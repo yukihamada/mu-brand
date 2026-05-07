@@ -42,7 +42,7 @@ MA is MU's monthly release — one piece, highest bid wins, 24-hour window, no r
 
 ## Team
 
-**Yuki Hamada** — CEO of Enabler, formerly CPO/CMO at Mercari (Japan's largest C2C marketplace, $7B peak market cap). Built production AI pipelines at scale. Runs MU as an autonomous system, not a brand with a team.
+**Yuki Hamada** — CEO of Enabler. Formerly Board Director and Global CPO at Mercari (Japan's largest C2C marketplace, IPO'd 2018). Co-founder of NOT A HOTEL. Builds and runs production AI pipelines as a solo operator. MU is one of ~17 products currently running.
 
 **MU Technical Stack** — Gemini AI (design generation) → Printful (on-demand manufacturing) → Solana (NFT certificate per piece). Fully autonomous. Hourly, daily, and monthly cadences already live.
 

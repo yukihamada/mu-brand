@@ -522,7 +522,7 @@ async fn stripe_webhook(
                     let html = format!(
                         r#"<div style="background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;padding:48px;max-width:560px">
   <div style="font-size:22px;font-weight:700;letter-spacing:0.4em;margin-bottom:32px">MU</div>
-  <div style="font-size:9px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.4;margin-bottom:12px">LAST PIECE</div>
+  <div style="font-size:9px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.65;margin-bottom:12px">LAST PIECE</div>
   <div style="font-size:20px;font-weight:300;margin-bottom:20px">{} — あなたが最後の1着を手に入れた。</div>
   <p style="font-size:12px;opacity:0.5;line-height:1.9">このドロップはあなたで閉じた。<br>二度と同じものは生まれない。</p>
 </div>"#,
@@ -715,12 +715,12 @@ async fn settle_auction(
     let html = format!(r#"
 <div style="background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;padding:48px;max-width:560px;margin:0 auto">
   <div style="font-size:22px;font-weight:700;letter-spacing:0.4em;margin-bottom:32px">MU</div>
-  <div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.4;margin-bottom:8px">間 MA — 落札のお知らせ</div>
+  <div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.65;margin-bottom:8px">間 MA — 落札のお知らせ</div>
   <div style="font-size:18px;font-weight:300;margin-bottom:24px">おめでとうございます。落札されました。</div>
   <div style="background:#1C1C1C;padding:24px;margin-bottom:24px">
-    <div style="font-size:9px;opacity:0.4;letter-spacing:0.2em;text-transform:uppercase;margin-bottom:8px">落札金額</div>
+    <div style="font-size:9px;opacity:0.65;letter-spacing:0.2em;text-transform:uppercase;margin-bottom:8px">落札金額</div>
     <div style="font-size:28px;font-weight:200">¥{amount}</div>
-    <div style="font-size:10px;opacity:0.4;margin-top:8px">{product_name}</div>
+    <div style="font-size:10px;opacity:0.65;margin-top:8px">{product_name}</div>
   </div>
   <p style="font-size:12px;line-height:1.85;opacity:0.5;margin-bottom:24px">
     下記のボタンから決済をお願いします。<br>
@@ -728,7 +728,7 @@ async fn settle_auction(
     Soulbound NFT証明書は発送後にSolanaウォレットへ送付します。
   </p>
   <a href="{payment_url}" style="display:inline-block;background:#F5F5F0;color:#0A0A0A;padding:16px 32px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:600">決済する →</a>
-  <div style="margin-top:48px;border-top:1px solid #1C1C1C;padding-top:20px;font-size:9px;opacity:0.25;letter-spacing:0.1em">
+  <div style="margin-top:48px;border-top:1px solid #1C1C1C;padding-top:20px;font-size:9px;opacity:0.5;letter-spacing:0.1em">
     MU — wearmu.com | mail@yukihamada.jp
   </div>
 </div>
@@ -1017,12 +1017,12 @@ body{{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Helvetica,Ar
 .hero{{width:100%;aspect-ratio:1;background:#111;overflow:hidden}}
 .hero img{{width:100%;height:100%;object-fit:cover}}
 .body{{padding:24px}}
-.brand-tag{{font-size:9px;letter-spacing:0.35em;text-transform:uppercase;opacity:0.4;margin-bottom:6px}}
+.brand-tag{{font-size:9px;letter-spacing:0.35em;text-transform:uppercase;opacity:0.65;margin-bottom:6px}}
 .name{{font-size:22px;font-weight:300;letter-spacing:0.02em;margin-bottom:4px}}
-.drop{{font-size:12px;opacity:0.4;letter-spacing:0.15em;margin-bottom:28px}}
-.section-label{{font-size:8px;letter-spacing:0.35em;text-transform:uppercase;opacity:0.3;margin-bottom:12px;margin-top:28px}}
+.drop{{font-size:12px;opacity:0.65;letter-spacing:0.15em;margin-bottom:28px}}
+.section-label{{font-size:8px;letter-spacing:0.35em;text-transform:uppercase;opacity:0.55;margin-bottom:12px;margin-top:28px}}
 .row{{display:flex;justify-content:space-between;align-items:baseline;padding:10px 0;border-bottom:1px solid #1C1C1C;font-size:12px}}
-.label{{opacity:0.4;letter-spacing:0.05em}}
+.label{{opacity:0.65;letter-spacing:0.05em}}
 .val{{font-weight:300;text-align:right;max-width:60%}}
 .mono{{font-family:monospace;font-size:11px}}
 .inventory{{display:flex;align-items:center;gap:6px}}
@@ -1031,7 +1031,7 @@ body{{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Helvetica,Ar
 .cta{{margin-top:32px;text-align:center}}
 .cta a{{display:inline-block;border:1px solid #333;color:#F5F5F0;font-size:9px;letter-spacing:0.35em;text-transform:uppercase;padding:14px 28px;text-decoration:none}}
 .cta a:hover{{background:#1C1C1C}}
-.hokkaido{{margin-top:28px;font-size:10px;opacity:0.3;line-height:1.8;letter-spacing:0.05em}}
+.hokkaido{{margin-top:28px;font-size:10px;opacity:0.55;line-height:1.8;letter-spacing:0.05em}}
 </style>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </head>
@@ -1130,8 +1130,8 @@ async fn success_page() -> Html<&'static str> {
     body{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',sans-serif;
     display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:20px}
     h1{font-size:14px;letter-spacing:0.4em;text-transform:uppercase;font-weight:300;opacity:0.6}
-    p{font-size:11px;opacity:0.3;letter-spacing:0.1em}
-    a{color:inherit;font-size:9px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.3;margin-top:40px}
+    p{font-size:11px;opacity:0.55;letter-spacing:0.1em}
+    a{color:inherit;font-size:9px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.55;margin-top:40px}
     </style>
     <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
     </head><body>
@@ -1174,19 +1174,19 @@ async fn fragment_request(
     let user_html = format!(r#"
 <div style="background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;padding:48px;max-width:560px;margin:0 auto">
   <div style="font-size:22px;font-weight:700;letter-spacing:0.4em;margin-bottom:32px">MU</div>
-  <div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.4;margin-bottom:8px">Fragment System</div>
+  <div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.65;margin-bottom:8px">Fragment System</div>
   <div style="font-size:18px;font-weight:300;letter-spacing:0.05em;margin-bottom:24px">申請を受け付けました</div>
   <div style="background:#1C1C1C;padding:24px;margin-bottom:24px">
-    <div style="font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.4;margin-bottom:8px">Exchange</div>
+    <div style="font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.65;margin-bottom:8px">Exchange</div>
     <div style="font-size:14px">{direction_ja}</div>
-    <div style="font-size:9px;opacity:0.4;margin-top:8px">注文番号: {order_ids}</div>
+    <div style="font-size:9px;opacity:0.65;margin-top:8px">注文番号: {order_ids}</div>
   </div>
   <p style="font-size:12px;line-height:1.85;opacity:0.5">
     担当者が注文を確認し、2営業日以内に返送先住所をこのメールにご返信します。<br>
     着払いで3着を返送してください。確認後、{result_item}をお送りします。<br><br>
     交換品の送料はMU負担です。申請から発送まで約2週間を予定しています。
   </p>
-  <div style="margin-top:32px;padding-top:20px;border-top:1px solid #1C1C1C;font-size:9px;opacity:0.25;letter-spacing:0.1em">
+  <div style="margin-top:32px;padding-top:20px;border-top:1px solid #1C1C1C;font-size:9px;opacity:0.5;letter-spacing:0.1em">
     MU — AIが服を作り続けるブランド<br>wearmu.com
   </div>
 </div>

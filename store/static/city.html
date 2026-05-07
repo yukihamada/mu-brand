@@ -68,7 +68,7 @@ button{cursor:pointer;font-family:inherit}
 #ticker{position:fixed;top:0;left:0;right:0;z-index:200;height:28px;background:#0d0d10;
   overflow:hidden;border-bottom:1px solid #15151a}
 .ticker-inner{display:flex;animation:ticker 35s linear infinite;white-space:nowrap;height:100%;align-items:center}
-.ticker-item{font-size:9px;letter-spacing:0.25em;text-transform:uppercase;padding:0 40px;opacity:0.45;pointer-events:none;user-select:none}
+.ticker-item{font-size:9px;letter-spacing:0.25em;text-transform:uppercase;padding:0 40px;opacity:0.7;pointer-events:none;user-select:none}
 .ticker-item span{color:var(--c);opacity:1}
 .ticker-item .m{color:var(--m)}
 @keyframes ticker{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
@@ -93,11 +93,11 @@ nav.scrolled{background:rgba(10,10,12,0.92);backdrop-filter:blur(12px);
 .nav-tab[data-b=kotsu].active{border-color:var(--w);background:rgba(255,255,255,0.04)}
 .nav-right{display:flex;align-items:center;gap:16px;flex-shrink:0}
 .nav-right a{font-size:9px;letter-spacing:0.25em;text-transform:uppercase;
-  opacity:0.4;transition:opacity 0.2s}
+  opacity:0.65;transition:opacity 0.2s}
 .nav-right a:hover{opacity:1}
 .live-dot{width:6px;height:6px;border-radius:50%;background:var(--c);
   animation:pulse-dot 2s infinite;box-shadow:0 0 8px var(--c)}
-@keyframes pulse-dot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.3;transform:scale(0.7)}}
+@keyframes pulse-dot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.55;transform:scale(0.7)}}
 .live-label{font-size:8px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5;color:var(--c)}
 
 /* ── HERO ── */
@@ -114,7 +114,7 @@ nav.scrolled{background:rgba(10,10,12,0.92);backdrop-filter:blur(12px);
   background:radial-gradient(circle, rgba(255,46,160,0.16), transparent 65%);
   filter:blur(20px);pointer-events:none}
 .hero-eyebrow{font-size:9px;letter-spacing:0.5em;text-transform:uppercase;
-  opacity:0.45;margin-bottom:28px;position:relative;z-index:2}
+  opacity:0.7;margin-bottom:28px;position:relative;z-index:2}
 .hero-eyebrow .ac{color:var(--c)}
 .hero-mu{font-size:clamp(96px,18vw,260px);font-weight:700;letter-spacing:0.18em;
   line-height:0.95;position:relative;z-index:2;margin-bottom:14px}
@@ -127,7 +127,7 @@ nav.scrolled{background:rgba(10,10,12,0.92);backdrop-filter:blur(12px);
 .hero-stat-num{font-size:24px;font-weight:200;letter-spacing:0.04em;color:var(--w)}
 .hero-stat-num.c{color:var(--c)}
 .hero-stat-num.m{color:var(--m)}
-.hero-stat-label{font-size:8px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.45}
+.hero-stat-label{font-size:8px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.7}
 
 /* ── CONCEPT STRIP ── */
 .concept{padding:96px 32px;border-top:1px solid var(--l);border-bottom:1px solid var(--l);
@@ -164,7 +164,7 @@ nav.scrolled{background:rgba(10,10,12,0.92);backdrop-filter:blur(12px);
   position:relative;overflow:hidden;transition:background 0.3s;min-height:420px}
 .track:hover{background:#101015}
 .track-num{font-size:8px;letter-spacing:0.3em;text-transform:uppercase;
-  opacity:0.25;margin-bottom:24px;font-family:monospace}
+  opacity:0.5;margin-bottom:24px;font-family:monospace}
 .track-jp{font-size:48px;font-weight:200;line-height:1;margin-bottom:8px;
   letter-spacing:0.04em}
 .track-en{font-size:10px;letter-spacing:0.4em;text-transform:uppercase;
@@ -176,7 +176,7 @@ nav.scrolled{background:rgba(10,10,12,0.92);backdrop-filter:blur(12px);
   display:flex;flex-direction:column;gap:8px}
 .track-data-row{display:flex;justify-content:space-between;font-size:9px;
   letter-spacing:0.1em;text-transform:uppercase;font-family:monospace}
-.track-data-k{opacity:0.4}
+.track-data-k{opacity:0.65}
 .track-data-v{opacity:0.85}
 .track[data-t=toshi] .track-jp,
 .track[data-t=toshi] .track-data-v{color:var(--c)}

@@ -113,7 +113,7 @@ button{cursor:pointer;font-family:inherit}
 #ticker{position:fixed;top:0;left:0;right:0;z-index:200;height:28px;background:#111;
   overflow:hidden;border-bottom:1px solid #1a1a1a}
 .ticker-inner{display:flex;animation:ticker 30s linear infinite;white-space:nowrap;height:100%;align-items:center}
-.ticker-item{font-size:9px;letter-spacing:0.25em;text-transform:uppercase;padding:0 40px;opacity:0.4;pointer-events:none;user-select:none}
+.ticker-item{font-size:9px;letter-spacing:0.25em;text-transform:uppercase;padding:0 40px;opacity:0.65;pointer-events:none;user-select:none}
 .ticker-item span{color:var(--w);opacity:1}
 @keyframes ticker{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
 
@@ -151,7 +151,7 @@ nav.scrolled{background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);
   color:#e6c449;opacity:0.7;margin-bottom:20px}
 .nouns-title{font-size:clamp(52px,9vw,120px);font-weight:200;letter-spacing:0.04em;
   line-height:1.05;margin-bottom:28px}
-.nouns-sub{font-size:14px;opacity:0.4;line-height:1.9;max-width:520px;font-weight:300}
+.nouns-sub{font-size:14px;opacity:0.65;line-height:1.9;max-width:520px;font-weight:300}
 .nouns-stats{display:flex;gap:48px;margin-top:48px;padding-top:32px;
   border-top:1px solid rgba(255,255,255,0.06);flex-wrap:wrap}
 .nouns-stat{display:flex;flex-direction:column;gap:6px}
@@ -165,12 +165,12 @@ nav.scrolled{background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);
 .nouns-track:hover{border-bottom-color:#e6c449}
 .nouns-track:hover::before{opacity:1}
 .nouns-track-num{font-size:8px;letter-spacing:0.25em;text-transform:uppercase;
-  opacity:0.2;margin-bottom:20px}
+  opacity:0.7;margin-bottom:20px}
 .nouns-track-emoji{font-size:32px;margin-bottom:20px;line-height:1}
 .nouns-track-freq{font-size:8px;letter-spacing:0.3em;text-transform:uppercase;
   color:#e6c449;opacity:0.8;margin-bottom:10px}
 .nouns-track-name{font-size:20px;font-weight:300;letter-spacing:0.04em;margin-bottom:16px}
-.nouns-track-desc{font-size:12px;opacity:0.35;line-height:1.8;flex:1}
+.nouns-track-desc{font-size:12px;opacity:0.6;line-height:1.8;flex:1}
 .nouns-track-meta{margin-top:24px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.05)}
 .nouns-track-chip{display:inline-block;font-size:8px;letter-spacing:0.2em;text-transform:uppercase;
   padding:4px 10px;background:rgba(230,196,73,0.08);color:#e6c449;margin-top:8px}
@@ -179,7 +179,7 @@ nav.scrolled{background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);
 .nouns-collab-left{max-width:560px}
 .nouns-collab-heading{font-size:11px;letter-spacing:0.3em;text-transform:uppercase;
   color:#e6c449;opacity:0.7;margin-bottom:16px}
-.nouns-collab-text{font-size:13px;opacity:0.45;line-height:1.9}
+.nouns-collab-text{font-size:13px;opacity:0.7;line-height:1.9}
 .nouns-addr-box{background:rgba(230,196,73,0.04);border:1px solid rgba(230,196,73,0.12);
   padding:20px 24px;margin-top:16px;display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap}
 .nouns-addr-label{font-size:8px;letter-spacing:0.25em;text-transform:uppercase;
@@ -212,11 +212,11 @@ nav.scrolled{background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);
 }
 .nav-right{display:flex;align-items:center;gap:16px;flex-shrink:0}
 .nav-right a{font-size:9px;letter-spacing:0.25em;text-transform:uppercase;
-  opacity:0.35;transition:opacity 0.2s}
+  opacity:0.6;transition:opacity 0.2s}
 .nav-right a:hover{opacity:0.9}
 .live-dot{width:6px;height:6px;border-radius:50%;background:var(--r);
   animation:pulse-dot 2s infinite}
-@keyframes pulse-dot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.4;transform:scale(0.8)}}
+@keyframes pulse-dot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.65;transform:scale(0.8)}}
 .live-label{font-size:8px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5}
 
 /* ── HERO ── */
@@ -225,7 +225,7 @@ nav.scrolled{background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);
 .hero-bg{position:absolute;inset:0;display:grid;grid-template-columns:repeat(8,1fr);
   grid-template-rows:repeat(8,1fr);opacity:0.03}
 .hero-bg-cell{border:1px solid var(--w)}
-.hero-eyebrow{font-size:9px;letter-spacing:0.5em;text-transform:uppercase;opacity:0.2;margin-bottom:32px}
+.hero-eyebrow{font-size:9px;letter-spacing:0.5em;text-transform:uppercase;opacity:0.7;margin-bottom:32px}
 .hero-mu{font-size:clamp(120px,22vw,340px);font-weight:700;letter-spacing:0.3em;
   line-height:1;opacity:0;animation:appear 1.4s ease 0.3s forwards}
 .hero-tagline{font-size:13px;font-weight:300;letter-spacing:0.08em;opacity:0;
@@ -237,8 +237,8 @@ nav.scrolled{background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);
 .hero-brands{display:flex;gap:48px;margin-top:80px;opacity:0;animation:appear 0.8s ease 2s forwards}
 .hero-brand-btn{display:flex;flex-direction:column;align-items:center;gap:12px;cursor:pointer}
 .hero-brand-sig{display:flex;flex-direction:column;align-items:center;gap:4px}
-.sig-line{width:1px;height:40px;background:var(--w);opacity:0.3}
-.sig-dot{width:5px;height:5px;border-radius:50%;background:var(--w);opacity:0.3}
+.sig-line{width:1px;height:40px;background:var(--w);opacity:0.55}
+.sig-dot{width:5px;height:5px;border-radius:50%;background:var(--w);opacity:0.55}
 .sig-dot.red{background:var(--r);opacity:0.7}
 .hero-brand-name{font-size:9px;letter-spacing:0.35em;text-transform:uppercase;opacity:0.5;
   transition:opacity 0.2s}
@@ -251,10 +251,10 @@ nav.scrolled{background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);
 .section-meta{display:flex;align-items:flex-start;justify-content:space-between;
   margin-bottom:80px;gap:40px;flex-wrap:wrap}
 .section-left{}
-.section-brand{font-size:10px;letter-spacing:0.4em;text-transform:uppercase;opacity:0.35;margin-bottom:12px}
+.section-brand{font-size:10px;letter-spacing:0.4em;text-transform:uppercase;opacity:0.6;margin-bottom:12px}
 .section-title{font-size:clamp(36px,6vw,80px);font-weight:200;letter-spacing:0.05em;line-height:1.1}
 .section-concept{max-width:420px;margin-top:20px}
-.concept-line{font-size:13px;line-height:1.8;opacity:0.45;font-weight:300}
+.concept-line{font-size:13px;line-height:1.8;opacity:0.7;font-weight:300}
 .section-right{text-align:right;flex-shrink:0}
 .live-info{font-size:9px;letter-spacing:0.2em;text-transform:uppercase;opacity:0.5;line-height:2}
 .live-info span{color:var(--w);opacity:1}
@@ -266,15 +266,15 @@ nav.scrolled{background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);
 .ma-auction{padding:48px 40px;display:flex;flex-direction:column;gap:24px;background:var(--g)}
 .auction-label{font-size:8px;letter-spacing:0.35em;text-transform:uppercase;opacity:0.5}
 .auction-current{font-size:40px;font-weight:200;letter-spacing:0.05em}
-.auction-timer{font-size:13px;opacity:0.4;font-variant-numeric:tabular-nums}
+.auction-timer{font-size:13px;opacity:0.65;font-variant-numeric:tabular-nums}
 .auction-bids{font-size:9px;opacity:0.5;letter-spacing:0.1em}
 .input-row{display:flex;flex-direction:column;gap:8px}
 .mu-input{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);
   color:var(--w);padding:14px;font-size:12px;font-family:inherit;font-weight:200;
   outline:none;width:100%;transition:border-color 0.2s}
 .mu-input:focus{border-color:rgba(255,255,255,0.3)}
-.mu-input::placeholder{opacity:0.3}
-.soulbound-note{font-size:9px;opacity:0.25;line-height:1.6;letter-spacing:0.03em}
+.mu-input::placeholder{opacity:0.55}
+.soulbound-note{font-size:9px;opacity:0.5;line-height:1.6;letter-spacing:0.03em}
 .btn-primary{background:var(--w);color:var(--k);border:none;padding:18px;
   font-size:9px;letter-spacing:0.35em;text-transform:uppercase;
   font-family:inherit;font-weight:600;transition:opacity 0.2s;width:100%}
@@ -292,15 +292,15 @@ nav.scrolled{background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);
 .card-placeholder{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px}
 .card-placeholder-label{font-size:8px;letter-spacing:0.3em;text-transform:uppercase;color:var(--w);animation:ai-gen-pulse 1.6s ease-in-out infinite}
 .card-placeholder-bar{width:48px;height:1px;background:var(--w);transform-origin:left;animation:ai-gen-bar 1.6s ease-in-out infinite}
-@keyframes ai-gen-pulse{0%,100%{opacity:0.25}50%{opacity:0.7}}
-@keyframes ai-gen-bar{0%{transform:scaleX(0.2);opacity:0.2}50%{transform:scaleX(1);opacity:0.6}100%{transform:scaleX(0.2);opacity:0.2}}
+@keyframes ai-gen-pulse{0%,100%{opacity:0.5}50%{opacity:0.7}}
+@keyframes ai-gen-bar{0%{transform:scaleX(0.2);opacity:0.7}50%{transform:scaleX(1);opacity:0.6}100%{transform:scaleX(0.2);opacity:0.7}}
 .card-overlay{position:absolute;inset:0;background:linear-gradient(to top,rgba(0,0,0,0.85)0%,transparent 55%);
   display:flex;flex-direction:column;justify-content:flex-end;padding:20px;
   opacity:0;transition:opacity 0.3s}
 .card:hover .card-overlay{opacity:1}
 .card-name{font-size:10px;letter-spacing:0.2em;text-transform:uppercase;margin-bottom:4px}
 .card-price{font-size:15px;font-weight:300}
-.card-stock{font-size:8px;opacity:0.4;margin-top:3px;letter-spacing:0.1em}
+.card-stock{font-size:8px;opacity:0.65;margin-top:3px;letter-spacing:0.1em}
 .card-buy{display:inline-block;margin-top:12px;padding:9px 16px;
   border:1px solid var(--w);font-size:9px;letter-spacing:0.3em;text-transform:uppercase;
   align-self:flex-start;background:transparent;color:var(--w);transition:all 0.2s}
@@ -313,27 +313,27 @@ nav.scrolled{background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);
 .muon-upload{margin:24px 0;padding:24px;border:1px solid rgba(255,255,255,0.06);
   display:flex;flex-direction:column;gap:12px}
 .upload-label{font-size:9px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5}
-.upload-desc{font-size:11px;opacity:0.4;line-height:1.7}
+.upload-desc{font-size:11px;opacity:0.65;line-height:1.7}
 .btn-upload{background:transparent;color:var(--w);border:1px solid rgba(255,255,255,0.15);
   padding:12px 20px;font-size:9px;letter-spacing:0.25em;text-transform:uppercase;
   font-family:inherit;transition:all 0.2s;align-self:flex-start}
 .btn-upload:hover{border-color:rgba(255,255,255,0.4)}
-#muon-weather{font-size:9px;opacity:0.25;letter-spacing:0.1em}
+#muon-weather{font-size:9px;opacity:0.5;letter-spacing:0.1em}
 
 /* MUGEN specific */
 .mugen-header-extra{display:flex;gap:40px;align-items:flex-start;margin-top:20px}
 .drop-counter{font-size:48px;font-weight:200;letter-spacing:0.05em;font-variant-numeric:tabular-nums}
 .drop-sub{font-size:8px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5;margin-top:4px}
 .next-drop-timer{font-variant-numeric:tabular-nums}
-.price-dropping{font-size:11px;opacity:0.4;letter-spacing:0.1em;margin-top:4px}
+.price-dropping{font-size:11px;opacity:0.65;letter-spacing:0.1em;margin-top:4px}
 
 /* Fragment system */
 .fragment-banner{background:var(--g);padding:32px 48px;margin:40px 0;
   display:flex;align-items:center;gap:40px;flex-wrap:wrap}
 .fragment-text{flex:1;min-width:240px}
 .fragment-title{font-size:11px;letter-spacing:0.25em;text-transform:uppercase;margin-bottom:8px}
-.fragment-desc{font-size:12px;opacity:0.4;line-height:1.7}
-.fragment-arrow{font-size:24px;opacity:0.3}
+.fragment-desc{font-size:12px;opacity:0.65;line-height:1.7}
+.fragment-arrow{font-size:24px;opacity:0.55}
 
 /* ── MODAL ── */
 .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:300;
@@ -353,7 +353,7 @@ nav.scrolled{background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);
 .divider{height:1px;background:rgba(255,255,255,0.05)}
 .meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .meta-item{}
-.meta-key{font-size:7px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.25;margin-bottom:3px}
+.meta-key{font-size:7px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5;margin-bottom:3px}
 .meta-val{font-size:11px;opacity:0.6;word-break:break-all}
 .nft-cert{padding:16px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06)}
 .nft-title{font-size:8px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5;margin-bottom:6px}
@@ -363,32 +363,32 @@ nav.scrolled{background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);
   padding:8px 14px;font-size:9px;letter-spacing:0.1em;transition:all 0.2s}
 .size-btn.selected,.size-btn:hover{border-color:rgba(255,255,255,0.5);background:rgba(255,255,255,0.06)}
 .btn-close{position:absolute;top:16px;right:20px;background:none;border:none;
-  color:var(--w);font-size:22px;opacity:0.3;z-index:10;transition:opacity 0.2s}
+  color:var(--w);font-size:22px;opacity:0.55;z-index:10;transition:opacity 0.2s}
 .btn-close:hover{opacity:0.8}
 select.mu-input option{background:var(--g)}
 
 /* ── PROOF section ── */
 .proof-section{padding:80px 48px;background:var(--g);margin-top:80px}
-.proof-title{font-size:10px;letter-spacing:0.4em;text-transform:uppercase;opacity:0.25;margin-bottom:48px}
+.proof-title{font-size:10px;letter-spacing:0.4em;text-transform:uppercase;opacity:0.5;margin-bottom:48px}
 .proof-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px}
 .proof-item{padding:32px;background:var(--k)}
 .proof-num{font-size:36px;font-weight:200;letter-spacing:0.05em;margin-bottom:8px}
 .proof-label{font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.5}
-.proof-desc{font-size:11px;opacity:0.35;margin-top:10px;line-height:1.7}
+.proof-desc{font-size:11px;opacity:0.6;margin-top:10px;line-height:1.7}
 
 /* ── FOOTER ── */
 footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:center;
   border-top:1px solid rgba(255,255,255,0.04);flex-wrap:wrap;gap:20px}
-.footer-brand{font-size:10px;letter-spacing:0.4em;text-transform:uppercase;opacity:0.2}
+.footer-brand{font-size:10px;letter-spacing:0.4em;text-transform:uppercase;opacity:0.7}
 .footer-links{display:flex;gap:32px}
-.footer-link{font-size:8px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.2;
+.footer-link{font-size:8px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.7;
   transition:opacity 0.2s}
 .footer-link:hover{opacity:0.6}
 
 /* ── UTILS ── */
 .empty{padding:80px 0;text-align:center;font-size:9px;letter-spacing:0.3em;
   text-transform:uppercase;opacity:0.15;animation:pulse-op 2s infinite}
-@keyframes pulse-op{0%,100%{opacity:0.15}50%{opacity:0.35}}
+@keyframes pulse-op{0%,100%{opacity:0.15}50%{opacity:0.6}}
 .tag{display:inline-block;font-size:7px;letter-spacing:0.2em;text-transform:uppercase;
   padding:3px 8px;border:1px solid rgba(255,255,255,0.1);opacity:0.5}
 
@@ -480,8 +480,8 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
     <div class="nav-tab" data-b="nouns" onclick="showSection('nouns')" role="button" tabindex="0" aria-label="MU × NOUNS コラボレーション">⌐◨-◨ NOUNS <span style="background:#e6c449;color:#000;font-size:6px;letter-spacing:0.15em;padding:2px 6px;vertical-align:middle;font-weight:700;margin-left:4px">🤝</span></div>
   </div>
   <div class="nav-right">
-    <a href="/about.html" style="font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.25;transition:opacity 0.2s;margin-right:8px" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=0.25">About</a>
-    <a href="/press.html" style="font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.25;transition:opacity 0.2s;margin-right:20px" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=0.25">Press</a>
+    <a href="/about.html" style="font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.5;transition:opacity 0.2s;margin-right:8px" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=0.25">About</a>
+    <a href="/press.html" style="font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.5;transition:opacity 0.2s;margin-right:20px" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=0.25">Press</a>
     <div class="live-dot"></div>
     <span class="live-label">生成中</span>
   </div>
@@ -651,7 +651,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
     <div class="fragment-text">
       <div class="fragment-title">Fragment System</div>
       <div class="fragment-desc">着古した3着が、1着の上位品になる。<br>MUGEN × 3 → MUON × 1。MUON × 3 → 間 MA × 1。<br>消費ではなく、変容。<br><br>
-      <span style="opacity:0.4;font-size:10px">申請後、返送先を案内します。交換品の送料はMU負担。申請から発送まで約2週間。</span></div>
+      <span style="opacity:0.65;font-size:10px">申請後、返送先を案内します。交換品の送料はMU負担。申請から発送まで約2週間。</span></div>
     </div>
     <div class="fragment-arrow">MUGEN × 3 → MUON → 間 MA</div>
     <button class="btn-primary" style="max-width:160px;font-size:8px" onclick="openFragmentModal()" aria-label="Fragment交換プログラムを申請する">Exchange</button>
@@ -724,7 +724,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
             </div>
           </div>
         </details>
-        <div style="font-size:9px;opacity:0.25;margin:8px 0;letter-spacing:0.05em">住所はStripeの決済画面で入力します</div>
+        <div style="font-size:9px;opacity:0.5;margin:8px 0;letter-spacing:0.05em">住所はStripeの決済画面で入力します</div>
         <input type="hidden" name="size" id="selected-size" value="M">
         <div id="checkout-msg" style="font-size:9px;letter-spacing:0.1em;min-height:16px;margin-bottom:4px"></div>
         <button type="submit" class="btn-primary" id="btn-buy">Purchase</button>
@@ -849,7 +849,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
     <!-- Products (nouns-tagged drops) -->
     <div class="nouns-products-section">
       <div class="nouns-section-label">NOUNS Collab Drops</div>
-      <div class="products-grid" id="grid-nouns"><div class="empty" style="opacity:0.3;font-size:12px;letter-spacing:0.1em">Coming after DAO approval ⌐◨-◨</div></div>
+      <div class="products-grid" id="grid-nouns"><div class="empty" style="opacity:0.55;font-size:12px;letter-spacing:0.1em">Coming after DAO approval ⌐◨-◨</div></div>
     </div>
 
   </div>
@@ -862,7 +862,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
     <div class="modal-body" style="padding:48px">
       <div class="modal-brand-label">Fragment System</div>
       <div class="modal-name">Exchange Program</div>
-      <div style="font-size:12px;opacity:0.4;line-height:1.8;margin:16px 0">
+      <div style="font-size:12px;opacity:0.65;line-height:1.8;margin:16px 0">
         MUGEN × 3着を返送することでMUON 1着と交換できます。<br>
         MUON × 3着を返送することで間 MA 1着と交換できます。<br><br>
         着続けることが、上位ブランドへの道。
@@ -1077,7 +1077,7 @@ async function loadMA(){
         <div class="divider"></div>
         <div>
           <div class="auction-label" style="margin-bottom:8px">${p.name}</div>
-          <div style="font-size:10px;opacity:0.35;line-height:1.7">
+          <div style="font-size:10px;opacity:0.6;line-height:1.7">
             世界に1着。SoulboundのNFT証明書付き。<br>
             落札後、転売時はNFTも同時移転が必要。
           </div>
@@ -1183,7 +1183,7 @@ async function loadNounsDrops(){
   const grid=document.getElementById('grid-nouns');
   try{
     const nouns=await fetch('/api/products/nouns').then(r=>r.json());
-    if(!nouns||!nouns.length){grid.innerHTML='<div class="empty" style="opacity:0.3;font-size:12px;letter-spacing:0.1em">Coming after DAO approval ⌐◨-◨</div>';return;}
+    if(!nouns||!nouns.length){grid.innerHTML='<div class="empty" style="opacity:0.55;font-size:12px;letter-spacing:0.1em">Coming after DAO approval ⌐◨-◨</div>';return;}
     grid.innerHTML=nouns.map(p=>{
       p.brand='nouns';
       const card=makeCard(p);
