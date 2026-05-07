@@ -233,6 +233,8 @@ nav.scrolled{background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);
 .hero-stats{display:flex;gap:48px;margin-top:64px;opacity:0;animation:appear 0.8s ease 1.8s forwards}
 .hero-stat{text-align:center}
 .hero-stat-num{font-size:28px;font-weight:200;letter-spacing:0.1em;font-variant-numeric:tabular-nums}
+.hero-stat-num.loading-shimmer{opacity:0.3;animation:hero-shim 1.4s ease-in-out infinite}
+@keyframes hero-shim{0%,100%{opacity:0.2}50%{opacity:0.6}}
 .hero-stat-label{font-size:8px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5;margin-top:4px}
 .hero-brands{display:flex;gap:48px;margin-top:80px;opacity:0;animation:appear 0.8s ease 2s forwards}
 .hero-brand-btn{display:flex;flex-direction:column;align-items:center;gap:12px;cursor:pointer}
@@ -355,6 +357,12 @@ nav.scrolled{background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);
 .meta-item{}
 .meta-key{font-size:7px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5;margin-bottom:3px}
 .meta-val{font-size:11px;opacity:0.6;word-break:break-all}
+.product-specs{padding:16px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02);
+  display:flex;flex-direction:column;gap:10px;margin-top:4px}
+.spec-row{display:grid;grid-template-columns:130px 1fr;gap:14px;font-size:11px;line-height:1.55}
+.spec-key{font-size:8px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.55;padding-top:2px}
+.spec-val{opacity:0.78}
+@media(max-width:600px){.spec-row{grid-template-columns:1fr;gap:2px}}
 .nft-cert{padding:16px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06)}
 .nft-title{font-size:8px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5;margin-bottom:6px}
 .nft-val{font-size:10px;opacity:0.5;word-break:break-all;font-family:monospace}
@@ -495,15 +503,15 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
   <div class="hero-tagline">毎時間、服が生まれている</div>
   <div class="hero-stats">
     <div class="hero-stat">
-      <div class="hero-stat-num" id="stat-mugen">—</div>
+      <div class="hero-stat-num loading-shimmer" id="stat-mugen" data-loading="true">···</div>
       <div class="hero-stat-label">MUGEN Drop</div>
     </div>
     <div class="hero-stat">
-      <div class="hero-stat-num" id="stat-temp">—°</div>
+      <div class="hero-stat-num loading-shimmer" id="stat-temp" data-loading="true">···</div>
       <div class="hero-stat-label">Today's Temp</div>
     </div>
     <div class="hero-stat">
-      <div class="hero-stat-num" id="stat-qty">—</div>
+      <div class="hero-stat-num loading-shimmer" id="stat-qty" data-loading="true">···</div>
       <div class="hero-stat-label">MUON Today</div>
     </div>
   </div>
@@ -695,6 +703,15 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
         <div class="stock-label" id="m-stock-label"></div>
       </div>
       <div class="meta-grid" id="m-meta"></div>
+
+      <div class="product-specs">
+        <div class="spec-row"><span class="spec-key">素材 / Material</span><span class="spec-val">100% Cotton, 200gsm heavyweight</span></div>
+        <div class="spec-row"><span class="spec-key">製造 / Made by</span><span class="spec-val">Printful — printed on demand at the closest fulfillment center (US / EU / JP)</span></div>
+        <div class="spec-row"><span class="spec-key">配送 / Shipping</span><span class="spec-val">Worldwide via DHL/FedEx — typically 7–10 business days. Calculated at checkout.</span></div>
+        <div class="spec-row"><span class="spec-key">返品 / Returns</span><span class="spec-val">Defective items only (made-to-order). Replacement guaranteed.</span></div>
+        <div class="spec-row"><span class="spec-key">保証書 / Certificate</span><span class="spec-val">Optional Solana on-chain NFT (free, opt-in below)</span></div>
+      </div>
+
       <div class="nft-cert" id="m-nft" style="display:none">
         <div class="nft-title">On-chain Certificate</div>
         <div class="nft-val" id="m-nft-val"></div>
@@ -930,6 +947,16 @@ function updateTimers(){
 setInterval(updateTimers,1000);
 updateTimers();
 
+// ── Live FX (JPY → USD) for ≈ price display ──
+async function loadFx(){
+  try{
+    const r = await fetch('https://api.frankfurter.dev/v1/latest?base=USD&symbols=JPY');
+    const d = await r.json();
+    const rate = d?.rates?.JPY;
+    if(rate && rate > 50 && rate < 500) window.JPY_PER_USD = rate;
+  }catch(e){}
+}
+
 // ── Load stats ──
 async function loadStats(){
   try{
@@ -940,7 +967,8 @@ async function loadStats(){
     ]);
     const lastMugen = mugen?.[0];
     if(lastMugen){
-      document.getElementById('stat-mugen').textContent = '#'+lastMugen.drop_num;
+      const sm = document.getElementById('stat-mugen');
+      sm.textContent = '#'+lastMugen.drop_num; sm.classList.remove('loading-shimmer');
       document.getElementById('mugen-drop-num').textContent = '#'+lastMugen.drop_num;
       const cycle = ((lastMugen.drop_num-1)%108)+1;
       document.getElementById('mugen-cycle').textContent = cycle+'/108';
@@ -950,7 +978,8 @@ async function loadStats(){
     const lastMuon = muon?.[0];
     if(lastMuon){
       const rem = lastMuon.inventory - lastMuon.sold;
-      document.getElementById('stat-qty').textContent = rem;
+      const sq = document.getElementById('stat-qty');
+      sq.textContent = rem; sq.classList.remove('loading-shimmer');
     }
   }catch(e){}
 }
@@ -966,7 +995,10 @@ async function loadWeather(){
     document.getElementById('weather-cond').textContent = w.condition || '—';
     document.getElementById('weather-qty').textContent = qty !== null ? qty : '—';
     const stTemp = document.getElementById('stat-temp');
-    if(stTemp) stTemp.textContent = temp !== null ? temp+'°' : '—';
+    if(stTemp){
+      stTemp.textContent = temp !== null ? temp+'°' : '—';
+      if(temp !== null) stTemp.classList.remove('loading-shimmer');
+    }
     ['t-temp','t-temp2'].forEach(id=>{const e=document.getElementById(id);if(e)e.textContent=temp !== null ? temp : '—'});
     ['t-qty','t-qty2'].forEach(id=>{const e=document.getElementById(id);if(e)e.textContent=qty !== null ? qty : '—'});
   }catch(e){}
@@ -1234,7 +1266,9 @@ function openModal(p, pushHistory=true){
 
   document.getElementById('m-brand').textContent = BRAND_LABELS[p.brand]||p.brand;
   document.getElementById('m-name').textContent = p.name;
-  document.getElementById('m-price').textContent = '¥'+p.price_jpy.toLocaleString();
+  const usd = Math.round(p.price_jpy / (window.JPY_PER_USD || 150));
+  document.getElementById('m-price').innerHTML = '¥'+p.price_jpy.toLocaleString()
+    + ' <span style="font-size:0.55em;opacity:0.55;letter-spacing:0.05em">≈ $'+usd.toLocaleString()+' USD</span>';
   document.getElementById('m-img').src = p.mockup_url||'';
   document.getElementById('m-stock-fill').style.width = pct+'%';
   document.getElementById('m-stock-label').textContent = `${rem} of ${p.inventory} — never restocked`;
@@ -1264,7 +1298,7 @@ function openModal(p, pushHistory=true){
   if(sizeSection) sizeSection.style.display = p.brand==='ma' ? 'none' : 'block';
 
   const btn = document.getElementById('btn-buy');
-  btn.textContent = `Purchase — ¥${p.price_jpy.toLocaleString()}`;
+  btn.textContent = `Purchase — ¥${p.price_jpy.toLocaleString()} (≈ $${usd})`;
   btn.className = 'btn-primary'+(p.brand==='mugen'?' red':'');
   btn.disabled = rem<=0;
 
@@ -1407,7 +1441,7 @@ window.addEventListener('popstate', ()=>{
 // ── Init ── preload everything so no dashes on load
 (async function init(){
   initRouter();  // parse URL first
-  await Promise.all([loadStats(), loadWeather()]);
+  await Promise.all([loadStats(), loadWeather(), loadFx()]);
   // Pre-populate grids in background so clicks feel instant
   loadBrand('muon');
   loadBrand('mugen');
