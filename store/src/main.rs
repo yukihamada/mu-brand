@@ -12,6 +12,7 @@ use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::{sync::{Arc, Mutex}, env, time::{SystemTime, UNIX_EPOCH}};
 use tower_http::services::ServeDir;
+use tower_http::trace::TraceLayer;
 
 /// Centralized admin token check. Fail-closed: if ADMIN_TOKEN env var
 /// is missing or empty, every admin request is rejected with 503.
@@ -1191,6 +1192,15 @@ async fn fragment_request(
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info,tower_http=info,axum::rejection=trace".into()),
+        )
+        .with_target(false)
+        .compact()
+        .init();
+
     let db_path = env::var("DB_PATH").unwrap_or_else(|_| "products.db".into());
     let conn = Connection::open(&db_path).expect("open db");
     conn.execute_batch("PRAGMA journal_mode=WAL;").ok();
@@ -1287,7 +1297,8 @@ async fn main() {
         .nest_service("/static", ServeDir::new("static"))
         .fallback_service(ServeDir::new("static"))
         .with_state(db)
-        .layer(middleware::from_fn(security_headers));
+        .layer(middleware::from_fn(security_headers))
+        .layer(TraceLayer::new_for_http());
 
     let port = env::var("PORT").unwrap_or_else(|_| "3000".into());
     let addr = format!("0.0.0.0:{}", port);
