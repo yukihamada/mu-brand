@@ -301,6 +301,10 @@ nav.scrolled{background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);
 .card-name{font-size:10px;letter-spacing:0.2em;text-transform:uppercase;margin-bottom:4px}
 .card-price{font-size:15px;font-weight:300}
 .card-stock{font-size:8px;opacity:0.4;margin-top:3px;letter-spacing:0.1em}
+.card-buy{display:inline-block;margin-top:12px;padding:9px 16px;
+  border:1px solid var(--w);font-size:9px;letter-spacing:0.3em;text-transform:uppercase;
+  align-self:flex-start;background:transparent;color:var(--w);transition:all 0.2s}
+.card:hover .card-buy{background:var(--w);color:var(--k)}
 .card-badge{position:absolute;top:14px;left:14px;font-size:7px;letter-spacing:0.2em;
   text-transform:uppercase;padding:4px 10px;background:var(--k);opacity:0.9}
 .card-badge.sold-out{background:rgba(0,0,0,0.7);opacity:0.6}
@@ -1015,6 +1019,7 @@ function makeCard(p){
       <div class="card-name">${p.name}</div>
       <div class="card-price">${soldOut?'—':('¥'+p.price_jpy.toLocaleString())}</div>
       <div class="card-stock">${soldOut?(p.sold_out_at?fmtSoldOutTime(p.sold_out_at):'SOLD OUT'):(rem+'/'+p.inventory+' remaining')}</div>
+      ${soldOut?'':'<div class="card-buy">Buy now</div>'}
     </div>
   </div>`;
 }

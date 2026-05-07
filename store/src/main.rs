@@ -222,6 +222,52 @@ async fn list_products(
     Json(products)
 }
 
+async fn list_brands(State(db): State<Db>) -> impl IntoResponse {
+    let counts: Vec<(String, i64, String)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT brand, COUNT(*) AS active_count, MAX(created_at) AS latest
+             FROM products WHERE active=1 GROUP BY brand ORDER BY brand"
+        ).unwrap();
+        stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?))
+        }).unwrap().filter_map(|r| r.ok()).collect()
+    };
+
+    let brands_json: Vec<serde_json::Value> = counts.into_iter().map(|(b, c, latest)| {
+        let (description, cycle) = match b.as_str() {
+            "mugen" => ("108 pieces per hour, weather-driven design", "hourly"),
+            "muon"  => ("daily drop, quantity from temperature", "daily"),
+            "ma"    => ("monthly auction, single piece", "monthly"),
+            "nouns" => ("MUON × Nouns DAO collaboration", "weekly"),
+            _ => ("", ""),
+        };
+        serde_json::json!({
+            "brand": b,
+            "name": b.to_uppercase(),
+            "description": description,
+            "cycle": cycle,
+            "active_drops": c,
+            "latest_drop_at": latest,
+            "list_endpoint": format!("/api/products/{}", b),
+            "page_url": format!("https://wearmu.com/{}", b),
+        })
+    }).collect();
+
+    Json(serde_json::json!({
+        "brand_count": brands_json.len(),
+        "brands": brands_json,
+        "docs": "https://github.com/yukihamada/mu-brand",
+        "endpoints": {
+            "brand_list":   "/api/products",
+            "brand_drops":  "/api/products/:brand",
+            "product":      "/api/products/item/:id",
+            "weather":      "/api/weather",
+            "verify":       "/v/:brand/:drop_num",
+        }
+    }))
+}
+
 async fn get_product(
     Path(id): Path<i64>,
     State(db): State<Db>,
@@ -1274,6 +1320,7 @@ async fn main() {
         // Product detail SPA routes
         .route("/products/:brand/:id", get(index))
         // API routes
+        .route("/api/products", get(list_brands))
         .route("/api/products/:brand", get(list_products))
         .route("/api/products/item/:id", get(get_product))
         .route("/api/weather", get(weather_handler))
