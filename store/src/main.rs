@@ -985,6 +985,7 @@ body{{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Helvetica,Ar
 .cta a:hover{{background:#1C1C1C}}
 .hokkaido{{margin-top:28px;font-size:10px;opacity:0.3;line-height:1.8;letter-spacing:0.05em}}
 </style>
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </head>
 <body>
 <div class="header">
@@ -1083,7 +1084,9 @@ async fn success_page() -> Html<&'static str> {
     h1{font-size:14px;letter-spacing:0.4em;text-transform:uppercase;font-weight:300;opacity:0.6}
     p{font-size:11px;opacity:0.3;letter-spacing:0.1em}
     a{color:inherit;font-size:9px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.3;margin-top:40px}
-    </style></head><body>
+    </style>
+    <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+    </head><body>
     <h1>Order Confirmed</h1>
     <p>確認メールをお送りしました。Printfulより発送します。</p>
     <a href="/">← Back to MU</a>
