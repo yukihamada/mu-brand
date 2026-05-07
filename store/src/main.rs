@@ -102,16 +102,43 @@ struct UpdateDesignBody {
     design_url: String,
 }
 
+/// Reverse Dutch auction pricing.
+/// Price starts at ¥4,000 (covers cost + margin) and steps up ¥250 per sold unit,
+/// capped at ¥30,000. Special cases: MA = ¥120,000, MUGEN #108 = ¥30,000 fixed.
+fn dynamic_price(brand: &str, drop_num: i64, sold: i64, name: &str) -> i64 {
+    if brand == "ma" {
+        return 120_000;
+    }
+    if brand == "nouns" {
+        let nm = name.to_uppercase();
+        if nm.contains("間") || nm.contains(" MA ") || nm.starts_with("MA ") || nm.ends_with(" MA") {
+            return 120_000;
+        }
+    }
+    if brand == "mugen" && drop_num == 108 {
+        return 30_000;
+    }
+    let base: i64 = 4_000;
+    let step: i64 = 250;
+    let max:  i64 = 30_000;
+    (base + sold.max(0) * step).min(max)
+}
+
 fn read_product(row: &rusqlite::Row) -> rusqlite::Result<Product> {
+    let brand:    String = row.get(1)?;
+    let drop_num: i64    = row.get(2)?;
+    let name:     String = row.get(3)?;
+    let sold:     i64    = row.get(7)?;
+    let dynamic = dynamic_price(&brand, drop_num, sold, &name);
     Ok(Product {
         id:           row.get(0)?,
-        brand:        row.get(1)?,
-        drop_num:     row.get(2)?,
-        name:         row.get(3)?,
+        brand,
+        drop_num,
+        name,
         mockup_url:   row.get(4)?,
-        price_jpy:    row.get(5)?,
+        price_jpy:    dynamic,
         inventory:    row.get(6)?,
-        sold:         row.get(7)?,
+        sold,
         created_at:   row.get(8)?,
         weather_data: row.get(9)?,
         prompt_hash:  row.get(10)?,
@@ -222,21 +249,24 @@ async fn checkout(
     let check = {
         let conn = db.lock().unwrap();
         conn.query_row(
-            "SELECT price_jpy, inventory, sold, name FROM products WHERE id=? AND active=1",
+            "SELECT brand, drop_num, inventory, sold, name FROM products WHERE id=? AND active=1",
             params![body.product_id],
             |row| Ok((
-                row.get::<_,i64>(0)?, row.get::<_,i64>(1)?,
-                row.get::<_,i64>(2)?, row.get::<_,String>(3)?
+                row.get::<_,String>(0)?, row.get::<_,i64>(1)?,
+                row.get::<_,i64>(2)?, row.get::<_,i64>(3)?,
+                row.get::<_,String>(4)?
             ))
         )
     };
-    let (price_jpy, inventory, sold, product_name) = match check {
+    let (brand_str, drop_num, inventory, sold, product_name) = match check {
         Ok(r) => r,
         Err(_) => return (StatusCode::NOT_FOUND, "product not found").into_response(),
     };
     if inventory - sold < body.quantity as i64 {
         return (StatusCode::CONFLICT, "sold out").into_response();
     }
+    // Reverse Dutch: compute current price from sold count at checkout time.
+    let price_jpy = dynamic_price(&brand_str, drop_num, sold, &product_name);
 
     let base_url = env::var("BASE_URL").unwrap_or_else(|_| "http://localhost:3000".into());
     let size_label = body.size.clone().unwrap_or_else(|| "M".into());
