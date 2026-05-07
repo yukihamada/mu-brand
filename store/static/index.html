@@ -1,0 +1,1421 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>MU — 北海道の天気がデザインする服 | wearmu.com</title>
+<meta name="description" content="気温が枚数を決め、風速が価格を決める。毎時・毎日・毎月、AIが北海道の気象データから限定Tシャツを自律生成するブランド。MUGEN 108枚サイクル、MUON 気温連動、MA 月次オークション。">
+<meta name="keywords" content="MU, wearmu, AI fashion, autonomous brand, 間 MA, MUON, MUGEN, NOUNS, AIブランド, 限定Tシャツ, 自律型ファッション, NFTファッション, 北海道, 弟子屈">
+<meta name="author" content="MU">
+<meta name="robots" content="index, follow">
+<meta name="theme-color" content="#0A0A0A">
+<link rel="canonical" href="https://wearmu.com/">
+<link rel="alternate" hreflang="ja" href="https://wearmu.com/">
+<link rel="alternate" hreflang="en" href="https://wearmu.com/">
+<link rel="alternate" hreflang="x-default" href="https://wearmu.com/">
+
+<!-- Favicon -->
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="shortcut icon" href="/favicon.ico">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.json">
+
+<!-- Open Graph -->
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://wearmu.com/">
+<meta property="og:title" content="MU — 北海道の天気がデザインする服">
+<meta property="og:description" content="気温が枚数を決め、風速が価格を決める。毎時・毎日・毎月、AIが生成する限定Tシャツ。売り切れたら二度と同じものは生まれない。">
+<meta property="og:image" content="https://wearmu.com/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="MU — AI autonomous fashion brand from Hokkaido">
+<meta property="og:site_name" content="MU">
+<meta property="og:locale" content="ja_JP">
+<meta property="og:locale:alternate" content="en_US">
+
+<!-- Twitter Card -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="MU — 北海道の天気がデザインする服">
+<meta name="twitter:description" content="気温が枚数を決め、風速が価格を決める。毎時・毎日・毎月、AIが生成する限定Tシャツ。">
+<meta name="twitter:image" content="https://wearmu.com/og.jpg">
+<meta name="twitter:image:alt" content="MU — AI autonomous fashion brand">
+
+<!-- JSON-LD: Organization + WebSite + ClothingStore -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://wearmu.com/#org",
+      "name": "MU",
+      "alternateName": ["ムー", "間 MA", "MUON", "MUGEN"],
+      "url": "https://wearmu.com",
+      "logo": {
+        "@type": "ImageObject",
+        "url": "https://wearmu.com/icon-512.png",
+        "width": 512,
+        "height": 512
+      },
+      "description": "北海道の気象データを起点に、AIが自律生成するファッションブランド。人間のデザイナーが介在しない、気候と時間の産物。",
+      "sameAs": [
+        "https://wearmu.com/about.html"
+      ]
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://wearmu.com/#website",
+      "url": "https://wearmu.com",
+      "name": "MU",
+      "publisher": {"@id": "https://wearmu.com/#org"},
+      "inLanguage": ["ja", "en"],
+      "potentialAction": {
+        "@type": "SearchAction",
+        "target": "https://wearmu.com/mugen",
+        "query-input": "required"
+      }
+    },
+    {
+      "@type": "ClothingStore",
+      "@id": "https://wearmu.com/#store",
+      "name": "MU Store",
+      "url": "https://wearmu.com",
+      "description": "AIが北海道の気象データから自律生成する限定Tシャツ。MUGEN（毎時108枚サイクル）、MUON（毎日・気温連動枚数）、MA（毎月・月次オークション）の3ライン。",
+      "currenciesAccepted": "JPY",
+      "paymentAccepted": "Credit Card, Stripe",
+      "priceRange": "¥5,000〜¥120,000",
+      "image": "https://wearmu.com/og.jpg",
+      "hasOfferCatalog": {
+        "@type": "OfferCatalog",
+        "name": "MU Drops",
+        "itemListElement": [
+          {"@type": "Offer", "name": "MUGEN — 毎時限定Tシャツ（108枚サイクル）"},
+          {"@type": "Offer", "name": "MUON — 毎日限定Tシャツ（気温連動枚数）"},
+          {"@type": "Offer", "name": "MA — 毎月オークションTシャツ（月次1点）"}
+        ]
+      }
+    }
+  ]
+}
+</script>
+<style>
+:root{--k:#0A0A0A;--w:#F5F5F0;--r:#C8362C;--g:#1C1C1C;--d:#2A2A2A;--a:#888}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--k);color:var(--w);font-family:'Helvetica Neue',Arial,sans-serif;
+  font-weight:200;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+a{color:inherit;text-decoration:none}
+button{cursor:pointer;font-family:inherit}
+
+/* ── LIVE TICKER ── */
+#ticker{position:fixed;top:0;left:0;right:0;z-index:200;height:28px;background:#111;
+  overflow:hidden;border-bottom:1px solid #1a1a1a}
+.ticker-inner{display:flex;animation:ticker 30s linear infinite;white-space:nowrap;height:100%;align-items:center}
+.ticker-item{font-size:9px;letter-spacing:0.25em;text-transform:uppercase;padding:0 40px;opacity:0.4;pointer-events:none;user-select:none}
+.ticker-item span{color:var(--w);opacity:1}
+@keyframes ticker{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+
+/* ── NAV ── */
+nav{position:fixed;top:28px;left:0;right:0;z-index:100;
+  display:flex;align-items:center;justify-content:space-between;gap:16px;
+  padding:14px 32px;transition:background 0.3s}
+nav.scrolled{background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);
+  border-bottom:1px solid rgba(255,255,255,0.05)}
+.nav-logo{font-size:16px;font-weight:700;letter-spacing:0.5em;flex-shrink:0}
+.nav-tabs{display:flex;gap:2px;flex:1;justify-content:center;min-width:0}
+.nav-tab{font-size:10px;letter-spacing:0.22em;text-transform:uppercase;
+  padding:10px 16px;opacity:0.55;cursor:pointer;border-bottom:2px solid transparent;
+  transition:all 0.2s;white-space:nowrap;line-height:1}
+.nav-tab:hover{opacity:1;background:rgba(255,255,255,0.04)}
+.nav-tab.active{opacity:1}
+.nav-tab[data-b=ma].active{border-color:var(--w);background:rgba(255,255,255,0.04)}
+.nav-tab[data-b=muon].active{border-color:var(--w);background:rgba(255,255,255,0.04)}
+.nav-tab[data-b=mugen].active{border-color:var(--r);background:rgba(200,54,44,0.08)}
+.nav-tab[data-b=nouns].active{border-color:#e6c449;background:rgba(230,196,73,0.07)}
+/* NOUNS collab styles */
+.nouns-wrap{background:var(--k);overflow:hidden}
+.nouns-cinematic{position:relative;min-height:100vh;display:flex;flex-direction:column;
+  justify-content:flex-end;padding:80px 48px 64px;overflow:hidden}
+.nouns-bg-glasses{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  font-size:clamp(200px,40vw,480px);line-height:1;opacity:0.04;pointer-events:none;
+  filter:drop-shadow(0 0 80px rgba(230,196,73,0.4));white-space:nowrap;user-select:none}
+.nouns-top-badge{position:absolute;top:100px;left:48px;display:flex;align-items:center;gap:12px}
+.nouns-pill{font-size:8px;letter-spacing:0.3em;text-transform:uppercase;
+  background:#e6c449;color:#000;padding:5px 12px;font-weight:700}
+.nouns-pill-cc0{font-size:8px;letter-spacing:0.2em;text-transform:uppercase;
+  border:1px solid rgba(230,196,73,0.3);color:#e6c449;padding:5px 12px}
+.nouns-hero-bottom{max-width:900px}
+.nouns-eyebrow{font-size:9px;letter-spacing:0.45em;text-transform:uppercase;
+  color:#e6c449;opacity:0.7;margin-bottom:20px}
+.nouns-title{font-size:clamp(52px,9vw,120px);font-weight:200;letter-spacing:0.04em;
+  line-height:1.05;margin-bottom:28px}
+.nouns-sub{font-size:14px;opacity:0.4;line-height:1.9;max-width:520px;font-weight:300}
+.nouns-stats{display:flex;gap:48px;margin-top:48px;padding-top:32px;
+  border-top:1px solid rgba(255,255,255,0.06);flex-wrap:wrap}
+.nouns-stat{display:flex;flex-direction:column;gap:6px}
+.nouns-stat-val{font-size:clamp(22px,4vw,36px);font-weight:200;letter-spacing:0.03em;color:#e6c449}
+.nouns-stat-label{font-size:8px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.5}
+.nouns-tracks{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;margin:2px 0}
+.nouns-track{background:var(--g);padding:40px 32px;display:flex;flex-direction:column;gap:0;
+  border-bottom:2px solid transparent;transition:border-color 0.3s;position:relative;overflow:hidden}
+.nouns-track::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(230,196,73,0.2),transparent);opacity:0}
+.nouns-track:hover{border-bottom-color:#e6c449}
+.nouns-track:hover::before{opacity:1}
+.nouns-track-num{font-size:8px;letter-spacing:0.25em;text-transform:uppercase;
+  opacity:0.2;margin-bottom:20px}
+.nouns-track-emoji{font-size:32px;margin-bottom:20px;line-height:1}
+.nouns-track-freq{font-size:8px;letter-spacing:0.3em;text-transform:uppercase;
+  color:#e6c449;opacity:0.8;margin-bottom:10px}
+.nouns-track-name{font-size:20px;font-weight:300;letter-spacing:0.04em;margin-bottom:16px}
+.nouns-track-desc{font-size:12px;opacity:0.35;line-height:1.8;flex:1}
+.nouns-track-meta{margin-top:24px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.05)}
+.nouns-track-chip{display:inline-block;font-size:8px;letter-spacing:0.2em;text-transform:uppercase;
+  padding:4px 10px;background:rgba(230,196,73,0.08);color:#e6c449;margin-top:8px}
+.nouns-collab-bar{background:#111;padding:48px;display:flex;
+  align-items:center;justify-content:space-between;gap:40px;flex-wrap:wrap}
+.nouns-collab-left{max-width:560px}
+.nouns-collab-heading{font-size:11px;letter-spacing:0.3em;text-transform:uppercase;
+  color:#e6c449;opacity:0.7;margin-bottom:16px}
+.nouns-collab-text{font-size:13px;opacity:0.45;line-height:1.9}
+.nouns-addr-box{background:rgba(230,196,73,0.04);border:1px solid rgba(230,196,73,0.12);
+  padding:20px 24px;margin-top:16px;display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap}
+.nouns-addr-label{font-size:8px;letter-spacing:0.25em;text-transform:uppercase;
+  color:#e6c449;opacity:0.7;white-space:nowrap;margin-top:2px}
+.nouns-addr{font-family:monospace;font-size:11px;opacity:0.5;word-break:break-all;line-height:1.6}
+.nouns-collab-actions{display:flex;flex-direction:column;gap:12px;flex-shrink:0}
+.nouns-btn-primary{display:inline-block;background:#e6c449;color:#000;
+  font-size:9px;letter-spacing:0.3em;text-transform:uppercase;padding:16px 28px;
+  font-weight:700;transition:opacity 0.2s;white-space:nowrap}
+.nouns-btn-primary:hover{opacity:0.85}
+.nouns-btn-secondary{display:inline-block;border:1px solid rgba(230,196,73,0.3);color:#e6c449;
+  font-size:9px;letter-spacing:0.25em;text-transform:uppercase;padding:14px 28px;
+  transition:all 0.2s;white-space:nowrap}
+.nouns-btn-secondary:hover{background:rgba(230,196,73,0.06);border-color:#e6c449}
+.nouns-tldr{background:#0d0d0d;border-left:3px solid #e6c449;padding:24px 32px;
+  margin:32px 48px;font-size:12px;opacity:0.5;line-height:1.9}
+.nouns-tldr strong{color:#F5F5F0;opacity:1}
+.nouns-products-section{padding:0 48px 60px}
+.nouns-section-label{font-size:9px;letter-spacing:0.4em;text-transform:uppercase;
+  color:#e6c449;opacity:0.6;margin:48px 0 24px}
+@media(max-width:768px){
+  .nouns-cinematic{padding:80px 24px 48px}
+  .nouns-top-badge{top:80px;left:24px}
+  .nouns-stats{gap:28px}
+  .nouns-tracks{grid-template-columns:1fr}
+  .nouns-collab-bar{padding:32px 24px}
+  .nouns-tldr{margin:24px 24px}
+  .nouns-products-section{padding:0 24px 48px}
+  .nouns-bg-glasses{font-size:clamp(140px,60vw,300px)}
+}
+.nav-right{display:flex;align-items:center;gap:16px;flex-shrink:0}
+.nav-right a{font-size:9px;letter-spacing:0.25em;text-transform:uppercase;
+  opacity:0.35;transition:opacity 0.2s}
+.nav-right a:hover{opacity:0.9}
+.live-dot{width:6px;height:6px;border-radius:50%;background:var(--r);
+  animation:pulse-dot 2s infinite}
+@keyframes pulse-dot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.4;transform:scale(0.8)}}
+.live-label{font-size:8px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5}
+
+/* ── HERO ── */
+#hero{height:100vh;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:0;position:relative;padding-top:80px}
+.hero-bg{position:absolute;inset:0;display:grid;grid-template-columns:repeat(8,1fr);
+  grid-template-rows:repeat(8,1fr);opacity:0.03}
+.hero-bg-cell{border:1px solid var(--w)}
+.hero-eyebrow{font-size:9px;letter-spacing:0.5em;text-transform:uppercase;opacity:0.2;margin-bottom:32px}
+.hero-mu{font-size:clamp(120px,22vw,340px);font-weight:700;letter-spacing:0.3em;
+  line-height:1;opacity:0;animation:appear 1.4s ease 0.3s forwards}
+.hero-tagline{font-size:13px;font-weight:300;letter-spacing:0.08em;opacity:0;
+  animation:appear 1s ease 1.2s forwards;margin-top:24px;color:rgba(245,245,240,0.4)}
+.hero-stats{display:flex;gap:48px;margin-top:64px;opacity:0;animation:appear 0.8s ease 1.8s forwards}
+.hero-stat{text-align:center}
+.hero-stat-num{font-size:28px;font-weight:200;letter-spacing:0.1em;font-variant-numeric:tabular-nums}
+.hero-stat-label{font-size:8px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5;margin-top:4px}
+.hero-brands{display:flex;gap:48px;margin-top:80px;opacity:0;animation:appear 0.8s ease 2s forwards}
+.hero-brand-btn{display:flex;flex-direction:column;align-items:center;gap:12px;cursor:pointer}
+.hero-brand-sig{display:flex;flex-direction:column;align-items:center;gap:4px}
+.sig-line{width:1px;height:40px;background:var(--w);opacity:0.3}
+.sig-dot{width:5px;height:5px;border-radius:50%;background:var(--w);opacity:0.3}
+.sig-dot.red{background:var(--r);opacity:0.7}
+.hero-brand-name{font-size:9px;letter-spacing:0.35em;text-transform:uppercase;opacity:0.5;
+  transition:opacity 0.2s}
+.hero-brand-btn:hover .hero-brand-name{opacity:1}
+@keyframes appear{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+
+/* ── SECTION ── */
+.section{min-height:100vh;padding:140px 48px 80px;display:none}
+.section.visible{display:block}
+.section-meta{display:flex;align-items:flex-start;justify-content:space-between;
+  margin-bottom:80px;gap:40px;flex-wrap:wrap}
+.section-left{}
+.section-brand{font-size:10px;letter-spacing:0.4em;text-transform:uppercase;opacity:0.35;margin-bottom:12px}
+.section-title{font-size:clamp(36px,6vw,80px);font-weight:200;letter-spacing:0.05em;line-height:1.1}
+.section-concept{max-width:420px;margin-top:20px}
+.concept-line{font-size:13px;line-height:1.8;opacity:0.45;font-weight:300}
+.section-right{text-align:right;flex-shrink:0}
+.live-info{font-size:9px;letter-spacing:0.2em;text-transform:uppercase;opacity:0.5;line-height:2}
+.live-info span{color:var(--w);opacity:1}
+
+/* ── MA SPECIFIC ── */
+.ma-piece{display:grid;grid-template-columns:1fr 1fr;gap:2px;max-width:900px}
+.ma-img{aspect-ratio:3/4;background:var(--g);overflow:hidden;position:relative}
+.ma-img img{width:100%;height:100%;object-fit:cover}
+.ma-auction{padding:48px 40px;display:flex;flex-direction:column;gap:24px;background:var(--g)}
+.auction-label{font-size:8px;letter-spacing:0.35em;text-transform:uppercase;opacity:0.5}
+.auction-current{font-size:40px;font-weight:200;letter-spacing:0.05em}
+.auction-timer{font-size:13px;opacity:0.4;font-variant-numeric:tabular-nums}
+.auction-bids{font-size:9px;opacity:0.5;letter-spacing:0.1em}
+.input-row{display:flex;flex-direction:column;gap:8px}
+.mu-input{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);
+  color:var(--w);padding:14px;font-size:12px;font-family:inherit;font-weight:200;
+  outline:none;width:100%;transition:border-color 0.2s}
+.mu-input:focus{border-color:rgba(255,255,255,0.3)}
+.mu-input::placeholder{opacity:0.3}
+.soulbound-note{font-size:9px;opacity:0.25;line-height:1.6;letter-spacing:0.03em}
+.btn-primary{background:var(--w);color:var(--k);border:none;padding:18px;
+  font-size:9px;letter-spacing:0.35em;text-transform:uppercase;
+  font-family:inherit;font-weight:600;transition:opacity 0.2s;width:100%}
+.btn-primary:hover{opacity:0.85}
+.btn-primary:disabled{opacity:0.2;cursor:not-allowed}
+.btn-primary.red{background:var(--r);color:var(--w)}
+
+/* ── GRID ── */
+.products-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:2px}
+.card{position:relative;background:var(--g);cursor:pointer;overflow:hidden;aspect-ratio:3/4;
+  transition:transform 0.3s}
+.card:hover{transform:scale(1.01)}
+.card-img{width:100%;height:100%;object-fit:cover;transition:transform 0.6s}
+.card:hover .card-img{transform:scale(1.03)}
+.card-placeholder{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px}
+.card-placeholder-label{font-size:8px;letter-spacing:0.3em;text-transform:uppercase;color:var(--w);animation:ai-gen-pulse 1.6s ease-in-out infinite}
+.card-placeholder-bar{width:48px;height:1px;background:var(--w);transform-origin:left;animation:ai-gen-bar 1.6s ease-in-out infinite}
+@keyframes ai-gen-pulse{0%,100%{opacity:0.25}50%{opacity:0.7}}
+@keyframes ai-gen-bar{0%{transform:scaleX(0.2);opacity:0.2}50%{transform:scaleX(1);opacity:0.6}100%{transform:scaleX(0.2);opacity:0.2}}
+.card-overlay{position:absolute;inset:0;background:linear-gradient(to top,rgba(0,0,0,0.85)0%,transparent 55%);
+  display:flex;flex-direction:column;justify-content:flex-end;padding:20px;
+  opacity:0;transition:opacity 0.3s}
+.card:hover .card-overlay{opacity:1}
+.card-name{font-size:10px;letter-spacing:0.2em;text-transform:uppercase;margin-bottom:4px}
+.card-price{font-size:15px;font-weight:300}
+.card-stock{font-size:8px;opacity:0.4;margin-top:3px;letter-spacing:0.1em}
+.card-badge{position:absolute;top:14px;left:14px;font-size:7px;letter-spacing:0.2em;
+  text-transform:uppercase;padding:4px 10px;background:var(--k);opacity:0.9}
+.card-badge.sold-out{background:rgba(0,0,0,0.7);opacity:0.6}
+
+/* MUON sound upload */
+.muon-upload{margin:24px 0;padding:24px;border:1px solid rgba(255,255,255,0.06);
+  display:flex;flex-direction:column;gap:12px}
+.upload-label{font-size:9px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5}
+.upload-desc{font-size:11px;opacity:0.4;line-height:1.7}
+.btn-upload{background:transparent;color:var(--w);border:1px solid rgba(255,255,255,0.15);
+  padding:12px 20px;font-size:9px;letter-spacing:0.25em;text-transform:uppercase;
+  font-family:inherit;transition:all 0.2s;align-self:flex-start}
+.btn-upload:hover{border-color:rgba(255,255,255,0.4)}
+#muon-weather{font-size:9px;opacity:0.25;letter-spacing:0.1em}
+
+/* MUGEN specific */
+.mugen-header-extra{display:flex;gap:40px;align-items:flex-start;margin-top:20px}
+.drop-counter{font-size:48px;font-weight:200;letter-spacing:0.05em;font-variant-numeric:tabular-nums}
+.drop-sub{font-size:8px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5;margin-top:4px}
+.next-drop-timer{font-variant-numeric:tabular-nums}
+.price-dropping{font-size:11px;opacity:0.4;letter-spacing:0.1em;margin-top:4px}
+
+/* Fragment system */
+.fragment-banner{background:var(--g);padding:32px 48px;margin:40px 0;
+  display:flex;align-items:center;gap:40px;flex-wrap:wrap}
+.fragment-text{flex:1;min-width:240px}
+.fragment-title{font-size:11px;letter-spacing:0.25em;text-transform:uppercase;margin-bottom:8px}
+.fragment-desc{font-size:12px;opacity:0.4;line-height:1.7}
+.fragment-arrow{font-size:24px;opacity:0.3}
+
+/* ── MODAL ── */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:300;
+  display:none;align-items:center;justify-content:center;padding:20px;overflow-y:auto}
+.modal-bg.open{display:flex}
+.modal{background:var(--g);max-width:960px;width:100%;display:grid;
+  grid-template-columns:1fr 1fr;max-height:92vh;overflow-y:auto;position:relative;margin:auto}
+.modal-img{aspect-ratio:3/4;background:var(--d);position:sticky;top:0;align-self:start}
+.modal-img img{width:100%;height:100%;object-fit:cover}
+.modal-body{padding:48px 40px;display:flex;flex-direction:column;gap:20px;overflow-y:auto}
+.modal-brand-label{font-size:8px;letter-spacing:0.4em;text-transform:uppercase;opacity:0.5}
+.modal-name{font-size:22px;font-weight:300;letter-spacing:0.05em;line-height:1.3}
+.modal-price{font-size:28px;font-weight:200}
+.stock-bar{height:1px;background:rgba(255,255,255,0.07)}
+.stock-fill{height:100%;background:var(--w);transition:width 0.6s}
+.stock-label{font-size:10px;letter-spacing:0.1em;opacity:0.5;margin-top:8px}
+.divider{height:1px;background:rgba(255,255,255,0.05)}
+.meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.meta-item{}
+.meta-key{font-size:7px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.25;margin-bottom:3px}
+.meta-val{font-size:11px;opacity:0.6;word-break:break-all}
+.nft-cert{padding:16px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06)}
+.nft-title{font-size:8px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5;margin-bottom:6px}
+.nft-val{font-size:10px;opacity:0.5;word-break:break-all;font-family:monospace}
+.select-row{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0}
+.size-btn{background:transparent;color:var(--w);border:1px solid rgba(255,255,255,0.12);
+  padding:8px 14px;font-size:9px;letter-spacing:0.1em;transition:all 0.2s}
+.size-btn.selected,.size-btn:hover{border-color:rgba(255,255,255,0.5);background:rgba(255,255,255,0.06)}
+.btn-close{position:absolute;top:16px;right:20px;background:none;border:none;
+  color:var(--w);font-size:22px;opacity:0.3;z-index:10;transition:opacity 0.2s}
+.btn-close:hover{opacity:0.8}
+select.mu-input option{background:var(--g)}
+
+/* ── PROOF section ── */
+.proof-section{padding:80px 48px;background:var(--g);margin-top:80px}
+.proof-title{font-size:10px;letter-spacing:0.4em;text-transform:uppercase;opacity:0.25;margin-bottom:48px}
+.proof-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px}
+.proof-item{padding:32px;background:var(--k)}
+.proof-num{font-size:36px;font-weight:200;letter-spacing:0.05em;margin-bottom:8px}
+.proof-label{font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.5}
+.proof-desc{font-size:11px;opacity:0.35;margin-top:10px;line-height:1.7}
+
+/* ── FOOTER ── */
+footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:center;
+  border-top:1px solid rgba(255,255,255,0.04);flex-wrap:wrap;gap:20px}
+.footer-brand{font-size:10px;letter-spacing:0.4em;text-transform:uppercase;opacity:0.2}
+.footer-links{display:flex;gap:32px}
+.footer-link{font-size:8px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.2;
+  transition:opacity 0.2s}
+.footer-link:hover{opacity:0.6}
+
+/* ── UTILS ── */
+.empty{padding:80px 0;text-align:center;font-size:9px;letter-spacing:0.3em;
+  text-transform:uppercase;opacity:0.15;animation:pulse-op 2s infinite}
+@keyframes pulse-op{0%,100%{opacity:0.15}50%{opacity:0.35}}
+.tag{display:inline-block;font-size:7px;letter-spacing:0.2em;text-transform:uppercase;
+  padding:3px 8px;border:1px solid rgba(255,255,255,0.1);opacity:0.5}
+
+@media(max-width:768px){
+  /* ── NAV ── */
+  nav{padding:10px 14px;gap:8px}
+  .nav-logo{font-size:13px;letter-spacing:0.4em}
+  .nav-tabs{overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;
+    flex-shrink:1;min-width:0;justify-content:flex-start;gap:0;
+    -webkit-mask-image:linear-gradient(90deg,#000 88%,transparent);
+    mask-image:linear-gradient(90deg,#000 88%,transparent)}
+  .nav-tabs::-webkit-scrollbar{display:none}
+  .nav-tab{padding:9px 12px;font-size:9px;letter-spacing:0.18em;white-space:nowrap}
+  .nav-right{gap:8px}
+  .nav-right a{display:none}
+  .live-label{display:none}
+
+  /* ── HERO ── */
+  #hero{padding-top:60px}
+  .hero-mu{font-size:clamp(80px,22vw,160px)}
+  .hero-tagline{font-size:11px;text-align:center}
+  .hero-stats{gap:20px;margin-top:40px;flex-wrap:wrap;justify-content:center}
+  .hero-stat-num{font-size:22px}
+  .hero-brands{gap:24px;margin-top:48px;flex-wrap:wrap;justify-content:center}
+
+  /* ── SECTIONS ── */
+  .section{padding:90px 20px 60px}
+  .section-meta{flex-direction:column;gap:20px;margin-bottom:48px}
+  .section-right{text-align:left}
+  .section-title{font-size:clamp(28px,9vw,52px)}
+
+  /* ── CARDS ── always show overlay on touch ── */
+  .products-grid{grid-template-columns:repeat(2,1fr);gap:1px}
+  .card-overlay{opacity:1;background:linear-gradient(to top,rgba(0,0,0,0.9)0%,transparent 60%)}
+  .card-name{font-size:8px}
+  .card-price{font-size:13px}
+  .card-stock{font-size:7px}
+
+  /* ── MA ── */
+  .ma-piece{grid-template-columns:1fr}
+  .ma-auction{padding:28px 20px}
+  .ma-auction .input-row{flex-direction:column}
+  .ma-auction .btn-primary{width:100%}
+  .auction-current{font-size:32px}
+
+  /* ── MODAL ── */
+  .modal-bg{padding:0;align-items:flex-start}
+  .modal{grid-template-columns:1fr;max-height:none;width:100%;min-height:100vh;margin:0}
+  .modal-img{aspect-ratio:unset;height:72vw;position:relative;top:auto}
+  .modal-body{padding:28px 20px;overflow-y:visible}
+  .btn-close{top:12px;right:12px;font-size:20px;background:rgba(0,0,0,0.6);
+    width:36px;height:36px;display:flex;align-items:center;justify-content:center;border-radius:50%}
+  .meta-grid{grid-template-columns:1fr 1fr}
+  .modal-price{font-size:24px}
+
+  /* ── MISC ── */
+  .proof-grid{grid-template-columns:1fr}
+  .hero-stats{gap:28px}
+  .fragment-banner{flex-direction:column}
+  .mugen-header-extra{gap:20px}
+  .drop-counter{font-size:36px}
+}
+</style>
+</head>
+<body>
+
+<!-- TICKER -->
+<div id="ticker">
+  <div class="ticker-inner" id="ticker-inner">
+    <span class="ticker-item">MUGEN 無限 — AIが毎時間デザインを生成中 <span id="t-drop">—</span></span>
+    <span class="ticker-item">MUON 無音 — 今日の気温 <span id="t-temp">—</span>°C → <span id="t-qty">—</span>着</span>
+    <span class="ticker-item">間 MA — 世界に1着 月1回のみ</span>
+    <span class="ticker-item">次のMUGENドロップまで <span id="t-timer">—</span></span>
+    <span class="ticker-item">MUGEN 無限 — AIが毎時間デザインを生成中 <span id="t-drop2">—</span></span>
+    <span class="ticker-item">MUON 無音 — 今日の気温 <span id="t-temp2">—</span>°C → <span id="t-qty2">—</span>着</span>
+    <span class="ticker-item">間 MA — 世界に1着 月1回のみ</span>
+    <span class="ticker-item">次のMUGENドロップまで <span id="t-timer2">—</span></span>
+  </div>
+</div>
+
+<!-- NAV -->
+<nav id="nav">
+  <a class="nav-logo" href="#" onclick="showSection('hero')">MU</a>
+  <div class="nav-tabs">
+    <div class="nav-tab" data-b="ma" onclick="showSection('ma')" role="button" tabindex="0" aria-label="間 MA — 月に1着のオークション">間 MA</div>
+    <div class="nav-tab" data-b="muon" onclick="showSection('muon')" role="button" tabindex="0" aria-label="MUON 無音 — 気温が枚数を決める">MUON 無音</div>
+    <div class="nav-tab" data-b="mugen" onclick="showSection('mugen')" role="button" tabindex="0" aria-label="MUGEN 無限 — 毎時間生まれるドロップ">MUGEN 無限</div>
+    <div class="nav-tab" data-b="nouns" onclick="showSection('nouns')" role="button" tabindex="0" aria-label="MU × NOUNS コラボレーション">⌐◨-◨ NOUNS <span style="background:#e6c449;color:#000;font-size:6px;letter-spacing:0.15em;padding:2px 6px;vertical-align:middle;font-weight:700;margin-left:4px">🤝</span></div>
+  </div>
+  <div class="nav-right">
+    <a href="/about.html" style="font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.25;transition:opacity 0.2s;margin-right:8px" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=0.25">About</a>
+    <a href="/press.html" style="font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.25;transition:opacity 0.2s;margin-right:20px" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=0.25">Press</a>
+    <div class="live-dot"></div>
+    <span class="live-label">生成中</span>
+  </div>
+</nav>
+
+<!-- HERO -->
+<div id="section-hero" class="visible" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding-top:80px;position:relative">
+  <div class="hero-bg" id="hero-bg"></div>
+  <div class="hero-eyebrow">AIが服を作り続けるブランド</div>
+  <div class="hero-mu">MU</div>
+  <div class="hero-tagline">毎時間、服が生まれている</div>
+  <div class="hero-stats">
+    <div class="hero-stat">
+      <div class="hero-stat-num" id="stat-mugen">—</div>
+      <div class="hero-stat-label">MUGEN Drop</div>
+    </div>
+    <div class="hero-stat">
+      <div class="hero-stat-num" id="stat-temp">—°</div>
+      <div class="hero-stat-label">Today's Temp</div>
+    </div>
+    <div class="hero-stat">
+      <div class="hero-stat-num" id="stat-qty">—</div>
+      <div class="hero-stat-label">MUON Today</div>
+    </div>
+  </div>
+  <div class="hero-brands">
+    <div class="hero-brand-btn" onclick="showSection('ma')">
+      <div class="hero-brand-sig"><div class="sig-line"></div></div>
+      <div class="hero-brand-name">間 MA</div>
+    </div>
+    <div class="hero-brand-btn" onclick="showSection('muon')">
+      <div class="hero-brand-sig"><div class="sig-line"></div><div class="sig-dot"></div></div>
+      <div class="hero-brand-name">MUON</div>
+    </div>
+    <div class="hero-brand-btn" onclick="showSection('mugen')">
+      <div class="hero-brand-sig">
+        <div class="sig-line"></div>
+        <div class="sig-dot red"></div>
+        <div class="sig-dot red"></div>
+      </div>
+      <div class="hero-brand-name">MUGEN</div>
+    </div>
+  </div>
+  <a href="/about.html" style="display:inline-block;margin-top:48px;font-size:8px;letter-spacing:0.4em;text-transform:uppercase;border:1px solid rgba(245,245,240,0.2);padding:12px 28px;opacity:0.6;transition:opacity 0.2s" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.6" aria-label="初めての方はこちら — MUについて詳しく知る">NEW? START HERE →</a>
+</div>
+
+<!-- MA -->
+<div id="section-ma" class="section" style="display:none">
+  <div class="section-meta">
+    <div class="section-left">
+      <div class="section-brand">間 MA</div>
+      <div class="section-title">世界に<br>1着。</div>
+      <div class="section-concept">
+        <p class="concept-line">月に一度、AIが生み出す。<br>一枚だけ製造される。<br>オークションで、一人の手に渡る。<br>その服の真正証明書はSoulbound NFTとなり、<br>服と共に永遠に生きる。</p>
+      </div>
+    </div>
+    <div class="section-right">
+      <div class="live-info">
+        月1回生成<br>
+        発行枚数 <span>1</span><br>
+        転売不可NFT<br>
+        オークション形式<br>
+        デザインDNA継承
+      </div>
+    </div>
+  </div>
+  <div id="ma-content"><div class="empty">—</div></div>
+
+  <div class="proof-section">
+    <div class="proof-title">間 MA — 証明書</div>
+    <div class="proof-grid">
+      <div class="proof-item">
+        <div class="proof-num">1</div>
+        <div class="proof-label">Pieces per month</div>
+        <div class="proof-desc">世界に存在するのは1枚だけ。製造・出荷の記録は永久に残る。</div>
+      </div>
+      <div class="proof-item">
+        <div class="proof-num">∞</div>
+        <div class="proof-label">NFT validity</div>
+        <div class="proof-desc">SoulboundなのでSolanaチェーン上で永久に存在する。転売されると無効化。</div>
+      </div>
+      <div class="proof-item">
+        <div class="proof-num">DNA</div>
+        <div class="proof-label">Generational design</div>
+        <div class="proof-desc">前月のデザインの「遺伝子」を引き継ぐ。12ヶ月で一つの進化の物語。</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MUON -->
+<div id="section-muon" class="section" style="display:none">
+  <div class="section-meta">
+    <div class="section-left">
+      <div class="section-brand">MUON 無音</div>
+      <div class="section-title">沈黙を、<br>記録する。</div>
+      <div class="section-concept">
+        <p class="concept-line">毎朝、気温が枚数を決める。<br>今日が14°Cなら、14着だけ存在する。<br>-3°Cの冬は、3着だけ。<br>Worn in silence. Proven on-chain.</p>
+      </div>
+    </div>
+    <div class="section-right">
+      <div class="live-info">
+        今日の天気<br>
+        <span id="weather-temp">—</span>°C<br>
+        <span id="weather-cond">—</span><br>
+        今日の発行枚数 <span id="weather-qty">—</span>着
+      </div>
+    </div>
+  </div>
+
+  <div class="muon-upload">
+    <div class="upload-label">Sound to Design — Coming Soon</div>
+    <div class="upload-desc">あなたの周囲の「沈黙」の周波数スペクトラムをMUONのデザインに反映するシステムを開発中。世界中の沈黙が、服になる。</div>
+  </div>
+
+  <div class="products-grid" id="grid-muon"><div class="empty">—</div></div>
+
+  <div class="proof-section">
+    <div class="proof-title">MUON — 気象証明</div>
+    <div class="proof-grid">
+      <div class="proof-item">
+        <div class="proof-num">°C</div>
+        <div class="proof-label">Temperature = Quantity</div>
+        <div class="proof-desc">今日の気温がそのまま発行枚数になる。自然が希少性を決める。</div>
+      </div>
+      <div class="proof-item">
+        <div class="proof-num">⛓</div>
+        <div class="proof-label">On-chain weather</div>
+        <div class="proof-desc">生成時の気温・湿度・風向きがNFTメタデータとしてSolanaに記録される。</div>
+      </div>
+      <div class="proof-item">
+        <div class="proof-num">無音</div>
+        <div class="proof-label">Silence certified</div>
+        <div class="proof-desc">チェーンは記憶する。ファッションが忘れることを。</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MUGEN -->
+<div id="section-mugen" class="section" style="display:none">
+  <div class="section-meta">
+    <div class="section-left">
+      <div class="section-brand">MUGEN 無限</div>
+      <div class="section-title">毎時間、<br>生まれ、消える。</div>
+      <div class="section-concept">
+        <p class="concept-line">毎時間、AIが1型を生み出す。<br>ドロップ番号がそのまま枚数になる。<br>#1は1着。#72は72着。#108は108着（煩悩の数）。<br>#109でまた#1に戻る。<br>完売後、永遠に復刻しない。</p>
+      </div>
+    </div>
+    <div class="section-right">
+      <div class="mugen-header-extra">
+        <div>
+          <div class="drop-sub">Current Drop</div>
+          <div class="drop-counter" id="mugen-drop-num">#—</div>
+          <div class="drop-sub" id="mugen-cycle">—/108</div>
+        </div>
+        <div>
+          <div class="drop-sub">Next Drop</div>
+          <div class="drop-counter next-drop-timer" id="mugen-timer">—:—</div>
+          <div class="price-dropping">価格は時間とともに下がる</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="fragment-banner">
+    <div class="fragment-text">
+      <div class="fragment-title">Fragment System</div>
+      <div class="fragment-desc">着古した3着が、1着の上位品になる。<br>MUGEN × 3 → MUON × 1。MUON × 3 → 間 MA × 1。<br>消費ではなく、変容。<br><br>
+      <span style="opacity:0.4;font-size:10px">申請後、返送先を案内します。交換品の送料はMU負担。申請から発送まで約2週間。</span></div>
+    </div>
+    <div class="fragment-arrow">MUGEN × 3 → MUON → 間 MA</div>
+    <button class="btn-primary" style="max-width:160px;font-size:8px" onclick="openFragmentModal()" aria-label="Fragment交換プログラムを申請する">Exchange</button>
+  </div>
+
+  <div class="products-grid" id="grid-mugen"><div class="empty">—</div></div>
+
+  <div class="proof-section">
+    <div class="proof-title">MUGEN — 無限のアーカイブ</div>
+    <div class="proof-grid">
+      <div class="proof-item">
+        <div class="proof-num">8,760</div>
+        <div class="proof-label">Drops per year</div>
+        <div class="proof-desc">毎時間1型 × 24時間 × 365日。10年で87,600型のAIファッションアーカイブが完成する。</div>
+      </div>
+      <div class="proof-item">
+        <div class="proof-num">108</div>
+        <div class="proof-label">Max per drop (煩悩)</div>
+        <div class="proof-desc">ドロップ番号がサイクルの頂点に達する時、煩悩の数だけ存在する。その後リセット。</div>
+      </div>
+      <div class="proof-item">
+        <div class="proof-num">∞</div>
+        <div class="proof-label">Archive</div>
+        <div class="proof-desc">完売後、二度と復刻しない。10年後も20年後も、そのドロップは存在した記録だけが残る。</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL -->
+<div class="modal-bg" id="modal">
+  <button class="btn-close" onclick="closeModal()" aria-label="閉じる">×</button>
+  <div class="modal" id="modal-inner">
+    <div class="modal-img"><img id="m-img" src="" alt=""></div>
+    <div class="modal-body">
+      <div class="modal-brand-label" id="m-brand"></div>
+      <div class="modal-name" id="m-name"></div>
+      <div class="modal-price" id="m-price"></div>
+      <div>
+        <div class="stock-bar"><div class="stock-fill" id="m-stock-fill"></div></div>
+        <div class="stock-label" id="m-stock-label"></div>
+      </div>
+      <div class="meta-grid" id="m-meta"></div>
+      <div class="nft-cert" id="m-nft" style="display:none">
+        <div class="nft-title">On-chain Certificate</div>
+        <div class="nft-val" id="m-nft-val"></div>
+      </div>
+      <div class="divider"></div>
+      <div>
+        <div style="font-size:8px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5;margin-bottom:10px">Size</div>
+        <div class="select-row" id="size-btns">
+          <button class="size-btn selected" data-size="S">S</button>
+          <button class="size-btn" data-size="M">M</button>
+          <button class="size-btn" data-size="L">L</button>
+          <button class="size-btn" data-size="XL">XL</button>
+        </div>
+      </div>
+      <form id="checkout-form" onsubmit="doCheckout(event)">
+        <div class="input-row">
+          <input class="mu-input" type="email" name="email" placeholder="Email" required>
+        </div>
+        <details style="margin:8px 0">
+          <summary style="font-size:8px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.5;cursor:pointer;list-style:none">
+            + NFT証明書を受け取る（オプション）
+          </summary>
+          <div style="margin-top:10px">
+            <input class="mu-input" type="text" name="wallet" placeholder="Solanaウォレットアドレス（任意）">
+            <div class="soulbound-note" style="margin-top:6px;display:block">
+              入力すると購入後にSolana NFT証明書が発行されます。間 MAはSoulbound（転売不可）。
+            </div>
+          </div>
+        </details>
+        <div style="font-size:9px;opacity:0.25;margin:8px 0;letter-spacing:0.05em">住所はStripeの決済画面で入力します</div>
+        <input type="hidden" name="size" id="selected-size" value="M">
+        <div id="checkout-msg" style="font-size:9px;letter-spacing:0.1em;min-height:16px;margin-bottom:4px"></div>
+        <button type="submit" class="btn-primary" id="btn-buy">Purchase</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- NOUNS Section -->
+<div id="section-nouns" class="section" style="display:none;padding:0">
+  <div class="nouns-wrap">
+
+    <!-- Cinematic hero -->
+    <div class="nouns-cinematic">
+      <div class="nouns-bg-glasses">⌐◨-◨</div>
+      <div class="nouns-top-badge">
+        <span class="nouns-pill">⌐◨-◨ NOUNS</span>
+        <span class="nouns-pill-cc0">CC0</span>
+      </div>
+      <div class="nouns-hero-bottom">
+        <div class="nouns-eyebrow">Autonomous AI × Ethereum DAO</div>
+        <div class="nouns-title">MU × NOUNS</div>
+        <div class="nouns-sub">
+          The first autonomous AI fashion brand meets the most iconic DAO in Ethereum.<br>
+          Three collaboration tracks. Zero funding requested.<br>
+          Just a cosign from the DAO that the machine can wear the glasses.
+        </div>
+        <div class="nouns-stats">
+          <div class="nouns-stat">
+            <div class="nouns-stat-val">0 ETH</div>
+            <div class="nouns-stat-label">Requested</div>
+          </div>
+          <div class="nouns-stat">
+            <div class="nouns-stat-val">10%</div>
+            <div class="nouns-stat-label">To Treasury</div>
+          </div>
+          <div class="nouns-stat">
+            <div class="nouns-stat-val">3</div>
+            <div class="nouns-stat-label">Tracks</div>
+          </div>
+          <div class="nouns-stat">
+            <div class="nouns-stat-val">∞</div>
+            <div class="nouns-stat-label">Drops</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TL;DR -->
+    <div class="nouns-tldr">
+      <strong>TL;DR</strong> — MUのAIパイプライン（Gemini → Printful → Solana NFT）に⌐◨-◨を組み込む。
+      DAOの許可は不要（CC0だから）。でも、正式なコサインが欲しい。
+      MUON × NOUNSの売上<strong>10%をNouns Treasuryへ</strong>。MAのオークション構造は<strong>Nounsと完全に同じ</strong>。
+      資金提供の要求なし。ハンドシェイクだけ。
+    </div>
+
+    <!-- Three tracks -->
+    <div class="nouns-tracks">
+      <div class="nouns-track">
+        <div class="nouns-track-num">Track 01</div>
+        <div class="nouns-track-emoji">⌐◨-◨</div>
+        <div class="nouns-track-freq">Weekly</div>
+        <div class="nouns-track-name">MUGEN × NOUNS</div>
+        <div class="nouns-track-desc">
+          毎週、MUのAIがNouns Glassesを「プロンプトの構造的インプット」として解釈し、新しいストリートウェアグラフィックを生成する。
+          直接的なピクセル再現ではなく、AIが媒介した創造的解釈。CCO＝法的にクリーン。でも、承認があった方が美しい。
+        </div>
+        <div class="nouns-track-meta">
+          <div class="nouns-track-chip">毎週月曜 12:00 JST</div>
+        </div>
+      </div>
+      <div class="nouns-track">
+        <div class="nouns-track-num">Track 02</div>
+        <div class="nouns-track-emoji">🌡</div>
+        <div class="nouns-track-freq">Daily × Treasury</div>
+        <div class="nouns-track-name">MUON × NOUNS</div>
+        <div class="nouns-track-desc">
+          MUONのドロップは毎日。販売枚数は自然のオラクル（気温）が決定する——人間は介在しない。
+          MUON × NOUNSエディションの<strong style="color:#F5F5F0;opacity:1">売上10%が自動的にNouns Treasuryへ</strong>送金される。
+          気候が供給を決める。DAOが分け前を得る。どちらも人間の判断を必要としない。
+        </div>
+        <div class="nouns-track-meta">
+          <div class="nouns-track-chip">10% → 0x0BC3807E...</div>
+        </div>
+      </div>
+      <div class="nouns-track">
+        <div class="nouns-track-num">Track 03</div>
+        <div class="nouns-track-emoji">間</div>
+        <div class="nouns-track-freq">Monthly Auction</div>
+        <div class="nouns-track-name">MA × NOUNS</div>
+        <div class="nouns-track-desc">
+          MAは毎月1着のみ。24時間オークション。最高額落札。リザーブなし。
+          <strong style="color:#F5F5F0;opacity:1">このメカニズムはNounsから直接引用している。</strong>
+          MAはファッション界のNouns。落札額の10%をNouns Treasuryへ。
+          DAOにこれを継続的な貢献として認識してほしい——一度限りのジェスチャーではなく。
+        </div>
+        <div class="nouns-track-meta">
+          <div class="nouns-track-chip">毎月15日 24h Auction</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Collab bar -->
+    <div class="nouns-collab-bar">
+      <div class="nouns-collab-left">
+        <div class="nouns-collab-heading">Nouns Treasury Address</div>
+        <div class="nouns-collab-text">
+          DAO承認後、MUON × NOUNSの売上10%とMA × NOUNSの落札額10%が自動送金される。<br>
+          それまでの売上は内部トレジャリーに積立て、承認後に一括送金する。
+        </div>
+        <div class="nouns-addr-box">
+          <div class="nouns-addr-label">Treasury</div>
+          <div class="nouns-addr">0x0BC3807Ec262cB779b38D65b38158acC3bfedE10</div>
+        </div>
+      </div>
+      <div class="nouns-collab-actions">
+        <a class="nouns-btn-primary" href="https://nouns.wtf/vote" target="_blank">Submit to Governance →</a>
+        <a class="nouns-btn-secondary" href="/nouns-proposal.html" target="_blank">Full Proposal →</a>
+      </div>
+    </div>
+
+    <!-- Products (nouns-tagged drops) -->
+    <div class="nouns-products-section">
+      <div class="nouns-section-label">NOUNS Collab Drops</div>
+      <div class="products-grid" id="grid-nouns"><div class="empty" style="opacity:0.3;font-size:12px;letter-spacing:0.1em">Coming after DAO approval ⌐◨-◨</div></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Fragment Modal -->
+<div class="modal-bg" id="fragment-modal">
+  <button class="btn-close" onclick="document.getElementById('fragment-modal').classList.remove('open')" aria-label="閉じる">×</button>
+  <div class="modal" style="grid-template-columns:1fr;max-width:500px">
+    <div class="modal-body" style="padding:48px">
+      <div class="modal-brand-label">Fragment System</div>
+      <div class="modal-name">Exchange Program</div>
+      <div style="font-size:12px;opacity:0.4;line-height:1.8;margin:16px 0">
+        MUGEN × 3着を返送することでMUON 1着と交換できます。<br>
+        MUON × 3着を返送することで間 MA 1着と交換できます。<br><br>
+        着続けることが、上位ブランドへの道。
+      </div>
+      <form onsubmit="submitFragment(event)">
+        <div class="input-row">
+          <input class="mu-input" type="email" name="email" placeholder="購入時のEmail" required>
+          <select class="mu-input" name="direction">
+            <option value="mugen_to_muon">MUGEN × 3 → MUON × 1</option>
+            <option value="muon_to_ma">MUON × 3 → 間 MA × 1</option>
+          </select>
+          <input class="mu-input" type="text" name="order_ids" placeholder="注文番号（カンマ区切りで3つ）" required>
+        </div>
+        <div class="fragment-msg" style="font-size:9px;letter-spacing:0.1em;min-height:16px;margin-top:8px"></div>
+        <button type="submit" class="btn-primary" style="margin-top:8px">申請する</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <div class="footer-brand">MU — AIが服を作り続けるブランド</div>
+  <div class="footer-links">
+    <a class="footer-link" href="/about.html">About</a>
+    <a class="footer-link" href="/press.html">Press</a>
+    <a class="footer-link" href="/nouns-proposal.html">Nouns Proposal</a>
+    <a class="footer-link" onclick="document.getElementById('fragment-modal').classList.add('open');return false" href="#">Fragment</a>
+    <a class="footer-link" href="/tokushoho.html">特定商取引法</a>
+  </div>
+</footer>
+
+<script>
+let currentProduct = null;
+let currentBrand = null;
+let selectedSize = 'M';
+const productMap = {};
+
+const BRAND_LABELS = {ma:'間 MA',muon:'MUON 無音',mugen:'MUGEN 無限'};
+
+// ── Hero grid ──
+(function(){
+  const bg = document.getElementById('hero-bg');
+  for(let i=0;i<64;i++) bg.innerHTML += '<div class="hero-bg-cell"></div>';
+})();
+
+// ── Nav scroll ──
+window.addEventListener('scroll',()=>{
+  document.getElementById('nav').classList.toggle('scrolled', window.scrollY > 50);
+});
+
+// ── Timer ──
+function updateTimers(){
+  const now = new Date();
+  const next = new Date(now);
+  next.setMinutes(60,0,0);
+  const diff = Math.max(0, next-now);
+  const m = String(Math.floor(diff/60000)).padStart(2,'0');
+  const s = String(Math.floor((diff%60000)/1000)).padStart(2,'0');
+  const t = `${m}:${s}`;
+  ['t-timer','t-timer2','mugen-timer'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.textContent = t;
+  });
+}
+setInterval(updateTimers,1000);
+updateTimers();
+
+// ── Load stats ──
+async function loadStats(){
+  try{
+    const [ma,muon,mugen] = await Promise.all([
+      fetch('/api/products/ma').then(r=>r.json()),
+      fetch('/api/products/muon').then(r=>r.json()),
+      fetch('/api/products/mugen').then(r=>r.json()),
+    ]);
+    const lastMugen = mugen?.[0];
+    if(lastMugen){
+      document.getElementById('stat-mugen').textContent = '#'+lastMugen.drop_num;
+      document.getElementById('mugen-drop-num').textContent = '#'+lastMugen.drop_num;
+      const cycle = ((lastMugen.drop_num-1)%108)+1;
+      document.getElementById('mugen-cycle').textContent = cycle+'/108';
+      const d1 = document.getElementById('t-drop'); if(d1) d1.textContent='#'+lastMugen.drop_num;
+      const d2 = document.getElementById('t-drop2'); if(d2) d2.textContent='#'+lastMugen.drop_num;
+    }
+    const lastMuon = muon?.[0];
+    if(lastMuon){
+      const rem = lastMuon.inventory - lastMuon.sold;
+      document.getElementById('stat-qty').textContent = rem;
+    }
+  }catch(e){}
+}
+
+// ── Load weather ──
+async function loadWeather(){
+  try{
+    const r = await fetch('/api/weather');
+    const w = await r.json();
+    const temp = w.temp_c;
+    const qty = temp !== null ? Math.abs(temp)||1 : null;
+    document.getElementById('weather-temp').textContent = temp !== null ? temp : '取得中';
+    document.getElementById('weather-cond').textContent = w.condition || '—';
+    document.getElementById('weather-qty').textContent = qty !== null ? qty : '—';
+    const stTemp = document.getElementById('stat-temp');
+    if(stTemp) stTemp.textContent = temp !== null ? temp+'°' : '—';
+    ['t-temp','t-temp2'].forEach(id=>{const e=document.getElementById(id);if(e)e.textContent=temp !== null ? temp : '—'});
+    ['t-qty','t-qty2'].forEach(id=>{const e=document.getElementById(id);if(e)e.textContent=qty !== null ? qty : '—'});
+  }catch(e){}
+}
+
+// ── Load weather ──
+// ── Load products ──
+function fmtSoldOutTime(ts){
+  if(!ts) return '';
+  const d = new Date(parseInt(ts)*1000);
+  const diff = Math.floor((Date.now()-d)/60000);
+  if(diff<60) return diff+'分前に完売';
+  if(diff<1440) return Math.floor(diff/60)+'時間前に完売';
+  return Math.floor(diff/1440)+'日前に完売';
+}
+
+function makeCard(p){
+  productMap[p.id] = p;
+  const rem = p.inventory - p.sold;
+  const soldOut = rem <= 0;
+  const isLast = rem === 1;
+  const isFirst = p.drop_num === 1;
+  const isIce = p.seed_data && p.seed_data.includes('"is_ice": true');
+  const isChapter = p.name && p.name.includes('CHAPTER END');
+
+  // Badge priority: sold-out > ice > chapter > last > first > low-stock
+  let badge = '';
+  if(soldOut){
+    const t = fmtSoldOutTime(p.sold_out_at);
+    badge = `<div class="card-badge sold-out">${t||'SOLD OUT'}</div>`;
+  } else if(isIce){
+    badge = `<div class="card-badge" style="background:#4af;color:#000">❄ ICE</div>`;
+  } else if(isChapter){
+    badge = `<div class="card-badge" style="background:#fff;color:#000">∞ CHAPTER END</div>`;
+  } else if(isLast){
+    badge = `<div class="card-badge" style="background:#C8362C;animation:pulse-op 1s infinite">LAST PIECE</div>`;
+  } else if(isFirst){
+    badge = `<div class="card-badge">#1</div>`;
+  } else if(rem<=3){
+    badge = `<div class="card-badge" style="background:#C8362C">残り${rem}着</div>`;
+  }
+
+  return `
+  <div class="card${soldOut?' sold-out-card':''}" data-pid="${p.id}">
+    ${p.mockup_url
+      ? `<img class="card-img" src="${p.mockup_url}" alt="${p.name}" loading="lazy">`
+      : `<div class="card-placeholder"><div class="card-placeholder-bar"></div><div class="card-placeholder-label">AI GENERATING...</div></div>`}
+    ${badge}
+    <div class="card-overlay">
+      <div class="card-name">${p.name}</div>
+      <div class="card-price">${soldOut?'—':('¥'+p.price_jpy.toLocaleString())}</div>
+      <div class="card-stock">${soldOut?(p.sold_out_at?fmtSoldOutTime(p.sold_out_at):'SOLD OUT'):(rem+'/'+p.inventory+' remaining')}</div>
+    </div>
+  </div>`;
+}
+
+// Event delegation for card clicks
+document.addEventListener('click', e => {
+  const card = e.target.closest('.card[data-pid]');
+  if (!card) return;
+  const p = productMap[card.dataset.pid];
+  if (!p) return;
+  if (p.inventory - p.sold <= 0) return;
+  openModal(p);
+});
+
+async function loadBrand(brand){
+  const grid = document.getElementById('grid-'+brand);
+  if(!grid) return;
+  try{
+    const r = await fetch('/api/products/'+brand);
+    const products = await r.json();
+    if(!products||!products.length){
+      grid.innerHTML = '<div class="empty">Next drop coming soon</div>';
+      return;
+    }
+    grid.innerHTML = products.map(makeCard).join('');
+  }catch(e){grid.innerHTML='<div class="empty">—</div>'}
+}
+
+async function loadMA(){
+  const cont = document.getElementById('ma-content');
+  try{
+    const r = await fetch('/api/products/ma');
+    const products = await r.json();
+    if(!products||!products.length){
+      cont.innerHTML='<div class="empty">Next drop: 来月初</div>';
+      return;
+    }
+    const p = products[0];
+    const rem = p.inventory - p.sold;
+    cont.innerHTML = `
+    <div class="ma-piece">
+      <div class="ma-img">
+        ${p.mockup_url?`<img src="${p.mockup_url}" alt="${p.name}" style="width:100%;height:100%;object-fit:cover">`:'<div class="card-placeholder" style="background:#1a1a1a"><div class="card-placeholder-bar"></div><div class="card-placeholder-label">AI GENERATING...</div></div>'}
+      </div>
+      <div class="ma-auction">
+        <div>
+          <div class="auction-label">Current Bid</div>
+          <div class="auction-current">¥${(p.current_bid||p.price_jpy).toLocaleString()}</div>
+          <div class="auction-bids">${p.bid_count||0} bids</div>
+        </div>
+        <div>
+          <div class="auction-label">Auction Ends</div>
+          <div class="auction-timer" id="ma-timer">—</div>
+        </div>
+        <div class="divider"></div>
+        <div>
+          <div class="auction-label" style="margin-bottom:8px">${p.name}</div>
+          <div style="font-size:10px;opacity:0.35;line-height:1.7">
+            世界に1着。SoulboundのNFT証明書付き。<br>
+            落札後、転売時はNFTも同時移転が必要。
+          </div>
+        </div>
+        ${rem>0?`
+        <div class="input-row">
+          <input class="mu-input" type="number" id="ma-bid" placeholder="入札金額（¥）" min="${(p.current_bid||p.price_jpy)+1000}">
+          <input class="mu-input" type="email" id="ma-email" placeholder="Email">
+          <input class="mu-input" type="text" id="ma-wallet" placeholder="Solanaウォレット（NFT受取用）">
+        </div>
+        <button class="btn-primary" onclick="placeBid(${p.id})">入札する</button>
+        <div id="bid-msg" style="font-size:9px;letter-spacing:0.1em;min-height:16px;margin-top:4px"></div>
+        <div class="soulbound-note">落札後、Soulbound NFT（転売不可の真正証明書）を発行。服の所有が変わる際はNFTの移転手続きが必要です。</div>
+        `:'<div class="empty" style="padding:20px 0">Sold</div>'}
+      </div>
+    </div>`;
+    if(p.auction_end) startMATimer(p.auction_end);
+  }catch(e){cont.innerHTML='<div class="empty">—</div>'}
+}
+
+function startMATimer(endISO){
+  const end = new Date(endISO);
+  function tick(){
+    const diff = end - new Date();
+    if(diff<=0){document.getElementById('ma-timer').textContent='Ended';return}
+    const d=Math.floor(diff/86400000);
+    const h=Math.floor((diff%86400000)/3600000);
+    const m=Math.floor((diff%3600000)/60000);
+    const s=Math.floor((diff%60000)/1000);
+    const el=document.getElementById('ma-timer');
+    if(el) el.textContent=`${d}d ${h}h ${m}m ${s}s`;
+  }
+  tick(); setInterval(tick,1000);
+}
+
+async function placeBid(productId){
+  const bid = parseInt(document.getElementById('ma-bid').value);
+  const email = document.getElementById('ma-email').value;
+  const wallet = document.getElementById('ma-wallet').value;
+  const msg = document.getElementById('bid-msg');
+  if(!bid||!email){
+    if(msg){msg.style.color='#C8362C';msg.textContent='金額とEmailを入力してください'}
+    return;
+  }
+  if(msg){msg.style.color='rgba(245,245,240,0.4)';msg.textContent='送信中…'}
+  const r = await fetch('/api/bid',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({product_id:productId,amount:bid,email,wallet})
+  });
+  if(r.ok){
+    if(msg){msg.style.color='#5a9e6f';msg.textContent='入札しました。落札の際にメールでご連絡します。'}
+    loadMA();
+  } else {
+    if(msg){msg.style.color='#C8362C';msg.textContent='エラーが発生しました。再度お試しください。'}
+  }
+}
+
+// ── URL Router ──
+function initRouter(){
+  const path = window.location.pathname;
+  const parts = path.replace(/^\//, '').split('/').filter(Boolean);
+  if(parts.length === 0){
+    showSection('hero', false);
+  } else if(parts.length === 1){
+    const s = parts[0];
+    if(['ma','muon','mugen','nouns'].includes(s)) showSection(s, false);
+    else showSection('hero', false);
+  } else if(parts[0] === 'products' && parts.length === 3){
+    const brand = parts[1], id = parts[2];
+    showSection(brand, false);
+    waitForProduct(brand, id).then(p => { if(p) openModal(p, false); });
+  } else {
+    showSection('hero', false);
+  }
+}
+
+async function waitForProduct(brand, dropNum){
+  // Poll productMap for a product with matching brand+drop_num
+  for(let i=0; i<30; i++){
+    const found = Object.values(productMap).find(p=>p.brand===brand && String(p.drop_num)===String(dropNum));
+    if(found) return found;
+    await new Promise(r=>setTimeout(r,100));
+  }
+  // Fallback: fetch brand list
+  try{
+    const r = await fetch('/api/products/'+brand);
+    const prods = await r.json();
+    const p = prods.find(x=>String(x.drop_num)===String(dropNum));
+    if(p) productMap[p.id]=p;
+    return p||null;
+  }catch(e){ return null; }
+}
+
+// Dynamic title and canonical per section/product
+function updateMeta(title, path){
+  document.title = title + ' | MU — wearmu.com';
+  let can = document.querySelector('link[rel="canonical"]');
+  if(can) can.href = 'https://wearmu.com' + path;
+}
+
+// ── Section nav ──
+async function loadNounsDrops(){
+  const grid=document.getElementById('grid-nouns');
+  try{
+    const nouns=await fetch('/api/products/nouns').then(r=>r.json());
+    if(!nouns||!nouns.length){grid.innerHTML='<div class="empty" style="opacity:0.3;font-size:12px;letter-spacing:0.1em">Coming after DAO approval ⌐◨-◨</div>';return;}
+    grid.innerHTML=nouns.map(p=>{
+      p.brand='nouns';
+      const card=makeCard(p);
+      // overlay the NOUNS badge on top by post-processing
+      return card.replace('data-pid="'+p.id+'"','data-pid="'+p.id+'" style="position:relative"')
+        .replace('<div class="card-overlay">','<div class="card-badge" style="background:#e6c449;color:#000;top:14px;left:14px;z-index:2">⌐◨-◨ NOUNS</div><div class="card-overlay">');
+    }).join('');
+  }catch(e){grid.innerHTML='<div class="empty">—</div>'}
+}
+
+function showSection(name, pushHistory=true){
+  ['hero','ma','muon','mugen','nouns'].forEach(s=>{
+    const el=document.getElementById('section-'+s);
+    if(!el)return;
+    el.style.display = s===name?(s==='hero'?'flex':'block'):'none';
+  });
+  document.querySelectorAll('.nav-tab').forEach(t=>
+    t.classList.toggle('active',t.dataset.b===name));
+  currentBrand = name;
+  if(name==='ma') loadMA();
+  else if(name==='muon'){loadBrand('muon');loadWeather();}
+  else if(name==='mugen') loadBrand('mugen');
+  else if(name==='nouns') loadNounsDrops();
+  else if(name==='hero'){
+    document.getElementById('section-hero').style.display='flex';
+    loadStats();
+  }
+  window.scrollTo(0,0);
+
+  if(pushHistory){
+    const url = name==='hero' ? '/' : '/'+name;
+    const titles = {hero:'AIが服を作り続けるブランド', ma:'間 MA — 月に1着', muon:'MUON 無音 — 沈黙を記録する', mugen:'MUGEN 無限 — 毎時間、生まれ消える', nouns:'MU × NOUNS'};
+    history.pushState({section:name}, '', url);
+    updateMeta(titles[name]||name, url);
+  }
+}
+
+// ── Modal ──
+function openModal(p, pushHistory=true){
+  currentProduct = p;
+  if(pushHistory){
+    const url = '/products/'+p.brand+'/'+p.drop_num;
+    history.pushState({productId:p.id, brand:p.brand}, '', url);
+    updateMeta(p.name, url);
+  }
+  const rem = p.inventory - p.sold;
+  const pct = Math.min(100,(p.sold/p.inventory)*100);
+
+  document.getElementById('m-brand').textContent = BRAND_LABELS[p.brand]||p.brand;
+  document.getElementById('m-name').textContent = p.name;
+  document.getElementById('m-price').textContent = '¥'+p.price_jpy.toLocaleString();
+  document.getElementById('m-img').src = p.mockup_url||'';
+  document.getElementById('m-stock-fill').style.width = pct+'%';
+  document.getElementById('m-stock-label').textContent = `${rem} of ${p.inventory} — never restocked`;
+
+  // Meta
+  const weather = p.weather_data ? JSON.parse(p.weather_data) : null;
+  let metaHtml = '';
+  if(weather) metaHtml += `
+    <div class="meta-item"><div class="meta-key">Temperature</div><div class="meta-val">${weather.temp_c}°C</div></div>
+    <div class="meta-item"><div class="meta-key">Weather</div><div class="meta-val">${weather.condition}, ${weather.wind_dir} wind</div></div>`;
+  if(p.created_at){
+    const ts = Number(p.created_at);
+    const dt = ts > 1e9 ? new Date(ts*1000) : new Date(p.created_at);
+    const fmt = dt.getFullYear()+'.'+String(dt.getMonth()+1).padStart(2,'0')+'.'+String(dt.getDate()).padStart(2,'0')
+      +' '+String(dt.getHours()).padStart(2,'0')+':'+String(dt.getMinutes()).padStart(2,'0');
+    metaHtml += `<div class="meta-item"><div class="meta-key">Generated</div><div class="meta-val">${fmt}</div></div>`;
+  }
+  document.getElementById('m-meta').innerHTML = metaHtml;
+
+  // NFT
+  if(p.nft_mint){
+    document.getElementById('m-nft').style.display='block';
+    document.getElementById('m-nft-val').textContent = p.nft_mint;
+  }
+  // MA: hide size buttons (one-of-one, size determined at order)
+  const sizeSection = document.querySelector('#modal .select-row')?.closest('div');
+  if(sizeSection) sizeSection.style.display = p.brand==='ma' ? 'none' : 'block';
+
+  const btn = document.getElementById('btn-buy');
+  btn.textContent = `Purchase — ¥${p.price_jpy.toLocaleString()}`;
+  btn.className = 'btn-primary'+(p.brand==='mugen'?' red':'');
+  btn.disabled = rem<=0;
+
+  document.getElementById('modal').classList.add('open');
+}
+
+function closeModal(){
+  document.getElementById('modal').classList.remove('open');
+  const brand = currentProduct?.brand || currentBrand;
+  if(brand && brand !== 'hero'){
+    const url = '/'+brand;
+    const titles = {ma:'間 MA — 月に1着', muon:'MUON 無音 — 沈黙を記録する', mugen:'MUGEN 無限 — 毎時間、生まれ消える'};
+    history.pushState({section:brand}, '', url);
+    updateMeta(titles[brand]||brand, url);
+  } else {
+    history.pushState({section:'hero'}, '', '/');
+    updateMeta('AIが服を作り続けるブランド', '/');
+  }
+}
+document.getElementById('modal').addEventListener('click',e=>{
+  if(e.target===document.getElementById('modal')) closeModal();
+});
+
+// Size buttons
+document.querySelectorAll('.size-btn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    document.querySelectorAll('.size-btn').forEach(b=>b.classList.remove('selected'));
+    btn.classList.add('selected');
+    selectedSize = btn.dataset.size;
+    document.getElementById('selected-size').value = selectedSize;
+  });
+});
+
+// ── Checkout ──
+async function doCheckout(e){
+  e.preventDefault();
+  if(!currentProduct) return;
+  const btn = document.getElementById('btn-buy');
+  btn.disabled=true; btn.textContent='Processing...';
+  const fd = new FormData(e.target);
+  const body = {
+    product_id: currentProduct.id,
+    quantity: 1,
+    email: fd.get('email'),
+    size: selectedSize,
+    wallet: fd.get('wallet') || undefined,
+  };
+  try{
+    const r = await fetch('/api/checkout',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    if(r.status===409){
+      btn.disabled=false;btn.textContent='Sold out';
+      const em = document.getElementById('checkout-msg');
+      if(em){em.style.color='#C8362C';em.textContent='Sold out'}
+      return;
+    }
+    const {url} = await r.json();
+    window.location.href = url;
+  }catch(err){
+    const em = document.getElementById('checkout-msg');
+    if(em){em.style.color='#C8362C';em.textContent='Error. Please try again.'}
+    btn.disabled=false;
+    btn.textContent='Purchase — ¥'+currentProduct.price_jpy.toLocaleString();
+  }
+}
+
+
+// ── Fragment modal ──
+function openFragmentModal(){
+  document.getElementById('fragment-modal').classList.add('open');
+}
+document.getElementById('fragment-modal').addEventListener('click',e=>{
+  if(e.target===document.getElementById('fragment-modal'))
+    document.getElementById('fragment-modal').classList.remove('open');
+});
+async function submitFragment(e){
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const btn = e.target.querySelector('button[type=submit]');
+  btn.disabled = true; btn.textContent = '送信中...';
+  try{
+    const r = await fetch('/api/fragment', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        email: fd.get('email'),
+        direction: fd.get('direction'),
+        order_ids: fd.get('order_ids'),
+      })
+    });
+    if(r.ok || r.status===404){
+      document.getElementById('fragment-modal').classList.remove('open');
+      btn.textContent = '申請完了';
+    } else {
+      btn.disabled=false; btn.textContent='再送信';
+      const em = e.target.querySelector('.fragment-msg');
+      if(em){em.style.color='#C8362C';em.textContent='エラーが発生しました。mail@yukihamada.jp までご連絡ください。'}
+    }
+  }catch(err){
+    btn.disabled=false; btn.textContent='再送信';
+    const em = e.target.querySelector('.fragment-msg');
+    if(em){em.style.color='#C8362C';em.textContent='送信に失敗しました。mail@yukihamada.jp までご連絡ください。'}
+  }
+}
+
+// ── Inject Product JSON-LD for SEO ──
+function injectProductSchema(products){
+  if(!products.length) return;
+  const items = products.map(p=>({
+    "@type": "Product",
+    "name": p.name,
+    "url": `https://wearmu.com/products/${p.brand}/${p.drop_num}`,
+    "image": p.mockup_url || "https://wearmu.com/og.jpg",
+    "description": `MU ${p.brand.toUpperCase()} — AI-generated garment. Drop #${p.drop_num}. ${p.inventory} pieces only.`,
+    "brand": {"@type":"Brand","name":"MU"},
+    "offers": {
+      "@type": "Offer",
+      "priceCurrency": "JPY",
+      "price": p.price_jpy,
+      "availability": (p.inventory - p.sold > 0)
+        ? "https://schema.org/InStock"
+        : "https://schema.org/SoldOut",
+      "url": `https://wearmu.com/products/${p.brand}/${p.drop_num}`
+    }
+  }));
+  const el = document.createElement('script');
+  el.type = 'application/ld+json';
+  el.textContent = JSON.stringify({"@context":"https://schema.org","@graph":items});
+  document.head.appendChild(el);
+}
+
+// Back/Forward navigation
+window.addEventListener('popstate', ()=>{
+  closeModal();
+  document.getElementById('modal').classList.remove('open');
+  initRouter();
+});
+
+// ── Init ── preload everything so no dashes on load
+(async function init(){
+  initRouter();  // parse URL first
+  await Promise.all([loadStats(), loadWeather()]);
+  // Pre-populate grids in background so clicks feel instant
+  loadBrand('muon');
+  loadBrand('mugen');
+  loadMA();
+  // Inject product schema for SEO
+  try{
+    const [ma,muon,mugen] = await Promise.all([
+      fetch('/api/products/ma').then(r=>r.json()),
+      fetch('/api/products/muon').then(r=>r.json()),
+      fetch('/api/products/mugen').then(r=>r.json()),
+    ]);
+    injectProductSchema([...(ma||[]),...(muon||[]),...(mugen||[])]);
+  }catch(e){}
+})();
+</script>
+</body>
+</html>

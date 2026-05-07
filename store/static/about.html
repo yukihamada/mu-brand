@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>About MU — 自律型AIファッションブランドの哲学 | wearmu.com</title>
+<meta name="description" content="MUとは何か。なぜ「無」を哲学的起点とするのか。間 MA（月1回）、MUON 無音（毎日）、MUGEN 無限（毎時間）— 3つのラインと自律生成の仕組み。">
+<meta name="keywords" content="MU about, AI fashion philosophy, 間 MA, MUON 無音, MUGEN 無限, 自律型ブランド, AIデザイン">
+<link rel="canonical" href="https://wearmu.com/about.html">
+<!-- Favicon -->
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="shortcut icon" href="/favicon.ico">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0A0A0A">
+
+<!-- Open Graph -->
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://wearmu.com/about.html">
+<meta property="og:title" content="About MU — 自律型AIファッションブランドの哲学">
+<meta property="og:description" content="MUとは何か。間 MA、MUON 無音、MUGEN 無限。3つのラインはすべて「無」を起点とする。人間のデザイナーがいないブランドの設計思想。">
+<meta property="og:image" content="https://wearmu.com/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:site_name" content="MU">
+<meta property="og:locale" content="ja_JP">
+
+<!-- Twitter Card -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="About MU — 自律型AIファッションブランドの哲学">
+<meta name="twitter:description" content="人間のデザイナーがいないブランド。間 MA、MUON 無音、MUGEN 無限。すべて「無」から始まる。">
+<meta name="twitter:image" content="https://wearmu.com/og.jpg">
+
+<!-- JSON-LD -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "AboutPage",
+  "url": "https://wearmu.com/about.html",
+  "name": "About MU",
+  "description": "自律型AIファッションブランドMUの哲学とアーキテクチャ",
+  "isPartOf": {"@type": "WebSite", "url": "https://wearmu.com"}
+}
+</script>
+<style>
+:root{--k:#0A0A0A;--w:#F5F5F0;--g:#1C1C1C;--r:#C8362C}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--k);color:var(--w);font-family:'Helvetica Neue',Arial,sans-serif;
+  font-weight:200;-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}
+
+nav{position:fixed;top:0;left:0;right:0;z-index:100;
+  display:flex;align-items:center;justify-content:space-between;
+  padding:24px 48px;background:rgba(10,10,10,0.95);backdrop-filter:blur(10px);
+  border-bottom:1px solid rgba(255,255,255,0.05)}
+.nav-logo{font-size:16px;font-weight:700;letter-spacing:0.5em}
+.nav-back{font-size:9px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.35;transition:opacity 0.2s}
+.nav-back:hover{opacity:1}
+
+.hero{min-height:100vh;display:flex;flex-direction:column;justify-content:center;
+  padding:0 48px;position:relative;overflow:hidden}
+.hero-bg{position:absolute;inset:0;display:grid;grid-template-columns:repeat(12,1fr);
+  grid-template-rows:repeat(12,1fr);opacity:0.02}
+.hero-bg-cell{border:1px solid var(--w)}
+.hero-mu{font-size:clamp(200px,35vw,500px);font-weight:700;letter-spacing:0.3em;
+  position:absolute;right:-80px;bottom:-40px;opacity:0.04;line-height:1;user-select:none}
+.hero-content{max-width:680px;position:relative;z-index:1}
+.hero-eyebrow{font-size:9px;letter-spacing:0.5em;text-transform:uppercase;opacity:0.2;margin-bottom:32px}
+h1{font-size:clamp(36px,6vw,80px);font-weight:200;letter-spacing:0.04em;line-height:1.15;margin-bottom:40px}
+.hero-para{font-size:clamp(15px,2vw,20px);line-height:1.8;opacity:0.45;font-weight:300;margin-bottom:20px}
+
+.section{padding:120px 48px;max-width:900px;margin:0 auto}
+h2{font-size:10px;letter-spacing:0.45em;text-transform:uppercase;opacity:0.25;margin-bottom:48px}
+
+.philosophy-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:2px;margin-top:0}
+.phil-card{background:var(--g);padding:40px 32px;display:flex;flex-direction:column;gap:20px}
+.phil-num{font-size:48px;font-weight:700;opacity:0.08;letter-spacing:0;line-height:1}
+.phil-title{font-size:12px;letter-spacing:0.2em;text-transform:uppercase;font-weight:400}
+.phil-body{font-size:13px;opacity:0.4;line-height:1.75;font-weight:300}
+
+.brand-stack{display:flex;flex-direction:column;gap:2px;margin-top:48px}
+.brand-row{display:grid;grid-template-columns:180px 1fr 1fr 1fr;gap:24px;
+  padding:32px 0;border-bottom:1px solid rgba(255,255,255,0.05);align-items:start}
+.brand-row:first-child{border-top:1px solid rgba(255,255,255,0.05)}
+.brand-name{font-size:14px;font-weight:400;letter-spacing:0.05em}
+.brand-meaning{font-size:11px;opacity:0.3;letter-spacing:0.1em;margin-top:4px}
+.brand-detail{font-size:12px;opacity:0.4;line-height:1.7}
+.brand-detail strong{color:var(--w);opacity:1;font-weight:400}
+
+.oracle-box{background:var(--g);padding:48px;margin-top:48px;display:grid;
+  grid-template-columns:1fr 1fr;gap:48px;align-items:center}
+.oracle-left{}
+.oracle-title{font-size:14px;font-weight:400;letter-spacing:0.05em;margin-bottom:16px}
+.oracle-body{font-size:13px;opacity:0.4;line-height:1.75;font-weight:300}
+.oracle-live{display:flex;flex-direction:column;gap:12px;background:rgba(255,255,255,0.03);
+  padding:24px}
+.oracle-row{display:flex;justify-content:space-between;font-size:12px;
+  border-bottom:1px solid rgba(255,255,255,0.04);padding-bottom:10px;margin-bottom:2px}
+.oracle-key{opacity:0.3;letter-spacing:0.1em;font-size:10px}
+.oracle-val{font-variant-numeric:tabular-nums}
+
+.tech-list{display:grid;grid-template-columns:1fr 1fr;gap:2px;margin-top:48px}
+.tech-item{background:var(--g);padding:28px 32px;display:flex;gap:20px;align-items:flex-start}
+.tech-icon{font-size:24px;opacity:0.5;flex-shrink:0;margin-top:2px}
+.tech-name{font-size:11px;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:6px;font-weight:400}
+.tech-desc{font-size:12px;opacity:0.35;line-height:1.65;font-weight:300}
+
+.fragment-visual{background:var(--g);padding:48px;margin-top:48px;display:grid;
+  grid-template-columns:1fr auto 1fr auto 1fr;gap:0;align-items:center}
+.frag-tier{display:flex;flex-direction:column;align-items:center;gap:12px;padding:20px}
+.frag-name{font-size:10px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.3}
+.frag-qty{font-size:36px;font-weight:200;opacity:0.6}
+.frag-desc{font-size:11px;opacity:0.25;letter-spacing:0.05em}
+.frag-arrow{font-size:20px;opacity:0.15;padding:0 8px}
+
+.founder-section{display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:center;
+  margin-top:80px;padding-top:80px;border-top:1px solid rgba(255,255,255,0.06)}
+.founder-quote{font-size:clamp(16px,2.5vw,24px);font-weight:200;line-height:1.65;opacity:0.6}
+.founder-attr{font-size:9px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.2;margin-top:20px}
+.founder-bio{font-size:13px;opacity:0.35;line-height:1.8;font-weight:300}
+.founder-bio strong{color:var(--w);opacity:0.7;font-weight:400}
+
+footer{border-top:1px solid rgba(255,255,255,0.05);padding:32px 48px;
+  display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:20px}
+.footer-brand{font-size:10px;letter-spacing:0.4em;text-transform:uppercase;opacity:0.2}
+.footer-link{font-size:9px;letter-spacing:0.25em;text-transform:uppercase;
+  opacity:0.2;transition:opacity 0.2s;margin-left:32px}
+.footer-link:hover{opacity:0.7}
+
+@media(max-width:768px){
+  nav{padding:20px 24px}
+  .hero{padding:0 24px}
+  .section{padding:80px 24px}
+  .philosophy-grid{grid-template-columns:1fr}
+  .brand-row{grid-template-columns:1fr;gap:12px}
+  .oracle-box{grid-template-columns:1fr;gap:32px}
+  .tech-list{grid-template-columns:1fr}
+  .fragment-visual{grid-template-columns:1fr;padding:32px}
+  .frag-arrow{transform:rotate(90deg)}
+  .founder-section{grid-template-columns:1fr;gap:40px}
+  footer{padding:24px}
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-logo" href="/">MU</a>
+  <a class="nav-back" href="/">← Store</a>
+</nav>
+
+<!-- ── HERO ── -->
+<div class="hero">
+  <div class="hero-bg" id="hero-bg"></div>
+  <div class="hero-mu">MU</div>
+  <div class="hero-content">
+    <div class="hero-eyebrow">What is MU</div>
+    <h1>人間のデザイナーが<br>いないブランド</h1>
+    <p class="hero-para">
+      MUは毎時間、新しい服を生み出しています。AIが。
+    </p>
+    <p class="hero-para" style="font-size:clamp(13px,1.6vw,16px);opacity:0.3">
+      気象データを読み、デザインを生成し、製造を発注し、販売する。<br>
+      その全てにおいて、人間は意思決定に関与していません。
+    </p>
+  </div>
+</div>
+
+<!-- ── NAME ── -->
+<div class="section" style="padding-bottom:0">
+  <h2>MU とは</h2>
+  <div style="max-width:640px;margin-bottom:60px">
+    <p style="font-size:clamp(28px,4vw,48px);font-weight:200;letter-spacing:0.05em;line-height:1.3;margin-bottom:32px">
+      無 — 無限 — 無音 — 間
+    </p>
+    <p style="font-size:14px;line-height:1.9;opacity:0.45;font-weight:300;margin-bottom:16px">
+      「MU」は日本語の「無」から来ている。<br>
+      無 = nothing / nothingness / negation。
+    </p>
+    <p style="font-size:14px;line-height:1.9;opacity:0.45;font-weight:300;margin-bottom:16px">
+      <strong style="color:#F5F5F0;font-weight:400;opacity:1">間 MA</strong> — 間、空白、余白。何もない空間そのものが意味を持つ。<br>
+      <strong style="color:#F5F5F0;font-weight:400;opacity:1">MUON 無音</strong> — 音が無い。沈黙こそが最も情報密度が高い。<br>
+      <strong style="color:#F5F5F0;font-weight:400;opacity:1">MUGEN 無限</strong> — 限りが無い。毎時間、永遠に生まれ続ける。
+    </p>
+    <p style="font-size:14px;line-height:1.9;opacity:0.45;font-weight:300">
+      3つのラインはすべて「無」を起点とする。削ぎ落とした先にあるものを服にする、というブランドの哲学の根幹。
+    </p>
+  </div>
+</div>
+
+<!-- ── PHILOSOPHY ── -->
+<div class="section">
+  <h2>Philosophy</h2>
+  <div class="philosophy-grid">
+    <div class="phil-card">
+      <div class="phil-num">無</div>
+      <div class="phil-title">Autonomy</div>
+      <div class="phil-body">ブランドの全判断はコードとAIが行う。デザインも、数量も、価格も、タイミングも。人間の好みは介在しない。</div>
+    </div>
+    <div class="phil-card">
+      <div class="phil-num">限</div>
+      <div class="phil-title">True Scarcity</div>
+      <div class="phil-body">数量は気温が決める。人工的な希少性ではなく、自然の希少性。今日しか存在しない枚数の、今日だけのデザイン。</div>
+    </div>
+    <div class="phil-card">
+      <div class="phil-num">証</div>
+      <div class="phil-title">Provenance</div>
+      <div class="phil-body">いつ、どの気象条件で、どのプロンプトから生まれたか。全ての服にブロックチェーン証明書が存在する。偽造不可能な来歴。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── BRANDS ── -->
+<div class="section" style="border-top:1px solid rgba(255,255,255,0.05)">
+  <h2>Three Lines</h2>
+  <div class="brand-stack">
+    <div class="brand-row">
+      <div>
+        <div class="brand-name">間 MA</div>
+        <div class="brand-meaning">Between / Gap / Pause</div>
+      </div>
+      <div class="brand-detail">
+        <strong>月に1回</strong><br>毎月1日00:00に生成
+      </div>
+      <div class="brand-detail">
+        <strong>世界に1着</strong><br>オークション形式、落札者のみ
+      </div>
+      <div class="brand-detail">
+        <strong>¥120,000〜</strong><br>SoulboundのNFT証明書付き
+      </div>
+    </div>
+    <div class="brand-row">
+      <div>
+        <div class="brand-name">MUON 無音</div>
+        <div class="brand-meaning">Silence / No Sound</div>
+      </div>
+      <div class="brand-detail">
+        <strong>毎日</strong><br>00:00 JSTに生成
+      </div>
+      <div class="brand-detail">
+        <strong>気温（°C）= 枚数</strong><br>今日の気温がそのまま在庫数
+      </div>
+      <div class="brand-detail">
+        <strong>¥8,000</strong><br>黒Tシャツ、白プリント
+      </div>
+    </div>
+    <div class="brand-row">
+      <div>
+        <div class="brand-name">MUGEN 無限</div>
+        <div class="brand-meaning">Infinite / Limitless</div>
+      </div>
+      <div class="brand-detail">
+        <strong>毎時間</strong><br>毎時00分に生成
+      </div>
+      <div class="brand-detail">
+        <strong>ドロップ番号 = 枚数</strong><br>1→108→1のサイクル。#1が最希少
+      </div>
+      <div class="brand-detail">
+        <strong>¥2,000〜¥9,800</strong><br>サイクルが進むほど安くなる
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── WEATHER ORACLE ── -->
+<div class="section" style="border-top:1px solid rgba(255,255,255,0.05)">
+  <h2>Weather Oracle</h2>
+  <div class="oracle-box">
+    <div class="oracle-left">
+      <div class="oracle-title">なぜ気温が数量を決めるのか</div>
+      <div style="margin-top:16px">
+        <p class="oracle-body">
+          MUONの数量は、その日の気温と等しくなります。
+          今日が13°Cなら13着。-5°Cなら5着。0°Cの日は存在しません（最低1着）。
+        </p>
+        <p class="oracle-body" style="margin-top:12px">
+          この仕組みには誰の意図もありません。気温は自然現象であり、
+          誰も操作できません。最も正直な在庫管理システムです。
+        </p>
+        <p class="oracle-body" style="margin-top:12px">
+          MUが観測する気温は、人間の手が届かない場所のものです。
+          北の自然、最少のもの、極端な気候。
+        </p>
+      </div>
+    </div>
+    <div class="oracle-live">
+      <div style="font-size:9px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.3;margin-bottom:8px">
+        Live — Now
+      </div>
+      <div class="oracle-row">
+        <span class="oracle-key">Temperature</span>
+        <span class="oracle-val" id="w-temp">—°C</span>
+      </div>
+      <div class="oracle-row">
+        <span class="oracle-key">Condition</span>
+        <span class="oracle-val" id="w-cond">—</span>
+      </div>
+      <div class="oracle-row">
+        <span class="oracle-key">Wind</span>
+        <span class="oracle-val" id="w-wind">—</span>
+      </div>
+      <div class="oracle-row" style="border:none;margin:0;padding:0">
+        <span class="oracle-key">Today's MUON qty</span>
+        <span class="oracle-val" id="w-qty" style="font-size:20px;font-weight:200">—</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── TECHNOLOGY ── -->
+<div class="section" style="border-top:1px solid rgba(255,255,255,0.05)">
+  <h2>Technology</h2>
+  <div class="tech-list">
+    <div class="tech-item">
+      <div class="tech-icon">🧠</div>
+      <div>
+        <div class="tech-name">Design Generation</div>
+        <div class="tech-desc">Google Gemini（gemini-3-pro-image-preview）が各ブランドの哲学に従ったプロンプトでデザインを生成。気象データ、時刻、ドロップ番号が入力される。</div>
+      </div>
+    </div>
+    <div class="tech-item">
+      <div class="tech-icon">👕</div>
+      <div>
+        <div class="tech-name">Manufacturing</div>
+        <div class="tech-desc">オンデマンド製造。売れた1着だけ作る。在庫ゼロ、廃棄ゼロ。世界中に直送。</div>
+      </div>
+    </div>
+    <div class="tech-item">
+      <div class="tech-icon">⛓️</div>
+      <div>
+        <div class="tech-name">NFT Certificate</div>
+        <div class="tech-desc">間 MAは各作品にSolanaの圧縮NFTが発行される。Helius API経由。デザインのプロンプトハッシュ、気象条件、タイムスタンプを含む。</div>
+      </div>
+    </div>
+    <div class="tech-item">
+      <div class="tech-icon">⚙️</div>
+      <div>
+        <div class="tech-name">Store Engine</div>
+        <div class="tech-desc">Rust / Axum 0.7 + SQLite。Fly.io Tokyo（nrt）で稼働。Shopifyを使わない理由は、完全な自律性のためにコードが全てを制御する必要があるから。</div>
+      </div>
+    </div>
+    <div class="tech-item">
+      <div class="tech-icon">🌡️</div>
+      <div>
+        <div class="tech-name">Weather Oracle</div>
+        <div class="tech-desc">リアルタイム気象データを取得。毎日の生成時に気温を読み込み、その数値がそのままMUONの在庫数になる。</div>
+      </div>
+    </div>
+    <div class="tech-item">
+      <div class="tech-icon">⏱️</div>
+      <div>
+        <div class="tech-name">Scheduler</div>
+        <div class="tech-desc">cronが毎時・毎日・毎月の生成をトリガー。人間がボタンを押す必要はない。ブランドは止まらない。</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── FRAGMENT ── -->
+<div class="section" style="border-top:1px solid rgba(255,255,255,0.05)">
+  <h2>Fragment System</h2>
+  <p style="font-size:14px;opacity:0.4;line-height:1.85;max-width:560px;font-weight:300;margin-bottom:32px">
+    MUGENを3着着て、返送する。するとMUON 1着に交換できます。<br>
+    MUONを3着着て、返送する。すると間 MA 1着に交換できます。<br>
+    <strong style="color:var(--w);opacity:0.7">長く着ることが、上位ブランドへの道。</strong>
+  </p>
+  <div class="fragment-visual">
+    <div class="frag-tier">
+      <div class="frag-qty">×3</div>
+      <div class="frag-name">MUGEN 無限</div>
+      <div class="frag-desc">毎時生成 / ¥2,000〜</div>
+    </div>
+    <div class="frag-arrow">→</div>
+    <div class="frag-tier">
+      <div class="frag-qty">×1</div>
+      <div class="frag-name">MUON 無音</div>
+      <div class="frag-desc">毎日生成 / ¥8,000</div>
+    </div>
+    <div class="frag-arrow">→</div>
+    <div class="frag-tier">
+      <div class="frag-qty">×1</div>
+      <div class="frag-name">間 MA</div>
+      <div class="frag-desc">月1点 / オークション</div>
+    </div>
+  </div>
+  <p style="font-size:11px;opacity:0.25;margin-top:24px;line-height:1.6">
+    ※ 返送にかかる送料はお客様ご負担となります。交換後の商品は廃棄せず、
+    素材リサイクルパートナーを通じて処理されます（実施予定）。
+  </p>
+</div>
+
+<!-- ── FOUNDER ── -->
+<div class="section" style="border-top:1px solid rgba(255,255,255,0.05)">
+  <h2>Founder</h2>
+  <div class="founder-section">
+    <div>
+      <div class="founder-quote">
+        「MUを作ったのは、AIが本当にブランドになれるかどうかを確かめたかったからです。デザインの補助ではなく、ブランドそのものとして。今のところ、AIは止まっていません。」
+      </div>
+      <div class="founder-attr">濱田優貴 — Enabler CEO / MU創設者</div>
+    </div>
+    <div class="founder-bio">
+      <p class="founder-bio">
+        <strong>濱田優貴</strong>は、Enabler Inc.のCEO。
+        元メルカリCPO/CMO（ピーク時時価総額7,000億円）。
+        生産規模のAIパイプラインを構築してきた経験を持つ。
+      </p>
+      <p class="founder-bio" style="margin-top:16px">
+        MUを「チームのいるブランド」ではなく、
+        <strong>「自律的に稼働するシステム」</strong>として構築することにこだわった。
+        コードを書き、インフラを整え、そして離れた。
+      </p>
+      <p class="founder-bio" style="margin-top:16px">
+        連絡先: <strong>mail@yukihamada.jp</strong>
+      </p>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <div class="footer-brand">MU — AIが服を作り続けるブランド</div>
+  <div>
+    <a class="footer-link" href="/">Store</a>
+    <a class="footer-link" href="/press.html">Press</a>
+    <a class="footer-link" href="/nouns-proposal.html">Nouns Proposal</a>
+  </div>
+</footer>
+
+<script>
+// Hero grid
+(function(){
+  const bg = document.getElementById('hero-bg');
+  for(let i=0;i<144;i++) bg.innerHTML += '<div class="hero-bg-cell"></div>';
+})();
+
+// Load weather
+fetch('/api/weather').then(r=>r.ok?r.json():Promise.reject()).then(w=>{
+  document.getElementById('w-temp').textContent = w.temp_c + '°C';
+  document.getElementById('w-cond').textContent = w.condition;
+  document.getElementById('w-wind').textContent = w.wind_kmh + 'km/h ' + w.wind_dir;
+  document.getElementById('w-qty').textContent = Math.abs(w.temp_c) || 1;
+}).catch(()=>{
+  // fallback: show static placeholder
+  document.getElementById('w-temp').textContent = '—°C';
+});
+</script>
+</body>
+</html>

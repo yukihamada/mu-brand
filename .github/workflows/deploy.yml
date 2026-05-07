@@ -1,0 +1,22 @@
+name: Deploy mu-store to Fly.io
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'store/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    concurrency: deploy-mu-store
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Deploy
+        working-directory: store
+        run: flyctl deploy --remote-only --app mu-store --wait-timeout=180
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

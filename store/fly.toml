@@ -1,0 +1,23 @@
+app = "mu-store"
+primary_region = "nrt"
+
+[build]
+
+[mounts]
+  source = "mu_store_data"
+  destination = "/data"
+
+[[services]]
+  internal_port = 3000
+  protocol = "tcp"
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+[env]
+  PORT = "3000"
+  DB_PATH = "/data/products.db"

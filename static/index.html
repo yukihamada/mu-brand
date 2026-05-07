@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MU</title>
+<style>
+  :root { --black:#0A0A0A; --white:#FAFAFA; --red:#C8362C; --grey:#222; }
+  *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--black); color:var(--white); font-family:'Helvetica Neue',Arial,sans-serif;
+    font-weight:200; -webkit-font-smoothing:antialiased; }
+  a { color:inherit; text-decoration:none; }
+
+  /* NAV */
+  nav { position:fixed; top:0; left:0; right:0; z-index:100;
+    display:flex; align-items:center; justify-content:space-between; padding:28px 48px; }
+  .nav-logo { font-size:13px; font-weight:600; letter-spacing:0.4em; }
+  .nav-tabs { display:flex; gap:0; }
+  .nav-tab { font-size:9px; letter-spacing:0.28em; text-transform:uppercase;
+    padding:8px 20px; opacity:0.3; cursor:pointer; border-bottom:1px solid transparent;
+    transition:all 0.2s; }
+  .nav-tab.active, .nav-tab:hover { opacity:1; border-bottom-color:var(--white); }
+  .nav-tab[data-brand="muon"].active { border-bottom-color:var(--white); }
+  .nav-tab[data-brand="mugen"].active { border-bottom-color:var(--red); }
+
+  /* HERO */
+  .hero { height:100vh; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; gap:16px; }
+  .hero-title { font-size:clamp(80px,16vw,240px); font-weight:600; letter-spacing:0.3em; opacity:0.06; }
+  .hero-sub { font-size:10px; letter-spacing:0.4em; text-transform:uppercase; opacity:0.3; }
+
+  /* GRID */
+  .section { padding:120px 48px 80px; }
+  .section-header { display:flex; align-items:baseline; gap:20px; margin-bottom:60px; }
+  .section-brand { font-size:11px; letter-spacing:0.35em; text-transform:uppercase; opacity:0.4; }
+  .section-tagline { font-size:13px; opacity:0.25; font-style:italic; }
+  .section-drop-info { margin-left:auto; font-size:9px; letter-spacing:0.2em;
+    text-transform:uppercase; opacity:0.25; }
+
+  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(300px, 1fr)); gap:2px; }
+  .card { position:relative; background:var(--grey); cursor:pointer;
+    overflow:hidden; aspect-ratio:3/4; }
+  .card img { width:100%; height:100%; object-fit:cover; transition:transform 0.6s ease; }
+  .card:hover img { transform:scale(1.03); }
+  .card-overlay { position:absolute; inset:0; background:linear-gradient(to top, rgba(0,0,0,0.8) 0%, transparent 50%);
+    display:flex; flex-direction:column; justify-content:flex-end; padding:24px;
+    opacity:0; transition:opacity 0.3s; }
+  .card:hover .card-overlay { opacity:1; }
+  .card-name { font-size:11px; letter-spacing:0.2em; text-transform:uppercase; margin-bottom:6px; }
+  .card-price { font-size:13px; font-weight:300; }
+  .card-stock { font-size:9px; letter-spacing:0.15em; opacity:0.5; margin-top:4px; }
+  .card-sold-out { position:absolute; top:16px; right:16px; font-size:8px;
+    letter-spacing:0.2em; text-transform:uppercase; background:var(--black);
+    padding:4px 10px; opacity:0.7; }
+
+  .loading { grid-column:1/-1; text-align:center; padding:80px 0;
+    font-size:9px; letter-spacing:0.3em; text-transform:uppercase; opacity:0.2;
+    animation:pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100%{opacity:0.2} 50%{opacity:0.5} }
+
+  /* MODAL */
+  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,0.92); z-index:200;
+    display:none; align-items:center; justify-content:center; padding:40px; }
+  .modal-bg.open { display:flex; }
+  .modal { background:var(--grey); max-width:900px; width:100%; display:grid;
+    grid-template-columns:1fr 1fr; max-height:90vh; overflow:auto; }
+  .modal-img { aspect-ratio:3/4; }
+  .modal-img img { width:100%; height:100%; object-fit:cover; }
+  .modal-info { padding:48px 40px; display:flex; flex-direction:column; gap:20px; }
+  .modal-brand { font-size:9px; letter-spacing:0.35em; text-transform:uppercase; opacity:0.4; }
+  .modal-name { font-size:18px; font-weight:300; letter-spacing:0.1em; line-height:1.4; }
+  .modal-price { font-size:22px; font-weight:200; }
+  .modal-stock-bar { height:1px; background:rgba(255,255,255,0.08); position:relative; }
+  .modal-stock-fill { position:absolute; left:0; top:0; height:100%; background:var(--white); transition:width 0.5s; }
+  .modal-stock-label { font-size:9px; letter-spacing:0.15em; opacity:0.35; margin-top:8px; }
+  .modal-divider { height:1px; background:rgba(255,255,255,0.06); }
+
+  form { display:flex; flex-direction:column; gap:12px; }
+  input, select { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);
+    color:var(--white); padding:12px 14px; font-size:12px; letter-spacing:0.05em;
+    font-family:inherit; font-weight:200; outline:none; width:100%;
+    transition:border-color 0.2s; }
+  input:focus, select:focus { border-color:rgba(255,255,255,0.3); }
+  input::placeholder { opacity:0.3; }
+  select option { background:var(--grey); }
+
+  .btn-buy { background:var(--white); color:var(--black); border:none;
+    padding:16px; font-size:10px; letter-spacing:0.3em; text-transform:uppercase;
+    cursor:pointer; font-family:inherit; font-weight:500; transition:opacity 0.2s;
+    margin-top:8px; }
+  .btn-buy:hover { opacity:0.85; }
+  .btn-buy:disabled { opacity:0.3; cursor:not-allowed; }
+  .btn-buy.mugen { background:var(--red); color:var(--white); }
+
+  .btn-close { position:absolute; top:20px; right:24px; font-size:20px;
+    cursor:pointer; opacity:0.4; transition:opacity 0.2s; z-index:201; }
+  .btn-close:hover { opacity:1; }
+
+  .modal-date { font-size:8px; letter-spacing:0.2em; opacity:0.2; font-variant-numeric:tabular-nums; }
+
+  /* MUGEN timer */
+  .next-drop { font-size:9px; letter-spacing:0.2em; text-transform:uppercase;
+    opacity:0.3; margin-top:auto; }
+  .timer { font-size:22px; font-weight:200; letter-spacing:0.1em;
+    font-variant-numeric:tabular-nums; }
+
+  @media(max-width:640px) {
+    nav { padding:20px 24px; }
+    .section { padding:80px 24px 60px; }
+    .modal { grid-template-columns:1fr; }
+    .modal-img { aspect-ratio:4/3; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <span class="nav-logo">MU</span>
+  <div class="nav-tabs">
+    <div class="nav-tab active" data-brand="ma" onclick="showBrand('ma')">間 MA</div>
+    <div class="nav-tab" data-brand="muon" onclick="showBrand('muon')">MUON</div>
+    <div class="nav-tab" data-brand="mugen" onclick="showBrand('mugen')">MUGEN</div>
+  </div>
+</nav>
+
+<div class="hero" id="hero">
+  <div class="hero-title">MU</div>
+  <div class="hero-sub">間 · 無音 · 無限</div>
+</div>
+
+<div class="section" id="section-ma">
+  <div class="section-header">
+    <span class="section-brand">間 MA</span>
+    <span class="section-tagline">月1型 — 月初に生まれ、完売後消える</span>
+    <span class="section-drop-info">Monthly drop</span>
+  </div>
+  <div class="grid" id="grid-ma"><div class="loading">Loading</div></div>
+</div>
+
+<div class="section" id="section-muon" style="display:none">
+  <div class="section-header">
+    <span class="section-brand">MUON 無音</span>
+    <span class="section-tagline">日1型 — 沈黙を、記録する</span>
+    <span class="section-drop-info">Daily drop</span>
+  </div>
+  <div class="grid" id="grid-muon"><div class="loading">Loading</div></div>
+</div>
+
+<div class="section" id="section-mugen" style="display:none">
+  <div class="section-header">
+    <span class="section-brand">MUGEN 無限</span>
+    <span class="section-tagline">時1型 × 108着 — 一着の寿命の、無限だ</span>
+    <span class="section-drop-info">
+      Next drop: <span id="next-drop-timer" class="timer">--:--:--</span>
+    </span>
+  </div>
+  <div class="grid" id="grid-mugen"><div class="loading">Loading</div></div>
+</div>
+
+<!-- Modal -->
+<div class="modal-bg" id="modal" onclick="closeModal(event)">
+  <span class="btn-close" onclick="closeModal()">×</span>
+  <div class="modal" id="modal-inner">
+    <div class="modal-img"><img id="modal-img" src="" alt=""></div>
+    <div class="modal-info">
+      <div class="modal-brand" id="modal-brand"></div>
+      <div class="modal-name" id="modal-name"></div>
+      <div class="modal-price" id="modal-price"></div>
+      <div>
+        <div class="modal-stock-bar"><div class="modal-stock-fill" id="modal-stock-fill"></div></div>
+        <div class="modal-stock-label" id="modal-stock-label"></div>
+      </div>
+      <div class="modal-date" id="modal-date"></div>
+      <div class="modal-divider"></div>
+      <form id="checkout-form" onsubmit="checkout(event)">
+        <input type="email" name="email" placeholder="Email" required>
+        <input type="text" name="recipient_name" placeholder="氏名 / Full name" required>
+        <input type="text" name="address" placeholder="住所 / Street address" required>
+        <input type="text" name="city" placeholder="市区町村 / City" required>
+        <input type="text" name="zip" placeholder="郵便番号 / ZIP" required>
+        <select name="country_code">
+          <option value="JP">Japan</option>
+          <option value="US">United States</option>
+          <option value="GB">United Kingdom</option>
+          <option value="FR">France</option>
+          <option value="DE">Germany</option>
+          <option value="AU">Australia</option>
+          <option value="KR">Korea</option>
+          <option value="CN">China</option>
+          <option value="TW">Taiwan</option>
+          <option value="HK">Hong Kong</option>
+        </select>
+        <button type="submit" class="btn-buy" id="btn-buy">Purchase — </button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentProduct = null;
+let currentBrand = 'ma';
+
+const BRAND_LABELS = { ma:'間 MA', muon:'MUON 無音', mugen:'MUGEN 無限' };
+
+async function loadBrand(brand) {
+  const grid = document.getElementById(`grid-${brand}`);
+  try {
+    const r = await fetch(`/api/products/${brand}`);
+    const products = await r.json();
+    if (!products.length) {
+      grid.innerHTML = `<div class="loading">Next drop coming soon</div>`;
+      return;
+    }
+    grid.innerHTML = products.map(p => {
+      const remaining = p.inventory - p.sold;
+      const pct = (p.sold / p.inventory) * 100;
+      const soldOut = remaining <= 0;
+      return `
+        <div class="card" onclick="${soldOut ? '' : `openModal(${JSON.stringify(JSON.stringify(p))})`}">
+          ${p.mockup_url
+            ? `<img src="${p.mockup_url}" alt="${p.name}" loading="lazy">`
+            : `<div style="width:100%;height:100%;background:#1a1a1a;display:flex;align-items:center;justify-content:center;opacity:0.3;font-size:11px;letter-spacing:0.2em">${p.name}</div>`}
+          ${soldOut ? `<div class="card-sold-out">Sold out</div>` : ''}
+          <div class="card-overlay">
+            <div class="card-name">${p.name}</div>
+            <div class="card-price">¥${p.price_jpy.toLocaleString()}</div>
+            <div class="card-stock">${remaining} / ${p.inventory} remaining</div>
+          </div>
+        </div>`;
+    }).join('');
+  } catch(e) {
+    grid.innerHTML = `<div class="loading">—</div>`;
+  }
+}
+
+function showBrand(brand) {
+  currentBrand = brand;
+  document.querySelectorAll('.nav-tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.brand === brand));
+  ['ma','muon','mugen'].forEach(b =>
+    document.getElementById(`section-${b}`).style.display = b === brand ? 'block' : 'none');
+  document.getElementById('hero').style.display = brand === 'ma' ? 'flex' : 'none';
+  loadBrand(brand);
+}
+
+function openModal(pJson) {
+  const p = JSON.parse(pJson);
+  currentProduct = p;
+  const remaining = p.inventory - p.sold;
+  const pct = Math.min(100, (p.sold / p.inventory) * 100);
+  const brand = p.brand;
+
+  document.getElementById('modal-brand').textContent = BRAND_LABELS[brand] || brand;
+  document.getElementById('modal-name').textContent = p.name;
+  document.getElementById('modal-price').textContent = `¥${p.price_jpy.toLocaleString()}`;
+  document.getElementById('modal-img').src = p.mockup_url || '';
+  document.getElementById('modal-stock-fill').style.width = pct + '%';
+  document.getElementById('modal-stock-label').textContent =
+    `${remaining} of ${p.inventory} remaining — never restocked`;
+  document.getElementById('modal-date').textContent = p.created_at?.slice(0,10) || '';
+
+  const btn = document.getElementById('btn-buy');
+  btn.textContent = `Purchase — ¥${p.price_jpy.toLocaleString()}`;
+  btn.className = `btn-buy${brand === 'mugen' ? ' mugen' : ''}`;
+
+  document.getElementById('modal').classList.add('open');
+}
+
+function closeModal(e) {
+  if (!e || e.target === document.getElementById('modal') || e.target.classList.contains('btn-close')) {
+    document.getElementById('modal').classList.remove('open');
+  }
+}
+
+async function checkout(e) {
+  e.preventDefault();
+  if (!currentProduct) return;
+  const btn = document.getElementById('btn-buy');
+  btn.disabled = true;
+  btn.textContent = 'Redirecting...';
+
+  const fd = new FormData(e.target);
+  const body = {
+    product_id: currentProduct.id,
+    quantity: 1,
+    email: fd.get('email'),
+    name: fd.get('recipient_name'),
+    address: fd.get('address'),
+    city: fd.get('city'),
+    country_code: fd.get('country_code'),
+    zip: fd.get('zip'),
+  };
+
+  try {
+    const r = await fetch('/api/checkout', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    if (r.status === 409) {
+      alert('Sold out.');
+      btn.disabled = false;
+      btn.textContent = `Purchase — ¥${currentProduct.price_jpy.toLocaleString()}`;
+      return;
+    }
+    const { url } = await r.json();
+    window.location.href = url;
+  } catch {
+    alert('Error. Please try again.');
+    btn.disabled = false;
+  }
+}
+
+// MUGEN countdown to next hour
+function updateTimer() {
+  const now = new Date();
+  const next = new Date(now);
+  next.setMinutes(60, 0, 0);
+  const diff = next - now;
+  const m = String(Math.floor(diff / 60000)).padStart(2,'0');
+  const s = String(Math.floor((diff % 60000) / 1000)).padStart(2,'0');
+  const el = document.getElementById('next-drop-timer');
+  if (el) el.textContent = `${m}:${s}`;
+}
+setInterval(updateTimer, 1000);
+updateTimer();
+
+// Init
+loadBrand('ma');
+</script>
+</body>
+</html>
