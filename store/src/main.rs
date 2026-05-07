@@ -1,7 +1,8 @@
 use axum::{
     extract::{Path, State},
-    http::{HeaderMap, StatusCode},
-    response::{Html, IntoResponse, Json},
+    http::{HeaderMap, HeaderValue, Request, StatusCode, header},
+    middleware::{self, Next},
+    response::{Html, IntoResponse, Json, Response},
     routing::{get, patch, post},
     Router,
 };
@@ -9,8 +10,52 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
-use std::{sync::{Arc, Mutex}, env};
+use std::{sync::{Arc, Mutex}, env, time::{SystemTime, UNIX_EPOCH}};
 use tower_http::services::ServeDir;
+
+/// Centralized admin token check. Fail-closed: if ADMIN_TOKEN env var
+/// is missing or empty, every admin request is rejected with 503.
+/// Never falls back to a default value (prevents the historical
+/// "mu-admin" default-token vulnerability).
+fn require_admin_token(provided: Option<&String>) -> Result<(), Response> {
+    let expected = match env::var("ADMIN_TOKEN") {
+        Ok(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!("[security] ADMIN_TOKEN env var is unset — rejecting admin request");
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                "admin disabled (server misconfigured: ADMIN_TOKEN not set)",
+            ).into_response());
+        }
+    };
+    let provided = provided.map(String::as_str).unwrap_or("");
+    // Constant-time comparison to prevent timing attacks
+    if provided.len() != expected.len() {
+        return Err((StatusCode::UNAUTHORIZED, "unauthorized").into_response());
+    }
+    let mut diff: u8 = 0;
+    for (a, b) in provided.bytes().zip(expected.bytes()) {
+        diff |= a ^ b;
+    }
+    if diff != 0 {
+        return Err((StatusCode::UNAUTHORIZED, "unauthorized").into_response());
+    }
+    Ok(())
+}
+
+/// Add baseline security response headers to every reply.
+async fn security_headers(req: Request<axum::body::Body>, next: Next) -> Response {
+    let mut resp = next.run(req).await;
+    let h = resp.headers_mut();
+    h.insert("X-Content-Type-Options", HeaderValue::from_static("nosniff"));
+    h.insert("X-Frame-Options", HeaderValue::from_static("SAMEORIGIN"));
+    h.insert("Referrer-Policy", HeaderValue::from_static("strict-origin-when-cross-origin"));
+    h.insert("Strict-Transport-Security",
+             HeaderValue::from_static("max-age=31536000; includeSubDomains"));
+    h.insert("Permissions-Policy",
+             HeaderValue::from_static("camera=(), microphone=(), geolocation=(), payment=(self \"https://js.stripe.com\")"));
+    resp
+}
 
 type Db = Arc<Mutex<Connection>>;
 
@@ -334,29 +379,52 @@ async fn stripe_webhook(
     headers: HeaderMap,
     body: String,
 ) -> impl IntoResponse {
-    // ── Signature verification ──
-    if let Ok(secret) = env::var("STRIPE_WEBHOOK_SECRET") {
-        let sig_header = headers
-            .get("stripe-signature")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-        let timestamp = sig_header.split(',')
-            .find(|s| s.starts_with("t="))
-            .and_then(|s| s.strip_prefix("t="))
-            .unwrap_or("");
-        let expected = sig_header.split(',')
-            .find(|s| s.starts_with("v1="))
-            .and_then(|s| s.strip_prefix("v1="))
-            .unwrap_or("");
-        let signed_payload = format!("{}.{}", timestamp, body);
-        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
-            .expect("HMAC init");
-        mac.update(signed_payload.as_bytes());
-        let computed = hex::encode(mac.finalize().into_bytes());
-        if computed != expected {
-            eprintln!("Stripe webhook signature mismatch");
+    // ── Signature verification (fail-closed) ──
+    // Reject all webhooks if STRIPE_WEBHOOK_SECRET is not configured —
+    // never accept unsigned webhooks even in dev.
+    let secret = match env::var("STRIPE_WEBHOOK_SECRET") {
+        Ok(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!("[security] STRIPE_WEBHOOK_SECRET unset — rejecting webhook");
+            return (StatusCode::SERVICE_UNAVAILABLE,
+                "webhook disabled (server misconfigured)").into_response();
+        }
+    };
+    let sig_header = headers.get("stripe-signature")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let timestamp_str = sig_header.split(',')
+        .find(|s| s.starts_with("t="))
+        .and_then(|s| s.strip_prefix("t="))
+        .unwrap_or("");
+    let provided_sig = sig_header.split(',')
+        .find(|s| s.starts_with("v1="))
+        .and_then(|s| s.strip_prefix("v1="))
+        .unwrap_or("");
+
+    // Replay protection: reject events older than 5 minutes.
+    let ts: u64 = timestamp_str.parse().unwrap_or(0);
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    if ts == 0 || now.saturating_sub(ts) > 300 {
+        eprintln!("[security] Stripe webhook timestamp out of tolerance (ts={}, now={})", ts, now);
+        return (StatusCode::UNAUTHORIZED, "stale webhook").into_response();
+    }
+
+    // Constant-time HMAC verification via Mac::verify_slice.
+    let signed_payload = format!("{}.{}", timestamp_str, body);
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
+        .expect("HMAC init");
+    mac.update(signed_payload.as_bytes());
+    let provided_bytes = match hex::decode(provided_sig) {
+        Ok(b) => b,
+        Err(_) => {
+            eprintln!("[security] Stripe webhook bad signature hex");
             return StatusCode::UNAUTHORIZED.into_response();
         }
+    };
+    if mac.verify_slice(&provided_bytes).is_err() {
+        eprintln!("[security] Stripe webhook signature mismatch");
+        return StatusCode::UNAUTHORIZED.into_response();
     }
 
     let event: serde_json::Value = match serde_json::from_str(&body) {
@@ -529,9 +597,8 @@ async fn settle_auction(
     State(db): State<Db>,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String,String>>,
 ) -> impl IntoResponse {
-    let expected = env::var("ADMIN_TOKEN").unwrap_or_else(|_| "mu-admin".into());
-    if q.get("token").map(|s| s.as_str()) != Some(expected.as_str()) {
-        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    if let Err(resp) = require_admin_token(q.get("token")) {
+        return resp;
     }
     let product_id: i64 = match q.get("product_id").and_then(|s| s.parse().ok()) {
         Some(v) => v,
@@ -642,9 +709,8 @@ async fn deactivate_product(
     State(db): State<Db>,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String,String>>,
 ) -> impl IntoResponse {
-    let expected = env::var("ADMIN_TOKEN").unwrap_or_else(|_| "mu-admin".into());
-    if q.get("token").map(|s| s.as_str()) != Some(expected.as_str()) {
-        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    if let Err(resp) = require_admin_token(q.get("token")) {
+        return resp;
     }
     let id: i64 = match q.get("product_id").and_then(|s| s.parse().ok()) {
         Some(v) => v,
@@ -660,9 +726,8 @@ async fn update_mockup(
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String,String>>,
     Json(body): Json<UpdateMockupBody>,
 ) -> impl IntoResponse {
-    let expected = env::var("ADMIN_TOKEN").unwrap_or_else(|_| "mu-admin".into());
-    if q.get("token").map(|s| s.as_str()) != Some(expected.as_str()) {
-        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    if let Err(resp) = require_admin_token(q.get("token")) {
+        return resp;
     }
     let conn = db.lock().unwrap();
     conn.execute(
@@ -677,9 +742,8 @@ async fn import_product(
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String,String>>,
     Json(body): Json<ImportProductBody>,
 ) -> impl IntoResponse {
-    let expected = env::var("ADMIN_TOKEN").unwrap_or_else(|_| "mu-admin".into());
-    if q.get("token").map(|s| s.as_str()) != Some(expected.as_str()) {
-        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    if let Err(resp) = require_admin_token(q.get("token")) {
+        return resp;
     }
     let conn = db.lock().unwrap();
     let now = chrono_now();
@@ -700,9 +764,8 @@ async fn update_price(
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String,String>>,
     Json(body): Json<UpdatePriceBody>,
 ) -> impl IntoResponse {
-    let expected = env::var("ADMIN_TOKEN").unwrap_or_else(|_| "mu-admin".into());
-    if q.get("token").map(|s| s.as_str()) != Some(expected.as_str()) {
-        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    if let Err(resp) = require_admin_token(q.get("token")) {
+        return resp;
     }
     let conn = db.lock().unwrap();
     let n = conn.execute(
@@ -717,9 +780,8 @@ async fn update_nft(
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String,String>>,
     Json(body): Json<UpdateNftBody>,
 ) -> impl IntoResponse {
-    let expected = env::var("ADMIN_TOKEN").unwrap_or_else(|_| "mu-admin".into());
-    if q.get("token").map(|s| s.as_str()) != Some(expected.as_str()) {
-        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    if let Err(resp) = require_admin_token(q.get("token")) {
+        return resp;
     }
     let conn = db.lock().unwrap();
     let n = conn.execute(
@@ -734,9 +796,8 @@ async fn update_design(
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String,String>>,
     Json(body): Json<UpdateDesignBody>,
 ) -> impl IntoResponse {
-    let expected = env::var("ADMIN_TOKEN").unwrap_or_else(|_| "mu-admin".into());
-    if q.get("token").map(|s| s.as_str()) != Some(expected.as_str()) {
-        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    if let Err(resp) = require_admin_token(q.get("token")) {
+        return resp;
     }
     let conn = db.lock().unwrap();
     let n = conn.execute(
@@ -751,9 +812,8 @@ async fn update_sold(
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String,String>>,
     Json(body): Json<UpdateSoldBody>,
 ) -> impl IntoResponse {
-    let expected = env::var("ADMIN_TOKEN").unwrap_or_else(|_| "mu-admin".into());
-    if q.get("token").map(|s| s.as_str()) != Some(expected.as_str()) {
-        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    if let Err(resp) = require_admin_token(q.get("token")) {
+        return resp;
     }
     let conn = db.lock().unwrap();
     let now = chrono_now();
@@ -1223,7 +1283,8 @@ async fn main() {
         .route("/city.html", get(city_page))
         .nest_service("/static", ServeDir::new("static"))
         .fallback_service(ServeDir::new("static"))
-        .with_state(db);
+        .with_state(db)
+        .layer(middleware::from_fn(security_headers));
 
     let port = env::var("PORT").unwrap_or_else(|_| "3000".into());
     let addr = format!("0.0.0.0:{}", port);
