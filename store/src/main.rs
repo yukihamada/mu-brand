@@ -955,6 +955,10 @@ async fn tokushoho_page() -> Html<&'static str> {
     Html(include_str!("../static/tokushoho.html"))
 }
 
+async fn city_page() -> Html<&'static str> {
+    Html(include_str!("../static/city.html"))
+}
+
 async fn success_page() -> Html<&'static str> {
     Html(r#"<!DOCTYPE html><html><head><meta charset=UTF-8><style>
     body{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',sans-serif;
@@ -1157,6 +1161,8 @@ async fn main() {
         .route("/v/:brand/:drop_num", get(verify_page))
         .route("/tokushoho", get(tokushoho_page))
         .route("/tokushoho.html", get(tokushoho_page))
+        .route("/city", get(city_page))
+        .route("/city.html", get(city_page))
         .nest_service("/static", ServeDir::new("static"))
         .fallback_service(ServeDir::new("static"))
         .with_state(db);
