@@ -102,8 +102,9 @@ struct UpdateDesignBody {
     design_url: String,
 }
 
-/// Reverse Dutch auction pricing.
-/// Price starts at ¥5,000 and steps up ¥250 per sold unit, capped at ¥30,000.
+/// Bonding-curve / progressive pricing.
+/// Price starts at ¥5,000 (1st buyer) and steps up ¥250 per sold unit, capped at ¥30,000.
+/// "Early buyer wins" — opposite of Dutch auction.
 /// Special cases: MA = ¥120,000, MUGEN #108 = ¥30,000 fixed.
 fn dynamic_price(brand: &str, drop_num: i64, sold: i64, name: &str) -> i64 {
     if brand == "ma" {
