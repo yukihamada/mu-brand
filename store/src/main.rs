@@ -103,8 +103,8 @@ struct UpdateDesignBody {
 }
 
 /// Reverse Dutch auction pricing.
-/// Price starts at ¥4,000 (covers cost + margin) and steps up ¥250 per sold unit,
-/// capped at ¥30,000. Special cases: MA = ¥120,000, MUGEN #108 = ¥30,000 fixed.
+/// Price starts at ¥5,000 and steps up ¥250 per sold unit, capped at ¥30,000.
+/// Special cases: MA = ¥120,000, MUGEN #108 = ¥30,000 fixed.
 fn dynamic_price(brand: &str, drop_num: i64, sold: i64, name: &str) -> i64 {
     if brand == "ma" {
         return 120_000;
@@ -118,7 +118,7 @@ fn dynamic_price(brand: &str, drop_num: i64, sold: i64, name: &str) -> i64 {
     if brand == "mugen" && drop_num == 108 {
         return 30_000;
     }
-    let base: i64 = 4_000;
+    let base: i64 = 5_000;
     let step: i64 = 250;
     let max:  i64 = 30_000;
     (base + sold.max(0) * step).min(max)
