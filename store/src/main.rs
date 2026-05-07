@@ -102,6 +102,13 @@ struct UpdateDesignBody {
     design_url: String,
 }
 
+#[derive(Deserialize)]
+struct UpdateSoldBody {
+    brand: String,
+    drop_num: i64,
+    sold: i64,
+}
+
 /// Bonding-curve / progressive pricing.
 /// Price starts at ¥5,000 (1st buyer) and steps up ¥250 per sold unit, capped at ¥30,000.
 /// "Early buyer wins" — opposite of Dutch auction.
@@ -739,6 +746,25 @@ async fn update_design(
     Json(serde_json::json!({"ok": true, "updated": n})).into_response()
 }
 
+async fn update_sold(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String,String>>,
+    Json(body): Json<UpdateSoldBody>,
+) -> impl IntoResponse {
+    let expected = env::var("ADMIN_TOKEN").unwrap_or_else(|_| "mu-admin".into());
+    if q.get("token").map(|s| s.as_str()) != Some(expected.as_str()) {
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+    let conn = db.lock().unwrap();
+    let now = chrono_now();
+    let n = conn.execute(
+        "UPDATE products SET sold=?, sold_out_at=CASE WHEN ?>=inventory THEN ? ELSE NULL END
+         WHERE brand=? AND drop_num=?",
+        params![body.sold, body.sold, now, body.brand, body.drop_num]
+    ).unwrap_or(0);
+    Json(serde_json::json!({"ok": true, "updated": n})).into_response()
+}
+
 async fn nft_metadata(
     Path((brand, drop_num)): Path<(String, i64)>,
     State(db): State<Db>,
@@ -1184,6 +1210,7 @@ async fn main() {
         .route("/api/admin/update-price", post(update_price))
         .route("/api/admin/update-nft", post(update_nft))
         .route("/api/admin/update-design", post(update_design))
+        .route("/api/admin/update-sold", post(update_sold))
         .route("/api/admin/mockup", patch(update_mockup))
         .route("/api/admin/deactivate", post(deactivate_product))
         .route("/api/admin/settle-auction", post(settle_auction))
