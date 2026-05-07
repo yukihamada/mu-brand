@@ -12,7 +12,8 @@ use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::{sync::{Arc, Mutex}, env, time::{SystemTime, UNIX_EPOCH}};
 use tower_http::services::ServeDir;
-use tower_http::trace::TraceLayer;
+use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
+use tracing::Level;
 
 /// Centralized admin token check. Fail-closed: if ADMIN_TOKEN env var
 /// is missing or empty, every admin request is rejected with 503.
@@ -1298,7 +1299,12 @@ async fn main() {
         .fallback_service(ServeDir::new("static"))
         .with_state(db)
         .layer(middleware::from_fn(security_headers))
-        .layer(TraceLayer::new_for_http());
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+                .on_request(DefaultOnRequest::new().level(Level::INFO))
+                .on_response(DefaultOnResponse::new().level(Level::INFO)),
+        );
 
     let port = env::var("PORT").unwrap_or_else(|_| "3000".into());
     let addr = format!("0.0.0.0:{}", port);
