@@ -156,6 +156,45 @@ struct UpdateSoldBody {
     sold: i64,
 }
 
+#[derive(Deserialize)]
+struct UpdateWalletBody {
+    wallet: String,
+}
+
+fn mockups_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(env::var("MOCKUPS_DIR").unwrap_or_else(|_| "/data/mockups".into()))
+}
+
+/// If the given URL is a Printful temporary upload (which expires), download
+/// the bytes and save them under MOCKUPS_DIR/<product_id>.jpg. Return the new
+/// internal URL (`/mockups/<id>.jpg`) on success, or None if the URL is
+/// already permanent / fetch failed.
+async fn persist_mockup_if_temporary(product_id: i64, url: &str) -> Option<String> {
+    let is_temp = url.starts_with("https://printful-upload.s3")
+        || url.contains("/tmp/");
+    if !is_temp {
+        return None;
+    }
+    let bytes = match reqwest::get(url).await {
+        Ok(r) if r.status().is_success() => match r.bytes().await {
+            Ok(b) if !b.is_empty() => b,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let dir = mockups_dir();
+    if let Err(e) = tokio::fs::create_dir_all(&dir).await {
+        eprintln!("[persist_mockup] create_dir_all failed: {}", e);
+        return None;
+    }
+    let path = dir.join(format!("{}.jpg", product_id));
+    if let Err(e) = tokio::fs::write(&path, &bytes).await {
+        eprintln!("[persist_mockup] write {} failed: {}", path.display(), e);
+        return None;
+    }
+    Some(format!("/mockups/{}.jpg", product_id))
+}
+
 /// Bonding-curve / progressive pricing.
 /// Price starts at ¥5,000 (1st buyer) and steps up ¥250 per sold unit, capped at ¥30,000.
 /// "Early buyer wins" — opposite of Dutch auction.
@@ -320,7 +359,7 @@ async fn place_bid(
         params![body.product_id],
         |row| Ok((row.get::<_,i64>(0)?, row.get::<_,i64>(1).unwrap_or(0), row.get::<_,Option<String>>(2)?))
     );
-    let (base_price, current_bid, auction_end) = match row {
+    let (base_price, current_bid, _auction_end) = match row {
         Ok(r) => r,
         Err(_) => return (StatusCode::NOT_FOUND, "not found").into_response(),
     };
@@ -330,15 +369,21 @@ async fn place_bid(
             format!("最低入札額は¥{}です", min_bid)).into_response();
     }
     let now = chrono_now();
+    let wallet_token = uuid::Uuid::new_v4().to_string();
     conn.execute(
-        "INSERT INTO bids (product_id, amount, email, wallet, created_at) VALUES (?,?,?,?,?)",
-        params![body.product_id, body.amount, body.email, body.wallet, now]
+        "INSERT INTO bids (product_id, amount, email, wallet, wallet_token, created_at) VALUES (?,?,?,?,?,?)",
+        params![body.product_id, body.amount, body.email, body.wallet, wallet_token, now]
     ).unwrap();
     conn.execute(
         "UPDATE products SET current_bid=?, bid_count=bid_count+1 WHERE id=?",
         params![body.amount, body.product_id]
     ).unwrap();
-    Json(serde_json::json!({"ok": true})).into_response()
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    Json(serde_json::json!({
+        "ok": true,
+        "wallet_token": wallet_token,
+        "wallet_url": format!("{}/wallet/{}", base_url, wallet_token),
+    })).into_response()
 }
 
 async fn checkout(
@@ -653,21 +698,38 @@ async fn settle_auction(
         None => return (StatusCode::BAD_REQUEST, "missing product_id").into_response(),
     };
 
-    // Find highest bid
+    // Find highest bid (also fetch its wallet_token, generating one if missing)
     let bid = {
         let conn = db.lock().unwrap();
         conn.query_row(
-            "SELECT b.amount, b.email, p.name, p.price_jpy FROM bids b
+            "SELECT b.id, b.amount, b.email, b.wallet, b.wallet_token, p.name, p.price_jpy FROM bids b
              JOIN products p ON p.id = b.product_id
              WHERE b.product_id=? ORDER BY b.amount DESC LIMIT 1",
             params![product_id],
-            |row| Ok((row.get::<_,i64>(0)?, row.get::<_,String>(1)?,
-                       row.get::<_,String>(2)?, row.get::<_,i64>(3)?))
+            |row| Ok((
+                row.get::<_,i64>(0)?,
+                row.get::<_,i64>(1)?,
+                row.get::<_,String>(2)?,
+                row.get::<_,Option<String>>(3)?,
+                row.get::<_,Option<String>>(4)?,
+                row.get::<_,String>(5)?,
+                row.get::<_,i64>(6)?,
+            ))
         )
     };
-    let (amount, email, product_name, _base_price) = match bid {
+    let (bid_id, amount, email, current_wallet, wallet_token_opt, product_name, _base_price) = match bid {
         Ok(r) => r,
         Err(_) => return (StatusCode::NOT_FOUND, "no bids found").into_response(),
+    };
+    // Backfill a wallet_token if this bid pre-dates the column
+    let wallet_token = match wallet_token_opt {
+        Some(t) if !t.is_empty() => t,
+        _ => {
+            let t = uuid::Uuid::new_v4().to_string();
+            let conn = db.lock().unwrap();
+            conn.execute("UPDATE bids SET wallet_token=? WHERE id=?", params![t, bid_id]).ok();
+            t
+        }
     };
 
     // Create Stripe payment link
@@ -712,6 +774,21 @@ async fn settle_auction(
 
     // Send email to winner via Resend
     let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    let wallet_url = format!("{}/wallet/{}", base_url, wallet_token);
+    let wallet_block = if current_wallet.as_deref().map(|s| !s.is_empty()).unwrap_or(false) {
+        format!(r#"<div style="background:#1C1C1C;padding:16px 20px;margin-bottom:24px;font-size:10px;line-height:1.7;opacity:0.7">
+        登録済みウォレット: <span style="font-family:monospace">{wallet}</span><br>
+        <a href="{wallet_url}" style="color:#F5F5F0;text-decoration:underline;opacity:0.7">変更する</a>
+        </div>"#, wallet = current_wallet.clone().unwrap_or_default(), wallet_url = wallet_url)
+    } else {
+        format!(r#"<div style="background:#1C1C1C;padding:20px;margin-bottom:24px;border-left:2px solid #C8B560">
+        <div style="font-size:9px;letter-spacing:0.2em;text-transform:uppercase;opacity:0.65;margin-bottom:8px">NFT受取ウォレット未登録</div>
+        <div style="font-size:11px;line-height:1.7;opacity:0.85;margin-bottom:12px">
+        Soulbound NFT証明書を受け取るSolanaウォレットアドレスを登録してください。発送までに登録があれば自動送付します。
+        </div>
+        <a href="{wallet_url}" style="display:inline-block;color:#F5F5F0;text-decoration:underline;font-size:11px;letter-spacing:0.15em">ウォレットを登録 →</a>
+        </div>"#, wallet_url = wallet_url)
+    };
     let html = format!(r#"
 <div style="background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;padding:48px;max-width:560px;margin:0 auto">
   <div style="font-size:22px;font-weight:700;letter-spacing:0.4em;margin-bottom:32px">MU</div>
@@ -728,6 +805,8 @@ async fn settle_auction(
     Soulbound NFT証明書は発送後にSolanaウォレットへ送付します。
   </p>
   <a href="{payment_url}" style="display:inline-block;background:#F5F5F0;color:#0A0A0A;padding:16px 32px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:600">決済する →</a>
+  <div style="margin-top:32px"></div>
+  {wallet_block}
   <div style="margin-top:48px;border-top:1px solid #1C1C1C;padding-top:20px;font-size:9px;opacity:0.5;letter-spacing:0.1em">
     MU — wearmu.com | mail@yukihamada.jp
   </div>
@@ -738,6 +817,7 @@ async fn settle_auction(
             .chars().rev().collect::<String>(),
         product_name = product_name,
         payment_url = payment_url,
+        wallet_block = wallet_block,
     );
 
     client.post("https://api.resend.com/emails")
@@ -750,7 +830,145 @@ async fn settle_auction(
         }))
         .send().await.ok();
 
-    Json(serde_json::json!({"ok": true, "winner": email, "amount": amount, "payment_url": payment_url})).into_response()
+    Json(serde_json::json!({
+        "ok": true,
+        "winner": email,
+        "amount": amount,
+        "payment_url": payment_url,
+        "wallet_url": wallet_url,
+        "wallet_registered": current_wallet.as_deref().map(|s| !s.is_empty()).unwrap_or(false),
+    })).into_response()
+}
+
+/// Lookup-by-token wallet management page. Linked from auction-winner emails.
+/// Single-page form: shows current wallet (if any) and lets the winner set/replace it.
+async fn wallet_page(
+    Path(token): Path<String>,
+    State(db): State<Db>,
+) -> impl IntoResponse {
+    let row = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT b.email, b.wallet, b.amount, p.name FROM bids b
+             JOIN products p ON p.id = b.product_id
+             WHERE b.wallet_token=? LIMIT 1",
+            params![token],
+            |r| Ok((
+                r.get::<_,String>(0)?,
+                r.get::<_,Option<String>>(1)?.unwrap_or_default(),
+                r.get::<_,i64>(2)?,
+                r.get::<_,String>(3)?,
+            ))
+        )
+    };
+    let (email, wallet, amount, product_name) = match row {
+        Ok(r) => r,
+        Err(_) => {
+            return (StatusCode::NOT_FOUND, Html("<h1 style='font-family:sans-serif;color:#666;text-align:center;margin-top:30vh'>Token not found.</h1>".to_string())).into_response();
+        }
+    };
+    let masked_email = {
+        let parts: Vec<&str> = email.splitn(2, '@').collect();
+        if parts.len() == 2 {
+            let local = parts[0];
+            let masked: String = if local.len() <= 2 {
+                "*".repeat(local.len())
+            } else {
+                format!("{}***{}", &local[..1], &local[local.len()-1..])
+            };
+            format!("{}@{}", masked, parts[1])
+        } else { "***".into() }
+    };
+    let html = format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Wallet — MU 間 MA</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}}
+.card{{max-width:480px;width:100%;background:#111;padding:40px;border:1px solid #1C1C1C}}
+.brand{{font-size:18px;font-weight:700;letter-spacing:0.4em;margin-bottom:32px}}
+.label{{font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.55;margin-bottom:6px}}
+.value{{font-size:13px;margin-bottom:18px;font-weight:300}}
+.amt{{font-size:24px;font-weight:200;margin-bottom:18px}}
+input[type=text]{{width:100%;padding:14px 16px;background:#0A0A0A;border:1px solid #2A2A2A;color:#F5F5F0;font-size:13px;font-family:monospace;letter-spacing:0.05em}}
+input[type=text]:focus{{outline:none;border-color:#C8B560}}
+button{{margin-top:14px;width:100%;background:#F5F5F0;color:#0A0A0A;border:0;padding:14px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;font-weight:600;cursor:pointer}}
+button:disabled{{opacity:0.5;cursor:wait}}
+.note{{font-size:10px;line-height:1.7;opacity:0.55;margin-top:18px}}
+.msg{{font-size:11px;margin-top:12px;min-height:16px;letter-spacing:0.05em}}
+.ok{{color:#5a9e6f}} .err{{color:#C8362C}}
+hr{{border:0;border-top:1px solid #1C1C1C;margin:24px 0}}
+</style></head>
+<body><div class="card">
+<div class="brand">MU</div>
+<div class="label">間 MA — 落札</div>
+<div class="value">{product_name}</div>
+<div class="label">落札金額</div>
+<div class="amt">¥{amount}</div>
+<div class="label">登録メールアドレス</div>
+<div class="value">{masked_email}</div>
+<hr>
+<div class="label">Solanaウォレットアドレス（NFT受取用）</div>
+<input id="w" type="text" value="{wallet}" placeholder="例: 8CeusiVAeibuBGv5xcf7kt7JQZzqwTS5pD7u2CfyoWnL" autocomplete="off" spellcheck="false">
+<button id="b" onclick="save()">登録 / 更新</button>
+<div id="m" class="msg"></div>
+<div class="note">アドレスは32〜44文字の Base58 形式（数字とアルファベットの英字）。<br>登録は何度でも変更可能。発送までの最終登録分にNFTを送付します。</div>
+</div>
+<script>
+async function save(){{
+  const w=document.getElementById('w').value.trim();
+  const m=document.getElementById('m');
+  const b=document.getElementById('b');
+  m.className='msg';
+  if(!/^[1-9A-HJ-NP-Za-km-z]{{32,44}}$/.test(w)){{
+    m.className='msg err';m.textContent='アドレスの形式が正しくありません。';return;
+  }}
+  b.disabled=true;m.textContent='送信中…';
+  try{{
+    const r=await fetch('/api/wallet/{token}',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{wallet:w}})}});
+    if(r.ok){{m.className='msg ok';m.textContent='登録しました。';}}
+    else{{m.className='msg err';m.textContent='エラーが発生しました（'+r.status+'）。';}}
+  }}catch(e){{m.className='msg err';m.textContent='ネットワークエラー';}}
+  b.disabled=false;
+}}
+</script></body></html>"#,
+        product_name = product_name,
+        amount = amount.to_string().chars().rev().collect::<Vec<_>>().chunks(3)
+            .map(|c| c.iter().collect::<String>()).collect::<Vec<_>>().join(",")
+            .chars().rev().collect::<String>(),
+        masked_email = masked_email,
+        wallet = wallet,
+        token = token,
+    );
+    Html(html).into_response()
+}
+
+async fn update_wallet(
+    Path(token): Path<String>,
+    State(db): State<Db>,
+    Json(body): Json<UpdateWalletBody>,
+) -> impl IntoResponse {
+    let w = body.wallet.trim();
+    // Solana addresses are Base58, 32–44 chars
+    let valid = w.len() >= 32 && w.len() <= 44
+        && w.chars().all(|c| matches!(c,
+            '1'..='9' | 'A'..='H' | 'J'..='N' | 'P'..='Z' | 'a'..='k' | 'm'..='z'));
+    if !valid {
+        return (StatusCode::BAD_REQUEST, "invalid wallet address").into_response();
+    }
+    let n = {
+        let conn = db.lock().unwrap();
+        conn.execute(
+            "UPDATE bids SET wallet=? WHERE wallet_token=?",
+            params![w, token]
+        ).unwrap_or(0)
+    };
+    if n == 0 {
+        return (StatusCode::NOT_FOUND, "token not found").into_response();
+    }
+    Json(serde_json::json!({"ok": true})).into_response()
 }
 
 async fn deactivate_product(
@@ -777,12 +995,76 @@ async fn update_mockup(
     if let Err(resp) = require_admin_token(q.get("token")) {
         return resp;
     }
-    let conn = db.lock().unwrap();
-    conn.execute(
-        "UPDATE products SET mockup_url=? WHERE id=?",
-        params![body.mockup_url, body.product_id]
-    ).unwrap();
-    Json(serde_json::json!({"ok": true})).into_response()
+    let final_url = persist_mockup_if_temporary(body.product_id, &body.mockup_url)
+        .await
+        .unwrap_or_else(|| body.mockup_url.clone());
+    {
+        let conn = db.lock().unwrap();
+        conn.execute(
+            "UPDATE products SET mockup_url=? WHERE id=?",
+            params![final_url, body.product_id]
+        ).unwrap();
+    }
+    Json(serde_json::json!({"ok": true, "mockup_url": final_url})).into_response()
+}
+
+/// Direct image upload (multipart/form-data). Use this to fix products whose
+/// Printful tmp URL has already expired, or to override the auto-generated mockup.
+/// Form fields: `product_id` (text) and `file` (image/jpeg).
+async fn upload_mockup(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String,String>>,
+    mut multipart: axum::extract::Multipart,
+) -> impl IntoResponse {
+    if let Err(resp) = require_admin_token(q.get("token")) {
+        return resp;
+    }
+    let mut product_id: Option<i64> = None;
+    let mut file_bytes: Option<axum::body::Bytes> = None;
+    while let Some(field) = match multipart.next_field().await {
+        Ok(f) => f,
+        Err(e) => return (StatusCode::BAD_REQUEST, format!("multipart error: {}", e)).into_response(),
+    } {
+        match field.name().unwrap_or("") {
+            "product_id" => {
+                product_id = field.text().await.ok().and_then(|s| s.parse().ok());
+            }
+            "file" => {
+                file_bytes = field.bytes().await.ok();
+            }
+            _ => {}
+        }
+    }
+    let pid = match product_id {
+        Some(v) => v,
+        None => return (StatusCode::BAD_REQUEST, "missing product_id").into_response(),
+    };
+    let bytes = match file_bytes {
+        Some(b) if !b.is_empty() => b,
+        _ => return (StatusCode::BAD_REQUEST, "missing or empty file").into_response(),
+    };
+    let dir = mockups_dir();
+    if let Err(e) = tokio::fs::create_dir_all(&dir).await {
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("mkdir: {}", e)).into_response();
+    }
+    let path = dir.join(format!("{}.jpg", pid));
+    if let Err(e) = tokio::fs::write(&path, &bytes).await {
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("write: {}", e)).into_response();
+    }
+    let internal_url = format!("/mockups/{}.jpg", pid);
+    {
+        let conn = db.lock().unwrap();
+        conn.execute(
+            "UPDATE products SET mockup_url=? WHERE id=?",
+            params![internal_url, pid]
+        ).unwrap();
+    }
+    Json(serde_json::json!({
+        "ok": true,
+        "product_id": pid,
+        "mockup_url": internal_url,
+        "bytes": bytes.len(),
+    })).into_response()
 }
 
 async fn import_product(
@@ -793,18 +1075,30 @@ async fn import_product(
     if let Err(resp) = require_admin_token(q.get("token")) {
         return resp;
     }
-    let conn = db.lock().unwrap();
-    let now = chrono_now();
-    conn.execute(
-        "INSERT OR IGNORE INTO products
-         (brand, drop_num, name, design_url, mockup_url, price_jpy, inventory,
-          created_at, weather_data, prompt_hash, seed_data, auction_end, nft_mint)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        params![body.brand, body.drop_num, body.name, body.design_url, body.mockup_url,
-                body.price_jpy, body.inventory, now, body.weather_data,
-                body.prompt_hash, body.seed_data, body.auction_end, body.nft_mint]
-    ).unwrap();
-    Json(serde_json::json!({"ok": true})).into_response()
+    let new_id: i64 = {
+        let conn = db.lock().unwrap();
+        let now = chrono_now();
+        conn.execute(
+            "INSERT INTO products
+             (brand, drop_num, name, design_url, mockup_url, price_jpy, inventory,
+              created_at, weather_data, prompt_hash, seed_data, auction_end, nft_mint)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            params![body.brand, body.drop_num, body.name, body.design_url, body.mockup_url,
+                    body.price_jpy, body.inventory, now, body.weather_data,
+                    body.prompt_hash, body.seed_data, body.auction_end, body.nft_mint]
+        ).unwrap();
+        conn.last_insert_rowid()
+    };
+    if let Some(src) = body.mockup_url.as_deref() {
+        if let Some(internal) = persist_mockup_if_temporary(new_id, src).await {
+            let conn = db.lock().unwrap();
+            conn.execute(
+                "UPDATE products SET mockup_url=? WHERE id=?",
+                params![internal, new_id]
+            ).ok();
+        }
+    }
+    Json(serde_json::json!({"ok": true, "id": new_id})).into_response()
 }
 
 async fn update_price(
@@ -1304,9 +1598,26 @@ async fn main() {
         "ALTER TABLE products ADD COLUMN nft_mint TEXT",
         "ALTER TABLE products ADD COLUMN parent_design TEXT",
         "ALTER TABLE products ADD COLUMN sold_out_at TEXT",
+        "ALTER TABLE bids ADD COLUMN wallet_token TEXT",
     ] {
         conn.execute(col, []).ok();
     }
+    // Backfill wallet_token for any pre-existing bid rows so old auctions can be settled
+    {
+        let mut stmt = conn.prepare("SELECT id FROM bids WHERE wallet_token IS NULL OR wallet_token=''")
+            .expect("prepare bid backfill");
+        let ids: Vec<i64> = stmt.query_map([], |r| r.get::<_,i64>(0))
+            .map(|it| it.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default();
+        for id in ids {
+            conn.execute(
+                "UPDATE bids SET wallet_token=? WHERE id=?",
+                params![uuid::Uuid::new_v4().to_string(), id]
+            ).ok();
+        }
+    }
+    // Ensure mockups dir exists for persisted images
+    std::fs::create_dir_all(mockups_dir()).ok();
     let db: Db = Arc::new(Mutex::new(conn));
 
     let app = Router::new()
@@ -1333,8 +1644,11 @@ async fn main() {
         .route("/api/admin/update-design", post(update_design))
         .route("/api/admin/update-sold", post(update_sold))
         .route("/api/admin/mockup", patch(update_mockup))
+        .route("/api/admin/upload-mockup", post(upload_mockup))
         .route("/api/admin/deactivate", post(deactivate_product))
         .route("/api/admin/settle-auction", post(settle_auction))
+        .route("/wallet/:token", get(wallet_page))
+        .route("/api/wallet/:token", post(update_wallet))
         .route("/api/nft/:brand/:drop_num", get(nft_metadata))
         .route("/api/fragment", post(fragment_request))
         .route("/v/:brand/:drop_num", get(verify_page))
@@ -1343,6 +1657,7 @@ async fn main() {
         .route("/city", get(city_page))
         .route("/city.html", get(city_page))
         .nest_service("/static", ServeDir::new("static"))
+        .nest_service("/mockups", ServeDir::new(mockups_dir()))
         .fallback_service(ServeDir::new("static"))
         .with_state(db)
         .layer(middleware::from_fn(security_headers))
