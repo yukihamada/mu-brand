@@ -987,6 +987,49 @@ async fn deactivate_product(
     Json(serde_json::json!({"ok": true, "id": id})).into_response()
 }
 
+/// Admin diagnostic: dump full product row (including design_url) for one or all products.
+/// Use ?id=<n> for a single product, omit for all (active+inactive).
+async fn admin_lookup(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String,String>>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_admin_token(q.get("token")) {
+        return resp;
+    }
+    let conn = db.lock().unwrap();
+    let sql = if q.contains_key("id") {
+        "SELECT id, brand, drop_num, name, design_url, mockup_url, active, sold, prompt_hash
+         FROM products WHERE id=?"
+    } else {
+        "SELECT id, brand, drop_num, name, design_url, mockup_url, active, sold, prompt_hash
+         FROM products ORDER BY id DESC LIMIT 200"
+    };
+    let mut stmt = conn.prepare(sql).unwrap();
+    let mapper = |row: &rusqlite::Row| -> rusqlite::Result<serde_json::Value> {
+        Ok(serde_json::json!({
+            "id":          row.get::<_, i64>(0)?,
+            "brand":       row.get::<_, String>(1)?,
+            "drop_num":    row.get::<_, i64>(2)?,
+            "name":        row.get::<_, String>(3)?,
+            "design_url":  row.get::<_, Option<String>>(4)?,
+            "mockup_url":  row.get::<_, Option<String>>(5)?,
+            "active":      row.get::<_, i64>(6)?,
+            "sold":        row.get::<_, i64>(7)?,
+            "prompt_hash": row.get::<_, Option<String>>(8)?,
+        }))
+    };
+    let rows: Vec<serde_json::Value> = if let Some(id_str) = q.get("id") {
+        let id: i64 = match id_str.parse() {
+            Ok(v) => v,
+            Err(_) => return (StatusCode::BAD_REQUEST, "bad id").into_response(),
+        };
+        stmt.query_map(params![id], mapper).unwrap().filter_map(|r| r.ok()).collect()
+    } else {
+        stmt.query_map([], mapper).unwrap().filter_map(|r| r.ok()).collect()
+    };
+    Json(serde_json::json!({"rows": rows})).into_response()
+}
+
 async fn update_mockup(
     State(db): State<Db>,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String,String>>,
@@ -1645,6 +1688,7 @@ async fn main() {
         .route("/api/admin/update-sold", post(update_sold))
         .route("/api/admin/mockup", patch(update_mockup))
         .route("/api/admin/upload-mockup", post(upload_mockup))
+        .route("/api/admin/lookup", get(admin_lookup))
         .route("/api/admin/deactivate", post(deactivate_product))
         .route("/api/admin/settle-auction", post(settle_auction))
         .route("/wallet/:token", get(wallet_page))
