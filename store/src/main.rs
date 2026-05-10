@@ -1504,6 +1504,10 @@ async fn city_page() -> Html<&'static str> {
     Html(include_str!("../static/city.html"))
 }
 
+async fn you_page() -> Html<&'static str> {
+    Html(include_str!("../static/you.html"))
+}
+
 async fn success_page() -> Html<&'static str> {
     Html(r#"<!DOCTYPE html><html><head><meta charset=UTF-8><style>
     body{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',sans-serif;
@@ -1616,6 +1620,600 @@ async fn fragment_request(
     Json(serde_json::json!({"ok": true}))
 }
 
+// ── MU × YOU — daily personalised collab tee ─────────────────────────────────
+//
+// Each subscriber gets one AI-prompt-driven design proposal per day, derived
+// from their taste profile + a deterministic per-day seed. Free to subscribe;
+// only the days they Claim become a Stripe checkout for a Bella+Canvas DTG tee.
+
+#[derive(Deserialize)]
+struct YouSubscribeBody {
+    email: String,
+    #[serde(default)] mood:    Vec<String>,
+    #[serde(default)] palette: Vec<String>,
+    #[serde(default)] scene:   Vec<String>,
+    #[serde(default)] size:    String,
+    #[serde(default)] bio:     String,
+}
+
+#[derive(Deserialize)]
+struct YouFeedbackBody {
+    token: String,
+    design_id: i64,
+    /// "skip" | "like" | "refresh"
+    action: String,
+}
+
+#[derive(Deserialize)]
+struct YouClaimBody {
+    token: String,
+    design_id: i64,
+}
+
+#[derive(Deserialize)]
+struct YouUnsubBody {
+    token: String,
+}
+
+fn jst_today_str() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now().duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64).unwrap_or(0) + 9 * 3600;
+    let days = secs / 86400;
+    civil_from_days_str(days)
+}
+
+fn civil_from_days_str(mut days: i64) -> String {
+    days += 719468;
+    let era = if days >= 0 { days } else { days - 146096 } / 146097;
+    let doe = days - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{:04}-{:02}-{:02}", y, m, d)
+}
+
+/// Build a poetic JP design name + prompt from the user taste profile and the
+/// day seed. Deterministic so the same user gets the same case if the day is
+/// regenerated, but feels fresh because the seed shifts every JST date.
+fn compose_design(taste: &serde_json::Value, day: &str, refresh_n: i64) -> (String, String, String) {
+    use sha2::{Digest, Sha256};
+    let seed_input = format!(
+        "{}|{}|{}|r{}",
+        day,
+        taste.get("email").and_then(|v| v.as_str()).unwrap_or(""),
+        serde_json::to_string(taste).unwrap_or_default(),
+        refresh_n,
+    );
+    let mut hasher = Sha256::new();
+    hasher.update(seed_input.as_bytes());
+    let h = hasher.finalize();
+    let seed = hex::encode(&h[..8]);
+
+    let mood: Vec<String> = taste.get("mood")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let palette: Vec<String> = taste.get("palette")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let scene: Vec<String> = taste.get("scene")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    let pick = |arr: &[String], offset: usize, fallback: &str| -> String {
+        if arr.is_empty() { return fallback.to_string(); }
+        let idx = (h[offset] as usize) % arr.len();
+        arr[idx].clone()
+    };
+
+    let m1 = pick(&mood, 0, "静か");
+    let m2 = if mood.len() > 1 { pick(&mood, 1, "余白") } else { String::new() };
+    let pal = pick(&palette, 2, "墨");
+    let sc  = pick(&scene, 3, "毎日");
+
+    // Curated noun bank — selected per seed
+    let nouns = [
+        "霧","余白","ノイズ","回路","層","ふち","島","橋","残響","解像度",
+        "層雲","北限","薄明","残光","水位","素描","点描","くずし","湾","ふもと",
+    ];
+    let noun = nouns[(h[4] as usize) % nouns.len()];
+    let day_num_seed = (h[5] as i64 % 30) + 1;
+    let _ = day_num_seed; // reserved
+
+    let name = if !m2.is_empty() {
+        format!("{} と {} の {}", m1, m2, noun)
+    } else {
+        format!("{} の {}", m1, noun)
+    };
+
+    let prompt = format!(
+        "{date}・{mood}な{noun}を、{pal}の階調で。{sc}に着られる、身体の延長としてのコットンTシャツ。\
+         胸ポケット位置に小さなモチーフ、背中に余白。10oz Bella+Canvas、DTG。",
+        date = day, mood = m1, noun = noun, pal = pal, sc = sc,
+    );
+
+    (name, prompt, seed)
+}
+
+/// SVG image URL (data URI) generated server-side for the design preview.
+/// Uses the seed to deterministically choose hues. Replace later with a real
+/// generative pipeline (Gemini / SDXL) — the schema persists the image_url
+/// field so swapping in a CDN URL later is a one-line change.
+fn render_design_svg(name: &str, seed: &str) -> String {
+    let h: u32 = u32::from_str_radix(seed.get(0..6).unwrap_or("336699"), 16).unwrap_or(0x336699);
+    let h1 = (h % 360) as i64;
+    let h2 = ((h / 360) % 360) as i64;
+    let svg = format!(
+        r##"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 800 800'>
+<defs>
+  <radialGradient id='g' cx='30%' cy='25%' r='90%'>
+    <stop offset='0%' stop-color='hsl({h1},58%,42%)'/>
+    <stop offset='65%' stop-color='hsl({h2},35%,16%)'/>
+    <stop offset='100%' stop-color='#0A0A0A'/>
+  </radialGradient>
+  <filter id='n'><feTurbulence baseFrequency='0.9' numOctaves='2' seed='{s}'/>
+    <feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.06 0'/>
+    <feComposite in2='SourceGraphic' operator='in'/></filter>
+</defs>
+<rect width='800' height='800' fill='url(#g)'/>
+<rect width='800' height='800' filter='url(#n)' opacity='0.6'/>
+<text x='50%' y='52%' text-anchor='middle' fill='rgba(255,255,255,0.9)'
+  font-family='Helvetica Neue,Arial' font-size='52' letter-spacing='10' font-weight='200'>MU × YOU</text>
+<text x='50%' y='60%' text-anchor='middle' fill='rgba(255,255,255,0.55)'
+  font-family='Helvetica Neue,Arial' font-size='18' letter-spacing='6'>{name}</text>
+<text x='50%' y='66%' text-anchor='middle' fill='rgba(255,255,255,0.25)'
+  font-family='monospace' font-size='10' letter-spacing='4'>seed:{s2}</text>
+</svg>"##,
+        h1 = h1, h2 = h2,
+        s = (h % 100) as i64,
+        s2 = &seed[..seed.len().min(8)],
+        name = name.replace('<', "").replace('>', ""),
+    );
+    format!("data:image/svg+xml;utf8,{}", urlencoded(&svg))
+}
+
+fn urlencoded(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9'
+            | b'-' | b'_' | b'.' | b'~'
+            | b'/' | b':' | b',' | b';' | b' '
+            | b'(' | b')' | b'\'' | b'!'
+            | b'=' | b'&' => out.push(b as char),
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
+}
+
+fn ensure_design_for_day(conn: &Connection, user_id: i64, day: &str, taste: &serde_json::Value, force_refresh: bool)
+    -> rusqlite::Result<i64>
+{
+    // existing?
+    let existing: Option<(i64, i64)> = conn.query_row(
+        "SELECT id, refresh_count FROM you_designs WHERE user_id=? AND day=?",
+        params![user_id, day],
+        |r| Ok((r.get::<_,i64>(0)?, r.get::<_,i64>(1)?)),
+    ).ok();
+
+    if let Some((id, refresh_count)) = existing {
+        if !force_refresh {
+            return Ok(id);
+        }
+        // refresh: bump count, regenerate name/prompt/seed/image
+        let new_count = refresh_count + 1;
+        let (name, prompt, seed) = compose_design(taste, day, new_count);
+        let image_url = render_design_svg(&name, &seed);
+        conn.execute(
+            "UPDATE you_designs
+             SET name=?, prompt=?, seed=?, image_url=?, refresh_count=?, updated_at=?
+             WHERE id=?",
+            params![name, prompt, seed, image_url, new_count, chrono_now(), id],
+        )?;
+        return Ok(id);
+    }
+
+    // figure out day_num for this user
+    let day_num: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(day_num), 0) + 1 FROM you_designs WHERE user_id=?",
+        params![user_id],
+        |r| r.get(0),
+    ).unwrap_or(1);
+
+    let (name, prompt, seed) = compose_design(taste, day, 0);
+    let image_url = render_design_svg(&name, &seed);
+    let now = chrono_now();
+    conn.execute(
+        "INSERT INTO you_designs
+         (user_id, day, day_num, name, prompt, seed, image_url, status,
+          refresh_count, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,'pending',0,?,?)",
+        params![user_id, day, day_num, name, prompt, seed, image_url, now, now],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+fn design_to_json(conn: &Connection, id: i64) -> Option<serde_json::Value> {
+    conn.query_row(
+        "SELECT id, day, day_num, name, prompt, seed, image_url, status, size, refresh_count
+         FROM you_designs WHERE id=?",
+        params![id],
+        |r| Ok(serde_json::json!({
+            "id": r.get::<_,i64>(0)?,
+            "day": r.get::<_,String>(1)?,
+            "day_num": r.get::<_,i64>(2)?,
+            "name": r.get::<_,String>(3)?,
+            "prompt": r.get::<_,String>(4)?,
+            "seed": r.get::<_,String>(5)?,
+            "image_url": r.get::<_,Option<String>>(6)?,
+            "status": r.get::<_,String>(7)?,
+            "size": r.get::<_,Option<String>>(8)?.unwrap_or_else(|| "S".into()),
+            "refresh_count": r.get::<_,i64>(9)?,
+            "price_jpy": 6800,
+            "valid_label": "24h",
+        })),
+    ).ok()
+}
+
+async fn you_subscribe(
+    State(db): State<Db>,
+    Json(body): Json<YouSubscribeBody>,
+) -> impl IntoResponse {
+    let email = body.email.trim().to_lowercase();
+    if email.is_empty() || !email.contains('@') || email.len() > 200 {
+        return (StatusCode::BAD_REQUEST, "invalid email").into_response();
+    }
+    let size = if body.size.is_empty() { "S".to_string() } else { body.size.clone() };
+    if !["XS","S","M","L","XL","XXL"].contains(&size.as_str()) {
+        return (StatusCode::BAD_REQUEST, "invalid size").into_response();
+    }
+    let taste = serde_json::json!({
+        "email": email,
+        "mood": body.mood, "palette": body.palette, "scene": body.scene,
+        "size": size, "bio": body.bio,
+    });
+
+    let now = chrono_now();
+    let day = jst_today_str();
+
+    let (token, user_id) = {
+        let conn = db.lock().unwrap();
+
+        // Upsert user
+        let existing: Option<(i64, String)> = conn.query_row(
+            "SELECT id, token FROM you_users WHERE email=?",
+            params![email],
+            |r| Ok((r.get::<_,i64>(0)?, r.get::<_,String>(1)?)),
+        ).ok();
+
+        let (uid, tk) = match existing {
+            Some((uid, tk)) => {
+                conn.execute(
+                    "UPDATE you_users SET taste_json=?, size=?, updated_at=?, unsubscribed_at=NULL
+                     WHERE id=?",
+                    params![taste.to_string(), size, now, uid],
+                ).ok();
+                (uid, tk)
+            }
+            None => {
+                let tk = uuid::Uuid::new_v4().to_string().replace('-', "");
+                conn.execute(
+                    "INSERT INTO you_users (email, token, taste_json, size, created_at, updated_at)
+                     VALUES (?,?,?,?,?,?)",
+                    params![email, tk, taste.to_string(), size, now, now],
+                ).ok();
+                let uid = conn.last_insert_rowid();
+                (uid, tk)
+            }
+        };
+
+        // Generate today's design (idempotent per (user, day))
+        if let Err(e) = ensure_design_for_day(&conn, uid, &day, &taste, false) {
+            eprintln!("[you] ensure_design failed for user {}: {}", uid, e);
+        }
+        (tk, uid)
+    };
+
+    // Send welcome via Resend (fire-and-forget)
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    if !resend_key.is_empty() {
+        let to = email.clone();
+        let tk = token.clone();
+        tokio::spawn(async move {
+            let html = format!(r#"
+<div style="background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;padding:48px;max-width:560px;margin:0 auto">
+  <div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:32px">MU × YOU</div>
+  <div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:8px">Welcome, Day 001</div>
+  <div style="font-size:18px;font-weight:300;line-height:1.5;margin-bottom:24px">明朝 7:00 から、毎日 1 案、あなた専用のTシャツデザインが届きます。</div>
+  <p style="font-size:12px;line-height:1.85;opacity:0.65">
+    本日の最初の案はもう生成されています。下のボタンから今すぐ確認できます。気に入ったらその一着を仕立て、合わなかったら Skip。Skip するほど明日の案があなたに寄っていきます。
+  </p>
+  <a href="https://wearmu.com/you?t={tk}" style="display:inline-block;margin-top:32px;background:#F5F5F0;color:#0A0A0A;padding:14px 28px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:700">
+    本日の案を見る →
+  </a>
+  <p style="font-size:10px;opacity:0.4;margin-top:32px;line-height:1.7;letter-spacing:0.05em">
+    退会は <code>STOP</code> と返信、またはこのリンクから即時実行されます。<br>MU — wearmu.com
+  </p>
+</div>"#, tk = tk);
+            let _ = reqwest::Client::new()
+                .post("https://api.resend.com/emails")
+                .bearer_auth(&resend_key)
+                .json(&serde_json::json!({
+                    "from": "MU × YOU <noreply@wearmu.com>",
+                    "to": [to],
+                    "subject": "MU × YOU — 明朝7時から毎日デザインが届きます",
+                    "html": html,
+                }))
+                .send().await;
+        });
+    }
+
+    // Build response payload
+    let conn = db.lock().unwrap();
+    let today_id: Option<i64> = conn.query_row(
+        "SELECT id FROM you_designs WHERE user_id=? AND day=?",
+        params![user_id, day],
+        |r| r.get(0),
+    ).ok();
+    let today = today_id.and_then(|id| design_to_json(&conn, id));
+    let history = list_history(&conn, user_id);
+
+    Json(serde_json::json!({
+        "ok": true,
+        "token": token,
+        "today": today,
+        "history": history,
+    })).into_response()
+}
+
+fn list_history(conn: &Connection, user_id: i64) -> Vec<serde_json::Value> {
+    let mut stmt = match conn.prepare(
+        "SELECT id, day, day_num, name, image_url, status, seed
+         FROM you_designs WHERE user_id=? ORDER BY day DESC LIMIT 30"
+    ) {
+        Ok(s) => s, Err(_) => return vec![],
+    };
+    stmt.query_map(params![user_id], |r| Ok(serde_json::json!({
+        "id": r.get::<_,i64>(0)?,
+        "day": r.get::<_,String>(1)?,
+        "day_num": r.get::<_,i64>(2)?,
+        "name": r.get::<_,String>(3)?,
+        "image_url": r.get::<_,Option<String>>(4)?,
+        "status": r.get::<_,String>(5)?,
+        "seed": r.get::<_,String>(6)?,
+    })))
+    .map(|it| it.filter_map(|r| r.ok()).collect())
+    .unwrap_or_default()
+}
+
+async fn you_daily(
+    State(db): State<Db>,
+    Path(token): Path<String>,
+) -> impl IntoResponse {
+    let day = jst_today_str();
+    let conn = db.lock().unwrap();
+    let row: Option<(i64, String)> = conn.query_row(
+        "SELECT id, taste_json FROM you_users
+         WHERE token=? AND unsubscribed_at IS NULL",
+        params![token],
+        |r| Ok((r.get::<_,i64>(0)?, r.get::<_,String>(1)?)),
+    ).ok();
+    let (uid, taste_json) = match row {
+        Some(v) => v,
+        None => return (StatusCode::NOT_FOUND, "invalid token").into_response(),
+    };
+    let taste: serde_json::Value =
+        serde_json::from_str(&taste_json).unwrap_or(serde_json::json!({}));
+    if let Err(e) = ensure_design_for_day(&conn, uid, &day, &taste, false) {
+        eprintln!("[you] ensure_design (daily) failed: {}", e);
+    }
+    let today_id: Option<i64> = conn.query_row(
+        "SELECT id FROM you_designs WHERE user_id=? AND day=?",
+        params![uid, day],
+        |r| r.get(0),
+    ).ok();
+    let today = today_id.and_then(|id| design_to_json(&conn, id));
+    let history = list_history(&conn, uid);
+    Json(serde_json::json!({
+        "ok": true,
+        "today": today,
+        "history": history,
+    })).into_response()
+}
+
+async fn you_feedback(
+    State(db): State<Db>,
+    Json(body): Json<YouFeedbackBody>,
+) -> impl IntoResponse {
+    let conn = db.lock().unwrap();
+    let row: Option<(i64, String)> = conn.query_row(
+        "SELECT u.id, u.taste_json
+         FROM you_users u
+         WHERE u.token=? AND u.unsubscribed_at IS NULL",
+        params![body.token],
+        |r| Ok((r.get::<_,i64>(0)?, r.get::<_,String>(1)?)),
+    ).ok();
+    let (uid, taste_json) = match row {
+        Some(v) => v,
+        None => return (StatusCode::NOT_FOUND, "invalid token").into_response(),
+    };
+    // Confirm design ownership
+    let design_user: Option<(i64, String)> = conn.query_row(
+        "SELECT user_id, day FROM you_designs WHERE id=?",
+        params![body.design_id],
+        |r| Ok((r.get::<_,i64>(0)?, r.get::<_,String>(1)?)),
+    ).ok();
+    let (owner_id, day) = match design_user {
+        Some(v) => v,
+        None => return (StatusCode::NOT_FOUND, "design not found").into_response(),
+    };
+    if owner_id != uid {
+        return (StatusCode::FORBIDDEN, "not your design").into_response();
+    }
+
+    let now = chrono_now();
+    let mut today_after: Option<serde_json::Value> = None;
+    match body.action.as_str() {
+        "skip" | "like" => {
+            conn.execute(
+                "UPDATE you_designs SET status=?, updated_at=? WHERE id=?",
+                params![body.action, now, body.design_id],
+            ).ok();
+            conn.execute(
+                "INSERT INTO you_feedback (user_id, design_id, action, created_at) VALUES (?,?,?,?)",
+                params![uid, body.design_id, body.action, now],
+            ).ok();
+        }
+        "refresh" => {
+            // Limited to 1 refresh per day
+            let cnt: i64 = conn.query_row(
+                "SELECT refresh_count FROM you_designs WHERE id=?",
+                params![body.design_id],
+                |r| r.get(0),
+            ).unwrap_or(0);
+            if cnt >= 1 {
+                return (StatusCode::TOO_MANY_REQUESTS,
+                    "refresh limit reached for today").into_response();
+            }
+            let taste: serde_json::Value =
+                serde_json::from_str(&taste_json).unwrap_or(serde_json::json!({}));
+            if let Err(e) = ensure_design_for_day(&conn, uid, &day, &taste, true) {
+                eprintln!("[you] refresh failed: {}", e);
+                return (StatusCode::INTERNAL_SERVER_ERROR, "refresh failed").into_response();
+            }
+            today_after = design_to_json(&conn, body.design_id);
+        }
+        _ => return (StatusCode::BAD_REQUEST, "unknown action").into_response(),
+    }
+    Json(serde_json::json!({
+        "ok": true,
+        "today": today_after,
+    })).into_response()
+}
+
+async fn you_claim(
+    State(db): State<Db>,
+    Json(body): Json<YouClaimBody>,
+) -> impl IntoResponse {
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "checkout disabled (STRIPE_SECRET_KEY not set)",
+        ).into_response();
+    }
+
+    let (email, size, design_name, day_num) = {
+        let conn = db.lock().unwrap();
+        let row: Option<(i64, String, String)> = conn.query_row(
+            "SELECT id, email, size FROM you_users
+             WHERE token=? AND unsubscribed_at IS NULL",
+            params![body.token],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).ok();
+        let (uid, email, size) = match row {
+            Some(v) => v,
+            None => return (StatusCode::NOT_FOUND, "invalid token").into_response(),
+        };
+        let drow: Option<(i64, String, i64)> = conn.query_row(
+            "SELECT user_id, name, day_num FROM you_designs WHERE id=?",
+            params![body.design_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).ok();
+        let (owner_id, name, day_num) = match drow {
+            Some(v) => v,
+            None => return (StatusCode::NOT_FOUND, "design not found").into_response(),
+        };
+        if owner_id != uid {
+            return (StatusCode::FORBIDDEN, "not your design").into_response();
+        }
+        (email, size, name, day_num)
+    };
+
+    let serial = format!("YOU#{:04}", body.design_id);
+    let display_name = format!("MU × YOU — {} ({}, {})", design_name, size, serial);
+    let price_jpy: i64 = 6_800;
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://api.stripe.com/v1/checkout/sessions")
+        .basic_auth(&stripe_key, None::<&str>)
+        .form(&[
+            ("mode", "payment"),
+            ("currency", "jpy"),
+            ("line_items[0][price_data][currency]", "jpy"),
+            ("line_items[0][price_data][product_data][name]", &display_name),
+            ("line_items[0][price_data][unit_amount]", &price_jpy.to_string()),
+            ("line_items[0][quantity]", "1"),
+            ("success_url", &format!("{}/success?sid={{CHECKOUT_SESSION_ID}}", base_url)),
+            ("cancel_url", &format!("{}/you", base_url)),
+            ("customer_email", &email),
+            ("shipping_address_collection[allowed_countries][0]", "JP"),
+            ("shipping_address_collection[allowed_countries][1]", "US"),
+            ("shipping_address_collection[allowed_countries][2]", "GB"),
+            ("shipping_address_collection[allowed_countries][3]", "FR"),
+            ("shipping_address_collection[allowed_countries][4]", "DE"),
+            ("shipping_address_collection[allowed_countries][5]", "AU"),
+            ("shipping_address_collection[allowed_countries][6]", "KR"),
+            ("shipping_address_collection[allowed_countries][7]", "TW"),
+            ("shipping_address_collection[allowed_countries][8]", "HK"),
+            ("metadata[you_design_id]", &body.design_id.to_string()),
+            ("metadata[you_size]", &size),
+            ("metadata[you_serial]", &serial),
+            ("metadata[you_day_num]", &day_num.to_string()),
+        ])
+        .send().await;
+
+    match resp {
+        Ok(r) if r.status().is_success() => {
+            let json: serde_json::Value = r.json().await.unwrap_or_default();
+            let url = json["url"].as_str().unwrap_or("/").to_string();
+            // mark claimed
+            let conn = db.lock().unwrap();
+            conn.execute(
+                "UPDATE you_designs SET status='claimed', updated_at=? WHERE id=?",
+                params![chrono_now(), body.design_id],
+            ).ok();
+            Json(serde_json::json!({"url": url, "serial": serial})).into_response()
+        }
+        Ok(r) => {
+            let status = r.status();
+            let txt = r.text().await.unwrap_or_default();
+            eprintln!("[you] stripe error {}: {}", status, txt);
+            (StatusCode::INTERNAL_SERVER_ERROR,
+                format!("stripe error: {}", &txt[..txt.len().min(200)])).into_response()
+        }
+        Err(e) => {
+            eprintln!("[you] stripe request error: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, "stripe connection error").into_response()
+        }
+    }
+}
+
+async fn you_unsubscribe(
+    State(db): State<Db>,
+    Json(body): Json<YouUnsubBody>,
+) -> impl IntoResponse {
+    let conn = db.lock().unwrap();
+    let n = conn.execute(
+        "UPDATE you_users SET unsubscribed_at=? WHERE token=?",
+        params![chrono_now(), body.token],
+    ).unwrap_or(0);
+    if n == 0 {
+        return (StatusCode::NOT_FOUND, "invalid token").into_response();
+    }
+    Json(serde_json::json!({"ok": true})).into_response()
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
@@ -1669,6 +2267,41 @@ async fn main() {
             order_ids  TEXT NOT NULL,
             status     TEXT NOT NULL DEFAULT 'pending',
             created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS you_users (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            email           TEXT NOT NULL UNIQUE,
+            token           TEXT NOT NULL UNIQUE,
+            taste_json      TEXT NOT NULL DEFAULT '{}',
+            size            TEXT NOT NULL DEFAULT 'S',
+            created_at      TEXT NOT NULL,
+            updated_at      TEXT NOT NULL,
+            unsubscribed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_you_users_token ON you_users(token);
+        CREATE TABLE IF NOT EXISTS you_designs (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id         INTEGER NOT NULL,
+            day             TEXT NOT NULL,
+            day_num         INTEGER NOT NULL,
+            name            TEXT NOT NULL,
+            prompt          TEXT NOT NULL,
+            seed            TEXT NOT NULL,
+            image_url       TEXT,
+            status          TEXT NOT NULL DEFAULT 'pending',
+            size            TEXT,
+            refresh_count   INTEGER NOT NULL DEFAULT 0,
+            created_at      TEXT NOT NULL,
+            updated_at      TEXT NOT NULL,
+            UNIQUE(user_id, day)
+        );
+        CREATE INDEX IF NOT EXISTS idx_you_designs_user ON you_designs(user_id, day DESC);
+        CREATE TABLE IF NOT EXISTS you_feedback (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL,
+            design_id   INTEGER NOT NULL,
+            action      TEXT NOT NULL,
+            created_at  TEXT NOT NULL
         );
     ").expect("init schema");
     // Idempotent column additions for existing DBs
@@ -1742,6 +2375,14 @@ async fn main() {
         .route("/tokushoho.html", get(tokushoho_page))
         .route("/city", get(city_page))
         .route("/city.html", get(city_page))
+        // MU × YOU collab
+        .route("/you", get(you_page))
+        .route("/you.html", get(you_page))
+        .route("/api/you/subscribe", post(you_subscribe))
+        .route("/api/you/daily/:token", get(you_daily))
+        .route("/api/you/feedback", post(you_feedback))
+        .route("/api/you/claim", post(you_claim))
+        .route("/api/you/unsubscribe", post(you_unsubscribe))
         .nest_service("/static", ServeDir::new("static"))
         .nest_service("/mockups", ServeDir::new(mockups_dir()))
         .fallback_service(ServeDir::new("static"))

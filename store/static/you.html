@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>MU × YOU — 毎朝、あなただけのTシャツ案が届く | wearmu.com</title>
+<meta name="description" content="あなたの好み（気分・色・着る場所）を1分で登録。翌朝から毎日、AIが生成したコラボTシャツの案が一枚ずつ届きます。気に入った日だけ、その一着を仕立てる。">
+<meta name="theme-color" content="#0A0A0A">
+<link rel="canonical" href="https://wearmu.com/you">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.json">
+
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://wearmu.com/you">
+<meta property="og:title" content="MU × YOU — 毎朝、あなただけのTシャツ案が届く">
+<meta property="og:description" content="あなたの好みを1分で登録。翌朝から毎日、AIが生成したコラボ案が一枚ずつ届く。気に入った日だけ仕立てる。">
+<meta property="og:image" content="https://wearmu.com/og.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="MU × YOU — 毎朝、あなただけのTシャツ案が届く">
+<meta name="twitter:description" content="あなたの好みを1分で登録。翌朝から毎日、AIが生成したコラボ案が一枚ずつ届く。">
+<meta name="twitter:image" content="https://wearmu.com/og.jpg">
+
+<style>
+:root{--k:#0A0A0A;--w:#F5F5F0;--r:#C8362C;--g:#1C1C1C;--d:#2A2A2A;--a:#888;--y:#e6c449}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--k);color:var(--w);font-family:'Helvetica Neue',Arial,sans-serif;
+  font-weight:200;-webkit-font-smoothing:antialiased;overflow-x:hidden;line-height:1.6}
+a{color:inherit;text-decoration:none}
+button{cursor:pointer;font-family:inherit;border:none;background:none;color:inherit}
+
+/* NAV */
+nav{position:fixed;top:0;left:0;right:0;z-index:100;
+  display:flex;align-items:center;justify-content:space-between;gap:16px;
+  padding:16px 32px;background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);
+  border-bottom:1px solid rgba(255,255,255,0.05)}
+.nav-logo{font-size:14px;font-weight:700;letter-spacing:0.45em;flex-shrink:0}
+.nav-back{font-size:9px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5;
+  transition:opacity 0.2s}
+.nav-back:hover{opacity:1}
+
+/* HERO */
+#hero{min-height:100vh;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;padding:120px 32px 80px;position:relative;text-align:center}
+.hero-bg{position:absolute;inset:0;background:
+  radial-gradient(ellipse at 30% 20%,rgba(230,196,73,0.08),transparent 50%),
+  radial-gradient(ellipse at 70% 80%,rgba(200,54,44,0.06),transparent 55%);
+  pointer-events:none}
+.hero-eyebrow{font-size:9px;letter-spacing:0.5em;text-transform:uppercase;opacity:0.6;
+  margin-bottom:32px;display:flex;align-items:center;gap:14px;justify-content:center}
+.hero-eyebrow .dot{width:6px;height:6px;border-radius:50%;background:var(--y);
+  animation:pulse-dot 2s infinite}
+@keyframes pulse-dot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.55;transform:scale(0.8)}}
+.hero-title{font-size:clamp(48px,9vw,116px);font-weight:200;letter-spacing:0.06em;
+  line-height:1.02;margin-bottom:32px;max-width:1100px}
+.hero-title .x{font-weight:300;opacity:0.5;margin:0 0.18em}
+.hero-title .you{background:linear-gradient(135deg,var(--y) 0%,#fff 60%);
+  -webkit-background-clip:text;background-clip:text;color:transparent;font-weight:300}
+.hero-sub{font-size:15px;font-weight:300;line-height:1.95;opacity:0.7;
+  max-width:620px;margin:0 auto 56px}
+.hero-cta{display:inline-flex;align-items:center;gap:14px;background:var(--w);
+  color:var(--k);padding:18px 36px;font-size:10px;letter-spacing:0.35em;
+  text-transform:uppercase;font-weight:700;transition:transform 0.2s;cursor:pointer}
+.hero-cta:hover{transform:translateY(-2px)}
+.hero-cta svg{width:16px;height:16px}
+.hero-meta{margin-top:64px;display:flex;gap:64px;flex-wrap:wrap;justify-content:center}
+.hero-meta .m{display:flex;flex-direction:column;gap:6px;align-items:center}
+.hero-meta .v{font-size:24px;font-weight:200;letter-spacing:0.04em;color:var(--y)}
+.hero-meta .l{font-size:8px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5}
+
+/* HOW */
+.how{padding:120px 32px;border-top:1px solid rgba(255,255,255,0.05)}
+.how-inner{max-width:1100px;margin:0 auto}
+.how-eyebrow{font-size:9px;letter-spacing:0.4em;text-transform:uppercase;opacity:0.55;
+  margin-bottom:24px;text-align:center}
+.how-title{font-size:clamp(30px,5vw,56px);font-weight:200;letter-spacing:0.04em;
+  text-align:center;margin-bottom:80px;line-height:1.15}
+.how-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:rgba(255,255,255,0.06)}
+.how-step{background:var(--k);padding:48px 36px;display:flex;flex-direction:column;gap:20px;
+  position:relative;min-height:280px}
+.how-num{font-size:11px;letter-spacing:0.35em;text-transform:uppercase;color:var(--y);opacity:0.85}
+.how-step-title{font-size:22px;font-weight:300;letter-spacing:0.03em;line-height:1.35}
+.how-step-desc{font-size:13px;opacity:0.65;line-height:1.85;flex:1}
+.how-step-meta{font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.4;
+  padding-top:16px;border-top:1px solid rgba(255,255,255,0.05)}
+
+/* FORM */
+.form-wrap{padding:120px 32px;border-top:1px solid rgba(255,255,255,0.05);
+  background:linear-gradient(180deg,#0d0d0d 0%,#0a0a0a 100%)}
+.form-inner{max-width:780px;margin:0 auto}
+.form-eyebrow{font-size:9px;letter-spacing:0.4em;text-transform:uppercase;color:var(--y);
+  opacity:0.85;margin-bottom:18px;text-align:center}
+.form-title{font-size:clamp(28px,4.6vw,48px);font-weight:200;letter-spacing:0.03em;
+  text-align:center;margin-bottom:18px;line-height:1.2}
+.form-sub{font-size:13px;opacity:0.6;line-height:1.85;text-align:center;margin-bottom:64px;
+  max-width:560px;margin-left:auto;margin-right:auto}
+
+.field{margin-bottom:36px}
+.label{font-size:10px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.7;
+  margin-bottom:14px;display:flex;align-items:center;gap:10px}
+.label .req{color:var(--y);font-size:8px}
+.input{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);
+  color:var(--w);padding:16px 18px;font-size:13px;font-family:inherit;font-weight:300;
+  outline:none;width:100%;transition:border-color 0.2s,background 0.2s}
+.input:focus{border-color:rgba(230,196,73,0.5);background:rgba(255,255,255,0.05)}
+.input::placeholder{opacity:0.4}
+textarea.input{resize:vertical;min-height:88px;line-height:1.7}
+
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);
+  padding:10px 16px;font-size:11px;letter-spacing:0.08em;cursor:pointer;
+  transition:all 0.18s;user-select:none;font-weight:300}
+.chip:hover{border-color:rgba(255,255,255,0.25);background:rgba(255,255,255,0.06)}
+.chip.on{background:rgba(230,196,73,0.12);border-color:var(--y);color:var(--y)}
+
+.size-row{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+.size{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);
+  padding:14px;text-align:center;font-size:11px;letter-spacing:0.18em;
+  cursor:pointer;transition:all 0.18s;font-weight:400}
+.size:hover{border-color:rgba(255,255,255,0.2)}
+.size.on{background:var(--w);color:var(--k);border-color:var(--w)}
+
+.submit{width:100%;background:var(--w);color:var(--k);padding:20px;
+  font-size:11px;letter-spacing:0.4em;text-transform:uppercase;font-weight:700;
+  margin-top:12px;transition:transform 0.2s,opacity 0.2s;cursor:pointer}
+.submit:hover{transform:translateY(-1px)}
+.submit:disabled{opacity:0.4;cursor:wait;transform:none}
+.fine{font-size:10px;opacity:0.4;text-align:center;margin-top:18px;letter-spacing:0.05em;
+  line-height:1.7}
+
+/* PREVIEW (shown after subscribe) */
+#preview{display:none;padding:120px 32px;border-top:1px solid rgba(255,255,255,0.05)}
+#preview.show{display:block}
+.preview-inner{max-width:1100px;margin:0 auto}
+.preview-eyebrow{font-size:9px;letter-spacing:0.4em;text-transform:uppercase;color:var(--y);
+  margin-bottom:18px;text-align:center}
+.preview-title{font-size:clamp(28px,4.5vw,48px);font-weight:200;letter-spacing:0.03em;
+  text-align:center;margin-bottom:48px;line-height:1.2}
+.preview-card{display:grid;grid-template-columns:1fr 1fr;gap:0;
+  background:var(--g);border:1px solid rgba(255,255,255,0.06);overflow:hidden}
+.preview-img{aspect-ratio:1;background:#000 center/cover no-repeat;position:relative;overflow:hidden}
+.preview-img::after{content:'';position:absolute;inset:0;
+  background:linear-gradient(180deg,transparent 60%,rgba(0,0,0,0.4))}
+.preview-img-stamp{position:absolute;top:18px;left:18px;background:rgba(0,0,0,0.55);
+  padding:6px 12px;font-size:8px;letter-spacing:0.3em;text-transform:uppercase;
+  color:var(--y);z-index:2;backdrop-filter:blur(8px)}
+.preview-meta{padding:48px 44px;display:flex;flex-direction:column;gap:24px}
+.preview-day{font-size:9px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.55}
+.preview-name{font-size:28px;font-weight:200;letter-spacing:0.03em;line-height:1.25}
+.preview-prompt{font-size:12px;opacity:0.6;line-height:1.95;font-style:italic;
+  border-left:2px solid var(--y);padding-left:16px}
+.preview-row{display:flex;gap:24px;font-size:10px;letter-spacing:0.18em;text-transform:uppercase;
+  opacity:0.55;padding-top:16px;border-top:1px solid rgba(255,255,255,0.05)}
+.preview-row span b{color:var(--w);opacity:1;font-weight:400;letter-spacing:0.05em;text-transform:none}
+.preview-actions{display:flex;gap:10px;margin-top:8px;flex-wrap:wrap}
+.btn{padding:14px 22px;font-size:9px;letter-spacing:0.3em;text-transform:uppercase;
+  font-weight:600;cursor:pointer;transition:all 0.18s;flex:1;text-align:center;
+  border:1px solid transparent}
+.btn-primary{background:var(--y);color:#000}
+.btn-primary:hover{background:#fff}
+.btn-secondary{background:transparent;border-color:rgba(255,255,255,0.15);color:var(--w);opacity:0.75}
+.btn-secondary:hover{border-color:var(--w);opacity:1}
+.btn-ghost{background:transparent;border-color:rgba(255,255,255,0.1);color:var(--w);opacity:0.5;flex:0 0 auto}
+.btn-ghost:hover{opacity:1}
+
+/* HISTORY */
+#history{display:none;padding:0 32px 120px}
+#history.show{display:block}
+.history-inner{max-width:1100px;margin:0 auto}
+.history-title{font-size:11px;letter-spacing:0.35em;text-transform:uppercase;opacity:0.6;
+  margin-bottom:32px}
+.history-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
+.history-card{background:var(--g);aspect-ratio:1;position:relative;overflow:hidden;cursor:pointer;
+  transition:transform 0.2s}
+.history-card:hover{transform:scale(1.02)}
+.history-img{width:100%;height:100%;background:#000 center/cover no-repeat}
+.history-meta{position:absolute;bottom:0;left:0;right:0;padding:12px 14px;
+  background:linear-gradient(180deg,transparent,rgba(0,0,0,0.85));font-size:9px;letter-spacing:0.18em}
+.history-meta b{color:var(--y);font-weight:600;text-transform:uppercase}
+.history-empty{font-size:12px;opacity:0.4;text-align:center;padding:40px;
+  border:1px dashed rgba(255,255,255,0.08)}
+
+/* FAQ */
+.faq{padding:120px 32px;border-top:1px solid rgba(255,255,255,0.05)}
+.faq-inner{max-width:780px;margin:0 auto}
+.faq-title{font-size:11px;letter-spacing:0.4em;text-transform:uppercase;color:var(--y);opacity:0.85;
+  margin-bottom:24px;text-align:center}
+.faq-h{font-size:clamp(28px,4vw,40px);font-weight:200;letter-spacing:0.03em;text-align:center;
+  margin-bottom:64px;line-height:1.2}
+details{border-top:1px solid rgba(255,255,255,0.06);padding:22px 0}
+details:last-of-type{border-bottom:1px solid rgba(255,255,255,0.06)}
+summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;
+  align-items:center;font-size:14px;font-weight:300;letter-spacing:0.02em;line-height:1.5}
+summary::-webkit-details-marker{display:none}
+summary::after{content:'+';font-size:22px;font-weight:200;opacity:0.5;flex-shrink:0;margin-left:24px}
+details[open] summary::after{content:'−'}
+.answer{font-size:13px;opacity:0.65;line-height:1.95;padding-top:18px;font-weight:300}
+
+/* FOOTER */
+footer{padding:48px 32px;border-top:1px solid rgba(255,255,255,0.05);
+  display:flex;justify-content:space-between;align-items:center;gap:24px;flex-wrap:wrap;
+  font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.45}
+footer a:hover{opacity:1}
+
+/* TOAST */
+#toast{position:fixed;bottom:32px;left:50%;transform:translateX(-50%) translateY(20px);
+  background:var(--w);color:var(--k);padding:14px 28px;font-size:11px;
+  letter-spacing:0.2em;text-transform:uppercase;font-weight:600;
+  opacity:0;pointer-events:none;transition:all 0.3s;z-index:1000;white-space:nowrap}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+#toast.err{background:var(--r);color:#fff}
+
+@media(max-width:880px){
+  nav{padding:14px 18px}
+  .how-grid{grid-template-columns:1fr}
+  .preview-card{grid-template-columns:1fr}
+  .preview-meta{padding:32px 28px}
+  .hero-meta{gap:32px}
+  .form-wrap, .how, .faq{padding:80px 20px}
+  #preview{padding:80px 20px}
+  #history{padding:0 20px 80px}
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <a href="/" class="nav-logo">MU</a>
+  <a href="/" class="nav-back">← MU メイン</a>
+</nav>
+
+<!-- HERO -->
+<section id="hero">
+  <div class="hero-bg"></div>
+  <div class="hero-eyebrow"><span class="dot"></span>MU × YOU — Daily Collab Tee</div>
+  <h1 class="hero-title">MU<span class="x">×</span><span class="you">YOU</span></h1>
+  <p class="hero-sub">
+    あなたの好み（気分・色・着るシーン）を1分で登録。<br>
+    翌朝から毎日、AI が生成したコラボTシャツの案が一枚ずつ届きます。<br>
+    気に入った日だけ、その一着を仕立てる。
+  </p>
+  <button class="hero-cta" onclick="document.getElementById('subscribe-form').scrollIntoView({behavior:'smooth'})">
+    始める
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+  </button>
+  <div class="hero-meta">
+    <div class="m"><div class="v">¥6,800〜</div><div class="l">仕立て上がり</div></div>
+    <div class="m"><div class="v">毎朝 7:00</div><div class="l">JST 配信</div></div>
+    <div class="m"><div class="v">1日1案</div><div class="l">あなた専用</div></div>
+    <div class="m"><div class="v">3〜10日</div><div class="l">受注生産</div></div>
+  </div>
+</section>
+
+<!-- HOW -->
+<section class="how">
+  <div class="how-inner">
+    <div class="how-eyebrow">How it works</div>
+    <h2 class="how-title">「欲しい」が、毎朝届く。</h2>
+    <div class="how-grid">
+      <div class="how-step">
+        <div class="how-num">01 — Tell us</div>
+        <div class="how-step-title">好みを 1 分で登録</div>
+        <div class="how-step-desc">気分のキーワード、好きな色、着るシーン、サイズ。AI のプロンプトに変換され、あなた専用の生成ループが起動します。</div>
+        <div class="how-step-meta">Email + Taste</div>
+      </div>
+      <div class="how-step">
+        <div class="how-num">02 — Daily drop</div>
+        <div class="how-step-title">毎朝 7:00 に 1 案だけ届く</div>
+        <div class="how-step-desc">AI が前日のフィードバックも踏まえて、その日のあなた専用デザインを 1 枚だけ生成。メールとここで確認できます。</div>
+        <div class="how-step-meta">JST 7:00 / 1案 / 24h limited</div>
+      </div>
+      <div class="how-step">
+        <div class="how-num">03 — Claim or skip</div>
+        <div class="how-step-title">気に入った日だけ仕立てる</div>
+        <div class="how-step-desc">「Claim」で受注生産（3〜10日で発送）。「Skip」を押すと AI が学習し、明日の案を寄せていきます。</div>
+        <div class="how-step-meta">¥6,800 / Bella+Canvas 5oz / DTG print</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FORM -->
+<section class="form-wrap" id="subscribe-form">
+  <div class="form-inner">
+    <div class="form-eyebrow">⌐◨-◨ Subscribe — Free</div>
+    <h2 class="form-title">あなたの "ほしい" を MU に教える</h2>
+    <p class="form-sub">
+      登録後、明日の朝 7:00 から最初のデザイン案が届きます。<br>
+      解約は <code>STOP</code> 返信で即時。買わない月は完全に無料。
+    </p>
+
+    <form id="taste-form">
+      <div class="field">
+        <div class="label">Email <span class="req">REQUIRED</span></div>
+        <input class="input" type="email" name="email" required placeholder="you@example.com" autocomplete="email">
+      </div>
+
+      <div class="field">
+        <div class="label">気分 / Mood — 何枚でも</div>
+        <div class="chips" data-name="mood" data-multi="1">
+          <span class="chip">静か</span><span class="chip">力強い</span><span class="chip">ノスタルジック</span>
+          <span class="chip">ミニマル</span><span class="chip">遊び</span><span class="chip">深い</span>
+          <span class="chip">朝の光</span><span class="chip">夜の余韻</span>
+          <span class="chip">海</span><span class="chip">山</span><span class="chip">街</span><span class="chip">余白</span>
+          <span class="chip">幾何学</span><span class="chip">手書き</span><span class="chip">写真的</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="label">色味 / Palette — 何枚でも</div>
+        <div class="chips" data-name="palette" data-multi="1">
+          <span class="chip">モノクロ</span><span class="chip">アースカラー</span>
+          <span class="chip">藍 / インディゴ</span><span class="chip">墨</span>
+          <span class="chip">サンドベージュ</span><span class="chip">セージグリーン</span>
+          <span class="chip">ヴィンテージ赤</span><span class="chip">サーモン</span>
+          <span class="chip">パステル</span><span class="chip">蛍光</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="label">着るシーン / When — 何枚でも</div>
+        <div class="chips" data-name="scene" data-multi="1">
+          <span class="chip">毎日</span><span class="chip">仕事</span>
+          <span class="chip">休日</span><span class="chip">旅</span>
+          <span class="chip">ジム</span><span class="chip">パートナー</span>
+          <span class="chip">家</span><span class="chip">夜の外出</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="label">サイズ <span class="req">REQUIRED</span></div>
+        <div class="size-row" data-name="size" data-multi="0">
+          <div class="size">XS</div><div class="size on">S</div><div class="size">M</div>
+          <div class="size">L</div><div class="size">XL</div>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="label">あなたを表す一言（任意）</div>
+        <textarea class="input" name="bio" rows="2" maxlength="240"
+          placeholder="例：北海道の朝霧が好き。Tシャツは身体の延長だと思う。"></textarea>
+      </div>
+
+      <button class="submit" type="submit">登録 → 明朝7時に最初のデザインが届く</button>
+      <p class="fine">登録は無料。デザインを気に入った日だけ ¥6,800 で仕立てます。<br>個人情報は MU 内でのみ使用、第三者提供なし。</p>
+    </form>
+  </div>
+</section>
+
+<!-- PREVIEW -->
+<section id="preview">
+  <div class="preview-inner">
+    <div class="preview-eyebrow">Today's design — for you</div>
+    <h2 class="preview-title">あなた専用、本日の一案</h2>
+    <div class="preview-card" id="preview-card">
+      <div class="preview-img" id="pv-img">
+        <div class="preview-img-stamp" id="pv-stamp">MU × YOU · DAY 001</div>
+      </div>
+      <div class="preview-meta">
+        <div class="preview-day" id="pv-day"></div>
+        <div class="preview-name" id="pv-name">…</div>
+        <div class="preview-prompt" id="pv-prompt">…</div>
+        <div class="preview-row">
+          <span>SIZE <b id="pv-size">S</b></span>
+          <span>PRICE <b id="pv-price">¥6,800</b></span>
+          <span>VALID <b id="pv-valid">24h</b></span>
+        </div>
+        <div class="preview-actions">
+          <button class="btn btn-primary" id="claim-btn">この一着を仕立てる</button>
+          <button class="btn btn-secondary" id="skip-btn">明日に期待 / Skip</button>
+          <button class="btn btn-ghost" id="refresh-btn" title="再生成（1回まで）">⟳</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HISTORY -->
+<section id="history">
+  <div class="history-inner">
+    <div class="history-title">これまでの案 / History</div>
+    <div class="history-grid" id="hgrid"></div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section class="faq">
+  <div class="faq-inner">
+    <div class="faq-title">FAQ</div>
+    <h3 class="faq-h">よくある質問</h3>
+
+    <details>
+      <summary>毎日デザインが届くの？合わなかったら？</summary>
+      <div class="answer">毎朝 7:00 JST に1案だけお送りします。「Skip」を押すか、メールで <code>SKIP</code> と返信すれば、明日の生成プロンプトが調整されます。要らない日は何もしなくて OK です。</div>
+    </details>
+
+    <details>
+      <summary>料金はどうなってる？</summary>
+      <div class="answer">登録は無料、購入も買いたい日だけ。Tシャツは1着 ¥6,800（送料 ¥700 / ¥5,000以上で送料無料）。同じデザインで色違い・サイズ違いを同時に頼むと 2着目から 15% OFF。</div>
+    </details>
+
+    <details>
+      <summary>納期と発送は？</summary>
+      <div class="answer">受注生産（DTG / 昇華プリント）のため、Claim から 3〜10 営業日で発送。日本国内は宅急便、海外は DHL Express で 5〜10 日着。発送後に追跡番号をメールします。</div>
+    </details>
+
+    <details>
+      <summary>同じデザインは他の人にも届く？</summary>
+      <div class="answer">いいえ。あなたのプロンプト＋日付＋シードから決定的に生成されるため、同じ案は世界に一案しかありません。Claim した時点でそのデザインに <b>シリアル「YOU#0001」</b> が付与され、あなた以外には販売されません。</div>
+    </details>
+
+    <details>
+      <summary>退会したい</summary>
+      <div class="answer">受信メールに <code>STOP</code> と返信、またはこのページの一番下から退会できます。即時に配信停止し、登録情報は 30 日後に削除されます。</div>
+    </details>
+
+    <details>
+      <summary>MUGEN / MUON / MA とどう違う？</summary>
+      <div class="answer">MUGEN・MUON・MA はブランドが「世界全員に対して」毎時・毎日・毎月生成する公開ドロップ。MU × YOU は「あなた1人に対して」毎日生成する個別ドロップです。生成エンジンとプロダクション工場は同じです。</div>
+    </details>
+  </div>
+</section>
+
+<footer>
+  <div>MU × YOU © wearmu.com</div>
+  <div style="display:flex;gap:24px;flex-wrap:wrap">
+    <a href="/">MU</a>
+    <a href="/tokushoho">特商法</a>
+    <a href="/about.html">About</a>
+    <a href="#" id="unsub-link">退会</a>
+  </div>
+</footer>
+
+<div id="toast"></div>
+
+<script>
+const $ = q=>document.querySelector(q);
+const $$ = q=>document.querySelectorAll(q);
+
+// chip / size selection
+$$('.chips, .size-row').forEach(group=>{
+  const multi = group.dataset.multi === '1';
+  group.addEventListener('click', e=>{
+    const t = e.target.closest('.chip,.size');
+    if (!t || !group.contains(t)) return;
+    if (multi) {
+      t.classList.toggle('on');
+    } else {
+      group.querySelectorAll('.chip,.size').forEach(c=>c.classList.remove('on'));
+      t.classList.add('on');
+    }
+  });
+});
+
+function selected(name){
+  const g = document.querySelector(`[data-name="${name}"]`);
+  if (!g) return [];
+  return Array.from(g.querySelectorAll('.chip.on,.size.on')).map(e=>e.textContent.trim());
+}
+
+function toast(msg, isErr){
+  const t = $('#toast');
+  t.textContent = msg;
+  t.classList.toggle('err', !!isErr);
+  t.classList.add('show');
+  clearTimeout(t._tm);
+  t._tm = setTimeout(()=>t.classList.remove('show'), 3200);
+}
+
+// state
+let token = localStorage.getItem('mu_you_token') || '';
+
+async function api(path, body){
+  const init = {
+    method: body ? 'POST' : 'GET',
+    headers: {'Content-Type': 'application/json'},
+  };
+  if (body) init.body = JSON.stringify(body);
+  const r = await fetch(path, init);
+  if (!r.ok) {
+    let msg = `HTTP ${r.status}`;
+    try { msg = (await r.text()) || msg; } catch(_){}
+    throw new Error(msg.slice(0, 200));
+  }
+  return r.json();
+}
+
+function fmtDay(s){
+  if (!s) return '';
+  const d = new Date(s + 'T00:00:00+09:00');
+  if (isNaN(d)) return s;
+  return d.toLocaleDateString('ja-JP', {timeZone:'Asia/Tokyo', year:'numeric', month:'long', day:'numeric', weekday:'long'});
+}
+
+function placeholderImg(seed){
+  // Deterministic SVG gradient placeholder so the layout never breaks even
+  // before the AI image arrives. Different seed → different gradient.
+  const h = Math.abs(hashCode(seed||'mu')) % 360;
+  const h2 = (h + 60) % 360;
+  return `url("data:image/svg+xml;utf8,${encodeURIComponent(
+    `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 600'>
+      <defs><radialGradient id='g' cx='30%' cy='25%' r='80%'>
+        <stop offset='0%' stop-color='hsl(${h},58%,42%)'/>
+        <stop offset='65%' stop-color='hsl(${h2},35%,16%)'/>
+        <stop offset='100%' stop-color='#0A0A0A'/>
+      </radialGradient></defs>
+      <rect width='600' height='600' fill='url(%23g)'/>
+      <text x='50%' y='52%' text-anchor='middle' fill='rgba(255,255,255,0.85)'
+        font-family='Helvetica Neue,Arial' font-size='42' letter-spacing='8' font-weight='200'>MU × YOU</text>
+      <text x='50%' y='60%' text-anchor='middle' fill='rgba(255,255,255,0.4)'
+        font-family='Helvetica Neue,Arial' font-size='13' letter-spacing='6'>${(seed||'').slice(0,16)}</text>
+    </svg>`
+  )}")`;
+}
+function hashCode(s){let h=0;for(let i=0;i<s.length;i++)h=((h<<5)-h+s.charCodeAt(i))|0;return h;}
+
+function showDesign(d){
+  if (!d) return;
+  $('#preview').classList.add('show');
+  $('#pv-day').textContent = fmtDay(d.day) + ' — Day #' + (d.day_num||1);
+  $('#pv-stamp').textContent = `MU × YOU · DAY ${String(d.day_num||1).padStart(3,'0')}`;
+  $('#pv-name').textContent = d.name || '名前未定';
+  $('#pv-prompt').textContent = d.prompt || '';
+  $('#pv-size').textContent = d.size || 'S';
+  $('#pv-price').textContent = '¥' + (d.price_jpy||6800).toLocaleString();
+  $('#pv-valid').textContent = d.valid_label || '24h';
+  const img = $('#pv-img');
+  if (d.image_url) {
+    img.style.background = `#000 center/cover no-repeat url("${d.image_url}")`;
+  } else {
+    img.style.background = `#000 center/cover no-repeat ${placeholderImg(d.seed||d.name||'')}`;
+  }
+  // re-add stamp after style overwrite
+  if (!img.querySelector('.preview-img-stamp')) {
+    const s = document.createElement('div');
+    s.className = 'preview-img-stamp';
+    s.id = 'pv-stamp';
+    s.textContent = `MU × YOU · DAY ${String(d.day_num||1).padStart(3,'0')}`;
+    img.appendChild(s);
+  }
+  $('#preview').dataset.designId = d.id;
+}
+
+function showHistory(items){
+  if (!items || !items.length) {
+    $('#history').classList.remove('show');
+    return;
+  }
+  $('#history').classList.add('show');
+  const grid = $('#hgrid');
+  grid.innerHTML = '';
+  items.forEach(d=>{
+    const card = document.createElement('div');
+    card.className = 'history-card';
+    const bg = d.image_url
+      ? `#000 center/cover no-repeat url("${d.image_url}")`
+      : `#000 center/cover no-repeat ${placeholderImg(d.seed||d.name||'')}`;
+    card.innerHTML = `
+      <div class="history-img" style="background:${bg}"></div>
+      <div class="history-meta">DAY ${String(d.day_num||1).padStart(3,'0')} · <b>${d.status||'PENDING'}</b></div>`;
+    grid.appendChild(card);
+  });
+}
+
+async function loadDaily(tk){
+  try {
+    const data = await api(`/api/you/daily/${tk}`);
+    if (data.today) showDesign(data.today);
+    if (data.history) showHistory(data.history);
+  } catch(e){
+    toast('読み込みに失敗：' + e.message, true);
+  }
+}
+
+$('#taste-form').addEventListener('submit', async e=>{
+  e.preventDefault();
+  const btn = e.target.querySelector('.submit');
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = '生成中…';
+  const fd = new FormData(e.target);
+  const payload = {
+    email: (fd.get('email')||'').toString().trim(),
+    bio: (fd.get('bio')||'').toString().trim(),
+    mood: selected('mood'),
+    palette: selected('palette'),
+    scene: selected('scene'),
+    size: (selected('size')[0] || 'S'),
+  };
+  if (!payload.email || !payload.email.includes('@')) {
+    toast('メールアドレスを確認してください', true);
+    btn.disabled = false; btn.textContent = orig; return;
+  }
+  try {
+    const r = await api('/api/you/subscribe', payload);
+    token = r.token;
+    localStorage.setItem('mu_you_token', token);
+    if (r.today) showDesign(r.today);
+    document.getElementById('preview').scrollIntoView({behavior:'smooth'});
+    toast('登録完了。本日の案を生成しました');
+    if (r.history) showHistory(r.history);
+  } catch(e){
+    toast('登録失敗：' + e.message, true);
+  } finally {
+    btn.disabled = false; btn.textContent = orig;
+  }
+});
+
+$('#skip-btn').addEventListener('click', async ()=>{
+  const id = $('#preview').dataset.designId;
+  if (!token || !id) return;
+  try {
+    await api('/api/you/feedback', {token, design_id: Number(id), action: 'skip'});
+    toast('Skip 受付。明日の案に反映します');
+  } catch(e){ toast(e.message, true); }
+});
+
+$('#refresh-btn').addEventListener('click', async ()=>{
+  const id = $('#preview').dataset.designId;
+  if (!token || !id) return;
+  $('#refresh-btn').disabled = true;
+  try {
+    const r = await api('/api/you/feedback', {token, design_id: Number(id), action: 'refresh'});
+    if (r.today) showDesign(r.today);
+    toast('再生成しました');
+  } catch(e){
+    toast(e.message, true);
+  } finally {
+    $('#refresh-btn').disabled = false;
+  }
+});
+
+$('#claim-btn').addEventListener('click', async ()=>{
+  const id = $('#preview').dataset.designId;
+  if (!token || !id) {
+    toast('まず登録してください', true); return;
+  }
+  $('#claim-btn').disabled = true;
+  $('#claim-btn').textContent = '決済画面に移動中…';
+  try {
+    const r = await api('/api/you/claim', {token, design_id: Number(id)});
+    if (r.url) {
+      window.location.href = r.url;
+    } else {
+      toast(r.message || '決済URL取得に失敗', true);
+      $('#claim-btn').disabled = false;
+      $('#claim-btn').textContent = 'この一着を仕立てる';
+    }
+  } catch(e){
+    toast(e.message, true);
+    $('#claim-btn').disabled = false;
+    $('#claim-btn').textContent = 'この一着を仕立てる';
+  }
+});
+
+$('#unsub-link').addEventListener('click', async e=>{
+  e.preventDefault();
+  if (!token) { toast('登録情報がありません', true); return; }
+  if (!confirm('退会します。よろしいですか？')) return;
+  try {
+    await api('/api/you/unsubscribe', {token});
+    localStorage.removeItem('mu_you_token');
+    toast('退会しました');
+    setTimeout(()=>location.reload(), 1500);
+  } catch(e){ toast(e.message, true); }
+});
+
+if (token) loadDaily(token);
+</script>
+</body>
+</html>
