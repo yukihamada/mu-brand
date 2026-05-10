@@ -165,10 +165,67 @@ fn mockups_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(env::var("MOCKUPS_DIR").unwrap_or_else(|_| "/data/mockups".into()))
 }
 
+/// Cloudflare R2 (S3-compatible) configuration. Active when all four envs
+/// are present: R2_ENDPOINT, R2_BUCKET, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY.
+/// R2_PUBLIC_BASE defaults to https://mockups.wearmu.com.
+struct R2Config {
+    bucket: s3::Bucket,
+    public_base: String,
+}
+
+fn r2_config() -> Option<R2Config> {
+    let endpoint = env::var("R2_ENDPOINT").ok().filter(|s| !s.is_empty())?;
+    let bucket_name = env::var("R2_BUCKET").ok().filter(|s| !s.is_empty())?;
+    let access_key = env::var("R2_ACCESS_KEY_ID").ok().filter(|s| !s.is_empty())?;
+    let secret_key = env::var("R2_SECRET_ACCESS_KEY").ok().filter(|s| !s.is_empty())?;
+    let public_base = env::var("R2_PUBLIC_BASE")
+        .unwrap_or_else(|_| "https://mockups.wearmu.com".into());
+    let region = s3::Region::Custom { region: "auto".into(), endpoint };
+    let creds = s3::creds::Credentials::new(
+        Some(&access_key), Some(&secret_key), None, None, None,
+    ).map_err(|e| eprintln!("[r2] credentials: {}", e)).ok()?;
+    let bucket = s3::Bucket::new(&bucket_name, region, creds)
+        .map_err(|e| eprintln!("[r2] bucket: {}", e)).ok()?
+        .with_path_style();
+    Some(R2Config { bucket, public_base })
+}
+
+/// Upload bytes to R2 if configured; otherwise write to local mockups dir.
+/// Returns the URL (R2 public URL or `/mockups/<id>.jpg`) to store in DB.
+async fn store_mockup_bytes(product_id: i64, bytes: &[u8]) -> Option<String> {
+    let key = format!("{}.jpg", product_id);
+    if let Some(cfg) = r2_config() {
+        match cfg.bucket.put_object_with_content_type(&key, bytes, "image/jpeg").await {
+            Ok(r) if r.status_code() == 200 => {
+                return Some(format!("{}/{}", cfg.public_base.trim_end_matches('/'), key));
+            }
+            Ok(r) => {
+                eprintln!("[r2] put_object {} status {}: {}", key, r.status_code(),
+                          String::from_utf8_lossy(r.bytes()));
+            }
+            Err(e) => eprintln!("[r2] put_object {} error: {}", key, e),
+        }
+        // R2 configured but failed — don't silently fall back to local disk
+        // (the local file would be inaccessible from the public DB URL anyway)
+        return None;
+    }
+    // No R2 → fallback to Fly volume
+    let dir = mockups_dir();
+    if let Err(e) = tokio::fs::create_dir_all(&dir).await {
+        eprintln!("[mockups] create_dir_all failed: {}", e);
+        return None;
+    }
+    let path = dir.join(&key);
+    if let Err(e) = tokio::fs::write(&path, bytes).await {
+        eprintln!("[mockups] write {} failed: {}", path.display(), e);
+        return None;
+    }
+    Some(format!("/mockups/{}", key))
+}
+
 /// If the given URL is a Printful temporary upload (which expires), download
-/// the bytes and save them under MOCKUPS_DIR/<product_id>.jpg. Return the new
-/// internal URL (`/mockups/<id>.jpg`) on success, or None if the URL is
-/// already permanent / fetch failed.
+/// the bytes and persist them. Return the new permanent URL on success, or
+/// None if the URL is already permanent / fetch failed.
 async fn persist_mockup_if_temporary(product_id: i64, url: &str) -> Option<String> {
     let is_temp = url.starts_with("https://printful-upload.s3")
         || url.contains("/tmp/");
@@ -182,17 +239,7 @@ async fn persist_mockup_if_temporary(product_id: i64, url: &str) -> Option<Strin
         },
         _ => return None,
     };
-    let dir = mockups_dir();
-    if let Err(e) = tokio::fs::create_dir_all(&dir).await {
-        eprintln!("[persist_mockup] create_dir_all failed: {}", e);
-        return None;
-    }
-    let path = dir.join(format!("{}.jpg", product_id));
-    if let Err(e) = tokio::fs::write(&path, &bytes).await {
-        eprintln!("[persist_mockup] write {} failed: {}", path.display(), e);
-        return None;
-    }
-    Some(format!("/mockups/{}.jpg", product_id))
+    store_mockup_bytes(product_id, &bytes).await
 }
 
 /// Bonding-curve / progressive pricing.
@@ -1086,26 +1133,21 @@ async fn upload_mockup(
         Some(b) if !b.is_empty() => b,
         _ => return (StatusCode::BAD_REQUEST, "missing or empty file").into_response(),
     };
-    let dir = mockups_dir();
-    if let Err(e) = tokio::fs::create_dir_all(&dir).await {
-        return (StatusCode::INTERNAL_SERVER_ERROR, format!("mkdir: {}", e)).into_response();
-    }
-    let path = dir.join(format!("{}.jpg", pid));
-    if let Err(e) = tokio::fs::write(&path, &bytes).await {
-        return (StatusCode::INTERNAL_SERVER_ERROR, format!("write: {}", e)).into_response();
-    }
-    let internal_url = format!("/mockups/{}.jpg", pid);
+    let stored_url = match store_mockup_bytes(pid, &bytes).await {
+        Some(u) => u,
+        None => return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    };
     {
         let conn = db.lock().unwrap();
         conn.execute(
             "UPDATE products SET mockup_url=? WHERE id=?",
-            params![internal_url, pid]
+            params![stored_url, pid]
         ).unwrap();
     }
     Json(serde_json::json!({
         "ok": true,
         "product_id": pid,
-        "mockup_url": internal_url,
+        "mockup_url": stored_url,
         "bytes": bytes.len(),
     })).into_response()
 }
