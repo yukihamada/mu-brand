@@ -38,3 +38,5 @@ Thumbs.db
 
 # Generated assets (kept in static/)
 designs/raw/
+node_modules
+.wrangler/

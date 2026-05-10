@@ -873,11 +873,14 @@ def run(brand: str):
     con.commit()
     print(f"  saved locally.")
 
-    # Push to deployed store
+    # Push to deployed store. Insert WITHOUT mockup_url first (we'll set the
+    # permanent R2 URL in a follow-up call) so the row is the source of truth
+    # for the new product id.
+    new_pid = None
     try:
         payload = {
             "brand": brand, "drop_num": drop_num, "name": name,
-            "design_url": file_url, "mockup_url": mockup_url,
+            "design_url": file_url, "mockup_url": None,
             "price_jpy": price, "inventory": quantity,
             "weather_data": json.dumps(weather), "prompt_hash": prompt_hash,
             "seed_data": seed_data, "auction_end": auction_end, "nft_mint": nft_mint,
@@ -885,11 +888,84 @@ def run(brand: str):
         }
         r = requests.post(f"{STORE_URL}/api/admin/import?token={ADMIN_TOKEN}", json=payload, timeout=10)
         print(f"  pushed to store: {r.status_code}")
+        if r.ok:
+            new_pid = r.json().get("id")
     except Exception as e:
         print(f"  store push failed: {e}")
 
+    # Upload mockup to Cloudflare R2 (wearmu-mockups bucket) so the public URL
+    # https://mockups.wearmu.com/<id>.jpg is permanent. Falls back to leaving
+    # the Printful tmp URL on the row if R2 upload fails — the Rust server
+    # will then auto-persist it onto the Fly volume on the next admin call.
+    if new_pid and mockup_url:
+        try:
+            push_mockup_to_r2(new_pid, mockup_url)
+        except Exception as e:
+            print(f"  R2 push failed ({e}); falling back to Printful tmp URL")
+            try:
+                requests.patch(
+                    f"{STORE_URL}/api/admin/mockup?token={ADMIN_TOKEN}",
+                    json={"product_id": new_pid, "mockup_url": mockup_url},
+                    timeout=15,
+                )
+            except Exception as e2:
+                print(f"  fallback patch failed: {e2}")
+
     print(f"  done.")
     return drop_num
+
+
+def push_mockup_to_r2(product_id: int, source_url: str) -> None:
+    """Download bytes from source_url and upload to R2 bucket wearmu-mockups
+    via wrangler CLI. Updates the wearmu DB to point at mockups.wearmu.com."""
+    import subprocess, tempfile
+    img = requests.get(source_url, timeout=30)
+    if img.status_code != 200:
+        raise RuntimeError(f"download {source_url} → HTTP {img.status_code}")
+    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
+        f.write(img.content)
+        tmp_path = f.name
+    try:
+        # Cron's PATH is minimal; resolve wrangler explicitly.
+        wrangler_bin = os.environ.get("WRANGLER_BIN", "/opt/homebrew/bin/wrangler")
+        result = subprocess.run(
+            [
+                wrangler_bin, "r2", "object", "put",
+                f"wearmu-mockups/{product_id}.jpg",
+                f"--file={tmp_path}",
+                "--remote",
+                "--content-type=image/jpeg",
+            ],
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"wrangler exit {result.returncode}: {result.stderr[-300:]}")
+        public_url = f"https://mockups.wearmu.com/{product_id}.jpg"
+        # Cloudflare may have cached a 404 for this URL — purge to be safe.
+        cf_token = os.environ.get("CLOUDFLARE_API_KEY")
+        cf_email = os.environ.get("CLOUDFLARE_EMAIL", "mail@yukihamada.jp")
+        zone_id = os.environ.get("WEARMU_ZONE_ID", "0d0b88e1d5c4cea8713cda1744fcc713")
+        if cf_token:
+            try:
+                requests.post(
+                    f"https://api.cloudflare.com/client/v4/zones/{zone_id}/purge_cache",
+                    headers={"X-Auth-Email": cf_email, "X-Auth-Key": cf_token,
+                             "Content-Type": "application/json"},
+                    json={"files": [public_url]},
+                    timeout=15,
+                )
+            except Exception as e:
+                print(f"  cache purge skipped: {e}")
+        # Point DB at R2
+        r = requests.patch(
+            f"{STORE_URL}/api/admin/mockup?token={ADMIN_TOKEN}",
+            json={"product_id": product_id, "mockup_url": public_url},
+            timeout=15,
+        )
+        print(f"  R2: {public_url}  (DB update {r.status_code})")
+    finally:
+        try: os.unlink(tmp_path)
+        except OSError: pass
 
 if __name__ == "__main__":
     brand = sys.argv[1] if len(sys.argv) > 1 else "mugen"
