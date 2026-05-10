@@ -1626,6 +1626,14 @@ async fn index() -> Html<&'static str> {
     Html(include_str!("../static/index.html"))
 }
 
+async fn blog_index() -> Html<&'static str> {
+    Html(include_str!("../static/blog/index.html"))
+}
+
+async fn blog_post_001() -> Html<&'static str> {
+    Html(include_str!("../static/blog/from-automation-to-autonomy.html"))
+}
+
 async fn tokushoho_page() -> Html<&'static str> {
     Html(include_str!("../static/tokushoho.html"))
 }
@@ -3919,6 +3927,10 @@ async fn main() {
         .route("/api/you/admin/list", get(you_admin_list))
         .route("/api/you/style", post(you_style_set))
         .route("/api/you/stats", get(you_active_count))
+        // Blog (public ops notes). Clean URLs without .html extension.
+        .route("/blog", get(blog_index))
+        .route("/blog/", get(blog_index))
+        .route("/blog/from-automation-to-autonomy", get(blog_post_001))
         // Per-user share page — REGISTER LAST so literal routes win
         .route("/:slug", get(slug_or_static))
         .nest_service("/static", ServeDir::new("static"))

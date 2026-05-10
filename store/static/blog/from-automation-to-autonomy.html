@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>自動から自律へ — 1 人 + AI で運営する MU の損益と、なぜオープンソースにしたか | wearmu.com</title>
+<meta name="description" content="北海道弟子屈町の気象データから AI が毎時／毎日／毎月 T シャツを生成する MU。1 人と複数の cron と複数の API で動いている。今日までに何が動いて、何が動いていないのか、お金はどう流れているのか。コードは GitHub。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="自動から自律へ — 1 人 + AI で運営する MU の損益と、なぜオープンソースにしたか">
+<meta property="og:description" content="北海道弟子屈町の気象データから AI が毎時／毎日／毎月 T シャツを生成する MU。今日までに何が動いて、何が動いていないのか、お金はどう流れているのか、コードは GitHub。">
+<meta property="og:image" content="https://wearmu.com/og.jpg">
+<meta property="og:url" content="https://wearmu.com/blog/from-automation-to-autonomy">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+:root{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.6);--y:#e6c449;--card:#111}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--fg);font-family:'Noto Serif JP','Helvetica Neue','Hiragino Sans',serif;line-height:1.95;font-size:16px;-webkit-font-smoothing:antialiased}
+nav{position:sticky;top:0;background:rgba(10,10,10,0.85);backdrop-filter:blur(12px);border-bottom:1px solid rgba(255,255,255,0.06);padding:18px 32px;display:flex;justify-content:space-between;align-items:center;z-index:50;font-family:'Helvetica Neue',Arial,sans-serif}
+nav a{color:var(--fg);text-decoration:none;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.85}
+nav a:hover{opacity:1}
+nav .logo{font-weight:700;letter-spacing:0.45em}
+article{max-width:680px;margin:0 auto;padding:64px 32px 120px}
+.eyebrow{font-family:'Helvetica Neue',Arial,sans-serif;font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:var(--y);opacity:0.85;margin-bottom:18px}
+h1{font-size:clamp(28px,4.5vw,44px);font-weight:300;letter-spacing:0.02em;line-height:1.35;margin-bottom:20px}
+.lede{font-size:15px;color:var(--mute);font-style:italic;border-left:2px solid rgba(230,196,73,0.45);padding:10px 0 10px 18px;margin:24px 0 48px;font-family:'Helvetica Neue',Arial,sans-serif}
+h2{font-size:22px;font-weight:300;letter-spacing:0.02em;margin:64px 0 18px;padding-top:28px;border-top:1px solid rgba(255,255,255,0.08);font-family:'Helvetica Neue',Arial,sans-serif;color:var(--y)}
+h3{font-size:16px;font-weight:500;letter-spacing:0.05em;margin:32px 0 12px;font-family:'Helvetica Neue',Arial,sans-serif;opacity:0.95}
+p{margin:0 0 18px}
+em{color:var(--y);font-style:normal}
+strong{color:var(--fg);font-weight:500}
+a{color:var(--y);text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:1px}
+ul,ol{margin:0 0 24px 24px;color:var(--mute)}
+ul li,ol li{margin-bottom:8px}
+table{width:100%;border-collapse:collapse;margin:20px 0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid rgba(255,255,255,0.08)}
+th{font-size:11px;letter-spacing:0.2em;text-transform:uppercase;opacity:0.55;font-weight:500}
+.figure{background:var(--card);padding:18px 22px;margin:24px 0;border-left:2px solid var(--y);border-radius:2px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;line-height:1.85}
+.figure .label{font-size:9px;letter-spacing:0.3em;text-transform:uppercase;color:var(--y);opacity:0.85;margin-bottom:8px}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:16px;margin:24px 0}
+.cell{background:var(--card);padding:16px 18px;border-radius:2px}
+.cell .v{font-size:24px;font-weight:200;color:var(--y);font-family:'Helvetica Neue',Arial,sans-serif}
+.cell .l{font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.55;font-family:'Helvetica Neue',Arial,sans-serif;margin-top:4px}
+hr{border:0;border-top:1px solid rgba(255,255,255,0.08);margin:48px 0}
+code{font-family:'Menlo','SF Mono',monospace;font-size:13px;background:rgba(230,196,73,0.08);padding:1px 6px;border-radius:2px;color:var(--y)}
+pre{background:#000;border:1px solid rgba(255,255,255,0.08);padding:18px 20px;overflow-x:auto;border-radius:2px;font-size:12px;line-height:1.7;margin:18px 0}
+pre code{background:none;padding:0;color:var(--mute)}
+.cta{display:flex;gap:12px;flex-wrap:wrap;margin:40px 0 0}
+.btn{display:inline-block;background:var(--y);color:#000;padding:14px 26px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:700;font-family:'Helvetica Neue',Arial,sans-serif;border-radius:2px}
+.btn.alt{background:transparent;color:var(--fg);border:1px solid rgba(255,255,255,0.18);font-weight:500}
+.meta{display:flex;gap:24px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;letter-spacing:0.15em;text-transform:uppercase;opacity:0.55;margin-top:14px}
+footer{padding:48px 32px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;font-size:11px;letter-spacing:0.2em;opacity:0.5;font-family:'Helvetica Neue',Arial,sans-serif}
+@media (max-width:520px){article{padding:40px 22px 80px}h1{letter-spacing:0}}
+</style>
+</head>
+<body>
+
+<nav>
+  <a href="/" class="logo">MU</a>
+  <a href="/you">/ YOU</a>
+</nav>
+
+<article>
+  <div class="eyebrow">2026.05.11 · 公開ノート #001</div>
+  <h1>自動から自律へ — 1 人 + AI で運営する MU の損益と、なぜ全部オープンソースにしたのか</h1>
+  <div class="meta">
+    <span>濱田優貴</span>
+    <span>読了 5 分</span>
+    <span>tag: ops, indie</span>
+  </div>
+
+  <p class="lede">
+    北海道弟子屈町の気象データから AI が T シャツを生成する MU というブランドを始めた。今日まで <em>4 日</em>。誰も雇っていないが、毎時 / 毎日 / 毎月、勝手に新しい服が生まれている。これは「自動 (automation)」だ。次にやりたいのは「自律 (autonomy)」だ。差は何か、何が動いていて何が動いていないか、いくら稼いでいくら使っているか、コードは何処にあるか。全部出す。
+  </p>
+
+  <h2>1. なぜ無人会社にしたか</h2>
+  <p>
+    2 つだけ。<br>
+    <strong>(a) 飽きるから。</strong> 同じ服を毎月作るのは退屈で、退屈な仕事は AI に任せたい。<br>
+    <strong>(b) 速くて、ノイズなく、毎日違うものを世に出したいから。</strong> これは僕の他のプロダクト全部に通底する哲学で、人間が間に挟まると速度が下がる。
+  </p>
+  <p>
+    結果的に「AI が作って、AI が値付けして、AI が広告を打って、AI が出荷指示する」という方向に進んでいる。 NOUNS DAO がやろうとしている autonomous brand の、雑な日本版だと思ってもらってよい。
+  </p>
+
+  <h2>2. 何が動いているか — 自動の部分</h2>
+  <p>cron と API の組み合わせ。具体的にはこう。</p>
+  <table>
+    <thead><tr><th>頻度</th><th>仕事</th><th>仕掛け</th></tr></thead>
+    <tbody>
+      <tr><td>毎時</td><td><strong>MUGEN</strong> 1 案を生成。108 サイクル</td><td>cron → Gemini 3 Pro Image → Printful → R2</td></tr>
+      <tr><td>毎日</td><td><strong>MUON</strong> を弟子屈の気温に応じて N 枚生成</td><td>cron → wttr.in 取得 → 生成パイプライン</td></tr>
+      <tr><td>毎日</td><td><strong>MU × YOU</strong> 各登録者に 1 案ずつ</td><td>cron → 個別 prompt → メール送信</td></tr>
+      <tr><td>毎月 1 日</td><td><strong>MA</strong> オークション 1 着</td><td>cron → bonding curve 価格算出</td></tr>
+      <tr><td>都度</td><td>注文が入ったら Printful に自動発注 → 世界配送</td><td>Stripe webhook → Printful API</td></tr>
+      <tr><td>都度</td><td>NFT 証明書 Soulbound mint</td><td>Stripe webhook → Solana</td></tr>
+    </tbody>
+  </table>
+
+  <p>人間が触っているのは <strong>コード</strong>と<strong>方針</strong> だけ。日々の意思決定（何を作るか、いくらか、誰に売るか、誰に NFT を渡すか）には基本介入していない。</p>
+
+  <h2>3. 何が動いていないか — 自律にはまだ遠い</h2>
+  <p>正直に書く。これは <em>automation</em> であって <em>autonomy</em> ではない。差はこれ。</p>
+  <ul>
+    <li>価格は <code>dynamic_price()</code> という単純な数式（売れた数 × 250 円ずつ上げる）。市場を見ていない。</li>
+    <li>広告は僕が手動でコピーを書いて Google Ads に流している。AI が CTR を見て自分で書き直してはいない。</li>
+    <li>「今日ボツ作にすべきか」を AI が判断していない。生成すれば全部世に出る。</li>
+    <li>顧客の skip / like を集計して翌日のプロンプトに入れる、はまだ <code>compose_design()</code> の seed 程度。本気で学習していない。</li>
+    <li>MU の口座残高を見て、自分で広告予算を決める、ということもまだしていない。</li>
+  </ul>
+  <p>つまり <strong>実行は自動だが、判断は半人力</strong>。これを 6 ヶ月以内に「判断も自律」に持っていくのが次の課題。</p>
+
+  <h2>4. お金 — 現在のキャッシュフロー</h2>
+  <p>立ち上げから 4 日目時点。数字は包み隠さず。</p>
+
+  <div class="row">
+    <div class="cell"><div class="v">112</div><div class="l">total drops</div></div>
+    <div class="cell"><div class="v">9</div><div class="l">/you subscribers</div></div>
+    <div class="cell"><div class="v">16</div><div class="l">designs generated</div></div>
+    <div class="cell"><div class="v">¥0</div><div class="l">monthly revenue *</div></div>
+  </div>
+
+  <p>* MUGEN/MUON/MA の在庫増分カウンタ自体は 142 を示しているが、これは launch 期のテスト・自分の購入を含んでいる。<strong>外部からの実売上は今のところ 0 円</strong>。書きながら少し恥ずかしいが、それでも書く。</p>
+
+  <h3>毎月のコスト（概算）</h3>
+  <table>
+    <thead><tr><th>項目</th><th>料金</th><th>備考</th></tr></thead>
+    <tbody>
+      <tr><td>Fly.io (mu-store + 周辺)</td><td>~$8</td><td>nrt リージョン、1GB volume</td></tr>
+      <tr><td>Cloudflare R2 (mockup CDN)</td><td>$0</td><td>10GB 無料枠の中</td></tr>
+      <tr><td>Resend (メール)</td><td>$0</td><td>3,000 通/月 までは無料</td></tr>
+      <tr><td>Gemini 3 Pro Image</td><td>~$30/月</td><td>毎時 + 毎日 + /you で 800 案/月想定</td></tr>
+      <tr><td>Printful</td><td>$0</td><td>注文時のみ販売額の 50% 程度</td></tr>
+      <tr><td>Solana mint 手数料</td><td>~$0.01/着</td><td>Soulbound NFT</td></tr>
+      <tr><td>独自ドメイン</td><td>$1/月</td><td>wearmu.com / mockups.wearmu.com</td></tr>
+      <tr><td><strong>固定費 計</strong></td><td><strong>~$40/月</strong></td><td>≒ ¥6,000</td></tr>
+      <tr><td>Google Ads (テスト)</td><td>¥10,000</td><td>10 日間限定、5/11 から走り始め</td></tr>
+    </tbody>
+  </table>
+
+  <p>つまり <strong>月 6,000 円で 800 案の T シャツが空中で生まれ、世界に配信されている</strong>。MUGEN を 1 着売れば固定費はペイする。</p>
+
+  <h2>5. 全部 GitHub に置いた — オープンソース</h2>
+  <p>MU 全てのコードはこちら。</p>
+  <pre><code>https://github.com/yukihamada/mu-brand</code></pre>
+  <p>これは「ブランドのコード」なので、フォークすれば誰でも別ブランドが立てられる（実際 MIT ライセンス）。生成 prompt も価格曲線も email 文面も値付けロジックも全部読める。NOUNS が DAO 仕様を CC0 にしたのと同じ精神で、 <strong>fork されてどんどん別の brand が立つほど元の MU の価値が上がる</strong> と思っている。</p>
+  <p>もし MU のコードを使って自分のブランド（食べ物でも、家具でも、何でも）を立ち上げたら教えてほしい。お互いリンク張りに行く。</p>
+
+  <h2>6. 次の 6 ヶ月 — 自律 (autonomy) への道</h2>
+  <p>具体的な改善計画は <code><a href="https://github.com/yukihamada/mu-brand/blob/main/ROADMAP.md">ROADMAP.md</a></code> に書いた。要約：</p>
+  <ul>
+    <li><strong>P0</strong> : 「仕立てる」一発購入、自分の OGP 画像、紹介で +30 日</li>
+    <li><strong>P1</strong> : Skip フィードバックがプロンプトに効く、月 ¥980 ライトプラン、Atelier 入札</li>
+    <li><strong>P2</strong> : 月次 PDF レポ、所有者マップ、第二オーナー、音声 bio</li>
+    <li><strong>P3</strong> : 法人プラン、弟子屈 オフラインストア、データ販売、多言語</li>
+  </ul>
+  <p>このうち <em>autonomy</em> に効くのは P1-A（Skip 学習）と P1-D（PDF レポートの自動コピー生成）あたり。最終的には MU の Stripe 残高と Google Ads コンソールを LLM が監視して、自分で広告予算と入札を決める、まで持っていく予定。</p>
+
+  <h2>7. 心理学を入れて転換率を上げる</h2>
+  <p>ところで /you は <a href="https://github.com/yukihamada/mu-brand/blob/main/PSYCHOLOGY.md">PSYCHOLOGY.md</a> に書いた行動経済学 18 原則を、コード上にすでに織り込んだ。例：</p>
+  <ul>
+    <li><strong>損失回避</strong> : 「あと N 日であなたの 30 案が消えます」</li>
+    <li><strong>IKEA 効果</strong> : Day 7 に「自分のスタイル名を付けてください」</li>
+    <li><strong>ピーク・エンド</strong> : Day 14 が頂点、Day 30 は 29 案ブレンドの "The 30"</li>
+    <li><strong>アンカリング</strong> : 「通常 月 ¥980 が永久 ¥0」</li>
+  </ul>
+  <p>全部嘘をつかずに、<em>本当に有限なもの</em>にだけ scarcity を使う。ダーク パターンは入れない。これも全部 commit log と <code>main.rs</code> に書いてある。</p>
+
+  <h2>8. 月 1 で同じノートを書く</h2>
+  <p>このページは固定 URL <code>/blog/from-automation-to-autonomy</code> に置いた。来月（2026 年 6 月 11 日）に「2 ヶ月目はどうだったか」を、同じく数字 + コミット履歴とセットで公開する予定。フォローは下のいずれかで：</p>
+
+  <div class="cta">
+    <a class="btn" href="/you">毎朝の一着を試す（30 日無料）</a>
+    <a class="btn alt" href="https://github.com/yukihamada/mu-brand">GitHub で fork</a>
+    <a class="btn alt" href="/mugen">MUGEN を見る</a>
+  </div>
+
+  <hr>
+
+  <p style="font-size:12px;opacity:0.55;font-family:'Helvetica Neue',Arial,sans-serif;line-height:1.85">
+    本ノートは <code>store/static/blog/from-automation-to-autonomy.html</code> に置いてある。
+    数字は記事公開時点のスナップショット — リアルタイムの登録数は <a href="/api/you/stats">/api/you/stats</a> で確認できる。
+    誤りや改善案があれば <a href="https://github.com/yukihamada/mu-brand/issues">GitHub Issues</a> までどうぞ。
+  </p>
+</article>
+
+<footer>MU — wearmu.com / mail@yukihamada.jp</footer>
+
+</body>
+</html>
