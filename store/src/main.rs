@@ -576,6 +576,14 @@ async fn stripe_webhook(
     if event["type"] == "checkout.session.completed" {
         let session = &event["data"]["object"];
         let meta = session["metadata"].clone();
+        // /you design purchase path (you_claim or you_public_buy):
+        // separate from MU drops because /you designs live in you_designs.
+        if let Some(design_id_str) = meta["you_design_id"].as_str() {
+            if let Ok(design_id) = design_id_str.parse::<i64>() {
+                handle_you_purchase_webhook(db.clone(), design_id, session.clone()).await;
+                return StatusCode::OK.into_response();
+            }
+        }
         let product_id: i64 = meta["product_id"].as_str()
             .and_then(|s| s.parse().ok()).unwrap_or(0);
         if product_id == 0 {
@@ -680,6 +688,141 @@ async fn stripe_webhook(
         });
     }
     StatusCode::OK.into_response()
+}
+
+/// /you design fulfillment: mark claimed, alert ops, confirm to buyer.
+/// Printful auto-fulfillment for /you designs is a follow-up (the design
+/// bytes live as a BLOB in SQLite, not on Imgur, so we need an extra
+/// step to push them through Printful's Files API).
+async fn handle_you_purchase_webhook(db: Db, design_id: i64, session: serde_json::Value) {
+    let buyer_email = session["customer_details"]["email"]
+        .as_str().or_else(|| session["customer_email"].as_str())
+        .unwrap_or("").to_string();
+    let amount: i64 = session["amount_total"].as_i64().unwrap_or(0);
+    let session_id = session["id"].as_str().unwrap_or("").to_string();
+    let serial = session["metadata"]["you_serial"].as_str().unwrap_or("").to_string();
+    let size = session["metadata"]["you_size"].as_str().unwrap_or("S").to_string();
+    let owner_slug = session["metadata"]["you_owner_slug"].as_str().unwrap_or("anon").to_string();
+    let public_buy = session["metadata"]["you_public_buy"].as_str() == Some("1");
+
+    // Mark the design claimed (idempotent on session_id-already-recorded).
+    let (design_name, day_num, owner_email) = {
+        let conn = db.lock().unwrap();
+        // record under the buyer's email so retro lifetime_free works (a
+        // /you-design buyer is also "owns a MU shirt" in spirit)
+        if !buyer_email.is_empty() {
+            conn.execute(
+                "INSERT OR IGNORE INTO mu_purchases (email, product_id, brand, drop_num, session_id, created_at)
+                 SELECT ?, ?, 'you', ?, ?, ?
+                 WHERE NOT EXISTS (SELECT 1 FROM mu_purchases WHERE session_id=?)",
+                params![
+                    buyer_email.to_lowercase(), design_id,
+                    session["metadata"]["you_day_num"].as_str().and_then(|s|s.parse::<i64>().ok()).unwrap_or(0),
+                    session_id, chrono_now(), session_id,
+                ],
+            ).ok();
+            let reason = format!("purchased /you design YOU#{:04} from @{}", design_id, owner_slug);
+            conn.execute(
+                "UPDATE you_users SET lifetime_free=1, lifetime_reason=COALESCE(lifetime_reason, ?)
+                 WHERE email=? AND lifetime_free=0",
+                params![reason, buyer_email.to_lowercase()],
+            ).ok();
+        }
+        conn.execute(
+            "UPDATE you_designs SET status='claimed', updated_at=? WHERE id=?",
+            params![chrono_now(), design_id],
+        ).ok();
+        let row: Option<(String, i64, String)> = conn.query_row(
+            "SELECT d.name, d.day_num, u.email FROM you_designs d JOIN you_users u ON u.id = d.user_id WHERE d.id=?",
+            params![design_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).ok();
+        row.unwrap_or((String::new(), 0, String::new()))
+    };
+
+    // Notify ops (yuki) so the order can be hand-fulfilled via Printful UI
+    // until the design-bytes-to-Printful-files automation lands.
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    if !resend_key.is_empty() {
+        let buyer = buyer_email.clone();
+        let name = design_name.clone();
+        let owner_slug2 = owner_slug.clone();
+        let owner_email2 = owner_email.clone();
+        let serial2 = serial.clone();
+        let size2 = size.clone();
+        let resend_key_ops = resend_key.clone();
+        tokio::spawn(async move {
+            let html = format!(
+                r#"<div style="font-family:monospace;font-size:13px;line-height:1.7;background:#0A0A0A;color:#F5F5F0;padding:32px">
+<h2 style="color:#e6c449">/you purchase — needs fulfillment</h2>
+<table>
+<tr><td>design id</td><td>{design_id}</td></tr>
+<tr><td>serial</td><td>{serial}</td></tr>
+<tr><td>name</td><td>{name}</td></tr>
+<tr><td>day_num</td><td>{day_num}</td></tr>
+<tr><td>size</td><td>{size}</td></tr>
+<tr><td>amount</td><td>¥{amount}</td></tr>
+<tr><td>buyer</td><td>{buyer}</td></tr>
+<tr><td>owner</td><td>@{owner} ({owner_email})</td></tr>
+<tr><td>public buy</td><td>{public}</td></tr>
+<tr><td>session</td><td>{session_id}</td></tr>
+<tr><td>image</td><td><a href="https://wearmu.com/api/you/design/{design_id}/image.png" style="color:#e6c449">design PNG</a></td></tr>
+</table>
+<p>Action: download the image, upload to Printful, place order with the buyer's shipping address (in Stripe dashboard).</p>
+</div>"#,
+                design_id = design_id, serial = serial2, name = name,
+                day_num = day_num, size = size2, amount = amount,
+                buyer = buyer, owner = owner_slug2, owner_email = owner_email2,
+                public = public_buy, session_id = session_id,
+            );
+            let _ = reqwest::Client::new()
+                .post("https://api.resend.com/emails")
+                .bearer_auth(&resend_key_ops)
+                .json(&serde_json::json!({
+                    "from": "MU ops <noreply@enablerdao.com>",
+                    "to": ["mail@yukihamada.jp"],
+                    "subject": format!("[fulfill] /you {} — ¥{} from {}", serial2, amount, buyer),
+                    "html": html,
+                }))
+                .send().await;
+        });
+    }
+    // Buyer confirmation
+    if !buyer_email.is_empty() && !resend_key.is_empty() {
+        let buyer = buyer_email.clone();
+        let html = format!(
+            r#"<div style="background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;padding:48px;max-width:560px;margin:0 auto">
+  <div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:32px">MU × YOU</div>
+  <div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:8px">Thank you</div>
+  <div style="font-size:18px;font-weight:300;line-height:1.5;margin-bottom:24px">この一着を選んでくれてありがとう。</div>
+  <div style="background:#1C1C1C;padding:18px;margin-bottom:24px">
+    <div style="font-size:9px;letter-spacing:0.2em;text-transform:uppercase;opacity:0.65;margin-bottom:8px">仕立てる一着</div>
+    <div style="font-size:15px;margin-bottom:6px">{name}</div>
+    <div style="font-size:11px;opacity:0.7">Serial {serial} · Size {size} · ¥{amount}</div>
+    <div style="font-size:11px;opacity:0.5;margin-top:6px">designed by @{owner}</div>
+  </div>
+  <p style="font-size:12px;line-height:1.85;opacity:0.75;margin-bottom:24px">
+    7〜14 営業日で世界配送。Printful より発送します。<br>
+    NFT 証明書（Soulbound）は発送後にお送りします。<br><br>
+    あなたは MU の所有者です。<a href="https://wearmu.com/you" style="color:#e6c449">MU × YOU</a> は今日からあなたにとって <strong>一生無料</strong> です。
+  </p>
+</div>"#,
+            name = design_name, serial = serial, size = size,
+            amount = amount, owner = owner_slug,
+        );
+        tokio::spawn(async move {
+            let _ = reqwest::Client::new()
+                .post("https://api.resend.com/emails")
+                .bearer_auth(&resend_key)
+                .json(&serde_json::json!({
+                    "from": "MU × YOU <noreply@enablerdao.com>",
+                    "to": [buyer],
+                    "subject": format!("MU × YOU — {} があなたの元へ", serial),
+                    "html": html,
+                }))
+                .send().await;
+        });
+    }
 }
 
 async fn create_printful_order(key: String, db: Db, product_id: i64, session: serde_json::Value) {
@@ -2563,6 +2706,100 @@ async fn you_feedback(
     })).into_response()
 }
 
+/// Public purchase: anyone (not just the design's owner) can buy a /you
+/// design they see on the share page. Buyer enters their email + shipping
+/// address inside Stripe Checkout. Default price is ¥6,800; the design
+/// owner does NOT have to pre-list.
+async fn you_public_buy(
+    State(db): State<Db>,
+    Path(design_id): Path<i64>,
+) -> impl IntoResponse {
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "checkout disabled").into_response();
+    }
+    // Look up the design + its owner's slug for branding.
+    let row: Option<(i64, i64, String, String, Option<String>, String)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT d.id, d.day_num, d.name, d.gen_status, u.slug, u.size
+             FROM you_designs d JOIN you_users u ON u.id = d.user_id
+             WHERE d.id=?",
+            params![design_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+        ).ok()
+    };
+    let (id, day_num, name, gen_status, slug_opt, default_size) = match row {
+        Some(v) => v,
+        None => return (StatusCode::NOT_FOUND, "design not found").into_response(),
+    };
+    if gen_status != "ready" {
+        return (StatusCode::CONFLICT, "design not ready yet").into_response();
+    }
+    let serial = format!("YOU#{:04}", id);
+    let owner_tag = slug_opt.as_deref().unwrap_or("anon");
+    let display = format!("MU × YOU @{} — {} ({})", owner_tag, name, serial);
+    let price_jpy: i64 = 6_800;
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    let cancel = match slug_opt.as_ref() {
+        Some(s) if !s.is_empty() => format!("{}/{}", base_url.trim_end_matches('/'), s),
+        _ => format!("{}/you", base_url.trim_end_matches('/')),
+    };
+
+    let resp = reqwest::Client::new()
+        .post("https://api.stripe.com/v1/checkout/sessions")
+        .basic_auth(&stripe_key, None::<&str>)
+        .form(&[
+            ("mode", "payment"),
+            ("currency", "jpy"),
+            ("line_items[0][price_data][currency]", "jpy"),
+            ("line_items[0][price_data][product_data][name]", &display),
+            ("line_items[0][price_data][unit_amount]", &price_jpy.to_string()),
+            ("line_items[0][quantity]", "1"),
+            ("success_url", &format!("{}/success?sid={{CHECKOUT_SESSION_ID}}", base_url)),
+            ("cancel_url", &cancel),
+            ("shipping_address_collection[allowed_countries][0]", "JP"),
+            ("shipping_address_collection[allowed_countries][1]", "US"),
+            ("shipping_address_collection[allowed_countries][2]", "GB"),
+            ("shipping_address_collection[allowed_countries][3]", "FR"),
+            ("shipping_address_collection[allowed_countries][4]", "DE"),
+            ("shipping_address_collection[allowed_countries][5]", "AU"),
+            ("shipping_address_collection[allowed_countries][6]", "KR"),
+            ("shipping_address_collection[allowed_countries][7]", "TW"),
+            ("shipping_address_collection[allowed_countries][8]", "HK"),
+            // Stripe collects buyer email. Default size is the owner's; buyer
+            // can change via shipping form (Stripe address has no size field
+            // so size is determined by the owner-of-design's profile for now;
+            // a follow-up will add a size selector on the slug page).
+            ("metadata[you_design_id]", &id.to_string()),
+            ("metadata[you_size]",      &default_size),
+            ("metadata[you_serial]",    &serial),
+            ("metadata[you_day_num]",   &day_num.to_string()),
+            ("metadata[you_owner_slug]", owner_tag),
+            ("metadata[you_public_buy]", "1"),
+        ])
+        .send().await;
+    match resp {
+        Ok(r) if r.status().is_success() => {
+            let json: serde_json::Value = r.json().await.unwrap_or_default();
+            let url = json["url"].as_str().unwrap_or("/").to_string();
+            // We don't mark the design as claimed for public-buy until the
+            // webhook confirms payment.
+            Json(serde_json::json!({"url": url, "serial": serial})).into_response()
+        }
+        Ok(r) => {
+            let status = r.status();
+            let txt = r.text().await.unwrap_or_default();
+            eprintln!("[you/public_buy] stripe {}: {}", status, txt);
+            (StatusCode::BAD_GATEWAY, "stripe error").into_response()
+        }
+        Err(e) => {
+            eprintln!("[you/public_buy] reqwest: {}", e);
+            (StatusCode::BAD_GATEWAY, "stripe network error").into_response()
+        }
+    }
+}
+
 async fn you_claim(
     State(db): State<Db>,
     Json(body): Json<YouClaimBody>,
@@ -3436,27 +3673,37 @@ fn render_share_page(
             html_escape(title_name))
     };
 
-    // Cards markup
+    // Cards markup. Each card is buyable when status != claimed and the
+    // image is already generated (gen_status=ready).
     let cards: String = designs.iter().map(|d| {
         let (id, day, day_num, name, prompt, status, gen_status, _img_url) = d;
         let img_src = format!("/api/you/design/{}/image.png", id);
-        let label = if status == "claimed" { "CLAIMED · 仕立てた一着" }
-                    else if status == "skip" { "SKIPPED · 明日に期待" }
+        let buyable = status != "claimed" && gen_status == "ready";
+        let label = if status == "claimed" { "CLAIMED · 仕立て済み" }
+                    else if status == "skip" { "SKIPPED · あえて選ばれなかった" }
                     else if gen_status == "generating" { "GENERATING · 生成中" }
-                    else if gen_status == "ready" { "TODAY'S CANDIDATE · 候補" }
+                    else if gen_status == "ready" { "AVAILABLE · ¥6,800" }
                     else if gen_status == "failed" { "FAILED · 再生成待ち" }
                     else { "PROPOSAL · 提案" };
         let class = if status == "claimed" { "card claimed" } else { "card" };
+        let buy_btn = if buyable {
+            format!(r##"<button class="buy-btn" data-buy-id="{id}" type="button">この一着を仕立てる · ¥6,800</button>"##, id = id)
+        } else if status == &"claimed".to_string() {
+            r##"<div class="buy-btn disabled" aria-disabled="true">SOLD · この一着は旅立ちました</div>"##.to_string()
+        } else {
+            String::new()
+        };
         format!(
-            r##"<a class="{class}" href="#" data-id="{id}">
+            r##"<div class="{class}" data-id="{id}">
   <div class="card-img" style="background-image:url('{img}')"></div>
   <div class="card-meta">
     <div class="day">DAY {day_num:03} · {day}</div>
     <div class="name">{name}</div>
     <div class="prompt">{prompt}</div>
     <div class="badge">{label}</div>
+    {buy_btn}
   </div>
-</a>"##,
+</div>"##,
             class = class,
             id = id,
             img = img_src,
@@ -3465,6 +3712,7 @@ fn render_share_page(
             name = html_escape(name),
             prompt = html_escape(prompt),
             label = label,
+            buy_btn = buy_btn,
         )
     }).collect();
 
@@ -3576,6 +3824,11 @@ main{{padding:0 24px 80px;max-width:1280px;margin:0 auto}}
 .card .badge{{display:inline-block;align-self:flex-start;font-size:8px;letter-spacing:0.25em;
   text-transform:uppercase;background:rgba(230,196,73,0.1);color:var(--y);padding:4px 10px}}
 .card.claimed .badge{{background:var(--y);color:#000}}
+.buy-btn{{margin-top:6px;background:var(--y);color:#000;border:0;padding:11px 14px;
+  font-size:10px;letter-spacing:0.18em;text-transform:uppercase;font-weight:700;cursor:pointer;
+  font-family:'Helvetica Neue',Arial,sans-serif;transition:transform 0.15s, background 0.15s}}
+.buy-btn:hover{{transform:translateY(-1px);background:#fff}}
+.buy-btn:disabled,.buy-btn.disabled{{background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.4);cursor:not-allowed;font-weight:500}}
 .cta-block{{margin:80px auto 0;max-width:680px;text-align:center;padding:48px 24px;
   background:linear-gradient(180deg,rgba(230,196,73,0.06),transparent);
   border-top:1px solid rgba(230,196,73,0.15)}}
@@ -3627,6 +3880,32 @@ footer{{padding:40px 24px;border-top:1px solid rgba(255,255,255,0.05);
   <div style="display:flex;gap:24px"><a href="/">MU</a><a href="/you">/you</a><a href="/tokushoho">特商法</a></div>
 </footer>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<script>
+// Public buy: any visitor on the share page can buy a /you design.
+document.addEventListener('click', async (e) => {{
+  const btn = e.target.closest('.buy-btn[data-buy-id]');
+  if (!btn) return;
+  const id = btn.getAttribute('data-buy-id');
+  if (!id || btn.disabled) return;
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = '読み込み中…';
+  try {{
+    const r = await fetch('/api/you/buy/' + id, {{method: 'POST'}});
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    if (data && data.url) {{
+      window.location.href = data.url;
+      return;
+    }}
+    throw new Error('no checkout url');
+  }} catch (err) {{
+    btn.disabled = false;
+    btn.textContent = orig;
+    alert('購入処理を起動できませんでした。少し待って再度お試しください。\n(' + err.message + ')');
+  }}
+}});
+</script>
 </body>
 </html>"##,
         title = html_escape(&title),
@@ -3927,6 +4206,7 @@ async fn main() {
         .route("/api/you/admin/list", get(you_admin_list))
         .route("/api/you/style", post(you_style_set))
         .route("/api/you/stats", get(you_active_count))
+        .route("/api/you/buy/:design_id", post(you_public_buy))
         // Blog (public ops notes). Clean URLs without .html extension.
         .route("/blog", get(blog_index))
         .route("/blog/", get(blog_index))
