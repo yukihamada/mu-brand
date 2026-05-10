@@ -1,0 +1,18 @@
+Campaign,Ad group,Keyword,Match type,Max CPC
+MU_YOU_Search_Registration,AI Tシャツ,毎日 Tシャツ デザイン,EXACT,150
+MU_YOU_Search_Registration,AI Tシャツ,AI Tシャツ デザイン,EXACT,150
+MU_YOU_Search_Registration,AI Tシャツ,Tシャツ サブスク 毎日,EXACT,150
+MU_YOU_Search_Registration,AI Tシャツ,AI が描く Tシャツ,PHRASE,150
+MU_YOU_Search_Registration,AI Tシャツ,自分専用 Tシャツ,PHRASE,150
+MU_YOU_Search_Registration,AI Tシャツ,オーダーメイド Tシャツ AI,PHRASE,150
+MU_YOU_Search_Registration,AI Tシャツ,毎日 違う Tシャツ,PHRASE,150
+MU_YOU_Search_Registration,AI Tシャツ,AI ファッション 自動生成,BROAD,120
+MU_YOU_Search_Registration,AI Tシャツ,パーソナライズ T-shirt,BROAD,120
+MU_YOU_Search_Registration,一点もの,一点もの Tシャツ,EXACT,130
+MU_YOU_Search_Registration,一点もの,オリジナル Tシャツ ブランド,EXACT,130
+MU_YOU_Search_Registration,一点もの,世界に 1 着 Tシャツ,PHRASE,130
+MU_YOU_Search_Registration,一点もの,作家 Tシャツ ブランド,PHRASE,130
+MU_YOU_Search_Registration,一点もの,アート Tシャツ 国内ブランド,PHRASE,130
+MU_YOU_Search_Registration,一点もの,AI アート ファッション,PHRASE,130
+MU_YOU_Search_Registration,一点もの,ミニマル Tシャツ ブランド,BROAD,100
+MU_YOU_Search_Registration,一点もの,日本発 ファッション ブランド,BROAD,100
