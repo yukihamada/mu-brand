@@ -598,6 +598,43 @@ async fn stripe_webhook(
                 false
             }
         };
+
+        // Record the purchase + grant /you lifetime_free. Idempotent on
+        // session_id (Stripe re-delivers the same event sometimes).
+        {
+            let buyer_email = session["customer_details"]["email"]
+                .as_str()
+                .or_else(|| session["customer_email"].as_str())
+                .unwrap_or("")
+                .to_lowercase();
+            let session_id = session["id"].as_str().unwrap_or("").to_string();
+            let conn = db.lock().unwrap();
+            let (brand, drop_num): (String, i64) = conn.query_row(
+                "SELECT brand, drop_num FROM products WHERE id=?",
+                params![product_id],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+            ).unwrap_or((String::new(), 0));
+            if !buyer_email.is_empty() {
+                conn.execute(
+                    "INSERT OR IGNORE INTO mu_purchases (email, product_id, brand, drop_num, session_id, created_at)
+                     SELECT ?, ?, ?, ?, ?, ?
+                     WHERE NOT EXISTS (
+                       SELECT 1 FROM mu_purchases WHERE session_id=? AND product_id=?
+                     )",
+                    params![buyer_email, product_id, brand, drop_num, session_id, chrono_now(), session_id, product_id],
+                ).ok();
+                let reason = format!("purchased {} #{}", brand.to_uppercase(), drop_num);
+                let updated = conn.execute(
+                    "UPDATE you_users
+                     SET lifetime_free=1, lifetime_reason=COALESCE(lifetime_reason, ?)
+                     WHERE email=? AND lifetime_free=0",
+                    params![reason, buyer_email],
+                ).unwrap_or(0);
+                if updated > 0 {
+                    eprintln!("[/you] granted lifetime_free to {} ({})", buyer_email, reason);
+                }
+            }
+        }
         if just_sold_out {
             let buyer_email = session["customer_details"]["email"].as_str().unwrap_or("").to_string();
             let product_name = {
@@ -1494,6 +1531,55 @@ fn chrono_now() -> String {
     format!("{}", secs)
 }
 
+/// Unix-epoch-seconds 30 days from now, as a string (matches you_users.trial_end_at format).
+fn trial_end_seconds_from_now() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    format!("{}", secs + 30 * 86400)
+}
+
+/// Whether a /you account is currently allowed to receive daily designs.
+/// Active when:
+///   - lifetime_free is set (purchased a MU shirt → forever), OR
+///   - trial_end_at is in the future
+fn you_user_active(trial_end_at: Option<&str>, lifetime_free: bool) -> bool {
+    if lifetime_free { return true; }
+    let trial_end: u64 = match trial_end_at.and_then(|s| s.parse().ok()) {
+        Some(v) => v,
+        None => return false,
+    };
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    now < trial_end
+}
+
+/// Subscription state shown to the client (and stamped on emails).
+fn you_user_state(trial_end_at: Option<&str>, lifetime_free: bool) -> serde_json::Value {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let trial_end: u64 = trial_end_at.and_then(|s| s.parse().ok()).unwrap_or(0);
+    let days_left: i64 = if lifetime_free {
+        -1   // sentinel: ∞
+    } else if trial_end > now {
+        ((trial_end - now) / 86400) as i64
+    } else {
+        0
+    };
+    let status = if lifetime_free {
+        "lifetime"
+    } else if trial_end > now {
+        "trial"
+    } else {
+        "expired"
+    };
+    serde_json::json!({
+        "status": status,
+        "trial_end_at": trial_end_at,
+        "days_left": days_left,
+        "lifetime_free": lifetime_free,
+    })
+}
+
 async fn index() -> Html<&'static str> {
     Html(include_str!("../static/index.html"))
 }
@@ -2043,6 +2129,8 @@ async fn you_subscribe(
 
         let (uid, tk) = match existing {
             Some((uid, tk)) => {
+                // Returning subscriber: refresh taste, never extend trial here
+                // (re-signup must not reset the 30-day window).
                 conn.execute(
                     "UPDATE you_users SET taste_json=?, size=?, updated_at=?, unsubscribed_at=NULL
                      WHERE id=?",
@@ -2062,12 +2150,29 @@ async fn you_subscribe(
                     if !exists { break; }
                     sl = random_slug();
                 }
+                let trial_end = trial_end_seconds_from_now();
                 conn.execute(
-                    "INSERT INTO you_users (email, token, slug, taste_json, size, created_at, updated_at)
-                     VALUES (?,?,?,?,?,?,?)",
-                    params![email, tk, sl, taste.to_string(), size, now, now],
+                    "INSERT INTO you_users (email, token, slug, taste_json, size, created_at, updated_at, trial_end_at)
+                     VALUES (?,?,?,?,?,?,?,?)",
+                    params![email, tk, sl, taste.to_string(), size, now, now, trial_end],
                 ).ok();
                 let uid = conn.last_insert_rowid();
+                // If this email has previously bought any MU shirt, grant
+                // lifetime_free immediately. Lookup is cheap thanks to
+                // idx_mu_purchases_email.
+                let prior: Option<(i64, String, i64)> = conn.query_row(
+                    "SELECT product_id, brand, COALESCE(drop_num,0)
+                     FROM mu_purchases WHERE email=? ORDER BY id DESC LIMIT 1",
+                    params![email],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                ).ok();
+                if let Some((_, brand, drop_num)) = prior {
+                    let reason = format!("retro: previously purchased {} #{}", brand.to_uppercase(), drop_num);
+                    conn.execute(
+                        "UPDATE you_users SET lifetime_free=1, lifetime_reason=? WHERE id=?",
+                        params![reason, uid],
+                    ).ok();
+                }
                 (uid, tk)
             }
         };
@@ -2100,6 +2205,10 @@ async fn you_subscribe(
   <p style="font-size:12px;line-height:1.85;opacity:0.65">
     本日の最初の案はもう生成されています。下のボタンから今すぐ確認できます。気に入ったらその一着を仕立て、合わなかったら Skip。Skip するほど明日の案があなたに寄っていきます。
   </p>
+  <div style="margin-top:24px;padding:16px 20px;background:#1C1C1C;border-left:2px solid #e6c449;font-size:11px;line-height:1.85;opacity:0.85">
+    <strong>無料トライアルは 30 日間。</strong><br>
+    その間に MU の T シャツを 1 着でも手に入れていただければ、MU × YOU は <strong>一生無料</strong>になります。
+  </div>
   <a href="https://wearmu.com/you?t={tk}" style="display:inline-block;margin-top:32px;background:#F5F5F0;color:#0A0A0A;padding:14px 28px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:700">
     本日の案を見る →
   </a>
@@ -2137,6 +2246,11 @@ async fn you_subscribe(
     let share_url = slug.as_ref().map(|s|
         format!("{}/{}", base_url.trim_end_matches('/'), s));
 
+    let (trial_end_at, lifetime_free): (Option<String>, i64) = conn.query_row(
+        "SELECT trial_end_at, COALESCE(lifetime_free,0) FROM you_users WHERE id=?",
+        params![user_id], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).unwrap_or((None, 0));
+    let subscription = you_user_state(trial_end_at.as_deref(), lifetime_free != 0);
     Json(serde_json::json!({
         "ok": true,
         "token": token,
@@ -2144,6 +2258,7 @@ async fn you_subscribe(
         "history": history,
         "slug": slug,
         "share_url": share_url,
+        "subscription": subscription,
     })).into_response()
 }
 
@@ -2621,6 +2736,114 @@ async fn you_admin_list(
     })).into_response()
 }
 
+/// Send a "5 days left in your free trial" email exactly once, when the
+/// remaining trial window first dips under 6 days. Idempotent on the
+/// trial_reminder_sent_at column.
+fn send_trial_reminder_if_needed(
+    db: Db, user_id: i64, email: String, trial_end_at: Option<&str>
+) {
+    let trial_end: u64 = match trial_end_at.and_then(|s| s.parse().ok()) {
+        Some(v) => v,
+        None => return,
+    };
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    if trial_end <= now { return; }
+    let days_left = (trial_end - now) / 86400;
+    if days_left > 5 { return; }
+    // Already sent? Bail.
+    {
+        let conn = db.lock().unwrap();
+        let already: Option<String> = conn.query_row(
+            "SELECT trial_reminder_sent_at FROM you_users WHERE id=?",
+            params![user_id], |r| r.get(0),
+        ).ok().flatten();
+        if already.is_some() { return; }
+        conn.execute(
+            "UPDATE you_users SET trial_reminder_sent_at=? WHERE id=?",
+            params![chrono_now(), user_id],
+        ).ok();
+    }
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    if resend_key.is_empty() { return; }
+    tokio::spawn(async move {
+        let html = format!(r#"
+<div style="background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;padding:48px;max-width:560px;margin:0 auto">
+  <div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:32px">MU × YOU</div>
+  <div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:8px">あと {days} 日</div>
+  <div style="font-size:18px;font-weight:300;line-height:1.5;margin-bottom:24px">無料トライアルが残り {days} 日です。</div>
+  <p style="font-size:12px;line-height:1.85;opacity:0.7;margin-bottom:24px">
+    気に入ったら、MU の T シャツを 1 着だけ手に入れてください。<br>
+    <strong>1 着でも所有すれば、MU × YOU は一生無料</strong>になります。
+  </p>
+  <a href="https://wearmu.com/mugen" style="display:inline-block;background:#e6c449;color:#000;padding:14px 28px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:700;margin-right:8px">MUGEN を見る →</a>
+  <a href="https://wearmu.com/ma" style="display:inline-block;border:1px solid rgba(255,255,255,0.2);color:#F5F5F0;padding:13px 22px;font-size:10px;letter-spacing:0.25em;text-transform:uppercase;text-decoration:none;opacity:0.8">月次 MA オークション</a>
+  <p style="font-size:10px;opacity:0.5;margin-top:32px;line-height:1.7">
+    トライアル終了後は、購入が無い限り毎日のデザイン配信は停止します。<br>退会は <code>STOP</code> 返信で即時。
+  </p>
+</div>"#, days = days_left.max(1));
+        let _ = reqwest::Client::new()
+            .post("https://api.resend.com/emails")
+            .bearer_auth(&resend_key)
+            .json(&serde_json::json!({
+                "from": "MU × YOU <noreply@enablerdao.com>",
+                "to": [email],
+                "subject": format!("MU × YOU — トライアル残り {} 日", days_left.max(1)),
+                "html": html,
+            }))
+            .send().await;
+    });
+}
+
+/// Send a "trial expired — buy a MU shirt to keep going" email once.
+/// Idempotent on trial_expired_notice_sent_at.
+fn send_trial_expired_notice_if_needed(
+    db: Db, user_id: i64, email: String, _trial_end_at: Option<String>,
+) {
+    {
+        let conn = db.lock().unwrap();
+        let already: Option<String> = conn.query_row(
+            "SELECT trial_expired_notice_sent_at FROM you_users WHERE id=?",
+            params![user_id], |r| r.get(0),
+        ).ok().flatten();
+        if already.is_some() { return; }
+        conn.execute(
+            "UPDATE you_users SET trial_expired_notice_sent_at=? WHERE id=?",
+            params![chrono_now(), user_id],
+        ).ok();
+    }
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    if resend_key.is_empty() { return; }
+    tokio::spawn(async move {
+        let html = r#"
+<div style="background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;padding:48px;max-width:560px;margin:0 auto">
+  <div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:32px">MU × YOU</div>
+  <div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:8px">Trial Ended</div>
+  <div style="font-size:18px;font-weight:300;line-height:1.5;margin-bottom:24px">30 日間のトライアル、ここまで届けてくれてありがとう。</div>
+  <p style="font-size:12px;line-height:1.85;opacity:0.75;margin-bottom:24px">
+    今日からは、毎朝 9 時のデザイン配信は一旦停止します。<br><br>
+    <strong>もう一度 ON にする方法はひとつだけ</strong> — MU の T シャツを 1 着、手に入れてください。<br>
+    1 着でも所有すれば、MU × YOU は <strong>一生無料</strong>。明日からまた毎朝、あなただけの一着が届きます。
+  </p>
+  <a href="https://wearmu.com/mugen" style="display:inline-block;background:#e6c449;color:#000;padding:14px 28px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:700;margin-right:8px">MUGEN を見る →</a>
+  <a href="https://wearmu.com/ma" style="display:inline-block;border:1px solid rgba(255,255,255,0.2);color:#F5F5F0;padding:13px 22px;font-size:10px;letter-spacing:0.25em;text-transform:uppercase;text-decoration:none;opacity:0.8">MA オークション</a>
+  <p style="font-size:10px;opacity:0.5;margin-top:32px;line-height:1.7">
+    トライアル中の 30 案は <a href="https://wearmu.com/you" style="color:#e6c449">あなたのページ</a> でいつでも見返せます。
+  </p>
+</div>"#;
+        let _ = reqwest::Client::new()
+            .post("https://api.resend.com/emails")
+            .bearer_auth(&resend_key)
+            .json(&serde_json::json!({
+                "from": "MU × YOU <noreply@enablerdao.com>",
+                "to": [email],
+                "subject": "MU × YOU — トライアル終了。続けるには MU を 1 着。",
+                "html": html,
+            }))
+            .send().await;
+    });
+}
+
 /// Admin: ensure today's design exists for every active subscriber and send
 /// the daily email. Useful for manually verifying deliverability after deploy.
 async fn you_admin_backfill(
@@ -2629,19 +2852,31 @@ async fn you_admin_backfill(
 ) -> impl IntoResponse {
     if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
     let day = jst_today_str();
-    let users: Vec<(i64, String, String, Option<String>)> = {
+    let users: Vec<(i64, String, String, Option<String>, Option<String>, i64)> = {
         let conn = db.lock().unwrap();
         let mut stmt = match conn.prepare(
-            "SELECT id, email, taste_json, slug FROM you_users
+            "SELECT id, email, taste_json, slug, trial_end_at, COALESCE(lifetime_free,0)
+             FROM you_users
              WHERE unsubscribed_at IS NULL"
         ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
-        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
-            .map(|it| it.filter_map(|r| r.ok()).collect())
-            .unwrap_or_default()
+        stmt.query_map([], |r| Ok((
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?,
+        ))).map(|it| it.filter_map(|r| r.ok()).collect())
+           .unwrap_or_default()
     };
 
     let mut queued = 0;
-    for (uid, _email, taste_json, _slug) in &users {
+    let mut skipped_expired = 0;
+    for (uid, email, taste_json, _slug, trial_end_at, lifetime_free_int) in &users {
+        let lifetime_free = *lifetime_free_int != 0;
+        // Skip expired trials (no daily email until they buy a MU shirt).
+        if !you_user_active(trial_end_at.as_deref(), lifetime_free) {
+            skipped_expired += 1;
+            send_trial_expired_notice_if_needed(db.clone(), *uid, email.clone(), trial_end_at.clone());
+            continue;
+        }
+        // Send 5-days-left reminder once if trial is winding down.
+        send_trial_reminder_if_needed(db.clone(), *uid, email.clone(), trial_end_at.as_deref());
         let taste: serde_json::Value = serde_json::from_str(taste_json)
             .unwrap_or(serde_json::json!({}));
         let (did, needs) = {
@@ -2660,6 +2895,7 @@ async fn you_admin_backfill(
         "day": day,
         "users": users.len(),
         "queued": queued,
+        "skipped_expired": skipped_expired,
     })).into_response()
 }
 
@@ -3313,9 +3549,43 @@ async fn main() {
         "ALTER TABLE you_designs ADD COLUMN gen_error TEXT",
         "ALTER TABLE you_users ADD COLUMN slug TEXT",
         "ALTER TABLE you_users ADD COLUMN display_name TEXT",
+        // 30-day trial / lifetime-free for MU shirt owners
+        "ALTER TABLE you_users ADD COLUMN trial_end_at TEXT",
+        "ALTER TABLE you_users ADD COLUMN lifetime_free INTEGER DEFAULT 0",
+        "ALTER TABLE you_users ADD COLUMN lifetime_reason TEXT",
+        "ALTER TABLE you_users ADD COLUMN trial_reminder_sent_at TEXT",
+        "ALTER TABLE you_users ADD COLUMN trial_expired_notice_sent_at TEXT",
     ] {
         conn.execute(col, []).ok();
     }
+    // Per-Stripe-checkout purchase ledger so we can grant lifetime_free
+    // retroactively when a returning buyer signs up for /you, AND so the
+    // webhook can mark a /you account lifetime_free as soon as a purchase
+    // settles.
+    conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS mu_purchases (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            email       TEXT NOT NULL,
+            product_id  INTEGER NOT NULL,
+            brand       TEXT NOT NULL,
+            drop_num    INTEGER,
+            session_id  TEXT,
+            created_at  TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_mu_purchases_email ON mu_purchases(email);
+        CREATE INDEX IF NOT EXISTS idx_mu_purchases_session ON mu_purchases(session_id);
+        CREATE INDEX IF NOT EXISTS idx_you_users_email ON you_users(email);
+    ").ok();
+    // Backfill trial_end_at for pre-existing /you users.
+    // created_at is a unix-epoch-seconds string; trial_end_at is the same
+    // format so we can compare without parsing each time.
+    // 30 days = 2592000 seconds.
+    conn.execute(
+        "UPDATE you_users
+         SET trial_end_at = CAST((CAST(created_at AS INTEGER) + 2592000) AS TEXT)
+         WHERE trial_end_at IS NULL",
+        [],
+    ).ok();
     // Now that the slug column has been added (or was created on a fresh DB),
     // create the index on it. Doing this after the ALTER TABLE migrations
     // is what makes a redeploy onto an older DB safe.
