@@ -141,10 +141,35 @@ textarea.input{resize:vertical;min-height:88px;line-height:1.7}
   background:var(--g);border:1px solid rgba(255,255,255,0.06);overflow:hidden}
 .preview-img{aspect-ratio:1;background:#000 center/cover no-repeat;position:relative;overflow:hidden}
 .preview-img::after{content:'';position:absolute;inset:0;
-  background:linear-gradient(180deg,transparent 60%,rgba(0,0,0,0.4))}
+  background:linear-gradient(180deg,transparent 60%,rgba(0,0,0,0.4));pointer-events:none}
 .preview-img-stamp{position:absolute;top:18px;left:18px;background:rgba(0,0,0,0.55);
   padding:6px 12px;font-size:8px;letter-spacing:0.3em;text-transform:uppercase;
   color:var(--y);z-index:2;backdrop-filter:blur(8px)}
+.preview-img-loading{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+  flex-direction:column;gap:14px;background:rgba(10,10,10,0.55);z-index:3;backdrop-filter:blur(2px)}
+.preview-img-loading.show{display:flex}
+.preview-img-loading .ring{width:38px;height:38px;border:1px solid rgba(255,255,255,0.18);
+  border-top-color:var(--y);border-radius:50%;animation:spin 1.1s linear infinite}
+.preview-img-loading .lbl{font-size:9px;letter-spacing:0.3em;text-transform:uppercase;color:var(--y);opacity:0.8}
+.preview-img-loading .sub{font-size:9px;letter-spacing:0.18em;opacity:0.5;max-width:240px;text-align:center;line-height:1.7}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* SHARE BAR */
+.share-bar{margin-top:24px;padding:18px;background:rgba(230,196,73,0.06);
+  border:1px solid rgba(230,196,73,0.18);display:none;flex-direction:column;gap:12px}
+.share-bar.show{display:flex}
+.share-bar .h{font-size:9px;letter-spacing:0.3em;text-transform:uppercase;color:var(--y);opacity:0.85}
+.share-row{display:flex;gap:8px;align-items:stretch}
+.share-row .input{flex:1;font-family:monospace;font-size:12px}
+.share-row .btn{flex:0 0 auto;padding:14px 18px;font-size:9px}
+.slug-edit{display:flex;gap:8px;align-items:stretch;margin-top:6px}
+.slug-edit .pre{display:flex;align-items:center;padding:0 14px;font-size:11px;
+  background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);
+  border-right:none;color:rgba(255,255,255,0.5);font-family:monospace}
+.slug-edit input{flex:1;border-left:none;font-family:monospace;font-size:12px}
+.slug-edit .btn{flex:0 0 auto;font-size:9px;padding:0 18px;letter-spacing:0.25em}
+.slug-msg{font-size:10px;opacity:0.55;line-height:1.7}
+.slug-msg.ok{color:#7ee27e}.slug-msg.err{color:var(--r);opacity:0.9}
 .preview-meta{padding:48px 44px;display:flex;flex-direction:column;gap:24px}
 .preview-day{font-size:9px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.55}
 .preview-name{font-size:28px;font-weight:200;letter-spacing:0.03em;line-height:1.25}
@@ -202,6 +227,20 @@ footer{padding:48px 32px;border-top:1px solid rgba(255,255,255,0.05);
   display:flex;justify-content:space-between;align-items:center;gap:24px;flex-wrap:wrap;
   font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.45}
 footer a:hover{opacity:1}
+
+/* TASTE EDIT */
+.taste-edit-bar{margin-top:48px;text-align:center;display:none}
+.taste-edit-bar.show{display:block}
+.taste-edit-bar a{font-size:10px;letter-spacing:0.3em;text-transform:uppercase;
+  opacity:0.55;border-bottom:1px solid rgba(255,255,255,0.15);padding-bottom:4px;cursor:pointer}
+.taste-edit-bar a:hover{opacity:1;border-color:var(--y);color:var(--y)}
+#taste-edit-form{display:none;margin-top:48px;padding:48px 28px;
+  background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.06);
+  max-width:780px;margin-left:auto;margin-right:auto}
+#taste-edit-form.show{display:block}
+#taste-edit-form .h{font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:var(--y);
+  margin-bottom:14px}
+#taste-edit-form .sub{font-size:12px;opacity:0.55;line-height:1.85;margin-bottom:32px}
 
 /* TOAST */
 #toast{position:fixed;bottom:32px;left:50%;transform:translateX(-50%) translateY(20px);
@@ -356,6 +395,11 @@ footer a:hover{opacity:1}
     <div class="preview-card" id="preview-card">
       <div class="preview-img" id="pv-img">
         <div class="preview-img-stamp" id="pv-stamp">MU × YOU · DAY 001</div>
+        <div class="preview-img-loading" id="pv-loading">
+          <div class="ring"></div>
+          <div class="lbl">Generating</div>
+          <div class="sub">Gemini 3 Pro Image があなた専用の一着を描いています — 30〜60秒</div>
+        </div>
       </div>
       <div class="preview-meta">
         <div class="preview-day" id="pv-day"></div>
@@ -371,10 +415,75 @@ footer a:hover{opacity:1}
           <button class="btn btn-secondary" id="skip-btn">明日に期待 / Skip</button>
           <button class="btn btn-ghost" id="refresh-btn" title="再生成（1回まで）">⟳</button>
         </div>
+        <div class="share-bar" id="share-bar">
+          <div class="h">あなた専用ページ — シェア用URL</div>
+          <div class="share-row">
+            <input class="input" id="share-url" readonly>
+            <button class="btn btn-primary" id="copy-btn" type="button">コピー</button>
+          </div>
+          <div class="slug-edit">
+            <span class="pre">wearmu.com/</span>
+            <input class="input" id="slug-input" placeholder="お好みのスラッグ（3〜32字）" maxlength="32" autocomplete="off">
+            <button class="btn btn-secondary" id="slug-save" type="button">設定</button>
+          </div>
+          <div class="slug-msg" id="slug-msg">a-z, 0-9, ハイフン (-)、アンダースコア (_) のみ。例: yuki, north-mist, kuroi-mu</div>
+        </div>
       </div>
     </div>
   </div>
 </section>
+
+<div class="taste-edit-bar" id="taste-edit-bar">
+  <a id="taste-edit-toggle">プロンプトを書き直す / Edit my taste</a>
+</div>
+
+<form id="taste-edit-form">
+  <div class="h">あなたの好みを更新</div>
+  <p class="sub">明日以降の案からこの内容で生成されます。<br>本日の案も再生成（30〜60秒）。確認メールが届きます。</p>
+
+  <div class="field">
+    <div class="label">気分 / Mood</div>
+    <div class="chips" data-name="te_mood" data-multi="1">
+      <span class="chip">静か</span><span class="chip">力強い</span><span class="chip">ノスタルジック</span>
+      <span class="chip">ミニマル</span><span class="chip">遊び</span><span class="chip">深い</span>
+      <span class="chip">朝の光</span><span class="chip">夜の余韻</span>
+      <span class="chip">海</span><span class="chip">山</span><span class="chip">街</span><span class="chip">余白</span>
+      <span class="chip">幾何学</span><span class="chip">手書き</span><span class="chip">写真的</span>
+    </div>
+  </div>
+  <div class="field">
+    <div class="label">色味 / Palette</div>
+    <div class="chips" data-name="te_palette" data-multi="1">
+      <span class="chip">モノクロ</span><span class="chip">アースカラー</span>
+      <span class="chip">藍 / インディゴ</span><span class="chip">墨</span>
+      <span class="chip">サンドベージュ</span><span class="chip">セージグリーン</span>
+      <span class="chip">ヴィンテージ赤</span><span class="chip">サーモン</span>
+      <span class="chip">パステル</span><span class="chip">蛍光</span>
+    </div>
+  </div>
+  <div class="field">
+    <div class="label">着るシーン / When</div>
+    <div class="chips" data-name="te_scene" data-multi="1">
+      <span class="chip">毎日</span><span class="chip">仕事</span>
+      <span class="chip">休日</span><span class="chip">旅</span>
+      <span class="chip">ジム</span><span class="chip">パートナー</span>
+      <span class="chip">家</span><span class="chip">夜の外出</span>
+    </div>
+  </div>
+  <div class="field">
+    <div class="label">サイズ</div>
+    <div class="size-row" data-name="te_size" data-multi="0">
+      <div class="size">XS</div><div class="size">S</div><div class="size">M</div>
+      <div class="size">L</div><div class="size">XL</div>
+    </div>
+  </div>
+  <div class="field">
+    <div class="label">ひとこと（任意）</div>
+    <textarea class="input" id="te-bio" rows="2" maxlength="240"
+      placeholder="例：藍と灰の中間が好き。詰めない、抜く服。"></textarea>
+  </div>
+  <button class="submit" type="button" id="taste-edit-save">更新 → 本日の案を再生成</button>
+</form>
 
 <!-- HISTORY -->
 <section id="history">
@@ -515,6 +624,8 @@ function placeholderImg(seed){
 }
 function hashCode(s){let h=0;for(let i=0;i<s.length;i++)h=((h<<5)-h+s.charCodeAt(i))|0;return h;}
 
+let pollTimer = null;
+
 function showDesign(d){
   if (!d) return;
   $('#preview').classList.add('show');
@@ -526,20 +637,53 @@ function showDesign(d){
   $('#pv-price').textContent = '¥' + (d.price_jpy||6800).toLocaleString();
   $('#pv-valid').textContent = d.valid_label || '24h';
   const img = $('#pv-img');
-  if (d.image_url) {
-    img.style.background = `#000 center/cover no-repeat url("${d.image_url}")`;
+  // Use cache-busting param when generating so we re-fetch the bytes once ready
+  const isReady = d.gen_status === 'ready' || d.gen_status === 'pending' && d.image_url;
+  const url = d.image_url ? `${d.image_url}${isReady ? '' : '?cb=' + Date.now()}` : null;
+  if (url) {
+    img.style.background = `#000 center/cover no-repeat url("${url}")`;
   } else {
     img.style.background = `#000 center/cover no-repeat ${placeholderImg(d.seed||d.name||'')}`;
   }
-  // re-add stamp after style overwrite
-  if (!img.querySelector('.preview-img-stamp')) {
-    const s = document.createElement('div');
-    s.className = 'preview-img-stamp';
-    s.id = 'pv-stamp';
-    s.textContent = `MU × YOU · DAY ${String(d.day_num||1).padStart(3,'0')}`;
-    img.appendChild(s);
+  // Loading overlay
+  const loading = $('#pv-loading');
+  if (d.gen_status === 'generating') {
+    loading.classList.add('show');
+    schedulePoll();
+  } else if (d.gen_status === 'failed') {
+    loading.classList.remove('show');
+    toast('画像生成に失敗。⟳ で再試行してください', true);
+  } else {
+    loading.classList.remove('show');
+    if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
   }
   $('#preview').dataset.designId = d.id;
+  // Show share bar once we have a token
+  if (token) $('#share-bar').classList.add('show');
+}
+
+function schedulePoll(){
+  if (pollTimer) return;
+  pollTimer = setTimeout(async ()=>{
+    pollTimer = null;
+    if (!token) return;
+    try {
+      const data = await api(`/api/you/daily/${token}`);
+      if (data.today) {
+        showDesign(data.today);
+        if (data.today.gen_status === 'generating') schedulePoll();
+      }
+      if (data.history) showHistory(data.history);
+      if (data.share_url) updateShareBar(data.share_url, data.slug);
+    } catch(e){ schedulePoll(); }
+  }, 4000);
+}
+
+function updateShareBar(shareUrl, slug){
+  if (!shareUrl) return;
+  $('#share-url').value = shareUrl;
+  if (slug && !$('#slug-input').value) $('#slug-input').value = slug;
+  $('#share-bar').classList.add('show');
 }
 
 function showHistory(items){
@@ -568,6 +712,7 @@ async function loadDaily(tk){
     const data = await api(`/api/you/daily/${tk}`);
     if (data.today) showDesign(data.today);
     if (data.history) showHistory(data.history);
+    if (data.share_url) updateShareBar(data.share_url, data.slug);
   } catch(e){
     toast('読み込みに失敗：' + e.message, true);
   }
@@ -597,8 +742,11 @@ $('#taste-form').addEventListener('submit', async e=>{
     token = r.token;
     localStorage.setItem('mu_you_token', token);
     if (r.today) showDesign(r.today);
+    if (r.share_url) updateShareBar(r.share_url, r.slug);
     document.getElementById('preview').scrollIntoView({behavior:'smooth'});
-    toast('登録完了。本日の案を生成しました');
+    toast(r.today && r.today.gen_status === 'generating'
+      ? '登録完了。Gemini が本日の一着を描いています…'
+      : '登録完了。本日の案を生成しました');
     if (r.history) showHistory(r.history);
   } catch(e){
     toast('登録失敗：' + e.message, true);
@@ -622,12 +770,54 @@ $('#refresh-btn').addEventListener('click', async ()=>{
   $('#refresh-btn').disabled = true;
   try {
     const r = await api('/api/you/feedback', {token, design_id: Number(id), action: 'refresh'});
-    if (r.today) showDesign(r.today);
-    toast('再生成しました');
+    // Force the loading overlay even before polling kicks in
+    if (r.today) {
+      r.today.gen_status = 'generating';
+      showDesign(r.today);
+    }
+    toast('再生成中…30〜60秒');
   } catch(e){
     toast(e.message, true);
   } finally {
     $('#refresh-btn').disabled = false;
+  }
+});
+
+// SHARE / SLUG handlers
+$('#copy-btn').addEventListener('click', async ()=>{
+  const url = $('#share-url').value;
+  if (!url) return;
+  try {
+    await navigator.clipboard.writeText(url);
+    toast('コピーしました：' + url);
+  } catch(e){
+    $('#share-url').select(); document.execCommand('copy');
+    toast('コピーしました');
+  }
+});
+
+$('#slug-save').addEventListener('click', async ()=>{
+  const slug = ($('#slug-input').value || '').trim().toLowerCase();
+  const msg = $('#slug-msg');
+  msg.classList.remove('ok','err');
+  if (!/^[a-z0-9][a-z0-9_-]{2,31}$/.test(slug)) {
+    msg.classList.add('err');
+    msg.textContent = '無効：3〜32文字、a-z/0-9/-/_、先頭は英数字';
+    return;
+  }
+  if (!token) { toast('まず登録してください', true); return; }
+  $('#slug-save').disabled = true;
+  try {
+    const r = await api('/api/you/slug', {token, slug});
+    msg.classList.add('ok');
+    msg.textContent = '✓ 設定完了：' + r.share_url;
+    updateShareBar(r.share_url, r.slug);
+    toast('スラッグ設定完了');
+  } catch(e){
+    msg.classList.add('err');
+    msg.textContent = '✗ ' + e.message;
+  } finally {
+    $('#slug-save').disabled = false;
   }
 });
 
@@ -666,7 +856,49 @@ $('#unsub-link').addEventListener('click', async e=>{
   } catch(e){ toast(e.message, true); }
 });
 
-if (token) loadDaily(token);
+// TASTE EDIT
+$('#taste-edit-toggle').addEventListener('click', ()=>{
+  const f = $('#taste-edit-form');
+  f.classList.toggle('show');
+  if (f.classList.contains('show')) {
+    f.scrollIntoView({behavior:'smooth', block:'start'});
+  }
+});
+
+$('#taste-edit-save').addEventListener('click', async ()=>{
+  if (!token) { toast('まず登録してください', true); return; }
+  const btn = $('#taste-edit-save');
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = '保存中…';
+  const payload = {
+    token,
+    mood: selected('te_mood'),
+    palette: selected('te_palette'),
+    scene: selected('te_scene'),
+    size: (selected('te_size')[0] || 'S'),
+    bio: ($('#te-bio').value || '').trim(),
+  };
+  try {
+    const r = await api('/api/you/taste', payload);
+    if (r.share_url) updateShareBar(r.share_url, r.slug);
+    toast('プロンプト更新完了。再生成中…');
+    $('#taste-edit-form').classList.remove('show');
+    // Reload to pick up the regenerated design
+    if (token) loadDaily(token);
+    document.getElementById('preview').scrollIntoView({behavior:'smooth'});
+  } catch(e){
+    toast(e.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+});
+
+if (token) {
+  loadDaily(token);
+  $('#taste-edit-bar').classList.add('show');
+}
 </script>
 </body>
 </html>

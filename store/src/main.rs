@@ -1,3 +1,5 @@
+mod gemini;
+
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, HeaderValue, Request, StatusCode, header},
@@ -1794,34 +1796,49 @@ fn urlencoded(s: &str) -> String {
     out
 }
 
+/// Ensure today's design row exists. Returns (design_id, needs_generation).
+/// `needs_generation = true` when the caller should kick off a Gemini task
+/// (new row, refresh, or a previous attempt that failed). Existing successful
+/// rows are returned untouched for idempotent daily polling.
 fn ensure_design_for_day(conn: &Connection, user_id: i64, day: &str, taste: &serde_json::Value, force_refresh: bool)
-    -> rusqlite::Result<i64>
+    -> rusqlite::Result<(i64, bool)>
 {
-    // existing?
-    let existing: Option<(i64, i64)> = conn.query_row(
-        "SELECT id, refresh_count FROM you_designs WHERE user_id=? AND day=?",
+    let existing: Option<(i64, i64, String)> = conn.query_row(
+        "SELECT id, refresh_count, gen_status FROM you_designs WHERE user_id=? AND day=?",
         params![user_id, day],
-        |r| Ok((r.get::<_,i64>(0)?, r.get::<_,i64>(1)?)),
+        |r| Ok((r.get::<_,i64>(0)?, r.get::<_,i64>(1)?, r.get::<_,String>(2)?)),
     ).ok();
 
-    if let Some((id, refresh_count)) = existing {
+    if let Some((id, refresh_count, gen_status)) = existing {
         if !force_refresh {
-            return Ok(id);
+            // Re-kick generation only if a prior attempt failed and nothing is
+            // currently running; never re-kick a 'ready' row.
+            let needs = gen_status == "failed";
+            if needs {
+                conn.execute(
+                    "UPDATE you_designs SET gen_status='generating', gen_error=NULL, updated_at=?
+                     WHERE id=?",
+                    params![chrono_now(), id],
+                )?;
+            }
+            return Ok((id, needs));
         }
         // refresh: bump count, regenerate name/prompt/seed/image
         let new_count = refresh_count + 1;
         let (name, prompt, seed) = compose_design(taste, day, new_count);
-        let image_url = render_design_svg(&name, &seed);
+        let svg_fallback = render_design_svg(&name, &seed);
         conn.execute(
             "UPDATE you_designs
-             SET name=?, prompt=?, seed=?, image_url=?, refresh_count=?, updated_at=?
+             SET name=?, prompt=?, seed=?, image_url=?, image_bytes=NULL, image_mime=NULL,
+                 gen_status='generating', gen_error=NULL,
+                 refresh_count=?, updated_at=?
              WHERE id=?",
-            params![name, prompt, seed, image_url, new_count, chrono_now(), id],
+            params![name, prompt, seed, svg_fallback, new_count, chrono_now(), id],
         )?;
-        return Ok(id);
+        return Ok((id, true));
     }
 
-    // figure out day_num for this user
+    // Compute day_num for this user
     let day_num: i64 = conn.query_row(
         "SELECT COALESCE(MAX(day_num), 0) + 1 FROM you_designs WHERE user_id=?",
         params![user_id],
@@ -1829,21 +1846,147 @@ fn ensure_design_for_day(conn: &Connection, user_id: i64, day: &str, taste: &ser
     ).unwrap_or(1);
 
     let (name, prompt, seed) = compose_design(taste, day, 0);
-    let image_url = render_design_svg(&name, &seed);
+    let svg_fallback = render_design_svg(&name, &seed);
     let now = chrono_now();
     conn.execute(
         "INSERT INTO you_designs
-         (user_id, day, day_num, name, prompt, seed, image_url, status,
+         (user_id, day, day_num, name, prompt, seed, image_url, gen_status, status,
           refresh_count, created_at, updated_at)
-         VALUES (?,?,?,?,?,?,?,'pending',0,?,?)",
-        params![user_id, day, day_num, name, prompt, seed, image_url, now, now],
+         VALUES (?,?,?,?,?,?,?,'generating','pending',0,?,?)",
+        params![user_id, day, day_num, name, prompt, seed, svg_fallback, now, now],
     )?;
-    Ok(conn.last_insert_rowid())
+    Ok((conn.last_insert_rowid(), true))
+}
+
+/// Spawn a background task that calls Gemini 3 Pro Image, writes the bytes
+/// back to the row, and emails the subscriber a "your design is ready" link.
+///
+/// Image bytes live as BLOB in the SQLite database at `DB_PATH`, which is
+/// `/data/products.db` in production — that path is the Fly volume
+/// `mu_store_data` (see fly.toml). The volume persists across deploys and
+/// machine restarts, so generated images survive forever unless explicitly
+/// deleted. Re-deploys never wipe them.
+fn spawn_gemini_for_design(db: Db, design_id: i64) {
+    tokio::spawn(async move {
+        let row = {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT d.name, d.prompt, d.seed, d.day_num, u.taste_json,
+                        u.email, u.slug
+                 FROM you_designs d JOIN you_users u ON u.id = d.user_id
+                 WHERE d.id=?",
+                params![design_id],
+                |r| Ok((
+                    r.get::<_,String>(0)?,
+                    r.get::<_,String>(1)?,
+                    r.get::<_,String>(2)?,
+                    r.get::<_,i64>(3)?,
+                    r.get::<_,String>(4)?,
+                    r.get::<_,String>(5)?,
+                    r.get::<_,Option<String>>(6)?,
+                )),
+            ).ok()
+        };
+        let (name, prompt, seed, day_num, taste_json, email, slug) = match row {
+            Some(v) => v,
+            None => {
+                eprintln!("[you/gemini] design {} disappeared", design_id);
+                return;
+            }
+        };
+        let taste: serde_json::Value =
+            serde_json::from_str(&taste_json).unwrap_or(serde_json::json!({}));
+        let pull_strs = |k: &str| -> Vec<String> {
+            taste.get(k).and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+                .unwrap_or_default()
+        };
+        let mood = pull_strs("mood");
+        let palette = pull_strs("palette");
+        let scene = pull_strs("scene");
+
+        let tee = gemini::TeeDesign {
+            name: &name, prompt: &prompt, seed: &seed,
+            mood: &mood, palette: &palette, scene: &scene,
+        };
+        match gemini::generate_tee(&tee).await {
+            Ok(g) => {
+                let bytes_len = g.bytes.len();
+                {
+                    let conn = db.lock().unwrap();
+                    let url = format!("/api/you/design/{}/image.png", design_id);
+                    let r = conn.execute(
+                        "UPDATE you_designs
+                         SET image_bytes=?, image_mime=?, image_url=?,
+                             gen_status='ready', gen_error=NULL, updated_at=?
+                         WHERE id=?",
+                        params![g.bytes, g.mime, url, chrono_now(), design_id],
+                    );
+                    if let Err(e) = r {
+                        eprintln!("[you/gemini] failed to persist design {}: {}", design_id, e);
+                        return;
+                    }
+                }
+                eprintln!("[you/gemini] design {} ready ({} bytes)", design_id, bytes_len);
+
+                // Notify subscriber
+                let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+                if !resend_key.is_empty() {
+                    let base_url = env::var("BASE_URL")
+                        .unwrap_or_else(|_| "https://wearmu.com".into());
+                    let base = base_url.trim_end_matches('/');
+                    let img_url = format!("{}/api/you/design/{}/image.png", base, design_id);
+                    let share = slug.as_ref()
+                        .map(|s| format!("{}/{}", base, s))
+                        .unwrap_or_else(|| format!("{}/you", base));
+                    let html = format!(r#"
+<div style="background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;padding:32px 0;margin:0">
+  <div style="max-width:600px;margin:0 auto;padding:0 32px">
+    <div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:32px">MU × YOU</div>
+    <div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:8px">DAY {day_num:03}</div>
+    <div style="font-size:24px;font-weight:200;line-height:1.4;margin-bottom:8px">{name}</div>
+    <p style="font-size:12px;line-height:1.85;opacity:0.7;margin-bottom:24px;font-style:italic;border-left:2px solid #e6c449;padding-left:14px">{prompt}</p>
+    <img src="{img}" alt="MU × YOU DAY {day_num}" style="width:100%;display:block;background:#1a1a1a;border-radius:2px;margin-bottom:24px">
+    <a href="{share}" style="display:inline-block;background:#e6c449;color:#000;padding:16px 28px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:700;margin-right:8px">この一着を仕立てる →</a>
+    <a href="{share}" style="display:inline-block;border:1px solid rgba(255,255,255,0.2);color:#F5F5F0;padding:15px 22px;font-size:10px;letter-spacing:0.25em;text-transform:uppercase;text-decoration:none;opacity:0.7">明日に期待 / Skip</a>
+    <p style="font-size:10px;opacity:0.45;margin-top:32px;line-height:1.7">
+      気分が変わったら <a href="{share}" style="color:#e6c449">プロンプトを書き直す</a>こともできます。<br>
+      退会は <code>STOP</code> 返信、または /you ページから即時。
+    </p>
+  </div>
+</div>"#,
+                        day_num = day_num, name = name, prompt = prompt,
+                        img = img_url, share = share);
+                    let _ = reqwest::Client::new()
+                        .post("https://api.resend.com/emails")
+                        .bearer_auth(&resend_key)
+                        .json(&serde_json::json!({
+                            "from": "MU × YOU <noreply@wearmu.com>",
+                            "to": [email],
+                            "subject": format!("MU × YOU DAY {:03} — {}", day_num, name),
+                            "html": html,
+                        }))
+                        .send().await;
+                }
+            }
+            Err(e) => {
+                eprintln!("[you/gemini] design {} failed: {}", design_id, e);
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "UPDATE you_designs
+                     SET gen_status='failed', gen_error=?, updated_at=?
+                     WHERE id=?",
+                    params![e, chrono_now(), design_id],
+                );
+            }
+        }
+    });
 }
 
 fn design_to_json(conn: &Connection, id: i64) -> Option<serde_json::Value> {
     conn.query_row(
-        "SELECT id, day, day_num, name, prompt, seed, image_url, status, size, refresh_count
+        "SELECT id, day, day_num, name, prompt, seed, image_url, status, size,
+                refresh_count, gen_status
          FROM you_designs WHERE id=?",
         params![id],
         |r| Ok(serde_json::json!({
@@ -1853,10 +1996,12 @@ fn design_to_json(conn: &Connection, id: i64) -> Option<serde_json::Value> {
             "name": r.get::<_,String>(3)?,
             "prompt": r.get::<_,String>(4)?,
             "seed": r.get::<_,String>(5)?,
-            "image_url": r.get::<_,Option<String>>(6)?,
+            "image_url": format!("/api/you/design/{}/image.png", r.get::<_,i64>(0)?),
+            "image_url_fallback": r.get::<_,Option<String>>(6)?,
             "status": r.get::<_,String>(7)?,
             "size": r.get::<_,Option<String>>(8)?.unwrap_or_else(|| "S".into()),
             "refresh_count": r.get::<_,i64>(9)?,
+            "gen_status": r.get::<_,String>(10)?,
             "price_jpy": 6800,
             "valid_label": "24h",
         })),
@@ -1884,7 +2029,7 @@ async fn you_subscribe(
     let now = chrono_now();
     let day = jst_today_str();
 
-    let (token, user_id) = {
+    let (token, user_id, today_design_id, needs_gen) = {
         let conn = db.lock().unwrap();
 
         // Upsert user
@@ -1905,10 +2050,20 @@ async fn you_subscribe(
             }
             None => {
                 let tk = uuid::Uuid::new_v4().to_string().replace('-', "");
+                // Try a few random slugs in case of collision
+                let mut sl = random_slug();
+                for _ in 0..5 {
+                    let exists: bool = conn.query_row(
+                        "SELECT 1 FROM you_users WHERE slug=?",
+                        params![sl], |_| Ok(true),
+                    ).unwrap_or(false);
+                    if !exists { break; }
+                    sl = random_slug();
+                }
                 conn.execute(
-                    "INSERT INTO you_users (email, token, taste_json, size, created_at, updated_at)
-                     VALUES (?,?,?,?,?,?)",
-                    params![email, tk, taste.to_string(), size, now, now],
+                    "INSERT INTO you_users (email, token, slug, taste_json, size, created_at, updated_at)
+                     VALUES (?,?,?,?,?,?,?)",
+                    params![email, tk, sl, taste.to_string(), size, now, now],
                 ).ok();
                 let uid = conn.last_insert_rowid();
                 (uid, tk)
@@ -1916,11 +2071,18 @@ async fn you_subscribe(
         };
 
         // Generate today's design (idempotent per (user, day))
-        if let Err(e) = ensure_design_for_day(&conn, uid, &day, &taste, false) {
-            eprintln!("[you] ensure_design failed for user {}: {}", uid, e);
-        }
-        (tk, uid)
+        let (did, needs_gen) = match ensure_design_for_day(&conn, uid, &day, &taste, false) {
+            Ok((id, needs)) => (id, needs),
+            Err(e) => {
+                eprintln!("[you] ensure_design failed for user {}: {}", uid, e);
+                (0, false)
+            }
+        };
+        (tk, uid, did, needs_gen)
     };
+    if needs_gen && today_design_id > 0 {
+        spawn_gemini_for_design(db.clone(), today_design_id);
+    }
 
     // Send welcome via Resend (fire-and-forget)
     let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
@@ -1965,31 +2127,43 @@ async fn you_subscribe(
     ).ok();
     let today = today_id.and_then(|id| design_to_json(&conn, id));
     let history = list_history(&conn, user_id);
+    let slug: Option<String> = conn.query_row(
+        "SELECT slug FROM you_users WHERE id=?",
+        params![user_id], |r| r.get(0),
+    ).ok();
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    let share_url = slug.as_ref().map(|s|
+        format!("{}/{}", base_url.trim_end_matches('/'), s));
 
     Json(serde_json::json!({
         "ok": true,
         "token": token,
         "today": today,
         "history": history,
+        "slug": slug,
+        "share_url": share_url,
     })).into_response()
 }
 
 fn list_history(conn: &Connection, user_id: i64) -> Vec<serde_json::Value> {
     let mut stmt = match conn.prepare(
-        "SELECT id, day, day_num, name, image_url, status, seed
+        "SELECT id, day, day_num, name, status, seed, gen_status
          FROM you_designs WHERE user_id=? ORDER BY day DESC LIMIT 30"
     ) {
         Ok(s) => s, Err(_) => return vec![],
     };
-    stmt.query_map(params![user_id], |r| Ok(serde_json::json!({
-        "id": r.get::<_,i64>(0)?,
+    stmt.query_map(params![user_id], |r| {
+        let id = r.get::<_,i64>(0)?;
+        Ok(serde_json::json!({
+        "id": id,
         "day": r.get::<_,String>(1)?,
         "day_num": r.get::<_,i64>(2)?,
         "name": r.get::<_,String>(3)?,
-        "image_url": r.get::<_,Option<String>>(4)?,
-        "status": r.get::<_,String>(5)?,
-        "seed": r.get::<_,String>(6)?,
-    })))
+        "image_url": format!("/api/you/design/{}/image.png", id),
+        "status": r.get::<_,String>(4)?,
+        "seed": r.get::<_,String>(5)?,
+        "gen_status": r.get::<_,String>(6)?,
+    }))})
     .map(|it| it.filter_map(|r| r.ok()).collect())
     .unwrap_or_default()
 }
@@ -1999,22 +2173,33 @@ async fn you_daily(
     Path(token): Path<String>,
 ) -> impl IntoResponse {
     let day = jst_today_str();
-    let conn = db.lock().unwrap();
-    let row: Option<(i64, String)> = conn.query_row(
-        "SELECT id, taste_json FROM you_users
-         WHERE token=? AND unsubscribed_at IS NULL",
-        params![token],
-        |r| Ok((r.get::<_,i64>(0)?, r.get::<_,String>(1)?)),
-    ).ok();
-    let (uid, taste_json) = match row {
-        Some(v) => v,
-        None => return (StatusCode::NOT_FOUND, "invalid token").into_response(),
+    let (uid, needs_gen, gen_id) = {
+        let conn = db.lock().unwrap();
+        let row: Option<(i64, String)> = conn.query_row(
+            "SELECT id, taste_json FROM you_users
+             WHERE token=? AND unsubscribed_at IS NULL",
+            params![token],
+            |r| Ok((r.get::<_,i64>(0)?, r.get::<_,String>(1)?)),
+        ).ok();
+        let (uid, taste_json) = match row {
+            Some(v) => v,
+            None => return (StatusCode::NOT_FOUND, "invalid token").into_response(),
+        };
+        let taste: serde_json::Value =
+            serde_json::from_str(&taste_json).unwrap_or(serde_json::json!({}));
+        let (id, needs) = match ensure_design_for_day(&conn, uid, &day, &taste, false) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("[you] ensure_design (daily) failed: {}", e);
+                (0, false)
+            }
+        };
+        (uid, needs, id)
     };
-    let taste: serde_json::Value =
-        serde_json::from_str(&taste_json).unwrap_or(serde_json::json!({}));
-    if let Err(e) = ensure_design_for_day(&conn, uid, &day, &taste, false) {
-        eprintln!("[you] ensure_design (daily) failed: {}", e);
+    if needs_gen && gen_id > 0 {
+        spawn_gemini_for_design(db.clone(), gen_id);
     }
+    let conn = db.lock().unwrap();
     let today_id: Option<i64> = conn.query_row(
         "SELECT id FROM you_designs WHERE user_id=? AND day=?",
         params![uid, day],
@@ -2022,8 +2207,17 @@ async fn you_daily(
     ).ok();
     let today = today_id.and_then(|id| design_to_json(&conn, id));
     let history = list_history(&conn, uid);
+    let slug: Option<String> = conn.query_row(
+        "SELECT slug FROM you_users WHERE id=?",
+        params![uid], |r| r.get(0),
+    ).ok();
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    let share_url = slug.as_ref().map(|s|
+        format!("{}/{}", base_url.trim_end_matches('/'), s));
     Json(serde_json::json!({
         "ok": true,
+        "slug": slug,
+        "share_url": share_url,
         "today": today,
         "history": history,
     })).into_response()
@@ -2033,65 +2227,76 @@ async fn you_feedback(
     State(db): State<Db>,
     Json(body): Json<YouFeedbackBody>,
 ) -> impl IntoResponse {
-    let conn = db.lock().unwrap();
-    let row: Option<(i64, String)> = conn.query_row(
-        "SELECT u.id, u.taste_json
-         FROM you_users u
-         WHERE u.token=? AND u.unsubscribed_at IS NULL",
-        params![body.token],
-        |r| Ok((r.get::<_,i64>(0)?, r.get::<_,String>(1)?)),
-    ).ok();
-    let (uid, taste_json) = match row {
-        Some(v) => v,
-        None => return (StatusCode::NOT_FOUND, "invalid token").into_response(),
-    };
-    // Confirm design ownership
-    let design_user: Option<(i64, String)> = conn.query_row(
-        "SELECT user_id, day FROM you_designs WHERE id=?",
-        params![body.design_id],
-        |r| Ok((r.get::<_,i64>(0)?, r.get::<_,String>(1)?)),
-    ).ok();
-    let (owner_id, day) = match design_user {
-        Some(v) => v,
-        None => return (StatusCode::NOT_FOUND, "design not found").into_response(),
-    };
-    if owner_id != uid {
-        return (StatusCode::FORBIDDEN, "not your design").into_response();
-    }
+    let outcome: Result<(Option<serde_json::Value>, Option<i64>), Response> = {
+        let conn = db.lock().unwrap();
+        let row: Option<(i64, String)> = conn.query_row(
+            "SELECT u.id, u.taste_json
+             FROM you_users u
+             WHERE u.token=? AND u.unsubscribed_at IS NULL",
+            params![body.token],
+            |r| Ok((r.get::<_,i64>(0)?, r.get::<_,String>(1)?)),
+        ).ok();
+        let (uid, taste_json) = match row {
+            Some(v) => v,
+            None => return (StatusCode::NOT_FOUND, "invalid token").into_response(),
+        };
+        let design_user: Option<(i64, String)> = conn.query_row(
+            "SELECT user_id, day FROM you_designs WHERE id=?",
+            params![body.design_id],
+            |r| Ok((r.get::<_,i64>(0)?, r.get::<_,String>(1)?)),
+        ).ok();
+        let (owner_id, day) = match design_user {
+            Some(v) => v,
+            None => return (StatusCode::NOT_FOUND, "design not found").into_response(),
+        };
+        if owner_id != uid {
+            return (StatusCode::FORBIDDEN, "not your design").into_response();
+        }
 
-    let now = chrono_now();
-    let mut today_after: Option<serde_json::Value> = None;
-    match body.action.as_str() {
-        "skip" | "like" => {
-            conn.execute(
-                "UPDATE you_designs SET status=?, updated_at=? WHERE id=?",
-                params![body.action, now, body.design_id],
-            ).ok();
-            conn.execute(
-                "INSERT INTO you_feedback (user_id, design_id, action, created_at) VALUES (?,?,?,?)",
-                params![uid, body.design_id, body.action, now],
-            ).ok();
-        }
-        "refresh" => {
-            // Limited to 1 refresh per day
-            let cnt: i64 = conn.query_row(
-                "SELECT refresh_count FROM you_designs WHERE id=?",
-                params![body.design_id],
-                |r| r.get(0),
-            ).unwrap_or(0);
-            if cnt >= 1 {
-                return (StatusCode::TOO_MANY_REQUESTS,
-                    "refresh limit reached for today").into_response();
+        let now = chrono_now();
+        match body.action.as_str() {
+            "skip" | "like" => {
+                conn.execute(
+                    "UPDATE you_designs SET status=?, updated_at=? WHERE id=?",
+                    params![body.action, now, body.design_id],
+                ).ok();
+                conn.execute(
+                    "INSERT INTO you_feedback (user_id, design_id, action, created_at) VALUES (?,?,?,?)",
+                    params![uid, body.design_id, body.action, now],
+                ).ok();
+                Ok((None, None))
             }
-            let taste: serde_json::Value =
-                serde_json::from_str(&taste_json).unwrap_or(serde_json::json!({}));
-            if let Err(e) = ensure_design_for_day(&conn, uid, &day, &taste, true) {
-                eprintln!("[you] refresh failed: {}", e);
-                return (StatusCode::INTERNAL_SERVER_ERROR, "refresh failed").into_response();
+            "refresh" => {
+                let cnt: i64 = conn.query_row(
+                    "SELECT refresh_count FROM you_designs WHERE id=?",
+                    params![body.design_id],
+                    |r| r.get(0),
+                ).unwrap_or(0);
+                if cnt >= 1 {
+                    return (StatusCode::TOO_MANY_REQUESTS,
+                        "refresh limit reached for today").into_response();
+                }
+                let taste: serde_json::Value =
+                    serde_json::from_str(&taste_json).unwrap_or(serde_json::json!({}));
+                let gen_id = match ensure_design_for_day(&conn, uid, &day, &taste, true) {
+                    Ok((id, _needs)) => id,
+                    Err(e) => {
+                        eprintln!("[you] refresh failed: {}", e);
+                        return (StatusCode::INTERNAL_SERVER_ERROR, "refresh failed").into_response();
+                    }
+                };
+                let after = design_to_json(&conn, body.design_id);
+                Ok((after, Some(gen_id)))
             }
-            today_after = design_to_json(&conn, body.design_id);
+            _ => return (StatusCode::BAD_REQUEST, "unknown action").into_response(),
         }
-        _ => return (StatusCode::BAD_REQUEST, "unknown action").into_response(),
+    };
+    let (today_after, refresh_id) = match outcome {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    if let Some(id) = refresh_id {
+        spawn_gemini_for_design(db.clone(), id);
     }
     Json(serde_json::json!({
         "ok": true,
@@ -2199,6 +2404,216 @@ async fn you_claim(
     }
 }
 
+async fn you_image(
+    State(db): State<Db>,
+    Path(id): Path<i64>,
+) -> Response {
+    let row: Option<(Option<Vec<u8>>, Option<String>, String)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT image_bytes, image_mime, gen_status FROM you_designs WHERE id=?",
+            params![id],
+            |r| Ok((
+                r.get::<_,Option<Vec<u8>>>(0)?,
+                r.get::<_,Option<String>>(1)?,
+                r.get::<_,String>(2)?,
+            )),
+        ).ok()
+    };
+    let (bytes, mime, status) = match row {
+        Some(v) => v,
+        None => return (StatusCode::NOT_FOUND, "design not found").into_response(),
+    };
+
+    if let (Some(b), m) = (bytes, mime) {
+        let mime = m.unwrap_or_else(|| "image/png".into());
+        let mut resp = b.into_response();
+        let h = resp.headers_mut();
+        if let Ok(v) = HeaderValue::from_str(&mime) {
+            h.insert(header::CONTENT_TYPE, v);
+        }
+        h.insert(header::CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=2592000, immutable"));
+        return resp;
+    }
+
+    // No bytes yet — return a 202 with a placeholder SVG so <img> still renders.
+    let placeholder = r##"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 800 800'>
+<defs><linearGradient id='g' x1='0%' y1='0%' x2='100%' y2='100%'>
+  <stop offset='0%' stop-color='#1a1a1a'/><stop offset='100%' stop-color='#0a0a0a'/></linearGradient></defs>
+<rect width='800' height='800' fill='url(#g)'/>
+<text x='50%' y='48%' text-anchor='middle' fill='rgba(230,196,73,0.9)'
+  font-family='Helvetica Neue,Arial' font-size='44' letter-spacing='10' font-weight='200'>GENERATING</text>
+<text x='50%' y='56%' text-anchor='middle' fill='rgba(255,255,255,0.45)'
+  font-family='Helvetica Neue,Arial' font-size='14' letter-spacing='6'>MU × YOU</text>
+<text x='50%' y='62%' text-anchor='middle' fill='rgba(255,255,255,0.25)'
+  font-family='monospace' font-size='10' letter-spacing='4'>Gemini 3 Pro · 30〜60s</text>
+</svg>"##;
+    let code = if status == "failed" { StatusCode::INTERNAL_SERVER_ERROR }
+               else { StatusCode::ACCEPTED };
+    let mut resp = (code, placeholder.to_string()).into_response();
+    resp.headers_mut().insert(header::CONTENT_TYPE,
+        HeaderValue::from_static("image/svg+xml"));
+    resp.headers_mut().insert(header::CACHE_CONTROL,
+        HeaderValue::from_static("no-store"));
+    resp
+}
+
+#[derive(Deserialize)]
+struct YouTasteBody {
+    token: String,
+    #[serde(default)] mood: Vec<String>,
+    #[serde(default)] palette: Vec<String>,
+    #[serde(default)] scene: Vec<String>,
+    #[serde(default)] size: String,
+    #[serde(default)] bio: String,
+    #[serde(default)] display_name: Option<String>,
+}
+
+async fn you_taste_update(
+    State(db): State<Db>,
+    Json(body): Json<YouTasteBody>,
+) -> impl IntoResponse {
+    let outcome: Result<(i64, String, String, Option<String>, Option<String>), Response> = {
+        let conn = db.lock().unwrap();
+        let row: Option<(i64, String, Option<String>, Option<String>)> = conn.query_row(
+            "SELECT id, email, slug, display_name FROM you_users
+             WHERE token=? AND unsubscribed_at IS NULL",
+            params![body.token],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        ).ok();
+        let (uid, email, slug, prev_display) = match row {
+            Some(v) => v,
+            None => return (StatusCode::NOT_FOUND, "invalid token").into_response(),
+        };
+        let size = if body.size.is_empty() { "S".to_string() } else { body.size.clone() };
+        if !["XS","S","M","L","XL","XXL"].contains(&size.as_str()) {
+            return (StatusCode::BAD_REQUEST, "invalid size").into_response();
+        }
+        let display_name = body.display_name.clone()
+            .filter(|s| !s.trim().is_empty())
+            .or(prev_display);
+        let taste = serde_json::json!({
+            "email": email,
+            "mood": body.mood, "palette": body.palette, "scene": body.scene,
+            "size": size, "bio": body.bio,
+        });
+        let now = chrono_now();
+        if let Err(e) = conn.execute(
+            "UPDATE you_users SET taste_json=?, size=?, display_name=?, updated_at=? WHERE id=?",
+            params![taste.to_string(), size.clone(), display_name, now, uid],
+        ) {
+            eprintln!("[you/taste] update failed: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, "could not save").into_response();
+        }
+        // Force regenerate today's design with the new taste
+        let day = jst_today_str();
+        let design_id = match ensure_design_for_day(&conn, uid, &day, &taste, true) {
+            Ok((id, _)) => id,
+            Err(e) => { eprintln!("[you/taste] regen failed: {}", e); 0 }
+        };
+        Ok((uid, email, taste.to_string(), slug, Some(design_id.to_string())))
+    };
+    let (uid, email, _taste_str, slug, design_id_s) = match outcome {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let design_id: i64 = design_id_s.and_then(|s| s.parse().ok()).unwrap_or(0);
+    if design_id > 0 {
+        spawn_gemini_for_design(db.clone(), design_id);
+    }
+
+    // Send confirmation email
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    if !resend_key.is_empty() {
+        let to = email.clone();
+        let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+        let share = slug.clone().map(|s| format!("{}/{}", base_url.trim_end_matches('/'), s))
+            .unwrap_or_else(|| format!("{}/you", base_url.trim_end_matches('/')));
+        tokio::spawn(async move {
+            let html = format!(r#"
+<div style="background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;padding:48px;max-width:560px;margin:0 auto">
+  <div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:32px">MU × YOU</div>
+  <div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:8px">Prompt updated</div>
+  <div style="font-size:18px;font-weight:300;line-height:1.55;margin-bottom:24px">
+    プロンプトを更新しました。<br>本日の案は新しい好みで再生成中です（30〜60秒）。
+  </div>
+  <p style="font-size:12px;line-height:1.85;opacity:0.65;margin-bottom:32px">
+    明日以降の案も、この内容に沿って生成されます。<br>気が変わったら、いつでも下のリンクから書き直せます。
+  </p>
+  <a href="{share}" style="display:inline-block;background:#F5F5F0;color:#0A0A0A;padding:14px 28px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:700">本日の案を見る →</a>
+  <p style="font-size:10px;opacity:0.4;margin-top:32px;line-height:1.7">
+    退会は <code>STOP</code> 返信または /you ページの「退会」リンクから即時実行されます。
+  </p>
+</div>"#, share = share);
+            let _ = reqwest::Client::new()
+                .post("https://api.resend.com/emails")
+                .bearer_auth(&resend_key)
+                .json(&serde_json::json!({
+                    "from": "MU × YOU <noreply@wearmu.com>",
+                    "to": [to],
+                    "subject": "MU × YOU — プロンプトを更新しました",
+                    "html": html,
+                }))
+                .send().await;
+        });
+    }
+    let _ = uid;
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    let share_url = slug.as_ref().map(|s|
+        format!("{}/{}", base_url.trim_end_matches('/'), s));
+    Json(serde_json::json!({
+        "ok": true,
+        "share_url": share_url,
+        "slug": slug,
+    })).into_response()
+}
+
+#[derive(Deserialize)]
+struct YouAdminBackfillBody {
+    admin_token: String,
+}
+
+/// Admin: ensure today's design exists for every active subscriber and send
+/// the daily email. Useful for manually verifying deliverability after deploy.
+async fn you_admin_backfill(
+    State(db): State<Db>,
+    Json(body): Json<YouAdminBackfillBody>,
+) -> impl IntoResponse {
+    if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+    let day = jst_today_str();
+    let users: Vec<(i64, String, String, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, email, taste_json, slug FROM you_users
+             WHERE unsubscribed_at IS NULL"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default()
+    };
+
+    let mut queued = 0;
+    for (uid, _email, taste_json, _slug) in &users {
+        let taste: serde_json::Value = serde_json::from_str(taste_json)
+            .unwrap_or(serde_json::json!({}));
+        let did = {
+            let conn = db.lock().unwrap();
+            ensure_design_for_day(&conn, *uid, &day, &taste, false).map(|(id, _)| id).unwrap_or(0)
+        };
+        if did > 0 {
+            spawn_gemini_for_design(db.clone(), did);
+            queued += 1;
+        }
+    }
+    Json(serde_json::json!({
+        "ok": true,
+        "day": day,
+        "users": users.len(),
+        "queued": queued,
+    })).into_response()
+}
+
 async fn you_unsubscribe(
     State(db): State<Db>,
     Json(body): Json<YouUnsubBody>,
@@ -2212,6 +2627,498 @@ async fn you_unsubscribe(
         return (StatusCode::NOT_FOUND, "invalid token").into_response();
     }
     Json(serde_json::json!({"ok": true})).into_response()
+}
+
+// ── Slug / share page ────────────────────────────────────────────────────────
+
+/// Reserved at root level: would clash with literal routes or static files.
+/// Keep this list aligned with the router below + static/ directory.
+const RESERVED_SLUGS: &[&str] = &[
+    "ma", "muon", "mugen", "nouns", "you", "city", "tokushoho", "success",
+    "wallet", "v", "products", "api", "static", "mockups", "u",
+    "about", "press", "robots.txt", "sitemap.xml", "manifest.json",
+    "favicon.ico", "favicon.svg", "favicon-16x16.png", "favicon-32x32.png",
+    "apple-touch-icon.png", "icon-192.png", "icon-512.png", "og.jpg",
+    "you.html", "tokushoho.html", "city.html", "about.html", "press.html",
+    "nouns-proposal.html", "nouns-proposal", "index.html",
+    // common reservations
+    "admin", "auth", "login", "logout", "signup", "settings", "help",
+    "support", "contact", "shop", "store", "cart", "checkout", "blog",
+    "news", "press", "team", "jobs", "careers", "privacy", "terms",
+    "legal", "twitter", "instagram", "facebook", "ig", "x", "linkedin",
+    "discord", "github", "mail", "email", "rss", "feed", "search",
+    "www", "ftp", "ssh", "root", "null", "undefined",
+];
+
+fn slug_valid(s: &str) -> bool {
+    let len = s.chars().count();
+    if !(3..=32).contains(&len) { return false; }
+    let mut chars = s.chars();
+    let first = chars.next().unwrap();
+    if !first.is_ascii_alphanumeric() { return false; }
+    for c in chars {
+        let ok = c.is_ascii_alphanumeric() || c == '-' || c == '_';
+        if !ok { return false; }
+    }
+    true
+}
+
+fn slug_reserved(s: &str) -> bool {
+    let lo = s.to_ascii_lowercase();
+    RESERVED_SLUGS.iter().any(|r| *r == lo.as_str())
+}
+
+fn random_slug() -> String {
+    // 7-char base32-like slug from a UUID — short, lowercase, URL-safe.
+    let raw = uuid::Uuid::new_v4().simple().to_string();
+    let alphabet = b"abcdefghjkmnpqrstuvwxyz23456789";
+    let mut out = String::with_capacity(7);
+    for i in 0..7 {
+        let byte = u8::from_str_radix(&raw[i*2..i*2+2], 16).unwrap_or(0);
+        out.push(alphabet[(byte as usize) % alphabet.len()] as char);
+    }
+    out
+}
+
+#[derive(Deserialize)]
+struct YouSlugBody {
+    token: String,
+    slug: String,
+}
+
+async fn you_slug_set(
+    State(db): State<Db>,
+    Json(body): Json<YouSlugBody>,
+) -> impl IntoResponse {
+    let slug = body.slug.trim().to_ascii_lowercase();
+    if !slug_valid(&slug) {
+        return (StatusCode::BAD_REQUEST,
+            "invalid slug: 3-32 chars, a-z 0-9 - _ only, must start with alphanumeric")
+            .into_response();
+    }
+    if slug_reserved(&slug) {
+        return (StatusCode::CONFLICT, "this name is reserved").into_response();
+    }
+    let conn = db.lock().unwrap();
+    // Check uniqueness vs other users
+    let owner: Option<i64> = conn.query_row(
+        "SELECT id FROM you_users WHERE slug=?", params![slug], |r| r.get(0),
+    ).ok();
+    let me: Option<i64> = conn.query_row(
+        "SELECT id FROM you_users WHERE token=? AND unsubscribed_at IS NULL",
+        params![body.token], |r| r.get(0),
+    ).ok();
+    let me = match me {
+        Some(v) => v,
+        None => return (StatusCode::NOT_FOUND, "invalid token").into_response(),
+    };
+    if let Some(other) = owner {
+        if other != me {
+            return (StatusCode::CONFLICT, "this name is taken").into_response();
+        }
+    }
+    if let Err(e) = conn.execute(
+        "UPDATE you_users SET slug=?, updated_at=? WHERE id=?",
+        params![slug, chrono_now(), me],
+    ) {
+        eprintln!("[you] slug update failed: {}", e);
+        return (StatusCode::INTERNAL_SERVER_ERROR, "could not save").into_response();
+    }
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    Json(serde_json::json!({
+        "ok": true,
+        "slug": slug,
+        "share_url": format!("{}/{}", base_url.trim_end_matches('/'), slug),
+    })).into_response()
+}
+
+async fn you_slug_check(
+    State(db): State<Db>,
+    Path(slug): Path<String>,
+) -> impl IntoResponse {
+    let slug = slug.trim().to_ascii_lowercase();
+    if !slug_valid(&slug) {
+        return Json(serde_json::json!({"available": false, "reason": "invalid"})).into_response();
+    }
+    if slug_reserved(&slug) {
+        return Json(serde_json::json!({"available": false, "reason": "reserved"})).into_response();
+    }
+    let conn = db.lock().unwrap();
+    let exists: bool = conn.query_row(
+        "SELECT 1 FROM you_users WHERE slug=?", params![slug], |_| Ok(true),
+    ).unwrap_or(false);
+    Json(serde_json::json!({"available": !exists})).into_response()
+}
+
+/// Public per-user share page. Server-rendered HTML with full OGP/SEO.
+/// Falls back to ServeDir behavior if the slug matches a static file at root
+/// (e.g. /about.html), so we don't break the existing static asset access.
+async fn slug_or_static(
+    State(db): State<Db>,
+    Path(slug): Path<String>,
+) -> Response {
+    let slug_lo = slug.to_ascii_lowercase();
+
+    // Reserved names → never claim them. Try static fallback then 404.
+    if slug_reserved(&slug_lo) {
+        return serve_static_or_404(&slug);
+    }
+    // Invalid slug shape → static fallback then 404.
+    if !slug_valid(&slug_lo) {
+        return serve_static_or_404(&slug);
+    }
+    // Look up user
+    let row: Option<(i64, String, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT id, email, display_name FROM you_users
+             WHERE slug=? AND unsubscribed_at IS NULL",
+            params![slug_lo],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).ok()
+    };
+    let (uid, _email, display_name) = match row {
+        Some(v) => v,
+        None => return serve_static_or_404(&slug),
+    };
+
+    // Pull recent designs (history) for the share page
+    let designs = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, day, day_num, name, prompt, status, gen_status, image_url
+             FROM you_designs WHERE user_id=? ORDER BY day DESC LIMIT 24"
+        ) {
+            Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response(),
+        };
+        let v: Vec<(i64, String, i64, String, String, String, String, Option<String>)> =
+            stmt.query_map(params![uid], |r| Ok((
+                r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?,
+            )))
+            .map(|it| it.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default();
+        v
+    };
+
+    let html = render_share_page(&slug_lo, display_name.as_deref(), &designs);
+    let mut resp = Html(html).into_response();
+    resp.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=300, s-maxage=300"),
+    );
+    resp
+}
+
+/// Serve a file from /static if it exists; otherwise 404.
+/// This preserves wearmu.com/<asset>.<ext> access for legitimate static
+/// files (about.html, robots.txt, og.jpg, etc.) when the slug doesn't
+/// belong to a user.
+fn serve_static_or_404(name: &str) -> Response {
+    // Sanitize: no path traversal, no leading slash.
+    if name.contains('/') || name.contains("..") {
+        return (StatusCode::NOT_FOUND, "not found").into_response();
+    }
+    let path = std::path::Path::new("static").join(name);
+    let bytes = std::fs::read(&path).ok();
+    let bytes = match bytes {
+        Some(b) => b,
+        None => {
+            // Try with .html appended for clean URLs (e.g. /about → about.html)
+            let path2 = std::path::Path::new("static").join(format!("{}.html", name));
+            match std::fs::read(&path2) {
+                Ok(b) => return html_response(b),
+                Err(_) => return (StatusCode::NOT_FOUND, "not found").into_response(),
+            }
+        }
+    };
+    let mime = mime_for(name);
+    let mut resp = bytes.into_response();
+    if let Ok(v) = HeaderValue::from_str(&mime) {
+        resp.headers_mut().insert(header::CONTENT_TYPE, v);
+    }
+    resp
+}
+
+fn html_response(bytes: Vec<u8>) -> Response {
+    let mut resp = bytes.into_response();
+    resp.headers_mut().insert(header::CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"));
+    resp
+}
+
+fn mime_for(name: &str) -> String {
+    let lo = name.to_ascii_lowercase();
+    let ext = lo.rsplit('.').next().unwrap_or("");
+    match ext {
+        "html" | "htm" => "text/html; charset=utf-8".into(),
+        "css" => "text/css".into(),
+        "js" => "application/javascript".into(),
+        "json" => "application/json".into(),
+        "svg" => "image/svg+xml".into(),
+        "png" => "image/png".into(),
+        "jpg" | "jpeg" => "image/jpeg".into(),
+        "webp" => "image/webp".into(),
+        "ico" => "image/x-icon".into(),
+        "txt" => "text/plain; charset=utf-8".into(),
+        "xml" => "application/xml".into(),
+        "md" => "text/markdown; charset=utf-8".into(),
+        _ => "application/octet-stream".into(),
+    }
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+        .replace('"', "&quot;").replace('\'', "&#39;")
+}
+
+#[allow(clippy::type_complexity)]
+fn render_share_page(
+    slug: &str,
+    display_name: Option<&str>,
+    designs: &[(i64, String, i64, String, String, String, String, Option<String>)],
+) -> String {
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    let canonical = format!("{}/{}", base_url.trim_end_matches('/'), slug);
+
+    // Featured / primary image: first claimed, else first design with gen_status=ready, else first
+    let primary = designs.iter().find(|d| d.5 == "claimed")
+        .or_else(|| designs.iter().find(|d| d.6 == "ready"))
+        .or_else(|| designs.first());
+    let primary_img_path = primary
+        .map(|d| format!("/api/you/design/{}/image.png", d.0))
+        .unwrap_or_else(|| "/og.jpg".to_string());
+    let og_image = format!("{}{}", base_url.trim_end_matches('/'), primary_img_path);
+    let title_name = display_name.unwrap_or(slug);
+    let n = designs.len();
+    let claimed = designs.iter().filter(|d| d.5 == "claimed").count();
+
+    let title = format!("@{} — MU × YOU コレクション | wearmu.com", html_escape(title_name));
+    let description = format!(
+        "@{} さん専用の MU × YOU コラボTシャツ・コレクション。AI が毎日生成する一着の案、{}案／うち {} 着が仕立てられました。あなたも始める →",
+        html_escape(title_name), n, claimed,
+    );
+
+    // Cards markup
+    let cards: String = designs.iter().map(|d| {
+        let (id, day, day_num, name, prompt, status, gen_status, _img_url) = d;
+        let img_src = format!("/api/you/design/{}/image.png", id);
+        let label = if status == "claimed" { "CLAIMED" }
+                    else if gen_status == "generating" { "GENERATING" }
+                    else if gen_status == "ready" { "READY" }
+                    else { "PENDING" };
+        let class = if status == "claimed" { "card claimed" } else { "card" };
+        format!(
+            r##"<a class="{class}" href="#" data-id="{id}">
+  <div class="card-img" style="background-image:url('{img}')"></div>
+  <div class="card-meta">
+    <div class="day">DAY {day_num:03} · {day}</div>
+    <div class="name">{name}</div>
+    <div class="prompt">{prompt}</div>
+    <div class="badge">{label}</div>
+  </div>
+</a>"##,
+            class = class,
+            id = id,
+            img = img_src,
+            day_num = day_num,
+            day = html_escape(day),
+            name = html_escape(name),
+            prompt = html_escape(prompt),
+            label = label,
+        )
+    }).collect();
+
+    let designs_jsonld: String = designs.iter().take(12).map(|d| {
+        format!(
+            r##"{{"@type":"Product","name":"{name}","image":"{base}/api/you/design/{id}/image.png","description":"{prompt}","brand":{{"@type":"Brand","name":"MU × YOU"}},"offers":{{"@type":"Offer","priceCurrency":"JPY","price":"6800","availability":"https://schema.org/InStock"}}}}"##,
+            name = json_escape(&d.3),
+            prompt = json_escape(&d.4),
+            base = base_url.trim_end_matches('/'),
+            id = d.0,
+        )
+    }).collect::<Vec<_>>().join(",");
+
+    format!(r##"<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
+<title>{title}</title>
+<meta name="description" content="{description}">
+<meta name="theme-color" content="#0A0A0A">
+<link rel="canonical" href="{canonical}">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.json">
+
+<meta property="og:type" content="profile">
+<meta property="og:url" content="{canonical}">
+<meta property="og:title" content="@{slug} — MU × YOU コレクション">
+<meta property="og:description" content="{description}">
+<meta property="og:image" content="{og_image}">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="1200">
+<meta property="og:image:alt" content="@{slug} の MU × YOU コラボTシャツ">
+<meta property="og:site_name" content="MU">
+<meta property="og:locale" content="ja_JP">
+<meta property="profile:username" content="{slug}">
+
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="@{slug} — MU × YOU コレクション">
+<meta name="twitter:description" content="{description}">
+<meta name="twitter:image" content="{og_image}">
+
+<script type="application/ld+json">
+{{
+  "@context": "https://schema.org",
+  "@graph": [
+    {{
+      "@type": "Person",
+      "@id": "{canonical}#person",
+      "name": "@{slug}",
+      "url": "{canonical}",
+      "alternateName": "{title_name}"
+    }},
+    {{
+      "@type": "ItemList",
+      "@id": "{canonical}#list",
+      "name": "@{slug} の MU × YOU コレクション",
+      "numberOfItems": {n},
+      "itemListElement": [{designs_jsonld}]
+    }}
+  ]
+}}
+</script>
+
+<style>
+:root{{--k:#0A0A0A;--w:#F5F5F0;--y:#e6c449;--r:#C8362C;--g:#1C1C1C}}
+*,*::before,*::after{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:var(--k);color:var(--w);font-family:'Helvetica Neue',Arial,sans-serif;
+  font-weight:200;-webkit-font-smoothing:antialiased;line-height:1.6}}
+a{{color:inherit;text-decoration:none}}
+nav{{position:fixed;top:0;left:0;right:0;z-index:50;display:flex;justify-content:space-between;
+  align-items:center;padding:14px 24px;background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);
+  border-bottom:1px solid rgba(255,255,255,0.05)}}
+.nav-logo{{font-size:14px;font-weight:700;letter-spacing:0.45em}}
+.nav-cta{{background:var(--y);color:#000;font-size:9px;letter-spacing:0.3em;text-transform:uppercase;
+  padding:10px 18px;font-weight:700}}
+.nav-cta:hover{{opacity:0.9}}
+header.hero{{padding:120px 24px 60px;text-align:center;position:relative}}
+.hero-bg{{position:absolute;inset:0;background:
+  radial-gradient(ellipse at 30% 20%,rgba(230,196,73,0.08),transparent 50%),
+  radial-gradient(ellipse at 70% 80%,rgba(200,54,44,0.06),transparent 55%);pointer-events:none}}
+.eyebrow{{font-size:9px;letter-spacing:0.45em;text-transform:uppercase;color:var(--y);opacity:0.85;margin-bottom:24px;display:flex;align-items:center;gap:14px;justify-content:center}}
+.dot{{width:6px;height:6px;background:var(--y);border-radius:50%;animation:p 2s infinite}}
+@keyframes p{{0%,100%{{opacity:1}}50%{{opacity:0.4}}}}
+h1.handle{{font-size:clamp(48px,9vw,108px);font-weight:200;letter-spacing:0.04em;
+  line-height:1.05;background:linear-gradient(135deg,var(--y) 0%,#fff 60%);
+  -webkit-background-clip:text;background-clip:text;color:transparent;display:inline-block}}
+.handle-prefix{{color:rgba(255,255,255,0.4);background:none;-webkit-text-fill-color:rgba(255,255,255,0.4)}}
+.bio{{font-size:14px;opacity:0.65;line-height:1.95;max-width:520px;margin:24px auto 0;font-weight:300}}
+.stats{{display:flex;gap:48px;justify-content:center;margin-top:48px;flex-wrap:wrap}}
+.stat .v{{font-size:28px;font-weight:200;color:var(--y);letter-spacing:0.03em}}
+.stat .l{{font-size:8px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5;margin-top:4px}}
+main{{padding:0 24px 80px;max-width:1280px;margin:0 auto}}
+.section-h{{font-size:11px;letter-spacing:0.4em;text-transform:uppercase;opacity:0.55;margin:48px 0 24px}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}}
+.card{{background:var(--g);overflow:hidden;display:flex;flex-direction:column;
+  border:1px solid rgba(255,255,255,0.04);transition:transform 0.2s,border-color 0.2s}}
+.card:hover{{transform:translateY(-2px);border-color:rgba(230,196,73,0.25)}}
+.card.claimed{{border-color:rgba(230,196,73,0.35)}}
+.card-img{{aspect-ratio:1;background:#000 center/cover no-repeat}}
+.card-meta{{padding:18px 18px 22px;display:flex;flex-direction:column;gap:10px}}
+.card .day{{font-size:8px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5}}
+.card .name{{font-size:15px;font-weight:300;letter-spacing:0.03em;line-height:1.4}}
+.card .prompt{{font-size:11px;opacity:0.55;line-height:1.7;
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}}
+.card .badge{{display:inline-block;align-self:flex-start;font-size:8px;letter-spacing:0.25em;
+  text-transform:uppercase;background:rgba(230,196,73,0.1);color:var(--y);padding:4px 10px}}
+.card.claimed .badge{{background:var(--y);color:#000}}
+.cta-block{{margin:80px auto 0;max-width:680px;text-align:center;padding:48px 24px;
+  background:linear-gradient(180deg,rgba(230,196,73,0.06),transparent);
+  border-top:1px solid rgba(230,196,73,0.15)}}
+.cta-h{{font-size:clamp(22px,4vw,36px);font-weight:200;letter-spacing:0.03em;line-height:1.3;margin-bottom:16px}}
+.cta-sub{{font-size:13px;opacity:0.6;margin-bottom:28px;line-height:1.85}}
+.cta-btn{{display:inline-flex;align-items:center;gap:12px;background:var(--w);color:var(--k);
+  padding:18px 32px;font-size:10px;letter-spacing:0.35em;text-transform:uppercase;font-weight:700}}
+.cta-btn:hover{{transform:translateY(-2px)}}
+footer{{padding:40px 24px;border-top:1px solid rgba(255,255,255,0.05);
+  display:flex;justify-content:space-between;align-items:center;gap:24px;flex-wrap:wrap;
+  font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.45}}
+.empty{{text-align:center;padding:80px 24px;font-size:12px;opacity:0.4;letter-spacing:0.1em}}
+@media(max-width:600px){{
+  .stats{{gap:28px}} h1.handle{{font-size:48px}}
+  .grid{{grid-template-columns:1fr 1fr;gap:8px}}
+  .card-meta{{padding:12px 12px 16px}}
+  .card .name{{font-size:13px}}
+}}
+</style>
+</head>
+<body>
+<nav>
+  <a href="/" class="nav-logo">MU</a>
+  <a href="/you" class="nav-cta">あなたも始める</a>
+</nav>
+<header class="hero">
+  <div class="hero-bg"></div>
+  <div class="eyebrow"><span class="dot"></span>MU × YOU · profile</div>
+  <h1 class="handle"><span class="handle-prefix">@</span>{slug}</h1>
+  <p class="bio">{description}</p>
+  <div class="stats">
+    <div class="stat"><div class="v">{n}</div><div class="l">designs</div></div>
+    <div class="stat"><div class="v">{claimed}</div><div class="l">claimed</div></div>
+    <div class="stat"><div class="v">¥6,800</div><div class="l">per tee</div></div>
+  </div>
+</header>
+<main>
+  <div class="section-h">Collection</div>
+  {grid}
+  <div class="cta-block">
+    <div class="cta-h">あなたの "ほしい" も、毎朝AIが描く。</div>
+    <div class="cta-sub">気分・色・着るシーンを 1 分で登録。<br>翌朝から毎日、あなた専用のTシャツ案が 1 枚届きます。</div>
+    <a href="/you" class="cta-btn">MU × YOU を始める →</a>
+  </div>
+</main>
+<footer>
+  <div>MU × YOU © wearmu.com</div>
+  <div style="display:flex;gap:24px"><a href="/">MU</a><a href="/you">/you</a><a href="/tokushoho">特商法</a></div>
+</footer>
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+</body>
+</html>"##,
+        title = html_escape(&title),
+        description = html_escape(&description),
+        canonical = canonical,
+        slug = html_escape(slug),
+        og_image = og_image,
+        title_name = html_escape(title_name),
+        n = n,
+        claimed = claimed,
+        designs_jsonld = designs_jsonld,
+        grid = if designs.is_empty() {
+            r#"<div class="empty">まだデザインがありません</div>"#.to_string()
+        } else {
+            format!(r#"<div class="grid">{}</div>"#, cards)
+        },
+    )
+}
+
+fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 4);
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                out.push_str(&format!("\\u{:04x}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 #[tokio::main]
@@ -2272,6 +3179,8 @@ async fn main() {
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             email           TEXT NOT NULL UNIQUE,
             token           TEXT NOT NULL UNIQUE,
+            slug            TEXT UNIQUE,
+            display_name    TEXT,
             taste_json      TEXT NOT NULL DEFAULT '{}',
             size            TEXT NOT NULL DEFAULT 'S',
             created_at      TEXT NOT NULL,
@@ -2279,6 +3188,7 @@ async fn main() {
             unsubscribed_at TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_you_users_token ON you_users(token);
+        CREATE INDEX IF NOT EXISTS idx_you_users_slug ON you_users(slug);
         CREATE TABLE IF NOT EXISTS you_designs (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id         INTEGER NOT NULL,
@@ -2288,6 +3198,10 @@ async fn main() {
             prompt          TEXT NOT NULL,
             seed            TEXT NOT NULL,
             image_url       TEXT,
+            image_bytes     BLOB,
+            image_mime      TEXT,
+            gen_status      TEXT NOT NULL DEFAULT 'pending',
+            gen_error       TEXT,
             status          TEXT NOT NULL DEFAULT 'pending',
             size            TEXT,
             refresh_count   INTEGER NOT NULL DEFAULT 0,
@@ -2317,8 +3231,30 @@ async fn main() {
         "ALTER TABLE products ADD COLUMN parent_design TEXT",
         "ALTER TABLE products ADD COLUMN sold_out_at TEXT",
         "ALTER TABLE bids ADD COLUMN wallet_token TEXT",
+        "ALTER TABLE you_designs ADD COLUMN image_bytes BLOB",
+        "ALTER TABLE you_designs ADD COLUMN image_mime TEXT",
+        "ALTER TABLE you_designs ADD COLUMN gen_status TEXT NOT NULL DEFAULT 'pending'",
+        "ALTER TABLE you_designs ADD COLUMN gen_error TEXT",
+        "ALTER TABLE you_users ADD COLUMN slug TEXT",
+        "ALTER TABLE you_users ADD COLUMN display_name TEXT",
     ] {
         conn.execute(col, []).ok();
+    }
+    // Backfill: every existing you_user gets a random slug if missing
+    {
+        let mut stmt = conn.prepare("SELECT id FROM you_users WHERE slug IS NULL OR slug=''")
+            .expect("prepare slug backfill");
+        let ids: Vec<i64> = stmt.query_map([], |r| r.get::<_,i64>(0))
+            .map(|it| it.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default();
+        for id in ids {
+            let s = random_slug();
+            // Try a few times in case of collision
+            for _ in 0..5 {
+                let r = conn.execute("UPDATE you_users SET slug=? WHERE id=?", params![s, id]);
+                if r.is_ok() { break; }
+            }
+        }
     }
     // Backfill wallet_token for any pre-existing bid rows so old auctions can be settled
     {
@@ -2383,6 +3319,14 @@ async fn main() {
         .route("/api/you/feedback", post(you_feedback))
         .route("/api/you/claim", post(you_claim))
         .route("/api/you/unsubscribe", post(you_unsubscribe))
+        .route("/api/you/design/:id/image.png", get(you_image))
+        .route("/api/you/design/:id/image", get(you_image))
+        .route("/api/you/slug", post(you_slug_set))
+        .route("/api/you/slug/check/:slug", get(you_slug_check))
+        .route("/api/you/taste", post(you_taste_update))
+        .route("/api/you/admin/backfill_today", post(you_admin_backfill))
+        // Per-user share page — REGISTER LAST so literal routes win
+        .route("/:slug", get(slug_or_static))
         .nest_service("/static", ServeDir::new("static"))
         .nest_service("/mockups", ServeDir::new(mockups_dir()))
         .fallback_service(ServeDir::new("static"))
