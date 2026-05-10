@@ -2582,6 +2582,40 @@ struct YouAdminBackfillBody {
     admin_token: String,
 }
 
+/// Admin: list /you subscribers (read-only, no emails sent).
+/// Use to verify count + addresses before triggering you-backfill.
+async fn you_admin_list(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let conn = db.lock().unwrap();
+    let mut stmt = match conn.prepare(
+        "SELECT id, email, slug, display_name, size, created_at, updated_at,
+                CASE WHEN unsubscribed_at IS NULL THEN 0 ELSE 1 END
+         FROM you_users
+         ORDER BY id ASC"
+    ) { Ok(s) => s, Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("db: {}", e)).into_response() };
+    let rows: Vec<serde_json::Value> = stmt.query_map([], |r| {
+        Ok(serde_json::json!({
+            "id":            r.get::<_, i64>(0)?,
+            "email":         r.get::<_, String>(1)?,
+            "slug":          r.get::<_, Option<String>>(2)?,
+            "display_name":  r.get::<_, Option<String>>(3)?,
+            "size":          r.get::<_, String>(4)?,
+            "created_at":    r.get::<_, String>(5)?,
+            "updated_at":    r.get::<_, String>(6)?,
+            "unsubscribed":  r.get::<_, i64>(7)? == 1,
+        }))
+    }).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+    let active = rows.iter().filter(|r| r["unsubscribed"] == false).count();
+    Json(serde_json::json!({
+        "total": rows.len(),
+        "active": active,
+        "subscribers": rows,
+    })).into_response()
+}
+
 /// Admin: ensure today's design exists for every active subscriber and send
 /// the daily email. Useful for manually verifying deliverability after deploy.
 async fn you_admin_backfill(
@@ -3369,6 +3403,7 @@ async fn main() {
         .route("/api/you/slug/check/:slug", get(you_slug_check))
         .route("/api/you/taste", post(you_taste_update))
         .route("/api/you/admin/backfill_today", post(you_admin_backfill))
+        .route("/api/you/admin/list", get(you_admin_list))
         // Per-user share page — REGISTER LAST so literal routes win
         .route("/:slug", get(slug_or_static))
         .nest_service("/static", ServeDir::new("static"))
