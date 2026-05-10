@@ -626,7 +626,7 @@ async fn stripe_webhook(
                         .post("https://api.resend.com/emails")
                         .bearer_auth(&resend_key)
                         .json(&serde_json::json!({
-                            "from": "MU <noreply@wearmu.com>",
+                            "from": "MU <noreply@enablerdao.com>",
                             "to": [&buyer_email2],
                             "subject": "あなたがこのドロップを閉じた — MU LAST PIECE",
                             "html": html,
@@ -872,7 +872,7 @@ async fn settle_auction(
     client.post("https://api.resend.com/emails")
         .bearer_auth(&resend_key)
         .json(&serde_json::json!({
-            "from": "MU <noreply@wearmu.com>",
+            "from": "MU <noreply@enablerdao.com>",
             "to": [&email],
             "subject": format!("【MU 間 MA】落札のお知らせ — ¥{}", amount),
             "html": html,
@@ -1584,7 +1584,7 @@ async fn fragment_request(
     let _ = client.post("https://api.resend.com/emails")
         .bearer_auth(&resend_key)
         .json(&serde_json::json!({
-            "from": "MU <noreply@wearmu.com>",
+            "from": "MU <noreply@enablerdao.com>",
             "to": [&body.email],
             "subject": format!("Fragment申請確認 — {}", direction_ja),
             "html": user_html,
@@ -1611,7 +1611,7 @@ async fn fragment_request(
     let _ = client.post("https://api.resend.com/emails")
         .bearer_auth(&resend_key)
         .json(&serde_json::json!({
-            "from": "MU Fragment <noreply@wearmu.com>",
+            "from": "MU Fragment <noreply@enablerdao.com>",
             "to": ["mail@yukihamada.jp"],
             "reply_to": &body.email,
             "subject": format!("[Fragment] {} — {}", direction_en, body.email),
@@ -1961,7 +1961,7 @@ fn spawn_gemini_for_design(db: Db, design_id: i64) {
                         .post("https://api.resend.com/emails")
                         .bearer_auth(&resend_key)
                         .json(&serde_json::json!({
-                            "from": "MU × YOU <noreply@wearmu.com>",
+                            "from": "MU × YOU <noreply@enablerdao.com>",
                             "to": [email],
                             "subject": format!("MU × YOU DAY {:03} — {}", day_num, name),
                             "html": html,
@@ -2109,7 +2109,7 @@ async fn you_subscribe(
                 .post("https://api.resend.com/emails")
                 .bearer_auth(&resend_key)
                 .json(&serde_json::json!({
-                    "from": "MU × YOU <noreply@wearmu.com>",
+                    "from": "MU × YOU <noreply@enablerdao.com>",
                     "to": [to],
                     "subject": "MU × YOU — 明朝7時から毎日デザインが届きます",
                     "html": html,
@@ -2558,7 +2558,7 @@ async fn you_taste_update(
                 .post("https://api.resend.com/emails")
                 .bearer_auth(&resend_key)
                 .json(&serde_json::json!({
-                    "from": "MU × YOU <noreply@wearmu.com>",
+                    "from": "MU × YOU <noreply@enablerdao.com>",
                     "to": [to],
                     "subject": "MU × YOU — プロンプトを更新しました",
                     "html": html,
