@@ -491,6 +491,7 @@ async fn checkout(
             ("shipping_address_collection[allowed_countries][6]", "KR"),
             ("shipping_address_collection[allowed_countries][7]", "TW"),
             ("shipping_address_collection[allowed_countries][8]", "HK"),
+            ("allow_promotion_codes", "true"),
             ("metadata[product_id]",   &body.product_id.to_string()),
             ("metadata[size]",         &size_label),
             ("metadata[wallet]",       &wallet),
@@ -987,6 +988,7 @@ async fn settle_auction(
             ("shipping_address_collection[allowed_countries][6]", "KR"),
             ("shipping_address_collection[allowed_countries][7]", "TW"),
             ("shipping_address_collection[allowed_countries][8]", "HK"),
+            ("allow_promotion_codes", "true"),
             ("metadata[product_id]", &product_id.to_string()),
             ("metadata[size]", "one-size"),
             ("metadata[wallet]", ""),
@@ -2706,6 +2708,347 @@ async fn you_feedback(
     })).into_response()
 }
 
+/// Weekly lottery draw — picks ~5% of pending entries as winners,
+/// mints a Stripe coupon ¥1,000-3,000 off, emails them.
+/// Idempotent on entry id (status changes from 'pending*' to 'won' / 'lost').
+async fn admin_lottery_draw(
+    State(db): State<Db>,
+    Json(body): Json<YouAdminBackfillBody>,
+) -> impl IntoResponse {
+    if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+
+    type Entry = (i64, String, String);
+    let pending: Vec<Entry> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, email, ticket_id FROM exit_offers
+             WHERE kind='lottery_entry' AND status LIKE 'pending%'"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    if pending.is_empty() {
+        return Json(serde_json::json!({"ok": true, "drawn": 0, "winners": 0, "msg": "no pending entries"})).into_response();
+    }
+
+    use sha2::{Digest, Sha256};
+    let week_seed = chrono_now().parse::<u64>().unwrap_or(0) / (7 * 86400);
+    let mut winners: Vec<Entry> = Vec::new();
+    let mut losers: Vec<i64> = Vec::new();
+    for entry in &pending {
+        let mut h = Sha256::new();
+        h.update(format!("{}|{}", week_seed, entry.0).as_bytes());
+        let d = h.finalize();
+        let r = (d[0] as u32) % 100;
+        if r < 5 { winners.push(entry.clone()); } else { losers.push(entry.0); }
+    }
+
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    let mut won_count = 0usize;
+
+    for (id, email, ticket) in &winners {
+        // Prize tier: 60% ¥1000, 30% ¥2000, 10% ¥3000
+        let mut h = Sha256::new();
+        h.update(format!("prize|{}", id).as_bytes());
+        let d = h.finalize();
+        let rr = (d[0] as u32) % 100;
+        let prize_jpy: i64 = if rr < 60 { 1000 } else if rr < 90 { 2000 } else { 3000 };
+
+        let token = uuid::Uuid::new_v4().to_string().replace('-', "");
+        let code = format!("MU-WIN-{}", token[..8].to_uppercase());
+        let mint = if !stripe_key.is_empty() {
+            let amount_off_str = prize_jpy.to_string();
+            let resp = reqwest::Client::new()
+                .post("https://api.stripe.com/v1/coupons")
+                .basic_auth(&stripe_key, None::<&str>)
+                .form(&[
+                    ("id", code.as_str()),
+                    ("amount_off", amount_off_str.as_str()),
+                    ("currency", "jpy"),
+                    ("duration", "once"),
+                    ("max_redemptions", "1"),
+                    ("name", &format!("MU 抽選 ¥{} OFF", prize_jpy)),
+                    ("redeem_by", &format!("{}", chrono_now().parse::<i64>().unwrap_or(0) + 60 * 86400)),
+                ])
+                .send().await;
+            match resp {
+                Ok(r) if r.status().is_success() => true,
+                Ok(r) => { eprintln!("[lottery] coupon mint {}: {}", r.status(), r.text().await.unwrap_or_default()); false }
+                Err(e) => { eprintln!("[lottery] coupon mint err: {}", e); false }
+            }
+        } else { false };
+
+        {
+            let conn = db.lock().unwrap();
+            conn.execute(
+                "UPDATE exit_offers SET status='won', prize_jpy=?, stripe_coupon=?, used_at=NULL WHERE id=?",
+                params![prize_jpy, if mint { Some(code.as_str()) } else { None }, id],
+            ).ok();
+        }
+
+        if mint && !resend_key.is_empty() {
+            let to = email.clone();
+            let code2 = code.clone();
+            let prize_label = format!("¥{}", prize_jpy);
+            let ticket2 = ticket.clone();
+            let resend_key2 = resend_key.clone();
+            tokio::spawn(async move {
+                let html = format!(r#"
+<div style="background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;padding:48px;max-width:560px;margin:0 auto">
+  <div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:32px">MU</div>
+  <div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:8px">当選 — Lottery</div>
+  <div style="font-size:20px;font-weight:300;line-height:1.4;margin-bottom:18px">おめでとうございます。{prize} OFF クーポンが当選しました。</div>
+  <div style="background:#1C1C1C;padding:18px;text-align:center;font-family:monospace;font-size:18px;letter-spacing:0.18em;color:#e6c449;margin:16px 0">{code}</div>
+  <p style="font-size:12px;line-height:1.85;opacity:0.75;margin-bottom:18px">
+    Stripe チェックアウトの「プロモーションコード」欄に貼ってください。<br>
+    1 回限り · 60 日有効 · MUGEN / MUON / MA / /you 共通。<br>
+    抽選チケット: <code style="font-family:monospace;color:#e6c449">{ticket}</code>
+  </p>
+  <a href="https://wearmu.com/mugen?coupon={code}" style="display:inline-block;background:#e6c449;color:#000;padding:14px 28px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:700">MUGEN を見る →</a>
+</div>"#, prize = prize_label, code = code2, ticket = ticket2.chars().take(8).collect::<String>());
+                let _ = reqwest::Client::new()
+                    .post("https://api.resend.com/emails")
+                    .bearer_auth(&resend_key2)
+                    .json(&serde_json::json!({
+                        "from": "MU <noreply@enablerdao.com>",
+                        "to": [to],
+                        "subject": format!("MU 抽選 当選: {} OFF クーポン", prize_label),
+                        "html": html,
+                    }))
+                    .send().await;
+            });
+            won_count += 1;
+        }
+    }
+
+    {
+        let conn = db.lock().unwrap();
+        for id in &losers {
+            conn.execute("UPDATE exit_offers SET status='lost' WHERE id=?", params![id]).ok();
+        }
+    }
+
+    Json(serde_json::json!({
+        "ok": true, "drawn": pending.len(),
+        "winners": won_count, "losers": losers.len(),
+    })).into_response()
+}
+
+// ── Exit-intent funnel ──────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct ExitSurveyBody {
+    #[serde(default)] email: String,
+    #[serde(default)] page: String,
+    #[serde(default)] why_left: String,
+    #[serde(default)] price_feel: String,
+    #[serde(default)] would_buy_at: i64,
+    #[serde(default)] comment: String,
+}
+
+/// Step 1: record the survey response. Always 200 OK so the modal flow
+/// continues even if email is empty (anonymous insight is still useful).
+async fn exit_survey(
+    State(db): State<Db>,
+    Json(body): Json<ExitSurveyBody>,
+) -> impl IntoResponse {
+    let conn = db.lock().unwrap();
+    let _ = conn.execute(
+        "INSERT INTO exit_surveys (email, page, why_left, price_feel, would_buy_at, comment, created_at)
+         VALUES (?,?,?,?,?,?,?)",
+        params![
+            body.email.trim().to_lowercase(),
+            body.page.chars().take(120).collect::<String>(),
+            body.why_left.chars().take(80).collect::<String>(),
+            body.price_feel.chars().take(80).collect::<String>(),
+            body.would_buy_at,
+            body.comment.chars().take(500).collect::<String>(),
+            chrono_now(),
+        ],
+    );
+    Json(serde_json::json!({"ok": true})).into_response()
+}
+
+#[derive(Deserialize)]
+struct ExitDiscountBody {
+    email: String,
+}
+
+/// Step 2: mint a Stripe one-time-use 50%-off coupon (≒ "原価レベル") for the
+/// email and return the code. Idempotent within 24h: returns the same code if
+/// the same email has already claimed today.
+async fn exit_discount_claim(
+    State(db): State<Db>,
+    Json(body): Json<ExitDiscountBody>,
+) -> impl IntoResponse {
+    let email = body.email.trim().to_lowercase();
+    if email.is_empty() || !email.contains('@') {
+        return (StatusCode::BAD_REQUEST, "invalid email").into_response();
+    }
+
+    // Reuse an existing un-used discount if one already exists today.
+    let existing: Option<String> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT stripe_coupon FROM exit_offers
+             WHERE email=? AND kind='discount_50' AND used_at IS NULL
+               AND CAST(created_at AS INTEGER) > CAST(? AS INTEGER) - 86400
+             ORDER BY id DESC LIMIT 1",
+            params![email, chrono_now()],
+            |r| r.get(0),
+        ).ok().flatten()
+    };
+    if let Some(code) = existing {
+        return Json(serde_json::json!({
+            "ok": true, "coupon": code, "percent_off": 50,
+            "valid_for": "MUGEN / MUON / MA / /you all", "reused": true,
+        })).into_response();
+    }
+
+    // Mint a new Stripe coupon with a memorable code.
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "checkout disabled").into_response();
+    }
+    let token = uuid::Uuid::new_v4().to_string().replace('-', "");
+    let code = format!("MU-COST-{}", token[..8].to_uppercase());
+    let resp = reqwest::Client::new()
+        .post("https://api.stripe.com/v1/coupons")
+        .basic_auth(&stripe_key, None::<&str>)
+        .form(&[
+            ("id", code.as_str()),
+            ("percent_off", "50"),
+            ("duration", "once"),
+            ("max_redemptions", "1"),
+            ("name", "MU 原価レベル"),
+        ])
+        .send().await;
+    let coupon_id = match resp {
+        Ok(r) if r.status().is_success() => {
+            let j: serde_json::Value = r.json().await.unwrap_or_default();
+            j["id"].as_str().unwrap_or(&code).to_string()
+        }
+        Ok(r) => {
+            let s = r.status();
+            let t = r.text().await.unwrap_or_default();
+            eprintln!("[exit] stripe coupon create {}: {}", s, t);
+            return (StatusCode::BAD_GATEWAY, "could not mint coupon").into_response();
+        }
+        Err(e) => {
+            eprintln!("[exit] stripe coupon network: {}", e);
+            return (StatusCode::BAD_GATEWAY, "stripe network error").into_response();
+        }
+    };
+    {
+        let conn = db.lock().unwrap();
+        conn.execute(
+            "INSERT INTO exit_offers (email, kind, stripe_coupon, status, expires_at, created_at)
+             VALUES (?, 'discount_50', ?, 'issued', ?, ?)",
+            params![
+                email, coupon_id,
+                format!("{}", chrono_now().parse::<i64>().unwrap_or(0) + 30 * 86400),
+                chrono_now(),
+            ],
+        ).ok();
+    }
+
+    // Email the code so it doesn't depend on the user keeping the tab open.
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    if !resend_key.is_empty() {
+        let to = email.clone();
+        let code_for_mail = coupon_id.clone();
+        tokio::spawn(async move {
+            let html = format!(r#"
+<div style="background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;padding:48px;max-width:560px;margin:0 auto">
+  <div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:32px">MU</div>
+  <div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:8px">原価レベル クーポン</div>
+  <div style="font-size:18px;font-weight:300;line-height:1.5;margin-bottom:24px">アンケートにお答えいただきありがとうございます。</div>
+  <p style="font-size:12px;line-height:1.85;opacity:0.78;margin-bottom:18px">
+    お試しいただきたいので、ほぼ製造原価で 1 着お渡しします。<br>
+    Stripe チェックアウトで以下のクーポンコードを入力してください。<br>
+    <strong>有効期限 30 日 · 1 回限り · 全カテゴリ対応</strong>
+  </p>
+  <div style="background:#1C1C1C;padding:18px;text-align:center;font-family:monospace;font-size:18px;letter-spacing:0.2em;color:#e6c449;margin:16px 0">
+    {code}
+  </div>
+  <a href="https://wearmu.com/mugen" style="display:inline-block;background:#e6c449;color:#000;padding:14px 28px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:700">MUGEN を見る →</a>
+  <p style="font-size:10px;opacity:0.5;margin-top:32px">MU が「合うかどうか」を体感してほしい。気に入ったら 2 着目から通常価格でどうぞ。</p>
+</div>"#, code = code_for_mail);
+            let _ = reqwest::Client::new()
+                .post("https://api.resend.com/emails")
+                .bearer_auth(&resend_key)
+                .json(&serde_json::json!({
+                    "from": "MU <noreply@enablerdao.com>",
+                    "to": [to],
+                    "subject": format!("MU — 原価レベル クーポン ({}, 30 日有効)", code_for_mail),
+                    "html": html,
+                })).send().await;
+        });
+    }
+    Json(serde_json::json!({
+        "ok": true, "coupon": coupon_id, "percent_off": 50,
+        "valid_days": 30, "reused": false,
+    })).into_response()
+}
+
+#[derive(Deserialize)]
+struct ExitLotteryBody {
+    email: String,
+    #[serde(default)] referrer: String,
+}
+
+/// Step 3: open lottery entry (オープン懸賞 — purchase NOT required, no
+/// statutory prize cap in Japan). Weekly draw selects winners for
+/// ¥1,000–¥3,000 cashback coupons.
+async fn exit_lottery_enter(
+    State(db): State<Db>,
+    Json(body): Json<ExitLotteryBody>,
+) -> impl IntoResponse {
+    let email = body.email.trim().to_lowercase();
+    if email.is_empty() || !email.contains('@') {
+        return (StatusCode::BAD_REQUEST, "invalid email").into_response();
+    }
+    // 1 ticket per email per week.
+    let existing: Option<String> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT ticket_id FROM exit_offers
+             WHERE email=? AND kind='lottery_entry'
+               AND CAST(created_at AS INTEGER) > CAST(? AS INTEGER) - 7 * 86400
+             ORDER BY id DESC LIMIT 1",
+            params![email, chrono_now()],
+            |r| r.get(0),
+        ).ok().flatten()
+    };
+    if let Some(t) = existing {
+        return Json(serde_json::json!({
+            "ok": true, "ticket": t, "prize_range_jpy": [1000, 3000],
+            "draw_at": "weekly Monday 9:00 JST", "reused": true,
+        })).into_response();
+    }
+    let ticket = uuid::Uuid::new_v4().to_string();
+    let conn = db.lock().unwrap();
+    conn.execute(
+        "INSERT INTO exit_offers (email, kind, ticket_id, status, created_at)
+         VALUES (?, 'lottery_entry', ?, 'pending', ?)",
+        params![email, ticket, chrono_now()],
+    ).ok();
+    if !body.referrer.is_empty() {
+        // Optional: log the referrer slug if any
+        conn.execute(
+            "UPDATE exit_offers SET status=? WHERE ticket_id=?",
+            params![format!("pending:ref={}", body.referrer.chars().take(40).collect::<String>()), ticket],
+        ).ok();
+    }
+    Json(serde_json::json!({
+        "ok": true, "ticket": ticket,
+        "prize_range_jpy": [1000, 3000],
+        "draw_at": "weekly Monday 9:00 JST",
+        "reused": false,
+    })).into_response()
+}
+
 /// Public purchase: anyone (not just the design's owner) can buy a /you
 /// design they see on the share page. Buyer enters their email + shipping
 /// address inside Stripe Checkout. Default price is ¥6,800; the design
@@ -2771,6 +3114,7 @@ async fn you_public_buy(
             // can change via shipping form (Stripe address has no size field
             // so size is determined by the owner-of-design's profile for now;
             // a follow-up will add a size selector on the slug page).
+            ("allow_promotion_codes", "true"),
             ("metadata[you_design_id]", &id.to_string()),
             ("metadata[you_size]",      &default_size),
             ("metadata[you_serial]",    &serial),
@@ -2867,6 +3211,7 @@ async fn you_claim(
             ("shipping_address_collection[allowed_countries][6]", "KR"),
             ("shipping_address_collection[allowed_countries][7]", "TW"),
             ("shipping_address_collection[allowed_countries][8]", "HK"),
+            ("allow_promotion_codes", "true"),
             ("metadata[you_design_id]", &body.design_id.to_string()),
             ("metadata[you_size]", &size),
             ("metadata[you_serial]", &serial),
@@ -3880,6 +4225,7 @@ footer{{padding:40px 24px;border-top:1px solid rgba(255,255,255,0.05);
   <div style="display:flex;gap:24px"><a href="/">MU</a><a href="/you">/you</a><a href="/tokushoho">特商法</a></div>
 </footer>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<script src="/exit-funnel.js" defer></script>
 <script>
 // Public buy: any visitor on the share page can buy a /you design.
 document.addEventListener('click', async (e) => {{
@@ -4081,6 +4427,35 @@ async fn main() {
     ] {
         conn.execute(col, []).ok();
     }
+    // Exit-intent funnel: survey → cost-price discount → no-purchase
+    // open lottery (オープン懸賞 — Japan has no prize cap on these).
+    conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS exit_surveys (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            email        TEXT,
+            page         TEXT,
+            why_left     TEXT,
+            price_feel   TEXT,
+            would_buy_at INTEGER,
+            comment      TEXT,
+            created_at   TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS exit_offers (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            email           TEXT NOT NULL,
+            kind            TEXT NOT NULL,        -- 'discount_50' | 'lottery_entry'
+            stripe_coupon   TEXT,                 -- Stripe coupon id once minted
+            ticket_id       TEXT,                 -- lottery ticket UUID
+            prize_jpy       INTEGER,              -- 0 if not yet drawn
+            status          TEXT NOT NULL DEFAULT 'issued',
+            expires_at      TEXT,
+            used_at         TEXT,
+            created_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_exit_offers_email ON exit_offers(email);
+        CREATE INDEX IF NOT EXISTS idx_exit_offers_ticket ON exit_offers(ticket_id);
+        CREATE INDEX IF NOT EXISTS idx_exit_offers_status ON exit_offers(status);
+    ").ok();
     // Per-Stripe-checkout purchase ledger so we can grant lifetime_free
     // retroactively when a returning buyer signs up for /you, AND so the
     // webhook can mark a /you account lifetime_free as soon as a purchase
@@ -4207,6 +4582,11 @@ async fn main() {
         .route("/api/you/style", post(you_style_set))
         .route("/api/you/stats", get(you_active_count))
         .route("/api/you/buy/:design_id", post(you_public_buy))
+        // Exit-intent funnel
+        .route("/api/exit/survey", post(exit_survey))
+        .route("/api/exit/discount", post(exit_discount_claim))
+        .route("/api/exit/lottery", post(exit_lottery_enter))
+        .route("/api/admin/lottery_draw", post(admin_lottery_draw))
         // Blog (public ops notes). Clean URLs without .html extension.
         .route("/blog", get(blog_index))
         .route("/blog/", get(blog_index))
