@@ -19,6 +19,9 @@ install_crons() {
     crontab -l 2>/dev/null | grep -v "mu-brand" > /tmp/mu_crontab_tmp
 
     NOUNS_GEN="$SCRIPT_DIR/generate_nouns.py"
+    # /you daily backfill needs the admin token; read from env file or default.
+    ADMIN_TOKEN="$(grep '^MU_ADMIN_TOKEN=' "$ENV_FILE" 2>/dev/null | cut -d= -f2)"
+    : "${ADMIN_TOKEN:=mu-admin-2026}"
     cat >> /tmp/mu_crontab_tmp << EOF
 # mu-brand MUGEN (every hour — random sleep 0-55min inside script makes actual time unpredictable)
 0 * * * * set -a && source $ENV_FILE && set +a && $PYTHON $GENERATE mugen >> $LOG_DIR/mugen.log 2>&1
@@ -32,6 +35,8 @@ install_crons() {
 0 1 * * * set -a && source $ENV_FILE && set +a && $PYTHON $GENERATE nouns_muon >> $LOG_DIR/nouns_muon.log 2>&1
 # mu-brand NOUNS × MA (monthly 15th)
 0 0 15 * * set -a && source $ENV_FILE && set +a && $PYTHON $GENERATE nouns_ma >> $LOG_DIR/nouns_ma.log 2>&1
+# mu-brand /you daily — triggers Gemini design + email at JST 9:00 (UTC 0:00)
+0 0 * * * /usr/bin/curl -s -X POST -H 'Content-Type: application/json' -d '{"admin_token":"$ADMIN_TOKEN"}' https://wearmu.com/api/you/admin/backfill_today >> $LOG_DIR/you_daily.log 2>&1
 EOF
 
     crontab /tmp/mu_crontab_tmp
