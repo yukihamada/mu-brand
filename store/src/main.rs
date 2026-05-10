@@ -1538,6 +1538,14 @@ fn trial_end_seconds_from_now() -> String {
     format!("{}", secs + 30 * 86400)
 }
 
+/// Days since signup (created_at). Positive integer, 1 on day 0.
+fn days_since_signup_secs(created_at_secs: u64) -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    if now <= created_at_secs { return 1; }
+    1 + ((now - created_at_secs) / 86400) as i64
+}
+
 /// Whether a /you account is currently allowed to receive daily designs.
 /// Active when:
 ///   - lifetime_free is set (purchased a MU shirt → forever), OR
@@ -1578,6 +1586,40 @@ fn you_user_state(trial_end_at: Option<&str>, lifetime_free: bool) -> serde_json
         "days_left": days_left,
         "lifetime_free": lifetime_free,
     })
+}
+
+/// Total active /you subscribers — used for social-proof badge on the LP.
+/// Cached for 60 seconds to avoid hammering the DB on every page load.
+async fn you_active_count(State(db): State<Db>) -> impl IntoResponse {
+    let total: i64 = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM you_users WHERE unsubscribed_at IS NULL",
+            [], |r| r.get(0),
+        ).unwrap_or(0)
+    };
+    let lifetime: i64 = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM you_users WHERE unsubscribed_at IS NULL AND lifetime_free=1",
+            [], |r| r.get(0),
+        ).unwrap_or(0)
+    };
+    let designs_total: i64 = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM you_designs WHERE gen_status='ready'",
+            [], |r| r.get(0),
+        ).unwrap_or(0)
+    };
+    // Cache 60s on the CDN
+    let mut headers = HeaderMap::new();
+    headers.insert("Cache-Control", HeaderValue::from_static("public, max-age=60"));
+    (headers, Json(serde_json::json!({
+        "active_subscribers": total,
+        "lifetime_members":   lifetime,
+        "designs_generated":  designs_total,
+    }))).into_response()
 }
 
 async fn index() -> Html<&'static str> {
@@ -1830,6 +1872,65 @@ fn compose_design(taste: &serde_json::Value, day: &str, refresh_n: i64) -> (Stri
     (name, prompt, seed)
 }
 
+/// Day-7 / Day-14 / Day-30 special compositions. Returns (name, prompt, seed,
+/// is_milestone). Milestone designs short-circuit the standard compose_design
+/// so subscribers feel the cadence (peak-end / IKEA / endowment).
+/// `day_num` is the day_num within this user's history (1-based).
+fn compose_special_design(
+    taste: &serde_json::Value, day: &str, day_num: i64
+) -> Option<(String, String, String)> {
+    use sha2::{Digest, Sha256};
+    let style_name = taste.get("style_name").and_then(|v| v.as_str()).unwrap_or("");
+    let bio = taste.get("bio").and_then(|v| v.as_str()).unwrap_or("");
+    let seed_input = format!("milestone|{}|{}|{}|d{}",
+        day,
+        taste.get("email").and_then(|v| v.as_str()).unwrap_or(""),
+        serde_json::to_string(taste).unwrap_or_default(),
+        day_num,
+    );
+    let mut hasher = Sha256::new();
+    hasher.update(seed_input.as_bytes());
+    let h = hasher.finalize();
+    let seed = hex::encode(&h[..8]);
+
+    match day_num {
+        14 => {
+            // Day 14: peak. Most dramatic prompt of the 30-day arc.
+            let name = if !style_name.is_empty() {
+                format!("{} — 14 日目の頂", style_name)
+            } else {
+                "14 日目の頂".to_string()
+            };
+            let prompt = format!(
+                "{date}・14 日間あなたが選び続けた方向の頂点。これまでの mood と palette を煮詰めて、\
+                 たった一つに結晶させた一着。背中に小さく『MU × YOU · 14』。{bio_clause}\
+                 アート性を強める、編集的でやや実験的、しかし日常で着られる。10oz Bella+Canvas、DTG。",
+                date = day,
+                bio_clause = if bio.is_empty() { String::new() } else { format!("着る人を表す『{}』。", bio) },
+            );
+            Some((name, prompt, seed))
+        }
+        30 => {
+            // Day 30: "The 30" — the end. Blend of all 29 prior seeds.
+            let name = if !style_name.is_empty() {
+                format!("The 30 · {} の最終形", style_name)
+            } else {
+                "The 30 · 29 案を一着に".to_string()
+            };
+            let prompt = format!(
+                "{date}・これは 30 日間の最後の 1 案。29 日分のあなたの選択（skip と like）が \
+                 全て seed に折り込まれている、唯一の一着。{bio_clause}\
+                 静かな祝祭感。胸に小さなモノグラム『M30』。背中に余白。\
+                 編集デザイン、ややクラシック、長く着られる仕上げ。10oz Bella+Canvas、DTG。",
+                date = day,
+                bio_clause = if bio.is_empty() { String::new() } else { format!("「{}」と書いた人のための一着。", bio) },
+            );
+            Some((name, prompt, seed))
+        }
+        _ => None,
+    }
+}
+
 /// SVG image URL (data URI) generated server-side for the design preview.
 /// Uses the seed to deterministically choose hues. Replace later with a real
 /// generative pipeline (Gemini / SDXL) — the schema persists the image_url
@@ -1931,7 +2032,26 @@ fn ensure_design_for_day(conn: &Connection, user_id: i64, day: &str, taste: &ser
         |r| r.get(0),
     ).unwrap_or(1);
 
-    let (name, prompt, seed) = compose_design(taste, day, 0);
+    // Merge the user's style_name (set on Day 7) into the taste so milestone
+    // prompts can reference it.
+    let mut taste_with_style = taste.clone();
+    if let Some(obj) = taste_with_style.as_object_mut() {
+        let style_name: Option<String> = conn.query_row(
+            "SELECT style_name FROM you_users WHERE id=?",
+            params![user_id], |r| r.get(0),
+        ).ok().flatten();
+        if let Some(sn) = style_name {
+            obj.insert("style_name".into(), serde_json::Value::String(sn));
+        }
+    }
+    let taste_for_prompt = &taste_with_style;
+
+    // Day 14 / 30 use a special composition (peak / The 30). Other days fall
+    // through to compose_design.
+    let (name, prompt, seed) = match compose_special_design(taste_for_prompt, day, day_num) {
+        Some(triple) => triple,
+        None => compose_design(taste_for_prompt, day, 0),
+    };
     let svg_fallback = render_design_svg(&name, &seed);
     let now = chrono_now();
     conn.execute(
@@ -2601,6 +2721,36 @@ struct YouTasteBody {
     #[serde(default)] display_name: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct YouStyleBody {
+    token: String,
+    style_name: String,
+}
+
+/// Day-7 ritual: subscriber gives their personal "style name" (IKEA effect /
+/// commitment). Stored on the user, used in milestone design prompts.
+async fn you_style_set(
+    State(db): State<Db>,
+    Json(body): Json<YouStyleBody>,
+) -> impl IntoResponse {
+    let name = body.style_name.trim();
+    if name.is_empty() || name.chars().count() > 32 {
+        return (StatusCode::BAD_REQUEST, "1〜32 文字で").into_response();
+    }
+    let n = {
+        let conn = db.lock().unwrap();
+        conn.execute(
+            "UPDATE you_users SET style_name=?, updated_at=?
+             WHERE token=? AND unsubscribed_at IS NULL",
+            params![name, chrono_now(), body.token],
+        ).unwrap_or(0)
+    };
+    if n == 0 {
+        return (StatusCode::NOT_FOUND, "invalid token").into_response();
+    }
+    Json(serde_json::json!({"ok": true, "style_name": name})).into_response()
+}
+
 async fn you_taste_update(
     State(db): State<Db>,
     Json(body): Json<YouTasteBody>,
@@ -2742,6 +2892,66 @@ async fn you_admin_list(
     })).into_response()
 }
 
+/// Day-7 commitment ritual: ask the subscriber to give their style a name.
+/// IKEA effect — naming creates ownership of the design feed.
+/// Idempotent on day7_email_sent_at.
+fn send_day7_style_prompt_if_needed(db: Db, user_id: i64, email: String) {
+    {
+        let conn = db.lock().unwrap();
+        let already: Option<String> = conn.query_row(
+            "SELECT day7_email_sent_at FROM you_users WHERE id=?",
+            params![user_id], |r| r.get(0),
+        ).ok().flatten();
+        if already.is_some() { return; }
+        conn.execute(
+            "UPDATE you_users SET day7_email_sent_at=? WHERE id=?",
+            params![chrono_now(), user_id],
+        ).ok();
+    }
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    if resend_key.is_empty() { return; }
+    // Token for the deep-link is fetched in the spawned future to avoid
+    // holding the DB lock across await.
+    let db2 = db.clone();
+    tokio::spawn(async move {
+        let token: Option<String> = {
+            let conn = db2.lock().unwrap();
+            conn.query_row("SELECT token FROM you_users WHERE id=?",
+                params![user_id], |r| r.get::<_, String>(0)).ok()
+        };
+        let link = match token {
+            Some(t) => format!("https://wearmu.com/you?t={}#name-your-style", t),
+            None => "https://wearmu.com/you".to_string(),
+        };
+        let html = format!(r#"
+<div style="background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;padding:48px;max-width:560px;margin:0 auto">
+  <div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:32px">MU × YOU</div>
+  <div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:8px">Day 7 / 30</div>
+  <div style="font-size:18px;font-weight:300;line-height:1.5;margin-bottom:24px">7 日間で 7 案。あなたのスタイルが見えてきました。</div>
+  <p style="font-size:12px;line-height:1.85;opacity:0.75;margin-bottom:24px">
+    ここまでの選択は、あなただけのフィルター。<br>
+    そのフィルターに <strong>名前</strong> を付けてください。<br>
+    たとえば「霧と紙」「夜の引き算」「8 月の沈黙」など、3〜10 文字で。<br><br>
+    付けた名前は、Day 14 と Day 30 の特別な一着に折り込まれます。
+  </p>
+  <a href="{link}" style="display:inline-block;background:#e6c449;color:#000;padding:14px 28px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:700">名前をつける →</a>
+  <p style="font-size:10px;opacity:0.5;margin-top:32px;line-height:1.7">
+    まだピンとこなければ、明日でも来週でも OK。/you ページからいつでも変えられます。
+  </p>
+</div>"#, link = link);
+        let _ = reqwest::Client::new()
+            .post("https://api.resend.com/emails")
+            .bearer_auth(&resend_key)
+            .json(&serde_json::json!({
+                "from": "MU × YOU <noreply@enablerdao.com>",
+                "to": [email],
+                "subject": "Day 7 — あなたのスタイルに名前を",
+                "html": html,
+            }))
+            .send().await;
+    });
+}
+
 /// Send a "5 days left in your free trial" email exactly once, when the
 /// remaining trial window first dips under 6 days. Idempotent on the
 /// trial_reminder_sent_at column.
@@ -2776,18 +2986,20 @@ fn send_trial_reminder_if_needed(
         let html = format!(r#"
 <div style="background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;padding:48px;max-width:560px;margin:0 auto">
   <div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:32px">MU × YOU</div>
-  <div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:8px">あと {days} 日</div>
-  <div style="font-size:18px;font-weight:300;line-height:1.5;margin-bottom:24px">無料トライアルが残り {days} 日です。</div>
-  <p style="font-size:12px;line-height:1.85;opacity:0.7;margin-bottom:24px">
-    気に入ったら、MU の T シャツを 1 着だけ手に入れてください。<br>
-    <strong>1 着でも所有すれば、MU × YOU は一生無料</strong>になります。
+  <div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#C8362C;opacity:0.95;margin-bottom:8px">あと {days} 日であなたの 30 案が消えます</div>
+  <div style="font-size:20px;font-weight:300;line-height:1.4;margin-bottom:18px">{days} 日後、毎朝の一着は届かなくなります。</div>
+  <p style="font-size:12px;line-height:1.85;opacity:0.78;margin-bottom:24px">
+    ここまで {days_done} 案を見てきました。<br>
+    その「あなただけの方向性」を <strong>失わない</strong> 方法はひとつ —<br>
+    MU の T シャツを 1 着、手に入れること。1 着で MU × YOU は <strong>一生無料</strong>。<br>
+    日割りすると 1 日 4 円以下。コーヒー 1 杯にも届きません。
   </p>
   <a href="https://wearmu.com/mugen" style="display:inline-block;background:#e6c449;color:#000;padding:14px 28px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:700;margin-right:8px">MUGEN を見る →</a>
   <a href="https://wearmu.com/ma" style="display:inline-block;border:1px solid rgba(255,255,255,0.2);color:#F5F5F0;padding:13px 22px;font-size:10px;letter-spacing:0.25em;text-transform:uppercase;text-decoration:none;opacity:0.8">月次 MA オークション</a>
   <p style="font-size:10px;opacity:0.5;margin-top:32px;line-height:1.7">
     トライアル終了後は、購入が無い限り毎日のデザイン配信は停止します。<br>退会は <code>STOP</code> 返信で即時。
   </p>
-</div>"#, days = days_left.max(1));
+</div>"#, days = days_left.max(1), days_done = (30 - days_left as i64).max(0));
         let _ = reqwest::Client::new()
             .post("https://api.resend.com/emails")
             .bearer_auth(&resend_key)
@@ -2858,22 +3070,24 @@ async fn you_admin_backfill(
 ) -> impl IntoResponse {
     if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
     let day = jst_today_str();
-    let users: Vec<(i64, String, String, Option<String>, Option<String>, i64)> = {
+    type UserRow = (i64, String, String, Option<String>, Option<String>, i64, String, Option<String>);
+    let users: Vec<UserRow> = {
         let conn = db.lock().unwrap();
         let mut stmt = match conn.prepare(
-            "SELECT id, email, taste_json, slug, trial_end_at, COALESCE(lifetime_free,0)
+            "SELECT id, email, taste_json, slug, trial_end_at, COALESCE(lifetime_free,0),
+                    created_at, style_name
              FROM you_users
              WHERE unsubscribed_at IS NULL"
         ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
         stmt.query_map([], |r| Ok((
-            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?,
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?,
         ))).map(|it| it.filter_map(|r| r.ok()).collect())
            .unwrap_or_default()
     };
 
     let mut queued = 0;
     let mut skipped_expired = 0;
-    for (uid, email, taste_json, _slug, trial_end_at, lifetime_free_int) in &users {
+    for (uid, email, taste_json, _slug, trial_end_at, lifetime_free_int, created_at, style_name) in &users {
         let lifetime_free = *lifetime_free_int != 0;
         // Skip expired trials (no daily email until they buy a MU shirt).
         if !you_user_active(trial_end_at.as_deref(), lifetime_free) {
@@ -2881,7 +3095,14 @@ async fn you_admin_backfill(
             send_trial_expired_notice_if_needed(db.clone(), *uid, email.clone(), trial_end_at.clone());
             continue;
         }
-        // Send 5-days-left reminder once if trial is winding down.
+        let created_secs: u64 = created_at.parse().unwrap_or(0);
+        let day_n = days_since_signup_secs(created_secs);
+        // Day-7 IKEA-effect ritual (asks the user to name their style),
+        // sent once. Skips if they already set a style_name.
+        if day_n >= 7 && day_n <= 9 && style_name.as_deref().unwrap_or("").is_empty() {
+            send_day7_style_prompt_if_needed(db.clone(), *uid, email.clone());
+        }
+        // 5-days-left and trial-end reminders.
         send_trial_reminder_if_needed(db.clone(), *uid, email.clone(), trial_end_at.as_deref());
         let taste: serde_json::Value = serde_json::from_str(taste_json)
             .unwrap_or(serde_json::json!({}));
@@ -3561,6 +3782,15 @@ async fn main() {
         "ALTER TABLE you_users ADD COLUMN lifetime_reason TEXT",
         "ALTER TABLE you_users ADD COLUMN trial_reminder_sent_at TEXT",
         "ALTER TABLE you_users ADD COLUMN trial_expired_notice_sent_at TEXT",
+        // Day-7 IKEA-effect commitment ritual: user names their style
+        "ALTER TABLE you_users ADD COLUMN style_name TEXT",
+        "ALTER TABLE you_users ADD COLUMN style_name_prompted_at TEXT",
+        // Day-7 / Day-14 / Day-25 / Day-30 trigger guards (idempotent emails)
+        "ALTER TABLE you_users ADD COLUMN day7_email_sent_at TEXT",
+        "ALTER TABLE you_users ADD COLUMN day14_peak_sent_at TEXT",
+        "ALTER TABLE you_users ADD COLUMN bonus_drops_sent INTEGER DEFAULT 0",
+        // Mark a design as the bonus / milestone variant for UI badges
+        "ALTER TABLE you_designs ADD COLUMN kind TEXT NOT NULL DEFAULT 'daily'",
     ] {
         conn.execute(col, []).ok();
     }
@@ -3687,6 +3917,8 @@ async fn main() {
         .route("/api/you/taste", post(you_taste_update))
         .route("/api/you/admin/backfill_today", post(you_admin_backfill))
         .route("/api/you/admin/list", get(you_admin_list))
+        .route("/api/you/style", post(you_style_set))
+        .route("/api/you/stats", get(you_active_count))
         // Per-user share page — REGISTER LAST so literal routes win
         .route("/:slug", get(slug_or_static))
         .nest_service("/static", ServeDir::new("static"))

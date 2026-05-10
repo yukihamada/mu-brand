@@ -294,11 +294,35 @@ footer a:hover{opacity:1}
     <div class="m"><div class="v">1日1案</div><div class="l">あなた専用</div></div>
     <div class="m"><div class="v">¥6,800〜</div><div class="l">仕立て上がり</div></div>
   </div>
-  <div style="max-width:560px;margin:24px auto 0;padding:14px 18px;background:rgba(230,196,73,0.08);border-left:2px solid #e6c449;font-size:12px;line-height:1.85;text-align:left;border-radius:2px">
-    <strong>30 日間無料</strong>でお試しいただけます。<br>
-    トライアル中に <a href="/mugen" style="color:#e6c449">MUGEN</a> / <a href="/muon" style="color:#e6c449">MUON</a> / <a href="/ma" style="color:#e6c449">MA</a> から T シャツを 1 着でも手に入れていただければ、<strong>MU × YOU は一生無料</strong>になります。
+  <div style="max-width:560px;margin:24px auto 0;padding:18px 22px;background:rgba(230,196,73,0.08);border-left:2px solid #e6c449;font-size:13px;line-height:1.9;text-align:left;border-radius:2px">
+    <div style="font-size:10px;letter-spacing:0.25em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:8px">価格</div>
+    <span style="opacity:0.55;text-decoration:line-through">通常 月額 ¥980 / 年額 ¥11,760</span><br>
+    <strong style="font-size:15px">→ 30 日間 ¥0</strong>。さらに <a href="/mugen" style="color:#e6c449">MUGEN</a> / <a href="/muon" style="color:#e6c449">MUON</a> / <a href="/ma" style="color:#e6c449">MA</a> から 1 着でも手に入れれば <strong>一生 ¥0</strong>。<br>
+    <span style="font-size:11px;opacity:0.7">— MU 1 着 ¥6,800 を 5 年使うと、1 日あたり 4 円 以下。</span>
   </div>
+  <!-- Live social proof: filled by /api/you/stats. Quietly empty if the
+       endpoint is offline so we never show placeholder zeros. -->
+  <div id="stats-block" style="max-width:560px;margin:14px auto 0;display:none;font-size:11px;letter-spacing:0.05em;opacity:0.7;text-align:center"></div>
 </section>
+<script>
+(async () => {
+  try {
+    const r = await fetch('/api/you/stats', {cache: 'no-store'});
+    if (!r.ok) return;
+    const d = await r.json();
+    const el = document.getElementById('stats-block');
+    if (!el) return;
+    const a = d.active_subscribers || 0;
+    const lf = d.lifetime_members || 0;
+    const dg = d.designs_generated || 0;
+    if (a < 3) return; // hide until we have meaningful numbers
+    el.style.display = 'block';
+    el.innerHTML = `今、${a} 人があなただけのデザインを育てています。 ` +
+      (lf > 0 ? `うち ${lf} 人が MU を所有して一生無料。 ` : '') +
+      (dg > 0 ? `これまでに ${dg.toLocaleString()} 案を生成。` : '');
+  } catch (_) { /* offline — leave the badge hidden */ }
+})();
+</script>
 
 <!-- HOW -->
 <section class="how">
@@ -412,8 +436,30 @@ footer a:hover{opacity:1}
       </div>
       <div class="preview-meta">
         <div class="preview-day" id="pv-day"></div>
+        <!-- Subscription progress / loss-aversion countdown.
+             Hidden for lifetime users; visible during trial. -->
+        <div id="pv-progress" style="display:none;font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:-4px"></div>
+        <div id="pv-progress-bar" style="display:none;height:3px;background:rgba(255,255,255,0.06);border-radius:2px;overflow:hidden">
+          <div id="pv-progress-fill" style="height:100%;background:linear-gradient(90deg,#e6c449,#C8362C);width:0%;transition:width 0.6s ease"></div>
+        </div>
+        <div id="pv-lifetime" style="display:none;font-size:11px;letter-spacing:0.15em;color:#5a9e6f;background:rgba(90,158,111,0.08);padding:8px 14px;border-left:2px solid #5a9e6f">★ MU 所有者 — 一生無料 (lifetime)</div>
         <div class="preview-name" id="pv-name">…</div>
         <div class="preview-prompt" id="pv-prompt">…</div>
+
+        <!-- Day 7 IKEA-effect: name-your-style inline ritual -->
+        <div id="name-your-style" style="display:none;padding:14px 16px;background:#111;border:1px solid rgba(230,196,73,0.3);border-radius:2px;margin-top:6px">
+          <div style="font-size:9px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:6px">Day 7 — Your Style Name</div>
+          <div style="font-size:12px;line-height:1.7;opacity:0.78;margin-bottom:10px">
+            7 日間で 7 案。あなただけのフィルターが見えてきました。<br>
+            このフィルターに名前を付けると、Day 14 と Day 30 の特別な一着に折り込まれます。
+          </div>
+          <div style="display:flex;gap:8px">
+            <input id="style-name-input" maxlength="32" placeholder='例: 霧と紙 / 8月の沈黙 / 静かな引き算' style="flex:1;background:#0A0A0A;border:1px solid rgba(255,255,255,0.18);color:#F5F5F0;padding:10px 12px;font-size:12px;letter-spacing:0.05em">
+            <button id="style-name-save" type="button" class="btn btn-primary" style="padding:10px 16px;font-size:10px">名前をつける</button>
+          </div>
+          <div id="style-name-msg" style="font-size:10px;opacity:0.65;margin-top:6px;min-height:14px"></div>
+        </div>
+
         <div class="preview-row">
           <span>SIZE <b id="pv-size">S</b></span>
           <span>PRICE <b id="pv-price">¥6,800</b></span>
@@ -641,6 +687,46 @@ function hashCode(s){let h=0;for(let i=0;i<s.length;i++)h=((h<<5)-h+s.charCodeAt
 
 let pollTimer = null;
 
+// Apply subscription state to the preview UI: progress bar / lifetime badge
+// / Day-7 naming ritual. Idempotent — safe to call on every fetch.
+function applySubscriptionUI(sub, dayNum, styleName){
+  if (!sub) return;
+  const progressEl = document.getElementById('pv-progress');
+  const barEl = document.getElementById('pv-progress-bar');
+  const fillEl = document.getElementById('pv-progress-fill');
+  const lifetimeEl = document.getElementById('pv-lifetime');
+  if (sub.lifetime_free) {
+    if (progressEl) progressEl.style.display = 'none';
+    if (barEl) barEl.style.display = 'none';
+    if (lifetimeEl) lifetimeEl.style.display = 'block';
+  } else if (sub.status === 'trial') {
+    const days = Math.max(0, sub.days_left || 0);
+    const used = Math.max(0, 30 - days);
+    if (progressEl) {
+      progressEl.style.display = 'block';
+      progressEl.textContent = `あと ${days} 日 / 30  · 失われる: ${used} 案を超えた経験`;
+    }
+    if (barEl) barEl.style.display = 'block';
+    if (fillEl) fillEl.style.width = `${(used / 30) * 100}%`;
+    if (lifetimeEl) lifetimeEl.style.display = 'none';
+  } else {
+    if (progressEl) {
+      progressEl.style.display = 'block';
+      progressEl.style.color = '#C8362C';
+      progressEl.textContent = '無料トライアル終了 — MU 1 着で再開';
+    }
+    if (barEl) barEl.style.display = 'none';
+  }
+  // Day-7 IKEA-effect ritual surfaces between Day 7 and Day 14 if no style name
+  const nyEl = document.getElementById('name-your-style');
+  if (nyEl) {
+    const showRitual = !sub.lifetime_free
+      && (dayNum||1) >= 7 && (dayNum||1) <= 14
+      && !(styleName && String(styleName).trim());
+    nyEl.style.display = showRitual ? 'block' : 'none';
+  }
+}
+
 function showDesign(d){
   if (!d) return;
   $('#preview').classList.add('show');
@@ -690,6 +776,11 @@ function schedulePoll(){
       }
       if (data.history) showHistory(data.history);
       if (data.share_url) updateShareBar(data.share_url, data.slug);
+      if (data.subscription) {
+        applySubscriptionUI(data.subscription,
+          (data.today && data.today.day_num) || 1,
+          data.style_name || (data.taste && data.taste.style_name) || '');
+      }
     } catch(e){ schedulePoll(); }
   }, 4000);
 }
@@ -758,10 +849,47 @@ async function loadDaily(tk){
     if (data.history) showHistory(data.history);
     if (data.share_url) updateShareBar(data.share_url, data.slug);
     if (data.taste) applyTasteToEditor(data.taste);
+    if (data.subscription) {
+      applySubscriptionUI(data.subscription,
+        (data.today && data.today.day_num) || 1,
+        data.style_name || (data.taste && data.taste.style_name) || '');
+    }
+    // If the URL has #name-your-style, scroll the inline ritual into view
+    if (location.hash === '#name-your-style') {
+      const ny = document.getElementById('name-your-style');
+      if (ny && ny.style.display !== 'none') ny.scrollIntoView({behavior:'smooth', block:'center'});
+    }
   } catch(e){
     toast('読み込みに失敗：' + e.message, true);
   }
 }
+
+// Wire the Day-7 inline ritual save button.
+document.addEventListener('DOMContentLoaded', () => {
+  const btn = document.getElementById('style-name-save');
+  if (!btn) return;
+  btn.addEventListener('click', async () => {
+    const input = document.getElementById('style-name-input');
+    const msg = document.getElementById('style-name-msg');
+    if (!token || !input || !msg) return;
+    const name = (input.value || '').trim();
+    if (!name) { msg.textContent = '空白では保存できません'; return; }
+    if (name.length > 32) { msg.textContent = '32 文字以内で'; return; }
+    btn.disabled = true; msg.textContent = '保存中…';
+    try {
+      const r = await api('/api/you/style', {token, style_name: name});
+      msg.style.color = '#5a9e6f';
+      msg.textContent = `保存しました — Day 14 と Day 30 はこの「${r.style_name}」が折り込まれます`;
+      setTimeout(() => {
+        const el = document.getElementById('name-your-style');
+        if (el) el.style.display = 'none';
+      }, 2500);
+    } catch (e) {
+      msg.style.color = '#C8362C';
+      msg.textContent = 'エラー：' + (e.message || '保存できませんでした');
+    } finally { btn.disabled = false; }
+  });
+});
 
 $('#taste-form').addEventListener('submit', async e=>{
   e.preventDefault();
@@ -788,6 +916,11 @@ $('#taste-form').addEventListener('submit', async e=>{
     localStorage.setItem('mu_you_token', token);
     if (r.today) showDesign(r.today);
     if (r.share_url) updateShareBar(r.share_url, r.slug);
+    if (r.subscription) {
+      applySubscriptionUI(r.subscription,
+        (r.today && r.today.day_num) || 1,
+        r.style_name || '');
+    }
     document.getElementById('preview').scrollIntoView({behavior:'smooth'});
     toast(r.today && r.today.gen_status === 'generating'
       ? '登録完了。Gemini が本日の一着を描いています…'
