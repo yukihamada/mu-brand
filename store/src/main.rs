@@ -2338,6 +2338,11 @@ async fn you_daily(
     let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
     let share_url = slug.as_ref().map(|s|
         format!("{}/{}", base_url.trim_end_matches('/'), s));
+    let (trial_end_at, lifetime_free): (Option<String>, i64) = conn.query_row(
+        "SELECT trial_end_at, COALESCE(lifetime_free,0) FROM you_users WHERE id=?",
+        params![uid], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).unwrap_or((None, 0));
+    let subscription = you_user_state(trial_end_at.as_deref(), lifetime_free != 0);
     Json(serde_json::json!({
         "ok": true,
         "slug": slug,
@@ -2345,6 +2350,7 @@ async fn you_daily(
         "taste": taste,
         "today": today,
         "history": history,
+        "subscription": subscription,
     })).into_response()
 }
 
