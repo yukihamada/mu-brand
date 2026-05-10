@@ -170,6 +170,11 @@ textarea.input{resize:vertical;min-height:88px;line-height:1.7}
 .slug-edit .btn{flex:0 0 auto;font-size:9px;padding:0 18px;letter-spacing:0.25em}
 .slug-msg{font-size:10px;opacity:0.55;line-height:1.7}
 .slug-msg.ok{color:#7ee27e}.slug-msg.err{color:var(--r);opacity:0.9}
+.share-sns{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.sns{font-size:9px;letter-spacing:0.2em;text-transform:uppercase;padding:11px 14px;
+  background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);
+  flex:1;min-width:96px;text-align:center;cursor:pointer;transition:all 0.15s;font-weight:600;color:var(--w)}
+.sns:hover{border-color:var(--y);color:var(--y);background:rgba(230,196,73,0.06)}
 .preview-meta{padding:48px 44px;display:flex;flex-direction:column;gap:24px}
 .preview-day{font-size:9px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.55}
 .preview-name{font-size:28px;font-weight:200;letter-spacing:0.03em;line-height:1.25}
@@ -416,10 +421,16 @@ footer a:hover{opacity:1}
           <button class="btn btn-ghost" id="refresh-btn" title="再生成（1回まで）">⟳</button>
         </div>
         <div class="share-bar" id="share-bar">
-          <div class="h">あなた専用ページ — シェア用URL</div>
+          <div class="h">あなた専用ページ — シェアして friends と作る</div>
           <div class="share-row">
             <input class="input" id="share-url" readonly>
             <button class="btn btn-primary" id="copy-btn" type="button">コピー</button>
+          </div>
+          <div class="share-sns">
+            <a class="sns x" id="share-x" target="_blank" rel="noopener">X / Twitter</a>
+            <a class="sns line" id="share-line" target="_blank" rel="noopener">LINE</a>
+            <a class="sns ig" id="share-ig" href="#" data-action="copy">Instagram (URLコピー)</a>
+            <a class="sns mail" id="share-mail" target="_blank" rel="noopener">Mail</a>
           </div>
           <div class="slug-edit">
             <span class="pre">wearmu.com/</span>
@@ -684,22 +695,51 @@ function updateShareBar(shareUrl, slug){
   $('#share-url').value = shareUrl;
   if (slug && !$('#slug-input').value) $('#slug-input').value = slug;
   $('#share-bar').classList.add('show');
+  // Pre-build SNS share links
+  const u = encodeURIComponent(shareUrl);
+  const txt = encodeURIComponent(`私の MU × YOU コラボTシャツ・コレクション。AI が毎朝1案描いてくれる。`);
+  $('#share-x').href = `https://twitter.com/intent/tweet?text=${txt}&url=${u}`;
+  $('#share-line').href = `https://social-plugins.line.me/lineit/share?url=${u}`;
+  $('#share-mail').href = `mailto:?subject=${encodeURIComponent('MU × YOU で作った私のTシャツ案')}&body=${txt}%20${u}`;
+}
+
+let currentTaste = null;
+function applyTasteToEditor(taste){
+  if (!taste) return;
+  currentTaste = taste;
+  const setSelected = (name, vals) => {
+    const g = document.querySelector(`[data-name="${name}"]`);
+    if (!g || !Array.isArray(vals)) return;
+    const setV = new Set(vals);
+    g.querySelectorAll('.chip,.size').forEach(c => {
+      c.classList.toggle('on', setV.has(c.textContent.trim()));
+    });
+  };
+  setSelected('te_mood', taste.mood);
+  setSelected('te_palette', taste.palette);
+  setSelected('te_scene', taste.scene);
+  if (taste.size) setSelected('te_size', [taste.size]);
+  if (taste.bio) $('#te-bio').value = taste.bio;
 }
 
 function showHistory(items){
-  if (!items || !items.length) {
-    $('#history').classList.remove('show');
-    return;
-  }
   $('#history').classList.add('show');
   const grid = $('#hgrid');
   grid.innerHTML = '';
+  if (!items || items.length <= 1) {
+    grid.innerHTML = `<div class="history-empty" style="grid-column:1/-1">
+      <div style="opacity:0.6;margin-bottom:6px">これまで ${items ? items.length : 0} 案</div>
+      明日の朝 7:00、また 1 案届きます。Skip するほど好みに寄っていきます。
+    </div>`;
+    if (!items || !items.length) return;
+  }
   items.forEach(d=>{
     const card = document.createElement('div');
     card.className = 'history-card';
-    const bg = d.image_url
-      ? `#000 center/cover no-repeat url("${d.image_url}")`
-      : `#000 center/cover no-repeat ${placeholderImg(d.seed||d.name||'')}`;
+    // Always use the cached endpoint URL — gen_status='ready' rows have bytes,
+    // 'generating' rows return the placeholder SVG; either way the <div>
+    // background renders correctly.
+    const bg = `#000 center/cover no-repeat url("${d.image_url || '/og.jpg'}")`;
     card.innerHTML = `
       <div class="history-img" style="background:${bg}"></div>
       <div class="history-meta">DAY ${String(d.day_num||1).padStart(3,'0')} · <b>${d.status||'PENDING'}</b></div>`;
@@ -713,6 +753,7 @@ async function loadDaily(tk){
     if (data.today) showDesign(data.today);
     if (data.history) showHistory(data.history);
     if (data.share_url) updateShareBar(data.share_url, data.slug);
+    if (data.taste) applyTasteToEditor(data.taste);
   } catch(e){
     toast('読み込みに失敗：' + e.message, true);
   }
@@ -784,16 +825,26 @@ $('#refresh-btn').addEventListener('click', async ()=>{
 });
 
 // SHARE / SLUG handlers
+async function copyToClipboard(text){
+  try { await navigator.clipboard.writeText(text); return true; }
+  catch(e){
+    const el = $('#share-url');
+    el.select(); document.execCommand('copy');
+    return true;
+  }
+}
+
 $('#copy-btn').addEventListener('click', async ()=>{
   const url = $('#share-url').value;
   if (!url) return;
-  try {
-    await navigator.clipboard.writeText(url);
-    toast('コピーしました：' + url);
-  } catch(e){
-    $('#share-url').select(); document.execCommand('copy');
-    toast('コピーしました');
-  }
+  if (await copyToClipboard(url)) toast('コピーしました');
+});
+
+$('#share-ig').addEventListener('click', async e=>{
+  e.preventDefault();
+  const url = $('#share-url').value;
+  if (!url) return;
+  if (await copyToClipboard(url)) toast('URLをコピー — Instagram のプロフィール / ストーリーに貼り付けてください');
 });
 
 $('#slug-save').addEventListener('click', async ()=>{

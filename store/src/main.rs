@@ -2207,10 +2207,17 @@ async fn you_daily(
     ).ok();
     let today = today_id.and_then(|id| design_to_json(&conn, id));
     let history = list_history(&conn, uid);
-    let slug: Option<String> = conn.query_row(
-        "SELECT slug FROM you_users WHERE id=?",
-        params![uid], |r| r.get(0),
+    let user_meta: Option<(Option<String>, String)> = conn.query_row(
+        "SELECT slug, taste_json FROM you_users WHERE id=?",
+        params![uid], |r| Ok((r.get(0)?, r.get(1)?)),
     ).ok();
+    let (slug, taste) = match user_meta {
+        Some((s, tj)) => (
+            s,
+            serde_json::from_str::<serde_json::Value>(&tj).unwrap_or(serde_json::json!({}))
+        ),
+        None => (None, serde_json::json!({})),
+    };
     let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
     let share_url = slug.as_ref().map(|s|
         format!("{}/{}", base_url.trim_end_matches('/'), s));
@@ -2218,6 +2225,7 @@ async fn you_daily(
         "ok": true,
         "slug": slug,
         "share_url": share_url,
+        "taste": taste,
         "today": today,
         "history": history,
     })).into_response()
