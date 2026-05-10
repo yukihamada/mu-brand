@@ -2790,8 +2790,8 @@ async fn slug_or_static(
         None => return serve_static_or_404(&slug),
     };
 
-    // Pull recent designs (history) for the share page
-    let designs = {
+    // Pull recent designs (history) for the share page + user bio
+    let (designs, user_bio) = {
         let conn = db.lock().unwrap();
         let mut stmt = match conn.prepare(
             "SELECT id, day, day_num, name, prompt, status, gen_status, image_url
@@ -2805,10 +2805,17 @@ async fn slug_or_static(
             )))
             .map(|it| it.filter_map(|r| r.ok()).collect())
             .unwrap_or_default();
-        v
+        let taste_json: String = conn.query_row(
+            "SELECT taste_json FROM you_users WHERE id=?",
+            params![uid], |r| r.get(0),
+        ).unwrap_or_else(|_| "{}".into());
+        let taste: serde_json::Value =
+            serde_json::from_str(&taste_json).unwrap_or(serde_json::json!({}));
+        let bio = taste.get("bio").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        (v, bio)
     };
 
-    let html = render_share_page(&slug_lo, display_name.as_deref(), &designs);
+    let html = render_share_page(&slug_lo, display_name.as_deref(), &user_bio, &designs);
     let mut resp = Html(html).into_response();
     resp.headers_mut().insert(
         header::CACHE_CONTROL,
@@ -2883,6 +2890,7 @@ fn html_escape(s: &str) -> String {
 fn render_share_page(
     slug: &str,
     display_name: Option<&str>,
+    user_bio: &str,
     designs: &[(i64, String, i64, String, String, String, String, Option<String>)],
 ) -> String {
     let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
@@ -2901,19 +2909,31 @@ fn render_share_page(
     let claimed = designs.iter().filter(|d| d.5 == "claimed").count();
 
     let title = format!("@{} — MU × YOU コレクション | wearmu.com", html_escape(title_name));
-    let description = format!(
-        "@{} さん専用の MU × YOU コラボTシャツ・コレクション。AI が毎日生成する一着の案、{}案／うち {} 着が仕立てられました。あなたも始める →",
-        html_escape(title_name), n, claimed,
-    );
+    let description = if claimed > 0 {
+        format!(
+            "@{} さん専用の MU × YOU コラボTシャツ・コレクション。AI が毎日描く一着の案、これまで {} 案 / 仕立てたのは {} 着。あなたも始める →",
+            html_escape(title_name), n, claimed,
+        )
+    } else if n > 0 {
+        format!(
+            "@{} さんは MU × YOU を始めました。AI が毎日描く一着の案、これまで {} 案。あなたも始める →",
+            html_escape(title_name), n,
+        )
+    } else {
+        format!("@{} さんは MU × YOU を始めたばかり。AI が毎日描くコラボTシャツの案。あなたも始める →",
+            html_escape(title_name))
+    };
 
     // Cards markup
     let cards: String = designs.iter().map(|d| {
         let (id, day, day_num, name, prompt, status, gen_status, _img_url) = d;
         let img_src = format!("/api/you/design/{}/image.png", id);
-        let label = if status == "claimed" { "CLAIMED" }
-                    else if gen_status == "generating" { "GENERATING" }
-                    else if gen_status == "ready" { "READY" }
-                    else { "PENDING" };
+        let label = if status == "claimed" { "CLAIMED · 仕立てた一着" }
+                    else if status == "skip" { "SKIPPED · 明日に期待" }
+                    else if gen_status == "generating" { "GENERATING · 生成中" }
+                    else if gen_status == "ready" { "TODAY'S CANDIDATE · 候補" }
+                    else if gen_status == "failed" { "FAILED · 再生成待ち" }
+                    else { "PROPOSAL · 提案" };
         let class = if status == "claimed" { "card claimed" } else { "card" };
         format!(
             r##"<a class="{class}" href="#" data-id="{id}">
@@ -3023,6 +3043,8 @@ h1.handle{{font-size:clamp(48px,9vw,108px);font-weight:200;letter-spacing:0.04em
   -webkit-background-clip:text;background-clip:text;color:transparent;display:inline-block}}
 .handle-prefix{{color:rgba(255,255,255,0.4);background:none;-webkit-text-fill-color:rgba(255,255,255,0.4)}}
 .bio{{font-size:14px;opacity:0.65;line-height:1.95;max-width:520px;margin:24px auto 0;font-weight:300}}
+.userbio{{font-size:14px;font-style:italic;opacity:0.8;line-height:1.85;max-width:520px;margin:18px auto 0;
+  font-weight:300;letter-spacing:0.02em;color:#fff}}
 .stats{{display:flex;gap:48px;justify-content:center;margin-top:48px;flex-wrap:wrap}}
 .stat .v{{font-size:28px;font-weight:200;color:var(--y);letter-spacing:0.03em}}
 .stat .l{{font-size:8px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5;margin-top:4px}}
@@ -3071,6 +3093,7 @@ footer{{padding:40px 24px;border-top:1px solid rgba(255,255,255,0.05);
   <div class="hero-bg"></div>
   <div class="eyebrow"><span class="dot"></span>MU × YOU · profile</div>
   <h1 class="handle"><span class="handle-prefix">@</span>{slug}</h1>
+  {bio_block}
   <p class="bio">{description}</p>
   <div class="stats">
     <div class="stat"><div class="v">{n}</div><div class="l">designs</div></div>
@@ -3103,6 +3126,11 @@ footer{{padding:40px 24px;border-top:1px solid rgba(255,255,255,0.05);
         n = n,
         claimed = claimed,
         designs_jsonld = designs_jsonld,
+        bio_block = if user_bio.trim().is_empty() {
+            String::new()
+        } else {
+            format!(r#"<p class="userbio">"{}"</p>"#, html_escape(user_bio))
+        },
         grid = if designs.is_empty() {
             r#"<div class="empty">まだデザインがありません</div>"#.to_string()
         } else {
