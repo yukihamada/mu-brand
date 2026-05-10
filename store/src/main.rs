@@ -1904,10 +1904,12 @@ fn spawn_gemini_for_design(db: Db, design_id: i64) {
         let mood = pull_strs("mood");
         let palette = pull_strs("palette");
         let scene = pull_strs("scene");
+        let bio = taste.get("bio").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
         let tee = gemini::TeeDesign {
             name: &name, prompt: &prompt, seed: &seed,
             mood: &mood, palette: &palette, scene: &scene,
+            bio: &bio,
         };
         match gemini::generate_tee(&tee).await {
             Ok(g) => {
@@ -2094,7 +2096,7 @@ async fn you_subscribe(
 <div style="background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;padding:48px;max-width:560px;margin:0 auto">
   <div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:32px">MU × YOU</div>
   <div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:8px">Welcome, Day 001</div>
-  <div style="font-size:18px;font-weight:300;line-height:1.5;margin-bottom:24px">明朝 7:00 から、毎日 1 案、あなた専用のTシャツデザインが届きます。</div>
+  <div style="font-size:18px;font-weight:300;line-height:1.5;margin-bottom:24px">明朝 9:00 から、毎日 1 案、あなた専用のTシャツデザインが届きます。</div>
   <p style="font-size:12px;line-height:1.85;opacity:0.65">
     本日の最初の案はもう生成されています。下のボタンから今すぐ確認できます。気に入ったらその一着を仕立て、合わなかったら Skip。Skip するほど明日の案があなたに寄っていきます。
   </p>
@@ -2111,7 +2113,7 @@ async fn you_subscribe(
                 .json(&serde_json::json!({
                     "from": "MU × YOU <noreply@enablerdao.com>",
                     "to": [to],
-                    "subject": "MU × YOU — 明朝7時から毎日デザインが届きます",
+                    "subject": "MU × YOU — 明朝9時から毎日デザインが届きます",
                     "html": html,
                 }))
                 .send().await;
@@ -2580,6 +2582,9 @@ async fn you_taste_update(
 #[derive(Deserialize)]
 struct YouAdminBackfillBody {
     admin_token: String,
+    /// When true, re-generate today's design even if it already exists
+    /// (useful after prompt-template changes, e.g. adding bio).
+    #[serde(default)] force: bool,
 }
 
 /// Admin: list /you subscribers (read-only, no emails sent).
@@ -2639,11 +2644,13 @@ async fn you_admin_backfill(
     for (uid, _email, taste_json, _slug) in &users {
         let taste: serde_json::Value = serde_json::from_str(taste_json)
             .unwrap_or(serde_json::json!({}));
-        let did = {
+        let (did, needs) = {
             let conn = db.lock().unwrap();
-            ensure_design_for_day(&conn, *uid, &day, &taste, false).map(|(id, _)| id).unwrap_or(0)
+            ensure_design_for_day(&conn, *uid, &day, &taste, body.force).unwrap_or((0, false))
         };
-        if did > 0 {
+        // Without force we only spawn when the row actually needs work; otherwise
+        // ready rows get re-sent each day at JST 9:00 unnecessarily.
+        if did > 0 && (body.force || needs) {
             spawn_gemini_for_design(db.clone(), did);
             queued += 1;
         }

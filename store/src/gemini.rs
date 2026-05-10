@@ -21,6 +21,10 @@ pub struct TeeDesign<'a> {
     pub palette: &'a [String],
     pub scene: &'a [String],
     pub seed: &'a str,
+    /// Free-text "one line about you" supplied by the wearer. Goes into the
+    /// design brief so the artwork interprets the wearer's self-description,
+    /// but is NEVER printed verbatim on the shirt.
+    pub bio: &'a str,
 }
 
 pub async fn generate_tee(p: &TeeDesign<'_>) -> Result<GeneratedImage, String> {
@@ -85,6 +89,14 @@ fn build_tee_prompt(p: &TeeDesign) -> String {
     let mood = if p.mood.is_empty() { "minimal, quiet".to_string() } else { p.mood.join(", ") };
     let palette = if p.palette.is_empty() { "muted earth tones".to_string() } else { p.palette.join(", ") };
     let scene = if p.scene.is_empty() { "every-day".to_string() } else { p.scene.join(", ") };
+    let bio_clause = if p.bio.trim().is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\nWearer self-description (interpret as personality, do NOT print on shirt): \"{}\"",
+            p.bio.replace('"', "'").chars().take(240).collect::<String>(),
+        )
+    };
 
     format!(
         "Photorealistic editorial product photograph of a single high-quality cream / off-white \
@@ -95,7 +107,7 @@ fn build_tee_prompt(p: &TeeDesign) -> String {
          Description: {prompt}\n\
          Mood keywords: {mood}\n\
          Palette: {palette}\n\
-         When it is worn: {scene}\n\
+         When it is worn: {scene}{bio_clause}\n\
          Deterministic seed (variation key): {seed}\n\n\
          === RENDERING RULES ===\n\
          - The chest graphic should be an artistic, abstract / minimal illustration that interprets \
@@ -113,5 +125,6 @@ fn build_tee_prompt(p: &TeeDesign) -> String {
         palette = palette,
         scene = scene,
         seed = p.seed,
+        bio_clause = bio_clause,
     )
 }
