@@ -3188,7 +3188,6 @@ async fn main() {
             unsubscribed_at TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_you_users_token ON you_users(token);
-        CREATE INDEX IF NOT EXISTS idx_you_users_slug ON you_users(slug);
         CREATE TABLE IF NOT EXISTS you_designs (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id         INTEGER NOT NULL,
@@ -3240,6 +3239,15 @@ async fn main() {
     ] {
         conn.execute(col, []).ok();
     }
+    // Now that the slug column has been added (or was created on a fresh DB),
+    // create the index on it. Doing this after the ALTER TABLE migrations
+    // is what makes a redeploy onto an older DB safe.
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_you_users_slug ON you_users(slug)", []);
+    let _ = conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_you_users_slug_unique \
+         ON you_users(slug) WHERE slug IS NOT NULL", []);
+
     // Backfill: every existing you_user gets a random slug if missing
     {
         let mut stmt = conn.prepare("SELECT id FROM you_users WHERE slug IS NULL OR slug=''")
