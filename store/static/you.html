@@ -593,6 +593,39 @@ footer a:hover{opacity:1}
   </div>
 </section>
 
+<!-- SAMPLE GALLERY — 他のユーザが今日もらった案 (購入可) -->
+<section id="sample-gallery" style="padding:80px 32px 60px;max-width:1080px;margin:0 auto">
+  <div style="text-align:center;margin-bottom:36px">
+    <div style="font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:10px">Sample · Gallery</div>
+    <h2 style="font-size:clamp(22px,3.4vw,32px);font-weight:300;letter-spacing:0.04em;line-height:1.4;color:#F5F5F0">他のユーザが今日もらった案</h2>
+    <p style="font-size:12px;opacity:0.6;margin-top:10px;line-height:1.85">
+      架空のサンプル ペルソナ 15 名と、各人が今日 AI からもらった「一案」。<br>
+      画像をクリックすれば、その一着は実際に購入できます。
+    </p>
+  </div>
+  <div id="sample-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:18px;margin-top:20px">
+    <div style="grid-column:1/-1;text-align:center;font-size:11px;letter-spacing:0.2em;opacity:0.45;text-transform:uppercase">Loading…</div>
+  </div>
+  <p style="font-size:10px;letter-spacing:0.15em;text-transform:uppercase;opacity:0.45;text-align:center;margin-top:24px">
+    毎日 JST 09:00、各ペルソナに新しい一案が追加されます。
+  </p>
+</section>
+<style>
+.sp-card{background:#111;border:1px solid rgba(255,255,255,0.06);border-radius:2px;overflow:hidden;display:flex;flex-direction:column;transition:transform 0.2s ease,border-color 0.2s ease}
+.sp-card:hover{transform:translateY(-2px);border-color:rgba(230,196,73,0.4)}
+.sp-card a.sp-link{color:inherit;text-decoration:none;display:block}
+.sp-img{width:100%;aspect-ratio:1/1;object-fit:cover;background:#0a0a0a;display:block}
+.sp-img.placeholder{display:flex;align-items:center;justify-content:center;font-size:48px;font-weight:200;color:rgba(230,196,73,0.4);font-family:'Helvetica Neue',Arial,sans-serif}
+.sp-body{padding:14px 16px 16px}
+.sp-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.sp-glyph{width:28px;height:28px;border-radius:50%;background:rgba(230,196,73,0.12);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:#e6c449;font-family:'Helvetica Neue',Arial,sans-serif}
+.sp-name{font-size:12px;letter-spacing:0.05em;color:#F5F5F0}
+.sp-bio{font-size:10px;line-height:1.6;opacity:0.55;margin-bottom:10px;min-height:30px}
+.sp-design{font-size:12px;color:#e6c449;letter-spacing:0.02em;margin-bottom:6px}
+.sp-meta{font-size:9px;letter-spacing:0.2em;text-transform:uppercase;opacity:0.5}
+.sp-price{font-size:11px;opacity:0.7;font-variant-numeric:tabular-nums}
+</style>
+
 <!-- FAQ -->
 <section class="faq">
   <div class="faq-inner">
@@ -1059,6 +1092,60 @@ document.addEventListener('DOMContentLoaded', () => {
     } finally { btn.disabled = false; }
   });
 });
+
+// ── サンプル ペルソナ gallery ──
+// 架空ユーザー 15 名が「今日もらった一着」を実在の MUGEN drop と共に表示。
+// 画像クリックで購入動線へ (/mugen?drop=XXX のような従来 URL ではなく、
+// その商品の現在ページにジャンプ — MUGEN は商品ごとに detail ページが
+// あるわけではなく一覧なので、トップに飛ばす + 該当 drop をハイライト)。
+document.addEventListener('DOMContentLoaded', async () => {
+  const grid = document.getElementById('sample-grid');
+  if (!grid) return;
+  try {
+    const r = await fetch('/api/sample_personas');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    const list = (data.personas || []).filter(p => p.product_id);
+    if (list.length === 0) {
+      grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;font-size:11px;opacity:0.45">まだ生成されていません — 今日 9:00 (JST) に表示されます</div>';
+      return;
+    }
+    grid.innerHTML = list.map(p => {
+      const img = p.product_image
+        ? `<img src="${escapeAttr(p.product_image)}" alt="${escapeAttr(p.today_design_name)}" class="sp-img" loading="lazy">`
+        : `<div class="sp-img placeholder">${escapeHTML(p.avatar_glyph||'·')}</div>`;
+      const price = p.product_price_jpy ? `¥${(p.product_price_jpy).toLocaleString('ja-JP')}` : '';
+      const buyHref = p.product_id ? `/mugen` : '#';
+      return `
+        <div class="sp-card">
+          <a class="sp-link" href="${buyHref}" title="この一着を購入する">
+            ${img}
+          </a>
+          <div class="sp-body">
+            <div class="sp-head">
+              <div class="sp-glyph" aria-hidden="true">${escapeHTML(p.avatar_glyph||'·')}</div>
+              <div class="sp-name">${escapeHTML(p.display_name)}</div>
+            </div>
+            <div class="sp-bio">${escapeHTML(p.bio)}</div>
+            <div class="sp-design">${escapeHTML(p.today_design_name||'')}</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+              <span class="sp-meta">Day ${p.day_num||1} · MUGEN</span>
+              <span class="sp-price">${price}</span>
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+  } catch (e) {
+    grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;font-size:11px;opacity:0.45">読み込みに失敗: ${escapeHTML(e.message)}</div>`;
+  }
+});
+
+function escapeHTML(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function escapeAttr(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+}
 
 $('#taste-form').addEventListener('submit', async e=>{
   e.preventDefault();

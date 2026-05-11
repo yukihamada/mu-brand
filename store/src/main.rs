@@ -4358,6 +4358,217 @@ fn detect_missing_drops(conn: &rusqlite::Connection) -> serde_json::Value {
     })
 }
 
+// ── サンプル ペルソナ + ギャラリー ──────────────────────────────────────────
+// 架空の 15 ユーザーが /you に登録しているように見せて、毎日 cron で
+// 「今日彼らがもらった一案」を実在の MUGEN drop から決定的に選んで表示する。
+// 訪問者が「あー、こういう人達が使っているのか」と分かりやすく + その絵が
+// 直接購入動線になる (picked MUGEN は売り物)。
+
+/// Build a small list of fictional personas to seed at startup. Diversity:
+/// age 22-55, regions across Japan + 1 海外, taste vectors deliberately
+/// pulled apart so the gallery looks varied. avatar_glyph は単色1文字 (絵文字
+/// は環境差が大きいので避ける).
+fn sample_personas_seed() -> Vec<(&'static str, &'static str, &'static str, serde_json::Value, &'static str)> {
+    use serde_json::json;
+    vec![
+        ("yuna",      "Yuna · 24 · 札幌",            "雪の音と余白。図書館に住んでる気分の日が多い。",
+            json!({"mood":["静か","朝の光","余白"],"palette":["モノクロ","アースカラー"],"scene":["毎日","家"],"size":"S"}),
+            "Y"),
+        ("ren",       "Ren · 31 · 福岡",             "汗をかいた日が一番好き。ジム→焼き鳥→Joy Division。",
+            json!({"mood":["力強い","深い","夜の余韻"],"palette":["墨","ヴィンテージ赤"],"scene":["ジム","夜の外出"],"size":"L"}),
+            "R"),
+        ("emi",       "Emi · 28 · 鎌倉",             "海と日記。雨の日は古道具屋へ。",
+            json!({"mood":["ノスタルジック","海","写真的"],"palette":["藍 / インディゴ","サンドベージュ"],"scene":["休日","旅"],"size":"M"}),
+            "E"),
+        ("kazu",      "Kazu · 45 · 高知",            "山小屋で焙煎してる。手書きの紙が好き。",
+            json!({"mood":["余白","手書き","深い"],"palette":["セージグリーン","アースカラー"],"scene":["山","休日"],"size":"L"}),
+            "K"),
+        ("mio",       "Mio · 22 · 京都",             "古本と祇園のだんごと、新しいバンド。",
+            json!({"mood":["遊び","幾何学","ノスタルジック"],"palette":["パステル","蛍光"],"scene":["毎日","街"],"size":"S"}),
+            "M"),
+        ("haruto",    "Haruto · 27 · 東京",          "ミニマルが行きすぎて床に何もない部屋。",
+            json!({"mood":["ミニマル","静か","余白"],"palette":["モノクロ","墨"],"scene":["仕事","家"],"size":"M"}),
+            "H"),
+        ("aoi",       "Aoi · 33 · 仙台",             "森の中の小さなギャラリーで働いている。",
+            json!({"mood":["深い","写真的","朝の光"],"palette":["セージグリーン","サンドベージュ"],"scene":["仕事","パートナー"],"size":"M"}),
+            "A"),
+        ("taka",      "Taka · 38 · 大阪",            "夜中に車を運転するのが趣味。808 と山下達郎を交互に。",
+            json!({"mood":["夜の余韻","力強い","幾何学"],"palette":["墨","ヴィンテージ赤"],"scene":["夜の外出","旅"],"size":"L"}),
+            "T"),
+        ("sora",      "Sora · 19 · 沖縄",            "海と紙の本と、たまにスケート。",
+            json!({"mood":["遊び","海","写真的"],"palette":["藍 / インディゴ","パステル"],"scene":["旅","休日"],"size":"S"}),
+            "S"),
+        ("nao",       "Nao · 41 · 長野",             "山の家を改装中。木と布。",
+            json!({"mood":["手書き","ノスタルジック","余白"],"palette":["アースカラー","サンドベージュ"],"scene":["家","休日"],"size":"M"}),
+            "N"),
+        ("rui",       "Rui · 35 · 金沢",             "茶室の床から始まる日。",
+            json!({"mood":["静か","深い","余白"],"palette":["墨","モノクロ"],"scene":["毎日","パートナー"],"scene_note":"雨"}),
+            "R"),
+        ("mika",      "Mika · 29 · 神戸",            "中華街で働いて、夜は海岸でランニング。",
+            json!({"mood":["力強い","写真的"],"palette":["ヴィンテージ赤","モノクロ"],"scene":["ジム","街"],"size":"M"}),
+            "M"),
+        ("jun",       "Jun · 52 · 横浜",             "息子が独立して、写真を撮り直し始めた。",
+            json!({"mood":["ノスタルジック","写真的","深い"],"palette":["セージグリーン","モノクロ"],"scene":["休日","家"],"size":"L"}),
+            "J"),
+        ("nina",      "Nina · 26 · Berlin (ex-旭川)", "Bookstore + late espresso. wishes for snow.",
+            json!({"mood":["静か","北限","幾何学"],"palette":["モノクロ","藍 / インディゴ"],"scene":["街","旅"],"size":"M"}),
+            "N"),
+        ("io",        "Io · 30 · 那覇",              "三線弾く深夜のおまわりさんの孫。",
+            json!({"mood":["遊び","海","ノスタルジック"],"palette":["藍 / インディゴ","サンドベージュ"],"scene":["毎日","パートナー"],"size":"S"}),
+            "I"),
+    ]
+}
+
+fn seed_sample_personas(conn: &rusqlite::Connection) {
+    let now = chrono_now();
+    for (slug, name, bio, taste, glyph) in sample_personas_seed() {
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO sample_personas
+                 (slug, display_name, bio, taste_json, avatar_glyph, active, created_at)
+             VALUES (?, ?, ?, ?, ?, 1, ?)",
+            params![slug, name, bio, taste.to_string(), glyph, now],
+        );
+    }
+    // Make sure each persona has at least one design "today". If today's row
+    // already exists this is a no-op; otherwise pick a fresh MUGEN drop.
+    grow_sample_designs_for_today(conn);
+}
+
+/// For every active persona, ensure there is a `sample_designs` row for
+/// today (JST). The picked MUGEN product is decided deterministically from
+/// (persona_slug + day) so the gallery is stable for that day.
+fn grow_sample_designs_for_today(conn: &rusqlite::Connection) {
+    use sha2::{Digest, Sha256};
+    let today = jst_today_str();
+    // Pool of MUGEN drops that are still buyable (sold < inventory) and
+    // active. We pick one per persona, allowing overlap (same product
+    // can appear under multiple personas — fine).
+    let pool: Vec<(i64, String, String)> = {
+        let mut stmt = match conn.prepare(
+            "SELECT id, name, COALESCE(mockup_url, '') FROM products
+             WHERE brand='mugen' AND active=1 AND (inventory IS NULL OR sold < inventory)
+             ORDER BY drop_num DESC LIMIT 200"
+        ) { Ok(s) => s, Err(_) => return };
+        let rows: Vec<(i64, String, String)> = stmt.query_map([], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+        }).map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>()).unwrap_or_default();
+        rows
+    };
+    if pool.is_empty() { return; }
+
+    let personas: Vec<(i64, String, String)> = {
+        let mut stmt = match conn.prepare(
+            "SELECT id, slug, taste_json FROM sample_personas WHERE active=1"
+        ) { Ok(s) => s, Err(_) => return };
+        let rows: Vec<(i64, String, String)> = stmt.query_map([], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+        }).map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>()).unwrap_or_default();
+        rows
+    };
+
+    for (persona_id, slug, taste_str) in personas {
+        // Already have today's row?
+        let exists: bool = conn.query_row(
+            "SELECT 1 FROM sample_designs WHERE persona_id=? AND day=?",
+            params![persona_id, today], |r| r.get::<_, i64>(0),
+        ).is_ok();
+        if exists { continue; }
+
+        // Deterministic pick from pool using sha256(slug|day) → index
+        let mut h = Sha256::new();
+        h.update(format!("{}|{}", slug, today).as_bytes());
+        let dig = h.finalize();
+        let idx = (u64::from_be_bytes(dig[..8].try_into().unwrap_or([0;8])) as usize) % pool.len();
+        let (product_id, product_name, mockup_url) = pool[idx].clone();
+
+        // Compose a poetic name/prompt from the persona's taste
+        let taste_json: serde_json::Value = serde_json::from_str(&taste_str)
+            .unwrap_or_else(|_| serde_json::json!({}));
+        let (name, prompt, _seed) = compose_design(&taste_json, &today, 0);
+
+        // day_num = days since persona created. Simple counter.
+        let day_num: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(day_num), 0) + 1 FROM sample_designs WHERE persona_id=?",
+            params![persona_id], |r| r.get(0),
+        ).unwrap_or(1);
+
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO sample_designs
+                 (persona_id, day, day_num, name, prompt, picked_product_id, image_url, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            params![persona_id, today, day_num, format!("{} ({})", name, product_name),
+                    prompt, product_id, mockup_url, chrono_now()],
+        );
+    }
+}
+
+/// `GET /api/sample_personas` — list of fictional personas + each one's
+/// "today's design" (linked to a real, buyable MUGEN product).
+async fn list_sample_personas(State(db): State<Db>) -> impl IntoResponse {
+    let conn = db.lock().unwrap();
+    let today = jst_today_str();
+
+    let rows: Vec<serde_json::Value> = {
+        let mut stmt = match conn.prepare(
+            "SELECT p.id, p.slug, p.display_name, p.bio, p.avatar_glyph,
+                    d.name, d.prompt, d.day_num, d.picked_product_id, d.image_url,
+                    pr.price_jpy
+             FROM sample_personas p
+             LEFT JOIN sample_designs d ON d.persona_id = p.id AND d.day = ?
+             LEFT JOIN products pr ON pr.id = d.picked_product_id
+             WHERE p.active = 1
+             ORDER BY p.id"
+        ) { Ok(s) => s, Err(_) => return Json(serde_json::json!({"personas":[]})).into_response() };
+        let it = stmt.query_map(params![today], |r| {
+            Ok(serde_json::json!({
+                "slug":          r.get::<_, String>(1).unwrap_or_default(),
+                "display_name":  r.get::<_, String>(2).unwrap_or_default(),
+                "bio":           r.get::<_, String>(3).unwrap_or_default(),
+                "avatar_glyph":  r.get::<_, Option<String>>(4).unwrap_or_default(),
+                "today_design_name":   r.get::<_, Option<String>>(5).unwrap_or_default(),
+                "today_design_prompt": r.get::<_, Option<String>>(6).unwrap_or_default(),
+                "day_num":         r.get::<_, Option<i64>>(7).unwrap_or_default(),
+                "product_id":      r.get::<_, Option<i64>>(8).unwrap_or_default(),
+                "product_image":   r.get::<_, Option<String>>(9).unwrap_or_default(),
+                "product_price_jpy": r.get::<_, Option<i64>>(10).unwrap_or_default(),
+            }))
+        });
+        match it {
+            Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
+            Err(_) => Vec::new(),
+        }
+    };
+
+    Json(serde_json::json!({"personas": rows, "day": today})).into_response()
+}
+
+/// `POST /api/admin/sample_grow` — daily cron entrypoint. Re-rolls each
+/// persona's "today design" if it hasn't been generated yet for the
+/// current JST day. Idempotent within a day.
+async fn admin_sample_grow(
+    State(db): State<Db>,
+    Json(body): Json<YouAdminBackfillBody>,
+) -> impl IntoResponse {
+    if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+    let conn = db.lock().unwrap();
+    let before: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sample_designs WHERE day=?",
+        params![jst_today_str()], |r| r.get(0),
+    ).unwrap_or(0);
+    grow_sample_designs_for_today(&conn);
+    let after: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sample_designs WHERE day=?",
+        params![jst_today_str()], |r| r.get(0),
+    ).unwrap_or(0);
+    Json(serde_json::json!({
+        "ok": true,
+        "day": jst_today_str(),
+        "designs_before": before,
+        "designs_after":  after,
+        "added": after - before,
+    })).into_response()
+}
+
 /// Weekly lottery draw — picks ~5% of pending entries as winners,
 /// mints a Stripe coupon ¥1,000-3,000 off, emails them.
 /// Idempotent on entry id (status changes from 'pending*' to 'won' / 'lost').
@@ -6242,6 +6453,36 @@ async fn main() {
             action      TEXT NOT NULL,
             created_at  TEXT NOT NULL
         );
+        -- 架空のサンプル ペルソナ (12-20名)。/you の gallery セクションに表示し、
+        -- 各ペルソナが「今日もらったデザイン」として実在の MUGEN drop を購入
+        -- 動線にリンクさせる。毎日 cron で picked_product_id を再ロールする。
+        CREATE TABLE IF NOT EXISTS sample_personas (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug            TEXT NOT NULL UNIQUE,
+            display_name    TEXT NOT NULL,
+            bio             TEXT NOT NULL,
+            taste_json      TEXT NOT NULL,
+            avatar_glyph    TEXT,
+            active          INTEGER NOT NULL DEFAULT 1,
+            created_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_sample_personas_active ON sample_personas(active);
+        -- ペルソナの「今日もらった案」履歴。day=YYYY-MM-DD ごとに1行。
+        -- picked_product_id は MUGEN drops のうち未売り切れのものから決定的に選ぶ。
+        CREATE TABLE IF NOT EXISTS sample_designs (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            persona_id        INTEGER NOT NULL,
+            day               TEXT NOT NULL,
+            day_num           INTEGER NOT NULL,
+            name              TEXT NOT NULL,
+            prompt            TEXT NOT NULL,
+            picked_product_id INTEGER,
+            image_url         TEXT,
+            created_at        TEXT NOT NULL,
+            UNIQUE(persona_id, day)
+        );
+        CREATE INDEX IF NOT EXISTS idx_sample_designs_day ON sample_designs(day DESC);
+        CREATE INDEX IF NOT EXISTS idx_sample_designs_persona ON sample_designs(persona_id, day DESC);
     ").expect("init schema");
     // Idempotent column additions for existing DBs
     for col in &[
@@ -6366,6 +6607,12 @@ async fn main() {
          WHERE key='pack_3mo_price_jpy' AND value='2940' AND reason='default'",
         params![chrono_now()],
     ).ok();
+
+    // Seed 15 サンプル ペルソナ (一度だけ、INSERT OR IGNORE on slug)。
+    // /you ページ "他の人がもらっているデザイン" で表示される架空のキャラ。
+    // 売れそうなクラスタを意図的に散らしてある (年代・地域・テイスト)。
+    seed_sample_personas(&conn);
+
     // /you signal stream — emoji reactions + dwell time + email taps.
     // Drives the auto-tuning of compose_design so tomorrow's drop bends
     // toward "love" tokens and away from "meh" / "skip" tokens.
@@ -6569,6 +6816,8 @@ async fn main() {
         .route("/api/admin/cv_pulse", post(cv_pulse))
         .route("/api/health/cron", get(cron_health_handler))
         .route("/api/transparency", get(public_transparency))
+        .route("/api/sample_personas", get(list_sample_personas))
+        .route("/api/admin/sample_grow", post(admin_sample_grow))
         .route("/api/cv/config", get(cv_public_config))
         .route("/api/you/signal/:design_id", post(you_signal))
         .route("/api/you/preferences", get(you_preferences))

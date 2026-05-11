@@ -37,6 +37,8 @@ install_crons() {
 0 0 15 * * set -a && source $ENV_FILE && set +a && $PYTHON $GENERATE nouns_ma >> $LOG_DIR/nouns_ma.log 2>&1
 # mu-brand /you daily — triggers Gemini design + email at JST 9:00 (UTC 0:00)
 0 0 * * * /usr/bin/curl -s -X POST -H 'Content-Type: application/json' -d '{"admin_token":"$ADMIN_TOKEN"}' https://wearmu.com/api/you/admin/backfill_today >> $LOG_DIR/you_daily.log 2>&1
+# mu-brand sample personas grow — daily JST 9:05 (UTC 0:05) — adds 1 design/persona
+5 0 * * * /usr/bin/curl -s -X POST -H 'Content-Type: application/json' -d '{"admin_token":"$ADMIN_TOKEN"}' https://wearmu.com/api/admin/sample_grow >> $LOG_DIR/sample_grow.log 2>&1
 # mu-brand exit-lottery weekly draw — Mondays JST 9:00 (UTC Sun 0:00)
 0 0 * * 1 /usr/bin/curl -s -X POST -H 'Content-Type: application/json' -d '{"admin_token":"$ADMIN_TOKEN"}' https://wearmu.com/api/admin/lottery_draw >> $LOG_DIR/lottery_draw.log 2>&1
 # mu-brand CV pulse — every 30 min, snapshots metrics, applies adjustments, posts Telegram digest
