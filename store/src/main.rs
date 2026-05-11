@@ -1,4 +1,5 @@
 mod gemini;
+mod payments;
 
 use axum::{
     extract::{Path, State},
@@ -125,6 +126,8 @@ struct BidBody {
     amount: i64,
     email: String,
     wallet: Option<String>,
+    /// Required when amount >= ¥300,000 (`KYC_THRESHOLD_JPY`).
+    kyc: Option<KycInfo>,
 }
 
 #[derive(Deserialize)]
@@ -586,6 +589,41 @@ async fn place_bid(
         return (StatusCode::BAD_REQUEST,
             format!("最低入札額は¥{}です", min_bid)).into_response();
     }
+
+    // KYC gate for high-value bids — settlement at ¥300k+ would require it
+    // anyway, so catch at bid time to avoid unverified high bids stuck in
+    // limbo at auction settlement.
+    if body.amount >= KYC_THRESHOLD_JPY {
+        let Some(kyc) = body.kyc.as_ref() else {
+            return (StatusCode::BAD_REQUEST,
+                "KYC required for bids at or above ¥300,000").into_response();
+        };
+        if kyc.full_name.trim().is_empty()
+            || kyc.date_of_birth.trim().is_empty()
+            || kyc.nationality.trim().is_empty()
+            || kyc.id_type.trim().is_empty()
+            || kyc.id_last4.trim().is_empty()
+            || kyc.address.trim().is_empty()
+            || kyc.consent_at.trim().is_empty()
+        {
+            return (StatusCode::BAD_REQUEST,
+                "KYC required for bids at or above ¥300,000 (incomplete fields)").into_response();
+        }
+        let _ = conn.execute(
+            "INSERT INTO kyc_records
+             (product_id, email, full_name, dob, nationality, id_type, id_last4,
+              address, consent_at, payment_method, total_amount_jpy, created_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            params![
+                body.product_id, body.email,
+                kyc.full_name.trim(), kyc.date_of_birth.trim(),
+                kyc.nationality.trim(), kyc.id_type.trim(), kyc.id_last4.trim(),
+                kyc.address.trim(), kyc.consent_at.trim(),
+                "jpy", body.amount, chrono_now()
+            ]
+        );
+    }
+
     let now = chrono_now();
     let wallet_token = uuid::Uuid::new_v4().to_string();
     conn.execute(
@@ -6068,6 +6106,28 @@ async fn main() {
         );
         CREATE INDEX IF NOT EXISTS idx_kyc_records_email ON kyc_records(email);
         CREATE INDEX IF NOT EXISTS idx_kyc_records_created ON kyc_records(created_at DESC);
+        CREATE TABLE IF NOT EXISTS pending_crypto_payments (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            reference       TEXT NOT NULL UNIQUE,
+            product_id      INTEGER NOT NULL,
+            email           TEXT NOT NULL,
+            size            TEXT NOT NULL DEFAULT 'M',
+            quantity        INTEGER NOT NULL DEFAULT 1,
+            wallet          TEXT,
+            payment_method  TEXT NOT NULL,
+            amount_jpy      INTEGER NOT NULL,
+            amount_crypto   TEXT NOT NULL,
+            asset           TEXT NOT NULL,
+            recipient       TEXT NOT NULL,
+            pay_url         TEXT NOT NULL,
+            status          TEXT NOT NULL DEFAULT 'pending',
+            tx_signature    TEXT,
+            confirmed_at    TEXT,
+            expires_at      TEXT NOT NULL,
+            created_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_pcp_reference ON pending_crypto_payments(reference);
+        CREATE INDEX IF NOT EXISTS idx_pcp_status ON pending_crypto_payments(status, created_at DESC);
         CREATE TABLE IF NOT EXISTS you_users (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             email           TEXT NOT NULL UNIQUE,
@@ -6374,7 +6434,13 @@ async fn main() {
         .route("/api/weather", get(weather_handler))
         .route("/api/bid", post(place_bid))
         .route("/api/checkout", post(checkout))
+        .route("/api/checkout/crypto", post(payments::checkout_crypto))
+        .route("/api/checkout/crypto/status/:reference", get(payments::checkout_crypto_status))
         .route("/api/webhook/stripe", post(stripe_webhook))
+        .route("/api/webhook/helius", post(payments::helius_webhook))
+        .route("/api/kyc/identity-session", post(payments::create_stripe_identity_session))
+        .route("/api/admin/exports/kyc.csv", get(payments::admin_export_kyc))
+        .route("/api/admin/exports/crypto.csv", get(payments::admin_export_crypto))
         .route("/api/admin/import", post(import_product))
         .route("/api/admin/update-price", post(update_price))
         .route("/api/admin/update-nft", post(update_nft))
