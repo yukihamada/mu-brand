@@ -13950,15 +13950,10 @@ async fn agent_vision_drift(db: Db) -> Result<AgentReport, String> {
          Examples of drift: 'seasonal' / 'NEW SEASON' language, hype tone, exclamation marks, \
          empty product names like 'Drop #20', fashion-industry cliches.\n\n\
          Surfaces:\n{surface}\n\n\
-         Respond as JSON ONLY (no markdown fence):\n\
-         {{\n\
-           \"drift_score\": 0-100,  // 0=perfectly on-vision, 100=full collapse\n\
-           \"summary\": \"<= 90 chars\",\n\
-           \"fixes\": [\n\
-             {{\"surface\":\"x|blog|drops|council\", \"issue\":\"<32 chars>\", \"suggestion\":\"<140 chars actionable>\"}}\n\
-           ]\n\
-         }}\n\
-         If no meaningful drift, return drift_score < 20 and fixes=[].",
+         Respond as compact JSON ONLY (no fences, no prose). Keep all strings short.\n\
+         Schema:\n\
+         {{\"drift_score\":0,\"summary\":\"<=80 chars\",\"fixes\":[{{\"surface\":\"x|blog|drops|council\",\"issue\":\"<=30 chars\",\"suggestion\":\"<=120 chars\"}}]}}\n\
+         Hard limits: max 3 fixes. If no drift, drift_score < 20 and fixes=[].",
         vision = MU_VISION.trim(),
         surface = serde_json::to_string_pretty(&surface).unwrap_or_default(),
     );
@@ -13967,7 +13962,7 @@ async fn agent_vision_drift(db: Db) -> Result<AgentReport, String> {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "temperature": 0.4,
-            "maxOutputTokens": 1500,
+            "maxOutputTokens": 4000,
             "responseMimeType": "application/json",
         },
     });
