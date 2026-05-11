@@ -881,6 +881,16 @@ async fn stripe_webhook(
     if ev_type == "checkout.session.completed" {
         let session = &event["data"]["object"];
         let meta = session["metadata"].clone();
+
+        // ── Collab order (MU × SWEEP etc.) ──
+        // Records a row in collab_orders. Production route:
+        //   - printful → POST to Printful /v2/orders (auto-fulfill)
+        //   - sweep_manual / pre_order → Telegram alert; SWEEP社 が個別対応
+        if meta["collab"].as_str() == Some("sweep") {
+            handle_collab_sweep_order(db.clone(), &session).await;
+            return StatusCode::OK.into_response();
+        }
+
         // 3-month prepaid pack (mode=payment, metadata.plan=3mo): extend
         // subscription_until by 90 days. Idempotent on session id.
         if meta["plan"].as_str() == Some("3mo") {
@@ -1284,6 +1294,206 @@ async fn create_printful_order(key: String, db: Db, product_id: i64, session: se
             eprintln!("Printful error {}: {}", status, body);
         }
         Err(e) => eprintln!("Printful request error: {}", e),
+    }
+}
+
+/// MU × SWEEP collab order webhook handler.
+/// Idempotent on stripe_session. Three production routes:
+///   - 'printful'      → POST draft order to Printful API (SWEEP社 approves in dashboard)
+///   - 'sweep_manual'  → Telegram + Resend ops alert; SWEEP社 produces by hand
+///   - 'pre_order'     → Telegram alert; ops contacts the buyer (sizing / consult)
+async fn handle_collab_sweep_order(db: Db, session: &serde_json::Value) {
+    let session_id = session["id"].as_str().unwrap_or("").to_string();
+    let slug = session["metadata"]["slug"].as_str().unwrap_or("").to_string();
+    let size = session["metadata"]["size"].as_str().unwrap_or("M").to_string();
+    let amount: i64 = session["amount_total"].as_i64().unwrap_or(0);
+    let email = session["customer_details"]["email"].as_str()
+        .or_else(|| session["customer_email"].as_str())
+        .unwrap_or("").to_string();
+
+    // Re-fetch with shipping_details expanded
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    let full_session: serde_json::Value = if !session_id.is_empty() && !stripe_key.is_empty() {
+        let resp = reqwest::Client::new()
+            .get(format!("https://api.stripe.com/v1/checkout/sessions/{}", session_id))
+            .query(&[("expand[]", "shipping_details")])
+            .basic_auth(&stripe_key, None::<&str>)
+            .send().await;
+        match resp {
+            Ok(r) if r.status().is_success() => r.json().await.unwrap_or(session.clone()),
+            _ => session.clone(),
+        }
+    } else { session.clone() };
+    let shipping = &full_session["shipping_details"];
+    let addr = &shipping["address"];
+    let ship_name = shipping["name"].as_str().unwrap_or("").to_string();
+    let address1 = addr["line1"].as_str().unwrap_or("");
+    let address2 = addr["line2"].as_str().unwrap_or("");
+    let city = addr["city"].as_str().unwrap_or("");
+    let country = addr["country"].as_str().unwrap_or("JP").to_string();
+    let zip = addr["postal_code"].as_str().unwrap_or("");
+    let state = addr["state"].as_str().unwrap_or("");
+    let ship_address = format!("{} {} {} {} {} {}", address1, address2, city, state, zip, country)
+        .split_whitespace().collect::<Vec<_>>().join(" ");
+
+    // Look up product (route + variant_id + image)
+    type ProdRow = (i64, String, String, i64, Option<i64>, Option<String>);
+    let product: Option<ProdRow> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT id, name, COALESCE(production_route,'sweep_manual'), price_jpy,
+                    printful_variant_id, image_url
+             FROM collab_products WHERE slug=? AND partner='sweep'",
+            params![slug],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+        ).ok()
+    };
+    let Some((_pid, name, route, _price, variant_id, image_url)) = product else {
+        eprintln!("[sweep/webhook] unknown slug: {}", slug);
+        return;
+    };
+
+    // Idempotent insert
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO collab_orders
+                 (stripe_session, slug, size, email, ship_name, ship_address, ship_country,
+                  amount_jpy, production_route, status, created_at)
+             VALUES (?,?,?,?,?,?,?,?,?, 'received', ?)",
+            params![
+                session_id, slug, size, email, ship_name, ship_address, country,
+                amount, route, chrono_now(),
+            ],
+        );
+    }
+
+    // Place Printful draft order for 'printful' route (when variant_id + key present)
+    let printful_key = env::var("PRINTFUL_API_KEY").unwrap_or_default();
+    let pf_order_id: Option<String> = if route == "printful"
+        && variant_id.is_some()
+        && !printful_key.is_empty()
+    {
+        let mut item = serde_json::json!({
+            "variant_id": variant_id.unwrap(),
+            "quantity": 1,
+        });
+        if let Some(img) = image_url.as_ref().filter(|u| !u.is_empty() && u.starts_with("http")) {
+            item["files"] = serde_json::json!([{"url": img, "placement": "front"}]);
+        }
+        let order = serde_json::json!({
+            "recipient": {
+                "name":         ship_name,
+                "address1":     address1,
+                "address2":     address2,
+                "city":         city,
+                "state_code":   state,
+                "country_code": country,
+                "zip":          zip,
+            },
+            "items": [item],
+            // confirm:false → draft (SWEEP社 が dashboard で承認後に出荷)
+            "confirm": false,
+            "external_id": session_id,
+        });
+        match reqwest::Client::new()
+            .post("https://api.printful.com/orders")
+            .bearer_auth(&printful_key)
+            .json(&order).send().await
+        {
+            Ok(r) if r.status().is_success() => {
+                let j: serde_json::Value = r.json().await.unwrap_or_default();
+                let oid = j["result"]["id"].as_i64().map(|n| n.to_string())
+                    .or_else(|| j["result"]["external_id"].as_str().map(String::from));
+                eprintln!("[sweep/printful] draft order created: {:?}", oid);
+                oid
+            }
+            Ok(r) => {
+                let s = r.status();
+                let t = r.text().await.unwrap_or_default();
+                eprintln!("[sweep/printful] {}: {}", s, t.chars().take(300).collect::<String>());
+                None
+            }
+            Err(e) => { eprintln!("[sweep/printful] reqwest: {}", e); None }
+        }
+    } else { None };
+
+    if let Some(ref oid) = pf_order_id {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE collab_orders SET printful_order_id=?, status='printful_draft' WHERE stripe_session=?",
+            params![oid, session_id],
+        );
+    }
+
+    // Telegram alert (always)
+    let tg_token = env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default();
+    let tg_chat  = env::var("TELEGRAM_CHAT_ID").unwrap_or_else(|_| "1136442501".into());
+    if !tg_token.is_empty() {
+        let route_emoji = match route.as_str() {
+            "printful"      => "🧵 printful draft",
+            "sweep_manual"  => "🥋 SWEEP 手動生産",
+            "pre_order"     => "📋 受注生産",
+            _               => "?",
+        };
+        let pf_line = pf_order_id.as_ref().map(|o| format!("\nPrintful: {}", o)).unwrap_or_default();
+        let body = format!(
+            "🎽 MU × SWEEP 受注\n{name} (size {size}) — ¥{amount}\n{email}\n{ship_name} / {ship_address}\nroute: {route_emoji}{pf}\nstripe: {sid}",
+            name = name, size = size, amount = amount, email = email,
+            ship_name = ship_name, ship_address = ship_address,
+            route_emoji = route_emoji, pf = pf_line, sid = session_id,
+        );
+        let _ = reqwest::Client::new()
+            .post(format!("https://api.telegram.org/bot{}/sendMessage", tg_token))
+            .json(&serde_json::json!({"chat_id": tg_chat, "text": body, "disable_web_page_preview": true}))
+            .send().await;
+    }
+
+    // Resend email to ops + SWEEP社 (when configured)
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    if !resend_key.is_empty() {
+        let to_csv = env::var("SWEEP_OPS_EMAILS")
+            .unwrap_or_else(|_| "mail@yukihamada.jp".into());
+        let to_list: Vec<String> = to_csv.split(',').map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()).collect();
+        let pf_html = pf_order_id.as_ref()
+            .map(|o| format!("<tr><td>Printful draft</td><td>{}</td></tr>", html_attr_escape(o)))
+            .unwrap_or_default();
+        let img_html = image_url.as_ref().filter(|u| !u.is_empty() && u.starts_with("http"))
+            .map(|u| format!(r#"<p><img src="{}" alt="" style="max-width:280px"></p>"#, html_attr_escape(u)))
+            .unwrap_or_default();
+        let html = format!(
+            r#"<div style="font-family:'Helvetica Neue',Arial,sans-serif;background:#0A0A0A;color:#F5F5F0;padding:32px;max-width:560px">
+<h2 style="color:#e6c449;font-weight:300;letter-spacing:0.1em">MU × SWEEP 受注</h2>
+<table style="font-size:13px;line-height:1.85">
+<tr><td>商品</td><td>{name}</td></tr>
+<tr><td>size</td><td>{size}</td></tr>
+<tr><td>金額</td><td>¥{amount}</td></tr>
+<tr><td>route</td><td>{route}</td></tr>
+{pf_html}
+<tr><td>顧客</td><td>{email}</td></tr>
+<tr><td>宛先</td><td>{ship_name}<br>{ship_address}</td></tr>
+<tr><td>stripe</td><td>{sid}</td></tr>
+</table>
+{img_html}
+<p>route が <code>sweep_manual</code> / <code>pre_order</code> の場合、SWEEP社 が手作業で生産・発送。<code>printful</code> は dashboard に draft 注文が入っています — 承認後に出荷されます。</p>
+</div>"#,
+            name = html_attr_escape(&name), size = html_attr_escape(&size),
+            amount = amount, route = html_attr_escape(&route), pf_html = pf_html,
+            email = html_attr_escape(&email), ship_name = html_attr_escape(&ship_name),
+            ship_address = html_attr_escape(&ship_address), sid = html_attr_escape(&session_id),
+            img_html = img_html,
+        );
+        let _ = reqwest::Client::new()
+            .post("https://api.resend.com/emails")
+            .bearer_auth(&resend_key)
+            .json(&serde_json::json!({
+                "from": "MU × SWEEP <noreply@wearmu.com>",
+                "to":   to_list,
+                "subject": format!("[MU×SWEEP] 受注 {} ¥{}", name, amount),
+                "html": html,
+            }))
+            .send().await;
     }
 }
 
@@ -5728,7 +5938,7 @@ async fn show_sweep_page(
                 r#"<div class="img-wrap placeholder"><span>{glyph}</span><small>generating…</small></div>"#,
                 glyph = html_attr_escape(cat.chars().next().map(|c| c.to_string()).unwrap_or("•".into()).as_str())),
         };
-        format!(r#"<article class="card">
+        format!(r#"<article class="card" data-slug="{slug}">
   {image}
   <div class="body">
     <div class="cat">{cat}</div>
@@ -5740,6 +5950,20 @@ async fn show_sweep_page(
         <option>S</option><option selected>M</option><option>L</option><option>XL</option>
       </select>
       <button class="buy" data-slug="{slug}" data-id="{id}">仕立てる →</button>
+    </div>
+    <div class="fb">
+      <button class="sig love" data-slug="{slug}" aria-label="好き">👍 <span class="n n-love">0</span></button>
+      <button class="sig meh"  data-slug="{slug}" aria-label="いまいち">👎 <span class="n n-meh">0</span></button>
+      <button class="sig comment" data-slug="{slug}" aria-label="コメント">💬 改善案</button>
+    </div>
+    <div class="fb-form" hidden>
+      <textarea placeholder="何が違う？ どう変えたい？ (任意 1000 字以内)" maxlength="1000"></textarea>
+      <input type="email" placeholder="返信を希望される方は email (任意)" autocomplete="email">
+      <div class="fb-row">
+        <button class="fb-send" data-slug="{slug}">送る</button>
+        <button class="fb-cancel" type="button">×</button>
+      </div>
+      <div class="fb-msg"></div>
     </div>
   </div>
 </article>"#,
@@ -5767,6 +5991,10 @@ header{{padding:72px 32px 30px;max-width:880px;margin:0 auto;text-align:center}}
 header .eyebrow{{font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:var(--y);opacity:0.85;margin-bottom:14px}}
 header h1{{font-size:clamp(28px,5vw,52px);font-weight:200;letter-spacing:0.02em;line-height:1.25;margin-bottom:16px}}
 header h1 em{{color:var(--y);font-style:normal;font-weight:300}}
+header .brandline{{display:flex;align-items:center;justify-content:center;gap:18px;margin:8px auto 28px;flex-wrap:wrap}}
+header .brandline-mu{{font-size:clamp(28px,5vw,48px);font-weight:700;letter-spacing:0.42em}}
+header .brandline-x{{font-size:clamp(20px,3.5vw,32px);font-weight:200;color:var(--mute)}}
+header .brandline-sweep{{height:clamp(28px,3.6vw,44px);width:auto;filter:invert(1);opacity:0.92}}
 header .lede{{color:var(--mute);font-size:14px;max-width:560px;margin:0 auto 22px;line-height:1.95}}
 header .warn{{display:inline-block;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;background:rgba(200,54,44,0.12);color:var(--red);padding:8px 18px;border-radius:2px;margin-top:8px}}
 .grid{{max-width:1100px;margin:30px auto 100px;padding:0 32px;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px}}
@@ -5787,6 +6015,19 @@ header .warn{{display:inline-block;font-size:10px;letter-spacing:0.22em;text-tra
 .card .buy{{background:var(--y);color:#000;border:0;font-family:inherit;font-size:11px;letter-spacing:0.28em;text-transform:uppercase;font-weight:700;padding:10px 16px;cursor:pointer;border-radius:2px}}
 .card .buy:hover{{opacity:0.85}}
 .card .buy:disabled{{opacity:0.4;cursor:wait}}
+.card .fb{{display:flex;gap:6px;margin-top:12px;border-top:1px solid rgba(255,255,255,0.06);padding-top:12px;flex-wrap:wrap}}
+.card .sig{{background:transparent;color:var(--mute);border:1px solid rgba(255,255,255,0.12);font-family:inherit;font-size:11px;padding:6px 10px;cursor:pointer;border-radius:2px;display:inline-flex;align-items:center;gap:4px;transition:all 0.15s ease}}
+.card .sig:hover{{border-color:rgba(230,196,73,0.45);color:var(--fg)}}
+.card .sig.on{{background:rgba(230,196,73,0.12);color:var(--y);border-color:rgba(230,196,73,0.45)}}
+.card .sig.comment{{margin-left:auto;border-color:rgba(255,255,255,0.08);font-size:10.5px}}
+.card .sig .n{{font-variant-numeric:tabular-nums;font-size:10.5px;opacity:0.7}}
+.card .fb-form{{margin-top:10px;display:flex;flex-direction:column;gap:6px}}
+.card .fb-form textarea{{background:#000;color:var(--fg);border:1px solid rgba(255,255,255,0.14);border-radius:2px;font-family:inherit;font-size:12px;padding:8px 10px;line-height:1.7;min-height:64px;resize:vertical}}
+.card .fb-form input{{background:#000;color:var(--fg);border:1px solid rgba(255,255,255,0.14);border-radius:2px;font-family:inherit;font-size:12px;padding:7px 10px}}
+.card .fb-row{{display:flex;gap:6px}}
+.card .fb-send{{flex:1;background:rgba(230,196,73,0.85);color:#000;border:0;font-family:inherit;font-size:10.5px;letter-spacing:0.26em;text-transform:uppercase;font-weight:700;padding:8px 12px;cursor:pointer;border-radius:2px}}
+.card .fb-cancel{{background:transparent;color:var(--mute);border:1px solid rgba(255,255,255,0.12);padding:8px 12px;cursor:pointer;border-radius:2px}}
+.card .fb-msg{{font-size:11px;color:var(--y);min-height:14px;line-height:1.6}}
 .note{{max-width:680px;margin:40px auto 60px;padding:18px 22px;background:rgba(230,196,73,0.06);border-left:2px solid var(--y);font-size:12.5px;line-height:1.95;color:rgba(245,245,240,0.78)}}
 footer{{padding:48px 32px 80px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;font-size:11px;letter-spacing:0.2em;opacity:0.5}}
 footer a{{color:inherit;text-decoration:underline}}
@@ -5795,7 +6036,12 @@ footer a{{color:inherit;text-decoration:underline}}
 <nav><a href="/" class="logo">MU</a><a href="/vision">Vision</a></nav>
 <header>
   <div class="eyebrow">Draft Preview — <em>SWEEP社 確認前</em></div>
-  <h1>MU × <em>SWEEP</em> — <br>北参道の BJJ アパレルと、AI ブランドの試作。</h1>
+  <div class="brandline">
+    <span class="brandline-mu">MU</span>
+    <span class="brandline-x">×</span>
+    <img class="brandline-sweep" alt="SIIIEEP" src="https://lifestyle.wearmu.com/sweep/_logo.png" loading="eager">
+  </div>
+  <h1>北参道の BJJ アパレルと、<br>AI ブランドの試作。</h1>
   <p class="lede">
     SWEEP は北参道の道場発、ラッシュガード / スパッツ / ジ・ファイトショーツのアパレル。<br>
     濱田 (柔術青帯、SWEEP に通ってる MU 創業者) が「MU の AI デザインを SWEEP の身体性で着たい」と思って、5 つの draft を作った。<br>
@@ -5838,6 +6084,90 @@ document.querySelectorAll('.card .buy').forEach(btn => {{
     }} catch (e) {{
       btn.disabled = false; btn.textContent = orig;
       msg.textContent = 'エラー: ' + e.message + ' — SWEEP社 承認前のため Stripe key 未設定の可能性あり';
+    }}
+  }});
+}});
+// ── 好き嫌いボタン + 改善案 FB ──
+async function sendSignal(slug, kind, comment, email) {{
+  const r = await fetch('/api/sweep/signal', {{
+    method: 'POST', headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{slug, kind, comment: comment || '', email: email || ''}})
+  }});
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return await r.json();
+}}
+function updateCounts(card, j) {{
+  if (j && typeof j.loves === 'number') {{
+    const l = card.querySelector('.n-love'); if (l) l.textContent = j.loves;
+  }}
+  if (j && typeof j.mehs === 'number') {{
+    const m = card.querySelector('.n-meh'); if (m) m.textContent = j.mehs;
+  }}
+}}
+// Preload counts
+fetch('/api/sweep/signals').then(r => r.json()).then(d => {{
+  const sig = d.signals || {{}};
+  document.querySelectorAll('.card').forEach(card => {{
+    const slug = card.dataset.slug; if (!slug || !sig[slug]) return;
+    updateCounts(card, sig[slug]);
+  }});
+}}).catch(() => {{}});
+// Click handlers
+document.querySelectorAll('.card .sig').forEach(btn => {{
+  btn.addEventListener('click', async () => {{
+    const card = btn.closest('.card');
+    const slug = btn.dataset.slug;
+    if (btn.classList.contains('comment')) {{
+      const form = card.querySelector('.fb-form');
+      form.hidden = !form.hidden;
+      if (!form.hidden) form.querySelector('textarea').focus();
+      return;
+    }}
+    const kind = btn.classList.contains('love') ? 'love' : 'meh';
+    if (btn.classList.contains('on')) return;
+    btn.classList.add('on');
+    try {{
+      const j = await sendSignal(slug, kind);
+      updateCounts(card, j);
+      if (kind === 'meh') {{
+        // 👎 → 改善案フォームを自動展開（理由を聞く）
+        const form = card.querySelector('.fb-form');
+        form.hidden = false;
+        const ta = form.querySelector('textarea');
+        ta.placeholder = '👎 ありがとうございます。どこを変えたら買いますか？';
+        ta.focus();
+      }}
+    }} catch (e) {{
+      btn.classList.remove('on');
+      card.querySelector('.fb-msg').textContent = 'エラー: ' + e.message;
+    }}
+  }});
+}});
+document.querySelectorAll('.card .fb-cancel').forEach(b => {{
+  b.addEventListener('click', () => {{
+    b.closest('.fb-form').hidden = true;
+  }});
+}});
+document.querySelectorAll('.card .fb-send').forEach(btn => {{
+  btn.addEventListener('click', async () => {{
+    const card = btn.closest('.card');
+    const form = card.querySelector('.fb-form');
+    const msg  = form.querySelector('.fb-msg');
+    const text = form.querySelector('textarea').value.trim();
+    const email = form.querySelector('input[type=email]').value.trim();
+    if (!text) {{ msg.textContent = 'コメントを入力してください'; return; }}
+    btn.disabled = true; const orig = btn.textContent; btn.textContent = '送信中…';
+    msg.textContent = '';
+    try {{
+      const j = await sendSignal(btn.dataset.slug, 'comment', text, email);
+      updateCounts(card, j);
+      form.querySelector('textarea').value = '';
+      msg.textContent = '✓ 受け取りました。ありがとうございます。次の試作に反映します。';
+      setTimeout(() => {{ form.hidden = true; msg.textContent = ''; }}, 4500);
+    }} catch (e) {{
+      msg.textContent = 'エラー: ' + e.message;
+    }} finally {{
+      btn.disabled = false; btn.textContent = orig;
     }}
   }});
 }});
@@ -5898,6 +6228,183 @@ button:hover{opacity:0.85}
 struct SweepCheckoutBody {
     slug: String,
     #[serde(default)] size: String,
+}
+
+// ── SWEEP 好き嫌い + コメント (お客様 → AI/ops 改善ループ) ──────────────
+#[derive(Deserialize)]
+struct SweepSignalBody {
+    slug: String,
+    kind: String,                       // 'love' | 'meh' | 'comment'
+    #[serde(default)] comment: String,  // 任意の自由記述
+    #[serde(default)] email: String,
+}
+
+fn read_or_set_visitor_cookie(headers: &HeaderMap) -> (String, Option<HeaderValue>) {
+    let existing = headers.get("cookie").and_then(|v| v.to_str().ok())
+        .and_then(|c| c.split(';').find_map(|p| {
+            let p = p.trim();
+            p.strip_prefix("mu_v=").map(|s| s.to_string())
+        }));
+    if let Some(v) = existing { return (v, None); }
+    // generate 16-char hex token via sha256(now + UA + remote hints)
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(chrono_now().as_bytes());
+    let ua = headers.get("user-agent").and_then(|v| v.to_str().ok()).unwrap_or("");
+    h.update(ua.as_bytes());
+    let ip = headers.get("fly-client-ip").or_else(|| headers.get("x-forwarded-for"))
+        .and_then(|v| v.to_str().ok()).unwrap_or("");
+    h.update(ip.as_bytes());
+    let token: String = hex::encode(&h.finalize()[..8]);
+    let setcookie = HeaderValue::from_str(&format!(
+        "mu_v={}; Max-Age=31536000; Path=/; HttpOnly; SameSite=Lax",
+        token
+    )).ok();
+    (token, setcookie)
+}
+
+async fn sweep_signal(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Json(body): Json<SweepSignalBody>,
+) -> impl IntoResponse {
+    let allowed = ["love", "meh", "comment"];
+    if !allowed.contains(&body.kind.as_str()) {
+        return (StatusCode::BAD_REQUEST, "bad kind").into_response();
+    }
+    if body.slug.is_empty() || body.slug.len() > 80 {
+        return (StatusCode::BAD_REQUEST, "bad slug").into_response();
+    }
+    let comment = body.comment.trim().chars().take(1000).collect::<String>();
+    let email = body.email.trim().chars().take(200).collect::<String>();
+    // Require a comment for 'comment' kind
+    if body.kind == "comment" && comment.is_empty() {
+        return (StatusCode::BAD_REQUEST, "comment empty").into_response();
+    }
+    // Validate slug exists
+    {
+        let conn = db.lock().unwrap();
+        let ok: bool = conn.query_row(
+            "SELECT 1 FROM collab_products WHERE slug=? AND partner='sweep'",
+            params![body.slug], |_| Ok(true),
+        ).unwrap_or(false);
+        if !ok { return (StatusCode::NOT_FOUND, "unknown slug").into_response(); }
+    }
+    let ua = headers.get("user-agent").and_then(|v| v.to_str().ok())
+        .map(|s| s.chars().take(200).collect::<String>()).unwrap_or_default();
+    let (token, setcookie) = read_or_set_visitor_cookie(&headers);
+
+    // Rate-limit: same (visitor, slug, kind) ignored if within 60s
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    {
+        let conn = db.lock().unwrap();
+        let recent: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sweep_signals
+             WHERE visitor_token=? AND slug=? AND kind=?
+               AND CAST(created_at AS INTEGER) >= ?",
+            params![token, body.slug, body.kind, now_s - 60], |r| r.get(0),
+        ).unwrap_or(0);
+        if recent == 0 {
+            let _ = conn.execute(
+                "INSERT INTO sweep_signals
+                     (slug, kind, comment, email, visitor_token, user_agent, created_at)
+                 VALUES (?,?,?,?,?,?,?)",
+                params![
+                    body.slug, body.kind,
+                    if comment.is_empty() { None } else { Some(&comment) },
+                    if email.is_empty() { None } else { Some(&email) },
+                    token, ua, now_s.to_string(),
+                ],
+            );
+        }
+    }
+
+    // Notify ops for any comment or strong dislike (so we can react quickly)
+    if body.kind == "comment" || (body.kind == "meh" && !comment.is_empty()) {
+        let tg_token = env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default();
+        let tg_chat  = env::var("TELEGRAM_CHAT_ID").unwrap_or_else(|_| "1136442501".into());
+        if !tg_token.is_empty() {
+            let icon = if body.kind == "meh" { "👎" } else { "💬" };
+            let body_txt = format!(
+                "{} SWEEP fb [{}]\n{}\n{}",
+                icon, body.slug,
+                if email.is_empty() { "(no email)" } else { &email },
+                comment.chars().take(800).collect::<String>(),
+            );
+            let _ = reqwest::Client::new()
+                .post(format!("https://api.telegram.org/bot{}/sendMessage", tg_token))
+                .json(&serde_json::json!({"chat_id": tg_chat, "text": body_txt, "disable_web_page_preview": true}))
+                .send().await;
+        }
+    }
+
+    // Return totals so the UI can update the count immediately
+    let (loves, mehs, comments) = {
+        let conn = db.lock().unwrap();
+        let l: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sweep_signals WHERE slug=? AND kind='love'",
+            params![body.slug], |r| r.get(0)).unwrap_or(0);
+        let m: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sweep_signals WHERE slug=? AND kind='meh'",
+            params![body.slug], |r| r.get(0)).unwrap_or(0);
+        let c: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sweep_signals WHERE slug=? AND kind='comment'",
+            params![body.slug], |r| r.get(0)).unwrap_or(0);
+        (l, m, c)
+    };
+    let mut resp = Json(serde_json::json!({
+        "ok": true, "loves": loves, "mehs": mehs, "comments": comments,
+    })).into_response();
+    if let Some(c) = setcookie { resp.headers_mut().insert(header::SET_COOKIE, c); }
+    resp
+}
+
+/// GET /api/sweep/signals — totals per slug, used by the page to render counts.
+async fn sweep_signals_summary(State(db): State<Db>) -> impl IntoResponse {
+    let conn = db.lock().unwrap();
+    let mut stmt = match conn.prepare(
+        "SELECT slug, kind, COUNT(*) FROM sweep_signals GROUP BY slug, kind"
+    ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+    let mut map: std::collections::HashMap<String, (i64, i64, i64)> = std::collections::HashMap::new();
+    let rows = stmt.query_map([], |r| Ok((
+        r.get::<_,String>(0)?, r.get::<_,String>(1)?, r.get::<_,i64>(2)?
+    ))).map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>()).unwrap_or_default();
+    for (slug, kind, n) in rows {
+        let e = map.entry(slug).or_insert((0,0,0));
+        match kind.as_str() {
+            "love" => e.0 = n,
+            "meh"  => e.1 = n,
+            "comment" => e.2 = n,
+            _ => {}
+        }
+    }
+    let out: serde_json::Map<String, serde_json::Value> = map.into_iter().map(|(slug, (l,m,c))| (
+        slug, serde_json::json!({"loves": l, "mehs": m, "comments": c})
+    )).collect();
+    Json(serde_json::json!({"signals": out})).into_response()
+}
+
+/// GET /api/admin/sweep_signals?token=… — raw feedback list for ops.
+async fn admin_sweep_signals(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let conn = db.lock().unwrap();
+    let mut stmt = match conn.prepare(
+        "SELECT s.slug, s.kind, COALESCE(s.comment,''), COALESCE(s.email,''),
+                COALESCE(s.visitor_token,''), s.created_at, COALESCE(p.name,'')
+         FROM sweep_signals s
+         LEFT JOIN collab_products p ON p.slug=s.slug
+         ORDER BY s.id DESC LIMIT 500"
+    ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+    let rows = stmt.query_map([], |r| Ok(serde_json::json!({
+        "slug": r.get::<_,String>(0)?, "kind": r.get::<_,String>(1)?,
+        "comment": r.get::<_,String>(2)?, "email": r.get::<_,String>(3)?,
+        "visitor_token": r.get::<_,String>(4)?, "created_at": r.get::<_,String>(5)?,
+        "product_name": r.get::<_,String>(6)?,
+    }))).map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>()).unwrap_or_default();
+    Json(serde_json::json!({"signals": rows, "count": rows.len()})).into_response()
 }
 
 async fn sweep_checkout(
@@ -8181,34 +8688,138 @@ async fn main() {
             created_at  TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_collab_partner ON collab_products(partner, active);
+        -- 注文記録 (Stripe webhook 経由)。production_route で
+        --   'printful' = 自動発注 (printful_variant_id set 必須)
+        --   'sweep_manual' = SWEEP社 手動生産 (Telegram 通知のみ)
+        --   'pre_order' = 受注生産 (Gi など、SWEEP社 が個別対応)
+        CREATE TABLE IF NOT EXISTS collab_orders (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            stripe_session  TEXT UNIQUE NOT NULL,
+            slug            TEXT NOT NULL,
+            size            TEXT,
+            email           TEXT,
+            ship_name       TEXT,
+            ship_address    TEXT,
+            ship_country    TEXT,
+            amount_jpy      INTEGER,
+            production_route TEXT,
+            printful_order_id TEXT,
+            status          TEXT NOT NULL DEFAULT 'received',
+            created_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_collab_orders_slug ON collab_orders(slug);
+        -- 商品ごとの好き嫌い 1-clic シグナル + 自由記述 FB。
+        --   kind: 'love' (👍) / 'meh' (👎) / 'comment' (自由記述同送)
+        --   visitor_token は cookie 由来の匿名 ID。集計用、再投稿の弱め判定。
+        CREATE TABLE IF NOT EXISTS sweep_signals (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug          TEXT NOT NULL,
+            kind          TEXT NOT NULL,
+            comment       TEXT,
+            email         TEXT,
+            visitor_token TEXT,
+            user_agent    TEXT,
+            created_at    TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_sweep_signals_slug ON sweep_signals(slug, kind);
+        CREATE INDEX IF NOT EXISTS idx_sweep_signals_at ON sweep_signals(created_at DESC);
     ").ok();
+    // Idempotent extra columns on collab_products (run after CREATE so we can
+    // add Printful integration columns without dropping the table).
+    for col in &[
+        "ALTER TABLE collab_products ADD COLUMN printful_product_id INTEGER",
+        "ALTER TABLE collab_products ADD COLUMN printful_variant_id INTEGER",
+        "ALTER TABLE collab_products ADD COLUMN production_route TEXT NOT NULL DEFAULT 'sweep_manual'",
+        "ALTER TABLE collab_products ADD COLUMN lead_time_days INTEGER NOT NULL DEFAULT 21",
+    ] {
+        conn.execute(col, []).ok();
+    }
 
     // Seed MU × SWEEP draft items (idempotent on slug)
-    let sweep_items: &[(&str, &str, &str, &str, i64)] = &[
+    // 17 商品。route= 'printful' は Printful catalog variant_id 紐付けで
+    // 受注時に自動発注 (T シャツ系)。'sweep_manual' は SWEEP社 が個別生産
+    // (BJJ 専用品)。'pre_order' は受注後に SWEEP社 が顧客と相談 (Gi など)。
+    type SweepRow = (
+        &'static str, &'static str, &'static str, &'static str, i64,
+        &'static str, Option<i64>, Option<i64>, i64,
+    );
+    let sweep_items: &[SweepRow] = &[
+        // ── BJJ 専用品 (Printful 不可、SWEEP社 manual) ──
         ("sweep-rashguard-ls",  "ラッシュガード",        "MU × SWEEP Long-Sleeve Rashguard",
          "北参道 SWEEP の身体に沿うパターンを MU の北海道気象データから生まれたグラフィックで再構築。圧縮ニット、UPF50+。",
-         11_800),
+         11_800, "sweep_manual", None, None, 28),
         ("sweep-fight-shorts",  "ファイトショーツ",      "MU × SWEEP Fight Shorts",
          "ストレッチドビル×ベルクロ。MUON の温度パターンを縫い目に転写した試作。",
-         9_800),
+         9_800,  "sweep_manual", None, None, 28),
         ("sweep-spats",         "スパッツ / グラップリング タイツ",
          "MU × SWEEP Grappling Spats",
          "MUGEN の連番が縦に流れるサイドライン入り。寒い日のアンダー / そのまま着用も可。",
-         8_800),
+         8_800,  "sweep_manual", None, None, 28),
+        ("sweep-gi-classic",    "柔術 Gi (道着)",        "MU × SWEEP Classic Gi",
+         "綿100% 550gsm、SWEEP 標準カット。襟裏に MUGEN 連番を刺繍。サイズ A0–A4。",
+         38_800, "pre_order", None, None, 56),
+        ("sweep-belt-promo",    "帯 (昇格用)",           "MU × SWEEP Promotion Belt",
+         "白帯〜黒帯。先端に MU×SWEEP のラベル縫い込み。昇格祝いの 1 本。",
+         6_800,  "pre_order", None, None, 21),
+        ("sweep-bjj-tape",      "BJJ フィンガーテープ",  "MU × SWEEP Finger Tape (3 rolls)",
+         "10m × 3 ロール。ロール側面に MUGEN ロゴ。指関節保護に最適。",
+         2_400,  "sweep_manual", None, None, 14),
+        ("sweep-mouthguard",    "マウスガード ケース",   "MU × SWEEP Mouthguard Case",
+         "アルマイトアルミ製、消臭穴、刻印 MU×SWEEP。",
+         3_800,  "sweep_manual", None, None, 21),
+
+        // ── ライフスタイル (Printful 系で自動発注、catalog ID = 仮置き) ──
         ("sweep-hoodie",        "ジムフーディ",          "MU × SWEEP Loop-back Hoodie",
-         "ジム→帰宅まで一枚で済む厚手ループバック。袖口に MA 週銘 (ISO 週) のシリアル刺繍。",
-         16_800),
+         "ジム→帰宅まで一枚で済む厚手ループバック。袖口に MA 週銘 (ISO 週) のシリアル刺繍。Bella+Canvas 3719 ベース。",
+         16_800, "printful", Some(146), Some(5538), 14),
         ("sweep-tee",           "コットン T",            "MU × SWEEP Heavy Cotton Tee",
-         "Bella+Canvas より厚手の SWEEP 別注ボディ。胸の小さな MU×SWEEP ロゴと、背の余白。",
-         6_800),
+         "Bella+Canvas 3001 (Heavy版 SWEEP 別注)。胸の小さな MU×SWEEP ロゴと、背の余白。",
+         6_800,  "printful", Some(71), Some(4017), 10),
+        ("sweep-tee-classic",   "クラシック T",          "MU × SWEEP Classic Tee",
+         "薄手 T、Bella+Canvas 3001 ベース。胸に小さなコラボ刺繍のみ、最小限の SWEEP ロゴ。",
+         4_800,  "printful", Some(71), Some(4011), 10),
+        ("sweep-longsleeve",    "ロングスリーブ T",      "MU × SWEEP Long Sleeve Tee",
+         "Bella+Canvas 3501、しっかり生地。ジム後の羽織に。",
+         7_800,  "printful", Some(229), Some(4434), 10),
+        ("sweep-sweatpants",    "スウェットパンツ",      "MU × SWEEP Loop-back Sweatpants",
+         "ループバック綿、テーパード、ジム前後を 1 枚で。",
+         12_800, "printful", Some(380), Some(13096), 14),
+        ("sweep-cap",           "5-panel キャップ",      "MU × SWEEP 5-panel Cap",
+         "ストラップバック、ダーク チャコール、SWEEP 縫い込みラベル。Yupoong 6606。",
+         5_800,  "printful", Some(206), Some(7855), 10),
+        ("sweep-beanie",        "ビーニー",              "MU × SWEEP Ribbed Beanie",
+         "リブ編み、Sportsman SP12、北海道テスト品。",
+         4_800,  "printful", Some(254), Some(8541), 10),
+        ("sweep-tote",          "ジムトート",            "MU × SWEEP Gear Tote",
+         "厚手キャンバス、内ポケット、Gi 1 着 + 着替え収納可。BAGedge BE008。",
+         7_800,  "printful", Some(92), Some(13169), 10),
+        ("sweep-socks-3pack",   "ソックス 3-pack",       "MU × SWEEP Training Socks (3-pack)",
+         "ロゴ織り込み、3 足セット (白/黒/グレー)。SP3001。",
+         2_400,  "printful", Some(259), Some(8616), 10),
+        ("sweep-windbreaker",   "ナイロン ウィンドブレーカー", "MU × SWEEP Pull-over Windbreaker",
+         "薄手ナイロン、撥水、collapsible。",
+         14_800, "printful", Some(363), Some(11378), 14),
     ];
     let now = chrono_now();
-    for (slug, cat, name, desc, price) in sweep_items {
+    for (slug, cat, name, desc, price, route, pf_prod, pf_var, lead) in sweep_items {
         conn.execute(
             "INSERT OR IGNORE INTO collab_products
-                 (slug, partner, category, name, description, image_url, price_jpy, sizes_json, active, draft, created_at)
-             VALUES (?, 'sweep', ?, ?, ?, NULL, ?, '[\"XS\",\"S\",\"M\",\"L\",\"XL\"]', 1, 1, ?)",
-            params![slug, cat, name, desc, price, now],
+                 (slug, partner, category, name, description, image_url, price_jpy,
+                  sizes_json, active, draft, created_at,
+                  printful_product_id, printful_variant_id, production_route, lead_time_days)
+             VALUES (?, 'sweep', ?, ?, ?, NULL, ?,
+                     '[\"XS\",\"S\",\"M\",\"L\",\"XL\"]', 1, 1, ?,
+                     ?, ?, ?, ?)",
+            params![slug, cat, name, desc, price, now, pf_prod, pf_var, route, lead],
+        ).ok();
+        // For pre-existing rows (idempotent), update route/lead fields too.
+        conn.execute(
+            "UPDATE collab_products
+             SET production_route = ?, lead_time_days = ?,
+                 printful_product_id = COALESCE(printful_product_id, ?),
+                 printful_variant_id = COALESCE(printful_variant_id, ?)
+             WHERE slug = ?",
+            params![route, lead, pf_prod, pf_var, slug],
         ).ok();
     }
     // Auto-blog posts table — every day the AI composes a "field log"
@@ -8587,6 +9198,9 @@ async fn main() {
         .route("/api/admin/x_mark_posted", post(admin_x_mark_posted))
         .route("/sweep", get(show_sweep_page))
         .route("/api/sweep/checkout", post(sweep_checkout))
+        .route("/api/sweep/signal", post(sweep_signal))
+        .route("/api/sweep/signals", get(sweep_signals_summary))
+        .route("/api/admin/sweep_signals", get(admin_sweep_signals))
         .route("/api/admin/council_compose", post(admin_council_compose))
         .route("/api/council/briefs", get(list_council_briefs))
         .route("/api/council/vote", post(council_vote))

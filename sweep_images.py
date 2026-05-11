@@ -22,33 +22,99 @@ WRANGLER_BIN   = os.environ.get("WRANGLER_BIN", "/opt/homebrew/bin/wrangler")
 R2_BUCKET      = "wearmu-lifestyle"
 PUBLIC_HOST    = "lifestyle.wearmu.com"
 
+# All 17 prompts share a brand spec: small SIIIEEP wordmark (s III ≡ ≡ p,
+# the official SWEEP brand logo) embroidered on left chest, and a small
+# MU × SIIIEEP serial number stitched on the inside neck label. No big
+# graphics — minimalist, editorial.
+BRAND_SPEC = (
+    "Brand: small embroidered SIIIEEP wordmark (s III equals-three-bars p logo) "
+    "on left chest in matching tonal thread, and a tiny MU × SIIIEEP serial number "
+    "on the inside neck. Both logos minimal and tonal, never loud. No other text or graphics."
+)
 PROMPTS = [
+    # ── BJJ 専用品 (SWEEP社 手動生産) ──
     ("sweep-rashguard-ls",
      "Editorial fashion product photo, fitted long-sleeve BJJ rashguard, "
      "navy with subtle off-white pinstripes (echoing Hokkaido weather radar lines), "
      "worn by a 30 year-old Japanese man in a Tokyo dojo at dawn, candid posture, "
-     "soft natural light, 50mm lens, 4:5 portrait, no logos or text other than a small chest emblem. "
-     "Clean minimalist composition, slight grain, magazine quality."),
+     "soft natural light, 50mm lens, 4:5 portrait. " + BRAND_SPEC +
+     " Clean minimalist composition, slight grain, magazine quality."),
     ("sweep-fight-shorts",
      "Studio product shot, BJJ MMA fight shorts, all-black with one subtle "
      "yellow gradient line on the side seam (representing temperature data), "
      "worn by an Asian athlete mid-stance, plain concrete background, "
-     "dramatic side lighting, 4:5 portrait, photographic realism, no captions."),
+     "dramatic side lighting, 4:5 portrait, photographic realism. " + BRAND_SPEC),
     ("sweep-spats",
      "Half-body action shot of a BJJ practitioner wearing compression "
      "grappling spats in matte black, faint serial-number stitching down the "
      "calf, knee bent in low guard pose on tatami, monochrome, dojo, "
-     "natural light, 4:5 portrait, no logos, photographic, slight motion blur."),
+     "natural light, 4:5 portrait, photographic, slight motion blur. " + BRAND_SPEC),
+    ("sweep-gi-classic",
+     "Studio product photo of a folded BJJ gi (kimono) in raw white 550gsm pearl weave cotton, "
+     "neat stack on a concrete plinth, dark backdrop, dramatic side light, "
+     "lapel facing the camera with a small embroidered SIIIEEP wordmark, "
+     "4:5 portrait, photographic, premium quality, no models. " + BRAND_SPEC),
+    ("sweep-belt-promo",
+     "Macro product shot of a black BJJ jiu-jitsu belt with one red bar, "
+     "tightly coiled on a dark wood floor, end-tag visible with embroidered "
+     "MU × SIIIEEP serial number, top-down 4:5 portrait, natural light, "
+     "shallow depth of field, no models, magazine quality. " + BRAND_SPEC),
+    ("sweep-bjj-tape",
+     "Three rolls of white BJJ finger tape stacked on a black concrete surface, "
+     "side label visible with small SIIIEEP wordmark printed in dark tonal ink, "
+     "studio still life, dramatic top-down side-light, 4:5 portrait, "
+     "photographic, minimalist composition, no models, no other text. " + BRAND_SPEC),
+    ("sweep-mouthguard",
+     "Premium product shot of a brushed anodized aluminum mouthguard case, "
+     "rectangular tin with small ventilation holes, top engraved with MU × SIIIEEP "
+     "wordmark, sitting on a sheet of folded tatami, soft directional light, "
+     "shallow depth of field, 4:5 portrait, no models, editorial product photography. " + BRAND_SPEC),
+
+    # ── ライフスタイル (Printful 系) ──
     ("sweep-hoodie",
      "Lifestyle editorial: 32 year-old Japanese man wearing a heavy loop-back "
      "cotton hoodie in dim charcoal grey, late-afternoon Tokyo apartment, "
-     "leaning on a wood-panel wall, small embroidered MU×SWEEP serial on chest, "
-     "soft window light, 4:5 portrait, no text overlays, magazine candid."),
+     "leaning on a wood-panel wall, soft window light, 4:5 portrait, "
+     "no text overlays, magazine candid. " + BRAND_SPEC),
     ("sweep-tee",
      "Heavy cotton white T-shirt on a 28 year-old Japanese woman, plain studio "
-     "background, half-body shot, small embroidered MU×SWEEP wordmark on left chest "
-     "and a bold abstract MUGEN print on center back (partial view), natural "
-     "lighting, 4:5 portrait, photographic, premium minimalist styling."),
+     "background, half-body shot, natural lighting, 4:5 portrait, photographic, "
+     "premium minimalist styling. " + BRAND_SPEC),
+    ("sweep-tee-classic",
+     "Classic-fit lightweight T-shirt in black, worn by an Asian woman in her late 20s, "
+     "front view, half-body, plain off-white studio background, soft natural light, "
+     "4:5 portrait, photographic, minimalist styling. " + BRAND_SPEC),
+    ("sweep-longsleeve",
+     "Long-sleeve heavy cotton tee in faded olive, worn casually by a 30 year-old "
+     "Japanese man, leaning against a concrete wall, side window light, half-body, "
+     "4:5 portrait, magazine candid. " + BRAND_SPEC),
+    ("sweep-sweatpants",
+     "Tapered loop-back cotton sweatpants in heather grey, worn by an Asian woman "
+     "from waist down, sitting on a wooden stool, plain backdrop, soft natural light, "
+     "4:5 portrait, editorial product photography. " + BRAND_SPEC),
+    ("sweep-cap",
+     "Dark charcoal grey 5-panel strapback cap, low crown, flat brim, "
+     "front view product shot floating on a plain concrete background, "
+     "small embroidered SIIIEEP wordmark on front center, dramatic side light, "
+     "4:5 portrait, no models, premium product photography. " + BRAND_SPEC),
+    ("sweep-beanie",
+     "Ribbed knit beanie in deep charcoal black, folded cuff, "
+     "studio product shot on a plain concrete plinth, small woven SIIIEEP label "
+     "on the cuff, 4:5 portrait, dramatic side light, no models, editorial product photography. " + BRAND_SPEC),
+    ("sweep-tote",
+     "Heavy raw canvas tote bag in natural off-white, large and structured, "
+     "hanging from a black metal hook against a concrete wall, "
+     "small black SIIIEEP wordmark screen-printed near the bottom hem, "
+     "4:5 portrait, soft directional light, no models, magazine product still. " + BRAND_SPEC),
+    ("sweep-socks-3pack",
+     "Three pairs of crew athletic socks in white, black, and heather grey, "
+     "stacked neatly on a black concrete surface, with the cuff showing a woven "
+     "SIIIEEP wordmark in tonal thread, top-down 4:5 portrait, dramatic side light, "
+     "no models, premium product photography. " + BRAND_SPEC),
+    ("sweep-windbreaker",
+     "Lightweight pull-over nylon windbreaker in matte black, worn by a 28 year-old "
+     "Japanese man, looking down adjusting the hem, urban setting (concrete + glass), "
+     "overcast natural light, 4:5 portrait, magazine candid. " + BRAND_SPEC),
 ]
 
 
