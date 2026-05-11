@@ -4261,6 +4261,129 @@ fn iso_to_unix_secs(iso: &str) -> Option<i64> {
     Some(days * 86_400 + hh * 3600 + mm * 60 + ss)
 }
 
+// ── Autonomous Treasury — MU が自分の口座を見て予算を決める ─────────────
+// Solana wallet (MU_TREASURY_PUBKEY env, default = Enabler treasury) の
+// SOL / USDC 残高を取得し、JPY 換算と AI 配分提案を返す。
+// 用途:
+//   - 広告予算上限の自動算出 (cv_pulse の延長)
+//   - 感謝クーポン総額の上限管理
+//   - grant pool (MA Council が採択する将来枠)
+// このエンドポイントは <em>公開</em>。透明性ブランドの一環。
+const MU_TREASURY_DEFAULT_PUBKEY: &str = "DK29rBGCvP83LUNjUGVM6xt6qPy6rycBFopXbFkg9XvQ";
+const SOLANA_USDC_MINT_ADDR: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+
+async fn fetch_solana_balances(pubkey: &str) -> Result<(f64, f64), String> {
+    // SOL native balance + USDC SPL token balance via public Solana RPC.
+    let rpc = env::var("SOLANA_RPC_URL")
+        .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".into());
+    let client = reqwest::Client::new();
+
+    // 1. native SOL
+    let sol_req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "getBalance",
+        "params": [pubkey, {"commitment": "confirmed"}]
+    });
+    let sol_resp = client.post(&rpc).json(&sol_req).send().await
+        .map_err(|e| format!("rpc sol: {e}"))?;
+    let sol_j: serde_json::Value = sol_resp.json().await.map_err(|e| format!("json sol: {e}"))?;
+    let lamports = sol_j["result"]["value"].as_u64().unwrap_or(0);
+    let sol = (lamports as f64) / 1_000_000_000.0;
+
+    // 2. SPL token (USDC) — use getTokenAccountsByOwner filtered by mint
+    let usdc_req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "getTokenAccountsByOwner",
+        "params": [
+            pubkey,
+            {"mint": SOLANA_USDC_MINT_ADDR},
+            {"encoding": "jsonParsed", "commitment": "confirmed"}
+        ]
+    });
+    let usdc_resp = client.post(&rpc).json(&usdc_req).send().await
+        .map_err(|e| format!("rpc usdc: {e}"))?;
+    let usdc_j: serde_json::Value = usdc_resp.json().await.map_err(|e| format!("json usdc: {e}"))?;
+    let mut usdc = 0f64;
+    if let Some(accs) = usdc_j["result"]["value"].as_array() {
+        for a in accs {
+            if let Some(amt) = a["account"]["data"]["parsed"]["info"]["tokenAmount"]["uiAmount"]
+                .as_f64() { usdc += amt; }
+        }
+    }
+    Ok((sol, usdc))
+}
+
+#[derive(Deserialize)]
+struct TreasuryQuery {
+    /// optional override; defaults to MU_TREASURY_PUBKEY env or constant
+    #[serde(default)] pubkey: Option<String>,
+}
+
+async fn public_treasury(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<TreasuryQuery>,
+) -> impl IntoResponse {
+    let pk = q.pubkey
+        .or_else(|| env::var("MU_TREASURY_PUBKEY").ok())
+        .unwrap_or_else(|| MU_TREASURY_DEFAULT_PUBKEY.to_string());
+
+    let (sol, usdc) = match fetch_solana_balances(&pk).await {
+        Ok(v) => v,
+        Err(e) => return Json(serde_json::json!({"ok": false, "error": e, "pubkey": pk})).into_response(),
+    };
+
+    // FX env (set daily by ops cron). Conservative defaults.
+    let jpy_per_sol: f64 = env::var("JPY_PER_SOL").ok()
+        .and_then(|s| s.parse().ok()).filter(|x: &f64| x.is_finite() && *x > 0.0).unwrap_or(25_000.0);
+    let jpy_per_usd: f64 = env::var("JPY_PER_USD").ok()
+        .and_then(|s| s.parse().ok()).filter(|x: &f64| x.is_finite() && *x > 0.0).unwrap_or(150.0);
+
+    let jpy_total = (sol * jpy_per_sol + usdc * jpy_per_usd) as i64;
+
+    // Real revenue this calendar month (cs_live_*)
+    let revenue_30d: i64 = {
+        let conn = db.lock().unwrap();
+        let cutoff: i64 = chrono_now().parse::<i64>().unwrap_or(0) - 30 * 86_400;
+        conn.query_row(
+            "SELECT COALESCE(SUM(p.price_jpy),0) FROM mu_purchases mp
+             JOIN products p ON p.id = mp.product_id
+             WHERE mp.session_id LIKE 'cs_live_%'
+               AND CAST(mp.created_at AS INTEGER) >= ?",
+            params![cutoff], |r| r.get(0),
+        ).unwrap_or(0)
+    };
+
+    // AI 予算配分の提案 (heuristics, transparent):
+    //   - Ads (Google Ads): ≤ 30% of treasury or ≤ revenue_30d * 0.5, whichever smaller
+    //   - Thanks coupon reserve: ≤ 10% of treasury
+    //   - Grant pool (MA Council 採択用): ≤ 10% of treasury
+    //   - Runway: 残り = ops 固定費 ¥6,000/月 + buffer
+    let ads_budget    = ((jpy_total as f64) * 0.30).min((revenue_30d as f64) * 0.50) as i64;
+    let thanks_budget = ((jpy_total as f64) * 0.10) as i64;
+    let grant_pool    = ((jpy_total as f64) * 0.10) as i64;
+    let monthly_burn  = 6_000_i64;
+    let runway_months = if monthly_burn > 0 { jpy_total / monthly_burn } else { 0 };
+
+    Json(serde_json::json!({
+        "ok": true,
+        "pubkey": pk,
+        "balance": {
+            "sol":  sol,
+            "usdc": usdc,
+            "jpy_estimate": jpy_total,
+        },
+        "fx": {"jpy_per_sol": jpy_per_sol, "jpy_per_usd": jpy_per_usd},
+        "revenue_30d_jpy": revenue_30d,
+        "ai_budget_suggestion": {
+            "ads_monthly_jpy":    ads_budget,
+            "thanks_reserve_jpy": thanks_budget,
+            "grant_pool_jpy":     grant_pool,
+            "monthly_burn_jpy":   monthly_burn,
+            "runway_months":      runway_months,
+        },
+        "note": "本ヒューリスティクスは公開・改変可能。実際の支出は admin 承認 (cv_pulse) を経て実行される。",
+        "as_of": chrono_now(),
+    })).into_response()
+}
+
 /// Public health endpoint — returns which brands are stale.
 async fn cron_health_handler(State(db): State<Db>) -> impl IntoResponse {
     let conn = db.lock().unwrap();
@@ -7621,6 +7744,7 @@ async fn main() {
         .route("/api/you/referral", post(you_referral_status))
         .route("/api/feedback", post(submit_feedback))
         .route("/api/admin/thank_buyers", post(admin_thank_buyers))
+        .route("/api/treasury", get(public_treasury))
         .route("/api/cv/config", get(cv_public_config))
         .route("/api/you/signal/:design_id", post(you_signal))
         .route("/api/you/preferences", get(you_preferences))

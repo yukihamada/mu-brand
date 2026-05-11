@@ -43,6 +43,10 @@ install_crons() {
 10 0 * * * /usr/bin/curl -s -X POST -H 'Content-Type: application/json' -d '{"admin_token":"$ADMIN_TOKEN"}' https://wearmu.com/api/admin/blog_compose >> $LOG_DIR/auto_blog.log 2>&1
 # mu-brand lifestyle photos — every 6 hours, generate up to 6 new ones
 0 */6 * * * cd $SCRIPT_DIR && set -a && source $ENV_FILE && set +a && $PYTHON generate_lifestyle.py 6 >> $LOG_DIR/lifestyle.log 2>&1
+# mu-brand auto-thank buyers — hourly, catches every new cs_live_* purchase
+15 * * * * /usr/bin/curl -s -X POST -H 'Content-Type: application/json' -d '{"admin_token":"$ADMIN_TOKEN"}' https://wearmu.com/api/admin/thank_buyers >> $LOG_DIR/thank_buyers.log 2>&1
+# mu-brand treasury snapshot — every 4h, logs Solana balance + AI budget suggestion
+20 */4 * * * /usr/bin/curl -s https://wearmu.com/api/treasury >> $LOG_DIR/treasury.log 2>&1
 # mu-brand exit-lottery weekly draw — Mondays JST 9:00 (UTC Sun 0:00)
 0 0 * * 1 /usr/bin/curl -s -X POST -H 'Content-Type: application/json' -d '{"admin_token":"$ADMIN_TOKEN"}' https://wearmu.com/api/admin/lottery_draw >> $LOG_DIR/lottery_draw.log 2>&1
 # mu-brand CV pulse — every 30 min, snapshots metrics, applies adjustments, posts Telegram digest
