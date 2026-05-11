@@ -7144,22 +7144,322 @@ async fn send_blog_digest(db: &Db, slug: &str, title: &str, body_md: &str) -> Re
 /// TWITTER_BEARER + X_AUTOPOST_ENDPOINT env var; if either is missing,
 /// logs a no-op. Real X API access is outside this repo for now.
 async fn cross_post_x(slug: &str, title: &str) -> Result<bool, String> {
-    let endpoint = env::var("X_AUTOPOST_ENDPOINT").ok();
-    let token    = env::var("X_AUTOPOST_TOKEN").ok();
-    let (Some(endpoint), Some(token)) = (endpoint, token) else {
-        return Ok(false);
-    };
-    let body = serde_json::json!({
-        "text": format!("{} https://wearmu.com/blog/{slug}", title),
-    });
-    let r = reqwest::Client::new().post(&endpoint)
-        .bearer_auth(&token).json(&body).send().await
-        .map_err(|e| format!("x-autopost: {e}"))?;
-    if !r.status().is_success() {
-        return Err(format!("x-autopost {}: {}",
-            r.status(), r.text().await.unwrap_or_default()));
+    // Now uses the real X API v2 via OAuth 2.0 PKCE tokens.
+    // Enqueue is preferred (sns_post_queue) — this direct call is kept for
+    // synchronous use cases (the legacy admin_blog_publish call).
+    let text = format!("{} https://wearmu.com/blog/{slug}", title);
+    match x_post_tweet(&text).await {
+        Ok(Some(_id)) => Ok(true),
+        Ok(None)      => Ok(false),  // not configured
+        Err(e)        => Err(format!("x-autopost: {e}")),
     }
-    Ok(true)
+}
+
+// ── X (Twitter) API v2 — OAuth 2.0 PKCE ──────────────────────────────────
+// Single-account flow: brand owns @wearmu. One-time admin consent via
+// /admin/x/auth → callback stores refresh_token → background worker drains
+// sns_post_queue and posts via /2/tweets.
+
+fn x_redirect_uri() -> String {
+    env::var("X_REDIRECT_URI").unwrap_or_else(|_|
+        "https://wearmu.com/admin/x/callback".to_string())
+}
+
+/// PKCE code_verifier → S256 code_challenge.
+fn pkce_challenge(verifier: &str) -> String {
+    use sha2::{Sha256, Digest};
+    let mut hasher = Sha256::new();
+    hasher.update(verifier.as_bytes());
+    let hash = hasher.finalize();
+    use base64::Engine;
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hash)
+}
+
+/// Step 1 of OAuth 2.0 PKCE: admin clicks /admin/x/auth?token=...
+/// Generates verifier+state, persists, redirects to X authorize URL.
+async fn admin_x_auth(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String,String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let client_id = match env::var("X_CLIENT_ID") {
+        Ok(v) if !v.is_empty() => v,
+        _ => return (StatusCode::SERVICE_UNAVAILABLE,
+            "X_CLIENT_ID not set").into_response(),
+    };
+    let verifier = uuid::Uuid::new_v4().simple().to_string()
+        + &uuid::Uuid::new_v4().simple().to_string();  // ~64 chars
+    let challenge = pkce_challenge(&verifier);
+    let state = uuid::Uuid::new_v4().simple().to_string();
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO x_oauth_state (state, code_verifier, created_at)
+             VALUES (?,?,?)",
+            params![state, verifier, chrono_now()],
+        );
+        // GC old (>10 min) states
+        let now_s: i64 = chrono_now().parse().unwrap_or(0);
+        let _ = conn.execute(
+            "DELETE FROM x_oauth_state WHERE CAST(created_at AS INTEGER) < ?",
+            params![now_s - 600],
+        );
+    }
+    let scopes = "tweet.read tweet.write users.read offline.access";
+    let url = format!(
+        "https://twitter.com/i/oauth2/authorize?response_type=code\
+         &client_id={cid}&redirect_uri={ru}&scope={sc}\
+         &state={st}&code_challenge={ch}&code_challenge_method=S256",
+        cid = urlencoding::encode(&client_id),
+        ru  = urlencoding::encode(&x_redirect_uri()),
+        sc  = urlencoding::encode(scopes),
+        st  = urlencoding::encode(&state),
+        ch  = urlencoding::encode(&challenge),
+    );
+    axum::response::Redirect::temporary(&url).into_response()
+}
+
+/// Step 2: X redirects back here with ?code & ?state.
+/// We exchange code for tokens and persist to x_oauth_tokens.
+async fn admin_x_callback(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String,String>>,
+) -> Response {
+    let code = match q.get("code") {
+        Some(c) if !c.is_empty() => c.clone(),
+        _ => return (StatusCode::BAD_REQUEST, "missing code").into_response(),
+    };
+    let state = match q.get("state") {
+        Some(s) if !s.is_empty() => s.clone(),
+        _ => return (StatusCode::BAD_REQUEST, "missing state").into_response(),
+    };
+    let client_id = env::var("X_CLIENT_ID").unwrap_or_default();
+    let client_secret = env::var("X_CLIENT_SECRET").unwrap_or_default();
+    if client_id.is_empty() || client_secret.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE,
+            "X credentials not set").into_response();
+    }
+    let verifier: Option<String> = {
+        let conn = db.lock().unwrap();
+        let v = conn.query_row(
+            "SELECT code_verifier FROM x_oauth_state WHERE state=?",
+            params![state], |r| r.get::<_, String>(0),
+        ).ok();
+        let _ = conn.execute("DELETE FROM x_oauth_state WHERE state=?", params![state]);
+        v
+    };
+    let Some(verifier) = verifier else {
+        return (StatusCode::BAD_REQUEST,
+            "state mismatch (expired or unknown)").into_response();
+    };
+    let form: Vec<(&str, &str)> = vec![
+        ("grant_type", "authorization_code"),
+        ("code", &code),
+        ("redirect_uri", ""),  // filled below
+        ("code_verifier", &verifier),
+        ("client_id", &client_id),
+    ];
+    let redirect_uri = x_redirect_uri();
+    let mut form2: Vec<(&str, &str)> = form.into_iter()
+        .map(|(k,v)| if k == "redirect_uri" { (k, redirect_uri.as_str()) } else { (k,v) })
+        .collect();
+    // Use Basic auth (confidential client)
+    use base64::Engine;
+    let basic = base64::engine::general_purpose::STANDARD.encode(
+        format!("{}:{}", client_id, client_secret).as_bytes());
+    let resp = reqwest::Client::new()
+        .post("https://api.twitter.com/2/oauth2/token")
+        .header("Authorization", format!("Basic {}", basic))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .form(&form2).send().await;
+    form2.clear();
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::BAD_GATEWAY,
+            format!("x token http: {e}")).into_response(),
+    };
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        eprintln!("[x-oauth] token exchange {}: {}", status, text);
+        return (StatusCode::BAD_GATEWAY,
+            format!("x token error {}: {}", status, &text[..text.len().min(300)])).into_response();
+    }
+    let v: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(v) => v, Err(e) => return (StatusCode::BAD_GATEWAY,
+            format!("x token json: {e}")).into_response(),
+    };
+    let access  = v["access_token"].as_str().unwrap_or("");
+    let refresh = v["refresh_token"].as_str().unwrap_or("");
+    let expires_in: i64 = v["expires_in"].as_i64().unwrap_or(7200);
+    let scope = v["scope"].as_str().unwrap_or("");
+    if access.is_empty() || refresh.is_empty() {
+        return (StatusCode::BAD_GATEWAY,
+            "x token response missing access/refresh").into_response();
+    }
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let expires_at = now_s + expires_in - 60;  // 60s slack
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO x_oauth_tokens
+                (id, access_token, refresh_token, expires_at, scope, updated_at)
+             VALUES (1, ?, ?, ?, ?, ?)",
+            params![access, refresh, expires_at, scope, chrono_now()],
+        );
+    }
+    (StatusCode::OK,
+     "✓ X account linked. Token persisted to x_oauth_tokens (single-row id=1).\n\
+      sns_post_queue worker will start consuming pending posts within ~60s.")
+        .into_response()
+}
+
+/// Load current access_token, refreshing if expired or about to be.
+/// Returns Some(access_token) on success, None if no tokens stored.
+async fn x_get_access_token(db: &Db) -> Result<Option<String>, String> {
+    let row: Option<(String, String, i64)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT access_token, refresh_token, expires_at FROM x_oauth_tokens WHERE id=1",
+            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).ok()
+    };
+    let Some((access, refresh, expires_at)) = row else { return Ok(None); };
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    if now_s + 30 < expires_at {
+        return Ok(Some(access));
+    }
+    // Refresh
+    let client_id = env::var("X_CLIENT_ID").unwrap_or_default();
+    let client_secret = env::var("X_CLIENT_SECRET").unwrap_or_default();
+    if client_id.is_empty() || client_secret.is_empty() {
+        return Err("X credentials not set".into());
+    }
+    use base64::Engine;
+    let basic = base64::engine::general_purpose::STANDARD.encode(
+        format!("{}:{}", client_id, client_secret).as_bytes());
+    let form = [
+        ("grant_type", "refresh_token"),
+        ("refresh_token", refresh.as_str()),
+        ("client_id", client_id.as_str()),
+    ];
+    let resp = reqwest::Client::new()
+        .post("https://api.twitter.com/2/oauth2/token")
+        .header("Authorization", format!("Basic {}", basic))
+        .form(&form).send().await
+        .map_err(|e| format!("x refresh http: {e}"))?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("x refresh {}: {}", status, &text[..text.len().min(300)]));
+    }
+    let v: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("x refresh json: {e}"))?;
+    let new_access  = v["access_token"].as_str().unwrap_or("").to_string();
+    let new_refresh = v["refresh_token"].as_str().unwrap_or(&refresh).to_string();
+    let exp: i64 = v["expires_in"].as_i64().unwrap_or(7200);
+    let expires_at_new = now_s + exp - 60;
+    if new_access.is_empty() {
+        return Err("x refresh response missing access_token".into());
+    }
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE x_oauth_tokens SET access_token=?, refresh_token=?,
+                                       expires_at=?, updated_at=? WHERE id=1",
+            params![new_access, new_refresh, expires_at_new, chrono_now()],
+        );
+    }
+    Ok(Some(new_access))
+}
+
+/// Post a tweet (text only, no media). Returns Ok(Some(id)) on success,
+/// Ok(None) if X isn't configured yet, Err on API failure.
+async fn x_post_tweet(text: &str) -> Result<Option<String>, String> {
+    // Get a global DB handle (we need it to load tokens). Use CRON_DB Once-cell.
+    let db = match payments::cron_db_ref() {
+        Some(d) => d, None => return Err("CRON_DB not initialized".into()),
+    };
+    let access = match x_get_access_token(&db).await? {
+        Some(t) => t, None => return Ok(None),
+    };
+    let body = serde_json::json!({ "text": text });
+    let resp = reqwest::Client::new()
+        .post("https://api.twitter.com/2/tweets")
+        .bearer_auth(&access)
+        .json(&body).send().await
+        .map_err(|e| format!("x post http: {e}"))?;
+    let status = resp.status();
+    let respbody = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("x post {}: {}", status, &respbody[..respbody.len().min(300)]));
+    }
+    let v: serde_json::Value = serde_json::from_str(&respbody)
+        .map_err(|e| format!("x post json: {e}"))?;
+    Ok(v["data"]["id"].as_str().map(String::from))
+}
+
+/// Background worker that drains sns_post_queue every 60s and posts to X.
+/// Idempotent (sets posted_at on success, error on failure).
+async fn x_post_worker(db: Db) {
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        if !autopilot_on() { continue; }
+        // Skip if X not yet linked
+        let linked = {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT 1 FROM x_oauth_tokens WHERE id=1",
+                [], |r| r.get::<_, i64>(0),
+            ).is_ok()
+        };
+        if !linked { continue; }
+        let pending: Vec<(i64, String)> = {
+            let conn = db.lock().unwrap();
+            let result = match conn.prepare(
+                "SELECT id, text FROM sns_post_queue
+                 WHERE network='x' AND posted_at IS NULL
+                 ORDER BY created_at ASC LIMIT 5"
+            ) {
+                Ok(mut stmt) => stmt.query_map([], |r| {
+                    Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+                }).map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>())
+                  .unwrap_or_default(),
+                Err(_) => Vec::new(),
+            };
+            result
+        };
+        for (id, text) in pending {
+            // Trim to 280 chars (X v2 limit).
+            let posted = if text.chars().count() > 280 {
+                text.chars().take(279).collect::<String>() + "…"
+            } else { text };
+            match x_post_tweet(&posted).await {
+                Ok(Some(tweet_id)) => {
+                    let conn = db.lock().unwrap();
+                    let _ = conn.execute(
+                        "UPDATE sns_post_queue SET posted_at=?, external_id=? WHERE id=?",
+                        params![chrono_now(), tweet_id, id],
+                    );
+                    tracing::info!("[x-worker] posted queue#{} → tweet {}", id, tweet_id);
+                }
+                Ok(None) => {
+                    // X not configured — leave row pending, stop loop.
+                    break;
+                }
+                Err(e) => {
+                    let conn = db.lock().unwrap();
+                    let _ = conn.execute(
+                        "UPDATE sns_post_queue SET posted_at=?, error=? WHERE id=?",
+                        params![chrono_now(), e, id],
+                    );
+                    tracing::warn!("[x-worker] queue#{} failed: persisted as error", id);
+                }
+            }
+            // Rate limit: 1 post per 5s within batch.
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -11973,6 +12273,24 @@ async fn main() {
         CREATE INDEX IF NOT EXISTS idx_sns_pending
             ON sns_post_queue(posted_at, created_at)
             WHERE posted_at IS NULL;
+
+        -- X (Twitter) OAuth 2.0 PKCE access + refresh tokens.
+        -- Single-row design (id=1) — only one brand account @wearmu.
+        -- Populated via /admin/x/auth one-shot consent flow.
+        CREATE TABLE IF NOT EXISTS x_oauth_tokens (
+            id            INTEGER PRIMARY KEY CHECK (id = 1),
+            access_token  TEXT NOT NULL,
+            refresh_token TEXT NOT NULL,
+            expires_at    INTEGER NOT NULL,
+            scope         TEXT,
+            updated_at    TEXT NOT NULL
+        );
+        -- Pending OAuth state — code_verifier + state for the redirect-back.
+        CREATE TABLE IF NOT EXISTS x_oauth_state (
+            state         TEXT PRIMARY KEY,
+            code_verifier TEXT NOT NULL,
+            created_at    TEXT NOT NULL
+        );
     ").ok();
     // Add option_index to ma_council_votes for the new HMAC-token flow
     // (older flow stored free-text `choice`). Both columns coexist.
@@ -12286,6 +12604,13 @@ async fn main() {
         }
     });
 
+    // X (Twitter) post worker — drains sns_post_queue every 60s.
+    // No-op until /admin/x/auth has been run to link the @wearmu account.
+    let db_xworker = db.clone();
+    tokio::spawn(async move {
+        x_post_worker(db_xworker).await;
+    });
+
     let app = Router::new()
         .route("/", get(index))
         .route("/success", get(success_page))
@@ -12398,6 +12723,8 @@ async fn main() {
         .route("/api/admin/sns/pending", get(admin_sns_pending))
         .route("/api/admin/sns/mark_posted", post(admin_sns_mark_posted))
         .route("/api/redeem_invite", post(redeem_invite))
+        .route("/admin/x/auth", get(admin_x_auth))
+        .route("/admin/x/callback", get(admin_x_callback))
         .route("/api/admin/council_compose", post(admin_council_compose))
         .route("/api/council/briefs", get(list_council_briefs))
         .route("/api/council/vote", post(council_vote))

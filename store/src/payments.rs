@@ -85,6 +85,11 @@ fn env_rate(key: &str, default: f64) -> f64 {
 /// argument (most call sites are deep inside synchronous helpers).
 static CRON_DB: std::sync::OnceLock<Db> = std::sync::OnceLock::new();
 
+/// Public accessor for main.rs (X poster needs DB without taking it as arg).
+pub fn cron_db_ref() -> Option<Db> {
+    CRON_DB.get().cloned()
+}
+
 /// True if the named env var is a placeholder value (unset, empty, or
 /// contains "PLACEHOLDER" / "REPLACE"). Used by /api/payment_methods and
 /// /health to gate crypto checkout until real secrets are deployed.
