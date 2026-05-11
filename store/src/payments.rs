@@ -814,6 +814,24 @@ async fn fulfill_crypto_order(db: Db, reference: String) {
     } else {
         tracing::info!("[fulfill] Resend skipped (no key) ref={}", reference);
     }
+
+    // ── Soulbound NFT pilot trigger (crypto-settled path) ──
+    // The buyer's Solana wallet is stored on the pending_crypto_payments row.
+    // If present, dispatch the cNFT mint in the background. Dry-run by default;
+    // see store/src/nft.rs and `MU_NFT_MINT_LIVE`.
+    let buyer_wallet: String = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(wallet,'') FROM pending_crypto_payments WHERE reference=?",
+            params![reference],
+            |r| r.get::<_, String>(0),
+        ).unwrap_or_default()
+    };
+    if !buyer_wallet.trim().is_empty() {
+        crate::nft::mint_soulbound_bg(db.clone(), product_id, buyer_wallet, "helius_webhook");
+    } else {
+        tracing::info!("[nft] crypto-settle skipped product_id={} ref={}: no wallet", product_id, reference);
+    }
 }
 
 // ── Admin CSV exports ─────────────────────────────────────────────────
