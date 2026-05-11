@@ -4929,6 +4929,27 @@ struct LifestyleBody {
 /// PATCH /api/admin/lifestyle?token=… — set `products.lifestyle_url` for
 /// a given product. Called from generate_lifestyle.py after Gemini generates
 /// and R2 stores the image.
+
+// PATCH /api/admin/collab_image — set image_url on collab_products by slug.
+#[derive(Deserialize)]
+struct CollabImageBody {
+    slug: String,
+    image_url: String,
+}
+async fn admin_collab_image(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<CollabImageBody>,
+) -> impl IntoResponse {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let conn = db.lock().unwrap();
+    let updated = conn.execute(
+        "UPDATE collab_products SET image_url=? WHERE slug=?",
+        params![body.image_url, body.slug],
+    ).unwrap_or(0);
+    Json(serde_json::json!({"ok": true, "updated": updated})).into_response()
+}
+
 async fn admin_lifestyle(
     State(db): State<Db>,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
@@ -5683,31 +5704,46 @@ async fn show_sweep_page(
     }
 
     // Build product list HTML server-side (no caching of the gate cookie path)
-    let items: Vec<(i64, String, String, String, String, i64)> = {
+    type Row = (i64, String, String, String, String, i64, Option<String>);
+    let items: Vec<Row> = {
         let conn = db.lock().unwrap();
         let mut stmt = match conn.prepare(
-            "SELECT id, slug, category, name, COALESCE(description,''), price_jpy
+            "SELECT id, slug, category, name, COALESCE(description,''), price_jpy, image_url
              FROM collab_products WHERE partner='sweep' AND active=1
              ORDER BY id"
         ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
         stmt.query_map([], |r| Ok((
-            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?
         ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
     };
 
-    let cards = items.iter().map(|(id, slug, cat, name, desc, price)| {
+    let cards = items.iter().map(|(id, slug, cat, name, desc, price, image)| {
+        // Image fallback: if no image_url set yet, show a styled placeholder
+        // with the category label, so the gallery is never empty.
+        let image_block = match image.as_deref().filter(|u| !u.is_empty() && u.starts_with("http")) {
+            Some(u) => format!(
+                r##"<a href="#buy-{id}" class="img-wrap" aria-label="{name_attr}"><img src="{src}" alt="{name_attr}" loading="lazy"></a>"##,
+                src = html_attr_escape(u), name_attr = html_attr_escape(name), id = id),
+            None => format!(
+                r#"<div class="img-wrap placeholder"><span>{glyph}</span><small>generating…</small></div>"#,
+                glyph = html_attr_escape(cat.chars().next().map(|c| c.to_string()).unwrap_or("•".into()).as_str())),
+        };
         format!(r#"<article class="card">
-  <div class="cat">{cat}</div>
-  <h3>{name}</h3>
-  <p class="desc">{desc}</p>
-  <div class="row">
-    <span class="price">¥{price_fmt}</span>
-    <select id="size-{id}" class="size">
-      <option>S</option><option selected>M</option><option>L</option><option>XL</option>
-    </select>
-    <button class="buy" data-slug="{slug}" data-id="{id}">仕立てる →</button>
+  {image}
+  <div class="body">
+    <div class="cat">{cat}</div>
+    <h3 id="buy-{id}">{name}</h3>
+    <p class="desc">{desc}</p>
+    <div class="row">
+      <span class="price">¥{price_fmt}</span>
+      <select id="size-{id}" class="size" aria-label="size">
+        <option>S</option><option selected>M</option><option>L</option><option>XL</option>
+      </select>
+      <button class="buy" data-slug="{slug}" data-id="{id}">仕立てる →</button>
+    </div>
   </div>
 </article>"#,
+        image = image_block,
         cat = html_attr_escape(cat), name = html_attr_escape(name),
         desc = html_attr_escape(desc), price_fmt = format_jpy(*price),
         id = id, slug = html_attr_escape(slug),
@@ -5734,7 +5770,14 @@ header h1 em{{color:var(--y);font-style:normal;font-weight:300}}
 header .lede{{color:var(--mute);font-size:14px;max-width:560px;margin:0 auto 22px;line-height:1.95}}
 header .warn{{display:inline-block;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;background:rgba(200,54,44,0.12);color:var(--red);padding:8px 18px;border-radius:2px;margin-top:8px}}
 .grid{{max-width:1100px;margin:30px auto 100px;padding:0 32px;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px}}
-.card{{background:var(--card);padding:24px 22px;border:1px solid rgba(255,255,255,0.06);border-radius:2px;display:flex;flex-direction:column;gap:8px}}
+.card{{background:var(--card);border:1px solid rgba(255,255,255,0.06);border-radius:2px;display:flex;flex-direction:column;overflow:hidden;transition:border-color 0.2s ease}}
+.card:hover{{border-color:rgba(230,196,73,0.45)}}
+.card .img-wrap{{display:block;aspect-ratio:4/5;background:#0a0a0a;overflow:hidden;position:relative}}
+.card .img-wrap img{{width:100%;height:100%;object-fit:cover;display:block}}
+.card .img-wrap.placeholder{{display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'Helvetica Neue',Arial,sans-serif}}
+.card .img-wrap.placeholder span{{font-size:48px;font-weight:200;color:rgba(230,196,73,0.4)}}
+.card .img-wrap.placeholder small{{font-size:9px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.4;margin-top:8px}}
+.card .body{{padding:22px 22px 24px;display:flex;flex-direction:column;gap:8px;flex:1}}
 .card .cat{{font-size:9px;letter-spacing:0.32em;text-transform:uppercase;color:var(--y);opacity:0.85}}
 .card h3{{font-size:17px;font-weight:400;letter-spacing:0.01em;margin:2px 0 4px}}
 .card .desc{{color:var(--mute);font-size:12.5px;line-height:1.85;flex:1}}
@@ -8532,6 +8575,7 @@ async fn main() {
         .route("/api/sample_personas", get(list_sample_personas))
         .route("/api/admin/sample_grow", post(admin_sample_grow))
         .route("/api/admin/lifestyle", axum::routing::patch(admin_lifestyle))
+        .route("/api/admin/collab_image", axum::routing::patch(admin_collab_image))
         .route("/api/admin/blog_compose", post(admin_blog_compose))
         .route("/api/blog/auto", get(list_auto_blog))
         .route("/blog/auto/:slug", get(show_auto_blog))
