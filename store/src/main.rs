@@ -3089,6 +3089,22 @@ async fn cv_pulse(
                 &format!("rotate (signups_24h={})", signups_24h));
             decisions.push(format!("email_subject_variant {} → {}", prev_subject, target_subj));
         }
+
+        // Rule 4: rotate hero CTA variant when stalled. variants cycle through
+        // value → identity → loss. Stalled = 0 signups in 24h.
+        let prev_cta = cv_get(&conn, "hero_cta_variant", "value");
+        let target_cta = if signups_24h == 0 {
+            match prev_cta.as_str() {
+                "value" => "identity",
+                "identity" => "loss",
+                _ => "value",
+            }
+        } else { prev_cta.as_str() };
+        if target_cta != prev_cta {
+            cv_set(&conn, "hero_cta_variant", target_cta,
+                &format!("rotate (signups_24h={})", signups_24h));
+            decisions.push(format!("hero_cta_variant {} → {}", prev_cta, target_cta));
+        }
     }
     let decision_str = if decisions.is_empty() { "no-change".to_string() } else { decisions.join(", ") };
 
@@ -4033,6 +4049,7 @@ fn send_trial_reminder_if_needed(
     }
     let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
     if resend_key.is_empty() { return; }
+    let subj_variant = you_subject_variant(&db);
     tokio::spawn(async move {
         let html = format!(r#"
 <div style="background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;padding:48px;max-width:560px;margin:0 auto">
@@ -4057,7 +4074,8 @@ fn send_trial_reminder_if_needed(
             .json(&serde_json::json!({
                 "from": "MU × YOU <noreply@wearmu.com>",
                 "to": [email],
-                "subject": format!("MU × YOU — トライアル残り {} 日", days_left.max(1)),
+                "subject": you_email_subject(&subj_variant, "trial5d",
+                    &serde_json::json!({"days_left": days_left as i64})),
                 "html": html,
             }))
             .send().await;
@@ -4083,6 +4101,7 @@ fn send_trial_expired_notice_if_needed(
     }
     let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
     if resend_key.is_empty() { return; }
+    let subj_variant = you_subject_variant(&db);
     tokio::spawn(async move {
         let html = r#"
 <div style="background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;padding:48px;max-width:560px;margin:0 auto">
@@ -4106,7 +4125,7 @@ fn send_trial_expired_notice_if_needed(
             .json(&serde_json::json!({
                 "from": "MU × YOU <noreply@wearmu.com>",
                 "to": [email],
-                "subject": "MU × YOU — トライアル終了。続けるには MU を 1 着。",
+                "subject": you_email_subject(&subj_variant, "trial_end", &serde_json::json!({})),
                 "html": html,
             }))
             .send().await;
@@ -4217,6 +4236,7 @@ async fn you_admin_email_today(
 
     let mut sent = 0;
     let mut failed: Vec<serde_json::Value> = vec![];
+    let subj_variant = you_subject_variant(&db);
     for (design_id, email, day_num, name, prompt, slug) in &rows {
         let img_url = format!("{}/api/you/design/{}/image.png", base, design_id);
         let share = slug.as_ref()
@@ -4247,7 +4267,8 @@ async fn you_admin_email_today(
             .json(&serde_json::json!({
                 "from": "MU × YOU <noreply@wearmu.com>",
                 "to": [email],
-                "subject": format!("MU × YOU DAY {:03} — {}", day_num, name),
+                "subject": you_email_subject(&subj_variant, "daily",
+                    &serde_json::json!({"day_num": *day_num, "name": name})),
                 "html": html,
             }))
             .send().await;
@@ -5048,6 +5069,12 @@ async fn main() {
          VALUES (?, ?, ?, ?)",
         params!["modal_scroll_required", "1", chrono_now(), "default"],
     ).ok();
+    // /you LP hero CTA variant. cv_pulse rotates: 'identity' / 'loss' / 'value'.
+    conn.execute(
+        "INSERT OR IGNORE INTO cv_config (key, value, updated_at, reason)
+         VALUES (?, ?, ?, ?)",
+        params!["hero_cta_variant", "value", chrono_now(), "default"],
+    ).ok();
     // Exit-intent funnel: survey → cost-price discount → no-purchase
     // open lottery (オープン懸賞 — Japan has no prize cap on these).
     conn.execute_batch("
@@ -5365,6 +5392,7 @@ async fn run_you_daily_cron(db: Db) {
 
     let mut sent = 0;
     let mut failed = 0;
+    let subj_variant = you_subject_variant(&db);
     for (design_id, email, day_num, name, prompt, slug) in &send_targets {
         let img_url = format!("{}/api/you/design/{}/image.png", base, design_id);
         let share = slug.as_ref()
@@ -5378,7 +5406,8 @@ async fn run_you_daily_cron(db: Db) {
             .json(&serde_json::json!({
                 "from": "MU × YOU <noreply@wearmu.com>",
                 "to": [email],
-                "subject": format!("MU × YOU DAY {:03} — {}", day_num, name),
+                "subject": you_email_subject(&subj_variant, "daily",
+                    &serde_json::json!({"day_num": *day_num, "name": name})),
                 "html": html,
             }))
             .send().await;

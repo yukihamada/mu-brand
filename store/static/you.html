@@ -284,10 +284,29 @@ footer a:hover{opacity:1}
     翌朝から毎日、AI が生成したコラボTシャツの案が一枚ずつ届きます。<br>
     気に入った日だけ、その一着を仕立てる。
   </p>
-  <button class="hero-cta" onclick="document.getElementById('subscribe-form').scrollIntoView({behavior:'smooth'})">
-    始める
+  <button id="hero-cta" class="hero-cta" onclick="document.getElementById('subscribe-form').scrollIntoView({behavior:'smooth'})">
+    <span id="hero-cta-label">始める</span>
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
   </button>
+<script>
+// Apply the hero CTA variant from cv_config so cv_pulse can rotate copy.
+(async () => {
+  try {
+    const r = await fetch('/api/cv/config', {cache: 'force-cache'});
+    if (!r.ok) return;
+    const c = await r.json();
+    const map = {
+      'value':    '30 日無料で始める',
+      'identity': 'あなた専用の一着を見る',
+      'loss':     '30 日後に消える、あなたの 30 案',
+    };
+    const v = c.hero_cta_variant || 'value';
+    const lbl = map[v] || map.value;
+    const el = document.getElementById('hero-cta-label');
+    if (el) el.textContent = lbl;
+  } catch (_) {}
+})();
+</script>
   <div class="hero-meta">
     <div class="m"><div class="v">30日</div><div class="l">無料トライアル</div></div>
     <div class="m"><div class="v">毎朝 9:00</div><div class="l">JST 配信</div></div>

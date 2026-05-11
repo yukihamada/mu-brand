@@ -41,6 +41,8 @@ install_crons() {
 0 0 * * 1 /usr/bin/curl -s -X POST -H 'Content-Type: application/json' -d '{"admin_token":"$ADMIN_TOKEN"}' https://wearmu.com/api/admin/lottery_draw >> $LOG_DIR/lottery_draw.log 2>&1
 # mu-brand CV pulse — every 30 min, snapshots metrics, applies adjustments, posts Telegram digest
 */30 * * * * /usr/bin/curl -s -X POST -H 'Content-Type: application/json' -d '{"admin_token":"$ADMIN_TOKEN"}' https://wearmu.com/api/admin/cv_pulse >> $LOG_DIR/cv_pulse.log 2>&1
+# mu-brand Google Ads CPC nudge — JST 10:00 daily (UTC 1:00)
+0 1 * * * set -a && source $ENV_FILE && set +a && $PYTHON $SCRIPT_DIR/ads/cv_tune_ads.py >> $LOG_DIR/ads_tune.log 2>&1
 EOF
 
     crontab /tmp/mu_crontab_tmp
