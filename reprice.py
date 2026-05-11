@@ -32,13 +32,23 @@ def recalc_price(brand: str, weather: dict, drop_num: int, name: str = "") -> in
 
 con = sqlite3.connect(DB_PATH)
 rows = con.execute(
-    "SELECT id, brand, drop_num, name, price_jpy, weather_data FROM products WHERE active=1 ORDER BY id"
+    "SELECT id, brand, drop_num, name, price_jpy, weather_data, current_bid, bid_count "
+    "FROM products WHERE active=1 ORDER BY id"
 ).fetchall()
 
 print(f"Repricing {len(rows)} products...")
 updated = 0
 
-for (pid, brand, drop_num, name, old_price, weather_json) in rows:
+for (pid, brand, drop_num, name, old_price, weather_json, current_bid, bid_count) in rows:
+    # NEVER reprice an MA piece that already has bids — that retroactively
+    # changes the floor under which bidders entered. 2026-05-11: this guard was
+    # added after the monthly→weekly cadence change accidentally lowered the
+    # floor on an in-flight MA #11 auction (¥120k → ¥30k mid-auction).
+    if brand == "ma" and (bid_count or 0) > 0:
+        print(f"  #{pid} {brand}/{drop_num} '{name}': in-flight auction "
+              f"(current_bid=¥{current_bid or 0:,}, {bid_count} bids), skip")
+        continue
+
     if not weather_json:
         print(f"  #{pid} {brand}/{drop_num}: no weather data, skip")
         continue

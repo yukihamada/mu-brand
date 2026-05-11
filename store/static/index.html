@@ -26,7 +26,7 @@
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://wearmu.com/">
 <meta property="og:title" content="MU — 北海道の天気がデザインする服">
-<meta property="og:description" content="気温が枚数を決め、風速が価格を決める。毎時・毎日・毎月、AIが生成する限定Tシャツ。売り切れたら二度と同じものは生まれない。">
+<meta property="og:description" content="気温が枚数を決め、風速が価格を決める。毎時・毎日・毎週、AIが生成する限定Tシャツ。売り切れたら二度と同じものは生まれない。">
 <meta property="og:image" content="https://wearmu.com/og.jpg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -38,7 +38,7 @@
 <!-- Twitter Card -->
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="MU — 北海道の天気がデザインする服">
-<meta name="twitter:description" content="気温が枚数を決め、風速が価格を決める。毎時・毎日・毎月、AIが生成する限定Tシャツ。">
+<meta name="twitter:description" content="気温が枚数を決め、風速が価格を決める。毎時・毎日・毎週、AIが生成する限定Tシャツ。">
 <meta name="twitter:image" content="https://wearmu.com/og.jpg">
 <meta name="twitter:image:alt" content="MU — AI autonomous fashion brand">
 
@@ -93,7 +93,7 @@
         "itemListElement": [
           {"@type": "Offer", "name": "MUGEN — 毎時限定Tシャツ（108枚サイクル）"},
           {"@type": "Offer", "name": "MUON — 毎日限定Tシャツ（気温連動枚数）"},
-          {"@type": "Offer", "name": "MA — 毎月オークションTシャツ（月次1点）"}
+          {"@type": "Offer", "name": "MA — 週次オークションTシャツ（7日間・1点）"}
         ]
       }
     }
@@ -483,7 +483,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
 <nav id="nav">
   <a class="nav-logo" href="#" onclick="showSection('hero')">MU</a>
   <div class="nav-tabs">
-    <div class="nav-tab" data-b="ma" onclick="showSection('ma')" role="button" tabindex="0" aria-label="間 MA — 月に1着のオークション">間 MA</div>
+    <div class="nav-tab" data-b="ma" onclick="showSection('ma')" role="button" tabindex="0" aria-label="間 MA — 週に1着の7日間オークション">間 MA</div>
     <div class="nav-tab" data-b="muon" onclick="showSection('muon')" role="button" tabindex="0" aria-label="MUON 無音 — 気温が枚数を決める">MUON 無音</div>
     <div class="nav-tab" data-b="mugen" onclick="showSection('mugen')" role="button" tabindex="0" aria-label="MUGEN 無限 — 毎時間生まれるドロップ">MUGEN 無限</div>
     <div class="nav-tab" data-b="nouns" onclick="showSection('nouns')" role="button" tabindex="0" aria-label="MU × NOUNS コラボレーション">⌐◨-◨ NOUNS <span style="background:#e6c449;color:#000;font-size:6px;letter-spacing:0.15em;padding:2px 6px;vertical-align:middle;font-weight:700;margin-left:4px">🤝</span></div>
@@ -555,15 +555,15 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
       <div class="section-brand">間 MA</div>
       <div class="section-title">世界に<br>1着。</div>
       <div class="section-concept">
-        <p class="concept-line">月に一度、AIが生み出す。<br>一枚だけ製造される。<br>オークションで、一人の手に渡る。<br>真正証明書として Solana 上の <span title="2026 Q3 ローンチ予定">Soulbound NFT (近日)</span> を opt-in で発行。<br>服と共に長く残ることを目指している。</p>
+        <p class="concept-line">週に一度（毎週月曜）、AIが生み出す。<br>一枚だけ製造される。<br>7日間のオークションで、一人の手に渡る。<br>真正証明書として Solana 上の <span title="2026 Q3 ローンチ予定">Soulbound NFT (近日)</span> を opt-in で発行。<br>服と共に長く残ることを目指している。</p>
       </div>
     </div>
     <div class="section-right">
       <div class="live-info">
-        月1回生成<br>
+        週1回生成 (月曜)<br>
         発行枚数 <span>1</span><br>
         転売不可NFT<br>
-        オークション形式<br>
+        7日間オークション<br>
         デザインDNA継承
       </div>
     </div>
@@ -851,7 +851,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
           DAOにこれを継続的な貢献として認識してほしい——一度限りのジェスチャーではなく。
         </div>
         <div class="nouns-track-meta">
-          <div class="nouns-track-chip">毎月15日 24h Auction</div>
+          <div class="nouns-track-chip">毎週月曜 7日間 Auction</div>
         </div>
       </div>
     </div>
@@ -1127,7 +1127,7 @@ async function loadMA(){
     const r = await fetch('/api/products/ma');
     const products = await r.json();
     if(!products||!products.length){
-      cont.innerHTML='<div class="empty">Next drop: 来月初</div>';
+      cont.innerHTML='<div class="empty">Next drop: 次の月曜 00:00 JST</div>';
       return;
     }
     const p = products[0];
