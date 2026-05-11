@@ -7866,6 +7866,8 @@ async fn main() {
         .route("/api/checkout/crypto", post(payments::checkout_crypto))
         .route("/api/checkout/crypto/status/:reference", get(payments::checkout_crypto_status))
         .route("/api/rates", get(payments::rates_handler))
+        .route("/api/payment_methods", get(payments::payment_methods_handler))
+        .route("/health", get(payments::health_handler))
         .route("/api/webhook/stripe", post(stripe_webhook))
         .route("/api/webhook/helius", post(payments::helius_webhook))
         .route("/api/webhook/alchemy", post(payments::alchemy_webhook))

@@ -113,6 +113,39 @@
     } catch (_) { /* ignore */ }
   }
 
+  // ── Payment-method availability ────────────────────────────────────
+  // Fetched once on init. Server hides crypto methods when their
+  // webhook secret isn't fully configured (placeholder), so paying with
+  // an undetectable on-chain settlement is impossible from the UI.
+  async function refreshPaymentMethods() {
+    try {
+      const r = await fetch('/api/payment_methods');
+      if (!r.ok) return;
+      const m = await r.json();
+      const btns = document.querySelectorAll('#pay-method-btns .size-btn');
+      let hiddenCount = 0;
+      btns.forEach((btn) => {
+        const meth = btn.dataset.method;
+        const enabled = m[meth] === true;
+        btn.style.display = enabled ? '' : 'none';
+        if (!enabled && btn.classList.contains('selected')) {
+          btn.classList.remove('selected');
+          // Reset to JPY (first button)
+          const jpy = document.querySelector('#pay-method-btns .size-btn[data-method=jpy]');
+          if (jpy) { jpy.classList.add('selected'); selectedPayMethod = 'jpy'; }
+        }
+        if (!enabled) hiddenCount++;
+      });
+      if (hiddenCount > 0) {
+        const note = document.getElementById('pay-method-note');
+        if (note && note.textContent === '') {
+          note.style.opacity = '0.5';
+          note.textContent = 'Crypto methods are temporarily unavailable.';
+        }
+      }
+    } catch (_) { /* ignore */ }
+  }
+
   // ── KYC modal ──────────────────────────────────────────────────────
   function ensureKycModal() {
     if (document.getElementById('kyc-modal-root')) return;
@@ -434,7 +467,9 @@
     }
     setTimeout(updatePayMethodNote, 100);
     refreshRates();
+    refreshPaymentMethods();
     setInterval(refreshRates, 5 * 60 * 1000);
+    setInterval(refreshPaymentMethods, 5 * 60 * 1000);
   }
 
   if (document.readyState === 'loading') {

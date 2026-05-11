@@ -85,6 +85,99 @@ fn env_rate(key: &str, default: f64) -> f64 {
 /// argument (most call sites are deep inside synchronous helpers).
 static CRON_DB: std::sync::OnceLock<Db> = std::sync::OnceLock::new();
 
+/// True if the named env var is a placeholder value (unset, empty, or
+/// contains "PLACEHOLDER" / "REPLACE"). Used by /api/payment_methods and
+/// /health to gate crypto checkout until real secrets are deployed.
+fn is_placeholder(key: &str) -> bool {
+    let v = env::var(key).unwrap_or_default();
+    if v.is_empty() { return true; }
+    let up = v.to_ascii_uppercase();
+    up.contains("PLACEHOLDER") || up.contains("REPLACE_ME") || up.contains("REPLACE_VIA")
+        || v == "0x0000000000000000000000000000000000000000"
+}
+
+/// Crypto checkout is enabled per-asset only when both the receiver
+/// wallet AND the corresponding webhook auth are real (non-placeholder).
+fn usdc_enabled() -> bool { !is_placeholder("MU_SOL_RECIPIENT") && !is_placeholder("HELIUS_WEBHOOK_AUTH") }
+fn sol_enabled()  -> bool { usdc_enabled() }
+fn eth_enabled()  -> bool { !is_placeholder("MU_ETH_RECIPIENT") && !is_placeholder("ALCHEMY_WEBHOOK_SIGNING_KEY") }
+
+/// GET /api/payment_methods — UI calls this on init to know which payment
+/// methods to render. JPY is always on; crypto methods only on when both
+/// the receiver wallet AND its webhook auth secret are real.
+pub async fn payment_methods_handler(State(_db): State<Db>) -> impl IntoResponse {
+    Json(serde_json::json!({
+        "jpy":  true,
+        "usdc": usdc_enabled(),
+        "sol":  sol_enabled(),
+        "eth":  eth_enabled(),
+        "_reason_unavailable": {
+            "usdc_sol": if !usdc_enabled() { Some("MU_SOL_RECIPIENT or HELIUS_WEBHOOK_AUTH is placeholder") } else { None },
+            "eth":      if !eth_enabled()  { Some("MU_ETH_RECIPIENT or ALCHEMY_WEBHOOK_SIGNING_KEY is placeholder") } else { None },
+        }
+    })).into_response()
+}
+
+/// Fire a Telegram message via the configured TELEGRAM_BOT_TOKEN /
+/// TELEGRAM_CHAT_ID. Non-blocking, swallows errors (the bot failing
+/// shouldn't break user-facing requests).
+fn tg_alert(text: &str) {
+    let token = env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default();
+    let chat_id = env::var("TELEGRAM_CHAT_ID").unwrap_or_default();
+    if token.is_empty() || chat_id.is_empty() { return; }
+    let text = format!("🚨 mu-store: {}", text);
+    let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+    tokio::spawn(async move {
+        let _ = reqwest::Client::new().post(&url)
+            .json(&serde_json::json!({
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": true,
+            }))
+            .timeout(std::time::Duration::from_secs(10))
+            .send().await;
+    });
+}
+
+/// GET /health — degraded-state report. Always returns 200 so Fly's HTTP
+/// health check stays green; the JSON payload surfaces what's wrong.
+pub async fn health_handler(State(db): State<Db>) -> impl IntoResponse {
+    let placeholders: Vec<&str> = ["MU_SOL_RECIPIENT", "MU_ETH_RECIPIENT",
+        "HELIUS_WEBHOOK_AUTH", "ALCHEMY_WEBHOOK_SIGNING_KEY",
+        "STRIPE_IDENTITY_WEBHOOK_SECRET"]
+        .iter().filter(|k| is_placeholder(k)).copied().collect();
+    let pending_count: i64 = {
+        if let Ok(conn) = db.lock() {
+            conn.query_row(
+                "SELECT COUNT(*) FROM pending_crypto_payments WHERE status='pending'",
+                [], |r| r.get(0)
+            ).unwrap_or(0)
+        } else { 0 }
+    };
+    let last_rate_update: String = {
+        if let Ok(conn) = db.lock() {
+            conn.query_row(
+                "SELECT MAX(updated_at) FROM crypto_settings",
+                [], |r| r.get::<_,Option<String>>(0)
+            ).unwrap_or(None).unwrap_or_default()
+        } else { String::new() }
+    };
+    Json(serde_json::json!({
+        "ok": true,
+        "version": env!("CARGO_PKG_VERSION"),
+        "degraded": !placeholders.is_empty(),
+        "placeholder_secrets": placeholders,
+        "crypto_enabled": {
+            "usdc": usdc_enabled(),
+            "sol":  sol_enabled(),
+            "eth":  eth_enabled(),
+        },
+        "pending_crypto_payments": pending_count,
+        "last_rate_refresh": last_rate_update,
+    })).into_response()
+}
+
 pub fn jpy_to_usdc_amount(jpy: i64) -> String {
     format!("{:.2}", jpy as f64 / env_rate("JPY_PER_USD", JPY_PER_USD_DEFAULT))
 }
@@ -190,6 +283,20 @@ pub async fn checkout_crypto(
     let pm = body.payment_method.to_ascii_lowercase();
     if !matches!(pm.as_str(), "usdc" | "sol" | "solana" | "eth" | "crypto") {
         return (StatusCode::BAD_REQUEST, "payment_method must be one of: usdc, sol, eth").into_response();
+    }
+    // Server-side gate: never accept a crypto checkout if its on-chain
+    // settlement webhook isn't fully configured. Otherwise we'd take a
+    // payment we can't detect → customer pays, order never ships.
+    let asset_enabled = match pm.as_str() {
+        "usdc" | "sol" | "solana" | "crypto" => usdc_enabled(),
+        "eth" => eth_enabled(),
+        _ => false,
+    };
+    if !asset_enabled {
+        return (StatusCode::SERVICE_UNAVAILABLE,
+            "Crypto checkout for this method is temporarily disabled. \
+             Webhook secret or recipient wallet is not yet configured. \
+             Use payment_method=\"jpy\" or try again later.").into_response();
     }
 
     let check = {
@@ -638,8 +745,18 @@ async fn fulfill_crypto_order(db: Db, reference: String) {
                 let s = r.status();
                 let body = r.text().await.unwrap_or_default();
                 tracing::warn!("[fulfill] Printful {} ref={}: {}", s, reference, &body[..body.len().min(300)]);
+                tg_alert(&format!(
+                    "Printful order FAILED for confirmed crypto payment.\n\
+                     ref={}\nproduct={}\nstatus={}\nbody={}",
+                    reference, product_id, s, &body[..body.len().min(400)]));
             }
-            Err(e) => tracing::warn!("[fulfill] Printful net err ref={}: {}", reference, e),
+            Err(e) => {
+                tracing::warn!("[fulfill] Printful net err ref={}: {}", reference, e);
+                tg_alert(&format!(
+                    "Printful network error for confirmed crypto payment.\n\
+                     ref={}\nproduct={}\nerror={}",
+                    reference, product_id, e));
+            }
         }
     } else {
         tracing::info!("[fulfill] Printful skipped (no key or no design_url) ref={}", reference);
@@ -681,8 +798,16 @@ async fn fulfill_crypto_order(db: Db, reference: String) {
                 let s = r.status();
                 let b = r.text().await.unwrap_or_default();
                 tracing::warn!("[fulfill] Resend {} ref={}: {}", s, reference, &b[..b.len().min(300)]);
+                tg_alert(&format!(
+                    "Resend confirmation-email FAILED.\nref={}\nemail={}\nstatus={}",
+                    reference, email, s));
             }
-            Err(e) => tracing::warn!("[fulfill] Resend net err ref={}: {}", reference, e),
+            Err(e) => {
+                tracing::warn!("[fulfill] Resend net err ref={}: {}", reference, e);
+                tg_alert(&format!(
+                    "Resend network error.\nref={}\nemail={}\nerror={}",
+                    reference, email, e));
+            }
         }
     } else {
         tracing::info!("[fulfill] Resend skipped (no key) ref={}", reference);
@@ -927,6 +1052,10 @@ fn write_setting(db: &Db, key: &str, value: &str) {
     }
 }
 
+// Pyth fetch failure noise filter — alert only after N consecutive fails so
+// transient outages don't spam Telegram.
+static PYTH_FAIL_STREAK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 async fn fetch_pyth_rates(db: Db) -> Result<(), String> {
     let ids = format!(
         "ids[]={}&ids[]={}&ids[]={}",
@@ -1006,8 +1135,20 @@ pub fn start_crons(db: Db) {
     let db1 = db.clone();
     tokio::spawn(async move {
         loop {
-            if let Err(e) = fetch_pyth_rates(db1.clone()).await {
-                tracing::warn!("[rates] fetch failed: {}", e);
+            match fetch_pyth_rates(db1.clone()).await {
+                Ok(_) => {
+                    PYTH_FAIL_STREAK.store(0, std::sync::atomic::Ordering::Relaxed);
+                }
+                Err(e) => {
+                    let n = PYTH_FAIL_STREAK
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    tracing::warn!("[rates] fetch failed (streak={}): {}", n, e);
+                    if n == 3 {
+                        tg_alert(&format!(
+                            "Pyth rate fetch failed 3 times in a row. Last error: {}. \
+                             Rates will fall through to env vars / defaults.", e));
+                    }
+                }
             }
             tokio::time::sleep(std::time::Duration::from_secs(300)).await;
         }
