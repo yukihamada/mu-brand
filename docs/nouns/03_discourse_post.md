@@ -24,7 +24,7 @@ doesn't fit Nouns" *before* I push the button, not after.
 | | Nouns | MU |
 |---|---|---|
 | Cadence | 1 Noun/day, forever | 1 MUON drop/day, forever (qty = today's °C in Teshikaga, Hokkaido) |
-| Auction | 24h on-chain, no reserve | MA: 1 piece/month, 24h on-chain, no reserve |
+| Auction | 24h on-chain, no reserve | MA: 1 piece/week, 7-day on-chain, no reserve, from ¥30k |
 | Decision-maker | The contract | The cron job |
 | Asset license | CC0 | MIT (whole pipeline, public) |
 
@@ -35,7 +35,7 @@ Recognition + a single channel of feedback while I build, on three concurrent
 
 1. **MUGEN × NOUNS** — weekly curated drop, ⌐◨-◨ as prompt input
 2. **MUON × NOUNS** — daily climate-gated drop, volume = day's temperature
-3. **MA × NOUNS** — monthly auction (mechanism lifted directly from Nouns)
+3. **MA × NOUNS** — weekly 7-day auction from ¥30k (mechanism lifted directly from Nouns)
 
 10% of gross revenue from all × NOUNS drops → Nouns Treasury
 (`0x0BC3807Ec262cB779b38D65b38158acC3bfedE10`), in perpetuity. Public

@@ -17,11 +17,13 @@ def recalc_price(brand: str, weather: dict, drop_num: int, name: str = "") -> in
             return 30000
         return max(2000, round((3000 + wind * 150) / 1000) * 1000)
     elif brand == "ma":
-        return 120000
+        # 2026-05-11: MA starting bid lowered from ¥120k → ¥30k when cadence
+        # changed from monthly to weekly 7-day auctions.
+        return 30000
     elif brand == "nouns":
         nm = name.upper()
         if "MA" in nm or "間" in nm:
-            return 120000
+            return 30000
         elif "MUON" in nm:
             return max(3000, round(temp * 1000 / 1000) * 1000)
         else:  # MUGEN × NOUNS

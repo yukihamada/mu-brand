@@ -34,8 +34,8 @@ no token issued.
 Three lines:
 - MUGEN 無限 — hourly drops, 108-piece cycle
 - MUON 無音 — daily, weather-gated supply
-- 間 MA   — monthly, single-piece auction (mechanism lifted from
-            Nouns DAO)
+- 間 MA   — weekly, 7-day single-piece auction from ¥30,000
+            (mechanism lifted from Nouns DAO)
 
 Founder: Yuki Hamada — ex-CPO of Mercari (2014–2021, IPO 2018), ex-
 co-founder of NOT A HOTEL.

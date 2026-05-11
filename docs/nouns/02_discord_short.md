@@ -16,7 +16,7 @@ human creative direction:
 - entire pipeline is MIT on GitHub (`yukihamada/mu-brand`)
 
 I want to weave ⌐◨-◨ into that machine via three concurrent collab tracks
-(MUGEN weekly / MUON daily / MA monthly auction), and commit to sending
+(MUGEN weekly / MUON daily / MA weekly 7-day auction), and commit to sending
 **10% of all × NOUNS drop revenue, in perpetuity, to the treasury**
 (`0x0BC3807Ec262cB779b38D65b38158acC3bfedE10`).
 

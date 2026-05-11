@@ -17,7 +17,7 @@ Quick one for the editorial team.
 - Three product lines:
     - **MUGEN 無限** (hourly, 108-piece cycle, #1 is rarest)
     - **MUON 無音** (daily, weather-gated)
-    - **間 MA** (monthly, 1-piece-in-the-world auction)
+    - **間 MA** (weekly, 7-day 1-piece-in-the-world auction)
 - Each garment ships with a Solana cNFT certificate. The MA piece is
   Soulbound.
 
@@ -29,7 +29,7 @@ called MU CITY as proof.
 
 NOUNS DAO collab in flight too — a candidate proposal commits 10% of
 ⌐◨-◨ co-branded drop revenue to the Nouns Treasury in perpetuity. Three
-collab tracks (weekly / daily / monthly auction) lined up. CC0 + MIT.
+collab tracks (weekly / daily / weekly auction) lined up. CC0 + MIT.
 
 Why I think this fits HB readers:
 - Generative aesthetics, finite scarcity (108-piece cycle is hard-capped),

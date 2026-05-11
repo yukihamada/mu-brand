@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 MU Brand — Autonomous AI Design Generator
-MA: monthly × 1piece | MUON: daily × temp°C pieces | MUGEN: hourly × drop# pieces (cycle 1-108)
+MA: weekly (Mon) × 1piece, 7-day auction from ¥30k | MUON: daily × temp°C pieces | MUGEN: hourly × drop# pieces (cycle 1-108)
 """
 
 import os, sys, json, random, sqlite3, requests, base64, hashlib, time, io, struct
@@ -214,8 +214,11 @@ def embed_serial_number(image_bytes: bytes, brand: str, drop_num: int, quantity:
         line1 = f"MUON {now.strftime('%Y.%m.%d')}"
         line2 = f"1 of {quantity} · {now.strftime('%H:%M')} JST"
     elif brand == "ma":
-        line1 = f"MA {now.strftime('%Y.%m')}"
-        line2 = f"1 of 1 · {now.strftime('%Y.%m.%d')}"
+        # MA is now a weekly 7-day auction (was monthly until 2026-05-11).
+        # Stamp with ISO week so each MA is uniquely tagged: "MA 2026.W19".
+        iso = now.isocalendar()
+        line1 = f"MA {iso.year}.W{iso.week:02d}"
+        line2 = f"1 of 1 · {now.strftime('%Y.%m.%d')} · 7-day auction"
     else:
         line1 = f"NOUNS × MU #{drop_num:04d}"
         line2 = f"1 of {quantity} · {now.strftime('%Y.%m.%d')}"
@@ -668,13 +671,15 @@ Execution:
 """
     else:  # ma
         quantity = 1
-        price = 120000
-        name = f"間 MA × NOUNS {today.strftime('%Y.%m')}"
+        # 2026-05-11: MA cadence monthly → weekly, start price ¥120k → ¥30k.
+        price = 30000
+        iso = today.isocalendar()
+        name = f"間 MA × NOUNS {iso.year}.W{iso.week:02d}"
         prompt = f"""
 FLAT PRINT ARTWORK. Single element. Black ink on pure white background. THIS IS A GRAPHIC — NOT A PHOTO OF A GARMENT. No t-shirt. No clothing shape. No model. Flat artwork only.
 
-Brand: MA × NOUNS — monthly auction collab with Nouns DAO. 1 piece only. Highest bid wins.
-Month: {today.strftime('%B %Y')} / {temp}°C, {weather['condition']}
+Brand: MA × NOUNS — weekly 7-day auction collab with Nouns DAO. 1 piece only. Highest bid wins.
+Week: {iso.year} W{iso.week:02d} / {temp}°C, {weather['condition']}
 
 Design concept: MA (間) is Japanese negative space. Nouns is pixel geometry. Fuse them:
 - Two squares (⬛⬜) rendered in sumi-e ink brush style — one filled with a single deliberate brushstroke, one left as a ghost outline
@@ -768,14 +773,13 @@ def run(brand: str):
         last = get_last_design(con, "ma")
         name, prompt = prompt_ma(weather, last)
         quantity = 1
-        price = 120000
+        # MA cadence: 2026-05-11 changed monthly → weekly. Start price ¥120k → ¥30k.
+        price = 30000
         cycle_num = None
         is_ice = False
-        auction_end = (datetime.now().replace(
-            day=1, hour=0, minute=0, second=0, microsecond=0
-        ).__class__(datetime.now().year + (datetime.now().month // 12),
-                    (datetime.now().month % 12) + 1, 1)
-        ).isoformat()
+        # Auction ends 7 days from now.
+        from datetime import timedelta
+        auction_end = (datetime.now() + timedelta(days=7)).isoformat()
 
     elif brand == "muon":
         name, prompt, quantity, is_ice = prompt_muon(weather, drop_num)

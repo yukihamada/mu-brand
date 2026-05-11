@@ -265,11 +265,13 @@ pub struct CryptoCheckoutBody {
 // rather than reach into main.rs to avoid the cross-module coupling that was
 // causing concurrent-edit races.
 fn dynamic_price(brand: &str, drop_num: i64, sold: i64, name: &str) -> i64 {
-    if brand == "ma" { return 120_000; }
+    // MA starting bid lowered from ¥120,000 → ¥30,000 on 2026-05-11 when
+    // MA cadence changed from monthly to weekly 7-day auctions.
+    if brand == "ma" { return 30_000; }
     if brand == "nouns" {
         let nm = name.to_uppercase();
         if nm.contains("間") || nm.contains(" MA ") || nm.starts_with("MA ") || nm.ends_with(" MA") {
-            return 120_000;
+            return 30_000;
         }
     }
     if brand == "mugen" && drop_num == 108 { return 30_000; }

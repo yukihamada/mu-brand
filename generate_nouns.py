@@ -356,12 +356,12 @@ every day (MUON), and every month (MA). We want to make NOUNS part of the AI's c
 2. **MUON × NOUNS Treasury Donation** — 10% of all MUON × NOUNS drop sales go to Nouns Treasury.
    These are limited by today's Hokkaido temperature (a natural oracle).
 
-3. **MA × NOUNS Auction** — Monthly 24-hour auction of a single garment.
+3. **MA × NOUNS Auction** — Weekly 7-day auction of a single garment, from ¥30,000.
    "MA is fashion's Nouns." Same mechanic. Different medium.
 
 ## Why Nouns?
 - CC0 means AI can freely incorporate Nouns Glasses into designs
-- Nouns' auction mechanism is the natural model for MA's 1-of-1 monthly piece
+- Nouns' auction mechanism is the natural model for MA's 1-of-1 weekly piece
 - Both projects use on-chain provenance as core value proposition
 - MU's audience: Japanese streetwear + Web3 → new demographic for Nouns
 

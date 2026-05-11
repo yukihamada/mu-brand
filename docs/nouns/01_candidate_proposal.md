@@ -33,7 +33,7 @@ MU is the same shape, in fabric:
 | | Nouns | MU |
 |---|---|---|
 | Cadence | 1 Noun / day, forever | 1 MUON drop / day, forever (volume = today's °C in Teshikaga) |
-| Auction | 24h on-chain, no reserve | MA: 1 piece / month, 24h on-chain, no reserve |
+| Auction | 24h on-chain, no reserve | MA: 1 piece / week, 7-day on-chain, no reserve, from ¥30k |
 | Decision-maker | The contract | The cron job |
 | Asset license | CC0 | MIT (entire pipeline, public on GitHub) |
 | Treasury | Auction proceeds | 10% of × NOUNS drops → Nouns Treasury |
@@ -73,16 +73,16 @@ drops always have meaningful edition sizes.
 - Daily climate dashboard published at `wearmu.com/nouns/today`
 - All `× NOUNS` MUON pieces tagged with the raw weather oracle output
 
-### Track 3 — `MA × NOUNS` (monthly auction)
+### Track 3 — `MA × NOUNS` (weekly 7-day auction)
 
-MA is MU's monthly release: one piece in the world, 24h on-chain auction, no
-reserve, highest bid wins. **The mechanism is lifted directly from the Nouns
-auction house.** We want the DAO to formally recognise this as a recurring tribute,
-not a one-off gesture.
+MA is MU's weekly release: one piece in the world, 7-day on-chain auction, no
+reserve, highest bid wins, starting from ¥30,000 (~$200). **The mechanism is
+lifted directly from the Nouns auction house.** We want the DAO to formally
+recognise this as a recurring tribute, not a one-off gesture.
 
 - 10% of the winning bid → Nouns Treasury
 - Auction settles in ETH; physical garment shipped to winner
-- Pre-announced 7 days ahead, on `wearmu.com/ma`
+- New auction opens every Monday 00:00 JST, on `wearmu.com/ma`
 
 ---
 
@@ -90,7 +90,7 @@ not a one-off gesture.
 
 - CC0 assets used **within the generative prompt**, never as direct pixel reproduction
 - Treasury recipient: `0x0BC3807Ec262cB779b38D65b38158acC3bfedE10` (Nouns DAO Executor)
-- Transfer mechanism: settlement-time direct ETH transfer (MA), monthly batched
+- Transfer mechanism: settlement-time direct ETH transfer (MA), weekly batched
   fiat→ETH→treasury (MUGEN/MUON), with a public dashboard reconciling sales to
   on-chain deposits
 - "× NOUNS" branding restricted to drops in the three tracks above

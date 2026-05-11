@@ -22,8 +22,8 @@ Every week, MU's AI generates a new streetwear graphic that reinterprets ⌐◨-
 **Track 2 — MUON × NOUNS (Daily, Climate-Gated)**
 MUON drops happen daily. The quantity printed per drop equals the current temperature in Hokkaido, Japan — a natural oracle creating real scarcity tied to weather. MUON × NOUNS editions run inside this system: 10% of gross sales from each collab drop go directly to the Nouns Treasury. Climate determines supply. The DAO gets a cut. No human decides either.
 
-**Track 3 — MA × NOUNS Auction (Monthly)**
-MA is MU's monthly release — one piece, highest bid wins, 24-hour window, no reserve. The mechanism is lifted directly from Nouns. MA is fashion's Nouns. One piece per month, on-chain auction, 10% of the winning bid to the Nouns Treasury. We want the DAO to formally recognize this as a recurring contribution, not a one-time gesture.
+**Track 3 — MA × NOUNS Auction (Weekly, 7-Day)**
+MA is MU's weekly release — one piece, highest bid wins, 7-day window, no reserve, starting from ¥30,000 (~$200). The mechanism is lifted directly from Nouns. MA is fashion's Nouns. One piece per week, on-chain auction, 10% of the winning bid to the Nouns Treasury. We want the DAO to formally recognize this as a recurring contribution, not a one-time gesture.
 
 ## Specification
 

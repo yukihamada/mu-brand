@@ -22,13 +22,13 @@ mechanics off-chain" makes a clean explainer.
 
 **2. Solana cNFT certificate per piece.**
 Solana Pay (USDC/SOL) is wired in alongside JPY. Each garment ships with
-a compressed NFT via Helius. The "間 MA" monthly auction line uses a
+a compressed NFT via Helius. The "間 MA" weekly 7-day auction line uses a
 mechanism lifted directly from the Nouns auction house.
 
 **3. Nouns DAO candidate proposal.**
 Draft is at github.com/yukihamada/mu-brand/blob/main/NOUNS_PROPOSAL.md.
 Three concurrent collab tracks (MUGEN × NOUNS weekly, MUON × NOUNS daily
-climate-gated, MA × NOUNS monthly auction). Funding requested from the
+climate-gated, MA × NOUNS weekly 7-day auction). Funding requested from the
 DAO: **0 ETH.** Just a cosign on the `× NOUNS` framing, and 10% of all
 co-branded gross revenue to the treasury in perpetuity. We're about to
 post the candidate to nouns.camp and discourse.nouns.wtf.

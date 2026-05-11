@@ -22,7 +22,7 @@ as the run sells.
 
 - MUGEN 無限 — hourly, 108-piece cycle, #1 is rarest
 - MUON 無音 — daily, weather-gated print run
-- 間 MA   — monthly 24h on-chain auction, one piece in the world
+- 間 MA   — weekly 7-day on-chain auction, one piece in the world (from ¥30,000)
 
 Live since 2026-05-07. The full backend (Rust + Gemini 3 Pro Image +
 Solana cNFT + Printful + Stripe) is MIT-licensed open-source at

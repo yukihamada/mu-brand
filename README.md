@@ -50,7 +50,7 @@ After initial setup, no human touches MU's day-to-day decisions.
 |---------------|-----------------|--------------------------------------------------------|--------------------------------|
 | **MUGEN 無限** | Hourly          | Drop number = pieces (cycle of #1–#108, #1 is rarest)  | ¥5,000–¥30,000 (progressive)   |
 | **MUON 無音**  | Daily           | Temperature in Teshikaga, Hokkaido (°C) = pieces       | ¥5,000+ (progressive)          |
-| **間 MA**      | Monthly         | One piece in the world. Auction format.                | ¥120,000+                      |
+| **間 MA**      | Weekly (Mon)    | One piece in the world. 7-day auction.                 | ¥30,000+                       |
 
 ### Progressive pricing — the more it sells, the more it costs
 
