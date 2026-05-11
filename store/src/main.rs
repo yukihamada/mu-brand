@@ -43,6 +43,87 @@ fn autopilot_skip(task: &str) -> bool {
 /// is missing or empty, every admin request is rejected with 503.
 /// Never falls back to a default value (prevents the historical
 /// "mu-admin" default-token vulnerability).
+/// 包括的 admin 認可 — 推奨経路。
+///
+/// 確認順序:
+///   1. `Authorization: Bearer <token>` ヘッダー (推奨、URL ログ漏れなし)
+///   2. `X-Admin-Token: <token>` ヘッダー (代替)
+///   3. `?token=<token>` クエリ (レガシー、後方互換のみ)
+///
+/// 副作用:
+///   - admin_auth_log テーブルに毎回 1 行記録 (success/failure 両方)
+///   - 直近 1 時間に同一 IP から失敗 30 回超で 429 (lockout 防止)
+///
+/// 引数:
+///   - headers : HeaderMap (リクエストヘッダー)
+///   - q       : Query map (`?token=...` を抽出)
+///   - db      : SQLite ハンドル (rate limit + ログ用)
+///   - path    : リクエストパス (ログ用)
+async fn admin_auth(
+    headers: &HeaderMap,
+    q: &std::collections::HashMap<String, String>,
+    db: Db,
+    path: &str,
+) -> Result<(), Response> {
+    // 1. クライアント IP
+    let ip = headers.get("fly-client-ip")
+        .or_else(|| headers.get("x-forwarded-for"))
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
+        .unwrap_or_default();
+
+    // 2. レート制限: 同一 IP の失敗が直近 1h で 30 回超 → 429
+    if !ip.is_empty() {
+        let now_s: i64 = chrono_now().parse().unwrap_or(0);
+        let h1 = now_s - 3600;
+        let fails: i64 = {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT COUNT(*) FROM admin_auth_log
+                 WHERE ip=? AND ok=0 AND CAST(at AS INTEGER) > ?",
+                params![ip, h1], |r| r.get(0),
+            ).unwrap_or(0)
+        };
+        if fails > 30 {
+            eprintln!("[security] admin rate-limit blocked ip={} fails_1h={}", ip, fails);
+            return Err((StatusCode::TOO_MANY_REQUESTS,
+                "admin auth: too many failed attempts; locked for 1h").into_response());
+        }
+    }
+
+    // 3. トークン抽出 (Authorization > X-Admin-Token > query)
+    let (provided, via): (Option<String>, &'static str) = {
+        let auth_h = headers.get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.strip_prefix("Bearer ").or_else(|| s.strip_prefix("bearer ")))
+            .map(String::from);
+        let xat = headers.get("x-admin-token")
+            .and_then(|v| v.to_str().ok()).map(String::from);
+        if let Some(t) = auth_h { (Some(t), "header") }
+        else if let Some(t) = xat { (Some(t), "header") }
+        else if let Some(t) = q.get("token") { (Some(t.clone()), "query") }
+        else { (None, "none") }
+    };
+
+    // 4. 検証 + 監査ログ
+    let result = require_admin_token(provided.as_ref());
+    let ok = result.is_ok();
+    let ua = headers.get("user-agent").and_then(|v| v.to_str().ok())
+        .map(|s| s.chars().take(200).collect::<String>()).unwrap_or_default();
+    let token_prefix = provided.as_deref()
+        .map(|s| s.chars().take(4).collect::<String>()).unwrap_or_default();
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO admin_auth_log
+                 (ip, path, method, user_agent, ok, token_prefix, via, at)
+             VALUES (?,?,?,?,?,?,?,?)",
+            params![ip, path, "?", ua, ok as i64, token_prefix, via, chrono_now()],
+        );
+    }
+    result
+}
+
 fn require_admin_token(provided: Option<&String>) -> Result<(), Response> {
     let expected = match env::var("ADMIN_TOKEN") {
         Ok(v) if !v.is_empty() => v,
@@ -12078,6 +12159,22 @@ async fn main() {
         );
         CREATE INDEX IF NOT EXISTS idx_agent_journal_at ON agent_journal(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_agent_journal_notable ON agent_journal(notable, created_at DESC);
+        -- /admin/* + /api/admin/* アクセスを 1 行ずつ記録 (success + failure 両方)。
+        -- IP 別レート制限 + インシデント対応の証跡に使う。
+        CREATE TABLE IF NOT EXISTS admin_auth_log (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            ip            TEXT,
+            path          TEXT NOT NULL,
+            method        TEXT,
+            user_agent    TEXT,
+            ok            INTEGER NOT NULL DEFAULT 0,
+            token_prefix  TEXT,         -- 先頭 4 char のみ。フル値は記録しない
+            via           TEXT,         -- 'header' | 'query'
+            at            TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_admin_auth_log_at ON admin_auth_log(at DESC);
+        CREATE INDEX IF NOT EXISTS idx_admin_auth_log_ip ON admin_auth_log(ip, at DESC);
+        CREATE INDEX IF NOT EXISTS idx_admin_auth_log_failed ON admin_auth_log(ok, ip, at DESC);
     ").ok();
     // Multi-agent: add agent_name column (idempotent). Default 'business_health'
     // backfills existing rows from the single-agent era.
@@ -12973,6 +13070,8 @@ async fn main() {
         .route("/admin/agent", get(admin_agent_journal))
         .route("/admin/agent/run", post(admin_agent_run))
         .route("/admin/agents", get(admin_agents_dashboard))
+        .route("/admin/auth_log", get(admin_auth_log_view))
+        .route("/healthz", get(healthz))
         .route("/api/admin/agent_run", post(admin_agent_run))
         .route("/api/admin/prompt_performance", get(admin_prompt_performance))
         .route("/api/admin/prompt_performance/refresh", post(admin_prompt_performance_refresh))
@@ -14149,12 +14248,57 @@ async fn admin_agent_run(
     })).into_response()
 }
 
+/// GET /healthz — Liveness probe. Returns "ok" plain text (200) when the
+/// process can respond. Used by external monitors and Fly health checks.
+async fn healthz() -> impl IntoResponse {
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        "ok\n",
+    )
+}
+
+/// GET /admin/auth_log?token=… — Recent admin auth attempts (audit trail)
+async fn admin_auth_log_view(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/auth_log").await { return r; }
+    let limit: i64 = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(100).clamp(1, 1000);
+    let only_failed = q.get("failed").map(|s| s == "1").unwrap_or(false);
+    let conn = db.lock().unwrap();
+    let sql = if only_failed {
+        "SELECT id, at, ip, path, method, user_agent, ok, token_prefix, via
+         FROM admin_auth_log WHERE ok=0 ORDER BY id DESC LIMIT ?"
+    } else {
+        "SELECT id, at, ip, path, method, user_agent, ok, token_prefix, via
+         FROM admin_auth_log ORDER BY id DESC LIMIT ?"
+    };
+    let mut stmt = match conn.prepare(sql) {
+        Ok(s) => s,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response(),
+    };
+    let rows: Vec<serde_json::Value> = stmt.query_map(params![limit], |r| Ok(serde_json::json!({
+        "id": r.get::<_,i64>(0)?,
+        "at": r.get::<_,String>(1)?,
+        "ip": r.get::<_,Option<String>>(2)?.unwrap_or_default(),
+        "path": r.get::<_,String>(3)?,
+        "method": r.get::<_,Option<String>>(4)?.unwrap_or_default(),
+        "user_agent": r.get::<_,Option<String>>(5)?.unwrap_or_default(),
+        "ok": r.get::<_,i64>(6)? == 1,
+        "token_prefix": r.get::<_,Option<String>>(7)?.unwrap_or_default(),
+        "via": r.get::<_,Option<String>>(8)?.unwrap_or_default(),
+    }))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+    Json(serde_json::json!({"entries": rows, "count": rows.len()})).into_response()
+}
+
 /// GET /admin/agents?token=… — HTML overview of all registered agents
 async fn admin_agents_dashboard(
     State(db): State<Db>,
+    headers: HeaderMap,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Response {
-    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/agents").await { return r; }
     let token_q = q.get("token").map(String::as_str).unwrap_or("");
 
     let now_s: i64 = chrono_now().parse().unwrap_or(0);
