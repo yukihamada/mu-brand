@@ -4636,6 +4636,8 @@ fn grow_sample_designs_for_today(conn: &rusqlite::Connection) {
     // Only R2-backed products (mockups.wearmu.com, lifestyle.wearmu.com, or
     // local /mockups/). The Printful tmp URLs from the launch week have
     // already 403'd; never picking them keeps the gallery alive.
+    // Sort: products with lifestyle photo first (so the gallery shows people,
+    // not flat mockups, whenever possible).
     let pool: Vec<(i64, String, String)> = {
         let mut stmt = match conn.prepare(
             "SELECT id, name, COALESCE(lifestyle_url, mockup_url, '') AS img
@@ -4645,7 +4647,8 @@ fn grow_sample_designs_for_today(conn: &rusqlite::Connection) {
                AND (lifestyle_url LIKE 'https://lifestyle.wearmu.com/%'
                  OR mockup_url    LIKE 'https://mockups.wearmu.com/%'
                  OR mockup_url    LIKE '/mockups/%')
-             ORDER BY drop_num DESC LIMIT 200"
+             ORDER BY (lifestyle_url IS NULL OR lifestyle_url='') ASC,
+                      drop_num DESC LIMIT 200"
         ) { Ok(s) => s, Err(_) => return };
         let rows: Vec<(i64, String, String)> = stmt.query_map([], |r| {
             Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
@@ -4774,25 +4777,47 @@ async fn list_sample_personas(State(db): State<Db>) -> impl IntoResponse {
 /// current JST day. Idempotent within a day.
 async fn admin_sample_grow(
     State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
     Json(body): Json<YouAdminBackfillBody>,
 ) -> impl IntoResponse {
     if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+    let force = q.get("force").map(|s| s == "1" || s == "true").unwrap_or(false);
+    let prefer_lifestyle = q.get("prefer_lifestyle").map(|s| s == "1" || s == "true").unwrap_or(false);
     let conn = db.lock().unwrap();
+    let today = jst_today_str();
+
+    // Force = wipe today's picks first. Prefer_lifestyle = only re-roll those
+    // whose current pick has no lifestyle_url.
+    if force {
+        let _ = conn.execute("DELETE FROM sample_designs WHERE day=?", params![today]);
+    } else if prefer_lifestyle {
+        let _ = conn.execute(
+            "DELETE FROM sample_designs WHERE day=?
+             AND picked_product_id IN (
+                SELECT id FROM products
+                WHERE (lifestyle_url IS NULL OR lifestyle_url='')
+             )",
+            params![today],
+        );
+    }
+
     let before: i64 = conn.query_row(
         "SELECT COUNT(*) FROM sample_designs WHERE day=?",
-        params![jst_today_str()], |r| r.get(0),
+        params![today], |r| r.get(0),
     ).unwrap_or(0);
     grow_sample_designs_for_today(&conn);
     let after: i64 = conn.query_row(
         "SELECT COUNT(*) FROM sample_designs WHERE day=?",
-        params![jst_today_str()], |r| r.get(0),
+        params![today], |r| r.get(0),
     ).unwrap_or(0);
     Json(serde_json::json!({
         "ok": true,
-        "day": jst_today_str(),
+        "day": today,
         "designs_before": before,
         "designs_after":  after,
         "added": after - before,
+        "force": force,
+        "prefer_lifestyle": prefer_lifestyle,
     })).into_response()
 }
 
