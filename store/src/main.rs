@@ -348,6 +348,227 @@ fn apply_payment_surcharge(price_jpy: i64, method: &str) -> i64 {
     surcharged.min(PRICE_CAP_JPY)
 }
 
+/// Fields needed to build a Stripe Checkout Session form. Used by both the
+/// MU clothing checkout (mode=payment) and the MA auction settlement.
+/// New options should be added here so the JP CVR config stays unified.
+pub struct StripeCheckoutFields<'a> {
+    pub mode: &'a str,                  // "payment" / "subscription"
+    pub base_url: &'a str,
+    pub success_path: &'a str,          // e.g. "/success?sid={CHECKOUT_SESSION_ID}"
+    pub cancel_path: &'a str,
+    pub display_name: &'a str,
+    pub unit_amount: i64,
+    pub quantity: i64,
+    pub customer_email: Option<&'a str>,
+    pub product_id: Option<i64>,
+    pub size: Option<&'a str>,
+    pub wallet: Option<&'a str>,
+    pub payment_method: Option<&'a str>,
+    pub base_price_jpy: Option<i64>,
+    pub total_jpy: Option<i64>,
+    pub kyc_required: bool,
+    pub collect_shipping: bool,
+}
+
+/// Build the Stripe Checkout Session form payload tuned for the JP market.
+///
+/// Diagnosed 2026-05-11: ~88% of recent sessions (44/50) abandoned at the
+/// Stripe page. Production sessions were going out with locale=null,
+/// payment_method_types=["card","wechat_pay"], no konbini, no Apple/Google
+/// Pay, no phone collection. This helper produces the corrected payload.
+///
+/// Each addition is gated by an env flag so the canonical config can be
+/// rolled back per-field without redeploying — set the corresponding
+/// `STRIPE_*_ENABLED` secret to "0" to disable that field.
+fn stripe_checkout_form_jp(f: StripeCheckoutFields) -> Vec<(String, String)> {
+    let mut form: Vec<(String, String)> = Vec::with_capacity(48);
+    let push = |form: &mut Vec<(String, String)>, k: &str, v: String| {
+        form.push((k.to_string(), v));
+    };
+
+    push(&mut form, "mode", f.mode.to_string());
+    push(&mut form, "currency", "jpy".into());
+    push(&mut form, "line_items[0][price_data][currency]", "jpy".into());
+    push(&mut form, "line_items[0][price_data][product_data][name]", f.display_name.to_string());
+    push(&mut form, "line_items[0][price_data][unit_amount]", f.unit_amount.to_string());
+    push(&mut form, "line_items[0][quantity]", f.quantity.to_string());
+    push(&mut form, "success_url", format!("{}{}", f.base_url, f.success_path));
+    push(&mut form, "cancel_url",  format!("{}{}", f.base_url, f.cancel_path));
+    if let Some(em) = f.customer_email { push(&mut form, "customer_email", em.to_string()); }
+
+    // ── JP CVR repair: locale=ja (was null → users saw English page) ──
+    if env_flag_enabled("STRIPE_LOCALE_JA", true) {
+        push(&mut form, "locale", "ja".into());
+    }
+
+    // ── JP payment methods: card + konbini (+ apple_pay/google_pay are
+    //    automatic for card on supported devices, but we explicitly include
+    //    them so Stripe doesn't omit them via locale negotiation).
+    //    NOTE: konbini requires "Konbini" payment method to be enabled in the
+    //    Stripe dashboard for the account. If the account hasn't enabled it,
+    //    Stripe returns a 400 — the env flag lets us turn it off in that case
+    //    without redeploying.
+    if env_flag_enabled("STRIPE_KONBINI_ENABLED", true) {
+        push(&mut form, "payment_method_types[0]", "card".into());
+        push(&mut form, "payment_method_types[1]", "konbini".into());
+        // payment_method_options[konbini][expires_after_days] — give buyers
+        // 3 days to walk to a conbini. Default = 3 if omitted, set explicit.
+        push(&mut form, "payment_method_options[konbini][expires_after_days]", "3".into());
+    }
+    // Apple Pay / Google Pay surface automatically on supported devices when
+    // 'card' is in payment_method_types; no separate flag needed (per Stripe
+    // docs as of 2026). We leave that auto-handling on.
+
+    // ── Phone collection (Stripe-recommended for JP for shipping reachability). ──
+    if env_flag_enabled("STRIPE_PHONE_COLLECTION", true) {
+        push(&mut form, "phone_number_collection[enabled]", "true".into());
+    }
+
+    // ── Submit type: "pay" instead of default "auto" so the button is
+    //    explicitly labelled "支払う" (avoids "Subscribe" mis-translations
+    //    that auto picks for some JP locales).
+    if f.mode == "payment" && env_flag_enabled("STRIPE_SUBMIT_TYPE_PAY", true) {
+        push(&mut form, "submit_type", "pay".into());
+    }
+
+    // ── Always create a customer object so receipts + Customer Portal work,
+    //    even for the one-shot clothing buys (some MUer becomes MA bidder
+    //    later — we want one Stripe customer per email).
+    push(&mut form, "customer_creation", "always".into());
+
+    // ── Shipping address collection: physical MU/MA pieces always ship.
+    //    Subscription-mode (/you 3-mo pack and monthly) doesn't ship → caller
+    //    can opt out via collect_shipping=false.
+    if f.collect_shipping {
+        let countries = ["JP","US","GB","FR","DE","AU","KR","TW","HK","SG","CA","CN","IT","ES","NL","SE","CH","NZ","TH","ID","PH","MY","VN","IN","MX","BR"];
+        for (i, c) in countries.iter().enumerate() {
+            push(&mut form,
+                &format!("shipping_address_collection[allowed_countries][{}]", i),
+                c.to_string());
+        }
+    }
+
+    // ── allow_promotion_codes is always on; we explicitly mint coupons via
+    //    the thank-you flow and the exit-intent discount funnel.
+    push(&mut form, "allow_promotion_codes", "true".into());
+
+    // ── Metadata (audit + webhook lookup) ──
+    if let Some(pid)  = f.product_id      { push(&mut form, "metadata[product_id]",      pid.to_string()); }
+    if let Some(s)    = f.size            { push(&mut form, "metadata[size]",            s.to_string()); }
+    if let Some(w)    = f.wallet          { push(&mut form, "metadata[wallet]",          w.to_string()); }
+    if let Some(p)    = f.payment_method  { push(&mut form, "metadata[payment_method]",  p.to_string()); }
+    if let Some(bp)   = f.base_price_jpy  { push(&mut form, "metadata[base_price_jpy]",  bp.to_string()); }
+    push(&mut form, "metadata[unit_price_jpy]", f.unit_amount.to_string());
+    if let Some(tot)  = f.total_jpy       { push(&mut form, "metadata[total_price_jpy]", tot.to_string()); }
+    push(&mut form, "metadata[kyc_required]",
+        if f.kyc_required { "true".into() } else { "false".into() });
+
+    form
+}
+
+/// Returns true if the named env var is set to a truthy value, OR (when unset)
+/// falls back to `default_on`. Truthy = "1" / "true" / "yes" (case-insensitive).
+/// Explicitly "0" / "false" / "no" disables.
+fn env_flag_enabled(var: &str, default_on: bool) -> bool {
+    match env::var(var).ok().map(|s| s.trim().to_ascii_lowercase()) {
+        Some(s) if s == "1" || s == "true" || s == "yes" || s == "on" => true,
+        Some(s) if s == "0" || s == "false" || s == "no" || s == "off" => false,
+        _ => default_on,
+    }
+}
+
+#[cfg(test)]
+mod stripe_cvr_tests {
+    use super::*;
+
+    fn base() -> StripeCheckoutFields<'static> {
+        StripeCheckoutFields {
+            mode: "payment",
+            base_url: "https://wearmu.com",
+            success_path: "/success?sid={CHECKOUT_SESSION_ID}",
+            cancel_path: "/",
+            display_name: "MU MUGEN-001 (M)",
+            unit_amount: 5_000,
+            quantity: 1,
+            customer_email: Some("buyer@example.com"),
+            product_id: Some(42),
+            size: Some("M"),
+            wallet: Some(""),
+            payment_method: Some("jpy"),
+            base_price_jpy: Some(5_000),
+            total_jpy: Some(5_000),
+            kyc_required: false,
+            collect_shipping: true,
+        }
+    }
+
+    fn has(form: &[(String, String)], key: &str, value: &str) -> bool {
+        form.iter().any(|(k, v)| k == key && v == value)
+    }
+    fn has_key(form: &[(String, String)], key: &str) -> bool {
+        form.iter().any(|(k, _)| k == key)
+    }
+
+    #[test]
+    fn default_includes_jp_locale() {
+        // Default flags ON → locale=ja must be present.
+        std::env::remove_var("STRIPE_LOCALE_JA");
+        let form = stripe_checkout_form_jp(base());
+        assert!(has(&form, "locale", "ja"),
+            "locale=ja missing — JP buyers were seeing English Stripe page");
+    }
+
+    #[test]
+    fn default_includes_konbini_payment_method() {
+        std::env::remove_var("STRIPE_KONBINI_ENABLED");
+        let form = stripe_checkout_form_jp(base());
+        assert!(has(&form, "payment_method_types[0]", "card"));
+        assert!(has(&form, "payment_method_types[1]", "konbini"),
+            "konbini missing — ~30% of JP e-commerce uses convenience-store payment");
+        assert!(has(&form, "payment_method_options[konbini][expires_after_days]", "3"));
+    }
+
+    #[test]
+    fn default_includes_phone_collection_and_submit_pay() {
+        std::env::remove_var("STRIPE_PHONE_COLLECTION");
+        std::env::remove_var("STRIPE_SUBMIT_TYPE_PAY");
+        let form = stripe_checkout_form_jp(base());
+        assert!(has(&form, "phone_number_collection[enabled]", "true"));
+        assert!(has(&form, "submit_type", "pay"));
+        assert!(has(&form, "customer_creation", "always"));
+    }
+
+    #[test]
+    fn shipping_collection_optional() {
+        let mut f = base();
+        f.collect_shipping = false;
+        let form = stripe_checkout_form_jp(f);
+        assert!(!has_key(&form, "shipping_address_collection[allowed_countries][0]"));
+
+        let f2 = base();
+        let form2 = stripe_checkout_form_jp(f2);
+        assert!(has(&form2, "shipping_address_collection[allowed_countries][0]", "JP"));
+    }
+
+    #[test]
+    fn konbini_flag_can_be_disabled() {
+        std::env::set_var("STRIPE_KONBINI_ENABLED", "0");
+        let form = stripe_checkout_form_jp(base());
+        assert!(!has(&form, "payment_method_types[1]", "konbini"),
+            "STRIPE_KONBINI_ENABLED=0 should disable konbini");
+        std::env::remove_var("STRIPE_KONBINI_ENABLED");
+    }
+
+    #[test]
+    fn metadata_preserved() {
+        let form = stripe_checkout_form_jp(base());
+        assert!(has(&form, "metadata[product_id]", "42"));
+        assert!(has(&form, "metadata[size]", "M"));
+        assert!(has(&form, "metadata[unit_price_jpy]", "5000"));
+        assert!(has(&form, "metadata[kyc_required]", "false"));
+    }
+}
+
 #[cfg(test)]
 mod price_tests {
     use super::*;
@@ -905,38 +1126,36 @@ async fn checkout(
 
     let wallet = body.wallet.clone().unwrap_or_default();
     let client = reqwest::Client::new();
+    // CVR-repair payload (2026-05-11). Diagnosed via Stripe API: 44/50 recent
+    // checkout sessions abandoned (~88% bail). Root causes: locale=null (JP
+    // users see English/auto Stripe page), no konbini (~30% of JP e-commerce
+    // pays this way), no Apple/Google Pay, no phone collection. Each addition
+    // is gated by an env flag so we can revert any single field if Stripe
+    // returns an error for an account-specific capability.
+    let stripe_form = stripe_checkout_form_jp(
+        StripeCheckoutFields {
+            mode: "payment",
+            base_url: &base_url,
+            success_path: "/success?sid={CHECKOUT_SESSION_ID}",
+            cancel_path: "/",
+            display_name: &display_name,
+            unit_amount: price_jpy,
+            quantity: body.quantity as i64,
+            customer_email: Some(&body.email),
+            product_id: Some(body.product_id),
+            size: Some(&size_label),
+            wallet: Some(&wallet),
+            payment_method: Some(&pm),
+            base_price_jpy: Some(base_price_jpy),
+            total_jpy: Some(total_jpy),
+            kyc_required: total_jpy >= KYC_THRESHOLD_JPY,
+            collect_shipping: true,
+        },
+    );
     let session_resp = client
         .post("https://api.stripe.com/v1/checkout/sessions")
         .basic_auth(&stripe_key, None::<&str>)
-        .form(&[
-            ("mode", "payment"),
-            ("currency", "jpy"),
-            ("line_items[0][price_data][currency]", "jpy"),
-            ("line_items[0][price_data][product_data][name]", &display_name),
-            ("line_items[0][price_data][unit_amount]", &price_jpy.to_string()),
-            ("line_items[0][quantity]", &body.quantity.to_string()),
-            ("success_url", &format!("{}/success?sid={{CHECKOUT_SESSION_ID}}", base_url)),
-            ("cancel_url", &format!("{}/", base_url)),
-            ("customer_email", &body.email),
-            ("shipping_address_collection[allowed_countries][0]", "JP"),
-            ("shipping_address_collection[allowed_countries][1]", "US"),
-            ("shipping_address_collection[allowed_countries][2]", "GB"),
-            ("shipping_address_collection[allowed_countries][3]", "FR"),
-            ("shipping_address_collection[allowed_countries][4]", "DE"),
-            ("shipping_address_collection[allowed_countries][5]", "AU"),
-            ("shipping_address_collection[allowed_countries][6]", "KR"),
-            ("shipping_address_collection[allowed_countries][7]", "TW"),
-            ("shipping_address_collection[allowed_countries][8]", "HK"),
-            ("allow_promotion_codes", "true"),
-            ("metadata[product_id]",       &body.product_id.to_string()),
-            ("metadata[size]",             &size_label),
-            ("metadata[wallet]",           &wallet),
-            ("metadata[payment_method]",   &pm),
-            ("metadata[base_price_jpy]",   &base_price_jpy.to_string()),
-            ("metadata[unit_price_jpy]",   &price_jpy.to_string()),
-            ("metadata[total_price_jpy]",  &total_jpy.to_string()),
-            ("metadata[kyc_required]",     if total_jpy >= KYC_THRESHOLD_JPY { "true" } else { "false" }),
-        ])
+        .form(&stripe_form)
         .send().await;
 
     match session_resp {
@@ -1808,33 +2027,32 @@ async fn settle_auction(
     let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
     let base_url = env::var("BASE_URL").unwrap_or_else(|_| "http://localhost:3000".into());
     let client = reqwest::Client::new();
+    // CVR-repair payload (see stripe_checkout_form_jp): locale=ja + konbini +
+    // phone collection. Applies to MA auction settlement as well so winning
+    // bidders don't bail at the Stripe page.
+    let auction_display_name = format!("{} — 落札", product_name);
+    let auction_form = stripe_checkout_form_jp(StripeCheckoutFields {
+        mode: "payment",
+        base_url: &base_url,
+        success_path: "/success?sid={CHECKOUT_SESSION_ID}",
+        cancel_path: "/ma",
+        display_name: &auction_display_name,
+        unit_amount: amount,
+        quantity: 1,
+        customer_email: Some(&email),
+        product_id: Some(product_id),
+        size: Some("one-size"),
+        wallet: Some(""),
+        payment_method: Some("jpy"),
+        base_price_jpy: None,
+        total_jpy: Some(amount),
+        kyc_required: amount >= KYC_THRESHOLD_JPY,
+        collect_shipping: true,
+    });
     let session_resp = client
         .post("https://api.stripe.com/v1/checkout/sessions")
         .basic_auth(&stripe_key, None::<&str>)
-        .form(&[
-            ("mode", "payment"),
-            ("currency", "jpy"),
-            ("line_items[0][price_data][currency]", "jpy"),
-            ("line_items[0][price_data][product_data][name]", &format!("{} — 落札", product_name)),
-            ("line_items[0][price_data][unit_amount]", &amount.to_string()),
-            ("line_items[0][quantity]", "1"),
-            ("success_url", &format!("{}/success?sid={{CHECKOUT_SESSION_ID}}", base_url)),
-            ("cancel_url", &format!("{}/ma", base_url)),
-            ("customer_email", &email),
-            ("shipping_address_collection[allowed_countries][0]", "JP"),
-            ("shipping_address_collection[allowed_countries][1]", "US"),
-            ("shipping_address_collection[allowed_countries][2]", "GB"),
-            ("shipping_address_collection[allowed_countries][3]", "FR"),
-            ("shipping_address_collection[allowed_countries][4]", "DE"),
-            ("shipping_address_collection[allowed_countries][5]", "AU"),
-            ("shipping_address_collection[allowed_countries][6]", "KR"),
-            ("shipping_address_collection[allowed_countries][7]", "TW"),
-            ("shipping_address_collection[allowed_countries][8]", "HK"),
-            ("allow_promotion_codes", "true"),
-            ("metadata[product_id]", &product_id.to_string()),
-            ("metadata[size]", "one-size"),
-            ("metadata[wallet]", ""),
-        ])
+        .form(&auction_form)
         .send().await;
 
     let payment_url = match session_resp {
@@ -3909,7 +4127,7 @@ async fn you_subscribe_3mo(
     };
     let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
 
-    let form: Vec<(&str, String)> = vec![
+    let mut form: Vec<(&str, String)> = vec![
         ("mode", "payment".into()),
         ("currency", "jpy".into()),
         ("customer_email", email),
@@ -3923,7 +4141,21 @@ async fn you_subscribe_3mo(
          format!("MU × YOU — 3 ヶ月パック ¥{} (¥980 × 3、自動更新なし)", price_jpy)),
         ("metadata[you_user_id]", user_id.to_string()),
         ("metadata[plan]", "3mo".into()),
+        ("customer_creation", "always".into()),
+        ("submit_type", "pay".into()),
     ];
+    // JP CVR-repair fields (gated by env flags so we can revert per-field).
+    if env_flag_enabled("STRIPE_LOCALE_JA", true) {
+        form.push(("locale", "ja".into()));
+    }
+    if env_flag_enabled("STRIPE_KONBINI_ENABLED", true) {
+        form.push(("payment_method_types[0]", "card".into()));
+        form.push(("payment_method_types[1]", "konbini".into()));
+        form.push(("payment_method_options[konbini][expires_after_days]", "3".into()));
+    }
+    if env_flag_enabled("STRIPE_PHONE_COLLECTION", true) {
+        form.push(("phone_number_collection[enabled]", "true".into()));
+    }
 
     let resp = reqwest::Client::new()
         .post("https://api.stripe.com/v1/checkout/sessions")
