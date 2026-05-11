@@ -672,7 +672,7 @@ async fn stripe_webhook(
                         .post("https://api.resend.com/emails")
                         .bearer_auth(&resend_key)
                         .json(&serde_json::json!({
-                            "from": "MU <noreply@enablerdao.com>",
+                            "from": "MU <noreply@wearmu.com>",
                             "to": [&buyer_email2],
                             "subject": "あなたがこのドロップを閉じた — MU LAST PIECE",
                             "html": html,
@@ -780,7 +780,7 @@ async fn handle_you_purchase_webhook(db: Db, design_id: i64, session: serde_json
                 .post("https://api.resend.com/emails")
                 .bearer_auth(&resend_key_ops)
                 .json(&serde_json::json!({
-                    "from": "MU ops <noreply@enablerdao.com>",
+                    "from": "MU ops <noreply@wearmu.com>",
                     "to": ["mail@yukihamada.jp"],
                     "subject": format!("[fulfill] /you {} — ¥{} from {}", serial2, amount, buyer),
                     "html": html,
@@ -816,7 +816,7 @@ async fn handle_you_purchase_webhook(db: Db, design_id: i64, session: serde_json
                 .post("https://api.resend.com/emails")
                 .bearer_auth(&resend_key)
                 .json(&serde_json::json!({
-                    "from": "MU × YOU <noreply@enablerdao.com>",
+                    "from": "MU × YOU <noreply@wearmu.com>",
                     "to": [buyer],
                     "subject": format!("MU × YOU — {} があなたの元へ", serial),
                     "html": html,
@@ -1054,7 +1054,7 @@ async fn settle_auction(
     client.post("https://api.resend.com/emails")
         .bearer_auth(&resend_key)
         .json(&serde_json::json!({
-            "from": "MU <noreply@enablerdao.com>",
+            "from": "MU <noreply@wearmu.com>",
             "to": [&email],
             "subject": format!("【MU 間 MA】落札のお知らせ — ¥{}", amount),
             "html": html,
@@ -1865,7 +1865,7 @@ async fn fragment_request(
     let _ = client.post("https://api.resend.com/emails")
         .bearer_auth(&resend_key)
         .json(&serde_json::json!({
-            "from": "MU <noreply@enablerdao.com>",
+            "from": "MU <noreply@wearmu.com>",
             "to": [&body.email],
             "subject": format!("Fragment申請確認 — {}", direction_ja),
             "html": user_html,
@@ -1892,7 +1892,7 @@ async fn fragment_request(
     let _ = client.post("https://api.resend.com/emails")
         .bearer_auth(&resend_key)
         .json(&serde_json::json!({
-            "from": "MU Fragment <noreply@enablerdao.com>",
+            "from": "MU Fragment <noreply@wearmu.com>",
             "to": ["mail@yukihamada.jp"],
             "reply_to": &body.email,
             "subject": format!("[Fragment] {} — {}", direction_en, body.email),
@@ -2322,7 +2322,7 @@ fn spawn_gemini_for_design(db: Db, design_id: i64) {
                         .post("https://api.resend.com/emails")
                         .bearer_auth(&resend_key)
                         .json(&serde_json::json!({
-                            "from": "MU × YOU <noreply@enablerdao.com>",
+                            "from": "MU × YOU <noreply@wearmu.com>",
                             "to": [email],
                             "subject": format!("MU × YOU DAY {:03} — {}", day_num, name),
                             "html": html,
@@ -2493,7 +2493,7 @@ async fn you_subscribe(
                 .post("https://api.resend.com/emails")
                 .bearer_auth(&resend_key)
                 .json(&serde_json::json!({
-                    "from": "MU × YOU <noreply@enablerdao.com>",
+                    "from": "MU × YOU <noreply@wearmu.com>",
                     "to": [to],
                     "subject": "MU × YOU — 明朝9時から毎日デザインが届きます",
                     "html": html,
@@ -2708,6 +2708,236 @@ async fn you_feedback(
     })).into_response()
 }
 
+// ── CV autonomous pulse ──────────────────────────────────────────────────────
+
+/// Public config endpoint — the LP / exit-funnel script reads variant choices
+/// here so cv_pulse can adjust UX without a redeploy.
+async fn cv_public_config(State(db): State<Db>) -> impl IntoResponse {
+    let mut out = serde_json::Map::new();
+    {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare("SELECT key, value FROM cv_config") {
+            Ok(s) => s,
+            Err(_) => return Json(serde_json::Value::Object(out)).into_response(),
+        };
+        let it = stmt.query_map([], |r| Ok::<_, rusqlite::Error>((r.get::<_, String>(0)?, r.get::<_, String>(1)?)));
+        if let Ok(rows) = it {
+            for row in rows.flatten() {
+                out.insert(row.0, serde_json::Value::String(row.1));
+            }
+        }
+    }
+    let mut headers = HeaderMap::new();
+    headers.insert("Cache-Control", HeaderValue::from_static("public, max-age=60"));
+    (headers, Json(serde_json::Value::Object(out))).into_response()
+}
+
+fn count_since(conn: &Connection, table: &str, ts_col: &str, secs_ago: i64) -> i64 {
+    let now: i64 = chrono_now().parse().unwrap_or(0);
+    let cutoff = now - secs_ago;
+    // ts_col is a unix-epoch string column. Cast to int for comparison.
+    let q = format!(
+        "SELECT COUNT(*) FROM {} WHERE CAST({} AS INTEGER) >= ?",
+        table, ts_col
+    );
+    conn.query_row(&q, params![cutoff], |r| r.get::<_, i64>(0)).unwrap_or(0)
+}
+
+fn count_offers_since(conn: &Connection, kind: &str, secs_ago: i64) -> i64 {
+    let now: i64 = chrono_now().parse().unwrap_or(0);
+    let cutoff = now - secs_ago;
+    conn.query_row(
+        "SELECT COUNT(*) FROM exit_offers
+         WHERE kind=? AND CAST(created_at AS INTEGER) >= ?",
+        params![kind, cutoff], |r| r.get::<_, i64>(0),
+    ).unwrap_or(0)
+}
+
+fn count_purchases_since(conn: &Connection, secs_ago: i64) -> i64 {
+    let now: i64 = chrono_now().parse().unwrap_or(0);
+    let cutoff = now - secs_ago;
+    conn.query_row(
+        "SELECT COUNT(*) FROM mu_purchases WHERE CAST(created_at AS INTEGER) >= ?",
+        params![cutoff], |r| r.get::<_, i64>(0),
+    ).unwrap_or(0)
+}
+
+fn cv_set(conn: &Connection, key: &str, value: &str, reason: &str) {
+    conn.execute(
+        "INSERT INTO cv_config (key, value, updated_at, reason) VALUES (?,?,?,?)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at, reason=excluded.reason",
+        params![key, value, chrono_now(), reason],
+    ).ok();
+}
+
+fn cv_get(conn: &Connection, key: &str, default: &str) -> String {
+    conn.query_row(
+        "SELECT value FROM cv_config WHERE key=?",
+        params![key],
+        |r| r.get::<_, String>(0),
+    ).unwrap_or_else(|_| default.to_string())
+}
+
+/// /api/admin/cv_pulse — called every 30 min by cron. Snapshots metrics,
+/// applies adjustment rules, persists decisions, posts a digest to Telegram.
+async fn cv_pulse(
+    State(db): State<Db>,
+    Json(body): Json<YouAdminBackfillBody>,
+) -> impl IntoResponse {
+    if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+
+    // ── 1. Pull metrics ──
+    let (signups_30m, signups_24h, signups_total,
+         surveys_30m, surveys_24h,
+         lottery_30m, lottery_24h,
+         discounts_30m, discounts_24h,
+         purchases_30m, purchases_24h) = {
+        let conn = db.lock().unwrap();
+        let signups_30m = count_since(&conn, "you_users", "created_at", 1800);
+        let signups_24h = count_since(&conn, "you_users", "created_at", 86400);
+        let signups_total: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM you_users WHERE unsubscribed_at IS NULL",
+            [], |r| r.get(0),
+        ).unwrap_or(0);
+        let surveys_30m = count_since(&conn, "exit_surveys", "created_at", 1800);
+        let surveys_24h = count_since(&conn, "exit_surveys", "created_at", 86400);
+        let lottery_30m = count_offers_since(&conn, "lottery_entry", 1800);
+        let lottery_24h = count_offers_since(&conn, "lottery_entry", 86400);
+        let discounts_30m = count_offers_since(&conn, "discount_50", 1800);
+        let discounts_24h = count_offers_since(&conn, "discount_50", 86400);
+        let purchases_30m = count_purchases_since(&conn, 1800);
+        let purchases_24h = count_purchases_since(&conn, 86400);
+        (signups_30m, signups_24h, signups_total,
+         surveys_30m, surveys_24h,
+         lottery_30m, lottery_24h,
+         discounts_30m, discounts_24h,
+         purchases_30m, purchases_24h)
+    };
+
+    // ── 2. Apply adjustment rules ──
+    // Read current settings first
+    let (prev_cooldown, prev_pct, prev_subject, prev_scroll) = {
+        let conn = db.lock().unwrap();
+        (
+            cv_get(&conn, "modal_cooldown_hours", "24"),
+            cv_get(&conn, "coupon_percent_off", "50"),
+            cv_get(&conn, "email_subject_variant", "loss"),
+            cv_get(&conn, "modal_scroll_required", "1"),
+        )
+    };
+    let mut decisions: Vec<String> = Vec::new();
+
+    {
+        let conn = db.lock().unwrap();
+
+        // Rule 1: signups in last 24h drives modal aggressiveness.
+        // < 2 signups → make modal more aggressive (12h cooldown, no scroll-required)
+        // 2-9 → default (24h cooldown, scroll required)
+        // ≥ 10 → ease off (48h, scroll required)
+        let target_cooldown = if signups_24h < 2 { "12" }
+            else if signups_24h >= 10 { "48" } else { "24" };
+        if target_cooldown != prev_cooldown {
+            cv_set(&conn, "modal_cooldown_hours", target_cooldown,
+                &format!("signups_24h={}", signups_24h));
+            decisions.push(format!("modal_cooldown_hours {} → {}", prev_cooldown, target_cooldown));
+        }
+        let target_scroll = if signups_24h < 2 { "0" } else { "1" };
+        if target_scroll != prev_scroll {
+            cv_set(&conn, "modal_scroll_required", target_scroll,
+                &format!("signups_24h={}", signups_24h));
+            decisions.push(format!("modal_scroll_required {} → {}", prev_scroll, target_scroll));
+        }
+
+        // Rule 2: coupon strength based on conversion drought.
+        // No purchases in 24h AND no discounts redeemed → boost to 60%.
+        // Any purchase in 24h → relax back to 50%.
+        let target_pct = if purchases_24h == 0 && signups_24h >= 5 { "60" }
+            else { "50" };
+        if target_pct != prev_pct {
+            cv_set(&conn, "coupon_percent_off", target_pct,
+                &format!("purchases_24h={} signups_24h={}", purchases_24h, signups_24h));
+            decisions.push(format!("coupon_percent_off {}% → {}%", prev_pct, target_pct));
+        }
+
+        // Rule 3: rotate email subject variant if signups stalled for 48h.
+        // signups_24h == 0 + we've been "loss" framing → try "curiosity"
+        let target_subj = if signups_24h == 0 && prev_subject == "loss" { "curiosity" }
+            else if signups_24h >= 5 && prev_subject != "loss" { "loss" }
+            else { prev_subject.as_str() };
+        if target_subj != prev_subject {
+            cv_set(&conn, "email_subject_variant", target_subj,
+                &format!("rotate (signups_24h={})", signups_24h));
+            decisions.push(format!("email_subject_variant {} → {}", prev_subject, target_subj));
+        }
+    }
+    let decision_str = if decisions.is_empty() { "no-change".to_string() } else { decisions.join(", ") };
+
+    // ── 3. Persist pulse row ──
+    {
+        let conn = db.lock().unwrap();
+        conn.execute(
+            "INSERT INTO cv_pulses (at, signups_30m, signups_24h,
+              surveys_30m, surveys_24h, lottery_30m, lottery_24h,
+              discounts_30m, discounts_24h, purchases_30m, purchases_24h,
+              decision, notes)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            params![
+                chrono_now(), signups_30m, signups_24h,
+                surveys_30m, surveys_24h, lottery_30m, lottery_24h,
+                discounts_30m, discounts_24h, purchases_30m, purchases_24h,
+                decision_str, format!("subscribers={}", signups_total),
+            ],
+        ).ok();
+    }
+
+    // ── 4. Telegram digest (best-effort, fire and forget) ──
+    let tg_token = env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default();
+    let tg_chat = env::var("TELEGRAM_CHAT_ID").unwrap_or_else(|_| "1136442501".into());
+    if !tg_token.is_empty() && !decisions.is_empty() || signups_30m > 0 || purchases_30m > 0 {
+        let msg = format!(
+            "MU CV pulse · {}\n\
+             ─ signups 30m/24h: {} / {}  (total {})\n\
+             ─ surveys 30m/24h: {} / {}\n\
+             ─ lottery 30m/24h: {} / {}\n\
+             ─ discounts 30m/24h: {} / {}\n\
+             ─ purchases 30m/24h: {} / {}\n\
+             ─ decision: {}",
+            jst_today_str(),
+            signups_30m, signups_24h, signups_total,
+            surveys_30m, surveys_24h,
+            lottery_30m, lottery_24h,
+            discounts_30m, discounts_24h,
+            purchases_30m, purchases_24h,
+            decision_str,
+        );
+        let token_for_tg = tg_token.clone();
+        let chat_for_tg = tg_chat.clone();
+        let msg_for_tg = msg.clone();
+        tokio::spawn(async move {
+            let _ = reqwest::Client::new()
+                .post(format!("https://api.telegram.org/bot{}/sendMessage", token_for_tg))
+                .json(&serde_json::json!({
+                    "chat_id": chat_for_tg, "text": msg_for_tg,
+                    "disable_web_page_preview": true,
+                }))
+                .send().await;
+        });
+    }
+
+    Json(serde_json::json!({
+        "ok": true,
+        "metrics": {
+            "signups_30m": signups_30m, "signups_24h": signups_24h, "total": signups_total,
+            "surveys_30m": surveys_30m, "surveys_24h": surveys_24h,
+            "lottery_30m": lottery_30m, "lottery_24h": lottery_24h,
+            "discounts_30m": discounts_30m, "discounts_24h": discounts_24h,
+            "purchases_30m": purchases_30m, "purchases_24h": purchases_24h,
+        },
+        "decision": decision_str,
+        "decisions": decisions,
+    })).into_response()
+}
+
 /// Weekly lottery draw — picks ~5% of pending entries as winners,
 /// mints a Stripe coupon ¥1,000-3,000 off, emails them.
 /// Idempotent on entry id (status changes from 'pending*' to 'won' / 'lost').
@@ -2811,7 +3041,7 @@ async fn admin_lottery_draw(
                     .post("https://api.resend.com/emails")
                     .bearer_auth(&resend_key2)
                     .json(&serde_json::json!({
-                        "from": "MU <noreply@enablerdao.com>",
+                        "from": "MU <noreply@wearmu.com>",
                         "to": [to],
                         "subject": format!("MU 抽選 当選: {} OFF クーポン", prize_label),
                         "html": html,
@@ -2900,8 +3130,12 @@ async fn exit_discount_claim(
         ).ok().flatten()
     };
     if let Some(code) = existing {
+        let pct: i64 = {
+            let conn = db.lock().unwrap();
+            cv_get(&conn, "coupon_percent_off", "50").parse().unwrap_or(50)
+        };
         return Json(serde_json::json!({
-            "ok": true, "coupon": code, "percent_off": 50,
+            "ok": true, "coupon": code, "percent_off": pct,
             "valid_for": "MUGEN / MUON / MA / /you all", "reused": true,
         })).into_response();
     }
@@ -2913,15 +3147,21 @@ async fn exit_discount_claim(
     }
     let token = uuid::Uuid::new_v4().to_string().replace('-', "");
     let code = format!("MU-COST-{}", token[..8].to_uppercase());
+    // cv_pulse may have tuned the strength; default 50 (≒ "原価レベル").
+    let pct = {
+        let conn = db.lock().unwrap();
+        cv_get(&conn, "coupon_percent_off", "50")
+    };
+    let pct_clamped = pct.parse::<i64>().unwrap_or(50).clamp(20, 80).to_string();
     let resp = reqwest::Client::new()
         .post("https://api.stripe.com/v1/coupons")
         .basic_auth(&stripe_key, None::<&str>)
         .form(&[
             ("id", code.as_str()),
-            ("percent_off", "50"),
+            ("percent_off", pct_clamped.as_str()),
             ("duration", "once"),
             ("max_redemptions", "1"),
-            ("name", "MU 原価レベル"),
+            ("name", &format!("MU 原価レベル ({}% OFF)", pct_clamped)),
         ])
         .send().await;
     let coupon_id = match resp {
@@ -2979,7 +3219,7 @@ async fn exit_discount_claim(
                 .post("https://api.resend.com/emails")
                 .bearer_auth(&resend_key)
                 .json(&serde_json::json!({
-                    "from": "MU <noreply@enablerdao.com>",
+                    "from": "MU <noreply@wearmu.com>",
                     "to": [to],
                     "subject": format!("MU — 原価レベル クーポン ({}, 30 日有効)", code_for_mail),
                     "html": html,
@@ -2987,7 +3227,8 @@ async fn exit_discount_claim(
         });
     }
     Json(serde_json::json!({
-        "ok": true, "coupon": coupon_id, "percent_off": 50,
+        "ok": true, "coupon": coupon_id,
+        "percent_off": pct_clamped.parse::<i64>().unwrap_or(50),
         "valid_days": 30, "reused": false,
     })).into_response()
 }
@@ -3421,7 +3662,7 @@ async fn you_taste_update(
                 .post("https://api.resend.com/emails")
                 .bearer_auth(&resend_key)
                 .json(&serde_json::json!({
-                    "from": "MU × YOU <noreply@enablerdao.com>",
+                    "from": "MU × YOU <noreply@wearmu.com>",
                     "to": [to],
                     "subject": "MU × YOU — プロンプトを更新しました",
                     "html": html,
@@ -3533,7 +3774,7 @@ fn send_day7_style_prompt_if_needed(db: Db, user_id: i64, email: String) {
             .post("https://api.resend.com/emails")
             .bearer_auth(&resend_key)
             .json(&serde_json::json!({
-                "from": "MU × YOU <noreply@enablerdao.com>",
+                "from": "MU × YOU <noreply@wearmu.com>",
                 "to": [email],
                 "subject": "Day 7 — あなたのスタイルに名前を",
                 "html": html,
@@ -3594,7 +3835,7 @@ fn send_trial_reminder_if_needed(
             .post("https://api.resend.com/emails")
             .bearer_auth(&resend_key)
             .json(&serde_json::json!({
-                "from": "MU × YOU <noreply@enablerdao.com>",
+                "from": "MU × YOU <noreply@wearmu.com>",
                 "to": [email],
                 "subject": format!("MU × YOU — トライアル残り {} 日", days_left.max(1)),
                 "html": html,
@@ -3643,7 +3884,7 @@ fn send_trial_expired_notice_if_needed(
             .post("https://api.resend.com/emails")
             .bearer_auth(&resend_key)
             .json(&serde_json::json!({
-                "from": "MU × YOU <noreply@enablerdao.com>",
+                "from": "MU × YOU <noreply@wearmu.com>",
                 "to": [email],
                 "subject": "MU × YOU — トライアル終了。続けるには MU を 1 着。",
                 "html": html,
@@ -4427,6 +4668,56 @@ async fn main() {
     ] {
         conn.execute(col, []).ok();
     }
+    // CV-pulse autonomous loop: every 30 min the cron POSTs to
+    // /api/admin/cv_pulse, which writes a snapshot here + may update
+    // cv_config (modal cooldown / coupon strength / email subject variant).
+    conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS cv_pulses (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            at              TEXT NOT NULL,
+            signups_30m     INTEGER DEFAULT 0,
+            signups_24h     INTEGER DEFAULT 0,
+            surveys_30m     INTEGER DEFAULT 0,
+            surveys_24h     INTEGER DEFAULT 0,
+            lottery_30m     INTEGER DEFAULT 0,
+            lottery_24h     INTEGER DEFAULT 0,
+            discounts_30m   INTEGER DEFAULT 0,
+            discounts_24h   INTEGER DEFAULT 0,
+            purchases_30m   INTEGER DEFAULT 0,
+            purchases_24h   INTEGER DEFAULT 0,
+            decision        TEXT,
+            notes           TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_cv_pulses_at ON cv_pulses(at);
+
+        CREATE TABLE IF NOT EXISTS cv_config (
+            key         TEXT PRIMARY KEY,
+            value       TEXT NOT NULL,
+            updated_at  TEXT NOT NULL,
+            reason      TEXT
+        );
+    ").ok();
+    // Seed defaults if the cv_config table is empty
+    conn.execute(
+        "INSERT OR IGNORE INTO cv_config (key, value, updated_at, reason)
+         VALUES (?, ?, ?, ?)",
+        params!["modal_cooldown_hours", "24", chrono_now(), "default"],
+    ).ok();
+    conn.execute(
+        "INSERT OR IGNORE INTO cv_config (key, value, updated_at, reason)
+         VALUES (?, ?, ?, ?)",
+        params!["coupon_percent_off", "50", chrono_now(), "default"],
+    ).ok();
+    conn.execute(
+        "INSERT OR IGNORE INTO cv_config (key, value, updated_at, reason)
+         VALUES (?, ?, ?, ?)",
+        params!["email_subject_variant", "loss", chrono_now(), "default (loss-aversion)"],
+    ).ok();
+    conn.execute(
+        "INSERT OR IGNORE INTO cv_config (key, value, updated_at, reason)
+         VALUES (?, ?, ?, ?)",
+        params!["modal_scroll_required", "1", chrono_now(), "default"],
+    ).ok();
     // Exit-intent funnel: survey → cost-price discount → no-purchase
     // open lottery (オープン懸賞 — Japan has no prize cap on these).
     conn.execute_batch("
@@ -4587,6 +4878,8 @@ async fn main() {
         .route("/api/exit/discount", post(exit_discount_claim))
         .route("/api/exit/lottery", post(exit_lottery_enter))
         .route("/api/admin/lottery_draw", post(admin_lottery_draw))
+        .route("/api/admin/cv_pulse", post(cv_pulse))
+        .route("/api/cv/config", get(cv_public_config))
         // Blog (public ops notes). Clean URLs without .html extension.
         .route("/blog", get(blog_index))
         .route("/blog/", get(blog_index))
