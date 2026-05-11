@@ -980,6 +980,9 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
 let currentProduct = null;
 let currentBrand = null;
 let selectedSize = 'M';
+// Expose to window so /static/payments-ui.js (separate script) can read them
+window.currentProduct = null;
+window.selectedSize = selectedSize;
 const productMap = {};
 
 const BRAND_LABELS = {ma:'間 MA',muon:'MUON 無音',mugen:'MUGEN 無限'};
@@ -1345,6 +1348,7 @@ function showSection(name, pushHistory=true){
 // ── Modal ──
 function openModal(p, pushHistory=true){
   currentProduct = p;
+  window.currentProduct = p;  // payments-ui.js compatibility
   if(pushHistory){
     const url = '/products/'+p.brand+'/'+p.drop_num;
     history.pushState({productId:p.id, brand:p.brand}, '', url);
@@ -1417,6 +1421,7 @@ document.querySelectorAll('.size-btn').forEach(btn=>{
     document.querySelectorAll('.size-btn').forEach(b=>b.classList.remove('selected'));
     btn.classList.add('selected');
     selectedSize = btn.dataset.size;
+    window.selectedSize = selectedSize;  // payments-ui.js compatibility
     document.getElementById('selected-size').value = selectedSize;
   });
 });
