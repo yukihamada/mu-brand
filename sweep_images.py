@@ -115,6 +115,52 @@ PROMPTS = [
      "Lightweight pull-over nylon windbreaker in matte black, worn by a 28 year-old "
      "Japanese man, looking down adjusting the hem, urban setting (concrete + glass), "
      "overcast natural light, 4:5 portrait, magazine candid. " + BRAND_SPEC),
+
+    # ── 第二弾 (2026-05-11) ──
+    ("sweep-tank-top",
+     "Athletic tank top in solid black cotton, worn by an Asian woman in her late 20s, "
+     "half-body front view, gym setting with concrete walls, natural side light, "
+     "small embroidered SIIIEEP wordmark on left chest, 4:5 portrait, "
+     "minimal styling, photographic. " + BRAND_SPEC),
+    ("sweep-zip-hoodie",
+     "Heavy black zip-up hoodie in cotton blend, worn open over a black tank by "
+     "a 30 year-old Japanese man, leaning against a concrete wall, natural side light, "
+     "small SIIIEEP wordmark embroidery on left chest, half-body 4:5 portrait, "
+     "magazine candid styling. " + BRAND_SPEC),
+    ("sweep-crewneck",
+     "Heavy fleece crewneck sweatshirt in black, worn by a 28 year-old Asian man, "
+     "front view, half-body, plain warm-toned studio background, natural soft light, "
+     "small chest embroidery of SIIIEEP wordmark, 4:5 portrait, photographic. " + BRAND_SPEC),
+    ("sweep-snapback",
+     "Classic flat-brim snapback cap in solid black wool, front view product shot "
+     "floating against a plain concrete background, large embroidered SIIIEEP wordmark "
+     "in white thread on the front panel, dramatic side light, 4:5 portrait, "
+     "no models, premium product photography. " + BRAND_SPEC),
+    ("sweep-mug",
+     "Black glossy ceramic coffee mug on a dark wood table, soft window light from "
+     "the side, a small SIIIEEP wordmark sublimated in white on the side of the mug, "
+     "steam rising faintly, 4:5 portrait, editorial product photography, no other text. " + BRAND_SPEC),
+    ("sweep-bottle",
+     "Matte black stainless steel water bottle, 17oz, standing upright on a concrete "
+     "plinth against a dark backdrop, side label showing SIIIEEP wordmark in white, "
+     "dramatic top-down light, 4:5 portrait, premium product photography. " + BRAND_SPEC),
+    ("sweep-stickers",
+     "A stack of sticker sheets featuring the SIIIEEP wordmark in various sizes and "
+     "monochrome variants, laying flat on a black concrete surface, top-down 4:5 view, "
+     "soft directional light, premium product still life, no other text. " + BRAND_SPEC),
+    ("sweep-duffle",
+     "All-over print black duffle bag with an abstract grid pattern of SIIIEEP wordmarks "
+     "subtly tiled across the fabric, hanging from a metal rack against a concrete wall, "
+     "4:5 portrait, soft directional light, no models, magazine product still. " + BRAND_SPEC),
+    ("sweep-gym-bag",
+     "All-over print black gym bag with a subtle tonal pattern of the SIIIEEP wordmark, "
+     "sitting on a tatami floor next to folded BJJ gear, soft window light, "
+     "4:5 portrait, no models, editorial product photography. " + BRAND_SPEC),
+    ("sweep-cotton-shorts",
+     "All-over print cotton shorts in solid black with a faint tonal SIIIEEP pattern "
+     "across the fabric, worn casually by an Asian woman in her late 20s, "
+     "lower-half shot only, plain warm studio background, natural soft light, "
+     "4:5 portrait, photographic, minimalist styling. " + BRAND_SPEC),
 ]
 
 
