@@ -1604,8 +1604,17 @@ async fn handle_collab_sweep_order(db: Db, session: &serde_json::Value) {
                 "zip":          zip,
             },
             "items": [item],
-            // confirm:false → draft (SIIIEEP社 / 濱田 が dashboard 承認後に出荷)
-            "confirm": false,
+            // PRINTFUL_AUTO_CONFIRM env var で自動承認の切替:
+            //   "true"  (default) → confirm=true で投入と同時にプリント開始・配送
+            //   "false"           → draft (dashboard で人手承認後に出荷)
+            //   "kill"            → 緊急ストップ。全て draft (override)
+            //
+            // 自動承認は 28-76% の粗利があるので Stripe 決済 → 即 Printful プリントが
+            // ベース運用。返金/キャンセルは Stripe + Printful の cancel-before-ship で対応。
+            "confirm": match env::var("PRINTFUL_AUTO_CONFIRM").as_deref() {
+                Ok("kill") | Ok("false") | Ok("0") => false,
+                _ => true,  // default true
+            },
             // Printful caps external_id at 32 chars; live Stripe session ids are ~78.
             // Strip the "cs_live_" prefix (8 chars) and keep the first 32 of the random tail.
             "external_id": session_id
@@ -10226,6 +10235,68 @@ async fn main() {
          Some(r#"{"S":16424,"M":16425,"L":16426,"XL":16427,"2XL":16428}"#),
          Some(r#"[{"type":"embroidery_chest_left","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
          Some(r##"[{"id":"thread_colors_chest_left","value":["#FFFFFF"]}]"##), 14, 1),
+
+        // ── 第二弾追加 (2026-05-11): DTG + 刺繍 + 全面プリント + 雑貨 ──
+        ("sweep-tank-top",      "タンクトップ",          "MU × SIIIEEP Staple Tank Top",
+         "Printful Bella+Canvas 3480 (pid 248)、Black。胸に SIIIEEP wordmark DTG プリント。ジムで快適。",
+         5_800,  "printful", Some(248), Some(8630),
+         Some(r#"{"S":8629,"M":8630,"L":8631,"XL":8632,"2XL":8633,"XS":8628}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         None, 10, 1),
+        ("sweep-zip-hoodie",    "ジップフーディ",        "MU × SIIIEEP Zip Hoodie",
+         "Printful Gildan 18600 (pid 692)、Black。前胸に SIIIEEP wordmark DTG プリント。練習前後の温度調整に。",
+         18_800, "printful", Some(692), Some(17296),
+         Some(r#"{"S":17295,"M":17296,"L":17297,"XL":17298,"2XL":17299,"3XL":17300,"4XL":17301,"5XL":17302}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         None, 14, 1),
+        ("sweep-crewneck",      "クルーネック",          "MU × SIIIEEP Champion Crewneck",
+         "Printful Champion S149 (pid 318)、Black。胸に SIIIEEP wordmark DTG プリント。厚手フリース。",
+         13_800, "printful", Some(318), Some(9660),
+         Some(r#"{"S":9659,"M":9660,"L":9661,"XL":9662,"2XL":9663}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         None, 14, 1),
+        ("sweep-snapback",      "スナップバック",        "MU × SIIIEEP Classic Snapback",
+         "Printful Yupoong 6089M (pid 99)、Black フラットブリム。フロントに SIIIEEP wordmark 刺繍 (白糸)。",
+         6_800,  "printful", Some(99), Some(4792),
+         Some(r#"{"OS":4792,"ONE SIZE":4792}"#),
+         Some(r#"[{"type":"embroidery_front_large","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r##"[{"id":"thread_colors_front_large","value":["#FFFFFF"]}]"##), 10, 1),
+        ("sweep-mug",           "コーヒーマグ",          "MU × SIIIEEP Glossy Mug",
+         "Printful Black Glossy Mug (pid 300)、11oz。両面に SIIIEEP wordmark サブリメーション印刷。",
+         2_800,  "printful", Some(300), Some(9323),
+         Some(r#"{"11 OZ":9323,"15 OZ":9324,"OS":9323,"ONE SIZE":9323,"M":9323,"L":9324}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         None, 10, 1),
+        ("sweep-bottle",        "ステンレスボトル",      "MU × SIIIEEP Stainless Bottle",
+         "Printful Stainless Steel Water Bottle (pid 382)、17oz。側面に SIIIEEP wordmark サブリメーション印刷。",
+         4_800,  "printful", Some(382), Some(16030),
+         Some(r#"{"17 OZ":16030,"OS":16030,"ONE SIZE":16030,"M":16030}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         None, 10, 1),
+        ("sweep-stickers",      "ステッカーシート",      "MU × SIIIEEP Sticker Sheet",
+         "Printful Kiss-Cut Sticker Sheet (pid 505)、5.83×8.27\"。複数の SIIIEEP wordmark / アイコンを kiss-cut。",
+         1_200,  "printful", Some(505), Some(12917),
+         Some(r#"{"OS":12917,"ONE SIZE":12917,"M":12917}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         None, 7, 1),
+        ("sweep-duffle",        "全面プリント ダッフル", "MU × SIIIEEP All-Over Duffle Bag",
+         "Printful All-Over Print Duffle Bag (pid 465)。SIIIEEP のサインを全面に展開した、ジム/旅行兼用バッグ。",
+         14_800, "printful", Some(465), Some(12021),
+         Some(r#"{"OS":12021,"ONE SIZE":12021,"M":12021}"#),
+         Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 14, 1),
+        ("sweep-gym-bag",       "全面プリント ジム バッグ", "MU × SIIIEEP All-Over Gym Bag",
+         "Printful All-Over Print Gym Bag (pid 594)。SIIIEEP パターンを全面プリント。Gi / 練習着収納に。",
+         9_800,  "printful", Some(594), Some(15155),
+         Some(r#"{"OS":15155,"ONE SIZE":15155,"M":15155}"#),
+         Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 14, 1),
+        ("sweep-cotton-shorts", "コットンショーツ",      "MU × SIIIEEP All-Over Cotton Shorts",
+         "Printful All-Over Print Unisex Cotton Shorts (pid 1481)。全面プリント、ラフな普段着用。",
+         6_800,  "printful", Some(1481), Some(46347),
+         Some(r#"{"S":46346,"M":46347,"L":46348,"XL":46349,"2XL":46350,"3XL":46351,"XS":46345}"#),
+         Some(r#"[{"type":"front_dtfabric","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 14, 1),
     ];
     let now = chrono_now();
     for (slug, cat, name, desc, price, route, pf_prod, pf_var, var_map, files, opts, lead, active) in sweep_items {
