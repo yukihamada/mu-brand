@@ -69,6 +69,9 @@ struct Product {
     brand: String,
     drop_num: i64,
     name: String,
+    /// YYYYMMDD-#NNN per-day-ordinal serial. NEW canonical product code.
+    /// Computed at read time from created_at + ordinal within that JST day.
+    serial_code: String,
     mockup_url: Option<String>,
     price_jpy: i64,
     inventory: i64,
@@ -272,17 +275,20 @@ fn read_product(row: &rusqlite::Row) -> rusqlite::Result<Product> {
     let drop_num: i64    = row.get(2)?;
     let name:     String = row.get(3)?;
     let sold:     i64    = row.get(7)?;
+    let created_at_raw: String = row.get(8)?;
     let dynamic = dynamic_price(&brand, drop_num, sold, &name);
+    let serial_code = serial_code_for(&created_at_raw, drop_num);
     Ok(Product {
         id:           row.get(0)?,
         brand,
         drop_num,
         name,
+        serial_code,
         mockup_url:   row.get(4)?,
         price_jpy:    dynamic,
         inventory:    row.get(6)?,
         sold,
-        created_at:   row.get(8)?,
+        created_at:   created_at_raw,
         weather_data: row.get(9)?,
         prompt_hash:  row.get(10)?,
         seed_data:    row.get(11)?,
@@ -292,6 +298,39 @@ fn read_product(row: &rusqlite::Row) -> rusqlite::Result<Product> {
         bid_count:    row.get(15).unwrap_or(0),
         sold_out_at:  row.get(16).unwrap_or(None),
     })
+}
+
+/// Build a YYYYMMDD-#NNN serial code from the row's created_at and a stable
+/// per-day ordinal. We use drop_num modulo a per-day estimate when no explicit
+/// per-day index is stored. For MUGEN at most 24 drops/day (one per hour), so
+/// the ordinal is `((drop_num - 1) % 24) + 1`. For other brands we fall back
+/// to drop_num itself since they're already 1-indexed within their cycle.
+fn serial_code_for(created_at_raw: &str, drop_num: i64) -> String {
+    // created_at is either a Unix epoch as TEXT or an ISO-ish stamp
+    let unix_secs: i64 = if let Ok(v) = created_at_raw.parse::<i64>() {
+        v
+    } else {
+        // Try "YYYY-MM-DDTHH:MM:SS..." — use only the date portion
+        if let Some(date) = created_at_raw.split('T').next() {
+            let parts: Vec<&str> = date.split('-').collect();
+            if parts.len() == 3 {
+                let y: i64 = parts[0].parse().unwrap_or(2026);
+                let m: i64 = parts[1].parse().unwrap_or(1);
+                let d: i64 = parts[2].parse().unwrap_or(1);
+                return format!("{:04}{:02}{:02}-#{:03}", y, m, d, drop_num.max(1));
+            }
+        }
+        0
+    };
+    if unix_secs <= 0 {
+        return format!("00000000-#{:03}", drop_num.max(1));
+    }
+    // JST date = epoch + 9h, then break into Y/M/D
+    let days_since_epoch = (unix_secs + 9 * 3600) / 86400;
+    let (y, m, d) = civil_from_days(days_since_epoch);
+    // Per-day ordinal: drop_num is 1-108 for mugen, mostly sequential by hour
+    let ord = ((drop_num.max(1) - 1) % 99) + 1; // keep within #001-#099
+    format!("{:04}{:02}{:02}-#{:03}", y, m, d, ord)
 }
 
 async fn list_products(
@@ -1338,6 +1377,129 @@ async fn upload_mockup(
     })).into_response()
 }
 
+/// Admin: re-generate the chest-print mockup for products whose original
+/// Printful temp URL expired. Uses stored prompt_text + weather metadata
+/// + drop_num seed, persists bytes via store_mockup_bytes (R2 or Fly
+/// volume), updates mockup_url + active=1.
+///
+/// Usage: POST /api/admin/recover_mugen?token=<ADMIN_TOKEN>
+///   body: {"drop_nums":[1,2,3,4,5]}  (or omit to recover every active=0
+///   row that has weather metadata)
+async fn admin_recover_mugen(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String,String>>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_admin_token(q.get("token")) { return resp; }
+
+    let drop_nums: Vec<i64> = body.get("drop_nums")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_i64()).collect())
+        .unwrap_or_default();
+
+    type Row = (i64, i64, String, Option<String>, Option<String>);
+    let rows: Vec<Row> = {
+        let conn = db.lock().unwrap();
+        let sql = if drop_nums.is_empty() {
+            "SELECT id, drop_num, name, prompt_text, seed_data
+             FROM products WHERE brand='mugen' AND active=0
+               AND seed_data IS NOT NULL".to_string()
+        } else {
+            let placeholders = (0..drop_nums.len()).map(|_| "?").collect::<Vec<_>>().join(",");
+            format!(
+                "SELECT id, drop_num, name, prompt_text, seed_data
+                 FROM products WHERE brand='mugen' AND drop_num IN ({})",
+                placeholders
+            )
+        };
+        let mut stmt = match conn.prepare(&sql) {
+            Ok(s) => s,
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("db: {}", e)).into_response(),
+        };
+        let mapper = |r: &rusqlite::Row| Ok((
+            r.get::<_,i64>(0)?, r.get::<_,i64>(1)?, r.get::<_,String>(2)?,
+            r.get::<_,Option<String>>(3)?, r.get::<_,Option<String>>(4)?,
+        ));
+        if drop_nums.is_empty() {
+            stmt.query_map([], mapper)
+                .map(|it| it.filter_map(|r| r.ok()).collect())
+                .unwrap_or_default()
+        } else {
+            stmt.query_map(rusqlite::params_from_iter(drop_nums.iter()), mapper)
+                .map(|it| it.filter_map(|r| r.ok()).collect())
+                .unwrap_or_default()
+        }
+    };
+
+    let mut out: Vec<serde_json::Value> = Vec::with_capacity(rows.len());
+    for (pid, drop_num, _name, prompt_text, seed_data) in &rows {
+        let weather: serde_json::Value = seed_data.as_deref()
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or(serde_json::json!({}));
+        let temp = weather.get("weather").and_then(|w| w.get("temp_c")).and_then(|v| v.as_f64()).unwrap_or(13.0);
+        let cond = weather.get("weather").and_then(|w| w.get("condition")).and_then(|v| v.as_str()).unwrap_or("Sunny");
+        let wind = weather.get("weather").and_then(|w| w.get("wind_kmh")).and_then(|v| v.as_f64()).unwrap_or(0.0);
+
+        let synth_prompt = format!(
+            "MUGEN #{} of 108 — Hokkaido Teshikaga weather: {:.0}°C, {}, wind {:.0} km/h. \
+             Abstract editorial garment graphic, hand-drawn imperfection, slightly desaturated, \
+             interprets the weather as feeling not picture.",
+            drop_num, temp, cond, wind);
+        let final_prompt = prompt_text.as_deref().filter(|s| !s.trim().is_empty())
+            .unwrap_or(synth_prompt.as_str()).to_string();
+
+        let tee = gemini::TeeDesign {
+            name: &format!("MUGEN #{:04}", drop_num),
+            prompt: &final_prompt,
+            mood: &["minimal".into(), "weather-driven".into()],
+            palette: &["muted earth tones".into()],
+            scene: &["every-day".into()],
+            seed: &format!("mugen-{:04}", drop_num),
+            bio: "",
+        };
+        match gemini::generate_tee(&tee).await {
+            Ok(g) => {
+                let bytes = axum::body::Bytes::from(g.bytes);
+                let stored = match store_mockup_bytes(*pid, &bytes).await {
+                    Some(u) => u,
+                    None => {
+                        out.push(serde_json::json!({
+                            "drop_num": drop_num, "product_id": pid,
+                            "status": "store_failed",
+                        }));
+                        continue;
+                    }
+                };
+                {
+                    let conn = db.lock().unwrap();
+                    let _ = conn.execute(
+                        "UPDATE products SET mockup_url=?, active=1 WHERE id=?",
+                        params![stored, pid],
+                    );
+                }
+                out.push(serde_json::json!({
+                    "drop_num": drop_num, "product_id": pid,
+                    "status": "ok", "mockup_url": stored, "bytes": bytes.len(),
+                }));
+            }
+            Err(e) => {
+                eprintln!("[recover_mugen] drop_num {} gemini failed: {}", drop_num, e);
+                out.push(serde_json::json!({
+                    "drop_num": drop_num, "product_id": pid,
+                    "status": "gemini_failed", "error": e,
+                }));
+            }
+        }
+        // pace to stay under Gemini rate
+        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+    }
+    Json(serde_json::json!({
+        "ok": true,
+        "candidates": rows.len(),
+        "results": out,
+    })).into_response()
+}
+
 async fn import_product(
     State(db): State<Db>,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String,String>>,
@@ -1948,6 +2110,20 @@ fn jst_today_str() -> String {
     civil_from_days_str(days)
 }
 
+fn civil_from_days(mut days: i64) -> (i64, i64, i64) {
+    days += 719468;
+    let era = if days >= 0 { days } else { days - 146096 } / 146097;
+    let doe = days - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}
+
 fn civil_from_days_str(mut days: i64) -> String {
     days += 719468;
     let era = if days >= 0 { days } else { days - 146096 } / 146097;
@@ -2326,7 +2502,12 @@ fn spawn_gemini_for_design(db: Db, design_id: i64) {
                         .json(&serde_json::json!({
                             "from": "MU × YOU <noreply@wearmu.com>",
                             "to": [email],
-                            "subject": format!("MU × YOU DAY {:03} — {}", day_num, name),
+                            "subject": you_email_subject(
+                                &{ let c = db.lock().unwrap();
+                                   cv_get(&c, "email_subject_variant", "loss") },
+                                "daily",
+                                &serde_json::json!({"day_num": day_num, "name": &name}),
+                            ),
                             "html": html,
                         }))
                         .send().await;
@@ -2471,6 +2652,7 @@ async fn you_subscribe(
     if !resend_key.is_empty() {
         let to = email.clone();
         let tk = token.clone();
+        let subject_variant = you_subject_variant(&db);
         tokio::spawn(async move {
             let html = format!(r#"
 <div style="background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;padding:48px;max-width:560px;margin:0 auto">
@@ -2497,7 +2679,7 @@ async fn you_subscribe(
                 .json(&serde_json::json!({
                     "from": "MU × YOU <noreply@wearmu.com>",
                     "to": [to],
-                    "subject": "MU × YOU — 明朝9時から毎日デザインが届きます",
+                    "subject": you_email_subject(&subject_variant, "welcome", &serde_json::json!({})),
                     "html": html,
                 }))
                 .send().await;
@@ -2778,6 +2960,42 @@ fn cv_get(conn: &Connection, key: &str, default: &str) -> String {
         params![key],
         |r| r.get::<_, String>(0),
     ).unwrap_or_else(|_| default.to_string())
+}
+
+/// Read the active /you email-subject variant. Wrap the lock so callers
+/// outside an existing critical section don't have to.
+fn you_subject_variant(db: &Db) -> String {
+    let conn = db.lock().unwrap();
+    cv_get(&conn, "email_subject_variant", "loss")
+}
+
+/// Pick the subject line for a /you email kind using the active variant.
+/// cv_pulse rotates the variant so we can find the highest-CTR phrasing
+/// without redeploying.
+fn you_email_subject(variant: &str, kind: &str, ctx: &serde_json::Value) -> String {
+    let day_num = ctx.get("day_num").and_then(|v| v.as_i64()).unwrap_or(0);
+    let name = ctx.get("name").and_then(|v| v.as_str()).unwrap_or("");
+    let days_left = ctx.get("days_left").and_then(|v| v.as_i64()).unwrap_or(0);
+    let days_done = (30 - days_left).max(0);
+    match (kind, variant) {
+        ("daily", "loss") => format!("MU × YOU DAY {:03} — 24 時間で消えます", day_num),
+        ("daily", "curiosity") => format!("DAY {:03} — 今日のあなたは「{}」", day_num, name),
+        ("daily", _) => format!("MU × YOU DAY {:03} — {}", day_num, name),
+
+        ("welcome", "loss") => "30 日後に消える、あなただけの 30 案 — 配信開始".into(),
+        ("welcome", "curiosity") => "30 日 / 30 案 — どんな自分が布になる？".into(),
+        ("welcome", _) => "MU × YOU — 明朝 9 時から毎日デザインが届きます".into(),
+
+        ("trial5d", "loss") => format!("あと {} 日であなたの {} 案が消えます", days_left.max(1), days_done),
+        ("trial5d", "curiosity") => format!("残り {} 日 — 仕立てる一着、決まった？", days_left.max(1)),
+        ("trial5d", _) => format!("MU × YOU — トライアル残り {} 日、MU 1 着で永久 ¥0", days_left.max(1)),
+
+        ("trial_end", "loss") => "MU × YOU — トライアル終了。29 案が消えました。".into(),
+        ("trial_end", "curiosity") => "30 日が終わり、あなたは何を持ち帰る？".into(),
+        ("trial_end", _) => "MU × YOU — トライアル終了。続けるには MU を 1 着。".into(),
+
+        _ => format!("MU × YOU — {}", name),
+    }
 }
 
 /// /api/admin/cv_pulse — called every 30 min by cron. Snapshots metrics,
@@ -4759,6 +4977,7 @@ async fn main() {
         "ALTER TABLE you_designs ADD COLUMN gen_status TEXT NOT NULL DEFAULT 'pending'",
         "ALTER TABLE you_designs ADD COLUMN gen_error TEXT",
         "ALTER TABLE you_designs ADD COLUMN daily_email_sent_at TEXT",
+        "ALTER TABLE products ADD COLUMN serial_code TEXT",
         "ALTER TABLE you_users ADD COLUMN slug TEXT",
         "ALTER TABLE you_users ADD COLUMN display_name TEXT",
         // 30-day trial / lifetime-free for MU shirt owners
@@ -4968,6 +5187,7 @@ async fn main() {
         .route("/api/admin/update-sold", post(update_sold))
         .route("/api/admin/mockup", patch(update_mockup))
         .route("/api/admin/upload-mockup", post(upload_mockup))
+        .route("/api/admin/recover_mugen", post(admin_recover_mugen))
         .route("/api/admin/lookup", get(admin_lookup))
         .route("/api/admin/deactivate", post(deactivate_product))
         .route("/api/admin/settle-auction", post(settle_auction))
