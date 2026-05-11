@@ -7970,6 +7970,205 @@ async fn admin_sweep_signals(
     Json(serde_json::json!({"signals": rows, "count": rows.len()})).into_response()
 }
 
+/// GET /admin/sweep?token=… — Management dashboard for MU × SIIIEEP collab.
+/// Shows price, Printful cost, margin, status, fulfillment plumbing,
+/// recent orders + signals per product. Admin-only; never publicly linked.
+async fn admin_sweep_dashboard(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let token_attr = html_attr_escape(q.get("token").map(String::as_str).unwrap_or(""));
+
+    type Row = (
+        i64, String, String, String, i64, Option<i64>,
+        Option<i64>, Option<i64>, i64, i64, String,
+    );
+    let rows: Vec<Row> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, slug, category, name, price_jpy, printful_cost_jpy,
+                    printful_product_id, printful_variant_id, active,
+                    COALESCE(lead_time_days, 14), COALESCE(production_route,'')
+             FROM collab_products WHERE partner='sweep' ORDER BY active DESC, id"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map([], |r| Ok((
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?,
+            r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?, r.get(10)?,
+        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+
+    // Order counts per slug
+    type CountRow = (String, i64, Option<i64>);
+    let order_stats: Vec<CountRow> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT slug, COUNT(*), SUM(amount_jpy) FROM collab_orders
+             GROUP BY slug"
+        ) { Ok(s) => s, Err(_) => return Json(serde_json::json!({"err":"db"})).into_response() };
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    let mut orders_by_slug: std::collections::HashMap<String, (i64, i64)> = Default::default();
+    for (slug, n, rev) in order_stats {
+        orders_by_slug.insert(slug, (n, rev.unwrap_or(0)));
+    }
+
+    // Signal counts per slug
+    type SigRow = (String, String, i64);
+    let sig_rows: Vec<SigRow> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT slug, kind, COUNT(*) FROM sweep_signals GROUP BY slug, kind"
+        ) { Ok(s) => s, Err(_) => return Json(serde_json::json!({"err":"db"})).into_response() };
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    let mut sigs: std::collections::HashMap<String, (i64, i64, i64)> = Default::default();
+    for (slug, kind, n) in sig_rows {
+        let e = sigs.entry(slug).or_insert((0,0,0));
+        match kind.as_str() {
+            "love" => e.0 = n, "meh" => e.1 = n, "comment" => e.2 = n, _ => {}
+        }
+    }
+
+    // Build table rows + totals
+    let mut total_orders = 0i64;
+    let mut total_revenue = 0i64;
+    let mut total_cost_est = 0i64;
+    let mut active_count = 0i64;
+    let mut hidden_count = 0i64;
+    let body_rows = rows.iter().map(|(id, slug, cat, name, price, cost, pf_prod, pf_var, active, lead, route)| {
+        let (n_orders, rev) = orders_by_slug.get(slug).copied().unwrap_or((0, 0));
+        total_orders += n_orders;
+        total_revenue += rev;
+        if let Some(c) = cost { total_cost_est += c * n_orders; }
+        if *active == 1 { active_count += 1 } else { hidden_count += 1 }
+        let (loves, mehs, comments) = sigs.get(slug).copied().unwrap_or((0,0,0));
+        let cost_cell = cost.map(|c| format!("¥{}", format_jpy(c))).unwrap_or_else(|| "—".into());
+        let margin_cell = match cost {
+            Some(c) if *price > 0 => {
+                let m = price - c;
+                let pct = m * 100 / price;
+                let cls = if pct < 25 { "thin" } else if pct < 40 { "ok" } else { "good" };
+                format!(r#"<span class="m m-{cls}">¥{m} ({pct}%)</span>"#,
+                    cls=cls, m=format_jpy(m), pct=pct)
+            }
+            _ => "—".to_string(),
+        };
+        let status = if *active == 1 {
+            r#"<span class="badge live">live</span>"#.to_string()
+        } else {
+            r#"<span class="badge hidden">非表示</span>"#.to_string()
+        };
+        let pf_link = match (pf_prod, pf_var) {
+            (Some(p), Some(v)) => format!(
+                r#"<a href="https://www.printful.com/dashboard/product/{p}" target="_blank">{p}/{v}</a>"#,
+                p=p, v=v),
+            _ => "—".to_string(),
+        };
+        format!(r#"<tr class="row-{a}">
+  <td class="status">{status}</td>
+  <td class="slug"><code>{slug_esc}</code><br><small>{cat_esc}</small></td>
+  <td class="name">{name_esc}</td>
+  <td class="num">¥{price_fmt}</td>
+  <td class="num cost">{cost_cell}</td>
+  <td class="num margin">{margin_cell}</td>
+  <td class="route">{route_esc}<br><small>{lead}日</small></td>
+  <td class="pf">{pf_link}</td>
+  <td class="num">{n_orders}<br><small>¥{rev_fmt}</small></td>
+  <td class="num sig">👍{loves} 👎{mehs} 💬{comments}</td>
+  <td><a class="link" href="https://wearmu.com/sweep#buy-{id}" target="_blank">view ↗</a></td>
+</tr>"#,
+            a = if *active == 1 { "active" } else { "hidden" },
+            status = status,
+            slug_esc = html_attr_escape(slug), cat_esc = html_attr_escape(cat),
+            name_esc = html_attr_escape(name),
+            price_fmt = format_jpy(*price),
+            cost_cell = cost_cell, margin_cell = margin_cell,
+            route_esc = html_attr_escape(route), lead = lead,
+            pf_link = pf_link,
+            n_orders = n_orders, rev_fmt = format_jpy(rev),
+            loves = loves, mehs = mehs, comments = comments,
+            id = id,
+        )
+    }).collect::<Vec<_>>().join("\n");
+
+    let total_margin = total_revenue - total_cost_est;
+    let total_pct = if total_revenue > 0 { total_margin * 100 / total_revenue } else { 0 };
+
+    let html = format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU × SIIIEEP — Admin Dashboard</title>
+<meta name="robots" content="noindex,nofollow">
+<style>
+*{{box-sizing:border-box}}
+body{{background:#0A0A0A;color:#F5F5F0;font-family:-apple-system,'Helvetica Neue','Hiragino Sans',Arial,sans-serif;margin:0;padding:32px;font-size:13px;line-height:1.6}}
+h1{{font-size:22px;font-weight:300;letter-spacing:0.06em;margin:0 0 6px}}
+h1 em{{color:#e6c449;font-style:normal}}
+.sub{{color:rgba(245,245,240,0.55);font-size:12px;margin-bottom:24px}}
+.summary{{display:flex;gap:18px;margin-bottom:24px;flex-wrap:wrap}}
+.stat{{background:#111;border:1px solid rgba(255,255,255,0.08);padding:14px 20px;border-radius:3px;min-width:160px}}
+.stat .v{{font-size:24px;font-weight:300;color:#e6c449;font-variant-numeric:tabular-nums}}
+.stat .l{{font-size:9px;letter-spacing:0.2em;text-transform:uppercase;opacity:0.55;margin-top:4px}}
+table{{width:100%;border-collapse:collapse;font-size:12px}}
+th,td{{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,0.05);vertical-align:top;text-align:left}}
+th{{font-size:9.5px;letter-spacing:0.15em;text-transform:uppercase;color:rgba(245,245,240,0.55);font-weight:400;background:#111;position:sticky;top:0}}
+td.num{{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}}
+.row-hidden{{opacity:0.42}}
+code{{font-size:11px;background:rgba(230,196,73,0.08);color:#e6c449;padding:1px 5px;border-radius:2px}}
+small{{font-size:10px;opacity:0.55}}
+.badge{{font-size:9px;letter-spacing:0.15em;text-transform:uppercase;padding:2px 6px;border-radius:2px;font-weight:600}}
+.badge.live{{background:rgba(34,197,94,0.18);color:#22c55e}}
+.badge.hidden{{background:rgba(200,54,44,0.18);color:#C8362C}}
+.m-good{{color:#22c55e}}
+.m-ok{{color:#e6c449}}
+.m-thin{{color:#C8362C}}
+.link{{color:#5cf;text-decoration:none;font-size:11px}}
+.link:hover{{text-decoration:underline}}
+a{{color:#5cf;text-decoration:none}}
+a:hover{{text-decoration:underline}}
+.foot{{margin-top:24px;font-size:11px;opacity:0.5}}
+</style></head><body>
+<h1>MU × <em>SIIIEEP</em> — Admin Dashboard</h1>
+<div class="sub">原価・利益率・FB を一覧。一般購入ページからは見えません。</div>
+
+<div class="summary">
+  <div class="stat"><div class="v">{active_count}</div><div class="l">商品 active</div></div>
+  <div class="stat"><div class="v">{hidden_count}</div><div class="l">商品 hidden</div></div>
+  <div class="stat"><div class="v">{total_orders}</div><div class="l">累計注文数</div></div>
+  <div class="stat"><div class="v">¥{rev_fmt}</div><div class="l">累計売上</div></div>
+  <div class="stat"><div class="v">¥{margin_fmt}</div><div class="l">累計推定粗利 ({total_pct}%)</div></div>
+</div>
+
+<table>
+<thead><tr>
+  <th>状態</th><th>slug / cat</th><th>商品名</th><th>売価</th><th>原価</th><th>粗利</th>
+  <th>route / 納期</th><th>Printful</th><th>注文 / 売上</th><th>FB</th><th></th>
+</tr></thead>
+<tbody>
+{body}
+</tbody>
+</table>
+
+<div class="foot">
+  原価は E2E Printful API 実測 (subtotal + ship to JP + tax)。価格変更・新規 SKU 時は <code>sweep_costs.py</code> で再計測 → seed update 推奨。<br>
+  自動承認: <code>PRINTFUL_AUTO_CONFIRM</code> (default <code>true</code>) — Stripe 決済直後に Printful へ即発注。
+</div>
+</body></html>"#,
+        active_count = active_count, hidden_count = hidden_count,
+        total_orders = total_orders, rev_fmt = format_jpy(total_revenue),
+        margin_fmt = format_jpy(total_margin), total_pct = total_pct,
+        body = body_rows,
+    );
+    let _ = token_attr; // currently unused but kept for future "Refresh costs" button
+    let mut resp = axum::response::Html(html).into_response();
+    resp.headers_mut().insert(
+        "X-Robots-Tag", HeaderValue::from_static("noindex, nofollow"),
+    );
+    resp
+}
+
 // ── Learning Loop admin endpoints ──────────────────────────────────────────
 
 /// GET /api/admin/prompt_performance?token=&brand=mugen&limit=20&sort=revenue
@@ -11908,6 +12107,7 @@ async fn main() {
         .route("/api/sweep/signal", post(sweep_signal))
         .route("/api/sweep/signals", get(sweep_signals_summary))
         .route("/api/admin/sweep_signals", get(admin_sweep_signals))
+        .route("/admin/sweep", get(admin_sweep_dashboard))
         .route("/api/admin/prompt_performance", get(admin_prompt_performance))
         .route("/api/admin/prompt_performance/refresh", post(admin_prompt_performance_refresh))
         .route("/api/admin/ai_decisions", get(admin_ai_decisions))
