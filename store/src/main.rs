@@ -415,9 +415,20 @@ fn read_product(row: &rusqlite::Row) -> rusqlite::Result<Product> {
     let brand:    String = row.get(1)?;
     let drop_num: i64    = row.get(2)?;
     let name:     String = row.get(3)?;
+    let db_price: i64    = row.get(5)?;
     let sold:     i64    = row.get(7)?;
     let created_at_raw: String = row.get(8)?;
-    let dynamic = dynamic_price(&brand, drop_num, sold, &name);
+    // Pricing rule:
+    //   - MA: respect the per-piece DB floor (so legacy monthly pieces created
+    //     at ¥120k stay ¥120k even after the cadence change lowered the constant
+    //     to ¥30k; admin update-price calls also persist correctly).
+    //   - MUGEN/MUON/NOUNS: recompute from the bonding curve so each read
+    //     reflects current `sold` count.
+    let price_jpy = if brand == "ma" && db_price > 0 {
+        db_price
+    } else {
+        dynamic_price(&brand, drop_num, sold, &name)
+    };
     let serial_code = serial_code_for(&created_at_raw, drop_num);
     let created_at = normalize_created_at_iso(&created_at_raw);
     Ok(Product {
@@ -427,7 +438,7 @@ fn read_product(row: &rusqlite::Row) -> rusqlite::Result<Product> {
         name,
         serial_code,
         mockup_url:   row.get(4)?,
-        price_jpy:    dynamic,
+        price_jpy,
         inventory:    row.get(6)?,
         sold,
         created_at,
@@ -1495,22 +1506,34 @@ async fn handle_collab_sweep_order(db: Db, session: &serde_json::Value) {
     let ship_address = format!("{} {} {} {} {} {}", address1, address2, city, state, zip, country)
         .split_whitespace().collect::<Vec<_>>().join(" ");
 
-    // Look up product (route + variant_id + image)
-    type ProdRow = (i64, String, String, i64, Option<i64>, Option<String>);
+    // Look up product (route + variant + variant_map + image)
+    type ProdRow = (i64, String, String, i64, Option<i64>, Option<String>, Option<String>);
     let product: Option<ProdRow> = {
         let conn = db.lock().unwrap();
         conn.query_row(
             "SELECT id, name, COALESCE(production_route,'sweep_manual'), price_jpy,
-                    printful_variant_id, image_url
+                    printful_variant_id, image_url, printful_variant_map
              FROM collab_products WHERE slug=? AND partner='sweep'",
             params![slug],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
         ).ok()
     };
-    let Some((_pid, name, route, _price, variant_id, image_url)) = product else {
+    let Some((_pid, name, route, _price, variant_id_default, image_url, variant_map_json)) = product else {
         eprintln!("[sweep/webhook] unknown slug: {}", slug);
         return;
     };
+
+    // Resolve variant_id by size from the JSON map, falling back to default.
+    // Map keys are upper-case (S/M/L/XL/2XL/OS/ONE SIZE/S-M etc).
+    let size_key = size.to_uppercase();
+    let variant_id: Option<i64> = variant_map_json.as_ref()
+        .and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok())
+        .and_then(|v| {
+            v.get(&size_key).and_then(|x| x.as_i64())
+                .or_else(|| v.get("OS").and_then(|x| x.as_i64()))
+                .or_else(|| v.get("ONE SIZE").and_then(|x| x.as_i64()))
+        })
+        .or(variant_id_default);
 
     // Idempotent insert
     {
@@ -6126,20 +6149,21 @@ async fn show_sweep_page(
     }
 
     // Build product list HTML server-side (no caching of the gate cookie path)
-    type Row = (i64, String, String, String, String, i64, Option<String>);
+    type Row = (i64, String, String, String, String, i64, Option<String>, i64);
     let items: Vec<Row> = {
         let conn = db.lock().unwrap();
         let mut stmt = match conn.prepare(
-            "SELECT id, slug, category, name, COALESCE(description,''), price_jpy, image_url
+            "SELECT id, slug, category, name, COALESCE(description,''), price_jpy, image_url,
+                    COALESCE(lead_time_days, 14)
              FROM collab_products WHERE partner='sweep' AND active=1
              ORDER BY id"
         ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
         stmt.query_map([], |r| Ok((
-            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?
         ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
     };
 
-    let cards = items.iter().map(|(id, slug, cat, name, desc, price, image)| {
+    let cards = items.iter().map(|(id, slug, cat, name, desc, price, image, lead)| {
         // Image fallback: if no image_url set yet, show a styled placeholder
         // with the category label, so the gallery is never empty.
         let image_block = match image.as_deref().filter(|u| !u.is_empty() && u.starts_with("http")) {
@@ -6156,12 +6180,13 @@ async fn show_sweep_page(
     <div class="cat">{cat}</div>
     <h3 id="buy-{id}">{name}</h3>
     <p class="desc">{desc}</p>
+    <div class="lead">📦 {lead}日でお届け · Printful 経由</div>
     <div class="row">
       <span class="price">¥{price_fmt}</span>
       <select id="size-{id}" class="size" aria-label="size">
         <option>S</option><option selected>M</option><option>L</option><option>XL</option>
       </select>
-      <button class="buy" data-slug="{slug}" data-id="{id}">仕立てる →</button>
+      <button class="buy" data-slug="{slug}" data-id="{id}">注文 →</button>
     </div>
     <div class="fb">
       <button class="sig love" data-slug="{slug}" aria-label="好き">👍 <span class="n n-love">0</span></button>
@@ -6221,6 +6246,7 @@ header .warn{{display:inline-block;font-size:10px;letter-spacing:0.22em;text-tra
 .card .cat{{font-size:9px;letter-spacing:0.32em;text-transform:uppercase;color:var(--y);opacity:0.85}}
 .card h3{{font-size:17px;font-weight:400;letter-spacing:0.01em;margin:2px 0 4px}}
 .card .desc{{color:var(--mute);font-size:12.5px;line-height:1.85;flex:1}}
+.card .lead{{font-size:9.5px;letter-spacing:0.16em;color:rgba(245,245,240,0.55);margin-top:8px}}
 .card .row{{display:flex;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap}}
 .card .price{{font-size:16px;color:var(--y);font-variant-numeric:tabular-nums;margin-right:auto}}
 .card select{{background:#000;color:var(--fg);border:1px solid rgba(255,255,255,0.18);font-size:12px;padding:7px 10px;border-radius:2px}}
@@ -6255,11 +6281,13 @@ footer a{{color:inherit;text-decoration:underline}}
   </div>
   <h1>北参道の BJJ アパレルと、<br>AI ブランドの試作。</h1>
   <p class="lede">
-    SWEEP は北参道の道場発、ラッシュガード / スパッツ / ジ・ファイトショーツのアパレル。<br>
-    濱田 (柔術青帯、SWEEP に通ってる MU 創業者) が「MU の AI デザインを SWEEP の身体性で着たい」と思って、5 つの draft を作った。<br>
-    本ページは <em>SWEEP社 確認前のプレビュー</em>。SWEEP の承認後、正式販売へ。
+    SIIIEEP は北参道の道場発、BJJ ラッシュガード / スパッツ / ファイトショーツのアパレル。<br>
+    濱田 (柔術青帯、北参道で SIIIEEP の練習着を着てる MU 創業者) が「MU の AI デザインを SIIIEEP の身体性で着たい」と思って、コラボ案を作った。<br>
+    本ページは <em>SIIIEEP社 確認前のプレビュー</em>。
+    13 アイテムは <strong>Printful の全面プリント / 刺繍で 10-14 日に発送</strong>される本物の購入。
+    Gi・帯・タープ・マウスガードケースの 4 アイテムは SIIIEEP社 と本契約完了後に解放。
   </p>
-  <div class="warn">⚠ Draft — SWEEP社 サインオフ前。本注文を入れた場合の生産・出荷は、両社合意後にお知らせします。</div>
+  <div class="warn">⚠ Draft — SIIIEEP社 サインオフ前のため password gate。13 商品は今日から実際に注文可能 (Printful 経由)。</div>
 </header>
 <div class="note">
   パスワードは知り合いに渡して下さい。リンクには <code>?pass={pw}</code> が必要 (このページが見えてるという事はあなたは合っています)。
@@ -7231,7 +7259,7 @@ async fn run_council_weekly_cron(db: Db) {
         ))).map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>()).unwrap_or_default()
     };
 
-    let (title, body_md, agendas, model_used) = match generate_council_brief_via_gemini(
+    let (_gemini_title, body_md, agendas, model_used) = match generate_council_brief_via_gemini(
         &week_label, &inputs).await {
         Some(triple) => (triple.0, triple.1, triple.2, "gemini-2.5-flash".to_string()),
         None => {
@@ -7240,6 +7268,11 @@ async fn run_council_weekly_cron(db: Db) {
             (t, b, a, "static-fallback".to_string())
         }
     };
+    // Always build the title server-side. Gemini hallucinated "2024 週11" on
+    // 2026-05-11 (week_label was correct "2026.W19" but Gemini wrote the year
+    // from its training data into the title).
+    let title = format!("今週の MA Council Brief — {}", week_label);
+
 
     // Insert the brief row
     {
@@ -9539,95 +9572,134 @@ async fn main() {
         "ALTER TABLE collab_products ADD COLUMN printful_variant_id INTEGER",
         "ALTER TABLE collab_products ADD COLUMN production_route TEXT NOT NULL DEFAULT 'sweep_manual'",
         "ALTER TABLE collab_products ADD COLUMN lead_time_days INTEGER NOT NULL DEFAULT 21",
+        // JSON: {\"S\":<id>,\"M\":<id>,\"L\":<id>,\"XL\":<id>} or {\"OS\":<id>} for one-size.
+        "ALTER TABLE collab_products ADD COLUMN printful_variant_map TEXT",
     ] {
         conn.execute(col, []).ok();
     }
 
-    // Seed MU × SWEEP draft items (idempotent on slug)
-    // 17 商品。route= 'printful' は Printful catalog variant_id 紐付けで
-    // 受注時に自動発注 (T シャツ系)。'sweep_manual' は SWEEP社 が個別生産
-    // (BJJ 専用品)。'pre_order' は受注後に SWEEP社 が顧客と相談 (Gi など)。
+    // Seed MU × SWEEP items (idempotent on slug).
+    //
+    // 13 商品が正式販売可能 (active=1):
+    //   - 3 BJJ items (rashguard/shorts/spats) use Printful all-over print
+    //     athletic apparel (rash guard 301, athletic long shorts 332, leggings 189).
+    //   - 10 lifestyle items use Printful catalog with verified variant IDs.
+    //
+    // 4 商品は SWEEP社 サインオフ前のため非表示 (active=0):
+    //   gi, belt, BJJ tape, mouthguard case — Printful カタログに無い。
+    //   SWEEP社 と契約完了後に active=1 へ。
+    //
+    // variant_map JSON: {\"S\":id,\"M\":id,\"L\":id,\"XL\":id} or {\"OS\":id} for one-size.
     type SweepRow = (
-        &'static str, &'static str, &'static str, &'static str, i64,
-        &'static str, Option<i64>, Option<i64>, i64,
+        &'static str,            // slug
+        &'static str,            // category
+        &'static str,            // name
+        &'static str,            // description
+        i64,                     // price_jpy
+        &'static str,            // production_route
+        Option<i64>,             // printful_product_id
+        Option<i64>,             // printful_variant_id (M default; lookup uses map first)
+        Option<&'static str>,    // printful_variant_map (JSON)
+        i64,                     // lead_time_days
+        i64,                     // active (0 = hidden)
     );
     let sweep_items: &[SweepRow] = &[
-        // ── BJJ 専用品 (Printful 不可、SWEEP社 manual) ──
+        // ── BJJ 専用品: Printful all-over print に置換 (今日 fulfillable) ──
         ("sweep-rashguard-ls",  "ラッシュガード",        "MU × SWEEP Long-Sleeve Rashguard",
-         "北参道 SWEEP の身体に沿うパターンを MU の北海道気象データから生まれたグラフィックで再構築。圧縮ニット、UPF50+。",
-         11_800, "sweep_manual", None, None, 28),
-        ("sweep-fight-shorts",  "ファイトショーツ",      "MU × SWEEP Fight Shorts",
-         "ストレッチドビル×ベルクロ。MUON の温度パターンを縫い目に転写した試作。",
-         9_800,  "sweep_manual", None, None, 28),
+         "Printful All-Over Print Men's Rash Guard (pid 301) ベース。全面プリントで MU の北海道気象データグラフィック + SIIIEEP のサイドステッチ。圧縮ニット、UPF50+。",
+         11_800, "printful", Some(301), Some(9328),
+         Some(r#"{"S":9327,"M":9328,"L":9329,"XL":9330,"2XL":9331,"3XL":9332,"XS":9326}"#), 14, 1),
+        ("sweep-fight-shorts",  "ファイトショーツ",      "MU × SWEEP Athletic Long Shorts",
+         "Printful All-Over Print Unisex Athletic Long Shorts (pid 332) ベース。MUON の温度パターンを全面プリント。ストレッチ + 内側ライナー。",
+         9_800,  "printful", Some(332), Some(9813),
+         Some(r#"{"S":9812,"M":9813,"L":9814,"XL":9815,"2XL":9816,"3XL":9817,"XS":9811,"2XS":16588}"#), 14, 1),
         ("sweep-spats",         "スパッツ / グラップリング タイツ",
          "MU × SWEEP Grappling Spats",
-         "MUGEN の連番が縦に流れるサイドライン入り。寒い日のアンダー / そのまま着用も可。",
-         8_800,  "sweep_manual", None, None, 28),
-        ("sweep-gi-classic",    "柔術 Gi (道着)",        "MU × SWEEP Classic Gi",
-         "綿100% 550gsm、SWEEP 標準カット。襟裏に MUGEN 連番を刺繍。サイズ A0–A4。",
-         38_800, "pre_order", None, None, 56),
-        ("sweep-belt-promo",    "帯 (昇格用)",           "MU × SWEEP Promotion Belt",
-         "白帯〜黒帯。先端に MU×SWEEP のラベル縫い込み。昇格祝いの 1 本。",
-         6_800,  "pre_order", None, None, 21),
-        ("sweep-bjj-tape",      "BJJ フィンガーテープ",  "MU × SWEEP Finger Tape (3 rolls)",
-         "10m × 3 ロール。ロール側面に MUGEN ロゴ。指関節保護に最適。",
-         2_400,  "sweep_manual", None, None, 14),
-        ("sweep-mouthguard",    "マウスガード ケース",   "MU × SWEEP Mouthguard Case",
-         "アルマイトアルミ製、消臭穴、刻印 MU×SWEEP。",
-         3_800,  "sweep_manual", None, None, 21),
+         "Printful All-Over Print Leggings (pid 189) ベース。MUGEN の連番が縦に流れるサイドライン入り。寒い日のアンダー / そのまま着用も可。",
+         8_800,  "printful", Some(189), Some(7678),
+         Some(r#"{"S":7677,"M":7678,"L":7679,"XL":7680,"XS":7676}"#), 14, 1),
 
-        // ── ライフスタイル (Printful 系で自動発注、catalog ID = 仮置き) ──
-        ("sweep-hoodie",        "ジムフーディ",          "MU × SWEEP Loop-back Hoodie",
-         "ジム→帰宅まで一枚で済む厚手ループバック。袖口に MA 週銘 (ISO 週) のシリアル刺繍。Bella+Canvas 3719 ベース。",
-         16_800, "printful", Some(146), Some(5538), 14),
+        // ── 非表示 (SWEEP社 サインオフ前 — Printful カタログ外) ──
+        ("sweep-gi-classic",    "柔術 Gi (道着)",        "MU × SWEEP Classic Gi",
+         "綿100% 550gsm、SWEEP 標準カット。襟裏に MUGEN 連番を刺繍。サイズ A0–A4。SWEEP社 確認後に販売開始。",
+         38_800, "pre_order", None, None, None, 56, 0),
+        ("sweep-belt-promo",    "帯 (昇格用)",           "MU × SWEEP Promotion Belt",
+         "白帯〜黒帯。先端に MU×SWEEP のラベル縫い込み。昇格祝いの 1 本。SWEEP社 確認後に販売開始。",
+         6_800,  "pre_order", None, None, None, 21, 0),
+        ("sweep-bjj-tape",      "BJJ フィンガーテープ",  "MU × SWEEP Finger Tape (3 rolls)",
+         "10m × 3 ロール。ロール側面に MUGEN ロゴ。指関節保護に最適。SWEEP社 確認後に販売開始。",
+         2_400,  "sweep_manual", None, None, None, 14, 0),
+        ("sweep-mouthguard",    "マウスガード ケース",   "MU × SWEEP Mouthguard Case",
+         "アルマイトアルミ製、消臭穴、刻印 MU×SWEEP。SWEEP社 確認後に販売開始。",
+         3_800,  "sweep_manual", None, None, None, 21, 0),
+
+        // ── ライフスタイル (Printful 自動 fulfill, 全 catalog ID 検証済) ──
+        ("sweep-hoodie",        "ヘビーフーディ",          "MU × SWEEP Heavy Hoodie",
+         "Printful Gildan 18500 (pid 146) ベース、ヘビーブレンド。胸に SIIIEEP wordmark 刺繍 + 内側ネックに MU×SIIIEEP serial。",
+         16_800, "printful", Some(146), Some(5531),
+         Some(r#"{"S":5530,"M":5531,"L":5532,"XL":5533,"2XL":5534,"3XL":5535,"4XL":5536,"5XL":5537}"#), 14, 1),
         ("sweep-tee",           "コットン T",            "MU × SWEEP Heavy Cotton Tee",
-         "Bella+Canvas 3001 (Heavy版 SWEEP 別注)。胸の小さな MU×SWEEP ロゴと、背の余白。",
-         6_800,  "printful", Some(71), Some(4017), 10),
+         "Printful Bella+Canvas 3001 (pid 71) ベース。胸に小さな SIIIEEP wordmark embroidery + 内側ネックタグに MU×SIIIEEP serial。",
+         6_800,  "printful", Some(71), Some(4017),
+         Some(r#"{"S":4016,"M":4017,"L":4018,"XL":4019,"2XL":4020,"XS":9527}"#), 10, 1),
         ("sweep-tee-classic",   "クラシック T",          "MU × SWEEP Classic Tee",
-         "薄手 T、Bella+Canvas 3001 ベース。胸に小さなコラボ刺繍のみ、最小限の SWEEP ロゴ。",
-         4_800,  "printful", Some(71), Some(4011), 10),
+         "Printful Bella+Canvas 3001 (pid 71) ベース、Black 別仕様。胸に最小限のコラボ刺繍のみ。",
+         4_800,  "printful", Some(71), Some(4017),
+         Some(r#"{"S":4016,"M":4017,"L":4018,"XL":4019,"2XL":4020,"XS":9527}"#), 10, 1),
         ("sweep-longsleeve",    "ロングスリーブ T",      "MU × SWEEP Long Sleeve Tee",
-         "Bella+Canvas 3501、しっかり生地。ジム後の羽織に。",
-         7_800,  "printful", Some(229), Some(4434), 10),
-        ("sweep-sweatpants",    "スウェットパンツ",      "MU × SWEEP Loop-back Sweatpants",
-         "ループバック綿、テーパード、ジム前後を 1 枚で。",
-         12_800, "printful", Some(380), Some(13096), 14),
-        ("sweep-cap",           "5-panel キャップ",      "MU × SWEEP 5-panel Cap",
-         "ストラップバック、ダーク チャコール、SWEEP 縫い込みラベル。Yupoong 6606。",
-         5_800,  "printful", Some(206), Some(7855), 10),
-        ("sweep-beanie",        "ビーニー",              "MU × SWEEP Ribbed Beanie",
-         "リブ編み、Sportsman SP12、北海道テスト品。",
-         4_800,  "printful", Some(254), Some(8541), 10),
-        ("sweep-tote",          "ジムトート",            "MU × SWEEP Gear Tote",
-         "厚手キャンバス、内ポケット、Gi 1 着 + 着替え収納可。BAGedge BE008。",
-         7_800,  "printful", Some(92), Some(13169), 10),
-        ("sweep-socks-3pack",   "ソックス 3-pack",       "MU × SWEEP Training Socks (3-pack)",
-         "ロゴ織り込み、3 足セット (白/黒/グレー)。SP3001。",
-         2_400,  "printful", Some(259), Some(8616), 10),
-        ("sweep-windbreaker",   "ナイロン ウィンドブレーカー", "MU × SWEEP Pull-over Windbreaker",
-         "薄手ナイロン、撥水、collapsible。",
-         14_800, "printful", Some(363), Some(11378), 14),
+         "Printful Bella+Canvas 3501 (pid 356) ベース。ジム後の羽織に。胸に SIIIEEP wordmark embroidery。",
+         7_800,  "printful", Some(356), Some(10095),
+         Some(r#"{"S":10094,"M":10095,"L":10096,"XL":10097,"2XL":10098,"XS":10093}"#), 12, 1),
+        ("sweep-sweatpants",    "スウェットパンツ",      "MU × SWEEP Garment-Dyed Sweatpants",
+         "Printful Comfort Colors 1469 (pid 898) ベース、ガーメントダイ仕上げ。MA 週銘 (ISO 週) シリアル刺繍。",
+         12_800, "printful", Some(898), Some(22923),
+         Some(r#"{"S":22916,"M":22923,"L":22930,"XL":22937,"2XL":22944}"#), 14, 1),
+        ("sweep-cap",           "ダッドハット",          "MU × SWEEP Classic Dad Hat",
+         "Printful Yupoong 6245CM (pid 206) ベース。Black、フロントに SIIIEEP wordmark embroidery。ワンサイズ。",
+         5_800,  "printful", Some(206), Some(7854),
+         Some(r#"{"OS":7854,"ONE SIZE":7854}"#), 10, 1),
+        ("sweep-beanie",        "リブニットビーニー",    "MU × SWEEP Ribbed Knit Beanie",
+         "Printful Atlantis Ribbed Knit Beanie (pid 519) ベース。Black、カフに SIIIEEP woven label。",
+         4_800,  "printful", Some(519), Some(13238),
+         Some(r#"{"OS":13238,"ONE SIZE":13238}"#), 10, 1),
+        ("sweep-tote",          "コットントート",        "MU × SWEEP Cotton Tote",
+         "Printful AS Colour 1001 (pid 641) ベース。Black ヘビーキャンバス。底に SIIIEEP wordmark 印刷。",
+         7_800,  "printful", Some(641), Some(16287),
+         Some(r#"{"OS":16287,"ONE SIZE":16287}"#), 10, 1),
+        ("sweep-socks-3pack",   "刺繍クルーソックス",    "MU × SWEEP Embroidered Crew Socks",
+         "Printful SOCCO SC200 (pid 502) ベース。カフに SIIIEEP wordmark embroidery。S/M, L/XL の 2 サイズ。",
+         2_400,  "printful", Some(502), Some(12674),
+         Some(r#"{"S":12674,"M":12674,"S/M":12674,"L":12675,"XL":12675,"L/XL":12675}"#), 10, 1),
+        ("sweep-windbreaker",   "ナイロン ウィンドブレーカー", "MU × SWEEP Basic Windbreaker",
+         "Printful SOL'S 32000 (pid 661) ベース。Black 撥水ナイロン、左胸に SIIIEEP wordmark。",
+         14_800, "printful", Some(661), Some(16425),
+         Some(r#"{"S":16424,"M":16425,"L":16426,"XL":16427,"2XL":16428}"#), 14, 1),
     ];
     let now = chrono_now();
-    for (slug, cat, name, desc, price, route, pf_prod, pf_var, lead) in sweep_items {
+    for (slug, cat, name, desc, price, route, pf_prod, pf_var, var_map, lead, active) in sweep_items {
         conn.execute(
             "INSERT OR IGNORE INTO collab_products
                  (slug, partner, category, name, description, image_url, price_jpy,
                   sizes_json, active, draft, created_at,
-                  printful_product_id, printful_variant_id, production_route, lead_time_days)
+                  printful_product_id, printful_variant_id, production_route,
+                  lead_time_days, printful_variant_map)
              VALUES (?, 'sweep', ?, ?, ?, NULL, ?,
-                     '[\"XS\",\"S\",\"M\",\"L\",\"XL\"]', 1, 1, ?,
-                     ?, ?, ?, ?)",
-            params![slug, cat, name, desc, price, now, pf_prod, pf_var, route, lead],
+                     '[\"XS\",\"S\",\"M\",\"L\",\"XL\"]', ?, 1, ?,
+                     ?, ?, ?, ?, ?)",
+            params![slug, cat, name, desc, price, active, now,
+                    pf_prod, pf_var, route, lead, var_map],
         ).ok();
-        // For pre-existing rows (idempotent), update route/lead fields too.
+        // For pre-existing rows (idempotent), sync every field that can change.
         conn.execute(
             "UPDATE collab_products
              SET production_route = ?, lead_time_days = ?,
-                 printful_product_id = COALESCE(printful_product_id, ?),
-                 printful_variant_id = COALESCE(printful_variant_id, ?)
+                 printful_product_id = ?, printful_variant_id = ?,
+                 printful_variant_map = ?,
+                 active = ?,
+                 category = ?, name = ?, description = ?, price_jpy = ?
              WHERE slug = ?",
-            params![route, lead, pf_prod, pf_var, slug],
+            params![route, lead, pf_prod, pf_var, var_map, active,
+                    cat, name, desc, price, slug],
         ).ok();
     }
     // Auto-blog posts table — every day the AI composes a "field log"
