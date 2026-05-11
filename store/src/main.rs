@@ -4633,10 +4633,18 @@ fn grow_sample_designs_for_today(conn: &rusqlite::Connection) {
     // Pool of MUGEN drops that are still buyable (sold < inventory) and
     // active. We pick one per persona, allowing overlap (same product
     // can appear under multiple personas — fine).
+    // Only R2-backed products (mockups.wearmu.com, lifestyle.wearmu.com, or
+    // local /mockups/). The Printful tmp URLs from the launch week have
+    // already 403'd; never picking them keeps the gallery alive.
     let pool: Vec<(i64, String, String)> = {
         let mut stmt = match conn.prepare(
-            "SELECT id, name, COALESCE(mockup_url, '') FROM products
-             WHERE brand='mugen' AND active=1 AND (inventory IS NULL OR sold < inventory)
+            "SELECT id, name, COALESCE(lifestyle_url, mockup_url, '') AS img
+             FROM products
+             WHERE brand='mugen' AND active=1
+               AND (inventory IS NULL OR sold < inventory)
+               AND (lifestyle_url LIKE 'https://lifestyle.wearmu.com/%'
+                 OR mockup_url    LIKE 'https://mockups.wearmu.com/%'
+                 OR mockup_url    LIKE '/mockups/%')
              ORDER BY drop_num DESC LIMIT 200"
         ) { Ok(s) => s, Err(_) => return };
         let rows: Vec<(i64, String, String)> = stmt.query_map([], |r| {
@@ -4645,6 +4653,17 @@ fn grow_sample_designs_for_today(conn: &rusqlite::Connection) {
         rows
     };
     if pool.is_empty() { return; }
+
+    // Re-roll any persona whose existing today-pick points at a broken (now
+    // 403'd Printful tmp) URL — happens for legacy data. Delete the row so
+    // the loop below regenerates with a fresh pool pick.
+    let _ = conn.execute(
+        "DELETE FROM sample_designs WHERE day=?
+           AND (
+             SELECT mockup_url FROM products WHERE id = sample_designs.picked_product_id
+           ) LIKE 'https://printful-upload.%'",
+        params![today],
+    );
 
     let personas: Vec<(i64, String, String)> = {
         let mut stmt = match conn.prepare(
@@ -4711,9 +4730,22 @@ async fn list_sample_personas(State(db): State<Db>) -> impl IntoResponse {
         ) { Ok(s) => s, Err(_) => return Json(serde_json::json!({"personas":[]})).into_response() };
         let it = stmt.query_map(params![today], |r| {
             // Prefer lifestyle photo if present, else fall back to flat mockup.
-            let lifestyle: Option<String> = r.get::<_, Option<String>>(11).unwrap_or_default();
-            let mockup:    Option<String> = r.get::<_, Option<String>>(9).unwrap_or_default();
-            let primary = lifestyle.clone().filter(|s| !s.is_empty()).or(mockup);
+            // Discard expired Printful tmp URLs (s3-accelerate.amazonaws.com/tmp/)
+            // — they 403'd weeks ago and leave broken images in the gallery.
+            let is_alive = |u: &str| -> bool {
+                !u.is_empty()
+                && !u.contains("printful-upload.s3")
+                && !u.contains("/tmp/")
+                && (u.starts_with("https://lifestyle.wearmu.com/")
+                    || u.starts_with("https://mockups.wearmu.com/")
+                    || u.starts_with("/mockups/")
+                    || u.starts_with("/static/"))
+            };
+            let lifestyle_raw: Option<String> = r.get::<_, Option<String>>(11).unwrap_or_default();
+            let mockup_raw:    Option<String> = r.get::<_, Option<String>>(9).unwrap_or_default();
+            let lifestyle = lifestyle_raw.clone().filter(|s| is_alive(s));
+            let mockup    = mockup_raw.clone().filter(|s| is_alive(s));
+            let primary = lifestyle.clone().or(mockup);
             Ok(serde_json::json!({
                 "slug":          r.get::<_, String>(1).unwrap_or_default(),
                 "display_name":  r.get::<_, String>(2).unwrap_or_default(),
