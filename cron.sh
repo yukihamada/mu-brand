@@ -47,6 +47,8 @@ install_crons() {
 15 * * * * /usr/bin/curl -s -X POST -H 'Content-Type: application/json' -d '{"admin_token":"$ADMIN_TOKEN"}' https://wearmu.com/api/admin/thank_buyers >> $LOG_DIR/thank_buyers.log 2>&1
 # mu-brand treasury snapshot — every 4h, logs Solana balance + AI budget suggestion
 20 */4 * * * /usr/bin/curl -s https://wearmu.com/api/treasury >> $LOG_DIR/treasury.log 2>&1
+# mu-brand X (Twitter) auto-post — hourly :25; posts up to 3 fresh drops if TWITTER_* env present
+25 * * * * cd $SCRIPT_DIR && set -a && source $ENV_FILE && set +a && $PYTHON twitter_post.py >> $LOG_DIR/twitter_post.log 2>&1
 # mu-brand exit-lottery weekly draw — Mondays JST 9:00 (UTC Sun 0:00)
 0 0 * * 1 /usr/bin/curl -s -X POST -H 'Content-Type: application/json' -d '{"admin_token":"$ADMIN_TOKEN"}' https://wearmu.com/api/admin/lottery_draw >> $LOG_DIR/lottery_draw.log 2>&1
 # mu-brand CV pulse — every 30 min, snapshots metrics, applies adjustments, posts Telegram digest

@@ -4937,6 +4937,17 @@ fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
+/// Escape for HTML attribute context (inside double-quoted attributes).
+/// Adds `"` and `'` on top of the body-context escaping. Required when the
+/// value is interpolated into `content="…"` or `href="…"` etc.
+fn html_attr_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+     .replace('<', "&lt;")
+     .replace('>', "&gt;")
+     .replace('"', "&quot;")
+     .replace('\'', "&#39;")
+}
+
 fn inline_md(s: &str) -> String {
     let esc = html_escape(s);
     let bold_re = pair_replace(&esc, "**", "<strong>", "</strong>");
@@ -4955,6 +4966,69 @@ fn pair_replace(s: &str, marker: &str, open: &str, close: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+// ── X (Twitter) auto-post queue ───────────────────────────────────────────
+// Rust 側は queue を出すだけ。実 post は twitter_post.py が OAuth 1.0a で
+// やる (Python の方が tweepy 等で楽)。Python が成功したら mark_posted を呼ぶ。
+
+#[derive(Deserialize)]
+struct AdminXQueueQuery {
+    #[serde(default)] token: String,
+    /// max items to return (default 4, max 10)
+    #[serde(default)] limit: Option<i64>,
+}
+
+async fn admin_x_queue(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<AdminXQueueQuery>,
+) -> impl IntoResponse {
+    if let Err(r) = require_admin_token(Some(&q.token)) { return r; }
+    let limit = q.limit.unwrap_or(4).clamp(1, 10);
+    let conn = db.lock().unwrap();
+    let mut stmt = match conn.prepare(
+        "SELECT id, brand, drop_num, name, COALESCE(lifestyle_url, mockup_url), price_jpy
+         FROM products
+         WHERE brand IN ('mugen','muon','ma')
+           AND active=1
+           AND (x_posted_at IS NULL OR x_posted_at='')
+         ORDER BY id DESC LIMIT ?"
+    ) {
+        Ok(s) => s,
+        Err(_) => return Json(serde_json::json!({"items":[]})).into_response(),
+    };
+    let rows: Vec<serde_json::Value> = stmt.query_map(params![limit], |r| {
+        Ok(serde_json::json!({
+            "id":         r.get::<_, i64>(0)?,
+            "brand":      r.get::<_, String>(1)?,
+            "drop_num":   r.get::<_, i64>(2)?,
+            "name":       r.get::<_, String>(3)?,
+            "image_url":  r.get::<_, Option<String>>(4).unwrap_or_default(),
+            "price_jpy":  r.get::<_, i64>(5)?,
+            "url":        format!("https://wearmu.com/{}", r.get::<_, String>(1)?),
+        }))
+    }).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+    Json(serde_json::json!({"items": rows})).into_response()
+}
+
+#[derive(Deserialize)]
+struct AdminXMarkPostedBody {
+    admin_token: String,
+    product_id: i64,
+    tweet_id: Option<String>,
+}
+
+async fn admin_x_mark_posted(
+    State(db): State<Db>,
+    Json(body): Json<AdminXMarkPostedBody>,
+) -> impl IntoResponse {
+    if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+    let conn = db.lock().unwrap();
+    let updated = conn.execute(
+        "UPDATE products SET x_posted_at=?, x_tweet_id=? WHERE id=?",
+        params![chrono_now(), body.tweet_id, body.product_id],
+    ).unwrap_or(0);
+    Json(serde_json::json!({"ok": true, "updated": updated})).into_response()
 }
 
 // ── Thank-you outreach to buyers (Vision + 50% MUON coupon + notes) ───────
@@ -5189,6 +5263,32 @@ async fn submit_feedback(
     if msg.is_empty() || msg.len() > 4000 {
         return (StatusCode::BAD_REQUEST, "message must be 1..4000 chars").into_response();
     }
+    // Rate limit: per-identity 1/30s, 20/24h. Protects against DOS (Gemini cost).
+    {
+        let id_key = if !body.email.is_empty() { body.email.to_lowercase() }
+            else if !body.token.is_empty() { format!("token:{}", &body.token[..body.token.len().min(16)]) }
+            else { "anon".to_string() };
+        let now_s: i64 = chrono_now().parse().unwrap_or(0);
+        let conn = db.lock().unwrap();
+        let recent_30s: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM customer_feedback
+             WHERE LOWER(COALESCE(email,'anon'))=?
+               AND CAST(created_at AS INTEGER) >= ?",
+            params![id_key, now_s - 30], |r| r.get(0),
+        ).unwrap_or(0);
+        if recent_30s >= 1 {
+            return (StatusCode::TOO_MANY_REQUESTS, "30 秒に 1 件までお送りください").into_response();
+        }
+        let recent_24h: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM customer_feedback
+             WHERE LOWER(COALESCE(email,'anon'))=?
+               AND CAST(created_at AS INTEGER) >= ?",
+            params![id_key, now_s - 86_400], |r| r.get(0),
+        ).unwrap_or(0);
+        if recent_24h >= 20 {
+            return (StatusCode::TOO_MANY_REQUESTS, "1 日 20 件までです。明日また送ってください").into_response();
+        }
+    }
     let (user_id, email, is_lifetime, ma_council): (Option<i64>, String, bool, bool) = {
         let conn = db.lock().unwrap();
         let row: Option<(i64, String, i64)> = if !body.token.is_empty() {
@@ -5359,11 +5459,21 @@ async fn show_auto_blog(
     let Some((title, body_html, _ts)) = row else {
         return (StatusCode::NOT_FOUND, "auto-blog not found").into_response();
     };
+    let title_attr = html_attr_escape(&title);
+    let slug_attr  = html_attr_escape(&slug);
     let html = format!(r#"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{title} | MU 自動運営ノート</title>
 <meta name="description" content="MU の AI 自動執筆 Field log。毎朝 JST 9:00 に Gemini が生成。">
-<meta property="og:title" content="{title}"><meta property="og:url" content="https://wearmu.com/blog/auto/{slug}">
+<meta property="og:type" content="article">
+<meta property="og:title" content="{title_attr}">
+<meta property="og:description" content="MU の AI 自動執筆 Field log — 毎朝 JST 9:00 に Gemini が /api/transparency の生データから書きます。">
+<meta property="og:image" content="https://wearmu.com/og.jpg">
+<meta property="og:url" content="https://wearmu.com/blog/auto/{slug_attr}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{title_attr}">
+<meta name="twitter:description" content="MU の AI 自動執筆 Field log — 毎朝 JST 9:00 に Gemini が書きます。">
+<meta name="twitter:image" content="https://wearmu.com/og.jpg">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
 :root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.6);--y:#e6c449;--card:#111}}
@@ -5396,7 +5506,8 @@ footer{{padding:48px 32px;border-top:1px solid rgba(255,255,255,0.06);text-align
 </body></html>
 "#,
         title = html_escape(&title),
-        slug  = slug,
+        title_attr = title_attr,
+        slug_attr  = slug_attr,
         day   = jst_today_str(),
         body_html = body_html,
     );
@@ -7398,6 +7509,9 @@ async fn main() {
         // Thank-you outreach to real buyers (cs_live_*). Idempotent.
         "ALTER TABLE mu_purchases ADD COLUMN thank_you_sent_at TEXT",
         "ALTER TABLE mu_purchases ADD COLUMN thank_you_coupon TEXT",
+        // X (Twitter) auto-post — set when twitter_post.py succeeds.
+        "ALTER TABLE products ADD COLUMN x_posted_at TEXT",
+        "ALTER TABLE products ADD COLUMN x_tweet_id TEXT",
     ] {
         conn.execute(col, []).ok();
     }
@@ -7745,6 +7859,8 @@ async fn main() {
         .route("/api/feedback", post(submit_feedback))
         .route("/api/admin/thank_buyers", post(admin_thank_buyers))
         .route("/api/treasury", get(public_treasury))
+        .route("/api/admin/x_queue", get(admin_x_queue))
+        .route("/api/admin/x_mark_posted", post(admin_x_mark_posted))
         .route("/api/cv/config", get(cv_public_config))
         .route("/api/you/signal/:design_id", post(you_signal))
         .route("/api/you/preferences", get(you_preferences))
