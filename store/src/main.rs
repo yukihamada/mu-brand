@@ -2194,10 +2194,27 @@ fn compose_design(taste: &serde_json::Value, day: &str, refresh_n: i64) -> (Stri
         format!("{} の {}", m1, noun)
     };
 
+    // Pull learned preferences out of taste (set by ensure_design_for_day).
+    let tend = taste.get("tend_toward").and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let avoid = taste.get("avoid").and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let prefs_clause = match (tend.is_empty(), avoid.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => format!(" 最近この人が好んだ語感: {}。", tend.join("、")),
+        (true, false) => format!(" 最近この人が避けた語感: {}。", avoid.join("、")),
+        (false, false) => format!(
+            " 最近この人が好んだ語感: {} / 避けた語感: {}。",
+            tend.join("、"), avoid.join("、")
+        ),
+    };
+
     let prompt = format!(
         "{date}・{mood}な{noun}を、{pal}の階調で。{sc}に着られる、身体の延長としてのコットンTシャツ。\
-         胸ポケット位置に小さなモチーフ、背中に余白。10oz Bella+Canvas、DTG。",
-        date = day, mood = m1, noun = noun, pal = pal, sc = sc,
+         胸ポケット位置に小さなモチーフ、背中に余白。10oz Bella+Canvas、DTG。{prefs}",
+        date = day, mood = m1, noun = noun, pal = pal, sc = sc, prefs = prefs_clause,
     );
 
     (name, prompt, seed)
@@ -2363,8 +2380,9 @@ fn ensure_design_for_day(conn: &Connection, user_id: i64, day: &str, taste: &ser
         |r| r.get(0),
     ).unwrap_or(1);
 
-    // Merge the user's style_name (set on Day 7) into the taste so milestone
-    // prompts can reference it.
+    // Merge the user's style_name (Day-7 ritual) AND learned preferences
+    // (from you_signals last 14 days) into the taste so compose_design /
+    // compose_special_design can bend the prompt toward what this user likes.
     let mut taste_with_style = taste.clone();
     if let Some(obj) = taste_with_style.as_object_mut() {
         let style_name: Option<String> = conn.query_row(
@@ -2373,6 +2391,20 @@ fn ensure_design_for_day(conn: &Connection, user_id: i64, day: &str, taste: &ser
         ).ok().flatten();
         if let Some(sn) = style_name {
             obj.insert("style_name".into(), serde_json::Value::String(sn));
+        }
+        // Inject tend_toward / avoid as arrays of strings
+        let prefs = compute_user_preferences(conn, user_id);
+        let tend: Vec<serde_json::Value> = prefs.get("tend_toward").and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|x| x.get("token").cloned()).collect())
+            .unwrap_or_default();
+        let avoid: Vec<serde_json::Value> = prefs.get("avoid").and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|x| x.get("token").cloned()).collect())
+            .unwrap_or_default();
+        if !tend.is_empty() {
+            obj.insert("tend_toward".into(), serde_json::Value::Array(tend));
+        }
+        if !avoid.is_empty() {
+            obj.insert("avoid".into(), serde_json::Value::Array(avoid));
         }
     }
     let taste_for_prompt = &taste_with_style;
@@ -2403,13 +2435,34 @@ fn ensure_design_for_day(conn: &Connection, user_id: i64, day: &str, taste: &ser
 /// `mu_store_data` (see fly.toml). The volume persists across deploys and
 /// machine restarts, so generated images survive forever unless explicitly
 /// deleted. Re-deploys never wipe them.
+/// Render the 4-emoji reaction row for daily emails. Each link hits
+/// /r/:design_id/:kind?t=<token> — one tap fires the signal endpoint.
+fn email_reaction_row(design_id: i64, token: &str) -> String {
+    let buttons = [
+        ("love", "🔥 大好き"),
+        ("ok",   "👍 良い"),
+        ("meh",  "😐 微妙"),
+        ("skip", "👋 Skip"),
+    ];
+    let cells: String = buttons.iter().map(|(k, label)| {
+        format!(
+            r##"<a href="https://wearmu.com/r/{id}/{k}?t={t}" style="display:inline-block;background:rgba(230,196,73,0.08);border:1px solid rgba(230,196,73,0.25);color:#F5F5F0;padding:11px 14px;margin:4px;font-size:12px;letter-spacing:0.04em;text-decoration:none;border-radius:2px">{label}</a>"##,
+            id = design_id, k = k, t = token, label = label,
+        )
+    }).collect();
+    format!(
+        r##"<div style="margin:18px 0 8px"><div style="font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.55;margin-bottom:8px">この一着、どう？ (1 タップ)</div>{cells}</div>"##,
+        cells = cells,
+    )
+}
+
 fn spawn_gemini_for_design(db: Db, design_id: i64) {
     tokio::spawn(async move {
         let row = {
             let conn = db.lock().unwrap();
             conn.query_row(
                 "SELECT d.name, d.prompt, d.seed, d.day_num, u.taste_json,
-                        u.email, u.slug
+                        u.email, u.slug, u.token
                  FROM you_designs d JOIN you_users u ON u.id = d.user_id
                  WHERE d.id=?",
                 params![design_id],
@@ -2421,10 +2474,11 @@ fn spawn_gemini_for_design(db: Db, design_id: i64) {
                     r.get::<_,String>(4)?,
                     r.get::<_,String>(5)?,
                     r.get::<_,Option<String>>(6)?,
+                    r.get::<_,String>(7)?,
                 )),
             ).ok()
         };
-        let (name, prompt, seed, day_num, taste_json, email, slug) = match row {
+        let (name, prompt, seed, day_num, taste_json, email, slug, token) = match row {
             Some(v) => v,
             None => {
                 eprintln!("[you/gemini] design {} disappeared", design_id);
@@ -2488,6 +2542,7 @@ fn spawn_gemini_for_design(db: Db, design_id: i64) {
     <img src="{img}" alt="MU × YOU DAY {day_num}" style="width:100%;display:block;background:#1a1a1a;border-radius:2px;margin-bottom:24px">
     <a href="{share}" style="display:inline-block;background:#e6c449;color:#000;padding:16px 28px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:700;margin-right:8px">この一着を仕立てる →</a>
     <a href="{share}" style="display:inline-block;border:1px solid rgba(255,255,255,0.2);color:#F5F5F0;padding:15px 22px;font-size:10px;letter-spacing:0.25em;text-transform:uppercase;text-decoration:none;opacity:0.7">明日に期待 / Skip</a>
+    {reactions}
     <p style="font-size:10px;opacity:0.45;margin-top:32px;line-height:1.7">
       気分が変わったら <a href="{share}" style="color:#e6c449">プロンプトを書き直す</a>こともできます。<br>
       退会は <code>STOP</code> 返信、または /you ページから即時。
@@ -2495,7 +2550,8 @@ fn spawn_gemini_for_design(db: Db, design_id: i64) {
   </div>
 </div>"#,
                         day_num = day_num, name = name, prompt = prompt,
-                        img = img_url, share = share);
+                        img = img_url, share = share,
+                        reactions = email_reaction_row(design_id, &token));
                     let _ = reqwest::Client::new()
                         .post("https://api.resend.com/emails")
                         .bearer_auth(&resend_key)
@@ -2890,6 +2946,338 @@ async fn you_feedback(
         "ok": true,
         "today": today_after,
     })).into_response()
+}
+
+/// Backfill mu_purchases from Stripe history (paid checkout sessions) so
+/// people who bought MU shirts BEFORE the mu_purchases table existed also
+/// get retroactive /you lifetime_free. Idempotent on session id.
+/// Returns counts: scanned, new_purchases, granted_lifetime.
+async fn admin_backfill_purchases(
+    State(db): State<Db>,
+    Json(body): Json<YouAdminBackfillBody>,
+) -> impl IntoResponse {
+    if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "no STRIPE_SECRET_KEY").into_response();
+    }
+    let client = reqwest::Client::new();
+    let mut scanned: i64 = 0;
+    let mut new_purchases: i64 = 0;
+    let mut starting_after: Option<String> = None;
+    // Walk all checkout sessions, max 50 pages (5000 sessions) to be safe.
+    for _page in 0..50 {
+        let mut form: Vec<(&str, String)> = vec![
+            ("limit", "100".into()),
+            ("expand[]", "data.customer_details".into()),
+        ];
+        if let Some(s) = &starting_after {
+            form.push(("starting_after", s.clone()));
+        }
+        let resp = client
+            .get("https://api.stripe.com/v1/checkout/sessions")
+            .basic_auth(&stripe_key, None::<&str>)
+            .query(&form)
+            .send().await;
+        let json: serde_json::Value = match resp {
+            Ok(r) if r.status().is_success() => r.json().await.unwrap_or_default(),
+            Ok(r) => {
+                eprintln!("[backfill] stripe {}: {}", r.status(), r.text().await.unwrap_or_default());
+                break;
+            }
+            Err(e) => { eprintln!("[backfill] reqwest: {}", e); break; }
+        };
+        let data = json["data"].as_array().cloned().unwrap_or_default();
+        if data.is_empty() { break; }
+        for s in &data {
+            scanned += 1;
+            // Only count paid sessions
+            let paid = s["payment_status"].as_str() == Some("paid");
+            if !paid { continue; }
+            let session_id = s["id"].as_str().unwrap_or("");
+            if session_id.is_empty() { continue; }
+            let buyer_email = s["customer_details"]["email"].as_str()
+                .or_else(|| s["customer_email"].as_str())
+                .unwrap_or("").to_lowercase();
+            if buyer_email.is_empty() { continue; }
+            let meta = &s["metadata"];
+            // Either path:
+            // - MU drop with metadata.product_id (MUGEN/MUON/MA)
+            // - /you design with metadata.you_design_id
+            let product_id: i64 = meta["product_id"].as_str()
+                .and_then(|x| x.parse().ok()).unwrap_or(0);
+            let you_design_id: i64 = meta["you_design_id"].as_str()
+                .and_then(|x| x.parse().ok()).unwrap_or(0);
+            if product_id == 0 && you_design_id == 0 { continue; }
+
+            // Resolve brand + drop_num
+            let (brand, drop_num) = if product_id != 0 {
+                let conn = db.lock().unwrap();
+                conn.query_row(
+                    "SELECT brand, drop_num FROM products WHERE id=?",
+                    params![product_id], |r| Ok((r.get::<_,String>(0)?, r.get::<_,i64>(1)?)),
+                ).unwrap_or_else(|_| (String::new(), 0))
+            } else {
+                ("you".to_string(),
+                 meta["you_day_num"].as_str().and_then(|x| x.parse().ok()).unwrap_or(0))
+            };
+
+            let inserted = {
+                let conn = db.lock().unwrap();
+                let created: i64 = s["created"].as_i64().unwrap_or_else(|| chrono_now().parse().unwrap_or(0));
+                conn.execute(
+                    "INSERT INTO mu_purchases (email, product_id, brand, drop_num, session_id, created_at)
+                     SELECT ?, ?, ?, ?, ?, ?
+                     WHERE NOT EXISTS (SELECT 1 FROM mu_purchases WHERE session_id=?)",
+                    params![
+                        buyer_email, if product_id != 0 { product_id } else { you_design_id },
+                        brand, drop_num, session_id, created.to_string(), session_id,
+                    ],
+                ).unwrap_or(0)
+            };
+            if inserted > 0 { new_purchases += 1; }
+        }
+        let has_more = json["has_more"].as_bool().unwrap_or(false);
+        if !has_more { break; }
+        starting_after = data.last().and_then(|s| s["id"].as_str().map(String::from));
+        if starting_after.is_none() { break; }
+    }
+
+    // Grant lifetime_free to every you_user whose email appears in mu_purchases.
+    let granted: i64 = {
+        let conn = db.lock().unwrap();
+        conn.execute(
+            "UPDATE you_users SET lifetime_free=1,
+                lifetime_reason = COALESCE(lifetime_reason,
+                  (SELECT 'retro: previously purchased ' || upper(brand) || ' #' || drop_num
+                   FROM mu_purchases p WHERE p.email = you_users.email ORDER BY p.id LIMIT 1))
+             WHERE lifetime_free=0
+               AND EXISTS (SELECT 1 FROM mu_purchases p WHERE p.email = you_users.email)",
+            [],
+        ).unwrap_or(0) as i64
+    };
+
+    Json(serde_json::json!({
+        "ok": true, "scanned": scanned, "new_purchases": new_purchases,
+        "granted_lifetime": granted,
+    })).into_response()
+}
+
+// ── User-signal stream (auto-tunes compose_design) ──────────────────────────
+
+#[derive(Deserialize)]
+struct YouSignalBody {
+    #[serde(default)] token: String,
+    kind: String,
+    #[serde(default)] weight: Option<i64>,
+    #[serde(default)] source: Option<String>,
+}
+
+fn signal_weight_for(kind: &str, override_w: Option<i64>) -> i64 {
+    if let Some(w) = override_w { return w.clamp(-5, 5); }
+    match kind {
+        "love"         =>  3,
+        "claim_intent" =>  3,
+        "share"        =>  2,
+        "ok"           =>  1,
+        "dwell"        =>  1,
+        "meh"          => -1,
+        "skip"         => -2,
+        _              =>  1,
+    }
+}
+
+/// POST /api/you/signal/:design_id — record a reaction. token-auth maps to a
+/// user; anonymous slug-page visitors hit this without a token (we record
+/// user_id=0 in that case).
+async fn you_signal(
+    State(db): State<Db>,
+    Path(design_id): Path<i64>,
+    Json(body): Json<YouSignalBody>,
+) -> impl IntoResponse {
+    let allowed = ["love","ok","meh","skip","claim_intent","share","dwell"];
+    if !allowed.contains(&body.kind.as_str()) {
+        return (StatusCode::BAD_REQUEST, "bad kind").into_response();
+    }
+    let w = signal_weight_for(&body.kind, body.weight);
+    let source = body.source.unwrap_or_else(|| "page".into());
+
+    // Look up user_id from token. Anonymous (slug-page visitors) → 0.
+    let user_id: i64 = if body.token.is_empty() { 0 } else {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT u.id FROM you_users u
+             JOIN you_designs d ON d.user_id = u.id
+             WHERE u.token=? AND d.id=?",
+            params![body.token, design_id], |r| r.get(0),
+        ).unwrap_or(0)
+    };
+
+    {
+        let conn = db.lock().unwrap();
+        conn.execute(
+            "INSERT INTO you_signals (user_id, design_id, kind, weight, source, created_at)
+             VALUES (?,?,?,?,?,?)",
+            params![user_id, design_id, body.kind, w, source, chrono_now()],
+        ).ok();
+        // Convenience: a 'skip' / 'claim_intent' also flips you_designs.status.
+        if body.kind == "skip" {
+            conn.execute(
+                "UPDATE you_designs SET status='skip', updated_at=? WHERE id=? AND status<>'claimed'",
+                params![chrono_now(), design_id],
+            ).ok();
+        }
+    }
+    Json(serde_json::json!({"ok": true, "kind": body.kind, "weight": w})).into_response()
+}
+
+/// GET /r/:design_id/:kind?t=<token> — one-tap reaction from email buttons.
+/// Returns a tiny thank-you page (no JS, no POST). Idempotent within 10 min
+/// per (user, design, kind).
+async fn you_signal_email(
+    State(db): State<Db>,
+    Path((design_id, kind)): Path<(i64, String)>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let allowed = ["love","ok","meh","skip"];
+    if !allowed.contains(&kind.as_str()) {
+        return (StatusCode::BAD_REQUEST, Html("invalid".to_string())).into_response();
+    }
+    let token = q.get("t").cloned().unwrap_or_default();
+    let w = signal_weight_for(&kind, None);
+
+    let (user_id, name): (i64, String) = if token.is_empty() {
+        (0, "this one".to_string())
+    } else {
+        let conn = db.lock().unwrap();
+        let row: Option<(i64, String)> = conn.query_row(
+            "SELECT u.id, d.name FROM you_users u
+             JOIN you_designs d ON d.user_id = u.id
+             WHERE u.token=? AND d.id=?",
+            params![token, design_id], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).ok();
+        match row { Some((u, n)) => (u, n), None => (0, "this one".into()) }
+    };
+    {
+        let conn = db.lock().unwrap();
+        let already: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM you_signals
+             WHERE user_id=? AND design_id=? AND kind=?
+               AND CAST(created_at AS INTEGER) > CAST(? AS INTEGER) - 600",
+            params![user_id, design_id, kind, chrono_now()], |r| r.get(0),
+        ).unwrap_or(0);
+        if already == 0 {
+            conn.execute(
+                "INSERT INTO you_signals (user_id, design_id, kind, weight, source, created_at)
+                 VALUES (?,?,?,?, 'email', ?)",
+                params![user_id, design_id, kind, w, chrono_now()],
+            ).ok();
+            if kind == "skip" {
+                conn.execute(
+                    "UPDATE you_designs SET status='skip', updated_at=? WHERE id=? AND status<>'claimed'",
+                    params![chrono_now(), design_id],
+                ).ok();
+            }
+        }
+    }
+    let label = match kind.as_str() {
+        "love" => "🔥 大好き", "ok" => "👍 良い", "meh" => "😐 微妙", "skip" => "👋 Skip",
+        _ => "—",
+    };
+    let html = format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{label} — MU × YOU</title>
+<style>
+body{{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;-webkit-font-smoothing:antialiased}}
+.card{{max-width:440px;width:100%;text-align:center;padding:48px 32px;border:1px solid rgba(230,196,73,0.25);background:#111;border-radius:2px}}
+.eye{{font-size:10px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:16px}}
+h1{{font-size:22px;font-weight:300;letter-spacing:0.04em;margin:0 0 14px;line-height:1.5}}
+p{{font-size:13px;line-height:1.9;opacity:0.75;margin:0 0 18px}}
+a{{color:#e6c449;text-decoration:underline}}
+</style></head>
+<body><div class="card">
+  <div class="eye">フィードバック受領</div>
+  <h1>{label}</h1>
+  <p>「{name}」へのリアクションを記録しました。<br>明日以降の生成に反映されます。</p>
+  <a href="https://wearmu.com/you?t={token}">あなたのページに戻る →</a>
+</div></body></html>"##, label = label, name = html_escape(&name), token = html_escape(&token));
+    Html(html).into_response()
+}
+
+#[derive(Deserialize)]
+struct YouPrefsQuery {
+    #[serde(default)] token: String,
+}
+
+/// GET /api/you/preferences — show what the AI has learned from this user's
+/// signals. Used by /you dashboard to make the feedback loop visible.
+async fn you_preferences(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<YouPrefsQuery>,
+) -> impl IntoResponse {
+    if q.token.is_empty() { return (StatusCode::BAD_REQUEST, "missing token").into_response(); }
+    let conn = db.lock().unwrap();
+    let user_id: i64 = match conn.query_row(
+        "SELECT id FROM you_users WHERE token=? AND unsubscribed_at IS NULL",
+        params![q.token], |r| r.get(0),
+    ).ok() { Some(v) => v, None => return (StatusCode::NOT_FOUND, "invalid token").into_response() };
+    let prefs = compute_user_preferences(&conn, user_id);
+    Json(prefs).into_response()
+}
+
+/// Read the user's signals from the last 14 days and tally weight by the
+/// token (mood/palette/scene/noun) used in each design's prompt + name.
+/// Returns the top "tend toward" and "avoid" tokens — these are folded into
+/// the next compose_design call.
+fn compute_user_preferences(conn: &Connection, user_id: i64) -> serde_json::Value {
+    let mut stmt = match conn.prepare(
+        "SELECT d.name, d.prompt, s.weight
+         FROM you_signals s JOIN you_designs d ON d.id = s.design_id
+         WHERE s.user_id = ? AND CAST(s.created_at AS INTEGER) > CAST(? AS INTEGER) - 14 * 86400"
+    ) { Ok(s) => s, Err(_) => return serde_json::json!({}) };
+    let rows: Vec<(String, String, i64)> = stmt.query_map(
+        params![user_id, chrono_now()],
+        |r| Ok((r.get::<_,String>(0)?, r.get::<_,String>(1)?, r.get::<_,i64>(2)?)),
+    ).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+
+    // Token bank — same lexicon compose_design picks from
+    let nouns = [
+        "霧","余白","ノイズ","回路","層","ふち","島","橋","残響","解像度",
+        "層雲","北限","薄明","残光","水位","素描","点描","くずし","湾","ふもと",
+    ];
+    let palettes_seed = ["墨","白","海","土","炭","金","群青","茜"];
+    let moods_seed = ["静か","余白","力強い","ノスタルジック","ミニマル","遊び",
+                      "深い","朝の光","夜の余韻","幾何学","手書き","写真的"];
+
+    use std::collections::HashMap;
+    let mut score: HashMap<String, i64> = HashMap::new();
+    for (name, prompt, w) in &rows {
+        let blob = format!("{} {}", name, prompt);
+        let mut counted = false;
+        for tok in nouns.iter().chain(palettes_seed.iter()).chain(moods_seed.iter()) {
+            if blob.contains(tok) {
+                *score.entry((*tok).to_string()).or_insert(0) += *w;
+                counted = true;
+            }
+        }
+        let _ = counted;
+    }
+    let mut tend: Vec<(String, i64)> = score.iter()
+        .filter(|(_, w)| **w >= 1)
+        .map(|(k, v)| (k.clone(), *v)).collect();
+    let mut avoid: Vec<(String, i64)> = score.iter()
+        .filter(|(_, w)| **w <= -1)
+        .map(|(k, v)| (k.clone(), *v)).collect();
+    tend.sort_by(|a, b| b.1.cmp(&a.1));
+    avoid.sort_by(|a, b| a.1.cmp(&b.1));
+    tend.truncate(5);
+    avoid.truncate(5);
+    serde_json::json!({
+        "tend_toward": tend.iter().map(|(k,w)| serde_json::json!({"token":k, "weight":w})).collect::<Vec<_>>(),
+        "avoid":       avoid.iter().map(|(k,w)| serde_json::json!({"token":k, "weight":w})).collect::<Vec<_>>(),
+        "signal_count": rows.len() as i64,
+    })
 }
 
 // ── CV autonomous pulse ──────────────────────────────────────────────────────
@@ -4214,18 +4602,18 @@ async fn you_admin_email_today(
     let base = base_url.trim_end_matches('/').to_string();
     let day = jst_today_str();
 
-    type Row = (i64, String, i64, String, String, Option<String>);
+    type Row = (i64, String, i64, String, String, Option<String>, String);
     let rows: Vec<Row> = {
         let conn = db.lock().unwrap();
         let mut stmt = match conn.prepare(
-            "SELECT d.id, u.email, d.day_num, d.name, d.prompt, u.slug
+            "SELECT d.id, u.email, d.day_num, d.name, d.prompt, u.slug, u.token
              FROM you_designs d JOIN you_users u ON u.id = d.user_id
              WHERE d.day=? AND d.gen_status='ready'
                AND u.unsubscribed_at IS NULL
                AND length(coalesce(u.email,''))>3"
         ) { Ok(s)=>s, Err(_)=>return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
         stmt.query_map(params![day], |r| Ok((
-            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?,
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?,
         ))).map(|it| it.filter_map(|r| r.ok()).collect())
            .unwrap_or_default()
     };
@@ -4237,7 +4625,7 @@ async fn you_admin_email_today(
     let mut sent = 0;
     let mut failed: Vec<serde_json::Value> = vec![];
     let subj_variant = you_subject_variant(&db);
-    for (design_id, email, day_num, name, prompt, slug) in &rows {
+    for (design_id, email, day_num, name, prompt, slug, token) in &rows {
         let img_url = format!("{}/api/you/design/{}/image.png", base, design_id);
         let share = slug.as_ref()
             .map(|s| format!("{}/{}", base, s))
@@ -4252,6 +4640,7 @@ async fn you_admin_email_today(
     <img src="{img}" alt="MU × YOU DAY {day_num}" style="width:100%;display:block;background:#1a1a1a;border-radius:2px;margin-bottom:24px">
     <a href="{share}" style="display:inline-block;background:#e6c449;color:#000;padding:16px 28px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:700;margin-right:8px">この一着を仕立てる →</a>
     <a href="{share}" style="display:inline-block;border:1px solid rgba(255,255,255,0.2);color:#F5F5F0;padding:15px 22px;font-size:10px;letter-spacing:0.25em;text-transform:uppercase;text-decoration:none;opacity:0.7">明日に期待 / Skip</a>
+    {reactions}
     <p style="font-size:10px;opacity:0.45;margin-top:32px;line-height:1.7">
       気分が変わったら <a href="{share}" style="color:#e6c449">プロンプトを書き直す</a>こともできます。<br>
       退会は <code>STOP</code> 返信、または /you ページから即時。
@@ -4259,7 +4648,8 @@ async fn you_admin_email_today(
   </div>
 </div>"#,
             day_num = day_num, name = name, prompt = prompt,
-            img = img_url, share = share);
+            img = img_url, share = share,
+            reactions = email_reaction_row(*design_id, token));
 
         let resp = client
             .post("https://api.resend.com/emails")
@@ -4628,6 +5018,15 @@ fn render_share_page(
         } else {
             String::new()
         };
+        let rx_row = if buyable {
+            format!(
+                r##"<div class="rx-row">
+      <button class="rx" data-rx-id="{id}" data-rx="love" type="button">🔥</button>
+      <button class="rx" data-rx-id="{id}" data-rx="ok"   type="button">👍</button>
+      <button class="rx" data-rx-id="{id}" data-rx="meh"  type="button">😐</button>
+      <button class="rx" data-rx-id="{id}" data-rx="skip" type="button">👋</button>
+    </div>"##, id = id)
+        } else { String::new() };
         format!(
             r##"<div class="{class}" data-id="{id}">
   <div class="card-img" style="background-image:url('{img}')"></div>
@@ -4636,6 +5035,7 @@ fn render_share_page(
     <div class="name">{name}</div>
     <div class="prompt">{prompt}</div>
     <div class="badge">{label}</div>
+    {rx_row}
     {buy_btn}
   </div>
 </div>"##,
@@ -4648,6 +5048,7 @@ fn render_share_page(
             prompt = html_escape(prompt),
             label = label,
             buy_btn = buy_btn,
+            rx_row = rx_row,
         )
     }).collect();
 
@@ -4764,6 +5165,10 @@ main{{padding:0 24px 80px;max-width:1280px;margin:0 auto}}
   font-family:'Helvetica Neue',Arial,sans-serif;transition:transform 0.15s, background 0.15s}}
 .buy-btn:hover{{transform:translateY(-1px);background:#fff}}
 .buy-btn:disabled,.buy-btn.disabled{{background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.4);cursor:not-allowed;font-weight:500}}
+.rx-row{{display:flex;gap:4px;margin-top:2px}}
+.rx{{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:#F5F5F0;padding:6px 9px;font-size:13px;cursor:pointer;border-radius:2px;line-height:1;transition:background 0.12s, transform 0.12s}}
+.rx:hover{{background:rgba(230,196,73,0.18);transform:translateY(-1px)}}
+.rx.on{{background:#e6c449;color:#000;border-color:#e6c449}}
 .cta-block{{margin:80px auto 0;max-width:680px;text-align:center;padding:48px 24px;
   background:linear-gradient(180deg,rgba(230,196,73,0.06),transparent);
   border-top:1px solid rgba(230,196,73,0.15)}}
@@ -4817,6 +5222,22 @@ footer{{padding:40px 24px;border-top:1px solid rgba(255,255,255,0.05);
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 <script src="/exit-funnel.js" defer></script>
 <script>
+// Anonymous reaction signal — anyone on the share page can tap an emoji
+// and the design's owner sees their next-day prompt bend accordingly.
+document.addEventListener('click', async (e) => {{
+  const rx = e.target.closest('.rx[data-rx-id]');
+  if (!rx) return;
+  const id = rx.getAttribute('data-rx-id');
+  const kind = rx.getAttribute('data-rx');
+  rx.classList.add('on');
+  try {{
+    await fetch('/api/you/signal/' + id, {{
+      method: 'POST', headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{kind: kind, source: 'slug'}}),
+    }});
+  }} catch (_) {{}}
+}});
+
 // Public buy: any visitor on the share page can buy a /you design.
 document.addEventListener('click', async (e) => {{
   const btn = e.target.closest('.buy-btn[data-buy-id]');
@@ -5075,6 +5496,24 @@ async fn main() {
          VALUES (?, ?, ?, ?)",
         params!["hero_cta_variant", "value", chrono_now(), "default"],
     ).ok();
+    // /you signal stream — emoji reactions + dwell time + email taps.
+    // Drives the auto-tuning of compose_design so tomorrow's drop bends
+    // toward "love" tokens and away from "meh" / "skip" tokens.
+    conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS you_signals (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL,
+            design_id   INTEGER NOT NULL,
+            kind        TEXT NOT NULL,     -- love / ok / meh / skip / claim_intent / share / dwell
+            weight      INTEGER NOT NULL DEFAULT 1,
+            source      TEXT,              -- 'page' / 'email' / 'slug' / 'auto'
+            created_at  TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_you_signals_user ON you_signals(user_id);
+        CREATE INDEX IF NOT EXISTS idx_you_signals_design ON you_signals(design_id);
+        CREATE INDEX IF NOT EXISTS idx_you_signals_kind ON you_signals(kind);
+    ").ok();
+
     // Exit-intent funnel: survey → cost-price discount → no-purchase
     // open lottery (オープン懸賞 — Japan has no prize cap on these).
     conn.execute_batch("
@@ -5253,6 +5692,10 @@ async fn main() {
         .route("/api/admin/lottery_draw", post(admin_lottery_draw))
         .route("/api/admin/cv_pulse", post(cv_pulse))
         .route("/api/cv/config", get(cv_public_config))
+        .route("/api/you/signal/:design_id", post(you_signal))
+        .route("/api/you/preferences", get(you_preferences))
+        .route("/r/:design_id/:kind", get(you_signal_email))
+        .route("/api/admin/backfill_purchases", post(admin_backfill_purchases))
         // Blog (public ops notes). Clean URLs without .html extension.
         .route("/blog", get(blog_index))
         .route("/blog/", get(blog_index))
@@ -5351,10 +5794,10 @@ async fn run_you_daily_cron(db: Db) {
 
     // 3. Send paced emails to everyone whose today's design is now ready
     //    AND we haven't yet emailed for this day (tracked by daily_email_sent).
-    let send_targets: Vec<(i64, String, i64, String, String, Option<String>)> = {
+    let send_targets: Vec<(i64, String, i64, String, String, Option<String>, String)> = {
         let conn = db.lock().unwrap();
         let mut stmt = match conn.prepare(
-            "SELECT d.id, u.email, d.day_num, d.name, d.prompt, u.slug
+            "SELECT d.id, u.email, d.day_num, d.name, d.prompt, u.slug, u.token
              FROM you_designs d JOIN you_users u ON u.id = d.user_id
              WHERE d.day=? AND d.gen_status='ready'
                AND u.unsubscribed_at IS NULL
@@ -5363,7 +5806,7 @@ async fn run_you_daily_cron(db: Db) {
         ) {
             Ok(s) => s,
             Err(_) => match conn.prepare(
-                "SELECT d.id, u.email, d.day_num, d.name, d.prompt, u.slug
+                "SELECT d.id, u.email, d.day_num, d.name, d.prompt, u.slug, u.token
                  FROM you_designs d JOIN you_users u ON u.id = d.user_id
                  WHERE d.day=? AND d.gen_status='ready'
                    AND u.unsubscribed_at IS NULL
@@ -5374,7 +5817,7 @@ async fn run_you_daily_cron(db: Db) {
             },
         };
         stmt.query_map(params![day], |r| Ok((
-            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?,
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?,
         ))).map(|it| it.filter_map(|r| r.ok()).collect())
            .unwrap_or_default()
     };
@@ -5393,13 +5836,14 @@ async fn run_you_daily_cron(db: Db) {
     let mut sent = 0;
     let mut failed = 0;
     let subj_variant = you_subject_variant(&db);
-    for (design_id, email, day_num, name, prompt, slug) in &send_targets {
+    for (design_id, email, day_num, name, prompt, slug, token) in &send_targets {
         let img_url = format!("{}/api/you/design/{}/image.png", base, design_id);
         let share = slug.as_ref()
             .map(|s| format!("{}/{}", base, s))
             .unwrap_or_else(|| format!("{}/you", base));
-        let html = format!(r#"<div style="background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;padding:32px 0;margin:0"><div style="max-width:600px;margin:0 auto;padding:0 32px"><div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:32px">MU × YOU</div><div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:8px">DAY {day_num:03}</div><div style="font-size:24px;font-weight:200;line-height:1.4;margin-bottom:8px">{name}</div><p style="font-size:12px;line-height:1.85;opacity:0.7;margin-bottom:24px;font-style:italic;border-left:2px solid #e6c449;padding-left:14px">{prompt}</p><img src="{img}" alt="MU × YOU DAY {day_num}" style="width:100%;display:block;background:#1a1a1a;border-radius:2px;margin-bottom:24px"><a href="{share}" style="display:inline-block;background:#e6c449;color:#000;padding:16px 28px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:700;margin-right:8px">この一着を仕立てる →</a><a href="{share}" style="display:inline-block;border:1px solid rgba(255,255,255,0.2);color:#F5F5F0;padding:15px 22px;font-size:10px;letter-spacing:0.25em;text-transform:uppercase;text-decoration:none;opacity:0.7">明日に期待 / Skip</a><p style="font-size:10px;opacity:0.45;margin-top:32px;line-height:1.7">気分が変わったら <a href="{share}" style="color:#e6c449">プロンプトを書き直す</a>こともできます。<br>退会は <code>STOP</code> 返信、または /you ページから即時。</p></div></div>"#,
-            day_num = day_num, name = name, prompt = prompt, img = img_url, share = share);
+        let reactions = email_reaction_row(*design_id, token);
+        let html = format!(r#"<div style="background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;padding:32px 0;margin:0"><div style="max-width:600px;margin:0 auto;padding:0 32px"><div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:32px">MU × YOU</div><div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:8px">DAY {day_num:03}</div><div style="font-size:24px;font-weight:200;line-height:1.4;margin-bottom:8px">{name}</div><p style="font-size:12px;line-height:1.85;opacity:0.7;margin-bottom:24px;font-style:italic;border-left:2px solid #e6c449;padding-left:14px">{prompt}</p><img src="{img}" alt="MU × YOU DAY {day_num}" style="width:100%;display:block;background:#1a1a1a;border-radius:2px;margin-bottom:24px"><a href="{share}" style="display:inline-block;background:#e6c449;color:#000;padding:16px 28px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:700;margin-right:8px">この一着を仕立てる →</a><a href="{share}" style="display:inline-block;border:1px solid rgba(255,255,255,0.2);color:#F5F5F0;padding:15px 22px;font-size:10px;letter-spacing:0.25em;text-transform:uppercase;text-decoration:none;opacity:0.7">明日に期待 / Skip</a>{reactions}<p style="font-size:10px;opacity:0.45;margin-top:32px;line-height:1.7">気分が変わったら <a href="{share}" style="color:#e6c449">プロンプトを書き直す</a>こともできます。<br>退会は <code>STOP</code> 返信、または /you ページから即時。</p></div></div>"#,
+            day_num = day_num, name = name, prompt = prompt, img = img_url, share = share, reactions = reactions);
         let resp = client
             .post("https://api.resend.com/emails")
             .bearer_auth(&resend_key)

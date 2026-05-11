@@ -484,6 +484,15 @@ footer a:hover{opacity:1}
           <span>PRICE <b id="pv-price">¥6,800</b></span>
           <span>VALID <b id="pv-valid">24h</b></span>
         </div>
+        <!-- 4-emoji feedback signal — tomorrow's design bends toward "love" tokens. -->
+        <div id="pv-reactions" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:4px 0">
+          <div style="font-size:9px;letter-spacing:0.22em;text-transform:uppercase;opacity:0.55;margin-right:6px">この一着、どう？</div>
+          <button class="rx-btn" data-rx="love" type="button">🔥 大好き</button>
+          <button class="rx-btn" data-rx="ok"   type="button">👍 良い</button>
+          <button class="rx-btn" data-rx="meh"  type="button">😐 微妙</button>
+          <button class="rx-btn" data-rx="skip" type="button">👋 Skip</button>
+          <span id="rx-msg" style="font-size:10px;opacity:0.65;margin-left:6px"></span>
+        </div>
         <div class="preview-actions">
           <button class="btn btn-primary" id="claim-btn">この一着を仕立てる</button>
           <button class="btn btn-secondary" id="skip-btn">明日に期待 / Skip</button>
@@ -883,6 +892,38 @@ async function loadDaily(tk){
   }
 }
 
+// Wire emoji reaction buttons on /you preview. Records the signal and
+// blinks a confirmation so the user sees the feedback was received.
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('#pv-reactions .rx-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const kind = btn.getAttribute('data-rx');
+      const id = ($('#preview').dataset.designId) || '';
+      const msg = document.getElementById('rx-msg');
+      if (!id) return;
+      try {
+        await fetch('/api/you/signal/' + id, {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({token: token || '', kind, source: 'page'}),
+        });
+        msg.style.color = '#e6c449';
+        msg.textContent = '受け取った — 明日に反映';
+        btn.style.background = '#e6c449';
+        btn.style.color = '#000';
+        setTimeout(() => { msg.textContent = ''; btn.style.background = ''; btn.style.color = ''; }, 1800);
+      } catch (e) {
+        msg.style.color = '#C8362C';
+        msg.textContent = 'エラー';
+      }
+    });
+  });
+});
+// Add minimal rx-btn styling — fits the surrounding preview card aesthetic.
+(() => {
+  const s = document.createElement('style');
+  s.textContent = `.rx-btn{background:rgba(230,196,73,0.08);border:1px solid rgba(230,196,73,0.25);color:#F5F5F0;padding:8px 12px;font-size:11px;letter-spacing:0.04em;cursor:pointer;border-radius:2px;font-family:inherit;transition:transform 0.1s, background 0.1s} .rx-btn:hover{background:rgba(230,196,73,0.18)}`;
+  document.head.appendChild(s);
+})();
 // Wire the Day-7 inline ritual save button.
 document.addEventListener('DOMContentLoaded', () => {
   const btn = document.getElementById('style-name-save');
