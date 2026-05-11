@@ -230,6 +230,31 @@ nav.scrolled{background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);
   line-height:1;opacity:0;animation:appear 1.4s ease 0.3s forwards}
 .hero-tagline{font-size:13px;font-weight:300;letter-spacing:0.08em;opacity:0;
   animation:appear 1s ease 1.2s forwards;margin-top:24px;color:rgba(245,245,240,0.4)}
+.hero-cta-primary{
+  appearance:none;-webkit-appearance:none;border:none;cursor:pointer;
+  display:inline-flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  margin-top:32px;
+  background:#e6c449;color:#0A0A0A;
+  padding:18px 56px;min-width:280px;
+  font-family:inherit;font-weight:700;
+  border-radius:6px;
+  box-shadow:0 4px 0 rgba(230,196,73,0.25), 0 0 24px rgba(230,196,73,0.18);
+  transition:transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+  opacity:0;animation:appear 0.7s ease 1.5s forwards;
+  position:relative;z-index:5;
+}
+.hero-cta-primary .cta-main{font-size:18px;letter-spacing:0.12em}
+.hero-cta-primary .cta-sub{font-size:10px;letter-spacing:0.12em;opacity:0.75;font-weight:500;margin-top:4px}
+.hero-cta-primary:hover{transform:translateY(-2px);background:#f0d156;
+  box-shadow:0 6px 0 rgba(230,196,73,0.32), 0 0 32px rgba(230,196,73,0.30)}
+.hero-cta-primary:active{transform:translateY(1px);
+  box-shadow:0 1px 0 rgba(230,196,73,0.25), 0 0 12px rgba(230,196,73,0.18)}
+.hero-cta-primary:focus-visible{outline:2px solid #fff;outline-offset:3px}
+@media(max-width:640px){
+  .hero-cta-primary{padding:16px 32px;min-width:0;width:calc(100% - 32px);max-width:380px;margin-top:24px}
+  .hero-cta-primary .cta-main{font-size:16px}
+  .hero-cta-primary .cta-sub{font-size:9px}
+}
 .hero-stats{display:flex;gap:48px;margin-top:64px;opacity:0;animation:appear 0.8s ease 1.8s forwards}
 .hero-stat{text-align:center}
 .hero-stat-num{font-size:28px;font-weight:200;letter-spacing:0.1em;font-variant-numeric:tabular-nums}
@@ -418,9 +443,12 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
   #hero{padding-top:60px}
   .hero-mu{font-size:clamp(80px,22vw,160px)}
   .hero-tagline{font-size:11px;text-align:center}
-  .hero-stats{gap:20px;margin-top:40px;flex-wrap:wrap;justify-content:center}
+  /* hide noisy secondaries on mobile so the CTA is unambiguous above fold */
+  #hero-lifestyle{display:none}
+  .hero-tagline-en{display:none}
+  .hero-stats{gap:18px;margin-top:24px;flex-wrap:wrap;justify-content:center}
   .hero-stat-num{font-size:22px}
-  .hero-brands{gap:24px;margin-top:48px;flex-wrap:wrap;justify-content:center}
+  .hero-brands{gap:24px;margin-top:32px;flex-wrap:wrap;justify-content:center}
 
   /* ── SECTIONS ── */
   .section{padding:90px 20px 60px}
@@ -510,8 +538,19 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
   <div class="hero-tagline-en" style="font-size:11px;font-weight:300;letter-spacing:0.18em;text-transform:uppercase;opacity:0.55;margin-top:6px;font-family:'Helvetica Neue',Arial,sans-serif">
     Autonomous fashion — designed by weather, made by AI.
   </div>
-  <!-- Lifestyle hero strip — 6 着画 (Gemini 3 Pro Image, R2). 着画が無ければ mockup にフォールバック -->
-  <div id="hero-lifestyle" style="margin-top:24px;width:100%;max-width:880px;display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;padding:0 12px">
+
+  <!-- Primary CTA — top-of-hero so it's always above the fold on PC & mobile.
+       Real <button> for max click reliability + accessibility. -->
+  <button type="button"
+          class="hero-cta-primary"
+          onclick="showSection('mugen');return false;"
+          aria-label="今すぐ買える MUGEN を見る — 毎時生まれる限定 Tシャツ">
+    <span class="cta-main">今すぐ買う</span>
+    <span class="cta-sub">MUGEN ¥5,000〜 · 早いほど安い ↓</span>
+  </button>
+
+  <!-- Lifestyle hero strip — below CTA, lazy. Click any photo to enter MUGEN. -->
+  <div id="hero-lifestyle" style="margin-top:28px;width:100%;max-width:880px;display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;padding:0 12px">
     <div style="grid-column:1/-1;text-align:center;font-size:9px;letter-spacing:0.3em;opacity:0.35;text-transform:uppercase">people wearing MU</div>
   </div>
   <div class="hero-stats" aria-live="polite">
@@ -528,15 +567,6 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
       <div class="hero-stat-label">MUON Today</div>
     </div>
   </div>
-  <!-- Primary CTA — moved up so first-time visitors see a buy path within 1 viewport -->
-  <a href="#section-mugen" onclick="event.preventDefault();showSection('mugen')"
-     style="display:inline-flex;align-items:center;gap:10px;margin-top:36px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;background:#F5F5F0;color:#0A0A0A;padding:16px 36px;font-weight:600;transition:transform 0.15s,box-shadow 0.15s;box-shadow:0 2px 0 rgba(245,245,240,0.15)"
-     onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 4px 0 rgba(245,245,240,0.25)'"
-     onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='0 2px 0 rgba(245,245,240,0.15)'"
-     aria-label="今すぐ買える MUGEN を見る — 毎時生まれる限定 Tシャツ">
-    今すぐ買う · MUGEN を見る →
-  </a>
-  <div style="margin-top:10px;font-size:10px;opacity:0.5;letter-spacing:0.05em">¥5,000 から · 売れるほど ¥250 上がる · 最初に買うあなたが一番安い</div>
   <div class="hero-brands">
     <div class="hero-brand-btn" onclick="showSection('ma')">
       <div class="hero-brand-sig"><div class="sig-line"></div></div>
@@ -1102,7 +1132,8 @@ function makeCard(p){
   return `
   <div class="card${soldOut?' sold-out-card':''}" data-pid="${p.id}">
     ${p.mockup_url
-      ? `<img class="card-img" src="${p.mockup_url}" alt="${p.name}" loading="lazy">`
+      ? `<img class="card-img" src="${p.mockup_url}" alt="${p.name}" loading="lazy"
+          onerror="this.onerror=null;this.src='/og.jpg';this.style.opacity='0.45';this.style.filter='grayscale(0.4)'">`
       : `<div class="card-placeholder"><div class="card-placeholder-bar"></div><div class="card-placeholder-label">AI GENERATING...</div></div>`}
     ${badge}
     <div class="card-overlay">
@@ -1152,7 +1183,7 @@ async function loadMA(){
     cont.innerHTML = `
     <div class="ma-piece">
       <div class="ma-img">
-        ${p.mockup_url?`<img src="${p.mockup_url}" alt="${p.name}" style="width:100%;height:100%;object-fit:cover">`:'<div class="card-placeholder" style="background:#1a1a1a"><div class="card-placeholder-bar"></div><div class="card-placeholder-label">AI GENERATING...</div></div>'}
+        ${p.mockup_url?`<img src="${p.mockup_url}" alt="${p.name}" style="width:100%;height:100%;object-fit:cover" onerror="this.onerror=null;this.src='/og.jpg';this.style.opacity='0.45'">`:'<div class="card-placeholder" style="background:#1a1a1a"><div class="card-placeholder-bar"></div><div class="card-placeholder-label">AI GENERATING...</div></div>'}
       </div>
       <div class="ma-auction">
         <div>

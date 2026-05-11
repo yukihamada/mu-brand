@@ -474,7 +474,17 @@ async fn list_products(
     let limit: i64 = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(500).clamp(1, 1000);
     let conn = db.lock().unwrap();
     let mut stmt = conn.prepare(
-        "SELECT id, brand, drop_num, name, mockup_url, price_jpy, inventory, sold, created_at,
+        // Printful S3 temp URLs (printful-upload.s3-accelerate.amazonaws.com)
+        // expire ~24h after upload. When that happens we fall back to the raw
+        // design_url (stable imgur/R2 URL) so the image never disappears.
+        "SELECT id, brand, drop_num, name,
+                CASE
+                  WHEN mockup_url LIKE 'https://printful-upload.s3%'
+                       OR mockup_url LIKE 'https://files.cdn.printful.com/upload%'
+                  THEN COALESCE(NULLIF(design_url,''), mockup_url)
+                  ELSE mockup_url
+                END AS mockup_url,
+                price_jpy, inventory, sold, created_at,
                 weather_data, prompt_hash, seed_data, nft_mint, auction_end,
                 COALESCE(current_bid,0), COALESCE(bid_count,0), sold_out_at, lifestyle_url
          FROM products WHERE brand=? AND active=1 ORDER BY drop_num DESC LIMIT ?"
@@ -546,7 +556,16 @@ async fn get_product(
 ) -> impl IntoResponse {
     let conn = db.lock().unwrap();
     let result = conn.query_row(
-        "SELECT id, brand, drop_num, name, mockup_url, price_jpy, inventory, sold, created_at,
+        // Same fallback rule as list_products: if Printful temp URL has expired,
+        // serve the stable design_url instead so the image never breaks.
+        "SELECT id, brand, drop_num, name,
+                CASE
+                  WHEN mockup_url LIKE 'https://printful-upload.s3%'
+                       OR mockup_url LIKE 'https://files.cdn.printful.com/upload%'
+                  THEN COALESCE(NULLIF(design_url,''), mockup_url)
+                  ELSE mockup_url
+                END AS mockup_url,
+                price_jpy, inventory, sold, created_at,
                 weather_data, prompt_hash, seed_data, nft_mint, auction_end,
                 COALESCE(current_bid,0), COALESCE(bid_count,0), sold_out_at, lifestyle_url
          FROM products WHERE id=? AND active=1",
