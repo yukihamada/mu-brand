@@ -608,14 +608,14 @@ footer a:hover{opacity:1}
   </div>
 </section>
 
-<!-- SAMPLE GALLERY — 他のユーザが今日もらった案 (購入可) -->
+<!-- SAMPLE GALLERY — 他の MUer が今日もらった案 (購入可) -->
 <section id="sample-gallery" style="padding:80px 32px 60px;max-width:1080px;margin:0 auto">
   <div style="text-align:center;margin-bottom:36px">
-    <div style="font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:10px">Sample · Gallery</div>
-    <h2 style="font-size:clamp(22px,3.4vw,32px);font-weight:300;letter-spacing:0.04em;line-height:1.4;color:#F5F5F0">他のユーザが今日もらった案</h2>
+    <div style="font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:10px">MUer · Gallery</div>
+    <h2 style="font-size:clamp(22px,3.4vw,32px);font-weight:300;letter-spacing:0.04em;line-height:1.4;color:#F5F5F0">他の MUer が今日もらった案</h2>
     <p style="font-size:12px;opacity:0.6;margin-top:10px;line-height:1.85">
-      架空のサンプル ペルソナ 15 名と、各人が今日 AI からもらった「一案」。<br>
-      画像をクリックすれば、その一着は実際に購入できます。
+      架空のサンプル MUer 15 名と、各人が今日 AI からもらった「一案」。<br>
+      画像をクリックすれば、その一着は実際に購入できます。MUer の階層は <a href="/vision" style="color:#e6c449">/vision</a> で。
     </p>
   </div>
   <div id="sample-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:18px;margin-top:20px">
@@ -640,6 +640,31 @@ footer a:hover{opacity:1}
 .sp-meta{font-size:9px;letter-spacing:0.2em;text-transform:uppercase;opacity:0.5}
 .sp-price{font-size:11px;opacity:0.7;font-variant-numeric:tabular-nums}
 </style>
+
+<!-- AI FEEDBACK (お客様 → MU AI 直通) -->
+<section style="padding:60px 32px 30px;max-width:780px;margin:0 auto">
+  <div style="background:rgba(230,196,73,0.05);border:1px solid rgba(230,196,73,0.18);border-radius:2px;padding:28px 28px 24px">
+    <div style="font-size:10px;letter-spacing:0.35em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:8px">Feedback · AI</div>
+    <h3 style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:20px;font-weight:300;letter-spacing:0.02em;margin-bottom:6px">MU AI に直接、要望や違和感を投げる。</h3>
+    <p style="font-size:12px;opacity:0.7;line-height:1.9;margin-bottom:14px">
+      返答は Gemini 2.5 が即時で書きます。<strong>MA Council (MA 落札者)</strong> は優先 / <strong>MU Owner</strong> はそれに次ぐ重み / <strong>MUer</strong> も 24 時間以内に必ず読まれます。<br>
+      全フィードバックは <a href="/api/transparency">/api/transparency</a> の将来項目として件数公開予定。
+    </p>
+    <textarea id="fb-message" placeholder="例: 「もっと暗い色味を増やしてほしい」「Tシャツのサイズ感が大きい」「コラボでこの作家とやってほしい」など、自由に。"
+      style="width:100%;background:#000;color:#F5F5F0;border:1px solid rgba(255,255,255,0.18);font-family:inherit;font-size:14px;padding:14px 16px;border-radius:2px;min-height:120px;line-height:1.7;resize:vertical"></textarea>
+    <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">
+      <select id="fb-kind" style="background:#000;color:#F5F5F0;border:1px solid rgba(255,255,255,0.18);font-family:inherit;font-size:12px;padding:8px 10px;border-radius:2px">
+        <option value="request">機能要望</option>
+        <option value="love">気に入ってる</option>
+        <option value="bug">バグ報告</option>
+        <option value="vision">方向性 / vision</option>
+      </select>
+      <button type="button" id="fb-submit" class="btn btn-primary" style="font-size:11px;padding:10px 18px">AI に送る →</button>
+      <span id="fb-tier" style="font-size:10px;letter-spacing:0.18em;text-transform:uppercase;opacity:0.55;margin-left:auto"></span>
+    </div>
+    <div id="fb-reply" style="display:none;margin-top:18px;padding:14px 18px;background:#0c0c0c;border-left:2px solid #5a9e6f;font-size:13px;line-height:1.85;border-radius:2px"></div>
+  </div>
+</section>
 
 <!-- FAQ -->
 <section class="faq">
@@ -1124,6 +1149,49 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 
+// ── AI Feedback — Gemini が即返答、Telegram に通知 ──
+document.addEventListener('DOMContentLoaded', () => {
+  const btn  = document.getElementById('fb-submit');
+  const txt  = document.getElementById('fb-message');
+  const kind = document.getElementById('fb-kind');
+  const reply= document.getElementById('fb-reply');
+  const tier = document.getElementById('fb-tier');
+  if (!btn || !txt) return;
+  btn.addEventListener('click', async () => {
+    const m = (txt.value || '').trim();
+    if (m.length < 2) { toast('もう少し長く書いてください', true); return; }
+    btn.disabled = true; btn.textContent = '送信中…';
+    try {
+      const r = await fetch('/api/feedback', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          token: token || undefined,
+          message: m,
+          kind: kind ? kind.value : 'request',
+        }),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      const tierName = {ma_council:'⭐ MA Council', mu_owner:'MU Owner', muer:'MUer'}[d.tier] || 'Visitor';
+      if (tier) tier.textContent = 'tier: ' + tierName;
+      if (reply) {
+        if (d.ai_reply && d.ai_reply.length > 0) {
+          reply.textContent = d.ai_reply;
+        } else {
+          reply.textContent = '届きました。AI 返答は今日中にメールします。';
+        }
+        reply.style.display = 'block';
+      }
+      txt.value = '';
+      toast('AI に届きました');
+    } catch (e) {
+      toast('送信失敗: ' + e.message, true);
+    } finally {
+      btn.disabled = false; btn.textContent = 'AI に送る →';
+    }
+  });
+});
+
 // ── Referral status — show shareable URL + credit if logged in ──
 document.addEventListener('DOMContentLoaded', async () => {
   const block = document.getElementById('referral-block');
@@ -1156,7 +1224,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 // ── サンプル ペルソナ gallery ──
-// 架空ユーザー 15 名が「今日もらった一着」を実在の MUGEN drop と共に表示。
+// 架空の MUer 15 名が「今日もらった一着」を実在の MUGEN drop と共に表示。
 // 画像クリックで購入動線へ (/mugen?drop=XXX のような従来 URL ではなく、
 // その商品の現在ページにジャンプ — MUGEN は商品ごとに detail ページが
 // あるわけではなく一覧なので、トップに飛ばす + 該当 drop をハイライト)。
