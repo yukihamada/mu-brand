@@ -426,9 +426,10 @@ fn stripe_checkout_form_jp(f: StripeCheckoutFields) -> Vec<(String, String)> {
     //    them so Stripe doesn't omit them via locale negotiation).
     //    NOTE: konbini requires "Konbini" payment method to be enabled in the
     //    Stripe dashboard for the account. If the account hasn't enabled it,
-    //    Stripe returns a 400 — the env flag lets us turn it off in that case
-    //    without redeploying.
-    if env_flag_enabled("STRIPE_KONBINI_ENABLED", true) {
+    //    Stripe returns 400 — runtime auto-detect flips KONBINI_DISABLED_RUNTIME
+    //    on first failure so subsequent calls skip konbini. Env override:
+    //    STRIPE_KONBINI_ENABLED=0 to force off.
+    if konbini_currently_enabled() {
         push(&mut form, "payment_method_types[0]", "card".into());
         push(&mut form, "payment_method_types[1]", "konbini".into());
         // payment_method_options[konbini][expires_after_days] — give buyers
@@ -494,6 +495,41 @@ fn env_flag_enabled(var: &str, default_on: bool) -> bool {
         Some(s) if s == "1" || s == "true" || s == "yes" || s == "on" => true,
         Some(s) if s == "0" || s == "false" || s == "no" || s == "off" => false,
         _ => default_on,
+    }
+}
+
+/// Runtime auto-disable for Konbini. Set to true once Stripe responds with
+/// "konbini is invalid" — happens when ops hasn't activated Konbini in the
+/// dashboard yet (capabilities API can't enable own-account features).
+/// Process-lifetime cache; resets on deploy. Once flipped, subsequent
+/// checkouts skip konbini without making a doomed Stripe call.
+static KONBINI_DISABLED_RUNTIME: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn konbini_currently_enabled() -> bool {
+    if KONBINI_DISABLED_RUNTIME.load(std::sync::atomic::Ordering::Relaxed) {
+        return false;
+    }
+    env_flag_enabled("STRIPE_KONBINI_ENABLED", true)
+}
+
+/// Inspect a Stripe error body and disable konbini at runtime if Stripe
+/// is telling us the account doesn't have konbini enabled. Called from
+/// the checkout error path so the next checkout call works without ops
+/// intervention.
+fn maybe_disable_konbini(stripe_error_body: &str) -> bool {
+    if stripe_error_body.contains("konbini")
+        && (stripe_error_body.contains("invalid") || stripe_error_body.contains("not activated"))
+    {
+        let was_enabled = !KONBINI_DISABLED_RUNTIME.swap(true, std::sync::atomic::Ordering::Relaxed);
+        if was_enabled {
+            tracing::warn!("[stripe] auto-disabling konbini at runtime — Stripe says it's not activated. \
+                            Enable it at https://dashboard.stripe.com/account/payments/settings then restart \
+                            (or `fly secrets set STRIPE_KONBINI_RESET=$(date +%s) -a mu-store` to force re-enable).");
+        }
+        true
+    } else {
+        false
     }
 }
 
@@ -754,6 +790,180 @@ async fn list_products(
     let products: Vec<Product> = stmt.query_map(params![brand, limit], |row| read_product(row))
         .unwrap().filter_map(|r| r.ok()).collect();
     Json(products)
+}
+
+/// GET /api/v1/embed/products?brand=mugen&limit=12&available=1
+///
+/// CORS-enabled, embed-friendly product listing for external EC sites.
+/// Returns a minimal, stable schema with explicit `checkout_url`, `share_url`,
+/// `available`, and `image_url`. Use from /embed.js or fetch() directly.
+///
+/// Query params:
+///   brand     — mugen | muon | ma | nouns | sweep (default: all)
+///   limit     — 1..50 (default 12)
+///   available — "1" to filter inventory>sold (default: all)
+async fn embed_products(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let limit: i64 = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(12).clamp(1, 50);
+    let available_only = q.get("available").map(|s| s == "1").unwrap_or(false);
+
+    // Build query — if `brand` is set, filter; otherwise include all main brands.
+    let allowed = ["mugen","muon","ma","nouns"];
+    let brand_filter = q.get("brand").map(String::as_str).filter(|b| allowed.contains(b));
+
+    let conn = db.lock().unwrap();
+    let sql = if brand_filter.is_some() {
+        "SELECT id, brand, drop_num, name,
+                CASE
+                  WHEN mockup_url LIKE 'https://printful-upload.s3%'
+                  THEN COALESCE(NULLIF(design_url,''), mockup_url)
+                  ELSE mockup_url
+                END AS img,
+                price_jpy, inventory, sold, created_at, auction_end
+         FROM products WHERE brand=? AND active=1
+         ORDER BY drop_num DESC LIMIT ?"
+    } else {
+        "SELECT id, brand, drop_num, name,
+                CASE
+                  WHEN mockup_url LIKE 'https://printful-upload.s3%'
+                  THEN COALESCE(NULLIF(design_url,''), mockup_url)
+                  ELSE mockup_url
+                END AS img,
+                price_jpy, inventory, sold, created_at, auction_end
+         FROM products WHERE active=1
+         ORDER BY id DESC LIMIT ?"
+    };
+    let mut stmt = match conn.prepare(sql) {
+        Ok(s) => s,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response(),
+    };
+    let mapper = |row: &rusqlite::Row| -> rusqlite::Result<serde_json::Value> {
+        let id: i64 = row.get(0)?;
+        let brand: String = row.get(1)?;
+        let drop_num: i64 = row.get(2)?;
+        let name: String = row.get(3)?;
+        let img: Option<String> = row.get(4)?;
+        let price: i64 = row.get(5)?;
+        let inv: i64 = row.get(6)?;
+        let sold: i64 = row.get(7)?;
+        let auction_end: Option<String> = row.get(9)?;
+        Ok(serde_json::json!({
+            "id": id,
+            "brand": brand,
+            "drop_num": drop_num,
+            "name": name,
+            "image_url": img,
+            "price_jpy": price,
+            "inventory": inv,
+            "sold": sold,
+            "available": (inv - sold) > 0,
+            "is_auction": auction_end.is_some(),
+            "checkout_url": format!("https://wearmu.com/products/{}/{}", brand, drop_num),
+            "share_url":    format!("https://wearmu.com/products/{}/{}", brand, drop_num),
+        }))
+    };
+    let products: Vec<serde_json::Value> = if let Some(b) = brand_filter {
+        stmt.query_map(params![b, limit], mapper)
+    } else {
+        stmt.query_map(params![limit], mapper)
+    }.map(|it| it.filter_map(|r| r.ok())
+        .filter(|p| !available_only || p["available"].as_bool().unwrap_or(false))
+        .collect()).unwrap_or_default();
+
+    Json(serde_json::json!({
+        "products": products,
+        "count":    products.len(),
+        "source":   "https://wearmu.com",
+        "docs":     "https://wearmu.com/developers",
+    })).into_response()
+}
+
+/// GET /embed.js — Drop-in widget. Renders MU products inside any HTML element
+/// on any domain. Usage:
+///
+///   <div id="mu-mount"></div>
+///   <script src="https://wearmu.com/embed.js" defer></script>
+///   <script>
+///     window.addEventListener('load', () => MU.mount({
+///       brand:    'mugen',     // mugen | muon | ma | nouns (or omit for mixed)
+///       count:    6,
+///       container:'#mu-mount',
+///       theme:    'dark',      // 'dark' | 'light' (default: dark)
+///       available: true,       // only in-stock items
+///       lang:     'ja',        // ja | en
+///       onClick:  (p) => window.open(p.checkout_url, '_blank'),
+///     }));
+///   </script>
+async fn embed_js() -> impl IntoResponse {
+    let body = include_str!("../static/embed.js");
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "application/javascript; charset=utf-8"),
+            (axum::http::header::CACHE_CONTROL, "public, max-age=300"),
+        ],
+        body,
+    )
+}
+
+/// GET /embed/products?brand=mugen&count=6&theme=dark
+/// Iframe-friendly mini page. For sites that prefer <iframe> over JS widget.
+async fn embed_iframe_page(
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let brand = q.get("brand").map(String::as_str).unwrap_or("mugen");
+    let count: i64 = q.get("count").and_then(|s| s.parse().ok()).unwrap_or(6).clamp(1, 24);
+    let theme = q.get("theme").map(String::as_str).unwrap_or("dark");
+    let lang  = q.get("lang").map(String::as_str).unwrap_or("ja");
+    let available = q.get("available").map(|s| s == "1" || s == "true").unwrap_or(true);
+    let brand_attr = html_attr_escape(brand);
+    let theme_attr = html_attr_escape(theme);
+    let lang_attr  = html_attr_escape(lang);
+    let html = format!(r#"<!doctype html><html lang="{lang}"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU products embed</title>
+<style>
+html,body{{margin:0;padding:0;background:transparent}}
+body{{font-family:-apple-system,'Helvetica Neue',Arial,sans-serif}}
+</style></head><body>
+<div id="mu-iframe-mount"></div>
+<script src="https://wearmu.com/embed.js" defer></script>
+<script>
+window.addEventListener('load', function(){{
+  MU.mount({{
+    brand:     {brand_json},
+    count:     {count},
+    container: '#mu-iframe-mount',
+    theme:     {theme_json},
+    available: {available_json},
+    lang:      {lang_json},
+    onClick:   function(p){{ window.top.location.href = p.checkout_url; }}
+  }});
+}});
+</script>
+</body></html>"#,
+        lang = lang_attr,
+        brand_json = serde_json::to_string(brand).unwrap_or_else(|_| "\"mugen\"".into()),
+        count = count,
+        theme_json = serde_json::to_string(theme).unwrap_or_else(|_| "\"dark\"".into()),
+        available_json = if available { "true" } else { "false" },
+        lang_json = serde_json::to_string(lang).unwrap_or_else(|_| "\"ja\"".into()),
+    );
+    let _ = (brand_attr, theme_attr, lang_attr);
+    // Allow iframing from any origin (this is the embed page's purpose).
+    let mut resp = axum::response::Html(html).into_response();
+    resp.headers_mut().remove("x-frame-options");
+    resp.headers_mut().insert("X-Frame-Options", HeaderValue::from_static("ALLOWALL"));
+    resp.headers_mut().insert("Content-Security-Policy",
+        HeaderValue::from_static("frame-ancestors *"));
+    resp
+}
+
+/// GET /developers — Public developer docs for embedding MU products.
+async fn developers_page() -> impl IntoResponse {
+    let body = include_str!("../static/developers.html");
+    axum::response::Html(body)
 }
 
 async fn list_brands(State(db): State<Db>) -> impl IntoResponse {
@@ -12103,6 +12313,13 @@ async fn main() {
         .route("/api/admin/x_queue", get(admin_x_queue))
         .route("/api/admin/x_mark_posted", post(admin_x_mark_posted))
         .route("/sweep", get(show_sweep_page))
+        // ── Public embed API + widget (CORS open via CorsLayer below) ──
+        .route("/api/v1/embed/products", get(embed_products))
+        .route("/api/v1/products", get(list_brands))
+        .route("/api/v1/products/:brand", get(list_products))
+        .route("/embed.js", get(embed_js))
+        .route("/embed/products", get(embed_iframe_page))
+        .route("/developers", get(developers_page))
         .route("/api/sweep/checkout", post(sweep_checkout))
         .route("/api/sweep/signal", post(sweep_signal))
         .route("/api/sweep/signals", get(sweep_signals_summary))
@@ -12144,9 +12361,22 @@ async fn main() {
         .nest_service("/mockups", ServeDir::new(mockups_dir()))
         .fallback_service(ServeDir::new("static"));
     let watcher_db = db.clone();
+
+    // CORS — allow any origin to read public APIs + embed.js.
+    // Restricted to GET/OPTIONS so write endpoints (POST /api/checkout etc.)
+    // are NOT exposed cross-origin. Frontends must redirect users to wearmu.com
+    // for Checkout instead of POSTing from the embed page directly.
+    use tower_http::cors::{Any, CorsLayer};
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods([axum::http::Method::GET, axum::http::Method::OPTIONS])
+        .allow_headers(Any)
+        .max_age(std::time::Duration::from_secs(86400));
+
     let app = app
         .with_state(db)
         .layer(middleware::from_fn(security_headers))
+        .layer(cors)
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::new().level(Level::INFO))

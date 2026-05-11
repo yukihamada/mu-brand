@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU Developer API — Embed MU products on your site | wearmu.com</title>
+<meta name="description" content="MU の AI 生成商品 (MUGEN / MUON / MA / NOUNS) を自社 EC やブログに埋め込む API + JS ウィジェット。CORS 公開・無料・即利用可。">
+<meta name="robots" content="index,follow">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+:root{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--card:#111;--border:rgba(255,255,255,0.08)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font-family:-apple-system,'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.85;-webkit-font-smoothing:antialiased}
+nav{position:sticky;top:0;background:rgba(10,10,10,0.88);backdrop-filter:blur(12px);border-bottom:1px solid var(--border);padding:18px 32px;display:flex;justify-content:space-between;align-items:center;z-index:50}
+nav a{color:var(--fg);text-decoration:none;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.85}
+nav .logo{font-weight:700;letter-spacing:0.45em}
+main{max-width:880px;margin:0 auto;padding:64px 32px 100px}
+h1{font-size:clamp(28px,5vw,44px);font-weight:200;letter-spacing:0.02em;line-height:1.2;margin-bottom:14px}
+h1 em{color:var(--y);font-style:normal;font-weight:300}
+.lede{color:var(--mute);font-size:15px;max-width:680px;margin-bottom:48px;line-height:1.95}
+h2{font-size:18px;font-weight:600;letter-spacing:0.04em;margin:48px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+h3{font-size:14px;font-weight:600;letter-spacing:0.04em;margin:28px 0 10px}
+p{color:rgba(245,245,240,0.85);margin-bottom:14px;font-size:14px}
+code{font-family:'SF Mono','Menlo','Monaco',monospace;font-size:12px;background:rgba(230,196,73,0.1);color:var(--y);padding:2px 6px;border-radius:2px;letter-spacing:0}
+pre{background:var(--card);border:1px solid var(--border);border-radius:3px;padding:18px 20px;overflow-x:auto;margin:14px 0;font-family:'SF Mono','Menlo',monospace;font-size:12px;line-height:1.7;color:var(--fg)}
+pre code{background:transparent;color:var(--fg);padding:0}
+.token{color:#888}
+.kw{color:#fca5a5}
+.str{color:#86efac}
+.cmt{color:#666;font-style:italic}
+ul{margin:10px 0 14px 22px;color:rgba(245,245,240,0.85);font-size:14px}
+li{margin-bottom:6px}
+.box{background:var(--card);border-left:2px solid var(--y);padding:16px 20px;margin:18px 0;font-size:13px;color:rgba(245,245,240,0.78)}
+table{width:100%;border-collapse:collapse;font-size:13px;margin:14px 0}
+th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--border)}
+th{font-size:10px;letter-spacing:0.15em;text-transform:uppercase;color:var(--mute);font-weight:400}
+td code{font-size:11px}
+.cta{display:inline-block;background:var(--y);color:#000;padding:12px 24px;font-size:11px;letter-spacing:0.28em;text-transform:uppercase;font-weight:700;text-decoration:none;border-radius:2px;margin:14px 14px 0 0}
+.cta:hover{opacity:0.85}
+.cta.alt{background:transparent;color:var(--y);border:1px solid var(--y)}
+.preview{background:var(--card);border:1px solid var(--border);border-radius:3px;padding:16px;margin:16px 0}
+.preview .label{font-size:9px;letter-spacing:0.3em;text-transform:uppercase;color:var(--mute);margin-bottom:14px}
+footer{padding:48px 32px;border-top:1px solid var(--border);text-align:center;font-size:11px;letter-spacing:0.2em;opacity:0.5}
+</style>
+</head>
+<body>
+<nav>
+  <a href="/" class="logo">MU</a>
+  <div>
+    <a href="/" style="margin-right:18px">Store</a>
+    <a href="/vision" style="margin-right:18px">Vision</a>
+    <a href="/developers" style="color:var(--y)">Developers</a>
+  </div>
+</nav>
+<main>
+  <h1>MU <em>Developer API</em></h1>
+  <p class="lede">
+    MU の AI 生成商品 (MUGEN 無限 / MUON 無音 / 間 MA / MU × NOUNS) を、
+    あなたの EC サイト・ブログ・自社プロダクトに <strong>1 行</strong>で埋め込めます。<br>
+    CORS 公開、認証不要、無料。商品が更新されると埋め込み先でも自動で反映されます。
+  </p>
+
+  <h2>1. 最速で埋め込む — JS ウィジェット</h2>
+  <p>HTML に以下を貼るだけ:</p>
+  <pre><code>&lt;<span class="kw">div</span> id=<span class="str">"mu-mount"</span>&gt;&lt;/<span class="kw">div</span>&gt;
+&lt;<span class="kw">script</span> src=<span class="str">"https://wearmu.com/embed.js"</span>
+        data-brand=<span class="str">"mugen"</span> data-count=<span class="str">"6"</span>
+        data-container=<span class="str">"#mu-mount"</span> data-theme=<span class="str">"dark"</span>
+        defer&gt;&lt;/<span class="kw">script</span>&gt;</code></pre>
+  <p>これだけで MUGEN 6 商品のグリッドが描画されます。クリックすると wearmu.com の購入ページに遷移。</p>
+
+  <h2>2. プログラムから使う — JS API</h2>
+  <pre><code>&lt;<span class="kw">script</span> src=<span class="str">"https://wearmu.com/embed.js"</span> defer&gt;&lt;/<span class="kw">script</span>&gt;
+&lt;<span class="kw">script</span>&gt;
+  <span class="kw">window</span>.addEventListener(<span class="str">'load'</span>, () =&gt; {
+    MU.mount({
+      brand:     <span class="str">'mugen'</span>,      <span class="cmt">// mugen | muon | ma | nouns | (omit for mixed)</span>
+      count:     <span class="str">6</span>,
+      container: <span class="str">'#mu-mount'</span>,
+      theme:     <span class="str">'dark'</span>,       <span class="cmt">// dark | light</span>
+      available: <span class="kw">true</span>,         <span class="cmt">// 在庫ありのみ</span>
+      lang:      <span class="str">'ja'</span>,         <span class="cmt">// ja | en</span>
+      onClick:   (p) =&gt; window.open(p.checkout_url, <span class="str">'_blank'</span>),
+    });
+  });
+&lt;/<span class="kw">script</span>&gt;</code></pre>
+
+  <h2>3. iframe で埋め込む</h2>
+  <p>JS を実行できないサイト (Notion, Wix, 等) はこちら:</p>
+  <pre><code>&lt;<span class="kw">iframe</span>
+  src=<span class="str">"https://wearmu.com/embed/products?brand=mugen&amp;count=6"</span>
+  width=<span class="str">"100%"</span> height=<span class="str">"720"</span>
+  style=<span class="str">"border:0"</span>&gt;&lt;/<span class="kw">iframe</span>&gt;</code></pre>
+
+  <h2>4. 直接 JSON API を叩く</h2>
+  <p>サーバー側からデータだけ取りたい時 (Next.js, Rails, Python, etc.):</p>
+  <pre><code><span class="kw">GET</span> https://wearmu.com/api/v1/embed/products?brand=mugen&amp;limit=12&amp;available=1</code></pre>
+  <p>レスポンス:</p>
+  <pre><code>{
+  <span class="str">"products"</span>: [
+    {
+      <span class="str">"id"</span>: 20,
+      <span class="str">"brand"</span>: <span class="str">"mugen"</span>,
+      <span class="str">"drop_num"</span>: 11,
+      <span class="str">"name"</span>: <span class="str">"MUGEN #0011 (11/108)"</span>,
+      <span class="str">"image_url"</span>: <span class="str">"https://i.imgur.com/jvntmCU.jpeg"</span>,
+      <span class="str">"price_jpy"</span>: 5250,
+      <span class="str">"inventory"</span>: 11,
+      <span class="str">"sold"</span>: 1,
+      <span class="str">"available"</span>: <span class="kw">true</span>,
+      <span class="str">"is_auction"</span>: <span class="kw">false</span>,
+      <span class="str">"checkout_url"</span>: <span class="str">"https://wearmu.com/products/mugen/11"</span>,
+      <span class="str">"share_url"</span>:    <span class="str">"https://wearmu.com/products/mugen/11"</span>
+    }
+  ],
+  <span class="str">"count"</span>: 12,
+  <span class="str">"source"</span>: <span class="str">"https://wearmu.com"</span>
+}</code></pre>
+
+  <h2>パラメータ</h2>
+  <table>
+  <thead><tr><th>パラメータ</th><th>型</th><th>説明</th></tr></thead>
+  <tbody>
+    <tr><td><code>brand</code></td><td>string</td><td>mugen / muon / ma / nouns。未指定 = 全ブランド mix。</td></tr>
+    <tr><td><code>count</code></td><td>int (1-50)</td><td>表示数。デフォルト 12。</td></tr>
+    <tr><td><code>available</code></td><td>bool</td><td>true なら在庫ありのみ。</td></tr>
+    <tr><td><code>theme</code></td><td>string</td><td>dark (default) / light</td></tr>
+    <tr><td><code>lang</code></td><td>string</td><td>ja (default) / en — ブランドラベルの言語</td></tr>
+    <tr><td><code>onClick</code></td><td>function</td><td>カードクリック時の callback。指定なしなら新タブで checkout_url を開く。</td></tr>
+    <tr><td><code>container</code></td><td>string / element</td><td>マウント先 (CSS セレクタ or HTMLElement)</td></tr>
+  </tbody>
+  </table>
+
+  <h2>ブランド</h2>
+  <ul>
+    <li><strong>MUGEN 無限</strong> — 毎時間 1 商品、108 個限定、北海道の気象データから AI が design 生成</li>
+    <li><strong>MUON 無音</strong> — 気温が枚数を決める。10°C なら 10 着のみ</li>
+    <li><strong>間 MA</strong> — 週 1 回の 7 日オークション、1 着のみ</li>
+    <li><strong>MU × NOUNS</strong> — NOUNS DAO とのコラボ枠</li>
+  </ul>
+
+  <h2>制限事項</h2>
+  <div class="box">
+    <strong>レート制限</strong>: 公開 API は IP あたり 60 req/min。Burst 許容。<br>
+    <strong>キャッシュ</strong>: <code>embed.js</code> は 5 分キャッシュ。商品データはノーキャッシュ (常に最新)。<br>
+    <strong>決済</strong>: Checkout は wearmu.com 側でのみ実行。埋め込み側からは決済 API を直接叩けません (Stripe フォーム秘匿のため)。
+  </div>
+
+  <h2>ライセンス・利用条件</h2>
+  <p>
+    無料・無認証で誰でも埋め込み可。MU はあなたのサイトでの商品閲覧・購買導線として機能します。<br>
+    <strong>禁止</strong>: 商品画像の改変・MU/SIIIEEP のロゴ削除・"powered by MU" フッターの除去。
+  </p>
+  <p>
+    商用パートナーシップ / カスタム ブランディング 希望は
+    <a href="mailto:mail@yukihamada.jp" style="color:var(--y)">mail@yukihamada.jp</a>
+  </p>
+
+  <h2>ライブプレビュー</h2>
+  <div class="preview">
+    <div class="label">↓ MUGEN, 6 商品, dark テーマ</div>
+    <div id="mu-preview"></div>
+  </div>
+  <script src="/embed.js" defer></script>
+  <script>
+    window.addEventListener('load', function(){
+      if (window.MU) MU.mount({brand:'mugen', count:6, container:'#mu-preview', theme:'dark', available:true});
+    });
+  </script>
+
+  <h2>サポート</h2>
+  <p>
+    バグ報告・機能リクエスト: <a href="https://github.com/yukihamada/mu-brand/issues" style="color:var(--y)">GitHub Issues</a><br>
+    技術的な質問: <a href="mailto:mail@yukihamada.jp" style="color:var(--y)">mail@yukihamada.jp</a>
+  </p>
+
+  <a href="#" class="cta" onclick="navigator.clipboard.writeText('&lt;script src=&quot;https://wearmu.com/embed.js&quot; data-brand=&quot;mugen&quot; data-count=&quot;6&quot; data-container=&quot;#mu-mount&quot; defer&gt;&lt;/script&gt;');alert('Snippet copied — paste into your site\\u0027s HTML');return false;">埋め込みコードをコピー</a>
+  <a href="/" class="cta alt">MU を見る</a>
+</main>
+<footer>
+  MU · 株式会社イネブラ (Enabler Inc.) · <a href="mailto:info@enablerdao.com" style="color:inherit">info@enablerdao.com</a>
+</footer>
+</body>
+</html>
