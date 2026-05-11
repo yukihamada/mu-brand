@@ -699,8 +699,18 @@ function setLang(e, lang) {
   document.querySelectorAll('.lang-content').forEach(el => el.classList.remove('visible'));
   document.querySelectorAll('.pr-lang-btn').forEach(el => el.classList.remove('active'));
   document.getElementById('lang-' + lang).classList.add('visible');
-  e.target.classList.add('active');
+  if (e && e.target) e.target.classList.add('active');
+  else {
+    document.querySelectorAll('.pr-lang-btn').forEach(b => {
+      if (b.textContent.toLowerCase().includes(lang === 'ja' ? '日本' : 'english')) b.classList.add('active');
+    });
+  }
 }
+// Honor ?lang=en|ja on load
+(function() {
+  var m = location.search.match(/[?&]lang=(en|ja)\b/);
+  if (m && m[1] === 'en') setLang(null, 'en');
+})();
 </script>
 </body>
 </html>

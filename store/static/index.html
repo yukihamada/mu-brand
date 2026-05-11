@@ -494,7 +494,8 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
   </div>
   <div class="nav-right">
     <a href="/about.html" style="font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.5;transition:opacity 0.2s;margin-right:8px" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=0.25">About</a>
-    <a href="/press.html" style="font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.5;transition:opacity 0.2s;margin-right:20px" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=0.25">Press</a>
+    <a href="/press.html" style="font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.5;transition:opacity 0.2s;margin-right:8px" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=0.25">Press</a>
+    <a href="/press.html?lang=en" style="font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.5;transition:opacity 0.2s;margin-right:20px;border:1px solid rgba(245,245,240,0.25);padding:3px 8px" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" aria-label="English overview — read the brand explanation in English on the press page">EN ↗</a>
     <div class="live-dot"></div>
     <span class="live-label">生成中</span>
   </div>
@@ -527,6 +528,15 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
       <div class="hero-stat-label">MUON Today</div>
     </div>
   </div>
+  <!-- Primary CTA — moved up so first-time visitors see a buy path within 1 viewport -->
+  <a href="#section-mugen" onclick="event.preventDefault();showSection('mugen')"
+     style="display:inline-flex;align-items:center;gap:10px;margin-top:36px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;background:#F5F5F0;color:#0A0A0A;padding:16px 36px;font-weight:600;transition:transform 0.15s,box-shadow 0.15s;box-shadow:0 2px 0 rgba(245,245,240,0.15)"
+     onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 4px 0 rgba(245,245,240,0.25)'"
+     onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='0 2px 0 rgba(245,245,240,0.15)'"
+     aria-label="今すぐ買える MUGEN を見る — 毎時生まれる限定 Tシャツ">
+    今すぐ買う · MUGEN を見る →
+  </a>
+  <div style="margin-top:10px;font-size:10px;opacity:0.5;letter-spacing:0.05em">¥5,000 から · 売れるほど ¥250 上がる · 最初に買うあなたが一番安い</div>
   <div class="hero-brands">
     <div class="hero-brand-btn" onclick="showSection('ma')">
       <div class="hero-brand-sig"><div class="sig-line"></div></div>
@@ -555,7 +565,13 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
       <div class="section-brand">間 MA</div>
       <div class="section-title">世界に<br>1着。</div>
       <div class="section-concept">
-        <p class="concept-line">週に一度（毎週月曜）、AIが生み出す。<br>一枚だけ製造される。<br>7日間のオークションで、一人の手に渡る。<br>真正証明書として Solana 上の <span title="2026 Q3 ローンチ予定">Soulbound NFT (近日)</span> を opt-in で発行。<br>服と共に長く残ることを目指している。</p>
+        <p class="concept-line">週に一度（毎週月曜）、AIが生み出す。<br>一枚だけ製造される。<br>7日間のオークションで、一人の手に渡る。<br>真正証明書として Solana 上の <span title="2026 Q3 ローンチ予定" style="border-bottom:1px dotted rgba(230,196,73,0.7);color:#e6c449">Soulbound NFT <span style="font-size:8px;letter-spacing:0.15em;background:rgba(230,196,73,0.15);padding:1px 5px;margin-left:3px">2026 Q3 予定</span></span> を opt-in で発行。<br>服と共に長く残ることを目指している。</p>
+        <div style="margin-top:14px;padding:10px 14px;border-left:2px solid #e6c449;background:rgba(230,196,73,0.06);font-size:10px;line-height:1.7;opacity:0.85">
+          <strong style="letter-spacing:0.1em">2026-05-11 ルール変更履歴</strong><br>
+          MA を月次（¥120,000〜）から <strong>週次 7 日間オークション（¥30,000〜）</strong> に変更。
+          現在進行中の「間 2026.05」は <strong>旧ルールで継続</strong>（2026-06-01 まで）。
+          新ルールは次の月曜開始ドロップから適用。
+        </div>
       </div>
     </div>
     <div class="section-right">
@@ -662,6 +678,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
           <div class="drop-sub">Next Drop</div>
           <div class="drop-counter next-drop-timer" id="mugen-timer">—:—</div>
           <div class="price-dropping">¥5,000スタート / 売れるほど高くなる</div>
+          <div style="font-size:9px;opacity:0.55;margin-top:4px;letter-spacing:0.05em">= 最初に買うあなたが、次の人より ¥250 安い。</div>
         </div>
       </div>
     </div>

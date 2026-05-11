@@ -66,6 +66,15 @@ section ul li{margin-bottom:8px}
 .roadmap .year{font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;letter-spacing:0.25em;text-transform:uppercase;color:var(--y);opacity:0.95;margin-bottom:4px}
 .roadmap .title{font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;font-weight:500;margin-bottom:6px}
 .roadmap .desc{font-size:13px;color:var(--mute);line-height:1.8}
+.roadmap .step.now::before{background:#7be57b;box-shadow:0 0 0 4px rgba(123,229,123,0.20),0 0 12px rgba(123,229,123,0.5)}
+.roadmap .step.now .year{color:#7be57b}
+.roadmap .step.now{padding-left:14px;border-left:2px solid rgba(123,229,123,0.35);margin-left:-14px}
+.roadmap .step.future{opacity:0.55}
+.roadmap .step.future::before{background:transparent;border:2px solid rgba(230,196,73,0.4);width:8px;height:8px;box-shadow:none}
+.roadmap-legend{display:flex;gap:18px;font-size:10px;opacity:0.7;margin:8px 0 18px;letter-spacing:0.05em}
+.roadmap-legend .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.roadmap-legend .dot-now{background:#7be57b;box-shadow:0 0 6px rgba(123,229,123,0.6)}
+.roadmap-legend .dot-future{border:2px solid rgba(230,196,73,0.4);width:6px;height:6px}
 
 .kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px;margin:30px 0 50px}
 .kpi{background:var(--card);padding:16px 18px;border-radius:2px}
@@ -212,38 +221,42 @@ footer a{color:inherit;text-decoration:underline}
 <section>
   <div class="eyebrow">04 — Roadmap</div>
   <h2>10 年計画 — Amazon の 27 年を、人間 0 人で。</h2>
+  <div class="roadmap-legend">
+    <span><span class="dot dot-now"></span>今動いている</span>
+    <span><span class="dot dot-future"></span>将来計画（実装前）</span>
+  </div>
   <div class="roadmap">
-    <div class="step">
-      <div class="year">2026.05 (now)</div>
+    <div class="step now">
+      <div class="year">2026.05 ← 今ここ</div>
       <div class="title">無人運営 v1 — automation</div>
       <div class="desc">1 founder + 5 cron + Gemini。1 日 24 ドロップ × 365 日 = 8,760 案/年。実売 ¥145,000 / MUer 9 名。<em>人間が判断する部分が多い</em>。</div>
     </div>
-    <div class="step">
+    <div class="step future">
       <div class="year">2026.07</div>
       <div class="title">MA Council 始動</div>
       <div class="desc">週次 MA 落札者が investor's report と並ぶ "council brief" を受け取り、議題に投票。最初の議決 = 2026.08 価格レンジ。</div>
     </div>
-    <div class="step">
+    <div class="step future">
       <div class="year">2027</div>
       <div class="title">無人運営 v2 — autonomy</div>
       <div class="desc">AI が広告予算 / コピー / プロンプト改良を自己決定。founder は方針承認のみ。年商 ¥10M、council 24 名。</div>
     </div>
-    <div class="step">
+    <div class="step future">
       <div class="year">2028</div>
       <div class="title">自律 production</div>
       <div class="desc">国内 fulfillment partner と AI が直接契約・出荷。配送 9 日 → 3 日。AI 監査機能 (財務・在庫・税務) が稼働。</div>
     </div>
-    <div class="step">
+    <div class="step future">
       <div class="year">2030</div>
       <div class="title">Founder retires</div>
       <div class="desc">創業者は MA Council member の一人に降りる。日常運営は AI + Council のみ。年商 ¥1B (¥10億)。</div>
     </div>
-    <div class="step">
+    <div class="step future">
       <div class="year">2032</div>
       <div class="title">Multi-brand fork</div>
       <div class="desc">MU を fork した「MU-style autonomous brands」が 100 件以上立ち上がる。MU は OSS infra + Council protocol を提供。</div>
     </div>
-    <div class="step">
+    <div class="step future">
       <div class="year">2036</div>
       <div class="title">Amazon を超える日</div>
       <div class="desc"><strong>「無人率 100%」「customer-decision 100%」</strong>の 2 軸で Amazon を超える。年 GMV は ¥100B (¥1000億)、employee は依然 0 人。Council 1,200 名。Earth's first truly autonomous brand.</div>
