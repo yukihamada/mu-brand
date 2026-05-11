@@ -297,15 +297,17 @@ fn read_product(row: &rusqlite::Row) -> rusqlite::Result<Product> {
 async fn list_products(
     Path(brand): Path<String>,
     State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
+    let limit: i64 = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(500).clamp(1, 1000);
     let conn = db.lock().unwrap();
     let mut stmt = conn.prepare(
         "SELECT id, brand, drop_num, name, mockup_url, price_jpy, inventory, sold, created_at,
                 weather_data, prompt_hash, seed_data, nft_mint, auction_end,
                 COALESCE(current_bid,0), COALESCE(bid_count,0), sold_out_at
-         FROM products WHERE brand=? AND active=1 ORDER BY created_at DESC LIMIT 24"
+         FROM products WHERE brand=? AND active=1 ORDER BY drop_num DESC LIMIT ?"
     ).unwrap();
-    let products: Vec<Product> = stmt.query_map(params![brand], |row| read_product(row))
+    let products: Vec<Product> = stmt.query_map(params![brand, limit], |row| read_product(row))
         .unwrap().filter_map(|r| r.ok()).collect();
     Json(products)
 }
@@ -3957,6 +3959,114 @@ async fn you_admin_backfill(
     })).into_response()
 }
 
+/// Admin: synchronously sends "today's design ready" email to every
+/// active subscriber whose today's design has image_bytes (gen_status=ready).
+/// Unlike the fire-and-forget path inside spawn_gemini_for_design, this
+/// awaits the Resend response and reports per-user success/failure so we
+/// can debug missing deliveries.
+async fn you_admin_email_today(
+    State(db): State<Db>,
+    Json(body): Json<YouAdminBackfillBody>,
+) -> impl IntoResponse {
+    if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    if resend_key.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "RESEND_API_KEY not set").into_response();
+    }
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    let base = base_url.trim_end_matches('/').to_string();
+    let day = jst_today_str();
+
+    type Row = (i64, String, i64, String, String, Option<String>);
+    let rows: Vec<Row> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT d.id, u.email, d.day_num, d.name, d.prompt, u.slug
+             FROM you_designs d JOIN you_users u ON u.id = d.user_id
+             WHERE d.day=? AND d.gen_status='ready'
+               AND u.unsubscribed_at IS NULL
+               AND length(coalesce(u.email,''))>3"
+        ) { Ok(s)=>s, Err(_)=>return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map(params![day], |r| Ok((
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?,
+        ))).map(|it| it.filter_map(|r| r.ok()).collect())
+           .unwrap_or_default()
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build().unwrap_or_default();
+
+    let mut sent = 0;
+    let mut failed: Vec<serde_json::Value> = vec![];
+    for (design_id, email, day_num, name, prompt, slug) in &rows {
+        let img_url = format!("{}/api/you/design/{}/image.png", base, design_id);
+        let share = slug.as_ref()
+            .map(|s| format!("{}/{}", base, s))
+            .unwrap_or_else(|| format!("{}/you", base));
+        let html = format!(r#"
+<div style="background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;padding:32px 0;margin:0">
+  <div style="max-width:600px;margin:0 auto;padding:0 32px">
+    <div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:32px">MU × YOU</div>
+    <div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:8px">DAY {day_num:03}</div>
+    <div style="font-size:24px;font-weight:200;line-height:1.4;margin-bottom:8px">{name}</div>
+    <p style="font-size:12px;line-height:1.85;opacity:0.7;margin-bottom:24px;font-style:italic;border-left:2px solid #e6c449;padding-left:14px">{prompt}</p>
+    <img src="{img}" alt="MU × YOU DAY {day_num}" style="width:100%;display:block;background:#1a1a1a;border-radius:2px;margin-bottom:24px">
+    <a href="{share}" style="display:inline-block;background:#e6c449;color:#000;padding:16px 28px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:700;margin-right:8px">この一着を仕立てる →</a>
+    <a href="{share}" style="display:inline-block;border:1px solid rgba(255,255,255,0.2);color:#F5F5F0;padding:15px 22px;font-size:10px;letter-spacing:0.25em;text-transform:uppercase;text-decoration:none;opacity:0.7">明日に期待 / Skip</a>
+    <p style="font-size:10px;opacity:0.45;margin-top:32px;line-height:1.7">
+      気分が変わったら <a href="{share}" style="color:#e6c449">プロンプトを書き直す</a>こともできます。<br>
+      退会は <code>STOP</code> 返信、または /you ページから即時。
+    </p>
+  </div>
+</div>"#,
+            day_num = day_num, name = name, prompt = prompt,
+            img = img_url, share = share);
+
+        let resp = client
+            .post("https://api.resend.com/emails")
+            .bearer_auth(&resend_key)
+            .json(&serde_json::json!({
+                "from": "MU × YOU <noreply@wearmu.com>",
+                "to": [email],
+                "subject": format!("MU × YOU DAY {:03} — {}", day_num, name),
+                "html": html,
+            }))
+            .send().await;
+        match resp {
+            Ok(r) if r.status().is_success() => {
+                eprintln!("[you/email] sent design {} → {}", design_id, email);
+                sent += 1;
+            }
+            Ok(r) => {
+                let status = r.status();
+                let txt = r.text().await.unwrap_or_default();
+                eprintln!("[you/email] FAIL design {} → {}: {} {}",
+                    design_id, email, status, &txt[..txt.len().min(200)]);
+                failed.push(serde_json::json!({
+                    "design_id": design_id, "email": email,
+                    "status": status.as_u16(), "body": &txt[..txt.len().min(200)],
+                }));
+            }
+            Err(e) => {
+                eprintln!("[you/email] NET FAIL design {} → {}: {}", design_id, email, e);
+                failed.push(serde_json::json!({
+                    "design_id": design_id, "email": email, "error": e.to_string(),
+                }));
+            }
+        }
+        // gentle pacing to stay under Resend rate limits (free tier: 2/s)
+        tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    }
+    Json(serde_json::json!({
+        "ok": true, "day": day,
+        "candidates": rows.len(),
+        "sent": sent,
+        "failed_count": failed.len(),
+        "failed": failed,
+    })).into_response()
+}
+
 async fn you_unsubscribe(
     State(db): State<Db>,
     Json(body): Json<YouUnsubBody>,
@@ -4648,6 +4758,7 @@ async fn main() {
         "ALTER TABLE you_designs ADD COLUMN image_mime TEXT",
         "ALTER TABLE you_designs ADD COLUMN gen_status TEXT NOT NULL DEFAULT 'pending'",
         "ALTER TABLE you_designs ADD COLUMN gen_error TEXT",
+        "ALTER TABLE you_designs ADD COLUMN daily_email_sent_at TEXT",
         "ALTER TABLE you_users ADD COLUMN slug TEXT",
         "ALTER TABLE you_users ADD COLUMN display_name TEXT",
         // 30-day trial / lifetime-free for MU shirt owners
@@ -4818,6 +4929,20 @@ async fn main() {
     std::fs::create_dir_all(mockups_dir()).ok();
     let db: Db = Arc::new(Mutex::new(conn));
 
+    // ── Daily cron: JST 07:00, ensure today's design + send paced emails ──
+    // Started before the router consumes `db` via with_state.
+    let db_cron = db.clone();
+    tokio::spawn(async move {
+        loop {
+            let sleep_secs = seconds_until_next_jst(7, 0);
+            tracing::info!("[cron] you-daily: sleeping {}s until next JST 07:00", sleep_secs);
+            tokio::time::sleep(std::time::Duration::from_secs(sleep_secs)).await;
+            run_you_daily_cron(db_cron.clone()).await;
+            // Belt-and-braces: avoid double-fire within the same minute.
+            tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+        }
+    });
+
     let app = Router::new()
         .route("/", get(index))
         .route("/success", get(success_page))
@@ -4869,6 +4994,7 @@ async fn main() {
         .route("/api/you/slug/check/:slug", get(you_slug_check))
         .route("/api/you/taste", post(you_taste_update))
         .route("/api/you/admin/backfill_today", post(you_admin_backfill))
+        .route("/api/you/admin/email_today", post(you_admin_email_today))
         .route("/api/you/admin/list", get(you_admin_list))
         .route("/api/you/style", post(you_style_set))
         .route("/api/you/stats", get(you_active_count))
@@ -4903,4 +5029,162 @@ async fn main() {
     println!("mu-store listening on {}", addr);
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
+}
+
+/// Number of seconds from now until the next JST (hh:mm). Always positive.
+fn seconds_until_next_jst(target_h: u32, target_m: u32) -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0) as i64;
+    let now_jst = now_secs + 9 * 3600;
+    let day = now_jst / 86400;
+    let sec_of_day = now_jst - day * 86400;
+    let target_sec = (target_h as i64) * 3600 + (target_m as i64) * 60;
+    let mut delta = target_sec - sec_of_day;
+    if delta <= 0 { delta += 86400; }
+    delta as u64
+}
+
+/// Body of the daily-email cron. Idempotent + safe to run more than once
+/// per day (won't regenerate designs that are already ready; won't double-
+/// send emails for the same day per user because of the cron_last_sent
+/// column).
+async fn run_you_daily_cron(db: Db) {
+    let day = jst_today_str();
+    tracing::info!("[cron] you-daily: starting for day={}", day);
+
+    // 1. Ensure today's design exists for every active subscriber, kick off
+    //    Gemini for the ones that don't have one yet.
+    let pending: Vec<(i64, String)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT u.id, u.taste_json FROM you_users u
+             WHERE u.unsubscribed_at IS NULL
+               AND you_user_active_sql(u.trial_end_at, COALESCE(u.lifetime_free,0))"
+        ) {
+            // Fallback to plain WHERE if the helper function isn't installed
+            // — SQLite doesn't have user-defined functions registered here, so
+            // this is the actual query we run:
+            Err(_) => match conn.prepare(
+                "SELECT u.id, u.taste_json FROM you_users u
+                 WHERE u.unsubscribed_at IS NULL"
+            ) {
+                Ok(s) => s,
+                Err(e) => { tracing::error!("[cron] db prepare: {}", e); return; }
+            },
+            Ok(s) => s,
+        };
+        stmt.query_map([], |r| Ok((r.get::<_,i64>(0)?, r.get::<_,String>(1)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default()
+    };
+
+    let mut ensured = 0;
+    for (uid, taste_json) in &pending {
+        let taste: serde_json::Value =
+            serde_json::from_str(taste_json).unwrap_or(serde_json::json!({}));
+        let (did, needs) = {
+            let conn = db.lock().unwrap();
+            ensure_design_for_day(&conn, *uid, &day, &taste, false).unwrap_or((0, false))
+        };
+        if did > 0 && needs {
+            spawn_gemini_for_design(db.clone(), did);
+            ensured += 1;
+            // Stagger Gemini calls so we don't blast 50 requests in parallel
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    }
+    tracing::info!("[cron] you-daily: queued {} Gemini gen calls", ensured);
+
+    // 2. Wait for Gemini calls to settle (~90s avg per design, but they
+    //    run in parallel; 3 minutes is generous).
+    tokio::time::sleep(std::time::Duration::from_secs(180)).await;
+
+    // 3. Send paced emails to everyone whose today's design is now ready
+    //    AND we haven't yet emailed for this day (tracked by daily_email_sent).
+    let send_targets: Vec<(i64, String, i64, String, String, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT d.id, u.email, d.day_num, d.name, d.prompt, u.slug
+             FROM you_designs d JOIN you_users u ON u.id = d.user_id
+             WHERE d.day=? AND d.gen_status='ready'
+               AND u.unsubscribed_at IS NULL
+               AND length(coalesce(u.email,''))>3
+               AND COALESCE(d.daily_email_sent_at,'')=''"
+        ) {
+            Ok(s) => s,
+            Err(_) => match conn.prepare(
+                "SELECT d.id, u.email, d.day_num, d.name, d.prompt, u.slug
+                 FROM you_designs d JOIN you_users u ON u.id = d.user_id
+                 WHERE d.day=? AND d.gen_status='ready'
+                   AND u.unsubscribed_at IS NULL
+                   AND length(coalesce(u.email,''))>3"
+            ) {
+                Ok(s) => s,
+                Err(e) => { tracing::error!("[cron] email prepare: {}", e); return; }
+            },
+        };
+        stmt.query_map(params![day], |r| Ok((
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?,
+        ))).map(|it| it.filter_map(|r| r.ok()).collect())
+           .unwrap_or_default()
+    };
+
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    let base = base_url.trim_end_matches('/').to_string();
+    if resend_key.is_empty() {
+        tracing::warn!("[cron] RESEND_API_KEY not set — skipping email phase");
+        return;
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build().unwrap_or_default();
+
+    let mut sent = 0;
+    let mut failed = 0;
+    for (design_id, email, day_num, name, prompt, slug) in &send_targets {
+        let img_url = format!("{}/api/you/design/{}/image.png", base, design_id);
+        let share = slug.as_ref()
+            .map(|s| format!("{}/{}", base, s))
+            .unwrap_or_else(|| format!("{}/you", base));
+        let html = format!(r#"<div style="background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;padding:32px 0;margin:0"><div style="max-width:600px;margin:0 auto;padding:0 32px"><div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:32px">MU × YOU</div><div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:8px">DAY {day_num:03}</div><div style="font-size:24px;font-weight:200;line-height:1.4;margin-bottom:8px">{name}</div><p style="font-size:12px;line-height:1.85;opacity:0.7;margin-bottom:24px;font-style:italic;border-left:2px solid #e6c449;padding-left:14px">{prompt}</p><img src="{img}" alt="MU × YOU DAY {day_num}" style="width:100%;display:block;background:#1a1a1a;border-radius:2px;margin-bottom:24px"><a href="{share}" style="display:inline-block;background:#e6c449;color:#000;padding:16px 28px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:700;margin-right:8px">この一着を仕立てる →</a><a href="{share}" style="display:inline-block;border:1px solid rgba(255,255,255,0.2);color:#F5F5F0;padding:15px 22px;font-size:10px;letter-spacing:0.25em;text-transform:uppercase;text-decoration:none;opacity:0.7">明日に期待 / Skip</a><p style="font-size:10px;opacity:0.45;margin-top:32px;line-height:1.7">気分が変わったら <a href="{share}" style="color:#e6c449">プロンプトを書き直す</a>こともできます。<br>退会は <code>STOP</code> 返信、または /you ページから即時。</p></div></div>"#,
+            day_num = day_num, name = name, prompt = prompt, img = img_url, share = share);
+        let resp = client
+            .post("https://api.resend.com/emails")
+            .bearer_auth(&resend_key)
+            .json(&serde_json::json!({
+                "from": "MU × YOU <noreply@wearmu.com>",
+                "to": [email],
+                "subject": format!("MU × YOU DAY {:03} — {}", day_num, name),
+                "html": html,
+            }))
+            .send().await;
+        match resp {
+            Ok(r) if r.status().is_success() => {
+                tracing::info!("[cron] sent design {} → {}", design_id, email);
+                sent += 1;
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "UPDATE you_designs SET daily_email_sent_at=? WHERE id=?",
+                    params![chrono_now(), design_id],
+                );
+            }
+            Ok(r) => {
+                let s = r.status();
+                let txt = r.text().await.unwrap_or_default();
+                tracing::warn!("[cron] FAIL design {} → {}: {} {}",
+                    design_id, email, s, &txt[..txt.len().min(200)]);
+                failed += 1;
+            }
+            Err(e) => {
+                tracing::warn!("[cron] NET FAIL design {} → {}: {}", design_id, email, e);
+                failed += 1;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    }
+    tracing::info!("[cron] you-daily: done day={} sent={} failed={}", day, sent, failed);
 }
