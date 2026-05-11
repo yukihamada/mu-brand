@@ -6244,7 +6244,8 @@ async fn you_unsubscribe(
 const RESERVED_SLUGS: &[&str] = &[
     "ma", "muon", "mugen", "nouns", "you", "city", "tokushoho", "success",
     "wallet", "v", "products", "api", "static", "mockups", "u",
-    "about", "press", "robots.txt", "sitemap.xml", "manifest.json",
+    "about", "press", "vision", "muer", "council",
+    "robots.txt", "sitemap.xml", "manifest.json",
     "favicon.ico", "favicon.svg", "favicon-16x16.png", "favicon-32x32.png",
     "apple-touch-icon.png", "icon-192.png", "icon-512.png", "og.jpg",
     "you.html", "tokushoho.html", "city.html", "about.html", "press.html",
