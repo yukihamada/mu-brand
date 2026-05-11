@@ -8313,12 +8313,23 @@ async fn dynamic_sitemap(State(db): State<Db>) -> Response {
 // (price_data, server-controlled, 改竄不可) に飛ばす。
 
 fn sweep_password() -> String {
-    env::var("SWEEP_PAGE_PASSWORD").unwrap_or_else(|_| "sweep-2026".into())
+    env::var("SWEEP_PAGE_PASSWORD").unwrap_or_else(|_| "set-SWEEP_PAGE_PASSWORD".into())
 }
 
 fn has_sweep_cookie(headers: &HeaderMap, pw: &str) -> bool {
     headers.get("cookie").and_then(|v| v.to_str().ok()).map(|c| {
         c.split(';').any(|p| p.trim() == format!("mu_sweep_pass={}", pw))
+    }).unwrap_or(false)
+}
+
+/// SIIIEEP 社専用 partner ページのパスワード (一般プレビューと分離)
+fn siiieep_partner_password() -> String {
+    env::var("SIIIEEP_PARTNER_PASSWORD").unwrap_or_else(|_| "set-SIIIEEP_PARTNER_PASSWORD".into())
+}
+
+fn has_siiieep_partner_cookie(headers: &HeaderMap, pw: &str) -> bool {
+    headers.get("cookie").and_then(|v| v.to_str().ok()).map(|c| {
+        c.split(';').any(|p| p.trim() == format!("mu_siiieep_partner={}", pw))
     }).unwrap_or(false)
 }
 
@@ -8621,6 +8632,384 @@ if (new URLSearchParams(location.search).get('logout') === '1') {{
     );
     resp
 }
+
+// ─── SIIIEEP 社専用 partner ページ ──────────────────────────────────
+//
+// 一般プレビュー (/sweep) とは別のパスワードでログインし、SIIIEEP 社が:
+//   - 各商品の承認 / 保留 / 差戻し
+//   - 売上 / 注文数 / 利益分配 (参考値) を確認
+//   - 商品ごとのコメント・要望を残せる
+//
+// URL: /sweep/partner?pass=…  (cookie 30日)
+// 編集 API: POST /api/sweep/partner/action  (partner cookie 必須)
+async fn show_siiieep_partner_page(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let pw = siiieep_partner_password();
+    let entered = q.get("pass").map(String::as_str).unwrap_or("");
+    let authed = entered == pw || has_siiieep_partner_cookie(&headers, &pw);
+    if !authed {
+        return axum::response::Html(SIIIEEP_PARTNER_GATE_HTML).into_response();
+    }
+
+    type Row = (
+        i64, String, String, String, i64, Option<i64>,
+        Option<String>, i64, i64, i64, Option<String>, Option<String>,
+    );
+    let items: Vec<Row> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, slug, category, name, price_jpy, printful_cost_jpy,
+                    image_url, active, partner_approved,
+                    COALESCE(lead_time_days, 14),
+                    COALESCE(production_route,''),
+                    partner_notes
+             FROM collab_products WHERE partner='sweep'
+             ORDER BY active DESC, id"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map([], |r| Ok((
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?,
+            r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?, r.get(10)?, r.get(11)?,
+        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+
+    // 注文・売上集計 (per slug, 全期間)
+    let orders_by_slug: std::collections::HashMap<String, (i64, i64)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT slug, COUNT(*), COALESCE(SUM(amount_jpy),0) FROM collab_orders GROUP BY slug"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map([], |r| Ok((r.get::<_,String>(0)?, r.get::<_,i64>(1)?, r.get::<_,i64>(2)?)))
+            .map(|it| it.filter_map(|r| r.ok())
+                .map(|(s,n,rev)| (s, (n, rev))).collect()).unwrap_or_default()
+    };
+
+    let pw_attr = html_attr_escape(&pw);
+    let mut tot_orders = 0i64;
+    let mut tot_rev = 0i64;
+    let mut tot_cost = 0i64;
+    let mut n_approved = 0i64;
+    let mut n_held = 0i64;
+    let mut n_pending = 0i64;
+
+    let cards = items.iter().map(|(id, slug, cat, name, price, cost, image, active, approved, lead, route, notes)| {
+        let (n_orders, rev) = orders_by_slug.get(slug).copied().unwrap_or((0,0));
+        tot_orders += n_orders;
+        tot_rev += rev;
+        if let Some(c) = cost { tot_cost += c * n_orders; }
+        let status_badge = if *active == 1 {
+            if *approved == 1 { n_approved += 1; r#"<span class="badge live">✅ 承認済 / live</span>"# }
+            else if *approved == -1 { n_held += 1; r#"<span class="badge held">⚠ 保留中</span>"# }
+            else { n_pending += 1; r#"<span class="badge pending">⏳ 確認待ち</span>"# }
+        } else {
+            r#"<span class="badge hidden">⚪ 非表示</span>"#
+        };
+        let image_html = match image.as_deref().filter(|u| !u.is_empty() && u.starts_with("http")) {
+            Some(u) => format!(r#"<div class="thumb"><img src="{}" alt="" loading="lazy"></div>"#, html_attr_escape(u)),
+            None => r#"<div class="thumb placeholder">—</div>"#.to_string(),
+        };
+        let margin = match cost {
+            Some(c) if *price > 0 => {
+                let m = price - c;
+                let pct = m * 100 / price;
+                format!("¥{} ({}%)", format_jpy(m), pct)
+            }
+            _ => "—".to_string(),
+        };
+        let notes_text = html_escape(notes.as_deref().unwrap_or(""));
+        let route_label = if route == "printful" { "Printful 自動製造" }
+            else if route == "sweep_manual" { "SIIIEEP 社 自社製造" }
+            else if route == "pre_order" { "予約 / カスタム" }
+            else { route.as_str() };
+        format!(r##"<div class="prow" data-slug="{slug}">
+  {image}
+  <div class="info">
+    <div class="top">
+      <span class="cat">{cat}</span>
+      <span class="name">{name}</span>
+      {status}
+    </div>
+    <div class="meta">
+      <span>売価 <b>¥{price_fmt}</b></span>
+      <span>原価 ¥{cost_fmt}</span>
+      <span>粗利 {margin}</span>
+      <span class="sep">·</span>
+      <span>{route_label}</span>
+      <span>納期 {lead}日</span>
+    </div>
+    <div class="meta orders">
+      <span>累計注文 <b>{n_orders}</b></span>
+      <span>累計売上 <b>¥{rev_fmt}</b></span>
+    </div>
+    <div class="actions">
+      <button class="btn approve" data-id="{id}" data-action="approve">✅ 承認</button>
+      <button class="btn hold"    data-id="{id}" data-action="hold">⚠ 保留</button>
+      <button class="btn reset"   data-id="{id}" data-action="reset">↻ 戻す</button>
+    </div>
+    <details class="notes-wrap"{open}>
+      <summary>SIIIEEP からのメモ {notes_count}</summary>
+      <textarea class="notes-input" data-id="{id}" placeholder="例: ロゴをもう少し小さく / 在庫が出たら正式販売 OK / 色味について…">{notes_text}</textarea>
+      <button class="btn save-notes" data-id="{id}">メモを保存</button>
+    </details>
+  </div>
+</div>"##,
+            slug = html_attr_escape(slug),
+            image = image_html,
+            cat = html_attr_escape(cat),
+            name = html_attr_escape(name),
+            status = status_badge,
+            price_fmt = format_jpy(*price),
+            cost_fmt = cost.map(|c| format_jpy(c)).unwrap_or_else(|| "—".into()),
+            margin = margin,
+            route_label = route_label,
+            lead = lead,
+            n_orders = n_orders,
+            rev_fmt = format_jpy(rev),
+            id = id,
+            open = if notes.as_deref().unwrap_or("").is_empty() { "" } else { " open" },
+            notes_count = if notes.as_deref().unwrap_or("").is_empty() { "".into() }
+                          else { format!("({}字)", notes.as_deref().unwrap_or("").chars().count()) },
+            notes_text = notes_text,
+        )
+    }).collect::<Vec<_>>().join("\n");
+
+    let tot_margin = tot_rev - tot_cost;
+
+    let body = format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU × SIIIEEP — Partner Console</title>
+<meta name="robots" content="noindex,nofollow">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+:root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--card:#111;--g:#22c55e;--r:#C8362C;--o:#f59e0b;--b:rgba(255,255,255,0.06)}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:var(--bg);color:var(--fg);font-family:-apple-system,'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.7;padding:24px;font-size:13px}}
+.head{{max-width:1100px;margin:0 auto 24px}}
+h1{{font-size:22px;font-weight:300;letter-spacing:0.08em;margin-bottom:6px}}
+h1 em{{color:var(--y);font-style:normal}}
+.sub{{color:var(--mute);font-size:12px;margin-bottom:18px}}
+.summary{{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:24px}}
+.stat{{background:var(--card);border:1px solid var(--b);padding:12px 16px;border-radius:3px}}
+.stat .v{{font-size:20px;font-weight:300;color:var(--y);font-variant-numeric:tabular-nums}}
+.stat .l{{font-size:8.5px;letter-spacing:0.2em;text-transform:uppercase;opacity:0.55;margin-top:3px}}
+.list{{max-width:1100px;margin:0 auto;display:flex;flex-direction:column;gap:14px}}
+.prow{{display:grid;grid-template-columns:96px 1fr;gap:16px;padding:14px;background:var(--card);border:1px solid var(--b);border-radius:3px}}
+.thumb{{width:96px;aspect-ratio:4/5;background:#000;overflow:hidden;border-radius:2px;flex-shrink:0}}
+.thumb img{{width:100%;height:100%;object-fit:cover}}
+.thumb.placeholder{{display:flex;align-items:center;justify-content:center;color:var(--mute);font-size:24px}}
+.info{{flex:1;min-width:0}}
+.top{{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px}}
+.cat{{font-size:9px;letter-spacing:0.22em;text-transform:uppercase;color:var(--y);opacity:0.85}}
+.name{{font-size:14px;font-weight:500;flex:1}}
+.badge{{font-size:9.5px;letter-spacing:0.12em;padding:3px 7px;border-radius:2px;font-weight:600;text-transform:uppercase}}
+.badge.live{{background:rgba(34,197,94,0.18);color:var(--g)}}
+.badge.held{{background:rgba(245,158,11,0.18);color:var(--o)}}
+.badge.pending{{background:rgba(255,255,255,0.06);color:var(--mute)}}
+.badge.hidden{{background:rgba(245,245,240,0.05);color:var(--mute)}}
+.meta{{display:flex;flex-wrap:wrap;gap:14px;color:var(--mute);font-size:11.5px;margin:4px 0}}
+.meta b{{color:var(--fg);font-weight:600;font-variant-numeric:tabular-nums}}
+.meta .sep{{color:rgba(255,255,255,0.15)}}
+.actions{{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}}
+.btn{{background:transparent;color:var(--fg);border:1px solid var(--b);font-family:inherit;font-size:11px;padding:6px 12px;cursor:pointer;border-radius:2px;letter-spacing:0.04em}}
+.btn:hover{{border-color:var(--y)}}
+.btn.approve{{border-color:rgba(34,197,94,0.3);color:var(--g)}}
+.btn.approve:hover{{background:rgba(34,197,94,0.08)}}
+.btn.hold{{border-color:rgba(245,158,11,0.3);color:var(--o)}}
+.btn.hold:hover{{background:rgba(245,158,11,0.08)}}
+.btn.reset{{opacity:0.5}}
+.btn.save-notes{{background:var(--y);color:#000;border:0;font-weight:600;margin-top:6px}}
+.notes-wrap{{margin-top:10px}}
+.notes-wrap summary{{font-size:11px;color:var(--mute);cursor:pointer;padding:4px 0}}
+.notes-input{{background:#000;color:var(--fg);border:1px solid var(--b);padding:8px 10px;width:100%;font-family:inherit;font-size:12.5px;line-height:1.6;min-height:60px;border-radius:2px;margin:6px 0;resize:vertical}}
+.toast{{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--y);color:#000;padding:10px 22px;border-radius:2px;font-size:11.5px;letter-spacing:0.05em;font-weight:600;opacity:0;transition:opacity .2s;pointer-events:none}}
+.toast.show{{opacity:1}}
+footer{{max-width:1100px;margin:36px auto 24px;padding-top:18px;border-top:1px solid var(--b);color:var(--mute);font-size:11px;line-height:1.9}}
+footer a{{color:var(--y);text-decoration:none}}
+@media (max-width:600px){{.prow{{grid-template-columns:64px 1fr}}.thumb{{width:64px}}}}
+</style></head><body>
+
+<div class="head">
+  <h1>MU × <em>SIIIEEP</em> — Partner Console</h1>
+  <div class="sub">SIIIEEP 社専用画面 — 商品の承認・差戻し、注文状況、利益確認、コメント。<br>
+  この URL と pass は <strong>SIIIEEP 社内のみ</strong>で共有してください。一般プレビューとは別経路です。</div>
+</div>
+
+<div class="summary head">
+  <div class="stat"><div class="v">{tot_orders}</div><div class="l">累計注文</div></div>
+  <div class="stat"><div class="v">¥{tot_rev_fmt}</div><div class="l">累計売上</div></div>
+  <div class="stat"><div class="v">¥{tot_margin_fmt}</div><div class="l">推定粗利</div></div>
+  <div class="stat"><div class="v">{n_approved}</div><div class="l">SIIIEEP 承認済</div></div>
+  <div class="stat"><div class="v">{n_held}</div><div class="l">保留</div></div>
+  <div class="stat"><div class="v">{n_pending}</div><div class="l">未確認</div></div>
+</div>
+
+<div class="list">
+{cards}
+</div>
+
+<footer>
+  ご相談・要望: <a href="mailto:mail@yukihamada.jp">mail@yukihamada.jp</a> / Telegram は濱田までDM<br>
+  この画面は SIIIEEP 社専用です。一般プレビュー <a href="/sweep">/sweep</a> とは別の URL/pass を使用しています。<br>
+  「承認」を押した商品は SIIIEEP 社サインオフ済とみなし、正式販売へ移行できます。「保留」は再検討対象として MU 側で flag されます。
+</footer>
+
+<div class="toast" id="toast">保存しました</div>
+
+<script>
+const PW = {pw_json};
+const toast = document.getElementById('toast');
+function showToast(msg){{ toast.textContent = msg; toast.classList.add('show'); setTimeout(() => toast.classList.remove('show'), 2200); }}
+
+async function action(id, action) {{
+  try {{
+    const r = await fetch('/api/sweep/partner/action', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      credentials: 'include',
+      body: JSON.stringify({{id, action}})
+    }});
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    showToast('反映しました');
+    setTimeout(() => location.reload(), 800);
+  }} catch (e) {{
+    showToast('エラー: ' + e.message);
+  }}
+}}
+document.querySelectorAll('.btn.approve, .btn.hold, .btn.reset').forEach(b => {{
+  b.addEventListener('click', () => action(b.dataset.id, b.dataset.action));
+}});
+document.querySelectorAll('.btn.save-notes').forEach(b => {{
+  b.addEventListener('click', async () => {{
+    const id = b.dataset.id;
+    const ta = document.querySelector('.notes-input[data-id="' + id + '"]');
+    try {{
+      const r = await fetch('/api/sweep/partner/action', {{
+        method: 'POST', credentials: 'include',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{id, action: 'notes', notes: ta.value}})
+      }});
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      showToast('メモを保存しました');
+    }} catch (e) {{ showToast('エラー: ' + e.message); }}
+  }});
+}});
+</script>
+</body></html>"#,
+        tot_orders = tot_orders,
+        tot_rev_fmt = format_jpy(tot_rev),
+        tot_margin_fmt = format_jpy(tot_margin),
+        n_approved = n_approved,
+        n_held = n_held,
+        n_pending = n_pending,
+        cards = cards,
+        pw_json = serde_json::to_string(&pw).unwrap_or_else(|_| "\"\"".into()),
+    );
+    let _ = pw_attr;
+
+    let mut resp = axum::response::Html(body).into_response();
+    if entered == pw {
+        resp.headers_mut().insert(
+            header::SET_COOKIE,
+            HeaderValue::from_str(&format!(
+                "mu_siiieep_partner={}; Max-Age=2592000; Path=/; HttpOnly; SameSite=Lax",
+                pw
+            )).unwrap_or_else(|_| HeaderValue::from_static("")),
+        );
+    }
+    resp.headers_mut().insert("X-Robots-Tag", HeaderValue::from_static("noindex, nofollow"));
+    resp
+}
+
+/// POST /api/sweep/partner/action — partner approve / hold / reset / notes
+async fn sweep_partner_action(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    // partner cookie 認証
+    let pw = siiieep_partner_password();
+    if !has_siiieep_partner_cookie(&headers, &pw) {
+        return (StatusCode::UNAUTHORIZED, "partner login required").into_response();
+    }
+    let id: i64 = body["id"].as_i64().unwrap_or(0);
+    let action = body["action"].as_str().unwrap_or("");
+    if id <= 0 {
+        return (StatusCode::BAD_REQUEST, "missing id").into_response();
+    }
+    let conn = db.lock().unwrap();
+    match action {
+        "approve" => {
+            let _ = conn.execute(
+                "UPDATE collab_products SET partner_approved=1, partner_updated_at=?
+                 WHERE id=? AND partner='sweep'",
+                params![chrono_now(), id],
+            );
+        }
+        "hold" => {
+            let _ = conn.execute(
+                "UPDATE collab_products SET partner_approved=-1, partner_updated_at=?
+                 WHERE id=? AND partner='sweep'",
+                params![chrono_now(), id],
+            );
+        }
+        "reset" => {
+            let _ = conn.execute(
+                "UPDATE collab_products SET partner_approved=0, partner_updated_at=?
+                 WHERE id=? AND partner='sweep'",
+                params![chrono_now(), id],
+            );
+        }
+        "notes" => {
+            let notes = body["notes"].as_str().unwrap_or("").chars().take(2000).collect::<String>();
+            let _ = conn.execute(
+                "UPDATE collab_products SET partner_notes=?, partner_updated_at=?
+                 WHERE id=? AND partner='sweep'",
+                params![notes, chrono_now(), id],
+            );
+        }
+        _ => return (StatusCode::BAD_REQUEST, "bad action").into_response(),
+    }
+    Json(serde_json::json!({"ok": true})).into_response()
+}
+
+const SIIIEEP_PARTNER_GATE_HTML: &str = r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU × SIIIEEP — Partner Login</title>
+<meta name="robots" content="noindex,nofollow">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:32px}
+.box{max-width:420px;text-align:center;width:100%}
+.brand{font-weight:700;letter-spacing:0.4em;font-size:24px;margin-bottom:8px}
+.brand em{color:#e6c449;font-style:normal;font-weight:300}
+.sub{font-size:10px;letter-spacing:0.32em;text-transform:uppercase;color:rgba(245,245,240,0.55);margin-bottom:36px}
+h1{font-size:12px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;margin-bottom:14px;opacity:0.85}
+p{color:rgba(245,245,240,0.7);font-size:13px;line-height:1.9;margin-bottom:24px}
+input{background:#000;color:#F5F5F0;border:1px solid rgba(255,255,255,0.22);padding:14px 16px;font-family:inherit;font-size:14px;width:100%;border-radius:2px;letter-spacing:0.08em;margin-bottom:14px}
+input:focus{outline:none;border-color:#e6c449}
+button{background:#e6c449;color:#000;border:0;font-family:inherit;font-size:11px;letter-spacing:0.32em;text-transform:uppercase;font-weight:700;padding:14px 28px;cursor:pointer;border-radius:2px;width:100%}
+button:hover{opacity:0.85}
+.foot{margin-top:30px;font-size:10px;letter-spacing:0.18em;text-transform:uppercase;opacity:0.45;line-height:1.9}
+.foot a{color:inherit;text-decoration:underline}
+</style></head><body>
+<form class="box" method="get" action="/sweep/partner">
+  <div class="brand">MU × <em>SIIIEEP</em></div>
+  <div class="sub">Partner Console</div>
+  <h1>SIIIEEP 社専用ログイン</h1>
+  <p>このページは <strong>SIIIEEP 社内</strong>でのみご利用いただけます。<br>
+  パスワードを濱田から共有されている方のみご入力ください。<br>
+  一般プレビューは <a style="color:#e6c449" href="/sweep">/sweep</a> です。</p>
+  <input name="pass" type="password" placeholder="SIIIEEP partner password" autofocus autocomplete="current-password">
+  <button type="submit">Sign in →</button>
+  <div class="foot">
+    Password ご不明の場合 <a href="mailto:mail@yukihamada.jp">mail@yukihamada.jp</a><br>
+    <a href="/">← MU トップへ</a>
+  </div>
+</form>
+</body></html>"#;
 
 const SWEEP_GATE_HTML: &str = r#"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -12208,6 +12597,10 @@ async fn main() {
         // Printful 仕入総コスト (subtotal + shipping + tax to JP) ¥ — 管理画面用。
         // 価格設定検証 / 利益率モニター時に表示。実 Printful API での E2E 計測値。
         "ALTER TABLE collab_products ADD COLUMN printful_cost_jpy INTEGER",
+        // SIIIEEP 社による承認状態 (0=未確認, 1=承認, -1=保留/差し戻し)
+        "ALTER TABLE collab_products ADD COLUMN partner_approved INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE collab_products ADD COLUMN partner_notes TEXT",
+        "ALTER TABLE collab_products ADD COLUMN partner_updated_at TEXT",
     ] {
         conn.execute(col, []).ok();
     }
@@ -13055,6 +13448,8 @@ async fn main() {
         .route("/api/admin/x_queue", get(admin_x_queue))
         .route("/api/admin/x_mark_posted", post(admin_x_mark_posted))
         .route("/sweep", get(show_sweep_page))
+        .route("/sweep/partner", get(show_siiieep_partner_page))
+        .route("/api/sweep/partner/action", post(sweep_partner_action))
         // ── Public embed API + widget (CORS open via CorsLayer below) ──
         .route("/api/v1/embed/products", get(embed_products))
         .route("/api/v1/products", get(list_brands))
