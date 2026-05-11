@@ -71,10 +71,20 @@ fn require_admin_token(provided: Option<&String>) -> Result<(), Response> {
 
 /// Add baseline security response headers to every reply.
 async fn security_headers(req: Request<axum::body::Body>, next: Next) -> Response {
+    // Embed iframe page is meant to be embedded cross-origin → skip the
+    // X-Frame-Options/CSP frame-ancestors lockdown for that path only.
+    let path = req.uri().path().to_string();
+    let embed_frame = path.starts_with("/embed/");
     let mut resp = next.run(req).await;
     let h = resp.headers_mut();
     h.insert("X-Content-Type-Options", HeaderValue::from_static("nosniff"));
-    h.insert("X-Frame-Options", HeaderValue::from_static("SAMEORIGIN"));
+    if !embed_frame {
+        h.insert("X-Frame-Options", HeaderValue::from_static("SAMEORIGIN"));
+    } else {
+        h.remove("X-Frame-Options");
+        h.insert("Content-Security-Policy",
+                 HeaderValue::from_static("frame-ancestors *"));
+    }
     h.insert("Referrer-Policy", HeaderValue::from_static("strict-origin-when-cross-origin"));
     h.insert("Strict-Transport-Security",
              HeaderValue::from_static("max-age=31536000; includeSubDomains"));
@@ -849,12 +859,23 @@ async fn embed_products(
         let inv: i64 = row.get(6)?;
         let sold: i64 = row.get(7)?;
         let auction_end: Option<String> = row.get(9)?;
+        // Absolute-URL the image: embedded sites on other origins cannot
+        // resolve relative paths like /mockups/121.jpg → expand to wearmu.com.
+        let image_abs: Option<String> = img.map(|u| {
+            if u.starts_with("http://") || u.starts_with("https://") {
+                u
+            } else if u.starts_with('/') {
+                format!("https://wearmu.com{}", u)
+            } else {
+                format!("https://wearmu.com/{}", u)
+            }
+        });
         Ok(serde_json::json!({
             "id": id,
             "brand": brand,
             "drop_num": drop_num,
             "name": name,
-            "image_url": img,
+            "image_url": image_abs,
             "price_jpy": price,
             "inventory": inv,
             "sold": sold,
