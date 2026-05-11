@@ -12960,6 +12960,7 @@ async fn main() {
         .route("/admin/agent", get(admin_agent_journal))
         .route("/admin/agent/run", post(admin_agent_run))
         .route("/admin/agents", get(admin_agents_dashboard))
+        .route("/api/admin/agent_run", post(admin_agent_run))
         .route("/api/admin/prompt_performance", get(admin_prompt_performance))
         .route("/api/admin/prompt_performance/refresh", post(admin_prompt_performance_refresh))
         .route("/api/admin/ai_decisions", get(admin_ai_decisions))
@@ -14065,6 +14066,44 @@ async fn agent_vision_drift(db: Db) -> Result<AgentReport, String> {
         observations: serde_json::Value::Object(obs),
         decisions, actions, summary, notable,
     })
+}
+
+/// POST /api/admin/agent_run?token=…&name=<agent_name>
+/// 指定 agent を即時実行 (テスト・運用時の手動 trigger)。schedule を待たず
+/// 1 サイクル走らせる。
+async fn admin_agent_run(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let name = match q.get("name") {
+        Some(n) if AGENT_REGISTRY.iter().any(|a| a.name == n.as_str()) => n.clone(),
+        _ => return (StatusCode::BAD_REQUEST, "missing or invalid 'name' query param").into_response(),
+    };
+    let started_at = chrono_now();
+    match run_agent(&name, db.clone()).await {
+        Ok(report) => {
+            let summary = report.summary.clone();
+            let notable = report.notable;
+            let n_decisions = report.decisions.len();
+            let n_actions = report.actions.len();
+            journal_agent_report(db, &name, &report).await;
+            Json(serde_json::json!({
+                "ok": true,
+                "agent": name,
+                "started_at": started_at,
+                "summary": summary,
+                "notable": notable,
+                "decisions": n_decisions,
+                "actions": n_actions,
+            })).into_response()
+        }
+        Err(e) => Json(serde_json::json!({
+            "ok": false,
+            "agent": name,
+            "error": e,
+        })).into_response(),
+    }
 }
 
 /// GET /admin/agent?token=…&name=<agent_name>&limit=50 — Journal JSON
