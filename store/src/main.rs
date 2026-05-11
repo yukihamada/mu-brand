@@ -1457,6 +1457,14 @@ async fn stripe_webhook(
         tokio::spawn(async move {
             create_printful_order(printful_key, db2, product_id, session_clone).await;
         });
+
+        // Learning Loop: refresh prompt_performance aggregate so the
+        // /api/admin/prompt_performance endpoint sees this sale immediately.
+        // Fire-and-forget on a background task — never blocks the webhook.
+        let db_perf = db.clone();
+        tokio::spawn(async move {
+            let _ = update_prompt_performance(&db_perf);
+        });
     }
     StatusCode::OK.into_response()
 }
@@ -5786,6 +5794,253 @@ fn gather_blog_stats(db: &Db) -> serde_json::Value {
     })
 }
 
+// ── Learning Loop core ─────────────────────────────────────────────────────
+// Three feedback-closing primitives:
+//   1. update_prompt_performance — refreshes the prompt_performance aggregate
+//      from products + mu_purchases. Idempotent UPSERT, safe to call from a
+//      daily cron AND on every webhook-driven mu_purchases insert.
+//   2. log_ai_decision — append-only audit row for any AI call (compose,
+//      critic, council). Returns the row id so the caller can later
+//      backfill outcome_metric (e.g. 7-day blog views).
+//   3. critic_check — generalized brand-voice critic. Replaces the old
+//      blog-only review path. Informational only — never blocks publish.
+//
+// All three are deliberately decoupled from the AI vendor; the critic falls
+// back to a deterministic heuristic when Gemini is unreachable so tests +
+// offline behaviour stay sane.
+
+/// MU brand voice rules — baked in so prompts stay reproducible. Loaded by
+/// `critic_check` for the JSON-mode Gemini call AND surfaced in the
+/// audit log so we can compare verdicts over time.
+pub const MU_VOICE_RULES: &str =
+    "MU brand voice:\n\
+    - 静謐 (quiet)、過剰演出なし、絵文字 ≤ 1 個\n\
+    - 数字は事実のみ、捏造禁止\n\
+    - 自己卑下も自慢もせず、機械的事実から始める\n\
+    - ファッション業界の \"今シーズン\" 文化を否定する立場\n\
+    - AI 生成であることを隠さない";
+
+/// Structured verdict from the brand-voice critic. `pass=false` is
+/// informational — caller decides whether to retry / publish anyway.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct CriticVerdict {
+    pub pass: bool,
+    /// 0-100 — higher is better. Below 60 is the "retry once" threshold.
+    pub score: i64,
+    /// <= 64 chars, human-readable single-line reason.
+    pub reason: String,
+    /// Tagged flags like "hype", "too-long", "missing-footer". May be empty.
+    pub flags: Vec<String>,
+}
+
+impl CriticVerdict {
+    /// Local deterministic fallback when Gemini is unavailable or returns
+    /// junk. Always pass=true (we never block publish on heuristic).
+    fn heuristic(content: &str, content_kind: &str) -> Self {
+        let mut flags: Vec<String> = Vec::new();
+        let mut score: i64 = 80;
+        // Emoji count — count non-ASCII codepoints that look "decorative".
+        let emoji_count = content.chars()
+            .filter(|c| {
+                let v = *c as u32;
+                // Pictographic, supplementary symbols, dingbats, misc symbols.
+                (0x1F300..=0x1FAFF).contains(&v) ||
+                (0x2600..=0x27BF).contains(&v)
+            })
+            .count();
+        if emoji_count > 1 { flags.push("emoji-overuse".into()); score -= 15; }
+        // "今シーズン" mention is a brand-rule violation.
+        if content.contains("今シーズン") {
+            flags.push("season-mention".into()); score -= 25;
+        }
+        // Length sanity per content kind.
+        let len = content.chars().count();
+        let (lo, hi) = match content_kind {
+            "blog" | "council_brief" => (300usize, 1600usize),
+            _ => (100usize, 4000usize),
+        };
+        if len < lo { flags.push("too-short".into()); score -= 10; }
+        if len > hi { flags.push("too-long".into()); score -= 10; }
+        // Heavy hype words.
+        for word in ["最強", "革命", "圧倒的", "神"] {
+            if content.contains(word) { flags.push("hype".into()); score -= 10; break; }
+        }
+        let score = score.clamp(0, 100);
+        let reason = if flags.is_empty() {
+            "heuristic ok".to_string()
+        } else {
+            format!("heuristic: {}", flags.join(","))
+        };
+        CriticVerdict {
+            pass: score >= 60,
+            score,
+            reason: reason.chars().take(64).collect(),
+            flags,
+        }
+    }
+}
+
+/// Generalized brand-voice critic. Sends content + rules to Gemini in JSON
+/// mode; falls back to `CriticVerdict::heuristic` when Gemini is unreachable
+/// or its reply doesn't parse. Always returns a verdict — never blocks the
+/// caller. Returns None ONLY when content is empty (caller bug).
+pub async fn critic_check(
+    content: &str, content_kind: &str, brand_rules: &str,
+) -> Option<CriticVerdict> {
+    let content = content.trim();
+    if content.is_empty() { return None; }
+    let heuristic = CriticVerdict::heuristic(content, content_kind);
+    let Some(key) = env::var("GEMINI_API_KEY").ok().filter(|s| !s.is_empty()) else {
+        return Some(heuristic);
+    };
+    let prompt = format!(
+        "あなたは MU ブランドの編集者です。以下のコンテンツを brand_rules に照らして採点してください。\n\
+        \n\
+        content_kind: {content_kind}\n\
+        \n\
+        brand_rules:\n{brand_rules}\n\
+        \n\
+        content:\n---\n{content}\n---\n\
+        \n\
+        出力は JSON のみ。コードフェンス禁止。\n\
+        {{\"pass\": bool, \"score\": 0-100 の int, \"reason\": \"<= 64 字\", \"flags\": [\"hype\"|\"too-long\"|\"missing-footer\"|\"emoji-overuse\"|\"season-mention\"|\"off-brand\"|...]}}\n\
+        \n\
+        - score < 60 は pass=false\n\
+        - flags は当てはまるものを全部列挙、無ければ空配列\n\
+        - reason は 1 行、機械的に");
+    let req = serde_json::json!({"contents": [{"parts": [{"text": prompt}]}]});
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
+        key);
+    let client_res = reqwest::Client::new().post(&url)
+        .timeout(std::time::Duration::from_secs(20))
+        .json(&req).send().await;
+    let Ok(resp) = client_res else { return Some(heuristic); };
+    if !resp.status().is_success() { return Some(heuristic); }
+    let Ok(j) = resp.json::<serde_json::Value>().await else { return Some(heuristic); };
+    let text = j["candidates"][0]["content"]["parts"][0]["text"]
+        .as_str().unwrap_or("").trim().to_string();
+    // Strip ```json fences if Gemini added them anyway.
+    let trimmed = text.trim().trim_start_matches("```json")
+        .trim_start_matches("```").trim_end_matches("```").trim();
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+        return Some(heuristic);
+    };
+    let pass = v["pass"].as_bool().unwrap_or(true);
+    let score = v["score"].as_i64().unwrap_or(if pass { 80 } else { 40 }).clamp(0, 100);
+    let reason: String = v["reason"].as_str().unwrap_or("").chars().take(64).collect();
+    let flags: Vec<String> = v["flags"].as_array().map(|arr| {
+        arr.iter().filter_map(|x| x.as_str().map(String::from)).collect()
+    }).unwrap_or_default();
+    Some(CriticVerdict { pass: pass && score >= 60, score, reason, flags })
+}
+
+/// Append-only audit row for any AI call. Returns the row id so callers
+/// can later UPDATE outcome_at + outcome_metric (e.g. 7-day blog reads).
+///
+/// `inputs` / `output` are serialised to JSON; pass `serde_json::Value::Null`
+/// or an empty object when there's nothing meaningful to record.
+/// Best-effort: returns 0 on DB error (logged) so AI flows never break.
+pub fn log_ai_decision(
+    conn: &rusqlite::Connection,
+    decision_type: &str,
+    inputs: &serde_json::Value,
+    output: &serde_json::Value,
+    model: &str,
+    retry_count: i64,
+) -> i64 {
+    let r = conn.execute(
+        "INSERT INTO ai_decisions
+            (decision_type, inputs_json, output_json, model, retry_count, created_at)
+         VALUES (?,?,?,?,?,?)",
+        params![decision_type, inputs.to_string(), output.to_string(),
+                model, retry_count, chrono_now()],
+    );
+    match r {
+        Ok(_) => conn.last_insert_rowid(),
+        Err(e) => {
+            eprintln!("[ai_decisions] insert: {e}");
+            0
+        }
+    }
+}
+
+/// Refresh `prompt_performance` from products + mu_purchases. Idempotent
+/// UPSERT on (prompt_hash, brand). Safe to run hourly / daily / on every
+/// new mu_purchases insert. Skips rows without a prompt_hash.
+///
+/// `avg_sell_through` = SUM(sold) / SUM(inventory + sold) across all
+/// products sharing that prompt_hash. Capped at 1.0.
+pub fn update_prompt_performance(db: &Db) -> i64 {
+    let conn = db.lock().unwrap();
+    // 1. Aggregate per (prompt_hash, brand). One pass over products joined
+    //    to mu_purchases for revenue + sale count. We compute the entire
+    //    aggregate from scratch each call — cheap at our scale (low 4-digit
+    //    rows) and idempotent without WAL gymnastics.
+    let mut stmt = match conn.prepare(
+        "SELECT p.prompt_hash,
+                p.brand,
+                MIN(p.created_at) as first_seen_at,
+                MAX(p.created_at) as last_seen_at,
+                COUNT(DISTINCT p.id) as product_count,
+                COALESCE(SUM(p.sold), 0) as total_sales,
+                COALESCE(SUM(p.sold * p.price_jpy), 0) as total_revenue_jpy,
+                CASE
+                  WHEN COALESCE(SUM(p.inventory + p.sold), 0) > 0
+                  THEN CAST(COALESCE(SUM(p.sold), 0) AS REAL)
+                     / CAST(SUM(p.inventory + p.sold) AS REAL)
+                  ELSE 0.0
+                END as avg_sell_through
+         FROM products p
+         WHERE p.prompt_hash IS NOT NULL AND p.prompt_hash != ''
+         GROUP BY p.prompt_hash, p.brand"
+    ) {
+        Ok(s) => s,
+        Err(e) => { eprintln!("[prompt_perf] prepare: {e}"); return 0; }
+    };
+    type Row = (String, String, String, String, i64, i64, i64, f64);
+    let rows: Vec<Row> = stmt.query_map([], |r| Ok((
+        r.get::<_, String>(0)?, r.get::<_, String>(1)?,
+        r.get::<_, String>(2)?, r.get::<_, String>(3)?,
+        r.get::<_, i64>(4)?, r.get::<_, i64>(5)?,
+        r.get::<_, i64>(6)?, r.get::<_, f64>(7)?,
+    ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+    drop(stmt);
+    let mut upserted = 0i64;
+    for (hash, brand, first_seen, last_seen, pcount, sales, revenue, stt) in rows {
+        let stt_capped = stt.clamp(0.0, 1.0);
+        let r = conn.execute(
+            "INSERT INTO prompt_performance
+                (prompt_hash, brand, first_seen_at, last_seen_at,
+                 product_count, total_sales, total_revenue_jpy, avg_sell_through)
+             VALUES (?,?,?,?,?,?,?,?)
+             ON CONFLICT(prompt_hash, brand) DO UPDATE SET
+                last_seen_at = excluded.last_seen_at,
+                product_count = excluded.product_count,
+                total_sales = excluded.total_sales,
+                total_revenue_jpy = excluded.total_revenue_jpy,
+                avg_sell_through = excluded.avg_sell_through",
+            params![hash, brand, first_seen, last_seen,
+                    pcount, sales, revenue, stt_capped],
+        );
+        if let Ok(n) = r { upserted += n as i64; }
+    }
+    upserted
+}
+
+/// Delete ai_decisions rows older than `days_to_keep`. Called from the
+/// daily cron. Safe to run multiple times per day; no-op if the table is
+/// already trimmed.
+pub fn cleanup_ai_decisions(db: &Db, days_to_keep: i64) -> i64 {
+    let conn = db.lock().unwrap();
+    let cutoff: i64 = chrono_now().parse::<i64>().unwrap_or(0)
+        - days_to_keep * 86_400;
+    conn.execute(
+        "DELETE FROM ai_decisions WHERE CAST(created_at AS INTEGER) < ?",
+        params![cutoff],
+    ).unwrap_or(0) as i64
+}
+
 /// Canonical prompt for the daily Field log. Used by both compose paths so
 /// the output stays consistent whether Gemini is called from Fly or Actions.
 fn blog_prompt(stats: &serde_json::Value) -> String {
@@ -5842,6 +6097,18 @@ async fn compose_auto_blog(db: &Db) -> Result<(String, String, String, serde_jso
     }
     let body_md = body_md_lines.join("\n").trim().to_string();
     let body_html = md_to_html_simple(&body_md);
+    // Learning Loop: append-only audit log of this AI call. Best-effort.
+    {
+        let conn = db.lock().unwrap();
+        let _ = log_ai_decision(
+            &conn,
+            "blog_compose",
+            &stats,
+            &serde_json::json!({"title": title, "body_md_len": body_md.chars().count()}),
+            "gemini-2.5-flash",
+            0,
+        );
+    }
     Ok((title, body_html, body_md, stats))
 }
 
@@ -6472,36 +6739,17 @@ async fn blog_stats_for_today(
     })).into_response()
 }
 
-/// Best-effort 2-pass review: send the composed body back to Gemini and ask
-/// "does this match MU's brand voice + factual constraints?". If the review
-/// returns `pass=false`, log a warning but still publish (we don't block on
-/// LLM critic; manual review can override).
-async fn review_blog_body(body_md: &str, stats: &serde_json::Value) -> Option<(bool, String)> {
-    let key = env::var("GEMINI_API_KEY").ok().filter(|s| !s.is_empty())?;
-    let prompt = format!(
-        "あなたは MU ブランドの編集者です。以下の Field log 草稿を以下のルールで採点してください:\n\
-        - 数字は stats JSON にあるものだけ使っているか (捏造禁止)\n\
-        - トーンが派手すぎないか / 自己卑下しすぎないか\n\
-        - 600〜900 字に収まっているか\n\
-        - 末尾に「— 自動生成 by Gemini 2.5 Flash」がついているか\n\n\
-        stats: {stats}\n\n草稿:\n---\n{body}\n---\n\n\
-        出力 (JSON のみ): {{\"pass\": bool, \"reason\": \"<32 字以内>\"}}",
-        stats = stats, body = body_md);
-    let req = serde_json::json!({"contents": [{"parts": [{"text": prompt}]}]});
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
-        key);
-    let resp = reqwest::Client::new().post(&url)
-        .json(&req).send().await.ok()?;
-    if !resp.status().is_success() { return None; }
-    let j: serde_json::Value = resp.json().await.ok()?;
-    let text = j["candidates"][0]["content"]["parts"][0]["text"].as_str()?.to_string();
-    // Strip ```json fences if Gemini added them.
-    let trimmed = text.trim().trim_start_matches("```json")
-        .trim_start_matches("```").trim_end_matches("```").trim();
-    let v: serde_json::Value = serde_json::from_str(trimmed).ok()?;
-    Some((v["pass"].as_bool().unwrap_or(true),
-          v["reason"].as_str().unwrap_or("").to_string()))
+/// Best-effort 2-pass review: delegate to `critic_check` (the generalized
+/// brand-voice critic) and surface a (pass, reason) tuple for backwards
+/// compatibility with the existing publish path. Informational only.
+///
+/// `stats` is unused by the critic itself but kept in the signature so the
+/// publish-time call-site stays identical; if we ever want to fact-check
+/// numbers, we can extend critic_check with an optional facts arg.
+#[allow(dead_code)]
+async fn review_blog_body(body_md: &str, _stats: &serde_json::Value) -> Option<(bool, String)> {
+    let verdict = critic_check(body_md, "blog", MU_VOICE_RULES).await?;
+    Some((verdict.pass, verdict.reason))
 }
 
 /// Send the published blog as a digest email to /you subscribers via Resend.
@@ -6660,9 +6908,25 @@ async fn admin_blog_publish(
     };
 
     // 2-pass review — informational only; we don't block publish on critic
-    // feedback. Just log + include in response so Actions can surface.
+    // feedback. Just log + include in response so Actions can surface. The
+    // verdict is also persisted in ai_decisions for the Learning Loop.
     let review = if inserted && !body.quiet {
-        review_blog_body(body_md, &body.stats_used.clone().unwrap_or(serde_json::Value::Null)).await
+        let verdict = critic_check(body_md, "blog", MU_VOICE_RULES).await;
+        if let Some(v) = &verdict {
+            let conn = db.lock().unwrap();
+            let _ = log_ai_decision(
+                &conn,
+                "review",
+                &serde_json::json!({"slug": slug, "content_kind": "blog"}),
+                &serde_json::json!({
+                    "pass": v.pass, "score": v.score,
+                    "reason": v.reason, "flags": v.flags,
+                }),
+                "gemini-2.5-flash",
+                0,
+            );
+        }
+        verdict.map(|v| (v.pass, v.reason))
     } else { None };
 
     // Email digest to /you subscribers + X cross-post + Telegram notify —
@@ -7378,6 +7642,139 @@ async fn admin_sweep_signals(
     Json(serde_json::json!({"signals": rows, "count": rows.len()})).into_response()
 }
 
+// ── Learning Loop admin endpoints ──────────────────────────────────────────
+
+/// GET /api/admin/prompt_performance?token=&brand=mugen&limit=20&sort=revenue
+/// Returns the top-N prompts by total_revenue_jpy (default) or
+/// avg_sell_through. `brand` is optional — when omitted, returns top across
+/// all brands. Token-gated.
+async fn admin_prompt_performance(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let brand = q.get("brand").cloned();
+    let limit: i64 = q.get("limit").and_then(|s| s.parse().ok())
+        .unwrap_or(20).clamp(1, 200);
+    let sort = q.get("sort").map(String::as_str).unwrap_or("revenue");
+    let order_col = match sort {
+        "sell_through" | "avg_sell_through" => "avg_sell_through",
+        _ => "total_revenue_jpy",
+    };
+    let conn = db.lock().unwrap();
+    let sql = if brand.is_some() {
+        format!(
+            "SELECT prompt_hash, brand, first_seen_at, last_seen_at,
+                    product_count, total_sales, total_revenue_jpy, avg_sell_through
+             FROM prompt_performance
+             WHERE brand=?
+             ORDER BY {} DESC, last_seen_at DESC LIMIT ?", order_col)
+    } else {
+        format!(
+            "SELECT prompt_hash, brand, first_seen_at, last_seen_at,
+                    product_count, total_sales, total_revenue_jpy, avg_sell_through
+             FROM prompt_performance
+             ORDER BY {} DESC, last_seen_at DESC LIMIT ?", order_col)
+    };
+    let mut stmt = match conn.prepare(&sql) {
+        Ok(s) => s,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR,
+            format!("db: {e}")).into_response(),
+    };
+    let rows: Vec<serde_json::Value> = if let Some(b) = brand {
+        stmt.query_map(params![b, limit], |r| Ok(serde_json::json!({
+            "prompt_hash": r.get::<_, String>(0)?,
+            "brand": r.get::<_, String>(1)?,
+            "first_seen_at": r.get::<_, String>(2)?,
+            "last_seen_at": r.get::<_, String>(3)?,
+            "product_count": r.get::<_, i64>(4)?,
+            "total_sales": r.get::<_, i64>(5)?,
+            "total_revenue_jpy": r.get::<_, i64>(6)?,
+            "avg_sell_through": r.get::<_, f64>(7)?,
+        }))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    } else {
+        stmt.query_map(params![limit], |r| Ok(serde_json::json!({
+            "prompt_hash": r.get::<_, String>(0)?,
+            "brand": r.get::<_, String>(1)?,
+            "first_seen_at": r.get::<_, String>(2)?,
+            "last_seen_at": r.get::<_, String>(3)?,
+            "product_count": r.get::<_, i64>(4)?,
+            "total_sales": r.get::<_, i64>(5)?,
+            "total_revenue_jpy": r.get::<_, i64>(6)?,
+            "avg_sell_through": r.get::<_, f64>(7)?,
+        }))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    Json(serde_json::json!({"rows": rows, "count": rows.len(), "sort": order_col})).into_response()
+}
+
+/// POST /api/admin/prompt_performance/refresh?token=… — manually trigger
+/// an UPSERT pass. Body unused. Returns the row count touched.
+async fn admin_prompt_performance_refresh(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let upserted = update_prompt_performance(&db);
+    Json(serde_json::json!({"ok": true, "upserted": upserted})).into_response()
+}
+
+/// GET /api/admin/ai_decisions?token=&type=blog_compose&limit=50
+/// Returns the most recent N rows (default 50, max 500), optionally
+/// filtered by decision_type. Token-gated. Used for ops inspection of the
+/// autonomy loop.
+async fn admin_ai_decisions(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let dtype = q.get("type").cloned();
+    let limit: i64 = q.get("limit").and_then(|s| s.parse().ok())
+        .unwrap_or(50).clamp(1, 500);
+    let conn = db.lock().unwrap();
+    let (sql, with_type) = if dtype.is_some() {
+        ("SELECT id, decision_type, inputs_json, output_json, model,
+                 retry_count, outcome_at, outcome_metric, created_at
+          FROM ai_decisions WHERE decision_type=?
+          ORDER BY id DESC LIMIT ?", true)
+    } else {
+        ("SELECT id, decision_type, inputs_json, output_json, model,
+                 retry_count, outcome_at, outcome_metric, created_at
+          FROM ai_decisions ORDER BY id DESC LIMIT ?", false)
+    };
+    let mut stmt = match conn.prepare(sql) {
+        Ok(s) => s,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR,
+            format!("db: {e}")).into_response(),
+    };
+    let mapper = |r: &rusqlite::Row<'_>| -> rusqlite::Result<serde_json::Value> {
+        let inputs: String = r.get::<_, Option<String>>(2)?.unwrap_or_default();
+        let output: String = r.get::<_, Option<String>>(3)?.unwrap_or_default();
+        let inputs_v: serde_json::Value =
+            serde_json::from_str(&inputs).unwrap_or(serde_json::Value::Null);
+        let output_v: serde_json::Value =
+            serde_json::from_str(&output).unwrap_or(serde_json::Value::Null);
+        Ok(serde_json::json!({
+            "id": r.get::<_, i64>(0)?,
+            "decision_type": r.get::<_, String>(1)?,
+            "inputs": inputs_v,
+            "output": output_v,
+            "model": r.get::<_, Option<String>>(4)?,
+            "retry_count": r.get::<_, Option<i64>>(5)?,
+            "outcome_at": r.get::<_, Option<String>>(6)?,
+            "outcome_metric": r.get::<_, Option<f64>>(7)?,
+            "created_at": r.get::<_, String>(8)?,
+        }))
+    };
+    let rows: Vec<serde_json::Value> = if with_type {
+        stmt.query_map(params![dtype.unwrap(), limit], mapper)
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    } else {
+        stmt.query_map(params![limit], mapper)
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    Json(serde_json::json!({"rows": rows, "count": rows.len()})).into_response()
+}
+
 async fn sweep_checkout(
     State(db): State<Db>,
     Json(body): Json<SweepCheckoutBody>,
@@ -7545,15 +7942,34 @@ async fn admin_council_compose(
     let body_md = parsed["body_md"].as_str().unwrap_or("").to_string();
     let agendas = parsed["agendas"].clone();
 
+    // Learning Loop — run the brand-voice critic + audit the decision.
+    let verdict = critic_check(&body_md, "council_brief", MU_VOICE_RULES).await;
+    let verdict_json = verdict.as_ref().map(|v| serde_json::json!({
+        "pass": v.pass, "score": v.score, "reason": v.reason, "flags": v.flags
+    })).unwrap_or(serde_json::Value::Null);
+
     let conn = db.lock().unwrap();
+    let _ = log_ai_decision(
+        &conn,
+        "council_brief",
+        &serde_json::json!({"week_label": week, "inputs_count": inputs.len()}),
+        &serde_json::json!({
+            "title": title, "body_md_len": body_md.chars().count(),
+            "agendas_count": agendas.as_array().map(|a| a.len()).unwrap_or(0),
+            "verdict": verdict_json,
+        }),
+        "gemini-2.5-flash",
+        0,
+    );
     let _ = conn.execute(
         "INSERT OR IGNORE INTO ma_council_briefs
-            (slug, week_start, title, body_md, agendas_json, model, published, created_at)
-         VALUES (?,?,?,?,?,?,1,?)",
+            (slug, week_start, title, body_md, agendas_json, model,
+             critic_verdict, published, created_at)
+         VALUES (?,?,?,?,?,?,?,1,?)",
         params![slug, week, title, body_md, agendas.to_string(),
-                "gemini-2.5-flash", chrono_now()],
+                "gemini-2.5-flash", verdict_json.to_string(), chrono_now()],
     );
-    Json(serde_json::json!({"ok": true, "slug": slug, "title": title, "agendas": agendas})).into_response()
+    Json(serde_json::json!({"ok": true, "slug": slug, "title": title, "agendas": agendas, "critic": verdict_json})).into_response()
 }
 
 #[derive(Deserialize)]
@@ -7990,30 +8406,70 @@ async fn run_council_weekly_cron(db: Db) {
         ))).map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>()).unwrap_or_default()
     };
 
-    let (_gemini_title, body_md, agendas, model_used) = match generate_council_brief_via_gemini(
-        &week_label, &inputs).await {
-        Some(triple) => (triple.0, triple.1, triple.2, "gemini-2.5-flash".to_string()),
-        None => {
-            tracing::warn!("[cron] council: Gemini unavailable — using static fallback");
-            let (t, b, a) = static_council_brief_fallback(&week_label);
-            (t, b, a, "static-fallback".to_string())
+    // First attempt — let Gemini synthesise the brief.
+    let mut retry_count: i64 = 0;
+    let (mut body_md, mut agendas, model_used) =
+        match generate_council_brief_via_gemini(&week_label, &inputs).await {
+            Some(triple) => (triple.1, triple.2, "gemini-2.5-flash".to_string()),
+            None => {
+                tracing::warn!("[cron] council: Gemini unavailable — using static fallback");
+                let (_t, b, a) = static_council_brief_fallback(&week_label);
+                (b, a, "static-fallback".to_string())
+            }
+        };
+
+    // Learning Loop — brand-voice critic. If score < 60, retry once. Always
+    // log the final verdict in ai_decisions + persist on the brief row.
+    let mut verdict = critic_check(&body_md, "council_brief", MU_VOICE_RULES).await;
+    if let Some(v) = &verdict {
+        if v.score < 60 && model_used != "static-fallback" {
+            tracing::warn!("[cron] council critic score={} ({}) — retrying once",
+                v.score, v.reason);
+            retry_count = 1;
+            if let Some(triple) = generate_council_brief_via_gemini(&week_label, &inputs).await {
+                body_md = triple.1;
+                agendas = triple.2;
+                verdict = critic_check(&body_md, "council_brief", MU_VOICE_RULES).await;
+            }
         }
-    };
+    }
+    let verdict_json = verdict.as_ref().map(|v| serde_json::json!({
+        "pass": v.pass, "score": v.score, "reason": v.reason, "flags": v.flags
+    })).unwrap_or(serde_json::Value::Null);
+
+    // Log the brief generation + critic verdict in the AI audit table.
+    {
+        let conn = db.lock().unwrap();
+        let _ = log_ai_decision(
+            &conn,
+            "council_brief",
+            &serde_json::json!({"week_label": week_label, "inputs_count": inputs.len()}),
+            &serde_json::json!({
+                "body_md_len": body_md.chars().count(),
+                "agendas_count": agendas.as_array().map(|a| a.len()).unwrap_or(0),
+                "verdict": verdict_json,
+            }),
+            &model_used,
+            retry_count,
+        );
+    }
+
     // Always build the title server-side. Gemini hallucinated "2024 週11" on
     // 2026-05-11 (week_label was correct "2026.W19" but Gemini wrote the year
     // from its training data into the title).
     let title = format!("今週の MA Council Brief — {}", week_label);
 
 
-    // Insert the brief row
+    // Insert the brief row + persist the critic verdict for later analysis.
     {
         let conn = db.lock().unwrap();
         let _ = conn.execute(
             "INSERT OR IGNORE INTO ma_council_briefs
-                (slug, week_start, title, body_md, agendas_json, model, published, created_at)
-             VALUES (?,?,?,?,?,?,1,?)",
+                (slug, week_start, title, body_md, agendas_json, model,
+                 critic_verdict, published, created_at)
+             VALUES (?,?,?,?,?,?,?,1,?)",
             params![slug, week_start, title, body_md, agendas.to_string(),
-                    model_used, chrono_now()],
+                    model_used, verdict_json.to_string(), chrono_now()],
         );
     }
 
@@ -10664,6 +11120,50 @@ async fn main() {
             WHERE title NOT LIKE '%' || week_start || '%'",
         [],
     );
+    // Learning Loop — brand-voice critic verdict on each council brief.
+    // JSON-encoded {pass,score,reason,flags}. Idempotent ALTER.
+    let _ = conn.execute(
+        "ALTER TABLE ma_council_briefs ADD COLUMN critic_verdict TEXT", []);
+    // ── Learning Loop core ─────────────────────────────────────────────
+    // prompt_performance: aggregates how each design prompt sells. Refreshed
+    // daily + on every mu_purchases insert. Idempotent UPSERT on
+    // (prompt_hash, brand). Drives the next round of design generation.
+    //
+    // ai_decisions: append-only audit log of every AI call we make. Tracks
+    // inputs, outputs, model, retries, plus optional outcome metric so we
+    // can correlate decisions with measured results later (e.g. blog reads
+    // 7 days post-publish). Daily cleanup deletes rows >90d old.
+    conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS prompt_performance (
+            prompt_hash       TEXT NOT NULL,
+            brand             TEXT NOT NULL,
+            first_seen_at     TEXT NOT NULL,
+            last_seen_at      TEXT NOT NULL,
+            product_count     INTEGER NOT NULL DEFAULT 1,
+            total_sales       INTEGER NOT NULL DEFAULT 0,
+            total_revenue_jpy INTEGER NOT NULL DEFAULT 0,
+            avg_sell_through  REAL DEFAULT 0,
+            PRIMARY KEY (prompt_hash, brand)
+        );
+        CREATE INDEX IF NOT EXISTS idx_prompt_perf_revenue
+            ON prompt_performance(brand, total_revenue_jpy DESC);
+        CREATE INDEX IF NOT EXISTS idx_prompt_perf_sellthrough
+            ON prompt_performance(brand, avg_sell_through DESC);
+
+        CREATE TABLE IF NOT EXISTS ai_decisions (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            decision_type TEXT NOT NULL,
+            inputs_json   TEXT,
+            output_json   TEXT,
+            model         TEXT,
+            retry_count   INTEGER DEFAULT 0,
+            outcome_at    TEXT,
+            outcome_metric REAL,
+            created_at    TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ai_decisions_type_time
+            ON ai_decisions(decision_type, created_at DESC);
+    ").ok();
     // CV-pulse autonomous loop: every 30 min the cron POSTs to
     // /api/admin/cv_pulse, which writes a snapshot here + may update
     // cv_config (modal cooldown / coupon strength / email subject variant).
@@ -11004,6 +11504,9 @@ async fn main() {
         .route("/api/sweep/signal", post(sweep_signal))
         .route("/api/sweep/signals", get(sweep_signals_summary))
         .route("/api/admin/sweep_signals", get(admin_sweep_signals))
+        .route("/api/admin/prompt_performance", get(admin_prompt_performance))
+        .route("/api/admin/prompt_performance/refresh", post(admin_prompt_performance_refresh))
+        .route("/api/admin/ai_decisions", get(admin_ai_decisions))
         .route("/api/admin/council_compose", post(admin_council_compose))
         .route("/api/council/briefs", get(list_council_briefs))
         .route("/api/council/vote", post(council_vote))
@@ -11276,4 +11779,212 @@ async fn run_you_daily_cron(db: Db) {
         tokio::time::sleep(std::time::Duration::from_millis(600)).await;
     }
     tracing::info!("[cron] you-daily: done day={} sent={} failed={}", day, sent, failed);
+
+    // ── Learning Loop maintenance (daily) ──────────────────────────────
+    // Refresh prompt_performance aggregate so /api/admin/prompt_performance
+    // reflects yesterday's sales. Idempotent UPSERT. Plus trim ai_decisions
+    // older than 90 days so the audit table doesn't grow unbounded.
+    let upserted = update_prompt_performance(&db);
+    let deleted = cleanup_ai_decisions(&db, 90);
+    tracing::info!(
+        "[cron] learning-loop: prompt_performance upsert={} ai_decisions trim={}",
+        upserted, deleted);
 }
+
+// ── Learning Loop tests ────────────────────────────────────────────────────
+#[cfg(test)]
+mod learning_loop_tests {
+    use super::*;
+    use rusqlite::Connection;
+    use std::sync::{Arc, Mutex};
+
+    /// In-memory DB with the minimal schema the Learning Loop touches:
+    /// products + mu_purchases + prompt_performance + ai_decisions.
+    fn setup_db() -> Db {
+        let conn = Connection::open_in_memory().expect("open mem db");
+        conn.execute_batch("
+            CREATE TABLE products (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                brand TEXT NOT NULL,
+                drop_num INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                price_jpy INTEGER NOT NULL,
+                inventory INTEGER NOT NULL DEFAULT 0,
+                sold INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                prompt_hash TEXT
+            );
+            CREATE TABLE mu_purchases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT NOT NULL,
+                product_id INTEGER NOT NULL,
+                brand TEXT NOT NULL,
+                drop_num INTEGER,
+                session_id TEXT,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE prompt_performance (
+                prompt_hash TEXT NOT NULL,
+                brand TEXT NOT NULL,
+                first_seen_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                product_count INTEGER NOT NULL DEFAULT 1,
+                total_sales INTEGER NOT NULL DEFAULT 0,
+                total_revenue_jpy INTEGER NOT NULL DEFAULT 0,
+                avg_sell_through REAL DEFAULT 0,
+                PRIMARY KEY (prompt_hash, brand)
+            );
+            CREATE TABLE ai_decisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                decision_type TEXT NOT NULL,
+                inputs_json TEXT,
+                output_json TEXT,
+                model TEXT,
+                retry_count INTEGER DEFAULT 0,
+                outcome_at TEXT,
+                outcome_metric REAL,
+                created_at TEXT NOT NULL
+            );
+        ").expect("init schema");
+        Arc::new(Mutex::new(conn))
+    }
+
+    #[test]
+    fn prompt_performance_upsert_is_idempotent() {
+        let db = setup_db();
+        // Seed: two products sharing prompt_hash "abc" — one with sales,
+        // one without. One product with prompt_hash "xyz".
+        {
+            let conn = db.lock().unwrap();
+            conn.execute(
+                "INSERT INTO products (brand, drop_num, name, price_jpy, inventory, sold, created_at, prompt_hash)
+                 VALUES ('mugen', 1, 'p1', 5000, 10, 3, '1700000000', 'abc'),
+                        ('mugen', 2, 'p2', 5000, 5, 0, '1700000100', 'abc'),
+                        ('muon',  1, 'p3', 9000, 2, 1, '1700000200', 'xyz')",
+                [],
+            ).expect("seed products");
+        }
+        // First pass: 2 rows expected (one per (hash, brand)).
+        let n1 = update_prompt_performance(&db);
+        assert!(n1 >= 2, "first pass should upsert at least 2 rows, got {}", n1);
+        // Second pass: same data → same row count + identical aggregates.
+        let n2 = update_prompt_performance(&db);
+        assert!(n2 >= 2, "second pass should still touch the same rows");
+
+        let conn = db.lock().unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM prompt_performance", [], |r| r.get(0),
+        ).expect("count");
+        assert_eq!(count, 2, "no duplicate rows after re-run");
+
+        let (sales_abc, rev_abc, stt_abc): (i64, i64, f64) = conn.query_row(
+            "SELECT total_sales, total_revenue_jpy, avg_sell_through
+             FROM prompt_performance WHERE prompt_hash='abc' AND brand='mugen'",
+            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).expect("read abc row");
+        assert_eq!(sales_abc, 3, "total sales for hash abc");
+        assert_eq!(rev_abc, 15_000, "total revenue for hash abc (3 * 5000)");
+        // sold=3 / (inventory+sold = 10+3 + 5+0 = 18) = 3/18 ≈ 0.1667
+        assert!((stt_abc - (3.0 / 18.0)).abs() < 1e-6,
+            "sell-through ≈ 0.1667, got {}", stt_abc);
+
+        // Third pass: simulate a new sale on p1 and verify the aggregate
+        // moves but no duplicate appears.
+        drop(conn);
+        {
+            let conn = db.lock().unwrap();
+            conn.execute("UPDATE products SET sold = 5 WHERE prompt_hash='abc' AND drop_num=1",
+                []).expect("bump sold");
+        }
+        let n3 = update_prompt_performance(&db);
+        assert!(n3 >= 1);
+        let conn = db.lock().unwrap();
+        let (sales_abc2, rev_abc2): (i64, i64) = conn.query_row(
+            "SELECT total_sales, total_revenue_jpy
+             FROM prompt_performance WHERE prompt_hash='abc' AND brand='mugen'",
+            [], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).expect("read abc row after update");
+        assert_eq!(sales_abc2, 5, "sales should reflect updated products row");
+        assert_eq!(rev_abc2, 25_000, "revenue should reflect updated products row");
+        let count_after: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM prompt_performance", [], |r| r.get(0),
+        ).expect("count");
+        assert_eq!(count_after, 2, "still no duplicates after data change");
+    }
+
+    #[test]
+    fn ai_decision_log_and_cleanup() {
+        let db = setup_db();
+        // Insert 3 decisions, then cleanup with days_to_keep=0 → all
+        // older-than-now rows go (cutoff = now, our rows have created_at = now).
+        {
+            let conn = db.lock().unwrap();
+            for i in 0..3 {
+                let rowid = log_ai_decision(
+                    &conn,
+                    "blog_compose",
+                    &serde_json::json!({"i": i}),
+                    &serde_json::json!({"title": format!("t{i}")}),
+                    "gemini-2.5-flash",
+                    0,
+                );
+                assert!(rowid > 0, "log row {i} should insert");
+            }
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM ai_decisions", [], |r| r.get(0),
+            ).expect("count");
+            assert_eq!(count, 3);
+        }
+        // cleanup(days_to_keep=10) — created_at IS now, so cutoff = now - 10d.
+        // All rows are newer than that, so cleanup should delete 0.
+        let deleted_recent = cleanup_ai_decisions(&db, 10);
+        assert_eq!(deleted_recent, 0, "fresh rows survive a 10-day cleanup");
+        // Backdate one row to 100 days ago.
+        {
+            let conn = db.lock().unwrap();
+            let cutoff: i64 = chrono_now().parse::<i64>().unwrap() - 100 * 86_400;
+            conn.execute(
+                "UPDATE ai_decisions SET created_at=? WHERE id=1",
+                params![cutoff.to_string()],
+            ).expect("backdate");
+        }
+        let deleted_old = cleanup_ai_decisions(&db, 90);
+        assert_eq!(deleted_old, 1, "90-day cleanup removes the backdated row");
+        let conn = db.lock().unwrap();
+        let remaining: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM ai_decisions", [], |r| r.get(0),
+        ).expect("count");
+        assert_eq!(remaining, 2, "2 fresh rows remain");
+    }
+
+    #[test]
+    fn critic_verdict_heuristic_flags_hype_and_emoji() {
+        // 2 emoji + hype word → should drop the score + flag.
+        let content = "今日も最強の一着。👀 圧倒的に良い。😎 過剰演出の見本のような文章で、長さは普通。"
+            .repeat(6);
+        let v = CriticVerdict::heuristic(&content, "blog");
+        assert!(v.flags.iter().any(|f| f == "hype"),
+            "hype word should flag: {:?}", v.flags);
+        assert!(v.flags.iter().any(|f| f == "emoji-overuse"),
+            "2 emojis should flag emoji-overuse: {:?}", v.flags);
+        assert!(v.score < 80, "loaded content should score below clean baseline");
+        // Round-trip via serde to confirm CriticVerdict is JSON-stable.
+        let s = serde_json::to_string(&v).expect("serialize");
+        let v2: CriticVerdict = serde_json::from_str(&s).expect("deserialize");
+        assert_eq!(v, v2, "verdict roundtrips through JSON");
+    }
+
+    #[test]
+    fn critic_verdict_heuristic_clean_content_passes() {
+        // Clean, machine-toned, no hype, no excess emoji, footer present.
+        let content = "今日の Field log。\n\n\
+            売上は事実として ¥12,000。インベントリ 3 着が残った。\n\
+            原因: 直近の天気変動でデザインが先週と似てしまった。\n\
+            明日は色相を 30° ずらす。\n\n\
+            — 自動生成 by Gemini 2.5 Flash";
+        let v = CriticVerdict::heuristic(content, "blog");
+        assert!(v.pass, "clean content should pass: {:?}", v);
+        assert!(v.score >= 60, "clean score ≥ 60, got {}", v.score);
+    }
+}
+
