@@ -19,6 +19,26 @@ use tower_http::services::ServeDir;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::Level;
 
+/// Master "autopilot" flag. When MU_AUTOPILOT=0, all autonomous background
+/// crons (blog compose, council brief, /you daily, prompt_performance, X
+/// cross-post, NFT mint) early-return after logging. Per-task env vars
+/// (e.g. MU_NFT_MINT_LIVE) still apply on top.
+/// Default: enabled (auto-on). Operator flips to 0 for emergency halt.
+fn autopilot_on() -> bool {
+    env::var("MU_AUTOPILOT").map(|v| v.trim() != "0").unwrap_or(true)
+}
+
+/// Returns true if autopilot is off — caller should log and skip.
+/// Used at the top of every autonomous cron task.
+fn autopilot_skip(task: &str) -> bool {
+    if !autopilot_on() {
+        tracing::warn!("[autopilot:off] skipping {} (set MU_AUTOPILOT=1 to re-enable)", task);
+        true
+    } else {
+        false
+    }
+}
+
 /// Centralized admin token check. Fail-closed: if ADMIN_TOKEN env var
 /// is missing or empty, every admin request is rejected with 503.
 /// Never falls back to a default value (prevents the historical
@@ -2005,10 +2025,13 @@ async fn settle_auction(
     // MA Council full-tier promotion. Done BEFORE the Stripe call so that
     // even if payment-link creation fails, the winner is still recorded as
     // a council full member. The trial → full upgrade is idempotent.
-    let council_token_winner = {
+    // Also grant 3 invite codes (50% off, 30-day expiry) for the winner
+    // to share with friends — viral growth mechanic.
+    let (council_token_winner, invite_codes) = {
         let conn = db.lock().unwrap();
         let _ = council_enroll(&conn, &email, "full", Some(product_id));
-        council_token_for(&email)
+        let codes = grant_ma_invite_codes(&conn, &email, product_id, 3);
+        (council_token_for(&email), codes)
     };
 
     // ── Soulbound NFT pilot (Q3 vision item, shipped behind MU_NFT_MINT_LIVE) ──
@@ -2155,6 +2178,7 @@ async fn settle_auction(
             .map(|t| format!("{}/council?token={}", base_url, t)),
         "nft_mint_dispatched": nft_minted,
         "nft_mint_live": std::env::var("MU_NFT_MINT_LIVE").unwrap_or_default() == "1",
+        "invite_codes": invite_codes,
     })).into_response()
 }
 
@@ -2576,6 +2600,16 @@ async fn import_product(
                 params![internal, new_id]
             ).ok();
         }
+    }
+    // Enqueue SNS post for new drops (MUGEN/MUON/MA/NOUNS).
+    // Drained by GitHub Actions worker. Suppressed when autopilot off.
+    if autopilot_on() {
+        let conn = db.lock().unwrap();
+        let url = format!("https://wearmu.com/products/{}/{}", body.brand, body.drop_num);
+        let text = format!("{} — ¥{} · {}着 · AI auto-generated.\n{}",
+            body.name, body.price_jpy, body.inventory, url);
+        enqueue_sns_post(&conn, "x", "drop", Some(new_id), None,
+            &text, body.mockup_url.as_deref());
     }
     Json(serde_json::json!({"ok": true, "id": new_id})).into_response()
 }
@@ -5782,6 +5816,37 @@ fn gather_blog_stats(db: &Db) -> serde_json::Value {
         "SELECT COUNT(*) FROM products WHERE lifestyle_url IS NOT NULL AND lifestyle_url != ''",
         [], |r| r.get(0)).unwrap_or(0);
     let missing = detect_missing_drops(&conn);
+    drop(conn);  // release lock before any heavy compute
+    // External signals widen the AI's worldview beyond Teshikaga temperature.
+    // Pure compute (no API call) — moon phase + JST day-of-week + month season.
+    // Adding more (Twitter trends, Nikkei, Spotify) is deferred until paid
+    // API keys are configured.
+    let now_secs: i64 = chrono_now().parse().unwrap_or(0);
+    let jst = now_secs + 9 * 3600;
+    let day_n = jst / 86_400;
+    let (year, month, day_of_month) = civil_from_days(day_n);
+    let dow = (day_n + 3).rem_euclid(7);  // 0=Mon..6=Sun (matches ISO)
+    let dow_jp = ["月","火","水","木","金","土","日"][dow as usize];
+    // Moon phase: synodic period ≈ 29.530589 days; reference new moon
+    // 2000-01-06 18:14 UTC (day 10961 ≈ unix ts 947108040).
+    let lunar_days = (now_secs as f64 - 947108040.0) / 86400.0;
+    let phase = (lunar_days / 29.530589).rem_euclid(1.0);
+    let moon = match phase {
+        p if p < 0.03 || p > 0.97 => "新月",
+        p if p < 0.22 => "三日月→上弦",
+        p if p < 0.28 => "上弦",
+        p if p < 0.47 => "上弦→満月",
+        p if p < 0.53 => "満月",
+        p if p < 0.72 => "満月→下弦",
+        p if p < 0.78 => "下弦",
+        _              => "下弦→新月",
+    };
+    let season = match month {
+        12 | 1 | 2 => "冬",
+        3 | 4 | 5  => "春",
+        6 | 7 | 8  => "夏",
+        _          => "秋",
+    };
     json!({
         "revenue_shown_jpy": revenue,
         "real_revenue_jpy": real_revenue,
@@ -5791,6 +5856,15 @@ fn gather_blog_stats(db: &Db) -> serde_json::Value {
         "lifestyle_photos": lifestyle_count,
         "missing": missing,
         "day": jst_today_str(),
+        "signals": {
+            "year": year,
+            "month": month,
+            "day_of_month": day_of_month,
+            "day_of_week_jp": dow_jp,
+            "season": season,
+            "moon_phase": moon,
+            "moon_phase_pct": (phase * 100.0).round() as i64,
+        },
     })
 }
 
@@ -6860,6 +6934,10 @@ async fn admin_blog_publish(
     Json(body): Json<BlogPublishBody>,
 ) -> impl IntoResponse {
     if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+    if !autopilot_on() {
+        return (StatusCode::SERVICE_UNAVAILABLE,
+            "autopilot disabled (MU_AUTOPILOT=0)").into_response();
+    }
     // Input validation — defend against Gemini returning garbage or empty.
     let title = body.title.trim();
     let body_md = body.body_md.trim();
@@ -6937,16 +7015,20 @@ async fn admin_blog_publish(
             Err(e) => { eprintln!("[blog-digest] {e}"); 0 }
         };
         let x_posted = cross_post_x(&slug, title).await.unwrap_or(false);
-        // Mark audit columns
-        if digest_sent > 0 || x_posted {
+        // Mark audit columns + enqueue SNS post (drained by Actions worker)
+        {
             let conn = db.lock().unwrap();
-            let _ = conn.execute(
-                "UPDATE auto_blog_posts SET
-                    digest_sent_at = CASE WHEN ? > 0 THEN ? ELSE digest_sent_at END,
-                    cross_post_x_at = CASE WHEN ?  THEN ? ELSE cross_post_x_at END
-                 WHERE slug=?",
-                params![digest_sent, chrono_now(), x_posted, chrono_now(), slug],
-            );
+            if digest_sent > 0 || x_posted {
+                let _ = conn.execute(
+                    "UPDATE auto_blog_posts SET
+                        digest_sent_at = CASE WHEN ? > 0 THEN ? ELSE digest_sent_at END,
+                        cross_post_x_at = CASE WHEN ?  THEN ? ELSE cross_post_x_at END
+                     WHERE slug=?",
+                    params![digest_sent, chrono_now(), x_posted, chrono_now(), slug],
+                );
+            }
+            let post_text = format!("📓 {} — MU Field log\nhttps://wearmu.com/blog/{slug}", title);
+            enqueue_sns_post(&conn, "x", "blog", None, Some(&slug), &post_text, None);
         }
         // Telegram success notification (best-effort, fail-open).
         if let (Ok(tg_token), tg_chat) = (
@@ -7059,6 +7141,252 @@ footer{{padding:48px 32px;border-top:1px solid rgba(255,255,255,0.06);text-align
         body_html = body_html,
     );
     axum::response::Html(html).into_response()
+}
+
+/// Rough monthly cost dashboard. All numbers are estimates — Gemini /
+/// Resend / Helius don't push real bills to us. Useful for "are we
+/// trending out of budget?" signal, not finance reporting.
+async fn admin_cost_dashboard(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let month_prefix = {
+        let t = jst_today_str();  // "YYYY-MM-DD"
+        t.get(..7).unwrap_or("").to_string()
+    };
+    let like = format!("{}%", month_prefix);
+    let (gemini_calls, resend_emails, real_mints, stripe_fees, infra_jpy): (i64, i64, i64, i64, i64) = {
+        let conn = db.lock().unwrap();
+        let gemini: i64 = conn.query_row(
+            "SELECT
+                COALESCE((SELECT COUNT(*) FROM auto_blog_posts WHERE created_at LIKE ?), 0) +
+                COALESCE((SELECT COUNT(*) FROM ai_decisions WHERE created_at LIKE ? AND model LIKE 'gemini%'), 0)",
+            params![like, like], |r| r.get(0)).unwrap_or(0);
+        let resend: i64 = conn.query_row(
+            "SELECT
+                COALESCE((SELECT COUNT(*) FROM auto_blog_posts WHERE digest_sent_at LIKE ?), 0) +
+                COALESCE((SELECT COUNT(*) FROM you_designs WHERE daily_email_sent_at LIKE ?), 0)",
+            params![like, like], |r| r.get(0)).unwrap_or(0);
+        let mints: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM products
+             WHERE nft_mint IS NOT NULL AND nft_mint NOT LIKE 'dryrun:%'
+               AND created_at LIKE ?",
+            params![like], |r| r.get(0)).unwrap_or(0);
+        let stripe_fees: i64 = conn.query_row(
+            "SELECT COALESCE(CAST(SUM(p.price_jpy * 0.036) AS INTEGER), 0)
+             FROM mu_purchases mp JOIN products p ON p.id = mp.product_id
+             WHERE mp.created_at LIKE ?",
+            params![like], |r| r.get(0)).unwrap_or(0);
+        (gemini, resend, mints, stripe_fees, 2400)
+    };
+    let gemini_jpy = gemini_calls / 2;   // ~¥0.5 / call rough
+    let resend_jpy = (resend_emails * 3) / 10;  // ¥0.3 / email rough
+    let helius_jpy = real_mints * 5;     // ¥5 / cNFT mint rough
+    let total = gemini_jpy + resend_jpy + helius_jpy + stripe_fees + infra_jpy;
+    let alert_at: i64 = env::var("COST_ALERT_AT_JPY")
+        .ok().and_then(|s| s.parse().ok()).unwrap_or(25_000);
+    let budget: i64 = env::var("COST_BUDGET_JPY")
+        .ok().and_then(|s| s.parse().ok()).unwrap_or(30_000);
+    let mut alerts: Vec<&str> = Vec::new();
+    if total > alert_at { alerts.push("monthly_total > alert_at"); }
+    if gemini_jpy > 5_000 { alerts.push("gemini_unusual"); }
+    Json(serde_json::json!({
+        "month_to_date": {
+            "gemini_calls": gemini_calls, "gemini_estimated_jpy": gemini_jpy,
+            "resend_emails": resend_emails, "resend_estimated_jpy": resend_jpy,
+            "helius_mints": real_mints, "helius_estimated_jpy": helius_jpy,
+            "stripe_fees_jpy": stripe_fees,
+            "infra_jpy": infra_jpy,
+            "total_jpy": total,
+        },
+        "thresholds": {
+            "budget_jpy": budget,
+            "alert_at_jpy": alert_at,
+        },
+        "month_prefix": month_prefix,
+        "autopilot": autopilot_on(),
+        "alerts": alerts,
+    })).into_response()
+}
+
+// ── MA invite codes: winners grant 3 friends 50%-off codes ──────────────
+//
+// Granted from settle_auction (call site is in main.rs settle_auction; this
+// helper exists here so callers stay short). The winner's auction-settle
+// email already exists; their template should be extended to include the
+// 3 codes when granted.
+
+/// Grant N invite codes to an MA winner. Returns the codes (caller emails).
+/// Idempotent on (granted_by, product_id) — re-running returns the existing
+/// 3 codes rather than creating new ones.
+fn grant_ma_invite_codes(
+    conn: &rusqlite::Connection,
+    granted_by: &str,
+    product_id: i64,
+    n: usize,
+) -> Vec<String> {
+    // Check existing
+    let existing: Vec<String> = {
+        let mut stmt = match conn.prepare(
+            "SELECT code FROM ma_invite_codes
+             WHERE granted_by=? AND product_id=? AND redeemed_at IS NULL
+             ORDER BY created_at LIMIT ?",
+        ) { Ok(s) => s, Err(_) => return Vec::new() };
+        stmt.query_map(params![granted_by, product_id, n as i64], |r| r.get(0))
+            .map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>())
+            .unwrap_or_default()
+    };
+    if existing.len() >= n { return existing; }
+    let needed = n - existing.len();
+    let now = chrono_now();
+    let expires = {
+        let now_s: i64 = now.parse().unwrap_or(0);
+        (now_s + 30 * 86_400).to_string()
+    };
+    let mut codes = existing;
+    for _ in 0..needed {
+        let code = format!("MA-{}", uuid::Uuid::new_v4().simple().to_string()[..10].to_uppercase());
+        let n = conn.execute(
+            "INSERT OR IGNORE INTO ma_invite_codes
+                (code, granted_by, product_id, discount_pct, expires_at, created_at)
+             VALUES (?,?,?,50,?,?)",
+            params![code, granted_by, product_id, expires, now],
+        ).unwrap_or(0);
+        if n > 0 { codes.push(code); }
+    }
+    codes
+}
+
+#[derive(Deserialize)]
+struct RedeemInviteBody {
+    code: String,
+    email: String,
+}
+
+async fn redeem_invite(
+    State(db): State<Db>,
+    Json(body): Json<RedeemInviteBody>,
+) -> impl IntoResponse {
+    let code = body.code.trim().to_uppercase();
+    let email = body.email.trim().to_lowercase();
+    if code.is_empty() || email.is_empty() {
+        return (StatusCode::BAD_REQUEST, "code + email required").into_response();
+    }
+    let now = chrono_now();
+    let row: Option<(i64, String, i64)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT discount_pct, expires_at, product_id FROM ma_invite_codes
+             WHERE code=? AND redeemed_at IS NULL",
+            params![code],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).ok()
+    };
+    let Some((discount_pct, expires_at, _product_id)) = row else {
+        return (StatusCode::NOT_FOUND, "invalid or already redeemed").into_response();
+    };
+    let now_s: i64 = now.parse().unwrap_or(0);
+    let exp_s: i64 = expires_at.parse().unwrap_or(0);
+    if exp_s > 0 && now_s > exp_s {
+        return (StatusCode::GONE, "code expired").into_response();
+    }
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE ma_invite_codes SET redeemed_by=?, redeemed_at=? WHERE code=?",
+            params![email, now, code],
+        );
+    }
+    Json(serde_json::json!({
+        "ok": true,
+        "discount_pct": discount_pct,
+        "code": code,
+        "message": format!("✓ {}% 割引コード適用済 · 次回 /api/checkout の invite_code に同じコードを渡してください", discount_pct),
+    })).into_response()
+}
+
+/// Enqueue an SNS post. Workers (GitHub Actions or external) drain
+/// posted_at IS NULL rows. Idempotent on (trigger_kind, product_id) for
+/// drops, (trigger_kind, blog_slug) for blogs.
+fn enqueue_sns_post(
+    conn: &rusqlite::Connection,
+    network: &str,
+    trigger_kind: &str,
+    product_id: Option<i64>,
+    blog_slug: Option<&str>,
+    text: &str,
+    image_url: Option<&str>,
+) -> i64 {
+    let _ = conn.execute(
+        "INSERT INTO sns_post_queue
+            (network, trigger_kind, product_id, blog_slug, text, image_url, created_at)
+         VALUES (?,?,?,?,?,?,?)",
+        params![network, trigger_kind, product_id, blog_slug,
+                text, image_url, chrono_now()],
+    ).unwrap_or(0);
+    conn.last_insert_rowid()
+}
+
+/// GET /api/admin/sns/pending — drains pending SNS post queue rows so an
+/// external worker can pick them up. Returns up to `limit` (default 10)
+/// rows oldest-first. Marks none as "claimed" — workers MUST follow up with
+/// POST /api/admin/sns/mark_posted to ack.
+async fn admin_sns_pending(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let limit: i64 = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(10).clamp(1, 100);
+    let rows: Vec<serde_json::Value> = {
+        let conn = db.lock().unwrap();
+        let result = match conn.prepare(
+            "SELECT id, network, trigger_kind, product_id, blog_slug, text, image_url, created_at
+             FROM sns_post_queue WHERE posted_at IS NULL
+             ORDER BY created_at ASC LIMIT ?"
+        ) {
+            Ok(mut stmt) => stmt.query_map(params![limit], |r| {
+                Ok(serde_json::json!({
+                    "id": r.get::<_, i64>(0)?,
+                    "network": r.get::<_, String>(1)?,
+                    "trigger_kind": r.get::<_, String>(2)?,
+                    "product_id": r.get::<_, Option<i64>>(3)?,
+                    "blog_slug": r.get::<_, Option<String>>(4)?,
+                    "text": r.get::<_, String>(5)?,
+                    "image_url": r.get::<_, Option<String>>(6)?,
+                    "created_at": r.get::<_, String>(7)?,
+                }))
+            }).map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>()).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
+        result
+    };
+    Json(serde_json::json!({"pending": rows, "count": rows.len()})).into_response()
+}
+
+#[derive(Deserialize)]
+struct SnsAckBody {
+    admin_token: String,
+    id: i64,
+    /// External post id (e.g. tweet id) when success
+    #[serde(default)]
+    external_id: Option<String>,
+    /// Error message when failure
+    #[serde(default)]
+    error: Option<String>,
+}
+
+async fn admin_sns_mark_posted(
+    State(db): State<Db>,
+    Json(body): Json<SnsAckBody>,
+) -> impl IntoResponse {
+    if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+    let conn = db.lock().unwrap();
+    let n = conn.execute(
+        "UPDATE sns_post_queue SET posted_at=?, external_id=?, error=? WHERE id=?",
+        params![chrono_now(), body.external_id, body.error, body.id],
+    ).unwrap_or(0);
+    Json(serde_json::json!({"ok": true, "updated": n})).into_response()
 }
 
 async fn list_auto_blog(State(db): State<Db>) -> impl IntoResponse {
@@ -8371,6 +8699,7 @@ async fn council_page() -> Html<&'static str> {
 /// Idempotent: skips if a brief for the current ISO week already exists.
 /// Falls back to a deterministic template if Gemini is unavailable.
 async fn run_council_weekly_cron(db: Db) {
+    if autopilot_skip("council-weekly") { return; }
     let week_label = iso_week_label_jst();
     let week_start = iso_week_start_jst();
     let slug = format!("council-{}", week_start);
@@ -10766,6 +11095,9 @@ async fn main() {
         "ALTER TABLE collab_products ADD COLUMN printful_files TEXT",
         // JSON array of [{id, value}] options like thread_colors_front_large, stitch_color.
         "ALTER TABLE collab_products ADD COLUMN printful_options TEXT",
+        // Printful 仕入総コスト (subtotal + shipping + tax to JP) ¥ — 管理画面用。
+        // 価格設定検証 / 利益率モニター時に表示。実 Printful API での E2E 計測値。
+        "ALTER TABLE collab_products ADD COLUMN printful_cost_jpy INTEGER",
     ] {
         conn.execute(col, []).ok();
     }
@@ -11015,6 +11347,41 @@ async fn main() {
                     cat, name, desc, price, slug],
         ).ok();
     }
+
+    // E2E 実測の Printful 仕入総コスト (subtotal + ship to JP + tax)、¥単位。
+    // 管理画面 (/admin/sweep) で利益率計算に使う。価格 / variant が変わったら
+    // sweep_costs.py の E2E スクリプトで更新できる (admin manual)。
+    let printful_costs: &[(&str, i64)] = &[
+        ("sweep-rashguard-ls",  5_950),
+        ("sweep-fight-shorts",  4_680),
+        ("sweep-spats",         3_390),
+        ("sweep-hoodie",        3_961),
+        ("sweep-tee",           2_318),
+        ("sweep-tee-classic",   2_318),
+        ("sweep-longsleeve",    3_100),
+        ("sweep-tote",          3_744),
+        ("sweep-sweatpants",    6_090),
+        ("sweep-cap",           3_550),
+        ("sweep-beanie",        3_630),
+        ("sweep-socks-3pack",   4_180),
+        ("sweep-windbreaker",   4_550),
+        ("sweep-tank-top",      2_610),
+        ("sweep-zip-hoodie",    4_530),
+        ("sweep-crewneck",      7_850),
+        ("sweep-snapback",      3_380),
+        ("sweep-mug",           1_820),
+        ("sweep-bottle",        5_400),
+        ("sweep-stickers",      1_136),
+        ("sweep-duffle",       16_090),
+        ("sweep-gym-bag",      13_305),
+        ("sweep-cotton-shorts", 3_640),
+    ];
+    for (slug, cost) in printful_costs {
+        conn.execute(
+            "UPDATE collab_products SET printful_cost_jpy = ? WHERE slug = ?",
+            params![cost, slug],
+        ).ok();
+    }
     // Auto-blog posts table — every day the AI composes a "field log"
     // entry from /api/transparency, recent commits + cron health, and
     // it lands here. Rendered at /blog/auto/<slug>.
@@ -11095,6 +11462,43 @@ async fn main() {
         );
         CREATE INDEX IF NOT EXISTS idx_council_members_tier
             ON ma_council_members(tier, joined_at DESC);
+
+        -- MA auction winners get 3 invite codes granting 50% off to friends.
+        -- Codes expire 30 days after grant. One-shot redemption.
+        CREATE TABLE IF NOT EXISTS ma_invite_codes (
+            code            TEXT PRIMARY KEY,
+            granted_by      TEXT NOT NULL,
+            product_id      INTEGER NOT NULL,
+            discount_pct    INTEGER NOT NULL DEFAULT 50,
+            expires_at      TEXT NOT NULL,
+            redeemed_by     TEXT,
+            redeemed_at     TEXT,
+            redemption_product_id INTEGER,
+            created_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_invite_active
+            ON ma_invite_codes(redeemed_at, expires_at);
+
+        -- Outbound social-network post queue. drop / blog / auction_settle
+        -- events INSERT here; an Actions-side worker (separate from Fly)
+        -- reads pending rows and posts to X/Bluesky/Threads then updates.
+        -- Decouples Fly from network access + OAuth headaches.
+        CREATE TABLE IF NOT EXISTS sns_post_queue (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            network         TEXT NOT NULL DEFAULT 'x',
+            trigger_kind    TEXT NOT NULL,
+            product_id      INTEGER,
+            blog_slug       TEXT,
+            text            TEXT NOT NULL,
+            image_url       TEXT,
+            posted_at       TEXT,
+            external_id     TEXT,
+            error           TEXT,
+            created_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_sns_pending
+            ON sns_post_queue(posted_at, created_at)
+            WHERE posted_at IS NULL;
     ").ok();
     // Add option_index to ma_council_votes for the new HMAC-token flow
     // (older flow stored free-text `choice`). Both columns coexist.
@@ -11507,6 +11911,10 @@ async fn main() {
         .route("/api/admin/prompt_performance", get(admin_prompt_performance))
         .route("/api/admin/prompt_performance/refresh", post(admin_prompt_performance_refresh))
         .route("/api/admin/ai_decisions", get(admin_ai_decisions))
+        .route("/api/admin/cost_dashboard", get(admin_cost_dashboard))
+        .route("/api/admin/sns/pending", get(admin_sns_pending))
+        .route("/api/admin/sns/mark_posted", post(admin_sns_mark_posted))
+        .route("/api/redeem_invite", post(redeem_invite))
         .route("/api/admin/council_compose", post(admin_council_compose))
         .route("/api/council/briefs", get(list_council_briefs))
         .route("/api/council/vote", post(council_vote))
@@ -11641,6 +12049,7 @@ fn seconds_until_next_jst_weekly_sunday(target_h: u32, target_m: u32) -> u64 {
 /// send emails for the same day per user because of the cron_last_sent
 /// column).
 async fn run_you_daily_cron(db: Db) {
+    if autopilot_skip("you-daily") { return; }
     let day = jst_today_str();
     tracing::info!("[cron] you-daily: starting for day={}", day);
 
