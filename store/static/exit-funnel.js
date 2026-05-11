@@ -1,10 +1,22 @@
 /* MU exit-intent funnel — survey → 50% coupon → no-purchase open lottery.
    Loaded on /you, /mugen, /muon, /ma, and the slug share pages.
    Idempotent: shows once per 24h per browser; respects URL ?noexit=1. */
-(() => {
+(async () => {
   const KEY = 'mu_exit_seen_at';
   const LAST_STEP_KEY = 'mu_exit_last_step';
-  const SHOW_AGAIN_HOURS = 24;
+  // Defaults — overridden by /api/cv/config (cv_pulse cron tunes these).
+  let SHOW_AGAIN_HOURS = 24;
+  let SCROLL_REQUIRED = true;
+  let COUPON_PCT = 50;
+  try {
+    const r = await fetch('/api/cv/config', {cache: 'force-cache'});
+    if (r.ok) {
+      const c = await r.json();
+      if (c.modal_cooldown_hours) SHOW_AGAIN_HOURS = Number(c.modal_cooldown_hours) || 24;
+      if (c.modal_scroll_required) SCROLL_REQUIRED = c.modal_scroll_required === '1';
+      if (c.coupon_percent_off) COUPON_PCT = Number(c.coupon_percent_off) || 50;
+    }
+  } catch (_) {}
   const params = new URLSearchParams(location.search);
   if (params.get('noexit') === '1') return;
   const now = Date.now();
@@ -18,7 +30,9 @@
 
   function trigger(reason) {
     if (shown) return;
-    if (!scrolledOnce && reason === 'mouseleave') return; // don't pop on landing without engagement
+    // Engagement gate — disabled when cv_pulse decides modal_scroll_required=0
+    // (aggressive mode used when signups are flatlined).
+    if (SCROLL_REQUIRED && !scrolledOnce && reason === 'mouseleave') return;
     shown = true;
     localStorage.setItem(KEY, String(now));
     showModal();
@@ -216,7 +230,7 @@
     card.innerHTML = `
       <button class="mu-x-close">×</button>
       <div class="mu-x-eyebrow">原価レベル クーポン 発行中…</div>
-      <div class="mu-x-h">¥6,800 → <span style="color:#e6c449">¥3,400</span> (50% OFF)</div>
+      <div class="mu-x-h">¥6,800 → <span style="color:#e6c449">¥${Math.round(6800 * (100 - COUPON_PCT) / 100).toLocaleString()}</span> (${COUPON_PCT}% OFF)</div>
       <div class="mu-x-sub">アンケートにご協力ありがとうございます。Stripe にクーポンを発行しています…</div>
       <div class="mu-x-msg">読み込み中</div>
     `;

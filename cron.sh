@@ -39,6 +39,8 @@ install_crons() {
 0 0 * * * /usr/bin/curl -s -X POST -H 'Content-Type: application/json' -d '{"admin_token":"$ADMIN_TOKEN"}' https://wearmu.com/api/you/admin/backfill_today >> $LOG_DIR/you_daily.log 2>&1
 # mu-brand exit-lottery weekly draw — Mondays JST 9:00 (UTC Sun 0:00)
 0 0 * * 1 /usr/bin/curl -s -X POST -H 'Content-Type: application/json' -d '{"admin_token":"$ADMIN_TOKEN"}' https://wearmu.com/api/admin/lottery_draw >> $LOG_DIR/lottery_draw.log 2>&1
+# mu-brand CV pulse — every 30 min, snapshots metrics, applies adjustments, posts Telegram digest
+*/30 * * * * /usr/bin/curl -s -X POST -H 'Content-Type: application/json' -d '{"admin_token":"$ADMIN_TOKEN"}' https://wearmu.com/api/admin/cv_pulse >> $LOG_DIR/cv_pulse.log 2>&1
 EOF
 
     crontab /tmp/mu_crontab_tmp
