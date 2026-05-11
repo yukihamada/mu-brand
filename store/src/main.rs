@@ -94,6 +94,29 @@ struct CheckoutBody {
     email: String,
     size: Option<String>,
     wallet: Option<String>,
+    /// "jpy" (default, Stripe Checkout), "usdc", "sol", "eth"
+    payment_method: Option<String>,
+    /// Required when the final billed total (unit_price × quantity) is at or
+    /// above `KYC_THRESHOLD_JPY` (¥300,000). Stored in `kyc_records`.
+    kyc: Option<KycInfo>,
+}
+
+#[derive(Deserialize)]
+struct KycInfo {
+    /// Legal full name as printed on ID
+    full_name: String,
+    /// YYYY-MM-DD
+    date_of_birth: String,
+    /// ISO 3166-1 alpha-2 (e.g. "JP")
+    nationality: String,
+    /// "passport" | "license" | "mynumber" | "residence_card"
+    id_type: String,
+    /// Last 4 chars of the ID number — keep storage minimized
+    id_last4: String,
+    /// Free-form residential address
+    address: String,
+    /// ISO 8601 timestamp the user clicked the consent checkbox
+    consent_at: String,
 }
 
 #[derive(Deserialize)]
@@ -251,23 +274,111 @@ async fn persist_mockup_if_temporary(product_id: i64, url: &str) -> Option<Strin
 /// Price starts at ¥5,000 (1st buyer) and steps up ¥250 per sold unit, capped at ¥30,000.
 /// "Early buyer wins" — opposite of Dutch auction.
 /// Special cases: MA = ¥120,000, MUGEN #108 = ¥30,000 fixed.
+/// Price ceiling for the bonding curve. Final price (post-surcharge) is also
+/// clamped to this value. Purchases at or above this threshold require KYC
+/// (`KYC_THRESHOLD_JPY`).
+const PRICE_CAP_JPY: i64 = 300_000;
+const PRICE_BASE_JPY: i64 = 5_000;
+const PRICE_STEP_JPY: i64 = 250;
+const MUGEN_108_PRICE_JPY: i64 = 30_000;
+const MA_BASE_PRICE_JPY: i64 = 120_000;
+const KYC_THRESHOLD_JPY: i64 = 300_000;
+
 fn dynamic_price(brand: &str, drop_num: i64, sold: i64, name: &str) -> i64 {
     if brand == "ma" {
-        return 120_000;
+        return MA_BASE_PRICE_JPY;
     }
     if brand == "nouns" {
         let nm = name.to_uppercase();
         if nm.contains("間") || nm.contains(" MA ") || nm.starts_with("MA ") || nm.ends_with(" MA") {
-            return 120_000;
+            return MA_BASE_PRICE_JPY;
         }
     }
     if brand == "mugen" && drop_num == 108 {
-        return 30_000;
+        return MUGEN_108_PRICE_JPY;
     }
-    let base: i64 = 5_000;
-    let step: i64 = 250;
-    let max:  i64 = 30_000;
-    (base + sold.max(0) * step).min(max)
+    (PRICE_BASE_JPY + sold.max(0) * PRICE_STEP_JPY).min(PRICE_CAP_JPY)
+}
+
+/// Surcharge in basis points (1 bp = 0.01%) applied on top of the JPY price
+/// for non-JPY payment methods. Covers processor fees, FX slip, oracle
+/// volatility, and the additional accounting/KYC overhead.
+fn payment_surcharge_bps(method: &str) -> i64 {
+    match method.to_ascii_lowercase().as_str() {
+        "eth" => 500,                                       // +5.0%
+        "usdc" | "sol" | "solana" | "crypto" => 300,        // +3.0%
+        "jpy" | "" => 0,
+        _ => 0,                                             // unknown → safe default
+    }
+}
+
+/// Apply the surcharge for the chosen payment method, then clamp to the
+/// price cap. Result is rounded to the nearest yen.
+fn apply_payment_surcharge(price_jpy: i64, method: &str) -> i64 {
+    let bps = payment_surcharge_bps(method);
+    if bps == 0 {
+        return price_jpy.min(PRICE_CAP_JPY);
+    }
+    // Use 128-bit intermediate to be safe at extreme inputs.
+    let surcharged = ((price_jpy as i128) * (10_000 + bps as i128) / 10_000) as i64;
+    surcharged.min(PRICE_CAP_JPY)
+}
+
+#[cfg(test)]
+mod price_tests {
+    use super::*;
+
+    #[test]
+    fn cap_is_three_hundred_thousand() {
+        // Far above the cap with normal step.
+        let p = dynamic_price("mugen", 1, 10_000, "x");
+        assert_eq!(p, PRICE_CAP_JPY);
+        assert_eq!(p, 300_000);
+    }
+
+    #[test]
+    fn surcharge_three_percent_for_crypto() {
+        assert_eq!(apply_payment_surcharge(5_000, "usdc"), 5_150);
+        assert_eq!(apply_payment_surcharge(5_000, "sol"), 5_150);
+        assert_eq!(apply_payment_surcharge(120_000, "usdc"), 123_600);
+    }
+
+    #[test]
+    fn surcharge_five_percent_for_eth() {
+        assert_eq!(apply_payment_surcharge(5_000, "eth"), 5_250);
+        assert_eq!(apply_payment_surcharge(120_000, "eth"), 126_000);
+    }
+
+    #[test]
+    fn surcharge_clamps_to_cap() {
+        // Base already at cap; ETH surcharge cannot push it past cap.
+        assert_eq!(apply_payment_surcharge(PRICE_CAP_JPY, "eth"), PRICE_CAP_JPY);
+        // Base just below cap; small surcharge pushed past would clamp.
+        assert_eq!(apply_payment_surcharge(295_000, "eth"), PRICE_CAP_JPY);
+    }
+
+    #[test]
+    fn jpy_is_passthrough() {
+        assert_eq!(apply_payment_surcharge(5_000, "jpy"), 5_000);
+        assert_eq!(apply_payment_surcharge(5_000, ""), 5_000);
+    }
+}
+
+/// Normalize a `created_at` value (which may be a unix epoch string OR an ISO
+/// timestamp like "2026-05-05T12:21:44.522054") into a consistent ISO-8601 UTC
+/// string `"YYYY-MM-DDTHH:MM:SSZ"`. Lets clients sort/compare deterministically.
+fn normalize_created_at_iso(raw: &str) -> String {
+    if let Ok(secs) = raw.parse::<i64>() {
+        if let Some(dt) = chrono::DateTime::<chrono::Utc>::from_timestamp(secs, 0) {
+            return dt.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        }
+    }
+    // Already ISO-ish — trim fractional seconds + ensure trailing Z.
+    let trimmed = raw.split('.').next().unwrap_or(raw);
+    if trimmed.contains('T') {
+        return if trimmed.ends_with('Z') { trimmed.to_string() } else { format!("{trimmed}Z") };
+    }
+    raw.to_string()
 }
 
 fn read_product(row: &rusqlite::Row) -> rusqlite::Result<Product> {
@@ -278,6 +389,7 @@ fn read_product(row: &rusqlite::Row) -> rusqlite::Result<Product> {
     let created_at_raw: String = row.get(8)?;
     let dynamic = dynamic_price(&brand, drop_num, sold, &name);
     let serial_code = serial_code_for(&created_at_raw, drop_num);
+    let created_at = normalize_created_at_iso(&created_at_raw);
     Ok(Product {
         id:           row.get(0)?,
         brand,
@@ -288,7 +400,7 @@ fn read_product(row: &rusqlite::Row) -> rusqlite::Result<Product> {
         price_jpy:    dynamic,
         inventory:    row.get(6)?,
         sold,
-        created_at:   created_at_raw,
+        created_at,
         weather_data: row.get(9)?,
         prompt_hash:  row.get(10)?,
         seed_data:    row.get(11)?,
@@ -352,14 +464,24 @@ async fn list_products(
 }
 
 async fn list_brands(State(db): State<Db>) -> impl IntoResponse {
+    // created_at is stored mixed-format (some rows are unix-epoch strings,
+    // others are ISO). Normalize inside SQL so MAX() picks the real latest.
     let counts: Vec<(String, i64, String)> = {
         let conn = db.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT brand, COUNT(*) AS active_count, MAX(created_at) AS latest
+            "SELECT brand, COUNT(*) AS active_count,
+                    MAX(
+                      CASE
+                        WHEN created_at GLOB '[0-9]*' AND created_at NOT LIKE '%-%'
+                          THEN strftime('%Y-%m-%dT%H:%M:%SZ', CAST(created_at AS INTEGER), 'unixepoch')
+                        ELSE created_at
+                      END
+                    ) AS latest
              FROM products WHERE active=1 GROUP BY brand ORDER BY brand"
         ).unwrap();
         stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?))
+            let latest_raw: String = row.get::<_, Option<String>>(2)?.unwrap_or_default();
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, normalize_created_at_iso(&latest_raw)))
         }).unwrap().filter_map(|r| r.ok()).collect()
     };
 
@@ -502,7 +624,63 @@ async fn checkout(
         return (StatusCode::CONFLICT, "sold out").into_response();
     }
     // Reverse Dutch: compute current price from sold count at checkout time.
-    let price_jpy = dynamic_price(&brand_str, drop_num, sold, &product_name);
+    let base_price_jpy = dynamic_price(&brand_str, drop_num, sold, &product_name);
+
+    let payment_method = body.payment_method.clone().unwrap_or_else(|| "jpy".into());
+    let pm = payment_method.to_ascii_lowercase();
+    let price_jpy = apply_payment_surcharge(base_price_jpy, &pm);
+    let total_jpy = price_jpy.saturating_mul(body.quantity as i64);
+
+    // KYC gate: any single transaction at or above ¥300,000 (final billed total
+    // including surcharge) requires the customer to submit identification.
+    // Records are written to the `kyc_records` table for AML hygiene; we do
+    // not run live ID verification here — that's a Stripe Identity / external
+    // step. This gate just makes the data collection mandatory.
+    if total_jpy >= KYC_THRESHOLD_JPY {
+        let Some(kyc) = body.kyc.as_ref() else {
+            return (StatusCode::BAD_REQUEST,
+                "KYC required for purchases at or above ¥300,000 (kyc field missing in body)")
+                .into_response();
+        };
+        if kyc.full_name.trim().is_empty()
+            || kyc.date_of_birth.trim().is_empty()
+            || kyc.nationality.trim().is_empty()
+            || kyc.id_type.trim().is_empty()
+            || kyc.id_last4.trim().is_empty()
+            || kyc.address.trim().is_empty()
+            || kyc.consent_at.trim().is_empty()
+        {
+            return (StatusCode::BAD_REQUEST,
+                "KYC required for purchases at or above ¥300,000 (incomplete kyc fields)")
+                .into_response();
+        }
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO kyc_records
+             (product_id, email, full_name, dob, nationality, id_type, id_last4,
+              address, consent_at, payment_method, total_amount_jpy, created_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            params![
+                body.product_id, body.email,
+                kyc.full_name.trim(), kyc.date_of_birth.trim(),
+                kyc.nationality.trim(), kyc.id_type.trim(), kyc.id_last4.trim(),
+                kyc.address.trim(), kyc.consent_at.trim(),
+                pm, total_jpy, chrono_now()
+            ]
+        );
+    }
+
+    // Crypto payment methods are recognised at the pricing layer (surcharge
+    // applied above) but the actual on-chain settlement flow is staged in a
+    // separate endpoint. For now, only JPY (Stripe) checkout is wired through.
+    if pm != "jpy" {
+        return (StatusCode::NOT_IMPLEMENTED, format!(
+            "Crypto checkout for '{}' is not yet wired through. \
+             Surcharged unit price would be ¥{} (total ¥{}). \
+             Use payment_method=\"jpy\" for now.",
+            pm, price_jpy, total_jpy
+        )).into_response();
+    }
 
     let base_url = env::var("BASE_URL").unwrap_or_else(|_| "http://localhost:3000".into());
     let size_label = body.size.clone().unwrap_or_else(|| "M".into());
@@ -533,9 +711,14 @@ async fn checkout(
             ("shipping_address_collection[allowed_countries][7]", "TW"),
             ("shipping_address_collection[allowed_countries][8]", "HK"),
             ("allow_promotion_codes", "true"),
-            ("metadata[product_id]",   &body.product_id.to_string()),
-            ("metadata[size]",         &size_label),
-            ("metadata[wallet]",       &wallet),
+            ("metadata[product_id]",       &body.product_id.to_string()),
+            ("metadata[size]",             &size_label),
+            ("metadata[wallet]",           &wallet),
+            ("metadata[payment_method]",   &pm),
+            ("metadata[base_price_jpy]",   &base_price_jpy.to_string()),
+            ("metadata[unit_price_jpy]",   &price_jpy.to_string()),
+            ("metadata[total_price_jpy]",  &total_jpy.to_string()),
+            ("metadata[kyc_required]",     if total_jpy >= KYC_THRESHOLD_JPY { "true" } else { "false" }),
         ])
         .send().await;
 
@@ -5623,6 +5806,23 @@ async fn main() {
             status     TEXT NOT NULL DEFAULT 'pending',
             created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS kyc_records (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_id       INTEGER NOT NULL,
+            email            TEXT NOT NULL,
+            full_name        TEXT NOT NULL,
+            dob              TEXT NOT NULL,
+            nationality      TEXT NOT NULL,
+            id_type          TEXT NOT NULL,
+            id_last4         TEXT NOT NULL,
+            address          TEXT NOT NULL,
+            consent_at       TEXT NOT NULL,
+            payment_method   TEXT NOT NULL,
+            total_amount_jpy INTEGER NOT NULL,
+            created_at       TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_kyc_records_email ON kyc_records(email);
+        CREATE INDEX IF NOT EXISTS idx_kyc_records_created ON kyc_records(created_at DESC);
         CREATE TABLE IF NOT EXISTS you_users (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             email           TEXT NOT NULL UNIQUE,
