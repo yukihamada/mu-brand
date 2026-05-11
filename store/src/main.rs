@@ -1362,7 +1362,8 @@ async fn checkout(
     // pays this way), no Apple/Google Pay, no phone collection. Each addition
     // is gated by an env flag so we can revert any single field if Stripe
     // returns an error for an account-specific capability.
-    let stripe_form = stripe_checkout_form_jp(
+    // Build form (helper reads `konbini_currently_enabled()` for konbini gate).
+    let build_form = || stripe_checkout_form_jp(
         StripeCheckoutFields {
             mode: "payment",
             base_url: &base_url,
@@ -1382,11 +1383,19 @@ async fn checkout(
             collect_shipping: true,
         },
     );
-    let session_resp = client
-        .post("https://api.stripe.com/v1/checkout/sessions")
-        .basic_auth(&stripe_key, None::<&str>)
-        .form(&stripe_form)
-        .send().await;
+    let send_request = |form: Vec<(String, String)>| {
+        let client = client.clone();
+        let stripe_key = stripe_key.clone();
+        async move {
+            client
+                .post("https://api.stripe.com/v1/checkout/sessions")
+                .basic_auth(&stripe_key, None::<&str>)
+                .form(&form)
+                .send().await
+        }
+    };
+
+    let session_resp = send_request(build_form()).await;
 
     match session_resp {
         Ok(r) if r.status().is_success() => {
@@ -1396,9 +1405,30 @@ async fn checkout(
         }
         Ok(r) => {
             let status = r.status();
-            let body = r.text().await.unwrap_or_default();
-            eprintln!("Stripe error {}: {}", status, body);
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("stripe error: {}", &body[..body.len().min(200)])).into_response()
+            let body_text = r.text().await.unwrap_or_default();
+            // Auto-recover: if Stripe says konbini isn't activated, flip the
+            // runtime flag and retry once with konbini stripped. This means
+            // ops doesn't need to set STRIPE_KONBINI_ENABLED=0 manually after
+            // a dashboard mishap.
+            if maybe_disable_konbini(&body_text) {
+                eprintln!("[stripe] retrying without konbini after runtime auto-disable");
+                let retry = send_request(build_form()).await;
+                if let Ok(r2) = retry {
+                    if r2.status().is_success() {
+                        let json: serde_json::Value = r2.json().await.unwrap();
+                        let url = json["url"].as_str().unwrap_or("/");
+                        return Json(serde_json::json!({"url": url})).into_response();
+                    } else {
+                        let s2 = r2.status();
+                        let b2 = r2.text().await.unwrap_or_default();
+                        eprintln!("Stripe retry error {}: {}", s2, b2);
+                        return (StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("stripe retry error: {}", &b2[..b2.len().min(200)])).into_response();
+                    }
+                }
+            }
+            eprintln!("Stripe error {}: {}", status, body_text);
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("stripe error: {}", &body_text[..body_text.len().min(200)])).into_response()
         }
         Err(e) => {
             eprintln!("Stripe request error: {}", e);
@@ -11489,6 +11519,20 @@ async fn main() {
         );
         CREATE INDEX IF NOT EXISTS idx_sweep_signals_slug ON sweep_signals(slug, kind);
         CREATE INDEX IF NOT EXISTS idx_sweep_signals_at ON sweep_signals(created_at DESC);
+
+        -- MU 自律エージェント journal (1h ごとの観察 → 判断 → 行動の記録)
+        CREATE TABLE IF NOT EXISTS agent_journal (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            cycle_at      TEXT NOT NULL,
+            observations  TEXT,           -- JSON dump: stats snapshot
+            decisions     TEXT,           -- JSON array of decisions made
+            actions       TEXT,           -- JSON array of side-effects performed
+            summary       TEXT,           -- 1-line human summary
+            notable       INTEGER NOT NULL DEFAULT 0,
+            created_at    TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_journal_at ON agent_journal(created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_agent_journal_notable ON agent_journal(notable, created_at DESC);
     ").ok();
     // Idempotent extra columns on collab_products (run after CREATE so we can
     // add Printful integration columns without dropping the table).
@@ -12325,6 +12369,7 @@ async fn main() {
         .route("/api/sweep/signals", get(sweep_signals_summary))
         .route("/api/admin/sweep_signals", get(admin_sweep_signals))
         .route("/admin/sweep", get(admin_sweep_dashboard))
+        .route("/admin/agent", get(admin_agent_journal))
         .route("/api/admin/prompt_performance", get(admin_prompt_performance))
         .route("/api/admin/prompt_performance/refresh", post(admin_prompt_performance_refresh))
         .route("/api/admin/ai_decisions", get(admin_ai_decisions))
@@ -12361,6 +12406,7 @@ async fn main() {
         .nest_service("/mockups", ServeDir::new(mockups_dir()))
         .fallback_service(ServeDir::new("static"));
     let watcher_db = db.clone();
+    let agent_db = db.clone();
 
     // CORS — allow any origin to read public APIs + embed.js.
     // Restricted to GET/OPTIONS so write endpoints (POST /api/checkout etc.)
@@ -12431,11 +12477,278 @@ async fn main() {
         }
     });
 
+    // ── MU 自律エージェント (in-process) ──
+    //
+    // 1 時間ごとに自律的に状態観察 → 判断 → 行動 → ジャーナル記録。
+    // 既存の self-heal watcher (cron 監視) とは別軸。こちらは商品・FB・販売の
+    // ビジネス判断 (price hint, sold-out alert, FB triage, blog autocompose 等)。
+    //
+    // 全アクションは agent_journal に永続記録 (admin から確認可)。Telegram で
+    // notable な決定だけ通知。AI 介入が必要な高コスト処理は flag だけ立てて
+    // m5 cron や GHA 側に投げる (この loop 自体は軽量・無料運転)。
+    // (agent_db は上で .with_state(db) より前に clone 済み)
+    tokio::spawn(async move {
+        // 1 時間ごと、起動 5 分後に開始 (deploy 直後の安定待ち)
+        tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            if let Err(e) = run_mu_agent_cycle(agent_db.clone()).await {
+                eprintln!("[mu-agent] cycle error: {e}");
+            }
+        }
+    });
+
     let port = env::var("PORT").unwrap_or_else(|_| "3000".into());
     let addr = format!("0.0.0.0:{}", port);
     println!("mu-store listening on {}", addr);
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
+}
+
+/// MU 自律エージェント — 1 時間ごとの観察 / 判断 / 行動 1 サイクル。
+///
+/// 軽量・無料運転。AI 呼び出しは行わず、DB ルールベースで判断する。
+/// 大型 AI 必要なケース (auto-blog compose 等) は decisions に flag を残し、
+/// 別の GHA / m5 cron に投げて貰う想定。
+async fn run_mu_agent_cycle(db: Db) -> Result<(), String> {
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let h24 = now_s - 86_400;
+    let h7d = now_s - 7 * 86_400;
+    let _ = h7d;
+
+    // ── 観察 (Observe) ─────────────────────────────────────────────────
+    let mut obs = serde_json::Map::new();
+    let mut decisions: Vec<serde_json::Value> = Vec::new();
+    let mut actions: Vec<serde_json::Value> = Vec::new();
+
+    {
+        let conn = db.lock().unwrap();
+
+        // 商品在庫: sold/inventory > 0.7 の active 商品 (low-stock alert)
+        let mut low_stock = Vec::<(String, String, i64, i64)>::new();
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT brand, name, inventory, sold FROM products
+             WHERE active=1 AND inventory > 0
+               AND (CAST(sold AS REAL) / inventory) > 0.7
+               AND sold < inventory
+             ORDER BY (CAST(sold AS REAL) / inventory) DESC LIMIT 10"
+        ) {
+            let it = stmt.query_map([], |r| Ok((
+                r.get::<_,String>(0)?, r.get::<_,String>(1)?, r.get::<_,i64>(2)?, r.get::<_,i64>(3)?,
+            )));
+            if let Ok(it) = it {
+                for r in it.filter_map(|r| r.ok()) { low_stock.push(r); }
+            }
+        }
+        obs.insert("low_stock_count".into(),
+            serde_json::Value::from(low_stock.len() as i64));
+
+        // SWEEP 商品ごとの 👎 比率 (signals last 24h)
+        let mut high_dislike = Vec::<(String, i64, i64)>::new();
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT slug,
+                    SUM(CASE WHEN kind='meh' THEN 1 ELSE 0 END) AS mehs,
+                    SUM(CASE WHEN kind='love' THEN 1 ELSE 0 END) AS loves
+             FROM sweep_signals
+             WHERE CAST(created_at AS INTEGER) > ?
+             GROUP BY slug
+             HAVING mehs >= 2 AND mehs > loves"
+        ) {
+            let it = stmt.query_map(params![h24], |r| Ok((
+                r.get::<_,String>(0)?, r.get::<_,i64>(1)?, r.get::<_,i64>(2)?,
+            )));
+            if let Ok(it) = it {
+                for r in it.filter_map(|r| r.ok()) { high_dislike.push(r); }
+            }
+        }
+        obs.insert("dislike_24h_count".into(),
+            serde_json::Value::from(high_dislike.len() as i64));
+
+        // 注文数 (last 24h)
+        let collab_24h: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM collab_orders WHERE CAST(created_at AS INTEGER) > ?",
+            params![h24], |r| r.get(0),
+        ).unwrap_or(0);
+        let mu_24h: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mu_purchases WHERE CAST(created_at AS INTEGER) > ?",
+            params![h24], |r| r.get(0),
+        ).unwrap_or(0);
+        obs.insert("collab_orders_24h".into(), serde_json::Value::from(collab_24h));
+        obs.insert("mu_purchases_24h".into(), serde_json::Value::from(mu_24h));
+
+        // FB 未返信 件数 (ai_reply IS NULL の最新)
+        let unreplied: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM customer_feedback
+             WHERE ai_reply IS NULL OR ai_reply='' ",
+            [], |r| r.get(0),
+        ).unwrap_or(0);
+        obs.insert("unreplied_feedback".into(), serde_json::Value::from(unreplied));
+
+        // 今日の auto-blog 投稿が無い？
+        let today_slug = format!("auto-{}", jst_today_str());
+        let blog_today: bool = conn.query_row(
+            "SELECT 1 FROM auto_blog_posts WHERE slug=?",
+            params![today_slug], |r| r.get::<_, i64>(0),
+        ).is_ok();
+        obs.insert("auto_blog_today_present".into(), serde_json::Value::from(blog_today));
+
+        // ── 判断 (Decide) ─────────────────────────────────────────────
+        for (brand, name, inv, sold) in &low_stock {
+            decisions.push(serde_json::json!({
+                "type": "low_stock_alert",
+                "brand": brand, "name": name,
+                "remaining": inv - sold,
+                "sold_pct": (*sold as f64 / *inv as f64),
+            }));
+        }
+        for (slug, mehs, loves) in &high_dislike {
+            decisions.push(serde_json::json!({
+                "type": "sweep_dislike_alert",
+                "slug": slug, "mehs": mehs, "loves": loves,
+                "action_hint": "consider redesign or pricing review",
+            }));
+        }
+        if !blog_today {
+            decisions.push(serde_json::json!({
+                "type": "auto_blog_missing",
+                "slug": today_slug,
+                "action_hint": "GHA cron-curl should compose today's blog",
+            }));
+        }
+        if unreplied > 5 {
+            decisions.push(serde_json::json!({
+                "type": "unreplied_feedback_backlog",
+                "count": unreplied,
+                "action_hint": "Gemini batch reply needed (admin endpoint)",
+            }));
+        }
+    } // release lock
+
+    // ── 行動 (Act) ─────────────────────────────────────────────────────
+    let notable = !decisions.is_empty();
+    let mut tg_lines: Vec<String> = Vec::new();
+    for d in &decisions {
+        let t = d["type"].as_str().unwrap_or("");
+        match t {
+            "low_stock_alert" => {
+                let brand = d["brand"].as_str().unwrap_or("");
+                let name  = d["name"].as_str().unwrap_or("");
+                let rem   = d["remaining"].as_i64().unwrap_or(0);
+                tg_lines.push(format!("⚠️ 残り{rem}着: {brand} / {name}",
+                    rem=rem, brand=brand, name=name));
+            }
+            "sweep_dislike_alert" => {
+                let slug = d["slug"].as_str().unwrap_or("");
+                let mehs = d["mehs"].as_i64().unwrap_or(0);
+                let loves = d["loves"].as_i64().unwrap_or(0);
+                tg_lines.push(format!("👎 SWEEP fb: {slug} (👎{mehs} > 👍{loves})",
+                    slug=slug, mehs=mehs, loves=loves));
+            }
+            "auto_blog_missing" => {
+                tg_lines.push("📝 今日の auto-blog 未投稿 (GHA cron 確認)".to_string());
+            }
+            "unreplied_feedback_backlog" => {
+                let n = d["count"].as_i64().unwrap_or(0);
+                tg_lines.push(format!("💬 未返信 FB が {n} 件 (Gemini 一括返信を)",
+                    n=n));
+            }
+            _ => {}
+        }
+    }
+
+    // Telegram 1 通だけ送る (notable のみ)
+    if notable {
+        let tg_token = env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default();
+        let tg_chat  = env::var("TELEGRAM_CHAT_ID").unwrap_or_else(|_| "1136442501".into());
+        if !tg_token.is_empty() && !tg_lines.is_empty() {
+            // De-dup: 同じ内容を 6h 以内に送ったかチェック
+            let summary_hash: String = {
+                use sha2::{Digest, Sha256};
+                let mut h = Sha256::new();
+                for l in &tg_lines { h.update(l.as_bytes()); }
+                hex::encode(&h.finalize()[..8])
+            };
+            let should_send: bool = {
+                let conn = db.lock().unwrap();
+                let last_hash = cv_get(&conn, "agent_last_tg_hash", "");
+                let last_at: i64 = cv_get(&conn, "agent_last_tg_at", "0").parse().unwrap_or(0);
+                last_hash != summary_hash || (now_s - last_at) > 6 * 3600
+            };
+            if should_send {
+                let body = format!(
+                    "🤖 MU 自律エージェント\n{}\n\n→ /admin/agent で journal 確認",
+                    tg_lines.join("\n")
+                );
+                let resp = reqwest::Client::new()
+                    .post(format!("https://api.telegram.org/bot{}/sendMessage", tg_token))
+                    .json(&serde_json::json!({"chat_id": tg_chat, "text": body, "disable_web_page_preview": true}))
+                    .send().await;
+                actions.push(serde_json::json!({
+                    "type": "telegram_digest",
+                    "lines": tg_lines.len(),
+                    "ok": resp.as_ref().map(|r| r.status().is_success()).unwrap_or(false),
+                }));
+                let conn = db.lock().unwrap();
+                cv_set(&conn, "agent_last_tg_hash", &summary_hash, "agent");
+                cv_set(&conn, "agent_last_tg_at", &now_s.to_string(), "agent");
+            } else {
+                actions.push(serde_json::json!({
+                    "type": "telegram_suppressed_dedupe",
+                }));
+            }
+        }
+    }
+
+    let summary = if notable {
+        format!("{} decisions; {} actions", decisions.len(), actions.len())
+    } else {
+        "idle (no notable signals)".to_string()
+    };
+
+    // ── ジャーナル記録 ─────────────────────────────────────────────────
+    let conn = db.lock().unwrap();
+    let _ = conn.execute(
+        "INSERT INTO agent_journal
+             (cycle_at, observations, decisions, actions, summary, notable, created_at)
+         VALUES (?,?,?,?,?,?,?)",
+        params![
+            chrono_now(),
+            serde_json::Value::Object(obs).to_string(),
+            serde_json::Value::Array(decisions).to_string(),
+            serde_json::Value::Array(actions).to_string(),
+            summary,
+            notable as i64,
+            chrono_now(),
+        ],
+    );
+    Ok(())
+}
+
+/// GET /admin/agent?token=… — Show recent agent journal entries
+async fn admin_agent_journal(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let limit: i64 = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50).clamp(1, 500);
+    let conn = db.lock().unwrap();
+    let mut stmt = match conn.prepare(
+        "SELECT id, cycle_at, COALESCE(summary,''), notable,
+                COALESCE(observations,''), COALESCE(decisions,''), COALESCE(actions,'')
+         FROM agent_journal ORDER BY id DESC LIMIT ?"
+    ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+    let rows: Vec<serde_json::Value> = stmt.query_map(params![limit], |r| Ok(serde_json::json!({
+        "id": r.get::<_,i64>(0)?,
+        "cycle_at": r.get::<_,String>(1)?,
+        "summary": r.get::<_,String>(2)?,
+        "notable": r.get::<_,i64>(3)? == 1,
+        "observations": serde_json::from_str::<serde_json::Value>(&r.get::<_,String>(4)?).unwrap_or_default(),
+        "decisions": serde_json::from_str::<serde_json::Value>(&r.get::<_,String>(5)?).unwrap_or_default(),
+        "actions": serde_json::from_str::<serde_json::Value>(&r.get::<_,String>(6)?).unwrap_or_default(),
+    }))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+    Json(serde_json::json!({"entries": rows, "count": rows.len()})).into_response()
 }
 
 /// Number of seconds from now until the next JST (hh:mm). Always positive.
