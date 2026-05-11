@@ -54,12 +54,36 @@ pub const JPY_PER_SOL_DEFAULT: f64 = 25_000.0;
 pub const JPY_PER_ETH_DEFAULT: f64 = 600_000.0;
 pub const CRYPTO_PAYMENT_TTL_MIN: i64 = 15;
 
+/// Read a rate. Priority:
+///   1. SQLite crypto_settings (set by Pyth cron, see `start_crons`)
+///   2. process env var
+///   3. compile-time default
+/// Falls back through the chain so the server always has a usable rate
+/// even when the oracle is unreachable.
 fn env_rate(key: &str, default: f64) -> f64 {
+    if let Some(db) = CRON_DB.get() {
+        if let Ok(conn) = db.lock() {
+            let v: Result<String, _> = conn.query_row(
+                "SELECT value FROM crypto_settings WHERE key=?",
+                params![key], |r| r.get(0)
+            );
+            if let Ok(s) = v {
+                if let Ok(n) = s.parse::<f64>() {
+                    if n.is_finite() && n > 0.0 { return n; }
+                }
+            }
+        }
+    }
     env::var(key).ok()
         .and_then(|s| s.parse::<f64>().ok())
         .filter(|r| r.is_finite() && *r > 0.0)
         .unwrap_or(default)
 }
+
+/// Process-global handle to the DB, populated by `start_crons` at startup.
+/// `env_rate` uses this to peek at `crypto_settings` without taking a Db
+/// argument (most call sites are deep inside synchronous helpers).
+static CRON_DB: std::sync::OnceLock<Db> = std::sync::OnceLock::new();
 
 pub fn jpy_to_usdc_amount(jpy: i64) -> String {
     format!("{:.2}", jpy as f64 / env_rate("JPY_PER_USD", JPY_PER_USD_DEFAULT))
@@ -295,6 +319,24 @@ pub async fn checkout_crypto(
         "pay_url": pay_url,
         "expires_in_min": CRYPTO_PAYMENT_TTL_MIN,
         "status_url": format!("/api/checkout/crypto/status/{}", reference),
+    })).into_response()
+}
+
+/// GET /api/rates — exposes the current JPY/USD, JPY/SOL, JPY/ETH rates the
+/// server is using. Pyth-refreshed by the rate cron; falls back to env vars,
+/// then defaults. Used by the UI to show "1 USDC = ¥X" next to each
+/// payment-method button.
+pub async fn rates_handler(State(_db): State<Db>) -> impl IntoResponse {
+    let jpy_per_usd = env_rate("JPY_PER_USD", JPY_PER_USD_DEFAULT);
+    let jpy_per_sol = env_rate("JPY_PER_SOL", JPY_PER_SOL_DEFAULT);
+    let jpy_per_eth = env_rate("JPY_PER_ETH", JPY_PER_ETH_DEFAULT);
+    Json(serde_json::json!({
+        "jpy_per_usd": jpy_per_usd,
+        "jpy_per_sol": jpy_per_sol,
+        "jpy_per_eth": jpy_per_eth,
+        "usdc_per_jpy": 1.0 / jpy_per_usd,
+        "sol_per_jpy":  1.0 / jpy_per_sol,
+        "eth_per_jpy":  1.0 / jpy_per_eth,
     })).into_response()
 }
 
@@ -851,4 +893,342 @@ mod tests {
         // Plain text passes through.
         assert_eq!(csv_escape("hello"), "hello");
     }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Phase 3.4 — Pyth rate refresh cron + Phase 3.7 — payment expiration sweep
+// ──────────────────────────────────────────────────────────────────────
+//
+// Pyth REST endpoint:   https://hermes.pyth.network/api/latest_price_feeds
+// Feed IDs (mainnet):
+//   USD/JPY: 0xef2c98c804ba503c6a707e38be4dfbb16683775f195b091252bf24693042fd52
+//   SOL/USD: 0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d
+//   ETH/USD: 0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace
+//
+// We compute:
+//   JPY_PER_USD = 1 / (USD/JPY ↑ this is inverted in Pyth — see code)
+//   JPY_PER_SOL = SOL/USD × JPY_PER_USD
+//   JPY_PER_ETH = ETH/USD × JPY_PER_USD
+//
+// On any fetch / parse failure we don't write — the prior cached value
+// (or env, or default) continues to be served.
+
+const PYTH_USD_JPY_ID: &str = "ef2c98c804ba503c6a707e38be4dfbb16683775f195b091252bf24693042fd52";
+const PYTH_SOL_USD_ID: &str = "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";
+const PYTH_ETH_USD_ID: &str = "ff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace";
+
+fn write_setting(db: &Db, key: &str, value: &str) {
+    if let Ok(conn) = db.lock() {
+        let _ = conn.execute(
+            "INSERT INTO crypto_settings (key, value, updated_at) VALUES (?,?,?)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+            params![key, value, now_iso()],
+        );
+    }
+}
+
+async fn fetch_pyth_rates(db: Db) -> Result<(), String> {
+    let ids = format!(
+        "ids[]={}&ids[]={}&ids[]={}",
+        PYTH_USD_JPY_ID, PYTH_SOL_USD_ID, PYTH_ETH_USD_ID
+    );
+    let url = format!("https://hermes.pyth.network/api/latest_price_feeds?{}", ids);
+    let resp = reqwest::Client::new()
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(10))
+        .send().await.map_err(|e| format!("net: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("status {}", resp.status()));
+    }
+    let arr: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {}", e))?;
+    let arr = arr.as_array().ok_or("not array")?;
+
+    let mut usd_jpy: Option<f64> = None;
+    let mut sol_usd: Option<f64> = None;
+    let mut eth_usd: Option<f64> = None;
+
+    for feed in arr {
+        let id = feed["id"].as_str().unwrap_or("");
+        let price_s = feed["price"]["price"].as_str().unwrap_or("0");
+        let expo: i32 = feed["price"]["expo"].as_i64().unwrap_or(0) as i32;
+        let raw: f64 = price_s.parse().unwrap_or(0.0);
+        let price = raw * 10f64.powi(expo);
+        if !price.is_finite() || price <= 0.0 { continue; }
+        if id.eq_ignore_ascii_case(PYTH_USD_JPY_ID) { usd_jpy = Some(price); }
+        else if id.eq_ignore_ascii_case(PYTH_SOL_USD_ID) { sol_usd = Some(price); }
+        else if id.eq_ignore_ascii_case(PYTH_ETH_USD_ID) { eth_usd = Some(price); }
+    }
+
+    let jpy_per_usd = usd_jpy.unwrap_or(JPY_PER_USD_DEFAULT);
+    write_setting(&db, "JPY_PER_USD", &format!("{:.4}", jpy_per_usd));
+    if let Some(s) = sol_usd {
+        write_setting(&db, "JPY_PER_SOL", &format!("{:.4}", s * jpy_per_usd));
+    }
+    if let Some(e) = eth_usd {
+        write_setting(&db, "JPY_PER_ETH", &format!("{:.4}", e * jpy_per_usd));
+    }
+    tracing::info!(
+        "[rates] refreshed: JPY/USD={:.2} JPY/SOL={:?} JPY/ETH={:?}",
+        jpy_per_usd,
+        sol_usd.map(|s| s * jpy_per_usd),
+        eth_usd.map(|e| e * jpy_per_usd),
+    );
+    Ok(())
+}
+
+async fn sweep_expired_pending(db: Db, ttl_min: i64) {
+    let cutoff_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64).unwrap_or(0)
+        - ttl_min * 60;
+    let cutoff = cutoff_secs.to_string();
+    if let Ok(conn) = db.lock() {
+        let n = conn.execute(
+            "UPDATE pending_crypto_payments
+             SET status='expired'
+             WHERE status='pending' AND CAST(created_at AS INTEGER) < ?",
+            params![cutoff],
+        ).unwrap_or(0);
+        if n > 0 {
+            tracing::info!("[sweep] expired {} pending crypto payment(s)", n);
+        }
+    }
+}
+
+/// Start the background cron tasks. Called once from main.rs after the
+/// router DB is initialised. Idempotent on re-call (returns early).
+pub fn start_crons(db: Db) {
+    if CRON_DB.set(db.clone()).is_err() {
+        // already started
+        return;
+    }
+    // Pyth rate refresh — every 5 min. Fire once immediately at startup.
+    let db1 = db.clone();
+    tokio::spawn(async move {
+        loop {
+            if let Err(e) = fetch_pyth_rates(db1.clone()).await {
+                tracing::warn!("[rates] fetch failed: {}", e);
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+        }
+    });
+    // Pending payment expiration sweep — every 5 min, TTL = CRYPTO_PAYMENT_TTL_MIN
+    let db2 = db.clone();
+    tokio::spawn(async move {
+        // First tick after a short delay so server boot isn't bottlenecked.
+        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        loop {
+            sweep_expired_pending(db2.clone(), CRYPTO_PAYMENT_TTL_MIN).await;
+            tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+        }
+    });
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Phase 3.5 — Alchemy ADDRESS_ACTIVITY webhook for ETH settlement
+// ──────────────────────────────────────────────────────────────────────
+//
+// Auth: ALCHEMY_WEBHOOK_SIGNING_KEY → HMAC-SHA256 of body, sent in
+//       `X-Alchemy-Signature` header. Constant-time compare.
+// Match: Alchemy ADDRESS_ACTIVITY events carry { toAddress, value, hash }.
+// We match the OLDEST pending ETH payment with our recipient where the
+// credited ETH value is at least 95% of the expected amount_crypto.
+
+pub async fn alchemy_webhook(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    body: String,
+) -> impl IntoResponse {
+    let key = env::var("ALCHEMY_WEBHOOK_SIGNING_KEY").unwrap_or_default();
+    if key.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "alchemy webhook key not set").into_response();
+    }
+    let sig = headers.get("x-alchemy-signature")
+        .and_then(|h| h.to_str().ok()).unwrap_or("");
+    // HMAC-SHA256(body)
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    type HmacSha256 = Hmac<Sha256>;
+    let mut mac = match HmacSha256::new_from_slice(key.as_bytes()) {
+        Ok(m) => m,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "key").into_response(),
+    };
+    mac.update(body.as_bytes());
+    let expected_hex = hex::encode(mac.finalize().into_bytes());
+    if !ct_eq(sig, &expected_hex) {
+        return (StatusCode::UNAUTHORIZED, "sig").into_response();
+    }
+
+    let v: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(v) => v,
+        Err(_) => return (StatusCode::BAD_REQUEST, "json").into_response(),
+    };
+    let mu_eth = env::var("MU_ETH_RECIPIENT").unwrap_or_default().to_ascii_lowercase();
+    let activity = v["event"]["activity"].as_array().cloned().unwrap_or_default();
+
+    let mut matched = 0usize;
+    let mut skipped_no_recipient = 0usize;
+    let mut skipped_no_match = 0usize;
+
+    for ev in activity {
+        let to = ev["toAddress"].as_str().unwrap_or("").to_ascii_lowercase();
+        let value: f64 = ev["value"].as_f64().unwrap_or_else(|| {
+            ev["value"].as_str().and_then(|s| s.parse().ok()).unwrap_or(0.0)
+        });
+        let hash = ev["hash"].as_str().unwrap_or("").to_string();
+        if to.is_empty() || hash.is_empty() || value <= 0.0 { continue; }
+        if mu_eth.is_empty() || to != mu_eth {
+            skipped_no_recipient += 1;
+            continue;
+        }
+
+        // Find oldest pending ETH payment with this recipient where the
+        // credited ETH covers ≥95% of expected. ETH amounts in
+        // pending_crypto_payments.amount_crypto are decimal strings like
+        // "0.001234".
+        let candidate: Option<(String, i64)> = {
+            let conn = db.lock().unwrap();
+            let mut stmt = match conn.prepare(
+                "SELECT reference, product_id, amount_crypto
+                 FROM pending_crypto_payments
+                 WHERE status='pending' AND asset='ETH' AND lower(recipient)=lower(?)
+                 ORDER BY created_at ASC"
+            ) { Ok(s) => s, Err(_) => continue };
+            let mut found: Option<(String, i64)> = None;
+            let rows = stmt.query_map(params![mu_eth], |r| Ok((
+                r.get::<_,String>(0)?, r.get::<_,i64>(1)?, r.get::<_,String>(2)?,
+            )));
+            if let Ok(it) = rows {
+                for row in it.flatten() {
+                    let expected: f64 = row.2.parse().unwrap_or(0.0);
+                    if expected > 0.0 && value >= expected * 0.95 {
+                        found = Some((row.0, row.1));
+                        break;
+                    }
+                }
+            }
+            found
+        };
+
+        let Some((reference, product_id)) = candidate else {
+            skipped_no_match += 1;
+            continue;
+        };
+
+        let confirmed = {
+            let conn = db.lock().unwrap();
+            let upd = conn.execute(
+                "UPDATE pending_crypto_payments
+                 SET status='confirmed', tx_signature=?, confirmed_at=?
+                 WHERE reference=? AND status='pending'",
+                params![hash, now_iso(), reference],
+            ).unwrap_or(0);
+            if upd > 0 {
+                let _ = conn.execute(
+                    "UPDATE products SET sold = sold + 1 WHERE id=?",
+                    params![product_id]
+                );
+                matched += 1;
+                true
+            } else { false }
+        };
+        if confirmed {
+            let db_clone = db.clone();
+            let r2 = reference.clone();
+            tokio::spawn(async move { fulfill_crypto_order(db_clone, r2).await; });
+            tracing::info!(
+                "[alchemy] confirmed ref={} product_id={} value={} hash={}",
+                reference, product_id, value, hash
+            );
+        }
+    }
+    Json(serde_json::json!({
+        "ok": true,
+        "matched": matched,
+        "skipped_no_recipient": skipped_no_recipient,
+        "skipped_no_match": skipped_no_match,
+    })).into_response()
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Phase 3.6 — Stripe Identity webhook
+// ──────────────────────────────────────────────────────────────────────
+//
+// Receives identity.verification_session.{verified,requires_input,canceled}
+// events. The verification session was created by
+// `create_stripe_identity_session` with metadata.kyc_record_id pointing at
+// the kyc_records row, so we update that row's stripe_identity_* columns.
+
+pub async fn stripe_identity_webhook(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    body: String,
+) -> impl IntoResponse {
+    let secret = env::var("STRIPE_IDENTITY_WEBHOOK_SECRET")
+        .or_else(|_| env::var("STRIPE_WEBHOOK_SECRET"))
+        .unwrap_or_default();
+    if secret.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE,
+            "STRIPE_IDENTITY_WEBHOOK_SECRET not set").into_response();
+    }
+    let sig_header = headers.get("stripe-signature")
+        .and_then(|h| h.to_str().ok()).unwrap_or("");
+    // Stripe signature: t=<unix>,v1=<hex>. Verify v1 against
+    // HMAC-SHA256(timestamp.body) with the webhook secret.
+    let mut ts: Option<&str> = None;
+    let mut v1: Option<&str> = None;
+    for kv in sig_header.split(',') {
+        if let Some(rest) = kv.strip_prefix("t=") { ts = Some(rest); }
+        else if let Some(rest) = kv.strip_prefix("v1=") { v1 = Some(rest); }
+    }
+    let (Some(ts), Some(v1)) = (ts, v1) else {
+        return (StatusCode::BAD_REQUEST, "bad signature header").into_response();
+    };
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    type HmacSha256 = Hmac<Sha256>;
+    let mut mac = match HmacSha256::new_from_slice(secret.as_bytes()) {
+        Ok(m) => m,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "key").into_response(),
+    };
+    mac.update(ts.as_bytes());
+    mac.update(b".");
+    mac.update(body.as_bytes());
+    let expected_hex = hex::encode(mac.finalize().into_bytes());
+    if !ct_eq(v1, &expected_hex) {
+        return (StatusCode::UNAUTHORIZED, "sig").into_response();
+    }
+
+    let event: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(v) => v,
+        Err(_) => return (StatusCode::BAD_REQUEST, "json").into_response(),
+    };
+    let kind = event["type"].as_str().unwrap_or("");
+    if !kind.starts_with("identity.verification_session.") {
+        return Json(serde_json::json!({"ok": true, "skipped": kind})).into_response();
+    }
+
+    let session = &event["data"]["object"];
+    let session_id = session["id"].as_str().unwrap_or("").to_string();
+    let status = session["status"].as_str().unwrap_or("").to_string();
+    let kyc_record_id: i64 = session["metadata"]["kyc_record_id"].as_str()
+        .and_then(|s| s.parse().ok())
+        .or_else(|| session["metadata"]["kyc_record_id"].as_i64())
+        .unwrap_or(0);
+
+    if kyc_record_id <= 0 {
+        return (StatusCode::BAD_REQUEST, "metadata.kyc_record_id missing").into_response();
+    }
+    let conn = db.lock().unwrap();
+    let _ = conn.execute(
+        "UPDATE kyc_records
+         SET stripe_identity_session_id=?, stripe_identity_status=?
+         WHERE id=?",
+        params![session_id, status, kyc_record_id],
+    );
+    tracing::info!(
+        "[stripe-identity] kyc_record={} session={} status={}",
+        kyc_record_id, session_id, status
+    );
+    Json(serde_json::json!({"ok": true})).into_response()
 }

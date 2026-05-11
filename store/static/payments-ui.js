@@ -80,13 +80,37 @@
       note.textContent = '';
     } else {
       const pct = (SURCHARGE_BPS[selectedPayMethod] / 100).toFixed(0);
-      note.textContent = `${selectedPayMethod.toUpperCase()} 払い：手数料 +${pct}% → ¥${finalPrice.toLocaleString()}`;
+      let cryptoAmount = '';
+      if (cachedRates) {
+        if (selectedPayMethod === 'usdc' && cachedRates.jpy_per_usd) {
+          cryptoAmount = `  ≈ ${(finalPrice / cachedRates.jpy_per_usd).toFixed(2)} USDC`;
+        } else if (selectedPayMethod === 'sol' && cachedRates.jpy_per_sol) {
+          cryptoAmount = `  ≈ ${(finalPrice / cachedRates.jpy_per_sol).toFixed(4)} SOL`;
+        } else if (selectedPayMethod === 'eth' && cachedRates.jpy_per_eth) {
+          cryptoAmount = `  ≈ ${(finalPrice / cachedRates.jpy_per_eth).toFixed(6)} ETH`;
+        }
+      }
+      note.textContent = `${selectedPayMethod.toUpperCase()} 払い：手数料 +${pct}% → ¥${finalPrice.toLocaleString()}${cryptoAmount}`;
     }
     if (btn) {
       btn.textContent = finalPrice >= KYC_THRESHOLD
         ? `本人確認 → ¥${finalPrice.toLocaleString()}`
         : `Purchase — ¥${finalPrice.toLocaleString()}`;
     }
+  }
+
+  // ── Live rates ─────────────────────────────────────────────────────
+  // Fetched from /api/rates on init and cached. Updated every 5 min so the
+  // displayed crypto-equivalent on the buy button stays roughly in sync
+  // with what the server will actually quote at checkout time.
+  let cachedRates = null;
+  async function refreshRates() {
+    try {
+      const r = await fetch('/api/rates');
+      if (!r.ok) return;
+      cachedRates = await r.json();
+      updatePayMethodNote();
+    } catch (_) { /* ignore */ }
   }
 
   // ── KYC modal ──────────────────────────────────────────────────────
@@ -409,6 +433,8 @@
       };
     }
     setTimeout(updatePayMethodNote, 100);
+    refreshRates();
+    setInterval(refreshRates, 5 * 60 * 1000);
   }
 
   if (document.readyState === 'loading') {

@@ -4834,6 +4834,143 @@ fn pair_replace(s: &str, marker: &str, open: &str, close: &str) -> String {
     out
 }
 
+// ── AI Feedback Loop (お客様 → AI → MA Council 通知) ───────────────────────
+#[derive(Deserialize)]
+struct CustomerFeedbackBody {
+    #[serde(default)] token: String,
+    #[serde(default)] email: String,
+    message: String,
+    #[serde(default)] kind: String,
+}
+
+async fn submit_feedback(
+    State(db): State<Db>,
+    Json(body): Json<CustomerFeedbackBody>,
+) -> impl IntoResponse {
+    let msg = body.message.trim().to_string();
+    if msg.is_empty() || msg.len() > 4000 {
+        return (StatusCode::BAD_REQUEST, "message must be 1..4000 chars").into_response();
+    }
+    let (user_id, email, is_lifetime, ma_council): (Option<i64>, String, bool, bool) = {
+        let conn = db.lock().unwrap();
+        let row: Option<(i64, String, i64)> = if !body.token.is_empty() {
+            conn.query_row(
+                "SELECT id, email, COALESCE(lifetime_free,0) FROM you_users
+                 WHERE token=? AND unsubscribed_at IS NULL",
+                params![body.token], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            ).ok()
+        } else if !body.email.is_empty() {
+            conn.query_row(
+                "SELECT id, email, COALESCE(lifetime_free,0) FROM you_users
+                 WHERE email=? AND unsubscribed_at IS NULL",
+                params![body.email.to_lowercase()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            ).ok()
+        } else { None };
+        let ma_owner: bool = if let Some((_, ref e, _)) = row {
+            conn.query_row(
+                "SELECT 1 FROM mu_purchases WHERE email=? AND brand='ma' LIMIT 1",
+                params![e], |_| Ok(true)
+            ).unwrap_or(false)
+        } else { false };
+        match row {
+            Some((uid, e, lf)) => (Some(uid), e, lf == 1, ma_owner),
+            None => (None, body.email.clone(), false, false),
+        }
+    };
+    let kind = if body.kind.is_empty() {
+        if msg.len() > 200 { "vision" } else { "request" }
+    } else { body.kind.as_str() }.to_string();
+
+    let feedback_id: i64 = {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO customer_feedback
+                 (user_id, email, message, kind, is_lifetime, is_ma_council, created_at)
+             VALUES (?,?,?,?,?,?,?)",
+            params![user_id, email, msg, kind, is_lifetime as i64, ma_council as i64, chrono_now()],
+        );
+        conn.last_insert_rowid()
+    };
+
+    let ai_reply = match gemini_feedback_reply(&msg, is_lifetime, ma_council).await {
+        Ok(s) => s,
+        Err(e) => { eprintln!("[feedback] gemini error: {e}"); String::new() }
+    };
+    if !ai_reply.is_empty() {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE customer_feedback SET ai_reply=?, ai_reply_at=? WHERE id=?",
+            params![ai_reply, chrono_now(), feedback_id],
+        );
+    }
+
+    let tag = if ma_council { "⭐ MA Council" }
+        else if is_lifetime { "MU Owner" }
+        else { "MUer" };
+    notify_telegram_feedback(tag, &email, &msg).await;
+
+    Json(serde_json::json!({
+        "ok": true,
+        "id": feedback_id,
+        "ai_reply": ai_reply,
+        "tier": if ma_council { "ma_council" } else if is_lifetime { "mu_owner" } else { "muer" },
+    })).into_response()
+}
+
+async fn gemini_feedback_reply(message: &str, is_lifetime: bool, is_ma_council: bool) -> Result<String, String> {
+    use serde_json::json;
+    let key = env::var("GEMINI_API_KEY").map_err(|_| "GEMINI_API_KEY missing".to_string())?;
+    let tier = if is_ma_council { "MA Council (MA オークション落札者、brand 方向性に投票権を持つ立場)" }
+        else if is_lifetime { "MU Owner (T シャツ所有者、一生無料)" }
+        else { "MUer (/you 登録のお客様)" };
+    let prompt = format!(r#"あなたは MU ブランド (北海道弟子屈町、無人 AI ファッション) の AI 運営担当です。お客様 ({tier}) からのフィードバックに 80〜200 字で返答してください。
+
+ルール:
+- 二人称は「あなた」、自分のことは「MU」または「私たち」
+- 過剰な謝罪は禁止、業務報告として簡潔に
+- 機能要望なら「要検討の優先度を○○として記録した」と返す
+- 数字や約束は捏造禁止 (subscribers 9 / lifetime 3 / 本売 5 件 ¥145,000 まで)
+- 必要なら info@enablerdao.com を提示
+- MA Council にはより丁寧かつ「次回 council 議題で扱う」と明記
+- 末尾に「— MU AI (Gemini 2.5)」と書く
+
+お客様のメッセージ:
+"""
+{message}
+"""
+"#);
+    let req_body = json!({"contents": [{"parts": [{"text": prompt}]}]});
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
+        key);
+    let resp = reqwest::Client::new().post(&url)
+        .json(&req_body).send().await
+        .map_err(|e| format!("gemini request: {e}"))?;
+    if !resp.status().is_success() {
+        let s = resp.status();
+        let t = resp.text().await.unwrap_or_default();
+        return Err(format!("gemini {}: {}", s, t.chars().take(200).collect::<String>()));
+    }
+    let j: serde_json::Value = resp.json().await.map_err(|e| format!("json: {e}"))?;
+    let text = j["candidates"][0]["content"]["parts"][0]["text"]
+        .as_str().unwrap_or("").to_string();
+    Ok(text.trim().to_string())
+}
+
+async fn notify_telegram_feedback(tier: &str, email: &str, message: &str) {
+    let tg_token = env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default();
+    let tg_chat  = env::var("TELEGRAM_CHAT_ID").unwrap_or_else(|_| "1136442501".into());
+    if tg_token.is_empty() { return; }
+    let body = format!(
+        "📮 MU feedback [{tier}]\n{email}\n\n{msg}",
+        msg = message.chars().take(800).collect::<String>(),
+    );
+    let _ = reqwest::Client::new()
+        .post(format!("https://api.telegram.org/bot{}/sendMessage", tg_token))
+        .json(&serde_json::json!({"chat_id": tg_chat, "text": body, "disable_web_page_preview": true}))
+        .send().await;
+}
+
 async fn admin_blog_compose(
     State(db): State<Db>,
     Json(body): Json<AutoBlogBody>,
@@ -6782,6 +6919,11 @@ async fn main() {
         );
         CREATE INDEX IF NOT EXISTS idx_pcp_reference ON pending_crypto_payments(reference);
         CREATE INDEX IF NOT EXISTS idx_pcp_status ON pending_crypto_payments(status, created_at DESC);
+        CREATE TABLE IF NOT EXISTS crypto_settings (
+            key        TEXT PRIMARY KEY,
+            value      TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS you_users (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             email           TEXT NOT NULL UNIQUE,
@@ -6933,6 +7075,22 @@ async fn main() {
             created_at  TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_auto_blog_published ON auto_blog_posts(published, created_at DESC);
+        -- お客様 → AI フィードバック。MUer / MU Owner / MA Council でタグ。
+        -- Gemini が即時返答、Telegram 通知、DB に永続記録。
+        CREATE TABLE IF NOT EXISTS customer_feedback (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id       INTEGER,
+            email         TEXT,
+            message       TEXT NOT NULL,
+            kind          TEXT NOT NULL DEFAULT 'request',
+            is_lifetime   INTEGER NOT NULL DEFAULT 0,
+            is_ma_council INTEGER NOT NULL DEFAULT 0,
+            ai_reply      TEXT,
+            ai_reply_at   TEXT,
+            created_at    TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_feedback_user ON customer_feedback(user_id);
+        CREATE INDEX IF NOT EXISTS idx_feedback_council ON customer_feedback(is_ma_council, created_at DESC);
     ").ok();
     // CV-pulse autonomous loop: every 30 min the cron POSTs to
     // /api/admin/cv_pulse, which writes a snapshot here + may update
@@ -7144,6 +7302,9 @@ async fn main() {
     std::fs::create_dir_all(mockups_dir()).ok();
     let db: Db = Arc::new(Mutex::new(conn));
 
+    // ── Phase 3.4 + 3.7: Pyth rate refresh + pending payment sweep ──
+    payments::start_crons(db.clone());
+
     // ── Daily cron: JST 07:00, ensure today's design + send paced emails ──
     // Started before the router consumes `db` via with_state.
     let db_cron = db.clone();
@@ -7177,8 +7338,11 @@ async fn main() {
         .route("/api/checkout", post(checkout))
         .route("/api/checkout/crypto", post(payments::checkout_crypto))
         .route("/api/checkout/crypto/status/:reference", get(payments::checkout_crypto_status))
+        .route("/api/rates", get(payments::rates_handler))
         .route("/api/webhook/stripe", post(stripe_webhook))
         .route("/api/webhook/helius", post(payments::helius_webhook))
+        .route("/api/webhook/alchemy", post(payments::alchemy_webhook))
+        .route("/api/webhook/stripe-identity", post(payments::stripe_identity_webhook))
         .route("/api/kyc/identity-session", post(payments::create_stripe_identity_session))
         .route("/api/admin/exports/kyc.csv", get(payments::admin_export_kyc))
         .route("/api/admin/exports/crypto.csv", get(payments::admin_export_crypto))
@@ -7236,6 +7400,7 @@ async fn main() {
         .route("/api/blog/auto", get(list_auto_blog))
         .route("/blog/auto/:slug", get(show_auto_blog))
         .route("/api/you/referral", post(you_referral_status))
+        .route("/api/feedback", post(submit_feedback))
         .route("/api/cv/config", get(cv_public_config))
         .route("/api/you/signal/:design_id", post(you_signal))
         .route("/api/you/preferences", get(you_preferences))
