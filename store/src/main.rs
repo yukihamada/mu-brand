@@ -7491,10 +7491,25 @@ async fn x_get_access_token(db: &Db) -> Result<Option<String>, String> {
     Ok(Some(new_access))
 }
 
-/// Post a tweet (text only, no media). Returns Ok(Some(id)) on success,
-/// Ok(None) if X isn't configured yet, Err on API failure.
+/// OAuth 1.0a signed POST to X API v2 /tweets. Falls back to OAuth 2.0
+/// PKCE path if the 1.0a Access Token / Secret aren't set.
+///
+/// Two paths supported:
+///   1. OAuth 1.0a User Context (preferred when X_ACCESS_TOKEN +
+///      X_ACCESS_TOKEN_SECRET secrets are set — no browser flow needed,
+///      just paste the 4 keys from Dev Portal "Keys and tokens" page)
+///   2. OAuth 2.0 PKCE (requires `/admin/x/auth` browser flow first)
 async fn x_post_tweet(text: &str) -> Result<Option<String>, String> {
-    // Get a global DB handle (we need it to load tokens). Use CRON_DB Once-cell.
+    // Path 1: OAuth 1.0a (preferred — simpler)
+    let ck  = env::var("X_CONSUMER_KEY").ok().filter(|s| !s.is_empty());
+    let cs  = env::var("X_CONSUMER_SECRET").ok().filter(|s| !s.is_empty());
+    let at  = env::var("X_ACCESS_TOKEN").ok().filter(|s| !s.is_empty());
+    let ats = env::var("X_ACCESS_TOKEN_SECRET").ok().filter(|s| !s.is_empty());
+    if let (Some(ck), Some(cs), Some(at), Some(ats)) = (ck, cs, at, ats) {
+        return x_post_tweet_oauth1a(text, &ck, &cs, &at, &ats).await;
+    }
+
+    // Path 2: OAuth 2.0 PKCE (requires /admin/x/auth flow)
     let db = match payments::cron_db_ref() {
         Some(d) => d, None => return Err("CRON_DB not initialized".into()),
     };
@@ -7514,6 +7529,79 @@ async fn x_post_tweet(text: &str) -> Result<Option<String>, String> {
     }
     let v: serde_json::Value = serde_json::from_str(&respbody)
         .map_err(|e| format!("x post json: {e}"))?;
+    Ok(v["data"]["id"].as_str().map(String::from))
+}
+
+/// OAuth 1.0a HMAC-SHA1 signing + POST.
+async fn x_post_tweet_oauth1a(
+    text: &str,
+    consumer_key: &str,
+    consumer_secret: &str,
+    access_token: &str,
+    access_token_secret: &str,
+) -> Result<Option<String>, String> {
+    use hmac::{Hmac, Mac};
+    use sha1::Sha1;
+    use base64::Engine;
+    type HmacSha1 = Hmac<Sha1>;
+
+    let url = "https://api.twitter.com/2/tweets";
+    let method = "POST";
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let nonce = uuid::Uuid::new_v4().simple().to_string();
+
+    // OAuth params (sorted, percent-encoded). v2 /tweets uses JSON body so
+    // body params do NOT go into the signature base (Content-Type is JSON).
+    let oauth_params: Vec<(&str, String)> = vec![
+        ("oauth_consumer_key",     consumer_key.to_string()),
+        ("oauth_nonce",            nonce.clone()),
+        ("oauth_signature_method", "HMAC-SHA1".to_string()),
+        ("oauth_timestamp",        now_s.to_string()),
+        ("oauth_token",            access_token.to_string()),
+        ("oauth_version",          "1.0".to_string()),
+    ];
+    fn enc(s: &str) -> String {
+        urlencoding::encode(s).into_owned()
+            // RFC 3986: also percent-encode reserved chars not handled by urlencoding
+            .replace('+', "%20").replace('*', "%2A")
+    }
+    let mut sorted = oauth_params.clone();
+    sorted.sort_by(|a,b| a.0.cmp(b.0));
+    let param_string = sorted.iter()
+        .map(|(k,v)| format!("{}={}", enc(k), enc(v)))
+        .collect::<Vec<_>>().join("&");
+    let base_string = format!("{}&{}&{}", method, enc(url), enc(&param_string));
+    let signing_key = format!("{}&{}", enc(consumer_secret), enc(access_token_secret));
+    let mut mac = HmacSha1::new_from_slice(signing_key.as_bytes())
+        .map_err(|e| format!("hmac key: {e}"))?;
+    mac.update(base_string.as_bytes());
+    let signature = base64::engine::general_purpose::STANDARD
+        .encode(mac.finalize().into_bytes());
+    let header = {
+        let mut hp = oauth_params.clone();
+        hp.push(("oauth_signature", signature));
+        hp.sort_by(|a,b| a.0.cmp(b.0));
+        let inner = hp.iter()
+            .map(|(k,v)| format!("{}=\"{}\"", enc(k), enc(v)))
+            .collect::<Vec<_>>().join(", ");
+        format!("OAuth {}", inner)
+    };
+
+    let body = serde_json::json!({ "text": text });
+    let resp = reqwest::Client::new()
+        .post(url)
+        .header("Authorization", header)
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send().await
+        .map_err(|e| format!("x oauth1 post http: {e}"))?;
+    let status = resp.status();
+    let respbody = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("x oauth1 post {}: {}", status, &respbody[..respbody.len().min(300)]));
+    }
+    let v: serde_json::Value = serde_json::from_str(&respbody)
+        .map_err(|e| format!("x oauth1 post json: {e}"))?;
     Ok(v["data"]["id"].as_str().map(String::from))
 }
 
