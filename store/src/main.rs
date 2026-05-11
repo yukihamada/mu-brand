@@ -4362,6 +4362,11 @@ async fn public_treasury(
     let monthly_burn  = 6_000_i64;
     let runway_months = if monthly_burn > 0 { jpy_total / monthly_burn } else { 0 };
 
+    // Pending Stripe payout (next payout to bank). Best-effort, non-fatal.
+    let stripe_pending = fetch_stripe_balance_pending().await.unwrap_or(0);
+    // Treasury auto-charge plan: 15% of next payout suggested → SOL/USDC
+    let charge_plan = (stripe_pending as f64 * 0.15) as i64;
+
     Json(serde_json::json!({
         "ok": true,
         "pubkey": pk,
@@ -4372,6 +4377,11 @@ async fn public_treasury(
         },
         "fx": {"jpy_per_sol": jpy_per_sol, "jpy_per_usd": jpy_per_usd},
         "revenue_30d_jpy": revenue_30d,
+        "stripe": {
+            "pending_payout_jpy": stripe_pending,
+            "charge_plan_jpy": charge_plan,
+            "note": "次回 Stripe payout の 15% を Solana wallet にチャージする計画値。実行は手動 (法定→暗号資産の自動変換は法令上不可)。",
+        },
         "ai_budget_suggestion": {
             "ads_monthly_jpy":    ads_budget,
             "thanks_reserve_jpy": thanks_budget,
@@ -4382,6 +4392,42 @@ async fn public_treasury(
         "note": "本ヒューリスティクスは公開・改変可能。実際の支出は admin 承認 (cv_pulse) を経て実行される。",
         "as_of": chrono_now(),
     })).into_response()
+}
+
+/// Best-effort: ask Stripe for the available balance (pending → bank).
+/// Returns JPY total; 0 on any failure (logged to stderr).
+async fn fetch_stripe_balance_pending() -> Result<i64, String> {
+    let key = match env::var("STRIPE_SECRET_KEY") {
+        Ok(v) if !v.is_empty() => v,
+        _ => return Ok(0),
+    };
+    let resp = reqwest::Client::new()
+        .get("https://api.stripe.com/v1/balance")
+        .basic_auth(&key, None::<&str>)
+        .send().await
+        .map_err(|e| format!("stripe balance net: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("stripe balance {}", resp.status()));
+    }
+    let j: serde_json::Value = resp.json().await.map_err(|e| format!("stripe balance json: {e}"))?;
+    // Sum pending JPY amounts. Stripe returns minor units; JPY is already a major unit (no cents).
+    let mut total = 0i64;
+    if let Some(arr) = j["pending"].as_array() {
+        for p in arr {
+            if p["currency"].as_str() == Some("jpy") {
+                total += p["amount"].as_i64().unwrap_or(0);
+            }
+        }
+    }
+    // Also count available (not yet paid out)
+    if let Some(arr) = j["available"].as_array() {
+        for p in arr {
+            if p["currency"].as_str() == Some("jpy") {
+                total += p["amount"].as_i64().unwrap_or(0);
+            }
+        }
+    }
+    Ok(total)
 }
 
 /// Public health endpoint — returns which brands are stale.
@@ -5599,6 +5645,209 @@ async fn list_auto_blog(State(db): State<Db>) -> impl IntoResponse {
         }))
     }).map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>()).unwrap_or_default();
     Json(serde_json::json!({"posts": rows})).into_response()
+}
+
+// ── MA Council briefs (Gemini が議題を集約) + voting ───────────────────────
+
+fn iso_week_start_jst() -> String {
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    // JST shift + back to Monday
+    let jst = now_s + 9 * 3600;
+    let day = jst / 86_400;
+    let dow_mon = (day + 3).rem_euclid(7); // 1970-01-01 = Thu, +3 → Mon=0
+    let monday_days = day - dow_mon;
+    let (y, m, d) = civil_from_days(monday_days);
+    format!("{:04}-{:02}-{:02}", y, m, d)
+}
+
+async fn admin_council_compose(
+    State(db): State<Db>,
+    Json(body): Json<AutoBlogBody>,
+) -> impl IntoResponse {
+    if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+    let week = iso_week_start_jst();
+    let slug = format!("council-{}", week);
+    {
+        let conn = db.lock().unwrap();
+        let exists: bool = conn.query_row(
+            "SELECT 1 FROM ma_council_briefs WHERE slug=?",
+            params![slug], |r| r.get::<_, i64>(0),
+        ).is_ok();
+        if exists {
+            return Json(serde_json::json!({"ok": true, "skipped": true, "slug": slug})).into_response();
+        }
+    }
+
+    // Pull the last 30 days of MA Council feedback + general high-signal feedback
+    let inputs: Vec<(String, String, i64)> = {
+        let conn = db.lock().unwrap();
+        let cutoff: i64 = chrono_now().parse::<i64>().unwrap_or(0) - 30 * 86_400;
+        let mut stmt = match conn.prepare(
+            "SELECT message, COALESCE(email,'anon'), is_ma_council
+             FROM customer_feedback
+             WHERE CAST(created_at AS INTEGER) >= ?
+             ORDER BY is_ma_council DESC, id DESC LIMIT 40"
+        ) {
+            Ok(s) => s,
+            Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response(),
+        };
+        stmt.query_map(params![cutoff], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?
+        ))).map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>()).unwrap_or_default()
+    };
+
+    let context: String = inputs.iter().enumerate().map(|(i, (m, e, council))| {
+        let tag = if *council == 1 { "[Council] " } else { "" };
+        format!("{}. {}{}: {}", i + 1, tag, e, m.chars().take(280).collect::<String>())
+    }).collect::<Vec<_>>().join("\n");
+
+    let key = match env::var("GEMINI_API_KEY").ok() {
+        Some(k) if !k.is_empty() => k,
+        _ => return (StatusCode::SERVICE_UNAVAILABLE, "GEMINI_API_KEY missing").into_response(),
+    };
+
+    let prompt = format!("あなたは MU ブランドの議題集計 AI です。週次 MA Council Brief を以下のフォーマットで生成してください。\n\n過去 30 日のお客様フィードバック (上位 40 件、Council 優先):\n{context}\n\n出力フォーマット (JSON のみ、コードフェンス不要):\n{{\n  \"title\": \"今週の MA Council Brief — YYYY 週X (28字以内)\",\n  \"body_md\": \"## 1. 今週のテーマ\\n## 2. お客様の声 (要約)\\n## 3. 議題\",\n  \"agendas\": [\n    {{\"id\": \"a1\", \"q\": \"次月の MUGEN 価格レンジを変更すべきか？\", \"options\": [\"¥4,000–6,000 (現行)\", \"¥5,000–8,000\", \"¥6,000–10,000\"]}},\n    {{\"id\": \"a2\", \"q\": \"新カテゴリ (sweat / longsleeve) を投入するか？\", \"options\": [\"sweat 優先\", \"longsleeve 優先\", \"T シャツ集中\"]}}\n  ]\n}}\n\nルール:\n- 議題は 2〜4 件\n- 各議題の options は 2〜4 個\n- お客様の生の声を 3 件以上 body_md に引用 (短く)\n- 捏造禁止 — フィードバックに無い議題は出さない\n- 末尾に「— 集計: Gemini 2.5 / 投票: MA Council メンバー」");
+
+    let req_body = serde_json::json!({"contents": [{"parts": [{"text": prompt}]}]});
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
+        key);
+    let resp = match reqwest::Client::new().post(&url).json(&req_body).send().await {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::BAD_GATEWAY, format!("gemini: {e}")).into_response(),
+    };
+    if !resp.status().is_success() {
+        let s = resp.status();
+        let t = resp.text().await.unwrap_or_default();
+        return (StatusCode::BAD_GATEWAY,
+            format!("gemini {}: {}", s, t.chars().take(200).collect::<String>())).into_response();
+    }
+    let j: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::BAD_GATEWAY, format!("json: {e}")).into_response(),
+    };
+    let text = j["candidates"][0]["content"]["parts"][0]["text"]
+        .as_str().unwrap_or("").trim()
+        .trim_start_matches("```json").trim_start_matches("```")
+        .trim_end_matches("```").trim().to_string();
+    let parsed: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::BAD_GATEWAY,
+            format!("gemini json parse: {e}, raw: {}", text.chars().take(300).collect::<String>())).into_response(),
+    };
+    let title = parsed["title"].as_str().unwrap_or("MA Council Brief").to_string();
+    let body_md = parsed["body_md"].as_str().unwrap_or("").to_string();
+    let agendas = parsed["agendas"].clone();
+
+    let conn = db.lock().unwrap();
+    let _ = conn.execute(
+        "INSERT OR IGNORE INTO ma_council_briefs
+            (slug, week_start, title, body_md, agendas_json, model, published, created_at)
+         VALUES (?,?,?,?,?,?,1,?)",
+        params![slug, week, title, body_md, agendas.to_string(),
+                "gemini-2.5-flash", chrono_now()],
+    );
+    Json(serde_json::json!({"ok": true, "slug": slug, "title": title, "agendas": agendas})).into_response()
+}
+
+#[derive(Deserialize)]
+struct CouncilVoteBody {
+    /// MUer token (must be MA owner)
+    token: String,
+    brief_slug: String,
+    agenda_id: String,
+    choice: String,
+}
+
+async fn council_vote(
+    State(db): State<Db>,
+    Json(body): Json<CouncilVoteBody>,
+) -> impl IntoResponse {
+    if body.choice.len() > 200 {
+        return (StatusCode::BAD_REQUEST, "choice too long").into_response();
+    }
+    let conn = db.lock().unwrap();
+    // Verify the voter is MA Council (= owns at least one MA piece)
+    let voter_email: Option<String> = conn.query_row(
+        "SELECT email FROM you_users WHERE token=? AND unsubscribed_at IS NULL",
+        params![body.token], |r| r.get(0),
+    ).ok();
+    let Some(email) = voter_email else {
+        return (StatusCode::UNAUTHORIZED, "invalid token").into_response();
+    };
+    let is_ma_council: bool = conn.query_row(
+        "SELECT 1 FROM mu_purchases WHERE LOWER(email)=? AND brand='ma' LIMIT 1",
+        params![email.to_lowercase()], |_| Ok(true),
+    ).unwrap_or(false);
+    if !is_ma_council {
+        return (StatusCode::FORBIDDEN, "MA Council メンバー限定の投票です").into_response();
+    }
+    // Verify brief exists + agenda_id valid (best-effort)
+    let agendas_str: Option<String> = conn.query_row(
+        "SELECT agendas_json FROM ma_council_briefs WHERE slug=? AND published=1",
+        params![body.brief_slug], |r| r.get(0),
+    ).ok();
+    let Some(agendas_str) = agendas_str else {
+        return (StatusCode::NOT_FOUND, "brief not found").into_response();
+    };
+    let agendas: serde_json::Value = serde_json::from_str(&agendas_str).unwrap_or(serde_json::json!([]));
+    let valid_ids: Vec<String> = agendas.as_array().map(|arr| {
+        arr.iter().filter_map(|a| a["id"].as_str().map(String::from)).collect()
+    }).unwrap_or_default();
+    if !valid_ids.contains(&body.agenda_id) {
+        return (StatusCode::BAD_REQUEST, "agenda_id not in brief").into_response();
+    }
+    let _ = conn.execute(
+        "INSERT INTO ma_council_votes (brief_slug, agenda_id, voter_email, choice, created_at)
+         VALUES (?,?,?,?,?)
+         ON CONFLICT(brief_slug, agenda_id, voter_email) DO UPDATE SET
+            choice=excluded.choice, created_at=excluded.created_at",
+        params![body.brief_slug, body.agenda_id, email.to_lowercase(), body.choice, chrono_now()],
+    );
+    Json(serde_json::json!({"ok": true})).into_response()
+}
+
+/// Public — return latest published brief + live vote tallies.
+async fn list_council_briefs(State(db): State<Db>) -> impl IntoResponse {
+    let conn = db.lock().unwrap();
+    let mut stmt = match conn.prepare(
+        "SELECT slug, week_start, title, body_md, agendas_json, created_at
+         FROM ma_council_briefs WHERE published=1 ORDER BY id DESC LIMIT 12"
+    ) { Ok(s) => s, Err(_) => return Json(serde_json::json!({"briefs":[]})).into_response() };
+    let rows: Vec<serde_json::Value> = stmt.query_map([], |r| {
+        let slug: String = r.get(0)?;
+        // Aggregate votes for this brief
+        let agendas_str: String = r.get(4)?;
+        Ok(serde_json::json!({
+            "slug":       slug,
+            "week_start": r.get::<_, String>(1)?,
+            "title":      r.get::<_, String>(2)?,
+            "body_md":    r.get::<_, String>(3)?,
+            "agendas":    serde_json::from_str::<serde_json::Value>(&agendas_str).unwrap_or(serde_json::json!([])),
+            "created_at": r.get::<_, String>(5)?,
+        }))
+    }).map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>()).unwrap_or_default();
+
+    // attach tallies per brief
+    let mut briefs_with_tally = Vec::new();
+    for mut b in rows {
+        let slug = b["slug"].as_str().unwrap_or("").to_string();
+        let mut tally_stmt = match conn.prepare(
+            "SELECT agenda_id, choice, COUNT(*) FROM ma_council_votes
+             WHERE brief_slug=? GROUP BY agenda_id, choice"
+        ) { Ok(s) => s, Err(_) => { briefs_with_tally.push(b); continue; } };
+        let tallies: Vec<(String, String, i64)> = tally_stmt.query_map(params![slug], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        }).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+        let mut tally_map = serde_json::Map::new();
+        for (ag, ch, cnt) in tallies {
+            let entry = tally_map.entry(ag).or_insert_with(|| serde_json::json!({}));
+            entry[ch] = serde_json::json!(cnt);
+        }
+        b["tally"] = serde_json::Value::Object(tally_map);
+        briefs_with_tally.push(b);
+    }
+    Json(serde_json::json!({"briefs": briefs_with_tally})).into_response()
 }
 
 /// Weekly lottery draw — picks ~5% of pending entries as winners,
@@ -7618,6 +7867,31 @@ async fn main() {
         );
         CREATE INDEX IF NOT EXISTS idx_feedback_user ON customer_feedback(user_id);
         CREATE INDEX IF NOT EXISTS idx_feedback_council ON customer_feedback(is_ma_council, created_at DESC);
+        -- MA Council weekly briefs: Gemini が customer_feedback (MA Council
+        -- 投稿) を要約して N 件の議題を生成。MA owner だけが /api/council/vote
+        -- で投票できる。集計は public で晒される。
+        CREATE TABLE IF NOT EXISTS ma_council_briefs (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug         TEXT NOT NULL UNIQUE,
+            week_start   TEXT NOT NULL,
+            title        TEXT NOT NULL,
+            body_md      TEXT NOT NULL,
+            agendas_json TEXT NOT NULL,    -- [{id, q, options:[a,b,c]}, ...]
+            model        TEXT,
+            published    INTEGER NOT NULL DEFAULT 1,
+            created_at   TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_council_briefs_pub ON ma_council_briefs(published, created_at DESC);
+        CREATE TABLE IF NOT EXISTS ma_council_votes (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            brief_slug   TEXT NOT NULL,
+            agenda_id    TEXT NOT NULL,
+            voter_email  TEXT NOT NULL,
+            choice       TEXT NOT NULL,
+            created_at   TEXT NOT NULL,
+            UNIQUE(brief_slug, agenda_id, voter_email)
+        );
+        CREATE INDEX IF NOT EXISTS idx_council_votes_brief ON ma_council_votes(brief_slug);
     ").ok();
     // CV-pulse autonomous loop: every 30 min the cron POSTs to
     // /api/admin/cv_pulse, which writes a snapshot here + may update
@@ -7934,6 +8208,9 @@ async fn main() {
         .route("/api/treasury", get(public_treasury))
         .route("/api/admin/x_queue", get(admin_x_queue))
         .route("/api/admin/x_mark_posted", post(admin_x_mark_posted))
+        .route("/api/admin/council_compose", post(admin_council_compose))
+        .route("/api/council/briefs", get(list_council_briefs))
+        .route("/api/council/vote", post(council_vote))
         .route("/api/cv/config", get(cv_public_config))
         .route("/api/you/signal/:design_id", post(you_signal))
         .route("/api/you/preferences", get(you_preferences))
@@ -7950,7 +8227,9 @@ async fn main() {
         .route("/:slug", get(slug_or_static))
         .nest_service("/static", ServeDir::new("static"))
         .nest_service("/mockups", ServeDir::new(mockups_dir()))
-        .fallback_service(ServeDir::new("static"))
+        .fallback_service(ServeDir::new("static"));
+    let watcher_db = db.clone();
+    let app = app
         .with_state(db)
         .layer(middleware::from_fn(security_headers))
         .layer(
@@ -7959,6 +8238,53 @@ async fn main() {
                 .on_request(DefaultOnRequest::new().level(Level::INFO))
                 .on_response(DefaultOnResponse::new().level(Level::INFO)),
         );
+
+    // Background self-heal watcher — runs hourly inside the Fly app itself,
+    // independent of m5 cron. Detects stale brands (MUGEN > 2h, MUON > 30h,
+    // MA > 35d) and pings Telegram CRITICAL. De-dup: 1 alert per brand per
+    // 24h to avoid alarm fatigue. (watcher_db cloned before with_state above.)
+    tokio::spawn(async move {
+        // Wait 60s on boot so deploy-time cron lag doesn't trigger.
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+        interval.tick().await; // skip the first immediate tick
+        loop {
+            interval.tick().await;
+            let warnings: Vec<String> = {
+                let conn = watcher_db.lock().unwrap();
+                cron_health_warnings(&conn)
+            };
+            if warnings.is_empty() { continue; }
+            // De-dup by suppressing alerts when we've alerted on the same set
+            // in the last 24h. Use cv_config as a tiny K-V store: key=last_cron_alert
+            let now_s: i64 = chrono_now().parse().unwrap_or(0);
+            let suppress = {
+                let conn = watcher_db.lock().unwrap();
+                let last: i64 = cv_get(&conn, "last_cron_alert", "0").parse().unwrap_or(0);
+                now_s - last < 24 * 3600
+            };
+            if suppress { continue; }
+            // Send Telegram CRITICAL
+            let tg_token = env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default();
+            let tg_chat  = env::var("TELEGRAM_CHAT_ID").unwrap_or_else(|_| "1136442501".into());
+            if tg_token.is_empty() { continue; }
+            let msg = format!(
+                "🚨 CRITICAL — MU cron self-heal watcher\n\
+                 m5 cron が止まっている可能性。Fly 側 watcher が検知:\n{}\n\n\
+                 → m5 Mac の crontab 確認 / `bash cron.sh install` 再実行",
+                warnings.join("\n")
+            );
+            let _ = reqwest::Client::new()
+                .post(format!("https://api.telegram.org/bot{}/sendMessage", tg_token))
+                .json(&serde_json::json!({"chat_id": tg_chat, "text": msg, "disable_web_page_preview": true}))
+                .send().await;
+            // Mark suppression timestamp
+            {
+                let conn = watcher_db.lock().unwrap();
+                cv_set(&conn, "last_cron_alert", &now_s.to_string(), "self-heal");
+            }
+        }
+    });
 
     let port = env::var("PORT").unwrap_or_else(|_| "3000".into());
     let addr = format!("0.0.0.0:{}", port);
