@@ -8656,7 +8656,7 @@ async fn show_siiieep_partner_page(
 
     type Row = (
         i64, String, String, String, i64, Option<i64>,
-        Option<String>, i64, i64, i64, Option<String>, Option<String>,
+        Option<String>, i64, i64, i64, String, Option<String>,
     );
     let items: Vec<Row> = {
         let conn = db.lock().unwrap();
