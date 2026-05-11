@@ -503,19 +503,22 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
 <div id="section-hero" class="visible" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding-top:80px;position:relative">
   <div class="hero-bg" id="hero-bg"></div>
   <div class="hero-eyebrow">AIが服を作り続けるブランド</div>
-  <div class="hero-mu">MU</div>
+  <div class="hero-mu" aria-label="MU — Hokkaido weather designs">MU</div>
   <div class="hero-tagline">AI が毎時間 T シャツをデザインして売る、無人ブランドです。</div>
-  <div class="hero-stats">
+  <div class="hero-tagline-en" style="font-size:11px;font-weight:300;letter-spacing:0.18em;text-transform:uppercase;opacity:0.55;margin-top:6px;font-family:'Helvetica Neue',Arial,sans-serif">
+    Autonomous fashion — designed by weather, made by AI.
+  </div>
+  <div class="hero-stats" aria-live="polite">
     <div class="hero-stat">
-      <div class="hero-stat-num loading-shimmer" id="stat-mugen" data-loading="true">···</div>
+      <div class="hero-stat-num loading-shimmer" id="stat-mugen" data-loading="true" aria-label="MUGEN drop number, loading">···</div>
       <div class="hero-stat-label">MUGEN Drop</div>
     </div>
     <div class="hero-stat">
-      <div class="hero-stat-num loading-shimmer" id="stat-temp" data-loading="true">···</div>
+      <div class="hero-stat-num loading-shimmer" id="stat-temp" data-loading="true" aria-label="Today's temperature in Hokkaido, loading">···</div>
       <div class="hero-stat-label">Today's Temp</div>
     </div>
     <div class="hero-stat">
-      <div class="hero-stat-num loading-shimmer" id="stat-qty" data-loading="true">···</div>
+      <div class="hero-stat-num loading-shimmer" id="stat-qty" data-loading="true" aria-label="MUON pieces today, loading">···</div>
       <div class="hero-stat-label">MUON Today</div>
     </div>
   </div>
@@ -547,7 +550,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
       <div class="section-brand">間 MA</div>
       <div class="section-title">世界に<br>1着。</div>
       <div class="section-concept">
-        <p class="concept-line">月に一度、AIが生み出す。<br>一枚だけ製造される。<br>オークションで、一人の手に渡る。<br>その服の真正証明書はSoulbound NFTとなり、<br>服と共に永遠に生きる。</p>
+        <p class="concept-line">月に一度、AIが生み出す。<br>一枚だけ製造される。<br>オークションで、一人の手に渡る。<br>真正証明書として Solana 上の <span title="2026 Q3 ローンチ予定">Soulbound NFT (近日)</span> を opt-in で発行。<br>服と共に長く残ることを目指している。</p>
       </div>
     </div>
     <div class="section-right">
@@ -573,7 +576,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
       <div class="proof-item">
         <div class="proof-num">∞</div>
         <div class="proof-label">NFT validity</div>
-        <div class="proof-desc">SoulboundなのでSolanaチェーン上で永久に存在する。転売されると無効化。</div>
+        <div class="proof-desc">Soulbound 仕様 (2026 Q3 ローンチ予定) — Solana 上に存在し、転売されると無効化。現在は opt-in 申請受付中。</div>
       </div>
       <div class="proof-item">
         <div class="proof-num">DNA</div>
@@ -741,7 +744,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
           <div style="margin-top:10px">
             <input class="mu-input" type="text" name="wallet" placeholder="Solanaウォレットアドレス（任意）">
             <div class="soulbound-note" style="margin-top:6px;display:block">
-              入力すると購入後にSolana NFT証明書が発行されます。間 MAはSoulbound（転売不可）。
+              入力すると Q3 mint パイロットの順番待ちに登録されます (まだ実 mint は行っていません)。間 MA はローンチ時に Soulbound (転売不可) となります。
             </div>
           </div>
         </details>
@@ -909,11 +912,16 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
   <div class="footer-links">
     <a class="footer-link" href="/about.html">About</a>
     <a class="footer-link" href="/press.html">Press</a>
+    <a class="footer-link" href="/blog/">Notes</a>
     <a class="footer-link" href="/nouns-proposal.html">Nouns Proposal</a>
     <a class="footer-link" onclick="document.getElementById('fragment-modal').classList.add('open');return false" href="#">Fragment</a>
     <a class="footer-link" href="/tokushoho.html">特定商取引法</a>
+    <a class="footer-link" href="mailto:info@enablerdao.com">Contact / 取材</a>
   </div>
 </footer>
+<div style="padding:18px 48px 36px;text-align:center;font-size:10px;letter-spacing:0.15em;opacity:0.45;font-family:'Helvetica Neue',Arial,sans-serif">
+  Press / collab / data API → <a href="mailto:info@enablerdao.com" style="color:inherit;text-decoration:underline">info@enablerdao.com</a> · 株式会社イネブラ (Enabler Inc.)
+</div>
 
 <script>
 let currentProduct = null;

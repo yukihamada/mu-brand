@@ -3305,7 +3305,7 @@ async fn you_subscribe_3mo(
             Some(v) => v,
             None => return (StatusCode::NOT_FOUND, "invalid token").into_response(),
         };
-        let p: i64 = cv_get(&conn, "pack_3mo_price_jpy", "2940").parse().unwrap_or(2940);
+        let p: i64 = cv_get(&conn, "pack_3mo_price_jpy", "2500").parse().unwrap_or(2500);
         (u, e, p.clamp(300, 29_400))
     };
     let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
@@ -4281,8 +4281,81 @@ async fn public_transparency(State(db): State<Db>) -> impl IntoResponse {
             "designs_generated": you_designs_generated,
             "approx_mrr_jpy": approx_mrr_jpy,
         },
+        "missing_drops": detect_missing_drops(&conn),
         "as_of": chrono_now(),
     }))
+}
+
+/// Inspect the drop history and surface gaps. MUGEN has a strictly increasing
+/// `drop_num` 1..108 so a missing integer = a failed/skipped hourly cron run.
+/// MUON is daily so missing dates in the last 30 days = a failed daily cron.
+/// Surfaced via /api/transparency so a casual reader sees that "automation"
+/// isn't perfect, and we don't pretend it is.
+fn detect_missing_drops(conn: &rusqlite::Connection) -> serde_json::Value {
+    // MUGEN: drop_num is meant to be 1..max. Any int in that range that's
+    // absent from active rows = a missed hourly drop.
+    let mugen_missing: Vec<i64> = {
+        let max_drop: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(drop_num), 0) FROM products WHERE brand='mugen' AND active=1",
+            [], |r| r.get(0),
+        ).unwrap_or(0);
+        if max_drop <= 0 { Vec::new() } else {
+            let present: std::collections::HashSet<i64> = {
+                let mut stmt = match conn.prepare(
+                    "SELECT drop_num FROM products WHERE brand='mugen' AND active=1"
+                ) { Ok(s) => s, Err(_) => return serde_json::json!({"mugen": [], "muon": []}) };
+                stmt.query_map([], |r| r.get::<_, i64>(0))
+                    .map(|it| it.filter_map(|r| r.ok()).collect())
+                    .unwrap_or_default()
+            };
+            (1..=max_drop).filter(|n| !present.contains(n)).collect()
+        }
+    };
+
+    // MUON: check the last 30 dates (JST). Compare a Set of present drop dates
+    // (extracted from row name "MUON YYYY.MM.DD" or from created_at) to the
+    // expected dates. We use the JST date since the cron fires on JST 00:00 UTC.
+    let muon_missing: Vec<String> = {
+        // Pull every active MUON row's name; parse "MUON YYYY.MM.DD".
+        let present_dates: std::collections::HashSet<String> = {
+            let mut stmt = match conn.prepare(
+                "SELECT name FROM products WHERE brand='muon' AND active=1"
+            ) { Ok(s) => s, Err(_) => return serde_json::json!({"mugen": mugen_missing, "muon": []}) };
+            let names: Vec<String> = stmt.query_map([], |r| r.get::<_, String>(0))
+                .map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>())
+                .unwrap_or_default();
+            names.into_iter()
+                .filter_map(|n| {
+                    // "MUON 2026.05.07" → "2026-05-07"
+                    n.split_whitespace().nth(1).map(|d| d.replace('.', "-"))
+                })
+                .collect()
+        };
+        if present_dates.is_empty() { Vec::new() } else {
+            // Generate the last 14 expected dates (today-13 .. today, JST).
+            let now_secs: i64 = chrono_now().parse().unwrap_or(0);
+            let jst_now = now_secs + 9 * 3600;
+            let today_days = jst_now / 86_400;
+            let mut missing = Vec::new();
+            // Skip today (cron may not have fired yet) and yesterday boundary
+            // (random sleep window). Check days [today-13..=today-2].
+            for offset in 2..=13 {
+                let d = today_days - offset;
+                let (y, mo, da) = civil_from_days(d);
+                let date_str = format!("{:04}-{:02}-{:02}", y, mo, da);
+                if !present_dates.contains(&date_str) {
+                    missing.push(date_str);
+                }
+            }
+            missing
+        }
+    };
+
+    serde_json::json!({
+        "mugen_missing_drops": mugen_missing,
+        "muon_missing_dates":  muon_missing,
+        "note": "MUGEN drop_num が 1..max の中で抜けている整数 / MUON 直近 14 日で抜けている日付",
+    })
 }
 
 /// Weekly lottery draw — picks ~5% of pending entries as winners,
@@ -6277,13 +6350,21 @@ async fn main() {
          VALUES (?, ?, ?, ?)",
         params!["monthly_price_jpy", "980", chrono_now(), "default"],
     ).ok();
-    // 3-month prepaid pack (¥980 × 3). One-time charge that extends
-    // subscription_until by 90 days. Finite-duration option for users
-    // uncomfortable with recurring billing.
+    // 3-month prepaid pack (¥980 × 3 → 15% OFF = ¥2,500). One-time charge
+    // that extends subscription_until by 90 days. Finite-duration option for
+    // users uncomfortable with recurring billing.
     conn.execute(
         "INSERT OR IGNORE INTO cv_config (key, value, updated_at, reason)
          VALUES (?, ?, ?, ?)",
-        params!["pack_3mo_price_jpy", "2940", chrono_now(), "default"],
+        params!["pack_3mo_price_jpy", "2500", chrono_now(), "default"],
+    ).ok();
+    // Migrate prior default ¥2,940 → ¥2,500 (15% OFF re-pricing). Only
+    // touches rows we previously seeded as 'default'; operator-set values
+    // are left alone.
+    conn.execute(
+        "UPDATE cv_config SET value='2500', updated_at=?, reason='default-rev-2'
+         WHERE key='pack_3mo_price_jpy' AND value='2940' AND reason='default'",
+        params![chrono_now()],
     ).ok();
     // /you signal stream — emoji reactions + dwell time + email taps.
     // Drives the auto-tuning of compose_design so tomorrow's drop bends

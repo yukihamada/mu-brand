@@ -319,7 +319,7 @@ footer a:hover{opacity:1}
     <span style="font-size:12px;opacity:0.85">
       ① MU の T シャツを <a href="/mugen" style="color:#e6c449">1 着</a> 買う (¥6,800〜) → <strong>一生 ¥0</strong>。<br>
       ② サブスク <strong>¥980/月</strong> (いつでも解約)。<br>
-      ③ <strong>3 ヶ月パック ¥2,940</strong> (¥980 × 3、自動更新なし)。
+      ③ <strong>3 ヶ月パック ¥2,500</strong> — 定価 ¥2,940 から <em>15% OFF</em>、自動更新なし。
     </span><br>
     <span style="font-size:11px;opacity:0.65">— MU 1 着を 5 年使うと月割り ¥113。年プラン ¥11,760 の 10 分の 1。</span>
   </div>
@@ -469,7 +469,7 @@ footer a:hover{opacity:1}
         <!-- Paid-plan / portal switch — shows the right button for the user's current state. -->
         <div id="pv-paid-cta" style="display:none;margin:8px 0">
           <button id="paid-subscribe-btn" type="button" class="btn btn-secondary" style="font-size:11px;padding:9px 14px">¥980/月で続ける →</button>
-          <button id="paid-3mo-btn" type="button" class="btn btn-ghost" style="font-size:11px;padding:9px 14px;margin-left:6px">3 ヶ月パック ¥2,940</button>
+          <button id="paid-3mo-btn" type="button" class="btn btn-ghost" style="font-size:11px;padding:9px 14px;margin-left:6px">3 ヶ月パック ¥2,500 (-15%)</button>
           <button id="paid-portal-btn" type="button" class="btn btn-ghost" style="display:none;font-size:11px;padding:9px 14px;margin-left:6px">サブスクを管理</button>
           <span id="paid-msg" style="font-size:10px;opacity:0.65;margin-left:6px"></span>
         </div>
@@ -971,7 +971,7 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('paid-msg').textContent = 'エラー: ' + e.message;
     }
   });
-  // 3-month prepaid pack (¥2,940 one-time) — Stripe Checkout in payment mode.
+  // 3-month prepaid pack (¥2,500 one-time, 15% off ¥2,940 list) — Stripe Checkout payment mode.
   const pack3 = document.getElementById('paid-3mo-btn');
   if (pack3) pack3.addEventListener('click', async () => {
     if (!token) return;
@@ -985,7 +985,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const d = await r.json();
       if (d.url) window.location.href = d.url;
     } catch (e) {
-      pack3.disabled = false; pack3.textContent = '3 ヶ月パック ¥2,940';
+      pack3.disabled = false; pack3.textContent = '3 ヶ月パック ¥2,500 (-15%)';
       document.getElementById('paid-msg').textContent = 'エラー: ' + e.message;
     }
   });
