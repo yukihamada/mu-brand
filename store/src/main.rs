@@ -4834,6 +4834,221 @@ fn pair_replace(s: &str, marker: &str, open: &str, close: &str) -> String {
     out
 }
 
+// ── Thank-you outreach to buyers (Vision + 50% MUON coupon + notes) ───────
+#[derive(Deserialize)]
+struct AdminThankYouBody {
+    admin_token: String,
+    /// Optional override: dry_run=true returns the planned recipient list
+    /// without minting coupons or sending email. Default false.
+    #[serde(default)] dry_run: bool,
+}
+
+fn thank_you_coupon_code(email: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(format!("MUON-THANKS-2026-05-{}", email.to_lowercase()).as_bytes());
+    let d = h.finalize();
+    // Stripe coupon IDs accept A-Z0-9_- ; avoid ambiguous chars
+    let alphabet = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+    let mut out = String::from("MUON50-");
+    for i in 0..8 {
+        out.push(alphabet[(d[i] as usize) % alphabet.len()] as char);
+    }
+    out
+}
+
+fn thank_you_email_html(coupon_code: &str) -> String {
+    format!(r#"<div style="background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;padding:48px 40px;max-width:560px;margin:0 auto;border-radius:2px">
+  <div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:30px">MU</div>
+  <div style="font-size:11px;letter-spacing:0.32em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:14px">Thank you · From the founder</div>
+
+  <h1 style="font-size:22px;font-weight:300;line-height:1.55;margin-bottom:18px;letter-spacing:0.01em">買ってくれてありがとう。<br>あなたは MU が始まる前の 5 人のうちの 1 人です。</h1>
+
+  <p style="font-size:14px;line-height:1.95;opacity:0.85;margin-bottom:18px">
+    MU は AI が毎時間 T シャツをデザインする無人ブランドです。立ち上げ 4 日目で、<strong>あなたを含めた 5 名</strong>から ¥145,000 を受け取りました。これは僕の <em>cron に毛が生えただけ</em>のスクリプトが、本当に誰かのクローゼットまで届いたという、たった 1 つの証拠です。
+  </p>
+
+  <h2 style="font-size:13px;font-weight:500;color:#e6c449;letter-spacing:0.18em;text-transform:uppercase;margin:32px 0 12px">①  MU の 10 年計画を作りました</h2>
+  <p style="font-size:13px;line-height:1.9;opacity:0.78;margin-bottom:14px">
+    Amazon が 27 年で 154 万人を雇って到達した場所に、MU は 10 年で人間 0 人で行きたい。<br>
+    MUer / MU Owner / MA Council という階層と、2036 年までのロードマップを公開しました:
+  </p>
+  <a href="https://wearmu.com/vision" style="display:inline-block;background:#e6c449;color:#000;padding:14px 26px;font-size:11px;letter-spacing:0.32em;text-transform:uppercase;text-decoration:none;font-weight:700;border-radius:2px;margin-bottom:18px">Vision を読む →</a>
+
+  <h2 style="font-size:13px;font-weight:500;color:#e6c449;letter-spacing:0.18em;text-transform:uppercase;margin:32px 0 12px">② 感謝の MUON 50% OFF</h2>
+  <p style="font-size:13px;line-height:1.9;opacity:0.78;margin-bottom:10px">
+    MUON は「気温が枚数を決める」毎日 1 案のドロップ。今日は 21°C なので 21 着限定です。<br>
+    あなた専用のクーポンを発行しました:
+  </p>
+  <div style="background:#111;border:1px dashed rgba(230,196,73,0.45);padding:18px 22px;text-align:center;margin:14px 0 18px;border-radius:2px">
+    <div style="font-size:9px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.55;margin-bottom:6px">Coupon code</div>
+    <div style="font-family:'Menlo','SF Mono',monospace;font-size:22px;letter-spacing:0.08em;color:#e6c449;font-weight:600">{coupon_code}</div>
+    <div style="font-size:10px;opacity:0.55;margin-top:8px;letter-spacing:0.04em">Checkout で入力 · 60 日以内 · 1 回限り</div>
+  </div>
+  <a href="https://wearmu.com/muon" style="display:inline-block;background:transparent;color:#F5F5F0;border:1px solid rgba(255,255,255,0.25);padding:13px 24px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:500;border-radius:2px;margin-bottom:18px">MUON を見る →</a>
+
+  <h2 style="font-size:13px;font-weight:500;color:#e6c449;letter-spacing:0.18em;text-transform:uppercase;margin:32px 0 12px">③ 公開ノート (Notes)</h2>
+  <p style="font-size:13px;line-height:1.9;opacity:0.78;margin-bottom:14px">
+    売上 ¥0 から ¥145,000 になるまで、何が動いて、何が壊れたか、全部書いています。<br>
+    明日からは <em>AI が毎朝この Field log を自分で書きます</em>。
+  </p>
+  <ul style="font-size:13px;line-height:2.0;opacity:0.85;padding-left:18px;margin-bottom:18px">
+    <li><a href="https://wearmu.com/blog/elon-cron-with-fur.html" style="color:#e6c449">「cron に毛が生えてるだけ」と Elon に言われたので 1 日でやり切った件</a> (#002)</li>
+    <li><a href="https://wearmu.com/blog/field-log-001.html" style="color:#e6c449">Field log #001 — 動いたもの / 壊れたもの / 直したもの</a></li>
+    <li><a href="https://wearmu.com/blog/auto/auto-2026-05-11" style="color:#e6c449">2026-05-11 — AI 自動運営ノート (初稿)</a></li>
+    <li><a href="https://wearmu.com/blog/from-automation-to-autonomy.html" style="color:#e6c449">公開ノート #001 — 自動から自律へ</a></li>
+  </ul>
+
+  <p style="font-size:13px;line-height:1.95;opacity:0.85;margin:30px 0 8px">
+    返信はそのまま <a href="mailto:info@enablerdao.com" style="color:#e6c449">info@enablerdao.com</a> に届きます。または <a href="https://wearmu.com/you" style="color:#e6c449">/you</a> の「MU AI に直接送る」フォームでも (Gemini が即返答 + 私が今日中に読みます)。
+  </p>
+  <p style="font-size:13px;line-height:1.95;opacity:0.85">
+    本当に、ありがとう。
+  </p>
+  <p style="font-size:12px;opacity:0.6;margin-top:24px">
+    — 濱田優貴 / 株式会社イネブラ (Enabler Inc.)<br>
+    <span style="font-size:11px">MU · wearmu.com · GitHub に CC0/MIT で全公開</span>
+  </p>
+</div>"#, coupon_code = coupon_code)
+}
+
+async fn admin_thank_buyers(
+    State(db): State<Db>,
+    Json(body): Json<AdminThankYouBody>,
+) -> impl IntoResponse {
+    if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    if stripe_key.is_empty() || resend_key.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "stripe / resend env missing").into_response();
+    }
+
+    // Distinct buyers (cs_live_* only) without prior thank-you.
+    let buyers: Vec<String> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT DISTINCT LOWER(email) FROM mu_purchases
+             WHERE session_id LIKE 'cs_live_%'
+               AND email IS NOT NULL AND email != ''
+               AND (thank_you_sent_at IS NULL OR thank_you_sent_at = '')"
+        ) {
+            Ok(s) => s,
+            Err(_) => return Json(serde_json::json!({"sent": 0, "errors": ["db prepare failed"]})).into_response(),
+        };
+        stmt.query_map([], |r| r.get::<_, String>(0))
+            .map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>())
+            .unwrap_or_default()
+    };
+
+    if body.dry_run {
+        return Json(serde_json::json!({"dry_run": true, "would_send_to": buyers})).into_response();
+    }
+
+    // Expiry: +60 days as unix seconds
+    let redeem_by: i64 = (chrono_now().parse::<i64>().unwrap_or(0)) + 60 * 86_400;
+
+    let mut sent = 0u32;
+    let mut errors: Vec<String> = Vec::new();
+
+    for email in buyers.iter() {
+        let code = thank_you_coupon_code(email);
+
+        // 1) Mint coupon. Idempotent on coupon id (Stripe returns existing).
+        let coupon_form: Vec<(&str, String)> = vec![
+            ("id", code.clone()),
+            ("percent_off", "50".into()),
+            ("duration", "once".into()),
+            ("max_redemptions", "1".into()),
+            ("currency", "jpy".into()),
+            ("name", format!("MU thanks · MUON 50% off")),
+            ("redeem_by", redeem_by.to_string()),
+            ("metadata[intended_brand]", "muon".into()),
+            ("metadata[buyer_email]", email.clone()),
+        ];
+        let cr = reqwest::Client::new()
+            .post("https://api.stripe.com/v1/coupons")
+            .basic_auth(&stripe_key, None::<&str>)
+            .form(&coupon_form)
+            .send().await;
+        match cr {
+            Ok(r) if r.status().is_success() => {}
+            Ok(r) => {
+                let s = r.status();
+                let t = r.text().await.unwrap_or_default();
+                // resource_already_exists → continue (idempotent)
+                if !t.contains("resource_already_exists") {
+                    errors.push(format!("{email}: coupon {s}: {}", t.chars().take(160).collect::<String>()));
+                    continue;
+                }
+            }
+            Err(e) => {
+                errors.push(format!("{email}: coupon network: {e}"));
+                continue;
+            }
+        }
+
+        // 2) Create a promotion_code so users can enter the code at checkout.
+        // (Best-effort; failure here doesn't abort — coupon id itself is usable.)
+        let promo_form: Vec<(&str, String)> = vec![
+            ("coupon", code.clone()),
+            ("code", code.clone()),
+            ("max_redemptions", "1".into()),
+            ("expires_at", redeem_by.to_string()),
+        ];
+        let _ = reqwest::Client::new()
+            .post("https://api.stripe.com/v1/promotion_codes")
+            .basic_auth(&stripe_key, None::<&str>)
+            .form(&promo_form)
+            .send().await;
+
+        // 3) Send Resend email.
+        let html = thank_you_email_html(&code);
+        let subject = "MU から、買ってくれたあなたへ — 50% MUON クーポンと Vision のお知らせ";
+        let send_res = reqwest::Client::new()
+            .post("https://api.resend.com/emails")
+            .bearer_auth(&resend_key)
+            .json(&serde_json::json!({
+                "from": "MU <noreply@wearmu.com>",
+                "to": [email],
+                "subject": subject,
+                "html": html,
+                "reply_to": "info@enablerdao.com",
+            }))
+            .send().await;
+        match send_res {
+            Ok(r) if r.status().is_success() => {}
+            Ok(r) => {
+                let s = r.status();
+                let t = r.text().await.unwrap_or_default();
+                errors.push(format!("{email}: resend {s}: {}", t.chars().take(160).collect::<String>()));
+                continue;
+            }
+            Err(e) => {
+                errors.push(format!("{email}: resend network: {e}"));
+                continue;
+            }
+        }
+
+        // 4) Mark every purchase row for this email as sent (idempotency seed).
+        {
+            let conn = db.lock().unwrap();
+            let _ = conn.execute(
+                "UPDATE mu_purchases SET thank_you_sent_at=?, thank_you_coupon=?
+                 WHERE LOWER(email)=? AND (thank_you_sent_at IS NULL OR thank_you_sent_at='')",
+                params![chrono_now(), code, email],
+            );
+        }
+        sent += 1;
+    }
+
+    Json(serde_json::json!({
+        "ok": true,
+        "buyers_considered": buyers.len(),
+        "sent": sent,
+        "errors": errors,
+    })).into_response()
+}
+
 // ── AI Feedback Loop (お客様 → AI → MA Council 通知) ───────────────────────
 #[derive(Deserialize)]
 struct CustomerFeedbackBody {
@@ -7057,6 +7272,9 @@ async fn main() {
         // Lifetime referral credit (¥). Spendable via auto-mint coupon.
         "ALTER TABLE you_users ADD COLUMN referral_credit_jpy INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE you_users ADD COLUMN referral_count INTEGER NOT NULL DEFAULT 0",
+        // Thank-you outreach to real buyers (cs_live_*). Idempotent.
+        "ALTER TABLE mu_purchases ADD COLUMN thank_you_sent_at TEXT",
+        "ALTER TABLE mu_purchases ADD COLUMN thank_you_coupon TEXT",
     ] {
         conn.execute(col, []).ok();
     }
@@ -7402,6 +7620,7 @@ async fn main() {
         .route("/blog/auto/:slug", get(show_auto_blog))
         .route("/api/you/referral", post(you_referral_status))
         .route("/api/feedback", post(submit_feedback))
+        .route("/api/admin/thank_buyers", post(admin_thank_buyers))
         .route("/api/cv/config", get(cv_public_config))
         .route("/api/you/signal/:design_id", post(you_signal))
         .route("/api/you/preferences", get(you_preferences))
