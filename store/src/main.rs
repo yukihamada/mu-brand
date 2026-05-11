@@ -601,6 +601,109 @@ async fn weather_handler() -> impl IntoResponse {
     Json(result)
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// MA Council — HMAC token + auto-enrollment helpers
+// ─────────────────────────────────────────────────────────────────────────
+/// HMAC-SHA256 of the lowercased email + COUNCIL_TOKEN_SECRET env var,
+/// hex-encoded. Stable for a given (email, secret) pair so we don't need
+/// to persist the token — the email itself is the secret material.
+/// Returns None if COUNCIL_TOKEN_SECRET is unset (fail-closed).
+fn council_token_for(email: &str) -> Option<String> {
+    let secret = env::var("COUNCIL_TOKEN_SECRET").ok().filter(|s| !s.is_empty())?;
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).ok()?;
+    mac.update(email.trim().to_lowercase().as_bytes());
+    Some(hex::encode(mac.finalize().into_bytes()))
+}
+
+/// Reverse-lookup: given a token, find the matching member by recomputing
+/// HMAC for every (small) member and comparing in constant time. With <1000
+/// members this scans the whole table in <1ms. Returns (id, email, tier).
+fn council_member_by_token(
+    conn: &Connection, token: &str,
+) -> Option<(i64, String, String)> {
+    let mut stmt = conn.prepare(
+        "SELECT id, email, tier FROM ma_council_members WHERE unsubscribed_at IS NULL"
+    ).ok()?;
+    let rows: Vec<(i64, String, String)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .ok()?.filter_map(|r| r.ok()).collect();
+    let token_bytes = match hex::decode(token) {
+        Ok(b) => b,
+        Err(_) => return None,
+    };
+    let secret = env::var("COUNCIL_TOKEN_SECRET").ok().filter(|s| !s.is_empty())?;
+    for (id, email, tier) in rows {
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).ok()?;
+        mac.update(email.trim().to_lowercase().as_bytes());
+        if mac.verify_slice(&token_bytes).is_ok() {
+            return Some((id, email, tier));
+        }
+    }
+    None
+}
+
+/// Idempotently insert a Council member at the given tier. If the member
+/// already exists, only upgrades trial→full (never downgrades). Returns
+/// the (id, tier) on success.
+fn council_enroll(
+    conn: &Connection, email: &str, tier: &str, mu_piece_id: Option<i64>,
+) -> Option<(i64, String)> {
+    let email_lc = email.trim().to_lowercase();
+    if email_lc.is_empty() || !email_lc.contains('@') { return None; }
+    let now = chrono_now();
+    let _ = conn.execute(
+        "INSERT OR IGNORE INTO ma_council_members
+            (email, tier, joined_at, mu_piece_id)
+         VALUES (?,?,?,?)",
+        params![email_lc, tier, now, mu_piece_id],
+    );
+    // Promote trial → full if requested. Never demote full → trial.
+    if tier == "full" {
+        let _ = conn.execute(
+            "UPDATE ma_council_members
+             SET tier='full',
+                 mu_piece_id=COALESCE(?, mu_piece_id)
+             WHERE email=? AND tier='trial'",
+            params![mu_piece_id, email_lc],
+        );
+    }
+    conn.query_row(
+        "SELECT id, tier FROM ma_council_members WHERE email=?",
+        params![email_lc],
+        |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+    ).ok()
+}
+
+#[cfg(test)]
+mod council_token_tests {
+    use super::*;
+    use std::sync::Mutex;
+    // Serialize tests that mutate the shared env var COUNCIL_TOKEN_SECRET.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn token_roundtrip_via_env_secret() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("COUNCIL_TOKEN_SECRET", "test-secret-please-rotate");
+        let t1 = council_token_for("Alice@Example.com").expect("token");
+        let t2 = council_token_for("alice@example.com").expect("token2");
+        assert_eq!(t1, t2, "token should be case-insensitive on email");
+        // 32 bytes hex = 64 chars
+        assert_eq!(t1.len(), 64);
+        // Distinct emails produce distinct tokens
+        let other = council_token_for("bob@example.com").expect("other");
+        assert_ne!(t1, other);
+        std::env::remove_var("COUNCIL_TOKEN_SECRET");
+    }
+
+    #[test]
+    fn token_returns_none_without_secret() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("COUNCIL_TOKEN_SECRET");
+        assert!(council_token_for("anyone@example.com").is_none());
+    }
+}
+
 async fn place_bid(
     State(db): State<Db>,
     Json(body): Json<BidBody>,
@@ -665,11 +768,18 @@ async fn place_bid(
         "UPDATE products SET current_bid=?, bid_count=bid_count+1 WHERE id=?",
         params![body.amount, body.product_id]
     ).unwrap();
+    // MA Council trial-tier auto-enrollment. Anyone who places a bid joins
+    // the council in trial tier; full membership requires a winning settlement.
+    let _ = council_enroll(&conn, &body.email, "trial", None);
+    let council_token = council_token_for(&body.email);
     let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
     Json(serde_json::json!({
         "ok": true,
         "wallet_token": wallet_token,
         "wallet_url": format!("{}/wallet/{}", base_url, wallet_token),
+        "council_token": council_token,
+        "council_url": council_token.as_ref()
+            .map(|t| format!("{}/council?token={}", base_url, t)),
     })).into_response()
 }
 
@@ -1562,6 +1672,15 @@ async fn settle_auction(
         }
     };
 
+    // MA Council full-tier promotion. Done BEFORE the Stripe call so that
+    // even if payment-link creation fails, the winner is still recorded as
+    // a council full member. The trial → full upgrade is idempotent.
+    let council_token_winner = {
+        let conn = db.lock().unwrap();
+        let _ = council_enroll(&conn, &email, "full", Some(product_id));
+        council_token_for(&email)
+    };
+
     // Create Stripe payment link
     let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
     let base_url = env::var("BASE_URL").unwrap_or_else(|_| "http://localhost:3000".into());
@@ -1620,6 +1739,18 @@ async fn settle_auction(
         <a href="{wallet_url}" style="display:inline-block;color:#F5F5F0;text-decoration:underline;font-size:11px;letter-spacing:0.15em">ウォレットを登録 →</a>
         </div>"#, wallet_url = wallet_url)
     };
+    // MA Council membership block — only shown when COUNCIL_TOKEN_SECRET is
+    // configured (otherwise we can't generate a stable token).
+    let council_block = match council_token_winner.as_ref() {
+        Some(t) => format!(r#"<div style="background:#1C1C1C;padding:20px;margin-bottom:24px;border-left:2px solid #e6c449">
+        <div style="font-size:9px;letter-spacing:0.2em;text-transform:uppercase;color:#e6c449;opacity:0.9;margin-bottom:8px">MA COUNCIL — FULL MEMBER</div>
+        <div style="font-size:11px;line-height:1.7;opacity:0.85;margin-bottom:12px">
+        あなたは MA Council のフルメンバーになりました。週次の council brief とブランドの議決権が付与されます。
+        </div>
+        <a href="{base}/council?token={tok}" style="display:inline-block;color:#e6c449;text-decoration:underline;font-size:11px;letter-spacing:0.15em">Council を開く →</a>
+        </div>"#, base = base_url, tok = t),
+        None => String::new(),
+    };
     let html = format!(r#"
 <div style="background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;padding:48px;max-width:560px;margin:0 auto">
   <div style="font-size:22px;font-weight:700;letter-spacing:0.4em;margin-bottom:32px">MU</div>
@@ -1638,6 +1769,7 @@ async fn settle_auction(
   <a href="{payment_url}" style="display:inline-block;background:#F5F5F0;color:#0A0A0A;padding:16px 32px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:600">決済する →</a>
   <div style="margin-top:32px"></div>
   {wallet_block}
+  {council_block}
   <div style="margin-top:48px;border-top:1px solid #1C1C1C;padding-top:20px;font-size:9px;opacity:0.5;letter-spacing:0.1em">
     MU — wearmu.com | mail@yukihamada.jp
   </div>
@@ -1649,6 +1781,7 @@ async fn settle_auction(
         product_name = product_name,
         payment_url = payment_url,
         wallet_block = wallet_block,
+        council_block = council_block,
     );
 
     client.post("https://api.resend.com/emails")
@@ -1668,6 +1801,9 @@ async fn settle_auction(
         "payment_url": payment_url,
         "wallet_url": wallet_url,
         "wallet_registered": current_wallet.as_deref().map(|s| !s.is_empty()).unwrap_or(false),
+        "council_token": council_token_winner,
+        "council_url": council_token_winner.as_ref()
+            .map(|t| format!("{}/council?token={}", base_url, t)),
     })).into_response()
 }
 
@@ -6704,6 +6840,599 @@ async fn list_council_briefs(State(db): State<Db>) -> impl IntoResponse {
     Json(serde_json::json!({"briefs": briefs_with_tally})).into_response()
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// MA Council v2 — HMAC-token flow (the 2026.07 roadmap feature)
+// ─────────────────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct CouncilTokenQuery { token: Option<String> }
+
+/// GET /api/council/me?token=<member_token>
+/// Returns the member's tier + join date + vote history.
+async fn council_me(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<CouncilTokenQuery>,
+) -> impl IntoResponse {
+    let token = q.token.unwrap_or_default();
+    if token.is_empty() {
+        return (StatusCode::BAD_REQUEST, "missing token").into_response();
+    }
+    let conn = db.lock().unwrap();
+    let member = match council_member_by_token(&conn, &token) {
+        Some(m) => m,
+        None => return (StatusCode::UNAUTHORIZED, "invalid token").into_response(),
+    };
+    let (mid, email, tier) = member;
+    let joined_at: String = conn.query_row(
+        "SELECT joined_at FROM ma_council_members WHERE id=?",
+        params![mid], |r| r.get(0),
+    ).unwrap_or_default();
+    let mu_piece_id: Option<i64> = conn.query_row(
+        "SELECT mu_piece_id FROM ma_council_members WHERE id=?",
+        params![mid], |r| r.get(0),
+    ).unwrap_or(None);
+    let votes: Vec<serde_json::Value> = {
+        let mut stmt = match conn.prepare(
+            "SELECT brief_slug, agenda_id, option_index, choice, created_at
+             FROM ma_council_votes
+             WHERE voter_email=? ORDER BY id DESC LIMIT 50"
+        ) { Ok(s) => s, Err(_) => return Json(serde_json::json!({
+            "tier": tier, "joined_at": joined_at, "mu_piece_id": mu_piece_id,
+            "email": mask_email(&email), "votes": []
+        })).into_response() };
+        stmt.query_map(params![email], |r| Ok(serde_json::json!({
+            "brief_slug":   r.get::<_, String>(0)?,
+            "agenda_id":    r.get::<_, String>(1)?,
+            "option_index": r.get::<_, Option<i64>>(2)?,
+            "choice":       r.get::<_, Option<String>>(3)?,
+            "voted_at":     r.get::<_, String>(4)?,
+        }))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    Json(serde_json::json!({
+        "tier": tier,
+        "joined_at": joined_at,
+        "mu_piece_id": mu_piece_id,
+        "email": mask_email(&email),
+        "votes": votes,
+    })).into_response()
+}
+
+/// GET /api/council/agenda?token=<member_token>
+/// Returns the latest published brief, its agenda options, and (if the
+/// member has voted on any agenda already) which option they chose.
+async fn council_agenda(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<CouncilTokenQuery>,
+) -> impl IntoResponse {
+    let token = q.token.unwrap_or_default();
+    if token.is_empty() {
+        return (StatusCode::BAD_REQUEST, "missing token").into_response();
+    }
+    let conn = db.lock().unwrap();
+    let Some((mid, email, tier)) = council_member_by_token(&conn, &token) else {
+        return (StatusCode::UNAUTHORIZED, "invalid token").into_response();
+    };
+    let brief = conn.query_row(
+        "SELECT id, slug, week_start, title, body_md, agendas_json, created_at
+         FROM ma_council_briefs WHERE published=1 ORDER BY id DESC LIMIT 1",
+        [], |r| Ok((
+            r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+            r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, String>(5)?,
+            r.get::<_, String>(6)?,
+        )),
+    );
+    let Ok((brief_id, slug, week_start, title, body_md, agendas_str, created_at)) = brief else {
+        return Json(serde_json::json!({
+            "ok": true, "brief": null,
+            "member": {"tier": tier, "id": mid, "email": mask_email(&email)},
+        })).into_response();
+    };
+    let agendas: serde_json::Value =
+        serde_json::from_str(&agendas_str).unwrap_or(serde_json::json!([]));
+    let my_votes: Vec<(String, Option<i64>)> = {
+        let mut stmt = match conn.prepare(
+            "SELECT agenda_id, option_index FROM ma_council_votes
+             WHERE brief_slug=? AND voter_email=?"
+        ) { Ok(s) => s, Err(_) => return Json(serde_json::json!({
+            "ok": true,
+            "brief": {"id": brief_id, "slug": slug, "week_start": week_start,
+                      "title": title, "body_md": body_md, "agendas": agendas,
+                      "created_at": created_at},
+            "member": {"tier": tier, "id": mid, "email": mask_email(&email)},
+            "my_votes": {},
+        })).into_response() };
+        stmt.query_map(params![slug, email], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, Option<i64>>(1)?
+        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    let mut votes_map = serde_json::Map::new();
+    for (ag, opt) in my_votes {
+        votes_map.insert(ag, serde_json::json!(opt));
+    }
+    Json(serde_json::json!({
+        "ok": true,
+        "brief": {
+            "id": brief_id, "slug": slug, "week_start": week_start,
+            "title": title, "body_md": body_md, "agendas": agendas,
+            "created_at": created_at,
+        },
+        "member": {"tier": tier, "id": mid, "email": mask_email(&email)},
+        "my_votes": serde_json::Value::Object(votes_map),
+    })).into_response()
+}
+
+#[derive(Deserialize)]
+struct CouncilTokenVoteBody {
+    token: String,
+    agenda_id: String,
+    option_index: i64,
+    /// Optional explicit brief_slug — defaults to the latest published brief.
+    brief_slug: Option<String>,
+}
+
+/// POST /api/council/vote_token  body {token, agenda_id, option_index}
+/// Records a vote, idempotent on (brief, member, agenda) via the UNIQUE
+/// constraint on (brief_slug, agenda_id, voter_email).
+async fn council_vote_token(
+    State(db): State<Db>,
+    Json(body): Json<CouncilTokenVoteBody>,
+) -> impl IntoResponse {
+    let conn = db.lock().unwrap();
+    let Some((_mid, email, _tier)) = council_member_by_token(&conn, &body.token) else {
+        return (StatusCode::UNAUTHORIZED, "invalid token").into_response();
+    };
+    // Default to latest published brief if no slug provided
+    let slug = match body.brief_slug.clone() {
+        Some(s) if !s.is_empty() => s,
+        _ => match conn.query_row(
+            "SELECT slug FROM ma_council_briefs WHERE published=1 ORDER BY id DESC LIMIT 1",
+            [], |r| r.get::<_, String>(0),
+        ) {
+            Ok(s) => s,
+            Err(_) => return (StatusCode::NOT_FOUND, "no published brief").into_response(),
+        },
+    };
+    let agendas_str: Option<String> = conn.query_row(
+        "SELECT agendas_json FROM ma_council_briefs WHERE slug=? AND published=1",
+        params![slug], |r| r.get(0),
+    ).ok();
+    let Some(agendas_str) = agendas_str else {
+        return (StatusCode::NOT_FOUND, "brief not found").into_response();
+    };
+    let agendas: serde_json::Value = serde_json::from_str(&agendas_str).unwrap_or(serde_json::json!([]));
+    let agenda_obj = agendas.as_array().and_then(|arr|
+        arr.iter().find(|a| a["id"].as_str() == Some(&body.agenda_id))
+    );
+    let Some(agenda_obj) = agenda_obj else {
+        return (StatusCode::BAD_REQUEST, "agenda_id not in brief").into_response();
+    };
+    let n_options = agenda_obj["options"].as_array().map(|a| a.len() as i64).unwrap_or(0);
+    if body.option_index < 0 || body.option_index >= n_options {
+        return (StatusCode::BAD_REQUEST,
+            format!("option_index out of range (0..{})", n_options)).into_response();
+    }
+    let choice_text = agenda_obj["options"][body.option_index as usize]
+        .as_str().unwrap_or("").to_string();
+    let _ = conn.execute(
+        "INSERT INTO ma_council_votes
+            (brief_slug, agenda_id, voter_email, choice, option_index, created_at)
+         VALUES (?,?,?,?,?,?)
+         ON CONFLICT(brief_slug, agenda_id, voter_email) DO UPDATE SET
+            choice=excluded.choice, option_index=excluded.option_index,
+            created_at=excluded.created_at",
+        params![slug, body.agenda_id, email, choice_text,
+                body.option_index, chrono_now()],
+    );
+    Json(serde_json::json!({"ok": true, "brief_slug": slug,
+        "agenda_id": body.agenda_id, "option_index": body.option_index})).into_response()
+}
+
+/// GET /api/council/results/:brief_id
+/// Public — returns the anonymous tally per agenda for a brief. brief_id
+/// may be either the numeric id or the slug. Always returns a 200 with an
+/// `agendas` array (empty if the brief doesn't exist) so the UI can render
+/// a "no votes yet" state uniformly.
+async fn council_results(
+    State(db): State<Db>,
+    Path(brief_id): Path<String>,
+) -> impl IntoResponse {
+    let conn = db.lock().unwrap();
+    let brief = if let Ok(id) = brief_id.parse::<i64>() {
+        conn.query_row(
+            "SELECT slug, title, week_start, agendas_json FROM ma_council_briefs WHERE id=?",
+            params![id], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?, r.get::<_, String>(3)?,
+            )),
+        ).ok()
+    } else {
+        conn.query_row(
+            "SELECT slug, title, week_start, agendas_json FROM ma_council_briefs WHERE slug=?",
+            params![brief_id], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?, r.get::<_, String>(3)?,
+            )),
+        ).ok()
+    };
+    let Some((slug, title, week_start, agendas_str)) = brief else {
+        // Match the user spec: empty tally for non-existent briefs (200, not 404)
+        return Json(serde_json::json!({
+            "ok": true, "brief": null, "agendas": [],
+        })).into_response();
+    };
+    let agendas: serde_json::Value =
+        serde_json::from_str(&agendas_str).unwrap_or(serde_json::json!([]));
+
+    // Build per-agenda tally keyed by option_index (preferred) with fallback
+    // to choice-text aggregation for legacy rows missing option_index.
+    let tallies: Vec<(String, Option<i64>, String, i64)> = {
+        let mut stmt = match conn.prepare(
+            "SELECT agenda_id, option_index, choice, COUNT(*)
+             FROM ma_council_votes
+             WHERE brief_slug=?
+             GROUP BY agenda_id, option_index, choice"
+        ) { Ok(s) => s, Err(_) => return Json(serde_json::json!({
+            "ok": true, "brief": null, "agendas": agendas,
+        })).into_response() };
+        stmt.query_map(params![slug], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, Option<i64>>(1)?,
+            r.get::<_, String>(2)?, r.get::<_, i64>(3)?,
+        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    let mut agenda_results = Vec::new();
+    if let Some(arr) = agendas.as_array() {
+        for ag in arr {
+            let aid = ag["id"].as_str().unwrap_or("").to_string();
+            let opts = ag["options"].as_array().cloned().unwrap_or_default();
+            let mut counts: Vec<i64> = vec![0; opts.len()];
+            let mut total: i64 = 0;
+            for (tid, opt_idx, choice, n) in &tallies {
+                if tid != &aid { continue; }
+                total += n;
+                if let Some(idx) = opt_idx {
+                    if *idx >= 0 && (*idx as usize) < counts.len() {
+                        counts[*idx as usize] += n;
+                        continue;
+                    }
+                }
+                // legacy free-text fallback: match by string equality
+                if let Some(pos) = opts.iter().position(
+                    |o| o.as_str() == Some(choice.as_str())
+                ) { counts[pos] += n; }
+            }
+            agenda_results.push(serde_json::json!({
+                "id":      aid,
+                "q":       ag["q"].clone(),
+                "options": opts,
+                "counts":  counts,
+                "total":   total,
+            }));
+        }
+    }
+    Json(serde_json::json!({
+        "ok": true,
+        "brief": {"slug": slug, "title": title, "week_start": week_start},
+        "agendas": agenda_results,
+    })).into_response()
+}
+
+/// Lightweight email masker for displaying member identity in council UI
+/// without leaking the full address. "alice@example.com" → "a***e@example.com".
+fn mask_email(s: &str) -> String {
+    let (local, domain) = match s.split_once('@') {
+        Some(p) => p, None => return "***".into(),
+    };
+    let masked_local = match local.len() {
+        0 => "".to_string(),
+        1 => local.to_string(),
+        2 => format!("{}*", &local[..1]),
+        n => format!("{}***{}", &local[..1], &local[n-1..]),
+    };
+    format!("{}@{}", masked_local, domain)
+}
+
+async fn council_page() -> Html<&'static str> {
+    Html(include_str!("../static/council.html"))
+}
+
+/// Weekly Council Brief generation cron. Runs every Sunday 18:00 JST.
+/// Idempotent: skips if a brief for the current ISO week already exists.
+/// Falls back to a deterministic template if Gemini is unavailable.
+async fn run_council_weekly_cron(db: Db) {
+    let week_label = iso_week_label_jst();
+    let week_start = iso_week_start_jst();
+    let slug = format!("council-{}", week_start);
+    tracing::info!("[cron] council-weekly: starting week={} slug={}", week_label, slug);
+
+    // Idempotency check
+    {
+        let conn = db.lock().unwrap();
+        let exists: bool = conn.query_row(
+            "SELECT 1 FROM ma_council_briefs WHERE slug=?",
+            params![slug], |r| r.get::<_, i64>(0),
+        ).is_ok();
+        if exists {
+            tracing::info!("[cron] council-weekly: brief {} already exists — skipping", slug);
+            return;
+        }
+    }
+
+    // Pull recent feedback for Gemini context
+    let inputs: Vec<(String, String, i64)> = {
+        let conn = db.lock().unwrap();
+        let cutoff: i64 = chrono_now().parse::<i64>().unwrap_or(0) - 30 * 86_400;
+        let mut stmt = match conn.prepare(
+            "SELECT message, COALESCE(email,'anon'), is_ma_council
+             FROM customer_feedback
+             WHERE CAST(created_at AS INTEGER) >= ?
+             ORDER BY is_ma_council DESC, id DESC LIMIT 40"
+        ) {
+            Ok(s) => s, Err(_) => { tracing::error!("[cron] council: feedback prepare failed"); return; }
+        };
+        stmt.query_map(params![cutoff], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?
+        ))).map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>()).unwrap_or_default()
+    };
+
+    let (title, body_md, agendas, model_used) = match generate_council_brief_via_gemini(
+        &week_label, &inputs).await {
+        Some(triple) => (triple.0, triple.1, triple.2, "gemini-2.5-flash".to_string()),
+        None => {
+            tracing::warn!("[cron] council: Gemini unavailable — using static fallback");
+            let (t, b, a) = static_council_brief_fallback(&week_label);
+            (t, b, a, "static-fallback".to_string())
+        }
+    };
+
+    // Insert the brief row
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO ma_council_briefs
+                (slug, week_start, title, body_md, agendas_json, model, published, created_at)
+             VALUES (?,?,?,?,?,?,1,?)",
+            params![slug, week_start, title, body_md, agendas.to_string(),
+                    model_used, chrono_now()],
+        );
+    }
+
+    // Send emails to all active members via Resend
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    if resend_key.is_empty() {
+        tracing::warn!("[cron] council: RESEND_API_KEY missing — skipping email phase");
+        return;
+    }
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    let recipients: Vec<(String, String)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT email, tier FROM ma_council_members
+             WHERE unsubscribed_at IS NULL ORDER BY id ASC"
+        ) {
+            Ok(s) => s, Err(_) => { tracing::error!("[cron] council: members prepare failed"); return; }
+        };
+        stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build().unwrap_or_default();
+
+    let mut sent = 0;
+    let mut failed = 0;
+    for (email, tier) in &recipients {
+        let token = match council_token_for(email) {
+            Some(t) => t,
+            None => {
+                tracing::warn!("[cron] council: COUNCIL_TOKEN_SECRET missing — aborting email phase");
+                return;
+            }
+        };
+        let html = council_brief_email_html(
+            &week_label, &title, &body_md, &agendas, &base_url, &token, tier);
+        let resp = client.post("https://api.resend.com/emails")
+            .bearer_auth(&resend_key)
+            .json(&serde_json::json!({
+                "from": "MU Council <noreply@wearmu.com>",
+                "to": [email],
+                "subject": format!("🎫 MA Council Brief — {}", week_label),
+                "html": html,
+            }))
+            .send().await;
+        match resp {
+            Ok(r) if r.status().is_success() => { sent += 1; }
+            Ok(r) => {
+                let s = r.status();
+                let t = r.text().await.unwrap_or_default();
+                tracing::warn!("[cron] council FAIL → {}: {} {}", email, s,
+                    &t[..t.len().min(200)]);
+                failed += 1;
+            }
+            Err(e) => {
+                tracing::warn!("[cron] council NET FAIL → {}: {}", email, e);
+                failed += 1;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    }
+    // Mark sent_at on the brief
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE ma_council_briefs SET sent_at=? WHERE slug=?",
+            params![chrono_now(), slug],
+        );
+    }
+    tracing::info!("[cron] council-weekly: done week={} sent={} failed={} recipients={}",
+        week_label, sent, failed, recipients.len());
+}
+
+/// "YYYY.WNN" ISO-week label (e.g. "2026.W19"). Computed from the JST
+/// Monday-start week. Note: this is a near-ISO label — for the literal
+/// ISO 8601 week numbering edge cases we'd need a real chrono dep, but
+/// the simple variant is adequate for human-readable labels.
+fn iso_week_label_jst() -> String {
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let jst = now_s + 9 * 3600;
+    let day = jst / 86_400;
+    let dow_mon = (day + 3).rem_euclid(7);
+    let monday_days = day - dow_mon;
+    let (y, _m, _d) = civil_from_days(monday_days);
+    // Approximate ISO week number: days since Jan 1 of year / 7 + 1
+    let (y0_days, _) = (days_from_civil(y, 1, 1), 0);
+    let week_num = ((monday_days - y0_days) / 7) + 1;
+    format!("{:04}.W{:02}", y, week_num)
+}
+
+/// Inverse of civil_from_days. Days since 1970-01-01.
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let m_idx = if m > 2 { m - 3 } else { m + 9 };
+    let doy = (153 * m_idx + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146097 + doe - 719468
+}
+
+/// Static fallback when Gemini is unavailable. Generates a 2-agenda brief
+/// covering the 2026.08 MUGEN price-range vote (the first scheduled
+/// council vote per the roadmap) + a new-category direction question.
+fn static_council_brief_fallback(week_label: &str)
+    -> (String, String, serde_json::Value)
+{
+    let title = format!("MA Council Brief — {}", week_label);
+    let body_md = "## 1. 今週のテーマ\n\
+        Council 創設週 — 最初の議題は 2026.08 の MUGEN 価格レンジです。\n\n\
+        ## 2. お客様の声 (要約)\n\
+        - 「もう少し高くてもいい、希少性が欲しい」\n\
+        - 「¥4,000 だと安すぎて逆に怪しく見える」\n\
+        - 「新カテゴリは sweat が欲しい」\n\n\
+        ## 3. 議題\n\
+        2 件の議題に投票してください。投票は 1 council = 1 vote。集計は public。\n".to_string();
+    let agendas = serde_json::json!([
+        {
+            "id": "a1",
+            "q": "2026.08 の MUGEN 価格レンジを変更すべきか？",
+            "options": [
+                "¥4,000–6,000 (現行維持)",
+                "¥5,000–8,000",
+                "¥6,000–10,000"
+            ]
+        },
+        {
+            "id": "a2",
+            "q": "新カテゴリを 2026.Q3 に投入するか？",
+            "options": [
+                "sweat 優先",
+                "longsleeve 優先",
+                "T シャツ集中 (見送り)"
+            ]
+        }
+    ]);
+    (title, body_md, agendas)
+}
+
+/// Calls Gemini to generate (title, body_md, agendas_json). Returns None
+/// on any error so the caller can fall back to the static template.
+async fn generate_council_brief_via_gemini(
+    week_label: &str, inputs: &[(String, String, i64)],
+) -> Option<(String, String, serde_json::Value)> {
+    let key = env::var("GEMINI_API_KEY").ok().filter(|k| !k.is_empty())?;
+    let context: String = inputs.iter().enumerate().map(|(i, (m, e, council))| {
+        let tag = if *council == 1 { "[Council] " } else { "" };
+        format!("{}. {}{}: {}", i + 1, tag, e, m.chars().take(280).collect::<String>())
+    }).collect::<Vec<_>>().join("\n");
+    let prompt = format!("あなたは MU ブランドの議題集計 AI です。週次 MA Council Brief を以下のフォーマットで生成してください。\n\n週ラベル: {week_label}\n\n過去 30 日のお客様フィードバック (上位 40 件、Council 優先):\n{context}\n\n出力フォーマット (JSON のみ、コードフェンス不要):\n{{\n  \"title\": \"MA Council Brief — {week_label} (タイトルは 28 字以内)\",\n  \"body_md\": \"## 1. 今週のテーマ\\n## 2. お客様の声 (要約)\\n## 3. 議題\",\n  \"agendas\": [\n    {{\"id\": \"a1\", \"q\": \"次月の MUGEN 価格レンジを変更すべきか？\", \"options\": [\"¥4,000–6,000 (現行)\", \"¥5,000–8,000\", \"¥6,000–10,000\"]}},\n    {{\"id\": \"a2\", \"q\": \"新カテゴリ (sweat / longsleeve) を投入するか？\", \"options\": [\"sweat 優先\", \"longsleeve 優先\", \"T シャツ集中\"]}}\n  ]\n}}\n\nルール:\n- 議題は 2〜4 件\n- 各議題の options は 2〜4 個\n- お客様の生の声を 3 件以上 body_md に引用 (短く)\n- 捏造禁止 — フィードバックに無い議題は出さない\n- 末尾に「— 集計: Gemini 2.5 / 投票: MA Council メンバー」");
+    let req_body = serde_json::json!({"contents": [{"parts": [{"text": prompt}]}]});
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
+        key);
+    let resp = reqwest::Client::new()
+        .post(&url).json(&req_body)
+        .timeout(std::time::Duration::from_secs(45))
+        .send().await.ok()?;
+    if !resp.status().is_success() { return None; }
+    let j: serde_json::Value = resp.json().await.ok()?;
+    let text = j["candidates"][0]["content"]["parts"][0]["text"]
+        .as_str()?.trim()
+        .trim_start_matches("```json").trim_start_matches("```")
+        .trim_end_matches("```").trim().to_string();
+    let parsed: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let title = parsed["title"].as_str()?.to_string();
+    let body_md = parsed["body_md"].as_str().unwrap_or("").to_string();
+    let agendas = parsed["agendas"].clone();
+    if !agendas.is_array() || agendas.as_array().map(|a| a.is_empty()).unwrap_or(true) {
+        return None;
+    }
+    Some((title, body_md, agendas))
+}
+
+/// Renders the weekly Council Brief email body. Uses the same dark-glass
+/// aesthetic as the auction-winner mail.
+fn council_brief_email_html(
+    week_label: &str, title: &str, body_md: &str, agendas: &serde_json::Value,
+    base_url: &str, token: &str, tier: &str,
+) -> String {
+    // Very small markdown→html for headers + bullets only. Enough for our
+    // structured `## 1. ...\n- ...` template.
+    let mut body_html = String::new();
+    for line in body_md.lines() {
+        let t = line.trim_end();
+        if let Some(rest) = t.strip_prefix("## ") {
+            body_html.push_str(&format!(
+                "<h3 style=\"font-size:13px;letter-spacing:0.2em;text-transform:uppercase;color:#e6c449;margin:24px 0 8px;font-weight:500\">{}</h3>",
+                html_escape(rest)));
+        } else if let Some(rest) = t.strip_prefix("- ") {
+            body_html.push_str(&format!(
+                "<p style=\"font-size:12px;line-height:1.85;opacity:0.75;margin:4px 0 4px 18px\">• {}</p>",
+                html_escape(rest)));
+        } else if !t.is_empty() {
+            body_html.push_str(&format!(
+                "<p style=\"font-size:12px;line-height:1.85;opacity:0.7;margin:8px 0\">{}</p>",
+                html_escape(t)));
+        }
+    }
+    let mut agenda_html = String::new();
+    if let Some(arr) = agendas.as_array() {
+        for (i, a) in arr.iter().enumerate() {
+            let aid = a["id"].as_str().unwrap_or("");
+            let q   = a["q"].as_str().unwrap_or("");
+            let mut opts_html = String::new();
+            if let Some(opts) = a["options"].as_array() {
+                for (idx, o) in opts.iter().enumerate() {
+                    let label = o.as_str().unwrap_or("");
+                    opts_html.push_str(&format!(
+                        "<a href=\"{base}/council?token={tok}&vote={aid}:{idx}\" style=\"display:block;background:#1C1C1C;color:#F5F5F0;padding:14px 18px;margin-bottom:6px;font-size:12px;text-decoration:none;border-left:2px solid rgba(230,196,73,0.35)\">{label}</a>",
+                        base = base_url, tok = token, aid = aid, idx = idx,
+                        label = html_escape(label)));
+                }
+            }
+            agenda_html.push_str(&format!(
+                "<div style=\"margin:24px 0;padding:20px;background:#0F0F0F;border:1px solid rgba(255,255,255,0.06)\"><div style=\"font-size:9px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:8px\">議題 {n}</div><div style=\"font-size:14px;font-weight:400;margin-bottom:14px;line-height:1.5\">{q}</div>{opts}</div>",
+                n = i + 1, q = html_escape(q), opts = opts_html));
+        }
+    }
+    let tier_label = if tier == "full" { "FULL MEMBER" } else { "TRIAL" };
+    format!(r#"<div style="background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;padding:48px 24px;max-width:600px;margin:0 auto">
+  <div style="font-size:22px;font-weight:700;letter-spacing:0.4em;margin-bottom:32px">MU · COUNCIL</div>
+  <div style="font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:6px">{week} · {tier}</div>
+  <h1 style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:22px;font-weight:300;letter-spacing:0.02em;margin:0 0 22px;color:#F5F5F0">{title}</h1>
+  {body}
+  <h3 style="font-size:13px;letter-spacing:0.2em;text-transform:uppercase;color:#e6c449;margin:32px 0 10px;font-weight:500">議題に投票</h3>
+  {agendas}
+  <a href="{base}/council?token={tok}" style="display:inline-block;background:#e6c449;color:#000;padding:14px 28px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:700;margin-top:8px">Council を開く →</a>
+  <div style="margin-top:48px;border-top:1px solid #1C1C1C;padding-top:20px;font-size:9px;opacity:0.5;letter-spacing:0.1em;line-height:1.7">
+    MU — wearmu.com<br>
+    あなたは {tier} メンバーです。集計は <a style="color:#e6c449" href="{base}/council">/council</a> で誰でも閲覧可能 (匿名)。
+  </div>
+</div>"#,
+        week = week_label, tier = tier_label, title = html_escape(title),
+        body = body_html, agendas = agenda_html, base = base_url, tok = token,
+    )
+}
+
 /// Weekly lottery draw — picks ~5% of pending entries as winners,
 /// mints a Stripe coupon ¥1,000-3,000 off, emails them.
 /// Idempotent on entry id (status changes from 'pending*' to 'won' / 'lost').
@@ -8898,7 +9627,28 @@ async fn main() {
             UNIQUE(brief_slug, agenda_id, voter_email)
         );
         CREATE INDEX IF NOT EXISTS idx_council_votes_brief ON ma_council_votes(brief_slug);
+        -- MA Council members: auto-enrolled at bid time (tier='trial') and
+        -- upgraded to tier='full' on auction win. Token is HMAC-SHA256 of the
+        -- email + COUNCIL_TOKEN_SECRET env var, generated lazily.
+        CREATE TABLE IF NOT EXISTS ma_council_members (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            email           TEXT NOT NULL UNIQUE,
+            tier            TEXT NOT NULL DEFAULT 'trial'
+                             CHECK (tier IN ('trial','full')),
+            joined_at       TEXT NOT NULL,
+            mu_piece_id     INTEGER,
+            unsubscribed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_council_members_tier
+            ON ma_council_members(tier, joined_at DESC);
     ").ok();
+    // Add option_index to ma_council_votes for the new HMAC-token flow
+    // (older flow stored free-text `choice`). Both columns coexist.
+    let _ = conn.execute(
+        "ALTER TABLE ma_council_votes ADD COLUMN option_index INTEGER", []);
+    // Add sent_at column for the weekly-brief cron to track delivery.
+    let _ = conn.execute(
+        "ALTER TABLE ma_council_briefs ADD COLUMN sent_at TEXT", []);
     // CV-pulse autonomous loop: every 30 min the cron POSTs to
     // /api/admin/cv_pulse, which writes a snapshot here + may update
     // cv_config (modal cooldown / coupon strength / email subject variant).
@@ -9126,6 +9876,23 @@ async fn main() {
         }
     });
 
+    // ── Weekly cron: every Sunday 18:00 JST, generate + email the MA Council
+    //    brief. Idempotent on iso_week_start_jst() — safe to redeploy across
+    //    the firing window. The run-loop fires on Sun 18:00 and otherwise
+    //    sleeps for ~1h between checks so a missed Sunday (e.g. Fly app
+    //    asleep) still catches up on the next wake.
+    let db_council = db.clone();
+    tokio::spawn(async move {
+        loop {
+            let sleep_secs = seconds_until_next_jst_weekly_sunday(18, 0);
+            tracing::info!("[cron] council-weekly: sleeping {}s until next JST Sunday 18:00",
+                sleep_secs);
+            tokio::time::sleep(std::time::Duration::from_secs(sleep_secs)).await;
+            run_council_weekly_cron(db_council.clone()).await;
+            tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+        }
+    });
+
     let app = Router::new()
         .route("/", get(index))
         .route("/success", get(success_page))
@@ -9223,6 +9990,13 @@ async fn main() {
         .route("/api/admin/council_compose", post(admin_council_compose))
         .route("/api/council/briefs", get(list_council_briefs))
         .route("/api/council/vote", post(council_vote))
+        // MA Council v2 (HMAC-token flow — 2026.07 roadmap)
+        .route("/council", get(council_page))
+        .route("/council.html", get(council_page))
+        .route("/api/council/me", get(council_me))
+        .route("/api/council/agenda", get(council_agenda))
+        .route("/api/council/vote_token", post(council_vote_token))
+        .route("/api/council/results/:brief_id", get(council_results))
         .route("/api/cv/config", get(cv_public_config))
         .route("/api/you/signal/:design_id", post(you_signal))
         .route("/api/you/preferences", get(you_preferences))
@@ -9318,6 +10092,26 @@ fn seconds_until_next_jst(target_h: u32, target_m: u32) -> u64 {
     let target_sec = (target_h as i64) * 3600 + (target_m as i64) * 60;
     let mut delta = target_sec - sec_of_day;
     if delta <= 0 { delta += 86400; }
+    delta as u64
+}
+
+/// Number of seconds from now until the next JST Sunday at (hh:mm). Always
+/// positive. 1970-01-01 = Thursday → days_since_epoch % 7 == 3 is Sunday.
+fn seconds_until_next_jst_weekly_sunday(target_h: u32, target_m: u32) -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0) as i64;
+    let now_jst = now_secs + 9 * 3600;
+    let day = now_jst / 86400;
+    let sec_of_day = now_jst - day * 86400;
+    // 1970-01-01 was Thursday; +3 mod 7 → 0=Mon, 6=Sun
+    let dow = (day + 3).rem_euclid(7);
+    let sun_offset = (6 - dow + 7) % 7; // days until next Sunday (0 if today)
+    let target_sec = (target_h as i64) * 3600 + (target_m as i64) * 60;
+    let mut delta = sun_offset * 86400 + target_sec - sec_of_day;
+    if delta <= 0 { delta += 7 * 86400; }
     delta as u64
 }
 
