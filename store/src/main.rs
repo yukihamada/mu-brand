@@ -1606,7 +1606,13 @@ async fn handle_collab_sweep_order(db: Db, session: &serde_json::Value) {
             "items": [item],
             // confirm:false → draft (SIIIEEP社 / 濱田 が dashboard 承認後に出荷)
             "confirm": false,
-            "external_id": session_id,
+            // Printful caps external_id at 32 chars; live Stripe session ids are ~78.
+            // Strip the "cs_live_" prefix (8 chars) and keep the first 32 of the random tail.
+            "external_id": session_id
+                .strip_prefix("cs_live_")
+                .or_else(|| session_id.strip_prefix("cs_test_"))
+                .unwrap_or(session_id.as_str())
+                .chars().take(32).collect::<String>(),
         });
         match reqwest::Client::new()
             .post("https://api.printful.com/orders")
@@ -5598,29 +5604,19 @@ async fn compose_auto_blog(db: &Db) -> Result<(String, String, String, serde_jso
     Ok((title, body_html, body_md, stats))
 }
 
+/// Safe Markdown → HTML renderer for AI-generated blog bodies.
+/// pulldown-cmark parse + ammonia sanitize. Strips <script>, on* attrs,
+/// javascript:/data:/vbscript: URLs, and unknown tags. Gemini ouputs are
+/// untrusted (could be prompt-injected) so always sanitize.
 fn md_to_html_simple(md: &str) -> String {
-    let mut out = String::new();
-    let mut in_list = false;
-    for raw in md.lines() {
-        let line = raw.trim_end();
-        if line.starts_with("## ") {
-            if in_list { out.push_str("</ul>\n"); in_list = false; }
-            out.push_str(&format!("<h2>{}</h2>\n", html_escape(&line[3..])));
-        } else if line.starts_with("### ") {
-            if in_list { out.push_str("</ul>\n"); in_list = false; }
-            out.push_str(&format!("<h3>{}</h3>\n", html_escape(&line[4..])));
-        } else if let Some(rest) = line.strip_prefix("- ").or_else(|| line.strip_prefix("* ")) {
-            if !in_list { out.push_str("<ul>\n"); in_list = true; }
-            out.push_str(&format!("<li>{}</li>\n", inline_md(rest)));
-        } else if line.is_empty() {
-            if in_list { out.push_str("</ul>\n"); in_list = false; }
-        } else {
-            if in_list { out.push_str("</ul>\n"); in_list = false; }
-            out.push_str(&format!("<p>{}</p>\n", inline_md(line)));
-        }
-    }
-    if in_list { out.push_str("</ul>\n"); }
-    out
+    use pulldown_cmark::{Parser, Options, html};
+    let mut opts = Options::empty();
+    opts.insert(Options::ENABLE_STRIKETHROUGH);
+    opts.insert(Options::ENABLE_TABLES);
+    let parser = Parser::new_ext(md, opts);
+    let mut rendered = String::with_capacity(md.len() * 2);
+    html::push_html(&mut rendered, parser);
+    ammonia::clean(&rendered)
 }
 
 fn html_escape(s: &str) -> String {
@@ -5638,12 +5634,14 @@ fn html_attr_escape(s: &str) -> String {
      .replace('\'', "&#39;")
 }
 
+#[allow(dead_code)]  // superseded by pulldown-cmark + ammonia in md_to_html_simple
 fn inline_md(s: &str) -> String {
     let esc = html_escape(s);
     let bold_re = pair_replace(&esc, "**", "<strong>", "</strong>");
     pair_replace(&bold_re, "*", "<em>", "</em>")
 }
 
+#[allow(dead_code)]
 fn pair_replace(s: &str, marker: &str, open: &str, close: &str) -> String {
     let mut out = String::new();
     let mut rest = s;
@@ -6145,25 +6143,198 @@ async fn admin_blog_compose(
 // Actions cron orchestrates: fetch stats → call Gemini directly → publish.
 // /api/admin/blog_compose stays available as a manual / Fly-side fallback.
 
-async fn blog_stats_for_today(State(db): State<Db>) -> impl IntoResponse {
-    let stats = gather_blog_stats(&db);
-    let slug = format!("auto-{}", jst_today_str());
-    let already: bool = {
-        let conn = db.lock().unwrap();
-        conn.query_row(
+/// Per-IP hourly rate limit on the public stats_for_today endpoint.
+/// Prevents abuse since the prompt is shipped in the response (an attacker
+/// could harvest it and pound Gemini at our expense if we proxied — we don't,
+/// but the prompt itself is brand IP we want minimal disclosure of).
+const BLOG_STATS_RATE_LIMIT_PER_HOUR: i64 = 30;
+
+/// Detect missing recent days (yesterday/2-ago/3-ago) so a single Actions run
+/// can backfill any days we slipped. Returns slugs *not yet* in the table,
+/// oldest-first, max 3 entries.
+fn detect_missing_blog_slugs(conn: &rusqlite::Connection) -> Vec<String> {
+    let mut missing = Vec::new();
+    let today_unix = chrono_now().parse::<i64>().unwrap_or(0);
+    let jst = today_unix + 9 * 3600;
+    let today_day = jst / 86_400;
+    for offset in (1..=3).rev() {
+        let day = today_day - offset;
+        let (y, m, d) = civil_from_days(day);
+        let slug = format!("auto-{:04}-{:02}-{:02}", y, m, d);
+        let exists: bool = conn.query_row(
             "SELECT 1 FROM auto_blog_posts WHERE slug=?",
             params![slug], |r| r.get::<_, i64>(0),
-        ).is_ok()
+        ).is_ok();
+        if !exists {
+            missing.push(slug);
+        }
+    }
+    missing
+}
+
+async fn blog_stats_for_today(
+    State(db): State<Db>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    // Rate limit by client IP. Best-effort — fly-client-ip header trusted
+    // because we're behind Fly's edge.
+    let ip = headers.get("fly-client-ip")
+        .or_else(|| headers.get("x-forwarded-for"))
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("unknown")
+        .split(',').next().unwrap_or("unknown").trim().to_string();
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let hour_bucket = now_s / 3600;
+    let hits: i64 = {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO blog_rate_limit (ip, hour_bucket, hits) VALUES (?,?,1)
+             ON CONFLICT(ip, hour_bucket) DO UPDATE SET hits = hits + 1",
+            params![ip, hour_bucket],
+        );
+        // GC old buckets (>24h)
+        let _ = conn.execute(
+            "DELETE FROM blog_rate_limit WHERE hour_bucket < ?",
+            params![hour_bucket - 24],
+        );
+        conn.query_row(
+            "SELECT hits FROM blog_rate_limit WHERE ip=? AND hour_bucket=?",
+            params![ip, hour_bucket], |r| r.get::<_, i64>(0),
+        ).unwrap_or(0)
+    };
+    if hits > BLOG_STATS_RATE_LIMIT_PER_HOUR {
+        return (StatusCode::TOO_MANY_REQUESTS,
+            format!("rate limit: {}/h per IP", BLOG_STATS_RATE_LIMIT_PER_HOUR)).into_response();
+    }
+
+    let stats = gather_blog_stats(&db);
+    let slug = format!("auto-{}", jst_today_str());
+    let (already, backfill): (bool, Vec<String>) = {
+        let conn = db.lock().unwrap();
+        let already = conn.query_row(
+            "SELECT 1 FROM auto_blog_posts WHERE slug=?",
+            params![slug], |r| r.get::<_, i64>(0),
+        ).is_ok();
+        let backfill = detect_missing_blog_slugs(&conn);
+        (already, backfill)
     };
     let prompt = blog_prompt(&stats);
     Json(serde_json::json!({
         "stats": stats,
         "today_slug": slug,
         "already_published": already,
+        "backfill_slugs": backfill, // Actions iterates these too if non-empty
         "prompt": prompt,           // shipped so Actions doesn't drift from server's wording
         "gemini_model": "gemini-2.5-flash",
-        "endpoint_version": 1,
+        "endpoint_version": 2,
+        "rate_limit_remaining": (BLOG_STATS_RATE_LIMIT_PER_HOUR - hits).max(0),
     })).into_response()
+}
+
+/// Best-effort 2-pass review: send the composed body back to Gemini and ask
+/// "does this match MU's brand voice + factual constraints?". If the review
+/// returns `pass=false`, log a warning but still publish (we don't block on
+/// LLM critic; manual review can override).
+async fn review_blog_body(body_md: &str, stats: &serde_json::Value) -> Option<(bool, String)> {
+    let key = env::var("GEMINI_API_KEY").ok().filter(|s| !s.is_empty())?;
+    let prompt = format!(
+        "あなたは MU ブランドの編集者です。以下の Field log 草稿を以下のルールで採点してください:\n\
+        - 数字は stats JSON にあるものだけ使っているか (捏造禁止)\n\
+        - トーンが派手すぎないか / 自己卑下しすぎないか\n\
+        - 600〜900 字に収まっているか\n\
+        - 末尾に「— 自動生成 by Gemini 2.5 Flash」がついているか\n\n\
+        stats: {stats}\n\n草稿:\n---\n{body}\n---\n\n\
+        出力 (JSON のみ): {{\"pass\": bool, \"reason\": \"<32 字以内>\"}}",
+        stats = stats, body = body_md);
+    let req = serde_json::json!({"contents": [{"parts": [{"text": prompt}]}]});
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
+        key);
+    let resp = reqwest::Client::new().post(&url)
+        .json(&req).send().await.ok()?;
+    if !resp.status().is_success() { return None; }
+    let j: serde_json::Value = resp.json().await.ok()?;
+    let text = j["candidates"][0]["content"]["parts"][0]["text"].as_str()?.to_string();
+    // Strip ```json fences if Gemini added them.
+    let trimmed = text.trim().trim_start_matches("```json")
+        .trim_start_matches("```").trim_end_matches("```").trim();
+    let v: serde_json::Value = serde_json::from_str(trimmed).ok()?;
+    Some((v["pass"].as_bool().unwrap_or(true),
+          v["reason"].as_str().unwrap_or("").to_string()))
+}
+
+/// Send the published blog as a digest email to /you subscribers via Resend.
+/// Best-effort; failure logged but doesn't block publish.
+async fn send_blog_digest(db: &Db, slug: &str, title: &str, body_md: &str) -> Result<i64, String> {
+    let resend_key = env::var("RESEND_API_KEY")
+        .map_err(|_| "RESEND_API_KEY missing".to_string())?;
+    let recipients: Vec<String> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT email FROM you_users WHERE unsubscribed_at IS NULL"
+        ).map_err(|e| format!("stmt: {e}"))?;
+        stmt.query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| format!("query: {e}"))?
+            .filter_map(|r| r.ok()).collect()
+    };
+    if recipients.is_empty() { return Ok(0); }
+    let preview = body_md.lines().take(8).collect::<Vec<_>>().join("\n");
+    let body_html = md_to_html_simple(&preview);
+    let url = format!("https://wearmu.com/blog/{slug}");
+    let html = format!(
+        r#"<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#222">
+        <div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.55;margin-bottom:18px">MU FIELD LOG</div>
+        <h1 style="font-size:22px;font-weight:600;margin-bottom:18px">{title}</h1>
+        <div style="font-size:14px;line-height:1.8;color:#444">{body_html}</div>
+        <p style="margin-top:24px"><a href="{url}" style="color:#0A0A0A;text-decoration:underline">続きを読む →</a></p>
+        <p style="font-size:10px;color:#999;margin-top:36px;line-height:1.7">毎朝 JST 9時に Gemini が生成・送信。配信停止は <a href="https://wearmu.com/you/unsubscribe">こちら</a>。</p>
+        </div>"#,
+        title = html_escape(title), body_html = body_html, url = url);
+    // Resend supports batching via /emails/batch (up to 100 per request).
+    // For our scale (<100), iterate.
+    let client = reqwest::Client::new();
+    let mut sent = 0i64;
+    for to in recipients {
+        let body = serde_json::json!({
+            "from": "MU <info@enablerdao.com>",
+            "to": [to],
+            "subject": format!("📓 {} — MU Field log", title),
+            "html": html,
+        });
+        let r = client.post("https://api.resend.com/emails")
+            .header("Authorization", format!("Bearer {resend_key}"))
+            .json(&body).send().await;
+        match r {
+            Ok(resp) if resp.status().is_success() => { sent += 1; }
+            Ok(resp) => { eprintln!("[blog-digest] resend {}: {}",
+                resp.status(), resp.text().await.unwrap_or_default()); }
+            Err(e) => { eprintln!("[blog-digest] http: {e}"); }
+        }
+    }
+    Ok(sent)
+}
+
+/// Cross-post the blog headline to X via the existing nanobot/twitter
+/// integration if configured. Currently best-effort — checks for a
+/// TWITTER_BEARER + X_AUTOPOST_ENDPOINT env var; if either is missing,
+/// logs a no-op. Real X API access is outside this repo for now.
+async fn cross_post_x(slug: &str, title: &str) -> Result<bool, String> {
+    let endpoint = env::var("X_AUTOPOST_ENDPOINT").ok();
+    let token    = env::var("X_AUTOPOST_TOKEN").ok();
+    let (Some(endpoint), Some(token)) = (endpoint, token) else {
+        return Ok(false);
+    };
+    let body = serde_json::json!({
+        "text": format!("{} https://wearmu.com/blog/{slug}", title),
+    });
+    let r = reqwest::Client::new().post(&endpoint)
+        .bearer_auth(&token).json(&body).send().await
+        .map_err(|e| format!("x-autopost: {e}"))?;
+    if !r.status().is_success() {
+        return Err(format!("x-autopost {}: {}",
+            r.status(), r.text().await.unwrap_or_default()));
+    }
+    Ok(true)
 }
 
 #[derive(Deserialize)]
@@ -6181,6 +6352,17 @@ struct BlogPublishBody {
     /// back-fill a missed day.
     #[serde(default)]
     slug: Option<String>,
+    /// Tag for the auto_blog_posts.origin audit column.
+    /// Expected values: "actions", "fly", "manual".
+    #[serde(default)]
+    origin: Option<String>,
+    /// Number of retries it took Actions to reach a good response.
+    #[serde(default)]
+    retry_count: Option<i64>,
+    /// If true, skip email digest + X cross-post + Telegram notify.
+    /// Used for dry-run / backfill scenarios.
+    #[serde(default)]
+    quiet: bool,
 }
 
 async fn admin_blog_publish(
@@ -6201,12 +6383,14 @@ async fn admin_blog_publish(
     }
     // Soft refusal detector — common Gemini failure patterns.
     let lower = body_md.to_lowercase();
-    if lower.contains("i can't") || lower.contains("申し訳") && body_md.len() < 600 {
+    if lower.contains("i can't") || (lower.contains("申し訳") && body_md.len() < 600) {
         return (StatusCode::BAD_REQUEST,
             "body looks like a refusal / placeholder").into_response();
     }
     let slug = body.slug.clone().unwrap_or_else(|| format!("auto-{}", jst_today_str()));
     let model = body.model.clone().unwrap_or_else(|| "gemini-2.5-flash-via-actions".to_string());
+    let origin = body.origin.clone().unwrap_or_else(|| "actions".to_string());
+    let retry_count = body.retry_count.unwrap_or(0);
     let body_html = md_to_html_simple(body_md);
     let stats_json = body.stats_used
         .as_ref()
@@ -6223,19 +6407,81 @@ async fn admin_blog_publish(
         } else {
             let n = conn.execute(
                 "INSERT OR IGNORE INTO auto_blog_posts
-                    (slug, title, body_html, body_md, model, stats_json, published, created_at)
-                 VALUES (?,?,?,?,?,?,1,?)",
-                params![slug, title, body_html, body_md, model, stats_json, chrono_now()],
+                    (slug, title, body_html, body_md, model, stats_json,
+                     origin, retry_count, published, created_at)
+                 VALUES (?,?,?,?,?,?,?,?,1,?)",
+                params![slug, title, body_html, body_md, model, stats_json,
+                        origin, retry_count, chrono_now()],
             ).unwrap_or(0);
             (n > 0, false)
         }
     };
+
+    // 2-pass review — informational only; we don't block publish on critic
+    // feedback. Just log + include in response so Actions can surface.
+    let review = if inserted && !body.quiet {
+        review_blog_body(body_md, &body.stats_used.clone().unwrap_or(serde_json::Value::Null)).await
+    } else { None };
+
+    // Email digest to /you subscribers + X cross-post + Telegram notify —
+    // only on fresh insert, not idempotent re-publish, and not in quiet mode.
+    let (digest_sent, x_posted): (i64, bool) = if inserted && !body.quiet {
+        let digest_sent = match send_blog_digest(&db, &slug, title, body_md).await {
+            Ok(n) => n,
+            Err(e) => { eprintln!("[blog-digest] {e}"); 0 }
+        };
+        let x_posted = cross_post_x(&slug, title).await.unwrap_or(false);
+        // Mark audit columns
+        if digest_sent > 0 || x_posted {
+            let conn = db.lock().unwrap();
+            let _ = conn.execute(
+                "UPDATE auto_blog_posts SET
+                    digest_sent_at = CASE WHEN ? > 0 THEN ? ELSE digest_sent_at END,
+                    cross_post_x_at = CASE WHEN ?  THEN ? ELSE cross_post_x_at END
+                 WHERE slug=?",
+                params![digest_sent, chrono_now(), x_posted, chrono_now(), slug],
+            );
+        }
+        // Telegram success notification (best-effort, fail-open).
+        if let (Ok(tg_token), tg_chat) = (
+            env::var("TELEGRAM_BOT_TOKEN"),
+            env::var("TELEGRAM_CHAT_ID").unwrap_or_else(|_| "1136442501".into()),
+        ) {
+            let review_line = match &review {
+                Some((pass, reason)) if *pass => format!("✓ review pass: {reason}"),
+                Some((_, reason))             => format!("⚠ review flag: {reason}"),
+                None                          => "review skipped".to_string(),
+            };
+            let msg = format!(
+                "📓 Blog published — {}\n{}\norigin={origin} retries={retry_count}\n\
+                 digest sent → {digest_sent} subs\nX cross-post: {}\n{review_line}\n\
+                 https://wearmu.com/blog/{slug}",
+                title,
+                if x_posted { "✓" } else { "—" },
+                if x_posted { "yes" } else { "no" },
+            );
+            let _ = reqwest::Client::new()
+                .post(format!("https://api.telegram.org/bot{}/sendMessage", tg_token))
+                .json(&serde_json::json!({
+                    "chat_id": tg_chat, "text": msg, "disable_web_page_preview": false,
+                }))
+                .send().await;
+        }
+        (digest_sent, x_posted)
+    } else {
+        (0, false)
+    };
+
     Json(serde_json::json!({
         "ok": true,
         "published": inserted,
         "already_existed": already,
         "slug": slug,
         "url": format!("https://wearmu.com/blog/{slug}"),
+        "digest_sent": digest_sent,
+        "x_posted": x_posted,
+        "review_pass": review.as_ref().map(|(p,_)| *p),
+        "review_reason": review.as_ref().map(|(_,r)| r.clone()),
     })).into_response()
 }
 
@@ -9987,6 +10233,15 @@ async fn main() {
             created_at  TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_auto_blog_published ON auto_blog_posts(published, created_at DESC);
+        -- blog_rate_limit: tracks /api/blog/stats_for_today fetches per IP per hour
+        -- to prevent abuse + cost explosion (Gemini API key is published in
+        -- the prompt field, so attacker could bypass our wrapper).
+        CREATE TABLE IF NOT EXISTS blog_rate_limit (
+            ip          TEXT NOT NULL,
+            hour_bucket INTEGER NOT NULL,
+            hits        INTEGER NOT NULL DEFAULT 1,
+            PRIMARY KEY (ip, hour_bucket)
+        );
         -- お客様 → AI フィードバック。MUer / MU Owner / MA Council でタグ。
         -- Gemini が即時返答、Telegram 通知、DB に永続記録。
         CREATE TABLE IF NOT EXISTS customer_feedback (
@@ -10050,6 +10305,13 @@ async fn main() {
     // Add sent_at column for the weekly-brief cron to track delivery.
     let _ = conn.execute(
         "ALTER TABLE ma_council_briefs ADD COLUMN sent_at TEXT", []);
+    // Audit columns for auto-blog: track which side (Fly compose / Actions
+    // publish) produced the post, how many retries it took, and when we
+    // notified subscribers / cross-posted to X.
+    let _ = conn.execute("ALTER TABLE auto_blog_posts ADD COLUMN origin TEXT", []);
+    let _ = conn.execute("ALTER TABLE auto_blog_posts ADD COLUMN retry_count INTEGER DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE auto_blog_posts ADD COLUMN digest_sent_at TEXT", []);
+    let _ = conn.execute("ALTER TABLE auto_blog_posts ADD COLUMN cross_post_x_at TEXT", []);
     // One-shot migration: Gemini 2.5 Flash hallucinated the year in the
     // title (saw "2024 週11" on 2026-05-11 when week_label was "2026.W19").
     // Force-rebuild title from week_label for any existing brief whose title
@@ -10422,6 +10684,7 @@ async fn main() {
         .route("/blog", get(blog_index))
         .route("/blog/", get(blog_index))
         .route("/blog/from-automation-to-autonomy", get(blog_post_001))
+        .route("/sitemap.xml", get(dynamic_sitemap))
         // Per-user share page — REGISTER LAST so literal routes win
         .route("/:slug", get(slug_or_static))
         .nest_service("/static", ServeDir::new("static"))
