@@ -2863,14 +2863,42 @@ async fn import_product(
         }
     }
     // Enqueue SNS post for new drops (MUGEN/MUON/MA/NOUNS).
-    // Drained by GitHub Actions worker. Suppressed when autopilot off.
+    // Text is composed by Gemini using the MU brand voice — falls back to a
+    // plain template if Gemini is unavailable. Drained by sns worker.
     if autopilot_on() {
-        let conn = db.lock().unwrap();
         let url = format!("https://wearmu.com/products/{}/{}", body.brand, body.drop_num);
-        let text = format!("{} — ¥{} · {}着 · AI auto-generated.\n{}",
-            body.name, body.price_jpy, body.inventory, url);
+        // Build context for Gemini. Include weather + brand-specific framing.
+        let weather_summary = body.weather_data.as_deref().unwrap_or("(weather unknown)");
+        let context = format!(
+            "Brand line: {brand}\n\
+             Drop name: {name}\n\
+             Drop number: {dn}\n\
+             Price: ¥{price}\n\
+             Inventory (pieces in existence): {inv}\n\
+             Weather data: {weather}\n\
+             URL: {url}\n\
+             Note: {brand_note}",
+            brand = body.brand,
+            name = body.name,
+            dn = body.drop_num,
+            price = body.price_jpy,
+            inv = body.inventory,
+            weather = weather_summary,
+            url = url,
+            brand_note = match body.brand.as_str() {
+                "mugen" => "MUGEN = 108-piece cycle, hourly, #1 rarest. Sold count rises price linearly.",
+                "muon"  => "MUON = one drop per day, edition size = today's Hokkaido °C.",
+                "ma"    => "MA = one piece in the world, weekly 7-day auction from ¥30k.",
+                "nouns" => "NOUNS = ⌐◨-◨ DAO collaboration, 10% of sales → Nouns Treasury.",
+                _ => "Standard MU drop.",
+            },
+        );
+        let composed = compose_x_tweet_via_gemini("drop", &context).await
+            .unwrap_or_else(|| format!("{} — ¥{} · {} pieces · today.\n{}",
+                body.name, body.price_jpy, body.inventory, url));
+        let conn = db.lock().unwrap();
         enqueue_sns_post(&conn, "x", "drop", Some(new_id), None,
-            &text, body.mockup_url.as_deref());
+            &composed, body.mockup_url.as_deref());
     }
     Json(serde_json::json!({"ok": true, "id": new_id})).into_response()
 }
@@ -7399,6 +7427,76 @@ async fn x_post_tweet(text: &str) -> Result<Option<String>, String> {
     Ok(v["data"]["id"].as_str().map(String::from))
 }
 
+/// "Cultural moment" daily cron — JST 12:00. Asks Gemini if there's an
+/// observation MU should make today that lands cleanly with the brand voice
+/// (fashion week timing, season turn, AI industry milestone, weather extreme,
+/// etc.). If Gemini returns something, enqueue. Empty response = silence.
+async fn run_cultural_moment_cron(db: Db) {
+    if autopilot_skip("cultural-moment") { return; }
+    // Skip if already enqueued today.
+    let today = jst_today_str();
+    let already: bool = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT 1 FROM sns_post_queue
+             WHERE trigger_kind='cultural' AND DATE(created_at) = DATE(?)",
+            params![chrono_now()], |r| r.get::<_, i64>(0),
+        ).is_ok()
+    };
+    if already {
+        tracing::info!("[cultural] already posted today, skipping");
+        return;
+    }
+    // Build context: today's weather, recent drops, current ISO week.
+    let weather_data: Option<String> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT weather_data FROM products
+             WHERE brand='muon' AND DATE(created_at) = DATE(?)
+             ORDER BY created_at DESC LIMIT 1",
+            params![chrono_now()], |r| r.get::<_, String>(0),
+        ).ok()
+    };
+    let recent_sales: i64 = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM mu_purchases WHERE DATE(created_at) >= DATE('now','-7 days')",
+            [], |r| r.get::<_, i64>(0),
+        ).unwrap_or(0)
+    };
+    let context = format!(
+        "Today: {today}\n\
+         Today's Hokkaido weather (MUON oracle): {weather}\n\
+         Sales last 7 days: {sales}\n\
+         Recent fashion-industry events to consider only if relevant:\n\
+         - Paris/Milan/Tokyo Fashion Week happens twice a year (Feb-Mar, Sep-Oct)\n\
+         - Met Gala is first Monday of May\n\
+         - Black Friday late November (we ignore it, but readers know)\n\
+         - Christmas, New Year, golden week, summer solstice\n\
+         AI events:\n\
+         - Major model releases, open-source LLM news\n\
+         - AI x art debates ongoing\n\
+         \n\
+         If today calls for an observation MU should make, write it as a tweet.\n\
+         If today is just an ordinary day with no clean angle, return EMPTY STRING.\n\
+         Don't force a take. Silence is fine.",
+        today = today,
+        weather = weather_data.as_deref().unwrap_or("(none today)"),
+        sales = recent_sales,
+    );
+    let composed = compose_x_tweet_via_gemini("cultural", &context).await;
+    match composed {
+        Some(text) if !text.trim().is_empty() => {
+            let conn = db.lock().unwrap();
+            let id = enqueue_sns_post(&conn, "x", "cultural", None, None, &text, None);
+            tracing::info!("[cultural] enqueued #{}: {}", id, text.chars().take(60).collect::<String>());
+        }
+        _ => {
+            tracing::info!("[cultural] no observation today, staying silent");
+        }
+    }
+}
+
 /// Background worker that drains sns_post_queue every 60s and posts to X.
 /// Idempotent (sets posted_at on success, error on failure).
 async fn x_post_worker(db: Db) {
@@ -7588,8 +7686,23 @@ async fn admin_blog_publish(
                     params![digest_sent, chrono_now(), x_posted, chrono_now(), slug],
                 );
             }
-            let post_text = format!("📓 {} — MU Field log\nhttps://wearmu.com/blog/{slug}", title);
-            enqueue_sns_post(&conn, "x", "blog", None, Some(&slug), &post_text, None);
+        }
+        // Compose tweet text via Gemini (brand voice) — fallback to plain
+        // template if compose fails. Done OUTSIDE the lock since it's async.
+        let blog_context = format!(
+            "Blog title: {title}\n\
+             Slug: {slug}\n\
+             URL: https://wearmu.com/blog/{slug}\n\
+             First 240 chars of body: {preview}\n\
+             Note: This is MU's daily Field log — operational diary the AI itself writes each morning.",
+            title = title,
+            slug = slug,
+            preview = body_md.chars().take(240).collect::<String>());
+        let blog_tweet = compose_x_tweet_via_gemini("blog", &blog_context).await
+            .unwrap_or_else(|| format!("📓 {} — MU Field log\nhttps://wearmu.com/blog/{slug}", title));
+        {
+            let conn = db.lock().unwrap();
+            enqueue_sns_post(&conn, "x", "blog", None, Some(&slug), &blog_tweet, None);
         }
         // Telegram success notification (best-effort, fail-open).
         if let (Ok(tg_token), tg_chat) = (
@@ -12724,6 +12837,20 @@ async fn main() {
     let db_xworker = db.clone();
     tokio::spawn(async move {
         x_post_worker(db_xworker).await;
+    });
+
+    // Cultural moment cron — JST 12:00 daily. Asks Gemini if MU should
+    // post an observation today. Silence is the default; only enqueues if
+    // there's something clean to say.
+    let db_cultural = db.clone();
+    tokio::spawn(async move {
+        loop {
+            let sleep_secs = seconds_until_next_jst(12, 0);
+            tracing::info!("[cron] cultural-moment: sleeping {}s until next JST 12:00", sleep_secs);
+            tokio::time::sleep(std::time::Duration::from_secs(sleep_secs)).await;
+            run_cultural_moment_cron(db_cultural.clone()).await;
+            tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+        }
     });
 
     let app = Router::new()
