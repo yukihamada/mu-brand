@@ -13965,25 +13965,67 @@ async fn agent_vision_drift(db: Db) -> Result<AgentReport, String> {
 
     let body = serde_json::json!({
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.4, "maxOutputTokens": 700},
+        "generationConfig": {
+            "temperature": 0.4,
+            "maxOutputTokens": 1500,
+            "responseMimeType": "application/json",
+        },
     });
     let url = format!(
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
         key);
     let resp = match reqwest::Client::new().post(&url).json(&body).send().await {
         Ok(r) if r.status().is_success() => r,
-        Ok(r) => return Err(format!("gemini {}", r.status())),
+        Ok(r) => {
+            let s = r.status();
+            let t = r.text().await.unwrap_or_default();
+            return Err(format!("gemini {}: {}", s, &t[..t.len().min(200)]));
+        }
         Err(e) => return Err(format!("gemini http: {e}")),
     };
     let j: serde_json::Value = match resp.json().await {
         Ok(v) => v, Err(e) => return Err(format!("gemini json: {e}")),
     };
     let raw = j["candidates"][0]["content"]["parts"][0]["text"].as_str().unwrap_or("").trim().to_string();
-    let cleaned = raw.trim_start_matches("```json").trim_start_matches("```")
-        .trim_end_matches("```").trim();
-    let parsed: serde_json::Value = match serde_json::from_str(cleaned) {
-        Ok(v) => v,
-        Err(_) => return Err(format!("vision_drift: gemini returned non-JSON ({} chars)", raw.len())),
+    // Extract JSON from anywhere in the response (Gemini sometimes wraps it
+    // in prose or fences). Greedy match { … } across the whole text.
+    let parsed: serde_json::Value = {
+        let cleaned = raw.trim_start_matches("```json").trim_start_matches("```")
+            .trim_end_matches("```").trim();
+        match serde_json::from_str::<serde_json::Value>(cleaned) {
+            Ok(v) => v,
+            Err(_) => {
+                // Fallback: extract first {…} block
+                let start = raw.find('{');
+                let end = raw.rfind('}');
+                match (start, end) {
+                    (Some(s), Some(e)) if e > s => {
+                        match serde_json::from_str::<serde_json::Value>(&raw[s..=e]) {
+                            Ok(v) => v,
+                            Err(_) => {
+                                tracing::warn!("[vision_drift] gemini non-JSON ({} chars): {}",
+                                    raw.len(), raw.chars().take(120).collect::<String>());
+                                // Treat as a soft "no drift detected"
+                                serde_json::json!({
+                                    "drift_score": 0,
+                                    "summary": "gemini returned non-JSON, treated as no-drift",
+                                    "fixes": [],
+                                })
+                            }
+                        }
+                    }
+                    _ => {
+                        tracing::warn!("[vision_drift] gemini empty/non-JSON ({} chars): {}",
+                            raw.len(), raw.chars().take(120).collect::<String>());
+                        serde_json::json!({
+                            "drift_score": 0,
+                            "summary": format!("gemini non-JSON: {}", raw.chars().take(60).collect::<String>()),
+                            "fixes": [],
+                        })
+                    }
+                }
+            }
+        }
     };
 
     let drift_score = parsed["drift_score"].as_i64().unwrap_or(0);
