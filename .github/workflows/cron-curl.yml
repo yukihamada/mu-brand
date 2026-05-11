@@ -1,0 +1,136 @@
+name: MU cron — admin API triggers
+
+# All curl-only crons. Hits public/admin endpoints on https://wearmu.com.
+# GitHub schedules are best-effort (can be delayed up to 1h during high load),
+# Fly's self-heal watcher (1h tokio task) catches misses.
+#
+# Required secret: MU_ADMIN_TOKEN
+
+on:
+  schedule:
+    # Every 30 min — cv_pulse (modal/coupon/email subject auto-tuning)
+    - cron: '*/30 * * * *'
+    # Hourly :15 — thank_buyers (auto-mail new cs_live_* buyers + MUON coupon)
+    - cron: '15 * * * *'
+    # Every 4h :20 — treasury snapshot (Solana + Stripe balance log)
+    - cron: '20 */4 * * *'
+    # Daily 00:00 UTC = JST 9:00 — /you backfill (today's design + email)
+    - cron: '0 0 * * *'
+    # Daily 00:05 — sample_grow (15 MUer get a fresh pick)
+    - cron: '5 0 * * *'
+    # Daily 00:10 — blog_compose (AI auto-blog Field log)
+    - cron: '10 0 * * *'
+    # Weekly Mon 00:00 — lottery draw
+    - cron: '0 0 * * 1'
+    # Weekly Mon 03:00 UTC = JST 12:00 — council_compose (議題自動生成)
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: which job to run on demand
+        type: choice
+        options:
+          - cv_pulse
+          - thank_buyers
+          - treasury
+          - you_backfill
+          - sample_grow
+          - blog_compose
+          - lottery_draw
+          - council_compose
+          - sample_grow_force
+
+permissions:
+  contents: read
+
+env:
+  BASE_URL: https://wearmu.com
+  MU_ADMIN_TOKEN: ${{ secrets.MU_ADMIN_TOKEN }}
+
+jobs:
+  cv_pulse:
+    if: github.event.schedule == '*/30 * * * *' || github.event.inputs.target == 'cv_pulse'
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /api/admin/cv_pulse
+        run: |
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            -d "{\"admin_token\":\"${MU_ADMIN_TOKEN}\"}" \
+            "${BASE_URL}/api/admin/cv_pulse" | head -c 1024
+
+  thank_buyers:
+    if: github.event.schedule == '15 * * * *' || github.event.inputs.target == 'thank_buyers'
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /api/admin/thank_buyers
+        run: |
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            -d "{\"admin_token\":\"${MU_ADMIN_TOKEN}\"}" \
+            "${BASE_URL}/api/admin/thank_buyers"
+
+  treasury:
+    if: github.event.schedule == '20 */4 * * *' || github.event.inputs.target == 'treasury'
+    runs-on: ubuntu-latest
+    steps:
+      - name: GET /api/treasury (snapshot to log)
+        run: curl -fsS "${BASE_URL}/api/treasury" | head -c 2048
+
+  you_backfill:
+    if: github.event.schedule == '0 0 * * *' || github.event.inputs.target == 'you_backfill'
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /api/you/admin/backfill_today
+        run: |
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            -d "{\"admin_token\":\"${MU_ADMIN_TOKEN}\"}" \
+            "${BASE_URL}/api/you/admin/backfill_today"
+
+  sample_grow:
+    if: github.event.schedule == '5 0 * * *' || github.event.inputs.target == 'sample_grow'
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /api/admin/sample_grow
+        run: |
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            -d "{\"admin_token\":\"${MU_ADMIN_TOKEN}\"}" \
+            "${BASE_URL}/api/admin/sample_grow"
+
+  sample_grow_force:
+    if: github.event.inputs.target == 'sample_grow_force'
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /api/admin/sample_grow?force=1
+        run: |
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            -d "{\"admin_token\":\"${MU_ADMIN_TOKEN}\"}" \
+            "${BASE_URL}/api/admin/sample_grow?force=1"
+
+  blog_compose:
+    if: github.event.schedule == '10 0 * * *' || github.event.inputs.target == 'blog_compose'
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /api/admin/blog_compose
+        run: |
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            -d "{\"admin_token\":\"${MU_ADMIN_TOKEN}\"}" \
+            "${BASE_URL}/api/admin/blog_compose"
+
+  lottery_draw:
+    if: github.event.schedule == '0 0 * * 1' || github.event.inputs.target == 'lottery_draw'
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /api/admin/lottery_draw
+        run: |
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            -d "{\"admin_token\":\"${MU_ADMIN_TOKEN}\"}" \
+            "${BASE_URL}/api/admin/lottery_draw"
+
+  council_compose:
+    if: github.event.schedule == '0 3 * * 1' || github.event.inputs.target == 'council_compose'
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /api/admin/council_compose
+        run: |
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            -d "{\"admin_token\":\"${MU_ADMIN_TOKEN}\"}" \
+            "${BASE_URL}/api/admin/council_compose"

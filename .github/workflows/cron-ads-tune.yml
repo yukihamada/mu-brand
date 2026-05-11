@@ -1,0 +1,47 @@
+name: MU cron — Google Ads CPC tune (daily JST 10:00)
+
+# ads/cv_tune_ads.py reads /api/admin/cv_pulse → decides CPC delta → mutates
+# AdGroup CPC via Google Ads REST v22. Self-heals to no-op if google-ads.yaml
+# is missing.
+#
+# Required secrets:
+#   MU_ADMIN_TOKEN
+#   GOOGLE_ADS_YAML       (full YAML body for ~/google-ads.yaml)
+#   TELEGRAM_BOT_TOKEN    (optional — for digest)
+#   TELEGRAM_CHAT_ID      (optional)
+
+on:
+  schedule:
+    - cron: '0 1 * * *'   # 01:00 UTC = JST 10:00
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tune:
+    runs-on: ubuntu-latest
+    env:
+      MU_ADMIN_TOKEN: ${{ secrets.MU_ADMIN_TOKEN }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install deps
+        run: pip install --quiet pyyaml requests
+      - name: Materialise google-ads.yaml
+        env:
+          GOOGLE_ADS_YAML: ${{ secrets.GOOGLE_ADS_YAML }}
+        run: |
+          if [ -z "$GOOGLE_ADS_YAML" ]; then
+            echo "GOOGLE_ADS_YAML secret not set — exiting (no-op)."
+            exit 0
+          fi
+          printf '%s' "$GOOGLE_ADS_YAML" > "$HOME/google-ads.yaml"
+          chmod 600 "$HOME/google-ads.yaml"
+      - name: Run CPC tune
+        run: python ads/cv_tune_ads.py

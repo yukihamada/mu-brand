@@ -1,6 +1,19 @@
 #!/bin/bash
-# MU Brand Cron Setup
+# MU Brand Cron Setup (m5 Mac)
 # Run: bash cron.sh install
+#
+# 注意: 2026-05-11 以降、curl-only / twitter / ads-tune は GitHub Actions に
+# 移管した (see .github/workflows/cron-*.yml)。
+# m5 cron として残るのは local 状態に依存する Python 生成系のみ:
+#   - generate.py mugen/muon/ma   (local designs/, products.db)
+#   - generate_nouns.py            (same)
+#   - generate_lifestyle.py        (local designs/ から人着画合成)
+#
+# Fly app 内の self-heal watcher (1h tokio task) が m5 cron 死を検知して
+# Telegram で警告する。両方落ちた場合の検知手段は X feed か wearmu.com の
+# 404 になるので、最後の防衛線として GHA の cron-curl.yml も /api/health/cron
+# を毎日叩く設計を将来追加検討。
+#
 # Schedules:
 #   MUGEN: every hour at :00
 #   MUON:  daily at 09:00 JST
