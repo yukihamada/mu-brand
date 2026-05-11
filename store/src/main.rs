@@ -4638,24 +4638,37 @@ fn grow_sample_designs_for_today(conn: &rusqlite::Connection) {
     // already 403'd; never picking them keeps the gallery alive.
     // Sort: products with lifestyle photo first (so the gallery shows people,
     // not flat mockups, whenever possible).
-    let pool: Vec<(i64, String, String)> = {
+    // Two pools: lifestyle-backed (preferred) + R2 mockup-only (fallback).
+    // Each persona first tries the lifestyle pool — if it lands on an index
+    // that has lifestyle photo we keep that. If the lifestyle pool is empty
+    // we fall back to mockup pool.
+    let lifestyle_pool: Vec<(i64, String, String)> = {
         let mut stmt = match conn.prepare(
-            "SELECT id, name, COALESCE(lifestyle_url, mockup_url, '') AS img
+            "SELECT id, name, lifestyle_url
              FROM products
              WHERE brand='mugen' AND active=1
                AND (inventory IS NULL OR sold < inventory)
-               AND (lifestyle_url LIKE 'https://lifestyle.wearmu.com/%'
-                 OR mockup_url    LIKE 'https://mockups.wearmu.com/%'
-                 OR mockup_url    LIKE '/mockups/%')
-             ORDER BY (lifestyle_url IS NULL OR lifestyle_url='') ASC,
-                      drop_num DESC LIMIT 200"
+               AND lifestyle_url LIKE 'https://lifestyle.wearmu.com/%'
+             ORDER BY drop_num DESC LIMIT 200"
         ) { Ok(s) => s, Err(_) => return };
-        let rows: Vec<(i64, String, String)> = stmt.query_map([], |r| {
+        stmt.query_map([], |r| {
             Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
-        }).map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>()).unwrap_or_default();
-        rows
+        }).map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>()).unwrap_or_default()
     };
-    if pool.is_empty() { return; }
+    let mockup_pool: Vec<(i64, String, String)> = {
+        let mut stmt = match conn.prepare(
+            "SELECT id, name, COALESCE(mockup_url, '')
+             FROM products
+             WHERE brand='mugen' AND active=1
+               AND (inventory IS NULL OR sold < inventory)
+               AND (mockup_url LIKE 'https://mockups.wearmu.com/%' OR mockup_url LIKE '/mockups/%')
+             ORDER BY drop_num DESC LIMIT 200"
+        ) { Ok(s) => s, Err(_) => return };
+        stmt.query_map([], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+        }).map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>()).unwrap_or_default()
+    };
+    if lifestyle_pool.is_empty() && mockup_pool.is_empty() { return; }
 
     // Re-roll any persona whose existing today-pick points at a broken (now
     // 403'd Printful tmp) URL — happens for legacy data. Delete the row so
@@ -4686,12 +4699,13 @@ fn grow_sample_designs_for_today(conn: &rusqlite::Connection) {
         ).is_ok();
         if exists { continue; }
 
-        // Deterministic pick from pool using sha256(slug|day) → index
+        // Deterministic pick: lifestyle pool first; mockup as fallback.
         let mut h = Sha256::new();
         h.update(format!("{}|{}", slug, today).as_bytes());
         let dig = h.finalize();
-        let idx = (u64::from_be_bytes(dig[..8].try_into().unwrap_or([0;8])) as usize) % pool.len();
-        let (product_id, product_name, mockup_url) = pool[idx].clone();
+        let chosen_pool = if !lifestyle_pool.is_empty() { &lifestyle_pool } else { &mockup_pool };
+        let idx = (u64::from_be_bytes(dig[..8].try_into().unwrap_or([0;8])) as usize) % chosen_pool.len();
+        let (product_id, product_name, mockup_url) = chosen_pool[idx].clone();
 
         // Compose a poetic name/prompt from the persona's taste
         let taste_json: serde_json::Value = serde_json::from_str(&taste_str)
