@@ -280,7 +280,8 @@ async fn persist_mockup_if_temporary(product_id: i64, url: &str) -> Option<Strin
 /// Bonding-curve / progressive pricing.
 /// Price starts at ¥5,000 (1st buyer) and steps up ¥250 per sold unit, capped at ¥30,000.
 /// "Early buyer wins" — opposite of Dutch auction.
-/// Special cases: MA = ¥120,000, MUGEN #108 = ¥30,000 fixed.
+/// Special cases: MA starts at ¥30,000 (lowered from ¥120k on 2026-05-11
+/// when MA moved from monthly to weekly 7-day auctions). MUGEN #108 = ¥30,000 fixed.
 /// Price ceiling for the bonding curve. Final price (post-surcharge) is also
 /// clamped to this value. Purchases at or above this threshold require KYC
 /// (`KYC_THRESHOLD_JPY`).
@@ -288,7 +289,13 @@ const PRICE_CAP_JPY: i64 = 300_000;
 const PRICE_BASE_JPY: i64 = 5_000;
 const PRICE_STEP_JPY: i64 = 250;
 const MUGEN_108_PRICE_JPY: i64 = 30_000;
-const MA_BASE_PRICE_JPY: i64 = 120_000;
+/// MA auction starting bid. 2026-05-11: ¥120,000 → ¥30,000, monthly → weekly.
+const MA_BASE_PRICE_JPY: i64 = 30_000;
+/// MA auction duration in seconds. 2026-05-11: 30d → 7d.
+/// Currently set by generate.py at row-insert time; this constant is the
+/// single source of truth referenced by docs and admin tools.
+#[allow(dead_code)]
+const MA_AUCTION_DURATION_SECS: i64 = 7 * 24 * 60 * 60;
 const KYC_THRESHOLD_JPY: i64 = 300_000;
 
 fn dynamic_price(brand: &str, drop_num: i64, sold: i64, name: &str) -> i64 {
@@ -503,7 +510,7 @@ async fn list_brands(State(db): State<Db>) -> impl IntoResponse {
         let (description, cycle) = match b.as_str() {
             "mugen" => ("108 pieces per hour, weather-driven design", "hourly"),
             "muon"  => ("daily drop, quantity from temperature", "daily"),
-            "ma"    => ("monthly auction, single piece", "monthly"),
+            "ma"    => ("weekly 7-day auction, single piece", "weekly"),
             "nouns" => ("MUON × Nouns DAO collaboration", "weekly"),
             _ => ("", ""),
         };
@@ -4205,7 +4212,7 @@ fn cron_health_warnings(conn: &rusqlite::Connection) -> Vec<String> {
     let budgets: &[(&str, i64, &str)] = &[
         ("mugen", 120,   "hourly"),
         ("muon",  1800,  "daily"),     // 30h
-        ("ma",    50400, "monthly"),   // 35d
+        ("ma",    10080, "weekly"),    // 7d (was 50400 = 35d, monthly cadence — now weekly)
         ("nouns", 10080, "weekly"),    // 7d
     ];
     let now_secs = chrono_now().parse::<i64>().unwrap_or(0);
@@ -5647,6 +5654,284 @@ async fn list_auto_blog(State(db): State<Db>) -> impl IntoResponse {
     Json(serde_json::json!({"posts": rows})).into_response()
 }
 
+// ── MU × SWEEP collab (draft, password-gated) ──────────────────────────────
+// SWEEP社 の承認前なので強めに gate。`?pass=...` で 30 日 cookie をセット。
+// 商品自体は collab_products に seed されており、buy ボタンは Stripe Checkout
+// (price_data, server-controlled, 改竄不可) に飛ばす。
+
+fn sweep_password() -> String {
+    env::var("SWEEP_PAGE_PASSWORD").unwrap_or_else(|_| "sweep-2026".into())
+}
+
+fn has_sweep_cookie(headers: &HeaderMap, pw: &str) -> bool {
+    headers.get("cookie").and_then(|v| v.to_str().ok()).map(|c| {
+        c.split(';').any(|p| p.trim() == format!("mu_sweep_pass={}", pw))
+    }).unwrap_or(false)
+}
+
+async fn show_sweep_page(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let pw = sweep_password();
+    let entered = q.get("pass").map(String::as_str).unwrap_or("");
+    let authed = entered == pw || has_sweep_cookie(&headers, &pw);
+
+    if !authed {
+        return axum::response::Html(SWEEP_GATE_HTML).into_response();
+    }
+
+    // Build product list HTML server-side (no caching of the gate cookie path)
+    let items: Vec<(i64, String, String, String, String, i64)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, slug, category, name, COALESCE(description,''), price_jpy
+             FROM collab_products WHERE partner='sweep' AND active=1
+             ORDER BY id"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map([], |r| Ok((
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?
+        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+
+    let cards = items.iter().map(|(id, slug, cat, name, desc, price)| {
+        format!(r#"<article class="card">
+  <div class="cat">{cat}</div>
+  <h3>{name}</h3>
+  <p class="desc">{desc}</p>
+  <div class="row">
+    <span class="price">¥{price_fmt}</span>
+    <select id="size-{id}" class="size">
+      <option>S</option><option selected>M</option><option>L</option><option>XL</option>
+    </select>
+    <button class="buy" data-slug="{slug}" data-id="{id}">仕立てる →</button>
+  </div>
+</article>"#,
+        cat = html_attr_escape(cat), name = html_attr_escape(name),
+        desc = html_attr_escape(desc), price_fmt = format_jpy(*price),
+        id = id, slug = html_attr_escape(slug),
+    )}).collect::<Vec<_>>().join("\n");
+
+    let pw_attr = html_attr_escape(&pw);
+    let body = format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU × SWEEP — Draft preview (BJJ collab) | wearmu.com</title>
+<meta name="description" content="MU と北参道の BJJ アパレル SWEEP のコラボ draft。ラッシュガード / ファイトショーツ / スパッツ / フーディ / T。SWEEP社確認前のため非公開。">
+<meta name="robots" content="noindex,nofollow">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+:root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--card:#111;--red:#C8362C}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.85;-webkit-font-smoothing:antialiased}}
+nav{{position:sticky;top:0;background:rgba(10,10,10,0.88);backdrop-filter:blur(12px);border-bottom:1px solid rgba(255,255,255,0.06);padding:18px 32px;display:flex;justify-content:space-between;align-items:center;z-index:50}}
+nav a{{color:var(--fg);text-decoration:none;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.85}}
+nav .logo{{font-weight:700;letter-spacing:0.45em}}
+header{{padding:72px 32px 30px;max-width:880px;margin:0 auto;text-align:center}}
+header .eyebrow{{font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:var(--y);opacity:0.85;margin-bottom:14px}}
+header h1{{font-size:clamp(28px,5vw,52px);font-weight:200;letter-spacing:0.02em;line-height:1.25;margin-bottom:16px}}
+header h1 em{{color:var(--y);font-style:normal;font-weight:300}}
+header .lede{{color:var(--mute);font-size:14px;max-width:560px;margin:0 auto 22px;line-height:1.95}}
+header .warn{{display:inline-block;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;background:rgba(200,54,44,0.12);color:var(--red);padding:8px 18px;border-radius:2px;margin-top:8px}}
+.grid{{max-width:1100px;margin:30px auto 100px;padding:0 32px;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px}}
+.card{{background:var(--card);padding:24px 22px;border:1px solid rgba(255,255,255,0.06);border-radius:2px;display:flex;flex-direction:column;gap:8px}}
+.card .cat{{font-size:9px;letter-spacing:0.32em;text-transform:uppercase;color:var(--y);opacity:0.85}}
+.card h3{{font-size:17px;font-weight:400;letter-spacing:0.01em;margin:2px 0 4px}}
+.card .desc{{color:var(--mute);font-size:12.5px;line-height:1.85;flex:1}}
+.card .row{{display:flex;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap}}
+.card .price{{font-size:16px;color:var(--y);font-variant-numeric:tabular-nums;margin-right:auto}}
+.card select{{background:#000;color:var(--fg);border:1px solid rgba(255,255,255,0.18);font-size:12px;padding:7px 10px;border-radius:2px}}
+.card .buy{{background:var(--y);color:#000;border:0;font-family:inherit;font-size:11px;letter-spacing:0.28em;text-transform:uppercase;font-weight:700;padding:10px 16px;cursor:pointer;border-radius:2px}}
+.card .buy:hover{{opacity:0.85}}
+.card .buy:disabled{{opacity:0.4;cursor:wait}}
+.note{{max-width:680px;margin:40px auto 60px;padding:18px 22px;background:rgba(230,196,73,0.06);border-left:2px solid var(--y);font-size:12.5px;line-height:1.95;color:rgba(245,245,240,0.78)}}
+footer{{padding:48px 32px 80px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;font-size:11px;letter-spacing:0.2em;opacity:0.5}}
+footer a{{color:inherit;text-decoration:underline}}
+#msg{{max-width:680px;margin:16px auto;text-align:center;font-size:11px;letter-spacing:0.05em;color:var(--mute);min-height:14px}}
+</style></head><body>
+<nav><a href="/" class="logo">MU</a><a href="/vision">Vision</a></nav>
+<header>
+  <div class="eyebrow">Draft Preview — <em>SWEEP社 確認前</em></div>
+  <h1>MU × <em>SWEEP</em> — <br>北参道の BJJ アパレルと、AI ブランドの試作。</h1>
+  <p class="lede">
+    SWEEP は北参道の道場発、ラッシュガード / スパッツ / ジ・ファイトショーツのアパレル。<br>
+    濱田 (柔術青帯、SWEEP に通ってる MU 創業者) が「MU の AI デザインを SWEEP の身体性で着たい」と思って、5 つの draft を作った。<br>
+    本ページは <em>SWEEP社 確認前のプレビュー</em>。SWEEP の承認後、正式販売へ。
+  </p>
+  <div class="warn">⚠ Draft — SWEEP社 サインオフ前。本注文を入れた場合の生産・出荷は、両社合意後にお知らせします。</div>
+</header>
+<div class="note">
+  パスワードは知り合いに渡して下さい。リンクには <code>?pass={pw}</code> が必要 (このページが見えてるという事はあなたは合っています)。
+  cookie は 30 日間有効。<br>
+  公開を急ぐ場合は <a href="mailto:info@enablerdao.com">info@enablerdao.com</a>。
+</div>
+<div class="grid">
+{cards}
+</div>
+<div id="msg"></div>
+<footer>
+  MU × SWEEP draft preview · 株式会社イネブラ (Enabler Inc.) ·
+  <a href="mailto:info@enablerdao.com">info@enablerdao.com</a> ·
+  <a href="/sweep?logout=1">ログアウト</a>
+</footer>
+<script>
+document.querySelectorAll('.card .buy').forEach(btn => {{
+  btn.addEventListener('click', async () => {{
+    const slug = btn.dataset.slug;
+    const id   = btn.dataset.id;
+    const size = document.getElementById('size-' + id).value;
+    const msg  = document.getElementById('msg');
+    btn.disabled = true; const orig = btn.textContent; btn.textContent = '読み込み中…';
+    msg.textContent = '';
+    try {{
+      const r = await fetch('/api/sweep/checkout', {{
+        method: 'POST', headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{slug, size}})
+      }});
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      if (d.url) window.location.href = d.url;
+      else throw new Error(d.error || 'no url');
+    }} catch (e) {{
+      btn.disabled = false; btn.textContent = orig;
+      msg.textContent = 'エラー: ' + e.message + ' — SWEEP社 承認前のため Stripe key 未設定の可能性あり';
+    }}
+  }});
+}});
+// ?logout=1
+if (new URLSearchParams(location.search).get('logout') === '1') {{
+  document.cookie = 'mu_sweep_pass=; max-age=0; path=/';
+  location.href = '/sweep';
+}}
+</script>
+</body></html>"#);
+
+    let mut resp = axum::response::Html(body).into_response();
+    if entered == pw {
+        resp.headers_mut().insert(
+            header::SET_COOKIE,
+            HeaderValue::from_str(&format!(
+                "mu_sweep_pass={}; Max-Age=2592000; Path=/; HttpOnly; SameSite=Lax",
+                pw
+            )).unwrap_or_else(|_| HeaderValue::from_static("")),
+        );
+    }
+    resp.headers_mut().insert(
+        "X-Robots-Tag", HeaderValue::from_static("noindex, nofollow"),
+    );
+    resp
+}
+
+const SWEEP_GATE_HTML: &str = r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU × SWEEP — Restricted preview</title>
+<meta name="robots" content="noindex,nofollow">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:32px}
+.box{max-width:420px;text-align:center;width:100%}
+.logo{font-weight:700;letter-spacing:0.45em;font-size:28px;margin-bottom:30px}
+h1{font-size:13px;letter-spacing:0.35em;text-transform:uppercase;color:#e6c449;margin-bottom:16px;opacity:0.85}
+p{color:rgba(245,245,240,0.7);font-size:13px;line-height:1.9;margin-bottom:24px}
+input{background:#000;color:#F5F5F0;border:1px solid rgba(255,255,255,0.22);padding:14px 16px;font-family:inherit;font-size:14px;width:100%;border-radius:2px;letter-spacing:0.08em;margin-bottom:14px}
+input:focus{outline:none;border-color:#e6c449}
+button{background:#e6c449;color:#000;border:0;font-family:inherit;font-size:11px;letter-spacing:0.32em;text-transform:uppercase;font-weight:700;padding:14px 28px;cursor:pointer;border-radius:2px;width:100%}
+button:hover{opacity:0.85}
+.foot{margin-top:30px;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;opacity:0.45}
+.foot a{color:inherit;text-decoration:underline}
+</style></head><body>
+<form class="box" method="get" action="/sweep">
+  <div class="logo">MU × SWEEP</div>
+  <h1>Draft preview · password required</h1>
+  <p>SWEEP社 サインオフ前のため、このページは関係者限定です。<br>パスワードをお持ちでない方は <a style="color:#e6c449" href="mailto:info@enablerdao.com">info@enablerdao.com</a> までご連絡ください。</p>
+  <input name="pass" type="password" placeholder="password" autofocus autocomplete="current-password">
+  <button type="submit">Enter →</button>
+  <div class="foot"><a href="/">← MU トップへ戻る</a></div>
+</form>
+</body></html>"#;
+
+#[derive(Deserialize)]
+struct SweepCheckoutBody {
+    slug: String,
+    #[serde(default)] size: String,
+}
+
+async fn sweep_checkout(
+    State(db): State<Db>,
+    Json(body): Json<SweepCheckoutBody>,
+) -> impl IntoResponse {
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "checkout disabled").into_response();
+    }
+    // Lookup product (server-trusted price)
+    let row: Option<(i64, String, String, i64)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT id, name, COALESCE(category,''), price_jpy
+             FROM collab_products WHERE slug=? AND partner='sweep' AND active=1",
+            params![body.slug],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        ).ok()
+    };
+    let Some((product_id, name, category, price_jpy)) = row else {
+        return (StatusCode::NOT_FOUND, "product not found").into_response();
+    };
+    let price = price_jpy.clamp(500, 99_800);
+    let size = body.size.chars().take(8).collect::<String>();
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    let form: Vec<(&str, String)> = vec![
+        ("mode", "payment".into()),
+        ("currency", "jpy".into()),
+        ("allow_promotion_codes", "true".into()),
+        ("success_url", format!("{}/sweep?paid=ok", base_url)),
+        ("cancel_url",  format!("{}/sweep?paid=cancel", base_url)),
+        ("line_items[0][quantity]", "1".into()),
+        ("line_items[0][price_data][currency]", "jpy".into()),
+        ("line_items[0][price_data][unit_amount]", price.to_string()),
+        ("line_items[0][price_data][product_data][name]",
+         format!("{} ({}) · MU×SWEEP draft", name, category)),
+        ("metadata[collab]", "sweep".into()),
+        ("metadata[collab_product_id]", product_id.to_string()),
+        ("metadata[slug]", body.slug.clone()),
+        ("metadata[size]", size),
+        ("shipping_address_collection[allowed_countries][0]", "JP".into()),
+    ];
+    let resp = reqwest::Client::new()
+        .post("https://api.stripe.com/v1/checkout/sessions")
+        .basic_auth(&stripe_key, None::<&str>)
+        .form(&form)
+        .send().await;
+    match resp {
+        Ok(r) if r.status().is_success() => {
+            let j: serde_json::Value = r.json().await.unwrap_or_default();
+            let url = j["url"].as_str().unwrap_or("/").to_string();
+            Json(serde_json::json!({"url": url, "price_jpy": price})).into_response()
+        }
+        Ok(r) => {
+            let s = r.status();
+            let t = r.text().await.unwrap_or_default();
+            eprintln!("[sweep/checkout] stripe {}: {}", s, t.chars().take(200).collect::<String>());
+            (StatusCode::BAD_GATEWAY, "stripe error").into_response()
+        }
+        Err(e) => {
+            eprintln!("[sweep/checkout] reqwest: {}", e);
+            (StatusCode::BAD_GATEWAY, "stripe network").into_response()
+        }
+    }
+}
+
+fn format_jpy(n: i64) -> String {
+    let s = n.to_string();
+    let mut out = String::new();
+    for (i, c) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 { out.push(','); }
+        out.push(c);
+    }
+    out.chars().rev().collect()
+}
+
 // ── MA Council briefs (Gemini が議題を集約) + voting ───────────────────────
 
 fn iso_week_start_jst() -> String {
@@ -6739,7 +7024,7 @@ fn send_trial_reminder_if_needed(
     日割りすると 1 日 4 円以下。コーヒー 1 杯にも届きません。
   </p>
   <a href="https://wearmu.com/mugen" style="display:inline-block;background:#e6c449;color:#000;padding:14px 28px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:700;margin-right:8px">MUGEN を見る →</a>
-  <a href="https://wearmu.com/ma" style="display:inline-block;border:1px solid rgba(255,255,255,0.2);color:#F5F5F0;padding:13px 22px;font-size:10px;letter-spacing:0.25em;text-transform:uppercase;text-decoration:none;opacity:0.8">月次 MA オークション</a>
+  <a href="https://wearmu.com/ma" style="display:inline-block;border:1px solid rgba(255,255,255,0.2);color:#F5F5F0;padding:13px 22px;font-size:10px;letter-spacing:0.25em;text-transform:uppercase;text-decoration:none;opacity:0.8">週次 MA オークション</a>
   <p style="font-size:10px;opacity:0.5;margin-top:32px;line-height:1.7">
     トライアル終了後は、購入が無い限り毎日のデザイン配信は停止します。<br>退会は <code>STOP</code> 返信で即時。
   </p>
@@ -7013,7 +7298,7 @@ async fn you_unsubscribe(
 const RESERVED_SLUGS: &[&str] = &[
     "ma", "muon", "mugen", "nouns", "you", "city", "tokushoho", "success",
     "wallet", "v", "products", "api", "static", "mockups", "u",
-    "about", "press", "vision", "muer", "council",
+    "about", "press", "vision", "muer", "council", "sweep", "collab",
     "robots.txt", "sitemap.xml", "manifest.json",
     "favicon.ico", "favicon.svg", "favicon-16x16.png", "favicon-32x32.png",
     "apple-touch-icon.png", "icon-192.png", "icon-512.png", "og.jpg",
@@ -7835,6 +8120,54 @@ async fn main() {
     ] {
         conn.execute(col, []).ok();
     }
+
+    // ── MU × Collab partner products (e.g. SWEEP, draft, password gated) ──
+    conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS collab_products (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug        TEXT UNIQUE NOT NULL,
+            partner     TEXT NOT NULL,
+            category    TEXT NOT NULL,
+            name        TEXT NOT NULL,
+            description TEXT,
+            image_url   TEXT,
+            price_jpy   INTEGER NOT NULL,
+            sizes_json  TEXT,
+            active      INTEGER NOT NULL DEFAULT 1,
+            draft       INTEGER NOT NULL DEFAULT 1,
+            created_at  TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_collab_partner ON collab_products(partner, active);
+    ").ok();
+
+    // Seed MU × SWEEP draft items (idempotent on slug)
+    let sweep_items: &[(&str, &str, &str, &str, i64)] = &[
+        ("sweep-rashguard-ls",  "ラッシュガード",        "MU × SWEEP Long-Sleeve Rashguard",
+         "北参道 SWEEP の身体に沿うパターンを MU の北海道気象データから生まれたグラフィックで再構築。圧縮ニット、UPF50+。",
+         11_800),
+        ("sweep-fight-shorts",  "ファイトショーツ",      "MU × SWEEP Fight Shorts",
+         "ストレッチドビル×ベルクロ。MUON の温度パターンを縫い目に転写した試作。",
+         9_800),
+        ("sweep-spats",         "スパッツ / グラップリング タイツ",
+         "MU × SWEEP Grappling Spats",
+         "MUGEN の連番が縦に流れるサイドライン入り。寒い日のアンダー / そのまま着用も可。",
+         8_800),
+        ("sweep-hoodie",        "ジムフーディ",          "MU × SWEEP Loop-back Hoodie",
+         "ジム→帰宅まで一枚で済む厚手ループバック。袖口に MA 週銘 (ISO 週) のシリアル刺繍。",
+         16_800),
+        ("sweep-tee",           "コットン T",            "MU × SWEEP Heavy Cotton Tee",
+         "Bella+Canvas より厚手の SWEEP 別注ボディ。胸の小さな MU×SWEEP ロゴと、背の余白。",
+         6_800),
+    ];
+    let now = chrono_now();
+    for (slug, cat, name, desc, price) in sweep_items {
+        conn.execute(
+            "INSERT OR IGNORE INTO collab_products
+                 (slug, partner, category, name, description, image_url, price_jpy, sizes_json, active, draft, created_at)
+             VALUES (?, 'sweep', ?, ?, ?, NULL, ?, '[\"XS\",\"S\",\"M\",\"L\",\"XL\"]', 1, 1, ?)",
+            params![slug, cat, name, desc, price, now],
+        ).ok();
+    }
     // Auto-blog posts table — every day the AI composes a "field log"
     // entry from /api/transparency, recent commits + cron health, and
     // it lands here. Rendered at /blog/auto/<slug>.
@@ -8208,6 +8541,8 @@ async fn main() {
         .route("/api/treasury", get(public_treasury))
         .route("/api/admin/x_queue", get(admin_x_queue))
         .route("/api/admin/x_mark_posted", post(admin_x_mark_posted))
+        .route("/sweep", get(show_sweep_page))
+        .route("/api/sweep/checkout", post(sweep_checkout))
         .route("/api/admin/council_compose", post(admin_council_compose))
         .route("/api/council/briefs", get(list_council_briefs))
         .route("/api/council/vote", post(council_vote))
