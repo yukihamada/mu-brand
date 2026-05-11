@@ -86,6 +86,10 @@ struct Product {
     current_bid: i64,
     bid_count: i64,
     sold_out_at: Option<String>,
+    /// Generated "person wearing this design" photo (Gemini image-to-image).
+    /// Optional; falls back to mockup_url client-side.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lifestyle_url: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -418,6 +422,7 @@ fn read_product(row: &rusqlite::Row) -> rusqlite::Result<Product> {
         current_bid:  row.get(14).unwrap_or(0),
         bid_count:    row.get(15).unwrap_or(0),
         sold_out_at:  row.get(16).unwrap_or(None),
+        lifestyle_url: row.get(17).unwrap_or(None),
     })
 }
 
@@ -464,7 +469,7 @@ async fn list_products(
     let mut stmt = conn.prepare(
         "SELECT id, brand, drop_num, name, mockup_url, price_jpy, inventory, sold, created_at,
                 weather_data, prompt_hash, seed_data, nft_mint, auction_end,
-                COALESCE(current_bid,0), COALESCE(bid_count,0), sold_out_at
+                COALESCE(current_bid,0), COALESCE(bid_count,0), sold_out_at, lifestyle_url
          FROM products WHERE brand=? AND active=1 ORDER BY drop_num DESC LIMIT ?"
     ).unwrap();
     let products: Vec<Product> = stmt.query_map(params![brand, limit], |row| read_product(row))
@@ -536,7 +541,7 @@ async fn get_product(
     let result = conn.query_row(
         "SELECT id, brand, drop_num, name, mockup_url, price_jpy, inventory, sold, created_at,
                 weather_data, prompt_hash, seed_data, nft_mint, auction_end,
-                COALESCE(current_bid,0), COALESCE(bid_count,0), sold_out_at
+                COALESCE(current_bid,0), COALESCE(bid_count,0), sold_out_at, lifestyle_url
          FROM products WHERE id=? AND active=1",
         params![id], |row| read_product(row)
     );
