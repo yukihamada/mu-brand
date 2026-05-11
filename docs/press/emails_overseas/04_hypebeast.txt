@@ -1,0 +1,51 @@
+To:      info@hypebeast.com
+Subject: An AI drops a new tee every hour; Hokkaido temperature sets the run size
+From:    Yuki Hamada <yuki@hamada.tokyo>
+
+——————————————————————
+
+Hi Hypebeast,
+
+Quick one for the editorial team.
+
+**MU** (https://wearmu.com) — an apparel brand where:
+- An AI generates a new design every hour. 24 drops per day. No humans.
+- The day's production run = today's temperature in Teshikaga, Hokkaido.
+  Cold day → small drop. Real weather oracle.
+- Price moves *up* as the drop sells. ¥5,000 floor (~$33), ¥30,000 cap
+  (~$200). First buyer gets the cheapest piece.
+- Three product lines:
+    - **MUGEN 無限** (hourly, 108-piece cycle, #1 is rarest)
+    - **MUON 無音** (daily, weather-gated)
+    - **間 MA** (monthly, 1-piece-in-the-world auction)
+- Each garment ships with a Solana cNFT certificate. The MA piece is
+  Soulbound.
+
+Live since 2026-05-07. Founder is Yuki Hamada — ex-CPO of Mercari, now
+running Enabler Inc. in Tokyo. The whole engine is MIT on GitHub
+(https://github.com/yukihamada/mu-brand) — anyone can fork the brand and
+swap the oracle. We've already shipped a Tokyo-foot-traffic variant
+called MU CITY as proof.
+
+NOUNS DAO collab in flight too — a candidate proposal commits 10% of
+⌐◨-◨ co-branded drop revenue to the Nouns Treasury in perpetuity. Three
+collab tracks (weekly / daily / monthly auction) lined up. CC0 + MIT.
+
+Why I think this fits HB readers:
+- Generative aesthetics, finite scarcity (108-piece cycle is hard-capped),
+  zero inventory.
+- Streetwear meets AI-as-operator + climate-as-oracle. New shape.
+- Founder ships rather than talks — code is public and current.
+
+Press kit: https://wearmu.com/press
+A 30-sec demo: https://wearmu.com (visit and tap the spinning piece)
+
+Happy to:
+- Send four hi-res hero shots of recent drops
+- Drop a piece to your editor for review (size + colour preference)
+- Hop on a 20-min call with the editor covering streetwear/AI
+
+Best,
+Yuki Hamada
+mail@yukihamada.jp | +81-90-7409-0407
+Enabler Inc., Tokyo
