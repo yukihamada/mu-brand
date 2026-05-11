@@ -615,9 +615,53 @@ async fn stripe_webhook(
         Ok(v) => v,
         Err(_) => return StatusCode::BAD_REQUEST.into_response(),
     };
-    if event["type"] == "checkout.session.completed" {
+    // /you ¥980/月 subscription lifecycle (created / updated / deleted).
+    let ev_type = event["type"].as_str().unwrap_or("");
+    if ev_type.starts_with("customer.subscription.") {
+        handle_subscription_event(&db, ev_type, &event);
+        return StatusCode::OK.into_response();
+    }
+    if ev_type == "invoice.paid" || ev_type == "invoice.payment_succeeded" {
+        // Period-end advance — re-read the subscription via id on the invoice.
+        let sub_id = event["data"]["object"]["subscription"].as_str().unwrap_or("").to_string();
+        let customer_id = event["data"]["object"]["customer"].as_str().unwrap_or("").to_string();
+        let period_end: i64 = event["data"]["object"]["lines"]["data"][0]["period"]["end"]
+            .as_i64().unwrap_or(0);
+        if !sub_id.is_empty() && period_end > 0 {
+            let conn = db.lock().unwrap();
+            let _ = conn.execute(
+                "UPDATE you_users
+                 SET subscription_until=?, subscription_status='active'
+                 WHERE stripe_subscription_id=? OR stripe_customer_id=?",
+                params![period_end.to_string(), sub_id, customer_id],
+            );
+        }
+        return StatusCode::OK.into_response();
+    }
+
+    if ev_type == "checkout.session.completed" {
         let session = &event["data"]["object"];
         let meta = session["metadata"].clone();
+        // ¥980/月 subscription Checkout completed (mode=subscription).
+        // The user_id is in metadata.you_user_id; record customer + sub.
+        if session["mode"].as_str() == Some("subscription") {
+            if let Some(uid_str) = meta["you_user_id"].as_str() {
+                let user_id: i64 = uid_str.parse().unwrap_or(0);
+                let customer_id = session["customer"].as_str().unwrap_or("").to_string();
+                let sub_id = session["subscription"].as_str().unwrap_or("").to_string();
+                if user_id > 0 {
+                    let conn = db.lock().unwrap();
+                    let _ = conn.execute(
+                        "UPDATE you_users
+                         SET stripe_customer_id=?, stripe_subscription_id=?,
+                             subscription_status='active'
+                         WHERE id=?",
+                        params![customer_id, sub_id, user_id],
+                    );
+                }
+            }
+            return StatusCode::OK.into_response();
+        }
         // /you design purchase path (you_claim or you_public_buy):
         // separate from MU drops because /you designs live in you_designs.
         if let Some(design_id_str) = meta["you_design_id"].as_str() {
@@ -1856,27 +1900,49 @@ fn days_since_signup_secs(created_at_secs: u64) -> i64 {
 }
 
 /// Whether a /you account is currently allowed to receive daily designs.
-/// Active when:
-///   - lifetime_free is set (purchased a MU shirt → forever), OR
+/// Active when ANY of:
+///   - lifetime_free is set (bought a MU shirt → forever)
 ///   - trial_end_at is in the future
+///   - subscription_until is in the future (¥980/月 paid plan)
 fn you_user_active(trial_end_at: Option<&str>, lifetime_free: bool) -> bool {
+    you_user_active_full(trial_end_at, lifetime_free, None)
+}
+
+fn you_user_active_full(
+    trial_end_at: Option<&str>,
+    lifetime_free: bool,
+    subscription_until: Option<&str>,
+) -> bool {
     if lifetime_free { return true; }
-    let trial_end: u64 = match trial_end_at.and_then(|s| s.parse().ok()) {
-        Some(v) => v,
-        None => return false,
-    };
     use std::time::{SystemTime, UNIX_EPOCH};
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-    now < trial_end
+    let trial_end: u64 = trial_end_at.and_then(|s| s.parse().ok()).unwrap_or(0);
+    if now < trial_end { return true; }
+    let sub_end: u64 = subscription_until.and_then(|s| s.parse().ok()).unwrap_or(0);
+    now < sub_end
 }
 
 /// Subscription state shown to the client (and stamped on emails).
 fn you_user_state(trial_end_at: Option<&str>, lifetime_free: bool) -> serde_json::Value {
+    you_user_state_full(trial_end_at, lifetime_free, None, None)
+}
+
+fn you_user_state_full(
+    trial_end_at: Option<&str>,
+    lifetime_free: bool,
+    subscription_status: Option<&str>,
+    subscription_until: Option<&str>,
+) -> serde_json::Value {
     use std::time::{SystemTime, UNIX_EPOCH};
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
     let trial_end: u64 = trial_end_at.and_then(|s| s.parse().ok()).unwrap_or(0);
+    let sub_end: u64   = subscription_until.and_then(|s| s.parse().ok()).unwrap_or(0);
+    let on_paid = subscription_status.map(|s| s == "active" || s == "trialing").unwrap_or(false)
+                  && sub_end > now;
     let days_left: i64 = if lifetime_free {
-        -1   // sentinel: ∞
+        -1
+    } else if on_paid {
+        ((sub_end - now) / 86400) as i64
     } else if trial_end > now {
         ((trial_end - now) / 86400) as i64
     } else {
@@ -1884,6 +1950,8 @@ fn you_user_state(trial_end_at: Option<&str>, lifetime_free: bool) -> serde_json
     };
     let status = if lifetime_free {
         "lifetime"
+    } else if on_paid {
+        "subscribed"
     } else if trial_end > now {
         "trial"
     } else {
@@ -1892,6 +1960,8 @@ fn you_user_state(trial_end_at: Option<&str>, lifetime_free: bool) -> serde_json
     serde_json::json!({
         "status": status,
         "trial_end_at": trial_end_at,
+        "subscription_status": subscription_status,
+        "subscription_until": subscription_until,
         "days_left": days_left,
         "lifetime_free": lifetime_free,
     })
@@ -2759,11 +2829,16 @@ async fn you_subscribe(
     let share_url = slug.as_ref().map(|s|
         format!("{}/{}", base_url.trim_end_matches('/'), s));
 
-    let (trial_end_at, lifetime_free): (Option<String>, i64) = conn.query_row(
-        "SELECT trial_end_at, COALESCE(lifetime_free,0) FROM you_users WHERE id=?",
-        params![user_id], |r| Ok((r.get(0)?, r.get(1)?)),
-    ).unwrap_or((None, 0));
-    let subscription = you_user_state(trial_end_at.as_deref(), lifetime_free != 0);
+    let (trial_end_at, lifetime_free, sub_status, sub_until):
+        (Option<String>, i64, Option<String>, Option<String>) = conn.query_row(
+        "SELECT trial_end_at, COALESCE(lifetime_free,0), subscription_status, subscription_until
+         FROM you_users WHERE id=?",
+        params![user_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+    ).unwrap_or((None, 0, None, None));
+    let subscription = you_user_state_full(
+        trial_end_at.as_deref(), lifetime_free != 0,
+        sub_status.as_deref(), sub_until.as_deref(),
+    );
     Json(serde_json::json!({
         "ok": true,
         "token": token,
@@ -2946,6 +3021,188 @@ async fn you_feedback(
         "ok": true,
         "today": today_after,
     })).into_response()
+}
+
+// ── ¥980/月 paid subscription tier ──────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct YouSubscribePaidBody {
+    token: String,
+}
+
+/// POST /api/you/subscribe-paid — start the ¥980/月 plan for the token's
+/// account. Returns a Stripe Checkout URL in subscription mode.
+async fn you_subscribe_paid(
+    State(db): State<Db>,
+    Json(body): Json<YouSubscribePaidBody>,
+) -> impl IntoResponse {
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "checkout disabled").into_response();
+    }
+    let (user_id, email, customer_id, price_jpy): (i64, String, Option<String>, i64) = {
+        let conn = db.lock().unwrap();
+        let row: Option<(i64, String, Option<String>)> = conn.query_row(
+            "SELECT id, email, stripe_customer_id FROM you_users
+             WHERE token=? AND unsubscribed_at IS NULL",
+            params![body.token], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).ok();
+        let (u, e, c) = match row {
+            Some(v) => v,
+            None => return (StatusCode::NOT_FOUND, "invalid token").into_response(),
+        };
+        let p: i64 = cv_get(&conn, "monthly_price_jpy", "980").parse().unwrap_or(980);
+        (u, e, c, p.clamp(100, 9_980))
+    };
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+
+    let mut form: Vec<(&str, String)> = vec![
+        ("mode", "subscription".into()),
+        ("currency", "jpy".into()),
+        ("customer_email", email.clone()),
+        ("allow_promotion_codes", "true".into()),
+        ("success_url", format!("{}/you?paid=ok", base_url)),
+        ("cancel_url", format!("{}/you?paid=cancel", base_url)),
+        ("line_items[0][quantity]", "1".into()),
+        ("line_items[0][price_data][currency]", "jpy".into()),
+        ("line_items[0][price_data][unit_amount]", price_jpy.to_string()),
+        ("line_items[0][price_data][recurring][interval]", "month".into()),
+        ("line_items[0][price_data][product_data][name]",
+         format!("MU × YOU — 月額 ¥{} (毎朝 1 案、いつでも解約)", price_jpy)),
+        ("metadata[you_user_id]", user_id.to_string()),
+        ("subscription_data[metadata][you_user_id]", user_id.to_string()),
+    ];
+    // Reuse existing Stripe customer if we have one so the portal works seamlessly.
+    if let Some(cid) = customer_id.as_deref() {
+        if !cid.is_empty() {
+            // Stripe Checkout: if customer is set, omit customer_email.
+            form.retain(|(k, _)| *k != "customer_email");
+            form.push(("customer", cid.into()));
+        }
+    }
+
+    let resp = reqwest::Client::new()
+        .post("https://api.stripe.com/v1/checkout/sessions")
+        .basic_auth(&stripe_key, None::<&str>)
+        .form(&form)
+        .send().await;
+    match resp {
+        Ok(r) if r.status().is_success() => {
+            let j: serde_json::Value = r.json().await.unwrap_or_default();
+            let url = j["url"].as_str().unwrap_or("/").to_string();
+            Json(serde_json::json!({"url": url, "price_jpy": price_jpy})).into_response()
+        }
+        Ok(r) => {
+            let s = r.status();
+            let t = r.text().await.unwrap_or_default();
+            eprintln!("[you/subscribe-paid] stripe {}: {}", s, t);
+            (StatusCode::BAD_GATEWAY, "stripe error").into_response()
+        }
+        Err(e) => {
+            eprintln!("[you/subscribe-paid] reqwest: {}", e);
+            (StatusCode::BAD_GATEWAY, "stripe network").into_response()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct YouPortalBody {
+    token: String,
+}
+
+/// POST /api/you/portal — return a Stripe billing-portal session for the
+/// user to manage / cancel their subscription.
+async fn you_portal(
+    State(db): State<Db>,
+    Json(body): Json<YouPortalBody>,
+) -> impl IntoResponse {
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "portal disabled").into_response();
+    }
+    let customer_id: String = {
+        let conn = db.lock().unwrap();
+        match conn.query_row(
+            "SELECT stripe_customer_id FROM you_users
+             WHERE token=? AND unsubscribed_at IS NULL",
+            params![body.token], |r| r.get::<_, Option<String>>(0),
+        ).ok().flatten() {
+            Some(c) if !c.is_empty() => c,
+            _ => return (StatusCode::NOT_FOUND, "no Stripe customer yet — start a subscription first").into_response(),
+        }
+    };
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    let resp = reqwest::Client::new()
+        .post("https://api.stripe.com/v1/billing_portal/sessions")
+        .basic_auth(&stripe_key, None::<&str>)
+        .form(&[
+            ("customer", customer_id.as_str()),
+            ("return_url", format!("{}/you", base_url).as_str()),
+        ])
+        .send().await;
+    match resp {
+        Ok(r) if r.status().is_success() => {
+            let j: serde_json::Value = r.json().await.unwrap_or_default();
+            Json(serde_json::json!({"url": j["url"].as_str().unwrap_or("/")})).into_response()
+        }
+        Ok(r) => {
+            let t = r.text().await.unwrap_or_default();
+            eprintln!("[you/portal] stripe {}", t);
+            (StatusCode::BAD_GATEWAY, "stripe error").into_response()
+        }
+        Err(e) => {
+            eprintln!("[you/portal] reqwest: {}", e);
+            (StatusCode::BAD_GATEWAY, "stripe network").into_response()
+        }
+    }
+}
+
+/// Webhook helper — invoked from stripe_webhook on subscription events.
+fn handle_subscription_event(db: &Db, event_type: &str, event: &serde_json::Value) {
+    let obj = &event["data"]["object"];
+    // The subscription object lives at .object for customer.subscription.*.
+    // For checkout.session.completed (mode=subscription) the subscription id
+    // is at .subscription and we need to fetch it; but we already record the
+    // mapping in the dedicated checkout branch — here we update only when
+    // we see customer.subscription.*.
+    let sub_id = obj["id"].as_str().unwrap_or("").to_string();
+    let customer_id = obj["customer"].as_str().unwrap_or("").to_string();
+    if sub_id.is_empty() || customer_id.is_empty() { return; }
+    let status = obj["status"].as_str().unwrap_or("").to_string();
+    let period_end: i64 = obj["current_period_end"].as_i64().unwrap_or(0);
+    let until_str = if period_end > 0 { period_end.to_string() } else { String::new() };
+
+    let conn = db.lock().unwrap();
+    // Try to locate the user by stripe_customer_id OR by metadata.you_user_id.
+    let user_id: Option<i64> = conn.query_row(
+        "SELECT id FROM you_users WHERE stripe_customer_id=?",
+        params![customer_id], |r| r.get(0),
+    ).ok().or_else(|| {
+        let from_meta = obj["metadata"]["you_user_id"].as_str()
+            .and_then(|x| x.parse::<i64>().ok());
+        from_meta
+    });
+    let Some(uid) = user_id else {
+        eprintln!("[stripe/subscription] no /you user for customer={}", customer_id);
+        return;
+    };
+    let _ = conn.execute(
+        "UPDATE you_users
+         SET stripe_customer_id = COALESCE(stripe_customer_id, ?),
+             stripe_subscription_id = ?,
+             subscription_status = ?,
+             subscription_until = CASE WHEN ?<>'' THEN ? ELSE subscription_until END
+         WHERE id=?",
+        params![customer_id, sub_id, status, until_str, until_str, uid],
+    );
+    if event_type == "customer.subscription.deleted" {
+        // No daily emails on canceled subs once subscription_until passes.
+        let _ = conn.execute(
+            "UPDATE you_users SET subscription_status='canceled' WHERE id=?",
+            params![uid],
+        );
+    }
+    eprintln!("[/you] subscription {} {} for user {}", sub_id, status, uid);
 }
 
 /// Backfill mu_purchases from Stripe history (paid checkout sessions) so
@@ -4498,11 +4755,13 @@ fn send_trial_expired_notice_if_needed(
   <div style="font-size:18px;font-weight:300;line-height:1.5;margin-bottom:24px">30 日間のトライアル、ここまで届けてくれてありがとう。</div>
   <p style="font-size:12px;line-height:1.85;opacity:0.75;margin-bottom:24px">
     今日からは、毎朝 9 時のデザイン配信は一旦停止します。<br><br>
-    <strong>もう一度 ON にする方法はひとつだけ</strong> — MU の T シャツを 1 着、手に入れてください。<br>
-    1 着でも所有すれば、MU × YOU は <strong>一生無料</strong>。明日からまた毎朝、あなただけの一着が届きます。
+    <strong>もう一度 ON にする方法は 2 つ</strong>:<br>
+    ① MU の T シャツを <strong>1 着</strong> 買う (¥6,800〜) → <strong>一生 ¥0</strong>。<br>
+    ② サブスク <strong>¥980/月</strong> (いつでも解約)。<br><br>
+    どちらでも、明日からまた毎朝、あなただけの一着が届きます。
   </p>
-  <a href="https://wearmu.com/mugen" style="display:inline-block;background:#e6c449;color:#000;padding:14px 28px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:700;margin-right:8px">MUGEN を見る →</a>
-  <a href="https://wearmu.com/ma" style="display:inline-block;border:1px solid rgba(255,255,255,0.2);color:#F5F5F0;padding:13px 22px;font-size:10px;letter-spacing:0.25em;text-transform:uppercase;text-decoration:none;opacity:0.8">MA オークション</a>
+  <a href="https://wearmu.com/mugen" style="display:inline-block;background:#e6c449;color:#000;padding:14px 28px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:700;margin-right:8px;margin-bottom:8px">MU を買う →</a>
+  <a href="https://wearmu.com/you?subscribe=1" style="display:inline-block;border:1px solid #e6c449;color:#e6c449;padding:13px 22px;font-size:10px;letter-spacing:0.25em;text-transform:uppercase;text-decoration:none;font-weight:700">¥980/月で続ける</a>
   <p style="font-size:10px;opacity:0.5;margin-top:32px;line-height:1.7">
     トライアル中の 30 案は <a href="https://wearmu.com/you" style="color:#e6c449">あなたのページ</a> でいつでも見返せます。
   </p>
@@ -4528,27 +4787,32 @@ async fn you_admin_backfill(
 ) -> impl IntoResponse {
     if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
     let day = jst_today_str();
-    type UserRow = (i64, String, String, Option<String>, Option<String>, i64, String, Option<String>);
+    type UserRow = (
+        i64, String, String, Option<String>, Option<String>, i64,
+        String, Option<String>, Option<String>, Option<String>,
+    );
     let users: Vec<UserRow> = {
         let conn = db.lock().unwrap();
         let mut stmt = match conn.prepare(
             "SELECT id, email, taste_json, slug, trial_end_at, COALESCE(lifetime_free,0),
-                    created_at, style_name
+                    created_at, style_name, subscription_status, subscription_until
              FROM you_users
              WHERE unsubscribed_at IS NULL"
         ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
         stmt.query_map([], |r| Ok((
-            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?,
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?,
+            r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?,
         ))).map(|it| it.filter_map(|r| r.ok()).collect())
            .unwrap_or_default()
     };
 
     let mut queued = 0;
     let mut skipped_expired = 0;
-    for (uid, email, taste_json, _slug, trial_end_at, lifetime_free_int, created_at, style_name) in &users {
+    for (uid, email, taste_json, _slug, trial_end_at, lifetime_free_int, created_at,
+         style_name, _sub_status, sub_until) in &users {
         let lifetime_free = *lifetime_free_int != 0;
-        // Skip expired trials (no daily email until they buy a MU shirt).
-        if !you_user_active(trial_end_at.as_deref(), lifetime_free) {
+        // Skip non-active accounts (no daily email until they pay or buy MU).
+        if !you_user_active_full(trial_end_at.as_deref(), lifetime_free, sub_until.as_deref()) {
             skipped_expired += 1;
             send_trial_expired_notice_if_needed(db.clone(), *uid, email.clone(), trial_end_at.clone());
             continue;
@@ -5437,6 +5701,11 @@ async fn main() {
         "ALTER TABLE you_users ADD COLUMN bonus_drops_sent INTEGER DEFAULT 0",
         // Mark a design as the bonus / milestone variant for UI badges
         "ALTER TABLE you_designs ADD COLUMN kind TEXT NOT NULL DEFAULT 'daily'",
+        // ¥980/月 paid subscription tier (alternative to buying a MU shirt).
+        "ALTER TABLE you_users ADD COLUMN stripe_customer_id TEXT",
+        "ALTER TABLE you_users ADD COLUMN stripe_subscription_id TEXT",
+        "ALTER TABLE you_users ADD COLUMN subscription_status TEXT",
+        "ALTER TABLE you_users ADD COLUMN subscription_until TEXT",
     ] {
         conn.execute(col, []).ok();
     }
@@ -5495,6 +5764,13 @@ async fn main() {
         "INSERT OR IGNORE INTO cv_config (key, value, updated_at, reason)
          VALUES (?, ?, ?, ?)",
         params!["hero_cta_variant", "value", chrono_now(), "default"],
+    ).ok();
+    // Monthly subscription price in JPY (¥). Editable from cv_config without
+    // a redeploy.
+    conn.execute(
+        "INSERT OR IGNORE INTO cv_config (key, value, updated_at, reason)
+         VALUES (?, ?, ?, ?)",
+        params!["monthly_price_jpy", "980", chrono_now(), "default"],
     ).ok();
     // /you signal stream — emoji reactions + dwell time + email taps.
     // Drives the auto-tuning of compose_design so tomorrow's drop bends
@@ -5696,6 +5972,8 @@ async fn main() {
         .route("/api/you/preferences", get(you_preferences))
         .route("/r/:design_id/:kind", get(you_signal_email))
         .route("/api/admin/backfill_purchases", post(admin_backfill_purchases))
+        .route("/api/you/subscribe-paid", post(you_subscribe_paid))
+        .route("/api/you/portal", post(you_portal))
         // Blog (public ops notes). Clean URLs without .html extension.
         .route("/blog", get(blog_index))
         .route("/blog/", get(blog_index))

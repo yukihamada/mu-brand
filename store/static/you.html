@@ -315,9 +315,12 @@ footer a:hover{opacity:1}
   </div>
   <div style="max-width:560px;margin:24px auto 0;padding:18px 22px;background:rgba(230,196,73,0.08);border-left:2px solid #e6c449;font-size:13px;line-height:1.9;text-align:left;border-radius:2px">
     <div style="font-size:10px;letter-spacing:0.25em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:8px">価格</div>
-    <span style="opacity:0.55;text-decoration:line-through">通常 月額 ¥980 / 年額 ¥11,760</span><br>
-    <strong style="font-size:15px">→ 30 日間 ¥0</strong>。さらに <a href="/mugen" style="color:#e6c449">MUGEN</a> / <a href="/muon" style="color:#e6c449">MUON</a> / <a href="/ma" style="color:#e6c449">MA</a> から 1 着でも手に入れれば <strong>一生 ¥0</strong>。<br>
-    <span style="font-size:11px;opacity:0.7">— MU 1 着 ¥6,800 を 5 年使うと、1 日あたり 4 円 以下。</span>
+    <strong style="font-size:15px">30 日間 ¥0</strong> のトライアル。その後の選択肢は 2 つ:<br>
+    <span style="font-size:12px;opacity:0.85">
+      ① MU の T シャツを <a href="/mugen" style="color:#e6c449">1 着</a> 買う (¥6,800〜) → <strong>一生 ¥0</strong>。<br>
+      ② サブスク <strong>¥980/月</strong> (いつでも解約)。
+    </span><br>
+    <span style="font-size:11px;opacity:0.65">— MU 1 着を 5 年使うと月割り ¥113。年プラン ¥11,760 の 10 分の 1。</span>
   </div>
   <!-- Live social proof: filled by /api/you/stats. Quietly empty if the
        endpoint is offline so we never show placeholder zeros. -->
@@ -462,6 +465,12 @@ footer a:hover{opacity:1}
           <div id="pv-progress-fill" style="height:100%;background:linear-gradient(90deg,#e6c449,#C8362C);width:0%;transition:width 0.6s ease"></div>
         </div>
         <div id="pv-lifetime" style="display:none;font-size:11px;letter-spacing:0.15em;color:#5a9e6f;background:rgba(90,158,111,0.08);padding:8px 14px;border-left:2px solid #5a9e6f">★ MU 所有者 — 一生無料 (lifetime)</div>
+        <!-- Paid-plan / portal switch — shows the right button for the user's current state. -->
+        <div id="pv-paid-cta" style="display:none;margin:8px 0">
+          <button id="paid-subscribe-btn" type="button" class="btn btn-secondary" style="font-size:11px;padding:9px 14px">¥980/月で続ける →</button>
+          <button id="paid-portal-btn" type="button" class="btn btn-ghost" style="display:none;font-size:11px;padding:9px 14px;margin-left:6px">サブスクを管理</button>
+          <span id="paid-msg" style="font-size:10px;opacity:0.65;margin-left:6px"></span>
+        </div>
         <div class="preview-name" id="pv-name">…</div>
         <div class="preview-prompt" id="pv-prompt">…</div>
 
@@ -723,27 +732,59 @@ function applySubscriptionUI(sub, dayNum, styleName){
   const barEl = document.getElementById('pv-progress-bar');
   const fillEl = document.getElementById('pv-progress-fill');
   const lifetimeEl = document.getElementById('pv-lifetime');
+  const paidCtaEl = document.getElementById('pv-paid-cta');
+  const subBtn  = document.getElementById('paid-subscribe-btn');
+  const portalBtn = document.getElementById('paid-portal-btn');
+  const allHide = () => {
+    if (paidCtaEl) paidCtaEl.style.display = 'none';
+    if (subBtn) subBtn.style.display = 'none';
+    if (portalBtn) portalBtn.style.display = 'none';
+  };
   if (sub.lifetime_free) {
     if (progressEl) progressEl.style.display = 'none';
     if (barEl) barEl.style.display = 'none';
     if (lifetimeEl) lifetimeEl.style.display = 'block';
+    allHide();
+  } else if (sub.status === 'subscribed') {
+    if (progressEl) {
+      progressEl.style.display = 'block';
+      progressEl.style.color = '#5a9e6f';
+      progressEl.textContent = '✓ ¥980/月 アクティブ — いつでも解約可';
+    }
+    if (barEl) barEl.style.display = 'none';
+    if (lifetimeEl) lifetimeEl.style.display = 'none';
+    if (paidCtaEl) paidCtaEl.style.display = 'block';
+    if (subBtn) subBtn.style.display = 'none';
+    if (portalBtn) portalBtn.style.display = 'inline-block';
   } else if (sub.status === 'trial') {
     const days = Math.max(0, sub.days_left || 0);
     const used = Math.max(0, 30 - days);
     if (progressEl) {
       progressEl.style.display = 'block';
+      progressEl.style.color = '#e6c449';
       progressEl.textContent = `あと ${days} 日 / 30  · 失われる: ${used} 案を超えた経験`;
     }
     if (barEl) barEl.style.display = 'block';
     if (fillEl) fillEl.style.width = `${(used / 30) * 100}%`;
     if (lifetimeEl) lifetimeEl.style.display = 'none';
+    // Show subscribe CTA from Day 20+ (last 10 days of trial)
+    if (paidCtaEl) {
+      const showCta = days <= 10;
+      paidCtaEl.style.display = showCta ? 'block' : 'none';
+      if (subBtn) subBtn.style.display = showCta ? 'inline-block' : 'none';
+      if (portalBtn) portalBtn.style.display = 'none';
+    }
   } else {
     if (progressEl) {
       progressEl.style.display = 'block';
       progressEl.style.color = '#C8362C';
-      progressEl.textContent = '無料トライアル終了 — MU 1 着で再開';
+      progressEl.textContent = '無料トライアル終了 — MU 1 着 か ¥980/月 で再開';
     }
     if (barEl) barEl.style.display = 'none';
+    if (lifetimeEl) lifetimeEl.style.display = 'none';
+    if (paidCtaEl) paidCtaEl.style.display = 'block';
+    if (subBtn) subBtn.style.display = 'inline-block';
+    if (portalBtn) portalBtn.style.display = 'none';
   }
   // Day-7 IKEA-effect ritual surfaces between Day 7 and Day 14 if no style name
   const nyEl = document.getElementById('name-your-style');
@@ -891,6 +932,54 @@ async function loadDaily(tk){
     toast('読み込みに失敗：' + e.message, true);
   }
 }
+
+// Wire paid-subscription + portal buttons.
+document.addEventListener('DOMContentLoaded', () => {
+  const sub = document.getElementById('paid-subscribe-btn');
+  if (sub) sub.addEventListener('click', async () => {
+    if (!token) return;
+    sub.disabled = true; sub.textContent = '読み込み中…';
+    try {
+      const r = await fetch('/api/you/subscribe-paid', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({token}),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      if (d.url) window.location.href = d.url;
+    } catch (e) {
+      sub.disabled = false; sub.textContent = '¥980/月で続ける →';
+      document.getElementById('paid-msg').textContent = 'エラー: ' + e.message;
+    }
+  });
+  const portal = document.getElementById('paid-portal-btn');
+  if (portal) portal.addEventListener('click', async () => {
+    if (!token) return;
+    portal.disabled = true; portal.textContent = '読み込み中…';
+    try {
+      const r = await fetch('/api/you/portal', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({token}),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      if (d.url) window.location.href = d.url;
+    } catch (e) {
+      portal.disabled = false; portal.textContent = 'サブスクを管理';
+      document.getElementById('paid-msg').textContent = 'エラー: ' + e.message;
+    }
+  });
+
+  // Auto-trigger subscribe flow when arriving from the trial-end email
+  // (`/you?subscribe=1`). Wait for token to be loaded, then click.
+  if (new URLSearchParams(location.search).get('subscribe') === '1') {
+    const tryClick = () => {
+      if (token && sub) { sub.click(); }
+      else { setTimeout(tryClick, 300); }
+    };
+    setTimeout(tryClick, 600);
+  }
+});
 
 // Wire emoji reaction buttons on /you preview. Records the signal and
 // blinks a confirmation so the user sees the feedback was received.
