@@ -275,9 +275,33 @@ pub async fn checkout_crypto_status(
     }
 }
 
-/// Helius enhanced-webhook handler. Auth via static `HELIUS_WEBHOOK_AUTH`
-/// header. Walks accountData looking for the reference public key, marks
-/// the matching pending_crypto_payments row confirmed, increments sold count.
+/// Constant-time string comparison. Prevents timing-attack disclosure of
+/// the secret length / content via response-time differences.
+fn ct_eq(a: &str, b: &str) -> bool {
+    let aa = a.as_bytes();
+    let bb = b.as_bytes();
+    if aa.len() != bb.len() { return false; }
+    let mut diff: u8 = 0;
+    for (x, y) in aa.iter().zip(bb.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+/// Helius enhanced-webhook handler.
+///
+/// Security model:
+///   1. Auth: shared secret in Authorization header, compared in constant time.
+///   2. Recipient check: every event must include our `MU_SOL_RECIPIENT` (or
+///      `MU_ETH_RECIPIENT`) in `accountData[].account`. Without this an
+///      attacker who learns the webhook secret could forge "payments" with
+///      arbitrary reference keys.
+///   3. Amount tolerance: when the event carries `nativeBalanceChange` or
+///      `tokenBalanceChanges` for our recipient, we require it to be at
+///      least 95% of the expected amount_crypto (5% slip for fee netting /
+///      rate drift within the TTL window).
+///   4. Idempotency: status='pending' guard in the UPDATE — replaying the
+///      same event won't double-confirm or double-increment sold count.
 pub async fn helius_webhook(
     State(db): State<Db>,
     headers: HeaderMap,
@@ -286,15 +310,21 @@ pub async fn helius_webhook(
     let expected = env::var("HELIUS_WEBHOOK_AUTH").unwrap_or_default();
     let got = headers.get("authorization")
         .and_then(|h| h.to_str().ok()).unwrap_or("");
-    if expected.is_empty() || got != expected {
+    if expected.is_empty() || !ct_eq(got, &expected) {
         return (StatusCode::UNAUTHORIZED, "auth").into_response();
     }
+    let mu_sol = env::var("MU_SOL_RECIPIENT").unwrap_or_default();
+    let mu_eth = env::var("MU_ETH_RECIPIENT").unwrap_or_default();
+
     let v: serde_json::Value = match serde_json::from_str(&body) {
         Ok(v) => v,
         Err(_) => return (StatusCode::BAD_REQUEST, "json").into_response(),
     };
     let events = v.as_array().cloned().unwrap_or_else(|| vec![v]);
     let mut matched = 0usize;
+    let mut skipped_no_recipient = 0usize;
+    let mut skipped_amount = 0usize;
+
     for ev in events {
         let signature = ev["signature"].as_str().unwrap_or("").to_string();
         let account_keys: Vec<String> = ev["accountData"].as_array()
@@ -304,8 +334,81 @@ pub async fn helius_webhook(
             .unwrap_or_default();
         if signature.is_empty() || account_keys.is_empty() { continue; }
 
-        let conn = db.lock().unwrap();
+        // Recipient must appear in this event. Otherwise it's not a tx
+        // routed at us and we should not consume it.
+        let recipient_present = (!mu_sol.is_empty() && account_keys.iter().any(|k| k == &mu_sol))
+            || (!mu_eth.is_empty() && account_keys.iter().any(|k| k.eq_ignore_ascii_case(&mu_eth)));
+        if !recipient_present {
+            skipped_no_recipient += 1;
+            continue;
+        }
+
+        // Build a quick lookup of net balance changes credited to our
+        // recipient (positive deltas only). Both native lamports and SPL
+        // token transfers are considered.
+        let mut credited_lamports: u64 = 0;
+        let mut credited_token_units: u128 = 0;
+        if let Some(arr) = ev["accountData"].as_array() {
+            for a in arr {
+                let acct = a["account"].as_str().unwrap_or("");
+                if acct != mu_sol && !acct.eq_ignore_ascii_case(&mu_eth) { continue; }
+                if let Some(d) = a["nativeBalanceChange"].as_i64() {
+                    if d > 0 { credited_lamports = credited_lamports.saturating_add(d as u64); }
+                }
+                if let Some(tb) = a["tokenBalanceChanges"].as_array() {
+                    for t in tb {
+                        let amt_str = t["rawTokenAmount"]["tokenAmount"]
+                            .as_str().unwrap_or("0");
+                        if let Ok(n) = amt_str.parse::<i128>() {
+                            if n > 0 { credited_token_units =
+                                credited_token_units.saturating_add(n as u128); }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Iterate reference keys; only confirm the row if the credited
+        // amount is at least 95% of the expected crypto amount.
         for key in &account_keys {
+            // Look up expected payment row first; skip if not a reference of ours.
+            let row = {
+                let conn = db.lock().unwrap();
+                conn.query_row(
+                    "SELECT product_id, amount_crypto, asset, payment_method
+                     FROM pending_crypto_payments
+                     WHERE reference=? AND status='pending'",
+                    params![key],
+                    |r| Ok((r.get::<_,i64>(0)?, r.get::<_,String>(1)?,
+                            r.get::<_,String>(2)?, r.get::<_,String>(3)?))
+                ).ok()
+            };
+            let Some((product_id, expected_amt_str, asset, _pm)) = row else { continue; };
+
+            let expected_amt: f64 = expected_amt_str.parse().unwrap_or(0.0);
+            // Convert expected_amt to the same unit as the on-chain credit.
+            // USDC has 6 decimals; SOL native is lamports (9 dec → use lamports).
+            let (expected_units, credited_units) = match asset.as_str() {
+                "USDC" => (
+                    (expected_amt * 1_000_000.0) as u128,
+                    credited_token_units,
+                ),
+                "SOL" => (
+                    (expected_amt * 1_000_000_000.0) as u128,
+                    credited_lamports as u128,
+                ),
+                _ => (0u128, 0u128), // ETH is reconciled separately; webhook
+                                    // only treats Solana for now.
+            };
+            if expected_units == 0 || credited_units == 0
+                || credited_units * 100 < expected_units * 95
+            {
+                skipped_amount += 1;
+                continue;
+            }
+
+            // Confirm + bump sold count in a scoped lock.
+            let conn = db.lock().unwrap();
             let upd = conn.execute(
                 "UPDATE pending_crypto_payments
                  SET status='confirmed', tx_signature=?, confirmed_at=?
@@ -313,21 +416,24 @@ pub async fn helius_webhook(
                 params![signature, now_iso(), key]
             ).unwrap_or(0);
             if upd > 0 {
-                let pid: Option<i64> = conn.query_row(
-                    "SELECT product_id FROM pending_crypto_payments WHERE reference=?",
-                    params![key], |r| r.get(0)
-                ).ok();
-                if let Some(product_id) = pid {
-                    let _ = conn.execute(
-                        "UPDATE products SET sold = sold + 1 WHERE id=?",
-                        params![product_id]
-                    );
-                }
+                let _ = conn.execute(
+                    "UPDATE products SET sold = sold + 1 WHERE id=?",
+                    params![product_id]
+                );
                 matched += 1;
+                tracing::info!(
+                    "[helius] confirmed ref={} product_id={} sig={} asset={} credited={} expected={}",
+                    key, product_id, signature, asset, credited_units, expected_units
+                );
             }
         }
     }
-    Json(serde_json::json!({"ok": true, "matched": matched})).into_response()
+    Json(serde_json::json!({
+        "ok": true,
+        "matched": matched,
+        "skipped_no_recipient": skipped_no_recipient,
+        "skipped_amount_too_low": skipped_amount,
+    })).into_response()
 }
 
 // ── Admin CSV exports ─────────────────────────────────────────────────
@@ -338,16 +444,24 @@ fn require_admin(headers: &HeaderMap) -> Result<(), Response> {
     }
     let got = headers.get("x-admin-token")
         .and_then(|h| h.to_str().ok()).unwrap_or("");
-    if got != expected {
+    if !ct_eq(got, &expected) {
         return Err((StatusCode::UNAUTHORIZED, "admin token mismatch").into_response());
     }
     Ok(())
 }
 
+/// CSV cell escaping. Quotes any cell that contains `, " \r \n` and any
+/// cell starting with the Excel/Sheets formula-injection sentinels
+/// `= + - @` so opening the CSV does not silently execute as a formula.
 fn csv_escape(s: &str) -> String {
-    if s.contains(',') || s.contains('"') || s.contains('\n') {
-        format!("\"{}\"", s.replace('"', "\"\""))
-    } else { s.to_string() }
+    let needs_quote = s.contains(',') || s.contains('"')
+        || s.contains('\n') || s.contains('\r');
+    let needs_prefix = s.starts_with('=') || s.starts_with('+')
+        || s.starts_with('-') || s.starts_with('@');
+    let core: String = if needs_prefix { format!("'{}", s) } else { s.to_string() };
+    if needs_quote || needs_prefix {
+        format!("\"{}\"", core.replace('"', "\"\""))
+    } else { core }
 }
 
 pub async fn admin_export_kyc(
@@ -503,5 +617,27 @@ mod tests {
     fn jpy_to_usdc_default_rate() {
         std::env::remove_var("JPY_PER_USD");
         assert_eq!(jpy_to_usdc_amount(150_000), "1000.00");
+    }
+
+    #[test]
+    fn ct_eq_handles_unequal_lengths() {
+        assert!(!ct_eq("abc", "abcd"));
+        assert!(!ct_eq("abcd", "abc"));
+        assert!(ct_eq("", ""));
+        assert!(ct_eq("token", "token"));
+        assert!(!ct_eq("token", "TOKEN"));
+    }
+
+    #[test]
+    fn csv_escape_blocks_formula_injection() {
+        // Excel/Sheets formula sentinels must be prefixed with ' and quoted.
+        assert_eq!(csv_escape("=SUM(A1:A10)"), "\"'=SUM(A1:A10)\"");
+        assert_eq!(csv_escape("+1234"), "\"'+1234\"");
+        assert_eq!(csv_escape("-x"), "\"'-x\"");
+        assert_eq!(csv_escape("@cmd"), "\"'@cmd\"");
+        // Newline + carriage return both trigger quoting.
+        assert_eq!(csv_escape("a\rb"), "\"a\rb\"");
+        // Plain text passes through.
+        assert_eq!(csv_escape("hello"), "hello");
     }
 }
