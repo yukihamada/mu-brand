@@ -103,6 +103,32 @@ pub struct KycInfo {
     pub consent_at: String,
 }
 
+#[derive(serde::Deserialize, Default, Clone)]
+pub struct ShippingInfo {
+    pub name: String,
+    pub line1: String,
+    #[serde(default)]
+    pub line2: String,
+    pub city: String,
+    #[serde(default)]
+    pub state: String,
+    pub zip: String,
+    /// ISO 3166-1 alpha-2 (e.g. "JP", "US")
+    pub country: String,
+    #[serde(default)]
+    pub phone: String,
+}
+
+impl ShippingInfo {
+    fn is_complete(&self) -> bool {
+        !self.name.trim().is_empty()
+            && !self.line1.trim().is_empty()
+            && !self.city.trim().is_empty()
+            && !self.zip.trim().is_empty()
+            && self.country.trim().len() == 2
+    }
+}
+
 #[derive(serde::Deserialize)]
 pub struct CryptoCheckoutBody {
     pub product_id: i64,
@@ -112,6 +138,10 @@ pub struct CryptoCheckoutBody {
     pub wallet: Option<String>,
     pub payment_method: String,
     pub kyc: Option<KycInfo>,
+    /// Required (the Helius webhook needs this to fire Printful auto-order
+    /// without a second user round-trip). Validated as complete on submit;
+    /// see `ShippingInfo::is_complete`.
+    pub shipping: Option<ShippingInfo>,
 }
 
 // MUGEN-cycle dynamic price (mirrors dynamic_price() in main.rs). We re-derive
@@ -154,6 +184,14 @@ pub async fn checkout_crypto(
     };
     if inventory - sold < body.quantity as i64 {
         return (StatusCode::CONFLICT, "sold out").into_response();
+    }
+
+    // Phase 3.1: shipping is required so that Helius confirmation can
+    // trigger Printful auto-fulfillment without a second user round-trip.
+    let shipping = body.shipping.clone().unwrap_or_default();
+    if !shipping.is_complete() {
+        return (StatusCode::BAD_REQUEST,
+            "shipping required: name, line1, city, zip, country (ISO-2)").into_response();
     }
 
     let base_price_jpy = dynamic_price(&brand_str, drop_num, sold, &product_name);
@@ -227,13 +265,19 @@ pub async fn checkout_crypto(
             "INSERT INTO pending_crypto_payments
              (reference, product_id, email, size, quantity, wallet, payment_method,
               amount_jpy, amount_crypto, asset, recipient, pay_url,
-              status, expires_at, created_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?)",
+              status, expires_at, created_at,
+              ship_name, ship_line1, ship_line2, ship_city, ship_state,
+              ship_zip, ship_country, ship_phone)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?)",
             params![
                 reference, body.product_id, body.email, size_label, body.quantity,
                 body.wallet, pm,
                 total_jpy, amount_crypto, asset, recipient, pay_url,
-                now_iso(), now_iso()
+                now_iso(), now_iso(),
+                shipping.name.trim(), shipping.line1.trim(), shipping.line2.trim(),
+                shipping.city.trim(), shipping.state.trim(),
+                shipping.zip.trim(), shipping.country.trim().to_uppercase(),
+                shipping.phone.trim()
             ]
         );
     }
@@ -408,23 +452,36 @@ pub async fn helius_webhook(
             }
 
             // Confirm + bump sold count in a scoped lock.
-            let conn = db.lock().unwrap();
-            let upd = conn.execute(
-                "UPDATE pending_crypto_payments
-                 SET status='confirmed', tx_signature=?, confirmed_at=?
-                 WHERE reference=? AND status='pending'",
-                params![signature, now_iso(), key]
-            ).unwrap_or(0);
-            if upd > 0 {
-                let _ = conn.execute(
-                    "UPDATE products SET sold = sold + 1 WHERE id=?",
-                    params![product_id]
-                );
-                matched += 1;
-                tracing::info!(
-                    "[helius] confirmed ref={} product_id={} sig={} asset={} credited={} expected={}",
-                    key, product_id, signature, asset, credited_units, expected_units
-                );
+            let fulfill_now: bool = {
+                let conn = db.lock().unwrap();
+                let upd = conn.execute(
+                    "UPDATE pending_crypto_payments
+                     SET status='confirmed', tx_signature=?, confirmed_at=?
+                     WHERE reference=? AND status='pending'",
+                    params![signature, now_iso(), key]
+                ).unwrap_or(0);
+                if upd > 0 {
+                    let _ = conn.execute(
+                        "UPDATE products SET sold = sold + 1 WHERE id=?",
+                        params![product_id]
+                    );
+                    matched += 1;
+                    tracing::info!(
+                        "[helius] confirmed ref={} product_id={} sig={} asset={} credited={} expected={}",
+                        key, product_id, signature, asset, credited_units, expected_units
+                    );
+                    true
+                } else { false }
+            };
+            if fulfill_now {
+                // Phase 3.2 + 3.3: fire Printful auto-order + Resend
+                // confirmation email asynchronously. Lock has been released
+                // above so this spawn doesn't pin the DB mutex.
+                let db_clone = db.clone();
+                let key_clone = key.clone();
+                tokio::spawn(async move {
+                    fulfill_crypto_order(db_clone, key_clone).await;
+                });
             }
         }
     }
@@ -434,6 +491,160 @@ pub async fn helius_webhook(
         "skipped_no_recipient": skipped_no_recipient,
         "skipped_amount_too_low": skipped_amount,
     })).into_response()
+}
+
+// ── Phase 3.2 + 3.3: post-confirmation fulfillment pipeline ────────────
+//
+// Triggered from helius_webhook on a successful confirm. Reads the
+// pending_crypto_payments row (now status='confirmed'), pulls the product
+// design / size / shipping, fires:
+//
+//   (1) Printful order  — auto-fulfillment via PRINTFUL_API_KEY
+//   (2) Resend email    — confirmation to the buyer + tx receipt
+//   (3) Stamps printful_order_id and fulfilled_at back on the row
+//
+// All failures are logged. Each side-effect is independent: an email
+// failure does not unwind a Printful order, and vice versa. Operator
+// can manually retry via the admin endpoint (TODO follow-up).
+
+async fn fulfill_crypto_order(db: Db, reference: String) {
+    // 1. Load all needed data in a single scoped lock.
+    let load: Option<(i64, String, String, String, i64, String, i64, String, String, String, String, String, String, String, String, String, String)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT pcp.product_id, pcp.email, pcp.size, pcp.tx_signature,
+                    pcp.amount_jpy, pcp.asset, pcp.quantity,
+                    pcp.ship_name, pcp.ship_line1, COALESCE(pcp.ship_line2,''),
+                    pcp.ship_city, COALESCE(pcp.ship_state,''),
+                    pcp.ship_zip, pcp.ship_country, COALESCE(pcp.ship_phone,''),
+                    p.name, COALESCE(p.design_url, p.mockup_url, '')
+             FROM pending_crypto_payments pcp
+             JOIN products p ON p.id = pcp.product_id
+             WHERE pcp.reference=? AND pcp.status='confirmed'",
+            params![reference],
+            |r| Ok((
+                r.get(0)?, r.get(1)?, r.get(2)?, r.get::<_,Option<String>>(3)?.unwrap_or_default(),
+                r.get(4)?, r.get(5)?, r.get(6)?,
+                r.get(7)?, r.get(8)?, r.get(9)?,
+                r.get(10)?, r.get(11)?,
+                r.get(12)?, r.get(13)?, r.get(14)?,
+                r.get(15)?, r.get(16)?,
+            ))
+        ).ok()
+    };
+    let Some((product_id, email, size, tx_sig, amount_jpy, asset, quantity,
+             ship_name, ship_line1, ship_line2, ship_city, ship_state,
+             ship_zip, ship_country, ship_phone,
+             product_name, design_url)) = load else {
+        tracing::warn!("[fulfill] no confirmed row for reference {}", reference);
+        return;
+    };
+
+    if design_url.is_empty() {
+        tracing::warn!("[fulfill] product {} has no design_url; skipping Printful", product_id);
+    }
+
+    // 2. Printful order (only if key is configured and design_url present).
+    let printful_key = env::var("PRINTFUL_API_KEY").unwrap_or_default();
+    let mut printful_order_id: Option<String> = None;
+    if !printful_key.is_empty() && !design_url.is_empty() {
+        let variant_id: u64 = match size.as_str() {
+            "S" => 4016, "M" => 4017, "L" => 4018, "XL" => 4019, _ => 4017,
+        };
+        let order = serde_json::json!({
+            "recipient": {
+                "name": ship_name,
+                "address1": ship_line1,
+                "address2": ship_line2,
+                "city": ship_city,
+                "state_code": ship_state,
+                "country_code": ship_country.to_uppercase(),
+                "zip": ship_zip,
+                "phone": ship_phone,
+                "email": email,
+            },
+            "items": [{
+                "variant_id": variant_id,
+                "quantity": quantity,
+                "files": [{"url": design_url, "placement": "front"}],
+            }],
+            "confirm": true,
+        });
+        match reqwest::Client::new()
+            .post("https://api.printful.com/orders")
+            .bearer_auth(&printful_key)
+            .json(&order).send().await
+        {
+            Ok(r) if r.status().is_success() => {
+                let j: serde_json::Value = r.json().await.unwrap_or_default();
+                let oid = j["result"]["id"].as_i64()
+                    .map(|n| n.to_string())
+                    .or_else(|| j["result"]["external_id"].as_str().map(|s| s.to_string()));
+                if let Some(ref oid) = oid {
+                    let conn = db.lock().unwrap();
+                    let _ = conn.execute(
+                        "UPDATE pending_crypto_payments
+                         SET printful_order_id=?, fulfilled_at=?
+                         WHERE reference=?",
+                        params![oid, now_iso(), reference]
+                    );
+                }
+                printful_order_id = oid;
+                tracing::info!("[fulfill] Printful OK ref={} order_id={:?}", reference, printful_order_id);
+            }
+            Ok(r) => {
+                let s = r.status();
+                let body = r.text().await.unwrap_or_default();
+                tracing::warn!("[fulfill] Printful {} ref={}: {}", s, reference, &body[..body.len().min(300)]);
+            }
+            Err(e) => tracing::warn!("[fulfill] Printful net err ref={}: {}", reference, e),
+        }
+    } else {
+        tracing::info!("[fulfill] Printful skipped (no key or no design_url) ref={}", reference);
+    }
+
+    // 3. Confirmation email via Resend (independent of Printful outcome).
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    if !resend_key.is_empty() {
+        let order_id_html = printful_order_id.as_ref()
+            .map(|o| format!("Order #{}", o))
+            .unwrap_or_else(|| "Pending fulfillment ID".to_string());
+        let html = format!(
+            r#"<div style="background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;padding:32px 0;margin:0"><div style="max-width:600px;margin:0 auto;padding:0 32px"><div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:24px">MU</div><div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#5cf;opacity:0.85;margin-bottom:8px">PAYMENT CONFIRMED</div><h2 style="font-size:18px;font-weight:300;line-height:1.4;margin:0 0 18px">{name} ({size}) — fulfillment started</h2><table style="width:100%;font-size:12px;line-height:1.8;border-collapse:collapse;margin-bottom:24px"><tr><td style="opacity:0.55;padding:4px 0;width:40%">Asset</td><td style="padding:4px 0">{asset}</td></tr><tr><td style="opacity:0.55;padding:4px 0">Reference</td><td style="padding:4px 0;font-family:monospace">{ref_id}</td></tr><tr><td style="opacity:0.55;padding:4px 0">Tx signature</td><td style="padding:4px 0;font-family:monospace;word-break:break-all">{tx}</td></tr><tr><td style="opacity:0.55;padding:4px 0">Amount (JPY)</td><td style="padding:4px 0">¥{amt}</td></tr><tr><td style="opacity:0.55;padding:4px 0">Quantity</td><td style="padding:4px 0">{qty}</td></tr><tr><td style="opacity:0.55;padding:4px 0">Order</td><td style="padding:4px 0">{oid}</td></tr></table><p style="font-size:12px;line-height:1.85;opacity:0.7;margin:0 0 18px">Your garment will be printed on-demand and shipped to:<br><br><b>{sn}</b><br>{s1}{s2br}<br>{sc}{ssp}{sz} {scn}<br>{sph}</p><p style="font-size:11px;line-height:1.85;opacity:0.55;margin:24px 0 0">Typically 7-10 business days for international shipping (DHL/FedEx). Tracking link will follow when Printful hands off to the carrier.<br><br>Reply to this email if anything looks wrong, or contact <a href="mailto:info@enablerdao.com" style="color:#5cf">info@enablerdao.com</a>.</p></div></div>"#,
+            name = product_name, size = size, asset = asset, ref_id = reference,
+            tx = if tx_sig.is_empty() { "—".to_string() } else { tx_sig.clone() },
+            amt = amount_jpy.to_string(), qty = quantity, oid = order_id_html,
+            sn = ship_name, s1 = ship_line1,
+            s2br = if ship_line2.is_empty() { String::new() } else { format!(", {}", ship_line2) },
+            sc = ship_city, ssp = if ship_state.is_empty() { ", ".to_string() } else { format!(", {} ", ship_state) },
+            sz = ship_zip, scn = ship_country,
+            sph = if ship_phone.is_empty() { String::new() } else { format!("Tel: {}", ship_phone) },
+        );
+        let subject = format!("MU — Payment confirmed for {} ({})", product_name, size);
+        let payload = serde_json::json!({
+            "from": "MU <noreply@wearmu.com>",
+            "to": [email.clone()],
+            "subject": subject,
+            "html": html,
+        });
+        match reqwest::Client::new()
+            .post("https://api.resend.com/emails")
+            .bearer_auth(&resend_key)
+            .json(&payload).send().await
+        {
+            Ok(r) if r.status().is_success() => {
+                tracing::info!("[fulfill] Resend OK ref={} → {}", reference, email);
+            }
+            Ok(r) => {
+                let s = r.status();
+                let b = r.text().await.unwrap_or_default();
+                tracing::warn!("[fulfill] Resend {} ref={}: {}", s, reference, &b[..b.len().min(300)]);
+            }
+            Err(e) => tracing::warn!("[fulfill] Resend net err ref={}: {}", reference, e),
+        }
+    } else {
+        tracing::info!("[fulfill] Resend skipped (no key) ref={}", reference);
+    }
 }
 
 // ── Admin CSV exports ─────────────────────────────────────────────────

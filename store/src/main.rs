@@ -980,6 +980,27 @@ async fn stripe_webhook(
                 if updated > 0 {
                     eprintln!("[/you] granted lifetime_free to {} ({})", buyer_email, reason);
                 }
+                // Referral credit: if the new lifetime member was referred,
+                // credit the inviter ¥3,400 (one-shot per referee). The
+                // credit accumulates on you_users.referral_credit_jpy and
+                // can be redeemed via the existing coupon flow.
+                let ref_slug: Option<String> = conn.query_row(
+                    "SELECT referred_by_slug FROM you_users WHERE email=?",
+                    params![buyer_email],
+                    |r| r.get::<_, Option<String>>(0),
+                ).ok().flatten();
+                if let Some(slug) = ref_slug {
+                    let credited = conn.execute(
+                        "UPDATE you_users
+                         SET referral_credit_jpy = referral_credit_jpy + 3400,
+                             referral_count      = referral_count + 1
+                         WHERE slug = ?",
+                        params![slug],
+                    ).unwrap_or(0);
+                    if credited > 0 {
+                        eprintln!("[referral] credited {} +¥3,400 (referee: {})", slug, buyer_email);
+                    }
+                }
             }
         }
         if just_sold_out {
@@ -2404,6 +2425,9 @@ struct YouSubscribeBody {
     #[serde(default)] scene:   Vec<String>,
     #[serde(default)] size:    String,
     #[serde(default)] bio:     String,
+    /// Referral slug captured from `?ref=` on the LP. Used to credit the
+    /// inviter when this signup makes their first purchase.
+    #[serde(default)] ref_slug: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -2992,6 +3016,22 @@ async fn you_subscribe(
                     params![email, tk, sl, taste.to_string(), size, now, now, trial_end],
                 ).ok();
                 let uid = conn.last_insert_rowid();
+                // Referral capture: tag the new user with the inviter's slug
+                // (validated against existing you_users.slug). On the new
+                // user's first MU purchase the webhook will credit the
+                // inviter +¥3,400.
+                if let Some(ref_slug) = body.ref_slug.as_deref() {
+                    let valid: bool = conn.query_row(
+                        "SELECT 1 FROM you_users WHERE slug=? AND unsubscribed_at IS NULL",
+                        params![ref_slug], |_| Ok(true),
+                    ).unwrap_or(false);
+                    if valid && ref_slug != sl {
+                        conn.execute(
+                            "UPDATE you_users SET referred_by_slug=? WHERE id=?",
+                            params![ref_slug, uid],
+                        ).ok();
+                    }
+                }
                 // If this email has previously bought any MU shirt, grant
                 // lifetime_free immediately. Lookup is cheap thanks to
                 // idx_mu_purchases_email.
@@ -3371,7 +3411,7 @@ async fn you_subscribe_paid(
             Some(v) => v,
             None => return (StatusCode::NOT_FOUND, "invalid token").into_response(),
         };
-        let p: i64 = cv_get(&conn, "monthly_price_jpy", "980").parse().unwrap_or(980);
+        let p: i64 = cv_get(&conn, "monthly_price_jpy", "1480").parse().unwrap_or(1480);
         (u, e, c, p.clamp(100, 9_980))
     };
     let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
@@ -4246,6 +4286,21 @@ async fn public_transparency(State(db): State<Db>) -> impl IntoResponse {
     let purchases_total: i64 = conn.query_row(
         "SELECT COUNT(*) FROM mu_purchases", [], |r| r.get(0),
     ).unwrap_or(0);
+
+    // Real revenue: only count rows that have an actual Stripe session_id
+    // (session_id LIKE 'cs_live_%' or 'cs_test_%' minus tests). Best-effort
+    // until we record amount_total on mu_purchases.
+    let real_revenue_jpy: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(p.price_jpy), 0)
+         FROM mu_purchases mp
+         JOIN products p ON p.id = mp.product_id
+         WHERE mp.session_id LIKE 'cs_live_%'",
+        [], |r| r.get(0),
+    ).unwrap_or(0);
+    let real_purchases: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM mu_purchases WHERE session_id LIKE 'cs_live_%'",
+        [], |r| r.get(0),
+    ).unwrap_or(0);
     let you_subscribers_total: i64 = conn.query_row(
         "SELECT COUNT(*) FROM you_users WHERE unsubscribed_at IS NULL",
         [], |r| r.get(0),
@@ -4261,12 +4316,13 @@ async fn public_transparency(State(db): State<Db>) -> impl IntoResponse {
     let you_designs_generated: i64 = conn.query_row(
         "SELECT COUNT(*) FROM you_designs", [], |r| r.get(0),
     ).unwrap_or(0);
-    let monthly_price = cv_get(&conn, "monthly_price_jpy", "980")
+    let monthly_price = cv_get(&conn, "monthly_price_jpy", "1480")
         .parse::<i64>().unwrap_or(980);
     let approx_mrr_jpy = you_subscribers_paid * monthly_price;
     let total_revenue_jpy = revenue_shirts_jpy + auction_revenue_jpy;
 
     Json(serde_json::json!({
+        // ── 旧フィールド (互換のため残す) — テスト購入を含む合計 ──
         "revenue_jpy": total_revenue_jpy,
         "revenue_breakdown": {
             "shirts_jpy":   revenue_shirts_jpy,
@@ -4274,6 +4330,12 @@ async fn public_transparency(State(db): State<Db>) -> impl IntoResponse {
         },
         "shirts_sold":   shirts_sold,
         "purchases_recorded": purchases_total,
+        // ── 本物の数字 (Stripe live session のみ) ──
+        "real": {
+            "revenue_jpy": real_revenue_jpy,
+            "purchases":   real_purchases,
+            "note": "Stripe live mode (cs_live_*) のみ集計。test purchase は除外。",
+        },
         "you": {
             "subscribers_free": you_subscribers_total - you_subscribers_paid - you_lifetime_members,
             "subscribers_paid": you_subscribers_paid,
@@ -4567,6 +4629,309 @@ async fn admin_sample_grow(
         "designs_after":  after,
         "added": after - before,
     })).into_response()
+}
+
+// ── Referral status ─────────────────────────────────────────────────────────
+#[derive(Deserialize)]
+struct ReferralStatusBody {
+    token: String,
+}
+
+/// POST /api/you/referral — returns the user's referral slug + accumulated
+/// credit + count of successful referrals (≥1 MU purchase).
+async fn you_referral_status(
+    State(db): State<Db>,
+    Json(body): Json<ReferralStatusBody>,
+) -> impl IntoResponse {
+    let conn = db.lock().unwrap();
+    let row: Option<(String, i64, i64)> = conn.query_row(
+        "SELECT slug, COALESCE(referral_credit_jpy,0), COALESCE(referral_count,0)
+         FROM you_users WHERE token=? AND unsubscribed_at IS NULL",
+        params![body.token], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ).ok();
+    let Some((slug, credit, count)) = row else {
+        return (StatusCode::NOT_FOUND, "invalid token").into_response();
+    };
+    let base = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    Json(serde_json::json!({
+        "slug": slug,
+        "referral_url": format!("{}/you?ref={}", base, slug),
+        "credit_jpy":   credit,
+        "count":        count,
+        "reward_per_referral_jpy": 3400,
+    })).into_response()
+}
+
+// ── Lifestyle photo admin endpoint ─────────────────────────────────────────
+#[derive(Deserialize)]
+struct LifestyleBody {
+    product_id: i64,
+    lifestyle_url: String,
+}
+
+/// PATCH /api/admin/lifestyle?token=… — set `products.lifestyle_url` for
+/// a given product. Called from generate_lifestyle.py after Gemini generates
+/// and R2 stores the image.
+async fn admin_lifestyle(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<LifestyleBody>,
+) -> impl IntoResponse {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let conn = db.lock().unwrap();
+    let updated = conn.execute(
+        "UPDATE products SET lifestyle_url=? WHERE id=?",
+        params![body.lifestyle_url, body.product_id],
+    ).unwrap_or(0);
+    Json(serde_json::json!({"ok": true, "updated": updated})).into_response()
+}
+
+// ── Auto-blog (AI generates daily field log) ───────────────────────────────
+#[derive(Deserialize)]
+struct AutoBlogBody {
+    admin_token: String,
+}
+
+async fn compose_auto_blog(db: &Db) -> Result<(String, String, String, serde_json::Value), String> {
+    use serde_json::json;
+    let key = env::var("GEMINI_API_KEY").map_err(|_| "GEMINI_API_KEY missing".to_string())?;
+    let stats = {
+        let conn = db.lock().unwrap();
+        let revenue: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(price_jpy * sold), 0) FROM products WHERE active=1",
+            [], |r| r.get(0)).unwrap_or(0);
+        let purchases: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mu_purchases", [], |r| r.get(0)).unwrap_or(0);
+        let real_revenue: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(p.price_jpy), 0) FROM mu_purchases mp
+             JOIN products p ON p.id = mp.product_id",
+            [], |r| r.get(0)).unwrap_or(0);
+        let subs: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM you_users WHERE unsubscribed_at IS NULL",
+            [], |r| r.get(0)).unwrap_or(0);
+        let designs: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM you_designs", [], |r| r.get(0)).unwrap_or(0);
+        let lifestyle_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM products WHERE lifestyle_url IS NOT NULL AND lifestyle_url != ''",
+            [], |r| r.get(0)).unwrap_or(0);
+        let missing = detect_missing_drops(&conn);
+        json!({
+            "revenue_shown_jpy": revenue,
+            "real_revenue_jpy": real_revenue,
+            "purchases": purchases,
+            "subscribers": subs,
+            "designs_generated": designs,
+            "lifestyle_photos": lifestyle_count,
+            "missing": missing,
+            "day": jst_today_str(),
+        })
+    };
+
+    let prompt = format!(r#"あなたは MU ブランドの「無人運営 AI 執筆者」です。今日の Field log を Markdown で書いてください。
+
+事実 (JSON、これ以外の数字は捏造禁止):
+{stats}
+
+書き方:
+- 600〜900 字、3〜4 セクション
+- 顧客視点 + 経営視点 (Bezos 的)、過剰演出は禁止
+- 数字を 1 つは引用 (real_revenue_jpy を優先)
+- "今日動いたもの / 動かなかったもの / 明日へ" の構成
+- 自己卑下や絵文字過剰は禁止
+- 末尾に「— 自動生成 by Gemini 2.5 Flash」と明記
+
+タイトルは 28 字以内、本文 1 行目に H1 として `# タイトル` を置いてください。"#,
+        stats = stats);
+
+    let req_body = json!({"contents": [{"parts": [{"text": prompt}]}]});
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
+        key);
+    let resp = reqwest::Client::new().post(&url)
+        .json(&req_body).send().await
+        .map_err(|e| format!("gemini request: {e}"))?;
+    if !resp.status().is_success() {
+        let s = resp.status();
+        let t = resp.text().await.unwrap_or_default();
+        return Err(format!("gemini {}: {}", s, t.chars().take(300).collect::<String>()));
+    }
+    let j: serde_json::Value = resp.json().await.map_err(|e| format!("json: {e}"))?;
+    let text = j["candidates"][0]["content"]["parts"][0]["text"]
+        .as_str().unwrap_or("").to_string();
+    if text.trim().is_empty() {
+        return Err("gemini returned empty text".into());
+    }
+    let mut title = "今日の Field log".to_string();
+    let mut body_md_lines: Vec<String> = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        if i == 0 && line.trim_start().starts_with("# ") {
+            title = line.trim_start_matches('#').trim().to_string();
+            continue;
+        }
+        body_md_lines.push(line.to_string());
+    }
+    let body_md = body_md_lines.join("\n").trim().to_string();
+    let body_html = md_to_html_simple(&body_md);
+    Ok((title, body_html, body_md, stats))
+}
+
+fn md_to_html_simple(md: &str) -> String {
+    let mut out = String::new();
+    let mut in_list = false;
+    for raw in md.lines() {
+        let line = raw.trim_end();
+        if line.starts_with("## ") {
+            if in_list { out.push_str("</ul>\n"); in_list = false; }
+            out.push_str(&format!("<h2>{}</h2>\n", html_escape(&line[3..])));
+        } else if line.starts_with("### ") {
+            if in_list { out.push_str("</ul>\n"); in_list = false; }
+            out.push_str(&format!("<h3>{}</h3>\n", html_escape(&line[4..])));
+        } else if let Some(rest) = line.strip_prefix("- ").or_else(|| line.strip_prefix("* ")) {
+            if !in_list { out.push_str("<ul>\n"); in_list = true; }
+            out.push_str(&format!("<li>{}</li>\n", inline_md(rest)));
+        } else if line.is_empty() {
+            if in_list { out.push_str("</ul>\n"); in_list = false; }
+        } else {
+            if in_list { out.push_str("</ul>\n"); in_list = false; }
+            out.push_str(&format!("<p>{}</p>\n", inline_md(line)));
+        }
+    }
+    if in_list { out.push_str("</ul>\n"); }
+    out
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+fn inline_md(s: &str) -> String {
+    let esc = html_escape(s);
+    let bold_re = pair_replace(&esc, "**", "<strong>", "</strong>");
+    pair_replace(&bold_re, "*", "<em>", "</em>")
+}
+
+fn pair_replace(s: &str, marker: &str, open: &str, close: &str) -> String {
+    let mut out = String::new();
+    let mut rest = s;
+    let mut toggle = false;
+    while let Some(idx) = rest.find(marker) {
+        out.push_str(&rest[..idx]);
+        out.push_str(if toggle { close } else { open });
+        rest = &rest[idx + marker.len()..];
+        toggle = !toggle;
+    }
+    out.push_str(rest);
+    out
+}
+
+async fn admin_blog_compose(
+    State(db): State<Db>,
+    Json(body): Json<AutoBlogBody>,
+) -> impl IntoResponse {
+    if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+    let slug = format!("auto-{}", jst_today_str());
+    {
+        let conn = db.lock().unwrap();
+        let exists: bool = conn.query_row(
+            "SELECT 1 FROM auto_blog_posts WHERE slug=?",
+            params![slug], |r| r.get::<_, i64>(0),
+        ).is_ok();
+        if exists {
+            return Json(serde_json::json!({"ok": true, "skipped": true, "slug": slug})).into_response();
+        }
+    }
+    match compose_auto_blog(&db).await {
+        Ok((title, body_html, body_md, stats)) => {
+            let conn = db.lock().unwrap();
+            let _ = conn.execute(
+                "INSERT OR IGNORE INTO auto_blog_posts
+                    (slug, title, body_html, body_md, model, stats_json, published, created_at)
+                 VALUES (?,?,?,?,?,?,1,?)",
+                params![slug, title, body_html, body_md, "gemini-2.5-flash",
+                        stats.to_string(), chrono_now()],
+            );
+            Json(serde_json::json!({"ok": true, "slug": slug, "title": title})).into_response()
+        }
+        Err(e) => {
+            eprintln!("[auto-blog] {e}");
+            (StatusCode::BAD_GATEWAY, e).into_response()
+        }
+    }
+}
+
+async fn show_auto_blog(
+    Path(slug): Path<String>,
+    State(db): State<Db>,
+) -> impl IntoResponse {
+    let row: Option<(String, String, String)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT title, body_html, created_at FROM auto_blog_posts
+             WHERE slug=? AND published=1",
+            params![slug], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).ok()
+    };
+    let Some((title, body_html, _ts)) = row else {
+        return (StatusCode::NOT_FOUND, "auto-blog not found").into_response();
+    };
+    let html = format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title} | MU 自動運営ノート</title>
+<meta name="description" content="MU の AI 自動執筆 Field log。毎朝 JST 9:00 に Gemini が生成。">
+<meta property="og:title" content="{title}"><meta property="og:url" content="https://wearmu.com/blog/auto/{slug}">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+:root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.6);--y:#e6c449;--card:#111}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:var(--bg);color:var(--fg);font-family:'Noto Serif JP','Helvetica Neue','Hiragino Sans',serif;line-height:1.95;font-size:16px;-webkit-font-smoothing:antialiased}}
+nav{{position:sticky;top:0;background:rgba(10,10,10,0.85);backdrop-filter:blur(12px);border-bottom:1px solid rgba(255,255,255,0.06);padding:18px 32px;display:flex;justify-content:space-between;align-items:center;z-index:50;font-family:'Helvetica Neue',Arial,sans-serif}}
+nav a{{color:var(--fg);text-decoration:none;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.85}}
+nav .logo{{font-weight:700;letter-spacing:0.45em}}
+article{{max-width:680px;margin:0 auto;padding:60px 32px 100px}}
+.eyebrow{{font-family:'Helvetica Neue',Arial,sans-serif;font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:var(--y);opacity:0.85;margin-bottom:16px}}
+h1{{font-size:clamp(26px,4vw,40px);font-weight:300;letter-spacing:0.02em;line-height:1.35;margin-bottom:18px}}
+h2{{font-size:20px;font-weight:300;letter-spacing:0.02em;margin:48px 0 14px;padding-top:22px;border-top:1px solid rgba(255,255,255,0.08);font-family:'Helvetica Neue',Arial,sans-serif;color:var(--y)}}
+h3{{font-size:15px;font-weight:500;margin:28px 0 10px;font-family:'Helvetica Neue',Arial,sans-serif}}
+p{{margin:0 0 16px}} em{{color:var(--y);font-style:normal}} strong{{color:var(--fg);font-weight:500}}
+ul{{margin:0 0 18px 22px;color:var(--mute)}} ul li{{margin-bottom:6px}}
+a{{color:var(--y);text-decoration:underline;text-underline-offset:3px}}
+.byline{{font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;opacity:0.55;margin-bottom:20px}}
+.tag{{display:inline-block;font-size:10px;letter-spacing:0.18em;text-transform:uppercase;padding:3px 10px;background:rgba(230,196,73,0.12);color:var(--y);border-radius:2px;margin-right:8px}}
+footer{{padding:48px 32px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;font-size:11px;letter-spacing:0.2em;opacity:0.5}}
+</style></head><body>
+<nav><a href="/" class="logo">MU</a><a href="/blog/">/ Notes</a></nav>
+<article>
+  <div class="eyebrow">{day} · 自動運営ノート</div>
+  <h1>{title}</h1>
+  <div class="byline"><span class="tag">AI</span> by Gemini 2.5 Flash · 監修なし</div>
+  {body_html}
+  <p style="margin-top:48px;font-size:11px;opacity:0.5">— このノートは MU が毎朝 JST 9:00 に <a href="/api/transparency">/api/transparency</a> の生データを Gemini に渡して自動生成しています。事実は数字、文体は AI。</p>
+</article>
+<footer>MU — wearmu.com / <a href="/blog/" style="color:inherit">all notes →</a></footer>
+</body></html>
+"#,
+        title = html_escape(&title),
+        slug  = slug,
+        day   = jst_today_str(),
+        body_html = body_html,
+    );
+    axum::response::Html(html).into_response()
+}
+
+async fn list_auto_blog(State(db): State<Db>) -> impl IntoResponse {
+    let conn = db.lock().unwrap();
+    let mut stmt = match conn.prepare(
+        "SELECT slug, title, created_at FROM auto_blog_posts
+         WHERE published=1 ORDER BY created_at DESC LIMIT 50"
+    ) { Ok(s) => s, Err(_) => return Json(serde_json::json!({"posts":[]})).into_response() };
+    let rows: Vec<serde_json::Value> = stmt.query_map([], |r| {
+        Ok(serde_json::json!({
+            "slug": r.get::<_, String>(0)?,
+            "title": r.get::<_, String>(1)?,
+            "created_at": r.get::<_, String>(2)?,
+        }))
+    }).map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>()).unwrap_or_default();
+    Json(serde_json::json!({"posts": rows})).into_response()
 }
 
 /// Weekly lottery draw — picks ~5% of pending entries as winners,
@@ -5969,11 +6334,6 @@ fn mime_for(name: &str) -> String {
     }
 }
 
-fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
-        .replace('"', "&quot;").replace('\'', "&#39;")
-}
-
 #[allow(clippy::type_complexity)]
 fn render_share_page(
     slug: &str,
@@ -6486,6 +6846,17 @@ async fn main() {
     ").expect("init schema");
     // Idempotent column additions for existing DBs
     for col in &[
+        // Phase 3.1: shipping collection on crypto checkout
+        "ALTER TABLE pending_crypto_payments ADD COLUMN ship_name TEXT",
+        "ALTER TABLE pending_crypto_payments ADD COLUMN ship_line1 TEXT",
+        "ALTER TABLE pending_crypto_payments ADD COLUMN ship_line2 TEXT",
+        "ALTER TABLE pending_crypto_payments ADD COLUMN ship_city TEXT",
+        "ALTER TABLE pending_crypto_payments ADD COLUMN ship_state TEXT",
+        "ALTER TABLE pending_crypto_payments ADD COLUMN ship_zip TEXT",
+        "ALTER TABLE pending_crypto_payments ADD COLUMN ship_country TEXT",
+        "ALTER TABLE pending_crypto_payments ADD COLUMN ship_phone TEXT",
+        "ALTER TABLE pending_crypto_payments ADD COLUMN printful_order_id TEXT",
+        "ALTER TABLE pending_crypto_payments ADD COLUMN fulfilled_at TEXT",
         "ALTER TABLE products ADD COLUMN weather_data TEXT",
         "ALTER TABLE products ADD COLUMN prompt_text TEXT",
         "ALTER TABLE products ADD COLUMN prompt_hash TEXT",
@@ -6525,9 +6896,34 @@ async fn main() {
         "ALTER TABLE you_users ADD COLUMN stripe_subscription_id TEXT",
         "ALTER TABLE you_users ADD COLUMN subscription_status TEXT",
         "ALTER TABLE you_users ADD COLUMN subscription_until TEXT",
+        // Lifestyle photo (人着画) generated via Gemini image-to-image from
+        // the design itself. R2 URL.
+        "ALTER TABLE products ADD COLUMN lifestyle_url TEXT",
+        // Referral: which you_user.slug brought this signup in?
+        "ALTER TABLE you_users ADD COLUMN referred_by_slug TEXT",
+        // Lifetime referral credit (¥). Spendable via auto-mint coupon.
+        "ALTER TABLE you_users ADD COLUMN referral_credit_jpy INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE you_users ADD COLUMN referral_count INTEGER NOT NULL DEFAULT 0",
     ] {
         conn.execute(col, []).ok();
     }
+    // Auto-blog posts table — every day the AI composes a "field log"
+    // entry from /api/transparency, recent commits + cron health, and
+    // it lands here. Rendered at /blog/auto/<slug>.
+    conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS auto_blog_posts (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug        TEXT NOT NULL UNIQUE,
+            title       TEXT NOT NULL,
+            body_html   TEXT NOT NULL,
+            body_md     TEXT,
+            model       TEXT,
+            stats_json  TEXT,
+            published   INTEGER NOT NULL DEFAULT 1,
+            created_at  TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_auto_blog_published ON auto_blog_posts(published, created_at DESC);
+    ").ok();
     // CV-pulse autonomous loop: every 30 min the cron POSTs to
     // /api/admin/cv_pulse, which writes a snapshot here + may update
     // cv_config (modal cooldown / coupon strength / email subject variant).
@@ -6585,11 +6981,18 @@ async fn main() {
         params!["hero_cta_variant", "value", chrono_now(), "default"],
     ).ok();
     // Monthly subscription price in JPY (¥). Editable from cv_config without
-    // a redeploy.
+    // a redeploy. Bezos anchoring: ¥1,480 makes the ¥2,500 3-mo pack look
+    // like a clear discount (¥1,480 × 3 = ¥4,440 vs ¥2,500 = 44% OFF).
     conn.execute(
         "INSERT OR IGNORE INTO cv_config (key, value, updated_at, reason)
          VALUES (?, ?, ?, ?)",
-        params!["monthly_price_jpy", "980", chrono_now(), "default"],
+        params!["monthly_price_jpy", "1480", chrono_now(), "default"],
+    ).ok();
+    // Migrate prior default ¥980 → ¥1,480 (anchoring redesign).
+    conn.execute(
+        "UPDATE cv_config SET value='1480', updated_at=?, reason='anchor-rev-3'
+         WHERE key='monthly_price_jpy' AND value='980' AND reason='default'",
+        params![chrono_now()],
     ).ok();
     // 3-month prepaid pack (¥980 × 3 → 15% OFF = ¥2,500). One-time charge
     // that extends subscription_until by 90 days. Finite-duration option for
@@ -6818,6 +7221,11 @@ async fn main() {
         .route("/api/transparency", get(public_transparency))
         .route("/api/sample_personas", get(list_sample_personas))
         .route("/api/admin/sample_grow", post(admin_sample_grow))
+        .route("/api/admin/lifestyle", axum::routing::patch(admin_lifestyle))
+        .route("/api/admin/blog_compose", post(admin_blog_compose))
+        .route("/api/blog/auto", get(list_auto_blog))
+        .route("/blog/auto/:slug", get(show_auto_blog))
+        .route("/api/you/referral", post(you_referral_status))
         .route("/api/cv/config", get(cv_public_config))
         .route("/api/you/signal/:design_id", post(you_signal))
         .route("/api/you/preferences", get(you_preferences))

@@ -1,0 +1,55 @@
+Submission target: https://www.businessoffashion.com/contact-us/ (Pitch form)
+Inquiry type: Editorial pitch / Newsletter tip
+
+Subject:
+A Japanese brand replaces forecasting with weather — and prices rise as it sells
+
+Name:        Yuki Hamada
+Company:     Enabler Inc. (Tokyo)
+Role:        Founder & CEO
+Email:       yuki@hamada.tokyo
+
+Pitch body:
+————————————————————————————————
+
+Pitching for BoF Professional / BoF Sustainability beat.
+
+**Story shape:** MU (https://wearmu.com) is a Tokyo-based apparel
+brand launched 2026-05-07. Two things make it BoF-shaped:
+
+**1. Demand forecasting is structurally removed from the supply curve.**
+Production volume each day equals the temperature, in degrees Celsius,
+of a small Hokkaido town (Teshikaga). 25°C = 25 pieces, −10°C = 10
+pieces. A weather oracle determines run size. The intent is to break
+the prediction-bias-driven overproduction problem that BoF has covered
+extensively — there is no buyer in the loop and no trend forecast to
+miss. Made-to-order via Printful keeps the inventory cost at zero.
+
+**2. Bonding-curve pricing on physical goods.**
+First buyer pays ¥5,000 (~$33). Each subsequent buyer pays ¥250 more
+(~$1.70). Capped at ¥30,000 (~$200). Inverted Dutch auction — early
+discovery is economically rewarded. Web3 pricing mechanics on Stripe,
+no token issued.
+
+Three lines:
+- MUGEN 無限 — hourly drops, 108-piece cycle
+- MUON 無音 — daily, weather-gated supply
+- 間 MA   — monthly, single-piece auction (mechanism lifted from
+            Nouns DAO)
+
+Founder: Yuki Hamada — ex-CPO of Mercari (2014–2021, IPO 2018), ex-
+co-founder of NOT A HOTEL.
+
+The entire engine is MIT-licensed open-source (github.com/yukihamada/
+mu-brand), so the operating model is forkable. We've already shipped
+a derivative ("MU CITY") that swaps the weather oracle for Tokyo
+foot-traffic data.
+
+Happy to share week-1 sales distribution data under embargo if useful
+for a more analytical piece.
+
+Press kit: https://wearmu.com/press
+GitHub: https://github.com/yukihamada/mu-brand
+
+Yuki Hamada
+mail@yukihamada.jp / +81-90-7409-0407

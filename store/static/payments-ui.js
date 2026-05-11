@@ -228,6 +228,82 @@
     if (btn) { btn.disabled = false; updatePayMethodNote(); }
   }
 
+  // ── Shipping modal (Phase 3.1) ───────────────────────────────────
+  // For crypto checkout, shipping is collected here BEFORE we hit the
+  // backend, because Stripe's hosted shipping page is the JPY path's
+  // collector and isn't reachable for crypto.
+  let pendingShipping = null;
+
+  function ensureShippingModal() {
+    if (document.getElementById('shipping-modal-root')) return;
+    const root = document.createElement('div');
+    root.id = 'shipping-modal-root';
+    root.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;align-items:center;justify-content:center;padding:20px';
+    root.innerHTML = `
+      <div style="background:#0a0a0a;border:1px solid #333;border-radius:8px;max-width:480px;width:100%;max-height:90vh;overflow-y:auto;padding:24px">
+        <div style="font-size:9px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.6;margin-bottom:12px">Shipping</div>
+        <h3 style="font-size:16px;letter-spacing:0.04em;margin:0 0 8px">配送先 / Shipping address</h3>
+        <p style="font-size:10px;line-height:1.6;opacity:0.6;margin:0 0 18px">
+          クリプト決済では、送金確認後に Printful から自動発送します。発送先を先にご入力ください。<br>
+          Worldwide via DHL/FedEx — typically 7-10 business days.
+        </p>
+        <form id="shipping-form-mu">
+          <input class="mu-input" type="text" name="name" placeholder="お名前 / Full name" required style="margin-bottom:8px">
+          <input class="mu-input" type="text" name="line1" placeholder="住所1行目 / Address line 1" required style="margin-bottom:8px">
+          <input class="mu-input" type="text" name="line2" placeholder="住所2行目 (任意) / Address line 2 (optional)" style="margin-bottom:8px">
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <input class="mu-input" type="text" name="city" placeholder="市区町村 / City" required style="flex:2">
+            <input class="mu-input" type="text" name="state" placeholder="都道府県/State" style="flex:1">
+          </div>
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <input class="mu-input" type="text" name="zip" placeholder="郵便番号 / ZIP" required style="flex:1">
+            <input class="mu-input" type="text" name="country" placeholder="国 (例 JP / US)" maxlength="2" required style="flex:1;text-transform:uppercase">
+          </div>
+          <input class="mu-input" type="tel" name="phone" placeholder="電話 (任意) / Phone (optional)" style="margin-bottom:12px">
+          <div id="ship-msg-mu" style="font-size:10px;color:#C8362C;min-height:14px;margin-bottom:8px"></div>
+          <button type="submit" class="btn-primary" id="ship-submit-mu">続行 / Continue</button>
+          <button type="button" id="ship-cancel-mu" style="margin-top:8px;width:100%;background:transparent;border:1px solid #333;color:#fff;padding:10px;font-size:11px;letter-spacing:0.2em;cursor:pointer">キャンセル</button>
+        </form>
+      </div>
+    `;
+    document.body.appendChild(root);
+    document.getElementById('ship-cancel-mu').addEventListener('click', closeShippingModal);
+    document.getElementById('shipping-form-mu').addEventListener('submit', submitShipping);
+  }
+  function openShippingModal() {
+    ensureShippingModal();
+    document.getElementById('ship-msg-mu').textContent = '';
+    document.getElementById('shipping-modal-root').style.display = 'flex';
+  }
+  function closeShippingModal() {
+    const r = document.getElementById('shipping-modal-root');
+    if (r) r.style.display = 'none';
+    const btn = document.getElementById('btn-buy');
+    if (btn) { btn.disabled = false; updatePayMethodNote(); }
+  }
+  function submitShipping(e) {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const msg = document.getElementById('ship-msg-mu');
+    const data = {
+      name: (fd.get('name') || '').trim(),
+      line1: (fd.get('line1') || '').trim(),
+      line2: (fd.get('line2') || '').trim(),
+      city: (fd.get('city') || '').trim(),
+      state: (fd.get('state') || '').trim(),
+      zip: (fd.get('zip') || '').trim(),
+      country: ((fd.get('country') || '').toUpperCase()).trim(),
+      phone: (fd.get('phone') || '').trim(),
+    };
+    if (!data.name || !data.line1 || !data.city || !data.zip || data.country.length !== 2) {
+      msg.textContent = '必須項目が未入力です';
+      return;
+    }
+    pendingShipping = data;
+    document.getElementById('shipping-modal-root').style.display = 'none';
+    proceedCheckout();
+  }
+
   // ── Checkout interception ─────────────────────────────────────────
   async function interceptedSubmit(e) {
     e.preventDefault();
@@ -237,8 +313,14 @@
     if (btn) { btn.disabled = true; btn.textContent = 'Processing...'; }
 
     const finalPrice = priceForMethod(window.currentProduct.price_jpy, selectedPayMethod);
+    // 1. KYC modal if needed
     if (finalPrice >= KYC_THRESHOLD && !pendingKyc) {
       openKycModal();
+      return;
+    }
+    // 2. Shipping modal for crypto checkout only (JPY → Stripe collects)
+    if (selectedPayMethod !== 'jpy' && !pendingShipping) {
+      openShippingModal();
       return;
     }
     await proceedCheckout();
@@ -257,6 +339,7 @@
       payment_method: selectedPayMethod,
     };
     if (pendingKyc) body.kyc = pendingKyc;
+    if (pendingShipping) body.shipping = pendingShipping;
 
     try {
       if (selectedPayMethod === 'jpy') {
@@ -315,6 +398,7 @@
       window.openModal = function (p, pushHistory) {
         // Reset state for the new product
         pendingKyc = null;
+        pendingShipping = null;
         selectedPayMethod = 'jpy';
         document.querySelectorAll('#pay-method-btns .size-btn').forEach((b, i) => {
           b.classList.toggle('selected', i === 0);
