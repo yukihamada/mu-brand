@@ -24,3 +24,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
 rust-s3 = { version = "0.34", default-features = false, features = ["tokio-rustls-tls"] }
 urlencoding = "2.1"
+# Safe Markdown → HTML for auto-blog. Strips script tags + javascript: URLs.
+pulldown-cmark = { version = "0.10", default-features = false, features = ["html"] }
+ammonia = "4"
