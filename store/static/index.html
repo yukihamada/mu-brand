@@ -636,6 +636,19 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
       </div>
     </div>
   </div>
+
+  <!-- ATSM.WTF Founding 100 invitation (MA holder special) -->
+  <div style="margin:32px auto 0;max-width:760px;border:1px solid rgba(230,196,73,0.45);background:rgba(230,196,73,0.04);padding:22px 24px;border-radius:4px">
+    <div style="font-size:9px;letter-spacing:0.22em;color:#e6c449;margin-bottom:10px">MA HOLDER · SPECIAL INVITATION</div>
+    <div style="font-size:14px;line-height:1.6;color:rgba(255,255,255,0.92);margin-bottom:10px">
+      MA を持つ人は、<a href="https://atsm.wtf" target="_blank" rel="noopener" style="color:#e6c449;border-bottom:1px solid #e6c449;text-decoration:none">ATSM.WTF</a> Founding 100 へ無料招待。
+    </div>
+    <div style="font-size:11px;line-height:1.7;color:rgba(255,255,255,0.6)">
+      100 席のうち <strong style="color:#e6c449">3 席</strong> を MA holder reserved に。月会費永続ゼロ (Hearth から場主が引き受け)。<br>
+      AI 経営を 100 人で 5 年組み立て直す場 — Mercari 初期 CPO 級の筆頭師範を招請中。<br>
+      <a href="https://atsm.wtf" target="_blank" rel="noopener" style="color:#e6c449;opacity:0.9">→ atsm.wtf で詳細を見る</a>
+    </div>
+  </div>
 </div>
 
 <!-- MUON -->
@@ -1207,11 +1220,15 @@ async function loadMA(){
         <div class="input-row">
           <input class="mu-input" type="number" id="ma-bid" placeholder="入札金額（¥）" min="${(p.current_bid||p.price_jpy)+1000}">
           <input class="mu-input" type="email" id="ma-email" placeholder="Email">
-          <input class="mu-input" type="text" id="ma-wallet" placeholder="Solanaウォレット（NFT受取用）">
         </div>
+        <label style="display:flex;align-items:flex-start;gap:8px;margin:10px 0 6px;font-size:9px;line-height:1.6;letter-spacing:0.05em;opacity:0.85;cursor:pointer">
+          <input type="checkbox" id="ma-nft-opt" style="margin-top:2px;accent-color:#e6c449" onchange="document.getElementById('ma-nft-wallet').style.display=this.checked?'block':'none'">
+          <span>🎫 Soulbound NFT 証明書を発行する <span style="opacity:0.55">(Solana wallet 必須・転売不可)</span></span>
+        </label>
+        <input class="mu-input" type="text" id="ma-nft-wallet" placeholder="Solana ウォレットアドレス" style="display:none;margin-bottom:6px">
         <button class="btn-primary" onclick="placeBid(${p.id})">入札する</button>
         <div id="bid-msg" style="font-size:9px;letter-spacing:0.1em;min-height:16px;margin-top:4px"></div>
-        <div class="soulbound-note">落札後、Soulbound NFT（転売不可の真正証明書）を発行。服の所有が変わる際はNFTの移転手続きが必要です。</div>
+        <div class="soulbound-note">落札後、Soulbound NFT（転売不可の真正証明書）を opt-in で発行。服の所有が変わる際はNFTの移転手続きが必要です。</div>
         `:'<div class="empty" style="padding:20px 0">Sold</div>'}
       </div>
     </div>`;
@@ -1237,16 +1254,28 @@ function startMATimer(endISO){
 async function placeBid(productId){
   const bid = parseInt(document.getElementById('ma-bid').value);
   const email = document.getElementById('ma-email').value;
-  const wallet = document.getElementById('ma-wallet').value;
+  const nftOpt = !!document.getElementById('ma-nft-opt')?.checked;
+  const nftWallet = (document.getElementById('ma-nft-wallet')?.value||'').trim();
   const msg = document.getElementById('bid-msg');
   if(!bid||!email){
     if(msg){msg.style.color='#C8362C';msg.textContent='金額とEmailを入力してください'}
     return;
   }
+  if(nftOpt && !nftWallet){
+    if(msg){msg.style.color='#C8362C';msg.textContent='NFT証明書を発行するには Solana ウォレットアドレスを入力してください'}
+    return;
+  }
   if(msg){msg.style.color='rgba(245,245,240,0.4)';msg.textContent='送信中…'}
   const r = await fetch('/api/bid',{
     method:'POST',headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({product_id:productId,amount:bid,email,wallet})
+    body: JSON.stringify({
+      product_id:productId,
+      amount:bid,
+      email,
+      wallet: nftWallet || undefined,
+      nft_opt_in: nftOpt,
+      nft_wallet: nftWallet || undefined,
+    })
   });
   if(r.ok){
     if(msg){msg.style.color='#5a9e6f';msg.textContent='入札しました。落札の際にメールでご連絡します。'}
@@ -1377,10 +1406,23 @@ function openModal(p, pushHistory=true){
   }
   document.getElementById('m-meta').innerHTML = metaHtml;
 
-  // NFT
-  if(p.nft_mint){
-    document.getElementById('m-nft').style.display='block';
-    document.getElementById('m-nft-val').textContent = p.nft_mint;
+  // NFT — show Soulbound certificate when issued.
+  // Dry-run mints are `dryrun:<uuid>` (pilot mode); live mints are base58
+  // Solana mint addresses that link to Solscan.
+  const nftEl = document.getElementById('m-nft');
+  const nftVal = document.getElementById('m-nft-val');
+  if(p.nft_mint && nftEl && nftVal){
+    nftEl.style.display='block';
+    const m = p.nft_mint;
+    const isDryRun = m.startsWith('dryrun:');
+    const short = m.length > 14 ? (m.slice(0,8) + '…' + m.slice(-4)) : m;
+    if(isDryRun){
+      nftVal.innerHTML = `🎫 <span style="opacity:0.7">Soulbound pilot (dry-run)</span> · <span style="font-family:monospace;opacity:0.55">${m.replace('dryrun:','').slice(0,8)}…</span>`;
+    } else {
+      nftVal.innerHTML = `🎫 Soulbound NFT · <a href="https://solscan.io/token/${m}" target="_blank" rel="noopener" style="color:#e6c449;font-family:monospace;text-decoration:underline">${short}</a>`;
+    }
+  } else if(nftEl){
+    nftEl.style.display='none';
   }
   // MA: hide size buttons (one-of-one, size determined at order)
   const sizeSection = document.querySelector('#modal .select-row')?.closest('div');

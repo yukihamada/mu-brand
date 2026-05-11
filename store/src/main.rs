@@ -1,4 +1,5 @@
 mod gemini;
+mod nft;
 mod payments;
 
 use axum::{
@@ -132,6 +133,15 @@ struct BidBody {
     wallet: Option<String>,
     /// Required when amount >= ¥300,000 (`KYC_THRESHOLD_JPY`).
     kyc: Option<KycInfo>,
+    /// Soulbound NFT pilot: when true and `nft_wallet` is a plausible Solana
+    /// address, the auction-winner flow will mint a Soulbound cNFT certificate
+    /// to that wallet on settle. See `nft::mint_soulbound` for details.
+    #[serde(default)]
+    nft_opt_in: bool,
+    /// Solana wallet to receive the Soulbound NFT (only used when
+    /// `nft_opt_in` is true). Falls back to `wallet` if not given.
+    #[serde(default)]
+    nft_wallet: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -657,9 +667,20 @@ async fn place_bid(
 
     let now = chrono_now();
     let wallet_token = uuid::Uuid::new_v4().to_string();
+    // Soulbound NFT opt-in: prefer the dedicated `nft_wallet` (entered in
+    // the modal's NFT checkbox row); fall back to `wallet` (legacy field).
+    let nft_wallet = body.nft_wallet.clone()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| body.wallet.clone().filter(|s| !s.trim().is_empty()));
+    let nft_opt_in_flag: i64 = if body.nft_opt_in && nft_wallet.is_some() { 1 } else { 0 };
     conn.execute(
-        "INSERT INTO bids (product_id, amount, email, wallet, wallet_token, created_at) VALUES (?,?,?,?,?,?)",
-        params![body.product_id, body.amount, body.email, body.wallet, wallet_token, now]
+        "INSERT INTO bids
+            (product_id, amount, email, wallet, wallet_token, created_at, nft_opt_in, nft_wallet)
+         VALUES (?,?,?,?,?,?,?,?)",
+        params![
+            body.product_id, body.amount, body.email, body.wallet, wallet_token, now,
+            nft_opt_in_flag, nft_wallet
+        ]
     ).unwrap();
     conn.execute(
         "UPDATE products SET current_bid=?, bid_count=bid_count+1 WHERE id=?",
@@ -1081,6 +1102,15 @@ async fn stripe_webhook(
                 });
             }
         }
+        // ── Soulbound NFT pilot trigger (Stripe path) ──
+        // Buyer opts in by entering a Solana wallet at checkout (modal form
+        // → `metadata.wallet` on the Stripe session). Dry-run by default;
+        // see store/src/nft.rs and `MU_NFT_MINT_LIVE`.
+        let buyer_wallet = meta["wallet"].as_str().unwrap_or("").trim().to_string();
+        if !buyer_wallet.is_empty() {
+            nft::mint_soulbound_bg(db.clone(), product_id, buyer_wallet, "stripe_webhook");
+        }
+
         let printful_key = env::var("PRINTFUL_API_KEY").unwrap_or_default();
         let db2 = db.clone();
         let session_clone = session.clone();
@@ -1532,7 +1562,9 @@ async fn settle_auction(
     let bid = {
         let conn = db.lock().unwrap();
         conn.query_row(
-            "SELECT b.id, b.amount, b.email, b.wallet, b.wallet_token, p.name, p.price_jpy FROM bids b
+            "SELECT b.id, b.amount, b.email, b.wallet, b.wallet_token, p.name, p.price_jpy,
+                    COALESCE(b.nft_opt_in, 0), b.nft_wallet
+             FROM bids b
              JOIN products p ON p.id = b.product_id
              WHERE b.product_id=? ORDER BY b.amount DESC LIMIT 1",
             params![product_id],
@@ -1544,10 +1576,13 @@ async fn settle_auction(
                 row.get::<_,Option<String>>(4)?,
                 row.get::<_,String>(5)?,
                 row.get::<_,i64>(6)?,
+                row.get::<_,i64>(7)?,
+                row.get::<_,Option<String>>(8)?,
             ))
         )
     };
-    let (bid_id, amount, email, current_wallet, wallet_token_opt, product_name, _base_price) = match bid {
+    let (bid_id, amount, email, current_wallet, wallet_token_opt, product_name, _base_price,
+         nft_opt_in, nft_wallet_opt) = match bid {
         Ok(r) => r,
         Err(_) => return (StatusCode::NOT_FOUND, "no bids found").into_response(),
     };
@@ -1561,6 +1596,26 @@ async fn settle_auction(
             t
         }
     };
+
+    // ── Soulbound NFT pilot (Q3 vision item, shipped behind MU_NFT_MINT_LIVE) ──
+    // Dispatched BEFORE the Stripe call so a Stripe outage doesn't block the
+    // certificate flow (the cNFT is independent of payment settlement). Async
+    // / background — never blocks the response. Default mode = dry-run (writes
+    // `dryrun:<uuid>` to products.nft_mint without hitting Helius). Flip
+    // MU_NFT_MINT_LIVE=1 once HELIUS_API_KEY is set.
+    let nft_target = nft_wallet_opt.clone()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| current_wallet.clone().filter(|s| !s.trim().is_empty()));
+    let nft_minted: bool = if nft_opt_in == 1 || nft_target.is_some() {
+        if let Some(wallet) = nft_target.clone() {
+            nft::mint_soulbound_bg(db.clone(), product_id, wallet, "settle_auction");
+            true
+        } else {
+            eprintln!("[nft] settle_auction product_id={} skipped: opt-in without wallet", product_id);
+            false
+        }
+    } else { false };
+    let _ = bid_id; // currently unused; retained for future event logging
 
     // Create Stripe payment link
     let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
@@ -1668,6 +1723,8 @@ async fn settle_auction(
         "payment_url": payment_url,
         "wallet_url": wallet_url,
         "wallet_registered": current_wallet.as_deref().map(|s| !s.is_empty()).unwrap_or(false),
+        "nft_mint_dispatched": nft_minted,
+        "nft_mint_live": std::env::var("MU_NFT_MINT_LIVE").unwrap_or_default() == "1",
     })).into_response()
 }
 
@@ -8644,6 +8701,9 @@ async fn main() {
         "ALTER TABLE products ADD COLUMN parent_design TEXT",
         "ALTER TABLE products ADD COLUMN sold_out_at TEXT",
         "ALTER TABLE bids ADD COLUMN wallet_token TEXT",
+        // Soulbound NFT pilot opt-in (per-bid; carried to settle_auction).
+        "ALTER TABLE bids ADD COLUMN nft_opt_in INTEGER DEFAULT 0",
+        "ALTER TABLE bids ADD COLUMN nft_wallet TEXT",
         "ALTER TABLE you_designs ADD COLUMN image_bytes BLOB",
         "ALTER TABLE you_designs ADD COLUMN image_mime TEXT",
         "ALTER TABLE you_designs ADD COLUMN gen_status TEXT NOT NULL DEFAULT 'pending'",
