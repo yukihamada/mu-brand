@@ -12958,6 +12958,7 @@ async fn main() {
         .route("/api/admin/sweep_signals", get(admin_sweep_signals))
         .route("/admin/sweep", get(admin_sweep_dashboard))
         .route("/admin/agent", get(admin_agent_journal))
+        .route("/admin/agent/run", post(admin_agent_run))
         .route("/admin/agents", get(admin_agents_dashboard))
         .route("/api/admin/prompt_performance", get(admin_prompt_performance))
         .route("/api/admin/prompt_performance/refresh", post(admin_prompt_performance_refresh))
@@ -14056,6 +14057,45 @@ async fn admin_agent_journal(
         "actions": serde_json::from_str::<serde_json::Value>(&r.get::<_,String>(7)?).unwrap_or_default(),
     }))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
     Json(serde_json::json!({"entries": rows, "count": rows.len()})).into_response()
+}
+
+/// POST /admin/agent/run?token=…&name=<agent_name> — manual trigger.
+/// Runs the agent synchronously, writes to agent_journal, returns the report.
+async fn admin_agent_run(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let name = match q.get("name") {
+        Some(n) if !n.is_empty() => n.clone(),
+        _ => return (StatusCode::BAD_REQUEST, "missing ?name=").into_response(),
+    };
+    let report = match run_agent(&name, db.clone()).await {
+        Ok(r) => r,
+        Err(e) => {
+            // Still write a failure row so we can see what happened.
+            let conn = db.lock().unwrap();
+            let _ = conn.execute(
+                "INSERT INTO agent_journal (cycle_at, summary, notable, agent_name, observations, decisions, actions, created_at)
+                 VALUES (?,?,1,?,?,?,?,?)",
+                params![chrono_now(), format!("error: {e}"), name,
+                    "{}", "[]", "[]", chrono_now()],
+            );
+            return (StatusCode::INTERNAL_SERVER_ERROR,
+                format!("agent {} failed: {}", name, e)).into_response();
+        }
+    };
+    // Persist + Telegram dispatch via the shared cron path.
+    journal_agent_report(db.clone(), &name, &report).await;
+    Json(serde_json::json!({
+        "ok": true,
+        "agent": name,
+        "summary": report.summary,
+        "notable": report.notable,
+        "observations": report.observations,
+        "decisions": report.decisions,
+        "actions": report.actions,
+    })).into_response()
 }
 
 /// GET /admin/agents?token=… — HTML overview of all registered agents
