@@ -9781,6 +9781,16 @@ async fn main() {
     // Add sent_at column for the weekly-brief cron to track delivery.
     let _ = conn.execute(
         "ALTER TABLE ma_council_briefs ADD COLUMN sent_at TEXT", []);
+    // One-shot migration: Gemini 2.5 Flash hallucinated the year in the
+    // title (saw "2024 週11" on 2026-05-11 when week_label was "2026.W19").
+    // Force-rebuild title from week_label for any existing brief whose title
+    // doesn't already contain its own week_label. Idempotent.
+    let _ = conn.execute(
+        "UPDATE ma_council_briefs
+            SET title = '今週の MA Council Brief — ' || week_start
+            WHERE title NOT LIKE '%' || week_start || '%'",
+        [],
+    );
     // CV-pulse autonomous loop: every 30 min the cron POSTs to
     // /api/admin/cv_pulse, which writes a snapshot here + may update
     // cv_config (modal cooldown / coupon strength / email subject variant).
