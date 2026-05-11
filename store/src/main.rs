@@ -369,8 +369,14 @@ mod price_tests {
 /// string `"YYYY-MM-DDTHH:MM:SSZ"`. Lets clients sort/compare deterministically.
 fn normalize_created_at_iso(raw: &str) -> String {
     if let Ok(secs) = raw.parse::<i64>() {
-        if let Some(dt) = chrono::DateTime::<chrono::Utc>::from_timestamp(secs, 0) {
-            return dt.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        if secs > 0 {
+            let days = secs.div_euclid(86_400);
+            let rem  = secs.rem_euclid(86_400);
+            let (y, m, d) = civil_from_days(days);
+            let hh = rem / 3600;
+            let mm = (rem % 3600) / 60;
+            let ss = rem % 60;
+            return format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, m, d, hh, mm, ss);
         }
     }
     // Already ISO-ish — trim fractional seconds + ensure trailing Z.
@@ -3954,19 +3960,33 @@ async fn cv_pulse(
         ).ok();
     }
 
+    // ── 3.5 Cron freshness check ──
+    // MUGEN must drop ≤ every 2h, MUON ≤ 30h, MA ≤ 35d. If any brand exceeds
+    // its budget we flag it loudly so the operator notices a stuck cron.
+    let stale_warnings: Vec<String> = {
+        let conn = db.lock().unwrap();
+        cron_health_warnings(&conn)
+    };
+
     // ── 4. Telegram digest (best-effort, fire and forget) ──
     let tg_token = env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default();
     let tg_chat = env::var("TELEGRAM_CHAT_ID").unwrap_or_else(|_| "1136442501".into());
-    if !tg_token.is_empty() && !decisions.is_empty() || signups_30m > 0 || purchases_30m > 0 {
+    let should_alert_stale = !stale_warnings.is_empty();
+    if !tg_token.is_empty() && (should_alert_stale || !decisions.is_empty() || signups_30m > 0 || purchases_30m > 0) {
+        let header = if should_alert_stale {
+            format!("🚨 MU CV pulse · STALE · {}\n{}\n", jst_today_str(), stale_warnings.join("\n"))
+        } else {
+            format!("MU CV pulse · {}\n", jst_today_str())
+        };
         let msg = format!(
-            "MU CV pulse · {}\n\
+            "{}\
              ─ signups 30m/24h: {} / {}  (total {})\n\
              ─ surveys 30m/24h: {} / {}\n\
              ─ lottery 30m/24h: {} / {}\n\
              ─ discounts 30m/24h: {} / {}\n\
              ─ purchases 30m/24h: {} / {}\n\
              ─ decision: {}",
-            jst_today_str(),
+            header,
             signups_30m, signups_24h, signups_total,
             surveys_30m, surveys_24h,
             lottery_30m, lottery_24h,
@@ -4000,6 +4020,138 @@ async fn cv_pulse(
         "decision": decision_str,
         "decisions": decisions,
     })).into_response()
+}
+
+/// Compute "minutes since the most recent active drop" for each brand and
+/// flag any brand that has exceeded its cadence budget. Returns one warning
+/// line per stale brand; empty if all healthy.
+fn cron_health_warnings(conn: &rusqlite::Connection) -> Vec<String> {
+    let budgets: &[(&str, i64, &str)] = &[
+        ("mugen", 120,   "hourly"),
+        ("muon",  1800,  "daily"),     // 30h
+        ("ma",    50400, "monthly"),   // 35d
+        ("nouns", 10080, "weekly"),    // 7d
+    ];
+    let now_secs = chrono_now().parse::<i64>().unwrap_or(0);
+    let mut warnings = Vec::new();
+    for &(brand, budget_min, cadence) in budgets {
+        let row: rusqlite::Result<String> = conn.query_row(
+            "SELECT MAX(
+                CASE
+                  WHEN created_at GLOB '[0-9]*' AND created_at NOT LIKE '%-%'
+                    THEN strftime('%Y-%m-%dT%H:%M:%SZ', CAST(created_at AS INTEGER), 'unixepoch')
+                  ELSE created_at
+                END
+             ) FROM products WHERE brand=? AND active=1",
+            params![brand], |r| r.get::<_, Option<String>>(0).map(|o| o.unwrap_or_default()),
+        );
+        let latest_iso = match row { Ok(s) if !s.is_empty() => s, _ => continue };
+        let latest_secs = iso_to_unix_secs(&latest_iso).unwrap_or(0);
+        if latest_secs == 0 { continue; }
+        let elapsed_min = (now_secs - latest_secs) / 60;
+        if elapsed_min > budget_min {
+            warnings.push(format!(
+                "  {} ({}): last drop {}h{}m ago — budget {}h",
+                brand.to_uppercase(), cadence,
+                elapsed_min / 60, elapsed_min % 60,
+                budget_min / 60,
+            ));
+        }
+    }
+    warnings
+}
+
+/// Parse "YYYY-MM-DDTHH:MM:SSZ" into unix seconds. None on failure.
+fn iso_to_unix_secs(iso: &str) -> Option<i64> {
+    let s = iso.trim_end_matches('Z');
+    let (date_part, time_part) = s.split_once('T')?;
+    let date_bits: Vec<&str> = date_part.split('-').collect();
+    if date_bits.len() != 3 { return None; }
+    let y: i64 = date_bits[0].parse().ok()?;
+    let m: i64 = date_bits[1].parse().ok()?;
+    let d: i64 = date_bits[2].parse().ok()?;
+    let time_bits: Vec<&str> = time_part.split(':').collect();
+    if time_bits.len() < 3 { return None; }
+    let hh: i64 = time_bits[0].parse().ok()?;
+    let mm: i64 = time_bits[1].parse().ok()?;
+    let ss: i64 = time_bits[2].split('.').next()?.parse().ok()?;
+    // days_from_civil — Howard Hinnant
+    let y_adj = if m <= 2 { y - 1 } else { y };
+    let era = if y_adj >= 0 { y_adj } else { y_adj - 399 } / 400;
+    let yoe = y_adj - era * 400;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some(days * 86_400 + hh * 3600 + mm * 60 + ss)
+}
+
+/// Public health endpoint — returns which brands are stale.
+async fn cron_health_handler(State(db): State<Db>) -> impl IntoResponse {
+    let conn = db.lock().unwrap();
+    let warnings = cron_health_warnings(&conn);
+    let healthy = warnings.is_empty();
+    Json(serde_json::json!({
+        "ok": healthy,
+        "stale": warnings,
+    }))
+}
+
+/// `/api/transparency` — public stats for the blog. Honest, computed live,
+/// no caching. If a number is wrong on the blog it's wrong here too.
+async fn public_transparency(State(db): State<Db>) -> impl IntoResponse {
+    let conn = db.lock().unwrap();
+    let revenue_shirts_jpy: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(price_jpy * sold), 0) FROM products WHERE active=1",
+        [], |r| r.get(0),
+    ).unwrap_or(0);
+    let auction_revenue_jpy: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(current_bid), 0) FROM products WHERE brand='ma' AND sold>=1",
+        [], |r| r.get(0),
+    ).unwrap_or(0);
+    let shirts_sold: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(sold), 0) FROM products WHERE active=1",
+        [], |r| r.get(0),
+    ).unwrap_or(0);
+    let purchases_total: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM mu_purchases", [], |r| r.get(0),
+    ).unwrap_or(0);
+    let you_subscribers_total: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM you_users WHERE unsubscribed_at IS NULL",
+        [], |r| r.get(0),
+    ).unwrap_or(0);
+    let you_subscribers_paid: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM you_users WHERE subscription_status='active'",
+        [], |r| r.get(0),
+    ).unwrap_or(0);
+    let you_lifetime_members: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM you_users WHERE lifetime_free=1",
+        [], |r| r.get(0),
+    ).unwrap_or(0);
+    let you_designs_generated: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM you_designs", [], |r| r.get(0),
+    ).unwrap_or(0);
+    let monthly_price = cv_get(&conn, "monthly_price_jpy", "980")
+        .parse::<i64>().unwrap_or(980);
+    let approx_mrr_jpy = you_subscribers_paid * monthly_price;
+    let total_revenue_jpy = revenue_shirts_jpy + auction_revenue_jpy;
+
+    Json(serde_json::json!({
+        "revenue_jpy": total_revenue_jpy,
+        "revenue_breakdown": {
+            "shirts_jpy":   revenue_shirts_jpy,
+            "auctions_jpy": auction_revenue_jpy,
+        },
+        "shirts_sold":   shirts_sold,
+        "purchases_recorded": purchases_total,
+        "you": {
+            "subscribers_free": you_subscribers_total - you_subscribers_paid - you_lifetime_members,
+            "subscribers_paid": you_subscribers_paid,
+            "lifetime_members": you_lifetime_members,
+            "designs_generated": you_designs_generated,
+            "approx_mrr_jpy": approx_mrr_jpy,
+        },
+        "as_of": chrono_now(),
+    }))
 }
 
 /// Weekly lottery draw — picks ~5% of pending entries as winners,
@@ -6167,6 +6319,8 @@ async fn main() {
         .route("/api/exit/lottery", post(exit_lottery_enter))
         .route("/api/admin/lottery_draw", post(admin_lottery_draw))
         .route("/api/admin/cv_pulse", post(cv_pulse))
+        .route("/api/health/cron", get(cron_health_handler))
+        .route("/api/transparency", get(public_transparency))
         .route("/api/cv/config", get(cv_public_config))
         .route("/api/you/signal/:design_id", post(you_signal))
         .route("/api/you/preferences", get(you_preferences))

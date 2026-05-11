@@ -114,14 +114,41 @@ footer{padding:48px 32px;border-top:1px solid rgba(255,255,255,0.06);text-align:
   <h2>4. お金 — 現在のキャッシュフロー</h2>
   <p>立ち上げから 4 日目時点。数字は包み隠さず。</p>
 
-  <div class="row">
-    <div class="cell"><div class="v">112</div><div class="l">total drops</div></div>
-    <div class="cell"><div class="v">9</div><div class="l">/you subscribers</div></div>
-    <div class="cell"><div class="v">16</div><div class="l">designs generated</div></div>
-    <div class="cell"><div class="v">¥0</div><div class="l">monthly revenue *</div></div>
+  <div class="row" id="live-stats" data-live="1">
+    <div class="cell"><div class="v" data-stat="total_drops">…</div><div class="l">total drops</div></div>
+    <div class="cell"><div class="v" data-stat="you_subscribers">…</div><div class="l">/you subscribers</div></div>
+    <div class="cell"><div class="v" data-stat="you_designs">…</div><div class="l">designs generated</div></div>
+    <div class="cell"><div class="v" data-stat="revenue">…</div><div class="l">total revenue *</div></div>
   </div>
+  <p style="font-size:11px;opacity:0.55;margin-top:-10px">↑ <a href="/api/transparency" style="color:inherit;text-decoration:underline">/api/transparency</a> から直接 fetch。リロードで最新が反映される。</p>
 
-  <p>* MUGEN/MUON/MA の在庫増分カウンタ自体は 142 を示しているが、これは launch 期のテスト・自分の購入を含んでいる。<strong>外部からの実売上は今のところ 0 円</strong>。書きながら少し恥ずかしいが、それでも書く。</p>
+  <p>* 「revenue」は <code>price_jpy × sold</code> の累計（products テーブル）+ MA 落札額。Stripe の生流入とは数字が <em>少し</em> ズレる（返金・テスト購入を含む）。
+    詳細な MRR・粗利は <a href="/api/transparency">/api/transparency</a> を叩いてください。<br>
+    書きながら少し恥ずかしい数字でも、それでも書く。隠したら自律ブランドの意味がない。</p>
+
+  <script>
+  (async () => {
+    const setStat = (key, val) => {
+      const el = document.querySelector('[data-stat="'+key+'"]');
+      if (el) el.textContent = val;
+    };
+    try {
+      const [t, brands] = await Promise.all([
+        fetch('/api/transparency').then(r => r.json()),
+        fetch('/api/products').then(r => r.json()),
+      ]);
+      const totalDrops = (brands.brands || []).reduce((s, b) => s + (b.active_drops || 0), 0);
+      const you = t.you || {};
+      const subs = (you.subscribers_free || 0) + (you.subscribers_paid || 0) + (you.lifetime_members || 0);
+      setStat('total_drops', totalDrops);
+      setStat('you_subscribers', subs);
+      setStat('you_designs', you.designs_generated || 0);
+      setStat('revenue', '¥' + (t.revenue_jpy || 0).toLocaleString('ja-JP'));
+    } catch (e) {
+      document.querySelectorAll('[data-stat]').forEach(el => el.textContent = '—');
+    }
+  })();
+  </script>
 
   <h3>毎月のコスト（概算）</h3>
   <table>
