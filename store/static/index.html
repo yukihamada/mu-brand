@@ -637,16 +637,11 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
     </div>
   </div>
 
-  <!-- ATSM.WTF Founding 100 invitation (MA holder special) -->
-  <div style="margin:32px auto 0;max-width:760px;border:1px solid rgba(230,196,73,0.45);background:rgba(230,196,73,0.04);padding:22px 24px;border-radius:4px">
-    <div style="font-size:9px;letter-spacing:0.22em;color:#e6c449;margin-bottom:10px">MA HOLDER · SPECIAL INVITATION</div>
-    <div style="font-size:14px;line-height:1.6;color:rgba(255,255,255,0.92);margin-bottom:10px">
-      MA を持つ人は、<a href="https://atsm.wtf" target="_blank" rel="noopener" style="color:#e6c449;border-bottom:1px solid #e6c449;text-decoration:none">ATSM.WTF</a> Founding 100 へ無料招待。
-    </div>
-    <div style="font-size:11px;line-height:1.7;color:rgba(255,255,255,0.6)">
-      100 席のうち <strong style="color:#e6c449">3 席</strong> を MA holder reserved に。月会費永続ゼロ (Hearth から場主が引き受け)。<br>
-      AI 経営を 100 人で 5 年組み立て直す場 — Mercari 初期 CPO 級の筆頭師範を招請中。<br>
-      <a href="https://atsm.wtf" target="_blank" rel="noopener" style="color:#e6c449;opacity:0.9">→ atsm.wtf で詳細を見る</a>
+  <!-- ATSM.WTF — MA holder benefit -->
+  <div style="margin:32px auto 0;max-width:760px;border-top:1px solid rgba(230,196,73,0.3);padding:18px 0 0;text-align:center">
+    <div style="font-size:9px;letter-spacing:0.22em;color:#e6c449;margin-bottom:8px">MA HOLDER</div>
+    <div style="font-size:13px;line-height:1.7;color:rgba(255,255,255,0.7)">
+      MA 保有者には特典あり。 <a href="https://atsm.wtf" target="_blank" rel="noopener" style="color:#e6c449;border-bottom:1px solid rgba(230,196,73,0.5);text-decoration:none">→ atsm.wtf</a>
     </div>
   </div>
 </div>
@@ -807,9 +802,10 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
             + NFT証明書を受け取る（オプション）
           </summary>
           <div style="margin-top:10px">
-            <input class="mu-input" type="text" name="wallet" placeholder="Solanaウォレットアドレス（任意）">
+            <input class="mu-input" type="text" name="wallet" placeholder="Solanaウォレットアドレス（後からでもOK）">
             <div class="soulbound-note" style="margin-top:6px;display:block">
-              入力すると Q3 mint パイロットの順番待ちに登録されます (まだ実 mint は行っていません)。間 MA はローンチ時に Soulbound (転売不可) となります。
+              <strong style="color:#e6c449">📧 ご購入後、Email で NFT 受け取り方法をお送りします。</strong><br>
+              ここで wallet を未入力でも OK — 後日メールから wallet を登録すれば mint パイロット (2026 Q3) で受け取れます。間 MA はローンチ時に Soulbound (転売不可) となります。
             </div>
           </div>
         </details>
@@ -1226,12 +1222,12 @@ async function loadMA(){
         </div>
         <label style="display:flex;align-items:flex-start;gap:8px;margin:10px 0 6px;font-size:9px;line-height:1.6;letter-spacing:0.05em;opacity:0.85;cursor:pointer">
           <input type="checkbox" id="ma-nft-opt" style="margin-top:2px;accent-color:#e6c449" onchange="document.getElementById('ma-nft-wallet').style.display=this.checked?'block':'none'">
-          <span>🎫 Soulbound NFT 証明書を発行する <span style="opacity:0.55">(Solana wallet 必須・転売不可)</span></span>
+          <span>🎫 Soulbound NFT 証明書を発行する <span style="opacity:0.55">(wallet は今ここで or 後日メールから登録 OK)</span></span>
         </label>
-        <input class="mu-input" type="text" id="ma-nft-wallet" placeholder="Solana ウォレットアドレス" style="display:none;margin-bottom:6px">
+        <input class="mu-input" type="text" id="ma-nft-wallet" placeholder="Solana ウォレットアドレス（任意・後からでもOK）" style="display:none;margin-bottom:6px">
         <button class="btn-primary" onclick="placeBid(${p.id})">入札する</button>
         <div id="bid-msg" style="font-size:9px;letter-spacing:0.1em;min-height:16px;margin-top:4px"></div>
-        <div class="soulbound-note">落札後、Soulbound NFT（転売不可の真正証明書）を opt-in で発行。服の所有が変わる際はNFTの移転手続きが必要です。</div>
+        <div class="soulbound-note">📧 落札後、NFT 受け取り方法を Email でお送りします。wallet を今ここで入力しなくても OK — メールから後で登録できます。Soulbound = 転売不可の真正証明書、所有が変わる際は NFT の移転手続きが必要です。</div>
         `:'<div class="empty" style="padding:20px 0">Sold</div>'}
       </div>
     </div>`;
@@ -1264,10 +1260,7 @@ async function placeBid(productId){
     if(msg){msg.style.color='#C8362C';msg.textContent='金額とEmailを入力してください'}
     return;
   }
-  if(nftOpt && !nftWallet){
-    if(msg){msg.style.color='#C8362C';msg.textContent='NFT証明書を発行するには Solana ウォレットアドレスを入力してください'}
-    return;
-  }
+  // wallet は任意 — 未入力でも opt-in は受付け、後日メールから登録できる。
   if(msg){msg.style.color='rgba(245,245,240,0.4)';msg.textContent='送信中…'}
   const r = await fetch('/api/bid',{
     method:'POST',headers:{'Content-Type':'application/json'},
