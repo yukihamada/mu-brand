@@ -1506,25 +1506,31 @@ async fn handle_collab_sweep_order(db: Db, session: &serde_json::Value) {
     let ship_address = format!("{} {} {} {} {} {}", address1, address2, city, state, zip, country)
         .split_whitespace().collect::<Vec<_>>().join(" ");
 
-    // Look up product (route + variant + variant_map + image)
-    type ProdRow = (i64, String, String, i64, Option<i64>, Option<String>, Option<String>);
+    // Look up product (route + variant + variant_map + image + files + options)
+    type ProdRow = (
+        i64, String, String, i64,
+        Option<i64>, Option<String>, Option<String>,
+        Option<String>, Option<String>,
+    );
     let product: Option<ProdRow> = {
         let conn = db.lock().unwrap();
         conn.query_row(
             "SELECT id, name, COALESCE(production_route,'sweep_manual'), price_jpy,
-                    printful_variant_id, image_url, printful_variant_map
+                    printful_variant_id, image_url, printful_variant_map,
+                    printful_files, printful_options
              FROM collab_products WHERE slug=? AND partner='sweep'",
             params![slug],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?)),
         ).ok()
     };
-    let Some((_pid, name, route, _price, variant_id_default, image_url, variant_map_json)) = product else {
+    let Some((_pid, name, route, _price, variant_id_default, image_url, variant_map_json,
+              files_json, options_json)) = product else {
         eprintln!("[sweep/webhook] unknown slug: {}", slug);
         return;
     };
 
     // Resolve variant_id by size from the JSON map, falling back to default.
-    // Map keys are upper-case (S/M/L/XL/2XL/OS/ONE SIZE/S-M etc).
+    // Map keys are upper-case (S/M/L/XL/2XL/OS/ONE SIZE/S/M etc).
     let size_key = size.to_uppercase();
     let variant_id: Option<i64> = variant_map_json.as_ref()
         .and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok())
@@ -1556,25 +1562,49 @@ async fn handle_collab_sweep_order(db: Db, session: &serde_json::Value) {
         && variant_id.is_some()
         && !printful_key.is_empty()
     {
+        // Build the line item.
+        // Use product-specific files+options from DB (set in the seed); fall
+        // back to a default DTG file URL using the SIIIEEP wordmark if none
+        // is configured for this product (legacy rows).
         let mut item = serde_json::json!({
             "variant_id": variant_id.unwrap(),
             "quantity": 1,
         });
-        if let Some(img) = image_url.as_ref().filter(|u| !u.is_empty() && u.starts_with("http")) {
-            item["files"] = serde_json::json!([{"url": img, "placement": "front"}]);
+        let files_val: serde_json::Value = files_json.as_ref()
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or_else(|| {
+                let fallback_url = image_url.as_ref()
+                    .filter(|u| !u.is_empty() && u.starts_with("http"))
+                    .cloned()
+                    .unwrap_or_else(|| "https://lifestyle.wearmu.com/sweep/_logo.png".into());
+                serde_json::json!([{"type": "default", "url": fallback_url}])
+            });
+        item["files"] = files_val;
+        if let Some(opts) = options_json.as_ref()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+            .filter(|v| v.as_array().map_or(false, |a| !a.is_empty()))
+        {
+            item["options"] = opts;
         }
+
+        // Convert JP prefecture name → ISO 3166-2 code (e.g. "Tokyo" → "JP-13").
+        // Stripe Checkout returns prefecture as the English/Japanese name; Printful
+        // requires the ISO subdivision code or accepts certain English names. Use a
+        // small lookup to be safe.
+        let state_code = jp_prefecture_to_iso(state).unwrap_or(state).to_string();
+
         let order = serde_json::json!({
             "recipient": {
                 "name":         ship_name,
                 "address1":     address1,
                 "address2":     address2,
                 "city":         city,
-                "state_code":   state,
+                "state_code":   state_code,
                 "country_code": country,
                 "zip":          zip,
             },
             "items": [item],
-            // confirm:false → draft (SWEEP社 が dashboard で承認後に出荷)
+            // confirm:false → draft (SIIIEEP社 / 濱田 が dashboard 承認後に出荷)
             "confirm": false,
             "external_id": session_id,
         });
@@ -2613,6 +2643,63 @@ fn chrono_now() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
     format!("{}", secs)
+}
+
+/// Convert a JP prefecture name (English or Japanese) to ISO 3166-2 subdivision
+/// code (e.g. "JP-13"). Printful requires this for JP recipients; Stripe returns
+/// the prefecture as a name string. Returns None if no match — caller should
+/// pass through the raw value.
+fn jp_prefecture_to_iso(s: &str) -> Option<&'static str> {
+    match s.trim() {
+        "Hokkaido"  | "Hokkaidō"  | "北海道"   => Some("JP-01"),
+        "Aomori"    | "青森県" | "青森"        => Some("JP-02"),
+        "Iwate"     | "岩手県" | "岩手"        => Some("JP-03"),
+        "Miyagi"    | "宮城県" | "宮城"        => Some("JP-04"),
+        "Akita"     | "秋田県" | "秋田"        => Some("JP-05"),
+        "Yamagata"  | "山形県" | "山形"        => Some("JP-06"),
+        "Fukushima" | "福島県" | "福島"        => Some("JP-07"),
+        "Ibaraki"   | "茨城県" | "茨城"        => Some("JP-08"),
+        "Tochigi"   | "栃木県" | "栃木"        => Some("JP-09"),
+        "Gunma"     | "群馬県" | "群馬"        => Some("JP-10"),
+        "Saitama"   | "埼玉県" | "埼玉"        => Some("JP-11"),
+        "Chiba"     | "千葉県" | "千葉"        => Some("JP-12"),
+        "Tokyo"     | "東京都" | "東京"        => Some("JP-13"),
+        "Kanagawa"  | "神奈川県" | "神奈川"    => Some("JP-14"),
+        "Niigata"   | "新潟県" | "新潟"        => Some("JP-15"),
+        "Toyama"    | "富山県" | "富山"        => Some("JP-16"),
+        "Ishikawa"  | "石川県" | "石川"        => Some("JP-17"),
+        "Fukui"     | "福井県" | "福井"        => Some("JP-18"),
+        "Yamanashi" | "山梨県" | "山梨"        => Some("JP-19"),
+        "Nagano"    | "長野県" | "長野"        => Some("JP-20"),
+        "Gifu"      | "岐阜県" | "岐阜"        => Some("JP-21"),
+        "Shizuoka"  | "静岡県" | "静岡"        => Some("JP-22"),
+        "Aichi"     | "愛知県" | "愛知"        => Some("JP-23"),
+        "Mie"       | "三重県" | "三重"        => Some("JP-24"),
+        "Shiga"     | "滋賀県" | "滋賀"        => Some("JP-25"),
+        "Kyoto"     | "京都府" | "京都"        => Some("JP-26"),
+        "Osaka"     | "大阪府" | "大阪"        => Some("JP-27"),
+        "Hyogo"     | "Hyōgo"     | "兵庫県" | "兵庫" => Some("JP-28"),
+        "Nara"      | "奈良県" | "奈良"        => Some("JP-29"),
+        "Wakayama"  | "和歌山県" | "和歌山"    => Some("JP-30"),
+        "Tottori"   | "鳥取県" | "鳥取"        => Some("JP-31"),
+        "Shimane"   | "島根県" | "島根"        => Some("JP-32"),
+        "Okayama"   | "岡山県" | "岡山"        => Some("JP-33"),
+        "Hiroshima" | "広島県" | "広島"        => Some("JP-34"),
+        "Yamaguchi" | "山口県" | "山口"        => Some("JP-35"),
+        "Tokushima" | "徳島県" | "徳島"        => Some("JP-36"),
+        "Kagawa"    | "香川県" | "香川"        => Some("JP-37"),
+        "Ehime"     | "愛媛県" | "愛媛"        => Some("JP-38"),
+        "Kochi"     | "Kōchi"     | "高知県" | "高知" => Some("JP-39"),
+        "Fukuoka"   | "福岡県" | "福岡"        => Some("JP-40"),
+        "Saga"      | "佐賀県" | "佐賀"        => Some("JP-41"),
+        "Nagasaki"  | "長崎県" | "長崎"        => Some("JP-42"),
+        "Kumamoto"  | "熊本県" | "熊本"        => Some("JP-43"),
+        "Oita"      | "Ōita"      | "大分県" | "大分" => Some("JP-44"),
+        "Miyazaki"  | "宮崎県" | "宮崎"        => Some("JP-45"),
+        "Kagoshima" | "鹿児島県" | "鹿児島"    => Some("JP-46"),
+        "Okinawa"   | "沖縄県" | "沖縄"        => Some("JP-47"),
+        _ => None,
+    }
 }
 
 /// Unix-epoch-seconds 30 days from now, as a string (matches you_users.trial_end_at format).
@@ -5415,42 +5502,47 @@ struct AutoBlogBody {
     admin_token: String,
 }
 
-async fn compose_auto_blog(db: &Db) -> Result<(String, String, String, serde_json::Value), String> {
+/// Shared stats gatherer used by both the legacy server-side compose path
+/// and the new GitHub-Actions-driven publish path. Keeping it in one place
+/// guarantees the Actions runner sees the same JSON the prompt has always
+/// consumed.
+fn gather_blog_stats(db: &Db) -> serde_json::Value {
     use serde_json::json;
-    let key = env::var("GEMINI_API_KEY").map_err(|_| "GEMINI_API_KEY missing".to_string())?;
-    let stats = {
-        let conn = db.lock().unwrap();
-        let revenue: i64 = conn.query_row(
-            "SELECT COALESCE(SUM(price_jpy * sold), 0) FROM products WHERE active=1",
-            [], |r| r.get(0)).unwrap_or(0);
-        let purchases: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM mu_purchases", [], |r| r.get(0)).unwrap_or(0);
-        let real_revenue: i64 = conn.query_row(
-            "SELECT COALESCE(SUM(p.price_jpy), 0) FROM mu_purchases mp
-             JOIN products p ON p.id = mp.product_id",
-            [], |r| r.get(0)).unwrap_or(0);
-        let subs: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM you_users WHERE unsubscribed_at IS NULL",
-            [], |r| r.get(0)).unwrap_or(0);
-        let designs: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM you_designs", [], |r| r.get(0)).unwrap_or(0);
-        let lifestyle_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM products WHERE lifestyle_url IS NOT NULL AND lifestyle_url != ''",
-            [], |r| r.get(0)).unwrap_or(0);
-        let missing = detect_missing_drops(&conn);
-        json!({
-            "revenue_shown_jpy": revenue,
-            "real_revenue_jpy": real_revenue,
-            "purchases": purchases,
-            "subscribers": subs,
-            "designs_generated": designs,
-            "lifestyle_photos": lifestyle_count,
-            "missing": missing,
-            "day": jst_today_str(),
-        })
-    };
+    let conn = db.lock().unwrap();
+    let revenue: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(price_jpy * sold), 0) FROM products WHERE active=1",
+        [], |r| r.get(0)).unwrap_or(0);
+    let purchases: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM mu_purchases", [], |r| r.get(0)).unwrap_or(0);
+    let real_revenue: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(p.price_jpy), 0) FROM mu_purchases mp
+         JOIN products p ON p.id = mp.product_id",
+        [], |r| r.get(0)).unwrap_or(0);
+    let subs: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM you_users WHERE unsubscribed_at IS NULL",
+        [], |r| r.get(0)).unwrap_or(0);
+    let designs: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM you_designs", [], |r| r.get(0)).unwrap_or(0);
+    let lifestyle_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM products WHERE lifestyle_url IS NOT NULL AND lifestyle_url != ''",
+        [], |r| r.get(0)).unwrap_or(0);
+    let missing = detect_missing_drops(&conn);
+    json!({
+        "revenue_shown_jpy": revenue,
+        "real_revenue_jpy": real_revenue,
+        "purchases": purchases,
+        "subscribers": subs,
+        "designs_generated": designs,
+        "lifestyle_photos": lifestyle_count,
+        "missing": missing,
+        "day": jst_today_str(),
+    })
+}
 
-    let prompt = format!(r#"あなたは MU ブランドの「無人運営 AI 執筆者」です。今日の Field log を Markdown で書いてください。
+/// Canonical prompt for the daily Field log. Used by both compose paths so
+/// the output stays consistent whether Gemini is called from Fly or Actions.
+fn blog_prompt(stats: &serde_json::Value) -> String {
+    format!(r#"あなたは MU ブランドの「無人運営 AI 執筆者」です。今日の Field log を Markdown で書いてください。
 
 事実 (JSON、これ以外の数字は捏造禁止):
 {stats}
@@ -5464,7 +5556,15 @@ async fn compose_auto_blog(db: &Db) -> Result<(String, String, String, serde_jso
 - 末尾に「— 自動生成 by Gemini 2.5 Flash」と明記
 
 タイトルは 28 字以内、本文 1 行目に H1 として `# タイトル` を置いてください。"#,
-        stats = stats);
+        stats = stats)
+}
+
+async fn compose_auto_blog(db: &Db) -> Result<(String, String, String, serde_json::Value), String> {
+    use serde_json::json;
+    let key = env::var("GEMINI_API_KEY").map_err(|_| "GEMINI_API_KEY missing".to_string())?;
+    let stats = gather_blog_stats(db);
+
+    let prompt = blog_prompt(&stats);
 
     let req_body = json!({"contents": [{"parts": [{"text": prompt}]}]});
     let url = format!(
@@ -6032,6 +6132,111 @@ async fn admin_blog_compose(
             (StatusCode::BAD_GATEWAY, e).into_response()
         }
     }
+}
+
+// ─── GitHub-Actions-driven blog autonomy ───────────────────────────────────
+// 2 endpoints replace the single-process /api/admin/blog_compose flow:
+//
+//   GET  /api/blog/stats_for_today  — public, returns the JSON the prompt
+//                                     needs + today's slug + already_published
+//   POST /api/admin/blog_publish    — admin, accepts pre-composed markdown
+//                                     and stores it (idempotent on slug)
+//
+// Actions cron orchestrates: fetch stats → call Gemini directly → publish.
+// /api/admin/blog_compose stays available as a manual / Fly-side fallback.
+
+async fn blog_stats_for_today(State(db): State<Db>) -> impl IntoResponse {
+    let stats = gather_blog_stats(&db);
+    let slug = format!("auto-{}", jst_today_str());
+    let already: bool = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT 1 FROM auto_blog_posts WHERE slug=?",
+            params![slug], |r| r.get::<_, i64>(0),
+        ).is_ok()
+    };
+    let prompt = blog_prompt(&stats);
+    Json(serde_json::json!({
+        "stats": stats,
+        "today_slug": slug,
+        "already_published": already,
+        "prompt": prompt,           // shipped so Actions doesn't drift from server's wording
+        "gemini_model": "gemini-2.5-flash",
+        "endpoint_version": 1,
+    })).into_response()
+}
+
+#[derive(Deserialize)]
+struct BlogPublishBody {
+    admin_token: String,
+    title: String,
+    body_md: String,
+    /// Optional. Defaults to "gemini-2.5-flash-via-actions" if unset.
+    #[serde(default)]
+    model: Option<String>,
+    /// Echoed back into auto_blog_posts.stats_json for audit. Optional.
+    #[serde(default)]
+    stats_used: Option<serde_json::Value>,
+    /// If set, override slug; defaults to `auto-{jst_today}`. Lets Actions
+    /// back-fill a missed day.
+    #[serde(default)]
+    slug: Option<String>,
+}
+
+async fn admin_blog_publish(
+    State(db): State<Db>,
+    Json(body): Json<BlogPublishBody>,
+) -> impl IntoResponse {
+    if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+    // Input validation — defend against Gemini returning garbage or empty.
+    let title = body.title.trim();
+    let body_md = body.body_md.trim();
+    if title.is_empty() || title.chars().count() > 120 {
+        return (StatusCode::BAD_REQUEST,
+            "title must be 1-120 chars").into_response();
+    }
+    if body_md.len() < 200 || body_md.len() > 8000 {
+        return (StatusCode::BAD_REQUEST,
+            "body_md must be 200-8000 bytes").into_response();
+    }
+    // Soft refusal detector — common Gemini failure patterns.
+    let lower = body_md.to_lowercase();
+    if lower.contains("i can't") || lower.contains("申し訳") && body_md.len() < 600 {
+        return (StatusCode::BAD_REQUEST,
+            "body looks like a refusal / placeholder").into_response();
+    }
+    let slug = body.slug.clone().unwrap_or_else(|| format!("auto-{}", jst_today_str()));
+    let model = body.model.clone().unwrap_or_else(|| "gemini-2.5-flash-via-actions".to_string());
+    let body_html = md_to_html_simple(body_md);
+    let stats_json = body.stats_used
+        .as_ref()
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "{}".to_string());
+    let (inserted, already): (bool, bool) = {
+        let conn = db.lock().unwrap();
+        let already: bool = conn.query_row(
+            "SELECT 1 FROM auto_blog_posts WHERE slug=?",
+            params![slug], |r| r.get::<_, i64>(0),
+        ).is_ok();
+        if already {
+            (false, true)
+        } else {
+            let n = conn.execute(
+                "INSERT OR IGNORE INTO auto_blog_posts
+                    (slug, title, body_html, body_md, model, stats_json, published, created_at)
+                 VALUES (?,?,?,?,?,?,1,?)",
+                params![slug, title, body_html, body_md, model, stats_json, chrono_now()],
+            ).unwrap_or(0);
+            (n > 0, false)
+        }
+    };
+    Json(serde_json::json!({
+        "ok": true,
+        "published": inserted,
+        "already_existed": already,
+        "slug": slug,
+        "url": format!("https://wearmu.com/blog/{slug}"),
+    })).into_response()
 }
 
 async fn show_auto_blog(
@@ -9574,6 +9779,11 @@ async fn main() {
         "ALTER TABLE collab_products ADD COLUMN lead_time_days INTEGER NOT NULL DEFAULT 21",
         // JSON: {\"S\":<id>,\"M\":<id>,\"L\":<id>,\"XL\":<id>} or {\"OS\":<id>} for one-size.
         "ALTER TABLE collab_products ADD COLUMN printful_variant_map TEXT",
+        // JSON array of [{type, url}] — type='default' for DTG, 'embroidery_*' for stitching.
+        // All-over-print and DTG use 'default'; specific embroidery placements per product.
+        "ALTER TABLE collab_products ADD COLUMN printful_files TEXT",
+        // JSON array of [{id, value}] options like thread_colors_front_large, stitch_color.
+        "ALTER TABLE collab_products ADD COLUMN printful_options TEXT",
     ] {
         conn.execute(col, []).ok();
     }
@@ -9590,6 +9800,29 @@ async fn main() {
     //   SWEEP社 と契約完了後に active=1 へ。
     //
     // variant_map JSON: {\"S\":id,\"M\":id,\"L\":id,\"XL\":id} or {\"OS\":id} for one-size.
+    // ── 共通の Printful 印刷ファイル / オプション ──
+    //
+    // 印刷ファイル URL は SIIIEEP 公式ロゴ (PNG 透過、3000×474)。R2 lifestyle.wearmu.com/sweep/_logo.png に配置。
+    // 商品ごとの placement (files[].type) + thread_colors key は Printful catalog からの実測。
+    const LOGO_URL: &str = "https://lifestyle.wearmu.com/sweep/_logo.png";
+
+    // 全面プリント (rashguard, shorts, spats) はライフスタイル写真を front に。
+    // ステッチ色は黒 (生地白の場合) — Printful はラベル/ステッチで使用。
+    let allover_options = r#"[{"id":"stitch_color","value":"black"}]"#;
+    // DTG (tee, hoodie, longsleeve, tote, tee-classic) は default 配置で胸に SIIIEEP wordmark。
+    // DTG は thread option 不要 (インクジェット印刷)。
+    let dtg_no_options: Option<&str> = None;
+
+    // Seed MU × SIIIEEP items (idempotent on slug).
+    //
+    // 13 商品が正式販売可能 (active=1):
+    //   - 3 BJJ items (rashguard/shorts/spats) use Printful all-over print
+    //     athletic apparel (rash guard 301, athletic long shorts 332, leggings 189).
+    //   - 10 lifestyle items use Printful catalog with verified variant IDs +
+    //     correct placement + thread_colors options for each embroidery product.
+    //
+    // 4 商品は SIIIEEP社 サインオフ前のため非表示 (active=0):
+    //   gi, belt, BJJ tape, mouthguard case — Printful カタログに無い。
     type SweepRow = (
         &'static str,            // slug
         &'static str,            // category
@@ -9599,95 +9832,130 @@ async fn main() {
         &'static str,            // production_route
         Option<i64>,             // printful_product_id
         Option<i64>,             // printful_variant_id (M default; lookup uses map first)
-        Option<&'static str>,    // printful_variant_map (JSON)
+        Option<&'static str>,    // printful_variant_map (JSON {S:id,...})
+        Option<&'static str>,    // printful_files (JSON [{type,url},...])
+        Option<&'static str>,    // printful_options (JSON [{id,value},...])
         i64,                     // lead_time_days
         i64,                     // active (0 = hidden)
     );
+    // Pre-build JSON file/option blobs (avoid repeating long strings)
+    let allover_files = format!(r#"[{{"type":"default","url":"{}"}}]"#, "https://lifestyle.wearmu.com/sweep/sweep-rashguard-ls.jpg");
+    let _ = allover_files; // (each product references its own image below)
+
     let sweep_items: &[SweepRow] = &[
         // ── BJJ 専用品: Printful all-over print に置換 (今日 fulfillable) ──
-        ("sweep-rashguard-ls",  "ラッシュガード",        "MU × SWEEP Long-Sleeve Rashguard",
-         "Printful All-Over Print Men's Rash Guard (pid 301) ベース。全面プリントで MU の北海道気象データグラフィック + SIIIEEP のサイドステッチ。圧縮ニット、UPF50+。",
+        ("sweep-rashguard-ls",  "ラッシュガード",        "MU × SIIIEEP Long-Sleeve Rashguard",
+         "Printful All-Over Print Men's Rash Guard (pid 301) ベース。全面プリントで MU の北海道気象データグラフィック + SIIIEEP サイドステッチ。圧縮ニット、UPF50+。",
          11_800, "printful", Some(301), Some(9328),
-         Some(r#"{"S":9327,"M":9328,"L":9329,"XL":9330,"2XL":9331,"3XL":9332,"XS":9326}"#), 14, 1),
-        ("sweep-fight-shorts",  "ファイトショーツ",      "MU × SWEEP Athletic Long Shorts",
+         Some(r#"{"S":9327,"M":9328,"L":9329,"XL":9330,"2XL":9331,"3XL":9332,"XS":9326}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/sweep-rashguard-ls.jpg"}]"#),
+         Some(allover_options), 14, 1),
+        ("sweep-fight-shorts",  "ファイトショーツ",      "MU × SIIIEEP Athletic Long Shorts",
          "Printful All-Over Print Unisex Athletic Long Shorts (pid 332) ベース。MUON の温度パターンを全面プリント。ストレッチ + 内側ライナー。",
          9_800,  "printful", Some(332), Some(9813),
-         Some(r#"{"S":9812,"M":9813,"L":9814,"XL":9815,"2XL":9816,"3XL":9817,"XS":9811,"2XS":16588}"#), 14, 1),
+         Some(r#"{"S":9812,"M":9813,"L":9814,"XL":9815,"2XL":9816,"3XL":9817,"XS":9811,"2XS":16588}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/sweep-fight-shorts.jpg"}]"#),
+         Some(allover_options), 14, 1),
         ("sweep-spats",         "スパッツ / グラップリング タイツ",
-         "MU × SWEEP Grappling Spats",
+         "MU × SIIIEEP Grappling Spats",
          "Printful All-Over Print Leggings (pid 189) ベース。MUGEN の連番が縦に流れるサイドライン入り。寒い日のアンダー / そのまま着用も可。",
          8_800,  "printful", Some(189), Some(7678),
-         Some(r#"{"S":7677,"M":7678,"L":7679,"XL":7680,"XS":7676}"#), 14, 1),
+         Some(r#"{"S":7677,"M":7678,"L":7679,"XL":7680,"XS":7676}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/sweep-spats.jpg"}]"#),
+         Some(allover_options), 14, 1),
 
-        // ── 非表示 (SWEEP社 サインオフ前 — Printful カタログ外) ──
-        ("sweep-gi-classic",    "柔術 Gi (道着)",        "MU × SWEEP Classic Gi",
-         "綿100% 550gsm、SWEEP 標準カット。襟裏に MUGEN 連番を刺繍。サイズ A0–A4。SWEEP社 確認後に販売開始。",
-         38_800, "pre_order", None, None, None, 56, 0),
-        ("sweep-belt-promo",    "帯 (昇格用)",           "MU × SWEEP Promotion Belt",
-         "白帯〜黒帯。先端に MU×SWEEP のラベル縫い込み。昇格祝いの 1 本。SWEEP社 確認後に販売開始。",
-         6_800,  "pre_order", None, None, None, 21, 0),
-        ("sweep-bjj-tape",      "BJJ フィンガーテープ",  "MU × SWEEP Finger Tape (3 rolls)",
-         "10m × 3 ロール。ロール側面に MUGEN ロゴ。指関節保護に最適。SWEEP社 確認後に販売開始。",
-         2_400,  "sweep_manual", None, None, None, 14, 0),
-        ("sweep-mouthguard",    "マウスガード ケース",   "MU × SWEEP Mouthguard Case",
-         "アルマイトアルミ製、消臭穴、刻印 MU×SWEEP。SWEEP社 確認後に販売開始。",
-         3_800,  "sweep_manual", None, None, None, 21, 0),
+        // ── 非表示 (SIIIEEP社 サインオフ前 — Printful カタログ外) ──
+        ("sweep-gi-classic",    "柔術 Gi (道着)",        "MU × SIIIEEP Classic Gi",
+         "綿100% 550gsm、SIIIEEP 標準カット。襟裏に MUGEN 連番を刺繍。SIIIEEP社 確認後に販売開始。",
+         38_800, "pre_order", None, None, None, None, None, 56, 0),
+        ("sweep-belt-promo",    "帯 (昇格用)",           "MU × SIIIEEP Promotion Belt",
+         "白帯〜黒帯。先端に MU×SIIIEEP のラベル縫い込み。SIIIEEP社 確認後に販売開始。",
+         6_800,  "pre_order", None, None, None, None, None, 21, 0),
+        ("sweep-bjj-tape",      "BJJ フィンガーテープ",  "MU × SIIIEEP Finger Tape (3 rolls)",
+         "10m × 3 ロール。ロール側面に MUGEN ロゴ。SIIIEEP社 確認後に販売開始。",
+         2_400,  "sweep_manual", None, None, None, None, None, 14, 0),
+        ("sweep-mouthguard",    "マウスガード ケース",   "MU × SIIIEEP Mouthguard Case",
+         "アルマイトアルミ製、消臭穴、刻印 MU×SIIIEEP。SIIIEEP社 確認後に販売開始。",
+         3_800,  "sweep_manual", None, None, None, None, None, 21, 0),
 
-        // ── ライフスタイル (Printful 自動 fulfill, 全 catalog ID 検証済) ──
-        ("sweep-hoodie",        "ヘビーフーディ",          "MU × SWEEP Heavy Hoodie",
-         "Printful Gildan 18500 (pid 146) ベース、ヘビーブレンド。胸に SIIIEEP wordmark 刺繍 + 内側ネックに MU×SIIIEEP serial。",
+        // ── DTG 印刷系 (T / hoodie / longsleeve / tote) ──
+        ("sweep-hoodie",        "ヘビーフーディ",          "MU × SIIIEEP Heavy Hoodie",
+         "Printful Gildan 18500 (pid 146) ベース、ヘビーブレンド。胸に SIIIEEP wordmark を DTG プリント (Black/White)。",
          16_800, "printful", Some(146), Some(5531),
-         Some(r#"{"S":5530,"M":5531,"L":5532,"XL":5533,"2XL":5534,"3XL":5535,"4XL":5536,"5XL":5537}"#), 14, 1),
-        ("sweep-tee",           "コットン T",            "MU × SWEEP Heavy Cotton Tee",
-         "Printful Bella+Canvas 3001 (pid 71) ベース。胸に小さな SIIIEEP wordmark embroidery + 内側ネックタグに MU×SIIIEEP serial。",
+         Some(r#"{"S":5530,"M":5531,"L":5532,"XL":5533,"2XL":5534,"3XL":5535,"4XL":5536,"5XL":5537}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         dtg_no_options, 14, 1),
+        ("sweep-tee",           "コットン T",            "MU × SIIIEEP Heavy Cotton Tee",
+         "Printful Bella+Canvas 3001 (pid 71) ベース、Black。胸に SIIIEEP wordmark を DTG プリント。",
          6_800,  "printful", Some(71), Some(4017),
-         Some(r#"{"S":4016,"M":4017,"L":4018,"XL":4019,"2XL":4020,"XS":9527}"#), 10, 1),
-        ("sweep-tee-classic",   "クラシック T",          "MU × SWEEP Classic Tee",
-         "Printful Bella+Canvas 3001 (pid 71) ベース、Black 別仕様。胸に最小限のコラボ刺繍のみ。",
+         Some(r#"{"S":4016,"M":4017,"L":4018,"XL":4019,"2XL":4020,"XS":9527}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         dtg_no_options, 10, 1),
+        ("sweep-tee-classic",   "クラシック T",          "MU × SIIIEEP Classic Tee",
+         "Printful Bella+Canvas 3001 (pid 71)、Black。胸に最小限の SIIIEEP wordmark のみ。",
          4_800,  "printful", Some(71), Some(4017),
-         Some(r#"{"S":4016,"M":4017,"L":4018,"XL":4019,"2XL":4020,"XS":9527}"#), 10, 1),
-        ("sweep-longsleeve",    "ロングスリーブ T",      "MU × SWEEP Long Sleeve Tee",
-         "Printful Bella+Canvas 3501 (pid 356) ベース。ジム後の羽織に。胸に SIIIEEP wordmark embroidery。",
+         Some(r#"{"S":4016,"M":4017,"L":4018,"XL":4019,"2XL":4020,"XS":9527}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         dtg_no_options, 10, 1),
+        ("sweep-longsleeve",    "ロングスリーブ T",      "MU × SIIIEEP Long Sleeve Tee",
+         "Printful Bella+Canvas 3501 (pid 356) ベース、Black。胸に SIIIEEP wordmark を DTG プリント。",
          7_800,  "printful", Some(356), Some(10095),
-         Some(r#"{"S":10094,"M":10095,"L":10096,"XL":10097,"2XL":10098,"XS":10093}"#), 12, 1),
-        ("sweep-sweatpants",    "スウェットパンツ",      "MU × SWEEP Garment-Dyed Sweatpants",
-         "Printful Comfort Colors 1469 (pid 898) ベース、ガーメントダイ仕上げ。MA 週銘 (ISO 週) シリアル刺繍。",
-         12_800, "printful", Some(898), Some(22923),
-         Some(r#"{"S":22916,"M":22923,"L":22930,"XL":22937,"2XL":22944}"#), 14, 1),
-        ("sweep-cap",           "ダッドハット",          "MU × SWEEP Classic Dad Hat",
-         "Printful Yupoong 6245CM (pid 206) ベース。Black、フロントに SIIIEEP wordmark embroidery。ワンサイズ。",
-         5_800,  "printful", Some(206), Some(7854),
-         Some(r#"{"OS":7854,"ONE SIZE":7854}"#), 10, 1),
-        ("sweep-beanie",        "リブニットビーニー",    "MU × SWEEP Ribbed Knit Beanie",
-         "Printful Atlantis Ribbed Knit Beanie (pid 519) ベース。Black、カフに SIIIEEP woven label。",
-         4_800,  "printful", Some(519), Some(13238),
-         Some(r#"{"OS":13238,"ONE SIZE":13238}"#), 10, 1),
-        ("sweep-tote",          "コットントート",        "MU × SWEEP Cotton Tote",
-         "Printful AS Colour 1001 (pid 641) ベース。Black ヘビーキャンバス。底に SIIIEEP wordmark 印刷。",
+         Some(r#"{"S":10094,"M":10095,"L":10096,"XL":10097,"2XL":10098,"XS":10093}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         dtg_no_options, 12, 1),
+        ("sweep-tote",          "コットントート",        "MU × SIIIEEP Cotton Tote",
+         "Printful AS Colour 1001 (pid 641) ベース、Black。前面に SIIIEEP wordmark DTG プリント。",
          7_800,  "printful", Some(641), Some(16287),
-         Some(r#"{"OS":16287,"ONE SIZE":16287}"#), 10, 1),
-        ("sweep-socks-3pack",   "刺繍クルーソックス",    "MU × SWEEP Embroidered Crew Socks",
-         "Printful SOCCO SC200 (pid 502) ベース。カフに SIIIEEP wordmark embroidery。S/M, L/XL の 2 サイズ。",
-         2_400,  "printful", Some(502), Some(12674),
-         Some(r#"{"S":12674,"M":12674,"S/M":12674,"L":12675,"XL":12675,"L/XL":12675}"#), 10, 1),
-        ("sweep-windbreaker",   "ナイロン ウィンドブレーカー", "MU × SWEEP Basic Windbreaker",
-         "Printful SOL'S 32000 (pid 661) ベース。Black 撥水ナイロン、左胸に SIIIEEP wordmark。",
+         Some(r#"{"OS":16287,"ONE SIZE":16287}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         dtg_no_options, 10, 1),
+
+        // ── Embroidery (cap / beanie / sweatpants / windbreaker / socks) ──
+        ("sweep-sweatpants",    "スウェットパンツ",      "MU × SIIIEEP Garment-Dyed Sweatpants",
+         "Printful Comfort Colors 1469 (pid 898)、Blue Jean。左大腿に SIIIEEP wordmark 刺繍 (白糸)。",
+         12_800, "printful", Some(898), Some(22923),
+         Some(r#"{"S":22916,"M":22923,"L":22930,"XL":22937,"2XL":22944}"#),
+         Some(r#"[{"type":"embroidery_chest_left","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r##"[{"id":"thread_colors_chest_left","value":["#FFFFFF"]}]"##), 14, 1),
+        ("sweep-cap",           "ダッドハット",          "MU × SIIIEEP Classic Dad Hat",
+         "Printful Yupoong 6245CM (pid 206)、Black。フロントに SIIIEEP wordmark 刺繍 (白糸)。ワンサイズ。",
+         5_800,  "printful", Some(206), Some(7854),
+         Some(r#"{"OS":7854,"ONE SIZE":7854}"#),
+         Some(r#"[{"type":"embroidery_front_large","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r##"[{"id":"thread_colors_front_large","value":["#FFFFFF"]}]"##), 10, 1),
+        ("sweep-beanie",        "リブニットビーニー",    "MU × SIIIEEP Ribbed Knit Beanie",
+         "Printful Atlantis Ribbed Knit Beanie (pid 519)、Black。フロントに SIIIEEP wordmark 刺繍 (白糸)。",
+         5_800,  "printful", Some(519), Some(13238),
+         Some(r#"{"OS":13238,"ONE SIZE":13238}"#),
+         Some(r#"[{"type":"embroidery_front","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r##"[{"id":"thread_colors","value":["#FFFFFF"]}]"##), 10, 1),
+        ("sweep-socks-3pack",   "刺繍クルーソックス",    "MU × SIIIEEP Embroidered Crew Socks (1 pair)",
+         "Printful SOCCO SC200 (pid 502)、Black。1 ペア。カフ外側に SIIIEEP wordmark 刺繍 (白糸)。",
+         5_800,  "printful", Some(502), Some(12674),
+         Some(r#"{"S":12674,"M":12674,"S/M":12674,"L":12675,"XL":12675,"L/XL":12675}"#),
+         Some(r#"[{"type":"embroidery_outside_left","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r##"[{"id":"thread_colors_outside_left","value":["#FFFFFF"]}]"##), 10, 1),
+        ("sweep-windbreaker",   "ナイロン ウィンドブレーカー", "MU × SIIIEEP Basic Windbreaker",
+         "Printful SOL'S 32000 (pid 661)、Black 撥水ナイロン。左胸に SIIIEEP wordmark 刺繍 (白糸)。",
          14_800, "printful", Some(661), Some(16425),
-         Some(r#"{"S":16424,"M":16425,"L":16426,"XL":16427,"2XL":16428}"#), 14, 1),
+         Some(r#"{"S":16424,"M":16425,"L":16426,"XL":16427,"2XL":16428}"#),
+         Some(r#"[{"type":"embroidery_chest_left","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r##"[{"id":"thread_colors_chest_left","value":["#FFFFFF"]}]"##), 14, 1),
     ];
     let now = chrono_now();
-    for (slug, cat, name, desc, price, route, pf_prod, pf_var, var_map, lead, active) in sweep_items {
+    for (slug, cat, name, desc, price, route, pf_prod, pf_var, var_map, files, opts, lead, active) in sweep_items {
         conn.execute(
             "INSERT OR IGNORE INTO collab_products
                  (slug, partner, category, name, description, image_url, price_jpy,
                   sizes_json, active, draft, created_at,
                   printful_product_id, printful_variant_id, production_route,
-                  lead_time_days, printful_variant_map)
+                  lead_time_days, printful_variant_map,
+                  printful_files, printful_options)
              VALUES (?, 'sweep', ?, ?, ?, NULL, ?,
                      '[\"XS\",\"S\",\"M\",\"L\",\"XL\"]', ?, 1, ?,
-                     ?, ?, ?, ?, ?)",
+                     ?, ?, ?, ?, ?, ?, ?)",
             params![slug, cat, name, desc, price, active, now,
-                    pf_prod, pf_var, route, lead, var_map],
+                    pf_prod, pf_var, route, lead, var_map, files, opts],
         ).ok();
         // For pre-existing rows (idempotent), sync every field that can change.
         conn.execute(
@@ -9695,10 +9963,11 @@ async fn main() {
              SET production_route = ?, lead_time_days = ?,
                  printful_product_id = ?, printful_variant_id = ?,
                  printful_variant_map = ?,
+                 printful_files = ?, printful_options = ?,
                  active = ?,
                  category = ?, name = ?, description = ?, price_jpy = ?
              WHERE slug = ?",
-            params![route, lead, pf_prod, pf_var, var_map, active,
+            params![route, lead, pf_prod, pf_var, var_map, files, opts, active,
                     cat, name, desc, price, slug],
         ).ok();
     }
@@ -10116,6 +10385,8 @@ async fn main() {
         .route("/api/admin/lifestyle", axum::routing::patch(admin_lifestyle))
         .route("/api/admin/collab_image", axum::routing::patch(admin_collab_image))
         .route("/api/admin/blog_compose", post(admin_blog_compose))
+        .route("/api/blog/stats_for_today", get(blog_stats_for_today))
+        .route("/api/admin/blog_publish", post(admin_blog_publish))
         .route("/api/blog/auto", get(list_auto_blog))
         .route("/blog/auto/:slug", get(show_auto_blog))
         .route("/api/you/referral", post(you_referral_status))
