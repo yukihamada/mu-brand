@@ -126,7 +126,7 @@ jobs:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
     steps:
-      - name: Fetch today's stats + prompt
+      - name: Fetch today's stats + prompt + backfill list
         id: stats
         run: |
           set -euo pipefail
@@ -135,23 +135,29 @@ jobs:
           jq -e .stats /tmp/stats.json > /dev/null
           already=$(jq -r .already_published /tmp/stats.json)
           slug=$(jq -r .today_slug /tmp/stats.json)
+          backfill=$(jq -c '.backfill_slugs // []' /tmp/stats.json)
           echo "already=$already" >> "$GITHUB_OUTPUT"
           echo "slug=$slug"       >> "$GITHUB_OUTPUT"
-          echo "Fetched stats: slug=$slug already=$already"
+          echo "backfill=$backfill" >> "$GITHUB_OUTPUT"
+          echo "Fetched stats: slug=$slug already=$already backfill=$backfill"
 
       - name: Skip if already published today
         if: steps.stats.outputs.already == 'true'
         run: echo "Today (${{ steps.stats.outputs.slug }}) already published — skipping."
 
-      - name: Call Gemini (with 3 retries, 10s/20s/40s backoff)
+      - name: Compose + publish today (Gemini + retry + audit)
         if: steps.stats.outputs.already != 'true'
         id: gen
         run: |
           set -euo pipefail
           : "${GEMINI_API_KEY:?GEMINI_API_KEY secret is required}"
+          : "${MU_ADMIN_TOKEN:?MU_ADMIN_TOKEN secret is required}"
           prompt=$(jq -r .prompt /tmp/stats.json)
           model=$(jq -r .gemini_model /tmp/stats.json)
+          stats=$(jq -c .stats /tmp/stats.json)
+          slug="${{ steps.stats.outputs.slug }}"
           payload=$(jq -n --arg p "$prompt" '{contents:[{parts:[{text:$p}]}]}')
+          retry_count=0
           for attempt in 1 2 3; do
             if curl -fsS --max-time 60 \
               -H 'Content-Type: application/json' \
@@ -160,49 +166,80 @@ jobs:
               > /tmp/gemini.json; then
               break
             fi
+            retry_count=$attempt
             backoff=$((attempt * 10))
             echo "Gemini attempt $attempt failed — sleeping ${backoff}s"
             sleep $backoff
           done
-          # Extract title (first H1 line) + body
           jq -e '.candidates[0].content.parts[0].text' /tmp/gemini.json > /dev/null \
             || { echo "Gemini returned no text"; cat /tmp/gemini.json; exit 1; }
           text=$(jq -r '.candidates[0].content.parts[0].text' /tmp/gemini.json)
-          # Split: title is the first line if it starts with "# "; body is the rest
           first=$(printf '%s\n' "$text" | head -1)
           if [[ "$first" == \#\ * ]]; then
             title=$(printf '%s\n' "$first" | sed 's/^#\s*//')
-            body_md=$(printf '%s\n' "$text" | tail -n +2 | sed -e '/^$/d;:a;n;ba' | awk 'NR>1{print prev} {prev=$0} END{print prev}')
-            body_md=$(printf '%s\n' "$text" | tail -n +2)
+            body_md=$(printf '%s\n' "$text" | tail -n +2 | sed -e '1{/^$/d;}')
           else
             title="今日の Field log"
             body_md="$text"
           fi
-          # Trim leading/trailing whitespace
-          body_md=$(printf '%s' "$body_md" | awk 'NF || p; {p=NF}' | sed -e '/./,$!d')
-          echo "title=$title" >> "$GITHUB_OUTPUT"
           printf '%s' "$body_md" > /tmp/body.md
-          echo "Composed: title=$title body_bytes=$(wc -c < /tmp/body.md)"
+          echo "Composed: title=$title body_bytes=$(wc -c < /tmp/body.md) retries=$retry_count"
 
-      - name: Publish to wearmu.com (idempotent on slug)
-        if: steps.stats.outputs.already != 'true'
-        run: |
-          set -euo pipefail
-          : "${MU_ADMIN_TOKEN:?MU_ADMIN_TOKEN secret is required}"
-          stats=$(jq -c .stats /tmp/stats.json)
-          payload=$(jq -n \
+          publish_payload=$(jq -n \
             --arg token "$MU_ADMIN_TOKEN" \
-            --arg title "${{ steps.gen.outputs.title }}" \
+            --arg title "$title" \
             --rawfile body /tmp/body.md \
             --argjson stats "$stats" \
-            --arg slug "${{ steps.stats.outputs.slug }}" \
-            '{admin_token:$token, title:$title, body_md:$body, model:"gemini-2.5-flash-via-actions", stats_used:$stats, slug:$slug}')
+            --arg slug "$slug" \
+            --argjson retry $retry_count \
+            '{admin_token:$token, title:$title, body_md:$body, model:"gemini-2.5-flash-via-actions",
+              stats_used:$stats, slug:$slug, origin:"actions", retry_count:$retry}')
           resp=$(curl -fsS --retry 3 --retry-delay 5 -X POST \
             -H 'Content-Type: application/json' \
-            -d "$payload" \
+            -d "$publish_payload" \
             "${BASE_URL}/api/admin/blog_publish")
           echo "Publish response: $resp"
           jq -e '.ok == true' <<<"$resp" > /dev/null
+          echo "title=$title" >> "$GITHUB_OUTPUT"
+
+      # Backfill: if Actions missed yesterday/2-ago/3-ago, generate a brief
+      # for each missing slug too. Idempotent on slug (server-side check).
+      - name: Backfill missing days
+        if: steps.stats.outputs.backfill != '[]' && steps.stats.outputs.backfill != ''
+        env:
+          BACKFILL_LIST: ${{ steps.stats.outputs.backfill }}
+        run: |
+          set -euo pipefail
+          : "${GEMINI_API_KEY:?}"
+          : "${MU_ADMIN_TOKEN:?}"
+          stats=$(jq -c .stats /tmp/stats.json)
+          prompt=$(jq -r .prompt /tmp/stats.json)
+          model=$(jq -r .gemini_model /tmp/stats.json)
+          for slug in $(jq -r '.[]' <<<"$BACKFILL_LIST"); do
+            echo "Backfilling $slug..."
+            payload=$(jq -n --arg p "$prompt" '{contents:[{parts:[{text:$p}]}]}')
+            curl -fsS --max-time 60 -H 'Content-Type: application/json' -d "$payload" \
+              "https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}" \
+              > /tmp/gemini-bf.json
+            text=$(jq -r '.candidates[0].content.parts[0].text // ""' /tmp/gemini-bf.json)
+            [ -z "$text" ] && { echo "Empty Gemini text for $slug — skipping"; continue; }
+            first=$(printf '%s\n' "$text" | head -1)
+            if [[ "$first" == \#\ * ]]; then
+              title=$(printf '%s\n' "$first" | sed 's/^#\s*//')
+              body_md=$(printf '%s\n' "$text" | tail -n +2)
+            else
+              title="Field log ($slug)"; body_md="$text"
+            fi
+            printf '%s' "$body_md" > /tmp/body-bf.md
+            bf_payload=$(jq -n \
+              --arg token "$MU_ADMIN_TOKEN" --arg title "$title" \
+              --rawfile body /tmp/body-bf.md --argjson stats "$stats" --arg slug "$slug" \
+              '{admin_token:$token, title:$title, body_md:$body, model:"gemini-2.5-flash-via-actions",
+                stats_used:$stats, slug:$slug, origin:"actions-backfill", quiet:true}')
+            curl -fsS -X POST -H 'Content-Type: application/json' \
+              -d "$bf_payload" "${BASE_URL}/api/admin/blog_publish" || echo "Backfill $slug failed (non-fatal)"
+            sleep 3  # space out Gemini calls
+          done
 
       - name: Telegram alert on failure
         if: failure() && env.TELEGRAM_BOT_TOKEN != ''

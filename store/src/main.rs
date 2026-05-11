@@ -6270,12 +6270,13 @@ async fn send_blog_digest(db: &Db, slug: &str, title: &str, body_md: &str) -> Re
         .map_err(|_| "RESEND_API_KEY missing".to_string())?;
     let recipients: Vec<String> = {
         let conn = db.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT email FROM you_users WHERE unsubscribed_at IS NULL"
-        ).map_err(|e| format!("stmt: {e}"))?;
-        stmt.query_map([], |r| r.get::<_, String>(0))
-            .map_err(|e| format!("query: {e}"))?
-            .filter_map(|r| r.ok()).collect()
+        let result = match conn.prepare("SELECT email FROM you_users WHERE unsubscribed_at IS NULL") {
+            Ok(mut stmt) => stmt.query_map([], |r| r.get::<_, String>(0))
+                .map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>())
+                .unwrap_or_default(),
+            Err(e) => { eprintln!("[blog-digest] stmt: {e}"); Vec::new() }
+        };
+        result
     };
     if recipients.is_empty() { return Ok(0); }
     let preview = body_md.lines().take(8).collect::<Vec<_>>().join("\n");
@@ -6569,6 +6570,44 @@ async fn list_auto_blog(State(db): State<Db>) -> impl IntoResponse {
         }))
     }).map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>()).unwrap_or_default();
     Json(serde_json::json!({"posts": rows})).into_response()
+}
+
+/// Dynamic /sitemap.xml — serves the static base sitemap from disk and
+/// appends one <url> per auto_blog_posts row before </urlset>. SEO bots
+/// pick up the daily Field log without manual sitemap maintenance.
+async fn dynamic_sitemap(State(db): State<Db>) -> Response {
+    let base = std::fs::read_to_string("static/sitemap.xml")
+        .unwrap_or_else(|_| "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"></urlset>".to_string());
+    let posts: Vec<(String, String)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT slug, COALESCE(SUBSTR(created_at,1,10), '') AS d
+             FROM auto_blog_posts WHERE published=1 ORDER BY created_at DESC LIMIT 365"
+        ) { Ok(s) => s, Err(_) => return (
+            [("content-type","application/xml")],
+            base.clone(),
+        ).into_response() };
+        stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>())
+            .unwrap_or_default()
+    };
+    let mut entries = String::new();
+    for (slug, lastmod) in posts {
+        entries.push_str(&format!(
+            "  <url>\n    <loc>https://wearmu.com/blog/{slug}</loc>\n    \
+             <lastmod>{lastmod}</lastmod>\n    \
+             <changefreq>never</changefreq>\n    <priority>0.6</priority>\n  </url>\n",
+            slug = slug, lastmod = lastmod));
+    }
+    let out = if base.contains("</urlset>") {
+        base.replace("</urlset>", &format!("{entries}</urlset>"))
+    } else {
+        format!("{base}\n{entries}")
+    };
+    (
+        [("content-type", "application/xml; charset=utf-8")],
+        out,
+    ).into_response()
 }
 
 // ── MU × SWEEP collab (draft, password-gated) ──────────────────────────────
