@@ -6412,6 +6412,10 @@ fn blog_prompt(stats: &serde_json::Value) -> String {
 事実 (JSON、これ以外の数字は捏造禁止):
 {stats}
 
+ブランドビジョン (内側で守ること、引用しない):
+- 季節サイクルはマーケティングの産物。MU には「seasons」はない、weather と hours だけ。
+- 数字は形容詞より強い (Numbers over adjectives)。
+
 書き方:
 - 600〜900 字、3〜4 セクション
 - 顧客視点 + 経営視点 (Bezos 的)、過剰演出は禁止
@@ -6419,6 +6423,11 @@ fn blog_prompt(stats: &serde_json::Value) -> String {
 - "今日動いたもの / 動かなかったもの / 明日へ" の構成
 - 自己卑下や絵文字過剰は禁止
 - 末尾に「— 自動生成 by Gemini 2.5 Flash」と明記
+
+禁止表現 (vision_drift 検出済):
+- 主観的形容詞のみで状態を述べる: "進化と洞察" "華やかに" "革命的" 等 → データ志向の語に置換
+- 季節サイクル示唆: "今シーズン" "春夏新作" "今期トレンド" 等 → 日付/数字 stamp で表現
+- 「すごい」「驚き」感嘆語の連発は禁止
 
 タイトルは 28 字以内、本文 1 行目に H1 として `# タイトル` を置いてください。"#,
         stats = stats)
@@ -9210,7 +9219,7 @@ async fn admin_council_compose(
         _ => return (StatusCode::SERVICE_UNAVAILABLE, "GEMINI_API_KEY missing").into_response(),
     };
 
-    let prompt = format!("あなたは MU ブランドの議題集計 AI です。週次 MA Council Brief を以下のフォーマットで生成してください。\n\n過去 30 日のお客様フィードバック (上位 40 件、Council 優先):\n{context}\n\n出力フォーマット (JSON のみ、コードフェンス不要):\n{{\n  \"title\": \"今週の MA Council Brief — YYYY 週X (28字以内)\",\n  \"body_md\": \"## 1. 今週のテーマ\\n## 2. お客様の声 (要約)\\n## 3. 議題\",\n  \"agendas\": [\n    {{\"id\": \"a1\", \"q\": \"次月の MUGEN 価格レンジを変更すべきか？\", \"options\": [\"¥4,000–6,000 (現行)\", \"¥5,000–8,000\", \"¥6,000–10,000\"]}},\n    {{\"id\": \"a2\", \"q\": \"新カテゴリ (sweat / longsleeve) を投入するか？\", \"options\": [\"sweat 優先\", \"longsleeve 優先\", \"T シャツ集中\"]}}\n  ]\n}}\n\nルール:\n- 議題は 2〜4 件\n- 各議題の options は 2〜4 個\n- お客様の生の声を 3 件以上 body_md に引用 (短く)\n- 捏造禁止 — フィードバックに無い議題は出さない\n- 末尾に「— 集計: Gemini 2.5 / 投票: MA Council メンバー」");
+    let prompt = format!("あなたは MU ブランドの議題集計 AI です。MA Council Brief を以下のフォーマットで生成してください。\n\n過去 30 日のお客様フィードバック (上位 40 件、Council 優先):\n{context}\n\n出力フォーマット (JSON のみ、コードフェンス不要):\n{{\n  \"title\": \"MA Council Brief — YYYY-MM-DD (28字以内、season 言及禁止)\",\n  \"body_md\": \"## 1. 今期のテーマ\\n## 2. お客様の声 (要約)\\n## 3. 議題\",\n  \"agendas\": [\n    {{\"id\": \"a1\", \"q\": \"次月の MUGEN 価格レンジを変更すべきか？\", \"options\": [\"¥4,000–6,000 (現行)\", \"¥5,000–8,000\", \"¥6,000–10,000\"]}},\n    {{\"id\": \"a2\", \"q\": \"新カテゴリ (sweat / longsleeve) を投入するか？\", \"options\": [\"sweat 優先\", \"longsleeve 優先\", \"T シャツ集中\"]}}\n  ]\n}}\n\nルール:\n- 議題は 2〜4 件、options は 2〜4 個\n- お客様の生の声を 3 件以上 body_md に引用 (短く)\n- 捏造禁止 — フィードバックに無い議題は出さない\n- 形容詞より数字優先 (vision: numbers over adjectives)\n- 循環的表現禁止: \"今週の\" \"今月の\" \"今期の\" など季節表現は避け、日付 stamp で表現\n- 末尾に「— 集計: Gemini 2.5 / 投票: MA Council メンバー」");
 
     let req_body = serde_json::json!({"contents": [{"parts": [{"text": prompt}]}]});
     let url = format!(
@@ -9759,7 +9768,9 @@ async fn run_council_weekly_cron(db: Db) {
     // Always build the title server-side. Gemini hallucinated "2024 週11" on
     // 2026-05-11 (week_label was correct "2026.W19" but Gemini wrote the year
     // from its training data into the title).
-    let title = format!("今週の MA Council Brief — {}", week_label);
+    // vision_drift agent (2026-05-11) でも "今週の" は循環表現で
+    // vision #1 "no seasons — only weather and hours" に反すると指摘 → 除去。
+    let title = format!("MA Council Brief — {}", week_label);
 
 
     // Insert the brief row + persist the critic verdict for later analysis.
@@ -12538,10 +12549,12 @@ async fn main() {
     // title (saw "2024 週11" on 2026-05-11 when week_label was "2026.W19").
     // Force-rebuild title from week_label for any existing brief whose title
     // doesn't already contain its own week_label. Idempotent.
+    // vision_drift 適用 (2026-05-11): "今週の" は循環表現 → 除去。
     let _ = conn.execute(
         "UPDATE ma_council_briefs
-            SET title = '今週の MA Council Brief — ' || week_start
-            WHERE title NOT LIKE '%' || week_start || '%'",
+            SET title = 'MA Council Brief — ' || week_start
+            WHERE title NOT LIKE '%' || week_start || '%'
+               OR title LIKE '今週の%'",
         [],
     );
     // Learning Loop — brand-voice critic verdict on each council brief.
