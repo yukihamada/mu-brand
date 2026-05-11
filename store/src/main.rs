@@ -831,6 +831,32 @@ async fn stripe_webhook(
     if ev_type == "checkout.session.completed" {
         let session = &event["data"]["object"];
         let meta = session["metadata"].clone();
+        // 3-month prepaid pack (mode=payment, metadata.plan=3mo): extend
+        // subscription_until by 90 days. Idempotent on session id.
+        if meta["plan"].as_str() == Some("3mo") {
+            if let Some(uid_str) = meta["you_user_id"].as_str() {
+                let user_id: i64 = uid_str.parse().unwrap_or(0);
+                if user_id > 0 {
+                    let now_secs: i64 = chrono_now().parse().unwrap_or(0);
+                    let conn = db.lock().unwrap();
+                    let current_end: i64 = conn.query_row(
+                        "SELECT COALESCE(CAST(subscription_until AS INTEGER), 0)
+                         FROM you_users WHERE id=?",
+                        params![user_id], |r| r.get(0),
+                    ).unwrap_or(0);
+                    let base = current_end.max(now_secs);
+                    let new_end = base + 90 * 86_400;
+                    let _ = conn.execute(
+                        "UPDATE you_users
+                         SET subscription_status='active',
+                             subscription_until=?
+                         WHERE id=?",
+                        params![new_end.to_string(), user_id],
+                    );
+                }
+            }
+            return StatusCode::OK.into_response();
+        }
         // ¥980/月 subscription Checkout completed (mode=subscription).
         // The user_id is in metadata.you_user_id; record customer + sub.
         if session["mode"].as_str() == Some("subscription") {
@@ -3217,6 +3243,73 @@ async fn you_feedback(
 #[derive(Deserialize)]
 struct YouSubscribePaidBody {
     token: String,
+}
+
+/// POST /api/you/subscribe-3mo — one-time ¥2,940 = ¥980 × 3 prepaid pack.
+/// Stripe Checkout mode=payment with metadata.plan=3mo. The webhook extends
+/// subscription_until by 90 days when paid. For users who want a finite cap.
+async fn you_subscribe_3mo(
+    State(db): State<Db>,
+    Json(body): Json<YouSubscribePaidBody>,
+) -> impl IntoResponse {
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "checkout disabled").into_response();
+    }
+    let (user_id, email, price_jpy): (i64, String, i64) = {
+        let conn = db.lock().unwrap();
+        let row: Option<(i64, String)> = conn.query_row(
+            "SELECT id, email FROM you_users
+             WHERE token=? AND unsubscribed_at IS NULL",
+            params![body.token], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).ok();
+        let (u, e) = match row {
+            Some(v) => v,
+            None => return (StatusCode::NOT_FOUND, "invalid token").into_response(),
+        };
+        let p: i64 = cv_get(&conn, "pack_3mo_price_jpy", "2940").parse().unwrap_or(2940);
+        (u, e, p.clamp(300, 29_400))
+    };
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+
+    let form: Vec<(&str, String)> = vec![
+        ("mode", "payment".into()),
+        ("currency", "jpy".into()),
+        ("customer_email", email),
+        ("allow_promotion_codes", "true".into()),
+        ("success_url", format!("{}/you?paid=3mo-ok", base_url)),
+        ("cancel_url",  format!("{}/you?paid=cancel", base_url)),
+        ("line_items[0][quantity]", "1".into()),
+        ("line_items[0][price_data][currency]", "jpy".into()),
+        ("line_items[0][price_data][unit_amount]", price_jpy.to_string()),
+        ("line_items[0][price_data][product_data][name]",
+         format!("MU × YOU — 3 ヶ月パック ¥{} (¥980 × 3、自動更新なし)", price_jpy)),
+        ("metadata[you_user_id]", user_id.to_string()),
+        ("metadata[plan]", "3mo".into()),
+    ];
+
+    let resp = reqwest::Client::new()
+        .post("https://api.stripe.com/v1/checkout/sessions")
+        .basic_auth(&stripe_key, None::<&str>)
+        .form(&form)
+        .send().await;
+    match resp {
+        Ok(r) if r.status().is_success() => {
+            let j: serde_json::Value = r.json().await.unwrap_or_default();
+            let url = j["url"].as_str().unwrap_or("/").to_string();
+            Json(serde_json::json!({"url": url, "price_jpy": price_jpy})).into_response()
+        }
+        Ok(r) => {
+            let s = r.status();
+            let t = r.text().await.unwrap_or_default();
+            eprintln!("[you/subscribe-3mo] stripe {}: {}", s, t);
+            (StatusCode::BAD_GATEWAY, "stripe error").into_response()
+        }
+        Err(e) => {
+            eprintln!("[you/subscribe-3mo] reqwest: {}", e);
+            (StatusCode::BAD_GATEWAY, "stripe network").into_response()
+        }
+    }
 }
 
 /// POST /api/you/subscribe-paid — start the ¥980/月 plan for the token's
@@ -6124,6 +6217,14 @@ async fn main() {
          VALUES (?, ?, ?, ?)",
         params!["monthly_price_jpy", "980", chrono_now(), "default"],
     ).ok();
+    // 3-month prepaid pack (¥980 × 3). One-time charge that extends
+    // subscription_until by 90 days. Finite-duration option for users
+    // uncomfortable with recurring billing.
+    conn.execute(
+        "INSERT OR IGNORE INTO cv_config (key, value, updated_at, reason)
+         VALUES (?, ?, ?, ?)",
+        params!["pack_3mo_price_jpy", "2940", chrono_now(), "default"],
+    ).ok();
     // /you signal stream — emoji reactions + dwell time + email taps.
     // Drives the auto-tuning of compose_design so tomorrow's drop bends
     // toward "love" tokens and away from "meh" / "skip" tokens.
@@ -6327,6 +6428,7 @@ async fn main() {
         .route("/r/:design_id/:kind", get(you_signal_email))
         .route("/api/admin/backfill_purchases", post(admin_backfill_purchases))
         .route("/api/you/subscribe-paid", post(you_subscribe_paid))
+        .route("/api/you/subscribe-3mo", post(you_subscribe_3mo))
         .route("/api/you/portal", post(you_portal))
         // Blog (public ops notes). Clean URLs without .html extension.
         .route("/blog", get(blog_index))
