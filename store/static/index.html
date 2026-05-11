@@ -508,6 +508,10 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
   <div class="hero-tagline-en" style="font-size:11px;font-weight:300;letter-spacing:0.18em;text-transform:uppercase;opacity:0.55;margin-top:6px;font-family:'Helvetica Neue',Arial,sans-serif">
     Autonomous fashion — designed by weather, made by AI.
   </div>
+  <!-- Lifestyle hero strip — 6 着画 (Gemini 3 Pro Image, R2). 着画が無ければ mockup にフォールバック -->
+  <div id="hero-lifestyle" style="margin-top:24px;width:100%;max-width:880px;display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;padding:0 12px">
+    <div style="grid-column:1/-1;text-align:center;font-size:9px;letter-spacing:0.3em;opacity:0.35;text-transform:uppercase">people wearing MU</div>
+  </div>
   <div class="hero-stats" aria-live="polite">
     <div class="hero-stat">
       <div class="hero-stat-num loading-shimmer" id="stat-mugen" data-loading="true" aria-label="MUGEN drop number, loading">···</div>
@@ -970,6 +974,29 @@ async function loadFx(){
 }
 
 // ── Load stats ──
+// Lifestyle hero — show 6 (人着画) tiles from products with lifestyle_url set.
+async function loadHeroLifestyle(){
+  const grid = document.getElementById('hero-lifestyle');
+  if (!grid) return;
+  try {
+    const r = await fetch('/api/products/mugen?limit=120');
+    const items = await r.json();
+    const withLifestyle = (items || []).filter(p => p.lifestyle_url && p.lifestyle_url.length > 8);
+    const cards = withLifestyle.slice(0, 6);
+    if (cards.length === 0) {
+      grid.style.display = 'none';
+      return;
+    }
+    grid.innerHTML =
+      '<div style="grid-column:1/-1;text-align:center;font-size:9px;letter-spacing:0.3em;opacity:0.45;text-transform:uppercase;margin-bottom:4px">people wearing MU · live</div>' +
+      cards.map(p => `<a href="/mugen" title="${p.name}" style="display:block;aspect-ratio:4/5;overflow:hidden;border:1px solid rgba(255,255,255,0.08);transition:border-color 0.2s ease" onmouseover="this.style.borderColor='rgba(230,196,73,0.6)'" onmouseout="this.style.borderColor='rgba(255,255,255,0.08)'">
+        <img src="${p.lifestyle_url}" alt="MUGEN #${p.drop_num} lifestyle" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block">
+      </a>`).join('');
+  } catch (e) {
+    grid.style.display = 'none';
+  }
+}
+
 async function loadStats(){
   try{
     const [ma,muon,mugen] = await Promise.all([
@@ -1453,7 +1480,7 @@ window.addEventListener('popstate', ()=>{
 // ── Init ── preload everything so no dashes on load
 (async function init(){
   initRouter();  // parse URL first
-  await Promise.all([loadStats(), loadWeather(), loadFx()]);
+  await Promise.all([loadStats(), loadWeather(), loadFx(), loadHeroLifestyle()]);
   // Pre-populate grids in background so clicks feel instant
   loadBrand('muon');
   loadBrand('mugen');

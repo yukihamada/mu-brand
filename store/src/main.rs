@@ -4574,7 +4574,7 @@ async fn list_sample_personas(State(db): State<Db>) -> impl IntoResponse {
         let mut stmt = match conn.prepare(
             "SELECT p.id, p.slug, p.display_name, p.bio, p.avatar_glyph,
                     d.name, d.prompt, d.day_num, d.picked_product_id, d.image_url,
-                    pr.price_jpy
+                    pr.price_jpy, pr.lifestyle_url
              FROM sample_personas p
              LEFT JOIN sample_designs d ON d.persona_id = p.id AND d.day = ?
              LEFT JOIN products pr ON pr.id = d.picked_product_id
@@ -4582,6 +4582,10 @@ async fn list_sample_personas(State(db): State<Db>) -> impl IntoResponse {
              ORDER BY p.id"
         ) { Ok(s) => s, Err(_) => return Json(serde_json::json!({"personas":[]})).into_response() };
         let it = stmt.query_map(params![today], |r| {
+            // Prefer lifestyle photo if present, else fall back to flat mockup.
+            let lifestyle: Option<String> = r.get::<_, Option<String>>(11).unwrap_or_default();
+            let mockup:    Option<String> = r.get::<_, Option<String>>(9).unwrap_or_default();
+            let primary = lifestyle.clone().filter(|s| !s.is_empty()).or(mockup);
             Ok(serde_json::json!({
                 "slug":          r.get::<_, String>(1).unwrap_or_default(),
                 "display_name":  r.get::<_, String>(2).unwrap_or_default(),
@@ -4591,7 +4595,8 @@ async fn list_sample_personas(State(db): State<Db>) -> impl IntoResponse {
                 "today_design_prompt": r.get::<_, Option<String>>(6).unwrap_or_default(),
                 "day_num":         r.get::<_, Option<i64>>(7).unwrap_or_default(),
                 "product_id":      r.get::<_, Option<i64>>(8).unwrap_or_default(),
-                "product_image":   r.get::<_, Option<String>>(9).unwrap_or_default(),
+                "product_image":   primary,
+                "product_lifestyle": lifestyle,
                 "product_price_jpy": r.get::<_, Option<i64>>(10).unwrap_or_default(),
             }))
         });

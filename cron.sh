@@ -39,6 +39,10 @@ install_crons() {
 0 0 * * * /usr/bin/curl -s -X POST -H 'Content-Type: application/json' -d '{"admin_token":"$ADMIN_TOKEN"}' https://wearmu.com/api/you/admin/backfill_today >> $LOG_DIR/you_daily.log 2>&1
 # mu-brand sample personas grow — daily JST 9:05 (UTC 0:05) — adds 1 design/persona
 5 0 * * * /usr/bin/curl -s -X POST -H 'Content-Type: application/json' -d '{"admin_token":"$ADMIN_TOKEN"}' https://wearmu.com/api/admin/sample_grow >> $LOG_DIR/sample_grow.log 2>&1
+# mu-brand auto-blog — daily JST 9:10 (UTC 0:10) — Gemini writes today's Field log
+10 0 * * * /usr/bin/curl -s -X POST -H 'Content-Type: application/json' -d '{"admin_token":"$ADMIN_TOKEN"}' https://wearmu.com/api/admin/blog_compose >> $LOG_DIR/auto_blog.log 2>&1
+# mu-brand lifestyle photos — every 6 hours, generate up to 6 new ones
+0 */6 * * * cd $SCRIPT_DIR && set -a && source $ENV_FILE && set +a && $PYTHON generate_lifestyle.py 6 >> $LOG_DIR/lifestyle.log 2>&1
 # mu-brand exit-lottery weekly draw — Mondays JST 9:00 (UTC Sun 0:00)
 0 0 * * 1 /usr/bin/curl -s -X POST -H 'Content-Type: application/json' -d '{"admin_token":"$ADMIN_TOKEN"}' https://wearmu.com/api/admin/lottery_draw >> $LOG_DIR/lottery_draw.log 2>&1
 # mu-brand CV pulse — every 30 min, snapshots metrics, applies adjustments, posts Telegram digest
