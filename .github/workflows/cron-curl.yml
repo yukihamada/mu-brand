@@ -105,15 +105,115 @@ jobs:
             -d "{\"admin_token\":\"${MU_ADMIN_TOKEN}\"}" \
             "${BASE_URL}/api/admin/sample_grow?force=1"
 
+  # Autonomous daily blog — composed entirely on GitHub Actions.
+  # Flow:
+  #   1. GET /api/blog/stats_for_today (Fly) → {stats, today_slug, already_published, prompt, model}
+  #   2. Short-circuit if already_published.
+  #   3. POST prompt to Google Gemini directly with retry.
+  #   4. POST result to /api/admin/blog_publish (Fly persists to SQLite).
+  #   5. On any failure → Telegram alert.
+  #
+  # Required additional secrets:
+  #   GEMINI_API_KEY      — Generative Language API key (separate from Fly's copy)
+  #   TELEGRAM_BOT_TOKEN  — for the failure-alert step (optional but recommended)
+  #
+  # Fly's legacy /api/admin/blog_compose endpoint remains as a manual fallback
+  # (trigger via the workflow_dispatch path on this job).
   blog_compose:
     if: github.event.schedule == '10 0 * * *' || github.event.inputs.target == 'blog_compose'
     runs-on: ubuntu-latest
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
     steps:
-      - name: POST /api/admin/blog_compose
+      - name: Fetch today's stats + prompt
+        id: stats
         run: |
-          curl -fsS -X POST -H 'Content-Type: application/json' \
-            -d "{\"admin_token\":\"${MU_ADMIN_TOKEN}\"}" \
-            "${BASE_URL}/api/admin/blog_compose"
+          set -euo pipefail
+          resp=$(curl -fsS --retry 3 --retry-delay 5 "${BASE_URL}/api/blog/stats_for_today")
+          echo "$resp" > /tmp/stats.json
+          jq -e .stats /tmp/stats.json > /dev/null
+          already=$(jq -r .already_published /tmp/stats.json)
+          slug=$(jq -r .today_slug /tmp/stats.json)
+          echo "already=$already" >> "$GITHUB_OUTPUT"
+          echo "slug=$slug"       >> "$GITHUB_OUTPUT"
+          echo "Fetched stats: slug=$slug already=$already"
+
+      - name: Skip if already published today
+        if: steps.stats.outputs.already == 'true'
+        run: echo "Today (${{ steps.stats.outputs.slug }}) already published — skipping."
+
+      - name: Call Gemini (with 3 retries, 10s/20s/40s backoff)
+        if: steps.stats.outputs.already != 'true'
+        id: gen
+        run: |
+          set -euo pipefail
+          : "${GEMINI_API_KEY:?GEMINI_API_KEY secret is required}"
+          prompt=$(jq -r .prompt /tmp/stats.json)
+          model=$(jq -r .gemini_model /tmp/stats.json)
+          payload=$(jq -n --arg p "$prompt" '{contents:[{parts:[{text:$p}]}]}')
+          for attempt in 1 2 3; do
+            if curl -fsS --max-time 60 \
+              -H 'Content-Type: application/json' \
+              -d "$payload" \
+              "https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}" \
+              > /tmp/gemini.json; then
+              break
+            fi
+            backoff=$((attempt * 10))
+            echo "Gemini attempt $attempt failed — sleeping ${backoff}s"
+            sleep $backoff
+          done
+          # Extract title (first H1 line) + body
+          jq -e '.candidates[0].content.parts[0].text' /tmp/gemini.json > /dev/null \
+            || { echo "Gemini returned no text"; cat /tmp/gemini.json; exit 1; }
+          text=$(jq -r '.candidates[0].content.parts[0].text' /tmp/gemini.json)
+          # Split: title is the first line if it starts with "# "; body is the rest
+          first=$(printf '%s\n' "$text" | head -1)
+          if [[ "$first" == \#\ * ]]; then
+            title=$(printf '%s\n' "$first" | sed 's/^#\s*//')
+            body_md=$(printf '%s\n' "$text" | tail -n +2 | sed -e '/^$/d;:a;n;ba' | awk 'NR>1{print prev} {prev=$0} END{print prev}')
+            body_md=$(printf '%s\n' "$text" | tail -n +2)
+          else
+            title="今日の Field log"
+            body_md="$text"
+          fi
+          # Trim leading/trailing whitespace
+          body_md=$(printf '%s' "$body_md" | awk 'NF || p; {p=NF}' | sed -e '/./,$!d')
+          echo "title=$title" >> "$GITHUB_OUTPUT"
+          printf '%s' "$body_md" > /tmp/body.md
+          echo "Composed: title=$title body_bytes=$(wc -c < /tmp/body.md)"
+
+      - name: Publish to wearmu.com (idempotent on slug)
+        if: steps.stats.outputs.already != 'true'
+        run: |
+          set -euo pipefail
+          : "${MU_ADMIN_TOKEN:?MU_ADMIN_TOKEN secret is required}"
+          stats=$(jq -c .stats /tmp/stats.json)
+          payload=$(jq -n \
+            --arg token "$MU_ADMIN_TOKEN" \
+            --arg title "${{ steps.gen.outputs.title }}" \
+            --rawfile body /tmp/body.md \
+            --argjson stats "$stats" \
+            --arg slug "${{ steps.stats.outputs.slug }}" \
+            '{admin_token:$token, title:$title, body_md:$body, model:"gemini-2.5-flash-via-actions", stats_used:$stats, slug:$slug}')
+          resp=$(curl -fsS --retry 3 --retry-delay 5 -X POST \
+            -H 'Content-Type: application/json' \
+            -d "$payload" \
+            "${BASE_URL}/api/admin/blog_publish")
+          echo "Publish response: $resp"
+          jq -e '.ok == true' <<<"$resp" > /dev/null
+
+      - name: Telegram alert on failure
+        if: failure() && env.TELEGRAM_BOT_TOKEN != ''
+        run: |
+          set -e
+          slug="${{ steps.stats.outputs.slug }}"
+          msg="🚨 blog_compose (Actions) failed%0Aslug=${slug:-unknown}%0Arun=${{ github.run_id }}%0AURL=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          curl -fsS -X POST \
+            -d "chat_id=1136442501" \
+            -d "text=${msg}" \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" || true
 
   lottery_draw:
     if: github.event.schedule == '0 0 * * 1' || github.event.inputs.target == 'lottery_draw'
