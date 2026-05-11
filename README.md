@@ -11,17 +11,19 @@
 
 ### **An apparel brand that runs without humans.**
 
-AI designs every hour · Hokkaido weather decides quantity · Price rises as it sells
+AI designs every hour · 7 autonomous agents run the company · Hokkaido weather decides quantity · Price rises as it sells
 
 [**wearmu.com**](https://wearmu.com) ·
-[**Press release**](https://wearmu.com/press.html) ·
+[**/developers**](https://wearmu.com/developers) ·
+[**Press**](https://wearmu.com/press.html) ·
 [**MU CITY**](https://wearmu.com/city) ·
-[**Blog**](https://enablerdao.com/blog/mu-launch-2026-05-07)
+[**MU × SIIIEEP**](https://wearmu.com/sweep) (gated)
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-F5F5F0?style=flat-square&labelColor=0A0A0A)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.88+-F5F5F0?style=flat-square&labelColor=0A0A0A)](https://www.rust-lang.org/)
 [![Fly.io](https://img.shields.io/badge/fly.io-deployed-F5F5F0?style=flat-square&labelColor=0A0A0A)](https://fly.io)
 [![Status](https://img.shields.io/badge/status-live-22c55e?style=flat-square&labelColor=0A0A0A)](https://wearmu.com)
+[![Autonomous](https://img.shields.io/badge/agents-7%20running-e6c449?style=flat-square&labelColor=0A0A0A)](https://wearmu.com)
 
 </div>
 
@@ -36,6 +38,7 @@ AI designs every hour · Hokkaido weather decides quantity · Price rises as it 
 - **Price** rises as units sell — a bonding curve, not a Dutch auction.
 - **Manufacturing** is on-demand. Zero inventory. Zero waste.
 - **Operation** is fully automated: design → pricing → checkout → manufacturing → shipping → certificate.
+- **The company itself runs autonomously** — 7 in-process agents monitor health, treasury, customer support, refunds, compliance, vision drift, and self-improvement.
 
 After initial setup, no human touches MU's day-to-day decisions.
 
@@ -44,13 +47,15 @@ After initial setup, no human touches MU's day-to-day decisions.
 
 ---
 
-## Three product lines
+## Three product lines + collabs
 
 | Line          | Frequency       | Quantity logic                                         | Price                          |
 |---------------|-----------------|--------------------------------------------------------|--------------------------------|
 | **MUGEN 無限** | Hourly          | Drop number = pieces (cycle of #1–#108, #1 is rarest)  | ¥5,000–¥30,000 (progressive)   |
 | **MUON 無音**  | Daily           | Temperature in Teshikaga, Hokkaido (°C) = pieces       | ¥5,000+ (progressive)          |
 | **間 MA**      | Weekly (Mon)    | One piece in the world. 7-day auction.                 | ¥30,000+                       |
+| **MU × NOUNS** | On request      | NOUNS DAO collab                                       | varies                         |
+| **MU × SIIIEEP** | curated        | BJJ apparel collab with [SIIIEEP](https://shop.sweep.love) (Kita-Sandō) — 23 SKUs auto-fulfilled via Printful | ¥1,200–¥38,800 |
 
 ### Progressive pricing — the more it sells, the more it costs
 
@@ -64,49 +69,114 @@ The first buyer gets the lowest price. Wait, and you pay more. The opposite of a
 
 ---
 
+## Multi-agent architecture
+
+**7 in-process agents** run inside the same Fly machine as the HTTP server, each on its own interval. A scheduler ticks every minute and fires any agent whose interval has elapsed. All cycles persist to `agent_journal`. Telegram digest fires only for **notable** events, with per-agent 6-hour dedup.
+
+| Agent | Interval | What it does |
+|---|---|---|
+| 🩺 **`business_health`** | 1h | Inventory ratio, SWEEP 👎 ratio, FB backlog, missing daily blog |
+| 💰 **`treasury`** | 6h | Stripe balance, 24h revenue/cost from `collab_orders`, estimated margin |
+| 📮 **`customer_support`** | 30m | Gemini classifies unreplied FB (severity / category / refund-recommended / 日本語 reply draft) |
+| ↩️ **`auto_refund`** | 1h | Refund requests ≤¥10,000 → Stripe Refund API auto; above threshold → escalate |
+| 📜 **`compliance_watch`** | 24h | Last-updated check on tokushoho/privacy/terms HTML + GDPR delete backlog |
+| 🧠 **`self_improvement`** | 24h | Scans `agent_journal` for repeat-error patterns across other agents |
+| 👁 **`vision_drift`** | 24h | Reads the 4-line public vision and scores how well today's decisions align |
+
+**Manual trigger** (admin token required):
+```bash
+curl -X POST "https://wearmu.com/admin/agent/run?token=...&name=treasury"
+```
+
+**Dashboards** (admin token required):
+- [`/admin/agents`](https://wearmu.com/admin/agents) — HTML overview, status per agent, last summary, journal links
+- [`/admin/agent?name=<agent>`](https://wearmu.com/admin/agent) — JSON journal for a specific agent
+- [`/admin/sweep`](https://wearmu.com/admin/sweep) — SWEEP product cost / margin / order count
+- [`/admin/treasury`](https://wearmu.com/admin/treasury) — Cumulative revenue & cost (if enabled)
+
+**Storage:** `agent_journal(cycle_at, agent_name, observations, decisions, actions, summary, notable)` in SQLite.
+
+---
+
 ## Tech stack
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│  Browser                                                  │
-└────────────────────┬─────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  Browser / External EC (CORS-enabled embed)                  │
+└────────────────────┬────────────────────────────────────────-┘
                      │ HTTPS
-┌────────────────────▼─────────────────────────────────────┐
-│  Fly.io  (mu-store, NRT, shared-cpu-1x · 512MB)          │
-│  ┌─────────────────────────────────────────────────┐     │
-│  │  Rust / Axum 0.7  (src/main.rs)                  │    │
-│  │  ─ HTTP routes                                    │    │
-│  │  ─ dynamic_price()  ← bonding curve              │    │
-│  │  ─ Stripe Checkout integration                    │    │
-│  │  ─ Printful order webhook                         │    │
-│  │  ─ Solana NFT issuance (MA line)                  │    │
-│  └────────────────┬────────────────────────────────┘     │
-│                   │                                        │
-│  ┌────────────────▼────────────────────────────────┐     │
-│  │  SQLite (WAL, /data volume)                       │    │
-│  └───────────────────────────────────────────────────┘   │
-└──────────────────────────────────────────────────────────┘
+┌────────────────────▼─────────────────────────────────────────┐
+│  Fly.io  (mu-store, NRT, shared-cpu-1x · 256MB)              │
+│  ┌──────────────────────────────────────────────────────┐    │
+│  │  Rust / Axum 0.7  (store/src/main.rs)                │    │
+│  │  ─ HTTP routes (/, /sweep, /admin/*, /api/v1/embed)  │    │
+│  │  ─ dynamic_price() — bonding curve                   │    │
+│  │  ─ Stripe Checkout + webhook (HMAC-SHA256)           │    │
+│  │  ─ Printful order webhook (auto-confirm by default)  │    │
+│  │  ─ Solana NFT issuance (MA line, dry-run pilot)      │    │
+│  │  ┌────────────────────────────────────────────────┐  │    │
+│  │  │  Background tokio tasks                        │  │    │
+│  │  │  ─ Self-heal watcher (cron health)              │  │    │
+│  │  │  ─ Agent scheduler → 7 agents                   │  │    │
+│  │  │  ─ X (Twitter) auto-post worker                 │  │    │
+│  │  │  ─ Auto-blog daily compose                      │  │    │
+│  │  └────────────────────────────────────────────────┘  │    │
+│  └────────────────┬─────────────────────────────────────┘    │
+│  ┌────────────────▼─────────────────────────────────────┐    │
+│  │  SQLite WAL (Fly volume, /data/products.db, 1GB)     │    │
+│  │  products, mu_purchases, collab_products,            │    │
+│  │  collab_orders, sweep_signals, customer_feedback,    │    │
+│  │  agent_journal, auto_blog_posts, ma_council_*        │    │
+│  └──────────────────────────────────────────────────────┘    │
+└──────────────────────────────────────────────────────────────┘
                      ▲
-                     │ cron
-┌────────────────────┴─────────────────────────────────────┐
-│  Generation pipeline  (Python + Gemini)                   │
-│  ─ wttr.in  → temperature/wind data                       │
-│  ─ Gemini gemini-3-pro-image-preview → design.png        │
-│  ─ Printful mockup generator                              │
-│  ─ POST /api/admin/import                                 │
-└───────────────────────────────────────────────────────────┘
+                     │ webhooks / cron
+   ┌─────────────────┴────────────────────────────────────────┐
+   │  External services                                        │
+   │  ─ Stripe         payments + balance + refunds            │
+   │  ─ Printful       on-demand fulfillment + cost lookup     │
+   │  ─ Gemini         design + FB classify + auto-blog        │
+   │  ─ Telegram       agent digest + ops alerts               │
+   │  ─ Resend         transactional email                     │
+   │  ─ GitHub Actions deploy + scheduled crons                │
+   │  ─ Cloudflare R2  mockup + lifestyle images               │
+   └───────────────────────────────────────────────────────────┘
 ```
 
 | Layer               | Technology                                                     |
 |---------------------|----------------------------------------------------------------|
 | Store backend       | Rust 1.88+, Axum 0.7, SQLite (rusqlite), Tokio                 |
-| Hosting             | Fly.io (Tokyo region, ARM64)                                   |
+| Hosting             | Fly.io (Tokyo region, shared-cpu-1x 256MB)                     |
 | Design generation   | Google Gemini (`gemini-3-pro-image-preview`)                   |
+| Text / classify     | Google Gemini (`gemini-2.5-flash`)                             |
 | Weather oracle      | wttr.in (Teshikaga, Hokkaido)                                  |
-| Manufacturing       | Printful — global on-demand fulfillment                        |
-| Payments            | Stripe Checkout (JPY)                                          |
-| NFT certificates    | Solana compressed NFTs via Helius (MA line only)               |
-| Generation cron     | Python scripts (`generate.py`, `generate_nouns.py`)            |
+| Manufacturing       | Printful — global on-demand fulfillment, auto-confirm default  |
+| Payments            | Stripe Checkout (JPY) + Stripe Refunds API                     |
+| NFT certificates    | Solana compressed NFTs via Helius (MA line, dry-run pilot)     |
+| Image CDN           | Cloudflare R2 (`mockups.wearmu.com`, `lifestyle.wearmu.com`)   |
+| Cron                | GitHub Actions + in-process tokio loops                        |
+
+---
+
+## External embed — put MU products on any site
+
+MU exposes a CORS-open API + drop-in JS widget so any EC site / blog can embed live products in one line.
+
+```html
+<div id="mu-mount"></div>
+<script src="https://wearmu.com/embed.js"
+        data-brand="mugen" data-count="6"
+        data-container="#mu-mount" data-theme="dark" defer></script>
+```
+
+Three integration paths:
+- **JS widget**: [`/embed.js`](https://wearmu.com/embed.js) — auto-mount via data-* attrs, or `MU.mount({...})` API
+- **iframe**: `/embed/products?brand=mugen&count=6` — for non-JS environments
+- **JSON API**: `GET /api/v1/embed/products?brand=mugen&limit=12&available=1` — server-side
+
+Full docs + live preview: [**wearmu.com/developers**](https://wearmu.com/developers)
+
+CORS allows `GET` / `OPTIONS` from any origin. Write endpoints (`POST /api/checkout`) stay same-origin so Stripe forms remain isolated.
 
 ---
 
@@ -115,18 +185,26 @@ The first buyer gets the lowest price. Wait, and you pay more. The opposite of a
 ```
 mu-brand/
 ├── store/                    # The Rust web store (Fly.io: mu-store)
-│   ├── src/main.rs           # All routes, pricing logic, Stripe, Printful
-│   ├── static/               # index.html, press.html, city.html, etc.
+│   ├── src/main.rs           # All routes, agents, pricing, Stripe, Printful, NFT
+│   ├── src/nft.rs            # Solana cNFT minting (dry-run pilot)
+│   ├── src/payments.rs       # Stripe payment helpers
+│   ├── src/gemini.rs         # Gemini API helpers
+│   ├── static/               # index.html, embed.js, developers.html, sweep page, etc.
 │   ├── Cargo.toml
 │   ├── Dockerfile
 │   └── fly.toml
 ├── generate.py               # Hourly/daily AI design generation (cron)
 ├── generate_nouns.py         # NOUNS DAO collab variant
+├── sweep_images.py           # MU × SIIIEEP product image generation
 ├── reprice.py                # Admin-only repricing utility
 ├── retry_mockups.py          # Printful mockup re-fetch
 ├── verify.py                 # Sanity checks
 ├── designs/                  # Generated PNGs (read-only artifacts)
-├── .github/workflows/        # Auto-deploy to Fly.io on push to main
+├── .github/workflows/        # Auto-deploy + cron workflows
+│   ├── deploy.yml            # push to main → Fly.io deploy
+│   ├── cron-curl.yml         # daily auto-blog + agent triggers
+│   ├── cron-twitter.yml      # X (Twitter) auto-post
+│   └── cron-ads-tune.yml     # Google Ads CPC tuning
 └── README.md
 ```
 
@@ -141,7 +219,8 @@ cd mu-brand
 
 # 2. Configure
 cp .env.example .env
-# fill in STRIPE_SECRET_KEY, GEMINI_API_KEY, etc.
+# fill in STRIPE_SECRET_KEY, GEMINI_API_KEY, PRINTFUL_API_KEY,
+# RESEND_API_KEY, TELEGRAM_BOT_TOKEN, MU_ADMIN_TOKEN, etc.
 
 # 3. Build the store
 cd store
@@ -155,17 +234,22 @@ cargo build --release
 The Stripe + Printful + Gemini integrations all need real API keys to function end-to-end.
 For UI-only experimentation, you can leave them blank — the store will serve the static pages.
 
+The agent scheduler starts 3 minutes after process boot, then ticks every minute.
+
 ---
 
 ## Deploy
 
-### Fly.io (production setup we use)
+### Fly.io (production)
+
+**Do not run `fly deploy` directly.** Always push to `main` → GitHub Actions handles the deploy.
 
 ```bash
-fly deploy --remote-only -a mu-store
+git push origin main
+# → .github/workflows/deploy.yml runs flyctl deploy --remote-only
+# → cargo-chef cached build (~1–2 min)
+# → health check OK → traffic cutover
 ```
-
-Or push to `main` — GitHub Actions handles it (see `.github/workflows/deploy.yml`).
 
 ### Self-host
 
@@ -173,6 +257,27 @@ Or push to `main` — GitHub Actions handles it (see `.github/workflows/deploy.y
 docker build -t mu-store store/
 docker run -p 8080:8080 --env-file .env mu-store
 ```
+
+---
+
+## Configuration (Fly secrets)
+
+| Secret | Purpose | Required |
+|---|---|---|
+| `STRIPE_SECRET_KEY` | Live Checkout + balance + refunds | yes |
+| `STRIPE_WEBHOOK_SECRET` | HMAC verify Stripe webhooks | yes |
+| `PRINTFUL_API_KEY` | Order placement + variant catalog | yes |
+| `GEMINI_API_KEY` | Design generation, FB classify, blog | yes |
+| `RESEND_API_KEY` | Transactional email | yes |
+| `TELEGRAM_BOT_TOKEN` | Agent digest + ops alerts | yes |
+| `TELEGRAM_CHAT_ID` | Default chat for digest | yes |
+| `MU_ADMIN_TOKEN` | `/admin/*` token-gated routes | yes |
+| `PRINTFUL_AUTO_CONFIRM` | `"true"` (default), `"false"`, or `"kill"` | no |
+| `AUTO_REFUND_THRESHOLD_JPY` | `auto_refund` ceiling (default 10000) | no |
+| `SWEEP_PAGE_PASSWORD` | Gate `/sweep` (default `sweep-2026`) | no |
+| `SWEEP_OPS_EMAILS` | CSV of email recipients for SIIIEEP orders | no |
+| `HELIUS_API_KEY` | Solana cNFT minting | no (dry-run without) |
+| `MU_NFT_MINT_LIVE` | `"1"` to enable real Solana mints | no |
 
 ---
 
@@ -188,8 +293,13 @@ Replace these and you have your own autonomous apparel:
 | Pricing curve         | `dynamic_price()` in `store/src/main.rs`  |
 | AI generation prompts | `generate.py`                             |
 | Manufacturing         | Printful → swap for any on-demand vendor  |
+| Agent registry        | `AGENT_REGISTRY` in `store/src/main.rs`   |
 
-We've already built one variant — **[MU CITY](https://wearmu.com/city)** — that swaps Hokkaido weather for Tokyo urban data (foot traffic, neon luminance, transit volume). Same engine, different inputs.
+We've already built variants:
+- **[MU CITY](https://wearmu.com/city)** — Tokyo urban data instead of Hokkaido weather
+- **[MU × SIIIEEP](https://wearmu.com/sweep)** — 23-SKU BJJ apparel collab via Printful
+
+Same engine, different inputs.
 
 ---
 
@@ -219,9 +329,16 @@ are **not** under MIT — please fork the engine, not the brand.
 - [x] MUGEN/MUON/MA all live
 - [x] Bonding-curve pricing
 - [x] Open-source release (you're reading it)
+- [x] MA Council foundation — auctioneers get voting rights
+- [x] Solana cNFT pilot (dry-run mode, MA line)
+- [x] MU × SIIIEEP collab — 23 SKUs Printful auto-fulfill
+- [x] **Multi-agent autonomous operation** — 7 agents covering health / treasury / support / refunds / compliance / vision / self-improvement
+- [x] **External embed API** — `/embed.js`, `/embed/products`, `/api/v1/embed/products`, CORS-open
+- [x] Stripe auto-refund for small disputes
 - [ ] MU CITY drops 001 — Tokyo data variant
 - [ ] NOUNS DAO formal proposal submission
-- [ ] Multi-city/multi-country fork SDK
+- [ ] Automated MA Council treasury distribution
+- [ ] Self-improvement agent → auto-PR (Sentry → Gemini → GitHub)
 
 ---
 
@@ -238,7 +355,7 @@ former CPO @ Mercari · co-founder NOT A HOTEL · external director NEWT
 
 <div align="center">
 
-**MU — AI designs the clothes. The weather decides how many. The first buyer wins.**
+**MU — AI designs the clothes. The weather decides how many.<br>The first buyer wins. Seven agents keep it all running.**
 
 ⌐◨-◨
 
