@@ -13163,6 +13163,11 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         interval_secs: 86_400, // 24h
         description: "Fly logs / agent_journal の繰り返しエラーを検知 → 改善案を journal",
     },
+    AgentDef {
+        name: "vision_drift",
+        interval_secs: 86_400, // 24h
+        description: "ビジョン (詩 4 行) からの drift を Gemini で検知 → 改善案 → Telegram",
+    },
 ];
 
 /// agent_journal から指定 agent の最後の cycle_at (epoch sec) を取得。
@@ -13183,6 +13188,7 @@ async fn run_agent(name: &str, db: Db) -> Result<AgentReport, String> {
         "auto_refund"       => agent_auto_refund(db).await,
         "compliance_watch"  => agent_compliance_watch(db).await,
         "self_improvement"  => agent_self_improvement(db).await,
+        "vision_drift"      => agent_vision_drift(db).await,
         _ => Err(format!("unknown agent: {}", name)),
     }
 }
@@ -13238,6 +13244,7 @@ async fn journal_agent_report(db: Db, name: &str, report: &AgentReport) {
         "auto_refund"      => "↩️",
         "compliance_watch" => "📜",
         "self_improvement" => "🧠",
+        "vision_drift"     => "🎯",
         _ => "🤖",
     };
     let mut lines = vec![format!("{} MU agent [{}]", icon, name), report.summary.clone()];
@@ -13860,6 +13867,165 @@ async fn agent_self_improvement(db: Db) -> Result<AgentReport, String> {
     Ok(AgentReport {
         observations: serde_json::Value::Object(obs),
         decisions, actions: vec![], summary, notable,
+    })
+}
+
+// ── Agent 7: vision_drift ──────────────────────────────────────────────
+// MU のビジョン 4 行を baseline として、site copy / 最新 X 投稿 /
+// 最新 blog / 最新 council brief を Gemini に渡し:
+//   "これらは vision からどれくらい drift しているか？"
+//   "drift していたら具体的に何を直すべきか？ (1-3 件)"
+// 出力を agent_journal に書き込み、drift があれば notable=1 で Telegram 通知。
+//
+// Auto-apply はしない。yuki がレビューして手動で取り込む。
+const MU_VISION: &str = r#"
+1. Fashion's seasonal cycle is a marketing artifact. MU has no seasons — only weather and hours.
+2. A brand can be 0 humans. We are proving it daily.
+3. A T-shirt is a small piece of climate, hashed to the day it was generated.
+4. Quiet confidence over loud announcements. Negative space matters. Numbers over adjectives.
+"#;
+
+async fn agent_vision_drift(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut decisions: Vec<serde_json::Value> = Vec::new();
+    let mut actions: Vec<serde_json::Value> = Vec::new();
+
+    let key = match env::var("GEMINI_API_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => return Ok(AgentReport::idle("GEMINI_API_KEY missing")),
+    };
+
+    // Sample recent surfaces.
+    let (recent_x, recent_blog_titles, recent_drop_names, recent_council_title): (Vec<String>, Vec<String>, Vec<String>, Option<String>) = {
+        let conn = db.lock().unwrap();
+        let xposts: Vec<String> = match conn.prepare(
+            "SELECT text FROM sns_post_queue WHERE posted_at IS NOT NULL ORDER BY posted_at DESC LIMIT 8"
+        ) {
+            Ok(mut s) => s.query_map([], |r| r.get::<_, String>(0))
+                .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
+        let blogs: Vec<String> = match conn.prepare(
+            "SELECT title FROM auto_blog_posts ORDER BY created_at DESC LIMIT 5"
+        ) {
+            Ok(mut s) => s.query_map([], |r| r.get::<_, String>(0))
+                .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
+        let drops: Vec<String> = match conn.prepare(
+            "SELECT name FROM products WHERE active=1 ORDER BY created_at DESC LIMIT 10"
+        ) {
+            Ok(mut s) => s.query_map([], |r| r.get::<_, String>(0))
+                .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
+        let council: Option<String> = conn.query_row(
+            "SELECT title FROM ma_council_briefs ORDER BY created_at DESC LIMIT 1",
+            [], |r| r.get(0),
+        ).ok();
+        (xposts, blogs, drops, council)
+    };
+
+    obs.insert("recent_x_post_count".into(), serde_json::Value::from(recent_x.len() as i64));
+    obs.insert("recent_blog_count".into(), serde_json::Value::from(recent_blog_titles.len() as i64));
+    obs.insert("recent_drop_count".into(), serde_json::Value::from(recent_drop_names.len() as i64));
+
+    if recent_x.is_empty() && recent_blog_titles.is_empty() && recent_drop_names.is_empty() {
+        return Ok(AgentReport::idle("nothing recent to review"));
+    }
+
+    let surface = serde_json::json!({
+        "recent_x_posts":     recent_x,
+        "recent_blog_titles": recent_blog_titles,
+        "recent_drop_names":  recent_drop_names,
+        "latest_council_brief_title": recent_council_title,
+    });
+
+    let prompt = format!(
+        "You are MU's brand-vision auditor. The brand's 4-line vision is:\n\n{vision}\n\n\
+         Below are recent brand surfaces (X posts, blog titles, drop names, latest council brief title). \
+         Audit them against the vision.\n\n\
+         For each kind of surface that DRIFTS from the vision, output ONE concrete fix.\n\
+         Examples of drift: 'seasonal' / 'NEW SEASON' language, hype tone, exclamation marks, \
+         empty product names like 'Drop #20', fashion-industry cliches.\n\n\
+         Surfaces:\n{surface}\n\n\
+         Respond as JSON ONLY (no markdown fence):\n\
+         {{\n\
+           \"drift_score\": 0-100,  // 0=perfectly on-vision, 100=full collapse\n\
+           \"summary\": \"<= 90 chars\",\n\
+           \"fixes\": [\n\
+             {{\"surface\":\"x|blog|drops|council\", \"issue\":\"<32 chars>\", \"suggestion\":\"<140 chars actionable>\"}}\n\
+           ]\n\
+         }}\n\
+         If no meaningful drift, return drift_score < 20 and fixes=[].",
+        vision = MU_VISION.trim(),
+        surface = serde_json::to_string_pretty(&surface).unwrap_or_default(),
+    );
+
+    let body = serde_json::json!({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.4, "maxOutputTokens": 700},
+    });
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
+        key);
+    let resp = match reqwest::Client::new().post(&url).json(&body).send().await {
+        Ok(r) if r.status().is_success() => r,
+        Ok(r) => return Err(format!("gemini {}", r.status())),
+        Err(e) => return Err(format!("gemini http: {e}")),
+    };
+    let j: serde_json::Value = match resp.json().await {
+        Ok(v) => v, Err(e) => return Err(format!("gemini json: {e}")),
+    };
+    let raw = j["candidates"][0]["content"]["parts"][0]["text"].as_str().unwrap_or("").trim().to_string();
+    let cleaned = raw.trim_start_matches("```json").trim_start_matches("```")
+        .trim_end_matches("```").trim();
+    let parsed: serde_json::Value = match serde_json::from_str(cleaned) {
+        Ok(v) => v,
+        Err(_) => return Err(format!("vision_drift: gemini returned non-JSON ({} chars)", raw.len())),
+    };
+
+    let drift_score = parsed["drift_score"].as_i64().unwrap_or(0);
+    let summary_text = parsed["summary"].as_str().unwrap_or("").to_string();
+    let fixes_arr: Vec<serde_json::Value> = parsed["fixes"].as_array().cloned().unwrap_or_default();
+
+    obs.insert("drift_score".into(), serde_json::Value::from(drift_score));
+    obs.insert("fix_count".into(), serde_json::Value::from(fixes_arr.len() as i64));
+
+    for fix in &fixes_arr {
+        decisions.push(serde_json::json!({
+            "type": "vision_fix",
+            "surface": fix.get("surface"),
+            "issue": fix.get("issue"),
+            "suggestion": fix.get("suggestion"),
+        }));
+    }
+
+    // Action: log this decision in ai_decisions for tracking trends over time.
+    {
+        let conn = db.lock().unwrap();
+        let _ = log_ai_decision(
+            &conn,
+            "vision_drift",
+            &serde_json::json!({
+                "surfaces_count": recent_x.len() + recent_blog_titles.len() + recent_drop_names.len(),
+            }),
+            &serde_json::json!({"drift_score": drift_score, "fixes": fixes_arr}),
+            "gemini-2.5-flash",
+            0,
+        );
+    }
+    actions.push(serde_json::json!({"kind": "logged_to_ai_decisions"}));
+
+    let notable = drift_score >= 30;
+    let summary = if summary_text.is_empty() {
+        format!("vision drift score: {} ({} fixes proposed)", drift_score, fixes_arr.len())
+    } else {
+        format!("drift {}: {}", drift_score, summary_text)
+    };
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs),
+        decisions, actions, summary, notable,
     })
 }
 
