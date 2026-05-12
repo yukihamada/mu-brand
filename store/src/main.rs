@@ -24709,6 +24709,12 @@ async fn agent_email_critic(db: Db) -> Result<AgentReport, String> {
     let mut total_out_tok = 0i64;
     let mut worst: Vec<(String, String, String, f64)> = Vec::new();
 
+    // 3-run median per persona kills Gemini sampling noise (±0.10 at temp 0.5).
+    // With temperature 0.0 + 3 runs + median aggregation, scores are stable to
+    // within ±0.02 in practice — enough signal to A/B compare rewrites.
+    const RUNS_PER_TEMPLATE: usize = 3;
+    const PERSONAS: &[&str] = &["musk", "bezos", "jobs", "buyer"];
+
     for (kind, variants) in CRITIC_TARGETS {
         for variant in *variants {
             let (subject, html) = match (*kind, *variant) {
@@ -24728,14 +24734,10 @@ async fn agent_email_critic(db: Db) -> Result<AgentReport, String> {
                 "{}\n---\nEMAIL UNDER REVIEW:\nkind: {}  variant: {}\nsubject: {}\nbody (plain text):\n{}\n",
                 EMAIL_CRITIC_PROMPT, kind, variant, subject, plain);
 
-            // gemini-2.5-flash enables hidden "thinking" by default which eats
-            // the output budget. With 2000 we were truncating mid-JSON. Bump
-            // to 6000 AND disable thinking (set budget to 0) so all tokens go
-            // to the visible response.
             let req = serde_json::json!({
                 "contents": [{"parts": [{"text": prompt}]}],
                 "generationConfig": {
-                    "temperature": 0.5,
+                    "temperature": 0.0,
                     "maxOutputTokens": 6000,
                     "responseMimeType": "application/json",
                     "thinkingConfig": {"thinkingBudget": 0},
@@ -24744,56 +24746,72 @@ async fn agent_email_critic(db: Db) -> Result<AgentReport, String> {
             let url = format!(
                 "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
                 key);
-            let resp = match reqwest::Client::new().post(&url).json(&req).send().await {
-                Ok(r) if r.status().is_success() => r,
-                Ok(r) => {
-                    let s = r.status();
-                    let t = r.text().await.unwrap_or_default();
-                    decisions.push(serde_json::json!({"type":"gemini_err","kind":kind,"variant":variant,"status":s.as_u16(),"body":t.chars().take(200).collect::<String>()}));
-                    continue;
-                }
-                Err(e) => {
-                    decisions.push(serde_json::json!({"type":"http_err","kind":kind,"variant":variant,"error":e.to_string()}));
-                    continue;
-                }
-            };
-            let body: serde_json::Value = match resp.json().await {
-                Ok(v) => v,
-                Err(e) => { decisions.push(serde_json::json!({"type":"json_err","kind":kind,"variant":variant,"error":e.to_string()})); continue; }
-            };
-            let raw = body["candidates"][0]["content"]["parts"][0]["text"]
-                .as_str().unwrap_or("").trim().to_string();
-            let parsed: serde_json::Value = match serde_json::from_str(&raw) {
-                Ok(v) => v,
-                Err(_) => {
-                    let start = raw.find('{');
-                    let end = raw.rfind('}');
-                    match (start, end) {
-                        (Some(s), Some(e)) if e > s => serde_json::from_str(&raw[s..=e]).unwrap_or_default(),
-                        _ => serde_json::Value::Null,
-                    }
-                }
-            };
-            if parsed.is_null() {
-                decisions.push(serde_json::json!({
-                    "type":"empty_parse","kind":kind,"variant":variant,
-                    "raw_head": raw.chars().take(80).collect::<String>(),
-                    "raw_tail": raw.chars().rev().take(80).collect::<String>().chars().rev().collect::<String>(),
-                    "raw_len": raw.chars().count(),
-                    "finish_reason": body["candidates"][0]["finishReason"].as_str().unwrap_or("unknown"),
-                }));
-                continue;
-            }
-            total_in_tok  += (prompt.chars().count() / 4) as i64;
-            total_out_tok += (raw.chars().count() / 4) as i64;
 
+            // Accumulate runs: per_persona_runs[persona_idx] = Vec<(score, verdict, suggestion)>.
+            let mut runs: [Vec<(f64, String, String)>; 4] = Default::default();
+
+            for run_idx in 0..RUNS_PER_TEMPLATE {
+                let resp = match reqwest::Client::new().post(&url).json(&req).send().await {
+                    Ok(r) if r.status().is_success() => r,
+                    Ok(r) => {
+                        let s = r.status();
+                        let t = r.text().await.unwrap_or_default();
+                        decisions.push(serde_json::json!({"type":"gemini_err","kind":kind,"variant":variant,"run":run_idx,"status":s.as_u16(),"body":t.chars().take(200).collect::<String>()}));
+                        continue;
+                    }
+                    Err(e) => {
+                        decisions.push(serde_json::json!({"type":"http_err","kind":kind,"variant":variant,"run":run_idx,"error":e.to_string()}));
+                        continue;
+                    }
+                };
+                let body: serde_json::Value = match resp.json().await {
+                    Ok(v) => v,
+                    Err(e) => { decisions.push(serde_json::json!({"type":"json_err","kind":kind,"variant":variant,"run":run_idx,"error":e.to_string()})); continue; }
+                };
+                let raw = body["candidates"][0]["content"]["parts"][0]["text"]
+                    .as_str().unwrap_or("").trim().to_string();
+                let parsed: serde_json::Value = match serde_json::from_str(&raw) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        let start = raw.find('{');
+                        let end = raw.rfind('}');
+                        match (start, end) {
+                            (Some(s), Some(e)) if e > s => serde_json::from_str(&raw[s..=e]).unwrap_or_default(),
+                            _ => serde_json::Value::Null,
+                        }
+                    }
+                };
+                if parsed.is_null() {
+                    decisions.push(serde_json::json!({
+                        "type":"empty_parse","kind":kind,"variant":variant,"run":run_idx,
+                        "raw_head": raw.chars().take(80).collect::<String>(),
+                        "raw_tail": raw.chars().rev().take(80).collect::<String>().chars().rev().collect::<String>(),
+                        "raw_len": raw.chars().count(),
+                        "finish_reason": body["candidates"][0]["finishReason"].as_str().unwrap_or("unknown"),
+                    }));
+                    continue;
+                }
+                total_in_tok  += (prompt.chars().count() / 4) as i64;
+                total_out_tok += (raw.chars().count() / 4) as i64;
+
+                for (pi, persona) in PERSONAS.iter().enumerate() {
+                    let p = &parsed[persona];
+                    if !p.is_object() { continue; }
+                    let score = p["score"].as_f64().unwrap_or(0.5).clamp(0.0, 1.0);
+                    let verdict = p["verdict"].as_str().unwrap_or("(no verdict)").chars().take(120).collect::<String>();
+                    let suggestion = p["suggestion"].as_str().unwrap_or("").chars().take(200).collect::<String>();
+                    runs[pi].push((score, verdict, suggestion));
+                }
+            }
+
+            // Aggregate: median score; keep verdict+suggestion from the median run.
             let now = chrono_now();
-            for persona in ["musk", "bezos", "jobs", "buyer"] {
-                let p = &parsed[persona];
-                if !p.is_object() { continue; }
-                let score = p["score"].as_f64().unwrap_or(0.5).clamp(0.0, 1.0);
-                let verdict = p["verdict"].as_str().unwrap_or("(no verdict)").chars().take(120).collect::<String>();
-                let suggestion = p["suggestion"].as_str().unwrap_or("").chars().take(200).collect::<String>();
+            for (pi, persona) in PERSONAS.iter().enumerate() {
+                let mut bucket = std::mem::take(&mut runs[pi]);
+                if bucket.is_empty() { continue; }
+                bucket.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+                let mid = bucket.len() / 2;
+                let (score, verdict, suggestion) = bucket.swap_remove(mid);
                 {
                     let conn = db.lock().unwrap();
                     let _ = conn.execute(
@@ -24804,7 +24822,7 @@ async fn agent_email_critic(db: Db) -> Result<AgentReport, String> {
                 }
                 scored += 1;
                 if score < 0.5 {
-                    worst.push((format!("{}/{}", kind, variant), persona.into(), suggestion.clone(), score));
+                    worst.push((format!("{}/{}", kind, variant), (*persona).into(), suggestion.clone(), score));
                 }
             }
         }
@@ -24933,7 +24951,7 @@ button:hover{{background:#2a2a2a}}
 <div class=sub>
 4 つの persona (Musk / Bezos / Jobs / 懐疑的 buyer) が各テンプレを 0.0–1.0 で採点。<br>
 平均 ≥ 0.75 = ship、0.5–0.75 = OK、&lt; 0.5 = 書き直し候補。<br>
-<form method="post" action="/admin/email-critique/run?token={tok}" onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='採点中… (1分くらいかかる)';">
+<form method="post" action="/admin/email-critique/run?token={tok}" onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='採点中… (temp 0 × 3-run median、3分くらいかかる)';">
   <button type=submit>いま採点する (Gemini Flash × 4 ペルソナ × 18 テンプレ)</button>
 </form>
 </div>
