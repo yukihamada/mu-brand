@@ -13351,7 +13351,7 @@ async fn gi_edition_checkout(
     Json(body): Json<GiCheckoutBody>,
 ) -> Response {
     let edition = id.trim_matches(|c: char| !c.is_ascii_alphanumeric()).to_string();
-    if !matches!(edition.as_str(), "1" | "01") {
+    if !matches!(edition.as_str(), "0" | "00" | "1" | "01") {
         return (StatusCode::NOT_FOUND, "edition not found").into_response();
     }
     let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
