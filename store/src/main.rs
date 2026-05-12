@@ -1341,6 +1341,251 @@ async fn bounty_page() -> impl IntoResponse {
     axum::response::Html(body)
 }
 
+/// Stable per-buyer token: sha256(email_lower | BUYER_TOKEN_SALT)[:20].
+/// Same email always yields the same token across sessions / orders.
+fn buyer_token_for(email: &str) -> String {
+    if email.is_empty() { return String::new(); }
+    let salt = env::var("BUYER_TOKEN_SALT").unwrap_or_else(|_| {
+        env::var("ADMIN_TOKEN").map(|t| t.chars().take(16).collect::<String>())
+            .unwrap_or_else(|_| "mu-default-buyer-salt".into())
+    });
+    use sha2::{Sha256, Digest};
+    let mut h = Sha256::new();
+    h.update(email.to_lowercase().trim().as_bytes());
+    h.update(b"|");
+    h.update(salt.as_bytes());
+    let digest = h.finalize();
+    let hex: String = digest.iter().map(|b| format!("{:02x}", b)).collect();
+    hex.chars().take(20).collect()
+}
+
+/// Mask an email for public display: y****@hamada.tokyo
+fn mask_email_public(email: &str) -> String {
+    let parts: Vec<&str> = email.splitn(2, '@').collect();
+    if parts.len() != 2 || parts[0].is_empty() {
+        return "***".into();
+    }
+    let local = parts[0];
+    let head: String = local.chars().take(1).collect();
+    format!("{}***@{}", head, parts[1])
+}
+
+/// GET /buyer/:token — public-but-unguessable buyer profile.
+/// Shows: masked email, MUGEN owned, Day N since first purchase, optional bio.
+async fn buyer_profile_page(
+    State(db): State<Db>,
+    axum::extract::Path(token): axum::extract::Path<String>,
+) -> Response {
+    // Token sanity: must be lowercase hex 20 chars. Anything else → 404
+    // immediately, no DB lookup.
+    let token = token.trim().to_string();
+    if token.len() != 20 || !token.chars().all(|c| c.is_ascii_hexdigit()) {
+        return (StatusCode::NOT_FOUND, "Not Found").into_response();
+    }
+
+    // Lazy backfill: if any collab_orders row has NULL buyer_token, populate
+    // by recomputing buyer_token_for(email). Cheap because indexed and
+    // touched rarely (only first time after migration).
+    {
+        let conn = db.lock().unwrap();
+        let needs_backfill: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM collab_orders WHERE buyer_token IS NULL AND COALESCE(email,'') <> ''",
+            [], |r| r.get(0)).unwrap_or(0);
+        if needs_backfill > 0 {
+            let mut stmt = match conn.prepare(
+                "SELECT id, COALESCE(email,'') FROM collab_orders WHERE buyer_token IS NULL AND COALESCE(email,'') <> '' LIMIT 5000"
+            ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+            let rows: Vec<(i64, String)> = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+            for (id, email) in rows {
+                let bt = buyer_token_for(&email);
+                let _ = conn.execute("UPDATE collab_orders SET buyer_token = ? WHERE id = ?", params![bt, id]);
+            }
+        }
+    }
+
+    // Resolve token → email + order count.
+    struct OrderSummary {
+        first_order_at: i64,
+        order_count: i64,
+        email: String,
+    }
+    let summary: Option<OrderSummary> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT MIN(CAST(COALESCE(created_at,'0') AS INTEGER)) AS first_at,
+                    COUNT(*) AS cnt,
+                    COALESCE(MIN(email),'') AS email
+             FROM collab_orders
+             WHERE buyer_token = ? AND COALESCE(email,'') <> ''",
+            params![token],
+            |r| Ok(OrderSummary {
+                first_order_at: r.get(0)?,
+                order_count: r.get(1)?,
+                email: r.get(2)?,
+            })
+        ).ok()
+    };
+    let summary = match summary {
+        Some(s) if s.order_count > 0 => s,
+        _ => return (StatusCode::NOT_FOUND, "Buyer not found").into_response(),
+    };
+
+    // Orders list (most recent 12).
+    struct OrderRow { slug: String, size: String, created_at: i64, amount_jpy: i64, status: String, product_name: String, image_url: String }
+    let orders: Vec<OrderRow> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT
+                o.slug,
+                COALESCE(o.size,''),
+                CAST(COALESCE(o.created_at,'0') AS INTEGER),
+                COALESCE(o.amount_jpy, 0),
+                COALESCE(o.status,'received'),
+                COALESCE((SELECT name FROM products p WHERE p.slug=o.slug), (SELECT name FROM collab_products cp WHERE cp.slug=o.slug), o.slug) AS pname,
+                COALESCE(
+                  (SELECT image_url FROM collab_products cp WHERE cp.slug=o.slug),
+                  (SELECT 'https://wearmu.com/mockups/' || p.id || '.jpg' FROM products p WHERE p.slug=o.slug),
+                  ''
+                ) AS img
+             FROM collab_orders o
+             WHERE o.buyer_token = ?
+             ORDER BY CAST(COALESCE(o.created_at,'0') AS INTEGER) DESC
+             LIMIT 12"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map(params![token], |r| Ok(OrderRow {
+            slug: r.get(0)?, size: r.get(1)?, created_at: r.get(2)?,
+            amount_jpy: r.get(3)?, status: r.get(4)?,
+            product_name: r.get::<_, Option<String>>(5)?.unwrap_or_default(),
+            image_url: r.get(6)?,
+        })).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+
+    // Optional buyer-controlled bio.
+    let bio: String = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT bio FROM buyer_bios WHERE buyer_token = ?",
+            params![token], |r| r.get::<_, String>(0),
+        ).unwrap_or_default()
+    };
+
+    // Day N calc.
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let day_n = if summary.first_order_at > 0 {
+        ((now_s - summary.first_order_at) / 86_400).max(0)
+    } else { 0 };
+
+    let masked = mask_email_public(&summary.email);
+    let bio_html = if bio.trim().is_empty() {
+        String::new()
+    } else {
+        format!(r#"<blockquote style="font-size:16px;color:#bbb;line-height:1.65;border-left:2px solid #e6c449;padding:8px 0 8px 18px;margin:28px 0;max-width:560px">「{}」</blockquote>"#,
+            html_escape(&bio))
+    };
+
+    let mut orders_html = String::new();
+    for o in &orders {
+        let d = (now_s - o.created_at) / 86_400;
+        let pname = if o.product_name.is_empty() { o.slug.clone() } else { o.product_name.clone() };
+        let img_html = if o.image_url.is_empty() {
+            r#"<div style="width:120px;height:120px;background:#0f0f0f;border:1px solid #1f1f1f;border-radius:4px;display:inline-block"></div>"#.to_string()
+        } else {
+            format!(r#"<img src="{}" alt="{}" width="120" height="120" loading="lazy" style="display:inline-block;width:120px;height:120px;object-fit:cover;background:#0f0f0f;border:1px solid #1f1f1f;border-radius:4px;"/>"#,
+                html_attr_escape(&o.image_url), html_escape(&pname))
+        };
+        orders_html.push_str(&format!(
+            r#"<a href="/products/{slug}" style="display:flex;gap:14px;padding:12px 0;border-bottom:1px solid #1a1a1a;text-decoration:none;align-items:center"><div>{img}</div><div style="flex:1;color:#bbb;font-size:13.5px;line-height:1.55"><div style="color:#e6c449;font-size:14px;font-weight:500">{name}</div><div style="color:#888;font-size:11.5px;margin-top:3px">{ago} 日前 · size {sz} · ¥{amt} · {st}</div></div></a>"#,
+            slug = html_attr_escape(&o.slug),
+            img = img_html,
+            name = html_escape(&pname),
+            ago = d,
+            sz = html_escape(&o.size),
+            amt = fmt_jpy(o.amount_jpy),
+            st = html_escape(&o.status)));
+    }
+
+    // Taste vector — count purchases per slug-stem (first 8 chars).
+    use std::collections::BTreeMap;
+    let mut taste_buckets: BTreeMap<String, i64> = BTreeMap::new();
+    {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT COALESCE(slug,'') FROM collab_orders WHERE buyer_token = ?"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        let it = stmt.query_map(params![token], |r| r.get::<_, String>(0)).map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>()).unwrap_or_default();
+        for s in it {
+            let stem: String = s.split('-').take(2).collect::<Vec<_>>().join("-");
+            *taste_buckets.entry(if stem.is_empty() { "(unknown)".into() } else { stem }).or_insert(0) += 1;
+        }
+    }
+    let mut taste_pairs: Vec<(String, i64)> = taste_buckets.into_iter().collect();
+    taste_pairs.sort_by(|a,b| b.1.cmp(&a.1));
+    let taste_html = if taste_pairs.is_empty() {
+        String::new()
+    } else {
+        let chips: String = taste_pairs.iter().take(6).map(|(k,v)| {
+            format!(r#"<span style="display:inline-block;background:#0f0f0f;border:1px solid #1f1f1f;color:#e6c449;font-size:12px;padding:5px 10px;border-radius:18px;margin:0 6px 6px 0;">{}<span style="color:#666;margin-left:6px">×{}</span></span>"#, html_escape(k), v)
+        }).collect();
+        format!(r#"<div style="margin:24px 0 0"><div style="font-size:10.5px;letter-spacing:0.18em;color:#666;text-transform:uppercase;margin-bottom:10px">taste</div>{}</div>"#, chips)
+    };
+
+    let page = format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="robots" content="noindex,nofollow"/>
+<title>buyer · {masked} · MU</title>
+<link rel="canonical" href="https://wearmu.com/buyer/{token}"/>
+<style>
+  :root {{ --bg:#000; --fg:#f5f5f0; --mute:#888; --gold:#e6c449; }}
+  *{{box-sizing:border-box}}
+  html,body{{background:var(--bg);color:var(--fg);margin:0;padding:0;font-family:-apple-system,"Helvetica Neue",sans-serif;font-feature-settings:"palt"}}
+  a{{color:inherit}}
+  .wrap{{max-width:680px;margin:0 auto;padding:48px 22px 80px}}
+  .kicker{{font-size:10.5px;letter-spacing:0.22em;color:#666;text-transform:uppercase;margin-bottom:12px}}
+  h1{{font-size:34px;font-weight:300;letter-spacing:0.02em;line-height:1.25;margin:0 0 6px}}
+  h1 em{{color:var(--gold);font-style:normal;font-weight:400}}
+  .meta{{color:var(--mute);font-size:13.5px;margin-top:6px;line-height:1.6}}
+  .stat{{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:32px 0 0;padding:18px 0;border-top:1px solid #1a1a1a;border-bottom:1px solid #1a1a1a}}
+  .stat .v{{font-size:24px;font-weight:300;letter-spacing:0.01em;color:var(--fg);font-variant-numeric:tabular-nums}}
+  .stat .l{{font-size:10.5px;letter-spacing:0.16em;color:var(--mute);text-transform:uppercase;margin-top:4px}}
+  h2{{font-size:11px;letter-spacing:0.22em;color:#777;text-transform:uppercase;margin:36px 0 8px}}
+  footer{{margin-top:60px;color:var(--mute);font-size:11px;line-height:1.7}}
+  footer a{{text-decoration:underline}}
+</style></head><body><div class="wrap">
+  <div class="kicker">buyer · MU</div>
+  <h1>{masked}</h1>
+  <div class="meta">この page はあなた専用の share URL です。<br>検索エンジン非表示 (noindex)。リンクを知っている人にだけ届きます。</div>
+  {bio_html}
+  <div class="stat">
+    <div><div class="v">{owned}</div><div class="l">MUGEN 所有</div></div>
+    <div><div class="v">{dayn}</div><div class="l">Day N</div></div>
+    <div><div class="v">¥{spent}</div><div class="l">累計</div></div>
+  </div>
+  {taste_html}
+  <h2>orders</h2>
+  <div>{orders_html}</div>
+  <footer>
+    bio を編集したい場合は <a href="mailto:info@enablerdao.com?subject=buyer-bio">info@enablerdao.com</a> まで。<br>
+    この URL を取り消したい場合も同じ宛先へどうぞ (24h 以内に対応)。
+  </footer>
+</div></body></html>"#,
+        masked = html_escape(&masked),
+        token = html_attr_escape(&token),
+        bio_html = bio_html,
+        owned = summary.order_count,
+        dayn = day_n,
+        spent = fmt_jpy({
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT COALESCE(SUM(amount_jpy),0) FROM collab_orders WHERE buyer_token=?",
+                params![token], |r| r.get::<_, i64>(0)).unwrap_or(0)
+        }),
+        taste_html = taste_html,
+        orders_html = orders_html);
+    axum::response::Html(page).into_response()
+}
+
 /// POST /api/bounty/submit — public endpoint, accepts a bug bounty report.
 /// Rate-limited per email + per ip_hash (10/h via in-memory bucket would be
 /// nice; for now we rely on body-size + uniqueness checks at DB layer).
@@ -21687,6 +21932,7 @@ async fn main() {
         .route("/bounty", get(bounty_page))
         .route("/security", get(bounty_page))
         .route("/api/bounty/submit", post(api_bounty_submit))
+        .route("/buyer/:token", get(buyer_profile_page))
         .route("/admin/bounty", get(admin_bounty))
         .route("/admin/bounty/:id/triage", post(admin_bounty_triage))
         .route("/admin/bounty/:id/issue-reward", post(admin_bounty_issue_reward))
