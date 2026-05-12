@@ -8620,13 +8620,14 @@ async fn send_lottery_winner_email(email: &str, action_url: &str, enai: i64) {
   <p style="font-size:13px;opacity:0.8">これはロトではありません。あなたが過去に MU と交わした購入の総量が、確率の重みとして反映された結果です。</p>
   <p style="font-size:13px;opacity:0.8">あなたは次の 3 つから 1 つを選べます。期限は 7 日間です。</p>
   <ol style="font-size:13px;opacity:0.9;padding-left:18px">
-    <li><strong style="color:#e6c449">受け取る</strong> — 次の MA を完全無料で。 ENAI {enai} 枚も同時に Treasury から贈与されます。</li>
+    <li><strong style="color:#e6c449">受け取る</strong> — 次の MA を完全無料で。 ENAI {enai} unit も同時に Treasury から贈与されます。</li>
     <li><strong style="color:#e6c449">譲る</strong> — 別のメールアドレスを指名できます。連鎖は 7 人で reset。</li>
     <li><strong style="color:#e6c449">チャリティ</strong> — Enabler Inc. の指定先 (CO₂ オフセット / 教育) に転換されます。</li>
   </ol>
   <p style="margin:32px 0">
     <a href="{action_url}" style="display:inline-block;padding:14px 28px;background:#e6c449;color:#0A0A0A;text-decoration:none;font-weight:700;letter-spacing:0.2em;font-size:12px;text-transform:uppercase">選択画面を開く</a>
   </p>
+  <p style="font-size:10px;opacity:0.4;line-height:1.7">ENAI は MU エコシステム内でのみ使用可能な独自 utility unit です。法定通貨や他暗号資産への換金は提供していません。</p>
   <p style="font-size:11px;opacity:0.5">— MU × Enabler Inc. (株式会社イネブラ)</p>
 </div>"#, action_url = action_url, enai = enai);
     let _ = reqwest::Client::new()
@@ -8838,11 +8839,11 @@ button small{{display:block;opacity:0.6;font-size:11px;line-height:1.65;margin-t
 </style></head><body><div class="wrap">
 <div class="eyebrow">MU · 4/7 Founder Relay</div>
 <h1>あなたに 1 着の MA が贈られます</h1>
-<div class="meta">{email} · 連鎖 {chain_pos} · ENAI {enai} 枚 · status={status}</div>
+<div class="meta">{email} · 連鎖 {chain_pos} · ENAI {enai} unit · status={status}</div>
 
 <div id="actions" {disabled_attr}>
 <button onclick="decide('accept')"><strong>受け取る</strong>
-次の MA を完全無料で。ENAI {enai} 枚も同時に Treasury から贈与されます。<small>shipping: Enabler Inc. が手配します</small></button>
+次の MA を完全無料で。ENAI {enai} unit も同時に Treasury から贈与されます。<small>shipping: Enabler Inc. が手配 / ENAI は MU エコ内で利用可、換金不可</small></button>
 
 <button onclick="showRelay()"><strong>譲る</strong>
 別のメールアドレスを指名できます。連鎖は最大 7 人で reset。<small>受贈者と同じ 3 択メールが届きます</small></button>
@@ -8947,7 +8948,7 @@ footer{{padding:48px 32px;border-top:1px solid rgba(255,255,255,0.06);text-align
 <p>MU は、100 日に 1 回、過去に MUGEN / MUON / MA / YOU / NOUNS を購入した方の中から weighted random で 1 人を選び、その人に <strong>次の MA (1-of-1)</strong> を贈与します。当選者は次の 3 つから 1 つを選びます。</p>
 
 <ol>
-<li><strong>受け取る</strong> — 次の MA を完全無料で受け取る。ENAI 100 枚も同時に Treasury から贈与。</li>
+<li><strong>受け取る</strong> — 次の MA を完全無料で受け取る。ENAI 100 unit も同時に Treasury から贈与 (MU エコ内 utility、換金不可)。</li>
 <li><strong>譲る</strong> — 別の人を指名。指名された人にも同じ 3 択メールが届く。連鎖は最大 7 人。7 人目で reset。</li>
 <li><strong>チャリティに転換</strong> — Enabler Inc. の指定先 (CO₂ オフセット / 教育) に転換。MA はオークションに戻り、収益が指定先に。</li>
 </ol>
@@ -9069,7 +9070,7 @@ async fn wearing_submit(
         "ok": true,
         "wearer_pseudonym": pseudonym,
         "status": "pending",
-        "message": "投稿は人手モデレーション後に /wearing に掲載されます。ENAI 5 枚贈与は承認後 7 日以内。",
+        "message": "投稿は人手モデレーション後に /wearing に掲載されます。ENAI 5 unit 贈与は承認後 7 日以内 (MU エコ内 utility、換金不可)。",
     })).into_response()
 }
 
@@ -9150,7 +9151,7 @@ footer{{padding:48px 32px;border-top:1px solid rgba(255,255,255,0.06);text-align
 </ul>
 <div class="submit">
 <h2>あなたの 1 着を投稿する</h2>
-<p>MU を購入した方は <code>POST /api/wearing/submit</code> から投稿できます (body: product_id, wearer_email, kind, image_url|note_text, location_zone)。承認後に /wearing に掲載され、ENAI 5 枚贈与。投稿フォームは近日公開。</p>
+<p>MU を購入した方は <code>POST /api/wearing/submit</code> から投稿できます (body: product_id, wearer_email, kind, image_url|note_text, location_zone)。承認後に /wearing に掲載され、ENAI 5 unit 贈与 (MU エコ内 utility、換金不可)。投稿フォームは近日公開。</p>
 </div>
 <footer>MU — wearmu.com / 顔のない brand</footer>
 </body></html>"#, entries = entries))
@@ -9418,7 +9419,7 @@ async fn send_ma_retire_reminder(email: &str, product_id: i64, expires_at_unix: 
   <p style="font-size:13px;opacity:0.85">これは強制返却ではありません。MU は服が時間を持つことを示すために expiry を明示しているだけです。あなたは次のいずれかを選べます:</p>
   <ol style="font-size:13px;opacity:0.9;padding-left:18px">
     <li><strong style="color:#e6c449">そのまま着続ける</strong> — 何もしなくて OK。期日後も所有は永続。</li>
-    <li><strong style="color:#e6c449">MU に返送する</strong> — ENAI 50 枚 refund + 服は次の MA Lottery の seed または永続アーカイブに。</li>
+    <li><strong style="color:#e6c449">MU に返送する</strong> — ENAI 50 unit refund (MU エコ内 utility、換金不可) + 服は次の MA Lottery の seed または永続アーカイブに。</li>
   </ol>
   <p style="margin:32px 0">
     <a href="https://wearmu.com/ma/retired" style="color:#e6c449;font-size:12px;letter-spacing:0.2em;text-transform:uppercase">retirement ledger を見る →</a>
