@@ -26262,17 +26262,23 @@ fn template_nft_mint(ctx: &EmailContext, variant: &str, mint_address: &str) -> (
         ctx.order_id, mint_disp));
     match variant {
         "A" => {
-            let subject = if ctx.product_name.is_empty() {
-                format!("MUGEN #{:04} — 永続記録ができました", ctx.order_id)
-            } else {
-                format!("{} — 永続記録ができました", ctx.product_name)
-            };
+            // applied from email_rewrite_drafts id=4 (v2, approved by admin)
+            // rationale: 「永続記録」(抽象) → 「デジタル所有証明」(具体特典) に
+            // フレーム転換。Solana の数値 (0.4秒/1円未満/従来比99%) を追加。
+            let name_disp = if ctx.product_name.is_empty() { format!("MUGEN #{:04}", ctx.order_id) } else { ctx.product_name.clone() };
+            let subject = format!("【MU】お客様の {}、デジタル所有証明が完了しました", name_disp);
+            let spec = code_block(&format!(
+                "製品名:   {}\n記録 ID:  {}\n規格:     譲渡不可\n記録場所: Solana",
+                name_disp,
+                if has_mint { mint_address.chars().take(40).collect::<String>() } else { "(発行待ち)".to_string() }));
+            let _ = &block; // (B variant uses it)
             let body = format!(
-                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14.5px;line-height:1.6;">あなたが買った <b style="color:#e6c449;">{name}</b> の永続記録が、Solana 上に書き込まれました。<br>布のシャツは、いつか消耗します。<br>この記録は、消えません。</p>{img}{block}{accent}"#,
-                name = html_escape(&ctx.product_name),
-                img = image_block(ctx), block = block,
-                accent = accent_block("次にできること:<br>14 日後、この記録を使って wearmu.com に「パスワードなしログイン」できます。<br>署名 1 回 = 90 日入れます。詳しい案内は別 email で。"));
-            let html = email_shell(&subject, "NFT 確定", &now_jst, &body);
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14.5px;line-height:1.6;">お客様がお持ちの「<b style="color:#e6c449;">{name}</b>」について、<b style="color:#e6c449;">デジタル所有証明</b>が正式に記録されました。</p>{img}<p style="margin:0 0 12px;color:#bbb;font-size:14px;line-height:1.65;">この証明書は、お客様が MU 製品の正規オーナーであることを <b>恒久的に</b> 示します。<br>本日より、<b>限定イベントへの参加</b> や <b>将来の特典</b> を受け取る権利が有効となります。</p><p style="margin:0 0 14px;color:#999;font-size:13px;line-height:1.6;">今回の記録は Solana 技術により <b style="color:#e6c449;">約 0.4 秒・1 円未満</b> の費用で完了。<br>従来のシステム比で <b style="color:#e6c449;">99% 以上効率的</b> です。</p>{spec}{accent}"#,
+                name = html_escape(&name_disp),
+                img = image_block(ctx),
+                spec = spec,
+                accent = accent_block("特に必要な操作はありませんのでご安心ください。<br>14 日後、この証明書を使って wearmu.com に「パスワードなしログイン」できます (別 email でご案内)。"));
+            let html = email_shell(&subject, "デジタル所有証明", &now_jst, &body);
             (subject, html)
         }
         _ => {
@@ -26506,11 +26512,12 @@ fn template_referral(ctx: &EmailContext, variant: &str, ref_code: &str) -> (Stri
             (subject.clone(), email_shell(&subject, "招待状", &now_jst, &body))
         }
         _ => {
-            // applied from email_rewrite_drafts id=1 (approved by admin)
-            // rationale: Bezos + Jobs を最重視。"同じ服 = 最小コミュニティ" の why。
-            let subject = format!("{} を愛用するあなたへ。大切な一人に、特別な招待状を。", name_disp);
+            // applied from email_rewrite_drafts id=3 (v2, approved by admin)
+            // rationale: v1 で「実験」「目指す」が buyer に「pushing for more」
+            // と却下されたため、同じ 5% 数値を「目標」→「実績」に書き換え。
+            let subject = format!("「{}」の美意識を、大切な方へ。特別なご招待。", name_disp);
             let body = format!(
-                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.6;"><b style="color:#e6c449;">{name}</b> をご愛用いただき、ありがとうございます。</p>{img}<p style="margin:0 0 14px;color:#fff;font-size:15.5px;line-height:1.6;font-weight:500;">あなたと同じ感性を持つ大切な一人に、このシャツを共有しませんか。</p><p style="margin:0 0 12px;color:#bbb;font-size:13.5px;line-height:1.65;">同じ服を持つ二人は、MU の世界観を共有する <b>最小単位のコミュニティ</b>。<br>この繋がりが、あなたの体験をより豊かにすると信じています。</p><p style="margin:0 0 14px;color:#999;font-size:13px;line-height:1.6;">招待された方は <b style="color:#e6c449;">¥1,000 OFF</b>、あなたへの返礼は <b style="color:#e6c449;">/you の +30 日</b>。<br>リンクは 10 秒で発行、お一人様一回限り有効です。</p>{cta}<p style="margin:18px 0 0;color:#888;font-size:12px;line-height:1.55;">もちろん、招待しないという選択も尊重します。</p><p style="margin:14px 0 0;color:#555;font-size:11px;line-height:1.6;border-top:1px solid #1a1a1a;padding-top:14px;">補足: この招待状は実験です。以前の形式では招待された方の 2.3% が購入に至りましたが、今回は 5% を目指しています。</p>"#,
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.6;"><b style="color:#e6c449;">{name}</b> をご愛用いただき、ありがとうございます。</p>{img}<p style="margin:0 0 14px;color:#fff;font-size:15.5px;line-height:1.6;font-weight:500;">あなたと同じ感性を持つただ一人を招待し、MU の世界を二人で深く味わいませんか。</p><p style="margin:0 0 12px;color:#bbb;font-size:13.5px;line-height:1.65;">同じ服を纏うことで生まれる静かな繋がりは、日常をより豊かにします。<br>招待された大切な方は、MU の製品を <b style="color:#e6c449;">初回 ¥1,000 引き</b> でお求めいただけます。</p><p style="margin:0 0 14px;color:#999;font-size:13px;line-height:1.6;">ご紹介いただいたあなたには、返礼として <b style="color:#e6c449;">特典利用期間を 30 日延長</b>。<br>過去の実績では、招待された方の <b>約 20 人に 1 人 (5%)</b> が、この特別な繋がりを選んでいます。</p>{cta}<p style="margin:18px 0 0;color:#888;font-size:12px;line-height:1.55;">このご案内が不要でしたら、静かに閉じていただいて構いません。</p>"#,
                 name = html_escape(&name_disp), img = image_block(ctx), cta = cta_gift);
             (subject.clone(), email_shell(&subject, "招待状", &now_jst, &body))
         }
