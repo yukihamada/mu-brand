@@ -11648,28 +11648,28 @@ async fn show_partner_proposal_page(
 
     // ── "なぜ MU が売れるのか" explainer (always shown) ──
     let why_mu_html = r##"<section class="why-mu-wrap">
-  <h2 class="section-h">📣 なぜ MU グッズが「売れる」のか</h2>
-  <p class="section-d">パートナーとサンプル発注に進む前に、MU 単独商品で実証済みの 4 つの強さ — これがコラボ商品にも丸ごと適用されます。</p>
+  <h2 class="section-h">📣 MU が大事にしている 4 つのこと</h2>
+  <p class="section-d">MU は立ち上げて間もないアパレルブランドです。実績はこれから積み上げますが、商品設計の根っこに置いている 4 つの考え方を共有します — これがそのままコラボ商品にも適用されます。</p>
   <div class="why-grid">
     <div class="why-card">
       <div class="why-n">01</div>
-      <div class="why-t">「今しかない」が買う理由になる</div>
-      <div class="why-d">MUGEN は毎時 108 枚限定・天気で柄が変わる。MA は週次 1/1 オークション。「次は無い」が伝わると、定価でも売り切れる。コラボ商品にもこの "希少性" を移植します。</div>
+      <div class="why-t">「今しかない」を商品の設計に組み込む</div>
+      <div class="why-d">MUGEN は毎時 108 枚・天気で柄が変わる。MA は週次 1/1 オークション。希少性を後付けの煽りではなく、構造そのものに入れています。コラボ商品も同じ思想で、ドロップごとの限定性を残します。</div>
     </div>
     <div class="why-card">
       <div class="why-n">02</div>
       <div class="why-t">在庫ゼロで始められる</div>
-      <div class="why-d">全品 Printful 経由のオンデマンド製造。コラボパートナー側に在庫リスクはゼロ。注文が入ってから 7〜14 日で工場直送されます。試作だけして売れたら作る、が可能。</div>
+      <div class="why-d">全品 Printful 経由のオンデマンド製造。コラボパートナー側に在庫リスクはゼロ。注文が入ってから 7〜14 日で工場直送。試作で反応を見て、売れ筋だけ本格化、が可能です。</div>
     </div>
     <div class="why-card">
       <div class="why-n">03</div>
       <div class="why-t">物語のあるブランド設計</div>
-      <div class="why-d">「天気で柄が変わる」「コラボ相手の世界観をその場で MU が解釈する」など、商品単体ではなく "なぜこのデザインなのか" が常にある。SNS で語られやすい = 拡散が止まらない。</div>
+      <div class="why-d">「なぜこの色・この柄なのか」を毎回言語化します。商品単体ではなく、文脈付きで世に出るので SNS で語られやすい。コラボ相手の世界観を MU が解釈し、デザイン根拠まで一緒に作ります。</div>
     </div>
     <div class="why-card">
       <div class="why-n">04</div>
-      <div class="why-t">パートナーは "MU ブランドの裏付け" を借りられる</div>
-      <div class="why-d">MUGEN ですでに 1,300+ 枚を売った実績、Mercari/Enabler 創業者の濱田優貴が直接プロデュース、MU Constitution によるオペレーション自動化。新規パートナーは「実績ある仕組みに乗る」だけで済む。</div>
+      <div class="why-t">運営者の本気と仕組み</div>
+      <div class="why-d">Mercari / Enabler 創業者の濱田優貴が直接プロデュース。MU Constitution に沿った自律エージェントが品質・在庫・顧客対応を裏で回しています。実績は積み上げ中ですが、システムと意志は揃っています。</div>
     </div>
   </div>
 </section>"##.to_string();
@@ -12330,7 +12330,8 @@ footer a{color:var(--y);text-decoration:none}
   <h1>あなたのブランドで <em>MU コラボグッズ</em>。<br>
   サイトURL とメール、1 分で OK。</h1>
   <div class="lead">
-    MU は <b>毎時 108 枚限定の AI デザイン</b>を売り、SIIIEEP・kokon.tokyo など複数のパートナーとコラボグッズを展開しています。<br>
+    MU は <b>毎時 108 枚限定の AI デザイン</b>を出し続ける、立ち上げ間もない実験的アパレルブランドです。<br>
+    西麻布の <b>焼肉古今 (kokon.tokyo)</b> と最初のコラボラインを公開しており、いま新しいパートナーを探しています。<br>
     貴社のサイトを <b>AI が読み取り</b>、推奨商品セットと <b>専用提案ページ</b>を 24 時間以内にお送りします。
   </div>
 
@@ -12341,20 +12342,21 @@ footer a{color:var(--y);text-decoration:none}
     <div class="step"><div class="n">STEP 3</div><div class="t">専用提案ページ送付</div><div class="d">パスワード保護された貴社専用 URL を 24h 以内にメールでお届け。サンプルは原価のみで発注可能。</div></div>
   </div>
 
-  <h2>なぜ MU グッズが「売れる」のか</h2>
+  <h2>MU が大事にしている 4 つのこと</h2>
   <div class="features">
-    <div class="feat"><div class="icon">⏳</div><div class="t">「今しかない」が買う理由</div><div class="d">毎時 108 枚・天気で柄が変わる・週次オークション。希少性を移植したコラボ商品も定価で売り切れる。</div></div>
-    <div class="feat"><div class="icon">📦</div><div class="t">在庫ゼロで始められる</div><div class="d">全品オンデマンド製造。パートナー側に在庫リスクはゼロ。試作だけして売れたら作る。</div></div>
-    <div class="feat"><div class="icon">📖</div><div class="t">物語のあるブランド設計</div><div class="d">"なぜこのデザインなのか" を毎回 AI が言語化。SNS で語られやすい = 拡散が止まらない。</div></div>
-    <div class="feat"><div class="icon">🤝</div><div class="t">MU 実績の裏付け</div><div class="d">MUGEN で 1,300+ 枚販売実績、Mercari/Enabler 創業者の濱田優貴が直接プロデュース。</div></div>
+    <div class="feat"><div class="icon">⏳</div><div class="t">「今しかない」が買う理由</div><div class="d">毎時 108 枚・天気で柄が変わる・週次オークション。希少性そのものをデザインに組み込んだ商品設計。コラボ品にも同じ思想を移植します。</div></div>
+    <div class="feat"><div class="icon">📦</div><div class="t">在庫ゼロで始められる</div><div class="d">全品 Printful オンデマンド製造。パートナー側に在庫リスクはゼロ。試作だけして、売れ筋が見えてから本格展開できます。</div></div>
+    <div class="feat"><div class="icon">📖</div><div class="t">物語のあるブランド設計</div><div class="d">"なぜこの色・この柄なのか"を毎回 AI が言語化。商品単体ではなく、文脈付きで世に出るので SNS で語られやすい。</div></div>
+    <div class="feat"><div class="icon">🤝</div><div class="t">運営者の本気</div><div class="d">Mercari / Enabler 創業者の濱田優貴が直接プロデュース。立ち上げて間もないが、システムと意志は揃っています。実績はこれから積み上げていきます。</div></div>
   </div>
 
   <div class="examples">
     すでにコラボ進行中:<br>
-    🥋 <b>SIIIEEP</b> (北参道 BJJ ブランド) — 31 SKU 展開中 (ラッシュガード/Tee/Hoodie ほか)<br>
-    🥩 <b>kokon.tokyo</b> (都内焼肉店) — 6 SKU 展開中 (エプロン/マグ/Tee ほか) · <a href="https://kokon.tokyo" target="_blank">kokon.tokyo</a><br>
+    🥩 <b>焼肉古今 (kokon.tokyo)</b> — 西麻布の完全個室焼肉。<b>田村牧場の純但馬牛</b>を専属焼き師が炭火で。コース ¥15,000〜¥35,000、Solana ブロックチェーンに産地証明を刻む、新時代の高級焼肉店。<br>
+    <a href="https://kokon.tokyo" target="_blank" style="color:var(--y)">kokon.tokyo →</a><br>
+    MU は古今と組み、「焼き師のエプロン」「黒磁器マグ」「金糸刺繍スナップバック」など <b>6 SKU</b> を、KOKON の世界観そのままに（モダン高級ミニマル / 黒 × 金）展開しています。<br>
     <br>
-    過去事例の確認・素材感の検証は申込後にお見せできます。
+    立ち上げて間もないので、コラボ事例はまだ少数。だからこそ、いまの段階で参加いただけるパートナーには相応にコミットします。
   </div>
 
   <form id="apply-form" autocomplete="on">
