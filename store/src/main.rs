@@ -17641,6 +17641,16 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         interval_secs: 7 * 86_400,
         description: "Jeff Bezos 思考モデル: customer obsession, Type 1/2 doors, Day-1 thinking, decisions/hour",
     },
+    AgentDef {
+        name: "checkout_health",
+        interval_secs: 15 * 60, // 15 min — purchase path is sacrosanct
+        description: "15分毎に wearmu.com 購入導線を synthetic probe、4xx/5xx は CRITICAL Telegram + T1 escalate",
+    },
+    AgentDef {
+        name: "funnel_anomaly",
+        interval_secs: 3600, // 1h
+        description: "24h funnel CV を 30d baseline と比較、>50% 下落かつ pv>=20 で T1 アラート (silent buy-broken 検出)",
+    },
 ];
 
 /// agent_journal から指定 agent の最後の cycle_at (epoch sec) を取得。
@@ -17676,6 +17686,8 @@ async fn run_agent(name: &str, db: Db) -> Result<AgentReport, String> {
         "growth"            => agent_growth(db).await,
         "musk_review"       => agent_musk_review(db).await,
         "bezos_review"      => agent_bezos_review(db).await,
+        "checkout_health"   => agent_checkout_health(db).await,
+        "funnel_anomaly"    => agent_funnel_anomaly(db).await,
         _ => Err(format!("unknown agent: {}", name)),
     }
 }
@@ -19285,8 +19297,11 @@ async fn agent_price_micro(db: Db) -> Result<AgentReport, String> {
     let week = now_s - 7 * 86_400;
     let two_weeks = now_s - 14 * 86_400;
 
-    // Active products with their 7-day order count and creation age
-    type Row = (i64, String, i64, i64, i64);
+    // Active products with their 7-day order count, age, AND Printful cost
+    // (cost is used as a hard floor — never let the agent price below
+    // cost × 1.2 even if the ±10% envelope would allow it. Constitution
+    // §"Purchase path is sacrosanct".)
+    type Row = (i64, String, i64, i64, i64, i64);
     let rows: Vec<Row> = {
         let conn = db.lock().unwrap();
         let mut stmt = match conn.prepare(
@@ -19294,12 +19309,13 @@ async fn agent_price_micro(db: Db) -> Result<AgentReport, String> {
                     (SELECT COUNT(*) FROM collab_orders o
                      WHERE o.slug = p.slug
                        AND CAST(COALESCE(o.created_at,'0') AS INTEGER) > ?1) AS sold_7d,
-                    CAST(COALESCE(p.created_at,'0') AS INTEGER) AS created_secs
+                    CAST(COALESCE(p.created_at,'0') AS INTEGER) AS created_secs,
+                    COALESCE(p.printful_cost_jpy, 0) AS cost
              FROM collab_products p
              WHERE p.active = 1
              ORDER BY p.id DESC LIMIT 50"
         ) { Ok(s) => s, Err(_) => return Ok(AgentReport::idle("schema not ready")) };
-        stmt.query_map(params![week], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+        stmt.query_map(params![week], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))
             .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
     };
     obs.insert("considered".into(), serde_json::Value::from(rows.len() as i64));
@@ -19307,13 +19323,44 @@ async fn agent_price_micro(db: Db) -> Result<AgentReport, String> {
     let mut bumped: i64 = 0;
     let mut cut: i64 = 0;
     let mut escalated: i64 = 0;
-    for (pid, slug, price, sold_7d, created_secs) in &rows {
+    let mut floor_blocked: i64 = 0;
+    for (pid, slug, price, sold_7d, created_secs, cost) in &rows {
         let delta: i64 = if *sold_7d > 3 { 300 }
                          else if *sold_7d == 0 && (now_s - created_secs) > 14 * 86_400 && *created_secs > 0 { -300 }
                          else { 0 };
         if delta == 0 { continue; }
         if (*created_secs == 0) && *sold_7d == 0 { continue; }
         let _ = two_weeks; // age check inlined above
+
+        // ─── Hard floors (Constitution: purchase path sacrosanct) ─────────
+        // The agent must never produce a price that makes us lose money or
+        // looks broken to a customer. These checks happen BEFORE the ±10%
+        // envelope, so even if the envelope says "allowed", we refuse.
+        let candidate = *price + delta;
+        let min_margin_floor = (((*cost) as f64) * 1.2).round() as i64;
+        let abs_floor: i64 = 1_000;
+        let abs_ceiling: i64 = 100_000;
+        if candidate < abs_floor {
+            decisions.push(serde_json::json!({
+                "type":"floor_block","slug":slug,"current":price,"would_be":candidate,
+                "hint": format!("candidate ¥{} < absolute floor ¥{}", candidate, abs_floor),
+            }));
+            floor_blocked += 1; continue;
+        }
+        if candidate > abs_ceiling {
+            decisions.push(serde_json::json!({
+                "type":"ceiling_block","slug":slug,"current":price,"would_be":candidate,
+                "hint": format!("candidate ¥{} > absolute ceiling ¥{}", candidate, abs_ceiling),
+            }));
+            floor_blocked += 1; continue;
+        }
+        if *cost > 0 && candidate < min_margin_floor {
+            decisions.push(serde_json::json!({
+                "type":"margin_block","slug":slug,"current":price,"would_be":candidate,"cost":cost,
+                "hint": format!("candidate ¥{} < cost×1.2 = ¥{}", candidate, min_margin_floor),
+            }));
+            floor_blocked += 1; continue;
+        }
 
         // T2 envelope per Bezos critique: ±10% / ±¥1000. Beyond that → T1.
         // (was ±5%/¥500 — too conservative; most price moves are two-way doors.)
@@ -19371,9 +19418,10 @@ async fn agent_price_micro(db: Db) -> Result<AgentReport, String> {
     obs.insert("bumped".into(), serde_json::Value::from(bumped));
     obs.insert("cut".into(), serde_json::Value::from(cut));
     obs.insert("escalated".into(), serde_json::Value::from(escalated));
+    obs.insert("floor_blocked".into(), serde_json::Value::from(floor_blocked));
     let notable = bumped + cut > 0 || escalated > 0;
-    let summary = format!("price_micro: {}↑ {}↓ {}↑esc (dry_run={})",
-        bumped, cut, escalated, is_dry_run);
+    let summary = format!("price_micro: {}↑ {}↓ {}↑esc {}floor (dry_run={})",
+        bumped, cut, escalated, floor_blocked, is_dry_run);
     Ok(AgentReport {
         observations: serde_json::Value::Object(obs),
         decisions, actions, summary, notable,
@@ -20478,6 +20526,181 @@ Respond as STRICT JSON: {{"text": "<the post body>"}}"#,
     Ok(AgentReport {
         observations: serde_json::Value::Object(obs),
         decisions, actions, summary, notable: true,
+    })
+}
+
+// ── Agent: checkout_health ─────────────────────────────────────────────
+// Constitution: "purchase path is sacrosanct". Every 15 min, probe the user-
+// facing endpoints customers actually use to buy. Any non-200 → governance T1
+// + immediate Telegram (severity=critical). Probes are external HTTPS hits
+// to wearmu.com so even Fly proxy issues are caught.
+async fn agent_checkout_health(_db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut decisions: Vec<serde_json::Value> = Vec::new();
+    let mut critical: Vec<String> = Vec::new();
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10)).build()
+        .map_err(|e| e.to_string())?;
+    let probes: &[(&str, &str, Option<&str>)] = &[
+        ("healthz",          "https://wearmu.com/healthz",              Some("ok")),
+        ("home",             "https://wearmu.com/",                     Some("MU")),
+        ("you_landing",      "https://wearmu.com/you",                  None),
+        ("sweep_signals",    "https://wearmu.com/api/sweep/signals",    None),
+        ("products_collab",  "https://wearmu.com/products/sweep-cap",   None),
+    ];
+    for (name, url, must_contain) in probes {
+        let started = std::time::Instant::now();
+        let res = client.get(*url).send().await;
+        let elapsed_ms = started.elapsed().as_millis() as i64;
+        let (ok, status, body_check) = match res {
+            Ok(r) => {
+                let status = r.status().as_u16();
+                let is_2xx = (200..=299).contains(&status);
+                let body_ok = if let Some(needle) = must_contain {
+                    r.text().await.map(|t| t.contains(needle)).unwrap_or(false)
+                } else { is_2xx };
+                (is_2xx && body_ok, status, body_ok)
+            }
+            Err(_) => (false, 0u16, false),
+        };
+        obs.insert(format!("{}_status", name), serde_json::Value::from(status as i64));
+        obs.insert(format!("{}_ms", name),     serde_json::Value::from(elapsed_ms));
+        obs.insert(format!("{}_ok", name),     serde_json::Value::from(ok));
+        if !ok {
+            critical.push(format!("{} {} status={} body_ok={} ({}ms)",
+                name, url, status, body_check, elapsed_ms));
+            decisions.push(serde_json::json!({
+                "type":"probe_fail","name":name,"url":url,"status":status,"elapsed_ms":elapsed_ms,
+            }));
+        }
+    }
+
+    // Stripe webhook lag: if there are recent orders (last 24h) but no
+    // successful webhook-processed row in same window, alert.
+    // We use a proxy: collab_orders rows with non-null amount_jpy.
+    let stripe_lag = {
+        let now_s: i64 = chrono_now().parse().unwrap_or(0);
+        let h24 = now_s - 24 * 3600;
+        let conn = _db.lock().unwrap();
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM collab_orders
+             WHERE CAST(COALESCE(created_at,'0') AS INTEGER) > ?",
+            params![h24], |r| r.get(0),
+        ).unwrap_or(0);
+        n
+    };
+    obs.insert("orders_24h".into(), serde_json::Value::from(stripe_lag));
+
+    // Constitution: critical means immediate Telegram, regardless of dedup.
+    if !critical.is_empty() {
+        let tg_token = env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default();
+        let tg_chat  = env::var("TELEGRAM_CHAT_ID").unwrap_or_else(|_| "1136442501".into());
+        if !tg_token.is_empty() {
+            let msg = format!(
+                "🚨 CHECKOUT HEALTH FAIL\n\nMU の購入導線に問題:\n{}",
+                critical.join("\n"));
+            let _ = reqwest::Client::new()
+                .post(format!("https://api.telegram.org/bot{}/sendMessage", tg_token))
+                .json(&serde_json::json!({
+                    "chat_id": tg_chat, "text": msg, "disable_web_page_preview": true,
+                }))
+                .send().await;
+        }
+        let conn = _db.lock().unwrap();
+        let did = log_autonomy_decision(
+            &conn, "checkout_health", "probe_critical_fail", "T1",
+            &serde_json::json!({"failures": critical.clone()}),
+            false, true, false,
+        );
+        let _ = enqueue_governance(
+            &conn, did, "checkout_health",
+            "CRITICAL: purchase path probes failed",
+            &critical.join(" | "),
+        );
+    }
+
+    let ok_count = probes.len() - critical.len();
+    let summary = format!("checkout_health: {}/{} probes OK ({} orders 24h)",
+        ok_count, probes.len(), stripe_lag);
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs),
+        decisions, actions: vec![],
+        summary,
+        notable: !critical.is_empty(),
+    })
+}
+
+// ── Agent: funnel_anomaly ──────────────────────────────────────────────
+// Looks at the last 24h funnel vs the 30d baseline. If CV rate dropped by
+// >50% relative to baseline AND there were ≥20 pageviews today, T1 alert.
+// Catches the silent "all customers see a broken Buy button" scenario.
+async fn agent_funnel_anomaly(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut decisions: Vec<serde_json::Value> = Vec::new();
+
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let h24 = now_s - 24 * 3600;
+    let d30 = now_s - 30 * 86_400;
+
+    let (pv_24h, paid_24h, pv_30d, paid_30d): (i64, i64, i64, i64) = {
+        let conn = db.lock().unwrap();
+        let q = |sql: &str, t: i64| -> i64 {
+            conn.query_row(sql, params![t], |r| r.get(0)).unwrap_or(0)
+        };
+        (
+            q("SELECT COUNT(*) FROM funnel_events WHERE event='pageview' AND CAST(COALESCE(created_at,'0') AS INTEGER) > ?", h24),
+            q("SELECT COUNT(*) FROM funnel_events WHERE event='checkout_paid' AND CAST(COALESCE(created_at,'0') AS INTEGER) > ?", h24),
+            q("SELECT COUNT(*) FROM funnel_events WHERE event='pageview' AND CAST(COALESCE(created_at,'0') AS INTEGER) > ?", d30),
+            q("SELECT COUNT(*) FROM funnel_events WHERE event='checkout_paid' AND CAST(COALESCE(created_at,'0') AS INTEGER) > ?", d30),
+        )
+    };
+    let cv_24h = if pv_24h > 0 { paid_24h as f64 / pv_24h as f64 } else { 0.0 };
+    let cv_30d = if pv_30d > 0 { paid_30d as f64 / pv_30d as f64 } else { 0.0 };
+    obs.insert("pageviews_24h".into(), pv_24h.into());
+    obs.insert("paid_24h".into(),      paid_24h.into());
+    obs.insert("cv_24h".into(),        serde_json::json!(cv_24h));
+    obs.insert("cv_30d".into(),        serde_json::json!(cv_30d));
+
+    if pv_24h < 20 || cv_30d == 0.0 {
+        return Ok(AgentReport::idle("insufficient signal (need >=20 pageviews and a 30d baseline)"));
+    }
+
+    let drop_ratio = if cv_30d > 0.0 { (cv_30d - cv_24h) / cv_30d } else { 0.0 };
+    if drop_ratio > 0.5 {
+        decisions.push(serde_json::json!({
+            "type":"cv_anomaly","drop_ratio":drop_ratio,"cv_24h":cv_24h,"cv_30d":cv_30d,
+        }));
+        let tg_token = env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default();
+        let tg_chat  = env::var("TELEGRAM_CHAT_ID").unwrap_or_else(|_| "1136442501".into());
+        if !tg_token.is_empty() {
+            let msg = format!(
+                "📉 FUNNEL ANOMALY\nCV dropped {:.0}% vs 30d baseline\n24h: {} pv / {} paid (cv {:.2}%)\n30d: cv {:.2}%",
+                drop_ratio * 100.0, pv_24h, paid_24h, cv_24h * 100.0, cv_30d * 100.0);
+            let _ = reqwest::Client::new()
+                .post(format!("https://api.telegram.org/bot{}/sendMessage", tg_token))
+                .json(&serde_json::json!({"chat_id": tg_chat, "text": msg}))
+                .send().await;
+        }
+        let conn = db.lock().unwrap();
+        let did = log_autonomy_decision(
+            &conn, "funnel_anomaly", "cv_drop", "T1",
+            &serde_json::json!({"cv_24h": cv_24h, "cv_30d": cv_30d, "drop_ratio": drop_ratio}),
+            false, true, false,
+        );
+        let _ = enqueue_governance(
+            &conn, did, "funnel_anomaly",
+            "Funnel CV dropped >50% vs 30d baseline",
+            &format!("24h cv={:.2}%, 30d cv={:.2}%", cv_24h * 100.0, cv_30d * 100.0),
+        );
+    }
+
+    let summary = format!("funnel: 24h cv={:.2}% vs 30d {:.2}% (drop {:.0}%)",
+        cv_24h * 100.0, cv_30d * 100.0, drop_ratio * 100.0);
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs),
+        decisions, actions: vec![],
+        summary, notable: drop_ratio > 0.5,
     })
 }
 

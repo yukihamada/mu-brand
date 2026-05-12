@@ -61,7 +61,11 @@ FORBIDDEN=(
   'unsafe'
   'transmute'
   '.amount_jpy'      # touching money math without review
+  'price_jpy'        # purchase-path-touching (Constitution §21)
+  'collab_products'  # ditto
+  '/api/checkout'    # checkout endpoint
   'stripe.com/v1'    # any new Stripe call
+  'webhook'          # stripe webhook handler
   'printful.com/'    # any new Printful call
 )
 DIFF_ADDED=$(git diff "$BASE" "$HEAD" | grep -E '^\+[^+]' || true)

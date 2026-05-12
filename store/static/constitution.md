@@ -38,6 +38,7 @@ or auditing surfaces (`vision_drift`).
 18. **Public reputation.** Agent scorecards are published at `/admin/governance` (admin token gated, but visible).
 19. **Customers over brand.** Refund disputes default to refund within Constitution caps; T1 escalation only when ambiguous.
 20. **End-of-life is honest.** When MU shuts down a product line, it is announced once, with a number (days lived, total sold). No mourning.
+21. **Purchase path is sacrosanct.** No agent — not price_micro, not catalog_health, not self_evolve, not strategist — may take an action that breaks a customer's ability to view or buy a live product. `price_jpy` is always `max(1000, printful_cost × 1.2) ≤ price ≤ 100,000`. `active=0` flips are T1 only. Any diff touching `collab_products.price_jpy / active / draft`, `products.sold / inventory`, the Stripe webhook handler, the `/api/checkout/*` endpoints, or `/products/*` templates is T1 only and excluded from auto-merge. The `checkout_health` agent probes the live purchase path every 15 minutes; any 4xx/5xx is a CRITICAL alert. The `funnel_anomaly` agent catches silent breakage (CV drop > 50% vs 30d baseline).
 
 ## Type 1 Doors — Irreversible / require human approval
 
