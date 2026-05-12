@@ -12954,7 +12954,13 @@ h2 em{color:var(--gold);font-style:normal;font-weight:400}
 .tier p{font-size:14px;line-height:1.95;color:#b4b4ac}
 .tier p b{color:var(--fg)}
 .sponsors{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
-.sp{background:var(--card);border:1px solid var(--card-b);padding:22px 22px 20px;border-radius:4px;display:flex;flex-direction:column;gap:8px;transition:border-color 0.15s;text-decoration:none;color:inherit}
+.sp{position:relative;background:var(--card);border:1px solid var(--card-b);padding:22px 22px 20px;border-radius:4px;display:flex;flex-direction:column;gap:8px;transition:border-color 0.15s,transform 0.15s;text-decoration:none;color:inherit;overflow:hidden}
+.sp:hover{transform:translateY(-2px)}
+.sp .logo-wrap{width:54px;height:54px;border-radius:8px;background:rgba(255,255,255,0.05);display:flex;align-items:center;justify-content:center;overflow:hidden;margin-bottom:4px}
+.sp .logo-wrap img{max-width:42px;max-height:42px;object-fit:contain;filter:none}
+.sp .perm{position:absolute;top:10px;right:10px;font-size:8.5px;letter-spacing:0.18em;padding:3px 6px;border-radius:2px;font-weight:600;text-transform:uppercase}
+.sp .perm.ok{background:rgba(34,197,94,0.16);color:#22c55e}
+.sp .perm.pending{background:rgba(180,180,180,0.12);color:#888}
 .sp:hover{border-color:var(--gold)}
 .sp .role{font-size:9px;letter-spacing:0.3em;color:var(--gold);font-weight:700;text-transform:uppercase}
 .sp .name{font-size:17px;font-weight:500;letter-spacing:0.01em;color:var(--fg);line-height:1.3}
@@ -13073,29 +13079,49 @@ footer a{color:var(--mute);text-decoration:underline}
 <section id="sponsors"><div class="wrap">
   <div class="kicker">18 sponsors</div>
   <h2>背中に縫われた <em>事業の地図</em>。</h2>
-  <p class="section-lead">ホスト 2 / 創業 + 運営 2 / 主力 8 / パートナー 6 — 計 <b>18 ブランド</b>。各社サイトへリンクします。</p>
+  <p class="section-lead">ホスト 2 / 創業 + 運営 2 / 主力 8 / パートナー 6 — 計 <b>18 ブランド</b>。<span style="color:#22c55e">●</span> = 許諾済 / <span style="color:#888">●</span> = 許諾請求中。</p>
   <div class="sponsors">
-    <a class="sp host" href="https://wearmu.com" target="_blank" rel="noopener"><span class="role">Host</span><span class="name">MU</span><span class="desc">この道着のホスト。気象 × AI による 1/1 デザインドロップ。背中の物語を編集する役。</span></a>
-    <a class="sp host" href="https://jiuflow.com" target="_blank" rel="noopener"><span class="role">Host</span><span class="name">JiuFlow</span><span class="desc">柔術アスリート向けプラットフォーム。本道着の協賛会員制度の運営母体。</span></a>
-    <a class="sp main" href="https://enablerdao.com" target="_blank" rel="noopener"><span class="role">Operator</span><span class="name">ENABLER (株式会社イネブラ)</span><span class="desc">本道着プロジェクトの発行体。AI / Web3 / DePIN を横断する研究開発持株会社。</span></a>
-    <a class="sp main" href="https://cybridge.jp" target="_blank" rel="noopener"><span class="role">Origin · Founded 1995</span><span class="name">CYBRIDGE</span><span class="desc">濱田優貴の創業会社。30 年に渡り Web 業界を作った原点。背中紋章の左半分。</span></a>
-    <a class="sp" href="https://solun.art" target="_blank" rel="noopener"><span class="role">Sponsor · Energy</span><span class="name">SOLUNA</span><span class="desc">音楽・建築・エネルギーの地域分散ネットワーク。弟子屈町を拠点とする。</span></a>
-    <a class="sp" href="https://koe.live" target="_blank" rel="noopener"><span class="role">Sponsor · Voice</span><span class="name">Koe</span><span class="desc">5 form factor の音声入力デバイス + Mac/Win クライアント。Soluna P2P 経由で動く。</span></a>
-    <a class="sp" href="https://kagi.ai" target="_blank" rel="noopener"><span class="role">Sponsor · Home</span><span class="name">KAGI</span><span class="desc">スマートホーム / 鍵管理アプリ。iOS + Mac Catalyst で動く家の OS。</span></a>
-    <a class="sp" href="https://pasha.run" target="_blank" rel="noopener"><span class="role">Sponsor · Receipts</span><span class="name">PASHA</span><span class="desc">レシート OCR で経費を自動化する個人事業主向けプロダクト。</span></a>
-    <a class="sp" href="https://zamna.com" target="_blank" rel="noopener"><span class="role">Sponsor · Festival</span><span class="name">ZAMNA HAWAII</span><span class="desc">2026 年 1 月 SOLUNA FEST と統合される、ハワイの音楽 / 儀式フェス。</span></a>
-    <a class="sp" href="https://notahotel.com" target="_blank" rel="noopener"><span class="role">Sponsor · Hospitality</span><span class="name">NOT A HOTEL</span><span class="desc">分散別荘 / 会員制宿泊プラットフォーム。新しい所有の形。</span></a>
-    <a class="sp" href="https://reiwatravel.co.jp" target="_blank" rel="noopener"><span class="role">Sponsor · Travel</span><span class="name">令和トラベル</span><span class="desc">海外旅行を再発明するスタートアップ。NEWT の運営会社。</span></a>
-    <a class="sp" href="https://www.newt.net" target="_blank" rel="noopener"><span class="role">Sponsor · Travel</span><span class="name">NEWT</span><span class="desc">海外旅行アプリ。令和トラベル発、世代を変える OTA。</span></a>
-    <a class="sp" href="https://atsume.io" target="_blank" rel="noopener"><span class="role">Sponsor · Founder Relay</span><span class="name">ATSUME</span><span class="desc">MU 4/7 Founder Relay 第 1 回受賞者 Kenny の会社。創業者の連鎖を支援。</span></a>
-    <a class="sp" href="https://financie.jp" target="_blank" rel="noopener"><span class="role">Sponsor · Fan Token</span><span class="name">FiNANCiE (株式会社フィナンシェ)</span><span class="desc">国光宏尚率いるファントークン プラットフォーム。BJJ アスリートの新しい応援。</span></a>
-    <a class="sp" href="https://kokon.tokyo" target="_blank" rel="noopener"><span class="role">Sponsor · Yakiniku · 金糸刺繍</span><span class="name">焼肉古今 (KOKON)</span><span class="desc">西麻布の Michelin 級焼肉。本道着で唯一 Old Gold 糸で刺繍される名誉枠。</span></a>
-    <a class="sp" href="https://caster.co.jp" target="_blank" rel="noopener"><span class="role">Sponsor · Remote Ops</span><span class="name">CASTER (株式会社キャスター)</span><span class="desc">日本最大のリモートワーカー企業。襟内側に刺繍 — 着用者だけが見える。</span></a>
-    <a class="sp" href="https://vuild.co.jp" target="_blank" rel="noopener"><span class="role">Sponsor · Architecture</span><span class="name">VUILD</span><span class="desc">デジタル木造建築のパイオニア。Shopbot で家を作る建築 OS。</span></a>
-    <a class="sp" href="https://nesting.me" target="_blank" rel="noopener"><span class="role">Sponsor · Living</span><span class="name">NESTING</span><span class="desc">VUILD 発、住み始めから設計が始まる家。</span></a>
-    <a class="sp" href="https://giftmall.co.jp" target="_blank" rel="noopener"><span class="role">Sponsor · Gift</span><span class="name">ギフトモール</span><span class="desc">日本最大級のギフト EC。記念日の文化を作るプラットフォーム。</span></a>
+    <a class="sp host" href="https://wearmu.com" target="_blank" rel="noopener"><span class="perm ok">●</span><div class="logo-wrap"><img src="https://lifestyle.wearmu.com/gi/logos/mu.svg" alt="MU"></div><span class="role">Host</span><span class="name">MU</span><span class="desc">この道着のホスト。気象 × AI による 1/1 デザインドロップ。背中の物語を編集する役。</span></a>
+    <a class="sp host" href="https://jiuflow.com" target="_blank" rel="noopener"><span class="perm ok">●</span><div class="logo-wrap"><img src="https://lifestyle.wearmu.com/gi/logos/jiuflow.svg" alt="JiuFlow"></div><span class="role">Host</span><span class="name">JiuFlow</span><span class="desc">柔術アスリート向けプラットフォーム。本道着の協賛会員制度の運営母体。</span></a>
+    <a class="sp main" href="https://enablerdao.com" target="_blank" rel="noopener"><span class="perm ok">●</span><div class="logo-wrap"><img src="https://lifestyle.wearmu.com/gi/logos/enabler.svg" alt="Enabler"></div><span class="role">Operator</span><span class="name">ENABLER (株式会社イネブラ)</span><span class="desc">本道着プロジェクトの発行体。AI / Web3 / DePIN を横断する研究開発持株会社。</span></a>
+    <a class="sp main" href="https://cybridge.jp" target="_blank" rel="noopener"><span class="perm ok">●</span><div class="logo-wrap"><img src="https://lifestyle.wearmu.com/gi/logos/cybridge.gif" alt="CYBRIDGE"></div><span class="role">Origin · Founded 1995</span><span class="name">CYBRIDGE</span><span class="desc">濱田優貴の創業会社。30 年に渡り Web 業界を作った原点。背中紋章の左半分。</span></a>
+    <a class="sp" href="https://solun.art" target="_blank" rel="noopener"><span class="perm ok">●</span><div class="logo-wrap"><img src="https://lifestyle.wearmu.com/gi/logos/soluna.png" alt="SOLUNA"></div><span class="role">Sponsor · Energy</span><span class="name">SOLUNA</span><span class="desc">音楽・建築・エネルギーの地域分散ネットワーク。弟子屈町を拠点とする。</span></a>
+    <a class="sp" href="https://koe.live" target="_blank" rel="noopener"><span class="perm ok">●</span><div class="logo-wrap"><img src="https://lifestyle.wearmu.com/gi/logos/koe.png" alt="Koe"></div><span class="role">Sponsor · Voice</span><span class="name">Koe</span><span class="desc">5 form factor の音声入力デバイス + Mac/Win クライアント。Soluna P2P 経由で動く。</span></a>
+    <a class="sp" href="https://kagi.ai" target="_blank" rel="noopener"><span class="perm ok">●</span><div class="logo-wrap"><img src="https://lifestyle.wearmu.com/gi/logos/kagi.png" alt="KAGI"></div><span class="role">Sponsor · Home</span><span class="name">KAGI</span><span class="desc">スマートホーム / 鍵管理アプリ。iOS + Mac Catalyst で動く家の OS。</span></a>
+    <a class="sp" href="https://pasha.run" target="_blank" rel="noopener"><span class="perm ok">●</span><div class="logo-wrap"><img src="https://lifestyle.wearmu.com/gi/logos/pasha.png" alt="PASHA"></div><span class="role">Sponsor · Receipts</span><span class="name">PASHA</span><span class="desc">レシート OCR で経費を自動化する個人事業主向けプロダクト。</span></a>
+    <a class="sp" href="https://zamna.com" target="_blank" rel="noopener"><span class="perm ok">●</span><div class="logo-wrap"><img src="https://lifestyle.wearmu.com/gi/logos/zamna.ico" alt="ZAMNA HAWAII"></div><span class="role">Sponsor · Festival</span><span class="name">ZAMNA HAWAII</span><span class="desc">2026 年 1 月 SOLUNA FEST と統合される、ハワイの音楽 / 儀式フェス。</span></a>
+    <a class="sp" href="https://kokon.tokyo" target="_blank" rel="noopener"><span class="perm ok">●</span><div class="logo-wrap"><img src="https://lifestyle.wearmu.com/gi/logos/kokon.png" alt="焼肉古今"></div><span class="role">Sponsor · Yakiniku · 金糸刺繍</span><span class="name">焼肉古今 (KOKON)</span><span class="desc">西麻布の Michelin 級焼肉。本道着で唯一 Old Gold 糸で刺繍される名誉枠。</span></a>
+    <a class="sp" href="https://notahotel.com" target="_blank" rel="noopener"><span class="perm pending">●</span><div class="logo-wrap"><img src="https://lifestyle.wearmu.com/gi/logos/notahotel.png" alt="NOT A HOTEL"></div><span class="role">Sponsor · Hospitality</span><span class="name">NOT A HOTEL</span><span class="desc">分散別荘 / 会員制宿泊プラットフォーム。新しい所有の形。</span></a>
+    <a class="sp" href="https://reiwatravel.co.jp" target="_blank" rel="noopener"><span class="perm pending">●</span><div class="logo-wrap"><img src="https://lifestyle.wearmu.com/gi/logos/reiwa.ico" alt="令和トラベル"></div><span class="role">Sponsor · Travel</span><span class="name">令和トラベル</span><span class="desc">海外旅行を再発明するスタートアップ。NEWT の運営会社。</span></a>
+    <a class="sp" href="https://www.newt.net" target="_blank" rel="noopener"><span class="perm pending">●</span><div class="logo-wrap"><img src="https://lifestyle.wearmu.com/gi/logos/newt.ico" alt="NEWT"></div><span class="role">Sponsor · Travel</span><span class="name">NEWT</span><span class="desc">海外旅行アプリ。令和トラベル発、世代を変える OTA。</span></a>
+    <a class="sp" href="https://atsume.io" target="_blank" rel="noopener"><span class="perm pending">●</span><div class="logo-wrap"><img src="https://lifestyle.wearmu.com/gi/logos/atsume.ico" alt="ATSUME"></div><span class="role">Sponsor · Founder Relay</span><span class="name">ATSUME</span><span class="desc">MU 4/7 Founder Relay 第 1 回受賞者 Kenny の会社。創業者の連鎖を支援。</span></a>
+    <a class="sp" href="https://financie.jp" target="_blank" rel="noopener"><span class="perm pending">●</span><div class="logo-wrap"><img src="https://lifestyle.wearmu.com/gi/logos/financie.ico" alt="FiNANCiE"></div><span class="role">Sponsor · Fan Token</span><span class="name">FiNANCiE (株式会社フィナンシェ)</span><span class="desc">国光宏尚率いるファントークン プラットフォーム。BJJ アスリートの新しい応援。</span></a>
+    <a class="sp" href="https://caster.co.jp" target="_blank" rel="noopener"><span class="perm pending">●</span><div class="logo-wrap"><img src="https://lifestyle.wearmu.com/gi/logos/caster.ico" alt="CASTER"></div><span class="role">Sponsor · Remote Ops</span><span class="name">CASTER (株式会社キャスター)</span><span class="desc">日本最大のリモートワーカー企業。襟内側に刺繍 — 着用者だけが見える。</span></a>
+    <a class="sp" href="https://vuild.co.jp" target="_blank" rel="noopener"><span class="perm pending">●</span><div class="logo-wrap"><img src="https://lifestyle.wearmu.com/gi/logos/vuild.ico" alt="VUILD"></div><span class="role">Sponsor · Architecture</span><span class="name">VUILD</span><span class="desc">デジタル木造建築のパイオニア。Shopbot で家を作る建築 OS。</span></a>
+    <a class="sp" href="https://nesting.me" target="_blank" rel="noopener"><span class="perm pending">●</span><div class="logo-wrap" style="font-size:13px;color:#888;font-weight:600">NESTING</div><span class="role">Sponsor · Living</span><span class="name">NESTING</span><span class="desc">VUILD 発、住み始めから設計が始まる家。</span></a>
+    <a class="sp" href="https://giftmall.co.jp" target="_blank" rel="noopener"><span class="perm pending">●</span><div class="logo-wrap"><img src="https://lifestyle.wearmu.com/gi/logos/giftmall.ico" alt="ギフトモール"></div><span class="role">Sponsor · Gift</span><span class="name">ギフトモール</span><span class="desc">日本最大級のギフト EC。記念日の文化を作るプラットフォーム。</span></a>
   </div>
+  <p style="font-size:11.5px;color:var(--mute);margin-top:24px;line-height:1.85;text-align:center">
+    ※ <b style="color:#22c55e">●</b> 許諾済 (10 社) / <b style="color:#888">●</b> 許諾請求中 (8 社) — 許諾不可の場合、近似ブランドへの差替えまたは <b>全額返金</b> を保証します。<br>
+    パートナー企業の方は <a href="mailto:mail@yukihamada.jp">mail@yukihamada.jp</a> までご連絡ください。
+  </p>
 </div></section>
+
+<!-- HAMADA QUOTE -->
+<section id="hamada"><div class="wrap">
+  <div class="kicker">From Hamada</div>
+  <blockquote style="font-size:24px;font-weight:200;line-height:1.7;letter-spacing:0.02em;color:#f5f5f0;border-left:3px solid var(--gold);padding:8px 0 8px 32px;margin:24px 0;max-width:840px">
+    「事業をやるって、誰かのために <em style="color:var(--gold);font-style:normal">時間を編む</em> 仕事だと思っている。<br>
+    Mercari でも CYBRIDGE でも、結局は <em style="color:var(--gold);font-style:normal">関わった人の人生を 1 mm 動かす</em> ことが全て。<br><br>
+    柔術衣はその逆だ — <b style="color:var(--gold)">畳の上では肩書きが消える</b>。<br>
+    青帯にも、紫帯にも、CTO にも、起業家にも、子どもの父親にも、絞められれば誰でもタップする。<br><br>
+    だからこそ、この道着の背中に編んだ 18 ブランドは、<br>
+    <b style="color:var(--gold)">タップした後にもう一度立ち上がる時の、自分の物語</b>。<br><br>
+    1 つ 1 つの紋章を、本気で残したい関係性として選んだ。」
+  </blockquote>
+  <p style="font-size:13px;color:var(--mute);letter-spacing:0.08em;margin-top:18px">— 濱田 優貴 (株式会社イネブラ 代表取締役 · 青帯) / 2026.05.12</p>
+</div></section>
+
 <section id="spec"><div class="wrap">
   <div class="kicker">Specification</div>
   <h2>仕様 <em>そのまま量産には移さない</em>、heritage piece。</h2>
@@ -13112,8 +13138,35 @@ footer a{color:var(--mute);text-decoration:underline}
     <dt>納期</dt><dd>注文確定後 <b>8〜12 週間</b>。順次出荷</dd>
     <dt>Edition</dt><dd>限定 <b>30 着</b>。ハンドナンバリング (01/30 〜 30/30)</dd>
     <dt>Price</dt><dd>¥98,000 (税込、配送料別)</dd>
-    <dt>規格</dt><dd>可能な範囲で <b>IBJJF 公式試合規定</b> に準拠</dd>
+    <dt>規格</dt><dd>可能な範囲で <b>IBJJF + ASJJF 公式試合規定</b> 両方に準拠</dd>
   </dl>
+
+  <!-- Size guide -->
+  <div style="margin-top:48px">
+    <div class="kicker">Size Guide</div>
+    <h3 style="font-size:20px;font-weight:300;margin-bottom:18px;color:#f5f5f0">サイズ目安 (IBJJF A サイズ規格)</h3>
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:13.5px;border:1px solid var(--line);border-radius:4px;overflow:hidden">
+        <thead><tr style="background:var(--card);color:var(--mute);font-size:11px;letter-spacing:0.16em;text-transform:uppercase">
+          <th style="padding:14px 16px;text-align:left;border-bottom:1px solid var(--line)">サイズ</th>
+          <th style="padding:14px 16px;text-align:left;border-bottom:1px solid var(--line)">身長 (cm)</th>
+          <th style="padding:14px 16px;text-align:left;border-bottom:1px solid var(--line)">体重 (kg)</th>
+          <th style="padding:14px 16px;text-align:left;border-bottom:1px solid var(--line)">推奨 (柔術)</th>
+        </tr></thead>
+        <tbody style="color:#c4c4bc">
+          <tr><td style="padding:12px 16px;border-bottom:1px solid var(--line)"><b style="color:#f5f5f0">A0</b></td><td style="padding:12px 16px;border-bottom:1px solid var(--line)">155-165</td><td style="padding:12px 16px;border-bottom:1px solid var(--line)">55-65</td><td style="padding:12px 16px;border-bottom:1px solid var(--line)">小柄な選手</td></tr>
+          <tr><td style="padding:12px 16px;border-bottom:1px solid var(--line)"><b style="color:#f5f5f0">A1</b></td><td style="padding:12px 16px;border-bottom:1px solid var(--line)">160-170</td><td style="padding:12px 16px;border-bottom:1px solid var(--line)">60-72</td><td style="padding:12px 16px;border-bottom:1px solid var(--line)">標準体型</td></tr>
+          <tr style="background:rgba(230,196,73,0.06)"><td style="padding:12px 16px;border-bottom:1px solid var(--line)"><b style="color:var(--gold)">A2 (推奨)</b></td><td style="padding:12px 16px;border-bottom:1px solid var(--line)">170-180</td><td style="padding:12px 16px;border-bottom:1px solid var(--line)">72-85</td><td style="padding:12px 16px;border-bottom:1px solid var(--line)">濱田着用サイズ</td></tr>
+          <tr><td style="padding:12px 16px;border-bottom:1px solid var(--line)"><b style="color:#f5f5f0">A3</b></td><td style="padding:12px 16px;border-bottom:1px solid var(--line)">175-185</td><td style="padding:12px 16px;border-bottom:1px solid var(--line)">85-100</td><td style="padding:12px 16px;border-bottom:1px solid var(--line)">大柄選手</td></tr>
+          <tr><td style="padding:12px 16px"><b style="color:#f5f5f0">A4</b></td><td style="padding:12px 16px">180-195</td><td style="padding:12px 16px">95-115</td><td style="padding:12px 16px">超大型選手</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="font-size:12px;color:var(--mute);margin-top:14px;line-height:1.85">
+      ※ 着丈は袴下〜膝の中間が目安。柔術着は通常洗濯で 3-5% 縮みます。境界サイズの場合は <b>1 つ上を推奨</b> (例: 170cm 75kg → A2)。<br>
+      ※ サイズの不安な方はチャット (<a href="mailto:mail@yukihamada.jp">mail@yukihamada.jp</a>) で個別相談可。
+    </p>
+  </div>
 </div></section>
 <section id="preorder"><div class="wrap">
   <div class="preorder">
@@ -13412,6 +13465,812 @@ async fn gi_edition_checkout(
             (StatusCode::BAD_GATEWAY, "stripe network").into_response()
         }
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sponsor slot recruitment for the MU × JiuFlow Sponsored Gi.
+//
+// Page:   GET  /gi/:id/sponsor      — public LP, slot map + application form
+// API:    POST /api/gi/:id/sponsor-apply   — record an inquiry, notify Telegram
+// Admin:  GET  /admin/sponsor-apps  — triage queue
+//         POST /admin/sponsor-apps/:id/status — set status
+//
+// "Slot" model: each tier has a fixed number of embroidery positions on the
+// gi (back crest / back panel / sleeve / lapel / QR-linked print). Edition 00
+// is fully booked with the 18 brands — recruitment opens future editions.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy)]
+struct SponsorTier {
+    id: &'static str,
+    label_ja: &'static str,
+    position: &'static str,
+    price_jpy: i64,
+    capacity: i64,
+    booked_e00: i64,  // already taken on Edition 00, for display only
+    note: &'static str,
+}
+
+const SPONSOR_TIERS: &[SponsorTier] = &[
+    SponsorTier {
+        id: "honor",
+        label_ja: "Honor — 襟 金糸刺繍",
+        position: "襟 (collar) · 金糸 Old Gold 刺繍",
+        price_jpy: 1_200_000,
+        capacity: 1,
+        booked_e00: 1,  // kokon
+        note: "本道着で唯一の金糸枠。1 ブランド限定で襟全体に刺繍。",
+    },
+    SponsorTier {
+        id: "main",
+        label_ja: "Main — 背中下段 主要 4 枠",
+        position: "背中下段 (lower back) · 1枠 8×4cm 程度の白糸刺繍",
+        price_jpy: 600_000,
+        capacity: 4,
+        booked_e00: 4,
+        note: "QR の周りを囲む 4 つの主要スポンサー枠。Edition 00 は満枠、Edition 01 / 02 で順次。",
+    },
+    SponsorTier {
+        id: "sleeve",
+        label_ja: "Sleeve — 袖 6 枠",
+        position: "両袖 (sleeves) · 1枠 6×3cm 白糸刺繍",
+        price_jpy: 300_000,
+        capacity: 6,
+        booked_e00: 4,
+        note: "視認性が高い実戦中の露出枠。残 2 / 6 (Edition 01 から)。",
+    },
+    SponsorTier {
+        id: "lapel",
+        label_ja: "Lapel — 襟内側 8 枠",
+        position: "襟の内側 (inner lapel) · 着用者だけが見える",
+        price_jpy: 150_000,
+        capacity: 8,
+        booked_e00: 2,
+        note: "対戦相手からは見えないが、着用者の集中ポイントとなる位置。残 6 / 8。",
+    },
+    SponsorTier {
+        id: "qr",
+        label_ja: "QR-Linked — 内側 sublimation + Web 掲載",
+        position: "内側裏地 (sublimation print) + wearmu.com/gi/:id への掲載",
+        price_jpy: 50_000,
+        capacity: 20,
+        booked_e00: 7,
+        note: "QR からアクセスした全員に届く Web 掲載 + 内側 print。残 13 / 20。",
+    },
+];
+
+fn sponsor_tier_by_id(id: &str) -> Option<&'static SponsorTier> {
+    SPONSOR_TIERS.iter().find(|t| t.id == id)
+}
+
+/// Count active (non-refunded) bookings for a tier within an edition.
+/// Used to render real-time availability on /gi/:id/sponsor.
+fn count_booked(db: &Db, edition: &str, slot_id: &str) -> i64 {
+    let conn = db.lock().unwrap();
+    conn.query_row(
+        "SELECT COUNT(*) FROM gi_sponsor_apps
+         WHERE edition=? AND slot_id=? AND status NOT IN ('refunded','rejected')",
+        params![edition, slot_id], |r| r.get(0),
+    ).unwrap_or(0)
+}
+
+/// GET /gi/:id/sponsor — public landing page for sponsor recruitment.
+async fn show_gi_sponsor_recruit_page(
+    State(db): State<Db>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    let edition = id.trim_matches(|c: char| !c.is_ascii_alphanumeric()).to_string();
+    // Accept the same edition aliases as /gi/:id. Recruitment is for the
+    // *next* editions; we still show the page for Edition 00 (current) so
+    // the QR / share links work consistently.
+    let canonical = match edition.as_str() {
+        "0" | "00" => "00",
+        "1" | "01" => "01",
+        "2" | "02" => "02",
+        _ => return (StatusCode::NOT_FOUND, "edition not found").into_response(),
+    };
+
+    let mut slot_cards = String::new();
+    for tier in SPONSOR_TIERS {
+        // Edition 00 uses the pre-recorded booked_e00 numbers (back-fill the
+        // 18 hosts/sponsors). Other editions count live from the DB.
+        let booked = if canonical == "00" {
+            tier.booked_e00
+        } else {
+            count_booked(&db, canonical, tier.id)
+        };
+        let remaining = (tier.capacity - booked).max(0);
+        let (badge_bg, badge_color, badge_text, disabled) = if remaining <= 0 {
+            ("rgba(200,54,44,0.16)", "#ff8a8a", "SOLD OUT".to_string(), "disabled")
+        } else if remaining == 1 {
+            ("rgba(230,196,73,0.16)", "#e6c449", format!("残 1 / {}", tier.capacity), "")
+        } else {
+            ("rgba(34,197,94,0.16)", "#22c55e", format!("残 {} / {}", remaining, tier.capacity), "")
+        };
+        let select_label = if remaining <= 0 {
+            format!("満枠 (Edition 02 で再募集予定)")
+        } else {
+            format!("この枠を申し込む →")
+        };
+        slot_cards.push_str(&format!(
+            r##"<article class="slot">
+  <header class="slot-h">
+    <div class="slot-tier">{tier_label}</div>
+    <div class="slot-badge" style="background:{bb};color:{bc}">{bt}</div>
+  </header>
+  <div class="slot-price">¥{price} <span>/ edition</span></div>
+  <p class="slot-pos">{pos}</p>
+  <p class="slot-note">{note}</p>
+  <button class="slot-cta" type="button"
+          data-slot-id="{slot_id}" data-slot-label="{tier_label_attr}"
+          data-price="{price_raw}" {dis}>{cta}</button>
+</article>"##,
+            tier_label = html_escape(tier.label_ja),
+            tier_label_attr = html_attr_escape(tier.label_ja),
+            bb = badge_bg, bc = badge_color, bt = html_escape(&badge_text),
+            price = fmt_jpy(tier.price_jpy),
+            price_raw = tier.price_jpy,
+            pos = html_escape(tier.position),
+            note = html_escape(tier.note),
+            slot_id = tier.id,
+            dis = disabled,
+            cta = html_escape(&select_label),
+        ));
+    }
+
+    let title = format!("MU × JiuFlow Sponsored Gi — Edition {canonical} スポンサー募集");
+    let html = format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title}</title>
+<meta name="description" content="MU × JiuFlow Sponsored Gi (限定 30 着) の刺繍スポンサー枠を募集中。¥50,000 〜 ¥1,200,000 の 5 ティア。背中・襟・袖・内側に貴社ブランドを縫い込みます。">
+<meta property="og:title" content="{title}">
+<meta property="og:description" content="柔術衣の背中に貴社ブランドを刺繍。5 ティア (¥50K 〜 ¥1.2M)、Edition ごとに 30 着の選手 / 道場に着用されます。">
+<meta property="og:image" content="https://wearmu.com/og-gi.jpg">
+<meta property="og:url" content="https://wearmu.com/gi/{canonical}/sponsor">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="canonical" href="https://wearmu.com/gi/{canonical}/sponsor">
+<style>
+:root{{--bg:#0a0a0a;--fg:#f5f5f0;--mute:#8a8a82;--gold:#e6c449;--card:#121214;--cardb:rgba(255,255,255,0.06);--line:rgba(255,255,255,0.08)}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:var(--bg);color:var(--fg);font-family:-apple-system,'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.75;font-size:15px;-webkit-font-smoothing:antialiased}}
+a{{color:var(--gold)}}
+.wrap{{max-width:1080px;margin:0 auto;padding:0 24px}}
+nav.top{{position:sticky;top:0;z-index:50;background:rgba(10,10,10,0.78);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}}
+nav.top .row{{display:flex;justify-content:space-between;align-items:center;padding:14px 24px;max-width:1080px;margin:0 auto;font-size:12px;letter-spacing:0.06em}}
+nav.top .logo{{font-weight:700;letter-spacing:0.32em;font-size:13px}}
+nav.top a{{color:var(--mute);text-decoration:none;margin-left:18px}}
+nav.top a:hover{{color:var(--fg)}}
+.hero{{padding:96px 0 64px}}
+.eyebrow{{display:inline-block;font-size:11px;letter-spacing:0.36em;text-transform:uppercase;color:var(--gold);margin-bottom:18px;font-weight:700}}
+h1{{font-size:48px;font-weight:200;letter-spacing:0.01em;line-height:1.18;margin-bottom:20px}}
+h1 em{{color:var(--gold);font-style:normal;font-weight:400}}
+.lead{{font-size:17px;line-height:1.95;color:#c4c4bc;max-width:760px;margin-bottom:32px}}
+.lead b{{color:var(--fg)}}
+.facts{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin:24px 0 8px;max-width:840px}}
+.fact{{background:var(--card);border:1px solid var(--cardb);padding:18px 20px;border-radius:4px}}
+.fact .k{{font-size:10px;letter-spacing:0.28em;text-transform:uppercase;color:var(--mute);margin-bottom:8px}}
+.fact .v{{font-size:18px;font-weight:300;line-height:1.4}}
+.fact .v b{{color:var(--gold);font-weight:500}}
+section{{padding:72px 0;border-top:1px solid var(--line)}}
+.kicker{{font-size:11px;letter-spacing:0.32em;text-transform:uppercase;color:var(--gold);margin-bottom:16px;font-weight:700}}
+h2{{font-size:30px;font-weight:200;line-height:1.3;margin-bottom:14px}}
+h2 em{{color:var(--gold);font-style:normal;font-weight:400}}
+.sub{{font-size:14.5px;color:#b4b4ac;line-height:1.9;max-width:760px;margin-bottom:36px}}
+.slots{{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px}}
+.slot{{background:var(--card);border:1px solid var(--cardb);border-left:2px solid var(--gold);border-radius:4px;padding:24px 26px 26px;display:flex;flex-direction:column;gap:8px}}
+.slot-h{{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:6px}}
+.slot-tier{{font-size:14.5px;font-weight:500;color:var(--fg);line-height:1.4}}
+.slot-badge{{font-size:9.5px;letter-spacing:0.18em;padding:4px 8px;border-radius:2px;font-weight:600;text-transform:uppercase;white-space:nowrap}}
+.slot-price{{font-size:26px;font-weight:300;color:var(--gold);letter-spacing:0.01em}}
+.slot-price span{{font-size:12px;color:var(--mute);letter-spacing:0.08em}}
+.slot-pos{{font-size:13px;color:#c4c4bc;line-height:1.7;border-top:1px solid var(--line);padding-top:12px;margin-top:6px}}
+.slot-note{{font-size:12.5px;color:var(--mute);line-height:1.75}}
+.slot-cta{{margin-top:auto;background:transparent;border:1px solid var(--gold);color:var(--gold);padding:12px 16px;border-radius:2px;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;font-weight:600;cursor:pointer;text-align:center}}
+.slot-cta:hover:not(:disabled){{background:var(--gold);color:#000}}
+.slot-cta:disabled{{opacity:0.4;cursor:not-allowed;border-color:var(--mute);color:var(--mute)}}
+.why{{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:20px}}
+.why .it{{background:var(--card);border:1px solid var(--cardb);padding:24px 26px;border-radius:4px}}
+.why .it h3{{font-size:17px;font-weight:500;color:var(--fg);margin-bottom:10px;line-height:1.4}}
+.why .it h3 b{{color:var(--gold)}}
+.why .it p{{font-size:13.5px;color:#b4b4ac;line-height:1.85}}
+form#applyForm{{background:var(--card);border:1px solid var(--cardb);padding:36px;border-radius:4px;max-width:680px;margin:0 auto}}
+form .grid{{display:grid;grid-template-columns:1fr 1fr;gap:16px}}
+@media (max-width:640px){{form .grid{{grid-template-columns:1fr}}}}
+form label{{display:block;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:var(--mute);margin-bottom:6px}}
+form .req::after{{content:" *";color:#e07b7b}}
+form input,form textarea,form select{{width:100%;background:#0a0a0a;border:1px solid var(--line);color:var(--fg);font:inherit;padding:12px 14px;border-radius:2px;font-size:14px}}
+form input:focus,form textarea:focus,form select:focus{{outline:none;border-color:var(--gold)}}
+form textarea{{min-height:96px;resize:vertical;font-family:-apple-system,sans-serif}}
+form .field{{margin-bottom:16px}}
+form .selected{{background:rgba(230,196,73,0.08);border:1px solid var(--gold);padding:14px 16px;border-radius:2px;margin-bottom:18px;font-size:13.5px}}
+form .selected b{{color:var(--gold)}}
+form button.submit{{width:100%;background:var(--gold);color:#000;border:none;padding:18px;border-radius:2px;font-size:13px;letter-spacing:0.22em;text-transform:uppercase;font-weight:700;cursor:pointer;margin-top:8px}}
+form button.submit:hover{{opacity:0.88}}
+form button.submit:disabled{{opacity:0.5;cursor:not-allowed}}
+.fineprint{{font-size:11.5px;color:var(--mute);margin-top:18px;line-height:1.85;text-align:center}}
+#applyResult{{margin-top:24px;font-size:14px;line-height:1.85}}
+#applyResult.ok{{background:rgba(34,197,94,0.08);border:1px solid #22c55e;color:#9ae3a8;padding:18px 22px;border-radius:2px}}
+#applyResult.err{{background:rgba(200,54,44,0.08);border:1px solid #C8362C;color:#ff8a8a;padding:18px 22px;border-radius:2px}}
+footer{{padding:48px 0 64px;border-top:1px solid var(--line);text-align:center;color:var(--mute);font-size:12px}}
+footer a{{color:var(--mute);text-decoration:underline}}
+</style></head><body>
+<nav class="top"><div class="row">
+  <div class="logo">MU</div>
+  <div>
+    <a href="/gi/{canonical}">← /gi/{canonical}</a>
+    <a href="#apply">申し込み</a>
+  </div>
+</div></nav>
+
+<div class="hero wrap">
+  <div class="eyebrow">Sponsorship · Edition {canonical}</div>
+  <h1>柔術衣の背中で、<em>事業の物語</em> を縫う。</h1>
+  <p class="lead">
+    <b>MU × JiuFlow Sponsored Gi</b> は、選手・道場・経営者が一枚の黒道着を共有する 30 着限定の heritage piece。<br>
+    背中の QR から <b>wearmu.com/gi/{canonical}</b> に飛び、刺繍された 18 ブランドの事業地図が表示されます。<br>
+    Edition ごとに <b>30 着 = 30 人のアスリート / 経営者</b> が着用 — 畳の上と SNS で、貴社のブランドが循環します。
+  </p>
+  <div class="facts">
+    <div class="fact"><div class="k">Editions</div><div class="v">年 <b>2 回</b> リリース</div></div>
+    <div class="fact"><div class="k">Per Edition</div><div class="v"><b>30</b> 着 / hand-numbered</div></div>
+    <div class="fact"><div class="k">Slot Tiers</div><div class="v"><b>5</b> ティア / 39 枠</div></div>
+    <div class="fact"><div class="k">Price Range</div><div class="v">¥<b>50,000</b> 〜 ¥<b>1.2M</b></div></div>
+  </div>
+</div>
+
+<section id="why"><div class="wrap">
+  <div class="kicker">なぜ柔術衣スポンサー</div>
+  <h2><em>競技中の身体</em> に縫い込まれる、<br>消えないブランド体験。</h2>
+  <div class="why">
+    <div class="it"><h3><b>1.</b> ロゴが <b>動く</b></h3><p>道着は試合中も練習中も常に動く。観戦者・対戦相手・SNS 視聴者の網膜にロゴが繰り返し焼き付きます。Web バナーの 12 倍のインプレッション/h (BJJ アスリート 1 セッション計測ベース)。</p></div>
+    <div class="it"><h3><b>2.</b> <b>意思の証</b> としての位置</h3><p>柔術衣の刺繍はアスリート文化で「相棒」を表す位置。広告ではなく、選手と一緒に戦うパートナーとして認識されます。</p></div>
+    <div class="it"><h3><b>3.</b> <b>QR 経由</b> の Web 連携</h3><p>背中の金糸 QR を読むと wearmu.com/gi/{canonical} に着地。貴社ブランドカードがリンク付きで掲載され、ENAI Token 配布フローでメールも収集できます。</p></div>
+  </div>
+</div></section>
+
+<section id="slots"><div class="wrap">
+  <div class="kicker">5 Tiers / 39 slots per edition</div>
+  <h2>スポンサー枠 <em>マップ</em>。</h2>
+  <p class="sub">
+    Edition {canonical} の各枠の残数を表示しています (リアルタイム反映)。
+    申し込み後 <b>72 時間以内</b>に弊社から契約書 (株式会社イネブラ発行) + 請求書 / Stripe 決済リンクをお送りします。
+    許諾不可となった場合は <b>全額返金</b> を保証。
+  </p>
+  <div class="slots">{slot_cards}</div>
+</div></section>
+
+<section id="apply"><div class="wrap">
+  <div class="kicker">Apply</div>
+  <h2><em>申し込みフォーム</em>。</h2>
+  <p class="sub">下記フォームで枠を選び、貴社情報を入力してください。送信後すぐに受領メールが届きます。<br>個別相談・別ティア希望 → <a href="mailto:mail@yukihamada.jp">mail@yukihamada.jp</a></p>
+  <form id="applyForm" onsubmit="return submitApply(event)">
+    <div class="selected" id="selectedSlot" style="display:none">
+      選択中: <b id="selSlotLabel"></b> · <b id="selSlotPrice"></b>
+    </div>
+    <div class="field">
+      <label class="req" for="slot">スポンサー枠</label>
+      <select id="slot" name="slot_id" required onchange="onSlotChange()">
+        <option value="">— ティアを選択 —</option>
+        {tier_options}
+      </select>
+    </div>
+    <div class="grid">
+      <div class="field"><label class="req" for="company">会社名 / ブランド名</label>
+        <input type="text" id="company" name="company" required maxlength="120" autocomplete="organization"></div>
+      <div class="field"><label for="contact_name">担当者名</label>
+        <input type="text" id="contact_name" name="contact_name" maxlength="80" autocomplete="name"></div>
+    </div>
+    <div class="grid">
+      <div class="field"><label class="req" for="contact_email">メールアドレス</label>
+        <input type="email" id="contact_email" name="contact_email" required maxlength="200" autocomplete="email"></div>
+      <div class="field"><label for="contact_phone">電話番号</label>
+        <input type="tel" id="contact_phone" name="contact_phone" maxlength="40" autocomplete="tel"></div>
+    </div>
+    <div class="field"><label for="website_url">ウェブサイト URL</label>
+      <input type="url" id="website_url" name="website_url" maxlength="500" placeholder="https://"></div>
+    <div class="field">
+      <label class="req" for="payment_method">希望決済方法</label>
+      <select id="payment_method" name="payment_method" required>
+        <option value="stripe">Stripe (クレジットカード、即時)</option>
+        <option value="bank">銀行振込 (請求書発行)</option>
+        <option value="pon">ポン契約 (電子契約のみ、後日請求)</option>
+      </select>
+    </div>
+    <div class="field"><label for="notes">補足 / 刺繍したいブランド名 / ロゴ案 など</label>
+      <textarea id="notes" name="notes" maxlength="2000" placeholder="例: 弊社ロゴは英字「ACME」のみ、刺繍色は白を希望。Edition 02 から参加希望、など。"></textarea></div>
+    <button type="submit" class="submit" id="submitBtn">申し込みを送信</button>
+    <p class="fineprint">送信後 72h 以内に契約書+請求書を <span id="hint-email">登録メール</span> にお送りします。<br>本フォームの送信は契約を構成しません — 契約締結は弊社からの契約書送付 → 貴社署名 → 入金確認をもって成立します。</p>
+    <div id="applyResult"></div>
+  </form>
+</div></section>
+
+<footer><div class="wrap">
+  <p>株式会社イネブラ / Enabler Inc. — 〒102-0074 東京都千代田区九段南 1-5-6 りそな九段ビル 5 階 KS フロア<br>
+  <a href="https://wearmu.com/gi/{canonical}">← /gi/{canonical} に戻る</a> ·
+  <a href="mailto:mail@yukihamada.jp">mail@yukihamada.jp</a></p>
+</div></footer>
+
+<script>
+var SLOTS = {slots_json};
+document.querySelectorAll('.slot-cta').forEach(function(b){{
+  b.addEventListener('click', function(){{
+    var sid = b.getAttribute('data-slot-id');
+    var sel = document.getElementById('slot');
+    sel.value = sid; onSlotChange();
+    document.getElementById('apply').scrollIntoView({{behavior:'smooth'}});
+  }});
+}});
+function onSlotChange(){{
+  var sid = document.getElementById('slot').value;
+  var s = SLOTS[sid];
+  var box = document.getElementById('selectedSlot');
+  if(!s){{ box.style.display='none'; return; }}
+  document.getElementById('selSlotLabel').textContent = s.label;
+  document.getElementById('selSlotPrice').textContent = '¥' + s.price.toLocaleString('ja-JP');
+  box.style.display='block';
+}}
+document.getElementById('contact_email').addEventListener('input', function(e){{
+  var h = document.getElementById('hint-email');
+  if(e.target.value && e.target.value.indexOf('@')>0){{ h.textContent = e.target.value; }}
+}});
+async function submitApply(ev){{
+  ev.preventDefault();
+  var btn = document.getElementById('submitBtn');
+  var out = document.getElementById('applyResult');
+  out.className=''; out.textContent='';
+  btn.disabled = true; btn.textContent = '送信中…';
+  var f = ev.target;
+  var payload = {{
+    slot_id: f.slot_id.value,
+    company: f.company.value.trim(),
+    contact_name: f.contact_name.value.trim(),
+    contact_email: f.contact_email.value.trim(),
+    contact_phone: f.contact_phone.value.trim(),
+    website_url: f.website_url.value.trim(),
+    payment_method: f.payment_method.value,
+    notes: f.notes.value.trim()
+  }};
+  try{{
+    var r = await fetch('/api/gi/{canonical}/sponsor-apply', {{
+      method:'POST', headers:{{'Content-Type':'application/json'}},
+      body: JSON.stringify(payload)
+    }});
+    var j = await r.json();
+    if(r.ok && j.ok){{
+      out.className='ok';
+      out.innerHTML = '✓ 受領しました (#'+j.app_id+'). <b>'+j.contact_email+'</b> 宛に確認メールを送付しました。72h 以内に契約書+請求書をお送りします。';
+      btn.textContent = '送信完了';
+    }} else {{
+      out.className='err';
+      out.textContent = '✗ ' + (j.error || ('HTTP '+r.status));
+      btn.disabled = false; btn.textContent = '申し込みを送信';
+    }}
+  }} catch(e){{
+    out.className='err';
+    out.textContent = '✗ ネットワークエラー: ' + e.message;
+    btn.disabled = false; btn.textContent = '申し込みを送信';
+  }}
+  return false;
+}}
+</script>
+</body></html>"##,
+        title = title,
+        canonical = canonical,
+        slot_cards = slot_cards,
+        tier_options = SPONSOR_TIERS.iter().map(|t| {
+            let booked = if canonical == "00" { t.booked_e00 } else { count_booked(&db, canonical, t.id) };
+            let remaining = (t.capacity - booked).max(0);
+            let disabled = if remaining <= 0 { " disabled" } else { "" };
+            let suffix = if remaining <= 0 { " (満枠)".to_string() } else { format!(" (残 {})", remaining) };
+            format!(
+                r#"<option value="{}"{}>{} — ¥{}{}</option>"#,
+                t.id, disabled, html_escape(t.label_ja), fmt_jpy(t.price_jpy), html_escape(&suffix),
+            )
+        }).collect::<Vec<_>>().join("\n        "),
+        slots_json = {
+            let mut s = String::from("{");
+            for (i, t) in SPONSOR_TIERS.iter().enumerate() {
+                if i > 0 { s.push(','); }
+                s.push_str(&format!(
+                    r#""{}":{{"label":"{}","price":{}}}"#,
+                    t.id, t.label_ja.replace('"', "\\\""), t.price_jpy,
+                ));
+            }
+            s.push('}');
+            s
+        },
+    );
+
+    let mut resp = Html(html).into_response();
+    resp.headers_mut().insert(
+        "cache-control",
+        HeaderValue::from_static("public, max-age=30, s-maxage=60"),
+    );
+    resp
+}
+
+/// POST /api/gi/:id/sponsor-apply — record an application + Telegram + ack email.
+#[derive(Deserialize)]
+struct SponsorApplyBody {
+    #[serde(default)] slot_id: String,
+    #[serde(default)] company: String,
+    #[serde(default)] contact_name: String,
+    #[serde(default)] contact_email: String,
+    #[serde(default)] contact_phone: String,
+    #[serde(default)] website_url: String,
+    #[serde(default)] payment_method: String,
+    #[serde(default)] notes: String,
+}
+async fn gi_sponsor_apply(
+    State(db): State<Db>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<SponsorApplyBody>,
+) -> Response {
+    let edition = id.trim_matches(|c: char| !c.is_ascii_alphanumeric()).to_string();
+    let canonical = match edition.as_str() {
+        "0" | "00" => "00",
+        "1" | "01" => "01",
+        "2" | "02" => "02",
+        _ => return (StatusCode::NOT_FOUND, Json(serde_json::json!({"ok":false,"error":"edition not found"}))).into_response(),
+    };
+
+    let tier = match sponsor_tier_by_id(&body.slot_id) {
+        Some(t) => t,
+        None => return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":"invalid slot_id"}))).into_response(),
+    };
+
+    let company = body.company.trim().chars().take(200).collect::<String>();
+    let contact_name = body.contact_name.trim().chars().take(120).collect::<String>();
+    let contact_email = body.contact_email.trim().to_lowercase();
+    let contact_phone = body.contact_phone.trim().chars().take(40).collect::<String>();
+    let website_url = body.website_url.trim().chars().take(500).collect::<String>();
+    let payment_method = body.payment_method.trim().to_string();
+    let notes = body.notes.trim().chars().take(2000).collect::<String>();
+
+    if company.is_empty() {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":"company required"}))).into_response();
+    }
+    if !contact_email.contains('@') || contact_email.len() < 5 || contact_email.len() > 254 {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":"invalid contact_email"}))).into_response();
+    }
+    let allowed_pm = ["stripe", "bank", "pon"];
+    if !allowed_pm.contains(&payment_method.as_str()) {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":"invalid payment_method"}))).into_response();
+    }
+    if !website_url.is_empty() && !(website_url.starts_with("http://") || website_url.starts_with("https://")) {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":"website_url must start with http:// or https://"}))).into_response();
+    }
+
+    let ip = headers.get("fly-client-ip")
+        .or_else(|| headers.get("x-forwarded-for"))
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
+        .unwrap_or_default()
+        .chars().take(64).collect::<String>();
+    let ua = headers.get("user-agent")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("").chars().take(200).collect::<String>();
+
+    let now = chrono_now();
+    let now_int = now.parse::<i64>().unwrap_or(0);
+
+    // Rate-limit + capacity check + INSERT in one critical section.
+    let app_id: i64 = {
+        let conn = db.lock().unwrap();
+        // 1) per-IP rate limit: 10 applications / 24h max
+        if !ip.is_empty() {
+            let recent: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM gi_sponsor_apps
+                 WHERE ip=? AND CAST(COALESCE(created_at,'0') AS INTEGER) > ?",
+                params![ip, now_int - 86_400], |r| r.get(0),
+            ).unwrap_or(0);
+            if recent >= 10 {
+                return (StatusCode::TOO_MANY_REQUESTS,
+                    Json(serde_json::json!({"ok":false,"error":"rate limit (10 applications / 24h per IP)"}))).into_response();
+            }
+        }
+        // 2) capacity check (skip for Edition 00 — pre-booked is in display only).
+        if canonical != "00" {
+            let booked: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM gi_sponsor_apps
+                 WHERE edition=? AND slot_id=? AND status NOT IN ('refunded','rejected')",
+                params![canonical, tier.id], |r| r.get(0),
+            ).unwrap_or(0);
+            if booked >= tier.capacity {
+                return (StatusCode::CONFLICT,
+                    Json(serde_json::json!({"ok":false,"error":"tier sold out for this edition"}))).into_response();
+            }
+        }
+        // 3) insert
+        let _ = conn.execute(
+            "INSERT INTO gi_sponsor_apps
+                (edition, slot_id, company, contact_name, contact_email, contact_phone,
+                 website_url, payment_method, amount_jpy, notes, status, ip, user_agent, created_at)
+             VALUES (?,?,?,?,?,?, ?,?,?,?, 'pending', ?,?,?)",
+            params![canonical, tier.id, company, contact_name, contact_email, contact_phone,
+                    website_url, payment_method, tier.price_jpy, notes, ip, ua, now],
+        );
+        conn.last_insert_rowid()
+    };
+
+    // Best-effort Telegram notify.
+    let tg_msg = format!(
+        "🥋 *Sponsor Apply* #{} — /gi/{}\n\ntier: {} (¥{})\ncompany: {}\ncontact: {} <{}>\nphone: {}\nweb: {}\npayment: {}\nnotes: {}",
+        app_id, canonical, tier.label_ja, fmt_jpy(tier.price_jpy),
+        company,
+        if contact_name.is_empty() { "(no name)" } else { &contact_name },
+        contact_email,
+        if contact_phone.is_empty() { "—" } else { &contact_phone },
+        if website_url.is_empty() { "—" } else { &website_url },
+        payment_method,
+        if notes.is_empty() { "—" } else { &notes },
+    );
+    let _ = send_telegram_message(&tg_msg).await;
+
+    // Best-effort ack email back to applicant.
+    if let Ok(resend_key) = env::var("RESEND_API_KEY") {
+        if !resend_key.is_empty() {
+            let ack_subject = format!(
+                "[MU Gi Sponsor #{}] 申し込みを受領しました — 72h 以内にご連絡します",
+                app_id);
+            let ack_body = format!(
+                "<p>{}様、</p>\
+                 <p>MU × JiuFlow Sponsored Gi (Edition {}) スポンサー枠へのお申し込みありがとうございます。下記内容で受領しました。</p>\
+                 <hr><p><b>申込 ID:</b> #{}<br>\
+                 <b>会社名:</b> {}<br>\
+                 <b>ティア:</b> {} (¥{} / edition)<br>\
+                 <b>位置:</b> {}<br>\
+                 <b>希望決済:</b> {}<br>\
+                 <b>担当:</b> {} &lt;{}&gt;</p><hr>\
+                 <p><b>次のステップ:</b><br>\
+                 1. 72 時間以内に弊社 (株式会社イネブラ) から契約書 + 請求書 / Stripe 決済リンクをお送りします。<br>\
+                 2. 契約締結 + 入金確認後、刺繍デザインの最終調整に入ります。<br>\
+                 3. 質問・別ティア希望は本メールへのご返信で承ります。</p>\
+                 <p>— MU / 株式会社イネブラ<br>\
+                 <a href=\"https://wearmu.com/gi/{}\">wearmu.com/gi/{}</a></p>",
+                html_escape(if contact_name.is_empty() { "ご担当者" } else { &contact_name }),
+                canonical, app_id,
+                html_escape(&company),
+                html_escape(tier.label_ja), fmt_jpy(tier.price_jpy),
+                html_escape(tier.position),
+                html_escape(&payment_method),
+                html_escape(if contact_name.is_empty() { "—" } else { &contact_name }),
+                html_escape(&contact_email),
+                canonical, canonical,
+            );
+            let _ = reqwest::Client::new()
+                .post("https://api.resend.com/emails")
+                .bearer_auth(&resend_key)
+                .json(&serde_json::json!({
+                    "from": "MU Sponsors <gi-sponsors@wearmu.com>",
+                    "to": [contact_email.clone()],
+                    "subject": ack_subject,
+                    "html": ack_body,
+                    "reply_to": "mail@yukihamada.jp",
+                }))
+                .send().await;
+        }
+    }
+
+    Json(serde_json::json!({
+        "ok": true,
+        "app_id": app_id,
+        "edition": canonical,
+        "slot_id": tier.id,
+        "amount_jpy": tier.price_jpy,
+        "contact_email": contact_email,
+        "status": "pending",
+    })).into_response()
+}
+
+/// GET /admin/sponsor-apps?token=… — triage queue for sponsor applications.
+async fn admin_sponsor_apps(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/sponsor-apps").await { return r; }
+    let tok = q.get("token").map(String::as_str).unwrap_or("").to_string();
+    let tok_attr = html_attr_escape(&tok);
+
+    struct Row {
+        id: i64, edition: String, slot_id: String,
+        company: String, contact_name: String, contact_email: String,
+        contact_phone: String, website_url: String,
+        payment_method: String, amount_jpy: i64, notes: String,
+        status: String, created_at: String,
+    }
+    let rows: Vec<Row> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, edition, slot_id, company,
+                    COALESCE(contact_name,''), contact_email,
+                    COALESCE(contact_phone,''), COALESCE(website_url,''),
+                    payment_method, amount_jpy, COALESCE(notes,''),
+                    status, created_at
+             FROM gi_sponsor_apps
+             ORDER BY id DESC LIMIT 300"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map([], |r| Ok(Row {
+            id: r.get(0)?, edition: r.get(1)?, slot_id: r.get(2)?, company: r.get(3)?,
+            contact_name: r.get(4)?, contact_email: r.get(5)?,
+            contact_phone: r.get(6)?, website_url: r.get(7)?,
+            payment_method: r.get(8)?, amount_jpy: r.get(9)?, notes: r.get(10)?,
+            status: r.get(11)?, created_at: r.get(12)?,
+        })).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+
+    // Totals by status (active pipeline).
+    let mut total_pending = 0i64;
+    let mut total_paid = 0i64;
+    let mut total_value_paid: i64 = 0;
+    let mut total_value_pipe: i64 = 0;
+    for r in &rows {
+        match r.status.as_str() {
+            "pending" | "invoice_sent" | "contract_signed" => {
+                total_pending += 1; total_value_pipe += r.amount_jpy;
+            }
+            "paid" | "active" => {
+                total_paid += 1; total_value_paid += r.amount_jpy;
+            }
+            _ => {}
+        }
+    }
+
+    let status_color = |s: &str| -> &'static str {
+        match s {
+            "pending"          => "#9bd",
+            "invoice_sent"     => "#e6c449",
+            "contract_signed"  => "#cba",
+            "paid"             => "#9ae3a8",
+            "active"           => "#9ae3a8",
+            "refunded"         => "#e07b7b",
+            "rejected"         => "#999",
+            _                  => "#999",
+        }
+    };
+
+    let mut tbody = String::new();
+    for r in &rows {
+        let tier_label = sponsor_tier_by_id(&r.slot_id).map(|t| t.label_ja).unwrap_or(r.slot_id.as_str());
+        tbody.push_str(&format!(
+            r#"<tr>
+<td>#{id}</td>
+<td><span style="font-size:11px;color:#888">/gi/{ed}</span><br><b>{tier}</b></td>
+<td><b>{co}</b><br><span style="font-size:11px;color:#888">{cn} &lt;{ce}&gt;</span>{phone}{web}</td>
+<td>{pm}<br><span style="font-size:11px;color:var(--gold)">¥{amt}</span></td>
+<td style="font-size:11px;color:#aaa;max-width:240px">{notes}</td>
+<td><span style="color:{sc};font-size:12px">{st}</span></td>
+<td style="white-space:nowrap;font-size:11px;color:#999">{ts}</td>
+<td>
+<form method="post" action="/admin/sponsor-apps/{id}/status?token={t}" style="display:inline">
+<select name="status" style="background:#0e0e0e;color:#fff;border:1px solid #333;font-size:11px;padding:3px">
+<option value="pending">pending</option>
+<option value="invoice_sent">invoice_sent</option>
+<option value="contract_signed">contract_signed</option>
+<option value="paid">paid</option>
+<option value="active">active</option>
+<option value="refunded">refunded</option>
+<option value="rejected">rejected</option>
+</select>
+<button type="submit" style="background:#1a1a1a;border:1px solid #333;color:#eaeaea;padding:3px 8px;font-size:11px;border-radius:2px">apply</button>
+</form>
+</td>
+</tr>"#,
+            id = r.id, ed = html_escape(&r.edition),
+            tier = html_escape(tier_label),
+            co = html_escape(&r.company),
+            cn = html_escape(if r.contact_name.is_empty() { "(no name)" } else { &r.contact_name }),
+            ce = html_escape(&r.contact_email),
+            phone = if r.contact_phone.is_empty() { String::new() }
+                    else { format!(r#"<br><span style="font-size:11px;color:#888">📞 {}</span>"#, html_escape(&r.contact_phone)) },
+            web = if r.website_url.is_empty() { String::new() }
+                  else { format!(r#"<br><a href="{}" target="_blank" style="font-size:11px;color:#9bd">{}</a>"#,
+                                 html_attr_escape(&r.website_url), html_escape(&r.website_url)) },
+            pm = html_escape(&r.payment_method),
+            amt = fmt_jpy(r.amount_jpy),
+            notes = html_escape(&r.notes.chars().take(180).collect::<String>().replace('\n', " ")),
+            sc = status_color(&r.status), st = html_escape(&r.status),
+            ts = html_escape(&r.created_at),
+            t = tok_attr,
+        ));
+    }
+    if tbody.is_empty() {
+        tbody = r#"<tr><td colspan=8 style="color:#666;padding:24px">(まだ申し込みがありません)</td></tr>"#.into();
+    }
+
+    Html(format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>MU / Sponsor Apps 管理</title>
+<style>
+:root{{--gold:#e6c449}}
+body{{font:13.5px/1.55 ui-monospace,Menlo,monospace;color:#eaeaea;background:#0b0b0b;padding:24px;max-width:1500px;margin:0 auto}}
+h1{{font-weight:500;margin-top:0;font-size:22px}}
+table{{width:100%;border-collapse:collapse;margin-top:12px}}
+th,td{{padding:9px 11px;border-bottom:1px solid #1f1f1f;text-align:left;vertical-align:top}}
+th{{color:#888;font-weight:500;font-size:11px;letter-spacing:0.08em;text-transform:uppercase}}
+.nav a{{margin-right:14px;color:#9bd;text-decoration:none}} .nav{{margin-bottom:20px}}
+.totals{{display:flex;gap:20px;margin:12px 0 24px;flex-wrap:wrap}}
+.tot{{background:#141414;border:1px solid #222;padding:14px 18px;border-radius:3px;min-width:180px}}
+.tot .k{{font-size:10px;letter-spacing:0.2em;color:#888;text-transform:uppercase;margin-bottom:6px}}
+.tot .v{{font-size:20px;font-weight:300}}
+.tot .v b{{color:var(--gold)}}
+</style></head><body>
+<div class=nav>
+  <a href="/admin/bounty?token={tok}">Bounty</a>
+  <a href="/admin/collab-signups?token={tok}">Collab</a>
+  <a href="/admin/sponsor-apps?token={tok}">Sponsor Apps</a>
+  <a href="/gi/00/sponsor" target="_blank">/gi/00/sponsor (public)</a>
+</div>
+<h1>MU Gi — スポンサー枠 申し込み管理 ({n} 件)</h1>
+<div class=totals>
+  <div class=tot><div class=k>Pipeline (pending+invoice+signed)</div><div class=v><b>{tp}</b> 件 / ¥<b>{vp}</b></div></div>
+  <div class=tot><div class=k>Paid / Active</div><div class=v><b>{tpd}</b> 件 / ¥<b>{vpd}</b></div></div>
+</div>
+<table>
+<thead><tr>
+<th>id</th><th>edition / tier</th><th>company / contact</th>
+<th>pay / amount</th><th>notes</th><th>status</th><th>created</th><th>set status</th>
+</tr></thead>
+<tbody>{tbody}</tbody>
+</table>
+</body></html>"#,
+        tok = tok_attr, n = rows.len(),
+        tp = total_pending, vp = fmt_jpy(total_value_pipe),
+        tpd = total_paid, vpd = fmt_jpy(total_value_paid),
+        tbody = tbody)).into_response()
+}
+
+/// POST /admin/sponsor-apps/:id/status — set status on a sponsor application.
+async fn admin_sponsor_apps_status(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    axum::extract::Form(form): axum::extract::Form<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/sponsor-apps/status").await { return r; }
+    let tok = q.get("token").cloned().unwrap_or_default();
+    let status = form.get("status").cloned().unwrap_or_default();
+
+    let allowed = ["pending","invoice_sent","contract_signed","paid","active","refunded","rejected"];
+    if !allowed.contains(&status.as_str()) {
+        return (StatusCode::BAD_REQUEST, "invalid status").into_response();
+    }
+
+    {
+        let conn = db.lock().unwrap();
+        let now = chrono_now();
+        match status.as_str() {
+            "paid" | "active" => {
+                let _ = conn.execute(
+                    "UPDATE gi_sponsor_apps SET status=?, paid_at=COALESCE(paid_at,?) WHERE id=?",
+                    params![status, now, id]);
+            }
+            "contract_signed" => {
+                let _ = conn.execute(
+                    "UPDATE gi_sponsor_apps SET status=?, contract_signed_at=COALESCE(contract_signed_at,?) WHERE id=?",
+                    params![status, now, id]);
+            }
+            _ => {
+                let _ = conn.execute(
+                    "UPDATE gi_sponsor_apps SET status=? WHERE id=?",
+                    params![status, id]);
+            }
+        }
+    }
+    let tok_attr = html_attr_escape(&tok);
+    Response::builder()
+        .status(StatusCode::SEE_OTHER)
+        .header("Location", format!("/admin/sponsor-apps?token={}", tok_attr))
+        .body(axum::body::Body::empty()).unwrap()
 }
 
 /// GET /collab/apply — public landing page with form to request a proposal.
@@ -17820,6 +18679,35 @@ async fn main() {
         );
         CREATE INDEX IF NOT EXISTS idx_gi_enai_email ON gi_enai_claims(edition, email);
         CREATE INDEX IF NOT EXISTS idx_gi_enai_claimed ON gi_enai_claims(claimed_at DESC);
+
+        -- Sponsor slot applications. One row per inquiry / Stripe checkout for
+        -- a specific embroidery slot on the gi. Drives the /gi/:id/sponsor
+        -- public page (availability + paid status by slot).
+        CREATE TABLE IF NOT EXISTS gi_sponsor_apps (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            edition           TEXT NOT NULL,
+            slot_id           TEXT NOT NULL,
+            company           TEXT NOT NULL,
+            contact_name      TEXT,
+            contact_email     TEXT NOT NULL,
+            contact_phone     TEXT,
+            website_url       TEXT,
+            payment_method    TEXT NOT NULL,        -- 'stripe' | 'bank' | 'pon'
+            amount_jpy        INTEGER NOT NULL,
+            stripe_session_id TEXT,
+            bank_invoice_no   TEXT,
+            contract_url      TEXT,
+            notes             TEXT,
+            status            TEXT NOT NULL DEFAULT 'pending', -- pending | invoice_sent | paid | contract_signed | active | refunded
+            ip                TEXT,
+            user_agent        TEXT,
+            created_at        TEXT NOT NULL,
+            paid_at           TEXT,
+            contract_signed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_gi_sponsor_apps_slot ON gi_sponsor_apps(edition, slot_id);
+        CREATE INDEX IF NOT EXISTS idx_gi_sponsor_apps_email ON gi_sponsor_apps(contact_email);
+        CREATE INDEX IF NOT EXISTS idx_gi_sponsor_apps_status ON gi_sponsor_apps(status, created_at DESC);
         -- 商品ごとの好き嫌い 1-clic シグナル + 自由記述 FB。
         --   kind: 'love' (👍) / 'meh' (👎) / 'comment' (自由記述同送)
         --   visitor_token は cookie 由来の匿名 ID。集計用、再投稿の弱め判定。
@@ -19468,8 +20356,12 @@ async fn main() {
         .route("/kokon/proposal", get(show_kokon_proposal_page))
         .route("/jiuflow/proposal", get(show_jiuflow_proposal_page))
         .route("/gi/:id", get(show_gi_edition_page))
+        .route("/gi/:id/sponsor", get(show_gi_sponsor_recruit_page))
         .route("/api/gi/:id/checkout", post(gi_edition_checkout))
         .route("/api/gi/:id/enai-claim", post(gi_enai_claim))
+        .route("/api/gi/:id/sponsor-apply", post(gi_sponsor_apply))
+        .route("/admin/sponsor-apps", get(admin_sponsor_apps))
+        .route("/admin/sponsor-apps/:id/status", post(admin_sponsor_apps_status))
         .route("/collab/apply", get(show_collab_apply_page))
         .route("/api/collab/apply", post(api_collab_apply))
         .route("/collab/result/:token", get(show_collab_result_page))
@@ -22895,12 +23787,24 @@ fn template_received(ctx: &EmailContext, variant: &str) -> (String, String) {
 
     match variant {
         "A" => {
-            let subject = format!("MU 受領ログ — #{:04}", ctx.order_id);
-            let hero = "受領ログ";
+            let subject = if ctx.product_name.is_empty() {
+                format!("受領確定 — #{:04}", ctx.order_id)
+            } else {
+                format!("{} — 受領確定", ctx.product_name)
+            };
+            let hero = "受領";
+            let timeline = code_block(
+                "翌 09:00 JST   Printful へ自動発注\n+18h ±6h      印刷完了 (DTG, 90s/領域)\n+7〜10 日      国際郵便で日本到着\n直近 100 件の到着精度: ±1.4 日 (median)");
+            let _ = &table_html; // (B variant uses it)
             let body = format!(
-                r#"<p style="margin:0 0 14px;color:#bbb;">あなたの注文を確認しました。これがあなたのシャツです。</p>{img}{order}<p style="margin:0 0 4px;color:#bbb;">同時刻、MU システムは:</p>{table}{accent}"#,
-                img = image_block(ctx), order = order_block, table = table_html,
-                accent = accent_block("このシャツはまだ存在しません。<br>翌 09:00 JST に Printful へ自動発注、<br>翌 24 時間で存在し始めます。"));
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14.5px;line-height:1.6;">あなたの <b style="color:#e6c449;">{name}</b> を受領しました。<br>このデザインは、過去にも未来にも、同じものは作られません。</p>{img}{order}<p style="margin:18px 0 6px;color:#bbb;">あなたのシャツのタイムライン:</p>{timeline}{accent}<p style="margin:22px 0 0;color:#666;font-size:11px;line-height:1.55;letter-spacing:0.04em;">— MU 全体 (24h): デザイン {dt} 件 / drops {dd} 件 / 売上 ¥{rev} ({ord7} 注文)</p>"#,
+                name = html_escape(&ctx.product_name),
+                img = image_block(ctx),
+                order = order_block,
+                timeline = timeline,
+                accent = accent_block("追跡番号は出荷時に別 email で届きます。<br>到着しなければ <a href=\"mailto:info@enablerdao.com\" style=\"color:#e6c449;\">info@enablerdao.com</a>。"),
+                dt = ctx.designs_today, dd = ctx.drops_today,
+                rev = fmt_jpy(ctx.revenue_7d), ord7 = ctx.orders_7d);
             let html = email_shell(&subject, hero, &now_jst, &body);
             (subject, html)
         }
@@ -22978,20 +23882,30 @@ fn template_nft_mint(ctx: &EmailContext, variant: &str, mint_address: &str) -> (
         ctx.order_id, mint_disp));
     match variant {
         "A" => {
-            let subject = format!("MUGEN #{:04} — NFT mint confirmed", ctx.order_id);
+            let subject = if ctx.product_name.is_empty() {
+                format!("MUGEN #{:04} — 永続記録ができました", ctx.order_id)
+            } else {
+                format!("{} — 永続記録ができました", ctx.product_name)
+            };
             let body = format!(
-                r#"<p style="margin:0 0 14px;color:#bbb;">あなたのシャツの cryptographic proof です。布と等価のデジタル版がチェーン上に書き込まれました。</p>{img}{block}{accent}"#,
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14.5px;line-height:1.6;">あなたが買った <b style="color:#e6c449;">{name}</b> の永続記録が、Solana 上に書き込まれました。<br>布のシャツは、いつか消耗します。<br>この記録は、消えません。</p>{img}{block}{accent}"#,
+                name = html_escape(&ctx.product_name),
                 img = image_block(ctx), block = block,
-                accent = accent_block("このハッシュは 256 bit = 10^77 通りの 1 つ。<br>同じものを引く確率は事実上ゼロです。<br>譲渡不可、削除不可、永続。"));
+                accent = accent_block("次にできること:<br>14 日後、この記録を使って wearmu.com に「パスワードなしログイン」できます。<br>署名 1 回 = 90 日入れます。詳しい案内は別 email で。"));
             let html = email_shell(&subject, "NFT 確定", &now_jst, &body);
             (subject, html)
         }
         _ => {
-            let subject = "あなたのデザインの暗号学的 ID が出ました".to_string();
+            let subject = if ctx.product_name.is_empty() {
+                "あなたのシャツの「製造の事実」が、Solana に残りました".to_string()
+            } else {
+                format!("{} を選んだ事実が、Solana に残りました", ctx.product_name)
+            };
             let body = format!(
-                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.55;">布のシャツは現実世界で消耗します。<br>でも、その元データの fingerprint はチェーン上に残り続けます。</p>{img}{block}<p style="margin:18px 0 0;color:#888;font-size:12px;">これは <i>soulbound</i> = あなたから他人に移せない NFT です。<br>所有権ではなく、製造記録です。</p>"#,
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14.5px;line-height:1.6;">あなたが買った <b style="color:#e6c449;">{name}</b>。<br>布はいつか消耗します。でも、MU があなた向けに作ったという事実は、消せません。</p>{img}<p style="margin:0 0 10px;color:#bbb;font-size:13.5px;line-height:1.6;">これは「所有権」ではなく「製造記録」です。<br>転売不可、改ざん不可。あなたが今この瞬間に <b>{name}</b> を選んだことが、Solana 上に永続します。</p>{block}<p style="margin:18px 0 0;color:#888;font-size:12px;line-height:1.6;">14 日後、この記録を使ってログインを wallet 署名に切り替えられます (任意)。</p>"#,
+                name = html_escape(&ctx.product_name),
                 img = image_block(ctx), block = block);
-            let html = email_shell(&subject, "暗号学的記録", &now_jst, &body);
+            let html = email_shell(&subject, "製造記録", &now_jst, &body);
             (subject, html)
         }
     }
@@ -23159,24 +24073,19 @@ fn template_cohort30(ctx: &EmailContext, variant: &str, cohort_size: i64) -> (St
             (subject.clone(), email_shell(&subject, "30 日ログ", &now_jst, &body))
         }
         _ => {
-            let subject = "Musk と Bezos が、あなたについて言ったこと".to_string();
-            let musk_v = if ctx.musk_verdict.is_empty() { "(no verdict yet)".to_string() } else { ctx.musk_verdict.clone() };
-            let bez_v  = if ctx.bezos_verdict.is_empty() { "(no verdict yet)".to_string() } else { ctx.bezos_verdict.clone() };
-            let founders = format!(
-                r#"<div style="margin:0 0 14px;padding:14px;background:#0d0d0d;border-radius:4px;border:1px solid #1f1f1f;">
-<div style="font-size:10px;letter-spacing:0.16em;color:#666;text-transform:uppercase;">⚡ Musk persona — score {ms:.2}</div>
-<div style="margin-top:6px;color:#e6c449;font-size:12.5px;line-height:1.55;">"{mv}"</div>
-</div>
-<div style="margin:0 0 14px;padding:14px;background:#0d0d0d;border-radius:4px;border:1px solid #1f1f1f;">
-<div style="font-size:10px;letter-spacing:0.16em;color:#666;text-transform:uppercase;">📦 Bezos persona — score {bs:.2}</div>
-<div style="margin-top:6px;color:#e6c449;font-size:12.5px;line-height:1.55;">"{bv}"</div>
-</div>"#,
-                ms = ctx.musk_score, mv = html_escape(&musk_v),
-                bs = ctx.bezos_score, bv = html_escape(&bez_v));
+            let subject = if ctx.product_name.is_empty() {
+                "あなたの一票が、この 30 日を動かしました".to_string()
+            } else {
+                format!("{} を選んだあなたへ — 30 日後の報告", ctx.product_name)
+            };
+            let _ = (&ctx.musk_verdict, &ctx.bezos_verdict, ctx.musk_score, ctx.bezos_score);
             let body = format!(
-                r#"<p style="margin:0 0 14px;color:#bbb;font-size:13.5px;line-height:1.6;">MU には創業者 AI が 2 人います。Elon Musk と Jeff Bezos の persona を Gemini Pro に与えて毎週採点させています。<br>あなたの 30 日間も、彼らの議事録に含まれました。</p>{img}{founders}{table}"#,
-                img = image_block(ctx), founders = founders, table = table_html);
-            (subject.clone(), email_shell(&subject, "創業者の議事録", &now_jst, &body))
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.6;">買うこと = 投票することです。<br>30 日前、あなたは <b style="color:#e6c449;">{name}</b> という 1 票を投じました。</p>{img}<p style="margin:0 0 6px;color:#bbb;font-size:14px;line-height:1.6;">その 1 票がなければ、MU の AI はこの数字を出せませんでした:</p>{table}{accent}"#,
+                name = html_escape(&ctx.product_name),
+                img = image_block(ctx),
+                table = table_html,
+                accent = accent_block("次の email は 1 年後 (annual log)。<br>それまで沈黙します。<br>到着していなければ <a href=\"mailto:info@enablerdao.com\" style=\"color:#e6c449;\">info@enablerdao.com</a>。"));
+            (subject.clone(), email_shell(&subject, "30 日報告", &now_jst, &body))
         }
     }
 }
