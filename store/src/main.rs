@@ -15533,7 +15533,7 @@ async fn main() {
         CREATE TABLE IF NOT EXISTS journal_embeddings (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
             journal_id    INTEGER NOT NULL,     -- references agent_journal.id
-            embedding     BLOB NOT NULL,        -- f32[768] little-endian packed
+            embedding     BLOB NOT NULL,        -- f32[N] little-endian packed (N depends on model; 3072 for gemini-embedding-001)
             model         TEXT NOT NULL,        -- e.g. 'text-embedding-004'
             created_at    TEXT NOT NULL
         );
@@ -17408,7 +17408,9 @@ async fn agent_journal_embedder(db: Db) -> Result<AgentReport, String> {
         return Ok(AgentReport::idle("no unembedded journals"));
     }
 
-    let model = "text-embedding-004";
+    // gemini-embedding-001 (3072-dim). `text-embedding-004` was deprecated
+    // on v1beta/embedContent — confirmed via ListModels 2026-05-12.
+    let model = "gemini-embedding-001";
     let mut embedded: i64 = 0;
     let mut errors: i64 = 0;
     for (jid, agent_name, summary) in &candidates {
