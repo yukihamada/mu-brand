@@ -1,0 +1,88 @@
+name: self-evolve-merge
+
+# Auto-merge gate for self_evolve agent's PRs. Runs only when a PR carries
+# the `self-evolve` label. Enforces the Auto-merge Allowlist defined in
+# static/constitution.md, then squash-merges if all checks pass. On any
+# failure the PR drops back to normal manual review.
+#
+# Kill switch: set repo secret SELF_EVOLVE_AUTO_MERGE=0 to disable.
+
+on:
+  pull_request:
+    types: [labeled, opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  evaluate:
+    if: contains(github.event.pull_request.labels.*.name, 'self-evolve')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Kill-switch check (SELF_EVOLVE_AUTO_MERGE)
+        id: killcheck
+        env:
+          KILL: ${{ secrets.SELF_EVOLVE_AUTO_MERGE }}
+        run: |
+          if [ "$KILL" = "0" ]; then
+            echo "::notice::auto-merge disabled by repo secret SELF_EVOLVE_AUTO_MERGE=0"
+            echo "result=disabled" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=enabled" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.killcheck.outputs.result == 'enabled'
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Allowlist check
+        if: steps.killcheck.outputs.result == 'enabled'
+        id: allowcheck
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          chmod +x scripts/check_auto_merge_allowlist.sh
+          if scripts/check_auto_merge_allowlist.sh "$BASE_SHA" "$HEAD_SHA" "$PR_BODY"; then
+            echo "result=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=fail" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Rust
+        if: steps.allowcheck.outputs.result == 'pass'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: cargo check (final sanity gate)
+        if: steps.allowcheck.outputs.result == 'pass'
+        working-directory: store
+        run: cargo check --quiet
+
+      - name: Comment success + enable auto-merge
+        if: steps.allowcheck.outputs.result == 'pass'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr comment "$PR" --body "✅ self-evolve allowlist + cargo check passed — squash-merging."
+          gh pr merge "$PR" --squash --auto --delete-branch
+
+      - name: Comment failure (fall back to manual review)
+        if: steps.killcheck.outputs.result == 'enabled' && steps.allowcheck.outputs.result == 'fail'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr comment "$PR" --body "❌ self-evolve allowlist check failed — see workflow logs and Constitution §Auto-merge Allowlist. Falling back to manual review."
+
+      - name: Comment kill-switch on
+        if: steps.killcheck.outputs.result == 'disabled'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr comment "$PR" --body "⏸ auto-merge globally disabled (\`SELF_EVOLVE_AUTO_MERGE=0\`). Manual review required."
