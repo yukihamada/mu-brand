@@ -16045,6 +16045,11 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         interval_secs: 7 * 86_400, // 週次
         description: "Gemini Pro が次 7 日の 1 つの大きな動き (drop / price / ad / deprecate) を提案 → T1 governance",
     },
+    AgentDef {
+        name: "weekly_digest",
+        interval_secs: 7 * 86_400, // 週次
+        description: "Telegram weekly digest 送信 + 7d 経過 governance pending を expired に遷移",
+    },
 ];
 
 /// agent_journal から指定 agent の最後の cycle_at (epoch sec) を取得。
@@ -16073,6 +16078,7 @@ async fn run_agent(name: &str, db: Db) -> Result<AgentReport, String> {
         "catalog_health"    => agent_catalog_health(db).await,
         "price_micro"       => agent_price_micro(db).await,
         "strategist"        => agent_strategist(db).await,
+        "weekly_digest"     => agent_weekly_digest(db).await,
         _ => Err(format!("unknown agent: {}", name)),
     }
 }
@@ -17917,6 +17923,116 @@ If no clear move is justified by the numbers above, respond {{"kind":"hold","tit
     })
 }
 
+// ── Agent 15: weekly_digest ────────────────────────────────────────────
+// 週 1 回、yuki に Telegram でガバナンス・サマリーを送る:
+//   - 過去 7d notable journal 件数
+//   - 現在の pending T1 件数 + 7d で expire した件数
+//   - 7d 売上 / 注文数
+//   - 直近 vision_drift verdict があれば 1 行
+//   - constitution version (build SHA + バイト数)
+// pending を 7d で expire させるロジックもこの agent に同居 (1 tick で十分)。
+async fn agent_weekly_digest(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut actions: Vec<serde_json::Value> = Vec::new();
+
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let week = now_s - 7 * 86_400;
+
+    // 1) Expire pending governance items older than 7 days (Constitution §Governance Cadence)
+    let expired: i64 = {
+        let conn = db.lock().unwrap();
+        conn.execute(
+            "UPDATE autonomy_governance_queue
+             SET status='expired'
+             WHERE status='pending'
+               AND CAST(COALESCE(created_at,'0') AS INTEGER) < ?",
+            params![week],
+        ).map(|n| n as i64).unwrap_or(0)
+    };
+    obs.insert("expired".into(), serde_json::Value::from(expired));
+
+    // 2) Gather digest numbers
+    let (notable_7d, pending, rev7d, orders7d, drift_summary): (i64, i64, i64, i64, String) = {
+        let conn = db.lock().unwrap();
+        let n_notable: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM agent_journal
+             WHERE notable=1 AND CAST(COALESCE(created_at,'0') AS INTEGER) > ?",
+            params![week], |r| r.get(0),
+        ).unwrap_or(0);
+        let n_pending: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM autonomy_governance_queue WHERE status='pending'",
+            [], |r| r.get(0),
+        ).unwrap_or(0);
+        let rev: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(amount_jpy),0) FROM collab_orders
+             WHERE CAST(COALESCE(created_at,'0') AS INTEGER) > ?",
+            params![week], |r| r.get(0),
+        ).unwrap_or(0);
+        let n_orders: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM collab_orders
+             WHERE CAST(COALESCE(created_at,'0') AS INTEGER) > ?",
+            params![week], |r| r.get(0),
+        ).unwrap_or(0);
+        let drift: String = conn.query_row(
+            "SELECT COALESCE(summary,'') FROM agent_journal
+             WHERE agent_name='vision_drift'
+             ORDER BY id DESC LIMIT 1",
+            [], |r| r.get(0),
+        ).unwrap_or_default();
+        (n_notable, n_pending, rev, n_orders, drift)
+    };
+    obs.insert("notable_7d".into(), serde_json::Value::from(notable_7d));
+    obs.insert("pending".into(), serde_json::Value::from(pending));
+    obs.insert("revenue_7d_jpy".into(), serde_json::Value::from(rev7d));
+    obs.insert("orders_7d".into(), serde_json::Value::from(orders7d));
+
+    // 3) Compose digest text. Constitution principle #11: numbers over adjectives.
+    let constitution_bytes = CONSTITUTION_RAW.len();
+    let msg = format!(
+        "MU weekly digest\n\
+         ───────────────\n\
+         revenue 7d: ¥{rev}  ({orders} orders)\n\
+         notable journal 7d: {n}\n\
+         governance pending: {p}  (expired this run: {e})\n\
+         constitution: {cb}B\n\
+         vision_drift last: {d}\n\
+         \n\
+         /admin/governance to approve/reject.",
+        rev = rev7d, orders = orders7d, n = notable_7d, p = pending, e = expired,
+        cb = constitution_bytes,
+        d = if drift_summary.is_empty() { "(none)".to_string() }
+            else { drift_summary.chars().take(120).collect::<String>() },
+    );
+
+    // 4) Send to Telegram (use the existing chat_id + bot_token).
+    let tg_token = env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default();
+    let tg_chat  = env::var("TELEGRAM_CHAT_ID").unwrap_or_else(|_| "1136442501".into());
+    if tg_token.is_empty() {
+        return Ok(AgentReport {
+            observations: serde_json::Value::Object(obs),
+            decisions: vec![serde_json::json!({"type":"telegram_skipped","reason":"no token"})],
+            actions, summary: "weekly_digest: prepared but no TELEGRAM_BOT_TOKEN".into(),
+            notable: pending > 0,
+        });
+    }
+    let resp = reqwest::Client::new()
+        .post(format!("https://api.telegram.org/bot{}/sendMessage", tg_token))
+        .json(&serde_json::json!({
+            "chat_id": tg_chat, "text": msg, "disable_web_page_preview": true,
+        }))
+        .send().await;
+    let sent = matches!(resp, Ok(ref r) if r.status().is_success());
+    actions.push(serde_json::json!({"type":"telegram_digest_sent","ok": sent}));
+    let summary = format!(
+        "weekly_digest: rev=¥{} pending={} expired={} (tg={})",
+        rev7d, pending, expired, sent);
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs),
+        decisions: vec![], actions, summary,
+        notable: pending > 0,
+    })
+}
+
 /// Decode a packed f32 embedding from journal_embeddings.embedding (little-endian).
 #[allow(dead_code)] // wired up by P3 strategist + P5 inject_similar_history
 fn decode_embedding_blob(blob: &[u8]) -> Vec<f32> {
@@ -18416,8 +18532,12 @@ code{{font-size:11px;background:rgba(230,196,73,0.08);color:#e6c449;padding:1px 
 .link:hover{{text-decoration:underline}}
 .foot{{margin-top:24px;font-size:11px;opacity:0.5}}
 </style></head><body>
-<h1>MU <em>マルチエージェント</em> — 6 agents</h1>
-<div class="sub">in-process scheduler が 1 分 tick で interval を超えた agent を順次実行。失敗しても他 agent をブロックしない。</div>
+<h1>MU <em>マルチエージェント</em> — {n_agents} agents</h1>
+<div class="sub">in-process scheduler が 1 分 tick で interval を超えた agent を順次実行。失敗しても他 agent をブロックしない。 ·
+  <a href="/static/constitution.md" style="color:rgba(245,245,240,0.55)">Constitution v1 ({cb}B)</a> ·
+  <a href="/admin/governance?token={tok}" style="color:rgba(245,245,240,0.55)">Governance</a> ·
+  <a href="/admin/insights?token={tok}" style="color:rgba(245,245,240,0.55)">Insights</a>
+</div>
 <table>
 <thead><tr>
   <th>状態</th><th>agent</th><th>役割</th><th>interval</th><th>最終実行</th>
@@ -18429,7 +18549,9 @@ code{{font-size:11px;background:rgba(230,196,73,0.08);color:#e6c449;padding:1px 
   全ジャーナル: <a href="/admin/agent?token={tok}&limit=100" style="color:#5cf">/admin/agent</a> ·
   SWEEP 売上: <a href="/admin/sweep?token={tok}" style="color:#5cf">/admin/sweep</a>
 </div>
-</body></html>"#, rows = rows_html, tok = html_attr_escape(token_q));
+</body></html>"#,
+        rows = rows_html, tok = html_attr_escape(token_q),
+        n_agents = AGENT_REGISTRY.len(), cb = CONSTITUTION_RAW.len());
     let mut resp = axum::response::Html(html).into_response();
     resp.headers_mut().insert("X-Robots-Tag", HeaderValue::from_static("noindex, nofollow"));
     resp
