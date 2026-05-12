@@ -1203,6 +1203,12 @@ async fn developers_page() -> impl IntoResponse {
     axum::response::Html(body)
 }
 
+/// GET /collab — MU Collab 法人向け資料 (pitch deck + pricing).
+async fn collab_page() -> impl IntoResponse {
+    let body = include_str!("../static/collab.html");
+    axum::response::Html(body)
+}
+
 async fn list_brands(State(db): State<Db>) -> impl IntoResponse {
     // created_at is stored mixed-format (some rows are unix-epoch strings,
     // others are ISO). Normalize inside SQL so MAX() picks the real latest.
@@ -8834,6 +8840,96 @@ async function decide(kind) {{
     Html(html).into_response()
 }
 
+/// GET /ma-lottery (no token) — public explainer page.
+async fn ma_lottery_explainer(State(db): State<Db>) -> Html<String> {
+    let recent: Vec<(String, i64, String, String)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT
+                CASE WHEN drawn_at GLOB '[0-9]*' AND LENGTH(drawn_at) <= 11
+                     THEN date(CAST(drawn_at AS INTEGER), 'unixepoch', '+9 hours')
+                     ELSE SUBSTR(drawn_at,1,10) END,
+                id, status, kind
+             FROM ma_lottery_draws ORDER BY id DESC LIMIT 5"
+        ) { Ok(s) => s, Err(_) => return Html(String::new()) };
+        let rows: Vec<(String, i64, String, String)> = stmt.query_map([], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, i64>(1)?,
+            r.get::<_, String>(2)?, r.get::<_, String>(3)?,
+        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+        rows
+    };
+    let history_rows: String = if recent.is_empty() {
+        r#"<li style="color:rgba(245,245,240,0.5)">まだ発火履歴はありません</li>"#.to_string()
+    } else {
+        recent.iter().map(|(d, id, status, kind)| format!(
+            r#"<li>#{id:03} · {d} · {kind} → <strong>{status}</strong></li>"#,
+            id = id, d = html_escape(d),
+            kind = html_escape(kind), status = html_escape(status),
+        )).collect::<Vec<_>>().join("\n")
+    };
+    Html(format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>4/7 Founder Relay — 100日に1回、MA を誰かに贈る | MU</title>
+<meta name="description" content="MU の Founder Relay。100 日に 1 回、過去購入者から weighted random で 1 人に MA を贈与。受/譲/寄付の 3 択。連鎖は 7 人で reset。">
+<meta property="og:title" content="4/7 Founder Relay — MU">
+<meta property="og:description" content="ロトではなく、贈与の連鎖。100 日に 1 回、MA を誰かに贈る。">
+<meta property="og:image" content="https://wearmu.com/og.jpg">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+body{{margin:0;padding:0;background:#0A0A0A;color:#F5F5F0;font-family:'Noto Serif JP','Helvetica Neue',serif;line-height:1.95;font-size:15px}}
+nav{{position:sticky;top:0;background:rgba(10,10,10,0.85);backdrop-filter:blur(12px);border-bottom:1px solid rgba(255,255,255,0.06);padding:18px 32px;display:flex;justify-content:space-between;align-items:center;z-index:50;font-family:'Helvetica Neue',Arial,sans-serif}}
+nav a{{color:#F5F5F0;text-decoration:none;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.85}}
+nav .logo{{font-weight:700;letter-spacing:0.45em}}
+.wrap{{max-width:680px;margin:0 auto;padding:60px 32px 100px}}
+.eyebrow{{font-family:'Helvetica Neue',Arial,sans-serif;font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:#e6c449;margin-bottom:14px}}
+h1{{font-size:clamp(28px,4.5vw,42px);font-weight:300;letter-spacing:0.02em;line-height:1.3;margin:0 0 18px}}
+h2{{font-size:18px;font-weight:300;letter-spacing:0.02em;margin:36px 0 12px;padding-top:22px;border-top:1px solid rgba(255,255,255,0.08);font-family:'Helvetica Neue',Arial,sans-serif;color:#e6c449}}
+p{{margin:0 0 14px}}
+strong{{color:#F5F5F0;font-weight:500}}
+em{{color:#e6c449;font-style:normal}}
+ol,ul{{padding-left:22px;color:rgba(245,245,240,0.7);margin:0 0 18px}}
+ol li,ul li{{margin-bottom:8px}}
+.history{{background:#1c1c1c;border-left:2px solid #e6c449;padding:14px 18px;margin:20px 0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px}}
+.history li{{list-style:none;margin-bottom:6px;font-feature-settings:"tnum"}}
+footer{{padding:48px 32px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;font-size:11px;letter-spacing:0.2em;opacity:0.5}}
+</style></head><body>
+<nav><a href="/" class="logo">MU</a><a href="/blog/">/ Notes</a></nav>
+<div class="wrap">
+<div class="eyebrow">MU · 4/7 Founder Relay</div>
+<h1>100 日に 1 回、MA を誰かに贈る。</h1>
+<p>MU は、100 日に 1 回、過去に MUGEN / MUON / MA / YOU / NOUNS を購入した方の中から weighted random で 1 人を選び、その人に <strong>次の MA (1-of-1)</strong> を贈与します。当選者は次の 3 つから 1 つを選びます。</p>
+
+<ol>
+<li><strong>受け取る</strong> — 次の MA を完全無料で受け取る。ENAI 100 枚も同時に Treasury から贈与。</li>
+<li><strong>譲る</strong> — 別の人を指名。指名された人にも同じ 3 択メールが届く。連鎖は最大 7 人。7 人目で reset。</li>
+<li><strong>チャリティに転換</strong> — Enabler Inc. の指定先 (CO₂ オフセット / 教育) に転換。MA はオークションに戻り、収益が指定先に。</li>
+</ol>
+
+<h2>なぜロトではなく贈与か</h2>
+<p>ロトは「確率に当たる」体験。Relay は「贈与の連鎖を起こす」体験。MU の vision にあるのは <em>numbers over adjectives</em> と <em>quiet confidence</em>。確率を煽る言葉は両方を犯します。だから連鎖にしました。</p>
+
+<h2>選定の重み</h2>
+<p>過去 24 ヶ月の累計支払額をそのまま重みにします。重みは公開できませんが、コードは <a href="https://github.com/yukihamada/mu-brand/blob/main/store/src/main.rs" style="color:#e6c449">main.rs</a> にあり、誰でも検証できます (関数名 <code>lottery_pick_winner</code>)。</p>
+
+<h2>発火条件</h2>
+<ol>
+<li>前回発火から <strong>100 日経過</strong></li>
+<li>または「沈黙の日」(売上 ¥0 の日) が発生した時、その日のうちに前倒し発火</li>
+</ol>
+
+<h2>これまでの発火履歴</h2>
+<div class="history">
+<ul>
+{history_rows}
+</ul>
+</div>
+
+<p style="margin-top:48px;font-size:12px;color:rgba(245,245,240,0.5)">— MU × Enabler Inc. (株式会社イネブラ) · <a href="/blog/4-7-founder-relay-001.html" style="color:#e6c449">第 1 回ノートを読む →</a></p>
+</div>
+<footer>MU — wearmu.com</footer>
+</body></html>"#, history_rows = history_rows))
+}
+
 /// GET /admin/lottery?token=… — list draws + relays
 async fn admin_ma_lottery_list(
     State(db): State<Db>,
@@ -14426,6 +14522,9 @@ async fn main() {
         .route("/embed.js", get(embed_js))
         .route("/embed/products", get(embed_iframe_page))
         .route("/developers", get(developers_page))
+        .route("/collab", get(collab_page))
+        .route("/b2b", get(collab_page))
+        .route("/partners", get(collab_page))
         .route("/api/sweep/checkout", post(sweep_checkout))
         .route("/api/sweep/signal", post(sweep_signal))
         .route("/api/sweep/signals", get(sweep_signals_summary))
@@ -14447,6 +14546,8 @@ async fn main() {
         .route("/api/admin/ma_lottery/draw", post(admin_ma_lottery_draw))
         .route("/api/admin/ma_lottery",      get(admin_ma_lottery_list))
         .route("/admin/ma-lottery",          get(admin_ma_lottery_list))
+        .route("/ma-lottery",                get(ma_lottery_explainer))
+        .route("/ma-lottery/",               get(ma_lottery_explainer))
         .route("/ma-lottery/:token",         get(ma_lottery_page))
         .route("/api/ma-lottery/:token/decide", post(ma_lottery_decide))
         .route("/api/admin/sns/pending", get(admin_sns_pending))

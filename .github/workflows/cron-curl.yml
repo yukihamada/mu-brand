@@ -27,6 +27,8 @@ on:
     - cron: '0 0 * * 1'
     # Weekly Mon 03:00 UTC = JST 12:00 — council_compose (議題自動生成)
     - cron: '0 3 * * 1'
+    # Daily 02:00 UTC = JST 11:00 — ma_lottery_draw (server-side 100d idempotent)
+    - cron: '0 2 * * *'
   workflow_dispatch:
     inputs:
       target:
@@ -40,6 +42,7 @@ on:
           - sample_grow
           - blog_compose
           - lottery_draw
+          - ma_lottery_draw
           - council_compose
           - sample_grow_force
 
@@ -282,6 +285,30 @@ jobs:
           curl -fsS -X POST -H 'Content-Type: application/json' \
             -d "{\"admin_token\":\"${MU_ADMIN_TOKEN}\"}" \
             "${BASE_URL}/api/admin/lottery_draw"
+
+  ma_lottery_draw:
+    # Daily check; server enforces 100-day idempotency. The endpoint refuses
+    # to re-fire within LOTTERY_PERIOD_DAYS days unless kind='manual'.
+    if: github.event.schedule == '0 2 * * *' || github.event.inputs.target == 'ma_lottery_draw'
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /api/admin/ma_lottery/draw (kind=100day)
+        run: |
+          set -euo pipefail
+          resp=$(curl -fsS -X POST -H 'Content-Type: application/json' \
+            -d "{\"admin_token\":\"${MU_ADMIN_TOKEN}\",\"kind\":\"100day\"}" \
+            "${BASE_URL}/api/admin/ma_lottery/draw")
+          echo "$resp"
+          # If ok=true, send Telegram alert. If skipped (recent draw exists), stay quiet.
+          ok=$(echo "$resp" | jq -r .ok 2>/dev/null || echo "false")
+          if [ "$ok" = "true" ] && [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
+            winner=$(echo "$resp" | jq -r .winner_email)
+            url=$(echo "$resp" | jq -r .action_url)
+            curl -fsS -X POST \
+              -d "chat_id=1136442501" \
+              --data-urlencode "text=🎟 4/7 Founder Relay fired — winner: ${winner} · ${url}" \
+              "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" || true
+          fi
 
   council_compose:
     if: github.event.schedule == '0 3 * * 1' || github.event.inputs.target == 'council_compose'
