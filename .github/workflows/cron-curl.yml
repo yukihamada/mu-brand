@@ -302,11 +302,12 @@ jobs:
           # If ok=true, send Telegram alert. If skipped (recent draw exists), stay quiet.
           ok=$(echo "$resp" | jq -r .ok 2>/dev/null || echo "false")
           if [ "$ok" = "true" ] && [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
-            winner=$(echo "$resp" | jq -r .winner_email)
+            # Privacy: only send pseudonym, never raw email.
+            pseudonym=$(echo "$resp" | jq -r .winner_pseudonym)
             url=$(echo "$resp" | jq -r .action_url)
             curl -fsS -X POST \
               -d "chat_id=1136442501" \
-              --data-urlencode "text=🎟 4/7 Founder Relay fired — winner: ${winner} · ${url}" \
+              --data-urlencode "text=🎟 4/7 Founder Relay fired — ${pseudonym} · ${url}" \
               "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" || true
           fi
 

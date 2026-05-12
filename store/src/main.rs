@@ -8486,6 +8486,26 @@ fn lottery_action_token() -> String {
     uuid::Uuid::new_v4().to_string().replace('-', "")
 }
 
+/// Derive a public, non-reversible pseudonym from an email for the lottery.
+/// Format: "relay:NNN:<16 base58 chars>". SHA-256 with a fixed salt is used so
+/// the pseudonym is deterministic per (draw_id, email) but not guessable
+/// without the salt + email together.
+fn lottery_pseudonym(draw_id: i64, email: &str) -> String {
+    use sha2::{Sha256, Digest};
+    const SALT: &str = "mu-founder-relay-2026";
+    let h = Sha256::digest(format!("{SALT}{email}").as_bytes());
+    let alphabet = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+    let mut n = u128::from_be_bytes(h[..16].try_into().unwrap_or([0u8; 16]));
+    let mut s = Vec::with_capacity(16);
+    while n > 0 && s.len() < 16 {
+        s.push(alphabet[(n % 58) as usize]);
+        n /= 58;
+    }
+    s.reverse();
+    format!("relay:{:03}:{}", draw_id, String::from_utf8_lossy(&s))
+}
+
+
 /// POST /api/admin/lottery/draw — fires a draw (idempotent: refuses if a
 /// pending draw already exists within the last LOTTERY_PERIOD_DAYS days
 /// unless kind='manual').
@@ -8529,6 +8549,7 @@ async fn admin_ma_lottery_draw(
 
     let token = lottery_action_token();
     let now = chrono_now();
+    let mut new_id: i64 = 0;
     if !dry {
         let conn = db.lock().unwrap();
         let _ = conn.execute(
@@ -8539,6 +8560,7 @@ async fn admin_ma_lottery_draw(
             params![kind, now, winner, weight, token, enai,
                     format!("auto draw kind={}", kind), now],
         );
+        new_id = conn.last_insert_rowid();
     }
 
     // Send winner email (best-effort, async)
@@ -8550,10 +8572,14 @@ async fn admin_ma_lottery_draw(
         });
     }
 
+    // Privacy: respond with pseudonym + masked email by default. The full
+    // email is only echoed back when `dry_run=true` (admin testing path).
+    let pseudonym = lottery_pseudonym(if new_id > 0 { new_id } else { 0 }, &winner);
     Json(serde_json::json!({
         "ok": true,
         "kind": kind,
-        "winner_email": winner,
+        "winner_pseudonym": pseudonym,
+        "winner_email_full": if dry { Some(winner.clone()) } else { None },
         "weight": weight,
         "action_token": token,
         "action_url": format!("https://wearmu.com/ma-lottery/{}", token),
@@ -8936,6 +8962,10 @@ async fn admin_ma_lottery_list(
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Response {
     if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    // Privacy: by default only return pseudonym + masked email. Pass
+    // `reveal=1` (admin-token-gated) to also include the raw email for ops
+    // (e.g. for re-sending the action URL).
+    let reveal = q.get("reveal").map(|s| s == "1").unwrap_or(false);
     let conn = db.lock().unwrap();
     let mut stmt = match conn.prepare(
         "SELECT id, kind, drawn_at, winner_email, weight, status,
@@ -8943,20 +8973,27 @@ async fn admin_ma_lottery_list(
                 COALESCE(charity_target,''), action_token
          FROM ma_lottery_draws ORDER BY id DESC LIMIT 100"
     ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
-    let rows: Vec<serde_json::Value> = stmt.query_map([], |r| Ok(serde_json::json!({
-        "id":             r.get::<_, i64>(0)?,
-        "kind":           r.get::<_, String>(1)?,
-        "drawn_at":       r.get::<_, String>(2)?,
-        "winner_email":   r.get::<_, String>(3)?,
-        "weight":         r.get::<_, f64>(4)?,
-        "status":         r.get::<_, String>(5)?,
-        "relay_count":    r.get::<_, i64>(6)?,
-        "enai_grant":     r.get::<_, i64>(7)?,
-        "decided_at":     r.get::<_, String>(8)?,
-        "charity_target": r.get::<_, String>(9)?,
-        "action_token":   r.get::<_, String>(10)?,
-    }))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
-    Json(serde_json::json!({"draws": rows, "count": rows.len()})).into_response()
+    let rows: Vec<serde_json::Value> = stmt.query_map([], |r| {
+        let id: i64 = r.get(0)?;
+        let email: String = r.get(3)?;
+        let pseudonym = lottery_pseudonym(id, &email);
+        Ok(serde_json::json!({
+            "id":             id,
+            "kind":           r.get::<_, String>(1)?,
+            "drawn_at":       r.get::<_, String>(2)?,
+            "winner_pseudonym": pseudonym,
+            "winner_email":   if reveal { Some(email) } else { None },
+            "weight":         r.get::<_, f64>(4)?,
+            "status":         r.get::<_, String>(5)?,
+            "relay_count":    r.get::<_, i64>(6)?,
+            "enai_grant":     r.get::<_, i64>(7)?,
+            "decided_at":     r.get::<_, String>(8)?,
+            "charity_target": r.get::<_, String>(9)?,
+            "action_token":   r.get::<_, String>(10)?,
+        }))
+    }).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+    Json(serde_json::json!({"draws": rows, "count": rows.len(),
+                            "privacy_note": "winner_email omitted by default; pass reveal=1 to include"})).into_response()
 }
 
 /// MU の X (Twitter) brand voice — Gemini への system prompt として渡す。
