@@ -23897,16 +23897,20 @@ fn template_nft_mint(ctx: &EmailContext, variant: &str, mint_address: &str) -> (
             (subject, html)
         }
         _ => {
-            let subject = if ctx.product_name.is_empty() {
-                "あなたのシャツの「製造の事実」が、Solana に残りました".to_string()
-            } else {
-                format!("{} を選んだ事実が、Solana に残りました", ctx.product_name)
-            };
+            let name_disp = if ctx.product_name.is_empty() { format!("MUGEN #{:04}", ctx.order_id) } else { ctx.product_name.clone() };
+            let subject = format!("{} を選んだ瞬間が、Solana に永続しました", name_disp);
+            let mint_short = if has_mint {
+                let s: String = mint_address.chars().take(6).collect();
+                let e: String = mint_address.chars().rev().take(4).collect::<String>().chars().rev().collect();
+                format!("{}…{}", s, e)
+            } else { "(発行待ち)".to_string() };
+            let _ = &block; // kept for variant A only
             let body = format!(
-                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14.5px;line-height:1.6;">あなたが買った <b style="color:#e6c449;">{name}</b>。<br>布はいつか消耗します。でも、MU があなた向けに作ったという事実は、消せません。</p>{img}<p style="margin:0 0 10px;color:#bbb;font-size:13.5px;line-height:1.6;">これは「所有権」ではなく「製造記録」です。<br>転売不可、改ざん不可。あなたが今この瞬間に <b>{name}</b> を選んだことが、Solana 上に永続します。</p>{block}<p style="margin:18px 0 0;color:#888;font-size:12px;line-height:1.6;">14 日後、この記録を使ってログインを wallet 署名に切り替えられます (任意)。</p>"#,
-                name = html_escape(&ctx.product_name),
-                img = image_block(ctx), block = block);
-            let html = email_shell(&subject, "製造記録", &now_jst, &body);
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:15px;line-height:1.6;">あなたが <b style="color:#e6c449;">{name}</b> を選んだ瞬間が、Solana に永続しました。</p>{img}<p style="margin:18px 0 0;color:#888;font-size:12px;line-height:1.7;">Solana は 2020 年以降 99.96% 稼働。MU が消えても、Cybridge が消えても、この記録は残ります。<br>14 日後、この記録で wearmu.com に「パスワードなしログイン」できます (任意・別 email)。</p><p style="margin:18px 0 0;color:#555;font-size:10.5px;letter-spacing:0.04em;font-family:ui-monospace,Menlo,monospace;">ref: {mint_short} · soulbound · 1/1</p>"#,
+                name = html_escape(&name_disp),
+                img = image_block(ctx),
+                mint_short = html_escape(&mint_short));
+            let html = email_shell(&subject, "永続記録", &now_jst, &body);
             (subject, html)
         }
     }
