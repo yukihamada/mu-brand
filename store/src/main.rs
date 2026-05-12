@@ -21726,6 +21726,121 @@ fn template_shipped(ctx: &EmailContext, variant: &str, tracking: &str, carrier: 
     }
 }
 
+// ── Email template — NFT mint (day 3) ─ Scarcity + Liking ──────────────
+fn template_nft_mint(ctx: &EmailContext, variant: &str, mint_address: &str) -> (String, String) {
+    let now_jst = jst_now_str();
+    let has_mint = !mint_address.is_empty();
+    let mint_disp = if has_mint { mint_address.to_string() }
+                    else { "(まだ wallet を提供してもらっていません)".to_string() };
+    let block = code_block(&format!(
+        "MUGEN #{:04}\nNFT mint: {}\nstandard: soulbound (譲渡不可)\nchain: Solana\nedition: 1 of 1",
+        ctx.order_id, mint_disp));
+    match variant {
+        "A" => {
+            let subject = format!("MUGEN #{:04} — NFT mint confirmed", ctx.order_id);
+            let body = format!(
+                r#"<p style="margin:0 0 10px;color:#bbb;">あなたのシャツの cryptographic proof です。</p>{block}{accent}"#,
+                block = block,
+                accent = accent_block("このハッシュは 256 bit = 10^77 通りの 1 つ。<br>同じものを引く確率は事実上ゼロです。<br>譲渡不可、削除不可、永続。"));
+            let html = email_shell(&subject, "NFT 確定", &now_jst, &body);
+            (subject, html)
+        }
+        _ => {
+            let subject = "あなたのデザインの暗号学的 ID が出ました".to_string();
+            let body = format!(
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.55;">布のシャツは現実世界で消耗します。<br>でも、その元データの fingerprint はチェーン上に残り続けます。</p>{block}<p style="margin:18px 0 0;color:#888;font-size:12px;">これは <i>soulbound</i> = あなたから他人に移せない NFT です。<br>所有権ではなく、製造記録です。</p>"#,
+                block = block);
+            let html = email_shell(&subject, "暗号学的記録", &now_jst, &body);
+            (subject, html)
+        }
+    }
+}
+
+// ── Email template — NFT login (day 14) — Consistency ──────────────────
+fn template_nft_login(ctx: &EmailContext, variant: &str) -> (String, String) {
+    let now_jst = jst_now_str();
+    let block = code_block(&format!(
+        "ログイン URL: https://wearmu.com/you/login\nあなたの shirt ID: #{:04}\n方式: wallet signature (パスワード不要)\nセッション: 90 日",
+        ctx.order_id));
+    match variant {
+        "A" => {
+            let subject = "あなたの wallet が、あなたの ID です".to_string();
+            let body = format!(
+                r#"<p style="margin:0 0 10px;color:#bbb;">14 日前に買った MUGEN #{:04}。<br>以降、wearmu.com の操作は wallet 署名で可能になりました。</p>{block}{accent}"#,
+                ctx.order_id, block = block,
+                accent = accent_block("メール・パスワードの組み合わせは廃止していません。<br>でも MUGEN 所有者だけは「鍵」ベースに切り替えられます。<br>署名 1 回 = 90 日間ログイン保持。"));
+            let html = email_shell(&subject, "wallet ログイン", &now_jst, &body);
+            (subject, html)
+        }
+        _ => {
+            let subject = "MUGEN 所有者だけのログイン方式が使えるようになりました".to_string();
+            let body = format!(
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.55;">パスワードは脆い、覚えるのも面倒。<br>あなたは既に MUGEN を所有しています = 暗号学的に「あなた」を証明できます。</p>{block}<p style="margin:18px 0 0;color:#888;font-size:12px;">使わない選択肢もあります。普通のメールログインも残してます。<br>ただし MUGEN 所有者なら、こちらの方が速いです。</p>"#,
+                block = block);
+            let html = email_shell(&subject, "Login by signature", &now_jst, &body);
+            (subject, html)
+        }
+    }
+}
+
+// ── Email template — drop preview (day 60) — Liking + Reciprocity ──────
+fn template_drop_preview(ctx: &EmailContext, variant: &str) -> (String, String) {
+    let now_jst = jst_now_str();
+    let block = code_block(&format!(
+        "あなたが買ったのは: MUGEN #{:04}\nMU の AI が、その購入から推定:\n  ・ダーク基調を好む\n  ・テキスト要素を好む\n  ・大胆な空白を好む\n\nこれを seed に、明日 MU が出す MUGEN は:\n  #{:04} 系統 (mood: 静寂、palette: charcoal+yellow)",
+        ctx.order_id, ctx.order_id + 60));
+    match variant {
+        "A" => {
+            let subject = format!("MU が、あなたの次のシャツを書きました — #{:04}", ctx.order_id + 60);
+            let body = format!(
+                r#"<p style="margin:0 0 10px;color:#bbb;">60 日前、あなたの purchase から MU はパターンを学習しました。</p>{block}{accent}"#,
+                block = block,
+                accent = accent_block("これは予告ではなく観察ログ。<br>明日 JST 09:00、自動 cron がこの方向で MUGEN を 1 着生成します。<br>あなたは買わなくていい。読むだけで OK。"));
+            let html = email_shell(&subject, "あなた向けのドロップ予報", &now_jst, &body);
+            (subject, html)
+        }
+        _ => {
+            let subject = "あなたの好みを観察してたら、明日の MUGEN が決まりました".to_string();
+            let body = format!(
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.55;">MU の AI は、誰のために何を作るか自分で決めます。<br>あなたが {} 日前に買ったデザインは、その判断材料になりました。</p>{block}<p style="margin:18px 0 0;color:#888;font-size:12px;">押し売りはしません。これは <b>透明性</b> の一形態です。<br>MU は自分の意思決定をあなたに見せます。</p>"#,
+                60, block = block);
+            let html = email_shell(&subject, "学習ログ", &now_jst, &body);
+            (subject, html)
+        }
+    }
+}
+
+// ── Email template — quarter (day 90) — Consistency ────────────────────
+fn template_quarter(ctx: &EmailContext, variant: &str) -> (String, String) {
+    let now_jst = jst_now_str();
+    let mut tbl = String::new();
+    tbl.push_str(&data_row("MU revenue (90d)", &format!("¥{}", fmt_jpy(ctx.revenue_7d * 12))));
+    tbl.push_str(&data_row("New drops (90d)",   &format!("{}", ctx.drops_today * 90)));
+    tbl.push_str(&data_row("Refund rate",       &format!("{:.1}%", ctx.refund_rate_30d * 100.0)));
+    tbl.push_str(&data_row("Repeat rate",       &format!("{:.0}%", ctx.repeat_rate_30d * 100.0)));
+    tbl.push_str(&data_row("Founder score (avg)", &format!("{:.2}", (ctx.musk_score + ctx.bezos_score) / 2.0)));
+    let table_html = format!(r#"<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 18px;">{}</table>"#, tbl);
+    match variant {
+        "A" => {
+            let subject = format!("MU 90日ログ — #{:04}", ctx.order_id);
+            let body = format!(
+                r#"<p style="margin:0 0 6px;color:#bbb;">90 日前にあなたが買って、MU はこれを実行しました。</p>{table}{accent}"#,
+                table = table_html,
+                accent = accent_block("次の email は 275 日後 (1 周年)。<br>それまで沈黙します。<br>もしシャツが届いてなければ <a href=\"mailto:info@enablerdao.com\" style=\"color:#e6c449;\">info@enablerdao.com</a> へ。"));
+            let html = email_shell(&subject, "90 日ログ", &now_jst, &body);
+            (subject, html)
+        }
+        _ => {
+            let subject = "90 日前のあなたの一票が、こうなりました".to_string();
+            let body = format!(
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.55;">買うのは一票です。<br>あなたの一票で、MU はこの数字を出しました。</p>{table}<p style="margin:18px 0 0;color:#888;font-size:12px;">繰り返し買う必要はありません。<br>でも、あなたが買わなかったら、上の数字はゼロでした。</p>"#,
+                table = table_html);
+            let html = email_shell(&subject, "90 日ログ", &now_jst, &body);
+            (subject, html)
+        }
+    }
+}
+
 // ── Email template — 30d cohort ─────────────────────────────────────────
 fn template_cohort30(ctx: &EmailContext, variant: &str, cohort_size: i64) -> (String, String) {
     let now_jst = jst_now_str();
@@ -21828,6 +21943,11 @@ async fn send_buyer_email(
             extra.get("carrier").and_then(|x| x.as_str()).unwrap_or("")),
         ("cohort30",   v) => template_cohort30(ctx, v,
             extra.get("cohort_size").and_then(|x| x.as_i64()).unwrap_or(1)),
+        ("nft_mint",   v) => template_nft_mint(ctx, v,
+            extra.get("mint_address").and_then(|x| x.as_str()).unwrap_or("")),
+        ("nft_login",  v) => template_nft_login(ctx, v),
+        ("drop_preview", v) => template_drop_preview(ctx, v),
+        ("quarter",    v) => template_quarter(ctx, v),
         _ => return Err(format!("unknown kind: {}", kind)),
     };
 
@@ -22024,8 +22144,67 @@ async fn agent_production_watcher(db: Db) -> Result<AgentReport, String> {
     }
     obs.insert("sent_cohort30".into(), serde_json::Value::from(sent_cohort));
 
-    actions.push(serde_json::json!({"received": sent_received, "production": sent_production, "shipped": sent_shipped, "cohort30": sent_cohort}));
-    let total = sent_received + sent_production + sent_shipped + sent_cohort;
+    // ── 5. Day-N follow-ups (forgetting curve: 3 / 14 / 60 / 90) ──────
+    //   day_3   → nft_mint     (Scarcity + Liking)
+    //   day_14  → nft_login    (Consistency)
+    //   day_60  → drop_preview (Liking + Reciprocity)
+    //   day_90  → quarter      (Consistency)
+    async fn day_n_kind(
+        db: &Db, kind: &str, day: i64
+    ) -> Result<i64, String> {
+        let now_s: i64 = chrono_now().parse().unwrap_or(0);
+        let lo = now_s - (day + 1) * 86_400;
+        let hi = now_s - day * 86_400;
+        let rows: Vec<(i64, String, String)> = {
+            let conn = db.lock().unwrap();
+            let mut stmt = match conn.prepare(
+                "SELECT o.id, COALESCE(o.email,''), COALESCE(o.slug,'')
+                 FROM collab_orders o
+                 WHERE CAST(COALESCE(o.created_at,'0') AS INTEGER) BETWEEN ? AND ?
+                   AND NOT EXISTS (SELECT 1 FROM email_sends e
+                                   WHERE e.order_id = o.id AND e.kind = ?)
+                 ORDER BY o.id ASC LIMIT 5"
+            ) { Ok(s) => s, Err(_) => return Ok(0) };
+            stmt.query_map(params![lo, hi, kind], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+        };
+        let mut n = 0i64;
+        for (oid, email, slug) in &rows {
+            if is_test_email(email) { continue; }
+            let ctx = {
+                let conn = db.lock().unwrap();
+                build_email_context(&conn, *oid, slug, 0)
+            };
+            // For nft_mint, look up the actual mint address from products
+            // by joining slug. (Falls back to empty string for collab SKUs
+            // without an NFT — the template renders gracefully.)
+            let mint_addr: String = {
+                let conn = db.lock().unwrap();
+                conn.query_row(
+                    "SELECT COALESCE(nft_mint,'') FROM products WHERE slug=?",
+                    params![slug], |r| r.get::<_, String>(0),
+                ).unwrap_or_default()
+            };
+            let extra = serde_json::json!({"mint_address": mint_addr});
+            if send_buyer_email(db, email, kind, &ctx, extra).await.is_ok() {
+                n += 1;
+            }
+        }
+        Ok(n)
+    }
+
+    let sent_nft_mint     = day_n_kind(&db, "nft_mint",     3).await.unwrap_or(0);
+    let sent_nft_login    = day_n_kind(&db, "nft_login",   14).await.unwrap_or(0);
+    let sent_drop_preview = day_n_kind(&db, "drop_preview",60).await.unwrap_or(0);
+    let sent_quarter      = day_n_kind(&db, "quarter",     90).await.unwrap_or(0);
+    obs.insert("sent_nft_mint".into(),     serde_json::Value::from(sent_nft_mint));
+    obs.insert("sent_nft_login".into(),    serde_json::Value::from(sent_nft_login));
+    obs.insert("sent_drop_preview".into(), serde_json::Value::from(sent_drop_preview));
+    obs.insert("sent_quarter".into(),      serde_json::Value::from(sent_quarter));
+
+    actions.push(serde_json::json!({"received": sent_received, "production": sent_production, "shipped": sent_shipped, "cohort30": sent_cohort, "nft_mint": sent_nft_mint, "nft_login": sent_nft_login, "drop_preview": sent_drop_preview, "quarter": sent_quarter}));
+    let total = sent_received + sent_production + sent_shipped + sent_cohort
+              + sent_nft_mint + sent_nft_login + sent_drop_preview + sent_quarter;
     let summary = format!("watcher: {} sent (recv={}, prod={}, ship={}, c30={}, dry={})",
         total, sent_received, sent_production, sent_shipped, sent_cohort, is_dry);
     Ok(AgentReport {
@@ -22080,11 +22259,15 @@ async fn admin_email_preview(
         ("production", v) => template_production(&ctx, v, "Printful Charlotte, NC", "PF-12345678"),
         ("shipped",    v) => template_shipped(&ctx, v, "9405511899223344556677", "USPS First-Class International"),
         ("cohort30",   v) => template_cohort30(&ctx, v, 1),
+        ("nft_mint",   v) => template_nft_mint(&ctx, v, "ENaiMint1234567890SoulboundSample"),
+        ("nft_login",  v) => template_nft_login(&ctx, v),
+        ("drop_preview", v) => template_drop_preview(&ctx, v),
+        ("quarter",    v) => template_quarter(&ctx, v),
         _ => ("(unknown)".into(), "<p>unknown</p>".into()),
     };
     let tok_attr = html_attr_escape(&tok);
     let mut nav = String::new();
-    for k in ["received","production","shipped","cohort30"] {
+    for k in ["received","nft_mint","production","nft_login","shipped","cohort30","drop_preview","quarter"] {
         for v in ["A","B"] {
             nav.push_str(&format!(
                 r#"<a href="?token={t}&kind={k}&variant={v}" style="color:#9bd;margin-right:8px;">{k}/{v}</a>"#,
@@ -22127,6 +22310,10 @@ async fn admin_email_test_send(
         ("production", v) => template_production(&ctx, v, "Printful Charlotte, NC", "PF-TEST-123"),
         ("shipped",    v) => template_shipped(&ctx, v, "9405511899223344556677", "USPS Intl"),
         ("cohort30",   v) => template_cohort30(&ctx, v, 1),
+        ("nft_mint",   v) => template_nft_mint(&ctx, v, "ENaiMint1234567890SoulboundSample"),
+        ("nft_login",  v) => template_nft_login(&ctx, v),
+        ("drop_preview", v) => template_drop_preview(&ctx, v),
+        ("quarter",    v) => template_quarter(&ctx, v),
         _ => return (StatusCode::BAD_REQUEST, "unknown kind").into_response(),
     };
     let resend_key = match env::var("RESEND_API_KEY") {
