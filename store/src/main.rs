@@ -11288,6 +11288,17 @@ async fn show_partner_proposal_page(
     let mut tot_skus = 0i64;
     let mut tot_with_cost = 0i64;
     let mut min_sample_total = 0i64;
+    // Categories that should never show clothing sizes (mug / sticker / hat / etc).
+    let is_apparel_category = |c: &str| -> bool {
+        let c = c.to_lowercase();
+        !(c.contains("マグ") || c.contains("mug") || c.contains("ボトル") || c.contains("bottle")
+          || c.contains("ステッカー") || c.contains("sticker") || c.contains("キャップ") || c.contains("cap")
+          || c.contains("ハット") || c.contains("hat") || c.contains("ビーニー") || c.contains("beanie")
+          || c.contains("バッグ") || c.contains("bag") || c.contains("ダッフル") || c.contains("バックパック")
+          || c.contains("トート") || c.contains("tote") || c.contains("ケース") || c.contains("case")
+          || c.contains("マット") || c.contains("缶クーラー") || c.contains("クーラー") || c.contains("エプロン") || c.contains("apron"))
+    };
+
     let cards = items.iter().map(|(id, slug, cat, name, price, cost, image, pf_vid, sizes_json)| {
         tot_skus += 1;
         if cost.is_some() { tot_with_cost += 1; }
@@ -11296,23 +11307,78 @@ async fn show_partner_proposal_page(
         let cost_disp = cost.map(|c| format!("¥{}", format_jpy(c)))
             .unwrap_or_else(|| "原価未登録".into());
         let image_html = match image.as_deref().filter(|u| !u.is_empty() && u.starts_with("http")) {
-            Some(u) => format!(r#"<div class="thumb"><img src="{}" alt="" loading="lazy"></div>"#, html_attr_escape(u)),
-            None => r#"<div class="thumb placeholder">—</div>"#.to_string(),
+            Some(u) => format!(r#"<div class="thumb"><img src="{}" alt="{}" loading="lazy"></div>"#,
+                html_attr_escape(u), html_attr_escape(name)),
+            None => r#"<div class="thumb placeholder" aria-hidden="true">—</div>"#.to_string(),
         };
-        let sizes: Vec<String> = sizes_json.as_deref()
+        let raw_sizes: Vec<String> = sizes_json.as_deref()
             .and_then(|j| serde_json::from_str::<Vec<String>>(j).ok())
             .unwrap_or_else(|| vec!["OS".into()]);
-        let size_opts = sizes.iter()
-            .map(|s| format!(r#"<option value="{}">{}</option>"#, html_attr_escape(s), html_escape(s)))
-            .collect::<Vec<_>>().join("");
-        let route_badge = if pf_vid.is_some() {
-            r#"<span class="route pf">🧵 Printful 自動</span>"#
+        // Filter out apparel sizes for non-apparel categories.
+        let sizes: Vec<String> = if is_apparel_category(cat) {
+            raw_sizes.clone()
         } else {
-            r#"<span class="route manual">手動生産</span>"#
+            vec!["OS".into()]
+        };
+        let is_one_size = sizes.len() <= 1 || sizes.iter().all(|s| {
+            let s = s.to_uppercase();
+            s == "OS" || s == "ONE SIZE" || s == "FREE" || s.is_empty()
+        });
+        // Discount %: 100 * (price - cost) / price, only when both known.
+        let discount_badge = match cost {
+            Some(c) if *price > 0 && *c < *price => {
+                let pct = ((*price - c) * 100 / *price).max(1);
+                format!(r#"<span class="off">-{}%</span>"#, pct)
+            }
+            _ => "".to_string(),
+        };
+        let route_badge = if pf_vid.is_some() {
+            r#"<span class="route pf" title="ご発注後、製造パートナーへ自動連携">自動製造</span>"#.to_string()
+        } else {
+            r#"<span class="route manual" title="お問合せ後に個別対応">手配制</span>"#.to_string()
         };
         let disabled_attr = if cost.is_none() { " disabled" } else { "" };
         let row_class = if cost.is_none() { " no-cost" } else { "" };
-        format!(r##"<div class="prow{row_class}" data-slug="{slug}" data-cost="{cost_raw}" data-name="{name_attr}">
+
+        // Quantity input block: single qty+size for one-size items, or a
+        // size-grid (XS/S/M/L/XL each with own qty) for apparel.
+        let qty_block = if is_one_size {
+            format!(r##"<div class="cart one-size">
+      <label class="qty"><span>数量</span>
+        <input type="number" min="0" max="20" value="0" class="qty-input" data-id="{id}-OS" data-slug="{slug}" data-size="OS" aria-label="{name_a} 数量"{disabled}>
+      </label>
+      <span class="size-tag">ワンサイズ</span>
+      <span class="line-total" data-id="{id}-OS">¥0</span>
+    </div>"##,
+                id = id,
+                slug = html_attr_escape(slug),
+                name_a = html_attr_escape(name),
+                disabled = disabled_attr,
+            )
+        } else {
+            let size_inputs = sizes.iter().map(|s| format!(
+                r##"<label class="size-cell"><span>{lbl}</span>
+        <input type="number" min="0" max="20" value="0" class="qty-input" data-id="{id}-{s}" data-slug="{slug}" data-size="{s}" aria-label="{name_a} サイズ{lbl} 数量"{disabled}></label>"##,
+                lbl = html_escape(s),
+                id = id,
+                s = html_attr_escape(s),
+                slug = html_attr_escape(slug),
+                name_a = html_attr_escape(name),
+                disabled = disabled_attr,
+            )).collect::<Vec<_>>().join("\n        ");
+            format!(r##"<div class="cart size-grid">
+      <span class="size-grid-label">サイズ別 数量</span>
+      <div class="size-grid-cells">
+        {size_inputs}
+      </div>
+      <span class="line-total" data-id="{id}-total">¥0</span>
+    </div>"##,
+                id = id,
+                size_inputs = size_inputs,
+            )
+        };
+
+        format!(r##"<article class="prow{row_class}" data-slug="{slug}" data-cost="{cost_raw}" data-name="{name_attr}" data-cat="{cat_attr}">
   {image}
   <div class="info">
     <div class="top">
@@ -11320,37 +11386,26 @@ async fn show_partner_proposal_page(
       <span class="name">{name}</span>
       {route_badge}
     </div>
-    <div class="meta">
-      <span>通常売価 <b>¥{price_fmt}</b></span>
-      <span>サンプル価格 <b class="sp">{cost_disp}</b></span>
-      <span class="sep">·</span>
-      <span class="hint">サンプル = Printful 仕入原価のみ</span>
+    <div class="price-row">
+      <span class="sample-price"><b>{cost_disp}</b><small>サンプル / 税込・送料別</small></span>
+      <span class="retail-price"><s>通常 ¥{price_fmt}</s></span>
+      {discount}
     </div>
-    <div class="cart">
-      <label class="qty">
-        数量
-        <input type="number" min="0" max="20" value="0" class="qty-input" data-id="{id}"{disabled}>
-      </label>
-      <label class="size">
-        size
-        <select class="size-input" data-id="{id}"{disabled}>{size_opts}</select>
-      </label>
-      <span class="line-total" data-id="{id}">¥0</span>
-    </div>
+    {qty}
   </div>
-</div>"##,
+</article>"##,
             slug = html_attr_escape(slug),
             cost_raw = cost.unwrap_or(0),
             name_attr = html_attr_escape(name),
+            cat_attr = html_attr_escape(cat),
             image = image_html,
             cat = html_attr_escape(cat),
             name = html_attr_escape(name),
             route_badge = route_badge,
             price_fmt = format_jpy(*price),
             cost_disp = cost_disp,
-            id = id,
-            size_opts = size_opts,
-            disabled = disabled_attr,
+            discount = discount_badge,
+            qty = qty_block,
             row_class = row_class,
         )
     }).collect::<Vec<_>>().join("\n");
@@ -19878,7 +19933,9 @@ Respond as STRICT JSON: {{"text": "<the post body>"}}"#,
         .json(&serde_json::json!({
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
-                "temperature": 0.6, "maxOutputTokens": 400,
+                // 2.5-flash also consumes hidden thinking tokens with JSON mode.
+                // 400 was too small (saw `gemini empty body: {\n "text`).
+                "temperature": 0.6, "maxOutputTokens": 2000,
                 "responseMimeType": "application/json",
             },
         }))
