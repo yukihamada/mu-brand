@@ -12906,7 +12906,7 @@ const GI_EDITION_01_HTML: &str = r##"<!doctype html>
 <style>
 :root{--bg:#0a0a0a;--bg-2:#111;--fg:#f5f5f0;--mute:#8a8a82;--gold:#e6c449;--gold-deep:#a67843;--line:rgba(255,255,255,0.08);--card:#121214;--card-b:rgba(255,255,255,0.06);--green:#22c55e}
 *{margin:0;padding:0;box-sizing:border-box}
-html{scroll-behavior:smooth}
+html{scroll-behavior:smooth;scroll-padding-top:72px}
 body{background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.75;font-size:15px;-webkit-font-smoothing:antialiased}
 .wrap{max-width:1200px;margin:0 auto;padding:0 24px}
 .muted{color:var(--mute)}
@@ -12986,7 +12986,7 @@ h2 em{color:var(--gold);font-style:normal;font-weight:400}
 .disclaimers{font-size:11.5px;color:var(--mute);line-height:1.95;margin-top:24px;text-align:left;max-width:680px;margin-left:auto;margin-right:auto}
 footer{padding:60px 0 40px;border-top:1px solid var(--line);color:var(--mute);font-size:12px;letter-spacing:0.06em;text-align:center}
 footer a{color:var(--mute);text-decoration:underline}
-@media(max-width:880px){h1.hero-title{font-size:38px}.story{grid-template-columns:1fr;gap:32px}.tier-grid{grid-template-columns:1fr}.spec{grid-template-columns:1fr}.spec dt,.spec dd{padding:14px 18px;border-bottom:0}.spec dt{border-bottom:1px solid var(--line);padding-bottom:6px}.spec dd{padding-top:0;padding-bottom:16px;border-bottom:1px solid var(--line)}.preorder{padding:40px 24px}.preorder .price-line{font-size:36px}section{padding:64px 0}nav.top .links{display:none}}
+@media(max-width:880px){h1.hero-title{font-size:38px}.story{grid-template-columns:1fr;gap:32px}.tier-grid{grid-template-columns:1fr}.spec{grid-template-columns:1fr}.spec dt,.spec dd{padding:14px 18px;border-bottom:0}.spec dt{border-bottom:1px solid var(--line);padding-bottom:6px}.spec dd{padding-top:0;padding-bottom:16px;border-bottom:1px solid var(--line)}.preorder{padding:40px 24px}.preorder .price-line{font-size:36px}section{padding:64px 0}nav.top .links{gap:12px;font-size:10.5px}nav.top .links a:not(.cta-mini){display:none}nav.top .links .cta-mini{padding:7px 12px;font-size:10px}}
 </style>
 </head>
 <body>
@@ -13633,6 +13633,7 @@ async fn show_gi_sponsor_recruit_page(
 <style>
 :root{{--bg:#0a0a0a;--fg:#f5f5f0;--mute:#8a8a82;--gold:#e6c449;--card:#121214;--cardb:rgba(255,255,255,0.06);--line:rgba(255,255,255,0.08)}}
 *{{margin:0;padding:0;box-sizing:border-box}}
+html{{scroll-behavior:smooth;scroll-padding-top:72px}}
 body{{background:var(--bg);color:var(--fg);font-family:-apple-system,'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.75;font-size:15px;-webkit-font-smoothing:antialiased}}
 a{{color:var(--gold)}}
 .wrap{{max-width:1080px;margin:0 auto;padding:0 24px}}
