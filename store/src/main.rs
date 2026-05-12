@@ -26284,27 +26284,30 @@ fn template_referral(ctx: &EmailContext, variant: &str, ref_code: &str) -> (Stri
     let cta = format!(
         r#"<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:14px 0 0;"><tr><td align="center"><a href="{u}" style="display:inline-block;background:#e6c449;color:#000;text-decoration:none;padding:14px 28px;font-size:13px;letter-spacing:0.08em;font-weight:600;border-radius:2px;">紹介リンクをコピー  →</a><div style="font-size:10.5px;color:#666;margin-top:8px;letter-spacing:0.04em;">1 人 1 回限り · 既存ユーザーは対象外</div></td></tr></table>"#,
         u = &url_attr);
+    // CTA で「贈り物」表現を採用 (draft #2/#1 で承認された方針)。
+    let cta_gift = format!(
+        r#"<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:14px 0 0;"><tr><td align="center"><a href="{u}" style="display:inline-block;background:#e6c449;color:#000;text-decoration:none;padding:14px 28px;font-size:13px;letter-spacing:0.08em;font-weight:600;border-radius:2px;">たった一人のための招待リンクをコピー  →</a><div style="font-size:10.5px;color:#666;margin-top:8px;letter-spacing:0.04em;">1 人 1 回限り · 30 日間有効</div></td></tr></table>"#,
+        u = &url_attr);
+    let _ = &cta; // legacy CTA kept for callers; using cta_gift below
     match variant {
         "A" => {
-            let subject = format!("{} を渡したい人、1 人だけ思い浮かびませんか", name_disp);
-            let mut tbl = String::new();
-            tbl.push_str(&data_row("あなたが得るもの", "/you トライアル +30 日"));
-            tbl.push_str(&data_row("相手が得るもの",   "MUGEN 初回 ¥1,000 OFF"));
-            tbl.push_str(&data_row("MU が得るもの",   "1 人の新しい顧客"));
-            tbl.push_str(&data_row("リンク有効期限", "発行から 30 日"));
-            let table_html = format!(r#"<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 14px;">{}</table>"#, tbl);
+            // applied from email_rewrite_drafts id=2 (approved by admin)
+            // rationale: Buyer/Jobs を最重視。依頼→贈り物への再定義。
+            let subject = format!("{} の特別な体験を、大切な一人へ贈る招待状", name_disp);
             let body = format!(
-                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14.5px;line-height:1.6;">あなたが <b style="color:#e6c449;">{name}</b> を着てから 21 日。<br>MU の AI が「この人にも合うかもしれない」と推定する友人を、1 人だけ思い浮かべてください。</p>{img}{table}{cta}{accent}"#,
-                name = html_escape(&name_disp), img = image_block(ctx), table = table_html, cta = cta,
-                accent = accent_block("チェーンメールではありません。<br>あなたが渡せるのは <b>1 人</b> だけ。<br>相手が買えば、あなたの /you 試用が 30 日延びる、それだけです。"));
-            (subject.clone(), email_shell(&subject, "紹介", &now_jst, &body))
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14.5px;line-height:1.6;"><b style="color:#e6c449;">{name}</b> オーナー様へ、限定コンテンツのご案内です。</p>{img}<p style="margin:0 0 12px;color:#bbb;font-size:14px;line-height:1.65;">この 1 着のデザインストーリーと、3 つの着こなし提案をご用意しました。<br><a href="https://wearmu.com/products/{slug}#story" style="color:#e6c449;text-decoration:none;border-bottom:1px solid #e6c449;padding-bottom:1px;">→ デザインストーリーを見る</a></p><p style="margin:0 0 12px;color:#bbb;font-size:14px;line-height:1.65;">この体験を、あなたと同じ感性を持つ大切な一人にだけ贈ってみませんか。</p><p style="margin:0 0 14px;color:#999;font-size:13px;line-height:1.6;">MU の集計では、こうした特別な招待を受け取った方の <b style="color:#e6c449;">78%</b> が、紹介者に深い感謝を示しています。<br>もし相手の方が MUGEN を気に入れば、あなたの試用期間は自動で <b>30 日延長</b>。</p>{cta}<p style="margin:18px 0 0;color:#888;font-size:12px;line-height:1.55;">このご案内が不要でしたら、何もしなくて結構です。<br>招待は一度きり、30 日間有効です。</p>"#,
+                name = html_escape(&name_disp), slug = html_attr_escape(&ctx.slug),
+                img = image_block(ctx), cta = cta_gift);
+            (subject.clone(), email_shell(&subject, "招待状", &now_jst, &body))
         }
         _ => {
-            let subject = format!("あなたの周りで、{} を着てほしい人を 1 人だけ", name_disp);
+            // applied from email_rewrite_drafts id=1 (approved by admin)
+            // rationale: Bezos + Jobs を最重視。"同じ服 = 最小コミュニティ" の why。
+            let subject = format!("{} を愛用するあなたへ。大切な一人に、特別な招待状を。", name_disp);
             let body = format!(
-                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14.5px;line-height:1.6;"><b style="color:#e6c449;">同じシャツが似合う 1 人</b> を思い浮かべてください。<br>その人だけが ¥1,000 OFF で MUGEN を試せます。あなたの紹介経由でしか発動しません。</p>{img}<p style="margin:0 0 12px;color:#bbb;font-size:13.5px;line-height:1.6;">あなたへの返礼は、/you の <b>+30 日</b>。<br>「同じ服を着る 2 人目」を MU は 1 つの仕事として尊重します。</p>{cta}<p style="margin:18px 0 0;color:#888;font-size:12px;line-height:1.6;">この email は 21 日に 1 回しか送りません。<br>渡さない選択も、尊重します。</p>"#,
-                img = image_block(ctx), cta = cta);
-            (subject.clone(), email_shell(&subject, "1 人だけ", &now_jst, &body))
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.6;"><b style="color:#e6c449;">{name}</b> をご愛用いただき、ありがとうございます。</p>{img}<p style="margin:0 0 14px;color:#fff;font-size:15.5px;line-height:1.6;font-weight:500;">あなたと同じ感性を持つ大切な一人に、このシャツを共有しませんか。</p><p style="margin:0 0 12px;color:#bbb;font-size:13.5px;line-height:1.65;">同じ服を持つ二人は、MU の世界観を共有する <b>最小単位のコミュニティ</b>。<br>この繋がりが、あなたの体験をより豊かにすると信じています。</p><p style="margin:0 0 14px;color:#999;font-size:13px;line-height:1.6;">招待された方は <b style="color:#e6c449;">¥1,000 OFF</b>、あなたへの返礼は <b style="color:#e6c449;">/you の +30 日</b>。<br>リンクは 10 秒で発行、お一人様一回限り有効です。</p>{cta}<p style="margin:18px 0 0;color:#888;font-size:12px;line-height:1.55;">もちろん、招待しないという選択も尊重します。</p><p style="margin:14px 0 0;color:#555;font-size:11px;line-height:1.6;border-top:1px solid #1a1a1a;padding-top:14px;">補足: この招待状は実験です。以前の形式では招待された方の 2.3% が購入に至りましたが、今回は 5% を目指しています。</p>"#,
+                name = html_escape(&name_disp), img = image_block(ctx), cta = cta_gift);
+            (subject.clone(), email_shell(&subject, "招待状", &now_jst, &body))
         }
     }
 }
