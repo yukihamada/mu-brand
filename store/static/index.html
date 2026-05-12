@@ -820,7 +820,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
       </div>
       <form id="checkout-form" onsubmit="doCheckout(event)">
         <div class="input-row">
-          <input class="mu-input" type="email" name="email" placeholder="Email" required>
+          <input class="mu-input" type="email" name="email" placeholder="Email (任意・決済画面でも入力できます)">
         </div>
         <details style="margin:8px 0">
           <summary style="font-size:8px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.5;cursor:pointer;list-style:none">
@@ -1496,10 +1496,12 @@ async function doCheckout(e){
   const btn = document.getElementById('btn-buy');
   btn.disabled=true; btn.textContent='Processing...';
   const fd = new FormData(e.target);
+  const _em = (fd.get('email') || '').trim();
   const body = {
     product_id: currentProduct.id,
     quantity: 1,
-    email: fd.get('email'),
+    // Email is optional; Stripe Checkout collects it on the hosted page when omitted.
+    ...(_em ? { email: _em } : {}),
     size: selectedSize,
     wallet: fd.get('wallet') || undefined,
   };

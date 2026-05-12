@@ -365,7 +365,11 @@ struct Product {
 struct CheckoutBody {
     product_id: i64,
     quantity: u32,
-    email: String,
+    /// Optional now (2026-05-13). Stripe Checkout collects email itself on
+    /// the hosted page — requiring it client-side was duplicate friction.
+    /// If provided, we prefill Stripe and also use it for KYC linkage.
+    #[serde(default)]
+    email: Option<String>,
     size: Option<String>,
     wallet: Option<String>,
     /// "jpy" (default, Stripe Checkout), "usdc", "sol", "eth"
@@ -3394,7 +3398,7 @@ async fn checkout(
               verification_token)
              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             params![
-                body.product_id, body.email,
+                body.product_id, body.email.clone().unwrap_or_default(),
                 kyc.full_name.trim(), kyc.date_of_birth.trim(),
                 kyc.nationality.trim(), kyc.id_type.trim(), kyc.id_last4.trim(),
                 kyc.address.trim(), kyc.consent_at.trim(),
@@ -3438,7 +3442,9 @@ async fn checkout(
             display_name: &display_name,
             unit_amount: price_jpy,
             quantity: body.quantity as i64,
-            customer_email: Some(&body.email),
+            // Email is optional now — Stripe collects it on the hosted page
+            // when we omit `customer_email`. Reduces duplicate friction.
+            customer_email: body.email.as_deref().filter(|s| !s.is_empty()),
             product_id: Some(body.product_id),
             size: Some(&size_label),
             wallet: Some(&wallet),
@@ -19853,6 +19859,17 @@ async fn main() {
         "ALTER TABLE bounty_rewards ADD COLUMN payout_status TEXT DEFAULT 'pending'",
         "ALTER TABLE bounty_rewards ADD COLUMN payout_tx_or_id TEXT",
         "ALTER TABLE bounty_rewards ADD COLUMN paid_out_at TEXT",
+        // Stable, per-buyer share-token for /buyer/:token public profile.
+        // Derived from sha256(email|BUYER_TOKEN_SALT)[:20]. Same email →
+        // same token (one profile per buyer, regardless of order count).
+        "ALTER TABLE collab_orders ADD COLUMN buyer_token TEXT",
+        "CREATE INDEX IF NOT EXISTS idx_collab_orders_buyer_token ON collab_orders(buyer_token)",
+        // Optional buyer-controlled bio (1 line public). NULL = hidden.
+        "CREATE TABLE IF NOT EXISTS buyer_bios (
+            buyer_token TEXT PRIMARY KEY,
+            bio         TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        )",
     ] {
         conn.execute(col, []).ok();
     }
