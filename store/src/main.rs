@@ -51,14 +51,20 @@ fn autopilot_skip(task: &str) -> bool {
 const CONSTITUTION_RAW: &str = include_str!("../static/constitution.md");
 
 /// Extract a top-level `## <name>` markdown section from the Constitution.
-/// Returns the slice up to (but not including) the next `## ` header, trimmed.
-/// Returns "" if the section is missing.
+/// Matches the heading prefix (so `## Type 1 Doors — Irreversible / require human
+/// approval` is found by `"Type 1 Doors"`), then returns the body up to the next
+/// `## ` heading, trimmed. Returns "" if the section is missing.
 fn constitution_section(name: &str) -> &'static str {
-    let needle = format!("\n## {}\n", name);
+    let needle = format!("\n## {}", name);
     let Some(idx) = CONSTITUTION_RAW.find(&needle) else {
         return "";
     };
-    let after = &CONSTITUTION_RAW[idx + needle.len()..];
+    // Skip to the end of the heading line.
+    let after_heading_start = idx + needle.len();
+    let rest = &CONSTITUTION_RAW[after_heading_start..];
+    let body_start = rest.find('\n').map(|n| after_heading_start + n + 1)
+        .unwrap_or(CONSTITUTION_RAW.len());
+    let after = &CONSTITUTION_RAW[body_start..];
     let end = after.find("\n## ").unwrap_or(after.len());
     after[..end].trim_matches(|c: char| c == '\n' || c == ' ')
 }
