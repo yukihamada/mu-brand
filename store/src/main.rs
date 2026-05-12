@@ -8454,8 +8454,8 @@ async fn show_sweep_page(
         // with the category label, so the gallery is never empty.
         let image_block = match image.as_deref().filter(|u| !u.is_empty() && u.starts_with("http")) {
             Some(u) => format!(
-                r##"<a href="#buy-{id}" class="img-wrap" aria-label="{name_attr}"><img src="{src}" alt="{name_attr}" loading="lazy"></a>"##,
-                src = html_attr_escape(u), name_attr = html_attr_escape(name), id = id),
+                r##"<button type="button" class="img-wrap zoom" data-full="{src}" data-name="{name_attr}" aria-label="拡大: {name_attr}"><img src="{src}" alt="{name_attr}" loading="lazy"><span class="zoom-hint">⤢</span></button>"##,
+                src = html_attr_escape(u), name_attr = html_attr_escape(name)),
             None => format!(
                 r#"<div class="img-wrap placeholder"><span>{glyph}</span><small>generating…</small></div>"#,
                 glyph = html_attr_escape(cat.chars().next().map(|c| c.to_string()).unwrap_or("•".into()).as_str())),
@@ -8470,7 +8470,7 @@ async fn show_sweep_page(
     <div class="row">
       <span class="price">¥{price_fmt}</span>
       <select id="size-{id}" class="size" aria-label="size">
-        <option>S</option><option selected>M</option><option>L</option><option>XL</option>
+        <option>XS</option><option>S</option><option selected>M</option><option>L</option><option>XL</option><option>2XL</option><option>3XL</option><option>OS</option>
       </select>
       <button class="buy" data-slug="{slug}" data-id="{id}">注文 →</button>
     </div>
@@ -8523,8 +8523,17 @@ header .warn{{display:inline-block;font-size:10px;letter-spacing:0.22em;text-tra
 .grid{{max-width:1100px;margin:30px auto 100px;padding:0 32px;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px}}
 .card{{background:var(--card);border:1px solid rgba(255,255,255,0.06);border-radius:2px;display:flex;flex-direction:column;overflow:hidden;transition:border-color 0.2s ease}}
 .card:hover{{border-color:rgba(230,196,73,0.45)}}
-.card .img-wrap{{display:block;aspect-ratio:4/5;background:#0a0a0a;overflow:hidden;position:relative}}
-.card .img-wrap img{{width:100%;height:100%;object-fit:cover;display:block}}
+.card .img-wrap{{display:block;aspect-ratio:4/5;background:#0a0a0a;overflow:hidden;position:relative;width:100%;border:0;padding:0;cursor:zoom-in;font-family:inherit;color:inherit}}
+.card .img-wrap img{{width:100%;height:100%;object-fit:cover;display:block;transition:transform 0.4s ease}}
+.card .img-wrap.zoom:hover img{{transform:scale(1.04)}}
+.card .img-wrap .zoom-hint{{position:absolute;top:10px;right:10px;font-size:14px;color:#fff;background:rgba(0,0,0,0.55);width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity 0.2s ease;pointer-events:none}}
+.card .img-wrap.zoom:hover .zoom-hint{{opacity:0.95}}
+#lightbox{{position:fixed;inset:0;background:rgba(0,0,0,0.92);display:none;align-items:center;justify-content:center;z-index:200;padding:40px;cursor:zoom-out}}
+#lightbox.on{{display:flex}}
+#lightbox img{{max-width:100%;max-height:90vh;object-fit:contain;box-shadow:0 24px 60px rgba(0,0,0,0.6);border-radius:2px}}
+#lightbox .close{{position:absolute;top:18px;right:24px;background:rgba(255,255,255,0.08);color:#fff;border:1px solid rgba(255,255,255,0.22);width:42px;height:42px;border-radius:50%;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-family:inherit}}
+#lightbox .close:hover{{background:rgba(255,255,255,0.18)}}
+#lightbox .caption{{position:absolute;bottom:24px;left:50%;transform:translateX(-50%);color:rgba(255,255,255,0.78);font-size:12px;letter-spacing:0.18em;text-transform:uppercase;text-align:center;max-width:90%}}
 .card .img-wrap.placeholder{{display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'Helvetica Neue',Arial,sans-serif}}
 .card .img-wrap.placeholder span{{font-size:48px;font-weight:200;color:rgba(230,196,73,0.4)}}
 .card .img-wrap.placeholder small{{font-size:9px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.4;margin-top:8px}}
@@ -8584,12 +8593,46 @@ footer a{{color:inherit;text-decoration:underline}}
 {cards}
 </div>
 <div id="msg"></div>
+<div id="lightbox" role="dialog" aria-modal="true" aria-label="商品画像 拡大表示">
+  <button class="close" type="button" aria-label="閉じる">×</button>
+  <img alt="" src="">
+  <div class="caption"></div>
+</div>
 <footer>
   MU × SWEEP draft preview · 株式会社イネブラ (Enabler Inc.) ·
   <a href="mailto:info@enablerdao.com">info@enablerdao.com</a> ·
   <a href="/sweep?logout=1">ログアウト</a>
 </footer>
 <script>
+// ── Lightbox (画像クリックで拡大) ──
+(function() {{
+  const lb = document.getElementById('lightbox');
+  if (!lb) return;
+  const lbImg = lb.querySelector('img');
+  const lbCap = lb.querySelector('.caption');
+  const closeBtn = lb.querySelector('.close');
+  function open(full, name) {{
+    lbImg.src = full;
+    lbImg.alt = name || '';
+    lbCap.textContent = name || '';
+    lb.classList.add('on');
+    document.body.style.overflow = 'hidden';
+  }}
+  function close() {{
+    lb.classList.remove('on');
+    lbImg.src = '';
+    document.body.style.overflow = '';
+  }}
+  document.querySelectorAll('.card .img-wrap.zoom').forEach(btn => {{
+    btn.addEventListener('click', e => {{
+      e.preventDefault();
+      open(btn.dataset.full, btn.dataset.name);
+    }});
+  }});
+  closeBtn.addEventListener('click', close);
+  lb.addEventListener('click', e => {{ if (e.target === lb) close(); }});
+  document.addEventListener('keydown', e => {{ if (e.key === 'Escape' && lb.classList.contains('on')) close(); }});
+}})();
 document.querySelectorAll('.card .buy').forEach(btn => {{
   btn.addEventListener('click', async () => {{
     const slug = btn.dataset.slug;
@@ -12908,6 +12951,56 @@ async fn main() {
          Some(r#"{"S":46346,"M":46347,"L":46348,"XL":46349,"2XL":46350,"3XL":46351,"XS":46345}"#),
          Some(r#"[{"type":"front_dtfabric","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
          Some(r#"[{"id":"stitch_color","value":"black"}]"#), 14, 1),
+
+        // ── 第三弾追加 (2026-05-12): バッグ/帽子/ジャケット/ケース ──
+        ("sweep-bomber",        "ボンバージャケット",    "MU × SIIIEEP All-Over Bomber Jacket",
+         "Printful All-Over Print Unisex Bomber Jacket (pid 390)、White。フロントに MU × SIIIEEP の全面プリント。サテン裏地で軽量、春秋に。",
+         19_800, "printful", Some(390), Some(10879),
+         Some(r#"{"XS":10877,"S":10878,"M":10879,"L":10880,"XL":10881,"2XL":10882,"3XL":10883}"#),
+         Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 14, 1),
+        ("sweep-track-jacket",  "トラックジャケット",    "MU × SIIIEEP Recycled Track Jacket",
+         "Printful All-Over Print Recycled Unisex Track Jacket (pid 801)、White。リサイクル素材、フロント全面プリント。練習前後の羽織りに。",
+         16_800, "printful", Some(801), Some(20373),
+         Some(r#"{"2XS":20370,"XS":20371,"S":20372,"M":20373,"L":20374,"XL":20375,"2XL":20376,"3XL":20377,"4XL":20378,"5XL":20379,"6XL":20380}"#),
+         Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 14, 1),
+        ("sweep-backpack",      "全面プリント バックパック","MU × SIIIEEP All-Over Backpack",
+         "Printful All-Over Print Backpack (pid 279)。SIIIEEP のサインを全面に展開した、デイリー / 練習 / 出張兼用バックパック。",
+         9_800,  "printful", Some(279), Some(9063),
+         Some(r#"{"OS":9063,"ONE SIZE":9063,"S":9063,"M":9063,"L":9063,"XL":9063}"#),
+         Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 14, 1),
+        ("sweep-fanny-pack",    "ファニーパック",        "MU × SIIIEEP All-Over Fanny Pack",
+         "Printful All-Over Print Fanny Pack (pid 350)。ウェスト / クロスボディ 2way。練習ジム用のミニマル装備。",
+         6_800,  "printful", Some(350), Some(9986),
+         Some(r#"{"S":9986,"M":9986,"S/M":9986,"L":9987,"XL":9987,"M/L":9987,"OS":9986,"ONE SIZE":9986}"#),
+         Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 10, 1),
+        ("sweep-iphone-case",   "iPhone クリアケース",   "MU × SIIIEEP Clear Case for iPhone",
+         "Printful Clear Case for iPhone® (pid 181)、iPhone 15 標準。背面に SIIIEEP wordmark を UV 印刷。MagSafe 非対応。サイズで機種選択不可のため、最新 iPhone 15 を出荷。他機種は info@enablerdao.com まで。",
+         3_800,  "printful", Some(181), Some(17616),
+         Some(r#"{"OS":17616,"ONE SIZE":17616,"S":17616,"M":17616,"L":17616,"XL":17616}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         None, 10, 1),
+        ("sweep-bucket-hat",    "バケットハット",        "MU × SIIIEEP Bucket Hat",
+         "Printful Big Accessories BX003 Bucket Hat (pid 379)、Black。フロントに SIIIEEP wordmark 刺繍 (白糸、フラット)。ワンサイズ。",
+         5_800,  "printful", Some(379), Some(10735),
+         Some(r#"{"OS":10735,"ONE SIZE":10735,"S":10735,"M":10735,"L":10735,"XL":10735}"#),
+         Some(r#"[{"type":"embroidery_front","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r##"[{"id":"thread_colors","value":["#FFFFFF"]}]"##), 10, 1),
+        ("sweep-joggers",       "ジョガーパンツ",        "MU × SIIIEEP Recycled Joggers",
+         "Printful All-Over Print Recycled Men's Joggers (pid 400)、White。右脚に SIIIEEP のサインを縦に全面プリント。リサイクル素材。",
+         12_800, "printful", Some(400), Some(11035),
+         Some(r#"{"XS":11033,"S":11034,"M":11035,"L":11036,"XL":11037,"2XL":11038,"3XL":11039}"#),
+         Some(r#"[{"type":"leg_right","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 14, 1),
+        ("sweep-baseball-jersey","ベースボールジャージ", "MU × SIIIEEP Recycled Baseball Jersey",
+         "Printful All-Over Print Recycled Unisex Baseball Jersey (pid 792)、White。リサイクル素材、フロント全面プリント。クラシックボタン留め。",
+         14_800, "printful", Some(792), Some(20185),
+         Some(r#"{"2XS":20182,"XS":20183,"S":20184,"M":20185,"L":20186,"XL":20187,"2XL":20188,"3XL":20189,"4XL":20190,"5XL":20191,"6XL":20192}"#),
+         Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 14, 1),
     ];
     let now = chrono_now();
     for (slug, cat, name, desc, price, route, pf_prod, pf_var, var_map, files, opts, lead, active) in sweep_items {
@@ -12966,6 +13059,15 @@ async fn main() {
         ("sweep-duffle",       16_090),
         ("sweep-gym-bag",      13_305),
         ("sweep-cotton-shorts", 3_640),
+        // 第三弾 (2026-05-12) 推定原価 — E2E 実測で更新予定
+        ("sweep-bomber",       11_500),
+        ("sweep-track-jacket", 10_900),
+        ("sweep-backpack",      6_200),
+        ("sweep-fanny-pack",    4_800),
+        ("sweep-iphone-case",   2_350),
+        ("sweep-bucket-hat",    3_580),
+        ("sweep-joggers",       7_900),
+        ("sweep-baseball-jersey", 9_400),
     ];
     for (slug, cost) in printful_costs {
         conn.execute(

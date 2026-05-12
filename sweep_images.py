@@ -161,6 +161,49 @@ PROMPTS = [
      "across the fabric, worn casually by an Asian woman in her late 20s, "
      "lower-half shot only, plain warm studio background, natural soft light, "
      "4:5 portrait, photographic, minimalist styling. " + BRAND_SPEC),
+
+    # ── 第三弾 (2026-05-12): バッグ / 帽子 / ジャケット / ケース ──
+    ("sweep-bomber",
+     "Editorial product photo of an all-over print bomber jacket, white satin shell with a "
+     "subtle tonal pattern of the SIIIEEP wordmark repeating across the body, "
+     "ribbed cuffs and hem in black, worn by a 30 year-old Japanese man on a "
+     "Tokyo rooftop at dusk, hands in pockets, 3/4 view, 4:5 portrait, "
+     "soft cinematic light, photographic, magazine candid. " + BRAND_SPEC),
+    ("sweep-track-jacket",
+     "Recycled poly track jacket in off-white with full-zip front and tonal SIIIEEP wordmark "
+     "repeating subtly across the chest, raglan sleeves, worn by a 28 year-old "
+     "Asian woman, half-body front view, plain warm studio background, "
+     "natural soft light, 4:5 portrait, photographic, minimalist styling. " + BRAND_SPEC),
+    ("sweep-backpack",
+     "Premium product still life of an all-over print backpack, mid-size daypack with "
+     "a tonal SIIIEEP wordmark pattern repeating across the white shell, "
+     "standing upright on a polished concrete floor, dramatic side lighting, "
+     "4:5 portrait, no models, editorial product photography. " + BRAND_SPEC),
+    ("sweep-fanny-pack",
+     "All-over print fanny pack in white with a subtle tonal SIIIEEP wordmark pattern, "
+     "worn cross-body by a 27 year-old Japanese man over a charcoal hoodie, "
+     "half-body candid in a Tokyo backstreet at golden hour, "
+     "4:5 portrait, photographic, magazine candid. " + BRAND_SPEC),
+    ("sweep-iphone-case",
+     "Macro product shot of a clear iPhone 15 case with the SIIIEEP wordmark "
+     "(s III equals-three-bars p logo) printed in matte black on the back panel, "
+     "case lying flat on a brushed-aluminum desk next to a small notebook, "
+     "soft directional light, 4:5 portrait, photographic, minimalist composition, no models. " + BRAND_SPEC),
+    ("sweep-bucket-hat",
+     "Editorial portrait of a 26 year-old Japanese woman wearing a black "
+     "bucket hat with a small flat white-thread embroidered SIIIEEP wordmark on the front, "
+     "half-body candid in soft natural daylight on a Tokyo street, "
+     "4:5 portrait, photographic, magazine candid. " + BRAND_SPEC),
+    ("sweep-joggers",
+     "Recycled poly joggers in white with a subtle tonal SIIIEEP wordmark "
+     "printed vertically down the right leg, worn by a 30 year-old Asian man, "
+     "lower-half candid shot, plain warm studio background, natural soft light, "
+     "4:5 portrait, photographic, minimalist styling. " + BRAND_SPEC),
+    ("sweep-baseball-jersey",
+     "Recycled poly baseball jersey, button-front in white with a subtle tonal "
+     "SIIIEEP wordmark pattern repeating across the chest, classic ringer collar, "
+     "worn by a 28 year-old Japanese man, half-body front view, plain warm studio "
+     "background, natural soft light, 4:5 portrait, photographic, magazine candid. " + BRAND_SPEC),
 ]
 
 
