@@ -2183,6 +2183,13 @@ async fn stripe_webhook(
             return StatusCode::OK.into_response();
         }
 
+        // ── Sponsored Gi pre-order (metadata.product = gi_edition_01) ──
+        // Powers the live inventory counter on /gi/01 and queues fulfillment.
+        if meta["product"].as_str() == Some("gi_edition_01") {
+            handle_gi_preorder(db.clone(), &session).await;
+            return StatusCode::OK.into_response();
+        }
+
         // 3-month prepaid pack (mode=payment, metadata.plan=3mo): extend
         // subscription_until by 90 days. Idempotent on session id.
         if meta["plan"].as_str() == Some("3mo") {
@@ -12670,16 +12677,24 @@ const GI_EDITION_01_HTML: &str = r##"<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MU × JiuFlow Sponsored Gi — Edition 01 / 限定 30 着</title>
+<title>MU × JiuFlow Sponsored Gi — Edition 00 / 限定 30 着</title>
 <meta name="description" content="背中で 18 ブランドの物語を語る、世界初のスポンサード黒 BJJ 道着。CYBRIDGE × ENABLER 紋章、金糸 QR 刺繍、内ライニング sublimation。限定 30 着 / ¥98,000 先行予約受付中。">
-<meta property="og:title" content="MU × JiuFlow Sponsored Gi / Edition 01">
+<meta property="og:title" content="MU × JiuFlow Sponsored Gi / Edition 00">
 <meta property="og:description" content="20 年の事業ネットワークを 1 着の黒道着に。限定 30 着、先行予約 ¥98,000。">
 <meta property="og:image" content="https://lifestyle.wearmu.com/gi/01/02_back.jpg">
-<meta property="og:url" content="https://wearmu.com/gi/01">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:url" content="https://wearmu.com/gi/00">
 <meta property="og:type" content="product">
+<meta property="og:site_name" content="MU / wearmu.com">
+<meta property="og:locale" content="ja_JP">
 <meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="MU × JiuFlow Sponsored Gi / Edition 00">
+<meta name="twitter:description" content="20 年の事業ネットワークを 1 着の黒道着に。限定 30 着、先行予約 ¥98,000。">
+<meta name="twitter:image" content="https://lifestyle.wearmu.com/gi/01/02_back.jpg">
+<meta name="twitter:site" content="@wearmu">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<link rel="canonical" href="https://wearmu.com/gi/01">
+<link rel="canonical" href="https://wearmu.com/gi/00">
 <style>
 :root{--bg:#0a0a0a;--bg-2:#111;--fg:#f5f5f0;--mute:#8a8a82;--gold:#e6c449;--gold-deep:#a67843;--line:rgba(255,255,255,0.08);--card:#121214;--card-b:rgba(255,255,255,0.06);--green:#22c55e}
 *{margin:0;padding:0;box-sizing:border-box}
@@ -12774,7 +12789,7 @@ footer a{color:var(--mute);text-decoration:underline}
 <section class="hero">
   <div class="hero-bg"></div>
   <div class="wrap hero-inner">
-    <div class="eyebrow">MU × JiuFlow · Edition 01 · Sponsored Gi</div>
+    <div class="eyebrow">MU × JiuFlow · Edition 00 · Sponsored Gi</div>
     <h1 class="hero-title">背中で <em>20 年の事業</em> を編む、<br>世界初のスポンサード <em>黒帯柔術衣</em>。</h1>
     <p class="hero-lead">18 ブランドが胸・袖・裾・背中に刺繍され、金糸 QR コードと NFC が <b>物理刺繍とデジタル ネットワーク</b> を結ぶ。CYBRIDGE (1995) から ENABLER (2026) まで、濱田優貴が関わった事業の系譜を 1 着の道着に編み込んだ heritage piece。</p>
     <div class="hero-meta">
@@ -12798,7 +12813,7 @@ footer a{color:var(--mute);text-decoration:underline}
       <p>1995 年、濱田優貴は <b>CYBRIDGE</b> を創業した。以来 30 年、Mercari、Enabler、SOLUNA、Pasha、Koe、KAGI、ZAMNA HAWAII、焼肉古今 — 業界を横断する事業を編んできた。</p>
       <p>この道着は、その <b>系譜の地図</b> である。着用者が稽古で背中を晒すたび、18 ブランドの紋章が畳に擦れる。スパーリングの相手が QR を読めば、スポンサーの宇宙へ通じる。</p>
       <p>「スポンサード ギ」という概念自体、世界で前例がない。F1 のレーシングスーツ、NASCAR のドライバーシャツ — それらの武道版を、職人の刺繍と金糸で、日本で作り上げた。</p>
-      <p class="muted" style="font-size:13px;margin-top:24px">Edition 01 は <b>濱田優貴本人</b> が試合・稽古で着用するモデル。replicas 30 着は同じ仕様で再現し、ハンドナンバリング後に発送。</p>
+      <p class="muted" style="font-size:13px;margin-top:24px">Edition 00 は <b>濱田優貴本人</b> が試合・稽古で着用するモデル。replicas 30 着は同じ仕様で再現し、ハンドナンバリング後に発送。</p>
     </div>
     <div class="story-img"><img src="https://lifestyle.wearmu.com/gi/01/01_front.jpg" alt="MU x JiuFlow Sponsored Gi front" loading="lazy"></div>
   </div>
@@ -12865,7 +12880,7 @@ footer a{color:var(--mute);text-decoration:underline}
     <dt>サイズ展開</dt><dd>A1 / A2 / A3 / A4 (注文時に選択)</dd>
     <dt>刺繍 数</dt><dd>表 13 箇所 (主催 2 + メイン 1 + 通常 10) + 裏 (内ライニング 18 全社)</dd>
     <dt>糸色</dt><dd>白 (主体) + Old Gold (#A67843) 焼肉古今・QR・帯エンドの 3 箇所</dd>
-    <dt>QR コード</dt><dd>10×10cm Old Gold 糸刺繍。corner markers に M / J / E / C 埋込み。読取 → https://wearmu.com/gi/01</dd>
+    <dt>QR コード</dt><dd>10×10cm Old Gold 糸刺繍。corner markers に M / J / E / C 埋込み。読取 → https://wearmu.com/gi/00</dd>
     <dt>NFC</dt><dd>襟裏に 5×5mm タグ縫込み。iPhone Wallet / Android で読取可</dd>
     <dt>裏地</dt><dd>sublimation 印刷 — 18 ブランド ロゴ 総柄パターン</dd>
     <dt>製造</dt><dd>ISAMI 早稲田 (日本) + Sialkot 並行見積中。最終決定は注文締切後</dd>
@@ -12910,13 +12925,13 @@ footer a{color:var(--mute);text-decoration:underline}
     var size=(document.querySelector('input[name="size"]:checked')||{}).value||'A2';
     var note=(document.getElementById('gi-note')||{}).value||'';
     try{
-      var r=await fetch('/api/gi/01/checkout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({size:size,note:note})});
+      var r=await fetch('/api/gi/00/checkout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({size:size,note:note})});
       var j=await r.json();
       if(j&&j.url){window.location.href=j.url;return;}
       throw new Error(j&&j.error||'checkout failed');
     }catch(e){console.error(e);btn.disabled=false;btn.textContent='もう一度試す';alert('決済の準備でエラーが発生しました。お時間を空けて再度お試しください。');}
   });
-  if(location.search.indexOf('paid=ok')>-1){alert('ご予約ありがとうございます！ 製造開始の連絡を順次お送りします。');history.replaceState({},'','/gi/01');}
+  if(location.search.indexOf('paid=ok')>-1){alert('ご予約ありがとうございます！ 製造開始の連絡を順次お送りします。');history.replaceState({},'','/gi/00');}
 })();
 </script>
 </body>
@@ -12929,8 +12944,9 @@ async fn show_gi_edition_page(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Response {
     let edition = id.trim_matches(|c: char| !c.is_ascii_alphanumeric()).to_string();
-    // For v1 only `01` (or `1`) is valid; future editions live as separate pages.
-    if !matches!(edition.as_str(), "1" | "01") {
+    // Canonical is `00` (Edition Zero). `01`/`1` accepted as legacy QR-printed
+    // redirects; serve same content. Future editions live as separate pages.
+    if !matches!(edition.as_str(), "0" | "00" | "1" | "01") {
         return (StatusCode::NOT_FOUND, "edition not found").into_response();
     }
     let html = GI_EDITION_01_HTML;
@@ -12971,13 +12987,13 @@ async fn gi_edition_checkout(
         ("mode", "payment".into()),
         ("currency", "jpy".into()),
         ("allow_promotion_codes", "true".into()),
-        ("success_url", format!("{}/gi/01?paid=ok", base_url)),
-        ("cancel_url",  format!("{}/gi/01?paid=cancel", base_url)),
+        ("success_url", format!("{}/gi/00?paid=ok", base_url)),
+        ("cancel_url",  format!("{}/gi/00?paid=cancel", base_url)),
         ("line_items[0][quantity]", "1".into()),
         ("line_items[0][price_data][currency]", "jpy".into()),
         ("line_items[0][price_data][unit_amount]", price.to_string()),
         ("line_items[0][price_data][product_data][name]",
-         "MU × JiuFlow Sponsored Gi — Edition 01 (Limited 30, 先行予約)".into()),
+         "MU × JiuFlow Sponsored Gi — Edition 00 (Limited 30, 先行予約)".into()),
         ("line_items[0][price_data][product_data][description]",
          "18 brand sponsorship limited gi. Embroidery + gold-thread QR + sublimation lining. Production 8-12 weeks after order. Hand-numbered.".into()),
         ("metadata[product]", "gi_edition_01".into()),
@@ -17378,6 +17394,45 @@ async fn main() {
         );
         CREATE INDEX IF NOT EXISTS idx_collab_apps_email ON collab_applications(contact_email);
         CREATE INDEX IF NOT EXISTS idx_collab_apps_created ON collab_applications(created_at DESC);
+
+        -- Sponsored Gi pre-orders. One row per paid Stripe Checkout session for
+        -- metadata.product = gi_edition_XX. Powers the live inventory counter
+        -- on /gi/:id and the post-order fulfillment queue.
+        CREATE TABLE IF NOT EXISTS gi_preorders (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            edition           TEXT NOT NULL,        -- '01' for v1
+            stripe_session_id TEXT UNIQUE NOT NULL,
+            amount_jpy        INTEGER NOT NULL,
+            email             TEXT,
+            name              TEXT,
+            phone             TEXT,
+            shipping_json     TEXT,                 -- raw shipping_details object
+            size              TEXT,
+            note              TEXT,
+            edition_number    INTEGER,              -- 1..30 assignment, NULL until manually allocated
+            status            TEXT NOT NULL DEFAULT 'paid',  -- paid | in_production | shipped | refunded
+            paid_at           TEXT NOT NULL,
+            shipped_at        TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_gi_preorders_edition ON gi_preorders(edition, paid_at DESC);
+
+        -- ENAI Token claims from QR-code scans on the physical gi.
+        -- One row per email × edition; rate-limited via (ip, ua, claimed_at).
+        CREATE TABLE IF NOT EXISTS gi_enai_claims (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            edition     TEXT NOT NULL,
+            email       TEXT NOT NULL,
+            wallet      TEXT,
+            amount      INTEGER NOT NULL DEFAULT 1,  -- ENAI units
+            status      TEXT NOT NULL DEFAULT 'queued',  -- queued | minted | failed
+            ip          TEXT,
+            user_agent  TEXT,
+            claimed_at  TEXT NOT NULL,
+            minted_at   TEXT,
+            tx_sig      TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_gi_enai_email ON gi_enai_claims(edition, email);
+        CREATE INDEX IF NOT EXISTS idx_gi_enai_claimed ON gi_enai_claims(claimed_at DESC);
         -- 商品ごとの好き嫌い 1-clic シグナル + 自由記述 FB。
         --   kind: 'love' (👍) / 'meh' (👎) / 'comment' (自由記述同送)
         --   visitor_token は cookie 由来の匿名 ID。集計用、再投稿の弱め判定。
