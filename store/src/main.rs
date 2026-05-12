@@ -2273,11 +2273,6 @@ struct BountyClaimBody {
     #[serde(default)] solana_wallet: String,
     #[serde(default)] stripe_connect_account_id: String,
     #[serde(default)] paypay_handle: String,
-    /// When true on the initial claim, defer the shipping step. Status moves
-    /// to 'ship_pending' (cash payout still triggered) and the recipient can
-    /// revisit the same URL later to fill in shipping → status 'claimed' +
-    /// Printful order. Ignored on subsequent POSTs.
-    #[serde(default)] skip_shipping: bool,
 }
 async fn bounty_claim(
     State(db): State<Db>,
@@ -22033,6 +22028,11 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         interval_secs: 86_400, // 24h — 4 persona × 9 kinds × 2 variants = 18 Gemini Flash calls
         description: "Musk/Bezos/Jobs/buyer 4 ペルソナがメール文面 (subject+body) を採点 → email_critique → /admin/email-critique",
     },
+    AgentDef {
+        name: "bounty_triage",
+        interval_secs: 1800, // 30 min — bounty 受領 → AI 1 次トリアージ (severity_final + status 提案、reward は人間)
+        description: "status='received' な bug bounty 報告を Gemini で 1 次トリアージ → severity_final 推定 + 明確な spam/scope外 は auto-reject、本物は'triaging' に",
+    },
 ];
 
 /// agent_journal から指定 agent の最後の cycle_at (epoch sec) を取得。
@@ -22072,6 +22072,7 @@ async fn run_agent(name: &str, db: Db) -> Result<AgentReport, String> {
         "funnel_anomaly"    => agent_funnel_anomaly(db).await,
         "production_watcher"=> agent_production_watcher(db).await,
         "email_critic"      => agent_email_critic(db).await,
+        "bounty_triage"     => agent_bounty_triage(db).await,
         _ => Err(format!("unknown agent: {}", name)),
     }
 }
@@ -26279,6 +26280,256 @@ async fn agent_email_critic(db: Db) -> Result<AgentReport, String> {
         observations: serde_json::Value::Object(obs),
         decisions, actions, summary,
         notable: !worst.is_empty(),
+    })
+}
+
+// ── agent_bounty_triage ──────────────────────────────────────────────────
+// 30 分ごとに status='received' な bounty_submissions を Gemini Flash で 1 次トリアージ。
+// 自動でやるのは「severity_final 推定」+「scope外/spam の auto-reject」+「triaging 化」だけ。
+// 報酬の支払いと confirmed/duplicate 確定は必ず人間 (admin) を経由する。
+const BOUNTY_TRIAGE_PROMPT: &str = r#"You are MU's first-line bug bounty triage analyst.
+Be SKEPTICAL and ANALYTICAL. Return STRICT JSON only (no fences).
+
+MU bounty scope (from /bounty page):
+- IN SCOPE:    purchase_path bugs, auth/IDOR, XSS/CSRF, injection, business_logic,
+               info_disclosure, agent_safety issues, security UX issues on
+               wearmu.com / api.wearmu.com / wallet-related flows.
+- OUT OF SCOPE: missing security headers without exploit, theoretical issues
+               with no PoC, rate-limit on public endpoints, denial-of-service,
+               domain-takeover w/o demonstrable subdomain, social-engineering,
+               anything on subdomains we do not control (financie / lovable etc.).
+
+Severity rubric:
+- critical: full account takeover, payment hijack, mass PII leak, agent able to
+            spend MU money without governance. Payout: ¥200K-¥1M.
+- high:     order modification across users, OAuth misuse, stored XSS on
+            authenticated pages, partial PII leak. Payout: ¥50K-¥200K.
+- medium:   reflected XSS, CSRF on state-changing endpoints, info disclosure
+            (non-PII). Payout: ¥10K-¥50K.
+- low:      info disclosure (config / version), minor business logic edge,
+            UX-security confusion. Payout: ¥3K-¥10K (or MUGEN credit).
+- info:     hardening suggestion, no exploit. Payout: thanks, no money.
+
+Triage decision values:
+- "triaging":   plausible report worth a human's 5-15 minutes to verify
+- "rejected":   clearly out-of-scope OR clearly bogus (no repro, no impact,
+                copy-pasted boilerplate, "I tested with curl and got 200")
+- "duplicate":  flag if the title sounds like a recent known issue (you can
+                only judge from the title; the human will dedupe properly)
+- "needs_human": skip — too ambiguous or too critical to AI-decide
+
+Output schema (all 4 keys required):
+{
+  "severity_final": "critical|high|medium|low|info",
+  "decision":       "triaging|rejected|duplicate|needs_human",
+  "reason":         "<=200 chars, internal note for the human reviewer",
+  "reply_to_reporter": "<=400 chars, polite Japanese reply if rejected; empty otherwise"
+}
+"#;
+
+async fn agent_bounty_triage(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut decisions: Vec<serde_json::Value> = Vec::new();
+    let mut actions: Vec<serde_json::Value> = Vec::new();
+    let is_dry = dry_run_active("bounty_triage");
+    obs.insert("dry_run".into(), serde_json::Value::from(is_dry));
+
+    let key = match env::var("GEMINI_API_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => return Ok(AgentReport::idle("GEMINI_API_KEY missing")),
+    };
+    {
+        let conn = db.lock().unwrap();
+        if let Err(e) = budget_check(&conn, "gemini-2.5-flash") {
+            return Ok(AgentReport::idle(&e));
+        }
+    }
+
+    struct Row { id: i64, severity: String, category: String, title: String,
+                 affected_url: String, body: String, reporter_email: String,
+                 received_at: String }
+    let rows: Vec<Row> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, severity, category, title,
+                    COALESCE(affected_url,''), body, reporter_email,
+                    received_at
+             FROM bounty_submissions
+             WHERE status = 'received'
+             ORDER BY CAST(received_at AS INTEGER) ASC
+             LIMIT 5"
+        ) { Ok(s) => s, Err(_) => return Ok(AgentReport::idle("schema not ready")) };
+        stmt.query_map([], |r| Ok(Row {
+            id: r.get(0)?, severity: r.get(1)?, category: r.get(2)?, title: r.get(3)?,
+            affected_url: r.get(4)?, body: r.get(5)?, reporter_email: r.get(6)?,
+            received_at: r.get(7)?,
+        })).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    obs.insert("considered".into(), serde_json::Value::from(rows.len() as i64));
+    if rows.is_empty() {
+        return Ok(AgentReport {
+            observations: serde_json::Value::Object(obs),
+            decisions, actions,
+            summary: "bounty_triage: no 'received' submissions".into(),
+            notable: false,
+        });
+    }
+
+    let mut triaged = 0i64;
+    let mut auto_rejected = 0i64;
+    let mut needs_human = 0i64;
+    let mut total_in_tok = 0i64;
+    let mut total_out_tok = 0i64;
+
+    for row in &rows {
+        let body_trim: String = row.body.chars().take(4000).collect();
+        let prompt = format!(
+            "{}\n---\nBOUNTY UNDER TRIAGE:\nid: #{}\nclaimed_severity: {}\ncategory: {}\ntitle: {}\naffected_url: {}\nreporter_email: {}\nreceived_at_epoch: {}\n\nbody:\n{}\n",
+            BOUNTY_TRIAGE_PROMPT, row.id, row.severity, row.category, row.title,
+            row.affected_url, row.reporter_email, row.received_at, body_trim);
+
+        let req = serde_json::json!({
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": 0.0,
+                "maxOutputTokens": 1500,
+                "responseMimeType": "application/json",
+                "thinkingConfig": {"thinkingBudget": 0},
+            },
+        });
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
+            key);
+        let resp = match reqwest::Client::new().post(&url).json(&req).send().await {
+            Ok(r) if r.status().is_success() => r,
+            Ok(r) => {
+                let s = r.status();
+                let t = r.text().await.unwrap_or_default();
+                decisions.push(serde_json::json!({"type":"gemini_err","id":row.id,"status":s.as_u16(),"body":t.chars().take(200).collect::<String>()}));
+                continue;
+            }
+            Err(e) => {
+                decisions.push(serde_json::json!({"type":"http_err","id":row.id,"error":e.to_string()}));
+                continue;
+            }
+        };
+        let body_val: serde_json::Value = match resp.json().await {
+            Ok(v) => v,
+            Err(e) => { decisions.push(serde_json::json!({"type":"json_err","id":row.id,"error":e.to_string()})); continue; }
+        };
+        let raw = body_val["candidates"][0]["content"]["parts"][0]["text"]
+            .as_str().unwrap_or("").trim().to_string();
+        let parsed: serde_json::Value = match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(_) => {
+                let s = raw.find('{'); let e = raw.rfind('}');
+                match (s, e) {
+                    (Some(s), Some(e)) if e > s => serde_json::from_str(&raw[s..=e]).unwrap_or_default(),
+                    _ => serde_json::Value::Null,
+                }
+            }
+        };
+        if parsed.is_null() {
+            decisions.push(serde_json::json!({"type":"empty_parse","id":row.id,"raw_head":raw.chars().take(80).collect::<String>()}));
+            continue;
+        }
+        total_in_tok  += (prompt.chars().count() / 4) as i64;
+        total_out_tok += (raw.chars().count() / 4) as i64;
+
+        let allowed_sev = ["critical","high","medium","low","info"];
+        let allowed_dec = ["triaging","rejected","duplicate","needs_human"];
+        let sev_final = parsed["severity_final"].as_str().unwrap_or("info").to_string();
+        let decision  = parsed["decision"].as_str().unwrap_or("needs_human").to_string();
+        let reason: String   = parsed["reason"].as_str().unwrap_or("").chars().take(200).collect();
+        let reply: String    = parsed["reply_to_reporter"].as_str().unwrap_or("").chars().take(400).collect();
+        if !allowed_sev.contains(&sev_final.as_str()) {
+            decisions.push(serde_json::json!({"type":"bad_severity","id":row.id,"got":sev_final}));
+            continue;
+        }
+        if !allowed_dec.contains(&decision.as_str()) {
+            decisions.push(serde_json::json!({"type":"bad_decision","id":row.id,"got":decision}));
+            continue;
+        }
+
+        let now = chrono_now();
+        let internal_note = format!("[AI {}] {} → {} :: {}", now, sev_final, decision, reason);
+
+        if is_dry {
+            actions.push(serde_json::json!({
+                "type":"dry_run","id":row.id,
+                "severity_final":sev_final,"decision":decision,
+                "reason":reason,"reply_to_reporter_len":reply.chars().count(),
+            }));
+            triaged += 1;
+            continue;
+        }
+
+        // Persist: never auto-confirm or auto-pay. Only soft moves:
+        //   - rejected  → status='rejected'
+        //   - duplicate → status='duplicate'
+        //   - triaging / needs_human → status='triaging'  (still queued for human)
+        let new_status = match decision.as_str() {
+            "rejected"   => "rejected",
+            "duplicate"  => "duplicate",
+            _            => "triaging",
+        };
+        {
+            let conn = db.lock().unwrap();
+            let _ = conn.execute(
+                "UPDATE bounty_submissions
+                 SET status = ?,
+                     severity_final = ?,
+                     internal_notes = COALESCE(internal_notes,'') || CASE WHEN COALESCE(internal_notes,'')='' THEN '' ELSE char(10) END || ?,
+                     triaged_at = ?
+                 WHERE id = ? AND status = 'received'",
+                params![new_status, sev_final, internal_note, now, row.id],
+            );
+        }
+
+        // Auto-reply to reporter ONLY for clear rejections.
+        if decision == "rejected" && !reply.trim().is_empty() {
+            if let Ok(resend_key) = env::var("RESEND_API_KEY") {
+                if !resend_key.is_empty() {
+                    let subj = format!("[MU Bounty #{}] 判定結果 (1 次トリアージ)", row.id);
+                    let html = format!(
+                        "<p>{} さん、</p><p>ご報告ありがとうございます。<br>1 次トリアージの結果、本件は対象外と判定しました。</p><hr><p>{}</p><hr><p>判断に異議がある場合は <a href=\"mailto:info@enablerdao.com\">info@enablerdao.com</a> までご返信ください。人間の判定者が再確認します。</p><p>— MU Autopilot / 株式会社イネブラ</p>",
+                        html_escape(row.reporter_email.split('@').next().unwrap_or("報告者")),
+                        html_escape(&reply).replace('\n', "<br>"));
+                    let _ = reqwest::Client::new()
+                        .post("https://api.resend.com/emails")
+                        .bearer_auth(&resend_key)
+                        .json(&serde_json::json!({
+                            "from": "MU Bounty <mu-bounty@wearmu.com>",
+                            "to": [row.reporter_email.clone()],
+                            "subject": subj,
+                            "html": html,
+                            "reply_to": "info@enablerdao.com",
+                        }))
+                        .send().await;
+                }
+            }
+            auto_rejected += 1;
+        }
+        if decision == "needs_human" { needs_human += 1; }
+        triaged += 1;
+        actions.push(serde_json::json!({
+            "type":"triaged","id":row.id,
+            "severity_final":sev_final,"decision":decision,"new_status":new_status,
+        }));
+    }
+
+    {
+        let conn = db.lock().unwrap();
+        let _ = budget_record(&conn, "bounty_triage", "gemini-2.5-flash", total_in_tok, total_out_tok);
+    }
+    obs.insert("triaged".into(), serde_json::Value::from(triaged));
+    obs.insert("auto_rejected".into(), serde_json::Value::from(auto_rejected));
+    obs.insert("needs_human".into(), serde_json::Value::from(needs_human));
+    let summary = format!("bounty_triage: {} triaged, {} auto-rejected, {} flagged for human", triaged, auto_rejected, needs_human);
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs),
+        decisions, actions, summary,
+        notable: needs_human > 0 || auto_rejected > 0,
     })
 }
 
