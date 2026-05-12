@@ -16207,70 +16207,87 @@ async fn gi_sponsor_apply(
             let success_path = format!("/gi/{}/sponsor?paid=ok&app_id={}", canonical, app_id);
             let cancel_path = format!("/gi/{}/sponsor?paid=cancel&app_id={}", canonical, app_id);
             let reuse_cid: Option<String> = find_stripe_customer_by_email(&stripe_key, &contact_email).await;
-            let mut form = stripe_checkout_form_jp(StripeCheckoutFields {
-                mode: "payment",
-                base_url: &base_url,
-                success_path: &success_path,
-                cancel_path: &cancel_path,
-                display_name: &display_name,
-                unit_amount: tier.price_jpy,
-                quantity: 1,
-                customer_email: Some(contact_email.as_str()),
-                customer_id: reuse_cid.as_deref(),
-                product_id: None,
-                size: None,
-                wallet: None,
-                payment_method: Some("jpy"),
-                base_price_jpy: Some(tier.price_jpy),
-                total_jpy: Some(tier.price_jpy),
-                // Sponsor tiers ≥ ¥300,000 always cross the KYC line. Stripe's
-                // hosted page handles the collection; we capture the kyc_record
-                // via the existing checkout flow if the buyer adds personal info.
-                kyc_required: tier.price_jpy >= KYC_THRESHOLD_JPY,
-                // No physical product shipped per sponsor slot — gi production
-                // is a separate Edition order, not bound to this sponsor session.
-                collect_shipping: false,
-            });
-            // Webhook routing + bookkeeping metadata.
-            form.push(("metadata[product]".into(), "gi_sponsor_app".into()));
-            form.push(("metadata[app_id]".into(), app_id.to_string()));
-            form.push(("metadata[edition]".into(), canonical.to_string()));
-            form.push(("metadata[slot_id]".into(), tier.id.to_string()));
-            form.push(("metadata[tier_label]".into(), tier.label_ja.to_string()));
-            form.push(("metadata[company]".into(), company.chars().take(120).collect::<String>()));
+            let build_form = || {
+                let mut f = stripe_checkout_form_jp(StripeCheckoutFields {
+                    mode: "payment",
+                    base_url: &base_url,
+                    success_path: &success_path,
+                    cancel_path: &cancel_path,
+                    display_name: &display_name,
+                    unit_amount: tier.price_jpy,
+                    quantity: 1,
+                    customer_email: Some(contact_email.as_str()),
+                    customer_id: reuse_cid.as_deref(),
+                    product_id: None,
+                    size: None,
+                    wallet: None,
+                    payment_method: Some("jpy"),
+                    base_price_jpy: Some(tier.price_jpy),
+                    total_jpy: Some(tier.price_jpy),
+                    kyc_required: tier.price_jpy >= KYC_THRESHOLD_JPY,
+                    collect_shipping: false,
+                });
+                // Webhook routing + bookkeeping metadata.
+                f.push(("metadata[product]".into(), "gi_sponsor_app".into()));
+                f.push(("metadata[app_id]".into(), app_id.to_string()));
+                f.push(("metadata[edition]".into(), canonical.to_string()));
+                f.push(("metadata[slot_id]".into(), tier.id.to_string()));
+                f.push(("metadata[tier_label]".into(), tier.label_ja.to_string()));
+                f.push(("metadata[company]".into(), company.chars().take(120).collect::<String>()));
+                f
+            };
+            let client = reqwest::Client::new();
+            let send_one = |form: Vec<(String, String)>| {
+                let c = client.clone(); let k = stripe_key.clone();
+                async move {
+                    c.post("https://api.stripe.com/v1/checkout/sessions")
+                        .basic_auth(&k, None::<&str>).form(&form).send().await
+                }
+            };
 
-            let resp = reqwest::Client::new()
-                .post("https://api.stripe.com/v1/checkout/sessions")
-                .basic_auth(&stripe_key, None::<&str>)
-                .form(&form)
-                .send().await;
-            match resp {
+            // First try, with konbini-retry fallback (mirrors /api/checkout).
+            let mut final_response: Option<reqwest::Response> = None;
+            match send_one(build_form()).await {
                 Ok(r) if r.status().is_success() => {
-                    let j: serde_json::Value = r.json().await.unwrap_or_default();
-                    let url = j["url"].as_str().unwrap_or("").to_string();
-                    let sid = j["id"].as_str().unwrap_or("").to_string();
-                    if !sid.is_empty() {
-                        let conn = db.lock().unwrap();
-                        let _ = conn.execute(
-                            "UPDATE gi_sponsor_apps
-                             SET stripe_session_id=?, status='invoice_sent'
-                             WHERE id=? AND status='pending'",
-                            params![sid, app_id],
-                        );
-                    }
-                    if url.is_empty() { None } else { Some(url) }
+                    final_response = Some(r);
                 }
                 Ok(r) => {
-                    let s = r.status();
-                    let t = r.text().await.unwrap_or_default();
-                    tracing::error!("[sponsor-apply] stripe {}: {}", s, t.chars().take(300).collect::<String>());
-                    None
+                    let body_text = r.text().await.unwrap_or_default();
+                    if maybe_disable_konbini(&body_text) {
+                        tracing::warn!("[sponsor-apply] retrying without konbini");
+                        if let Ok(r2) = send_one(build_form()).await {
+                            if r2.status().is_success() {
+                                final_response = Some(r2);
+                            } else {
+                                let s2 = r2.status();
+                                let t2 = r2.text().await.unwrap_or_default();
+                                tracing::error!("[sponsor-apply] stripe retry {}: {}", s2, t2.chars().take(300).collect::<String>());
+                            }
+                        }
+                    } else {
+                        tracing::error!("[sponsor-apply] stripe: {}", body_text.chars().take(300).collect::<String>());
+                    }
                 }
                 Err(e) => {
                     tracing::error!("[sponsor-apply] stripe network: {}", e);
-                    None
                 }
             }
+
+            if let Some(r) = final_response {
+                let j: serde_json::Value = r.json().await.unwrap_or_default();
+                let url = j["url"].as_str().unwrap_or("").to_string();
+                let sid = j["id"].as_str().unwrap_or("").to_string();
+                if !sid.is_empty() {
+                    let conn = db.lock().unwrap();
+                    let _ = conn.execute(
+                        "UPDATE gi_sponsor_apps
+                         SET stripe_session_id=?, status='invoice_sent'
+                         WHERE id=? AND status='pending'",
+                        params![sid, app_id],
+                    );
+                }
+                if url.is_empty() { None } else { Some(url) }
+            } else { None }
         }
     } else { None };
 
