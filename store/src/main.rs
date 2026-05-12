@@ -17912,6 +17912,36 @@ async fn main() {
         );
         CREATE INDEX IF NOT EXISTS idx_customer_scorecard_end ON customer_scorecard(period_end);
 
+        CREATE TABLE IF NOT EXISTS email_sends (
+            id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+            to_email             TEXT NOT NULL,
+            kind                 TEXT NOT NULL,    -- received | production | shipped | cohort30
+            variant              TEXT NOT NULL,    -- A | B
+            subject              TEXT,
+            resend_id            TEXT,
+            order_id             INTEGER,
+            sent_at              TEXT NOT NULL,
+            opened_at            TEXT,
+            clicked_at           TEXT,
+            replied_at           TEXT,
+            converted_repeat_at  TEXT,
+            dry_run              INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_email_sends_to     ON email_sends(to_email, kind);
+        CREATE INDEX IF NOT EXISTS idx_email_sends_resend ON email_sends(resend_id);
+        CREATE INDEX IF NOT EXISTS idx_email_sends_ab     ON email_sends(kind, variant, sent_at);
+
+        CREATE TABLE IF NOT EXISTS production_status (
+            collab_order_id     INTEGER PRIMARY KEY,
+            printful_order_id   TEXT,
+            last_status         TEXT,
+            tracking_number     TEXT,
+            carrier             TEXT,
+            facility            TEXT,
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS founder_reviews (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
             founder       TEXT NOT NULL,   -- 'musk' | 'bezos'
@@ -18177,6 +18207,8 @@ async fn main() {
         .route("/admin/audit", get(admin_audit))
         .route("/admin/founders", get(admin_founders))
         .route("/admin/queue", get(admin_queue))
+        .route("/admin/email-ab", get(admin_email_ab))
+        .route("/webhooks/resend", post(webhook_resend))
         .route("/api/v1/event", post(api_funnel_event))
         .route("/admin/auth_log", get(admin_auth_log_view))
         .route("/healthz", get(healthz))
@@ -18495,6 +18527,11 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         interval_secs: 3600, // 1h
         description: "24h funnel CV を 30d baseline と比較、>50% 下落かつ pv>=20 で T1 アラート (silent buy-broken 検出)",
     },
+    AgentDef {
+        name: "production_watcher",
+        interval_secs: 1800, // 30 min — 受領メール + Printful 状態遷移検知
+        description: "buyer 4-email A/B (受領/製造/出荷/30日 cohort) を Resend で送る。DRY_RUN_PRODUCTION_WATCHER=1 で本番テスト可",
+    },
 ];
 
 /// agent_journal から指定 agent の最後の cycle_at (epoch sec) を取得。
@@ -18532,6 +18569,7 @@ async fn run_agent(name: &str, db: Db) -> Result<AgentReport, String> {
         "bezos_review"      => agent_bezos_review(db).await,
         "checkout_health"   => agent_checkout_health(db).await,
         "funnel_anomaly"    => agent_funnel_anomaly(db).await,
+        "production_watcher"=> agent_production_watcher(db).await,
         _ => Err(format!("unknown agent: {}", name)),
     }
 }
@@ -21371,6 +21409,592 @@ Respond as STRICT JSON: {{"text": "<the post body>"}}"#,
         observations: serde_json::Value::Object(obs),
         decisions, actions, summary, notable: true,
     })
+}
+
+// ── Email A/B helpers ──────────────────────────────────────────────────
+// Deterministic variant assignment by (to_email, kind). Same buyer always
+// gets the same variant for a given email type. Avoids self-bias.
+fn assign_email_variant(to: &str, kind: &str) -> &'static str {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    format!("{}|{}", to, kind).hash(&mut h);
+    if h.finish() % 2 == 0 { "A" } else { "B" }
+}
+
+/// Wraps any body HTML in the MU email shell. Inline CSS only, table layout
+/// for email-client compatibility (Gmail/Outlook strip <style>).
+fn email_shell(subject_label: &str, hero_title: &str, when_jst: &str, body_html: &str) -> String {
+    format!(r#"<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{subject_label}</title></head>
+<body style="margin:0;padding:0;background:#0A0A0A;font-family:ui-monospace,Menlo,'SF Mono',Monaco,Consolas,monospace;color:#F5F5F0;font-size:13px;line-height:1.65;-webkit-text-size-adjust:100%;">
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#0A0A0A;">
+<tr><td align="center" style="padding:40px 16px;">
+<table cellpadding="0" cellspacing="0" border="0" width="540" style="max-width:540px;background:#111;border-radius:8px;border:1px solid #1f1f1f;">
+<tr><td style="padding:32px 32px 14px;">
+  <div style="font-size:10px;letter-spacing:0.22em;color:#666;text-transform:uppercase;">MU autopilot</div>
+  <div style="font-size:20px;font-weight:300;letter-spacing:0.06em;color:#e6c449;margin-top:6px;line-height:1.3;">{hero}</div>
+  <div style="font-size:11px;color:#666;margin-top:4px;font-variant-numeric:tabular-nums;">{when}</div>
+</td></tr>
+<tr><td style="padding:0 32px;"><div style="height:1px;background:#222;"></div></td></tr>
+<tr><td style="padding:22px 32px 28px;font-size:13px;line-height:1.7;">
+{body}
+</td></tr>
+<tr><td style="padding:18px 32px 28px;font-size:10.5px;color:#555;border-top:1px solid #1f1f1f;line-height:1.55;">
+  <div>MU / 株式会社イネブラ — <a href="https://wearmu.com" style="color:#888;text-decoration:none;">wearmu.com</a></div>
+  <div style="margin-top:4px;">この受領ログは自動生成です。返信は読まれません。配信停止は <a href="https://wearmu.com/unsubscribe" style="color:#888;text-decoration:underline;">こちら</a>。</div>
+</td></tr>
+</table>
+</td></tr>
+</table>
+</body></html>"#,
+    subject_label = subject_label, hero = hero_title, when = when_jst, body = body_html)
+}
+
+/// Snapshot of MU's current state — woven into every email body for the
+/// "data-first" feel. Single query batch, cheap.
+struct EmailContext {
+    order_id: i64,
+    slug: String,
+    amount: i64,
+    revenue_7d: i64,
+    orders_7d: i64,
+    drops_today: i64,
+    designs_today: i64,
+    refund_rate_30d: f64,
+    repeat_rate_30d: f64,
+    musk_score: f64,
+    bezos_score: f64,
+    musk_verdict: String,
+    bezos_verdict: String,
+}
+fn build_email_context(conn: &Connection, order_id: i64, slug: &str, amount: i64) -> EmailContext {
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let h7  = now_s - 7 * 86_400;
+    let h24 = now_s - 24 * 3600;
+    let q_i = |sql: &str, t: i64| -> i64 {
+        conn.query_row(sql, params![t], |r| r.get(0)).unwrap_or(0)
+    };
+    let rev7 = q_i("SELECT COALESCE(SUM(amount_jpy),0) FROM collab_orders WHERE CAST(COALESCE(created_at,'0') AS INTEGER) > ?", h7);
+    let ord7 = q_i("SELECT COUNT(*) FROM collab_orders WHERE CAST(COALESCE(created_at,'0') AS INTEGER) > ?", h7);
+    let drops_today = q_i("SELECT COUNT(*) FROM products WHERE CAST(COALESCE(created_at,'0') AS INTEGER) > ?", h24);
+    let designs_today = q_i("SELECT COUNT(*) FROM you_designs WHERE CAST(COALESCE(created_at,'0') AS INTEGER) > ?", h24);
+    let (rr, rp): (Option<f64>, Option<f64>) = conn.query_row(
+        "SELECT refund_rate, repeat_rate FROM customer_scorecard ORDER BY id DESC LIMIT 1",
+        [], |r| Ok((r.get(0)?, r.get(1)?))
+    ).unwrap_or((None, None));
+    let musk: (Option<f64>, Option<String>) = conn.query_row(
+        "SELECT score, COALESCE(verdict,'') FROM founder_reviews WHERE founder='musk' ORDER BY id DESC LIMIT 1",
+        [], |r| Ok((r.get(0)?, r.get(1)?))
+    ).unwrap_or((None, None));
+    let bez: (Option<f64>, Option<String>) = conn.query_row(
+        "SELECT score, COALESCE(verdict,'') FROM founder_reviews WHERE founder='bezos' ORDER BY id DESC LIMIT 1",
+        [], |r| Ok((r.get(0)?, r.get(1)?))
+    ).unwrap_or((None, None));
+    EmailContext {
+        order_id, slug: slug.into(), amount,
+        revenue_7d: rev7, orders_7d: ord7,
+        drops_today, designs_today,
+        refund_rate_30d: rr.unwrap_or(0.0),
+        repeat_rate_30d: rp.unwrap_or(0.0),
+        musk_score: musk.0.unwrap_or(0.5),
+        bezos_score: bez.0.unwrap_or(0.5),
+        musk_verdict: musk.1.unwrap_or_default(),
+        bezos_verdict: bez.1.unwrap_or_default(),
+    }
+}
+
+fn data_row(label: &str, value: &str) -> String {
+    format!(r#"<tr><td style="padding:3px 0;color:#999;">{}</td><td style="padding:3px 0;text-align:right;color:#F5F5F0;font-variant-numeric:tabular-nums;">{}</td></tr>"#,
+        html_escape(label), html_escape(value))
+}
+fn accent_block(html: &str) -> String {
+    format!(r#"<p style="margin:22px 0 0;color:#e6c449;border-left:2px solid #e6c449;padding-left:14px;line-height:1.55;">{}</p>"#, html)
+}
+fn code_block(text: &str) -> String {
+    format!(r#"<pre style="margin:0 0 18px;font:13px ui-monospace,Menlo,monospace;color:#F5F5F0;background:#0d0d0d;padding:14px;border-radius:4px;border:1px solid #1f1f1f;white-space:pre;overflow:auto;">{}</pre>"#, html_escape(text))
+}
+
+// ── Email template — received (Stripe paid) ─────────────────────────────
+fn template_received(ctx: &EmailContext, variant: &str) -> (String, String) {
+    let now_jst = jst_now_str();
+    let mut tbl = String::new();
+    tbl.push_str(&data_row("デザイン生成 (24h)", &format!("{} 件", ctx.designs_today)));
+    tbl.push_str(&data_row("売上 (7d)",       &format!("¥{} / {} 注文", fmt_jpy(ctx.revenue_7d), ctx.orders_7d)));
+    tbl.push_str(&data_row("MUGEN drops (24h)", &format!("{} 件", ctx.drops_today)));
+    let table_html = format!(r#"<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 14px;">{}</table>"#, tbl);
+    let order_block = code_block(&format!("注文 #{:04}\nSKU: {}\n金額: ¥{}", ctx.order_id, ctx.slug, fmt_jpy(ctx.amount)));
+
+    match variant {
+        "A" => {
+            let subject = format!("MU 受領ログ — #{:04}", ctx.order_id);
+            let hero = "受領ログ";
+            let body = format!(
+                r#"<p style="margin:0 0 10px;color:#bbb;">あなたの注文を確認しました。</p>{order}<p style="margin:0 0 4px;color:#bbb;">同時刻、MU システムは:</p>{table}{accent}"#,
+                order = order_block, table = table_html,
+                accent = accent_block("このシャツはまだ存在しません。<br>翌 09:00 JST に Printful へ自動発注、<br>翌 24 時間で存在し始めます。"));
+            let html = email_shell(&subject, hero, &now_jst, &body);
+            (subject, html)
+        }
+        _ => {
+            let subject = "あなたのシャツはまだ存在しません".to_string();
+            let hero = "未存在ログ";
+            let body = format!(
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:15px;line-height:1.55;">あなたが今日買ったシャツは、まだ布になっていません。</p>{order}<p style="margin:0 0 4px;color:#999;">この瞬間 MU が確認している数値:</p>{table}<p style="margin:18px 0 0;color:#888;font-size:12px;line-height:1.55;">機械が動き出すのは翌 09:00 JST。<br>そこから約 24 時間で、あなたのデザインは綿の繊維に焼き付きます。</p>"#,
+                order = order_block, table = table_html);
+            (subject.clone(), email_shell(&subject, hero, &now_jst, &body))
+        }
+    }
+}
+
+// ── Email template — production started ─────────────────────────────────
+fn template_production(ctx: &EmailContext, variant: &str, facility: &str, _pf_id: &str) -> (String, String) {
+    let now_jst = jst_now_str();
+    let facility_disp = if facility.is_empty() { "Printful (facility TBD)".to_string() } else { facility.into() };
+    let spec = code_block(&format!(
+        "施設: {}\n印刷: DTG (Direct-to-Garment)\nインク: 水性反応性、220°C 焼成 90s\n生地: 100% コットン",
+        facility_disp));
+    match variant {
+        "A" => {
+            let subject = format!("MUGEN #{:04} — printing started", ctx.order_id);
+            let body = format!(
+                r#"<p style="margin:0 0 10px;color:#bbb;">あなたのデザインが製造ラインに乗りました。</p>{spec}{accent}"#,
+                spec = spec, accent = accent_block("取り出し予定: 翌 18 時間 (±6h)。<br>その後、検査・梱包・出荷へ。"));
+            (subject.clone(), email_shell(&subject, "製造開始", &now_jst, &body))
+        }
+        _ => {
+            let subject = "今この瞬間、機械があなたのデザインを焼いてます".to_string();
+            let body = format!(
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.55;">印刷ヘッドが動いています。<br>インクが繊維に焼き付くまで、領域あたり 90 秒。</p>{spec}<p style="margin:18px 0 0;color:#888;font-size:12px;">あなたのシャツが「物」として存在し始める瞬間です。</p>"#,
+                spec = spec);
+            (subject.clone(), email_shell(&subject, "印刷中", &now_jst, &body))
+        }
+    }
+}
+
+// ── Email template — shipped ────────────────────────────────────────────
+fn template_shipped(ctx: &EmailContext, variant: &str, tracking: &str, carrier: &str) -> (String, String) {
+    let now_jst = jst_now_str();
+    let tracking_disp = if tracking.is_empty() { "(発番中)".to_string() } else { tracking.into() };
+    let carrier_disp = if carrier.is_empty() { "USPS / FedEx (出庫経路次第)".to_string() } else { carrier.into() };
+    let block = code_block(&format!("追跡: {}\nキャリア: {}\n推定経路: 工場 → 集荷ハブ → 成田 → 配達",
+        tracking_disp, carrier_disp));
+    match variant {
+        "A" => {
+            let subject = format!("MUGEN #{:04} — shipped", ctx.order_id);
+            let body = format!(
+                r#"<p style="margin:0 0 10px;color:#bbb;">あなたのシャツが出荷されました。</p>{block}{accent}"#,
+                block = block,
+                accent = accent_block("到着目安: 7〜10 日 (国際郵便標準)。<br>追跡番号は当日中にキャリア側で活性化します。"));
+            (subject.clone(), email_shell(&subject, "出荷", &now_jst, &body))
+        }
+        _ => {
+            let subject = "あなたから 11,000 km。最高 894 km/h で接近中".to_string();
+            let body = format!(
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.55;">出荷ログ確定。<br>シャツはあなたへの軌道に乗りました。</p>{block}<p style="margin:18px 0 0;color:#888;font-size:12px;">残り時間は航空便と通関の合算。MU は介入できません。あとは物理学です。</p>"#,
+                block = block);
+            (subject.clone(), email_shell(&subject, "移動中", &now_jst, &body))
+        }
+    }
+}
+
+// ── Email template — 30d cohort ─────────────────────────────────────────
+fn template_cohort30(ctx: &EmailContext, variant: &str, cohort_size: i64) -> (String, String) {
+    let now_jst = jst_now_str();
+    let mut tbl = String::new();
+    tbl.push_str(&data_row("MU revenue (30d)",     &format!("¥{}", fmt_jpy(ctx.revenue_7d * 4)))); // proxy
+    tbl.push_str(&data_row("New drops (30d)",      &format!("{}", ctx.drops_today * 30)));
+    tbl.push_str(&data_row("Refund rate (30d)",    &format!("{:.1}%", ctx.refund_rate_30d * 100.0)));
+    tbl.push_str(&data_row("Repeat rate (30d)",    &format!("{:.0}%", ctx.repeat_rate_30d * 100.0)));
+    tbl.push_str(&data_row("あなたの cohort 規模", &format!("{} 人", cohort_size)));
+    let table_html = format!(r#"<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 18px;">{}</table>"#, tbl);
+
+    match variant {
+        "A" => {
+            let subject = format!("MU 30日ログ — #{:04} cohort", ctx.order_id);
+            let body = format!(
+                r#"<p style="margin:0 0 6px;color:#bbb;">あなたが買って 30 日。MU は以下を実行しました。</p>{table}{accent}"#,
+                table = table_html,
+                accent = accent_block("次の email は 365 日後 (annual log)。<br>それまで沈黙します。"));
+            (subject.clone(), email_shell(&subject, "30 日ログ", &now_jst, &body))
+        }
+        _ => {
+            let subject = "Musk と Bezos が、あなたについて言ったこと".to_string();
+            let musk_v = if ctx.musk_verdict.is_empty() { "(no verdict yet)".to_string() } else { ctx.musk_verdict.clone() };
+            let bez_v  = if ctx.bezos_verdict.is_empty() { "(no verdict yet)".to_string() } else { ctx.bezos_verdict.clone() };
+            let founders = format!(
+                r#"<div style="margin:0 0 14px;padding:14px;background:#0d0d0d;border-radius:4px;border:1px solid #1f1f1f;">
+<div style="font-size:10px;letter-spacing:0.16em;color:#666;text-transform:uppercase;">⚡ Musk persona — score {ms:.2}</div>
+<div style="margin-top:6px;color:#e6c449;font-size:12.5px;line-height:1.55;">"{mv}"</div>
+</div>
+<div style="margin:0 0 14px;padding:14px;background:#0d0d0d;border-radius:4px;border:1px solid #1f1f1f;">
+<div style="font-size:10px;letter-spacing:0.16em;color:#666;text-transform:uppercase;">📦 Bezos persona — score {bs:.2}</div>
+<div style="margin-top:6px;color:#e6c449;font-size:12.5px;line-height:1.55;">"{bv}"</div>
+</div>"#,
+                ms = ctx.musk_score, mv = html_escape(&musk_v),
+                bs = ctx.bezos_score, bv = html_escape(&bez_v));
+            let body = format!(
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:13.5px;line-height:1.6;">MU には創業者 AI が 2 人います。Elon Musk と Jeff Bezos の persona を Gemini Pro に与えて毎週採点させています。<br>あなたの 30 日間も、彼らの議事録に含まれました。</p>{founders}{table}"#,
+                founders = founders, table = table_html);
+            (subject.clone(), email_shell(&subject, "創業者の議事録", &now_jst, &body))
+        }
+    }
+}
+
+fn fmt_jpy(n: i64) -> String {
+    let s = n.to_string();
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len() + s.len() / 3);
+    for (i, b) in bytes.iter().enumerate() {
+        if i > 0 && (bytes.len() - i) % 3 == 0 { out.push(','); }
+        out.push(*b as char);
+    }
+    out
+}
+fn jst_now_str() -> String {
+    let now: i64 = chrono_now().parse().unwrap_or(0);
+    let jst = now + 9 * 3600;
+    let day = jst / 86400;
+    let h = (jst % 86400) / 3600;
+    let m = (jst % 3600) / 60;
+    let s = jst % 60;
+    let (y, mo, d) = days_to_ymd(day);
+    format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02} JST", y, mo, d, h, m, s)
+}
+fn days_to_ymd(days_since_epoch: i64) -> (i64, i64, i64) {
+    // 1970-01-01 → days = 0
+    let mut y = 1970i64;
+    let mut d = days_since_epoch;
+    loop {
+        let leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+        let dy = if leap { 366 } else { 365 };
+        if d < dy { break; }
+        d -= dy; y += 1;
+    }
+    let leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+    let mdays = if leap { [31,29,31,30,31,30,31,31,30,31,30,31] }
+                else    { [31,28,31,30,31,30,31,31,30,31,30,31] };
+    let mut m = 0usize;
+    while d >= mdays[m] as i64 { d -= mdays[m] as i64; m += 1; }
+    (y, (m + 1) as i64, d + 1)
+}
+
+/// Send one A/B-variant template via Resend. Persists to email_sends.
+/// Honors DRY_RUN_PRODUCTION_WATCHER.
+async fn send_buyer_email(
+    db: &Db,
+    to: &str,
+    kind: &str,
+    ctx: &EmailContext,
+    extra: serde_json::Value,
+) -> Result<String, String> {
+    if is_test_email(to) { return Err("test_email".into()); }
+    let variant = assign_email_variant(to, kind);
+    let (subject, html) = match (kind, variant) {
+        ("received",   v) => template_received(ctx, v),
+        ("production", v) => template_production(ctx, v,
+            extra.get("facility").and_then(|x| x.as_str()).unwrap_or(""),
+            extra.get("printful_order_id").and_then(|x| x.as_str()).unwrap_or("")),
+        ("shipped",    v) => template_shipped(ctx, v,
+            extra.get("tracking").and_then(|x| x.as_str()).unwrap_or(""),
+            extra.get("carrier").and_then(|x| x.as_str()).unwrap_or("")),
+        ("cohort30",   v) => template_cohort30(ctx, v,
+            extra.get("cohort_size").and_then(|x| x.as_i64()).unwrap_or(1)),
+        _ => return Err(format!("unknown kind: {}", kind)),
+    };
+
+    let is_dry = dry_run_active("production_watcher");
+    if is_dry {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO email_sends (to_email, kind, variant, subject, order_id, sent_at, dry_run)
+             VALUES (?,?,?,?,?,?,1)",
+            params![to, kind, variant, subject, ctx.order_id, chrono_now()],
+        );
+        return Ok(format!("DRY_RUN variant={}", variant));
+    }
+    let resend_key = env::var("RESEND_API_KEY").map_err(|_| "RESEND_API_KEY missing".to_string())?;
+    let resp = reqwest::Client::new()
+        .post("https://api.resend.com/emails")
+        .bearer_auth(&resend_key)
+        .json(&serde_json::json!({
+            "from": "MU Autopilot <mu-autopilot@wearmu.com>",
+            "to": [to],
+            "subject": subject,
+            "html": html,
+            "headers": {"X-MU-Variant": variant, "X-MU-Kind": kind},
+            "tags": [
+                {"name":"kind","value":kind},
+                {"name":"variant","value":variant}
+            ],
+            "reply_to": "info@enablerdao.com",
+        }))
+        .send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        let s = resp.status();
+        let t = resp.text().await.unwrap_or_default();
+        return Err(format!("resend {}: {}", s, t.chars().take(200).collect::<String>()));
+    }
+    let j: serde_json::Value = resp.json().await.unwrap_or_default();
+    let resend_id = j["id"].as_str().unwrap_or("").to_string();
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO email_sends (to_email, kind, variant, subject, resend_id, order_id, sent_at)
+             VALUES (?,?,?,?,?,?,?)",
+            params![to, kind, variant, subject, resend_id, ctx.order_id, chrono_now()],
+        );
+    }
+    Ok(resend_id)
+}
+
+// ── Agent: production_watcher ───────────────────────────────────────────
+// 30 min. Drives the 4-email A/B cohort:
+//   1. received  — new collab_orders <24h without a 'received' email_sends row
+//   2. production — Printful API says status moved into in_production/inprocess
+//   3. shipped    — Printful status moved into fulfilled/shipped + tracking
+//   4. cohort30   — orders aged 30–31d without a 'cohort30' email_sends row
+async fn agent_production_watcher(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut actions: Vec<serde_json::Value> = Vec::new();
+    let mut decisions: Vec<serde_json::Value> = Vec::new();
+    let is_dry = dry_run_active("production_watcher");
+    obs.insert("dry_run".into(), serde_json::Value::from(is_dry));
+
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let h24 = now_s - 24 * 3600;
+    let d30 = now_s - 30 * 86_400;
+    let d31 = now_s - 31 * 86_400;
+
+    // ── 1. received ───────────────────────────────────────────────────
+    let new_orders: Vec<(i64, String, String, i64)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT o.id, COALESCE(o.email,''), COALESCE(o.slug,''), COALESCE(o.amount_jpy,0)
+             FROM collab_orders o
+             WHERE CAST(COALESCE(o.created_at,'0') AS INTEGER) > ?
+               AND NOT EXISTS (SELECT 1 FROM email_sends e WHERE e.order_id = o.id AND e.kind = 'received')
+             ORDER BY o.id ASC LIMIT 10"
+        ) { Ok(s) => s, Err(_) => return Ok(AgentReport::idle("schema not ready")) };
+        stmt.query_map(params![h24], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    let mut sent_received = 0i64;
+    for (oid, email, slug, amount) in &new_orders {
+        if is_test_email(email) { continue; }
+        let ctx = {
+            let conn = db.lock().unwrap();
+            build_email_context(&conn, *oid, slug, *amount)
+        };
+        match send_buyer_email(&db, email, "received", &ctx, serde_json::json!({})).await {
+            Ok(_) => { sent_received += 1; }
+            Err(e) => {
+                decisions.push(serde_json::json!({"type":"received_fail","order_id":oid,"error":e}));
+            }
+        }
+    }
+    obs.insert("sent_received".into(), serde_json::Value::from(sent_received));
+
+    // ── 2 + 3. production / shipped via Printful API ──────────────────
+    let printful_key = env::var("PRINTFUL_API_KEY").unwrap_or_default();
+    let mut sent_production = 0i64;
+    let mut sent_shipped = 0i64;
+    if !printful_key.is_empty() {
+        let opens: Vec<(i64, String, String, String, String)> = {
+            let conn = db.lock().unwrap();
+            let mut stmt = match conn.prepare(
+                "SELECT o.id, COALESCE(o.email,''), COALESCE(o.printful_order_id,''),
+                        COALESCE(o.slug,''), COALESCE(ps.last_status,'')
+                 FROM collab_orders o
+                 LEFT JOIN production_status ps ON ps.collab_order_id = o.id
+                 WHERE o.printful_order_id IS NOT NULL AND length(o.printful_order_id) > 0
+                   AND (ps.last_status IS NULL OR ps.last_status NOT IN ('fulfilled','canceled','shipped'))
+                 ORDER BY o.id DESC LIMIT 20"
+            ) { Ok(s) => s, Err(_) => return Ok(AgentReport::idle("schema not ready")) };
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+                .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+        };
+        for (oid, email, pf_id, slug, last_status) in &opens {
+            let url = format!("https://api.printful.com/orders/{}", pf_id);
+            let r = match reqwest::Client::new().get(&url).bearer_auth(&printful_key).send().await {
+                Ok(r) if r.status().is_success() => r,
+                _ => continue,
+            };
+            let j: serde_json::Value = match r.json().await { Ok(v) => v, _ => continue };
+            let pf_status = j["result"]["status"].as_str().unwrap_or("").to_string();
+            let tracking = j["result"]["shipments"][0]["tracking_number"].as_str().unwrap_or("").to_string();
+            let carrier  = j["result"]["shipments"][0]["service"].as_str().unwrap_or("").to_string();
+            {
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "INSERT INTO production_status (collab_order_id, printful_order_id, last_status, tracking_number, carrier, created_at, updated_at)
+                     VALUES (?,?,?,?,?,?,?)
+                     ON CONFLICT(collab_order_id) DO UPDATE SET
+                         last_status = excluded.last_status,
+                         tracking_number = excluded.tracking_number,
+                         carrier = excluded.carrier,
+                         updated_at = excluded.updated_at",
+                    params![oid, pf_id, pf_status, tracking, carrier, chrono_now(), chrono_now()],
+                );
+            }
+            if &pf_status == last_status { continue; }
+            if is_test_email(email) { continue; }
+            let (kind, extra) = match pf_status.as_str() {
+                "inprocess" | "in_production" => ("production",
+                    serde_json::json!({"facility":"", "printful_order_id":pf_id})),
+                "fulfilled" | "shipped" => ("shipped",
+                    serde_json::json!({"tracking":tracking, "carrier":carrier})),
+                _ => continue,
+            };
+            let ctx = {
+                let conn = db.lock().unwrap();
+                build_email_context(&conn, *oid, slug, 0)
+            };
+            match send_buyer_email(&db, email, kind, &ctx, extra).await {
+                Ok(_) => if kind == "production" { sent_production += 1 } else { sent_shipped += 1 },
+                Err(e) => decisions.push(serde_json::json!({"type":format!("{}_fail",kind),"order_id":oid,"error":e})),
+            }
+        }
+    }
+    obs.insert("sent_production".into(), serde_json::Value::from(sent_production));
+    obs.insert("sent_shipped".into(),    serde_json::Value::from(sent_shipped));
+
+    // ── 4. cohort30 ───────────────────────────────────────────────────
+    let cohort: Vec<(i64, String, String)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT o.id, COALESCE(o.email,''), COALESCE(o.slug,'')
+             FROM collab_orders o
+             WHERE CAST(COALESCE(o.created_at,'0') AS INTEGER) BETWEEN ? AND ?
+               AND NOT EXISTS (SELECT 1 FROM email_sends e WHERE e.order_id = o.id AND e.kind = 'cohort30')
+             ORDER BY o.id ASC LIMIT 5"
+        ) { Ok(s) => s, Err(_) => return Ok(AgentReport::idle("schema not ready")) };
+        stmt.query_map(params![d31, d30], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    let mut sent_cohort = 0i64;
+    for (oid, email, slug) in &cohort {
+        if is_test_email(email) { continue; }
+        let cohort_size: i64 = {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT COUNT(DISTINCT email) FROM collab_orders
+                 WHERE DATE(created_at,'unixepoch') = (SELECT DATE(created_at,'unixepoch') FROM collab_orders WHERE id=?)",
+                params![oid], |r| r.get(0),
+            ).unwrap_or(1)
+        };
+        let ctx = {
+            let conn = db.lock().unwrap();
+            build_email_context(&conn, *oid, slug, 0)
+        };
+        match send_buyer_email(&db, email, "cohort30", &ctx,
+            serde_json::json!({"cohort_size": cohort_size})).await
+        {
+            Ok(_) => { sent_cohort += 1; }
+            Err(e) => decisions.push(serde_json::json!({"type":"cohort30_fail","order_id":oid,"error":e})),
+        }
+    }
+    obs.insert("sent_cohort30".into(), serde_json::Value::from(sent_cohort));
+
+    actions.push(serde_json::json!({"received": sent_received, "production": sent_production, "shipped": sent_shipped, "cohort30": sent_cohort}));
+    let total = sent_received + sent_production + sent_shipped + sent_cohort;
+    let summary = format!("watcher: {} sent (recv={}, prod={}, ship={}, c30={}, dry={})",
+        total, sent_received, sent_production, sent_shipped, sent_cohort, is_dry);
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs),
+        decisions, actions, summary,
+        notable: total > 0,
+    })
+}
+
+/// POST /webhooks/resend — receive open/click events from Resend.
+/// No HMAC verification for v1 (Resend uses Svix; defer signing). The webhook
+/// is idempotent at the DB level via COALESCE.
+async fn webhook_resend(
+    State(db): State<Db>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let event_type = body["type"].as_str().unwrap_or("");
+    let resend_id  = body["data"]["email_id"].as_str().unwrap_or("");
+    if resend_id.is_empty() { return StatusCode::OK.into_response(); }
+    let column = match event_type {
+        "email.opened"    => "opened_at",
+        "email.clicked"   => "clicked_at",
+        "email.bounced"   => return StatusCode::OK.into_response(),
+        "email.complained"=> return StatusCode::OK.into_response(),
+        _ => return StatusCode::OK.into_response(),
+    };
+    let conn = db.lock().unwrap();
+    let _ = conn.execute(
+        &format!("UPDATE email_sends SET {col} = COALESCE({col}, ?) WHERE resend_id = ?", col = column),
+        params![chrono_now(), resend_id],
+    );
+    StatusCode::OK.into_response()
+}
+
+/// GET /admin/email-ab?token=… — A/B test rollup per kind+variant.
+async fn admin_email_ab(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/email-ab").await { return r; }
+    let token = q.get("token").map(String::as_str).unwrap_or("");
+
+    let rows: Vec<(String, String, i64, i64, i64)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT kind, variant,
+                    COUNT(*) AS sent,
+                    SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened,
+                    SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked
+             FROM email_sends
+             WHERE COALESCE(dry_run, 0) = 0
+             GROUP BY kind, variant
+             ORDER BY kind, variant"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+
+    let mut tbody = String::new();
+    for (kind, variant, sent, opened, clicked) in &rows {
+        let open_pct  = if *sent > 0 { *opened as f64 / *sent as f64 * 100.0 } else { 0.0 };
+        let click_pct = if *sent > 0 { *clicked as f64 / *sent as f64 * 100.0 } else { 0.0 };
+        tbody.push_str(&format!(
+            r#"<tr><td><code>{kind}</code></td><td><b>{v}</b></td><td class=num>{s}</td><td class=num>{o} ({op:.0}%)</td><td class=num>{c} ({cp:.0}%)</td></tr>"#,
+            kind = html_escape(kind), v = html_escape(variant),
+            s = sent, o = opened, op = open_pct, c = clicked, cp = click_pct));
+    }
+    if tbody.is_empty() {
+        tbody = "<tr><td colspan=5 class=dim>(no email_sends rows yet — production_watcher hasn't fired)</td></tr>".into();
+    }
+
+    Html(format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>MU / Email A/B</title>
+<style>
+body{{font:14px/1.55 ui-monospace,Menlo,monospace;color:#eaeaea;background:#0b0b0b;padding:24px;max-width:980px;margin:0 auto}}
+h1{{font-weight:500;margin-top:0}}
+table{{width:100%;border-collapse:collapse;margin-top:12px}}
+td,th{{padding:8px 10px;border-bottom:1px solid #222;text-align:left}}
+.num{{text-align:right;font-variant-numeric:tabular-nums}} .dim{{color:#666}}
+code{{background:#1a1a1a;padding:1px 6px;border-radius:4px;color:#e6c449}}
+.nav a{{margin-right:14px;color:#9bd}} .nav{{margin-bottom:20px}}
+</style></head><body>
+<div class=nav>
+  <a href="/admin/agents?token={tok}">Agents</a>
+  <a href="/admin/insights?token={tok}">Insights</a>
+  <a href="/admin/governance?token={tok}">Governance</a>
+  <a href="/admin/audit?token={tok}">Audit</a>
+  <a href="/admin/founders?token={tok}">Founders</a>
+  <a href="/admin/email-ab?token={tok}">Email A/B</a>
+</div>
+<h1>Buyer email A/B rollup</h1>
+<p class=dim>送信タグごとに variant A vs B の sent / opened / clicked。production_watcher が DRY_RUN_PRODUCTION_WATCHER=1 のとき send は db ログのみ (dry_run=1 行は除外)。</p>
+<table><thead><tr><th>kind</th><th>variant</th><th>sent</th><th>opened</th><th>clicked</th></tr></thead>
+<tbody>{tbody}</tbody></table>
+</body></html>"#,
+        tok = html_attr_escape(token), tbody = tbody)).into_response()
 }
 
 // ── Agent: checkout_health ─────────────────────────────────────────────
