@@ -22038,6 +22038,7 @@ struct FunnelEventReq {
 
 async fn api_funnel_event(
     State(db): State<Db>,
+    headers: HeaderMap,
     Json(req): Json<FunnelEventReq>,
 ) -> Response {
     if req.visitor_id.is_empty() || req.session_id.is_empty()
@@ -22054,7 +22055,55 @@ async fn api_funnel_event(
     if !ALLOWED.contains(&req.event.as_str()) {
         return (StatusCode::BAD_REQUEST, "unknown event").into_response();
     }
-    let extra_s = req.extra.map(|v| v.to_string());
+
+    // Security review §1: public POST + only browser-CORS protected. Per-IP
+    // rate limit prevents funnel_events flooding (would corrupt
+    // customer_scorecard statistics). 120/min + 2000/h matches realistic
+    // browsing peaks.
+    let ip = headers.get("fly-client-ip")
+        .or_else(|| headers.get("x-forwarded-for"))
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
+        .unwrap_or_default();
+    if !ip.is_empty() {
+        let now_s: i64 = chrono_now().parse().unwrap_or(0);
+        let conn = db.lock().unwrap();
+        let recent_min: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM funnel_events
+             WHERE CAST(COALESCE(created_at,'0') AS INTEGER) >= ?
+               AND json_extract(COALESCE(extra,'{}'),'$._ip') = ?",
+            params![now_s - 60, ip], |r| r.get(0),
+        ).unwrap_or(0);
+        if recent_min > 120 {
+            return (StatusCode::TOO_MANY_REQUESTS, "120/min cap").into_response();
+        }
+        let recent_hour: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM funnel_events
+             WHERE CAST(COALESCE(created_at,'0') AS INTEGER) >= ?
+               AND json_extract(COALESCE(extra,'{}'),'$._ip') = ?",
+            params![now_s - 3600, ip], |r| r.get(0),
+        ).unwrap_or(0);
+        if recent_hour > 2000 {
+            return (StatusCode::TOO_MANY_REQUESTS, "2000/h cap").into_response();
+        }
+    }
+
+    // Stash IP into extra._ip so the rate-limit window above works without
+    // an extra table.
+    let mut extra_obj = match req.extra {
+        Some(serde_json::Value::Object(m)) => m,
+        Some(other) => {
+            let mut m = serde_json::Map::new();
+            m.insert("_v".into(), other);
+            m
+        }
+        None => serde_json::Map::new(),
+    };
+    if !ip.is_empty() {
+        extra_obj.insert("_ip".into(), serde_json::Value::String(ip));
+    }
+    let extra_s = if extra_obj.is_empty() { None }
+                  else { Some(serde_json::Value::Object(extra_obj).to_string()) };
     let conn = db.lock().unwrap();
     let _ = conn.execute(
         "INSERT INTO funnel_events
