@@ -336,6 +336,8 @@ pub async fn checkout_crypto(
     let unit_price_jpy = apply_payment_surcharge(base_price_jpy, &pm);
     let total_jpy = unit_price_jpy.saturating_mul(body.quantity as i64);
 
+    let mut kyc_record_id: i64 = 0;
+    let mut kyc_token: String = String::new();
     if total_jpy >= KYC_THRESHOLD_JPY {
         let Some(kyc) = body.kyc.as_ref() else {
             return (StatusCode::BAD_REQUEST,
@@ -344,23 +346,32 @@ pub async fn checkout_crypto(
         if kyc.full_name.trim().is_empty() || kyc.id_last4.trim().is_empty() {
             return (StatusCode::BAD_REQUEST, "KYC required (incomplete fields)").into_response();
         }
+        kyc_token = new_kyc_verification_token();
         let conn = db.lock().unwrap();
         let _ = conn.execute(
             "INSERT INTO kyc_records
              (product_id, email, full_name, dob, nationality, id_type, id_last4,
-              address, consent_at, payment_method, total_amount_jpy, created_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+              address, consent_at, payment_method, total_amount_jpy, created_at,
+              verification_token)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             params![
                 body.product_id, body.email,
                 kyc.full_name.trim(), kyc.date_of_birth.trim(),
                 kyc.nationality.trim(), kyc.id_type.trim(), kyc.id_last4.trim(),
                 kyc.address.trim(), kyc.consent_at.trim(),
-                pm, total_jpy, now_iso()
+                pm, total_jpy, now_iso(),
+                kyc_token,
             ]
         );
+        kyc_record_id = conn.last_insert_rowid();
     }
 
-    let reference = uuid::Uuid::new_v4().to_string();
+    // R2 fix: Solana Pay `reference` must be a base58-encoded 32-byte
+    // pubkey-format value. The Helius / @solana/pay client iterates txs that
+    // include this pubkey as a signer/non-signer reference. A UUID string
+    // (hex+hyphens) cannot be decoded as a pubkey → no tx ever confirms.
+    // For ETH this is also fine — it's just an opaque order identifier there.
+    let reference = new_solana_pay_reference();
     let size_label = body.size.clone().unwrap_or_else(|| "M".into());
 
     let (amount_crypto, asset, recipient, pay_url): (String, &str, String, String) = match pm.as_str() {
@@ -433,7 +444,34 @@ pub async fn checkout_crypto(
         "pay_url": pay_url,
         "expires_in_min": CRYPTO_PAYMENT_TTL_MIN,
         "status_url": format!("/api/checkout/crypto/status/{}", reference),
+        // Returned only when KYC was triggered (total_jpy ≥ ¥300,000).
+        // Pass these to /api/kyc/identity-session — the token closes R3 (IDOR).
+        "kyc_record_id": if kyc_record_id > 0 { serde_json::Value::from(kyc_record_id) } else { serde_json::Value::Null },
+        "kyc_verification_token": if !kyc_token.is_empty() { serde_json::Value::from(kyc_token) } else { serde_json::Value::Null },
     })).into_response()
+}
+
+/// 256-bit random token used to gate Stripe Identity session creation for
+/// a specific kyc_records row. Two UUIDv4 concatenated → ~256 bits, 64 hex chars.
+/// Single-use, scoped to one row.
+pub fn new_kyc_verification_token() -> String {
+    format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple(),
+    )
+}
+
+/// 32 random bytes encoded as base58 — a Solana Pay `reference` shaped like
+/// an ed25519 pubkey (the spec requires this format so the wallet client
+/// can attach it as a tx non-signer key for later lookup). Bytes are not
+/// derived from any keypair; this is just an opaque identifier with the
+/// right shape. ~44 chars typical. R2 fix.
+pub fn new_solana_pay_reference() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    bs58::encode(bytes).into_string()
 }
 
 /// GET /api/rates — exposes the current JPY/USD, JPY/SOL, JPY/ETH rates the
@@ -945,30 +983,95 @@ pub async fn admin_export_crypto(
 }
 
 /// Generate a Stripe Identity verification session URL for high-value KYC.
+/// POST /api/kyc/identity-session — create a Stripe Identity verification
+/// session for a previously-created kyc_records row.
+///
+/// HARDENED for R3 (Stripe Identity IDOR + open redirect):
+/// 1. Caller MUST present the per-record `verification_token` returned at
+///    checkout time. Without it the request is rejected (was: unauthenticated).
+/// 2. `kyc_record_id` is still accepted but only the (id, token) tuple is
+///    trusted — the row's stored `email` is forwarded to Stripe, ignoring any
+///    client-supplied email (was: attacker could swap email).
+/// 3. `return_url` is validated against an allowlist of wearmu.com / teai.io
+///    hosts (was: open redirect via Stripe success page).
+/// 4. Refuses to create a duplicate session if one already exists for the row.
 pub async fn create_stripe_identity_session(
-    State(_db): State<Db>,
+    State(db): State<Db>,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
     let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
     if stripe_key.is_empty() {
         return (StatusCode::SERVICE_UNAVAILABLE, "stripe key not configured").into_response();
     }
-    let email = body["email"].as_str().unwrap_or("");
+
     let kyc_record_id = body["kyc_record_id"].as_i64().unwrap_or(0);
-    let return_url = body["return_url"].as_str().unwrap_or("https://wearmu.com/");
+    let token_in = body["verification_token"].as_str().unwrap_or("").trim().to_string();
+    let return_url_in = body["return_url"].as_str().unwrap_or("").trim().to_string();
+    if kyc_record_id <= 0 || token_in.len() < 16 || token_in.len() > 128 {
+        return (StatusCode::BAD_REQUEST,
+            "kyc_record_id + verification_token required").into_response();
+    }
+
+    // 1. Verify (id, token) pair + load stored email + existing session id.
+    let row: Result<(String, Option<String>, Option<String>), rusqlite::Error> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT email, verification_token, stripe_identity_session_id
+             FROM kyc_records WHERE id=?",
+            params![kyc_record_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+    };
+    let (stored_email, stored_token, existing_session_id) = match row {
+        Ok(r) => r,
+        Err(_) => {
+            // Constant-ish response to not leak existence.
+            return (StatusCode::FORBIDDEN, "verification_token mismatch").into_response();
+        }
+    };
+    let expected = stored_token.unwrap_or_default();
+    if expected.is_empty() || !ct_eq(&expected, &token_in) {
+        return (StatusCode::FORBIDDEN, "verification_token mismatch").into_response();
+    }
+
+    // 2. Refuse to re-create a session for the same record. Idempotency +
+    //    prevents an attacker who later acquires the token from re-binding.
+    if let Some(sid) = existing_session_id.as_ref().filter(|s| !s.is_empty()) {
+        return Json(serde_json::json!({
+            "ok": true,
+            "id": sid,
+            "already_created": true,
+            "message": "identity session already exists for this kyc_record",
+        })).into_response();
+    }
+
+    // 3. return_url allowlist. Only wearmu.com / teai.io (+ www.) over https.
+    //    Empty / invalid → safe default.
+    let return_url = sanitize_kyc_return_url(&return_url_in);
+
     let resp = reqwest::Client::new()
         .post("https://api.stripe.com/v1/identity/verification_sessions")
         .basic_auth(&stripe_key, None::<&str>)
         .form(&[
             ("type", "document"),
             ("metadata[kyc_record_id]", &kyc_record_id.to_string()),
-            ("metadata[email]", email),
-            ("return_url", return_url),
+            ("metadata[email]", &stored_email),  // server-side email, NOT client-supplied
+            ("return_url", &return_url),
         ])
         .send().await;
     match resp {
         Ok(r) if r.status().is_success() => {
             let json: serde_json::Value = r.json().await.unwrap_or(serde_json::json!({}));
+            let session_id = json["id"].as_str().unwrap_or("").to_string();
+            // Persist session id immediately so re-requests are short-circuited.
+            if !session_id.is_empty() {
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "UPDATE kyc_records SET stripe_identity_session_id=?, stripe_identity_status='pending'
+                     WHERE id=? AND (stripe_identity_session_id IS NULL OR stripe_identity_session_id='')",
+                    params![session_id, kyc_record_id],
+                );
+            }
             Json(serde_json::json!({"url": json["url"], "id": json["id"]})).into_response()
         }
         Ok(r) => {
@@ -979,6 +1082,30 @@ pub async fn create_stripe_identity_session(
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("stripe http: {}", e)).into_response(),
     }
+}
+
+/// Allowlist + scheme + length validation for the Stripe Identity return_url.
+/// Falls back to https://wearmu.com/ on any rejection. Closes the open-redirect
+/// half of R3.
+pub fn sanitize_kyc_return_url(input: &str) -> String {
+    const FALLBACK: &str = "https://wearmu.com/";
+    const ALLOWED_HOSTS: &[&str] = &[
+        "wearmu.com", "www.wearmu.com",
+        "teai.io", "www.teai.io",
+        "chatweb.ai", "www.chatweb.ai",
+    ];
+    let s = input.trim();
+    if s.is_empty() || s.len() > 500 { return FALLBACK.into(); }
+    // Reject anything that isn't https.
+    let Some(rest) = s.strip_prefix("https://") else { return FALLBACK.into(); };
+    // Host is everything up to the first /, ?, or #
+    let host_end = rest.find(|c: char| matches!(c, '/' | '?' | '#')).unwrap_or(rest.len());
+    let host_part = &rest[..host_end];
+    // Strip optional :port, basic auth not allowed.
+    if host_part.contains('@') { return FALLBACK.into(); }
+    let host = host_part.split(':').next().unwrap_or("").to_ascii_lowercase();
+    if !ALLOWED_HOSTS.contains(&host.as_str()) { return FALLBACK.into(); }
+    s.to_string()
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────
@@ -1238,6 +1365,7 @@ pub async fn alchemy_webhook(
 
     for ev in activity {
         let to = ev["toAddress"].as_str().unwrap_or("").to_ascii_lowercase();
+        let from = ev["fromAddress"].as_str().unwrap_or("").to_ascii_lowercase();
         let value: f64 = ev["value"].as_f64().unwrap_or_else(|| {
             ev["value"].as_str().and_then(|s| s.parse().ok()).unwrap_or(0.0)
         });
@@ -1248,32 +1376,79 @@ pub async fn alchemy_webhook(
             continue;
         }
 
-        // Find oldest pending ETH payment with this recipient where the
-        // credited ETH covers ≥95% of expected. ETH amounts in
-        // pending_crypto_payments.amount_crypto are decimal strings like
-        // "0.001234".
+        // HARDENED for R4 (ETH order hijack via greedy oldest-pending match):
+        //
+        // 1. Match by `wallet` (sender address) WHEN KNOWN — closes the
+        //    "attacker creates an older pending order at the same amount"
+        //    attack. The buyer's wallet is captured at checkout_crypto time
+        //    in pending_crypto_payments.wallet.
+        // 2. Tolerance tightened from 95% to 99.5%. Gas-rounding + price-slip
+        //    rarely costs >0.5%; a 5% slack made distinct-amount orders
+        //    collide trivially.
+        // 3. Reject when MULTIPLE candidate rows match the same amount — we
+        //    refuse to choose rather than silently steal from the oldest.
+        //    Operator can resolve manually via /admin/crypto-recon.
         let candidate: Option<(String, i64)> = {
             let conn = db.lock().unwrap();
-            let mut stmt = match conn.prepare(
-                "SELECT reference, product_id, amount_crypto
-                 FROM pending_crypto_payments
-                 WHERE status='pending' AND asset='ETH' AND lower(recipient)=lower(?)
-                 ORDER BY created_at ASC"
-            ) { Ok(s) => s, Err(_) => continue };
-            let mut found: Option<(String, i64)> = None;
-            let rows = stmt.query_map(params![mu_eth], |r| Ok((
-                r.get::<_,String>(0)?, r.get::<_,i64>(1)?, r.get::<_,String>(2)?,
-            )));
-            if let Ok(it) = rows {
-                for row in it.flatten() {
-                    let expected: f64 = row.2.parse().unwrap_or(0.0);
-                    if expected > 0.0 && value >= expected * 0.95 {
-                        found = Some((row.0, row.1));
-                        break;
+            // First pass: wallet-bound match. Strictly the user who placed
+            // this specific order from this specific sender address.
+            let by_wallet: Option<(String, i64)> = if !from.is_empty() {
+                conn.query_row(
+                    "SELECT reference, product_id, amount_crypto
+                     FROM pending_crypto_payments
+                     WHERE status='pending' AND asset='ETH'
+                       AND lower(recipient)=lower(?)
+                       AND lower(COALESCE(wallet,''))=?
+                     ORDER BY created_at ASC LIMIT 1",
+                    params![mu_eth, from],
+                    |r| Ok((
+                        r.get::<_,String>(0)?, r.get::<_,i64>(1)?, r.get::<_,String>(2)?,
+                    ))
+                ).ok().and_then(|(reference, pid, exp)| {
+                    let expected: f64 = exp.parse().unwrap_or(0.0);
+                    if expected > 0.0 && value >= expected * 0.995 {
+                        Some((reference, pid))
+                    } else { None }
+                })
+            } else { None };
+
+            if by_wallet.is_some() {
+                by_wallet
+            } else {
+                // Fallback: amount-only match — but ONLY when exactly ONE
+                // pending order is plausibly the recipient. If the amount
+                // matches multiple orders we abstain (operator triage).
+                let mut stmt = match conn.prepare(
+                    "SELECT reference, product_id, amount_crypto
+                     FROM pending_crypto_payments
+                     WHERE status='pending' AND asset='ETH'
+                       AND lower(recipient)=lower(?)
+                     ORDER BY created_at ASC"
+                ) { Ok(s) => s, Err(_) => continue };
+                let mut matches: Vec<(String, i64)> = Vec::new();
+                let rows = stmt.query_map(params![mu_eth], |r| Ok((
+                    r.get::<_,String>(0)?, r.get::<_,i64>(1)?, r.get::<_,String>(2)?,
+                )));
+                if let Ok(it) = rows {
+                    for row in it.flatten() {
+                        let expected: f64 = row.2.parse().unwrap_or(0.0);
+                        if expected > 0.0 && value >= expected * 0.995 {
+                            matches.push((row.0, row.1));
+                            if matches.len() > 1 { break; }
+                        }
                     }
                 }
+                match matches.len() {
+                    1 => Some(matches.into_iter().next().unwrap()),
+                    n if n > 1 => {
+                        tracing::warn!(
+                            "[alchemy] ambiguous match: {} pending orders match value={} hash={} — abstaining",
+                            n, value, hash);
+                        None
+                    }
+                    _ => None,
+                }
             }
-            found
         };
 
         let Some((reference, product_id)) = candidate else {

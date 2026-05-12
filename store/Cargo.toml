@@ -23,6 +23,10 @@ base64 = "0.22"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
+# Solana Pay `reference` must be a base58-encoded 32-byte ed25519 pubkey-format
+# value — UUID strings fail Helius confirmation lookup (R2).
+bs58 = "0.5"
+rand = "0.8"
 rust-s3 = { version = "0.34", default-features = false, features = ["tokio-rustls-tls"] }
 urlencoding = "2.1"
 # Safe Markdown → HTML for auto-blog. Strips script tags + javascript: URLs.

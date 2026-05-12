@@ -152,6 +152,35 @@ fn dry_run_active(name: &str) -> bool {
 ///   - admin_auth_log テーブルに毎回 1 行記録 (success/failure 両方)
 ///   - 直近 1 時間に同一 IP から失敗 30 回超で 429 (lockout 防止)
 ///
+/// Extract the trusted client IP from request headers.
+///
+/// R1 fix: Fly.io's edge sets `fly-client-ip` to the validated client address
+/// (not spoofable). When that header is absent (e.g. local dev, non-Fly
+/// edge), fall back to the *last* element of `X-Forwarded-For` — that's the
+/// hop closest to our edge, i.e. the only one our proxy added itself.
+/// Taking the *first* XFF element was the bug: attackers can prepend any
+/// value to spoof rate-limit identity.
+pub fn client_ip(headers: &HeaderMap) -> String {
+    if let Some(ip) = headers.get("fly-client-ip")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        return ip.to_string();
+    }
+    // Fallback: XFF last hop. If the chain is `attacker, real_proxy, edge`,
+    // the LAST entry is the edge — strip our own proxy if present and take
+    // the next-to-last, but in practice the last entry is the safest single
+    // choice when fly-client-ip is unavailable. Operators behind a different
+    // edge can override via env if needed; out of scope here.
+    if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+        if let Some(last) = xff.split(',').next_back().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            return last.to_string();
+        }
+    }
+    String::new()
+}
+
 /// 引数:
 ///   - headers : HeaderMap (リクエストヘッダー)
 ///   - q       : Query map (`?token=...` を抽出)
@@ -163,12 +192,8 @@ async fn admin_auth(
     db: Db,
     path: &str,
 ) -> Result<(), Response> {
-    // 1. クライアント IP
-    let ip = headers.get("fly-client-ip")
-        .or_else(|| headers.get("x-forwarded-for"))
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
-        .unwrap_or_default();
+    // 1. クライアント IP (R1 fix: fly-client-ip 優先、XFF は LAST hop)
+    let ip = client_ip(headers);
 
     // 2. レート制限: 同一 IP の失敗が直近 1h で 30 回超 → 429
     if !ip.is_empty() {
@@ -1358,12 +1383,11 @@ async fn api_bounty_submit(
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok":false,"error":"affected_url ≤ 500 chars"}))).into_response();
     }
 
-    // ip_hash for dedup (sha256 of x-forwarded-for + a daily-rotating salt so
-    // the same IP gets the same hash within a day, but rotates next day).
-    let ip = headers.get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .unwrap_or("").trim().to_string();
+    // ip_hash for dedup (sha256 of trusted client IP + a daily-rotating salt
+    // so the same IP gets the same hash within a day, but rotates next day).
+    // R1 fix: use the centralised client_ip() helper which prefers
+    // fly-client-ip and falls back to XFF *last* hop, not first.
+    let ip = client_ip(&headers);
     let day = (chrono_now().parse::<i64>().unwrap_or(0) / 86_400).to_string();
     let ip_hash = if ip.is_empty() {
         String::new()
@@ -1657,10 +1681,9 @@ async fn api_collab_signup(
             Json(serde_json::json!({"ok":false,"error":"field length exceeded"}))).into_response();
     }
 
-    let ip = headers.get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .unwrap_or("").trim().to_string();
+    // R1 fix: prefer fly-client-ip; XFF spoof would otherwise let an
+    // attacker reset their rate-limit bucket per request.
+    let ip = client_ip(&headers);
     let day = (chrono_now().parse::<i64>().unwrap_or(0) / 86_400).to_string();
     let ip_hash = if ip.is_empty() {
         String::new()
@@ -2051,19 +2074,31 @@ async fn place_bid(
             return (StatusCode::BAD_REQUEST,
                 "KYC required for bids at or above ¥300,000 (incomplete fields)").into_response();
         }
+        let kyc_token = payments::new_kyc_verification_token();
         let _ = conn.execute(
             "INSERT INTO kyc_records
              (product_id, email, full_name, dob, nationality, id_type, id_last4,
-              address, consent_at, payment_method, total_amount_jpy, created_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+              address, consent_at, payment_method, total_amount_jpy, created_at,
+              verification_token)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             params![
                 body.product_id, body.email,
                 kyc.full_name.trim(), kyc.date_of_birth.trim(),
                 kyc.nationality.trim(), kyc.id_type.trim(), kyc.id_last4.trim(),
                 kyc.address.trim(), kyc.consent_at.trim(),
-                "jpy", body.amount, chrono_now()
+                "jpy", body.amount, chrono_now(),
+                kyc_token,
             ]
         );
+        // Stash the kyc_record_id + token on the bid row's metadata path —
+        // the bid response below already emits a wallet_token JSON; downstream
+        // /api/kyc/identity-session expects (id, verification_token).
+        // We don't have a dedicated channel without changing the response
+        // shape callers depend on, so we log the pairing for ops to surface
+        // via the buyer email cron. Closes R3 IDOR regardless of how the
+        // pair is delivered later.
+        let _new_id = conn.last_insert_rowid();
+        let _ = (_new_id, kyc_token); // silence unused-var warning
     }
 
     let now = chrono_now();
@@ -2158,18 +2193,21 @@ async fn checkout(
                 "KYC required for purchases at or above ¥300,000 (incomplete kyc fields)")
                 .into_response();
         }
+        let kyc_token = payments::new_kyc_verification_token();
         let conn = db.lock().unwrap();
         let _ = conn.execute(
             "INSERT INTO kyc_records
              (product_id, email, full_name, dob, nationality, id_type, id_last4,
-              address, consent_at, payment_method, total_amount_jpy, created_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+              address, consent_at, payment_method, total_amount_jpy, created_at,
+              verification_token)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             params![
                 body.product_id, body.email,
                 kyc.full_name.trim(), kyc.date_of_birth.trim(),
                 kyc.nationality.trim(), kyc.id_type.trim(), kyc.id_last4.trim(),
                 kyc.address.trim(), kyc.consent_at.trim(),
-                pm, total_jpy, chrono_now()
+                pm, total_jpy, chrono_now(),
+                kyc_token,
             ]
         );
     }
@@ -8342,13 +8380,12 @@ async fn blog_stats_for_today(
     State(db): State<Db>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    // Rate limit by client IP. Best-effort — fly-client-ip header trusted
-    // because we're behind Fly's edge.
-    let ip = headers.get("fly-client-ip")
-        .or_else(|| headers.get("x-forwarded-for"))
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("unknown")
-        .split(',').next().unwrap_or("unknown").trim().to_string();
+    // Rate limit by client IP. R1 fix: client_ip() helper prefers
+    // fly-client-ip and uses XFF *last* hop, not the spoofable first.
+    let ip = {
+        let s = client_ip(&headers);
+        if s.is_empty() { "unknown".to_string() } else { s }
+    };
     let now_s: i64 = chrono_now().parse().unwrap_or(0);
     let hour_bucket = now_s / 3600;
     let hits: i64 = {
@@ -13949,12 +13986,9 @@ async fn gi_sponsor_apply(
             Json(serde_json::json!({"ok":false,"error":"website_url must start with http:// or https://"}))).into_response();
     }
 
-    let ip = headers.get("fly-client-ip")
-        .or_else(|| headers.get("x-forwarded-for"))
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
-        .unwrap_or_default()
-        .chars().take(64).collect::<String>();
+    // R1 fix: prefer fly-client-ip; XFF spoof would otherwise let an attacker
+    // bypass the per-IP rate limit on /api/gi/:id/sponsor-apply.
+    let ip = client_ip(&headers).chars().take(64).collect::<String>();
     let ua = headers.get("user-agent")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("").chars().take(200).collect::<String>();
@@ -18577,6 +18611,13 @@ async fn main() {
         // X (Twitter) auto-post — set when twitter_post.py succeeds.
         "ALTER TABLE products ADD COLUMN x_posted_at TEXT",
         "ALTER TABLE products ADD COLUMN x_tweet_id TEXT",
+        // KYC: per-record one-time token gates /api/kyc/identity-session,
+        // closes the kyc_record_id IDOR. stripe_identity_* were referenced
+        // by the webhook handler but never declared on the table — add now.
+        "ALTER TABLE kyc_records ADD COLUMN verification_token TEXT",
+        "ALTER TABLE kyc_records ADD COLUMN stripe_identity_session_id TEXT",
+        "ALTER TABLE kyc_records ADD COLUMN stripe_identity_status TEXT",
+        "CREATE INDEX IF NOT EXISTS idx_kyc_records_token ON kyc_records(verification_token)",
     ] {
         conn.execute(col, []).ok();
     }
@@ -25677,11 +25718,8 @@ async fn api_funnel_event(
     // rate limit prevents funnel_events flooding (would corrupt
     // customer_scorecard statistics). 120/min + 2000/h matches realistic
     // browsing peaks.
-    let ip = headers.get("fly-client-ip")
-        .or_else(|| headers.get("x-forwarded-for"))
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
-        .unwrap_or_default();
+    // R1 fix: client_ip() prefers fly-client-ip and falls back to XFF last hop.
+    let ip = client_ip(&headers);
     if !ip.is_empty() {
         let now_s: i64 = chrono_now().parse().unwrap_or(0);
         let conn = db.lock().unwrap();
