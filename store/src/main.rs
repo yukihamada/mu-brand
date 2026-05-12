@@ -11461,8 +11461,36 @@ async fn show_partner_proposal_page(
             ));
         }
     }
+    let _ = (bars.len(), labels.len()); // silence dead-code warning in mini path
     let chart_bars = bars;
     let chart_labels = labels;
+
+    // Show full chart only when there's meaningful data (>=30 PVs in 14 days
+    // OR ?stats=1 query). Otherwise show a 1-line compact summary — empty
+    // bars look like "no one is using this".
+    let force_full = q.get("stats").map(String::as_str) == Some("1");
+    let chart_block = if pv14_total >= 30 || force_full {
+        format!(r#"<div class="head chart-wrap">
+  <div class="chart-title">📈 アクセス & サンプル購入 (過去14日 · JST)</div>
+  <svg viewBox="0 0 700 160" preserveAspectRatio="none" class="chart" aria-label="14日間のアクセス推移">
+    {bars}
+    {labels}
+  </svg>
+  <div class="chart-legend">
+    <span><i class="lg-pv"></i> PV (総数)</span>
+    <span><i class="lg-uq"></i> ユニーク</span>
+    <span><i class="lg-paid"></i> サンプル購入</span>
+  </div>
+</div>"#, bars = chart_bars, labels = chart_labels)
+    } else {
+        format!(r#"<div class="head chart-mini" role="status" aria-label="14日間のアクセス概況">
+  <span class="pill">14 日</span>
+  <span>PV <b>{pv}</b></span>
+  <span>ユニーク <b>{uq}</b></span>
+  <span>サンプル購入 <b>{pd}</b></span>
+  <span style="margin-left:auto;font-size:10.5px;opacity:0.7">※ アクセスが増えると詳細グラフを表示 (`?stats=1` で常時表示)</span>
+</div>"#, pv = pv14_total, uq = uniq14_total, pd = paid14_total)
+    };
 
     let body = format!(r#"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -11472,129 +11500,170 @@ async fn show_partner_proposal_page(
 <style>
 :root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--card:#111;--g:#22c55e;--r:#C8362C;--o:#f59e0b;--b:rgba(255,255,255,0.06)}}
 *{{margin:0;padding:0;box-sizing:border-box}}
-body{{background:var(--bg);color:var(--fg);font-family:-apple-system,'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.7;padding:24px 24px 140px;font-size:13px}}
+body{{background:var(--bg);color:var(--fg);font-family:-apple-system,'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.65;padding:24px 24px 160px;padding-bottom:calc(160px + env(safe-area-inset-bottom,0px));font-size:14.5px}}
 .head{{max-width:1100px;margin:0 auto 18px}}
-h1{{font-size:22px;font-weight:300;letter-spacing:0.08em;margin-bottom:6px}}
+h1{{font-size:24px;font-weight:300;letter-spacing:0.06em;margin-bottom:6px}}
 h1 em{{color:var(--y);font-style:normal}}
-.sub{{color:var(--mute);font-size:12px;margin-bottom:18px;line-height:1.85}}
-.sub b{{color:var(--fg)}}
+.sub{{color:#C4C4BC;font-size:13.5px;margin-bottom:14px;line-height:1.85}}
+.sub b{{color:var(--fg);font-weight:600}}
+.tax-note{{color:#9C9C95;font-size:11.5px;margin-bottom:18px;letter-spacing:0.02em}}
+.hero-steps{{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin:14px 0 26px}}
+.step{{background:var(--card);border:1px solid var(--b);border-left:2px solid var(--y);padding:14px 16px;border-radius:3px}}
+.step .n{{color:var(--y);font-size:10px;letter-spacing:0.28em;font-weight:700;margin-bottom:4px}}
+.step .t{{font-size:13.5px;font-weight:600;margin-bottom:2px}}
+.step .d{{color:#A8A8A0;font-size:11.5px;line-height:1.7}}
 .summary{{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:24px}}
 .stat{{background:var(--card);border:1px solid var(--b);padding:12px 16px;border-radius:3px}}
-.stat .v{{font-size:20px;font-weight:300;color:var(--y);font-variant-numeric:tabular-nums}}
-.stat .l{{font-size:8.5px;letter-spacing:0.2em;text-transform:uppercase;opacity:0.55;margin-top:3px}}
+.stat .v{{font-size:22px;font-weight:300;color:var(--y);font-variant-numeric:tabular-nums}}
+.stat .l{{font-size:9.5px;letter-spacing:0.18em;text-transform:uppercase;color:#A8A8A0;margin-top:3px}}
 .list{{max-width:1100px;margin:0 auto;display:flex;flex-direction:column;gap:14px}}
-.prow{{display:grid;grid-template-columns:96px 1fr;gap:16px;padding:14px;background:var(--card);border:1px solid var(--b);border-radius:3px}}
+.prow{{display:grid;grid-template-columns:108px 1fr;gap:18px;padding:16px;background:var(--card);border:1px solid var(--b);border-radius:3px}}
 .prow.no-cost{{opacity:0.55}}
-.thumb{{width:96px;aspect-ratio:4/5;background:#000;overflow:hidden;border-radius:2px;flex-shrink:0}}
+.thumb{{width:108px;aspect-ratio:4/5;background:#000;overflow:hidden;border-radius:2px;flex-shrink:0}}
 .thumb img{{width:100%;height:100%;object-fit:cover}}
-.thumb.placeholder{{display:flex;align-items:center;justify-content:center;color:var(--mute);font-size:24px}}
+.thumb.placeholder{{display:flex;align-items:center;justify-content:center;color:#A8A8A0;font-size:24px}}
 .info{{flex:1;min-width:0}}
-.top{{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px}}
-.cat{{font-size:9px;letter-spacing:0.22em;text-transform:uppercase;color:var(--y);opacity:0.85}}
-.name{{font-size:14px;font-weight:500;flex:1}}
-.route{{font-size:9.5px;letter-spacing:0.12em;padding:3px 7px;border-radius:2px;font-weight:600;text-transform:uppercase}}
+.top{{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px}}
+.cat{{font-size:10.5px;letter-spacing:0.12em;color:var(--y);font-weight:600}}
+.name{{font-size:15.5px;font-weight:600;flex:1;color:#F5F5F0}}
+.route{{font-size:10px;letter-spacing:0.1em;padding:3px 7px;border-radius:2px;font-weight:600}}
 .route.pf{{background:rgba(34,197,94,0.18);color:var(--g)}}
-.route.manual{{background:rgba(255,255,255,0.06);color:var(--mute)}}
-.meta{{display:flex;flex-wrap:wrap;gap:14px;color:var(--mute);font-size:11.5px;margin:4px 0}}
-.meta b{{color:var(--fg);font-weight:600;font-variant-numeric:tabular-nums}}
-.meta b.sp{{color:var(--y)}}
-.meta .sep{{color:rgba(255,255,255,0.15)}}
-.meta .hint{{opacity:0.5}}
-.cart{{display:flex;align-items:center;gap:14px;margin-top:10px;flex-wrap:wrap}}
-.cart label{{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--mute);letter-spacing:0.04em}}
-.cart input,.cart select{{background:#000;color:var(--fg);border:1px solid var(--b);padding:6px 10px;font-family:inherit;font-size:12.5px;border-radius:2px;min-width:64px}}
-.cart input:focus,.cart select:focus{{outline:none;border-color:var(--y)}}
-.cart .line-total{{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--fg);font-size:13px;font-weight:600}}
-.bar{{position:fixed;bottom:0;left:0;right:0;background:#0A0A0A;border-top:1px solid var(--b);padding:14px 24px;display:flex;justify-content:center;z-index:50;backdrop-filter:blur(8px)}}
+.route.manual{{background:rgba(245,158,11,0.18);color:var(--o)}}
+.price-row{{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin:6px 0 8px}}
+.sample-price{{display:flex;flex-direction:column;line-height:1.1}}
+.sample-price b{{font-size:20px;color:var(--y);font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:0.01em}}
+.sample-price small{{font-size:10px;color:#A8A8A0;margin-top:2px;letter-spacing:0.04em}}
+.retail-price s{{color:#7E7E78;font-size:13px;font-variant-numeric:tabular-nums}}
+.off{{display:inline-block;background:var(--y);color:#0A0A0A;font-size:11px;font-weight:700;padding:3px 8px;border-radius:2px;letter-spacing:0.04em}}
+.cart{{display:flex;align-items:center;gap:14px;margin-top:8px;flex-wrap:wrap}}
+.cart .qty{{display:flex;align-items:center;gap:8px;font-size:12px;color:#C4C4BC;letter-spacing:0.02em}}
+.cart input[type=number]{{background:#000;color:var(--fg);border:1px solid var(--b);padding:8px 10px;font-family:inherit;font-size:14px;border-radius:2px;min-width:72px;height:38px}}
+.cart input:focus-visible{{outline:2px solid var(--y);outline-offset:1px;border-color:var(--y)}}
+.cart .size-tag{{color:#A8A8A0;font-size:11.5px;letter-spacing:0.04em}}
+.cart .line-total{{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--fg);font-size:14px;font-weight:600}}
+.cart.size-grid{{flex-direction:column;align-items:stretch;gap:6px}}
+.size-grid-label{{font-size:11px;color:#A8A8A0;letter-spacing:0.08em}}
+.size-grid-cells{{display:grid;grid-template-columns:repeat(auto-fit,minmax(76px,1fr));gap:6px}}
+.size-cell{{display:flex;flex-direction:column;background:#000;border:1px solid var(--b);border-radius:2px;padding:6px 8px;gap:2px;align-items:center}}
+.size-cell span{{font-size:10.5px;color:#A8A8A0;letter-spacing:0.06em;font-weight:600}}
+.size-cell input{{background:#000;color:var(--fg);border:0;font-family:inherit;font-size:14px;width:100%;text-align:center;padding:4px 0;min-width:0}}
+.size-cell input:focus-visible{{outline:2px solid var(--y);outline-offset:1px}}
+.cart.size-grid .line-total{{align-self:flex-end;font-size:14.5px;margin-top:2px}}
+.bar{{position:fixed;bottom:0;left:0;right:0;background:#0A0A0A;border-top:1px solid var(--b);padding:12px 20px;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px));display:flex;justify-content:center;z-index:50;backdrop-filter:blur(8px)}}
 .bar-inner{{max-width:1100px;width:100%;display:flex;align-items:center;gap:18px;flex-wrap:wrap}}
-.bar .total{{font-size:18px;font-weight:300;color:var(--y);font-variant-numeric:tabular-nums}}
-.bar .ct{{color:var(--mute);font-size:11px;letter-spacing:0.18em;text-transform:uppercase}}
+.bar .totals-cell{{display:flex;flex-direction:column;line-height:1.2}}
+.bar .total{{font-size:20px;font-weight:300;color:var(--y);font-variant-numeric:tabular-nums}}
+.bar .ct{{color:#A8A8A0;font-size:10.5px;letter-spacing:0.16em;text-transform:uppercase;margin-bottom:2px}}
+.bar .ship-note{{color:#9C9C95;font-size:10.5px;letter-spacing:0.02em;flex-basis:100%;order:99}}
 .bar form{{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center}}
-.bar input[type=email]{{background:#000;color:var(--fg);border:1px solid var(--b);padding:10px 12px;font-family:inherit;font-size:12.5px;border-radius:2px;min-width:240px}}
-.bar input[type=email]:focus{{outline:none;border-color:var(--y)}}
-.bar button{{background:var(--y);color:#000;border:0;font-family:inherit;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;font-weight:700;padding:11px 22px;cursor:pointer;border-radius:2px}}
-.bar button:disabled{{opacity:0.4;cursor:not-allowed}}
+.bar input[type=email]{{background:#000;color:var(--fg);border:1px solid var(--b);padding:10px 12px;font-family:inherit;font-size:14px;border-radius:2px;min-width:240px;height:42px}}
+.bar input[type=email]:focus-visible{{outline:2px solid var(--y);outline-offset:1px;border-color:var(--y)}}
+.bar button{{background:var(--y);color:#000;border:0;font-family:inherit;font-size:13px;letter-spacing:0.1em;font-weight:700;padding:11px 22px;cursor:pointer;border-radius:2px;height:42px}}
+.bar button:disabled{{cursor:not-allowed;background:#3a3a36;color:#A8A8A0}}
 .bar button:hover:not(:disabled){{opacity:0.85}}
-footer{{max-width:1100px;margin:36px auto 24px;padding-top:18px;border-top:1px solid var(--b);color:var(--mute);font-size:11px;line-height:1.9}}
+.bar button:focus-visible{{outline:2px solid #fff;outline-offset:2px}}
+footer{{max-width:1100px;margin:36px auto 24px;padding-top:18px;border-top:1px solid var(--b);color:#A8A8A0;font-size:11.5px;line-height:1.9}}
 footer a{{color:var(--y);text-decoration:none}}
+.chart-mini{{background:var(--card);border:1px solid var(--b);border-radius:3px;padding:12px 16px;margin-bottom:24px;font-size:12.5px;color:#A8A8A0;display:flex;gap:18px;flex-wrap:wrap;align-items:center;letter-spacing:0.03em}}
+.chart-mini b{{color:var(--fg);font-weight:600;font-variant-numeric:tabular-nums}}
+.chart-mini .pill{{background:#000;border:1px solid var(--b);padding:2px 8px;border-radius:99px;font-size:10.5px;color:#A8A8A0;letter-spacing:0.18em}}
 .chart-wrap{{background:var(--card);border:1px solid var(--b);border-radius:3px;padding:18px;margin-bottom:24px}}
-.chart-title{{font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:var(--y);margin-bottom:14px;opacity:0.9}}
+.chart-title{{font-size:11.5px;letter-spacing:0.16em;color:var(--y);margin-bottom:14px}}
 .chart{{width:100%;height:160px;display:block}}
-.chart .b-pv{{fill:rgba(255,255,255,0.18)}}
-.chart .b-uq{{fill:var(--mute)}}
+.chart .b-pv{{fill:rgba(255,255,255,0.22)}}
+.chart .b-uq{{fill:#A8A8A0}}
 .chart .b-paid{{fill:var(--y)}}
-.chart .lbl{{fill:rgba(245,245,240,0.42);font-size:9px;font-family:inherit}}
-.chart .num{{fill:var(--fg);font-size:9px;font-family:inherit;font-variant-numeric:tabular-nums}}
-.chart-legend{{margin-top:10px;display:flex;gap:18px;font-size:10.5px;letter-spacing:0.08em;color:var(--mute)}}
+.chart .lbl{{fill:#9C9C95;font-size:9.5px;font-family:inherit}}
+.chart .num{{fill:var(--fg);font-size:9.5px;font-family:inherit;font-variant-numeric:tabular-nums}}
+.chart-legend{{margin-top:10px;display:flex;gap:18px;font-size:11px;letter-spacing:0.06em;color:#A8A8A0}}
 .chart-legend i{{display:inline-block;width:10px;height:10px;margin-right:6px;vertical-align:middle;border-radius:2px}}
-.chart-legend i.lg-pv{{background:rgba(255,255,255,0.18)}}
-.chart-legend i.lg-uq{{background:var(--mute)}}
+.chart-legend i.lg-pv{{background:rgba(255,255,255,0.22)}}
+.chart-legend i.lg-uq{{background:#A8A8A0}}
 .chart-legend i.lg-paid{{background:var(--y)}}
-.toast{{position:fixed;bottom:110px;left:50%;transform:translateX(-50%);background:var(--y);color:#000;padding:10px 22px;border-radius:2px;font-size:11.5px;letter-spacing:0.05em;font-weight:600;opacity:0;transition:opacity .2s;pointer-events:none;z-index:60}}
+.toast{{position:fixed;bottom:130px;left:50%;transform:translateX(-50%);background:var(--y);color:#000;padding:11px 22px;border-radius:2px;font-size:12.5px;letter-spacing:0.04em;font-weight:600;opacity:0;transition:opacity .2s;pointer-events:none;z-index:60;max-width:90vw;text-align:center}}
 .toast.show{{opacity:1}}
 .toast.err{{background:var(--r);color:#fff}}
-@media (max-width:600px){{.prow{{grid-template-columns:64px 1fr}}.thumb{{width:64px}}.bar input[type=email]{{min-width:0;flex:1}}}}
+@media (max-width:640px){{
+  body{{padding:20px 16px 200px;padding-bottom:calc(200px + env(safe-area-inset-bottom,0px));font-size:14px}}
+  h1{{font-size:20px}}
+  .prow{{grid-template-columns:80px 1fr;gap:12px;padding:12px}}
+  .thumb{{width:80px}}
+  .name{{font-size:14.5px}}
+  .sample-price b{{font-size:18px}}
+  .bar{{padding:10px 14px}}
+  .bar-inner{{gap:10px}}
+  .bar .totals-cell{{flex:1}}
+  .bar .total{{font-size:18px}}
+  .bar form{{margin-left:0;width:100%;flex-direction:column;align-items:stretch}}
+  .bar input[type=email]{{min-width:0;width:100%}}
+  .bar button{{width:100%}}
+  .size-grid-cells{{grid-template-columns:repeat(auto-fit,minmax(64px,1fr))}}
+}}
+@media print {{
+  body{{background:#fff;color:#000;padding:16px;font-size:11pt}}
+  h1{{color:#000}} h1 em{{color:#b89320}}
+  .sub,.tax-note,.cat,.size-tag,.step .d{{color:#444}}
+  .step,.stat,.prow,.chart-mini,.chart-wrap{{background:#fff;border:1px solid #999;color:#000}}
+  .stat .v{{color:#b89320}}
+  .sample-price b{{color:#000}}
+  .off{{color:#000;background:#fff;border:1px solid #b89320}}
+  .retail-price s{{color:#666}}
+  .bar,.toast,.cart input,.cart select,.hero-steps{{display:none}}
+  .prow{{break-inside:avoid;page-break-inside:avoid}}
+}}
 </style></head><body>
 
 <div class="head">
   <h1>MU × <em>{pretty_em}</em> — 商品提案 + サンプルまとめ買い</h1>
   <div class="sub">
-    {display_label} 専用画面。掲載中の MU × {pretty_em} ラインの全 SKU を一覧で提示。<br>
-    気になる商品の <b>サンプル</b> をまとめて発注できます。価格は <b>Printful 仕入原価のみ</b> で、MU 側は利益を取りません。<br>
-    決済後、自動で Printful に draft order が入り、製造・配送が走ります（手動生産分は {display_label} に Telegram 通知）。
+    {display_label} 専用画面です。MU × {pretty_em} ラインの全 SKU を一覧で確認いただき、<br>
+    気になる商品の <b>サンプル</b> をまとめて発注できます（決済 1 回で複数 SKU OK）。<br>
+    サンプル価格は <b>製造工場の卸値（原価）そのまま</b> — MU 側は 1 円も上乗せしていません。
+  </div>
+  <div class="tax-note">価格は <b style="color:#F5F5F0">税込・送料別</b> ／ 送料は決済画面で加算 ／ お届け目安は <b style="color:#F5F5F0">7〜14 営業日</b>（製造工場直送）。</div>
+  <div class="hero-steps">
+    <div class="step"><div class="n">STEP 1</div><div class="t">商品の数量を入れる</div><div class="d">気になる商品の数量欄に 1 以上を入力。サイズ展開がある服は S/M/L 別々に指定できます。</div></div>
+    <div class="step"><div class="n">STEP 2</div><div class="t">下のバーで合計を確認</div><div class="d">画面下のバーが点数と合計金額をリアルタイム集計。間違いはすぐ修正できます。</div></div>
+    <div class="step"><div class="n">STEP 3</div><div class="t">決済へ進む</div><div class="d">メール（任意）を入れて決済ボタン。送付先住所は次画面（Stripe）で入力します。</div></div>
   </div>
 </div>
 
 <div class="summary head">
   <div class="stat"><div class="v">{tot_skus}</div><div class="l">掲載 SKU</div></div>
   <div class="stat"><div class="v">{tot_with_cost}</div><div class="l">サンプル可</div></div>
-  <div class="stat"><div class="v">¥{min_sample_total_fmt}</div><div class="l">全1個ずつ合計目安</div></div>
-  <div class="stat"><div class="v">{pv14_total}</div><div class="l">14日 PV</div></div>
-  <div class="stat"><div class="v">{uniq14_total}</div><div class="l">14日 ユニーク</div></div>
-  <div class="stat"><div class="v">{paid14_total}</div><div class="l">14日 サンプル購入</div></div>
+  <div class="stat"><div class="v">¥{min_sample_total_fmt}</div><div class="l">全 1 個ずつ合計</div></div>
 </div>
 
-<div class="head chart-wrap">
-  <div class="chart-title">📈 アクセス & サンプル購入 (過去14日 · JST)</div>
-  <svg viewBox="0 0 700 160" preserveAspectRatio="none" class="chart">
-    {chart_bars}
-    {chart_labels}
-  </svg>
-  <div class="chart-legend">
-    <span><i class="lg-pv"></i> PV (総数)</span>
-    <span><i class="lg-uq"></i> ユニーク</span>
-    <span><i class="lg-paid"></i> サンプル購入</span>
-  </div>
-</div>
+{chart_block}
 
 <div class="list">
 {cards}
 </div>
 
 <footer>
-  ご相談・要望: <a href="mailto:mail@yukihamada.jp">mail@yukihamada.jp</a> / Telegram は濱田まで DM<br>
-  このページは {display_label} 専用です。一般プレビュー <a href="{cancel_path}">{cancel_path}</a> とは別の URL/pass を使用しています。<br>
-  サンプル決済は Stripe Checkout（日本国内配送、住所入力あり）。返金は Stripe + Printful の cancel-before-ship でのみ対応可。
+  ご相談・要望: <a href="mailto:mail@yukihamada.jp">mail@yukihamada.jp</a><br>
+  サンプル決済は Stripe Checkout で日本国内配送です。出荷前のキャンセル・返金は個別対応可（製造開始後は不可）。
 </footer>
 
-<div class="bar">
+<div class="bar" role="region" aria-label="サンプルまとめ買いカート">
   <div class="bar-inner">
-    <div>
-      <div class="ct">サンプル合計</div>
-      <div class="total" id="bar-total">¥0</div>
+    <div class="totals-cell">
+      <div class="ct">サンプル合計（税込・送料別）</div>
+      <div class="total" id="bar-total" aria-live="polite">¥0</div>
     </div>
-    <div>
+    <div class="totals-cell">
       <div class="ct">点数</div>
-      <div class="total" id="bar-count" style="color:var(--fg);font-size:16px">0</div>
+      <div class="total" id="bar-count" style="color:var(--fg);font-size:18px" aria-live="polite">0</div>
     </div>
     <form id="checkout-form">
-      <input type="email" id="email-input" placeholder="送付先メール（任意）" autocomplete="email">
-      <button type="submit" id="checkout-btn" disabled>サンプルまとめ買いへ進む →</button>
+      <input type="email" id="email-input" placeholder="連絡先メール（任意・領収書宛先）" autocomplete="email" aria-label="連絡先メール">
+      <button type="submit" id="checkout-btn" disabled aria-disabled="true">商品を 1 点以上選んでください</button>
     </form>
+    <div class="ship-note">送料・お届け日は次画面（Stripe）で確認できます。</div>
   </div>
 </div>
 
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
 const PARTNER = {partner_json};
@@ -11612,32 +11681,54 @@ function fmt(n) {{ return n.toLocaleString('ja-JP'); }}
 function recalc() {{
   let tot = 0, ct = 0;
   document.querySelectorAll('.prow').forEach(row => {{
-    const qty = parseInt(row.querySelector('.qty-input').value || '0', 10);
     const cost = parseInt(row.dataset.cost || '0', 10);
-    const line = qty * cost;
-    row.querySelector('.line-total').textContent = '¥' + fmt(line);
-    if (qty > 0) {{ tot += line; ct += qty; }}
+    let rowTotal = 0;
+    row.querySelectorAll('.qty-input').forEach(inp => {{
+      const qty = parseInt(inp.value || '0', 10);
+      if (qty > 0) {{ rowTotal += qty * cost; ct += qty; }}
+    }});
+    tot += rowTotal;
+    // size-grid rows have a single .line-total summing all cells; one-size has one per row.
+    const isGrid = row.querySelector('.cart.size-grid');
+    if (isGrid) {{
+      const t = row.querySelector('.line-total');
+      if (t) t.textContent = '¥' + fmt(rowTotal);
+    }} else {{
+      row.querySelectorAll('.qty-input').forEach(inp => {{
+        const cell = inp.closest('.cart');
+        const t = cell && cell.querySelector('.line-total');
+        const q = parseInt(inp.value || '0', 10);
+        if (t) t.textContent = '¥' + fmt(q * cost);
+      }});
+    }}
   }});
   barTotal.textContent = '¥' + fmt(tot);
   barCount.textContent = ct;
-  btn.disabled = ct === 0;
+  const empty = ct === 0;
+  btn.disabled = empty;
+  btn.setAttribute('aria-disabled', empty ? 'true' : 'false');
+  btn.textContent = empty ? '商品を 1 点以上選んでください' : 'サンプルまとめ買いへ進む →';
 }}
-document.querySelectorAll('.qty-input').forEach(i => i.addEventListener('input', recalc));
+document.querySelectorAll('.qty-input').forEach(i => {{
+  i.addEventListener('input', recalc);
+  i.addEventListener('change', recalc);
+}});
 document.getElementById('checkout-form').addEventListener('submit', async (e) => {{
   e.preventDefault();
   const items = [];
-  document.querySelectorAll('.prow').forEach(row => {{
-    const qty = parseInt(row.querySelector('.qty-input').value || '0', 10);
+  document.querySelectorAll('.qty-input').forEach(inp => {{
+    const qty = parseInt(inp.value || '0', 10);
     if (qty > 0) {{
       items.push({{
-        slug: row.dataset.slug,
-        size: row.querySelector('.size-input').value || 'OS',
+        slug: inp.dataset.slug,
+        size: inp.dataset.size || 'OS',
         qty: qty,
       }});
     }}
   }});
-  if (!items.length) {{ showToast('数量を1以上にしてください', true); return; }}
+  if (!items.length) {{ showToast('数量を 1 以上にしてください', true); return; }}
   btn.disabled = true;
+  btn.textContent = '決済画面を準備中…';
   try {{
     const r = await fetch('/api/' + PARTNER + '/sample-checkout', {{
       method: 'POST',
@@ -11645,13 +11736,23 @@ document.getElementById('checkout-form').addEventListener('submit', async (e) =>
       credentials: 'include',
       body: JSON.stringify({{ items: items, email: document.getElementById('email-input').value || null }}),
     }});
-    if (!r.ok) throw new Error('HTTP ' + r.status + ' — ' + (await r.text()).slice(0,200));
+    if (!r.ok) {{
+      // User-friendly error mapping; raw body only goes to console.
+      const raw = await r.text();
+      console.error('sample-checkout error', r.status, raw);
+      const msg = r.status === 401 ? 'ログイン状態が切れました。ページを再読み込みしてください。'
+                : r.status === 429 ? '混雑しています。30秒後に再度お試しください。'
+                : r.status >= 500 ? 'サーバ側で問題が起きました。時間をおいて再試行してください。'
+                : '入力内容を確認してください（' + r.status + '）';
+      throw new Error(msg);
+    }}
     const j = await r.json();
     if (j.url) {{ location.href = j.url; return; }}
-    throw new Error('no url in response');
+    throw new Error('決済画面の URL を受け取れませんでした');
   }} catch (e) {{
-    showToast('決済画面に進めませんでした: ' + e.message, true);
+    showToast(e.message, true);
     btn.disabled = false;
+    btn.textContent = 'サンプルまとめ買いへ進む →';
   }}
 }});
 recalc();
@@ -11660,18 +11761,14 @@ recalc();
         pretty = pretty_partner,
         pretty_em = pretty_partner,
         display_label = display_label,
-        cancel_path = cancel_path,
         tot_skus = tot_skus,
         tot_with_cost = tot_with_cost,
         min_sample_total_fmt = format_jpy(min_sample_total),
-        pv14_total = pv14_total,
-        uniq14_total = uniq14_total,
-        paid14_total = paid14_total,
-        chart_bars = chart_bars,
-        chart_labels = chart_labels,
+        chart_block = chart_block,
         cards = cards,
         partner_json = serde_json::to_string(partner).unwrap_or_else(|_| "\"\"".into()),
     );
+    let _ = cancel_path;
 
     let mut resp = axum::response::Html(body).into_response();
     if entered == pw {
