@@ -12662,6 +12662,266 @@ async fn jiuflow_sample_checkout(
     sample_checkout(db, "jiuflow", "/jiuflow/proposal", "MU×JiuFlow sample", headers, body).await
 }
 
+/// Inline HTML for /gi/01 — long string literal kept here to avoid Askama
+/// dependency for a one-off page. Self-contained <style>, no external assets
+/// besides photos hosted on lifestyle.wearmu.com/gi/01/.
+const GI_EDITION_01_HTML: &str = r##"<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU × JiuFlow Sponsored Gi — Edition 01 / 限定 30 着</title>
+<meta name="description" content="背中で 18 ブランドの物語を語る、世界初のスポンサード黒 BJJ 道着。CYBRIDGE × ENABLER 紋章、金糸 QR 刺繍、内ライニング sublimation。限定 30 着 / ¥98,000 先行予約受付中。">
+<meta property="og:title" content="MU × JiuFlow Sponsored Gi / Edition 01">
+<meta property="og:description" content="20 年の事業ネットワークを 1 着の黒道着に。限定 30 着、先行予約 ¥98,000。">
+<meta property="og:image" content="https://lifestyle.wearmu.com/gi/01/02_back.jpg">
+<meta property="og:url" content="https://wearmu.com/gi/01">
+<meta property="og:type" content="product">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="canonical" href="https://wearmu.com/gi/01">
+<style>
+:root{--bg:#0a0a0a;--bg-2:#111;--fg:#f5f5f0;--mute:#8a8a82;--gold:#e6c449;--gold-deep:#a67843;--line:rgba(255,255,255,0.08);--card:#121214;--card-b:rgba(255,255,255,0.06);--green:#22c55e}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.75;font-size:15px;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1200px;margin:0 auto;padding:0 24px}
+.muted{color:var(--mute)}
+b{font-weight:600}
+a{color:var(--gold)}
+nav.top{position:fixed;top:0;left:0;right:0;z-index:50;background:rgba(10,10,10,0.78);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+nav.top .row{display:flex;justify-content:space-between;align-items:center;padding:14px 24px;max-width:1200px;margin:0 auto}
+nav.top .logo{font-weight:700;letter-spacing:0.32em;font-size:13px}
+nav.top .links{display:flex;gap:22px;font-size:12px;letter-spacing:0.08em}
+nav.top .links a{color:var(--mute);text-decoration:none}
+nav.top .links a:hover{color:var(--fg)}
+.cta-mini{background:var(--gold);color:#000;padding:8px 16px;border-radius:2px;font-size:11px;letter-spacing:0.18em;font-weight:700;text-decoration:none;text-transform:uppercase}
+.hero{position:relative;min-height:96vh;display:flex;align-items:flex-end;padding:160px 0 80px;overflow:hidden}
+.hero-bg{position:absolute;inset:0;background:linear-gradient(180deg,rgba(10,10,10,0.4) 0%,rgba(10,10,10,0.55) 45%,rgba(10,10,10,0.95) 100%),url('https://lifestyle.wearmu.com/gi/01/02_back.jpg') center/cover no-repeat;z-index:0}
+.hero-inner{position:relative;z-index:1;width:100%}
+.eyebrow{display:inline-block;font-size:11px;letter-spacing:0.36em;text-transform:uppercase;color:var(--gold);margin-bottom:18px;font-weight:700}
+h1.hero-title{font-size:62px;font-weight:200;letter-spacing:0.01em;line-height:1.12;margin-bottom:24px}
+h1.hero-title em{color:var(--gold);font-style:normal;font-weight:400}
+.hero-lead{font-size:18px;line-height:1.85;color:#d4d4cc;max-width:720px;margin-bottom:36px;font-weight:300}
+.hero-meta{display:flex;gap:36px;flex-wrap:wrap;font-size:12px;color:var(--mute);letter-spacing:0.06em;margin-bottom:40px}
+.hero-meta b{color:var(--fg)}
+.hero-cta{display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+.btn-primary{background:var(--gold);color:#000;padding:18px 32px;border:none;border-radius:2px;font-size:13px;letter-spacing:0.22em;text-transform:uppercase;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:10px}
+.btn-primary:hover{opacity:0.88}
+.btn-primary .price{font-size:15px;letter-spacing:0.02em}
+.btn-ghost{color:var(--fg);padding:18px 24px;border:1px solid rgba(255,255,255,0.2);border-radius:2px;font-size:11px;letter-spacing:0.22em;text-transform:uppercase;text-decoration:none}
+.btn-ghost:hover{border-color:var(--gold);color:var(--gold)}
+section{padding:96px 0;border-top:1px solid var(--line)}
+.kicker{font-size:11px;letter-spacing:0.32em;text-transform:uppercase;color:var(--gold);margin-bottom:16px;font-weight:700}
+h2{font-size:38px;font-weight:200;line-height:1.25;margin-bottom:18px;letter-spacing:0.01em}
+h2 em{color:var(--gold);font-style:normal;font-weight:400}
+.section-lead{font-size:16px;line-height:1.95;color:#c4c4bc;max-width:760px;margin-bottom:48px}
+.section-lead b{color:var(--fg)}
+.story{display:grid;grid-template-columns:1fr 1fr;gap:60px;align-items:center}
+.story p{font-size:15.5px;line-height:2;color:#c4c4bc;margin-bottom:18px}
+.story p b{color:var(--fg);font-weight:600}
+.story-img img{width:100%;border-radius:4px;border:1px solid var(--line)}
+.tier-grid{display:grid;grid-template-columns:1fr 1fr;gap:48px}
+.tier{background:var(--card);border:1px solid var(--card-b);border-left:2px solid var(--gold);padding:0;border-radius:4px;overflow:hidden;display:flex;flex-direction:column}
+.tier img{width:100%;height:340px;object-fit:cover;display:block}
+.tier .body{padding:28px 32px 32px}
+.tier .num{font-size:10px;letter-spacing:0.4em;color:var(--gold);font-weight:700;margin-bottom:6px}
+.tier h3{font-size:22px;font-weight:300;letter-spacing:0.02em;margin-bottom:10px;line-height:1.3}
+.tier h3 b{color:var(--gold);font-weight:600}
+.tier p{font-size:14px;line-height:1.95;color:#b4b4ac}
+.tier p b{color:var(--fg)}
+.sponsors{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+.sp{background:var(--card);border:1px solid var(--card-b);padding:22px 22px 20px;border-radius:4px;display:flex;flex-direction:column;gap:8px;transition:border-color 0.15s;text-decoration:none;color:inherit}
+.sp:hover{border-color:var(--gold)}
+.sp .role{font-size:9px;letter-spacing:0.3em;color:var(--gold);font-weight:700;text-transform:uppercase}
+.sp .name{font-size:17px;font-weight:500;letter-spacing:0.01em;color:var(--fg);line-height:1.3}
+.sp .desc{font-size:12px;color:var(--mute);line-height:1.7;flex:1}
+.sp.host{border-left:2px solid var(--gold)}
+.sp.main{border-left:2px solid #6aa8e0}
+.spec{display:grid;grid-template-columns:1fr 2fr;gap:0;border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.spec dt,.spec dd{padding:18px 22px;border-bottom:1px solid var(--line);font-size:14px}
+.spec dt{color:var(--mute);font-size:11px;letter-spacing:0.16em;text-transform:uppercase;background:var(--card)}
+.spec dd{color:var(--fg)}
+.spec dt:last-of-type,.spec dd:last-of-type{border-bottom:0}
+.preorder{background:linear-gradient(180deg,var(--card) 0%,var(--bg-2) 100%);border:1px solid var(--line);border-radius:6px;padding:60px 48px;text-align:center}
+.preorder h2{margin-bottom:14px}
+.preorder .price-line{font-size:48px;font-weight:200;color:var(--gold);margin:22px 0 6px;letter-spacing:0.02em}
+.preorder .price-line small{font-size:13px;color:var(--mute);font-weight:400;letter-spacing:0.12em;margin-left:10px}
+.preorder .stock{font-size:11px;letter-spacing:0.28em;text-transform:uppercase;color:var(--mute);margin-bottom:32px}
+.size-pick{display:flex;justify-content:center;gap:10px;margin:24px 0 30px;flex-wrap:wrap}
+.size-pick label{cursor:pointer;padding:10px 18px;border:1px solid var(--line);border-radius:2px;font-size:12px;letter-spacing:0.18em;color:var(--mute);user-select:none}
+.size-pick input{display:none}
+.size-pick label:has(input:checked){border-color:var(--gold);background:rgba(230,196,73,0.06);color:var(--gold)}
+.note-field{width:100%;max-width:520px;margin:0 auto 24px;display:block;background:#0a0a0a;color:var(--fg);border:1px solid var(--line);padding:12px 16px;font-family:inherit;font-size:13px;border-radius:2px;resize:vertical;min-height:60px}
+.note-field:focus{outline:none;border-color:var(--gold)}
+.disclaimers{font-size:11.5px;color:var(--mute);line-height:1.95;margin-top:24px;text-align:left;max-width:680px;margin-left:auto;margin-right:auto}
+footer{padding:60px 0 40px;border-top:1px solid var(--line);color:var(--mute);font-size:12px;letter-spacing:0.06em;text-align:center}
+footer a{color:var(--mute);text-decoration:underline}
+@media(max-width:880px){h1.hero-title{font-size:38px}.story{grid-template-columns:1fr;gap:32px}.tier-grid{grid-template-columns:1fr}.spec{grid-template-columns:1fr}.spec dt,.spec dd{padding:14px 18px;border-bottom:0}.spec dt{border-bottom:1px solid var(--line);padding-bottom:6px}.spec dd{padding-top:0;padding-bottom:16px;border-bottom:1px solid var(--line)}.preorder{padding:40px 24px}.preorder .price-line{font-size:36px}section{padding:64px 0}nav.top .links{display:none}}
+</style>
+</head>
+<body>
+<nav class="top"><div class="row">
+  <div class="logo">MU</div>
+  <div class="links">
+    <a href="#story">物語</a>
+    <a href="#design">デザイン</a>
+    <a href="#sponsors">18 ブランド</a>
+    <a href="#spec">仕様</a>
+    <a href="#preorder" class="cta-mini">先行予約</a>
+  </div>
+</div></nav>
+<section class="hero">
+  <div class="hero-bg"></div>
+  <div class="wrap hero-inner">
+    <div class="eyebrow">MU × JiuFlow · Edition 01 · Sponsored Gi</div>
+    <h1 class="hero-title">背中で <em>20 年の事業</em> を編む、<br>世界初のスポンサード <em>黒帯柔術衣</em>。</h1>
+    <p class="hero-lead">18 ブランドが胸・袖・裾・背中に刺繍され、金糸 QR コードと NFC が <b>物理刺繍とデジタル ネットワーク</b> を結ぶ。CYBRIDGE (1995) から ENABLER (2026) まで、濱田優貴が関わった事業の系譜を 1 着の道着に編み込んだ heritage piece。</p>
+    <div class="hero-meta">
+      <span>Edition <b>01</b></span>
+      <span>限定 <b>30 着</b></span>
+      <span>素材 <b>黒パールウィーブ 350-450 GSM</b></span>
+      <span>納期 <b>注文後 8-12 週</b></span>
+    </div>
+    <div class="hero-cta">
+      <a href="#preorder" class="btn-primary">先行予約 <span class="price">¥98,000</span></a>
+      <a href="#story" class="btn-ghost">物語を読む →</a>
+    </div>
+  </div>
+</section>
+<section id="story"><div class="wrap">
+  <div class="kicker">Why this exists</div>
+  <h2>1 着の道着に <em>18 の事業</em> を縫う、という挑戦。</h2>
+  <div class="story">
+    <div>
+      <p>柔術衣 (gi) は、組み手の <b>引き合う</b> 衣装だ。掴まれる場所は決まっている — 襟、袖、裾、背中。そこに <b>18 のブランド</b> を刺繍し、QR で接続したとき、道着は単なる衣ではなくなる。</p>
+      <p>1995 年、濱田優貴は <b>CYBRIDGE</b> を創業した。以来 30 年、Mercari、Enabler、SOLUNA、Pasha、Koe、KAGI、ZAMNA HAWAII、焼肉古今 — 業界を横断する事業を編んできた。</p>
+      <p>この道着は、その <b>系譜の地図</b> である。着用者が稽古で背中を晒すたび、18 ブランドの紋章が畳に擦れる。スパーリングの相手が QR を読めば、スポンサーの宇宙へ通じる。</p>
+      <p>「スポンサード ギ」という概念自体、世界で前例がない。F1 のレーシングスーツ、NASCAR のドライバーシャツ — それらの武道版を、職人の刺繍と金糸で、日本で作り上げた。</p>
+      <p class="muted" style="font-size:13px;margin-top:24px">Edition 01 は <b>濱田優貴本人</b> が試合・稽古で着用するモデル。replicas 30 着は同じ仕様で再現し、ハンドナンバリング後に発送。</p>
+    </div>
+    <div class="story-img"><img src="https://lifestyle.wearmu.com/gi/01/01_front.jpg" alt="MU x JiuFlow Sponsored Gi front" loading="lazy"></div>
+  </div>
+</div></section>
+<section id="design"><div class="wrap">
+  <div class="kicker">Design / 4 layers</div>
+  <h2>表に <em>13 箇所の刺繍</em>。裏に <em>無限のスポンサー</em>。</h2>
+  <p class="section-lead">物理刺繍は厳選した 13 箇所のみ。<b>NASCAR にならない美学</b> を保ちながら、背中の QR・襟内の NFC・裏地のサブリメーションで <b>残り全社を 3 重に表現</b> する。</p>
+  <div class="tier-grid">
+    <div class="tier"><img src="https://lifestyle.wearmu.com/gi/01/03_detail_crest.jpg" alt="crest"><div class="body">
+      <div class="num">TIER 01 — CREST</div>
+      <h3><b>CYBRIDGE × ENABLER</b> 紋章</h3>
+      <p>背中 <b>24×12cm</b>、白糸刺繍。月桂樹の冠と二振りの刀で「×」を構成。盾の中心に CYBRIDGE / ENABLER、下に EST. HAMADA YUKI / 濱田優貴。<b>創業の系譜を 1 つの紋章に統合</b> した、本作の心臓部。</p>
+    </div></div>
+    <div class="tier"><img src="https://lifestyle.wearmu.com/gi/01/04_detail_qr.jpg" alt="qr"><div class="body">
+      <div class="num">TIER 02 — QR</div>
+      <h3>金糸刺繍 <b>QR コード</b></h3>
+      <p>背中下 <b>10×10cm</b>、Old Gold 糸で刺繍した QR コード。角の位置決めマーカーには <b>M / J / E / C</b> の頭文字を埋込み。読み取るとこのページに着地し、<b>ENAI Token +1 配布</b>。BJJ 業界初の「読める衣装」。</p>
+    </div></div>
+    <div class="tier"><img src="https://lifestyle.wearmu.com/gi/01/01_front.jpg" alt="embroidery"><div class="body">
+      <div class="num">TIER 03 — EMBROIDERY</div>
+      <h3>胸 / 袖 / 裾 <b>13 箇所</b> の精密刺繍</h3>
+      <p>左胸 MU、右胸 JiuFlow、左袖 4 連 (SOLUNA / Koe / KAGI / PASHA)、右袖 4 連 (NOT A HOTEL / FiNANCiE / NEWT / 焼肉古今)、両裾 ATSUME・GIFTMALL・VUILD・NESTING、襟内 CASTER。<b>各 6〜8cm 角、白糸主体 + 焼肉古今のみ Old Gold</b> でアクセント。</p>
+    </div></div>
+    <div class="tier"><img src="https://lifestyle.wearmu.com/gi/01/02_back.jpg" alt="lining"><div class="body">
+      <div class="num">TIER 04 — LINING + NFC</div>
+      <h3>裏地 <b>sublimation</b> + 襟裏 <b>NFC</b></h3>
+      <p>ジャケット内側裏地に <b>18 ブランド全社のロゴ総柄</b> を sublimation 印刷。脱いだ瞬間に現れる隠し装飾。襟裏には NFC タグを縫込み、<b>スマホをかざすだけ</b> で QR と同じページが起動。Shoyoroll の lining 文化を引き継ぐ、現代の贅沢。</p>
+    </div></div>
+  </div>
+</div></section>
+<section id="sponsors"><div class="wrap">
+  <div class="kicker">18 sponsors</div>
+  <h2>背中に縫われた <em>事業の地図</em>。</h2>
+  <p class="section-lead">ホスト 2 / 創業 + 運営 2 / 主力 8 / パートナー 6 — 計 <b>18 ブランド</b>。各社サイトへリンクします。</p>
+  <div class="sponsors">
+    <a class="sp host" href="https://wearmu.com" target="_blank" rel="noopener"><span class="role">Host</span><span class="name">MU</span><span class="desc">この道着のホスト。気象 × AI による 1/1 デザインドロップ。背中の物語を編集する役。</span></a>
+    <a class="sp host" href="https://jiuflow.com" target="_blank" rel="noopener"><span class="role">Host</span><span class="name">JiuFlow</span><span class="desc">柔術アスリート向けプラットフォーム。本道着の協賛会員制度の運営母体。</span></a>
+    <a class="sp main" href="https://enablerdao.com" target="_blank" rel="noopener"><span class="role">Operator</span><span class="name">ENABLER (株式会社イネブラ)</span><span class="desc">本道着プロジェクトの発行体。AI / Web3 / DePIN を横断する研究開発持株会社。</span></a>
+    <a class="sp main" href="https://cybridge.jp" target="_blank" rel="noopener"><span class="role">Origin · Founded 1995</span><span class="name">CYBRIDGE</span><span class="desc">濱田優貴の創業会社。30 年に渡り Web 業界を作った原点。背中紋章の左半分。</span></a>
+    <a class="sp" href="https://solun.art" target="_blank" rel="noopener"><span class="role">Sponsor · Energy</span><span class="name">SOLUNA</span><span class="desc">音楽・建築・エネルギーの地域分散ネットワーク。弟子屈町を拠点とする。</span></a>
+    <a class="sp" href="https://koe.live" target="_blank" rel="noopener"><span class="role">Sponsor · Voice</span><span class="name">Koe</span><span class="desc">5 form factor の音声入力デバイス + Mac/Win クライアント。Soluna P2P 経由で動く。</span></a>
+    <a class="sp" href="https://kagi.ai" target="_blank" rel="noopener"><span class="role">Sponsor · Home</span><span class="name">KAGI</span><span class="desc">スマートホーム / 鍵管理アプリ。iOS + Mac Catalyst で動く家の OS。</span></a>
+    <a class="sp" href="https://pasha.run" target="_blank" rel="noopener"><span class="role">Sponsor · Receipts</span><span class="name">PASHA</span><span class="desc">レシート OCR で経費を自動化する個人事業主向けプロダクト。</span></a>
+    <a class="sp" href="https://zamna.com" target="_blank" rel="noopener"><span class="role">Sponsor · Festival</span><span class="name">ZAMNA HAWAII</span><span class="desc">2026 年 1 月 SOLUNA FEST と統合される、ハワイの音楽 / 儀式フェス。</span></a>
+    <a class="sp" href="https://notahotel.com" target="_blank" rel="noopener"><span class="role">Sponsor · Hospitality</span><span class="name">NOT A HOTEL</span><span class="desc">分散別荘 / 会員制宿泊プラットフォーム。新しい所有の形。</span></a>
+    <a class="sp" href="https://reiwatravel.co.jp" target="_blank" rel="noopener"><span class="role">Sponsor · Travel</span><span class="name">令和トラベル</span><span class="desc">海外旅行を再発明するスタートアップ。NEWT の運営会社。</span></a>
+    <a class="sp" href="https://www.newt.net" target="_blank" rel="noopener"><span class="role">Sponsor · Travel</span><span class="name">NEWT</span><span class="desc">海外旅行アプリ。令和トラベル発、世代を変える OTA。</span></a>
+    <a class="sp" href="https://atsume.io" target="_blank" rel="noopener"><span class="role">Sponsor · Founder Relay</span><span class="name">ATSUME</span><span class="desc">MU 4/7 Founder Relay 第 1 回受賞者 Kenny の会社。創業者の連鎖を支援。</span></a>
+    <a class="sp" href="https://financie.jp" target="_blank" rel="noopener"><span class="role">Sponsor · Fan Token</span><span class="name">FiNANCiE (株式会社フィナンシェ)</span><span class="desc">国光宏尚率いるファントークン プラットフォーム。BJJ アスリートの新しい応援。</span></a>
+    <a class="sp" href="https://kokon.tokyo" target="_blank" rel="noopener"><span class="role">Sponsor · Yakiniku · 金糸刺繍</span><span class="name">焼肉古今 (KOKON)</span><span class="desc">西麻布の Michelin 級焼肉。本道着で唯一 Old Gold 糸で刺繍される名誉枠。</span></a>
+    <a class="sp" href="https://caster.co.jp" target="_blank" rel="noopener"><span class="role">Sponsor · Remote Ops</span><span class="name">CASTER (株式会社キャスター)</span><span class="desc">日本最大のリモートワーカー企業。襟内側に刺繍 — 着用者だけが見える。</span></a>
+    <a class="sp" href="https://vuild.co.jp" target="_blank" rel="noopener"><span class="role">Sponsor · Architecture</span><span class="name">VUILD</span><span class="desc">デジタル木造建築のパイオニア。Shopbot で家を作る建築 OS。</span></a>
+    <a class="sp" href="https://nesting.me" target="_blank" rel="noopener"><span class="role">Sponsor · Living</span><span class="name">NESTING</span><span class="desc">VUILD 発、住み始めから設計が始まる家。</span></a>
+    <a class="sp" href="https://giftmall.co.jp" target="_blank" rel="noopener"><span class="role">Sponsor · Gift</span><span class="name">ギフトモール</span><span class="desc">日本最大級のギフト EC。記念日の文化を作るプラットフォーム。</span></a>
+  </div>
+</div></section>
+<section id="spec"><div class="wrap">
+  <div class="kicker">Specification</div>
+  <h2>仕様 <em>そのまま量産には移さない</em>、heritage piece。</h2>
+  <dl class="spec">
+    <dt>Base</dt><dd>黒 BJJ 道着 (上下) — パールウィーブ 350-450 GSM</dd>
+    <dt>本体色</dt><dd>マットブラック (墨黒)</dd>
+    <dt>サイズ展開</dt><dd>A1 / A2 / A3 / A4 (注文時に選択)</dd>
+    <dt>刺繍 数</dt><dd>表 13 箇所 (主催 2 + メイン 1 + 通常 10) + 裏 (内ライニング 18 全社)</dd>
+    <dt>糸色</dt><dd>白 (主体) + Old Gold (#A67843) 焼肉古今・QR・帯エンドの 3 箇所</dd>
+    <dt>QR コード</dt><dd>10×10cm Old Gold 糸刺繍。corner markers に M / J / E / C 埋込み。読取 → https://wearmu.com/gi/01</dd>
+    <dt>NFC</dt><dd>襟裏に 5×5mm タグ縫込み。iPhone Wallet / Android で読取可</dd>
+    <dt>裏地</dt><dd>sublimation 印刷 — 18 ブランド ロゴ 総柄パターン</dd>
+    <dt>製造</dt><dd>ISAMI 早稲田 (日本) + Sialkot 並行見積中。最終決定は注文締切後</dd>
+    <dt>納期</dt><dd>注文確定後 <b>8〜12 週間</b>。順次出荷</dd>
+    <dt>Edition</dt><dd>限定 <b>30 着</b>。ハンドナンバリング (01/30 〜 30/30)</dd>
+    <dt>Price</dt><dd>¥98,000 (税込、配送料別)</dd>
+    <dt>規格</dt><dd>可能な範囲で <b>IBJJF 公式試合規定</b> に準拠</dd>
+  </dl>
+</div></section>
+<section id="preorder"><div class="wrap">
+  <div class="preorder">
+    <div class="kicker">Pre-order</div>
+    <h2>先行予約 — <em>限定 30 着</em>。</h2>
+    <p class="section-lead" style="margin-left:auto;margin-right:auto;text-align:center">Stripe 決済後、製造ロットに加わります。納期 8〜12 週。<br>ハンドナンバリング・出荷準備でき次第ご連絡。</p>
+    <div class="size-pick">
+      <label><input type="radio" name="size" value="A1"><span>A1</span></label>
+      <label><input type="radio" name="size" value="A2" checked><span>A2 (推奨)</span></label>
+      <label><input type="radio" name="size" value="A3"><span>A3</span></label>
+      <label><input type="radio" name="size" value="A4"><span>A4</span></label>
+    </div>
+    <textarea class="note-field" id="gi-note" placeholder="(任意) 着用者名のローマ字刺繍 / 裾内側 / その他のご要望"></textarea>
+    <div class="price-line">¥98,000 <small>税込 / 配送料別</small></div>
+    <div class="stock">在庫 <b style="color:var(--gold)">30/30</b> · 残り 30 着</div>
+    <button id="gi-buy" class="btn-primary" style="padding:20px 48px;font-size:14px">先行予約する → Stripe で決済</button>
+    <div class="disclaimers">
+      <p>※ 本道着の刺繍デザインは、各スポンサーの正式許諾を取得次第確定します。許諾が得られないブランドがあった場合、近似ブランドへの差替えまたは <b>全額返金</b> をお選びいただけます。</p>
+      <p>※ 配送は日本国内のみ。海外配送ご希望の方は <a href="mailto:mail@yukihamada.jp">mail@yukihamada.jp</a> までご相談ください。</p>
+      <p>※ 製造ロットは 30 着まとめて発注のため、<b>すべての注文締切後</b> に製造開始 (見込み 2026 年 7 月)。早期完売の可能性あり。</p>
+    </div>
+  </div>
+</div></section>
+<footer><div class="wrap">
+  <p>Designed &amp; sponsored by <b style="color:var(--fg)">株式会社イネブラ (Enabler Inc.)</b><br>
+  Worn by <b style="color:var(--fg)">濱田優貴</b> · Made in collaboration with <b style="color:var(--fg)">ISAMI 早稲田</b><br>
+  <a href="https://wearmu.com">wearmu.com</a> · <a href="https://jiuflow.com">jiuflow.com</a> · <a href="mailto:mail@yukihamada.jp">mail@yukihamada.jp</a></p>
+</div></footer>
+<script>
+(function(){
+  var btn=document.getElementById('gi-buy');if(!btn)return;
+  btn.addEventListener('click',async function(){
+    btn.disabled=true;btn.textContent='決済画面に遷移中…';
+    var size=(document.querySelector('input[name="size"]:checked')||{}).value||'A2';
+    var note=(document.getElementById('gi-note')||{}).value||'';
+    try{
+      var r=await fetch('/api/gi/01/checkout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({size:size,note:note})});
+      var j=await r.json();
+      if(j&&j.url){window.location.href=j.url;return;}
+      throw new Error(j&&j.error||'checkout failed');
+    }catch(e){console.error(e);btn.disabled=false;btn.textContent='もう一度試す';alert('決済の準備でエラーが発生しました。お時間を空けて再度お試しください。');}
+  });
+  if(location.search.indexOf('paid=ok')>-1){alert('ご予約ありがとうございます！ 製造開始の連絡を順次お送りします。');history.replaceState({},'','/gi/01');}
+})();
+</script>
+</body>
+</html>"##;
+
 /// GET /gi/:id — public landing page for a limited-edition sponsored Gi.
 /// QR-code target from the physical gi itself. Storytelling + 18 sponsors
 /// + pre-order CTA. v1 = "01" edition only (Hamada-worn, 30 replicas).
@@ -12673,7 +12933,6 @@ async fn show_gi_edition_page(
     if !matches!(edition.as_str(), "1" | "01") {
         return (StatusCode::NOT_FOUND, "edition not found").into_response();
     }
-    const GI_EDITION_01_HTML: &str = "<!doctype html><html><body><p>GI Edition 01 — coming soon.</p></body></html>";
     let html = GI_EDITION_01_HTML;
     let mut resp = Html(html).into_response();
     resp.headers_mut().insert(
@@ -18748,6 +19007,8 @@ async fn main() {
         .route("/sweep/proposal", get(show_sweep_proposal_page))
         .route("/kokon/proposal", get(show_kokon_proposal_page))
         .route("/jiuflow/proposal", get(show_jiuflow_proposal_page))
+        .route("/gi/:id", get(show_gi_edition_page))
+        .route("/api/gi/:id/checkout", post(gi_edition_checkout))
         .route("/collab/apply", get(show_collab_apply_page))
         .route("/api/collab/apply", post(api_collab_apply))
         .route("/collab/result/:token", get(show_collab_result_page))
