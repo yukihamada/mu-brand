@@ -3641,14 +3641,13 @@ Gemini が書く運営日誌
 </section>
 <ul class="list">"#);
         for (slug, title, date) in &posts {
-            // date is YYYY-MM-DD; format as "YYYY.MM.DD"
-            let date_disp = date.replace('-', ".");
+            // ISO 8601 (YYYY-MM-DD) — keep machine-tone consistent across surfaces.
             s.push_str(&format!(
                 r#"<li>
 <div class="date">{date} · AI auto-blog</div>
 <h2><a href="/blog/auto/{slug}">{title}</a></h2>
 </li>"#,
-                date = html_escape(&date_disp),
+                date = html_escape(date),
                 slug = html_attr_escape(slug),
                 title = html_escape(title),
             ));
@@ -6699,12 +6698,15 @@ fn blog_prompt(stats: &serde_json::Value) -> String {
 - 自己卑下や絵文字過剰は禁止
 - 末尾に「— 自動生成 by Gemini 2.5 Pro」と明記
 
-禁止表現 (vision_drift 検出済):
-- 主観的形容詞のみで状態を述べる: "進化と洞察" "華やかに" "革命的" 等 → データ志向の語に置換
+禁止表現 (vision_drift + self_evolve 検出済):
+- 主観的形容詞のみで状態を述べる: "進化" "洞察" "成果" "課題" "華やかに" "革命的" → データ志向の語 (ログ / データ / パフォーマンス / 不整合 / 差分) に置換
 - 季節サイクル示唆: "今シーズン" "春夏新作" "今期トレンド" 等 → 日付/数字 stamp で表現
 - 「すごい」「驚き」感嘆語の連発は禁止
 
-タイトルは 28 字以内、本文 1 行目に H1 として `# タイトル` を置いてください。"#,
+タイトル要件 (machine-tone を保つため):
+- 28 字以内、本文 1 行目に H1 として `# タイトル` を置く
+- 必ず ISO 8601 日付 (YYYY-MM-DD) を含める。`.` 区切り（例: 2026.05.12）や和暦 (2026年5月12日) は禁止
+- 主観形容詞 (進化 / 洞察 / 成果 / 課題) だけでタイトルを構成しない。最低 1 つは事実語 (ログ / 数字 / イベント名 / コード変更) を含める"#,
         stats = stats)
 }
 
