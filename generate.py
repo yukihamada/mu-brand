@@ -191,8 +191,23 @@ def make_transparent_bg(image_bytes: bytes, threshold: int = 35) -> bytes:
     return buf.getvalue()
 
 def embed_serial_number(image_bytes: bytes, brand: str, drop_num: int, quantity: int) -> bytes:
-    """Serial number (bottom-right) + QR code (bottom-left).
-    QR links to verify page — survives print and photograph."""
+    """Stamp a small serial number and verification QR onto the bottom edge
+    of the T-shirt mockup, *outside* the chest-graphic safe zone.
+
+    Layout (top-down T-shirt photo, ~4:3 canvas):
+      - The chest graphic occupies roughly the upper-middle of the shirt
+        (centre, ~15–35% of the shirt width, top half of canvas).
+      - We anchor QR + serial to the very bottom strip of the canvas
+        (below the visible shirt hem, on the surrounding "table" area).
+      - No solid-fill backplates — QR is rendered as transparent + dark
+        modules only; serial number is drawn directly with a subtle
+        shadow for legibility on either a light- or dark-colored table.
+
+    Bias 2026-05-13: previously the serial sat at bottom-RIGHT with a
+    semi-opaque black box, which collided with chest graphics that
+    extended into the lower-right shirt area. The new layout places
+    both elements far below the shirt body and removes the backplate.
+    """
     import qrcode as _qrcode
     from qrcode.image.styledpil import StyledPilImage
     from qrcode.image.styles.moduledrawers.pil import SquareModuleDrawer
@@ -214,8 +229,6 @@ def embed_serial_number(image_bytes: bytes, brand: str, drop_num: int, quantity:
         line1 = f"MUON {now.strftime('%Y.%m.%d')}"
         line2 = f"1 of {quantity} · {now.strftime('%H:%M')} JST"
     elif brand == "ma":
-        # MA is now a weekly 7-day auction (was monthly until 2026-05-11).
-        # Stamp with ISO week so each MA is uniquely tagged: "MA 2026.W19".
         iso = now.isocalendar()
         line1 = f"MA {iso.year}.W{iso.week:02d}"
         line2 = f"1 of 1 · {now.strftime('%Y.%m.%d')} · 7-day auction"
@@ -235,23 +248,17 @@ def embed_serial_number(image_bytes: bytes, brand: str, drop_num: int, quantity:
 
     pad = int(w * 0.025)
 
-    # ── Serial text, bottom-right ──────────────────────────
-    bb1 = draw.textbbox((0, 0), line1, font=font)
-    bb2 = draw.textbbox((0, 0), line2, font=font2)
-    tw  = max(bb1[2] - bb1[0], bb2[2] - bb2[0])
-    th  = (bb1[3] - bb1[1]) + 4 + (bb2[3] - bb2[1])
-    x = w - tw - pad
-    y = h - th - pad
-    draw.rectangle([x - 6, y - 4, x + tw + 6, y + th + 6], fill=(0, 0, 0, 130))
-    draw.text((x, y),                        line1, font=font,  fill=(230, 230, 230, 210))
-    draw.text((x, y + bb1[3] - bb1[1] + 4), line2, font=font2, fill=(180, 180, 180, 170))
+    # Bottom strip lives in the lowest 10% of the canvas — the
+    # Gemini prompt places the shirt within the upper ~85%, so this
+    # area is the "table" / margin and never overlaps the chest design.
+    bottom_strip_top = int(h * 0.92)
 
-    # ── QR code, bottom-left — print+photograph resistant ──
+    # ── QR (bottom-left of canvas, in the safe bottom strip) ──
     verify_url = f"https://wearmu.com/v/{brand}/{drop_num:04d}"
     qr = _qrcode.QRCode(
         version=3,
         error_correction=_qrcode.constants.ERROR_CORRECT_H,
-        box_size=max(3, h // 400),
+        box_size=max(3, h // 480),  # slightly smaller to fit safe strip
         border=2,
     )
     qr.add_data(verify_url)
@@ -259,11 +266,41 @@ def embed_serial_number(image_bytes: bytes, brand: str, drop_num: int, quantity:
     qr_img = qr.make_image(
         image_factory=StyledPilImage,
         module_drawer=SquareModuleDrawer(),
+        # Fully transparent background; only the dark modules carry pixels.
+        # When printed/composited the shirt or table colour shows through.
         back_color=(0, 0, 0, 0),
-        fill_color=(220, 220, 220),
+        # Mid-grey modules so the QR reads on both light and dark surfaces.
+        fill_color=(180, 180, 180),
     ).convert("RGBA")
     qw, qh = qr_img.size
-    overlay.paste(qr_img, (pad, h - qh - pad), qr_img)
+    qr_x = pad
+    qr_y = h - qh - pad
+    # Ensure QR is fully inside the bottom safe strip; if it would intrude
+    # into the shirt body, shrink it.
+    if qr_y < bottom_strip_top:
+        scale = max(0.6, (h - bottom_strip_top - pad) / qh)
+        new_qh = max(48, int(qh * scale))
+        new_qw = max(48, int(qw * scale))
+        qr_img = qr_img.resize((new_qw, new_qh), Image.LANCZOS)
+        qw, qh = new_qw, new_qh
+        qr_y = h - qh - pad
+    overlay.paste(qr_img, (qr_x, qr_y), qr_img)
+
+    # ── Serial text (bottom-right of canvas, same safe strip) ──
+    bb1 = draw.textbbox((0, 0), line1, font=font)
+    bb2 = draw.textbbox((0, 0), line2, font=font2)
+    tw  = max(bb1[2] - bb1[0], bb2[2] - bb2[0])
+    th  = (bb1[3] - bb1[1]) + 4 + (bb2[3] - bb2[1])
+    sx = w - tw - pad
+    sy = h - th - pad
+    # No solid backplate — use a subtle dark shadow + light fill so the
+    # text reads on either substrate colour without painting a rectangle.
+    for dx, dy in ((1, 1), (-1, 1), (1, -1), (-1, -1)):
+        draw.text((sx + dx, sy + dy), line1, font=font, fill=(0, 0, 0, 110))
+        draw.text((sx + dx, sy + bb1[3] - bb1[1] + 4 + dy),
+                  line2, font=font2, fill=(0, 0, 0, 90))
+    draw.text((sx, sy),                       line1, font=font,  fill=(235, 235, 235, 230))
+    draw.text((sx, sy + bb1[3] - bb1[1] + 4), line2, font=font2, fill=(195, 195, 195, 195))
 
     out = Image.alpha_composite(rgba, overlay)
     buf = io.BytesIO()

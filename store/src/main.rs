@@ -1646,6 +1646,666 @@ async fn admin_bounty_triage(
         .body(axum::body::Body::empty()).unwrap()
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Bug-bounty reward redemption.
+//
+// Flow:
+//   1. Admin triages a bounty → POST /admin/bounty/:id/issue-reward
+//      with cash_amount_jpy + notes. Server creates a bounty_rewards row,
+//      returns a one-time claim URL.
+//   2. Reporter visits  /bounty/claim/:token  and chooses:
+//        A) existing MU drop (MUGEN / MUON / MU) — limited to in-stock
+//        B) bounty-original "MU Security Researcher" tee
+//      + size + shipping. Token consumed on claim, expires after 30 days.
+//   3. POST /api/bounty/claim/:token kicks off Printful auto-fulfillment.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Static asset for the "MU Security Researcher" bounty-original tee.
+/// Override via SECURITY_TEE_DESIGN_URL env when the final artwork ships.
+const BOUNTY_ORIGINAL_TEE_DEFAULT: &str =
+    "https://lifestyle.wearmu.com/bounty/security-researcher-2026.png";
+
+fn bounty_variant_id_for_size(size: &str) -> u64 {
+    match size {
+        "S"  => 4016,
+        "M"  => 4017,
+        "L"  => 4018,
+        "XL" => 4019,
+        "XXL" | "2XL" => 4020,
+        _    => 4017,
+    }
+}
+
+fn bounty_original_tee_design_url() -> String {
+    env::var("SECURITY_TEE_DESIGN_URL").unwrap_or_else(|_| BOUNTY_ORIGINAL_TEE_DEFAULT.into())
+}
+
+/// POST /admin/bounty/:id/issue-reward — admin endpoint.
+/// Form fields: cash_amount_jpy (i64), notes (string, optional).
+/// Returns JSON `{ ok, token, claim_url, expires_at }`. Idempotent: if a
+/// non-claimed, non-expired reward already exists for this bounty_id, returns
+/// that one instead of creating a duplicate.
+async fn admin_bounty_issue_reward(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    axum::extract::Form(form): axum::extract::Form<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/bounty/issue-reward").await { return r; }
+
+    let cash_amount_jpy: i64 = form.get("cash_amount_jpy")
+        .and_then(|s| s.parse().ok()).unwrap_or(0).max(0);
+    let notes = form.get("notes").cloned().unwrap_or_default().chars().take(2000).collect::<String>();
+
+    let exists: bool = {
+        let conn = db.lock().unwrap();
+        conn.query_row("SELECT 1 FROM bounty_submissions WHERE id=?",
+            params![id], |_| Ok(true)).unwrap_or(false)
+    };
+    if !exists {
+        return (StatusCode::NOT_FOUND, "bounty submission not found").into_response();
+    }
+
+    let now_int: i64 = chrono_now().parse().unwrap_or(0);
+    let existing: Option<(String, i64)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT token, CAST(expires_at AS INTEGER) FROM bounty_rewards
+             WHERE bounty_id=? AND status='issued'
+               AND CAST(expires_at AS INTEGER) > ?
+             ORDER BY id DESC LIMIT 1",
+            params![id, now_int],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+        ).ok()
+    };
+
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    if let Some((token, expires_at)) = existing {
+        return Json(serde_json::json!({
+            "ok": true,
+            "already_issued": true,
+            "token": token,
+            "claim_url": format!("{}/bounty/claim/{}", base_url, token),
+            "expires_at": expires_at,
+        })).into_response();
+    }
+
+    let token = format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple(),
+    );
+    let expires_at = now_int + 30 * 86_400;
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO bounty_rewards
+                (bounty_id, token, cash_amount_jpy, notes, status, issued_at, expires_at)
+             VALUES (?,?,?,?, 'issued', ?, ?)",
+            params![id, token, cash_amount_jpy, notes, now_int.to_string(), expires_at.to_string()],
+        );
+    }
+    Json(serde_json::json!({
+        "ok": true,
+        "already_issued": false,
+        "token": token,
+        "claim_url": format!("{}/bounty/claim/{}", base_url, token),
+        "cash_amount_jpy": cash_amount_jpy,
+        "expires_at": expires_at,
+    })).into_response()
+}
+
+/// GET /bounty/claim/:token — public claim page.
+async fn show_bounty_claim_page(
+    State(db): State<Db>,
+    axum::extract::Path(token): axum::extract::Path<String>,
+) -> Response {
+    if token.len() < 32 || token.len() > 128 || !token.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return bounty_claim_error_page("無効なリンクです", 404);
+    }
+
+    let now_int: i64 = chrono_now().parse().unwrap_or(0);
+    struct Row {
+        bounty_id: i64, cash_amount_jpy: i64, status: String,
+        expires_at: i64, claimed_at: Option<String>,
+        bounty_title: String, bounty_severity_final: String,
+    }
+    let row: Option<Row> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT r.bounty_id, r.cash_amount_jpy, r.status,
+                    CAST(r.expires_at AS INTEGER), r.claimed_at,
+                    COALESCE(b.title,''), COALESCE(b.severity_final, b.severity, '')
+             FROM bounty_rewards r
+             LEFT JOIN bounty_submissions b ON b.id = r.bounty_id
+             WHERE r.token = ?",
+            params![token],
+            |r| Ok(Row {
+                bounty_id: r.get(0)?, cash_amount_jpy: r.get(1)?,
+                status: r.get(2)?, expires_at: r.get(3)?,
+                claimed_at: r.get(4)?,
+                bounty_title: r.get(5)?, bounty_severity_final: r.get(6)?,
+            }),
+        ).ok()
+    };
+    let Some(row) = row else {
+        return bounty_claim_error_page("リンクが見つかりません", 404);
+    };
+    if row.status != "issued" {
+        let msg = match row.status.as_str() {
+            "claimed" | "shipped" => format!(
+                "このリンクは既に使用されました (claim 日: {})。", row.claimed_at.as_deref().unwrap_or("不明")),
+            _ => "このリンクは無効化されています。".into(),
+        };
+        return bounty_claim_error_page(&msg, 410);
+    }
+    if row.expires_at <= now_int {
+        return bounty_claim_error_page("このリンクは期限切れです (発行から 30 日以上経過しました)。", 410);
+    }
+
+    // Up to 12 existing MU tees with artwork + stock.
+    struct TeePick { id: i64, name: String, mockup: String, brand: String }
+    let picks: Vec<TeePick> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, name, COALESCE(mockup_url, ''), brand
+             FROM products
+             WHERE active=1 AND brand='mugen'
+               AND mockup_url IS NOT NULL AND mockup_url != ''
+               AND (inventory - sold) > 0
+             ORDER BY created_at DESC LIMIT 12"
+        ) { Ok(s) => s, Err(_) => return bounty_claim_error_page("内部エラー", 500) };
+        stmt.query_map([], |r| Ok(TeePick {
+            id: r.get(0)?, name: r.get(1)?, mockup: r.get(2)?, brand: r.get(3)?,
+        })).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+
+    let mut tee_cards = String::new();
+    for p in &picks {
+        tee_cards.push_str(&format!(
+            r##"<label class="tee-card">
+              <input type="radio" name="product_id" value="{id}" data-name="{name_attr}">
+              <img src="{mockup}" alt="{name_attr}" loading="lazy">
+              <span class="tee-name">{name}</span>
+              <span class="tee-brand">{brand}</span>
+            </label>"##,
+            id = p.id,
+            name = html_escape(&p.name),
+            name_attr = html_attr_escape(&p.name),
+            mockup = html_attr_escape(&p.mockup),
+            brand = html_escape(&p.brand.to_uppercase()),
+        ));
+    }
+    if tee_cards.is_empty() {
+        tee_cards = r#"<p style="color:#888;padding:24px">在庫のある既存ドロップが見つかりません。「オリジナル」をお選びください。</p>"#.into();
+    }
+
+    let cash_line = if row.cash_amount_jpy > 0 {
+        format!(
+            r#"<div class="cash-card"><div class="k">現金報酬 (別途お振込)</div><div class="v">¥{}</div><div class="note">本フォーム送信後にご案内する別フォームで振込先 (銀行 / Solana wallet) をお知らせください。</div></div>"#,
+            fmt_jpy(row.cash_amount_jpy),
+        )
+    } else { String::new() };
+
+    let original_design_url = bounty_original_tee_design_url();
+    let title = format!("MU Bounty Reward Claim #{}", row.bounty_id);
+    let html = format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title}</title>
+<meta name="robots" content="noindex,nofollow">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+:root{{--bg:#0a0a0a;--fg:#f5f5f0;--mute:#8a8a82;--gold:#e6c449;--card:#121214;--cardb:rgba(255,255,255,0.06);--line:rgba(255,255,255,0.08);--green:#22c55e}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:var(--bg);color:var(--fg);font-family:-apple-system,'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.7;font-size:14.5px;-webkit-font-smoothing:antialiased}}
+.wrap{{max-width:980px;margin:0 auto;padding:48px 24px 80px}}
+.brand{{font-weight:700;letter-spacing:0.32em;font-size:14px;margin-bottom:32px;opacity:0.75}}
+.eyebrow{{display:inline-block;font-size:11px;letter-spacing:0.32em;text-transform:uppercase;color:var(--gold);margin-bottom:14px;font-weight:700}}
+h1{{font-size:38px;font-weight:200;line-height:1.25;margin-bottom:14px}}
+h1 em{{color:var(--gold);font-style:normal;font-weight:400}}
+.lead{{color:#c4c4bc;font-size:15px;line-height:1.95;margin-bottom:32px;max-width:760px}}
+.lead b{{color:var(--fg)}}
+.bounty-info{{background:var(--card);border:1px solid var(--cardb);padding:18px 22px;border-radius:4px;margin-bottom:32px;font-size:13px;color:#c4c4bc}}
+.bounty-info b{{color:var(--gold)}}
+.choice{{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:32px}}
+@media (max-width:760px){{.choice{{grid-template-columns:1fr}}}}
+.opt{{background:var(--card);border:1px solid var(--cardb);border-radius:4px;padding:28px;cursor:pointer;transition:border-color 0.15s}}
+.opt.selected{{border-color:var(--gold);background:rgba(230,196,73,0.04)}}
+.opt h3{{font-size:18px;font-weight:500;margin-bottom:8px}}
+.opt h3 b{{color:var(--gold)}}
+.opt p{{color:#b4b4ac;font-size:13px;line-height:1.85;margin-bottom:18px}}
+.opt-radio{{display:flex;align-items:center;gap:10px;margin-bottom:18px;font-size:11px;letter-spacing:0.16em;color:var(--gold);text-transform:uppercase;font-weight:600}}
+.opt-img{{width:100%;border-radius:3px;border:1px solid var(--cardb);background:#0a0a0a;margin-bottom:16px;aspect-ratio:1/1;object-fit:cover;display:block}}
+.tee-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-top:8px}}
+.tee-card{{background:#0a0a0a;border:1px solid var(--cardb);border-radius:3px;padding:8px;cursor:pointer;display:flex;flex-direction:column;gap:4px;transition:border-color 0.15s}}
+.tee-card:has(input:checked){{border-color:var(--gold);background:rgba(230,196,73,0.06)}}
+.tee-card input{{display:none}}
+.tee-card img{{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:2px}}
+.tee-name{{font-size:11px;color:var(--fg);line-height:1.3}}
+.tee-brand{{font-size:9px;letter-spacing:0.16em;color:var(--gold)}}
+form{{background:var(--card);border:1px solid var(--cardb);padding:28px;border-radius:4px}}
+form .grid{{display:grid;grid-template-columns:1fr 1fr;gap:14px}}
+@media (max-width:600px){{form .grid{{grid-template-columns:1fr}}}}
+form label{{display:block;font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:var(--mute);margin-bottom:6px}}
+form .req::after{{content:" *";color:#e07b7b}}
+form input,form select,form textarea{{width:100%;background:#0a0a0a;border:1px solid var(--line);color:var(--fg);font:inherit;padding:11px 13px;border-radius:2px;font-size:14px}}
+form input:focus,form select:focus,form textarea:focus{{outline:none;border-color:var(--gold)}}
+form .field{{margin-bottom:14px}}
+form button.submit{{width:100%;background:var(--gold);color:#000;border:none;padding:16px;border-radius:2px;font-size:13px;letter-spacing:0.22em;text-transform:uppercase;font-weight:700;cursor:pointer;margin-top:8px}}
+form button.submit:disabled{{opacity:0.5;cursor:not-allowed}}
+.cash-card{{background:rgba(34,197,94,0.06);border:1px solid var(--green);padding:18px 22px;border-radius:4px;margin-bottom:28px}}
+.cash-card .k{{font-size:10px;letter-spacing:0.22em;color:var(--green);text-transform:uppercase;margin-bottom:6px}}
+.cash-card .v{{font-size:28px;font-weight:300;color:var(--green)}}
+.cash-card .note{{font-size:12px;color:#b4b4ac;margin-top:8px;line-height:1.7}}
+#result{{margin-top:20px;font-size:14px;line-height:1.85}}
+#result.ok{{background:rgba(34,197,94,0.08);border:1px solid var(--green);color:#9ae3a8;padding:18px;border-radius:2px}}
+#result.err{{background:rgba(200,54,44,0.08);border:1px solid #C8362C;color:#ff8a8a;padding:18px;border-radius:2px}}
+</style></head><body>
+<div class="wrap">
+  <div class="brand">MU</div>
+  <div class="eyebrow">Bug Bounty Reward</div>
+  <h1>ご報告ありがとうございました — <em>受取手続き</em></h1>
+  <p class="lead">
+    あなたのバウンティ報告 (<b>#{bounty_id}</b>) に対する報酬として、<b>MU の T シャツ 1 着</b> をお送りします。<br>
+    既存のドロップから選ぶか、本ご報告にちなんだ <b>「MU Security Researcher」オリジナル</b> をお選びください。
+  </p>
+
+  <div class="bounty-info">
+    Bounty #{bounty_id} · severity: <b>{sev}</b> · title: {bt}
+  </div>
+
+  {cash_line}
+
+  <form id="claimForm" onsubmit="return submitClaim(event)">
+    <input type="hidden" name="choice" id="choiceInput" value="">
+
+    <div class="choice">
+      <div class="opt" id="optA" onclick="selectChoice('existing')">
+        <div class="opt-radio"><input type="radio" name="ch" value="existing" id="rA"><label for="rA">A — 既存ドロップから選ぶ</label></div>
+        <h3>既存 <b>MUGEN</b> ドロップ</h3>
+        <p>毎日 1/1 で生成される MUGEN シリーズから 1 着お選びください。在庫があるもののみ表示しています。</p>
+        <div class="tee-grid">{tee_cards}</div>
+      </div>
+
+      <div class="opt" id="optB" onclick="selectChoice('original')">
+        <div class="opt-radio"><input type="radio" name="ch" value="original" id="rB"><label for="rB">B — 作業報酬オリジナル</label></div>
+        <h3>MU <b>Security Researcher</b> 2026</h3>
+        <p>ご報告者専用デザイン。背中に「MU SECURITY RESEARCHER · BOUNTY #{bounty_id} · 2026」プリント。<br>1 枚限り、再販なし。</p>
+        <img class="opt-img" src="{orig_img}" alt="MU Security Researcher tee" loading="lazy" onerror="this.style.display='none'">
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="field">
+        <label class="req" for="size">サイズ</label>
+        <select id="size" name="size" required>
+          <option value="">— 選択 —</option>
+          <option value="S">S</option><option value="M" selected>M</option>
+          <option value="L">L</option><option value="XL">XL</option>
+          <option value="XXL">XXL</option>
+        </select>
+      </div>
+      <div class="field"><label class="req" for="ship_email">メール</label>
+        <input type="email" id="ship_email" name="ship_email" required maxlength="200" autocomplete="email"></div>
+    </div>
+
+    <div class="grid">
+      <div class="field"><label class="req" for="ship_name">お名前 (受取人)</label>
+        <input type="text" id="ship_name" name="ship_name" required maxlength="120" autocomplete="name"></div>
+      <div class="field"><label for="ship_phone">電話番号</label>
+        <input type="tel" id="ship_phone" name="ship_phone" maxlength="40" autocomplete="tel"></div>
+    </div>
+
+    <div class="field"><label class="req" for="ship_line1">住所 1 行目</label>
+      <input type="text" id="ship_line1" name="ship_line1" required maxlength="200" autocomplete="address-line1"></div>
+    <div class="field"><label for="ship_line2">住所 2 行目</label>
+      <input type="text" id="ship_line2" name="ship_line2" maxlength="200" autocomplete="address-line2"></div>
+
+    <div class="grid">
+      <div class="field"><label class="req" for="ship_city">市区町村</label>
+        <input type="text" id="ship_city" name="ship_city" required maxlength="80" autocomplete="address-level2"></div>
+      <div class="field"><label for="ship_state">都道府県 / 州</label>
+        <input type="text" id="ship_state" name="ship_state" maxlength="80" autocomplete="address-level1"></div>
+    </div>
+
+    <div class="grid">
+      <div class="field"><label class="req" for="ship_zip">郵便番号</label>
+        <input type="text" id="ship_zip" name="ship_zip" required maxlength="20" autocomplete="postal-code"></div>
+      <div class="field">
+        <label class="req" for="ship_country">国 (ISO-2)</label>
+        <select id="ship_country" name="ship_country" required>
+          <option value="JP" selected>JP — 日本</option>
+          <option value="US">US — United States</option>
+          <option value="GB">GB — United Kingdom</option>
+          <option value="DE">DE — Germany</option>
+          <option value="FR">FR — France</option>
+          <option value="AU">AU — Australia</option>
+          <option value="CA">CA — Canada</option>
+        </select>
+      </div>
+    </div>
+
+    <button type="submit" id="submitBtn" class="submit" disabled>選択してから送信</button>
+    <div id="result"></div>
+  </form>
+</div>
+
+<script>
+function selectChoice(ch){{
+  document.getElementById('choiceInput').value = ch;
+  document.getElementById('rA').checked = (ch==='existing');
+  document.getElementById('rB').checked = (ch==='original');
+  document.getElementById('optA').classList.toggle('selected', ch==='existing');
+  document.getElementById('optB').classList.toggle('selected', ch==='original');
+  updateBtn();
+}}
+function updateBtn(){{
+  var ch = document.getElementById('choiceInput').value;
+  var btn = document.getElementById('submitBtn');
+  if(ch){{ btn.disabled = false; btn.textContent = '報酬を受け取る'; }}
+  else {{ btn.disabled = true; btn.textContent = '選択してから送信'; }}
+}}
+document.querySelectorAll('input[name="product_id"]').forEach(function(r){{
+  r.addEventListener('change', function(){{ selectChoice('existing'); }});
+}});
+
+async function submitClaim(ev){{
+  ev.preventDefault();
+  var btn = document.getElementById('submitBtn');
+  var out = document.getElementById('result');
+  out.className=''; out.textContent='';
+  btn.disabled = true; btn.textContent='送信中…';
+  var f = ev.target;
+  var pid = document.querySelector('input[name="product_id"]:checked');
+  var payload = {{
+    choice:       f.choice.value,
+    product_id:   pid ? parseInt(pid.value,10) : null,
+    size:         f.size.value,
+    ship_name:    f.ship_name.value.trim(),
+    ship_email:   f.ship_email.value.trim(),
+    ship_phone:   f.ship_phone.value.trim(),
+    ship_line1:   f.ship_line1.value.trim(),
+    ship_line2:   f.ship_line2.value.trim(),
+    ship_city:    f.ship_city.value.trim(),
+    ship_state:   f.ship_state.value.trim(),
+    ship_zip:     f.ship_zip.value.trim(),
+    ship_country: f.ship_country.value
+  }};
+  if(payload.choice==='existing' && !payload.product_id){{
+    out.className='err'; out.textContent='✗ 既存ドロップを選択した場合は、T シャツを 1 つお選びください。';
+    btn.disabled=false; btn.textContent='報酬を受け取る';
+    return false;
+  }}
+  try{{
+    var r = await fetch('/api/bounty/claim/{token}', {{
+      method:'POST', headers:{{'Content-Type':'application/json'}},
+      body: JSON.stringify(payload)
+    }});
+    var j = await r.json();
+    if(r.ok && j.ok){{
+      out.className='ok';
+      out.innerHTML = '✓ 受領しました。<br>選択: <b>'+(payload.choice==='existing'?'既存ドロップ':'MU Security Researcher オリジナル')+'</b> · サイズ <b>'+payload.size+'</b><br>追跡番号が発行され次第、登録メール宛にご連絡します。';
+      btn.textContent='完了';
+    }} else {{
+      out.className='err';
+      out.textContent='✗ ' + (j.error || ('HTTP '+r.status));
+      btn.disabled=false; btn.textContent='報酬を受け取る';
+    }}
+  }} catch(e){{
+    out.className='err';
+    out.textContent='✗ ネットワークエラー: '+e.message;
+    btn.disabled=false; btn.textContent='報酬を受け取る';
+  }}
+  return false;
+}}
+</script>
+</body></html>"##,
+        title = title,
+        bounty_id = row.bounty_id,
+        sev = html_escape(if row.bounty_severity_final.is_empty() { "未判定" } else { &row.bounty_severity_final }),
+        bt = html_escape(&row.bounty_title),
+        cash_line = cash_line,
+        tee_cards = tee_cards,
+        orig_img = html_attr_escape(&original_design_url),
+        token = html_attr_escape(&token),
+    );
+    let mut resp = Html(html).into_response();
+    resp.headers_mut().insert("cache-control", HeaderValue::from_static("no-store, private"));
+    resp.headers_mut().insert("x-robots-tag", HeaderValue::from_static("noindex, nofollow"));
+    resp
+}
+
+fn bounty_claim_error_page(msg: &str, status: u16) -> Response {
+    let html = format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>MU Bounty Reward — リンクエラー</title>
+<style>
+body{{background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,'Hiragino Sans',sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:24px}}
+.box{{max-width:540px;text-align:center}}
+.box .ico{{font-size:36px;letter-spacing:0.32em;color:#e6c449;font-weight:700;margin-bottom:24px}}
+.box h1{{font-size:24px;font-weight:300;margin-bottom:14px}}
+.box p{{color:#c4c4bc;line-height:1.85}}
+.box a{{color:#e6c449;text-decoration:underline}}
+</style></head><body>
+<div class="box">
+  <div class="ico">MU</div>
+  <h1>{msg}</h1>
+  <p>お問い合わせ: <a href="mailto:mail@yukihamada.jp">mail@yukihamada.jp</a></p>
+</div></body></html>"##, msg = html_escape(msg));
+    let st = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_REQUEST);
+    (st, Html(html)).into_response()
+}
+
+/// POST /api/bounty/claim/:token — consume the token, record shipping,
+/// kick off Printful fulfillment.
+#[derive(Deserialize)]
+struct BountyClaimBody {
+    #[serde(default)] choice: String,
+    #[serde(default)] product_id: Option<i64>,
+    #[serde(default)] size: String,
+    #[serde(default)] ship_name: String,
+    #[serde(default)] ship_email: String,
+    #[serde(default)] ship_phone: String,
+    #[serde(default)] ship_line1: String,
+    #[serde(default)] ship_line2: String,
+    #[serde(default)] ship_city: String,
+    #[serde(default)] ship_state: String,
+    #[serde(default)] ship_zip: String,
+    #[serde(default)] ship_country: String,
+}
+async fn bounty_claim(
+    State(db): State<Db>,
+    axum::extract::Path(token): axum::extract::Path<String>,
+    Json(body): Json<BountyClaimBody>,
+) -> Response {
+    if token.len() < 32 || token.len() > 128 || !token.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"ok":false,"error":"invalid token"}))).into_response();
+    }
+    let choice = body.choice.trim().to_string();
+    if choice != "existing" && choice != "original" {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok":false,"error":"choice must be 'existing' or 'original'"}))).into_response();
+    }
+    let size = body.size.trim().to_uppercase();
+    if !["S","M","L","XL","XXL","2XL"].contains(&size.as_str()) {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok":false,"error":"invalid size"}))).into_response();
+    }
+    let ship_email = body.ship_email.trim().to_lowercase();
+    if !ship_email.contains('@') || ship_email.len() < 5 || ship_email.len() > 254 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok":false,"error":"invalid ship_email"}))).into_response();
+    }
+    let ship_name = body.ship_name.trim().chars().take(120).collect::<String>();
+    let ship_line1 = body.ship_line1.trim().chars().take(200).collect::<String>();
+    let ship_line2 = body.ship_line2.trim().chars().take(200).collect::<String>();
+    let ship_city = body.ship_city.trim().chars().take(80).collect::<String>();
+    let ship_state = body.ship_state.trim().chars().take(80).collect::<String>();
+    let ship_zip = body.ship_zip.trim().chars().take(20).collect::<String>();
+    let ship_country = body.ship_country.trim().to_uppercase().chars().take(2).collect::<String>();
+    let ship_phone = body.ship_phone.trim().chars().take(40).collect::<String>();
+    if ship_name.is_empty() || ship_line1.is_empty() || ship_city.is_empty()
+        || ship_zip.is_empty() || ship_country.len() != 2 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok":false,"error":"shipping required (name, line1, city, zip, country)"}))).into_response();
+    }
+
+    let now_int: i64 = chrono_now().parse().unwrap_or(0);
+
+    // Atomic check-and-claim in one critical section.
+    struct TxResult { reward_id: i64, bounty_id: i64, cash_amount_jpy: i64, design_url: String }
+    let outcome: Result<TxResult, Response> = (|| -> Result<TxResult, Response> {
+        let conn = db.lock().unwrap();
+        let row: Result<(i64, i64, i64, String, i64), rusqlite::Error> = conn.query_row(
+            "SELECT id, bounty_id, cash_amount_jpy, status, CAST(expires_at AS INTEGER)
+             FROM bounty_rewards WHERE token=?",
+            params![token],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        );
+        let (reward_id, bounty_id, cash_amount_jpy, status, expires_at) = match row {
+            Ok(t) => t,
+            Err(_) => return Err((StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"ok":false,"error":"token not found"}))).into_response()),
+        };
+        if status != "issued" {
+            return Err((StatusCode::GONE,
+                Json(serde_json::json!({"ok":false,"error":"token already used"}))).into_response());
+        }
+        if expires_at <= now_int {
+            return Err((StatusCode::GONE,
+                Json(serde_json::json!({"ok":false,"error":"token expired"}))).into_response());
+        }
+        let design_url = if choice == "original" {
+            bounty_original_tee_design_url()
+        } else {
+            let pid = match body.product_id {
+                Some(p) if p > 0 => p,
+                _ => return Err((StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"ok":false,"error":"product_id required for choice=existing"}))).into_response()),
+            };
+            let url: Result<String, rusqlite::Error> = conn.query_row(
+                "SELECT COALESCE(design_url, mockup_url, '')
+                 FROM products WHERE id=? AND active=1",
+                params![pid], |r| r.get(0),
+            );
+            match url {
+                Ok(u) if !u.is_empty() => u,
+                _ => return Err((StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"ok":false,"error":"selected product has no artwork"}))).into_response()),
+            }
+        };
+        let updated = conn.execute(
+            "UPDATE bounty_rewards
+             SET choice=?, chosen_product_id=?, chosen_size=?,
+                 ship_name=?, ship_line1=?, ship_line2=?, ship_city=?, ship_state=?,
+                 ship_zip=?, ship_country=?, ship_phone=?, ship_email=?,
+                 status='claimed', claimed_at=?
+             WHERE id=? AND status='issued'",
+            params![
+                choice, body.product_id, size,
+                ship_name, ship_line1, ship_line2, ship_city, ship_state,
+                ship_zip, ship_country, ship_phone, ship_email,
+                now_int.to_string(), reward_id,
+            ],
+        ).unwrap_or(0);
+        if updated == 0 {
+            return Err((StatusCode::CONFLICT,
+                Json(serde_json::json!({"ok":false,"error":"race: token already consumed"}))).into_response());
+        }
+        Ok(TxResult { reward_id, bounty_id, cash_amount_jpy, design_url })
+    })();
+    let r = match outcome { Ok(t) => t, Err(resp) => return resp };
+
+    let tg = format!(
+        "🎁 *Bounty reward claimed* #{} (bounty #{})\nchoice: {}\nproduct_id: {:?}\nsize: {}\ncash: ¥{}\nship: {} <{}>\nto: {} {} {} {} {} {}",
+        r.reward_id, r.bounty_id, choice, body.product_id, size, fmt_jpy(r.cash_amount_jpy),
+        ship_name, ship_email,
+        ship_line1, ship_line2, ship_city, ship_state, ship_zip, ship_country,
+    );
+    let _ = send_telegram_message(&tg).await;
+
+    let printful_key = env::var("PRINTFUL_API_KEY").unwrap_or_default();
+    if !printful_key.is_empty() {
+        let db_clone = db.clone();
+        let r_id = r.reward_id;
+        let r_size = size.clone();
+        let r_design = r.design_url.clone();
+        let r_email = ship_email.clone();
+        let r_name = ship_name.clone();
+        let r_l1 = ship_line1.clone();
+        let r_l2 = ship_line2.clone();
+        let r_c = ship_city.clone();
+        let r_s = ship_state.clone();
+        let r_z = ship_zip.clone();
+        let r_cc = ship_country.clone();
+        let r_p = ship_phone.clone();
+        tokio::spawn(async move {
+            bounty_printful_fulfill(
+                printful_key, db_clone, r_id, &r_size, &r_design,
+                &r_email, &r_name, &r_l1, &r_l2, &r_c, &r_s, &r_z, &r_cc, &r_p,
+            ).await;
+        });
+    } else {
+        tracing::warn!("[bounty/claim] PRINTFUL_API_KEY unset — order will be fulfilled manually");
+    }
+
+    Json(serde_json::json!({
+        "ok": true,
+        "reward_id": r.reward_id,
+        "bounty_id": r.bounty_id,
+        "choice": choice,
+        "size": size,
+        "cash_amount_jpy": r.cash_amount_jpy,
+    })).into_response()
+}
+
+/// Background task: create a Printful order for a bounty reward claim and
+/// stamp the printful_order_id back onto the row.
+async fn bounty_printful_fulfill(
+    key: String, db: Db, reward_id: i64,
+    size: &str, design_url: &str,
+    email: &str, name: &str, line1: &str, line2: &str,
+    city: &str, state: &str, zip: &str, country: &str, phone: &str,
+) {
+    let variant_id = bounty_variant_id_for_size(size);
+    let order = serde_json::json!({
+        "recipient": {
+            "name": name, "address1": line1, "address2": line2,
+            "city": city, "state_code": state, "country_code": country,
+            "zip": zip, "phone": phone, "email": email,
+        },
+        "items": [{
+            "variant_id": variant_id,
+            "quantity": 1,
+            "files": [{"url": design_url, "placement": "front"}],
+        }],
+        "confirm": true,
+    });
+    let resp = reqwest::Client::new()
+        .post("https://api.printful.com/orders")
+        .bearer_auth(&key).json(&order).send().await;
+    let now_int = chrono_now();
+    match resp {
+        Ok(r) if r.status().is_success() => {
+            let j: serde_json::Value = r.json().await.unwrap_or_default();
+            let order_id = j["result"]["id"].as_i64()
+                .map(|n| n.to_string())
+                .or_else(|| j["result"]["id"].as_str().map(String::from))
+                .unwrap_or_default();
+            let conn = db.lock().unwrap();
+            let _ = conn.execute(
+                "UPDATE bounty_rewards SET printful_order_id=?, status='shipped', shipped_at=? WHERE id=?",
+                params![order_id, now_int, reward_id],
+            );
+            tracing::info!("[bounty/printful] reward_id={} printful_order_id={}", reward_id, order_id);
+        }
+        Ok(r) => {
+            let s = r.status();
+            let t = r.text().await.unwrap_or_default();
+            tracing::error!("[bounty/printful] reward_id={} status={} body={}",
+                reward_id, s, t.chars().take(400).collect::<String>());
+        }
+        Err(e) => tracing::error!("[bounty/printful] reward_id={} network: {}", reward_id, e),
+    }
+}
+
 /// POST /api/collab/signup — public endpoint, self-serve collab onboarding.
 /// Replaces the legacy mailto: CTAs. Web + email only — no demo call required.
 async fn api_collab_signup(
@@ -20469,6 +21129,9 @@ async fn main() {
         .route("/api/bounty/submit", post(api_bounty_submit))
         .route("/admin/bounty", get(admin_bounty))
         .route("/admin/bounty/:id/triage", post(admin_bounty_triage))
+        .route("/admin/bounty/:id/issue-reward", post(admin_bounty_issue_reward))
+        .route("/bounty/claim/:token", get(show_bounty_claim_page))
+        .route("/api/bounty/claim/:token", post(bounty_claim))
         .route("/api/collab/signup", post(api_collab_signup))
         .route("/admin/collab-signups", get(admin_collab_signups))
         .route("/api/sweep/checkout", post(sweep_checkout))
