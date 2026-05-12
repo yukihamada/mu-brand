@@ -29,6 +29,8 @@ on:
     - cron: '0 3 * * 1'
     # Daily 02:00 UTC = JST 11:00 — ma_lottery_draw (server-side 100d idempotent)
     - cron: '0 2 * * *'
+    # Daily 23:00 UTC = JST 08:00 — ma_retire_notify (100d expiry 7-day heads up)
+    - cron: '0 23 * * *'
   workflow_dispatch:
     inputs:
       target:
@@ -43,6 +45,7 @@ on:
           - blog_compose
           - lottery_draw
           - ma_lottery_draw
+          - ma_retire_notify
           - council_compose
           - sample_grow_force
 
@@ -310,6 +313,21 @@ jobs:
               --data-urlencode "text=🎟 4/7 Founder Relay fired — ${pseudonym} · ${url}" \
               "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" || true
           fi
+
+  ma_retire_notify:
+    # Daily JST 08:00 — for MA pieces hitting 100d expiry today (±1d window),
+    # send the owner a "you can retire / or keep" reminder. Idempotent via
+    # server-side NOTIFY:<jst-date> marker in retire_reason.
+    if: github.event.schedule == '0 23 * * *' || github.event.inputs.target == 'ma_retire_notify'
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /api/admin/ma_retire/notify
+        run: |
+          set -euo pipefail
+          resp=$(curl -fsS -X POST -H 'Content-Type: application/json' \
+            -d "{\"admin_token\":\"${MU_ADMIN_TOKEN}\"}" \
+            "${BASE_URL}/api/admin/ma_retire/notify")
+          echo "$resp"
 
   council_compose:
     if: github.event.schedule == '0 3 * * 1' || github.event.inputs.target == 'council_compose'
