@@ -18788,6 +18788,14 @@ async fn agent_support_reply_sender(db: Db) -> Result<AgentReport, String> {
             actions.push(serde_json::json!({"type":"reply_sent","fb_id":fb_id,"to":email}));
             sent += 1;
         } else {
+            // Mark the row so we don't retry every 30 min (was generating
+            // duplicate governance entries — observed in /admin/governance).
+            // Real Resend failures stay actionable via the single governance
+            // queue entry; further retries don't add information.
+            let _ = conn.execute(
+                "UPDATE customer_feedback SET ai_action_taken='send_failed' WHERE id=?",
+                params![fb_id],
+            );
             let _ = log_autonomy_decision(
                 &conn, "support_reply_sender", "send_reply_failed",
                 "T1",
