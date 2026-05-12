@@ -2836,7 +2836,7 @@ async fn handle_collab_sample_order(db: Db, session: &serde_json::Value) {
             .unwrap_or_default();
         let manual_block = if manual_lines.is_empty() { "".to_string() }
             else { format!("\n手動分:\n  - {}", manual_lines.join("\n  - ")) };
-        let pretty = if partner == "sweep" { "SIIIEEP" } else { "kokon.tokyo" };
+        let pretty = match partner.as_str() { "sweep" => "SIIIEEP", "kokon" => "kokon.tokyo", "jiuflow" => "JiuFlow", _ => partner.as_str() };
         let body = format!(
             "🧪 MU × {pretty} サンプルまとめ買い ({n}点)\n{items}\n¥{amount} · {email}\n{ship_name} / {ship_address}{pf}{manual}\nstripe: {sid}",
             pretty = pretty,
@@ -2858,7 +2858,7 @@ async fn handle_collab_sample_order(db: Db, session: &serde_json::Value) {
         let to_csv = env::var("SWEEP_OPS_EMAILS").unwrap_or_else(|_| "mail@yukihamada.jp".into());
         let to_list: Vec<String> = to_csv.split(',').map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty()).collect();
-        let pretty = if partner == "sweep" { "SIIIEEP" } else { "kokon.tokyo" };
+        let pretty = match partner.as_str() { "sweep" => "SIIIEEP", "kokon" => "kokon.tokyo", "jiuflow" => "JiuFlow", _ => partner.as_str() };
         let item_rows = summary_lines.iter()
             .map(|l| format!("<tr><td>{}</td></tr>", html_escape(l)))
             .collect::<Vec<_>>().join("\n");
@@ -11566,7 +11566,12 @@ async fn show_partner_proposal_page(
     }).collect::<Vec<_>>().join("\n");
 
     let display_label = html_escape(label);
-    let pretty_partner = if partner == "sweep" { "SIIIEEP" } else { "kokon.tokyo" };
+    let pretty_partner = match partner {
+        "sweep" => "SIIIEEP",
+        "kokon" => "kokon.tokyo",
+        "jiuflow" => "JiuFlow",
+        _ => partner,
+    };
 
     // ── Render Tab B (MU 自社 drops) cards ──
     let abs_url = |u: &str| -> String {
@@ -12174,7 +12179,12 @@ recalc();
 }
 
 fn partner_proposal_gate_html(partner: &str, label: &str) -> String {
-    let pretty = if partner == "sweep" { "SIIIEEP" } else { "kokon.tokyo" };
+    let pretty = match partner {
+        "sweep" => "SIIIEEP",
+        "kokon" => "kokon.tokyo",
+        "jiuflow" => "JiuFlow",
+        _ => partner,
+    };
     let label_esc = html_escape(label);
     let action = format!("/{}/proposal", partner);
     let public_path = format!("/{}", partner);
