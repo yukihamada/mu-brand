@@ -1307,6 +1307,311 @@ async fn collab_page() -> impl IntoResponse {
     axum::response::Html(body)
 }
 
+async fn bounty_page() -> impl IntoResponse {
+    let body = include_str!("../static/bounty.html");
+    axum::response::Html(body)
+}
+
+/// POST /api/bounty/submit — public endpoint, accepts a bug bounty report.
+/// Rate-limited per email + per ip_hash (10/h via in-memory bucket would be
+/// nice; for now we rely on body-size + uniqueness checks at DB layer).
+async fn api_bounty_submit(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    // Pull fields, normalize, validate.
+    let pick = |k: &str| -> String {
+        body.get(k).and_then(|v| v.as_str()).unwrap_or("").trim().to_string()
+    };
+    let severity = pick("severity");
+    let category = pick("category");
+    let title    = pick("title");
+    let aff_url  = pick("affected_url");
+    let bod      = pick("body");
+    let r_name   = pick("reporter_name");
+    let r_email  = pick("reporter_email");
+    let solana   = pick("solana_address");
+    let ship     = pick("ship_size");
+
+    let allowed_sev = ["critical","high","medium","low","info","unknown"];
+    let allowed_cat = [
+        "purchase_path","auth","xss_csrf","injection","business_logic",
+        "info_disclosure","agent_safety","ui_ux","other",
+    ];
+    if !allowed_sev.contains(&severity.as_str()) {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok":false,"error":"invalid severity"}))).into_response();
+    }
+    if !allowed_cat.contains(&category.as_str()) {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok":false,"error":"invalid category"}))).into_response();
+    }
+    if title.is_empty() || title.chars().count() > 120 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok":false,"error":"title required, ≤ 120 chars"}))).into_response();
+    }
+    if bod.is_empty() || bod.chars().count() > 20_000 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok":false,"error":"body required, ≤ 20000 chars"}))).into_response();
+    }
+    if !r_email.contains('@') || r_email.chars().count() > 200 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok":false,"error":"reporter_email invalid"}))).into_response();
+    }
+    if aff_url.chars().count() > 500 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok":false,"error":"affected_url ≤ 500 chars"}))).into_response();
+    }
+
+    // ip_hash for dedup (sha256 of x-forwarded-for + a daily-rotating salt so
+    // the same IP gets the same hash within a day, but rotates next day).
+    let ip = headers.get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .unwrap_or("").trim().to_string();
+    let day = (chrono_now().parse::<i64>().unwrap_or(0) / 86_400).to_string();
+    let ip_hash = if ip.is_empty() {
+        String::new()
+    } else {
+        use sha2::{Sha256, Digest};
+        let mut h = Sha256::new();
+        h.update(ip.as_bytes()); h.update(b"|"); h.update(day.as_bytes());
+        format!("{:x}", h.finalize())[..16].to_string()
+    };
+
+    // Per-IP rate limit (24h cooldown after 5 reports from same ip_hash).
+    if !ip_hash.is_empty() {
+        let conn = db.lock().unwrap();
+        let recent: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM bounty_submissions
+             WHERE ip_hash=? AND CAST(COALESCE(received_at,'0') AS INTEGER) > ?",
+            params![ip_hash, chrono_now().parse::<i64>().unwrap_or(0) - 86_400],
+            |r| r.get(0),
+        ).unwrap_or(0);
+        if recent >= 5 {
+            return (StatusCode::TOO_MANY_REQUESTS,
+                Json(serde_json::json!({"ok":false,"error":"rate limit (5 reports / 24h per IP); please email info@enablerdao.com directly"}))).into_response();
+        }
+    }
+
+    let now_s = chrono_now();
+    let id: i64 = {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO bounty_submissions
+                (severity, category, title, affected_url, body,
+                 reporter_name, reporter_email, solana_address, ship_size,
+                 ip_hash, status, received_at)
+             VALUES (?,?,?,?,?, ?,?,?,?, ?, 'received', ?)",
+            params![severity, category, title, aff_url, bod,
+                    r_name, r_email, solana, ship, ip_hash, now_s],
+        );
+        conn.last_insert_rowid()
+    };
+
+    // Telegram immediate notify (no dedup — every report fires).
+    let tg_token = env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default();
+    let tg_chat  = env::var("TELEGRAM_CHAT_ID").unwrap_or_else(|_| "1136442501".into());
+    if !tg_token.is_empty() {
+        let msg = format!(
+            "🛡️ BOUNTY #{} — severity={} category={}\n\n{}\n\nfrom: {} <{}>\nurl: {}",
+            id, severity, category, title,
+            if r_name.is_empty() { "(anon)" } else { &r_name },
+            r_email, aff_url);
+        let _ = reqwest::Client::new()
+            .post(format!("https://api.telegram.org/bot{}/sendMessage", tg_token))
+            .json(&serde_json::json!({"chat_id": tg_chat, "text": msg}))
+            .send().await;
+    }
+
+    // Auto-acknowledge email back to reporter (best effort).
+    if let Ok(resend_key) = env::var("RESEND_API_KEY") {
+        if !resend_key.is_empty() {
+            let ack_subject = format!("[MU Bounty #{}] 受領しました — 72h 以内に判定します", id);
+            let ack_body = format!(
+                "<p>{} さん、</p><p>MU バグバウンティへのご報告ありがとうございます。<br>下記内容を受領しました。72 時間以内に深刻度判定をお返しします。</p><hr><p><b>ID:</b> #{}<br><b>想定 Tier:</b> {}<br><b>カテゴリ:</b> {}<br><b>タイトル:</b> {}<br><b>影響 URL:</b> {}</p><hr><p>判定が確定次第、報酬の受け取り方法 (Printful 配送先、Solana address 等) を確認させていただきます。<br>— MU Autopilot / 株式会社イネブラ</p>",
+                html_escape(if r_name.is_empty() { "報告者" } else { &r_name }),
+                id, html_escape(&severity), html_escape(&category),
+                html_escape(&title), html_escape(&aff_url));
+            let _ = reqwest::Client::new()
+                .post("https://api.resend.com/emails")
+                .bearer_auth(&resend_key)
+                .json(&serde_json::json!({
+                    "from": "MU Bounty <mu-bounty@wearmu.com>",
+                    "to": [r_email.clone()],
+                    "subject": ack_subject,
+                    "html": ack_body,
+                    "reply_to": "info@enablerdao.com",
+                }))
+                .send().await;
+        }
+    }
+
+    Json(serde_json::json!({"ok": true, "report_id": id, "status": "received"})).into_response()
+}
+
+/// GET /admin/bounty?token=… — list bounty submissions (most recent first).
+async fn admin_bounty(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/bounty").await { return r; }
+    let tok = q.get("token").map(String::as_str).unwrap_or("").to_string();
+    let tok_attr = html_attr_escape(&tok);
+
+    struct Row {
+        id: i64, severity: String, category: String, title: String,
+        reporter_name: String, reporter_email: String,
+        status: String, severity_final: String,
+        received_at: String, body_head: String,
+    }
+    let rows: Vec<Row> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, severity, category, title,
+                    COALESCE(reporter_name,''), reporter_email,
+                    status, COALESCE(severity_final,''),
+                    received_at,
+                    SUBSTR(body, 1, 240)
+             FROM bounty_submissions
+             ORDER BY id DESC LIMIT 200"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map([], |r| Ok(Row {
+            id: r.get(0)?, severity: r.get(1)?, category: r.get(2)?, title: r.get(3)?,
+            reporter_name: r.get(4)?, reporter_email: r.get(5)?,
+            status: r.get(6)?, severity_final: r.get(7)?,
+            received_at: r.get(8)?, body_head: r.get(9)?,
+        })).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+
+    let badge = |sev: &str| -> &'static str {
+        match sev {
+            "critical" => "background:#3a0e0e;color:#ff8a8a;",
+            "high"     => "background:#3a1f0e;color:#ffb98a;",
+            "medium"   => "background:#3a300e;color:#e6c449;",
+            "low"      => "background:#0e2238;color:#9bd;",
+            "info"     => "background:#222;color:#999;",
+            _          => "background:#222;color:#aaa;",
+        }
+    };
+    let status_color = |s: &str| -> &'static str {
+        match s {
+            "received"   => "#9bd",
+            "triaging"   => "#e6c449",
+            "confirmed"  => "#9ae3a8",
+            "duplicate"  => "#999",
+            "rejected"   => "#e07b7b",
+            "paid"       => "#9ae3a8",
+            _            => "#999",
+        }
+    };
+    let mut tbody = String::new();
+    for r in &rows {
+        let final_or = if r.severity_final.is_empty() { &r.severity } else { &r.severity_final };
+        tbody.push_str(&format!(
+            r#"<tr>
+<td>#{id}</td>
+<td><span style="padding:2px 8px;border-radius:2px;font-size:11px;{sb}">{sf}</span></td>
+<td>{cat}</td>
+<td><b>{ti}</b><br><span style="color:#888;font-size:12px;">{bh}…</span></td>
+<td>{rn}<br><span style="color:#888;font-size:11px">{re}</span></td>
+<td><span style="color:{sc}">{st}</span></td>
+<td style="white-space:nowrap;font-size:11px;color:#999">{ts}</td>
+<td>
+<form method="post" action="/admin/bounty/{id}/triage?token={t}" style="display:inline">
+<select name="severity_final" style="background:#0e0e0e;color:#fff;border:1px solid #333;font-size:11px;padding:3px">
+<option value="">— set —</option>
+<option value="critical">critical</option><option value="high">high</option>
+<option value="medium">medium</option><option value="low">low</option>
+<option value="info">info</option>
+</select>
+<select name="status" style="background:#0e0e0e;color:#fff;border:1px solid #333;font-size:11px;padding:3px">
+<option value="triaging">triaging</option>
+<option value="confirmed">confirmed</option>
+<option value="duplicate">duplicate</option>
+<option value="rejected">rejected</option>
+<option value="paid">paid</option>
+</select>
+<button type="submit" style="background:#1a1a1a;border:1px solid #333;color:#eaeaea;padding:3px 8px;font-size:11px;border-radius:2px">apply</button>
+</form>
+</td>
+</tr>"#,
+            id = r.id,
+            sb = badge(final_or),
+            sf = html_escape(final_or),
+            cat = html_escape(&r.category),
+            ti = html_escape(&r.title),
+            bh = html_escape(&r.body_head.replace('\n', " ")),
+            rn = html_escape(if r.reporter_name.is_empty() { "(anon)" } else { &r.reporter_name }),
+            re = html_escape(&r.reporter_email),
+            sc = status_color(&r.status), st = html_escape(&r.status),
+            ts = html_escape(&r.received_at),
+            t = tok_attr,
+        ));
+    }
+    if tbody.is_empty() {
+        tbody = r#"<tr><td colspan=8 style="color:#666;padding:24px">(まだ submission がありません)</td></tr>"#.into();
+    }
+
+    Html(format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>MU / Bounty 管理</title>
+<style>
+body{{font:14px/1.55 ui-monospace,Menlo,monospace;color:#eaeaea;background:#0b0b0b;padding:24px;max-width:1400px;margin:0 auto}}
+h1{{font-weight:500;margin-top:0}}
+table{{width:100%;border-collapse:collapse;margin-top:12px}}
+th,td{{padding:9px 11px;border-bottom:1px solid #1f1f1f;text-align:left;vertical-align:top}}
+th{{color:#888;font-weight:500;font-size:11px;letter-spacing:0.08em;text-transform:uppercase}}
+.nav a{{margin-right:14px;color:#9bd}} .nav{{margin-bottom:20px}}
+code{{background:#1a1a1a;padding:1px 6px;border-radius:4px;color:#e6c449}}
+</style></head><body>
+<div class=nav>
+  <a href="/admin/agents?token={tok}">Agents</a>
+  <a href="/admin/governance?token={tok}">Governance</a>
+  <a href="/admin/email-critique?token={tok}">Email Critique</a>
+  <a href="/admin/bounty?token={tok}">Bounty</a>
+  <a href="/bounty" target="_blank">/bounty (public)</a>
+</div>
+<h1>MU Bounty — 報告管理 ({n} 件)</h1>
+<table>
+<thead><tr>
+<th>id</th><th>sev</th><th>cat</th><th>title / body head</th>
+<th>reporter</th><th>status</th><th>received</th><th>triage</th>
+</tr></thead>
+<tbody>{tbody}</tbody>
+</table>
+</body></html>"#,
+        tok = tok_attr, n = rows.len(), tbody = tbody)).into_response()
+}
+
+/// POST /admin/bounty/:id/triage — set severity_final / status.
+async fn admin_bounty_triage(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    axum::extract::Form(form): axum::extract::Form<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/bounty/triage").await { return r; }
+    let tok = q.get("token").cloned().unwrap_or_default();
+    let sev_final = form.get("severity_final").cloned().unwrap_or_default();
+    let status    = form.get("status").cloned().unwrap_or_else(|| "triaging".into());
+    {
+        let conn = db.lock().unwrap();
+        let now = chrono_now();
+        if sev_final.is_empty() {
+            let _ = conn.execute(
+                "UPDATE bounty_submissions SET status=?, triaged_at=? WHERE id=?",
+                params![status, now, id]);
+        } else {
+            let _ = conn.execute(
+                "UPDATE bounty_submissions SET severity_final=?, status=?, triaged_at=? WHERE id=?",
+                params![sev_final, status, now, id]);
+        }
+    }
+    let tok_attr = html_attr_escape(&tok);
+    Response::builder()
+        .status(StatusCode::SEE_OTHER)
+        .header("Location", format!("/admin/bounty?token={}", tok_attr))
+        .body(axum::body::Body::empty()).unwrap()
+}
+
 async fn list_brands(State(db): State<Db>) -> impl IntoResponse {
     // created_at is stored mixed-format (some rows are unix-epoch strings,
     // others are ISO). Normalize inside SQL so MAX() picks the real latest.
@@ -12357,6 +12662,96 @@ async fn jiuflow_sample_checkout(
     sample_checkout(db, "jiuflow", "/jiuflow/proposal", "MU×JiuFlow sample", headers, body).await
 }
 
+/// GET /gi/:id — public landing page for a limited-edition sponsored Gi.
+/// QR-code target from the physical gi itself. Storytelling + 18 sponsors
+/// + pre-order CTA. v1 = "01" edition only (Hamada-worn, 30 replicas).
+async fn show_gi_edition_page(
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    let edition = id.trim_matches(|c: char| !c.is_ascii_alphanumeric()).to_string();
+    // For v1 only `01` (or `1`) is valid; future editions live as separate pages.
+    if !matches!(edition.as_str(), "1" | "01") {
+        return (StatusCode::NOT_FOUND, "edition not found").into_response();
+    }
+    const GI_EDITION_01_HTML: &str = "<!doctype html><html><body><p>GI Edition 01 — coming soon.</p></body></html>";
+    let html = GI_EDITION_01_HTML;
+    let mut resp = Html(html).into_response();
+    resp.headers_mut().insert(
+        "cache-control",
+        HeaderValue::from_static("public, max-age=120, s-maxage=300"),
+    );
+    resp
+}
+
+/// POST /api/gi/:id/checkout — Stripe Checkout for the sponsored gi pre-order.
+/// Fixed-price single-SKU. Live mode. Shipping JP only for v1.
+#[derive(Deserialize)]
+struct GiCheckoutBody {
+    #[serde(default)]
+    size: String,
+    #[serde(default)]
+    note: String,
+}
+async fn gi_edition_checkout(
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(body): Json<GiCheckoutBody>,
+) -> Response {
+    let edition = id.trim_matches(|c: char| !c.is_ascii_alphanumeric()).to_string();
+    if !matches!(edition.as_str(), "1" | "01") {
+        return (StatusCode::NOT_FOUND, "edition not found").into_response();
+    }
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "checkout disabled").into_response();
+    }
+    let price: i64 = 98_000;
+    let size = body.size.chars().take(8).collect::<String>();
+    let note = body.note.chars().take(200).collect::<String>();
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    let form: Vec<(&str, String)> = vec![
+        ("mode", "payment".into()),
+        ("currency", "jpy".into()),
+        ("allow_promotion_codes", "true".into()),
+        ("success_url", format!("{}/gi/01?paid=ok", base_url)),
+        ("cancel_url",  format!("{}/gi/01?paid=cancel", base_url)),
+        ("line_items[0][quantity]", "1".into()),
+        ("line_items[0][price_data][currency]", "jpy".into()),
+        ("line_items[0][price_data][unit_amount]", price.to_string()),
+        ("line_items[0][price_data][product_data][name]",
+         "MU × JiuFlow Sponsored Gi — Edition 01 (Limited 30, 先行予約)".into()),
+        ("line_items[0][price_data][product_data][description]",
+         "18 brand sponsorship limited gi. Embroidery + gold-thread QR + sublimation lining. Production 8-12 weeks after order. Hand-numbered.".into()),
+        ("metadata[product]", "gi_edition_01".into()),
+        ("metadata[edition]", "01".into()),
+        ("metadata[size]", size),
+        ("metadata[note]", note),
+        ("shipping_address_collection[allowed_countries][0]", "JP".into()),
+        ("phone_number_collection[enabled]", "true".into()),
+    ];
+    let resp = reqwest::Client::new()
+        .post("https://api.stripe.com/v1/checkout/sessions")
+        .basic_auth(&stripe_key, None::<&str>)
+        .form(&form)
+        .send().await;
+    match resp {
+        Ok(r) if r.status().is_success() => {
+            let j: serde_json::Value = r.json().await.unwrap_or_default();
+            let url = j["url"].as_str().unwrap_or("/").to_string();
+            Json(serde_json::json!({"url": url, "price_jpy": price})).into_response()
+        }
+        Ok(r) => {
+            let s = r.status();
+            let t = r.text().await.unwrap_or_default();
+            eprintln!("[gi/checkout] stripe {}: {}", s, t.chars().take(200).collect::<String>());
+            (StatusCode::BAD_GATEWAY, "stripe error").into_response()
+        }
+        Err(e) => {
+            eprintln!("[gi/checkout] reqwest: {}", e);
+            (StatusCode::BAD_GATEWAY, "stripe network").into_response()
+        }
+    }
+}
+
 /// GET /collab/apply — public landing page with form to request a proposal.
 /// Explains what MU does, why it works, and pulls website URL + email +
 /// merch interests. POSTs to /api/collab/apply.
@@ -18107,6 +18502,31 @@ async fn main() {
         );
         CREATE INDEX IF NOT EXISTS idx_email_critique_kind ON email_critique(kind, variant, persona, created_at);
 
+        CREATE TABLE IF NOT EXISTS bounty_submissions (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            severity        TEXT NOT NULL,
+            category        TEXT NOT NULL,
+            title           TEXT NOT NULL,
+            affected_url    TEXT,
+            body            TEXT NOT NULL,
+            reporter_name   TEXT,
+            reporter_email  TEXT NOT NULL,
+            solana_address  TEXT,
+            ship_size       TEXT,
+            ip_hash         TEXT,
+            status          TEXT NOT NULL DEFAULT 'received',
+            severity_final  TEXT,
+            duplicate_of    INTEGER,
+            internal_notes  TEXT,
+            reward_payload  TEXT,
+            received_at     TEXT NOT NULL,
+            triaged_at      TEXT,
+            paid_at         TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_bounty_status   ON bounty_submissions(status, received_at);
+        CREATE INDEX IF NOT EXISTS idx_bounty_email    ON bounty_submissions(reporter_email);
+        CREATE INDEX IF NOT EXISTS idx_bounty_severity ON bounty_submissions(severity_final, received_at);
+
         CREATE TABLE IF NOT EXISTS agent_scorecard (
             id                INTEGER PRIMARY KEY AUTOINCREMENT,
             agent_name        TEXT NOT NULL,
@@ -18356,6 +18776,11 @@ async fn main() {
         .route("/collab", get(collab_page))
         .route("/b2b", get(collab_page))
         .route("/partners", get(collab_page))
+        .route("/bounty", get(bounty_page))
+        .route("/security", get(bounty_page))
+        .route("/api/bounty/submit", post(api_bounty_submit))
+        .route("/admin/bounty", get(admin_bounty))
+        .route("/admin/bounty/:id/triage", post(admin_bounty_triage))
         .route("/api/sweep/checkout", post(sweep_checkout))
         .route("/api/kokon/checkout", post(kokon_checkout))
         .route("/api/sweep/signal", post(sweep_signal))

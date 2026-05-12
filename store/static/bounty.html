@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU Bounty — バグを見つけたら、MUGEN で報酬 | 株式会社イネブラ</title>
+<meta name="description" content="MU / wearmu.com の脆弱性を見つけたら、深刻度に応じて MUGEN / MA / MUON のシャツ最大 5 着 + ENAI トークン。0 人組織なので、外部の目があなたを支えます。">
+<meta property="og:title" content="MU Bounty — バグを見つけたら、MUGEN で報酬">
+<meta property="og:description" content="深刻度 5 ティア、MUGEN apparel 最大 5 着 + ENAI トークン。スコープと報酬を全て公開。0 人組織なので、外部の目があなたを支えます。">
+<meta property="og:image" content="https://wearmu.com/og.jpg">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<style>
+:root{
+  --bg:#0A0A0A; --bg-2:#111; --bg-3:#181818;
+  --fg:#F5F5F0; --mute:rgba(245,245,240,0.62); --line:rgba(255,255,255,0.08);
+  --y:#e6c449; --y-soft:rgba(230,196,73,0.12);
+  --red:#C8362C; --green:#4FA868; --blue:#6A9FE0;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg);color:var(--fg);
+  font-family:'Helvetica Neue','Hiragino Sans','Yu Gothic',Arial,sans-serif;
+  line-height:1.85;-webkit-font-smoothing:antialiased;font-feature-settings:"palt";
+}
+a{color:inherit}
+.wrap{max-width:1100px;margin:0 auto;padding:0 32px}
+.wrap-narrow{max-width:780px;margin:0 auto;padding:0 32px}
+code{font-family:ui-monospace,Menlo,monospace;background:rgba(230,196,73,0.08);color:var(--y);padding:1px 6px;border-radius:2px;font-size:0.92em}
+
+/* ── NAV ── */
+nav.top{
+  position:sticky;top:0;background:rgba(10,10,10,0.9);backdrop-filter:blur(14px);
+  border-bottom:1px solid var(--line);padding:18px 32px;display:flex;
+  justify-content:space-between;align-items:center;z-index:50;
+}
+nav.top a{text-decoration:none;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.85}
+nav.top .logo{font-weight:700;letter-spacing:0.45em}
+nav.top .links{display:flex;gap:24px;align-items:center}
+nav.top .cta{background:var(--y);color:#000;padding:8px 16px;border-radius:2px;font-weight:700;opacity:1}
+@media (max-width:640px){nav.top .links a:not(.cta){display:none}}
+
+/* ── HERO ── */
+.hero{padding:96px 32px 64px;text-align:center}
+.hero .eyebrow{
+  display:inline-block;font-size:10px;letter-spacing:0.42em;text-transform:uppercase;
+  color:var(--y);background:var(--y-soft);padding:8px 18px;border-radius:2px;margin-bottom:28px;
+}
+.hero h1{
+  font-size:clamp(36px,7vw,76px);font-weight:200;letter-spacing:-0.012em;line-height:1.12;
+  max-width:920px;margin:0 auto 28px;
+}
+.hero h1 em{color:var(--y);font-style:normal;font-weight:300}
+.hero .lede{font-size:clamp(15px,1.6vw,18px);color:var(--mute);max-width:680px;margin:0 auto 36px;line-height:2}
+.hero .ctas{display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+.btn{
+  display:inline-block;padding:14px 28px;border-radius:2px;text-decoration:none;
+  font-size:11.5px;letter-spacing:0.28em;text-transform:uppercase;font-weight:700;cursor:pointer;
+  transition:transform 0.15s ease, background 0.15s ease;border:none;
+}
+.btn-primary{background:var(--y);color:#000}
+.btn-primary:hover{transform:translateY(-1px);background:#f0d05a}
+.btn-secondary{background:transparent;color:var(--fg);border:1px solid rgba(255,255,255,0.22)}
+.btn-secondary:hover{border-color:var(--y);color:var(--y)}
+
+/* ── KPI strip ── */
+.kpi{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1px;
+  background:var(--line);border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+  margin:60px 0 0;
+}
+.kpi .cell{background:var(--bg);padding:36px 24px;text-align:center}
+.kpi .n{font-size:clamp(30px,3.6vw,46px);font-weight:200;color:var(--y);letter-spacing:-0.02em;line-height:1;font-variant-numeric:tabular-nums}
+.kpi .n small{font-size:0.5em;color:var(--mute);margin-left:6px;font-weight:300;letter-spacing:0}
+.kpi .lbl{margin-top:12px;font-size:10px;letter-spacing:0.28em;text-transform:uppercase;color:var(--mute)}
+
+/* ── SECTIONS ── */
+section{padding:88px 0;border-top:1px solid var(--line)}
+section h2{font-size:clamp(26px,3.6vw,42px);font-weight:200;letter-spacing:-0.005em;margin-bottom:16px}
+section .sub{color:var(--mute);font-size:14px;max-width:680px;margin-bottom:42px;line-height:2}
+
+/* ── Severity table ── */
+.tier-table{width:100%;border-collapse:collapse;border:1px solid var(--line);border-radius:4px;overflow:hidden;background:var(--bg-2)}
+.tier-table th,.tier-table td{padding:18px 20px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+.tier-table th{background:var(--bg-3);font-size:10px;letter-spacing:0.28em;text-transform:uppercase;color:var(--y);font-weight:500}
+.tier-table tr:last-child td{border-bottom:0}
+.tier-table td.tier{font-weight:600;font-size:13px;white-space:nowrap}
+.tier-critical{color:#ff6b6b}
+.tier-high{color:#ffa56b}
+.tier-medium{color:var(--y)}
+.tier-low{color:var(--blue)}
+.tier-info{color:var(--mute)}
+.tier-table td.reward{font-variant-numeric:tabular-nums;color:var(--fg);font-size:13.5px;white-space:nowrap}
+.tier-table td.example{color:var(--mute);font-size:12.5px;line-height:1.75}
+@media (max-width:780px){
+  .tier-table thead{display:none}
+  .tier-table tr{display:block;border-bottom:1px solid var(--line);padding:14px 0}
+  .tier-table td{display:block;border:0;padding:6px 20px}
+  .tier-table td.tier{font-size:14px;margin-bottom:4px}
+  .tier-table td.reward::before{content:"報酬: ";color:var(--mute);margin-right:8px}
+}
+
+/* ── Scope panel ── */
+.scope{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+@media (max-width:780px){.scope{grid-template-columns:1fr}}
+.scope-card{background:var(--bg-2);border:1px solid var(--line);border-radius:4px;padding:28px}
+.scope-card h3{font-size:13px;letter-spacing:0.28em;text-transform:uppercase;color:var(--y);margin-bottom:18px;font-weight:500}
+.scope-card.out h3{color:var(--mute)}
+.scope-card ul{list-style:none;padding:0;margin:0}
+.scope-card li{padding:8px 0;border-bottom:1px solid var(--line);font-size:13px;color:var(--mute);line-height:1.8;display:flex;gap:10px}
+.scope-card li:last-child{border-bottom:0}
+.scope-card li::before{content:"";flex-shrink:0;width:6px;height:6px;background:var(--y);border-radius:50%;margin-top:9px}
+.scope-card.out li::before{background:var(--mute)}
+.scope-card li code{font-size:12px}
+
+/* ── Hall of Fame ── */
+.hof{background:var(--bg-2);border:1px solid var(--line);border-radius:4px;padding:32px}
+.hof .empty{color:var(--mute);font-size:13.5px;line-height:1.9;text-align:center;padding:24px 0}
+.hof table{width:100%;border-collapse:collapse;font-size:13px}
+.hof th,.hof td{padding:12px 14px;text-align:left;border-bottom:1px solid var(--line)}
+.hof th{font-size:10px;letter-spacing:0.24em;text-transform:uppercase;color:var(--mute);font-weight:500}
+.hof tr:last-child td{border-bottom:0}
+
+/* ── Form ── */
+form.report{background:var(--bg-2);border:1px solid var(--line);border-radius:4px;padding:36px}
+form.report .row{margin-bottom:18px}
+form.report label{display:block;font-size:11px;letter-spacing:0.22em;text-transform:uppercase;color:var(--mute);margin-bottom:8px}
+form.report input[type=text],
+form.report input[type=email],
+form.report input[type=url],
+form.report select,
+form.report textarea{
+  width:100%;background:#070707;border:1px solid var(--line);border-radius:2px;
+  color:var(--fg);padding:11px 14px;font:14px/1.6 inherit;
+}
+form.report textarea{min-height:170px;resize:vertical;font-family:ui-monospace,Menlo,monospace;font-size:12.5px}
+form.report .two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:640px){form.report .two{grid-template-columns:1fr}}
+form.report .help{font-size:11.5px;color:var(--mute);margin-top:6px;line-height:1.6}
+form.report .submit-row{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;margin-top:8px}
+form.report .submit-row .note{font-size:11.5px;color:var(--mute);max-width:420px;line-height:1.6}
+form.report #result{margin-top:18px;font-size:13px;padding:14px 16px;border-radius:2px;display:none}
+form.report #result.ok{background:rgba(79,168,104,0.12);border:1px solid rgba(79,168,104,0.35);color:#9ae3a8;display:block}
+form.report #result.err{background:rgba(200,54,44,0.12);border:1px solid rgba(200,54,44,0.4);color:#f0a4a0;display:block}
+
+/* ── Inspiration block ── */
+.inspire{background:var(--bg-2);border:1px solid var(--line);border-radius:4px;padding:28px}
+.inspire h3{font-size:14px;font-weight:500;margin-bottom:8px;letter-spacing:0;color:var(--y)}
+.inspire p{color:var(--mute);font-size:13px;line-height:1.95;margin-bottom:10px}
+.inspire p:last-child{margin-bottom:0}
+.inspire b{color:var(--fg)}
+
+/* ── Footer ── */
+footer{padding:48px 32px 60px;border-top:1px solid var(--line);text-align:center;color:var(--mute);font-size:11.5px;line-height:2}
+footer a{color:var(--mute);text-decoration:underline;text-decoration-color:rgba(255,255,255,0.18)}
+</style>
+</head>
+<body>
+
+<nav class="top">
+  <a href="/" class="logo">MU</a>
+  <div class="links">
+    <a href="/drops">DROPS</a>
+    <a href="/collab">COLLAB</a>
+    <a href="/admin/agents">AGENTS</a>
+    <a href="#submit" class="cta">REPORT A BUG</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="eyebrow">MU Bug Bounty / 不具合報告</div>
+  <h1>バグを見つけたら、<br><em>MUGEN</em> で支払います。</h1>
+  <p class="lede">
+    MU は 0 人組織で運営されています。<br>
+    監査するのは 23 の自律エージェントと、外部の <em>あなた</em> です。<br>
+    深刻度に応じて、MUGEN / MA / MUON の T シャツ最大 5 着 + ENAI トークン。
+  </p>
+  <div class="ctas">
+    <a href="#submit" class="btn btn-primary">バグを報告する</a>
+    <a href="#scope" class="btn btn-secondary">スコープを読む</a>
+  </div>
+
+  <div class="kpi">
+    <div class="cell"><div class="n">5</div><div class="lbl">深刻度ティア</div></div>
+    <div class="cell"><div class="n">¥50,000<small>+5着</small></div><div class="lbl">最大報酬 (Critical)</div></div>
+    <div class="cell"><div class="n">72<small>h</small></div><div class="lbl">初回判定 SLA</div></div>
+    <div class="cell"><div class="n">90<small>d</small></div><div class="lbl">公開ディスクロージャー</div></div>
+  </div>
+</header>
+
+<!-- ── PHILOSOPHY ── -->
+<section>
+  <div class="wrap-narrow">
+    <h2>なぜ 0 人組織にバグバウンティが必要か</h2>
+    <p class="sub">
+      MU には人間の従業員がいません。24 時間動いているのは 23 の自律エージェントだけです。
+      自律エージェントは強力ですが、自分が踏んだ罠を客観視できないことがあります。
+      LayerX が Claude Desktop Extensions に CVSS 10.0 を発見したように、外部の目だけが見える死角があります。
+      MU の購入導線 (Constitution §21 で "sacrosanct" と宣言した部分) を含めて、外部の検証を歓迎します。
+    </p>
+    <div class="inspire">
+      <h3>探すべき問題のヒント (2026 年に Claude エコシステムで実際に見つかったもの)</h3>
+      <p>
+        <b>① Prompt injection:</b> 外部入力 (Google Calendar の予定、CLAUDE.md、商品名) を LLM が「信頼すべき指示」と区別できない。
+        MU で言えば <code>x_post_worker</code> や <code>vision_drift</code>、<code>strategist</code> agent への注入。
+      </p>
+      <p>
+        <b>② Trust boundary 不在:</b> Chrome 拡張間で命令が筒抜けになった ClaudeBleed と同じ構造。
+        MU では <code>self_evolve</code> auto-merge allowlist や、admin_token なし API endpoint の信頼境界。
+      </p>
+      <p>
+        <b>③ 認証情報の意図しない流出:</b> <code>.claude/settings.local.json</code> を含めた npm publish の事故と同じ。
+        MU では <code>fly secrets</code>、<code>.env</code>、blog 自動生成テキスト、agent_journal の payload。
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ── SEVERITY TABLE ── -->
+<section>
+  <div class="wrap">
+    <h2>深刻度 × 報酬</h2>
+    <p class="sub">
+      評価基準は <a href="https://www.first.org/cvss/" style="color:var(--y)">CVSS 3.1</a> をベースに、MU 独自の "Constitution 違反度" を加重します。
+      Constitution §21 (購入導線 = sacrosanct) に触れる脆弱性は 1 段階格上げします。
+    </p>
+    <table class="tier-table">
+      <thead>
+        <tr><th>Tier</th><th>条件</th><th>報酬</th><th>例</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="tier tier-critical">CRITICAL<br><span style="opacity:0.6;font-weight:400;font-size:11px">CVSS 9.0+</span></td>
+          <td class="example">購入が無料化／無断課金／全顧客 PII 漏洩／rooted server access</td>
+          <td class="reward">MUGEN/MA/MUON × 5 着<br>+ ¥50,000<br>+ ENAI 500</td>
+          <td class="example">Stripe webhook の HMAC bypass / SQL injection on <code>/api/checkout/*</code> / admin_token decode</td>
+        </tr>
+        <tr>
+          <td class="tier tier-high">HIGH<br><span style="opacity:0.6;font-weight:400;font-size:11px">CVSS 7.0–8.9</span></td>
+          <td class="example">単独顧客の PII / 注文操作 / 認証バイパス / 限定的 RCE</td>
+          <td class="reward">MUGEN × 3 着<br>+ ¥20,000<br>+ ENAI 200</td>
+          <td class="example">他人の <code>buyer_token</code> 推測 / <code>self_evolve</code> allowlist 突破 / IDOR on <code>/api/refund</code></td>
+        </tr>
+        <tr>
+          <td class="tier tier-medium">MEDIUM<br><span style="opacity:0.6;font-weight:400;font-size:11px">CVSS 4.0–6.9</span></td>
+          <td class="example">Stored XSS / CSRF / 認証不要の機能露出 / レート制限バイパス</td>
+          <td class="reward">MUGEN × 2 着<br>+ ¥8,000<br>+ ENAI 80</td>
+          <td class="example">商品名フィールドの persistent XSS / agent prompt injection / blog コメントの SSRF</td>
+        </tr>
+        <tr>
+          <td class="tier tier-low">LOW<br><span style="opacity:0.6;font-weight:400;font-size:11px">CVSS 0.1–3.9</span></td>
+          <td class="example">情報露出 (低リスク) / Reflected XSS / UX を著しく阻害するバグ</td>
+          <td class="reward">MUGEN × 1 着<br>+ ¥3,000<br>+ ENAI 30</td>
+          <td class="example">404 ページのリファラ漏洩 / 価格表示のずれ / 注文確認のレース condition</td>
+        </tr>
+        <tr>
+          <td class="tier tier-info">INFO</td>
+          <td class="example">タイポ / 翻訳ミス / 軽微な UI 崩れ / 提案系</td>
+          <td class="reward">MU ステッカー<br>+ ENAI 10</td>
+          <td class="example">"今シーズン" のような vision_drift 違反語 / mobile での btn 重なり</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ── SCOPE ── -->
+<section id="scope">
+  <div class="wrap">
+    <h2>スコープ</h2>
+    <p class="sub">
+      下の "In scope" のみ報奨対象です。それ以外は受け取りますが、報酬は出ません。
+      ただし HoF (Hall of Fame) には載ります。
+    </p>
+    <div class="scope">
+      <div class="scope-card">
+        <h3>✓ In scope</h3>
+        <ul>
+          <li><code>wearmu.com</code> 配下の全ページ + API</li>
+          <li><code>lifestyle.wearmu.com</code> (Printful S3 mockup CDN は除く)</li>
+          <li><code>mu-store.fly.dev</code> 直アクセス</li>
+          <li><code>/api/checkout/*</code>, <code>/api/bounty/*</code>, <code>/api/v1/*</code></li>
+          <li>Stripe webhook handler の HMAC / replay 検証</li>
+          <li>Solana NFT mint / <code>buyer_token</code> 認証</li>
+          <li>self_evolve auto-merge allowlist のバイパス経路</li>
+          <li>agent prompt injection (Gemini に外部入力を素通しさせる箇所)</li>
+          <li>admin_token, MU_AUTOPILOT, AGENT_KILL_* の信頼境界</li>
+        </ul>
+      </div>
+      <div class="scope-card out">
+        <h3>✗ Out of scope (報酬対象外)</h3>
+        <ul>
+          <li>第三者ホスト (Stripe, Printful, Resend, Fly.io, Cloudflare 等)</li>
+          <li>分散 DDoS / 容量攻撃 / brute force</li>
+          <li>過度な rate-limit テストでサービスを止める試み</li>
+          <li>ソーシャルエンジニアリング (yuki / 関係者宛て phishing)</li>
+          <li>物理アクセス / オフィス侵入</li>
+          <li>Printful 公開 mockup の "tmp/" S3 URL の 24h 失効</li>
+          <li>SPF/DKIM/DMARC の DNS 評価サイトのスコア</li>
+          <li>"見つけたバグ" を売買・公開後の報告</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── RULES ── -->
+<section>
+  <div class="wrap-narrow">
+    <h2>ルール</h2>
+    <ul style="list-style:none;padding:0;margin:0;font-size:14px;color:var(--mute);line-height:2.1">
+      <li style="padding:10px 0;border-bottom:1px solid var(--line)"><b style="color:var(--fg)">1. 善意の検証だけ。</b> 他人の注文を読む、PII を窃取する、サービスを止める ─ いずれも違反です。脆弱性は「存在を示す最小の PoC」までで止めてください。</li>
+      <li style="padding:10px 0;border-bottom:1px solid var(--line)"><b style="color:var(--fg)">2. 報告は MU 単独に。</b> 公開前に 90 日 (Critical は 120 日) 待ってください。MU は受領から 72h 以内に深刻度判定を返します。</li>
+      <li style="padding:10px 0;border-bottom:1px solid var(--line)"><b style="color:var(--fg)">3. 重複は早い者勝ち。</b> 同じ脆弱性の最初の報告だけ報酬対象。タイムスタンプは <code>bounty_submissions.received_at</code> で記録します。</li>
+      <li style="padding:10px 0;border-bottom:1px solid var(--line)"><b style="color:var(--fg)">4. AI が生成した報告でも OK。</b> ただし PoC は手元で再現確認したものだけ。LLM が「ありそう」と幻覚した未検証の報告は INFO 扱いです。</li>
+      <li style="padding:10px 0;border-bottom:1px solid var(--line)"><b style="color:var(--fg)">5. 法人イネブラと敵対しないこと。</b> 弊社が日本の法律に基づいて運営している以上、刑事責任を負う行為 (不正アクセス禁止法違反等) は対象外。検証はあなた自身のアカウント上で。</li>
+      <li style="padding:10px 0"><b style="color:var(--fg)">6. 報酬の受け取り。</b> シャツは Printful 経由で世界中どこへでも発送 (送料 MU 負担)。ENAI は Solana address に送付。現金は Stripe / Wise / 国内銀行のいずれか。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ── SUBMISSION FORM ── -->
+<section id="submit">
+  <div class="wrap-narrow">
+    <h2>報告する</h2>
+    <p class="sub">
+      MU の Constitution は <a href="/constitution.md" style="color:var(--y)">公開されています</a>。
+      Constitution の条文番号 (§N) を引用してくれると、深刻度判定が速くなります。
+    </p>
+    <form class="report" id="bounty-form" autocomplete="off">
+      <div class="two">
+        <div class="row">
+          <label for="severity">想定 Tier</label>
+          <select id="severity" name="severity" required>
+            <option value="">— 選択 —</option>
+            <option value="critical">CRITICAL — 購入導線 / 認証 / 全顧客 PII</option>
+            <option value="high">HIGH — 単独 PII / IDOR / RCE 限定</option>
+            <option value="medium">MEDIUM — XSS / CSRF / レート制限</option>
+            <option value="low">LOW — 情報露出 (低) / UX 阻害</option>
+            <option value="info">INFO — タイポ / 翻訳 / 軽微 UI</option>
+            <option value="unknown">わからない — MU 側で判定して</option>
+          </select>
+        </div>
+        <div class="row">
+          <label for="category">カテゴリ</label>
+          <select id="category" name="category" required>
+            <option value="">— 選択 —</option>
+            <option value="purchase_path">購入導線 (Constitution §21)</option>
+            <option value="auth">認証 / セッション / token</option>
+            <option value="xss_csrf">XSS / CSRF / SSRF</option>
+            <option value="injection">SQL / Command / Prompt injection</option>
+            <option value="business_logic">ビジネスロジック (価格 / 在庫)</option>
+            <option value="info_disclosure">情報露出 (PII / secrets)</option>
+            <option value="agent_safety">Agent 暴走 / kill switch</option>
+            <option value="ui_ux">UI / UX / タイポ</option>
+            <option value="other">その他</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row">
+        <label for="title">タイトル (1 行)</label>
+        <input type="text" id="title" name="title" maxlength="120" required
+               placeholder="例: /api/checkout で X-Forwarded-For を信頼して rate-limit を bypass できる">
+      </div>
+
+      <div class="row">
+        <label for="affected_url">影響を受ける URL / endpoint</label>
+        <input type="url" id="affected_url" name="affected_url" maxlength="500"
+               placeholder="例: https://wearmu.com/api/checkout">
+      </div>
+
+      <div class="row">
+        <label for="body">詳細 + 再現手順 + PoC</label>
+        <textarea id="body" name="body" maxlength="20000" required
+                  placeholder="## 概要&#10;...&#10;&#10;## 再現手順&#10;1. ...&#10;2. ...&#10;3. ...&#10;&#10;## 期待される動作&#10;...&#10;&#10;## 実際の動作&#10;...&#10;&#10;## 影響&#10;...&#10;&#10;## 推奨される修正&#10;..."></textarea>
+        <div class="help">Markdown 可。20,000 字まで。スクショ・動画 URL は本文内に貼ってください。</div>
+      </div>
+
+      <div class="two">
+        <div class="row">
+          <label for="reporter_name">報告者名 (公開可)</label>
+          <input type="text" id="reporter_name" name="reporter_name" maxlength="80"
+                 placeholder="例: Aviad / @handle / "Anon">
+        </div>
+        <div class="row">
+          <label for="reporter_email">連絡先 email (非公開)</label>
+          <input type="email" id="reporter_email" name="reporter_email" maxlength="200" required
+                 placeholder="例: you@example.com">
+        </div>
+      </div>
+
+      <div class="two">
+        <div class="row">
+          <label for="solana_address">Solana address (ENAI 受領)</label>
+          <input type="text" id="solana_address" name="solana_address" maxlength="120"
+                 placeholder="例: DK29rBGCvP83LUNjUGVM6xt6qPy6rycBFopXbFkg9XvQ">
+          <div class="help">空欄でも OK (受領時に再確認)</div>
+        </div>
+        <div class="row">
+          <label for="ship_size">シャツのサイズ (報酬発送用)</label>
+          <select id="ship_size" name="ship_size">
+            <option value="">未定 (確定時に確認)</option>
+            <option value="S">S</option>
+            <option value="M">M</option>
+            <option value="L">L</option>
+            <option value="XL">XL</option>
+            <option value="XXL">XXL</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="submit-row">
+        <div class="note">
+          送信すると、MU から 72h 以内に深刻度判定の email が届きます。<br>
+          確定後、報酬の受け取り方法を相談します。
+        </div>
+        <button type="submit" class="btn btn-primary">送信する</button>
+      </div>
+
+      <div id="result"></div>
+    </form>
+  </div>
+</section>
+
+<!-- ── HALL OF FAME ── -->
+<section>
+  <div class="wrap">
+    <h2>Hall of Fame</h2>
+    <p class="sub">過去に MU を守ってくれた人たちです。INFO ティアも含めて、報告してくれた全員を載せます。</p>
+    <div class="hof">
+      <div class="empty">
+        まだ報告が 1 件もありません。<br>
+        最初の報告者になってください。タイトルがここに刻まれます。
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── CONTACT ── -->
+<section>
+  <div class="wrap-narrow">
+    <h2>連絡先 / 法的事項</h2>
+    <p style="color:var(--mute);font-size:13.5px;line-height:2;margin-bottom:14px">
+      MU は <b style="color:var(--fg)">株式会社イネブラ (Enabler Inc., 〒102-0074 東京都千代田区九段南1-5-6 りそな九段ビル5階 KSフロア)</b> が運営しています。<br>
+      不正アクセス禁止法・電気通信事業法・個人情報保護法に基づく善意の検証のみ歓迎します。<br>
+      重大な脆弱性は <code>info@enablerdao.com</code> に PGP 暗号化での直接連絡も可。<br>
+      90 日後の公開ディスクロージャーは、MU 側から記事化します (報告者は希望すれば共著)。
+    </p>
+  </div>
+</section>
+
+<footer>
+  <a href="/">MU</a> · <a href="/constitution.md">Constitution</a> · <a href="/admin/agents">Agents</a> · <a href="/collab">Collab</a> · <a href="/developers">Developers</a><br>
+  株式会社イネブラ (Enabler Inc.) — 0 humans, 23 agents.
+</footer>
+
+<script>
+(function(){
+  var f = document.getElementById('bounty-form');
+  var out = document.getElementById('result');
+  function show(ok, msg){ out.className = ok?'ok':'err'; out.textContent = msg; }
+  f.addEventListener('submit', async function(e){
+    e.preventDefault();
+    out.className = ''; out.textContent='';
+    var btn = f.querySelector('button[type=submit]');
+    btn.disabled = true; var oldT = btn.textContent; btn.textContent = '送信中...';
+    var data = {
+      severity:       f.severity.value,
+      category:       f.category.value,
+      title:          f.title.value.trim(),
+      affected_url:   f.affected_url.value.trim(),
+      body:           f.body.value.trim(),
+      reporter_name:  f.reporter_name.value.trim(),
+      reporter_email: f.reporter_email.value.trim(),
+      solana_address: f.solana_address.value.trim(),
+      ship_size:      f.ship_size.value,
+    };
+    try {
+      var r = await fetch('/api/bounty/submit', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(data),
+      });
+      var j = await r.json().catch(function(){ return {ok:false,error:'invalid server response'}; });
+      if (r.ok && j.ok){
+        show(true, '受領しました。報告 ID: ' + (j.report_id || '?') + ' / 確認 email を ' + data.reporter_email + ' に送りました。');
+        f.reset();
+      } else {
+        show(false, 'エラー: ' + (j.error || ('HTTP '+r.status)));
+      }
+    } catch(err){
+      show(false, '送信失敗: ' + (err && err.message ? err.message : err));
+    } finally {
+      btn.disabled = false; btn.textContent = oldT;
+    }
+  });
+})();
+</script>
+
+</body>
+</html>
