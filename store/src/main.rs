@@ -16973,6 +16973,7 @@ async fn main() {
         .route("/admin/governance/:id/decide", post(admin_governance_decide))
         .route("/admin/audit", get(admin_audit))
         .route("/admin/founders", get(admin_founders))
+        .route("/admin/queue", get(admin_queue))
         .route("/api/v1/event", post(api_funnel_event))
         .route("/admin/auth_log", get(admin_auth_log_view))
         .route("/healthz", get(healthz))
@@ -20309,6 +20310,92 @@ async fn founder_review(db: Db, founder: &str, persona_prompt: &str) -> Result<A
         summary,
         notable: score < 0.5 || enqueued > 0,
     })
+}
+
+/// GET /admin/queue?token=… — last 20 sns_post_queue rows (posted/pending/error).
+/// Diagnostic for x_post_worker drain issues.
+async fn admin_queue(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/queue").await { return r; }
+    let conn = db.lock().unwrap();
+    let rows: Vec<(i64, String, String, String, String, String, String)> = {
+        let mut stmt = match conn.prepare(
+            "SELECT id, trigger_kind, COALESCE(text,''), COALESCE(posted_at,''),
+                    COALESCE(external_id,''), COALESCE(error,''), created_at
+             FROM sns_post_queue ORDER BY id DESC LIMIT 20"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map([], |r| Ok((
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?,
+        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    let linked: bool = conn.query_row(
+        "SELECT 1 FROM x_oauth_tokens WHERE id=1", [], |r| r.get::<_,i64>(0)
+    ).is_ok();
+    let (expires_at, scope): (i64, String) = conn.query_row(
+        "SELECT COALESCE(expires_at,0), COALESCE(scope,'') FROM x_oauth_tokens WHERE id=1",
+        [], |r| Ok((r.get::<_,i64>(0)?, r.get::<_,String>(1)?))
+    ).unwrap_or((0, "".into()));
+    drop(conn);
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let token = q.get("token").map(String::as_str).unwrap_or("");
+
+    let mut rows_html = String::new();
+    for (id, kind, text, posted_at, ext_id, err, _ca) in &rows {
+        let status = if !posted_at.is_empty() && !ext_id.is_empty() {
+            format!("<span style=color:#7e7>✓ posted {}</span>", html_escape(ext_id))
+        } else if !err.is_empty() {
+            format!("<span style=color:#e77>✗ {}</span>", html_escape(&err.chars().take(60).collect::<String>()))
+        } else {
+            "<span style=color:#bb7>… pending</span>".to_string()
+        };
+        rows_html.push_str(&format!(
+            r#"<tr><td>#{id}</td><td><code>{kind}</code></td><td class=text>{text}</td><td>{status}</td></tr>"#,
+            id = id, kind = html_escape(kind),
+            text = html_escape(&text.chars().take(100).collect::<String>()),
+            status = status));
+    }
+    if rows_html.is_empty() { rows_html = "<tr><td colspan=4 class=dim>(queue empty)</td></tr>".into(); }
+
+    let exp_str = if expires_at > 0 {
+        let delta = expires_at - now_s;
+        if delta > 0 { format!("expires in {}s", delta) } else { format!("EXPIRED {}s ago", -delta) }
+    } else { "—".into() };
+
+    Html(format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>MU / sns_post_queue</title>
+<style>
+body{{font:13px/1.55 ui-monospace,Menlo,monospace;color:#eaeaea;background:#0b0b0b;padding:24px;max-width:1280px;margin:0 auto}}
+h1{{font-weight:500;margin-top:0}}
+table{{width:100%;border-collapse:collapse;margin-top:12px}}
+td,th{{padding:8px 10px;border-bottom:1px solid #222;text-align:left;vertical-align:top}}
+.text{{color:#bbb;max-width:540px}} .dim{{color:#666}}
+code{{background:#1a1a1a;padding:1px 6px;border-radius:4px}}
+.nav a{{margin-right:14px;color:#9bd}} .nav{{margin-bottom:16px}}
+.meta{{background:#141414;padding:10px 14px;border-radius:6px;margin-bottom:14px}}
+</style></head><body>
+<div class=nav>
+  <a href="/admin/agents?token={tok}">Agents</a>
+  <a href="/admin/insights?token={tok}">Insights</a>
+  <a href="/admin/governance?token={tok}">Governance</a>
+  <a href="/admin/founders?token={tok}">Founders</a>
+  <a href="/admin/queue?token={tok}">Queue</a>
+</div>
+<h1>sns_post_queue (last 20)</h1>
+<div class=meta>
+  X OAuth: <b>{linked}</b> · token {exp} · scope <code>{scope}</code>
+</div>
+<table><thead><tr><th>id</th><th>kind</th><th>text</th><th>status</th></tr></thead>
+<tbody>{rows}</tbody></table>
+</body></html>"#,
+        tok = html_attr_escape(token),
+        linked = if linked {"linked"} else {"NOT linked"},
+        exp = html_escape(&exp_str),
+        scope = html_escape(&scope),
+        rows = rows_html)).into_response()
 }
 
 /// GET /admin/founders?token=… — side-by-side latest Musk × Bezos reviews.
