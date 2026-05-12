@@ -11389,11 +11389,14 @@ async fn show_partner_proposal_page(
     let recent_buys: Vec<RecentRow> = {
         let conn = db.lock().unwrap();
         // Try mu_purchases first (real purchases with dates).
+        // Filter out rows with empty / null mockup_url so we never render
+        // a "—" placeholder card (looks broken / weakens social proof).
         let mut stmt = match conn.prepare(
             "SELECT p.id, p.brand, p.drop_num, p.name, p.mockup_url, MAX(mp.created_at) AS bought_at
              FROM mu_purchases mp
              JOIN products p ON p.id = mp.product_id
              WHERE mp.created_at > datetime('now', '-90 days')
+               AND p.mockup_url IS NOT NULL AND p.mockup_url <> ''
              GROUP BY p.id
              ORDER BY bought_at DESC
              LIMIT 12"
@@ -11404,11 +11407,12 @@ async fn show_partner_proposal_page(
         if !from_purchases.is_empty() {
             from_purchases
         } else {
-            // Fallback: any product with sold > 0, ordered by created_at desc.
+            // Fallback: any product with sold > 0 AND visual asset, latest first.
             let mut stmt = match conn.prepare(
                 "SELECT id, brand, drop_num, name, mockup_url, created_at
                  FROM products
                  WHERE sold > 0
+                   AND mockup_url IS NOT NULL AND mockup_url <> ''
                  ORDER BY created_at DESC
                  LIMIT 12"
             ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "recent fallback").into_response() };
@@ -11619,17 +11623,45 @@ async fn show_partner_proposal_page(
         )
     }).collect::<Vec<_>>().join("\n");
 
+    // ── "なぜ MU が売れるのか" explainer (always shown) ──
+    let why_mu_html = r##"<section class="why-mu-wrap">
+  <h2 class="section-h">📣 なぜ MU グッズが「売れる」のか</h2>
+  <p class="section-d">パートナーとサンプル発注に進む前に、MU 単独商品で実証済みの 4 つの強さ — これがコラボ商品にも丸ごと適用されます。</p>
+  <div class="why-grid">
+    <div class="why-card">
+      <div class="why-n">01</div>
+      <div class="why-t">「今しかない」が買う理由になる</div>
+      <div class="why-d">MUGEN は毎時 108 枚限定・天気で柄が変わる。MA は週次 1/1 オークション。「次は無い」が伝わると、定価でも売り切れる。コラボ商品にもこの "希少性" を移植します。</div>
+    </div>
+    <div class="why-card">
+      <div class="why-n">02</div>
+      <div class="why-t">在庫ゼロで始められる</div>
+      <div class="why-d">全品 Printful 経由のオンデマンド製造。コラボパートナー側に在庫リスクはゼロ。注文が入ってから 7〜14 日で工場直送されます。試作だけして売れたら作る、が可能。</div>
+    </div>
+    <div class="why-card">
+      <div class="why-n">03</div>
+      <div class="why-t">物語のあるブランド設計</div>
+      <div class="why-d">「天気で柄が変わる」「コラボ相手の世界観をその場で MU が解釈する」など、商品単体ではなく "なぜこのデザインなのか" が常にある。SNS で語られやすい = 拡散が止まらない。</div>
+    </div>
+    <div class="why-card">
+      <div class="why-n">04</div>
+      <div class="why-t">パートナーは "MU ブランドの裏付け" を借りられる</div>
+      <div class="why-d">MUGEN ですでに 1,300+ 枚を売った実績、Mercari/Enabler 創業者の濱田優貴が直接プロデュース、MU Constitution によるオペレーション自動化。新規パートナーは「実績ある仕組みに乗る」だけで済む。</div>
+    </div>
+  </div>
+</section>"##.to_string();
+
     // ── Render recent buys (social proof at bottom) ──
     let recent_html = if recent_buys.is_empty() {
         "".to_string()
     } else {
         let cards = recent_buys.iter().map(|(id, brand, drop_num, name, mockup, created_at)| {
+            // mockup_url is guaranteed non-empty by SQL filter, but defend anyway.
             let img = match mockup.as_deref().filter(|u| !u.is_empty()) {
                 Some(u) => format!(r#"<img src="{}" alt="{}" loading="lazy">"#,
                     html_attr_escape(&abs_url(u)), html_attr_escape(name)),
-                None => r#"<div class="rb-placeholder">—</div>"#.to_string(),
+                None => return String::new(), // skip if somehow empty
             };
-            // Compact "5月12日" date from ISO timestamp.
             let dstr = created_at.get(5..10).map(|s| s.replace('-', "/")).unwrap_or_default();
             format!(r#"<a class="rb-card" href="https://wearmu.com/products/{brand}/{id}" target="_blank" rel="noopener">
   <div class="rb-img">{img}</div>
@@ -11645,13 +11677,17 @@ async fn show_partner_proposal_page(
                 drop_num = drop_num,
                 dstr = dstr,
             )
-        }).collect::<Vec<_>>().join("\n");
-        format!(r#"<section class="recent-wrap">
+        }).filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n");
+        if cards.is_empty() {
+            "".to_string()
+        } else {
+            format!(r#"<section class="recent-wrap">
   <h2 class="section-h">🔥 最近 MU で購入されたデザイン</h2>
-  <p class="section-d">過去 30 日に売れた {n} 点。クリックで商品詳細ページに飛びます。<br>
+  <p class="section-d">過去 90 日にお客様が実際に買った 1/1 ピース。「同じ商品を作りたい」「この方向性で行きたい」のヒントに。クリックで商品詳細へ。<br>
   ※ これらは MU 通常販売 — 「サンプル原価販売」とは別経路です。</p>
   <div class="recent-grid">{cards}</div>
-</section>"#, n = recent_buys.len(), cards = cards)
+</section>"#, cards = cards)
+        }
     };
 
     // ── Build 14-day SVG chart from `series` ──────────────────────────────
@@ -11856,7 +11892,12 @@ footer a{{color:var(--y);text-decoration:none}}
 .drop-row .stock{{font-size:10.5px;letter-spacing:0.06em;color:#A8A8A0;background:rgba(255,255,255,0.04);padding:3px 8px;border-radius:2px;font-weight:600}}
 .drop-row .stock.low{{color:var(--o);background:rgba(245,158,11,0.18)}}
 .drop-row .small-note{{font-size:11.5px;color:#9C9C95}}
-.recent-wrap{{max-width:1100px;margin:48px auto 12px;padding-top:30px;border-top:1px solid var(--b)}}
+.recent-wrap,.why-mu-wrap{{max-width:1100px;margin:48px auto 12px;padding-top:30px;border-top:1px solid var(--b)}}
+.why-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin-top:18px}}
+.why-card{{background:var(--card);border:1px solid var(--b);border-left:2px solid var(--y);padding:18px 18px 16px;border-radius:3px}}
+.why-card .why-n{{font-size:10px;letter-spacing:0.28em;color:var(--y);font-weight:700;margin-bottom:6px}}
+.why-card .why-t{{font-size:14.5px;font-weight:600;margin-bottom:8px;color:#F5F5F0;line-height:1.55}}
+.why-card .why-d{{color:#C4C4BC;font-size:12.5px;line-height:1.85}}
 .section-h{{font-size:15px;font-weight:600;letter-spacing:0.04em;margin-bottom:6px}}
 .section-d{{color:#A8A8A0;font-size:11.5px;line-height:1.85;margin-bottom:18px}}
 .recent-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}}
@@ -11924,6 +11965,8 @@ footer a{{color:var(--y);text-decoration:none}}
   </div>
   <div class="list">{drops_cards}</div>
 </section>
+
+{why_mu_html}
 
 {recent_html}
 
@@ -12086,6 +12129,7 @@ recalc();
         cards = cards,
         drops_cards = drops_cards,
         drops_count = drops.len(),
+        why_mu_html = why_mu_html,
         recent_html = recent_html,
         tab_a_cls = if q.get("tab").map(String::as_str) == Some("drops") { "" } else { "active" },
         tab_b_cls = if q.get("tab").map(String::as_str) == Some("drops") { "active" } else { "" },
@@ -15937,6 +15981,29 @@ async fn main() {
             created_at      TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_collab_orders_slug ON collab_orders(slug);
+        -- /collab/apply からの提案リクエスト。AI スクレイピング結果 + magic link。
+        --   status: pending (AI 自動応答済) → reviewed (濱田が確認) → onboarded (本格カタログ作成済)
+        CREATE TABLE IF NOT EXISTS collab_applications (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug            TEXT UNIQUE,
+            company_name    TEXT NOT NULL,
+            website_url     TEXT NOT NULL,
+            contact_email   TEXT NOT NULL,
+            contact_name    TEXT,
+            description     TEXT,
+            interest_types  TEXT,                 -- JSON array of merch types
+            fetched_text    TEXT,                 -- truncated site HTML/text
+            ai_pitch        TEXT,                 -- Gemini-generated pitch
+            ai_recommended  TEXT,                 -- JSON array of suggested product types
+            magic_token     TEXT UNIQUE NOT NULL,
+            status          TEXT NOT NULL DEFAULT 'pending',
+            ip              TEXT,
+            user_agent      TEXT,
+            created_at      TEXT NOT NULL,
+            reviewed_at     TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_collab_apps_email ON collab_applications(contact_email);
+        CREATE INDEX IF NOT EXISTS idx_collab_apps_created ON collab_applications(created_at DESC);
         -- 商品ごとの好き嫌い 1-clic シグナル + 自由記述 FB。
         --   kind: 'love' (👍) / 'meh' (👎) / 'comment' (自由記述同送)
         --   visitor_token は cookie 由来の匿名 ID。集計用、再投稿の弱め判定。
