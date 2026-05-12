@@ -39,6 +39,78 @@ fn autopilot_skip(task: &str) -> bool {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// MU Constitution — machine-readable single source of truth.
+// File is `static/constitution.md`, read at compile time via include_str! so a
+// rebuild is required to change Vision / Type-1 list / budget caps. This is
+// intentional: those changes are governance-level, not runtime tweakable.
+// Operational toggles (per-agent kill / dry-run) are env vars, not Constitution.
+// ─────────────────────────────────────────────────────────────────────────────
+const CONSTITUTION_RAW: &str = include_str!("../../static/constitution.md");
+
+/// Extract a top-level `## <name>` markdown section from the Constitution.
+/// Returns the slice up to (but not including) the next `## ` header, trimmed.
+/// Returns "" if the section is missing.
+fn constitution_section(name: &str) -> &'static str {
+    let needle = format!("\n## {}\n", name);
+    let Some(idx) = CONSTITUTION_RAW.find(&needle) else {
+        return "";
+    };
+    let after = &CONSTITUTION_RAW[idx + needle.len()..];
+    let end = after.find("\n## ").unwrap_or(after.len());
+    after[..end].trim_matches(|c: char| c == '\n' || c == ' ')
+}
+
+/// The 4-line brand vision. Sourced from Constitution `## Vision`.
+fn mu_vision() -> &'static str {
+    constitution_section("Vision")
+}
+
+/// Fail-fast at startup: if the Constitution is malformed or someone deleted
+/// the Vision section, do not start MU. Better to crash on boot than to ship
+/// agents with an empty vision string.
+fn validate_constitution() {
+    let v = mu_vision();
+    if v.is_empty() || !v.contains("seasons") {
+        panic!(
+            "[constitution] static/constitution.md is missing or has no parseable '## Vision' section. \
+             Fix and rebuild before deploying — refusing to start MU."
+        );
+    }
+    for section in &["Operational Principles", "Type 1 Doors", "Type 2 Doors", "Budget Caps", "Kill Switches"] {
+        if constitution_section(section).is_empty() {
+            panic!("[constitution] required section '{}' missing", section);
+        }
+    }
+    tracing::info!("[constitution] OK — Vision + 5 required sections present ({} bytes)", CONSTITUTION_RAW.len());
+}
+
+/// Check if a given agent is explicitly killed via env var.
+/// Returns the env var name that triggered the kill (for audit), or None.
+/// Honors `AGENT_KILL_ALL=1` and `AGENT_KILL_<UPPER_NAME>=1`.
+fn agent_killed(name: &str) -> Option<String> {
+    let truthy = |v: String| { let v = v.trim(); v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes") };
+    if env::var("AGENT_KILL_ALL").map(&truthy).unwrap_or(false) {
+        return Some("AGENT_KILL_ALL".to_string());
+    }
+    let var = format!("AGENT_KILL_{}", name.to_uppercase());
+    if env::var(&var).map(&truthy).unwrap_or(false) {
+        return Some(var);
+    }
+    None
+}
+
+/// Check if a given agent should run in dry-run (log only, no side effects).
+/// Honors `DRY_RUN_ALL=1` and `DRY_RUN_<UPPER_NAME>=1`.
+fn dry_run_active(name: &str) -> bool {
+    let truthy = |v: String| { let v = v.trim(); v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes") };
+    if env::var("DRY_RUN_ALL").map(&truthy).unwrap_or(false) {
+        return true;
+    }
+    let var = format!("DRY_RUN_{}", name.to_uppercase());
+    env::var(&var).map(&truthy).unwrap_or(false)
+}
+
 /// Centralized admin token check. Fail-closed: if ADMIN_TOKEN env var
 /// is missing or empty, every admin request is rejected with 503.
 /// Never falls back to a default value (prevents the historical
@@ -14053,6 +14125,11 @@ async fn main() {
         .compact()
         .init();
 
+    // Fail-fast: parse the Constitution before any subsystem boots. Empty
+    // Vision / missing required sections means agents would run with an
+    // undefined brand — better to crash on boot.
+    validate_constitution();
+
     let db_path = env::var("DB_PATH").unwrap_or_else(|_| "products.db".into());
     let conn = Connection::open(&db_path).expect("open db");
     conn.execute_batch("PRAGMA journal_mode=WAL;").ok();
@@ -14857,6 +14934,13 @@ async fn main() {
         ("sweep-bucket-hat",    3_590),
         ("sweep-joggers",       6_730),
         ("sweep-baseball-jersey", 5_660),
+        // KOKON v2 — Printful 実測仕入 (2026-05-12 Tokyo 配送)
+        ("kokon-apron",         4_600),
+        ("kokon-mug",           1_820),
+        ("kokon-tee",           2_318),
+        ("kokon-crewneck",      7_850),
+        ("kokon-snapback",      3_380),
+        ("kokon-stickers",      1_136),
     ];
     for (slug, cost) in printful_costs {
         conn.execute(
@@ -15359,6 +15443,110 @@ async fn main() {
         );
         CREATE INDEX IF NOT EXISTS idx_ma_relays_draw ON ma_lottery_relays(draw_id, position);
     ").ok();
+
+    // ── Autonomous-org tables (2026-05-12 introduced by Constitution v1) ──────
+    // Decision log (T1/T2 tagged), kill-switch audit, governance queue,
+    // SNS metrics, funnel events, journal embeddings, agent scorecards.
+    // See static/constitution.md for the governing principles.
+    conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS autonomy_kill_log (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_name    TEXT NOT NULL,
+            kill_var      TEXT NOT NULL,        -- e.g. 'AGENT_KILL_AUTO_REFUND' or 'AGENT_KILL_ALL'
+            blocked_at    TEXT NOT NULL,        -- epoch seconds (string)
+            notes         TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_kill_log_agent ON autonomy_kill_log(agent_name, blocked_at);
+
+        CREATE TABLE IF NOT EXISTS autonomy_decision_log (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_name      TEXT NOT NULL,
+            decision_kind   TEXT NOT NULL,      -- refund | price_adjust | drop_launch | prompt_edit | …
+            reversibility   TEXT NOT NULL,      -- 'T1' | 'T2'
+            payload         TEXT NOT NULL,      -- JSON
+            executed        INTEGER NOT NULL DEFAULT 0,
+            escalated       INTEGER NOT NULL DEFAULT 0,
+            dry_run         INTEGER NOT NULL DEFAULT 0,
+            outcome_score   REAL,               -- 0.0..1.0 filled by score_past_decisions
+            outcome_notes   TEXT,
+            created_at      TEXT NOT NULL,
+            scored_at       TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_decision_agent     ON autonomy_decision_log(agent_name, created_at);
+        CREATE INDEX IF NOT EXISTS idx_decision_revers    ON autonomy_decision_log(reversibility, executed);
+        CREATE INDEX IF NOT EXISTS idx_decision_unscored  ON autonomy_decision_log(scored_at);
+
+        CREATE TABLE IF NOT EXISTS autonomy_governance_queue (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            decision_id   INTEGER REFERENCES autonomy_decision_log(id),
+            agent_name    TEXT NOT NULL,
+            title         TEXT NOT NULL,
+            description   TEXT,
+            status        TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | rejected | expired
+            decided_by    TEXT,
+            decided_at    TEXT,
+            created_at    TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_gov_status ON autonomy_governance_queue(status, created_at);
+
+        CREATE TABLE IF NOT EXISTS sns_post_metrics (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_id       TEXT NOT NULL,        -- platform-side ID (X tweet id)
+            platform      TEXT NOT NULL,        -- 'x' | 'instagram' | …
+            queue_id      INTEGER,              -- joins sns_post_queue.id when known
+            impressions   INTEGER,
+            likes         INTEGER,
+            reposts       INTEGER,
+            replies       INTEGER,
+            bookmarks     INTEGER,
+            quote_tweets  INTEGER,
+            clicks        INTEGER,
+            raw_payload   TEXT,                 -- full API response JSON
+            measured_at   TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_sns_metrics_post  ON sns_post_metrics(post_id, measured_at);
+        CREATE INDEX IF NOT EXISTS idx_sns_metrics_queue ON sns_post_metrics(queue_id, measured_at);
+
+        CREATE TABLE IF NOT EXISTS funnel_events (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            visitor_id    TEXT NOT NULL,        -- cookie-derived
+            session_id    TEXT NOT NULL,
+            event         TEXT NOT NULL,        -- pageview | cta_click | checkout_start | checkout_paid
+            path          TEXT NOT NULL,
+            referrer      TEXT,
+            product_id    INTEGER,
+            extra         TEXT,                 -- JSON
+            created_at    TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_funnel_session  ON funnel_events(session_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_funnel_visitor  ON funnel_events(visitor_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_funnel_event    ON funnel_events(event, created_at);
+
+        CREATE TABLE IF NOT EXISTS journal_embeddings (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            journal_id    INTEGER NOT NULL,     -- references agent_journal.id
+            embedding     BLOB NOT NULL,        -- f32[768] little-endian packed
+            model         TEXT NOT NULL,        -- e.g. 'text-embedding-004'
+            created_at    TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_emb_journal ON journal_embeddings(journal_id);
+
+        CREATE TABLE IF NOT EXISTS agent_scorecard (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_name        TEXT NOT NULL,
+            period_start      TEXT NOT NULL,    -- epoch sec
+            period_end        TEXT NOT NULL,
+            decisions_total   INTEGER NOT NULL,
+            decisions_scored  INTEGER NOT NULL,
+            avg_outcome_score REAL,
+            notable_failures  INTEGER,
+            cost_jpy          INTEGER,
+            notes             TEXT,
+            created_at        TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_scorecard_agent ON agent_scorecard(agent_name, period_end);
+    ").ok();
+
     // Backfill trial_end_at for pre-existing /you users.
     // created_at is a unix-epoch-seconds string; trial_end_at is the same
     // format so we can compare without parsing each time.
@@ -15818,6 +16006,11 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         interval_secs: 86_400, // 24h
         description: "ビジョン (詩 4 行) からの drift を Gemini で検知 → 改善案 → Telegram",
     },
+    AgentDef {
+        name: "self_evolve",
+        interval_secs: 86_400, // 24h
+        description: "Gemini Pro が状況観察 → コード/プロンプト/param の小改善 1〜3 件を提案 → ai_decisions (PR は別 workflow)",
+    },
 ];
 
 /// agent_journal から指定 agent の最後の cycle_at (epoch sec) を取得。
@@ -15919,7 +16112,63 @@ async fn journal_agent_report(db: Db, name: &str, report: &AgentReport) {
     cv_set(&conn, &dedup_at, &now_s.to_string(), "agent");
 }
 
+/// Write one row to `autonomy_decision_log`. Returns the new row id, or None
+/// on insert failure (treated as best-effort — never aborts the caller).
+/// Constitution principle #7: audit before action.
+fn log_autonomy_decision(
+    conn: &Connection,
+    agent_name: &str,
+    decision_kind: &str,
+    reversibility: &str,            // "T1" | "T2"
+    payload: &serde_json::Value,
+    executed: bool,
+    escalated: bool,
+    dry_run: bool,
+) -> Option<i64> {
+    let res = conn.execute(
+        "INSERT INTO autonomy_decision_log \
+         (agent_name, decision_kind, reversibility, payload, executed, escalated, dry_run, created_at) \
+         VALUES (?,?,?,?,?,?,?,?)",
+        params![
+            agent_name, decision_kind, reversibility,
+            payload.to_string(),
+            executed as i64, escalated as i64, dry_run as i64,
+            chrono_now(),
+        ],
+    );
+    if res.is_ok() { Some(conn.last_insert_rowid()) } else { None }
+}
+
+/// Enqueue a T1 (irreversible) item into `autonomy_governance_queue` for
+/// yuki to approve / reject at /admin/governance. Pairs with a decision_log row.
+fn enqueue_governance(
+    conn: &Connection,
+    decision_id: Option<i64>,
+    agent_name: &str,
+    title: &str,
+    description: &str,
+) -> Option<i64> {
+    let res = conn.execute(
+        "INSERT INTO autonomy_governance_queue \
+         (decision_id, agent_name, title, description, status, created_at) \
+         VALUES (?,?,?,?, 'pending', ?)",
+        params![decision_id, agent_name, title, description, chrono_now()],
+    );
+    if res.is_ok() { Some(conn.last_insert_rowid()) } else { None }
+}
+
+/// Log a kill-switch hit to `autonomy_kill_log` (one row per blocked tick).
+/// Best-effort: failures are swallowed so a broken table never wedges the scheduler.
+fn log_kill_switch_blocked(conn: &Connection, agent_name: &str, kill_var: &str) {
+    let _ = conn.execute(
+        "INSERT INTO autonomy_kill_log (agent_name, kill_var, blocked_at, notes) VALUES (?,?,?,?)",
+        params![agent_name, kill_var, chrono_now(), "scheduler skipped tick"],
+    );
+}
+
 /// 1 分ごとに registry を walk して、interval を超えた agent を走らせる。
+/// Honors per-agent kill switches (AGENT_KILL_<NAME> / AGENT_KILL_ALL env vars):
+/// blocked ticks are recorded to autonomy_kill_log but cause no side effects.
 async fn agent_scheduler(db: Db) {
     let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
     tick.tick().await; // skip immediate tick
@@ -15927,6 +16176,12 @@ async fn agent_scheduler(db: Db) {
         tick.tick().await;
         let now_s: i64 = chrono_now().parse().unwrap_or(0);
         for agent in AGENT_REGISTRY {
+            // Constitution: kill switch is non-negotiable. Check before any work.
+            if let Some(kill_var) = agent_killed(agent.name) {
+                let conn = db.lock().unwrap();
+                log_kill_switch_blocked(&conn, agent.name, &kill_var);
+                continue;
+            }
             let last_run: i64 = {
                 let conn = db.lock().unwrap();
                 agent_last_run_secs(&conn, agent.name)
@@ -16317,6 +16572,10 @@ async fn agent_auto_refund(db: Db) -> Result<AgentReport, String> {
     let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
     let threshold_jpy: i64 = env::var("AUTO_REFUND_THRESHOLD_JPY")
         .ok().and_then(|s| s.parse().ok()).unwrap_or(10_000);
+    // Constitution §8: dry-run by env var. When DRY_RUN_AUTO_REFUND=1 we log
+    // every intended refund to autonomy_decision_log but skip the Stripe call.
+    let is_dry_run = dry_run_active("auto_refund");
+    obs.insert("dry_run".into(), serde_json::Value::from(is_dry_run));
 
     for (fb_id, email, _msg) in &candidates {
         // 該当 email の直近 collab_orders を探す
@@ -16335,6 +16594,21 @@ async fn agent_auto_refund(db: Db) -> Result<AgentReport, String> {
                 "fb_id": fb_id, "email": email,
                 "hint": "no matching order — manual review",
             }));
+            // Constitution §19 + §7: ambiguous refund → escalate, audit.
+            {
+                let conn = db.lock().unwrap();
+                let did = log_autonomy_decision(
+                    &conn, "auto_refund", "refund_no_order",
+                    "T1",
+                    &serde_json::json!({"fb_id": fb_id, "email": email}),
+                    false, true, is_dry_run,
+                );
+                let _ = enqueue_governance(
+                    &conn, did, "auto_refund",
+                    "Refund request without matching order",
+                    &format!("fb_id={}, email={}", fb_id, email),
+                );
+            }
             continue;
         };
         if amount > threshold_jpy {
@@ -16343,6 +16617,20 @@ async fn agent_auto_refund(db: Db) -> Result<AgentReport, String> {
                 "fb_id": fb_id, "amount": amount, "threshold": threshold_jpy,
                 "hint": format!("amount ¥{} > ¥{}, escalate to human", amount, threshold_jpy),
             }));
+            {
+                let conn = db.lock().unwrap();
+                let did = log_autonomy_decision(
+                    &conn, "auto_refund", "refund_above_threshold",
+                    "T1",
+                    &serde_json::json!({"fb_id": fb_id, "amount": amount, "threshold": threshold_jpy, "email": email}),
+                    false, true, is_dry_run,
+                );
+                let _ = enqueue_governance(
+                    &conn, did, "auto_refund",
+                    &format!("Refund ¥{} > cap ¥{}", amount, threshold_jpy),
+                    &format!("fb_id={}, email={}", fb_id, email),
+                );
+            }
             continue;
         }
         // Stripe Refund: payment_intent or charge を session から取得
@@ -16350,6 +16638,24 @@ async fn agent_auto_refund(db: Db) -> Result<AgentReport, String> {
             decisions.push(serde_json::json!({
                 "type": "refund_stripe_unavailable", "fb_id": fb_id,
             }));
+            continue;
+        }
+        // DRY_RUN: stop here. Log intent but never call Stripe.
+        if is_dry_run {
+            decisions.push(serde_json::json!({
+                "type": "refund_dry_run",
+                "fb_id": fb_id, "amount": amount, "session": session_id,
+                "hint": "DRY_RUN_AUTO_REFUND=1 → Stripe call skipped",
+            }));
+            {
+                let conn = db.lock().unwrap();
+                let _ = log_autonomy_decision(
+                    &conn, "auto_refund", "stripe_refund",
+                    "T2",
+                    &serde_json::json!({"fb_id": fb_id, "amount": amount, "session": session_id, "email": email}),
+                    false, false, true,
+                );
+            }
             continue;
         }
         // 1) Get session → payment_intent
@@ -16385,11 +16691,17 @@ async fn agent_auto_refund(db: Db) -> Result<AgentReport, String> {
                 "fb_id": fb_id, "amount": amount,
                 "hint": format!("¥{} 自動返金完了 ({})", amount, email),
             }));
-            // mark FB as actioned
+            // mark FB as actioned + audit-log
             let conn = db.lock().unwrap();
             let _ = conn.execute(
                 "UPDATE customer_feedback SET ai_action_taken='auto_refund' WHERE id=?",
                 params![fb_id],
+            );
+            let _ = log_autonomy_decision(
+                &conn, "auto_refund", "stripe_refund",
+                "T2",
+                &serde_json::json!({"fb_id": fb_id, "amount": amount, "session": session_id, "email": email}),
+                true, false, false,
             );
         } else {
             decisions.push(serde_json::json!({
@@ -16397,6 +16709,18 @@ async fn agent_auto_refund(db: Db) -> Result<AgentReport, String> {
                 "fb_id": fb_id, "session": session_id,
                 "hint": "Stripe refund API failed — manual review",
             }));
+            let conn = db.lock().unwrap();
+            let did = log_autonomy_decision(
+                &conn, "auto_refund", "stripe_refund_failed",
+                "T1",  // failure path is irreversible from agent's POV — needs human
+                &serde_json::json!({"fb_id": fb_id, "amount": amount, "session": session_id, "email": email}),
+                false, true, false,
+            );
+            let _ = enqueue_governance(
+                &conn, did, "auto_refund",
+                "Stripe refund API failed",
+                &format!("fb_id={}, session={}", fb_id, session_id),
+            );
         }
     }
 
@@ -16529,12 +16853,8 @@ async fn agent_self_improvement(db: Db) -> Result<AgentReport, String> {
 // 出力を agent_journal に書き込み、drift があれば notable=1 で Telegram 通知。
 //
 // Auto-apply はしない。yuki がレビューして手動で取り込む。
-const MU_VISION: &str = r#"
-1. Fashion's seasonal cycle is a marketing artifact. MU has no seasons — only weather and hours.
-2. A brand can be 0 humans. We are proving it daily.
-3. A T-shirt is a small piece of climate, hashed to the day it was generated.
-4. Quiet confidence over loud announcements. Negative space matters. Numbers over adjectives.
-"#;
+// MU vision moved to `static/constitution.md` as the single source of truth.
+// Access via `mu_vision()` (returns &'static str from include_str!'d Constitution).
 
 async fn agent_vision_drift(db: Db) -> Result<AgentReport, String> {
     let mut obs = serde_json::Map::new();
@@ -16604,7 +16924,7 @@ async fn agent_vision_drift(db: Db) -> Result<AgentReport, String> {
          Schema:\n\
          {{\"drift_score\":0,\"summary\":\"<=80 chars\",\"fixes\":[{{\"surface\":\"x|blog|drops|council\",\"issue\":\"<=30 chars\",\"suggestion\":\"<=120 chars\"}}]}}\n\
          Hard limits: max 3 fixes. If no drift, drift_score < 20 and fixes=[].",
-        vision = MU_VISION.trim(),
+        vision = mu_vision(),
         surface = serde_json::to_string_pretty(&surface).unwrap_or_default(),
     );
 
@@ -16804,7 +17124,7 @@ Schema:
 }}], "headline":"<=80 chars overall direction"}}
 
 Hard limit: max 3 proposals. If MU is already optimal, proposals=[]."#,
-        vision = MU_VISION.trim(),
+        vision = mu_vision(),
         blogs = serde_json::to_string(&recent_blogs).unwrap_or_default(),
         drift = serde_json::to_string(&drift_history).unwrap_or_default(),
         used = budget_used, limit = budget_limit,
