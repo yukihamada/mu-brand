@@ -1612,6 +1612,188 @@ async fn admin_bounty_triage(
         .body(axum::body::Body::empty()).unwrap()
 }
 
+/// POST /api/collab/signup — public endpoint, self-serve collab onboarding.
+/// Replaces the legacy mailto: CTAs. Web + email only — no demo call required.
+async fn api_collab_signup(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let pick = |k: &str| -> String {
+        body.get(k).and_then(|v| v.as_str()).unwrap_or("").trim().to_string()
+    };
+    let brand_name    = pick("brand_name");
+    let contact_email = pick("contact_email");
+    let website       = pick("website");
+    let plan          = pick("plan");
+    let logo_url      = pick("logo_url");
+    let notes         = pick("notes");
+
+    let allowed_plans = ["starter","growth","enterprise","unsure"];
+    if !allowed_plans.contains(&plan.as_str()) {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":"invalid plan"}))).into_response();
+    }
+    if brand_name.is_empty() || brand_name.chars().count() > 120 {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":"brand_name required, ≤120 chars"}))).into_response();
+    }
+    if !contact_email.contains('@') || contact_email.chars().count() > 200 {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":"contact_email invalid"}))).into_response();
+    }
+    if website.chars().count() > 300 || logo_url.chars().count() > 500 || notes.chars().count() > 2_000 {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":"field length exceeded"}))).into_response();
+    }
+
+    let ip = headers.get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .unwrap_or("").trim().to_string();
+    let day = (chrono_now().parse::<i64>().unwrap_or(0) / 86_400).to_string();
+    let ip_hash = if ip.is_empty() {
+        String::new()
+    } else {
+        use sha2::{Sha256, Digest};
+        let mut h = Sha256::new();
+        h.update(ip.as_bytes()); h.update(b"|"); h.update(day.as_bytes());
+        format!("{:x}", h.finalize())[..16].to_string()
+    };
+
+    if !ip_hash.is_empty() {
+        let conn = db.lock().unwrap();
+        let recent: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM collab_signups
+             WHERE ip_hash=? AND CAST(COALESCE(received_at,'0') AS INTEGER) > ?",
+            params![ip_hash, chrono_now().parse::<i64>().unwrap_or(0) - 86_400],
+            |r| r.get(0),
+        ).unwrap_or(0);
+        if recent >= 3 {
+            return (StatusCode::TOO_MANY_REQUESTS,
+                Json(serde_json::json!({"ok":false,"error":"rate limit (3 signups / 24h per IP); please email info@enablerdao.com"}))).into_response();
+        }
+    }
+
+    let now_s = chrono_now();
+    let id: i64 = {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO collab_signups
+                (brand_name, contact_email, website, plan, logo_url, notes, ip_hash, status, received_at)
+             VALUES (?,?,?,?,?,?,?,'received',?)",
+            params![brand_name, contact_email, website, plan, logo_url, notes, ip_hash, now_s],
+        );
+        conn.last_insert_rowid()
+    };
+
+    let tg_token = env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default();
+    let tg_chat  = env::var("TELEGRAM_CHAT_ID").unwrap_or_else(|_| "1136442501".into());
+    if !tg_token.is_empty() {
+        let msg = format!(
+            "🆕 COLLAB SIGNUP #{} — plan={}\nbrand: {}\nemail: {}\nweb: {}\nnotes: {}",
+            id, plan, brand_name, contact_email, website,
+            notes.chars().take(300).collect::<String>());
+        let _ = reqwest::Client::new()
+            .post(format!("https://api.telegram.org/bot{}/sendMessage", tg_token))
+            .json(&serde_json::json!({"chat_id": tg_chat, "text": msg}))
+            .send().await;
+    }
+
+    if let Ok(resend_key) = env::var("RESEND_API_KEY") {
+        if !resend_key.is_empty() {
+            let plan_label = match plan.as_str() {
+                "starter" => "Starter (RS 30%, 初年度基本料 ¥0)",
+                "growth"  => "Growth (RS 20%, 初年度基本料 ¥0)",
+                "enterprise" => "Enterprise (RS 10%, 初年度基本料 ¥0)",
+                _ => "未定 — MU が提案",
+            };
+            let subj = format!("[MU Collab #{}] 受領しました — 24h 以内にプレビューをお送りします", id);
+            let html = format!(
+                r#"<p>{brand} ご担当者さま、</p><p>MU Collab へのご登録ありがとうございます。<br>下記内容を受領しました。<b>24 時間以内に AI が 3 SKU プレビュー</b>を生成して、このメールへの返信形でお送りします。</p><hr><p><b>登録 ID:</b> #{id}<br><b>プラン:</b> {plan_label}<br><b>ブランド名:</b> {brand}<br><b>ウェブサイト:</b> {website}</p><p><b>世界観メモ:</b><br>{notes}</p><hr><p>気に入れば続きの 27 SKU を生成して <code>yourbrand.wearmu.com</code> サブパスでローンチ。<br>気に入らなければ返信不要 — 履歴は <code>/admin/collab-signups</code> に残るだけです。</p><p>— MU Autopilot / 株式会社イネブラ<br><a href="https://wearmu.com/constitution.md" style="color:#e6c449">MU Constitution</a> · <a href="https://wearmu.com/legal" style="color:#e6c449">特商法表記</a></p>"#,
+                id = id,
+                brand = html_escape(&brand_name),
+                plan_label = html_escape(plan_label),
+                website = if website.is_empty() { "(未入力)".into() } else { html_escape(&website) },
+                notes = if notes.is_empty() { "(未入力)".into() } else { html_escape(&notes).replace('\n', "<br>") },
+            );
+            let _ = reqwest::Client::new()
+                .post("https://api.resend.com/emails")
+                .bearer_auth(&resend_key)
+                .json(&serde_json::json!({
+                    "from": "MU Autopilot <mu-autopilot@wearmu.com>",
+                    "to": [contact_email.clone()],
+                    "subject": subj,
+                    "html": html,
+                    "reply_to": "info@enablerdao.com",
+                }))
+                .send().await;
+        }
+    }
+
+    Json(serde_json::json!({"ok": true, "signup_id": id, "status": "received"})).into_response()
+}
+
+/// GET /admin/collab-signups?token= — list collab signups.
+async fn admin_collab_signups(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/collab-signups").await { return r; }
+    let tok_attr = html_attr_escape(q.get("token").map(String::as_str).unwrap_or(""));
+
+    struct Row {
+        id: i64, brand: String, email: String, website: String,
+        plan: String, status: String, notes_head: String, received_at: String,
+    }
+    let rows: Vec<Row> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, brand_name, contact_email,
+                    COALESCE(website,''), plan, status,
+                    SUBSTR(COALESCE(notes,''),1,160), received_at
+             FROM collab_signups ORDER BY id DESC LIMIT 200"
+        ) { Ok(s)=>s, Err(_)=> return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map([], |r| Ok(Row {
+            id: r.get(0)?, brand: r.get(1)?, email: r.get(2)?, website: r.get(3)?,
+            plan: r.get(4)?, status: r.get(5)?, notes_head: r.get(6)?, received_at: r.get(7)?,
+        })).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+
+    let mut tbody = String::new();
+    for r in &rows {
+        tbody.push_str(&format!(
+            r#"<tr><td>#{id}</td><td><b>{br}</b><br><span style="color:#888">{em}</span></td><td>{web}</td><td><span style="color:#e6c449">{plan}</span></td><td>{st}</td><td><span style="color:#888;font-size:12px">{nh}…</span></td><td style="color:#999;font-size:11px;white-space:nowrap">{ts}</td></tr>"#,
+            id=r.id, br=html_escape(&r.brand), em=html_escape(&r.email),
+            web=html_escape(&r.website), plan=html_escape(&r.plan),
+            st=html_escape(&r.status),
+            nh=html_escape(&r.notes_head.replace('\n', " ")),
+            ts=html_escape(&r.received_at)));
+    }
+    if tbody.is_empty() { tbody = r#"<tr><td colspan=7 style="color:#666;padding:24px">(まだ signup なし)</td></tr>"#.into(); }
+    Html(format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset=utf-8><title>MU / Collab Signups</title>
+<style>
+body{{font:14px/1.55 ui-monospace,Menlo,monospace;color:#eaeaea;background:#0b0b0b;padding:24px;max-width:1300px;margin:0 auto}}
+h1{{font-weight:500;margin:0 0 14px}}
+table{{width:100%;border-collapse:collapse}}
+th,td{{padding:10px 12px;border-bottom:1px solid #1f1f1f;text-align:left;vertical-align:top}}
+th{{color:#888;font-weight:500;font-size:11px;letter-spacing:0.08em;text-transform:uppercase}}
+.nav a{{margin-right:14px;color:#9bd}}
+</style></head><body>
+<div class=nav>
+  <a href="/admin/agents?token={tok}">Agents</a>
+  <a href="/admin/bounty?token={tok}">Bounty</a>
+  <a href="/admin/collab-signups?token={tok}">Collab Signups</a>
+  <a href="/collab" target="_blank">/collab (public)</a>
+</div>
+<h1>MU Collab — signups ({n})</h1>
+<table><thead><tr><th>id</th><th>brand / email</th><th>website</th><th>plan</th><th>status</th><th>notes</th><th>received</th></tr></thead>
+<tbody>{tbody}</tbody></table>
+</body></html>"#, tok=tok_attr, n=rows.len(), tbody=tbody)).into_response()
+}
+
 async fn list_brands(State(db): State<Db>) -> impl IntoResponse {
     // created_at is stored mixed-format (some rows are unix-epoch strings,
     // others are ISO). Normalize inside SQL so MAX() picks the real latest.
@@ -19038,6 +19220,24 @@ async fn main() {
         CREATE INDEX IF NOT EXISTS idx_bounty_email    ON bounty_submissions(reporter_email);
         CREATE INDEX IF NOT EXISTS idx_bounty_severity ON bounty_submissions(severity_final, received_at);
 
+        CREATE TABLE IF NOT EXISTS collab_signups (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            brand_name      TEXT NOT NULL,
+            contact_email   TEXT NOT NULL,
+            website         TEXT,
+            plan            TEXT NOT NULL,
+            logo_url        TEXT,
+            notes           TEXT,
+            ip_hash         TEXT,
+            status          TEXT NOT NULL DEFAULT 'received',
+            internal_notes  TEXT,
+            received_at     TEXT NOT NULL,
+            preview_sent_at TEXT,
+            contracted_at   TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_collab_signups_status ON collab_signups(status, received_at);
+        CREATE INDEX IF NOT EXISTS idx_collab_signups_email  ON collab_signups(contact_email);
+
         CREATE TABLE IF NOT EXISTS agent_scorecard (
             id                INTEGER PRIMARY KEY AUTOINCREMENT,
             agent_name        TEXT NOT NULL,
@@ -19295,6 +19495,8 @@ async fn main() {
         .route("/api/bounty/submit", post(api_bounty_submit))
         .route("/admin/bounty", get(admin_bounty))
         .route("/admin/bounty/:id/triage", post(admin_bounty_triage))
+        .route("/api/collab/signup", post(api_collab_signup))
+        .route("/admin/collab-signups", get(admin_collab_signups))
         .route("/api/sweep/checkout", post(sweep_checkout))
         .route("/api/kokon/checkout", post(kokon_checkout))
         .route("/api/sweep/signal", post(sweep_signal))
