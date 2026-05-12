@@ -3001,6 +3001,12 @@ async fn admin_recover_mugen(
         let final_prompt = prompt_text.as_deref().filter(|s| !s.trim().is_empty())
             .unwrap_or(synth_prompt.as_str()).to_string();
 
+        // MU Next Thesis (A) — wearable timestamp overlay.
+        // Format: "YYYY-MM-DD · Teshikaga · 14.2°C"
+        let overlay = format!(
+            "{} · Teshikaga · {:.1}°C",
+            jst_today_str(), temp,
+        );
         let tee = gemini::TeeDesign {
             name: &format!("MUGEN #{:04}", drop_num),
             prompt: &final_prompt,
@@ -3009,6 +3015,7 @@ async fn admin_recover_mugen(
             scene: &["every-day".into()],
             seed: &format!("mugen-{:04}", drop_num),
             bio: "",
+            wear_log_overlay: &overlay,
         };
         match gemini::generate_tee(&tee).await {
             Ok(g) => {
@@ -4232,10 +4239,15 @@ fn spawn_gemini_for_design(db: Db, design_id: i64) {
         let scene = pull_strs("scene");
         let bio = taste.get("bio").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
+        // /you (per-user) designs: overlay opt-in via taste.wear_log_overlay
+        // (string). Default empty = legacy no-text behavior preserved.
+        let overlay = taste.get("wear_log_overlay")
+            .and_then(|v| v.as_str()).unwrap_or("").to_string();
         let tee = gemini::TeeDesign {
             name: &name, prompt: &prompt, seed: &seed,
             mood: &mood, palette: &palette, scene: &scene,
             bio: &bio,
+            wear_log_overlay: &overlay,
         };
         match gemini::generate_tee(&tee).await {
             Ok(g) => {
@@ -8996,6 +9008,349 @@ async fn admin_ma_lottery_list(
                             "privacy_note": "winner_email omitted by default; pass reveal=1 to include"})).into_response()
 }
 
+// ── E: Anonymous Wearing Log (MU_NEXT_THESIS.md) ─────────────────────────
+// 顔を使わない MU の community 表現。購入者が「私が着てる」を投稿、地点
+// は都道府県粒度、wearer は pseudonym。承認で ENAI 5 枚贈与。
+
+#[derive(serde::Deserialize)]
+struct WearingSubmitBody {
+    product_id: i64,
+    wearer_email: String,      // submission identity, hashed before persisting
+    kind: Option<String>,      // 'note' (default) | 'photo'
+    image_url: Option<String>, // already-uploaded R2 / Imgur URL
+    note_text: Option<String>,
+    location_zone: Option<String>, // 'JP-13' (Tokyo) etc.
+}
+
+async fn wearing_submit(
+    State(db): State<Db>,
+    Json(body): Json<WearingSubmitBody>,
+) -> impl IntoResponse {
+    let email = body.wearer_email.trim().to_lowercase();
+    if !email.contains('@') {
+        return (StatusCode::BAD_REQUEST, "wearer_email invalid").into_response();
+    }
+    // Verify the email actually owns this product
+    let owns: bool = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT 1 FROM mu_purchases WHERE email=? AND product_id=? LIMIT 1",
+            params![email, body.product_id], |r| r.get::<_, i64>(0),
+        ).is_ok()
+    };
+    if !owns {
+        return (StatusCode::FORBIDDEN, "you have not bought this piece").into_response();
+    }
+    let kind = body.kind.clone().unwrap_or_else(|| "note".into());
+    if kind == "photo" && body.image_url.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
+        return (StatusCode::BAD_REQUEST, "image_url required for kind=photo").into_response();
+    }
+    let pseudonym = lottery_pseudonym(body.product_id, &email);
+    let now = chrono_now();
+    let conn = db.lock().unwrap();
+    let _ = conn.execute(
+        "INSERT INTO wearing_log
+            (product_id, wearer_pseudonym, submitted_at, kind,
+             image_url, note_text, location_zone, status, enai_grant, created_at)
+         VALUES (?,?,?,?,?,?,?,'pending',5,?)",
+        params![body.product_id, pseudonym, now, kind,
+                body.image_url, body.note_text, body.location_zone, now],
+    );
+    Json(serde_json::json!({
+        "ok": true,
+        "wearer_pseudonym": pseudonym,
+        "status": "pending",
+        "message": "投稿は人手モデレーション後に /wearing に掲載されます。ENAI 5 枚贈与は承認後 7 日以内。",
+    })).into_response()
+}
+
+/// GET /wearing — public approved log (latest 100)
+async fn wearing_log_page(State(db): State<Db>) -> Html<String> {
+    let rows: Vec<(i64, String, String, String, Option<String>, Option<String>, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT w.id, w.wearer_pseudonym,
+                    CASE WHEN w.submitted_at GLOB '[0-9]*' AND LENGTH(w.submitted_at) <= 11
+                         THEN date(CAST(w.submitted_at AS INTEGER), 'unixepoch', '+9 hours')
+                         ELSE SUBSTR(w.submitted_at,1,10) END,
+                    w.kind, w.image_url, w.note_text, w.location_zone
+             FROM wearing_log w
+             WHERE w.status='approved'
+             ORDER BY w.id DESC LIMIT 100"
+        ) { Ok(s) => s, Err(_) => return Html(String::new()) };
+        stmt.query_map([], |r| Ok((
+            r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+            r.get::<_, String>(3)?, r.get::<_, Option<String>>(4)?,
+            r.get::<_, Option<String>>(5)?, r.get::<_, Option<String>>(6)?,
+        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    let entries: String = if rows.is_empty() {
+        r#"<p style="color:rgba(245,245,240,0.5);text-align:center;padding:40px 0">まだ投稿はありません。<br>最初の wearer になる: <a href="/" style="color:#e6c449">MU を着る →</a></p>"#.to_string()
+    } else {
+        rows.iter().map(|(_id, pseudonym, date, kind, img, note, zone)| {
+            let body = if kind == "photo" {
+                img.as_deref().map(|u| format!(
+                    r#"<img src="{u}" alt="" loading="lazy" style="width:100%;display:block;background:#1c1c1c">"#,
+                    u = html_attr_escape(u))).unwrap_or_default()
+            } else {
+                note.as_deref().map(|n| format!(
+                    r#"<p style="font-size:14px;line-height:1.85;padding:24px 24px 16px;margin:0">{}</p>"#,
+                    html_escape(n))).unwrap_or_default()
+            };
+            let zone_disp = zone.as_deref().map(|z| html_escape(z)).unwrap_or_default();
+            format!(r#"<li>{body}<div class="meta">{date} · {pseudonym} · {zone}</div></li>"#,
+                body = body, date = html_escape(date),
+                pseudonym = html_escape(pseudonym), zone = zone_disp)
+        }).collect::<Vec<_>>().join("\n")
+    };
+    Html(format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wearing Log — MU を着る人々 | MU</title>
+<meta name="description" content="MU は永遠に有名人や顔を使わない。代わりに、実際にそれを着ている人々の anonymous log がブランドの主役。">
+<meta property="og:title" content="Wearing Log — MU">
+<meta property="og:description" content="顔のない brand. 着る人々の log が主役。">
+<meta property="og:image" content="https://wearmu.com/og.jpg">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+body{{margin:0;padding:0;background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.7;font-size:15px}}
+nav{{position:sticky;top:0;background:rgba(10,10,10,0.85);backdrop-filter:blur(12px);border-bottom:1px solid rgba(255,255,255,0.06);padding:18px 32px;display:flex;justify-content:space-between;align-items:center;z-index:50}}
+nav a{{color:#F5F5F0;text-decoration:none;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.85}}
+nav .logo{{font-weight:700;letter-spacing:0.45em}}
+header{{max-width:760px;margin:0 auto;padding:80px 32px 30px}}
+.eyebrow{{font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:#e6c449;margin-bottom:14px}}
+h1{{font-size:clamp(28px,4.5vw,46px);font-weight:300;letter-spacing:0.02em;line-height:1.3;margin-bottom:14px}}
+.manifesto{{color:rgba(245,245,240,0.65);font-size:13px;line-height:1.95;max-width:560px;margin-bottom:8px}}
+.manifesto strong{{color:#e6c449;font-weight:500}}
+.grid{{max-width:1024px;margin:48px auto 120px;padding:0 16px;list-style:none;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px}}
+.grid li{{background:#111;border:1px solid rgba(255,255,255,0.06);overflow:hidden;display:flex;flex-direction:column}}
+.grid .meta{{padding:12px 16px;font-size:10px;letter-spacing:0.18em;color:rgba(245,245,240,0.55);border-top:1px solid rgba(255,255,255,0.06);margin-top:auto;font-feature-settings:"tnum"}}
+.submit{{max-width:560px;margin:80px auto;padding:32px;background:#1c1c1c;border-left:2px solid #e6c449}}
+.submit h2{{font-size:18px;font-weight:300;color:#e6c449;margin:0 0 12px}}
+.submit p{{font-size:12px;color:rgba(245,245,240,0.7);margin-bottom:12px}}
+.submit code{{background:#0A0A0A;padding:2px 6px;font-size:11px}}
+footer{{padding:48px 32px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;font-size:11px;letter-spacing:0.2em;opacity:0.5}}
+</style></head><body>
+<nav><a href="/" class="logo">MU</a><a href="/blog/">/ Notes</a></nav>
+<header>
+<div class="eyebrow">Wearing Log · 顔のない brand</div>
+<h1>MU は有名人を使わない。<br>代わりに、それを着る人々が主役。</h1>
+<p class="manifesto"><strong>MU will never use a celebrity or a human face.</strong> Instead, every wearer can post — anonymously, with a hash pseudonym — what they wore, where, and what they felt. The brand's official archive is faceless. The locations are coarse (prefecture only). The faces, never. それが MU の物語の作り方。</p>
+</header>
+<ul class="grid">
+{entries}
+</ul>
+<div class="submit">
+<h2>あなたの 1 着を投稿する</h2>
+<p>MU を購入した方は <code>POST /api/wearing/submit</code> から投稿できます (body: product_id, wearer_email, kind, image_url|note_text, location_zone)。承認後に /wearing に掲載され、ENAI 5 枚贈与。投稿フォームは近日公開。</p>
+</div>
+<footer>MU — wearmu.com / 顔のない brand</footer>
+</body></html>"#, entries = entries))
+}
+
+/// GET /admin/wearing/queue?token=… — pending moderation list
+async fn admin_wearing_queue(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let conn = db.lock().unwrap();
+    let mut stmt = match conn.prepare(
+        "SELECT id, product_id, wearer_pseudonym, submitted_at, kind,
+                COALESCE(image_url,''), COALESCE(note_text,''),
+                COALESCE(location_zone,''), status
+         FROM wearing_log WHERE status='pending' ORDER BY id DESC LIMIT 100"
+    ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+    let rows: Vec<serde_json::Value> = stmt.query_map([], |r| Ok(serde_json::json!({
+        "id":               r.get::<_, i64>(0)?,
+        "product_id":       r.get::<_, i64>(1)?,
+        "wearer_pseudonym": r.get::<_, String>(2)?,
+        "submitted_at":     r.get::<_, String>(3)?,
+        "kind":             r.get::<_, String>(4)?,
+        "image_url":        r.get::<_, String>(5)?,
+        "note_text":        r.get::<_, String>(6)?,
+        "location_zone":    r.get::<_, String>(7)?,
+        "status":           r.get::<_, String>(8)?,
+    }))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+    Json(serde_json::json!({"pending": rows, "count": rows.len()})).into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct WearingDecideBody {
+    admin_token: String,
+    id: i64,
+    decision: String, // 'approve' | 'reject'
+    moderator_note: Option<String>,
+}
+
+async fn admin_wearing_decide(
+    State(db): State<Db>,
+    Json(body): Json<WearingDecideBody>,
+) -> impl IntoResponse {
+    if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+    let new_status = match body.decision.as_str() {
+        "approve" => "approved",
+        "reject"  => "rejected",
+        _ => return (StatusCode::BAD_REQUEST, "decision must be approve|reject").into_response(),
+    };
+    let conn = db.lock().unwrap();
+    let n = conn.execute(
+        "UPDATE wearing_log SET status=?, moderator_note=?, decided_at=?
+         WHERE id=? AND status='pending'",
+        params![new_status, body.moderator_note, chrono_now(), body.id],
+    ).unwrap_or(0);
+    Json(serde_json::json!({"ok": n > 0, "id": body.id, "status": new_status})).into_response()
+}
+
+// ── F: Death-Defined Drops (MA retirement) ───────────────────────────────
+// MA piece は明示的な expiry を持つ。期日になったら owner に retirement
+// 案内 email を送る。owner が retire を承認 → 物理返送 → ENAI 50 枚 refund。
+
+#[derive(serde::Deserialize)]
+struct MaRetireBody {
+    product_id: i64,
+    owner_email: String,
+    reason: Option<String>,   // 'natural' | 'damaged' | 'opt-out'
+}
+
+async fn ma_retire(
+    State(db): State<Db>,
+    Json(body): Json<MaRetireBody>,
+) -> impl IntoResponse {
+    let email = body.owner_email.trim().to_lowercase();
+    let owns: bool = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT 1 FROM mu_purchases mp
+             JOIN products p ON p.id=mp.product_id
+             WHERE mp.email=? AND mp.product_id=? AND p.brand='ma' LIMIT 1",
+            params![email, body.product_id], |r| r.get::<_, i64>(0),
+        ).is_ok()
+    };
+    if !owns {
+        return (StatusCode::FORBIDDEN, "you do not own this MA piece").into_response();
+    }
+    let already: bool = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT 1 FROM ma_retirements WHERE product_id=? LIMIT 1",
+            params![body.product_id], |r| r.get::<_, i64>(0),
+        ).is_ok()
+    };
+    if already {
+        return (StatusCode::CONFLICT, "already retired").into_response();
+    }
+    let pseudonym = lottery_pseudonym(body.product_id, &email);
+    let now = chrono_now();
+    let reason = body.reason.clone().unwrap_or_else(|| "natural".into());
+    let conn = db.lock().unwrap();
+    let _ = conn.execute(
+        "INSERT INTO ma_retirements
+            (product_id, owner_email, owner_pseudonym, retired_at, reason,
+             enai_refund, created_at)
+         VALUES (?,?,?,?,?,50,?)",
+        params![body.product_id, email, pseudonym, now, reason, now],
+    );
+    let _ = conn.execute(
+        "UPDATE products SET retired_at=?, retire_reason=? WHERE id=? AND brand='ma'",
+        params![now, reason, body.product_id],
+    );
+    Json(serde_json::json!({
+        "ok": true,
+        "product_id": body.product_id,
+        "owner_pseudonym": pseudonym,
+        "reason": reason,
+        "enai_refund": 50,
+        "next_step": "返送先住所と返送案内が 24h 以内にメールで届きます (Enabler Inc. ops)。",
+    })).into_response()
+}
+
+/// GET /ma/retired — public retirement ledger.
+async fn ma_retired_ledger(State(db): State<Db>) -> Html<String> {
+    let rows: Vec<(i64, String, String, String, i64)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT r.product_id, r.owner_pseudonym,
+                    CASE WHEN r.retired_at GLOB '[0-9]*' AND LENGTH(r.retired_at) <= 11
+                         THEN date(CAST(r.retired_at AS INTEGER), 'unixepoch', '+9 hours')
+                         ELSE SUBSTR(r.retired_at,1,10) END,
+                    r.reason, r.enai_refund
+             FROM ma_retirements r ORDER BY r.id DESC LIMIT 200"
+        ) { Ok(s) => s, Err(_) => return Html(String::new()) };
+        stmt.query_map([], |r| Ok((
+            r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+            r.get::<_, String>(3)?, r.get::<_, i64>(4)?,
+        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    let entries: String = if rows.is_empty() {
+        r#"<li style="color:rgba(245,245,240,0.5);text-align:center;padding:40px 0">まだ retirement はありません。MA piece は 100 日後に自然返却可能になります。</li>"#.to_string()
+    } else {
+        rows.iter().map(|(pid, ps, d, reason, enai)| format!(
+            r#"<li><span class="id">MA #{pid:04}</span><span class="ps">{ps}</span><span class="d">{d}</span><span class="reason">{reason}</span><span class="enai">ENAI +{enai}</span></li>"#,
+            pid = pid, ps = html_escape(ps), d = html_escape(d),
+            reason = html_escape(reason), enai = enai,
+        )).collect::<Vec<_>>().join("\n")
+    };
+    Html(format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Retired — 死を持つ服 | MU</title>
+<meta name="description" content="MU MA piece は明示的な expiry を持つ。返却された服の公開 ledger。Fast fashion の対極。">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+body{{margin:0;padding:0;background:#0A0A0A;color:#F5F5F0;font-family:'Noto Serif JP','Helvetica Neue',serif;line-height:1.85;font-size:14px}}
+nav{{position:sticky;top:0;background:rgba(10,10,10,0.85);backdrop-filter:blur(12px);border-bottom:1px solid rgba(255,255,255,0.06);padding:18px 32px;display:flex;justify-content:space-between;align-items:center;z-index:50;font-family:'Helvetica Neue',Arial,sans-serif}}
+nav a{{color:#F5F5F0;text-decoration:none;font-size:11px;letter-spacing:0.3em;text-transform:uppercase}}
+nav .logo{{font-weight:700;letter-spacing:0.45em}}
+.wrap{{max-width:680px;margin:0 auto;padding:60px 32px 100px}}
+.eyebrow{{font-family:'Helvetica Neue',Arial,sans-serif;font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:#e6c449;margin-bottom:14px}}
+h1{{font-size:clamp(26px,4vw,38px);font-weight:300;line-height:1.35;margin:0 0 18px}}
+p{{margin:0 0 14px}}
+ul.ledger{{list-style:none;padding:0;margin:36px 0;font-family:'Helvetica Neue','SF Mono',Menlo,monospace;font-size:12px}}
+ul.ledger li{{padding:14px 18px;border-bottom:1px solid rgba(255,255,255,0.06);display:grid;grid-template-columns:80px 1fr 90px 90px 80px;gap:12px;align-items:center;font-feature-settings:"tnum"}}
+ul.ledger .id{{color:#e6c449}}
+ul.ledger .ps{{color:rgba(245,245,240,0.7)}}
+ul.ledger .d{{color:rgba(245,245,240,0.5)}}
+ul.ledger .reason{{color:rgba(245,245,240,0.6);text-transform:uppercase;font-size:10px;letter-spacing:0.15em}}
+ul.ledger .enai{{color:#e6c449;text-align:right}}
+footer{{padding:48px 32px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;font-size:11px;letter-spacing:0.2em;opacity:0.5}}
+</style></head><body>
+<nav><a href="/" class="logo">MU</a><a href="/blog/">/ Notes</a></nav>
+<div class="wrap">
+<div class="eyebrow">MU · Retired</div>
+<h1>死を持つ服。返された服の ledger。</h1>
+<p>MU の MA は明示的な expiry を持つ。Owner は 100 日後以降、いつでも MU に返送できる。返却された服は次の MA Lottery の seed になる、または永続アーカイブに retire される。<br>Fast fashion は時間を消す。MU は時間を持つ。</p>
+<ul class="ledger">
+{entries}
+</ul>
+<p style="font-size:12px;color:rgba(245,245,240,0.5)">— 返送先 + 手順は MA piece 同梱の card に。ENAI refund は返送確認後 7 日以内。</p>
+</div>
+<footer>MU — wearmu.com</footer>
+</body></html>"#, entries = entries))
+}
+
+// ── B: cities listing endpoint ────────────────────────────────────────────
+async fn cities_index(State(db): State<Db>) -> Response {
+    let rows: Vec<serde_json::Value> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT slug, name_en, name_local, country_code, lat, lon,
+                    weather_provider, status, treasury_split_pct
+             FROM cities ORDER BY status='origin' DESC, status, slug"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map([], |r| Ok(serde_json::json!({
+            "slug":              r.get::<_, String>(0)?,
+            "name_en":           r.get::<_, String>(1)?,
+            "name_local":        r.get::<_, String>(2)?,
+            "country_code":      r.get::<_, String>(3)?,
+            "lat":               r.get::<_, f64>(4)?,
+            "lon":               r.get::<_, f64>(5)?,
+            "weather_provider":  r.get::<_, String>(6)?,
+            "status":            r.get::<_, String>(7)?,
+            "treasury_split_pct": r.get::<_, i64>(8)?,
+        }))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    Json(serde_json::json!({"cities": rows, "count": rows.len()})).into_response()
+}
+
 /// MU の X (Twitter) brand voice — Gemini への system prompt として渡す。
 /// すべての投稿は最終的にこの声を通る。
 ///
@@ -13404,6 +13759,12 @@ async fn main() {
         "ALTER TABLE products ADD COLUMN nft_mint TEXT",
         "ALTER TABLE products ADD COLUMN parent_design TEXT",
         "ALTER TABLE products ADD COLUMN sold_out_at TEXT",
+        // F: 死を持つ服 — MA piece に明示的な expiry。retire → ENAI refund。
+        "ALTER TABLE products ADD COLUMN expires_at TEXT",
+        "ALTER TABLE products ADD COLUMN retired_at TEXT",
+        "ALTER TABLE products ADD COLUMN retire_reason TEXT",
+        // B: multi-city — どの origin city が drop を発行したか
+        "ALTER TABLE products ADD COLUMN city_slug TEXT NOT NULL DEFAULT 'teshikaga'",
         "ALTER TABLE bids ADD COLUMN wallet_token TEXT",
         // Soulbound NFT pilot opt-in (per-bid; carried to settle_auction).
         "ALTER TABLE bids ADD COLUMN nft_opt_in INTEGER DEFAULT 0",
@@ -14158,6 +14519,67 @@ async fn main() {
         );
         CREATE INDEX IF NOT EXISTS idx_ai_budget_usage_month
             ON ai_budget_usage(yyyymm, created_at DESC);
+
+        -- B: multi-city 衛星化 (MU_NEXT_THESIS.md)。各 city が独立して
+        -- weather → drop count → auction を回す。origin = teshikaga。
+        CREATE TABLE IF NOT EXISTS cities (
+            slug              TEXT PRIMARY KEY,
+            name_en           TEXT NOT NULL,
+            name_local        TEXT NOT NULL,
+            country_code      TEXT NOT NULL,
+            lat               REAL NOT NULL,
+            lon               REAL NOT NULL,
+            weather_provider  TEXT NOT NULL DEFAULT 'openmeteo',
+            status            TEXT NOT NULL DEFAULT 'pilot', -- 'origin'|'active'|'pilot'|'paused'
+            operator_email    TEXT,
+            treasury_split_pct INTEGER NOT NULL DEFAULT 95,  -- 5% to origin
+            created_at        TEXT NOT NULL
+        );
+        INSERT OR IGNORE INTO cities
+            (slug, name_en, name_local, country_code, lat, lon, status,
+             operator_email, treasury_split_pct, created_at)
+        VALUES
+            ('teshikaga', 'Teshikaga',  '弟子屈町', 'JP', 43.4869, 144.4664,
+             'origin',  'mail@yukihamada.jp', 100, strftime('%s','now')),
+            ('honolulu',  'Honolulu',   'ホノルル', 'US', 21.3099, -157.8581,
+             'pilot',   NULL,                  95,  strftime('%s','now'));
+
+        -- E: Anonymous Wearing Log (MU_NEXT_THESIS.md)。
+        -- 顔は使わない、地点は粒度低 (都道府県/state)、wearer は pseudonym。
+        CREATE TABLE IF NOT EXISTS wearing_log (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_id        INTEGER NOT NULL,
+            wearer_pseudonym  TEXT NOT NULL,
+            submitted_at      TEXT NOT NULL,
+            kind              TEXT NOT NULL DEFAULT 'note',   -- 'photo'|'note'
+            image_url         TEXT,
+            note_text         TEXT,
+            location_zone     TEXT,                            -- 'JP-13' or 'US-HI' etc
+            weather_match_pct REAL,
+            status            TEXT NOT NULL DEFAULT 'pending', -- 'pending'|'approved'|'rejected'
+            moderator_note    TEXT,
+            decided_at        TEXT,
+            enai_grant        INTEGER NOT NULL DEFAULT 5,
+            created_at        TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_wearing_log_status ON wearing_log(status, submitted_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_wearing_log_product ON wearing_log(product_id);
+
+        -- F: Death-Defined Drops — MA retirement ledger。
+        -- 服が「死ぬ」イベントを 1 行記録。返却 → ENAI refund。
+        CREATE TABLE IF NOT EXISTS ma_retirements (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_id      INTEGER NOT NULL,
+            owner_email     TEXT NOT NULL,
+            owner_pseudonym TEXT NOT NULL,
+            retired_at      TEXT NOT NULL,
+            reason          TEXT,                  -- 'natural' | 'damaged' | 'opt-out'
+            enai_refund     INTEGER NOT NULL DEFAULT 50,
+            settled_at      TEXT,
+            created_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ma_retirements_retired_at
+            ON ma_retirements(retired_at DESC);
     ").ok();
     // CV-pulse autonomous loop: every 30 min the cron POSTs to
     // /api/admin/cv_pulse, which writes a snapshot here + may update
@@ -14587,6 +15009,17 @@ async fn main() {
         .route("/ma-lottery/",               get(ma_lottery_explainer))
         .route("/ma-lottery/:token",         get(ma_lottery_page))
         .route("/api/ma-lottery/:token/decide", post(ma_lottery_decide))
+        // E: Anonymous Wearing Log
+        .route("/wearing",                   get(wearing_log_page))
+        .route("/wearing/",                  get(wearing_log_page))
+        .route("/api/wearing/submit",        post(wearing_submit))
+        .route("/api/admin/wearing/queue",   get(admin_wearing_queue))
+        .route("/api/admin/wearing/decide",  post(admin_wearing_decide))
+        // F: Death-Defined Drops (MA retirement)
+        .route("/ma/retired",                get(ma_retired_ledger))
+        .route("/api/ma/retire",             post(ma_retire))
+        // B: Multi-city
+        .route("/api/cities",                get(cities_index))
         .route("/api/admin/sns/pending", get(admin_sns_pending))
         .route("/api/admin/sns/mark_posted", post(admin_sns_mark_posted))
         .route("/api/redeem_invite", post(redeem_invite))

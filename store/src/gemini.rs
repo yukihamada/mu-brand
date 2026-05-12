@@ -25,6 +25,11 @@ pub struct TeeDesign<'a> {
     /// design brief so the artwork interprets the wearer's self-description,
     /// but is NEVER printed verbatim on the shirt.
     pub bio: &'a str,
+    /// MU Next Thesis (A): "wearable timestamp" overlay. A single small line
+    /// of machine-tone text printed near the hem (NOT in the chest area).
+    /// Example: "2026-05-12 · Teshikaga · 14.2°C". Optional — pass empty
+    /// string to disable (legacy behavior: no text on shirt at all).
+    pub wear_log_overlay: &'a str,
 }
 
 pub async fn generate_tee(p: &TeeDesign<'_>) -> Result<GeneratedImage, String> {
@@ -98,23 +103,38 @@ fn build_tee_prompt(p: &TeeDesign) -> String {
         )
     };
 
+    // MU Next Thesis (A) — "wearable timestamp" overlay. A small, machine-tone
+    // text line near the hem. When empty, falls back to the original
+    // "no text at all" rule.
+    let (overlay_brief, text_rule) = if p.wear_log_overlay.trim().is_empty() {
+        (String::new(),
+         "- NO text on the T-shirt itself. NO watermark. NO model. NO mannequin. NO hangers.")
+    } else {
+        let safe = p.wear_log_overlay.replace('"', "'").chars().take(80).collect::<String>();
+        (format!("\nWearable timestamp overlay (single small line of text, near hem): \"{}\"", safe),
+         "- The chest area must NOT contain any text. The ONLY text on the shirt is the small \
+          single-line wearable-timestamp overlay near the hem (left-aligned, ~10pt equivalent, \
+          neutral sans-serif, in the same ink colour as the chest graphic, machine-tone). \
+          NO watermark. NO model. NO mannequin. NO hangers.")
+    };
+
     format!(
         "Photorealistic editorial product photograph of a single high-quality cream / off-white \
          heavyweight cotton T-shirt laid flat on a soft warm-grey concrete or paper surface, top-down 4:3 view. \
          The T-shirt features a printed graphic design centered on the chest:\n\n\
-         === DESIGN BRIEF (do not write any of this text on the shirt) ===\n\
+         === DESIGN BRIEF (do not write any of this text on the shirt unless explicitly noted) ===\n\
          Concept name (poetic, Japanese): \"{name}\"\n\
          Description: {prompt}\n\
          Mood keywords: {mood}\n\
          Palette: {palette}\n\
-         When it is worn: {scene}{bio_clause}\n\
+         When it is worn: {scene}{bio_clause}{overlay_brief}\n\
          Deterministic seed (variation key): {seed}\n\n\
          === RENDERING RULES ===\n\
          - The chest graphic should be an artistic, abstract / minimal illustration that interprets \
            the concept above. NOT literal, NOT a logo, NOT a word mark. Think Aesop / Kinfolk \
            editorial, slightly hand-drawn, slightly imperfect.\n\
          - The graphic should occupy roughly the chest area, ~15% of the shirt's width.\n\
-         - NO text on the T-shirt itself. NO watermark. NO model. NO mannequin. NO hangers.\n\
+         {text_rule}\n\
          - Subtle natural shadow under the shirt, gentle directional sunlight from upper-left.\n\
          - High-fidelity fabric texture (visible weave at close range).\n\
          - Backdrop should be calm, slightly desaturated, ~80% of frame is the shirt.\n\
@@ -126,5 +146,7 @@ fn build_tee_prompt(p: &TeeDesign) -> String {
         scene = scene,
         seed = p.seed,
         bio_clause = bio_clause,
+        overlay_brief = overlay_brief,
+        text_rule = text_rule,
     )
 }
