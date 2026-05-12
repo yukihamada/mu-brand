@@ -18,8 +18,11 @@ on:
     - cron: '0 0 * * *'
     # Daily 00:05 — sample_grow (15 MUer get a fresh pick)
     - cron: '5 0 * * *'
-    # Daily 00:10 — blog_compose (AI auto-blog Field log)
+    # Daily 00:10 UTC = JST 09:10 — blog_compose (canonical daily Field log)
     - cron: '10 0 * * *'
+    # TEMP (2026-05-12 only): every 6h burst to validate post-incident.
+    # Revert to daily-only on 2026-05-13 JST 10:00.
+    - cron: '15 6,12,18 * * *'
     # Weekly Mon 00:00 — lottery draw
     - cron: '0 0 * * 1'
     # Weekly Mon 03:00 UTC = JST 12:00 — council_compose (議題自動生成)
@@ -120,7 +123,7 @@ jobs:
   # Fly's legacy /api/admin/blog_compose endpoint remains as a manual fallback
   # (trigger via the workflow_dispatch path on this job).
   blog_compose:
-    if: github.event.schedule == '10 0 * * *' || github.event.inputs.target == 'blog_compose'
+    if: github.event.schedule == '10 0 * * *' || github.event.schedule == '15 6,12,18 * * *' || github.event.inputs.target == 'blog_compose'
     runs-on: ubuntu-latest
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -134,16 +137,29 @@ jobs:
           echo "$resp" > /tmp/stats.json
           jq -e .stats /tmp/stats.json > /dev/null
           already=$(jq -r .already_published /tmp/stats.json)
-          slug=$(jq -r .today_slug /tmp/stats.json)
+          base_slug=$(jq -r .today_slug /tmp/stats.json)
           backfill=$(jq -c '.backfill_slugs // []' /tmp/stats.json)
+          # 6h burst mode: when triggered by the 6h schedule, use hour-suffixed
+          # slug (auto-YYYY-MM-DD-HH) so multiple posts/day don't collide.
+          # The daily 10 0 * * * cron continues to use the canonical slug.
+          if [ "${{ github.event.schedule }}" = "15 6,12,18 * * *" ]; then
+            hh=$(date -u +%H)
+            slug="${base_slug}-${hh}utc"
+            # for 6h burst the canonical "already" check doesn't apply; check the suffix.
+            already=$(curl -s "${BASE_URL}/api/blog/auto" | jq -r --arg s "$slug" \
+              '.posts | map(select(.slug==$s)) | length > 0')
+            echo "6h burst — slug=$slug already=$already"
+          else
+            slug="$base_slug"
+          fi
           echo "already=$already" >> "$GITHUB_OUTPUT"
           echo "slug=$slug"       >> "$GITHUB_OUTPUT"
           echo "backfill=$backfill" >> "$GITHUB_OUTPUT"
           echo "Fetched stats: slug=$slug already=$already backfill=$backfill"
 
-      - name: Skip if already published today
+      - name: Skip if already published
         if: steps.stats.outputs.already == 'true'
-        run: echo "Today (${{ steps.stats.outputs.slug }}) already published — skipping."
+        run: echo "(${{ steps.stats.outputs.slug }}) already published — skipping."
 
       - name: Compose + publish today (Gemini + retry + audit)
         if: steps.stats.outputs.already != 'true'
