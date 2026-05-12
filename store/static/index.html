@@ -838,6 +838,11 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
         <input type="hidden" name="size" id="selected-size" value="M">
         <div id="checkout-msg" style="font-size:9px;letter-spacing:0.1em;min-height:16px;margin-bottom:4px"></div>
         <button type="submit" class="btn-primary" id="btn-buy">Purchase</button>
+        <!-- Stripe Payment Link quick-buy (shown only when present on product) -->
+        <a id="btn-quick" href="#" target="_blank" rel="noopener"
+           style="display:none;margin-top:8px;text-align:center;background:rgba(230,196,73,0.08);border:1px solid rgba(230,196,73,0.35);color:#e6c449;padding:10px 14px;border-radius:2px;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;font-weight:600;text-decoration:none">
+          ⚡ クイック購入 (Stripe へ直行)
+        </a>
       </form>
     </div>
   </div>
@@ -1458,7 +1463,48 @@ function openModal(p, pushHistory=true){
   btn.className = 'btn-primary'+(p.brand==='mugen'?' red':'');
   btn.disabled = rem<=0;
 
+  // Quick-buy via Stripe Payment Link (skips our /api/checkout roundtrip).
+  // Shown only when the product has a pre-generated payment_link_url AND
+  // there is at least 1 unit remaining.
+  const quick = document.getElementById('btn-quick');
+  if (quick) {
+    if (p.payment_link_url && rem > 0) {
+      quick.href = p.payment_link_url;
+      quick.style.display = 'block';
+    } else {
+      quick.style.display = 'none';
+      quick.removeAttribute('href');
+    }
+  }
+
   document.getElementById('modal').classList.add('open');
+
+  // ── URL-param quick-buy hooks ──────────────────────────────────────
+  // ?size=L          → pre-select size (case-insensitive)
+  // ?buy=1           → auto-submit checkout (size pre-applied first)
+  // Combined: e.g. /products/mugen/0042?size=L&buy=1 = direct to Stripe.
+  try {
+    const params = new URLSearchParams(window.location.search || '');
+    const wantedSize = (params.get('size') || '').toUpperCase().trim();
+    if (wantedSize && ['S','M','L','XL','XXL'].includes(wantedSize) && p.brand !== 'ma') {
+      const target = document.querySelector('.size-btn[data-size="' + wantedSize + '"]');
+      if (target) {
+        document.querySelectorAll('.size-btn').forEach(b => b.classList.remove('selected'));
+        target.classList.add('selected');
+        selectedSize = wantedSize;
+        window.selectedSize = wantedSize;
+        const hidden = document.getElementById('selected-size');
+        if (hidden) hidden.value = wantedSize;
+      }
+    }
+    if ((params.get('buy') === '1' || params.get('autobuy') === '1') && rem > 0) {
+      // Defer one tick so the form is mounted + size hidden is set.
+      setTimeout(() => {
+        const f = document.getElementById('checkout-form');
+        if (f) f.requestSubmit ? f.requestSubmit() : f.dispatchEvent(new Event('submit', {cancelable:true,bubbles:true}));
+      }, 80);
+    }
+  } catch(e) { /* silent */ }
 }
 
 function closeModal(){

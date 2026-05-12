@@ -359,6 +359,11 @@ struct Product {
     /// Optional; falls back to mockup_url client-side.
     #[serde(skip_serializing_if = "Option::is_none")]
     lifestyle_url: Option<String>,
+    /// Stripe Payment Link URL — when present, the PDP renders a
+    /// "クイック購入" CTA that goes straight to Stripe-hosted checkout,
+    /// skipping our /api/checkout roundtrip.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    payment_link_url: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -869,6 +874,369 @@ fn env_flag_enabled(var: &str, default_on: bool) -> bool {
     }
 }
 
+/// Convert a Unix epoch (seconds, UTC) into "YYYY-MM-DD HH:MM JST" without
+/// dragging in the chrono crate. Good enough for human-readable reminder
+/// emails. Handles 1970..2099 via the proleptic Gregorian calendar.
+fn format_jst_yyyy_mm_dd_hhmm(unix_utc: i64) -> String {
+    let jst = unix_utc + 9 * 3600;
+    let days_since_epoch = jst.div_euclid(86_400);
+    let secs = jst.rem_euclid(86_400);
+    let hour = (secs / 3_600) as u32;
+    let minute = ((secs % 3_600) / 60) as u32;
+    // Civil-from-days (Howard Hinnant's algorithm).
+    let z = days_since_epoch + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
+    let y = y + if m <= 2 { 1 } else { 0 };
+    format!("{:04}-{:02}-{:02} {:02}:{:02} JST", y, m, d, hour, minute)
+}
+
+/// POST /api/admin/products/:id/payment-link — create (or refresh) a Stripe
+/// Payment Link for a product. Persists the URL + Stripe Price ID on
+/// products.payment_link_url so the PDP renders a "クイック購入" button.
+///
+/// Idempotent: returns the existing link if already created. Set ?refresh=1
+/// to force-recreate (e.g. after price changes — old link auto-deactivated).
+///
+/// Limited to 1 completed session per Payment Link (suits MUGEN 1/1).
+async fn admin_create_payment_link(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/products/payment-link").await { return r; }
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"ok":false,"error":"stripe key not configured"}))).into_response();
+    }
+    let force = matches!(q.get("refresh").map(String::as_str), Some("1") | Some("true"));
+
+    // 1. Load product (and any existing link / price).
+    struct ProdRow {
+        brand: String, drop_num: i64, name: String, price_jpy: i64,
+        inventory: i64, sold: i64,
+        link_url: Option<String>, link_id: Option<String>, price_id: Option<String>,
+    }
+    let prod: Result<ProdRow, rusqlite::Error> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT brand, drop_num, name, price_jpy, inventory, sold,
+                    payment_link_url, payment_link_id, stripe_price_id
+             FROM products WHERE id=?",
+            params![id],
+            |r| Ok(ProdRow{
+                brand: r.get(0)?, drop_num: r.get(1)?, name: r.get(2)?,
+                price_jpy: r.get(3)?, inventory: r.get(4)?, sold: r.get(5)?,
+                link_url: r.get(6)?, link_id: r.get(7)?, price_id: r.get(8)?,
+            }),
+        )
+    };
+    let prod = match prod {
+        Ok(p) => p,
+        Err(_) => return (StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"ok":false,"error":"product not found"}))).into_response(),
+    };
+
+    if !force {
+        if let (Some(url), Some(lid)) = (prod.link_url.as_ref().filter(|s| !s.is_empty()),
+                                         prod.link_id.as_ref().filter(|s| !s.is_empty())) {
+            return Json(serde_json::json!({
+                "ok": true, "already": true,
+                "url": url, "payment_link_id": lid, "stripe_price_id": prod.price_id,
+            })).into_response();
+        }
+    }
+
+    let display_name = format!("{} — {}", prod.brand.to_uppercase(), prod.name);
+    let client = reqwest::Client::new();
+
+    // 2. If force-refresh, deactivate the old link first (best-effort).
+    if force {
+        if let Some(lid) = prod.link_id.as_ref().filter(|s| !s.is_empty()) {
+            let _ = client.post(format!("https://api.stripe.com/v1/payment_links/{}", lid))
+                .basic_auth(&stripe_key, None::<&str>)
+                .form(&[("active", "false")])
+                .send().await;
+        }
+    }
+
+    // 3. Create (or reuse) a Stripe Price object for this product.
+    let price_id: String = if let (false, Some(pid)) = (force, prod.price_id.as_ref().filter(|s| !s.is_empty())) {
+        pid.clone()
+    } else {
+        let resp = client.post("https://api.stripe.com/v1/prices")
+            .basic_auth(&stripe_key, None::<&str>)
+            .form(&[
+                ("unit_amount", prod.price_jpy.to_string().as_str()),
+                ("currency", "jpy"),
+                ("product_data[name]", &display_name),
+                ("product_data[metadata][product_id]", &id.to_string()),
+                ("product_data[metadata][brand]", &prod.brand),
+                ("product_data[metadata][drop_num]", &prod.drop_num.to_string()),
+            ])
+            .send().await;
+        match resp {
+            Ok(r) if r.status().is_success() => {
+                let j: serde_json::Value = r.json().await.unwrap_or_default();
+                let pid = j["id"].as_str().unwrap_or("").to_string();
+                if pid.is_empty() {
+                    return (StatusCode::BAD_GATEWAY,
+                        Json(serde_json::json!({"ok":false,"error":"stripe returned no price id"}))).into_response();
+                }
+                pid
+            }
+            Ok(r) => {
+                let s = r.status();
+                let t = r.text().await.unwrap_or_default();
+                tracing::error!("[payment-link] price create {}: {}", s, t.chars().take(200).collect::<String>());
+                return (StatusCode::BAD_GATEWAY,
+                    Json(serde_json::json!({"ok":false,"error":format!("stripe price {}", s)}))).into_response();
+            }
+            Err(e) => return (StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"ok":false,"error":format!("network: {}", e)}))).into_response(),
+        }
+    };
+
+    // 4. Create the Payment Link itself.
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    let success_url = format!("{}/success?from=payment_link", base_url);
+    // For 1/1 MUGEN: cap at inventory-sold so we don't overshoot. For
+    // multi-quantity drops (MUON / NOUNS), let buyers choose 1..rem on the link.
+    let remaining = (prod.inventory - prod.sold).max(0);
+    let pmt_link_form: Vec<(&str, String)> = vec![
+        ("line_items[0][price]", price_id.clone()),
+        ("line_items[0][quantity]", "1".into()),
+        ("line_items[0][adjustable_quantity][enabled]", "false".into()),
+        ("after_completion[type]", "redirect".into()),
+        ("after_completion[redirect][url]", success_url.clone()),
+        ("allow_promotion_codes", "true".into()),
+        // Stripe Payment Links use restrictions to cap total successful
+        // checkouts. 1 keeps MUGEN safe; for MUON we cap to remaining.
+        ("restrictions[completed_sessions][limit]",
+            if prod.brand == "mugen" || prod.brand == "ma" { "1".to_string() }
+            else { remaining.max(1).to_string() }),
+        ("shipping_address_collection[allowed_countries][0]", "JP".into()),
+        ("phone_number_collection[enabled]", "true".into()),
+        ("metadata[product_id]", id.to_string()),
+        ("metadata[brand]", prod.brand.clone()),
+        ("metadata[drop_num]", prod.drop_num.to_string()),
+    ];
+    let resp = client.post("https://api.stripe.com/v1/payment_links")
+        .basic_auth(&stripe_key, None::<&str>)
+        .form(&pmt_link_form)
+        .send().await;
+    let (url, link_id): (String, String) = match resp {
+        Ok(r) if r.status().is_success() => {
+            let j: serde_json::Value = r.json().await.unwrap_or_default();
+            (j["url"].as_str().unwrap_or("").to_string(),
+             j["id"].as_str().unwrap_or("").to_string())
+        }
+        Ok(r) => {
+            let s = r.status();
+            let t = r.text().await.unwrap_or_default();
+            tracing::error!("[payment-link] create {}: {}", s, t.chars().take(300).collect::<String>());
+            return (StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"ok":false,"error":format!("stripe link {}: {}", s, &t[..t.len().min(200)])}))).into_response();
+        }
+        Err(e) => return (StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({"ok":false,"error":format!("network: {}", e)}))).into_response(),
+    };
+    if url.is_empty() || link_id.is_empty() {
+        return (StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({"ok":false,"error":"stripe returned incomplete link"}))).into_response();
+    }
+
+    // 5. Persist.
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE products
+             SET payment_link_url=?, payment_link_id=?, stripe_price_id=?
+             WHERE id=?",
+            params![url, link_id, price_id, id],
+        );
+    }
+
+    Json(serde_json::json!({
+        "ok": true, "already": false,
+        "url": url, "payment_link_id": link_id, "stripe_price_id": price_id,
+    })).into_response()
+}
+
+/// POST /api/admin/cron/konbini-reminder — scheduled cron that finds open
+/// Konbini checkout sessions and emails the buyer a reminder.
+///
+/// Two reminder buckets, both idempotent (won't double-send):
+///   - "24h": session was created ≥24h ago, ≥24h until konbini expiry → ping
+///   - "48h": session was created ≥48h ago, ~24h before expiry → "明日まで"
+async fn cron_konbini_reminder(
+    State(db): State<Db>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let admin_token = body["admin_token"].as_str().unwrap_or("").to_string();
+    if let Err(r) = require_admin_token(Some(&admin_token)) { return r; }
+
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    if stripe_key.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "stripe key not configured").into_response();
+    }
+
+    let now_unix: i64 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64).unwrap_or(0);
+    let since_unix = now_unix - 4 * 86_400;
+    let url = format!(
+        "https://api.stripe.com/v1/checkout/sessions?limit=100&created[gte]={}",
+        since_unix,
+    );
+    let resp = match reqwest::Client::new()
+        .get(&url).basic_auth(&stripe_key, None::<&str>)
+        .timeout(std::time::Duration::from_secs(20))
+        .send().await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!("[konbini-reminder] stripe list err: {}", e);
+            return Json(serde_json::json!({"ok":false,"error":"stripe network"})).into_response();
+        }
+    };
+    if !resp.status().is_success() {
+        let s = resp.status();
+        let t = resp.text().await.unwrap_or_default();
+        return Json(serde_json::json!({"ok":false,"error":format!("stripe {} {}", s, &t[..t.len().min(200)])})).into_response();
+    }
+    let j: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(_) => return Json(serde_json::json!({"ok":false,"error":"bad stripe json"})).into_response(),
+    };
+    let sessions = j["data"].as_array().cloned().unwrap_or_default();
+
+    let mut considered = 0usize;
+    let mut sent_24h   = 0usize;
+    let mut sent_48h   = 0usize;
+    let mut skipped    = 0usize;
+
+    for sess in sessions {
+        considered += 1;
+        let status = sess["status"].as_str().unwrap_or("");
+        if status != "open" { skipped += 1; continue; }
+        let payment_status = sess["payment_status"].as_str().unwrap_or("");
+        if payment_status == "paid" { skipped += 1; continue; }
+        let pmt = sess["payment_method_types"].as_array().cloned().unwrap_or_default();
+        let has_konbini = pmt.iter().any(|v| v.as_str() == Some("konbini"));
+        if !has_konbini { skipped += 1; continue; }
+
+        let session_id = sess["id"].as_str().unwrap_or("").to_string();
+        if session_id.is_empty() { skipped += 1; continue; }
+        let created    = sess["created"].as_i64().unwrap_or(0);
+        let expires_at = sess["expires_at"].as_i64().unwrap_or(0);
+        if created == 0 || expires_at == 0 || expires_at <= now_unix {
+            skipped += 1; continue;
+        }
+        let age = now_unix - created;
+        let time_left = expires_at - now_unix;
+
+        let bucket: &'static str = if time_left <= 24 * 3_600 + 7_200 && age >= 36 * 3_600 {
+            "48h"
+        } else if age >= 24 * 3_600 && time_left >= 24 * 3_600 {
+            "24h"
+        } else {
+            skipped += 1; continue;
+        };
+
+        let already_sent: bool = {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT 1 FROM konbini_reminders WHERE session_id=? AND bucket=?",
+                params![session_id, bucket], |_| Ok(true),
+            ).unwrap_or(false)
+        };
+        if already_sent { skipped += 1; continue; }
+
+        let email = sess["customer_details"]["email"].as_str()
+            .or_else(|| sess["customer_email"].as_str())
+            .unwrap_or("").to_string();
+        if email.is_empty() || !email.contains('@') { skipped += 1; continue; }
+
+        let amount_total = sess["amount_total"].as_i64().unwrap_or(0);
+        let item_name = sess["metadata"]["display_name"].as_str()
+            .or_else(|| sess["metadata"]["product_id"].as_str())
+            .unwrap_or("MU 商品").to_string();
+        // Format expiry as JST without a chrono dep.
+        let exp_str = format_jst_yyyy_mm_dd_hhmm(expires_at);
+        let session_url = sess["url"].as_str().unwrap_or("").to_string();
+        let (subject, html) = if bucket == "48h" {
+            (format!("【明日まで】コンビニ払込番号 — ご注文 {}", item_name),
+             format!(
+                 "<p>こんにちは,</p>\
+                  <p>MU でのご注文 <b>{name}</b> (¥{amt}) のコンビニ払込番号の <b>有効期限が明日 ({exp})</b> までです。お近くのコンビニでお早めにお支払いください。</p>\
+                  <p>払込番号がお手元にない場合は、下記のリンクから再表示できます:<br><a href=\"{url}\">{url}</a></p>\
+                  <p>期限を過ぎるとご注文はキャンセルとなります。<br>— MU / 株式会社イネブラ</p>",
+                 name = html_escape(&item_name), amt = fmt_jpy(amount_total),
+                 exp = html_escape(&exp_str), url = html_attr_escape(&session_url),
+             ))
+        } else {
+            (format!("コンビニ払込番号のご案内 — {}", item_name),
+             format!(
+                 "<p>こんにちは,</p>\
+                  <p>MU でのご注文 <b>{name}</b> (¥{amt}) のコンビニ払込番号をお送りします。</p>\
+                  <p>有効期限: <b>{exp}</b><br><a href=\"{url}\">こちら</a> から払込番号を表示し、お近くのコンビニ (ローソン / ファミマ / セイコーマート / ミニストップ) でお支払いください。</p>\
+                  <p>ご質問は本メールへの返信、または info@enablerdao.com まで。<br>— MU / 株式会社イネブラ</p>",
+                 name = html_escape(&item_name), amt = fmt_jpy(amount_total),
+                 exp = html_escape(&exp_str), url = html_attr_escape(&session_url),
+             ))
+        };
+
+        let send_ok = if !resend_key.is_empty() {
+            let r = reqwest::Client::new()
+                .post("https://api.resend.com/emails")
+                .bearer_auth(&resend_key)
+                .json(&serde_json::json!({
+                    "from": "MU <info@enablerdao.com>",
+                    "to": [email.clone()],
+                    "subject": subject,
+                    "html": html,
+                    "reply_to": "info@enablerdao.com",
+                }))
+                .timeout(std::time::Duration::from_secs(15))
+                .send().await;
+            matches!(r, Ok(rr) if rr.status().is_success())
+        } else {
+            tracing::warn!("[konbini-reminder] RESEND_API_KEY unset — skipping send (would notify {} for session {})", email, session_id);
+            false
+        };
+
+        if send_ok {
+            let now_iso = chrono_now();
+            {
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "INSERT OR REPLACE INTO konbini_reminders (session_id, bucket, email, sent_at)
+                     VALUES (?,?,?,?)",
+                    params![session_id, bucket, email, now_iso],
+                );
+            }
+            if bucket == "48h" { sent_48h += 1; } else { sent_24h += 1; }
+        }
+    }
+
+    Json(serde_json::json!({
+        "ok": true,
+        "considered": considered,
+        "sent_24h": sent_24h,
+        "sent_48h": sent_48h,
+        "skipped": skipped,
+    })).into_response()
+}
+
 /// Search Stripe for an existing customer with this email and return
 /// `cus_xxx` if found. Best-effort: any error / timeout returns None so
 /// the caller falls back to creating a fresh customer. Single API call,
@@ -1121,6 +1489,9 @@ fn read_product(row: &rusqlite::Row) -> rusqlite::Result<Product> {
         bid_count:    row.get(15).unwrap_or(0),
         sold_out_at:  row.get(16).unwrap_or(None),
         lifestyle_url: row.get(17).unwrap_or(None),
+        // Try-get because not every SELECT pulls the new column. When the
+        // column index is out-of-range (small SELECT), this falls back to None.
+        payment_link_url: row.get(18).unwrap_or(None),
     })
 }
 
@@ -1177,7 +1548,8 @@ async fn list_products(
                 END AS mockup_url,
                 price_jpy, inventory, sold, created_at,
                 weather_data, prompt_hash, seed_data, nft_mint, auction_end,
-                COALESCE(current_bid,0), COALESCE(bid_count,0), sold_out_at, lifestyle_url
+                COALESCE(current_bid,0), COALESCE(bid_count,0), sold_out_at, lifestyle_url,
+                payment_link_url
          FROM products WHERE brand=? AND active=1 ORDER BY drop_num DESC LIMIT ?"
     ).unwrap();
     let products: Vec<Product> = stmt.query_map(params![brand, limit], |row| read_product(row))
@@ -20154,6 +20526,12 @@ async fn main() {
             sent_at      TEXT NOT NULL,
             PRIMARY KEY (session_id, bucket)
         )",
+        // Stripe Payment Link per product — shareable URL that goes straight
+        // to the Stripe-hosted checkout. Used as the PDP "クイック購入" CTA
+        // so the buyer skips our backend roundtrip + form entirely.
+        "ALTER TABLE products ADD COLUMN payment_link_url TEXT",
+        "ALTER TABLE products ADD COLUMN payment_link_id  TEXT",
+        "ALTER TABLE products ADD COLUMN stripe_price_id  TEXT",
         // Cash-payout fields for bounty rewards. Solana is the primary
         // method (treasury sends USDC). Stripe Connect Express is for
         // recipients who prefer fiat / JP-domestic bank. PayPay is a
@@ -21949,6 +22327,8 @@ async fn main() {
         .route("/api/exit/lottery", post(exit_lottery_enter))
         .route("/api/admin/lottery_draw", post(admin_lottery_draw))
         .route("/api/admin/cv_pulse", post(cv_pulse))
+        .route("/api/admin/cron/konbini-reminder", post(cron_konbini_reminder))
+        .route("/api/admin/products/:id/payment-link", post(admin_create_payment_link))
         .route("/api/health/cron", get(cron_health_handler))
         .route("/api/transparency", get(public_transparency))
         .route("/api/sample_personas", get(list_sample_personas))

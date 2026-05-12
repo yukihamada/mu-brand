@@ -31,6 +31,9 @@ on:
     - cron: '0 2 * * *'
     # Daily 23:00 UTC = JST 08:00 — ma_retire_notify (100d expiry 7-day heads up)
     - cron: '0 23 * * *'
+    # Every 6h :30 — konbini-reminder (poke buyers with unpaid Konbini sessions
+    # before the 3-day expiry, two buckets: 24h-old and ~24h-before-expiry)
+    - cron: '30 */6 * * *'
   workflow_dispatch:
     inputs:
       target:
@@ -48,6 +51,7 @@ on:
           - ma_retire_notify
           - council_compose
           - sample_grow_force
+          - konbini_reminder
 
 permissions:
   contents: read
@@ -338,3 +342,16 @@ jobs:
           curl -fsS -X POST -H 'Content-Type: application/json' \
             -d "{\"admin_token\":\"${MU_ADMIN_TOKEN}\"}" \
             "${BASE_URL}/api/admin/council_compose"
+
+  konbini_reminder:
+    # Every 6h :30 — finds open Konbini sessions and emails the buyer a
+    # reminder. Two buckets (24h-old and ~24h-before-expiry), de-duped on
+    # (session_id, bucket) so re-runs are safe.
+    if: github.event.schedule == '30 */6 * * *' || github.event.inputs.target == 'konbini_reminder'
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /api/admin/cron/konbini-reminder
+        run: |
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            -d "{\"admin_token\":\"${MU_ADMIN_TOKEN}\"}" \
+            "${BASE_URL}/api/admin/cron/konbini-reminder"
