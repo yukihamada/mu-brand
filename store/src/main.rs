@@ -8367,8 +8367,12 @@ async fn x_post_worker(db: Db) {
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
         if !autopilot_on() { continue; }
-        // Skip if X not yet linked
-        let linked = {
+        // Skip if X not yet linked. Two paths satisfy "linked":
+        //   1. OAuth 1.0a creds set as env vars (preferred — no expiry)
+        //   2. OAuth 2.0 PKCE row in x_oauth_tokens (from /admin/x/auth)
+        let has_oauth1 = ["X_CONSUMER_KEY","X_CONSUMER_SECRET","X_ACCESS_TOKEN","X_ACCESS_TOKEN_SECRET"]
+            .iter().all(|k| env::var(k).map(|v| !v.is_empty()).unwrap_or(false));
+        let linked = if has_oauth1 { true } else {
             let conn = db.lock().unwrap();
             conn.query_row(
                 "SELECT 1 FROM x_oauth_tokens WHERE id=1",
@@ -20543,11 +20547,12 @@ async fn agent_checkout_health(_db: Db) -> Result<AgentReport, String> {
         .timeout(std::time::Duration::from_secs(10)).build()
         .map_err(|e| e.to_string())?;
     let probes: &[(&str, &str, Option<&str>)] = &[
-        ("healthz",          "https://wearmu.com/healthz",              Some("ok")),
-        ("home",             "https://wearmu.com/",                     Some("MU")),
-        ("you_landing",      "https://wearmu.com/you",                  None),
-        ("sweep_signals",    "https://wearmu.com/api/sweep/signals",    None),
-        ("products_collab",  "https://wearmu.com/products/sweep-cap",   None),
+        ("healthz",          "https://wearmu.com/healthz",                       Some("ok")),
+        ("home",             "https://wearmu.com/",                              Some("MU")),
+        ("you_landing",      "https://wearmu.com/you",                           None),
+        ("sweep_signals",    "https://wearmu.com/api/sweep/signals",             None),
+        ("collab_landing",   "https://wearmu.com/collab",                        None),
+        ("product_detail",   "https://wearmu.com/products/sweep/sweep-cap",      None),
     ];
     for (name, url, must_contain) in probes {
         let started = std::time::Instant::now();
@@ -20928,13 +20933,16 @@ async fn admin_queue(
             r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?,
         ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
     };
-    let linked: bool = conn.query_row(
+    let oauth1_set = ["X_CONSUMER_KEY","X_CONSUMER_SECRET","X_ACCESS_TOKEN","X_ACCESS_TOKEN_SECRET"]
+        .iter().all(|k| env::var(k).map(|v| !v.is_empty()).unwrap_or(false));
+    let oauth2_row: bool = conn.query_row(
         "SELECT 1 FROM x_oauth_tokens WHERE id=1", [], |r| r.get::<_,i64>(0)
     ).is_ok();
     let (expires_at, scope): (i64, String) = conn.query_row(
         "SELECT COALESCE(expires_at,0), COALESCE(scope,'') FROM x_oauth_tokens WHERE id=1",
         [], |r| Ok((r.get::<_,i64>(0)?, r.get::<_,String>(1)?))
     ).unwrap_or((0, "".into()));
+    let linked = oauth1_set || oauth2_row;
     drop(conn);
     let now_s: i64 = chrono_now().parse().unwrap_or(0);
     let token = q.get("token").map(String::as_str).unwrap_or("");
@@ -20983,13 +20991,15 @@ code{{background:#1a1a1a;padding:1px 6px;border-radius:4px}}
 </div>
 <h1>sns_post_queue (last 20)</h1>
 <div class=meta>
-  X OAuth: <b>{linked}</b> · token {exp} · scope <code>{scope}</code>
+  X OAuth: <b>{linked}</b> · OAuth1.0a:{o1} · OAuth2.0:{o2} · token {exp} · scope <code>{scope}</code>
 </div>
 <table><thead><tr><th>id</th><th>kind</th><th>text</th><th>status</th></tr></thead>
 <tbody>{rows}</tbody></table>
 </body></html>"#,
         tok = html_attr_escape(token),
-        linked = if linked {"linked"} else {"NOT linked"},
+        linked = if linked {"linked ✓"} else {"NOT linked ✗"},
+        o1 = if oauth1_set {"✓"} else {"✗"},
+        o2 = if oauth2_row {"✓"} else {"✗"},
         exp = html_escape(&exp_str),
         scope = html_escape(&scope),
         rows = rows_html)).into_response()
