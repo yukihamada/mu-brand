@@ -18618,6 +18618,38 @@ async fn main() {
         "ALTER TABLE kyc_records ADD COLUMN stripe_identity_session_id TEXT",
         "ALTER TABLE kyc_records ADD COLUMN stripe_identity_status TEXT",
         "CREATE INDEX IF NOT EXISTS idx_kyc_records_token ON kyc_records(verification_token)",
+        // Bug-bounty reward redemption. Admin issues a one-time URL after
+        // triaging a submission; reporter visits the link and chooses either
+        // an existing MU tee or the bounty-original \"Security Researcher\" tee,
+        // entering shipping. Token is consumed on claim, expires in 30 days.
+        "CREATE TABLE IF NOT EXISTS bounty_rewards (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bounty_id INTEGER NOT NULL,
+            token TEXT NOT NULL UNIQUE,
+            cash_amount_jpy INTEGER NOT NULL DEFAULT 0,
+            notes TEXT,
+            choice TEXT,
+            chosen_product_id INTEGER,
+            chosen_size TEXT,
+            ship_name TEXT,
+            ship_line1 TEXT,
+            ship_line2 TEXT,
+            ship_city TEXT,
+            ship_state TEXT,
+            ship_zip TEXT,
+            ship_country TEXT,
+            ship_phone TEXT,
+            ship_email TEXT,
+            printful_order_id TEXT,
+            status TEXT NOT NULL DEFAULT 'issued',
+            issued_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            claimed_at TEXT,
+            shipped_at TEXT
+        )",
+        "CREATE INDEX IF NOT EXISTS idx_bounty_rewards_token ON bounty_rewards(token)",
+        "CREATE INDEX IF NOT EXISTS idx_bounty_rewards_bounty ON bounty_rewards(bounty_id)",
+        "CREATE INDEX IF NOT EXISTS idx_bounty_rewards_status ON bounty_rewards(status)",
     ] {
         conn.execute(col, []).ok();
     }
@@ -23965,11 +23997,15 @@ fn template_nft_login(ctx: &EmailContext, variant: &str) -> (String, String) {
         ctx.order_id));
     match variant {
         "A" => {
-            let subject = "あなたの wallet が、あなたの ID です".to_string();
+            let name_disp = if ctx.product_name.is_empty() { format!("MUGEN #{:04}", ctx.order_id) } else { ctx.product_name.clone() };
+            let subject = format!("{} の所有者へ — もうパスワードは要りません", name_disp);
+            let _ = &block; // (B variant uses it)
             let body = format!(
-                r#"<p style="margin:0 0 14px;color:#bbb;">14 日前に買った MUGEN #{:04}。<br>以降、wearmu.com の操作は wallet 署名で可能になりました。</p>{img}{block}{accent}"#,
-                ctx.order_id, img = image_block(ctx), block = block,
-                accent = accent_block("メール・パスワードの組み合わせは廃止していません。<br>でも MUGEN 所有者だけは「鍵」ベースに切り替えられます。<br>署名 1 回 = 90 日間ログイン保持。"));
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:15.5px;line-height:1.55;"><b style="color:#e6c449;">あなたの wallet が、wearmu.com の鍵になりました。</b></p>{img}<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 14px;"><tr><td style="padding:4px 0;color:#999;font-size:13px;">パスワード入力</td><td style="padding:4px 0;text-align:right;color:#F5F5F0;font-size:13px;">→ <s style="color:#666">廃止</s> 署名 1 回</td></tr><tr><td style="padding:4px 0;color:#999;font-size:13px;">ログイン所要時間</td><td style="padding:4px 0;text-align:right;color:#F5F5F0;font-size:13px;">~12 秒 → ~2 秒</td></tr><tr><td style="padding:4px 0;color:#999;font-size:13px;">セッション</td><td style="padding:4px 0;text-align:right;color:#F5F5F0;font-size:13px;">90 日保持</td></tr><tr><td style="padding:4px 0;color:#999;font-size:13px;">対象</td><td style="padding:4px 0;text-align:right;color:#F5F5F0;font-size:13px;"><b>{name}</b> 所有者のみ</td></tr></table>{cta}{accent}"#,
+                name = html_escape(&name_disp),
+                img = image_block(ctx),
+                cta = format!(r#"<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:14px 0 0;"><tr><td align="center"><a href="https://wearmu.com/you/login" style="display:inline-block;background:#e6c449;color:#000;text-decoration:none;padding:14px 28px;font-size:13px;letter-spacing:0.08em;font-weight:600;border-radius:2px;">wallet で wearmu.com に入る  →</a></td></tr></table>"#),
+                accent = accent_block("従来のメール・パスワードログインも残しています。<br>でも、あなたはもう覚える必要がありません。"));
             let html = email_shell(&subject, "wallet ログイン", &now_jst, &body);
             (subject, html)
         }
