@@ -108,6 +108,24 @@ fn agent_killed(name: &str) -> Option<String> {
     None
 }
 
+/// Heuristic: is this email a fake/test address that no agent should send to?
+/// Per Bezos critique: keep test data from polluting governance queue.
+/// Errs on the side of skipping (better to under-act on a real edge-case than
+/// to email-bomb noreply@ or burn Resend quota on test data).
+fn is_test_email(email: &str) -> bool {
+    let e = email.trim().to_lowercase();
+    if e.is_empty() || !e.contains('@') { return true; }
+    let bad_substrs = [
+        "test@", "@test.", "test.com", "test.local",
+        "@example.", "example.com", "example.org",
+        "noreply@", "no-reply@", "donotreply@",
+        "mailinator.com", "tempmail", "throwaway",
+        "rate@", "burst-", "agent-test",
+        "x@x.", "a@a.",
+    ];
+    bad_substrs.iter().any(|s| e.contains(s))
+}
+
 /// Check if a given agent should run in dry-run (log only, no side effects).
 /// Honors `DRY_RUN_ALL=1` and `DRY_RUN_<UPPER_NAME>=1`.
 fn dry_run_active(name: &str) -> bool {
@@ -1849,8 +1867,14 @@ async fn stripe_webhook(
         // Records a row in collab_orders. Production route:
         //   - printful → POST to Printful /v2/orders (auto-fulfill)
         //   - sweep_manual / pre_order → Telegram alert; partner が個別対応
+        // metadata[sample]=1 のときは partner 専用 proposal page 経由の
+        // サンプルまとめ買いとして multi-item ハンドラに分岐。
         if matches!(meta["collab"].as_str(), Some("sweep") | Some("kokon")) {
-            handle_collab_sweep_order(db.clone(), &session).await;
+            if meta["sample"].as_str() == Some("1") {
+                handle_collab_sample_order(db.clone(), &session).await;
+            } else {
+                handle_collab_sweep_order(db.clone(), &session).await;
+            }
             return StatusCode::OK.into_response();
         }
 
@@ -2528,6 +2552,305 @@ async fn handle_collab_sweep_order(db: Db, session: &serde_json::Value) {
                 "from": "MU × SWEEP <noreply@wearmu.com>",
                 "to":   to_list,
                 "subject": format!("[MU×SWEEP] 受注 {} ¥{}", name, amount),
+                "html": html,
+            }))
+            .send().await;
+    }
+}
+
+/// Handle a bulk SAMPLE order (metadata[collab]=sweep|kokon AND metadata[sample]=1).
+/// Reassembles the items list from metadata[sample_items_N] chunks, records
+/// one collab_orders row per (slug,size) at sample status, and submits a
+/// SINGLE consolidated Printful order containing all Printful-routed items.
+/// Non-Printful items fall through to Telegram only.
+async fn handle_collab_sample_order(db: Db, session: &serde_json::Value) {
+    let session_id = session["id"].as_str().unwrap_or("").to_string();
+    let partner = session["metadata"]["collab"].as_str().unwrap_or("").to_string();
+    let amount: i64 = session["amount_total"].as_i64().unwrap_or(0);
+    let email = session["customer_details"]["email"].as_str()
+        .or_else(|| session["customer_email"].as_str())
+        .unwrap_or("").to_string();
+
+    // Reassemble sample_items JSON from chunked metadata fields.
+    let chunk_count: usize = session["metadata"]["sample_items_count"]
+        .as_str().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let mut joined = String::new();
+    for i in 0..chunk_count.min(20) {
+        if let Some(s) = session["metadata"][format!("sample_items_{}", i)].as_str() {
+            joined.push_str(s);
+        }
+    }
+    let items: Vec<serde_json::Value> = serde_json::from_str(&joined).unwrap_or_default();
+    if items.is_empty() {
+        eprintln!("[{}/sample-webhook] no items in metadata (session={})", partner, session_id);
+        return;
+    }
+
+    // Re-fetch with shipping_details expanded (same as single-item flow).
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    let full_session: serde_json::Value = if !session_id.is_empty() && !stripe_key.is_empty() {
+        let resp = reqwest::Client::new()
+            .get(format!("https://api.stripe.com/v1/checkout/sessions/{}", session_id))
+            .query(&[("expand[]", "shipping_details")])
+            .basic_auth(&stripe_key, None::<&str>)
+            .send().await;
+        match resp {
+            Ok(r) if r.status().is_success() => r.json().await.unwrap_or(session.clone()),
+            _ => session.clone(),
+        }
+    } else { session.clone() };
+    let shipping = &full_session["shipping_details"];
+    let addr = &shipping["address"];
+    let ship_name = shipping["name"].as_str().unwrap_or("").to_string();
+    let address1 = addr["line1"].as_str().unwrap_or("");
+    let address2 = addr["line2"].as_str().unwrap_or("");
+    let city = addr["city"].as_str().unwrap_or("");
+    let country = addr["country"].as_str().unwrap_or("JP").to_string();
+    let zip = addr["postal_code"].as_str().unwrap_or("");
+    let state = addr["state"].as_str().unwrap_or("");
+    let ship_address = format!("{} {} {} {} {} {}", address1, address2, city, state, zip, country)
+        .split_whitespace().collect::<Vec<_>>().join(" ");
+
+    // Per-item DB lookup and Printful line item build.
+    let mut printful_items: Vec<serde_json::Value> = Vec::new();
+    let mut manual_lines: Vec<String> = Vec::new();
+    let mut summary_lines: Vec<String> = Vec::new();
+
+    for it in &items {
+        let slug = it["slug"].as_str().unwrap_or("").to_string();
+        let size = it["size"].as_str().unwrap_or("OS").to_string();
+        let qty: i64 = it["qty"].as_i64().unwrap_or(1).clamp(1, 20);
+        if slug.is_empty() { continue; }
+
+        type Row = (
+            String, String, Option<i64>, Option<String>,
+            Option<String>, Option<String>, Option<String>,
+        );
+        let row: Option<Row> = {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT name, COALESCE(production_route,'sweep_manual'),
+                        printful_variant_id, image_url, printful_variant_map,
+                        printful_files, printful_options
+                 FROM collab_products WHERE slug=? AND partner=?",
+                params![slug, partner],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
+            ).ok()
+        };
+        let Some((name, route, variant_id_default, image_url, variant_map_json, files_json, options_json)) = row else {
+            eprintln!("[{}/sample-webhook] unknown slug: {}", partner, slug);
+            continue;
+        };
+
+        // Record one collab_orders row per line. The stripe_session column
+        // is UNIQUE so suffix with slug+size to keep idempotency per line.
+        let line_key = format!("{}|{}|{}", session_id, slug, size);
+        {
+            let conn = db.lock().unwrap();
+            let _ = conn.execute(
+                "INSERT OR IGNORE INTO collab_orders
+                     (stripe_session, slug, size, email, ship_name, ship_address, ship_country,
+                      amount_jpy, production_route, status, created_at)
+                 VALUES (?,?,?,?,?,?,?,?,?, 'sample_received', ?)",
+                params![
+                    line_key, slug, size, email, ship_name, ship_address, country,
+                    0i64, route, chrono_now(),
+                ],
+            );
+        }
+
+        let size_key = size.to_uppercase();
+        let variant_id: Option<i64> = variant_map_json.as_ref()
+            .and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok())
+            .and_then(|v| {
+                v.get(&size_key).and_then(|x| x.as_i64())
+                    .or_else(|| v.get("OS").and_then(|x| x.as_i64()))
+                    .or_else(|| v.get("ONE SIZE").and_then(|x| x.as_i64()))
+            })
+            .or(variant_id_default);
+
+        summary_lines.push(format!("• {} (size {}) ×{}", name, size, qty));
+
+        if route == "printful" {
+            if let Some(vid) = variant_id {
+                let mut pf_item = serde_json::json!({
+                    "variant_id": vid,
+                    "quantity": qty,
+                });
+                let files_val: serde_json::Value = files_json.as_ref()
+                    .and_then(|s| serde_json::from_str(s).ok())
+                    .unwrap_or_else(|| {
+                        let fallback_url = image_url.as_ref()
+                            .filter(|u| !u.is_empty() && u.starts_with("http"))
+                            .cloned()
+                            .unwrap_or_else(|| format!("https://lifestyle.wearmu.com/{}/_logo.png", partner));
+                        serde_json::json!([{"type": "default", "url": fallback_url}])
+                    });
+                pf_item["files"] = files_val;
+                if let Some(opts) = options_json.as_ref()
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                    .filter(|v| v.as_array().map_or(false, |a| !a.is_empty()))
+                {
+                    pf_item["options"] = opts;
+                }
+                printful_items.push(pf_item);
+            } else {
+                manual_lines.push(format!("{} (size {}): printful_variant_id 未設定", name, size));
+            }
+        } else {
+            manual_lines.push(format!("{} (size {}) ×{} [route={}]", name, size, qty, route));
+        }
+    }
+
+    // Single consolidated Printful order for all printful-routed items.
+    let printful_key = env::var("PRINTFUL_API_KEY").unwrap_or_default();
+    let pf_order_id: Option<String> = if !printful_items.is_empty() && !printful_key.is_empty() {
+        let state_code = jp_prefecture_to_iso(state).unwrap_or(state).to_string();
+        let order = serde_json::json!({
+            "recipient": {
+                "name":         ship_name,
+                "address1":     address1,
+                "address2":     address2,
+                "city":         city,
+                "state_code":   state_code,
+                "country_code": country,
+                "zip":          zip,
+            },
+            "items": printful_items,
+            "confirm": match env::var("PRINTFUL_AUTO_CONFIRM").as_deref() {
+                Ok("kill") | Ok("false") | Ok("0") => false,
+                _ => true,
+            },
+            "external_id": format!("sample-{}",
+                session_id.strip_prefix("cs_live_")
+                    .or_else(|| session_id.strip_prefix("cs_test_"))
+                    .unwrap_or(session_id.as_str())
+                    .chars().take(24).collect::<String>()),
+        });
+        match reqwest::Client::new()
+            .post("https://api.printful.com/orders")
+            .bearer_auth(&printful_key)
+            .json(&order).send().await
+        {
+            Ok(r) if r.status().is_success() => {
+                let j: serde_json::Value = r.json().await.unwrap_or_default();
+                let oid = j["result"]["id"].as_i64().map(|n| n.to_string());
+                eprintln!("[{}/sample/printful] draft order created: {:?}", partner, oid);
+                oid
+            }
+            Ok(r) => {
+                let s = r.status();
+                let t = r.text().await.unwrap_or_default();
+                eprintln!("[{}/sample/printful] {}: {}", partner, s, t.chars().take(300).collect::<String>());
+                None
+            }
+            Err(e) => { eprintln!("[{}/sample/printful] reqwest: {}", partner, e); None }
+        }
+    } else { None };
+
+    // Mark line statuses for the printful ones.
+    if let Some(ref oid) = pf_order_id {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE collab_orders SET printful_order_id=?, status='sample_printful_draft'
+             WHERE stripe_session LIKE ? AND production_route='printful'",
+            params![oid, format!("{}|%", session_id)],
+        );
+    }
+
+    // Log the sample purchase into funnel_events so the proposal page's
+    // 14-day chart picks it up. extra carries partner + summary fields.
+    {
+        let extra = serde_json::json!({
+            "partner": partner,
+            "items_count": items.len(),
+            "amount_jpy": amount,
+            "printful_order_id": pf_order_id,
+        }).to_string();
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO funnel_events
+             (visitor_id, session_id, event, path, referrer, product_id, extra, created_at)
+             VALUES (?,?,?,?,?,?,?,?)",
+            params![
+                session_id, session_id, "sample_paid",
+                format!("/{}/proposal", partner),
+                None::<String>, None::<i64>, extra, chrono_now()
+            ],
+        );
+    }
+
+    // Telegram alert (always)
+    let tg_token = env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default();
+    let tg_chat  = env::var("TELEGRAM_CHAT_ID").unwrap_or_else(|_| "1136442501".into());
+    if !tg_token.is_empty() {
+        let pf_line = pf_order_id.as_ref()
+            .map(|o| format!("\nPrintful (consolidated): {}", o))
+            .unwrap_or_default();
+        let manual_block = if manual_lines.is_empty() { "".to_string() }
+            else { format!("\n手動分:\n  - {}", manual_lines.join("\n  - ")) };
+        let pretty = if partner == "sweep" { "SIIIEEP" } else { "kokon.tokyo" };
+        let body = format!(
+            "🧪 MU × {pretty} サンプルまとめ買い ({n}点)\n{items}\n¥{amount} · {email}\n{ship_name} / {ship_address}{pf}{manual}\nstripe: {sid}",
+            pretty = pretty,
+            n = items.len(),
+            items = summary_lines.join("\n"),
+            amount = amount, email = email,
+            ship_name = ship_name, ship_address = ship_address,
+            pf = pf_line, manual = manual_block, sid = session_id,
+        );
+        let _ = reqwest::Client::new()
+            .post(format!("https://api.telegram.org/bot{}/sendMessage", tg_token))
+            .json(&serde_json::json!({"chat_id": tg_chat, "text": body, "disable_web_page_preview": true}))
+            .send().await;
+    }
+
+    // Resend email to ops
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    if !resend_key.is_empty() {
+        let to_csv = env::var("SWEEP_OPS_EMAILS").unwrap_or_else(|_| "mail@yukihamada.jp".into());
+        let to_list: Vec<String> = to_csv.split(',').map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()).collect();
+        let pretty = if partner == "sweep" { "SIIIEEP" } else { "kokon.tokyo" };
+        let item_rows = summary_lines.iter()
+            .map(|l| format!("<tr><td>{}</td></tr>", html_escape(l)))
+            .collect::<Vec<_>>().join("\n");
+        let pf_row = pf_order_id.as_ref()
+            .map(|o| format!("<tr><td><b>Printful (consolidated draft)</b></td><td>{}</td></tr>", html_attr_escape(o)))
+            .unwrap_or_default();
+        let manual_html = if manual_lines.is_empty() { "".to_string() }
+            else { format!("<tr><td><b>手動生産分</b></td><td>{}</td></tr>",
+                html_escape(&manual_lines.join("; "))) };
+        let html = format!(
+            r#"<div style="font-family:'Helvetica Neue',Arial,sans-serif;background:#0A0A0A;color:#F5F5F0;padding:32px;max-width:600px">
+<h2 style="color:#e6c449;font-weight:300;letter-spacing:0.1em">MU × {pretty} サンプルまとめ買い</h2>
+<table style="font-size:13px;line-height:1.85;width:100%">
+{item_rows}
+<tr><td>金額</td><td>¥{amount}</td></tr>
+<tr><td>顧客</td><td>{email}</td></tr>
+<tr><td>宛先</td><td>{ship_name}<br>{ship_address}</td></tr>
+{pf_row}
+{manual_html}
+<tr><td>stripe</td><td>{sid}</td></tr>
+</table>
+</div>"#,
+            pretty = pretty,
+            item_rows = item_rows,
+            amount = amount,
+            email = html_escape(&email),
+            ship_name = html_escape(&ship_name),
+            ship_address = html_escape(&ship_address),
+            pf_row = pf_row,
+            manual_html = manual_html,
+            sid = html_escape(&session_id),
+        );
+        let _ = reqwest::Client::new()
+            .post("https://api.resend.com/emails")
+            .bearer_auth(&resend_key)
+            .json(&serde_json::json!({
+                "from": format!("MU × {} <noreply@wearmu.com>", pretty),
+                "to":   to_list,
+                "subject": format!("[MU×{}] サンプルまとめ買い {}点 ¥{}", pretty, items.len(), amount),
                 "html": html,
             }))
             .send().await;
@@ -9963,6 +10286,44 @@ fn has_siiieep_partner_cookie(headers: &HeaderMap, pw: &str) -> bool {
     }).unwrap_or(false)
 }
 
+/// kokon.tokyo 専用 proposal ページのパスワード (一般 /kokon と分離)。
+/// kokon は焼肉店、商品提案・サンプルまとめ買い用。
+fn kokon_partner_password() -> String {
+    env::var("KOKON_PARTNER_PASSWORD").unwrap_or_else(|_| "set-KOKON_PARTNER_PASSWORD".into())
+}
+
+fn has_kokon_partner_cookie(headers: &HeaderMap, pw: &str) -> bool {
+    headers.get("cookie").and_then(|v| v.to_str().ok()).map(|c| {
+        c.split(';').any(|p| p.trim() == format!("mu_kokon_partner={}", pw))
+    }).unwrap_or(false)
+}
+
+/// Per-partner proposal page password resolver.
+fn partner_proposal_password(partner: &str) -> String {
+    match partner {
+        "sweep" => siiieep_partner_password(),
+        "kokon" => kokon_partner_password(),
+        _ => "set-PARTNER_PASSWORD".into(),
+    }
+}
+
+/// Per-partner proposal cookie check.
+fn has_partner_proposal_cookie(partner: &str, headers: &HeaderMap, pw: &str) -> bool {
+    match partner {
+        "sweep" => has_siiieep_partner_cookie(headers, pw),
+        "kokon" => has_kokon_partner_cookie(headers, pw),
+        _ => false,
+    }
+}
+
+fn partner_proposal_cookie_name(partner: &str) -> &'static str {
+    match partner {
+        "sweep" => "mu_siiieep_partner",
+        "kokon" => "mu_kokon_partner",
+        _ => "mu_partner",
+    }
+}
+
 async fn show_sweep_page(
     State(db): State<Db>,
     headers: HeaderMap,
@@ -10838,6 +11199,503 @@ async fn sweep_partner_action(
     Json(serde_json::json!({"ok": true})).into_response()
 }
 
+/// GET /sweep/proposal and /kokon/proposal — password-gated proposal &
+/// bulk-sample order page for SIIIEEP and kokon.tokyo respectively. Lists
+/// all active=1 collab_products for the partner with retail vs sample
+/// (printful 原価) pricing, lets the partner pick qty per item, then
+/// POSTs to /api/<partner>/sample-checkout to create a single multi-line
+/// Stripe session.
+async fn show_partner_proposal_page(
+    db: Db,
+    partner: &'static str,
+    label: &'static str,
+    cancel_path: &'static str,
+    headers: HeaderMap,
+    q: std::collections::HashMap<String, String>,
+) -> Response {
+    let pw = partner_proposal_password(partner);
+    let entered = q.get("pass").map(String::as_str).unwrap_or("");
+    let authed = entered == pw || has_partner_proposal_cookie(partner, &headers, &pw);
+    if !authed {
+        return axum::response::Html(partner_proposal_gate_html(partner, label)).into_response();
+    }
+
+    // Server-side pageview logging (so /sweep/proposal / /kokon/proposal の
+    // アクセスを時系列に残せる)。
+    let (visitor_id, _vc) = read_or_set_visitor_cookie(&headers);
+    let proposal_path = format!("/{}/proposal", partner);
+    {
+        let referrer = headers.get("referer").and_then(|v| v.to_str().ok()).map(|s| s.chars().take(280).collect::<String>());
+        let extra = serde_json::json!({"partner": partner}).to_string();
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO funnel_events
+             (visitor_id, session_id, event, path, referrer, product_id, extra, created_at)
+             VALUES (?,?,?,?,?,?,?,?)",
+            params![visitor_id, visitor_id, "pageview", proposal_path, referrer, None::<i64>, extra, chrono_now()],
+        );
+    }
+
+    // 14-day daily breakdown — pageviews + uniq visitors + sample_paid.
+    // Generates the 14-day skeleton in SQL via recursive CTE so missing days
+    // come back as 0 without Rust-side date arithmetic.
+    let series: Vec<(String, i64, i64, i64)> = {
+        let conn = db.lock().unwrap();
+        let needle = format!("%\"partner\":\"{}\"%", partner);
+        let mut stmt = match conn.prepare(
+            "WITH RECURSIVE days(d, i) AS (
+                SELECT date('now', '+9 hours', '-13 days'), 0
+                UNION ALL
+                SELECT date(d, '+1 day'), i+1 FROM days WHERE i < 13
+             )
+             SELECT
+                d,
+                (SELECT COUNT(*) FROM funnel_events
+                   WHERE event='pageview' AND path=?1
+                   AND date(datetime(CAST(created_at AS INTEGER),'unixepoch','+9 hours'))=d) AS pv,
+                (SELECT COUNT(DISTINCT visitor_id) FROM funnel_events
+                   WHERE event='pageview' AND path=?1
+                   AND date(datetime(CAST(created_at AS INTEGER),'unixepoch','+9 hours'))=d) AS uniq,
+                (SELECT COUNT(*) FROM funnel_events
+                   WHERE event='sample_paid' AND extra LIKE ?2
+                   AND date(datetime(CAST(created_at AS INTEGER),'unixepoch','+9 hours'))=d) AS paid
+             FROM days ORDER BY d"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db series").into_response() };
+        stmt.query_map(params![proposal_path, needle], |r| Ok((
+            r.get::<_,String>(0)?, r.get::<_,i64>(1)?, r.get::<_,i64>(2)?, r.get::<_,i64>(3)?,
+        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+
+    type Row = (
+        i64, String, String, String, i64, Option<i64>,
+        Option<String>, Option<i64>, Option<String>,
+    );
+    let items: Vec<Row> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, slug, category, name, price_jpy, printful_cost_jpy,
+                    image_url, printful_variant_id, sizes_json
+             FROM collab_products
+             WHERE partner=? AND active=1
+             ORDER BY id",
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map(params![partner], |r| Ok((
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?,
+            r.get(6)?, r.get(7)?, r.get(8)?,
+        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+
+    let mut tot_skus = 0i64;
+    let mut tot_with_cost = 0i64;
+    let mut min_sample_total = 0i64;
+    let cards = items.iter().map(|(id, slug, cat, name, price, cost, image, pf_vid, sizes_json)| {
+        tot_skus += 1;
+        if cost.is_some() { tot_with_cost += 1; }
+        let sample_price = cost.unwrap_or(0).max(500);
+        if cost.is_some() { min_sample_total += sample_price; }
+        let cost_disp = cost.map(|c| format!("¥{}", format_jpy(c)))
+            .unwrap_or_else(|| "原価未登録".into());
+        let image_html = match image.as_deref().filter(|u| !u.is_empty() && u.starts_with("http")) {
+            Some(u) => format!(r#"<div class="thumb"><img src="{}" alt="" loading="lazy"></div>"#, html_attr_escape(u)),
+            None => r#"<div class="thumb placeholder">—</div>"#.to_string(),
+        };
+        let sizes: Vec<String> = sizes_json.as_deref()
+            .and_then(|j| serde_json::from_str::<Vec<String>>(j).ok())
+            .unwrap_or_else(|| vec!["OS".into()]);
+        let size_opts = sizes.iter()
+            .map(|s| format!(r#"<option value="{}">{}</option>"#, html_attr_escape(s), html_escape(s)))
+            .collect::<Vec<_>>().join("");
+        let route_badge = if pf_vid.is_some() {
+            r#"<span class="route pf">🧵 Printful 自動</span>"#
+        } else {
+            r#"<span class="route manual">手動生産</span>"#
+        };
+        let disabled_attr = if cost.is_none() { " disabled" } else { "" };
+        let row_class = if cost.is_none() { " no-cost" } else { "" };
+        format!(r##"<div class="prow{row_class}" data-slug="{slug}" data-cost="{cost_raw}" data-name="{name_attr}">
+  {image}
+  <div class="info">
+    <div class="top">
+      <span class="cat">{cat}</span>
+      <span class="name">{name}</span>
+      {route_badge}
+    </div>
+    <div class="meta">
+      <span>通常売価 <b>¥{price_fmt}</b></span>
+      <span>サンプル価格 <b class="sp">{cost_disp}</b></span>
+      <span class="sep">·</span>
+      <span class="hint">サンプル = Printful 仕入原価のみ</span>
+    </div>
+    <div class="cart">
+      <label class="qty">
+        数量
+        <input type="number" min="0" max="20" value="0" class="qty-input" data-id="{id}"{disabled}>
+      </label>
+      <label class="size">
+        size
+        <select class="size-input" data-id="{id}"{disabled}>{size_opts}</select>
+      </label>
+      <span class="line-total" data-id="{id}">¥0</span>
+    </div>
+  </div>
+</div>"##,
+            slug = html_attr_escape(slug),
+            cost_raw = cost.unwrap_or(0),
+            name_attr = html_attr_escape(name),
+            image = image_html,
+            cat = html_attr_escape(cat),
+            name = html_attr_escape(name),
+            route_badge = route_badge,
+            price_fmt = format_jpy(*price),
+            cost_disp = cost_disp,
+            id = id,
+            size_opts = size_opts,
+            disabled = disabled_attr,
+            row_class = row_class,
+        )
+    }).collect::<Vec<_>>().join("\n");
+
+    let display_label = html_escape(label);
+    let pretty_partner = if partner == "sweep" { "SIIIEEP" } else { "kokon.tokyo" };
+
+    // ── Build 14-day SVG chart from `series` ──────────────────────────────
+    // Layout: chart area 700×130 (top), labels row at y=145.
+    // For each day: 3 bars (pv / uniq / paid) side-by-side, scaled to max_y.
+    let (pv14_total, uniq14_total, paid14_total) = series.iter()
+        .fold((0i64, 0i64, 0i64), |(a, b, c), (_, pv, uq, pd)| (a + pv, b + uq, c + pd));
+    let max_y = series.iter()
+        .map(|(_, pv, uq, pd)| *pv.max(uq).max(pd))
+        .max().unwrap_or(0).max(1);
+    let chart_w = 700.0f64;
+    let chart_h = 130.0f64;
+    let n_days = series.len().max(1) as f64;
+    let slot_w = chart_w / n_days;        // one day slot
+    let bar_w = (slot_w / 4.5).max(2.0);  // 3 bars + gaps
+    let mut bars = String::new();
+    let mut labels = String::new();
+    for (i, (date_str, pv, uq, pd)) in series.iter().enumerate() {
+        let x0 = i as f64 * slot_w + slot_w * 0.10;
+        let h_pv  = (*pv  as f64 / max_y as f64) * chart_h;
+        let h_uq  = (*uq  as f64 / max_y as f64) * chart_h;
+        let h_pd  = (*pd  as f64 / max_y as f64) * chart_h;
+        bars.push_str(&format!(
+            r#"<rect class="b-pv"   x="{xpv:.1}" y="{ypv:.1}" width="{bw:.1}" height="{hpv:.1}"/>
+<rect class="b-uq"   x="{xuq:.1}" y="{yuq:.1}" width="{bw:.1}" height="{huq:.1}"/>
+<rect class="b-paid" x="{xpd:.1}" y="{ypd:.1}" width="{bw:.1}" height="{hpd:.1}"/>"#,
+            xpv = x0,                  ypv = chart_h - h_pv, hpv = h_pv,
+            xuq = x0 + bar_w * 1.1,    yuq = chart_h - h_uq, huq = h_uq,
+            xpd = x0 + bar_w * 2.2,    ypd = chart_h - h_pd, hpd = h_pd,
+            bw = bar_w,
+        ));
+        // Bottom date label (MM/DD), every 2nd day to avoid clutter.
+        if i % 2 == 0 || i + 1 == series.len() {
+            let mmdd = if date_str.len() >= 10 { &date_str[5..10] } else { date_str.as_str() };
+            let cx = x0 + bar_w * 1.5;
+            labels.push_str(&format!(
+                r#"<text class="lbl" x="{cx:.1}" y="148" text-anchor="middle">{mmdd}</text>"#,
+                cx = cx, mmdd = mmdd,
+            ));
+        }
+        // PV count above bar (only if > 0)
+        if *pv > 0 {
+            let cx = x0 + bar_w * 1.5;
+            let cy = (chart_h - h_pv).max(10.0) - 2.0;
+            labels.push_str(&format!(
+                r#"<text class="num" x="{cx:.1}" y="{cy:.1}" text-anchor="middle">{n}</text>"#,
+                cx = cx, cy = cy, n = pv,
+            ));
+        }
+    }
+    let chart_bars = bars;
+    let chart_labels = labels;
+
+    let body = format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU × {pretty} — 商品提案 + サンプルまとめ買い</title>
+<meta name="robots" content="noindex,nofollow">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+:root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--card:#111;--g:#22c55e;--r:#C8362C;--o:#f59e0b;--b:rgba(255,255,255,0.06)}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:var(--bg);color:var(--fg);font-family:-apple-system,'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.7;padding:24px 24px 140px;font-size:13px}}
+.head{{max-width:1100px;margin:0 auto 18px}}
+h1{{font-size:22px;font-weight:300;letter-spacing:0.08em;margin-bottom:6px}}
+h1 em{{color:var(--y);font-style:normal}}
+.sub{{color:var(--mute);font-size:12px;margin-bottom:18px;line-height:1.85}}
+.sub b{{color:var(--fg)}}
+.summary{{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:24px}}
+.stat{{background:var(--card);border:1px solid var(--b);padding:12px 16px;border-radius:3px}}
+.stat .v{{font-size:20px;font-weight:300;color:var(--y);font-variant-numeric:tabular-nums}}
+.stat .l{{font-size:8.5px;letter-spacing:0.2em;text-transform:uppercase;opacity:0.55;margin-top:3px}}
+.list{{max-width:1100px;margin:0 auto;display:flex;flex-direction:column;gap:14px}}
+.prow{{display:grid;grid-template-columns:96px 1fr;gap:16px;padding:14px;background:var(--card);border:1px solid var(--b);border-radius:3px}}
+.prow.no-cost{{opacity:0.55}}
+.thumb{{width:96px;aspect-ratio:4/5;background:#000;overflow:hidden;border-radius:2px;flex-shrink:0}}
+.thumb img{{width:100%;height:100%;object-fit:cover}}
+.thumb.placeholder{{display:flex;align-items:center;justify-content:center;color:var(--mute);font-size:24px}}
+.info{{flex:1;min-width:0}}
+.top{{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px}}
+.cat{{font-size:9px;letter-spacing:0.22em;text-transform:uppercase;color:var(--y);opacity:0.85}}
+.name{{font-size:14px;font-weight:500;flex:1}}
+.route{{font-size:9.5px;letter-spacing:0.12em;padding:3px 7px;border-radius:2px;font-weight:600;text-transform:uppercase}}
+.route.pf{{background:rgba(34,197,94,0.18);color:var(--g)}}
+.route.manual{{background:rgba(255,255,255,0.06);color:var(--mute)}}
+.meta{{display:flex;flex-wrap:wrap;gap:14px;color:var(--mute);font-size:11.5px;margin:4px 0}}
+.meta b{{color:var(--fg);font-weight:600;font-variant-numeric:tabular-nums}}
+.meta b.sp{{color:var(--y)}}
+.meta .sep{{color:rgba(255,255,255,0.15)}}
+.meta .hint{{opacity:0.5}}
+.cart{{display:flex;align-items:center;gap:14px;margin-top:10px;flex-wrap:wrap}}
+.cart label{{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--mute);letter-spacing:0.04em}}
+.cart input,.cart select{{background:#000;color:var(--fg);border:1px solid var(--b);padding:6px 10px;font-family:inherit;font-size:12.5px;border-radius:2px;min-width:64px}}
+.cart input:focus,.cart select:focus{{outline:none;border-color:var(--y)}}
+.cart .line-total{{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--fg);font-size:13px;font-weight:600}}
+.bar{{position:fixed;bottom:0;left:0;right:0;background:#0A0A0A;border-top:1px solid var(--b);padding:14px 24px;display:flex;justify-content:center;z-index:50;backdrop-filter:blur(8px)}}
+.bar-inner{{max-width:1100px;width:100%;display:flex;align-items:center;gap:18px;flex-wrap:wrap}}
+.bar .total{{font-size:18px;font-weight:300;color:var(--y);font-variant-numeric:tabular-nums}}
+.bar .ct{{color:var(--mute);font-size:11px;letter-spacing:0.18em;text-transform:uppercase}}
+.bar form{{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center}}
+.bar input[type=email]{{background:#000;color:var(--fg);border:1px solid var(--b);padding:10px 12px;font-family:inherit;font-size:12.5px;border-radius:2px;min-width:240px}}
+.bar input[type=email]:focus{{outline:none;border-color:var(--y)}}
+.bar button{{background:var(--y);color:#000;border:0;font-family:inherit;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;font-weight:700;padding:11px 22px;cursor:pointer;border-radius:2px}}
+.bar button:disabled{{opacity:0.4;cursor:not-allowed}}
+.bar button:hover:not(:disabled){{opacity:0.85}}
+footer{{max-width:1100px;margin:36px auto 24px;padding-top:18px;border-top:1px solid var(--b);color:var(--mute);font-size:11px;line-height:1.9}}
+footer a{{color:var(--y);text-decoration:none}}
+.chart-wrap{{background:var(--card);border:1px solid var(--b);border-radius:3px;padding:18px;margin-bottom:24px}}
+.chart-title{{font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:var(--y);margin-bottom:14px;opacity:0.9}}
+.chart{{width:100%;height:160px;display:block}}
+.chart .b-pv{{fill:rgba(255,255,255,0.18)}}
+.chart .b-uq{{fill:var(--mute)}}
+.chart .b-paid{{fill:var(--y)}}
+.chart .lbl{{fill:rgba(245,245,240,0.42);font-size:9px;font-family:inherit}}
+.chart .num{{fill:var(--fg);font-size:9px;font-family:inherit;font-variant-numeric:tabular-nums}}
+.chart-legend{{margin-top:10px;display:flex;gap:18px;font-size:10.5px;letter-spacing:0.08em;color:var(--mute)}}
+.chart-legend i{{display:inline-block;width:10px;height:10px;margin-right:6px;vertical-align:middle;border-radius:2px}}
+.chart-legend i.lg-pv{{background:rgba(255,255,255,0.18)}}
+.chart-legend i.lg-uq{{background:var(--mute)}}
+.chart-legend i.lg-paid{{background:var(--y)}}
+.toast{{position:fixed;bottom:110px;left:50%;transform:translateX(-50%);background:var(--y);color:#000;padding:10px 22px;border-radius:2px;font-size:11.5px;letter-spacing:0.05em;font-weight:600;opacity:0;transition:opacity .2s;pointer-events:none;z-index:60}}
+.toast.show{{opacity:1}}
+.toast.err{{background:var(--r);color:#fff}}
+@media (max-width:600px){{.prow{{grid-template-columns:64px 1fr}}.thumb{{width:64px}}.bar input[type=email]{{min-width:0;flex:1}}}}
+</style></head><body>
+
+<div class="head">
+  <h1>MU × <em>{pretty_em}</em> — 商品提案 + サンプルまとめ買い</h1>
+  <div class="sub">
+    {display_label} 専用画面。掲載中の MU × {pretty_em} ラインの全 SKU を一覧で提示。<br>
+    気になる商品の <b>サンプル</b> をまとめて発注できます。価格は <b>Printful 仕入原価のみ</b> で、MU 側は利益を取りません。<br>
+    決済後、自動で Printful に draft order が入り、製造・配送が走ります（手動生産分は {display_label} に Telegram 通知）。
+  </div>
+</div>
+
+<div class="summary head">
+  <div class="stat"><div class="v">{tot_skus}</div><div class="l">掲載 SKU</div></div>
+  <div class="stat"><div class="v">{tot_with_cost}</div><div class="l">サンプル可</div></div>
+  <div class="stat"><div class="v">¥{min_sample_total_fmt}</div><div class="l">全1個ずつ合計目安</div></div>
+  <div class="stat"><div class="v">{pv14_total}</div><div class="l">14日 PV</div></div>
+  <div class="stat"><div class="v">{uniq14_total}</div><div class="l">14日 ユニーク</div></div>
+  <div class="stat"><div class="v">{paid14_total}</div><div class="l">14日 サンプル購入</div></div>
+</div>
+
+<div class="head chart-wrap">
+  <div class="chart-title">📈 アクセス & サンプル購入 (過去14日 · JST)</div>
+  <svg viewBox="0 0 700 160" preserveAspectRatio="none" class="chart">
+    {chart_bars}
+    {chart_labels}
+  </svg>
+  <div class="chart-legend">
+    <span><i class="lg-pv"></i> PV (総数)</span>
+    <span><i class="lg-uq"></i> ユニーク</span>
+    <span><i class="lg-paid"></i> サンプル購入</span>
+  </div>
+</div>
+
+<div class="list">
+{cards}
+</div>
+
+<footer>
+  ご相談・要望: <a href="mailto:mail@yukihamada.jp">mail@yukihamada.jp</a> / Telegram は濱田まで DM<br>
+  このページは {display_label} 専用です。一般プレビュー <a href="{cancel_path}">{cancel_path}</a> とは別の URL/pass を使用しています。<br>
+  サンプル決済は Stripe Checkout（日本国内配送、住所入力あり）。返金は Stripe + Printful の cancel-before-ship でのみ対応可。
+</footer>
+
+<div class="bar">
+  <div class="bar-inner">
+    <div>
+      <div class="ct">サンプル合計</div>
+      <div class="total" id="bar-total">¥0</div>
+    </div>
+    <div>
+      <div class="ct">点数</div>
+      <div class="total" id="bar-count" style="color:var(--fg);font-size:16px">0</div>
+    </div>
+    <form id="checkout-form">
+      <input type="email" id="email-input" placeholder="送付先メール（任意）" autocomplete="email">
+      <button type="submit" id="checkout-btn" disabled>サンプルまとめ買いへ進む →</button>
+    </form>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const PARTNER = {partner_json};
+const toast = document.getElementById('toast');
+const btn = document.getElementById('checkout-btn');
+const barTotal = document.getElementById('bar-total');
+const barCount = document.getElementById('bar-count');
+function showToast(msg, err) {{
+  toast.textContent = msg;
+  toast.classList.toggle('err', !!err);
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 2800);
+}}
+function fmt(n) {{ return n.toLocaleString('ja-JP'); }}
+function recalc() {{
+  let tot = 0, ct = 0;
+  document.querySelectorAll('.prow').forEach(row => {{
+    const qty = parseInt(row.querySelector('.qty-input').value || '0', 10);
+    const cost = parseInt(row.dataset.cost || '0', 10);
+    const line = qty * cost;
+    row.querySelector('.line-total').textContent = '¥' + fmt(line);
+    if (qty > 0) {{ tot += line; ct += qty; }}
+  }});
+  barTotal.textContent = '¥' + fmt(tot);
+  barCount.textContent = ct;
+  btn.disabled = ct === 0;
+}}
+document.querySelectorAll('.qty-input').forEach(i => i.addEventListener('input', recalc));
+document.getElementById('checkout-form').addEventListener('submit', async (e) => {{
+  e.preventDefault();
+  const items = [];
+  document.querySelectorAll('.prow').forEach(row => {{
+    const qty = parseInt(row.querySelector('.qty-input').value || '0', 10);
+    if (qty > 0) {{
+      items.push({{
+        slug: row.dataset.slug,
+        size: row.querySelector('.size-input').value || 'OS',
+        qty: qty,
+      }});
+    }}
+  }});
+  if (!items.length) {{ showToast('数量を1以上にしてください', true); return; }}
+  btn.disabled = true;
+  try {{
+    const r = await fetch('/api/' + PARTNER + '/sample-checkout', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      credentials: 'include',
+      body: JSON.stringify({{ items: items, email: document.getElementById('email-input').value || null }}),
+    }});
+    if (!r.ok) throw new Error('HTTP ' + r.status + ' — ' + (await r.text()).slice(0,200));
+    const j = await r.json();
+    if (j.url) {{ location.href = j.url; return; }}
+    throw new Error('no url in response');
+  }} catch (e) {{
+    showToast('決済画面に進めませんでした: ' + e.message, true);
+    btn.disabled = false;
+  }}
+}});
+recalc();
+</script>
+</body></html>"#,
+        pretty = pretty_partner,
+        pretty_em = pretty_partner,
+        display_label = display_label,
+        cancel_path = cancel_path,
+        tot_skus = tot_skus,
+        tot_with_cost = tot_with_cost,
+        min_sample_total_fmt = format_jpy(min_sample_total),
+        pv14_total = pv14_total,
+        uniq14_total = uniq14_total,
+        paid14_total = paid14_total,
+        chart_bars = chart_bars,
+        chart_labels = chart_labels,
+        cards = cards,
+        partner_json = serde_json::to_string(partner).unwrap_or_else(|_| "\"\"".into()),
+    );
+
+    let mut resp = axum::response::Html(body).into_response();
+    if entered == pw {
+        resp.headers_mut().insert(
+            header::SET_COOKIE,
+            HeaderValue::from_str(&format!(
+                "{}={}; Max-Age=2592000; Path=/; HttpOnly; SameSite=Lax",
+                partner_proposal_cookie_name(partner), pw
+            )).unwrap_or_else(|_| HeaderValue::from_static("")),
+        );
+    }
+    resp.headers_mut().insert("X-Robots-Tag", HeaderValue::from_static("noindex, nofollow"));
+    resp
+}
+
+fn partner_proposal_gate_html(partner: &str, label: &str) -> String {
+    let pretty = if partner == "sweep" { "SIIIEEP" } else { "kokon.tokyo" };
+    let label_esc = html_escape(label);
+    let action = format!("/{}/proposal", partner);
+    let public_path = format!("/{}", partner);
+    format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU × {pretty} — 商品提案ログイン</title>
+<meta name="robots" content="noindex,nofollow">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:32px}}
+.box{{max-width:420px;text-align:center;width:100%}}
+.brand{{font-weight:700;letter-spacing:0.4em;font-size:24px;margin-bottom:8px}}
+.brand em{{color:#e6c449;font-style:normal;font-weight:300}}
+.sub{{font-size:10px;letter-spacing:0.32em;text-transform:uppercase;color:rgba(245,245,240,0.55);margin-bottom:36px}}
+h1{{font-size:12px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;margin-bottom:14px;opacity:0.85}}
+p{{color:rgba(245,245,240,0.7);font-size:13px;line-height:1.9;margin-bottom:24px}}
+input{{background:#000;color:#F5F5F0;border:1px solid rgba(255,255,255,0.22);padding:14px 16px;font-family:inherit;font-size:14px;width:100%;border-radius:2px;letter-spacing:0.08em;margin-bottom:14px}}
+input:focus{{outline:none;border-color:#e6c449}}
+button{{background:#e6c449;color:#000;border:0;font-family:inherit;font-size:11px;letter-spacing:0.32em;text-transform:uppercase;font-weight:700;padding:14px 28px;cursor:pointer;border-radius:2px;width:100%}}
+button:hover{{opacity:0.85}}
+.foot{{margin-top:30px;font-size:10px;letter-spacing:0.18em;text-transform:uppercase;opacity:0.45;line-height:1.9}}
+.foot a{{color:inherit;text-decoration:underline}}
+</style></head><body>
+<form class="box" method="get" action="{action}">
+  <div class="brand">MU × <em>{pretty}</em></div>
+  <div class="sub">Proposal / Samples</div>
+  <h1>{label} 専用ログイン</h1>
+  <p>このページは <strong>{label}</strong> 社内専用です。<br>
+  商品提案ラインナップと、サンプルまとめ買いの URL です。<br>
+  パスワードは濱田から共有された 1 本のみ。</p>
+  <input name="pass" type="password" placeholder="proposal password" autofocus autocomplete="current-password">
+  <button type="submit">Sign in →</button>
+  <div class="foot">
+    Password ご不明の場合 <a href="mailto:mail@yukihamada.jp">mail@yukihamada.jp</a><br>
+    一般プレビュー <a href="{public_path}">{public_path}</a> / <a href="/">← MU トップへ</a>
+  </div>
+</form>
+</body></html>"#,
+        pretty = pretty,
+        label = label_esc,
+        action = action,
+        public_path = public_path,
+    )
+}
+
+async fn show_sweep_proposal_page(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    show_partner_proposal_page(db, "sweep", "SIIIEEP 社", "/sweep", headers, q).await
+}
+
+async fn show_kokon_proposal_page(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    show_partner_proposal_page(db, "kokon", "kokon.tokyo", "/kokon", headers, q).await
+}
+
 const SIIIEEP_PARTNER_GATE_HTML: &str = r#"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>MU × SIIIEEP — Partner Login</title>
@@ -11501,6 +12359,153 @@ async fn kokon_checkout(
     Json(body): Json<SweepCheckoutBody>,
 ) -> impl IntoResponse {
     collab_checkout(db, "kokon", "/kokon", "MU×kokon.tokyo", body).await
+}
+
+#[derive(Deserialize)]
+struct SampleCheckoutItem {
+    slug: String,
+    #[serde(default)] size: String,
+    #[serde(default)] qty: i64,
+}
+
+#[derive(Deserialize)]
+struct SampleCheckoutBody {
+    items: Vec<SampleCheckoutItem>,
+    #[serde(default)] email: Option<String>,
+}
+
+/// POST /api/{partner}/sample-checkout — bulk sample order.
+/// Builds a multi-line Stripe Checkout session at Printful 仕入原価
+/// (=printful_cost_jpy, clamped >=500). Packs item slugs/sizes into
+/// metadata[sample_items]=<base64 JSON> so the webhook can iterate and
+/// place a single Printful order with multiple items.
+async fn sample_checkout(
+    db: Db,
+    partner: &'static str,
+    return_path: &'static str,
+    label: &'static str,
+    headers: HeaderMap,
+    body: SampleCheckoutBody,
+) -> Response {
+    let pw = partner_proposal_password(partner);
+    if !has_partner_proposal_cookie(partner, &headers, &pw) {
+        return (StatusCode::UNAUTHORIZED, "partner login required").into_response();
+    }
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "checkout disabled").into_response();
+    }
+    if body.items.is_empty() {
+        return (StatusCode::BAD_REQUEST, "no items").into_response();
+    }
+    if body.items.len() > 30 {
+        return (StatusCode::BAD_REQUEST, "too many items (max 30)").into_response();
+    }
+
+    // Look up every slug, build line_items + a compact metadata payload.
+    type Row = (i64, String, String, i64, Option<i64>);
+    let mut line_form: Vec<(String, String)> = Vec::new();
+    let mut meta_items: Vec<serde_json::Value> = Vec::new();
+    let mut total = 0i64;
+    {
+        let conn = db.lock().unwrap();
+        for (idx, it) in body.items.iter().enumerate() {
+            if it.qty <= 0 || it.qty > 20 {
+                return (StatusCode::BAD_REQUEST, format!("bad qty for {}", it.slug)).into_response();
+            }
+            let row: Option<Row> = conn.query_row(
+                "SELECT id, name, COALESCE(category,''), price_jpy, printful_cost_jpy
+                 FROM collab_products WHERE slug=? AND partner=? AND active=1",
+                params![it.slug, partner],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            ).ok();
+            let Some((_pid, name, category, _price, cost)) = row else {
+                return (StatusCode::NOT_FOUND, format!("unknown slug {}", it.slug)).into_response();
+            };
+            let Some(c) = cost else {
+                return (StatusCode::BAD_REQUEST,
+                    format!("{} は原価未登録のためサンプル不可", it.slug)).into_response();
+            };
+            // Stripe JPY minimum is ¥50; clamp 500..=99,800 to match retail flow.
+            let unit = c.clamp(500, 99_800);
+            total += unit * it.qty;
+            let size = it.size.chars().take(8).collect::<String>();
+            line_form.push((format!("line_items[{}][quantity]", idx), it.qty.to_string()));
+            line_form.push((format!("line_items[{}][price_data][currency]", idx), "jpy".into()));
+            line_form.push((format!("line_items[{}][price_data][unit_amount]", idx), unit.to_string()));
+            line_form.push((format!("line_items[{}][price_data][product_data][name]", idx),
+                format!("[sample] {} ({}) · {}", name, category, label)));
+            meta_items.push(serde_json::json!({"slug": it.slug, "size": size, "qty": it.qty}));
+        }
+    }
+    let _ = total;
+
+    // metadata[sample_items] payload — Stripe caps each metadata value at 500
+    // chars. For <30 items the compact JSON fits comfortably, but split into
+    // sample_items_0/_1/... when over 480 chars to be safe.
+    let items_json = serde_json::to_string(&meta_items).unwrap_or_else(|_| "[]".into());
+    let mut form: Vec<(String, String)> = vec![
+        ("mode".into(), "payment".into()),
+        ("currency".into(), "jpy".into()),
+        ("allow_promotion_codes".into(), "false".into()),
+        ("success_url".into(), format!("{}{}?sample=ok",
+            env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into()), return_path)),
+        ("cancel_url".into(), format!("{}{}?sample=cancel",
+            env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into()), return_path)),
+        ("metadata[collab]".into(), partner.into()),
+        ("metadata[sample]".into(), "1".into()),
+        ("shipping_address_collection[allowed_countries][0]".into(), "JP".into()),
+    ];
+    form.extend(line_form);
+    // Chunk items JSON into 480-char pieces to stay under Stripe's 500-char limit.
+    let chunks: Vec<String> = items_json.as_bytes().chunks(480)
+        .map(|c| String::from_utf8_lossy(c).to_string()).collect();
+    for (i, c) in chunks.iter().enumerate() {
+        form.push((format!("metadata[sample_items_{}]", i), c.clone()));
+    }
+    form.push(("metadata[sample_items_count]".into(), chunks.len().to_string()));
+    if let Some(email) = body.email.as_deref().filter(|s| s.contains('@') && s.len() < 250) {
+        form.push(("customer_email".into(), email.into()));
+    }
+
+    let resp = reqwest::Client::new()
+        .post("https://api.stripe.com/v1/checkout/sessions")
+        .basic_auth(&stripe_key, None::<&str>)
+        .form(&form)
+        .send().await;
+    match resp {
+        Ok(r) if r.status().is_success() => {
+            let j: serde_json::Value = r.json().await.unwrap_or_default();
+            let url = j["url"].as_str().unwrap_or("/").to_string();
+            Json(serde_json::json!({"url": url, "total_jpy": total})).into_response()
+        }
+        Ok(r) => {
+            let s = r.status();
+            let t = r.text().await.unwrap_or_default();
+            eprintln!("[{}/sample-checkout] stripe {}: {}", partner, s, t.chars().take(300).collect::<String>());
+            (StatusCode::BAD_GATEWAY, "stripe error").into_response()
+        }
+        Err(e) => {
+            eprintln!("[{}/sample-checkout] reqwest: {}", partner, e);
+            (StatusCode::BAD_GATEWAY, "stripe network").into_response()
+        }
+    }
+}
+
+async fn sweep_sample_checkout(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Json(body): Json<SampleCheckoutBody>,
+) -> impl IntoResponse {
+    sample_checkout(db, "sweep", "/sweep/proposal", "MU×SIIIEEP sample", headers, body).await
+}
+
+async fn kokon_sample_checkout(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Json(body): Json<SampleCheckoutBody>,
+) -> impl IntoResponse {
+    sample_checkout(db, "kokon", "/kokon/proposal", "MU×kokon sample", headers, body).await
 }
 
 fn format_jpy(n: i64) -> String {
@@ -15539,6 +16544,36 @@ async fn main() {
         );
         CREATE UNIQUE INDEX IF NOT EXISTS idx_emb_journal ON journal_embeddings(journal_id);
 
+        CREATE TABLE IF NOT EXISTS customer_scorecard (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            period_start    TEXT NOT NULL,
+            period_end      TEXT NOT NULL,
+            orders_total    INTEGER NOT NULL,
+            unique_buyers   INTEGER NOT NULL,
+            repeat_buyers   INTEGER NOT NULL,
+            repeat_rate     REAL,
+            refund_count    INTEGER,
+            refund_rate     REAL,
+            nps_proxy       REAL,
+            pageviews       INTEGER,
+            checkout_starts INTEGER,
+            checkout_paid   INTEGER,
+            cv_rate         REAL,
+            created_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_customer_scorecard_end ON customer_scorecard(period_end);
+
+        CREATE TABLE IF NOT EXISTS founder_reviews (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            founder       TEXT NOT NULL,   -- 'musk' | 'bezos'
+            verdict       TEXT,            -- short headline
+            body          TEXT NOT NULL,   -- full JSON output
+            score         REAL,            -- their own self-rating of MU 0..1
+            proposals     INTEGER NOT NULL DEFAULT 0,
+            created_at    TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_founder_reviews_who ON founder_reviews(founder, created_at);
+
         CREATE TABLE IF NOT EXISTS agent_scorecard (
             id                INTEGER PRIMARY KEY AUTOINCREMENT,
             agent_name        TEXT NOT NULL,
@@ -15757,6 +16792,10 @@ async fn main() {
         .route("/sweep", get(show_sweep_page))
         .route("/kokon", get(show_kokon_page))
         .route("/sweep/partner", get(show_siiieep_partner_page))
+        .route("/sweep/proposal", get(show_sweep_proposal_page))
+        .route("/kokon/proposal", get(show_kokon_proposal_page))
+        .route("/api/sweep/sample-checkout", post(sweep_sample_checkout))
+        .route("/api/kokon/sample-checkout", post(kokon_sample_checkout))
         .route("/api/sweep/partner/action", post(sweep_partner_action))
         // ── Public embed API + widget (CORS open via CorsLayer below) ──
         .route("/api/v1/embed/products", get(embed_products))
@@ -15781,6 +16820,7 @@ async fn main() {
         .route("/admin/governance", get(admin_governance))
         .route("/admin/governance/:id/decide", post(admin_governance_decide))
         .route("/admin/audit", get(admin_audit))
+        .route("/admin/founders", get(admin_founders))
         .route("/api/v1/event", post(api_funnel_event))
         .route("/admin/auth_log", get(admin_auth_log_view))
         .route("/healthz", get(healthz))
@@ -16064,6 +17104,31 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         interval_secs: 7 * 86_400, // 週次
         description: "30d 経過の autonomy_decision_log を heuristic 採点 → agent_scorecard ロールアップ",
     },
+    AgentDef {
+        name: "customer_scorecard",
+        interval_secs: 7 * 86_400,
+        description: "30d window で NPS proxy / refund rate / repeat rate / funnel CV を集計 → customer_scorecard",
+    },
+    AgentDef {
+        name: "pr_writer",
+        interval_secs: 86_400,
+        description: "self_evolve 提案 (area=prompt+forbid_token) を実際の GitHub PR に変換 → self-evolve label",
+    },
+    AgentDef {
+        name: "growth",
+        interval_secs: 12 * 3600,
+        description: "Gemini で X post 1本自動生成 → sns_post_queue (24h rate limit、ACTION-default、Musk critique 対応)",
+    },
+    AgentDef {
+        name: "musk_review",
+        interval_secs: 7 * 86_400,
+        description: "Elon Musk 思考モデル: first-principles, delete-then-optimize, K-factor focus, anti-bureaucracy",
+    },
+    AgentDef {
+        name: "bezos_review",
+        interval_secs: 7 * 86_400,
+        description: "Jeff Bezos 思考モデル: customer obsession, Type 1/2 doors, Day-1 thinking, decisions/hour",
+    },
 ];
 
 /// agent_journal から指定 agent の最後の cycle_at (epoch sec) を取得。
@@ -16094,6 +17159,11 @@ async fn run_agent(name: &str, db: Db) -> Result<AgentReport, String> {
         "strategist"        => agent_strategist(db).await,
         "weekly_digest"     => agent_weekly_digest(db).await,
         "decision_audit"    => agent_decision_audit(db).await,
+        "customer_scorecard"=> agent_customer_scorecard(db).await,
+        "pr_writer"         => agent_pr_writer(db).await,
+        "growth"            => agent_growth(db).await,
+        "musk_review"       => agent_musk_review(db).await,
+        "bezos_review"      => agent_bezos_review(db).await,
         _ => Err(format!("unknown agent: {}", name)),
     }
 }
@@ -16639,6 +17709,16 @@ async fn agent_auto_refund(db: Db) -> Result<AgentReport, String> {
     obs.insert("dry_run".into(), serde_json::Value::from(is_dry_run));
 
     for (fb_id, email, _msg) in &candidates {
+        // Constitution §19 + Bezos critique: don't escalate obvious test data.
+        if is_test_email(email) {
+            let conn = db.lock().unwrap();
+            let _ = conn.execute(
+                "UPDATE customer_feedback SET ai_action_taken='skipped_test_email' WHERE id=?",
+                params![fb_id],
+            );
+            decisions.push(serde_json::json!({"type":"skip_test_email","fb_id":fb_id,"email":email}));
+            continue;
+        }
         // 該当 email の直近 collab_orders を探す
         let order: Option<(String, i64)> = {
             let conn = db.lock().unwrap();
@@ -17495,9 +18575,16 @@ async fn agent_support_reply_sender(db: Db) -> Result<AgentReport, String> {
 
     let mut sent: i64 = 0;
     let mut failed: i64 = 0;
+    let mut test_skipped: i64 = 0;
     for (fb_id, email, kind, reply, _replied_at) in &candidates {
-        if email.is_empty() || !email.contains('@') {
-            decisions.push(serde_json::json!({"type":"skip_no_email","fb_id":fb_id}));
+        if is_test_email(email) {
+            // Don't pollute governance queue with test-data escalations.
+            test_skipped += 1;
+            let conn = db.lock().unwrap();
+            let _ = conn.execute(
+                "UPDATE customer_feedback SET ai_action_taken='skipped_test_email' WHERE id=?",
+                params![fb_id],
+            );
             continue;
         }
         if is_dry_run {
@@ -17565,8 +18652,10 @@ async fn agent_support_reply_sender(db: Db) -> Result<AgentReport, String> {
     }
     obs.insert("sent".into(), serde_json::Value::from(sent));
     obs.insert("failed".into(), serde_json::Value::from(failed));
+    obs.insert("test_skipped".into(), serde_json::Value::from(test_skipped));
     let notable = failed > 0 || sent > 0;
-    let summary = format!("{} sent, {} failed (dry_run={})", sent, failed, is_dry_run);
+    let summary = format!("{} sent, {} failed, {} test-skipped (dry_run={})",
+        sent, failed, test_skipped, is_dry_run);
     Ok(AgentReport {
         observations: serde_json::Value::Object(obs),
         decisions, actions, summary, notable,
@@ -17698,19 +18787,20 @@ async fn agent_price_micro(db: Db) -> Result<AgentReport, String> {
     let mut cut: i64 = 0;
     let mut escalated: i64 = 0;
     for (pid, slug, price, sold_7d, created_secs) in &rows {
-        let delta: i64 = if *sold_7d > 3 { 200 }
-                         else if *sold_7d == 0 && (now_s - created_secs) > 14 * 86_400 && *created_secs > 0 { -200 }
+        let delta: i64 = if *sold_7d > 3 { 300 }
+                         else if *sold_7d == 0 && (now_s - created_secs) > 14 * 86_400 && *created_secs > 0 { -300 }
                          else { 0 };
         if delta == 0 { continue; }
         if (*created_secs == 0) && *sold_7d == 0 { continue; }
         let _ = two_weeks; // age check inlined above
 
-        // ±5% guard. Use current price as baseline (running cap; OK for v1).
-        let max_delta = (*price as f64 * 0.05).round() as i64;
-        if delta.abs() > 500 || delta.abs() > max_delta.max(1) {
+        // T2 envelope per Bezos critique: ±10% / ±¥1000. Beyond that → T1.
+        // (was ±5%/¥500 — too conservative; most price moves are two-way doors.)
+        let max_delta = (*price as f64 * 0.10).round() as i64;
+        if delta.abs() > 1000 || delta.abs() > max_delta.max(1) {
             decisions.push(serde_json::json!({
                 "type":"escalate_above_cap","slug":slug,"price":price,"delta":delta,
-                "hint": format!("|{}| > ¥500 or > 5% of ¥{}", delta, price),
+                "hint": format!("|{}| > ¥1000 or > 10% of ¥{}", delta, price),
             }));
             let conn = db.lock().unwrap();
             let did = log_autonomy_decision(
@@ -17866,7 +18956,11 @@ Respond as compact JSON ONLY (no fences):
   "payload": {{"slug":"...","amount_jpy":N,"price_from":X,"price_to":Y}}
 }}
 
-If no clear move is justified by the numbers above, respond {{"kind":"hold","title":"hold","rationale":"...","payload":{{}}}}."#,
+DEFAULT POLICY: propose an ACTION every week. HOLD only when the numbers
+explicitly justify NOT moving (e.g. revenue +30% wk-over-wk with no inventory
+slack — any noise is downside). HOLD without a specific cited number is
+itself a failure mode. If torn between two actions, pick the one with smaller
+risk_if_wrong and ship it."#,
         vision = mu_vision(),
         rev = rev7d, orders = orders7d,
         top = serde_json::to_string(&top_slugs).unwrap_or_default(),
@@ -18182,11 +19276,33 @@ async fn agent_decision_audit(db: Db) -> Result<AgentReport, String> {
         );
     }
 
-    let summary = format!("decision_audit: {} scored, {} agents rolled up", scored, scorecard_rows.len());
+    // Bezos critique: define a trigger to upgrade from heuristic to LLM scoring.
+    // When 30-day decision volume exceeds 200, the heuristic stops capturing
+    // edge cases — switch to per-decision Gemini scoring. We just signal here
+    // (notable=true with a clear hint); the upgrade itself is one PR away.
+    let last_30d_total: i64 = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM autonomy_decision_log
+             WHERE CAST(COALESCE(created_at,'0') AS INTEGER) > ?",
+            params![cutoff], |r| r.get(0),
+        ).unwrap_or(0)
+    };
+    obs.insert("last_30d_total".into(), serde_json::Value::from(last_30d_total));
+    let ml_ready = last_30d_total > 200;
+    obs.insert("ml_scoring_ready".into(), serde_json::Value::from(ml_ready));
+
+    let summary = if ml_ready {
+        format!("decision_audit: {} scored, {} rollups — ML_SCORING_READY ({}/mo > 200)",
+            scored, scorecard_rows.len(), last_30d_total)
+    } else {
+        format!("decision_audit: {} scored, {} rollups ({}/mo)",
+            scored, scorecard_rows.len(), last_30d_total)
+    };
     Ok(AgentReport {
         observations: serde_json::Value::Object(obs),
         decisions: vec![], actions, summary,
-        notable: scored > 0,
+        notable: scored > 0 || ml_ready,
     })
 }
 
@@ -18262,6 +19378,899 @@ code{{background:#1a1a1a;padding:1px 6px;border-radius:4px}}
 <table><thead><tr><th>agent</th><th>total</th><th>scored</th><th>avg</th><th></th><th>last_end</th></tr></thead>
 <tbody>{tbody}</tbody></table>
 </body></html>"#, tok = html_attr_escape(token), tbody = tbody)).into_response()
+}
+
+// ── Agent 17: customer_scorecard ───────────────────────────────────────
+// Bezos critique: agent_scorecard measures MU itself; nothing measures the
+// customer. This agent rolls up NPS-proxy / refund rate / repeat rate / funnel
+// conversion over 30d and persists into `customer_scorecard`.
+async fn agent_customer_scorecard(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut actions: Vec<serde_json::Value> = Vec::new();
+
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let p30 = now_s - 30 * 86_400;
+
+    let conn = db.lock().unwrap();
+    let orders_total: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM collab_orders WHERE CAST(COALESCE(created_at,'0') AS INTEGER) > ?",
+        params![p30], |r| r.get(0),
+    ).unwrap_or(0);
+    let unique_buyers: i64 = conn.query_row(
+        "SELECT COUNT(DISTINCT LOWER(email)) FROM collab_orders
+         WHERE CAST(COALESCE(created_at,'0') AS INTEGER) > ? AND email IS NOT NULL AND email <> ''",
+        params![p30], |r| r.get(0),
+    ).unwrap_or(0);
+    let repeat_buyers: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM (
+           SELECT LOWER(email) AS e FROM collab_orders
+           WHERE CAST(COALESCE(created_at,'0') AS INTEGER) > ? AND email IS NOT NULL AND email <> ''
+           GROUP BY e HAVING COUNT(*) > 1
+         )",
+        params![p30], |r| r.get(0),
+    ).unwrap_or(0);
+    let refund_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM customer_feedback
+         WHERE kind='refund' AND CAST(COALESCE(created_at,'0') AS INTEGER) > ?",
+        params![p30], |r| r.get(0),
+    ).unwrap_or(0);
+    let praise_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM customer_feedback
+         WHERE kind='praise' AND CAST(COALESCE(created_at,'0') AS INTEGER) > ?",
+        params![p30], |r| r.get(0),
+    ).unwrap_or(0);
+    let complaint_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM customer_feedback
+         WHERE kind IN ('complaint','bug') AND CAST(COALESCE(created_at,'0') AS INTEGER) > ?",
+        params![p30], |r| r.get(0),
+    ).unwrap_or(0);
+    let feedback_total: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM customer_feedback WHERE CAST(COALESCE(created_at,'0') AS INTEGER) > ?",
+        params![p30], |r| r.get(0),
+    ).unwrap_or(0);
+    let pageviews: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM funnel_events WHERE event='pageview'
+         AND CAST(COALESCE(created_at,'0') AS INTEGER) > ?",
+        params![p30], |r| r.get(0),
+    ).unwrap_or(0);
+    let checkout_starts: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM funnel_events WHERE event='checkout_start'
+         AND CAST(COALESCE(created_at,'0') AS INTEGER) > ?",
+        params![p30], |r| r.get(0),
+    ).unwrap_or(0);
+    let checkout_paid: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM funnel_events WHERE event='checkout_paid'
+         AND CAST(COALESCE(created_at,'0') AS INTEGER) > ?",
+        params![p30], |r| r.get(0),
+    ).unwrap_or(0);
+    drop(conn);
+
+    let repeat_rate = if unique_buyers > 0 {
+        repeat_buyers as f64 / unique_buyers as f64
+    } else { 0.0 };
+    let refund_rate = if orders_total > 0 {
+        refund_count as f64 / orders_total as f64
+    } else { 0.0 };
+    let nps_proxy = if feedback_total > 0 {
+        (praise_count as f64 - complaint_count as f64) / feedback_total as f64
+    } else { 0.0 };
+    let cv_rate = if pageviews > 0 {
+        checkout_paid as f64 / pageviews as f64
+    } else { 0.0 };
+
+    obs.insert("orders_30d".into(), orders_total.into());
+    obs.insert("unique_buyers_30d".into(), unique_buyers.into());
+    obs.insert("repeat_buyers_30d".into(), repeat_buyers.into());
+    obs.insert("repeat_rate".into(), serde_json::json!(repeat_rate));
+    obs.insert("refund_rate".into(), serde_json::json!(refund_rate));
+    obs.insert("nps_proxy".into(), serde_json::json!(nps_proxy));
+    obs.insert("cv_rate".into(), serde_json::json!(cv_rate));
+    obs.insert("pageviews_30d".into(), pageviews.into());
+
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO customer_scorecard
+             (period_start, period_end, orders_total, unique_buyers, repeat_buyers,
+              repeat_rate, refund_count, refund_rate, nps_proxy,
+              pageviews, checkout_starts, checkout_paid, cv_rate, created_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            params![p30.to_string(), now_s.to_string(),
+                    orders_total, unique_buyers, repeat_buyers, repeat_rate,
+                    refund_count, refund_rate, nps_proxy,
+                    pageviews, checkout_starts, checkout_paid, cv_rate,
+                    chrono_now()],
+        );
+    }
+    actions.push(serde_json::json!({"rolled_up": true}));
+
+    // Notable thresholds: refund rate > 5% or repeat rate < 5% with >=10 buyers
+    let notable = refund_rate > 0.05 || (unique_buyers >= 10 && repeat_rate < 0.05);
+    let summary = format!(
+        "customers 30d: {} orders, {}/{} repeat ({:.0}%), refund {:.1}%, NPS {:+.0}%, CV {:.2}%",
+        orders_total, repeat_buyers, unique_buyers, repeat_rate * 100.0,
+        refund_rate * 100.0, nps_proxy * 100.0, cv_rate * 100.0);
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs),
+        decisions: vec![], actions, summary, notable,
+    })
+}
+
+// ── Agent 18: pr_writer ────────────────────────────────────────────────
+// Closes the self_evolve → PR loop (Musk critique). v1 handles ONE specific
+// proposal shape: "add a forbidden token to the vision_drift forbidden list".
+// That's the most common self_evolve output. Other proposal kinds are logged
+// and skipped (defer to human for now). Honors DRY_RUN_PR_WRITER.
+//
+// Requires env var GITHUB_TOKEN (fine-grained PAT with `contents:write` +
+// `pull_requests:write` on yukihamada/mu-brand). Without it the agent is idle.
+async fn agent_pr_writer(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut actions: Vec<serde_json::Value> = Vec::new();
+    let mut decisions: Vec<serde_json::Value> = Vec::new();
+
+    let gh_token = match env::var("GITHUB_TOKEN") {
+        Ok(t) if !t.is_empty() => t,
+        _ => return Ok(AgentReport::idle("GITHUB_TOKEN missing")),
+    };
+    let is_dry_run = dry_run_active("pr_writer");
+    obs.insert("dry_run".into(), serde_json::Value::from(is_dry_run));
+
+    // Find a recent self_evolve proposal we haven't PR'd yet. Marker:
+    // the ai_decisions row's output_json gets a "pr_url" key on success;
+    // absence of that key means it's eligible.
+    let candidate: Option<(i64, String)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT id, COALESCE(output_json,'{}') FROM ai_decisions
+             WHERE decision_type='self_evolve'
+               AND output_json NOT LIKE '%\"pr_url\"%'
+               AND CAST(COALESCE(created_at,'0') AS INTEGER) > ?
+             ORDER BY id DESC LIMIT 1",
+            params![chrono_now().parse::<i64>().unwrap_or(0) - 7 * 86_400],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        ).ok()
+    };
+    let Some((dec_id, payload_s)) = candidate else {
+        return Ok(AgentReport::idle("no unprocessed self_evolve proposals in 7d"));
+    };
+    obs.insert("decision_id".into(), serde_json::Value::from(dec_id));
+
+    let payload: serde_json::Value = serde_json::from_str(&payload_s).unwrap_or_default();
+    let proposals = payload["proposals"].as_array().cloned().unwrap_or_default();
+    // Pick first prompt-area proposal that names a specific forbidden token.
+    let mut chosen: Option<(String, String, String)> = None; // (title, rationale, token)
+    for p in &proposals {
+        let area = p["area"].as_str().unwrap_or("");
+        let title = p["title"].as_str().unwrap_or("").to_string();
+        let rationale = p["rationale"].as_str().unwrap_or("").to_string();
+        let patch = p["patch_summary"].as_str().unwrap_or("");
+        if area != "prompt" && area != "prompt:forbid" { continue; }
+        // Extract a JP/EN token like 「進化」 or "革命的" or "今シーズン" from the
+        // patch_summary or rationale. Heuristic: look for quoted runs.
+        let combined = format!("{} {} {}", title, rationale, patch);
+        let token = extract_quoted_token(&combined);
+        if let Some(t) = token {
+            chosen = Some((title, rationale, t));
+            break;
+        }
+    }
+    let Some((title, rationale, token)) = chosen else {
+        decisions.push(serde_json::json!({
+            "type":"no_actionable_proposal",
+            "decision_id": dec_id,
+            "hint": "no prompt-area proposal with a quoted forbidden token found",
+        }));
+        return Ok(AgentReport {
+            observations: serde_json::Value::Object(obs),
+            decisions, actions, summary: "pr_writer: skip (nothing actionable)".into(),
+            notable: false,
+        });
+    };
+    obs.insert("token".into(), serde_json::Value::String(token.clone()));
+
+    if is_dry_run {
+        decisions.push(serde_json::json!({
+            "type":"dry_run", "decision_id": dec_id, "token": token, "title": title,
+        }));
+        return Ok(AgentReport {
+            observations: serde_json::Value::Object(obs),
+            decisions, actions,
+            summary: format!("pr_writer DRY_RUN: would add forbidden token '{}'", token),
+            notable: false,
+        });
+    }
+
+    // ── 1. Fetch current main.rs via GitHub Contents API ───────────────────
+    let repo = "yukihamada/mu-brand";
+    let path = "store/src/main.rs";
+    let api = format!("https://api.github.com/repos/{}/contents/{}", repo, path);
+    let client = reqwest::Client::builder()
+        .user_agent("mu-store/pr_writer").build().map_err(|e| e.to_string())?;
+    let resp = client.get(&api)
+        .bearer_auth(&gh_token)
+        .header("Accept", "application/vnd.github+json")
+        .send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("github get main.rs: {}", resp.status()));
+    }
+    let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let sha = body["sha"].as_str().unwrap_or("").to_string();
+    let b64 = body["content"].as_str().unwrap_or("").replace('\n', "");
+    use base64::Engine;
+    let decoded_bytes = base64::engine::general_purpose::STANDARD.decode(b64.as_bytes())
+        .map_err(|e| format!("base64: {e}"))?;
+    let content = String::from_utf8(decoded_bytes).map_err(|e| format!("utf8: {e}"))?;
+
+    // ── 2. Locate the "禁止表現" block inside blog_prompt() ────────────────
+    // We insert a new bullet at the end of the block.
+    let anchor = "- 「すごい」「驚き」感嘆語の連発は禁止";
+    let new_line = format!("- 「{}」の使用禁止 (vision_drift / self_evolve 自動検出 — decision #{})", token, dec_id);
+    if !content.contains(anchor) {
+        return Err("anchor line not found in main.rs".into());
+    }
+    if content.contains(&format!("「{}」の使用禁止", token)) {
+        decisions.push(serde_json::json!({
+            "type":"already_present","token":token,"decision_id":dec_id,
+        }));
+        // Mark the ai_decision as handled so we don't loop.
+        let conn = db.lock().unwrap();
+        let new_payload = patch_with_pr_url(&payload, "already_present", "");
+        let _ = conn.execute(
+            "UPDATE ai_decisions SET output_json=? WHERE id=?",
+            params![new_payload.to_string(), dec_id],
+        );
+        return Ok(AgentReport {
+            observations: serde_json::Value::Object(obs),
+            decisions, actions,
+            summary: format!("pr_writer: token '{}' already in main.rs (no-op)", token),
+            notable: false,
+        });
+    }
+    let new_content = content.replacen(anchor, &format!("{}\n{}", anchor, new_line), 1);
+
+    // ── 3. Create branch off main pointing at current HEAD ─────────────────
+    let head_sha = {
+        let url = format!("https://api.github.com/repos/{}/git/ref/heads/main", repo);
+        let r = client.get(&url).bearer_auth(&gh_token)
+            .header("Accept", "application/vnd.github+json")
+            .send().await.map_err(|e| e.to_string())?;
+        if !r.status().is_success() {
+            return Err(format!("get main ref: {}", r.status()));
+        }
+        let j: serde_json::Value = r.json().await.map_err(|e| e.to_string())?;
+        j["object"]["sha"].as_str().unwrap_or("").to_string()
+    };
+    let branch = format!("self-evolve/forbid-{}-{}",
+        token.chars().filter(|c| c.is_alphanumeric()).take(20).collect::<String>(),
+        dec_id);
+    {
+        let url = format!("https://api.github.com/repos/{}/git/refs", repo);
+        let r = client.post(&url).bearer_auth(&gh_token)
+            .header("Accept", "application/vnd.github+json")
+            .json(&serde_json::json!({
+                "ref": format!("refs/heads/{}", branch),
+                "sha": head_sha,
+            }))
+            .send().await.map_err(|e| e.to_string())?;
+        if !r.status().is_success() {
+            let s = r.status();
+            let t = r.text().await.unwrap_or_default();
+            return Err(format!("create branch {} {}", s, t.chars().take(200).collect::<String>()));
+        }
+    }
+
+    // ── 4. PUT updated content to that branch ───────────────────────────────
+    let put = client.put(&api).bearer_auth(&gh_token)
+        .header("Accept", "application/vnd.github+json")
+        .json(&serde_json::json!({
+            "message": format!("self_evolve: forbid '{}' in blog_prompt\n\nauto-merge-eligible: true\nsource: ai_decisions#{}", token, dec_id),
+            "content": base64::engine::general_purpose::STANDARD.encode(new_content.as_bytes()),
+            "sha": sha,
+            "branch": branch,
+        }))
+        .send().await.map_err(|e| e.to_string())?;
+    if !put.status().is_success() {
+        let s = put.status();
+        let t = put.text().await.unwrap_or_default();
+        return Err(format!("put content {} {}", s, t.chars().take(200).collect::<String>()));
+    }
+
+    // ── 5. Open PR with `self-evolve` label ────────────────────────────────
+    let pr_body = format!(
+        "auto-merge-eligible: true\n\n\
+         **Origin**: ai_decisions #{dec_id} (self_evolve agent)\n\
+         **Title**: {title}\n\
+         **Rationale**: {rationale}\n\
+         **Change**: add `「{token}」` to the vision_drift forbidden-tokens list inside `blog_prompt()`.\n\n\
+         This PR was created autonomously by `agent_pr_writer`. The auto-merge harness\n\
+         (.github/workflows/self-evolve-merge.yml) will run the allowlist check + cargo check.\n\
+         If both pass, it will squash-merge. Otherwise it falls back to manual review.",
+        dec_id = dec_id, title = title, rationale = rationale, token = token);
+    let pr_url = {
+        let url = format!("https://api.github.com/repos/{}/pulls", repo);
+        let r = client.post(&url).bearer_auth(&gh_token)
+            .header("Accept", "application/vnd.github+json")
+            .json(&serde_json::json!({
+                "title": format!("self_evolve: forbid '{}'", token),
+                "head": branch, "base": "main", "body": pr_body,
+            }))
+            .send().await.map_err(|e| e.to_string())?;
+        if !r.status().is_success() {
+            let s = r.status();
+            let t = r.text().await.unwrap_or_default();
+            return Err(format!("create PR {} {}", s, t.chars().take(200).collect::<String>()));
+        }
+        let j: serde_json::Value = r.json().await.map_err(|e| e.to_string())?;
+        let url = j["html_url"].as_str().unwrap_or("").to_string();
+        let num = j["number"].as_i64().unwrap_or(0);
+        // Label
+        let label_url = format!("https://api.github.com/repos/{}/issues/{}/labels", repo, num);
+        let _ = client.post(&label_url).bearer_auth(&gh_token)
+            .header("Accept", "application/vnd.github+json")
+            .json(&serde_json::json!({"labels": ["self-evolve"]}))
+            .send().await;
+        url
+    };
+
+    // ── 6. Mark the ai_decisions row as PR'd so we don't loop ──────────────
+    {
+        let conn = db.lock().unwrap();
+        let new_payload = patch_with_pr_url(&payload, "pr_created", &pr_url);
+        let _ = conn.execute(
+            "UPDATE ai_decisions SET output_json=? WHERE id=?",
+            params![new_payload.to_string(), dec_id],
+        );
+        let _ = log_autonomy_decision(
+            &conn, "pr_writer", "self_evolve_pr",
+            "T2",
+            &serde_json::json!({"decision_id": dec_id, "token": token, "pr_url": pr_url}),
+            true, false, false,
+        );
+    }
+    actions.push(serde_json::json!({"pr_url": pr_url, "token": token}));
+    let summary = format!("pr_writer: opened {} (token '{}')", pr_url, token);
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs),
+        decisions, actions, summary, notable: true,
+    })
+}
+
+/// Helper: pull the first 「…」-quoted or "…"-quoted run from a string,
+/// preferring JP brackets (more specific to MU's forbidden tokens).
+fn extract_quoted_token(s: &str) -> Option<String> {
+    // 「token」 — JP corner brackets
+    if let Some(start) = s.find('「') {
+        let rest = &s[start + '「'.len_utf8()..];
+        if let Some(end) = rest.find('」') {
+            let t = &rest[..end];
+            if !t.is_empty() && t.chars().count() <= 20 {
+                return Some(t.to_string());
+            }
+        }
+    }
+    // "token" — ASCII or fullwidth
+    for (open, close) in &[('"','"'), ('\u{201C}','\u{201D}'), ('\u{2018}','\u{2019}')] {
+        if let Some(s_idx) = s.find(*open) {
+            let rest = &s[s_idx + open.len_utf8()..];
+            if let Some(e_idx) = rest.find(*close) {
+                let t = &rest[..e_idx];
+                if !t.is_empty() && t.chars().count() <= 20 {
+                    return Some(t.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Helper: merge {"pr_url": "...", "pr_status": "..."} into an existing
+/// ai_decisions payload so the pr_writer agent won't re-pick this row.
+fn patch_with_pr_url(payload: &serde_json::Value, status: &str, url: &str) -> serde_json::Value {
+    let mut obj = payload.as_object().cloned().unwrap_or_default();
+    obj.insert("pr_status".to_string(), serde_json::Value::String(status.into()));
+    if !url.is_empty() {
+        obj.insert("pr_url".to_string(), serde_json::Value::String(url.into()));
+    } else {
+        obj.insert("pr_url".to_string(), serde_json::Value::String("(no-op)".into()));
+    }
+    obj.insert("pr_writer_at".to_string(), serde_json::Value::String(chrono_now()));
+    serde_json::Value::Object(obj)
+}
+
+// ── Agent 19: growth ───────────────────────────────────────────────────
+// Musk critique: K factor zero. This agent generates one X-post per run
+// (12h interval) when a recent blog or drop is available, queues it to
+// sns_post_queue, and lets the existing x_post_worker fire it. ACTION-default
+// — only skips if there's literally nothing new to talk about in the last 48h.
+async fn agent_growth(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut actions: Vec<serde_json::Value> = Vec::new();
+    let mut decisions: Vec<serde_json::Value> = Vec::new();
+
+    let is_dry_run = dry_run_active("growth");
+    obs.insert("dry_run".into(), serde_json::Value::from(is_dry_run));
+
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let h48 = now_s - 48 * 3600;
+    let h24 = now_s - 24 * 3600;
+
+    // Avoid spamming: if we already queued or posted within 24h, skip.
+    let recent_queued: i64 = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM sns_post_queue
+             WHERE CAST(COALESCE(created_at,'0') AS INTEGER) > ?
+               AND trigger_kind = 'growth'",
+            params![h24], |r| r.get(0),
+        ).unwrap_or(0)
+    };
+    obs.insert("recent_growth_24h".into(), serde_json::Value::from(recent_queued));
+    if recent_queued > 0 {
+        return Ok(AgentReport::idle("growth: queued <24h ago; respect rate limit"));
+    }
+
+    // Pick a source: newest blog title or newest active drop slug + name.
+    let (kind, source_text): (&str, String) = {
+        let conn = db.lock().unwrap();
+        let blog: Option<(String, String)> = conn.query_row(
+            "SELECT slug, title FROM auto_blog_posts
+             WHERE CAST(COALESCE(created_at,'0') AS INTEGER) > ?
+             ORDER BY id DESC LIMIT 1",
+            params![h48], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).ok();
+        if let Some((slug, title)) = blog {
+            ("blog", format!("blog:{}|{}|https://wearmu.com/blog/{}", title, slug, slug))
+        } else {
+            let drop: Option<(String, String)> = conn.query_row(
+                "SELECT slug, name FROM collab_products
+                 WHERE active=1
+                   AND CAST(COALESCE(created_at,'0') AS INTEGER) > ?
+                 ORDER BY id DESC LIMIT 1",
+                params![h48], |r| Ok((r.get(0)?, r.get(1)?)),
+            ).ok();
+            if let Some((slug, name)) = drop {
+                ("drop", format!("drop:{}|{}|https://wearmu.com/products/{}", name, slug, slug))
+            } else {
+                return Ok(AgentReport::idle("growth: nothing new in 48h"));
+            }
+        }
+    };
+    obs.insert("kind".into(), serde_json::Value::String(kind.to_string()));
+
+    // Compose the post via Gemini using MU brand voice. Numbers over adjectives.
+    let key = match env::var("GEMINI_API_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => return Ok(AgentReport::idle("GEMINI_API_KEY missing")),
+    };
+    let parts: Vec<&str> = source_text.split('|').collect();
+    let (label, url) = (
+        parts.get(0).cloned().unwrap_or(""),
+        parts.get(2).cloned().unwrap_or(""),
+    );
+
+    let prompt = format!(r#"You are MU's autonomous social-media composer. The brand vision:
+{vision}
+
+Compose ONE post for X (Twitter) in Japanese, 110 文字以内 (URL は含めない),
+about the following surface:
+
+{label}
+
+Rules:
+- Numbers over adjectives. If you cite "today", include a date (YYYY-MM-DD).
+- No exclamation marks. No hype emoji. No "今シーズン" / "革命的".
+- Lowercase / casual tone OK. One line break max.
+- Do NOT include the URL in the body — it will be appended automatically.
+
+Respond as STRICT JSON: {{"text": "<the post body>"}}"#,
+        vision = mu_vision(),
+        label = label,
+    );
+
+    let url_g = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
+        key);
+    let resp = reqwest::Client::new().post(&url_g)
+        .json(&serde_json::json!({
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": 0.6, "maxOutputTokens": 400,
+                "responseMimeType": "application/json",
+            },
+        }))
+        .send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        let s = resp.status();
+        let t = resp.text().await.unwrap_or_default();
+        return Err(format!("gemini {} {}", s, t.chars().take(200).collect::<String>()));
+    }
+    let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let raw = body["candidates"][0]["content"]["parts"][0]["text"]
+        .as_str().unwrap_or("").trim().to_string();
+    let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap_or_default();
+    let mut text = parsed["text"].as_str().unwrap_or("").trim().to_string();
+    if text.is_empty() {
+        return Err(format!("gemini empty body: {}", raw.chars().take(120).collect::<String>()));
+    }
+    // Defense in depth: strip drift tokens just in case.
+    for bad in &["今シーズン", "革命的", "！！", "!!", "今期"] {
+        text = text.replace(bad, "");
+    }
+    if !url.is_empty() {
+        text = format!("{} {}", text.trim(), url);
+    }
+    if text.chars().count() > 270 { // X allows 280
+        text = text.chars().take(267).collect::<String>() + "…";
+    }
+    obs.insert("text_len".into(), serde_json::Value::from(text.chars().count() as i64));
+
+    if is_dry_run {
+        decisions.push(serde_json::json!({"type":"dry_run","text":text}));
+        return Ok(AgentReport {
+            observations: serde_json::Value::Object(obs),
+            decisions, actions,
+            summary: format!("growth DRY_RUN ({} chars): {}",
+                text.chars().count(), text.chars().take(80).collect::<String>()),
+            notable: false,
+        });
+    }
+
+    // Queue it. The existing x_post_worker drains sns_post_queue every 60s.
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO sns_post_queue
+             (network, trigger_kind, product_id, blog_slug, text, image_url, created_at)
+             VALUES ('x','growth',NULL,NULL,?,NULL,?)",
+            params![text, chrono_now()],
+        );
+        let _ = log_autonomy_decision(
+            &conn, "growth", "x_post_queue",
+            "T2",
+            &serde_json::json!({"kind": kind, "text": text}),
+            true, false, false,
+        );
+    }
+    actions.push(serde_json::json!({"queued": true, "kind": kind, "text": text}));
+    let summary = format!("growth: queued X post ({} chars, kind={})",
+        text.chars().count(), kind);
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs),
+        decisions, actions, summary, notable: true,
+    })
+}
+
+// ── Agent 20: musk_review (founder persona) ────────────────────────────
+async fn agent_musk_review(db: Db) -> Result<AgentReport, String> {
+    founder_review(db, "musk", MUSK_PROMPT).await
+}
+
+// ── Agent 21: bezos_review (founder persona) ───────────────────────────
+async fn agent_bezos_review(db: Db) -> Result<AgentReport, String> {
+    founder_review(db, "bezos", BEZOS_PROMPT).await
+}
+
+const MUSK_PROMPT: &str = r#"You are Elon Musk reviewing MU, a 0-human apparel
+brand. Your operating principles (apply ruthlessly):
+1) Best part is no part. Best agent is no agent.
+2) Question every requirement, regardless of who set it. Most are wrong.
+3) Delete, then optimize. Anything that can be deleted should be deleted.
+4) Accelerate cycle time. If a decision takes >24h, the process is broken.
+5) K factor > 0 or the brand dies. Reach-per-week beats internal metrics.
+6) Bureaucracy is a tumor. Approval gates that can be skipped, should be.
+7) Hardcore mode. Default = action. Default = ship.
+
+Today you're looking at MU's autonomy snapshot below. Give a HARSH but actionable
+review. No politeness. Numbers, not adjectives.
+
+Output STRICT JSON (no fences):
+{
+  "verdict": "<= 80 chars",
+  "score": 0.0..1.0  (0.3 if slow/safe, 0.8 only if shipping fast and growing),
+  "delete_candidates": ["agent_name or feature"],
+  "speed_up": ["concrete change"],
+  "k_factor_check": "<=120 chars",
+  "ship_today": "<= 80 chars",
+  "proposals": [
+    {"title":"<= 60 chars","rationale":"<=200 chars","kind":"delete|speed_up|ship|kill_gate"}
+  ]
+}
+Hard limit: max 3 proposals."#;
+
+const BEZOS_PROMPT: &str = r#"You are Jeff Bezos reviewing MU, a 0-human apparel
+brand. Your operating principles:
+1) Customer obsession over competitor obsession.
+2) Day 1 mentality. Day 2 is decline.
+3) Type 1 doors (irreversible) → go slow. Type 2 (reversible) → go fast.
+4) High-velocity decisions. ~70% information is enough.
+5) Disagree and commit. Once decided, full energy.
+6) Numbers over narrative — but a strong narrative wins.
+7) "What won't change in 10 years?" beats "what will change?"
+
+Today you're looking at MU's autonomy snapshot below. Identify which doors
+are mis-classified.
+
+Output STRICT JSON (no fences):
+{
+  "verdict": "<= 80 chars",
+  "score": 0.0..1.0,
+  "customer_obsession_score": 0.0..1.0,
+  "type1_to_demote_to_type2": ["concrete door"],
+  "missing_customer_signal": "<=120 chars",
+  "ten_year_thesis": "<=140 chars",
+  "ship_today": "<= 80 chars",
+  "proposals": [
+    {"title":"<= 60 chars","rationale":"<=200 chars","kind":"demote_t1|measure_customer|day1_reset|new_signal"}
+  ]
+}
+Hard limit: max 3 proposals."#;
+
+async fn founder_review(db: Db, founder: &str, persona_prompt: &str) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let key = match env::var("GEMINI_API_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => return Ok(AgentReport::idle("GEMINI_API_KEY missing")),
+    };
+    {
+        let conn = db.lock().unwrap();
+        if let Err(e) = budget_check(&conn, SELF_EVOLVE_GEMINI_MODEL) {
+            return Ok(AgentReport::idle(&e));
+        }
+    }
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let p7  = now_s - 7 * 86_400;
+    let p30 = now_s - 30 * 86_400;
+    let snapshot: serde_json::Value = {
+        let conn = db.lock().unwrap();
+        let q_i = |sql: &str, p7: i64| -> i64 {
+            conn.query_row(sql, params![p7], |r| r.get(0)).unwrap_or(0)
+        };
+        let pending_t1 = conn.query_row(
+            "SELECT COUNT(*) FROM autonomy_governance_queue WHERE status='pending'",
+            [], |r| r.get::<_,i64>(0)).unwrap_or(0);
+        let expired_t1 = conn.query_row(
+            "SELECT COUNT(*) FROM autonomy_governance_queue WHERE status='expired'",
+            [], |r| r.get::<_,i64>(0)).unwrap_or(0);
+        let notable_7d = q_i(
+            "SELECT COUNT(*) FROM agent_journal WHERE notable=1 AND CAST(COALESCE(created_at,'0') AS INTEGER) > ?", p7);
+        let rev_7d = q_i(
+            "SELECT COALESCE(SUM(amount_jpy),0) FROM collab_orders WHERE CAST(COALESCE(created_at,'0') AS INTEGER) > ?", p7);
+        let orders_7d = q_i(
+            "SELECT COUNT(*) FROM collab_orders WHERE CAST(COALESCE(created_at,'0') AS INTEGER) > ?", p7);
+        let x_reach_7d = q_i(
+            "SELECT COALESCE(SUM(impressions),0) FROM sns_post_metrics WHERE CAST(COALESCE(measured_at,'0') AS INTEGER) > ?", p7);
+        let pageviews_7d = q_i(
+            "SELECT COUNT(*) FROM funnel_events WHERE event='pageview' AND CAST(COALESCE(created_at,'0') AS INTEGER) > ?", p7);
+        let (repeat, refund, nps, cv): (Option<f64>,Option<f64>,Option<f64>,Option<f64>) = conn.query_row(
+            "SELECT repeat_rate, refund_rate, nps_proxy, cv_rate FROM customer_scorecard ORDER BY id DESC LIMIT 1",
+            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        ).unwrap_or((None,None,None,None));
+        let t1_count = q_i(
+            "SELECT COUNT(*) FROM autonomy_decision_log WHERE reversibility='T1' AND CAST(COALESCE(created_at,'0') AS INTEGER) > ?", p30);
+        let t2_count = q_i(
+            "SELECT COUNT(*) FROM autonomy_decision_log WHERE reversibility='T2' AND CAST(COALESCE(created_at,'0') AS INTEGER) > ?", p30);
+        let idle: Vec<String> = AGENT_REGISTRY.iter().filter_map(|a| {
+            let last = agent_last_run_secs(&conn, a.name);
+            if last == 0 || (now_s - last) > 14 * 86_400 { Some(a.name.to_string()) } else { None }
+        }).collect();
+        serde_json::json!({
+            "agent_count":   AGENT_REGISTRY.len() as i64,
+            "idle_agents":   idle,
+            "notable_7d":    notable_7d,
+            "pending_t1":    pending_t1,
+            "expired_t1":    expired_t1,
+            "revenue_7d_jpy": rev_7d,
+            "orders_7d":     orders_7d,
+            "x_impressions_7d": x_reach_7d,
+            "pageviews_7d":  pageviews_7d,
+            "k_factor_proxy": if pageviews_7d > 0 { orders_7d as f64 / pageviews_7d as f64 } else { 0.0 },
+            "t1_decisions_30d": t1_count,
+            "t2_decisions_30d": t2_count,
+            "repeat_rate":  repeat, "refund_rate": refund,
+            "nps_proxy":    nps, "cv_rate":      cv,
+        })
+    };
+    obs.insert("snapshot".into(), snapshot.clone());
+
+    let prompt = format!("{}\n\nMU snapshot (last 7 days unless noted):\n{}\n",
+        persona_prompt,
+        serde_json::to_string_pretty(&snapshot).unwrap_or_default());
+    let req = serde_json::json!({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 1500,
+            "responseMimeType": "application/json"},
+    });
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+        SELF_EVOLVE_GEMINI_MODEL, key);
+    let resp = reqwest::Client::new().post(&url).json(&req).send().await
+        .map_err(|e| format!("gemini http: {e}"))?;
+    if !resp.status().is_success() {
+        let s = resp.status();
+        let t = resp.text().await.unwrap_or_default();
+        return Err(format!("gemini {} {}", s, t.chars().take(200).collect::<String>()));
+    }
+    let body: serde_json::Value = resp.json().await.map_err(|e| format!("json: {e}"))?;
+    let raw = body["candidates"][0]["content"]["parts"][0]["text"]
+        .as_str().unwrap_or("").trim().to_string();
+    let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap_or_default();
+    let verdict = parsed["verdict"].as_str().unwrap_or("(no verdict)").to_string();
+    let score = parsed["score"].as_f64().unwrap_or(0.5).clamp(0.0, 1.0);
+    let proposals = parsed["proposals"].as_array().cloned().unwrap_or_default();
+
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO founder_reviews (founder, verdict, body, score, proposals, created_at)
+             VALUES (?,?,?,?,?,?)",
+            params![founder, verdict, parsed.to_string(), score, proposals.len() as i64, chrono_now()],
+        );
+        let in_tok  = (prompt.chars().count() / 4) as i64;
+        let out_tok = (raw.chars().count() / 4) as i64;
+        let _ = budget_record(&conn, &format!("{}_review", founder), SELF_EVOLVE_GEMINI_MODEL, in_tok, out_tok);
+    }
+    let mut enqueued = 0i64;
+    for p in &proposals {
+        let title = p["title"].as_str().unwrap_or("(untitled)").to_string();
+        let rationale = p["rationale"].as_str().unwrap_or("").to_string();
+        let kind = p["kind"].as_str().unwrap_or("misc").to_string();
+        let conn = db.lock().unwrap();
+        let did = log_autonomy_decision(
+            &conn, &format!("{}_review", founder),
+            &format!("founder_{}", kind), "T1",
+            p, false, true, false,
+        );
+        let _ = enqueue_governance(
+            &conn, did, &format!("{}_review", founder),
+            &format!("[{}] {}", founder, title),
+            &rationale,
+        );
+        enqueued += 1;
+    }
+    obs.insert("score".into(), serde_json::json!(score));
+    obs.insert("proposals".into(), serde_json::json!(proposals.len()));
+    obs.insert("enqueued_t1".into(), serde_json::json!(enqueued));
+    let summary = format!("{} verdict (score {:.2}): {} — {} → governance",
+        founder, score, verdict.chars().take(60).collect::<String>(), enqueued);
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs),
+        decisions: vec![parsed],
+        actions: vec![serde_json::json!({"enqueued": enqueued})],
+        summary,
+        notable: score < 0.5 || enqueued > 0,
+    })
+}
+
+/// GET /admin/founders?token=… — side-by-side latest Musk × Bezos reviews.
+async fn admin_founders(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/founders").await { return r; }
+    let token = q.get("token").map(String::as_str).unwrap_or("");
+    let (m_v, m_s, m_b, m_t, b_v, b_s, b_b, b_t) = {
+        let conn = db.lock().unwrap();
+        let fetch = |who: &str| -> (String, f64, String, String) {
+            conn.query_row(
+                "SELECT COALESCE(verdict,''), COALESCE(score, 0.5),
+                        COALESCE(body, '{}'), COALESCE(created_at,'')
+                 FROM founder_reviews WHERE founder=? ORDER BY id DESC LIMIT 1",
+                params![who],
+                |r| Ok((r.get::<_,String>(0)?, r.get::<_,f64>(1)?, r.get::<_,String>(2)?, r.get::<_,String>(3)?))
+            ).unwrap_or(("(no review yet — agent has not run)".into(), 0.5, "{}".into(), "".into()))
+        };
+        let m = fetch("musk");
+        let b = fetch("bezos");
+        (m.0, m.1, m.2, m.3, b.0, b.1, b.2, b.3)
+    };
+
+    let render_body = |who: &str, body: &str| -> String {
+        let v: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
+        let mut html = String::new();
+        if let Some(s) = v.get("ship_today").and_then(|x| x.as_str()) {
+            html.push_str(&format!("<p><b>ship_today:</b> {}</p>", html_escape(s)));
+        }
+        if who == "musk" {
+            if let Some(s) = v.get("k_factor_check").and_then(|x| x.as_str()) {
+                html.push_str(&format!("<p><b>K-factor:</b> {}</p>", html_escape(s)));
+            }
+            for (field, label) in &[("delete_candidates","delete"), ("speed_up","speed_up")] {
+                if let Some(a) = v.get(*field).and_then(|x| x.as_array()) {
+                    let items: Vec<String> = a.iter().filter_map(|x| x.as_str()).map(|s| format!("<li>{}</li>", html_escape(s))).collect();
+                    if !items.is_empty() {
+                        html.push_str(&format!("<p><b>{}:</b><ul>{}</ul></p>", label, items.join("")));
+                    }
+                }
+            }
+        } else {
+            if let Some(s) = v.get("customer_obsession_score").and_then(|x| x.as_f64()) {
+                html.push_str(&format!("<p><b>customer_obsession:</b> {:.2}</p>", s));
+            }
+            if let Some(s) = v.get("missing_customer_signal").and_then(|x| x.as_str()) {
+                html.push_str(&format!("<p><b>missing signal:</b> {}</p>", html_escape(s)));
+            }
+            if let Some(s) = v.get("ten_year_thesis").and_then(|x| x.as_str()) {
+                html.push_str(&format!("<p><b>10-year thesis:</b> {}</p>", html_escape(s)));
+            }
+            if let Some(a) = v.get("type1_to_demote_to_type2").and_then(|x| x.as_array()) {
+                let items: Vec<String> = a.iter().filter_map(|x| x.as_str()).map(|s| format!("<li>{}</li>", html_escape(s))).collect();
+                if !items.is_empty() {
+                    html.push_str(&format!("<p><b>demote T1→T2:</b><ul>{}</ul></p>", items.join("")));
+                }
+            }
+        }
+        if let Some(a) = v.get("proposals").and_then(|x| x.as_array()) {
+            let items: Vec<String> = a.iter().map(|p| {
+                let t = p.get("title").and_then(|x| x.as_str()).unwrap_or("");
+                let k = p.get("kind").and_then(|x| x.as_str()).unwrap_or("");
+                let r = p.get("rationale").and_then(|x| x.as_str()).unwrap_or("");
+                format!("<li><code>{}</code> <b>{}</b><br><span class=dim>{}</span></li>",
+                    html_escape(k), html_escape(t), html_escape(r))
+            }).collect();
+            if !items.is_empty() {
+                html.push_str(&format!("<p><b>proposals (T1 → governance):</b><ul>{}</ul></p>", items.join("")));
+            }
+        }
+        html
+    };
+
+    Html(format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>MU / Founder Reviews</title>
+<style>
+body{{font:14px/1.55 ui-monospace,Menlo,monospace;color:#eaeaea;background:#0b0b0b;padding:24px;max-width:1280px;margin:0 auto}}
+h1{{font-weight:500;margin-top:0}}
+.grid{{display:grid;grid-template-columns:1fr 1fr;gap:24px}}
+.card{{background:#141414;padding:20px;border-radius:8px;border:1px solid #222}}
+.card h2{{margin:0 0 6px;font-size:16px}}
+.card .verdict{{color:#e6c449;font-size:15px;font-weight:500;margin-bottom:8px}}
+.card .when{{color:#666;font-size:11px;margin-bottom:14px}}
+.card .score{{display:inline-block;padding:2px 8px;border-radius:3px;font-weight:600;margin-left:8px}}
+.card.musk h2::before{{content:"⚡ "}}
+.card.bezos h2::before{{content:"📦 "}}
+.s-good{{background:#1d4d20;color:#9fe69f}} .s-meh{{background:#4a3a14;color:#e6c449}} .s-bad{{background:#4d1d20;color:#e69f9f}}
+ul{{margin:4px 0 0 0;padding-left:20px}} li{{margin:3px 0}}
+code{{background:#0a0a0a;padding:1px 5px;border-radius:3px;color:#e6c449}}
+.dim{{color:#888}}
+.nav a{{margin-right:14px;color:#9bd}}
+.nav{{margin-bottom:20px}}
+</style></head><body>
+<div class=nav>
+  <a href="/admin/agents?token={tok}">Agents</a>
+  <a href="/admin/insights?token={tok}">Insights</a>
+  <a href="/admin/governance?token={tok}">Governance</a>
+  <a href="/admin/audit?token={tok}">Audit</a>
+  <a href="/admin/founders?token={tok}">Founders</a>
+</div>
+<h1>Founder Reviews — Musk × Bezos</h1>
+<p class=dim>毎週 Gemini Pro が両者を persona として走らせる。提案は T1 として governance queue に積まれる。</p>
+<div class=grid>
+  <div class="card musk">
+    <h2>Elon Musk<span class="score {ms_cls}">{ms}</span></h2>
+    <div class=verdict>{mv}</div>
+    <div class=when>{mt}</div>
+    {mbody}
+  </div>
+  <div class="card bezos">
+    <h2>Jeff Bezos<span class="score {bs_cls}">{bs}</span></h2>
+    <div class=verdict>{bv}</div>
+    <div class=when>{bt}</div>
+    {bbody}
+  </div>
+</div>
+</body></html>"#,
+        tok = html_attr_escape(token),
+        mv = html_escape(&m_v), mt = html_escape(&m_t),
+        bv = html_escape(&b_v), bt = html_escape(&b_t),
+        ms = format!("{:.2}", m_s),
+        bs = format!("{:.2}", b_s),
+        ms_cls = if m_s >= 0.7 {"s-good"} else if m_s >= 0.5 {"s-meh"} else {"s-bad"},
+        bs_cls = if b_s >= 0.7 {"s-good"} else if b_s >= 0.5 {"s-meh"} else {"s-bad"},
+        mbody = render_body("musk", &m_b),
+        bbody = render_body("bezos", &b_b),
+    )).into_response()
 }
 
 /// Decode a packed f32 embedding from journal_embeddings.embedding (little-endian).
