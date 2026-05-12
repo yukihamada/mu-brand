@@ -15769,6 +15769,10 @@ async fn main() {
         .route("/admin/agent", get(admin_agent_journal))
         .route("/admin/agent/run", post(admin_agent_run))
         .route("/admin/agents", get(admin_agents_dashboard))
+        .route("/admin/insights", get(admin_insights))
+        .route("/admin/governance", get(admin_governance))
+        .route("/admin/governance/:id/decide", post(admin_governance_decide))
+        .route("/api/v1/event", post(api_funnel_event))
         .route("/admin/auth_log", get(admin_auth_log_view))
         .route("/healthz", get(healthz))
         .route("/api/admin/agent_run", post(admin_agent_run))
@@ -16011,6 +16015,16 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         interval_secs: 86_400, // 24h
         description: "Gemini Pro が状況観察 → コード/プロンプト/param の小改善 1〜3 件を提案 → ai_decisions (PR は別 workflow)",
     },
+    AgentDef {
+        name: "sns_metrics",
+        interval_secs: 3600, // 1h
+        description: "過去 72h の X tweets の public_metrics を fetch → sns_post_metrics",
+    },
+    AgentDef {
+        name: "journal_embedder",
+        interval_secs: 21_600, // 6h
+        description: "agent_journal 未 embed 行を text-embedding-004 で埋め込み → journal_embeddings",
+    },
 ];
 
 /// agent_journal から指定 agent の最後の cycle_at (epoch sec) を取得。
@@ -16033,6 +16047,8 @@ async fn run_agent(name: &str, db: Db) -> Result<AgentReport, String> {
         "self_improvement"  => agent_self_improvement(db).await,
         "vision_drift"      => agent_vision_drift(db).await,
         "self_evolve"       => agent_self_evolve(db).await,
+        "sns_metrics"       => agent_sns_metrics(db).await,
+        "journal_embedder"  => agent_journal_embedder(db).await,
         _ => Err(format!("unknown agent: {}", name)),
     }
 }
@@ -17216,6 +17232,481 @@ Hard limit: max 3 proposals. If MU is already optimal, proposals=[]."#,
         observations: serde_json::Value::Object(obs),
         decisions, actions, summary, notable,
     })
+}
+
+// ── Agent 9: sns_metrics ───────────────────────────────────────────────
+// 過去 72h で X に投稿された tweet の public_metrics を 1h ごとに fetch
+// → sns_post_metrics に追記。X API basic plan 未契約だと 4xx でスキップ。
+async fn agent_sns_metrics(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut actions: Vec<serde_json::Value> = Vec::new();
+    let mut decisions: Vec<serde_json::Value> = Vec::new();
+
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let h72 = now_s - 72 * 3600;
+    let posts: Vec<(i64, String)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, COALESCE(external_id,'') FROM sns_post_queue
+             WHERE posted_at IS NOT NULL
+               AND external_id IS NOT NULL AND length(external_id) > 0
+               AND network = 'x'
+               AND CAST(COALESCE(posted_at,'0') AS INTEGER) > ?
+             ORDER BY id DESC LIMIT 50"
+        ) { Ok(s) => s, Err(_) => return Ok(AgentReport::idle("schema not ready")) };
+        stmt.query_map(params![h72], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    obs.insert("candidates".into(), serde_json::Value::from(posts.len() as i64));
+    if posts.is_empty() {
+        return Ok(AgentReport::idle("no posted tweets in 72h"));
+    }
+
+    let token = match x_get_access_token(&db).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return Ok(AgentReport::idle("no X token (run /admin/x/auth)")),
+        Err(e) => return Err(format!("x auth: {e}")),
+    };
+
+    let mut fetched: i64 = 0;
+    let mut http_4xx: i64 = 0;
+    for (qid, tweet_id) in &posts {
+        let url = format!(
+            "https://api.twitter.com/2/tweets/{}?tweet.fields=public_metrics",
+            tweet_id,
+        );
+        let resp = reqwest::Client::new()
+            .get(&url)
+            .bearer_auth(&token)
+            .send().await;
+        match resp {
+            Ok(r) if r.status().is_success() => {
+                let raw_text = r.text().await.unwrap_or_default();
+                let j: serde_json::Value = serde_json::from_str(&raw_text)
+                    .unwrap_or(serde_json::json!({}));
+                let m = &j["data"]["public_metrics"];
+                let imp     = m["impression_count"].as_i64();
+                let likes   = m["like_count"].as_i64();
+                let reposts = m["retweet_count"].as_i64();
+                let replies = m["reply_count"].as_i64();
+                let bookmarks = m["bookmark_count"].as_i64();
+                let quotes  = m["quote_count"].as_i64();
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "INSERT INTO sns_post_metrics
+                     (post_id, platform, queue_id, impressions, likes, reposts, replies,
+                      bookmarks, quote_tweets, clicks, raw_payload, measured_at)
+                     VALUES (?,'x',?,?,?,?,?,?,?,?,?,?)",
+                    params![tweet_id, qid, imp, likes, reposts, replies, bookmarks, quotes,
+                            None::<i64>, raw_text, chrono_now()],
+                );
+                fetched += 1;
+            },
+            Ok(r) if r.status().as_u16() == 429 => {
+                decisions.push(serde_json::json!({
+                    "type": "rate_limited", "tweet_id": tweet_id,
+                }));
+                break;
+            },
+            Ok(r) => {
+                let s = r.status().as_u16();
+                http_4xx += 1;
+                if http_4xx <= 3 {
+                    decisions.push(serde_json::json!({
+                        "type": "x_api_error", "tweet_id": tweet_id, "status": s,
+                    }));
+                }
+            },
+            Err(e) => {
+                decisions.push(serde_json::json!({
+                    "type": "x_api_http_err", "tweet_id": tweet_id, "error": e.to_string(),
+                }));
+            }
+        }
+    }
+    actions.push(serde_json::json!({"fetched": fetched}));
+    obs.insert("fetched".into(), serde_json::Value::from(fetched));
+    obs.insert("http_4xx".into(), serde_json::Value::from(http_4xx));
+    let notable = http_4xx > posts.len() as i64 / 2;
+    let summary = format!("X metrics: {}/{} fetched, {} 4xx",
+        fetched, posts.len(), http_4xx);
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs),
+        decisions, actions, summary, notable,
+    })
+}
+
+// ── Agent 10: journal_embedder ─────────────────────────────────────────
+// 未 embed の agent_journal 行を Gemini text-embedding-004 で embed →
+// journal_embeddings に保存。後続 agents (strategist / self_evolve) の
+// 過去類似事例検索の素材になる。
+async fn agent_journal_embedder(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let key = match env::var("GEMINI_API_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => return Ok(AgentReport::idle("GEMINI_API_KEY missing")),
+    };
+    let candidates: Vec<(i64, String, String)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT j.id, j.agent_name, COALESCE(j.summary,'')
+             FROM agent_journal j
+             LEFT JOIN journal_embeddings e ON e.journal_id = j.id
+             WHERE e.id IS NULL
+             ORDER BY j.id DESC LIMIT 30"
+        ) { Ok(s) => s, Err(_) => return Ok(AgentReport::idle("schema not ready")) };
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    obs.insert("candidates".into(), serde_json::Value::from(candidates.len() as i64));
+    if candidates.is_empty() {
+        return Ok(AgentReport::idle("no unembedded journals"));
+    }
+
+    let model = "text-embedding-004";
+    let mut embedded: i64 = 0;
+    let mut errors: i64 = 0;
+    for (jid, agent_name, summary) in &candidates {
+        let text = format!("[{}] {}", agent_name, summary);
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:embedContent?key={}",
+            model, key,
+        );
+        let req = serde_json::json!({
+            "model": format!("models/{}", model),
+            "content": {"parts": [{"text": text}]},
+        });
+        let resp = reqwest::Client::new().post(&url).json(&req).send().await;
+        let r = match resp { Ok(r) => r, Err(_) => { errors += 1; continue; } };
+        if !r.status().is_success() { errors += 1; continue; }
+        let v: serde_json::Value = match r.json().await { Ok(v) => v, Err(_) => { errors += 1; continue; } };
+        let Some(arr) = v["embedding"]["values"].as_array() else { errors += 1; continue; };
+        let floats: Vec<f32> = arr.iter()
+            .filter_map(|x| x.as_f64().map(|f| f as f32)).collect();
+        if floats.is_empty() { errors += 1; continue; }
+        let mut blob: Vec<u8> = Vec::with_capacity(floats.len() * 4);
+        for f in &floats { blob.extend_from_slice(&f.to_le_bytes()); }
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO journal_embeddings (journal_id, embedding, model, created_at)
+             VALUES (?,?,?,?)",
+            params![jid, blob, model, chrono_now()],
+        );
+        embedded += 1;
+    }
+    obs.insert("embedded".into(), serde_json::Value::from(embedded));
+    obs.insert("errors".into(), serde_json::Value::from(errors));
+    let notable = errors > embedded;
+    let summary = format!("embedded {}/{} ({} errors)",
+        embedded, candidates.len(), errors);
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs),
+        decisions: vec![],
+        actions: vec![serde_json::json!({"embedded": embedded})],
+        summary, notable,
+    })
+}
+
+/// Decode a packed f32 embedding from journal_embeddings.embedding (little-endian).
+#[allow(dead_code)] // wired up by P3 strategist + P5 inject_similar_history
+fn decode_embedding_blob(blob: &[u8]) -> Vec<f32> {
+    blob.chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect()
+}
+
+#[allow(dead_code)] // wired up by P3 strategist + P5 inject_similar_history
+fn cosine_sim(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() || a.is_empty() { return 0.0; }
+    let mut dot = 0.0_f32; let mut na = 0.0_f32; let mut nb = 0.0_f32;
+    for i in 0..a.len() {
+        dot += a[i] * b[i];
+        na  += a[i] * a[i];
+        nb  += b[i] * b[i];
+    }
+    let denom = (na.sqrt()) * (nb.sqrt());
+    if denom == 0.0 { 0.0 } else { dot / denom }
+}
+
+/// Find up to k journal entries similar to `query_emb` (cosine similarity).
+/// Returns (journal_id, agent_name, summary, similarity) tuples, highest first.
+#[allow(dead_code)] // wired up by P3 strategist + P5 inject_similar_history
+fn find_similar_journal(conn: &Connection, query_emb: &[f32], k: usize)
+    -> Vec<(i64, String, String, f32)>
+{
+    let mut stmt = match conn.prepare(
+        "SELECT e.journal_id, e.embedding, j.agent_name, COALESCE(j.summary,'')
+         FROM journal_embeddings e
+         JOIN agent_journal j ON j.id = e.journal_id"
+    ) { Ok(s) => s, Err(_) => return Vec::new() };
+    let rows = stmt.query_map([], |r| Ok((
+        r.get::<_,i64>(0)?,
+        r.get::<_,Vec<u8>>(1)?,
+        r.get::<_,String>(2)?,
+        r.get::<_,String>(3)?,
+    ))).map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>()).unwrap_or_default();
+    let mut scored: Vec<(i64, String, String, f32)> = rows.into_iter().map(|(id, blob, name, sum)| {
+        let emb = decode_embedding_blob(&blob);
+        let s = cosine_sim(query_emb, &emb);
+        (id, name, sum, s)
+    }).collect();
+    scored.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
+    scored.truncate(k);
+    scored
+}
+
+// ─── Funnel events (POST /api/v1/event) ────────────────────────────────
+#[derive(Deserialize)]
+struct FunnelEventReq {
+    visitor_id: String,
+    session_id: String,
+    event:      String,
+    path:       String,
+    referrer:   Option<String>,
+    product_id: Option<i64>,
+    extra:      Option<serde_json::Value>,
+}
+
+async fn api_funnel_event(
+    State(db): State<Db>,
+    Json(req): Json<FunnelEventReq>,
+) -> Response {
+    if req.visitor_id.is_empty() || req.session_id.is_empty()
+        || req.event.is_empty()  || req.path.is_empty()
+        || req.visitor_id.len() > 80 || req.session_id.len() > 80
+        || req.event.len() > 40 || req.path.len() > 300
+    {
+        return (StatusCode::BAD_REQUEST, "field length").into_response();
+    }
+    const ALLOWED: &[&str] = &[
+        "pageview", "cta_click", "checkout_start", "checkout_paid",
+        "you_register", "you_skip", "you_like", "share",
+    ];
+    if !ALLOWED.contains(&req.event.as_str()) {
+        return (StatusCode::BAD_REQUEST, "unknown event").into_response();
+    }
+    let extra_s = req.extra.map(|v| v.to_string());
+    let conn = db.lock().unwrap();
+    let _ = conn.execute(
+        "INSERT INTO funnel_events
+         (visitor_id, session_id, event, path, referrer, product_id, extra, created_at)
+         VALUES (?,?,?,?,?,?,?,?)",
+        params![req.visitor_id, req.session_id, req.event, req.path,
+                req.referrer, req.product_id, extra_s, chrono_now()],
+    );
+    StatusCode::NO_CONTENT.into_response()
+}
+
+/// GET /admin/insights?token=… — sensing dashboard (last 7 days)
+async fn admin_insights(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/insights").await { return r; }
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let h7 = now_s - 7 * 86_400;
+    let token = q.get("token").map(String::as_str).unwrap_or("");
+
+    let conn = db.lock().unwrap();
+    let top_tweets: Vec<(String, i64, i64)> = {
+        let mut stmt = match conn.prepare(
+            "SELECT post_id, COALESCE(MAX(impressions),0), COALESCE(MAX(likes),0)
+             FROM sns_post_metrics
+             WHERE platform='x' AND CAST(measured_at AS INTEGER) > ?
+             GROUP BY post_id
+             ORDER BY MAX(likes) DESC LIMIT 10"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map(params![h7], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    let funnel: Vec<(String, i64)> = {
+        let mut stmt = match conn.prepare(
+            "SELECT event, COUNT(*) FROM funnel_events
+             WHERE CAST(created_at AS INTEGER) > ?
+             GROUP BY event ORDER BY 2 DESC"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map(params![h7], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    let metrics_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sns_post_metrics WHERE CAST(measured_at AS INTEGER) > ?",
+        params![h7], |r| r.get(0),
+    ).unwrap_or(0);
+    let funnel_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM funnel_events WHERE CAST(created_at AS INTEGER) > ?",
+        params![h7], |r| r.get(0),
+    ).unwrap_or(0);
+    let emb_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM journal_embeddings", [], |r| r.get(0),
+    ).unwrap_or(0);
+    drop(conn);
+
+    let mut tweet_rows = String::new();
+    for (id, imp, likes) in &top_tweets {
+        tweet_rows.push_str(&format!(
+            r#"<tr><td><a href="https://x.com/i/status/{id}" target=_blank>{id}</a></td><td class=num>{imp}</td><td class=num>{likes}</td></tr>"#,
+            id = html_attr_escape(id), imp = imp, likes = likes));
+    }
+    if tweet_rows.is_empty() { tweet_rows = "<tr><td colspan=3 class=dim>(no metrics yet — agent_sns_metrics needs X Basic plan)</td></tr>".into(); }
+    let mut funnel_rows = String::new();
+    for (e, c) in &funnel {
+        funnel_rows.push_str(&format!(
+            r#"<tr><td><code>{}</code></td><td class=num>{}</td></tr>"#,
+            html_attr_escape(e), c));
+    }
+    if funnel_rows.is_empty() { funnel_rows = "<tr><td colspan=2 class=dim>(no events yet — wire t.js → /api/v1/event)</td></tr>".into(); }
+
+    Html(format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>MU / Insights — last 7d</title>
+<style>
+body{{font:14px/1.55 ui-monospace,Menlo,monospace;color:#eaeaea;background:#0b0b0b;padding:24px;max-width:980px;margin:0 auto}}
+h1,h2{{font-weight:500;margin-top:28px}} h1{{margin-top:0}}
+table{{width:100%;border-collapse:collapse;margin:8px 0 24px}}
+td,th{{padding:6px 10px;border-bottom:1px solid #222;text-align:left}}
+.num{{text-align:right;font-variant-numeric:tabular-nums}}
+.dim{{color:#666}}
+code{{background:#1a1a1a;padding:1px 6px;border-radius:4px}}
+.nav{{margin-bottom:24px}} .nav a{{margin-right:14px;color:#9bd}}
+.kv{{display:flex;gap:18px;flex-wrap:wrap}} .kv .b{{background:#141414;padding:8px 12px;border-radius:6px}}
+.kv .b b{{display:block;font-size:18px}}
+</style></head><body>
+<div class=nav>
+  <a href="/admin/agents?token={tok}">Agents</a>
+  <a href="/admin/insights?token={tok}">Insights</a>
+  <a href="/admin/governance?token={tok}">Governance</a>
+</div>
+<h1>MU Insights — last 7 days</h1>
+
+<div class=kv>
+  <div class=b>sns_post_metrics rows<b>{mc}</b></div>
+  <div class=b>funnel_events rows<b>{fc}</b></div>
+  <div class=b>journal_embeddings<b>{ec}</b></div>
+</div>
+
+<h2>X: top 10 tweets by likes</h2>
+<table><thead><tr><th>tweet_id</th><th>imp</th><th>likes</th></tr></thead><tbody>{tweets}</tbody></table>
+
+<h2>Funnel events</h2>
+<table><thead><tr><th>event</th><th>count</th></tr></thead><tbody>{funnel}</tbody></table>
+</body></html>"#,
+        tok = html_attr_escape(token),
+        mc = metrics_count, fc = funnel_count, ec = emb_count,
+        tweets = tweet_rows, funnel = funnel_rows)).into_response()
+}
+
+/// GET /admin/governance?token=… — pending T1 escalations
+async fn admin_governance(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/governance").await { return r; }
+    let token = q.get("token").map(String::as_str).unwrap_or("");
+
+    let conn = db.lock().unwrap();
+    let pending: Vec<(i64, String, String, String, String)> = {
+        let mut stmt = match conn.prepare(
+            "SELECT id, agent_name, title, COALESCE(description,''), created_at
+             FROM autonomy_governance_queue
+             WHERE status='pending'
+             ORDER BY id DESC LIMIT 50"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    let counts: Vec<(String, i64)> = {
+        let mut stmt = match conn.prepare(
+            "SELECT status, COUNT(*) FROM autonomy_governance_queue GROUP BY status"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    drop(conn);
+
+    let mut rows = String::new();
+    for (id, agent, title, desc, created_at) in &pending {
+        let age_s = chrono_now().parse::<i64>().unwrap_or(0) - created_at.parse::<i64>().unwrap_or(0);
+        let age_h = age_s / 3600;
+        rows.push_str(&format!(
+            r#"<tr><td>#{id}</td><td><code>{agent}</code></td><td>{title}</td><td class=desc>{desc}</td><td class=num>{age}h</td>
+<td><form method=post action="/admin/governance/{id}/decide" style=display:inline>
+<input type=hidden name=token value="{tok}"><input type=hidden name=action value=approve>
+<button class="b ok">approve</button></form>
+<form method=post action="/admin/governance/{id}/decide" style=display:inline>
+<input type=hidden name=token value="{tok}"><input type=hidden name=action value=reject>
+<button class="b no">reject</button></form></td></tr>"#,
+            id = id, agent = html_attr_escape(agent),
+            title = html_escape(title), desc = html_escape(desc),
+            age = age_h, tok = html_attr_escape(token)));
+    }
+    if rows.is_empty() {
+        rows = "<tr><td colspan=6 class=dim>(no pending T1 escalations)</td></tr>".into();
+    }
+    let mut counts_html = String::new();
+    for (s, c) in &counts {
+        counts_html.push_str(&format!(r#"<span class=b>{}: <b>{}</b></span>"#, html_escape(s), c));
+    }
+
+    Html(format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>MU / Governance</title>
+<style>
+body{{font:14px/1.55 ui-monospace,Menlo,monospace;color:#eaeaea;background:#0b0b0b;padding:24px;max-width:1080px;margin:0 auto}}
+h1{{font-weight:500;margin-top:0}}
+table{{width:100%;border-collapse:collapse;margin-top:12px}}
+td,th{{padding:8px 10px;border-bottom:1px solid #222;text-align:left;vertical-align:top}}
+.num{{text-align:right;font-variant-numeric:tabular-nums}} .dim{{color:#666}}
+.desc{{color:#bbb;max-width:380px}} code{{background:#1a1a1a;padding:1px 6px;border-radius:4px}}
+.nav{{margin-bottom:24px}} .nav a{{margin-right:14px;color:#9bd}}
+.kv{{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px}} .kv .b{{background:#141414;padding:6px 12px;border-radius:6px}} .kv b{{color:#fff}}
+button.b{{background:#1a1a1a;border:1px solid #333;color:#eee;padding:4px 10px;border-radius:4px;cursor:pointer;margin-right:4px}}
+button.b.ok{{border-color:#2a4}} button.b.no{{border-color:#a33}}
+</style></head><body>
+<div class=nav>
+  <a href="/admin/agents?token={tok}">Agents</a>
+  <a href="/admin/insights?token={tok}">Insights</a>
+  <a href="/admin/governance?token={tok}">Governance</a>
+</div>
+<h1>MU Governance — pending Type 1 escalations</h1>
+<div class=kv>{counts}</div>
+<table><thead><tr><th>id</th><th>agent</th><th>title</th><th>description</th><th>age</th><th>decide</th></tr></thead>
+<tbody>{rows}</tbody></table>
+<p class=dim>Constitution: Type 1 items require human approval. 7d 経過で自動 expire.</p>
+</body></html>"#,
+        tok = html_attr_escape(token), counts = counts_html, rows = rows)).into_response()
+}
+
+/// POST /admin/governance/:id/decide — approve or reject a T1 item
+async fn admin_governance_decide(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    axum::extract::Form(form): axum::extract::Form<std::collections::HashMap<String, String>>,
+) -> Response {
+    let q_for_auth: std::collections::HashMap<String, String> =
+        form.iter().filter(|(k,_)| k.as_str() == "token").map(|(k,v)| (k.clone(), v.clone())).collect();
+    if let Err(r) = admin_auth(&headers, &q_for_auth, db.clone(), "/admin/governance/decide").await { return r; }
+    let action = form.get("action").map(String::as_str).unwrap_or("");
+    let new_status = match action {
+        "approve" => "approved",
+        "reject"  => "rejected",
+        _ => return (StatusCode::BAD_REQUEST, "bad action").into_response(),
+    };
+    let decider = "yuki@hamada.tokyo"; // until SSO, single human governor
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE autonomy_governance_queue
+             SET status=?, decided_by=?, decided_at=?
+             WHERE id=? AND status='pending'",
+            params![new_status, decider, chrono_now(), id],
+        );
+    }
+    let tok = q_for_auth.get("token").cloned().unwrap_or_default();
+    let target = format!("/admin/governance?token={}", urlencoding::encode(&tok));
+    (StatusCode::SEE_OTHER, [(axum::http::header::LOCATION, target)]).into_response()
 }
 
 /// GET /admin/agent?token=…&name=<agent_name>&limit=50 — Journal JSON
