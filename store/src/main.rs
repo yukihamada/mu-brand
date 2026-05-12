@@ -1869,7 +1869,7 @@ async fn stripe_webhook(
         //   - sweep_manual / pre_order → Telegram alert; partner が個別対応
         // metadata[sample]=1 のときは partner 専用 proposal page 経由の
         // サンプルまとめ買いとして multi-item ハンドラに分岐。
-        if matches!(meta["collab"].as_str(), Some("sweep") | Some("kokon")) {
+        if matches!(meta["collab"].as_str(), Some("sweep") | Some("kokon") | Some("jiuflow")) {
             if meta["sample"].as_str() == Some("1") {
                 handle_collab_sample_order(db.clone(), &session).await;
             } else {
@@ -2352,7 +2352,7 @@ async fn handle_collab_sweep_order(db: Db, session: &serde_json::Value) {
             "SELECT id, name, COALESCE(production_route,'sweep_manual'), price_jpy,
                     printful_variant_id, image_url, printful_variant_map,
                     printful_files, printful_options
-             FROM collab_products WHERE slug=? AND partner IN ('sweep','kokon')",
+             FROM collab_products WHERE slug=? AND partner IN ('sweep','kokon','jiuflow')",
             params![slug],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?)),
         ).ok()
@@ -10368,11 +10368,23 @@ fn has_kokon_partner_cookie(headers: &HeaderMap, pw: &str) -> bool {
     }).unwrap_or(false)
 }
 
+/// JiuFlow 専用 proposal ページのパスワード (jiuflow.com BJJ メディア)
+fn jiuflow_partner_password() -> String {
+    env::var("JIUFLOW_PARTNER_PASSWORD").unwrap_or_else(|_| "set-JIUFLOW_PARTNER_PASSWORD".into())
+}
+
+fn has_jiuflow_partner_cookie(headers: &HeaderMap, pw: &str) -> bool {
+    headers.get("cookie").and_then(|v| v.to_str().ok()).map(|c| {
+        c.split(';').any(|p| p.trim() == format!("mu_jiuflow_partner={}", pw))
+    }).unwrap_or(false)
+}
+
 /// Per-partner proposal page password resolver.
 fn partner_proposal_password(partner: &str) -> String {
     match partner {
         "sweep" => siiieep_partner_password(),
         "kokon" => kokon_partner_password(),
+        "jiuflow" => jiuflow_partner_password(),
         _ => "set-PARTNER_PASSWORD".into(),
     }
 }
@@ -10382,6 +10394,7 @@ fn has_partner_proposal_cookie(partner: &str, headers: &HeaderMap, pw: &str) -> 
     match partner {
         "sweep" => has_siiieep_partner_cookie(headers, pw),
         "kokon" => has_kokon_partner_cookie(headers, pw),
+        "jiuflow" => has_jiuflow_partner_cookie(headers, pw),
         _ => false,
     }
 }
@@ -10390,6 +10403,7 @@ fn partner_proposal_cookie_name(partner: &str) -> &'static str {
     match partner {
         "sweep" => "mu_siiieep_partner",
         "kokon" => "mu_kokon_partner",
+        "jiuflow" => "mu_jiuflow_partner",
         _ => "mu_partner",
     }
 }
@@ -12221,6 +12235,577 @@ async fn show_kokon_proposal_page(
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Response {
     show_partner_proposal_page(db, "kokon", "kokon.tokyo", "/kokon", headers, q).await
+}
+
+async fn show_jiuflow_proposal_page(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    show_partner_proposal_page(db, "jiuflow", "JiuFlow", "/jiuflow", headers, q).await
+}
+
+async fn jiuflow_sample_checkout(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Json(body): Json<SampleCheckoutBody>,
+) -> impl IntoResponse {
+    sample_checkout(db, "jiuflow", "/jiuflow/proposal", "MU×JiuFlow sample", headers, body).await
+}
+
+/// GET /collab/apply — public landing page with form to request a proposal.
+/// Explains what MU does, why it works, and pulls website URL + email +
+/// merch interests. POSTs to /api/collab/apply.
+async fn show_collab_apply_page() -> Response {
+    let body = r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU で コラボグッズを作る — 提案リクエスト</title>
+<meta name="description" content="貴社のサイトとメールを登録するだけで、MU がコラボグッズの提案ページを自動生成します。在庫リスクゼロ、原価サンプル発注、Printful 連携。">
+<meta property="og:title" content="MU で コラボグッズを作る — 1 分で提案リクエスト">
+<meta property="og:description" content="貴社サイト URL とメールを入れると、MU が AI で世界観を読み取り、提案ページを 24h 以内に送付します。">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+:root{--bg:#0A0A0A;--fg:#F5F5F0;--mute:#A8A8A0;--y:#e6c449;--card:#111;--b:rgba(255,255,255,0.06);--g:#22c55e;--r:#C8362C}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:-apple-system,'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.7;padding:32px 24px 80px;font-size:15px;-webkit-font-smoothing:antialiased}
+.wrap{max-width:760px;margin:0 auto}
+.brand{font-weight:700;letter-spacing:0.32em;font-size:18px;margin-bottom:38px;opacity:0.85}
+h1{font-size:34px;font-weight:300;letter-spacing:0.04em;line-height:1.35;margin-bottom:14px}
+h1 em{color:var(--y);font-style:normal;font-weight:500}
+.lead{color:#C4C4BC;font-size:15.5px;line-height:1.95;margin-bottom:36px}
+.lead b{color:var(--fg);font-weight:600}
+h2{font-size:12px;letter-spacing:0.26em;color:var(--y);margin:30px 0 14px;font-weight:700}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:32px}
+.step{background:var(--card);border:1px solid var(--b);border-left:2px solid var(--y);padding:16px 18px;border-radius:3px}
+.step .n{color:var(--y);font-size:11px;letter-spacing:0.28em;font-weight:700;margin-bottom:4px}
+.step .t{font-size:14.5px;font-weight:600;margin-bottom:4px;line-height:1.5}
+.step .d{color:#A8A8A0;font-size:12px;line-height:1.85}
+.features{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-bottom:36px}
+.feat{background:var(--card);border:1px solid var(--b);padding:18px 18px 16px;border-radius:3px}
+.feat .icon{font-size:22px;margin-bottom:6px}
+.feat .t{font-size:14px;font-weight:600;margin-bottom:6px}
+.feat .d{color:#A8A8A0;font-size:12.5px;line-height:1.85}
+.examples{background:#000;border:1px solid var(--b);padding:18px 20px;border-radius:3px;margin-bottom:36px;color:#A8A8A0;font-size:12.5px;line-height:1.95}
+.examples b{color:var(--y);font-weight:600}
+.examples a{color:var(--y);text-decoration:underline}
+form{background:var(--card);border:1px solid var(--b);padding:28px;border-radius:4px}
+form h3{font-size:18px;font-weight:600;margin-bottom:6px}
+form .sub{color:#A8A8A0;font-size:12.5px;margin-bottom:24px;line-height:1.85}
+.field{margin-bottom:18px;display:flex;flex-direction:column;gap:6px}
+.field label{font-size:12px;color:#C4C4BC;letter-spacing:0.04em;font-weight:600}
+.field label .req{color:var(--y);margin-left:2px}
+.field input,.field textarea,.field select{background:#000;color:var(--fg);border:1px solid var(--b);padding:12px 14px;font-family:inherit;font-size:14.5px;border-radius:2px;width:100%}
+.field input:focus,.field textarea:focus,.field select:focus{outline:2px solid var(--y);outline-offset:1px;border-color:var(--y)}
+.field .hint{font-size:11.5px;color:#9C9C95;line-height:1.7}
+.checks{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px}
+.check{display:flex;align-items:center;gap:8px;background:#000;border:1px solid var(--b);padding:10px 12px;border-radius:2px;cursor:pointer;font-size:13px}
+.check:hover{border-color:var(--y)}
+.check input{width:16px;height:16px;margin:0;accent-color:var(--y)}
+button[type=submit]{background:var(--y);color:#000;border:0;font-family:inherit;font-size:14px;letter-spacing:0.08em;font-weight:700;padding:14px 28px;cursor:pointer;border-radius:2px;width:100%;margin-top:8px}
+button[type=submit]:hover{opacity:0.88}
+button[type=submit]:disabled{opacity:0.55;cursor:not-allowed;background:#3a3a36;color:#A8A8A0}
+.privacy{color:#9C9C95;font-size:11px;margin-top:14px;line-height:1.8}
+.toast{position:fixed;bottom:32px;left:50%;transform:translateX(-50%);background:var(--y);color:#000;padding:12px 28px;border-radius:2px;font-size:13px;font-weight:600;opacity:0;transition:opacity .2s;pointer-events:none;z-index:60;max-width:90vw;text-align:center}
+.toast.show{opacity:1}
+.toast.err{background:var(--r);color:#fff}
+.success{background:var(--card);border:1px solid var(--g);border-left:3px solid var(--g);padding:24px;border-radius:3px;margin-top:18px}
+.success h3{color:var(--g);font-size:15px;margin-bottom:8px}
+footer{max-width:760px;margin:48px auto 0;padding-top:20px;border-top:1px solid var(--b);color:var(--mute);font-size:12px;line-height:1.85;text-align:center}
+footer a{color:var(--y);text-decoration:none}
+@media (max-width:600px){h1{font-size:24px}form{padding:20px}}
+</style></head><body>
+
+<div class="wrap">
+  <div class="brand">MU</div>
+  <h1>あなたのブランドで <em>MU コラボグッズ</em>。<br>
+  サイトURL とメール、1 分で OK。</h1>
+  <div class="lead">
+    MU は <b>毎時 108 枚限定の AI デザイン</b>を売り、SIIIEEP・kokon.tokyo など複数のパートナーとコラボグッズを展開しています。<br>
+    貴社のサイトを <b>AI が読み取り</b>、推奨商品セットと <b>専用提案ページ</b>を 24 時間以内にお送りします。
+  </div>
+
+  <h2>申込から発注までの 3 ステップ</h2>
+  <div class="steps">
+    <div class="step"><div class="n">STEP 1</div><div class="t">このフォームに記入</div><div class="d">会社サイトURL とご担当者のメールだけで OK。1 分で終わります。</div></div>
+    <div class="step"><div class="n">STEP 2</div><div class="t">AI が貴社サイトを解析</div><div class="d">業種・世界観・カラーリングを読み取り、最適な商品セット 6〜8 品をピックアップ。</div></div>
+    <div class="step"><div class="n">STEP 3</div><div class="t">専用提案ページ送付</div><div class="d">パスワード保護された貴社専用 URL を 24h 以内にメールでお届け。サンプルは原価のみで発注可能。</div></div>
+  </div>
+
+  <h2>なぜ MU グッズが「売れる」のか</h2>
+  <div class="features">
+    <div class="feat"><div class="icon">⏳</div><div class="t">「今しかない」が買う理由</div><div class="d">毎時 108 枚・天気で柄が変わる・週次オークション。希少性を移植したコラボ商品も定価で売り切れる。</div></div>
+    <div class="feat"><div class="icon">📦</div><div class="t">在庫ゼロで始められる</div><div class="d">全品オンデマンド製造。パートナー側に在庫リスクはゼロ。試作だけして売れたら作る。</div></div>
+    <div class="feat"><div class="icon">📖</div><div class="t">物語のあるブランド設計</div><div class="d">"なぜこのデザインなのか" を毎回 AI が言語化。SNS で語られやすい = 拡散が止まらない。</div></div>
+    <div class="feat"><div class="icon">🤝</div><div class="t">MU 実績の裏付け</div><div class="d">MUGEN で 1,300+ 枚販売実績、Mercari/Enabler 創業者の濱田優貴が直接プロデュース。</div></div>
+  </div>
+
+  <div class="examples">
+    すでにコラボ進行中:<br>
+    🥋 <b>SIIIEEP</b> (北参道 BJJ ブランド) — 31 SKU 展開中 (ラッシュガード/Tee/Hoodie ほか)<br>
+    🥩 <b>kokon.tokyo</b> (都内焼肉店) — 6 SKU 展開中 (エプロン/マグ/Tee ほか) · <a href="https://kokon.tokyo" target="_blank">kokon.tokyo</a><br>
+    <br>
+    過去事例の確認・素材感の検証は申込後にお見せできます。
+  </div>
+
+  <form id="apply-form" autocomplete="on">
+    <h3>提案リクエスト</h3>
+    <div class="sub">入力内容は MU 社内 (濱田) のみが確認します。SNS / 公開資料には使用しません。</div>
+
+    <div class="field">
+      <label for="company">会社名・ブランド名 <span class="req">*</span></label>
+      <input id="company" name="company" type="text" required maxlength="100" placeholder="例: 株式会社サンプル / Sample Inc.">
+    </div>
+    <div class="field">
+      <label for="website">会社サイト URL <span class="req">*</span></label>
+      <input id="website" name="website" type="url" required maxlength="300" placeholder="https://example.com">
+      <div class="hint">トップページの URL を入れてください。AI が読み取り、世界観を反映します。</div>
+    </div>
+    <div class="field">
+      <label for="email">担当者メール <span class="req">*</span></label>
+      <input id="email" name="email" type="email" required maxlength="200" placeholder="you@example.com" autocomplete="email">
+      <div class="hint">提案 URL を送付するアドレスです。社内転送可能なメーリングリストでも可。</div>
+    </div>
+    <div class="field">
+      <label for="contact_name">担当者名（任意）</label>
+      <input id="contact_name" name="contact_name" type="text" maxlength="80" placeholder="例: 山田 太郎">
+    </div>
+    <div class="field">
+      <label>興味のある商品カテゴリ（複数選択可）</label>
+      <div class="checks" id="interests">
+        <label class="check"><input type="checkbox" value="tee">Tシャツ</label>
+        <label class="check"><input type="checkbox" value="hoodie">フーディー</label>
+        <label class="check"><input type="checkbox" value="cap">キャップ</label>
+        <label class="check"><input type="checkbox" value="tote">トート</label>
+        <label class="check"><input type="checkbox" value="mug">マグカップ</label>
+        <label class="check"><input type="checkbox" value="sticker">ステッカー</label>
+        <label class="check"><input type="checkbox" value="apron">エプロン</label>
+        <label class="check"><input type="checkbox" value="bottle">ボトル</label>
+        <label class="check"><input type="checkbox" value="rashguard">ラッシュガード</label>
+        <label class="check"><input type="checkbox" value="other">その他</label>
+      </div>
+    </div>
+    <div class="field">
+      <label for="description">ひとこと（任意・160 文字まで）</label>
+      <textarea id="description" name="description" maxlength="160" rows="3" placeholder="例: 来春のリブランディング用に。常連顧客 200 名向けにプレゼント企画も検討中。"></textarea>
+    </div>
+    <button type="submit" id="submit-btn">提案ページ作成をリクエスト →</button>
+    <div class="privacy">送信後、AI が貴社サイトを解析し、24h 以内に提案 URL をメールでお送りします。<br>本フォームに会社情報以外（個人情報・機微情報）は記入しないでください。</div>
+  </form>
+
+  <div class="success" id="success-box" hidden>
+    <h3>✓ リクエストを受け付けました</h3>
+    <p id="success-msg" style="color:#C4C4BC;font-size:13px;line-height:1.9"></p>
+  </div>
+</div>
+
+<footer>
+  株式会社イネブラ (Enabler Inc.) · <a href="mailto:mail@yukihamada.jp">mail@yukihamada.jp</a> · <a href="https://wearmu.com">wearmu.com</a>
+</footer>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+const form = document.getElementById('apply-form');
+const btn = document.getElementById('submit-btn');
+const toast = document.getElementById('toast');
+const successBox = document.getElementById('success-box');
+const successMsg = document.getElementById('success-msg');
+function showToast(msg, err) {
+  toast.textContent = msg;
+  toast.classList.toggle('err', !!err);
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 3000);
+}
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const interests = Array.from(document.querySelectorAll('#interests input:checked')).map(i => i.value);
+  const data = {
+    company: form.company.value.trim(),
+    website: form.website.value.trim(),
+    email: form.email.value.trim(),
+    contact_name: form.contact_name.value.trim() || null,
+    interests: interests,
+    description: form.description.value.trim() || null,
+  };
+  if (!data.company || !data.website || !data.email) {
+    showToast('必須項目を入力してください', true);
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = '送信中…AI が貴社サイトを読み取っています…';
+  try {
+    const r = await fetch('/api/collab/apply', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(data),
+    });
+    if (!r.ok) {
+      const raw = await r.text();
+      console.error('apply error', r.status, raw);
+      const msg = r.status === 429 ? 'リクエストが多すぎます。1時間後に再度お試しください。'
+                : r.status === 400 ? '入力内容に問題があります: ' + raw
+                : 'サーバ側で問題が起きました。time を おいて再試行してください。';
+      throw new Error(msg);
+    }
+    const j = await r.json();
+    form.style.display = 'none';
+    successBox.hidden = false;
+    successMsg.innerHTML = '<b style="color:#F5F5F0">' + (j.company || '') + '</b> 様、ご連絡ありがとうございます。<br><br>'
+      + '✉️ <b>' + (j.email || '') + '</b> 宛に AI 生成の提案サマリを送付しました。<br>'
+      + '本格的な専用提案ページの URL は <b>濱田の確認後 24h 以内</b>にお届けします。<br><br>'
+      + (j.preview_url ? '今すぐ AI 提案サマリを確認: <a href="' + j.preview_url + '" style="color:#e6c449">' + j.preview_url + '</a>' : '');
+    showToast('リクエストを受け付けました ✓');
+  } catch (e) {
+    showToast(e.message, true);
+    btn.disabled = false;
+    btn.textContent = '提案ページ作成をリクエスト →';
+  }
+});
+</script>
+</body></html>"##;
+    let mut resp = axum::response::Html(body).into_response();
+    // Public page, allow indexing.
+    resp.headers_mut().insert("Cache-Control", HeaderValue::from_static("public, max-age=300"));
+    resp
+}
+
+#[derive(Deserialize)]
+struct CollabApplyBody {
+    company: String,
+    website: String,
+    email: String,
+    #[serde(default)] contact_name: Option<String>,
+    #[serde(default)] interests: Vec<String>,
+    #[serde(default)] description: Option<String>,
+}
+
+/// POST /api/collab/apply — receive partner application, scrape site, run
+/// Gemini to draft a pitch, store, notify 濱田, email applicant.
+async fn api_collab_apply(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Json(body): Json<CollabApplyBody>,
+) -> Response {
+    // ── Validation ────────────────────────────────────────────────
+    let company = body.company.trim();
+    let website = body.website.trim();
+    let email = body.email.trim();
+    if company.is_empty() || company.len() > 120 {
+        return (StatusCode::BAD_REQUEST, "company name length").into_response();
+    }
+    if !website.starts_with("http") || website.len() > 400 {
+        return (StatusCode::BAD_REQUEST, "website must start with http/https").into_response();
+    }
+    if !email.contains('@') || email.len() > 250 {
+        return (StatusCode::BAD_REQUEST, "valid email required").into_response();
+    }
+
+    let ip = headers.get("fly-client-ip").or_else(|| headers.get("x-forwarded-for"))
+        .and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let ua = headers.get("user-agent").and_then(|v| v.to_str().ok()).unwrap_or("").chars().take(300).collect::<String>();
+
+    // ── Rate limit: max 5 applications per IP per hour (anti-spam) ──
+    {
+        let conn = db.lock().unwrap();
+        let recent: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM collab_applications
+             WHERE ip=? AND created_at > datetime('now', '-1 hour')",
+            params![ip], |r| r.get(0),
+        ).unwrap_or(0);
+        if recent >= 5 {
+            return (StatusCode::TOO_MANY_REQUESTS, "rate limit").into_response();
+        }
+    }
+
+    // ── Slug + magic token ───────────────────────────────────────
+    let slug = {
+        let base = company.to_lowercase()
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == ' ')
+            .map(|c| if c == ' ' { '-' } else { c })
+            .collect::<String>();
+        let base = base.split('-').filter(|s| !s.is_empty()).collect::<Vec<_>>().join("-");
+        let base = if base.is_empty() { "applicant".to_string() } else { base.chars().take(24).collect() };
+        // suffix with short random for uniqueness
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(format!("{}{}{}", company, email, chrono_now()).as_bytes());
+        let sfx: String = hex::encode(&h.finalize()[..3]);
+        format!("{}-{}", base, sfx)
+    };
+    let magic_token = {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(format!("{}{}{}", slug, email, chrono_now()).as_bytes());
+        h.update(env::var("MAGIC_TOKEN_SALT").unwrap_or_else(|_| "mu-collab-2026".into()).as_bytes());
+        hex::encode(&h.finalize()[..16])
+    };
+    let interests_json = serde_json::to_string(&body.interests).unwrap_or_else(|_| "[]".into());
+
+    // ── Fetch website (best effort, 8s timeout, 30KB cap) ─────────
+    let fetched_text: String = {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(8))
+            .user_agent("MU-AppBot/1.0 (+https://wearmu.com)")
+            .build().unwrap_or_default();
+        match client.get(website).send().await {
+            Ok(r) if r.status().is_success() => {
+                let raw = r.text().await.unwrap_or_default();
+                // Strip HTML tags very lightly and truncate.
+                let mut out = String::with_capacity(raw.len().min(8000));
+                let mut in_tag = false;
+                let mut in_script = false;
+                let lower = raw.to_lowercase();
+                for (i, c) in raw.chars().enumerate() {
+                    if i > 80_000 { break; }
+                    if c == '<' {
+                        in_tag = true;
+                        if i + 7 < lower.len() && (&lower[i..(i+7).min(lower.len())]).starts_with("<script") { in_script = true; }
+                        if i + 6 < lower.len() && (&lower[i..(i+6).min(lower.len())]).starts_with("<style")  { in_script = true; }
+                        continue;
+                    }
+                    if c == '>' {
+                        in_tag = false;
+                        if in_script {
+                            // crude: stop script-mode after closing </script> or </style>
+                            let tail = &lower[i.saturating_sub(10)..(i+1).min(lower.len())];
+                            if tail.contains("</script>") || tail.contains("</style>") { in_script = false; }
+                        }
+                        continue;
+                    }
+                    if !in_tag && !in_script {
+                        out.push(c);
+                        if out.len() >= 6000 { break; }
+                    }
+                }
+                out.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(5000).collect()
+            }
+            _ => "".to_string(),
+        }
+    };
+
+    // ── Gemini pitch generation ─────────────────────────────────
+    let interests_label = if body.interests.is_empty() { "未指定".to_string() } else { body.interests.join(", ") };
+    let prompt = format!(
+        "あなたは MU (wearmu.com) のブランドキュレーターです。MU は毎時 108 枚限定の AI デザイン T シャツを売り、SIIIEEP (北参道 BJJ) や kokon.tokyo (焼肉店) とコラボグッズを展開しています。在庫リスクゼロの Printful オンデマンド製造を使っています。\n\n\
+         以下の会社情報から、MU × {company} コラボの提案サマリを 400 文字以内・日本語の素直なトーンで書いてください。\n\
+         - 会社名: {company}\n\
+         - サイトURL: {website}\n\
+         - 担当: {name}\n\
+         - 興味カテゴリ: {interests}\n\
+         - 担当者メモ: {desc}\n\
+         - サイト抜粋 (3000字以内): {site}\n\n\
+         構成: (1) 貴社の世界観の解釈 1〜2 文 (2) MU で作る価値 1 文 (3) 推奨商品セット 5〜7 品とそれぞれの一言理由。商品候補例: Tシャツ、フーディー、キャップ、トート、マグ、ステッカー、エプロン、ボトル、ラッシュガード、タオル、缶クーラー、ステッカーシート。\n\
+         専門用語は使わず、決裁者が読んで意義が伝わる文章にしてください。",
+        company = company,
+        website = website,
+        name = body.contact_name.clone().unwrap_or_else(|| "未記入".into()),
+        interests = interests_label,
+        desc = body.description.clone().unwrap_or_else(|| "なし".into()),
+        site = fetched_text.chars().take(3000).collect::<String>(),
+    );
+    let ai_pitch: String = {
+        let key = env::var("GEMINI_API_KEY").unwrap_or_default();
+        if key.is_empty() { "(Gemini API 未設定のため、自動提案は生成されませんでした。濱田から手動で連絡します。)".to_string() }
+        else {
+            let url = format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
+                key
+            );
+            let req = serde_json::json!({
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"maxOutputTokens": 800, "temperature": 0.7}
+            });
+            match reqwest::Client::new().post(&url)
+                .timeout(std::time::Duration::from_secs(20))
+                .json(&req).send().await
+            {
+                Ok(r) if r.status().is_success() => {
+                    let j: serde_json::Value = r.json().await.unwrap_or_default();
+                    j["candidates"][0]["content"]["parts"][0]["text"]
+                        .as_str().unwrap_or("(生成失敗)").to_string()
+                }
+                Ok(r) => {
+                    let s = r.status();
+                    eprintln!("[collab/apply] gemini {}", s);
+                    "(AI 提案生成エラー — 濱田から手動で連絡します)".to_string()
+                }
+                Err(e) => {
+                    eprintln!("[collab/apply] gemini reqwest: {}", e);
+                    "(AI 提案生成タイムアウト — 濱田から手動で連絡します)".to_string()
+                }
+            }
+        }
+    };
+
+    // ── Store application ───────────────────────────────────────
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO collab_applications
+             (slug, company_name, website_url, contact_email, contact_name,
+              description, interest_types, fetched_text, ai_pitch, ai_recommended,
+              magic_token, status, ip, user_agent, created_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            params![
+                slug, company, website, email, body.contact_name,
+                body.description, interests_json,
+                fetched_text.chars().take(3000).collect::<String>(),
+                ai_pitch, "[]",
+                magic_token, "pending", ip, ua, chrono_now(),
+            ],
+        );
+    }
+
+    let preview_url = format!("https://wearmu.com/collab/result/{}", magic_token);
+
+    // ── Telegram notification to 濱田 ───────────────────────────
+    let tg_token = env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default();
+    let tg_chat  = env::var("TELEGRAM_CHAT_ID").unwrap_or_else(|_| "1136442501".into());
+    if !tg_token.is_empty() {
+        let preview_snippet: String = ai_pitch.chars().take(400).collect();
+        let body = format!(
+            "📬 MU collab apply\n会社: {}\nサイト: {}\nメール: {}\n担当: {}\n興味: {}\npreview: {}\n\n--- AI pitch (first 400 chars) ---\n{}",
+            company, website, email,
+            body.contact_name.as_deref().unwrap_or("-"),
+            interests_label, preview_url, preview_snippet,
+        );
+        let _ = reqwest::Client::new()
+            .post(format!("https://api.telegram.org/bot{}/sendMessage", tg_token))
+            .json(&serde_json::json!({"chat_id": tg_chat, "text": body, "disable_web_page_preview": true}))
+            .send().await;
+    }
+
+    // ── Email applicant via Resend ──────────────────────────────
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    if !resend_key.is_empty() {
+        let html = format!(
+            r#"<div style="font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;background:#0A0A0A;color:#F5F5F0;padding:40px;max-width:560px">
+<div style="font-weight:700;letter-spacing:0.32em;font-size:18px;margin-bottom:24px;opacity:0.85">MU</div>
+<h1 style="font-size:22px;font-weight:300;margin-bottom:14px">MU × {company} コラボ提案のご案内</h1>
+<p style="color:#C4C4BC;line-height:1.95;font-size:14px">{contact} 様<br><br>
+ご連絡ありがとうございます。<br>
+貴社サイトを AI で解析し、コラボ提案のサマリを生成しました。下記の URL から確認いただけます。</p>
+<p style="margin:24px 0"><a href="{preview}" style="display:inline-block;background:#e6c449;color:#000;padding:14px 28px;text-decoration:none;font-weight:700;letter-spacing:0.08em;border-radius:2px">AI 提案サマリを開く →</a></p>
+<p style="color:#A8A8A0;font-size:13px;line-height:1.85">本格的な専用提案ページ (パスワード付き、サンプル原価発注機能つき) は、濱田の確認後 <b style="color:#F5F5F0">24 時間以内</b>に別途お送りします。<br><br>
+ご質問・修正要望は <a href="mailto:mail@yukihamada.jp" style="color:#e6c449">mail@yukihamada.jp</a> までご連絡ください。</p>
+<hr style="border:0;border-top:1px solid rgba(255,255,255,0.1);margin:30px 0">
+<p style="color:#9C9C95;font-size:11px;line-height:1.85">株式会社イネブラ (Enabler Inc.) · 濱田優貴<br>このメールに心当たりがない場合はこのまま削除してください。</p>
+</div>"#,
+            company = company,
+            contact = body.contact_name.as_deref().unwrap_or(&company),
+            preview = preview_url,
+        );
+        let _ = reqwest::Client::new()
+            .post("https://api.resend.com/emails")
+            .bearer_auth(&resend_key)
+            .json(&serde_json::json!({
+                "from": "MU <info@enablerdao.com>",
+                "to": [email],
+                "subject": format!("MU × {} コラボ提案サマリ (AI 自動生成)", company),
+                "html": html,
+            }))
+            .send().await;
+    }
+
+    Json(serde_json::json!({
+        "ok": true,
+        "slug": slug,
+        "company": company,
+        "email": email,
+        "preview_url": preview_url,
+    })).into_response()
+}
+
+/// GET /collab/result/{token} — display the AI-generated proposal summary
+/// (preview before full proposal page is set up).
+async fn show_collab_result_page(
+    State(db): State<Db>,
+    Path(token): Path<String>,
+) -> Response {
+    type AppRow = (String, String, String, String, String, Option<String>);
+    let row: Option<AppRow> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT company_name, website_url, contact_email, ai_pitch, status, interest_types
+             FROM collab_applications WHERE magic_token=?",
+            params![token],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+        ).ok()
+    };
+    let Some((company, website, _email, ai_pitch, status, interests)) = row else {
+        return (StatusCode::NOT_FOUND, axum::response::Html(
+            r#"<!doctype html><html><head><meta charset="utf-8"><title>Not found</title></head><body style="font-family:sans-serif;padding:40px;text-align:center"><h1>リンクが無効です</h1><p>提案リクエストの URL が見つかりません。<br><a href="/collab/apply">新しく申し込む</a></p></body></html>"#
+        )).into_response();
+    };
+
+    let interests_label = interests.as_deref()
+        .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+        .map(|v| if v.is_empty() { "未指定".into() } else { v.join(", ") })
+        .unwrap_or_else(|| "未指定".into());
+
+    let pitch_html = html_escape(&ai_pitch).replace('\n', "<br>");
+
+    let body = format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU × {company} コラボ提案サマリ</title>
+<meta name="robots" content="noindex,nofollow">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:#0A0A0A;color:#F5F5F0;font-family:-apple-system,'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.85;padding:40px 24px 80px;font-size:15px}}
+.wrap{{max-width:720px;margin:0 auto}}
+.brand{{font-weight:700;letter-spacing:0.32em;font-size:16px;margin-bottom:32px;opacity:0.85}}
+h1{{font-size:26px;font-weight:300;letter-spacing:0.04em;margin-bottom:8px}}
+h1 em{{color:#e6c449;font-style:normal}}
+.meta{{color:#A8A8A0;font-size:12.5px;margin-bottom:24px}}
+.meta a{{color:#e6c449;text-decoration:none}}
+.status{{display:inline-block;background:rgba(230,196,73,0.18);color:#e6c449;padding:4px 12px;border-radius:99px;font-size:11px;letter-spacing:0.18em;font-weight:600;margin-bottom:24px}}
+.pitch{{background:#111;border:1px solid rgba(255,255,255,0.06);border-left:2px solid #e6c449;padding:24px 28px;border-radius:3px;color:#E0E0DA;font-size:14.5px;line-height:2.05;margin-bottom:30px;white-space:normal}}
+.callout{{background:#111;border:1px solid rgba(34,197,94,0.3);padding:20px 24px;border-radius:3px;color:#C4C4BC;font-size:13.5px;line-height:1.95;margin-bottom:24px}}
+.callout h3{{color:#22c55e;font-size:14px;font-weight:600;margin-bottom:6px}}
+.next{{background:#111;border:1px solid rgba(255,255,255,0.06);padding:20px 24px;border-radius:3px}}
+.next h3{{font-size:13px;letter-spacing:0.14em;color:#e6c449;margin-bottom:8px}}
+.next p{{color:#C4C4BC;font-size:13.5px;line-height:1.95}}
+.next a{{color:#e6c449}}
+footer{{max-width:720px;margin:48px auto 0;padding-top:18px;border-top:1px solid rgba(255,255,255,0.08);color:#A8A8A0;font-size:11.5px;line-height:1.85;text-align:center}}
+footer a{{color:#e6c449;text-decoration:none}}
+@media (max-width:600px){{h1{{font-size:21px}}.pitch{{padding:18px 20px}}}}
+</style></head><body>
+<div class="wrap">
+  <div class="brand">MU</div>
+  <h1>MU × <em>{company}</em> コラボ提案サマリ</h1>
+  <div class="meta">対象サイト: <a href="{website}" target="_blank" rel="noopener">{website}</a> ／ 興味カテゴリ: {interests}</div>
+  <div class="status">STATUS — {status}</div>
+  <div class="pitch">{pitch}</div>
+
+  <div class="callout">
+    <h3>✓ ここまでが AI 自動生成のサマリです</h3>
+    濱田が内容を確認後、<b>専用の提案ページ URL（サンプル原価発注機能つき）</b>を 24h 以内にお送りします。<br>
+    上記のサマリは「方向性のたたき台」として、ご担当者と社内で検討用にお使いください。
+  </div>
+
+  <div class="next">
+    <h3>NEXT STEP</h3>
+    <p>提案内容で気になる点・追加要望があれば、<a href="mailto:mail@yukihamada.jp">mail@yukihamada.jp</a> まで返信してください。<br>
+    商品の追加・削除、デザイン方針の調整、最低発注数、レベニューシェア条件など、すべて柔軟に対応します。</p>
+  </div>
+</div>
+<footer>
+  株式会社イネブラ (Enabler Inc.) · <a href="mailto:mail@yukihamada.jp">mail@yukihamada.jp</a> · <a href="https://wearmu.com">wearmu.com</a><br>
+  この URL はあなた専用です — 第三者に共有しないでください。
+</footer>
+</body></html>"##,
+        company = html_escape(&company),
+        website = html_attr_escape(&website),
+        interests = html_escape(&interests_label),
+        status = html_escape(&status),
+        pitch = pitch_html,
+    );
+
+    let mut resp = axum::response::Html(body).into_response();
+    resp.headers_mut().insert("X-Robots-Tag", HeaderValue::from_static("noindex, nofollow"));
+    resp
 }
 
 const SIIIEEP_PARTNER_GATE_HTML: &str = r#"<!doctype html><html lang="ja"><head>
@@ -16497,6 +17082,93 @@ async fn main() {
         ).ok();
     }
 
+    // ── MU × JiuFlow (jiuflow.com BJJ メディア) ──
+    // 2 部構成:
+    //   - コラボ試作 4 品 (MU × JiuFlow 並記): BJJ 実用ライン
+    //   - JiuFlow オリジナル 4 品 (JiuFlow 単独ロゴ): 日常使い
+    // 世界観: 黒 × 白 × ロイヤルブルー (BJJ 帯の青)。
+    // ロゴ URL: lifestyle.wearmu.com/jiuflow/_logo.png (黒地白抜き JiuFlow wordmark)
+    let jiuflow_items: &[SweepRow] = &[
+        // ── コラボ試作 4 品 (MU × JiuFlow) — BJJ 実戦ライン ──
+        ("jiuflow-rashguard-ls", "ラッシュガード LS", "MU × JiuFlow Long-Sleeve Rashguard",
+         "Printful All-Over Print Long-Sleeve Rashguard (pid 257)、Black ベース。胸 MU × JiuFlow ダブルロゴ、袖に IBJJF 公式テクニック番号モチーフ柄。Gi の下にも No-Gi 単体でも。",
+         11_800, "printful", Some(257), Some(7793),
+         Some(r#"{"XS":7793,"S":7794,"M":7795,"L":7796,"XL":7797,"2XL":7798}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/jiuflow/_collab_v1.png"}]"#),
+         None, 14, 1),
+        ("jiuflow-fight-shorts", "ファイトショーツ", "MU × JiuFlow Athletic Long Shorts",
+         "Printful All-Over Print Athletic Long Shorts (pid 282)、Black + ロイヤルブルー サイドストライプ。腰部に MU × JiuFlow ダブルロゴ。柔術スパー・グラップリング用。",
+         9_800,  "printful", Some(282), Some(8716),
+         Some(r#"{"XS":8716,"S":8717,"M":8718,"L":8719,"XL":8720,"2XL":8721}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/jiuflow/_collab_v1.png"}]"#),
+         None, 14, 1),
+        ("jiuflow-tee-classic", "クラシック Tee (黒)", "MU × JiuFlow Heavy Cotton Tee",
+         "Printful Bella+Canvas 3001 (pid 71)、Black。胸正面に MU × JiuFlow wordmark を白プリント。柔術アカデミー後の日常着、ジム・カフェにそのまま行けるトーン。",
+         4_800,  "printful", Some(71), Some(4017),
+         Some(r#"{"S":4016,"M":4017,"L":4018,"XL":4019,"2XL":4020,"XS":9527}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/jiuflow/_collab_v1.png"}]"#),
+         None, 10, 1),
+        ("jiuflow-hoodie-fleece", "ヘビーフーディ (黒)", "MU × JiuFlow Heavy Hoodie",
+         "Printful Gildan 18500 (pid 146)、Black ヘビーフリース。胸 MU × JiuFlow ダブルロゴ、袖に「Roll. Flow. Reset.」スローガン。アカデミー入り口での着替え時にすぐ脱ぎ着できる重量感。",
+         9_800,  "printful", Some(146), Some(5530),
+         Some(r#"{"S":5530,"M":5531,"L":5532,"XL":5533,"2XL":5534}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/jiuflow/_collab_v1.png"}]"#),
+         None, 14, 1),
+
+        // ── JiuFlow オリジナル 4 品 (JiuFlow 単独ロゴ) — 日常使い ──
+        ("jiuflow-cap-snapback", "スナップバック (黒)", "JiuFlow Black Snapback",
+         "Printful Yupoong 6089M (pid 99)、Black フラットブリム。フロントに JiuFlow wordmark を白糸 (or ロイヤルブルー) で刺繍。柔術アカデミー前後・日常使いの両対応。",
+         6_800,  "printful", Some(99), Some(4792),
+         Some(r#"{"OS":4792,"ONE SIZE":4792,"S":4792,"M":4792,"L":4792,"XL":4792}"#),
+         Some(r#"[{"type":"embroidery_front_large","url":"https://lifestyle.wearmu.com/jiuflow/_logo.png"}]"#),
+         Some(r##"[{"id":"thread_colors_front_large","value":["#FFFFFF"]}]"##), 10, 1),
+        ("jiuflow-bottle-water", "ウォーターボトル", "JiuFlow Steel Water Bottle 17oz",
+         "Printful Stainless Steel Water Bottle (pid 522)、17oz White。表面に JiuFlow ロゴ + 「Hydrate Like You Train」をブルー印刷。スパー前後の水分補給に。",
+         3_800,  "printful", Some(522), Some(13384),
+         Some(r#"{"OS":13384,"ONE SIZE":13384,"M":13384,"L":13384,"17 OZ":13384}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/jiuflow/_logo.png"}]"#),
+         None, 10, 1),
+        ("jiuflow-stickers", "ステッカーシート", "JiuFlow Sticker Sheet",
+         "Printful Kiss-Cut Sticker Sheet (pid 505)、5.83×8.27\"。JiuFlow wordmark + 帯カラー (白〜黒の 8 色グラデ) + 技名コーション (Triangle / Armbar / Omoplata) を kiss-cut。Gi カバン・ボトル・PC へ。",
+         1_500,  "printful", Some(505), Some(12917),
+         Some(r#"{"OS":12917,"ONE SIZE":12917,"M":12917,"S":12917,"L":12917}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/jiuflow/_logo.png"}]"#),
+         None, 7, 1),
+        ("jiuflow-towel-gym", "マイクロファイバータオル", "JiuFlow Quick-Dry Gym Towel",
+         "Printful Sublimated Gym Towel (pid 478)、15×30\" White。中央に JiuFlow wordmark + ロイヤルブルーのライン。スパー後の汗拭き、Gi 着替え時のフェイスケアに。",
+         2_800,  "printful", Some(478), Some(12428),
+         Some(r#"{"OS":12428,"ONE SIZE":12428,"M":12428,"L":12428,"15X30":12428}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/jiuflow/_logo.png"}]"#),
+         None, 10, 1),
+    ];
+    for (slug, cat, name, desc, price, route, pf_prod, pf_var, var_map, files, opts, lead, active) in jiuflow_items {
+        conn.execute(
+            "INSERT OR IGNORE INTO collab_products
+                 (slug, partner, category, name, description, image_url, price_jpy,
+                  sizes_json, active, draft, created_at,
+                  printful_product_id, printful_variant_id, production_route,
+                  lead_time_days, printful_variant_map,
+                  printful_files, printful_options)
+             VALUES (?, 'jiuflow', ?, ?, ?, NULL, ?,
+                     '[\"S\",\"M\",\"L\",\"XL\"]', ?, 1, ?,
+                     ?, ?, ?, ?, ?, ?, ?)",
+            params![slug, cat, name, desc, price, active, now,
+                    pf_prod, pf_var, route, lead, var_map, files, opts],
+        ).ok();
+        conn.execute(
+            "UPDATE collab_products
+             SET production_route = ?, lead_time_days = ?,
+                 printful_product_id = ?, printful_variant_id = ?,
+                 printful_variant_map = ?,
+                 printful_files = ?, printful_options = ?,
+                 active = ?, partner = 'jiuflow',
+                 category = ?, name = ?, description = ?, price_jpy = ?
+             WHERE slug = ?",
+            params![route, lead, pf_prod, pf_var, var_map, files, opts, active,
+                    cat, name, desc, price, slug],
+        ).ok();
+    }
+
     // E2E 実測の Printful 仕入総コスト (subtotal + ship to JP + tax)、¥単位。
     // 管理画面 (/admin/sweep) で利益率計算に使う。価格 / variant が変わったら
     // sweep_costs.py の E2E スクリプトで更新できる (admin manual)。
@@ -16540,6 +17212,15 @@ async fn main() {
         ("kokon-crewneck",      7_850),
         ("kokon-snapback",      3_380),
         ("kokon-stickers",      1_136),
+        // JiuFlow v1 — Printful 推定仕入 (2026-05-12, kokon と類似 SKU の実測値)
+        ("jiuflow-rashguard-ls", 5_950),
+        ("jiuflow-fight-shorts", 4_680),
+        ("jiuflow-tee-classic",  2_318),
+        ("jiuflow-hoodie-fleece",3_961),
+        ("jiuflow-cap-snapback", 3_380),
+        ("jiuflow-bottle-water", 2_780),
+        ("jiuflow-stickers",     1_136),
+        ("jiuflow-towel-gym",    2_180),
     ];
     for (slug, cost) in printful_costs {
         conn.execute(
@@ -17380,8 +18061,13 @@ async fn main() {
         .route("/sweep/partner", get(show_siiieep_partner_page))
         .route("/sweep/proposal", get(show_sweep_proposal_page))
         .route("/kokon/proposal", get(show_kokon_proposal_page))
+        .route("/jiuflow/proposal", get(show_jiuflow_proposal_page))
+        .route("/collab/apply", get(show_collab_apply_page))
+        .route("/api/collab/apply", post(api_collab_apply))
+        .route("/collab/result/:token", get(show_collab_result_page))
         .route("/api/sweep/sample-checkout", post(sweep_sample_checkout))
         .route("/api/kokon/sample-checkout", post(kokon_sample_checkout))
+        .route("/api/jiuflow/sample-checkout", post(jiuflow_sample_checkout))
         .route("/api/sweep/partner/action", post(sweep_partner_action))
         // ── Public embed API + widget (CORS open via CorsLayer below) ──
         .route("/api/v1/embed/products", get(embed_products))
