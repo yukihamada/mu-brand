@@ -11406,34 +11406,57 @@ async fn show_partner_proposal_page(
     type RecentRow = (i64, String, i64, String, Option<String>, String);
     let recent_buys: Vec<RecentRow> = {
         let conn = db.lock().unwrap();
-        // Try mu_purchases first (real purchases with dates).
-        // Filter out rows with empty / null mockup_url so we never render
-        // a "—" placeholder card (looks broken / weakens social proof).
-        let mut stmt = match conn.prepare(
-            "SELECT p.id, p.brand, p.drop_num, p.name, p.mockup_url, MAX(mp.created_at) AS bought_at
+        // Resolve mockup_url to a STABLE image: Printful S3 `tmp/...` URLs
+        // expire (~24h → 403 Forbidden), so when mockup_url points there,
+        // substitute design_url (imgur/R2/lifestyle CDN). Also filter rows
+        // whose resolved URL would still be a dead Printful temp URL —
+        // broken cards weaken social proof on kokon/sweep/jiuflow proposals.
+        let resolved_img = "CASE
+            WHEN p.mockup_url LIKE 'https://printful-upload.s3%'
+                 OR p.mockup_url LIKE 'https://files.cdn.printful.com/upload%'
+            THEN COALESCE(NULLIF(p.design_url,''), NULLIF(p.lifestyle_url,''), p.mockup_url)
+            ELSE p.mockup_url
+        END";
+        let stable_filter = "((
+            p.mockup_url NOT LIKE 'https://printful-upload.s3%'
+            AND p.mockup_url NOT LIKE 'https://files.cdn.printful.com/upload%'
+        ) OR COALESCE(NULLIF(p.design_url,''), NULLIF(p.lifestyle_url,'')) IS NOT NULL)";
+
+        let sql_recent = format!(
+            "SELECT p.id, p.brand, p.drop_num, p.name, {resolved_img} AS img,
+                    MAX(mp.created_at) AS bought_at
              FROM mu_purchases mp
              JOIN products p ON p.id = mp.product_id
              WHERE mp.created_at > datetime('now', '-90 days')
                AND p.mockup_url IS NOT NULL AND p.mockup_url <> ''
+               AND {stable_filter}
              GROUP BY p.id
              ORDER BY bought_at DESC
              LIMIT 12"
-        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "recent").into_response() };
+        );
+        let mut stmt = match conn.prepare(&sql_recent) {
+            Ok(s) => s,
+            Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "recent").into_response(),
+        };
         let from_purchases: Vec<RecentRow> = stmt.query_map([], |r| Ok((
             r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?,
         ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
         if !from_purchases.is_empty() {
             from_purchases
         } else {
-            // Fallback: any product with sold > 0 AND visual asset, latest first.
-            let mut stmt = match conn.prepare(
-                "SELECT id, brand, drop_num, name, mockup_url, created_at
-                 FROM products
-                 WHERE sold > 0
-                   AND mockup_url IS NOT NULL AND mockup_url <> ''
-                 ORDER BY created_at DESC
+            let sql_fallback = format!(
+                "SELECT p.id, p.brand, p.drop_num, p.name, {resolved_img} AS img, p.created_at
+                 FROM products p
+                 WHERE p.sold > 0
+                   AND p.mockup_url IS NOT NULL AND p.mockup_url <> ''
+                   AND {stable_filter}
+                 ORDER BY p.created_at DESC
                  LIMIT 12"
-            ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "recent fallback").into_response() };
+            );
+            let mut stmt = match conn.prepare(&sql_fallback) {
+                Ok(s) => s,
+                Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "recent fallback").into_response(),
+            };
             stmt.query_map([], |r| Ok((
                 r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?,
             ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
