@@ -8042,6 +8042,23 @@ async fn gemini_feedback_reply(message: &str, is_lifetime: bool, is_ma_council: 
     Ok(text.trim().to_string())
 }
 
+/// Send a plaintext / Markdown message to the default Telegram chat (yuki).
+/// Best-effort; silent on failure. Honors TELEGRAM_BOT_TOKEN env var.
+async fn send_telegram_message(text: &str) {
+    let tg_token = env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default();
+    let tg_chat  = env::var("TELEGRAM_CHAT_ID").unwrap_or_else(|_| "1136442501".into());
+    if tg_token.is_empty() { return; }
+    let _ = reqwest::Client::new()
+        .post(format!("https://api.telegram.org/bot{}/sendMessage", tg_token))
+        .json(&serde_json::json!({
+            "chat_id": tg_chat,
+            "text": text.chars().take(4000).collect::<String>(),
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": true,
+        }))
+        .send().await;
+}
+
 async fn notify_telegram_feedback(tier: &str, email: &str, message: &str) {
     let tg_token = env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default();
     let tg_chat  = env::var("TELEGRAM_CHAT_ID").unwrap_or_else(|_| "1136442501".into());
@@ -12681,9 +12698,10 @@ const GI_EDITION_01_HTML: &str = r##"<!doctype html>
 <meta name="description" content="背中で 18 ブランドの物語を語る、世界初のスポンサード黒 BJJ 道着。CYBRIDGE × ENABLER 紋章、金糸 QR 刺繍、内ライニング sublimation。限定 30 着 / ¥98,000 先行予約受付中。">
 <meta property="og:title" content="MU × JiuFlow Sponsored Gi / Edition 00">
 <meta property="og:description" content="20 年の事業ネットワークを 1 着の黒道着に。限定 30 着、先行予約 ¥98,000。">
-<meta property="og:image" content="https://lifestyle.wearmu.com/gi/01/02_back.jpg">
+<meta property="og:image" content="https://wearmu.com/og-gi.jpg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="MU × JiuFlow Edition 00 — black BJJ gi with gold crest. Limited 30 / 98,000 JPY.">
 <meta property="og:url" content="https://wearmu.com/gi/00">
 <meta property="og:type" content="product">
 <meta property="og:site_name" content="MU / wearmu.com">
@@ -12691,7 +12709,7 @@ const GI_EDITION_01_HTML: &str = r##"<!doctype html>
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="MU × JiuFlow Sponsored Gi / Edition 00">
 <meta name="twitter:description" content="20 年の事業ネットワークを 1 着の黒道着に。限定 30 着、先行予約 ¥98,000。">
-<meta name="twitter:image" content="https://lifestyle.wearmu.com/gi/01/02_back.jpg">
+<meta name="twitter:image" content="https://wearmu.com/og-gi.jpg">
 <meta name="twitter:site" content="@wearmu">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="canonical" href="https://wearmu.com/gi/00">
@@ -12786,6 +12804,23 @@ footer a{color:var(--mute);text-decoration:underline}
     <a href="#preorder" class="cta-mini">先行予約</a>
   </div>
 </div></nav>
+
+<!-- ENAI claim banner — shown only on ?qr=1 (real-life QR scan from the gi) -->
+<div id="enai-banner" style="display:none;position:fixed;top:54px;left:0;right:0;z-index:49;background:linear-gradient(180deg,rgba(230,196,73,0.98) 0%,rgba(210,170,55,0.95) 100%);color:#0a0a0a;padding:14px 24px;border-bottom:2px solid #0a0a0a;font-size:13.5px;">
+  <div style="max-width:1200px;margin:0 auto;display:flex;gap:14px;align-items:center;justify-content:space-between;flex-wrap:wrap">
+    <div style="flex:1;min-width:260px;line-height:1.55">
+      🪙 <b style="letter-spacing:0.04em">QR を読んでくれてありがとう。</b>
+      実物の道着 (Edition 00) からアクセスした方限定で、<b>ENAI Token +1</b> を配布します。
+    </div>
+    <form id="enai-form" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <input type="email" id="enai-email" required placeholder="your@email" style="background:#0a0a0a;color:#f5f5f0;border:0;padding:10px 14px;font-family:inherit;font-size:13px;border-radius:2px;min-width:200px">
+      <button type="submit" style="background:#0a0a0a;color:#e6c449;border:0;padding:10px 18px;font-family:inherit;font-size:11.5px;letter-spacing:0.18em;font-weight:700;text-transform:uppercase;cursor:pointer;border-radius:2px">Claim ENAI</button>
+      <button type="button" id="enai-close" style="background:transparent;color:#0a0a0a;border:1px solid #0a0a0a;padding:9px 14px;font-family:inherit;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;cursor:pointer;border-radius:2px;opacity:0.6">後で</button>
+    </form>
+  </div>
+  <div id="enai-status" style="max-width:1200px;margin:6px auto 0;font-size:12px;color:#0a0a0a;opacity:0.78;display:none"></div>
+</div>
+
 <section class="hero">
   <div class="hero-bg"></div>
   <div class="wrap hero-inner">
@@ -12903,8 +12938,8 @@ footer a{color:var(--mute);text-decoration:underline}
     </div>
     <textarea class="note-field" id="gi-note" placeholder="(任意) 着用者名のローマ字刺繍 / 裾内側 / その他のご要望"></textarea>
     <div class="price-line">¥98,000 <small>税込 / 配送料別</small></div>
-    <div class="stock">在庫 <b style="color:var(--gold)">30/30</b> · 残り 30 着</div>
-    <button id="gi-buy" class="btn-primary" style="padding:20px 48px;font-size:14px">先行予約する → Stripe で決済</button>
+    <div class="stock">在庫 __STOCK_TEXT__</div>
+    <button id="gi-buy" class="btn-primary" style="padding:20px 48px;font-size:14px" __CTA_DISABLED__>__CTA_LABEL__</button>
     <div class="disclaimers">
       <p>※ 本道着の刺繍デザインは、各スポンサーの正式許諾を取得次第確定します。許諾が得られないブランドがあった場合、近似ブランドへの差替えまたは <b>全額返金</b> をお選びいただけます。</p>
       <p>※ 配送は日本国内のみ。海外配送ご希望の方は <a href="mailto:mail@yukihamada.jp">mail@yukihamada.jp</a> までご相談ください。</p>
@@ -12941,6 +12976,7 @@ footer a{color:var(--mute);text-decoration:underline}
 /// QR-code target from the physical gi itself. Storytelling + 18 sponsors
 /// + pre-order CTA. v1 = "01" edition only (Hamada-worn, 30 replicas).
 async fn show_gi_edition_page(
+    State(db): State<Db>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Response {
     let edition = id.trim_matches(|c: char| !c.is_ascii_alphanumeric()).to_string();
@@ -12949,13 +12985,147 @@ async fn show_gi_edition_page(
     if !matches!(edition.as_str(), "0" | "00" | "1" | "01") {
         return (StatusCode::NOT_FOUND, "edition not found").into_response();
     }
-    let html = GI_EDITION_01_HTML;
+    const TOTAL: i64 = 30;
+    let sold: i64 = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM gi_preorders
+             WHERE edition IN ('01','00') AND status NOT IN ('refunded','cancelled')",
+            [], |r| r.get(0),
+        ).unwrap_or(0)
+    };
+    let available = (TOTAL - sold).max(0);
+    let stock_text = if available <= 0 {
+        format!("<b style=\"color:#C8362C\">SOLD OUT</b> · {sold}/{TOTAL}")
+    } else if available <= 5 {
+        format!("<b style=\"color:#e6c449\">残り {available} 着</b> / {TOTAL}")
+    } else {
+        format!("<b style=\"color:var(--gold)\">{available}/{TOTAL}</b> · 残り {available} 着")
+    };
+    let cta_disabled = if available <= 0 { "disabled" } else { "" };
+    let cta_label = if available <= 0 {
+        "SOLD OUT — 次の Edition をお待ちください"
+    } else {
+        "先行予約する → Stripe で決済"
+    };
+    let html = GI_EDITION_01_HTML
+        .replace("__STOCK_TEXT__", &stock_text)
+        .replace("__CTA_DISABLED__", cta_disabled)
+        .replace("__CTA_LABEL__", cta_label);
     let mut resp = Html(html).into_response();
     resp.headers_mut().insert(
         "cache-control",
-        HeaderValue::from_static("public, max-age=120, s-maxage=300"),
+        HeaderValue::from_static("public, max-age=30, s-maxage=60"),
     );
     resp
+}
+
+/// Webhook handler: insert one paid preorder row + Telegram + email notify.
+async fn handle_gi_preorder(db: Db, session: &serde_json::Value) {
+    let sid = session["id"].as_str().unwrap_or("").to_string();
+    if sid.is_empty() { return; }
+    let edition = session["metadata"]["edition"].as_str().unwrap_or("01").to_string();
+    let size = session["metadata"]["size"].as_str().unwrap_or("").to_string();
+    let note = session["metadata"]["note"].as_str().unwrap_or("").to_string();
+    let amount = session["amount_total"].as_i64().unwrap_or(98_000);
+    let email = session["customer_details"]["email"].as_str()
+        .or_else(|| session["customer_email"].as_str())
+        .unwrap_or("").to_string();
+    let name = session["customer_details"]["name"].as_str().unwrap_or("").to_string();
+    let phone = session["customer_details"]["phone"].as_str().unwrap_or("").to_string();
+    let shipping_json = session["shipping_details"].to_string();
+    let now = chrono_now();
+    let inserted: usize = {
+        let conn = db.lock().unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO gi_preorders
+             (edition, stripe_session_id, amount_jpy, email, name, phone,
+              shipping_json, size, note, paid_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?)",
+            params![edition, sid, amount, email, name, phone, shipping_json, size, note, now],
+        ).unwrap_or(0)
+    };
+    if inserted == 0 { return; }
+    // Telegram + email — best-effort, ignore errors
+    let sold_now: i64 = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM gi_preorders WHERE edition IN ('01','00')",
+            [], |r| r.get(0),
+        ).unwrap_or(0)
+    };
+    let remaining = 30 - sold_now;
+    let msg = format!(
+        "🥋 *MU × JiuFlow Sponsored Gi* — 先行予約 #{}\n\nedition: {}\nsize: {}\namount: ¥{}\nemail: {}\nname: {}\nphone: {}\nshipping: {}\nnote: {}\n\n*残り {} / 30*",
+        sold_now, edition, size, amount, email, name, phone,
+        session["shipping_details"]["address"]["country"].as_str().unwrap_or("?"),
+        note, remaining,
+    );
+    let _ = send_telegram_message(&msg).await;
+}
+
+/// POST /api/gi/:id/enai-claim — record an email for ENAI Token airdrop.
+/// Triggered when the physical gi's QR is scanned and the visitor consents.
+#[derive(Deserialize)]
+struct EnaiClaimBody {
+    #[serde(default)]
+    email: String,
+    #[serde(default)]
+    wallet: String,
+}
+async fn gi_enai_claim(
+    State(db): State<Db>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<EnaiClaimBody>,
+) -> Response {
+    let edition = id.trim_matches(|c: char| !c.is_ascii_alphanumeric()).to_string();
+    if !matches!(edition.as_str(), "0" | "00" | "1" | "01") {
+        return (StatusCode::NOT_FOUND, "edition not found").into_response();
+    }
+    let email = body.email.trim().to_lowercase();
+    if !email.contains('@') || email.len() < 5 || email.len() > 254 {
+        return Json(serde_json::json!({"ok": false, "error": "invalid email"})).into_response();
+    }
+    let wallet = body.wallet.chars().take(64).collect::<String>();
+    let ip = headers.get("cf-connecting-ip")
+        .or_else(|| headers.get("x-forwarded-for"))
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("").chars().take(64).collect::<String>();
+    let ua = headers.get("user-agent")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("").chars().take(255).collect::<String>();
+    let now = chrono_now();
+    let canonical_edition = if edition == "0" || edition == "00" { "00" } else { "01" };
+    let inserted: usize = {
+        let conn = db.lock().unwrap();
+        // Per-email idempotent within an edition
+        conn.execute(
+            "INSERT OR IGNORE INTO gi_enai_claims
+             (edition, email, wallet, ip, user_agent, claimed_at)
+             VALUES (?,?,?,?,?,?)",
+            params![canonical_edition, email, wallet, ip, ua, now],
+        ).unwrap_or(0)
+    };
+    let count_total: i64 = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM gi_enai_claims WHERE edition=?",
+            params![canonical_edition], |r| r.get(0),
+        ).unwrap_or(0)
+    };
+    if inserted > 0 {
+        let msg = format!(
+            "🪙 *ENAI claim #{}* /gi/{}\nemail: {}\nwallet: {}\nip: {}",
+            count_total, canonical_edition, email, wallet, ip,
+        );
+        let _ = send_telegram_message(&msg).await;
+    }
+    Json(serde_json::json!({
+        "ok": true,
+        "already_claimed": inserted == 0,
+        "total_claims": count_total,
+    })).into_response()
 }
 
 /// POST /api/gi/:id/checkout — Stripe Checkout for the sponsored gi pre-order.
