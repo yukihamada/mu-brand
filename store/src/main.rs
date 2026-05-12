@@ -135,19 +135,53 @@ fn require_admin_token(provided: Option<&String>) -> Result<(), Response> {
             ).into_response());
         }
     };
-    let provided = provided.map(String::as_str).unwrap_or("");
+    let provided_str = provided.map(String::as_str).unwrap_or("");
     // Constant-time comparison to prevent timing attacks
-    if provided.len() != expected.len() {
-        return Err((StatusCode::UNAUTHORIZED, "unauthorized").into_response());
-    }
-    let mut diff: u8 = 0;
-    for (a, b) in provided.bytes().zip(expected.bytes()) {
-        diff |= a ^ b;
-    }
-    if diff != 0 {
+    let mismatch =
+        provided_str.len() != expected.len()
+        || {
+            let mut diff: u8 = 0;
+            for (a, b) in provided_str.bytes().zip(expected.bytes()) {
+                diff |= a ^ b;
+            }
+            diff != 0
+        };
+    if mismatch {
+        // Async-fire a Telegram alert (deduped) so admin-token-rotation
+        // mismatches (Fly rotated, Actions secret stale → silent 401 chain)
+        // surface immediately. 2026-05-12 incident: admin cron died for 24h
+        // because we synced one side only.
+        admin_token_mismatch_alert();
         return Err((StatusCode::UNAUTHORIZED, "unauthorized").into_response());
     }
     Ok(())
+}
+
+/// Telegram alert on admin-token mismatch. Deduped to 1 alert / 6h so a
+/// brute-force attempt doesn't flood. Fires in a background tokio task so
+/// the auth path stays fast.
+fn admin_token_mismatch_alert() {
+    use std::sync::atomic::{AtomicI64, Ordering};
+    static LAST_ALERT: AtomicI64 = AtomicI64::new(0);
+    let now: i64 = chrono_now().parse().unwrap_or(0);
+    let last = LAST_ALERT.load(Ordering::Relaxed);
+    if now - last < 6 * 3600 { return; }
+    LAST_ALERT.store(now, Ordering::Relaxed);
+    let tg_token = env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default();
+    let tg_chat  = env::var("TELEGRAM_CHAT_ID").unwrap_or_else(|_| "1136442501".into());
+    if tg_token.is_empty() { return; }
+    tokio::spawn(async move {
+        let msg = "🔐 admin-token mismatch on wearmu.com — \
+                   GH Actions secret or external caller is using a stale token. \
+                   Check `fly ssh console -a mu-store -C 'printenv ADMIN_TOKEN'` vs \
+                   `gh secret list --repo yukihamada/mu-brand`.";
+        let _ = reqwest::Client::new()
+            .post(format!("https://api.telegram.org/bot{}/sendMessage", tg_token))
+            .json(&serde_json::json!({
+                "chat_id": tg_chat, "text": msg, "disable_web_page_preview": true,
+            }))
+            .send().await;
+    });
 }
 
 /// Add baseline security response headers to every reply.
