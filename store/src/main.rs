@@ -453,6 +453,107 @@ const MA_BASE_PRICE_JPY: i64 = 30_000;
 const MA_AUCTION_DURATION_SECS: i64 = 7 * 24 * 60 * 60;
 const KYC_THRESHOLD_JPY: i64 = 300_000;
 
+/// Gemini model used for the daily Field log + customer feedback replies.
+/// Pro tier — slower & costlier than Flash, but writes far better Japanese
+/// and follows the brand-voice constraints (no seasonal cycle, numbers > adj)
+/// more reliably. Other agents (vision_drift, x_brand, critic_check) stay
+/// on Flash for cost reasons since their outputs are short.
+const BLOG_GEMINI_MODEL: &str = "gemini-2.5-pro";
+
+/// Gemini model used by the self_evolve agent (proposes code-level changes
+/// to main.rs). Pro tier — the higher reasoning quality is worth the cost
+/// for code patches that humans will review.
+const SELF_EVOLVE_GEMINI_MODEL: &str = "gemini-2.5-pro";
+
+/// Rough per-call JPY cost estimates for budget accounting. Pro is ~10x
+/// the cost of Flash. These are intentionally conservative (upper bound)
+/// so the budget hits the cap *before* real billing does.
+fn estimated_call_cost_jpy(model: &str) -> i64 {
+    match model {
+        m if m.contains("2.5-pro") || m.contains("3-pro") => 15, // ¥15 per call (avg)
+        m if m.contains("flash")    => 2,                        // ¥2 per call
+        _                            => 5,
+    }
+}
+
+/// Current month key (JST) — used as the bucket for `ai_budget_usage`.
+fn yyyymm_jst() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64).unwrap_or(0);
+    let jst = secs + 9 * 3600;
+    // approx: days since unix epoch / 30
+    let days = jst / 86400;
+    // shift to civil-date via tegmen / Howard Hinnant algorithm
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y_actual = if m <= 2 { y + 1 } else { y };
+    format!("{:04}-{:02}", y_actual, m)
+}
+
+/// Returns (used_jpy, limit_jpy, remaining_jpy) for the current JST month.
+fn budget_state_jpy(conn: &rusqlite::Connection) -> (i64, i64, i64) {
+    let month = yyyymm_jst();
+    let limit: i64 = conn.query_row(
+        "SELECT monthly_limit_jpy FROM ai_budget_config WHERE id=1",
+        [], |r| r.get(0),
+    ).unwrap_or(30_000);
+    let used: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(estimated_cost_jpy),0)
+         FROM ai_budget_usage WHERE yyyymm=?",
+        params![month], |r| r.get(0),
+    ).unwrap_or(0);
+    (used, limit, (limit - used).max(0))
+}
+
+/// Check budget before an AI call. Returns Err with a human-readable
+/// reason if the monthly cap would be exceeded. The cap is a hard stop —
+/// callers must propagate the error and skip the AI call.
+fn budget_check(conn: &rusqlite::Connection, model: &str) -> Result<(), String> {
+    let (used, limit, remaining) = budget_state_jpy(conn);
+    let est = estimated_call_cost_jpy(model);
+    if est > remaining {
+        return Err(format!(
+            "AI budget exceeded for {} (used ¥{} / cap ¥{}, this call est ¥{}). \
+             Set AI_BUDGET_MONTHLY_JPY higher or wait for the next month.",
+            yyyymm_jst(), used, limit, est));
+    }
+    Ok(())
+}
+
+/// Record an AI call in the budget ledger. Best-effort.
+/// `paid_by`: 'card' | 'crypto' | 'pending' (None = pending).
+fn budget_record(
+    conn: &rusqlite::Connection,
+    decision_type: &str,
+    model: &str,
+    in_tokens: i64,
+    out_tokens: i64,
+) -> i64 {
+    let month = yyyymm_jst();
+    let est = estimated_call_cost_jpy(model);
+    // Default payment: card first, fall through to crypto. The actual
+    // settlement is done in batch (see /admin/budget/settle).
+    let paid_by: Option<String> = Some("card".into());
+    match conn.execute(
+        "INSERT INTO ai_budget_usage
+            (yyyymm, decision_type, model, estimated_cost_jpy,
+             in_tokens, out_tokens, paid_by, created_at)
+         VALUES (?,?,?,?,?,?,?,?)",
+        params![month, decision_type, model, est, in_tokens, out_tokens,
+                paid_by, chrono_now()],
+    ) {
+        Ok(_) => conn.last_insert_rowid(),
+        Err(e) => { eprintln!("[budget_record] {e}"); 0 }
+    }
+}
+
 fn dynamic_price(brand: &str, drop_num: i64, sold: i64, name: &str) -> i64 {
     if brand == "ma" {
         return MA_BASE_PRICE_JPY;
@@ -6596,7 +6697,7 @@ fn blog_prompt(stats: &serde_json::Value) -> String {
 - 数字を 1 つは引用 (real_revenue_jpy を優先)
 - "今日動いたもの / 動かなかったもの / 明日へ" の構成
 - 自己卑下や絵文字過剰は禁止
-- 末尾に「— 自動生成 by Gemini 2.5 Flash」と明記
+- 末尾に「— 自動生成 by Gemini 2.5 Pro」と明記
 
 禁止表現 (vision_drift 検出済):
 - 主観的形容詞のみで状態を述べる: "進化と洞察" "華やかに" "革命的" 等 → データ志向の語に置換
@@ -6610,14 +6711,23 @@ fn blog_prompt(stats: &serde_json::Value) -> String {
 async fn compose_auto_blog(db: &Db) -> Result<(String, String, String, serde_json::Value), String> {
     use serde_json::json;
     let key = env::var("GEMINI_API_KEY").map_err(|_| "GEMINI_API_KEY missing".to_string())?;
+    // Budget hard-cap (responsible_entity = 株式会社イネブラ). Skip the call
+    // entirely if the monthly limit would be exceeded.
+    {
+        let conn = db.lock().unwrap();
+        budget_check(&conn, BLOG_GEMINI_MODEL)?;
+    }
     let stats = gather_blog_stats(db);
 
     let prompt = blog_prompt(&stats);
 
-    let req_body = json!({"contents": [{"parts": [{"text": prompt}]}]});
+    let req_body = json!({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"maxOutputTokens": 4096, "temperature": 0.7}
+    });
     let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
-        key);
+        "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}",
+        model = BLOG_GEMINI_MODEL, key = key);
     let resp = reqwest::Client::new().post(&url)
         .json(&req_body).send().await
         .map_err(|e| format!("gemini request: {e}"))?;
@@ -6643,7 +6753,7 @@ async fn compose_auto_blog(db: &Db) -> Result<(String, String, String, serde_jso
     }
     let body_md = body_md_lines.join("\n").trim().to_string();
     let body_html = md_to_html_simple(&body_md);
-    // Learning Loop: append-only audit log of this AI call. Best-effort.
+    // Learning Loop + Budget: append-only audit log of this AI call.
     {
         let conn = db.lock().unwrap();
         let _ = log_ai_decision(
@@ -6651,9 +6761,13 @@ async fn compose_auto_blog(db: &Db) -> Result<(String, String, String, serde_jso
             "blog_compose",
             &stats,
             &serde_json::json!({"title": title, "body_md_len": body_md.chars().count()}),
-            "gemini-2.5-flash",
+            BLOG_GEMINI_MODEL,
             0,
         );
+        // Best-effort token estimate: 4 chars/token Japanese (rough).
+        let in_tok  = (prompt.chars().count() / 4) as i64;
+        let out_tok = (body_md.chars().count() / 4) as i64;
+        let _ = budget_record(&conn, "blog_compose", BLOG_GEMINI_MODEL, in_tok, out_tok);
     }
     Ok((title, body_html, body_md, stats))
 }
@@ -7174,7 +7288,7 @@ async fn admin_blog_compose(
                 "INSERT OR IGNORE INTO auto_blog_posts
                     (slug, title, body_html, body_md, model, stats_json, published, created_at)
                  VALUES (?,?,?,?,?,?,1,?)",
-                params![slug, title, body_html, body_md, "gemini-2.5-flash",
+                params![slug, title, body_html, body_md, BLOG_GEMINI_MODEL,
                         stats.to_string(), chrono_now()],
             );
             Json(serde_json::json!({"ok": true, "slug": slug, "title": title})).into_response()
@@ -7279,8 +7393,8 @@ async fn blog_stats_for_today(
         "already_published": already,
         "backfill_slugs": backfill, // Actions iterates these too if non-empty
         "prompt": prompt,           // shipped so Actions doesn't drift from server's wording
-        "gemini_model": "gemini-2.5-flash",
-        "endpoint_version": 2,
+        "gemini_model": BLOG_GEMINI_MODEL,
+        "endpoint_version": 3,
         "rate_limit_remaining": (BLOG_STATS_RATE_LIMIT_PER_HOUR - hits).max(0),
     })).into_response()
 }
@@ -7886,7 +8000,7 @@ async fn admin_blog_publish(
             "body looks like a refusal / placeholder").into_response();
     }
     let slug = body.slug.clone().unwrap_or_else(|| format!("auto-{}", jst_today_str()));
-    let model = body.model.clone().unwrap_or_else(|| "gemini-2.5-flash-via-actions".to_string());
+    let model = body.model.clone().unwrap_or_else(|| format!("{}-via-actions", BLOG_GEMINI_MODEL));
     let origin = body.origin.clone().unwrap_or_else(|| "actions".to_string());
     let retry_count = body.retry_count.unwrap_or(0);
     let body_html = md_to_html_simple(body_md);
@@ -8072,7 +8186,7 @@ footer{{padding:48px 32px;border-top:1px solid rgba(255,255,255,0.06);text-align
 <article>
   <div class="eyebrow">{day} · 自動運営ノート</div>
   <h1>{title}</h1>
-  <div class="byline"><span class="tag">AI</span> by Gemini 2.5 Flash · 監修なし</div>
+  <div class="byline"><span class="tag">AI</span> by Gemini 2.5 Pro · 監修なし</div>
   {body_html}
   <p style="margin-top:48px;font-size:11px;opacity:0.5">— このノートは MU が毎朝 JST 9:00 に <a href="/api/transparency">/api/transparency</a> の生データを Gemini に渡して自動生成しています。事実は数字、文体は AI。</p>
 </article>
@@ -8152,6 +8266,61 @@ async fn admin_cost_dashboard(
         "month_prefix": month_prefix,
         "autopilot": autopilot_on(),
         "alerts": alerts,
+    })).into_response()
+}
+
+/// GET /admin/budget?token=… — surfaces ai_budget_config + this month's
+/// usage. Responsible entity is 株式会社イネブラ (Enabler Inc.). The
+/// settlement column (`paid_by`) is informational; actual card/crypto
+/// charge is batched via /admin/budget/settle.
+async fn admin_budget(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let conn = db.lock().unwrap();
+    let cfg: serde_json::Value = conn.query_row(
+        "SELECT responsible_entity, entity_jp, monthly_limit_jpy,
+                payment_methods_json, auto_recharge,
+                COALESCE(crypto_wallet,''), COALESCE(card_last4,''), updated_at
+         FROM ai_budget_config WHERE id=1",
+        [], |r| Ok(serde_json::json!({
+            "responsible_entity": r.get::<_, String>(0)?,
+            "entity_jp":          r.get::<_, String>(1)?,
+            "monthly_limit_jpy":  r.get::<_, i64>(2)?,
+            "payment_methods":    serde_json::from_str::<serde_json::Value>(
+                                    &r.get::<_, String>(3)?).unwrap_or_default(),
+            "auto_recharge":      r.get::<_, i64>(4)? == 1,
+            "crypto_wallet":      r.get::<_, String>(5)?,
+            "card_last4":         r.get::<_, String>(6)?,
+            "updated_at":         r.get::<_, String>(7)?,
+        }))).unwrap_or(serde_json::json!({}));
+    let (used, limit, remaining) = budget_state_jpy(&conn);
+    let breakdown: Vec<serde_json::Value> = {
+        let mut stmt = match conn.prepare(
+            "SELECT decision_type, model, SUM(estimated_cost_jpy), COUNT(*)
+             FROM ai_budget_usage WHERE yyyymm=?
+             GROUP BY decision_type, model ORDER BY 3 DESC"
+        ) { Ok(s) => s, Err(_) => return Json(serde_json::json!({
+            "config": cfg, "month": yyyymm_jst(),
+            "used_jpy": used, "limit_jpy": limit, "remaining_jpy": remaining,
+            "by_kind": [],
+        })).into_response() };
+        let mut stmt = stmt;
+        stmt.query_map(params![yyyymm_jst()], |r| Ok(serde_json::json!({
+            "decision_type": r.get::<_, String>(0)?,
+            "model":         r.get::<_, String>(1)?,
+            "est_cost_jpy":  r.get::<_, i64>(2)?,
+            "calls":         r.get::<_, i64>(3)?,
+        }))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    Json(serde_json::json!({
+        "config": cfg,
+        "month": yyyymm_jst(),
+        "used_jpy": used,
+        "limit_jpy": limit,
+        "remaining_jpy": remaining,
+        "by_kind": breakdown,
     })).into_response()
 }
 
@@ -13376,6 +13545,43 @@ async fn main() {
         );
         CREATE INDEX IF NOT EXISTS idx_ai_decisions_type_time
             ON ai_decisions(decision_type, created_at DESC);
+
+        -- AI 予算管理。法定代理人 = 株式会社イネブラ (Enabler Inc.)。
+        -- 月次 hard cap で全 AI 呼び出しを止めるためのテーブル。
+        -- card / crypto (Solana ENAI) を自動 fallback で使う。
+        CREATE TABLE IF NOT EXISTS ai_budget_config (
+            id                    INTEGER PRIMARY KEY,
+            responsible_entity    TEXT NOT NULL DEFAULT 'Enabler Inc.',
+            entity_jp             TEXT NOT NULL DEFAULT '株式会社イネブラ',
+            monthly_limit_jpy     INTEGER NOT NULL DEFAULT 30000,
+            payment_methods_json  TEXT NOT NULL DEFAULT '[\"card\",\"crypto\"]',
+            auto_recharge         INTEGER NOT NULL DEFAULT 1,
+            crypto_wallet         TEXT,
+            card_last4            TEXT,
+            updated_at            TEXT NOT NULL
+        );
+        INSERT OR IGNORE INTO ai_budget_config
+            (id, responsible_entity, entity_jp, monthly_limit_jpy,
+             payment_methods_json, auto_recharge, crypto_wallet, card_last4, updated_at)
+        VALUES
+            (1, 'Enabler Inc.', '株式会社イネブラ', 30000,
+             '[\"card\",\"crypto\"]', 1,
+             'DK29rBGCvP83LUNjUGVM6xt6qPy6rycBFopXbFkg9XvQ', NULL,
+             strftime('%s','now'));
+
+        CREATE TABLE IF NOT EXISTS ai_budget_usage (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            yyyymm              TEXT NOT NULL,
+            decision_type       TEXT NOT NULL,
+            model               TEXT NOT NULL,
+            estimated_cost_jpy  INTEGER NOT NULL DEFAULT 0,
+            in_tokens           INTEGER DEFAULT 0,
+            out_tokens          INTEGER DEFAULT 0,
+            paid_by             TEXT,                       -- 'card' | 'crypto' | NULL
+            created_at          TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ai_budget_usage_month
+            ON ai_budget_usage(yyyymm, created_at DESC);
     ").ok();
     // CV-pulse autonomous loop: every 30 min the cron POSTs to
     // /api/admin/cv_pulse, which writes a snapshot here + may update
@@ -13758,6 +13964,8 @@ async fn main() {
         .route("/api/admin/prompt_performance/refresh", post(admin_prompt_performance_refresh))
         .route("/api/admin/ai_decisions", get(admin_ai_decisions))
         .route("/api/admin/cost_dashboard", get(admin_cost_dashboard))
+        .route("/api/admin/budget",         get(admin_budget))
+        .route("/admin/budget",             get(admin_budget))
         .route("/api/admin/sns/pending", get(admin_sns_pending))
         .route("/api/admin/sns/mark_posted", post(admin_sns_mark_posted))
         .route("/api/redeem_invite", post(redeem_invite))
@@ -13984,6 +14192,7 @@ async fn run_agent(name: &str, db: Db) -> Result<AgentReport, String> {
         "compliance_watch"  => agent_compliance_watch(db).await,
         "self_improvement"  => agent_self_improvement(db).await,
         "vision_drift"      => agent_vision_drift(db).await,
+        "self_evolve"       => agent_self_evolve(db).await,
         _ => Err(format!("unknown agent: {}", name)),
     }
 }
@@ -14854,6 +15063,187 @@ async fn agent_vision_drift(db: Db) -> Result<AgentReport, String> {
         format!("vision drift score: {} ({} fixes proposed)", drift_score, fixes_arr.len())
     } else {
         format!("drift {}: {}", drift_score, summary_text)
+    };
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs),
+        decisions, actions, summary, notable,
+    })
+}
+
+/// agent_self_evolve — Gemini Pro が MU の現状を観察し、コード/コピー/プロンプト/
+/// パラメータの「次の一手」を 1〜3 件提案する。提案は agent_journal と
+/// ai_decisions に書き残されるだけで、コミット権限はサーバ側には持たせない。
+/// 採用は GitHub Actions の self-evolve workflow が PR を立てる形で行う
+/// (workflow_dispatch から journal を読んで Edit + branch + PR)。
+async fn agent_self_evolve(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut decisions: Vec<serde_json::Value> = Vec::new();
+    let mut actions: Vec<serde_json::Value> = Vec::new();
+
+    let key = match env::var("GEMINI_API_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => return Ok(AgentReport::idle("GEMINI_API_KEY missing")),
+    };
+
+    // Budget hard-cap.
+    {
+        let conn = db.lock().unwrap();
+        if let Err(e) = budget_check(&conn, SELF_EVOLVE_GEMINI_MODEL) {
+            return Ok(AgentReport::idle(&e));
+        }
+    }
+
+    // Gather context: recent blog drift, last 3 blog titles, last 5 ai_decisions,
+    // pending vision_drift fixes, current month budget state.
+    let (recent_blogs, drift_history, budget_used, budget_limit): (Vec<String>, Vec<serde_json::Value>, i64, i64) = {
+        let conn = db.lock().unwrap();
+        let blogs: Vec<String> = match conn.prepare(
+            "SELECT title FROM auto_blog_posts ORDER BY created_at DESC LIMIT 5"
+        ) {
+            Ok(mut s) => s.query_map([], |r| r.get::<_, String>(0))
+                .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
+        let drift: Vec<serde_json::Value> = match conn.prepare(
+            "SELECT output_json FROM ai_decisions
+             WHERE decision_type='vision_drift'
+             ORDER BY created_at DESC LIMIT 3"
+        ) {
+            Ok(mut s) => s.query_map([], |r| r.get::<_, String>(0))
+                .map(|it| it.filter_map(|r| r.ok())
+                    .filter_map(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                    .collect()).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
+        let (used, limit, _) = budget_state_jpy(&conn);
+        (blogs, drift, used, limit)
+    };
+
+    obs.insert("recent_blog_titles".into(), serde_json::Value::from(recent_blogs.clone()));
+    obs.insert("budget_used_jpy".into(), serde_json::Value::from(budget_used));
+    obs.insert("budget_limit_jpy".into(), serde_json::Value::from(budget_limit));
+    obs.insert("vision_drift_history_count".into(), serde_json::Value::from(drift_history.len() as i64));
+
+    let prompt = format!(r#"You are MU brand's autonomous code-evolution agent.
+
+Brand vision:
+{vision}
+
+Recent state (read-only — do not invent additional facts):
+- Last 5 blog titles: {blogs}
+- Last 3 vision_drift verdicts (most recent first): {drift}
+- This month's AI budget: ¥{used} / ¥{limit} JPY (responsible: 株式会社イネブラ)
+
+Task: propose 1–3 CONCRETE, SMALL changes that would make MU more autonomous,
+more on-vision, or more cost-efficient. Examples of good proposals:
+- Tighten a Gemini prompt to forbid a specific cliche found in recent blogs
+- Add a new agent that performs a specific check on a fixed schedule
+- Adjust an existing parameter (rate limit, retry count, dedup window)
+- Add a missing endpoint that an existing UI already references
+- Remove a dead code path the journal shows has never fired
+
+DO NOT propose: refactors, new infrastructure, third-party SaaS, anything that
+would require user approval to operate (payments, kyc, legal).
+
+Respond as compact JSON ONLY (no fences, no prose). Keep all strings short.
+Schema:
+{{"proposals":[{{
+  "area":"prompt|agent|param|endpoint|cleanup",
+  "title":"<=60 chars action-oriented",
+  "rationale":"<=200 chars why this helps the vision/cost",
+  "file_hint":"path or function name (best guess)",
+  "patch_summary":"<=300 chars what to change in plain prose, no code",
+  "est_effort":"minutes (integer)"
+}}], "headline":"<=80 chars overall direction"}}
+
+Hard limit: max 3 proposals. If MU is already optimal, proposals=[]."#,
+        vision = MU_VISION.trim(),
+        blogs = serde_json::to_string(&recent_blogs).unwrap_or_default(),
+        drift = serde_json::to_string(&drift_history).unwrap_or_default(),
+        used = budget_used, limit = budget_limit,
+    );
+
+    let body = serde_json::json!({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0.5,
+            "maxOutputTokens": 4000,
+            "responseMimeType": "application/json",
+        },
+    });
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}",
+        model = SELF_EVOLVE_GEMINI_MODEL, key = key);
+    let resp = match reqwest::Client::new().post(&url).json(&body).send().await {
+        Ok(r) if r.status().is_success() => r,
+        Ok(r) => {
+            let s = r.status();
+            let t = r.text().await.unwrap_or_default();
+            return Err(format!("gemini {}: {}", s, t.chars().take(200).collect::<String>()));
+        }
+        Err(e) => return Err(format!("gemini http: {e}")),
+    };
+    let j: serde_json::Value = resp.json().await
+        .map_err(|e| format!("gemini json: {e}"))?;
+    let raw = j["candidates"][0]["content"]["parts"][0]["text"]
+        .as_str().unwrap_or("").trim().to_string();
+    let parsed: serde_json::Value = {
+        let cleaned = raw.trim_start_matches("```json").trim_start_matches("```")
+            .trim_end_matches("```").trim();
+        serde_json::from_str(cleaned).unwrap_or_else(|_| {
+            let start = raw.find('{');
+            let end = raw.rfind('}');
+            match (start, end) {
+                (Some(s), Some(e)) if e > s =>
+                    serde_json::from_str(&raw[s..=e]).unwrap_or(serde_json::json!({"proposals":[]})),
+                _ => serde_json::json!({"proposals":[]}),
+            }
+        })
+    };
+
+    let headline = parsed["headline"].as_str().unwrap_or("").to_string();
+    let proposals = parsed["proposals"].as_array().cloned().unwrap_or_default();
+    obs.insert("proposal_count".into(), serde_json::Value::from(proposals.len() as i64));
+    obs.insert("headline".into(), serde_json::Value::String(headline.clone()));
+
+    for p in &proposals {
+        decisions.push(serde_json::json!({
+            "type": "self_evolve_proposal",
+            "area": p.get("area"),
+            "title": p.get("title"),
+            "rationale": p.get("rationale"),
+            "file_hint": p.get("file_hint"),
+            "patch_summary": p.get("patch_summary"),
+            "est_effort": p.get("est_effort"),
+        }));
+    }
+
+    {
+        let conn = db.lock().unwrap();
+        let _ = log_ai_decision(
+            &conn,
+            "self_evolve",
+            &serde_json::json!({"context_size": recent_blogs.len() + drift_history.len()}),
+            &serde_json::json!({"headline": headline, "proposals": proposals}),
+            SELF_EVOLVE_GEMINI_MODEL,
+            0,
+        );
+        let in_tok  = (prompt.chars().count() / 4) as i64;
+        let out_tok = (raw.chars().count() / 4) as i64;
+        let _ = budget_record(&conn, "self_evolve", SELF_EVOLVE_GEMINI_MODEL, in_tok, out_tok);
+    }
+    actions.push(serde_json::json!({"kind": "logged_to_ai_decisions"}));
+
+    let notable = !proposals.is_empty();
+    let summary = if proposals.is_empty() {
+        "self_evolve: no proposals — system is on-vision".to_string()
+    } else {
+        format!("{} proposals: {}",
+            proposals.len(),
+            if headline.is_empty() {
+                proposals.iter().filter_map(|p| p.get("title").and_then(|v| v.as_str()))
+                    .collect::<Vec<_>>().join(" | ")
+            } else { headline })
     };
     Ok(AgentReport {
         observations: serde_json::Value::Object(obs),
