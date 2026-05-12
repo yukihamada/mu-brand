@@ -20105,8 +20105,6 @@ async fn main() {
         "ALTER TABLE bounty_rewards ADD COLUMN payout_tx_or_id TEXT",
         "ALTER TABLE bounty_rewards ADD COLUMN paid_out_at TEXT",
         // Stable, per-buyer share-token for /buyer/:token public profile.
-        // Derived from sha256(email|BUYER_TOKEN_SALT)[:20]. Same email →
-        // same token (one profile per buyer, regardless of order count).
         "ALTER TABLE collab_orders ADD COLUMN buyer_token TEXT",
         "CREATE INDEX IF NOT EXISTS idx_collab_orders_buyer_token ON collab_orders(buyer_token)",
         // Optional buyer-controlled bio (1 line public). NULL = hidden.
@@ -20115,6 +20113,25 @@ async fn main() {
             bio         TEXT NOT NULL,
             updated_at  TEXT NOT NULL
         )",
+        // Auto-rewrite drafts produced by agent_email_rewriter.
+        //   status: pending → approved (human accepts) → rejected (human drops)
+        //   parent_score: the median score that triggered the rewrite attempt
+        "CREATE TABLE IF NOT EXISTS email_rewrite_drafts (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind            TEXT NOT NULL,
+            variant         TEXT NOT NULL,
+            parent_score    REAL NOT NULL,
+            new_subject     TEXT NOT NULL,
+            new_body_plain  TEXT NOT NULL,
+            rationale       TEXT NOT NULL,
+            persona_inputs  TEXT,
+            status          TEXT NOT NULL DEFAULT 'pending',
+            created_at      TEXT NOT NULL,
+            decided_at      TEXT,
+            decided_by      TEXT
+        )",
+        "CREATE INDEX IF NOT EXISTS idx_rewrite_drafts_status ON email_rewrite_drafts(status, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_rewrite_drafts_slot   ON email_rewrite_drafts(kind, variant, created_at DESC)",
     ] {
         conn.execute(col, []).ok();
     }
@@ -21962,6 +21979,8 @@ async fn main() {
         .route("/admin/email-test-send", post(admin_email_test_send))
         .route("/admin/email-critique", get(admin_email_critique))
         .route("/admin/email-critique/run", post(admin_email_critique_run))
+        .route("/admin/email-rewrites", get(admin_email_rewrites))
+        .route("/admin/email-rewrites/:id/decide", post(admin_email_rewrites_decide))
         .route("/webhooks/resend", post(webhook_resend))
         .route("/api/v1/event", post(api_funnel_event))
         .route("/admin/auth_log", get(admin_auth_log_view))
@@ -22296,6 +22315,11 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         interval_secs: 1800, // 30 min — bounty 受領 → AI 1 次トリアージ (severity_final + status 提案、reward は人間)
         description: "status='received' な bug bounty 報告を Gemini で 1 次トリアージ → severity_final 推定 + 明確な spam/scope外 は auto-reject、本物は'triaging' に",
     },
+    AgentDef {
+        name: "email_rewriter",
+        interval_secs: 86_400, // 24h
+        description: "median score < 0.70 なテンプレを persona suggestion 統合で Gemini に rewrite させ email_rewrite_drafts に保存 (適用は /admin/email-rewrites で人間が承認)",
+    },
 ];
 
 /// agent_journal から指定 agent の最後の cycle_at (epoch sec) を取得。
@@ -22336,6 +22360,7 @@ async fn run_agent(name: &str, db: Db) -> Result<AgentReport, String> {
         "production_watcher"=> agent_production_watcher(db).await,
         "email_critic"      => agent_email_critic(db).await,
         "bounty_triage"     => agent_bounty_triage(db).await,
+        "email_rewriter"    => agent_email_rewriter(db).await,
         _ => Err(format!("unknown agent: {}", name)),
     }
 }
@@ -26794,6 +26819,327 @@ async fn agent_bounty_triage(db: Db) -> Result<AgentReport, String> {
         decisions, actions, summary,
         notable: needs_human > 0 || auto_rejected > 0,
     })
+}
+
+// ── agent_email_rewriter ─────────────────────────────────────────────────
+// 24h ごとに email_critique を読んで median score < REWRITE_THRESHOLD なテンプレ
+// 上位 N 件を選び、Gemini Pro に persona suggestion を統合した rewrite を
+// 依頼。結果は email_rewrite_drafts に status='pending' で書き、人間が
+// /admin/email-rewrites で内容を見て承認 → 実テンプレ実装は手動で main.rs
+// に反映する (auto-merge は危険なので意図的に手動)。
+const EMAIL_REWRITE_PROMPT: &str = r#"You are a senior copywriter for MU (0-human apparel brand).
+You will be given an email template (subject + body plain text) that scored
+poorly with 4 personas (Musk / Bezos / Jobs / buyer). Your job: REWRITE both
+the subject and the body to address ALL four critiques at once.
+
+Rules for the rewrite:
+1. Lead with the customer's specific product name (you'll see it in the body).
+2. ONE core message in the first paragraph, ideally as a single bold sentence.
+3. Quantify wherever possible (use realistic-sounding numbers from the original).
+4. Plain Japanese. No "256 bit = 10^77", no "soulbound" jargon in prose.
+5. Single CTA if any. No competing buttons.
+6. Acknowledge that "doing nothing / declining" is valid.
+7. Keep the same HTML structure family ({img}, {block}, {accent}, tables).
+   You may rearrange them but don't invent new structures.
+8. Subject ≤ 60 Japanese chars. Body ≤ 600 Japanese chars (plain text).
+
+Return STRICT JSON (no fences). Schema:
+{
+  "new_subject": "<rewritten subject, plain text>",
+  "new_body_plain": "<rewritten body, PLAIN TEXT — line breaks with \\n, no HTML>",
+  "rationale": "<=300 chars: which persona suggestion you weighted most and why"
+}
+"#;
+
+const REWRITE_THRESHOLD: f64 = 0.70;
+const REWRITE_BATCH:    usize = 3; // 1 cycle = up to 3 rewrites (cost cap)
+
+async fn agent_email_rewriter(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut decisions: Vec<serde_json::Value> = Vec::new();
+    let mut actions: Vec<serde_json::Value> = Vec::new();
+    let is_dry = dry_run_active("email_rewriter");
+    obs.insert("dry_run".into(), serde_json::Value::from(is_dry));
+
+    let key = match env::var("GEMINI_API_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => return Ok(AgentReport::idle("GEMINI_API_KEY missing")),
+    };
+    {
+        let conn = db.lock().unwrap();
+        if let Err(e) = budget_check(&conn, "gemini-2.5-pro") {
+            return Ok(AgentReport::idle(&e));
+        }
+    }
+
+    // Aggregate latest median scores per (kind, variant). Skip slots that
+    // already have a pending draft (avoid spamming the queue).
+    #[derive(Debug)]
+    struct Slot { kind: String, variant: String, avg: f64, suggestions: String }
+    let candidates: Vec<Slot> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "WITH latest AS (
+                SELECT kind, variant, persona, score, suggestion
+                FROM email_critique
+                WHERE id IN (SELECT MAX(id) FROM email_critique GROUP BY kind, variant, persona)
+            )
+            SELECT kind, variant, AVG(score) AS avg,
+                   GROUP_CONCAT(persona || ': ' || suggestion, char(10)) AS suggestions
+            FROM latest
+            GROUP BY kind, variant
+            HAVING avg < ?
+              AND NOT EXISTS (
+                SELECT 1 FROM email_rewrite_drafts d
+                WHERE d.kind = latest.kind AND d.variant = latest.variant
+                  AND d.status = 'pending'
+              )
+            ORDER BY avg ASC
+            LIMIT ?"
+        ) { Ok(s) => s, Err(_) => return Ok(AgentReport::idle("schema not ready")) };
+        stmt.query_map(params![REWRITE_THRESHOLD, REWRITE_BATCH as i64], |r| Ok(Slot {
+            kind: r.get(0)?, variant: r.get(1)?, avg: r.get(2)?,
+            suggestions: r.get::<_, Option<String>>(3)?.unwrap_or_default(),
+        })).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    obs.insert("considered".into(), serde_json::Value::from(candidates.len() as i64));
+    if candidates.is_empty() {
+        return Ok(AgentReport {
+            observations: serde_json::Value::Object(obs),
+            decisions, actions,
+            summary: format!("email_rewriter: nothing under {:.2} threshold or all already pending", REWRITE_THRESHOLD),
+            notable: false,
+        });
+    }
+
+    // Reuse the frozen critic ctx so the rewrite anchors on the same prompt
+    // surface the scoring saw.
+    let ctx = {
+        let conn = db.lock().unwrap();
+        build_critic_email_context(&conn)
+    };
+
+    let mut written = 0i64;
+    let mut total_in_tok = 0i64;
+    let mut total_out_tok = 0i64;
+
+    for slot in &candidates {
+        // Render the current template to give the LLM the "before" state.
+        let (subject_now, html_now) = match (slot.kind.as_str(), slot.variant.as_str()) {
+            ("received",         v) => template_received(&ctx, v),
+            ("production",       v) => template_production(&ctx, v, "Printful Charlotte, NC", "PF-12345678"),
+            ("shipped",          v) => template_shipped(&ctx, v, "9405511899223344556677", "USPS Intl"),
+            ("cohort30",         v) => template_cohort30(&ctx, v, 1),
+            ("nft_mint",         v) => template_nft_mint(&ctx, v, "ENaiMint1234567890SoulboundSample"),
+            ("nft_login",        v) => template_nft_login(&ctx, v),
+            ("mu_x_you",         v) => template_mu_x_you(&ctx, v),
+            ("drop_preview",     v) => template_drop_preview(&ctx, v),
+            ("quarter",          v) => template_quarter(&ctx, v),
+            ("referral",         v) => template_referral(&ctx, v, "MU-REF-0042-SAMPLE"),
+            ("silent_disappear", v) => template_silent_disappear(&ctx, v, 87),
+            ("council",          v) => template_council(&ctx, v, "Council"),
+            ("anniversary",      v) => template_anniversary(&ctx, v, 1),
+            _ => continue,
+        };
+        let plain_now = strip_html_tags(&html_now);
+        let prompt = format!(
+            "{}\n---\nTEMPLATE UNDER REWRITE:\nkind: {}  variant: {}\nmedian_score: {:.2}\n\nCURRENT SUBJECT:\n{}\n\nCURRENT BODY (plain text):\n{}\n\nPERSONA SUGGESTIONS (combine ALL of these):\n{}\n",
+            EMAIL_REWRITE_PROMPT, slot.kind, slot.variant, slot.avg,
+            subject_now, plain_now, slot.suggestions);
+
+        // Use 2.5-pro for the rewrite (higher quality than flash, only 3 calls/day).
+        let req = serde_json::json!({
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": 0.4,
+                "maxOutputTokens": 4000,
+                "responseMimeType": "application/json",
+            },
+        });
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={}",
+            key);
+        let resp = match reqwest::Client::new().post(&url).json(&req).send().await {
+            Ok(r) if r.status().is_success() => r,
+            Ok(r) => {
+                let s = r.status();
+                let t = r.text().await.unwrap_or_default();
+                decisions.push(serde_json::json!({"type":"gemini_err","slot":format!("{}/{}",slot.kind,slot.variant),"status":s.as_u16(),"body":t.chars().take(200).collect::<String>()}));
+                continue;
+            }
+            Err(e) => {
+                decisions.push(serde_json::json!({"type":"http_err","slot":format!("{}/{}",slot.kind,slot.variant),"error":e.to_string()}));
+                continue;
+            }
+        };
+        let body_val: serde_json::Value = match resp.json().await {
+            Ok(v) => v,
+            Err(e) => { decisions.push(serde_json::json!({"type":"json_err","slot":format!("{}/{}",slot.kind,slot.variant),"error":e.to_string()})); continue; }
+        };
+        let raw = body_val["candidates"][0]["content"]["parts"][0]["text"]
+            .as_str().unwrap_or("").trim().to_string();
+        let parsed: serde_json::Value = match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(_) => {
+                let s = raw.find('{'); let e = raw.rfind('}');
+                match (s, e) {
+                    (Some(s), Some(e)) if e > s => serde_json::from_str(&raw[s..=e]).unwrap_or_default(),
+                    _ => serde_json::Value::Null,
+                }
+            }
+        };
+        if parsed.is_null() {
+            decisions.push(serde_json::json!({"type":"empty_parse","slot":format!("{}/{}",slot.kind,slot.variant),"raw_head":raw.chars().take(80).collect::<String>()}));
+            continue;
+        }
+        total_in_tok  += (prompt.chars().count() / 4) as i64;
+        total_out_tok += (raw.chars().count() / 4) as i64;
+
+        let new_subject: String = parsed["new_subject"].as_str().unwrap_or("").chars().take(200).collect();
+        let new_body:    String = parsed["new_body_plain"].as_str().unwrap_or("").chars().take(2000).collect();
+        let rationale:   String = parsed["rationale"].as_str().unwrap_or("").chars().take(300).collect();
+
+        if new_subject.trim().is_empty() || new_body.trim().is_empty() {
+            decisions.push(serde_json::json!({"type":"empty_fields","slot":format!("{}/{}",slot.kind,slot.variant)}));
+            continue;
+        }
+        if is_dry {
+            actions.push(serde_json::json!({
+                "type":"dry_run","slot":format!("{}/{}",slot.kind,slot.variant),
+                "new_subject":new_subject,
+                "new_body_len":new_body.chars().count(),
+                "rationale":rationale,
+            }));
+            written += 1;
+            continue;
+        }
+
+        let now = chrono_now();
+        {
+            let conn = db.lock().unwrap();
+            let _ = conn.execute(
+                "INSERT INTO email_rewrite_drafts
+                    (kind, variant, parent_score, new_subject, new_body_plain, rationale, persona_inputs, status, created_at)
+                 VALUES (?,?,?,?,?,?,?, 'pending', ?)",
+                params![slot.kind, slot.variant, slot.avg, new_subject, new_body, rationale, slot.suggestions, now],
+            );
+        }
+        written += 1;
+        actions.push(serde_json::json!({
+            "type":"draft_saved","slot":format!("{}/{}",slot.kind,slot.variant),
+            "parent_score":slot.avg,"new_subject_head":new_subject.chars().take(40).collect::<String>(),
+        }));
+    }
+
+    {
+        let conn = db.lock().unwrap();
+        let _ = budget_record(&conn, "email_rewriter", "gemini-2.5-pro", total_in_tok, total_out_tok);
+    }
+    obs.insert("drafts_written".into(), serde_json::Value::from(written));
+    let summary = format!("email_rewriter: {} drafts written under threshold {:.2}", written, REWRITE_THRESHOLD);
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs),
+        decisions, actions, summary,
+        notable: written > 0,
+    })
+}
+
+/// GET /admin/email-rewrites?token=… — review pending rewrite drafts.
+async fn admin_email_rewrites(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/email-rewrites").await { return r; }
+    let tok = q.get("token").map(String::as_str).unwrap_or("").to_string();
+    let tok_attr = html_attr_escape(&tok);
+
+    struct Row { id: i64, kind: String, variant: String, parent_score: f64,
+                 new_subject: String, new_body: String, rationale: String,
+                 persona_inputs: String, status: String, created_at: String }
+    let rows: Vec<Row> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, kind, variant, parent_score, new_subject, new_body_plain,
+                    rationale, COALESCE(persona_inputs,''), status, created_at
+             FROM email_rewrite_drafts
+             ORDER BY (status='pending') DESC, id DESC
+             LIMIT 50"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map([], |r| Ok(Row {
+            id: r.get(0)?, kind: r.get(1)?, variant: r.get(2)?, parent_score: r.get(3)?,
+            new_subject: r.get(4)?, new_body: r.get(5)?, rationale: r.get(6)?,
+            persona_inputs: r.get(7)?, status: r.get(8)?, created_at: r.get(9)?,
+        })).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+
+    let mut cards = String::new();
+    for r in &rows {
+        let badge_color = match r.status.as_str() {
+            "pending"  => "#e6c449",
+            "approved" => "#9bd97a",
+            "rejected" => "#e07b7b",
+            _ => "#888",
+        };
+        let actions_html = if r.status == "pending" {
+            format!(
+                r#"<form method="post" action="/admin/email-rewrites/{id}/decide?token={tok}" style="display:inline;margin-right:8px">
+<input type="hidden" name="decision" value="approved"/>
+<button style="background:#1a2a1a;border:1px solid #2f5f2f;color:#9bd97a;padding:6px 14px;font-size:11.5px;cursor:pointer">承認 (採用)</button>
+</form>
+<form method="post" action="/admin/email-rewrites/{id}/decide?token={tok}" style="display:inline">
+<input type="hidden" name="decision" value="rejected"/>
+<button style="background:#2a1a1a;border:1px solid #5f2f2f;color:#e07b7b;padding:6px 14px;font-size:11.5px;cursor:pointer">却下</button>
+</form>"#,
+                id = r.id, tok = tok_attr)
+        } else { String::new() };
+        cards.push_str(&format!(
+            r#"<div style="margin:0 0 20px;border:1px solid #1a1a1a;background:#0a0a0a;padding:18px;border-radius:4px"><div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px"><div><b style="color:#e6c449">{kind}/{variant}</b> <span style="color:#666;font-size:11px">score={score:.2}</span></div><div><span style="background:{bc}22;border:1px solid {bc}55;color:{bc};font-size:10px;letter-spacing:0.14em;padding:3px 8px;border-radius:2px;text-transform:uppercase">{status}</span></div></div><div style="color:#999;font-size:12px;margin:6px 0">new_subject:</div><div style="color:#fff;font-size:13.5px;margin-bottom:10px">{subj}</div><div style="color:#999;font-size:12px;margin:10px 0 4px">new_body_plain:</div><pre style="white-space:pre-wrap;color:#ccc;font-size:12.5px;line-height:1.55;background:#050505;padding:12px;border-radius:3px;border:1px solid #1a1a1a;font-family:ui-monospace,Menlo,monospace">{body}</pre><div style="color:#999;font-size:12px;margin:10px 0 4px">rationale:</div><div style="color:#888;font-size:12px;line-height:1.55">{rat}</div><div style="color:#999;font-size:12px;margin:12px 0 4px">persona suggestions (input):</div><pre style="white-space:pre-wrap;color:#666;font-size:11px;line-height:1.5;background:#050505;padding:10px;border-radius:3px;border:1px solid #1a1a1a;font-family:ui-monospace,Menlo,monospace">{pin}</pre><div style="margin-top:14px;color:#555;font-size:10.5px">id={id} · created={ca}</div><div style="margin-top:10px">{actions}</div></div>"#,
+            kind = html_escape(&r.kind), variant = html_escape(&r.variant), score = r.parent_score,
+            bc = badge_color, status = html_escape(&r.status),
+            subj = html_escape(&r.new_subject),
+            body = html_escape(&r.new_body),
+            rat = html_escape(&r.rationale),
+            pin = html_escape(&r.persona_inputs),
+            id = r.id, ca = html_escape(&r.created_at),
+            actions = actions_html));
+    }
+
+    let page = format!(r#"<!doctype html><html><head><meta charset="utf-8"/><title>Email rewrites · admin</title><style>html,body{{background:#000;color:#f5f5f0;font-family:-apple-system,sans-serif;margin:0;padding:0}}a{{color:#e6c449}}.wrap{{max-width:1000px;margin:0 auto;padding:32px 22px 80px}}h1{{font-size:24px;font-weight:300;letter-spacing:0.02em;margin:0 0 8px}}.meta{{color:#888;font-size:12.5px;line-height:1.6;margin-bottom:24px}}nav{{margin:0 0 24px;font-size:12.5px}}nav a{{margin-right:14px}}</style></head><body><div class="wrap"><nav><a href="/admin/email-critique?token={tok}">← Critique</a> <a href="/admin/email-preview?token={tok}">Preview</a> <a href="/admin/bounty?token={tok}">Bounty</a></nav><h1>Email rewrite drafts</h1><div class="meta">median score &lt; {th:.2} のテンプレに対する自動 rewrite 草案 (Gemini Pro)。承認後は手動で main.rs に反映してください。</div>{cards}</div></body></html>"#,
+        tok = tok_attr, th = REWRITE_THRESHOLD, cards = if cards.is_empty() { r#"<div style="color:#888">No drafts yet. Run agent_email_rewriter or wait for the next 24h cycle.</div>"#.to_string() } else { cards });
+    axum::response::Html(page).into_response()
+}
+
+/// POST /admin/email-rewrites/:id/decide — approved | rejected
+async fn admin_email_rewrites_decide(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    axum::extract::Form(form): axum::extract::Form<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/email-rewrites/decide").await { return r; }
+    let tok = q.get("token").map(String::as_str).unwrap_or("").to_string();
+    let tok_attr = html_attr_escape(&tok);
+    let decision = form.get("decision").cloned().unwrap_or_default();
+    if !["approved","rejected"].contains(&decision.as_str()) {
+        return (StatusCode::BAD_REQUEST, "invalid decision").into_response();
+    }
+    let now = chrono_now();
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE email_rewrite_drafts
+             SET status = ?, decided_at = ?, decided_by = 'admin'
+             WHERE id = ? AND status = 'pending'",
+            params![decision, now, id],
+        );
+    }
+    Response::builder()
+        .status(StatusCode::SEE_OTHER)
+        .header("Location", format!("/admin/email-rewrites?token={}", tok_attr))
+        .body(axum::body::Body::empty())
+        .unwrap()
 }
 
 /// GET /admin/email-critique?token=… — latest persona scores per template.
