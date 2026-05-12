@@ -8395,12 +8395,16 @@ async fn x_post_worker(db: Db) {
                    AND CAST(COALESCE(created_at,'0') AS INTEGER) < ?",
                 params![week_ago],
             );
+            // Constitution §3 ("Quiet by default"). 1 post per 60s tick =
+            // catch-up backlog at 1/min, natural cadence at 1/tick. Was 5/tick
+            // which posted 5 tweets in ~5s and risked X spam-flagging the
+            // account (observed live 2026-05-12T10:27:25Z–10:27:46Z).
             let result = match conn.prepare(
                 "SELECT id, text FROM sns_post_queue
                  WHERE network='x' AND posted_at IS NULL
                    AND (error IS NULL OR error = '')
                    AND CAST(COALESCE(created_at,'0') AS INTEGER) >= ?
-                 ORDER BY created_at ASC LIMIT 5"
+                 ORDER BY created_at ASC LIMIT 1"
             ) {
                 Ok(mut stmt) => stmt.query_map(params![week_ago], |r| {
                     Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
