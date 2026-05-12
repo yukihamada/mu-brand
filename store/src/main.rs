@@ -1765,11 +1765,11 @@ async fn stripe_webhook(
         let session = &event["data"]["object"];
         let meta = session["metadata"].clone();
 
-        // ── Collab order (MU × SWEEP etc.) ──
+        // ── Collab order (MU × SWEEP / MU × kokon.tokyo / etc.) ──
         // Records a row in collab_orders. Production route:
         //   - printful → POST to Printful /v2/orders (auto-fulfill)
-        //   - sweep_manual / pre_order → Telegram alert; SWEEP社 が個別対応
-        if meta["collab"].as_str() == Some("sweep") {
+        //   - sweep_manual / pre_order → Telegram alert; partner が個別対応
+        if matches!(meta["collab"].as_str(), Some("sweep") | Some("kokon")) {
             handle_collab_sweep_order(db.clone(), &session).await;
             return StatusCode::OK.into_response();
         }
@@ -2248,7 +2248,7 @@ async fn handle_collab_sweep_order(db: Db, session: &serde_json::Value) {
             "SELECT id, name, COALESCE(production_route,'sweep_manual'), price_jpy,
                     printful_variant_id, image_url, printful_variant_map,
                     printful_files, printful_options
-             FROM collab_products WHERE slug=? AND partner='sweep'",
+             FROM collab_products WHERE slug=? AND partner IN ('sweep','kokon')",
             params![slug],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?)),
         ).ok()
@@ -3071,14 +3071,23 @@ async fn import_product(
     let new_id: i64 = {
         let conn = db.lock().unwrap();
         let now = chrono_now();
+        // MU Next Thesis (F) — Death-Defined Drops: MA piece gets a
+        // deterministic 100-day expiry. owner can retire afterwards for
+        // ENAI 50 refund. Other brands are not time-bounded (NULL = 永久).
+        let expires_at: Option<String> = if body.brand == "ma" {
+            now.parse::<i64>().ok()
+                .map(|s| (s + 100 * 86400).to_string())
+        } else { None };
         conn.execute(
             "INSERT INTO products
              (brand, drop_num, name, design_url, mockup_url, price_jpy, inventory,
-              created_at, weather_data, prompt_hash, seed_data, auction_end, nft_mint)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+              created_at, weather_data, prompt_hash, seed_data, auction_end, nft_mint,
+              expires_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             params![body.brand, body.drop_num, body.name, body.design_url, body.mockup_url,
                     body.price_jpy, body.inventory, now, body.weather_data,
-                    body.prompt_hash, body.seed_data, body.auction_end, body.nft_mint]
+                    body.prompt_hash, body.seed_data, body.auction_end, body.nft_mint,
+                    expires_at]
         ).unwrap();
         conn.last_insert_rowid()
     };
@@ -9327,6 +9336,134 @@ footer{{padding:48px 32px;border-top:1px solid rgba(255,255,255,0.06);text-align
 </body></html>"#, entries = entries))
 }
 
+/// POST /api/admin/ma_retire/notify — fired daily by cron. Finds MA pieces
+/// whose `expires_at` is in [now-86400, now+86400] (within 1 day of today)
+/// and have not yet been retired, then emails the owner with a heads-up.
+/// Idempotent: tracks last-notified day via `retire_reason='NOTIFY:YYYY-MM-DD'`
+/// stub trick (avoids a new column). Best-effort.
+#[derive(serde::Deserialize)]
+struct MaRetireNotifyBody {
+    admin_token: String,
+    dry_run: Option<bool>,
+}
+
+async fn admin_ma_retire_notify(
+    State(db): State<Db>,
+    Json(body): Json<MaRetireNotifyBody>,
+) -> impl IntoResponse {
+    if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+    let dry = body.dry_run.unwrap_or(false);
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let window_start = now_s - 86400;
+    let window_end   = now_s + 86400;
+    let today_jst = jst_today_str();
+
+    let candidates: Vec<(i64, String, i64)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT p.id, COALESCE(mp.email,''),
+                    CAST(p.expires_at AS INTEGER)
+             FROM products p
+             LEFT JOIN mu_purchases mp ON mp.product_id = p.id
+             WHERE p.brand='ma'
+               AND p.retired_at IS NULL
+               AND p.expires_at IS NOT NULL
+               AND CAST(p.expires_at AS INTEGER) BETWEEN ? AND ?
+               AND COALESCE(p.retire_reason,'') NOT LIKE 'NOTIFY:'||?||'%'"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map(params![window_start, window_end, today_jst], |r| Ok((
+            r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?,
+        ))).map(|it| it.filter_map(|r| r.ok())
+                  .filter(|(_, e, _)| !e.is_empty()).collect()).unwrap_or_default()
+    };
+
+    let mut notified = 0;
+    for (pid, email, exp) in &candidates {
+        if !dry {
+            let conn = db.lock().unwrap();
+            let _ = conn.execute(
+                "UPDATE products SET retire_reason=? WHERE id=?",
+                params![format!("NOTIFY:{}", today_jst), pid],
+            );
+            // Send email out of band (best-effort)
+            let pid = *pid; let email = email.clone(); let exp = *exp;
+            tokio::spawn(async move {
+                send_ma_retire_reminder(&email, pid, exp).await;
+            });
+        }
+        notified += 1;
+    }
+
+    Json(serde_json::json!({
+        "ok": true,
+        "candidates": candidates.len(),
+        "notified": notified,
+        "dry_run": dry,
+        "today_jst": today_jst,
+    })).into_response()
+}
+
+async fn send_ma_retire_reminder(email: &str, product_id: i64, expires_at_unix: i64) {
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    if resend_key.is_empty() || email.is_empty() { return; }
+    // Civil date of expires_at, JST
+    let jst_secs = expires_at_unix + 9 * 3600;
+    let days = jst_secs / 86400;
+    let (y, mo, da) = civil_from_days(days);
+    let exp_str = format!("{:04}-{:02}-{:02}", y, mo, da);
+    let html = format!(r#"<div style="background:#0A0A0A;color:#F5F5F0;font-family:'Noto Serif JP','Helvetica Neue',serif;padding:48px 32px;max-width:560px;margin:0 auto;line-height:1.85">
+  <div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:32px">MU</div>
+  <div style="font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:#e6c449;margin-bottom:12px">Death-Defined · 100日</div>
+  <p style="font-size:18px;font-weight:300;line-height:1.5;margin-bottom:24px">あなたの MA piece #{pid:04} の 100 日 expiry が <strong>{exp}</strong> に到達します。</p>
+  <p style="font-size:13px;opacity:0.85">これは強制返却ではありません。MU は服が時間を持つことを示すために expiry を明示しているだけです。あなたは次のいずれかを選べます:</p>
+  <ol style="font-size:13px;opacity:0.9;padding-left:18px">
+    <li><strong style="color:#e6c449">そのまま着続ける</strong> — 何もしなくて OK。期日後も所有は永続。</li>
+    <li><strong style="color:#e6c449">MU に返送する</strong> — ENAI 50 枚 refund + 服は次の MA Lottery の seed または永続アーカイブに。</li>
+  </ol>
+  <p style="margin:32px 0">
+    <a href="https://wearmu.com/ma/retired" style="color:#e6c449;font-size:12px;letter-spacing:0.2em;text-transform:uppercase">retirement ledger を見る →</a>
+  </p>
+  <p style="font-size:11px;opacity:0.55">返送は <code>POST /api/ma/retire</code> または ops@enablerdao.com まで。MU × Enabler Inc.</p>
+</div>"#, pid = product_id, exp = exp_str);
+    let _ = reqwest::Client::new()
+        .post("https://api.resend.com/emails")
+        .bearer_auth(&resend_key)
+        .json(&serde_json::json!({
+            "from": "MU <noreply@wearmu.com>",
+            "to": [email],
+            "subject": format!("[MU] MA #{:04} の 100 日 expiry は {} です", product_id, exp_str),
+            "html": html,
+        }))
+        .send().await;
+}
+
+// ── B: city operator update endpoint ─────────────────────────────────────
+#[derive(serde::Deserialize)]
+struct CityOperatorUpdate {
+    admin_token: String,
+    slug: String,
+    operator_email: Option<String>,
+    status: Option<String>, // 'origin'|'active'|'pilot'|'paused'
+    treasury_split_pct: Option<i64>,
+}
+
+async fn admin_city_update(
+    State(db): State<Db>,
+    Json(body): Json<CityOperatorUpdate>,
+) -> impl IntoResponse {
+    if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+    let conn = db.lock().unwrap();
+    let n = conn.execute(
+        "UPDATE cities SET
+            operator_email     = COALESCE(?, operator_email),
+            status             = COALESCE(?, status),
+            treasury_split_pct = COALESCE(?, treasury_split_pct)
+         WHERE slug=?",
+        params![body.operator_email, body.status, body.treasury_split_pct, body.slug],
+    ).unwrap_or(0);
+    Json(serde_json::json!({"ok": n > 0, "slug": body.slug, "updated": n})).into_response()
+}
+
 // ── B: cities listing endpoint ────────────────────────────────────────────
 async fn cities_index(State(db): State<Db>) -> Response {
     let rows: Vec<serde_json::Value> = {
@@ -9958,6 +10095,197 @@ if (new URLSearchParams(location.search).get('logout') === '1') {{
         "X-Robots-Tag", HeaderValue::from_static("noindex, nofollow"),
     );
     resp
+}
+
+/// GET /kokon — Public MU × kokon.tokyo (yakiniku) collab shop.
+/// No password gate (kokon.tokyo is jointly run by 濱田 → 公開ローンチ済).
+async fn show_kokon_page(State(db): State<Db>) -> Response {
+    type Row = (i64, String, String, String, String, i64, Option<String>, i64);
+    let items: Vec<Row> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, slug, category, name, COALESCE(description,''), price_jpy, image_url,
+                    COALESCE(lead_time_days, 14)
+             FROM collab_products WHERE partner='kokon' AND active=1
+             ORDER BY id"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map([], |r| Ok((
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?
+        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+
+    let cards = items.iter().map(|(id, slug, cat, name, desc, price, image, lead)| {
+        let image_block = match image.as_deref().filter(|u| !u.is_empty() && u.starts_with("http")) {
+            Some(u) => format!(
+                r##"<button type="button" class="img-wrap zoom" data-full="{src}" data-name="{name_attr}" aria-label="拡大: {name_attr}"><img src="{src}" alt="{name_attr}" loading="lazy"><span class="zoom-hint">⤢</span></button>"##,
+                src = html_attr_escape(u), name_attr = html_attr_escape(name)),
+            None => format!(
+                r#"<div class="img-wrap placeholder"><span>{glyph}</span><small>生成中…</small></div>"#,
+                glyph = html_attr_escape(cat.chars().next().map(|c| c.to_string()).unwrap_or("•".into()).as_str())),
+        };
+        format!(r#"<article class="card" data-slug="{slug}">
+  {image}
+  <div class="body">
+    <div class="cat">{cat}</div>
+    <h3 id="buy-{id}">{name}</h3>
+    <p class="desc">{desc}</p>
+    <div class="lead">📦 {lead}日でお届け · Printful 経由</div>
+    <div class="row">
+      <span class="price">¥{price_fmt}</span>
+      <select id="size-{id}" class="size" aria-label="size">
+        <option>XS</option><option>S</option><option selected>M</option><option>L</option><option>XL</option><option>2XL</option><option>OS</option>
+      </select>
+      <button class="buy" data-slug="{slug}" data-id="{id}">注文 →</button>
+    </div>
+  </div>
+</article>"#,
+        image = image_block,
+        cat = html_attr_escape(cat), name = html_attr_escape(name),
+        desc = html_attr_escape(desc), price_fmt = format_jpy(*price),
+        id = id, slug = html_attr_escape(slug),
+    )}).collect::<Vec<_>>().join("\n");
+
+    let body = format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU × kokon.tokyo — 焼肉店ブランド公式グッズ | wearmu.com</title>
+<meta name="description" content="MU と kokon.tokyo (都内焼肉店) のコラボ。T / クルーネック / トート / エナメルマグ / エプロン / キャップ / ステッカー / 缶クーラー。Printful 経由で 10-14 日に発送。">
+<meta property="og:title" content="MU × kokon.tokyo — 焼肉店ブランド公式グッズ">
+<meta property="og:description" content="都内焼肉店 kokon.tokyo のブランドグッズ 8 SKU を Printful 経由で。在庫ゼロ、注文即発送。">
+<meta property="og:image" content="https://wearmu.com/og.jpg">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+:root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--card:#111;--red:#C8362C}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.85;-webkit-font-smoothing:antialiased}}
+nav{{position:sticky;top:0;background:rgba(10,10,10,0.88);backdrop-filter:blur(12px);border-bottom:1px solid rgba(255,255,255,0.06);padding:18px 32px;display:flex;justify-content:space-between;align-items:center;z-index:50}}
+nav a{{color:var(--fg);text-decoration:none;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.85}}
+nav .logo{{font-weight:700;letter-spacing:0.45em}}
+header{{padding:72px 32px 30px;max-width:880px;margin:0 auto;text-align:center}}
+header .eyebrow{{font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:var(--y);opacity:0.85;margin-bottom:14px}}
+header h1{{font-size:clamp(28px,5vw,52px);font-weight:200;letter-spacing:0.02em;line-height:1.25;margin-bottom:16px}}
+header h1 em{{color:var(--y);font-style:normal;font-weight:300}}
+header .brandline{{display:flex;align-items:center;justify-content:center;gap:18px;margin:8px auto 28px;flex-wrap:wrap}}
+header .brandline-mu{{font-size:clamp(28px,5vw,48px);font-weight:700;letter-spacing:0.42em}}
+header .brandline-x{{font-size:clamp(20px,3.5vw,32px);font-weight:200;color:var(--mute)}}
+header .brandline-partner{{font-size:clamp(20px,3.5vw,36px);font-weight:200;letter-spacing:0.1em;color:var(--fg)}}
+header .lede{{color:var(--mute);font-size:14px;max-width:560px;margin:0 auto 22px;line-height:1.95}}
+.grid{{max-width:1100px;margin:30px auto 100px;padding:0 32px;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px}}
+.card{{background:var(--card);border:1px solid rgba(255,255,255,0.06);border-radius:2px;display:flex;flex-direction:column;overflow:hidden;transition:border-color 0.2s ease}}
+.card:hover{{border-color:rgba(230,196,73,0.45)}}
+.card .img-wrap{{display:block;aspect-ratio:4/5;background:#0a0a0a;overflow:hidden;position:relative;width:100%;border:0;padding:0;cursor:zoom-in;font-family:inherit;color:inherit}}
+.card .img-wrap img{{width:100%;height:100%;object-fit:cover;display:block;transition:transform 0.4s ease}}
+.card .img-wrap.zoom:hover img{{transform:scale(1.04)}}
+.card .img-wrap .zoom-hint{{position:absolute;top:10px;right:10px;font-size:14px;color:#fff;background:rgba(0,0,0,0.55);width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity 0.2s ease;pointer-events:none}}
+.card .img-wrap.zoom:hover .zoom-hint{{opacity:0.95}}
+#lightbox{{position:fixed;inset:0;background:rgba(0,0,0,0.92);display:none;align-items:center;justify-content:center;z-index:200;padding:40px;cursor:zoom-out}}
+#lightbox.on{{display:flex}}
+#lightbox img{{max-width:100%;max-height:90vh;object-fit:contain;box-shadow:0 24px 60px rgba(0,0,0,0.6);border-radius:2px}}
+#lightbox .close{{position:absolute;top:18px;right:24px;background:rgba(255,255,255,0.08);color:#fff;border:1px solid rgba(255,255,255,0.22);width:42px;height:42px;border-radius:50%;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-family:inherit}}
+#lightbox .close:hover{{background:rgba(255,255,255,0.18)}}
+#lightbox .caption{{position:absolute;bottom:24px;left:50%;transform:translateX(-50%);color:rgba(255,255,255,0.78);font-size:12px;letter-spacing:0.18em;text-transform:uppercase;text-align:center;max-width:90%}}
+.card .img-wrap.placeholder{{display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'Helvetica Neue',Arial,sans-serif}}
+.card .img-wrap.placeholder span{{font-size:48px;font-weight:200;color:rgba(230,196,73,0.4)}}
+.card .img-wrap.placeholder small{{font-size:9px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.4;margin-top:8px}}
+.card .body{{padding:22px 22px 24px;display:flex;flex-direction:column;gap:8px;flex:1}}
+.card .cat{{font-size:9px;letter-spacing:0.32em;text-transform:uppercase;color:var(--y);opacity:0.85}}
+.card h3{{font-size:17px;font-weight:400;letter-spacing:0.01em;margin:2px 0 4px}}
+.card .desc{{color:var(--mute);font-size:12.5px;line-height:1.85;flex:1}}
+.card .lead{{font-size:9.5px;letter-spacing:0.16em;color:rgba(245,245,240,0.55);margin-top:8px}}
+.card .row{{display:flex;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap}}
+.card .price{{font-size:16px;color:var(--y);font-variant-numeric:tabular-nums;margin-right:auto}}
+.card select{{background:#000;color:var(--fg);border:1px solid rgba(255,255,255,0.18);font-size:12px;padding:7px 10px;border-radius:2px}}
+.card .buy{{background:var(--y);color:#000;border:0;font-family:inherit;font-size:11px;letter-spacing:0.28em;text-transform:uppercase;font-weight:700;padding:10px 16px;cursor:pointer;border-radius:2px}}
+.card .buy:hover{{opacity:0.85}}
+.card .buy:disabled{{opacity:0.4;cursor:wait}}
+.note{{max-width:680px;margin:40px auto 60px;padding:18px 22px;background:rgba(230,196,73,0.06);border-left:2px solid var(--y);font-size:12.5px;line-height:1.95;color:rgba(245,245,240,0.78)}}
+footer{{padding:48px 32px 80px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;font-size:11px;letter-spacing:0.2em;opacity:0.5}}
+footer a{{color:inherit;text-decoration:underline}}
+#msg{{max-width:680px;margin:16px auto;text-align:center;font-size:11px;letter-spacing:0.05em;color:var(--mute);min-height:14px}}
+</style></head><body>
+<nav><a href="/" class="logo">MU</a><a href="https://kokon.tokyo">kokon.tokyo →</a></nav>
+<header>
+  <div class="eyebrow">MU Collab — 公式ローンチ済</div>
+  <div class="brandline">
+    <span class="brandline-mu">MU</span>
+    <span class="brandline-x">×</span>
+    <span class="brandline-partner">kokon.tokyo</span>
+  </div>
+  <h1>都内焼肉店、<br>ブランドグッズ <em>8 SKU</em>。</h1>
+  <p class="lede">
+    <a href="https://kokon.tokyo" style="color:var(--y)">kokon.tokyo</a> は都内の焼肉店。常連向けに T / トート / マグ / キャップ / 全面プリント エプロン / ステッカー / 缶クーラー / クルーネックを公開。<br>
+    全 SKU <strong>Printful 経由で在庫ゼロ</strong>、注文後 10〜14 日で直送。
+  </p>
+</header>
+<div class="note">
+  <strong style="color:var(--y)">店舗在庫ゼロ。</strong> 注文ごとに作り、製造拠点 (Printful) から世界中に直接配送します。常連の方は店内 QR からも注文できます (店内 QR → このページに直リンク)。
+</div>
+<div class="grid">
+{cards}
+</div>
+<div id="msg"></div>
+<div id="lightbox" role="dialog" aria-modal="true" aria-label="商品画像 拡大表示">
+  <button class="close" type="button" aria-label="閉じる">×</button>
+  <img alt="" src="">
+  <div class="caption"></div>
+</div>
+<footer>
+  MU × kokon.tokyo — 公式ローンチ · 株式会社イネブラ (Enabler Inc.) ·
+  <a href="mailto:info@enablerdao.com">info@enablerdao.com</a> ·
+  <a href="/collab">他のブランドの方は MU Collab →</a>
+</footer>
+<script>
+// Lightbox
+(function() {{
+  const lb = document.getElementById('lightbox');
+  if (!lb) return;
+  const lbImg = lb.querySelector('img');
+  const lbCap = lb.querySelector('.caption');
+  const closeBtn = lb.querySelector('.close');
+  function openLB(full, name) {{
+    lbImg.src = full; lbImg.alt = name || '';
+    lbCap.textContent = name || '';
+    lb.classList.add('on');
+    document.body.style.overflow = 'hidden';
+  }}
+  function closeLB() {{
+    lb.classList.remove('on'); lbImg.src = '';
+    document.body.style.overflow = '';
+  }}
+  document.querySelectorAll('.card .img-wrap.zoom').forEach(btn => {{
+    btn.addEventListener('click', e => {{ e.preventDefault(); openLB(btn.dataset.full, btn.dataset.name); }});
+  }});
+  closeBtn.addEventListener('click', closeLB);
+  lb.addEventListener('click', e => {{ if (e.target === lb) closeLB(); }});
+  document.addEventListener('keydown', e => {{ if (e.key === 'Escape' && lb.classList.contains('on')) closeLB(); }});
+}})();
+// Buy button
+document.querySelectorAll('.card .buy').forEach(btn => {{
+  btn.addEventListener('click', async () => {{
+    const slug = btn.dataset.slug;
+    const id   = btn.dataset.id;
+    const size = document.getElementById('size-' + id).value;
+    const msg  = document.getElementById('msg');
+    btn.disabled = true; const orig = btn.textContent; btn.textContent = '読み込み中…';
+    msg.textContent = '';
+    try {{
+      const r = await fetch('/api/kokon/checkout', {{
+        method: 'POST', headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{slug, size}})
+      }});
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      if (d.url) window.location.href = d.url;
+      else throw new Error(d.error || 'no url');
+    }} catch (e) {{
+      btn.disabled = false; btn.textContent = orig;
+      msg.textContent = 'エラー: ' + e.message;
+    }}
+  }});
+}});
+</script>
+</body></html>"#);
+
+    axum::response::Html(body).into_response()
 }
 
 // ─── SIIIEEP 社専用 partner ページ ──────────────────────────────────
@@ -10882,21 +11210,26 @@ async fn admin_ai_decisions(
     Json(serde_json::json!({"rows": rows, "count": rows.len()})).into_response()
 }
 
-async fn sweep_checkout(
-    State(db): State<Db>,
-    Json(body): Json<SweepCheckoutBody>,
-) -> impl IntoResponse {
+/// Shared collab checkout. `partner` is "sweep" / "kokon" / etc. — must match
+/// `collab_products.partner` value. Sets `metadata[collab]=<partner>` so the
+/// webhook can route to the correct fulfillment handler.
+async fn collab_checkout(
+    db: Db,
+    partner: &'static str,
+    return_path: &'static str,
+    label: &'static str,
+    body: SweepCheckoutBody,
+) -> Response {
     let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
     if stripe_key.is_empty() {
         return (StatusCode::SERVICE_UNAVAILABLE, "checkout disabled").into_response();
     }
-    // Lookup product (server-trusted price)
     let row: Option<(i64, String, String, i64)> = {
         let conn = db.lock().unwrap();
         conn.query_row(
             "SELECT id, name, COALESCE(category,''), price_jpy
-             FROM collab_products WHERE slug=? AND partner='sweep' AND active=1",
-            params![body.slug],
+             FROM collab_products WHERE slug=? AND partner=? AND active=1",
+            params![body.slug, partner],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         ).ok()
     };
@@ -10910,14 +11243,14 @@ async fn sweep_checkout(
         ("mode", "payment".into()),
         ("currency", "jpy".into()),
         ("allow_promotion_codes", "true".into()),
-        ("success_url", format!("{}/sweep?paid=ok", base_url)),
-        ("cancel_url",  format!("{}/sweep?paid=cancel", base_url)),
+        ("success_url", format!("{}{}?paid=ok", base_url, return_path)),
+        ("cancel_url",  format!("{}{}?paid=cancel", base_url, return_path)),
         ("line_items[0][quantity]", "1".into()),
         ("line_items[0][price_data][currency]", "jpy".into()),
         ("line_items[0][price_data][unit_amount]", price.to_string()),
         ("line_items[0][price_data][product_data][name]",
-         format!("{} ({}) · MU×SWEEP draft", name, category)),
-        ("metadata[collab]", "sweep".into()),
+         format!("{} ({}) · {}", name, category, label)),
+        ("metadata[collab]", partner.into()),
         ("metadata[collab_product_id]", product_id.to_string()),
         ("metadata[slug]", body.slug.clone()),
         ("metadata[size]", size),
@@ -10937,14 +11270,28 @@ async fn sweep_checkout(
         Ok(r) => {
             let s = r.status();
             let t = r.text().await.unwrap_or_default();
-            eprintln!("[sweep/checkout] stripe {}: {}", s, t.chars().take(200).collect::<String>());
+            eprintln!("[{}/checkout] stripe {}: {}", partner, s, t.chars().take(200).collect::<String>());
             (StatusCode::BAD_GATEWAY, "stripe error").into_response()
         }
         Err(e) => {
-            eprintln!("[sweep/checkout] reqwest: {}", e);
+            eprintln!("[{}/checkout] reqwest: {}", partner, e);
             (StatusCode::BAD_GATEWAY, "stripe network").into_response()
         }
     }
+}
+
+async fn sweep_checkout(
+    State(db): State<Db>,
+    Json(body): Json<SweepCheckoutBody>,
+) -> impl IntoResponse {
+    collab_checkout(db, "sweep", "/sweep", "MU×SWEEP draft", body).await
+}
+
+async fn kokon_checkout(
+    State(db): State<Db>,
+    Json(body): Json<SweepCheckoutBody>,
+) -> impl IntoResponse {
+    collab_checkout(db, "kokon", "/kokon", "MU×kokon.tokyo", body).await
 }
 
 fn format_jpy(n: i64) -> String {
@@ -13765,6 +14112,10 @@ async fn main() {
         "ALTER TABLE products ADD COLUMN retire_reason TEXT",
         // B: multi-city — どの origin city が drop を発行したか
         "ALTER TABLE products ADD COLUMN city_slug TEXT NOT NULL DEFAULT 'teshikaga'",
+        // F: backfill expires_at for existing MA rows that were created
+        // before the column existed. 100 days from created_at, applied once.
+        "UPDATE products SET expires_at = CAST(CAST(created_at AS INTEGER) + 8640000 AS TEXT)
+         WHERE brand='ma' AND expires_at IS NULL AND created_at GLOB '[0-9]*'",
         "ALTER TABLE bids ADD COLUMN wallet_token TEXT",
         // Soulbound NFT pilot opt-in (per-bid; carried to settle_auction).
         "ALTER TABLE bids ADD COLUMN nft_opt_in INTEGER DEFAULT 0",
@@ -14227,6 +14578,88 @@ async fn main() {
                  printful_variant_map = ?,
                  printful_files = ?, printful_options = ?,
                  active = ?,
+                 category = ?, name = ?, description = ?, price_jpy = ?
+             WHERE slug = ?",
+            params![route, lead, pf_prod, pf_var, var_map, files, opts, active,
+                    cat, name, desc, price, slug],
+        ).ok();
+    }
+
+    // ── MU × kokon.tokyo (焼肉店、濱田経営参加) — 8 SKU ──
+    // 公開ローンチ事例。F&B 業態向けに調整した SKU 構成: T / クルーネック /
+    // トート / ステッカー / エナメルマグ / ダッドハット / 全面プリントエプロン /
+    // can cooler。logo は R2 lifestyle.wearmu.com/kokon/_logo.png に配置。
+    let kokon_items: &[SweepRow] = &[
+        ("kokon-tee",       "T シャツ",         "MU × kokon.tokyo Heavy Cotton Tee",
+         "Printful Bella+Canvas 3001 (pid 71)、Black。胸に kokon.tokyo wordmark を DTG プリント。",
+         4_800,  "printful", Some(71), Some(4017),
+         Some(r#"{"S":4016,"M":4017,"L":4018,"XL":4019,"2XL":4020,"XS":9527}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo.png"}]"#),
+         None, 10, 1),
+        ("kokon-crewneck",  "クルーネック",     "MU × kokon.tokyo Champion Crewneck",
+         "Printful Champion S149 (pid 318)、Black。厚手フリース。前胸に kokon.tokyo wordmark を DTG プリント。",
+         9_800,  "printful", Some(318), Some(9660),
+         Some(r#"{"S":9659,"M":9660,"L":9661,"XL":9662,"2XL":9663}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo.png"}]"#),
+         None, 14, 1),
+        ("kokon-tote",      "キャンバストート", "MU × kokon.tokyo Cotton Tote",
+         "Printful AS Colour 1001 (pid 641)、Black。前面に kokon.tokyo wordmark DTG プリント。買い物 / 出前持ち帰り兼用。",
+         3_800,  "printful", Some(641), Some(16287),
+         Some(r#"{"OS":16287,"ONE SIZE":16287,"S":16287,"M":16287,"L":16287,"XL":16287}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo.png"}]"#),
+         None, 10, 1),
+        ("kokon-stickers",  "ステッカーシート", "MU × kokon.tokyo Sticker Sheet",
+         "Printful Kiss-Cut Sticker Sheet (pid 505)、5.83×8.27\"。kokon.tokyo の wordmark / モチーフを複数 kiss-cut。",
+         1_800,  "printful", Some(505), Some(12917),
+         Some(r#"{"OS":12917,"ONE SIZE":12917,"M":12917,"S":12917,"L":12917}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo.png"}]"#),
+         None, 7, 1),
+        ("kokon-mug-enamel","エナメルマグ",     "MU × kokon.tokyo Enamel Mug",
+         "Printful Enamel Mug (pid 407)、12oz White。両面に kokon.tokyo wordmark サブリメーション印刷。アウトドア / 店内両用。",
+         2_800,  "printful", Some(407), Some(11189),
+         Some(r#"{"OS":11189,"ONE SIZE":11189,"M":11189,"L":11189,"12 OZ":11189}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo.png"}]"#),
+         None, 10, 1),
+        ("kokon-cap",       "ダッドハット",     "MU × kokon.tokyo Classic Dad Hat",
+         "Printful Yupoong 6245CM (pid 206)、Black。フロントに kokon.tokyo wordmark 刺繍 (白糸)。ワンサイズ。",
+         5_800,  "printful", Some(206), Some(7854),
+         Some(r#"{"OS":7854,"ONE SIZE":7854,"S":7854,"M":7854,"L":7854,"XL":7854}"#),
+         Some(r#"[{"type":"embroidery_front_large","url":"https://lifestyle.wearmu.com/kokon/_logo.png"}]"#),
+         Some(r##"[{"id":"thread_colors_front_large","value":["#FFFFFF"]}]"##), 10, 1),
+        ("kokon-apron",     "キャンバスエプロン","MU × kokon.tokyo All-Over Apron",
+         "Printful All-Over Print Apron (pid 894)、One Size White。前面に kokon.tokyo の全面パターン。店舗 / 自宅キッチン共用。",
+         5_800,  "printful", Some(894), Some(22903),
+         Some(r#"{"OS":22903,"ONE SIZE":22903,"S":22903,"M":22903,"L":22903,"XL":22903}"#),
+         Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/kokon/_logo.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 14, 1),
+        ("kokon-can-cooler","缶クーラー",        "MU × kokon.tokyo Can Cooler",
+         "Printful Can Cooler (pid 764)、Regular 12oz White。kokon.tokyo wordmark を前面プリント。ビール缶用、店内記念ノベルティに最適。",
+         1_800,  "printful", Some(764), Some(19461),
+         Some(r#"{"OS":19461,"ONE SIZE":19461,"S":19461,"M":19461,"L":19461,"12 OZ":19461,"REGULAR":19461}"#),
+         Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/kokon/_logo.png"}]"#),
+         None, 10, 1),
+    ];
+    for (slug, cat, name, desc, price, route, pf_prod, pf_var, var_map, files, opts, lead, active) in kokon_items {
+        conn.execute(
+            "INSERT OR IGNORE INTO collab_products
+                 (slug, partner, category, name, description, image_url, price_jpy,
+                  sizes_json, active, draft, created_at,
+                  printful_product_id, printful_variant_id, production_route,
+                  lead_time_days, printful_variant_map,
+                  printful_files, printful_options)
+             VALUES (?, 'kokon', ?, ?, ?, NULL, ?,
+                     '[\"OS\"]', ?, 1, ?,
+                     ?, ?, ?, ?, ?, ?, ?)",
+            params![slug, cat, name, desc, price, active, now,
+                    pf_prod, pf_var, route, lead, var_map, files, opts],
+        ).ok();
+        conn.execute(
+            "UPDATE collab_products
+             SET production_route = ?, lead_time_days = ?,
+                 printful_product_id = ?, printful_variant_id = ?,
+                 printful_variant_map = ?,
+                 printful_files = ?, printful_options = ?,
+                 active = ?, partner = 'kokon',
                  category = ?, name = ?, description = ?, price_jpy = ?
              WHERE slug = ?",
             params![route, lead, pf_prod, pf_var, var_map, files, opts, active,
@@ -14972,6 +15405,7 @@ async fn main() {
         .route("/api/admin/x_queue", get(admin_x_queue))
         .route("/api/admin/x_mark_posted", post(admin_x_mark_posted))
         .route("/sweep", get(show_sweep_page))
+        .route("/kokon", get(show_kokon_page))
         .route("/sweep/partner", get(show_siiieep_partner_page))
         .route("/api/sweep/partner/action", post(sweep_partner_action))
         // ── Public embed API + widget (CORS open via CorsLayer below) ──
@@ -14985,6 +15419,7 @@ async fn main() {
         .route("/b2b", get(collab_page))
         .route("/partners", get(collab_page))
         .route("/api/sweep/checkout", post(sweep_checkout))
+        .route("/api/kokon/checkout", post(kokon_checkout))
         .route("/api/sweep/signal", post(sweep_signal))
         .route("/api/sweep/signals", get(sweep_signals_summary))
         .route("/api/admin/sweep_signals", get(admin_sweep_signals))
@@ -15018,8 +15453,10 @@ async fn main() {
         // F: Death-Defined Drops (MA retirement)
         .route("/ma/retired",                get(ma_retired_ledger))
         .route("/api/ma/retire",             post(ma_retire))
+        .route("/api/admin/ma_retire/notify", post(admin_ma_retire_notify))
         // B: Multi-city
         .route("/api/cities",                get(cities_index))
+        .route("/api/admin/city/update",     post(admin_city_update))
         .route("/api/admin/sns/pending", get(admin_sns_pending))
         .route("/api/admin/sns/mark_posted", post(admin_sns_mark_posted))
         .route("/api/redeem_invite", post(redeem_invite))
