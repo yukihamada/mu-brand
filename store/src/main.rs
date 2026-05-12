@@ -11378,23 +11378,40 @@ async fn show_partner_proposal_page(
         out
     };
 
-    // ── Recently purchased designs (social proof, last 30 days) ──
-    // Shows: design thumbnail + brand + drop# + when bought, to nudge demand.
+    // ── Recently purchased designs (social proof, last 90 days) ──
+    // Joined against mu_purchases (real purchase log), falls back to
+    // products.sold > 0 (any time) if there are no recent purchases.
     type RecentRow = (i64, String, i64, String, Option<String>, String);
     let recent_buys: Vec<RecentRow> = {
         let conn = db.lock().unwrap();
-        let cutoff_iso = format!("{}", chrono_now().parse::<i64>().unwrap_or(0) - 30 * 86_400);
+        // Try mu_purchases first (real purchases with dates).
         let mut stmt = match conn.prepare(
-            "SELECT p.id, p.brand, p.drop_num, p.name, p.mockup_url, p.created_at
-             FROM products p
-             WHERE p.sold > 0
-               AND CAST(strftime('%s', p.created_at) AS INTEGER) > ?
-             ORDER BY p.created_at DESC
+            "SELECT p.id, p.brand, p.drop_num, p.name, p.mockup_url, MAX(mp.created_at) AS bought_at
+             FROM mu_purchases mp
+             JOIN products p ON p.id = mp.product_id
+             WHERE mp.created_at > datetime('now', '-90 days')
+             GROUP BY p.id
+             ORDER BY bought_at DESC
              LIMIT 12"
         ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "recent").into_response() };
-        stmt.query_map(params![cutoff_iso], |r| Ok((
+        let from_purchases: Vec<RecentRow> = stmt.query_map([], |r| Ok((
             r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?,
-        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+        if !from_purchases.is_empty() {
+            from_purchases
+        } else {
+            // Fallback: any product with sold > 0, ordered by created_at desc.
+            let mut stmt = match conn.prepare(
+                "SELECT id, brand, drop_num, name, mockup_url, created_at
+                 FROM products
+                 WHERE sold > 0
+                 ORDER BY created_at DESC
+                 LIMIT 12"
+            ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "recent fallback").into_response() };
+            stmt.query_map([], |r| Ok((
+                r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?,
+            ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+        }
     };
 
     let mut tot_skus = 0i64;
