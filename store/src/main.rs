@@ -733,6 +733,11 @@ pub struct StripeCheckoutFields<'a> {
     pub unit_amount: i64,
     pub quantity: i64,
     pub customer_email: Option<&'a str>,
+    /// Existing Stripe Customer ID (e.g. "cus_xxx"). When set, Stripe will
+    /// reuse the customer's saved name + shipping addresses on the hosted
+    /// page (auto-prefill). Overrides `customer_email` and disables the
+    /// `customer_creation=always` toggle so we don't get a duplicate row.
+    pub customer_id: Option<&'a str>,
     pub product_id: Option<i64>,
     pub size: Option<&'a str>,
     pub wallet: Option<&'a str>,
@@ -767,7 +772,16 @@ fn stripe_checkout_form_jp(f: StripeCheckoutFields) -> Vec<(String, String)> {
     push(&mut form, "line_items[0][quantity]", f.quantity.to_string());
     push(&mut form, "success_url", format!("{}{}", f.base_url, f.success_path));
     push(&mut form, "cancel_url",  format!("{}{}", f.base_url, f.cancel_path));
-    if let Some(em) = f.customer_email { push(&mut form, "customer_email", em.to_string()); }
+    // Returning-customer path: when we found an existing Stripe Customer,
+    // pass `customer=cus_xxx` so Stripe auto-prefills name + shipping +
+    // saved payment methods. Customer-creation must NOT be set in that case
+    // (would create a second duplicate customer). When absent, fall back to
+    // customer_email + customer_creation=always (legacy behaviour).
+    if let Some(cid) = f.customer_id.filter(|s| s.starts_with("cus_")) {
+        push(&mut form, "customer", cid.to_string());
+    } else if let Some(em) = f.customer_email {
+        push(&mut form, "customer_email", em.to_string());
+    }
 
     // ── JP CVR repair: locale=ja (was null → users saw English page) ──
     if env_flag_enabled("STRIPE_LOCALE_JA", true) {
@@ -808,7 +822,11 @@ fn stripe_checkout_form_jp(f: StripeCheckoutFields) -> Vec<(String, String)> {
     // ── Always create a customer object so receipts + Customer Portal work,
     //    even for the one-shot clothing buys (some MUer becomes MA bidder
     //    later — we want one Stripe customer per email).
-    push(&mut form, "customer_creation", "always".into());
+    // Skipped when reusing an existing customer (`customer=cus_xxx`) — Stripe
+    // rejects the combination "customer + customer_creation".
+    if f.customer_id.is_none() {
+        push(&mut form, "customer_creation", "always".into());
+    }
 
     // ── Shipping address collection: physical MU/MA pieces always ship.
     //    Subscription-mode (/you 3-mo pack and monthly) doesn't ship → caller
@@ -849,6 +867,27 @@ fn env_flag_enabled(var: &str, default_on: bool) -> bool {
         Some(s) if s == "0" || s == "false" || s == "no" || s == "off" => false,
         _ => default_on,
     }
+}
+
+/// Search Stripe for an existing customer with this email and return
+/// `cus_xxx` if found. Best-effort: any error / timeout returns None so
+/// the caller falls back to creating a fresh customer. Single API call,
+/// limit=1, ~150ms typical. Used by /api/checkout to auto-prefill the
+/// returning buyer's name + shipping on the Stripe Checkout page.
+pub async fn find_stripe_customer_by_email(stripe_key: &str, email: &str) -> Option<String> {
+    if stripe_key.is_empty() || email.is_empty() || !email.contains('@') { return None; }
+    let url = format!(
+        "https://api.stripe.com/v1/customers?email={}&limit=1",
+        urlencoding::encode(email),
+    );
+    let resp = reqwest::Client::new()
+        .get(&url)
+        .basic_auth(stripe_key, None::<&str>)
+        .timeout(std::time::Duration::from_millis(2_500))
+        .send().await.ok()?;
+    if !resp.status().is_success() { return None; }
+    let j: serde_json::Value = resp.json().await.ok()?;
+    j["data"][0]["id"].as_str().filter(|s| s.starts_with("cus_")).map(String::from)
 }
 
 /// Runtime auto-disable for Konbini. Set to true once Stripe responds with
@@ -900,6 +939,7 @@ mod stripe_cvr_tests {
             unit_amount: 5_000,
             quantity: 1,
             customer_email: Some("buyer@example.com"),
+            customer_id: None,
             product_id: Some(42),
             size: Some("M"),
             wallet: Some(""),
@@ -3677,6 +3717,14 @@ async fn checkout(
     // pays this way), no Apple/Google Pay, no phone collection. Each addition
     // is gated by an env flag so we can revert any single field if Stripe
     // returns an error for an account-specific capability.
+    // Returning-customer lookup: if the buyer gave us an email AND that email
+    // already maps to a Stripe Customer, reuse it so Stripe auto-prefills
+    // name + saved shipping addresses on the hosted page. Best-effort —
+    // network/timeout errors silently fall back to the fresh-customer path.
+    let reuse_customer_id: Option<String> = if let Some(em) = body.email.as_deref().filter(|s| !s.is_empty()) {
+        find_stripe_customer_by_email(&stripe_key, em).await
+    } else { None };
+
     // Build form (helper reads `konbini_currently_enabled()` for konbini gate).
     let build_form = || stripe_checkout_form_jp(
         StripeCheckoutFields {
@@ -3690,6 +3738,7 @@ async fn checkout(
             // Email is optional now — Stripe collects it on the hosted page
             // when we omit `customer_email`. Reduces duplicate friction.
             customer_email: body.email.as_deref().filter(|s| !s.is_empty()),
+            customer_id: reuse_customer_id.as_deref(),
             product_id: Some(body.product_id),
             size: Some(&size_label),
             wallet: Some(&wallet),
@@ -4987,6 +5036,7 @@ async fn settle_auction(
         unit_amount: amount,
         quantity: 1,
         customer_email: Some(&email),
+        customer_id: None,  // MA auctions: fresh customer per settlement
         product_id: Some(product_id),
         size: Some("one-size"),
         wallet: Some(""),
@@ -20093,6 +20143,17 @@ async fn main() {
         "CREATE INDEX IF NOT EXISTS idx_bounty_rewards_token ON bounty_rewards(token)",
         "CREATE INDEX IF NOT EXISTS idx_bounty_rewards_bounty ON bounty_rewards(bounty_id)",
         "CREATE INDEX IF NOT EXISTS idx_bounty_rewards_status ON bounty_rewards(status)",
+        // Konbini reminder cron — one row per (session_id, bucket) so we
+        // don't re-send the same bucket twice. Bucket = '24h' (sent ~24h
+        // after session opens) or '48h' (sent ~48h after, ~24h before
+        // konbini expires).
+        "CREATE TABLE IF NOT EXISTS konbini_reminders (
+            session_id   TEXT NOT NULL,
+            bucket       TEXT NOT NULL,
+            email        TEXT,
+            sent_at      TEXT NOT NULL,
+            PRIMARY KEY (session_id, bucket)
+        )",
         // Cash-payout fields for bounty rewards. Solana is the primary
         // method (treasury sends USDC). Stripe Connect Express is for
         // recipients who prefer fiat / JP-domestic bank. PayPay is a
@@ -21980,6 +22041,7 @@ async fn main() {
         .route("/admin/email-critique", get(admin_email_critique))
         .route("/admin/email-critique/run", post(admin_email_critique_run))
         .route("/admin/email-rewrites", get(admin_email_rewrites))
+        .route("/admin/email-rewrites/run", post(admin_email_rewrites_run))
         .route("/admin/email-rewrites/:id/decide", post(admin_email_rewrites_decide))
         .route("/webhooks/resend", post(webhook_resend))
         .route("/api/v1/event", post(api_funnel_event))
@@ -27105,8 +27167,12 @@ async fn admin_email_rewrites(
             actions = actions_html));
     }
 
-    let page = format!(r#"<!doctype html><html><head><meta charset="utf-8"/><title>Email rewrites · admin</title><style>html,body{{background:#000;color:#f5f5f0;font-family:-apple-system,sans-serif;margin:0;padding:0}}a{{color:#e6c449}}.wrap{{max-width:1000px;margin:0 auto;padding:32px 22px 80px}}h1{{font-size:24px;font-weight:300;letter-spacing:0.02em;margin:0 0 8px}}.meta{{color:#888;font-size:12.5px;line-height:1.6;margin-bottom:24px}}nav{{margin:0 0 24px;font-size:12.5px}}nav a{{margin-right:14px}}</style></head><body><div class="wrap"><nav><a href="/admin/email-critique?token={tok}">← Critique</a> <a href="/admin/email-preview?token={tok}">Preview</a> <a href="/admin/bounty?token={tok}">Bounty</a></nav><h1>Email rewrite drafts</h1><div class="meta">median score &lt; {th:.2} のテンプレに対する自動 rewrite 草案 (Gemini Pro)。承認後は手動で main.rs に反映してください。</div>{cards}</div></body></html>"#,
-        tok = tok_attr, th = REWRITE_THRESHOLD, cards = if cards.is_empty() { r#"<div style="color:#888">No drafts yet. Run agent_email_rewriter or wait for the next 24h cycle.</div>"#.to_string() } else { cards });
+    let trigger_form = format!(
+        r#"<form method="post" action="/admin/email-rewrites/run?token={tok}" onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Gemini Pro が書き直し中… (~2 分)';" style="margin:0 0 24px"><button style="background:#1a1a1a;border:1px solid #444;color:#e6c449;font-size:12.5px;padding:9px 18px;letter-spacing:0.04em;cursor:pointer">今すぐ rewriter を走らせる (max 3 件 · Gemini Pro)</button></form>"#,
+        tok = tok_attr);
+    let page = format!(r#"<!doctype html><html><head><meta charset="utf-8"/><title>Email rewrites · admin</title><style>html,body{{background:#000;color:#f5f5f0;font-family:-apple-system,sans-serif;margin:0;padding:0}}a{{color:#e6c449}}.wrap{{max-width:1000px;margin:0 auto;padding:32px 22px 80px}}h1{{font-size:24px;font-weight:300;letter-spacing:0.02em;margin:0 0 8px}}.meta{{color:#888;font-size:12.5px;line-height:1.6;margin-bottom:24px}}nav{{margin:0 0 24px;font-size:12.5px}}nav a{{margin-right:14px}}</style></head><body><div class="wrap"><nav><a href="/admin/email-critique?token={tok}">← Critique</a> <a href="/admin/email-preview?token={tok}">Preview</a> <a href="/admin/bounty?token={tok}">Bounty</a></nav><h1>Email rewrite drafts</h1><div class="meta">median score &lt; {th:.2} のテンプレに対する自動 rewrite 草案 (Gemini Pro)。承認後は手動で main.rs に反映してください。</div>{trigger}{cards}</div></body></html>"#,
+        tok = tok_attr, th = REWRITE_THRESHOLD, trigger = trigger_form,
+        cards = if cards.is_empty() { r#"<div style="color:#888">No drafts yet. Run agent_email_rewriter or wait for the next 24h cycle.</div>"#.to_string() } else { cards });
     axum::response::Html(page).into_response()
 }
 
@@ -27268,6 +27334,26 @@ async fn admin_email_critique_run(
     Response::builder()
         .status(StatusCode::SEE_OTHER)
         .header("Location", format!("/admin/email-critique?token={}", tok_attr))
+        .body(axum::body::Body::empty()).unwrap()
+}
+
+/// POST /admin/email-rewrites/run?token=… — force agent_email_rewriter to run now.
+async fn admin_email_rewrites_run(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/email-rewrites/run").await { return r; }
+    let tok = q.get("token").cloned().unwrap_or_default();
+    let report = match agent_email_rewriter(db.clone()).await {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("rewriter err: {e}")).into_response(),
+    };
+    journal_agent_report(db, "email_rewriter", &report).await;
+    let tok_attr = html_attr_escape(&tok);
+    Response::builder()
+        .status(StatusCode::SEE_OTHER)
+        .header("Location", format!("/admin/email-rewrites?token={}", tok_attr))
         .body(axum::body::Body::empty()).unwrap()
 }
 
