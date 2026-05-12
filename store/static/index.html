@@ -843,6 +843,18 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
            style="display:none;margin-top:8px;text-align:center;background:rgba(230,196,73,0.08);border:1px solid rgba(230,196,73,0.35);color:#e6c449;padding:10px 14px;border-radius:2px;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;font-weight:600;text-decoration:none">
           ⚡ クイック購入 (Stripe へ直行)
         </a>
+        <!--
+          Express Checkout (Apple Pay / Google Pay / Link) via Stripe's
+          embedded Checkout. Mounted on demand: pressing "Apple Pay / Google Pay"
+          POSTs /api/checkout/embedded then init's Stripe Embedded Checkout
+          inside #stripe-embedded. The native sheet handles confirmation and
+          redirects to /success on completion.
+        -->
+        <button type="button" id="btn-express" onclick="openExpressCheckout(event)"
+                style="display:none;margin-top:8px;width:100%;background:#000;color:#fff;border:1px solid rgba(255,255,255,0.2);padding:12px 14px;border-radius:2px;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;font-weight:600;cursor:pointer">
+           Apple Pay / Google Pay
+        </button>
+        <div id="stripe-embedded" style="display:none;margin-top:14px"></div>
       </form>
     </div>
   </div>
@@ -1663,5 +1675,101 @@ window.addEventListener('popstate', ()=>{
 })();
 </script>
 <script src="/static/payments-ui.js" defer></script>
+<!-- Stripe.js for Express Checkout (Apple Pay / Google Pay embedded sheet) -->
+<script src="https://js.stripe.com/v3/" async></script>
+<script>
+// Express Checkout — opens Stripe's embedded form (with native wallet buttons)
+// directly inside the product modal. Skips the redirect to checkout.stripe.com.
+// Requires STRIPE_PUBLISHABLE_KEY env var to be set on the server.
+(function(){
+  let _stripe = null;        // cached Stripe instance after the first init
+  let _checkout = null;      // currently-mounted EmbeddedCheckout
+
+  async function getStripe(){
+    if (_stripe) return _stripe;
+    // Wait for the async <script src="https://js.stripe.com/v3/"> to define Stripe.
+    for (let i=0; i<50 && typeof Stripe === 'undefined'; i++) {
+      await new Promise(r => setTimeout(r, 100));
+    }
+    if (typeof Stripe === 'undefined') throw new Error('Stripe.js failed to load');
+    const r = await fetch('/api/stripe/pubkey', {cache:'no-store'});
+    if (!r.ok) throw new Error('publishable key unavailable');
+    const {publishable_key} = await r.json();
+    if (!publishable_key) throw new Error('publishable key missing');
+    _stripe = Stripe(publishable_key);
+    return _stripe;
+  }
+
+  window.openExpressCheckout = async function(ev){
+    ev && ev.preventDefault && ev.preventDefault();
+    const btn  = document.getElementById('btn-express');
+    const host = document.getElementById('stripe-embedded');
+    const msg  = document.getElementById('checkout-msg');
+    if (!window.currentProduct || !window.currentProduct.id) {
+      if (msg) { msg.style.color='#C8362C'; msg.textContent='no product selected'; }
+      return;
+    }
+    btn.disabled = true; btn.textContent = '読み込み中…';
+
+    try {
+      const stripe = await getStripe();
+      const r = await fetch('/api/checkout/embedded', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          product_id: window.currentProduct.id,
+          quantity: 1,
+          size: window.selectedSize || 'M',
+        })
+      });
+      if (!r.ok) {
+        const t = await r.text();
+        throw new Error('HTTP ' + r.status + ' ' + t.slice(0,120));
+      }
+      const {client_secret} = await r.json();
+      if (!client_secret) throw new Error('no client_secret');
+
+      // Tear down any previous mount (size changes, re-open, etc.)
+      if (_checkout) { try { _checkout.destroy(); } catch(e) {} _checkout = null; }
+      host.innerHTML = '';
+      host.style.display = 'block';
+      btn.style.display = 'none';
+      // Mount the embedded checkout sheet. Native Apple Pay / Google Pay
+      // buttons surface automatically when the device supports them.
+      _checkout = await stripe.initEmbeddedCheckout({
+        clientSecret: client_secret,
+        onComplete: () => { /* Stripe will redirect to return_url */ },
+      });
+      _checkout.mount('#stripe-embedded');
+    } catch (e) {
+      if (msg) { msg.style.color='#C8362C'; msg.textContent='✗ '+(e.message||'error'); }
+      btn.disabled = false; btn.textContent = 'Apple Pay / Google Pay';
+    }
+  };
+
+  // Re-show the Express button whenever the product modal opens; hide the
+  // mounted sheet so stale clientSecrets don't linger.
+  const origOpenModal = window.openModal;
+  if (typeof origOpenModal === 'function') {
+    window.openModal = function(p, push){
+      origOpenModal.apply(this, arguments);
+      const btn = document.getElementById('btn-express');
+      const host = document.getElementById('stripe-embedded');
+      if (host) {
+        if (_checkout) { try { _checkout.destroy(); } catch(e) {} _checkout = null; }
+        host.innerHTML = ''; host.style.display = 'none';
+      }
+      if (btn) {
+        // Only show for purchasable products (avoid MA auctions and out-of-stock).
+        const rem = p ? (p.inventory - p.sold) : 0;
+        const can = p && p.brand !== 'ma' && rem > 0;
+        btn.style.display = can ? 'block' : 'none';
+        btn.disabled = false;
+        btn.textContent = 'Apple Pay / Google Pay';
+      }
+    };
+  }
+})();
+</script>
 </body>
 </html>

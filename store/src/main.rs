@@ -897,6 +897,138 @@ fn format_jst_yyyy_mm_dd_hhmm(unix_utc: i64) -> String {
     format!("{:04}-{:02}-{:02} {:02}:{:02} JST", y, m, d, hour, minute)
 }
 
+/// POST /api/checkout/embedded — return a `client_secret` for Stripe's
+/// embedded Checkout Session.
+///
+/// Why embedded over hosted: the embedded form mounts directly in the modal,
+/// shows the native Apple Pay / Google Pay button without a page redirect,
+/// and reuses the existing `checkout.session.completed` webhook for
+/// fulfillment (no new server handlers required). The buyer never leaves
+/// wearmu.com — fastest path from "Add" to "Paid."
+async fn checkout_embedded(
+    State(db): State<Db>,
+    Json(body): Json<CheckoutBody>,
+) -> impl IntoResponse {
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"ok":false,"error":"stripe key not configured"}))).into_response();
+    }
+
+    // Product lookup mirrors /api/checkout — same pricing + KYC threshold rules.
+    let (brand_str, drop_num, inventory, sold, product_name) = {
+        let conn = db.lock().unwrap();
+        match conn.query_row(
+            "SELECT brand, drop_num, inventory, sold, name FROM products WHERE id=? AND active=1",
+            params![body.product_id],
+            |row| Ok((
+                row.get::<_,String>(0)?, row.get::<_,i64>(1)?,
+                row.get::<_,i64>(2)?, row.get::<_,i64>(3)?,
+                row.get::<_,String>(4)?,
+            )),
+        ) {
+            Ok(r) => r,
+            Err(_) => return (StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"ok":false,"error":"product not found"}))).into_response(),
+        }
+    };
+    if inventory - sold < body.quantity as i64 {
+        return (StatusCode::CONFLICT,
+            Json(serde_json::json!({"ok":false,"error":"sold out"}))).into_response();
+    }
+
+    let base_price_jpy = dynamic_price(&brand_str, drop_num, sold, &product_name);
+    let pm = body.payment_method.clone().unwrap_or_else(|| "jpy".into()).to_ascii_lowercase();
+    let price_jpy = apply_payment_surcharge(base_price_jpy, &pm);
+    let total_jpy = price_jpy.saturating_mul(body.quantity as i64);
+
+    if pm != "jpy" {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":"embedded checkout supports jpy only"}))).into_response();
+    }
+
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "http://localhost:3000".into());
+    let size_label = body.size.clone().unwrap_or_else(|| "M".into());
+    let display_name = format!("{} ({})", product_name, size_label);
+    let wallet = body.wallet.clone().unwrap_or_default();
+
+    let reuse_customer_id: Option<String> = if let Some(em) = body.email.as_deref().filter(|s| !s.is_empty()) {
+        find_stripe_customer_by_email(&stripe_key, em).await
+    } else { None };
+
+    let mut form = stripe_checkout_form_jp(StripeCheckoutFields {
+        mode: "payment",
+        base_url: &base_url,
+        // Embedded mode uses `return_url` (not success/cancel paths) — the
+        // form helper still emits success_url; embedded ignores it.
+        success_path: "/success?sid={CHECKOUT_SESSION_ID}",
+        cancel_path: "/",
+        display_name: &display_name,
+        unit_amount: price_jpy,
+        quantity: body.quantity as i64,
+        customer_email: body.email.as_deref().filter(|s| !s.is_empty()),
+        customer_id: reuse_customer_id.as_deref(),
+        product_id: Some(body.product_id),
+        size: Some(&size_label),
+        wallet: Some(&wallet),
+        payment_method: Some(&pm),
+        base_price_jpy: Some(base_price_jpy),
+        total_jpy: Some(total_jpy),
+        kyc_required: total_jpy >= KYC_THRESHOLD_JPY,
+        collect_shipping: true,
+    });
+    // Switch to embedded mode + add the required `return_url`.
+    form.push(("ui_mode".into(), "embedded".into()));
+    form.push(("return_url".into(),
+        format!("{}/success?sid={{CHECKOUT_SESSION_ID}}&from=embedded", base_url)));
+    // success_url is invalid in embedded mode — strip it.
+    form.retain(|(k, _)| k != "success_url" && k != "cancel_url");
+
+    let resp = reqwest::Client::new()
+        .post("https://api.stripe.com/v1/checkout/sessions")
+        .basic_auth(&stripe_key, None::<&str>)
+        .form(&form)
+        .send().await;
+    match resp {
+        Ok(r) if r.status().is_success() => {
+            let j: serde_json::Value = r.json().await.unwrap_or_default();
+            let client_secret = j["client_secret"].as_str().unwrap_or("").to_string();
+            let session_id    = j["id"].as_str().unwrap_or("").to_string();
+            if client_secret.is_empty() {
+                return (StatusCode::BAD_GATEWAY,
+                    Json(serde_json::json!({"ok":false,"error":"stripe returned no client_secret"}))).into_response();
+            }
+            Json(serde_json::json!({
+                "ok": true,
+                "client_secret": client_secret,
+                "session_id": session_id,
+                "amount_jpy": total_jpy,
+            })).into_response()
+        }
+        Ok(r) => {
+            let s = r.status();
+            let t = r.text().await.unwrap_or_default();
+            tracing::error!("[embedded-checkout] stripe {}: {}", s, t.chars().take(300).collect::<String>());
+            (StatusCode::BAD_GATEWAY,
+             Json(serde_json::json!({"ok":false,"error":format!("stripe {}: {}", s, &t[..t.len().min(200)])}))).into_response()
+        }
+        Err(e) => (StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({"ok":false,"error":format!("network: {}", e)}))).into_response(),
+    }
+}
+
+/// GET /api/stripe/pubkey — exposes the Stripe publishable key so the
+/// embedded Checkout Element on the PDP can initialise Stripe.js without
+/// hard-coding the key in the static HTML.
+async fn stripe_pubkey() -> impl IntoResponse {
+    let pk = env::var("STRIPE_PUBLISHABLE_KEY").unwrap_or_default();
+    if pk.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"ok":false,"error":"STRIPE_PUBLISHABLE_KEY unset"}))).into_response();
+    }
+    Json(serde_json::json!({"ok": true, "publishable_key": pk})).into_response()
+}
+
 /// POST /api/admin/products/:id/payment-link — create (or refresh) a Stripe
 /// Payment Link for a product. Persists the URL + Stripe Price ID on
 /// products.payment_link_url so the PDP renders a "クイック購入" button.
@@ -22329,6 +22461,8 @@ async fn main() {
         .route("/api/admin/cv_pulse", post(cv_pulse))
         .route("/api/admin/cron/konbini-reminder", post(cron_konbini_reminder))
         .route("/api/admin/products/:id/payment-link", post(admin_create_payment_link))
+        .route("/api/checkout/embedded", post(checkout_embedded))
+        .route("/api/stripe/pubkey", get(stripe_pubkey))
         .route("/api/health/cron", get(cron_health_handler))
         .route("/api/transparency", get(public_transparency))
         .route("/api/sample_personas", get(list_sample_personas))
