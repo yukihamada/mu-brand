@@ -11408,8 +11408,8 @@ async fn show_partner_proposal_page(
         let conn = db.lock().unwrap();
         // Resolve mockup_url to a STABLE image: Printful S3 `tmp/...` URLs
         // expire (~24h → 403 Forbidden), so when mockup_url points there,
-        // substitute design_url (imgur/R2/lifestyle CDN). Also filter rows
-        // whose resolved URL would still be a dead Printful temp URL —
+        // substitute design_url (imgur/R2/lifestyle CDN). Also filter out
+        // rows whose resolved URL would still be a dead Printful temp URL —
         // broken cards weaken social proof on kokon/sweep/jiuflow proposals.
         let resolved_img = "CASE
             WHEN p.mockup_url LIKE 'https://printful-upload.s3%'
@@ -11444,6 +11444,7 @@ async fn show_partner_proposal_page(
         if !from_purchases.is_empty() {
             from_purchases
         } else {
+            // Fallback: any product with sold > 0 AND a usable visual asset.
             let sql_fallback = format!(
                 "SELECT p.id, p.brand, p.drop_num, p.name, {resolved_img} AS img, p.created_at
                  FROM products p
@@ -18093,6 +18094,19 @@ async fn main() {
         );
         CREATE INDEX IF NOT EXISTS idx_founder_reviews_who ON founder_reviews(founder, created_at);
 
+        CREATE TABLE IF NOT EXISTS email_critique (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind        TEXT NOT NULL,    -- received | nft_mint | ... | mu_x_you
+            variant     TEXT NOT NULL,    -- 'A' | 'B'
+            persona     TEXT NOT NULL,    -- 'musk' | 'bezos' | 'jobs' | 'buyer'
+            subject     TEXT NOT NULL,
+            score       REAL NOT NULL,    -- 0.0..1.0
+            verdict     TEXT NOT NULL,    -- <= 120 chars headline
+            suggestion  TEXT NOT NULL,    -- <= 200 chars actionable rewrite/cut
+            created_at  TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_email_critique_kind ON email_critique(kind, variant, persona, created_at);
+
         CREATE TABLE IF NOT EXISTS agent_scorecard (
             id                INTEGER PRIMARY KEY AUTOINCREMENT,
             agent_name        TEXT NOT NULL,
@@ -18360,6 +18374,8 @@ async fn main() {
         .route("/admin/email-ab", get(admin_email_ab))
         .route("/admin/email-preview", get(admin_email_preview))
         .route("/admin/email-test-send", post(admin_email_test_send))
+        .route("/admin/email-critique", get(admin_email_critique))
+        .route("/admin/email-critique/run", post(admin_email_critique_run))
         .route("/webhooks/resend", post(webhook_resend))
         .route("/api/v1/event", post(api_funnel_event))
         .route("/admin/auth_log", get(admin_auth_log_view))
@@ -18684,6 +18700,11 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         interval_secs: 1800, // 30 min — 受領メール + Printful 状態遷移検知
         description: "buyer 4-email A/B (受領/製造/出荷/30日 cohort) を Resend で送る。DRY_RUN_PRODUCTION_WATCHER=1 で本番テスト可",
     },
+    AgentDef {
+        name: "email_critic",
+        interval_secs: 86_400, // 24h — 4 persona × 9 kinds × 2 variants = 18 Gemini Flash calls
+        description: "Musk/Bezos/Jobs/buyer 4 ペルソナがメール文面 (subject+body) を採点 → email_critique → /admin/email-critique",
+    },
 ];
 
 /// agent_journal から指定 agent の最後の cycle_at (epoch sec) を取得。
@@ -18722,6 +18743,7 @@ async fn run_agent(name: &str, db: Db) -> Result<AgentReport, String> {
         "checkout_health"   => agent_checkout_health(db).await,
         "funnel_anomaly"    => agent_funnel_anomaly(db).await,
         "production_watcher"=> agent_production_watcher(db).await,
+        "email_critic"      => agent_email_critic(db).await,
         _ => Err(format!("unknown agent: {}", name)),
     }
 }
@@ -21608,6 +21630,8 @@ struct EmailContext {
     order_id: i64,
     slug: String,
     amount: i64,
+    image_url: String,           // mockup URL for the shirt; "" if unknown
+    product_name: String,        // human-readable name e.g. "MUGEN #0123"
     revenue_7d: i64,
     orders_7d: i64,
     drops_today: i64,
@@ -21620,6 +21644,32 @@ struct EmailContext {
     bezos_verdict: String,
 }
 fn build_email_context(conn: &Connection, order_id: i64, slug: &str, amount: i64) -> EmailContext {
+    // Look up the shirt image: collab_products first (collab SKUs), then
+    // products (MUGEN drops). For MUGEN, the public mockup URL pattern is
+    // /mockups/{id}.jpg (verified via /api/v1/embed/products).
+    let (image_url, product_name): (String, String) = {
+        if let Ok((img, nm)) = conn.query_row(
+            "SELECT COALESCE(image_url,''), COALESCE(name,'') FROM collab_products WHERE slug=?",
+            params![slug], |r| Ok((r.get::<_,String>(0)?, r.get::<_,String>(1)?))
+        ) {
+            if !img.is_empty() { (img, nm) }
+            else { (String::new(), nm) }
+        } else if let Ok((pid, nm)) = conn.query_row(
+            "SELECT id, COALESCE(name,'') FROM products WHERE slug=?",
+            params![slug], |r| Ok((r.get::<_,i64>(0)?, r.get::<_,String>(1)?))
+        ) {
+            (format!("https://wearmu.com/mockups/{}.jpg", pid), nm)
+        } else {
+            // Fallback for preview/test — use the latest MUGEN as a stand-in
+            let (pid_opt, nm): (Option<i64>, String) = conn.query_row(
+                "SELECT id, COALESCE(name,'') FROM products
+                 WHERE brand='mugen' AND active=1 ORDER BY id DESC LIMIT 1",
+                [], |r| Ok((r.get(0).ok(), r.get::<_,String>(1)?))
+            ).unwrap_or((None, "MUGEN sample".into()));
+            (pid_opt.map(|p| format!("https://wearmu.com/mockups/{}.jpg", p))
+                .unwrap_or_default(), nm)
+        }
+    };
     let now_s: i64 = chrono_now().parse().unwrap_or(0);
     let h7  = now_s - 7 * 86_400;
     let h24 = now_s - 24 * 3600;
@@ -21644,6 +21694,7 @@ fn build_email_context(conn: &Connection, order_id: i64, slug: &str, amount: i64
     ).unwrap_or((None, None));
     EmailContext {
         order_id, slug: slug.into(), amount,
+        image_url, product_name,
         revenue_7d: rev7, orders_7d: ord7,
         drops_today, designs_today,
         refund_rate_30d: rr.unwrap_or(0.0),
@@ -21653,6 +21704,23 @@ fn build_email_context(conn: &Connection, order_id: i64, slug: &str, amount: i64
         musk_verdict: musk.1.unwrap_or_default(),
         bezos_verdict: bez.1.unwrap_or_default(),
     }
+}
+
+/// HTML <img> block for the shirt mockup. Returns "" if no image URL.
+/// Renders as a centered 480px-max image with a thin border, matching the
+/// MU email card style. Plain-text alt text falls back if image is blocked.
+fn image_block(ctx: &EmailContext) -> String {
+    if ctx.image_url.is_empty() { return String::new(); }
+    format!(
+        r#"<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 18px;"><tr><td align="center">
+<a href="https://wearmu.com/products/{slug}" style="display:inline-block;text-decoration:none;">
+<img src="{img}" alt="{alt}" width="476" style="display:block;max-width:476px;width:100%;height:auto;border:1px solid #1f1f1f;border-radius:4px;background:#0d0d0d;"/>
+</a>
+<div style="font-size:10.5px;color:#666;margin-top:6px;letter-spacing:0.06em;">{alt}</div>
+</td></tr></table>"#,
+        img = html_attr_escape(&ctx.image_url),
+        slug = html_attr_escape(&ctx.slug),
+        alt = html_escape(&ctx.product_name))
 }
 
 fn data_row(label: &str, value: &str) -> String {
@@ -21681,8 +21749,8 @@ fn template_received(ctx: &EmailContext, variant: &str) -> (String, String) {
             let subject = format!("MU 受領ログ — #{:04}", ctx.order_id);
             let hero = "受領ログ";
             let body = format!(
-                r#"<p style="margin:0 0 10px;color:#bbb;">あなたの注文を確認しました。</p>{order}<p style="margin:0 0 4px;color:#bbb;">同時刻、MU システムは:</p>{table}{accent}"#,
-                order = order_block, table = table_html,
+                r#"<p style="margin:0 0 14px;color:#bbb;">あなたの注文を確認しました。これがあなたのシャツです。</p>{img}{order}<p style="margin:0 0 4px;color:#bbb;">同時刻、MU システムは:</p>{table}{accent}"#,
+                img = image_block(ctx), order = order_block, table = table_html,
                 accent = accent_block("このシャツはまだ存在しません。<br>翌 09:00 JST に Printful へ自動発注、<br>翌 24 時間で存在し始めます。"));
             let html = email_shell(&subject, hero, &now_jst, &body);
             (subject, html)
@@ -21691,8 +21759,8 @@ fn template_received(ctx: &EmailContext, variant: &str) -> (String, String) {
             let subject = "あなたのシャツはまだ存在しません".to_string();
             let hero = "未存在ログ";
             let body = format!(
-                r#"<p style="margin:0 0 14px;color:#bbb;font-size:15px;line-height:1.55;">あなたが今日買ったシャツは、まだ布になっていません。</p>{order}<p style="margin:0 0 4px;color:#999;">この瞬間 MU が確認している数値:</p>{table}<p style="margin:18px 0 0;color:#888;font-size:12px;line-height:1.55;">機械が動き出すのは翌 09:00 JST。<br>そこから約 24 時間で、あなたのデザインは綿の繊維に焼き付きます。</p>"#,
-                order = order_block, table = table_html);
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:15px;line-height:1.55;">あなたが今日買ったシャツは、まだ布になっていません。<br>これがその「予定図」です。</p>{img}{order}<p style="margin:0 0 4px;color:#999;">この瞬間 MU が確認している数値:</p>{table}<p style="margin:18px 0 0;color:#888;font-size:12px;line-height:1.55;">機械が動き出すのは翌 09:00 JST。<br>そこから約 24 時間で、あなたのデザインは綿の繊維に焼き付きます。</p>"#,
+                img = image_block(ctx), order = order_block, table = table_html);
             (subject.clone(), email_shell(&subject, hero, &now_jst, &body))
         }
     }
@@ -21709,15 +21777,16 @@ fn template_production(ctx: &EmailContext, variant: &str, facility: &str, _pf_id
         "A" => {
             let subject = format!("MUGEN #{:04} — printing started", ctx.order_id);
             let body = format!(
-                r#"<p style="margin:0 0 10px;color:#bbb;">あなたのデザインが製造ラインに乗りました。</p>{spec}{accent}"#,
-                spec = spec, accent = accent_block("取り出し予定: 翌 18 時間 (±6h)。<br>その後、検査・梱包・出荷へ。"));
+                r#"<p style="margin:0 0 14px;color:#bbb;">あなたのデザインが製造ラインに乗りました。今、これが布になりつつあります。</p>{img}{spec}{accent}"#,
+                img = image_block(ctx), spec = spec,
+                accent = accent_block("取り出し予定: 翌 18 時間 (±6h)。<br>その後、検査・梱包・出荷へ。"));
             (subject.clone(), email_shell(&subject, "製造開始", &now_jst, &body))
         }
         _ => {
             let subject = "今この瞬間、機械があなたのデザインを焼いてます".to_string();
             let body = format!(
-                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.55;">印刷ヘッドが動いています。<br>インクが繊維に焼き付くまで、領域あたり 90 秒。</p>{spec}<p style="margin:18px 0 0;color:#888;font-size:12px;">あなたのシャツが「物」として存在し始める瞬間です。</p>"#,
-                spec = spec);
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.55;">印刷ヘッドが動いています。<br>インクが繊維に焼き付くまで、領域あたり 90 秒。</p>{img}{spec}<p style="margin:18px 0 0;color:#888;font-size:12px;">あなたのシャツが「物」として存在し始める瞬間です。</p>"#,
+                img = image_block(ctx), spec = spec);
             (subject.clone(), email_shell(&subject, "印刷中", &now_jst, &body))
         }
     }
@@ -21734,16 +21803,16 @@ fn template_shipped(ctx: &EmailContext, variant: &str, tracking: &str, carrier: 
         "A" => {
             let subject = format!("MUGEN #{:04} — shipped", ctx.order_id);
             let body = format!(
-                r#"<p style="margin:0 0 10px;color:#bbb;">あなたのシャツが出荷されました。</p>{block}{accent}"#,
-                block = block,
+                r#"<p style="margin:0 0 14px;color:#bbb;">あなたのシャツが出荷されました。これが今、箱の中身です。</p>{img}{block}{accent}"#,
+                img = image_block(ctx), block = block,
                 accent = accent_block("到着目安: 7〜10 日 (国際郵便標準)。<br>追跡番号は当日中にキャリア側で活性化します。"));
             (subject.clone(), email_shell(&subject, "出荷", &now_jst, &body))
         }
         _ => {
             let subject = "あなたから 11,000 km。最高 894 km/h で接近中".to_string();
             let body = format!(
-                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.55;">出荷ログ確定。<br>シャツはあなたへの軌道に乗りました。</p>{block}<p style="margin:18px 0 0;color:#888;font-size:12px;">残り時間は航空便と通関の合算。MU は介入できません。あとは物理学です。</p>"#,
-                block = block);
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.55;">出荷ログ確定。<br>シャツはあなたへの軌道に乗りました。</p>{img}{block}<p style="margin:18px 0 0;color:#888;font-size:12px;">残り時間は航空便と通関の合算。MU は介入できません。あとは物理学です。</p>"#,
+                img = image_block(ctx), block = block);
             (subject.clone(), email_shell(&subject, "移動中", &now_jst, &body))
         }
     }
@@ -21762,8 +21831,8 @@ fn template_nft_mint(ctx: &EmailContext, variant: &str, mint_address: &str) -> (
         "A" => {
             let subject = format!("MUGEN #{:04} — NFT mint confirmed", ctx.order_id);
             let body = format!(
-                r#"<p style="margin:0 0 10px;color:#bbb;">あなたのシャツの cryptographic proof です。</p>{block}{accent}"#,
-                block = block,
+                r#"<p style="margin:0 0 14px;color:#bbb;">あなたのシャツの cryptographic proof です。布と等価のデジタル版がチェーン上に書き込まれました。</p>{img}{block}{accent}"#,
+                img = image_block(ctx), block = block,
                 accent = accent_block("このハッシュは 256 bit = 10^77 通りの 1 つ。<br>同じものを引く確率は事実上ゼロです。<br>譲渡不可、削除不可、永続。"));
             let html = email_shell(&subject, "NFT 確定", &now_jst, &body);
             (subject, html)
@@ -21771,8 +21840,8 @@ fn template_nft_mint(ctx: &EmailContext, variant: &str, mint_address: &str) -> (
         _ => {
             let subject = "あなたのデザインの暗号学的 ID が出ました".to_string();
             let body = format!(
-                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.55;">布のシャツは現実世界で消耗します。<br>でも、その元データの fingerprint はチェーン上に残り続けます。</p>{block}<p style="margin:18px 0 0;color:#888;font-size:12px;">これは <i>soulbound</i> = あなたから他人に移せない NFT です。<br>所有権ではなく、製造記録です。</p>"#,
-                block = block);
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.55;">布のシャツは現実世界で消耗します。<br>でも、その元データの fingerprint はチェーン上に残り続けます。</p>{img}{block}<p style="margin:18px 0 0;color:#888;font-size:12px;">これは <i>soulbound</i> = あなたから他人に移せない NFT です。<br>所有権ではなく、製造記録です。</p>"#,
+                img = image_block(ctx), block = block);
             let html = email_shell(&subject, "暗号学的記録", &now_jst, &body);
             (subject, html)
         }
@@ -21789,8 +21858,8 @@ fn template_nft_login(ctx: &EmailContext, variant: &str) -> (String, String) {
         "A" => {
             let subject = "あなたの wallet が、あなたの ID です".to_string();
             let body = format!(
-                r#"<p style="margin:0 0 10px;color:#bbb;">14 日前に買った MUGEN #{:04}。<br>以降、wearmu.com の操作は wallet 署名で可能になりました。</p>{block}{accent}"#,
-                ctx.order_id, block = block,
+                r#"<p style="margin:0 0 14px;color:#bbb;">14 日前に買った MUGEN #{:04}。<br>以降、wearmu.com の操作は wallet 署名で可能になりました。</p>{img}{block}{accent}"#,
+                ctx.order_id, img = image_block(ctx), block = block,
                 accent = accent_block("メール・パスワードの組み合わせは廃止していません。<br>でも MUGEN 所有者だけは「鍵」ベースに切り替えられます。<br>署名 1 回 = 90 日間ログイン保持。"));
             let html = email_shell(&subject, "wallet ログイン", &now_jst, &body);
             (subject, html)
@@ -21798,8 +21867,8 @@ fn template_nft_login(ctx: &EmailContext, variant: &str) -> (String, String) {
         _ => {
             let subject = "MUGEN 所有者だけのログイン方式が使えるようになりました".to_string();
             let body = format!(
-                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.55;">パスワードは脆い、覚えるのも面倒。<br>あなたは既に MUGEN を所有しています = 暗号学的に「あなた」を証明できます。</p>{block}<p style="margin:18px 0 0;color:#888;font-size:12px;">使わない選択肢もあります。普通のメールログインも残してます。<br>ただし MUGEN 所有者なら、こちらの方が速いです。</p>"#,
-                block = block);
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.55;">パスワードは脆い、覚えるのも面倒。<br>あなたは既に MUGEN を所有しています = 暗号学的に「あなた」を証明できます。</p>{img}{block}<p style="margin:18px 0 0;color:#888;font-size:12px;">使わない選択肢もあります。普通のメールログインも残してます。<br>ただし MUGEN 所有者なら、こちらの方が速いです。</p>"#,
+                img = image_block(ctx), block = block);
             let html = email_shell(&subject, "Login by signature", &now_jst, &body);
             (subject, html)
         }
@@ -21816,8 +21885,8 @@ fn template_drop_preview(ctx: &EmailContext, variant: &str) -> (String, String) 
         "A" => {
             let subject = format!("MU が、あなたの次のシャツを書きました — #{:04}", ctx.order_id + 60);
             let body = format!(
-                r#"<p style="margin:0 0 10px;color:#bbb;">60 日前、あなたの purchase から MU はパターンを学習しました。</p>{block}{accent}"#,
-                block = block,
+                r#"<p style="margin:0 0 14px;color:#bbb;">60 日前、あなたが買ったのはこの 1 着。MU はそこからパターンを学習しました。</p>{img}{block}{accent}"#,
+                img = image_block(ctx), block = block,
                 accent = accent_block("これは予告ではなく観察ログ。<br>明日 JST 09:00、自動 cron がこの方向で MUGEN を 1 着生成します。<br>あなたは買わなくていい。読むだけで OK。"));
             let html = email_shell(&subject, "あなた向けのドロップ予報", &now_jst, &body);
             (subject, html)
@@ -21825,8 +21894,8 @@ fn template_drop_preview(ctx: &EmailContext, variant: &str) -> (String, String) 
         _ => {
             let subject = "あなたの好みを観察してたら、明日の MUGEN が決まりました".to_string();
             let body = format!(
-                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.55;">MU の AI は、誰のために何を作るか自分で決めます。<br>あなたが {} 日前に買ったデザインは、その判断材料になりました。</p>{block}<p style="margin:18px 0 0;color:#888;font-size:12px;">押し売りはしません。これは <b>透明性</b> の一形態です。<br>MU は自分の意思決定をあなたに見せます。</p>"#,
-                60, block = block);
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.55;">MU の AI は、誰のために何を作るか自分で決めます。<br>あなたが {} 日前に買ったのはこのデザイン:</p>{img}<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.55;">これが MU の判断材料になりました。</p>{block}<p style="margin:18px 0 0;color:#888;font-size:12px;">押し売りはしません。これは <b>透明性</b> の一形態です。<br>MU は自分の意思決定をあなたに見せます。</p>"#,
+                60, img = image_block(ctx), block = block);
             let html = email_shell(&subject, "学習ログ", &now_jst, &body);
             (subject, html)
         }
@@ -21847,8 +21916,8 @@ fn template_quarter(ctx: &EmailContext, variant: &str) -> (String, String) {
         "A" => {
             let subject = format!("MU 90日ログ — #{:04}", ctx.order_id);
             let body = format!(
-                r#"<p style="margin:0 0 6px;color:#bbb;">90 日前にあなたが買って、MU はこれを実行しました。</p>{table}{accent}"#,
-                table = table_html,
+                r#"<p style="margin:0 0 14px;color:#bbb;">90 日前にあなたが買ったのはこのシャツ:</p>{img}<p style="margin:0 0 6px;color:#bbb;">MU はあなたの買い物以降、これを実行しました。</p>{table}{accent}"#,
+                img = image_block(ctx), table = table_html,
                 accent = accent_block("次の email は 275 日後 (1 周年)。<br>それまで沈黙します。<br>もしシャツが届いてなければ <a href=\"mailto:info@enablerdao.com\" style=\"color:#e6c449;\">info@enablerdao.com</a> へ。"));
             let html = email_shell(&subject, "90 日ログ", &now_jst, &body);
             (subject, html)
@@ -21856,9 +21925,64 @@ fn template_quarter(ctx: &EmailContext, variant: &str) -> (String, String) {
         _ => {
             let subject = "90 日前のあなたの一票が、こうなりました".to_string();
             let body = format!(
-                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.55;">買うのは一票です。<br>あなたの一票で、MU はこの数字を出しました。</p>{table}<p style="margin:18px 0 0;color:#888;font-size:12px;">繰り返し買う必要はありません。<br>でも、あなたが買わなかったら、上の数字はゼロでした。</p>"#,
-                table = table_html);
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.55;">買うのは一票です。あなたが 90 日前に投じた一票:</p>{img}<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.55;">この一票で、MU はこの数字を出しました。</p>{table}<p style="margin:18px 0 0;color:#888;font-size:12px;">繰り返し買う必要はありません。<br>でも、あなたが買わなかったら、上の数字はゼロでした。</p>"#,
+                img = image_block(ctx), table = table_html);
             let html = email_shell(&subject, "90 日ログ", &now_jst, &body);
+            (subject, html)
+        }
+    }
+}
+
+// ── Email template — MU × YOU invitation (day 7) ───────────────────────
+// Cialdini: Reciprocity (free 30d trial) + Liking (echoes their taste).
+// The /you feature generates a daily AI-personalized design from the buyer's
+// own taste vector. 30 days, ¥0 to look, then disappears unless ordered.
+fn template_mu_x_you(ctx: &EmailContext, variant: &str) -> (String, String) {
+    let now_jst = jst_now_str();
+    let designs_today = ctx.designs_today;
+    let url = format!("https://wearmu.com/you?ref=email&kind=mu_x_you&order={}", ctx.order_id);
+    let url_attr = html_attr_escape(&url);
+    let cta = format!(
+        r#"<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:18px 0 0;"><tr><td align="center">
+<a href="{u}" style="display:inline-block;background:#e6c449;color:#000;text-decoration:none;padding:14px 28px;font-size:13px;letter-spacing:0.08em;font-weight:600;border-radius:2px;">MU × YOU を開始する  →</a>
+<div style="font-size:10.5px;color:#666;margin-top:8px;letter-spacing:0.04em;">30 日間 ¥0 · クレカ登録なし · 気に入った日だけ買える</div>
+</td></tr></table>"#,
+        u = &url_attr);
+
+    match variant {
+        "A" => {
+            // Data-first: show the numbers, let the reader decide.
+            let subject = format!("MU × YOU — あなた専用の MUGEN を 30 日間、毎日生成します (¥0)");
+            let mut tbl = String::new();
+            tbl.push_str(&data_row("今日生成された MUGEN (全員ぶん)", &format!("{} 着", designs_today)));
+            tbl.push_str(&data_row("あなた専用に生成される枚数", "30 日 × 1 着/日"));
+            tbl.push_str(&data_row("料金 (見る・選ぶ)", "¥0"));
+            tbl.push_str(&data_row("購入は気に入った日だけ", "¥3,800〜"));
+            tbl.push_str(&data_row("有効期限 (1 着あたり)", "24 時間"));
+            let table_html = format!(r#"<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 18px;">{}</table>"#, tbl);
+            let body = format!(
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:13.5px;line-height:1.6;">あなたが買ったのはこの 1 着でした:</p>{img}<p style="margin:0 0 14px;color:#bbb;font-size:13.5px;line-height:1.6;">MU はそこからあなたの趣味ベクトルを学習しました。<br>明日から毎朝 09:00 JST、その学習結果から <b>あなた専用の MUGEN</b> を 1 着生成します。</p>{table}{cta}{accent}"#,
+                img = image_block(ctx),
+                table = table_html,
+                cta = cta,
+                accent = accent_block("これは予告ではありません。<br>あなたが「開始する」を押した時点で、明日朝の cron があなた専用のシードを使います。<br>30 日後、自動で停止します。<br>解約フォームはありません。あるのは沈黙です。"));
+            let html = email_shell(&subject, "MU × YOU — あなた専用 MUGEN", &now_jst, &body);
+            (subject, html)
+        }
+        _ => {
+            // Framing-first: invitational, quieter, leans into Liking.
+            let subject = "あなたの好みで、明日の MUGEN を書かせてください".to_string();
+            let body = format!(
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.6;">MU の AI は、あなたが買った 1 着からこういうことを覚えました:</p>{img}<div style="margin:0 0 18px;padding:14px;background:#0d0d0d;border-radius:4px;border:1px solid #1f1f1f;color:#e6c449;font-size:12.5px;line-height:1.6;">
+&middot; ダーク基調が好き<br>
+&middot; テキストの密度が好き<br>
+&middot; 大胆な空白が好き<br>
+&middot; "{name}" がそれを示しました
+</div><p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.6;">これを seed に、明日から 30 日間、毎朝 1 着ずつ <b>あなた専用の MUGEN</b> を書きます。<br>料金は ¥0。気に入った日だけ ¥3,800 から買えます。<br>気に入らなければ、24 時間で消えます。</p>{cta}<p style="margin:18px 0 0;color:#888;font-size:12px;line-height:1.55;">押し売りはしません。<br>これは MU から見た、あなたへの最も静かな返礼です。</p>"#,
+                img = image_block(ctx),
+                name = html_escape(&ctx.product_name),
+                cta = cta);
+            let html = email_shell(&subject, "MU × YOU — 招待", &now_jst, &body);
             (subject, html)
         }
     }
@@ -21879,7 +22003,8 @@ fn template_cohort30(ctx: &EmailContext, variant: &str, cohort_size: i64) -> (St
         "A" => {
             let subject = format!("MU 30日ログ — #{:04} cohort", ctx.order_id);
             let body = format!(
-                r#"<p style="margin:0 0 6px;color:#bbb;">あなたが買って 30 日。MU は以下を実行しました。</p>{table}{accent}"#,
+                r#"<p style="margin:0 0 14px;color:#bbb;">30 日前、あなたが買ったのはこの 1 着:</p>{img}<p style="margin:0 0 6px;color:#bbb;">そして MU は以下を実行しました。</p>{table}{accent}"#,
+                img = image_block(ctx),
                 table = table_html,
                 accent = accent_block("次の email は 365 日後 (annual log)。<br>それまで沈黙します。"));
             (subject.clone(), email_shell(&subject, "30 日ログ", &now_jst, &body))
@@ -21900,8 +22025,8 @@ fn template_cohort30(ctx: &EmailContext, variant: &str, cohort_size: i64) -> (St
                 ms = ctx.musk_score, mv = html_escape(&musk_v),
                 bs = ctx.bezos_score, bv = html_escape(&bez_v));
             let body = format!(
-                r#"<p style="margin:0 0 14px;color:#bbb;font-size:13.5px;line-height:1.6;">MU には創業者 AI が 2 人います。Elon Musk と Jeff Bezos の persona を Gemini Pro に与えて毎週採点させています。<br>あなたの 30 日間も、彼らの議事録に含まれました。</p>{founders}{table}"#,
-                founders = founders, table = table_html);
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:13.5px;line-height:1.6;">MU には創業者 AI が 2 人います。Elon Musk と Jeff Bezos の persona を Gemini Pro に与えて毎週採点させています。<br>あなたの 30 日間も、彼らの議事録に含まれました。</p>{img}{founders}{table}"#,
+                img = image_block(ctx), founders = founders, table = table_html);
             (subject.clone(), email_shell(&subject, "創業者の議事録", &now_jst, &body))
         }
     }
@@ -21969,6 +22094,7 @@ async fn send_buyer_email(
         ("nft_mint",   v) => template_nft_mint(ctx, v,
             extra.get("mint_address").and_then(|x| x.as_str()).unwrap_or("")),
         ("nft_login",  v) => template_nft_login(ctx, v),
+        ("mu_x_you",   v) => template_mu_x_you(ctx, v),
         ("drop_preview", v) => template_drop_preview(ctx, v),
         ("quarter",    v) => template_quarter(ctx, v),
         _ => return Err(format!("unknown kind: {}", kind)),
@@ -22217,17 +22343,19 @@ async fn agent_production_watcher(db: Db) -> Result<AgentReport, String> {
     }
 
     let sent_nft_mint     = day_n_kind(&db, "nft_mint",     3).await.unwrap_or(0);
+    let sent_mu_x_you     = day_n_kind(&db, "mu_x_you",     7).await.unwrap_or(0);
     let sent_nft_login    = day_n_kind(&db, "nft_login",   14).await.unwrap_or(0);
     let sent_drop_preview = day_n_kind(&db, "drop_preview",60).await.unwrap_or(0);
     let sent_quarter      = day_n_kind(&db, "quarter",     90).await.unwrap_or(0);
     obs.insert("sent_nft_mint".into(),     serde_json::Value::from(sent_nft_mint));
+    obs.insert("sent_mu_x_you".into(),     serde_json::Value::from(sent_mu_x_you));
     obs.insert("sent_nft_login".into(),    serde_json::Value::from(sent_nft_login));
     obs.insert("sent_drop_preview".into(), serde_json::Value::from(sent_drop_preview));
     obs.insert("sent_quarter".into(),      serde_json::Value::from(sent_quarter));
 
-    actions.push(serde_json::json!({"received": sent_received, "production": sent_production, "shipped": sent_shipped, "cohort30": sent_cohort, "nft_mint": sent_nft_mint, "nft_login": sent_nft_login, "drop_preview": sent_drop_preview, "quarter": sent_quarter}));
+    actions.push(serde_json::json!({"received": sent_received, "production": sent_production, "shipped": sent_shipped, "cohort30": sent_cohort, "nft_mint": sent_nft_mint, "mu_x_you": sent_mu_x_you, "nft_login": sent_nft_login, "drop_preview": sent_drop_preview, "quarter": sent_quarter}));
     let total = sent_received + sent_production + sent_shipped + sent_cohort
-              + sent_nft_mint + sent_nft_login + sent_drop_preview + sent_quarter;
+              + sent_nft_mint + sent_mu_x_you + sent_nft_login + sent_drop_preview + sent_quarter;
     let summary = format!("watcher: {} sent (recv={}, prod={}, ship={}, c30={}, dry={})",
         total, sent_received, sent_production, sent_shipped, sent_cohort, is_dry);
     Ok(AgentReport {
@@ -22284,13 +22412,14 @@ async fn admin_email_preview(
         ("cohort30",   v) => template_cohort30(&ctx, v, 1),
         ("nft_mint",   v) => template_nft_mint(&ctx, v, "ENaiMint1234567890SoulboundSample"),
         ("nft_login",  v) => template_nft_login(&ctx, v),
+        ("mu_x_you",   v) => template_mu_x_you(&ctx, v),
         ("drop_preview", v) => template_drop_preview(&ctx, v),
         ("quarter",    v) => template_quarter(&ctx, v),
         _ => ("(unknown)".into(), "<p>unknown</p>".into()),
     };
     let tok_attr = html_attr_escape(&tok);
     let mut nav = String::new();
-    for k in ["received","nft_mint","production","nft_login","shipped","cohort30","drop_preview","quarter"] {
+    for k in ["received","nft_mint","production","nft_login","shipped","mu_x_you","cohort30","drop_preview","quarter"] {
         for v in ["A","B"] {
             nav.push_str(&format!(
                 r#"<a href="?token={t}&kind={k}&variant={v}" style="color:#9bd;margin-right:8px;">{k}/{v}</a>"#,
@@ -22335,6 +22464,7 @@ async fn admin_email_test_send(
         ("cohort30",   v) => template_cohort30(&ctx, v, 1),
         ("nft_mint",   v) => template_nft_mint(&ctx, v, "ENaiMint1234567890SoulboundSample"),
         ("nft_login",  v) => template_nft_login(&ctx, v),
+        ("mu_x_you",   v) => template_mu_x_you(&ctx, v),
         ("drop_preview", v) => template_drop_preview(&ctx, v),
         ("quarter",    v) => template_quarter(&ctx, v),
         _ => return (StatusCode::BAD_REQUEST, "unknown kind").into_response(),
@@ -22369,6 +22499,352 @@ async fn admin_email_test_send(
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("http: {e}")).into_response(),
     }
+}
+
+// ── Agent 24: email_critic ─────────────────────────────────────────────
+// 4 personas (Musk / Bezos / Jobs / skeptical buyer) score each email
+// template (subject + body) via Gemini Flash. Writes to email_critique.
+// Cost: 9 kinds × 2 variants × 1 batched call/day ≈ 18 Flash calls/day.
+
+const EMAIL_CRITIC_PROMPT: &str = r#"You are scoring a single email from MU
+(a 0-human apparel brand) from FOUR personas. Each persona has its own
+operating principles. Return STRICT JSON only (no fences).
+
+The four personas:
+1. "musk"  — Elon Musk. Cuts BS. Numbers, not adjectives. Speed obsessed.
+            Scores HIGH only when message is data-dense, no fluff, ships fast.
+            Scores LOW if it sounds like a marketing email.
+2. "bezos" — Jeff Bezos. Customer obsession. Day 1 thinking.
+            Scores HIGH when the email centers the buyer's actual experience
+            and discloses the long-term thesis. LOW if seller-centric.
+3. "jobs"  — Steve Jobs. Aesthetic + simplicity + emotional resonance.
+            Scores HIGH when one sentence carries the whole point and the
+            design serves the message. LOW for clutter, multiple CTAs,
+            "everything but the kitchen sink".
+4. "buyer" — A skeptical 28-year-old Tokyo customer who bought a single
+            MUGEN shirt. Scores HIGH if reading it feels like the brand
+            knows them and isn't trying to extract more money. LOW if it
+            feels like spam, "BUY NOW", or guilt-tripping.
+
+Each persona returns:
+- score: 0.0..1.0 (be HARSH; default ~0.4–0.6, only excellent gets 0.85+)
+- verdict: <=120 chars headline ("what this email is")
+- suggestion: <=200 chars, ONE concrete change (rewrite/delete/add)
+
+Output schema (exact keys, all four required):
+{
+  "musk":  {"score":0.0,"verdict":"...","suggestion":"..."},
+  "bezos": {"score":0.0,"verdict":"...","suggestion":"..."},
+  "jobs":  {"score":0.0,"verdict":"...","suggestion":"..."},
+  "buyer": {"score":0.0,"verdict":"...","suggestion":"..."}
+}
+"#;
+
+/// Strip HTML tags for a plain-text summary suitable for Gemini.
+fn strip_html_tags(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut in_tag = false;
+    let mut last_was_space = true;
+    for ch in html.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => { in_tag = false; if !last_was_space { out.push(' '); last_was_space = true; } }
+            c if in_tag => { let _ = c; }
+            c if c.is_whitespace() => {
+                if !last_was_space { out.push(' '); last_was_space = true; }
+            }
+            c => { out.push(c); last_was_space = false; }
+        }
+    }
+    out.replace("&nbsp;", " ")
+       .replace("&amp;", "&")
+       .replace("&lt;", "<")
+       .replace("&gt;", ">")
+       .replace("&quot;", "\"")
+       .replace("&#39;", "'")
+       .trim().chars().take(1800).collect()
+}
+
+const CRITIC_TARGETS: &[(&str, &[&str])] = &[
+    ("received",     &["A", "B"]),
+    ("nft_mint",     &["A", "B"]),
+    ("production",   &["A", "B"]),
+    ("shipped",      &["A", "B"]),
+    ("mu_x_you",     &["A", "B"]),
+    ("nft_login",    &["A", "B"]),
+    ("cohort30",     &["A", "B"]),
+    ("drop_preview", &["A", "B"]),
+    ("quarter",      &["A", "B"]),
+];
+
+async fn agent_email_critic(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut decisions: Vec<serde_json::Value> = Vec::new();
+    let mut actions:   Vec<serde_json::Value> = Vec::new();
+    let is_dry = dry_run_active("email_critic");
+    obs.insert("dry_run".into(), serde_json::Value::from(is_dry));
+
+    let key = match env::var("GEMINI_API_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => return Ok(AgentReport::idle("GEMINI_API_KEY missing")),
+    };
+    {
+        let conn = db.lock().unwrap();
+        if let Err(e) = budget_check(&conn, "gemini-2.5-flash") {
+            return Ok(AgentReport::idle(&e));
+        }
+    }
+
+    let ctx = {
+        let conn = db.lock().unwrap();
+        build_email_context(&conn, 42, "mugen-0042-charcoal-m", 6_000)
+    };
+
+    let mut scored = 0i64;
+    let mut total_in_tok = 0i64;
+    let mut total_out_tok = 0i64;
+    let mut worst: Vec<(String, String, String, f64)> = Vec::new();
+
+    for (kind, variants) in CRITIC_TARGETS {
+        for variant in *variants {
+            let (subject, html) = match (*kind, *variant) {
+                ("received",   v) => template_received(&ctx, v),
+                ("production", v) => template_production(&ctx, v, "Printful Charlotte, NC", "PF-12345678"),
+                ("shipped",    v) => template_shipped(&ctx, v, "9405511899223344556677", "USPS Intl"),
+                ("cohort30",   v) => template_cohort30(&ctx, v, 1),
+                ("nft_mint",   v) => template_nft_mint(&ctx, v, "ENaiMint1234567890SoulboundSample"),
+                ("nft_login",  v) => template_nft_login(&ctx, v),
+                ("mu_x_you",   v) => template_mu_x_you(&ctx, v),
+                ("drop_preview", v) => template_drop_preview(&ctx, v),
+                ("quarter",    v) => template_quarter(&ctx, v),
+                _ => continue,
+            };
+            let plain = strip_html_tags(&html);
+            let prompt = format!(
+                "{}\n---\nEMAIL UNDER REVIEW:\nkind: {}  variant: {}\nsubject: {}\nbody (plain text):\n{}\n",
+                EMAIL_CRITIC_PROMPT, kind, variant, subject, plain);
+
+            let req = serde_json::json!({
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.5, "maxOutputTokens": 2000,
+                    "responseMimeType": "application/json"},
+            });
+            let url = format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
+                key);
+            let resp = match reqwest::Client::new().post(&url).json(&req).send().await {
+                Ok(r) if r.status().is_success() => r,
+                Ok(r) => {
+                    let s = r.status();
+                    let t = r.text().await.unwrap_or_default();
+                    decisions.push(serde_json::json!({"type":"gemini_err","kind":kind,"variant":variant,"status":s.as_u16(),"body":t.chars().take(200).collect::<String>()}));
+                    continue;
+                }
+                Err(e) => {
+                    decisions.push(serde_json::json!({"type":"http_err","kind":kind,"variant":variant,"error":e.to_string()}));
+                    continue;
+                }
+            };
+            let body: serde_json::Value = match resp.json().await {
+                Ok(v) => v,
+                Err(e) => { decisions.push(serde_json::json!({"type":"json_err","kind":kind,"variant":variant,"error":e.to_string()})); continue; }
+            };
+            let raw = body["candidates"][0]["content"]["parts"][0]["text"]
+                .as_str().unwrap_or("").trim().to_string();
+            let parsed: serde_json::Value = match serde_json::from_str(&raw) {
+                Ok(v) => v,
+                Err(_) => {
+                    let start = raw.find('{');
+                    let end = raw.rfind('}');
+                    match (start, end) {
+                        (Some(s), Some(e)) if e > s => serde_json::from_str(&raw[s..=e]).unwrap_or_default(),
+                        _ => serde_json::Value::Null,
+                    }
+                }
+            };
+            if parsed.is_null() {
+                decisions.push(serde_json::json!({"type":"empty_parse","kind":kind,"variant":variant,"raw_head":raw.chars().take(80).collect::<String>()}));
+                continue;
+            }
+            total_in_tok  += (prompt.chars().count() / 4) as i64;
+            total_out_tok += (raw.chars().count() / 4) as i64;
+
+            let now = chrono_now();
+            for persona in ["musk", "bezos", "jobs", "buyer"] {
+                let p = &parsed[persona];
+                if !p.is_object() { continue; }
+                let score = p["score"].as_f64().unwrap_or(0.5).clamp(0.0, 1.0);
+                let verdict = p["verdict"].as_str().unwrap_or("(no verdict)").chars().take(120).collect::<String>();
+                let suggestion = p["suggestion"].as_str().unwrap_or("").chars().take(200).collect::<String>();
+                {
+                    let conn = db.lock().unwrap();
+                    let _ = conn.execute(
+                        "INSERT INTO email_critique (kind, variant, persona, subject, score, verdict, suggestion, created_at)
+                         VALUES (?,?,?,?,?,?,?,?)",
+                        params![kind, variant, persona, subject, score, verdict, suggestion, now],
+                    );
+                }
+                scored += 1;
+                if score < 0.5 {
+                    worst.push((format!("{}/{}", kind, variant), persona.into(), suggestion.clone(), score));
+                }
+            }
+        }
+    }
+    {
+        let conn = db.lock().unwrap();
+        let _ = budget_record(&conn, "email_critic", "gemini-2.5-flash", total_in_tok, total_out_tok);
+    }
+    obs.insert("scored_rows".into(), serde_json::Value::from(scored));
+    obs.insert("low_score_count".into(), serde_json::Value::from(worst.len() as i64));
+    actions.push(serde_json::json!({"rows": scored, "tok_in": total_in_tok, "tok_out": total_out_tok}));
+
+    let mut worst_sorted = worst.clone();
+    worst_sorted.sort_by(|a, b| a.3.partial_cmp(&b.3).unwrap_or(std::cmp::Ordering::Equal));
+    let top3: Vec<serde_json::Value> = worst_sorted.into_iter().take(3)
+        .map(|(slot, persona, sug, sc)| serde_json::json!({
+            "slot": slot, "persona": persona, "score": sc, "suggestion": sug
+        })).collect();
+    obs.insert("worst3".into(), serde_json::Value::Array(top3));
+    let summary = if scored == 0 {
+        "email_critic: 0 rows (gemini all-fail or no templates)".into()
+    } else {
+        format!("email_critic: {} rows, {} low (<0.5)", scored, worst.len())
+    };
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs),
+        decisions, actions, summary,
+        notable: !worst.is_empty(),
+    })
+}
+
+/// GET /admin/email-critique?token=… — latest persona scores per template.
+async fn admin_email_critique(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/email-critique").await { return r; }
+    let tok = q.get("token").map(String::as_str).unwrap_or("").to_string();
+    let tok_attr = html_attr_escape(&tok);
+
+    #[derive(Clone)]
+    struct Row { kind: String, variant: String, persona: String, score: f64, verdict: String, suggestion: String }
+    let rows: Vec<Row> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT kind, variant, persona, score, verdict, suggestion
+             FROM email_critique
+             WHERE id IN (
+               SELECT MAX(id) FROM email_critique GROUP BY kind, variant, persona
+             )
+             ORDER BY kind, variant, persona"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map([], |r| Ok(Row {
+            kind: r.get(0)?, variant: r.get(1)?, persona: r.get(2)?,
+            score: r.get(3)?, verdict: r.get(4)?, suggestion: r.get(5)?,
+        })).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+
+    let mut slot_rows: std::collections::BTreeMap<(String, String), [Option<Row>; 4]> = std::collections::BTreeMap::new();
+    let personas = ["musk", "bezos", "jobs", "buyer"];
+    for r in &rows {
+        let idx = personas.iter().position(|p| *p == r.persona).unwrap_or(0);
+        let slot = slot_rows.entry((r.kind.clone(), r.variant.clone())).or_insert([None, None, None, None]);
+        slot[idx] = Some(r.clone());
+    }
+    let cell = |r: &Option<Row>| -> String {
+        match r {
+            Some(x) => {
+                let bar = (x.score * 20.0).round() as i64;
+                let bar_str: String = "█".repeat(bar.max(0).min(20) as usize);
+                let color = if x.score >= 0.75 { "#9bd97a" } else if x.score >= 0.5 { "#e6c449" } else { "#e07b7b" };
+                format!(
+                    r#"<div style="color:{c}"><b>{s:.2}</b> <span style="opacity:0.55">{bar}</span></div>
+<div style="color:#aaa;font-size:11.5px;margin-top:3px">{v}</div>
+<div style="color:#777;font-size:11px;margin-top:3px">▶ {sug}</div>"#,
+                    c = color, s = x.score, bar = bar_str,
+                    v = html_escape(&x.verdict), sug = html_escape(&x.suggestion))
+            }
+            None => r#"<span style="color:#444">—</span>"#.into(),
+        }
+    };
+    let mut tbody = String::new();
+    for ((kind, variant), arr) in &slot_rows {
+        let scores: Vec<f64> = arr.iter().filter_map(|r| r.as_ref().map(|x| x.score)).collect();
+        let avg: f64 = if scores.is_empty() { 0.0 } else { scores.iter().sum::<f64>() / scores.len() as f64 };
+        let avg_color = if avg >= 0.75 { "#9bd97a" } else if avg >= 0.5 { "#e6c449" } else { "#e07b7b" };
+        tbody.push_str(&format!(
+            r#"<tr>
+<td><a href="/admin/email-preview?token={t}&kind={k}&variant={v}" style="color:#9bd;text-decoration:none;"><b>{k}</b>/<b>{v}</b></a></td>
+<td style="color:{ac};font-variant-numeric:tabular-nums;"><b>{a:.2}</b></td>
+<td>{c0}</td><td>{c1}</td><td>{c2}</td><td>{c3}</td>
+</tr>"#,
+            t = tok_attr, k = html_escape(kind), v = html_escape(variant),
+            ac = avg_color, a = avg,
+            c0 = cell(&arr[0]), c1 = cell(&arr[1]), c2 = cell(&arr[2]), c3 = cell(&arr[3])));
+    }
+    if tbody.is_empty() {
+        tbody = r#"<tr><td colspan=6 style="color:#666">(まだ critique なし。下のボタンで実行してください)</td></tr>"#.into();
+    }
+
+    let html = format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>MU / Email critique — 4 ペルソナ採点</title>
+<style>
+body{{font:14px/1.55 ui-monospace,Menlo,monospace;color:#eaeaea;background:#0b0b0b;padding:24px;max-width:1280px;margin:0 auto}}
+h1{{font-weight:500;margin:0 0 4px;font-size:18px}}
+.sub{{color:#888;margin-bottom:18px;font-size:13px}}
+table{{width:100%;border-collapse:collapse}}
+th,td{{padding:10px 12px;border-bottom:1px solid #1f1f1f;text-align:left;vertical-align:top}}
+th{{color:#888;font-weight:500;font-size:11px;letter-spacing:0.08em;text-transform:uppercase}}
+.nav a{{margin-right:14px;color:#9bd}} .nav{{margin-bottom:20px}}
+code{{background:#1a1a1a;padding:1px 6px;border-radius:4px;color:#e6c449}}
+form{{display:inline}}
+button{{background:#1a1a1a;border:1px solid #333;color:#eaeaea;padding:6px 12px;border-radius:3px;cursor:pointer;font:inherit}}
+button:hover{{background:#2a2a2a}}
+</style></head><body>
+<div class=nav>
+  <a href="/admin/agents?token={tok}">Agents</a>
+  <a href="/admin/email-ab?token={tok}">Email A/B</a>
+  <a href="/admin/email-critique?token={tok}">Email Critique</a>
+  <a href="/admin/email-preview?token={tok}&kind=received&variant=A">Email Preview</a>
+  <a href="/admin/founders?token={tok}">Founders</a>
+</div>
+<h1>Email critique — 4 ペルソナ採点 (latest)</h1>
+<div class=sub>
+4 つの persona (Musk / Bezos / Jobs / 懐疑的 buyer) が各テンプレを 0.0–1.0 で採点。<br>
+平均 ≥ 0.75 = ship、0.5–0.75 = OK、&lt; 0.5 = 書き直し候補。<br>
+<form method="post" action="/admin/email-critique/run?token={tok}" onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='採点中… (1分くらいかかる)';">
+  <button type=submit>いま採点する (Gemini Flash × 4 ペルソナ × 18 テンプレ)</button>
+</form>
+</div>
+<table>
+<thead><tr><th>template</th><th>avg</th><th>⚡ Musk</th><th>📦 Bezos</th><th>🍎 Jobs</th><th>🧊 Buyer</th></tr></thead>
+<tbody>{tbody}</tbody>
+</table>
+</body></html>"#, tok = tok_attr, tbody = tbody);
+    Html(html).into_response()
+}
+
+/// POST /admin/email-critique/run?token=… — force agent_email_critic to run now.
+async fn admin_email_critique_run(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/email-critique/run").await { return r; }
+    let tok = q.get("token").cloned().unwrap_or_default();
+    let report = match agent_email_critic(db.clone()).await {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("critic err: {e}")).into_response(),
+    };
+    journal_agent_report(db, "email_critic", &report).await;
+    let tok_attr = html_attr_escape(&tok);
+    Response::builder()
+        .status(StatusCode::SEE_OTHER)
+        .header("Location", format!("/admin/email-critique?token={}", tok_attr))
+        .body(axum::body::Body::empty()).unwrap()
 }
 
 /// GET /admin/email-ab?token=… — A/B test rollup per kind+variant.
