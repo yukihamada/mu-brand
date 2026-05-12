@@ -16025,6 +16025,26 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         interval_secs: 21_600, // 6h
         description: "agent_journal 未 embed 行を text-embedding-004 で埋め込み → journal_embeddings",
     },
+    AgentDef {
+        name: "support_reply_sender",
+        interval_secs: 1800, // 30 min
+        description: "customer_support 草案を kind=praise/request/shipping/other かつ 24h 経過なら Resend で自動送信",
+    },
+    AgentDef {
+        name: "catalog_health",
+        interval_secs: 86_400, // 24h
+        description: "active collab_products の image 到達性 + 利益 > 0 を日次確認、不健全は governance_queue",
+    },
+    AgentDef {
+        name: "price_micro",
+        interval_secs: 86_400, // 24h
+        description: "7d 売上で collab_products の価格を ±¥200 微調整 (T2、±5%/¥500 超は T1)",
+    },
+    AgentDef {
+        name: "strategist",
+        interval_secs: 7 * 86_400, // 週次
+        description: "Gemini Pro が次 7 日の 1 つの大きな動き (drop / price / ad / deprecate) を提案 → T1 governance",
+    },
 ];
 
 /// agent_journal から指定 agent の最後の cycle_at (epoch sec) を取得。
@@ -16049,6 +16069,10 @@ async fn run_agent(name: &str, db: Db) -> Result<AgentReport, String> {
         "self_evolve"       => agent_self_evolve(db).await,
         "sns_metrics"       => agent_sns_metrics(db).await,
         "journal_embedder"  => agent_journal_embedder(db).await,
+        "support_reply_sender" => agent_support_reply_sender(db).await,
+        "catalog_health"    => agent_catalog_health(db).await,
+        "price_micro"       => agent_price_micro(db).await,
+        "strategist"        => agent_strategist(db).await,
         _ => Err(format!("unknown agent: {}", name)),
     }
 }
@@ -17404,6 +17428,492 @@ async fn agent_journal_embedder(db: Db) -> Result<AgentReport, String> {
         decisions: vec![],
         actions: vec![serde_json::json!({"embedded": embedded})],
         summary, notable,
+    })
+}
+
+// ── Agent 11: support_reply_sender ─────────────────────────────────────
+// customer_support が書いた ai_reply 草案を、kind が T2-safe で 24h 経過 +
+// 未送信なら Resend で自動送信。kind∈{bug,refund,complaint} は T1 とみなし
+// 自動送信しない (governance_queue に既に上がっているはず)。
+async fn agent_support_reply_sender(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut actions: Vec<serde_json::Value> = Vec::new();
+    let mut decisions: Vec<serde_json::Value> = Vec::new();
+
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    if resend_key.is_empty() {
+        return Ok(AgentReport::idle("RESEND_API_KEY missing"));
+    }
+    let is_dry_run = dry_run_active("support_reply_sender");
+    obs.insert("dry_run".into(), serde_json::Value::from(is_dry_run));
+
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let h24 = now_s - 24 * 3600;
+    let candidates: Vec<(i64, String, String, String, String)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, COALESCE(email,''), COALESCE(kind,''),
+                    COALESCE(ai_reply,''), COALESCE(ai_reply_at,'')
+             FROM customer_feedback
+             WHERE ai_reply IS NOT NULL AND length(ai_reply) > 5
+               AND (ai_action_taken IS NULL OR ai_action_taken='')
+               AND CAST(COALESCE(ai_reply_at,'0') AS INTEGER) > 0
+               AND CAST(ai_reply_at AS INTEGER) < ?
+               AND kind IN ('praise','request','shipping','other')
+             ORDER BY id ASC LIMIT 5"
+        ) { Ok(s) => s, Err(_) => return Ok(AgentReport::idle("schema not ready")) };
+        stmt.query_map(params![h24], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    obs.insert("candidates".into(), serde_json::Value::from(candidates.len() as i64));
+    if candidates.is_empty() {
+        return Ok(AgentReport::idle("no T2-safe replies aged 24h+"));
+    }
+
+    let mut sent: i64 = 0;
+    let mut failed: i64 = 0;
+    for (fb_id, email, kind, reply, _replied_at) in &candidates {
+        if email.is_empty() || !email.contains('@') {
+            decisions.push(serde_json::json!({"type":"skip_no_email","fb_id":fb_id}));
+            continue;
+        }
+        if is_dry_run {
+            decisions.push(serde_json::json!({
+                "type": "reply_dry_run", "fb_id": fb_id, "to": email, "kind": kind,
+            }));
+            let conn = db.lock().unwrap();
+            let _ = log_autonomy_decision(
+                &conn, "support_reply_sender", "send_reply",
+                "T2",
+                &serde_json::json!({"fb_id": fb_id, "to": email, "kind": kind}),
+                false, false, true,
+            );
+            continue;
+        }
+        let body_html = format!(
+            r#"<div style="font:14px/1.55 -apple-system,BlinkMacSystemFont,sans-serif;color:#1a1a1a;max-width:540px;margin:24px auto;padding:24px">
+{reply}
+<hr style="border:none;border-top:1px solid #eee;margin:24px 0">
+<p style="color:#666;font-size:12px">MU autopilot ・ 株式会社イネブラ ・ <a href="https://wearmu.com" style="color:#888">wearmu.com</a></p>
+</div>"#,
+            reply = html_escape(reply).replace('\n', "<br>"),
+        );
+        let resp = reqwest::Client::new()
+            .post("https://api.resend.com/emails")
+            .bearer_auth(&resend_key)
+            .json(&serde_json::json!({
+                "from": "MU <noreply@wearmu.com>",
+                "to": [email],
+                "subject": "MU からの返信",
+                "html": body_html,
+                "reply_to": "info@enablerdao.com",
+            }))
+            .send().await;
+        let ok = matches!(resp, Ok(ref r) if r.status().is_success());
+        let conn = db.lock().unwrap();
+        if ok {
+            let _ = conn.execute(
+                "UPDATE customer_feedback SET ai_action_taken='replied_auto' WHERE id=?",
+                params![fb_id],
+            );
+            let _ = log_autonomy_decision(
+                &conn, "support_reply_sender", "send_reply",
+                "T2",
+                &serde_json::json!({"fb_id": fb_id, "to": email, "kind": kind}),
+                true, false, false,
+            );
+            actions.push(serde_json::json!({"type":"reply_sent","fb_id":fb_id,"to":email}));
+            sent += 1;
+        } else {
+            let _ = log_autonomy_decision(
+                &conn, "support_reply_sender", "send_reply_failed",
+                "T1",
+                &serde_json::json!({"fb_id": fb_id, "to": email}),
+                false, true, false,
+            );
+            let _ = enqueue_governance(
+                &conn, None, "support_reply_sender",
+                "Resend API send failed",
+                &format!("fb_id={}, to={}", fb_id, email),
+            );
+            decisions.push(serde_json::json!({"type":"reply_failed","fb_id":fb_id}));
+            failed += 1;
+        }
+    }
+    obs.insert("sent".into(), serde_json::Value::from(sent));
+    obs.insert("failed".into(), serde_json::Value::from(failed));
+    let notable = failed > 0 || sent > 0;
+    let summary = format!("{} sent, {} failed (dry_run={})", sent, failed, is_dry_run);
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs),
+        decisions, actions, summary, notable,
+    })
+}
+
+// ── Agent 12: catalog_health ───────────────────────────────────────────
+// 24h ごと、active な collab_products の image_url HEAD 200 OK / 利益 > 0 を確認。
+// 失敗 → governance_queue (T1)。利益 0 や赤字 → notable。
+async fn agent_catalog_health(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut decisions: Vec<serde_json::Value> = Vec::new();
+
+    let products: Vec<(i64, String, String, i64)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, slug, COALESCE(image_url,''), price_jpy
+             FROM collab_products WHERE active=1
+             ORDER BY id DESC LIMIT 30"
+        ) { Ok(s) => s, Err(_) => return Ok(AgentReport::idle("schema not ready")) };
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    obs.insert("products".into(), serde_json::Value::from(products.len() as i64));
+    if products.is_empty() {
+        return Ok(AgentReport::idle("no active collab products"));
+    }
+
+    let mut bad_image = 0i64;
+    let mut low_margin = 0i64;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8)).build()
+        .map_err(|e| e.to_string())?;
+    for (pid, slug, image_url, price) in &products {
+        // 1) Image reachability
+        if !image_url.is_empty() && image_url.starts_with("http") {
+            let head = client.head(image_url).send().await;
+            let ok = matches!(head, Ok(ref r) if r.status().is_success());
+            if !ok {
+                bad_image += 1;
+                decisions.push(serde_json::json!({
+                    "type":"image_unreachable","slug":slug,"image_url":image_url,
+                }));
+                let conn = db.lock().unwrap();
+                let did = log_autonomy_decision(
+                    &conn, "catalog_health", "image_unreachable", "T1",
+                    &serde_json::json!({"pid": pid, "slug": slug, "image_url": image_url}),
+                    false, true, false,
+                );
+                let _ = enqueue_governance(
+                    &conn, did, "catalog_health",
+                    "Product image unreachable",
+                    &format!("slug={}, url={}", slug, image_url),
+                );
+            }
+        }
+        // 2) Margin check — look up Printful cost from the printful_costs table
+        let cost: i64 = {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT COALESCE(printful_cost_jpy, 0) FROM collab_products WHERE id=?",
+                params![pid], |r| r.get(0),
+            ).unwrap_or(0)
+        };
+        if cost > 0 && *price <= cost {
+            low_margin += 1;
+            decisions.push(serde_json::json!({
+                "type":"non_positive_margin","slug":slug,"price":price,"cost":cost,
+            }));
+            let conn = db.lock().unwrap();
+            let did = log_autonomy_decision(
+                &conn, "catalog_health", "non_positive_margin", "T1",
+                &serde_json::json!({"pid": pid, "slug": slug, "price": price, "cost": cost}),
+                false, true, false,
+            );
+            let _ = enqueue_governance(
+                &conn, did, "catalog_health",
+                &format!("¥{} ≤ cost ¥{}", price, cost),
+                &format!("slug={} — adjust price or deactivate", slug),
+            );
+        }
+    }
+    obs.insert("bad_image".into(), serde_json::Value::from(bad_image));
+    obs.insert("low_margin".into(), serde_json::Value::from(low_margin));
+    let notable = bad_image > 0 || low_margin > 0;
+    let summary = format!("{} active, {} bad image, {} low margin",
+        products.len(), bad_image, low_margin);
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs),
+        decisions, actions: vec![], summary, notable,
+    })
+}
+
+// ── Agent 13: price_micro ──────────────────────────────────────────────
+// 24h ごと、collab_products の 7日販売数を集計し、高速 (>3 売れた) → +¥200、
+// 低速 (0 売れた かつ active>14d) → -¥200。T2 (可逆)、ただし起源価格から
+// ±5% 超 / 絶対値 ¥500 超は T1 escalate。最初は DRY_RUN_PRICE_MICRO=1 で運用。
+async fn agent_price_micro(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut actions: Vec<serde_json::Value> = Vec::new();
+    let mut decisions: Vec<serde_json::Value> = Vec::new();
+    let is_dry_run = dry_run_active("price_micro");
+    obs.insert("dry_run".into(), serde_json::Value::from(is_dry_run));
+
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let week = now_s - 7 * 86_400;
+    let two_weeks = now_s - 14 * 86_400;
+
+    // Active products with their 7-day order count and creation age
+    type Row = (i64, String, i64, i64, i64);
+    let rows: Vec<Row> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT p.id, p.slug, p.price_jpy,
+                    (SELECT COUNT(*) FROM collab_orders o
+                     WHERE o.slug = p.slug
+                       AND CAST(COALESCE(o.created_at,'0') AS INTEGER) > ?1) AS sold_7d,
+                    CAST(COALESCE(p.created_at,'0') AS INTEGER) AS created_secs
+             FROM collab_products p
+             WHERE p.active = 1
+             ORDER BY p.id DESC LIMIT 50"
+        ) { Ok(s) => s, Err(_) => return Ok(AgentReport::idle("schema not ready")) };
+        stmt.query_map(params![week], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    obs.insert("considered".into(), serde_json::Value::from(rows.len() as i64));
+
+    let mut bumped: i64 = 0;
+    let mut cut: i64 = 0;
+    let mut escalated: i64 = 0;
+    for (pid, slug, price, sold_7d, created_secs) in &rows {
+        let delta: i64 = if *sold_7d > 3 { 200 }
+                         else if *sold_7d == 0 && (now_s - created_secs) > 14 * 86_400 && *created_secs > 0 { -200 }
+                         else { 0 };
+        if delta == 0 { continue; }
+        if (*created_secs == 0) && *sold_7d == 0 { continue; }
+        let _ = two_weeks; // age check inlined above
+
+        // ±5% guard. Use current price as baseline (running cap; OK for v1).
+        let max_delta = (*price as f64 * 0.05).round() as i64;
+        if delta.abs() > 500 || delta.abs() > max_delta.max(1) {
+            decisions.push(serde_json::json!({
+                "type":"escalate_above_cap","slug":slug,"price":price,"delta":delta,
+                "hint": format!("|{}| > ¥500 or > 5% of ¥{}", delta, price),
+            }));
+            let conn = db.lock().unwrap();
+            let did = log_autonomy_decision(
+                &conn, "price_micro", "price_adjust", "T1",
+                &serde_json::json!({"pid": pid, "slug": slug, "from": price, "delta": delta}),
+                false, true, is_dry_run,
+            );
+            let _ = enqueue_governance(
+                &conn, did, "price_micro",
+                &format!("price ±{} on {}", delta, slug),
+                &format!("¥{} → ¥{}; reason: 7d sold={}", price, price + delta, sold_7d),
+            );
+            escalated += 1;
+            continue;
+        }
+        // T2: apply the adjustment (unless dry-run)
+        if is_dry_run {
+            decisions.push(serde_json::json!({
+                "type":"dry_run_price","slug":slug,"from":price,"to":price+delta,"sold_7d":sold_7d,
+            }));
+            let conn = db.lock().unwrap();
+            let _ = log_autonomy_decision(
+                &conn, "price_micro", "price_adjust", "T2",
+                &serde_json::json!({"pid":pid,"slug":slug,"from":price,"to":price+delta,"sold_7d":sold_7d}),
+                false, false, true,
+            );
+            continue;
+        }
+        let new_price = price + delta;
+        let conn = db.lock().unwrap();
+        let r = conn.execute(
+            "UPDATE collab_products SET price_jpy=? WHERE id=?",
+            params![new_price, pid],
+        );
+        if r.is_ok() {
+            if delta > 0 { bumped += 1; } else { cut += 1; }
+            actions.push(serde_json::json!({
+                "type":"price_adjusted","slug":slug,"from":price,"to":new_price,"sold_7d":sold_7d,
+            }));
+            let _ = log_autonomy_decision(
+                &conn, "price_micro", "price_adjust", "T2",
+                &serde_json::json!({"pid":pid,"slug":slug,"from":price,"to":new_price,"sold_7d":sold_7d}),
+                true, false, false,
+            );
+        }
+    }
+    obs.insert("bumped".into(), serde_json::Value::from(bumped));
+    obs.insert("cut".into(), serde_json::Value::from(cut));
+    obs.insert("escalated".into(), serde_json::Value::from(escalated));
+    let notable = bumped + cut > 0 || escalated > 0;
+    let summary = format!("price_micro: {}↑ {}↓ {}↑esc (dry_run={})",
+        bumped, cut, escalated, is_dry_run);
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs),
+        decisions, actions, summary, notable,
+    })
+}
+
+// ── Agent 14: strategist ───────────────────────────────────────────────
+// 週次 (月曜 09:00 JST 想定)、Gemini Pro が「次の 1 週間にすべき 1 つの大きな
+// 動き」を提案。観測 = 7d 売上 / 7d 反応 / journal 過去類似事例 / vision_drift
+// 直近 verdicts。提案は T1 として governance_queue に積む (人間承認必須)。
+async fn agent_strategist(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut decisions: Vec<serde_json::Value> = Vec::new();
+
+    let key = match env::var("GEMINI_API_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => return Ok(AgentReport::idle("GEMINI_API_KEY missing")),
+    };
+    {
+        let conn = db.lock().unwrap();
+        if let Err(e) = budget_check(&conn, SELF_EVOLVE_GEMINI_MODEL) {
+            return Ok(AgentReport::idle(&e));
+        }
+    }
+
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let week = now_s - 7 * 86_400;
+
+    // Gather 7-day business state.
+    let (rev7d, orders7d, top_slugs, recent_blog, drift_recent): (i64, i64, Vec<(String, i64)>, Vec<String>, Vec<serde_json::Value>) = {
+        let conn = db.lock().unwrap();
+        let rev: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(amount_jpy),0) FROM collab_orders
+             WHERE CAST(COALESCE(created_at,'0') AS INTEGER) > ?",
+            params![week], |r| r.get(0),
+        ).unwrap_or(0);
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM collab_orders
+             WHERE CAST(COALESCE(created_at,'0') AS INTEGER) > ?",
+            params![week], |r| r.get(0),
+        ).unwrap_or(0);
+        let top: Vec<(String, i64)> = {
+            let mut stmt = conn.prepare(
+                "SELECT slug, COUNT(*) FROM collab_orders
+                 WHERE CAST(COALESCE(created_at,'0') AS INTEGER) > ?
+                 GROUP BY slug ORDER BY 2 DESC LIMIT 5"
+            ).expect("prepare");
+            stmt.query_map(params![week], |r| Ok((r.get(0)?, r.get(1)?)))
+                .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+        };
+        let blogs: Vec<String> = {
+            let mut stmt = conn.prepare(
+                "SELECT title FROM auto_blog_posts ORDER BY created_at DESC LIMIT 3"
+            ).expect("prepare");
+            stmt.query_map([], |r| r.get::<_, String>(0))
+                .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+        };
+        let drift: Vec<serde_json::Value> = match conn.prepare(
+            "SELECT output_json FROM ai_decisions
+             WHERE decision_type='vision_drift'
+             ORDER BY created_at DESC LIMIT 3"
+        ) {
+            Ok(mut stmt) => stmt.query_map([], |r| r.get::<_, String>(0))
+                .map(|it| it.filter_map(|r| r.ok())
+                    .filter_map(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                    .collect()).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
+        (rev, n, top, blogs, drift)
+    };
+    obs.insert("revenue_7d_jpy".into(), serde_json::Value::from(rev7d));
+    obs.insert("orders_7d".into(), serde_json::Value::from(orders7d));
+    obs.insert("top_slugs".into(), serde_json::json!(top_slugs));
+
+    let prompt = format!(r#"You are MU's weekly strategist. Constitution vision (4 lines):
+{vision}
+
+Current 7-day state (DO NOT invent figures beyond these):
+- Revenue: ¥{rev}
+- Orders: {orders}
+- Top SKUs by orders: {top}
+- Last 3 blog titles: {blogs}
+- Recent vision_drift verdicts (most recent first): {drift}
+
+Propose ONE concrete action for the next 7 days. It MUST be one of:
+  A) launch a new drop (give name + theme stamp + price band ¥X–¥Y)
+  B) adjust a price band ±¥N on a specific slug (must respect ±5% cap)
+  C) allocate ¥M of ad budget on a specific X post / campaign
+  D) deprecate an underperforming SKU
+
+DO NOT propose: refactors, new dependencies, anything that needs a human
+signature (legal, payments, KYC, hiring).
+
+Respond as compact JSON ONLY (no fences):
+{{
+  "kind": "drop_launch|price_adjust|ad_spend|deprecate",
+  "title": "<= 60 chars",
+  "rationale": "<= 240 chars citing a number from the state above",
+  "expected_outcome": "<= 120 chars, with a target number",
+  "risk_if_wrong": "<= 120 chars",
+  "payload": {{"slug":"...","amount_jpy":N,"price_from":X,"price_to":Y}}
+}}
+
+If no clear move is justified by the numbers above, respond {{"kind":"hold","title":"hold","rationale":"...","payload":{{}}}}."#,
+        vision = mu_vision(),
+        rev = rev7d, orders = orders7d,
+        top = serde_json::to_string(&top_slugs).unwrap_or_default(),
+        blogs = serde_json::to_string(&recent_blog).unwrap_or_default(),
+        drift = serde_json::to_string(&drift_recent).unwrap_or_default(),
+    );
+
+    let req = serde_json::json!({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0.4,
+            "maxOutputTokens": 1500,
+            "responseMimeType": "application/json",
+        },
+    });
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+        SELF_EVOLVE_GEMINI_MODEL, key);
+    let resp = reqwest::Client::new().post(&url).json(&req).send().await
+        .map_err(|e| format!("gemini http: {e}"))?;
+    if !resp.status().is_success() {
+        let s = resp.status();
+        let t = resp.text().await.unwrap_or_default();
+        return Err(format!("gemini {}: {}", s, t.chars().take(200).collect::<String>()));
+    }
+    let body: serde_json::Value = resp.json().await.map_err(|e| format!("json: {e}"))?;
+    let raw = body["candidates"][0]["content"]["parts"][0]["text"]
+        .as_str().unwrap_or("").trim().to_string();
+    let parsed: serde_json::Value = serde_json::from_str(&raw)
+        .unwrap_or(serde_json::json!({"kind":"hold","title":"parse_failed"}));
+    let kind = parsed["kind"].as_str().unwrap_or("hold").to_string();
+    let title = parsed["title"].as_str().unwrap_or("(no title)").to_string();
+    let rationale = parsed["rationale"].as_str().unwrap_or("").to_string();
+    obs.insert("proposal_kind".into(), serde_json::Value::String(kind.clone()));
+    obs.insert("proposal_title".into(), serde_json::Value::String(title.clone()));
+
+    if kind == "hold" {
+        let conn = db.lock().unwrap();
+        let in_tok = (prompt.chars().count() / 4) as i64;
+        let out_tok = (raw.chars().count() / 4) as i64;
+        let _ = budget_record(&conn, "strategist", SELF_EVOLVE_GEMINI_MODEL, in_tok, out_tok);
+        return Ok(AgentReport {
+            observations: serde_json::Value::Object(obs),
+            decisions: vec![serde_json::json!({"type":"hold","rationale": rationale})],
+            actions: vec![],
+            summary: "strategist: HOLD this week".into(),
+            notable: false,
+        });
+    }
+    // T1 → governance_queue
+    {
+        let conn = db.lock().unwrap();
+        let did = log_autonomy_decision(
+            &conn, "strategist", &format!("strategist_{}", kind), "T1",
+            &parsed, false, true, false,
+        );
+        let _ = enqueue_governance(
+            &conn, did, "strategist",
+            &title,
+            &format!("kind={} | {}", kind, rationale),
+        );
+        let in_tok = (prompt.chars().count() / 4) as i64;
+        let out_tok = (raw.chars().count() / 4) as i64;
+        let _ = budget_record(&conn, "strategist", SELF_EVOLVE_GEMINI_MODEL, in_tok, out_tok);
+    }
+    decisions.push(parsed);
+    let summary = format!("strategist: proposal '{}' (kind={})", title, kind);
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs),
+        decisions, actions: vec![], summary, notable: true,
     })
 }
 
