@@ -1,0 +1,671 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU Collab — あなたのブランドを 24h で AI ネイティブ DTC へ | 法人向けプラン</title>
+<meta name="description" content="ロゴを送ると、24 時間で 30+ 商品ラインが立ち上がる。在庫ゼロ、AI デザイン、自律エージェント運営。基本料 1 年無料、収益シェア型。MU Collab — 法人向けプラン。">
+<meta property="og:title" content="MU Collab — ブランドを 24h で AI ネイティブ DTC へ">
+<meta property="og:description" content="基本料 1 年無料 / 在庫ゼロ / AI デザイン / 自律エージェント 7 体運営。実例: MU × SIIIEEP は 13 日で 31 商品稼働、平均 margin 47%。">
+<meta property="og:image" content="https://wearmu.com/og.jpg">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+:root{
+  --bg:#0A0A0A; --bg-2:#111; --bg-3:#181818;
+  --fg:#F5F5F0; --mute:rgba(245,245,240,0.62); --line:rgba(255,255,255,0.08);
+  --y:#e6c449; --y-soft:rgba(230,196,73,0.12);
+  --red:#C8362C; --green:#4FA868;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg);color:var(--fg);
+  font-family:'Helvetica Neue','Hiragino Sans','Yu Gothic',Arial,sans-serif;
+  line-height:1.85;-webkit-font-smoothing:antialiased;
+  font-feature-settings:"palt";
+}
+a{color:inherit}
+.wrap{max-width:1100px;margin:0 auto;padding:0 32px}
+.wrap-narrow{max-width:780px;margin:0 auto;padding:0 32px}
+
+/* ── NAV ── */
+nav.top{
+  position:sticky;top:0;background:rgba(10,10,10,0.9);backdrop-filter:blur(14px);
+  border-bottom:1px solid var(--line);padding:18px 32px;display:flex;
+  justify-content:space-between;align-items:center;z-index:50;
+}
+nav.top a{text-decoration:none;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.85}
+nav.top .logo{font-weight:700;letter-spacing:0.45em}
+nav.top .links{display:flex;gap:24px;align-items:center}
+nav.top .cta{background:var(--y);color:#000;padding:8px 16px;border-radius:2px;font-weight:700;opacity:1}
+@media (max-width:640px){nav.top .links a:not(.cta){display:none}}
+
+/* ── HERO ── */
+.hero{padding:96px 32px 80px;text-align:center}
+.hero .eyebrow{
+  display:inline-block;font-size:10px;letter-spacing:0.42em;text-transform:uppercase;
+  color:var(--y);background:var(--y-soft);padding:8px 18px;border-radius:2px;margin-bottom:28px;
+}
+.hero h1{
+  font-size:clamp(36px,7vw,80px);font-weight:200;letter-spacing:-0.012em;line-height:1.12;
+  max-width:920px;margin:0 auto 28px;
+}
+.hero h1 em{color:var(--y);font-style:normal;font-weight:300}
+.hero h1 strong{font-weight:700}
+.hero .lede{
+  font-size:clamp(15px,1.6vw,18px);color:var(--mute);max-width:680px;margin:0 auto 44px;line-height:2;
+}
+.hero .ctas{display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+.btn{
+  display:inline-block;padding:14px 28px;border-radius:2px;text-decoration:none;
+  font-size:11.5px;letter-spacing:0.28em;text-transform:uppercase;font-weight:700;
+  transition:transform 0.15s ease, background 0.15s ease;
+}
+.btn-primary{background:var(--y);color:#000}
+.btn-primary:hover{transform:translateY(-1px);background:#f0d05a}
+.btn-secondary{background:transparent;color:var(--fg);border:1px solid rgba(255,255,255,0.22)}
+.btn-secondary:hover{border-color:var(--y);color:var(--y)}
+
+/* ── KPI strip ── */
+.kpi{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1px;
+  background:var(--line);border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+  margin:60px 0 0;
+}
+.kpi .cell{background:var(--bg);padding:40px 28px;text-align:center}
+.kpi .n{font-size:clamp(34px,4vw,52px);font-weight:200;color:var(--y);letter-spacing:-0.02em;line-height:1;font-variant-numeric:tabular-nums}
+.kpi .n small{font-size:0.5em;color:var(--mute);margin-left:6px;font-weight:300;letter-spacing:0}
+.kpi .lbl{margin-top:12px;font-size:10px;letter-spacing:0.28em;text-transform:uppercase;color:var(--mute)}
+
+/* ── SECTION shell ── */
+section{padding:96px 0;border-bottom:1px solid var(--line)}
+section.tight{padding:64px 0}
+section.bg-2{background:var(--bg-2)}
+.section-head{text-align:center;margin-bottom:64px}
+.section-head .label{
+  display:inline-block;font-size:10px;letter-spacing:0.42em;text-transform:uppercase;
+  color:var(--y);margin-bottom:18px;
+}
+.section-head h2{
+  font-size:clamp(28px,4.5vw,46px);font-weight:200;letter-spacing:-0.005em;line-height:1.25;
+  max-width:820px;margin:0 auto;
+}
+.section-head h2 em{color:var(--y);font-style:normal;font-weight:300}
+.section-head .sub{color:var(--mute);font-size:14px;max-width:560px;margin:20px auto 0;line-height:1.95}
+
+/* ── Problem cards ── */
+.problems{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:22px}
+.problem{background:var(--bg-2);border:1px solid var(--line);padding:32px 28px;border-radius:2px}
+.problem .icon{font-size:24px;color:var(--red);margin-bottom:18px}
+.problem h3{font-size:16px;font-weight:500;margin-bottom:10px;letter-spacing:0}
+.problem p{color:var(--mute);font-size:13px;line-height:1.95}
+
+/* ── Solution: 5 layers ── */
+.layers{display:flex;flex-direction:column;gap:14px;max-width:880px;margin:0 auto}
+.layer{
+  display:grid;grid-template-columns:80px 1fr auto;gap:24px;align-items:center;
+  background:var(--bg-2);border:1px solid var(--line);padding:24px 28px;border-radius:2px;
+  transition:border-color 0.2s ease, background 0.2s ease;
+}
+.layer:hover{border-color:rgba(230,196,73,0.45);background:var(--bg-3)}
+.layer .num{
+  font-size:36px;font-weight:200;color:var(--y);letter-spacing:-0.02em;
+  font-variant-numeric:tabular-nums;
+}
+.layer h3{font-size:16px;font-weight:500;margin-bottom:4px;letter-spacing:0}
+.layer p{color:var(--mute);font-size:13px;line-height:1.85;max-width:560px}
+.layer .tech{
+  font-size:9.5px;letter-spacing:0.16em;text-transform:uppercase;color:var(--y);
+  border:1px solid rgba(230,196,73,0.3);padding:6px 12px;border-radius:2px;white-space:nowrap;
+}
+@media (max-width:640px){
+  .layer{grid-template-columns:60px 1fr;gap:18px}
+  .layer .tech{grid-column:1 / -1;justify-self:start;margin-top:6px}
+}
+
+/* ── 3 STEP timeline ── */
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:0;border:1px solid var(--line);border-radius:2px;overflow:hidden}
+.step{padding:36px 32px;background:var(--bg-2);border-right:1px solid var(--line);position:relative}
+.step:last-child{border-right:0}
+.step .day{font-size:9.5px;letter-spacing:0.32em;text-transform:uppercase;color:var(--y);margin-bottom:12px}
+.step h3{font-size:18px;font-weight:400;margin-bottom:10px;letter-spacing:0}
+.step p{color:var(--mute);font-size:13px;line-height:1.95}
+@media (max-width:780px){.steps{grid-template-columns:1fr}.step{border-right:0;border-bottom:1px solid var(--line)}}
+
+/* ── Case study ── */
+.case{display:grid;grid-template-columns:1.05fr 0.95fr;gap:48px;align-items:start;max-width:1000px;margin:0 auto}
+@media (max-width:880px){.case{grid-template-columns:1fr}}
+.case .narrative h3{font-size:24px;font-weight:300;margin-bottom:16px;letter-spacing:-0.005em}
+.case .narrative p{color:var(--mute);font-size:14px;line-height:2;margin-bottom:16px}
+.case .narrative .pull{
+  font-size:18px;font-weight:300;color:var(--fg);border-left:2px solid var(--y);
+  padding:14px 0 14px 22px;margin:24px 0;font-style:italic;line-height:1.7;
+}
+.case .stats{background:var(--bg-2);border:1px solid var(--line);padding:32px;border-radius:2px}
+.case .stats h4{font-size:11px;letter-spacing:0.32em;text-transform:uppercase;color:var(--y);margin-bottom:22px}
+.case .stats table{width:100%;border-collapse:collapse;font-size:13px}
+.case .stats td{padding:11px 0;border-bottom:1px solid var(--line);vertical-align:top}
+.case .stats td:last-child{text-align:right;color:var(--y);font-variant-numeric:tabular-nums;white-space:nowrap}
+.case .stats tr:last-child td{border-bottom:0}
+.case .stats .margin-pos{color:var(--green)}
+.case .stats .total td{border-top:2px solid var(--y);padding-top:18px;margin-top:8px;font-weight:500;color:var(--y);font-size:14px}
+
+/* ── PRICING ── */
+.plans{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+@media (max-width:980px){.plans{grid-template-columns:1fr}}
+.plan{
+  background:var(--bg-2);border:1px solid var(--line);border-radius:4px;
+  padding:40px 32px;display:flex;flex-direction:column;position:relative;
+}
+.plan.featured{border-color:var(--y);background:var(--bg-3);box-shadow:0 4px 36px rgba(230,196,73,0.08)}
+.plan.featured::before{
+  content:"おすすめ";position:absolute;top:-12px;left:50%;transform:translateX(-50%);
+  background:var(--y);color:#000;padding:5px 14px;font-size:10px;letter-spacing:0.32em;
+  text-transform:uppercase;font-weight:700;border-radius:2px;
+}
+.plan .tier{font-size:11px;letter-spacing:0.32em;text-transform:uppercase;color:var(--y);margin-bottom:14px}
+.plan h3{font-size:22px;font-weight:400;margin-bottom:12px;letter-spacing:0}
+.plan .desc{color:var(--mute);font-size:12px;line-height:1.9;min-height:54px;margin-bottom:24px}
+.plan .price{display:flex;align-items:baseline;gap:6px;margin-bottom:6px}
+.plan .price .amount{font-size:38px;font-weight:300;color:var(--fg);letter-spacing:-0.02em;font-variant-numeric:tabular-nums}
+.plan .price .unit{font-size:13px;color:var(--mute)}
+.plan .price.strike .amount{text-decoration:line-through;opacity:0.4;font-size:18px}
+.plan .free-tag{
+  display:inline-block;background:var(--y);color:#000;padding:5px 12px;border-radius:2px;
+  font-size:10px;letter-spacing:0.24em;text-transform:uppercase;font-weight:700;margin-bottom:4px;
+}
+.plan .free-note{font-size:11px;color:var(--mute);margin:6px 0 22px;line-height:1.7}
+.plan .rev{
+  background:rgba(255,255,255,0.04);border-radius:2px;padding:14px 18px;margin-bottom:24px;
+  font-size:12.5px;color:var(--mute);line-height:1.8;
+}
+.plan .rev strong{color:var(--y);font-weight:500;font-size:15px}
+.plan ul{list-style:none;margin-bottom:28px;flex:1}
+.plan li{padding:8px 0 8px 22px;font-size:13px;color:var(--mute);line-height:1.85;position:relative;border-bottom:1px solid rgba(255,255,255,0.04)}
+.plan li:last-child{border-bottom:0}
+.plan li::before{content:"✓";position:absolute;left:0;color:var(--y);font-weight:700}
+.plan .plan-cta{
+  display:block;text-align:center;padding:13px;background:var(--y);color:#000;text-decoration:none;
+  border-radius:2px;font-size:11px;letter-spacing:0.28em;text-transform:uppercase;font-weight:700;
+}
+.plan.starter .plan-cta{background:transparent;color:var(--y);border:1px solid var(--y)}
+.plan.enterprise .plan-cta{background:#fff;color:#000}
+
+/* ── compare table ── */
+.compare{margin-top:48px;background:var(--bg-2);border:1px solid var(--line);border-radius:2px;overflow:hidden}
+.compare table{width:100%;border-collapse:collapse;font-size:12.5px}
+.compare th, .compare td{padding:14px 18px;text-align:left;border-bottom:1px solid var(--line)}
+.compare thead th{font-size:10px;letter-spacing:0.28em;text-transform:uppercase;color:var(--y);background:var(--bg-3)}
+.compare tbody tr:last-child td{border-bottom:0}
+.compare td:not(:first-child){text-align:center;color:var(--mute)}
+.compare td.yes{color:var(--y);font-weight:700}
+.compare td.no{color:#666}
+
+/* ── FAQ ── */
+.faqs{max-width:780px;margin:0 auto}
+.faq{border-bottom:1px solid var(--line);padding:24px 0}
+.faq summary{
+  cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;
+  font-size:15px;font-weight:400;letter-spacing:0;
+}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary::after{content:"＋";color:var(--y);font-size:18px;font-weight:300;margin-left:18px;transition:transform 0.2s ease}
+.faq[open] summary::after{transform:rotate(45deg)}
+.faq .a{padding:18px 0 0;color:var(--mute);font-size:13.5px;line-height:2}
+.faq .a strong{color:var(--fg);font-weight:500}
+
+/* ── FINAL CTA ── */
+.final{padding:128px 32px;text-align:center;background:linear-gradient(180deg,var(--bg) 0%, var(--bg-2) 100%)}
+.final h2{font-size:clamp(30px,5vw,56px);font-weight:200;letter-spacing:-0.01em;line-height:1.2;margin-bottom:24px}
+.final h2 em{color:var(--y);font-style:normal;font-weight:300}
+.final p{color:var(--mute);font-size:15px;max-width:560px;margin:0 auto 40px;line-height:2}
+.final .ctas{display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+
+/* ── FOOTER ── */
+footer{padding:48px 32px 80px;border-top:1px solid var(--line);text-align:center;font-size:11px;letter-spacing:0.18em;color:var(--mute)}
+footer a{color:inherit;text-decoration:underline;text-decoration-color:rgba(245,245,240,0.2)}
+footer a:hover{text-decoration-color:var(--y);color:var(--y)}
+
+/* ── print / PDF ── */
+@media print{
+  body{background:#fff;color:#000;font-size:11pt}
+  nav.top, .final, footer .footer-print-hide, .ctas, .plan-cta, .btn{display:none !important}
+  section{padding:36px 0;page-break-inside:avoid;border-bottom:0}
+  .hero{padding:36px 32px}
+  .hero h1{font-size:32pt;color:#000}
+  .hero h1 em{color:#b88f1c}
+  .hero .lede{color:#444}
+  .kpi{background:transparent;border-color:#ddd}
+  .kpi .cell{background:#fff}
+  .kpi .n{color:#b88f1c}
+  .kpi .lbl{color:#666}
+  .section-head h2{color:#000}
+  .section-head h2 em, .section-head .label{color:#b88f1c}
+  .section-head .sub{color:#444}
+  .problem, .layer, .step, .plan, .case .stats, .compare{background:#fafafa !important;border-color:#ddd !important;color:#000}
+  .problem h3, .layer h3, .step h3, .plan h3, .case .narrative h3{color:#000}
+  .problem p, .layer p, .step p, .plan .desc, .plan li, .case .narrative p{color:#444}
+  .layer .num, .layer .tech, .plan .tier, .plan .price .amount, .plan .free-tag, .step .day{color:#b88f1c}
+  .free-tag{background:#b88f1c;color:#fff}
+  .plan.featured{background:#fff !important;border:2px solid #b88f1c !important;box-shadow:none}
+  .case .stats td:last-child{color:#b88f1c}
+  .case .stats .margin-pos{color:#1f6b3e}
+  .case .narrative .pull{color:#000;border-color:#b88f1c}
+  .faq summary{color:#000}
+  .faq[open]{page-break-inside:avoid}
+  .faq .a{color:#444}
+  .faq summary::after{color:#b88f1c}
+  a{color:#000;text-decoration:none}
+  .layers, .problems, .steps, .plans{page-break-inside:avoid}
+  section.bg-2{background:#fff}
+  .compare thead th{background:#f0f0f0;color:#b88f1c}
+  .compare td.yes{color:#1f6b3e}
+}
+</style>
+</head>
+<body>
+
+<nav class="top">
+  <a href="https://wearmu.com" class="logo">MU</a>
+  <div class="links">
+    <a href="#how">仕組み</a>
+    <a href="#case">実例</a>
+    <a href="#pricing">料金</a>
+    <a href="#faq">FAQ</a>
+    <a href="mailto:info@enablerdao.com?subject=MU%20Collab%20%E5%95%86%E8%AB%87" class="cta">商談する</a>
+  </div>
+</nav>
+
+<!-- ────── HERO ────── -->
+<header class="hero">
+  <div class="eyebrow">MU Collab — Corporate Plan / 法人向け</div>
+  <h1>あなたのブランドを、<br>
+    <em>24 時間で</em> AI ネイティブ DTC に。
+  </h1>
+  <p class="lede">
+    ロゴと方向性を送れば、MU が <strong style="color:var(--y);font-weight:500">30+ 商品ラインを自動生成</strong>。<br>
+    在庫ゼロ・Printful 製造・Stripe 決済・自律エージェント 7 体が CS / 返金 / ブログを 24h 回す。<br>
+    あなたは <strong style="color:var(--fg);font-weight:500">PR とブランド体験</strong>だけに集中できる。
+  </p>
+  <div class="ctas">
+    <a href="#pricing" class="btn btn-primary">料金を見る</a>
+    <a href="mailto:info@enablerdao.com?subject=MU%20Collab%20%E5%95%86%E8%AB%87" class="btn btn-secondary">30 分の無料デモを予約</a>
+  </div>
+
+  <div class="kpi">
+    <div class="cell"><div class="n">24<small>h</small></div><div class="lbl">商品ライン立ち上げ</div></div>
+    <div class="cell"><div class="n">¥0<small>/12 か月</small></div><div class="lbl">基本料 無料 (初年度)</div></div>
+    <div class="cell"><div class="n">31<small>SKU</small></div><div class="lbl">実証済 商品ライン</div></div>
+    <div class="cell"><div class="n">47<small>%</small></div><div class="lbl">平均 粗利率 (実測)</div></div>
+  </div>
+</header>
+
+<!-- ────── PROBLEM ────── -->
+<section id="problem">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="label">なぜ既存の DTC は重いのか</div>
+      <h2>ブランドを物販化したい時、<em>4 つの壁</em>が同時に立ちはだかる。</h2>
+    </div>
+    <div class="problems">
+      <div class="problem">
+        <div class="icon">◆</div>
+        <h3>在庫リスク</h3>
+        <p>1 SKU で 50 着 MOQ、在庫キャッシュフロー、売れ残りの値引き処分。Tier 1 ブランドでも 30〜40% は棚滞留。</p>
+      </div>
+      <div class="problem">
+        <div class="icon">◆</div>
+        <h3>デザイナー雇用</h3>
+        <p>専属デザイナー月 ¥40〜80 万 × 半年 = 数百万先行投資。30 SKU 揃えるのに 3〜6 か月、しかも当たるか分からない。</p>
+      </div>
+      <div class="problem">
+        <div class="icon">◆</div>
+        <h3>EC・物流・決済の構築</h3>
+        <p>Shopify 月額 + 決済手数料 + 海外配送 + 印刷工場交渉 + 返品処理 + 多言語 + 税務。専任 PMM が最低 1 人必要。</p>
+      </div>
+      <div class="problem">
+        <div class="icon">◆</div>
+        <h3>顧客対応 24/365</h3>
+        <p>「サイズ違いを送って」「いつ届く」「返金して」が深夜・休日にも来る。CS 月 ¥15 万〜、応答品質はバラつく。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ────── SOLUTION: 5 LAYERS ────── -->
+<section id="how" class="bg-2">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="label">MU が一気通貫で代行する 5 つのレイヤー</div>
+      <h2>あなたは <em>ロゴと世界観</em>を渡すだけ。<br>残りは MU が動かす。</h2>
+    </div>
+    <div class="layers">
+      <div class="layer">
+        <div class="num">01</div>
+        <div>
+          <h3>AI デザイン生成</h3>
+          <p>Gemini 3 Pro Image が、あなたのブランドガイドに沿ってロゴ展開・グラフィック・ライフスタイル写真を 1 SKU あたり 5 分で生成。1 ヶ月 100 種類まで枠付き。</p>
+        </div>
+        <div class="tech">Gemini 3 Pro</div>
+      </div>
+      <div class="layer">
+        <div class="num">02</div>
+        <div>
+          <h3>製造 (在庫ゼロ)</h3>
+          <p>Printful (米 / 欧 / 日 6 拠点) の on-demand 製造に直結。T シャツから刺繍ジャケットまで 350+ 品目。注文ごとに作るので在庫リスク・キャッシュフロー圧迫ゼロ。</p>
+        </div>
+        <div class="tech">Printful API</div>
+      </div>
+      <div class="layer">
+        <div class="num">03</div>
+        <div>
+          <h3>EC・決済</h3>
+          <p>Stripe Checkout (50+ 通貨 / Apple Pay / Google Pay)、税務オートメーション、ENAI 暗号決済 (Solana) もオプション対応。1 行の `&lt;script&gt;` で既存サイトに埋め込み可。</p>
+        </div>
+        <div class="tech">Stripe + Embed JS</div>
+      </div>
+      <div class="layer">
+        <div class="num">04</div>
+        <div>
+          <h3>自律運営エージェント 7 体</h3>
+          <p>1 時間ごとに在庫 / 売上 / 苦情 / コンプラ / ブログ / 仕入 / 自己改善を回す。¥10,000 以下の苦情は自動返金、特商法ページ更新も自律監視。Telegram 通知付き。</p>
+        </div>
+        <div class="tech">In-process AI</div>
+      </div>
+      <div class="layer">
+        <div class="num">05</div>
+        <div>
+          <h3>透明ダッシュボード</h3>
+          <p>PV / CVR / 平均 margin / 自律エージェントの判断ログまで全部見える。`/admin/agents` で誰がいつ何を決めたか時系列で追える。</p>
+        </div>
+        <div class="tech">Live Dashboard</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ────── HOW: 3 STEPS ────── -->
+<section id="steps">
+  <div class="wrap-narrow">
+    <div class="section-head">
+      <div class="label">立ち上げまで 3 ステップ</div>
+      <h2>キックオフから <em>24 時間</em>で、最初の SKU が買える状態に。</h2>
+    </div>
+    <div class="steps">
+      <div class="step">
+        <div class="day">Day 0 — 30 分</div>
+        <h3>ブランドガイド送付</h3>
+        <p>ロゴ PNG (透過、3000px) + ブランド色 + トーン + 想定顧客 + NG 表現。フォーム or 30 分通話で完了。</p>
+      </div>
+      <div class="step">
+        <div class="day">Day 1 — 24h 以内</div>
+        <h3>30+ SKU が自動で並ぶ</h3>
+        <p>AI が T / hoodie / cap / バッグ / ステッカーまで一括生成。あなたは「これは出さない」を YES/NO で判定するだけ。</p>
+      </div>
+      <div class="step">
+        <div class="day">Day 1+ — 永続</div>
+        <h3>注文受付 → 直送</h3>
+        <p>あなたのサイト or 専用 URL から注文が入る。Printful が即製造、平均 10〜14 日でエンドユーザーに直送。あなたは何もしない。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ────── CASE STUDY ────── -->
+<section id="case" class="bg-2">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="label">実例 — MU × SIIIEEP</div>
+      <h2>北参道の BJJ 道場ブランドが、<br><em>13 日でゼロから 31 商品</em>稼働。</h2>
+      <p class="sub">BJJ アパレル SIIIEEP (北参道、年商規模スタートアップ) を MU でアパレル化。手動工程ゼロ、デザイナー雇用ゼロ、初期在庫費ゼロ。</p>
+    </div>
+    <div class="case">
+      <div class="narrative">
+        <h3>「もう自社 EC やる気がなかった」</h3>
+        <p>SIIIEEP は北参道の BJJ 道場発のアパレル。練習着 / Gi までは作れたが、ライフスタイル系 (T / hoodie / バッグ) は「在庫 50 着持つキャッシュフローが無理」で諦めていた。</p>
+        <div class="pull">
+          MU に渡してから、24 時間で 13 SKU が並んだ。値段が決まっていて、注文が入れば Printful から発送される。我々がやったことは「これ出して OK」ボタンを押しただけ。
+        </div>
+        <p>13 日後、第二弾 10 SKU、続けて 第三弾 8 SKU。今は <strong style="color:var(--y);font-weight:500">合計 31 商品が wearmu.com/sweep で稼働中</strong>。1 件売れるごとに Printful へ自動発注、Telegram に売上通知、苦情は自動分類 → 必要なら自動返金。</p>
+        <p>濱田 (MU 創業者 / 柔術青帯) が SIIIEEP の練習着を着ていたことが発端。今では他の道場・格闘技ブランドからも問い合わせが入っている。</p>
+      </div>
+      <div class="stats">
+        <h4>第三弾 8 SKU の実測収益</h4>
+        <table>
+          <tr><td>Bomber Jacket</td><td class="margin-pos">+¥11,060 / 56%</td></tr>
+          <tr><td>Baseball Jersey</td><td class="margin-pos">+¥9,140 / 62%</td></tr>
+          <tr><td>Joggers</td><td class="margin-pos">+¥6,070 / 47%</td></tr>
+          <tr><td>Track Jacket</td><td class="margin-pos">+¥5,880 / 35%</td></tr>
+          <tr><td>Backpack</td><td class="margin-pos">+¥3,825 / 24%</td></tr>
+          <tr><td>Fanny Pack</td><td class="margin-pos">+¥2,360 / 35%</td></tr>
+          <tr><td>Bucket Hat</td><td class="margin-pos">+¥2,210 / 38%</td></tr>
+          <tr><td>iPhone Case</td><td class="margin-pos">+¥940 / 25%</td></tr>
+          <tr class="total"><td>8 SKU 平均 margin</td><td>40.3%</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ────── PRICING ────── -->
+<section id="pricing">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="label">料金プラン (法人向け)</div>
+      <h2>基本料 <em>1 年間 ¥0</em>。<br>収益が出てから、収益の中からシェア。</h2>
+      <p class="sub">3 プランすべて、初年度 12 か月は <strong style="color:var(--y)">基本料無料</strong>。導入リスクをゼロにして、まずブランド × MU の相性を試せる。</p>
+    </div>
+
+    <div class="plans">
+      <!-- STARTER -->
+      <div class="plan starter">
+        <div class="tier">Starter</div>
+        <h3>はじめての DTC</h3>
+        <p class="desc">小規模ブランド / クリエイター / 道場・ジム・カフェなどローカルビジネス向け。最小構成で動かして、まず売れるかを試したい人へ。</p>
+
+        <span class="free-tag">初年度 基本料 ¥0</span>
+        <div class="price strike"><span class="amount">¥29,800</span><span class="unit">/月 (2 年目以降)</span></div>
+        <div class="price"><span class="amount">¥0</span><span class="unit">/月 (12 か月)</span></div>
+        <div class="free-note">13 か月目から ¥29,800/月。1 年間で合意できなければ無償解約 OK。</div>
+
+        <div class="rev">
+          <strong>レベニューシェア 30%</strong><br>
+          売上 (Printful 仕入・Stripe 手数料控除後) の 30% を MU 取り分。
+        </div>
+
+        <ul>
+          <li>AI デザイン生成 100 SKU/月</li>
+          <li>Printful 全 350+ 商品アクセス</li>
+          <li>Stripe 決済 (50+ 通貨)</li>
+          <li>埋め込み JS / iframe / JSON API</li>
+          <li>自律エージェント 7 体</li>
+          <li>Telegram 通知</li>
+          <li>独自パスワード付き draft preview</li>
+          <li>共有 wearmu.com サブパス公開</li>
+        </ul>
+        <a href="mailto:info@enablerdao.com?subject=MU%20Collab%20Starter%20%E7%94%B3%E8%BE%BC" class="plan-cta">Starter で相談する</a>
+      </div>
+
+      <!-- GROWTH (FEATURED) -->
+      <div class="plan featured">
+        <div class="tier">Growth</div>
+        <h3>本気で売る規模</h3>
+        <p class="desc">月間 100 万円〜の売上を狙う既存ブランド向け。レベニューシェア比率を抑え、独自ドメイン + 専属チャンネルが付く。</p>
+
+        <span class="free-tag">初年度 基本料 ¥0</span>
+        <div class="price strike"><span class="amount">¥98,000</span><span class="unit">/月 (2 年目以降)</span></div>
+        <div class="price"><span class="amount">¥0</span><span class="unit">/月 (12 か月)</span></div>
+        <div class="free-note">13 か月目から ¥98,000/月。年間契約で 2 か月分割引。</div>
+
+        <div class="rev">
+          <strong>レベニューシェア 20%</strong><br>
+          Starter の 30% から 10% 圧縮。月 ¥100 万売れば ¥10 万/月の差。
+        </div>
+
+        <ul>
+          <li>AI デザイン生成 <strong style="color:var(--y)">500 SKU/月</strong></li>
+          <li>Printful 全商品 + 優先製造ライン</li>
+          <li>Stripe + ENAI 暗号決済</li>
+          <li>埋め込み + 専用サブドメイン (yourbrand.wearmu.com)</li>
+          <li>自律エージェント 7 体 + カスタマイズ可</li>
+          <li>専属 Slack / Telegram チャンネル</li>
+          <li>月次レビュー (30 分通話)</li>
+          <li>Google Ads / Meta Ads オートチューン</li>
+        </ul>
+        <a href="mailto:info@enablerdao.com?subject=MU%20Collab%20Growth%20%E7%94%B3%E8%BE%BC" class="plan-cta">Growth で相談する</a>
+      </div>
+
+      <!-- ENTERPRISE -->
+      <div class="plan enterprise">
+        <div class="tier">Enterprise</div>
+        <h3>完全別ブランド</h3>
+        <p class="desc">大手・上場・グループ会社向け。完全独立ドメイン、専属 Stripe アカウント、SLA、契約書テンプレート、専任 AI エージェント。</p>
+
+        <span class="free-tag">初年度 基本料 ¥0</span>
+        <div class="price strike"><span class="amount">¥298,000</span><span class="unit">/月 (2 年目以降)</span></div>
+        <div class="price"><span class="amount">¥0</span><span class="unit">/月 (12 か月)</span></div>
+        <div class="free-note">13 か月目から ¥298,000/月。専用契約・NDA・法務カスタマイズ含む。</div>
+
+        <div class="rev">
+          <strong>レベニューシェア 10%</strong><br>
+          年商 1 億超では Starter の 1/3。利益が立つほど MU の取り分が薄くなる構造。
+        </div>
+
+        <ul>
+          <li>AI デザイン生成 <strong style="color:var(--y)">無制限</strong></li>
+          <li>専用 yourbrand.com ドメイン</li>
+          <li>専属 Stripe アカウント (送金先分離)</li>
+          <li>専任 AI エージェント (御社ロゴ学習)</li>
+          <li>SLA 99.9% / 24h サポート</li>
+          <li>監査ログエクスポート / SOC2 対応中</li>
+          <li>契約書 / 特商法 / GDPR フルカスタマイズ</li>
+          <li>NFT / Solana トークンゲート対応可</li>
+          <li>月次 KPI レビュー + ロードマップ提案</li>
+        </ul>
+        <a href="mailto:info@enablerdao.com?subject=MU%20Collab%20Enterprise%20%E7%94%B3%E8%BE%BC" class="plan-cta">Enterprise で相談する</a>
+      </div>
+    </div>
+
+    <div class="compare">
+      <table>
+        <thead>
+          <tr><th>比較項目</th><th>Starter</th><th>Growth</th><th>Enterprise</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>初年度 基本料</td><td class="yes">¥0</td><td class="yes">¥0</td><td class="yes">¥0</td></tr>
+          <tr><td>2 年目以降 基本料</td><td>¥29,800/月</td><td>¥98,000/月</td><td>¥298,000/月</td></tr>
+          <tr><td>レベニューシェア</td><td>30%</td><td>20%</td><td>10%</td></tr>
+          <tr><td>AI デザイン枠 / 月</td><td>100 SKU</td><td>500 SKU</td><td>無制限</td></tr>
+          <tr><td>独自ドメイン</td><td class="no">—</td><td>サブドメイン</td><td class="yes">フル</td></tr>
+          <tr><td>専属 Stripe</td><td class="no">—</td><td class="no">—</td><td class="yes">✓</td></tr>
+          <tr><td>専任 AI エージェント</td><td class="no">—</td><td class="no">—</td><td class="yes">✓</td></tr>
+          <tr><td>SLA</td><td>Best effort</td><td>99.5%</td><td class="yes">99.9%</td></tr>
+          <tr><td>Slack / Telegram 専用</td><td class="no">—</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+          <tr><td>月次レビュー</td><td class="no">—</td><td class="yes">30 分</td><td class="yes">60 分</td></tr>
+          <tr><td>Ads オートチューン</td><td class="no">—</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+          <tr><td>NFT / Crypto ゲート</td><td class="no">—</td><td class="no">—</td><td class="yes">✓</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ────── FAQ ────── -->
+<section id="faq">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="label">よくある質問</div>
+      <h2>導入前に <em>必ず聞かれる</em> 9 つの質問。</h2>
+    </div>
+    <div class="faqs">
+      <details class="faq" open>
+        <summary>本当に基本料 1 年無料？仕掛けは？</summary>
+        <div class="a">
+          <strong>仕掛け無し。レベニューシェアだけ取ります。</strong>
+          売上が立たなければ MU の取り分も ¥0 です。我々は「ブランドが本当に動くか」を実証するために初年度を持ち出しでやってます。ただし AI デザイン枠 / Printful 仕入 / Stripe 手数料は売上から実費で引かれます (利益にはダメージ無し)。
+        </div>
+      </details>
+      <details class="faq">
+        <summary>デザインの最終承認は誰がやる？</summary>
+        <div class="a">
+          <strong>あなた。</strong> AI が生成した SKU はあなたの draft preview に並び、1 つずつ「公開 / 非公開」をボタンで判定できます。NG が出続ければプロンプトを調整し、好みのトンマナに収束します。SIIIEEP の場合、第二弾以降は AI の通過率 90%+ です。
+        </div>
+      </details>
+      <details class="faq">
+        <summary>Printful の品質は？返品クレームは？</summary>
+        <div class="a">
+          Printful は北米最大の on-demand 印刷ファクトリー (年間 数千万 SKU)。当 31 SKU すべて API レベルで draft 注文 → 検証済。<br>
+          返品 / 印刷ミスは Printful が 100% 無料再印刷。MU の自律エージェント (auto_refund) が ¥10,000 以下の苦情を自動分類 → Stripe で即返金 → Printful に再発注の流れまで自動化済。
+        </div>
+      </details>
+      <details class="faq">
+        <summary>既存の自社サイトに埋め込める？</summary>
+        <div class="a">
+          <strong>1 行でできます。</strong> <code style="background:var(--bg-3);padding:2px 6px;border-radius:2px;font-size:12px">&lt;script src="https://wearmu.com/embed.js" data-brand="yourbrand" defer&gt;&lt;/script&gt;</code><br>
+          Notion / Wix / Webflow など JS が禁止のサイトには iframe 版もあり。SSR (Next.js / Rails / Python) 用に JSON API も公開済 (CORS 全オリジン許可)。
+        </div>
+      </details>
+      <details class="faq">
+        <summary>うちのロゴ / ブランド IP は守られる？</summary>
+        <div class="a">
+          ロゴ画像は Cloudflare R2 (専用バケット) に格納、AI 学習データには使用しません。Enterprise プランでは NDA + SOC2 対応中の専属インスタンスを提供。<br>
+          全ファイル削除を希望すれば GDPR 削除リクエスト 1 回でクリアします (自律エージェントの compliance_watch が滞留監視)。
+        </div>
+      </details>
+      <details class="faq">
+        <summary>売上の振込先は？</summary>
+        <div class="a">
+          Starter / Growth は MU の Stripe アカウントに着金 → MU が月末締めでレベニューシェア分を差し引いて翌月末に振込。<br>
+          Enterprise はあなたの Stripe アカウントに直接着金 → MU の取り分を翌月インボイスで請求 (法人税務的にクリーン)。
+        </div>
+      </details>
+      <details class="faq">
+        <summary>解約は？年間契約縛り？</summary>
+        <div class="a">
+          初年度 12 か月は <strong>無償解約 OK</strong> (基本料 ¥0 のため違約金無し)。2 年目以降は月次解約も OK ですが、年間契約で 2 か月分割引が選べます。<br>
+          解約時はデザインデータ / 商品 DB / 顧客リスト すべて CSV / JSON でエクスポート可。lock-in しません。
+        </div>
+      </details>
+      <details class="faq">
+        <summary>暗号通貨決済 (ENAI / Solana) の手数料は？</summary>
+        <div class="a">
+          Stripe の 3.6% に対して Solana 経由は <strong style="color:var(--y)">0.5%</strong> (Helius RPC + 自社 webhook)。ENAI トークン (Enabler ガバナンス) と USDC で受領可。Enterprise プランでは NFT ゲート販売 (例: 限定 100 体ホルダーだけが買える) もサポート。
+        </div>
+      </details>
+      <details class="faq">
+        <summary>競合 (Shopify / Printful 直 / Spring) との違いは？</summary>
+        <div class="a">
+          <strong>Shopify</strong> はあくまで EC プラットフォーム。在庫 / デザイン / 物流は別途必要。<br>
+          <strong>Printful 直</strong> は製造のみ。デザイン・EC・CS は自前。<br>
+          <strong>Spring (Spring.fly)</strong> はインフルエンサー向けでブランド統制が弱い。<br>
+          <strong>MU</strong> は AI デザイン + 製造 + EC + CS + 法務まで一気通貫、しかも自律エージェントで運用フリー。完全比較表は本ページ <a href="#pricing" style="color:var(--y);text-decoration:underline">料金セクション</a>にあります。
+        </div>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- ────── FINAL CTA ────── -->
+<section class="final">
+  <h2>あなたのブランドは、<br><em>来月にはもう DTC に</em>なっているかもしれない。</h2>
+  <p>30 分の無料デモで、あなたのロゴから AI が生成した 3 SKU プレビューをその場でお見せします。<br>気に入らなければそれで終わり。気に入れば 24 時間後にローンチ。</p>
+  <div class="ctas">
+    <a href="mailto:info@enablerdao.com?subject=MU%20Collab%20%E7%84%A1%E6%96%99%E3%83%87%E3%83%A2&body=%E2%97%8F%E4%BC%9A%E7%A4%BE%E5%90%8D%3A%0A%E2%97%8F%E5%B8%8C%E6%9C%9B%E3%83%97%E3%83%A9%E3%83%B3%20%28Starter%2FGrowth%2FEnterprise%29%3A%0A%E2%97%8F%E3%83%AD%E3%82%B4%E7%94%BB%E5%83%8F%20or%20%E3%83%96%E3%83%A9%E3%83%B3%E3%83%89URL%3A%0A%E2%97%8F%E5%B8%8C%E6%9C%9B%E6%97%A5%E7%A8%8B%3A%0A" class="btn btn-primary">無料デモを申し込む</a>
+    <a href="/b2b/mu-collab-pitch.pdf" class="btn btn-secondary" target="_blank">PDF 資料をダウンロード</a>
+  </div>
+</section>
+
+<footer>
+  <p>
+    <a href="https://wearmu.com">MU (wearmu.com)</a> ·
+    <a href="https://wearmu.com/sweep">実例: MU × SIIIEEP</a> ·
+    <a href="https://wearmu.com/developers">開発者向け 埋め込み API</a>
+  </p>
+  <p style="margin-top:14px">
+    株式会社イネブラ (Enabler Inc.) · 〒102-0074 東京都千代田区九段南 1-5-6 りそな九段ビル 5F KS フロア<br>
+    <a href="mailto:info@enablerdao.com">info@enablerdao.com</a> · <a href="https://wearmu.com/legal">特商法表記</a>
+  </p>
+</footer>
+
+</body>
+</html>
