@@ -17222,6 +17222,85 @@ async fn main() {
          Some(r#"{"OS":12428,"ONE SIZE":12428,"M":12428,"L":12428,"15X30":12428}"#),
          Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/jiuflow/_logo.png"}]"#),
          None, 10, 1),
+
+        // ── 第二弾追加 12 品 (Apparel 7 + Bags 2 + Goods 3) ──
+        // Apparel
+        ("jiuflow-tank-top", "タンクトップ (黒)", "JiuFlow Heavyweight Tank Top",
+         "Printful Bella+Canvas 3480 (pid 102)、Black。胸正面に白プリント JiuFlow wordmark。No-Gi スパー / 暑い季節のアカデミー入り口着用に。",
+         3_800,  "printful", Some(102), Some(5613),
+         Some(r#"{"S":5613,"M":5614,"L":5615,"XL":5616,"2XL":5617}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/jiuflow/_logo.png"}]"#),
+         None, 10, 1),
+        ("jiuflow-zip-hoodie", "ジップフーディ (黒)", "JiuFlow Full-Zip Hoodie",
+         "Printful Independent SS4500Z (pid 380)、Black。フロント中央に小さく JiuFlow wordmark を白プリント、背中に大型ロゴ。アカデミー前のウォームアップにも、Gi の上に羽織るのにも。",
+         12_800, "printful", Some(380), Some(10713),
+         Some(r#"{"S":10713,"M":10714,"L":10715,"XL":10716,"2XL":10717}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/jiuflow/_logo.png"}]"#),
+         None, 14, 1),
+        ("jiuflow-longsleeve", "ロングスリーブ Tee (黒)", "JiuFlow Long-Sleeve Tee",
+         "Printful Bella+Canvas 3501 (pid 36)、Black。胸正面に白プリント JiuFlow wordmark。寒い季節のアカデミー入り、Gi の下にも No-Gi の上にも 1 枚。",
+         5_800,  "printful", Some(36), Some(2374),
+         Some(r#"{"S":2374,"M":2375,"L":2376,"XL":2377,"2XL":2378}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/jiuflow/_logo.png"}]"#),
+         None, 10, 1),
+        ("jiuflow-sweatpants", "スウェットパンツ (黒)", "JiuFlow Heavyweight Sweatpants",
+         "Printful Independent SS650RP (pid 472)、Black。サイドに小さく JiuFlow wordmark を白プリント。アカデミー後の帰宅着、休息日のリカバリーウェアに。",
+         9_800,  "printful", Some(472), Some(13037),
+         Some(r#"{"S":13037,"M":13038,"L":13039,"XL":13040,"2XL":13041}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/jiuflow/_logo.png"}]"#),
+         None, 14, 1),
+        ("jiuflow-joggers", "ジョガーパンツ (黒)", "JiuFlow Tapered Joggers",
+         "Printful Independent SS80MJ (pid 472)、Black スリムテーパード。サイドポケット付き、サイドに JiuFlow wordmark を白プリント。Gi バッグを担いで電車移動する日のスタイル。",
+         11_800, "printful", Some(472), Some(14782),
+         Some(r#"{"S":14782,"M":14783,"L":14784,"XL":14785,"2XL":14786}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/jiuflow/_logo.png"}]"#),
+         None, 14, 1),
+        ("jiuflow-cap-dad", "ダッドキャップ (ネイビー)", "JiuFlow Navy Dad Hat",
+         "Printful Yupoong 6245CM (pid 206)、Navy。フロントに白糸刺繍で JiuFlow wordmark、サイドにロイヤルブルー (#1E40AF) のサブ刺繍。カジュアル寄り、日常スタイル。",
+         5_800,  "printful", Some(206), Some(7854),
+         Some(r#"{"OS":7854,"ONE SIZE":7854,"S":7854,"M":7854,"L":7854}"#),
+         Some(r#"[{"type":"embroidery_front_large","url":"https://lifestyle.wearmu.com/jiuflow/_logo.png"}]"#),
+         Some(r##"[{"id":"thread_colors_front_large","value":["#FFFFFF"]}]"##), 10, 1),
+        ("jiuflow-beanie", "ビーニー (黒)", "JiuFlow Cuffed Beanie",
+         "Printful Yupoong 1501KC (pid 159)、Black。前面に白糸刺繍 JiuFlow wordmark。冬のアカデミー入り、ロード移動の防寒に。",
+         3_800,  "printful", Some(159), Some(6093),
+         Some(r#"{"OS":6093,"ONE SIZE":6093,"S":6093,"M":6093,"L":6093}"#),
+         Some(r#"[{"type":"embroidery_front_large","url":"https://lifestyle.wearmu.com/jiuflow/_logo.png"}]"#),
+         Some(r##"[{"id":"thread_colors_front_large","value":["#FFFFFF"]}]"##), 10, 1),
+
+        // Bags
+        ("jiuflow-tote", "コットントート (大型)", "JiuFlow Heavy Canvas Tote",
+         "Printful BAGedge BE055 (pid 367)、Black 16oz heavy canvas。Gi 1〜2 着が入る大型サイズ、JiuFlow wordmark を白プリント。アカデミー通いに最適。",
+         4_800,  "printful", Some(367), Some(10458),
+         Some(r#"{"OS":10458,"ONE SIZE":10458,"M":10458,"L":10458}"#),
+         Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/jiuflow/_logo.png"}]"#),
+         None, 12, 1),
+        ("jiuflow-duffle", "ダッフルバッグ (Gi 入れ)", "JiuFlow Gi Duffle Bag",
+         "Printful BAGedge BE008 (pid 730)、Black。Gi 2〜3 着 + 帯 + シューズ + タオル全て入る。サイドに白プリント JiuFlow wordmark、上面にロイヤルブルーのアクセント。",
+         9_800,  "printful", Some(730), Some(18654),
+         Some(r#"{"OS":18654,"ONE SIZE":18654,"M":18654,"L":18654}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/jiuflow/_logo.png"}]"#),
+         None, 14, 1),
+
+        // Goods
+        ("jiuflow-mug", "セラミックマグ (白)", "JiuFlow White Ceramic Mug",
+         "Printful White Glossy Mug (pid 19)、11oz White。表面に JiuFlow wordmark + 「Daily Roll」を黒+ロイヤルブルーで昇華印刷。朝のプロテイン・コーヒーに。",
+         2_800,  "printful", Some(19), Some(1320),
+         Some(r#"{"OS":1320,"ONE SIZE":1320,"M":1320,"11 OZ":1320,"15 OZ":1321}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/jiuflow/_logo.png"}]"#),
+         None, 10, 1),
+        ("jiuflow-iphone-case", "iPhone ケース (黒)", "JiuFlow iPhone Case",
+         "Printful iPhone Tough Case (pid 657)、Black マット仕上げ。背面に白プリント JiuFlow wordmark、ロイヤルブルーのアクセントライン。耐衝撃二層構造でアカデミー床への落下にも対応。",
+         4_800,  "printful", Some(657), Some(15734),
+         Some(r#"{"OS":15734,"ONE SIZE":15734,"M":15734,"iPhone 15":15734,"iPhone 15 Pro":15735,"iPhone 14":15736,"iPhone 14 Pro":15737}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/jiuflow/_logo.png"}]"#),
+         None, 10, 1),
+        ("jiuflow-laptop-sleeve", "ラップトップスリーブ", "JiuFlow Laptop Sleeve",
+         "Printful Laptop Sleeve (pid 526)、Black canvas、13\"/15\"。表面に白プリント JiuFlow wordmark + ロイヤルブルーのコーピング。在宅トレーニング日のデスクサイドに。",
+         5_800,  "printful", Some(526), Some(13452),
+         Some(r#"{"OS":13452,"ONE SIZE":13452,"M":13452,"S":13452,"L":13453,"13":13452,"15":13453}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/jiuflow/_logo.png"}]"#),
+         None, 10, 1),
     ];
     for (slug, cat, name, desc, price, route, pf_prod, pf_var, var_map, files, opts, lead, active) in jiuflow_items {
         conn.execute(
@@ -17303,6 +17382,19 @@ async fn main() {
         ("jiuflow-bottle-water", 2_780),
         ("jiuflow-stickers",     1_136),
         ("jiuflow-towel-gym",    2_180),
+        // JiuFlow v2 (12 品追加) — sweep/kokon 実測値を流用した推定原価
+        ("jiuflow-tank-top",       2_610),
+        ("jiuflow-zip-hoodie",     4_530),
+        ("jiuflow-longsleeve",     3_100),
+        ("jiuflow-sweatpants",     6_090),
+        ("jiuflow-joggers",        6_730),
+        ("jiuflow-cap-dad",        3_550),
+        ("jiuflow-beanie",         3_630),
+        ("jiuflow-tote",           3_744),
+        ("jiuflow-duffle",        16_090),
+        ("jiuflow-mug",            1_820),
+        ("jiuflow-iphone-case",    2_860),
+        ("jiuflow-laptop-sleeve",  3_280),
     ];
     for (slug, cost) in printful_costs {
         conn.execute(
@@ -18208,6 +18300,8 @@ async fn main() {
         .route("/admin/founders", get(admin_founders))
         .route("/admin/queue", get(admin_queue))
         .route("/admin/email-ab", get(admin_email_ab))
+        .route("/admin/email-preview", get(admin_email_preview))
+        .route("/admin/email-test-send", post(admin_email_test_send))
         .route("/webhooks/resend", post(webhook_resend))
         .route("/api/v1/event", post(api_funnel_event))
         .route("/admin/auth_log", get(admin_auth_log_view))
@@ -21929,6 +22023,98 @@ async fn webhook_resend(
         params![chrono_now(), resend_id],
     );
     StatusCode::OK.into_response()
+}
+
+/// GET /admin/email-preview?token=…&kind=&variant=
+/// Render an email template with synthetic context (no send). Visual QA tool.
+async fn admin_email_preview(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/email-preview").await { return r; }
+    let kind = q.get("kind").map(String::as_str).unwrap_or("received").to_string();
+    let variant = q.get("variant").map(String::as_str).unwrap_or("A").to_string();
+    let tok = q.get("token").map(String::as_str).unwrap_or("").to_string();
+    let ctx = {
+        let conn = db.lock().unwrap();
+        build_email_context(&conn, 42, "mugen-0042-charcoal-m", 6_000)
+    };
+    let (subject, html) = match (kind.as_str(), variant.as_str()) {
+        ("received",   v) => template_received(&ctx, v),
+        ("production", v) => template_production(&ctx, v, "Printful Charlotte, NC", "PF-12345678"),
+        ("shipped",    v) => template_shipped(&ctx, v, "9405511899223344556677", "USPS First-Class International"),
+        ("cohort30",   v) => template_cohort30(&ctx, v, 1),
+        _ => ("(unknown)".into(), "<p>unknown</p>".into()),
+    };
+    let nav = ["received","production","shipped","cohort30"].iter().flat_map(|k| {
+        ["A","B"].iter().map(move |v| format!(
+            r#"<a href="?token={t}&kind={k}&variant={v}" style="color:#9bd;margin-right:8px;">{k}/{v}</a>"#,
+            t = html_attr_escape(&tok), k = k, v = v))
+    }).collect::<String>();
+    let wrapped = format!(
+        r#"<div style="background:#222;color:#999;padding:10px 16px;font:12px ui-monospace,Menlo,monospace;border-bottom:1px solid #444;">PREVIEW · subject=<b>{}</b><br>{}</div>{}"#,
+        html_escape(&subject), nav, html);
+    Html(wrapped).into_response()
+}
+
+/// POST /admin/email-test-send?token=&to=&kind=
+/// Actually send 1 email via Resend to the specified address. Use to verify
+/// design renders in real inbox. admin-only; not gated by is_test_email so
+/// you can send to your own address even if it matches test patterns.
+async fn admin_email_test_send(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/email-test-send").await { return r; }
+    let to = q.get("to").cloned().unwrap_or_default();
+    let kind = q.get("kind").cloned().unwrap_or("received".into());
+    if to.is_empty() || !to.contains('@') {
+        return (StatusCode::BAD_REQUEST, "missing or invalid ?to=").into_response();
+    }
+    let ctx = {
+        let conn = db.lock().unwrap();
+        build_email_context(&conn, 42, "mugen-0042-charcoal-m", 6_000)
+    };
+    let variant = assign_email_variant(&to, &kind);
+    let (subject, html) = match (kind.as_str(), variant) {
+        ("received",   v) => template_received(&ctx, v),
+        ("production", v) => template_production(&ctx, v, "Printful Charlotte, NC", "PF-TEST-123"),
+        ("shipped",    v) => template_shipped(&ctx, v, "9405511899223344556677", "USPS Intl"),
+        ("cohort30",   v) => template_cohort30(&ctx, v, 1),
+        _ => return (StatusCode::BAD_REQUEST, "unknown kind").into_response(),
+    };
+    let resend_key = match env::var("RESEND_API_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => return (StatusCode::SERVICE_UNAVAILABLE, "RESEND_API_KEY missing").into_response(),
+    };
+    let resp = reqwest::Client::new()
+        .post("https://api.resend.com/emails")
+        .bearer_auth(&resend_key)
+        .json(&serde_json::json!({
+            "from": "MU Autopilot <mu-autopilot@wearmu.com>",
+            "to": [to.clone()],
+            "subject": format!("[TEST] {}", subject),
+            "html": html,
+            "headers": {"X-MU-Variant": variant, "X-MU-Kind": kind, "X-MU-Test": "1"},
+        }))
+        .send().await;
+    match resp {
+        Ok(r) if r.status().is_success() => {
+            let j: serde_json::Value = r.json().await.unwrap_or_default();
+            Json(serde_json::json!({
+                "ok": true, "to": to, "kind": kind, "variant": variant,
+                "subject": subject, "resend_id": j["id"].as_str().unwrap_or(""),
+            })).into_response()
+        }
+        Ok(r) => {
+            let s = r.status();
+            let t = r.text().await.unwrap_or_default();
+            (s, format!("resend: {}", t)).into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("http: {e}")).into_response(),
+    }
 }
 
 /// GET /admin/email-ab?token=… — A/B test rollup per kind+variant.
