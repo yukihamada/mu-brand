@@ -22047,11 +22047,15 @@ async fn admin_email_preview(
         ("cohort30",   v) => template_cohort30(&ctx, v, 1),
         _ => ("(unknown)".into(), "<p>unknown</p>".into()),
     };
-    let nav = ["received","production","shipped","cohort30"].iter().flat_map(|k| {
-        ["A","B"].iter().map(move |v| format!(
-            r#"<a href="?token={t}&kind={k}&variant={v}" style="color:#9bd;margin-right:8px;">{k}/{v}</a>"#,
-            t = html_attr_escape(&tok), k = k, v = v))
-    }).collect::<String>();
+    let tok_attr = html_attr_escape(&tok);
+    let mut nav = String::new();
+    for k in ["received","production","shipped","cohort30"] {
+        for v in ["A","B"] {
+            nav.push_str(&format!(
+                r#"<a href="?token={t}&kind={k}&variant={v}" style="color:#9bd;margin-right:8px;">{k}/{v}</a>"#,
+                t = &tok_attr, k = k, v = v));
+        }
+    }
     let wrapped = format!(
         r#"<div style="background:#222;color:#999;padding:10px 16px;font:12px ui-monospace,Menlo,monospace;border-bottom:1px solid #444;">PREVIEW · subject=<b>{}</b><br>{}</div>{}"#,
         html_escape(&subject), nav, html);
