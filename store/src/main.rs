@@ -3507,8 +3507,13 @@ async fn blog_index(State(db): State<Db>) -> Html<String> {
     // Fetch most recent 30 AI auto-blog posts and render a section.
     let posts: Vec<(String, String, String)> = {
         let conn = db.lock().unwrap();
+        // created_at is stored as unix-epoch string (chrono_now()). Convert to
+        // JST date for display. Fallback to SUBSTR for legacy ISO rows.
         let result = match conn.prepare(
-            "SELECT slug, title, COALESCE(SUBSTR(created_at,1,10),'')
+            "SELECT slug, title, COALESCE(
+                CASE WHEN created_at GLOB '[0-9]*' AND LENGTH(created_at) <= 11
+                     THEN date(CAST(created_at AS INTEGER), 'unixepoch', '+9 hours')
+                     ELSE SUBSTR(created_at,1,10) END, '')
              FROM auto_blog_posts WHERE published=1
              ORDER BY created_at DESC LIMIT 30"
         ) {
@@ -8454,7 +8459,10 @@ async fn dynamic_sitemap(State(db): State<Db>) -> Response {
     let posts: Vec<(String, String)> = {
         let conn = db.lock().unwrap();
         let mut stmt = match conn.prepare(
-            "SELECT slug, COALESCE(SUBSTR(created_at,1,10), '') AS d
+            "SELECT slug, COALESCE(
+                CASE WHEN created_at GLOB '[0-9]*' AND LENGTH(created_at) <= 11
+                     THEN date(CAST(created_at AS INTEGER), 'unixepoch', '+9 hours')
+                     ELSE SUBSTR(created_at,1,10) END, '') AS d
              FROM auto_blog_posts WHERE published=1 ORDER BY created_at DESC LIMIT 365"
         ) { Ok(s) => s, Err(_) => return (
             [("content-type","application/xml")],
