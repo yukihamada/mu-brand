@@ -12967,6 +12967,33 @@ footer a{color:var(--mute);text-decoration:underline}
     }catch(e){console.error(e);btn.disabled=false;btn.textContent='もう一度試す';alert('決済の準備でエラーが発生しました。お時間を空けて再度お試しください。');}
   });
   if(location.search.indexOf('paid=ok')>-1){alert('ご予約ありがとうございます！ 製造開始の連絡を順次お送りします。');history.replaceState({},'','/gi/00');}
+
+  // ENAI banner — only show when ?qr=1 (real-life QR scan from the gi).
+  var qs=new URLSearchParams(location.search);
+  var banner=document.getElementById('enai-banner');
+  var form=document.getElementById('enai-form');
+  var emailEl=document.getElementById('enai-email');
+  var statusEl=document.getElementById('enai-status');
+  var closeBtn=document.getElementById('enai-close');
+  var shown=qs.get('qr')==='1'&&!localStorage.getItem('enai-dismissed-00');
+  if(banner&&shown){banner.style.display='block';document.body.style.paddingTop='52px';}
+  if(closeBtn){closeBtn.addEventListener('click',function(){if(banner){banner.style.display='none';}document.body.style.paddingTop='';localStorage.setItem('enai-dismissed-00','1');});}
+  if(form){form.addEventListener('submit',async function(e){
+    e.preventDefault();
+    var email=(emailEl&&emailEl.value||'').trim();
+    if(!email||email.indexOf('@')<0){statusEl.style.display='block';statusEl.textContent='メールアドレスをご確認ください';return;}
+    statusEl.style.display='block';statusEl.textContent='送信中…';
+    try{
+      var r=await fetch('/api/gi/00/enai-claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email})});
+      var j=await r.json();
+      if(j&&j.ok){
+        if(j.already_claimed){statusEl.textContent='✅ 既に登録済みです。配布準備でき次第ご連絡します。';}
+        else{statusEl.textContent='✅ 受付完了！配布準備でき次第ご連絡します。 ('+j.total_claims+' 人目)';}
+        localStorage.setItem('enai-dismissed-00','1');
+        setTimeout(function(){if(banner){banner.style.display='none';}document.body.style.paddingTop='';},3000);
+      }else{statusEl.textContent='エラー: '+(j&&j.error||'時間を空けて再度お試しください');}
+    }catch(err){console.error(err);statusEl.textContent='ネットワークエラー。後でもう一度お試しください';}
+  });}
 })();
 </script>
 </body>
@@ -19234,6 +19261,7 @@ async fn main() {
         .route("/jiuflow/proposal", get(show_jiuflow_proposal_page))
         .route("/gi/:id", get(show_gi_edition_page))
         .route("/api/gi/:id/checkout", post(gi_edition_checkout))
+        .route("/api/gi/:id/enai-claim", post(gi_enai_claim))
         .route("/collab/apply", get(show_collab_apply_page))
         .route("/api/collab/apply", post(api_collab_apply))
         .route("/collab/result/:token", get(show_collab_result_page))
