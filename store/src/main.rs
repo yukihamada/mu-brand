@@ -11902,18 +11902,18 @@ footer a{{color:var(--y);text-decoration:none}}
 {chart_block}
 
 <div class="tabs" role="tablist" aria-label="商品カテゴリ">
-  <button class="tab active" role="tab" id="tab-collab" aria-controls="pane-collab" aria-selected="true" data-target="pane-collab">MU × {pretty_em} <span class="count">{tot_skus}</span></button>
-  <button class="tab" role="tab" id="tab-drops" aria-controls="pane-drops" aria-selected="false" data-target="pane-drops">MU 自社 drops <span class="count">{drops_count}</span></button>
+  <button class="tab {tab_a_cls}" role="tab" id="tab-collab" aria-controls="pane-collab" aria-selected="{tab_a_sel}" data-target="pane-collab">MU × {pretty_em} <span class="count">{tot_skus}</span></button>
+  <button class="tab {tab_b_cls}" role="tab" id="tab-drops" aria-controls="pane-drops" aria-selected="{tab_b_sel}" data-target="pane-drops">MU 自社 drops <span class="count">{drops_count}</span></button>
 </div>
 
-<section class="tab-pane active" id="pane-collab" role="tabpanel" aria-labelledby="tab-collab">
+<section class="tab-pane {tab_a_cls}" id="pane-collab" role="tabpanel" aria-labelledby="tab-collab"{tab_a_hidden}>
   <div class="pane-intro">
     🤝 <b>{pretty_em} 向けに設計したコラボ商品</b>。サンプル価格は <b>製造工場の卸値（原価）そのまま</b>、MU は 1 円も乗せていません。サイズ展開がある服は <b>サイズ別に数量指定</b>できます。
   </div>
   <div class="list">{cards}</div>
 </section>
 
-<section class="tab-pane" id="pane-drops" role="tabpanel" aria-labelledby="tab-drops" hidden>
+<section class="tab-pane {tab_b_cls}" id="pane-drops" role="tabpanel" aria-labelledby="tab-drops"{tab_b_hidden}>
   <div class="pane-intro">
     🎨 <b>MU が普段作っている 1/1 作品</b>です。MUGEN（毎時生成）、MA（週次オークション現品）、MUON（日次気温連動）、NOUNS（DAO コラボ）。<br>
     こちらは <b>通常販売価格</b>での購入になります（コラボサンプルとは別経路）。在庫は <b>各 1 点もの</b>、欲しいものはお早めに。
@@ -12083,6 +12083,12 @@ recalc();
         drops_cards = drops_cards,
         drops_count = drops.len(),
         recent_html = recent_html,
+        tab_a_cls = if q.get("tab").map(String::as_str) == Some("drops") { "" } else { "active" },
+        tab_b_cls = if q.get("tab").map(String::as_str) == Some("drops") { "active" } else { "" },
+        tab_a_sel = if q.get("tab").map(String::as_str) == Some("drops") { "false" } else { "true" },
+        tab_b_sel = if q.get("tab").map(String::as_str) == Some("drops") { "true" } else { "false" },
+        tab_a_hidden = if q.get("tab").map(String::as_str) == Some("drops") { " hidden" } else { "" },
+        tab_b_hidden = if q.get("tab").map(String::as_str) == Some("drops") { "" } else { " hidden" },
         partner_json = serde_json::to_string(partner).unwrap_or_else(|_| "\"\"".into()),
     );
     let _ = cancel_path;
