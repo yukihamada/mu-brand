@@ -956,39 +956,64 @@ async fn checkout_embedded(
         find_stripe_customer_by_email(&stripe_key, em).await
     } else { None };
 
-    let mut form = stripe_checkout_form_jp(StripeCheckoutFields {
-        mode: "payment",
-        base_url: &base_url,
-        // Embedded mode uses `return_url` (not success/cancel paths) — the
-        // form helper still emits success_url; embedded ignores it.
-        success_path: "/success?sid={CHECKOUT_SESSION_ID}",
-        cancel_path: "/",
-        display_name: &display_name,
-        unit_amount: price_jpy,
-        quantity: body.quantity as i64,
-        customer_email: body.email.as_deref().filter(|s| !s.is_empty()),
-        customer_id: reuse_customer_id.as_deref(),
-        product_id: Some(body.product_id),
-        size: Some(&size_label),
-        wallet: Some(&wallet),
-        payment_method: Some(&pm),
-        base_price_jpy: Some(base_price_jpy),
-        total_jpy: Some(total_jpy),
-        kyc_required: total_jpy >= KYC_THRESHOLD_JPY,
-        collect_shipping: true,
-    });
-    // Switch to embedded mode + add the required `return_url`.
-    form.push(("ui_mode".into(), "embedded".into()));
-    form.push(("return_url".into(),
-        format!("{}/success?sid={{CHECKOUT_SESSION_ID}}&from=embedded", base_url)));
-    // success_url is invalid in embedded mode — strip it.
-    form.retain(|(k, _)| k != "success_url" && k != "cancel_url");
+    let build_form = || {
+        let mut f = stripe_checkout_form_jp(StripeCheckoutFields {
+            mode: "payment",
+            base_url: &base_url,
+            success_path: "/success?sid={CHECKOUT_SESSION_ID}",
+            cancel_path: "/",
+            display_name: &display_name,
+            unit_amount: price_jpy,
+            quantity: body.quantity as i64,
+            customer_email: body.email.as_deref().filter(|s| !s.is_empty()),
+            customer_id: reuse_customer_id.as_deref(),
+            product_id: Some(body.product_id),
+            size: Some(&size_label),
+            wallet: Some(&wallet),
+            payment_method: Some(&pm),
+            base_price_jpy: Some(base_price_jpy),
+            total_jpy: Some(total_jpy),
+            kyc_required: total_jpy >= KYC_THRESHOLD_JPY,
+            collect_shipping: true,
+        });
+        f.push(("ui_mode".into(), "embedded".into()));
+        f.push(("return_url".into(),
+            format!("{}/success?sid={{CHECKOUT_SESSION_ID}}&from=embedded", base_url)));
+        // success_url / cancel_url are invalid in embedded mode — strip them.
+        f.retain(|(k, _)| k != "success_url" && k != "cancel_url");
+        f
+    };
 
-    let resp = reqwest::Client::new()
-        .post("https://api.stripe.com/v1/checkout/sessions")
-        .basic_auth(&stripe_key, None::<&str>)
-        .form(&form)
-        .send().await;
+    let client = reqwest::Client::new();
+    let send_one = |form: Vec<(String, String)>| {
+        let c = client.clone();
+        let k = stripe_key.clone();
+        async move {
+            c.post("https://api.stripe.com/v1/checkout/sessions")
+                .basic_auth(&k, None::<&str>).form(&form).send().await
+        }
+    };
+
+    // First attempt. If Stripe rejects konbini as inactive, auto-disable +
+    // retry without it — mirrors the legacy /api/checkout path.
+    let first = send_one(build_form()).await;
+    let resp = match first {
+        Ok(r) if r.status().is_success() => Ok(r),
+        Ok(r) => {
+            let s = r.status();
+            let body_text = r.text().await.unwrap_or_default();
+            if maybe_disable_konbini(&body_text) {
+                tracing::warn!("[embedded-checkout] retrying without konbini after runtime auto-disable");
+                send_one(build_form()).await
+            } else {
+                tracing::error!("[embedded-checkout] stripe {}: {}", s, body_text.chars().take(300).collect::<String>());
+                return (StatusCode::BAD_GATEWAY,
+                    Json(serde_json::json!({"ok":false,"error":format!("stripe {}: {}", s, &body_text[..body_text.len().min(200)])}))).into_response();
+            }
+        }
+        Err(e) => Err(e),
+    };
+
     match resp {
         Ok(r) if r.status().is_success() => {
             let j: serde_json::Value = r.json().await.unwrap_or_default();
@@ -1008,7 +1033,7 @@ async fn checkout_embedded(
         Ok(r) => {
             let s = r.status();
             let t = r.text().await.unwrap_or_default();
-            tracing::error!("[embedded-checkout] stripe {}: {}", s, t.chars().take(300).collect::<String>());
+            tracing::error!("[embedded-checkout] stripe retry {}: {}", s, t.chars().take(300).collect::<String>());
             (StatusCode::BAD_GATEWAY,
              Json(serde_json::json!({"ok":false,"error":format!("stripe {}: {}", s, &t[..t.len().min(200)])}))).into_response()
         }
