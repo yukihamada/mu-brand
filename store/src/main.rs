@@ -15772,6 +15772,7 @@ async fn main() {
         .route("/admin/insights", get(admin_insights))
         .route("/admin/governance", get(admin_governance))
         .route("/admin/governance/:id/decide", post(admin_governance_decide))
+        .route("/admin/audit", get(admin_audit))
         .route("/api/v1/event", post(api_funnel_event))
         .route("/admin/auth_log", get(admin_auth_log_view))
         .route("/healthz", get(healthz))
@@ -16050,6 +16051,11 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         interval_secs: 7 * 86_400, // 週次
         description: "Telegram weekly digest 送信 + 7d 経過 governance pending を expired に遷移",
     },
+    AgentDef {
+        name: "decision_audit",
+        interval_secs: 7 * 86_400, // 週次
+        description: "30d 経過の autonomy_decision_log を heuristic 採点 → agent_scorecard ロールアップ",
+    },
 ];
 
 /// agent_journal から指定 agent の最後の cycle_at (epoch sec) を取得。
@@ -16079,6 +16085,7 @@ async fn run_agent(name: &str, db: Db) -> Result<AgentReport, String> {
         "price_micro"       => agent_price_micro(db).await,
         "strategist"        => agent_strategist(db).await,
         "weekly_digest"     => agent_weekly_digest(db).await,
+        "decision_audit"    => agent_decision_audit(db).await,
         _ => Err(format!("unknown agent: {}", name)),
     }
 }
@@ -18031,6 +18038,220 @@ async fn agent_weekly_digest(db: Db) -> Result<AgentReport, String> {
         decisions: vec![], actions, summary,
         notable: pending > 0,
     })
+}
+
+// ── Agent 16: decision_audit ───────────────────────────────────────────
+// 週 1 回、autonomy_decision_log の 30 日経過 + 未採点 decision を回顧採点。
+// 観測しやすい kind は heuristic で score を付け、未知 kind は 0.5 (neutral)。
+// Gemini は使わない (コスト 0, 即決)。後続 self_evolve がスコア低い決定を
+// 検知してプロンプト改訂を提案するための土台。
+async fn agent_decision_audit(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut actions: Vec<serde_json::Value> = Vec::new();
+
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let cutoff = now_s - 30 * 86_400;
+
+    type Row = (i64, String, String, String, String, i64, i64);
+    let rows: Vec<Row> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, agent_name, decision_kind, reversibility, COALESCE(payload,'{}'),
+                    executed, escalated
+             FROM autonomy_decision_log
+             WHERE scored_at IS NULL
+               AND CAST(COALESCE(created_at,'0') AS INTEGER) < ?
+             ORDER BY id ASC LIMIT 50"
+        ) { Ok(s) => s, Err(_) => return Ok(AgentReport::idle("schema not ready")) };
+        stmt.query_map(params![cutoff], |r| Ok((
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?,
+        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    obs.insert("candidates".into(), serde_json::Value::from(rows.len() as i64));
+    if rows.is_empty() {
+        return Ok(AgentReport::idle("no aged unscored decisions"));
+    }
+
+    let mut scored: i64 = 0;
+    for (id, agent_name, kind, _rev, payload_s, executed, escalated) in &rows {
+        let payload: serde_json::Value = serde_json::from_str(payload_s).unwrap_or_default();
+        // Heuristic scoring per kind. Conservative neutral default.
+        let (score, notes): (f64, String) = match (agent_name.as_str(), kind.as_str()) {
+            ("auto_refund", "stripe_refund") => {
+                // Score 0.8 if customer didn't file another complaint within 30d after refund
+                let email = payload.get("email").and_then(|v| v.as_str()).unwrap_or("");
+                let conn = db.lock().unwrap();
+                let post_complaints: i64 = if email.is_empty() { 0 } else {
+                    conn.query_row(
+                        "SELECT COUNT(*) FROM customer_feedback
+                         WHERE LOWER(email)=LOWER(?) AND CAST(COALESCE(created_at,'0') AS INTEGER) > ?",
+                        params![email, now_s - 30 * 86_400], |r| r.get(0),
+                    ).unwrap_or(0)
+                };
+                if post_complaints > 0 { (0.4, format!("{} repeat complaints after refund", post_complaints)) }
+                else if *executed == 1 { (0.85, "executed, no repeat complaint".into()) }
+                else { (0.5, "not executed".into()) }
+            },
+            ("price_micro", "price_adjust") => {
+                let slug = payload.get("slug").and_then(|v| v.as_str()).unwrap_or("");
+                let conn = db.lock().unwrap();
+                // Did orders in the 30d after this adjustment outpace the 30d before?
+                let after: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM collab_orders WHERE slug=?
+                     AND CAST(COALESCE(created_at,'0') AS INTEGER) BETWEEN ? AND ?",
+                    params![slug, cutoff, now_s], |r| r.get(0),
+                ).unwrap_or(0);
+                let before: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM collab_orders WHERE slug=?
+                     AND CAST(COALESCE(created_at,'0') AS INTEGER) BETWEEN ? AND ?",
+                    params![slug, cutoff - 30 * 86_400, cutoff], |r| r.get(0),
+                ).unwrap_or(0);
+                if after > before { (0.75, format!("orders {}→{}", before, after)) }
+                else if after < before { (0.35, format!("orders {}→{} (worse)", before, after)) }
+                else { (0.5, format!("flat at {}", before)) }
+            },
+            ("strategist", _) => {
+                // Outcome = governance verdict on the linked queue item
+                let conn = db.lock().unwrap();
+                let status: Option<String> = conn.query_row(
+                    "SELECT status FROM autonomy_governance_queue WHERE decision_id=? LIMIT 1",
+                    params![id], |r| r.get::<_, String>(0),
+                ).ok();
+                match status.as_deref() {
+                    Some("approved") => (0.8, "approved by yuki".into()),
+                    Some("rejected") => (0.3, "rejected".into()),
+                    Some("expired")  => (0.1, "expired without decision".into()),
+                    _ => (0.5, "no governance verdict (pending?)".into()),
+                }
+            },
+            ("support_reply_sender", "send_reply") => {
+                if *executed == 1 { (0.75, "sent without bounceback".into()) } else { (0.4, "not sent".into()) }
+            },
+            ("catalog_health", _) => (if *escalated == 1 { 0.7 } else { 0.55 }, "audit-only".into()),
+            _ => (0.5, "neutral (no heuristic for this kind)".into()),
+        };
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE autonomy_decision_log
+             SET outcome_score=?, outcome_notes=?, scored_at=?
+             WHERE id=?",
+            params![score, notes, chrono_now(), id],
+        );
+        scored += 1;
+    }
+    obs.insert("scored".into(), serde_json::Value::from(scored));
+    actions.push(serde_json::json!({"scored": scored}));
+
+    // Roll up into agent_scorecard for this 30-day window
+    let scorecard_rows: Vec<(String, i64, i64, Option<f64>)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT agent_name, COUNT(*),
+                    SUM(CASE WHEN outcome_score IS NOT NULL THEN 1 ELSE 0 END),
+                    AVG(outcome_score)
+             FROM autonomy_decision_log
+             WHERE CAST(COALESCE(created_at,'0') AS INTEGER) > ?
+             GROUP BY agent_name"
+        ).expect("prepare");
+        stmt.query_map(params![cutoff], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    for (agent_name, total, scored_n, avg) in &scorecard_rows {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO agent_scorecard
+             (agent_name, period_start, period_end, decisions_total, decisions_scored,
+              avg_outcome_score, notable_failures, cost_jpy, notes, created_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?)",
+            params![
+                agent_name, cutoff.to_string(), now_s.to_string(),
+                total, scored_n, avg.unwrap_or(0.5),
+                0i64, 0i64, "auto rollup",
+                chrono_now(),
+            ],
+        );
+    }
+
+    let summary = format!("decision_audit: {} scored, {} agents rolled up", scored, scorecard_rows.len());
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs),
+        decisions: vec![], actions, summary,
+        notable: scored > 0,
+    })
+}
+
+/// GET /admin/audit?token=… — agent scorecard view (last rollup per agent)
+async fn admin_audit(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/audit").await { return r; }
+    let token = q.get("token").map(String::as_str).unwrap_or("");
+
+    let conn = db.lock().unwrap();
+    let rows: Vec<(String, i64, i64, f64, String)> = {
+        let mut stmt = match conn.prepare(
+            "SELECT agent_name,
+                    MAX(decisions_total)   AS total,
+                    MAX(decisions_scored)  AS scored,
+                    AVG(avg_outcome_score) AS avg_score,
+                    MAX(period_end)        AS last_end
+             FROM agent_scorecard
+             GROUP BY agent_name
+             ORDER BY 4 ASC"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map([], |r| Ok((
+            r.get::<_,String>(0)?,
+            r.get::<_,Option<i64>>(1)?.unwrap_or(0),
+            r.get::<_,Option<i64>>(2)?.unwrap_or(0),
+            r.get::<_,Option<f64>>(3)?.unwrap_or(0.5),
+            r.get::<_,Option<String>>(4)?.unwrap_or_default(),
+        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    drop(conn);
+
+    let mut tbody = String::new();
+    for (agent, total, scored, avg, last_end) in &rows {
+        let pct = (avg * 100.0).round() as i64;
+        let bar_color = if *avg >= 0.7 { "#2a4" } else if *avg >= 0.5 { "#a83" } else { "#a33" };
+        tbody.push_str(&format!(
+            r#"<tr><td><code>{a}</code></td><td class=num>{t}</td><td class=num>{s}</td>
+<td class=num>{p}%</td>
+<td><div style="width:{w}px;height:8px;background:{c};border-radius:2px"></div></td>
+<td class="dim num">{end}</td></tr>"#,
+            a = html_attr_escape(agent), t = total, s = scored,
+            p = pct, w = (pct * 2).clamp(2, 200), c = bar_color,
+            end = html_attr_escape(last_end),
+        ));
+    }
+    if tbody.is_empty() {
+        tbody = "<tr><td colspan=6 class=dim>(no scorecard rollups yet — decision_audit runs weekly)</td></tr>".into();
+    }
+
+    Html(format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>MU / Audit</title>
+<style>
+body{{font:14px/1.55 ui-monospace,Menlo,monospace;color:#eaeaea;background:#0b0b0b;padding:24px;max-width:1080px;margin:0 auto}}
+h1{{font-weight:500;margin-top:0}}
+table{{width:100%;border-collapse:collapse;margin-top:12px}}
+td,th{{padding:8px 10px;border-bottom:1px solid #222;text-align:left}}
+.num{{text-align:right;font-variant-numeric:tabular-nums}} .dim{{color:#666}}
+code{{background:#1a1a1a;padding:1px 6px;border-radius:4px}}
+.nav{{margin-bottom:24px}} .nav a{{margin-right:14px;color:#9bd}}
+</style></head><body>
+<div class=nav>
+  <a href="/admin/agents?token={tok}">Agents</a>
+  <a href="/admin/insights?token={tok}">Insights</a>
+  <a href="/admin/governance?token={tok}">Governance</a>
+  <a href="/admin/audit?token={tok}">Audit</a>
+</div>
+<h1>Agent Scorecard — avg outcome score</h1>
+<p class=dim>Heuristic-scored 30d after each decision. 0.5 = neutral. Bar = avg×200px.</p>
+<table><thead><tr><th>agent</th><th>total</th><th>scored</th><th>avg</th><th></th><th>last_end</th></tr></thead>
+<tbody>{tbody}</tbody></table>
+</body></html>"#, tok = html_attr_escape(token), tbody = tbody)).into_response()
 }
 
 /// Decode a packed f32 embedding from journal_embeddings.embedding (little-endian).
