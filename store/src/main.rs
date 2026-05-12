@@ -1998,6 +1998,13 @@ form button.submit:disabled{{opacity:0.5;cursor:not-allowed}}
         <input type="tel" id="ship_phone" name="ship_phone" maxlength="40" autocomplete="tel"></div>
     </div>
 
+    <div id="prefillBanner" style="display:none;background:rgba(34,197,94,0.06);border:1px solid var(--green);border-radius:3px;padding:14px 16px;margin-bottom:18px;font-size:13px;line-height:1.7">
+      <div style="color:var(--green);font-size:10px;letter-spacing:0.22em;text-transform:uppercase;margin-bottom:6px">過去のお届け先が見つかりました</div>
+      <div id="prefillMasked" style="color:#c4c4bc;margin-bottom:10px"></div>
+      <button type="button" id="prefillApply" style="background:var(--green);color:#000;border:none;padding:8px 14px;border-radius:2px;font-size:11px;letter-spacing:0.16em;text-transform:uppercase;font-weight:600;cursor:pointer;margin-right:6px">この住所で送る</button>
+      <button type="button" id="prefillIgnore" style="background:transparent;color:var(--mute);border:1px solid var(--cardb);padding:8px 14px;border-radius:2px;font-size:11px;letter-spacing:0.16em;text-transform:uppercase;cursor:pointer">別の住所を入力</button>
+    </div>
+
     <div class="field"><label class="req" for="ship_line1">住所 1 行目</label>
       <input type="text" id="ship_line1" name="ship_line1" required maxlength="200" autocomplete="address-line1"></div>
     <div class="field"><label for="ship_line2">住所 2 行目</label>
@@ -2050,6 +2057,46 @@ function updateBtn(){{
 document.querySelectorAll('input[name="product_id"]').forEach(function(r){{
   r.addEventListener('change', function(){{ selectChoice('existing'); }});
 }});
+
+// Prefill shipping from past purchases keyed off the bounty reporter's email.
+(async function(){{
+  try {{
+    var r = await fetch('/api/bounty/claim/{token}/prefill', {{cache:'no-store'}});
+    if(!r.ok) return;
+    var j = await r.json();
+    if(!j || !j.found || !j.fields) return;
+    var b  = document.getElementById('prefillBanner');
+    var mk = document.getElementById('prefillMasked');
+    if(!b || !mk) return;
+    mk.innerHTML = '前回お送りした住所: <b>' + (j.masked||'') + '</b>';
+    b.style.display = '';
+    document.getElementById('prefillApply').addEventListener('click', function(){{
+      var f = j.fields;
+      var setIfEmpty = function(id, v){{
+        var el = document.getElementById(id);
+        if(!el) return;
+        if(!el.value || el.value.trim()==='') el.value = v || '';
+      }};
+      // Always overwrite when user explicitly clicks the prefill button.
+      var setAlways = function(id, v){{ var el = document.getElementById(id); if(el) el.value = v || ''; }};
+      setAlways('ship_name',    f.ship_name);
+      setAlways('ship_line1',   f.ship_line1);
+      setAlways('ship_line2',   f.ship_line2);
+      setAlways('ship_city',    f.ship_city);
+      setAlways('ship_state',   f.ship_state);
+      setAlways('ship_zip',     f.ship_zip);
+      if(f.ship_country) setAlways('ship_country', f.ship_country);
+      setIfEmpty('ship_phone',  f.ship_phone);
+      b.style.background = 'rgba(34,197,94,0.12)';
+      mk.innerHTML = '✓ 住所をフォームに反映しました。必要なら下で編集してください。';
+      document.getElementById('prefillApply').style.display = 'none';
+      document.getElementById('prefillIgnore').textContent = '使わない (クリア)';
+    }});
+    document.getElementById('prefillIgnore').addEventListener('click', function(){{
+      b.style.display = 'none';
+    }});
+  }} catch(e) {{ /* silent */ }}
+}})();
 
 function onPayoutChange(){{
   var m = document.querySelector('input[name="payout_method"]:checked');
@@ -2434,6 +2481,149 @@ async fn bounty_claim(
         "size": size,
         "cash_amount_jpy": r.cash_amount_jpy,
         "payout_method": if r.cash_amount_jpy > 0 { Some(payout_method.clone()) } else { None },
+    })).into_response()
+}
+
+/// GET /api/bounty/claim/:token/prefill — find a past shipping address for
+/// the bounty reporter's email and return it so the claim page can offer
+/// "前回のお届け先に送る" pre-fill.
+///
+/// Sources, in priority order (most-recent within each):
+///   1. previously claimed bounty_rewards (same email, fully filled)
+///   2. pending_crypto_payments (crypto checkout with shipping)
+///   3. gi_preorders.shipping_json (Stripe shipping_details JSON)
+///
+/// Returns `{ found, source, masked, fields }`. We expose the unmasked
+/// fields too because the token is single-use and only the email recipient
+/// holds the URL — the masked label is just for the UI confirmation banner.
+async fn bounty_claim_prefill(
+    State(db): State<Db>,
+    axum::extract::Path(token): axum::extract::Path<String>,
+) -> Response {
+    if token.len() < 32 || token.len() > 128 || !token.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"found": false}))).into_response();
+    }
+    let now_int: i64 = chrono_now().parse().unwrap_or(0);
+
+    // 1. Resolve the bounty reporter's email via the token.
+    let email: Option<String> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT b.reporter_email
+             FROM bounty_rewards r
+             JOIN bounty_submissions b ON b.id = r.bounty_id
+             WHERE r.token = ? AND r.status = 'issued'
+               AND CAST(r.expires_at AS INTEGER) > ?",
+            params![token, now_int],
+            |r| r.get::<_, String>(0),
+        ).ok()
+    };
+    let Some(email) = email.filter(|s| s.contains('@')) else {
+        return Json(serde_json::json!({"found": false})).into_response();
+    };
+
+    #[derive(Default)]
+    struct Ship {
+        name: String, line1: String, line2: String, city: String,
+        state: String, zip: String, country: String, phone: String,
+    }
+    fn nonempty(s: &Ship) -> bool { !s.line1.is_empty() && !s.city.is_empty() && !s.zip.is_empty() }
+
+    let mut source: &'static str = "";
+    let mut ship = Ship::default();
+
+    let conn = db.lock().unwrap();
+
+    // 1a. Past claimed bounty_rewards for this email.
+    if let Ok(s) = conn.query_row(
+        "SELECT COALESCE(ship_name,''), COALESCE(ship_line1,''), COALESCE(ship_line2,''),
+                COALESCE(ship_city,''), COALESCE(ship_state,''), COALESCE(ship_zip,''),
+                COALESCE(ship_country,''), COALESCE(ship_phone,'')
+         FROM bounty_rewards
+         WHERE ship_email = ? AND ship_line1 IS NOT NULL AND ship_line1 != ''
+         ORDER BY claimed_at DESC LIMIT 1",
+        params![email],
+        |r| Ok(Ship{
+            name: r.get(0)?, line1: r.get(1)?, line2: r.get(2)?, city: r.get(3)?,
+            state: r.get(4)?, zip: r.get(5)?, country: r.get(6)?, phone: r.get(7)?,
+        })) {
+        if nonempty(&s) { ship = s; source = "prior_bounty"; }
+    }
+
+    // 1b. Crypto checkout history.
+    if source.is_empty() {
+        if let Ok(s) = conn.query_row(
+            "SELECT COALESCE(ship_name,''), COALESCE(ship_line1,''), COALESCE(ship_line2,''),
+                    COALESCE(ship_city,''), COALESCE(ship_state,''), COALESCE(ship_zip,''),
+                    COALESCE(ship_country,''), COALESCE(ship_phone,'')
+             FROM pending_crypto_payments
+             WHERE email = ? AND ship_line1 IS NOT NULL AND ship_line1 != ''
+             ORDER BY created_at DESC LIMIT 1",
+            params![email],
+            |r| Ok(Ship{
+                name: r.get(0)?, line1: r.get(1)?, line2: r.get(2)?, city: r.get(3)?,
+                state: r.get(4)?, zip: r.get(5)?, country: r.get(6)?, phone: r.get(7)?,
+            })) {
+            if nonempty(&s) { ship = s; source = "crypto_checkout"; }
+        }
+    }
+
+    // 1c. Gi preorder Stripe shipping_json fallback.
+    if source.is_empty() {
+        let row: Option<(String, String, String)> = conn.query_row(
+            "SELECT COALESCE(shipping_json,''), COALESCE(name,''), COALESCE(phone,'')
+             FROM gi_preorders
+             WHERE email = ? AND shipping_json IS NOT NULL AND shipping_json != ''
+             ORDER BY paid_at DESC LIMIT 1",
+            params![email],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).ok();
+        if let Some((js, name, phone)) = row {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&js) {
+                let a = &v["address"];
+                let s = Ship{
+                    name:    if !name.is_empty() { name } else { v["name"].as_str().unwrap_or("").to_string() },
+                    line1:   a["line1"].as_str().unwrap_or("").to_string(),
+                    line2:   a["line2"].as_str().unwrap_or("").to_string(),
+                    city:    a["city"].as_str().unwrap_or("").to_string(),
+                    state:   a["state"].as_str().unwrap_or("").to_string(),
+                    zip:     a["postal_code"].as_str().unwrap_or("").to_string(),
+                    country: a["country"].as_str().unwrap_or("").to_string(),
+                    phone,
+                };
+                if nonempty(&s) { ship = s; source = "gi_preorder"; }
+            }
+        }
+    }
+
+    if source.is_empty() {
+        return Json(serde_json::json!({"found": false})).into_response();
+    }
+
+    // Build a human-readable masked label for the UI banner. Show city +
+    // first ~3 chars of the postal code; hide street.
+    let masked = format!(
+        "{country} · {state} {city} · 〒{zip_head}…",
+        country = if ship.country == "JP" { "日本" } else { ship.country.as_str() },
+        state = ship.state,
+        city = ship.city,
+        zip_head = ship.zip.chars().take(3).collect::<String>(),
+    );
+
+    Json(serde_json::json!({
+        "found": true,
+        "source": source,
+        "masked": masked,
+        "fields": {
+            "ship_name":    ship.name,
+            "ship_line1":   ship.line1,
+            "ship_line2":   ship.line2,
+            "ship_city":    ship.city,
+            "ship_state":   ship.state,
+            "ship_zip":     ship.zip,
+            "ship_country": ship.country,
+            "ship_phone":   ship.phone,
+        },
     })).into_response()
 }
 
@@ -21486,6 +21676,7 @@ async fn main() {
         .route("/bounty/claim/:token", get(show_bounty_claim_page))
         .route("/api/bounty/claim/:token", post(bounty_claim))
         .route("/api/bounty/claim/:token/stripe-connect", post(bounty_claim_stripe_connect))
+        .route("/api/bounty/claim/:token/prefill", get(bounty_claim_prefill))
         .route("/api/collab/signup", post(api_collab_signup))
         .route("/admin/collab-signups", get(admin_collab_signups))
         .route("/api/sweep/checkout", post(sweep_checkout))
