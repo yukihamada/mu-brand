@@ -2617,9 +2617,56 @@ async fn handle_collab_sample_order(db: Db, session: &serde_json::Value) {
     let mut summary_lines: Vec<String> = Vec::new();
 
     for it in &items {
+        let source = it["source"].as_str().unwrap_or("collab");
+        let qty: i64 = it["qty"].as_i64().unwrap_or(1).clamp(1, 20);
+
+        // Drop items (MU 自社 drops) are handled separately — no Printful,
+        // just Telegram alert with the brand/drop_num so 濱田 can ship from
+        // existing 1/1 stock.
+        if source == "drop" {
+            let pid = it["product_id"].as_i64().unwrap_or(0);
+            let brand = it["brand"].as_str().unwrap_or("?");
+            let drop_num = it["drop_num"].as_i64().unwrap_or(0);
+            if pid <= 0 { continue; }
+            // Look up name + decrement sold count.
+            let name: String = {
+                let conn = db.lock().unwrap();
+                let n: String = conn.query_row(
+                    "SELECT name FROM products WHERE id=?",
+                    params![pid], |r| r.get(0),
+                ).unwrap_or_default();
+                let _ = conn.execute(
+                    "UPDATE products SET sold=sold+? WHERE id=?",
+                    params![qty, pid],
+                );
+                n
+            };
+            // Record into collab_orders for unified bookkeeping (route='mu_drop').
+            let line_key = format!("{}|drop|{}", session_id, pid);
+            {
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "INSERT OR IGNORE INTO collab_orders
+                         (stripe_session, slug, size, email, ship_name, ship_address, ship_country,
+                          amount_jpy, production_route, status, created_at)
+                     VALUES (?,?,?,?,?,?,?,?,?, 'drop_received', ?)",
+                    params![
+                        line_key, format!("{}#{:04}", brand, drop_num), "OS", email,
+                        ship_name, ship_address, country,
+                        0i64, "mu_drop", chrono_now(),
+                    ],
+                );
+            }
+            manual_lines.push(format!("{} {} #{:04} ×{} [MU 自社 drop / 手動発送]",
+                name, brand.to_uppercase(), drop_num, qty));
+            summary_lines.push(format!("• {} {} #{:04} ×{} (1/1 drop)",
+                name, brand.to_uppercase(), drop_num, qty));
+            continue;
+        }
+
+        // Collab items (default path, existing logic)
         let slug = it["slug"].as_str().unwrap_or("").to_string();
         let size = it["size"].as_str().unwrap_or("OS").to_string();
-        let qty: i64 = it["qty"].as_i64().unwrap_or(1).clamp(1, 20);
         if slug.is_empty() { continue; }
 
         type Row = (
@@ -11300,6 +11347,56 @@ async fn show_partner_proposal_page(
         ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
     };
 
+    // ── Tab B: MU 自社 drops (MA / MUGEN / MUON / NOUNS) ──
+    // 1/1 unique-design pieces, no Printful cost, retail-priced purchase.
+    // Per-brand caps to avoid flooding: MA 2, MUGEN 12 (latest), MUON 6, NOUNS 10.
+    type DropRow = (i64, String, i64, String, i64, Option<String>, i64, i64);
+    let drops: Vec<DropRow> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, brand, drop_num, name, price_jpy, mockup_url, sold, inventory
+             FROM products
+             WHERE active=1 AND sold_out_at IS NULL
+               AND brand IN ('mugen','ma','muon','nouns')
+               AND brand=brand
+             ORDER BY brand, drop_num DESC"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "drops").into_response() };
+        let all: Vec<DropRow> = stmt.query_map([], |r| Ok((
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?,
+            r.get(5)?, r.get(6)?, r.get(7)?,
+        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+        // Per-brand cap.
+        let cap = |b: &str| -> usize {
+            match b { "ma" => 2, "mugen" => 12, "muon" => 6, "nouns" => 10, _ => 0 }
+        };
+        let mut out: Vec<DropRow> = Vec::new();
+        let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for d in all {
+            let n = counts.entry(d.1.clone()).or_insert(0);
+            if *n < cap(&d.1) { *n += 1; out.push(d); }
+        }
+        out
+    };
+
+    // ── Recently purchased designs (social proof, last 30 days) ──
+    // Shows: design thumbnail + brand + drop# + when bought, to nudge demand.
+    type RecentRow = (i64, String, i64, String, Option<String>, String);
+    let recent_buys: Vec<RecentRow> = {
+        let conn = db.lock().unwrap();
+        let cutoff_iso = format!("{}", chrono_now().parse::<i64>().unwrap_or(0) - 30 * 86_400);
+        let mut stmt = match conn.prepare(
+            "SELECT p.id, p.brand, p.drop_num, p.name, p.mockup_url, p.created_at
+             FROM products p
+             WHERE p.sold > 0
+               AND CAST(strftime('%s', p.created_at) AS INTEGER) > ?
+             ORDER BY p.created_at DESC
+             LIMIT 12"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "recent").into_response() };
+        stmt.query_map(params![cutoff_iso], |r| Ok((
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?,
+        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+
     let mut tot_skus = 0i64;
     let mut tot_with_cost = 0i64;
     let mut min_sample_total = 0i64;
@@ -11427,6 +11524,114 @@ async fn show_partner_proposal_page(
 
     let display_label = html_escape(label);
     let pretty_partner = if partner == "sweep" { "SIIIEEP" } else { "kokon.tokyo" };
+
+    // ── Render Tab B (MU 自社 drops) cards ──
+    let abs_url = |u: &str| -> String {
+        if u.starts_with("http") || u.is_empty() { u.to_string() }
+        else { format!("https://wearmu.com{}", u) }
+    };
+    let brand_label = |b: &str| -> &'static str {
+        match b {
+            "ma" => "MA",
+            "mugen" => "MUGEN",
+            "muon" => "MUON",
+            "nouns" => "NOUNS",
+            _ => "MU",
+        }
+    };
+    let brand_desc = |b: &str| -> &'static str {
+        match b {
+            "ma" => "週次 1/1 オークション現品",
+            "mugen" => "毎時生成 weather-driven AI design",
+            "muon" => "日次 / 気温連動の数量限定",
+            "nouns" => "MUON × Nouns DAO コラボ",
+            _ => "",
+        }
+    };
+    let drops_cards = drops.iter().map(|(id, brand, drop_num, name, price, mockup, sold, inventory)| {
+        let stock_left = (inventory - sold).max(0);
+        let stock_pill = if stock_left <= 3 {
+            format!(r#"<span class="stock low">残り {} 枚</span>"#, stock_left)
+        } else {
+            format!(r#"<span class="stock">残り {} 枚</span>"#, stock_left)
+        };
+        let image_html = match mockup.as_deref().filter(|u| !u.is_empty()) {
+            Some(u) => format!(
+                r#"<div class="thumb"><img src="{}" alt="{}" loading="lazy"></div>"#,
+                html_attr_escape(&abs_url(u)), html_attr_escape(name)
+            ),
+            None => r#"<div class="thumb placeholder" aria-hidden="true">—</div>"#.to_string(),
+        };
+        format!(r##"<article class="prow drop-row" data-pid="{id}" data-price="{price}" data-name="{name_a}" data-brand="{brand}">
+  {image}
+  <div class="info">
+    <div class="top">
+      <span class="cat">{brand_label} #{drop_num:04}</span>
+      <span class="name">{name}</span>
+      {stock}
+    </div>
+    <div class="price-row">
+      <span class="sample-price"><b>¥{price_fmt}</b><small>通常販売価格 / 税込・送料別</small></span>
+      <span class="retail-price small-note">{desc}</span>
+    </div>
+    <div class="cart one-size">
+      <label class="qty"><span>数量</span>
+        <input type="number" min="0" max="{max_qty}" value="0" class="qty-input drop-qty" data-pid="{id}" data-source="drop" aria-label="{name_a} 数量">
+      </label>
+      <span class="size-tag">1 / 1 ピース</span>
+      <span class="line-total" data-pid="{id}">¥0</span>
+    </div>
+  </div>
+</article>"##,
+            id = id,
+            price = price,
+            brand = html_attr_escape(brand),
+            name_a = html_attr_escape(name),
+            image = image_html,
+            brand_label = brand_label(brand),
+            drop_num = drop_num,
+            name = html_escape(name),
+            stock = stock_pill,
+            price_fmt = format_jpy(*price),
+            desc = brand_desc(brand),
+            max_qty = stock_left.max(1).min(10),
+        )
+    }).collect::<Vec<_>>().join("\n");
+
+    // ── Render recent buys (social proof at bottom) ──
+    let recent_html = if recent_buys.is_empty() {
+        "".to_string()
+    } else {
+        let cards = recent_buys.iter().map(|(id, brand, drop_num, name, mockup, created_at)| {
+            let img = match mockup.as_deref().filter(|u| !u.is_empty()) {
+                Some(u) => format!(r#"<img src="{}" alt="{}" loading="lazy">"#,
+                    html_attr_escape(&abs_url(u)), html_attr_escape(name)),
+                None => r#"<div class="rb-placeholder">—</div>"#.to_string(),
+            };
+            // Compact "5月12日" date from ISO timestamp.
+            let dstr = created_at.get(5..10).map(|s| s.replace('-', "/")).unwrap_or_default();
+            format!(r#"<a class="rb-card" href="https://wearmu.com/products/{brand}/{id}" target="_blank" rel="noopener">
+  <div class="rb-img">{img}</div>
+  <div class="rb-meta">
+    <span class="rb-brand">{brand_lbl} #{drop_num:04}</span>
+    <span class="rb-date">{dstr}</span>
+  </div>
+</a>"#,
+                brand = html_attr_escape(brand),
+                id = id,
+                img = img,
+                brand_lbl = brand_label(brand),
+                drop_num = drop_num,
+                dstr = dstr,
+            )
+        }).collect::<Vec<_>>().join("\n");
+        format!(r#"<section class="recent-wrap">
+  <h2 class="section-h">🔥 最近 MU で購入されたデザイン</h2>
+  <p class="section-d">過去 30 日に売れた {n} 点。クリックで商品詳細ページに飛びます。<br>
+  ※ これらは MU 通常販売 — 「サンプル原価販売」とは別経路です。</p>
+  <div class="recent-grid">{cards}</div>
+</section>"#, n = recent_buys.len(), cards = cards)
+    };
 
     // ── Build 14-day SVG chart from `series` ──────────────────────────────
     // Layout: chart area 700×130 (top), labels row at y=145.
@@ -11613,7 +11818,35 @@ footer a{{color:var(--y);text-decoration:none}}
   .bar input[type=email]{{min-width:0;width:100%}}
   .bar button{{width:100%}}
   .size-grid-cells{{grid-template-columns:repeat(auto-fit,minmax(64px,1fr))}}
+  .tabs{{font-size:12px}}
+  .recent-grid{{grid-template-columns:repeat(auto-fit,minmax(120px,1fr))}}
 }}
+.tabs{{display:flex;gap:4px;margin:6px 0 18px;padding:4px;background:#000;border:1px solid var(--b);border-radius:4px;max-width:520px}}
+.tab{{flex:1;background:transparent;color:#A8A8A0;border:0;font-family:inherit;font-size:13px;font-weight:600;letter-spacing:0.04em;padding:11px 16px;cursor:pointer;border-radius:2px;transition:background 0.15s}}
+.tab.active{{background:var(--y);color:#0A0A0A}}
+.tab:hover:not(.active){{background:rgba(255,255,255,0.04);color:var(--fg)}}
+.tab .count{{display:inline-block;margin-left:6px;padding:1px 7px;background:rgba(0,0,0,0.18);border-radius:99px;font-size:11px;font-variant-numeric:tabular-nums}}
+.tab.active .count{{background:rgba(0,0,0,0.18)}}
+.tab:not(.active) .count{{background:rgba(255,255,255,0.06)}}
+.tab-pane{{display:none}}
+.tab-pane.active{{display:block}}
+.pane-intro{{color:#A8A8A0;font-size:12.5px;margin-bottom:14px;line-height:1.8;padding:10px 14px;background:rgba(255,255,255,0.02);border-left:2px solid var(--y);border-radius:2px}}
+.pane-intro b{{color:#F5F5F0}}
+.drop-row .stock{{font-size:10.5px;letter-spacing:0.06em;color:#A8A8A0;background:rgba(255,255,255,0.04);padding:3px 8px;border-radius:2px;font-weight:600}}
+.drop-row .stock.low{{color:var(--o);background:rgba(245,158,11,0.18)}}
+.drop-row .small-note{{font-size:11.5px;color:#9C9C95}}
+.recent-wrap{{max-width:1100px;margin:48px auto 12px;padding-top:30px;border-top:1px solid var(--b)}}
+.section-h{{font-size:15px;font-weight:600;letter-spacing:0.04em;margin-bottom:6px}}
+.section-d{{color:#A8A8A0;font-size:11.5px;line-height:1.85;margin-bottom:18px}}
+.recent-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}}
+.rb-card{{background:var(--card);border:1px solid var(--b);border-radius:3px;text-decoration:none;color:inherit;transition:border-color 0.15s,transform 0.15s;display:block}}
+.rb-card:hover{{border-color:var(--y);transform:translateY(-2px)}}
+.rb-img{{aspect-ratio:1/1;background:#000;overflow:hidden;border-radius:2px 2px 0 0}}
+.rb-img img{{width:100%;height:100%;object-fit:cover}}
+.rb-placeholder{{display:flex;align-items:center;justify-content:center;width:100%;height:100%;color:#A8A8A0}}
+.rb-meta{{padding:8px 10px;display:flex;justify-content:space-between;align-items:center;font-size:10.5px}}
+.rb-brand{{color:var(--y);font-weight:600;letter-spacing:0.08em}}
+.rb-date{{color:#A8A8A0;font-variant-numeric:tabular-nums}}
 @media print {{
   body{{background:#fff;color:#000;padding:16px;font-size:11pt}}
   h1{{color:#000}} h1 em{{color:#b89320}}
@@ -11651,13 +11884,32 @@ footer a{{color:var(--y);text-decoration:none}}
 
 {chart_block}
 
-<div class="list">
-{cards}
+<div class="tabs" role="tablist" aria-label="商品カテゴリ">
+  <button class="tab active" role="tab" id="tab-collab" aria-controls="pane-collab" aria-selected="true" data-target="pane-collab">MU × {pretty_em} <span class="count">{tot_skus}</span></button>
+  <button class="tab" role="tab" id="tab-drops" aria-controls="pane-drops" aria-selected="false" data-target="pane-drops">MU 自社 drops <span class="count">{drops_count}</span></button>
 </div>
+
+<section class="tab-pane active" id="pane-collab" role="tabpanel" aria-labelledby="tab-collab">
+  <div class="pane-intro">
+    🤝 <b>{pretty_em} 向けに設計したコラボ商品</b>。サンプル価格は <b>製造工場の卸値（原価）そのまま</b>、MU は 1 円も乗せていません。サイズ展開がある服は <b>サイズ別に数量指定</b>できます。
+  </div>
+  <div class="list">{cards}</div>
+</section>
+
+<section class="tab-pane" id="pane-drops" role="tabpanel" aria-labelledby="tab-drops" hidden>
+  <div class="pane-intro">
+    🎨 <b>MU が普段作っている 1/1 作品</b>です。MUGEN（毎時生成）、MA（週次オークション現品）、MUON（日次気温連動）、NOUNS（DAO コラボ）。<br>
+    こちらは <b>通常販売価格</b>での購入になります（コラボサンプルとは別経路）。在庫は <b>各 1 点もの</b>、欲しいものはお早めに。
+  </div>
+  <div class="list">{drops_cards}</div>
+</section>
+
+{recent_html}
 
 <footer>
   ご相談・要望: <a href="mailto:mail@yukihamada.jp">mail@yukihamada.jp</a><br>
-  サンプル決済は Stripe Checkout で日本国内配送です。出荷前のキャンセル・返金は個別対応可（製造開始後は不可）。
+  サンプル決済は Stripe Checkout で日本国内配送です。出荷前のキャンセル・返金は個別対応可（製造開始後は不可）。<br>
+  MU 自社 drops は 1/1 のためサイズ・在庫が限られます。気になる作品は早めの確保を推奨します。
 </footer>
 
 <div class="bar" role="region" aria-label="サンプルまとめ買いカート">
@@ -11695,7 +11947,8 @@ function showToast(msg, err) {{
 function fmt(n) {{ return n.toLocaleString('ja-JP'); }}
 function recalc() {{
   let tot = 0, ct = 0;
-  document.querySelectorAll('.prow').forEach(row => {{
+  // Collab rows: data-cost on row, qty inputs may be per-size.
+  document.querySelectorAll('.prow:not(.drop-row)').forEach(row => {{
     const cost = parseInt(row.dataset.cost || '0', 10);
     let rowTotal = 0;
     row.querySelectorAll('.qty-input').forEach(inp => {{
@@ -11703,7 +11956,6 @@ function recalc() {{
       if (qty > 0) {{ rowTotal += qty * cost; ct += qty; }}
     }});
     tot += rowTotal;
-    // size-grid rows have a single .line-total summing all cells; one-size has one per row.
     const isGrid = row.querySelector('.cart.size-grid');
     if (isGrid) {{
       const t = row.querySelector('.line-total');
@@ -11717,13 +11969,33 @@ function recalc() {{
       }});
     }}
   }});
+  // Drop rows: retail price on row, single qty.
+  document.querySelectorAll('.prow.drop-row').forEach(row => {{
+    const price = parseInt(row.dataset.price || '0', 10);
+    const inp = row.querySelector('.qty-input');
+    const qty = parseInt((inp && inp.value) || '0', 10);
+    const line = qty * price;
+    if (qty > 0) {{ tot += line; ct += qty; }}
+    const t = row.querySelector('.line-total');
+    if (t) t.textContent = '¥' + fmt(line);
+  }});
   barTotal.textContent = '¥' + fmt(tot);
   barCount.textContent = ct;
   const empty = ct === 0;
   btn.disabled = empty;
   btn.setAttribute('aria-disabled', empty ? 'true' : 'false');
-  btn.textContent = empty ? '商品を 1 点以上選んでください' : 'サンプルまとめ買いへ進む →';
+  btn.textContent = empty ? '商品を 1 点以上選んでください' : 'カートを購入へ進む →';
 }}
+// Tab switcher
+document.querySelectorAll('.tab').forEach(t => {{
+  t.addEventListener('click', () => {{
+    document.querySelectorAll('.tab').forEach(x => {{ x.classList.remove('active'); x.setAttribute('aria-selected','false'); }});
+    document.querySelectorAll('.tab-pane').forEach(p => {{ p.classList.remove('active'); p.setAttribute('hidden',''); }});
+    t.classList.add('active'); t.setAttribute('aria-selected','true');
+    const pane = document.getElementById(t.dataset.target);
+    if (pane) {{ pane.classList.add('active'); pane.removeAttribute('hidden'); }}
+  }});
+}});
 document.querySelectorAll('.qty-input').forEach(i => {{
   i.addEventListener('input', recalc);
   i.addEventListener('change', recalc);
@@ -11734,11 +12006,21 @@ document.getElementById('checkout-form').addEventListener('submit', async (e) =>
   document.querySelectorAll('.qty-input').forEach(inp => {{
     const qty = parseInt(inp.value || '0', 10);
     if (qty > 0) {{
-      items.push({{
-        slug: inp.dataset.slug,
-        size: inp.dataset.size || 'OS',
-        qty: qty,
-      }});
+      const source = inp.dataset.source || 'collab';
+      if (source === 'drop') {{
+        items.push({{
+          source: 'drop',
+          product_id: parseInt(inp.dataset.pid, 10),
+          qty: qty,
+        }});
+      }} else {{
+        items.push({{
+          source: 'collab',
+          slug: inp.dataset.slug,
+          size: inp.dataset.size || 'OS',
+          qty: qty,
+        }});
+      }}
     }}
   }});
   if (!items.length) {{ showToast('数量を 1 以上にしてください', true); return; }}
@@ -11781,6 +12063,9 @@ recalc();
         min_sample_total_fmt = format_jpy(min_sample_total),
         chart_block = chart_block,
         cards = cards,
+        drops_cards = drops_cards,
+        drops_count = drops.len(),
+        recent_html = recent_html,
         partner_json = serde_json::to_string(partner).unwrap_or_else(|_| "\"\"".into()),
     );
     let _ = cancel_path;
@@ -12530,7 +12815,9 @@ async fn kokon_checkout(
 
 #[derive(Deserialize)]
 struct SampleCheckoutItem {
-    slug: String,
+    #[serde(default)] source: String,         // "collab" (default) or "drop"
+    #[serde(default)] slug: String,            // for collab
+    #[serde(default)] product_id: Option<i64>, // for drop (products.id)
     #[serde(default)] size: String,
     #[serde(default)] qty: i64,
 }
@@ -12569,8 +12856,9 @@ async fn sample_checkout(
         return (StatusCode::BAD_REQUEST, "too many items (max 30)").into_response();
     }
 
-    // Look up every slug, build line_items + a compact metadata payload.
-    type Row = (i64, String, String, i64, Option<i64>);
+    // Look up each item (collab or drop), build line_items + metadata payload.
+    type CollabRow = (i64, String, String, i64, Option<i64>);
+    type DropRow2 = (String, i64, String, i64);
     let mut line_form: Vec<(String, String)> = Vec::new();
     let mut meta_items: Vec<serde_json::Value> = Vec::new();
     let mut total = 0i64;
@@ -12578,31 +12866,64 @@ async fn sample_checkout(
         let conn = db.lock().unwrap();
         for (idx, it) in body.items.iter().enumerate() {
             if it.qty <= 0 || it.qty > 20 {
-                return (StatusCode::BAD_REQUEST, format!("bad qty for {}", it.slug)).into_response();
-            }
-            let row: Option<Row> = conn.query_row(
-                "SELECT id, name, COALESCE(category,''), price_jpy, printful_cost_jpy
-                 FROM collab_products WHERE slug=? AND partner=? AND active=1",
-                params![it.slug, partner],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
-            ).ok();
-            let Some((_pid, name, category, _price, cost)) = row else {
-                return (StatusCode::NOT_FOUND, format!("unknown slug {}", it.slug)).into_response();
-            };
-            let Some(c) = cost else {
                 return (StatusCode::BAD_REQUEST,
-                    format!("{} は原価未登録のためサンプル不可", it.slug)).into_response();
-            };
-            // Stripe JPY minimum is ¥50; clamp 500..=99,800 to match retail flow.
-            let unit = c.clamp(500, 99_800);
-            total += unit * it.qty;
-            let size = it.size.chars().take(8).collect::<String>();
-            line_form.push((format!("line_items[{}][quantity]", idx), it.qty.to_string()));
-            line_form.push((format!("line_items[{}][price_data][currency]", idx), "jpy".into()));
-            line_form.push((format!("line_items[{}][price_data][unit_amount]", idx), unit.to_string()));
-            line_form.push((format!("line_items[{}][price_data][product_data][name]", idx),
-                format!("[sample] {} ({}) · {}", name, category, label)));
-            meta_items.push(serde_json::json!({"slug": it.slug, "size": size, "qty": it.qty}));
+                    format!("bad qty (item #{})", idx + 1)).into_response();
+            }
+            let source = if it.source.is_empty() { "collab" } else { it.source.as_str() };
+            match source {
+                "drop" => {
+                    let Some(pid) = it.product_id else {
+                        return (StatusCode::BAD_REQUEST, "drop item missing product_id").into_response();
+                    };
+                    let row: Option<DropRow2> = conn.query_row(
+                        "SELECT brand, drop_num, name, price_jpy
+                         FROM products
+                         WHERE id=? AND active=1 AND sold_out_at IS NULL
+                           AND brand IN ('mugen','ma','muon','nouns')",
+                        params![pid],
+                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                    ).ok();
+                    let Some((brand, drop_num, name, price)) = row else {
+                        return (StatusCode::NOT_FOUND, format!("unknown drop product_id {}", pid)).into_response();
+                    };
+                    let unit = price.clamp(500, 999_800);
+                    total += unit * it.qty;
+                    line_form.push((format!("line_items[{}][quantity]", idx), it.qty.to_string()));
+                    line_form.push((format!("line_items[{}][price_data][currency]", idx), "jpy".into()));
+                    line_form.push((format!("line_items[{}][price_data][unit_amount]", idx), unit.to_string()));
+                    line_form.push((format!("line_items[{}][price_data][product_data][name]", idx),
+                        format!("{} {} #{:04} (1/1)", name, brand.to_uppercase(), drop_num)));
+                    meta_items.push(serde_json::json!({
+                        "source": "drop", "product_id": pid, "brand": brand, "drop_num": drop_num, "qty": it.qty,
+                    }));
+                }
+                _ => {
+                    let row: Option<CollabRow> = conn.query_row(
+                        "SELECT id, name, COALESCE(category,''), price_jpy, printful_cost_jpy
+                         FROM collab_products WHERE slug=? AND partner=? AND active=1",
+                        params![it.slug, partner],
+                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+                    ).ok();
+                    let Some((_pid, name, category, _price, cost)) = row else {
+                        return (StatusCode::NOT_FOUND, format!("unknown slug {}", it.slug)).into_response();
+                    };
+                    let Some(c) = cost else {
+                        return (StatusCode::BAD_REQUEST,
+                            format!("{} は原価未登録のためサンプル不可", it.slug)).into_response();
+                    };
+                    let unit = c.clamp(500, 99_800);
+                    total += unit * it.qty;
+                    let size = it.size.chars().take(8).collect::<String>();
+                    line_form.push((format!("line_items[{}][quantity]", idx), it.qty.to_string()));
+                    line_form.push((format!("line_items[{}][price_data][currency]", idx), "jpy".into()));
+                    line_form.push((format!("line_items[{}][price_data][unit_amount]", idx), unit.to_string()));
+                    line_form.push((format!("line_items[{}][price_data][product_data][name]", idx),
+                        format!("[sample] {} ({}) · {}", name, category, label)));
+                    meta_items.push(serde_json::json!({
+                        "source": "collab", "slug": it.slug, "size": size, "qty": it.qty,
+                    }));
+                }
+            }
         }
     }
     let _ = total;
