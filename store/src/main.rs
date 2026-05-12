@@ -3502,8 +3502,62 @@ async fn index() -> Html<&'static str> {
     Html(include_str!("../static/index.html"))
 }
 
-async fn blog_index() -> Html<&'static str> {
-    Html(include_str!("../static/blog/index.html"))
+async fn blog_index(State(db): State<Db>) -> Html<String> {
+    let base = include_str!("../static/blog/index.html");
+    // Fetch most recent 30 AI auto-blog posts and render a section.
+    let posts: Vec<(String, String, String)> = {
+        let conn = db.lock().unwrap();
+        let result = match conn.prepare(
+            "SELECT slug, title, COALESCE(SUBSTR(created_at,1,10),'')
+             FROM auto_blog_posts WHERE published=1
+             ORDER BY created_at DESC LIMIT 30"
+        ) {
+            Ok(mut stmt) => stmt.query_map([], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?
+            ))).map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>())
+              .unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
+        result
+    };
+    let auto_html = if posts.is_empty() {
+        String::new()
+    } else {
+        let mut s = String::from(
+            r#"<section style="max-width:760px;margin:48px auto 0;padding:0 32px">
+<div class="eyebrow">AI Field log — 毎朝 9:10 JST</div>
+<h2 style="font-size:22px;font-weight:300;letter-spacing:0.02em;margin:14px 0 8px">
+Gemini が書く運営日誌
+</h2>
+<p style="color:var(--mute);font-size:13px;line-height:1.85;margin-bottom:6px">
+人手版のノートとは別系列。AI が毎朝、その日の天気・売上・在庫・お客様の声を見て自分の言葉で書く。
+</p>
+</section>
+<ul class="list">"#);
+        for (slug, title, date) in &posts {
+            // date is YYYY-MM-DD; format as "YYYY.MM.DD"
+            let date_disp = date.replace('-', ".");
+            s.push_str(&format!(
+                r#"<li>
+<div class="date">{date} · AI auto-blog</div>
+<h2><a href="/blog/auto/{slug}">{title}</a></h2>
+</li>"#,
+                date = html_escape(&date_disp),
+                slug = html_attr_escape(slug),
+                title = html_escape(title),
+            ));
+        }
+        s.push_str("</ul>");
+        s
+    };
+    // Inject the new section right before <footer>
+    let injected = if let Some(footer_idx) = base.find("<footer>") {
+        let (head, tail) = base.split_at(footer_idx);
+        format!("{head}{auto_html}{tail}")
+    } else {
+        format!("{base}{auto_html}")
+    };
+    Html(injected)
 }
 
 async fn blog_post_001() -> Html<&'static str> {
