@@ -13675,7 +13675,7 @@ async fn main() {
          Some(r#"[{"id":"stitch_color","value":"black"}]"#), 14, 1),
         ("sweep-backpack",      "全面プリント バックパック","MU × SIIIEEP All-Over Backpack",
          "Printful All-Over Print Backpack (pid 279)。SIIIEEP のサインを全面に展開した、デイリー / 練習 / 出張兼用バックパック。",
-         9_800,  "printful", Some(279), Some(9063),
+         15_800, "printful", Some(279), Some(9063),
          Some(r#"{"OS":9063,"ONE SIZE":9063,"S":9063,"M":9063,"L":9063,"XL":9063}"#),
          Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
          Some(r#"[{"id":"stitch_color","value":"black"}]"#), 14, 1),
@@ -13767,15 +13767,15 @@ async fn main() {
         ("sweep-duffle",       16_090),
         ("sweep-gym-bag",      13_305),
         ("sweep-cotton-shorts", 3_640),
-        // 第三弾 (2026-05-12) 推定原価 — E2E 実測で更新予定
-        ("sweep-bomber",       11_500),
-        ("sweep-track-jacket", 10_900),
-        ("sweep-backpack",      6_200),
-        ("sweep-fanny-pack",    4_800),
-        ("sweep-iphone-case",   2_350),
-        ("sweep-bucket-hat",    3_580),
-        ("sweep-joggers",       7_900),
-        ("sweep-baseball-jersey", 9_400),
+        // 第三弾 (2026-05-12) Printful 実測原価 — Tokyo 配送 / 確定 JPY
+        ("sweep-bomber",        8_740),
+        ("sweep-track-jacket", 10_920),
+        ("sweep-backpack",     11_975),  // ¥15,800 sale → +¥3,825 margin
+        ("sweep-fanny-pack",    4_440),
+        ("sweep-iphone-case",   2_860),
+        ("sweep-bucket-hat",    3_590),
+        ("sweep-joggers",       6_730),
+        ("sweep-baseball-jersey", 5_660),
     ];
     for (slug, cost) in printful_costs {
         conn.execute(
