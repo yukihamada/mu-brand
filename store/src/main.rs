@@ -1843,8 +1843,33 @@ async fn show_bounty_claim_page(
 
     let cash_line = if row.cash_amount_jpy > 0 {
         format!(
-            r#"<div class="cash-card"><div class="k">現金報酬 (別途お振込)</div><div class="v">¥{}</div><div class="note">本フォーム送信後にご案内する別フォームで振込先 (銀行 / Solana wallet) をお知らせください。</div></div>"#,
-            fmt_jpy(row.cash_amount_jpy),
+            r##"<div class="cash-card">
+              <div class="k">現金報酬</div>
+              <div class="v">¥{amt}</div>
+              <div class="note">下記のいずれかの方法で受取先をご指定ください。送信後 5 営業日以内にお支払い完了します。</div>
+              <div class="pay-tabs">
+                <label class="pay-tab"><input type="radio" name="payout_method" value="solana" checked onchange="onPayoutChange()"><span><b>Solana</b> <em>(USDC 送付・推奨)</em></span></label>
+                <label class="pay-tab"><input type="radio" name="payout_method" value="stripe_connect" onchange="onPayoutChange()"><span><b>Stripe Connect</b> <em>(国内銀行振込)</em></span></label>
+                <label class="pay-tab"><input type="radio" name="payout_method" value="paypay" onchange="onPayoutChange()"><span><b>PayPay</b> <em>(最悪手・手動送金)</em></span></label>
+              </div>
+              <div class="pay-body" id="payBodySolana">
+                <label for="solana_wallet">Solana wallet アドレス</label>
+                <input type="text" id="solana_wallet" name="solana_wallet" maxlength="64" placeholder="例: 8CeusiVAeibuBGv5xcf7kt7JQZzqwTS5pD7u2CfyoWnL" autocomplete="off">
+                <p class="hint">¥{amt} 相当の USDC を MU treasury から直接送ります。<br>※ 1 USDC = 約 ¥150。送付額は当日レートで計算 (送付タイミング ±0.5% 程度の slippage あり)。</p>
+              </div>
+              <div class="pay-body" id="payBodyStripe" style="display:none">
+                <p class="hint">Stripe Connect Express で onboarding (2-3 分) → 日本国内銀行に直接振込されます。下のボタンで Stripe のページが開きます。受取人情報を入力後、本ページに戻って「報酬を受け取る」を押してください。</p>
+                <button type="button" id="stripeConnectBtn" class="pay-stripe-btn" onclick="startStripeConnect()">Stripe Connect で onboarding を始める</button>
+                <input type="hidden" id="stripe_connect_account_id" name="stripe_connect_account_id" value="">
+                <div class="pay-stripe-status" id="stripeStatus"></div>
+              </div>
+              <div class="pay-body" id="payBodyPaypay" style="display:none">
+                <label for="paypay_handle">PayPay ID (電話番号 / PayPay ID)</label>
+                <input type="text" id="paypay_handle" name="paypay_handle" maxlength="60" placeholder="例: 090-xxxx-xxxx or @yourid" autocomplete="off">
+                <p class="hint">手動で送金します。1 営業日以内に PayPay 通知が届きます。</p>
+              </div>
+            </div>"##,
+            amt = fmt_jpy(row.cash_amount_jpy),
         )
     } else { String::new() };
 
@@ -1894,10 +1919,26 @@ form input:focus,form select:focus,form textarea:focus{{outline:none;border-colo
 form .field{{margin-bottom:14px}}
 form button.submit{{width:100%;background:var(--gold);color:#000;border:none;padding:16px;border-radius:2px;font-size:13px;letter-spacing:0.22em;text-transform:uppercase;font-weight:700;cursor:pointer;margin-top:8px}}
 form button.submit:disabled{{opacity:0.5;cursor:not-allowed}}
-.cash-card{{background:rgba(34,197,94,0.06);border:1px solid var(--green);padding:18px 22px;border-radius:4px;margin-bottom:28px}}
+.cash-card{{background:rgba(34,197,94,0.06);border:1px solid var(--green);padding:22px 24px;border-radius:4px;margin-bottom:28px}}
 .cash-card .k{{font-size:10px;letter-spacing:0.22em;color:var(--green);text-transform:uppercase;margin-bottom:6px}}
 .cash-card .v{{font-size:28px;font-weight:300;color:var(--green)}}
-.cash-card .note{{font-size:12px;color:#b4b4ac;margin-top:8px;line-height:1.7}}
+.cash-card .note{{font-size:12px;color:#b4b4ac;margin-top:8px;margin-bottom:18px;line-height:1.7}}
+.pay-tabs{{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;border-top:1px solid rgba(255,255,255,0.06);padding-top:18px}}
+.pay-tab{{flex:1;min-width:140px;background:#0a0a0a;border:1px solid var(--cardb);border-radius:3px;padding:10px 12px;cursor:pointer;font-size:12.5px;display:flex;align-items:center;gap:8px;transition:border-color 0.15s}}
+.pay-tab:has(input:checked){{border-color:var(--green);background:rgba(34,197,94,0.08)}}
+.pay-tab input{{margin:0}}
+.pay-tab b{{color:var(--fg)}}
+.pay-tab em{{color:var(--mute);font-style:normal;font-size:11px;margin-left:4px}}
+.pay-body{{background:#0a0a0a;border:1px solid var(--cardb);border-radius:3px;padding:16px 18px}}
+.pay-body label{{display:block;font-size:10px;letter-spacing:0.16em;text-transform:uppercase;color:var(--mute);margin-bottom:6px}}
+.pay-body input[type="text"]{{width:100%;background:#000;border:1px solid var(--cardb);color:var(--fg);font:inherit;padding:10px 12px;border-radius:2px;font-size:13px;font-family:ui-monospace,Menlo,monospace}}
+.pay-body input[type="text"]:focus{{outline:none;border-color:var(--green)}}
+.pay-body .hint{{font-size:11.5px;color:var(--mute);margin-top:10px;line-height:1.75}}
+.pay-stripe-btn{{display:inline-block;background:#635bff;color:#fff;padding:11px 18px;border-radius:3px;font-size:12px;letter-spacing:0.16em;text-transform:uppercase;font-weight:600;border:none;cursor:pointer;text-decoration:none;margin-top:10px}}
+.pay-stripe-btn:hover{{opacity:0.9}}
+.pay-stripe-btn:disabled{{opacity:0.5;cursor:not-allowed}}
+.pay-stripe-status{{font-size:12px;color:var(--green);margin-top:10px;display:none}}
+.pay-stripe-status.show{{display:block}}
 #result{{margin-top:20px;font-size:14px;line-height:1.85}}
 #result.ok{{background:rgba(34,197,94,0.08);border:1px solid var(--green);color:#9ae3a8;padding:18px;border-radius:2px}}
 #result.err{{background:rgba(200,54,44,0.08);border:1px solid #C8362C;color:#ff8a8a;padding:18px;border-radius:2px}}
@@ -2010,6 +2051,50 @@ document.querySelectorAll('input[name="product_id"]').forEach(function(r){{
   r.addEventListener('change', function(){{ selectChoice('existing'); }});
 }});
 
+function onPayoutChange(){{
+  var m = document.querySelector('input[name="payout_method"]:checked');
+  if(!m) return;
+  var v = m.value;
+  var sol = document.getElementById('payBodySolana');
+  var stp = document.getElementById('payBodyStripe');
+  var pay = document.getElementById('payBodyPaypay');
+  if(sol) sol.style.display = (v==='solana') ? '' : 'none';
+  if(stp) stp.style.display = (v==='stripe_connect') ? '' : 'none';
+  if(pay) pay.style.display = (v==='paypay') ? '' : 'none';
+}}
+
+async function startStripeConnect(){{
+  var btn = document.getElementById('stripeConnectBtn');
+  var st  = document.getElementById('stripeStatus');
+  btn.disabled = true; btn.textContent = '準備中…';
+  try {{
+    var r = await fetch('/api/bounty/claim/{token}/stripe-connect', {{
+      method:'POST', headers:{{'Content-Type':'application/json'}}, body: '{{}}'
+    }});
+    var j = await r.json();
+    if(r.ok && j.url){{
+      if(j.account_id){{
+        document.getElementById('stripe_connect_account_id').value = j.account_id;
+      }}
+      st.className = 'pay-stripe-status show';
+      st.textContent = '↗ Stripe のページを別タブで開きました。完了後、本ページに戻って「報酬を受け取る」を押してください。';
+      window.open(j.url, '_blank', 'noopener');
+      btn.textContent = 'もう一度 onboarding ページを開く';
+      btn.disabled = false;
+    }} else {{
+      st.className = 'pay-stripe-status show';
+      st.style.color = '#ff8a8a';
+      st.textContent = '✗ ' + (j.error || ('HTTP '+r.status));
+      btn.disabled = false; btn.textContent = 'Stripe Connect で onboarding を始める';
+    }}
+  }} catch(e){{
+    st.className = 'pay-stripe-status show';
+    st.style.color = '#ff8a8a';
+    st.textContent = '✗ ' + e.message;
+    btn.disabled = false; btn.textContent = 'Stripe Connect で onboarding を始める';
+  }}
+}}
+
 async function submitClaim(ev){{
   ev.preventDefault();
   var btn = document.getElementById('submitBtn');
@@ -2018,6 +2103,11 @@ async function submitClaim(ev){{
   btn.disabled = true; btn.textContent='送信中…';
   var f = ev.target;
   var pid = document.querySelector('input[name="product_id"]:checked');
+  var payoutEl = document.querySelector('input[name="payout_method"]:checked');
+  var payout_method = payoutEl ? payoutEl.value : '';
+  var solw = document.getElementById('solana_wallet');
+  var stpa = document.getElementById('stripe_connect_account_id');
+  var ppy  = document.getElementById('paypay_handle');
   var payload = {{
     choice:       f.choice.value,
     product_id:   pid ? parseInt(pid.value,10) : null,
@@ -2030,8 +2120,25 @@ async function submitClaim(ev){{
     ship_city:    f.ship_city.value.trim(),
     ship_state:   f.ship_state.value.trim(),
     ship_zip:     f.ship_zip.value.trim(),
-    ship_country: f.ship_country.value
+    ship_country: f.ship_country.value,
+    payout_method: payout_method,
+    solana_wallet: solw ? solw.value.trim() : '',
+    stripe_connect_account_id: stpa ? stpa.value.trim() : '',
+    paypay_handle: ppy  ? ppy.value.trim()  : ''
   }};
+  // Client-side validation for the chosen payout method.
+  if(payout_method === 'solana' && !payload.solana_wallet){{
+    out.className='err'; out.textContent='✗ Solana wallet アドレスを入力してください。';
+    btn.disabled=false; btn.textContent='報酬を受け取る'; return false;
+  }}
+  if(payout_method === 'stripe_connect' && !payload.stripe_connect_account_id){{
+    out.className='err'; out.textContent='✗ Stripe Connect onboarding を完了してください ("Stripe Connect で onboarding を始める" ボタン)。';
+    btn.disabled=false; btn.textContent='報酬を受け取る'; return false;
+  }}
+  if(payout_method === 'paypay' && !payload.paypay_handle){{
+    out.className='err'; out.textContent='✗ PayPay ID (電話番号など) を入力してください。';
+    btn.disabled=false; btn.textContent='報酬を受け取る'; return false;
+  }}
   if(payload.choice==='existing' && !payload.product_id){{
     out.className='err'; out.textContent='✗ 既存ドロップを選択した場合は、T シャツを 1 つお選びください。';
     btn.disabled=false; btn.textContent='報酬を受け取る';
@@ -2097,8 +2204,8 @@ body{{background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,'Hiragino Sans'
     (st, Html(html)).into_response()
 }
 
-/// POST /api/bounty/claim/:token — consume the token, record shipping,
-/// kick off Printful fulfillment.
+/// POST /api/bounty/claim/:token — consume the token, record shipping +
+/// cash-payout target, kick off Printful fulfillment.
 #[derive(Deserialize)]
 struct BountyClaimBody {
     #[serde(default)] choice: String,
@@ -2113,6 +2220,12 @@ struct BountyClaimBody {
     #[serde(default)] ship_state: String,
     #[serde(default)] ship_zip: String,
     #[serde(default)] ship_country: String,
+    // Cash-payout. Only one of solana_wallet / stripe_connect_account_id /
+    // paypay_handle is used, depending on payout_method.
+    #[serde(default)] payout_method: String,
+    #[serde(default)] solana_wallet: String,
+    #[serde(default)] stripe_connect_account_id: String,
+    #[serde(default)] paypay_handle: String,
 }
 async fn bounty_claim(
     State(db): State<Db>,
@@ -2145,6 +2258,50 @@ async fn bounty_claim(
     if ship_name.is_empty() || ship_line1.is_empty() || ship_city.is_empty()
         || ship_zip.is_empty() || ship_country.len() != 2 {
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok":false,"error":"shipping required (name, line1, city, zip, country)"}))).into_response();
+    }
+
+    // ── Payout validation ─────────────────────────────────────────────
+    let payout_method = body.payout_method.trim().to_lowercase();
+    let solana_wallet = body.solana_wallet.trim().chars().take(64).collect::<String>();
+    let stripe_account_id = body.stripe_connect_account_id.trim().chars().take(64).collect::<String>();
+    let paypay_handle = body.paypay_handle.trim().chars().take(60).collect::<String>();
+    // Only require a payout target if there's actually cash on the reward.
+    // (For tee-only rewards, payout_method may be blank.)
+    let need_cash_payout = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT cash_amount_jpy FROM bounty_rewards WHERE token=?",
+            params![token], |r| r.get::<_, i64>(0),
+        ).unwrap_or(0) > 0
+    };
+    if need_cash_payout {
+        if !["solana", "stripe_connect", "paypay"].contains(&payout_method.as_str()) {
+            return (StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"ok":false,"error":"payout_method must be 'solana', 'stripe_connect', or 'paypay'"}))).into_response();
+        }
+        match payout_method.as_str() {
+            "solana" => {
+                // Solana addresses are base58-encoded ed25519 pubkeys,
+                // typically 43–44 chars. Validate length + base58 alphabet.
+                if !is_plausible_solana_wallet(&solana_wallet) {
+                    return (StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({"ok":false,"error":"invalid Solana wallet address"}))).into_response();
+                }
+            }
+            "stripe_connect" => {
+                if !stripe_account_id.starts_with("acct_") || stripe_account_id.len() < 12 {
+                    return (StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({"ok":false,"error":"please complete Stripe Connect onboarding first"}))).into_response();
+                }
+            }
+            "paypay" => {
+                if paypay_handle.is_empty() || paypay_handle.len() > 60 {
+                    return (StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({"ok":false,"error":"PayPay ID required"}))).into_response();
+                }
+            }
+            _ => unreachable!(),
+        }
     }
 
     let now_int: i64 = chrono_now().parse().unwrap_or(0);
@@ -2191,17 +2348,30 @@ async fn bounty_claim(
                     Json(serde_json::json!({"ok":false,"error":"selected product has no artwork"}))).into_response()),
             }
         };
+        // Persist payout target only if relevant; otherwise leave NULL so
+        // the admin payout queue ignores tee-only rewards.
+        let (pm_db, sol_db, stp_db, pp_db): (Option<&str>, Option<&str>, Option<&str>, Option<&str>) =
+            if cash_amount_jpy > 0 {
+                (Some(payout_method.as_str()),
+                 if !solana_wallet.is_empty() { Some(solana_wallet.as_str()) } else { None },
+                 if !stripe_account_id.is_empty() { Some(stripe_account_id.as_str()) } else { None },
+                 if !paypay_handle.is_empty() { Some(paypay_handle.as_str()) } else { None })
+            } else { (None, None, None, None) };
         let updated = conn.execute(
             "UPDATE bounty_rewards
              SET choice=?, chosen_product_id=?, chosen_size=?,
                  ship_name=?, ship_line1=?, ship_line2=?, ship_city=?, ship_state=?,
                  ship_zip=?, ship_country=?, ship_phone=?, ship_email=?,
+                 payout_method=?, solana_wallet=?, stripe_connect_account_id=?, paypay_handle=?,
+                 payout_status=CASE WHEN ?>0 THEN 'pending' ELSE NULL END,
                  status='claimed', claimed_at=?
              WHERE id=? AND status='issued'",
             params![
                 choice, body.product_id, size,
                 ship_name, ship_line1, ship_line2, ship_city, ship_state,
                 ship_zip, ship_country, ship_phone, ship_email,
+                pm_db, sol_db, stp_db, pp_db,
+                cash_amount_jpy,
                 now_int.to_string(), reward_id,
             ],
         ).unwrap_or(0);
@@ -2213,9 +2383,19 @@ async fn bounty_claim(
     })();
     let r = match outcome { Ok(t) => t, Err(resp) => return resp };
 
+    let payout_summary = if r.cash_amount_jpy > 0 {
+        match payout_method.as_str() {
+            "solana"          => format!("solana → {}", solana_wallet),
+            "stripe_connect"  => format!("stripe_connect → {}", stripe_account_id),
+            "paypay"          => format!("paypay → {}", paypay_handle),
+            _                 => "未指定".into(),
+        }
+    } else { "—".into() };
+
     let tg = format!(
-        "🎁 *Bounty reward claimed* #{} (bounty #{})\nchoice: {}\nproduct_id: {:?}\nsize: {}\ncash: ¥{}\nship: {} <{}>\nto: {} {} {} {} {} {}",
+        "🎁 *Bounty reward claimed* #{} (bounty #{})\nchoice: {}\nproduct_id: {:?}\nsize: {}\ncash: ¥{}\npayout: {}\nship: {} <{}>\nto: {} {} {} {} {} {}",
         r.reward_id, r.bounty_id, choice, body.product_id, size, fmt_jpy(r.cash_amount_jpy),
+        payout_summary,
         ship_name, ship_email,
         ship_line1, ship_line2, ship_city, ship_state, ship_zip, ship_country,
     );
@@ -2253,7 +2433,169 @@ async fn bounty_claim(
         "choice": choice,
         "size": size,
         "cash_amount_jpy": r.cash_amount_jpy,
+        "payout_method": if r.cash_amount_jpy > 0 { Some(payout_method.clone()) } else { None },
     })).into_response()
+}
+
+/// Basic shape check for a Solana wallet address. Real Solana pubkeys
+/// are 32-byte base58 strings (32-44 chars typically), but we don't link
+/// libsodium just to ed25519-validate. This is a "looks plausible" guard.
+fn is_plausible_solana_wallet(s: &str) -> bool {
+    if !(32..=44).contains(&s.len()) { return false; }
+    s.chars().all(|c| {
+        // Base58 alphabet (Bitcoin / Solana): excludes 0, O, I, l.
+        matches!(c,
+            '1'..='9' |
+            'A'..='H' | 'J'..='N' | 'P'..='Z' |
+            'a'..='k' | 'm'..='z')
+    })
+}
+
+/// POST /api/bounty/claim/:token/stripe-connect — create a Stripe Connect
+/// Express account + onboarding link for the bounty reward recipient.
+/// Returns `{ url, account_id, expires_at }`.
+///
+/// The account is created once per claim token (idempotent: if the row
+/// already has a stripe_connect_account_id, re-uses it and returns a fresh
+/// account_link).
+async fn bounty_claim_stripe_connect(
+    State(db): State<Db>,
+    axum::extract::Path(token): axum::extract::Path<String>,
+) -> Response {
+    if token.len() < 32 || token.len() > 128 || !token.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"ok":false,"error":"invalid token"}))).into_response();
+    }
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"ok":false,"error":"stripe key not configured"}))).into_response();
+    }
+
+    // Verify token is live + read existing state.
+    let now_int: i64 = chrono_now().parse().unwrap_or(0);
+    struct R { reward_id: i64, cash_amount_jpy: i64, status: String, expires_at: i64,
+               existing_account: Option<String> }
+    let r: Option<R> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT id, cash_amount_jpy, status, CAST(expires_at AS INTEGER),
+                    stripe_connect_account_id
+             FROM bounty_rewards WHERE token=?",
+            params![token],
+            |r| Ok(R{
+                reward_id: r.get(0)?, cash_amount_jpy: r.get(1)?,
+                status: r.get(2)?, expires_at: r.get(3)?,
+                existing_account: r.get(4)?,
+            }),
+        ).ok()
+    };
+    let Some(r) = r else {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"ok":false,"error":"token not found"}))).into_response();
+    };
+    if r.status != "issued" && r.status != "claimed" {
+        return (StatusCode::GONE, Json(serde_json::json!({"ok":false,"error":"reward not active"}))).into_response();
+    }
+    if r.expires_at <= now_int {
+        return (StatusCode::GONE, Json(serde_json::json!({"ok":false,"error":"token expired"}))).into_response();
+    }
+    if r.cash_amount_jpy <= 0 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok":false,"error":"no cash on this reward"}))).into_response();
+    }
+
+    let client = reqwest::Client::new();
+
+    // 1. Re-use or create the connected account.
+    let account_id: String = if let Some(a) = r.existing_account.as_ref()
+        .filter(|s| s.starts_with("acct_") && s.len() > 10) {
+        a.clone()
+    } else {
+        let resp = client.post("https://api.stripe.com/v1/accounts")
+            .basic_auth(&stripe_key, None::<&str>)
+            .form(&[
+                ("type", "express"),
+                ("country", "JP"),
+                ("capabilities[transfers][requested]", "true"),
+                ("metadata[bounty_reward_id]", &r.reward_id.to_string()),
+            ])
+            .send().await;
+        match resp {
+            Ok(r2) if r2.status().is_success() => {
+                let j: serde_json::Value = r2.json().await.unwrap_or_default();
+                let id = j["id"].as_str().unwrap_or("").to_string();
+                if id.is_empty() {
+                    return (StatusCode::BAD_GATEWAY,
+                        Json(serde_json::json!({"ok":false,"error":"stripe returned no account id"}))).into_response();
+                }
+                // Persist before generating link so a partial onboard still
+                // re-uses the same account next attempt.
+                {
+                    let conn = db.lock().unwrap();
+                    let _ = conn.execute(
+                        "UPDATE bounty_rewards SET stripe_connect_account_id=? WHERE id=?",
+                        params![id, r.reward_id],
+                    );
+                }
+                id
+            }
+            Ok(r2) => {
+                let st = r2.status();
+                let t  = r2.text().await.unwrap_or_default();
+                tracing::error!("[bounty/stripe-connect] account create {}: {}", st, t.chars().take(400).collect::<String>());
+                let user_msg = if t.contains("signed up for Connect") || t.contains("Connect platform") {
+                    "Stripe Connect is not enabled on this account. Choose Solana or PayPay instead."
+                } else {
+                    "Stripe account creation failed. Try again or pick another method."
+                };
+                return (StatusCode::BAD_GATEWAY,
+                    Json(serde_json::json!({"ok":false,"error":user_msg}))).into_response();
+            }
+            Err(e) => {
+                tracing::error!("[bounty/stripe-connect] account network: {}", e);
+                return (StatusCode::BAD_GATEWAY,
+                    Json(serde_json::json!({"ok":false,"error":"stripe network error"}))).into_response();
+            }
+        }
+    };
+
+    // 2. Generate a fresh onboarding link (these expire after a few minutes).
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    let return_url = format!("{}/bounty/claim/{}#stripe-return", base_url, token);
+    let refresh_url = format!("{}/bounty/claim/{}#stripe-refresh", base_url, token);
+    let link_resp = client.post("https://api.stripe.com/v1/account_links")
+        .basic_auth(&stripe_key, None::<&str>)
+        .form(&[
+            ("account", account_id.as_str()),
+            ("type", "account_onboarding"),
+            ("refresh_url", refresh_url.as_str()),
+            ("return_url", return_url.as_str()),
+        ])
+        .send().await;
+    match link_resp {
+        Ok(r2) if r2.status().is_success() => {
+            let j: serde_json::Value = r2.json().await.unwrap_or_default();
+            let url = j["url"].as_str().unwrap_or("").to_string();
+            let expires_at = j["expires_at"].as_i64().unwrap_or(0);
+            if url.is_empty() {
+                return (StatusCode::BAD_GATEWAY,
+                    Json(serde_json::json!({"ok":false,"error":"stripe returned no link"}))).into_response();
+            }
+            Json(serde_json::json!({
+                "ok": true, "url": url, "account_id": account_id, "expires_at": expires_at,
+            })).into_response()
+        }
+        Ok(r2) => {
+            let st = r2.status();
+            let t  = r2.text().await.unwrap_or_default();
+            tracing::error!("[bounty/stripe-connect] account_links {}: {}", st, t.chars().take(400).collect::<String>());
+            (StatusCode::BAD_GATEWAY,
+             Json(serde_json::json!({"ok":false,"error":"stripe link creation failed"}))).into_response()
+        }
+        Err(e) => {
+            tracing::error!("[bounty/stripe-connect] account_links network: {}", e);
+            (StatusCode::BAD_GATEWAY,
+             Json(serde_json::json!({"ok":false,"error":"stripe network error"}))).into_response()
+        }
+    }
 }
 
 /// Background task: create a Printful order for a bounty reward claim and
@@ -19310,6 +19652,17 @@ async fn main() {
         "CREATE INDEX IF NOT EXISTS idx_bounty_rewards_token ON bounty_rewards(token)",
         "CREATE INDEX IF NOT EXISTS idx_bounty_rewards_bounty ON bounty_rewards(bounty_id)",
         "CREATE INDEX IF NOT EXISTS idx_bounty_rewards_status ON bounty_rewards(status)",
+        // Cash-payout fields for bounty rewards. Solana is the primary
+        // method (treasury sends USDC). Stripe Connect Express is for
+        // recipients who prefer fiat / JP-domestic bank. PayPay is a
+        // last-resort manual fallback (record handle, send via app).
+        "ALTER TABLE bounty_rewards ADD COLUMN payout_method TEXT",
+        "ALTER TABLE bounty_rewards ADD COLUMN solana_wallet TEXT",
+        "ALTER TABLE bounty_rewards ADD COLUMN stripe_connect_account_id TEXT",
+        "ALTER TABLE bounty_rewards ADD COLUMN paypay_handle TEXT",
+        "ALTER TABLE bounty_rewards ADD COLUMN payout_status TEXT DEFAULT 'pending'",
+        "ALTER TABLE bounty_rewards ADD COLUMN payout_tx_or_id TEXT",
+        "ALTER TABLE bounty_rewards ADD COLUMN paid_out_at TEXT",
     ] {
         conn.execute(col, []).ok();
     }
@@ -21132,6 +21485,7 @@ async fn main() {
         .route("/admin/bounty/:id/issue-reward", post(admin_bounty_issue_reward))
         .route("/bounty/claim/:token", get(show_bounty_claim_page))
         .route("/api/bounty/claim/:token", post(bounty_claim))
+        .route("/api/bounty/claim/:token/stripe-connect", post(bounty_claim_stripe_connect))
         .route("/api/collab/signup", post(api_collab_signup))
         .route("/admin/collab-signups", get(admin_collab_signups))
         .route("/api/sweep/checkout", post(sweep_checkout))
