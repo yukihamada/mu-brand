@@ -4439,6 +4439,40 @@ async fn stripe_webhook(
             return StatusCode::OK.into_response();
         }
 
+        // ── Gi sponsor slot payment (metadata.product = gi_sponsor_app) ──
+        // Flips gi_sponsor_apps.status → 'paid'. Idempotent on app_id.
+        if meta["product"].as_str() == Some("gi_sponsor_app") {
+            let app_id: i64 = meta["app_id"].as_str()
+                .and_then(|s| s.parse().ok()).unwrap_or(0);
+            if app_id > 0 {
+                let amount = session["amount_total"].as_i64().unwrap_or(0);
+                let sid    = session["id"].as_str().unwrap_or("").to_string();
+                let now    = chrono_now();
+                let updated = {
+                    let conn = db.lock().unwrap();
+                    conn.execute(
+                        "UPDATE gi_sponsor_apps
+                         SET status='paid', paid_at=COALESCE(paid_at, ?),
+                             stripe_session_id=COALESCE(stripe_session_id, ?)
+                         WHERE id=? AND status IN ('pending','invoice_sent','contract_signed')",
+                        params![now, sid, app_id],
+                    ).unwrap_or(0)
+                };
+                if updated > 0 {
+                    let tier  = meta["tier_label"].as_str().unwrap_or("");
+                    let company = meta["company"].as_str().unwrap_or("");
+                    let email = session["customer_details"]["email"].as_str()
+                        .or_else(|| session["customer_email"].as_str())
+                        .unwrap_or("");
+                    let _ = send_telegram_message(&format!(
+                        "💰 *Sponsor slot PAID* #{}\n\ntier: {}\namount: ¥{}\ncompany: {}\nemail: {}\nsession: {}",
+                        app_id, tier, fmt_jpy(amount), company, email, sid,
+                    )).await;
+                }
+            }
+            return StatusCode::OK.into_response();
+        }
+
         // 3-month prepaid pack (mode=payment, metadata.plan=3mo): extend
         // subscription_until by 90 days. Idempotent on session id.
         if meta["plan"].as_str() == Some("3mo") {
@@ -15763,6 +15797,16 @@ footer a{{color:var(--mute);text-decoration:underline}}
   </div>
 </div></nav>
 
+<!-- Returning-from-Stripe banners. Rendered always; JS unhides based on
+     ?paid=ok / ?paid=cancel query params after Stripe redirect. -->
+<div id="paidOkBanner" style="display:none;background:rgba(34,197,94,0.08);border:1px solid var(--green,#22c55e);color:#9ae3a8;padding:18px 22px;border-radius:3px;margin:32px auto 0;max-width:1040px;font-size:14.5px;line-height:1.85">
+  ✓ <b>お支払いを受領しました。</b> ご担当者様のメール宛に Stripe からの受領確認 + 弊社からの契約書ドラフトをお送りします (3 営業日以内)。<br>
+  ありがとうございました。 — 株式会社イネブラ
+</div>
+<div id="paidCancelBanner" style="display:none;background:rgba(180,180,180,0.06);border:1px solid var(--cardb);color:#c4c4bc;padding:18px 22px;border-radius:3px;margin:32px auto 0;max-width:1040px;font-size:14.5px;line-height:1.85">
+  決済をキャンセルしました。再度お申し込みいただくか、銀行振込・ポン電子契約をご希望の方は同フォームから方法を変更してください。
+</div>
+
 <div class="hero wrap">
   <div class="eyebrow">Sponsorship · Edition {canonical}</div>
   <h1>柔術衣の背中で、<em>事業の物語</em> を縫う。</h1>
@@ -15852,6 +15896,25 @@ footer a{{color:var(--mute);text-decoration:underline}}
 </div></footer>
 
 <script>
+// Banner control: show paid-ok / paid-cancel after the Stripe redirect.
+(function(){{
+  try {{
+    var qs = new URLSearchParams(window.location.search || '');
+    var paid = qs.get('paid');
+    if (paid === 'ok') {{
+      var b = document.getElementById('paidOkBanner');
+      if (b) b.style.display = 'block';
+      // Clean the URL so a refresh doesn't re-trigger the banner.
+      var clean = window.location.pathname;
+      history.replaceState({{}}, '', clean);
+    }} else if (paid === 'cancel') {{
+      var c = document.getElementById('paidCancelBanner');
+      if (c) c.style.display = 'block';
+      history.replaceState({{}}, '', window.location.pathname);
+    }}
+  }} catch(e) {{}}
+}})();
+
 var SLOTS = {slots_json};
 document.querySelectorAll('.slot-cta').forEach(function(b){{
   b.addEventListener('click', function(){{
@@ -15899,8 +15962,17 @@ async function submitApply(ev){{
     var j = await r.json();
     if(r.ok && j.ok){{
       out.className='ok';
-      out.innerHTML = '✓ 受領しました (#'+j.app_id+'). <b>'+j.contact_email+'</b> 宛に確認メールを送付しました。72h 以内に契約書+請求書をお送りします。';
-      btn.textContent = '送信完了';
+      if(j.checkout_url){{
+        // Stripe path — redirect to hosted checkout. Apple Pay / Google Pay
+        // are auto-detected on supported devices.
+        out.innerHTML = '✓ 受領しました (#'+j.app_id+'). Stripe 決済ページに移動します…';
+        btn.textContent = '決済ページへ';
+        setTimeout(function(){{ window.location.href = j.checkout_url; }}, 800);
+      }} else {{
+        // Bank / pon path — manual invoice follows.
+        out.innerHTML = '✓ 受領しました (#'+j.app_id+'). <b>'+j.contact_email+'</b> 宛に確認メールを送付しました。72h 以内に契約書+請求書をお送りします。';
+        btn.textContent = '送信完了';
+      }}
     }} else {{
       out.className='err';
       out.textContent = '✗ ' + (j.error || ('HTTP '+r.status));
@@ -16116,6 +16188,94 @@ async fn gi_sponsor_apply(
         }
     }
 
+    // ── Stripe Checkout for immediate payment (payment_method == "stripe") ──
+    //
+    // The application is already recorded as 'pending'. For Stripe payers we
+    // create a hosted Checkout Session now so the applicant can pay without
+    // waiting for a manual invoice. metadata.product = "gi_sponsor_app" lets
+    // the existing checkout.session.completed webhook flip status → paid.
+    let stripe_checkout_url: Option<String> = if payment_method == "stripe" {
+        let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+        if stripe_key.is_empty() {
+            None
+        } else {
+            let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+            let display_name = format!(
+                "MU × JiuFlow Sponsored Gi — Edition {} スポンサー枠 ({})",
+                canonical, tier.label_ja,
+            );
+            let success_path = format!("/gi/{}/sponsor?paid=ok&app_id={}", canonical, app_id);
+            let cancel_path = format!("/gi/{}/sponsor?paid=cancel&app_id={}", canonical, app_id);
+            let reuse_cid: Option<String> = find_stripe_customer_by_email(&stripe_key, &contact_email).await;
+            let mut form = stripe_checkout_form_jp(StripeCheckoutFields {
+                mode: "payment",
+                base_url: &base_url,
+                success_path: &success_path,
+                cancel_path: &cancel_path,
+                display_name: &display_name,
+                unit_amount: tier.price_jpy,
+                quantity: 1,
+                customer_email: Some(contact_email.as_str()),
+                customer_id: reuse_cid.as_deref(),
+                product_id: None,
+                size: None,
+                wallet: None,
+                payment_method: Some("jpy"),
+                base_price_jpy: Some(tier.price_jpy),
+                total_jpy: Some(tier.price_jpy),
+                // Sponsor tiers ≥ ¥300,000 always cross the KYC line. Stripe's
+                // hosted page handles the collection; we capture the kyc_record
+                // via the existing checkout flow if the buyer adds personal info.
+                kyc_required: tier.price_jpy >= KYC_THRESHOLD_JPY,
+                // No physical product shipped per sponsor slot — gi production
+                // is a separate Edition order, not bound to this sponsor session.
+                collect_shipping: false,
+            });
+            // Webhook routing + bookkeeping metadata.
+            form.push(("metadata[product]".into(), "gi_sponsor_app".into()));
+            form.push(("metadata[app_id]".into(), app_id.to_string()));
+            form.push(("metadata[edition]".into(), canonical.to_string()));
+            form.push(("metadata[slot_id]".into(), tier.id.to_string()));
+            form.push(("metadata[tier_label]".into(), tier.label_ja.to_string()));
+            form.push(("metadata[company]".into(), company.chars().take(120).collect::<String>()));
+
+            let resp = reqwest::Client::new()
+                .post("https://api.stripe.com/v1/checkout/sessions")
+                .basic_auth(&stripe_key, None::<&str>)
+                .form(&form)
+                .send().await;
+            match resp {
+                Ok(r) if r.status().is_success() => {
+                    let j: serde_json::Value = r.json().await.unwrap_or_default();
+                    let url = j["url"].as_str().unwrap_or("").to_string();
+                    let sid = j["id"].as_str().unwrap_or("").to_string();
+                    if !sid.is_empty() {
+                        let conn = db.lock().unwrap();
+                        let _ = conn.execute(
+                            "UPDATE gi_sponsor_apps
+                             SET stripe_session_id=?, status='invoice_sent'
+                             WHERE id=? AND status='pending'",
+                            params![sid, app_id],
+                        );
+                    }
+                    if url.is_empty() { None } else { Some(url) }
+                }
+                Ok(r) => {
+                    let s = r.status();
+                    let t = r.text().await.unwrap_or_default();
+                    tracing::error!("[sponsor-apply] stripe {}: {}", s, t.chars().take(300).collect::<String>());
+                    None
+                }
+                Err(e) => {
+                    tracing::error!("[sponsor-apply] stripe network: {}", e);
+                    None
+                }
+            }
+        }
+    } else { None };
+
+    let new_status = if stripe_checkout_url.is_some() { "invoice_sent" } else { "pending" };
+
     Json(serde_json::json!({
         "ok": true,
         "app_id": app_id,
@@ -16123,7 +16283,10 @@ async fn gi_sponsor_apply(
         "slot_id": tier.id,
         "amount_jpy": tier.price_jpy,
         "contact_email": contact_email,
-        "status": "pending",
+        "status": new_status,
+        // Frontend redirects to this URL when present so the applicant pays
+        // immediately. Null for non-stripe methods (bank / pon).
+        "checkout_url": stripe_checkout_url,
     })).into_response()
 }
 
