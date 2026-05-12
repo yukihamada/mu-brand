@@ -22116,7 +22116,12 @@ async fn admin_email_test_send(
         let conn = db.lock().unwrap();
         build_email_context(&conn, 42, "mugen-0042-charcoal-m", 6_000)
     };
-    let variant = assign_email_variant(&to, &kind);
+    // Optional ?variant=A|B override for QA (default: deterministic hash).
+    let variant: &'static str = match q.get("variant").map(String::as_str) {
+        Some("A") => "A",
+        Some("B") => "B",
+        _ => assign_email_variant(&to, &kind),
+    };
     let (subject, html) = match (kind.as_str(), variant) {
         ("received",   v) => template_received(&ctx, v),
         ("production", v) => template_production(&ctx, v, "Printful Charlotte, NC", "PF-TEST-123"),
