@@ -11659,7 +11659,7 @@ async fn show_partner_proposal_page(
     <div class="why-card">
       <div class="why-n">02</div>
       <div class="why-t">在庫ゼロで始められる</div>
-      <div class="why-d">全品 Printful 経由のオンデマンド製造。コラボパートナー側に在庫リスクはゼロ。注文が入ってから 7〜14 日で工場直送。試作で反応を見て、売れ筋だけ本格化、が可能です。</div>
+      <div class="why-d">海外オンデマンド工場 (Printful 等) / 国内 OEM / SIIIEEP のような職人パートナーと、商品ごとに最適な製造ルートを選びます。在庫リスクはゼロ、注文が入ってから 7〜14 日で工場直送 (国内 OEM は別納期)。試作で反応を見て、売れ筋だけ本格化、が可能です。</div>
     </div>
     <div class="why-card">
       <div class="why-n">03</div>
@@ -12270,7 +12270,7 @@ async fn show_collab_apply_page() -> Response {
     let body = r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>MU で コラボグッズを作る — 提案リクエスト</title>
-<meta name="description" content="貴社のサイトとメールを登録するだけで、MU がコラボグッズの提案ページを自動生成します。在庫リスクゼロ、原価サンプル発注、Printful 連携。">
+<meta name="description" content="貴社のサイトとメールを登録するだけで、MU がコラボグッズの提案ページを自動生成します。在庫リスクゼロ、原価サンプル発注、海外オンデマンド + 国内 OEM のハイブリッド製造ネットワーク。">
 <meta property="og:title" content="MU で コラボグッズを作る — 1 分で提案リクエスト">
 <meta property="og:description" content="貴社サイト URL とメールを入れると、MU が AI で世界観を読み取り、提案ページを 24h 以内に送付します。">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -12345,7 +12345,7 @@ footer a{color:var(--y);text-decoration:none}
   <h2>MU が大事にしている 4 つのこと</h2>
   <div class="features">
     <div class="feat"><div class="icon">⏳</div><div class="t">「今しかない」が買う理由</div><div class="d">毎時 108 枚・天気で柄が変わる・週次オークション。希少性そのものをデザインに組み込んだ商品設計。コラボ品にも同じ思想を移植します。</div></div>
-    <div class="feat"><div class="icon">📦</div><div class="t">在庫ゼロで始められる</div><div class="d">全品 Printful オンデマンド製造。パートナー側に在庫リスクはゼロ。試作だけして、売れ筋が見えてから本格展開できます。</div></div>
+    <div class="feat"><div class="icon">📦</div><div class="t">在庫ゼロで始められる</div><div class="d">海外オンデマンド工場 (Printful) / 国内 OEM / 職人手作りパートナーと、商品ごとに最適なルートを選びます。パートナー側の在庫リスクはゼロ。</div></div>
     <div class="feat"><div class="icon">📖</div><div class="t">物語のあるブランド設計</div><div class="d">"なぜこの色・この柄なのか"を毎回 AI が言語化。商品単体ではなく、文脈付きで世に出るので SNS で語られやすい。</div></div>
     <div class="feat"><div class="icon">🤝</div><div class="t">運営者の本気</div><div class="d">Mercari / Enabler 創業者の濱田優貴が直接プロデュース。立ち上げて間もないが、システムと意志は揃っています。実績はこれから積み上げていきます。</div></div>
   </div>
@@ -12599,7 +12599,7 @@ async fn api_collab_apply(
     // ── Gemini pitch generation ─────────────────────────────────
     let interests_label = if body.interests.is_empty() { "未指定".to_string() } else { body.interests.join(", ") };
     let prompt = format!(
-        "あなたは MU (wearmu.com) のブランドキュレーターです。MU は毎時 108 枚限定の AI デザイン T シャツを売り、SIIIEEP (北参道 BJJ) や kokon.tokyo (焼肉店) とコラボグッズを展開しています。在庫リスクゼロの Printful オンデマンド製造を使っています。\n\n\
+        "あなたは MU (wearmu.com) のブランドキュレーターです。MU は毎時 108 枚限定の AI デザイン T シャツを売り、kokon.tokyo (西麻布の高級焼肉店「焼肉古今」) などとコラボグッズを企画している立ち上げ間もないブランドです。海外オンデマンド工場 (Printful) / 国内 OEM / 職人パートナーを商品ごとに使い分け、パートナーは在庫リスクゼロでスタートできます。\n\n\
          以下の会社情報から、MU × {company} コラボの提案サマリを 400 文字以内・日本語の素直なトーンで書いてください。\n\
          - 会社名: {company}\n\
          - サイトURL: {website}\n\
