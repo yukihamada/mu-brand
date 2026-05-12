@@ -41,12 +41,14 @@ fn autopilot_skip(task: &str) -> bool {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MU Constitution — machine-readable single source of truth.
-// File is `static/constitution.md`, read at compile time via include_str! so a
-// rebuild is required to change Vision / Type-1 list / budget caps. This is
-// intentional: those changes are governance-level, not runtime tweakable.
-// Operational toggles (per-agent kill / dry-run) are env vars, not Constitution.
+// File is `store/static/constitution.md`, read at compile time via
+// include_str! so a rebuild is required to change Vision / Type-1 list /
+// budget caps. This is intentional: those changes are governance-level, not
+// runtime tweakable. Operational toggles (per-agent kill / dry-run) are env
+// vars, not Constitution. NB: lives under store/static/ because that's the
+// Docker build context (see store/Dockerfile `COPY static static`).
 // ─────────────────────────────────────────────────────────────────────────────
-const CONSTITUTION_RAW: &str = include_str!("../../static/constitution.md");
+const CONSTITUTION_RAW: &str = include_str!("../static/constitution.md");
 
 /// Extract a top-level `## <name>` markdown section from the Constitution.
 /// Returns the slice up to (but not including) the next `## ` header, trimmed.
@@ -73,7 +75,7 @@ fn validate_constitution() {
     let v = mu_vision();
     if v.is_empty() || !v.contains("seasons") {
         panic!(
-            "[constitution] static/constitution.md is missing or has no parseable '## Vision' section. \
+            "[constitution] store/static/constitution.md is missing or has no parseable '## Vision' section. \
              Fix and rebuild before deploying — refusing to start MU."
         );
     }
