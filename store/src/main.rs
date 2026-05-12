@@ -12247,6 +12247,76 @@ async fn show_kokon_proposal_page(
     show_partner_proposal_page(db, "kokon", "kokon.tokyo", "/kokon", headers, q).await
 }
 
+/// GET /api/v1/collab/:partner — public JSON catalog of collab products for
+/// one partner. CORS-open so other domains (jiuflow.com, kokon.tokyo) can
+/// fetch and render in their own shop UIs.
+async fn api_collab_products(
+    State(db): State<Db>,
+    Path(partner): Path<String>,
+) -> Response {
+    const ALLOWED: &[&str] = &["sweep", "kokon", "jiuflow"];
+    if !ALLOWED.contains(&partner.as_str()) {
+        return (StatusCode::NOT_FOUND, "unknown partner").into_response();
+    }
+    let items: Vec<serde_json::Value> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, slug, category, name, description, image_url, price_jpy,
+                    printful_cost_jpy, sizes_json, lead_time_days,
+                    COALESCE(production_route,'sweep_manual')
+             FROM collab_products
+             WHERE partner=? AND active=1
+             ORDER BY id"
+        ) {
+            Ok(s) => s,
+            Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response(),
+        };
+        stmt.query_map(params![partner], |r| {
+            let id: i64 = r.get(0)?;
+            let slug: String = r.get(1)?;
+            let cat: String = r.get(2)?;
+            let name: String = r.get(3)?;
+            let desc: Option<String> = r.get(4)?;
+            let img: Option<String> = r.get(5)?;
+            let price: i64 = r.get(6)?;
+            let cost: Option<i64> = r.get(7)?;
+            let sizes_json: Option<String> = r.get(8)?;
+            let lead: i64 = r.get(9)?;
+            let route: String = r.get(10)?;
+            let sizes: Vec<String> = sizes_json.as_deref()
+                .and_then(|s| serde_json::from_str(s).ok())
+                .unwrap_or_else(|| vec!["OS".into()]);
+            let img_abs = img.as_deref().map(|u| {
+                if u.starts_with("http") { u.to_string() }
+                else if u.starts_with('/') { format!("https://wearmu.com{}", u) }
+                else { format!("https://wearmu.com/{}", u) }
+            });
+            Ok(serde_json::json!({
+                "id": id,
+                "slug": slug,
+                "partner": partner,
+                "category": cat,
+                "name": name,
+                "description": desc,
+                "image_url": img_abs,
+                "price_jpy": price,
+                "sample_cost_jpy": cost,
+                "sizes": sizes,
+                "lead_time_days": lead,
+                "production_route": route,
+                "checkout_url": format!("https://wearmu.com/api/{}/checkout", partner),
+                "product_page": format!("https://wearmu.com/{}", partner),
+            }))
+        }).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    let mut resp = Json(items).into_response();
+    let h = resp.headers_mut();
+    h.insert("Access-Control-Allow-Origin", HeaderValue::from_static("*"));
+    h.insert("Access-Control-Allow-Methods", HeaderValue::from_static("GET, OPTIONS"));
+    h.insert("Cache-Control", HeaderValue::from_static("public, max-age=300"));
+    resp
+}
+
 async fn show_jiuflow_proposal_page(
     State(db): State<Db>,
     headers: HeaderMap,
@@ -18077,6 +18147,7 @@ async fn main() {
         .route("/collab/apply", get(show_collab_apply_page))
         .route("/api/collab/apply", post(api_collab_apply))
         .route("/collab/result/:token", get(show_collab_result_page))
+        .route("/api/v1/collab/:partner", get(api_collab_products))
         .route("/api/sweep/sample-checkout", post(sweep_sample_checkout))
         .route("/api/kokon/sample-checkout", post(kokon_sample_checkout))
         .route("/api/jiuflow/sample-checkout", post(jiuflow_sample_checkout))
