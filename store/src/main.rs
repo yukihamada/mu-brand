@@ -9151,9 +9151,63 @@ footer{{padding:48px 32px;border-top:1px solid rgba(255,255,255,0.06);text-align
 </ul>
 <div class="submit">
 <h2>あなたの 1 着を投稿する</h2>
-<p>MU を購入した方は <code>POST /api/wearing/submit</code> から投稿できます (body: product_id, wearer_email, kind, image_url|note_text, location_zone)。承認後に /wearing に掲載され、ENAI 5 unit 贈与 (MU エコ内 utility、換金不可)。投稿フォームは近日公開。</p>
+<p>MU を購入した方は下のフォームから投稿できます。承認後に /wearing に掲載され、<strong>ENAI 5 unit 贈与</strong> (MU エコ内 utility、換金不可)。地点は粒度粗く (都道府県 / state)、顔は載せない方針。</p>
+<form id="wf" onsubmit="submitWearing(event)" style="display:grid;gap:10px;margin-top:16px">
+  <input name="wearer_email" type="email" placeholder="購入時のメールアドレス" required style="padding:12px;background:#0A0A0A;border:1px solid rgba(245,245,240,0.18);color:#F5F5F0;font-family:inherit;font-size:13px">
+  <input name="product_id" type="number" placeholder="Product ID (購入した MA/MUGEN/MUON の product_id)" required style="padding:12px;background:#0A0A0A;border:1px solid rgba(245,245,240,0.18);color:#F5F5F0;font-family:inherit;font-size:13px">
+  <select name="kind" style="padding:12px;background:#0A0A0A;border:1px solid rgba(245,245,240,0.18);color:#F5F5F0;font-family:inherit;font-size:13px">
+    <option value="note">note (テキストのみ)</option>
+    <option value="photo">photo (画像 URL 提示)</option>
+  </select>
+  <input name="image_url" type="url" placeholder="image_url (kind=photo の時、R2 / Imgur 等の URL)" style="padding:12px;background:#0A0A0A;border:1px solid rgba(245,245,240,0.18);color:#F5F5F0;font-family:inherit;font-size:13px">
+  <textarea name="note_text" rows="3" placeholder="何を着た / どんな天気 / どんな気持ち (kind=note の時)" style="padding:12px;background:#0A0A0A;border:1px solid rgba(245,245,240,0.18);color:#F5F5F0;font-family:inherit;font-size:13px;resize:vertical"></textarea>
+  <input name="location_zone" placeholder="location_zone (例: JP-13 = 東京都, US-HI = ハワイ州)" maxlength="8" style="padding:12px;background:#0A0A0A;border:1px solid rgba(245,245,240,0.18);color:#F5F5F0;font-family:inherit;font-size:13px">
+  <button type="submit" style="padding:14px 24px;background:#e6c449;color:#0A0A0A;border:none;font-weight:700;font-size:12px;letter-spacing:0.2em;text-transform:uppercase;cursor:pointer;font-family:inherit">投稿する</button>
+</form>
+<div id="wresult" style="margin-top:12px;font-size:12px;display:none;padding:12px;background:#0A0A0A;border-left:2px solid #e6c449"></div>
 </div>
 <footer>MU — wearmu.com / 顔のない brand</footer>
+<script>
+async function submitWearing(e){{
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const out = document.getElementById('wresult');
+  const btn = e.target.querySelector('button[type=submit]');
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = '送信中...';
+  try {{
+    const r = await fetch('/api/wearing/submit', {{
+      method:'POST', headers:{{'content-type':'application/json'}},
+      body: JSON.stringify({{
+        wearer_email: fd.get('wearer_email'),
+        product_id: parseInt(fd.get('product_id'),10),
+        kind: fd.get('kind'),
+        image_url: fd.get('image_url') || null,
+        note_text: fd.get('note_text') || null,
+        location_zone: fd.get('location_zone') || null,
+      }})
+    }});
+    const j = await r.json().catch(()=>null);
+    out.style.display = 'block';
+    if (r.ok && j && j.ok) {{
+      out.style.borderLeftColor = '#e6c449';
+      out.innerHTML = '✓ 投稿を受け付けました (pseudonym: <code style="color:#e6c449">'+(j.wearer_pseudonym||'')+'</code>)。モデレーション後に /wearing に表示されます。';
+      e.target.reset();
+    }} else {{
+      out.style.borderLeftColor = '#C8362C';
+      out.textContent = '✗ ' + (typeof j === 'string' ? j : JSON.stringify(j)) + ' (HTTP '+r.status+')';
+    }}
+  }} catch (err) {{
+    out.style.display = 'block';
+    out.style.borderLeftColor = '#C8362C';
+    out.textContent = '✗ ' + err.message;
+  }} finally {{
+    btn.disabled = false;
+    btn.textContent = orig;
+  }}
+}}
+</script>
 </body></html>"#, entries = entries))
 }
 
@@ -9463,6 +9517,80 @@ async fn admin_city_update(
         params![body.operator_email, body.status, body.treasury_split_pct, body.slug],
     ).unwrap_or(0);
     Json(serde_json::json!({"ok": n > 0, "slug": body.slug, "updated": n})).into_response()
+}
+
+// ── B: public /cities page ────────────────────────────────────────────────
+async fn cities_page(State(db): State<Db>) -> Html<String> {
+    let rows: Vec<(String, String, String, String, String, i64)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT slug, name_en, name_local, country_code, status, treasury_split_pct
+             FROM cities ORDER BY status='origin' DESC, status, slug"
+        ) { Ok(s) => s, Err(_) => return Html(String::new()) };
+        stmt.query_map([], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+            r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, i64>(5)?,
+        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    let entries: String = rows.iter().map(|(slug, en, jp, cc, status, split)| {
+        let badge = match status.as_str() {
+            "origin" => "<span style='background:#e6c449;color:#0A0A0A;padding:3px 8px;font-size:9px;letter-spacing:0.2em;font-weight:700'>ORIGIN</span>",
+            "active" => "<span style='background:rgba(230,196,73,0.18);color:#e6c449;padding:3px 8px;font-size:9px;letter-spacing:0.2em'>ACTIVE</span>",
+            "pilot"  => "<span style='border:1px solid rgba(230,196,73,0.4);color:#e6c449;padding:3px 8px;font-size:9px;letter-spacing:0.2em'>PILOT</span>",
+            _        => "<span style='border:1px solid rgba(245,245,240,0.2);color:rgba(245,245,240,0.5);padding:3px 8px;font-size:9px;letter-spacing:0.2em'>PAUSED</span>",
+        };
+        format!(r#"<li><div class="head"><span class="name">{en}</span><span class="local">{jp}</span><span class="cc">{cc}</span></div><div class="meta">{badge} &middot; split {split}% / origin {origin_pct}% &middot; slug={slug}</div></li>"#,
+            en = html_escape(en), jp = html_escape(jp), cc = html_escape(cc),
+            badge = badge, split = split, origin_pct = 100 - split,
+            slug = html_escape(slug))
+    }).collect::<Vec<_>>().join("\n");
+
+    Html(format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cities — MU の都市 | wearmu.com</title>
+<meta name="description" content="MU は protocol。Teshikaga が origin、Honolulu が pilot。誰でも自分の都市の MU を立ち上げる構想。">
+<meta property="og:title" content="MU Cities — Teshikaga (origin) + satellites">
+<meta property="og:description" content="MU は wearable timestamp の protocol。Anyone can install a city.">
+<meta property="og:image" content="https://wearmu.com/og.jpg">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+body{{margin:0;padding:0;background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.85;font-size:15px}}
+nav{{position:sticky;top:0;background:rgba(10,10,10,0.85);backdrop-filter:blur(12px);border-bottom:1px solid rgba(255,255,255,0.06);padding:18px 32px;display:flex;justify-content:space-between;align-items:center;z-index:50}}
+nav a{{color:#F5F5F0;text-decoration:none;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.85}}
+nav .logo{{font-weight:700;letter-spacing:0.45em}}
+.wrap{{max-width:720px;margin:0 auto;padding:60px 32px 100px}}
+.eyebrow{{font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:#e6c449;margin-bottom:14px}}
+h1{{font-size:clamp(28px,4.5vw,46px);font-weight:300;letter-spacing:0.02em;line-height:1.3;margin:0 0 18px;font-family:'Noto Serif JP',serif}}
+.lede{{color:rgba(245,245,240,0.7);font-size:14px;line-height:1.95;max-width:560px}}
+ul.cities{{list-style:none;padding:0;margin:48px 0 32px}}
+ul.cities li{{padding:24px;border:1px solid rgba(255,255,255,0.08);margin-bottom:12px;background:#111;font-feature-settings:"tnum"}}
+ul.cities .head{{display:flex;align-items:baseline;gap:14px;margin-bottom:10px;flex-wrap:wrap}}
+ul.cities .name{{font-size:20px;font-weight:300;color:#F5F5F0}}
+ul.cities .local{{font-size:13px;color:rgba(245,245,240,0.6);font-family:'Noto Serif JP',serif}}
+ul.cities .cc{{font-size:9px;letter-spacing:0.25em;color:rgba(245,245,240,0.4);margin-left:auto}}
+ul.cities .meta{{font-size:10px;letter-spacing:0.15em;color:rgba(245,245,240,0.5)}}
+.cta{{margin-top:48px;padding:24px;background:#1c1c1c;border-left:2px solid #e6c449}}
+.cta h2{{font-size:18px;font-weight:300;color:#e6c449;margin:0 0 10px;font-family:'Noto Serif JP',serif}}
+.cta p{{font-size:13px;color:rgba(245,245,240,0.7);margin:0}}
+footer{{padding:48px 32px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;font-size:11px;letter-spacing:0.2em;opacity:0.5}}
+</style></head><body>
+<nav><a href="/" class="logo">MU</a><a href="/blog/">/ Notes</a></nav>
+<div class="wrap">
+<div class="eyebrow">MU · Cities (protocol layer)</div>
+<h1>MU は protocol。都市は誰でも立てられる。</h1>
+<p class="lede"><strong style="color:#e6c449">Teshikaga (弟子屈) が origin</strong>。その他の都市はそれぞれ独自の気象データで MU の drop を生成する satellite。売上の 95% は各 city operator のもの、5% が origin Treasury に戻る。コードは <a href="https://github.com/yukihamada/mu-brand" style="color:#e6c449">CC0/MIT</a>、誰でもフォークして自分の都市を立てられる構想。</p>
+
+<ul class="cities">
+{entries}
+</ul>
+
+<div class="cta">
+<h2>Your city, your MU.</h2>
+<p>自分の都市の MU operator になりたい場合は、<a href="https://github.com/yukihamada/mu-brand/blob/main/docs/MU_PROTOCOL.md" style="color:#e6c449">MU_PROTOCOL.md</a> を読んで <a href="mailto:info@enablerdao.com" style="color:#e6c449">info@enablerdao.com</a> まで。Honolulu satellite #001 は pilot 中。</p>
+</div>
+</div>
+<footer>MU — wearmu.com / MU is a wearable timestamp.</footer>
+</body></html>"#, entries = entries))
 }
 
 // ── B: cities listing endpoint ────────────────────────────────────────────
@@ -14586,59 +14714,84 @@ async fn main() {
         ).ok();
     }
 
-    // ── MU × kokon.tokyo (焼肉店、濱田経営参加) — 8 SKU ──
-    // 公開ローンチ事例。F&B 業態向けに調整した SKU 構成: T / クルーネック /
-    // トート / ステッカー / エナメルマグ / ダッドハット / 全面プリントエプロン /
-    // can cooler。logo は R2 lifestyle.wearmu.com/kokon/_logo.png に配置。
+    // ── MU × 焼肉古今 (kokon.tokyo) v2 ──
+    //
+    // ブランド: 純但馬牛・田村牧場直送・完全個室・専属焼き師・炭火
+    // パレット: 黒 (炭) × 金 (黄金色の焦げ目) × 白 (純粋)
+    // 世界観: モダン高級ミニマル。キャラ無し。"KOKON" wordmark 単一統一。
+    //
+    // ロゴ URL: lifestyle.wearmu.com/kokon/_logo_v2.png (金 KOKON on 透明背景)
+    // v1 (white-only ベーシック) は ALL active=0 で hide → v2 (黒×金) のみ ACTIVE
     let kokon_items: &[SweepRow] = &[
-        ("kokon-tee",       "T シャツ",         "MU × kokon.tokyo Heavy Cotton Tee",
-         "Printful Bella+Canvas 3001 (pid 71)、Black。胸に kokon.tokyo wordmark を DTG プリント。",
+        // ── v2 アクティブ 6 SKU (黒×金 mini-monogram) ──
+        ("kokon-apron",     "焼き師のエプロン", "MU × KOKON Black Strap Apron",
+         "Printful All-Over Print 5-Color Strap Apron (pid 927)、Black。胸に小さく金色 KOKON wordmark をプリント。完全個室・専属焼き師のスタイルをそのまま家庭・スタジオへ。炭火の煙にも強いキャンバス素材。",
+         7_800,  "printful", Some(927), Some(23723),
+         Some(r#"{"OS":23723,"ONE SIZE":23723,"S":23723,"M":23723,"L":23723,"XL":23723}"#),
+         Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 14, 1),
+        ("kokon-mug",       "黒磁器マグ",       "MU × KOKON Black Glossy Mug",
+         "Printful Black Glossy Mug (pid 300)、11oz Black。表面に金色 KOKON wordmark を昇華印刷。カウンター席で焼酎ロックを呑む夜のための、店の温度感を運ぶマグ。",
+         3_800,  "printful", Some(300), Some(9323),
+         Some(r#"{"OS":9323,"ONE SIZE":9323,"M":9323,"L":9324,"11 OZ":9323,"15 OZ":9324}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         None, 10, 1),
+        ("kokon-tee",       "黒 T (金 tonal)",  "MU × KOKON Heavy Cotton Tee",
+         "Printful Bella+Canvas 3001 (pid 71)、Black。左胸に控えめな金色トーンの KOKON wordmark を DTG プリント。声高でない、判る人にだけ判るブランディング。",
          4_800,  "printful", Some(71), Some(4017),
          Some(r#"{"S":4016,"M":4017,"L":4018,"XL":4019,"2XL":4020,"XS":9527}"#),
-         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo.png"}]"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
          None, 10, 1),
-        ("kokon-crewneck",  "クルーネック",     "MU × kokon.tokyo Champion Crewneck",
-         "Printful Champion S149 (pid 318)、Black。厚手フリース。前胸に kokon.tokyo wordmark を DTG プリント。",
-         9_800,  "printful", Some(318), Some(9660),
+        ("kokon-crewneck",  "黒クルーネック",   "MU × KOKON Champion Crewneck",
+         "Printful Champion S149 (pid 318)、Black。厚手フリース、左胸に金色トーン KOKON wordmark。焼き師の腕を彷彿とさせる、無骨な質感と最小限の装飾。",
+         10_800, "printful", Some(318), Some(9660),
          Some(r#"{"S":9659,"M":9660,"L":9661,"XL":9662,"2XL":9663}"#),
-         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo.png"}]"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
          None, 14, 1),
-        ("kokon-tote",      "エコトート",       "MU × kokon.tokyo Eco Tote",
-         "Printful Econscious EC8000 Eco Tote Bag (pid 367)、Oyster。前面に kokon.tokyo wordmark プリント。リサイクル素材、買い物 / 出前持ち帰り兼用。",
-         3_800,  "printful", Some(367), Some(10458),
-         Some(r#"{"OS":10458,"ONE SIZE":10458,"S":10458,"M":10458,"L":10458,"XL":10458}"#),
-         Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/kokon/_logo.png"}]"#),
-         None, 14, 1),
-        ("kokon-stickers",  "ステッカーシート", "MU × kokon.tokyo Sticker Sheet",
-         "Printful Kiss-Cut Sticker Sheet (pid 505)、5.83×8.27\"。kokon.tokyo の wordmark / モチーフを複数 kiss-cut。",
+        ("kokon-snapback",  "金糸刺繍スナップバック","MU × KOKON Gold-Thread Snapback",
+         "Printful Yupoong 6089M (pid 99)、Black フラットブリム。フロントに KOKON wordmark を金糸 (#A67843 Old Gold) で刺繍。炭火の照り返しのような、上品な光沢のあるアンバーゴールド。",
+         6_800,  "printful", Some(99), Some(4792),
+         Some(r#"{"OS":4792,"ONE SIZE":4792,"S":4792,"M":4792,"L":4792,"XL":4792}"#),
+         Some(r#"[{"type":"embroidery_front_large","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         Some(r##"[{"id":"thread_colors_front_large","value":["#A67843"]}]"##), 10, 1),
+        ("kokon-stickers",  "金 × 黒 ステッカーシート","MU × KOKON Sticker Sheet",
+         "Printful Kiss-Cut Sticker Sheet (pid 505)、5.83×8.27\"。KOKON wordmark + 炭火モチーフ + 但馬牛シルエットを金×黒モノクロームで構成、複数 kiss-cut。店内常連へのお土産、PC・iPhone 装飾に。",
          1_800,  "printful", Some(505), Some(12917),
          Some(r#"{"OS":12917,"ONE SIZE":12917,"M":12917,"S":12917,"L":12917}"#),
-         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo.png"}]"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
          None, 7, 1),
-        ("kokon-mug-enamel","エナメルマグ",     "MU × kokon.tokyo Enamel Mug",
-         "Printful Enamel Mug (pid 407)、12oz White。両面に kokon.tokyo wordmark サブリメーション印刷。アウトドア / 店内両用。",
+
+        // ── v1 旧 SKU (KOKON 世界観ミスマッチ) は active=0 で hide ──
+        ("kokon-hoodie",    "ヘビーフーディ",   "MU × kokon.tokyo Heavy Hoodie (旧)",
+         "[非表示] v2 で kokon-crewneck に集約 (T+クルーネックで十分)。",
+         9_800,  "printful", Some(146), Some(5531),
+         Some(r#"{"OS":5531}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         None, 14, 0),
+        ("kokon-tote",      "エコトート",       "MU × kokon.tokyo Eco Tote (旧)",
+         "[非表示] KOKON premium 世界観に合うトート (黒) が Printful 在庫切れ。manual_jp ルート整備後に再開。",
+         3_800,  "printful", Some(367), Some(10458),
+         Some(r#"{"OS":10458}"#),
+         Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         None, 14, 0),
+        ("kokon-mug-enamel","エナメルマグ (白)","MU × kokon.tokyo Enamel Mug (旧)",
+         "[非表示] 白ベースは KOKON 世界観に合わず。kokon-mug (黒磁器) に置換。",
          2_800,  "printful", Some(407), Some(11189),
-         Some(r#"{"OS":11189,"ONE SIZE":11189,"M":11189,"L":11189,"12 OZ":11189}"#),
-         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo.png"}]"#),
-         None, 10, 1),
-        ("kokon-cap",       "ダッドハット",     "MU × kokon.tokyo Classic Dad Hat",
-         "Printful Yupoong 6245CM (pid 206)、Black。フロントに kokon.tokyo wordmark 刺繍 (白糸)。ワンサイズ。",
+         Some(r#"{"OS":11189}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         None, 10, 0),
+        ("kokon-cap",       "ダッドハット",     "MU × kokon.tokyo Dad Hat (旧)",
+         "[非表示] ダッドハットは casual すぎ。kokon-snapback (フラットブリム金糸) に置換。",
          5_800,  "printful", Some(206), Some(7854),
-         Some(r#"{"OS":7854,"ONE SIZE":7854,"S":7854,"M":7854,"L":7854,"XL":7854}"#),
-         Some(r#"[{"type":"embroidery_front_large","url":"https://lifestyle.wearmu.com/kokon/_logo.png"}]"#),
-         Some(r##"[{"id":"thread_colors_front_large","value":["#FFFFFF"]}]"##), 10, 1),
-        ("kokon-apron",     "キャンバスエプロン","MU × kokon.tokyo All-Over Apron",
-         "Printful All-Over Print Apron (pid 894)、One Size White。前面に kokon.tokyo の全面パターン。店舗 / 自宅キッチン共用。",
-         5_800,  "printful", Some(894), Some(22903),
-         Some(r#"{"OS":22903,"ONE SIZE":22903,"S":22903,"M":22903,"L":22903,"XL":22903}"#),
-         Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/kokon/_logo.png"}]"#),
-         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 14, 1),
-        ("kokon-can-cooler","缶クーラー",        "MU × kokon.tokyo Can Cooler",
-         "Printful Can Cooler (pid 764)、Regular 12oz White。kokon.tokyo wordmark を前面プリント。ビール缶用、店内記念ノベルティに最適。",
+         Some(r#"{"OS":7854}"#),
+         Some(r#"[{"type":"embroidery_front_large","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         Some(r##"[{"id":"thread_colors_front_large","value":["#A67843"]}]"##), 10, 0),
+        ("kokon-can-cooler","缶クーラー",        "MU × kokon.tokyo Can Cooler (旧)",
+         "[非表示] casual すぎ。manual_jp ルート整備後に「真鍮製お猪口・銀箔ぐい呑み」等に置換予定。",
          1_800,  "printful", Some(764), Some(19461),
-         Some(r#"{"OS":19461,"ONE SIZE":19461,"S":19461,"M":19461,"L":19461,"12 OZ":19461,"REGULAR":19461}"#),
-         Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/kokon/_logo.png"}]"#),
-         None, 10, 1),
+         Some(r#"{"OS":19461}"#),
+         Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         None, 10, 0),
     ];
     for (slug, cat, name, desc, price, route, pf_prod, pf_var, var_map, files, opts, lead, active) in kokon_items {
         conn.execute(
@@ -15456,6 +15609,8 @@ async fn main() {
         .route("/api/ma/retire",             post(ma_retire))
         .route("/api/admin/ma_retire/notify", post(admin_ma_retire_notify))
         // B: Multi-city
+        .route("/cities",                    get(cities_page))
+        .route("/cities/",                   get(cities_page))
         .route("/api/cities",                get(cities_index))
         .route("/api/admin/city/update",     post(admin_city_update))
         .route("/api/admin/sns/pending", get(admin_sns_pending))
