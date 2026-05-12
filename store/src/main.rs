@@ -18271,11 +18271,12 @@ Hard limit: max 3 proposals. If MU is already optimal, proposals=[]."#,
         used = budget_used, limit = budget_limit,
     );
 
+    // gemini-2.5-pro mandatory thinking ~1500-2500 tokens; bump headroom.
     let body = serde_json::json!({
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "temperature": 0.5,
-            "maxOutputTokens": 4000,
+            "maxOutputTokens": 8000,
             "responseMimeType": "application/json",
         },
     });
@@ -18968,11 +18969,13 @@ risk_if_wrong and ship it."#,
         drift = serde_json::to_string(&drift_recent).unwrap_or_default(),
     );
 
+    // gemini-2.5-pro consumes ~1500–2500 tokens for hidden thinking before
+    // emitting the visible JSON. Budget 8000 = thinking + ~1500 chars body.
     let req = serde_json::json!({
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "temperature": 0.4,
-            "maxOutputTokens": 1500,
+            "maxOutputTokens": 8000,
             "responseMimeType": "application/json",
         },
     });
@@ -20076,9 +20079,13 @@ async fn founder_review(db: Db, founder: &str, persona_prompt: &str) -> Result<A
     let prompt = format!("{}\n\nMU snapshot (last 7 days unless noted):\n{}\n",
         persona_prompt,
         serde_json::to_string_pretty(&snapshot).unwrap_or_default());
+    // gemini-2.5-pro mandates internal "thinking" tokens (≈ 1500-2500). With
+    // maxOutputTokens=1500 the entire budget was consumed by thinking and the
+    // visible response came back empty (finishReason=MAX_TOKENS). Bump to 8000
+    // so we have headroom for thinking + the JSON body.
     let req = serde_json::json!({
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 1500,
+        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 8000,
             "responseMimeType": "application/json"},
     });
     let url = format!(
