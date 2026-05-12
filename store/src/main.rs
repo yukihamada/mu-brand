@@ -1374,24 +1374,22 @@ async fn api_bounty_submit(
         format!("{:x}", h.finalize())[..16].to_string()
     };
 
-    // Per-IP rate limit (24h cooldown after 5 reports from same ip_hash).
-    if !ip_hash.is_empty() {
-        let conn = db.lock().unwrap();
-        let recent: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM bounty_submissions
-             WHERE ip_hash=? AND CAST(COALESCE(received_at,'0') AS INTEGER) > ?",
-            params![ip_hash, chrono_now().parse::<i64>().unwrap_or(0) - 86_400],
-            |r| r.get(0),
-        ).unwrap_or(0);
-        if recent >= 5 {
-            return (StatusCode::TOO_MANY_REQUESTS,
-                Json(serde_json::json!({"ok":false,"error":"rate limit (5 reports / 24h per IP); please email info@enablerdao.com directly"}))).into_response();
-        }
-    }
-
+    // Per-IP rate limit + INSERT in ONE critical section so concurrent
+    // requests can't all pass the read-then-write window. (Self-audit #1)
     let now_s = chrono_now();
-    let id: i64 = {
+    let now_int = now_s.parse::<i64>().unwrap_or(0);
+    let id_or_429: Result<i64, ()> = {
         let conn = db.lock().unwrap();
+        if !ip_hash.is_empty() {
+            let recent: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM bounty_submissions
+                 WHERE ip_hash=? AND CAST(COALESCE(received_at,'0') AS INTEGER) > ?",
+                params![ip_hash, now_int - 86_400],
+                |r| r.get(0),
+            ).unwrap_or(0);
+            if recent >= 5 { return (StatusCode::TOO_MANY_REQUESTS,
+                Json(serde_json::json!({"ok":false,"error":"rate limit (5 reports / 24h per IP); please email info@enablerdao.com directly"}))).into_response(); }
+        }
         let _ = conn.execute(
             "INSERT INTO bounty_submissions
                 (severity, category, title, affected_url, body,
@@ -1401,8 +1399,9 @@ async fn api_bounty_submit(
             params![severity, category, title, aff_url, bod,
                     r_name, r_email, solana, ship, ip_hash, now_s],
         );
-        conn.last_insert_rowid()
+        Ok(conn.last_insert_rowid())
     };
+    let id: i64 = id_or_429.unwrap_or(0);
 
     // Telegram immediate notify (no dedup — every report fires).
     let tg_token = env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default();
@@ -1592,6 +1591,17 @@ async fn admin_bounty_triage(
     let tok = q.get("token").cloned().unwrap_or_default();
     let sev_final = form.get("severity_final").cloned().unwrap_or_default();
     let status    = form.get("status").cloned().unwrap_or_else(|| "triaging".into());
+
+    // Self-audit #2: validate enums even though admin-gated, defense in depth.
+    let allowed_sev = ["", "critical", "high", "medium", "low", "info"];
+    let allowed_status = ["received","triaging","confirmed","duplicate","rejected","paid"];
+    if !allowed_sev.contains(&sev_final.as_str()) {
+        return (StatusCode::BAD_REQUEST, "invalid severity_final").into_response();
+    }
+    if !allowed_status.contains(&status.as_str()) {
+        return (StatusCode::BAD_REQUEST, "invalid status").into_response();
+    }
+
     {
         let conn = db.lock().unwrap();
         let now = chrono_now();
@@ -1661,23 +1671,21 @@ async fn api_collab_signup(
         format!("{:x}", h.finalize())[..16].to_string()
     };
 
-    if !ip_hash.is_empty() {
-        let conn = db.lock().unwrap();
-        let recent: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM collab_signups
-             WHERE ip_hash=? AND CAST(COALESCE(received_at,'0') AS INTEGER) > ?",
-            params![ip_hash, chrono_now().parse::<i64>().unwrap_or(0) - 86_400],
-            |r| r.get(0),
-        ).unwrap_or(0);
-        if recent >= 3 {
-            return (StatusCode::TOO_MANY_REQUESTS,
-                Json(serde_json::json!({"ok":false,"error":"rate limit (3 signups / 24h per IP); please email info@enablerdao.com"}))).into_response();
-        }
-    }
-
+    // Rate limit + INSERT in ONE critical section (self-audit #1).
     let now_s = chrono_now();
+    let now_int = now_s.parse::<i64>().unwrap_or(0);
     let id: i64 = {
         let conn = db.lock().unwrap();
+        if !ip_hash.is_empty() {
+            let recent: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM collab_signups
+                 WHERE ip_hash=? AND CAST(COALESCE(received_at,'0') AS INTEGER) > ?",
+                params![ip_hash, now_int - 86_400],
+                |r| r.get(0),
+            ).unwrap_or(0);
+            if recent >= 3 { return (StatusCode::TOO_MANY_REQUESTS,
+                Json(serde_json::json!({"ok":false,"error":"rate limit (3 signups / 24h per IP); please email info@enablerdao.com"}))).into_response(); }
+        }
         let _ = conn.execute(
             "INSERT INTO collab_signups
                 (brand_name, contact_email, website, plan, logo_url, notes, ip_hash, status, received_at)
@@ -23765,10 +23773,18 @@ async fn agent_email_critic(db: Db) -> Result<AgentReport, String> {
                 "{}\n---\nEMAIL UNDER REVIEW:\nkind: {}  variant: {}\nsubject: {}\nbody (plain text):\n{}\n",
                 EMAIL_CRITIC_PROMPT, kind, variant, subject, plain);
 
+            // gemini-2.5-flash enables hidden "thinking" by default which eats
+            // the output budget. With 2000 we were truncating mid-JSON. Bump
+            // to 6000 AND disable thinking (set budget to 0) so all tokens go
+            // to the visible response.
             let req = serde_json::json!({
                 "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": 0.5, "maxOutputTokens": 2000,
-                    "responseMimeType": "application/json"},
+                "generationConfig": {
+                    "temperature": 0.5,
+                    "maxOutputTokens": 6000,
+                    "responseMimeType": "application/json",
+                    "thinkingConfig": {"thinkingBudget": 0},
+                },
             });
             let url = format!(
                 "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
@@ -23804,7 +23820,13 @@ async fn agent_email_critic(db: Db) -> Result<AgentReport, String> {
                 }
             };
             if parsed.is_null() {
-                decisions.push(serde_json::json!({"type":"empty_parse","kind":kind,"variant":variant,"raw_head":raw.chars().take(80).collect::<String>()}));
+                decisions.push(serde_json::json!({
+                    "type":"empty_parse","kind":kind,"variant":variant,
+                    "raw_head": raw.chars().take(80).collect::<String>(),
+                    "raw_tail": raw.chars().rev().take(80).collect::<String>().chars().rev().collect::<String>(),
+                    "raw_len": raw.chars().count(),
+                    "finish_reason": body["candidates"][0]["finishReason"].as_str().unwrap_or("unknown"),
+                }));
                 continue;
             }
             total_in_tok  += (prompt.chars().count() / 4) as i64;
