@@ -8422,6 +8422,447 @@ async fn redeem_invite(
     })).into_response()
 }
 
+// ── MA Lottery (4/7 Founder Relay) ─────────────────────────────────────────
+//
+// 100日に1回、過去の MUGEN/MA 購入者からランダム 1 人を選び、その人に
+// 「次の MA を完全無料で受け取る権利」を贈る。当選者は 受/譲渡/チャリティ
+// の 3 択。譲渡された場合は連鎖、7 人で reset → 新規 random。
+// ENAI 100 枚も同時贈与 (Treasury から自動払い記録)。
+
+const LOTTERY_RELAY_LIMIT: i64 = 7;
+const LOTTERY_PERIOD_DAYS: i64 = 100;
+const LOTTERY_DEFAULT_ENAI_GRANT: i64 = 100;
+const LOTTERY_ACTION_DEADLINE_DAYS: i64 = 7;
+
+#[derive(serde::Deserialize)]
+struct LotteryDrawBody {
+    admin_token: String,
+    kind: Option<String>,       // 'manual' | '100day' | 'silent_day'
+    enai_grant: Option<i64>,    // override default 100
+    dry_run: Option<bool>,      // pick winner but don't email or persist
+}
+
+/// Pick one weighted-random winner from past MUGEN/MA purchasers.
+/// Weight = total spend in JPY in the last 24 months (>= 1 to allow newcomers).
+/// Returns Some(email) or None if no eligible buyers exist.
+fn lottery_pick_winner(conn: &rusqlite::Connection) -> Option<(String, f64)> {
+    let mut stmt = conn.prepare(
+        "SELECT mp.email,
+                COALESCE(SUM(p.price_jpy), 0) AS spend_jpy
+         FROM mu_purchases mp
+         JOIN products p ON p.id = mp.product_id
+         WHERE mp.brand IN ('mugen','ma','muon','you','nouns')
+           AND mp.email IS NOT NULL AND mp.email != ''
+         GROUP BY mp.email
+         HAVING SUM(p.price_jpy) > 0",
+    ).ok()?;
+    let rows: Vec<(String, f64)> = stmt.query_map([], |r| Ok((
+        r.get::<_, String>(0)?,
+        r.get::<_, i64>(1)? as f64,
+    ))).ok()?.filter_map(|r| r.ok()).collect();
+    if rows.is_empty() { return None; }
+    let total: f64 = rows.iter().map(|(_, w)| w.max(1.0)).sum();
+    // Seed from system time — good enough for lottery, not cryptographic.
+    let pick_raw = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).ok()?.subsec_nanos() as f64;
+    let pick = (pick_raw % total).max(0.0);
+    let mut cum = 0.0;
+    for (email, w) in &rows {
+        cum += w.max(1.0);
+        if cum >= pick {
+            return Some((email.clone(), *w));
+        }
+    }
+    rows.into_iter().last()
+}
+
+fn lottery_action_token() -> String {
+    uuid::Uuid::new_v4().to_string().replace('-', "")
+}
+
+/// POST /api/admin/lottery/draw — fires a draw (idempotent: refuses if a
+/// pending draw already exists within the last LOTTERY_PERIOD_DAYS days
+/// unless kind='manual').
+async fn admin_ma_lottery_draw(
+    State(db): State<Db>,
+    Json(body): Json<LotteryDrawBody>,
+) -> impl IntoResponse {
+    if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+    let kind = body.kind.clone().unwrap_or_else(|| "manual".into());
+    let dry  = body.dry_run.unwrap_or(false);
+    let enai = body.enai_grant.unwrap_or(LOTTERY_DEFAULT_ENAI_GRANT);
+
+    // Idempotency: in '100day' / 'silent_day' modes, don't re-fire if a
+    // recent draw exists. 'manual' bypasses the guard.
+    if kind != "manual" {
+        let conn = db.lock().unwrap();
+        let recent: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM ma_lottery_draws
+             WHERE CAST(drawn_at AS INTEGER) > ?",
+            params![chrono_now().parse::<i64>().unwrap_or(0) - LOTTERY_PERIOD_DAYS * 86400],
+            |r| r.get(0),
+        ).unwrap_or(0);
+        if recent > 0 {
+            return Json(serde_json::json!({
+                "ok": false,
+                "error": "recent draw exists, skipping",
+                "kind": kind,
+            })).into_response();
+        }
+    }
+
+    let (winner, weight) = {
+        let conn = db.lock().unwrap();
+        match lottery_pick_winner(&conn) {
+            Some(w) => w,
+            None => return Json(serde_json::json!({
+                "ok": false, "error": "no eligible buyers", "kind": kind,
+            })).into_response(),
+        }
+    };
+
+    let token = lottery_action_token();
+    let now = chrono_now();
+    if !dry {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO ma_lottery_draws
+                (kind, drawn_at, winner_email, weight, action_token,
+                 status, relay_count, enai_grant, notes, created_at)
+             VALUES (?,?,?,?,?,'pending',0,?,?,?)",
+            params![kind, now, winner, weight, token, enai,
+                    format!("auto draw kind={}", kind), now],
+        );
+    }
+
+    // Send winner email (best-effort, async)
+    if !dry {
+        let action_url = format!("https://wearmu.com/ma-lottery/{}", token);
+        let winner2 = winner.clone();
+        tokio::spawn(async move {
+            send_lottery_winner_email(&winner2, &action_url, enai).await;
+        });
+    }
+
+    Json(serde_json::json!({
+        "ok": true,
+        "kind": kind,
+        "winner_email": winner,
+        "weight": weight,
+        "action_token": token,
+        "action_url": format!("https://wearmu.com/ma-lottery/{}", token),
+        "enai_grant": enai,
+        "dry_run": dry,
+        "next_eligible_at": format!("now + {} days", LOTTERY_PERIOD_DAYS),
+    })).into_response()
+}
+
+async fn send_lottery_winner_email(email: &str, action_url: &str, enai: i64) {
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    if resend_key.is_empty() { return; }
+    let html = format!(r#"<div style="background:#0A0A0A;color:#F5F5F0;font-family:'Noto Serif JP','Helvetica Neue',serif;padding:48px 32px;max-width:560px;margin:0 auto;line-height:1.85">
+  <div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:32px">MU</div>
+  <div style="font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:#e6c449;margin-bottom:12px">4/7 Founder Relay · 当選</div>
+  <p style="font-size:18px;font-weight:300;line-height:1.5;margin-bottom:24px">あなたは、100 日に 1 度の MA 贈与の対象に選ばれました。</p>
+  <p style="font-size:13px;opacity:0.8">これはロトではありません。あなたが過去に MU と交わした購入の総量が、確率の重みとして反映された結果です。</p>
+  <p style="font-size:13px;opacity:0.8">あなたは次の 3 つから 1 つを選べます。期限は 7 日間です。</p>
+  <ol style="font-size:13px;opacity:0.9;padding-left:18px">
+    <li><strong style="color:#e6c449">受け取る</strong> — 次の MA を完全無料で。 ENAI {enai} 枚も同時に Treasury から贈与されます。</li>
+    <li><strong style="color:#e6c449">譲る</strong> — 別のメールアドレスを指名できます。連鎖は 7 人で reset。</li>
+    <li><strong style="color:#e6c449">チャリティ</strong> — Enabler Inc. の指定先 (CO₂ オフセット / 教育) に転換されます。</li>
+  </ol>
+  <p style="margin:32px 0">
+    <a href="{action_url}" style="display:inline-block;padding:14px 28px;background:#e6c449;color:#0A0A0A;text-decoration:none;font-weight:700;letter-spacing:0.2em;font-size:12px;text-transform:uppercase">選択画面を開く</a>
+  </p>
+  <p style="font-size:11px;opacity:0.5">— MU × Enabler Inc. (株式会社イネブラ)</p>
+</div>"#, action_url = action_url, enai = enai);
+    let _ = reqwest::Client::new()
+        .post("https://api.resend.com/emails")
+        .bearer_auth(&resend_key)
+        .json(&serde_json::json!({
+            "from": "MU <noreply@wearmu.com>",
+            "to": [email],
+            "subject": "[MU] 4/7 Founder Relay — あなたが選ばれました",
+            "html": html,
+        }))
+        .send().await;
+}
+
+#[derive(serde::Deserialize)]
+struct LotteryDecideBody {
+    decision: String,            // 'accept' | 'relay' | 'charity'
+    relay_to_email: Option<String>,
+    charity_target:  Option<String>,
+}
+
+/// POST /api/ma-lottery/<token>/decide — winner makes their choice.
+/// On 'relay', creates the next ma_lottery_relays row + emails the relay
+/// target. On 'accept' or 'charity', closes the chain.
+async fn ma_lottery_decide(
+    State(db): State<Db>,
+    axum::extract::Path(token): axum::extract::Path<String>,
+    Json(body): Json<LotteryDecideBody>,
+) -> impl IntoResponse {
+    let decision = body.decision.trim().to_lowercase();
+    if !["accept","relay","charity"].contains(&decision.as_str()) {
+        return (StatusCode::BAD_REQUEST, "decision must be accept|relay|charity").into_response();
+    }
+
+    // Token may belong to either a draw or a relay step. Try both.
+    let (draw_id, source_email, position): (i64, String, i64) = {
+        let conn = db.lock().unwrap();
+        if let Ok((id, email)) = conn.query_row(
+            "SELECT id, winner_email FROM ma_lottery_draws
+             WHERE action_token=? AND status='pending'",
+            params![token], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+        ) {
+            (id, email, 0)
+        } else if let Ok((draw_id, email, pos)) = conn.query_row(
+            "SELECT draw_id, to_email, position FROM ma_lottery_relays
+             WHERE action_token=? AND status='pending'",
+            params![token],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)),
+        ) {
+            (draw_id, email, pos)
+        } else {
+            return (StatusCode::NOT_FOUND, "token not found or already decided").into_response();
+        }
+    };
+
+    let now = chrono_now();
+    match decision.as_str() {
+        "accept" => {
+            let conn = db.lock().unwrap();
+            if position == 0 {
+                let _ = conn.execute(
+                    "UPDATE ma_lottery_draws SET status='accepted', decided_at=? WHERE id=?",
+                    params![now, draw_id]);
+            } else {
+                let _ = conn.execute(
+                    "UPDATE ma_lottery_relays SET status='accepted', decided_at=? WHERE action_token=?",
+                    params![now, token]);
+                let _ = conn.execute(
+                    "UPDATE ma_lottery_draws SET status='accepted' WHERE id=?",
+                    params![draw_id]);
+            }
+            Json(serde_json::json!({
+                "ok": true, "decision": "accept",
+                "message": "✓ MU は近日中にあなたへ MA を発送します。"
+            })).into_response()
+        }
+        "charity" => {
+            let target = body.charity_target.clone().unwrap_or_else(|| "co2_offset".into());
+            let conn = db.lock().unwrap();
+            if position == 0 {
+                let _ = conn.execute(
+                    "UPDATE ma_lottery_draws SET status='charity', decided_at=?, charity_target=? WHERE id=?",
+                    params![now, target, draw_id]);
+            } else {
+                let _ = conn.execute(
+                    "UPDATE ma_lottery_relays SET status='charity', decided_at=? WHERE action_token=?",
+                    params![now, token]);
+                let _ = conn.execute(
+                    "UPDATE ma_lottery_draws SET status='charity', charity_target=? WHERE id=?",
+                    params![target, draw_id]);
+            }
+            Json(serde_json::json!({
+                "ok": true, "decision": "charity",
+                "charity_target": target,
+                "message": format!("✓ MA は {} に転換されました。", target),
+            })).into_response()
+        }
+        "relay" => {
+            let relay_to = body.relay_to_email.clone().unwrap_or_default()
+                .trim().to_lowercase();
+            if !relay_to.contains('@') {
+                return (StatusCode::BAD_REQUEST, "relay_to_email required").into_response();
+            }
+            if relay_to == source_email.to_lowercase() {
+                return (StatusCode::BAD_REQUEST, "cannot relay to self").into_response();
+            }
+            let next_pos = position + 1;
+            if next_pos > LOTTERY_RELAY_LIMIT {
+                // Chain limit — auto-convert to charity instead.
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "UPDATE ma_lottery_draws SET status='charity',
+                     charity_target='chain_limit', decided_at=? WHERE id=?",
+                    params![now, draw_id]);
+                return Json(serde_json::json!({
+                    "ok": true, "decision": "chain_limit_reached",
+                    "message": "連鎖が 7 人に達したため、MA は charity に転換されました。",
+                })).into_response();
+            }
+            let next_token = lottery_action_token();
+            {
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "INSERT INTO ma_lottery_relays
+                        (draw_id, position, from_email, to_email,
+                         action_token, status, created_at)
+                     VALUES (?,?,?,?,?,'pending',?)",
+                    params![draw_id, next_pos, source_email,
+                            relay_to, next_token, now]);
+                // Mark previous step as relayed
+                if position == 0 {
+                    let _ = conn.execute(
+                        "UPDATE ma_lottery_draws SET status='relayed', relay_count=?,
+                         decided_at=? WHERE id=?",
+                        params![next_pos, now, draw_id]);
+                } else {
+                    let _ = conn.execute(
+                        "UPDATE ma_lottery_relays SET status='relayed', decided_at=? WHERE action_token=?",
+                        params![now, token]);
+                    let _ = conn.execute(
+                        "UPDATE ma_lottery_draws SET relay_count=? WHERE id=?",
+                        params![next_pos, draw_id]);
+                }
+            }
+            let action_url = format!("https://wearmu.com/ma-lottery/{}", next_token);
+            let to2 = relay_to.clone();
+            tokio::spawn(async move {
+                send_lottery_winner_email(&to2, &action_url, LOTTERY_DEFAULT_ENAI_GRANT).await;
+            });
+            Json(serde_json::json!({
+                "ok": true, "decision": "relay",
+                "relayed_to": relay_to,
+                "position": next_pos,
+                "remaining_relays": LOTTERY_RELAY_LIMIT - next_pos,
+                "message": format!("✓ {} へ譲渡しました。連鎖 {}/7。", relay_to, next_pos),
+            })).into_response()
+        }
+        _ => unreachable!()
+    }
+}
+
+/// GET /ma-lottery/<token> — winner-facing action page (3 buttons).
+async fn ma_lottery_page(
+    State(db): State<Db>,
+    axum::extract::Path(token): axum::extract::Path<String>,
+) -> Response {
+    let row: Option<(String, String, i64, i64)> = {
+        let conn = db.lock().unwrap();
+        if let Ok(r) = conn.query_row(
+            "SELECT winner_email, status, enai_grant, relay_count FROM ma_lottery_draws
+             WHERE action_token=?",
+            params![token],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?, r.get::<_, i64>(3)?)),
+        ) { Some(r) }
+        else { conn.query_row(
+            "SELECT r.to_email, r.status, d.enai_grant, r.position
+             FROM ma_lottery_relays r JOIN ma_lottery_draws d ON d.id=r.draw_id
+             WHERE r.action_token=?",
+            params![token],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?, r.get::<_, i64>(3)?)),
+        ).ok() }
+    };
+    let Some((email, status, enai, position)) = row else {
+        return (StatusCode::NOT_FOUND,
+            "このリンクは見つかりません (期限切れ / 既に決定済)").into_response();
+    };
+    let already_decided = status != "pending";
+    let chain_pos = if position == 0 { "1st (winner)".to_string() }
+                    else { format!("{}/7 (relay)", position) };
+    let html = format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU 4/7 Founder Relay — 選択</title>
+<style>
+body{{margin:0;padding:0;background:#0A0A0A;color:#F5F5F0;font-family:'Noto Serif JP','Helvetica Neue',serif;line-height:1.85;font-size:15px}}
+.wrap{{max-width:520px;margin:0 auto;padding:48px 32px 80px}}
+.eyebrow{{font-family:'Helvetica Neue',Arial,sans-serif;font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:#e6c449;margin-bottom:14px}}
+h1{{font-size:26px;font-weight:300;letter-spacing:0.02em;line-height:1.35;margin:0 0 18px}}
+.meta{{font-size:12px;opacity:0.6;letter-spacing:0.1em;margin-bottom:28px}}
+button{{display:block;width:100%;background:#1c1c1c;color:#F5F5F0;border:1px solid rgba(245,245,240,0.12);padding:18px 22px;font-size:14px;text-align:left;cursor:pointer;margin-bottom:12px;font-family:inherit;letter-spacing:0.04em}}
+button:hover{{background:#252525;border-color:#e6c449}}
+button strong{{color:#e6c449;font-weight:500;display:block;margin-bottom:4px}}
+button small{{display:block;opacity:0.6;font-size:11px;line-height:1.65;margin-top:6px}}
+#relay-input{{display:none;margin:8px 0 12px}}
+#relay-input input{{width:100%;padding:14px;background:#1c1c1c;border:1px solid #e6c449;color:#F5F5F0;font-family:inherit;font-size:14px}}
+#out{{margin-top:24px;padding:16px;background:#1c1c1c;border-left:2px solid #e6c449;font-size:13px;display:none}}
+.disabled{{opacity:0.4;pointer-events:none}}
+</style></head><body><div class="wrap">
+<div class="eyebrow">MU · 4/7 Founder Relay</div>
+<h1>あなたに 1 着の MA が贈られます</h1>
+<div class="meta">{email} · 連鎖 {chain_pos} · ENAI {enai} 枚 · status={status}</div>
+
+<div id="actions" {disabled_attr}>
+<button onclick="decide('accept')"><strong>受け取る</strong>
+次の MA を完全無料で。ENAI {enai} 枚も同時に Treasury から贈与されます。<small>shipping: Enabler Inc. が手配します</small></button>
+
+<button onclick="showRelay()"><strong>譲る</strong>
+別のメールアドレスを指名できます。連鎖は最大 7 人で reset。<small>受贈者と同じ 3 択メールが届きます</small></button>
+<div id="relay-input">
+<input id="relay-email" placeholder="譲渡先のメールアドレス" type="email">
+<button onclick="decide('relay')" style="margin-top:8px;background:#e6c449;color:#0A0A0A;text-align:center">この人に譲る →</button>
+</div>
+
+<button onclick="decide('charity')"><strong>チャリティに転換</strong>
+Enabler Inc. の指定先 (CO₂ オフセット / 教育) に転換。<small>MA はオークションに戻り、収益が指定先に</small></button>
+</div>
+
+<div id="out"></div>
+
+<p style="margin-top:48px;font-size:11px;opacity:0.5">期限: 通知から 7 日間。MU × Enabler Inc. (株式会社イネブラ)</p>
+</div>
+<script>
+function showRelay() {{ document.getElementById('relay-input').style.display='block'; }}
+async function decide(kind) {{
+  const body = {{decision: kind}};
+  if (kind === 'relay') {{
+    body.relay_to_email = document.getElementById('relay-email').value.trim();
+    if (!body.relay_to_email) {{ alert('譲渡先のメールアドレスを入力してください'); return; }}
+  }}
+  const r = await fetch('/api/ma-lottery/{token}/decide', {{
+    method:'POST', headers:{{'content-type':'application/json'}},
+    body: JSON.stringify(body)
+  }});
+  const j = await r.json();
+  const out = document.getElementById('out');
+  out.style.display = 'block';
+  out.textContent = j.message || JSON.stringify(j);
+  document.getElementById('actions').classList.add('disabled');
+}}
+</script></body></html>"#,
+        email = html_escape(&email),
+        chain_pos = chain_pos,
+        enai = enai,
+        status = status,
+        token = html_attr_escape(&token),
+        disabled_attr = if already_decided { "class=\"disabled\"" } else { "" });
+    Html(html).into_response()
+}
+
+/// GET /admin/lottery?token=… — list draws + relays
+async fn admin_ma_lottery_list(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let conn = db.lock().unwrap();
+    let mut stmt = match conn.prepare(
+        "SELECT id, kind, drawn_at, winner_email, weight, status,
+                relay_count, enai_grant, COALESCE(decided_at,''),
+                COALESCE(charity_target,''), action_token
+         FROM ma_lottery_draws ORDER BY id DESC LIMIT 100"
+    ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+    let rows: Vec<serde_json::Value> = stmt.query_map([], |r| Ok(serde_json::json!({
+        "id":             r.get::<_, i64>(0)?,
+        "kind":           r.get::<_, String>(1)?,
+        "drawn_at":       r.get::<_, String>(2)?,
+        "winner_email":   r.get::<_, String>(3)?,
+        "weight":         r.get::<_, f64>(4)?,
+        "status":         r.get::<_, String>(5)?,
+        "relay_count":    r.get::<_, i64>(6)?,
+        "enai_grant":     r.get::<_, i64>(7)?,
+        "decided_at":     r.get::<_, String>(8)?,
+        "charity_target": r.get::<_, String>(9)?,
+        "action_token":   r.get::<_, String>(10)?,
+    }))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+    Json(serde_json::json!({"draws": rows, "count": rows.len()})).into_response()
+}
+
 /// MU の X (Twitter) brand voice — Gemini への system prompt として渡す。
 /// すべての投稿は最終的にこの声を通る。
 ///
@@ -13741,6 +14182,40 @@ async fn main() {
         CREATE INDEX IF NOT EXISTS idx_mu_purchases_email ON mu_purchases(email);
         CREATE INDEX IF NOT EXISTS idx_mu_purchases_session ON mu_purchases(session_id);
         CREATE INDEX IF NOT EXISTS idx_you_users_email ON you_users(email);
+
+        -- MA Lottery (4/7 Founder Relay): 100日に1回 ランダム1人に MA を贈与。
+        -- 当選者は 受け取る / 別の人へ譲渡指名 / チャリティに転換 を選べる。
+        -- 譲渡された場合は ma_lottery_relays に追記、連鎖が 7 人で reset。
+        CREATE TABLE IF NOT EXISTS ma_lottery_draws (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind            TEXT NOT NULL DEFAULT '100day',  -- '100day' | 'silent_day' | 'manual'
+            drawn_at        TEXT NOT NULL,
+            winner_email    TEXT NOT NULL,
+            weight          REAL DEFAULT 1.0,
+            action_token    TEXT NOT NULL UNIQUE,            -- url-safe random token
+            status          TEXT NOT NULL DEFAULT 'pending', -- 'pending' | 'accepted' | 'relayed' | 'charity' | 'expired'
+            relay_count     INTEGER NOT NULL DEFAULT 0,
+            decided_at      TEXT,
+            charity_target  TEXT,                            -- e.g. 'enabler_charity' | 'co2_offset'
+            enai_grant      INTEGER DEFAULT 0,               -- ENAI tokens granted (default 100)
+            notes           TEXT,
+            created_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ma_lottery_drawn_at ON ma_lottery_draws(drawn_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_ma_lottery_token ON ma_lottery_draws(action_token);
+
+        CREATE TABLE IF NOT EXISTS ma_lottery_relays (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            draw_id       INTEGER NOT NULL REFERENCES ma_lottery_draws(id),
+            position      INTEGER NOT NULL,                 -- 1..7
+            from_email    TEXT NOT NULL,
+            to_email      TEXT NOT NULL,
+            action_token  TEXT NOT NULL UNIQUE,
+            status        TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'accepted' | 'relayed' | 'charity' | 'expired'
+            decided_at    TEXT,
+            created_at    TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ma_relays_draw ON ma_lottery_relays(draw_id, position);
     ").ok();
     // Backfill trial_end_at for pre-existing /you users.
     // created_at is a unix-epoch-seconds string; trial_end_at is the same
@@ -13968,6 +14443,12 @@ async fn main() {
         .route("/api/admin/cost_dashboard", get(admin_cost_dashboard))
         .route("/api/admin/budget",         get(admin_budget))
         .route("/admin/budget",             get(admin_budget))
+        // MA Lottery (4/7 Founder Relay)
+        .route("/api/admin/ma_lottery/draw", post(admin_ma_lottery_draw))
+        .route("/api/admin/ma_lottery",      get(admin_ma_lottery_list))
+        .route("/admin/ma-lottery",          get(admin_ma_lottery_list))
+        .route("/ma-lottery/:token",         get(ma_lottery_page))
+        .route("/api/ma-lottery/:token/decide", post(ma_lottery_decide))
         .route("/api/admin/sns/pending", get(admin_sns_pending))
         .route("/api/admin/sns/mark_posted", post(admin_sns_mark_posted))
         .route("/api/redeem_invite", post(redeem_invite))
