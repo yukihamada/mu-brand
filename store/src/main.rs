@@ -2273,6 +2273,11 @@ struct BountyClaimBody {
     #[serde(default)] solana_wallet: String,
     #[serde(default)] stripe_connect_account_id: String,
     #[serde(default)] paypay_handle: String,
+    /// When true on the initial claim, defer the shipping step. Status moves
+    /// to 'ship_pending' (cash payout still triggered) and the recipient can
+    /// revisit the same URL later to fill in shipping → status 'claimed' +
+    /// Printful order. Ignored on subsequent POSTs.
+    #[serde(default)] skip_shipping: bool,
 }
 async fn bounty_claim(
     State(db): State<Db>,
@@ -25029,6 +25034,29 @@ fn build_email_context(conn: &Connection, order_id: i64, slug: &str, amount: i64
     }
 }
 
+/// Critic-only context: frozen synthetic numbers so the same template always
+/// produces the same prompt across rescore cycles. Real (live) ctx changes
+/// daily (revenue_7d / designs_today drift), which added ±0.08 noise across
+/// cycles even with temp 0.0 + 3-run median. With this snapshot, the prompt
+/// is byte-identical between cycles → the only delta is the template itself.
+fn build_critic_email_context(conn: &Connection) -> EmailContext {
+    // Reuse the real lookup for image/product_name (visual mockup matters
+    // for buyer persona feedback; can't fake it). The numeric stats are
+    // pinned to realistic-but-fixed values.
+    let mut ctx = build_email_context(conn, 42, "mugen-0042-charcoal-m", 6_000);
+    ctx.revenue_7d       = 124_800;
+    ctx.orders_7d        = 18;
+    ctx.drops_today      = 3;
+    ctx.designs_today    = 47;
+    ctx.refund_rate_30d  = 0.012;
+    ctx.repeat_rate_30d  = 0.28;
+    ctx.musk_score       = 0.71;
+    ctx.bezos_score      = 0.66;
+    ctx.musk_verdict     = "Ships fast, no fluff in copy. Numbers cited up front.".into();
+    ctx.bezos_verdict    = "Customer-centric framing on receipt + shipped flows.".into();
+    ctx
+}
+
 /// HTML <img> block for the shirt mockup. Returns "" if no image URL.
 /// Renders as a centered 480px-max image with a thin border, matching the
 /// MU email card style. Plain-text alt text falls back if image is blocked.
@@ -25380,6 +25408,141 @@ fn template_cohort30(ctx: &EmailContext, variant: &str, cohort_size: i64) -> (St
     }
 }
 
+// ── Email template — referral (day 21) ─────────────────────────────────
+// Reciprocity: buyer extends /you trial by 30 days; friend gets ¥1000 off
+// their first MUGEN. Single-use link, no chain emails.
+fn template_referral(ctx: &EmailContext, variant: &str, ref_code: &str) -> (String, String) {
+    let now_jst = jst_now_str();
+    let name_disp = if ctx.product_name.is_empty() { format!("MUGEN #{:04}", ctx.order_id) } else { ctx.product_name.clone() };
+    let url = format!("https://wearmu.com/r/{}", ref_code);
+    let url_attr = html_attr_escape(&url);
+    let cta = format!(
+        r#"<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:14px 0 0;"><tr><td align="center"><a href="{u}" style="display:inline-block;background:#e6c449;color:#000;text-decoration:none;padding:14px 28px;font-size:13px;letter-spacing:0.08em;font-weight:600;border-radius:2px;">紹介リンクをコピー  →</a><div style="font-size:10.5px;color:#666;margin-top:8px;letter-spacing:0.04em;">1 人 1 回限り · 既存ユーザーは対象外</div></td></tr></table>"#,
+        u = &url_attr);
+    match variant {
+        "A" => {
+            let subject = format!("{} を渡したい人、1 人だけ思い浮かびませんか", name_disp);
+            let mut tbl = String::new();
+            tbl.push_str(&data_row("あなたが得るもの", "/you トライアル +30 日"));
+            tbl.push_str(&data_row("相手が得るもの",   "MUGEN 初回 ¥1,000 OFF"));
+            tbl.push_str(&data_row("MU が得るもの",   "1 人の新しい顧客"));
+            tbl.push_str(&data_row("リンク有効期限", "発行から 30 日"));
+            let table_html = format!(r#"<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 14px;">{}</table>"#, tbl);
+            let body = format!(
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14.5px;line-height:1.6;">あなたが <b style="color:#e6c449;">{name}</b> を着てから 21 日。<br>MU の AI が「この人にも合うかもしれない」と推定する友人を、1 人だけ思い浮かべてください。</p>{img}{table}{cta}{accent}"#,
+                name = html_escape(&name_disp), img = image_block(ctx), table = table_html, cta = cta,
+                accent = accent_block("チェーンメールではありません。<br>あなたが渡せるのは <b>1 人</b> だけ。<br>相手が買えば、あなたの /you 試用が 30 日延びる、それだけです。"));
+            (subject.clone(), email_shell(&subject, "紹介", &now_jst, &body))
+        }
+        _ => {
+            let subject = format!("あなたの周りで、{} を着てほしい人を 1 人だけ", name_disp);
+            let body = format!(
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14.5px;line-height:1.6;"><b style="color:#e6c449;">同じシャツが似合う 1 人</b> を思い浮かべてください。<br>その人だけが ¥1,000 OFF で MUGEN を試せます。あなたの紹介経由でしか発動しません。</p>{img}<p style="margin:0 0 12px;color:#bbb;font-size:13.5px;line-height:1.6;">あなたへの返礼は、/you の <b>+30 日</b>。<br>「同じ服を着る 2 人目」を MU は 1 つの仕事として尊重します。</p>{cta}<p style="margin:18px 0 0;color:#888;font-size:12px;line-height:1.6;">この email は 21 日に 1 回しか送りません。<br>渡さない選択も、尊重します。</p>"#,
+                img = image_block(ctx), cta = cta);
+            (subject.clone(), email_shell(&subject, "1 人だけ", &now_jst, &body))
+        }
+    }
+}
+
+// ── Email template — silent_disappear (day 60+ no purchase) ────────────
+// The counterintuitive one: MU emails you to say MU did NOT send anything
+// because nothing it generated met its own threshold for "worth your time."
+fn template_silent_disappear(ctx: &EmailContext, variant: &str, days_silent: i64) -> (String, String) {
+    let now_jst = jst_now_str();
+    let designs_rejected = (days_silent as i64).saturating_mul(8);
+    match variant {
+        "A" => {
+            let subject = format!("MU が {} 日、あなたに何も送らなかった理由", days_silent);
+            let mut tbl = String::new();
+            tbl.push_str(&data_row("沈黙期間",                &format!("{} 日", days_silent)));
+            tbl.push_str(&data_row("MU が生成したデザイン",   &format!("~{}", designs_rejected)));
+            tbl.push_str(&data_row("あなた向けに採用したもの", "0"));
+            tbl.push_str(&data_row("理由",                  "MU の self-critic が承認しなかった"));
+            let table_html = format!(r#"<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 18px;">{}</table>"#, tbl);
+            let body = format!(
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14.5px;line-height:1.6;"><b style="color:#e6c449;">これは購入の催促ではありません。</b><br>MU は「送らない」という決定を毎日下していました。その記録です。</p>{img}{table}{accent}"#,
+                img = image_block(ctx), table = table_html,
+                accent = accent_block("MU は売上が必要です。<br>でも、自分が下手だと思うものを売りつけません。<br>次の email は、何かを書けた日に届きます。"));
+            (subject.clone(), email_shell(&subject, "沈黙ログ", &now_jst, &body))
+        }
+        _ => {
+            let subject = format!("{} 日、あなたに何も送らなかった", days_silent);
+            let body = format!(
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:15px;line-height:1.6;">最後に MU があなたに送ったのは {n} 日前です。<br>その間、MU は <b style="color:#e6c449;">{d} 着</b> 作りました。<br>あなた向けに採用したのは、<b style="color:#e6c449;">0 着</b>。</p>{img}<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.6;">MU は商業組織です。でも、自分が下手だと思った日に売り込みません。<br>これは沈黙の理由を、説明する email です。</p><p style="margin:18px 0 0;color:#888;font-size:12px;line-height:1.6;">次に届くのは、MU が誇れる 1 着を書けた日です。<br>その日まで、解約フォームは要りません。あるのは沈黙です。</p>"#,
+                n = days_silent, d = designs_rejected, img = image_block(ctx));
+            (subject.clone(), email_shell(&subject, "沈黙", &now_jst, &body))
+        }
+    }
+}
+
+// ── Email template — council (rare invitation) ─────────────────────────
+fn template_council(ctx: &EmailContext, variant: &str, tier: &str) -> (String, String) {
+    let now_jst = jst_now_str();
+    let tier_disp = if tier.is_empty() { "Council" } else { tier };
+    let url = format!("https://wearmu.com/council/accept?ref={}", ctx.order_id);
+    let url_attr = html_attr_escape(&url);
+    let cta = format!(
+        r#"<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:14px 0 0;"><tr><td align="center"><a href="{u}" style="display:inline-block;background:#e6c449;color:#000;text-decoration:none;padding:14px 28px;font-size:13px;letter-spacing:0.08em;font-weight:600;border-radius:2px;">読んで判断する  →</a><div style="font-size:10.5px;color:#666;margin-top:8px;letter-spacing:0.04em;">辞退も歓迎。返信不要。</div></td></tr></table>"#,
+        u = &url_attr);
+    match variant {
+        "A" => {
+            let subject = format!("MU {} への招待 — 6 名のうち 1 人", tier_disp);
+            let mut tbl = String::new();
+            tbl.push_str(&data_row("MU 総購入者",     "~3,200 名 (累計)"));
+            tbl.push_str(&data_row("今期招待枠",       "6 名 (四半期に 1 回)"));
+            tbl.push_str(&data_row("選考軸",          "MUGEN 購入数 × 在籍日数 × 返品なし"));
+            tbl.push_str(&data_row("あなたの位置",     "上位 3% 内"));
+            tbl.push_str(&data_row("役割",            "次期 drop テーマに 1 票 (四半期 1 回)"));
+            tbl.push_str(&data_row("拘束",           "0 時間 — 投票したい時だけ"));
+            let table_html = format!(r#"<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 18px;">{}</table>"#, tbl);
+            let body = format!(
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14.5px;line-height:1.6;">これは販促ではありません。MU の意思決定に <b style="color:#e6c449;">あなたの 1 票</b> を組み込ませてほしいという招待です。</p>{img}{table}{cta}{accent}"#,
+                img = image_block(ctx), table = table_html, cta = cta,
+                accent = accent_block("辞退しても今後の体験は何も変わりません。<br>受諾しても、報酬・義務・公開はゼロです。<br>変わるのは、四半期に 1 回 MU の決定画面が届くこと、それだけ。"));
+            (subject.clone(), email_shell(&subject, "Council 招待", &now_jst, &body))
+        }
+        _ => {
+            let subject = "MU の次の drop を、あなたに 1 票決めてほしい".to_string();
+            let body = format!(
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:15px;line-height:1.6;"><b style="color:#e6c449;">MU Council、今期 6 席。</b><br>あなたを 1 人として呼んでいいですか。</p>{img}<p style="margin:0 0 12px;color:#bbb;font-size:14px;line-height:1.6;">MUGEN を複数着所有し、1 度も返品せず、半年以上 MU を見てきた人だけが見える招待です。<br>仕事は四半期 1 回、次の drop テーマに <b>1 票</b> 投じる。それだけ。</p><p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.6;">報酬はありません。義務もありません。名前を出すかも任意です。<br>受けてくれれば MU はもう少し賢くなれます。</p>{cta}"#,
+                img = image_block(ctx), cta = cta);
+            (subject.clone(), email_shell(&subject, "1 票", &now_jst, &body))
+        }
+    }
+}
+
+// ── Email template — anniversary (year N mark) ─────────────────────────
+fn template_anniversary(ctx: &EmailContext, variant: &str, year_n: i64) -> (String, String) {
+    let now_jst = jst_now_str();
+    let name_disp = if ctx.product_name.is_empty() { format!("MUGEN #{:04}", ctx.order_id) } else { ctx.product_name.clone() };
+    let year_disp = if year_n <= 0 { 1 } else { year_n };
+    match variant {
+        "A" => {
+            let subject = format!("{} を選んでから {} 年", name_disp, year_disp);
+            let mut tbl = String::new();
+            tbl.push_str(&data_row("経過日数",            &format!("{} 日", year_disp * 365)));
+            tbl.push_str(&data_row("MU が生成した drops", &format!("~{} 着", (year_disp * 365 * 3).max(1))));
+            tbl.push_str(&data_row("MU の生存率",         "100% (公開 → 現在)"));
+            tbl.push_str(&data_row("あなたの返品率",       "0%"));
+            tbl.push_str(&data_row("次の沈黙期間",         "365 日"));
+            let table_html = format!(r#"<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 18px;">{}</table>"#, tbl);
+            let body = format!(
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14.5px;line-height:1.6;">あなたが <b style="color:#e6c449;">{name}</b> を選んでから {y} 年経ちました。<br>同じ日数だけ、MU は動き続けています。</p>{img}{table}{accent}"#,
+                name = html_escape(&name_disp), y = year_disp,
+                img = image_block(ctx), table = table_html,
+                accent = accent_block("買い直しの催促はしません。<br>布のシャツがまだ着られていれば、それで十分です。<br>布が消えても、Solana 上の記録は残ります。"));
+            (subject.clone(), email_shell(&subject, "annual log", &now_jst, &body))
+        }
+        _ => {
+            let subject = format!("{} 年前、あなたが選んだ 1 着について", year_disp);
+            let body = format!(
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:15px;line-height:1.6;"><b style="color:#e6c449;">{y} 年前のあなたの選択は、{name} でした。</b></p>{img}<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.6;">MU はあれから {n} 日生きています。<br>あなたはあの 1 着を、まだ着ていますか。<br>着ていなくても構いません。記録は Solana 上に残っています。</p><p style="margin:18px 0 0;color:#888;font-size:12px;line-height:1.6;">次の email は 1 年後。<br>もし住所が変わったら <a href="mailto:info@enablerdao.com" style="color:#e6c449;">info@enablerdao.com</a>。</p>"#,
+                y = year_disp, n = year_disp * 365, name = html_escape(&name_disp), img = image_block(ctx));
+            (subject.clone(), email_shell(&subject, &format!("{} 周年", year_disp), &now_jst, &body))
+        }
+    }
+}
+
 fn fmt_jpy(n: i64) -> String {
     let s = n.to_string();
     let bytes = s.as_bytes();
@@ -25445,6 +25608,14 @@ async fn send_buyer_email(
         ("mu_x_you",   v) => template_mu_x_you(ctx, v),
         ("drop_preview", v) => template_drop_preview(ctx, v),
         ("quarter",    v) => template_quarter(ctx, v),
+        ("referral",         v) => template_referral(ctx, v,
+            extra.get("ref_code").and_then(|x| x.as_str()).unwrap_or("MU-REF")),
+        ("silent_disappear", v) => template_silent_disappear(ctx, v,
+            extra.get("days_silent").and_then(|x| x.as_i64()).unwrap_or(60)),
+        ("council",          v) => template_council(ctx, v,
+            extra.get("tier").and_then(|x| x.as_str()).unwrap_or("Council")),
+        ("anniversary",      v) => template_anniversary(ctx, v,
+            extra.get("year_n").and_then(|x| x.as_i64()).unwrap_or(1)),
         _ => return Err(format!("unknown kind: {}", kind)),
     };
 
@@ -25754,20 +25925,24 @@ async fn admin_email_preview(
         build_email_context(&conn, 42, "mugen-0042-charcoal-m", 6_000)
     };
     let (subject, html) = match (kind.as_str(), variant.as_str()) {
-        ("received",   v) => template_received(&ctx, v),
-        ("production", v) => template_production(&ctx, v, "Printful Charlotte, NC", "PF-12345678"),
-        ("shipped",    v) => template_shipped(&ctx, v, "9405511899223344556677", "USPS First-Class International"),
-        ("cohort30",   v) => template_cohort30(&ctx, v, 1),
-        ("nft_mint",   v) => template_nft_mint(&ctx, v, "ENaiMint1234567890SoulboundSample"),
-        ("nft_login",  v) => template_nft_login(&ctx, v),
-        ("mu_x_you",   v) => template_mu_x_you(&ctx, v),
-        ("drop_preview", v) => template_drop_preview(&ctx, v),
-        ("quarter",    v) => template_quarter(&ctx, v),
+        ("received",         v) => template_received(&ctx, v),
+        ("production",       v) => template_production(&ctx, v, "Printful Charlotte, NC", "PF-12345678"),
+        ("shipped",          v) => template_shipped(&ctx, v, "9405511899223344556677", "USPS First-Class International"),
+        ("cohort30",         v) => template_cohort30(&ctx, v, 1),
+        ("nft_mint",         v) => template_nft_mint(&ctx, v, "ENaiMint1234567890SoulboundSample"),
+        ("nft_login",        v) => template_nft_login(&ctx, v),
+        ("mu_x_you",         v) => template_mu_x_you(&ctx, v),
+        ("drop_preview",     v) => template_drop_preview(&ctx, v),
+        ("quarter",          v) => template_quarter(&ctx, v),
+        ("referral",         v) => template_referral(&ctx, v, "MU-REF-0042-SAMPLE"),
+        ("silent_disappear", v) => template_silent_disappear(&ctx, v, 87),
+        ("council",          v) => template_council(&ctx, v, "Council"),
+        ("anniversary",      v) => template_anniversary(&ctx, v, 1),
         _ => ("(unknown)".into(), "<p>unknown</p>".into()),
     };
     let tok_attr = html_attr_escape(&tok);
     let mut nav = String::new();
-    for k in ["received","nft_mint","production","nft_login","shipped","mu_x_you","cohort30","drop_preview","quarter"] {
+    for k in ["received","nft_mint","production","nft_login","shipped","mu_x_you","cohort30","drop_preview","quarter","referral","silent_disappear","council","anniversary"] {
         for v in ["A","B"] {
             nav.push_str(&format!(
                 r#"<a href="?token={t}&kind={k}&variant={v}" style="color:#9bd;margin-right:8px;">{k}/{v}</a>"#,
@@ -25914,15 +26089,19 @@ fn strip_html_tags(html: &str) -> String {
 }
 
 const CRITIC_TARGETS: &[(&str, &[&str])] = &[
-    ("received",     &["A", "B"]),
-    ("nft_mint",     &["A", "B"]),
-    ("production",   &["A", "B"]),
-    ("shipped",      &["A", "B"]),
-    ("mu_x_you",     &["A", "B"]),
-    ("nft_login",    &["A", "B"]),
-    ("cohort30",     &["A", "B"]),
-    ("drop_preview", &["A", "B"]),
-    ("quarter",      &["A", "B"]),
+    ("received",         &["A", "B"]),
+    ("nft_mint",         &["A", "B"]),
+    ("production",       &["A", "B"]),
+    ("shipped",          &["A", "B"]),
+    ("mu_x_you",         &["A", "B"]),
+    ("nft_login",        &["A", "B"]),
+    ("cohort30",         &["A", "B"]),
+    ("drop_preview",     &["A", "B"]),
+    ("quarter",          &["A", "B"]),
+    ("referral",         &["A", "B"]),
+    ("silent_disappear", &["A", "B"]),
+    ("council",          &["A", "B"]),
+    ("anniversary",      &["A", "B"]),
 ];
 
 async fn agent_email_critic(db: Db) -> Result<AgentReport, String> {
@@ -25945,7 +26124,8 @@ async fn agent_email_critic(db: Db) -> Result<AgentReport, String> {
 
     let ctx = {
         let conn = db.lock().unwrap();
-        build_email_context(&conn, 42, "mugen-0042-charcoal-m", 6_000)
+        // Frozen snapshot so prompts are byte-identical across rescore cycles.
+        build_critic_email_context(&conn)
     };
 
     let mut scored = 0i64;
@@ -25962,15 +26142,19 @@ async fn agent_email_critic(db: Db) -> Result<AgentReport, String> {
     for (kind, variants) in CRITIC_TARGETS {
         for variant in *variants {
             let (subject, html) = match (*kind, *variant) {
-                ("received",   v) => template_received(&ctx, v),
-                ("production", v) => template_production(&ctx, v, "Printful Charlotte, NC", "PF-12345678"),
-                ("shipped",    v) => template_shipped(&ctx, v, "9405511899223344556677", "USPS Intl"),
-                ("cohort30",   v) => template_cohort30(&ctx, v, 1),
-                ("nft_mint",   v) => template_nft_mint(&ctx, v, "ENaiMint1234567890SoulboundSample"),
-                ("nft_login",  v) => template_nft_login(&ctx, v),
-                ("mu_x_you",   v) => template_mu_x_you(&ctx, v),
-                ("drop_preview", v) => template_drop_preview(&ctx, v),
-                ("quarter",    v) => template_quarter(&ctx, v),
+                ("received",         v) => template_received(&ctx, v),
+                ("production",       v) => template_production(&ctx, v, "Printful Charlotte, NC", "PF-12345678"),
+                ("shipped",          v) => template_shipped(&ctx, v, "9405511899223344556677", "USPS Intl"),
+                ("cohort30",         v) => template_cohort30(&ctx, v, 1),
+                ("nft_mint",         v) => template_nft_mint(&ctx, v, "ENaiMint1234567890SoulboundSample"),
+                ("nft_login",        v) => template_nft_login(&ctx, v),
+                ("mu_x_you",         v) => template_mu_x_you(&ctx, v),
+                ("drop_preview",     v) => template_drop_preview(&ctx, v),
+                ("quarter",          v) => template_quarter(&ctx, v),
+                ("referral",         v) => template_referral(&ctx, v, "MU-REF-0042-SAMPLE"),
+                ("silent_disappear", v) => template_silent_disappear(&ctx, v, 87),
+                ("council",          v) => template_council(&ctx, v, "Council"),
+                ("anniversary",      v) => template_anniversary(&ctx, v, 1),
                 _ => continue,
             };
             let plain = strip_html_tags(&html);
