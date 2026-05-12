@@ -11380,7 +11380,7 @@ async fn show_partner_proposal_page(
              FROM products
              WHERE active=1 AND sold_out_at IS NULL
                AND brand IN ('mugen','ma','muon','nouns')
-               AND brand=brand
+               AND mockup_url IS NOT NULL AND mockup_url <> ''
              ORDER BY brand, drop_num DESC"
         ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "drops").into_response() };
         let all: Vec<DropRow> = stmt.query_map([], |r| Ok((
@@ -13499,7 +13499,13 @@ async fn collab_checkout(
     };
     let price = price_jpy.clamp(500, 99_800);
     let size = body.size.chars().take(8).collect::<String>();
-    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    // JiuFlow purchases are made on jiuflow.com, so redirect back there after
+    // Stripe success (not wearmu.com). Other partners stay on wearmu.com.
+    let base_url = if partner == "jiuflow" {
+        "https://jiuflow.com".to_string()
+    } else {
+        env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into())
+    };
     let form: Vec<(&str, String)> = vec![
         ("mode", "payment".into()),
         ("currency", "jpy".into()),
@@ -13553,6 +13559,25 @@ async fn kokon_checkout(
     Json(body): Json<SweepCheckoutBody>,
 ) -> impl IntoResponse {
     collab_checkout(db, "kokon", "/kokon", "MU×kokon.tokyo", body).await
+}
+
+/// POST /api/jiuflow/checkout — single-item retail checkout for jiuflow.com /shop.
+/// Public endpoint (no auth, returns Stripe session URL). After payment,
+/// success_url returns to jiuflow.com/shop/success; webhook fulfills via
+/// Printful.
+async fn jiuflow_checkout(
+    State(db): State<Db>,
+    Json(body): Json<SweepCheckoutBody>,
+) -> impl IntoResponse {
+    let mut resp = collab_checkout(db, "jiuflow", "/shop/success", "JiuFlow × MU", body).await;
+    // CORS so jiuflow.com can POST cross-origin.
+    resp.headers_mut().insert("Access-Control-Allow-Origin",
+        HeaderValue::from_static("https://jiuflow.com"));
+    resp.headers_mut().insert("Access-Control-Allow-Methods",
+        HeaderValue::from_static("POST, OPTIONS"));
+    resp.headers_mut().insert("Access-Control-Allow-Headers",
+        HeaderValue::from_static("Content-Type"));
+    resp
 }
 
 #[derive(Deserialize)]
@@ -18273,6 +18298,16 @@ async fn main() {
         .route("/api/sweep/sample-checkout", post(sweep_sample_checkout))
         .route("/api/kokon/sample-checkout", post(kokon_sample_checkout))
         .route("/api/jiuflow/sample-checkout", post(jiuflow_sample_checkout))
+        .route("/api/jiuflow/checkout", post(jiuflow_checkout)
+            .options(|| async {
+                let mut resp = StatusCode::NO_CONTENT.into_response();
+                let h = resp.headers_mut();
+                h.insert("Access-Control-Allow-Origin", HeaderValue::from_static("https://jiuflow.com"));
+                h.insert("Access-Control-Allow-Methods", HeaderValue::from_static("POST, OPTIONS"));
+                h.insert("Access-Control-Allow-Headers", HeaderValue::from_static("Content-Type"));
+                h.insert("Access-Control-Max-Age", HeaderValue::from_static("3600"));
+                resp
+            }))
         .route("/api/sweep/partner/action", post(sweep_partner_action))
         // ── Public embed API + widget (CORS open via CorsLayer below) ──
         .route("/api/v1/embed/products", get(embed_products))
