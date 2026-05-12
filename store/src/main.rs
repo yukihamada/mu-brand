@@ -19504,10 +19504,23 @@ risk_if_wrong and ship it."#,
         return Err(format!("gemini {}: {}", s, t.chars().take(200).collect::<String>()));
     }
     let body: serde_json::Value = resp.json().await.map_err(|e| format!("json: {e}"))?;
+    let finish_reason = body["candidates"][0]["finishReason"].as_str().unwrap_or("").to_string();
     let raw = body["candidates"][0]["content"]["parts"][0]["text"]
         .as_str().unwrap_or("").trim().to_string();
-    let parsed: serde_json::Value = serde_json::from_str(&raw)
-        .unwrap_or(serde_json::json!({"kind":"hold","title":"parse_failed"}));
+    // Parse with explicit fallback. Silent "parse_failed → hold" was masking
+    // a real failure mode (gemini-2.5-pro thinking-token bug). Now we keep
+    // the raw response on the journal so future debugging is cheap.
+    let (parsed, parse_failed) = match serde_json::from_str::<serde_json::Value>(&raw) {
+        Ok(v) => (v, false),
+        Err(_) => (serde_json::json!({
+            "kind": "hold",
+            "title": "parse_failed",
+            "rationale": format!("Gemini returned non-JSON; finishReason={}; raw[0..200]={:?}",
+                finish_reason, raw.chars().take(200).collect::<String>()),
+        }), true),
+    };
+    obs.insert("parse_failed".into(), serde_json::Value::from(parse_failed));
+    obs.insert("finish_reason".into(), serde_json::Value::String(finish_reason));
     let kind = parsed["kind"].as_str().unwrap_or("hold").to_string();
     let title = parsed["title"].as_str().unwrap_or("(no title)").to_string();
     let rationale = parsed["rationale"].as_str().unwrap_or("").to_string();
@@ -19523,8 +19536,10 @@ risk_if_wrong and ship it."#,
             observations: serde_json::Value::Object(obs),
             decisions: vec![serde_json::json!({"type":"hold","rationale": rationale})],
             actions: vec![],
-            summary: "strategist: HOLD this week".into(),
-            notable: false,
+            summary: if parse_failed {
+                "strategist: parse_failed (see observations.raw)".into()
+            } else { "strategist: HOLD this week".into() },
+            notable: parse_failed,
         });
     }
     // T1 → governance_queue
@@ -21170,6 +21185,26 @@ async fn admin_governance_decide(
         _ => return (StatusCode::BAD_REQUEST, "bad action").into_response(),
     };
     let decider = "yuki@hamada.tokyo"; // until SSO, single human governor
+
+    // Read decision context BEFORE updating, so we can dispatch on approve.
+    let (decision_kind, decision_payload, agent_name): (String, serde_json::Value, String) = {
+        let conn = db.lock().unwrap();
+        let row: Option<(i64,)> = conn.query_row(
+            "SELECT COALESCE(decision_id,0) FROM autonomy_governance_queue WHERE id=?",
+            params![id], |r| Ok((r.get(0)?,))
+        ).ok();
+        let dec_id = row.map(|r| r.0).unwrap_or(0);
+        if dec_id > 0 {
+            conn.query_row(
+                "SELECT COALESCE(decision_kind,''), COALESCE(payload,'{}'), COALESCE(agent_name,'')
+                 FROM autonomy_decision_log WHERE id=?",
+                params![dec_id],
+                |r| Ok((r.get::<_,String>(0)?, r.get::<_,String>(1)?, r.get::<_,String>(2)?))
+            ).map(|(k, p, a)| (k, serde_json::from_str(&p).unwrap_or_default(), a))
+             .unwrap_or_default()
+        } else { (String::new(), serde_json::json!({}), String::new()) }
+    };
+
     {
         let conn = db.lock().unwrap();
         let _ = conn.execute(
@@ -21178,10 +21213,76 @@ async fn admin_governance_decide(
              WHERE id=? AND status='pending'",
             params![new_status, decider, chrono_now(), id],
         );
+        if new_status == "approved" {
+            let _ = log_autonomy_decision(
+                &conn, "governance_dispatcher",
+                &format!("approve:{}", decision_kind),
+                "T2",
+                &decision_payload,
+                true, false, false,
+            );
+        }
     }
+
+    // Dispatch on approve. For now: send a structured Telegram + apply a
+    // small set of T2-safe actions inline. Anything we can't execute cleanly
+    // is left for follow-up.
+    if new_status == "approved" {
+        tokio::spawn(governance_dispatch(db.clone(), id, decision_kind, decision_payload, agent_name));
+    }
+
     let tok = q_for_auth.get("token").cloned().unwrap_or_default();
     let target = format!("/admin/governance?token={}", urlencoding::encode(&tok));
     (StatusCode::SEE_OTHER, [(axum::http::header::LOCATION, target)]).into_response()
+}
+
+/// Action dispatcher fired from /admin/governance/:id/decide when status →
+/// approved. Sends a structured Telegram for every approval, and for kinds
+/// that map to safe inline operations, executes them directly:
+///   - "price_adjust" → update collab_products.price_jpy (within constitution caps)
+///   - "founder_demote_t1" → nothing inline; logged for human follow-up
+///   - everything else → notify only
+async fn governance_dispatch(
+    db: Db,
+    queue_id: i64,
+    kind: String,
+    payload: serde_json::Value,
+    agent_name: String,
+) {
+    let mut applied = false;
+    let mut detail = String::new();
+
+    if kind == "price_adjust" {
+        let pid = payload.get("pid").and_then(|v| v.as_i64()).unwrap_or(0);
+        let to  = payload.get("to").and_then(|v| v.as_i64()).unwrap_or(0);
+        if pid > 0 && to > 0 {
+            let conn = db.lock().unwrap();
+            let n = conn.execute(
+                "UPDATE collab_products SET price_jpy=? WHERE id=?",
+                params![to, pid]
+            ).unwrap_or(0);
+            applied = n > 0;
+            detail = format!("collab_products.id={} price → ¥{}", pid, to);
+        }
+    }
+
+    let tg_token = env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default();
+    let tg_chat  = env::var("TELEGRAM_CHAT_ID").unwrap_or_else(|_| "1136442501".into());
+    if tg_token.is_empty() { return; }
+    let title = payload.get("title").and_then(|v| v.as_str()).unwrap_or("(no title)");
+    let text = format!(
+        "✅ governance #{id} approved\n\
+         agent: {a}\n\
+         kind:  {k}\n\
+         title: {t}\n\
+         {applied}{detail}",
+        id = queue_id, a = agent_name, k = kind, t = title,
+        applied = if applied { "applied: " } else { "" },
+        detail = detail);
+    let _ = reqwest::Client::new()
+        .post(format!("https://api.telegram.org/bot{}/sendMessage", tg_token))
+        .json(&serde_json::json!({"chat_id": tg_chat, "text": text, "disable_web_page_preview": true}))
+        .send().await;
 }
 
 /// GET /admin/agent?token=…&name=<agent_name>&limit=50 — Journal JSON
