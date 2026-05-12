@@ -8329,14 +8329,29 @@ async fn x_post_worker(db: Db) {
             ).is_ok()
         };
         if !linked { continue; }
+        // Age-filter so a long-paused worker (e.g. X OAuth unset for a week)
+        // doesn't burst-post stale content when auth is reconnected. Anything
+        // older than 7 days gets marked expired and skipped. Constitution
+        // principle #14: preserve negative space — skip a day rather than fill.
+        let week_ago = chrono_now().parse::<i64>().unwrap_or(0) - 7 * 86_400;
         let pending: Vec<(i64, String)> = {
             let conn = db.lock().unwrap();
+            // Expire any rows older than 7d that never posted.
+            let _ = conn.execute(
+                "UPDATE sns_post_queue
+                 SET error = COALESCE(NULLIF(error,''), 'expired_too_old')
+                 WHERE network='x' AND posted_at IS NULL
+                   AND CAST(COALESCE(created_at,'0') AS INTEGER) < ?",
+                params![week_ago],
+            );
             let result = match conn.prepare(
                 "SELECT id, text FROM sns_post_queue
                  WHERE network='x' AND posted_at IS NULL
+                   AND (error IS NULL OR error = '')
+                   AND CAST(COALESCE(created_at,'0') AS INTEGER) >= ?
                  ORDER BY created_at ASC LIMIT 5"
             ) {
-                Ok(mut stmt) => stmt.query_map([], |r| {
+                Ok(mut stmt) => stmt.query_map(params![week_ago], |r| {
                     Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
                 }).map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>())
                   .unwrap_or_default(),
