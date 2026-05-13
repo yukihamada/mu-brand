@@ -10114,7 +10114,7 @@ footer a:hover{{color:var(--y)}}
     <div class="row"><span class="k">初年度 基本料</span><span class="v y">¥0</span></div>
     <div class="row"><span class="k">レベニューシェア</span><span class="v">30% / 20% / 10% (Starter / Growth / Enterprise)</span></div>
     <div class="row"><span class="k">セットアップ</span><span class="v">~24h (ロゴ受領 → 商品 30 案稼働)</span></div>
-    <div class="row"><span class="k">実例</span><span class="v">kokon.tokyo, SIIIEEP, jiuflow など</span></div>
+    <div class="row"><span class="k">実例</span><span class="v">焼肉古今 (kokon.tokyo), jiuflow など</span></div>
     <p style="margin-top:14px">
       <a href="/collab">/collab で詳細</a> · 法人問合せ <a href="mailto:info@enablerdao.com">info@enablerdao.com</a>
     </p>
