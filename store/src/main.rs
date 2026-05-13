@@ -11619,6 +11619,87 @@ async fn admin_blog_unpublish(
     })).into_response()
 }
 
+#[derive(Deserialize)]
+struct AdminTokenOnly { admin_token: String }
+
+/// POST /api/admin/products_reconcile_sold — set every active product's `sold`
+/// column to the actual count from mu_purchases (joined on product_id + brand).
+/// Fixes the lie where seed data had sold=24 for products never bought.
+///
+/// Returns: { updated: <total rows>, before_sum: i64, after_sum: i64 }
+async fn admin_products_reconcile_sold(
+    State(db): State<Db>,
+    Json(body): Json<AdminTokenOnly>,
+) -> impl IntoResponse {
+    if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+    let (updated, before_sum, after_sum): (i64, i64, i64) = {
+        let conn = db.lock().unwrap();
+        let before: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(sold), 0) FROM products WHERE active=1",
+            [], |r| r.get(0)).unwrap_or(0);
+        // brand-aware: brand='you' doesn't have a products row to update.
+        // Other brands: set products.sold = real cs_live_* count joined on (id, brand).
+        let n = conn.execute(
+            "UPDATE products SET sold = (
+                SELECT COUNT(*) FROM mu_purchases mp
+                WHERE mp.product_id = products.id
+                  AND mp.brand = products.brand
+                  AND mp.session_id LIKE 'cs_live_%'
+             ) WHERE active=1",
+            [],
+        ).unwrap_or(0) as i64;
+        let after: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(sold), 0) FROM products WHERE active=1",
+            [], |r| r.get(0)).unwrap_or(0);
+        (n, before, after)
+    };
+    Json(serde_json::json!({
+        "ok": true,
+        "updated_rows": updated,
+        "before_total_sold": before_sum,
+        "after_total_sold": after_sum,
+        "delta": after_sum - before_sum,
+    })).into_response()
+}
+
+#[derive(Deserialize)]
+struct DeactivateBrandBody {
+    admin_token: String,
+    brand: String,
+    reason: Option<String>,
+}
+
+/// POST /api/admin/deactivate_brand — flip `active=0` for every product of a
+/// given brand. Used to hide a brand (e.g. NOUNS) from the public catalog
+/// without dropping rows. Reversible by an UPDATE products SET active=1.
+async fn admin_deactivate_brand(
+    State(db): State<Db>,
+    Json(body): Json<DeactivateBrandBody>,
+) -> impl IntoResponse {
+    if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+    let brand = body.brand.trim().to_lowercase();
+    if brand.is_empty() || brand.len() > 32 {
+        return (StatusCode::BAD_REQUEST, "brand required").into_response();
+    }
+    // Constitution §21: `active=0` flips are T1 only — this endpoint requires
+    // admin_token which is the human-approval gate.
+    let reason = body.reason.unwrap_or_else(|| "admin_deactivate_brand".into());
+    let n = {
+        let conn = db.lock().unwrap();
+        let n = conn.execute(
+            "UPDATE products SET active=0, retired_at=?, retire_reason=?
+             WHERE brand=? AND active=1",
+            params![chrono_now(), reason, brand],
+        ).unwrap_or(0);
+        n as i64
+    };
+    Json(serde_json::json!({
+        "ok": true,
+        "brand": brand,
+        "rows_deactivated": n,
+    })).into_response()
+}
+
 async fn show_auto_blog(
     Path(slug): Path<String>,
     State(db): State<Db>,
@@ -23055,6 +23136,8 @@ async fn main() {
         .route("/api/admin/blog_publish", post(admin_blog_publish))
         .route("/api/admin/blog_unpublish", post(admin_blog_unpublish))
         .route("/api/admin/blog_update", post(admin_blog_update))
+        .route("/api/admin/products_reconcile_sold", post(admin_products_reconcile_sold))
+        .route("/api/admin/deactivate_brand", post(admin_deactivate_brand))
         .route("/api/blog/auto", get(list_auto_blog))
         .route("/blog/auto/:slug", get(show_auto_blog))
         .route("/api/you/referral", post(you_referral_status))

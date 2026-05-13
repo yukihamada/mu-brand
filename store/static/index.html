@@ -512,16 +512,25 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
 <nav id="nav">
   <a class="nav-logo" href="#" onclick="showSection('hero')">MU</a>
   <div class="nav-tabs">
-    <div class="nav-tab" data-b="ma" onclick="showSection('ma')" role="button" tabindex="0" aria-label="間 MA — 週に1着の7日間オークション">間 MA</div>
-    <div class="nav-tab" data-b="muon" onclick="showSection('muon')" role="button" tabindex="0" aria-label="MUON 無音 — 気温が枚数を決める">MUON 無音</div>
-    <div class="nav-tab" data-b="mugen" onclick="showSection('mugen')" role="button" tabindex="0" aria-label="MUGEN 無限 — 毎時間生まれるドロップ">MUGEN 無限</div>
-    <div class="nav-tab" data-b="nouns" onclick="showSection('nouns')" role="button" tabindex="0" aria-label="MU × NOUNS コラボレーション">⌐◨-◨ NOUNS <span style="background:#e6c449;color:#000;font-size:6px;letter-spacing:0.15em;padding:2px 6px;vertical-align:middle;font-weight:700;margin-left:4px">🤝</span></div>
-    <a href="https://house.wearmu.com" class="nav-tab" style="text-decoration:none;color:inherit" aria-label="HOUSE — AI が毎日1邸を設計">HOUSE <span style="background:#e6c449;color:#000;font-size:6px;letter-spacing:0.15em;padding:2px 6px;vertical-align:middle;font-weight:700;margin-left:4px">🏠</span></a>
-    <a href="/you" class="nav-tab" style="text-decoration:none;color:inherit" aria-label="MU × YOU — 毎日あなた専用のコラボTシャツ案が届く">MU × YOU <span style="background:#e6c449;color:#000;font-size:6px;letter-spacing:0.15em;padding:2px 6px;vertical-align:middle;font-weight:700;margin-left:4px">NEW</span></a>
-    <a href="/wearing" class="nav-tab" style="text-decoration:none;color:inherit" aria-label="Wearing Log — MU を着る人々の anonymous 投稿">Wearing</a>
-    <a href="/ma-lottery" class="nav-tab" style="text-decoration:none;color:inherit" aria-label="4/7 Founder Relay — 100日に1回 MA を誰かに贈る">4/7 Relay <span style="background:#e6c449;color:#000;font-size:6px;letter-spacing:0.15em;padding:2px 6px;vertical-align:middle;font-weight:700;margin-left:4px">NEW</span></a>
-    <a href="/blog" class="nav-tab" style="text-decoration:none;color:inherit" aria-label="MU の運営公開ノート（売上・コスト・コードを月1で公開）">運営ノート</a>
-    <a href="/vision" class="nav-tab" style="text-decoration:none;color:#e6c449;font-weight:500" aria-label="MU の Vision — Amazon を超える 10 年計画">Vision</a>
+    <!-- Primary 2 (focus per Constitution §14 — preserve negative space): MUGEN + MUON -->
+    <div class="nav-tab" data-b="mugen" onclick="showSection('mugen')" role="button" tabindex="0" aria-label="MUGEN 無限 — 毎時間生まれる T シャツ ¥5,000">MUGEN <span style="opacity:0.45;font-size:9px;margin-left:4px">¥5K〜</span></div>
+    <div class="nav-tab" data-b="muon" onclick="showSection('muon')" role="button" tabindex="0" aria-label="MUON 無音 — 気温が枚数を決める ¥10,000+">MUON <span style="opacity:0.45;font-size:9px;margin-left:4px">¥10K〜</span></div>
+    <!-- Secondary: shown but visually de-emphasized -->
+    <div class="nav-tab" data-b="ma" onclick="showSection('ma')" role="button" tabindex="0" aria-label="間 MA — 週1回 7日オークション" style="opacity:0.55">間 MA</div>
+    <a href="/you" class="nav-tab" style="text-decoration:none;color:inherit;opacity:0.55" aria-label="MU × YOU — あなた専用 T シャツ">/you</a>
+    <a href="/blog" class="nav-tab" style="text-decoration:none;color:inherit;opacity:0.55" aria-label="運営公開ノート">運営ノート</a>
+    <a href="/vision" class="nav-tab" style="text-decoration:none;color:#e6c449;font-weight:500" aria-label="MU の Vision">Vision</a>
+    <!-- Tertiary: hidden behind "More" -->
+    <div class="nav-tab" style="position:relative;opacity:0.5" role="button" tabindex="0" onclick="this.querySelector('.more-pop').style.display = this.querySelector('.more-pop').style.display==='block'?'none':'block'">
+      More
+      <div class="more-pop" style="display:none;position:absolute;top:100%;right:0;background:#0a0a0a;border:1px solid rgba(255,255,255,0.1);padding:12px 16px;min-width:160px;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;line-height:2.4;z-index:50">
+        <div onclick="event.stopPropagation();showSection('nouns')" style="cursor:pointer">⌐◨-◨ NOUNS <span style="background:rgba(255,150,80,0.16);color:#ffb37a;font-size:7px;padding:1px 5px;margin-left:4px">PENDING</span></div>
+        <a href="https://house.wearmu.com" style="color:inherit;text-decoration:none;display:block">HOUSE 🏠</a>
+        <a href="/wearing" style="color:inherit;text-decoration:none;display:block">Wearing</a>
+        <a href="/ma-lottery" style="color:inherit;text-decoration:none;display:block">4/7 Relay</a>
+        <a href="/retired" style="color:inherit;text-decoration:none;display:block">Retired</a>
+      </div>
+    </div>
   </div>
   <div class="nav-right">
     <a href="/about.html" style="font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.5;transition:opacity 0.2s;margin-right:8px" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=0.25">About</a>
@@ -535,15 +544,18 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
 <!-- HERO -->
 <div id="section-hero" class="visible" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding-top:80px;position:relative">
   <div class="hero-bg" id="hero-bg"></div>
-  <div class="hero-eyebrow">AIが服を作り続けるブランド</div>
+  <div class="hero-eyebrow">天気がデザインする服</div>
   <div class="hero-mu" aria-label="MU — Hokkaido weather designs">MU</div>
-  <div class="hero-tagline">AI が毎時間 T シャツをデザインして売る、無人ブランドです。</div>
-  <div class="hero-tagline-en" style="font-size:11px;font-weight:300;letter-spacing:0.18em;text-transform:uppercase;opacity:0.55;margin-top:6px;font-family:'Helvetica Neue',Arial,sans-serif">
-    Autonomous fashion — designed by weather, made by AI.
+  <div class="hero-tagline">北海道弟子屈町の今の気温が、今日の T シャツの枚数を決める。</div>
+  <div style="font-size:14px;font-weight:400;letter-spacing:0.02em;color:#F5F5F0;opacity:0.85;margin-top:18px;text-align:center;line-height:1.95;max-width:560px;padding:0 24px">
+    着る人へ: あなたが手にする T シャツは、生まれた日の<strong style="color:#e6c449">気温・月相・時刻</strong>がそのまま落とし込まれた一枚です。同じデザインは二度と作られません。<br>
+    <span style="opacity:0.65;font-size:12px;display:inline-block;margin-top:8px">100% Cotton 200gsm · Made in JP/US/EU · 7-10 day delivery</span>
   </div>
-  <div style="font-size:11px;font-weight:400;letter-spacing:0.08em;color:#e6c449;opacity:0.85;margin-top:18px;text-align:center;line-height:1.7;font-family:'Helvetica Neue',Arial,sans-serif;max-width:520px;padding:0 24px">
-    MU is a <em style="color:#e6c449;font-style:normal;text-decoration:underline;text-underline-offset:3px">wearable timestamp</em>.<br>
-    <span style="opacity:0.7;font-size:10px;letter-spacing:0.14em">Anyone can install a city. The brand is a protocol, not a company.</span>
+  <div style="font-size:11px;letter-spacing:0.24em;text-transform:uppercase;opacity:0.55;margin-top:20px;text-align:center">
+    価格レンジ <strong style="color:#F5F5F0;letter-spacing:0.05em">¥5,000 – ¥30,000</strong>
+  </div>
+  <div style="font-size:10px;letter-spacing:0.2em;text-transform:uppercase;opacity:0.4;margin-top:6px;text-align:center;font-family:'Helvetica Neue',Arial,sans-serif">
+    Autonomous fashion · designed by weather · made by AI · 0 humans
   </div>
 
   <!-- Primary CTA — top-of-hero so it's always above the fold on PC & mobile.
@@ -551,9 +563,9 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
   <button type="button"
           class="hero-cta-primary"
           onclick="showSection('mugen');return false;"
-          aria-label="今すぐ買える MUGEN を見る — 毎時生まれる限定 Tシャツ">
+          aria-label="MUGEN を見る — 1 時間ごとに 1 着、毎回違うデザインの T シャツ">
     <span class="cta-main">今すぐ買う</span>
-    <span class="cta-sub">MUGEN ¥5,000〜 · 早いほど安い ↓</span>
+    <span class="cta-sub">MUGEN ¥5,000〜 · 早く買うほど安い ↓</span>
   </button>
 
   <!-- Lifestyle hero strip — below CTA, lazy. Click any photo to enter MUGEN. -->
