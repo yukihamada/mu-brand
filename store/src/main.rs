@@ -10510,7 +10510,7 @@ footer a:hover{{color:var(--y)}}
     </p>
     {traffic_rows}
     <p style="margin-top:14px;font-size:12px;opacity:0.6">
-      計測: <code style="background:rgba(230,196,73,0.10);color:var(--y);padding:1px 5px">funnel_events</code> table (event='pageview') を直接集計。Vendor analytics なし。
+      計測: 自社の <code style="background:rgba(230,196,73,0.10);color:var(--y);padding:1px 5px">funnel_events</code> table (event='pageview') を直接集計。発火元は自社運用の <code style="background:rgba(230,196,73,0.10);color:var(--y);padding:1px 5px">enabler-analytics.fly.dev/t.js</code>。GA / Segment / 第三者トラッカー一切なし。
     </p>
   </div>
 
@@ -10557,7 +10557,7 @@ footer a:hover{{color:var(--y)}}
     <div class="row"><span class="k">配信 / 決済</span><span class="v">Printful (Print-on-demand) + Stripe</span></div>
     <p style="margin-top:14px">
       Fly.io で 1 process / 28 in-process agent。1 ヶ月の運用コストは <strong style="color:var(--y)">~¥8,600/mo</strong>。
-      <a href="https://github.com/yukihamada/mu-brand/blob/main/README.md">README</a> を読めば 30 分で setup できる構成です。
+      <a href="https://github.com/yukihamada/mu-brand/blob/main/README.md">README</a> を読めば、Fly + Stripe + Gemini アカウントが既にある前提で 1 時間以内に起動できる構成。
     </p>
   </div>
 
@@ -10599,7 +10599,10 @@ footer a:hover{{color:var(--y)}}
     <div class="row"><span class="k">初年度 基本料</span><span class="v y">¥0</span></div>
     <div class="row"><span class="k">レベニューシェア</span><span class="v">30% / 20% / 10% (Starter / Growth / Enterprise)</span></div>
     <div class="row"><span class="k">セットアップ</span><span class="v">~24h (ロゴ受領 → 商品 30 案稼働)</span></div>
-    <div class="row"><span class="k">実例</span><span class="v">焼肉古今 (kokon.tokyo), jiuflow など</span></div>
+    <div class="row"><span class="k">パイロット導入</span><span class="v">焼肉古今 (kokon.tokyo, 焼肉店), jiuflow (柔術 SaaS)</span></div>
+    <p style="font-size:11.5px;opacity:0.55;margin:6px 0 0">
+      ※ パイロット ≠ レベニューシェア課金中。MU のスタック上で動かしている B2B サイトで、現時点で MU Collab としての売上計上はゼロ。先に honesty。
+    </p>
     <p style="margin-top:14px">
       <a href="/collab">/collab で詳細</a> · 法人問合せ <a href="mailto:info@enablerdao.com">info@enablerdao.com</a>
     </p>
@@ -10608,7 +10611,7 @@ footer a:hover{{color:var(--y)}}
   <footer>
     数字に矛盾があったら <a href="mailto:info@enablerdao.com">info@enablerdao.com</a> または <a href="/bounty">/bounty</a> へ。<br>
     Raw JSON: <a href="/api/transparency">wearmu.com/api/transparency</a> · Constitution: <a href="/constitution.md">wearmu.com/constitution.md</a><br>
-    株式会社イネブラ (Enabler Inc.) · 0 humans · 28 agents
+    株式会社イネブラ (Enabler Inc.) · yuki (1 人のオペレーター) · 28 agents
   </footer>
 </div>
 
@@ -10871,31 +10874,46 @@ footer a:hover{{color:var(--y)}}
   <div class="section">
     <h2>What is MU?</h2>
     <p>
-      <strong style="color:var(--fg)">MU is a brand where Hokkaido's weather designs the clothes.</strong> Zero human designers.
+      <strong style="color:var(--fg)">MU is a brand where Hokkaido's weather designs the clothes.</strong>
       Every hour Gemini Pro generates one new T-shirt concept; the temperature decides today's edition size; Printful prints it; Stripe charges it; carriers ship it.
-      The entire chain runs on code, AI, and outsourced infrastructure — no humans in the loop.
+    </p>
+    <p style="margin-top:14px">
+      To be precise about the "0 humans" claim: <strong style="color:var(--fg)">yuki is one human</strong> — the maintainer / operator who pushes code, holds the Stripe key, and answers customer email.
+      What the 28 agents do <strong style="color:var(--y)">without humans</strong>: design, copy, pricing, scheduling, drops, blog, X posts, fulfillment hand-off. The brand-operations chain is unmanned. The repo isn't.
     </p>
     <p style="margin-top:14px">
       It's not that we have no revenue — it's that whatever revenue we have is <strong style="color:var(--y)">published here, unedited</strong>. That's MU.
-      The 4-line Vision lives at <a href="/constitution.md">/constitution.md</a>.
+      The 4-line Vision + 20 operational principles live at <a href="/constitution.md">/constitution.md</a>.
     </p>
+  </div>
+
+  <div class="section">
+    <h2>Product spec (what you're buying)</h2>
+    <p>The T-shirt itself, not the AI behind it.</p>
+    <div class="row"><span class="k">Body</span><span class="v">Cotton 200gsm, ring-spun, pre-shrunk</span></div>
+    <div class="row"><span class="k">Print</span><span class="v">DTG (Direct-to-Garment), 4-color CMYK</span></div>
+    <div class="row"><span class="k">Sizes</span><span class="v">S / M / L / XL / 2XL (unisex)</span></div>
+    <div class="row"><span class="k">Production</span><span class="v">Printful — print on demand, no resale stock</span></div>
+    <div class="row"><span class="k">Lead time</span><span class="v">3–5 days print + ship</span></div>
+    <div class="row"><span class="k">Shipping</span><span class="v">Worldwide — JP / US / EU / AU / SG (per Printful zones)</span></div>
+    <div class="row"><span class="k">Returns</span><span class="v">Defects only (we reprint or refund). Made-to-order, no resale.</span></div>
   </div>
 
   <div class="section">
     <h2>Open-source protocol</h2>
     <p>
       MU is <strong style="color:var(--fg)">a brand and a protocol</strong>. The full stack — Rust + libsql + Gemini + Stripe + Printful —
-      is published <strong style="color:var(--y)">unedited, under MIT</strong>. Fork it; spin up your own 0-human brand using your own city's weather.
+      is published <strong style="color:var(--y)">unedited, under MIT</strong>. Fork it; spin up your own brand using your own city's weather.
     </p>
     <div class="row"><span class="k">Repository</span><span class="v"><a href="https://github.com/yukihamada/mu-brand">github.com/yukihamada/mu-brand</a></span></div>
-    <div class="row"><span class="k">License</span><span class="v">MIT</span></div>
-    <div class="row"><span class="k">Languages / size</span><span class="v">Rust ~30,000 LOC + Python helpers</span></div>
-    <div class="row"><span class="k">AI used</span><span class="v">Gemini 2.5 Pro (blog / self-evolve) + Flash (classify)</span></div>
-    <div class="row"><span class="k">Image generation</span><span class="v">Gemini 3 Pro Image</span></div>
-    <div class="row"><span class="k">Fulfillment / payments</span><span class="v">Printful (print-on-demand) + Stripe</span></div>
+    <div class="row"><span class="k">License</span><span class="v"><a href="https://github.com/yukihamada/mu-brand/blob/main/LICENSE">MIT (LICENSE)</a></span></div>
+    <div class="row"><span class="k">Size</span><span class="v">store/src/main.rs ≈ 30,000 LOC Rust + Python image helpers</span></div>
+    <div class="row"><span class="k">AI — copy / agents</span><span class="v">Gemini 2.5 Pro + Flash (classify)</span></div>
+    <div class="row"><span class="k">AI — image generation</span><span class="v">Gemini 3 Pro Image</span></div>
+    <div class="row"><span class="k">Fulfillment / payments</span><span class="v">Printful + Stripe</span></div>
     <p style="margin-top:14px">
-      Runs as 1 Fly.io process hosting 28 in-process agents. Monthly operating cost: <strong style="color:var(--y)">~¥8,600/mo (~$57/mo)</strong>.
-      Read the <a href="https://github.com/yukihamada/mu-brand/blob/main/README.md">README</a> — 30-minute setup.
+      Runs as 1 Fly.io process hosting 28 in-process agents (tokio-scheduled, 60s tick). Monthly operating cost: <strong style="color:var(--y)">~¥8,600/mo (~$57/mo)</strong> — Fly compute + Gemini API + Stripe fees.
+      Honest setup time: ~1h end-to-end if Fly + Stripe + Gemini accounts already exist. <a href="https://github.com/yukihamada/mu-brand/blob/main/README.md">README</a>.
     </p>
   </div>
 
@@ -10928,13 +10946,16 @@ footer a:hover{{color:var(--y)}}
   <div class="section">
     <h2>For brands — MU Collab</h2>
     <p>
-      Send your logo, tone, and material guide. Within 24 hours, <strong style="color:var(--fg)">your own 0-human EC line</strong> goes live —
+      Send your logo, tone, and material guide. Within 24 hours, <strong style="color:var(--fg)">your own unmanned EC line</strong> goes live —
       same pipeline as MU (AI generation → Printful → Stripe → shipping), running on your brand name and your domain. B2B.
     </p>
     <div class="row"><span class="k">Year-one base fee</span><span class="v y">¥0</span></div>
     <div class="row"><span class="k">Revenue share</span><span class="v">30% / 20% / 10% (Starter / Growth / Enterprise)</span></div>
     <div class="row"><span class="k">Setup time</span><span class="v">~24h (logo received → 30 designs live)</span></div>
-    <div class="row"><span class="k">Live examples</span><span class="v">焼肉古今 (kokon.tokyo), jiuflow, and more</span></div>
+    <div class="row"><span class="k">Pilot integrations</span><span class="v">焼肉古今 (kokon.tokyo, BBQ), jiuflow (BJJ)</span></div>
+    <p style="margin-top:8px;font-size:12px;opacity:0.55">
+      Pilot ≠ paying revenue-share client yet. Two B2B sites running on MU's stack with our brand teams; no revenue-share invoiced to date. Honest first.
+    </p>
     <p style="margin-top:14px">
       <a href="/collab">/collab for details</a> · Enterprise inquiries <a href="mailto:info@enablerdao.com">info@enablerdao.com</a>
     </p>
@@ -10943,7 +10964,7 @@ footer a:hover{{color:var(--y)}}
   <footer>
     If any number is wrong, please reach <a href="mailto:info@enablerdao.com">info@enablerdao.com</a> or use <a href="/bounty">/bounty</a>.<br>
     Raw JSON: <a href="/api/transparency">wearmu.com/api/transparency</a> · Constitution: <a href="/constitution.md">wearmu.com/constitution.md</a> · 日本語: <a href="/transparency">/transparency</a><br>
-    Enabler Inc. · 0 humans · 28 agents
+    Enabler Inc. · yuki (1 human operator) · 28 agents
   </footer>
 </div>
 
