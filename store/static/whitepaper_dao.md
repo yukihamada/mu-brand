@@ -239,73 +239,79 @@ CREATE TABLE IF NOT EXISTS dao_email_wallets (
 
 ---
 
-## 9. **未実装 (planned)**
+## 9. Phase 2 進捗
 
-### 9.1 Magic-link self-bind (Phase 2)
+### 9.1 Magic-link self-bind ✅ 実装ずみ
 
-現状: yuki が admin で手動 bind するしかない。
-予定: `/dao/bind` ページ + Resend email magic-link → 顧客が自分で email ↔ wallet を bind できる。
+- `/dao/bind` ページ + Resend email magic-link
+- `POST /api/dao/bind/request` {email, wallet} → 確認メール送信
+- `GET /dao/bind/confirm/:token` で `dao_email_wallets` row insert
+- rate limit: 1 email / hour
+
+### 9.2 Wallet signature verification 📋 未実装
+
+現状: email→wallet を email 確認ベースで信頼している (wallet 所有権の暗号証明はない)。
+予定: bind 時に wallet の Solana ed25519 / EVM secp256k1 署名を要求。Phantom / MetaMask signMessage で proof.
 工数: 1 日。
 
-### 9.2 Wallet signature verification
+### 9.3 On-chain voting bridge ✅ DB 版実装ずみ (on-chain は別途)
 
-現状: email→wallet を admin 申告ベースで信頼している。
-予定: bind 時に wallet の署名を要求 (Solana/EVM 双方サポート)。 wallet 制御者であることを暗号学的に証明。
+- `POST /api/dao/vote` {governance_queue_id, wallet, vote}
+- weight は `dao_weight_compute()` で都度算出
+- 自動 tally: quorum + threshold 達成で `governance_queue.status = approved` に自動遷移
+- 同一 wallet からの再投票で上書き
+- 投票結果は `dao_votes` テーブルに永続化
+- 未実装: on-chain signing (Phase 2.1 — wallet sig と統合)
+
+### 9.4 git blame 統合 (deletion-aware) 📋 未実装
+
+現状: `CONSTITUTION_AUTHORS` は coarse range。amendment が既存行を部分編集すると粒度が崩れる。
+予定: build.rs (or GH Actions step) で `git blame --line-porcelain` を JSON 化。
+工数: 1 日。
+注: Fly remote builder が `.git` を見れないため、GH Actions で pre-generate して `store/static/constitution_blame.json` を repo にコミットする方式が現実的。
+
+### 9.5 T1 governance ↔ CONSTITUTION_AUTHORS 自動更新 📋 未実装
+
+現状: §23 を追加した時に const を手動で更新。
+予定: Constitution 編集 PR が T1 承認後、PR diff から author + 行範囲を自動抽出して const に append する GH Action。
 工数: 1 日。
 
-### 9.3 On-chain voting bridge
+### 9.6 MA piece の Solana NFT 化 📋 未実装
 
-現状: governance_queue は yuki が /admin/governance で承認するだけ。
-予定: 各提案に対して bound wallet が weight 分の票を投じる UI + 集計。
-- 投票 = 提案 ID + wallet sig + (approve/reject/abstain)
-- weight 計算は dao_weight_compute() を使う
-- quorum / 賛成閾値 が満たされた時点で governance_queue.status を auto-approve / auto-reject
-工数: 2-3 日。
+現状: MA は `ma_gifts.claim_email` 固定、譲渡 = email 変更で対応。
+予定: Solana 上で soulbound-but-transferable NFT (transfer は yuki 承認制 = T1)。Metaplex Core でメタデータ管理。
+工数: 2 日 (Solana program 単体)。
 
-### 9.4 git blame 統合 (deletion-aware)
+### 9.7 Stripe checkout 後の 1-click bind 📋 未実装
 
-現状: `CONSTITUTION_AUTHORS` は coarse range (yuki 1-243)。amendment が部分的に既存行を編集すると粒度が崩れる。
-予定: build.rs (or GH Actions step) で `git blame --line-porcelain static/constitution.md` を JSON 化、各 line 単位で author + committed_date を保持。
-工数: 1 日 (GH Actions step + Rust 側 parser)。
-
-### 9.5 T1 governance ↔ CONSTITUTION_AUTHORS 自動更新
-
-現状: §23 を追加した時に手動で const を更新した。
-予定: Constitution に対する PR が T1 governance で承認されると、その PR の git diff から author + 行範囲を自動抽出して `CONSTITUTION_AUTHORS` に append する GH Action。
-工数: 1 日。
-
-### 9.6 MA piece の transfer 経路
-
-現状: MA は ma_gifts.claim_email に固定、譲渡 = email 変更で行う想定。
-予定: Solana 上で soulbound-but-transferable NFT として mint (transfer は yuki 承認制 = T1)。
-工数: 2 日。
-
-### 9.7 Chronicle slot の wallet binding 自動化
-
-現状: collab_orders.email を頼りに、別途 dao_email_wallets で email→wallet を bind してもらう必要がある。
-予定: Stripe checkout 完了画面に「DAO 参加するには」リンク → magic-link で 1-click bind。
-工数: 0.5 日 (Magic-link Phase 2 と統合)。
-
-### 9.8 /dao ページの拡張
-
-現状: leaderboard + formula + how-to のみ。
-予定:
-- 進行中の governance_queue 提案表示 + bound wallet による投票 UI
-- yuki の weight 推移グラフ (時間とともに dilution / wisdom dividend)
-- 「次に wisdom dividend で 倍率が上がる日」カウントダウン
-工数: 1-2 日。
-
-### 9.9 提案投稿フロー
-
-現状: 提案は yuki が手動で governance_queue に入れるしかない。
-予定: bound wallet 所有者が `/dao/propose` から T2 / T1 / amendment 提案を投稿できる。weight 100 以上必要 (= 100 シャツ持ち or MA piece 1 個 持ち)。
-工数: 1 日。
-
-### 9.10 Sybil 検知の強化
-
-現状: Stripe identity に依存。
-予定: 同一住所 / 同一決済カード / IP cluster から複数 email がある場合に weight 結合 (admin による merge ボタン)。
+現状: シャツを買った後に `/dao/bind` に手動で行く必要あり。
+予定: Stripe checkout success 画面に DAO bind CTA を追加、purchaser email がプリフィル。
 工数: 0.5 日。
+
+### 9.8 /dao ページの拡張 ✅ 実装ずみ
+
+- 進行中提案 (status='pending') の一覧表示
+- proposal card に approve / reject / abstain ボタン
+- 投票 = wallet 入力 + ボタン押下 → `dao_vote_api` 経由
+- リアルタイム tally バー (approve/reject/abstain/empty の積み上げ)
+- 「通過予想 / quorum 到達 / 投票受付中」3 段階バッジ
+- 未実装: weight 推移グラフ、wisdom dividend カウントダウン (Phase 3)
+
+### 9.9 提案投稿フロー ✅ 実装ずみ
+
+- `/dao/propose` ページ
+- `POST /api/dao/propose` {kind, title, description, wallet}
+- weight gate: T2 ≥ 100, T1 ≥ 500, amendment ≥ 2,000, cessation ≥ 5,000
+- 通過後 `enqueue_governance` + `dao_proposals` row 作成
+- Telegram alert
+
+### 9.10 Sybil merge ボタン ✅ 実装ずみ
+
+- `POST /api/admin/dao/merge?token=…` {from_email, to_email, reason}
+- 同住所 / 同決済カードと判断した 2 email を統合
+- `ma_gifts.claim_email`, `collab_orders.email`, `dao_email_wallets` を to_email に書き換え
+- from_email の binding は削除
+- Telegram で監査ログ
 
 ---
 
@@ -382,6 +388,7 @@ GitHub: <https://github.com/yukihamada/mu-brand>
 | 日付 | 版 | 内容 |
 |---|---|---|
 | 2026-05-13 | v0.1 | 初版。§23 実装 + Phase 1 API + leaderboard ページ + 本 whitepaper |
+| 2026-05-13 | v0.2 | Phase 2: magic-link self-bind / /dao/propose / /api/dao/vote 自動 tally / Sybil merge / /dao 拡張 (active proposals + 投票 UI)。残: wallet sig、git blame 統合、Solana NFT、Stripe success bind |
 
 ---
 

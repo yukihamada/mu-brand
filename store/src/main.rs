@@ -14075,6 +14075,597 @@ async fn admin_dao_bind(
     Json(serde_json::json!({"ok": true, "email": email, "wallet": wallet})).into_response()
 }
 
+// ─── DAO Phase 2: magic-link self-bind ───────────────────────────────
+
+#[derive(Deserialize)]
+struct DaoBindRequest {
+    email: String,
+    wallet: String,
+}
+
+/// POST /api/dao/bind/request — customer-initiated bind. Sends Resend
+/// magic-link to email. Confirmation at /dao/bind/confirm/:token writes
+/// the dao_email_wallets row.
+async fn dao_bind_request_api(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Json(body): Json<DaoBindRequest>,
+) -> Response {
+    let email = body.email.trim().to_lowercase();
+    let wallet = body.wallet.trim().to_string();
+    if !email.contains('@') || email.len() > 200 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"bad email"}))).into_response();
+    }
+    if wallet.len() < 25 || wallet.len() > 64 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"wallet must be 25-64 chars (Solana base58 ~44, EVM 42)"}))).into_response();
+    }
+    let ip = client_ip(&headers);
+    let ip_hash = if ip.is_empty() { String::new() } else {
+        use sha2::{Sha256, Digest};
+        let mut h = Sha256::new();
+        h.update(ip.as_bytes()); h.update(b"|dao-bind");
+        format!("{:x}", h.finalize())[..16].to_string()
+    };
+    let now_int = chrono_now().parse::<i64>().unwrap_or(0);
+    let token = uuid::Uuid::new_v4().to_string().replace('-', "");
+    {
+        let conn = db.lock().unwrap();
+        // Rate limit: 1 request per email per hour
+        let recent: bool = conn.query_row(
+            "SELECT 1 FROM dao_bind_tokens
+             WHERE email=? AND CAST(issued_at AS INTEGER) > ? LIMIT 1",
+            params![email, now_int - 3600], |r| r.get::<_, i64>(0),
+        ).is_ok();
+        if recent {
+            return Json(serde_json::json!({
+                "ok": false,
+                "error": "1 時間以内に確認メールを送りました。受信箱をご確認ください。"
+            })).into_response();
+        }
+        let _ = conn.execute(
+            "INSERT INTO dao_bind_tokens (token, email, wallet, issued_at, ip_hash)
+             VALUES (?,?,?,?,?)",
+            params![token, email, wallet, now_int.to_string(), ip_hash],
+        );
+    }
+
+    let confirm_url = format!("https://wearmu.com/dao/bind/confirm/{}", token);
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    if !resend_key.is_empty() {
+        let wallet_short = format!("{}…{}",
+            wallet.chars().take(6).collect::<String>(),
+            wallet.chars().rev().take(4).collect::<String>().chars().rev().collect::<String>(),
+        );
+        let html = format!(
+            r#"<div style="font-family:'Helvetica Neue',sans-serif;font-size:14px;line-height:1.85;color:#222;max-width:560px;margin:0 auto;padding:32px">
+              <p style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.6">MU · DAO bind</p>
+              <p>このメールアドレスと wallet を MU DAO に紐付けようとしています:</p>
+              <p style="background:#f6f4ee;padding:14px 18px;border-left:3px solid #A67843;font-family:'SF Mono',Menlo,monospace;font-size:12.5px">{wallet_short}</p>
+              <p>下のボタンを 1 回押すと binding が確定し、あなたの保有する Chronicle slot / MA piece / Constitution authorship が wallet に集計されるようになります。</p>
+              <p style="text-align:center;margin:24px 0"><a href="{confirm_url}" style="background:#A67843;color:#fff;text-decoration:none;padding:14px 28px;border-radius:2px;font-size:12px;letter-spacing:0.2em;text-transform:uppercase;font-weight:600">bind を確定する →</a></p>
+              <p style="font-size:11px;color:#888;line-height:1.7">URL を直接踏むのも同じ確認です:<br><a href="{confirm_url}" style="color:#A67843">{confirm_url}</a></p>
+              <p style="font-size:11px;color:#888;margin-top:24px">— MU Autopilot · yuki (1 human operator) · 28 agents · §23</p>
+            </div>"#,
+            wallet_short = html_escape(&wallet_short), confirm_url = confirm_url,
+        );
+        let _ = reqwest::Client::new()
+            .post("https://api.resend.com/emails")
+            .bearer_auth(&resend_key)
+            .json(&serde_json::json!({
+                "from": "MU DAO <noreply@wearmu.com>",
+                "to": [email.clone()],
+                "subject": "[MU] DAO bind の確認",
+                "html": html,
+                "reply_to": "info@wearmu.com",
+            }))
+            .send().await;
+    }
+    Json(serde_json::json!({"ok": true, "email": email, "wallet": wallet})).into_response()
+}
+
+/// GET /dao/bind/confirm/:token — consume magic-link, insert binding.
+async fn dao_bind_confirm(
+    Path(token): Path<String>,
+    State(db): State<Db>,
+) -> Html<String> {
+    let row: Option<(String, String, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT email, wallet, consumed_at FROM dao_bind_tokens WHERE token=?",
+            params![token], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).ok()
+    };
+    let Some((email, wallet, consumed)) = row else {
+        return Html(dao_bind_result_page("無効な確認リンク", "リンクが存在しないか、すでに使用されました。"));
+    };
+    if consumed.is_some() {
+        return Html(dao_bind_result_page("このリンクは既に使用済み", "bind は既に完了しています。/dao で確認してください。"));
+    }
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO dao_email_wallets (email, wallet, bound_at, bound_by)
+             VALUES (?,?,?, 'magic_link')
+             ON CONFLICT(email) DO UPDATE SET wallet=excluded.wallet, bound_at=excluded.bound_at, bound_by='magic_link'",
+            params![email, wallet, chrono_now()],
+        );
+        let _ = conn.execute(
+            "UPDATE dao_bind_tokens SET consumed_at=? WHERE token=?",
+            params![chrono_now(), token],
+        );
+    }
+    // Telegram alert
+    send_telegram_message(&format!(
+        "🔗 DAO bind: {}…@… → {}…",
+        email.chars().take(2).collect::<String>(),
+        wallet.chars().take(6).collect::<String>(),
+    )).await;
+    Html(dao_bind_result_page("Bind 完了", &format!(
+        "<p>{}…@… を <code>{}…</code> に紐付けました。</p>\
+         <p><a href=\"/dao\">/dao</a> で weight を確認できます。</p>",
+        html_escape(&email.chars().take(2).collect::<String>()),
+        html_escape(&wallet.chars().take(10).collect::<String>()),
+    )))
+}
+
+fn dao_bind_result_page(title: &str, body_html: &str) -> String {
+    format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title} · MU DAO</title>
+<link rel="icon" href="/favicon.svg">
+<style>
+  body {{ background:#0a0a0a; color:#f5f5f0; font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif; max-width:560px; margin:0 auto; padding:60px 24px; line-height:1.8; }}
+  h1 {{ font-weight:300; font-size:24px; margin:0 0 16px; }}
+  p {{ color:#bbb; }} a {{ color:#e6c449; }}
+  code {{ background:#141414; padding:2px 8px; border-radius:3px; font-size:12px; }}
+</style></head><body>
+<h1>{title}</h1>
+{body_html}
+<p style="margin-top:24px;font-size:11px;color:#666">— MU · §23</p>
+</body></html>"##, title = html_escape(title), body_html = body_html)
+}
+
+/// GET /dao/bind — public form.
+async fn dao_bind_page() -> Html<String> {
+    Html(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bind · MU DAO</title>
+<link rel="icon" href="/favicon.svg">
+<style>
+  body { background:#0a0a0a; color:#f5f5f0; font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif; max-width:520px; margin:0 auto; padding:60px 24px; line-height:1.7; }
+  h1 { font-weight:300; font-size:26px; margin:0 0 8px; }
+  .lede { color:#888; font-size:13px; margin-bottom:32px; }
+  .field { display:flex; flex-direction:column; gap:6px; margin-bottom:18px; }
+  .field label { font-size:11px; color:#888; letter-spacing:0.05em; text-transform:uppercase; }
+  .field input { background:#141414; color:#f5f5f0; border:1px solid #222; border-radius:4px; padding:12px; font-size:14px; }
+  .field input:focus { outline:none; border-color:#A67843; }
+  button { background:#A67843; color:#fff; border:none; padding:14px 24px; font-size:13px; letter-spacing:0.15em; text-transform:uppercase; border-radius:2px; cursor:pointer; width:100%; }
+  button:hover { background:#bb8a4f; }
+  .note { font-size:12px; color:#888; margin-top:16px; }
+  .result { margin-top:18px; padding:12px; border-radius:4px; font-size:13px; }
+  .result.ok { background:#1f3b1f; color:#9be39b; }
+  .result.err { background:#3b1f1f; color:#e39b9b; }
+  a { color:#e6c449; }
+  code { background:#141414; padding:2px 6px; border-radius:3px; font-size:11px; }
+</style></head><body>
+<h1>DAO bind</h1>
+<p class="lede">email と wallet を紐付けます。確認メールが届きます。Constitution §23 — token は存在しないので bind 自体は free、bind すれば Chronicle / MA / 著作の weight が自動集計されます。</p>
+<form id="f">
+  <div class="field"><label>email</label><input id="email" type="email" autocomplete="email" required placeholder="you@example.com"></div>
+  <div class="field"><label>wallet (Solana base58 or EVM 0x…)</label><input id="wallet" type="text" required placeholder="例: 4dF3X…q7Bz"></div>
+  <button type="submit">確認メールを送る</button>
+</form>
+<p class="result" id="r" style="display:none"></p>
+<p class="note">参考: <a href="/dao/whitepaper">whitepaper</a> · <a href="/dao">leaderboard</a> · <a href="/constitution">/constitution</a></p>
+<script>
+document.getElementById('f').addEventListener('submit', async e => {
+  e.preventDefault();
+  const email = document.getElementById('email').value.trim();
+  const wallet = document.getElementById('wallet').value.trim();
+  const r = document.getElementById('r'); r.style.display = 'block'; r.className = 'result';
+  r.textContent = '送信中…';
+  try {
+    const res = await fetch('/api/dao/bind/request', {
+      method: 'POST', headers: {'content-type':'application/json'},
+      body: JSON.stringify({email, wallet}),
+    });
+    const j = await res.json();
+    if (res.ok && j.ok) {
+      r.className = 'result ok'; r.textContent = '✓ 確認メールを送りました。受信箱をご確認ください。';
+    } else {
+      r.className = 'result err'; r.textContent = '✗ ' + (j.error || 'error');
+    }
+  } catch (e) { r.className = 'result err'; r.textContent = '✗ network error'; }
+});
+</script>
+</body></html>"##.to_string())
+}
+
+// ─── DAO Phase 2: proposals ────────────────────────────────────────
+
+const DAO_PROPOSE_MIN_WEIGHT_T2: f64 = 100.0;
+const DAO_PROPOSE_MIN_WEIGHT_T1: f64 = 500.0;
+const DAO_PROPOSE_MIN_WEIGHT_AMENDMENT: f64 = 2_000.0;
+const DAO_PROPOSE_MIN_WEIGHT_CESSATION: f64 = 5_000.0;
+
+fn dao_proposal_kind_thresholds(kind: &str) -> Option<(f64, f64, f64)> {
+    // (min_proposer_weight, quorum_pct, threshold_pct)
+    match kind {
+        "T2"        => Some((DAO_PROPOSE_MIN_WEIGHT_T2,         0.00, 0.50)),
+        "T1"        => Some((DAO_PROPOSE_MIN_WEIGHT_T1,         0.05, 0.60)),
+        "amendment" => Some((DAO_PROPOSE_MIN_WEIGHT_AMENDMENT,  0.20, 0.75)),
+        "cessation" => Some((DAO_PROPOSE_MIN_WEIGHT_CESSATION,  0.40, 0.90)),
+        _ => None,
+    }
+}
+
+#[derive(Deserialize)]
+struct DaoProposeBody {
+    kind: String,         // T2 | T1 | amendment | cessation
+    title: String,
+    description: String,
+    wallet: String,       // proposer
+}
+
+/// POST /api/dao/propose — bound wallet submits proposal. weight gate
+/// enforced; on pass, enqueue_governance + insert dao_proposals.
+async fn dao_propose_api(
+    State(db): State<Db>,
+    Json(body): Json<DaoProposeBody>,
+) -> Response {
+    let kind = body.kind.trim().to_string();
+    let Some((min_w, quorum, threshold)) = dao_proposal_kind_thresholds(&kind) else {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"kind must be T2|T1|amendment|cessation"}))).into_response();
+    };
+    let title = body.title.trim().to_string();
+    let desc  = body.description.trim().to_string();
+    if title.is_empty() || title.len() > 200 || desc.is_empty() || desc.len() > 8000 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"title 1-200 chars, description 1-8000 chars"}))).into_response();
+    }
+    let full_title = format!("[{}] {}", kind, title);
+    enum ProposeOutcome { NotBound, Underweight(f64), EnqueueFail, Ok(i64, f64) }
+    let outcome: ProposeOutcome = {
+        let conn = db.lock().unwrap();
+        let weight = dao_weight_compute(&conn, &body.wallet);
+        if weight.email.is_none() {
+            ProposeOutcome::NotBound
+        } else if weight.total_weight < min_w {
+            ProposeOutcome::Underweight(weight.total_weight)
+        } else {
+            match enqueue_governance(&conn, None, "dao_proposal", &full_title, &desc) {
+                Some(qid) => {
+                    let _ = conn.execute(
+                        "INSERT INTO dao_proposals
+                            (governance_queue_id, kind, proposer_wallet, proposer_email,
+                             quorum_pct, threshold_pct, min_proposer_weight, created_at)
+                         VALUES (?,?,?,?,?,?,?,?)",
+                        params![qid, kind, body.wallet, weight.email, quorum, threshold, min_w, chrono_now()],
+                    );
+                    ProposeOutcome::Ok(qid, weight.total_weight)
+                }
+                None => ProposeOutcome::EnqueueFail,
+            }
+        }
+    };
+    let (qid, weight_total) = match outcome {
+        ProposeOutcome::NotBound => return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error":"wallet not bound — visit /dao/bind first"}))).into_response(),
+        ProposeOutcome::Underweight(w) => return (StatusCode::FORBIDDEN, Json(serde_json::json!({
+            "error": format!("提案には weight ≥ {} 必要 (現 {:.1})。シャツ買う / Constitution 編集 / MA piece で weight を増やしてください。", min_w, w)
+        }))).into_response(),
+        ProposeOutcome::EnqueueFail => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error":"enqueue failed"}))).into_response(),
+        ProposeOutcome::Ok(qid, w) => (qid, w),
+    };
+    send_telegram_message(&format!(
+        "🗳 DAO proposal · #{} · [{}] {}\nproposer weight={:.1}",
+        qid, kind, title, weight_total,
+    )).await;
+    Json(serde_json::json!({
+        "ok": true, "governance_queue_id": qid, "kind": kind,
+        "quorum_pct": quorum, "threshold_pct": threshold,
+    })).into_response()
+}
+
+/// GET /api/dao/proposals — list active + recent proposals with tally.
+async fn dao_proposals_api(State(db): State<Db>) -> Response {
+    let conn = db.lock().unwrap();
+    let mut stmt = match conn.prepare(
+        "SELECT g.decision_id, g.id, g.title, g.description, g.status, g.created_at,
+                COALESCE(p.kind, 'T2'),
+                COALESCE(p.quorum_pct, 0.0), COALESCE(p.threshold_pct, 0.5),
+                COALESCE(p.proposer_wallet, ''),
+                COALESCE(p.proposer_email, '')
+         FROM autonomy_governance_queue g
+         LEFT JOIN dao_proposals p ON p.governance_queue_id=g.id
+         WHERE g.agent_name='dao_proposal'
+            OR (g.status='pending' AND p.governance_queue_id IS NOT NULL)
+         ORDER BY g.created_at DESC LIMIT 50"
+    ) { Ok(s) => s, Err(_) => return Json(serde_json::json!({"proposals":[]})).into_response() };
+    let rows: Vec<serde_json::Value> = stmt.query_map([], |r| {
+        let qid: i64 = r.get(1)?;
+        Ok(serde_json::json!({
+            "decision_id":     r.get::<_, Option<i64>>(0)?,
+            "governance_queue_id": qid,
+            "title":           r.get::<_, String>(2)?,
+            "description":     r.get::<_, String>(3)?,
+            "status":          r.get::<_, String>(4)?,
+            "created_at":      r.get::<_, String>(5)?,
+            "kind":            r.get::<_, String>(6)?,
+            "quorum_pct":      r.get::<_, f64>(7)?,
+            "threshold_pct":   r.get::<_, f64>(8)?,
+            "proposer_wallet": r.get::<_, String>(9)?,
+            "proposer_email_redacted": dao_redact_email(&r.get::<_, String>(10)?),
+        }))
+    }).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+    // Augment each with current tally
+    let mut augmented: Vec<serde_json::Value> = Vec::with_capacity(rows.len());
+    let total_supply = dao_total_supply_weight(&conn);
+    for mut p in rows {
+        let qid = p["governance_queue_id"].as_i64().unwrap_or(0);
+        let tally = dao_tally_for(&conn, qid);
+        let approve_pct = if (tally.approve + tally.reject) > 0.0 {
+            tally.approve / (tally.approve + tally.reject)
+        } else { 0.0 };
+        let participation = if total_supply > 0.0 {
+            (tally.approve + tally.reject + tally.abstain) / total_supply
+        } else { 0.0 };
+        p["tally"] = serde_json::json!({
+            "approve": tally.approve, "reject": tally.reject, "abstain": tally.abstain,
+            "voters": tally.voters,
+            "approve_pct": approve_pct, "participation": participation,
+        });
+        augmented.push(p);
+    }
+    Json(serde_json::json!({"total_supply_weight": total_supply, "proposals": augmented})).into_response()
+}
+
+// ─── DAO Phase 2: voting ────────────────────────────────────────────
+
+struct DaoTally {
+    approve: f64,
+    reject:  f64,
+    abstain: f64,
+    voters:  i64,
+}
+
+fn dao_tally_for(conn: &Connection, qid: i64) -> DaoTally {
+    let mut t = DaoTally { approve: 0.0, reject: 0.0, abstain: 0.0, voters: 0 };
+    let mut stmt = match conn.prepare(
+        "SELECT vote, weight_snapshot FROM dao_votes WHERE governance_queue_id=?"
+    ) { Ok(s) => s, Err(_) => return t };
+    let rows: Vec<(String, f64)> = stmt.query_map([qid], |r| Ok((r.get(0)?, r.get(1)?)))
+        .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+    for (vote, w) in rows {
+        t.voters += 1;
+        match vote.as_str() {
+            "approve" => t.approve += w,
+            "reject"  => t.reject  += w,
+            "abstain" => t.abstain += w,
+            _ => {}
+        }
+    }
+    t
+}
+
+#[derive(Deserialize)]
+struct DaoVoteBody {
+    governance_queue_id: i64,
+    wallet: String,
+    vote: String,    // approve | reject | abstain
+}
+
+/// POST /api/dao/vote — record vote. Replaces prior vote from same wallet.
+/// Auto-tallies after each vote and transitions governance_queue.status
+/// to approved/rejected if quorum + threshold met.
+async fn dao_vote_api(
+    State(db): State<Db>,
+    Json(body): Json<DaoVoteBody>,
+) -> Response {
+    if !["approve","reject","abstain"].contains(&body.vote.as_str()) {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"vote must be approve|reject|abstain"}))).into_response();
+    }
+    enum VoteOutcome { Ok {
+        weight_used: f64, tally_approve: f64, tally_reject: f64, tally_abstain: f64,
+        voters: i64, participation: f64, approve_share: f64,
+        quorum_pct: f64, threshold_pct: f64, auto_resolved: Option<&'static str>,
+    } }
+    let outcome: VoteOutcome = {
+        let conn = db.lock().unwrap();
+        let weight = dao_weight_compute(&conn, &body.wallet);
+        let email = match weight.email.clone() {
+            Some(e) => e,
+            None => return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error":"wallet not bound — visit /dao/bind first"}))).into_response(),
+        };
+        if weight.total_weight <= 0.0 {
+            return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error":"weight=0 — buy a shirt or write the constitution"}))).into_response();
+        }
+        let (status, kind): (String, String) = match conn.query_row(
+            "SELECT g.status, COALESCE(p.kind,'T2')
+             FROM autonomy_governance_queue g
+             LEFT JOIN dao_proposals p ON p.governance_queue_id=g.id
+             WHERE g.id=?",
+            params![body.governance_queue_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        ) {
+            Ok(t) => t,
+            Err(_) => return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error":"proposal not found"}))).into_response(),
+        };
+        if status != "pending" {
+            return (StatusCode::CONFLICT, Json(serde_json::json!({"error": format!("proposal not open: {}", status)}))).into_response();
+        }
+        let _ = conn.execute(
+            "INSERT INTO dao_votes (governance_queue_id, wallet, email, vote, weight_snapshot, voted_at)
+             VALUES (?,?,?,?,?,?)
+             ON CONFLICT(governance_queue_id, wallet) DO UPDATE SET
+                 vote=excluded.vote, weight_snapshot=excluded.weight_snapshot, voted_at=excluded.voted_at",
+            params![body.governance_queue_id, body.wallet, email, body.vote, weight.total_weight, chrono_now()],
+        );
+        let tally = dao_tally_for(&conn, body.governance_queue_id);
+        let total = dao_total_supply_weight(&conn);
+        let (_, quorum_pct, threshold_pct) = dao_proposal_kind_thresholds(&kind).unwrap_or((100.0, 0.05, 0.50));
+        let participation = if total > 0.0 { (tally.approve + tally.reject + tally.abstain) / total } else { 0.0 };
+        let approve_share = if (tally.approve + tally.reject) > 0.0 {
+            tally.approve / (tally.approve + tally.reject)
+        } else { 0.0 };
+        let mut auto_resolved: Option<&'static str> = None;
+        if participation >= quorum_pct && approve_share >= threshold_pct {
+            let _ = conn.execute(
+                "UPDATE autonomy_governance_queue SET status='approved' WHERE id=? AND status='pending'",
+                params![body.governance_queue_id],
+            );
+            auto_resolved = Some("approved");
+        }
+        VoteOutcome::Ok {
+            weight_used: weight.total_weight,
+            tally_approve: tally.approve, tally_reject: tally.reject, tally_abstain: tally.abstain,
+            voters: tally.voters,
+            participation, approve_share, quorum_pct, threshold_pct, auto_resolved,
+        }
+    };
+    let VoteOutcome::Ok {
+        weight_used, tally_approve, tally_reject, tally_abstain, voters,
+        participation, approve_share, quorum_pct, threshold_pct, auto_resolved,
+    } = outcome else {
+        unreachable!("error outcomes return early")
+    };
+    if let Some(s) = auto_resolved {
+        send_telegram_message(&format!(
+            "✓ DAO proposal #{} auto-{} · approve {:.1} / reject {:.1} / participation {:.1}%",
+            body.governance_queue_id, s, tally_approve, tally_reject, participation * 100.0,
+        )).await;
+    }
+    Json(serde_json::json!({
+        "ok": true, "weight_used": weight_used,
+        "tally": {
+            "approve": tally_approve, "reject": tally_reject, "abstain": tally_abstain,
+            "voters": voters,
+        },
+        "participation": participation,
+        "approve_share": approve_share,
+        "quorum_required": quorum_pct,
+        "threshold_required": threshold_pct,
+        "auto_resolved": auto_resolved,
+    })).into_response()
+}
+
+// ─── DAO Phase 2: Sybil merge ──────────────────────────────────────
+
+#[derive(Deserialize)]
+struct DaoMergeBody {
+    from_email: String,
+    to_email: String,
+    reason: Option<String>,
+}
+
+/// POST /api/admin/dao/merge — admin merges from_email's primitives into to_email.
+/// Re-keys ma_gifts.claim_email + collab_orders.email + dao_email_wallets (deletes from_email row).
+async fn admin_dao_merge(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<DaoMergeBody>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let from = body.from_email.trim().to_lowercase();
+    let to   = body.to_email.trim().to_lowercase();
+    if !from.contains('@') || !to.contains('@') || from == to {
+        return (StatusCode::BAD_REQUEST, "bad emails").into_response();
+    }
+    let (n_ma, n_chr): (usize, usize) = {
+        let conn = db.lock().unwrap();
+        let n_ma = conn.execute(
+            "UPDATE ma_gifts SET claim_email=? WHERE LOWER(claim_email)=?",
+            params![to, from],
+        ).unwrap_or(0);
+        let n_chr = conn.execute(
+            "UPDATE collab_orders SET email=? WHERE LOWER(email)=?",
+            params![to, from],
+        ).unwrap_or(0);
+        let _ = conn.execute("DELETE FROM dao_email_wallets WHERE email=?", params![from]);
+        (n_ma, n_chr)
+    };
+    let note = body.reason.unwrap_or_default();
+    send_telegram_message(&format!(
+        "🪢 DAO Sybil merge: {} → {} · ma={} chronicle={} note={}",
+        from, to, n_ma, n_chr, note,
+    )).await;
+    Json(serde_json::json!({
+        "ok": true, "from": from, "to": to,
+        "ma_pieces_moved": n_ma, "chronicle_slots_moved": n_chr,
+    })).into_response()
+}
+
+/// GET /dao/propose — public form to submit a proposal.
+async fn dao_propose_page() -> Html<String> {
+    Html(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Propose · MU DAO</title>
+<link rel="icon" href="/favicon.svg">
+<style>
+  body { background:#0a0a0a; color:#f5f5f0; font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif; max-width:640px; margin:0 auto; padding:60px 24px; line-height:1.7; }
+  h1 { font-weight:300; font-size:26px; margin:0 0 8px; }
+  .lede { color:#888; font-size:13px; margin-bottom:32px; }
+  .field { display:flex; flex-direction:column; gap:6px; margin-bottom:18px; }
+  .field label { font-size:11px; color:#888; letter-spacing:0.05em; text-transform:uppercase; }
+  .field input, .field textarea, .field select { background:#141414; color:#f5f5f0; border:1px solid #222; border-radius:4px; padding:12px; font-size:14px; font-family:inherit; }
+  .field textarea { min-height:160px; resize:vertical; }
+  .field input:focus, .field textarea:focus, .field select:focus { outline:none; border-color:#A67843; }
+  button { background:#A67843; color:#fff; border:none; padding:14px 24px; font-size:13px; letter-spacing:0.15em; text-transform:uppercase; border-radius:2px; cursor:pointer; width:100%; }
+  .note { font-size:12px; color:#888; }
+  .result { margin-top:18px; padding:12px; border-radius:4px; font-size:13px; }
+  .result.ok { background:#1f3b1f; color:#9be39b; }
+  .result.err { background:#3b1f1f; color:#e39b9b; }
+  a { color:#e6c449; }
+  table { width:100%; border-collapse:collapse; margin: 12px 0 18px; font-size: 12px; color:#aaa; }
+  th, td { padding: 6px 8px; border-bottom: 1px solid #222; text-align:left; }
+  th { color:#888; }
+</style></head><body>
+<h1>Propose</h1>
+<p class="lede">提案を governance queue に積みます。bound wallet が必要、kind に応じた最低 weight が必要。提案は §23 の閾値で投票され、quorum + 賛成率を満たした時点で自動承認。</p>
+
+<table>
+  <thead><tr><th>kind</th><th>最低 weight</th><th>quorum</th><th>賛成閾値</th><th>例</th></tr></thead>
+  <tbody>
+    <tr><td>T2</td><td>100</td><td>0%</td><td>50%</td><td>価格 ±¥500 微調整など</td></tr>
+    <tr><td>T1</td><td>500</td><td>5%</td><td>60%</td><td>新 drop / 法的文書編集など</td></tr>
+    <tr><td>amendment</td><td>2,000</td><td>20%</td><td>75%</td><td>Constitution 編集 (新原則 / cap 変更)</td></tr>
+    <tr><td>cessation</td><td>5,000</td><td>40%</td><td>90%</td><td>事業 wind-down</td></tr>
+  </tbody>
+</table>
+
+<form id="f">
+  <div class="field"><label>kind</label><select id="kind"><option>T2</option><option>T1</option><option>amendment</option><option>cessation</option></select></div>
+  <div class="field"><label>your wallet</label><input id="wallet" type="text" required placeholder="bound wallet"></div>
+  <div class="field"><label>title (1 行、200 字以内)</label><input id="title" type="text" maxlength="200" required></div>
+  <div class="field"><label>description (本文、8000 字以内)</label><textarea id="desc" maxlength="8000" required placeholder="提案の動機 / 数字 / 期待効果 / 影響範囲 / リバート計画。Markdown OK。"></textarea></div>
+  <button type="submit">提案を積む</button>
+</form>
+<p class="result" id="r" style="display:none"></p>
+<p class="note"><a href="/dao/bind">/dao/bind</a> · <a href="/dao">leaderboard</a> · <a href="/dao/whitepaper">whitepaper</a></p>
+<script>
+document.getElementById('f').addEventListener('submit', async e => {
+  e.preventDefault();
+  const r = document.getElementById('r'); r.style.display='block'; r.className='result'; r.textContent='送信中…';
+  const body = {
+    kind: document.getElementById('kind').value,
+    wallet: document.getElementById('wallet').value.trim(),
+    title: document.getElementById('title').value.trim(),
+    description: document.getElementById('desc').value,
+  };
+  try {
+    const res = await fetch('/api/dao/propose', {
+      method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    const j = await res.json();
+    if (res.ok && j.ok) {
+      r.className='result ok';
+      r.innerHTML = '✓ 提案 #' + j.governance_queue_id + ' を積みました。<a href="/dao">/dao</a> で投票が始まります。';
+    } else { r.className='result err'; r.textContent='✗ ' + (j.error || 'error'); }
+  } catch (e) { r.className='result err'; r.textContent='✗ network error'; }
+});
+</script>
+</body></html>"##.to_string())
+}
+
 /// GET /dao/whitepaper — full §23 whitepaper, rendered from
 /// `static/whitepaper_dao.md`. Same CSS as /constitution.
 async fn dao_whitepaper_page() -> Html<String> {
@@ -14151,6 +14742,31 @@ async fn dao_page(State(db): State<Db>) -> Html<String> {
         .map(|w| dao_weight_compute(&conn, w))
         .filter(|b| b.total_weight > 0.0)
         .collect();
+    // Active proposals (pending) with tally
+    let proposal_rows: Vec<(i64, String, String, f64, f64, String, String)> = conn.prepare(
+        "SELECT g.id, g.title, g.created_at,
+                COALESCE(p.quorum_pct, 0.0), COALESCE(p.threshold_pct, 0.5),
+                COALESCE(p.kind, 'T2'),
+                COALESCE(p.proposer_email,'')
+         FROM autonomy_governance_queue g
+         LEFT JOIN dao_proposals p ON p.governance_queue_id=g.id
+         WHERE g.agent_name='dao_proposal' AND g.status='pending'
+         ORDER BY g.created_at DESC LIMIT 20"
+    ).ok().and_then(|mut s| s.query_map([], |r| {
+        Ok((
+            r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+            r.get::<_, f64>(3)?, r.get::<_, f64>(4)?, r.get::<_, String>(5)?,
+            r.get::<_, String>(6)?,
+        ))
+    }).ok().map(|it| it.filter_map(|r| r.ok()).collect())).unwrap_or_default();
+    let proposals: Vec<(i64, String, String, f64, f64, String, String, DaoTally, f64)> =
+        proposal_rows.into_iter().map(|(id, title, created_at, q, th, kind, proposer_email)| {
+            let tally = dao_tally_for(&conn, id);
+            let participation = if total_supply > 0.0 {
+                (tally.approve + tally.reject + tally.abstain) / total_supply
+            } else { 0.0 };
+            (id, title, created_at, q, th, kind, proposer_email, tally, participation)
+        }).collect();
     drop(conn);
     rows.sort_by(|a, b| b.total_weight.partial_cmp(&a.total_weight).unwrap_or(std::cmp::Ordering::Equal));
 
@@ -14170,7 +14786,59 @@ async fn dao_page(State(db): State<Db>) -> Html<String> {
         ));
     }
     if rows.is_empty() {
-        tbody.push_str("<tr><td colspan=\"8\" style=\"text-align:center;color:#666;padding:24px\">no wallets bound yet · use /api/admin/dao/bind</td></tr>");
+        tbody.push_str("<tr><td colspan=\"8\" style=\"text-align:center;color:#666;padding:24px\">no wallets bound yet · <a href=\"/dao/bind\" style=\"color:#e6c449\">/dao/bind</a> で自己バインド</td></tr>");
+    }
+    // Render active proposal cards
+    let mut prop_cards = String::new();
+    for (id, title, created_at, q_pct, th_pct, kind, _proposer_email, tally, participation) in &proposals {
+        let approve_share = if (tally.approve + tally.reject) > 0.0 {
+            tally.approve / (tally.approve + tally.reject)
+        } else { 0.0 };
+        let quorum_met = *participation >= *q_pct;
+        let threshold_met = approve_share >= *th_pct;
+        let badge = if quorum_met && threshold_met {
+            "<span class=\"badge pass\">通過予想</span>"
+        } else if quorum_met {
+            "<span class=\"badge quorum\">quorum 到達</span>"
+        } else {
+            "<span class=\"badge open\">投票受付中</span>"
+        };
+        prop_cards.push_str(&format!(
+            r##"<article class="proposal" data-id="{id}">
+              <header>
+                <span class="kind kind-{kind_lower}">{kind}</span>
+                <h3>{title}</h3>
+                <span class="ago">{created}</span>
+                {badge}
+              </header>
+              <div class="tally">
+                <div class="bars">
+                  <span class="bar approve" style="flex: {a:.3}"></span>
+                  <span class="bar reject" style="flex: {r:.3}"></span>
+                  <span class="bar abstain" style="flex: {ab:.3}"></span>
+                  <span class="bar empty" style="flex: {empty:.3}"></span>
+                </div>
+                <div class="nums">approve {a:.1} · reject {r:.1} · abstain {ab:.1} · voters {voters} · participation {part:.2}% (quorum {qpct:.0}%) · approve share {asp:.1}% (threshold {thp:.0}%)</div>
+              </div>
+              <div class="vote-actions">
+                <input type="text" class="vw" placeholder="your bound wallet" />
+                <button onclick="dvote({id},'approve',this)">approve</button>
+                <button onclick="dvote({id},'reject',this)">reject</button>
+                <button onclick="dvote({id},'abstain',this)">abstain</button>
+                <span class="vresult"></span>
+              </div>
+            </article>"##,
+            id = id, kind = kind, kind_lower = kind.to_lowercase(),
+            title = html_escape(title), created = html_escape(&created_at[..10.min(created_at.len())]),
+            badge = badge,
+            a = tally.approve, r = tally.reject, ab = tally.abstain,
+            empty = (1.0 - participation).max(0.0),
+            voters = tally.voters, part = participation * 100.0, qpct = q_pct * 100.0,
+            asp = approve_share * 100.0, thp = th_pct * 100.0,
+        ));
+    }
+    if proposals.is_empty() {
+        prop_cards.push_str("<p style=\"color:#666;text-align:center;padding:24px;background:#141414;border-radius:6px\">現在 active な提案はありません。<a href=\"/dao/propose\" style=\"color:#e6c449\">/dao/propose</a> で最初の 1 件を作成</p>");
     }
     let today = dao_today_jst();
     let html = format!(r##"<!doctype html><html lang="ja"><head>
@@ -14201,6 +14869,30 @@ async fn dao_page(State(db): State<Db>) -> Html<String> {
   .how h3 {{ font-weight:400; font-size:15px; margin: 0 0 10px; color:#f5f5f0; }}
   .how li {{ font-size:13px; color:#bbb; margin: 4px 0; }}
   a {{ color:#9bc8e3; }}
+  .proposal {{ background:#141414; border-radius:6px; padding:16px; margin: 12px 0; }}
+  .proposal header {{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px; }}
+  .proposal h3 {{ font-weight:400; font-size:15px; margin:0; flex:1 1 60%; }}
+  .proposal .ago {{ font-size:11px; color:#666; }}
+  .kind {{ font-size:10px; padding:2px 6px; border-radius:3px; background:#222; color:#aaa; text-transform:uppercase; letter-spacing:0.08em; }}
+  .kind-t1 {{ background:#3b2f1f; color:#e3c89b; }}
+  .kind-amendment {{ background:#3b1f3b; color:#e39be3; }}
+  .kind-cessation {{ background:#3b1f1f; color:#e39b9b; }}
+  .badge {{ font-size:10px; padding:3px 8px; border-radius:10px; }}
+  .badge.open {{ background:#1f2f3b; color:#9bc8e3; }}
+  .badge.quorum {{ background:#3b2f1f; color:#e3c89b; }}
+  .badge.pass {{ background:#1f3b1f; color:#9be39b; }}
+  .bars {{ display:flex; height:8px; border-radius:4px; overflow:hidden; background:#0a0a0a; margin-bottom:6px; }}
+  .bar.approve {{ background:#3b8a3b; }}
+  .bar.reject {{ background:#8a3b3b; }}
+  .bar.abstain {{ background:#666; }}
+  .bar.empty {{ background:transparent; }}
+  .nums {{ font-size:11px; color:#888; font-family: ui-monospace, Menlo, monospace; }}
+  .vote-actions {{ display:flex; gap:6px; align-items:center; margin-top:10px; flex-wrap:wrap; }}
+  .vote-actions input {{ background:#0a0a0a; color:#f5f5f0; border:1px solid #222; border-radius:4px; padding:6px 10px; font-size:11px; flex:1; min-width:180px; }}
+  .vote-actions button {{ background:#0a0a0a; color:#f5f5f0; border:1px solid #333; border-radius:4px; padding:6px 10px; font-size:11px; cursor:pointer; }}
+  .vote-actions button:hover {{ border-color:#888; }}
+  .vresult {{ font-size:11px; color:#9be39b; }}
+  .vresult.err {{ color:#e39b9b; }}
 </style>
 </head><body>
 <h1>MU DAO · §23</h1>
@@ -14212,6 +14904,10 @@ async fn dao_page(State(db): State<Db>) -> Html<String> {
   <div class="stat"><div class="n">{total_supply:.0}</div><div class="l">total weight (today)</div></div>
   <div class="stat"><div class="n">{n_wallets}</div><div class="l">bound wallets</div></div>
 </div>
+
+<h2 style="font-weight:300;font-size:18px;margin-top:24px">Active proposals</h2>
+{prop_cards}
+<div style="text-align:center;margin: 14px 0 24px"><a href="/dao/propose" style="display:inline-block;background:#A67843;color:#fff;padding:10px 20px;border-radius:3px;font-size:12px;letter-spacing:0.15em;text-transform:uppercase;text-decoration:none">+ propose</a></div>
 
 <h2 style="font-weight:300;font-size:18px;margin-top:24px">Leaderboard</h2>
 <table>
@@ -14239,17 +14935,41 @@ age_factor:
 <div class="how">
   <h3>参加方法</h3>
   <ul>
-    <li><b>書く</b> — Constitution に PR、T1 governance で通れば mint event (永続)</li>
+    <li><b>書く</b> — Constitution に PR、amendment 提案 で通れば mint event (永続)</li>
     <li><b>運ぶ</b> — MA 1-of-1 piece を持つ (= +100 weight)</li>
     <li><b>着る</b> — シャツ買えば自動で chronicle slot = 1 weight</li>
-    <li>email → wallet bind は <code>/api/admin/dao/bind</code> (現在は admin)。magic-link 自己 bind は Phase 2</li>
+    <li><b>bind</b> — <a href="/dao/bind">/dao/bind</a> で email + wallet を magic-link bind</li>
+    <li><b>propose</b> — <a href="/dao/propose">/dao/propose</a> で T2/T1/amendment/cessation 提案</li>
     <li>weight 確認 → <code>GET /api/dao/weight/&lt;wallet&gt;</code></li>
-    <li>Constitution: <a href="/constitution">/constitution</a> · §23 (this)</li>
+    <li>提案 / 投票 API → <code>POST /api/dao/propose</code>, <code>/api/dao/vote</code></li>
+    <li>Constitution: <a href="/constitution">/constitution</a> · §23 · <a href="/dao/whitepaper">whitepaper</a></li>
   </ul>
 </div>
+<script>
+async function dvote(qid, vote, btn) {{
+  const row = btn.closest('.vote-actions');
+  const wallet = row.querySelector('.vw').value.trim();
+  const out = row.querySelector('.vresult');
+  if (!wallet) {{ out.className='vresult err'; out.textContent='wallet 必要'; return; }}
+  out.className='vresult'; out.textContent='送信中…';
+  try {{
+    const res = await fetch('/api/dao/vote', {{
+      method:'POST', headers:{{'content-type':'application/json'}},
+      body: JSON.stringify({{governance_queue_id: qid, wallet, vote}}),
+    }});
+    const j = await res.json();
+    if (res.ok && j.ok) {{
+      const tag = j.auto_resolved ? ' · auto-' + j.auto_resolved : '';
+      out.className='vresult'; out.textContent = '✓ vote ' + vote + ' · weight ' + j.weight_used.toFixed(1) + tag;
+      setTimeout(() => location.reload(), 1200);
+    }} else {{ out.className='vresult err'; out.textContent='✗ ' + (j.error || 'error'); }}
+  }} catch (e) {{ out.className='vresult err'; out.textContent='✗ network'; }}
+}}
+</script>
 </body></html>"##,
         today = today, lines_total = lines_total, ma_total = ma_total, chr_total = chr_total,
         total_supply = total_supply, n_wallets = rows.len(), tbody = tbody,
+        prop_cards = prop_cards,
     );
     Html(html)
 }
@@ -29589,6 +30309,46 @@ async fn main() {
         );
         CREATE INDEX IF NOT EXISTS idx_dao_email_wallets_wallet ON dao_email_wallets(wallet);
 
+        -- DAO magic-link bind: customer enters email + wallet on /dao/bind,
+        -- token is emailed via Resend, /dao/bind/confirm/:token consumes it
+        -- and inserts dao_email_wallets row (proves email control).
+        CREATE TABLE IF NOT EXISTS dao_bind_tokens (
+            token       TEXT PRIMARY KEY,
+            email       TEXT NOT NULL,
+            wallet      TEXT NOT NULL,
+            issued_at   TEXT NOT NULL,
+            ip_hash     TEXT,
+            consumed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_dao_bind_email ON dao_bind_tokens(email);
+
+        -- DAO proposals (extends governance_queue with kind / proposer / thresholds).
+        CREATE TABLE IF NOT EXISTS dao_proposals (
+            id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+            governance_queue_id  INTEGER UNIQUE NOT NULL,
+            kind                 TEXT NOT NULL,      -- 'T2' | 'T1' | 'amendment' | 'cessation'
+            proposer_wallet      TEXT,
+            proposer_email       TEXT,
+            quorum_pct           REAL NOT NULL,      -- e.g. 0.05 for T1, 0.20 for amendment
+            threshold_pct        REAL NOT NULL,      -- e.g. 0.60 for T1, 0.75 for amendment
+            min_proposer_weight  REAL NOT NULL,      -- gate to submit
+            created_at           TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_dao_proposals_kind ON dao_proposals(kind, created_at DESC);
+
+        -- DAO votes: 1 row per (proposal, wallet). Replaces previous vote on update.
+        CREATE TABLE IF NOT EXISTS dao_votes (
+            id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+            governance_queue_id  INTEGER NOT NULL,
+            wallet               TEXT NOT NULL,
+            email                TEXT NOT NULL,
+            vote                 TEXT NOT NULL,      -- 'approve' | 'reject' | 'abstain'
+            weight_snapshot      REAL NOT NULL,
+            voted_at             TEXT NOT NULL,
+            UNIQUE(governance_queue_id, wallet)
+        );
+        CREATE INDEX IF NOT EXISTS idx_dao_votes_queue ON dao_votes(governance_queue_id);
+
         -- Moon-phase marker: events for entry check-in via T-shirt scan.
         CREATE TABLE IF NOT EXISTS mu_events (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -29813,9 +30573,17 @@ async fn main() {
         .route("/api/lineage/claim", post(ma_lineage_claim_submit))
         .route("/dao", get(dao_page))
         .route("/dao/whitepaper", get(dao_whitepaper_page))
+        .route("/dao/bind", get(dao_bind_page))
+        .route("/dao/bind/confirm/:token", get(dao_bind_confirm))
+        .route("/dao/propose", get(dao_propose_page))
         .route("/api/dao/weight/:wallet", get(dao_weight_api))
         .route("/api/dao/leaderboard", get(dao_leaderboard_api))
+        .route("/api/dao/bind/request", post(dao_bind_request_api))
+        .route("/api/dao/propose", post(dao_propose_api))
+        .route("/api/dao/proposals", get(dao_proposals_api))
+        .route("/api/dao/vote", post(dao_vote_api))
         .route("/api/admin/dao/bind", post(admin_dao_bind))
+        .route("/api/admin/dao/merge", post(admin_dao_merge))
         .route("/api/mark/:product_id/:position.svg", get(moon_marker_svg))
         .route("/api/mark/decode/:value", get(moon_marker_decode))
         .route("/scan", get(moon_scan_page))
