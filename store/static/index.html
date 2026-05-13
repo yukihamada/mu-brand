@@ -869,6 +869,17 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
         <div class="nft-title">On-chain Certificate</div>
         <div class="nft-val" id="m-nft-val"></div>
       </div>
+
+      <!-- Sibling chronicle — only filled when same design has siblings -->
+      <div id="m-chronicle" style="display:none;background:#0e0e0e;border:1px solid rgba(230,196,73,0.25);padding:14px 16px;font-size:11.5px;line-height:1.85;border-radius:2px">
+        <div style="font-size:9px;letter-spacing:0.32em;text-transform:uppercase;color:#e6c449;margin-bottom:8px">この服が運ぶ年代記</div>
+        <div id="m-chronicle-intro" style="opacity:0.75;margin-bottom:10px"></div>
+        <div id="m-chronicle-list" style="font-family:'SF Mono','Menlo',monospace;font-size:10.5px;line-height:1.85;opacity:0.7;border-left:1px solid rgba(230,196,73,0.25);padding-left:10px"></div>
+        <div style="margin-top:10px;font-size:10px;opacity:0.5">
+          匿名 ID は <a href="/transparency" style="color:#e6c449">/transparency</a> と同じ <code>MU-XXXX</code> 形式 (SHA-256 由来、逆引き不可)。実名・メール・住所は一切載せません。
+        </div>
+      </div>
+
       <div class="divider"></div>
       <div>
         <div style="font-size:8px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5;margin-bottom:10px">Size</div>
@@ -1730,6 +1741,39 @@ function openModal(p, pushHistory=true){
   const shareTw = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(shareUrl)}`;
   const shareLink = document.getElementById('m-share-x');
   if (shareLink) shareLink.href = shareTw;
+
+  // Sibling chronicle — only meaningful when inventory > 1 (MUON / multi-unit drops).
+  // MUGEN drops have inventory = drop_num so each unit is unique; the chronicle is the
+  // single-buyer trail in that case, less useful as a feature so we hide for sold=0.
+  (async () => {
+    const box = document.getElementById('m-chronicle');
+    const intro = document.getElementById('m-chronicle-intro');
+    const list = document.getElementById('m-chronicle-list');
+    if (!box || !intro || !list) return;
+    box.style.display = 'none';
+    if (!p.id || p.inventory <= 1) return;
+    try {
+      const r = await fetch(`/api/products/item/${p.id}/chronicle`, { cache: 'no-store' });
+      if (!r.ok) return;
+      const d = await r.json();
+      const next = d.next_position || (p.sold + 1);
+      const siblings = (d.siblings || []).filter(s => s.position < next);
+      if (next === 1) {
+        // You'd be the first — chronicle starts with you.
+        intro.innerHTML = `あなたが <strong style="color:#e6c449">#1</strong> 番目になります。あなたの後に買う人の裏ラベルに、<strong>あなたが買った日時</strong>が刻まれます。`;
+        list.innerHTML = `<div style="opacity:0.5">— まだ siblings なし。あなたが始まり。</div>`;
+        box.style.display = 'block';
+        return;
+      }
+      intro.innerHTML = `あなたが受け取る <strong style="color:#e6c449">#${next}</strong> 番目のシャツの裏ラベルには、これまでの <strong>#1〜#${next - 1}</strong> の注文日時が印字されます。同じデザインが運ぶ匿名の年代記です。`;
+      list.innerHTML = siblings.map(s =>
+        `<div>#${String(s.position).padStart(3,'0')} · ${s.ordered_at_jst}` +
+        (s.shipped_at_jst ? ` · shipped ${s.shipped_at_jst}` : '') +
+        ` · <span style="color:#e6c449">${s.buyer}</span></div>`
+      ).join('');
+      box.style.display = 'block';
+    } catch(_) {}
+  })();
 
   // Meta
   const weather = p.weather_data ? JSON.parse(p.weather_data) : null;

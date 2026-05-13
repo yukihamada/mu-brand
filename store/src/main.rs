@@ -4444,6 +4444,69 @@ async fn list_brands(State(db): State<Db>) -> impl IntoResponse {
     }))
 }
 
+/// GET /api/products/item/:id/chronicle — PII-safe sibling chronicle.
+/// Lists every prior purchase of the SAME design (same product_id), each row
+/// = {position, buyer_pseudonym (MU-XXXX), ordered_at_jst, shipped_at_jst}.
+/// Surfaces the "your shirt #N carries the dates of #1..#(N-1)" mechanic.
+async fn get_product_chronicle(
+    Path(id): Path<i64>,
+    State(db): State<Db>,
+) -> impl IntoResponse {
+    let conn = db.lock().unwrap();
+    let (inventory, sold): (i64, i64) = conn.query_row(
+        "SELECT inventory, sold FROM products WHERE id=?",
+        params![id], |r| Ok((r.get(0)?, r.get(1)?))
+    ).unwrap_or((0, 0));
+    let mut stmt = match conn.prepare(
+        "SELECT mp.email, mp.created_at,
+                COALESCE(ps.shipped_at, '') AS shipped_at
+         FROM mu_purchases mp
+         LEFT JOIN collab_orders co ON co.stripe_session = mp.session_id
+         LEFT JOIN production_status ps ON ps.collab_order_id = co.id
+         WHERE mp.product_id = ?
+           AND mp.session_id LIKE 'cs_live_%'
+         ORDER BY mp.id ASC"
+    ) { Ok(s) => s, Err(_) => return Json(serde_json::json!({"siblings": [], "next_position": sold + 1, "inventory": inventory})).into_response() };
+    let siblings: Vec<serde_json::Value> = stmt.query_map(params![id], |r| {
+        let email: String = r.get(0)?;
+        let created_at: String = r.get(1)?;
+        let shipped_at: String = r.get(2)?;
+        Ok((email, created_at, shipped_at))
+    }).map(|it| {
+        it.filter_map(|r| r.ok()).enumerate().map(|(idx, (email, created, shipped))| {
+            let position = (idx as i64) + 1;
+            let fmt = |raw: &str| -> String {
+                if raw.is_empty() { return String::new(); }
+                if let Ok(s) = raw.parse::<i64>() {
+                    let jst = s + 9 * 3600;
+                    let day_n = jst / 86_400;
+                    let (y, m, d) = civil_from_days(day_n);
+                    let secs = jst.rem_euclid(86_400);
+                    let hh = secs / 3600; let mm = (secs % 3600) / 60;
+                    format!("{:04}-{:02}-{:02} {:02}:{:02} JST", y, m, d, hh, mm)
+                } else {
+                    raw.chars().take(16).collect::<String>().replace('T', " ")
+                }
+            };
+            serde_json::json!({
+                "position":       position,
+                "buyer":          purchase_pseudonym(&email),
+                "ordered_at_jst": fmt(&created),
+                "shipped_at_jst": fmt(&shipped),
+            })
+        }).collect()
+    }).unwrap_or_default();
+    Json(serde_json::json!({
+        "product_id":    id,
+        "inventory":     inventory,
+        "sold":          sold,
+        "next_position": sold + 1,
+        "remaining":     (inventory - sold).max(0),
+        "siblings":      siblings,
+        "note":          "Each unit of this design carries the chronicle of #1..#(its position - 1) on its inside label. PII-safe pseudonyms only.",
+    })).into_response()
+}
+
 async fn get_product(
     Path(id): Path<i64>,
     State(db): State<Db>,
@@ -26161,6 +26224,7 @@ async fn main() {
         .route("/api/products", get(list_brands))
         .route("/api/products/:brand", get(list_products))
         .route("/api/products/item/:id", get(get_product))
+        .route("/api/products/item/:id/chronicle", get(get_product_chronicle))
         .route("/api/weather", get(weather_handler))
         .route("/api/bid", post(place_bid))
         .route("/api/checkout", post(checkout))
