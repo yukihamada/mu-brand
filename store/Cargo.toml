@@ -35,3 +35,6 @@ ammonia = "4"
 # Per-order chronicle QR: pure-Rust QR encoder. SVG output is composited
 # into the Printful print file at fulfillment time.
 qrcodegen = "1.8"
+# PNG encoder (no decoder, no full image crate) — used to serve the QR
+# as a PNG that Printful's order API can accept as a print file.
+png = "0.17"

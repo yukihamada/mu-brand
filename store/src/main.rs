@@ -4507,6 +4507,64 @@ async fn get_product_chronicle(
     })).into_response()
 }
 
+/// GET /api/qr/c/:product_id/:position.png — Per-shirt QR as PNG.
+/// Printful's order API needs PNG/JPG, not SVG, so this endpoint serves the
+/// same QR as the .svg variant but as a 1024×1024 PNG with transparent
+/// background and tonal charcoal modules.
+async fn chronicle_qr_png(
+    Path((id, pos)): Path<(i64, i64)>,
+) -> Response {
+    use qrcodegen::{QrCode, QrCodeEcc};
+    let url = format!("https://wearmu.com/c/{}/{}", id, pos);
+    let qr = match QrCode::encode_text(&url, QrCodeEcc::Medium) {
+        Ok(q) => q,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "qr encode").into_response(),
+    };
+    let n = qr.size() as usize;
+    let border: usize = 2;
+    let dim = n + border * 2;
+    let scale: usize = 1024 / dim.max(1);
+    let scale = scale.max(8);
+    let img_dim = dim * scale;
+    // RGBA: charcoal modules on transparent. Each pixel = 4 bytes.
+    let mut rgba = vec![0u8; img_dim * img_dim * 4];
+    for y in 0..n {
+        for x in 0..n {
+            if qr.get_module(x as i32, y as i32) {
+                let px = (x + border) * scale;
+                let py = (y + border) * scale;
+                for dy in 0..scale {
+                    for dx in 0..scale {
+                        let i = ((py + dy) * img_dim + (px + dx)) * 4;
+                        rgba[i]     = 0x1a;
+                        rgba[i + 1] = 0x1a;
+                        rgba[i + 2] = 0x1a;
+                        rgba[i + 3] = 0xff;
+                    }
+                }
+            }
+        }
+    }
+    let mut buf: Vec<u8> = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut buf, img_dim as u32, img_dim as u32);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut w = match enc.write_header() {
+            Ok(w) => w,
+            Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "png header").into_response(),
+        };
+        if w.write_image_data(&rgba).is_err() {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "png write").into_response();
+        }
+    }
+    (
+        [(axum::http::header::CONTENT_TYPE, "image/png"),
+         (axum::http::header::CACHE_CONTROL, "public, max-age=31536000, immutable")],
+        buf
+    ).into_response()
+}
+
 /// GET /api/qr/c/:product_id/:position.svg — Per-shirt QR for the inside-neck
 /// chronicle. The QR encodes the short URL https://wearmu.com/c/<id>/<pos>
 /// so when a buyer scans their own shirt they get the live chronicle of
@@ -6304,6 +6362,42 @@ async fn create_printful_order(key: String, db: Db, product_id: i64, session: se
     };
 
     let client = reqwest::Client::new();
+    // Per-shirt chronicle: only for products where the same design is printed
+    // multiple times. Inventory > 1 = MUON / multi-unit drops where the
+    // sibling chronicle is meaningful. inventory = 1 (MUGEN) = unique → skip.
+    let (chronicle_position, eligible_for_chronicle, brand_name_for_blog): (i64, bool, String) = {
+        let conn = db.lock().unwrap();
+        let (inv, sold, brand): (i64, i64, String) = conn.query_row(
+            "SELECT inventory, sold, brand FROM products WHERE id=?",
+            params![product_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        ).unwrap_or((0, 0, String::new()));
+        let prior_paid: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mu_purchases
+             WHERE product_id=? AND session_id LIKE 'cs_live_%'
+               AND session_id != ?",
+            params![product_id, session_id], |r| r.get(0),
+        ).unwrap_or(sold);
+        // Position = number of prior + 1 (this purchase is the next slot).
+        (prior_paid + 1, inv > 1, brand)
+    };
+
+    let mut files = vec![
+        serde_json::json!({"url": design_url, "placement": "front"})
+    ];
+    if eligible_for_chronicle {
+        let qr_url = format!(
+            "https://wearmu.com/api/qr/c/{}/{}.png",
+            product_id, chronicle_position,
+        );
+        // label_outside = exterior back-of-neck DTG, ~4×1 inch print area.
+        // The QR alone is enough; the scan opens /c/<id>/<pos> for the
+        // live chronicle. Printful composites on their side.
+        files.push(serde_json::json!({
+            "url": qr_url,
+            "placement": "label_outside",
+        }));
+    }
+
     let order = serde_json::json!({
         "recipient": {
             "name":         name,
@@ -6317,14 +6411,16 @@ async fn create_printful_order(key: String, db: Db, product_id: i64, session: se
         "items": [{
             "variant_id": variant_id,
             "quantity": 1,
-            "files": [{"url": design_url, "placement": "front"}],
+            "files": files,
         }],
         "confirm": true,
     });
     let resp = client.post("https://api.printful.com/orders")
         .bearer_auth(&key).json(&order).send().await;
+    let printful_succeeded;
     match resp {
         Ok(r) if r.status().is_success() => {
+            printful_succeeded = true;
             // Store printful_order_id on the matching mu_purchases row so
             // purchase_celebrate agent can poll Printful for state transitions.
             let body: serde_json::Value = r.json().await.unwrap_or_default();
@@ -6343,12 +6439,140 @@ async fn create_printful_order(key: String, db: Db, product_id: i64, session: se
             eprintln!("Printful order created for product {} → pf_id={}", product_id, pf_id);
         }
         Ok(r) => {
+            printful_succeeded = false;
             let status = r.status();
             let body = r.text().await.unwrap_or_default();
             eprintln!("Printful error {}: {}", status, body);
         }
-        Err(e) => eprintln!("Printful request error: {}", e),
+        Err(e) => {
+            printful_succeeded = false;
+            eprintln!("Printful request error: {}", e);
+        }
     }
+
+    // First-chronicle-purchase blog hook. yuki asked: "実装できて購入できたら
+    // ブログに書いて欲しい" — fire a draft when the first multi-unit
+    // chronicle order is fulfilled. Stored in cv_config so it's idempotent.
+    if printful_succeeded && eligible_for_chronicle {
+        let already_blogged = {
+            let conn = db.lock().unwrap();
+            cv_get(&conn, "chronicle_blog_first_done", "0") == "1"
+        };
+        if !already_blogged {
+            let db2 = db.clone();
+            let brand = brand_name_for_blog;
+            let pid = product_id;
+            let pos = chronicle_position;
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+                if let Err(e) = compose_chronicle_first_blog(db2.clone(), pid, &brand, pos).await {
+                    eprintln!("[chronicle] first-purchase blog failed: {}", e);
+                }
+            });
+        }
+    }
+}
+
+/// Custom one-shot blog generator for the "first chronicle shirt shipped" moment.
+/// Calls Gemini 2.5 Pro with a feature-launch prompt, inserts directly into
+/// auto_blog_posts as a published row. Flips cv_config so it never re-fires.
+async fn compose_chronicle_first_blog(
+    db: Db, product_id: i64, brand: &str, position: i64,
+) -> Result<(), String> {
+    use serde_json::json;
+    let key = env::var("GEMINI_API_KEY").map_err(|_| "GEMINI_API_KEY missing".to_string())?;
+    let prompt = format!(r#"あなたは MU ブランド (北海道弟子屈町、無人 AI ファッション) の運営ブログを書く AI です。
+今、新機能「Sibling Chronicle (年代記)」の初出荷が発生しました。事実ベース + 静かなトーンで書いてください。
+
+事実:
+- product_id = {pid}, brand = {brand}, position = #{pos} (これが第 1 号)
+- 同じデザインで複数刷る商品 (MUON 等、inventory > 1) を買うと、首裏下に小さな QR + 番号が DTG プリントされる
+- スキャンすると `/c/{pid}/{pos}` が開き、これまでの #1..#({prev}) の注文日時 (JST) + 匿名 ID (MU-XXXX, SHA-256 由来) が表示される
+- 後から同じデザインを買う人がいると、自動でリストに追記される
+- 物理 (QR) は永続、Web (年代記) は常に最新
+- Vision §1「numbers over adjectives」§3「Hashed to a day」§14「negative space」に合う
+- 追加コスト: label_outside DTG +$2.00/着 (~¥300)、MUGEN ¥5,000 で margin 約 15% 減
+- 個人情報は載せず、SHA-256 由来の匿名 ID のみ ([[feedback-pii-protection]] 準拠)
+
+ブログタイトル + 本文 (markdown、800〜1200 字) を生成してください。
+
+ルール:
+- 二人称は「あなた」
+- 売り込み禁止。事実を並べるだけ
+- 個人名・email・住所・配送先 一切載せない
+- 絵文字・「!!!」・"NEW DROP" 禁止 ([MU_VOICE_RULES])
+- 末尾に "— yuki" の 1 行で締める (人間 1 名の operator として書いている)
+
+出力フォーマット (厳守):
+{title}
+TITLE: <タイトル 1 行 - 30 字以内>
+
+{body}
+BODY (markdown):
+... 本文 ...
+"#,
+        pid = product_id, brand = brand, pos = position, prev = position - 1,
+        title = "---",
+        body = "---",
+    );
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={}",
+        key);
+    let resp = reqwest::Client::new().post(&url)
+        .json(&json!({
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.7, "maxOutputTokens": 2400}
+        }))
+        .send().await
+        .map_err(|e| format!("gemini request: {}", e))?;
+    if !resp.status().is_success() {
+        let s = resp.status();
+        let t = resp.text().await.unwrap_or_default();
+        return Err(format!("gemini {}: {}", s, t.chars().take(300).collect::<String>()));
+    }
+    let j: serde_json::Value = resp.json().await.map_err(|e| format!("json: {}", e))?;
+    let text = j["candidates"][0]["content"]["parts"][0]["text"]
+        .as_str().unwrap_or("").trim().to_string();
+    if text.is_empty() {
+        return Err("gemini empty body".into());
+    }
+    // Extract TITLE and BODY blocks. Forgiving: fall back to first line / rest.
+    let (title, body_md) = if let Some(t_idx) = text.find("TITLE:") {
+        let after_title = &text[t_idx + 6..];
+        let line_end = after_title.find('\n').unwrap_or(after_title.len());
+        let title = after_title[..line_end].trim().to_string();
+        let body_start = if let Some(b_idx) = after_title.find("BODY") {
+            // Skip past "BODY (markdown):\n"
+            let s = &after_title[b_idx..];
+            s.find('\n').map(|i| b_idx + i + 1).unwrap_or(b_idx)
+        } else { line_end };
+        (title, after_title[body_start..].trim().to_string())
+    } else {
+        let mut lines = text.lines();
+        let t = lines.next().unwrap_or("Chronicle が始まった").trim().to_string();
+        (t, lines.collect::<Vec<_>>().join("\n"))
+    };
+    let body_html = md_to_html_simple(&body_md);
+    let slug = format!("chronicle-first-{}", jst_today_str());
+    let stats = json!({
+        "feature": "sibling_chronicle",
+        "first_position": position,
+        "first_product_id": product_id,
+        "first_brand": brand,
+    });
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO auto_blog_posts
+                (slug, title, body_html, body_md, model, stats_json, published, created_at)
+             VALUES (?,?,?,?,?,?,1,?)",
+            params![slug, title, body_html, body_md, "gemini-2.5-pro",
+                    stats.to_string(), chrono_now()],
+        );
+        cv_set(&conn, "chronicle_blog_first_done", "1", "chronicle_first_blog");
+    }
+    eprintln!("[chronicle] first-purchase blog drafted+published: /blog/{}", slug);
+    Ok(())
 }
 
 /// MU × SWEEP collab order webhook handler.
@@ -26404,6 +26628,7 @@ async fn main() {
         .route("/api/products/item/:id/chronicle", get(get_product_chronicle))
         .route("/c/:id/:pos", get(chronicle_short_page))
         .route("/api/qr/c/:id/:pos.svg", get(chronicle_qr_svg))
+        .route("/api/qr/c/:id/:pos.png", get(chronicle_qr_png))
         .route("/api/weather", get(weather_handler))
         .route("/api/bid", post(place_bid))
         .route("/api/checkout", post(checkout))
