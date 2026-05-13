@@ -9200,14 +9200,19 @@ async fn public_transparency(State(db): State<Db>) -> impl IntoResponse {
     let monthly_price = cv_get(&conn, "monthly_price_jpy", "1480")
         .parse::<i64>().unwrap_or(980);
     let approx_mrr_jpy = you_subscribers_paid * monthly_price;
-    let total_revenue_jpy = revenue_shirts_jpy + auction_revenue_jpy;
+    // Public-facing total revenue. Historical bug: this was SUM(p.price_jpy * p.sold)
+    // joined to products only — silently excluded /you tee sales (¥6,800 each,
+    // no products row). After the polymorphic-FK fix we expose the same number
+    // as `real.revenue_jpy` so `revenue_jpy` and `real.revenue_jpy` always agree.
+    let total_revenue_jpy = real_revenue_jpy;
 
     Json(serde_json::json!({
-        // ── 旧フィールド (互換のため残す) — テスト購入を含む合計 ──
+        // ── 旧フィールド (互換のため残す) — Stripe live のみ集計 (test 除外) ──
         "revenue_jpy": total_revenue_jpy,
         "revenue_breakdown": {
             "shirts_jpy":   revenue_shirts_jpy,
             "auctions_jpy": auction_revenue_jpy,
+            "you_tee_jpy":  total_revenue_jpy - revenue_shirts_jpy - auction_revenue_jpy,
         },
         "shirts_sold":   shirts_sold,
         "purchases_recorded": purchases_total,
