@@ -1023,6 +1023,11 @@ async fn checkout_embedded(
                 return (StatusCode::BAD_GATEWAY,
                     Json(serde_json::json!({"ok":false,"error":"stripe returned no client_secret"}))).into_response();
             }
+            // Funnel: server-side checkout_start event.
+            funnel_track_server(&db, "checkout_start",
+                &format!("/products/{}", body.product_id),
+                Some(body.product_id),
+                serde_json::json!({"amount_jpy": total_jpy, "session": session_id})).await;
             Json(serde_json::json!({
                 "ok": true,
                 "client_secret": client_secret,
@@ -5132,6 +5137,16 @@ async fn stripe_webhook(
     if ev_type == "checkout.session.completed" {
         let session = &event["data"]["object"];
         let meta = session["metadata"].clone();
+
+        // Funnel: server-side checkout_paid event (fires for ANY paid session,
+        // including collab + standalone). amount_total is in cents/smallest unit.
+        let amount_total = session["amount_total"].as_i64().unwrap_or(0);
+        let session_id   = session["id"].as_str().unwrap_or("").to_string();
+        let product_id   = meta["product_id"].as_str().and_then(|s| s.parse::<i64>().ok());
+        funnel_track_server(&db, "checkout_paid",
+            "/api/webhook/stripe",
+            product_id,
+            serde_json::json!({"amount_total": amount_total, "session": session_id})).await;
 
         // ── Collab order (MU × SWEEP / MU × kokon.tokyo / etc.) ──
         // Records a row in collab_orders. Production route:
@@ -30865,6 +30880,30 @@ fn find_similar_journal(conn: &Connection, query_emb: &[f32], k: usize)
     scored.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
     scored.truncate(k);
     scored
+}
+
+// ─── Server-side funnel tracking ─────────────────────────────────────────
+// For events the server originates (checkout_start, checkout_paid) we
+// bypass /api/v1/event and insert directly. visitor_id/session_id are
+// synthetic "server:<random>" so the row joins cleanly with the table.
+async fn funnel_track_server(
+    db: &Db,
+    event: &str,
+    path: &str,
+    product_id: Option<i64>,
+    extra: serde_json::Value,
+) {
+    let now = chrono_now();
+    let synthetic_id = format!("server:{}", uuid::Uuid::new_v4().simple());
+    let mut full_extra = extra.as_object().cloned().unwrap_or_default();
+    full_extra.insert("_server".into(), serde_json::Value::from(true));
+    let extra_str = serde_json::Value::Object(full_extra).to_string();
+    let conn = db.lock().unwrap();
+    let _ = conn.execute(
+        "INSERT INTO funnel_events (visitor_id, session_id, event, path, product_id, extra, created_at)
+         VALUES (?,?,?,?,?,?,?)",
+        params![synthetic_id, synthetic_id.clone(), event, path, product_id, extra_str, now],
+    );
 }
 
 // ─── Funnel events (POST /api/v1/event) ────────────────────────────────
