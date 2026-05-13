@@ -9800,6 +9800,20 @@ async fn cron_health_handler(State(db): State<Db>) -> impl IntoResponse {
     }))
 }
 
+/// Comma-separator for JPY / count display (`52800` → `52,800`).
+fn fmt_commas(n: i64) -> String {
+    let neg = n < 0;
+    let s = n.unsigned_abs().to_string();
+    let mut out = String::with_capacity(s.len() + s.len() / 3 + 1);
+    for (i, ch) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 { out.push(','); }
+        out.push(ch);
+    }
+    let mut out: String = out.chars().rev().collect();
+    if neg { out.insert(0, '-'); }
+    out
+}
+
 /// GET /transparency — full-page HTML rendering of /api/transparency, designed
 /// for tweet-share. URL points here from social posts that say "公開ダッシュボード".
 /// Same data as the JSON endpoint, server-side rendered with the MU dark theme.
@@ -9829,17 +9843,32 @@ async fn public_transparency_page(State(db): State<Db>) -> Html<String> {
     let (hh, mm) = (secs_today / 3600, (secs_today % 3600) / 60);
     let as_of_str = format!("{:04}-{:02}-{:02} {:02}:{:02} JST", y, m, d, hh, mm);
 
+    // Pre-format display strings (comma separation for thousands).
+    let real_rev_s     = fmt_commas(real_rev);
+    let ext_rev_s      = fmt_commas(ext_rev);
+    let ext_purch_s    = fmt_commas(ext_purch);
+    let ext_cust_s     = fmt_commas(ext_cust);
+    let real_purch_s   = fmt_commas(real_purch);
+    let shirts_sold_s  = fmt_commas(shirts_sold);
+    let you_paid_s     = fmt_commas(you_paid);
+    let you_lifetime_s = fmt_commas(you_lifetime);
+    let you_free_s     = fmt_commas(you_free);
+    let you_mrr_s      = fmt_commas(you_mrr);
+    let you_designs_s  = fmt_commas(you_designs);
+    let mugen_missing_s = fmt_commas(mugen_missing);
+    let muon_missing_s  = fmt_commas(muon_missing);
+
     let html = format!(r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Transparency — MU の数字、全部 | wearmu.com</title>
 <meta name="description" content="MU の売上・購入・購読・欠番。一切隠さない数字を、毎リクエストで再計算して返します。">
 <meta property="og:title" content="MU Transparency — 数字を全部晒します">
-<meta property="og:description" content="累計売上 ¥{real_rev}・第三者購入 {ext_purch} 件・MRR ¥{you_mrr}。0 人組織のリアル。">
+<meta property="og:description" content="累計売上 ¥{real_rev_s}・第三者購入 {ext_purch_s} 件・MRR ¥{you_mrr_s}。0 人組織のリアル。">
 <meta property="og:image" content="https://wearmu.com/og.jpg">
 <meta property="og:url" content="https://wearmu.com/transparency">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="MU Transparency">
-<meta name="twitter:description" content="累計売上 ¥{real_rev}・第三者購入 {ext_purch} 件・MRR ¥{you_mrr}">
+<meta name="twitter:description" content="累計売上 ¥{real_rev_s}・第三者購入 {ext_purch_s} 件・MRR ¥{you_mrr_s}">
 <meta name="twitter:image" content="https://wearmu.com/og.jpg">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
@@ -9913,36 +9942,36 @@ footer a:hover{{color:var(--y)}}
 
   <!-- Hero: real revenue -->
   <div class="hero-num">
-    <div class="v">¥{real_rev}</div>
+    <div class="v">¥{real_rev_s}</div>
     <div class="l">累計実売上 (Stripe live)</div>
-    <div class="s">うち第三者 (非 yuki) は <strong style="color:var(--y)">¥{ext_rev}</strong> / {ext_cust} 名 / {ext_purch} 件</div>
+    <div class="s">うち第三者 (非 yuki) は <strong style="color:var(--y)">¥{ext_rev_s}</strong> / {ext_cust_s} 名 / {ext_purch_s} 件</div>
   </div>
 
   <!-- KPI strip -->
   <div class="kpi">
-    <div class="cell"><div class="v">{real_purch}</div><div class="l">累計購入</div><div class="s">cs_live_* のみ</div></div>
-    <div class="cell"><div class="v y">{ext_cust}</div><div class="l">第三者顧客 (人)</div><div class="s">yuki の dogfood 除外</div></div>
-    <div class="cell"><div class="v">{shirts_sold}</div><div class="l">出荷済み枚数</div><div class="s">products.sold 合計</div></div>
-    <div class="cell"><div class="v">{designs}</div><div class="l">AI 生成済デザイン</div><div class="s">/you tee 含む</div></div>
+    <div class="cell"><div class="v">{real_purch_s}</div><div class="l">累計購入</div><div class="s">cs_live_* のみ</div></div>
+    <div class="cell"><div class="v y">{ext_cust_s}</div><div class="l">第三者顧客 (人)</div><div class="s">yuki の dogfood 除外</div></div>
+    <div class="cell"><div class="v">{shirts_sold_s}</div><div class="l">出荷済み枚数</div><div class="s">products.sold 合計</div></div>
+    <div class="cell"><div class="v">{you_designs_s}</div><div class="l">AI 生成済デザイン</div><div class="s">/you tee 含む</div></div>
   </div>
 
   <!-- /you -->
   <div class="section">
     <h2>/you サブスクリプション</h2>
     <p>毎朝あなた専用の T シャツが AI に生成される /you。30日間無料トライアル、その後 ¥1,480/月 (または ¥980/月年払い)。MUGEN/MUON を 1 着でも買うと一生 ¥0。</p>
-    <div class="row"><span class="k">有料サブスク</span><span class="v {you_paid_class}">{you_paid}</span></div>
-    <div class="row"><span class="k">ライフタイムメンバー</span><span class="v">{you_lifetime}</span></div>
-    <div class="row"><span class="k">無料トライアル中</span><span class="v">{you_free}</span></div>
-    <div class="row"><span class="k">概算 MRR</span><span class="v {mrr_class}">¥{you_mrr}</span></div>
-    <div class="row"><span class="k">累計デザイン生成</span><span class="v">{you_designs}</span></div>
+    <div class="row"><span class="k">有料サブスク</span><span class="v {you_paid_class}">{you_paid_s}</span></div>
+    <div class="row"><span class="k">ライフタイムメンバー</span><span class="v">{you_lifetime_s}</span></div>
+    <div class="row"><span class="k">無料トライアル中</span><span class="v">{you_free_s}</span></div>
+    <div class="row"><span class="k">概算 MRR</span><span class="v {mrr_class}">¥{you_mrr_s}</span></div>
+    <div class="row"><span class="k">累計デザイン生成</span><span class="v">{you_designs_s}</span></div>
   </div>
 
   <!-- Missing drops -->
   <div class="section">
     <h2>欠番 (cron 失敗 / 意図的 skip)</h2>
     <p>MUGEN は毎時間 1 ドロップが理想ですが、cron 失敗や Vision §14「negative space を尊重」で skip した日があります。隠さずそのまま公開。</p>
-    <div class="row"><span class="k">MUGEN 欠番 drop_num</span><span class="v warn">{mugen_missing}</span></div>
-    <div class="row"><span class="k">MUON 欠番日付</span><span class="v warn">{muon_missing}</span></div>
+    <div class="row"><span class="k">MUGEN 欠番 drop_num</span><span class="v warn">{mugen_missing_s}</span></div>
+    <div class="row"><span class="k">MUON 欠番日付</span><span class="v warn">{muon_missing_s}</span></div>
   </div>
 
   <!-- Methodology -->
@@ -9967,20 +9996,19 @@ footer a:hover{{color:var(--y)}}
 </div>
 
 </body></html>"##,
-        real_rev = real_rev,
-        ext_rev = ext_rev,
-        ext_purch = ext_purch,
-        ext_cust = ext_cust,
-        real_purch = real_purch,
-        shirts_sold = shirts_sold,
-        you_paid = you_paid,
-        you_lifetime = you_lifetime,
-        you_free = you_free,
-        you_mrr = you_mrr,
-        you_designs = you_designs,
-        designs = you_designs,
-        mugen_missing = mugen_missing,
-        muon_missing = muon_missing,
+        real_rev_s = real_rev_s,
+        ext_rev_s = ext_rev_s,
+        ext_purch_s = ext_purch_s,
+        ext_cust_s = ext_cust_s,
+        real_purch_s = real_purch_s,
+        shirts_sold_s = shirts_sold_s,
+        you_paid_s = you_paid_s,
+        you_lifetime_s = you_lifetime_s,
+        you_free_s = you_free_s,
+        you_mrr_s = you_mrr_s,
+        you_designs_s = you_designs_s,
+        mugen_missing_s = mugen_missing_s,
+        muon_missing_s = muon_missing_s,
         as_of_str = as_of_str,
         you_paid_class = if you_paid == 0 { "bad" } else { "good" },
         mrr_class = if you_mrr == 0 { "bad" } else { "good" },
