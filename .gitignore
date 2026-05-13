@@ -38,5 +38,12 @@ Thumbs.db
 
 # Generated assets (kept in static/)
 designs/raw/
+# AI-generated drop assets — uploaded to Printful + R2, not source-of-truth in git
+designs/*.png
+designs/*.jpg
+designs/*.webp
 node_modules
 .wrangler/
+
+# Claude Code per-agent scratch worktrees
+.claude/worktrees/
