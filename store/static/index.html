@@ -134,6 +134,24 @@ nav.scrolled{background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);
 .nav-tab[data-b=muon].active{border-color:var(--w);background:rgba(255,255,255,0.04)}
 .nav-tab[data-b=mugen].active{border-color:var(--r);background:rgba(200,54,44,0.08)}
 .nav-tab[data-b=nouns].active{border-color:#e6c449;background:rgba(230,196,73,0.07)}
+
+/* Floating sticky shop CTA — visible while scrolled past the hero CTA.
+   "next MUGEN drop in 23m" + 1-tap → showSection('mugen'). */
+#floating-shop{position:fixed;right:18px;bottom:18px;z-index:90;
+  background:var(--w);color:var(--k);padding:12px 18px;font-family:inherit;
+  font-size:10px;letter-spacing:0.28em;text-transform:uppercase;font-weight:700;
+  border:0;cursor:pointer;border-radius:2px;display:none;align-items:center;gap:10px;
+  box-shadow:0 8px 24px rgba(0,0,0,0.5);transition:transform 0.2s, opacity 0.2s;
+  font-variant-numeric:tabular-nums}
+#floating-shop:hover{transform:translateY(-2px)}
+#floating-shop .price{color:var(--r);font-weight:700;letter-spacing:0.18em}
+#floating-shop .timer{font-size:9px;opacity:0.6;letter-spacing:0.1em;text-transform:none;font-weight:500}
+#floating-shop.visible{display:inline-flex;animation:pop-in 0.45s ease-out}
+@keyframes pop-in{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+@media (max-width: 600px){
+  #floating-shop{right:10px;bottom:10px;padding:11px 14px;font-size:9px;gap:8px}
+  #floating-shop .timer{font-size:8px}
+}
 /* NOUNS collab styles */
 .nouns-wrap{background:var(--k);overflow:hidden}
 .nouns-cinematic{position:relative;min-height:100vh;display:flex;flex-direction:column;
@@ -340,6 +358,12 @@ nav.scrolled{background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);
 .card-badge{position:absolute;top:14px;left:14px;font-size:7px;letter-spacing:0.2em;
   text-transform:uppercase;padding:4px 10px;background:var(--k);opacity:0.9}
 .card-badge.sold-out{background:rgba(0,0,0,0.7);opacity:0.6}
+.card-price-tag{position:absolute;bottom:14px;left:14px;background:rgba(0,0,0,0.6);
+  backdrop-filter:blur(6px);padding:7px 11px;font-size:11px;letter-spacing:0.04em;
+  font-variant-numeric:tabular-nums;line-height:1.4;font-weight:500;border-radius:2px;
+  display:flex;flex-direction:column;gap:1px;pointer-events:none}
+.card-price-tag .next{font-size:9px;opacity:0.7;letter-spacing:0.06em;font-weight:400;color:#e6c449}
+.card.sold-out-card .card-price-tag{opacity:0.55}
 
 /* MUON sound upload */
 .muon-upload{margin:24px 0;padding:24px;border:1px solid rgba(255,255,255,0.06);
@@ -498,6 +522,12 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
 <script src="/exit-funnel.js" defer></script>
 </head>
 <body>
+
+<!-- FLOATING STICKY SHOP CTA — visible after hero scrolls off -->
+<button id="floating-shop" type="button" aria-label="MUGEN を買う — 次のドロップまでのカウントダウン" onclick="showSection('mugen')">
+  <span class="price">MUGEN ¥5K〜</span>
+  <span class="timer" id="floating-shop-timer">next drop —</span>
+</button>
 
 <!-- TICKER -->
 <div id="ticker">
@@ -761,6 +791,12 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- Honesty sales ticker (last 7d) — hides itself if 0 to avoid fake-y proof. -->
+  <div id="mugen-sales-ticker" style="display:none;margin:24px 0 0;padding:14px 18px;border:1px solid rgba(230,196,73,0.25);background:rgba(230,196,73,0.06);font-size:12px;letter-spacing:0.05em;line-height:1.7;color:#e6c449">
+    <span id="mugen-sales-ticker-text"></span>
+    <span style="opacity:0.55;font-size:10.5px;margin-left:6px">— <a href="/transparency" style="color:inherit;text-decoration:underline">数字, public</a></span>
   </div>
 
   <div class="fragment-banner">
@@ -1220,6 +1256,10 @@ function makeCard(p){
   // Use data-src so IntersectionObserver can swap into src when the card
   // approaches the viewport. tiny 1x1 SVG placeholder keeps layout stable.
   const placeholderSvg = "data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 4'%3E%3C/svg%3E";
+  const nextDelta = Math.max(250, Math.round(p.price_jpy * 0.05));
+  const priceTag = soldOut
+    ? `<div class="card-price-tag"><div>SOLD OUT</div></div>`
+    : `<div class="card-price-tag"><div>¥${p.price_jpy.toLocaleString()}</div><div class="next">next buyer +¥${nextDelta.toLocaleString()}</div></div>`;
   return `
   <div class="card${soldOut?' sold-out-card':''}" data-pid="${p.id}">
     ${p.mockup_url
@@ -1227,10 +1267,11 @@ function makeCard(p){
           onerror="this.onerror=null;this.src='/og.jpg';this.style.opacity='0.45';this.style.filter='grayscale(0.4)'">`
       : `<div class="card-placeholder"><div class="card-placeholder-bar"></div><div class="card-placeholder-label">AI GENERATING...</div></div>`}
     ${badge}
+    ${priceTag}
     <div class="card-overlay">
       <div class="card-name">${p.name}</div>
       <div class="card-price">${soldOut?'—':('¥'+p.price_jpy.toLocaleString())}</div>
-      <div class="card-stock">${soldOut?(p.sold_out_at?'SOLD OUT · '+fmtSoldOutTime(p.sold_out_at):'SOLD OUT'):(rem+'/'+p.inventory+' remaining · 次の購入で +¥'+Math.max(250,Math.round(p.price_jpy*0.05)))}</div>
+      <div class="card-stock">${soldOut?(p.sold_out_at?'SOLD OUT · '+fmtSoldOutTime(p.sold_out_at):'SOLD OUT'):(rem+'/'+p.inventory+' remaining · 早く買うほど安い')}</div>
       ${soldOut?'':'<div class="card-buy">Buy now ↓</div>'}
     </div>
   </div>`;
@@ -1317,6 +1358,62 @@ function tickGeneratingTimers(){
   });
 }
 setInterval(tickGeneratingTimers, 1000);
+
+// 7d honesty ticker: "X 人が直近 7 日で買いました". Hidden if 0 — no fake numbers.
+(async () => {
+  try {
+    const r = await fetch('/api/transparency', { cache: 'no-store' });
+    if (!r.ok) return;
+    const d = await r.json();
+    const n7 = d?.external?.purchases_7d || 0;
+    const cust = d?.external?.distinct_customers || 0;
+    const el = document.getElementById('mugen-sales-ticker');
+    const txt = document.getElementById('mugen-sales-ticker-text');
+    if (!el || !txt) return;
+    if (n7 > 0) {
+      txt.innerHTML = `直近 7 日で <strong>${n7}</strong> 着が買われました (累計 ${cust} 名のお客様)`;
+      el.style.display = 'block';
+    } else if (cust > 0) {
+      // Show lifetime fallback so the section isn't empty when 7d=0.
+      txt.innerHTML = `累計 <strong>${cust}</strong> 名のお客様が MU を購入 (yuki の dogfood は除外)`;
+      el.style.display = 'block';
+    }
+  } catch (_) {}
+})();
+
+// Floating sticky shop CTA — visible after the hero CTA scrolls off-screen.
+// Updates the next-drop countdown every second.
+(function(){
+  const btn = document.getElementById('floating-shop');
+  const tEl = document.getElementById('floating-shop-timer');
+  if (!btn || !tEl) return;
+  function updateTimer(){
+    const now = new Date();
+    const next = new Date(now);
+    next.setMinutes(0,0,0);
+    next.setHours(next.getHours()+1);
+    const diff = next - now;
+    if (diff <= 0) { tEl.textContent = 'now'; return; }
+    const m = Math.floor(diff/60000);
+    const s = Math.floor((diff%60000)/1000);
+    tEl.textContent = `next drop ${m}m ${String(s).padStart(2,'0')}s`;
+  }
+  function updateVisibility(){
+    // Show after user has scrolled past 60vh, hide while on hero section in SPA mode.
+    const heroSection = document.getElementById('section-hero');
+    const onHero = heroSection && heroSection.style.display !== 'none';
+    const scrolled = window.scrollY > window.innerHeight * 0.6;
+    btn.classList.toggle('visible', scrolled || !onHero);
+  }
+  updateTimer(); updateVisibility();
+  setInterval(updateTimer, 1000);
+  window.addEventListener('scroll', updateVisibility, { passive:true });
+  // Re-check after section transitions
+  const origShow = window.showSection;
+  if (typeof origShow === 'function') {
+    window.showSection = function(name, push){ origShow(name, push); setTimeout(updateVisibility, 50); };
+  }
+})();
 
 // Event delegation for card clicks
 document.addEventListener('click', e => {

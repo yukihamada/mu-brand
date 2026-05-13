@@ -11222,6 +11222,20 @@ fn public_transparency_inner(conn: &rusqlite::Connection) -> serde_json::Value {
          WHERE session_id LIKE 'cs_live_%' AND email NOT IN (?, ?)",
         params![yuki_emails[0], yuki_emails[1]], |r| r.get(0),
     ).unwrap_or(0);
+    // 7-day window for the "X people bought recently" honesty ticker.
+    // mu_purchases.created_at can be unix seconds OR ISO 8601; CAST handles
+    // numeric strings, and strftime('%s', ts) handles ISO. We use the
+    // CAST-as-int variant (matches existing queries on created_at).
+    let external_purchases_7d: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM mu_purchases
+         WHERE session_id LIKE 'cs_live_%' AND email NOT IN (?, ?)
+           AND (
+             (created_at GLOB '[0-9]*' AND CAST(created_at AS INTEGER) > strftime('%s','now')-7*86400)
+             OR
+             (created_at NOT GLOB '[0-9]*' AND created_at > datetime('now', '-7 days'))
+           )",
+        params![yuki_emails[0], yuki_emails[1]], |r| r.get(0),
+    ).unwrap_or(0);
     let you_subscribers_total: i64 = conn.query_row(
         "SELECT COUNT(*) FROM you_users WHERE unsubscribed_at IS NULL",
         [], |r| r.get(0),
@@ -11318,6 +11332,7 @@ fn public_transparency_inner(conn: &rusqlite::Connection) -> serde_json::Value {
         // 「自分以外のお客様に届いた」純粋な数字。市場検証の正直な指標。
         "external": {
             "purchases":          external_purchases,
+            "purchases_7d":       external_purchases_7d,
             "distinct_customers": external_distinct_customers,
             "revenue_jpy":        external_revenue_jpy,
             "note": "Stripe live + email が yuki 以外。dogfood 除外。",
