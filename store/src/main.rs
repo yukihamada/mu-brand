@@ -6071,7 +6071,22 @@ async fn create_printful_order(key: String, db: Db, product_id: i64, session: se
         .bearer_auth(&key).json(&order).send().await;
     match resp {
         Ok(r) if r.status().is_success() => {
-            eprintln!("Printful order created for product {}", product_id);
+            // Store printful_order_id on the matching mu_purchases row so
+            // purchase_celebrate agent can poll Printful for state transitions.
+            let body: serde_json::Value = r.json().await.unwrap_or_default();
+            let pf_id = body["result"]["id"].as_i64()
+                .map(|n| n.to_string())
+                .or_else(|| body["result"]["id"].as_str().map(String::from))
+                .unwrap_or_default();
+            if !pf_id.is_empty() && !session_id.is_empty() {
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "UPDATE mu_purchases SET printful_order_id=?, last_printful_status='draft', last_status_at=?
+                     WHERE session_id=? AND product_id=?",
+                    params![pf_id, chrono_now(), session_id, product_id],
+                );
+            }
+            eprintln!("Printful order created for product {} → pf_id={}", product_id, pf_id);
         }
         Ok(r) => {
             let status = r.status();
@@ -23140,6 +23155,14 @@ async fn main() {
         // Thank-you outreach to real buyers (cs_live_*). Idempotent.
         "ALTER TABLE mu_purchases ADD COLUMN thank_you_sent_at TEXT",
         "ALTER TABLE mu_purchases ADD COLUMN thank_you_coupon TEXT",
+        // Lifecycle tracking for purchase_celebrate agent (2026-05-13):
+        // Printful order id + last status snapshot. Updated by
+        // create_printful_order() and the purchase_celebrate agent's
+        // status-polling loop. Each state transition (purchase / production /
+        // shipped / delivered) fires a unique celebration tweet + design seed.
+        "ALTER TABLE mu_purchases ADD COLUMN printful_order_id TEXT",
+        "ALTER TABLE mu_purchases ADD COLUMN last_printful_status TEXT",
+        "ALTER TABLE mu_purchases ADD COLUMN last_status_at TEXT",
         // X (Twitter) auto-post — set when twitter_post.py succeeds.
         "ALTER TABLE products ADD COLUMN x_posted_at TEXT",
         "ALTER TABLE products ADD COLUMN x_tweet_id TEXT",
@@ -31204,17 +31227,204 @@ async fn agent_purchase_celebrate(db: Db) -> Result<AgentReport, String> {
         let conn = db.lock().unwrap();
         cv_set(&conn, "last_celebrated_purchase_id", &max_id.to_string(), "purchase_celebrate");
     }
+
+    // ── 2. Lifecycle transitions (production / shipped / delivered) ──
+    // Poll Printful for all mu_purchases that have printful_order_id and
+    // are not yet 'fulfilled'. Detect state changes vs last_printful_status,
+    // fire a celebration tweet per transition (kind = production_started /
+    // shipped / delivered), and update last_printful_status.
+    let printful_key = env::var("PRINTFUL_API_KEY").unwrap_or_default();
+    let mut lifecycle_posted = 0i64;
+    if !printful_key.is_empty() {
+        let opens: Vec<(i64, String, String, i64, String, String)> = {
+            let conn = db.lock().unwrap();
+            let mut stmt = match conn.prepare(
+                "SELECT id, COALESCE(email,''), brand, drop_num,
+                        COALESCE(printful_order_id,''), COALESCE(last_printful_status,'')
+                 FROM mu_purchases
+                 WHERE printful_order_id IS NOT NULL AND length(printful_order_id) > 0
+                   AND (last_printful_status IS NULL
+                        OR last_printful_status NOT IN ('fulfilled','delivered','canceled'))
+                   AND email NOT IN (?,?)
+                 ORDER BY id DESC LIMIT 20"
+            ) { Ok(s) => s, Err(_) => return Ok(AgentReport {
+                observations: serde_json::json!({"new_purchases": new_purchases.len(), "tweets_queued": posted}),
+                decisions, actions, summary: format!("purchase_celebrate (no lifecycle): {} purchases", new_purchases.len()),
+                notable: posted > 0,
+            }) };
+            stmt.query_map(params![yuki_a, yuki_b], |r| Ok((
+                r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?,
+            ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+        };
+        for (pid, _email, brand, drop_num, pf_id, prev_status) in &opens {
+            let url = format!("https://api.printful.com/orders/{}", pf_id);
+            let r = match reqwest::Client::new().get(&url).bearer_auth(&printful_key).send().await {
+                Ok(r) if r.status().is_success() => r,
+                _ => continue,
+            };
+            let j: serde_json::Value = match r.json().await { Ok(v) => v, _ => continue };
+            let pf_status = j["result"]["status"].as_str().unwrap_or("").to_string();
+            if pf_status == *prev_status || pf_status.is_empty() { continue; }
+            // Map Printful status → our lifecycle kind.
+            let kind: Option<&str> = match pf_status.as_str() {
+                "inprocess" | "in_production" | "pending"      => Some("production_started"),
+                "fulfilled" | "shipped"                         => Some("shipped"),
+                "delivered"                                     => Some("delivered"),
+                _ => None,
+            };
+            let Some(kind) = kind else {
+                // Still update the recorded status even if we don't celebrate.
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "UPDATE mu_purchases SET last_printful_status=?, last_status_at=? WHERE id=?",
+                    params![pf_status, chrono_now(), pid],
+                );
+                continue;
+            };
+            let parent_seed = {
+                let conn = db.lock().unwrap();
+                cv_get(&conn, "next_mugen_seed_prompt", "")
+            };
+            let parent_opt = if parent_seed.is_empty() { None } else { Some(parent_seed.as_str()) };
+            let (tweet, seed) = match generate_lifecycle_celebration(
+                &key, kind, brand, *drop_num, &pf_status, parent_opt, &db,
+            ).await {
+                Ok(v) => v,
+                Err(e) => {
+                    decisions.push(serde_json::json!({"type":"lifecycle_err","kind":kind,"purchase_id":pid,"error":e}));
+                    continue;
+                }
+            };
+            {
+                let conn = db.lock().unwrap();
+                let qid = enqueue_sns_post(&conn, "x", &format!("celebrate_{}", kind), None, None, &tweet, None);
+                cv_set(&conn, "next_mugen_seed_prompt", &seed, &format!("celebrate_{} purchase_id={}", kind, pid));
+                let _ = conn.execute(
+                    "UPDATE mu_purchases SET last_printful_status=?, last_status_at=? WHERE id=?",
+                    params![pf_status, chrono_now(), pid],
+                );
+                actions.push(serde_json::json!({
+                    "purchase_id": pid, "kind": kind, "pf_status": pf_status,
+                    "queue_id": qid, "tweet_chars": tweet.chars().count(),
+                }));
+            }
+            lifecycle_posted += 1;
+        }
+    }
+    let total_posted = posted + lifecycle_posted;
     Ok(AgentReport {
         observations: serde_json::json!({
-            "new_purchases": new_purchases.len(), "tweets_queued": posted,
+            "new_purchases": new_purchases.len(),
+            "purchase_tweets": posted,
+            "lifecycle_tweets": lifecycle_posted,
             "last_celebrated_id": max_id,
-            "next_mugen_seed_set": posted > 0,
         }),
         decisions,
         actions,
-        summary: format!("purchase_celebrate: {} new external purchases → {} tweets queued + seed updated", new_purchases.len(), posted),
-        notable: posted > 0,
+        summary: format!(
+            "purchase_celebrate: {} purchase + {} lifecycle tweets queued ({}+{} events)",
+            posted, lifecycle_posted, new_purchases.len(), lifecycle_posted,
+        ),
+        notable: total_posted > 0,
     })
+}
+
+/// Lifecycle-aware celebration. `kind` ∈ {production_started, shipped, delivered}.
+/// `parent_seed` is the previous design's seed prompt — included so each new
+/// celebration design RIFFS on the original instead of being unrelated. ふぁ
+/// ファンループ: 元のデザインがいろんな場面で派生する。
+async fn generate_lifecycle_celebration(
+    gemini_key: &str, kind: &str, brand: &str, drop_num: i64,
+    pf_status: &str, parent_seed: Option<&str>, db: &Db,
+) -> Result<(String, String), String> {
+    // Avoid recent celebrations of the same lifecycle kind.
+    let recent: Vec<String> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT text FROM sns_post_queue
+             WHERE network='x' AND trigger_kind = ?
+             ORDER BY created_at DESC LIMIT 4"
+        ) { Ok(s) => s, Err(_) => return Err("db prep".into()) };
+        stmt.query_map(params![format!("celebrate_{}", kind)], |r| r.get::<_,String>(0))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    let avoid_block = if recent.is_empty() { "(初回)".into() }
+        else { recent.iter().enumerate().map(|(i,t)| format!("{}: {}", i+1, t.chars().take(120).collect::<String>())).collect::<Vec<_>>().join("\n") };
+    let brand_url = match brand {
+        "mugen" => "wearmu.com/mugen", "muon" => "wearmu.com/muon",
+        "ma" => "wearmu.com/ma", "you" => "wearmu.com/you",
+        _ => "wearmu.com",
+    };
+    let lifecycle_jp = match kind {
+        "production_started" => "生産開始",
+        "shipped"            => "発送",
+        "delivered"          => "到着",
+        _                    => kind,
+    };
+    let humor_angle = match kind {
+        "production_started" => "プリンタが温まった瞬間 / インクが布に乗る前の静けさ / Printful の工場で何かが始まる",
+        "shipped"            => "段ボールが travel する / 弟子屈から飛び立つ / トラックが知らない誰かの街へ",
+        "delivered"          => "玄関のチャイム / クローゼットに 1 着追加 / 18°C の朝の温度が誰かの肩に着地",
+        _                    => "",
+    };
+    let parent_hint = match parent_seed {
+        Some(s) if !s.is_empty() => format!("\n# 元のデザインの seed (riff してね、無視せず)\n{}", s),
+        _ => String::new(),
+    };
+    let prompt = format!(r#"あなたは MU (北海道弟子屈町、無人 AI ファッションブランド) の SNS 担当 AI です。
+{brand} #{drop_num} の lifecycle に変化: 「{lifecycle_jp}」 (Printful 状態: {pf_status})。
+このイベントを X 投稿します。同時に次の MUGEN ドロップの design_seed も提案します。
+
+# 場面の手触り
+{humor_angle}
+
+{parent_hint}
+
+# tweet 必須条件
+- 240 文字以内
+- 末尾に {brand_url}
+- ! は最大 1 個。🎉/🔥/CAPS 禁止。感謝連呼禁止。
+- humor 必須: 短い ironic / 観察的 / 自虐的
+- 「{lifecycle_jp}」の場面を fresh に描写、定型句なし
+- 次の人が「自分も買いたい」と思える FOMO 要素
+
+# avoid (直近の同 kind ツイート)
+{avoid_block}
+
+# 出力フォーマット
+JSON のみ:
+{{
+  "tweet": "<上記条件を満たす日本語ツイート>",
+  "design_seed": "<次 MUGEN T シャツの英語 prompt 30-80 字。元の seed を riff or 進化させる>"
+}}"#,
+        brand=brand, drop_num=drop_num, lifecycle_jp=lifecycle_jp, pf_status=pf_status,
+        humor_angle=humor_angle, parent_hint=parent_hint, brand_url=brand_url, avoid_block=avoid_block,
+    );
+    let req = serde_json::json!({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0.95, "maxOutputTokens": 8000,
+            "responseMimeType": "application/json",
+        },
+    });
+    let url = format!("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={}", gemini_key);
+    let resp = reqwest::Client::new().post(&url).json(&req).send().await
+        .map_err(|e| format!("gemini http: {e}"))?;
+    if !resp.status().is_success() {
+        let s = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("gemini {}: {}", s, &body[..body.len().min(200)]));
+    }
+    let body: serde_json::Value = resp.json().await.map_err(|e| format!("gemini json: {e}"))?;
+    let text = body["candidates"][0]["content"]["parts"][0]["text"]
+        .as_str().ok_or("no text")?.trim().to_string();
+    let parsed: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("parse: {e}"))?;
+    let tweet = parsed["tweet"].as_str().ok_or("missing tweet")?.trim().to_string();
+    let seed  = parsed["design_seed"].as_str().ok_or("missing design_seed")?.trim().to_string();
+    if tweet.is_empty() || tweet.chars().count() > 280 { return Err(format!("tweet len {}", tweet.chars().count())); }
+    if seed.is_empty() || seed.len() > 400 { return Err(format!("seed len {}", seed.len())); }
+    Ok((tweet, seed))
 }
 
 /// Gemini Pro で celebration tweet + 次 MUGEN ドロップ用 design_seed を生成。
