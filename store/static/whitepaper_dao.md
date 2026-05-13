@@ -400,3 +400,6 @@ GitHub: <https://github.com/yukihamada/mu-brand>
 ---
 
 *This whitepaper is itself part of the protocol surface. It lives at `store/static/whitepaper_dao.md` in the repo, is rendered at `/dao/whitepaper`, and any change is a git commit subject to the same review as code.*
+
+<!-- ci-retrigger 2026-05-13: ensure deploy fires for 73567cb's Phase 2.5 changes -->
+
