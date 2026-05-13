@@ -1911,6 +1911,248 @@ async fn collab_page() -> impl IntoResponse {
     axum::response::Html(body)
 }
 
+/// GET /itto/:serial — public page for one calf. Shows farm / birthdate /
+/// photos / status / per-tier sold counts. Pulled by buyers from the
+/// success page after checkout (deep-linkable).
+async fn itto_serial_page(
+    State(db): State<Db>,
+    axum::extract::Path(serial): axum::extract::Path<String>,
+) -> Response {
+    let serial = serial.trim().chars().take(20).collect::<String>();
+    if serial.is_empty() || !serial.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return (StatusCode::NOT_FOUND, "calf not found").into_response();
+    }
+    let calf: Option<(String, Option<String>, Option<String>, Option<String>,
+                       Option<i64>, Option<String>, Option<String>, String, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT serial, birthdate, death_date, farm, weight_g,
+                    photos_json, intro_md, status, event_date
+             FROM itto_calves WHERE serial=?",
+            params![serial],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?,
+                    r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?)),
+        ).ok()
+    };
+    let Some((serial, birthdate, death_date, farm, weight_g, photos_json, intro_md, status, event_date)) = calf else {
+        return (StatusCode::NOT_FOUND, "calf not found").into_response();
+    };
+
+    // Per-tier sold counts.
+    let tiers: Vec<(String, i64)> = {
+        let conn = db.lock().unwrap();
+        ITTO_VALID_TYPES.iter().map(|t| {
+            let sold: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM itto_seats WHERE serial=? AND seat_type=?",
+                params![serial, t], |r| r.get(0),
+            ).unwrap_or(0);
+            (t.to_string(), sold)
+        }).collect()
+    };
+
+    let photos: Vec<serde_json::Value> = photos_json.as_deref()
+        .and_then(|s| serde_json::from_str::<Vec<serde_json::Value>>(s).ok())
+        .unwrap_or_default();
+
+    let bd = birthdate.as_deref().unwrap_or("—");
+    let dd = death_date.as_deref().unwrap_or("—");
+    let farm_s = farm.as_deref().unwrap_or("(調達確定後に公開)");
+    let weight_s = weight_g.map(|w| format!("{} g (推定総可食量)", w)).unwrap_or_else(|| "—".into());
+    let intro_html = intro_md.as_deref()
+        .map(md_to_html_simple)
+        .unwrap_or_else(|| "<p>このページは調達確定後、牛のデータが揃い次第更新されていきます。</p>".into());
+
+    let mut photos_html = String::new();
+    if photos.is_empty() {
+        photos_html.push_str(r#"<div style="color:#666;font-size:13px;padding:32px;text-align:center;border:1px dashed #1f1f1f">写真は調達確定後に追加されます。</div>"#);
+    } else {
+        photos_html.push_str(r#"<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">"#);
+        for p in &photos {
+            let url = p["url"].as_str().unwrap_or("");
+            let cap = p["caption"].as_str().unwrap_or("");
+            let dt  = p["taken_at"].as_str().unwrap_or("");
+            if url.is_empty() { continue; }
+            photos_html.push_str(&format!(
+                r#"<figure style="margin:0"><img src="{}" alt="{}" style="width:100%;display:block;border:1px solid #1a1a1a"><figcaption style="color:#888;font-size:11.5px;padding:6px 0 0">{} {}</figcaption></figure>"#,
+                html_attr_escape(url), html_attr_escape(cap),
+                html_escape(cap), html_escape(dt),
+            ));
+        }
+        photos_html.push_str("</div>");
+    }
+
+    let mut tier_html = String::new();
+    for (t, sold) in &tiers {
+        let remaining = ITTO_SEATS_PER_TIER.saturating_sub(*sold);
+        tier_html.push_str(&format!(
+            r#"<div style="background:#0d0d0d;border:1px solid #1a1a1a;padding:18px;text-align:center"><div style="color:#e6c449;font-size:22px;font-weight:300">{}</div><div style="color:#888;font-size:11.5px;letter-spacing:0.16em;text-transform:uppercase;margin-top:6px">{}-heavy</div><div style="font-size:13px;color:#bbb;margin-top:10px">残 {} / 7</div></div>"#,
+            sold, html_escape(t), remaining,
+        ));
+    }
+
+    let event_s = event_date.as_deref().unwrap_or("調達確定後に決定");
+    let status_label = match status.as_str() {
+        "planned"   => "計画中",
+        "sourced"   => "調達確定",
+        "delivered" => "到着済",
+        "completed" => "終了",
+        _           => &status,
+    };
+
+    let html = format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>一頭 #{serial} — MU × 焼肉古今</title>
+<meta name="description" content="一頭 ittō #{serial} の個別ページ。誕生日、牧場、写真、進行ステータスを全公開。">
+<meta property="og:title" content="一頭 #{serial}">
+<meta property="og:description" content="ittō calf #{serial} — その牛のデータを全公開。">
+<meta property="og:image" content="https://wearmu.com/static/itto/hero_calf.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@wearMUcom">
+<link rel="canonical" href="https://wearmu.com/itto/{serial}">
+<style>
+:root{{--bg:#070707;--bg-2:#0d0d0d;--fg:#F5F5F0;--mute:rgba(245,245,240,0.62);--line:rgba(255,255,255,0.10);--y:#e6c449}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue','Hiragino Mincho ProN','Yu Mincho',Arial,sans-serif;line-height:1.85;font-feature-settings:"palt"}}
+.wrap{{max-width:920px;margin:0 auto;padding:60px 28px 80px}}
+nav{{font-size:11px;letter-spacing:0.2em;text-transform:uppercase;margin-bottom:32px;color:var(--mute)}}
+nav a{{color:var(--y);text-decoration:none;margin-right:14px}}
+h1{{font-size:clamp(40px,7vw,80px);font-weight:200;letter-spacing:0.03em;margin:0 0 14px;font-family:'Hiragino Mincho ProN','Yu Mincho',serif}}
+.serial{{color:var(--y);font-size:12px;letter-spacing:0.36em;text-transform:uppercase;margin-bottom:18px;font-family:'Helvetica Neue',Arial,sans-serif}}
+.status{{display:inline-block;padding:5px 14px;background:rgba(230,196,73,0.1);border:1px solid rgba(230,196,73,0.3);color:var(--y);font-size:11px;letter-spacing:0.22em;text-transform:uppercase;margin-bottom:32px}}
+.fact{{display:grid;grid-template-columns:140px 1fr;gap:12px 24px;padding:24px 0;border-top:1px solid var(--line)}}
+.fact dt{{color:var(--mute);font-size:11.5px;letter-spacing:0.22em;text-transform:uppercase}}
+.fact dd{{font-size:15px;color:var(--fg)}}
+section{{margin:48px 0}}
+section h2{{font-size:18px;font-weight:400;color:var(--y);letter-spacing:0.06em;margin-bottom:20px;font-family:'Hiragino Mincho ProN',Arial,sans-serif}}
+.tiers{{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}}
+@media (max-width:580px){{.tiers{{grid-template-columns:repeat(2,1fr)}}}}
+.intro p{{color:var(--mute);margin-bottom:14px;font-size:14.5px;line-height:2}}
+footer{{margin-top:60px;padding-top:24px;border-top:1px solid var(--line);color:var(--mute);font-size:11.5px;letter-spacing:0.06em;line-height:2}}
+footer a{{color:var(--y)}}
+</style></head><body><div class="wrap">
+<nav><a href="/itto">← /itto (募集ページ)</a> <a href="/agents">/agents</a></nav>
+<div class="serial">ITTŌ #{serial}</div>
+<h1>一頭</h1>
+<div class="status">status: {status}</div>
+<div class="intro">{intro}</div>
+<dl class="fact">
+  <dt>誕生日</dt><dd>{bd}</dd>
+  <dt>屠畜予定 / 実施</dt><dd>{dd}</dd>
+  <dt>牧場</dt><dd>{farm}</dd>
+  <dt>推定可食量</dt><dd>{weight}</dd>
+  <dt>会期</dt><dd>{event}</dd>
+</dl>
+<section>
+  <h2>席の状況 (現在)</h2>
+  <div class="tiers">{tier_html}</div>
+</section>
+<section>
+  <h2>写真</h2>
+  {photos_html}
+</section>
+<footer>
+  全部 open: <a href="https://x.com/wearMUcom">@wearMUcom</a> · <a href="/stats">live stats</a> · <a href="/agents">/agents</a> · <a href="/itto">/itto (募集)</a><br>
+  最終的な日程・献立は <a href="/blog">/blog</a> で告知。問合せ <a href="mailto:info@enablerdao.com">info@enablerdao.com</a>
+</footer>
+</div></body></html>"##,
+        serial = html_escape(&serial),
+        status = html_escape(status_label),
+        intro = intro_html,
+        bd = html_escape(bd),
+        dd = html_escape(dd),
+        farm = html_escape(farm_s),
+        weight = html_escape(&weight_s),
+        event = html_escape(event_s),
+        tier_html = tier_html,
+        photos_html = photos_html,
+    );
+    axum::response::Html(html).into_response()
+}
+
+#[derive(Deserialize)]
+struct AdminIttoCalfBody {
+    admin_token: String,
+    serial: String,
+    #[serde(default)] birthdate: Option<String>,
+    #[serde(default)] death_date: Option<String>,
+    #[serde(default)] farm: Option<String>,
+    #[serde(default)] weight_g: Option<i64>,
+    #[serde(default)] intro_md: Option<String>,
+    #[serde(default)] status: Option<String>,
+    #[serde(default)] event_date: Option<String>,
+    /// Optional photo to append. If set, this object is JSON-appended into
+    /// the existing photos_json array.
+    #[serde(default)] add_photo_url: Option<String>,
+    #[serde(default)] add_photo_caption: Option<String>,
+    #[serde(default)] add_photo_taken_at: Option<String>,
+}
+
+/// POST /admin/itto/calf — update calf metadata or append a photo.
+async fn admin_itto_calf_update(
+    State(db): State<Db>,
+    Json(body): Json<AdminIttoCalfBody>,
+) -> Response {
+    if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+    let serial = body.serial.trim().chars().take(20).collect::<String>();
+    if serial.is_empty() || !serial.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return (StatusCode::BAD_REQUEST, "bad serial").into_response();
+    }
+
+    let conn = db.lock().unwrap();
+    // Ensure row exists.
+    let _ = conn.execute(
+        "INSERT OR IGNORE INTO itto_calves (serial, status, created_at, updated_at)
+         VALUES (?, 'planned', ?, ?)",
+        params![serial, chrono_now(), chrono_now()],
+    );
+
+    // Photo append: read existing JSON, push, write back.
+    if let Some(url) = body.add_photo_url.as_deref().filter(|s| !s.trim().is_empty()) {
+        let existing: String = conn.query_row(
+            "SELECT COALESCE(photos_json, '[]') FROM itto_calves WHERE serial=?",
+            params![serial], |r| r.get(0),
+        ).unwrap_or_else(|_| "[]".into());
+        let mut arr: Vec<serde_json::Value> = serde_json::from_str(&existing).unwrap_or_default();
+        arr.push(serde_json::json!({
+            "url": url.trim(),
+            "caption": body.add_photo_caption.clone().unwrap_or_default(),
+            "taken_at": body.add_photo_taken_at.clone().unwrap_or_else(|| chrono_now()),
+        }));
+        let new_json = serde_json::to_string(&arr).unwrap_or_else(|_| existing.clone());
+        let _ = conn.execute(
+            "UPDATE itto_calves SET photos_json=?, updated_at=? WHERE serial=?",
+            params![new_json, chrono_now(), serial],
+        );
+    }
+
+    // Scalar field updates (only set if non-empty).
+    let setters: Vec<(&str, Option<String>, Option<i64>)> = vec![
+        ("birthdate",  body.birthdate.clone(),  None),
+        ("death_date", body.death_date.clone(), None),
+        ("farm",       body.farm.clone(),       None),
+        ("intro_md",   body.intro_md.clone(),   None),
+        ("status",     body.status.clone(),     None),
+        ("event_date", body.event_date.clone(), None),
+        ("weight_g",   None,                    body.weight_g),
+    ];
+    for (col, sv, iv) in setters {
+        if let Some(v) = sv {
+            let _ = conn.execute(
+                &format!("UPDATE itto_calves SET {}=?, updated_at=? WHERE serial=?", col),
+                params![v, chrono_now(), serial],
+            );
+        }
+        if let Some(v) = iv {
+            let _ = conn.execute(
+                &format!("UPDATE itto_calves SET {}=?, updated_at=? WHERE serial=?", col),
+                params![v, chrono_now(), serial],
+            );
+        }
+    }
+
+    Json(serde_json::json!({"ok": true, "serial": serial})).into_response()
+}
+
 async fn itto_page() -> impl IntoResponse {
     let body = include_str!("../static/itto.html");
     axum::response::Html(body)
@@ -6319,6 +6561,12 @@ async fn public_agents_page(State(db): State<Db>) -> Response {
             purpose: "tshirt_requests.status='product_ready' に対し、in_reply_to_tweet_id 指定で @author にツイート返信。返信文に @handle + デザイン URL + 24h soft lock の案内。投稿成功で status='replied'、x_tweet_id 記録。",
             model: "(no LLM — template)",
             prompt: "// SELECT * FROM tshirt_requests WHERE status='product_ready' LIMIT 1\n// pid = generated_product_id\n// design = generated_design_url\n// text = '@{handle} you asked, so we made one.\\n→ wearmu.com/products/mugen_reply/{pid}\\n(yours to grab for the next 24h.)'\n// x_post_tweet_v2(text, in_reply_to=tweet_id)\n// UPDATE tshirt_requests status='replied'",
+        },
+        AgentDoc {
+            name: "itto_tshirt_designer", interval: "5 min",
+            purpose: "itto_seats.tshirt_design_url IS NULL の席を 1 件処理。serial / 席タイプ / 座席番号 / 牛の誕生日 / cuts list を seed に Gemini 3 Pro Image で 1/1 デザイン生成、R2 アップロード、DB 更新。",
+            model: "Gemini 3 Pro Image preview",
+            prompt: "// SELECT s.id, s.serial, s.seat_type, s.seat_tier_num, s.buyer_handle,\n//        c.birthdate FROM itto_seats s LEFT JOIN itto_calves c\n//        ON c.serial=s.serial WHERE s.tshirt_design_url IS NULL LIMIT 1\n// cuts = ITTO_TIER_CUTS[seat_type]  // 固定 tier プロファイル\n// prompt = transparent-PNG white-ink T-shirt design seed:\n//   serial / type / cuts list / birthdate, monastic typography\n// img = Gemini 3 Pro Image generate\n// R2 upload → itto_<serial>_<type>_seat<n>.png\n// UPDATE itto_seats SET tshirt_design_url=URL, tshirt_printed_at=NOW",
         },
         AgentDoc {
             name: "self_improvement", interval: "24h",
@@ -30542,6 +30790,23 @@ async fn main() {
         -- number within the tier is auto-assigned (1..7). Front-end queries
         -- /api/itto/availability for remaining-by-tier; checkout endpoint
         -- enforces the 7-per-tier cap at session-creation time.
+        -- /itto/<serial> public page metadata. One row per calf.
+        -- Admin POST /admin/itto/calf updates fields incrementally as the
+        -- calf is sourced → photographed → delivered → consumed.
+        CREATE TABLE IF NOT EXISTS itto_calves (
+            serial      TEXT PRIMARY KEY,
+            birthdate   TEXT,     -- 'YYYY-MM-DD'
+            death_date  TEXT,     -- 'YYYY-MM-DD' (set post-event)
+            farm        TEXT,
+            weight_g    INTEGER,
+            photos_json TEXT,     -- JSON array of photo objects (url / caption / taken_at)
+            intro_md    TEXT,     -- short markdown narrative for the public page
+            status      TEXT NOT NULL DEFAULT 'planned',  -- planned|sourced|delivered|completed
+            event_date  TEXT,     -- the dinner date once fixed
+            created_at  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS itto_seats (
             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
             serial              TEXT    NOT NULL,         -- '0001' = first calf
@@ -30919,6 +31184,14 @@ async fn main() {
         CREATE INDEX IF NOT EXISTS idx_scorecard_agent ON agent_scorecard(agent_name, period_end);
     ").ok();
 
+    // /itto first calf (#0001) — admin can later update fields via /admin/itto/calf.
+    // Must run AFTER the itto_calves CREATE TABLE batch above.
+    conn.execute(
+        "INSERT OR IGNORE INTO itto_calves (serial, status, created_at, updated_at)
+         VALUES (?, 'planned', ?, ?)",
+        params![ITTO_CURRENT_SERIAL, chrono_now(), chrono_now()],
+    ).ok();
+
     // Backfill trial_end_at for pre-existing /you users.
     // created_at is a unix-epoch-seconds string; trial_end_at is the same
     // format so we can compare without parsing each time.
@@ -31221,8 +31494,10 @@ async fn main() {
         .route("/developers", get(developers_page))
         .route("/collab", get(collab_page))
         .route("/itto", get(itto_page))
+        .route("/itto/:serial", get(itto_serial_page))
         .route("/api/itto/availability", get(api_itto_availability))
         .route("/api/itto/checkout", post(api_itto_checkout))
+        .route("/admin/itto/calf", post(admin_itto_calf_update))
         .route("/b2b", get(collab_page))
         .route("/partners", get(collab_page))
         .route("/bounty", get(bounty_page))
@@ -31664,6 +31939,11 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         description: "tshirt_requests.status='product_ready' に対し、@author に X reply を投稿 (デザイン URL 付き)。投稿成功で status='replied'。",
     },
     AgentDef {
+        name: "itto_tshirt_designer",
+        interval_secs: 300, // 5 min — fires shortly after a seat is sold
+        description: "itto_seats.tshirt_design_url IS NULL の席を 1 件、Gemini 3 Pro Image で個別デザイン生成。serial / 席タイプ / 牛の誕生日 / cuts list を seed。R2 にアップロード、DB 更新。",
+    },
+    AgentDef {
         name: "ma_lineage_daily",
         interval_secs: 86_400, // 24h
         description: "MA holder 1 名につき 1 日 1 デザインを Gemini で生成 → ma_lineage。/lineage/<short>?k=… でグリッド閲覧、claim は T1。",
@@ -31717,6 +31997,7 @@ async fn run_agent(name: &str, db: Db) -> Result<AgentReport, String> {
         "watchdog"          => agent_watchdog(db).await,
         "tshirt_factory"    => agent_tshirt_factory(db).await,
         "tshirt_replier"    => agent_tshirt_replier(db).await,
+        "itto_tshirt_designer" => agent_itto_tshirt_designer(db).await,
         "x_followers_sync"  => agent_x_followers_sync(db).await,
         "drop_filler"       => agent_drop_filler(db).await,
         "purchase_celebrate"=> agent_purchase_celebrate(db).await,
@@ -37027,6 +37308,182 @@ async fn agent_mention_responder(db: Db) -> Result<AgentReport, String> {
         decisions, actions,
         summary: format!("mention_responder: {} replied, {} skipped ({} self)", replied, skipped, self_skipped),
         notable: replied > 0,
+    })
+}
+
+// ── agent_itto_tshirt_designer ──────────────────────────────────────────
+// Sold seat → 1/1 T-shirt design auto-generated. Fires every 5 min, picks
+// one row where tshirt_design_url IS NULL, generates a transparent PNG
+// with Gemini 3 Pro Image, uploads to R2, updates the row.
+//
+// Design seed: serial / seat_type / seat_tier_num + the calf birthdate
+// (if known) + the fixed cuts profile for that seat_type. The result is a
+// monastic, brand-true design that varies per seat tier.
+
+fn itto_cuts_for_tier(seat_type: &str) -> &'static str {
+    match seat_type {
+        "序" => "Chateaubriand 45g · Zabuton 40g · Misuji 25g · Sirloin 40g · Tongue 25g · Harami 30g · Tail 50g",
+        "本" => "Sirloin 80g · Rib roast 60g · Top kalbi 50g · Chateaubriand 20g · Zabuton 25g · Tongue 25g · Tail 50g",
+        "続" => "Tongue 60g · Harami 70g · Sagari 30g · Heart 25g · Sirloin 40g · Chateaubriand 20g · Tail 40g",
+        "尽" => "Oxtail 100g · Bone marrow 30g · Bone broth 400ml · Sinew 80g · Tongue 25g · Sirloin 40g",
+        _    => "(unknown tier)",
+    }
+}
+
+async fn agent_itto_tshirt_designer(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut decisions: Vec<serde_json::Value> = Vec::new();
+    let mut actions: Vec<serde_json::Value> = Vec::new();
+
+    let is_dry = dry_run_active("itto_tshirt_designer");
+    obs.insert("dry_run".into(), serde_json::Value::from(is_dry));
+
+    let key = match env::var("GEMINI_API_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => return Ok(AgentReport::idle("GEMINI_API_KEY missing")),
+    };
+
+    // Pick oldest seat without a design.
+    let row: Option<(i64, String, String, i64, String, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT s.id, s.serial, s.seat_type, s.seat_tier_num, s.buyer_email, c.birthdate
+             FROM itto_seats s LEFT JOIN itto_calves c ON c.serial = s.serial
+             WHERE s.tshirt_design_url IS NULL
+             ORDER BY s.id ASC LIMIT 1",
+            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+        ).ok()
+    };
+    let Some((seat_id, serial, seat_type, seat_num, _email, birthdate)) = row else {
+        return Ok(AgentReport::idle("no itto seats awaiting design"));
+    };
+    obs.insert("seat_id".into(), serde_json::Value::from(seat_id));
+    obs.insert("serial".into(), serde_json::Value::from(serial.clone()));
+    obs.insert("seat_type".into(), serde_json::Value::from(seat_type.clone()));
+    obs.insert("seat_tier_num".into(), serde_json::Value::from(seat_num));
+
+    let cuts = itto_cuts_for_tier(&seat_type);
+    let bd = birthdate.as_deref().unwrap_or("TBA");
+    let prompt = format!(
+        "T-shirt graphic design.\n\
+         Subject: a personal certificate for one seat at the MU × kokon ittō dinner.\n\
+         Identifier: ITTŌ #{serial} · seat {num} · {kind}-heavy\n\
+         Calf birthdate: {bd}\n\
+         Cuts received (in grams): {cuts}\n\
+         \n\
+         Constraints:\n\
+         - Output: square 1024x1024 PNG with TRANSPARENT background\n\
+         - White ink only (will be printed on a black Bella+Canvas 3001)\n\
+         - Visual hierarchy: a single bold kanji 「{kanji}」 dominant in the center, sumi-brushwork style.\n\
+         - Below it: a small typography block in monospaced font listing\n\
+           the cuts and grams (use abbreviations, English OK). The block\n\
+           is restrained, ~12pt, centered.\n\
+         - Tiny serial badge near a corner: ITTŌ #{serial} · S{num:02}\n\
+         - Composition occupies ~75% of the canvas, centered\n\
+         - Mood: monastic, post-fashion, like a hand-pressed certificate\n\
+         - No decorative flourish, no animal silhouettes, no flames",
+        serial = serial, num = seat_num, kind = seat_type, bd = bd, cuts = cuts,
+        kanji = seat_type,
+    );
+    obs.insert("prompt_preview".into(), serde_json::Value::from(prompt.chars().take(200).collect::<String>()));
+
+    if is_dry {
+        actions.push(serde_json::json!({"type":"dry_run","seat_id":seat_id}));
+        return Ok(AgentReport {
+            observations: serde_json::Value::Object(obs), decisions, actions,
+            summary: format!("itto_tshirt_designer DRY: would gen seat #{}/{}", serial, seat_id),
+            notable: false,
+        });
+    }
+
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image-preview:generateContent?key={}",
+        key);
+    let body = serde_json::json!({
+        "contents": [{"parts":[{"text": prompt}]}],
+        "generationConfig": {"responseModalities": ["IMAGE","TEXT"]}
+    });
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(150))
+        .build().unwrap_or_else(|_| reqwest::Client::new());
+    let resp = match client.post(&url).json(&body).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            decisions.push(serde_json::json!({"type":"gemini_net","err":e.to_string()}));
+            return Ok(AgentReport {
+                observations: serde_json::Value::Object(obs), decisions, actions,
+                summary: format!("itto_tshirt_designer: gemini net err"), notable: true,
+            });
+        }
+    };
+    if !resp.status().is_success() {
+        let s = resp.status();
+        let t = resp.text().await.unwrap_or_default();
+        decisions.push(serde_json::json!({"type":"gemini_status","status":s.as_u16(),"body":t.chars().take(200).collect::<String>()}));
+        return Ok(AgentReport {
+            observations: serde_json::Value::Object(obs), decisions, actions,
+            summary: format!("itto_tshirt_designer: gemini {}", s), notable: true,
+        });
+    }
+    let j: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(e) => return Ok(AgentReport::idle(&format!("gemini json: {e}"))),
+    };
+    let b64 = j["candidates"][0]["content"]["parts"]
+        .as_array().and_then(|parts| parts.iter().find_map(|p| {
+            p.get("inlineData").or_else(|| p.get("inline_data"))
+                .and_then(|d| d.get("data"))
+                .and_then(|v| v.as_str())
+        }));
+    let Some(b64) = b64 else {
+        return Ok(AgentReport::idle("no inline_data in response"));
+    };
+    use base64::Engine;
+    let bytes = match base64::engine::general_purpose::STANDARD.decode(b64) {
+        Ok(b) => b,
+        Err(e) => return Ok(AgentReport::idle(&format!("b64: {e}"))),
+    };
+    obs.insert("png_bytes".into(), serde_json::Value::from(bytes.len() as i64));
+
+    // Save to R2 (or local fallback).
+    let obj_key = format!("itto_{}_{}_seat{:02}.png", serial, seat_type, seat_num);
+    let stored_url = if let Some(cfg) = r2_config() {
+        match cfg.bucket.put_object_with_content_type(&obj_key, &bytes, "image/png").await {
+            Ok(r) if r.status_code() == 200 => {
+                Some(format!("{}/{}", cfg.public_base.trim_end_matches('/'), obj_key))
+            }
+            _ => None,
+        }
+    } else {
+        let dir = mockups_dir();
+        let _ = tokio::fs::create_dir_all(&dir).await;
+        let path = dir.join(&obj_key);
+        if tokio::fs::write(&path, &bytes).await.is_ok() {
+            Some(format!("https://wearmu.com/mockups/{}", obj_key))
+        } else { None }
+    };
+    let Some(stored) = stored_url else {
+        return Ok(AgentReport::idle("storage failed"));
+    };
+    obs.insert("design_url".into(), serde_json::Value::from(stored.clone()));
+
+    // Update row.
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE itto_seats SET tshirt_design_url=?, tshirt_printed_at=?
+             WHERE id=? AND tshirt_design_url IS NULL",
+            params![stored.clone(), chrono_now(), seat_id],
+        );
+    }
+    actions.push(serde_json::json!({
+        "type":"design_saved","seat_id":seat_id,"serial":serial,
+        "seat_type":seat_type,"seat_num":seat_num,"url":stored,
+    }));
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs), decisions, actions,
+        summary: format!("itto_tshirt_designer: #{}/{} seat{} designed", serial, seat_type, seat_num),
+        notable: true,
     })
 }
 
