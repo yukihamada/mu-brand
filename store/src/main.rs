@@ -15472,6 +15472,177 @@ async fn admin_collab_refresh_mockups(
     })).into_response()
 }
 
+/// POST /api/admin/chronicle/vote/announce?token=…[&dry_run=1][&include_you=1]
+/// Sends the Sibling Chronicle DAO vote announcement to every past
+/// third-party buyer (mu_purchases, cs_live_*, excluding yuki dogfood).
+///
+/// Default mode = dry_run: returns the recipient list + the rendered HTML
+/// without sending anything. Pass dry_run=0 to actually fire emails.
+/// Idempotent: each email is recorded in cv_config so a re-run skips
+/// previously notified addresses (audit + safety against double-send).
+async fn admin_chronicle_vote_announce(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let dry_run = q.get("dry_run").map(|s| s != "0").unwrap_or(true);
+    let include_you = q.get("include_you").map(|s| s == "1").unwrap_or(false);
+
+    let yuki = ("yuki@hamada.tokyo", "mail@yukihamada.jp");
+    let recipients: Vec<(String, i64)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT LOWER(email) AS e, COUNT(*) AS n
+             FROM mu_purchases
+             WHERE session_id LIKE 'cs_live_%'
+               AND LOWER(email) NOT IN (?, ?)
+             GROUP BY e
+             ORDER BY MIN(id) ASC"
+        ) { Ok(s) => s, Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("db: {}", e)).into_response() };
+        let mut buyers: Vec<(String, i64)> = stmt.query_map(params![yuki.0, yuki.1], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, i64>(1)?,
+        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+
+        if include_you {
+            let mut s2 = match conn.prepare(
+                "SELECT LOWER(email) FROM you_users
+                 WHERE unsubscribed_at IS NULL
+                   AND LOWER(email) NOT IN (?, ?)
+                   AND LOWER(email) NOT IN (SELECT LOWER(email) FROM mu_purchases WHERE session_id LIKE 'cs_live_%')"
+            ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db you").into_response() };
+            let you_emails: Vec<String> = s2.query_map(params![yuki.0, yuki.1], |r| r.get::<_, String>(0))
+                .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+            for em in you_emails { buyers.push((em, 0)); }
+        }
+        buyers
+    };
+
+    // Filter out already-notified recipients (idempotency).
+    let recipients: Vec<(String, i64, bool)> = {
+        let conn = db.lock().unwrap();
+        recipients.into_iter().map(|(em, n)| {
+            let key = format!("chronicle_vote_notified:{}", em);
+            let already = cv_get(&conn, &key, "") == "1";
+            (em, n, already)
+        }).collect()
+    };
+
+    let body_template = |email: &str, purchases: i64, is_you_only: bool| -> String {
+        let buyer_id = purchase_pseudonym(email);
+        let lifetime_line = if is_you_only {
+            "あなたは /you 登録者として参加できます。".to_string()
+        } else {
+            format!("あなたはこれまで <strong>{}</strong> 着 MU を購入してくださいました。", purchases)
+        };
+        format!(
+            r#"<div style="font-family:'Helvetica Neue','Hiragino Sans',sans-serif;font-size:14.5px;line-height:1.85;color:#222;max-width:560px;margin:0 auto;padding:32px 24px">
+  <p style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#A67843;opacity:0.85;margin-bottom:16px">MU · Sibling Chronicle · DAO 投票</p>
+  <h1 style="font-size:22px;font-weight:300;letter-spacing:0.02em;line-height:1.4;margin:0 0 18px">同じデザインを着る人たちの「年代記」、入れていいですか?</h1>
+  <p>{lifetime}</p>
+  <p>
+    新しい仕組みを設計しました: 同じデザインを N 着刷る商品 (MUON 等) の N 番目を買うと、シャツに小さな QR + 番号がプリントされます。
+    スキャンすると、これまでの注文日時 + 匿名 ID が表示され、後から買う人もリストに自動で追記されていく。<br>
+    実名・メール・住所は一切載せず、SHA-256 由来の <code style="background:#f6f4ee;color:#A67843;padding:1px 5px">MU-XXXX</code> 形式の匿名 ID のみ。
+  </p>
+  <p style="margin-top:18px">QR を <strong>どこに焼くか</strong> を、過去に MU を着てくださった皆さまの投票で決めます:</p>
+  <ol style="padding-left:20px;margin:0 0 18px">
+    <li style="margin-bottom:8px"><strong>front design に合成</strong> — Printful の placement は 1 つのまま、追加費用 ¥0。デザインの隅に QR が入る trade-off</li>
+    <li style="margin-bottom:8px"><strong>首裏下に専用印刷</strong> — デザインは無傷、Printful 追加配置 +$2/着 (¥300)、margin -15%</li>
+    <li><strong>実装しない</strong> — feature flag OFF のまま</li>
+  </ol>
+  <p style="margin-top:16px">
+    <a href="https://wearmu.com/chronicle-vote" style="display:inline-block;background:#A67843;color:#fff;text-decoration:none;padding:14px 28px;font-size:12px;letter-spacing:0.25em;text-transform:uppercase;font-weight:600;border-radius:2px">投票ページへ →</a>
+  </p>
+  <p style="font-size:12px;color:#666;margin-top:16px">
+    投票方式: メールアドレスに magic link を送り、リンクをクリックで確定。1 人 1 票、24 時間以内に有効。<br>
+    クォーラム = 5 票 + 60% 賛成で<strong>自動デプロイ</strong>。yuki が判断するのではなく、コードと投票結果が判断します。
+  </p>
+  <p style="font-size:11px;color:#999;margin-top:24px;line-height:1.7">
+    あなたの匿名 ID: <code style="background:#f6f4ee;color:#A67843;padding:1px 5px">{buyer_id}</code><br>
+    これは <a href="https://wearmu.com/transparency" style="color:#A67843">/transparency</a> ページに最近の購入として既に表示されている (PII 安全な) ID です。<br>
+    本メールが不要な場合は <a href="mailto:info@wearmu.com" style="color:#A67843">info@wearmu.com</a> までご連絡ください。<br>
+    — yuki (1 human operator) · 28 agents · 株式会社イネブラ (Enabler Inc.)
+  </p>
+</div>"#,
+            lifetime = lifetime_line,
+            buyer_id = buyer_id,
+        )
+    };
+
+    if dry_run {
+        let sample = recipients.first()
+            .map(|(em, n, _)| body_template(em, *n, *n == 0))
+            .unwrap_or_default();
+        return Json(serde_json::json!({
+            "ok": true,
+            "dry_run": true,
+            "total_recipients": recipients.len(),
+            "would_send": recipients.iter().filter(|(_,_,already)| !already).count(),
+            "already_notified": recipients.iter().filter(|(_,_,already)| *already).count(),
+            "recipients": recipients.iter().map(|(em, n, already)| serde_json::json!({
+                "email_masked": mask_email(em),
+                "purchases": n,
+                "already_notified": already,
+            })).collect::<Vec<_>>(),
+            "sample_html": sample,
+            "note": "Pass dry_run=0 to actually send. include_you=1 adds /you signups that haven't bought yet.",
+        })).into_response();
+    }
+
+    // Production send.
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    if resend_key.is_empty() {
+        return (StatusCode::FAILED_DEPENDENCY, "RESEND_API_KEY unset").into_response();
+    }
+    let client = reqwest::Client::new();
+    let mut sent = 0i64;
+    let mut errs: Vec<serde_json::Value> = Vec::new();
+    for (email, purchases, already) in &recipients {
+        if *already { continue; }
+        let body = body_template(email, *purchases, *purchases == 0);
+        let resp = client.post("https://api.resend.com/emails")
+            .bearer_auth(&resend_key)
+            .json(&serde_json::json!({
+                "from": "MU Vote <noreply@wearmu.com>",
+                "to": [email.clone()],
+                "subject": "[MU] 「年代記」を入れていいですか? DAO 投票のお願い",
+                "html": body,
+                "reply_to": "info@wearmu.com",
+            }))
+            .send().await;
+        match resp {
+            Ok(r) if r.status().is_success() => {
+                sent += 1;
+                {
+                    let conn = db.lock().unwrap();
+                    let key = format!("chronicle_vote_notified:{}", email);
+                    cv_set(&conn, &key, "1", "chronicle_vote_announce");
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+            Ok(r) => {
+                let s = r.status();
+                let b = r.text().await.unwrap_or_default();
+                errs.push(serde_json::json!({"email": mask_email(email), "status": s.as_u16(), "body": b.chars().take(200).collect::<String>()}));
+            }
+            Err(e) => {
+                errs.push(serde_json::json!({"email": mask_email(email), "err": e.to_string()}));
+            }
+        }
+    }
+    send_telegram_message(&format!(
+        "📬 chronicle vote announce: sent={} errors={} total_recipients={}",
+        sent, errs.len(), recipients.len()
+    )).await;
+    Json(serde_json::json!({
+        "ok": true,
+        "dry_run": false,
+        "sent": sent,
+        "errors": errs,
+        "total_recipients": recipients.len(),
+    })).into_response()
+}
+
 #[derive(Deserialize)]
 struct AdminTokenOnly { admin_token: String }
 
@@ -27212,6 +27383,7 @@ async fn main() {
         .route("/api/admin/blog_unpublish", post(admin_blog_unpublish))
         .route("/api/admin/funnel/top_paths", get(admin_funnel_top_paths))
         .route("/api/admin/collab/refresh_mockups", post(admin_collab_refresh_mockups))
+        .route("/api/admin/chronicle/vote/announce", post(admin_chronicle_vote_announce))
         .route("/api/admin/blog_update", post(admin_blog_update))
         .route("/api/admin/products_reconcile_sold", post(admin_products_reconcile_sold))
         .route("/api/admin/deactivate_brand", post(admin_deactivate_brand))
