@@ -6892,7 +6892,7 @@ async fn chronicle_short_page(
 <meta name="description" content="このシャツが運ぶ匿名の年代記。同じデザインを着る人たちの注文日時の連続。">
 <meta property="og:title" content="{name} #{pos:03} · MU Chronicle">
 <meta property="og:description" content="同じデザインを着る {prev_n} 人の年代記。">
-<meta property="og:image" content="https://wearmu.com/og.jpg">
+<meta property="og:image" content="https://mockups.wearmu.com/hero.png">
 <meta name="robots" content="noindex">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
@@ -13451,12 +13451,12 @@ async fn public_transparency_page(State(db): State<Db>) -> Html<String> {
 <meta name="description" content="MU の売上・購入・購読・欠番。一切隠さない数字を、毎リクエストで再計算して返します。">
 <meta property="og:title" content="MU Transparency — 数字を全部晒します">
 <meta property="og:description" content="累計売上 ¥{real_rev_s}・第三者購入 {ext_purch_s} 件・MRR ¥{you_mrr_s}。0 人組織のリアル。">
-<meta property="og:image" content="https://wearmu.com/og.jpg">
+<meta property="og:image" content="https://mockups.wearmu.com/hero.png">
 <meta property="og:url" content="https://wearmu.com/transparency">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="MU Transparency">
 <meta name="twitter:description" content="累計売上 ¥{real_rev_s}・第三者購入 {ext_purch_s} 件・MRR ¥{you_mrr_s}">
-<meta name="twitter:image" content="https://wearmu.com/og.jpg">
+<meta name="twitter:image" content="https://mockups.wearmu.com/hero.png">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 <style>
@@ -13826,7 +13826,7 @@ async fn public_transparency_page_en(State(db): State<Db>) -> Html<String> {
 <meta name="description" content="MU's revenue, purchases, subscriptions, missing drops. Every number recomputed on every request. Nothing hidden.">
 <meta property="og:title" content="MU Transparency — every number, public">
 <meta property="og:description" content="Lifetime revenue ¥{real_rev_s} · {ext_purch_s} external purchases · MRR ¥{you_mrr_s}. The reality of a 0-human brand.">
-<meta property="og:image" content="https://wearmu.com/og.jpg">
+<meta property="og:image" content="https://mockups.wearmu.com/hero.png">
 <meta property="og:url" content="https://wearmu.com/en/transparency">
 <meta property="og:locale" content="en_US">
 <meta property="og:locale:alternate" content="ja_JP">
@@ -13836,7 +13836,7 @@ async fn public_transparency_page_en(State(db): State<Db>) -> Html<String> {
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="MU Transparency">
 <meta name="twitter:description" content="Lifetime revenue ¥{real_rev_s} · {ext_purch_s} external purchases · MRR ¥{you_mrr_s}">
-<meta name="twitter:image" content="https://wearmu.com/og.jpg">
+<meta name="twitter:image" content="https://mockups.wearmu.com/hero.png">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 <style>
@@ -14139,7 +14139,7 @@ async fn public_constitution_page() -> Html<String> {
 <meta name="description" content="MU の 4 行 Vision と 20 の運用原則。コードが参照する単一の正典 (machine-readable, include_str! at compile time).">
 <meta property="og:title" content="MU Constitution">
 <meta property="og:description" content="MU の 4 行 Vision と 20 の運用原則。コードが参照する単一の正典。">
-<meta property="og:image" content="https://wearmu.com/og.jpg">
+<meta property="og:image" content="https://mockups.wearmu.com/hero.png">
 <meta property="og:url" content="https://wearmu.com/constitution">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -14512,13 +14512,13 @@ async fn chronicle_vote_page(State(db): State<Db>) -> Html<String> {
 <meta name="description" content="MU 保有者・/you 登録者向けの DAO 投票。Sibling Chronicle (年代記 QR) を front design に合成するか、首裏下に専用印刷するか、入れないか。">
 <meta property="og:title" content="MU · Sibling Chronicle DAO 投票">
 <meta property="og:description" content="QR を front design に合成 (¥0) vs 首裏下に専用印刷 (+¥300/着) vs 導入しない。5 票 + 60% で自動デプロイ。">
-<meta property="og:image" content="https://wearmu.com/og.jpg">
+<meta property="og:image" content="https://mockups.wearmu.com/hero.png">
 <meta property="og:url" content="https://wearmu.com/chronicle-vote">
 <meta property="og:type" content="website">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="MU · Sibling Chronicle DAO 投票">
 <meta name="twitter:description" content="同じデザインの N 番目を買うとシャツに QR が焼かれる新仕組み。入れるかは保有者投票で。5 票 + 60% で自動デプロイ。">
-<meta name="twitter:image" content="https://wearmu.com/og.jpg">
+<meta name="twitter:image" content="https://mockups.wearmu.com/hero.png">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 <style>
@@ -16779,7 +16779,7 @@ async fn dao_whitepaper_page() -> Html<String> {
 <meta name="description" content="MU DAO の仕組み: Constitution authorship + MA pieces + Chronicle slots による weight 関数。ICO なし、Airdrop なし、Founder allocation なし。">
 <meta property="og:title" content="MU DAO Whitepaper">
 <meta property="og:description" content="The base token does not exist. Voting weight = authored lines + MA pieces + Chronicle slots.">
-<meta property="og:image" content="https://wearmu.com/og.jpg">
+<meta property="og:image" content="https://mockups.wearmu.com/hero.png">
 <meta property="og:url" content="https://wearmu.com/dao/whitepaper">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -17301,7 +17301,7 @@ async function submitForm(e){{
             let u = preview.as_deref().unwrap_or("");
             if u.starts_with("http") { u.to_string() }
             else if u.starts_with('/') { format!("https://wearmu.com{}", u) }
-            else { "https://wearmu.com/og.jpg".to_string() }
+            else { "https://mockups.wearmu.com/hero.png".to_string() }
         }),
         preview_block = preview_block,
         already = already,
@@ -21034,12 +21034,12 @@ async fn show_auto_blog(
 <meta property="og:type" content="article">
 <meta property="og:title" content="{title_attr}">
 <meta property="og:description" content="MU の AI 自動執筆 Field log — 毎朝 JST 9:00 に Gemini が /api/transparency の生データから書きます。">
-<meta property="og:image" content="https://wearmu.com/og.jpg">
+<meta property="og:image" content="https://mockups.wearmu.com/hero.png">
 <meta property="og:url" content="https://wearmu.com/blog/auto/{slug_attr}">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="{title_attr}">
 <meta name="twitter:description" content="MU の AI 自動執筆 Field log — 毎朝 JST 9:00 に Gemini が書きます。">
-<meta name="twitter:image" content="https://wearmu.com/og.jpg">
+<meta name="twitter:image" content="https://mockups.wearmu.com/hero.png">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
 :root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.6);--y:#e6c449;--card:#111}}
@@ -21790,7 +21790,7 @@ async fn ma_lottery_explainer(State(db): State<Db>) -> Html<String> {
 <meta name="description" content="MU の Founder Relay。100 日に 1 回、過去購入者から weighted random で 1 人に MA を贈与。受/譲/寄付の 3 択。連鎖は 7 人で reset。">
 <meta property="og:title" content="4/7 Founder Relay — MU">
 <meta property="og:description" content="ロトではなく、贈与の連鎖。100 日に 1 回、MA を誰かに贈る。">
-<meta property="og:image" content="https://wearmu.com/og.jpg">
+<meta property="og:image" content="https://mockups.wearmu.com/hero.png">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
 body{{margin:0;padding:0;background:#0A0A0A;color:#F5F5F0;font-family:'Noto Serif JP','Helvetica Neue',serif;line-height:1.95;font-size:15px}}
@@ -21988,7 +21988,7 @@ async fn wearing_log_page(State(db): State<Db>) -> Html<String> {
 <meta name="description" content="MU は永遠に有名人や顔を使わない。代わりに、実際にそれを着ている人々の anonymous log がブランドの主役。">
 <meta property="og:title" content="Wearing Log — MU">
 <meta property="og:description" content="顔のない brand. 着る人々の log が主役。">
-<meta property="og:image" content="https://wearmu.com/og.jpg">
+<meta property="og:image" content="https://mockups.wearmu.com/hero.png">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
 body{{margin:0;padding:0;background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.7;font-size:15px}}
@@ -22420,7 +22420,7 @@ async fn cities_page(State(db): State<Db>) -> Html<String> {
 <meta name="description" content="MU は protocol。Teshikaga が origin、Honolulu が pilot。誰でも自分の都市の MU を立ち上げる構想。">
 <meta property="og:title" content="MU Cities — Teshikaga (origin) + satellites">
 <meta property="og:description" content="MU は wearable timestamp の protocol。Anyone can install a city.">
-<meta property="og:image" content="https://wearmu.com/og.jpg">
+<meta property="og:image" content="https://mockups.wearmu.com/hero.png">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
 body{{margin:0;padding:0;background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.85;font-size:15px}}
@@ -23201,7 +23201,7 @@ async fn show_kokon_page(State(db): State<Db>) -> Response {
 <meta name="description" content="MU と kokon.tokyo (都内焼肉店) のコラボ。T / クルーネック / トート / エナメルマグ / エプロン / キャップ / ステッカー / 缶クーラー。Printful 経由で 10-14 日に発送。">
 <meta property="og:title" content="MU × kokon.tokyo — 焼肉店ブランド公式グッズ">
 <meta property="og:description" content="都内焼肉店 kokon.tokyo のブランドグッズ 8 SKU を Printful 経由で。在庫ゼロ、注文即発送。">
-<meta property="og:image" content="https://wearmu.com/og.jpg">
+<meta property="og:image" content="https://mockups.wearmu.com/hero.png">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
 :root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--card:#111;--red:#C8362C}}
