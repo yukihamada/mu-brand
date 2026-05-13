@@ -12027,6 +12027,12 @@ async fn chronicle_vote_page(State(db): State<Db>) -> Html<String> {
 <meta property="og:title" content="MU · Sibling Chronicle DAO 投票">
 <meta property="og:description" content="QR を front design に合成 (¥0) vs 首裏下に専用印刷 (+¥300/着) vs 導入しない。5 票 + 60% で自動デプロイ。">
 <meta property="og:image" content="https://wearmu.com/og.jpg">
+<meta property="og:url" content="https://wearmu.com/chronicle-vote">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="MU · Sibling Chronicle DAO 投票">
+<meta name="twitter:description" content="同じデザインの N 番目を買うとシャツに QR が焼かれる新仕組み。入れるかは保有者投票で。5 票 + 60% で自動デプロイ。">
+<meta name="twitter:image" content="https://wearmu.com/og.jpg">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 <style>
