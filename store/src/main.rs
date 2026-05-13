@@ -24187,20 +24187,12 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         interval_secs: 86_400, // 24h
         description: "特商法・PP の更新日が古くなってないか日次チェック",
     },
+    // self_improvement / vision_drift / self_evolve / pr_writer は self_review に統合
+    // (2026-05-13)。個別関数は debug 用に残るが、スケジュール対象は self_review のみ。
     AgentDef {
-        name: "self_improvement",
+        name: "self_review",
         interval_secs: 86_400, // 24h
-        description: "Fly logs / agent_journal の繰り返しエラーを検知 → 改善案を journal",
-    },
-    AgentDef {
-        name: "vision_drift",
-        interval_secs: 86_400, // 24h
-        description: "ビジョン (詩 4 行) からの drift を Gemini で検知 → 改善案 → Telegram",
-    },
-    AgentDef {
-        name: "self_evolve",
-        interval_secs: 86_400, // 24h
-        description: "Gemini Pro が状況観察 → コード/プロンプト/param の小改善 1〜3 件を提案 → ai_decisions (PR は別 workflow)",
+        description: "4 サブ (self_improvement / vision_drift / self_evolve / pr_writer) を 1 daily run に統合。journal + Telegram は merged 1 件",
     },
     AgentDef {
         name: "sns_metrics",
@@ -24247,11 +24239,7 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         interval_secs: 7 * 86_400,
         description: "30d window で NPS proxy / refund rate / repeat rate / funnel CV を集計 → customer_scorecard",
     },
-    AgentDef {
-        name: "pr_writer",
-        interval_secs: 86_400,
-        description: "self_evolve 提案 (area=prompt+forbid_token) を実際の GitHub PR に変換 → self-evolve label",
-    },
+    // pr_writer は self_review に統合 (2026-05-13)。
     AgentDef {
         name: "growth",
         interval_secs: 12 * 3600,
@@ -24321,6 +24309,8 @@ async fn run_agent(name: &str, db: Db) -> Result<AgentReport, String> {
         "customer_support"  => agent_customer_support(db).await,
         "auto_refund"       => agent_auto_refund(db).await,
         "compliance_watch"  => agent_compliance_watch(db).await,
+        "self_review"       => agent_self_review(db).await,
+        // Kept dispatchable individually for /admin debug + dry-run isolation.
         "self_improvement"  => agent_self_improvement(db).await,
         "vision_drift"      => agent_vision_drift(db).await,
         "self_evolve"       => agent_self_evolve(db).await,
@@ -29576,6 +29566,50 @@ async fn agent_funnel_anomaly(db: Db) -> Result<AgentReport, String> {
 // ── Agent 20: musk_review (founder persona) ────────────────────────────
 async fn agent_musk_review(db: Db) -> Result<AgentReport, String> {
     founder_review(db, "musk", MUSK_PROMPT).await
+}
+
+// ── Agent: self_review (umbrella over 4 daily inward-looking agents) ───
+// 統合先: self_improvement + vision_drift + self_evolve + pr_writer
+// → 1 daily run で 4 サブエージェントを直列実行し、結果を 1 つの AgentReport に
+// merge。 個別 agent としても残存 (debug や個別 dry_run 用)、ただし
+// AGENT_REGISTRY からは self_review のみ scheduled。
+//
+// Telegram は merged summary 1 通 (旧: 最大 4 通)。
+// agent_journal は merged 1 行 (旧: 最大 4 行/日)。
+async fn agent_self_review(db: Db) -> Result<AgentReport, String> {
+    let mut merged_obs = serde_json::Map::new();
+    let mut merged_decisions: Vec<serde_json::Value> = Vec::new();
+    let mut merged_actions: Vec<serde_json::Value> = Vec::new();
+    let mut summary_parts: Vec<String> = Vec::new();
+    let mut any_notable = false;
+    let stages: [(&str, fn(Db) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<AgentReport, String>> + Send>>); 4] = [
+        ("self_improvement", |d| Box::pin(agent_self_improvement(d))),
+        ("vision_drift",     |d| Box::pin(agent_vision_drift(d))),
+        ("self_evolve",      |d| Box::pin(agent_self_evolve(d))),
+        ("pr_writer",        |d| Box::pin(agent_pr_writer(d))),
+    ];
+    for (stage_name, run_fn) in stages {
+        match run_fn(db.clone()).await {
+            Ok(r) => {
+                merged_obs.insert(stage_name.into(), r.observations.clone());
+                for d in r.decisions { merged_decisions.push(serde_json::json!({"stage": stage_name, "decision": d})); }
+                for a in r.actions   { merged_actions.push(serde_json::json!({"stage": stage_name, "action": a})); }
+                if r.notable { any_notable = true; }
+                summary_parts.push(format!("{}: {}", stage_name, r.summary));
+            }
+            Err(e) => {
+                merged_obs.insert(stage_name.into(), serde_json::json!({"error": e.clone()}));
+                summary_parts.push(format!("{}: error", stage_name));
+            }
+        }
+    }
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(merged_obs),
+        decisions: merged_decisions,
+        actions: merged_actions,
+        summary: summary_parts.join(" | "),
+        notable: any_notable,
+    })
 }
 
 // ── Agent: drop_filler ─────────────────────────────────────────────────
