@@ -1911,6 +1911,11 @@ async fn collab_page() -> impl IntoResponse {
     axum::response::Html(body)
 }
 
+async fn itto_page() -> impl IntoResponse {
+    let body = include_str!("../static/itto.html");
+    axum::response::Html(body)
+}
+
 async fn bounty_page() -> impl IntoResponse {
     let body = include_str!("../static/bounty.html");
     axum::response::Html(body)
@@ -30953,6 +30958,7 @@ async fn main() {
         .route("/embed/products", get(embed_iframe_page))
         .route("/developers", get(developers_page))
         .route("/collab", get(collab_page))
+        .route("/itto", get(itto_page))
         .route("/b2b", get(collab_page))
         .route("/partners", get(collab_page))
         .route("/bounty", get(bounty_page))
