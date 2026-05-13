@@ -12506,6 +12506,60 @@ async fn admin_blog_unpublish(
 #[derive(Deserialize)]
 struct AdminTokenOnly { admin_token: String }
 
+#[derive(Deserialize)]
+struct AdminXEnqueueBody {
+    admin_token: String,
+    text: String,
+    #[serde(default)]
+    image_url: Option<String>,
+    /// Free-form tag for audit (e.g. "manual-yuki" or "campaign-2026-05").
+    #[serde(default)]
+    trigger_kind: Option<String>,
+}
+
+/// POST /api/admin/x_enqueue — push a hand-written X post into sns_post_queue.
+/// The x_post_worker drains 1/min, so a manual post lands in ~60s. Bypasses
+/// the growth agent's 24h rate limit (which only governs auto-generation).
+/// Idempotent on text within last 24h to prevent dup-fire.
+async fn admin_x_enqueue(
+    State(db): State<Db>,
+    Json(body): Json<AdminXEnqueueBody>,
+) -> impl IntoResponse {
+    if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+    let text = body.text.trim();
+    if text.is_empty() || text.chars().count() > 280 {
+        return (StatusCode::BAD_REQUEST, "text must be 1-280 chars").into_response();
+    }
+    let trigger_kind = body.trigger_kind.as_deref().unwrap_or("manual");
+    let image_url = body.image_url.as_deref();
+    let day_ago: i64 = chrono_now().parse::<i64>().unwrap_or(0) - 86_400;
+    let (queue_id, was_duplicate): (i64, bool) = {
+        let conn = db.lock().unwrap();
+        let existing: Option<i64> = conn.query_row(
+            "SELECT id FROM sns_post_queue
+             WHERE network='x' AND text=? AND CAST(created_at AS INTEGER) > ?",
+            params![text, day_ago], |r| r.get(0),
+        ).ok();
+        match existing {
+            Some(id) => (id, true),
+            None => {
+                let id = enqueue_sns_post(&conn, "x", trigger_kind, None, None, text, image_url);
+                (id, false)
+            }
+        }
+    };
+    Json(serde_json::json!({
+        "ok": true,
+        "queue_id": queue_id,
+        "duplicate": was_duplicate,
+        "note": if was_duplicate {
+            "same text enqueued within last 24h — returned existing row"
+        } else {
+            "x_post_worker drains 1/min — expect post within ~60s"
+        },
+    })).into_response()
+}
+
 /// POST /api/admin/products_reconcile_sold — set every active product's `sold`
 /// column to the actual count from mu_purchases (joined on product_id + brand).
 /// Fixes the lie where seed data had sold=24 for products never bought.
@@ -24063,6 +24117,7 @@ async fn main() {
         .route("/api/admin/blog_update", post(admin_blog_update))
         .route("/api/admin/products_reconcile_sold", post(admin_products_reconcile_sold))
         .route("/api/admin/deactivate_brand", post(admin_deactivate_brand))
+        .route("/api/admin/x_enqueue", post(admin_x_enqueue))
         .route("/api/blog/auto", get(list_auto_blog))
         .route("/blog/auto/:slug", get(show_auto_blog))
         .route("/api/you/referral", post(you_referral_status))
