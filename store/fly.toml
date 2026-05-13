@@ -24,10 +24,13 @@ primary_region = "nrt"
     port = 443
     handlers = ["tls", "http"]
   # HTTP liveness check. 3 consecutive failures → Fly restarts the VM.
+  # grace_period is generous (90s) because Rust startup + first agent fire
+  # can take 30-60s and the deep /healthz needs a journal entry to exist.
+  # Combined with the in-process 15min warmup grace, deploys don't bounce.
   [[services.http_checks]]
     interval = "30s"
     timeout = "5s"
-    grace_period = "20s"
+    grace_period = "90s"
     method = "GET"
     path = "/healthz"
     protocol = "http"

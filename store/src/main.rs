@@ -33784,19 +33784,31 @@ async fn admin_agent_run(
     })).into_response()
 }
 
+/// Process start time, recorded on first /healthz call. Used to give the
+/// scheduler/watchdog checks a 15-min warmup grace after deploy — the
+/// agents need time to fire their first cycle before we can fairly judge
+/// them stale.
+static PROCESS_BOOT_AT: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
+
 /// GET /healthz — Deep liveness probe. Returns 200 with a JSON body when ALL
 /// of:
 ///   - the agent scheduler is firing (any agent_journal write < 600s ago)
+///   - the watchdog itself ran recently (< 900s)
 ///   - the DB is writable (BEGIN/ROLLBACK a no-op tx)
 ///   - /data has > 100 MB free
 /// pass. Anything else returns 503 so the Fly platform health check (which
 /// triggers VM auto-restart on 3 consecutive failures) catches a degraded
 /// process where HTTP is still up but the app is silently dead.
 ///
-/// We expose the JSON so the external GH Actions watcher can also inspect
-/// detail (e.g. watchdog stale → alert even when overall is 200).
+/// During the first 15 min of process uptime, scheduler/watchdog checks
+/// report their status but don't fail the overall — agents haven't had
+/// a chance to fire their first cycle yet. Without this grace, every
+/// deploy causes ~2 min of Fly proxy "no healthy instance" errors.
 async fn healthz(State(db): State<Db>) -> Response {
     let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let boot_at = *PROCESS_BOOT_AT.get_or_init(|| now_s);
+    let uptime_s = now_s - boot_at;
+    let warming_up = uptime_s < 900; // 15 min after first /healthz call
 
     // (a) Scheduler liveness: any journal write in the last 10 min.
     //     If the tokio scheduler hangs, this gap grows.
@@ -33808,7 +33820,7 @@ async fn healthz(State(db): State<Db>) -> Response {
         ).unwrap_or(0);
         if last == 0 { i64::MAX } else { now_s - last }
     };
-    let scheduler_ok = last_journal_age < 600;
+    let scheduler_ok = warming_up || last_journal_age < 600;
 
     // (b) DB writable: open a tx and roll it back. Cheap, no schema impact.
     let db_writable = {
@@ -33827,8 +33839,8 @@ async fn healthz(State(db): State<Db>) -> Response {
         ).unwrap_or(0);
         if last == 0 { i64::MAX } else { now_s - last }
     };
-    // Watchdog runs every 5min; allow 2x interval + grace.
-    let watchdog_ok = last_watchdog_age < 900;
+    // Watchdog runs every 5min; allow 2x interval + grace. Warmup-graced.
+    let watchdog_ok = warming_up || last_watchdog_age < 900;
 
     // (c) Disk free on /data (the volume backing products.db).
     //     statvfs not in std; shell out to df. Best-effort — if df is
@@ -33855,6 +33867,8 @@ async fn healthz(State(db): State<Db>) -> Response {
         "db_writable": db_writable,
         "watchdog_ok": watchdog_ok,
         "disk_ok": disk_ok,
+        "warming_up": warming_up,
+        "uptime_s": uptime_s,
         "last_journal_age_secs":  if last_journal_age == i64::MAX { -1 } else { last_journal_age },
         "last_watchdog_age_secs": if last_watchdog_age == i64::MAX { -1 } else { last_watchdog_age },
         "disk_free_mb": disk_free_mb,
