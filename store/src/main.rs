@@ -5245,6 +5245,60 @@ async fn public_agents_page(State(db): State<Db>) -> Response {
             model: "(no LLM — health check)",
             prompt: "// GET / → 200 想定\n// GET /mugen → 200 想定\n// POST /api/checkout/embedded (test product) → client_secret 返却想定\n// 異常時: 即 Telegram + governance_queue で T1 escalate",
         },
+        AgentDoc {
+            name: "growth", interval: "12h",
+            purpose: "@wearMUcom の X ツイートを Gemini に自動生成させて sns_post_queue に enqueue。最新の MUGEN 番号 / 弟子屈気温 / cultural moment (メットガラ等) に応じて自動で文面を変える。実際の投稿は 60 秒間隔のワーカーが OAuth 1.0a で API v2 に POST。",
+            model: "Gemini 2.5 Flash · Musk-critique 内蔵",
+            prompt: "// 直近の文脈:\n//  - 最新 MUGEN drop_num + 価格\n//  - 弟子屈 今日の気温 (cv_config 'weather_temp_c')\n//  - 今日のニュース / cultural moment (Gemini が web 検索)\n//  - 過去 24h に投稿した text (重複回避)\n// 出力ルール:\n//  - 280 char以下、ACTION default (CTA を最後に)\n//  - 「すごい」「最高」禁止 forbid_token\n//  - Musk critique で「1st principles / delete-then-optimize / K-factor」適合確認\n//  - 24h rate limit: 4 post / day",
+        },
+        AgentDoc {
+            name: "funnel_anomaly", interval: "1h",
+            purpose: "直近 24h の funnel CV (pageview→checkout_paid) を 30 日 baseline と比較。50% 以上下落 + pv >= 20 で T1 governance + Telegram alert。silent buy-broken (購入できなくなったのに気づかない) を検出する最後の砦。",
+            model: "(no LLM — statistical)",
+            prompt: "// baseline_cvr = past_30d (checkout_paid / pageview)\n// today_cvr   = past_24h (checkout_paid / pageview)\n// if today_cvr < baseline_cvr * 0.5 AND today_pv >= 20:\n//   → governance_queue T1 (urgent)\n//   → Telegram CRITICAL alert\n// pv < 20 では noise が大きいので skip",
+        },
+        AgentDoc {
+            name: "catalog_health", interval: "24h",
+            purpose: "active な collab_products を日次チェック。画像 URL の到達性 (HEAD 200) と利益 (price - cost) > 0 を確認。どちらか不健全な商品は governance_queue で人間レビュー。",
+            model: "(no LLM — health check)",
+            prompt: "// 全 active collab_products に対し:\n//  - HEAD image_url が 200/30x かチェック\n//  - margin = price_jpy - printful_cost_jpy > 0\n//  - inventory > sold (在庫切れでない)\n// 不健全行 → governance_queue (T2: deactivate 提案)",
+        },
+        AgentDoc {
+            name: "musk_review", interval: "weekly",
+            purpose: "Elon Musk 思考モデルで MU の直近 7 日を批評: first-principles / delete-then-optimize / K-factor focus / anti-bureaucracy。批評結果を founder_reviews に保存、cohort30 / 採点 prompt に inject されて他の決定に影響する。",
+            model: "Gemini 2.5 Pro · persona: Musk",
+            prompt: "// 直近 7 日の: 売上, 新 drop, 価格変更, CVR, X impressions, agent 決定\n// に対し Musk persona で:\n//  score: 0.0-1.0 (delete-then-optimize 観点で)\n//  verdict: <=120 chars 一刀両断\n//  delete_list: 「これ削れ」リスト (5 件以内)\n//  K-factor の K 値推定 (招待 → 招待 の連鎖)",
+        },
+        AgentDoc {
+            name: "bezos_review", interval: "weekly",
+            purpose: "Jeff Bezos 思考モデルで MU の直近 7 日を批評: customer obsession / Type 1-2 doors / Day-1 thinking / decisions per hour。Musk と同じく founder_reviews に保存。",
+            model: "Gemini 2.5 Pro · persona: Bezos",
+            prompt: "// Musk と同じ入力\n// Bezos persona で:\n//  score: 0.0-1.0 (customer obsession 観点で)\n//  verdict: <=120 chars\n//  type1_doors_flagged: 戻れない決定の警告\n//  customer_value_changes: 直近 1 週間で顧客価値が増えた / 減ったか",
+        },
+        AgentDoc {
+            name: "decision_audit", interval: "weekly",
+            purpose: "autonomy_decision_log の 30 日経過行を heuristic + outcome metric で採点。良い決定 / 悪い決定を learn して agent_scorecard を更新、次の self_evolve prompt に inject。",
+            model: "Gemini 2.5 Pro",
+            prompt: "// 各 decision に対し:\n//  outcome_metric: 売上 / refund / X 反応 など客観指標 30d 後\n//  score: 0.0-1.0 (期待効果に対し実際どうだったか)\n//  notes: 何が刺さった / 滑った\n// → agent_scorecard に集計、次の strategist prompt の「過去類似」injection に使う",
+        },
+        AgentDoc {
+            name: "drop_filler", interval: "24h",
+            purpose: "MUGEN drop の在庫が枯れる前に補充。次の drop_num を予約 + Printful 用デザインを Gemini 3 Pro Image で先行生成。最も古い drop は archive。",
+            model: "Gemini 2.5 Flash (計画) + Gemini 3 Pro Image (生成)",
+            prompt: "// active MUGEN < 5 件なら:\n//  - 次の drop_num = max(drop_num) + 1\n//  - 弟子屈の今日の気温 + 季節を seed に\n//  - Gemini 3 Pro Image で T シャツ前面用 design を生成 (透過 PNG)\n//  - products + Printful に登録、active=1\n// 古い MUGEN (>108 cycle前) は active=0 化",
+        },
+        AgentDoc {
+            name: "journal_embedder", interval: "6h",
+            purpose: "agent_journal の未 embed 行を text-embedding-004 で埋め込み → journal_embeddings。過去類似の決定を見つける時に semantic 検索で使う (strategist と self_evolve の injection)。",
+            model: "Gemini text-embedding-004",
+            prompt: "// SELECT agent_journal WHERE embedding IS NULL LIMIT 100\n// 各行の (summary + decisions + actions) を embedding\n// journal_embeddings に upsert (768-dim float vector)",
+        },
+        AgentDoc {
+            name: "self_improvement", interval: "24h",
+            purpose: "Fly logs と agent_journal を読んで、繰り返し出てるエラー (3 回以上) を検知。改善案を journal に書く (実コード変更は self_evolve が PR 化)。",
+            model: "Gemini 2.5 Flash",
+            prompt: "// 直近 24h:\n//  - Fly app logs から ERROR / panic を抽出\n//  - agent_journal の notable=1 行をクラスタリング\n//  - 同じパターンが 3 回以上出てたら「改善候補」\n// 出力:\n//  - issue: 何が繰り返し起きてるか\n//  - root_cause: 推定根本原因\n//  - suggestion: 直し方 (code / param / forbid)\n// → journal に書く、self_evolve が後で PR 化",
+        },
     ];
 
     // For each agent: pull last 3 journal entries.
