@@ -12937,20 +12937,49 @@ async fn generate_ma_gift_mockup(token: String, design_url: String, db: Db) {
         )).await;
         return;
     };
-    // Persist the Printful mockup URL (it's already a CDN URL; we just save it).
-    // For OG image stability, optionally we could mirror to R2 — for now,
-    // direct Printful CDN is fine (FB / X cache the preview).
+    // Mirror Printful's tmp/ CDN URL to R2 so the OG image stays resolvable
+    // beyond the ~24h S3 presign window. If R2 mirror succeeds, store the R2
+    // URL; otherwise fall back to the Printful URL (still works short-term).
+    let persisted_url = mirror_ma_gift_mockup_to_r2(&token, &remote_url)
+        .await
+        .unwrap_or_else(|| remote_url.clone());
     {
         let conn = db.lock().unwrap();
         let _ = conn.execute(
             "UPDATE ma_gifts SET mockup_url=? WHERE token=?",
-            params![remote_url, token],
+            params![persisted_url, token],
         );
     }
     send_telegram_message(&format!(
         "📸 MA gift mockup ready · token={}\nmockup: {}",
-        &token[..8.min(token.len())], remote_url
+        &token[..8.min(token.len())], persisted_url
     )).await;
+}
+
+/// Mirror a Printful tmp/ CDN URL into R2 under `ma_gift_<token>_mockup.png`
+/// (or .jpg) so the og:image keeps resolving after Printful's S3 presign expires.
+/// Returns the R2 public URL on success.
+async fn mirror_ma_gift_mockup_to_r2(token: &str, src_url: &str) -> Option<String> {
+    let cfg = r2_config()?;
+    let bytes = match reqwest::get(src_url).await {
+        Ok(r) if r.status().is_success() => match r.bytes().await {
+            Ok(b) if !b.is_empty() => b,
+            _ => return None,
+        },
+        Ok(r) => { eprintln!("[ma_gift_mirror] fetch http {}", r.status()); return None; }
+        Err(e) => { eprintln!("[ma_gift_mirror] fetch err: {}", e); return None; }
+    };
+    let (ext, ctype) = if src_url.contains(".jpg") || src_url.contains(".jpeg") {
+        ("jpg", "image/jpeg")
+    } else { ("png", "image/png") };
+    let key = format!("ma_gift_{}_mockup.{}", token, ext);
+    match cfg.bucket.put_object_with_content_type(&key, &bytes, ctype).await {
+        Ok(r) if r.status_code() == 200 => {
+            Some(format!("{}/{}", cfg.public_base.trim_end_matches('/'), key))
+        }
+        Ok(r) => { eprintln!("[ma_gift_mirror] put status {}", r.status_code()); None }
+        Err(e) => { eprintln!("[ma_gift_mirror] put err: {}", e); None }
+    }
 }
 
 /// Fire a free Printful order for a fully-ready MA gift (status='design_ready'
