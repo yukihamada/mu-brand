@@ -2155,6 +2155,522 @@ async fn buyer_profile_page(
     axum::response::Html(page).into_response()
 }
 
+// ── /mypage — email magic-link login ─────────────────────────────────────
+// Flow:
+//   GET  /mypage                    → if cookie session: render dashboard
+//                                     else:  render email-entry form
+//   POST /api/mypage/request-link    → email → magic link via Resend (15 min TTL)
+//   GET  /mypage/auth/:token         → consume token, set cookie, redirect /mypage
+//   POST /mypage/logout              → clear cookie
+//   POST /api/mypage/claim-nft       → buyer requests NFT mint to their wallet
+
+fn mypage_random_token() -> String {
+    use sha2::{Sha256, Digest};
+    let now_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let rand: i64 = (now_ns as i64).wrapping_mul(2862933555777941757).wrapping_add(3037000493);
+    let mut h = Sha256::new();
+    h.update(now_ns.to_le_bytes());
+    h.update(rand.to_le_bytes());
+    h.update(env::var("ADMIN_TOKEN").unwrap_or_default().as_bytes());
+    format!("{:x}", h.finalize())
+}
+
+fn mypage_session_from_cookie(headers: &HeaderMap) -> Option<String> {
+    let cookie_str = headers.get("cookie").and_then(|v| v.to_str().ok())?;
+    for kv in cookie_str.split(';') {
+        let kv = kv.trim();
+        if let Some(rest) = kv.strip_prefix("mu_session=") {
+            return Some(rest.to_string());
+        }
+    }
+    None
+}
+
+fn mypage_lookup_session(conn: &Connection, session_id: &str) -> Option<(String, String)> {
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    conn.query_row(
+        "SELECT email, buyer_token FROM mypage_sessions
+         WHERE session_id = ? AND CAST(expires_at AS INTEGER) > ?",
+        params![session_id, now_s],
+        |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+    ).ok()
+}
+
+async fn mypage_entry(
+    State(db): State<Db>,
+    headers: HeaderMap,
+) -> Response {
+    // Logged-in path.
+    if let Some(sid) = mypage_session_from_cookie(&headers) {
+        let session = {
+            let conn = db.lock().unwrap();
+            mypage_lookup_session(&conn, &sid)
+        };
+        if let Some((email, buyer_token)) = session {
+            return mypage_dashboard(db, email, buyer_token).await;
+        }
+    }
+    // Entry form.
+    let page = r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>マイページ · MU</title>
+<style>
+  :root{--bg:#000;--fg:#f5f5f0;--mute:#888;--gold:#e6c449}
+  html,body{background:var(--bg);color:var(--fg);margin:0;font-family:-apple-system,sans-serif;font-feature-settings:"palt"}
+  .wrap{max-width:480px;margin:0 auto;padding:64px 22px}
+  .kicker{font-size:10.5px;letter-spacing:0.22em;color:#666;text-transform:uppercase;margin-bottom:14px}
+  h1{font-size:30px;font-weight:300;letter-spacing:0.02em;line-height:1.3;margin:0 0 10px}
+  h1 em{color:var(--gold);font-style:normal;font-weight:400}
+  .meta{color:var(--mute);font-size:13.5px;line-height:1.7;margin:0 0 28px}
+  form{display:flex;flex-direction:column;gap:12px}
+  input[type=email]{background:#0a0a0a;border:1px solid #1f1f1f;color:#fff;padding:14px 14px;font-size:15px;border-radius:3px;font-family:inherit}
+  input[type=email]:focus{outline:none;border-color:var(--gold)}
+  button{background:var(--gold);color:#000;border:0;padding:14px;font-size:14px;font-weight:600;letter-spacing:0.06em;cursor:pointer;border-radius:3px}
+  button:disabled{opacity:0.6}
+  .ok{color:#9bd97a;font-size:13px;margin-top:14px;line-height:1.6;text-align:center}
+  .err{color:#e07b7b;font-size:13px;margin-top:10px;line-height:1.6}
+  footer{margin-top:60px;color:#555;font-size:11px;line-height:1.7;text-align:center}
+</style></head><body><div class="wrap">
+  <div class="kicker">マイページ</div>
+  <h1>あなたの <em>MU</em></h1>
+  <p class="meta">ご注文時のメールアドレスを入力してください。<br>ログイン用のリンクをメールでお送りします (15 分有効、パスワード不要)。</p>
+  <form id="f" onsubmit="return false">
+    <input type="email" name="email" id="e" placeholder="you@example.com" required autocomplete="email" autofocus/>
+    <button id="b" type="submit">ログインリンクを送る</button>
+  </form>
+  <div id="msg"></div>
+  <footer>
+    リンクが届かない場合は <a style="color:#888" href="mailto:info@wearmu.com">info@wearmu.com</a> までご連絡ください。
+  </footer>
+</div>
+<script>
+const f=document.getElementById('f'),e=document.getElementById('e'),b=document.getElementById('b'),m=document.getElementById('msg');
+f.addEventListener('submit',async()=>{
+  m.innerHTML='';
+  b.disabled=true; const orig=b.textContent; b.textContent='送信中…';
+  try{
+    const r=await fetch('/api/mypage/request-link',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email:e.value.trim()})});
+    const j=await r.json();
+    if(j.ok){m.innerHTML='<div class="ok">📬 リンクをお送りしました。<br>'+e.value+' をご確認ください。</div>';}
+    else{m.innerHTML='<div class="err">'+(j.error||'送信に失敗しました')+'</div>';b.disabled=false;b.textContent=orig;}
+  }catch(err){m.innerHTML='<div class="err">通信エラー</div>';b.disabled=false;b.textContent=orig;}
+});
+</script>
+</body></html>"#;
+    axum::response::Html(page).into_response()
+}
+
+async fn mypage_request_link(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let email = body.get("email").and_then(|v| v.as_str()).unwrap_or("").trim().to_lowercase();
+    if !email.contains('@') || email.len() > 200 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok":false,"error":"invalid email"}))).into_response();
+    }
+    // Must be a known buyer.
+    let known: bool = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT 1 FROM collab_orders WHERE email = ? LIMIT 1",
+            params![email], |_| Ok(true)).unwrap_or(false)
+    };
+    if !known {
+        // Do not reveal which emails are buyers — return generic OK so we
+        // don't leak enumeration. Skip the actual send.
+        return Json(serde_json::json!({"ok":true,"hint":"if account exists, a link was sent"})).into_response();
+    }
+
+    let ip = client_ip(&headers);
+    let day = (chrono_now().parse::<i64>().unwrap_or(0) / 86_400).to_string();
+    let ip_hash = if ip.is_empty() { String::new() } else {
+        use sha2::{Sha256, Digest};
+        let mut h = Sha256::new();
+        h.update(ip.as_bytes()); h.update(b"|"); h.update(day.as_bytes());
+        format!("{:x}", h.finalize())[..16].to_string()
+    };
+
+    // Rate-limit: 5 requests / hour / email.
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    {
+        let conn = db.lock().unwrap();
+        let recent: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mypage_login_tokens
+             WHERE email = ? AND CAST(issued_at AS INTEGER) > ?",
+            params![email, now_s - 3600], |r| r.get(0)).unwrap_or(0);
+        if recent >= 5 {
+            return (StatusCode::TOO_MANY_REQUESTS,
+                Json(serde_json::json!({"ok":false,"error":"レート制限: 1 時間に 5 回まで"}))).into_response();
+        }
+    }
+
+    let token = mypage_random_token();
+    let expires_at = now_s + 15 * 60;
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO mypage_login_tokens (token, email, issued_at, expires_at, ip_hash)
+             VALUES (?,?,?,?,?)",
+            params![token, email, now_s.to_string(), expires_at.to_string(), ip_hash],
+        );
+    }
+
+    // Send magic link via Resend.
+    let link = format!("https://wearmu.com/mypage/auth/{}", token);
+    if let Ok(resend_key) = env::var("RESEND_API_KEY") {
+        if !resend_key.is_empty() {
+            let html = format!(
+                r#"<p>MU マイページへのログインリンクです。</p><p style="margin:24px 0"><a href="{link}" style="display:inline-block;background:#e6c449;color:#000;text-decoration:none;padding:14px 28px;font-weight:600;letter-spacing:0.06em;border-radius:3px">マイページを開く →</a></p><p style="color:#888;font-size:13px;line-height:1.6">このリンクは <b>15 分</b> 有効、<b>1 回限り</b> 使えます。<br>心当たりがない場合は、このメールを破棄してください。<br>URL: <code style="color:#888">{link}</code></p><p style="color:#888;font-size:12px">— MU / 株式会社イネブラ</p>"#,
+                link = html_escape(&link));
+            let _ = reqwest::Client::new()
+                .post("https://api.resend.com/emails")
+                .bearer_auth(&resend_key)
+                .json(&serde_json::json!({
+                    "from": "MU <noreply@wearmu.com>",
+                    "to": [email.clone()],
+                    "subject": "MU マイページ — ログインリンク (15 分有効)",
+                    "html": html,
+                    "reply_to": "info@wearmu.com",
+                }))
+                .send().await;
+        }
+    }
+
+    Json(serde_json::json!({"ok":true})).into_response()
+}
+
+async fn mypage_auth_consume(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Path(token): axum::extract::Path<String>,
+) -> Response {
+    let token = token.trim().to_string();
+    if token.len() < 32 || token.len() > 128 {
+        return (StatusCode::NOT_FOUND, "invalid token").into_response();
+    }
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let email: Option<String> = {
+        let conn = db.lock().unwrap();
+        // Check valid + unconsumed
+        let valid = conn.query_row(
+            "SELECT email FROM mypage_login_tokens
+             WHERE token = ? AND consumed_at IS NULL
+               AND CAST(expires_at AS INTEGER) > ?",
+            params![token, now_s], |r| r.get::<_, String>(0)).ok();
+        if let Some(ref _e) = valid {
+            // Mark consumed.
+            let _ = conn.execute(
+                "UPDATE mypage_login_tokens SET consumed_at = ? WHERE token = ?",
+                params![now_s.to_string(), token]);
+        }
+        valid
+    };
+    let email = match email {
+        Some(e) => e,
+        None => return (StatusCode::UNAUTHORIZED, axum::response::Html(
+            r#"<!doctype html><html><body style="background:#000;color:#e07b7b;font-family:-apple-system,sans-serif;padding:60px 22px;text-align:center"><h1 style="font-weight:300">リンクが無効です</h1><p style="color:#888">期限切れ、または既に使用済みです。<br><a href="/mypage" style="color:#e6c449">/mypage</a> から新しいリンクをリクエストしてください。</p></body></html>"#
+        )).into_response(),
+    };
+
+    // Create session (30 days).
+    let session_id = mypage_random_token();
+    let buyer_token = buyer_token_for(&email);
+    let expires_at = now_s + 30 * 86_400;
+    let ip = client_ip(&headers);
+    let day = (now_s / 86_400).to_string();
+    let ip_hash = if ip.is_empty() { String::new() } else {
+        use sha2::{Sha256, Digest};
+        let mut h = Sha256::new();
+        h.update(ip.as_bytes()); h.update(b"|"); h.update(day.as_bytes());
+        format!("{:x}", h.finalize())[..16].to_string()
+    };
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO mypage_sessions (session_id, email, buyer_token, issued_at, expires_at, last_seen, ip_hash)
+             VALUES (?,?,?,?,?,?,?)",
+            params![session_id, email, buyer_token, now_s.to_string(), expires_at.to_string(), now_s.to_string(), ip_hash],
+        );
+    }
+
+    Response::builder()
+        .status(StatusCode::SEE_OTHER)
+        .header("Location", "/mypage")
+        .header("Set-Cookie", format!(
+            "mu_session={}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={}",
+            session_id, 30 * 86_400))
+        .body(axum::body::Body::empty()).unwrap()
+}
+
+async fn mypage_logout(
+    State(db): State<Db>,
+    headers: HeaderMap,
+) -> Response {
+    if let Some(sid) = mypage_session_from_cookie(&headers) {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute("DELETE FROM mypage_sessions WHERE session_id = ?", params![sid]);
+    }
+    Response::builder()
+        .status(StatusCode::SEE_OTHER)
+        .header("Location", "/mypage")
+        .header("Set-Cookie", "mu_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0")
+        .body(axum::body::Body::empty()).unwrap()
+}
+
+async fn mypage_dashboard(db: Db, email: String, buyer_token: String) -> Response {
+    let masked = mask_email_public(&email);
+
+    // Orders for this buyer (by email, since collab_orders.email is the join key).
+    struct OrderRow {
+        id: i64, slug: String, size: String, created_at: i64,
+        amount_jpy: i64, status: String,
+        product_name: String, image_url: String,
+        printful_order_id: String,
+    }
+    let orders: Vec<OrderRow> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT
+                o.id, o.slug, COALESCE(o.size,''),
+                CAST(COALESCE(o.created_at,'0') AS INTEGER),
+                COALESCE(o.amount_jpy, 0),
+                COALESCE(o.status,'received'),
+                COALESCE((SELECT name FROM products p WHERE p.slug=o.slug),
+                         (SELECT name FROM collab_products cp WHERE cp.slug=o.slug),
+                         o.slug) AS pname,
+                COALESCE(
+                  (SELECT image_url FROM collab_products cp WHERE cp.slug=o.slug),
+                  (SELECT 'https://wearmu.com/mockups/' || p.id || '.jpg' FROM products p WHERE p.slug=o.slug),
+                  ''
+                ) AS img,
+                COALESCE(o.printful_order_id, '')
+             FROM collab_orders o
+             WHERE o.email = ?
+             ORDER BY CAST(COALESCE(o.created_at,'0') AS INTEGER) DESC"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map(params![email], |r| Ok(OrderRow {
+            id: r.get(0)?, slug: r.get(1)?, size: r.get(2)?, created_at: r.get(3)?,
+            amount_jpy: r.get(4)?, status: r.get(5)?,
+            product_name: r.get::<_, Option<String>>(6)?.unwrap_or_default(),
+            image_url: r.get(7)?, printful_order_id: r.get(8)?,
+        })).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+
+    // Existing NFT claim requests.
+    struct ClaimRow { order_id: i64, slug: String, wallet: String, status: String, mint_address: String }
+    let claims: Vec<ClaimRow> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT COALESCE(order_id,0), COALESCE(slug,''), wallet_address,
+                    status, COALESCE(mint_address,'')
+             FROM nft_claim_requests WHERE buyer_token = ?
+             ORDER BY id DESC"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map(params![buyer_token], |r| Ok(ClaimRow {
+            order_id: r.get(0)?, slug: r.get(1)?, wallet: r.get(2)?,
+            status: r.get(3)?, mint_address: r.get(4)?,
+        })).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+
+    // Render order cards with status pill + (if eligible) NFT claim form.
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let mut orders_html = String::new();
+    if orders.is_empty() {
+        orders_html.push_str(r#"<div style="color:#888;font-size:13px;text-align:center;padding:48px 0">まだご注文がありません。</div>"#);
+    }
+    for o in &orders {
+        let d = (now_s - o.created_at) / 86_400;
+        let pname = if o.product_name.is_empty() { o.slug.clone() } else { o.product_name.clone() };
+        let img_html = if o.image_url.is_empty() {
+            r#"<div style="width:100px;height:100px;background:#0f0f0f;border:1px solid #1f1f1f;border-radius:4px;flex-shrink:0"></div>"#.to_string()
+        } else {
+            format!(r#"<img src="{}" alt="{}" width="100" height="100" loading="lazy" style="width:100px;height:100px;object-fit:cover;background:#0f0f0f;border:1px solid #1f1f1f;border-radius:4px;flex-shrink:0"/>"#,
+                html_attr_escape(&o.image_url), html_escape(&pname))
+        };
+        let pill_color = match o.status.as_str() {
+            "received" => "#888", "production" => "#e6c449", "shipped" => "#9bd97a",
+            "delivered" => "#9bd97a", _ => "#888",
+        };
+        let status_jp = match o.status.as_str() {
+            "received" => "受領 (発注待ち)",
+            "production" => "印刷中",
+            "shipped" => "出荷済",
+            "delivered" => "お届け済",
+            other => other,
+        };
+        // NFT claim form (if no claim yet for this order).
+        let already_claimed = claims.iter().find(|c| c.order_id == o.id);
+        let nft_html = match already_claimed {
+            Some(c) => {
+                let mint_disp = if c.mint_address.is_empty() {
+                    "(発行待ち)".to_string()
+                } else {
+                    let s: String = c.mint_address.chars().take(8).collect();
+                    let e: String = c.mint_address.chars().rev().take(6).collect::<String>().chars().rev().collect();
+                    format!("{}…{}", s, e)
+                };
+                format!(
+                    r#"<div style="margin-top:12px;padding:10px 12px;background:#0a0a0a;border:1px solid #1f1f1f;border-radius:3px;font-size:11.5px;line-height:1.6;color:#888"><div>NFT 受け取り: <span style="color:#9bd97a">{st}</span></div><div style="font-family:ui-monospace,Menlo,monospace;color:#666;margin-top:3px">→ {wallet}</div><div style="font-family:ui-monospace,Menlo,monospace;color:#666">mint: {mint}</div></div>"#,
+                    st = html_escape(&c.status), wallet = html_escape(&c.wallet), mint = html_escape(&mint_disp))
+            }
+            None => {
+                format!(
+                    r#"<form class="claim-form" data-order="{oid}" data-slug="{slug}" style="margin-top:12px;display:flex;gap:8px"><input name="wallet" placeholder="Solana wallet (オプション)" style="flex:1;background:#0a0a0a;border:1px solid #1f1f1f;color:#fff;padding:8px 10px;font-size:12px;border-radius:3px;font-family:ui-monospace,Menlo,monospace"/><button type="submit" style="background:#e6c449;color:#000;border:0;padding:8px 14px;font-size:11.5px;font-weight:600;letter-spacing:0.04em;cursor:pointer;border-radius:3px">NFT 受け取り</button></form>"#,
+                    oid = o.id, slug = html_attr_escape(&o.slug))
+            }
+        };
+        let printful_html = if o.printful_order_id.is_empty() {
+            String::new()
+        } else {
+            format!(r#"<div style="color:#555;font-size:10.5px;font-family:ui-monospace,Menlo,monospace;margin-top:3px">Printful: {}</div>"#,
+                html_escape(&o.printful_order_id))
+        };
+        orders_html.push_str(&format!(
+            r#"<div style="display:flex;gap:14px;padding:18px 0;border-bottom:1px solid #1a1a1a"><div>{img}</div><div style="flex:1"><div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><div style="color:#e6c449;font-size:14.5px;font-weight:500">{name}</div><span style="font-size:10px;letter-spacing:0.16em;color:{pc};text-transform:uppercase;padding:2px 7px;border:1px solid {pc}55;border-radius:2px">{stj}</span></div><div style="color:#888;font-size:11.5px;margin-top:4px">{ago} 日前 · size {sz} · ¥{amt} · order #{oid}</div>{pf}{nft}</div></div>"#,
+            img = img_html, name = html_escape(&pname), pc = pill_color, stj = status_jp,
+            ago = d, sz = html_escape(&o.size), amt = fmt_jpy(o.amount_jpy), oid = o.id,
+            pf = printful_html, nft = nft_html));
+    }
+
+    let total_spent: i64 = orders.iter().map(|o| o.amount_jpy).sum();
+    let first_day = orders.iter().map(|o| o.created_at).min().unwrap_or(now_s);
+    let day_n = ((now_s - first_day) / 86_400).max(0);
+
+    let page = format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="robots" content="noindex,nofollow"/>
+<title>マイページ · {masked} · MU</title>
+<style>
+  :root{{--bg:#000;--fg:#f5f5f0;--mute:#888;--gold:#e6c449}}
+  html,body{{background:var(--bg);color:var(--fg);margin:0;font-family:-apple-system,sans-serif;font-feature-settings:"palt"}}
+  a{{color:inherit}}
+  .wrap{{max-width:720px;margin:0 auto;padding:36px 22px 80px}}
+  .topbar{{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;color:#888;font-size:12px}}
+  .kicker{{font-size:10.5px;letter-spacing:0.22em;color:#666;text-transform:uppercase;margin-bottom:10px}}
+  h1{{font-size:28px;font-weight:300;letter-spacing:0.02em;line-height:1.3;margin:0 0 8px}}
+  .stat{{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:28px 0 0;padding:18px 0;border-top:1px solid #1a1a1a;border-bottom:1px solid #1a1a1a}}
+  .stat .v{{font-size:22px;font-weight:300;color:var(--fg);font-variant-numeric:tabular-nums}}
+  .stat .l{{font-size:10.5px;letter-spacing:0.16em;color:var(--mute);text-transform:uppercase;margin-top:3px}}
+  h2{{font-size:11px;letter-spacing:0.22em;color:#777;text-transform:uppercase;margin:36px 0 6px}}
+  form.logout{{display:inline}}
+  form.logout button{{background:none;border:0;color:#888;font-size:11.5px;cursor:pointer;letter-spacing:0.06em;padding:6px 0;text-decoration:underline}}
+  .msg{{margin:10px 0;color:#9bd97a;font-size:12px}}
+  .err{{margin:10px 0;color:#e07b7b;font-size:12px}}
+</style></head><body><div class="wrap">
+  <div class="topbar"><div>👤 {masked}</div><form class="logout" method="post" action="/mypage/logout"><button type="submit">ログアウト</button></form></div>
+  <div class="kicker">マイページ · MU</div>
+  <h1>あなたの MU</h1>
+  <div class="stat">
+    <div><div class="v">{owned}</div><div class="l">注文数</div></div>
+    <div><div class="v">{dayn}</div><div class="l">Day N</div></div>
+    <div><div class="v">¥{spent}</div><div class="l">累計</div></div>
+  </div>
+  <h2>注文 / 受け取り状況</h2>
+  <div>{orders_html}</div>
+  <div style="margin-top:48px;color:#555;font-size:11px;line-height:1.7;text-align:center">
+    NFT 受け取りはオプション (Solana wallet をお持ちの方のみ)。<br>
+    送付先変更などのお問い合わせは <a style="color:#888" href="mailto:info@wearmu.com">info@wearmu.com</a> まで。
+  </div>
+</div>
+<script>
+document.querySelectorAll('form.claim-form').forEach(f=>{{
+  f.addEventListener('submit',async ev=>{{
+    ev.preventDefault();
+    const wallet=f.querySelector('input[name=wallet]').value.trim();
+    const oid=f.dataset.order, slug=f.dataset.slug;
+    if(!wallet||wallet.length<32){{alert('Solana wallet を 32 文字以上で入力してください');return;}}
+    f.querySelector('button').disabled=true;
+    const r=await fetch('/api/mypage/claim-nft',{{method:'POST',headers:{{'content-type':'application/json'}},body:JSON.stringify({{order_id:Number(oid),slug:slug,wallet:wallet}})}});
+    const j=await r.json();
+    if(j.ok){{location.reload();}}else{{alert(j.error||'エラー');f.querySelector('button').disabled=false;}}
+  }});
+}});
+</script>
+</body></html>"#,
+        masked = html_escape(&masked),
+        owned = orders.len(),
+        dayn = day_n,
+        spent = fmt_jpy(total_spent),
+        orders_html = orders_html);
+    axum::response::Html(page).into_response()
+}
+
+async fn mypage_claim_nft(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    // Session required.
+    let sid = match mypage_session_from_cookie(&headers) {
+        Some(s) => s,
+        None => return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"ok":false,"error":"not logged in"}))).into_response(),
+    };
+    let (email, buyer_token) = {
+        let conn = db.lock().unwrap();
+        match mypage_lookup_session(&conn, &sid) {
+            Some(s) => s,
+            None => return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"ok":false,"error":"session expired"}))).into_response(),
+        }
+    };
+
+    let order_id = body.get("order_id").and_then(|v| v.as_i64()).unwrap_or(0);
+    let slug    = body.get("slug").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let wallet  = body.get("wallet").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    if wallet.len() < 32 || wallet.len() > 64 || !wallet.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok":false,"error":"invalid wallet"}))).into_response();
+    }
+
+    // Verify the order belongs to this email.
+    let owns_order: bool = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT 1 FROM collab_orders WHERE id = ? AND email = ?",
+            params![order_id, email], |_| Ok(true)).unwrap_or(false)
+    };
+    if !owns_order {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"ok":false,"error":"order not yours"}))).into_response();
+    }
+
+    // Reject duplicate claims for the same order.
+    let dup: bool = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT 1 FROM nft_claim_requests WHERE order_id = ? AND buyer_token = ?",
+            params![order_id, buyer_token], |_| Ok(true)).unwrap_or(false)
+    };
+    if dup {
+        return (StatusCode::CONFLICT, Json(serde_json::json!({"ok":false,"error":"既にリクエスト済みです"}))).into_response();
+    }
+
+    let now = chrono_now();
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO nft_claim_requests (buyer_token, email, order_id, slug, wallet_address, status, requested_at)
+             VALUES (?,?,?,?,?, 'requested', ?)",
+            params![buyer_token, email, order_id, slug, wallet, now],
+        );
+    }
+
+    // Telegram notify (admin can review then trigger mint).
+    if let Ok(tg_token) = env::var("TELEGRAM_BOT_TOKEN") {
+        if !tg_token.is_empty() {
+            let tg_chat = env::var("TELEGRAM_CHAT_ID").unwrap_or_else(|_| "1136442501".into());
+            let msg = format!(
+                "🎟️ NFT CLAIM request\n\nfrom: {}\norder: #{} ({})\nwallet: {}\n\n→ /admin (実 mint は手動 or agent で)",
+                email, order_id, slug, wallet);
+            let _ = reqwest::Client::new()
+                .post(format!("https://api.telegram.org/bot{}/sendMessage", tg_token))
+                .json(&serde_json::json!({"chat_id": tg_chat, "text": msg}))
+                .send().await;
+        }
+    }
+
+    Json(serde_json::json!({"ok":true})).into_response()
+}
+
 /// POST /api/bounty/submit — public endpoint, accepts a bug bounty report.
 /// Rate-limited per email + per ip_hash (10/h via in-memory bucket would be
 /// nice; for now we rely on body-size + uniqueness checks at DB layer).
@@ -21506,6 +22022,44 @@ async fn main() {
             bio         TEXT NOT NULL,
             updated_at  TEXT NOT NULL
         )",
+        // /mypage email magic-link login: one-time tokens + session cookies.
+        "CREATE TABLE IF NOT EXISTS mypage_login_tokens (
+            token       TEXT PRIMARY KEY,
+            email       TEXT NOT NULL,
+            issued_at   TEXT NOT NULL,
+            expires_at  TEXT NOT NULL,
+            consumed_at TEXT,
+            ip_hash     TEXT
+        )",
+        "CREATE INDEX IF NOT EXISTS idx_mpt_email ON mypage_login_tokens(email, issued_at DESC)",
+        "CREATE TABLE IF NOT EXISTS mypage_sessions (
+            session_id  TEXT PRIMARY KEY,
+            email       TEXT NOT NULL,
+            buyer_token TEXT NOT NULL,
+            issued_at   TEXT NOT NULL,
+            expires_at  TEXT NOT NULL,
+            last_seen   TEXT,
+            ip_hash     TEXT
+        )",
+        "CREATE INDEX IF NOT EXISTS idx_mps_email ON mypage_sessions(email)",
+        "CREATE INDEX IF NOT EXISTS idx_mps_buyer_token ON mypage_sessions(buyer_token)",
+        // NFT receipt claim (buyer optionally provides wallet address; agent
+        // mints the soulbound to it. NULL wallet = "not requested yet").
+        "CREATE TABLE IF NOT EXISTS nft_claim_requests (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            buyer_token     TEXT NOT NULL,
+            email           TEXT NOT NULL,
+            order_id        INTEGER,
+            slug            TEXT,
+            wallet_address  TEXT NOT NULL,
+            status          TEXT NOT NULL DEFAULT 'requested',
+            mint_address    TEXT,
+            tx_signature    TEXT,
+            requested_at    TEXT NOT NULL,
+            minted_at       TEXT
+        )",
+        "CREATE INDEX IF NOT EXISTS idx_nft_claim_buyer ON nft_claim_requests(buyer_token, requested_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_nft_claim_status ON nft_claim_requests(status)",
         // Auto-rewrite drafts produced by agent_email_rewriter.
         //   status: pending → approved (human accepts) → rejected (human drops)
         //   parent_score: the median score that triggered the rewrite attempt
@@ -23354,6 +23908,11 @@ async fn main() {
         .route("/security", get(bounty_page))
         .route("/api/bounty/submit", post(api_bounty_submit))
         .route("/buyer/:token", get(buyer_profile_page))
+        .route("/mypage", get(mypage_entry))
+        .route("/api/mypage/request-link", post(mypage_request_link))
+        .route("/mypage/auth/:token", get(mypage_auth_consume))
+        .route("/mypage/logout", post(mypage_logout))
+        .route("/api/mypage/claim-nft", post(mypage_claim_nft))
         .route("/admin/bounty", get(admin_bounty))
         .route("/admin/bounty/:id/triage", post(admin_bounty_triage))
         .route("/admin/bounty/:id/issue-reward", post(admin_bounty_issue_reward))
