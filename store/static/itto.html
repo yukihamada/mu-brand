@@ -259,34 +259,81 @@ footer a{color:var(--y)}
 </section>
 
 <section class="story" style="background:var(--bg-2)">
-  <h2>あなたの T シャツは、<em>あなただけの受領証</em>。</h2>
-  <p class="lede">28 人全員が同じ夜を共有しますが、<br>T シャツに刻まれるデータは、1 人ずつ違います。</p>
-  <div style="max-width:780px;margin:40px auto 0;background:var(--bg);border:1px solid var(--line);padding:36px 32px;font-family:ui-monospace,Menlo,'Hiragino Mincho ProN',monospace;font-size:13.5px;line-height:2.05;color:var(--mute)">
-    <div style="color:var(--y);font-size:10.5px;letter-spacing:0.28em;text-transform:uppercase;margin-bottom:18px;font-family:'Helvetica Neue',Arial,sans-serif">T シャツ背面に刻まれるもの (例)</div>
+  <h2>席ごとに、<em>食べる部位と g が事前に決まっています</em>。</h2>
+  <p class="lede">「当日のおまかせ」ではありません。<br>調達した 1 頭を 28 等分する設計図が、購入時点で確定しています。</p>
+  <p style="margin-top:6px">28 席は 4 つの方向に分かれます。どの席を選ぶか = どの方向で <strong>この一頭</strong> と向き合うか。価格は全席 ¥75,000 で同じです。</p>
+
+  <div class="dual" style="grid-template-columns:repeat(2,1fr);max-width:920px">
+    <div class="card">
+      <h5>序-heavy · 7 席</h5>
+      <p style="font-family:ui-monospace,Menlo,monospace;color:var(--fg);margin-bottom:10px">
+        シャトーブリアン 45g · ザブトン 40g · ミスジ 25g<br>
+        サーロイン 40g · 上カルビ 25g<br>
+        タン 25g · ハラミ 30g<br>
+        テール 50g · 骨スープ 200ml
+      </p>
+      <p style="font-size:13px">希少部位の比率を最大化。最初に銃を撃つ席。<br><span style="color:var(--y)">合計 280g (赤身換算)</span></p>
+    </div>
+    <div class="card">
+      <h5>本-heavy · 7 席</h5>
+      <p style="font-family:ui-monospace,Menlo,monospace;color:var(--fg);margin-bottom:10px">
+        シャトーブリアン 20g · ザブトン 25g<br>
+        サーロイン 80g · リブロース 60g · 上カルビ 50g<br>
+        タン 25g · ハラミ 30g<br>
+        テール 50g · 骨スープ 200ml
+      </p>
+      <p style="font-size:13px">王道の塊を厚めに。但馬の旨味の芯を取りに行く席。<br><span style="color:var(--y)">合計 340g (赤身換算)</span></p>
+    </div>
+    <div class="card">
+      <h5>続-heavy · 7 席</h5>
+      <p style="font-family:ui-monospace,Menlo,monospace;color:var(--fg);margin-bottom:10px">
+        シャトーブリアン 20g · ザブトン 25g<br>
+        サーロイン 40g · 上カルビ 30g<br>
+        タン 60g · ハラミ 70g · サガリ 30g · ハツ 25g<br>
+        テール 40g · 骨スープ 200ml
+      </p>
+      <p style="font-size:13px">動いて生きた部位の力強さを軸に。<br><span style="color:var(--y)">合計 340g (赤身換算)</span></p>
+    </div>
+    <div class="card">
+      <h5>尽-heavy · 7 席</h5>
+      <p style="font-family:ui-monospace,Menlo,monospace;color:var(--fg);margin-bottom:10px">
+        シャトーブリアン 20g · ザブトン 25g<br>
+        サーロイン 40g · 上カルビ 25g<br>
+        タン 25g · ハラミ 30g<br>
+        テール 100g · 骨髄 30g · 骨スープ 400ml · スジ煮込み 80g
+      </p>
+      <p style="font-size:13px">最も命の根に近い席。残さず使い切るための席。<br><span style="color:var(--y)">合計 345g (赤身換算)</span></p>
+    </div>
+  </div>
+
+  <p style="margin-top:36px;text-align:center;font-size:13.5px;color:var(--mute);max-width:680px">
+    各席の正確な部位・g 表は購入確定時のメールにも同封。<br>
+    Stripe 直販 (2026-05-15 公開) では、席タイプを選んでチェックアウトします。
+  </p>
+</section>
+
+<section class="story">
+  <h2>T シャツは、<em>あなたの席の受領証</em>。</h2>
+  <p class="lede">座る前から、何を食べるかが決まっている。<br>その「事前確定書」がそのまま T シャツになります。</p>
+  <div style="max-width:780px;margin:40px auto 0;background:var(--bg-2);border:1px solid var(--line);padding:36px 32px;font-family:ui-monospace,Menlo,'Hiragino Mincho ProN',monospace;font-size:13.5px;line-height:2.05;color:var(--mute)">
+    <div style="color:var(--y);font-size:10.5px;letter-spacing:0.28em;text-transform:uppercase;margin-bottom:18px;font-family:'Helvetica Neue',Arial,sans-serif">T シャツ背面に刻まれるもの (席 #07 · 本-heavy の例)</div>
     <div style="color:var(--fg);font-size:15px;line-height:2.2">
       <div>ittō #0001 — 純但馬子牛</div>
-      <div>2025.04.12 → 2026.08.03 (478 日)</div>
+      <div>2025.04.12 — 2026.08.03 (478 日)</div>
       <div>田村牧場 (兵庫県) · 推定 178,200g</div>
-      <div style="margin-top:14px">受領 — @hamadayuki / 21:14 着席</div>
-      <div style="margin-left:14px;color:var(--mute);font-size:13.5px">序 シャトーブリアン 30g · ザブトン 25g</div>
-      <div style="margin-left:14px;color:var(--mute);font-size:13.5px">本 サーロイン 60g · 上カルビ 45g</div>
-      <div style="margin-left:14px;color:var(--mute);font-size:13.5px">続 タン 40g · ハラミ 55g · ハツ 20g</div>
-      <div style="margin-left:14px;color:var(--mute);font-size:13.5px">尽 テール 80g · 骨髄 15g · 骨スープ 240ml</div>
-      <div style="margin-top:14px;color:var(--y)">合計 — 370g (この一頭の 0.21%)</div>
-      <div style="margin-top:14px;font-size:13px;color:var(--mute)">QR → wearmu.com/itto/0001</div>
+      <div style="margin-top:14px">SEAT 07 / 本-HEAVY — @hamadayuki</div>
+      <div style="margin-left:14px;color:var(--mute);font-size:13.5px">序 シャトーブリアン 20g · ザブトン 25g</div>
+      <div style="margin-left:14px;color:var(--mute);font-size:13.5px">本 サーロイン 80g · リブロース 60g · 上カルビ 50g</div>
+      <div style="margin-left:14px;color:var(--mute);font-size:13.5px">続 タン 25g · ハラミ 30g</div>
+      <div style="margin-left:14px;color:var(--mute);font-size:13.5px">尽 テール 50g · 骨スープ 200ml</div>
+      <div style="margin-top:14px;color:var(--y)">合計 — 340g (この一頭の 0.19%)</div>
+      <div style="margin-top:14px;font-size:13px;color:var(--mute)">QR → wearmu.com/itto/0001#seat-07</div>
     </div>
   </div>
   <p style="margin-top:36px;text-align:center;font-size:14.5px;color:var(--fg);max-width:680px">
-    <strong>「この一頭の 0.21%」</strong> — 食べたものが、文字どおり数字で残ります。<br>
-    部位とグラムは焼き師の手で記録、夜の終わりに 28 人分の個別データが Gemini 3 Pro Image で背面デザインに焼き込まれます。
+    <strong>「この一頭の 0.19%」</strong> — 食べる前から、数字で確定しています。<br>
+    席ごとに違う数字、ただし全 28 席が揃って 1 頭の最も濃い部分を成す。
   </p>
-  <ul style="max-width:680px;margin:24px auto 0;color:var(--mute);font-size:13.5px;line-height:2;list-style:none">
-    <li>・ 牛の誕生日 / 全寿命 / 牧場 / 推定総体重</li>
-    <li>・ あなたが頂いた部位の <strong>正確なグラム</strong></li>
-    <li>・ あなたが頂いた合計と、この一頭に占める <strong>%</strong></li>
-    <li>・ あなたの着席時刻と席番号</li>
-    <li>・ 永続トレース URL の QR コード</li>
-  </ul>
 </section>
 
 <section class="story">
@@ -310,8 +357,8 @@ footer a{color:var(--y)}
       <tr><th>項目</th><th class="r">相当額</th></tr>
     </thead>
     <tbody>
-      <tr><td>焼肉古今 4 課コース (序・本・続・尽) + ペアリング</td><td class="r">¥48,000</td></tr>
-      <tr><td>1/1 記念 T シャツ — <strong style="color:var(--fg)">あなたが頂いた部位と g、牛の誕生日と全寿命、その夜に占めたあなたの %、QR を背面に個別刻印</strong></td><td class="r">¥6,000</td></tr>
+      <tr><td>焼肉古今 4 課コース (序・本・続・尽) — <strong style="color:var(--fg)">席タイプにより部位構成は事前確定</strong> + ペアリング</td><td class="r">¥48,000</td></tr>
+      <tr><td>1/1 記念 T シャツ — <strong style="color:var(--fg)">あなたの席の部位 + g、牛の誕生日と全寿命、占める % を背面に個別刻印</strong></td><td class="r">¥6,000</td></tr>
       <tr><td>NFT 部分所有証 (Solana / 任意)</td><td class="r">¥5,000</td></tr>
       <tr><td>1 ヶ月の体重推移 + 屠畜記録 + 4 課動画の永続 access</td><td class="r">¥6,000</td></tr>
       <tr><td>残部位の出処トラッキング (1 ヶ月分の通知)</td><td class="r">¥3,000</td></tr>
