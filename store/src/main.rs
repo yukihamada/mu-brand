@@ -25512,6 +25512,11 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         interval_secs: 21_600, // 6h
         description: "MUGEN drop_num + MUON 日付の欠番を検知し、generate.py の正確なコマンドを Telegram で yuki に提示 (Fly app から Python 実行不可なので nudge 型)",
     },
+    AgentDef {
+        name: "purchase_celebrate",
+        interval_secs: 600, // 10min
+        description: "新規 external 購入 / 生産開始 / 発送 / 到着の lifecycle 4 イベントで Gemini Pro が humor + FOMO ツイート生成して enqueue。次の MUGEN drop の design_seed も保存して fan loop を回す",
+    },
 ];
 
 /// agent_journal から指定 agent の最後の cycle_at (epoch sec) を取得。
@@ -25559,6 +25564,7 @@ async fn run_agent(name: &str, db: Db) -> Result<AgentReport, String> {
         "weather_pulse"     => agent_weather_pulse(db).await,
         "mention_responder" => agent_mention_responder(db).await,
         "drop_filler"       => agent_drop_filler(db).await,
+        "purchase_celebrate"=> agent_purchase_celebrate(db).await,
         _ => Err(format!("unknown agent: {}", name)),
     }
 }
@@ -31131,6 +31137,181 @@ async fn agent_funnel_anomaly(db: Db) -> Result<AgentReport, String> {
 // ── Agent 20: musk_review (founder persona) ────────────────────────────
 async fn agent_musk_review(db: Db) -> Result<AgentReport, String> {
     founder_review(db, "musk", MUSK_PROMPT).await
+}
+
+// ── Agent: purchase_celebrate ───────────────────────────────────────────
+// 新規 external 購入を検知し、Gemini Pro で「同じ文面の繰り返しなし / humor /
+// FOMO」のお祝いツイートを生成して enqueue。同時に次の MUGEN ドロップ用の
+// design_seed を cv_config('next_mugen_seed_prompt') に保存。
+//
+// 売れたから生まれる T シャツ、というファンループ:
+//   purchase → tweet → 次 MUGEN drop のデザイン seed → 別の購入 → ...
+//
+// yuki 本人 (yuki@hamada.tokyo / mail@yukihamada.jp) の dogfood 購入は対象外。
+// 10 分 cadence、idempotent (cv_config('last_celebrated_purchase_id'))。
+async fn agent_purchase_celebrate(db: Db) -> Result<AgentReport, String> {
+    let key = match env::var("GEMINI_API_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => return Ok(AgentReport::idle("GEMINI_API_KEY missing")),
+    };
+    let yuki_a = "yuki@hamada.tokyo";
+    let yuki_b = "mail@yukihamada.jp";
+    let (last_id, new_purchases): (i64, Vec<(i64, String, String, i64, String)>) = {
+        let conn = db.lock().unwrap();
+        let last: i64 = cv_get(&conn, "last_celebrated_purchase_id", "0").parse().unwrap_or(0);
+        let mut stmt = match conn.prepare(
+            "SELECT id, email, brand, drop_num, COALESCE(session_id,'') FROM mu_purchases
+             WHERE id > ? AND session_id LIKE 'cs_live_%' AND email NOT IN (?,?)
+             ORDER BY id ASC LIMIT 5"
+        ) { Ok(s) => s, Err(_) => return Ok(AgentReport::idle("schema not ready")) };
+        let rows: Vec<_> = stmt.query_map(params![last, yuki_a, yuki_b],
+            |r| Ok((r.get::<_,i64>(0)?, r.get::<_,String>(1)?, r.get::<_,String>(2)?,
+                    r.get::<_,i64>(3)?, r.get::<_,String>(4)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+        (last, rows)
+    };
+    if new_purchases.is_empty() {
+        return Ok(AgentReport::idle("no new external purchases"));
+    }
+    let mut decisions: Vec<serde_json::Value> = Vec::new();
+    let mut actions: Vec<serde_json::Value> = Vec::new();
+    let mut posted = 0i64;
+    let mut max_id = last_id;
+    for (pid, _email, brand, drop_num, _sess) in &new_purchases {
+        let (tweet, seed) = match generate_purchase_celebration(&key, brand, *drop_num, &db).await {
+            Ok(v) => v,
+            Err(e) => {
+                decisions.push(serde_json::json!({"type":"gemini_err","purchase_id":pid,"error":e}));
+                max_id = *pid;
+                continue;
+            }
+        };
+        // Enqueue tweet + save next drop seed (atomic-ish)
+        {
+            let conn = db.lock().unwrap();
+            let qid = enqueue_sns_post(&conn, "x", "purchase_celebrate", None, None, &tweet, None);
+            cv_set(&conn, "next_mugen_seed_prompt", &seed, &format!("purchase_celebrate purchase_id={}", pid));
+            actions.push(serde_json::json!({
+                "purchase_id": pid, "brand": brand, "drop_num": drop_num,
+                "queue_id": qid, "tweet_chars": tweet.chars().count(),
+                "design_seed_preview": seed.chars().take(60).collect::<String>(),
+            }));
+        }
+        posted += 1;
+        max_id = *pid;
+    }
+    {
+        let conn = db.lock().unwrap();
+        cv_set(&conn, "last_celebrated_purchase_id", &max_id.to_string(), "purchase_celebrate");
+    }
+    Ok(AgentReport {
+        observations: serde_json::json!({
+            "new_purchases": new_purchases.len(), "tweets_queued": posted,
+            "last_celebrated_id": max_id,
+            "next_mugen_seed_set": posted > 0,
+        }),
+        decisions,
+        actions,
+        summary: format!("purchase_celebrate: {} new external purchases → {} tweets queued + seed updated", new_purchases.len(), posted),
+        notable: posted > 0,
+    })
+}
+
+/// Gemini Pro で celebration tweet + 次 MUGEN ドロップ用 design_seed を生成。
+/// temperature 高め (0.9) で variety 担保、recent tweets を avoid list として送る。
+async fn generate_purchase_celebration(
+    gemini_key: &str, brand: &str, drop_num: i64, db: &Db,
+) -> Result<(String, String), String> {
+    // Pull last 5 celebration tweets so Gemini can avoid repeating them.
+    let recent: Vec<String> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT text FROM sns_post_queue
+             WHERE network='x' AND trigger_kind='purchase_celebrate'
+             ORDER BY created_at DESC LIMIT 5"
+        ) { Ok(s) => s, Err(_) => return Err("db prep".into()) };
+        stmt.query_map([], |r| r.get::<_, String>(0))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    // Weather snippet (best-effort).
+    let temp = {
+        let conn = db.lock().unwrap();
+        cv_get(&conn, "weather_temp_c", "?")
+    };
+    let avoid_block = if recent.is_empty() {
+        "(初回なので avoid なし)".into()
+    } else {
+        recent.iter().enumerate()
+            .map(|(i, t)| format!("{}: {}", i+1, t.chars().take(120).collect::<String>()))
+            .collect::<Vec<_>>().join("\n")
+    };
+    let brand_url = match brand {
+        "mugen" => "wearmu.com/mugen",
+        "muon"  => "wearmu.com/muon",
+        "ma"    => "wearmu.com/ma",
+        "you"   => "wearmu.com/you",
+        _       => "wearmu.com",
+    };
+    let prompt = format!(r#"あなたは MU (北海道弟子屈町、無人 AI ファッションブランド) の SNS 担当 AI です。
+今、{brand} #{drop_num} が 1 着、外部のお客様に売れました。お祝い + FOMO + humor の X 投稿を書きます。
+
+# 文脈
+- 弟子屈の今の気温: {temp}°C (発行枚数のシード)
+- 売れたブランド: {brand} / drop_num: {drop_num}
+- URL: {brand_url}
+
+# 必須条件 (Vision §3 quiet by default + §1 numbers over adjectives)
+- 240 文字以内
+- 末尾に {brand_url}
+- ! は最大 1 個。CAPS / hype emoji 禁止 (🎉 ✨ 🔥 など全部 NG)
+- 「ありがとう」「感謝」「!!!」の連呼禁止
+- humor: 短い ironic な観察、または自虐
+- FOMO: 「次の人を待ってる」「もう 1 枚しかない」「同じデザインは二度と」など、買い逃すと損する暗示
+
+# 避けるべき表現 (直近 5 件、同じ文体は drift)
+{avoid_block}
+
+# 出力フォーマット
+JSON のみ。前置きや説明なし:
+{{
+  "tweet": "<上記条件を満たすツイート全文>",
+  "design_seed": "<このツイートの世界観・トーンを反映した、次の MUGEN T シャツデザインのプロンプト英語 30-80 字。例: 'A single grain of static caught in 18°C morning air, sumi-e style'>"
+}}"#,
+        brand = brand, drop_num = drop_num, temp = temp,
+        brand_url = brand_url, avoid_block = avoid_block,
+    );
+    let req = serde_json::json!({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0.9,
+            "maxOutputTokens": 8000,
+            "responseMimeType": "application/json",
+        },
+    });
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={}",
+        gemini_key);
+    let resp = reqwest::Client::new().post(&url).json(&req).send().await
+        .map_err(|e| format!("gemini http: {e}"))?;
+    if !resp.status().is_success() {
+        let s = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("gemini {}: {}", s, &body[..body.len().min(200)]));
+    }
+    let body: serde_json::Value = resp.json().await.map_err(|e| format!("gemini json: {e}"))?;
+    let text = body["candidates"][0]["content"]["parts"][0]["text"]
+        .as_str().ok_or("no text in gemini response")?.trim().to_string();
+    let parsed: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("parse json '{}': {}", text.chars().take(200).collect::<String>(), e))?;
+    let tweet = parsed["tweet"].as_str().ok_or("missing tweet")?.trim().to_string();
+    let seed  = parsed["design_seed"].as_str().ok_or("missing design_seed")?.trim().to_string();
+    if tweet.is_empty() || tweet.chars().count() > 280 {
+        return Err(format!("tweet length out of bounds: {}", tweet.chars().count()));
+    }
+    if seed.is_empty() || seed.len() > 400 {
+        return Err(format!("design_seed length out of bounds: {}", seed.len()));
+    }
+    Ok((tweet, seed))
 }
 
 // ── Agent: self_review (umbrella over 4 daily inward-looking agents) ───
