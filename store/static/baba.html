@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>馬場ちゃんへ — MU × 焼肉古今 統合提案</title>
+<meta name="robots" content="noindex,nofollow">
+<style>
+:root{
+  --bg:#070707; --bg-2:#0d0d0d; --bg-3:#141414;
+  --fg:#F5F5F0; --mute:rgba(245,245,240,0.62); --line:rgba(255,255,255,0.10);
+  --y:#e6c449; --y-soft:rgba(230,196,73,0.10); --red:#C8362C; --green:#4FA868;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg);color:var(--fg);
+  font-family:'Helvetica Neue','Hiragino Mincho ProN','Yu Mincho',Arial,sans-serif;
+  line-height:1.85;-webkit-font-smoothing:antialiased;
+  font-feature-settings:"palt";
+}
+a{color:inherit;text-decoration:none}
+img{display:block;max-width:100%;height:auto}
+.wrap{max-width:880px;margin:0 auto;padding:0 28px}
+
+.cover{padding:88px 28px 60px;text-align:center;border-bottom:1px solid var(--line)}
+.cover .to{font-size:11.5px;letter-spacing:0.36em;text-transform:uppercase;color:var(--mute);margin-bottom:18px}
+.cover h1{font-size:clamp(32px,6vw,60px);font-weight:200;letter-spacing:0.02em;line-height:1.2;font-family:'Hiragino Mincho ProN','Yu Mincho',serif;margin-bottom:20px}
+.cover h1 em{color:var(--y);font-style:normal}
+.cover .sub{font-size:15px;color:var(--mute);max-width:560px;margin:0 auto;line-height:1.95}
+.cover .meta{margin-top:32px;font-size:11.5px;color:var(--mute);letter-spacing:0.16em}
+
+section{padding:72px 28px;border-bottom:1px solid var(--line)}
+section h2{font-size:clamp(22px,3vw,30px);font-weight:300;color:var(--fg);text-align:center;margin:0 0 20px;letter-spacing:0.02em}
+section h2 em{color:var(--y);font-style:normal}
+section .lede{font-size:15px;color:var(--mute);text-align:center;max-width:600px;margin:0 auto 36px;line-height:2}
+section p{color:var(--mute);max-width:680px;margin:0 auto 14px;font-size:14.5px;line-height:2}
+section p strong{color:var(--fg);font-weight:400}
+
+table{width:100%;max-width:760px;margin:24px auto;border-collapse:collapse;font-variant-numeric:tabular-nums;font-size:14px}
+table th,table td{padding:11px 14px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+table th{color:var(--y);font-weight:500;font-size:10.5px;letter-spacing:0.22em;text-transform:uppercase}
+table td.r{text-align:right}
+table tfoot td{font-weight:700;border-top:2px solid var(--y);border-bottom:none}
+
+.live-banner{background:var(--y-soft);border:1px solid rgba(230,196,73,0.3);padding:16px 22px;max-width:680px;margin:24px auto;text-align:center;font-size:14px}
+.live-banner strong{color:var(--y)}
+
+.gallery{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;max-width:880px;margin:30px auto 0}
+@media (max-width:680px){.gallery{grid-template-columns:1fr}}
+.gallery figure{margin:0;border:1px solid var(--line)}
+.gallery img{width:100%;height:240px;object-fit:cover;display:block}
+.gallery figcaption{padding:10px 12px;font-size:11.5px;color:var(--mute);letter-spacing:0.08em;background:var(--bg-2)}
+
+.split{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);max-width:780px;margin:30px auto 0;border:1px solid var(--line)}
+@media (max-width:680px){.split{grid-template-columns:1fr}}
+.split .col{padding:24px 22px;background:var(--bg-2)}
+.split .col h5{font-size:11px;letter-spacing:0.22em;text-transform:uppercase;color:var(--y);margin-bottom:14px;font-weight:600}
+.split .col p{font-size:13.5px;line-height:1.85;color:var(--mute);max-width:none;margin:0}
+
+.checklist{max-width:680px;margin:24px auto;padding:24px;background:var(--bg-2);border:1px solid var(--line)}
+.checklist h5{font-size:11px;letter-spacing:0.22em;text-transform:uppercase;color:var(--y);margin-bottom:16px;font-weight:600}
+.checklist ol{margin-left:18px;color:var(--fg);font-size:14.5px;line-height:2.1}
+.checklist ol li{margin-bottom:6px}
+.checklist ol li small{display:block;color:var(--mute);font-size:12.5px}
+
+.print-cta{padding:48px 28px;text-align:center;background:linear-gradient(180deg,var(--bg),#0f0f0f);border-bottom:1px solid var(--line)}
+.print-cta button{background:var(--y);color:#000;border:none;padding:14px 30px;font-size:12px;letter-spacing:0.28em;text-transform:uppercase;font-weight:700;cursor:pointer;font-family:inherit}
+.print-cta small{display:block;margin-top:14px;color:var(--mute);font-size:11.5px;letter-spacing:0.06em}
+
+footer{padding:36px 28px;color:var(--mute);font-size:11px;text-align:center;line-height:2;letter-spacing:0.06em}
+footer a{color:var(--y)}
+
+@media print{
+  body{background:#fff;color:#000}
+  .print-cta,nav{display:none}
+  section{break-inside:avoid;page-break-inside:avoid;border-color:#ccc}
+  h1,h2{color:#000}
+  p,td,th{color:#000}
+  .live-banner{background:#fff;border:1px solid #999}
+  a{color:#000;text-decoration:underline}
+  table tfoot td{border-top:2px solid #000}
+  img{max-height:380px;object-fit:contain}
+  table th{color:#000}
+}
+</style>
+</head>
+<body>
+
+<section class="cover">
+  <div class="to">For — 馬場ちゃん (焼肉古今 オーナー)</div>
+  <h1>焼肉古今 × MU<br><em>統合提案</em></h1>
+  <p class="sub">
+    1 つのイベント (一頭) + 通年のグッズライン。<br>
+    馬場ちゃん側の負担は最小、MU 側で運営すべて持ちます。<br>
+    1 リンクで全部見せられるようにまとめた、おそらく日本初の "AI 運営型コラボ" 提案書。
+  </p>
+  <div class="meta">2026-05-13 · 株式会社イネブラ (Enabler Inc.) · 濱田優貴</div>
+</section>
+
+<section>
+  <h2>まず — <em>もう動いてる</em>。</h2>
+  <p class="lede">この提案は「アイデア」じゃありません。<br>馬場ちゃんが OK を出した瞬間から動かせる状態で、もう全部ビルドしてあります。</p>
+  <div class="live-banner">
+    🟢 <strong>LIVE NOW</strong> · /itto · /itto/0001 · /api/itto/checkout · Stripe 直販動作中<br>
+    <span style="font-size:12px;color:var(--mute)">→ <a href="/itto" style="color:var(--y)">wearmu.com/itto</a> で実際の販売ページが見れます (席は仮で 0/28 売れている状態)</span>
+  </div>
+  <table>
+    <thead><tr><th>機能</th><th>状態</th></tr></thead>
+    <tbody>
+      <tr><td>4 tier × 7 席 = 28 席の販売 LP (序/本/続/尽)</td><td class="r">✓ LIVE</td></tr>
+      <tr><td>Stripe Checkout 決済</td><td class="r">✓ LIVE</td></tr>
+      <tr><td>持ち帰り肉オプション (500g / 1kg)</td><td class="r">✓ LIVE</td></tr>
+      <tr><td>牛 #0001 個別ページ (誕生日 / 写真 / トレース)</td><td class="r">✓ LIVE</td></tr>
+      <tr><td>席 sold → 自動で個別 T シャツデザイン生成 (Gemini AI)</td><td class="r">✓ LIVE</td></tr>
+      <tr><td>28 個の運営 AI agent (自動修復・自動 backup 込み)</td><td class="r">✓ LIVE</td></tr>
+      <tr><td>焼肉古今 公式写真の埋め込み (要許可)</td><td class="r">✓ LIVE</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section style="background:var(--bg-2)">
+  <h2>提案 ①  <em>一頭 (ittō)</em> イベント</h2>
+  <p class="lede">純但馬子牛 1 頭を、28 人 1 夜で頂く。<br>命の物語ごと、最も濃い切り出しを。</p>
+  <table>
+    <thead><tr><th>項目</th><th class="r">数字</th></tr></thead>
+    <tbody>
+      <tr><td>1 席 単価</td><td class="r">¥75,000</td></tr>
+      <tr><td>席数</td><td class="r">28 席 (4 tier × 各 7 席)</td></tr>
+      <tr><td>持ち帰り add-on 想定 (40% 購入 × 平均 ¥25,000)</td><td class="r">+¥280,000</td></tr>
+      <tr><td>会期</td><td class="r">1 夜のみ</td></tr>
+    </tbody>
+    <tfoot>
+      <tr><td>想定総売上</td><td class="r">¥2,380,000</td></tr>
+    </tfoot>
+  </table>
+  <table>
+    <thead><tr><th>原価内訳</th><th class="r">概算</th></tr></thead>
+    <tbody>
+      <tr><td>子牛 1 頭 (田村牧場、純但馬)</td><td class="r">¥1,200,000</td></tr>
+      <tr><td>焼肉古今 1 夜営業費 (酒・人件・席料込)</td><td class="r">¥450,000</td></tr>
+      <tr><td>1/1 記念 T シャツ × 28 着 (Gemini 生成 → Printful)</td><td class="r">¥70,000</td></tr>
+      <tr><td>持ち帰り肉 物流 + 真空包装</td><td class="r">¥80,000</td></tr>
+      <tr><td>Stripe 手数料 3.6%</td><td class="r">¥86,000</td></tr>
+      <tr><td>LP / システム運営 (MU 持ち)</td><td class="r">¥0</td></tr>
+    </tbody>
+    <tfoot>
+      <tr><td>総原価</td><td class="r">¥1,886,000</td></tr>
+      <tr><td>粗利</td><td class="r" style="color:var(--green)">¥494,000</td></tr>
+    </tfoot>
+  </table>
+  <h2 style="margin-top:48px"><em>利益分配案</em></h2>
+  <table>
+    <thead><tr><th>分配</th><th class="r">金額</th></tr></thead>
+    <tbody>
+      <tr><td>焼肉古今 (会場・料理・現場運営)</td><td class="r" style="color:var(--y)">¥247,000 (50%)</td></tr>
+      <tr><td>MU (調達・LP・AI・物流・顧客対応)</td><td class="r" style="color:var(--y)">¥247,000 (50%)</td></tr>
+    </tbody>
+  </table>
+  <p style="text-align:center;margin-top:18px;font-size:13px">
+    1 夜で焼肉古今は通常営業 + ¥247,000。さらに「あの場所で食べた」記憶を 28 人に与える広告効果 + 翌年継続案件化。
+  </p>
+</section>
+
+<section>
+  <h2>提案 ②  <em>通年グッズ販売ライン</em></h2>
+  <p class="lede">一頭イベントとは別の継続収益源。<br>焼肉古今のブランド × MU の AI ネイティブ DTC で、月単位のレベニュー。</p>
+  <div class="gallery">
+    <figure>
+      <img src="/static/itto/goods/tshirt_daily.jpg" alt="kokon × MU T シャツ コンセプト">
+      <figcaption>T シャツ (黒 / Bella+Canvas 3001 / 焼肉古今刺繍)</figcaption>
+    </figure>
+    <figure>
+      <img src="/static/itto/goods/apron.jpg" alt="焼肉古今 エプロン コンセプト">
+      <figcaption>業務用エプロン (デニム / 「焼肉古今」刺繍)</figcaption>
+    </figure>
+    <figure>
+      <img src="/static/itto/goods/tenugui.jpg" alt="手拭い コンセプト">
+      <figcaption>手拭い (藍染 / 「古今」筆書き)</figcaption>
+    </figure>
+    <figure>
+      <img src="/static/itto/goods/stack.jpg" alt="3 点セット 集合">
+      <figcaption>3 点まとめ (capsule kit)</figcaption>
+    </figure>
+  </div>
+  <p style="text-align:center;font-size:12px;color:var(--mute);margin-top:14px">
+    ※ 画像は Gemini 3 Pro Image による <strong>コンセプトモックアップ</strong>です。実際のロゴは焼肉古今のレギュレーションに合わせて再生成 / 差し替え可能。
+  </p>
+
+  <h2 style="margin-top:48px"><em>SKU と価格</em></h2>
+  <table>
+    <thead><tr><th>SKU</th><th class="r">販売価格</th><th class="r">原価</th><th class="r">粗利</th></tr></thead>
+    <tbody>
+      <tr><td>T シャツ (黒、刺繍)</td><td class="r">¥6,800</td><td class="r">¥2,400</td><td class="r" style="color:var(--y)">¥4,400</td></tr>
+      <tr><td>業務用エプロン (デニム)</td><td class="r">¥12,000</td><td class="r">¥4,500</td><td class="r" style="color:var(--y)">¥7,500</td></tr>
+      <tr><td>手拭い (藍染)</td><td class="r">¥3,200</td><td class="r">¥800</td><td class="r" style="color:var(--y)">¥2,400</td></tr>
+      <tr><td>3 点まとめ kit (上記 3 つ)</td><td class="r">¥19,800</td><td class="r">¥7,700</td><td class="r" style="color:var(--y)">¥12,100</td></tr>
+      <tr><td>(将来) タンブラー / 焼き網手袋 / 包丁 etc.</td><td class="r">—</td><td class="r">—</td><td class="r">—</td></tr>
+    </tbody>
+  </table>
+
+  <h2 style="margin-top:48px">想定 <em>月次売上</em> (現実線)</h2>
+  <table>
+    <thead><tr><th>シナリオ</th><th class="r">月販売数</th><th class="r">月売上</th><th class="r">月粗利</th></tr></thead>
+    <tbody>
+      <tr><td>低 (店内 QR から月 30 個)</td><td class="r">30</td><td class="r">¥150,000</td><td class="r" style="color:var(--y)">¥100,000</td></tr>
+      <tr><td>中 (X 拡散 + Web 100 個)</td><td class="r">100</td><td class="r">¥600,000</td><td class="r" style="color:var(--y)">¥420,000</td></tr>
+      <tr><td>高 (一頭事後拡散 300 個)</td><td class="r">300</td><td class="r">¥1,800,000</td><td class="r" style="color:var(--y)">¥1,260,000</td></tr>
+    </tbody>
+  </table>
+
+  <h2 style="margin-top:48px"><em>分配案</em> (グッズ)</h2>
+  <table>
+    <thead><tr><th>分配</th><th class="r">比率 (粗利ベース)</th></tr></thead>
+    <tbody>
+      <tr><td>焼肉古今 (ブランド・ロゴ提供のみ)</td><td class="r" style="color:var(--y)">30%</td></tr>
+      <tr><td>MU (デザイン・受発注・物流・顧客対応・LP)</td><td class="r">70%</td></tr>
+    </tbody>
+  </table>
+  <p style="text-align:center;margin-top:14px;font-size:13px">
+    中シナリオなら焼肉古今は月 ¥126,000 が何もしなくても入る計算。<br>
+    高シナリオなら月 ¥378,000。一頭イベントの粗利分とは別。
+  </p>
+</section>
+
+<section style="background:var(--bg-2)">
+  <h2>誰が <em>何をやる</em>。</h2>
+  <div class="split">
+    <div class="col">
+      <h5>焼肉古今 (馬場ちゃん側)</h5>
+      <p>
+        ・ ロゴ / 屋号の利用承認<br>
+        ・ 一頭イベント当日 1 夜の通常営業 (28 人個室、4 課コース)<br>
+        ・ 子牛調達ルートの紹介 (田村牧場と既にお取引)<br>
+        ・ 焼き師の手配<br>
+        ・ 月 1 回の状況確認ミーティング (30 分)
+      </p>
+    </div>
+    <div class="col">
+      <h5>MU (株式会社イネブラ側)</h5>
+      <p>
+        ・ LP / Stripe / Web / トレースシステム の全運営<br>
+        ・ T シャツ生成 (Gemini AI) + Printful 印刷 + 配送<br>
+        ・ 顧客対応 / 問合せ / アレルギー一覧の取りまとめ<br>
+        ・ 子牛調達契約 + 解体物流 + 持ち帰り肉 真空パック手配<br>
+        ・ 28 個の AI agent による 24h 自動運営 (障害監視・バックアップ込み)<br>
+        ・ 一頭イベント終了後の事後ブログ / X 拡散
+      </p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>タイムライン (<em>馬場ちゃん OK 出した日から</em>)</h2>
+  <div class="checklist">
+    <h5>Day 0 (合意当日)</h5>
+    <ol>
+      <li>契約書草案 (1 枚もの)<small>MU が即日メール</small></li>
+      <li>子牛調達ルート確認<small>馬場ちゃんから田村牧場に一言</small></li>
+      <li>ロゴ素材納品<small>焼肉古今の高解像度ロゴデータ</small></li>
+    </ol>
+  </div>
+  <div class="checklist">
+    <h5>Week 1</h5>
+    <ol>
+      <li>子牛 #0001 仮押さえ<small>MU が田村牧場経由</small></li>
+      <li>グッズ第 1 弾 SKU 3 種を Printful に登録<small>MU 側で実行</small></li>
+      <li>会期候補日 3 つ提示<small>焼肉古今カレンダー確認</small></li>
+    </ol>
+  </div>
+  <div class="checklist">
+    <h5>Week 2-4</h5>
+    <ol>
+      <li>子牛確定 → /itto/0001 に写真・誕生日・牧場・推定体重 反映</li>
+      <li>X / Telegram / メールで「一頭イベント告知」</li>
+      <li>Stripe 決済オープン</li>
+      <li>同時にグッズ販売 LP オープン</li>
+    </ol>
+  </div>
+  <div class="checklist">
+    <h5>Month 2-3</h5>
+    <ol>
+      <li>席が埋まる (28 席完売目標)</li>
+      <li>2-3 週前: 参加者全員にアレルギー / 服装 / 集合時間メール</li>
+      <li>1 週前: 参加者の 1/1 T シャツ印刷 → 当日渡し</li>
+      <li>当日: 1 夜限定 4 課コース</li>
+      <li>翌週: 写真・動画を /itto/0001 に追加、ブログ・X 公開</li>
+    </ol>
+  </div>
+</section>
+
+<section style="background:var(--bg-2)">
+  <h2>馬場ちゃんが <em>判断するべき 3 つ</em></h2>
+  <div class="checklist">
+    <h5>1. 一頭イベント、やる？</h5>
+    <ol>
+      <li><strong>やる</strong>: 来月から子牛調達開始、2 ヶ月後に開催。MU 側で全部回す。</li>
+      <li><strong>やらない</strong>: ここで終了。MU は 1 度だけテストしたい (グッズだけ続けてもよし)。</li>
+    </ol>
+  </div>
+  <div class="checklist">
+    <h5>2. 通年グッズ販売、やる？</h5>
+    <ol>
+      <li><strong>やる</strong>: 来週から MU が SKU 3 種 (T シャツ + エプロン + 手拭い) を立ち上げ、ロゴ承認のみ依頼。月 ¥100k-400k の粗利分配。</li>
+      <li><strong>やらない</strong>: イベントだけにする。</li>
+      <li><strong>SKU 増やしたい</strong>: 包丁、焼き網手袋、タンブラー、何でも追加可能。</li>
+    </ol>
+  </div>
+  <div class="checklist">
+    <h5>3. 利益分配の比率はこれで OK?</h5>
+    <ol>
+      <li>イベント: 焼肉古今 50% / MU 50%<small>(粗利ベース、約 ¥247,000 ずつ)</small></li>
+      <li>グッズ: 焼肉古今 30% / MU 70%<small>(粗利ベース、ロゴ提供のみのため。SKU/月により ¥30k-380k)</small></li>
+      <li>変更したい: 比率は再交渉可能。MU 側は<strong>赤字にならない最低ライン</strong>だけ確認。</li>
+    </ol>
+  </div>
+</section>
+
+<section class="print-cta">
+  <button onclick="window.print()">この提案を PDF で保存 / 印刷 →</button>
+  <small>※ ブラウザの「印刷 → PDF として保存」で A4 形式で出ます</small>
+</section>
+
+<footer>
+  株式会社イネブラ (Enabler Inc.) · 濱田優貴<br>
+  〒102-0074 東京都千代田区九段南 1-5-6 りそな九段ビル 5F KS フロア<br>
+  <a href="mailto:info@enablerdao.com">info@enablerdao.com</a> · <a href="https://wearmu.com">wearmu.com</a><br>
+  <span style="opacity:0.55;font-size:10.5px;margin-top:14px;display:inline-block">この提案ページは焼肉古今オーナー (馬場ちゃん) 専用のため URL を共有しないでください。一般 LP は <a href="/itto" style="color:var(--y)">/itto</a>。</span>
+</footer>
+
+</body>
+</html>

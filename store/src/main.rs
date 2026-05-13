@@ -2335,6 +2335,55 @@ async fn itto_page() -> impl IntoResponse {
     axum::response::Html(body)
 }
 
+/// GET /baba — owner-facing combined proposal (event + goods).
+/// Reuses kokon_partner_password() so we don't need a new secret env.
+async fn show_baba_owner_proposal(
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let pw = kokon_partner_password();
+    // Accept ?pw=… (sets cookie + redirects to clean URL) or already-set cookie.
+    if let Some(submitted) = q.get("pw") {
+        if submitted == &pw {
+            let cookie = format!(
+                "mu_kokon_partner={}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000",
+                pw);
+            return (
+                StatusCode::FOUND,
+                [
+                    (axum::http::header::SET_COOKIE, cookie),
+                    (axum::http::header::LOCATION, "/baba".into()),
+                ],
+            ).into_response();
+        }
+    }
+    if !has_kokon_partner_cookie(&headers, &pw) {
+        // Show a minimal password gate.
+        let gate = r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>馬場ちゃん専用 — MU 提案</title>
+<style>body{background:#0a0a0a;color:#f5f5f0;font-family:'Helvetica Neue',sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:24px}
+.box{max-width:380px;text-align:center;background:#111;padding:36px 28px;border:1px solid rgba(255,255,255,0.1)}
+h1{font-size:18px;font-weight:300;letter-spacing:0.04em;margin-bottom:14px}
+p{color:rgba(245,245,240,0.62);font-size:13px;margin-bottom:24px;line-height:1.8}
+input{width:100%;background:#0a0a0a;border:1px solid rgba(255,255,255,0.15);color:#fff;padding:10px 14px;font-size:14px;letter-spacing:0.04em;margin-bottom:16px;font-family:inherit}
+button{background:#e6c449;color:#000;border:none;padding:11px 22px;font-size:11px;letter-spacing:0.28em;text-transform:uppercase;font-weight:700;cursor:pointer;font-family:inherit;width:100%}
+small{display:block;margin-top:16px;color:rgba(245,245,240,0.5);font-size:11px}</style>
+</head><body><div class="box">
+<h1>馬場ちゃん専用ページ</h1>
+<p>このページは焼肉古今オーナー向けの統合提案です。<br>合言葉を入れてください。</p>
+<form method="get" action="/baba">
+<input type="password" name="pw" placeholder="合言葉" autofocus required>
+<button type="submit">開く</button>
+</form>
+<small>合言葉は MU から個別に伝えています。<br>分からない場合は <a href="mailto:info@enablerdao.com" style="color:#e6c449">info@enablerdao.com</a></small>
+</div></body></html>"##;
+        return axum::response::Html(gate).into_response();
+    }
+    let body = include_str!("../static/baba.html");
+    axum::response::Html(body).into_response()
+}
+
 const ITTO_CURRENT_SERIAL: &str = "0001";
 const ITTO_SEAT_PRICE_JPY: i64 = 75_000;
 const ITTO_SEATS_PER_TIER: i64 = 7;
@@ -32535,6 +32584,7 @@ async fn main() {
         .route("/collab", get(collab_page))
         .route("/itto", get(itto_page))
         .route("/itto/:serial", get(itto_serial_page))
+        .route("/baba", get(show_baba_owner_proposal))
         .route("/api/itto/availability", get(api_itto_availability))
         .route("/api/itto/checkout", post(api_itto_checkout))
         .route("/admin/itto/calf", post(admin_itto_calf_update))
