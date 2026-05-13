@@ -6700,7 +6700,7 @@ async fn index(State(db): State<Db>) -> Html<String> {
     //   - weather temp_c            → cv_config('weather_temp_c') populated by /api/weather
     //   - mugen-timer mm:ss         → seconds-to-next-hour computed server-side
 
-    let (mugen_drop, mugen_cycle, muon_qty, temp_c): (Option<i64>, Option<i64>, Option<i64>, Option<i64>) = {
+    let (mugen_drop, mugen_cycle, muon_qty, temp_c, lifestyle_tiles): (Option<i64>, Option<i64>, Option<i64>, Option<i64>, Vec<(i64, String, String)>) = {
         let conn = db.lock().unwrap();
         let mugen = conn.query_row(
             "SELECT drop_num FROM products WHERE brand='mugen' AND active=1
@@ -6723,7 +6723,18 @@ async fn index(State(db): State<Db>) -> Html<String> {
                 raw.parse::<i64>().ok()
             } else { None }
         };
-        (mugen, cycle, muon, temp)
+        // people-wearing-MU tiles: pull up to 6 mugen products with lifestyle_url.
+        let tiles: Vec<(i64, String, String)> = {
+            let mut stmt = match conn.prepare(
+                "SELECT drop_num, name, lifestyle_url FROM products
+                 WHERE active=1 AND lifestyle_url IS NOT NULL AND lifestyle_url != ''
+                 ORDER BY id DESC LIMIT 6"
+            ) { Ok(s) => s, Err(_) => return Html(String::new()) };
+            stmt.query_map([], |r| Ok((r.get::<_,i64>(0)?, r.get::<_,String>(1)?, r.get::<_,String>(2)?)))
+                .map(|it| it.filter_map(|r| r.ok()).collect())
+                .unwrap_or_default()
+        };
+        (mugen, cycle, muon, temp, tiles)
     };
 
     // Timer: seconds to next whole hour (UTC, mirrors JS implementation).
@@ -6812,6 +6823,38 @@ async fn index(State(db): State<Db>) -> Html<String> {
             r#"<div class="drop-counter next-drop-timer" id="mugen-timer">—:—</div>"#,
             &format!(r#"<div class="drop-counter next-drop-timer" id="mugen-timer">{}</div>"#, timer_str),
         );
+
+    // Fill the `#hero-lifestyle` "people wearing MU" grid with up to 6 cards.
+    // Empty fallback: keep the original placeholder (CSS hides it via display:none).
+    let html = if !lifestyle_tiles.is_empty() {
+        let cards: String = lifestyle_tiles.iter().map(|(drop, name, url)| {
+            let name_esc = html_attr_escape(name);
+            let url_esc  = html_attr_escape(url);
+            format!(
+                r#"<a href="/mugen" title="{name_esc}" style="display:block;aspect-ratio:4/5;overflow:hidden;border:1px solid rgba(255,255,255,0.08);transition:border-color 0.2s ease"><img src="{url_esc}" alt="MUGEN #{drop} lifestyle" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block"></a>"#,
+                drop = drop, name_esc = name_esc, url_esc = url_esc,
+            )
+        }).collect();
+        let new_grid = format!(
+            r#"<div id="hero-lifestyle" style="margin-top:28px;width:100%;max-width:880px;display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;padding:0 12px"><div style="grid-column:1/-1;text-align:center;font-size:9px;letter-spacing:0.3em;opacity:0.45;text-transform:uppercase;margin-bottom:4px">people wearing MU · live</div>{}</div>"#,
+            cards,
+        );
+        // Match the static placeholder. The CSS rule `#hero-lifestyle{{display:none}}`
+        // hides the empty grid; once filled by JS or SSR, JS clears it. Here we
+        // also add an inline display:grid override so SSR wins over the rule.
+        let new_grid = new_grid.replacen(
+            r#"id="hero-lifestyle" style=""#,
+            r#"id="hero-lifestyle" style="display:grid !important;"#, 1,
+        );
+        html.replace(
+            r#"<div id="hero-lifestyle" style="margin-top:28px;width:100%;max-width:880px;display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;padding:0 12px">
+    <div style="grid-column:1/-1;text-align:center;font-size:9px;letter-spacing:0.3em;opacity:0.35;text-transform:uppercase">people wearing MU</div>
+  </div>"#,
+            &new_grid,
+        )
+    } else {
+        html
+    };
 
     Html(html)
 }
@@ -9105,6 +9148,40 @@ async fn public_transparency(State(db): State<Db>) -> impl IntoResponse {
         "SELECT COUNT(*) FROM mu_purchases WHERE session_id LIKE 'cs_live_%'",
         [], |r| r.get(0),
     ).unwrap_or(0);
+
+    // ── External (= third-party, non-yuki) split ──
+    // yuki's own dogfood / test purchases inflate "real_purchases" today.
+    // Surface a separate external metric so external auditors / readers can
+    // judge the actual market-validation without manual filtering.
+    let yuki_emails = ["yuki@hamada.tokyo", "mail@yukihamada.jp"];
+    let external_purchases: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM mu_purchases
+         WHERE session_id LIKE 'cs_live_%' AND email NOT IN (?, ?)",
+        params![yuki_emails[0], yuki_emails[1]], |r| r.get(0),
+    ).unwrap_or(0);
+    let external_revenue_jpy: i64 = {
+        let prod: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(p.price_jpy), 0)
+             FROM mu_purchases mp
+             JOIN products p ON p.id = mp.product_id
+             WHERE mp.brand != 'you'
+               AND mp.session_id LIKE 'cs_live_%'
+               AND mp.email NOT IN (?, ?)",
+            params![yuki_emails[0], yuki_emails[1]], |r| r.get(0),
+        ).unwrap_or(0);
+        let you_n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mu_purchases
+             WHERE brand='you' AND session_id LIKE 'cs_live_%'
+               AND email NOT IN (?, ?)",
+            params![yuki_emails[0], yuki_emails[1]], |r| r.get(0),
+        ).unwrap_or(0);
+        prod + you_n * 6_800
+    };
+    let external_distinct_customers: i64 = conn.query_row(
+        "SELECT COUNT(DISTINCT email) FROM mu_purchases
+         WHERE session_id LIKE 'cs_live_%' AND email NOT IN (?, ?)",
+        params![yuki_emails[0], yuki_emails[1]], |r| r.get(0),
+    ).unwrap_or(0);
     let you_subscribers_total: i64 = conn.query_row(
         "SELECT COUNT(*) FROM you_users WHERE unsubscribed_at IS NULL",
         [], |r| r.get(0),
@@ -9139,6 +9216,14 @@ async fn public_transparency(State(db): State<Db>) -> impl IntoResponse {
             "revenue_jpy": real_revenue_jpy,
             "purchases":   real_purchases,
             "note": "Stripe live mode (cs_live_*) のみ集計。test purchase は除外。",
+        },
+        // ── 第三者購入のみ (yuki の dogfood / test は除外) ──
+        // 「自分以外のお客様に届いた」純粋な数字。市場検証の正直な指標。
+        "external": {
+            "purchases":          external_purchases,
+            "distinct_customers": external_distinct_customers,
+            "revenue_jpy":        external_revenue_jpy,
+            "note": "Stripe live + email が yuki 以外。dogfood 除外。",
         },
         "you": {
             "subscribers_free": you_subscribers_total - you_subscribers_paid - you_lifetime_members,
