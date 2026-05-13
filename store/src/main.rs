@@ -1916,6 +1916,170 @@ async fn itto_page() -> impl IntoResponse {
     axum::response::Html(body)
 }
 
+const ITTO_CURRENT_SERIAL: &str = "0001";
+const ITTO_SEAT_PRICE_JPY: i64 = 75_000;
+const ITTO_SEATS_PER_TIER: i64 = 7;
+const ITTO_VALID_TYPES: &[&str] = &["序", "本", "続", "尽"];
+
+/// Pricing for the optional takeaway meat add-on. None = no takeaway.
+fn itto_takeaway_price_jpy(grams: i64) -> Option<i64> {
+    match grams {
+        0    => Some(0),
+        500  => Some(18_000),
+        1000 => Some(32_000),
+        _    => None,
+    }
+}
+
+/// GET /api/itto/availability — JSON of remaining seats per tier.
+/// Drives the live counters on /itto. Public, cached briefly.
+async fn api_itto_availability(State(db): State<Db>) -> Response {
+    let conn = db.lock().unwrap();
+    let mut obj = serde_json::Map::new();
+    for t in ITTO_VALID_TYPES {
+        let sold: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM itto_seats WHERE serial=? AND seat_type=?",
+            params![ITTO_CURRENT_SERIAL, t], |r| r.get(0),
+        ).unwrap_or(0);
+        let remaining = ITTO_SEATS_PER_TIER.saturating_sub(sold);
+        obj.insert((*t).into(), serde_json::json!({
+            "sold": sold,
+            "remaining": remaining,
+            "capacity": ITTO_SEATS_PER_TIER,
+        }));
+    }
+    Json(serde_json::json!({
+        "serial": ITTO_CURRENT_SERIAL,
+        "price_jpy": ITTO_SEAT_PRICE_JPY,
+        "tiers": serde_json::Value::Object(obj),
+    })).into_response()
+}
+
+#[derive(Deserialize)]
+struct IttoCheckoutBody {
+    seat_type: String,         // '序'|'本'|'続'|'尽'
+    #[serde(default)]
+    takeaway_g: i64,           // 0 | 500 | 1000
+    #[serde(default)]
+    email: String,             // optional, Stripe will collect if blank
+    #[serde(default)]
+    note: String,              // dietary / aレルギー note
+}
+
+/// POST /api/itto/checkout — create a Stripe Checkout Session for one seat.
+/// Returns { url } for redirect. Enforces per-tier 7-seat cap at session
+/// creation time (race: Stripe webhook is the source of truth, but failing
+/// fast here is cheap defense vs. clearly-sold-out clicks).
+async fn api_itto_checkout(
+    State(db): State<Db>,
+    Json(body): Json<IttoCheckoutBody>,
+) -> Response {
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"ok":false,"error":"stripe not configured"})))
+            .into_response();
+    }
+    let seat_type = body.seat_type.trim().to_string();
+    if !ITTO_VALID_TYPES.contains(&seat_type.as_str()) {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":"invalid seat_type"})))
+            .into_response();
+    }
+    let Some(takeaway_jpy) = itto_takeaway_price_jpy(body.takeaway_g) else {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":"takeaway_g must be 0/500/1000"})))
+            .into_response();
+    };
+
+    // Capacity check.
+    let sold: i64 = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM itto_seats WHERE serial=? AND seat_type=?",
+            params![ITTO_CURRENT_SERIAL, seat_type], |r| r.get(0),
+        ).unwrap_or(0)
+    };
+    if sold >= ITTO_SEATS_PER_TIER {
+        return (StatusCode::CONFLICT,
+            Json(serde_json::json!({"ok":false,"error":"this tier is sold out"})))
+            .into_response();
+    }
+
+    let total_jpy = ITTO_SEAT_PRICE_JPY + takeaway_jpy;
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    let display_name = format!("一頭 ittō — 席 ({}-heavy)", seat_type);
+
+    // Stripe checkout session form. We use 2 line items when takeaway is
+    // selected so the buyer can see the split on the receipt.
+    let mut form: Vec<(String, String)> = vec![
+        ("mode".into(), "payment".into()),
+        ("currency".into(), "jpy".into()),
+        ("allow_promotion_codes".into(), "true".into()),
+        ("success_url".into(), format!("{}/itto?paid=ok&sid={{CHECKOUT_SESSION_ID}}", base_url)),
+        ("cancel_url".into(),  format!("{}/itto?paid=cancel", base_url)),
+        ("phone_number_collection[enabled]".into(), "true".into()),
+        ("shipping_address_collection[allowed_countries][0]".into(), "JP".into()),
+        // Line 1: the seat itself.
+        ("line_items[0][quantity]".into(), "1".into()),
+        ("line_items[0][price_data][currency]".into(), "jpy".into()),
+        ("line_items[0][price_data][unit_amount]".into(), ITTO_SEAT_PRICE_JPY.to_string()),
+        ("line_items[0][price_data][product_data][name]".into(), display_name.clone()),
+        ("line_items[0][price_data][product_data][description]".into(),
+         format!("MU × 焼肉古今 一頭 ittō #{} — 1 夜限定、序・本・続・尽 4 課コース + ペアリング + 1/1 記念 T シャツ", ITTO_CURRENT_SERIAL)),
+        // Metadata (consumed by the Stripe webhook).
+        ("metadata[product]".into(), "itto_seat".into()),
+        ("metadata[serial]".into(), ITTO_CURRENT_SERIAL.into()),
+        ("metadata[seat_type]".into(), seat_type.clone()),
+        ("metadata[takeaway_g]".into(), body.takeaway_g.to_string()),
+        ("metadata[takeaway_amount_jpy]".into(), takeaway_jpy.to_string()),
+        ("metadata[note]".into(), body.note.chars().take(300).collect::<String>()),
+    ];
+    if !body.email.trim().is_empty() {
+        form.push(("customer_email".into(), body.email.trim().into()));
+    }
+    if takeaway_jpy > 0 {
+        let label = format!("持ち帰り但馬牛 {}g (真空パック・冷蔵便)", body.takeaway_g);
+        form.extend([
+            ("line_items[1][quantity]".into(), "1".into()),
+            ("line_items[1][price_data][currency]".into(), "jpy".into()),
+            ("line_items[1][price_data][unit_amount]".into(), takeaway_jpy.to_string()),
+            ("line_items[1][price_data][product_data][name]".into(), label),
+        ]);
+    }
+
+    let resp = reqwest::Client::new()
+        .post("https://api.stripe.com/v1/checkout/sessions")
+        .basic_auth(&stripe_key, None::<&str>)
+        .form(&form)
+        .send().await;
+    match resp {
+        Ok(r) if r.status().is_success() => {
+            let j: serde_json::Value = r.json().await.unwrap_or_default();
+            let url = j["url"].as_str().unwrap_or("/").to_string();
+            Json(serde_json::json!({
+                "ok": true,
+                "url": url,
+                "total_jpy": total_jpy,
+                "seat_type": seat_type,
+                "takeaway_g": body.takeaway_g,
+            })).into_response()
+        }
+        Ok(r) => {
+            let s = r.status();
+            let t = r.text().await.unwrap_or_default();
+            eprintln!("[itto/checkout] stripe {}: {}", s, t.chars().take(300).collect::<String>());
+            (StatusCode::BAD_GATEWAY,
+             Json(serde_json::json!({"ok":false,"error":"stripe error"}))).into_response()
+        }
+        Err(e) => {
+            eprintln!("[itto/checkout] network: {}", e);
+            (StatusCode::BAD_GATEWAY,
+             Json(serde_json::json!({"ok":false,"error":"network"}))).into_response()
+        }
+    }
+}
+
 async fn bounty_page() -> impl IntoResponse {
     let body = include_str!("../static/bounty.html");
     axum::response::Html(body)
@@ -6467,6 +6631,78 @@ async fn stripe_webhook(
         // Powers the live inventory counter on /gi/01 and queues fulfillment.
         if meta["product"].as_str() == Some("gi_edition_01") {
             handle_gi_preorder(db.clone(), &session).await;
+            return StatusCode::OK.into_response();
+        }
+
+        // ── itto seat (metadata.product = itto_seat) ──
+        // 1 seat per session. Assign next available seat_tier_num (1..7).
+        if meta["product"].as_str() == Some("itto_seat") {
+            let serial    = meta["serial"].as_str().unwrap_or(ITTO_CURRENT_SERIAL).to_string();
+            let seat_type = meta["seat_type"].as_str().unwrap_or("").to_string();
+            if seat_type.is_empty() {
+                eprintln!("[itto webhook] missing seat_type metadata, session={}", session_id);
+                return StatusCode::OK.into_response();
+            }
+            let takeaway_g: i64 = meta["takeaway_g"].as_str()
+                .and_then(|s| s.parse().ok()).unwrap_or(0);
+            let takeaway_amount: i64 = meta["takeaway_amount_jpy"].as_str()
+                .and_then(|s| s.parse().ok()).unwrap_or(0);
+            let note = meta["note"].as_str().unwrap_or("").to_string();
+            let email = session["customer_details"]["email"].as_str()
+                .or_else(|| session["customer_email"].as_str())
+                .unwrap_or("").to_string();
+            let name = session["customer_details"]["name"].as_str()
+                .unwrap_or("").to_string();
+
+            // Idempotency + capacity check happen atomically.
+            let inserted: bool = {
+                let conn = db.lock().unwrap();
+                // Already processed?
+                let exists: bool = conn.query_row(
+                    "SELECT 1 FROM itto_seats WHERE stripe_session_id=?",
+                    params![session_id], |r| r.get::<_, i64>(0),
+                ).is_ok();
+                if exists { false } else {
+                    let next_num: i64 = conn.query_row(
+                        "SELECT COALESCE(MAX(seat_tier_num),0)+1
+                         FROM itto_seats WHERE serial=? AND seat_type=?",
+                        params![serial, seat_type], |r| r.get(0),
+                    ).unwrap_or(1);
+                    if next_num > ITTO_SEATS_PER_TIER {
+                        eprintln!("[itto webhook] tier overflow: serial={} type={} num={} session={}",
+                            serial, seat_type, next_num, session_id);
+                        // Don't refund automatically — log + alert human.
+                        let _ = send_telegram_message(&format!(
+                            "🚨 itto seat OVERSOLD: serial={} type={} session={} email={}\n\
+                             この session を手動 refund して下さい (Stripe dashboard).",
+                            serial, seat_type, session_id, email));
+                        false
+                    } else {
+                        let n = conn.execute(
+                            "INSERT INTO itto_seats
+                             (serial, seat_type, seat_tier_num, buyer_email, buyer_name,
+                              dietary_note, takeaway_g, takeaway_amount_jpy,
+                              stripe_session_id, amount_paid_jpy, paid_at)
+                             VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                            params![
+                                serial, seat_type, next_num, email, name,
+                                note, takeaway_g, takeaway_amount,
+                                session_id, amount_total, chrono_now(),
+                            ],
+                        ).unwrap_or(0);
+                        n > 0
+                    }
+                }
+            };
+
+            if inserted {
+                let take_label = if takeaway_g > 0 { format!(" +持帰{}g", takeaway_g) } else { String::new() };
+                let _ = send_telegram_message(&format!(
+                    "🥩 *itto seat sold* #{} {}\n\n席タイプ: {}-heavy{}\n金額: ¥{}\nbuyer: {} ({})\nsession: {}",
+                    serial, "0001", seat_type, take_label,
+                    fmt_jpy(amount_total), email, name, session_id,
+                )).await;
+            }
             return StatusCode::OK.into_response();
         }
 
@@ -30300,6 +30536,32 @@ async fn main() {
             created_at    TEXT NOT NULL
         );
 
+        -- /itto seat sales. Each calf (serial = '0001', '0002', ...) has
+        -- 28 seats split across 4 tiers (序/本/続/尽), 7 each. Rows are
+        -- inserted by the Stripe webhook when payment completes. Seat
+        -- number within the tier is auto-assigned (1..7). Front-end queries
+        -- /api/itto/availability for remaining-by-tier; checkout endpoint
+        -- enforces the 7-per-tier cap at session-creation time.
+        CREATE TABLE IF NOT EXISTS itto_seats (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            serial              TEXT    NOT NULL,         -- '0001' = first calf
+            seat_type           TEXT    NOT NULL,         -- '序' | '本' | '続' | '尽'
+            seat_tier_num       INTEGER NOT NULL,         -- 1..7 within the tier
+            buyer_email         TEXT    NOT NULL,
+            buyer_name          TEXT,
+            buyer_handle        TEXT,
+            dietary_note        TEXT,
+            takeaway_g          INTEGER NOT NULL DEFAULT 0,  -- 0 | 500 | 1000
+            takeaway_amount_jpy INTEGER NOT NULL DEFAULT 0,
+            stripe_session_id   TEXT    UNIQUE,
+            amount_paid_jpy     INTEGER NOT NULL,
+            paid_at             TEXT    NOT NULL,
+            tshirt_design_url   TEXT,
+            tshirt_printed_at   TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_itto_seats_serial_type
+            ON itto_seats(serial, seat_type);
+
         -- Cache of @wearMUcom followers. x_followers_sync agent populates
         -- this once a day via the X v2 /followers endpoint. mention_responder
         -- uses it to give followers a higher daily request quota.
@@ -30959,6 +31221,8 @@ async fn main() {
         .route("/developers", get(developers_page))
         .route("/collab", get(collab_page))
         .route("/itto", get(itto_page))
+        .route("/api/itto/availability", get(api_itto_availability))
+        .route("/api/itto/checkout", post(api_itto_checkout))
         .route("/b2b", get(collab_page))
         .route("/partners", get(collab_page))
         .route("/bounty", get(bounty_page))

@@ -146,6 +146,23 @@ table.price tfoot td{font-weight:700;border-top:2px solid var(--y);border-bottom
 
 footer{padding:36px 28px;border-top:1px solid var(--line);color:var(--mute);font-size:11px;text-align:center;line-height:2;letter-spacing:0.06em}
 footer a{color:var(--y)}
+
+/* ── Buy buttons ── */
+.buy-btn{
+  display:block;width:100%;margin-top:18px;padding:14px 18px;
+  background:var(--y);color:#000;border:none;cursor:pointer;
+  font-size:12px;letter-spacing:0.22em;text-transform:uppercase;font-weight:700;
+  font-family:inherit;transition:transform 0.12s ease, opacity 0.12s ease;
+}
+.buy-btn:hover{transform:translateY(-1px)}
+.buy-btn:disabled{opacity:0.4;cursor:not-allowed;background:#666}
+.buy-btn[data-soldout]{background:transparent;color:var(--mute);border:1px solid var(--line);cursor:default}
+
+/* ── Real kokon photo strip ── */
+.real-photos{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);max-width:1100px;margin:36px auto 0;border:1px solid var(--line)}
+@media (max-width:780px){.real-photos{grid-template-columns:repeat(2,1fr)}}
+.real-photos img{width:100%;height:240px;object-fit:cover;display:block;background:#0a0a0a}
+.real-photos .cap{padding:14px;background:var(--bg);font-size:11.5px;color:var(--mute);letter-spacing:0.08em;text-align:center}
 </style>
 </head>
 <body>
@@ -263,9 +280,9 @@ footer a{color:var(--y)}
   <p class="lede">「当日のおまかせ」ではありません。<br>調達した 1 頭を 28 等分する設計図が、購入時点で確定しています。</p>
   <p style="margin-top:6px">28 席は 4 つの方向に分かれます。どの席を選ぶか = どの方向で <strong>この一頭</strong> と向き合うか。価格は全席 ¥75,000 で同じです。</p>
 
-  <div class="dual" style="grid-template-columns:repeat(2,1fr);max-width:920px">
-    <div class="card">
-      <h5>序-heavy · 7 席</h5>
+  <div class="dual" style="grid-template-columns:repeat(2,1fr);max-width:920px" id="tier-grid">
+    <div class="card" data-tier="序">
+      <h5>序-heavy · <span data-remaining="序">…</span> / 7 席</h5>
       <p style="font-family:ui-monospace,Menlo,monospace;color:var(--fg);margin-bottom:10px">
         シャトーブリアン 45g · ザブトン 40g · ミスジ 25g<br>
         サーロイン 40g · 上カルビ 25g<br>
@@ -273,9 +290,10 @@ footer a{color:var(--y)}
         テール 50g · 骨スープ 200ml
       </p>
       <p style="font-size:13px">希少部位の比率を最大化。最初に銃を撃つ席。<br><span style="color:var(--y)">合計 280g (赤身換算)</span></p>
+      <button class="buy-btn" data-seat="序">この席を買う · ¥75,000 →</button>
     </div>
-    <div class="card">
-      <h5>本-heavy · 7 席</h5>
+    <div class="card" data-tier="本">
+      <h5>本-heavy · <span data-remaining="本">…</span> / 7 席</h5>
       <p style="font-family:ui-monospace,Menlo,monospace;color:var(--fg);margin-bottom:10px">
         シャトーブリアン 20g · ザブトン 25g<br>
         サーロイン 80g · リブロース 60g · 上カルビ 50g<br>
@@ -283,9 +301,10 @@ footer a{color:var(--y)}
         テール 50g · 骨スープ 200ml
       </p>
       <p style="font-size:13px">王道の塊を厚めに。但馬の旨味の芯を取りに行く席。<br><span style="color:var(--y)">合計 340g (赤身換算)</span></p>
+      <button class="buy-btn" data-seat="本">この席を買う · ¥75,000 →</button>
     </div>
-    <div class="card">
-      <h5>続-heavy · 7 席</h5>
+    <div class="card" data-tier="続">
+      <h5>続-heavy · <span data-remaining="続">…</span> / 7 席</h5>
       <p style="font-family:ui-monospace,Menlo,monospace;color:var(--fg);margin-bottom:10px">
         シャトーブリアン 20g · ザブトン 25g<br>
         サーロイン 40g · 上カルビ 30g<br>
@@ -293,9 +312,10 @@ footer a{color:var(--y)}
         テール 40g · 骨スープ 200ml
       </p>
       <p style="font-size:13px">動いて生きた部位の力強さを軸に。<br><span style="color:var(--y)">合計 340g (赤身換算)</span></p>
+      <button class="buy-btn" data-seat="続">この席を買う · ¥75,000 →</button>
     </div>
-    <div class="card">
-      <h5>尽-heavy · 7 席</h5>
+    <div class="card" data-tier="尽">
+      <h5>尽-heavy · <span data-remaining="尽">…</span> / 7 席</h5>
       <p style="font-family:ui-monospace,Menlo,monospace;color:var(--fg);margin-bottom:10px">
         シャトーブリアン 20g · ザブトン 25g<br>
         サーロイン 40g · 上カルビ 25g<br>
@@ -303,12 +323,57 @@ footer a{color:var(--y)}
         テール 100g · 骨髄 30g · 骨スープ 400ml · スジ煮込み 80g
       </p>
       <p style="font-size:13px">最も命の根に近い席。残さず使い切るための席。<br><span style="color:var(--y)">合計 345g (赤身換算)</span></p>
+      <button class="buy-btn" data-seat="尽">この席を買う · ¥75,000 →</button>
     </div>
   </div>
 
-  <p style="margin-top:36px;text-align:center;font-size:13.5px;color:var(--mute);max-width:680px">
-    各席の正確な部位・g 表は購入確定時のメールにも同封。<br>
-    Stripe 直販 (2026-05-15 公開) では、席タイプを選んでチェックアウトします。
+  <div style="max-width:680px;margin:36px auto 0;padding:24px 28px;background:var(--bg);border:1px solid var(--line)">
+    <div style="color:var(--y);font-size:10.5px;letter-spacing:0.28em;text-transform:uppercase;margin-bottom:14px">持ち帰り肉 add-on (任意)</div>
+    <p style="color:var(--mute);font-size:14px;line-height:1.85;margin:0 0 14px">
+      その夜の同じ一頭から、真空パック・冷蔵便で<strong style="color:var(--fg)">追加の但馬牛</strong>を持ち帰れます。席購入と一緒にチェックアウト時に選択:
+    </p>
+    <label style="display:block;color:var(--fg);font-size:14.5px;margin:8px 0;cursor:pointer">
+      <input type="radio" name="takeaway" value="0" checked style="margin-right:10px;accent-color:var(--y)"> 持ち帰り無し · ±¥0
+    </label>
+    <label style="display:block;color:var(--fg);font-size:14.5px;margin:8px 0;cursor:pointer">
+      <input type="radio" name="takeaway" value="500" style="margin-right:10px;accent-color:var(--y)"> 500g セット · +¥18,000 (上ロース / 上カルビ ミックス)
+    </label>
+    <label style="display:block;color:var(--fg);font-size:14.5px;margin:8px 0;cursor:pointer">
+      <input type="radio" name="takeaway" value="1000" style="margin-right:10px;accent-color:var(--y)"> 1kg セット · +¥32,000 (サーロイン込みフルカット)
+    </label>
+    <p style="color:var(--mute);font-size:12.5px;margin-top:14px;line-height:1.7">
+      ※ 国内冷蔵便、夜の翌週着指定。日付は受領後に Stripe レシート同送メールで調整。
+    </p>
+  </div>
+
+  <p style="margin-top:30px;text-align:center;font-size:13.5px;color:var(--mute);max-width:680px">
+    各席の正確な部位・g 表は購入確定時のメールにも同封。
+  </p>
+</section>
+
+<section class="story" style="background:var(--bg-2)">
+  <h2>会場の <em>実写</em>。</h2>
+  <p class="lede">焼肉古今 (kokon.tokyo)、西麻布、完全個室。<br>下の 4 枚は同店の公式写真です (cinematic 生成ではなく現実)。</p>
+  <div class="real-photos">
+    <div>
+      <img src="/static/itto/kokon/photo_tabelog_4.jpg" alt="焼肉古今 完全個室">
+      <div class="cap">完全個室 · 28 席</div>
+    </div>
+    <div>
+      <img src="/static/itto/kokon/kokon_grill.webp" alt="焼肉古今 専属焼き師" onerror="this.style.display='none'">
+      <div class="cap">専属焼き師の手仕事</div>
+    </div>
+    <div>
+      <img src="/static/itto/kokon/photo_tabelog_5.jpg" alt="特選和牛の盛り合わせ">
+      <div class="cap">純但馬の切り出し</div>
+    </div>
+    <div>
+      <img src="/static/itto/kokon/photo_tabelog_6.jpg" alt="極上の霜降り">
+      <div class="cap">極上の霜降り</div>
+    </div>
+  </div>
+  <p style="margin-top:24px;text-align:center;font-size:12.5px;color:var(--mute);opacity:0.8">
+    写真出典: 焼肉古今 公式サイト <a href="https://kokon.tokyo" style="color:var(--y)">kokon.tokyo</a>
   </p>
 </section>
 
@@ -384,10 +449,10 @@ footer a{color:var(--y)}
 </section>
 
 <section class="cta-block" id="申込">
-  <h2>1 席、申し込む。</h2>
-  <p>¥75,000 / 1 席。Stripe 直販 LP は 2026-05-15 公開予定。<br>それまでは先着順の意思表示のみメールで受け付けています。<br>(意思表示 = 公開時に最初に案内が届きます)</p>
-  <a class="btn" href="mailto:info@enablerdao.com?subject=%E4%B8%80%E9%A0%AD%20ittō%20%E7%94%B3%E8%BE%BC%E6%84%8F%E6%80%9D%E8%A1%A8%E7%A4%BA&body=%E5%B8%AD%E6%95%B0%3A%201%0A%E3%81%8A%E5%90%8D%E5%89%8D%3A%0A%E3%82%A2%E3%83%AC%E3%83%AB%E3%82%AE%E3%83%BC%E3%83%BB%E5%88%B6%E9%99%90%E3%81%AA%E3%81%A9%3A%0A">先行受付に意思表示 →</a>
-  <small>※ 開催想定: 2026 年 7-8 月のいずれか 1 夜 (調達確定後に確定)。<br>1 席 = 1 名様分。複数席まとめての申込可。</small>
+  <h2>席は <em style="font-style:normal">上のグリッド</em> から。</h2>
+  <p>¥75,000 / 1 席 (持ち帰り肉オプションあり)。<br>Stripe チェックアウトで即時決済。決済完了で席確保 + 確認メール。<br>質問・特別要望は <a style="color:var(--y)" href="mailto:info@enablerdao.com">info@enablerdao.com</a></p>
+  <a class="btn" href="#tier-grid">席タイプを選ぶ ↑</a>
+  <small>※ 開催想定: 2026 年 7-8 月のいずれか 1 夜 (調達確定後に確定)。<br>1 席 = 1 名様分、複数席のまとめ買いは席タイプ毎に複数回チェックアウト。</small>
 </section>
 
 <section class="addr">
@@ -406,9 +471,85 @@ footer a{color:var(--y)}
 
 <footer>
   全部 open: <a href="https://x.com/wearMUcom">@wearMUcom</a> · <a href="/stats">live stats</a> · <a href="/agents">/agents (AI agent 全公開)</a> · <a href="/">wearmu.com</a><br>
-  <span style="opacity:0.55">写真は cinematic AI 生成のコンセプトイメージです。実際の会場・牛・料理は別途記録/掲載されます。<br>
+  <span style="opacity:0.55">ヒーロー画像 / 4 課セクション / 一皿 は cinematic AI 生成のコンセプトイメージ。実会場の写真は上記「会場の実写」セクション (kokon.tokyo 公式) を参照。<br>
   この企画は焼肉古今 (<a href="https://kokon.tokyo" style="color:var(--y);opacity:0.75">kokon.tokyo</a>) との共同企画として進行中。最終的な日程・献立は確定次第 /blog で告知します。</span>
 </footer>
+
+<script>
+(function(){
+  // ── Live availability counter ──
+  async function loadAvail(){
+    try {
+      const r = await fetch('/api/itto/availability', {cache:'no-store'});
+      if(!r.ok) return;
+      const d = await r.json();
+      for (const t of ['序','本','続','尽']) {
+        const el = document.querySelector(`[data-remaining="${t}"]`);
+        const btn = document.querySelector(`.buy-btn[data-seat="${t}"]`);
+        if (!el || !d.tiers[t]) continue;
+        const remaining = d.tiers[t].remaining;
+        el.textContent = remaining;
+        if (remaining <= 0 && btn) {
+          btn.textContent = 'SOLD OUT';
+          btn.disabled = true;
+          btn.dataset.soldout = '1';
+        }
+      }
+    } catch(e) { /* silent */ }
+  }
+  loadAvail();
+  setInterval(loadAvail, 30000); // refresh every 30s
+
+  // ── Checkout ──
+  function getTakeaway(){
+    const sel = document.querySelector('input[name="takeaway"]:checked');
+    return sel ? parseInt(sel.value, 10) : 0;
+  }
+  document.querySelectorAll('.buy-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (btn.dataset.soldout) return;
+      const seat = btn.dataset.seat;
+      const takeaway_g = getTakeaway();
+      btn.disabled = true;
+      const originalText = btn.textContent;
+      btn.textContent = 'Stripe へ移動中...';
+      try {
+        const r = await fetch('/api/itto/checkout', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({seat_type: seat, takeaway_g: takeaway_g}),
+        });
+        const d = await r.json();
+        if (d.ok && d.url) {
+          window.location.href = d.url;
+        } else {
+          alert(d.error || 'checkout failed');
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }
+      } catch(e) {
+        alert('network error: ' + e.message);
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    });
+  });
+
+  // ── If returned from Stripe ──
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('paid') === 'ok') {
+    const banner = document.createElement('div');
+    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#e6c449;color:#000;padding:14px;text-align:center;font-size:14px;font-weight:700;z-index:100';
+    banner.textContent = '✓ お支払いありがとうございます。確認メールをお送りしました。';
+    document.body.appendChild(banner);
+  } else if (params.get('paid') === 'cancel') {
+    const banner = document.createElement('div');
+    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#222;color:#e6c449;padding:14px;text-align:center;font-size:14px;font-weight:500;z-index:100;border-bottom:1px solid #e6c449';
+    banner.textContent = '決済キャンセル — 席は確保されていません。いつでも戻ってこられます。';
+    document.body.appendChild(banner);
+  }
+})();
+</script>
 
 </body>
 </html>
