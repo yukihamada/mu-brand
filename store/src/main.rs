@@ -6134,6 +6134,18 @@ async fn public_agents_page(State(db): State<Db>) -> Response {
             prompt: "// for def in AGENT_REGISTRY:\n//   last = MAX(cycle_at) for agent_name = def.name\n//   age = now - last\n//   if age > 2*interval + 600s: stuck.push(def)\n// for stuck in stuck[..3]:  // cap 3/cycle to avoid stampede\n//   run_agent(stuck)\n//   if Err → telegram alert\n// gen_stalled = (now - MAX(created_at) for brand='mugen') > 6h\n// if gen_stalled: telegram alert 'MUGEN generation stalled'",
         },
         AgentDoc {
+            name: "tshirt_factory", interval: "10 min",
+            purpose: "mention_responder が enqueue した tshirt_requests の pending 1 件を処理。design_brief を seed に Gemini 3 Pro Image で 1/1 デザイン生成、R2 にアップロード、products テーブルに brand='mugen_reply' + reserved_for_handle=@author + reserved_until=now+24h で挿入。",
+            model: "Gemini 3 Pro Image preview",
+            prompt: "// brief = cv_config 'tshirt_brief_<tweet_id>'\n// prompt = TSHIRT_DESIGN_PROMPT(brief) — T シャツ前面用、透過 PNG、白インク中心\n// img = Gemini 3 Pro Image generate\n// upload R2 → mugen_reply_<id>.png\n// INSERT products (brand='mugen_reply', name='MUGEN for @handle', design_url=R2_URL,\n//   price_jpy=5000, inventory=1, reserved_for_handle=@handle,\n//   reserved_until=now+86400)\n// UPDATE tshirt_requests status='product_ready'",
+        },
+        AgentDoc {
+            name: "tshirt_replier", interval: "10 min",
+            purpose: "tshirt_requests.status='product_ready' に対し、in_reply_to_tweet_id 指定で @author にツイート返信。返信文に @handle + デザイン URL + 24h soft lock の案内。投稿成功で status='replied'、x_tweet_id 記録。",
+            model: "(no LLM — template)",
+            prompt: "// SELECT * FROM tshirt_requests WHERE status='product_ready' LIMIT 1\n// pid = generated_product_id\n// design = generated_design_url\n// text = '@{handle} you asked, so we made one.\\n→ wearmu.com/products/mugen_reply/{pid}\\n(yours to grab for the next 24h.)'\n// x_post_tweet_v2(text, in_reply_to=tweet_id)\n// UPDATE tshirt_requests status='replied'",
+        },
+        AgentDoc {
             name: "self_improvement", interval: "24h",
             purpose: "Fly logs と agent_journal を読んで、繰り返し出てるエラー (3 回以上) を検知。改善案を journal に書く (実コード変更は self_evolve が PR 化)。",
             model: "Gemini 2.5 Flash",
@@ -28611,6 +28623,9 @@ async fn main() {
         "ALTER TABLE products ADD COLUMN retire_reason TEXT",
         // B: multi-city — どの origin city が drop を発行したか
         "ALTER TABLE products ADD COLUMN city_slug TEXT NOT NULL DEFAULT 'teshikaga'",
+        // mention → MUGEN reply: 24h soft-lock for the requester.
+        "ALTER TABLE products ADD COLUMN reserved_for_handle TEXT",
+        "ALTER TABLE products ADD COLUMN reserved_until INTEGER",
         // F: backfill expires_at for existing MA rows that were created
         // before the column existed. 100 days from created_at, applied once.
         "UPDATE products SET expires_at = CAST(CAST(created_at AS INTEGER) + 8640000 AS TEXT)
@@ -30273,6 +30288,28 @@ async fn main() {
             extra         TEXT,                 -- JSON
             created_at    TEXT NOT NULL
         );
+
+        -- mention-triggered T-shirt requests. mention_responder enqueues a
+        -- row here when Gemini classifies a mention as an explicit T-shirt
+        -- request. tshirt_factory generates the design + product, then
+        -- tshirt_replier posts the X reply. 24h soft-lock to the mention
+        -- author via products.reserved_for_handle / reserved_until.
+        CREATE TABLE IF NOT EXISTS tshirt_requests (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            tweet_id        TEXT    NOT NULL UNIQUE,
+            author_id       TEXT    NOT NULL,
+            author_handle   TEXT    NOT NULL,
+            mention_text    TEXT    NOT NULL,
+            status          TEXT    NOT NULL DEFAULT 'pending',  -- pending|generating|product_ready|replied|skipped|failed
+            generated_product_id INTEGER,
+            generated_design_url TEXT,
+            reply_tweet_id  TEXT,
+            err_reason      TEXT,
+            created_at      TEXT    NOT NULL,
+            updated_at      TEXT    NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_tshirt_requests_status
+            ON tshirt_requests(status, created_at);
         CREATE INDEX IF NOT EXISTS idx_funnel_session  ON funnel_events(session_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_funnel_visitor  ON funnel_events(visitor_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_funnel_event    ON funnel_events(event, created_at);
@@ -31327,6 +31364,16 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         description: "全 agent の last_seen を agent_journal で監視。2x interval を超えて止まってる agent を見つけたら force-run + Telegram。誰か止まっても他の agent が治す cross-heal。",
     },
     AgentDef {
+        name: "tshirt_factory",
+        interval_secs: 600, // 10 min
+        description: "tshirt_requests の pending を 1 件処理。Gemini 3 Pro Image でメンション内容を seed にデザイン生成、R2 保存、products 行を作成 (brand='mugen_reply', reserved_for_handle, reserved_until=now+24h)。",
+    },
+    AgentDef {
+        name: "tshirt_replier",
+        interval_secs: 600, // 10 min — typically runs after tshirt_factory
+        description: "tshirt_requests.status='product_ready' に対し、@author に X reply を投稿 (デザイン URL 付き)。投稿成功で status='replied'。",
+    },
+    AgentDef {
         name: "ma_lineage_daily",
         interval_secs: 86_400, // 24h
         description: "MA holder 1 名につき 1 日 1 デザインを Gemini で生成 → ma_lineage。/lineage/<short>?k=… でグリッド閲覧、claim は T1。",
@@ -31378,6 +31425,8 @@ async fn run_agent(name: &str, db: Db) -> Result<AgentReport, String> {
         "weather_pulse"     => agent_weather_pulse(db).await,
         "mention_responder" => agent_mention_responder(db).await,
         "watchdog"          => agent_watchdog(db).await,
+        "tshirt_factory"    => agent_tshirt_factory(db).await,
+        "tshirt_replier"    => agent_tshirt_replier(db).await,
         "drop_filler"       => agent_drop_filler(db).await,
         "purchase_celebrate"=> agent_purchase_celebrate(db).await,
         "feedback_learner"  => agent_feedback_learner(db).await,
@@ -36399,12 +36448,15 @@ async fn agent_weather_pulse(db: Db) -> Result<AgentReport, String> {
 // Gemini Flash で positive/question/spam 分類、本物には AI 返信。
 // 状態は cv_config 'mention_last_seen_id' で since_id を進める。
 const MENTION_CLASSIFY_PROMPT: &str = r#"You are a brand-safe mention triage for MU (wearmu.com), a 0-human apparel brand.
-A tweet just mentioned @wearMUcom. Classify it and (if appropriate) draft a SHORT, polite Japanese reply.
+A tweet just mentioned @wearMUcom. Classify it, decide whether it's an explicit
+T-shirt request, and (if appropriate) draft a SHORT, polite Japanese reply.
 
 Output STRICT JSON:
 {
   "kind":   "positive|question|spam|negative|other",
-  "reply":  "<=180 chars Japanese reply, OR empty string if kind is spam/negative/other",
+  "is_tshirt_request": false,
+  "design_brief":      "<=120 chars English design seed if is_tshirt_request, else empty",
+  "reply":  "<=180 chars Japanese reply, OR empty string if kind is spam/negative/other OR is_tshirt_request",
   "reason": "<=100 chars internal note (why this classification)"
 }
 
@@ -36414,6 +36466,13 @@ Rules:
 - spam: link spam, account farming, irrelevant → empty reply
 - negative: complaint, criticism → empty reply (defer to human)
 - other: unclear / off-topic → empty reply
+- is_tshirt_request: TRUE only if the mention EXPLICITLY asks MU to make a T-shirt
+  for them. Examples: "作って", "make me one", "MUGEN me", "Tシャツ欲しい",
+  "design one for me". A vague compliment or a question is NOT a request.
+  When TRUE: leave "reply" empty (the tshirt_factory pipeline will reply later)
+  and fill "design_brief" with a 1-line English seed for Gemini Image
+  (extract emotion / theme / motif from the tweet — e.g. "snow lake at dawn,
+  silver/black, kanji 静", "tokyo neon at 3am, magenta and ink").
 - Never include "ありがとうございます" + excited tone for non-positive.
 - All wearmu URLs must be the bare https://wearmu.com or a specific subpath (/mugen, /you, /agents, /stats).
 - No emoji unless the original mention used emoji.
@@ -36439,7 +36498,9 @@ async fn agent_mention_responder(db: Db) -> Result<AgentReport, String> {
         let conn = db.lock().unwrap();
         cv_get(&conn, "mention_last_seen_id", "")
     };
-    let mut url = String::from("https://api.twitter.com/2/users/2053797881262555136/mentions?tweet.fields=author_id,text,created_at&max_results=20");
+    // expansions + user.fields needed so we can resolve author_handle for
+    // T-shirt request enqueueing (needs @handle, not just author_id).
+    let mut url = String::from("https://api.twitter.com/2/users/2053797881262555136/mentions?tweet.fields=author_id,text,created_at&expansions=author_id&user.fields=username&max_results=20");
     if !since_id.is_empty() {
         url.push_str(&format!("&since_id={}", since_id));
     }
@@ -36521,6 +36582,86 @@ async fn agent_mention_responder(db: Db) -> Result<AgentReport, String> {
         let kind = parsed["kind"].as_str().unwrap_or("other").to_string();
         let reply = parsed["reply"].as_str().unwrap_or("").chars().take(180).collect::<String>();
         let reason = parsed["reason"].as_str().unwrap_or("").chars().take(100).collect::<String>();
+        let is_tshirt_req = parsed["is_tshirt_request"].as_bool().unwrap_or(false);
+        let design_brief = parsed["design_brief"].as_str().unwrap_or("").chars().take(120).collect::<String>();
+
+        // T-shirt request branch — enqueue and skip the direct reply.
+        // tshirt_factory + tshirt_replier handle the rest.
+        if is_tshirt_req && !design_brief.trim().is_empty() {
+            // Resolve handle from the includes/users block we pulled earlier.
+            let author_id = m["author_id"].as_str().unwrap_or("").to_string();
+            let handle = body["includes"]["users"].as_array()
+                .and_then(|us| us.iter().find(|u| u["id"].as_str() == Some(&author_id)))
+                .and_then(|u| u["username"].as_str())
+                .unwrap_or("")
+                .to_string();
+            if author_id.is_empty() || handle.is_empty() {
+                decisions.push(serde_json::json!({"type":"tshirt_skip_no_handle","tweet_id":tweet_id}));
+                skipped += 1;
+                continue;
+            }
+            // Per-user rate limit: 1 request per 30d. Cheap defense vs spam.
+            let now_s: i64 = chrono_now().parse().unwrap_or(0);
+            let recent: i64 = {
+                let conn = db.lock().unwrap();
+                conn.query_row(
+                    "SELECT COUNT(*) FROM tshirt_requests
+                     WHERE author_id=? AND CAST(created_at AS INTEGER) > ?",
+                    params![author_id, now_s - 30 * 86400],
+                    |r| r.get(0),
+                ).unwrap_or(0)
+            };
+            if recent > 0 {
+                decisions.push(serde_json::json!({"type":"tshirt_rate_limited","tweet_id":tweet_id,"author":handle}));
+                skipped += 1;
+                continue;
+            }
+            // Monthly budget guard ($100/mo ≈ 2500 reqs at $0.04 ea).
+            let month_start = now_s - 30 * 86400; // rolling 30-day, simpler than calendar month
+            let month_count: i64 = {
+                let conn = db.lock().unwrap();
+                conn.query_row(
+                    "SELECT COUNT(*) FROM tshirt_requests
+                     WHERE CAST(created_at AS INTEGER) > ?",
+                    params![month_start], |r| r.get(0),
+                ).unwrap_or(0)
+            };
+            if month_count >= 2500 {
+                decisions.push(serde_json::json!({"type":"tshirt_budget_capped","month_count":month_count}));
+                skipped += 1;
+                continue;
+            }
+            if is_dry {
+                actions.push(serde_json::json!({
+                    "type":"dry_run_tshirt_enqueue","tweet_id":tweet_id,
+                    "handle":handle,"design_brief":design_brief}));
+                continue;
+            }
+            // Enqueue. UNIQUE on tweet_id makes this idempotent on rerun.
+            let now_iso = now_s.to_string();
+            let inserted = {
+                let conn = db.lock().unwrap();
+                conn.execute(
+                    "INSERT OR IGNORE INTO tshirt_requests
+                     (tweet_id, author_id, author_handle, mention_text,
+                      status, created_at, updated_at)
+                     VALUES (?,?,?,?,?,?,?)",
+                    params![tweet_id, author_id, handle, text,
+                            "pending", now_iso, now_iso],
+                ).unwrap_or(0)
+            };
+            // Stash the design_brief in a side-table so the factory can use
+            // it as Gemini seed. Reuse cv_config (k=v store) keyed by tweet_id.
+            {
+                let conn = db.lock().unwrap();
+                let k = format!("tshirt_brief_{}", tweet_id);
+                cv_set(&conn, &k, &design_brief, "mention_responder");
+            }
+            actions.push(serde_json::json!({
+                "type":"tshirt_enqueued","tweet_id":tweet_id,
+                "handle":handle,"inserted":inserted}));
+            continue;
+        }
 
         if !matches!(kind.as_str(), "positive" | "question") || reply.trim().is_empty() {
             decisions.push(serde_json::json!({"type":"skipped","tweet_id":tweet_id,"kind":kind,"reason":reason}));
@@ -36558,6 +36699,314 @@ async fn agent_mention_responder(db: Db) -> Result<AgentReport, String> {
         summary: format!("mention_responder: {} replied, {} skipped ({} self)", replied, skipped, self_skipped),
         notable: replied > 0,
     })
+}
+
+// ── agent_tshirt_factory + agent_tshirt_replier ─────────────────────────
+// Mention-triggered 1/1 T-shirt pipeline. mention_responder enqueues a row
+// into tshirt_requests when Gemini classifies a mention as an explicit
+// T-shirt request. tshirt_factory does the heavy lifting (Gemini Image →
+// R2 → products row), tshirt_replier posts the X reply.
+
+const TSHIRT_DESIGN_PROMPT_TPL: &str = r#"T-shirt graphic design.
+Design brief: {brief}
+
+Constraints:
+- Output: square 1024x1024 PNG with TRANSPARENT background
+- Single-color print (white ink) on a black Bella+Canvas 3001
+- Crisp shapes, no anti-aliasing fuzz
+- Total composition occupies ~70% of the canvas, centered
+- Quiet, sober, no decorative flourish (MU Vision §14)
+- Mood: brand voice is monastic, post-fashion, north Japan winter clarity
+- No text labels unless explicitly part of the brief"#;
+
+async fn agent_tshirt_factory(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut decisions: Vec<serde_json::Value> = Vec::new();
+    let mut actions: Vec<serde_json::Value> = Vec::new();
+
+    let is_dry = dry_run_active("tshirt_factory");
+    obs.insert("dry_run".into(), serde_json::Value::from(is_dry));
+
+    let key = match env::var("GEMINI_API_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => return Ok(AgentReport::idle("GEMINI_API_KEY missing")),
+    };
+
+    // Pick oldest pending request.
+    let row: Option<(i64, String, String, String, String)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT id, tweet_id, author_id, author_handle, mention_text
+             FROM tshirt_requests
+             WHERE status='pending'
+             ORDER BY id ASC LIMIT 1",
+            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        ).ok()
+    };
+    let Some((req_id, tweet_id, _author_id, handle, mention_text)) = row else {
+        return Ok(AgentReport::idle("no pending tshirt_requests"));
+    };
+    obs.insert("request_id".into(), serde_json::Value::from(req_id));
+    obs.insert("handle".into(), serde_json::Value::from(handle.clone()));
+
+    // Mark generating to avoid double-pick if this run takes long.
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE tshirt_requests SET status='generating', updated_at=?
+             WHERE id=? AND status='pending'",
+            params![chrono_now(), req_id],
+        );
+    }
+
+    let brief = {
+        let conn = db.lock().unwrap();
+        let k = format!("tshirt_brief_{}", tweet_id);
+        let b = cv_get(&conn, &k, "");
+        if b.is_empty() { mention_text.chars().take(120).collect::<String>() } else { b }
+    };
+    obs.insert("brief".into(), serde_json::Value::from(brief.clone()));
+
+    if is_dry {
+        actions.push(serde_json::json!({"type":"dry_run","brief":brief,"handle":handle}));
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE tshirt_requests SET status='pending', updated_at=?
+             WHERE id=?",
+            params![chrono_now(), req_id],
+        );
+        return Ok(AgentReport {
+            observations: serde_json::Value::Object(obs), decisions, actions,
+            summary: format!("tshirt_factory DRY: would gen for @{}", handle),
+            notable: false,
+        });
+    }
+
+    // Gemini 3 Pro Image generate.
+    let prompt = TSHIRT_DESIGN_PROMPT_TPL.replace("{brief}", &brief);
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image-preview:generateContent?key={}",
+        key);
+    let body = serde_json::json!({
+        "contents": [{"parts":[{"text": prompt}]}],
+        "generationConfig": {"responseModalities": ["IMAGE","TEXT"]}
+    });
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(150))
+        .build().unwrap_or_else(|_| reqwest::Client::new());
+    let resp = match client.post(&url).json(&body).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            mark_tshirt_failed(&db, req_id, &format!("gemini http: {e}"));
+            return Ok(AgentReport {
+                observations: serde_json::Value::Object(obs),
+                decisions: vec![serde_json::json!({"type":"gemini_http_err","err":e.to_string()})],
+                actions,
+                summary: "tshirt_factory: gemini http error".into(),
+                notable: true,
+            });
+        }
+    };
+    if !resp.status().is_success() {
+        let s = resp.status();
+        let t = resp.text().await.unwrap_or_default();
+        mark_tshirt_failed(&db, req_id, &format!("gemini {}: {}", s, t.chars().take(200).collect::<String>()));
+        return Ok(AgentReport {
+            observations: serde_json::Value::Object(obs),
+            decisions: vec![serde_json::json!({"type":"gemini_status","status":s.as_u16()})],
+            actions,
+            summary: format!("tshirt_factory: gemini {}", s),
+            notable: true,
+        });
+    }
+    let j: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(e) => {
+            mark_tshirt_failed(&db, req_id, &format!("gemini json: {e}"));
+            return Ok(AgentReport::idle("gemini json parse"));
+        }
+    };
+    let b64 = j["candidates"][0]["content"]["parts"]
+        .as_array().and_then(|parts| parts.iter().find_map(|p| {
+            p.get("inlineData").or_else(|| p.get("inline_data"))
+                .and_then(|d| d.get("data"))
+                .and_then(|v| v.as_str())
+        }));
+    let Some(b64) = b64 else {
+        mark_tshirt_failed(&db, req_id, "no inline_data in gemini response");
+        return Ok(AgentReport::idle("no image returned"));
+    };
+    use base64::Engine;
+    let bytes = match base64::engine::general_purpose::STANDARD.decode(b64) {
+        Ok(b) => b,
+        Err(e) => {
+            mark_tshirt_failed(&db, req_id, &format!("base64: {e}"));
+            return Ok(AgentReport::idle("base64 decode"));
+        }
+    };
+    obs.insert("png_bytes".into(), serde_json::Value::from(bytes.len() as i64));
+
+    // Store to R2 (or local fallback).
+    let key_obj = format!("mugen_reply_{}.png", req_id);
+    let stored_url = if let Some(cfg) = r2_config() {
+        match cfg.bucket.put_object_with_content_type(&key_obj, &bytes, "image/png").await {
+            Ok(r) if r.status_code() == 200 => {
+                Some(format!("{}/{}", cfg.public_base.trim_end_matches('/'), key_obj))
+            }
+            _ => None,
+        }
+    } else {
+        let dir = mockups_dir();
+        let _ = tokio::fs::create_dir_all(&dir).await;
+        let path = dir.join(&key_obj);
+        if tokio::fs::write(&path, &bytes).await.is_ok() {
+            Some(format!("https://wearmu.com/mockups/{}", key_obj))
+        } else { None }
+    };
+    let Some(stored) = stored_url else {
+        mark_tshirt_failed(&db, req_id, "storage failed");
+        return Ok(AgentReport::idle("storage failed"));
+    };
+    obs.insert("design_url".into(), serde_json::Value::from(stored.clone()));
+
+    // INSERT product row.
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let reserved_until = now_s + 86_400; // 24h
+    let name = format!("MUGEN for @{}", handle);
+    let prompt_hash = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        brief.hash(&mut h);
+        tweet_id.hash(&mut h);
+        format!("{:016x}", h.finish())
+    };
+    let new_pid: i64 = {
+        let conn = db.lock().unwrap();
+        let next_drop_num: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(drop_num),0)+1 FROM products WHERE brand='mugen_reply'",
+            [], |r| r.get(0),
+        ).unwrap_or(1);
+        let n = conn.execute(
+            "INSERT INTO products
+             (brand, drop_num, name, design_url, mockup_url,
+              price_jpy, inventory, sold, created_at, active,
+              prompt_text, prompt_hash, reserved_for_handle, reserved_until,
+              city_slug)
+             VALUES (?,?,?,?,?, ?,?,0,?,1, ?,?,?,?, 'teshikaga')",
+            params![
+                "mugen_reply", next_drop_num, name, stored.clone(), Option::<String>::None,
+                5000, 1, now_s.to_string(),
+                brief, prompt_hash, handle, reserved_until,
+            ],
+        ).unwrap_or(0);
+        if n == 0 { 0 } else { conn.last_insert_rowid() }
+    };
+    if new_pid == 0 {
+        mark_tshirt_failed(&db, req_id, "product insert failed");
+        return Ok(AgentReport::idle("insert failed"));
+    }
+    obs.insert("product_id".into(), serde_json::Value::from(new_pid));
+
+    // Mark ready for replier.
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE tshirt_requests
+             SET status='product_ready', generated_product_id=?,
+                 generated_design_url=?, updated_at=?
+             WHERE id=?",
+            params![new_pid, stored.clone(), chrono_now(), req_id],
+        );
+    }
+
+    actions.push(serde_json::json!({
+        "type":"product_created","product_id":new_pid,
+        "handle":handle,"design_url":stored,
+    }));
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs), decisions, actions,
+        summary: format!("tshirt_factory: product #{} created for @{}", new_pid, handle),
+        notable: true,
+    })
+}
+
+fn mark_tshirt_failed(db: &Db, req_id: i64, reason: &str) {
+    let conn = db.lock().unwrap();
+    let _ = conn.execute(
+        "UPDATE tshirt_requests SET status='failed', err_reason=?, updated_at=?
+         WHERE id=?",
+        params![reason, chrono_now(), req_id],
+    );
+}
+
+async fn agent_tshirt_replier(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut decisions: Vec<serde_json::Value> = Vec::new();
+    let mut actions: Vec<serde_json::Value> = Vec::new();
+    let is_dry = dry_run_active("tshirt_replier");
+    obs.insert("dry_run".into(), serde_json::Value::from(is_dry));
+
+    let row: Option<(i64, String, String, i64, String)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT id, tweet_id, author_handle, generated_product_id, generated_design_url
+             FROM tshirt_requests
+             WHERE status='product_ready'
+             ORDER BY id ASC LIMIT 1",
+            [], |r| Ok((
+                r.get(0)?, r.get(1)?, r.get(2)?,
+                r.get::<_, Option<i64>>(3)?.unwrap_or(0),
+                r.get::<_, Option<String>>(4)?.unwrap_or_default(),
+            )),
+        ).ok()
+    };
+    let Some((req_id, tweet_id, handle, product_id, _design_url)) = row else {
+        return Ok(AgentReport::idle("no product_ready rows"));
+    };
+    obs.insert("request_id".into(), serde_json::Value::from(req_id));
+    obs.insert("product_id".into(), serde_json::Value::from(product_id));
+
+    // Tweet copy. Keep it tight, name the handle, give the URL.
+    let text = format!(
+        "@{handle} あなたから生まれた 1 着、出来ました。\n\
+         → https://wearmu.com/products/mugen_reply/{pid}\n\
+         今後 24h はあなた優先で買えます。",
+        handle = handle, pid = product_id);
+
+    if is_dry {
+        actions.push(serde_json::json!({"type":"dry_run","text":text}));
+        return Ok(AgentReport {
+            observations: serde_json::Value::Object(obs), decisions, actions,
+            summary: format!("tshirt_replier DRY: would reply to @{}", handle),
+            notable: false,
+        });
+    }
+
+    match x_post_tweet_v2(&db, &text, Some(&tweet_id)).await {
+        Ok(reply_id) => {
+            let conn = db.lock().unwrap();
+            let _ = conn.execute(
+                "UPDATE tshirt_requests SET status='replied', reply_tweet_id=?, updated_at=?
+                 WHERE id=?",
+                params![reply_id.clone(), chrono_now(), req_id],
+            );
+            actions.push(serde_json::json!({
+                "type":"replied","reply_tweet_id":reply_id,"handle":handle}));
+            Ok(AgentReport {
+                observations: serde_json::Value::Object(obs), decisions, actions,
+                summary: format!("tshirt_replier: replied to @{}", handle),
+                notable: true,
+            })
+        }
+        Err(e) => {
+            decisions.push(serde_json::json!({"type":"reply_err","err":e.clone()}));
+            Ok(AgentReport {
+                observations: serde_json::Value::Object(obs), decisions, actions,
+                summary: format!("tshirt_replier: post failed — {}", e.chars().take(80).collect::<String>()),
+                notable: true,
+            })
+        }
+    }
 }
 
 // ── agent_watchdog ──────────────────────────────────────────────────────
