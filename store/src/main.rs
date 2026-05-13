@@ -9988,6 +9988,83 @@ footer a:hover{{color:var(--y)}}
     </p>
   </div>
 
+  <!-- MU とは -->
+  <div class="section">
+    <h2>MU とは</h2>
+    <p>
+      <strong style="color:var(--fg)">MU は、北海道の天気が服を作るブランドです。</strong> 人間のデザイナーは 1 人もいません。
+      毎時間 Gemini Pro が新しい T シャツを 1 案生成し、気温が今日の発行枚数を決め、Printful がプリントして、Stripe が決済し、配送業者が運びます。
+      その一連のチェーンを、コードと AI と外注インフラだけで回しています。
+    </p>
+    <p style="margin-top:14px">
+      売上が出ていないわけではなく、出ている数字を <strong style="color:var(--y)">隠さず</strong> このページで公開しているのが MU です。
+      Vision 4 行は <a href="/constitution.md">/constitution.md</a> に。
+    </p>
+  </div>
+
+  <!-- OSS protocol -->
+  <div class="section">
+    <h2>オープンソースのプロトコル</h2>
+    <p>
+      MU は<strong style="color:var(--fg)">ブランドであると同時にプロトコル</strong>です。Rust + libsql + Gemini + Stripe + Printful の組み合わせを、
+      MIT で<strong style="color:var(--y)">そのまま公開しています</strong>。fork して、あなたの都市の気温で、あなた専用の無人ブランドを立ち上げられます。
+    </p>
+    <div class="row"><span class="k">リポジトリ</span><span class="v"><a href="https://github.com/yukihamada/mu-brand">github.com/yukihamada/mu-brand</a></span></div>
+    <div class="row"><span class="k">ライセンス</span><span class="v">MIT</span></div>
+    <div class="row"><span class="k">主要言語 / 規模</span><span class="v">Rust ~30,000 LOC + Python helpers</span></div>
+    <div class="row"><span class="k">使用 AI</span><span class="v">Gemini 2.5 Pro (blog/self-evolve) + Flash (classify)</span></div>
+    <div class="row"><span class="k">画像生成</span><span class="v">Gemini 3 Pro Image</span></div>
+    <div class="row"><span class="k">配信 / 決済</span><span class="v">Printful (Print-on-demand) + Stripe</span></div>
+    <p style="margin-top:14px">
+      Fly.io で 1 process / 28 in-process agent。1 ヶ月の運用コストは <strong style="color:var(--y)">~¥8,600/mo</strong>。
+      <a href="https://github.com/yukihamada/mu-brand/blob/main/README.md">README</a> を読めば 30 分で setup できる構成です。
+    </p>
+  </div>
+
+  <!-- How to use -->
+  <div class="section">
+    <h2>使い方 (お客様として)</h2>
+    <p>MU の関わり方は 5 通り。それぞれ価格と頻度が違います。</p>
+    <div class="row"><span class="k">MUGEN — 毎時 1 案 / 1〜108 着限定</span><span class="v">¥5,000〜</span></div>
+    <div class="row"><span class="k">MUON — 毎日 1 案 / 気温 = 枚数</span><span class="v">¥5,000〜</span></div>
+    <div class="row"><span class="k">間 MA — 週次 / 7 日オークション / 世界に 1 着</span><span class="v">¥30,000〜</span></div>
+    <div class="row"><span class="k">/you — 毎朝あなた専用の AI デザイン</span><span class="v">30 日無料 → ¥1,480/月</span></div>
+    <div class="row"><span class="k">バウンティ — バグ発見で MUGEN 報酬</span><span class="v">最大 5 着 + ¥50,000</span></div>
+    <p style="margin-top:14px">
+      MUGEN/MUON/MA を 1 着でも買うと <strong style="color:var(--y)">/you が一生 ¥0</strong>。
+      ご注文は <a href="/">wearmu.com</a> から、サブスクは <a href="/you">wearmu.com/you</a>。
+    </p>
+  </div>
+
+  <!-- /you focus -->
+  <div class="section">
+    <h2>/you — あなた専用の MU</h2>
+    <p>
+      登録すると、その日からあなたの bio とその日の気象シードを使って、Gemini 3 Pro Image が <strong style="color:var(--y)">毎朝 9:00 JST に 1 案</strong> 生成します。
+      気に入ったら ¥6,800 でその場で発注、興味なければ翌朝の案を待つ。在庫はゼロ、未注文の案はその日でただ流れていきます。
+    </p>
+    <p style="margin-top:14px">
+      30 日トライアル無料。MU を 1 着買ったお客様は<strong style="color:var(--y)">一生 ¥0</strong>。
+      → <a href="/you">/you に登録する</a>
+    </p>
+  </div>
+
+  <!-- 法人 -->
+  <div class="section">
+    <h2>法人向け — MU Collab</h2>
+    <p>
+      あなたのブランドのロゴ・トーン・素材ガイドを送ると、24 時間で <strong style="color:var(--fg)">あなたのブランドの無人 EC ライン</strong>が立ち上がります。
+      MU と同じパイプライン (AI 生成 → Printful → Stripe → 配送) を、あなたのブランド名・あなたのドメインで動かす B2B 構成です。
+    </p>
+    <div class="row"><span class="k">初年度 基本料</span><span class="v y">¥0</span></div>
+    <div class="row"><span class="k">レベニューシェア</span><span class="v">30% / 20% / 10% (Starter / Growth / Enterprise)</span></div>
+    <div class="row"><span class="k">セットアップ</span><span class="v">~24h (ロゴ受領 → 商品 30 案稼働)</span></div>
+    <div class="row"><span class="k">実例</span><span class="v">kokon.tokyo, SIIIEEP, jiuflow など</span></div>
+    <p style="margin-top:14px">
+      <a href="/collab">/collab で詳細</a> · 法人問合せ <a href="mailto:info@enablerdao.com">info@enablerdao.com</a>
+    </p>
+  </div>
+
   <footer>
     数字に矛盾があったら <a href="mailto:info@enablerdao.com">info@enablerdao.com</a> または <a href="/bounty">/bounty</a> へ。<br>
     Raw JSON: <a href="/api/transparency">wearmu.com/api/transparency</a> · Constitution: <a href="/constitution.md">wearmu.com/constitution.md</a><br>
