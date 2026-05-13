@@ -826,12 +826,69 @@ const SUZURI_HEAVY_TEE_ITEM_ID: u32 = 148;
 /// SUZURI redirect friction.
 const SUZURI_CREATOR_MARGIN_JPY: i64 = 1_400;
 
+/// Crop transparent borders from a PNG so the visible artwork fills the frame.
+/// SUZURI's API uses `resizeMode: contain` which fits the entire PNG (including
+/// invisible alpha=0 padding) into the print area. Without this crop, designs
+/// rendered with large transparent margins (most of our Gemini-generated drops)
+/// end up printed much smaller than the available area. Returns the cropped
+/// PNG bytes, or the original bytes if the input isn't RGBA / can't be parsed.
+fn crop_transparent_borders(png_bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let decoder = png::Decoder::new(std::io::Cursor::new(png_bytes));
+    let mut reader = decoder.read_info().map_err(|e| format!("png decode: {}", e))?;
+    let info = reader.info().clone();
+    if info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
+        return Ok(png_bytes.to_vec()); // nothing to crop without alpha @ 8-bit
+    }
+    let (w, h) = (info.width as usize, info.height as usize);
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    reader.next_frame(&mut buf).map_err(|e| format!("png frame: {}", e))?;
+    let row_stride = w * 4;
+    let mut min_x = w; let mut min_y = h;
+    let mut max_x = 0usize; let mut max_y = 0usize;
+    let mut found = false;
+    for y in 0..h {
+        let row_off = y * row_stride;
+        for x in 0..w {
+            if buf[row_off + x * 4 + 3] > 8 { // ignore near-transparent dust
+                if !found { min_x = x; min_y = y; max_x = x; max_y = y; found = true; }
+                else {
+                    if x < min_x { min_x = x; }
+                    if x > max_x { max_x = x; }
+                    if y < min_y { min_y = y; }
+                    if y > max_y { max_y = y; }
+                }
+            }
+        }
+    }
+    if !found { return Err("image is fully transparent".to_string()); }
+    if min_x == 0 && min_y == 0 && max_x == w-1 && max_y == h-1 {
+        return Ok(png_bytes.to_vec()); // already tight
+    }
+    let cw = max_x - min_x + 1;
+    let ch = max_y - min_y + 1;
+    let mut out_rgba = Vec::with_capacity(cw * ch * 4);
+    for y in min_y..=max_y {
+        let start = y * row_stride + min_x * 4;
+        out_rgba.extend_from_slice(&buf[start..start + cw * 4]);
+    }
+    let mut encoded = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut encoded, cw as u32, ch as u32);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().map_err(|e| format!("png header: {}", e))?;
+        writer.write_image_data(&out_rgba).map_err(|e| format!("png write: {}", e))?;
+    }
+    Ok(encoded)
+}
+
 /// Mirror a product to SUZURI: fetches design PNG, uploads as material,
 /// creates a product on item #148 (ヘビーウェイトT) with ¥1,400 creator
 /// margin. Returns (material_id, product_id, product_url) on success.
 async fn suzuri_publish_drop(
     db: Db,
     product_id: i64,
+    force: bool,
 ) -> Result<(i64, i64, String), String> {
     let token = env::var("SUZURI_ACCESS_TOKEN").map_err(|_| "SUZURI_ACCESS_TOKEN unset".to_string())?;
     let (design_url, name, suzuri_already): (Option<String>, String, Option<i64>) = {
@@ -842,7 +899,9 @@ async fn suzuri_publish_drop(
         ).map_err(|e| format!("db lookup: {}", e))?
     };
     if let Some(existing) = suzuri_already {
-        return Err(format!("product {} already mirrored to SUZURI ({})", product_id, existing));
+        if !force {
+            return Err(format!("product {} already mirrored to SUZURI ({}); pass ?force=1 to republish", product_id, existing));
+        }
     }
     let design_url = design_url.ok_or_else(|| "design_url missing".to_string())?;
     let abs_url = if design_url.starts_with("http") {
@@ -850,12 +909,17 @@ async fn suzuri_publish_drop(
     } else if design_url.starts_with('/') {
         format!("https://wearmu.com{}", design_url)
     } else { design_url.clone() };
-    // Fetch image bytes.
-    let bytes = reqwest::get(&abs_url).await
+    // Fetch image bytes, then crop transparent borders so SUZURI's contain-fit
+    // renders the artwork at the full print area instead of leaving padding.
+    let raw = reqwest::get(&abs_url).await
         .map_err(|e| format!("fetch design: {}", e))?
         .bytes().await.map_err(|e| format!("read bytes: {}", e))?;
+    let cropped = match crop_transparent_borders(&raw) {
+        Ok(b) => b,
+        Err(e) => { eprintln!("[suzuri] crop failed, using original: {}", e); raw.to_vec() }
+    };
     use base64::Engine;
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&cropped);
     let body = serde_json::json!({
         "texture": format!("data:image/png;base64,{}", b64),
         "title": name,
@@ -904,6 +968,8 @@ async fn suzuri_publish_drop(
 #[derive(Deserialize)]
 struct SuzuriPublishQuery {
     token: String,
+    #[serde(default)]
+    force: Option<String>,
 }
 
 /// POST /api/admin/suzuri/publish/:pid — yuki/cron mirrors a product to SUZURI.
@@ -913,7 +979,8 @@ async fn admin_suzuri_publish(
     axum::extract::Query(q): axum::extract::Query<SuzuriPublishQuery>,
 ) -> Response {
     if let Err(r) = require_admin_token(Some(&q.token)) { return r; }
-    match suzuri_publish_drop(db, pid).await {
+    let force = matches!(q.force.as_deref(), Some("1") | Some("true"));
+    match suzuri_publish_drop(db, pid, force).await {
         Ok((mid, spid, url)) => Json(serde_json::json!({
             "ok": true, "product_id": pid,
             "suzuri_material_id": mid,
