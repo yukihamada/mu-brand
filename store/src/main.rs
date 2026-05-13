@@ -11464,6 +11464,14 @@ async fn public_transparency_page(State(db): State<Db>) -> Html<String> {
         .map(|a| a.len() as i64).unwrap_or(0);
     let muon_missing  = snap["missing_drops"]["muon_missing_dates"].as_array()
         .map(|a| a.len() as i64).unwrap_or(0);
+    let (domain_expiry_s, domain_days_s, domain_days_class): (String, String, &str) = {
+        let conn = db.lock().unwrap();
+        let exp = cv_get(&conn, "domain_expiry_iso", "—");
+        let days: i64 = cv_get(&conn, "domain_days_remaining", "-1").parse().unwrap_or(-1);
+        let class = if days < 0 { "warn" } else if days < 30 { "bad" } else if days < 90 { "warn" } else { "good" };
+        let days_s = if days < 0 { "—".to_string() } else { format!("{} days", fmt_commas(days)) };
+        (exp[..10.min(exp.len())].to_string(), days_s, class)
+    };
     let as_of_unix: i64 = snap["as_of"].as_str().and_then(|s| s.parse().ok()).unwrap_or(0);
     // JST timestamp
     let jst = as_of_unix + 9 * 3600;
@@ -11644,6 +11652,21 @@ footer a:hover{{color:var(--y)}}
     </p>
   </div>
 
+  <!-- Domain continuity (Constitution §22) -->
+  <div class="section">
+    <h2>ドメイン継続 (Constitution §22)</h2>
+    <p>
+      MU は <strong style="color:var(--fg)">wearmu.com を 2126 年まで保持</strong> することを Constitution §22 で commitment しています。
+      各 T シャツの首裏 / chronicle QR / scan アプリは全部このドメインに依存するため、消えたら過去の購入者にも害が及ぶ。
+      毎日 VeriSign RDAP から expiry を取得して下に live 表示、残り 90/60/30/7 日で Telegram に alert。
+    </p>
+    <div class="row"><span class="k">現在の expiry (Registry)</span><span class="v">{domain_expiry_s}</span></div>
+    <div class="row"><span class="k">残り日数</span><span class="v {domain_days_class}">{domain_days_s}</span></div>
+    <div class="row"><span class="k">Registrar</span><span class="v">お名前.com (GMO Internet Group)</span></div>
+    <div class="row"><span class="k">継承先 (yuki 不在時)</span><span class="v">株式会社イネブラ (Enabler Inc.)</span></div>
+    <div class="row"><span class="k">commitment</span><span class="v"><a href="/constitution#centennial-domain-commitment">§22 を読む</a></span></div>
+  </div>
+
   <!-- MU とは -->
   <div class="section">
     <h2>MU とは</h2>
@@ -11749,6 +11772,9 @@ footer a:hover{{color:var(--y)}}
         pv_7d_s = pv_7d_s,
         traffic_rows = traffic_rows,
         recent_purch_rows = render_recent_purchases_rows(&snap, "ja"),
+        domain_expiry_s = domain_expiry_s,
+        domain_days_s = domain_days_s,
+        domain_days_class = domain_days_class,
         you_paid_class = if you_paid == 0 { "bad" } else { "good" },
         mrr_class = if you_mrr == 0 { "bad" } else { "good" },
     );
@@ -11815,6 +11841,14 @@ async fn public_transparency_page_en(State(db): State<Db>) -> Html<String> {
         .map(|a| a.len() as i64).unwrap_or(0);
     let muon_missing  = snap["missing_drops"]["muon_missing_dates"].as_array()
         .map(|a| a.len() as i64).unwrap_or(0);
+    let (domain_expiry_s, domain_days_s, domain_days_class): (String, String, &str) = {
+        let conn = db.lock().unwrap();
+        let exp = cv_get(&conn, "domain_expiry_iso", "—");
+        let days: i64 = cv_get(&conn, "domain_days_remaining", "-1").parse().unwrap_or(-1);
+        let class = if days < 0 { "warn" } else if days < 30 { "bad" } else if days < 90 { "warn" } else { "good" };
+        let days_s = if days < 0 { "—".to_string() } else { format!("{} days", fmt_commas(days)) };
+        (exp[..10.min(exp.len())].to_string(), days_s, class)
+    };
     let as_of_unix: i64 = snap["as_of"].as_str().and_then(|s| s.parse().ok()).unwrap_or(0);
     let jst = as_of_unix + 9 * 3600;
     let day_n = jst / 86_400;
@@ -12001,6 +12035,20 @@ footer a:hover{{color:var(--y)}}
   </div>
 
   <div class="section">
+    <h2>Domain continuity (Constitution §22)</h2>
+    <p>
+      MU has committed to keeping <strong style="color:var(--fg)">wearmu.com registered through at least 2126</strong>.
+      Every T-shirt sold has a neck-back chronicle QR that resolves here — if the domain lapses, every shirt loses its trail.
+      A daily agent polls VeriSign RDAP, persists the expiry below, and alerts Telegram at 90/60/30/7 days remaining.
+    </p>
+    <div class="row"><span class="k">Current expiry (Registry)</span><span class="v">{domain_expiry_s}</span></div>
+    <div class="row"><span class="k">Days remaining</span><span class="v {domain_days_class}">{domain_days_s}</span></div>
+    <div class="row"><span class="k">Registrar</span><span class="v">お名前.com (GMO Internet Group)</span></div>
+    <div class="row"><span class="k">Successor designee (if yuki absent)</span><span class="v">Enabler Inc.</span></div>
+    <div class="row"><span class="k">Commitment</span><span class="v"><a href="/constitution#centennial-domain-commitment">read §22</a></span></div>
+  </div>
+
+  <div class="section">
     <h2>What is MU?</h2>
     <p>
       <strong style="color:var(--fg)">MU is a brand where Hokkaido's weather designs the clothes.</strong>
@@ -12115,6 +12163,9 @@ footer a:hover{{color:var(--y)}}
         pv_7d_s = pv_7d_s,
         traffic_rows = traffic_rows,
         recent_purch_rows = render_recent_purchases_rows(&snap, "en"),
+        domain_expiry_s = domain_expiry_s,
+        domain_days_s = domain_days_s,
+        domain_days_class = domain_days_class,
         you_paid_class = if you_paid == 0 { "bad" } else { "good" },
         mrr_class = if you_mrr == 0 { "bad" } else { "good" },
     );
@@ -28986,6 +29037,11 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         description: "過去 72h の X tweets の public_metrics を fetch → sns_post_metrics",
     },
     AgentDef {
+        name: "domain_watch",
+        interval_secs: 86_400, // 24h
+        description: "Constitution §22: wearmu.com の RDAP 残期間を毎日 fetch、90/60/30/7日で Telegram alert",
+    },
+    AgentDef {
         name: "journal_embedder",
         interval_secs: 21_600, // 6h
         description: "agent_journal 未 embed 行を text-embedding-004 で埋め込み → journal_embeddings",
@@ -29156,6 +29212,7 @@ async fn run_agent(name: &str, db: Db) -> Result<AgentReport, String> {
         "drop_filler"       => agent_drop_filler(db).await,
         "purchase_celebrate"=> agent_purchase_celebrate(db).await,
         "feedback_learner"  => agent_feedback_learner(db).await,
+        "domain_watch"      => agent_domain_watch(db).await,
         _ => Err(format!("unknown agent: {}", name)),
     }
 }
@@ -29332,6 +29389,91 @@ async fn agent_scheduler(db: Db) {
 
 // ── Agent 1: business_health ───────────────────────────────────────────
 // 在庫切れ間近 / SWEEP 嫌われ / blog 不在 / FB 未返信 を 1h ごと検知。
+/// `agent_domain_watch` — Constitution §22 centennial commitment.
+/// Polls VeriSign RDAP for wearmu.com expiry, persists to cv_config,
+/// alerts Telegram at 90/60/30/7 day thresholds. Idempotent: stores
+/// 'domain_alert_<bucket>_sent' flags so each threshold pings once.
+async fn agent_domain_watch(db: Db) -> Result<AgentReport, String> {
+    let url = "https://rdap.verisign.com/com/v1/domain/wearmu.com";
+    let resp = reqwest::Client::new().get(url)
+        .timeout(std::time::Duration::from_secs(15))
+        .send().await
+        .map_err(|e| format!("rdap fetch: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("rdap status: {}", resp.status()));
+    }
+    let j: serde_json::Value = resp.json().await.map_err(|e| format!("json: {}", e))?;
+    let expiry: String = j["events"].as_array()
+        .and_then(|evs| evs.iter().find(|e|
+            e["eventAction"].as_str() == Some("expiration")
+        ))
+        .and_then(|e| e["eventDate"].as_str().map(String::from))
+        .ok_or_else(|| "no expiration event".to_string())?;
+    // Parse YYYY-MM-DDTHH:MM:SSZ → unix seconds.
+    let expiry_unix: i64 = {
+        let (date_part, time_part) = expiry.split_once('T').ok_or_else(|| "bad date".to_string())?;
+        let date_bits: Vec<i64> = date_part.split('-').filter_map(|s| s.parse().ok()).collect();
+        let time_bits: Vec<i64> = time_part.trim_end_matches('Z').split(':').filter_map(|s| s.parse::<f64>().ok().map(|f| f as i64)).collect();
+        if date_bits.len() < 3 || time_bits.len() < 3 { return Err("date parse".into()); }
+        let y = date_bits[0]; let m = date_bits[1]; let d = date_bits[2];
+        // Civil → days since 1970-01-01 (Howard Hinnant algorithm subset).
+        let y_adj = if m <= 2 { y - 1 } else { y };
+        let era = y_adj.div_euclid(400);
+        let yoe = (y_adj - era * 400) as i64;
+        let mp = if m > 2 { m - 3 } else { m + 9 };
+        let doy = (153 * mp + 2) / 5 + d - 1;
+        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+        let days = era * 146_097 + doe - 719_468;
+        days * 86_400 + time_bits[0] * 3600 + time_bits[1] * 60 + time_bits[2]
+    };
+    let now_s = chrono_now().parse::<i64>().unwrap_or(0);
+    let days_remaining = ((expiry_unix - now_s) / 86_400).max(0);
+    {
+        let conn = db.lock().unwrap();
+        cv_set(&conn, "domain_expiry_iso", &expiry, "domain_watch");
+        cv_set(&conn, "domain_expiry_unix", &expiry_unix.to_string(), "domain_watch");
+        cv_set(&conn, "domain_days_remaining", &days_remaining.to_string(), "domain_watch");
+        cv_set(&conn, "domain_last_checked_at", &chrono_now(), "domain_watch");
+    }
+    // Tiered alerts. Each threshold fires once until reset by renewal.
+    let buckets: &[(i64, &str)] = &[(7,"7d"),(30,"30d"),(60,"60d"),(90,"90d")];
+    let mut alerts_fired = 0;
+    for (limit, label) in buckets {
+        if days_remaining <= *limit {
+            let flag_key = format!("domain_alert_{}_sent_{}", label, &expiry[..10]);
+            let already = {
+                let conn = db.lock().unwrap();
+                cv_get(&conn, &flag_key, "0") == "1"
+            };
+            if !already {
+                let msg = format!(
+                    "⏰ wearmu.com 残り {} 日 (expires {}). お名前.com で更新してください. Constitution §22.",
+                    days_remaining, &expiry[..10]
+                );
+                send_telegram_message(&msg).await;
+                let conn = db.lock().unwrap();
+                cv_set(&conn, &flag_key, "1", "domain_watch");
+                alerts_fired += 1;
+                break; // only fire the most-urgent bucket per run
+            }
+        }
+    }
+    Ok(AgentReport {
+        observations: serde_json::json!({
+            "expiry": &expiry[..10],
+            "days_remaining": days_remaining,
+            "alerts_fired": alerts_fired,
+        }),
+        decisions: vec![],
+        actions: vec![],
+        summary: format!(
+            "expiry={} days_remaining={} alerts_fired={}",
+            &expiry[..10], days_remaining, alerts_fired,
+        ),
+        notable: alerts_fired > 0,
+    })
+}
+
 async fn agent_business_health(db: Db) -> Result<AgentReport, String> {
     let now_s: i64 = chrono_now().parse().unwrap_or(0);
     let h24 = now_s - 86_400;

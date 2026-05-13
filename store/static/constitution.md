@@ -159,6 +159,45 @@ to SWEEP at cost, and the Fly machine spins down on day 31.
 
 No mourning. One blog post with the final number. End.
 
+## Centennial Domain Commitment
+
+`wearmu.com` shall remain registered through **at least 2126-05-13**
+(100 years from the Constitution's first publication).
+
+Concretely:
+
+1. **Always renew at the maximum** the `.com` registry allows
+   (currently 10 years per registration). The next renewal must occur
+   no later than 60 days before the registrar expiry date.
+2. **Auto-renew is permanently ON** at the registrar. The billing
+   payment method is renewed at every credit-card expiry; the
+   recurring billing must never lapse.
+3. **WHOIS monitor agent** (`domain_watch`) polls expiry daily and
+   alerts Telegram at 90 / 60 / 30 / 7 days remaining.
+4. **`/transparency` shows the live expiry date** — every visitor can
+   verify the commitment is being kept.
+5. **Successor designation**: if `yuki@hamada.tokyo` becomes
+   permanently unreachable, ownership transfers to 株式会社イネブラ
+   (Enabler Inc., 法人番号 9010001229178) as the corporate parent.
+   On the company's dissolution, the next-named designee in the
+   board minutes inherits the domain + Fly account + Stripe entity.
+   If no named designee exists, the domain enters a 5-year hold
+   under the registrar's standard expiry process — yuki / イネブラ
+   shall pre-fund 5 years of renewals into the registrar account
+   to cover any handover gap.
+6. **Pre-funded renewal escrow**: a JPY balance of at least
+   ¥150,000 (≈ 10 × current annual renewal × 5-year safety factor)
+   is kept on file with the registrar's billing account at all times.
+7. **No T1 agent may transfer or surrender this domain.** The
+   transfer-lock at the registrar must be ON. Only yuki (or the
+   designated successor) can unlock — and only with a Constitution
+   amendment ratified in `governance_queue`.
+
+This commitment is hashed into `cv_config['domain_expiry_target']`
+and `chronicle_*` infrastructure depends on it (the QR codes on
+shirts resolve to `wearmu.com/c/...` and must remain resolvable for
+the lifetime of every shirt ever sold).
+
 ---
 
 *This document is hashed into every build. The build SHA prefix is shown on `/admin/agents` next to the Constitution version.*
