@@ -954,6 +954,13 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
            style="display:none;margin-top:8px;text-align:center;background:rgba(230,196,73,0.08);border:1px solid rgba(230,196,73,0.35);color:#e6c449;padding:10px 14px;border-radius:2px;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;font-weight:600;text-decoration:none">
           ⚡ クイック購入 (Stripe へ直行)
         </a>
+        <!-- SUZURI marketplace mirror (Constitution §24-v2 dual-channel).
+             Shown only when product has been published to suzuri.jp. JP
+             customers get ~¥4,900 + 2-3 day domestic shipping. -->
+        <a id="btn-suzuri" href="#" target="_blank" rel="noopener"
+           style="display:none;margin-top:8px;text-align:center;background:rgba(255,107,107,0.06);border:1px solid rgba(255,107,107,0.4);color:#ff8a8a;padding:10px 14px;border-radius:2px;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;font-weight:600;text-decoration:none">
+          🇯🇵 SUZURI で買う (¥4,900 国内発送)
+        </a>
         <!--
           Express Checkout (Apple Pay / Google Pay / Link) via Stripe's
           embedded Checkout. Mounted on demand: pressing "Apple Pay / Google Pay"
@@ -1905,6 +1912,21 @@ function openModal(p, pushHistory=true){
     } else {
       quick.style.display = 'none';
       quick.removeAttribute('href');
+    }
+  }
+
+  // SUZURI marketplace mirror (§24-v2). Visible only for JP-shipping
+  // buyers when product has been published to suzuri.jp. We don't
+  // geo-gate — the button shows whenever suzuri_url is set and rem>0;
+  // the label calls out 国内発送 so non-JP visitors self-select away.
+  const suzuri = document.getElementById('btn-suzuri');
+  if (suzuri) {
+    if (p.suzuri_url && rem > 0) {
+      suzuri.href = p.suzuri_url;
+      suzuri.style.display = 'block';
+    } else {
+      suzuri.style.display = 'none';
+      suzuri.removeAttribute('href');
     }
   }
 

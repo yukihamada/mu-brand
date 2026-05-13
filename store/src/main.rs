@@ -365,6 +365,11 @@ struct Product {
     /// skipping our /api/checkout roundtrip.
     #[serde(skip_serializing_if = "Option::is_none")]
     payment_link_url: Option<String>,
+    /// SUZURI marketplace mirror URL — when present, JP customers can
+    /// click "🇯🇵 SUZURI で買う" for domestic fulfillment via suzuri.jp.
+    /// See [[wearmu_suzuri_mirror]] / Constitution §24-v2.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    suzuri_url: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -797,6 +802,127 @@ const SATU001_BLACK_VARIANT_IDS: &[(&str, u32)] = &[
     ("4XL", 21232),
     ("5XL", 21233),
 ];
+
+// ───── SUZURI marketplace mirror (Constitution §24-v2 dual-channel) ─────
+//
+// SUZURI is a JP creator marketplace (GMO ペパボ). It does NOT support
+// behind-the-scenes fulfillment from our Stripe checkout (their public
+// API is 404 for direct order placement). The model is: we mirror each
+// MUGEN drop as a SUZURI product, JP customers click "🇯🇵 SUZURI で買う"
+// and complete the purchase on suzuri.jp at a lower price (¥4,900) with
+// fast domestic 2-3 day shipping. SUZURI handles checkout + fulfillment
+// + customer service; we receive a creator margin of ¥1,400 per sale.
+//
+// Constitution §2 (0 humans) preserved — publishing is via API; SUZURI's
+// JP fulfillment is autonomous on their side.
+
+/// SUZURI item template id for our default heavy tee. 148 = ヘビーウェイトTシャツ
+/// (5.6 oz Printstar). Heavier than Stanley/Stella SATU001 (180gsm ≈ 5.3 oz).
+const SUZURI_HEAVY_TEE_ITEM_ID: u32 = 148;
+
+/// Creator margin in JPY per sale. SUZURI's item base for #148 is ~¥3,500,
+/// so consumer-facing price ≈ ¥4,900. JP customers see a clear discount
+/// vs the wearmu.com Stripe path (¥7,800) which compensates for the
+/// SUZURI redirect friction.
+const SUZURI_CREATOR_MARGIN_JPY: i64 = 1_400;
+
+/// Mirror a product to SUZURI: fetches design PNG, uploads as material,
+/// creates a product on item #148 (ヘビーウェイトT) with ¥1,400 creator
+/// margin. Returns (material_id, product_id, product_url) on success.
+async fn suzuri_publish_drop(
+    db: Db,
+    product_id: i64,
+) -> Result<(i64, i64, String), String> {
+    let token = env::var("SUZURI_ACCESS_TOKEN").map_err(|_| "SUZURI_ACCESS_TOKEN unset".to_string())?;
+    let (design_url, name, suzuri_already): (Option<String>, String, Option<i64>) = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT design_url, name, suzuri_product_id FROM products WHERE id=?",
+            params![product_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).map_err(|e| format!("db lookup: {}", e))?
+    };
+    if let Some(existing) = suzuri_already {
+        return Err(format!("product {} already mirrored to SUZURI ({})", product_id, existing));
+    }
+    let design_url = design_url.ok_or_else(|| "design_url missing".to_string())?;
+    let abs_url = if design_url.starts_with("http") {
+        design_url.clone()
+    } else if design_url.starts_with('/') {
+        format!("https://wearmu.com{}", design_url)
+    } else { design_url.clone() };
+    // Fetch image bytes.
+    let bytes = reqwest::get(&abs_url).await
+        .map_err(|e| format!("fetch design: {}", e))?
+        .bytes().await.map_err(|e| format!("read bytes: {}", e))?;
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    let body = serde_json::json!({
+        "texture": format!("data:image/png;base64,{}", b64),
+        "title": name,
+        "price": SUZURI_CREATOR_MARGIN_JPY,
+        "products": [{
+            "itemId": SUZURI_HEAVY_TEE_ITEM_ID,
+            "published": true,
+            "resaleEnabled": false,
+        }],
+    });
+    let resp = reqwest::Client::new()
+        .post("https://suzuri.jp/api/v1/materials")
+        .bearer_auth(&token)
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send().await
+        .map_err(|e| format!("suzuri POST: {}", e))?;
+    let status = resp.status();
+    let text = resp.text().await.map_err(|e| format!("read body: {}", e))?;
+    if !status.is_success() {
+        return Err(format!("suzuri {} {}", status, text.chars().take(400).collect::<String>()));
+    }
+    let j: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("json: {}", e))?;
+    let material_id = j["material"]["id"].as_i64().ok_or_else(|| "no material.id".to_string())?;
+    let products_arr = j["products"].as_array().ok_or_else(|| "no products[]".to_string())?;
+    let first = products_arr.first().ok_or_else(|| "products[] empty".to_string())?;
+    let suzuri_product_id = first["id"].as_i64().ok_or_else(|| "no products[0].id".to_string())?;
+    let url_template = first["url"].as_str().unwrap_or_default().to_string();
+    // SUZURI URLs have {size}/{color} placeholders — keep as-is for the
+    // public link (SUZURI's UI fills them via dropdown), but also build a
+    // clean default link to the black/M variant page.
+    let pretty_url = url_template
+        .replace("{size}", "m")
+        .replace("{color}", "black");
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE products SET suzuri_material_id=?, suzuri_product_id=?, suzuri_url=?
+             WHERE id=?",
+            params![material_id, suzuri_product_id, pretty_url, product_id],
+        );
+    }
+    Ok((material_id, suzuri_product_id, pretty_url))
+}
+
+#[derive(Deserialize)]
+struct SuzuriPublishQuery {
+    token: String,
+}
+
+/// POST /api/admin/suzuri/publish/:pid — yuki/cron mirrors a product to SUZURI.
+async fn admin_suzuri_publish(
+    Path(pid): Path<i64>,
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<SuzuriPublishQuery>,
+) -> Response {
+    if let Err(r) = require_admin_token(Some(&q.token)) { return r; }
+    match suzuri_publish_drop(db, pid).await {
+        Ok((mid, spid, url)) => Json(serde_json::json!({
+            "ok": true, "product_id": pid,
+            "suzuri_material_id": mid,
+            "suzuri_product_id": spid,
+            "suzuri_url": url,
+        })).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))).into_response(),
+    }
+}
 
 /// Returns "era-1 (Bella+Canvas 3001)" or "era-2 (Stanley/Stella SATU001)"
 /// for a given mugen drop_num. Other brands return their own era string.
@@ -1902,6 +2028,7 @@ fn read_product(row: &rusqlite::Row) -> rusqlite::Result<Product> {
         // Try-get because not every SELECT pulls the new column. When the
         // column index is out-of-range (small SELECT), this falls back to None.
         payment_link_url: row.get(18).unwrap_or(None),
+        suzuri_url: row.get(19).unwrap_or(None),
     })
 }
 
@@ -1959,7 +2086,7 @@ async fn list_products(
                 price_jpy, inventory, sold, created_at,
                 weather_data, prompt_hash, seed_data, nft_mint, auction_end,
                 COALESCE(current_bid,0), COALESCE(bid_count,0), sold_out_at, lifestyle_url,
-                payment_link_url
+                payment_link_url, suzuri_url
          FROM products WHERE brand=? AND active=1 ORDER BY drop_num DESC LIMIT ?"
     ).unwrap();
     let products: Vec<Product> = stmt.query_map(params![brand, limit], |row| read_product(row))
@@ -30267,6 +30394,14 @@ async fn main() {
         // for counterfeit detection (matched design but no Stripe sale).
         // 64-bit hash stored as 16-hex-char string.
         "ALTER TABLE products ADD COLUMN dhash TEXT",
+        // SUZURI marketplace mirror (Constitution §24-v2). When a MUGEN drop
+        // is created in our products table, we publish it to suzuri.jp via
+        // their API so JP customers can buy on SUZURI directly (fast
+        // domestic shipping + lower price ¥4,900). These columns track the
+        // mirror link.
+        "ALTER TABLE products ADD COLUMN suzuri_material_id INTEGER",
+        "ALTER TABLE products ADD COLUMN suzuri_product_id  INTEGER",
+        "ALTER TABLE products ADD COLUMN suzuri_url TEXT",
         // mention → MUGEN reply: 24h soft-lock for the requester.
         "ALTER TABLE products ADD COLUMN reserved_for_handle TEXT",
         "ALTER TABLE products ADD COLUMN reserved_until INTEGER",
@@ -32661,6 +32796,7 @@ async fn main() {
         .route("/api/admin/products_reconcile_sold", post(admin_products_reconcile_sold))
         .route("/api/admin/deactivate_brand", post(admin_deactivate_brand))
         .route("/api/admin/x_enqueue", post(admin_x_enqueue))
+        .route("/api/admin/suzuri/publish/:pid", post(admin_suzuri_publish))
         .route("/api/blog/auto", get(list_auto_blog))
         .route("/blog/auto/:slug", get(show_auto_blog))
         .route("/api/you/referral", post(you_referral_status))
