@@ -5307,9 +5307,15 @@ async fn public_agents_page(State(db): State<Db>) -> Response {
         },
         AgentDoc {
             name: "mention_responder", interval: "15 min",
-            purpose: "@wearMUcom のメンションを GET /2/users/:id/mentions で since_id 進めながら取得、Gemini で positive/question/spam/negative/other 分類、positive と question に AI が日本語で 180 字以内の丁寧返信。",
+            purpose: "@wearMUcom のメンションを GET /2/users/:id/mentions で since_id 進めながら取得、Gemini で positive/question/spam/negative/other 分類、positive と question に AI が日本語で 180 字以内の丁寧返信。author_id == @wearMUcom はセルフメンションとして必ず skip。",
             model: "Gemini 2.5 Flash · temperature 0.0",
             prompt: "// MENTION_CLASSIFY_PROMPT (Gemini に渡す):\n//  Classify a @wearMUcom mention and (if appropriate) draft a SHORT, polite Japanese reply.\n//  Output JSON: {kind: positive|question|spam|negative|other, reply: <=180 chars, reason: <=100 chars}\n//  Rules:\n//   - positive → 短い感謝 + 1 link (自然なら)\n//   - question → 事実回答 + 正しい link (/mugen /you /agents /stats)\n//   - spam/negative/other → empty reply\n//   - No 過剰絵文字、URL は bare https://wearmu.com or 具体 subpath\n// 返信成功 → 次の since_id を進める",
+        },
+        AgentDoc {
+            name: "watchdog", interval: "5 min",
+            purpose: "全 agent の last_seen を agent_journal で監視。2x interval を超えて止まってる agent を force-run。MUGEN 生成パイプライン (GH Actions hourly) が 6h 以上止まったら Telegram alert。誰かが止まっても他の agent が治す cross-heal。",
+            model: "(no LLM — heuristic)",
+            prompt: "// for def in AGENT_REGISTRY:\n//   last = MAX(cycle_at) for agent_name = def.name\n//   age = now - last\n//   if age > 2*interval + 600s: stuck.push(def)\n// for stuck in stuck[..3]:  // cap 3/cycle to avoid stampede\n//   run_agent(stuck)\n//   if Err → telegram alert\n// gen_stalled = (now - MAX(created_at) for brand='mugen') > 6h\n// if gen_stalled: telegram alert 'MUGEN generation stalled'",
         },
         AgentDoc {
             name: "self_improvement", interval: "24h",
@@ -7386,6 +7392,28 @@ async fn import_product(
             &composed, body.mockup_url.as_deref());
     }
     Json(serde_json::json!({"ok": true, "id": new_id})).into_response()
+}
+
+/// GET /api/admin/next_drop?brand=mugen&token=… — return next safe drop_num.
+/// Used by generate.py (running on a stateless GH Actions runner) to avoid
+/// drop_num collisions with the production DB.
+async fn admin_next_drop(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let brand = match q.get("brand") {
+        Some(b) if matches!(b.as_str(), "mugen" | "muon" | "ma" | "nouns" | "nouns_mugen" | "nouns_muon" | "nouns_ma") => b.clone(),
+        _ => return (StatusCode::BAD_REQUEST, "brand must be one of: mugen, muon, ma, nouns, nouns_mugen, nouns_muon, nouns_ma").into_response(),
+    };
+    let max: i64 = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(MAX(drop_num), 0) FROM products WHERE brand=?",
+            params![brand], |r| r.get(0),
+        ).unwrap_or(0)
+    };
+    Json(serde_json::json!({"brand": brand, "current_max": max, "next": max + 1})).into_response()
 }
 
 async fn update_price(
@@ -25562,6 +25590,7 @@ async fn main() {
         .route("/api/admin/exports/kyc.csv", get(payments::admin_export_kyc))
         .route("/api/admin/exports/crypto.csv", get(payments::admin_export_crypto))
         .route("/api/admin/import", post(import_product))
+        .route("/api/admin/next_drop", get(admin_next_drop))
         .route("/api/admin/update-price", post(update_price))
         .route("/api/admin/update-nft", post(update_nft))
         .route("/api/admin/update-design", post(update_design))
@@ -26089,6 +26118,11 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         interval_secs: 21_600, // 6h
         description: "X mentions + 自分の posted tweets の public_metrics を観察し、Gemini Pro が「何が刺さって何が flat か」を分析して feedback_insights に保存。celebration tweet 生成プロンプトに injection されて系統が学習する",
     },
+    AgentDef {
+        name: "watchdog",
+        interval_secs: 300, // 5 min
+        description: "全 agent の last_seen を agent_journal で監視。2x interval を超えて止まってる agent を見つけたら force-run + Telegram。誰か止まっても他の agent が治す cross-heal。",
+    },
 ];
 
 /// agent_journal から指定 agent の最後の cycle_at (epoch sec) を取得。
@@ -26135,6 +26169,7 @@ async fn run_agent(name: &str, db: Db) -> Result<AgentReport, String> {
         "mugen_announce"    => agent_mugen_announce(db).await,
         "weather_pulse"     => agent_weather_pulse(db).await,
         "mention_responder" => agent_mention_responder(db).await,
+        "watchdog"          => agent_watchdog(db).await,
         "drop_filler"       => agent_drop_filler(db).await,
         "purchase_celebrate"=> agent_purchase_celebrate(db).await,
         "feedback_learner"  => agent_feedback_learner(db).await,
@@ -31227,6 +31262,131 @@ async fn agent_mention_responder(db: Db) -> Result<AgentReport, String> {
         decisions, actions,
         summary: format!("mention_responder: {} replied, {} skipped ({} self)", replied, skipped, self_skipped),
         notable: replied > 0,
+    })
+}
+
+// ── agent_watchdog ──────────────────────────────────────────────────────
+// Cross-heal: every 5 min, scan AGENT_REGISTRY for any agent whose last
+// journal entry is older than 2x its interval + 600s grace, force-run it,
+// and (if a force-run also fails or generation has stalled) alert Telegram.
+//
+// Philosophy: 誰かが止まっても誰かが動いたら直す — no single agent failure
+// can permanently break the brand because watchdog re-fires it.
+async fn agent_watchdog(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut decisions: Vec<serde_json::Value> = Vec::new();
+    let mut actions: Vec<serde_json::Value> = Vec::new();
+
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+
+    // Snapshot last_seen + interval for every registered agent.
+    let mut stuck: Vec<(String, i64, i64)> = Vec::new(); // (name, age_secs, interval)
+    let mut healthy = 0i64;
+    {
+        let conn = db.lock().unwrap();
+        for def in AGENT_REGISTRY {
+            // Skip the watchdog itself — we're running right now.
+            if def.name == "watchdog" { continue; }
+            let last = agent_last_run_secs(&conn, def.name);
+            if last == 0 {
+                // Never ran — treat as stuck if registry is > 1h old.
+                // (We can't know server start time precisely; the agent
+                // scheduler runs at boot, so a >1h gap is suspicious.)
+                stuck.push((def.name.into(), now_s, def.interval_secs));
+                continue;
+            }
+            let age = now_s - last;
+            let threshold = 2 * def.interval_secs + 600;
+            if age > threshold {
+                stuck.push((def.name.into(), age, def.interval_secs));
+            } else {
+                healthy += 1;
+            }
+        }
+    }
+
+    obs.insert("healthy_count".into(), serde_json::Value::from(healthy));
+    obs.insert("stuck_count".into(), serde_json::Value::from(stuck.len() as i64));
+
+    // Force-run each stuck agent (best-effort, sequentially with a guard).
+    // Cap at 3 per cycle to avoid stampede if something is truly broken.
+    let mut forced = 0i64;
+    let mut still_stuck: Vec<String> = Vec::new();
+    for (name, age, interval) in stuck.iter().take(3) {
+        // Box::pin because run_agent → agent_watchdog → run_agent is a
+        // recursive async cycle (even though we never re-invoke "watchdog"
+        // from here — the compiler can't prove it statically).
+        let fut = Box::pin(run_agent(name, db.clone()));
+        let res = fut.await;
+        match res {
+            Ok(rep) => {
+                decisions.push(serde_json::json!({
+                    "type":"force_ran","agent":name,"age_secs":age,"interval_secs":interval,
+                    "ok":true,"summary":rep.summary.chars().take(120).collect::<String>(),
+                }));
+                forced += 1;
+            }
+            Err(e) => {
+                decisions.push(serde_json::json!({
+                    "type":"force_ran","agent":name,"age_secs":age,"interval_secs":interval,
+                    "ok":false,"err":e.chars().take(200).collect::<String>(),
+                }));
+                still_stuck.push(name.clone());
+            }
+        }
+    }
+    if stuck.len() > 3 {
+        decisions.push(serde_json::json!({
+            "type":"deferred","count": stuck.len() - 3,
+            "agents": stuck.iter().skip(3).map(|(n,_,_)| n.clone()).collect::<Vec<_>>(),
+        }));
+    }
+
+    // Generation pipeline cross-check: if no MUGEN was inserted in the last
+    // 6h despite the GH Actions hourly cron, alert. (gen pipeline lives
+    // off-Fly so watchdog can't restart it — but a Telegram nudge lets a
+    // human flip it back on.)
+    let last_mugen_age: i64 = {
+        let conn = db.lock().unwrap();
+        let last_iso: String = conn.query_row(
+            "SELECT COALESCE(MAX(created_at), '0')
+             FROM products WHERE brand='mugen'",
+            [], |r| r.get(0),
+        ).unwrap_or_else(|_| "0".to_string());
+        let last_s = last_iso.parse::<i64>().unwrap_or(0);
+        if last_s == 0 { i64::MAX } else { now_s - last_s }
+    };
+    obs.insert("last_mugen_age_secs".into(), serde_json::Value::from(last_mugen_age));
+    if last_mugen_age > 6 * 3600 && last_mugen_age != i64::MAX {
+        decisions.push(serde_json::json!({
+            "type":"gen_stalled","age_hours": last_mugen_age / 3600,
+        }));
+        actions.push(serde_json::json!({"type":"telegram_alert","subject":"MUGEN generation stalled"}));
+        send_telegram_message(&format!(
+            "⚠️ MUGEN generation stalled — last new MUGEN was {} hours ago. \
+             GH Actions hourly cron may have failed. \
+             Run `python3 generate.py mugen` manually.",
+            last_mugen_age / 3600
+        )).await;
+    }
+
+    // If after force-run something is STILL stuck (failed twice), Telegram.
+    if !still_stuck.is_empty() {
+        actions.push(serde_json::json!({
+            "type":"telegram_alert","subject":"agents stuck after force-run",
+            "agents": still_stuck.clone(),
+        }));
+        send_telegram_message(&format!(
+            "⚠️ watchdog: {} agent(s) still stuck after force-run: {}",
+            still_stuck.len(), still_stuck.join(", ")
+        )).await;
+    }
+
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs),
+        decisions, actions,
+        summary: format!("watchdog: {} healthy, {} stuck, {} re-fired", healthy, stuck.len(), forced),
+        notable: !stuck.is_empty(),
     })
 }
 

@@ -34,6 +34,9 @@ on:
     # Every 6h :30 — konbini-reminder (poke buyers with unpaid Konbini sessions
     # before the 3-day expiry, two buckets: 24h-old and ~24h-before-expiry)
     - cron: '30 */6 * * *'
+    # Hourly :25 — MUGEN auto-generate (Gemini 3 Pro Image → Printful → DB).
+    # Watchdog on Fly alerts if no new MUGEN in 6h.
+    - cron: '25 * * * *'
   workflow_dispatch:
     inputs:
       target:
@@ -52,6 +55,7 @@ on:
           - council_compose
           - sample_grow_force
           - konbini_reminder
+          - mugen_generate
 
 permissions:
   contents: read
@@ -357,3 +361,43 @@ jobs:
           curl -fsS -X POST -H 'Content-Type: application/json' \
             -d "{\"admin_token\":\"${MU_ADMIN_TOKEN}\"}" \
             "${BASE_URL}/api/admin/cron/konbini-reminder"
+
+  mugen_generate:
+    # Hourly :25 — generate the next MUGEN drop with Gemini 3 Pro Image,
+    # register on Printful, push to wearmu.com via /api/admin/import.
+    # generate.py queries /api/admin/next_drop?brand=mugen for the safe
+    # next drop_num (production DB authoritative), so the stateless GH
+    # runner never collides. Failure here surfaces in the Fly watchdog
+    # agent (alerts if no new MUGEN in 6h).
+    if: github.event.schedule == '25 * * * *' || github.event.inputs.target == 'mugen_generate'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install deps
+        run: pip install --quiet google-genai pillow requests numpy
+      - name: Generate next MUGEN
+        env:
+          GEMINI_API_KEY:     ${{ secrets.GEMINI_API_KEY }}
+          PRINTFUL_API_KEY:   ${{ secrets.PRINTFUL_API_KEY }}
+          MU_ADMIN_TOKEN:     ${{ secrets.MU_ADMIN_TOKEN }}
+          HELIUS_API_KEY:     ${{ secrets.HELIUS_API_KEY }}
+          MU_STORE_URL:       https://wearmu.com
+        run: python3 generate.py mugen
+      - name: Notify Telegram on failure
+        if: failure()
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT:  ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT" ]; then
+            curl -fsS -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+              -d "chat_id=${TG_CHAT}" \
+              -d "text=⚠️ mugen_generate cron failed (${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}). Fly watchdog will alert again if this persists."
+          fi

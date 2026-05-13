@@ -91,8 +91,29 @@ def init_db():
     return con
 
 def next_drop_num(con, brand):
+    # Local working DB authority (when present).
     row = con.execute("SELECT MAX(drop_num) FROM products WHERE brand=?", (brand,)).fetchone()
-    return (row[0] or 0) + 1
+    local_max = row[0] or 0
+    # On a stateless runner (GH Actions) the local DB starts empty, which
+    # would collide with the production DB. Prefer the higher of:
+    #   - local DB MAX
+    #   - production /api/admin/next_drop?brand=… (authoritative)
+    # Explicit env override (MU_NEXT_DROP_NUM) wins both.
+    env_override = os.environ.get("MU_NEXT_DROP_NUM")
+    if env_override and env_override.isdigit():
+        return int(env_override)
+    remote_next = 0
+    try:
+        r = requests.get(
+            f"{STORE_URL}/api/admin/next_drop",
+            params={"brand": brand, "token": ADMIN_TOKEN},
+            timeout=10,
+        )
+        if r.ok:
+            remote_next = int(r.json().get("next", 0)) or 0
+    except Exception as e:
+        print(f"  next_drop API unreachable ({e}); falling back to local DB only")
+    return max(local_max + 1, remote_next)
 
 def get_last_design(con, brand):
     row = con.execute(
