@@ -24425,6 +24425,27 @@ footer a{{color:var(--y);text-decoration:none}}
 
 {recent_html}
 
+<!-- Bridge: route the 99 pv we get on /sweep/proposal + /kokon/proposal +
+     /jiuflow/proposal into MU 本体 individual purchases. Funnel data
+     2026-05-13: B2B proposals = 99 pv / 14d, /mugen = 2 pv / 14d. -->
+<section style="max-width:900px;margin:48px auto 0;padding:24px 22px;border:1px solid rgba(230,196,73,0.35);border-radius:6px;background:linear-gradient(180deg,rgba(230,196,73,0.05),rgba(230,196,73,0.02));text-align:center">
+  <div style="font-size:10px;letter-spacing:0.42em;text-transform:uppercase;color:#e6c449;margin-bottom:10px;opacity:0.9">個人で 1 着試したい方は</div>
+  <h3 style="font-size:18px;font-weight:300;letter-spacing:0.02em;line-height:1.5;margin:0 0 12px;color:#F5F5F0">
+    このページは <strong style="color:#e6c449;font-weight:500">{pretty_em}</strong> 様向け B2B 提案です
+  </h3>
+  <p style="font-size:13px;line-height:1.95;color:rgba(245,245,240,0.7);max-width:560px;margin:0 auto 20px">
+    1 着試したい方は MU 本体へ。 MUGEN は毎時 1 着、 ¥7,800〜、 Stanley/Stella SATU001 (リブ襟 / GOTS organic / EU 製)。<br>
+    国内のお客様は SUZURI 経由 ¥4,900 (Printstar 5.6oz、 2-3 日 国内発送) もあります。
+  </p>
+  <a href="/?from=proposal_{partner_slug}" data-funnel="cta_click" data-funnel-cta="proposal_to_mu"
+     style="display:inline-block;background:#e6c449;color:#0A0A0A;padding:14px 32px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;font-weight:700;text-decoration:none;border-radius:2px">
+    → MU 本体 (個人向け)
+  </a>
+  <div style="margin-top:14px;font-size:10px;letter-spacing:0.2em;opacity:0.45">
+    <a href="/blog/fabric-shift" style="color:inherit;border-bottom:1px dotted rgba(245,245,240,0.3)" data-funnel="cta_click" data-funnel-cta="proposal_to_blog_fabric">なぜ素材を変えたか →</a>
+  </div>
+</section>
+
 <footer>
   ご相談・要望: <a href="mailto:mail@yukihamada.jp">mail@yukihamada.jp</a><br>
   サンプル決済は Stripe Checkout で日本国内配送です。出荷前のキャンセル・返金は個別対応可（製造開始後は不可）。<br>
@@ -24593,6 +24614,7 @@ recalc();
         tab_a_hidden = if q.get("tab").map(String::as_str) == Some("drops") { " hidden" } else { "" },
         tab_b_hidden = if q.get("tab").map(String::as_str) == Some("drops") { "" } else { " hidden" },
         partner_json = serde_json::to_string(partner).unwrap_or_else(|_| "\"\"".into()),
+        partner_slug = partner,
     );
     let _ = cancel_path;
 

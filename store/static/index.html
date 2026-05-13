@@ -624,6 +624,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
   <button type="button"
           class="hero-cta-primary"
           onclick="showSection('mugen');return false;"
+          data-funnel="cta_click" data-funnel-cta="hero_buy_now"
           aria-label="MUGEN を見る — 1 時間ごとに 1 着、毎回違うデザインの T シャツ"
           style="margin-top:24px">
     <span class="cta-main">今すぐ買う</span>
@@ -648,6 +649,67 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
       <div class="hero-stat-label">MUON Today</div>
     </div>
   </div>
+
+  <!-- Hero "今買える 1 着" — fetches the latest available MUGEN drop and
+       renders a direct buy link with live price, stock, and a countdown
+       to the next MUGEN drop (drops happen at the top of every hour JST).
+       Persona FB (Toru): hero shirt image was static + no urgency. This
+       card injects "current drop + 残り stock + 次まで XX:XX" above the
+       brand selector so the buyer doesn't have to scroll. -->
+  <a id="hero-latest-card" href="/mugen" data-funnel="cta_click" data-funnel-cta="hero_latest"
+     style="display:none;margin:32px auto 0;max-width:560px;width:90%;text-decoration:none;color:inherit;background:linear-gradient(180deg,rgba(230,196,73,0.05),rgba(230,196,73,0.02));border:1px solid rgba(230,196,73,0.4);border-radius:4px;padding:14px 18px;align-items:center;gap:18px;transition:all 0.18s ease">
+    <img id="hero-latest-img" src="" alt="latest MUGEN" style="width:84px;height:84px;object-fit:cover;border-radius:2px;background:#000;flex-shrink:0">
+    <div style="flex:1;min-width:0;text-align:left">
+      <div style="font-size:9px;letter-spacing:0.4em;text-transform:uppercase;color:#e6c449;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center">
+        <span>▶ 今買える 1 着</span>
+        <span id="hero-latest-countdown" style="color:#ff8a8a;letter-spacing:0.18em">next: --:--</span>
+      </div>
+      <div id="hero-latest-name" style="font-size:13.5px;font-weight:500;margin-bottom:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">—</div>
+      <div style="font-size:11px;opacity:0.78;display:flex;gap:12px;align-items:center">
+        <span id="hero-latest-price" style="color:#fff;font-weight:600">—</span>
+        <span id="hero-latest-stock" style="opacity:0.75">—</span>
+      </div>
+    </div>
+    <span style="font-size:10.5px;letter-spacing:0.32em;text-transform:uppercase;color:#e6c449;flex-shrink:0;align-self:center;font-weight:600">Buy →</span>
+  </a>
+  <script>
+  (async () => {
+    try {
+      const r = await fetch('/api/products/mugen?limit=20');
+      if (!r.ok) return;
+      const ps = await r.json();
+      const pick = ps.find(p => (p.inventory - (p.sold||0)) > 0);
+      if (!pick) return;
+      const c = document.getElementById('hero-latest-card');
+      if (!c) return;
+      const img = document.getElementById('hero-latest-img');
+      img.src = pick.mockup_url || ('https://mockups.wearmu.com/' + pick.id + '.jpg');
+      img.onerror = () => { img.src = '/og.jpg'; img.style.opacity = '0.4'; };
+      document.getElementById('hero-latest-name').textContent = pick.name || ('MUGEN #' + pick.drop_num);
+      document.getElementById('hero-latest-price').textContent = '¥' + (pick.price_jpy||0).toLocaleString();
+      const rem = (pick.inventory||0) - (pick.sold||0);
+      document.getElementById('hero-latest-stock').textContent = 'のこり ' + rem + ' / ' + (pick.inventory||0);
+      c.href = '/products/mugen/' + pick.drop_num + '?from=hero_latest';
+      c.style.display = 'flex';
+      // Countdown: MUGEN drops at the top of every hour JST (UTC+9).
+      const tickCountdown = () => {
+        const now = new Date();
+        // ms until next top-of-hour
+        const next = new Date(now);
+        next.setMinutes(0, 0, 0);
+        next.setHours(next.getHours() + 1);
+        const ms = next - now;
+        const mm = Math.floor(ms / 60000).toString().padStart(2,'0');
+        const ss = Math.floor((ms % 60000) / 1000).toString().padStart(2,'0');
+        const el = document.getElementById('hero-latest-countdown');
+        if (el) el.textContent = 'next drop ' + mm + ':' + ss;
+      };
+      tickCountdown();
+      setInterval(tickCountdown, 1000);
+    } catch (e) {}
+  })();
+  </script>
+
   <div class="hero-brands">
     <div class="hero-brand-btn" onclick="showSection('ma')">
       <div class="hero-brand-sig"><div class="sig-line"></div></div>
@@ -666,6 +728,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
       <div class="hero-brand-name">MUGEN</div>
     </div>
   </div>
+
   <!-- Multi-city / Cities ticker — origin + satellite -->
   <a href="/cities" style="display:inline-block;margin-top:32px;font-size:9px;letter-spacing:0.32em;text-transform:uppercase;opacity:0.5;text-decoration:none;color:inherit;border-bottom:1px dotted rgba(245,245,240,0.25);padding-bottom:4px" aria-label="MU の都市 — origin: Teshikaga, satellites">
     <span style="color:#e6c449">●</span> Origin: Teshikaga (JP) &nbsp;·&nbsp; <span style="opacity:0.6">○ Pilot: Honolulu (US)</span>

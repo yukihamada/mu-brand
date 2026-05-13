@@ -73,13 +73,22 @@
     send('pageview', null);
   }
 
-  // Click tracker for [data-funnel]
+  // Click tracker for [data-funnel]. Reads optional data-funnel-product
+  // (numeric id) and data-funnel-cta (free-form slug, e.g. "hero_latest")
+  // so the funnel_events.extra payload can tell which specific button
+  // converted, not just "some cta_click somewhere".
   document.addEventListener('click', function (e) {
     var el = e.target.closest && e.target.closest('[data-funnel]');
     if (!el) return;
     var name = el.getAttribute('data-funnel');
     var pid  = el.getAttribute('data-funnel-product');
-    send(name, { product_id: pid ? parseInt(pid, 10) : null });
+    var cta  = el.getAttribute('data-funnel-cta');
+    var path = el.getAttribute('data-funnel-href') || (el.tagName === 'A' ? el.getAttribute('href') : null);
+    var extra = {};
+    if (pid)  extra.product_id = parseInt(pid, 10);
+    if (cta)  extra.cta = cta;
+    if (path) extra.href = path;
+    send(name, extra.product_id !== undefined ? extra : (Object.keys(extra).length ? { product_id: null, ...extra } : null));
   }, true);
 
   // Expose for inline send (e.g. after a Stripe checkout success)
