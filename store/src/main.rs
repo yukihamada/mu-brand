@@ -6123,7 +6123,7 @@ async fn public_agents_page(State(db): State<Db>) -> Response {
         },
         AgentDoc {
             name: "mention_responder", interval: "15 min",
-            purpose: "@wearMUcom のメンションを GET /2/users/:id/mentions で since_id 進めながら取得、Gemini で positive/question/spam/negative/other 分類、positive と question に AI が日本語で 180 字以内の丁寧返信。author_id == @wearMUcom はセルフメンションとして必ず skip。",
+            purpose: "@wearMUcom のメンションを 15 分ごとに pull、Gemini で 5 分類 (positive/question/spam/negative/other) + is_tshirt_request 判定。is_tshirt_request=true な場合は tshirt_requests に enqueue (3 tier rate limit: 知らない人 1/30d、フォロワー 3/日、MUGEN 所有者 10/日)。それ以外で reply が必要なら直接返信。author_id == @wearMUcom (セルフ) は必ず skip。",
             model: "Gemini 2.5 Flash · temperature 0.0",
             prompt: "// MENTION_CLASSIFY_PROMPT (Gemini に渡す):\n//  Classify a @wearMUcom mention and (if appropriate) draft a SHORT, polite Japanese reply.\n//  Output JSON: {kind: positive|question|spam|negative|other, reply: <=180 chars, reason: <=100 chars}\n//  Rules:\n//   - positive → 短い感謝 + 1 link (自然なら)\n//   - question → 事実回答 + 正しい link (/mugen /you /agents /stats)\n//   - spam/negative/other → empty reply\n//   - No 過剰絵文字、URL は bare https://wearmu.com or 具体 subpath\n// 返信成功 → 次の since_id を進める",
         },
@@ -6132,6 +6132,12 @@ async fn public_agents_page(State(db): State<Db>) -> Response {
             purpose: "全 agent の last_seen を agent_journal で監視。2x interval を超えて止まってる agent を force-run。MUGEN 生成パイプライン (GH Actions hourly) が 6h 以上止まったら Telegram alert。誰かが止まっても他の agent が治す cross-heal。",
             model: "(no LLM — heuristic)",
             prompt: "// for def in AGENT_REGISTRY:\n//   last = MAX(cycle_at) for agent_name = def.name\n//   age = now - last\n//   if age > 2*interval + 600s: stuck.push(def)\n// for stuck in stuck[..3]:  // cap 3/cycle to avoid stampede\n//   run_agent(stuck)\n//   if Err → telegram alert\n// gen_stalled = (now - MAX(created_at) for brand='mugen') > 6h\n// if gen_stalled: telegram alert 'MUGEN generation stalled'",
+        },
+        AgentDoc {
+            name: "x_followers_sync", interval: "24h",
+            purpose: "@wearMUcom の followers list を X v2 API でページング全件取得、x_followers テーブルに upsert。mention_responder が「フォロー済みかどうか」の判定に使う (フォロワー = T シャツ 3 件/日)。",
+            model: "(no LLM — X API call)",
+            prompt: "// loop pagination_token:\n//   GET /2/users/2053797881262555136/followers?max_results=1000&user.fields=username&pagination_token={tok}\n//   for u in data:\n//     UPSERT x_followers (author_id, handle, last_seen_at)\n//   tok = next_token; break if absent\n// → 1日 1 回 fresh、stale フォロワーは last_seen_at 古い行として残る",
         },
         AgentDoc {
             name: "tshirt_factory", interval: "10 min",
@@ -30289,6 +30295,15 @@ async fn main() {
             created_at    TEXT NOT NULL
         );
 
+        -- Cache of @wearMUcom followers. x_followers_sync agent populates
+        -- this once a day via the X v2 /followers endpoint. mention_responder
+        -- uses it to give followers a higher daily request quota.
+        CREATE TABLE IF NOT EXISTS x_followers (
+            author_id     TEXT PRIMARY KEY,
+            handle        TEXT NOT NULL,
+            last_seen_at  TEXT NOT NULL
+        );
+
         -- mention-triggered T-shirt requests. mention_responder enqueues a
         -- row here when Gemini classifies a mention as an explicit T-shirt
         -- request. tshirt_factory generates the design + product, then
@@ -31364,6 +31379,11 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         description: "全 agent の last_seen を agent_journal で監視。2x interval を超えて止まってる agent を見つけたら force-run + Telegram。誰か止まっても他の agent が治す cross-heal。",
     },
     AgentDef {
+        name: "x_followers_sync",
+        interval_secs: 86_400, // 24h
+        description: "@wearMUcom の followers を X v2 API でページング取得、x_followers テーブルに upsert。mention_responder の rate-limit tier 判定に使う。",
+    },
+    AgentDef {
         name: "tshirt_factory",
         interval_secs: 600, // 10 min
         description: "tshirt_requests の pending を 1 件処理。Gemini 3 Pro Image でメンション内容を seed にデザイン生成、R2 保存、products 行を作成 (brand='mugen_reply', reserved_for_handle, reserved_until=now+24h)。",
@@ -31427,6 +31447,7 @@ async fn run_agent(name: &str, db: Db) -> Result<AgentReport, String> {
         "watchdog"          => agent_watchdog(db).await,
         "tshirt_factory"    => agent_tshirt_factory(db).await,
         "tshirt_replier"    => agent_tshirt_replier(db).await,
+        "x_followers_sync"  => agent_x_followers_sync(db).await,
         "drop_filler"       => agent_drop_filler(db).await,
         "purchase_celebrate"=> agent_purchase_celebrate(db).await,
         "feedback_learner"  => agent_feedback_learner(db).await,
@@ -36600,9 +36621,36 @@ async fn agent_mention_responder(db: Db) -> Result<AgentReport, String> {
                 skipped += 1;
                 continue;
             }
-            // Per-user rate limit: 1 request per 30d. Cheap defense vs spam.
+            // 3-tier rate limit:
+            //   stranger (default):   1 / 30d  (spam defense)
+            //   follower (X follows):  3 / day, 60 / 30d
+            //   MUGEN owner (env):    10 / day, no monthly cap
             let now_s: i64 = chrono_now().parse().unwrap_or(0);
-            let recent: i64 = {
+            let is_follower: bool = {
+                let conn = db.lock().unwrap();
+                conn.query_row(
+                    "SELECT 1 FROM x_followers WHERE author_id=?",
+                    params![author_id], |r| r.get::<_, i64>(0),
+                ).is_ok()
+            };
+            let is_owner: bool = env::var("MUGEN_OWNER_HANDLES")
+                .unwrap_or_default()
+                .split(',')
+                .map(|s| s.trim().trim_start_matches('@').to_lowercase())
+                .any(|h| h == handle.to_lowercase() && !h.is_empty());
+
+            let tier = if is_owner { "owner" } else if is_follower { "follower" } else { "stranger" };
+
+            let day_count: i64 = {
+                let conn = db.lock().unwrap();
+                conn.query_row(
+                    "SELECT COUNT(*) FROM tshirt_requests
+                     WHERE author_id=? AND CAST(created_at AS INTEGER) > ?",
+                    params![author_id, now_s - 86_400],
+                    |r| r.get(0),
+                ).unwrap_or(0)
+            };
+            let month_count_user: i64 = {
                 let conn = db.lock().unwrap();
                 conn.query_row(
                     "SELECT COUNT(*) FROM tshirt_requests
@@ -36611,8 +36659,19 @@ async fn agent_mention_responder(db: Db) -> Result<AgentReport, String> {
                     |r| r.get(0),
                 ).unwrap_or(0)
             };
-            if recent > 0 {
-                decisions.push(serde_json::json!({"type":"tshirt_rate_limited","tweet_id":tweet_id,"author":handle}));
+
+            let (day_cap, month_cap) = match tier {
+                "owner"    => (10_i64, 9999_i64),
+                "follower" => (3, 60),
+                _          => (1, 1), // stranger
+            };
+            if day_count >= day_cap || month_count_user >= month_cap {
+                decisions.push(serde_json::json!({
+                    "type":"tshirt_rate_limited","tweet_id":tweet_id,
+                    "author":handle,"tier":tier,
+                    "day":day_count,"day_cap":day_cap,
+                    "month":month_count_user,"month_cap":month_cap,
+                }));
                 skipped += 1;
                 continue;
             }
@@ -36698,6 +36757,92 @@ async fn agent_mention_responder(db: Db) -> Result<AgentReport, String> {
         decisions, actions,
         summary: format!("mention_responder: {} replied, {} skipped ({} self)", replied, skipped, self_skipped),
         notable: replied > 0,
+    })
+}
+
+// ── agent_x_followers_sync ──────────────────────────────────────────────
+// Daily: fetch @wearMUcom's full followers list via X v2 API, upsert into
+// x_followers. mention_responder uses this to give followers a higher
+// daily T-shirt request quota. X v2 followers endpoint: 1000 per page,
+// 15 req/15min rate limit at app level.
+async fn agent_x_followers_sync(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut decisions: Vec<serde_json::Value> = Vec::new();
+
+    let bearer = env::var("X_BEARER_TOKEN").unwrap_or_default();
+    if bearer.is_empty() {
+        return Ok(AgentReport::idle("X_BEARER_TOKEN missing"));
+    }
+
+    let mut upserted = 0i64;
+    let mut pages = 0i64;
+    let mut next: Option<String> = None;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build().unwrap_or_else(|_| reqwest::Client::new());
+
+    loop {
+        let mut url = String::from(
+            "https://api.twitter.com/2/users/2053797881262555136/followers?max_results=1000&user.fields=username");
+        if let Some(tok) = next.as_ref() {
+            url.push_str(&format!("&pagination_token={}", tok));
+        }
+        let resp = match client.get(&url).bearer_auth(&bearer).send().await {
+            Ok(r) if r.status().is_success() => r,
+            Ok(r) => {
+                let s = r.status();
+                let t = r.text().await.unwrap_or_default();
+                decisions.push(serde_json::json!({
+                    "type":"x_followers_http_err","status":s.as_u16(),
+                    "body":t.chars().take(200).collect::<String>(),
+                }));
+                break;
+            }
+            Err(e) => {
+                decisions.push(serde_json::json!({"type":"x_followers_net_err","err":e.to_string()}));
+                break;
+            }
+        };
+        let v: serde_json::Value = match resp.json().await {
+            Ok(v) => v,
+            Err(e) => {
+                decisions.push(serde_json::json!({"type":"x_followers_json_err","err":e.to_string()}));
+                break;
+            }
+        };
+        pages += 1;
+        let data = v["data"].as_array().cloned().unwrap_or_default();
+        let now = chrono_now();
+        {
+            let conn = db.lock().unwrap();
+            for u in &data {
+                let id = u["id"].as_str().unwrap_or("");
+                let handle = u["username"].as_str().unwrap_or("");
+                if id.is_empty() || handle.is_empty() { continue; }
+                let _ = conn.execute(
+                    "INSERT INTO x_followers (author_id, handle, last_seen_at)
+                     VALUES (?,?,?)
+                     ON CONFLICT(author_id) DO UPDATE SET
+                         handle=excluded.handle,
+                         last_seen_at=excluded.last_seen_at",
+                    params![id, handle, now],
+                );
+                upserted += 1;
+            }
+        }
+        next = v["meta"]["next_token"].as_str().map(String::from);
+        if next.is_none() { break; }
+        if pages >= 50 { break; } // safety cap (50,000 followers)
+    }
+
+    obs.insert("pages".into(), serde_json::Value::from(pages));
+    obs.insert("upserted".into(), serde_json::Value::from(upserted));
+
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs),
+        decisions, actions: vec![],
+        summary: format!("x_followers_sync: {} pages, {} upserted", pages, upserted),
+        notable: false,
     })
 }
 
