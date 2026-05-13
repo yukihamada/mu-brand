@@ -7394,6 +7394,54 @@ async fn import_product(
     Json(serde_json::json!({"ok": true, "id": new_id})).into_response()
 }
 
+/// GET /api/admin/db_backup?token=… — stream a consistent SQLite snapshot.
+/// Uses `VACUUM INTO` so the copy is transactionally consistent even with
+/// concurrent writes. Pulled hourly by GH Actions and stored as a workflow
+/// artifact, giving an off-Fly backup independent of Fly's daily volume
+/// snapshots.
+async fn admin_db_backup(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+
+    // Unique temp path so concurrent backups don't collide.
+    let ts = chrono_now();
+    let tmp = format!("/tmp/products_snap_{}.db", ts);
+
+    // VACUUM INTO is a consistent copy. It takes a brief lock on the source
+    // DB. For a ~50-100MB SQLite this completes in under a second.
+    let backup_res = {
+        let conn = db.lock().unwrap();
+        conn.execute(&format!("VACUUM INTO '{}'", tmp.replace('\'', "''")), [])
+    };
+    if let Err(e) = backup_res {
+        return (StatusCode::INTERNAL_SERVER_ERROR,
+                format!("vacuum failed: {}", e)).into_response();
+    }
+
+    let bytes = match std::fs::read(&tmp) {
+        Ok(b) => b,
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            return (StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("read snapshot failed: {}", e)).into_response();
+        }
+    };
+    let _ = std::fs::remove_file(&tmp);
+
+    let filename = format!("products_{}.db", ts);
+    (
+        StatusCode::OK,
+        [
+            (axum::http::header::CONTENT_TYPE, "application/x-sqlite3".to_string()),
+            (axum::http::header::CONTENT_DISPOSITION,
+             format!("attachment; filename=\"{}\"", filename)),
+        ],
+        bytes,
+    ).into_response()
+}
+
 /// GET /api/admin/next_drop?brand=mugen&token=… — return next safe drop_num.
 /// Used by generate.py (running on a stateless GH Actions runner) to avoid
 /// drop_num collisions with the production DB.
@@ -25730,6 +25778,7 @@ async fn main() {
         .route("/api/admin/exports/crypto.csv", get(payments::admin_export_crypto))
         .route("/api/admin/import", post(import_product))
         .route("/api/admin/next_drop", get(admin_next_drop))
+        .route("/api/admin/db_backup", get(admin_db_backup))
         .route("/api/admin/update-price", post(update_price))
         .route("/api/admin/update-nft", post(update_nft))
         .route("/api/admin/update-design", post(update_design))

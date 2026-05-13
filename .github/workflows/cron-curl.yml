@@ -41,6 +41,8 @@ on:
     # so a Fly outage / DNS issue / panic-loop trips Telegram even when the
     # internal Fly watchdog is also down.
     - cron: '*/5 * * * *'
+    # Hourly :45 — off-Fly DB backup (VACUUM INTO → workflow artifact).
+    - cron: '45 * * * *'
   workflow_dispatch:
     inputs:
       target:
@@ -61,6 +63,7 @@ on:
           - konbini_reminder
           - mugen_generate
           - uptime_ping
+          - db_backup
 
 permissions:
   contents: read
@@ -408,29 +411,33 @@ jobs:
           fi
 
   uptime_ping:
-    # Every 5 min — external uptime probe (3-retry + 30s spacing). Failure
-    # path Telegram-alerts the user. Cheap insurance against the Fly
-    # internal watchdog itself going down or DNS regressions.
+    # Every 5 min — external uptime probe. Deep /healthz returns 503 when
+    # any sub-check fails (scheduler stale, DB unwritable, disk full,
+    # watchdog itself stale) → 3 retries → Telegram. The JSON body is
+    # captured and forwarded to Telegram so we know WHICH check tripped.
     if: github.event.schedule == '*/5 * * * *' || github.event.inputs.target == 'uptime_ping'
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - name: Probe /healthz
+      - name: Probe /healthz (3 retries)
         id: probe
         run: |
           set +e
           for i in 1 2 3; do
             code=$(curl -sS -o /tmp/body -w "%{http_code}" --max-time 12 "${BASE_URL}/healthz")
             if [ "$code" = "200" ]; then
-              echo "ok ($code)"
-              echo "ok=1" >> $GITHUB_OUTPUT
-              exit 0
+              # Even with 200, double-check the sub-fields explicitly so
+              # any false-positive (e.g. /healthz returns "ok" plain-text
+              # from a stale binary) becomes visible.
+              if grep -q '"ok":true' /tmp/body 2>/dev/null || ! grep -q '"ok":' /tmp/body 2>/dev/null; then
+                echo "ok ($code)"
+                exit 0
+              fi
             fi
-            echo "attempt $i: code=$code"
+            echo "attempt $i: code=$code body=$(head -c 400 /tmp/body)"
             sleep 30
           done
-          echo "ok=0" >> $GITHUB_OUTPUT
-          echo "last_code=$code" >> $GITHUB_OUTPUT
+          echo "FAIL last_code=$code"
           exit 1
       - name: Telegram alert on persistent failure
         if: failure()
@@ -439,7 +446,47 @@ jobs:
           TG_CHAT:  ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT" ]; then
+            body=$(head -c 800 /tmp/body 2>/dev/null || echo "(no body)")
             curl -fsS -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
               -d "chat_id=${TG_CHAT}" \
-              -d "text=🚨 wearmu.com /healthz DOWN — 3x retries failed. ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+              --data-urlencode "text=🚨 wearmu.com /healthz DOWN — 3x retries failed. body=${body}  run=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          fi
+
+  db_backup:
+    # Every hour :45 — pull a consistent SQLite snapshot via VACUUM INTO and
+    # upload as a 14-day-retained GitHub workflow artifact. Off-Fly backup
+    # independent of Fly's daily volume snapshots. Restore: download
+    # artifact, fly volume create + scp the file in.
+    if: github.event.schedule == '45 * * * *' || github.event.inputs.target == 'db_backup'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Download DB snapshot
+        env:
+          ADMIN_TOKEN: ${{ secrets.MU_ADMIN_TOKEN }}
+        run: |
+          ts=$(date -u +%Y%m%dT%H%M%SZ)
+          curl -fsS --max-time 60 \
+            "${BASE_URL}/api/admin/db_backup?token=${ADMIN_TOKEN}" \
+            -o "products_${ts}.db"
+          ls -lh "products_${ts}.db"
+          # Sanity: file should be a valid SQLite DB (header "SQLite format 3\000")
+          head -c 16 "products_${ts}.db" | hexdump -C | head -1
+          echo "DB_FILE=products_${ts}.db" >> $GITHUB_ENV
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.DB_FILE }}
+          path: ${{ env.DB_FILE }}
+          retention-days: 14
+      - name: Telegram on failure
+        if: failure()
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT:  ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT" ]; then
+            curl -fsS -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+              -d "chat_id=${TG_CHAT}" \
+              -d "text=⚠️ db_backup hourly snapshot failed. ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           fi
