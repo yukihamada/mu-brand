@@ -947,6 +947,18 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
         </details>
         <div style="font-size:9px;opacity:0.5;margin:8px 0;letter-spacing:0.05em">住所はStripeの決済画面で入力します</div>
         <input type="hidden" name="size" id="selected-size" value="M">
+        <!-- Fabric note — JP/海外 で違う生地が届くことを明示。Constitution §24-v2 の dual-channel。 -->
+        <div id="fabric-note" style="font-size:10px;line-height:1.7;opacity:0.78;margin:12px 0;padding:10px 12px;border-left:2px solid rgba(230,196,73,0.35);background:rgba(255,255,255,0.02);text-align:left">
+          <span class="note-jp" style="display:none">
+            <strong style="color:#ff8a8a">🇯🇵 SUZURI 経路の生地:</strong> Printstar 00148-HVT 5.6oz (国内・generic crew、 リブ襟 / GOTS 認証なし)。
+            Stanley/Stella SATU001 (180gsm / 織りリブ襟 / GOTS organic / EU 製) が欲しい方は海外 Stripe 経路を選んでください。
+            <a href="/blog/fabric-shift" style="color:#e6c449;text-decoration:underline">→ 生地・原価・経路の違い</a>
+          </span>
+          <span class="note-intl" style="display:none">
+            <strong style="color:#e6c449">Stanley/Stella SATU001</strong> — 180gsm, 100% GOTS organic combed ring-spun cotton, ribbed neck, EU-made (Portugal), piece-dyed black. DTG print, white ink only.
+            <a href="/blog/fabric-shift" style="color:#e6c449;text-decoration:underline">→ Why we switched from Bella+Canvas</a>
+          </span>
+        </div>
         <div id="checkout-msg" style="font-size:9px;letter-spacing:0.1em;min-height:16px;margin-bottom:4px"></div>
         <button type="submit" class="btn-primary" id="btn-buy">Purchase</button>
         <!-- Stripe Payment Link quick-buy (shown only when present on product) -->
@@ -1945,11 +1957,22 @@ function openModal(p, pushHistory=true){
   const expressBtn = document.getElementById('btn-express');
   if (expressBtn && showSuzuriOnly) expressBtn.style.display = 'none';
 
+  // Fabric note — show JP or 海外 variant based on the resolved channel.
+  // The note links to /blog/fabric-shift for the full breakdown.
+  const fabricNote = document.getElementById('fabric-note');
+  if (fabricNote) {
+    const jp = fabricNote.querySelector('.note-jp');
+    const intl = fabricNote.querySelector('.note-intl');
+    if (jp)   jp.style.display   = showSuzuriOnly ? 'block' : 'none';
+    if (intl) intl.style.display = showSuzuriOnly ? 'none'  : 'block';
+  }
+
   // When SUZURI-only: hide every other form child (email input, NFT details,
   // size hint, checkout-msg) so JP buyers see ONE clear CTA — the SUZURI link.
   // The size <select> lives outside the form; hide it via sizeSection too.
   document.querySelectorAll('#checkout-form > *').forEach(el => {
     if (el.id === 'btn-suzuri') return;
+    if (el.id === 'fabric-note') return;
     if (!showSuzuriOnly) {
       // Restore — only btn-buy / btn-quick / btn-express keep their own
       // display logic above; everything else clears the inline override.
