@@ -11967,10 +11967,14 @@ async fn x_oauth2_refresh() -> Result<String, String> {
     v["access_token"].as_str().map(String::from).ok_or_else(|| "no access_token".into())
 }
 
-/// Post a tweet (optionally as a reply). Uses OAuth 2.0 user-context Bearer
-/// (write-scoped). Falls back to a refresh on 401.
-async fn x_post_tweet_v2(text: &str, in_reply_to: Option<&str>) -> Result<String, String> {
-    let mut access = env::var("X_OAUTH2_ACCESS_TOKEN").map_err(|_| "X_OAUTH2_ACCESS_TOKEN missing".to_string())?;
+/// Post a tweet via OAuth 2.0 user-context Bearer. Resolution order:
+///   1. DB-stored token from /admin/x/auth PKCE flow (preferred — known scope)
+///   2. X_OAUTH2_ACCESS_TOKEN env var (fallback)
+async fn x_post_tweet_v2(db: &Db, text: &str, in_reply_to: Option<&str>) -> Result<String, String> {
+    let mut access = match x_get_access_token(db).await {
+        Ok(Some(t)) => t,
+        _ => env::var("X_OAUTH2_ACCESS_TOKEN").map_err(|_| "no X access token available".to_string())?,
+    };
     let api = "https://api.twitter.com/2/tweets";
     let mut body = serde_json::json!({"text": text});
     if let Some(rid) = in_reply_to {
@@ -11989,6 +11993,8 @@ async fn x_post_tweet_v2(text: &str, in_reply_to: Option<&str>) -> Result<String
             return v["data"]["id"].as_str().map(String::from).ok_or_else(|| "no id".into());
         }
         if s.as_u16() == 401 && attempt == 0 {
+            // Try refresh + retry once.
+            if let Ok(Some(t)) = x_get_access_token(db).await { access = t; continue; }
             access = x_oauth2_refresh().await?;
             continue;
         }
@@ -11998,8 +12004,11 @@ async fn x_post_tweet_v2(text: &str, in_reply_to: Option<&str>) -> Result<String
 }
 
 /// Pin a tweet (v2 user-context). user_id of @wearMUcom = 2053797881262555136.
-async fn x_pin_tweet(tweet_id: &str) -> Result<(), String> {
-    let mut access = env::var("X_OAUTH2_ACCESS_TOKEN").map_err(|_| "X_OAUTH2_ACCESS_TOKEN missing".to_string())?;
+async fn x_pin_tweet(db: &Db, tweet_id: &str) -> Result<(), String> {
+    let mut access = match x_get_access_token(db).await {
+        Ok(Some(t)) => t,
+        _ => env::var("X_OAUTH2_ACCESS_TOKEN").map_err(|_| "no X access token available".to_string())?,
+    };
     let api = "https://api.twitter.com/2/users/2053797881262555136/pinned_tweets";
     let body = serde_json::json!({"tweet_id": tweet_id});
     for attempt in 0..2 {
@@ -12012,6 +12021,7 @@ async fn x_pin_tweet(tweet_id: &str) -> Result<(), String> {
         let b = resp.text().await.unwrap_or_default();
         if s.is_success() { return Ok(()); }
         if s.as_u16() == 401 && attempt == 0 {
+            if let Ok(Some(t)) = x_get_access_token(db).await { access = t; continue; }
             access = x_oauth2_refresh().await?;
             continue;
         }
@@ -12099,14 +12109,14 @@ async fn admin_x_rebrand_once(
 
     // 2. Rebrand tweet (head of thread).
     let t1 = "はじめまして、@wearMUcom です。\n\n「自動運転のアパレル」をやってます:\n\n🌡️ 北海道弟子屈の気象を AI が毎日読む\n🎨 1日1着、世界に1人のためのTシャツを生成\n📦 Printful 直接発注、7-10日でお届け\n🔗 Solana 永続記録、布が消えても記録は残る\n🤖 メール文面まで AI が自分で書き直す\n\n人間 0 人で動く apparel ブランド、はじめます。\n→ wearmu.com";
-    let t1_id = match x_post_tweet_v2(t1, None).await {
+    let t1_id = match x_post_tweet_v2(&db, t1, None).await {
         Ok(id) => { result.insert("tweet1".into(), serde_json::Value::from(id.clone())); Some(id) }
         Err(e) => { result.insert("tweet1_err".into(), serde_json::Value::from(e)); None }
     };
 
     // 3. Pin tweet 1.
     if let Some(id) = &t1_id {
-        match x_pin_tweet(id).await {
+        match x_pin_tweet(&db, id).await {
             Ok(()) => { result.insert("pinned".into(), serde_json::Value::from(true)); }
             Err(e) => { result.insert("pin_err".into(), serde_json::Value::from(e)); }
         }
@@ -12115,7 +12125,7 @@ async fn admin_x_rebrand_once(
     // 4. Thread tweet 2 (reply to 1).
     let t2 = "1/ MU の中身を全部公開してます。\n\nなぜ自動運転?\n人間0人で動く apparel ブランドを作ってる。デザイン生成、価格調整、カスタマーサポート、メール文面の改善、すべて AI agent が回す。\n\n濱田 (元 Mercari US CEO) が監査だけする。";
     let t2_id = if let Some(rid) = &t1_id {
-        match x_post_tweet_v2(t2, Some(rid)).await {
+        match x_post_tweet_v2(&db, t2, Some(rid)).await {
             Ok(id) => { result.insert("tweet2".into(), serde_json::Value::from(id.clone())); Some(id) }
             Err(e) => { result.insert("tweet2_err".into(), serde_json::Value::from(e)); None }
         }
@@ -12124,7 +12134,7 @@ async fn admin_x_rebrand_once(
     // 5. Thread tweet 3 (reply to 2).
     let t3 = "2/ 仕組みは全部 open:\n\n- agent_email_critic: 4 ペルソナ (Musk/Bezos/Jobs/Buyer) が毎日採点\n- agent_email_rewriter: 0.7 以下を Gemini Pro が書き直し\n- agent_bounty_triage: バグ報告を AI が 1 次仕分け\n- agent_price_micro: 価格を ±¥200 で自動調整\n- agent_strategist: 週次戦略を Gemini Pro が提案";
     let t3_id = if let Some(rid) = &t2_id {
-        match x_post_tweet_v2(t3, Some(rid)).await {
+        match x_post_tweet_v2(&db, t3, Some(rid)).await {
             Ok(id) => { result.insert("tweet3".into(), serde_json::Value::from(id.clone())); Some(id) }
             Err(e) => { result.insert("tweet3_err".into(), serde_json::Value::from(e)); None }
         }
@@ -12133,7 +12143,7 @@ async fn admin_x_rebrand_once(
     // 6. Thread tweet 4 (reply to 3) — new features.
     let t4 = "3/ 今日 live になった追加機能:\n\n✅ /mypage — email リンクログイン + NFT 受け取り\n✅ /buyer/:token — 各オーナーの公開プロフィール\n✅ Resend Inbound — info@wearmu.com → AI 自動分類\n✅ 13 種 × A/B = 26 メールテンプレ自動運用\n\n服が届くまで体験を作ってる。\n→ wearmu.com";
     if let Some(rid) = &t3_id {
-        match x_post_tweet_v2(t4, Some(rid)).await {
+        match x_post_tweet_v2(&db, t4, Some(rid)).await {
             Ok(id) => { result.insert("tweet4".into(), serde_json::Value::from(id)); }
             Err(e) => { result.insert("tweet4_err".into(), serde_json::Value::from(e)); }
         }
