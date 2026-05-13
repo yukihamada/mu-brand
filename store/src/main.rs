@@ -2244,15 +2244,39 @@ async fn mypage_entry(
     リンクが届かない場合は <a style="color:#888" href="mailto:info@wearmu.com">info@wearmu.com</a> までご連絡ください。
   </footer>
 </div>
+<style>
+  .mailers{margin:18px auto 0;display:grid;grid-template-columns:repeat(2,1fr);gap:8px;max-width:380px}
+  .mailers a{display:flex;align-items:center;justify-content:center;gap:8px;background:#0a0a0a;border:1px solid #1f1f1f;color:#e6c449;text-decoration:none;padding:11px 12px;font-size:12.5px;border-radius:3px;transition:border-color .15s}
+  .mailers a:hover{border-color:#e6c449}
+  .mailers a .ic{width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;font-size:14px}
+  .mailers .hint{grid-column:1/-1;color:#666;font-size:11px;text-align:center;margin-top:6px;letter-spacing:0.04em}
+</style>
 <script>
 const f=document.getElementById('f'),e=document.getElementById('e'),b=document.getElementById('b'),m=document.getElementById('msg');
+const MAILER_ALL=[
+  {n:'Gmail',     u:'https://mail.google.com/mail/u/0/#search/from%3Anoreply%40wearmu.com+newer_than%3A1h', ic:'G', domains:['gmail.com','googlemail.com']},
+  {n:'iCloud Mail', u:'https://www.icloud.com/mail/',  ic:'',  domains:['icloud.com','me.com','mac.com']},
+  {n:'Outlook',   u:'https://outlook.live.com/mail/0/inbox', ic:'O', domains:['outlook.com','outlook.jp','hotmail.com','live.com','msn.com']},
+  {n:'Yahoo!メール', u:'https://mail.yahoo.co.jp/u/inbox', ic:'Y!', domains:['yahoo.co.jp','ybb.ne.jp']},
+  {n:'Yahoo Mail', u:'https://mail.yahoo.com/d/folders/1', ic:'Y', domains:['yahoo.com']},
+  {n:'ProtonMail', u:'https://mail.proton.me/u/0/inbox', ic:'PR', domains:['proton.me','protonmail.com','pm.me']},
+  {n:'docomo メール', u:'https://imode.net/cmail/', ic:'d', domains:['docomo.ne.jp']},
+  {n:'au メール',   u:'https://wm.auone.jp/',     ic:'au', domains:['au.com','ezweb.ne.jp']},
+];
+function renderMailers(email){
+  const dom=(email.split('@')[1]||'').toLowerCase();
+  const matched=MAILER_ALL.find(m=>m.domains.includes(dom));
+  const shown=matched?[matched]:[MAILER_ALL[0],MAILER_ALL[1],MAILER_ALL[2],MAILER_ALL[3]];
+  return '<div class="mailers">'+shown.map(m=>`<a href="${m.u}" target="_blank" rel="noopener"><span class="ic">${m.ic}</span>${m.n} を開く →</a>`).join('')+(matched?'':'<div class="hint">他のメーラーをお使いの場合はそちらでご確認ください</div>')+'</div>';
+}
 f.addEventListener('submit',async()=>{
   m.innerHTML='';
   b.disabled=true; const orig=b.textContent; b.textContent='送信中…';
   try{
-    const r=await fetch('/api/mypage/request-link',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email:e.value.trim()})});
+    const email=e.value.trim();
+    const r=await fetch('/api/mypage/request-link',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email:email})});
     const j=await r.json();
-    if(j.ok){m.innerHTML='<div class="ok">📬 リンクをお送りしました。<br>'+e.value+' をご確認ください。</div>';}
+    if(j.ok){m.innerHTML='<div class="ok">📬 リンクをお送りしました。<br>'+email+' をご確認ください。</div>'+renderMailers(email);}
     else{m.innerHTML='<div class="err">'+(j.error||'送信に失敗しました')+'</div>';b.disabled=false;b.textContent=orig;}
   }catch(err){m.innerHTML='<div class="err">通信エラー</div>';b.disabled=false;b.textContent=orig;}
 });
