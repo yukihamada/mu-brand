@@ -4507,6 +4507,183 @@ async fn get_product_chronicle(
     })).into_response()
 }
 
+/// GET /api/qr/c/:product_id/:position.svg — Per-shirt QR for the inside-neck
+/// chronicle. The QR encodes the short URL https://wearmu.com/c/<id>/<pos>
+/// so when a buyer scans their own shirt they get the live chronicle of
+/// units #1..#(self).
+async fn chronicle_qr_svg(
+    Path((id, pos)): Path<(i64, i64)>,
+) -> Response {
+    use qrcodegen::{QrCode, QrCodeEcc};
+    let url = format!("https://wearmu.com/c/{}/{}", id, pos);
+    let qr = match QrCode::encode_text(&url, QrCodeEcc::Medium) {
+        Ok(q) => q,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "qr encode").into_response(),
+    };
+    let n = qr.size();
+    let border: i32 = 1;
+    let dim = n + border * 2;
+    // Tonal: charcoal (#1a1a1a) on transparent — discreet on black shirts.
+    let mut svg = String::with_capacity(2048);
+    svg.push_str(&format!(
+        r##"<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {dim} {dim}" stroke="none" shape-rendering="crispEdges">
+<rect width="100%" height="100%" fill="transparent"/>
+<path fill="#1a1a1a" d=""##,
+        dim = dim
+    ));
+    for y in 0..n {
+        for x in 0..n {
+            if qr.get_module(x, y) {
+                svg.push_str(&format!("M{} {}h1v1h-1z", x + border, y + border));
+            }
+        }
+    }
+    svg.push_str("\"/></svg>");
+    (
+        [(axum::http::header::CONTENT_TYPE, "image/svg+xml; charset=utf-8"),
+         (axum::http::header::CACHE_CONTROL, "public, max-age=31536000, immutable")],
+        svg
+    ).into_response()
+}
+
+/// GET /c/:product_id/:position — short URL printed on the shirt's neck-back QR.
+/// Renders a phone-friendly chronicle page for that specific shirt.
+async fn chronicle_short_page(
+    Path((id, pos)): Path<(i64, i64)>,
+    State(db): State<Db>,
+) -> Html<String> {
+    let (brand, name, inventory): (String, String, i64) = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT brand, name, inventory FROM products WHERE id=?",
+            params![id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?))
+        ).unwrap_or((String::new(), String::new(), 0))
+    };
+    if name.is_empty() {
+        return Html(r##"<!doctype html><html><body style="background:#0A0A0A;color:#F5F5F0;font-family:sans-serif;padding:48px;text-align:center"><p>このシャツの記録が見つかりませんでした。<br><a href="/" style="color:#e6c449">wearmu.com</a></p></body></html>"##.to_string());
+    }
+    // Reuse the chronicle data layer.
+    let siblings: Vec<(i64, String, String, String)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT mp.email, mp.created_at,
+                    COALESCE(ps.shipped_at, '')
+             FROM mu_purchases mp
+             LEFT JOIN collab_orders co ON co.stripe_session = mp.session_id
+             LEFT JOIN production_status ps ON ps.collab_order_id = co.id
+             WHERE mp.product_id = ?
+               AND mp.session_id LIKE 'cs_live_%'
+             ORDER BY mp.id ASC"
+        ) { Ok(s) => s, Err(_) => return Html(String::new()) };
+        stmt.query_map(params![id], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+        ))).map(|it| it.filter_map(|r| r.ok()).enumerate().map(|(i, (em, c, sh))| {
+            ((i as i64) + 1, em, c, sh)
+        }).collect()).unwrap_or_default()
+    };
+
+    let fmt_jst = |raw: &str| -> String {
+        if raw.is_empty() { return String::new(); }
+        if let Ok(s) = raw.parse::<i64>() {
+            let jst = s + 9 * 3600;
+            let day_n = jst / 86_400;
+            let (y, m, d) = civil_from_days(day_n);
+            let secs = jst.rem_euclid(86_400);
+            let hh = secs / 3600; let mm = (secs % 3600) / 60;
+            format!("{:04}-{:02}-{:02} {:02}:{:02} JST", y, m, d, hh, mm)
+        } else {
+            raw.chars().take(16).collect::<String>().replace('T', " ")
+        }
+    };
+
+    let rows: String = siblings.iter().map(|(p, em, c, sh)| {
+        let is_you = *p == pos;
+        let highlight = if is_you {
+            "background:rgba(230,196,73,0.10);border-left:2px solid #e6c449;padding:14px 16px;margin:8px -16px"
+        } else { "padding:14px 0;border-bottom:1px solid rgba(255,255,255,0.06)" };
+        let label = if is_you { " · YOU" } else { "" };
+        let shipped = if !sh.is_empty() {
+            format!(r#"<div style="font-size:11px;opacity:0.55;margin-top:2px">shipped {}</div>"#, html_escape(&fmt_jst(sh)))
+        } else { String::new() };
+        format!(
+            r#"<div style="{hl}"><div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px"><span style="font-variant-numeric:tabular-nums;font-size:14px"><strong style="color:#e6c449">#{p:03}</strong>{label} · <span style="opacity:0.6;font-family:'SF Mono','Menlo',monospace;font-size:11.5px">{buyer}</span></span><span style="font-size:11px;opacity:0.7;font-variant-numeric:tabular-nums">{ordered}</span></div>{shipped}</div>"#,
+            hl = highlight,
+            p = p,
+            label = label,
+            buyer = html_escape(&purchase_pseudonym(em)),
+            ordered = html_escape(&fmt_jst(c)),
+            shipped = shipped,
+        )
+    }).collect::<String>();
+
+    let after = inventory - (siblings.len() as i64);
+    let your_turn = pos as usize > siblings.len();
+    let intro = if your_turn {
+        format!(r#"<p>あなたがこのシャツの <strong style="color:#e6c449">#{pos:03}</strong> 番目になります。<br>{prev} 人の年代記の続きを受け継いでいます。あなたが届いた瞬間、この記録に <strong>#{pos:03}</strong> が追記されます。</p>"#,
+            pos = pos,
+            prev = siblings.len())
+    } else {
+        format!(r#"<p>このシャツは <strong style="color:#e6c449">#{pos:03}</strong> 番。同じデザインで <strong>{total}</strong> 着刷られ、そのうち <strong>{sold}</strong> 着が出ています。あなたの後にも続く番号は、同じ年代記に追記されていきます。</p>"#,
+            pos = pos, total = inventory, sold = siblings.len())
+    };
+
+    Html(format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>#{pos:03} / {name} — Chronicle</title>
+<meta name="description" content="このシャツが運ぶ匿名の年代記。同じデザインを着る人たちの注文日時の連続。">
+<meta property="og:title" content="{name} #{pos:03} · MU Chronicle">
+<meta property="og:description" content="同じデザインを着る {prev_n} 人の年代記。">
+<meta property="og:image" content="https://wearmu.com/og.jpg">
+<meta name="robots" content="noindex">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+:root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--line:rgba(255,255,255,0.08)}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue','Hiragino Sans',sans-serif;line-height:1.8;font-size:14.5px;-webkit-font-smoothing:antialiased}}
+.wrap{{max-width:520px;margin:0 auto;padding:48px 24px 80px}}
+.eyebrow{{font-size:9px;letter-spacing:0.42em;text-transform:uppercase;color:var(--y);opacity:0.85;margin-bottom:14px}}
+h1{{font-size:clamp(28px,7vw,40px);font-weight:200;letter-spacing:0.01em;line-height:1.18;margin-bottom:14px}}
+h1 em{{color:var(--y);font-style:normal;font-weight:300}}
+p{{color:var(--mute);margin:0 0 12px}}
+.chron{{margin:32px 0;padding-top:24px;border-top:1px solid var(--line)}}
+.foot{{margin-top:48px;padding-top:24px;border-top:1px solid var(--line);font-size:11px;letter-spacing:0.08em;opacity:0.55;line-height:2}}
+a{{color:var(--y);text-decoration:none}}
+a:hover{{text-decoration:underline}}
+</style></head><body>
+<div class="wrap">
+  <div class="eyebrow">MU Chronicle · #{pos:03}</div>
+  <h1>{name}<br><em>#{pos:03}</em> / {inventory}</h1>
+  {intro}
+  <div class="chron">
+    {rows}
+    {your_row}
+  </div>
+  <div class="foot">
+    匿名 ID は SHA-256 由来の <code>MU-XXXX</code> 形式。実名・メール・住所は載せません ([[feedback-pii-protection]] ルール準拠)。<br>
+    残り {after} 着。同じ年代記の続きを買う → <a href="/products/{brand}/{id}">{brand_upper} #{id}</a><br>
+    <a href="/transparency">/transparency</a> · <a href="/constitution">/constitution</a> · 株式会社イネブラ
+  </div>
+</div>
+</body></html>"##,
+        pos = pos,
+        name = html_escape(&name),
+        inventory = inventory,
+        after = after.max(0),
+        brand = brand,
+        brand_upper = brand.to_uppercase(),
+        id = id,
+        intro = intro,
+        rows = rows,
+        your_row = if your_turn {
+            format!(
+                r#"<div style="background:rgba(230,196,73,0.10);border-left:2px solid #e6c449;padding:14px 16px;margin:8px -16px"><div style="display:flex;justify-content:space-between;gap:12px;align-items:baseline"><span><strong style="color:#e6c449">#{pos:03}</strong> · YOU · <span style="opacity:0.6">— 注文待ち</span></span><span style="font-size:11px;opacity:0.7">pending</span></div></div>"#,
+                pos = pos)
+        } else { String::new() },
+        prev_n = siblings.len(),
+    ))
+}
+
 async fn get_product(
     Path(id): Path<i64>,
     State(db): State<Db>,
@@ -26225,6 +26402,8 @@ async fn main() {
         .route("/api/products/:brand", get(list_products))
         .route("/api/products/item/:id", get(get_product))
         .route("/api/products/item/:id/chronicle", get(get_product_chronicle))
+        .route("/c/:id/:pos", get(chronicle_short_page))
+        .route("/api/qr/c/:id/:pos.svg", get(chronicle_qr_svg))
         .route("/api/weather", get(weather_handler))
         .route("/api/bid", post(place_bid))
         .route("/api/checkout", post(checkout))

@@ -32,3 +32,6 @@ urlencoding = "2.1"
 # Safe Markdown → HTML for auto-blog. Strips script tags + javascript: URLs.
 pulldown-cmark = { version = "0.10", default-features = false, features = ["html"] }
 ammonia = "4"
+# Per-order chronicle QR: pure-Rust QR encoder. SVG output is composited
+# into the Printful print file at fulfillment time.
+qrcodegen = "1.8"

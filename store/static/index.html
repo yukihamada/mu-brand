@@ -875,6 +875,12 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
         <div style="font-size:9px;letter-spacing:0.32em;text-transform:uppercase;color:#e6c449;margin-bottom:8px">この服が運ぶ年代記</div>
         <div id="m-chronicle-intro" style="opacity:0.75;margin-bottom:10px"></div>
         <div id="m-chronicle-list" style="font-family:'SF Mono','Menlo',monospace;font-size:10.5px;line-height:1.85;opacity:0.7;border-left:1px solid rgba(230,196,73,0.25);padding-left:10px"></div>
+        <div style="margin-top:14px;padding-top:12px;border-top:1px solid rgba(230,196,73,0.18);display:flex;gap:12px;align-items:center">
+          <img id="m-chronicle-qr" alt="このシャツの QR" style="width:64px;height:64px;background:#fff;padding:6px;border-radius:2px;flex-shrink:0">
+          <div style="font-size:10.5px;line-height:1.7;opacity:0.75">
+            首裏下に小さな QR + <code id="m-chronicle-posnum" style="background:rgba(230,196,73,0.10);color:#e6c449;padding:0 4px">#—</code> をトナル印刷。スキャンすると<strong style="color:#e6c449">この場のページが現在の状態で開きます</strong>。後から買った人の番号も自動で年代記に追加されていきます。
+          </div>
+        </div>
         <div style="margin-top:10px;font-size:10px;opacity:0.5">
           匿名 ID は <a href="/transparency" style="color:#e6c449">/transparency</a> と同じ <code>MU-XXXX</code> 形式 (SHA-256 由来、逆引き不可)。実名・メール・住所は一切載せません。
         </div>
@@ -1743,12 +1749,14 @@ function openModal(p, pushHistory=true){
   if (shareLink) shareLink.href = shareTw;
 
   // Sibling chronicle — only meaningful when inventory > 1 (MUON / multi-unit drops).
-  // MUGEN drops have inventory = drop_num so each unit is unique; the chronicle is the
-  // single-buyer trail in that case, less useful as a feature so we hide for sold=0.
+  // MUGEN drops have inventory = drop_num so each unit is unique; we still show for
+  // single-buyer drops if sold>=1 (helps explain the system before purchase).
   (async () => {
     const box = document.getElementById('m-chronicle');
     const intro = document.getElementById('m-chronicle-intro');
     const list = document.getElementById('m-chronicle-list');
+    const qrImg = document.getElementById('m-chronicle-qr');
+    const posLabel = document.getElementById('m-chronicle-posnum');
     if (!box || !intro || !list) return;
     box.style.display = 'none';
     if (!p.id || p.inventory <= 1) return;
@@ -1758,14 +1766,16 @@ function openModal(p, pushHistory=true){
       const d = await r.json();
       const next = d.next_position || (p.sold + 1);
       const siblings = (d.siblings || []).filter(s => s.position < next);
+      const posStr = String(next).padStart(3,'0');
+      if (qrImg) qrImg.src = `/api/qr/c/${p.id}/${next}.svg`;
+      if (posLabel) posLabel.textContent = `#${posStr} / ${p.inventory}`;
       if (next === 1) {
-        // You'd be the first — chronicle starts with you.
-        intro.innerHTML = `あなたが <strong style="color:#e6c449">#1</strong> 番目になります。あなたの後に買う人の裏ラベルに、<strong>あなたが買った日時</strong>が刻まれます。`;
+        intro.innerHTML = `あなたが <strong style="color:#e6c449">#001</strong> 番目になります。首裏下 QR をスキャンすると <a href="/c/${p.id}/1" style="color:#e6c449">/c/${p.id}/1</a> が開き、あなた以降に買う人の日時もここに自動で追加されます。`;
         list.innerHTML = `<div style="opacity:0.5">— まだ siblings なし。あなたが始まり。</div>`;
         box.style.display = 'block';
         return;
       }
-      intro.innerHTML = `あなたが受け取る <strong style="color:#e6c449">#${next}</strong> 番目のシャツの裏ラベルには、これまでの <strong>#1〜#${next - 1}</strong> の注文日時が印字されます。同じデザインが運ぶ匿名の年代記です。`;
+      intro.innerHTML = `あなたが受け取る <strong style="color:#e6c449">#${posStr}</strong> 番のシャツには首裏下に小さな QR が印刷されます。スキャンすると <a href="/c/${p.id}/${next}" style="color:#e6c449">/c/${p.id}/${next}</a> が開き、これまでの <strong>#001〜#${String(next - 1).padStart(3,'0')}</strong> の注文日時が見えます。`;
       list.innerHTML = siblings.map(s =>
         `<div>#${String(s.position).padStart(3,'0')} · ${s.ordered_at_jst}` +
         (s.shipped_at_jst ? ` · shipped ${s.shipped_at_jst}` : '') +
