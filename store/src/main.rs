@@ -10764,6 +10764,60 @@ async fn blog_post_001() -> Html<&'static str> {
     Html(include_str!("../static/blog/from-automation-to-autonomy.html"))
 }
 
+const BLOG_FABRIC_SHIFT_RAW: &str = include_str!("../static/blog/fabric-shift.md");
+const BLOG_WEEK_ONE_RAW: &str = include_str!("../static/blog/week-one-7-buyers.md");
+
+fn render_blog_md(title: &str, md: &str) -> String {
+    let body = md_to_html_simple(md);
+    format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{t} · MU blog</title>
+<meta name="description" content="MU brand log — yuki が数字で書く運営記録">
+<meta property="og:title" content="{t} · MU">
+<meta property="og:image" content="https://mockups.wearmu.com/hero.png">
+<meta property="og:type" content="article">
+<link rel="icon" href="/favicon.svg">
+<style>
+:root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--line:rgba(255,255,255,0.08)}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.85;font-size:15px;font-feature-settings:"palt"}}
+a{{color:var(--y);text-decoration:none}}
+a:hover{{text-decoration:underline}}
+nav{{position:sticky;top:0;background:rgba(10,10,10,0.9);backdrop-filter:blur(12px);border-bottom:1px solid var(--line);padding:16px 28px;display:flex;justify-content:space-between;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;z-index:50}}
+nav .logo{{font-weight:700;letter-spacing:0.45em}}
+.wrap{{max-width:760px;margin:0 auto;padding:60px 28px 100px}}
+.wrap h1{{font-size:clamp(28px,4vw,40px);font-weight:300;margin:0 0 24px;line-height:1.25}}
+.wrap h2{{font-size:13px;letter-spacing:0.28em;text-transform:uppercase;color:var(--y);font-weight:500;margin:48px 0 14px;padding-top:32px;border-top:1px solid var(--line)}}
+.wrap h3{{font-size:16px;font-weight:400;margin:24px 0 10px}}
+.wrap p{{margin:0 0 14px;color:var(--mute)}}
+.wrap p strong{{color:var(--fg);font-weight:500}}
+.wrap ul,.wrap ol{{margin:6px 0 18px;padding-left:24px;color:var(--mute)}}
+.wrap li{{margin:6px 0}}
+.wrap code{{background:rgba(230,196,73,0.10);color:var(--y);padding:1px 6px;font-size:12.5px;font-family:'SF Mono','Menlo',monospace;border-radius:2px}}
+.wrap blockquote{{margin:18px 0;padding:10px 16px;border-left:2px solid var(--y);background:rgba(230,196,73,0.05);font-size:13.5px;color:var(--mute)}}
+.wrap table{{border-collapse:collapse;width:100%;margin:14px 0;font-size:13px}}
+.wrap th,.wrap td{{border:1px solid var(--line);padding:8px 12px;text-align:left}}
+.wrap th{{background:#0e0e0e;color:var(--fg);font-weight:500}}
+.wrap hr{{border:none;border-top:1px solid var(--line);margin:40px 0}}
+footer{{max-width:760px;margin:0 auto;padding:32px 28px 60px;border-top:1px solid var(--line);font-size:11px;color:var(--mute);letter-spacing:0.1em}}
+</style></head><body>
+<nav>
+  <a class="logo" href="/">MU</a>
+  <span><a href="/constitution" style="opacity:0.6;margin-right:14px">constitution</a><a href="/transparency" style="opacity:0.6">数字</a></span>
+</nav>
+<div class="wrap">{body}</div>
+<footer>— yuki / MU / 株式会社イネブラ · <a href="/">wearmu.com</a></footer>
+</body></html>"##, t = html_escape(title), body = body)
+}
+
+async fn blog_fabric_shift() -> Html<String> {
+    Html(render_blog_md("素材を変えた、 原価も公開する", BLOG_FABRIC_SHIFT_RAW))
+}
+
+async fn blog_week_one() -> Html<String> {
+    Html(render_blog_md("1 週間経って、 7 人に売れた", BLOG_WEEK_ONE_RAW))
+}
+
 async fn tokushoho_page() -> Html<&'static str> {
     Html(include_str!("../static/tokushoho.html"))
 }
@@ -32766,6 +32820,8 @@ async fn main() {
         .route("/blog", get(blog_index))
         .route("/blog/", get(blog_index))
         .route("/blog/from-automation-to-autonomy", get(blog_post_001))
+        .route("/blog/fabric-shift", get(blog_fabric_shift))
+        .route("/blog/week-one-7-buyers", get(blog_week_one))
         .route("/sitemap.xml", get(dynamic_sitemap))
         // Per-user share page — REGISTER LAST so literal routes win
         .route("/:slug", get(slug_or_static))
