@@ -24818,6 +24818,23 @@ async fn main() {
         );
         CREATE INDEX IF NOT EXISTS idx_email_critique_kind ON email_critique(kind, variant, persona, created_at);
 
+        -- 2026-05-13: feedback_learner agent persists tweet learning here.
+        -- Each row = a pattern Gemini extracted from observing our tweets'
+        -- engagement metrics + audience mentions. Injected into next
+        -- celebration prompts so the system literally learns from reactions.
+        CREATE TABLE IF NOT EXISTS feedback_insights (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            learned_at      TEXT NOT NULL,
+            scope           TEXT NOT NULL,         -- 'purchase_celebrate' | 'lifecycle' | 'general'
+            theme           TEXT NOT NULL,         -- <=40 char short label
+            pattern         TEXT NOT NULL,         -- <=240 char description of what works/fails
+            polarity        TEXT NOT NULL,         -- 'positive' | 'negative' | 'neutral'
+            signal_score    REAL NOT NULL,         -- 0.0..1.0 confidence
+            evidence        TEXT,                  -- JSON: which tweets backed this
+            active          INTEGER NOT NULL DEFAULT 1
+        );
+        CREATE INDEX IF NOT EXISTS idx_feedback_active ON feedback_insights(active, scope, signal_score DESC);
+
         CREATE TABLE IF NOT EXISTS bounty_submissions (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             severity        TEXT NOT NULL,
@@ -25540,6 +25557,11 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         interval_secs: 600, // 10min
         description: "新規 external 購入 / 生産開始 / 発送 / 到着の lifecycle 4 イベントで Gemini Pro が humor + FOMO ツイート生成して enqueue。次の MUGEN drop の design_seed も保存して fan loop を回す",
     },
+    AgentDef {
+        name: "feedback_learner",
+        interval_secs: 21_600, // 6h
+        description: "X mentions + 自分の posted tweets の public_metrics を観察し、Gemini Pro が「何が刺さって何が flat か」を分析して feedback_insights に保存。celebration tweet 生成プロンプトに injection されて系統が学習する",
+    },
 ];
 
 /// agent_journal から指定 agent の最後の cycle_at (epoch sec) を取得。
@@ -25588,6 +25610,7 @@ async fn run_agent(name: &str, db: Db) -> Result<AgentReport, String> {
         "mention_responder" => agent_mention_responder(db).await,
         "drop_filler"       => agent_drop_filler(db).await,
         "purchase_celebrate"=> agent_purchase_celebrate(db).await,
+        "feedback_learner"  => agent_feedback_learner(db).await,
         _ => Err(format!("unknown agent: {}", name)),
     }
 }
@@ -31371,6 +31394,7 @@ async fn generate_lifecycle_celebration(
         Some(s) if !s.is_empty() => format!("\n# 元のデザインの seed (riff してね、無視せず)\n{}", s),
         _ => String::new(),
     };
+    let learnings = active_feedback_insights(db, 5);
     let prompt = format!(r#"あなたは MU (北海道弟子屈町、無人 AI ファッションブランド) の SNS 担当 AI です。
 {brand} #{drop_num} の lifecycle に変化: 「{lifecycle_jp}」 (Printful 状態: {pf_status})。
 このイベントを X 投稿します。同時に次の MUGEN ドロップの design_seed も提案します。
@@ -31379,6 +31403,8 @@ async fn generate_lifecycle_celebration(
 {humor_angle}
 
 {parent_hint}
+
+{learnings}
 
 # tweet 必須条件
 - 240 文字以内
@@ -31462,6 +31488,7 @@ async fn generate_purchase_celebration(
         "you"   => "wearmu.com/you",
         _       => "wearmu.com",
     };
+    let learnings = active_feedback_insights(db, 5);
     let prompt = format!(r#"あなたは MU (北海道弟子屈町、無人 AI ファッションブランド) の SNS 担当 AI です。
 今、{brand} #{drop_num} が 1 着、外部のお客様に売れました。お祝い + FOMO + humor の X 投稿を書きます。
 
@@ -31469,6 +31496,8 @@ async fn generate_purchase_celebration(
 - 弟子屈の今の気温: {temp}°C (発行枚数のシード)
 - 売れたブランド: {brand} / drop_num: {drop_num}
 - URL: {brand_url}
+
+{learnings}
 
 # 必須条件 (Vision §3 quiet by default + §1 numbers over adjectives)
 - 240 文字以内
@@ -31522,6 +31551,205 @@ JSON のみ。前置きや説明なし:
         return Err(format!("design_seed length out of bounds: {}", seed.len()));
     }
     Ok((tweet, seed))
+}
+
+// ── Agent: feedback_learner ─────────────────────────────────────────────
+// Observe X reactions (mentions + own tweets' public_metrics) and let Gemini
+// extract patterns about what resonates vs falls flat. Insights persist in
+// feedback_insights table and are injected into next celebration tweets.
+//
+// Cadence: 6h (X API rate-limited; over-frequent = waste).
+// Inputs: X mentions to @WEARMUCOM + last 20 posted tweets' metrics.
+// Output: 3-7 short insights, e.g.
+//   - "数字+humor 組合せが retweet を集める (signal 0.8 positive)"
+//   - "ありがとう連呼ツイートは impressions 0 (signal 0.9 negative)"
+//
+// generate_purchase_celebration / generate_lifecycle_celebration both pull
+// top-3 active insights and prepend them to the Gemini prompt as
+// 「これまでの学び」 — so the system literally learns from reactions.
+async fn agent_feedback_learner(db: Db) -> Result<AgentReport, String> {
+    let gemini_key = match env::var("GEMINI_API_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => return Ok(AgentReport::idle("GEMINI_API_KEY missing")),
+    };
+    let bearer = env::var("X_BEARER_TOKEN").unwrap_or_default();
+    if bearer.is_empty() {
+        return Ok(AgentReport::idle("X_BEARER_TOKEN missing"));
+    }
+    // Fetch @WEARMUCOM user id (cached). Lock scope is sync-only, await
+    // happens outside so the future stays Send.
+    let cached_id: String = {
+        let conn = db.lock().unwrap();
+        cv_get(&conn, "wearmu_x_user_id", "")
+    };
+    let user_id: String = if !cached_id.is_empty() { cached_id } else {
+        let url = "https://api.twitter.com/2/users/by/username/WEARMUCOM";
+        let r = reqwest::Client::new().get(url).bearer_auth(&bearer).send().await
+            .map_err(|e| format!("x user_id: {e}"))?;
+        if !r.status().is_success() {
+            return Ok(AgentReport::idle(&format!("X user lookup {}", r.status())));
+        }
+        let j: serde_json::Value = r.json().await.map_err(|e| format!("x user json: {e}"))?;
+        let id = j["data"]["id"].as_str().unwrap_or("").to_string();
+        if !id.is_empty() {
+            let conn = db.lock().unwrap();
+            cv_set(&conn, "wearmu_x_user_id", &id, "feedback_learner");
+        }
+        id
+    };
+    if user_id.is_empty() { return Ok(AgentReport::idle("no X user id")); }
+
+    // Recent posted tweets with metrics (signal of what worked).
+    let tweets_url = format!(
+        "https://api.twitter.com/2/users/{}/tweets?max_results=20&tweet.fields=public_metrics,created_at,text",
+        user_id);
+    let tw_resp = reqwest::Client::new().get(&tweets_url).bearer_auth(&bearer).send().await
+        .map_err(|e| format!("x tweets: {e}"))?;
+    let tw_j: serde_json::Value = tw_resp.json().await.unwrap_or_default();
+    let tweets: Vec<serde_json::Value> = tw_j["data"].as_array().cloned().unwrap_or_default();
+
+    // Mentions: who's talking about us (proxy for resonance).
+    let mentions_url = format!(
+        "https://api.twitter.com/2/users/{}/mentions?max_results=20&tweet.fields=public_metrics,text,author_id",
+        user_id);
+    let m_resp = reqwest::Client::new().get(&mentions_url).bearer_auth(&bearer).send().await
+        .map_err(|e| format!("x mentions: {e}"))?;
+    let m_j: serde_json::Value = m_resp.json().await.unwrap_or_default();
+    let mentions: Vec<serde_json::Value> = m_j["data"].as_array().cloned().unwrap_or_default();
+
+    if tweets.is_empty() && mentions.is_empty() {
+        return Ok(AgentReport::idle("no X data to analyze"));
+    }
+
+    // Compact serialization for Gemini.
+    let tweets_compact: Vec<serde_json::Value> = tweets.iter().take(20).map(|t| {
+        serde_json::json!({
+            "text": t["text"].as_str().unwrap_or(""),
+            "imp": t["public_metrics"]["impression_count"].as_i64().unwrap_or(0),
+            "like": t["public_metrics"]["like_count"].as_i64().unwrap_or(0),
+            "rt": t["public_metrics"]["retweet_count"].as_i64().unwrap_or(0),
+            "rep": t["public_metrics"]["reply_count"].as_i64().unwrap_or(0),
+        })
+    }).collect();
+    let mentions_compact: Vec<serde_json::Value> = mentions.iter().take(20).map(|t| {
+        serde_json::json!({
+            "text": t["text"].as_str().unwrap_or(""),
+            "like": t["public_metrics"]["like_count"].as_i64().unwrap_or(0),
+        })
+    }).collect();
+
+    let prompt = format!(r#"あなたは MU (北海道弟子屈町、無人 AI ファッションブランド) の X SNS analyst。
+直近の @WEARMUCOM の投稿と外部 mention を見て、「何が機能していて、何が flat か」のパターンを抽出します。
+
+# データ
+## @WEARMUCOM の最近の投稿 (text + impressions/like/rt/replies):
+{tweets_json}
+
+## @WEARMUCOM への外部 mentions (text + like):
+{mentions_json}
+
+# 出力指示
+JSON 配列で 3-7 件の learning insight を出して。各 insight は:
+- theme: 短い label (40 char 以下)
+- pattern: 何が起きてる / 何が刺さってる (240 char 以下、具体的に)
+- polarity: 'positive' (続けるべき) | 'negative' (やめるべき) | 'neutral' (中立観察)
+- signal_score: 0.0 to 1.0 (確信度。証拠が薄ければ 0.3 以下)
+
+# 例 (出力フォーマットの参考、実データに合わせて差し替えること)
+[
+  {{"theme":"数字 hook 強い","pattern":"具体的な金額が書かれてるツイートが imp 平均 2x","polarity":"positive","signal_score":0.7}},
+  {{"theme":"絵文字過多","pattern":"🎉 含むツイートは reply 0","polarity":"negative","signal_score":0.5}}
+]
+
+JSON 配列のみ出力。前置きや説明禁止。
+"#,
+        tweets_json = serde_json::to_string(&tweets_compact).unwrap_or_default(),
+        mentions_json = serde_json::to_string(&mentions_compact).unwrap_or_default(),
+    );
+
+    let req = serde_json::json!({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0.4, "maxOutputTokens": 8000,
+            "responseMimeType": "application/json",
+        },
+    });
+    let url = format!("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={}", gemini_key);
+    let resp = reqwest::Client::new().post(&url).json(&req).send().await
+        .map_err(|e| format!("gemini http: {e}"))?;
+    if !resp.status().is_success() {
+        let s = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("gemini {}: {}", s, &body[..body.len().min(200)]));
+    }
+    let body: serde_json::Value = resp.json().await.map_err(|e| format!("gemini json: {e}"))?;
+    let text = body["candidates"][0]["content"]["parts"][0]["text"]
+        .as_str().ok_or("no text")?.trim().to_string();
+    let insights: Vec<serde_json::Value> = serde_json::from_str(&text)
+        .map_err(|e| format!("parse: {e}: '{}'", text.chars().take(200).collect::<String>()))?;
+
+    // Mark previous insights as superseded (active=0), then insert fresh.
+    let now = chrono_now();
+    let mut saved = 0i64;
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE feedback_insights SET active=0 WHERE scope='general' AND active=1",
+            [],
+        );
+        for ins in insights.iter().take(7) {
+            let theme = ins["theme"].as_str().unwrap_or("");
+            let pattern = ins["pattern"].as_str().unwrap_or("");
+            let polarity = ins["polarity"].as_str().unwrap_or("neutral");
+            let score = ins["signal_score"].as_f64().unwrap_or(0.3);
+            if theme.is_empty() || pattern.is_empty() { continue; }
+            let evidence = serde_json::json!({
+                "tweet_count": tweets.len(), "mention_count": mentions.len(),
+            }).to_string();
+            let n = conn.execute(
+                "INSERT INTO feedback_insights
+                    (learned_at, scope, theme, pattern, polarity, signal_score, evidence, active)
+                 VALUES (?, 'general', ?, ?, ?, ?, ?, 1)",
+                params![now, theme, pattern, polarity, score, evidence],
+            ).unwrap_or(0);
+            saved += n as i64;
+        }
+    }
+    Ok(AgentReport {
+        observations: serde_json::json!({
+            "tweets_analyzed": tweets.len(),
+            "mentions_analyzed": mentions.len(),
+            "insights_saved": saved,
+        }),
+        decisions: vec![],
+        actions: vec![serde_json::json!({"saved": saved})],
+        summary: format!("feedback_learner: {} tweets + {} mentions → {} insights", tweets.len(), mentions.len(), saved),
+        notable: saved > 0,
+    })
+}
+
+/// Fetch top-N active feedback_insights to inject into generation prompts.
+/// Bucketed: positive (do more), negative (avoid), neutral (observe).
+fn active_feedback_insights(db: &Db, limit: usize) -> String {
+    let conn = db.lock().unwrap();
+    let mut stmt = match conn.prepare(
+        "SELECT theme, pattern, polarity, signal_score
+         FROM feedback_insights WHERE active=1 ORDER BY signal_score DESC LIMIT ?"
+    ) { Ok(s) => s, Err(_) => return String::new() };
+    let rows: Vec<(String, String, String, f64)> = stmt.query_map(params![limit as i64],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+        .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+    if rows.is_empty() { return String::new(); }
+    let mut out = String::from("# これまでの学び (feedback_learner より、優先度高い順)\n");
+    for (theme, pattern, polarity, score) in rows {
+        let mark = match polarity.as_str() {
+            "positive" => "✓ 続ける",
+            "negative" => "✗ 避ける",
+            _          => "○ 観察",
+        };
+        out.push_str(&format!("- {} [{}, score {:.2}] {}: {}\n", mark, polarity, score, theme, pattern));
+    }
+    out
 }
 
 // ── Agent: self_review (umbrella over 4 daily inward-looking agents) ───
