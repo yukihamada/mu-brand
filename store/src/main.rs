@@ -8802,17 +8802,29 @@ async fn public_treasury(
 
     let jpy_total = (sol * jpy_per_sol + usdc * jpy_per_usd) as i64;
 
-    // Real revenue this calendar month (cs_live_*)
+    // Real revenue this calendar month (cs_live_*).
+    // mu_purchases.product_id is polymorphic: products.id for brand∈{mugen,muon,ma,...}
+    // but you_designs.id when brand='you'. /you tees are fixed at ¥6,800
+    // (see L19201). Joining unconditionally to products mis-prices /you rows.
     let revenue_30d: i64 = {
         let conn = db.lock().unwrap();
         let cutoff: i64 = chrono_now().parse::<i64>().unwrap_or(0) - 30 * 86_400;
-        conn.query_row(
+        let products_part: i64 = conn.query_row(
             "SELECT COALESCE(SUM(p.price_jpy),0) FROM mu_purchases mp
              JOIN products p ON p.id = mp.product_id
-             WHERE mp.session_id LIKE 'cs_live_%'
+             WHERE mp.brand != 'you'
+               AND mp.session_id LIKE 'cs_live_%'
                AND CAST(mp.created_at AS INTEGER) >= ?",
             params![cutoff], |r| r.get(0),
-        ).unwrap_or(0)
+        ).unwrap_or(0);
+        let you_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mu_purchases
+             WHERE brand='you'
+               AND session_id LIKE 'cs_live_%'
+               AND CAST(created_at AS INTEGER) >= ?",
+            params![cutoff], |r| r.get(0),
+        ).unwrap_or(0);
+        products_part + you_count * 6_800
     };
 
     // AI 予算配分の提案 (heuristics, transparent):
@@ -8928,13 +8940,22 @@ async fn public_transparency(State(db): State<Db>) -> impl IntoResponse {
     // Real revenue: only count rows that have an actual Stripe session_id
     // (session_id LIKE 'cs_live_%' or 'cs_test_%' minus tests). Best-effort
     // until we record amount_total on mu_purchases.
-    let real_revenue_jpy: i64 = conn.query_row(
-        "SELECT COALESCE(SUM(p.price_jpy), 0)
-         FROM mu_purchases mp
-         JOIN products p ON p.id = mp.product_id
-         WHERE mp.session_id LIKE 'cs_live_%'",
-        [], |r| r.get(0),
-    ).unwrap_or(0);
+    // brand='you' rows reference you_designs (no price col); fixed ¥6,800.
+    let real_revenue_jpy: i64 = {
+        let prod: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(p.price_jpy), 0)
+             FROM mu_purchases mp
+             JOIN products p ON p.id = mp.product_id
+             WHERE mp.brand != 'you' AND mp.session_id LIKE 'cs_live_%'",
+            [], |r| r.get(0),
+        ).unwrap_or(0);
+        let you_n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mu_purchases
+             WHERE brand='you' AND session_id LIKE 'cs_live_%'",
+            [], |r| r.get(0),
+        ).unwrap_or(0);
+        prod + you_n * 6_800
+    };
     let real_purchases: i64 = conn.query_row(
         "SELECT COUNT(*) FROM mu_purchases WHERE session_id LIKE 'cs_live_%'",
         [], |r| r.get(0),
@@ -9439,10 +9460,18 @@ fn gather_blog_stats(db: &Db) -> serde_json::Value {
         [], |r| r.get(0)).unwrap_or(0);
     let purchases: i64 = conn.query_row(
         "SELECT COUNT(*) FROM mu_purchases", [], |r| r.get(0)).unwrap_or(0);
-    let real_revenue: i64 = conn.query_row(
-        "SELECT COALESCE(SUM(p.price_jpy), 0) FROM mu_purchases mp
-         JOIN products p ON p.id = mp.product_id",
-        [], |r| r.get(0)).unwrap_or(0);
+    // brand='you' uses you_designs (fixed ¥6,800); other brands use products.
+    let real_revenue: i64 = {
+        let prod: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(p.price_jpy), 0) FROM mu_purchases mp
+             JOIN products p ON p.id = mp.product_id
+             WHERE mp.brand != 'you'",
+            [], |r| r.get(0)).unwrap_or(0);
+        let you_n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mu_purchases WHERE brand='you'",
+            [], |r| r.get(0)).unwrap_or(0);
+        prod + you_n * 6_800
+    };
     let subs: i64 = conn.query_row(
         "SELECT COUNT(*) FROM you_users WHERE unsubscribed_at IS NULL",
         [], |r| r.get(0)).unwrap_or(0);
@@ -11243,6 +11272,49 @@ async fn admin_blog_publish(
         "x_posted": x_posted,
         "review_pass": review.as_ref().map(|(p,_)| *p),
         "review_reason": review.as_ref().map(|(_,r)| r.clone()),
+    })).into_response()
+}
+
+#[derive(Deserialize)]
+struct BlogUnpublishBody {
+    admin_token: String,
+    slug: String,
+}
+
+/// POST /api/admin/blog_unpublish — flip an existing auto_blog_posts row to
+/// published=0 so /blog/auto/:slug returns 404 and /blog listing hides it.
+/// Idempotent: returns ok=true even if row was already unpublished.
+async fn admin_blog_unpublish(
+    State(db): State<Db>,
+    Json(body): Json<BlogUnpublishBody>,
+) -> impl IntoResponse {
+    if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+    let slug = body.slug.trim();
+    if slug.is_empty() || slug.len() > 200 {
+        return (StatusCode::BAD_REQUEST, "slug required").into_response();
+    }
+    let (found, updated): (bool, bool) = {
+        let conn = db.lock().unwrap();
+        let exists: bool = conn.query_row(
+            "SELECT 1 FROM auto_blog_posts WHERE slug=?",
+            params![slug], |r| r.get::<_, i64>(0),
+        ).is_ok();
+        if !exists { (false, false) }
+        else {
+            let n = conn.execute(
+                "UPDATE auto_blog_posts SET published=0 WHERE slug=? AND published=1",
+                params![slug],
+            ).unwrap_or(0);
+            (true, n > 0)
+        }
+    };
+    if !found {
+        return (StatusCode::NOT_FOUND, "slug not found").into_response();
+    }
+    Json(serde_json::json!({
+        "ok": true,
+        "slug": slug,
+        "was_published": updated,
     })).into_response()
 }
 
@@ -22677,6 +22749,7 @@ async fn main() {
         .route("/api/admin/blog_compose", post(admin_blog_compose))
         .route("/api/blog/stats_for_today", get(blog_stats_for_today))
         .route("/api/admin/blog_publish", post(admin_blog_publish))
+        .route("/api/admin/blog_unpublish", post(admin_blog_unpublish))
         .route("/api/blog/auto", get(list_auto_blog))
         .route("/blog/auto/:slug", get(show_auto_blog))
         .route("/api/you/referral", post(you_referral_status))
