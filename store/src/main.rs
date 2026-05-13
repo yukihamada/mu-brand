@@ -11968,10 +11968,10 @@ async fn x_post_tweet_v2(text: &str, in_reply_to: Option<&str>) -> Result<String
     v["data"]["id"].as_str().map(String::from).ok_or_else(|| "no id".into())
 }
 
-/// Pin a tweet (v2 user-context). user_id of @wearMU = 905113460.
+/// Pin a tweet (v2 user-context). user_id of @wearMUcom = 2053797881262555136.
 async fn x_pin_tweet(tweet_id: &str) -> Result<(), String> {
     let (ck, cs, at, ats) = x_oauth1a_creds().ok_or("X creds missing")?;
-    let api = "https://api.twitter.com/2/users/905113460/pinned_tweets";
+    let api = "https://api.twitter.com/2/users/2053797881262555136/pinned_tweets";
     let auth = x_oauth1a_sign("POST", api, &ck, &cs, &at, &ats, &[]);
     let body = serde_json::json!({"tweet_id": tweet_id});
     let resp = reqwest::Client::new()
@@ -12002,7 +12002,7 @@ async fn admin_x_rebrand_once(
     }
 
     // 2. Rebrand tweet (head of thread).
-    let t1 = "@wearMU はもう \"More Upstairs\" じゃなくなりました。\n\nこれからは「自動運転のアパレル」:\n\n🌡️ 北海道弟子屈の気象を AI が毎日読む\n🎨 1日1着、世界に1人のためのTシャツを生成\n📦 Printful 直接発注、7-10日でお届け\n🔗 Solana 永続記録、布が消えても記録は残る\n🤖 メール文面まで AI が自分で書き直す\n\n10年眠ってたアカウント、今日から起きます。\n→ wearmu.com";
+    let t1 = "はじめまして、@wearMUcom です。\n\n「自動運転のアパレル」をやってます:\n\n🌡️ 北海道弟子屈の気象を AI が毎日読む\n🎨 1日1着、世界に1人のためのTシャツを生成\n📦 Printful 直接発注、7-10日でお届け\n🔗 Solana 永続記録、布が消えても記録は残る\n🤖 メール文面まで AI が自分で書き直す\n\n人間 0 人で動く apparel ブランド、はじめます。\n→ wearmu.com";
     let t1_id = match x_post_tweet_v2(t1, None).await {
         Ok(id) => { result.insert("tweet1".into(), serde_json::Value::from(id.clone())); Some(id) }
         Err(e) => { result.insert("tweet1_err".into(), serde_json::Value::from(e)); None }
