@@ -13231,7 +13231,7 @@ a{{color:var(--y)}}
     <input type="text" name="ship_name" placeholder="山田 太郎 / Taro Yamada" required {disabled}>
 
     <label>住所 1 / Address line 1</label>
-    <input type="text" name="ship_addr1" placeholder="例: 港区三田 2-7-1" required {disabled}>
+    <input type="text" name="ship_addr1" placeholder="番地・町名" required {disabled}>
 
     <label>住所 2 / Address line 2 (任意)</label>
     <input type="text" name="ship_addr2" {disabled}>
