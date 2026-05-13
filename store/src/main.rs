@@ -766,8 +766,12 @@ const MUGEN_108_PRICE_JPY: i64 = 30_000;
 // 1-147 (Bella+Canvas 3001 era) retain their Bella-era base price as
 // preserved by Constitution §21 (purchase path sacrosanct).
 const MU_FABRIC_SATU001_FIRST_DROP: i64 = 148;
-const PRICE_BASE_SATU001_JPY: i64 = 9_800;
-const PRICE_CAP_SATU001_JPY: i64 = 40_000;
+/// Base ¥7,800: cost ~¥5,700 → 27% start margin. Bonding curve at +¥250/sale
+/// hits ¥34,800 at position 108, so cap ¥35,000 plateaus naturally.
+/// (Previously set to ¥9,800 / cap ¥40,000 — relaxed 2026-05-13 to lower
+/// entry barrier; floor §21 cost × 1.2 = ¥6,840 still respected.)
+const PRICE_BASE_SATU001_JPY: i64 = 7_800;
+const PRICE_CAP_SATU001_JPY: i64 = 35_000;
 
 /// Stanley/Stella SATU001 Ribbed Neck Creator 2.0, BLACK, Printful variant
 /// IDs by size. Source: GET /products/818 from Printful catalog.

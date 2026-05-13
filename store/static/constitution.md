@@ -259,12 +259,19 @@ on its `/shirt/:pid/life` page so a buyer can prove "I have an era-1
 piece" forever.
 
 Pricing for drop_num ≥ 148:
-- Base ¥9,800 (cost ≈ ¥3,750 + DTG ≈ ¥750 + EU→JP ship ≈ ¥1,200 ≈ ¥5,700; margin 42% at base)
+- Base **¥7,800** (cost ≈ ¥3,750 + DTG ≈ ¥750 + EU→JP ship ≈ ¥1,200 ≈ ¥5,700; margin 27% at base)
 - Bonding step +¥250 / sale (unchanged)
-- Cap ¥40,000 per SKU
+- Cap **¥35,000** per SKU — naturally reached around the 108th sale (¥7,800 + 108 × ¥250 = ¥34,800), so the curve plateaus at sell-out
 
 Constitution §21 ceiling ¥100,000 unchanged. §21 floor `cost × 1.2`
-satisfied (¥5,700 × 1.2 = ¥6,840 < ¥9,800).
+satisfied (¥5,700 × 1.2 = ¥6,840 < ¥7,800).
+
+Margin profile: 27% at start → ~83% at cap. 30 sales/month at the base
+price clears the §Cessation ¥30,000 net threshold by ~2x.
+
+(History: §24 initially set base ¥9,800 / cap ¥40,000 on 2026-05-13;
+relaxed to ¥7,800 / cap ¥35,000 the same day to lower the entry
+barrier for first-time buyers while keeping the §21 floor.)
 
 Why this fabric:
 1. 180gsm + ribbed neck is the "touched detail" Visvim/Comme buyers register without being told. Bella+Canvas 3001 had no such signal.
