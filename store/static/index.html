@@ -678,6 +678,16 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
   </div>
   <div id="ma-content"><div class="empty">—</div></div>
 
+  <!-- MA Gifts: 1-of-1 commemorative pieces sent to past contributors -->
+  <div id="ma-gifts-section" style="display:none;margin:48px 0 0">
+    <div style="font-size:11px;letter-spacing:0.32em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:14px">MA · Commemorative Gifts</div>
+    <div style="font-size:13px;opacity:0.7;line-height:1.85;max-width:640px;margin-bottom:20px">
+      過去の貢献者 (HAMADAO veteran など) に贈った、1-of-1 の MA piece。<br>
+      auction には出ない別ラインで、買えるものではありません — それぞれ違う AI 生成デザインで、世界に 1 着のみ存在します。
+    </div>
+    <div id="ma-gifts-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px"></div>
+  </div>
+
   <div class="proof-section">
     <div class="proof-title">間 MA — 証明書</div>
     <div class="proof-grid">
@@ -1508,8 +1518,42 @@ async function loadBrand(brand){
   }catch(e){grid.innerHTML='<div class="empty">—</div>'}
 }
 
+async function loadMaGifts(){
+  const sect = document.getElementById('ma-gifts-section');
+  const grid = document.getElementById('ma-gifts-grid');
+  if (!sect || !grid) return;
+  try {
+    const r = await fetch('/api/v1/ma/gifts', { cache: 'no-store' });
+    if (!r.ok) return;
+    const d = await r.json();
+    const gifts = (d.gifts || []).filter(g => g.mockup_url);
+    if (!gifts.length) { sect.style.display = 'none'; return; }
+    sect.style.display = 'block';
+    grid.innerHTML = gifts.map(g => {
+      const badge = g.status === 'shipped' ? 'SHIPPED'
+                  : g.status === 'design_ready' ? 'CLAIMED · 発送準備中'
+                  : g.status === 'claimed' ? 'CLAIMED · 発送準備中'
+                  : 'GIFTED · 受取待ち';
+      const badgeColor = g.status === 'shipped' ? '#a8d99a'
+                       : g.status === 'design_ready' || g.status === 'claimed' ? '#e6c449'
+                       : 'rgba(245,245,240,0.55)';
+      return `
+        <div style="position:relative;background:#0d0d0d;border:1px solid rgba(255,255,255,0.08);aspect-ratio:1/1;overflow:hidden;border-radius:2px">
+          <img src="${g.mockup_url}" alt="${g.label}" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover">
+          <div style="position:absolute;inset:0;background:linear-gradient(to top,rgba(0,0,0,0.85) 0%,transparent 55%);padding:14px;display:flex;flex-direction:column;justify-content:flex-end">
+            <div style="font-size:9px;letter-spacing:0.2em;text-transform:uppercase;color:${badgeColor};margin-bottom:4px">${badge}</div>
+            <div style="font-size:11.5px;line-height:1.4;color:#F5F5F0">${g.label}</div>
+            <div style="font-size:9px;opacity:0.55;margin-top:3px">1-of-1 · 非売品</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch(_) {}
+}
+
 async function loadMA(){
   const cont = document.getElementById('ma-content');
+  loadMaGifts();
   try{
     const r = await fetch('/api/products/ma');
     const products = await r.json();

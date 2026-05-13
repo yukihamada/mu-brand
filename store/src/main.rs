@@ -12487,6 +12487,28 @@ async fn fire_ma_gift_printful_order(db: Db, token: String) {
     }
 }
 
+/// GET /api/v1/ma/gifts — public, PII-safe listing of MA gift pieces.
+/// Returns only commemorative gifts that have a Printful mockup (so the
+/// design is actually visible). No claim URL, no email, no shipping
+/// info is ever exposed. Used by the /ma page to showcase gifts.
+async fn public_ma_gifts(State(db): State<Db>) -> impl IntoResponse {
+    let conn = db.lock().unwrap();
+    let mut stmt = match conn.prepare(
+        "SELECT id, label, mockup_url, status, created_at
+         FROM ma_gifts
+         WHERE mockup_url IS NOT NULL AND mockup_url <> ''
+         ORDER BY id ASC"
+    ) { Ok(s) => s, Err(_) => return Json(serde_json::json!({"gifts": []})).into_response() };
+    let rows: Vec<serde_json::Value> = stmt.query_map([], |r| Ok(serde_json::json!({
+        "id":         r.get::<_, i64>(0)?,
+        "label":      r.get::<_, String>(1)?,
+        "mockup_url": r.get::<_, String>(2)?,
+        "status":     r.get::<_, String>(3)?,
+        "created_at": r.get::<_, String>(4)?,
+    }))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+    Json(serde_json::json!({"gifts": rows})).into_response()
+}
+
 /// POST /api/admin/ma/gift/issue?token=…
 /// body: { label, design_brief }  →  returns { token, claim_url }
 async fn admin_ma_gift_issue(
@@ -28002,6 +28024,7 @@ async fn main() {
         .route("/admin/ma/gifts", get(admin_ma_gift_list))
         .route("/claim/ma/:token", get(ma_gift_claim_page))
         .route("/api/claim/ma/:token", post(ma_gift_claim_submit))
+        .route("/api/v1/ma/gifts", get(public_ma_gifts))
         // matchit (axum's router) treats `:pos.svg` and `:pos.png` as
         // conflicting because both reduce to a single capture segment. Use
         // ONE route that captures the full last segment (e.g. "5.png") and
