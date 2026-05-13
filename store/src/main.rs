@@ -13223,31 +13223,68 @@ a{{color:var(--y)}}
   <p>MU 間 MA の commemorative piece をお贈りします。<strong style="color:var(--fg)">送料・本体ともに MU 負担</strong>、受取情報のみご登録ください。</p>
   {preview_block}
   {already}
-  <form id="f" onsubmit="return submitForm(event)">
+  <form id="f" onsubmit="return submitForm(event)" autocomplete="on">
     <label>Email</label>
-    <input type="email" name="email" placeholder="your@email" required {disabled}>
+    <input type="email" name="email" placeholder="your@email" required {disabled}
+           autocomplete="email" inputmode="email">
 
     <label>お名前 / Recipient</label>
-    <input type="text" name="ship_name" placeholder="山田 太郎 / Taro Yamada" required {disabled}>
-
-    <label>住所 1 / Address line 1</label>
-    <input type="text" name="ship_addr1" placeholder="番地・町名" required {disabled}>
-
-    <label>住所 2 / Address line 2 (任意)</label>
-    <input type="text" name="ship_addr2" {disabled}>
+    <input type="text" name="ship_name" placeholder="山田 太郎 / Taro Yamada" required {disabled}
+           autocomplete="name">
 
     <div class="row2">
-      <div><label>市 / City</label><input type="text" name="ship_city" required {disabled}></div>
-      <div><label>都道府県 / State</label><input type="text" name="ship_state" {disabled}></div>
+      <div>
+        <label>サイズ</label>
+        <select name="size" required {disabled}>
+          <option value="S">S</option><option value="M" selected>M</option>
+          <option value="L">L</option><option value="XL">XL</option><option value="2XL">2XL</option>
+        </select>
+      </div>
+      <div>
+        <label>国 / Country</label>
+        <select name="ship_country" required {disabled} autocomplete="country" id="f_country">
+          <option value="JP" selected>日本 (JP)</option>
+          <option value="US">United States (US)</option>
+          <option value="GB">United Kingdom (GB)</option>
+          <option value="AU">Australia (AU)</option>
+          <option value="DE">Germany (DE)</option>
+          <option value="FR">France (FR)</option>
+          <option value="SG">Singapore (SG)</option>
+          <option value="HK">Hong Kong (HK)</option>
+          <option value="KR">Korea (KR)</option>
+          <option value="TW">Taiwan (TW)</option>
+        </select>
+      </div>
     </div>
+
+    <label>郵便番号 / Postal code <span id="f_zip_hint" style="font-size:9px;opacity:0.55;margin-left:8px">(JP: 7 桁入力で住所自動入力)</span></label>
+    <input type="text" name="ship_zip" id="f_zip" placeholder="1080073" required {disabled}
+           autocomplete="postal-code" inputmode="numeric" maxlength="10">
+
     <div class="row2">
-      <div><label>郵便 / ZIP</label><input type="text" name="ship_zip" required {disabled}></div>
-      <div><label>国コード / Country</label><input type="text" name="ship_country" value="JP" maxlength="2" required {disabled}></div>
+      <div>
+        <label>都道府県 / State</label>
+        <input type="text" name="ship_state" id="f_state" {disabled}
+               autocomplete="address-level1" placeholder="東京都">
+      </div>
+      <div>
+        <label>市区町村 / City</label>
+        <input type="text" name="ship_city" id="f_city" required {disabled}
+               autocomplete="address-level2" placeholder="港区">
+      </div>
     </div>
-    <div class="row2">
-      <div><label>電話 (任意)</label><input type="text" name="ship_phone" {disabled}></div>
-      <div><label>サイズ</label><select name="size" required {disabled}><option value="S">S</option><option value="M" selected>M</option><option value="L">L</option><option value="XL">XL</option><option value="2XL">2XL</option></select></div>
-    </div>
+
+    <label>町名・番地 / Address line 1</label>
+    <input type="text" name="ship_addr1" id="f_addr1" placeholder="町名・丁目・番地" required {disabled}
+           autocomplete="address-line1">
+
+    <label>建物名・部屋番号 / Address line 2 (任意)</label>
+    <input type="text" name="ship_addr2" {disabled}
+           autocomplete="address-line2" placeholder="マンション名・号室">
+
+    <label>電話 / Phone (任意・配送通知用)</label>
+    <input type="text" name="ship_phone" {disabled}
+           autocomplete="tel" inputmode="tel" placeholder="0901234XXXX">
 
     <button type="submit" {disabled}>受取情報を登録 →</button>
     <div id="msg"></div>
@@ -13259,6 +13296,40 @@ a{{color:var(--y)}}
   </div>
 </div>
 <script>
+// JP postal-code → 都道府県 + 市区町村 autofill (zipcloud API, free, CORS-open).
+const f_zip = document.getElementById('f_zip');
+const f_state = document.getElementById('f_state');
+const f_city = document.getElementById('f_city');
+const f_addr1 = document.getElementById('f_addr1');
+const f_country = document.getElementById('f_country');
+let lastZip = '';
+async function zipAutofill(){{
+  if (!f_zip || !f_country) return;
+  if (f_country.value !== 'JP') return;
+  const z = f_zip.value.replace(/[^0-9]/g, '');
+  if (z.length !== 7 || z === lastZip) return;
+  lastZip = z;
+  try {{
+    const r = await fetch(`https://zipcloud.ibsnet.co.jp/api/search?zipcode=${{z}}`);
+    const d = await r.json();
+    if (!d.results || !d.results.length) return;
+    const a = d.results[0];
+    if (f_state && !f_state.value) f_state.value = a.address1 || '';
+    if (f_city && !f_city.value) f_city.value = (a.address2 || '') + (a.address3 || '');
+    if (f_addr1) f_addr1.focus();
+  }} catch(_) {{}}
+}}
+if (f_zip) {{
+  f_zip.addEventListener('input', zipAutofill);
+  f_zip.addEventListener('blur', zipAutofill);
+}}
+if (f_country) {{
+  f_country.addEventListener('change', () => {{
+    const hint = document.getElementById('f_zip_hint');
+    if (hint) hint.style.display = f_country.value === 'JP' ? 'inline' : 'none';
+  }});
+}}
+
 async function submitForm(e){{
   e.preventDefault();
   const f = document.getElementById('f');
