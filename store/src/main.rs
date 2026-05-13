@@ -4588,10 +4588,496 @@ async fn chronicle_qr_png(
     ).into_response()
 }
 
+/// GET /scan — PWA scanner. Camera + on-page OpenCV.js detects the
+/// 8-circle moon-phase marker, decodes via /api/mark/decode/:value,
+/// shows live overlay. Add ?event=<slug> for entry check-in mode.
+async fn moon_scan_page(
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Html<String> {
+    let event = q.get("event").cloned().unwrap_or_default();
+    let event_html = if event.is_empty() {
+        String::new()
+    } else {
+        format!(
+            r##"<div style="background:rgba(230,196,73,0.10);border:1px solid rgba(230,196,73,0.35);padding:12px 16px;margin:0 0 14px;border-radius:2px;font-size:12px;line-height:1.6">
+              <div style="font-size:9px;letter-spacing:0.32em;text-transform:uppercase;color:#e6c449;margin-bottom:4px">ENTRY MODE</div>
+              <div>Event: <strong style="color:#F5F5F0">{}</strong> — スキャンで自動チェックイン</div>
+            </div>"##,
+            html_escape(&event)
+        )
+    };
+    Html(format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>MU Scan — 月相マーカー読取</title>
+<meta name="robots" content="noindex">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+:root{{--bg:#0A0A0A;--fg:#F5F5F0;--y:#e6c449;--line:rgba(255,255,255,0.08)}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue',sans-serif;line-height:1.6;font-size:14px;overflow:hidden;height:100vh}}
+.wrap{{position:relative;width:100%;height:100vh;display:flex;flex-direction:column}}
+.cam{{flex:1;position:relative;background:#000;overflow:hidden}}
+video,canvas{{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);max-width:100%;max-height:100%;object-fit:contain}}
+#overlay{{position:absolute;inset:0;pointer-events:none;display:flex;align-items:center;justify-content:center}}
+#crosshair{{width:80%;max-width:300px;aspect-ratio:8/1;border:1px dashed rgba(230,196,73,0.55);position:relative}}
+#crosshair::before{{content:'8 円をフレームに合わせる';position:absolute;top:-22px;left:0;right:0;text-align:center;font-size:10px;letter-spacing:0.25em;text-transform:uppercase;color:#e6c449;opacity:0.85}}
+.bar{{background:#0e0e0e;border-top:1px solid var(--line);padding:14px 18px;font-size:12.5px;line-height:1.7;min-height:120px;max-height:50vh;overflow-y:auto}}
+.bar h1{{font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:var(--y);font-weight:500;margin-bottom:8px}}
+.row{{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}}
+.row:last-child{{border:0}}
+.row .k{{opacity:0.6}}
+.btn{{background:var(--y);color:#000;border:0;padding:14px;font-family:inherit;font-size:11px;letter-spacing:0.32em;text-transform:uppercase;font-weight:700;width:100%;margin-top:10px;border-radius:2px;cursor:pointer}}
+.btn:disabled{{opacity:0.4}}
+.msg{{padding:10px 14px;font-size:12px;border-radius:2px;margin-top:8px}}
+.msg.ok{{background:rgba(168,217,154,0.10);color:#a8d99a;border-left:2px solid #a8d99a}}
+.msg.err{{background:rgba(255,138,122,0.10);color:#ff8a7a;border-left:2px solid #ff8a7a}}
+.dim{{opacity:0.55;font-size:11px}}
+nav{{position:absolute;top:0;left:0;right:0;padding:12px 18px;display:flex;justify-content:space-between;background:rgba(10,10,10,0.6);backdrop-filter:blur(8px);z-index:5;font-size:11px;letter-spacing:0.32em;text-transform:uppercase}}
+nav a{{color:var(--fg);text-decoration:none;opacity:0.8}}
+</style></head><body>
+<div class="wrap">
+  <div class="cam">
+    <nav>
+      <a href="/">MU</a>
+      <span style="opacity:0.6">SCAN</span>
+    </nav>
+    <video id="v" autoplay playsinline muted></video>
+    <canvas id="c" style="display:none"></canvas>
+    <div id="overlay"><div id="crosshair"></div></div>
+  </div>
+  <div class="bar">
+    {event_html}
+    <h1>Last scan</h1>
+    <div id="result" class="dim">カメラを T シャツの月相マーカーに向けてください。</div>
+    <button class="btn" id="start">カメラ起動</button>
+  </div>
+</div>
+
+<script src="https://docs.opencv.org/4.x/opencv.js" async></script>
+<script>
+const event_slug = {event_json};
+let videoEl, canvasEl, ctx, stream;
+let cvReady = false;
+let lastValue = null, lastSeenAt = 0;
+
+document.getElementById('start').addEventListener('click', startCamera);
+
+async function startCamera() {{
+  try {{
+    stream = await navigator.mediaDevices.getUserMedia({{
+      video: {{facingMode: 'environment', width: {{ideal: 1280}}, height: {{ideal: 720}}}},
+      audio: false,
+    }});
+    videoEl = document.getElementById('v');
+    canvasEl = document.getElementById('c');
+    ctx = canvasEl.getContext('2d', {{willReadFrequently: true}});
+    videoEl.srcObject = stream;
+    document.getElementById('start').style.display = 'none';
+    videoEl.onloadedmetadata = () => {{
+      canvasEl.width = videoEl.videoWidth;
+      canvasEl.height = videoEl.videoHeight;
+      requestAnimationFrame(loop);
+    }};
+  }} catch(e) {{
+    document.getElementById('result').innerHTML = '<div class="msg err">カメラ起動失敗: '+e.message+'</div>';
+  }}
+}}
+
+// Wait for opencv.js
+const cvReadyCheck = setInterval(() => {{
+  if (typeof cv !== 'undefined' && cv.Mat) {{ cvReady = true; clearInterval(cvReadyCheck); }}
+}}, 200);
+
+function loop() {{
+  if (!videoEl || videoEl.readyState < 2) {{ requestAnimationFrame(loop); return; }}
+  ctx.drawImage(videoEl, 0, 0);
+  if (cvReady) {{
+    try {{ detect(); }} catch(e) {{ /* swallow */ }}
+  }}
+  requestAnimationFrame(loop);
+}}
+
+function detect() {{
+  const src = cv.imread(canvasEl);
+  const gray = new cv.Mat();
+  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+  cv.GaussianBlur(gray, gray, new cv.Size(5,5), 1.4, 1.4);
+  const circles = new cv.Mat();
+  cv.HoughCircles(gray, circles, cv.HOUGH_GRADIENT, 1.0,
+    20,    // minDist
+    100,   // param1 (Canny upper)
+    25,    // param2 (accumulator)
+    6,     // minRadius
+    32     // maxRadius
+  );
+  if (circles.cols < 8) {{ src.delete(); gray.delete(); circles.delete(); return; }}
+  // Collect circles → array of {{x,y,r}}.
+  const arr = [];
+  for (let i = 0; i < circles.cols; i++) {{
+    arr.push({{
+      x: circles.data32F[i*3],
+      y: circles.data32F[i*3+1],
+      r: circles.data32F[i*3+2],
+    }});
+  }}
+  // Group by horizontal rows: cluster on y within ±r tolerance, pick the row of 8.
+  arr.sort((a,b) => a.y - b.y);
+  let row = null;
+  for (let i = 0; i < arr.length; i++) {{
+    const ref = arr[i];
+    const band = arr.filter(c => Math.abs(c.y - ref.y) < ref.r * 0.6);
+    if (band.length >= 8) {{ row = band; break; }}
+  }}
+  if (!row || row.length < 8) {{ src.delete(); gray.delete(); circles.delete(); return; }}
+  row.sort((a,b) => a.x - b.x).splice(8); // first 8 in x-order
+  // For each circle, compute fill ratio via mean intensity inside.
+  const levels = [];
+  for (const c of row) {{
+    const r = Math.max(3, c.r - 2);
+    let sum = 0, n = 0;
+    const cx = Math.round(c.x), cy = Math.round(c.y);
+    const rr = r*r;
+    const data = ctx.getImageData(Math.max(0,cx-r), Math.max(0,cy-r), Math.min(canvasEl.width-cx+r, 2*r), Math.min(canvasEl.height-cy+r, 2*r)).data;
+    const ww = Math.min(canvasEl.width-cx+r, 2*r);
+    for (let dy = -r; dy < r; dy++) {{
+      for (let dx = -r; dx < r; dx++) {{
+        if (dx*dx + dy*dy > rr) continue;
+        const idx = ((dy+r)*ww + (dx+r)) * 4;
+        if (idx+2 >= data.length) continue;
+        const lum = 0.299*data[idx] + 0.587*data[idx+1] + 0.114*data[idx+2];
+        sum += (255 - lum); // ink ≈ dark
+        n++;
+      }}
+    }}
+    const fill = n > 0 ? sum / (n * 255) : 0;  // 0..1
+    // Quantize to 5 levels.
+    let level = 0;
+    if (fill > 0.85) level = 4;
+    else if (fill > 0.55) level = 3;
+    else if (fill > 0.35) level = 2;
+    else if (fill > 0.15) level = 1;
+    levels.push(level);
+  }}
+  src.delete(); gray.delete(); circles.delete();
+  // Decode to value.
+  let value = 0;
+  for (const l of levels) value = value * 5 + l;
+  // Debounce: same value within 1.5s = ignore.
+  const now = Date.now();
+  if (value === lastValue && now - lastSeenAt < 1500) return;
+  lastValue = value; lastSeenAt = now;
+  fetchDecode(value);
+}}
+
+async function fetchDecode(value) {{
+  const el = document.getElementById('result');
+  el.innerHTML = '<div class="dim">decoding... value=' + value + '</div>';
+  try {{
+    const r = await fetch('/api/mark/decode/' + value, {{cache:'no-store'}});
+    const d = await r.json();
+    if (!d.ok) {{
+      el.innerHTML = `<div class="msg err">decode 失敗: ${{d.error || 'unknown'}} · value=${{value}}</div>`;
+      return;
+    }}
+    let html = `
+      <div class="msg ok">✓ Authenticated</div>
+      <div class="row"><span class="k">Drop</span><span>${{d.brand.toUpperCase()}} #${{String(d.drop_num).padStart(4,'0')}}</span></div>
+      <div class="row"><span class="k">Position</span><span>#${{d.position}} / ${{d.inventory}}</span></div>
+      <div class="row"><span class="k">Name</span><span>${{d.name}}</span></div>
+      ${{d.buyer ? `<div class="row"><span class="k">Buyer</span><span>${{d.buyer}}</span></div>` : ''}}`;
+    if (event_slug) {{
+      const ci = await fetch('/api/scan/checkin', {{
+        method: 'POST', headers: {{'Content-Type':'application/json'}},
+        body: JSON.stringify({{value, event_slug}})
+      }});
+      const cj = await ci.json();
+      html += cj.ok
+        ? `<div class="msg ok">✓ ${{event_slug}} · checked in (${{cj.is_new ? '初回' : '既登録'}})</div>`
+        : `<div class="msg err">${{cj.error || 'check-in error'}}</div>`;
+    }}
+    el.innerHTML = html;
+    if (navigator.vibrate) navigator.vibrate(60);
+  }} catch(e) {{
+    el.innerHTML = `<div class="msg err">network: ${{e.message}}</div>`;
+  }}
+}}
+</script>
+</body></html>"##,
+        event_html = event_html,
+        event_json = serde_json::to_string(&event).unwrap_or_else(|_| "\"\"".to_string()),
+    ))
+}
+
+/// POST /api/scan/checkin — body: { value, event_slug }
+async fn moon_event_checkin(
+    State(db): State<Db>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let value = body["value"].as_u64().unwrap_or(u64::MAX);
+    let event_slug = body["event_slug"].as_str().unwrap_or("").trim().to_string();
+    if event_slug.is_empty() {
+        return Json(serde_json::json!({"ok": false, "error": "event_slug required"})).into_response();
+    }
+    let max = (MOON_LEVELS as u64).pow(MOON_CIRCLES as u32);
+    if value >= max {
+        return Json(serde_json::json!({"ok": false, "error": "value out of range"})).into_response();
+    }
+    let pid = (value / 64) as i64;
+    let pos = (value % 64) as i64;
+    let now = chrono_now();
+    let (event_id, is_new): (i64, bool) = {
+        let conn = db.lock().unwrap();
+        let event_id: i64 = match conn.query_row(
+            "SELECT id FROM mu_events WHERE slug=? AND active=1",
+            params![event_slug], |r| r.get(0),
+        ) {
+            Ok(id) => id,
+            Err(_) => return Json(serde_json::json!({"ok": false, "error": "event not found or inactive"})).into_response(),
+        };
+        // Look up buyer pseudonym at this position.
+        let buyer: Option<String> = {
+            let mut s = match conn.prepare(
+                "SELECT email FROM mu_purchases
+                 WHERE product_id=? AND session_id LIKE 'cs_live_%'
+                 ORDER BY id ASC LIMIT 1 OFFSET ?"
+            ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+            s.query_row(params![pid, (pos - 1).max(0)], |r| r.get::<_, String>(0)).ok()
+                .map(|e| purchase_pseudonym(&e))
+        };
+        let n = conn.execute(
+            "INSERT OR IGNORE INTO mu_event_checkins
+                (event_id, marker_int, source_kind, source_id, position, buyer_pseudonym, checked_in_at)
+             VALUES (?,?,'product',?,?,?,?)",
+            params![event_id, value as i64, pid, pos, buyer, now],
+        ).unwrap_or(0);
+        (event_id, n > 0)
+    };
+    Json(serde_json::json!({
+        "ok": true,
+        "event_id": event_id,
+        "is_new": is_new,
+        "checked_in_at": now,
+    })).into_response()
+}
+
+/// POST /api/admin/event/create?token=… body:{slug,name,description,starts_at,ends_at}
+async fn admin_event_create(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let pick = |k: &str| body[k].as_str().unwrap_or("").trim().to_string();
+    let slug = pick("slug");
+    let name = pick("name");
+    if slug.is_empty() || name.is_empty() {
+        return (StatusCode::BAD_REQUEST, "slug + name required").into_response();
+    }
+    let id = {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO mu_events (slug, name, description, starts_at, ends_at, active, created_at)
+             VALUES (?,?,?,?,?,1,?)",
+            params![slug, name, pick("description"), pick("starts_at"), pick("ends_at"), chrono_now()],
+        );
+        conn.last_insert_rowid()
+    };
+    Json(serde_json::json!({
+        "ok": true, "id": id, "slug": slug,
+        "scan_url": format!("https://wearmu.com/scan?event={}", slug),
+    })).into_response()
+}
+
+/// GET /api/admin/event/checkins?token=…&slug=…
+async fn admin_event_checkins(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let slug = q.get("slug").cloned().unwrap_or_default();
+    if slug.is_empty() { return (StatusCode::BAD_REQUEST, "slug required").into_response(); }
+    let conn = db.lock().unwrap();
+    let event_id: i64 = match conn.query_row(
+        "SELECT id FROM mu_events WHERE slug=?", params![slug], |r| r.get(0),
+    ) { Ok(id) => id, Err(_) => return (StatusCode::NOT_FOUND, "no event").into_response() };
+    let mut stmt = match conn.prepare(
+        "SELECT marker_int, source_id, position, buyer_pseudonym, checked_in_at
+         FROM mu_event_checkins WHERE event_id=? ORDER BY id DESC"
+    ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+    let rows: Vec<serde_json::Value> = stmt.query_map(params![event_id], |r| Ok(serde_json::json!({
+        "marker_int":     r.get::<_, i64>(0)?,
+        "product_id":     r.get::<_, i64>(1)?,
+        "position":       r.get::<_, Option<i64>>(2)?,
+        "buyer_pseudonym": r.get::<_, Option<String>>(3)?,
+        "checked_in_at":  r.get::<_, String>(4)?,
+    }))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+    Json(serde_json::json!({"event": slug, "count": rows.len(), "checkins": rows})).into_response()
+}
+
 /// GET /api/qr/c/:product_id/:position.svg — Per-shirt QR for the inside-neck
 /// chronicle. The QR encodes the short URL https://wearmu.com/c/<id>/<pos>
 /// so when a buyer scans their own shirt they get the live chronicle of
 /// units #1..#(self).
+// ── Moon-phase marker (8 circles × 5 levels = 5^8 = 390,625 states) ──
+//
+// Encoding scheme (base-5):
+//   value = product_id * 64 + position    (assumes product_id < 6103, position < 64)
+//   digits = value in base 5, padded to 8 digits, drawn left-to-right
+//
+// Fill levels:
+//   0 = ○ empty outline
+//   1 = ◔ right-quarter filled
+//   2 = ◑ right-half filled
+//   3 = ◕ three-quarter filled (right + bottom)
+//   4 = ● fully filled
+//
+// Camera detection: Hough Circle Transform finds 8 circles in a row, then
+// each circle's interior is sampled — fill ratio quantized to {0..4}.
+const MOON_LEVELS: usize = 5;
+const MOON_CIRCLES: usize = 8;
+
+fn moon_encode(value: u64) -> [u8; MOON_CIRCLES] {
+    let mut digits = [0u8; MOON_CIRCLES];
+    let mut v = value;
+    for i in (0..MOON_CIRCLES).rev() {
+        digits[i] = (v % MOON_LEVELS as u64) as u8;
+        v /= MOON_LEVELS as u64;
+    }
+    digits
+}
+
+fn moon_decode(digits: &[u8]) -> u64 {
+    digits.iter().fold(0u64, |acc, &d| acc * (MOON_LEVELS as u64) + (d as u64))
+}
+
+/// GET /api/mark/:product_id/:position.svg — tonal moon-phase marker SVG
+/// for the given (product_id, position) pair. Designed to be composited
+/// into the design PNG by the m5 generate.py pipeline.
+async fn moon_marker_svg(
+    Path((pid, pos)): Path<(i64, i64)>,
+) -> Response {
+    if pid < 0 || pos < 0 || pid > 6102 || pos > 63 {
+        return (StatusCode::BAD_REQUEST, "out of range").into_response();
+    }
+    let value = (pid as u64) * 64 + (pos as u64);
+    let digits = moon_encode(value);
+    // SVG: 8 circles, radius 8, gap 2px, total width = 8*16 + 7*2 = 142, height 18
+    let cell = 16; let gap = 2; let r = 7;
+    let w = MOON_CIRCLES * cell + (MOON_CIRCLES - 1) * gap;
+    let h = cell + 2;
+    let mut svg = String::with_capacity(2048);
+    svg.push_str(&format!(
+        r##"<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" stroke="none" shape-rendering="geometricPrecision">"##,
+        w = w, h = h
+    ));
+    let fill = "#1a1a1a";
+    for (i, d) in digits.iter().enumerate() {
+        let cx = i * (cell + gap) + cell / 2;
+        let cy = h / 2;
+        // outline
+        svg.push_str(&format!(
+            r##"<circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="{fill}" stroke-width="1.4"/>"##,
+            cx = cx, cy = cy, r = r, fill = fill,
+        ));
+        // fill arc based on level (0 = empty, 4 = full)
+        match d {
+            0 => {} // empty
+            4 => {
+                // full
+                svg.push_str(&format!(
+                    r##"<circle cx="{cx}" cy="{cy}" r="{r}" fill="{fill}"/>"##,
+                    cx = cx, cy = cy, r = r, fill = fill,
+                ));
+            }
+            // partial: right side (waxing-style). Use SVG path for crescent.
+            // 1 = 25% (right thin sliver), 2 = 50% (right half), 3 = 75% (right + bottom)
+            n => {
+                // Use clip-rect: x from cx - r to cx + r*ratio... no, fill right portion.
+                // Simpler: render a clipped circle showing only the right-side area.
+                let frac = (*n as f32) / 4.0;
+                let left_x = cx as f32 - r as f32 + (2.0 * r as f32) * (1.0 - frac);
+                let rect_w = 2.0 * r as f32 * frac;
+                svg.push_str(&format!(
+                    r##"<defs><clipPath id="c{i}"><rect x="{lx}" y="{ty}" width="{rw}" height="{ch}"/></clipPath></defs><circle cx="{cx}" cy="{cy}" r="{r}" fill="{fill}" clip-path="url(#c{i})"/>"##,
+                    i = i,
+                    lx = left_x,
+                    ty = cy as f32 - r as f32,
+                    rw = rect_w,
+                    ch = (2 * r) as f32,
+                    cx = cx, cy = cy, r = r, fill = fill,
+                ));
+            }
+        }
+    }
+    svg.push_str("</svg>");
+    (
+        [(axum::http::header::CONTENT_TYPE, "image/svg+xml; charset=utf-8"),
+         (axum::http::header::CACHE_CONTROL, "public, max-age=31536000, immutable")],
+        svg
+    ).into_response()
+}
+
+/// GET /api/mark/decode/:value — server-side decode of a moon-phase value to
+/// the shirt's metadata (PII-safe). Used by /scan after the PWA reads the
+/// 8 circles via the camera.
+async fn moon_marker_decode(
+    Path(value): Path<u64>,
+    State(db): State<Db>,
+) -> Response {
+    let max = (MOON_LEVELS as u64).pow(MOON_CIRCLES as u32); // 390,625
+    if value >= max {
+        return (StatusCode::BAD_REQUEST, "value out of range").into_response();
+    }
+    let pid = (value / 64) as i64;
+    let pos = (value % 64) as i64;
+    // Look up product → brand + name + drop_num.
+    let row: Option<(String, i64, String, i64, i64)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT brand, drop_num, name, inventory, sold
+             FROM products WHERE id=?",
+            params![pid], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?, r.get::<_, i64>(4)?,
+            ))
+        ).ok()
+    };
+    let Some((brand, drop_num, name, inventory, sold)) = row else {
+        return Json(serde_json::json!({
+            "ok": false,
+            "value": value,
+            "decoded": {"product_id": pid, "position": pos},
+            "error": "no such product_id",
+        })).into_response();
+    };
+    // For meaningful chronicle info: which buyer is at this position?
+    let buyer_pseudonym: Option<String> = {
+        let conn = db.lock().unwrap();
+        // Find the N-th purchase of this product (ordered by id) where pos = N.
+        let mut stmt = match conn.prepare(
+            "SELECT email FROM mu_purchases
+             WHERE product_id=? AND session_id LIKE 'cs_live_%'
+             ORDER BY id ASC LIMIT 1 OFFSET ?"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_row(params![pid, (pos - 1).max(0)], |r| r.get::<_, String>(0))
+            .ok()
+            .map(|e| purchase_pseudonym(&e))
+    };
+    Json(serde_json::json!({
+        "ok": true,
+        "value": value,
+        "product_id": pid,
+        "position": pos,
+        "brand":     brand,
+        "drop_num":  drop_num,
+        "name":      name,
+        "inventory": inventory,
+        "sold":      sold,
+        "buyer":     buyer_pseudonym,
+    })).into_response()
+}
+
 async fn chronicle_qr_svg(
     Path((id, pos)): Path<(i64, i64)>,
 ) -> Response {
@@ -27831,6 +28317,31 @@ async fn main() {
         );
         CREATE INDEX IF NOT EXISTS idx_ma_gifts_status ON ma_gifts(status, created_at);
 
+        -- Moon-phase marker: events for entry check-in via T-shirt scan.
+        CREATE TABLE IF NOT EXISTS mu_events (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug        TEXT UNIQUE NOT NULL,
+            name        TEXT NOT NULL,
+            description TEXT,
+            starts_at   TEXT,
+            ends_at     TEXT,
+            active      INTEGER NOT NULL DEFAULT 1,
+            created_at  TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS mu_event_checkins (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id        INTEGER NOT NULL,
+            marker_int      INTEGER NOT NULL,
+            source_kind     TEXT NOT NULL,  -- 'product' | 'ma_gift'
+            source_id       INTEGER NOT NULL,
+            position        INTEGER,
+            buyer_pseudonym TEXT,
+            checked_in_at   TEXT NOT NULL,
+            scanner_note    TEXT,
+            UNIQUE(event_id, marker_int)
+        );
+        CREATE INDEX IF NOT EXISTS idx_checkins_event ON mu_event_checkins(event_id, checked_in_at);
+
         CREATE TABLE IF NOT EXISTS bounty_submissions (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             severity        TEXT NOT NULL,
@@ -28025,6 +28536,12 @@ async fn main() {
         .route("/claim/ma/:token", get(ma_gift_claim_page))
         .route("/api/claim/ma/:token", post(ma_gift_claim_submit))
         .route("/api/v1/ma/gifts", get(public_ma_gifts))
+        .route("/api/mark/:product_id/:position.svg", get(moon_marker_svg))
+        .route("/api/mark/decode/:value", get(moon_marker_decode))
+        .route("/scan", get(moon_scan_page))
+        .route("/api/scan/checkin", post(moon_event_checkin))
+        .route("/api/admin/event/create", post(admin_event_create))
+        .route("/api/admin/event/checkins", get(admin_event_checkins))
         // matchit (axum's router) treats `:pos.svg` and `:pos.png` as
         // conflicting because both reduce to a single capture segment. Use
         // ONE route that captures the full last segment (e.g. "5.png") and
