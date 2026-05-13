@@ -6363,10 +6363,13 @@ async fn create_printful_order(key: String, db: Db, product_id: i64, session: se
 
     let client = reqwest::Client::new();
     // Per-shirt chronicle: only for products where the same design is printed
-    // multiple times. Inventory > 1 = MUON / multi-unit drops where the
-    // sibling chronicle is meaningful. inventory = 1 (MUGEN) = unique → skip.
-    let (chronicle_position, eligible_for_chronicle, brand_name_for_blog): (i64, bool, String) = {
+    // multiple times AND the DAO has enabled the feature. Strategy controls
+    // whether the QR goes in the front design (¥0) or as a separate
+    // label_outside file (+¥300/着).
+    let (chronicle_position, eligible_for_chronicle, brand_name_for_blog, strategy): (i64, bool, String, String) = {
         let conn = db.lock().unwrap();
+        let enabled = cv_get(&conn, "chronicle_enabled", "0") == "1";
+        let strategy = cv_get(&conn, "chronicle_pricing_strategy", "qr_in_front_design");
         let (inv, sold, brand): (i64, i64, String) = conn.query_row(
             "SELECT inventory, sold, brand FROM products WHERE id=?",
             params![product_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))
@@ -6377,26 +6380,27 @@ async fn create_printful_order(key: String, db: Db, product_id: i64, session: se
                AND session_id != ?",
             params![product_id, session_id], |r| r.get(0),
         ).unwrap_or(sold);
-        // Position = number of prior + 1 (this purchase is the next slot).
-        (prior_paid + 1, inv > 1, brand)
+        (prior_paid + 1, enabled && inv > 1, brand, strategy)
     };
 
     let mut files = vec![
         serde_json::json!({"url": design_url, "placement": "front"})
     ];
-    if eligible_for_chronicle {
+    if eligible_for_chronicle && strategy == "qr_label_outside" {
+        // Strategy 2: separate label_outside placement (+$2/shirt).
         let qr_url = format!(
             "https://wearmu.com/api/qr/c/{}/{}.png",
             product_id, chronicle_position,
         );
-        // label_outside = exterior back-of-neck DTG, ~4×1 inch print area.
-        // The QR alone is enough; the scan opens /c/<id>/<pos> for the
-        // live chronicle. Printful composites on their side.
         files.push(serde_json::json!({
             "url": qr_url,
             "placement": "label_outside",
         }));
     }
+    // Strategy 1 (qr_in_front_design): the QR is composited into the front
+    // design itself by the design-generation pipeline, no extra placement
+    // here. The product's design_url already contains the QR. (Compositing
+    // implementation lives in the m5 generate.py pipeline.)
 
     let order = serde_json::json!({
         "recipient": {
@@ -11677,6 +11681,469 @@ footer a:hover{{color:var(--y)}}
         body = body_html,
     );
     Html(html)
+}
+
+// ── Sibling Chronicle DAO vote ────────────────────────────────────────────
+// MUGEN/MA/MUON 保有者 + /you 登録者の email 投票。可決で
+// cv_config 'chronicle_enabled' = '1' に flip → chronicle が新規 order
+// に焼き込まれる (label_outside +¥300 cost が発生する)。
+
+fn chronicle_vote_tier(conn: &rusqlite::Connection, email: &str) -> Option<String> {
+    let em = email.trim().to_lowercase();
+    if em.is_empty() || !em.contains('@') { return None; }
+    let is_buyer: bool = conn.query_row(
+        "SELECT 1 FROM mu_purchases WHERE LOWER(email)=? AND session_id LIKE 'cs_live_%' LIMIT 1",
+        params![em], |r| r.get::<_, i64>(0),
+    ).is_ok();
+    if is_buyer { return Some("buyer".into()); }
+    let in_you: bool = conn.query_row(
+        "SELECT 1 FROM you_users WHERE LOWER(email)=? AND unsubscribed_at IS NULL LIMIT 1",
+        params![em], |r| r.get::<_, i64>(0),
+    ).is_ok();
+    if in_you { return Some("you".into()); }
+    None
+}
+
+fn chronicle_tally(conn: &rusqlite::Connection) -> (i64, i64, i64, i64) {
+    let q = |opt: &str| -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM chronicle_votes WHERE option=?",
+            params![opt], |r| r.get(0),
+        ).unwrap_or(0)
+    };
+    let keep = q("keep");
+    let raise = q("raise");
+    let no = q("no");
+    (keep, raise, no, keep + raise + no)
+}
+
+/// If quorum (>= 5) AND majority (>=60%) opts for keep or raise, flip
+/// cv_config 'chronicle_enabled' to '1' and set the pricing strategy.
+/// Idempotent: only fires once.
+fn chronicle_maybe_enable(conn: &rusqlite::Connection) -> Option<String> {
+    let already = cv_get(conn, "chronicle_enabled", "0");
+    if already == "1" { return None; }
+    let (keep, raise, no, total) = chronicle_tally(conn);
+    const QUORUM: i64 = 5;
+    if total < QUORUM { return None; }
+    let yes = keep + raise;
+    let ratio = (yes as f64) / (total as f64);
+    if ratio < 0.60 { return None; }
+    // Pick the more popular of keep vs raise as the pricing strategy.
+    let strategy = if keep >= raise { "qr_in_front_design" } else { "qr_label_outside" };
+    cv_set(conn, "chronicle_enabled", "1", "dao_vote");
+    cv_set(conn, "chronicle_pricing_strategy", strategy, "dao_vote");
+    Some(format!("enabled with strategy={} ({} yes / {} no / {} total)", strategy, yes, no, total))
+}
+
+/// POST /api/chronicle/vote/request — body: {email, option}
+/// Sends a magic-link to the email. Anti-spam: 1 request per email per hour.
+async fn chronicle_vote_request(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let email = body["email"].as_str().unwrap_or("").trim().to_lowercase();
+    let option = body["option"].as_str().unwrap_or("").to_string();
+    if !email.contains('@') || email.len() > 200 {
+        return (StatusCode::BAD_REQUEST, "email invalid").into_response();
+    }
+    if !["keep", "raise", "no"].contains(&option.as_str()) {
+        return (StatusCode::BAD_REQUEST, "option must be keep|raise|no").into_response();
+    }
+    let tier = {
+        let conn = db.lock().unwrap();
+        chronicle_vote_tier(&conn, &email)
+    };
+    let Some(tier) = tier else {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({
+            "ok": false,
+            "error": "投票には MU の購入履歴 (MUGEN/MA/MUON) または /you 登録が必要です。先に /you に登録するか、MU を 1 着お買い上げください。"
+        }))).into_response();
+    };
+    let ip = client_ip(&headers);
+    let now_int = chrono_now().parse::<i64>().unwrap_or(0);
+    let ip_hash = if ip.is_empty() { String::new() } else {
+        use sha2::{Sha256, Digest};
+        let mut h = Sha256::new();
+        h.update(ip.as_bytes()); h.update(b"|chronicle-vote");
+        format!("{:x}", h.finalize())[..16].to_string()
+    };
+    let token = uuid::Uuid::new_v4().to_string().replace('-', "");
+    let _ = tier; // tier captured later when consuming
+    {
+        let conn = db.lock().unwrap();
+        // Has this email already voted?
+        let already: bool = conn.query_row(
+            "SELECT 1 FROM chronicle_votes WHERE email=? LIMIT 1",
+            params![email], |r| r.get::<_, i64>(0),
+        ).is_ok();
+        if already {
+            return Json(serde_json::json!({
+                "ok": false,
+                "error": "このメールアドレスは既に投票済みです (1 人 1 票)。"
+            })).into_response();
+        }
+        // Rate limit: 1 request per email per hour
+        let recent: bool = conn.query_row(
+            "SELECT 1 FROM chronicle_vote_tokens
+             WHERE email=? AND CAST(issued_at AS INTEGER) > ? LIMIT 1",
+            params![email, now_int - 3600], |r| r.get::<_, i64>(0),
+        ).is_ok();
+        if recent {
+            return Json(serde_json::json!({
+                "ok": false,
+                "error": "1 時間以内に既に確認メールを送りました。受信箱をご確認ください。"
+            })).into_response();
+        }
+        let _ = conn.execute(
+            "INSERT INTO chronicle_vote_tokens (token, email, option, issued_at, ip_hash)
+             VALUES (?,?,?,?,?)",
+            params![token, email, option, now_int.to_string(), ip_hash],
+        );
+    }
+    let confirm_url = format!("https://wearmu.com/chronicle/vote/confirm/{}", token);
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    if !resend_key.is_empty() {
+        let option_label = match option.as_str() {
+            "keep"  => "front design に QR 合成 (追加費用 0 円、margin 影響なし)",
+            "raise" => "首裏下に専用印刷 (label_outside +$2/着、margin -15%)",
+            _       => "Sibling Chronicle 不要 (実装しない)",
+        };
+        let html = format!(
+            r#"<div style="font-family:'Helvetica Neue',sans-serif;font-size:14px;line-height:1.85;color:#222;max-width:560px;margin:0 auto;padding:32px">
+            <p style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.6">MU · Sibling Chronicle 投票</p>
+            <p>あなたの選択:</p>
+            <p style="background:#f6f4ee;padding:14px 18px;border-left:3px solid #A67843;font-weight:500">{option_label}</p>
+            <p>下のボタンを 1 回押すと投票が確定します (1 人 1 票)。投票は <strong>5 人以上</strong> 集まって <strong>60% 以上の賛成</strong> でこの機能が自動で実装されます。</p>
+            <p style="text-align:center;margin:24px 0"><a href="{confirm_url}" style="background:#A67843;color:#fff;text-decoration:none;padding:14px 28px;border-radius:2px;font-size:12px;letter-spacing:0.2em;text-transform:uppercase;font-weight:600">投票を確定する →</a></p>
+            <p style="font-size:11px;color:#888;line-height:1.7">
+              URL を直接踏むのも同じ確認です:<br><a href="{confirm_url}" style="color:#A67843">{confirm_url}</a>
+            </p>
+            <p style="font-size:11px;color:#888;margin-top:24px">— MU Autopilot · yuki (1 human operator) · 28 agents</p>
+            </div>"#,
+            option_label = option_label,
+            confirm_url = confirm_url,
+        );
+        let _ = reqwest::Client::new()
+            .post("https://api.resend.com/emails")
+            .bearer_auth(&resend_key)
+            .json(&serde_json::json!({
+                "from": "MU Vote <noreply@wearmu.com>",
+                "to": [email.clone()],
+                "subject": "[MU] Sibling Chronicle 投票の確認",
+                "html": html,
+                "reply_to": "info@wearmu.com",
+            }))
+            .send().await;
+    }
+    Json(serde_json::json!({
+        "ok": true,
+        "tier": tier,
+        "message": "確認メールを送りました。リンクをクリックすると投票が確定します。"
+    })).into_response()
+}
+
+/// GET /chronicle/vote/confirm/:token — clicking the magic link records the
+/// vote and (if quorum is met) flips cv_config to enable the feature.
+async fn chronicle_vote_confirm(
+    Path(token): Path<String>,
+    State(db): State<Db>,
+    headers: HeaderMap,
+) -> Html<String> {
+    let now_int = chrono_now().parse::<i64>().unwrap_or(0);
+    let result: Result<(String, String), &'static str> = {
+        let conn = db.lock().unwrap();
+        let row = conn.query_row(
+            "SELECT email, option, consumed_at, CAST(issued_at AS INTEGER)
+             FROM chronicle_vote_tokens WHERE token=?",
+            params![token], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, String>(1)?,
+                r.get::<_, Option<String>>(2)?, r.get::<_, i64>(3)?,
+            ))
+        );
+        match row {
+            Err(_) => Err("invalid_token"),
+            Ok((_, _, consumed, _)) if consumed.is_some() => Err("already_consumed"),
+            Ok((_, _, _, issued)) if now_int - issued > 86400 => Err("expired"),
+            Ok((email, option, _, _)) => Ok((email, option)),
+        }
+    };
+    let (email, option) = match result {
+        Ok(t) => t,
+        Err(reason) => {
+            let msg = match reason {
+                "invalid_token" => "このリンクは無効です。新しい投票リクエストを送ってください。",
+                "already_consumed" => "このリンクは既に使用済みです。1 人 1 票のため、再投票はできません。",
+                "expired" => "このリンクは 24 時間で有効期限が切れました。新しい投票リクエストを送ってください。",
+                _ => "エラー",
+            };
+            return Html(format!(
+                r#"<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>投票確認 — MU</title></head><body style="background:#0A0A0A;color:#F5F5F0;font-family:sans-serif;padding:48px;text-align:center;line-height:1.8"><h2 style="font-weight:200">投票確認できませんでした</h2><p style="opacity:0.7">{}</p><p><a href="/chronicle-vote" style="color:#e6c449">投票ページへ戻る →</a></p></body></html>"#,
+                html_escape(msg)
+            ));
+        }
+    };
+    let ip = client_ip(&headers);
+    let ip_hash = if ip.is_empty() { String::new() } else {
+        use sha2::{Sha256, Digest};
+        let mut h = Sha256::new();
+        h.update(ip.as_bytes()); h.update(b"|chronicle-vote");
+        format!("{:x}", h.finalize())[..16].to_string()
+    };
+    let (already_voted, deploy_msg) = {
+        let conn = db.lock().unwrap();
+        let tier = chronicle_vote_tier(&conn, &email)
+            .unwrap_or_else(|| "other".to_string());
+        let _ = conn.execute(
+            "UPDATE chronicle_vote_tokens SET consumed_at=? WHERE token=?",
+            params![chrono_now(), token],
+        );
+        // Idempotent vote insert.
+        let inserted = conn.execute(
+            "INSERT OR IGNORE INTO chronicle_votes (email, option, voted_at, ip_hash, tier)
+             VALUES (?,?,?,?,?)",
+            params![email, option, chrono_now(), ip_hash, tier],
+        ).unwrap_or(0);
+        let already = inserted == 0;
+        let deploy = chronicle_maybe_enable(&conn);
+        (already, deploy)
+    };
+    if let Some(msg) = deploy_msg.as_ref() {
+        // Notify yuki via Telegram (async, non-blocking).
+        let m = msg.clone();
+        tokio::spawn(async move {
+            send_telegram_message(&format!("🗳️ Sibling Chronicle DAO vote PASSED:\n{}", m)).await;
+        });
+    }
+    let (keep, raise, no, total) = {
+        let conn = db.lock().unwrap();
+        chronicle_tally(&conn)
+    };
+    let option_label = match option.as_str() {
+        "keep"  => "front design に QR 合成 (追加費用 0)",
+        "raise" => "首裏下に専用印刷 (+¥300/着)",
+        _       => "実装しない",
+    };
+    let deploy_note = if deploy_msg.is_some() {
+        r#"<div style="margin-top:24px;padding:16px 20px;background:rgba(168,217,154,0.12);border-left:3px solid #a8d99a;color:#a8d99a;font-size:13px;line-height:1.8">🎉 quorum (5 人) + 60% 賛成を達成。<strong>chronicle 機能が今 deployed されました</strong>。次の MUON/multi-unit drop から首裏下 QR が焼き込まれます。</div>"#
+    } else if already_voted {
+        r#"<div style="margin-top:24px;padding:14px 18px;background:rgba(245,245,240,0.06);font-size:13px;line-height:1.8;opacity:0.75">あなたの投票は既に記録されています (再投票はできません)。</div>"#
+    } else {
+        r#""#
+    };
+    Html(format!(
+        r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>投票完了 — Sibling Chronicle | MU</title>
+<style>
+body{{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',sans-serif;line-height:1.85;padding:48px 24px;margin:0}}
+.wrap{{max-width:520px;margin:0 auto}}
+h1{{font-weight:200;font-size:28px;letter-spacing:0.02em;line-height:1.3;margin:0 0 12px}}
+.tally{{margin:32px 0;padding:24px;border:1px solid rgba(255,255,255,0.08);background:#0e0e0e;border-radius:2px}}
+.row{{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05);font-size:14px}}
+.row:last-child{{border:0}}
+.row .v{{font-variant-numeric:tabular-nums;color:#e6c449}}
+a{{color:#e6c449}}
+</style></head><body>
+<div class="wrap">
+  <div style="font-size:10px;letter-spacing:0.32em;text-transform:uppercase;color:#e6c449;opacity:0.85">MU · Sibling Chronicle 投票</div>
+  <h1>あなたの投票を記録しました.</h1>
+  <p style="opacity:0.75">選択: <strong style="color:#e6c449">{option_label}</strong></p>
+  {deploy_note}
+  <div class="tally">
+    <div style="font-size:9px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5;margin-bottom:14px">現在の集計</div>
+    <div class="row"><span>front design に QR 合成 (¥0)</span><span class="v">{keep}</span></div>
+    <div class="row"><span>首裏下に専用印刷 (+¥300/着)</span><span class="v">{raise}</span></div>
+    <div class="row"><span>実装しない</span><span class="v">{no}</span></div>
+    <div class="row"><span style="opacity:0.6">合計</span><span class="v" style="font-weight:600">{total}</span></div>
+    <div class="row" style="margin-top:8px;border-top:1px solid rgba(255,255,255,0.08);padding-top:12px"><span style="opacity:0.6">クォーラム (5 票) + 60% 賛成</span><span class="v">{progress}</span></div>
+  </div>
+  <p style="font-size:12px;opacity:0.55;margin-top:24px">
+    可決すると <code style="background:rgba(230,196,73,0.10);color:#e6c449;padding:0 4px">chronicle_enabled = 1</code> に変わり、次の MUON / multi-unit drop から首裏下 QR が焼き込まれます。<a href="/transparency">/transparency</a> · <a href="/constitution">/constitution</a>
+  </p>
+</div>
+</body></html>"##,
+        option_label = html_escape(option_label),
+        deploy_note = deploy_note,
+        keep = keep, raise = raise, no = no, total = total,
+        progress = if total >= 5 {
+            let yes = keep + raise;
+            let pct = (yes as f64 / total as f64 * 100.0) as i64;
+            format!("{}% 賛成", pct)
+        } else { format!("{}/5 票", total) }
+    ))
+}
+
+/// GET /chronicle-vote — public voting page with live tallies + form.
+async fn chronicle_vote_page(State(db): State<Db>) -> Html<String> {
+    let (keep, raise, no, total) = {
+        let conn = db.lock().unwrap();
+        chronicle_tally(&conn)
+    };
+    let enabled = {
+        let conn = db.lock().unwrap();
+        cv_get(&conn, "chronicle_enabled", "0") == "1"
+    };
+    let strategy = {
+        let conn = db.lock().unwrap();
+        cv_get(&conn, "chronicle_pricing_strategy", "")
+    };
+    let status_block = if enabled {
+        format!(
+            r#"<div style="background:rgba(168,217,154,0.10);border:1px solid rgba(168,217,154,0.4);padding:18px 22px;margin:24px 0;color:#a8d99a;font-size:13px;line-height:1.8">✓ <strong>Deployed</strong> — DAO 可決済み。strategy: <code style="background:#1a1a1a;color:#a8d99a;padding:1px 6px">{}</code>。新しい MUON / multi-unit drop から首裏下 QR が焼き込まれます。</div>"#,
+            html_escape(&strategy)
+        )
+    } else {
+        String::new()
+    };
+    Html(format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sibling Chronicle — DAO 投票 | MU</title>
+<meta name="description" content="MU 保有者・/you 登録者向けの DAO 投票。Sibling Chronicle (年代記 QR) を front design に合成するか、首裏下に専用印刷するか、入れないか。">
+<meta property="og:title" content="MU · Sibling Chronicle DAO 投票">
+<meta property="og:description" content="QR を front design に合成 (¥0) vs 首裏下に専用印刷 (+¥300/着) vs 導入しない。5 票 + 60% で自動デプロイ。">
+<meta property="og:image" content="https://wearmu.com/og.jpg">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<style>
+:root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--line:rgba(255,255,255,0.08)}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue','Hiragino Sans',sans-serif;line-height:1.85;font-size:14.5px;-webkit-font-smoothing:antialiased}}
+nav{{position:sticky;top:0;background:rgba(10,10,10,0.9);backdrop-filter:blur(12px);border-bottom:1px solid var(--line);padding:16px 28px;display:flex;justify-content:space-between;align-items:center;z-index:50;font-size:11px;letter-spacing:0.3em;text-transform:uppercase}}
+nav .logo{{font-weight:700;letter-spacing:0.45em}}
+.wrap{{max-width:680px;margin:0 auto;padding:48px 24px 80px}}
+.eyebrow{{font-size:10px;letter-spacing:0.42em;text-transform:uppercase;color:var(--y);opacity:0.85;margin-bottom:14px}}
+h1{{font-size:clamp(28px,5.5vw,42px);font-weight:200;letter-spacing:0.01em;line-height:1.18;margin-bottom:18px}}
+h1 em{{color:var(--y);font-style:normal;font-weight:300}}
+p{{color:var(--mute);margin:0 0 14px}}
+.tally{{margin:32px 0;padding:24px;border:1px solid var(--line);background:#0e0e0e;border-radius:2px}}
+.tally h3{{font-size:9px;letter-spacing:0.32em;text-transform:uppercase;color:var(--y);font-weight:500;margin-bottom:16px}}
+.row{{display:grid;grid-template-columns:1fr auto;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);align-items:baseline}}
+.row:last-child{{border:0}}
+.row .v{{font-variant-numeric:tabular-nums;color:var(--y);font-size:15px;font-weight:500}}
+.opts{{margin:32px 0}}
+.opt{{display:block;padding:18px 20px;border:1px solid var(--line);background:#0d0d0d;border-radius:2px;margin-bottom:10px;cursor:pointer;transition:all 0.2s}}
+.opt:hover{{border-color:rgba(230,196,73,0.4);background:#101010}}
+.opt input{{display:none}}
+.opt.sel{{border-color:var(--y);background:rgba(230,196,73,0.06)}}
+.opt-title{{font-size:14px;font-weight:500;letter-spacing:0.02em;margin-bottom:4px}}
+.opt-desc{{font-size:12px;opacity:0.7;line-height:1.7}}
+.form{{margin-top:24px}}
+.form input{{width:100%;background:#000;border:1px solid var(--line);color:var(--fg);padding:14px 16px;font-family:inherit;font-size:14px;border-radius:2px;letter-spacing:0.04em}}
+.form input:focus{{outline:none;border-color:var(--y)}}
+.btn{{display:inline-flex;align-items:center;gap:10px;background:var(--y);color:#000;border:0;padding:16px 32px;font-family:inherit;font-size:11px;letter-spacing:0.32em;text-transform:uppercase;font-weight:700;cursor:pointer;border-radius:2px;margin-top:14px;width:100%}}
+.btn:disabled{{opacity:0.4;cursor:not-allowed}}
+.msg{{margin-top:14px;padding:12px 16px;font-size:12px;line-height:1.7;border-radius:2px}}
+.msg.ok{{background:rgba(168,217,154,0.10);color:#a8d99a;border-left:2px solid #a8d99a}}
+.msg.err{{background:rgba(255,138,122,0.10);color:#ff8a7a;border-left:2px solid #ff8a7a}}
+footer{{margin-top:48px;padding-top:24px;border-top:1px solid var(--line);font-size:11px;opacity:0.55;letter-spacing:0.08em;line-height:2}}
+a{{color:var(--y)}}
+</style></head><body>
+<nav><a class="logo" href="/">MU</a><span style="opacity:0.55">Chronicle Vote</span><a href="/transparency" style="opacity:0.55">数字</a></nav>
+<div class="wrap">
+  <div class="eyebrow">MU DAO · Sibling Chronicle</div>
+  <h1>同じデザインを着る人たちの<br><em>年代記</em>、入れるべきか?</h1>
+  <p>
+    Sibling Chronicle = 同じデザインを N 着刷る商品 (MUON 等) の N 番目を買うと、シャツに小さな QR + 番号が DTG プリントされます。<br>
+    スキャンすると <a href="/c/11/1">/c/&lt;id&gt;/&lt;position&gt;</a> が開き、これまでの注文日時 + 匿名 ID が見えます。後から買う人もリストに自動追記されていく。
+  </p>
+  <p>
+    QR を <strong>どこに焼くか</strong> を決めます:<br>
+    ① front design に合成 → Printful の placement 数は 1 のままなので <strong style="color:#e6c449">追加費用 ¥0</strong> (デザインの隅に QR が入る)<br>
+    ② 首裏下 (label_outside) に専用印刷 → デザイン無傷だが Printful 追加 placement +$2/着 (¥300)、MUGEN ¥5,000 で margin -15%<br>
+    ③ 実装しない
+  </p>
+  {status_block}
+  <div class="tally">
+    <h3>現在の集計</h3>
+    <div class="row"><span>front design に QR 合成 (追加費用 ¥0)</span><span class="v">{keep}</span></div>
+    <div class="row"><span>首裏下に専用印刷 (+¥300/着)</span><span class="v">{raise}</span></div>
+    <div class="row"><span>実装しない</span><span class="v">{no}</span></div>
+    <div class="row"><span style="opacity:0.6">合計 / クォーラム 5 票 + 60% 賛成で自動デプロイ</span><span class="v">{total}</span></div>
+  </div>
+
+  <div class="opts">
+    <label class="opt" onclick="pick(this, 'keep')">
+      <input type="radio" name="opt" value="keep">
+      <div class="opt-title">① QR を front design に合成 (追加費用 ¥0)</div>
+      <div class="opt-desc">既存の front プリント領域の隅に QR + 番号を一緒に焼く。Printful の placement は 1 つのままなので <strong style="color:#e6c449">追加コストなし</strong>。デザインの隅にコードが入る trade-off (毎時 AI が考慮)。</div>
+    </label>
+    <label class="opt" onclick="pick(this, 'raise')">
+      <input type="radio" name="opt" value="raise">
+      <div class="opt-title">② 首裏下に専用印刷 (+¥300/着)</div>
+      <div class="opt-desc">label_outside placement に DTG 印刷。front デザインは無傷で QR は背中側に discreet に。Printful の追加 placement 料金が +$2/着 = ¥300、margin -15%。価格据え置き or +¥500 上乗せは別途決定。</div>
+    </label>
+    <label class="opt" onclick="pick(this, 'no')">
+      <input type="radio" name="opt" value="no">
+      <div class="opt-title">③ 実装しない</div>
+      <div class="opt-desc">Sibling Chronicle はリリースしない。コードは feature flag OFF のまま残す。</div>
+    </label>
+  </div>
+
+  <form class="form" onsubmit="return submitVote(event)">
+    <input id="vote-email" type="email" placeholder="メールアドレス (MU 購入歴 or /you 登録のもの)" required>
+    <button class="btn" id="vote-btn" type="submit" disabled>確認メールを送る →</button>
+    <div id="vote-msg" style="display:none" class="msg"></div>
+  </form>
+
+  <footer>
+    投票資格: MUGEN/MA/MUON 購入歴 または <a href="/you">/you 登録</a>。<br>
+    1 人 1 票 · 集計は real-time · 可決で <code style="background:rgba(230,196,73,0.10);padding:0 4px;color:var(--y)">chronicle_enabled</code> = 1 に自動 flip。<br>
+    株式会社イネブラ (Enabler Inc.) · yuki (1 human operator) · 28 agents · <a href="/transparency">数字 public</a>
+  </footer>
+</div>
+<script>
+let selectedOpt = null;
+function pick(el, opt){{
+  document.querySelectorAll('.opt').forEach(o => o.classList.remove('sel'));
+  el.classList.add('sel');
+  el.querySelector('input').checked = true;
+  selectedOpt = opt;
+  updateBtn();
+}}
+function updateBtn(){{
+  const email = document.getElementById('vote-email').value.trim();
+  document.getElementById('vote-btn').disabled = !(selectedOpt && email.includes('@'));
+}}
+document.getElementById('vote-email').addEventListener('input', updateBtn);
+async function submitVote(e){{
+  e.preventDefault();
+  const email = document.getElementById('vote-email').value.trim();
+  const msg = document.getElementById('vote-msg');
+  const btn = document.getElementById('vote-btn');
+  if (!selectedOpt || !email) return false;
+  btn.disabled = true; btn.textContent = '送信中…';
+  msg.style.display = 'none';
+  try {{
+    const r = await fetch('/api/chronicle/vote/request', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{email, option: selectedOpt}})
+    }});
+    const d = await r.json();
+    if (d.ok) {{
+      msg.className = 'msg ok';
+      msg.textContent = d.message || '確認メールを送りました。リンクをクリックすると投票が確定します。';
+    }} else {{
+      msg.className = 'msg err';
+      msg.textContent = d.error || 'エラーが発生しました。';
+    }}
+    msg.style.display = 'block';
+  }} catch(_) {{
+    msg.className = 'msg err';
+    msg.textContent = 'ネットワークエラー。少し待って再送信してください。';
+    msg.style.display = 'block';
+  }}
+  btn.textContent = '確認メールを送る →';
+  updateBtn();
+  return false;
+}}
+</script>
+</body></html>"##,
+        status_block = status_block,
+        keep = keep, raise = raise, no = no, total = total,
+    ))
 }
 
 /// Shared snapshot builder for /api/transparency (JSON) + /transparency (HTML).
@@ -26442,6 +26909,34 @@ async fn main() {
         );
         CREATE INDEX IF NOT EXISTS idx_feedback_active ON feedback_insights(active, scope, signal_score DESC);
 
+        -- Sibling Chronicle DAO vote: where to put the QR.
+        -- Three options:
+        --   'keep'  = QR を front design に合成 (追加費用 ¥0)
+        --   'raise' = QR を首裏下 label_outside に専用印刷 (+¥300/着、margin -15%)
+        --   'no'    = 実装しない
+        -- Eligibility: any email in mu_purchases (real buyer) or you_users
+        -- (any signup). One vote per email; magic-link confirms ownership.
+        CREATE TABLE IF NOT EXISTS chronicle_votes (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            email       TEXT NOT NULL UNIQUE,
+            option      TEXT NOT NULL,           -- 'keep' | 'raise' | 'no'
+            voted_at    TEXT NOT NULL,
+            ip_hash     TEXT,
+            tier        TEXT                     -- 'buyer' | 'you' | 'other'
+        );
+        CREATE INDEX IF NOT EXISTS idx_chronicle_votes_opt ON chronicle_votes(option);
+
+        -- One-time magic-link tokens for chronicle voting. Token expires 24h.
+        CREATE TABLE IF NOT EXISTS chronicle_vote_tokens (
+            token       TEXT PRIMARY KEY,
+            email       TEXT NOT NULL,
+            option      TEXT NOT NULL,
+            issued_at   TEXT NOT NULL,
+            consumed_at TEXT,
+            ip_hash     TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_chronicle_tokens_email ON chronicle_vote_tokens(email);
+
         CREATE TABLE IF NOT EXISTS bounty_submissions (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             severity        TEXT NOT NULL,
@@ -26627,6 +27122,9 @@ async fn main() {
         .route("/api/products/item/:id", get(get_product))
         .route("/api/products/item/:id/chronicle", get(get_product_chronicle))
         .route("/c/:id/:pos", get(chronicle_short_page))
+        .route("/chronicle-vote", get(chronicle_vote_page))
+        .route("/api/chronicle/vote/request", post(chronicle_vote_request))
+        .route("/chronicle/vote/confirm/:token", get(chronicle_vote_confirm))
         .route("/api/qr/c/:id/:pos.svg", get(chronicle_qr_svg))
         .route("/api/qr/c/:id/:pos.png", get(chronicle_qr_png))
         .route("/api/weather", get(weather_handler))
