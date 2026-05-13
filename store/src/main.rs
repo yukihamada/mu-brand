@@ -26656,25 +26656,23 @@ fn template_referral(ctx: &EmailContext, variant: &str, ref_code: &str) -> (Stri
     let _ = &cta; // legacy CTA kept for callers; using cta_gift below
     match variant {
         "A" => {
-            // applied from email_rewrite_drafts id=5 (v2, approved by admin)
-            // rationale: v1 「贈り物」フレームが clutter 増で逆効果だったため、
-            // 直接的ベネフィット提示 (試用 +30 日) に転換。78% 統計は維持。
-            let subject = format!("{}: ご紹介で、あなたの試用期間を 30 日延長します", name_disp);
+            // REVERTED to email_rewrite_drafts id=2 ("贈り物" frame).
+            // v3 attempt (id=5, 直球販促) regressed 0.35→0.31. Going back to v2 baseline.
+            let subject = format!("{} の特別な体験を、大切な一人へ贈る招待状", name_disp);
             let body = format!(
-                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14.5px;line-height:1.6;"><b style="color:#e6c449;">{name}</b> オーナー様</p>{img}<p style="margin:0 0 14px;color:#fff;font-size:15.5px;line-height:1.6;font-weight:500;">{name} の体験を共有し、ご自身の試用期間を <b style="color:#e6c449;">30 日間延長</b> できます。</p><p style="margin:0 0 12px;color:#bbb;font-size:13.5px;line-height:1.65;">ご紹介された方の <b style="color:#e6c449;">78%</b> が、この限定体験 (デザインストーリーと 3 つの着こなし提案) に高い満足度を示しています。<br>オーナー様からのご紹介は、MUGEN の世界観を深く理解するコミュニティを育て、将来の製品体験を共に向上させるためのものです。</p><p style="margin:0 0 12px;color:#bbb;font-size:13.5px;line-height:1.65;">以下より、大切な方お一人だけにご利用いただける招待リンクを発行してください。</p>{cta}<p style="margin:18px 0 0;color:#888;font-size:12px;line-height:1.55;">このご案内が不要でしたら、何もしなくて結構です。</p>"#,
-                name = html_escape(&name_disp),
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14.5px;line-height:1.6;"><b style="color:#e6c449;">{name}</b> オーナー様へ、限定コンテンツのご案内です。</p>{img}<p style="margin:0 0 12px;color:#bbb;font-size:14px;line-height:1.65;">この 1 着のデザインストーリーと、3 つの着こなし提案をご用意しました。<br><a href="https://wearmu.com/products/{slug}#story" style="color:#e6c449;text-decoration:none;border-bottom:1px solid #e6c449;padding-bottom:1px;">→ デザインストーリーを見る</a></p><p style="margin:0 0 12px;color:#bbb;font-size:14px;line-height:1.65;">この体験を、あなたと同じ感性を持つ大切な一人にだけ贈ってみませんか。</p><p style="margin:0 0 14px;color:#999;font-size:13px;line-height:1.6;">MU の集計では、こうした特別な招待を受け取った方の <b style="color:#e6c449;">78%</b> が、紹介者に深い感謝を示しています。<br>もし相手の方が MUGEN を気に入れば、あなたの試用期間は自動で <b>30 日延長</b>。</p>{cta}<p style="margin:18px 0 0;color:#888;font-size:12px;line-height:1.55;">このご案内が不要でしたら、何もしなくて結構です。<br>招待は一度きり、30 日間有効です。</p>"#,
+                name = html_escape(&name_disp), slug = html_attr_escape(&ctx.slug),
                 img = image_block(ctx), cta = cta_gift);
-            (subject.clone(), email_shell(&subject, "招待", &now_jst, &body))
+            (subject.clone(), email_shell(&subject, "招待状", &now_jst, &body))
         }
         _ => {
-            // applied from email_rewrite_drafts id=6 (v3, approved by admin)
-            // rationale: v2「美意識」フレームは clutter 残存。"招待枠" +
-            // "最も質の高い出会い" framing で community を強化、5% を keep。
-            let subject = format!("{} の招待枠：あなたと同じ感性を持つ方、お一人様へ", name_disp);
+            // REVERTED to email_rewrite_drafts id=3 ("美意識" frame, v2 round).
+            // v3 (id=6, 招待枠) oscillated, no real improvement. Going back to v2.
+            let subject = format!("「{}」の美意識を、大切な方へ。特別なご招待。", name_disp);
             let body = format!(
-                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.6;"><b style="color:#e6c449;">{name}</b> をご愛用いただき、ありがとうございます。</p>{img}<p style="margin:0 0 14px;color:#fff;font-size:15.5px;line-height:1.6;font-weight:500;">あなたと同じ感性を持つ大切な方へ、この世界観を共有しませんか。</p><p style="margin:0 0 12px;color:#bbb;font-size:13.5px;line-height:1.65;">この招待は、MU の美意識を深く理解されている方同士を繋ぐための試みです。<br>実際に、この方法で MU と出会った方の <b style="color:#e6c449;">5%</b> が新たな愛用者となり、これは私たちの <b>最も質の高い出会い</b> の形となっています。</p><p style="margin:0 0 14px;color:#999;font-size:13px;line-height:1.6;">ご招待された方は、MU の製品を <b style="color:#e6c449;">初回 ¥1,000 引き</b>。<br>あなたへの感謝のしるしとして、<b style="color:#e6c449;">特典期間も 30 日延長</b> させていただきます。</p>{cta}<p style="margin:18px 0 0;color:#888;font-size:12px;line-height:1.55;">このご案内が不要でしたら、このまま閉じていただいて構いません。</p>"#,
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.6;"><b style="color:#e6c449;">{name}</b> をご愛用いただき、ありがとうございます。</p>{img}<p style="margin:0 0 14px;color:#fff;font-size:15.5px;line-height:1.6;font-weight:500;">あなたと同じ感性を持つただ一人を招待し、MU の世界を二人で深く味わいませんか。</p><p style="margin:0 0 12px;color:#bbb;font-size:13.5px;line-height:1.65;">同じ服を纏うことで生まれる静かな繋がりは、日常をより豊かにします。<br>招待された大切な方は、MU の製品を <b style="color:#e6c449;">初回 ¥1,000 引き</b> でお求めいただけます。</p><p style="margin:0 0 14px;color:#999;font-size:13px;line-height:1.6;">ご紹介いただいたあなたには、返礼として <b style="color:#e6c449;">特典利用期間を 30 日延長</b>。<br>過去の実績では、招待された方の <b>約 20 人に 1 人 (5%)</b> が、この特別な繋がりを選んでいます。</p>{cta}<p style="margin:18px 0 0;color:#888;font-size:12px;line-height:1.55;">このご案内が不要でしたら、静かに閉じていただいて構いません。</p>"#,
                 name = html_escape(&name_disp), img = image_block(ctx), cta = cta_gift);
-            (subject.clone(), email_shell(&subject, "招待枠", &now_jst, &body))
+            (subject.clone(), email_shell(&subject, "招待状", &now_jst, &body))
         }
     }
 }
