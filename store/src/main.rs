@@ -11022,6 +11022,14 @@ async fn blog_suzuri_vs_printful() -> Html<String> {
     Html(render_blog_md("SUZURI と Printful、 同じ MUGEN でも届くシャツが違う件", BLOG_SUZURI_VS_PRINTFUL_RAW))
 }
 
+/// /buy — single-product friction-minimum LP for paid/SNS traffic. Renders
+/// the latest available MUGEN drop in a 2-column hero with price, stock,
+/// countdown, size picker, and a 1-click Stripe checkout button. Targeted
+/// at the Toru persona for cold paid acquisition + DM cold-share.
+async fn buy_page() -> Html<&'static str> {
+    Html(include_str!("../static/buy.html"))
+}
+
 /// Branded 404 — served when no route/static file matches. Returns 404
 /// status with the static/404.html body so links + navigation are intact.
 async fn not_found_page() -> Response {
@@ -33192,6 +33200,7 @@ async fn main() {
         .route("/blog/week-one-7-buyers", get(blog_week_one))
         .route("/blog/quality-upgrade-muon-ma", get(blog_quality_upgrade))
         .route("/blog/suzuri-vs-printful-spec", get(blog_suzuri_vs_printful))
+        .route("/buy", get(buy_page))
         .route("/survey/quality", get(survey_quality_page))
         .route("/api/poll/quality", get(quality_poll_results))
         .route("/api/poll/quality/vote", post(quality_poll_vote))
