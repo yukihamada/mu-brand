@@ -31,9 +31,9 @@
 <meta property="og:url" content="https://wearmu.com/">
 <meta property="og:title" content="MU — 北海道の天気がデザインする服">
 <meta property="og:description" content="気温が枚数を決め、売れた数が価格を決める（早く買うほど安い）。毎時・毎日・毎週、AIが生成する限定Tシャツ。売り切れたら二度と同じものは生まれない。">
-<meta property="og:image" content="https://wearmu.com/og.jpg">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="630">
+<meta property="og:image" content="https://mockups.wearmu.com/hero.png">
+<meta property="og:image:width" content="1424">
+<meta property="og:image:height" content="752">
 <meta property="og:image:alt" content="MU — AI autonomous fashion brand from Hokkaido">
 <meta property="og:site_name" content="MU">
 <meta property="og:locale" content="ja_JP">
@@ -43,7 +43,7 @@
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="MU — 北海道の天気がデザインする服">
 <meta name="twitter:description" content="気温が枚数を決め、売れた数が価格を決める（早く買うほど安い）。毎時・毎日・毎週、AIが生成する限定Tシャツ。">
-<meta name="twitter:image" content="https://wearmu.com/og.jpg">
+<meta name="twitter:image" content="https://mockups.wearmu.com/hero.png">
 <meta name="twitter:image:alt" content="MU — AI autonomous fashion brand">
 
 <!-- JSON-LD: Organization + WebSite + ClothingStore -->
@@ -90,7 +90,7 @@
       "currenciesAccepted": "JPY",
       "paymentAccepted": "Credit Card, Stripe",
       "priceRange": "¥5,000〜¥300,000",
-      "image": "https://wearmu.com/og.jpg",
+      "image": "https://mockups.wearmu.com/hero.png",
       "hasOfferCatalog": {
         "@type": "OfferCatalog",
         "name": "MU Drops",
@@ -601,12 +601,31 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
     Autonomous fashion · designed by weather · made by AI · 1 maintainer + 28 agents
   </div>
 
+  <!-- Hero shirt — the single anchor image MU is recognized by. AI-generated
+       (Gemini 3 Pro Image, 2026-05-13). Constitution §13: faceless, just the
+       fabric. Sits ABOVE the CTA so passers-by see what they're buying first. -->
+  <a href="#section-mugen" onclick="showSection('mugen');return false;"
+     style="display:block;width:100%;max-width:880px;margin:32px auto 0;text-decoration:none;cursor:pointer">
+    <img src="https://mockups.wearmu.com/hero.png"
+         alt="MU — black short-sleeve T-shirt with the ━◯━ mark on the chest"
+         width="1424" height="752"
+         loading="eager"
+         fetchpriority="high"
+         style="width:100%;height:auto;display:block;border-radius:2px;opacity:0.92"
+         onmouseover="this.style.opacity='1'"
+         onmouseout="this.style.opacity='0.92'">
+    <div style="text-align:center;font-size:10px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.45;margin-top:10px">
+      black tee · ━◯━ · ¥5,000 → ¥30,000 (bonding curve)
+    </div>
+  </a>
+
   <!-- Primary CTA — top-of-hero so it's always above the fold on PC & mobile.
        Real <button> for max click reliability + accessibility. -->
   <button type="button"
           class="hero-cta-primary"
           onclick="showSection('mugen');return false;"
-          aria-label="MUGEN を見る — 1 時間ごとに 1 着、毎回違うデザインの T シャツ">
+          aria-label="MUGEN を見る — 1 時間ごとに 1 着、毎回違うデザインの T シャツ"
+          style="margin-top:24px">
     <span class="cta-main">今すぐ買う</span>
     <span class="cta-sub">MUGEN ¥5,000〜 · 早く買うほど安い ↓</span>
   </button>
@@ -2029,7 +2048,7 @@ function injectProductSchema(products){
     "@type": "Product",
     "name": p.name,
     "url": `https://wearmu.com/products/${p.brand}/${p.drop_num}`,
-    "image": p.mockup_url || "https://wearmu.com/og.jpg",
+    "image": p.mockup_url || "https://mockups.wearmu.com/hero.png",
     "description": `MU ${p.brand.toUpperCase()} — AI-generated garment. Drop #${p.drop_num}. ${p.inventory} pieces only.`,
     "brand": {"@type":"Brand","name":"MU"},
     "offers": {
