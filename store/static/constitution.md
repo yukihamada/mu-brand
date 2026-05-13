@@ -238,6 +238,43 @@ weight. As Chronicle slots accumulate and new amendments are
 ratified, this share dilutes naturally. Wisdom dividend re-inflates
 it over time if it survives.
 
+## Fabric
+
+§24 — From `mugen` drop_num **148** onward, the default fabric is
+**Stanley/Stella SATU001 Creator 2.0 Ribbed Neck T-Shirt**
+(Printful product 818).
+
+Spec:
+- 180gsm / 100% organic combed ring-spun cotton
+- **Ribbed crew neck** (the visible Visvim-class detail)
+- GOTS organic certified, EU made (Portugal)
+- Black, piece-dyed
+- Black M variant_id `20717`; cost to merchant ≈ $25.00
+- DTG white-ink front print on dense weave
+
+Drops 1–147 (the Bella+Canvas 3001 era) are immutable. No retroactive
+re-printing — Constitution §21 (purchase path sacrosanct) takes
+precedence over fabric upgrades. Each shirt's fabric era is recorded
+on its `/shirt/:pid/life` page so a buyer can prove "I have an era-1
+piece" forever.
+
+Pricing for drop_num ≥ 148:
+- Base ¥9,800 (cost ≈ ¥3,750 + DTG ≈ ¥750 + EU→JP ship ≈ ¥1,200 ≈ ¥5,700; margin 42% at base)
+- Bonding step +¥250 / sale (unchanged)
+- Cap ¥40,000 per SKU
+
+Constitution §21 ceiling ¥100,000 unchanged. §21 floor `cost × 1.2`
+satisfied (¥5,700 × 1.2 = ¥6,840 < ¥9,800).
+
+Why this fabric:
+1. 180gsm + ribbed neck is the "touched detail" Visvim/Comme buyers register without being told. Bella+Canvas 3001 had no such signal.
+2. GOTS organic + EU heritage gives the quiet-luxury narrative that the §19-aligned target buyer (`/persona.md`) values.
+3. Stanley/Stella is on Printful's EU center → Constitution §2 (0 humans) preserved, §15 (compose) preserved.
+
+Substitution to a different default fabric requires a new amendment
+to §24. MA pieces, MUON, and collab lines retain their own fabric
+decisions (recorded per-line, not in this §).
+
 ---
 
 *This document is hashed into every build. The build SHA prefix is shown on `/admin/agents` next to the Constitution version.*
