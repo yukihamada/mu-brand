@@ -21,6 +21,10 @@
 <link rel="shortcut icon" href="/favicon.ico">
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.json">
+<!-- iOS standalone (hide Safari UI when launched from Home Screen) -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="MU">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
 <!-- Open Graph -->
 <meta property="og:type" content="website">
@@ -2166,6 +2170,16 @@ window.addEventListener('popstate', ()=>{
     };
   }
 })();
+</script>
+<!-- Service worker registration (PWA, offline Constitution / DAO / Scan).
+     Constitution §22 alignment: brand documents must be readable even
+     when the network isn't. Safe to fail silently — SW is progressive. -->
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {});
+  });
+}
 </script>
 </body>
 </html>

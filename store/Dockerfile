@@ -13,7 +13,10 @@ COPY . .
 RUN cargo build --release --bin mu-store
 
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+# openssl: signs the Apple Wallet .pkpass manifest with PASS_CERT/PASS_KEY.
+# pkpass needs a PKCS#7 detached CMS signature over manifest.json; pure-Rust
+# CMS crates are immature so we shell out to /usr/bin/openssl.
+RUN apt-get update && apt-get install -y ca-certificates openssl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /app/target/release/mu-store .
 COPY static static

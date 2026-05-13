@@ -546,6 +546,183 @@ async fn store_mockup_bytes(product_id: i64, bytes: &[u8]) -> Option<String> {
     Some(format!("/mockups/{}", key))
 }
 
+/// Rasterize the moon-phase marker for a given (pid, pos) into an RGBA
+/// buffer. White ink (255,255,255,a) on transparent background, designed
+/// to be composited into the bottom-right of a 1024×1024 design PNG so
+/// every Bella+Canvas 3001 DTG print carries a covert MU identifier.
+///
+/// Layout: 8 circles, radius=6, gap=4, stroke=1, total ~124×14 px.
+/// First circle = MOON_MAGIC_DIGIT (=4, fully filled) so a HoughCircles
+/// detection that doesn't see the magic byte can fast-reject as "not MU".
+fn rasterize_moon_marker_rgba(pid: i64, pos: i64) -> (Vec<u8>, u32, u32) {
+    let (digits, _) = moon_encode_marker(pid, pos);
+    let radius: i32 = 6;
+    let gap: i32 = 4;
+    let stroke: i32 = 1;
+    let cell: i32 = radius * 2 + stroke * 2;
+    let n = MOON_CIRCLES as i32;
+    let w: i32 = n * cell + (n - 1) * gap;
+    let h: i32 = cell;
+    let mut buf = vec![0u8; (w * h * 4) as usize];
+    let set_px = |buf: &mut [u8], x: i32, y: i32, a: u8| {
+        if x < 0 || x >= w || y < 0 || y >= h { return; }
+        let idx = ((y * w + x) * 4) as usize;
+        // White ink, alpha = a.  Composite via "max alpha" so overlapping
+        // outline/fill regions don't darken each other.
+        buf[idx]     = 255;
+        buf[idx + 1] = 255;
+        buf[idx + 2] = 255;
+        if a > buf[idx + 3] { buf[idx + 3] = a; }
+    };
+    for (i, &d) in digits.iter().enumerate() {
+        let cx = (i as i32) * (cell + gap) + cell / 2;
+        let cy = h / 2;
+        let frac = d as f32 / 4.0;
+        let fill_right_from = cx as f32 - radius as f32 + (2.0 * radius as f32) * (1.0 - frac);
+        for dy in -radius..=radius {
+            for dx in -radius..=radius {
+                let dist2 = dx * dx + dy * dy;
+                let r_inner = (radius - stroke).max(1);
+                if dist2 > radius * radius { continue; }
+                let on_outline = dist2 > r_inner * r_inner;
+                let in_fill = (d == 4)
+                    || (d > 0 && (cx + dx) as f32 >= fill_right_from);
+                let alpha: u8 = if d == 0 {
+                    if on_outline { 255 } else { 0 }
+                } else if in_fill {
+                    255
+                } else if on_outline {
+                    255
+                } else {
+                    0
+                };
+                if alpha > 0 {
+                    set_px(&mut buf, cx + dx, cy + dy, alpha);
+                }
+            }
+        }
+    }
+    (buf, w as u32, h as u32)
+}
+
+/// Composite the moon marker into the bottom-right corner of a 1024×1024
+/// (or any-size) design PNG. Returns the new PNG bytes. Pure-Rust path
+/// using only the `png` crate — no heavy `image` dep.
+///
+/// White marker pixels are alpha-blended onto the design. If the design's
+/// background is transparent (TYPE for all Gemini-generated MU designs),
+/// the marker becomes part of the printable region for Printful DTG.
+fn composite_marker_into_png(design_bytes: &[u8], pid: i64, pos: i64) -> Result<Vec<u8>, String> {
+    let cursor = std::io::Cursor::new(design_bytes);
+    let decoder = png::Decoder::new(cursor);
+    let mut reader = decoder.read_info().map_err(|e| format!("png decode: {}", e))?;
+    let info = reader.info().clone();
+    let width = info.width;
+    let height = info.height;
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let frame_info = reader.next_frame(&mut buf).map_err(|e| format!("png frame: {}", e))?;
+    // Normalize to RGBA8.
+    let mut rgba: Vec<u8> = match frame_info.color_type {
+        png::ColorType::Rgba => buf.clone(),
+        png::ColorType::Rgb => {
+            let mut out = Vec::with_capacity((width * height * 4) as usize);
+            for chunk in buf.chunks_exact(3) {
+                out.extend_from_slice(&[chunk[0], chunk[1], chunk[2], 255]);
+            }
+            out
+        }
+        png::ColorType::Grayscale => {
+            let mut out = Vec::with_capacity((width * height * 4) as usize);
+            for &g in &buf { out.extend_from_slice(&[g, g, g, 255]); }
+            out
+        }
+        png::ColorType::GrayscaleAlpha => {
+            let mut out = Vec::with_capacity((width * height * 4) as usize);
+            for chunk in buf.chunks_exact(2) {
+                out.extend_from_slice(&[chunk[0], chunk[0], chunk[0], chunk[1]]);
+            }
+            out
+        }
+        other => return Err(format!("unsupported PNG color type {:?}", other)),
+    };
+    let bit_depth = frame_info.bit_depth;
+    if bit_depth != png::BitDepth::Eight {
+        return Err(format!("unsupported bit depth {:?}", bit_depth));
+    }
+    // Rasterize marker.
+    let (marker, mw, mh) = rasterize_moon_marker_rgba(pid, pos);
+    // Place at bottom-right with 40 px padding (or 4% of width for smaller designs).
+    let pad: u32 = (width / 25).max(16);
+    let mx = width.saturating_sub(mw).saturating_sub(pad);
+    let my = height.saturating_sub(mh).saturating_sub(pad);
+    for y in 0..mh.min(height.saturating_sub(my)) {
+        for x in 0..mw.min(width.saturating_sub(mx)) {
+            let mi = ((y * mw + x) * 4) as usize;
+            let ma = marker[mi + 3];
+            if ma == 0 { continue; }
+            let di = (((my + y) * width + (mx + x)) * 4) as usize;
+            // Source-over blend: result = src*a + dst*(1-a)
+            let sa = ma as u32;
+            let da = rgba[di + 3] as u32;
+            let inv = 255 - sa;
+            rgba[di]     = ((marker[mi]     as u32 * sa + rgba[di]     as u32 * inv) / 255) as u8;
+            rgba[di + 1] = ((marker[mi + 1] as u32 * sa + rgba[di + 1] as u32 * inv) / 255) as u8;
+            rgba[di + 2] = ((marker[mi + 2] as u32 * sa + rgba[di + 2] as u32 * inv) / 255) as u8;
+            rgba[di + 3] = (sa + (da * inv) / 255).min(255) as u8;
+        }
+    }
+    // Re-encode as PNG (RGBA8).
+    let mut out: Vec<u8> = Vec::with_capacity(design_bytes.len());
+    {
+        let mut encoder = png::Encoder::new(&mut out, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().map_err(|e| format!("png header: {}", e))?;
+        writer.write_image_data(&rgba).map_err(|e| format!("png write: {}", e))?;
+    }
+    Ok(out)
+}
+
+/// Fetch a design URL, composite the marker, upload to R2 (or fall back
+/// to a local mockup dir), and return the new public URL. If R2/local
+/// write fails, returns the original design_url unchanged — print still
+/// works without the marker.
+async fn marker_composite_url(original: &str, pid: i64, pos: i64) -> String {
+    let original_owned = original.to_string();
+    let bytes = match reqwest::get(original).await {
+        Ok(r) if r.status().is_success() => match r.bytes().await {
+            Ok(b) if !b.is_empty() => b,
+            _ => return original_owned,
+        },
+        _ => return original_owned,
+    };
+    let composited = match composite_marker_into_png(&bytes, pid, pos) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("[marker_composite] pid={} pos={} compose err: {}", pid, pos, e);
+            return original_owned;
+        }
+    };
+    let key = format!("marker/{}_{}.png", pid, pos);
+    if let Some(cfg) = r2_config() {
+        match cfg.bucket.put_object_with_content_type(&key, &composited, "image/png").await {
+            Ok(r) if r.status_code() == 200 => {
+                return format!("{}/{}", cfg.public_base.trim_end_matches('/'), key);
+            }
+            Ok(r) => eprintln!("[marker_composite] r2 status {}", r.status_code()),
+            Err(e) => eprintln!("[marker_composite] r2 err: {}", e),
+        }
+    }
+    // Fallback: write to /data/mockups/marker/.
+    let dir = mockups_dir().join("marker");
+    let _ = tokio::fs::create_dir_all(&dir).await;
+    let path = dir.join(format!("{}_{}.png", pid, pos));
+    if tokio::fs::write(&path, &composited).await.is_ok() {
+        return format!("https://wearmu.com/mockups/marker/{}_{}.png", pid, pos);
+    }
+    original_owned
+}
+
 /// If the given URL is a Printful temporary upload (which expires), download
 /// the bytes and persist them. Return the new permanent URL on success, or
 /// None if the URL is already permanent / fetch failed.
@@ -5171,7 +5348,19 @@ function detect() {{
     levels.push(level);
   }}
   src.delete(); gray.delete(); circles.delete();
-  // Decode to value.
+  // §23 magic byte: digit[0] (left-most circle) must be level 4 (full) to
+  // be a valid MU marker. Reject early so random shirts never trigger
+  // the decode round-trip.
+  if (levels[0] !== 4) return;
+  // Optional geometric sanity: gaps + radii consistent (within ~25%).
+  const xs = row.map(c => c.x); const rs = row.map(c => c.r);
+  const dxs = []; for (let i = 1; i < xs.length; i++) dxs.push(xs[i] - xs[i-1]);
+  const meanDx = dxs.reduce((a,b)=>a+b,0) / dxs.length;
+  const dxVar = dxs.some(d => Math.abs(d - meanDx) / meanDx > 0.30);
+  const meanR = rs.reduce((a,b)=>a+b,0) / rs.length;
+  const rVar = rs.some(r => Math.abs(r - meanR) / meanR > 0.30);
+  if (dxVar || rVar) return;  // geometry too irregular — not a real MU marker
+  // Decode to value (base-5 over 8 levels including the magic digit).
   let value = 0;
   for (const l of levels) value = value * 5 + l;
   // Debounce: same value within 1.5s = ignore.
@@ -5191,12 +5380,25 @@ async function fetchDecode(value) {{
       el.innerHTML = `<div class="msg err">decode 失敗: ${{d.error || 'unknown'}} · value=${{value}}</div>`;
       return;
     }}
+    const designedDate = d.design_created_at ? String(d.design_created_at).slice(0,10) : '—';
+    const purchasedDate = d.this_position_purchased_at ? String(d.this_position_purchased_at).slice(0,10) : '未購入';
     let html = `
-      <div class="msg ok">✓ Authenticated</div>
+      <div class="msg ok">✓ Authenticated · MU magic byte verified</div>
       <div class="row"><span class="k">Drop</span><span>${{d.brand.toUpperCase()}} #${{String(d.drop_num).padStart(4,'0')}}</span></div>
       <div class="row"><span class="k">Position</span><span>#${{d.position}} / ${{d.inventory}}</span></div>
       <div class="row"><span class="k">Name</span><span>${{d.name}}</span></div>
+      <div class="row"><span class="k">Designed</span><span>${{designedDate}}</span></div>
+      <div class="row"><span class="k">Bought</span><span>${{purchasedDate}}</span></div>
       ${{d.buyer ? `<div class="row"><span class="k">Buyer</span><span>${{d.buyer}}</span></div>` : ''}}`;
+    if (Array.isArray(d.siblings) && d.siblings.length > 1) {{
+      html += `<div class="row"><span class="k">Siblings</span><span style="font-size:11px;opacity:0.7">${{d.siblings.length}} positions in this drop</span></div>`;
+    }}
+    if (Array.isArray(d.drop_lineage) && d.drop_lineage.length > 1) {{
+      const ladder = d.drop_lineage.map(x =>
+        `<span style="${{x.is_self?'color:#e6c449;font-weight:600':'opacity:0.5'}}">#${{x.drop_num}} (${{String(x.created_at).slice(0,10)}})</span>`
+      ).join(' → ');
+      html += `<div class="row" style="flex-direction:column;align-items:flex-start"><span class="k">Lineage</span><span style="font-size:11px;margin-top:4px">${{ladder}}</span></div>`;
+    }}
     if (event_slug) {{
       const ci = await fetch('/api/scan/checkin', {{
         method: 'POST', headers: {{'Content-Type':'application/json'}},
@@ -5347,7 +5549,56 @@ async fn admin_event_checkins(
 // each circle's interior is sampled — fill ratio quantized to {0..4}.
 const MOON_LEVELS: usize = 5;
 const MOON_CIRCLES: usize = 8;
+/// First circle is reserved as the MU "magic byte" — always rendered at
+/// the max level (4 = fully filled). This gives the scanner a strong
+/// cheap-to-verify signal that the mark belongs to MU before doing any
+/// /api round-trip. Random clothing prints almost never have an 8-circle
+/// row where the first one is fully filled.
+const MOON_MAGIC_DIGIT: u8 = 4;
+/// Payload encoded by digits 1..7 (7 base-5 digits → 78,125 slots).
+/// At 64 positions per product, that's 1,220 unique products — more than
+/// MU's catalogue will ever reach in a reasonable horizon.
+const MOON_PAYLOAD_RADIX: u64 = 5;
+const MOON_PAYLOAD_DIGITS: u32 = (MOON_CIRCLES as u32) - 1; // 7
 
+/// Encode (product_id, position) → 8 circle levels with magic[0]=4.
+/// Returns the digit array and the canonical u64 value (digits as base-5).
+fn moon_encode_marker(pid: i64, pos: i64) -> ([u8; MOON_CIRCLES], u64) {
+    let payload = ((pid as u64).saturating_mul(64)).saturating_add(pos.max(0) as u64);
+    let mut digits = [0u8; MOON_CIRCLES];
+    digits[0] = MOON_MAGIC_DIGIT;
+    let mut v = payload;
+    for i in (1..MOON_CIRCLES).rev() {
+        digits[i] = (v % MOON_PAYLOAD_RADIX) as u8;
+        v /= MOON_PAYLOAD_RADIX;
+    }
+    let value = digits.iter().fold(0u64, |acc, &d| acc * (MOON_LEVELS as u64) + d as u64);
+    (digits, value)
+}
+
+/// Decode a raw 8-digit base-5 value back to (pid, pos). Returns None if
+/// the magic byte (digit[0]) doesn't match.
+fn moon_decode_marker(value: u64) -> Option<(i64, i64)> {
+    let max = (MOON_LEVELS as u64).pow(MOON_CIRCLES as u32);
+    if value >= max { return None; }
+    let mut digits = [0u8; MOON_CIRCLES];
+    let mut v = value;
+    for i in (0..MOON_CIRCLES).rev() {
+        digits[i] = (v % (MOON_LEVELS as u64)) as u8;
+        v /= MOON_LEVELS as u64;
+    }
+    if digits[0] != MOON_MAGIC_DIGIT { return None; }
+    let payload: u64 = digits[1..].iter()
+        .fold(0u64, |acc, &d| acc * MOON_PAYLOAD_RADIX + d as u64);
+    let pid = (payload / 64) as i64;
+    let pos = (payload % 64) as i64;
+    Some((pid, pos))
+}
+
+/// Legacy helper kept for SVG renderer & PWA. Pure base-5 encode of a
+/// value into 8 digits, no magic byte applied. New code should use
+/// moon_encode_marker / moon_decode_marker.
+#[allow(dead_code)]
 fn moon_encode(value: u64) -> [u8; MOON_CIRCLES] {
     let mut digits = [0u8; MOON_CIRCLES];
     let mut v = value;
@@ -5358,6 +5609,7 @@ fn moon_encode(value: u64) -> [u8; MOON_CIRCLES] {
     digits
 }
 
+#[allow(dead_code)]
 fn moon_decode(digits: &[u8]) -> u64 {
     digits.iter().fold(0u64, |acc, &d| acc * (MOON_LEVELS as u64) + (d as u64))
 }
@@ -5368,11 +5620,12 @@ fn moon_decode(digits: &[u8]) -> u64 {
 async fn moon_marker_svg(
     Path((pid, pos)): Path<(i64, i64)>,
 ) -> Response {
-    if pid < 0 || pos < 0 || pid > 6102 || pos > 63 {
+    // 7 payload digits in base 5 = 78,125 slots → 1,220 distinct products
+    // (since pos uses 0..63). Plenty.
+    if pid < 0 || pos < 0 || pid >= 1_220 || pos > 63 {
         return (StatusCode::BAD_REQUEST, "out of range").into_response();
     }
-    let value = (pid as u64) * 64 + (pos as u64);
-    let digits = moon_encode(value);
+    let (digits, _value) = moon_encode_marker(pid, pos);
     // SVG: 8 circles, radius 8, gap 2px, total width = 8*16 + 7*2 = 142, height 18
     let cell = 16; let gap = 2; let r = 7;
     let w = MOON_CIRCLES * cell + (MOON_CIRCLES - 1) * gap;
@@ -5437,25 +5690,23 @@ async fn moon_marker_decode(
     Path(value): Path<u64>,
     State(db): State<Db>,
 ) -> Response {
-    let max = (MOON_LEVELS as u64).pow(MOON_CIRCLES as u32); // 390,625
-    if value >= max {
-        return (StatusCode::BAD_REQUEST, "value out of range").into_response();
-    }
-    let pid = (value / 64) as i64;
-    let pos = (value % 64) as i64;
-    // Look up product → brand + name + drop_num.
-    let row: Option<(String, i64, String, i64, i64)> = {
+    let Some((pid, pos)) = moon_decode_marker(value) else {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "ok": false, "error": "magic byte mismatch — not a MU marker"
+        }))).into_response();
+    };
+    let row: Option<(String, i64, String, i64, i64, String)> = {
         let conn = db.lock().unwrap();
         conn.query_row(
-            "SELECT brand, drop_num, name, inventory, sold
+            "SELECT brand, drop_num, name, inventory, sold, created_at
              FROM products WHERE id=?",
             params![pid], |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?,
-                r.get::<_, i64>(3)?, r.get::<_, i64>(4)?,
+                r.get::<_, i64>(3)?, r.get::<_, i64>(4)?, r.get::<_, String>(5)?,
             ))
         ).ok()
     };
-    let Some((brand, drop_num, name, inventory, sold)) = row else {
+    let Some((brand, drop_num, name, inventory, sold, design_created_at)) = row else {
         return Json(serde_json::json!({
             "ok": false,
             "value": value,
@@ -5463,18 +5714,44 @@ async fn moon_marker_decode(
             "error": "no such product_id",
         })).into_response();
     };
-    // For meaningful chronicle info: which buyer is at this position?
-    let buyer_pseudonym: Option<String> = {
+    // Per-position purchase info + sibling positions in this drop.
+    let (this_purchased_at, buyer_pseudonym, siblings): (Option<String>, Option<String>, Vec<serde_json::Value>) = {
         let conn = db.lock().unwrap();
-        // Find the N-th purchase of this product (ordered by id) where pos = N.
         let mut stmt = match conn.prepare(
-            "SELECT email FROM mu_purchases
+            "SELECT email, created_at FROM mu_purchases
              WHERE product_id=? AND session_id LIKE 'cs_live_%'
-             ORDER BY id ASC LIMIT 1 OFFSET ?"
+             ORDER BY id ASC"
         ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
-        stmt.query_row(params![pid, (pos - 1).max(0)], |r| r.get::<_, String>(0))
-            .ok()
-            .map(|e| purchase_pseudonym(&e))
+        let rows: Vec<(String, String)> = stmt.query_map(params![pid], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+        let idx = (pos - 1).max(0) as usize;
+        let this = rows.get(idx).cloned();
+        let siblings: Vec<serde_json::Value> = rows.iter().enumerate().map(|(i, (email, ts))| {
+            serde_json::json!({
+                "position":       i as i64 + 1,
+                "purchased_at":   ts,
+                "buyer_pseudonym": purchase_pseudonym(email),
+                "is_self":        (i as i64 + 1) == pos,
+            })
+        }).collect();
+        (this.as_ref().map(|(_, ts)| ts.clone()),
+         this.as_ref().map(|(email, _)| purchase_pseudonym(email)),
+         siblings)
+    };
+    // Drop-lineage: prev/next product in the same brand sorted by drop_num.
+    let drop_lineage: Vec<serde_json::Value> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, drop_num, created_at FROM products
+             WHERE brand=? AND ABS(drop_num - ?) <= 2 AND active=1
+             ORDER BY drop_num ASC"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map(params![brand, drop_num], |r| Ok(serde_json::json!({
+            "product_id": r.get::<_, i64>(0)?,
+            "drop_num":   r.get::<_, i64>(1)?,
+            "created_at": r.get::<_, String>(2)?,
+            "is_self":    r.get::<_, i64>(0)? == pid,
+        }))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
     };
     Json(serde_json::json!({
         "ok": true,
@@ -5487,6 +5764,10 @@ async fn moon_marker_decode(
         "inventory": inventory,
         "sold":      sold,
         "buyer":     buyer_pseudonym,
+        "design_created_at":          design_created_at,
+        "this_position_purchased_at": this_purchased_at,
+        "siblings":     siblings,
+        "drop_lineage": drop_lineage,
     })).into_response()
 }
 
@@ -7400,8 +7681,13 @@ async fn create_printful_order(key: String, db: Db, product_id: i64, session: se
         (prior_paid + 1, enabled && inv > 1, brand, strategy)
     };
 
+    // Composite the moon-phase marker into the front design (¥0/着, fully
+    // covert). All multi-unit drop Printful orders ship with a tiny tonal
+    // marker baked into the bottom-right of the design — readable by the
+    // /scan PWA, invisible enough not to break the art.
+    let composited_design_url = marker_composite_url(&design_url, product_id, chronicle_position).await;
     let mut files = vec![
-        serde_json::json!({"url": design_url, "placement": "front"})
+        serde_json::json!({"url": composited_design_url, "placement": "front"})
     ];
     if eligible_for_chronicle && strategy == "qr_label_outside" {
         // Strategy 2: separate label_outside placement (+$2/shirt).

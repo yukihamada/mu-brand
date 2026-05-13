@@ -42,3 +42,7 @@ qrcodegen = "1.8"
 # PNG encoder (no decoder, no full image crate) — used to serve the QR
 # as a PNG that Printful's order API can accept as a print file.
 png = "0.17"
+# Apple Wallet pass (.pkpass) packaging — pkpass is just a stored-mode zip
+# of pass.json + manifest.json + signature + icons. We construct it
+# in-memory and stream the bytes via Axum.
+zip = { version = "2", default-features = false, features = ["deflate"] }
