@@ -10961,6 +10961,7 @@ async fn blog_post_001() -> Html<&'static str> {
 const BLOG_FABRIC_SHIFT_RAW: &str = include_str!("../static/blog/fabric-shift.md");
 const BLOG_WEEK_ONE_RAW: &str = include_str!("../static/blog/week-one-7-buyers.md");
 const BLOG_QUALITY_UPGRADE_RAW: &str = include_str!("../static/blog/quality-upgrade-muon-ma.md");
+const BLOG_SUZURI_VS_PRINTFUL_RAW: &str = include_str!("../static/blog/suzuri-vs-printful-spec.md");
 
 fn render_blog_md(title: &str, md: &str) -> String {
     let body = md_to_html_simple(md);
@@ -11015,6 +11016,10 @@ async fn blog_week_one() -> Html<String> {
 
 async fn blog_quality_upgrade() -> Html<String> {
     Html(render_blog_md("MUON / MA のクオリティを上げるなら何がいい？", BLOG_QUALITY_UPGRADE_RAW))
+}
+
+async fn blog_suzuri_vs_printful() -> Html<String> {
+    Html(render_blog_md("SUZURI と Printful、 同じ MUGEN でも届くシャツが違う件", BLOG_SUZURI_VS_PRINTFUL_RAW))
 }
 
 // ───── Quality upgrade poll (§24-v3 検討) ─────
@@ -33127,6 +33132,7 @@ async fn main() {
         .route("/blog/fabric-shift", get(blog_fabric_shift))
         .route("/blog/week-one-7-buyers", get(blog_week_one))
         .route("/blog/quality-upgrade-muon-ma", get(blog_quality_upgrade))
+        .route("/blog/suzuri-vs-printful-spec", get(blog_suzuri_vs_printful))
         .route("/survey/quality", get(survey_quality_page))
         .route("/api/poll/quality", get(quality_poll_results))
         .route("/api/poll/quality/vote", post(quality_poll_vote))
