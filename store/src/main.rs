@@ -11947,43 +11947,127 @@ async fn x_update_profile(
     serde_json::from_str(&b).map_err(|e| format!("json: {e}"))
 }
 
-/// Post a tweet (optionally as a reply). Returns tweet id.
+/// Refresh X OAuth 2.0 access token using the stored refresh token.
+async fn x_oauth2_refresh() -> Result<String, String> {
+    let client_id = env::var("X_CLIENT_ID").map_err(|_| "X_CLIENT_ID missing".to_string())?;
+    let refresh = env::var("X_OAUTH2_REFRESH_TOKEN").map_err(|_| "X_OAUTH2_REFRESH_TOKEN missing".to_string())?;
+    let resp = reqwest::Client::new()
+        .post("https://api.twitter.com/2/oauth2/token")
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh.as_str()),
+            ("client_id", client_id.as_str()),
+        ])
+        .send().await
+        .map_err(|e| format!("refresh http: {e}"))?;
+    let s = resp.status();
+    let b = resp.text().await.unwrap_or_default();
+    if !s.is_success() { return Err(format!("refresh {}: {}", s, &b[..b.len().min(300)])); }
+    let v: serde_json::Value = serde_json::from_str(&b).map_err(|e| format!("refresh json: {e}"))?;
+    v["access_token"].as_str().map(String::from).ok_or_else(|| "no access_token".into())
+}
+
+/// Post a tweet (optionally as a reply). Uses OAuth 2.0 user-context Bearer
+/// (write-scoped). Falls back to a refresh on 401.
 async fn x_post_tweet_v2(text: &str, in_reply_to: Option<&str>) -> Result<String, String> {
-    let (ck, cs, at, ats) = x_oauth1a_creds().ok_or("X creds missing")?;
+    let mut access = env::var("X_OAUTH2_ACCESS_TOKEN").map_err(|_| "X_OAUTH2_ACCESS_TOKEN missing".to_string())?;
     let api = "https://api.twitter.com/2/tweets";
-    let auth = x_oauth1a_sign("POST", api, &ck, &cs, &at, &ats, &[]);
     let mut body = serde_json::json!({"text": text});
     if let Some(rid) = in_reply_to {
         body["reply"] = serde_json::json!({"in_reply_to_tweet_id": rid});
     }
-    let resp = reqwest::Client::new()
-        .post(api).header("Authorization", auth)
-        .header("Content-Type", "application/json")
-        .json(&body).send().await
-        .map_err(|e| format!("http: {e}"))?;
-    let s = resp.status();
-    let b = resp.text().await.unwrap_or_default();
-    if !s.is_success() { return Err(format!("post tweet {}: {}", s, &b[..b.len().min(400)])); }
-    let v: serde_json::Value = serde_json::from_str(&b).map_err(|e| format!("json: {e}"))?;
-    v["data"]["id"].as_str().map(String::from).ok_or_else(|| "no id".into())
+    for attempt in 0..2 {
+        let resp = reqwest::Client::new()
+            .post(api).bearer_auth(&access)
+            .header("Content-Type", "application/json")
+            .json(&body).send().await
+            .map_err(|e| format!("http: {e}"))?;
+        let s = resp.status();
+        let b = resp.text().await.unwrap_or_default();
+        if s.is_success() {
+            let v: serde_json::Value = serde_json::from_str(&b).map_err(|e| format!("json: {e}"))?;
+            return v["data"]["id"].as_str().map(String::from).ok_or_else(|| "no id".into());
+        }
+        if s.as_u16() == 401 && attempt == 0 {
+            access = x_oauth2_refresh().await?;
+            continue;
+        }
+        return Err(format!("post tweet {}: {}", s, &b[..b.len().min(400)]));
+    }
+    Err("unreachable".into())
 }
 
 /// Pin a tweet (v2 user-context). user_id of @wearMUcom = 2053797881262555136.
 async fn x_pin_tweet(tweet_id: &str) -> Result<(), String> {
-    let (ck, cs, at, ats) = x_oauth1a_creds().ok_or("X creds missing")?;
+    let mut access = env::var("X_OAUTH2_ACCESS_TOKEN").map_err(|_| "X_OAUTH2_ACCESS_TOKEN missing".to_string())?;
     let api = "https://api.twitter.com/2/users/2053797881262555136/pinned_tweets";
-    let auth = x_oauth1a_sign("POST", api, &ck, &cs, &at, &ats, &[]);
     let body = serde_json::json!({"tweet_id": tweet_id});
+    for attempt in 0..2 {
+        let resp = reqwest::Client::new()
+            .post(api).bearer_auth(&access)
+            .header("Content-Type", "application/json")
+            .json(&body).send().await
+            .map_err(|e| format!("http: {e}"))?;
+        let s = resp.status();
+        let b = resp.text().await.unwrap_or_default();
+        if s.is_success() { return Ok(()); }
+        if s.as_u16() == 401 && attempt == 0 {
+            access = x_oauth2_refresh().await?;
+            continue;
+        }
+        return Err(format!("pin {}: {}", s, &b[..b.len().min(400)]));
+    }
+    Err("unreachable".into())
+}
+
+/// Update profile image (v1.1, OAuth 1.0a, multipart). PNG bytes.
+async fn x_update_profile_image(png_bytes: &[u8]) -> Result<(), String> {
+    let (ck, cs, at, ats) = x_oauth1a_creds().ok_or("X creds missing")?;
+    let api = "https://api.twitter.com/1.1/account/update_profile_image.json";
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(png_bytes);
+    let form_params: Vec<(&str, String)> = vec![("image", b64.clone())];
+    // For x-www-form-urlencoded, signature must include the body params.
+    let auth = x_oauth1a_sign("POST", api, &ck, &cs, &at, &ats, &form_params);
+    let body_str = form_params.iter()
+        .map(|(k,v)| format!("{}={}", x_oauth_enc(k), x_oauth_enc(v)))
+        .collect::<Vec<_>>().join("&");
     let resp = reqwest::Client::new()
         .post(api).header("Authorization", auth)
-        .header("Content-Type", "application/json")
-        .json(&body).send().await
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(body_str).send().await
         .map_err(|e| format!("http: {e}"))?;
     let s = resp.status();
     let b = resp.text().await.unwrap_or_default();
-    if !s.is_success() { return Err(format!("pin {}: {}", s, &b[..b.len().min(400)])); }
+    if !s.is_success() { return Err(format!("profile_image {}: {}", s, &b[..b.len().min(300)])); }
     Ok(())
 }
+
+/// Update profile banner (v1.1, OAuth 1.0a, base64 body).
+async fn x_update_profile_banner(png_bytes: &[u8]) -> Result<(), String> {
+    let (ck, cs, at, ats) = x_oauth1a_creds().ok_or("X creds missing")?;
+    let api = "https://api.twitter.com/1.1/account/update_profile_banner.json";
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(png_bytes);
+    let form_params: Vec<(&str, String)> = vec![("banner", b64.clone())];
+    let auth = x_oauth1a_sign("POST", api, &ck, &cs, &at, &ats, &form_params);
+    let body_str = form_params.iter()
+        .map(|(k,v)| format!("{}={}", x_oauth_enc(k), x_oauth_enc(v)))
+        .collect::<Vec<_>>().join("&");
+    let resp = reqwest::Client::new()
+        .post(api).header("Authorization", auth)
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(body_str).send().await
+        .map_err(|e| format!("http: {e}"))?;
+    let s = resp.status();
+    let b = resp.text().await.unwrap_or_default();
+    if !s.is_success() { return Err(format!("profile_banner {}: {}", s, &b[..b.len().min(300)])); }
+    Ok(())
+}
+
+/// Bytes of profile + banner PNGs (embedded at compile time).
+const X_PROFILE_PNG: &[u8] = include_bytes!("../static/x/profile.png");
+const X_BANNER_PNG:  &[u8] = include_bytes!("../static/x/banner.png");
 
 /// POST /admin/x/rebrand-once — one-shot: profile + pinned tweet + 3-tweet thread.
 async fn admin_x_rebrand_once(
@@ -11994,11 +12078,23 @@ async fn admin_x_rebrand_once(
     if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/x/rebrand-once").await { return r; }
     let mut result = serde_json::Map::new();
 
-    // 1. Profile update.
+    // 1. Profile fields.
     let bio = "北海道弟子屈の気象 × AI が、世界に 1 人のための T シャツを毎日描く。\nHokkaido weather → AI → 1/1 T-shirt. Autopilot apparel.\n/collab /bounty /you · Enabler Inc.";
     match x_update_profile(Some("MU / wearmu.com"), Some(bio), Some("https://wearmu.com"), Some("弟子屈 / Tokyo")).await {
         Ok(_) => { result.insert("profile".into(), serde_json::Value::from("updated")); }
         Err(e) => { result.insert("profile_err".into(), serde_json::Value::from(e)); }
+    }
+
+    // 1b. Profile image.
+    match x_update_profile_image(X_PROFILE_PNG).await {
+        Ok(()) => { result.insert("profile_image".into(), serde_json::Value::from("updated")); }
+        Err(e) => { result.insert("profile_image_err".into(), serde_json::Value::from(e)); }
+    }
+
+    // 1c. Profile banner.
+    match x_update_profile_banner(X_BANNER_PNG).await {
+        Ok(()) => { result.insert("profile_banner".into(), serde_json::Value::from("updated")); }
+        Err(e) => { result.insert("profile_banner_err".into(), serde_json::Value::from(e)); }
     }
 
     // 2. Rebrand tweet (head of thread).
