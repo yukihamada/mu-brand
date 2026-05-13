@@ -364,6 +364,11 @@ nav.scrolled{background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);
   display:flex;flex-direction:column;gap:1px;pointer-events:none}
 .card-price-tag .next{font-size:9px;opacity:0.7;letter-spacing:0.06em;font-weight:400;color:#e6c449}
 .card.sold-out-card .card-price-tag{opacity:0.55}
+.card-fragment-hint{position:absolute;top:14px;right:14px;background:rgba(230,196,73,0.18);
+  border:1px solid rgba(230,196,73,0.4);padding:5px 9px;font-size:8.5px;
+  letter-spacing:0.16em;text-transform:uppercase;color:#e6c449;border-radius:2px;
+  pointer-events:none;line-height:1.4;font-weight:500}
+.card-fragment-hint .small{font-size:7.5px;opacity:0.7;letter-spacing:0.06em;text-transform:none;display:block;margin-top:1px}
 
 /* MUON sound upload */
 .muon-upload{margin:24px 0;padding:24px;border:1px solid rgba(255,255,255,0.06);
@@ -842,6 +847,10 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
       <div class="modal-brand-label" id="m-brand"></div>
       <div class="modal-name" id="m-name"></div>
       <div class="modal-price" id="m-price"></div>
+      <a id="m-share-x" href="#" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:8px;align-self:flex-start;border:1px solid rgba(255,255,255,0.15);padding:8px 14px;font-size:9px;letter-spacing:0.32em;text-transform:uppercase;color:#F5F5F0;text-decoration:none;transition:all 0.18s;font-family:inherit" onmouseover="this.style.borderColor='#e6c449';this.style.color='#e6c449'" onmouseout="this.style.borderColor='rgba(255,255,255,0.15)';this.style.color='#F5F5F0'" aria-label="X (Twitter) でこのドロップをシェア">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+        Share on X
+      </a>
       <div>
         <div class="stock-bar"><div class="stock-fill" id="m-stock-fill"></div></div>
         <div class="stock-label" id="m-stock-label"></div>
@@ -1227,6 +1236,16 @@ function fmtSoldOutTime(ts){
   return Math.floor(diff/1440)+'日前に完売';
 }
 
+// Pull a temperature string for share text. Falls back gracefully.
+function weatherTempForShare(p){
+  try {
+    if (!p.weather_data) return '—°C';
+    const w = JSON.parse(p.weather_data);
+    if (typeof w.temp_c === 'number') return `${w.temp_c}°C`;
+  } catch(_) {}
+  return '—°C';
+}
+
 function makeCard(p){
   productMap[p.id] = p;
   const rem = p.inventory - p.sold;
@@ -1260,6 +1279,13 @@ function makeCard(p){
   const priceTag = soldOut
     ? `<div class="card-price-tag"><div>SOLD OUT</div></div>`
     : `<div class="card-price-tag"><div>¥${p.price_jpy.toLocaleString()}</div><div class="next">next buyer +¥${nextDelta.toLocaleString()}</div></div>`;
+  // Fragment system hint: 3 of the same brand → upgrade to next tier.
+  // Only show on the active (non-sold-out, non-badge-conflicting) MUGEN/MUON cards.
+  const fragHint = (!soldOut && !badge && (p.brand === 'mugen' || p.brand === 'muon'))
+    ? (p.brand === 'mugen'
+        ? `<div class="card-fragment-hint">Fragment<span class="small">×3 → MUON</span></div>`
+        : `<div class="card-fragment-hint">Fragment<span class="small">×3 → 間 MA</span></div>`)
+    : '';
   return `
   <div class="card${soldOut?' sold-out-card':''}" data-pid="${p.id}">
     ${p.mockup_url
@@ -1267,6 +1293,7 @@ function makeCard(p){
           onerror="this.onerror=null;this.src='/og.jpg';this.style.opacity='0.45';this.style.filter='grayscale(0.4)'">`
       : `<div class="card-placeholder"><div class="card-placeholder-bar"></div><div class="card-placeholder-label">AI GENERATING...</div></div>`}
     ${badge}
+    ${fragHint}
     ${priceTag}
     <div class="card-overlay">
       <div class="card-name">${p.name}</div>
@@ -1690,6 +1717,19 @@ function openModal(p, pushHistory=true){
   document.getElementById('m-img').src = p.mockup_url||'';
   document.getElementById('m-stock-fill').style.width = pct+'%';
   document.getElementById('m-stock-label').textContent = `${rem} of ${p.inventory} — never restocked`;
+
+  // Share-to-X link — uses canonical product URL so referrers / OG cards work.
+  // Tone follows MU_VOICE_RULES: quiet, factual, no hype emoji.
+  const shareUrl = `https://wearmu.com/products/${p.brand}/${p.drop_num || p.id}`;
+  const tempStr = weatherTempForShare(p);
+  const shareText = (p.brand === 'mugen')
+    ? `${p.name} — 1/${p.inventory} 着限定。北海道の気温 ${tempStr} がデザインしました。`
+    : (p.brand === 'muon')
+      ? `${p.name} — 今日の気温 ${tempStr} が枚数を決めた MUON。${p.inventory} 着のみ。`
+      : `${p.name} — wearmu.com`;
+  const shareTw = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(shareUrl)}`;
+  const shareLink = document.getElementById('m-share-x');
+  if (shareLink) shareLink.href = shareTw;
 
   // Meta
   const weather = p.weather_data ? JSON.parse(p.weather_data) : null;

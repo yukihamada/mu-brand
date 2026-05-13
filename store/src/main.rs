@@ -10669,7 +10669,7 @@ footer a:hover{{color:var(--y)}}
     </p>
     <p style="margin-top:14px">
       売上が出ていないわけではなく、出ている数字を <strong style="color:var(--y)">隠さず</strong> このページで公開しているのが MU です。
-      Vision 4 行は <a href="/constitution.md">/constitution.md</a> に。
+      Vision 4 行は <a href="/constitution">/constitution</a> に。
     </p>
   </div>
 
@@ -10741,7 +10741,7 @@ footer a:hover{{color:var(--y)}}
 
   <footer>
     数字に矛盾があったら <a href="mailto:info@enablerdao.com">info@enablerdao.com</a> または <a href="/bounty">/bounty</a> へ。<br>
-    Raw JSON: <a href="/api/transparency">wearmu.com/api/transparency</a> · Constitution: <a href="/constitution.md">wearmu.com/constitution.md</a><br>
+    Raw JSON: <a href="/api/transparency">wearmu.com/api/transparency</a> · Constitution: <a href="/constitution">wearmu.com/constitution</a><br>
     株式会社イネブラ (Enabler Inc.) · yuki (1 人のオペレーター) · 28 agents
   </footer>
 </div>
@@ -11027,7 +11027,7 @@ footer a:hover{{color:var(--y)}}
     </p>
     <p style="margin-top:14px">
       It's not that we have no revenue — it's that whatever revenue we have is <strong style="color:var(--y)">published here, unedited</strong>. That's MU.
-      The 4-line Vision + 20 operational principles live at <a href="/constitution.md">/constitution.md</a>.
+      The 4-line Vision + 20 operational principles live at <a href="/constitution">/constitution</a>.
     </p>
   </div>
 
@@ -11107,7 +11107,7 @@ footer a:hover{{color:var(--y)}}
 
   <footer>
     If any number is wrong, please reach <a href="mailto:info@enablerdao.com">info@enablerdao.com</a> or use <a href="/bounty">/bounty</a>.<br>
-    Raw JSON: <a href="/api/transparency">wearmu.com/api/transparency</a> · Constitution: <a href="/constitution.md">wearmu.com/constitution.md</a> · 日本語: <a href="/transparency">/transparency</a><br>
+    Raw JSON: <a href="/api/transparency">wearmu.com/api/transparency</a> · Constitution: <a href="/constitution">wearmu.com/constitution</a> · 日本語: <a href="/transparency">/transparency</a><br>
     Enabler Inc. · yuki (1 human operator) · 28 agents
   </footer>
 </div>
@@ -11140,6 +11140,71 @@ footer a:hover{{color:var(--y)}}
 /// no caching. If a number is wrong on the blog it's wrong here too.
 async fn public_transparency(State(db): State<Db>) -> impl IntoResponse {
     Json(gather_transparency_snapshot(&db))
+}
+
+/// GET /constitution — rendered, styled MU Constitution. Same file as the
+/// raw /constitution.md (kept for machine clients + grepping), but wrapped in
+/// the dark MU theme so humans landing from /transparency or X can read it
+/// without horizontal scroll on phones.
+async fn public_constitution_page() -> Html<String> {
+    let body_html = md_to_html_simple(CONSTITUTION_RAW);
+    let html = format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU Constitution — Vision + 20 operational principles | wearmu.com</title>
+<meta name="description" content="MU の 4 行 Vision と 20 の運用原則。コードが参照する単一の正典 (machine-readable, include_str! at compile time).">
+<meta property="og:title" content="MU Constitution">
+<meta property="og:description" content="MU の 4 行 Vision と 20 の運用原則。コードが参照する単一の正典。">
+<meta property="og:image" content="https://wearmu.com/og.jpg">
+<meta property="og:url" content="https://wearmu.com/constitution">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="alternate" type="text/markdown" href="/constitution.md">
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<style>
+:root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--line:rgba(255,255,255,0.08)}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.85;font-size:15px;-webkit-font-smoothing:antialiased;font-feature-settings:"palt"}}
+a{{color:var(--y);text-decoration:none}}
+a:hover{{text-decoration:underline;text-underline-offset:3px}}
+nav{{position:sticky;top:0;background:rgba(10,10,10,0.9);backdrop-filter:blur(12px);border-bottom:1px solid var(--line);padding:16px 28px;display:flex;justify-content:space-between;align-items:center;z-index:50;font-size:11px;letter-spacing:0.3em;text-transform:uppercase}}
+nav .logo{{font-weight:700;letter-spacing:0.45em}}
+.wrap{{max-width:760px;margin:0 auto;padding:60px 28px 100px}}
+.wrap h1{{font-size:clamp(34px,5.5vw,52px);font-weight:200;letter-spacing:0.01em;line-height:1.18;margin:0 0 28px;color:var(--fg)}}
+.wrap h2{{font-size:13px;letter-spacing:0.28em;text-transform:uppercase;color:var(--y);font-weight:500;margin:48px 0 18px;padding-top:32px;border-top:1px solid var(--line)}}
+.wrap h3{{font-size:17px;font-weight:300;letter-spacing:0.02em;margin:28px 0 12px;color:var(--fg)}}
+.wrap p{{margin:0 0 14px;color:var(--mute)}}
+.wrap p strong{{color:var(--fg);font-weight:500}}
+.wrap blockquote{{margin:18px 0;padding:12px 18px;border-left:2px solid var(--y);background:rgba(230,196,73,0.06);font-size:13.5px;color:var(--mute)}}
+.wrap ol,.wrap ul{{margin:6px 0 18px;padding-left:24px;color:var(--mute)}}
+.wrap li{{margin:6px 0}}
+.wrap li strong{{color:var(--fg);font-weight:500}}
+.wrap code{{background:rgba(230,196,73,0.10);color:var(--y);padding:1px 6px;font-size:12.5px;font-family:'SF Mono','Menlo',monospace;border-radius:2px}}
+.wrap pre{{background:#0e0e0e;border:1px solid var(--line);padding:14px 18px;overflow-x:auto;font-size:12px;margin:14px 0;border-radius:2px}}
+.wrap pre code{{background:transparent;color:var(--fg);padding:0}}
+.wrap hr{{border:none;border-top:1px solid var(--line);margin:48px 0}}
+.wrap table{{border-collapse:collapse;width:100%;margin:14px 0;font-size:13px}}
+.wrap th,.wrap td{{border:1px solid var(--line);padding:8px 12px;text-align:left}}
+.wrap th{{background:#0e0e0e;color:var(--fg);font-weight:500;letter-spacing:0.04em}}
+footer{{max-width:760px;margin:0 auto;padding:32px 28px 80px;border-top:1px solid var(--line);color:var(--mute);font-size:11.5px;letter-spacing:0.1em;line-height:2}}
+footer a{{color:var(--mute);text-decoration:underline;text-decoration-color:rgba(255,255,255,0.18)}}
+footer a:hover{{color:var(--y)}}
+</style></head><body>
+<nav>
+  <a class="logo" href="/">MU</a>
+  <span style="opacity:0.55">Constitution</span>
+  <span><a href="/constitution.md" style="opacity:0.55;margin-right:14px">raw.md</a><a href="/transparency" style="opacity:0.55">数字</a></span>
+</nav>
+<div class="wrap">
+{body}
+</div>
+<footer>
+  <div>raw markdown: <a href="/constitution.md">wearmu.com/constitution.md</a> · source: <a href="https://github.com/yukihamada/mu-brand/blob/main/store/static/constitution.md">github.com/yukihamada/mu-brand</a></div>
+  <div style="margin-top:6px">株式会社イネブラ (Enabler Inc.) · yuki (1 human operator) · 28 agents</div>
+</footer>
+</body></html>"##,
+        body = body_html,
+    );
+    Html(html)
 }
 
 /// Shared snapshot builder for /api/transparency (JSON) + /transparency (HTML).
@@ -18057,7 +18122,7 @@ async fn show_jiuflow_proposal_page(
     headers: HeaderMap,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Response {
-    show_partner_proposal_page(db, "jiuflow", "JiuFlow", "/jiuflow", headers, q).await
+    show_partner_proposal_page(db, "jiuflow", "JiuFlow (柔術 SaaS)", "/jiuflow", headers, q).await
 }
 
 async fn jiuflow_sample_checkout(
@@ -25846,6 +25911,7 @@ async fn main() {
         .route("/api/transparency", get(public_transparency))
         .route("/transparency", get(public_transparency_page))
         .route("/en/transparency", get(public_transparency_page_en))
+        .route("/constitution", get(public_constitution_page))
         .route("/api/sample_personas", get(list_sample_personas))
         .route("/api/admin/sample_grow", post(admin_sample_grow))
         .route("/api/admin/lifestyle", axum::routing::patch(admin_lifestyle))
