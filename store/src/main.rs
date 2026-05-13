@@ -5239,6 +5239,8 @@ nav a{{color:var(--fg);text-decoration:none;opacity:0.8}}
     <h1>Last scan</h1>
     <div id="result" class="dim">カメラを T シャツの月相マーカーに向けてください。</div>
     <button class="btn" id="start">カメラ起動</button>
+    <button class="btn" id="img-scan" style="background:transparent;color:#e6c449;border:1px solid rgba(230,196,73,0.5);margin-top:6px" onclick="scanAsImage()">画像で判別 (pre-§23 シャツ用)</button>
+    <p style="font-size:10px;color:#666;margin-top:8px;letter-spacing:0.05em;text-transform:uppercase">マーカーが無い昔のシャツも、画像 hash でデザインを判別 → /shirt/N/life</p>
   </div>
 </div>
 
@@ -5370,6 +5372,67 @@ function detect() {{
   fetchDecode(value);
 }}
 
+async function postSighting(pid, pos, source, confidence) {{
+  // Fire-and-forget sighting. Failure is silent (network errors are ignored).
+  try {{
+    await fetch('/api/sightings', {{
+      method:'POST', headers:{{'content-type':'application/json'}},
+      body: JSON.stringify({{ shirts:[{{ pid, pos }}], source, confidence }}),
+    }});
+  }} catch (e) {{ /* swallow */ }}
+}}
+
+// dHash a 9x8 region from the canvas. 64-bit hex string.
+function computeDhashFromCanvas() {{
+  const tmp = document.createElement('canvas');
+  tmp.width = 9; tmp.height = 8;
+  const tctx = tmp.getContext('2d');
+  tctx.drawImage(canvasEl, 0, 0, 9, 8);
+  const id = tctx.getImageData(0, 0, 9, 8).data;
+  const gray = new Uint8Array(72);
+  for (let i = 0; i < 72; i++) {{
+    const o = i * 4;
+    gray[i] = Math.round(0.299*id[o] + 0.587*id[o+1] + 0.114*id[o+2]);
+  }}
+  let bits = 0n;
+  for (let y = 0; y < 8; y++) {{
+    for (let x = 0; x < 8; x++) {{
+      const l = gray[y*9 + x]; const r = gray[y*9 + x + 1];
+      bits = (bits << 1n) | (r > l ? 1n : 0n);
+    }}
+  }}
+  return bits.toString(16).padStart(16, '0');
+}}
+
+async function scanAsImage() {{
+  if (!videoEl || videoEl.readyState < 2) {{
+    document.getElementById('result').innerHTML = '<div class="msg err">カメラ未起動</div>';
+    return;
+  }}
+  ctx.drawImage(videoEl, 0, 0);
+  const dhash = computeDhashFromCanvas();
+  const el = document.getElementById('result');
+  el.innerHTML = `<div class="dim">image hash ${{dhash}} を検索中...</div>`;
+  try {{
+    const r = await fetch('/api/scan/phash', {{
+      method:'POST', headers:{{'content-type':'application/json'}},
+      body: JSON.stringify({{ dhash }}),
+    }});
+    const j = await r.json();
+    if (!j.ok) {{
+      el.innerHTML = `<div class="msg err">画像一致なし · ${{j.error || ''}}</div>`;
+      return;
+    }}
+    el.innerHTML = `
+      <div class="msg ok">✓ Image matched (Hamming ${{j.hamming_distance}})</div>
+      <div class="row"><span class="k">Drop</span><span>${{j.brand.toUpperCase()}} #${{String(j.drop_num).padStart(4,'0')}}</span></div>
+      <div class="row"><span class="k">Name</span><span>${{j.name}}</span></div>
+      <div class="row"><span class="k">Life</span><span><a href="/shirt/${{j.product_id}}/life" style="color:#9bc8e3">/shirt/${{j.product_id}}/life</a></span></div>
+    `;
+    postSighting(j.product_id, null, 'phash', 1 - (j.hamming_distance / 64));
+  }} catch (e) {{ el.innerHTML = `<div class="msg err">network: ${{e.message}}</div>`; }}
+}}
+
 async function fetchDecode(value) {{
   const el = document.getElementById('result');
   el.innerHTML = '<div class="dim">decoding... value=' + value + '</div>';
@@ -5380,6 +5443,8 @@ async function fetchDecode(value) {{
       el.innerHTML = `<div class="msg err">decode 失敗: ${{d.error || 'unknown'}} · value=${{value}}</div>`;
       return;
     }}
+    // Record sighting (anonymous, cookie-based pseudonym, no GPS by default).
+    postSighting(d.product_id, d.position, 'marker', 1.0);
     const designedDate = d.design_created_at ? String(d.design_created_at).slice(0,10) : '—';
     const purchasedDate = d.this_position_purchased_at ? String(d.this_position_purchased_at).slice(0,10) : '未購入';
     let html = `
@@ -5409,6 +5474,7 @@ async function fetchDecode(value) {{
         ? `<div class="msg ok">✓ ${{event_slug}} · checked in (${{cj.is_new ? '初回' : '既登録'}})</div>`
         : `<div class="msg err">${{cj.error || 'check-in error'}}</div>`;
     }}
+    html += `<div class="row"><span class="k">Life</span><span><a href="/shirt/${{d.product_id}}/life?pos=${{d.position}}" style="color:#9bc8e3">/shirt/${{d.product_id}}/life</a></span></div>`;
     el.innerHTML = html;
     if (navigator.vibrate) navigator.vibrate(60);
   }} catch(e) {{
@@ -5769,6 +5835,623 @@ async fn moon_marker_decode(
         "siblings":     siblings,
         "drop_lineage": drop_lineage,
     })).into_response()
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Sightings system — every successful /scan decode (or pHash match) is
+// recorded as a "this shirt was seen at T by anonymous device" event.
+// Builds a life-log per shirt (§22 100-year horizon) and a crossings
+// graph when multiple shirts are in one frame. §13: only fabric, never
+// faces; §19: prefecture granularity max.
+// ═══════════════════════════════════════════════════════════════════════
+
+fn device_pseudonym_from(headers: &HeaderMap, ip: &str) -> String {
+    // Stable per-device pseudonym derived from cookie OR IP+UA hash.
+    // Tries Sec-CH-* + cookie first, falls back to IP+UA hash.
+    use sha2::{Sha256, Digest};
+    let cookie = headers.get(axum::http::header::COOKIE).and_then(|v| v.to_str().ok()).unwrap_or("");
+    let mu_id = cookie.split(';').find_map(|c| {
+        let c = c.trim();
+        c.strip_prefix("mu_device=").map(|s| s.to_string())
+    });
+    if let Some(id) = mu_id {
+        let mut h = Sha256::new();
+        h.update(b"mu_device|"); h.update(id.as_bytes());
+        return format!("dv-{}", &format!("{:x}", h.finalize())[..10]);
+    }
+    let ua = headers.get(axum::http::header::USER_AGENT).and_then(|v| v.to_str().ok()).unwrap_or("");
+    let mut h = Sha256::new();
+    h.update(b"mu_device|"); h.update(ip.as_bytes()); h.update(b"|"); h.update(ua.as_bytes());
+    format!("dv-{}", &format!("{:x}", h.finalize())[..10])
+}
+
+#[derive(Deserialize)]
+struct SightingSubmit {
+    /// List of (pid, pos|null) tuples from one camera frame. 1 entry =
+    /// single sighting, 2+ entries = crossings pair-up server-side.
+    shirts: Vec<SightingShirt>,
+    /// Optional 1-2 char prefecture code (e.g. "13" Tokyo) — opt-in.
+    #[serde(default)]
+    prefecture: Option<String>,
+    /// 'marker' (8-circle decode) or 'phash' (image perceptual hash).
+    source: String,
+    #[serde(default)]
+    confidence: Option<f64>,
+}
+
+#[derive(Deserialize, Clone)]
+struct SightingShirt {
+    pid: i64,
+    #[serde(default)]
+    pos: Option<i64>,
+}
+
+#[derive(serde::Serialize)]
+struct SightingResult {
+    sighting_ids: Vec<i64>,
+    crossing_ids: Vec<i64>,
+    counterfeit_flagged: bool,
+}
+
+/// POST /api/sightings — record 1+ sightings from a single camera frame.
+async fn sightings_record(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Json(body): Json<SightingSubmit>,
+) -> Response {
+    if body.shirts.is_empty() || body.shirts.len() > 16 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"shirts 1..16"}))).into_response();
+    }
+    if !["marker","phash"].contains(&body.source.as_str()) {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"source must be marker|phash"}))).into_response();
+    }
+    let ip = client_ip(&headers);
+    let pseudo = device_pseudonym_from(&headers, &ip);
+    let now = chrono_now();
+    let prefecture = body.prefecture.as_deref().filter(|s| !s.is_empty() && s.len() <= 8).map(|s| s.to_string());
+
+    let mut sighting_ids: Vec<i64> = Vec::with_capacity(body.shirts.len());
+    let mut counterfeit = false;
+    {
+        let conn = db.lock().unwrap();
+        for shirt in &body.shirts {
+            // Counterfeit detection: phash source, position not None, but no
+            // sale exists at that position → flag.
+            if body.source == "phash" {
+                let sold_count: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM mu_purchases WHERE product_id=? AND session_id LIKE 'cs_live_%'",
+                    params![shirt.pid], |r| r.get(0),
+                ).unwrap_or(0);
+                if sold_count == 0 {
+                    let _ = conn.execute(
+                        "INSERT INTO mu_counterfeit_alerts (dhash, matched_pid, reason, flagged_at, device_pseudonym)
+                         VALUES (?,?,?,?,?)",
+                        params!["", shirt.pid, "phash match, no Stripe sales recorded", now, pseudo],
+                    );
+                    counterfeit = true;
+                }
+            }
+            if conn.execute(
+                "INSERT INTO mu_sightings (shirt_pid, shirt_pos, sighted_at, device_pseudonym, prefecture, source, confidence)
+                 VALUES (?,?,?,?,?,?,?)",
+                params![shirt.pid, shirt.pos, now, pseudo, prefecture, body.source, body.confidence],
+            ).is_ok() {
+                sighting_ids.push(conn.last_insert_rowid());
+            }
+        }
+    }
+
+    // Crossings: every unordered pair within this frame.
+    let mut crossing_ids: Vec<i64> = Vec::new();
+    if body.shirts.len() >= 2 {
+        let conn = db.lock().unwrap();
+        for i in 0..body.shirts.len() {
+            for j in (i + 1)..body.shirts.len() {
+                let a = &body.shirts[i];
+                let b = &body.shirts[j];
+                // Canonical order (lower pid/pos first).
+                let (ap, apos, bp, bpos) = if (a.pid, a.pos.unwrap_or(0)) <= (b.pid, b.pos.unwrap_or(0)) {
+                    (a.pid, a.pos, b.pid, b.pos)
+                } else {
+                    (b.pid, b.pos, a.pid, a.pos)
+                };
+                if conn.execute(
+                    "INSERT INTO mu_crossings
+                       (shirt_a_pid, shirt_a_pos, shirt_b_pid, shirt_b_pos, crossed_at, prefecture, device_pseudonym)
+                     VALUES (?,?,?,?,?,?,?)",
+                    params![ap, apos, bp, bpos, now, prefecture, pseudo],
+                ).is_ok() {
+                    crossing_ids.push(conn.last_insert_rowid());
+                }
+            }
+        }
+    }
+
+    if counterfeit {
+        let pids: Vec<String> = body.shirts.iter()
+            .filter(|s| s.pos.is_some())
+            .map(|s| format!("pid={} pos={:?}", s.pid, s.pos)).collect();
+        send_telegram_message(&format!(
+            "🚨 counterfeit suspected · phash match without Stripe sale\n{}",
+            pids.join("\n"),
+        )).await;
+    }
+
+    Json(SightingResult { sighting_ids, crossing_ids, counterfeit_flagged: counterfeit }).into_response()
+}
+
+// ───────── pHash (perceptual hash, dHash) for retroactive identification ─────────
+
+/// Compute a 64-bit dHash of an RGBA buffer at (w, h). Resize via
+/// nearest-neighbor to 9×8 grayscale, then output 8 rows of 8
+/// "next pixel brighter?" bits (64 bits total). Returns hex string.
+fn dhash_rgba(buf: &[u8], w: u32, h: u32) -> String {
+    let tw = 9u32; let th = 8u32;
+    let mut gray = vec![0u8; (tw * th) as usize];
+    for y in 0..th {
+        for x in 0..tw {
+            let src_x = (x as u64 * w as u64 / tw as u64).min(w as u64 - 1) as u32;
+            let src_y = (y as u64 * h as u64 / th as u64).min(h as u64 - 1) as u32;
+            let idx = ((src_y * w + src_x) * 4) as usize;
+            let r = buf.get(idx).copied().unwrap_or(0) as u32;
+            let g = buf.get(idx + 1).copied().unwrap_or(0) as u32;
+            let b = buf.get(idx + 2).copied().unwrap_or(0) as u32;
+            gray[(y * tw + x) as usize] = ((299 * r + 587 * g + 114 * b) / 1000).min(255) as u8;
+        }
+    }
+    let mut bits = 0u64;
+    for y in 0..th {
+        for x in 0..(tw - 1) {
+            let l = gray[(y * tw + x) as usize];
+            let r = gray[(y * tw + x + 1) as usize];
+            bits = (bits << 1) | (if r > l { 1 } else { 0 });
+        }
+    }
+    format!("{:016x}", bits)
+}
+
+/// Decode a PNG (or fall back to a 0-bytes result on failure) and return
+/// its dHash hex string.
+fn dhash_from_png(bytes: &[u8]) -> Result<String, String> {
+    let cursor = std::io::Cursor::new(bytes);
+    let decoder = png::Decoder::new(cursor);
+    let mut reader = decoder.read_info().map_err(|e| format!("png: {}", e))?;
+    let info = reader.info().clone();
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let frame = reader.next_frame(&mut buf).map_err(|e| format!("png frame: {}", e))?;
+    // Normalize to RGBA8.
+    let rgba: Vec<u8> = match frame.color_type {
+        png::ColorType::Rgba => buf,
+        png::ColorType::Rgb => {
+            let mut out = Vec::with_capacity((info.width * info.height * 4) as usize);
+            for c in buf.chunks_exact(3) { out.extend_from_slice(&[c[0], c[1], c[2], 255]); }
+            out
+        }
+        png::ColorType::Grayscale => {
+            let mut out = Vec::with_capacity((info.width * info.height * 4) as usize);
+            for &g in &buf { out.extend_from_slice(&[g,g,g,255]); }
+            out
+        }
+        png::ColorType::GrayscaleAlpha => {
+            let mut out = Vec::with_capacity((info.width * info.height * 4) as usize);
+            for c in buf.chunks_exact(2) { out.extend_from_slice(&[c[0], c[0], c[0], c[1]]); }
+            out
+        }
+        other => return Err(format!("unsupported color type {:?}", other)),
+    };
+    Ok(dhash_rgba(&rgba, info.width, info.height))
+}
+
+/// Hamming distance between two 64-bit hex hashes (16 hex chars).
+fn dhash_hamming(a: &str, b: &str) -> u32 {
+    let ai = u64::from_str_radix(a, 16).unwrap_or(0);
+    let bi = u64::from_str_radix(b, 16).unwrap_or(0);
+    (ai ^ bi).count_ones()
+}
+
+#[derive(Deserialize)]
+struct PhashLookup {
+    /// 16-hex-char dHash from the PWA (computed client-side).
+    dhash: String,
+}
+
+/// POST /api/scan/phash — given a dHash, find the nearest product within
+/// threshold (≤ 12 hamming) and return its pid + brand/drop_num. Allows
+/// /scan to identify pre-§23 shirts that have no marker.
+async fn scan_phash_lookup(
+    State(db): State<Db>,
+    Json(body): Json<PhashLookup>,
+) -> Response {
+    let needle = body.dhash.trim().to_lowercase();
+    if needle.len() != 16 || u64::from_str_radix(&needle, 16).is_err() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"dhash must be 16 hex chars"}))).into_response();
+    }
+    let conn = db.lock().unwrap();
+    let mut stmt = match conn.prepare(
+        "SELECT id, brand, drop_num, name, dhash FROM products
+         WHERE dhash IS NOT NULL AND length(dhash)=16"
+    ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+    let rows: Vec<(i64, String, i64, String, String)> = stmt.query_map([], |r| Ok((
+        r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?
+    ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+    let mut best: Option<(u32, i64, String, i64, String)> = None;
+    for (pid, brand, drop_num, name, dh) in rows {
+        let d = dhash_hamming(&needle, &dh);
+        if best.as_ref().map(|b| d < b.0).unwrap_or(true) {
+            best = Some((d, pid, brand, drop_num, name));
+        }
+    }
+    let Some((dist, pid, brand, drop_num, name)) = best else {
+        return Json(serde_json::json!({"ok": false, "error": "no products have a dhash yet"})).into_response();
+    };
+    // Threshold: dHash 64-bit, 12 = ~80% similarity ≈ good match for cropped photos
+    let confident = dist <= 12;
+    Json(serde_json::json!({
+        "ok": confident,
+        "hamming_distance": dist,
+        "threshold": 12,
+        "product_id": pid,
+        "brand": brand,
+        "drop_num": drop_num,
+        "name": name,
+    })).into_response()
+}
+
+#[derive(Deserialize)]
+struct AdminPhashBackfillQuery {
+    token: String,
+    #[serde(default)]
+    only_missing: Option<i64>,
+}
+
+/// POST /api/admin/phash/backfill — for every product (or only those
+/// without dhash if only_missing=1), download design_url, compute
+/// dHash, store it. yuki invokes this after deploying the pHash system.
+async fn admin_phash_backfill(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<AdminPhashBackfillQuery>,
+) -> Response {
+    if let Err(r) = require_admin_token(Some(&q.token)) { return r; }
+    let only_missing = q.only_missing.unwrap_or(1) == 1;
+    let rows: Vec<(i64, String, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        let sql = if only_missing {
+            "SELECT id, COALESCE(design_url,''), dhash FROM products
+             WHERE design_url IS NOT NULL AND design_url <> '' AND (dhash IS NULL OR dhash = '')"
+        } else {
+            "SELECT id, COALESCE(design_url,''), dhash FROM products
+             WHERE design_url IS NOT NULL AND design_url <> ''"
+        };
+        let mut stmt = match conn.prepare(sql) {
+            Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response()
+        };
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    let mut ok = 0; let mut err = 0;
+    for (pid, url, _existing) in &rows {
+        let abs_url = if url.starts_with("http") {
+            url.clone()
+        } else if url.starts_with('/') {
+            format!("https://wearmu.com{}", url)
+        } else { url.clone() };
+        let resp = reqwest::get(&abs_url).await;
+        let bytes = match resp {
+            Ok(r) if r.status().is_success() => match r.bytes().await { Ok(b) => b.to_vec(), Err(_) => { err += 1; continue; } },
+            _ => { err += 1; continue; }
+        };
+        let dh = match dhash_from_png(&bytes) {
+            Ok(h) => h, Err(e) => { eprintln!("[phash] pid={} {}", pid, e); err += 1; continue; }
+        };
+        let conn = db.lock().unwrap();
+        if conn.execute("UPDATE products SET dhash=? WHERE id=?", params![dh, pid]).is_ok() {
+            ok += 1;
+        }
+    }
+    Json(serde_json::json!({"ok": true, "updated": ok, "errors": err, "scanned": rows.len()})).into_response()
+}
+
+// ───────── /shirt/:pid/life — per-shirt public life log ─────────
+
+async fn shirt_life_page(
+    Path(pid): Path<i64>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    State(db): State<Db>,
+) -> Html<String> {
+    let pos: Option<i64> = q.get("pos").and_then(|s| s.parse().ok());
+    let conn = db.lock().unwrap();
+    let prod: Option<(String, i64, String, String, i64, i64)> = conn.query_row(
+        "SELECT brand, drop_num, name, created_at, inventory, sold FROM products WHERE id=?",
+        params![pid],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+    ).ok();
+    let Some((brand, drop_num, name, design_created_at, inventory, sold)) = prod else {
+        return Html(format!("<h1>no such product #{}</h1>", pid));
+    };
+    let sightings: Vec<(String, Option<String>, String)> = {
+        let mut stmt = match conn.prepare(
+            "SELECT sighted_at, prefecture, source FROM mu_sightings
+             WHERE shirt_pid=? AND (? IS NULL OR shirt_pos=?)
+             ORDER BY sighted_at DESC LIMIT 300"
+        ) { Ok(s) => s, Err(_) => return Html("db error".to_string()) };
+        stmt.query_map(params![pid, pos, pos], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    let crossings: Vec<(i64, Option<i64>, String, Option<String>)> = {
+        let mut stmt = match conn.prepare(
+            "SELECT
+               CASE WHEN shirt_a_pid=? THEN shirt_b_pid ELSE shirt_a_pid END,
+               CASE WHEN shirt_a_pid=? THEN shirt_b_pos ELSE shirt_a_pos END,
+               crossed_at, prefecture
+             FROM mu_crossings WHERE shirt_a_pid=? OR shirt_b_pid=?
+             ORDER BY crossed_at DESC LIMIT 200"
+        ) { Ok(s) => s, Err(_) => return Html("db error".to_string()) };
+        stmt.query_map(params![pid, pid, pid, pid], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    let buyer_for_pos: Option<(String, String)> = if let Some(p) = pos {
+        let idx = (p - 1).max(0) as usize;
+        let mut stmt = match conn.prepare(
+            "SELECT email, created_at FROM mu_purchases
+             WHERE product_id=? AND session_id LIKE 'cs_live_%'
+             ORDER BY id ASC LIMIT 1 OFFSET ?"
+        ) { Ok(s) => s, Err(_) => return Html("db error".to_string()) };
+        stmt.query_row(params![pid, idx as i64], |r| Ok((purchase_pseudonym(&r.get::<_, String>(0)?), r.get(1)?))).ok()
+    } else { None };
+    drop(conn);
+
+    let sightings_n = sightings.len();
+    let crossings_n = crossings.len();
+    let pref_counts: std::collections::HashMap<String, usize> = sightings.iter()
+        .filter_map(|s| s.1.clone())
+        .fold(std::collections::HashMap::new(), |mut m, p| { *m.entry(p).or_insert(0) += 1; m });
+    let mut prefs: Vec<(String, usize)> = pref_counts.into_iter().collect();
+    prefs.sort_by(|a, b| b.1.cmp(&a.1));
+    let pref_list: String = prefs.iter().take(8).map(|(p, n)| format!(
+        "<span style=\"display:inline-block;background:#1a1a1a;padding:3px 9px;border-radius:3px;margin:2px;font-size:11px\">{} <b>×{}</b></span>",
+        html_escape(p), n
+    )).collect();
+
+    let sightings_html: String = sightings.iter().take(80).map(|(at, pref, src)| {
+        let date = at.chars().take(10).collect::<String>();
+        let pref_html = pref.as_deref().unwrap_or("—");
+        format!(
+            "<tr><td>{}</td><td>{}</td><td><code>{}</code></td></tr>",
+            html_escape(&date), html_escape(pref_html), html_escape(src),
+        )
+    }).collect();
+    let crossings_html: String = crossings.iter().take(40).map(|(other_pid, other_pos, at, _pref)| {
+        format!(
+            "<tr><td>{}</td><td><a href=\"/shirt/{}{}\">#{}{}</a></td></tr>",
+            html_escape(&at.chars().take(10).collect::<String>()),
+            other_pid,
+            other_pos.map(|p| format!("?pos={}", p)).unwrap_or_default(),
+            other_pid,
+            other_pos.map(|p| format!(" / pos {}", p)).unwrap_or_default(),
+        )
+    }).collect();
+    let buyer_html = buyer_for_pos.map(|(p, when)| format!(
+        "<tr><td>Buyer</td><td><code>{}</code> on {}</td></tr>",
+        html_escape(&p), html_escape(&when.chars().take(10).collect::<String>())
+    )).unwrap_or_default();
+    let pos_html = pos.map(|p| format!(" / position {} of {}", p, inventory)).unwrap_or_default();
+
+    let html = format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Shirt #{pid} life · {brand_disp} #{drop_disp} · MU</title>
+<link rel="icon" href="/favicon.svg">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="MU">
+<style>
+  body {{ background:#0a0a0a; color:#f5f5f0; font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif; max-width:760px; margin:0 auto; padding:32px 16px 80px; line-height:1.7; }}
+  h1 {{ font-weight:300; font-size:24px; margin:0 0 4px; }}
+  .sub {{ color:#888; font-size:12px; margin-bottom:24px; }}
+  .stats {{ display:grid; grid-template-columns: repeat(auto-fit, minmax(120px,1fr)); gap:8px; margin: 12px 0 24px; }}
+  .stat {{ background:#141414; padding:12px; border-radius:6px; }}
+  .stat .n {{ font-size:22px; font-weight:300; }}
+  .stat .l {{ font-size:10px; color:#888; letter-spacing:0.05em; text-transform:uppercase; margin-top:3px; }}
+  h2 {{ font-weight:400; font-size:15px; margin: 28px 0 10px; color:#e6c449; letter-spacing:0.04em; }}
+  table {{ width:100%; border-collapse:collapse; background:#141414; border-radius:6px; overflow:hidden; }}
+  th,td {{ padding:8px 12px; text-align:left; font-size:12.5px; border-bottom:1px solid #1f1f1f; }}
+  tr:last-child td {{ border:0; }}
+  code {{ background:#0a0a0a; padding:1px 6px; border-radius:3px; font-size:11.5px; }}
+  a {{ color:#9bc8e3; }}
+  .reply-box {{ background:#141414; padding:14px; border-radius:6px; margin-top:14px; }}
+  .reply-box input {{ width:100%; background:#0a0a0a; color:#f5f5f0; border:1px solid #222; padding:10px; border-radius:4px; font-family:inherit; font-size:13px; }}
+  .reply-box button {{ background:#A67843; color:#fff; border:0; padding:8px 16px; border-radius:3px; margin-top:8px; cursor:pointer; font-size:11px; letter-spacing:0.12em; text-transform:uppercase; }}
+  .reply-result {{ font-size:11px; margin-top:8px; }}
+</style>
+</head><body>
+<h1>{brand_disp} #{drop_disp_pad}{pos_html}</h1>
+<p class="sub">{name}</p>
+
+<div class="stats">
+  <div class="stat"><div class="n">{sightings_n}</div><div class="l">sightings</div></div>
+  <div class="stat"><div class="n">{crossings_n}</div><div class="l">crossings</div></div>
+  <div class="stat"><div class="n">{sold}</div><div class="l">sold / {inventory}</div></div>
+</div>
+
+<table>
+  <tbody>
+    <tr><td>Designed</td><td>{design_created_at_pretty} JST</td></tr>
+    {buyer_html}
+    <tr><td>Top prefectures</td><td>{pref_list}</td></tr>
+  </tbody>
+</table>
+
+<h2>Sightings (last 80)</h2>
+<table>
+  <thead><tr><th>date</th><th>prefecture</th><th>source</th></tr></thead>
+  <tbody>{sightings_html}</tbody>
+</table>
+{sightings_empty}
+
+<h2>Crossings (last 40)</h2>
+<table>
+  <thead><tr><th>date</th><th>met</th></tr></thead>
+  <tbody>{crossings_html}</tbody>
+</table>
+{crossings_empty}
+
+<h2>Send anonymous 1-line</h2>
+<div class="reply-box">
+  <p style="font-size:11.5px;color:#888;margin:0 0 8px">この服を着てる人に 1 行匿名メッセージを送る。yuki 経由で本人に届く。1 日 1 通まで。</p>
+  <input id="reply-line" maxlength="140" placeholder="例: 「Shibuya で見ました、いい雰囲気でした」">
+  <button onclick="sendReply()">送信</button>
+  <p class="reply-result" id="reply-result"></p>
+</div>
+
+<p style="margin-top:32px;font-size:11px;color:#666"><a href="/scan">/scan</a> · <a href="/map">/map</a> · <a href="/dao">/dao</a> · <a href="/constitution">§14 negative space</a></p>
+
+<script>
+async function sendReply() {{
+  const line = document.getElementById('reply-line').value.trim();
+  const out = document.getElementById('reply-result');
+  if (!line) {{ out.style.color='#e39b9b'; out.textContent='本文必要'; return; }}
+  const r = await fetch('/api/sighting/reply', {{
+    method:'POST', headers:{{'content-type':'application/json'}},
+    body: JSON.stringify({{ shirt_pid: {pid}, shirt_pos: {pos_json}, line }}),
+  }});
+  const j = await r.json().catch(()=>({{}}));
+  if (r.ok && j.ok) {{ out.style.color='#9be39b'; out.textContent='✓ 届けました'; document.getElementById('reply-line').value=''; }}
+  else {{ out.style.color='#e39b9b'; out.textContent='✗ ' + (j.error || 'error'); }}
+}}
+</script>
+</body></html>"##,
+        pid = pid, brand_disp = html_escape(&brand.to_uppercase()),
+        drop_disp = drop_num, drop_disp_pad = format!("{:04}", drop_num),
+        pos_html = pos_html,
+        name = html_escape(&name),
+        sightings_n = sightings_n, crossings_n = crossings_n,
+        sold = sold, inventory = inventory,
+        design_created_at_pretty = html_escape(&design_created_at.chars().take(16).collect::<String>()),
+        buyer_html = buyer_html,
+        pref_list = if pref_list.is_empty() { "—".to_string() } else { pref_list },
+        sightings_html = sightings_html,
+        sightings_empty = if sightings_n == 0 { "<p style=\"color:#666;font-size:12px;margin-top:6px\">まだ目撃なし。/scan でこのシャツを撮ると 1 件目になる。</p>" } else { "" },
+        crossings_html = crossings_html,
+        crossings_empty = if crossings_n == 0 { "<p style=\"color:#666;font-size:12px;margin-top:6px\">まだ交差なし。別の MU シャツと一緒にカメラに映ると 1 件目になる。</p>" } else { "" },
+        pos_json = pos.map(|p| p.to_string()).unwrap_or_else(|| "null".into()),
+    );
+    Html(html)
+}
+
+// ───────── /map — prefecture heatmap + crossings lines ─────────
+
+async fn shirt_map_page(State(db): State<Db>) -> Html<String> {
+    let conn = db.lock().unwrap();
+    let pref_counts: Vec<(String, i64)> = {
+        let mut stmt = match conn.prepare(
+            "SELECT prefecture, COUNT(*) FROM mu_sightings
+             WHERE prefecture IS NOT NULL AND prefecture <> ''
+             GROUP BY prefecture ORDER BY COUNT(*) DESC"
+        ) { Ok(s) => s, Err(_) => return Html("db error".to_string()) };
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    let crossings_n: i64 = conn.query_row("SELECT COUNT(*) FROM mu_crossings", [], |r| r.get(0)).unwrap_or(0);
+    let sightings_n: i64 = conn.query_row("SELECT COUNT(*) FROM mu_sightings",  [], |r| r.get(0)).unwrap_or(0);
+    drop(conn);
+
+    let mut rows = String::new();
+    let total: i64 = pref_counts.iter().map(|x| x.1).sum();
+    for (pref, n) in &pref_counts {
+        let pct = if total > 0 { (*n as f64) * 100.0 / (total as f64) } else { 0.0 };
+        rows.push_str(&format!(
+            "<tr><td>{}</td><td>{}</td><td><div class=\"bar\" style=\"width: {}%\"></div></td></tr>",
+            html_escape(pref), n, pct.min(100.0),
+        ));
+    }
+    if pref_counts.is_empty() {
+        rows.push_str("<tr><td colspan=\"3\" style=\"text-align:center;color:#666;padding:24px\">まだ目撃 0 件 · <a href=\"/scan\" style=\"color:#e6c449\">/scan</a> で 1 件目を作る</td></tr>");
+    }
+    let html = format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Map · MU shirts in the wild</title>
+<link rel="icon" href="/favicon.svg">
+<style>
+  body {{ background:#0a0a0a; color:#f5f5f0; font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif; max-width:720px; margin:0 auto; padding:32px 16px 80px; line-height:1.7; }}
+  h1 {{ font-weight:300; font-size:24px; margin:0 0 4px; }}
+  .sub {{ color:#888; font-size:12px; margin-bottom:24px; }}
+  .stats {{ display:grid; grid-template-columns: repeat(2, 1fr); gap:8px; margin-bottom:24px; }}
+  .stat {{ background:#141414; padding:12px; border-radius:6px; }}
+  .stat .n {{ font-size:24px; font-weight:300; }}
+  .stat .l {{ font-size:10px; color:#888; text-transform:uppercase; letter-spacing:0.05em; margin-top:3px; }}
+  table {{ width:100%; border-collapse:collapse; background:#141414; border-radius:6px; overflow:hidden; }}
+  th,td {{ padding:8px 12px; text-align:left; font-size:13px; border-bottom:1px solid #1f1f1f; }}
+  td:last-child {{ width:60%; }}
+  .bar {{ background:#A67843; height:6px; border-radius:3px; }}
+  a {{ color:#9bc8e3; }}
+</style></head><body>
+<h1>MU shirts in the wild</h1>
+<p class="sub">/scan で目撃された場所 (都道府県 only、opt-in)。§13 / §19 compliant — 服の動きだけ記録、人は記録しない。</p>
+<div class="stats">
+  <div class="stat"><div class="n">{sightings_n}</div><div class="l">total sightings</div></div>
+  <div class="stat"><div class="n">{crossings_n}</div><div class="l">crossings</div></div>
+</div>
+<table>
+  <thead><tr><th>都道府県</th><th>目撃</th><th>分布</th></tr></thead>
+  <tbody>{rows}</tbody>
+</table>
+<p style="margin-top:24px;font-size:11px;color:#666"><a href="/scan">/scan</a> · <a href="/dao">/dao</a> · <a href="/constitution">§19</a></p>
+</body></html>"##,
+        sightings_n = sightings_n, crossings_n = crossings_n, rows = rows,
+    );
+    Html(html)
+}
+
+// ───────── POST /api/sighting/reply — anonymous 1-line to wearer ─────────
+
+#[derive(Deserialize)]
+struct SightingReplyBody {
+    shirt_pid: i64,
+    #[serde(default)]
+    shirt_pos: Option<i64>,
+    line: String,
+}
+
+async fn sighting_reply_submit(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Json(body): Json<SightingReplyBody>,
+) -> Response {
+    let line = body.line.trim().to_string();
+    if line.is_empty() || line.chars().count() > 140 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"line 1-140 chars"}))).into_response();
+    }
+    let ip = client_ip(&headers);
+    let pseudo = device_pseudonym_from(&headers, &ip);
+    use sha2::{Sha256, Digest};
+    let ip_hash = if ip.is_empty() { String::new() } else {
+        let mut h = Sha256::new(); h.update(ip.as_bytes()); h.update(b"|reply");
+        format!("{:x}", h.finalize())[..16].to_string()
+    };
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    {
+        let conn = db.lock().unwrap();
+        let recent: bool = conn.query_row(
+            "SELECT 1 FROM mu_sighting_replies
+             WHERE shirt_pid=? AND sender_pseudonym=? AND CAST(sent_at AS INTEGER) > ?
+             LIMIT 1",
+            params![body.shirt_pid, pseudo, now_s - 86_400], |r| r.get::<_, i64>(0),
+        ).is_ok();
+        if recent {
+            return Json(serde_json::json!({
+                "ok": false,
+                "error": "1 日 1 通までです。明日また送れます。"
+            })).into_response();
+        }
+        let _ = conn.execute(
+            "INSERT INTO mu_sighting_replies (shirt_pid, shirt_pos, line, sender_pseudonym, sent_at, ip_hash)
+             VALUES (?,?,?,?,?,?)",
+            params![body.shirt_pid, body.shirt_pos, line, pseudo, chrono_now(), ip_hash],
+        );
+    }
+    send_telegram_message(&format!(
+        "📨 anonymous reply for shirt #{} pos={:?}\n「{}」\nfrom: {}",
+        body.shirt_pid, body.shirt_pos, line, pseudo,
+    )).await;
+    Json(serde_json::json!({"ok": true})).into_response()
 }
 
 async fn chronicle_qr_svg(
@@ -29404,6 +30087,11 @@ async fn main() {
         "ALTER TABLE products ADD COLUMN retire_reason TEXT",
         // B: multi-city — どの origin city が drop を発行したか
         "ALTER TABLE products ADD COLUMN city_slug TEXT NOT NULL DEFAULT 'teshikaga'",
+        // dHash perceptual hash of design_url for retroactive identification
+        // of pre-§23 shirts (sold before moon marker compositing landed) and
+        // for counterfeit detection (matched design but no Stripe sale).
+        // 64-bit hash stored as 16-hex-char string.
+        "ALTER TABLE products ADD COLUMN dhash TEXT",
         // mention → MUGEN reply: 24h soft-lock for the requester.
         "ALTER TABLE products ADD COLUMN reserved_for_handle TEXT",
         "ALTER TABLE products ADD COLUMN reserved_until INTEGER",
@@ -31338,6 +32026,66 @@ async fn main() {
         -- DAO §23: email → wallet binding. Authorship + MA + Chronicle are
         -- keyed by email throughout the codebase, so we bind email→wallet
         -- once and dao_weight_compute() looks up everything via that.
+        -- Sightings: every successful /scan decode (marker or pHash) creates
+        -- one row. shirt_pid+shirt_pos identifies the garment. Device cookie
+        -- pseudonyms keep it human-PII-free per §13. Prefecture only (no GPS)
+        -- per §19. The life-log of each shirt is built from these rows.
+        CREATE TABLE IF NOT EXISTS mu_sightings (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            shirt_pid        INTEGER NOT NULL,
+            shirt_pos        INTEGER,
+            sighted_at       TEXT NOT NULL,
+            device_pseudonym TEXT NOT NULL,
+            prefecture       TEXT,
+            source           TEXT NOT NULL,   -- 'marker' | 'phash'
+            confidence       REAL,
+            notes            TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_sightings_shirt ON mu_sightings(shirt_pid, shirt_pos, sighted_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_sightings_at    ON mu_sightings(sighted_at DESC);
+
+        -- Crossings: when /scan sees 2+ MU shirts in the same camera frame
+        -- we log a pairwise crossing per unordered pair. The implicit social
+        -- graph is between garments, never between humans (§13).
+        CREATE TABLE IF NOT EXISTS mu_crossings (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            shirt_a_pid      INTEGER NOT NULL,
+            shirt_a_pos      INTEGER,
+            shirt_b_pid      INTEGER NOT NULL,
+            shirt_b_pos      INTEGER,
+            crossed_at       TEXT NOT NULL,
+            prefecture       TEXT,
+            device_pseudonym TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_crossings_a ON mu_crossings(shirt_a_pid, shirt_a_pos);
+        CREATE INDEX IF NOT EXISTS idx_crossings_b ON mu_crossings(shirt_b_pid, shirt_b_pos);
+
+        -- Counterfeit alerts: pHash matches a known design but there's no
+        -- magic byte AND no Stripe sale at this position. Telegram only —
+        -- never visible publicly, never automatically blocks anything.
+        CREATE TABLE IF NOT EXISTS mu_counterfeit_alerts (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            dhash            TEXT NOT NULL,
+            matched_pid      INTEGER,
+            reason           TEXT NOT NULL,
+            flagged_at       TEXT NOT NULL,
+            device_pseudonym TEXT
+        );
+
+        -- Anonymous 1-line replies sent by scanners back to wearer (opt-in).
+        -- Each shirt's owner gets a Telegram notif via yuki (later: own inbox
+        -- on /you). Rate-limited to 1 reply/scanner/shirt/day.
+        CREATE TABLE IF NOT EXISTS mu_sighting_replies (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            shirt_pid        INTEGER NOT NULL,
+            shirt_pos        INTEGER,
+            line             TEXT NOT NULL,
+            sender_pseudonym TEXT NOT NULL,
+            sent_at          TEXT NOT NULL,
+            ip_hash          TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_replies_shirt ON mu_sighting_replies(shirt_pid, shirt_pos);
+
         CREATE TABLE IF NOT EXISTS dao_email_wallets (
             email     TEXT PRIMARY KEY,
             wallet    TEXT NOT NULL,
@@ -31633,6 +32381,12 @@ async fn main() {
         .route("/api/mark/decode/:value", get(moon_marker_decode))
         .route("/scan", get(moon_scan_page))
         .route("/api/scan/checkin", post(moon_event_checkin))
+        .route("/api/sightings", post(sightings_record))
+        .route("/api/scan/phash", post(scan_phash_lookup))
+        .route("/api/sighting/reply", post(sighting_reply_submit))
+        .route("/api/admin/phash/backfill", post(admin_phash_backfill))
+        .route("/shirt/:pid/life", get(shirt_life_page))
+        .route("/map", get(shirt_map_page))
         .route("/api/admin/event/create", post(admin_event_create))
         .route("/api/admin/event/checkins", get(admin_event_checkins))
         // matchit (axum's router) treats `:pos.svg` and `:pos.png` as
