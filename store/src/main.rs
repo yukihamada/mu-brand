@@ -9819,6 +9819,48 @@ fn fmt_commas(n: i64) -> String {
 /// Same data as the JSON endpoint, server-side rendered with the MU dark theme.
 async fn public_transparency_page(State(db): State<Db>) -> Html<String> {
     let snap = gather_transparency_snapshot(&db);
+    // Traffic snapshot (last 7d) — for the "where did people come from" section.
+    let (pv_7d, top_refs): (i64, Vec<(String, i64)>) = {
+        let conn = db.lock().unwrap();
+        let pv: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM funnel_events
+             WHERE event='pageview' AND CAST(created_at AS INTEGER) > strftime('%s','now')-7*86400",
+            [], |r| r.get(0),
+        ).unwrap_or(0);
+        let refs: Vec<(String, i64)> = match conn.prepare(
+            "SELECT
+                CASE
+                    WHEN referrer IS NULL OR referrer = '' THEN '(直接 / unknown)'
+                    WHEN referrer LIKE '%t.co%' OR referrer LIKE '%twitter.com%' OR referrer LIKE '%x.com%' THEN 'X / Twitter'
+                    WHEN referrer LIKE '%google%' THEN 'Google'
+                    WHEN referrer LIKE '%threads%' THEN 'Threads'
+                    WHEN referrer LIKE '%instagram%' THEN 'Instagram'
+                    WHEN referrer LIKE '%bing%' THEN 'Bing'
+                    WHEN referrer LIKE '%duckduckgo%' THEN 'DuckDuckGo'
+                    WHEN referrer LIKE '%news.ycombinator.com%' THEN 'Hacker News'
+                    WHEN referrer LIKE '%reddit%' THEN 'Reddit'
+                    ELSE 'その他'
+                END as source,
+                COUNT(*) as n
+             FROM funnel_events
+             WHERE event='pageview' AND CAST(created_at AS INTEGER) > strftime('%s','now')-7*86400
+             GROUP BY source ORDER BY n DESC LIMIT 8"
+        ) {
+            Ok(mut s) => s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+                .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
+        (pv, refs)
+    };
+    let traffic_rows: String = if top_refs.is_empty() {
+        r#"<div class="row"><span class="k">(no pageviews in last 7d — t.js not firing?)</span><span class="v">—</span></div>"#.to_string()
+    } else {
+        top_refs.iter().map(|(src, n)| {
+            format!(r#"<div class="row"><span class="k">{}</span><span class="v">{}</span></div>"#,
+                html_escape(src), fmt_commas(*n))
+        }).collect::<String>()
+    };
+    let pv_7d_s = fmt_commas(pv_7d);
     let real_rev      = snap["real"]["revenue_jpy"].as_i64().unwrap_or(0);
     let real_purch    = snap["real"]["purchases"].as_i64().unwrap_or(0);
     let ext_rev       = snap["external"]["revenue_jpy"].as_i64().unwrap_or(0);
@@ -9974,6 +10016,19 @@ footer a:hover{{color:var(--y)}}
     <div class="row"><span class="k">MUON 欠番日付</span><span class="v warn">{muon_missing_s}</span></div>
   </div>
 
+  <!-- Traffic -->
+  <div class="section">
+    <h2>トラフィック (last 7d)</h2>
+    <p>
+      過去 7 日のページビュー <strong style="color:var(--y)">{pv_7d_s}</strong> 件。流入元の内訳もそのまま晒します
+      (現状 0 フォロワー X / 1 IP がほぼ全部 = bot or yuki = 実トラフィックほぼゼロ)。
+    </p>
+    {traffic_rows}
+    <p style="margin-top:14px;font-size:12px;opacity:0.6">
+      計測: <code style="background:rgba(230,196,73,0.10);color:var(--y);padding:1px 5px">funnel_events</code> table (event='pageview') を直接集計。Vendor analytics なし。
+    </p>
+  </div>
+
   <!-- Methodology -->
   <div class="section">
     <h2>計測方法</h2>
@@ -10087,6 +10142,8 @@ footer a:hover{{color:var(--y)}}
         mugen_missing_s = mugen_missing_s,
         muon_missing_s = muon_missing_s,
         as_of_str = as_of_str,
+        pv_7d_s = pv_7d_s,
+        traffic_rows = traffic_rows,
         you_paid_class = if you_paid == 0 { "bad" } else { "good" },
         mrr_class = if you_mrr == 0 { "bad" } else { "good" },
     );
