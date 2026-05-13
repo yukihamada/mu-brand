@@ -10788,10 +10788,26 @@ footer a:hover{{color:var(--y)}}
   <div class="eyebrow">Transparency · live</div>
   <h1>Every MU number, <em>public</em>.</h1>
   <p class="lede">
-    Recomputed on every request. No cache. Inflated counters are isolated in separate fields.<br>
+    Recomputed on every request. No cache. Inflated counters are isolated.<br>
     Third-party purchases (excluding yuki's own dogfooding) are surfaced as <strong style="color:var(--y)">external</strong>.
   </p>
   <p class="as-of">As of {as_of_str}</p>
+
+  <!-- TL;DR strip for skimmers -->
+  <div style="margin:28px 0 0;padding:18px 20px;border:1px solid var(--line);background:#0e0e0e;border-radius:2px">
+    <div style="font-size:10px;letter-spacing:0.32em;text-transform:uppercase;color:var(--y);opacity:0.85;margin-bottom:10px">TL;DR · 2026-Q2</div>
+    <ul style="list-style:none;padding:0;margin:0;font-size:13.5px;line-height:2;color:var(--mute)">
+      <li>· Lifetime revenue <strong style="color:var(--fg)">¥{real_rev_s}</strong> · of which third-party <strong style="color:var(--y)">¥{ext_rev_s}</strong> from <strong style="color:var(--fg)">{ext_cust_s}</strong> customer(s)</li>
+      <li>· Subscription MRR <strong style="color:var(--fg)">¥{you_mrr_s}</strong> · 28 in-process agents on 1 Fly.io VM · ~$57/mo all-in</li>
+      <li>· Stack: Rust + libsql + Gemini + Stripe + Printful, MIT-licensed at <a href="https://github.com/yukihamada/mu-brand">github.com/yukihamada/mu-brand</a></li>
+      <li>· <strong style="color:var(--fg)">yuki = 1 human operator</strong>. Design / copy / pricing / scheduling = 0 humans (agents).</li>
+    </ul>
+    <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+      <a href="/" style="display:inline-block;background:var(--y);color:#000;padding:9px 16px;font-size:10.5px;letter-spacing:0.28em;text-transform:uppercase;font-weight:600;border-radius:2px">Shop live drops →</a>
+      <a href="/api/transparency" style="display:inline-block;border:1px solid var(--line);padding:9px 16px;font-size:10.5px;letter-spacing:0.28em;text-transform:uppercase;color:var(--mute);border-radius:2px">Raw JSON</a>
+      <a href="https://github.com/yukihamada/mu-brand" style="display:inline-block;border:1px solid var(--line);padding:9px 16px;font-size:10.5px;letter-spacing:0.28em;text-transform:uppercase;color:var(--mute);border-radius:2px">Source on GitHub</a>
+    </div>
+  </div>
 
   <div class="hero-num">
     <div class="v">¥{real_rev_s}</div>
@@ -10831,7 +10847,7 @@ footer a:hover{{color:var(--y)}}
     </p>
     {traffic_rows}
     <p style="margin-top:14px;font-size:12px;opacity:0.6">
-      Measurement: direct aggregation of the <code style="background:rgba(230,196,73,0.10);color:var(--y);padding:1px 5px">funnel_events</code> table (event='pageview'). No vendor analytics.
+      Measurement: direct aggregation of our own <code style="background:rgba(230,196,73,0.10);color:var(--y);padding:1px 5px">funnel_events</code> table (event='pageview'). Pageviews fire via <code style="background:rgba(230,196,73,0.10);color:var(--y);padding:1px 5px">enabler-analytics.fly.dev/t.js</code> — our self-hosted endpoint. No Google Analytics, no Segment, no third-party trackers.
     </p>
   </div>
 
@@ -10843,8 +10859,12 @@ footer a:hover{{color:var(--y)}}
       • <strong style="color:var(--fg)">approx_mrr</strong>: paid subscriber count × monthly price. Annual plans converted to monthly equivalent.<br>
       • <strong style="color:var(--fg)">designs_generated</strong>: total rows across products + you_designs.
     </p>
+    <p style="margin-top:14px;font-size:13px">
+      Sample query (revenue):<br>
+      <code style="display:block;margin-top:6px;padding:10px 14px;background:#0e0e0e;border:1px solid var(--line);color:var(--y);font-size:12px;line-height:1.6;overflow-x:auto">SELECT COALESCE(SUM(amount_total),0) FROM stripe_sessions<br>WHERE id LIKE 'cs_live_%' AND payment_status='paid';</code>
+    </p>
     <p style="margin-top:16px">
-      Source: <a href="https://github.com/yukihamada/mu-brand">github.com/yukihamada/mu-brand</a> · query logic in <code style="background:rgba(230,196,73,0.10);color:var(--y);padding:1px 5px">store/src/main.rs::public_transparency</code>.
+      Source: <a href="https://github.com/yukihamada/mu-brand">github.com/yukihamada/mu-brand</a> · query logic in <code style="background:rgba(230,196,73,0.10);color:var(--y);padding:1px 5px">store/src/main.rs::gather_transparency_snapshot</code>.
     </p>
   </div>
 
@@ -13229,6 +13249,30 @@ async fn x_post_tweet_v2(db: &Db, text: &str, in_reply_to: Option<&str>) -> Resu
     Err("unreachable".into())
 }
 
+/// Delete a tweet (v2 user-context). DELETE /2/tweets/:id.
+async fn x_delete_tweet_v2(db: &Db, tweet_id: &str) -> Result<(), String> {
+    let mut access = match x_get_access_token(db).await {
+        Ok(Some(t)) => t,
+        _ => env::var("X_OAUTH2_ACCESS_TOKEN").map_err(|_| "no X access token available".to_string())?,
+    };
+    let api = format!("https://api.twitter.com/2/tweets/{}", tweet_id);
+    for attempt in 0..2 {
+        let resp = reqwest::Client::new()
+            .delete(&api).bearer_auth(&access).send().await
+            .map_err(|e| format!("http: {e}"))?;
+        let s = resp.status();
+        let b = resp.text().await.unwrap_or_default();
+        if s.is_success() { return Ok(()); }
+        if s.as_u16() == 401 && attempt == 0 {
+            if let Ok(Some(t)) = x_get_access_token(db).await { access = t; continue; }
+            access = x_oauth2_refresh().await?;
+            continue;
+        }
+        return Err(format!("delete tweet {}: {}", s, &b[..b.len().min(400)]));
+    }
+    Err("unreachable".into())
+}
+
 /// Pin a tweet (v2 user-context). user_id of @wearMUcom = 2053797881262555136.
 async fn x_pin_tweet(db: &Db, tweet_id: &str) -> Result<(), String> {
     let mut access = match x_get_access_token(db).await {
@@ -13376,6 +13420,23 @@ async fn admin_x_rebrand_once(
     }
 
     Json(serde_json::Value::Object(result)).into_response()
+}
+
+/// POST /admin/x/delete?token=…&tweet_id=… — delete a tweet from @wearMUcom.
+async fn admin_x_delete(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/x/delete").await { return r; }
+    let tweet_id = match q.get("tweet_id") {
+        Some(t) if !t.is_empty() => t.clone(),
+        _ => return (StatusCode::BAD_REQUEST, "missing ?tweet_id=").into_response(),
+    };
+    match x_delete_tweet_v2(&db, &tweet_id).await {
+        Ok(()) => Json(serde_json::json!({"ok": true, "deleted": tweet_id})).into_response(),
+        Err(e) => Json(serde_json::json!({"ok": false, "tweet_id": tweet_id, "err": e})).into_response(),
+    }
 }
 
 /// "Cultural moment" daily cron — JST 12:00. Asks Gemini if there's an
@@ -25574,6 +25635,7 @@ async fn main() {
         .route("/admin/email-rewrites", get(admin_email_rewrites))
         .route("/admin/email-rewrites/run", post(admin_email_rewrites_run))
         .route("/admin/x/rebrand-once", post(admin_x_rebrand_once))
+        .route("/admin/x/delete", post(admin_x_delete))
         .route("/admin/email-rewrites/:id/decide", post(admin_email_rewrites_decide))
         .route("/webhooks/resend", post(webhook_resend))
         .route("/api/v1/event", post(api_funnel_event))
@@ -30846,22 +30908,32 @@ async fn agent_weather_pulse(db: Db) -> Result<AgentReport, String> {
     obs.insert("now_c".into(), serde_json::Value::from(now_t));
 
     let prev_t: Option<f64> = last_announced_str.parse::<f64>().ok();
-    if let Some(prev) = prev_t {
-        let delta = (now_t - prev).abs();
-        obs.insert("prev_c".into(), serde_json::Value::from(prev));
-        obs.insert("delta_c".into(), serde_json::Value::from(delta));
-        if delta < 5.0 {
-            return Ok(AgentReport {
-                observations: serde_json::Value::Object(obs), decisions, actions,
-                summary: format!("weather_pulse: only {:.1}°C delta (< 5)", delta),
-                notable: false,
-            });
+    // On the very first run there is no baseline. Set silently and skip —
+    // posting "弟子屈、今 15°C" with no comparison is just noise.
+    let Some(prev) = prev_t else {
+        {
+            let conn = db.lock().unwrap();
+            cv_set(&conn, "weather_last_announced_c", &now_t.to_string(), "weather_pulse");
         }
+        obs.insert("baseline_set_c".into(), serde_json::Value::from(now_t));
+        return Ok(AgentReport {
+            observations: serde_json::Value::Object(obs), decisions, actions,
+            summary: format!("weather_pulse: baseline set to {:.1}°C (no post)", now_t),
+            notable: false,
+        });
+    };
+    let delta = (now_t - prev).abs();
+    obs.insert("prev_c".into(), serde_json::Value::from(prev));
+    obs.insert("delta_c".into(), serde_json::Value::from(delta));
+    if delta < 5.0 {
+        return Ok(AgentReport {
+            observations: serde_json::Value::Object(obs), decisions, actions,
+            summary: format!("weather_pulse: only {:.1}°C delta (< 5)", delta),
+            notable: false,
+        });
     }
 
-    let dir_jp = if let Some(p) = prev_t {
-        if now_t > p { "上昇" } else { "降下" }
-    } else { "計測開始" };
+    let dir_jp = if now_t > prev { "上昇" } else { "降下" };
 
     let color_hint = match now_t as i64 {
         i if i <= -10 => "白と銀 (極寒)",
@@ -30872,15 +30944,9 @@ async fn agent_weather_pulse(db: Db) -> Result<AgentReport, String> {
         _             => "オレンジと黒 (真夏)",
     };
 
-    let text = if let Some(p) = prev_t {
-        format!(
-            "弟子屈、{}°C → {}°C ({})。\n今日の MUGEN は <{}> 系統で生成されます。\n→ wearmu.com",
-            p as i64, now_t as i64, dir_jp, color_hint)
-    } else {
-        format!(
-            "弟子屈、今 {}°C。\n今日の MUGEN は <{}> 系統で生成されます。\n→ wearmu.com",
-            now_t as i64, color_hint)
-    };
+    let text = format!(
+        "弟子屈、{}°C → {}°C ({})。\n今日の MUGEN は {} 系統で生成されます。\n→ wearmu.com",
+        prev as i64, now_t as i64, dir_jp, color_hint);
 
     if is_dry {
         actions.push(serde_json::json!({"type":"dry_run","text":text}));
@@ -30998,10 +31064,21 @@ async fn agent_mention_responder(db: Db) -> Result<AgentReport, String> {
     let mut replied = 0i64;
     let mut skipped = 0i64;
 
+    // @wearMUcom user id — skip self-mentions (our own quote-tweets, etc.).
+    // Without this we end up replying "ご紹介いただきありがとうございます！" to ourselves.
+    const SELF_AUTHOR_ID: &str = "2053797881262555136";
+
+    let mut self_skipped = 0i64;
     for m in &mentions {
-        let tweet_id = m["id"].as_str().unwrap_or("").to_string();
-        let text     = m["text"].as_str().unwrap_or("").to_string();
+        let tweet_id  = m["id"].as_str().unwrap_or("").to_string();
+        let text      = m["text"].as_str().unwrap_or("").to_string();
+        let author_id = m["author_id"].as_str().unwrap_or("").to_string();
         if tweet_id.is_empty() || text.is_empty() { continue; }
+        if author_id == SELF_AUTHOR_ID {
+            decisions.push(serde_json::json!({"type":"self_skipped","tweet_id":tweet_id}));
+            self_skipped += 1;
+            continue;
+        }
 
         // Classify + draft via Gemini Flash.
         let prompt = format!(
@@ -31062,10 +31139,11 @@ async fn agent_mention_responder(db: Db) -> Result<AgentReport, String> {
 
     obs.insert("replied".into(), serde_json::Value::from(replied));
     obs.insert("skipped".into(), serde_json::Value::from(skipped));
+    obs.insert("self_skipped".into(), serde_json::Value::from(self_skipped));
     Ok(AgentReport {
         observations: serde_json::Value::Object(obs),
         decisions, actions,
-        summary: format!("mention_responder: {} replied, {} skipped", replied, skipped),
+        summary: format!("mention_responder: {} replied, {} skipped ({} self)", replied, skipped, self_skipped),
         notable: replied > 0,
     })
 }
