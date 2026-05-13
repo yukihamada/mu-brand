@@ -10960,6 +10960,7 @@ async fn blog_post_001() -> Html<&'static str> {
 
 const BLOG_FABRIC_SHIFT_RAW: &str = include_str!("../static/blog/fabric-shift.md");
 const BLOG_WEEK_ONE_RAW: &str = include_str!("../static/blog/week-one-7-buyers.md");
+const BLOG_QUALITY_UPGRADE_RAW: &str = include_str!("../static/blog/quality-upgrade-muon-ma.md");
 
 fn render_blog_md(title: &str, md: &str) -> String {
     let body = md_to_html_simple(md);
@@ -11010,6 +11011,96 @@ async fn blog_fabric_shift() -> Html<String> {
 
 async fn blog_week_one() -> Html<String> {
     Html(render_blog_md("1 週間経って、 7 人に売れた", BLOG_WEEK_ONE_RAW))
+}
+
+async fn blog_quality_upgrade() -> Html<String> {
+    Html(render_blog_md("MUON / MA のクオリティを上げるなら何がいい？", BLOG_QUALITY_UPGRADE_RAW))
+}
+
+// ───── Quality upgrade poll (§24-v3 検討) ─────
+// Lightweight survey: お客様 vote which fabric/finish upgrade matters most.
+// One vote per IP (sha256 of remote IP). Results are public.
+
+const QUALITY_POLL_SLUG: &str = "quality_upgrade_muon_ma_v1";
+const QUALITY_POLL_OPTIONS: &[(&str, &str)] = &[
+    ("A", "生地を 250gsm に上げる (Stanley/Stella STTU788)"),
+    ("B", "MA 専用の内側 woven label + hang tag"),
+    ("C", "garment-dyed (色落ち系) に切替"),
+    ("D", "DTG → screen print に切替"),
+    ("E", "MA 限定: 国内 loopwheel (§2 例外)"),
+    ("F", "現状維持 (Stanley/Stella SATU001 で十分)"),
+];
+
+fn quality_poll_option_is_valid(id: &str) -> bool {
+    QUALITY_POLL_OPTIONS.iter().any(|(k, _)| *k == id)
+}
+
+#[derive(Deserialize)]
+struct QualityVoteBody {
+    option_id: String,
+}
+
+async fn quality_poll_vote(
+    State(db): State<Db>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<QualityVoteBody>,
+) -> Response {
+    let opt = body.option_id.trim().to_string();
+    if !quality_poll_option_is_valid(&opt) {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"invalid option_id"}))).into_response();
+    }
+    // Derive a stable per-IP hash. Fly forwards client IP via Fly-Client-IP.
+    let ip = headers.get("fly-client-ip").or_else(|| headers.get("x-forwarded-for"))
+        .and_then(|v| v.to_str().ok()).unwrap_or("anon")
+        .split(',').next().unwrap_or("anon").trim().to_string();
+    use sha2::{Sha256, Digest};
+    let mut h = Sha256::new();
+    h.update(ip.as_bytes());
+    h.update(QUALITY_POLL_SLUG.as_bytes());
+    let ip_hash = hex::encode(h.finalize());
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let conn = db.lock().unwrap();
+    // One vote per IP per slug — INSERT OR REPLACE so a re-vote updates the choice.
+    let res = conn.execute(
+        "INSERT INTO quality_poll_votes (slug, option_id, ip_hash, voted_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(slug, ip_hash) DO UPDATE SET option_id=excluded.option_id, voted_at=excluded.voted_at",
+        params![QUALITY_POLL_SLUG, opt, ip_hash, now_s],
+    );
+    match res {
+        Ok(_) => Json(serde_json::json!({"ok": true, "option_id": opt})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response(),
+    }
+}
+
+async fn quality_poll_results(State(db): State<Db>) -> Response {
+    let conn = db.lock().unwrap();
+    let mut stmt = match conn.prepare(
+        "SELECT option_id, COUNT(*) FROM quality_poll_votes WHERE slug=? GROUP BY option_id"
+    ) {
+        Ok(s) => s,
+        Err(_) => return Json(serde_json::json!({"options":[], "total":0})).into_response(),
+    };
+    let rows: Vec<(String, i64)> = stmt.query_map(params![QUALITY_POLL_SLUG], |r| Ok((r.get(0)?, r.get(1)?)))
+        .map(|it| it.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default();
+    let total: i64 = rows.iter().map(|(_, c)| *c).sum();
+    let options: Vec<serde_json::Value> = QUALITY_POLL_OPTIONS.iter().map(|(id, label)| {
+        let count = rows.iter().find(|(k, _)| k == id).map(|(_, c)| *c).unwrap_or(0);
+        serde_json::json!({
+            "id": id, "label": label, "count": count,
+            "pct": if total > 0 { (count as f64 / total as f64 * 100.0).round() as i64 } else { 0 },
+        })
+    }).collect();
+    Json(serde_json::json!({
+        "slug": QUALITY_POLL_SLUG,
+        "total": total,
+        "options": options,
+    })).into_response()
+}
+
+async fn survey_quality_page() -> Html<&'static str> {
+    Html(include_str!("../static/survey-quality.html"))
 }
 
 async fn tokushoho_page() -> Html<&'static str> {
@@ -31605,6 +31696,16 @@ async fn main() {
         );
         CREATE INDEX IF NOT EXISTS idx_feedback_user ON customer_feedback(user_id);
         CREATE INDEX IF NOT EXISTS idx_feedback_council ON customer_feedback(is_ma_council, created_at DESC);
+        -- §24-v3 quality upgrade poll: open survey, 1 vote per IP.
+        CREATE TABLE IF NOT EXISTS quality_poll_votes (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug        TEXT NOT NULL,
+            option_id   TEXT NOT NULL,
+            ip_hash     TEXT NOT NULL,
+            voted_at    INTEGER NOT NULL,
+            UNIQUE(slug, ip_hash)
+        );
+        CREATE INDEX IF NOT EXISTS idx_quality_poll_slug ON quality_poll_votes(slug, option_id);
         -- MA Council weekly briefs: Gemini が customer_feedback (MA Council
         -- 投稿) を要約して N 件の議題を生成。MA owner だけが /api/council/vote
         -- で投票できる。集計は public で晒される。
@@ -33025,6 +33126,10 @@ async fn main() {
         .route("/blog/from-automation-to-autonomy", get(blog_post_001))
         .route("/blog/fabric-shift", get(blog_fabric_shift))
         .route("/blog/week-one-7-buyers", get(blog_week_one))
+        .route("/blog/quality-upgrade-muon-ma", get(blog_quality_upgrade))
+        .route("/survey/quality", get(survey_quality_page))
+        .route("/api/poll/quality", get(quality_poll_results))
+        .route("/api/poll/quality/vote", post(quality_poll_vote))
         .route("/sitemap.xml", get(dynamic_sitemap))
         // Per-user share page — REGISTER LAST so literal routes win
         .route("/:slug", get(slug_or_static))
