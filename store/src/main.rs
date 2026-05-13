@@ -4353,6 +4353,113 @@ async fn checkout(
     }
 }
 
+// ── Resend Inbound Webhook ────────────────────────────────────────────────
+// info@wearmu.com 等への受信 email を customer_feedback に保存し、
+// 既存の agent_customer_support (30min cron) が AI 返信草案を作る。
+//
+// Resend ダッシュボード設定:
+//   1) Domains → wearmu.com → MX records を Resend 指示通りに DNS 設定
+//   2) Webhooks → Add → URL: https://wearmu.com/api/webhook/resend-inbound?secret=<RESEND_INBOUND_SECRET>
+//      Events: email.received
+//   3) fly secrets set RESEND_INBOUND_SECRET=<長いランダム文字列> -a mu-store
+//
+// Svix 署名検証は TODO (現状は URL の ?secret= による事前共有鍵)。
+async fn resend_inbound_webhook(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    // Shared-secret gate (TODO: replace with Svix signature verify)
+    let expected = env::var("RESEND_INBOUND_SECRET").unwrap_or_default();
+    let provided = q.get("secret").map(String::as_str).unwrap_or("");
+    if expected.is_empty() {
+        eprintln!("[resend-inbound] RESEND_INBOUND_SECRET env var is not set — rejecting");
+        return (StatusCode::SERVICE_UNAVAILABLE, "inbound disabled").into_response();
+    }
+    if provided != expected {
+        return (StatusCode::UNAUTHORIZED, "bad secret").into_response();
+    }
+
+    // Resend's email.received payload (loose parse — schema may evolve).
+    //   { type: "email.received", data: { from: {email,...}, to: [{email}],
+    //     subject, text, html, headers, ... } }
+    let event_type = body["type"].as_str().unwrap_or("");
+    if event_type != "email.received" {
+        return (StatusCode::OK, "ignored").into_response();
+    }
+    let data = &body["data"];
+    let from_email: String = data["from"]["email"].as_str()
+        .or_else(|| data["from"].as_str())
+        .unwrap_or("")
+        .trim().to_string();
+    let to_email: String = data["to"][0]["email"].as_str()
+        .or_else(|| data["to"].as_str())
+        .unwrap_or("")
+        .to_string();
+    let subject: String = data["subject"].as_str().unwrap_or("").chars().take(300).collect();
+    let text_body: String = data["text"].as_str()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| {
+            // Fall back to stripping html
+            data["html"].as_str().map(strip_html_tags).unwrap_or_default()
+        })
+        .chars().take(20_000).collect();
+
+    if from_email.is_empty() || (subject.is_empty() && text_body.is_empty()) {
+        return (StatusCode::BAD_REQUEST, "missing from/content").into_response();
+    }
+
+    // Compose message: include "To: <addr>" + "Subject:" + body for context.
+    let composed = format!("[inbox / to:{}]\n{}\n\n{}", to_email, subject, text_body);
+
+    // Heuristic kind classification (final classify happens in agent_customer_support).
+    let lower = format!("{} {}", subject.to_lowercase(), text_body.to_lowercase());
+    let kind = if lower.contains("返金") || lower.contains("refund")
+                  || lower.contains("キャンセル") || lower.contains("cancel")
+        { "refund" }
+    else if lower.contains("不具合") || lower.contains("壊れ") || lower.contains("broken")
+                  || lower.contains("届かない") || lower.contains("missing")
+        { "complaint" }
+    else if lower.contains("ありがとう") || lower.contains("最高") || lower.contains("素敵")
+                  || lower.contains("love") || lower.contains("amazing")
+        { "praise" }
+    else { "request" };
+
+    let now = chrono_now();
+    let inserted_id: i64 = {
+        let conn = db.lock().unwrap();
+        match conn.execute(
+            "INSERT INTO customer_feedback (email, message, kind, created_at)
+             VALUES (?,?,?,?)",
+            params![from_email, composed, kind, now],
+        ) {
+            Ok(_) => conn.last_insert_rowid(),
+            Err(e) => {
+                eprintln!("[resend-inbound] insert failed: {}", e);
+                return (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response();
+            }
+        }
+    };
+
+    // Telegram notify so you see inbound mail in real-time.
+    if let Ok(tg_token) = env::var("TELEGRAM_BOT_TOKEN") {
+        if !tg_token.is_empty() {
+            let tg_chat = env::var("TELEGRAM_CHAT_ID").unwrap_or_else(|_| "1136442501".into());
+            let msg = format!(
+                "📬 INBOX #{} ({}) — {}\n\nfrom: {}\nto:   {}\nsubject: {}\n\n{}",
+                inserted_id, kind, now,
+                from_email, to_email, subject,
+                text_body.chars().take(800).collect::<String>());
+            let _ = reqwest::Client::new()
+                .post(format!("https://api.telegram.org/bot{}/sendMessage", tg_token))
+                .json(&serde_json::json!({"chat_id": tg_chat, "text": msg}))
+                .send().await;
+        }
+    }
+
+    Json(serde_json::json!({"ok": true, "feedback_id": inserted_id, "kind": kind})).into_response()
+}
+
 async fn stripe_webhook(
     State(db): State<Db>,
     headers: HeaderMap,
@@ -23078,6 +23185,7 @@ async fn main() {
         .route("/api/webhook/helius", post(payments::helius_webhook))
         .route("/api/webhook/alchemy", post(payments::alchemy_webhook))
         .route("/api/webhook/stripe-identity", post(payments::stripe_identity_webhook))
+        .route("/api/webhook/resend-inbound", post(resend_inbound_webhook))
         .route("/api/kyc/identity-session", post(payments::create_stripe_identity_session))
         .route("/api/admin/exports/kyc.csv", get(payments::admin_export_kyc))
         .route("/api/admin/exports/crypto.csv", get(payments::admin_export_crypto))
