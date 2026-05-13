@@ -11276,6 +11276,77 @@ async fn admin_blog_publish(
 }
 
 #[derive(Deserialize)]
+struct BlogUpdateBody {
+    admin_token: String,
+    slug: String,
+    /// New title (1-120 chars). Optional — if omitted, title is preserved.
+    #[serde(default)]
+    title: Option<String>,
+    /// New markdown body (200-8000 bytes). Required.
+    body_md: String,
+    /// Tag for the auto_blog_posts.model audit column. Optional.
+    /// Used when rewriting older posts under a stronger model.
+    #[serde(default)]
+    model: Option<String>,
+}
+
+/// POST /api/admin/blog_update — overwrite body_md / body_html / title / model
+/// on an existing slug. Does NOT trigger email digest / X cross-post / Telegram
+/// (this is a rewrite, not a publish). Idempotent if the new body equals the old.
+async fn admin_blog_update(
+    State(db): State<Db>,
+    Json(body): Json<BlogUpdateBody>,
+) -> impl IntoResponse {
+    if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+    let slug = body.slug.trim();
+    if slug.is_empty() || slug.len() > 200 {
+        return (StatusCode::BAD_REQUEST, "slug required").into_response();
+    }
+    let body_md = body.body_md.trim();
+    if body_md.len() < 200 || body_md.len() > 8000 {
+        return (StatusCode::BAD_REQUEST, "body_md must be 200-8000 bytes").into_response();
+    }
+    let new_title = body.title.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    if let Some(t) = new_title {
+        if t.chars().count() > 120 {
+            return (StatusCode::BAD_REQUEST, "title must be ≤120 chars").into_response();
+        }
+    }
+    let body_html = md_to_html_simple(body_md);
+    let n = {
+        let conn = db.lock().unwrap();
+        match (new_title, body.model.as_deref()) {
+            (Some(t), Some(m)) => conn.execute(
+                "UPDATE auto_blog_posts SET title=?, body_md=?, body_html=?, model=?
+                 WHERE slug=?",
+                params![t, body_md, body_html, m, slug],
+            ).unwrap_or(0),
+            (Some(t), None) => conn.execute(
+                "UPDATE auto_blog_posts SET title=?, body_md=?, body_html=? WHERE slug=?",
+                params![t, body_md, body_html, slug],
+            ).unwrap_or(0),
+            (None, Some(m)) => conn.execute(
+                "UPDATE auto_blog_posts SET body_md=?, body_html=?, model=? WHERE slug=?",
+                params![body_md, body_html, m, slug],
+            ).unwrap_or(0),
+            (None, None) => conn.execute(
+                "UPDATE auto_blog_posts SET body_md=?, body_html=? WHERE slug=?",
+                params![body_md, body_html, slug],
+            ).unwrap_or(0),
+        }
+    };
+    if n == 0 {
+        return (StatusCode::NOT_FOUND, "slug not found").into_response();
+    }
+    Json(serde_json::json!({
+        "ok": true,
+        "slug": slug,
+        "rows_updated": n,
+        "url": format!("https://wearmu.com/blog/auto/{}", slug),
+    })).into_response()
+}
+
+#[derive(Deserialize)]
 struct BlogUnpublishBody {
     admin_token: String,
     slug: String,
@@ -11364,6 +11435,9 @@ h3{{font-size:15px;font-weight:500;margin:28px 0 10px;font-family:'Helvetica Neu
 p{{margin:0 0 16px}} em{{color:var(--y);font-style:normal}} strong{{color:var(--fg);font-weight:500}}
 ul{{margin:0 0 18px 22px;color:var(--mute)}} ul li{{margin-bottom:6px}}
 a{{color:var(--y);text-decoration:underline;text-underline-offset:3px}}
+img{{max-width:100%;height:auto;display:block;margin:24px auto;border-radius:2px}}
+figure{{margin:24px 0}} figure img{{margin:0 auto 8px}}
+figcaption{{font-size:11px;letter-spacing:0.12em;text-align:center;color:var(--mute);font-family:'Helvetica Neue',Arial,sans-serif}}
 .byline{{font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;opacity:0.55;margin-bottom:20px}}
 .tag{{display:inline-block;font-size:10px;letter-spacing:0.18em;text-transform:uppercase;padding:3px 10px;background:rgba(230,196,73,0.12);color:var(--y);border-radius:2px;margin-right:8px}}
 footer{{padding:48px 32px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;font-size:11px;letter-spacing:0.2em;opacity:0.5}}
@@ -22750,6 +22824,7 @@ async fn main() {
         .route("/api/blog/stats_for_today", get(blog_stats_for_today))
         .route("/api/admin/blog_publish", post(admin_blog_publish))
         .route("/api/admin/blog_unpublish", post(admin_blog_unpublish))
+        .route("/api/admin/blog_update", post(admin_blog_update))
         .route("/api/blog/auto", get(list_auto_blog))
         .route("/blog/auto/:slug", get(show_auto_blog))
         .route("/api/you/referral", post(you_referral_status))

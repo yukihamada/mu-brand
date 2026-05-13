@@ -222,8 +222,9 @@ jobs:
             --rawfile body /tmp/body.md \
             --argjson stats "$stats" \
             --arg slug "$slug" \
+            --arg model "$model" \
             --argjson retry $retry_count \
-            '{admin_token:$token, title:$title, body_md:$body, model:"gemini-2.5-flash-via-actions",
+            '{admin_token:$token, title:$title, body_md:$body, model:($model+"-via-actions"),
               stats_used:$stats, slug:$slug, origin:"actions", retry_count:$retry}')
           resp=$(curl -fsS --retry 3 --retry-delay 5 -X POST \
             -H 'Content-Type: application/json' \
@@ -265,7 +266,8 @@ jobs:
             bf_payload=$(jq -n \
               --arg token "$MU_ADMIN_TOKEN" --arg title "$title" \
               --rawfile body /tmp/body-bf.md --argjson stats "$stats" --arg slug "$slug" \
-              '{admin_token:$token, title:$title, body_md:$body, model:"gemini-2.5-flash-via-actions",
+              --arg model "$model" \
+              '{admin_token:$token, title:$title, body_md:$body, model:($model+"-via-actions"),
                 stats_used:$stats, slug:$slug, origin:"actions-backfill", quiet:true}')
             curl -fsS -X POST -H 'Content-Type: application/json' \
               -d "$bf_payload" "${BASE_URL}/api/admin/blog_publish" || echo "Backfill $slug failed (non-fatal)"
