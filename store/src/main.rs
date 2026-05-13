@@ -10455,7 +10455,7 @@ footer a:hover{{color:var(--y)}}
 <nav>
   <a class="logo" href="/">MU</a>
   <span style="opacity:0.55">Transparency</span>
-  <a href="/api/transparency" style="opacity:0.55">JSON ↗</a>
+  <span><a href="/en/transparency" style="opacity:0.55;margin-right:14px">English</a><a href="/api/transparency" style="opacity:0.55">JSON ↗</a></span>
 </nav>
 
 <div class="wrap">
@@ -10609,6 +10609,321 @@ footer a:hover{{color:var(--y)}}
     数字に矛盾があったら <a href="mailto:info@enablerdao.com">info@enablerdao.com</a> または <a href="/bounty">/bounty</a> へ。<br>
     Raw JSON: <a href="/api/transparency">wearmu.com/api/transparency</a> · Constitution: <a href="/constitution.md">wearmu.com/constitution.md</a><br>
     株式会社イネブラ (Enabler Inc.) · 0 humans · 28 agents
+  </footer>
+</div>
+
+</body></html>"##,
+        real_rev_s = real_rev_s,
+        ext_rev_s = ext_rev_s,
+        ext_purch_s = ext_purch_s,
+        ext_cust_s = ext_cust_s,
+        real_purch_s = real_purch_s,
+        shirts_sold_s = shirts_sold_s,
+        you_paid_s = you_paid_s,
+        you_lifetime_s = you_lifetime_s,
+        you_free_s = you_free_s,
+        you_mrr_s = you_mrr_s,
+        you_designs_s = you_designs_s,
+        mugen_missing_s = mugen_missing_s,
+        muon_missing_s = muon_missing_s,
+        as_of_str = as_of_str,
+        pv_7d_s = pv_7d_s,
+        traffic_rows = traffic_rows,
+        you_paid_class = if you_paid == 0 { "bad" } else { "good" },
+        mrr_class = if you_mrr == 0 { "bad" } else { "good" },
+    );
+    Html(html)
+}
+
+/// English version of /transparency. Same numbers, English copy.
+/// yuki ships this URL to non-JP audiences on X / Hacker News.
+async fn public_transparency_page_en(State(db): State<Db>) -> Html<String> {
+    let snap = gather_transparency_snapshot(&db);
+    let (pv_7d, top_refs): (i64, Vec<(String, i64)>) = {
+        let conn = db.lock().unwrap();
+        let pv: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM funnel_events
+             WHERE event='pageview' AND CAST(created_at AS INTEGER) > strftime('%s','now')-7*86400",
+            [], |r| r.get(0),
+        ).unwrap_or(0);
+        let refs: Vec<(String, i64)> = match conn.prepare(
+            "SELECT
+                CASE
+                    WHEN referrer IS NULL OR referrer = '' THEN '(direct / unknown)'
+                    WHEN referrer LIKE '%t.co%' OR referrer LIKE '%twitter.com%' OR referrer LIKE '%x.com%' THEN 'X / Twitter'
+                    WHEN referrer LIKE '%google%' THEN 'Google'
+                    WHEN referrer LIKE '%threads%' THEN 'Threads'
+                    WHEN referrer LIKE '%instagram%' THEN 'Instagram'
+                    WHEN referrer LIKE '%bing%' THEN 'Bing'
+                    WHEN referrer LIKE '%duckduckgo%' THEN 'DuckDuckGo'
+                    WHEN referrer LIKE '%news.ycombinator.com%' THEN 'Hacker News'
+                    WHEN referrer LIKE '%reddit%' THEN 'Reddit'
+                    ELSE 'Other'
+                END as source,
+                COUNT(*) as n
+             FROM funnel_events
+             WHERE event='pageview' AND CAST(created_at AS INTEGER) > strftime('%s','now')-7*86400
+             GROUP BY source ORDER BY n DESC LIMIT 8"
+        ) {
+            Ok(mut s) => s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+                .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
+        (pv, refs)
+    };
+    let traffic_rows: String = if top_refs.is_empty() {
+        r#"<div class="row"><span class="k">(no pageviews in last 7d — t.js not firing?)</span><span class="v">—</span></div>"#.to_string()
+    } else {
+        top_refs.iter().map(|(src, n)| {
+            format!(r#"<div class="row"><span class="k">{}</span><span class="v">{}</span></div>"#,
+                html_escape(src), fmt_commas(*n))
+        }).collect::<String>()
+    };
+    let pv_7d_s = fmt_commas(pv_7d);
+    let real_rev      = snap["real"]["revenue_jpy"].as_i64().unwrap_or(0);
+    let real_purch    = snap["real"]["purchases"].as_i64().unwrap_or(0);
+    let ext_rev       = snap["external"]["revenue_jpy"].as_i64().unwrap_or(0);
+    let ext_purch     = snap["external"]["purchases"].as_i64().unwrap_or(0);
+    let ext_cust      = snap["external"]["distinct_customers"].as_i64().unwrap_or(0);
+    let shirts_sold   = snap["shirts_sold"].as_i64().unwrap_or(0);
+    let you_paid      = snap["you"]["subscribers_paid"].as_i64().unwrap_or(0);
+    let you_lifetime  = snap["you"]["lifetime_members"].as_i64().unwrap_or(0);
+    let you_free      = snap["you"]["subscribers_free"].as_i64().unwrap_or(0);
+    let you_mrr       = snap["you"]["approx_mrr_jpy"].as_i64().unwrap_or(0);
+    let you_designs   = snap["you"]["designs_generated"].as_i64().unwrap_or(0);
+    let mugen_missing = snap["missing_drops"]["mugen_missing_drops"].as_array()
+        .map(|a| a.len() as i64).unwrap_or(0);
+    let muon_missing  = snap["missing_drops"]["muon_missing_dates"].as_array()
+        .map(|a| a.len() as i64).unwrap_or(0);
+    let as_of_unix: i64 = snap["as_of"].as_str().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let jst = as_of_unix + 9 * 3600;
+    let day_n = jst / 86_400;
+    let (y, m, d) = civil_from_days(day_n);
+    let secs_today = jst.rem_euclid(86_400);
+    let (hh, mm) = (secs_today / 3600, (secs_today % 3600) / 60);
+    let as_of_str = format!("{:04}-{:02}-{:02} {:02}:{:02} JST", y, m, d, hh, mm);
+
+    let real_rev_s     = fmt_commas(real_rev);
+    let ext_rev_s      = fmt_commas(ext_rev);
+    let ext_purch_s    = fmt_commas(ext_purch);
+    let ext_cust_s     = fmt_commas(ext_cust);
+    let real_purch_s   = fmt_commas(real_purch);
+    let shirts_sold_s  = fmt_commas(shirts_sold);
+    let you_paid_s     = fmt_commas(you_paid);
+    let you_lifetime_s = fmt_commas(you_lifetime);
+    let you_free_s     = fmt_commas(you_free);
+    let you_mrr_s      = fmt_commas(you_mrr);
+    let you_designs_s  = fmt_commas(you_designs);
+    let mugen_missing_s = fmt_commas(mugen_missing);
+    let muon_missing_s  = fmt_commas(muon_missing);
+
+    let html = format!(r##"<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Transparency — every MU number, public | wearmu.com</title>
+<meta name="description" content="MU's revenue, purchases, subscriptions, missing drops. Every number recomputed on every request. Nothing hidden.">
+<meta property="og:title" content="MU Transparency — every number, public">
+<meta property="og:description" content="Lifetime revenue ¥{real_rev_s} · {ext_purch_s} external purchases · MRR ¥{you_mrr_s}. The reality of a 0-human brand.">
+<meta property="og:image" content="https://wearmu.com/og.jpg">
+<meta property="og:url" content="https://wearmu.com/en/transparency">
+<meta property="og:locale" content="en_US">
+<meta property="og:locale:alternate" content="ja_JP">
+<link rel="alternate" hreflang="ja" href="https://wearmu.com/transparency">
+<link rel="alternate" hreflang="en" href="https://wearmu.com/en/transparency">
+<link rel="alternate" hreflang="x-default" href="https://wearmu.com/transparency">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="MU Transparency">
+<meta name="twitter:description" content="Lifetime revenue ¥{real_rev_s} · {ext_purch_s} external purchases · MRR ¥{you_mrr_s}">
+<meta name="twitter:image" content="https://wearmu.com/og.jpg">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<style>
+:root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.55);--y:#e6c449;--line:rgba(255,255,255,0.08);--card:#111}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue',Arial,sans-serif;line-height:1.7;font-size:15px;-webkit-font-smoothing:antialiased}}
+a{{color:var(--y);text-decoration:none}}
+a:hover{{text-decoration:underline;text-underline-offset:3px}}
+nav{{position:sticky;top:0;background:rgba(10,10,10,0.9);backdrop-filter:blur(12px);border-bottom:1px solid var(--line);padding:16px 28px;display:flex;justify-content:space-between;align-items:center;z-index:50;font-size:11px;letter-spacing:0.3em;text-transform:uppercase}}
+nav .logo{{font-weight:700;letter-spacing:0.45em}}
+.wrap{{max-width:920px;margin:0 auto;padding:60px 28px 100px}}
+.eyebrow{{font-size:10px;letter-spacing:0.42em;text-transform:uppercase;color:var(--y);opacity:0.85;margin-bottom:18px}}
+h1{{font-size:clamp(34px,6vw,64px);font-weight:200;letter-spacing:-0.012em;line-height:1.15;margin-bottom:18px}}
+h1 em{{color:var(--y);font-style:normal;font-weight:300}}
+.lede{{color:var(--mute);font-size:15px;max-width:640px;line-height:2;margin-bottom:8px}}
+.as-of{{font-size:10px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.45;margin-top:6px}}
+.lang-switch{{position:absolute;top:60px;right:28px;font-size:10px;letter-spacing:0.32em;text-transform:uppercase;color:var(--mute)}}
+.lang-switch a{{color:var(--mute);padding:0 4px}}
+.lang-switch a.active{{color:var(--y)}}
+.hero-num{{margin:56px 0 16px;text-align:center}}
+.hero-num .v{{font-size:clamp(72px,16vw,160px);font-weight:200;color:var(--y);letter-spacing:-0.03em;line-height:1;font-variant-numeric:tabular-nums}}
+.hero-num .l{{margin-top:14px;font-size:11px;letter-spacing:0.32em;text-transform:uppercase;color:var(--mute)}}
+.hero-num .s{{font-size:13px;color:var(--mute);margin-top:8px}}
+.kpi{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1px;background:var(--line);border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin:48px 0 24px}}
+.cell{{background:var(--bg);padding:32px 24px;text-align:center}}
+.cell .v{{font-size:clamp(28px,3.6vw,42px);font-weight:200;color:var(--fg);letter-spacing:-0.015em;line-height:1;font-variant-numeric:tabular-nums}}
+.cell .v.y{{color:var(--y)}}
+.cell .l{{margin-top:12px;font-size:10px;letter-spacing:0.3em;text-transform:uppercase;color:var(--mute)}}
+.cell .s{{margin-top:6px;font-size:11px;color:var(--mute);line-height:1.5}}
+.section{{margin:64px 0 0;padding-top:32px;border-top:1px solid var(--line)}}
+.section h2{{font-size:13px;letter-spacing:0.28em;text-transform:uppercase;color:var(--y);font-weight:500;margin-bottom:18px}}
+.section p{{color:var(--mute);font-size:14px;line-height:2;max-width:680px}}
+.row{{display:grid;grid-template-columns:1fr auto;gap:14px;padding:14px 0;border-bottom:1px solid var(--line);align-items:baseline}}
+.row:last-child{{border-bottom:0}}
+.row .k{{font-size:13px;color:var(--mute)}}
+.row .v{{font-variant-numeric:tabular-nums;font-weight:500;font-size:15px}}
+.row .v.bad{{color:#ff8a7a}}
+.row .v.warn{{color:#ffb37a}}
+.row .v.good{{color:#a8d99a}}
+footer{{margin-top:80px;padding-top:32px;border-top:1px solid var(--line);color:var(--mute);font-size:11.5px;letter-spacing:0.1em;line-height:2}}
+footer a{{color:var(--mute);text-decoration:underline;text-decoration-color:rgba(255,255,255,0.18)}}
+footer a:hover{{color:var(--y)}}
+</style></head><body>
+
+<nav>
+  <a class="logo" href="/">MU</a>
+  <span style="opacity:0.55">Transparency</span>
+  <span><a href="/transparency" style="opacity:0.55;margin-right:14px">日本語</a><a href="/api/transparency" style="opacity:0.55">JSON ↗</a></span>
+</nav>
+
+<div class="wrap">
+  <div class="eyebrow">Transparency · live</div>
+  <h1>Every MU number, <em>public</em>.</h1>
+  <p class="lede">
+    Recomputed on every request. No cache. Inflated counters are isolated in separate fields.<br>
+    Third-party purchases (excluding yuki's own dogfooding) are surfaced as <strong style="color:var(--y)">external</strong>.
+  </p>
+  <p class="as-of">As of {as_of_str}</p>
+
+  <div class="hero-num">
+    <div class="v">¥{real_rev_s}</div>
+    <div class="l">Lifetime revenue (Stripe live)</div>
+    <div class="s">of which third-party (non-yuki) is <strong style="color:var(--y)">¥{ext_rev_s}</strong> from {ext_cust_s} customer(s) / {ext_purch_s} purchase(s)</div>
+  </div>
+
+  <div class="kpi">
+    <div class="cell"><div class="v">{real_purch_s}</div><div class="l">Lifetime purchases</div><div class="s">cs_live_* only</div></div>
+    <div class="cell"><div class="v y">{ext_cust_s}</div><div class="l">Third-party customers</div><div class="s">excludes yuki's dogfooding</div></div>
+    <div class="cell"><div class="v">{shirts_sold_s}</div><div class="l">Shirts shipped</div><div class="s">SUM(products.sold)</div></div>
+    <div class="cell"><div class="v">{you_designs_s}</div><div class="l">AI-generated designs</div><div class="s">includes /you tee</div></div>
+  </div>
+
+  <div class="section">
+    <h2>/you subscription</h2>
+    <p>A new T-shirt designed for you every morning by AI. 30-day free trial, then ¥1,480/month (or ¥980/month annual). Buy a single MUGEN or MUON and /you is free for life.</p>
+    <div class="row"><span class="k">Paid subscribers</span><span class="v {you_paid_class}">{you_paid_s}</span></div>
+    <div class="row"><span class="k">Lifetime members</span><span class="v">{you_lifetime_s}</span></div>
+    <div class="row"><span class="k">Free trial active</span><span class="v">{you_free_s}</span></div>
+    <div class="row"><span class="k">Approximate MRR</span><span class="v {mrr_class}">¥{you_mrr_s}</span></div>
+    <div class="row"><span class="k">Lifetime designs generated</span><span class="v">{you_designs_s}</span></div>
+  </div>
+
+  <div class="section">
+    <h2>Missing drops (cron failures / intentional skips)</h2>
+    <p>MUGEN ideally drops 1 design per hour. Some hours skipped due to cron failure or deliberate "negative space" per Vision §14. Not hidden — published as-is.</p>
+    <div class="row"><span class="k">MUGEN missing drop_num</span><span class="v warn">{mugen_missing_s}</span></div>
+    <div class="row"><span class="k">MUON missing dates</span><span class="v warn">{muon_missing_s}</span></div>
+  </div>
+
+  <div class="section">
+    <h2>Traffic (last 7d)</h2>
+    <p>
+      Pageviews in the last 7 days: <strong style="color:var(--y)">{pv_7d_s}</strong>. Source breakdown is published unedited
+      (currently almost all traffic is bot or yuki, since followers = 0).
+    </p>
+    {traffic_rows}
+    <p style="margin-top:14px;font-size:12px;opacity:0.6">
+      Measurement: direct aggregation of the <code style="background:rgba(230,196,73,0.10);color:var(--y);padding:1px 5px">funnel_events</code> table (event='pageview'). No vendor analytics.
+    </p>
+  </div>
+
+  <div class="section">
+    <h2>Methodology</h2>
+    <p>
+      • <strong style="color:var(--fg)">real.revenue_jpy</strong>: SUM of Stripe live sessions (cs_live_*). Test sessions excluded.<br>
+      • <strong style="color:var(--fg)">external</strong>: real minus yuki's dogfooding (yuki@hamada.tokyo / mail@yukihamada.jp).<br>
+      • <strong style="color:var(--fg)">approx_mrr</strong>: paid subscriber count × monthly price. Annual plans converted to monthly equivalent.<br>
+      • <strong style="color:var(--fg)">designs_generated</strong>: total rows across products + you_designs.
+    </p>
+    <p style="margin-top:16px">
+      Source: <a href="https://github.com/yukihamada/mu-brand">github.com/yukihamada/mu-brand</a> · query logic in <code style="background:rgba(230,196,73,0.10);color:var(--y);padding:1px 5px">store/src/main.rs::public_transparency</code>.
+    </p>
+  </div>
+
+  <div class="section">
+    <h2>What is MU?</h2>
+    <p>
+      <strong style="color:var(--fg)">MU is a brand where Hokkaido's weather designs the clothes.</strong> Zero human designers.
+      Every hour Gemini Pro generates one new T-shirt concept; the temperature decides today's edition size; Printful prints it; Stripe charges it; carriers ship it.
+      The entire chain runs on code, AI, and outsourced infrastructure — no humans in the loop.
+    </p>
+    <p style="margin-top:14px">
+      It's not that we have no revenue — it's that whatever revenue we have is <strong style="color:var(--y)">published here, unedited</strong>. That's MU.
+      The 4-line Vision lives at <a href="/constitution.md">/constitution.md</a>.
+    </p>
+  </div>
+
+  <div class="section">
+    <h2>Open-source protocol</h2>
+    <p>
+      MU is <strong style="color:var(--fg)">a brand and a protocol</strong>. The full stack — Rust + libsql + Gemini + Stripe + Printful —
+      is published <strong style="color:var(--y)">unedited, under MIT</strong>. Fork it; spin up your own 0-human brand using your own city's weather.
+    </p>
+    <div class="row"><span class="k">Repository</span><span class="v"><a href="https://github.com/yukihamada/mu-brand">github.com/yukihamada/mu-brand</a></span></div>
+    <div class="row"><span class="k">License</span><span class="v">MIT</span></div>
+    <div class="row"><span class="k">Languages / size</span><span class="v">Rust ~30,000 LOC + Python helpers</span></div>
+    <div class="row"><span class="k">AI used</span><span class="v">Gemini 2.5 Pro (blog / self-evolve) + Flash (classify)</span></div>
+    <div class="row"><span class="k">Image generation</span><span class="v">Gemini 3 Pro Image</span></div>
+    <div class="row"><span class="k">Fulfillment / payments</span><span class="v">Printful (print-on-demand) + Stripe</span></div>
+    <p style="margin-top:14px">
+      Runs as 1 Fly.io process hosting 28 in-process agents. Monthly operating cost: <strong style="color:var(--y)">~¥8,600/mo (~$57/mo)</strong>.
+      Read the <a href="https://github.com/yukihamada/mu-brand/blob/main/README.md">README</a> — 30-minute setup.
+    </p>
+  </div>
+
+  <div class="section">
+    <h2>How to use MU (as a customer)</h2>
+    <p>5 ways to engage with MU — each at a different price and cadence.</p>
+    <div class="row"><span class="k">MUGEN — hourly drop / 1–108 pieces only</span><span class="v">from ¥5,000</span></div>
+    <div class="row"><span class="k">MUON — daily drop / temperature = edition size</span><span class="v">from ¥5,000</span></div>
+    <div class="row"><span class="k">MA — weekly / 7-day auction / one piece worldwide</span><span class="v">from ¥30,000</span></div>
+    <div class="row"><span class="k">/you — your private AI-generated design, daily</span><span class="v">30d free → ¥1,480/mo</span></div>
+    <div class="row"><span class="k">Bounty — find a bug, earn a MUGEN</span><span class="v">up to 5 pieces + ¥50,000</span></div>
+    <p style="margin-top:14px">
+      Buy a single MUGEN/MUON/MA and <strong style="color:var(--y)">/you is free for life</strong>.
+      Shop at <a href="/">wearmu.com</a>, subscribe at <a href="/you">wearmu.com/you</a>.
+    </p>
+  </div>
+
+  <div class="section">
+    <h2>/you — your private MU</h2>
+    <p>
+      Once subscribed, Gemini 3 Pro Image uses your bio and that day's weather seed to render <strong style="color:var(--y)">one design every morning at 9:00 JST</strong>.
+      Like it? One-tap order at ¥6,800. Skip? Tomorrow's design is waiting. Zero inventory — un-ordered designs simply expire.
+    </p>
+    <p style="margin-top:14px">
+      30-day free trial. <strong style="color:var(--y)">Free for life</strong> if you've bought any MU piece.
+      → <a href="/you">Subscribe to /you</a>
+    </p>
+  </div>
+
+  <div class="section">
+    <h2>For brands — MU Collab</h2>
+    <p>
+      Send your logo, tone, and material guide. Within 24 hours, <strong style="color:var(--fg)">your own 0-human EC line</strong> goes live —
+      same pipeline as MU (AI generation → Printful → Stripe → shipping), running on your brand name and your domain. B2B.
+    </p>
+    <div class="row"><span class="k">Year-one base fee</span><span class="v y">¥0</span></div>
+    <div class="row"><span class="k">Revenue share</span><span class="v">30% / 20% / 10% (Starter / Growth / Enterprise)</span></div>
+    <div class="row"><span class="k">Setup time</span><span class="v">~24h (logo received → 30 designs live)</span></div>
+    <div class="row"><span class="k">Live examples</span><span class="v">焼肉古今 (kokon.tokyo), jiuflow, and more</span></div>
+    <p style="margin-top:14px">
+      <a href="/collab">/collab for details</a> · Enterprise inquiries <a href="mailto:info@enablerdao.com">info@enablerdao.com</a>
+    </p>
+  </div>
+
+  <footer>
+    If any number is wrong, please reach <a href="mailto:info@enablerdao.com">info@enablerdao.com</a> or use <a href="/bounty">/bounty</a>.<br>
+    Raw JSON: <a href="/api/transparency">wearmu.com/api/transparency</a> · Constitution: <a href="/constitution.md">wearmu.com/constitution.md</a> · 日本語: <a href="/transparency">/transparency</a><br>
+    Enabler Inc. · 0 humans · 28 agents
   </footer>
 </div>
 
@@ -25156,6 +25471,7 @@ async fn main() {
         .route("/api/health/cron", get(cron_health_handler))
         .route("/api/transparency", get(public_transparency))
         .route("/transparency", get(public_transparency_page))
+        .route("/en/transparency", get(public_transparency_page_en))
         .route("/api/sample_personas", get(list_sample_personas))
         .route("/api/admin/sample_grow", post(admin_sample_grow))
         .route("/api/admin/lifestyle", axum::routing::patch(admin_lifestyle))
