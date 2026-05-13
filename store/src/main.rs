@@ -10962,6 +10962,7 @@ const BLOG_FABRIC_SHIFT_RAW: &str = include_str!("../static/blog/fabric-shift.md
 const BLOG_WEEK_ONE_RAW: &str = include_str!("../static/blog/week-one-7-buyers.md");
 const BLOG_QUALITY_UPGRADE_RAW: &str = include_str!("../static/blog/quality-upgrade-muon-ma.md");
 const BLOG_SUZURI_VS_PRINTFUL_RAW: &str = include_str!("../static/blog/suzuri-vs-printful-spec.md");
+const BLOG_SPEC_AND_PROMPT_RAW: &str = include_str!("../static/blog/spec-and-prompt.md");
 
 fn render_blog_md(title: &str, md: &str) -> String {
     let body = md_to_html_simple(md);
@@ -11020,6 +11021,10 @@ async fn blog_quality_upgrade() -> Html<String> {
 
 async fn blog_suzuri_vs_printful() -> Html<String> {
     Html(render_blog_md("SUZURI と Printful、 同じ MUGEN でも届くシャツが違う件", BLOG_SUZURI_VS_PRINTFUL_RAW))
+}
+
+async fn blog_spec_and_prompt() -> Html<String> {
+    Html(render_blog_md("今の MU の T シャツ仕様 + デザインプロンプト全公開", BLOG_SPEC_AND_PROMPT_RAW))
 }
 
 /// /buy — single-product friction-minimum LP for paid/SNS traffic. Renders
@@ -33200,6 +33205,7 @@ async fn main() {
         .route("/blog/week-one-7-buyers", get(blog_week_one))
         .route("/blog/quality-upgrade-muon-ma", get(blog_quality_upgrade))
         .route("/blog/suzuri-vs-printful-spec", get(blog_suzuri_vs_printful))
+        .route("/blog/spec-and-prompt", get(blog_spec_and_prompt))
         .route("/buy", get(buy_page))
         .route("/survey/quality", get(survey_quality_page))
         .route("/api/poll/quality", get(quality_poll_results))
