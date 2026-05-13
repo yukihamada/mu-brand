@@ -1,0 +1,459 @@
+
+<!DOCTYPE html>
+	<html lang="ja" class="ja">
+
+<head itemscope>
+	<script type="text/javascript">
+		window.scrollTo(0, 0);
+	</script>
+	<meta charset="utf-8">
+	<title></title>
+	<meta property="og:image" content="/resource/img/common/ogp.jpg">
+	<meta property="og:image:width" content="1200">
+	<meta property="og:image:height" content="630">
+	<meta name="twitter:image" content="/resource/img/common/ogp.jpg">
+	<meta name="viewport"
+		content="width=device-width,initial-scale=1.0,minimum-scale=1.0,maximum-scale=1.0,user-scalable=no">
+	<meta name="format-detection" content="telephone=no">
+	<link rel="apple-touch-icon" sizes="180x180" href="/resource/img/common/ico/apple-touch-icon.png">
+	<link rel="icon" type="image/png" sizes="32x32" href="/resource/img/common/ico/favicon-32x32.png">
+	<link rel="icon" type="image/png" sizes="16x16" href="/resource/img/common/ico/favicon-16x16.png">
+	<meta name="msapplication-TileColor" content="#000">
+	<meta name="theme-color" content="#fff">
+	<link rel="shortcut icon" href="/resource/img/common/ico/favicon.ico">
+	<link rel="stylesheet" href="/resource/css/style.min.css" type="text/css" />
+
+	<script src="/resource/js/_libs/jquery-3.6.3.min.js" deffer></script>
+	<script src="/resource/js/_libs/imagesloaded.pkgd.min.js"></script>
+	<script src="/resource/js/_libs/VirtualScroll.js" deffer></script>
+	<script src="/resource/js/_libs/gsap.js" deffer></script>
+	<script src="/resource/js/_libs/CustomEase.js" deffer></script>
+	<script src="/resource/js/_libs/ScrollTrigger.min.js" deffer></script>
+	<script src="/resource/js/_libs/barba.js" deffer></script>
+	<script src="/resource/js/_libs/swiper.js" deffer></script>
+	<script src="/resource/js/_libs/splide.min.js" deffer></script>
+	<script src="/resource/js/_libs/three.min.js"></script>
+	<script src="/resource/js/_libs/lil-gui.js" deffer></script>
+	<script src="/resource/js/_libs/SplitText.js" deffer></script>
+	<script src="/resource/js/_libs/masonry.min.js" deffer></script>
+	<script src="/resource/js/bundle_min.js"></script>
+
+	<!-- <script>
+		(function(d) {
+			var config = {
+					kitId: 'mbg8mhw',
+					scriptTimeout: 3000,
+					async: true
+				},
+				h = d.documentElement,
+				t = setTimeout(function() {
+					h.className = h.className.replace(/\bwf-loading\b/g, "") + " wf-inactive";
+				}, config.scriptTimeout),
+				tk = d.createElement("script"),
+				f = false,
+				s = d.getElementsByTagName("script")[0],
+				a;
+			h.className += " wf-loading";
+			tk.src = 'https://use.typekit.net/' + config.kitId + '.js';
+			tk.async = true;
+			tk.onload = tk.onreadystatechange = function() {
+				a = this.readyState;
+				if (f || a && a != "complete" && a != "loaded") return;
+				f = true;
+				clearTimeout(t);
+				try {
+					Typekit.load(config)
+				} catch (e) {}
+			};
+			s.parentNode.insertBefore(tk, s)
+		})(document);
+	</script> -->
+	<script>
+		(function (d) {
+			var config = {
+				kitId: 'sqs5bwz',
+				scriptTimeout: 3000,
+				async: true
+			},
+				h = d.documentElement, t = setTimeout(function () { h.className = h.className.replace(/\bwf-loading\b/g, "") + " wf-inactive"; }, config.scriptTimeout), tk = d.createElement("script"), f = false, s = d.getElementsByTagName("script")[0], a; h.className += " wf-loading"; tk.src = 'https://use.typekit.net/' + config.kitId + '.js'; tk.async = true; tk.onload = tk.onreadystatechange = function () { a = this.readyState; if (f || a && a != "complete" && a != "loaded") return; f = true; clearTimeout(t); try { Typekit.load(config) } catch (e) { } }; s.parentNode.insertBefore(tk, s)
+		})(document);
+	</script>
+
+	<!-- Google Tag Manager -->
+	<script>
+		(function (w, d, s, l, i) {
+			w[l] = w[l] || [];
+			w[l].push({
+				'gtm.start': new Date().getTime(),
+				event: 'gtm.js'
+			});
+			var f = d.getElementsByTagName(s)[0],
+				j = d.createElement(s),
+				dl = l != 'dataLayer' ? '&l=' + l : '';
+			j.async = true;
+			j.src =
+				'https://www.googletagmanager.com/gtm.js?id=' + i + dl;
+			f.parentNode.insertBefore(j, f);
+		})(window, document, 'script', 'dataLayer', 'GTM-WK64WC7');
+	</script>
+	<!-- Google Tag Manager -->
+
+	
+		<!-- All in One SEO 4.3.5 - aioseo.com -->
+		<link rel="canonical" href="https://vuild.co.jp/favicon.ico/" />
+		<meta name="generator" content="All in One SEO (AIOSEO) 4.3.5 " />
+		<script type="application/ld+json" class="aioseo-schema">
+			{"@context":"https:\/\/schema.org","@graph":[{"@type":"Organization","@id":"https:\/\/vuild.co.jp\/#organization","name":"VUILD","url":"https:\/\/vuild.co.jp\/"},{"@type":"WebPage","@id":"https:\/\/vuild.co.jp\/favicon.ico\/#webpage","url":"https:\/\/vuild.co.jp\/favicon.ico\/","inLanguage":"ja","isPartOf":{"@id":"https:\/\/vuild.co.jp\/#website"},"breadcrumb":{"@id":"https:\/\/vuild.co.jp\/favicon.ico\/#breadcrumblist"}},{"@type":"WebSite","@id":"https:\/\/vuild.co.jp\/#website","url":"https:\/\/vuild.co.jp\/","name":"VUILD","description":"VUILD\u682a\u5f0f\u4f1a\u793e\u306f\u3001\u30c6\u30af\u30ce\u30ed\u30b8\u30fc\u306e\u529b\u3067\u8ab0\u3082\u304c\u4f5c\u308a\u624b\u306b\u306a\u308c\u308b\u4e16\u754c\u3092\u5b9f\u73fe\u3059\u308b\u3001\u5efa\u7bc9\u7cfb\u30b9\u30bf\u30fc\u30c8\u30a2\u30c3\u30d7\u3067\u3059\u3002","inLanguage":"ja","publisher":{"@id":"https:\/\/vuild.co.jp\/#organization"}}]}
+		</script>
+		<!-- All in One SEO -->
+
+<script type="text/javascript">
+window._wpemojiSettings = {"baseUrl":"https:\/\/s.w.org\/images\/core\/emoji\/14.0.0\/72x72\/","ext":".png","svgUrl":"https:\/\/s.w.org\/images\/core\/emoji\/14.0.0\/svg\/","svgExt":".svg","source":{"concatemoji":"https:\/\/vuild.co.jp\/wp-includes\/js\/wp-emoji-release.min.js?ver=6.2.9"}};
+/*! This file is auto-generated */
+!function(e,a,t){var n,r,o,i=a.createElement("canvas"),p=i.getContext&&i.getContext("2d");function s(e,t){p.clearRect(0,0,i.width,i.height),p.fillText(e,0,0);e=i.toDataURL();return p.clearRect(0,0,i.width,i.height),p.fillText(t,0,0),e===i.toDataURL()}function c(e){var t=a.createElement("script");t.src=e,t.defer=t.type="text/javascript",a.getElementsByTagName("head")[0].appendChild(t)}for(o=Array("flag","emoji"),t.supports={everything:!0,everythingExceptFlag:!0},r=0;r<o.length;r++)t.supports[o[r]]=function(e){if(p&&p.fillText)switch(p.textBaseline="top",p.font="600 32px Arial",e){case"flag":return s("\ud83c\udff3\ufe0f\u200d\u26a7\ufe0f","\ud83c\udff3\ufe0f\u200b\u26a7\ufe0f")?!1:!s("\ud83c\uddfa\ud83c\uddf3","\ud83c\uddfa\u200b\ud83c\uddf3")&&!s("\ud83c\udff4\udb40\udc67\udb40\udc62\udb40\udc65\udb40\udc6e\udb40\udc67\udb40\udc7f","\ud83c\udff4\u200b\udb40\udc67\u200b\udb40\udc62\u200b\udb40\udc65\u200b\udb40\udc6e\u200b\udb40\udc67\u200b\udb40\udc7f");case"emoji":return!s("\ud83e\udef1\ud83c\udffb\u200d\ud83e\udef2\ud83c\udfff","\ud83e\udef1\ud83c\udffb\u200b\ud83e\udef2\ud83c\udfff")}return!1}(o[r]),t.supports.everything=t.supports.everything&&t.supports[o[r]],"flag"!==o[r]&&(t.supports.everythingExceptFlag=t.supports.everythingExceptFlag&&t.supports[o[r]]);t.supports.everythingExceptFlag=t.supports.everythingExceptFlag&&!t.supports.flag,t.DOMReady=!1,t.readyCallback=function(){t.DOMReady=!0},t.supports.everything||(n=function(){t.readyCallback()},a.addEventListener?(a.addEventListener("DOMContentLoaded",n,!1),e.addEventListener("load",n,!1)):(e.attachEvent("onload",n),a.attachEvent("onreadystatechange",function(){"complete"===a.readyState&&t.readyCallback()})),(e=t.source||{}).concatemoji?c(e.concatemoji):e.wpemoji&&e.twemoji&&(c(e.twemoji),c(e.wpemoji)))}(window,document,window._wpemojiSettings);
+</script>
+<link rel="https://api.w.org/" href="https://vuild.co.jp/wp-json/" /><link rel="alternate" hreflang="x-default" href="" title="ja" />
+</head>
+<body class="ready">
+	<!-- Google Tag Manager (noscript) -->
+<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-WK64WC7" height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
+<!-- End Google Tag Manager (noscript) -->	<svg aria-hidden="true" style="position: absolute; width: 0; height: 0; overflow: hidden;" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <defs>
+        <symbol id="logo" viewBox="0 0 141 32">
+            <path d="M18.856 25.492c3.319-8.436 6.686-16.557 10.438-24.955-1.343 0.293-2.335 0.338-3.562 0-2.94 8.476-6.332 17.252-9.927 25.511-3.834-8.179-7.496-16.441-10.759-25.511-1.558 0.275-3.079 0.275-4.636 0 4.644 10.082 9.487 21.101 13.217 30.225 0 0 1.065-0.197 2.346-0.171 0.973 0.019 1.905 0.173 2.002 0.174 0.092 0.002 0.329-0.379 0.329-0.494 0-0.211-0.281-0.954-0.215-2.137 0.039-0.721 0.502-1.913 0.768-2.643z"></path>
+            <path d="M78.367 6.206c0.072-1.862 0.152-3.762 0.239-5.697-0.377 0.059-0.739 0.11-1.087 0.154s-0.695 0.066-1.043 0.066c-0.348 0-0.695-0.022-1.043-0.066s-0.71-0.095-1.087-0.154c0.087 1.936 0.167 3.836 0.239 5.697s0.109 3.762 0.109 5.697v7.568c0 1.936-0.036 3.843-0.109 5.719-0.073 1.878-0.152 3.725-0.239 5.543 0.666-0.059 1.375-0.088 2.129-0.088s1.462 0.029 2.129 0.088c-0.087-1.818-0.167-3.666-0.239-5.543s-0.109-3.784-0.109-5.719v-7.568c0-1.936 0.036-3.834 0.109-5.697z"></path>
+            <path d="M132.082 1.694c-1.834-0.675-3.874-1.15-6.455-1.15-2.233-0.018-3.897 0.202-6.13 0.184-2.234 0.004-4.412-0.106-6.643-0.22 0.168 3.888 0.359 7.503 0.352 11.395 0.035 5.896 0.001 13.028-0.352 18.83 2.949-0.147 5.9-0.1 8.843-0.044 4.621 0.261 9.376-0.092 13.183-3.184 3.642-2.955 5.265-6.526 5.212-11.678 0.047-6.008-2.628-12.154-8.009-14.134zM134.75 22.607c-2.787 7.34-11.147 6.868-17.673 6.191-0.176-3.050-0.264-6.16-0.264-9.327 0.010-3.092-0.037-9.253 0.066-12.253 0.044-1.54 0.11-3.014 0.198-4.422 2.114-0.196 4.437-0.42 6.762-0.411 4.953-0.083 9.437 1.764 11.175 6.825 1.356 3.324 1.244 10.25-0.264 13.397z"></path>
+            <path d="M99.91 28.487c-1.907 0.069-4.118 0.077-6.3 0.052-0.155-2.161-0.162-4.31-0.191-7.023-0.030-2.713-0.044-5.918-0.044-9.613 0-1.936 0.058-3.834 0.11-5.697 0.052-1.87 0.106-3.693 0.242-5.697-0.382 0.059-0.748 0.11-1.1 0.154s-0.704 0.066-1.056 0.066c-0.352 0-0.704-0.022-1.056-0.066s-0.719-0.095-1.1-0.154c0.088 1.936 0.168 3.836 0.242 5.697s0.11 3.762 0.11 5.697v7.568c0 1.936-0.037 3.843-0.11 5.719-0.074 1.878-0.154 3.725-0.242 5.543 1.408-0.059 2.764-0.088 4.070-0.088 1.305 0 3.075 0 4.483 0 1.348 0 3.111 0 4.461 0s2.698 0.029 4.048 0.088c-0.147-0.469-0.22-1.035-0.22-1.358 0-0.352 0.073-0.88 0.22-1.408-2.201 0.294-4.649 0.45-6.567 0.52z"></path>
+            <path d="M63.652 6.206c0.072-1.862 0.152-3.762 0.239-5.697-0.377 0.059-0.739 0.11-1.087 0.154s-0.695 0.066-1.043 0.066-0.695-0.022-1.043-0.066c-0.348-0.044-0.71-0.095-1.087-0.154 0.087 1.936 0.197 3.834 0.239 5.697 0.066 2.98 0.098 7.647 0.098 10.854 0 3.815-0.704 8.802-5.476 10.838-4.023 1.717-10.023 0.42-12.030-3.923-1.214-2.626-1.239-7.017-1.253-10.036-0.004-5.016 0.010-8.645 0.386-13.431-1.364 0.31-2.809 0.247-4.179 0 0.156 3.505 0.298 6.146 0.264 10.209-0.044 5.167-0.543 13.116 2.995 17.004 3.665 4.028 9.875 4.7 14.094 2.629 2.148-1.055 3.935-2.804 5.109-4.958-0.014 1.812-0.114 3.652-0.245 5.341 0.666-0.059 1.375-0.088 2.129-0.088s1.462 0.029 2.129 0.088c-0.087-1.818-0.167-3.666-0.239-5.543s-0.109-3.784-0.109-5.719v-7.568c0-1.936 0.036-3.834 0.109-5.697z"></path>
+        </symbol>
+    </defs>
+</svg>	<div id="op">
+	<div class="logo">
+		<svg>
+			<use xlink:href="#logo" />
+		</svg>
+	</div>
+	<div class="imgs">
+		<figure class="img" data-num="0">
+			<picture>
+				<source media="(min-width: 1500px)" srcset="/resource/img/common/op_img1@2x.jpg">
+				<source media="(min-width: 820px)" srcset="/resource/img/common/op_img1@1x.jpg 1x, /resource/img/common/op_img1@2x.jpg 2x">
+				<source media="(min-width: 320px)" srcset="/resource/img/common/op_img1@sp.jpg">
+				<img src="/resource/img/common/op_img1@2x.jpg">
+			</picture>
+		</figure>
+		<figure class="img" data-num="1">
+			<picture>
+				<source media="(min-width: 1500px)" srcset="/resource/img/common/op_img2@2x.jpg">
+				<source media="(min-width: 820px)" srcset="/resource/img/common/op_img2@1x.jpg 1x, /resource/img/common/op_img2@2x.jpg 2x">
+				<source media="(min-width: 320px)" srcset="/resource/img/common/op_img2@sp.jpg">
+				<img src="/resource/img/common/op_img2@2x.jpg">
+			</picture>
+		</figure>
+		<figure class="img" data-num="2">
+			<picture>
+				<source media="(min-width: 1500px)" srcset="/resource/img/common/op_img3@2x.jpg">
+				<source media="(min-width: 820px)" srcset="/resource/img/common/op_img3@1x.jpg 1x, /resource/img/common/op_img3@2x.jpg 2x">
+				<source media="(min-width: 320px)" srcset="/resource/img/common/op_img3@sp.jpg">
+				<img src="/resource/img/common/op_img3@2x.jpg">
+			</picture>
+		</figure>
+		<figure class="img" data-num="3">
+			<picture>
+				<source media="(min-width: 1500px)" srcset="/resource/img/common/op_img4@2x.jpg">
+				<source media="(min-width: 820px)" srcset="/resource/img/common/op_img4@1x.jpg 1x, /resource/img/common/op_img4@2x.jpg 2x">
+				<source media="(min-width: 320px)" srcset="/resource/img/common/op_img4@sp.jpg">
+				<img src="/resource/img/common/op_img4@2x.jpg">
+			</picture>
+		</figure>
+		<figure class="img" data-num="4">
+			<picture>
+				<source media="(min-width: 1500px)" srcset="/resource/img/common/op_img5@2x.jpg">
+				<source media="(min-width: 820px)" srcset="/resource/img/common/op_img5@1x.jpg 1x, /resource/img/common/op_img5@2x.jpg 2x">
+				<source media="(min-width: 320px)" srcset="/resource/img/common/op_img5@sp.jpg">
+				<img src="/resource/img/common/op_img5@2x.jpg">
+			</picture>
+		</figure>
+		<figure class="img" data-num="5">
+			<picture>
+				<source media="(min-width: 1500px)" srcset="/resource/img/common/op_img6@2x.jpg">
+				<source media="(min-width: 820px)" srcset="/resource/img/common/op_img6@1x.jpg 1x, /resource/img/common/op_img6@2x.jpg 2x">
+				<source media="(min-width: 320px)" srcset="/resource/img/common/op_img6@sp.jpg">
+				<img src="/resource/img/common/op_img6@2x.jpg">
+			</picture>
+		</figure>
+		<figure class="img" data-num="6">
+			<picture>
+				<source media="(min-width: 1500px)" srcset="/resource/img/common/op_img7@2x.jpg">
+				<source media="(min-width: 820px)" srcset="/resource/img/common/op_img7@1x.jpg 1x, /resource/img/common/op_img7@2x.jpg 2x">
+				<source media="(min-width: 320px)" srcset="/resource/img/common/op_img7@sp.jpg">
+				<img src="/resource/img/common/op_img7@2x.jpg">
+			</picture>
+		</figure>
+		<figure class="img" data-num="7">
+			<picture>
+				<source media="(min-width: 1500px)" srcset="/resource/img/common/op_img8@2x.jpg">
+				<source media="(min-width: 820px)" srcset="/resource/img/common/op_img8@1x.jpg 1x, /resource/img/common/op_img8@2x.jpg 2x">
+				<source media="(min-width: 320px)" srcset="/resource/img/common/op_img8@sp.jpg">
+				<img src="/resource/img/common/op_img8@2x.jpg">
+			</picture>
+		</figure>
+		<figure class="img" data-num="8">
+			<picture>
+				<source media="(min-width: 1500px)" srcset="/resource/img/common/op_img9@2x.jpg">
+				<source media="(min-width: 820px)" srcset="/resource/img/common/op_img9@1x.jpg 1x, /resource/img/common/op_img9@2x.jpg 2x">
+				<source media="(min-width: 320px)" srcset="/resource/img/common/op_img9@sp.jpg">
+				<img src="/resource/img/common/op_img9@2x.jpg">
+			</picture>
+		</figure>
+		<figure class="img" data-num="9">
+			<picture>
+				<source media="(min-width: 1500px)" srcset="/resource/img/common/op_img10@2x.jpg">
+				<source media="(min-width: 820px)" srcset="/resource/img/common/op_img10@1x.jpg 1x, /resource/img/common/op_img10@2x.jpg 2x">
+				<source media="(min-width: 320px)" srcset="/resource/img/common/op_img10@sp.jpg">
+				<img src="/resource/img/common/op_img10@2x.jpg">
+			</picture>
+		</figure>
+	</div>
+	<small><i>Toward a society that revolves around “living” and “building”.</i></small>
+</div>
+<div id="panel"></div>
+<div id="cursor" class="is-loading">
+	<span class="loading"></span>
+	<span class="scroll">
+		<i>Scroll</i>
+		<svg viewBox="0 0 200 200" class="progress" style="transform: matrix(1, 0, 0, 1, 0, 0);">
+			<path d="M100,20a80,80,0,1,1-80,80,80,80,0,0,1,80-80" class="path"></path>
+			<path d="M100,20a80,80,0,1,1-80,80,80,80,0,0,1,80-80" class="path-base"></path>
+		</svg>
+	</span>
+	<div class="more">
+		<i>More</i>
+	</div>
+	<div class="next">
+		<i>Next</i>
+	</div>
+	<div class="prev">
+		<i>Prev</i>
+	</div>
+	<div class="close">
+		<i>Close</i>
+	</div>
+</div>	<header id="h">
+	<h1 class="logo">
+		<span>VUILD</span>
+		<a href="/">
+			<svg>
+				<use xlink:href="#logo" />
+			</svg>
+		</a>
+	</h1>
+	<div class="lang">
+		<a href="/" class="jp prevent">JP</a>
+		<a href="/en" class="en prevent">EN</a>
+	</div>
+	<div id="btn-menu">
+		<span></span>
+		<span></span>
+	</div>
+</header>	<menu id="menu">
+	<div class="l">
+		<div class="main">
+			<a href="/thinking/" class="in-tg l-nav l-thinking">
+				<span>考えていること</span>
+			</a>
+			<a href="/services/" class="in-tg l-nav l-services">
+				<span>事業のこと</span>
+			</a>
+			<a href="/projects/" class="in-tg l-nav l-projects">
+				<span>つくっているもの</span>
+			</a>
+			<a href="/company/" class="in-tg l-nav l-company">
+				<span>会社のこと</span>
+			</a>
+			<a href="/career/" class="in-tg l-nav l-career">
+				<span>採用のこと</span>
+			</a>
+			<a href="/contact/" class="in-tg l-nav l-contact">
+				<span>お問い合わせ</span>
+			</a>
+		</div>
+		<div class="sns">
+			<a href="https://note.com/vuild" target="_blank" class="in-tg">
+				<span>Note</span>
+			</a>
+			<a href="https://www.facebook.com/VUILD.co.jp/" target="_blank" class="in-tg">
+				<span>Facebook</span>
+			</a>
+			<a href="https://www.instagram.com/vuild_official/" target="_blank" class="in-tg">
+				<span>Instagram</span>
+			</a>
+			<a href="https://twitter.com/VUILDinc" target="_blank" class="in-tg">
+				<span>Twitter</span>
+			</a>
+		</div>
+	</div>
+	<div class="b">
+		<a href="/privacy-policy/" class="in-tg l-nav l-policy">
+			<span>Privacy Policy</span>
+		</a>
+		<small class="in-tg">(c) 2023 VUILD Inc.</small>
+	</div>
+	<div id="btn-close">
+		<span></span>
+		<span></span>
+	</div>
+	<div class="imgs">
+		<figure class="img">
+			<picture>
+				<source media="(min-width: 1500px)" srcset="/resource/img/top/s2_img1@2x.jpg">
+				<source media="(min-width: 820px)" srcset="/resource/img/top/s2_img1@1x.jpg 1x, /resource/img/top/s2_img1@2x.jpg 2x">
+				<source media="(min-width: 320px)" srcset="/resource/img/top/s2_img1@sp.jpg">
+				<img src="/resource/img/top/s2_img1@2x.jpg">
+			</picture>
+		</figure>
+		<figure class="img">
+			<picture>
+				<source media="(min-width: 1500px)" srcset="/resource/img/top/s2_img1@2x.jpg">
+				<source media="(min-width: 820px)" srcset="/resource/img/top/s2_img1@1x.jpg 1x, /resource/img/top/s2_img1@2x.jpg 2x">
+				<source media="(min-width: 320px)" srcset="/resource/img/top/s2_img1@sp.jpg">
+				<img src="/resource/img/top/s2_img1@2x.jpg">
+			</picture>
+		</figure>
+		<figure class="img">
+			<picture>
+				<source media="(min-width: 1500px)" srcset="/resource/img/top/s2_img1@2x.jpg">
+				<source media="(min-width: 820px)" srcset="/resource/img/top/s2_img1@1x.jpg 1x, /resource/img/top/s2_img1@2x.jpg 2x">
+				<source media="(min-width: 320px)" srcset="/resource/img/top/s2_img1@sp.jpg">
+				<img src="/resource/img/top/s2_img1@2x.jpg">
+			</picture>
+		</figure>
+		<figure class="img">
+			<picture>
+				<source media="(min-width: 1500px)" srcset="/resource/img/top/s2_img1@2x.jpg">
+				<source media="(min-width: 820px)" srcset="/resource/img/top/s2_img1@1x.jpg 1x, /resource/img/top/s2_img1@2x.jpg 2x">
+				<source media="(min-width: 320px)" srcset="/resource/img/top/s2_img1@sp.jpg">
+				<img src="/resource/img/top/s2_img1@2x.jpg">
+			</picture>
+		</figure>
+		<figure class="img">
+			<picture>
+				<source media="(min-width: 1500px)" srcset="/resource/img/top/s2_img1@2x.jpg">
+				<source media="(min-width: 820px)" srcset="/resource/img/top/s2_img1@1x.jpg 1x, /resource/img/top/s2_img1@2x.jpg 2x">
+				<source media="(min-width: 320px)" srcset="/resource/img/top/s2_img1@sp.jpg">
+				<img src="/resource/img/top/s2_img1@2x.jpg">
+			</picture>
+		</figure>
+	</div>
+</menu>	<div id="modal">
+	<div class="modal-bg"></div>
+	<div class="modal-content">
+		<div class="modal-close">
+			<span></span>
+			<span></span>
+		</div>
+		<div class="modal-inner">
+			<figure class="img"><img src="" id="modal-img"></figure>
+			<div class="txt">
+				<p class="name"></p>
+				<span class="position"></span>
+				<i class="profile"></i>
+			</div>
+		</div>
+		<div class="modal-nav-wrap">
+			<span class="modal-nav prev"><img src="/resource/img/common/arw1.png"></span>
+			<span class="num">
+				<i class="modal-current"></i>
+				<i class="modal-len"></i>
+			</span>
+			<span class="modal-nav next"><img src="/resource/img/common/arw1.png"></span>
+		</div>
+	</div>
+</div>
+	<main id="wrapper" data-barba="wrapper">
+		<div id="page-thanks" class="cont page-under" data-barba="container" data-barba-namespace="thanks">
+			<div class="head-common">
+				<h2 class="in-elm">404</h2>
+				<span class="in-elm"></span>
+				<h3 class="in-elm">お探しのページは見つかりません。</h3>
+				<span class="in-bar"></span>
+			</div>
+			<section class="s1">
+				<strong class="common-ttl in-ttl">Page Not Found</strong>
+				<div class="txt fade">
+					<p>お探しのページは削除されたか別のURLに変更されました。</p>
+					<a href="/" class="btn-common">
+						<span>
+							<i>Back to top</i>
+							<i>Back to top</i>
+						</span>
+					</a>
+				</div>
+			</section>
+			<article id="contact-area">
+	<div class="l">一緒にできることがあれば<br class="sp-none">お気軽に<br class="pc-none">ご連絡ください。</div>
+	<div class="r">
+		<strong>Let’s vuild with us.</strong>
+		<a href="/contact/" class="btn-common">
+			<span>
+				<i>Contact</i>
+				<i>Contact</i>
+			</span>
+		</a>
+	</div>
+</article>
+<footer id="f">
+	<div class="w">
+		<div class="l">
+			<ul class="pages">
+				<li><a class="l-nav l-thinking" href="/thinking/"><span>考えていること</span></a></li>
+				<li><a class="l-nav l-services" href="/services/"><span>事業のこと</span></a></li>
+				<li><a class="l-nav l-projects" href="/projects/"><span>つくっているもの</span></a></li>
+				<li><a class="l-nav l-company" href="/company/"><span>会社のこと</span></a></li>
+				<li><a class="l-nav l-career" href="/career/"><span>採用のこと</span></a></li>
+				<li><a class="l-nav l-contact" href="/contact/"><span>お問い合わせ</span></a></li>
+			</ul>
+			<ul class="social">
+				<li><a href="https://note.com/vuild" target="_blank"><span>Note</span></a></li>
+				<li><a href="https://www.facebook.com/VUILD.co.jp/" target="_blank"><span>Facebook</span></a></li>
+				<li><a href="https://www.instagram.com/vuild_official/" target="_blank"><span>Instagram</span></a></li>
+				<li><a href="https://twitter.com/VUILDinc" target="_blank"><span>Twitter</span></a></li>
+			</ul>
+		</div>
+		<div class="r">
+			<a class="l-nav l-policy" href="/privacy-policy/"><span>Privacy Policy</span></a>
+			<small>(c) 2026 VUILD Inc.</small>
+		</div>
+	</div>
+</footer>
+<link rel='stylesheet' id='wp-block-library-css' href='https://vuild.co.jp/wp-includes/css/dist/block-library/style.min.css?ver=6.2.9' type='text/css' media='all' />
+<link rel='stylesheet' id='classic-theme-styles-css' href='https://vuild.co.jp/wp-includes/css/classic-themes.min.css?ver=6.2.9' type='text/css' media='all' />
+<style id='global-styles-inline-css' type='text/css'>
+body{--wp--preset--color--black: #000000;--wp--preset--color--cyan-bluish-gray: #abb8c3;--wp--preset--color--white: #ffffff;--wp--preset--color--pale-pink: #f78da7;--wp--preset--color--vivid-red: #cf2e2e;--wp--preset--color--luminous-vivid-orange: #ff6900;--wp--preset--color--luminous-vivid-amber: #fcb900;--wp--preset--color--light-green-cyan: #7bdcb5;--wp--preset--color--vivid-green-cyan: #00d084;--wp--preset--color--pale-cyan-blue: #8ed1fc;--wp--preset--color--vivid-cyan-blue: #0693e3;--wp--preset--color--vivid-purple: #9b51e0;--wp--preset--gradient--vivid-cyan-blue-to-vivid-purple: linear-gradient(135deg,rgba(6,147,227,1) 0%,rgb(155,81,224) 100%);--wp--preset--gradient--light-green-cyan-to-vivid-green-cyan: linear-gradient(135deg,rgb(122,220,180) 0%,rgb(0,208,130) 100%);--wp--preset--gradient--luminous-vivid-amber-to-luminous-vivid-orange: linear-gradient(135deg,rgba(252,185,0,1) 0%,rgba(255,105,0,1) 100%);--wp--preset--gradient--luminous-vivid-orange-to-vivid-red: linear-gradient(135deg,rgba(255,105,0,1) 0%,rgb(207,46,46) 100%);--wp--preset--gradient--very-light-gray-to-cyan-bluish-gray: linear-gradient(135deg,rgb(238,238,238) 0%,rgb(169,184,195) 100%);--wp--preset--gradient--cool-to-warm-spectrum: linear-gradient(135deg,rgb(74,234,220) 0%,rgb(151,120,209) 20%,rgb(207,42,186) 40%,rgb(238,44,130) 60%,rgb(251,105,98) 80%,rgb(254,248,76) 100%);--wp--preset--gradient--blush-light-purple: linear-gradient(135deg,rgb(255,206,236) 0%,rgb(152,150,240) 100%);--wp--preset--gradient--blush-bordeaux: linear-gradient(135deg,rgb(254,205,165) 0%,rgb(254,45,45) 50%,rgb(107,0,62) 100%);--wp--preset--gradient--luminous-dusk: linear-gradient(135deg,rgb(255,203,112) 0%,rgb(199,81,192) 50%,rgb(65,88,208) 100%);--wp--preset--gradient--pale-ocean: linear-gradient(135deg,rgb(255,245,203) 0%,rgb(182,227,212) 50%,rgb(51,167,181) 100%);--wp--preset--gradient--electric-grass: linear-gradient(135deg,rgb(202,248,128) 0%,rgb(113,206,126) 100%);--wp--preset--gradient--midnight: linear-gradient(135deg,rgb(2,3,129) 0%,rgb(40,116,252) 100%);--wp--preset--duotone--dark-grayscale: url('#wp-duotone-dark-grayscale');--wp--preset--duotone--grayscale: url('#wp-duotone-grayscale');--wp--preset--duotone--purple-yellow: url('#wp-duotone-purple-yellow');--wp--preset--duotone--blue-red: url('#wp-duotone-blue-red');--wp--preset--duotone--midnight: url('#wp-duotone-midnight');--wp--preset--duotone--magenta-yellow: url('#wp-duotone-magenta-yellow');--wp--preset--duotone--purple-green: url('#wp-duotone-purple-green');--wp--preset--duotone--blue-orange: url('#wp-duotone-blue-orange');--wp--preset--font-size--small: 13px;--wp--preset--font-size--medium: 20px;--wp--preset--font-size--large: 36px;--wp--preset--font-size--x-large: 42px;--wp--preset--spacing--20: 0.44rem;--wp--preset--spacing--30: 0.67rem;--wp--preset--spacing--40: 1rem;--wp--preset--spacing--50: 1.5rem;--wp--preset--spacing--60: 2.25rem;--wp--preset--spacing--70: 3.38rem;--wp--preset--spacing--80: 5.06rem;--wp--preset--shadow--natural: 6px 6px 9px rgba(0, 0, 0, 0.2);--wp--preset--shadow--deep: 12px 12px 50px rgba(0, 0, 0, 0.4);--wp--preset--shadow--sharp: 6px 6px 0px rgba(0, 0, 0, 0.2);--wp--preset--shadow--outlined: 6px 6px 0px -3px rgba(255, 255, 255, 1), 6px 6px rgba(0, 0, 0, 1);--wp--preset--shadow--crisp: 6px 6px 0px rgba(0, 0, 0, 1);}:where(.is-layout-flex){gap: 0.5em;}body .is-layout-flow > .alignleft{float: left;margin-inline-start: 0;margin-inline-end: 2em;}body .is-layout-flow > .alignright{float: right;margin-inline-start: 2em;margin-inline-end: 0;}body .is-layout-flow > .aligncenter{margin-left: auto !important;margin-right: auto !important;}body .is-layout-constrained > .alignleft{float: left;margin-inline-start: 0;margin-inline-end: 2em;}body .is-layout-constrained > .alignright{float: right;margin-inline-start: 2em;margin-inline-end: 0;}body .is-layout-constrained > .aligncenter{margin-left: auto !important;margin-right: auto !important;}body .is-layout-constrained > :where(:not(.alignleft):not(.alignright):not(.alignfull)){max-width: var(--wp--style--global--content-size);margin-left: auto !important;margin-right: auto !important;}body .is-layout-constrained > .alignwide{max-width: var(--wp--style--global--wide-size);}body .is-layout-flex{display: flex;}body .is-layout-flex{flex-wrap: wrap;align-items: center;}body .is-layout-flex > *{margin: 0;}:where(.wp-block-columns.is-layout-flex){gap: 2em;}.has-black-color{color: var(--wp--preset--color--black) !important;}.has-cyan-bluish-gray-color{color: var(--wp--preset--color--cyan-bluish-gray) !important;}.has-white-color{color: var(--wp--preset--color--white) !important;}.has-pale-pink-color{color: var(--wp--preset--color--pale-pink) !important;}.has-vivid-red-color{color: var(--wp--preset--color--vivid-red) !important;}.has-luminous-vivid-orange-color{color: var(--wp--preset--color--luminous-vivid-orange) !important;}.has-luminous-vivid-amber-color{color: var(--wp--preset--color--luminous-vivid-amber) !important;}.has-light-green-cyan-color{color: var(--wp--preset--color--light-green-cyan) !important;}.has-vivid-green-cyan-color{color: var(--wp--preset--color--vivid-green-cyan) !important;}.has-pale-cyan-blue-color{color: var(--wp--preset--color--pale-cyan-blue) !important;}.has-vivid-cyan-blue-color{color: var(--wp--preset--color--vivid-cyan-blue) !important;}.has-vivid-purple-color{color: var(--wp--preset--color--vivid-purple) !important;}.has-black-background-color{background-color: var(--wp--preset--color--black) !important;}.has-cyan-bluish-gray-background-color{background-color: var(--wp--preset--color--cyan-bluish-gray) !important;}.has-white-background-color{background-color: var(--wp--preset--color--white) !important;}.has-pale-pink-background-color{background-color: var(--wp--preset--color--pale-pink) !important;}.has-vivid-red-background-color{background-color: var(--wp--preset--color--vivid-red) !important;}.has-luminous-vivid-orange-background-color{background-color: var(--wp--preset--color--luminous-vivid-orange) !important;}.has-luminous-vivid-amber-background-color{background-color: var(--wp--preset--color--luminous-vivid-amber) !important;}.has-light-green-cyan-background-color{background-color: var(--wp--preset--color--light-green-cyan) !important;}.has-vivid-green-cyan-background-color{background-color: var(--wp--preset--color--vivid-green-cyan) !important;}.has-pale-cyan-blue-background-color{background-color: var(--wp--preset--color--pale-cyan-blue) !important;}.has-vivid-cyan-blue-background-color{background-color: var(--wp--preset--color--vivid-cyan-blue) !important;}.has-vivid-purple-background-color{background-color: var(--wp--preset--color--vivid-purple) !important;}.has-black-border-color{border-color: var(--wp--preset--color--black) !important;}.has-cyan-bluish-gray-border-color{border-color: var(--wp--preset--color--cyan-bluish-gray) !important;}.has-white-border-color{border-color: var(--wp--preset--color--white) !important;}.has-pale-pink-border-color{border-color: var(--wp--preset--color--pale-pink) !important;}.has-vivid-red-border-color{border-color: var(--wp--preset--color--vivid-red) !important;}.has-luminous-vivid-orange-border-color{border-color: var(--wp--preset--color--luminous-vivid-orange) !important;}.has-luminous-vivid-amber-border-color{border-color: var(--wp--preset--color--luminous-vivid-amber) !important;}.has-light-green-cyan-border-color{border-color: var(--wp--preset--color--light-green-cyan) !important;}.has-vivid-green-cyan-border-color{border-color: var(--wp--preset--color--vivid-green-cyan) !important;}.has-pale-cyan-blue-border-color{border-color: var(--wp--preset--color--pale-cyan-blue) !important;}.has-vivid-cyan-blue-border-color{border-color: var(--wp--preset--color--vivid-cyan-blue) !important;}.has-vivid-purple-border-color{border-color: var(--wp--preset--color--vivid-purple) !important;}.has-vivid-cyan-blue-to-vivid-purple-gradient-background{background: var(--wp--preset--gradient--vivid-cyan-blue-to-vivid-purple) !important;}.has-light-green-cyan-to-vivid-green-cyan-gradient-background{background: var(--wp--preset--gradient--light-green-cyan-to-vivid-green-cyan) !important;}.has-luminous-vivid-amber-to-luminous-vivid-orange-gradient-background{background: var(--wp--preset--gradient--luminous-vivid-amber-to-luminous-vivid-orange) !important;}.has-luminous-vivid-orange-to-vivid-red-gradient-background{background: var(--wp--preset--gradient--luminous-vivid-orange-to-vivid-red) !important;}.has-very-light-gray-to-cyan-bluish-gray-gradient-background{background: var(--wp--preset--gradient--very-light-gray-to-cyan-bluish-gray) !important;}.has-cool-to-warm-spectrum-gradient-background{background: var(--wp--preset--gradient--cool-to-warm-spectrum) !important;}.has-blush-light-purple-gradient-background{background: var(--wp--preset--gradient--blush-light-purple) !important;}.has-blush-bordeaux-gradient-background{background: var(--wp--preset--gradient--blush-bordeaux) !important;}.has-luminous-dusk-gradient-background{background: var(--wp--preset--gradient--luminous-dusk) !important;}.has-pale-ocean-gradient-background{background: var(--wp--preset--gradient--pale-ocean) !important;}.has-electric-grass-gradient-background{background: var(--wp--preset--gradient--electric-grass) !important;}.has-midnight-gradient-background{background: var(--wp--preset--gradient--midnight) !important;}.has-small-font-size{font-size: var(--wp--preset--font-size--small) !important;}.has-medium-font-size{font-size: var(--wp--preset--font-size--medium) !important;}.has-large-font-size{font-size: var(--wp--preset--font-size--large) !important;}.has-x-large-font-size{font-size: var(--wp--preset--font-size--x-large) !important;}
+.wp-block-navigation a:where(:not(.wp-element-button)){color: inherit;}
+:where(.wp-block-columns.is-layout-flex){gap: 2em;}
+.wp-block-pullquote{font-size: 1.5em;line-height: 1.6;}
+</style>
+<link rel='stylesheet' id='contact-form-7-css' href='https://vuild.co.jp/wp-content/plugins/contact-form-7/includes/css/styles.css?ver=5.7.6' type='text/css' media='all' />
+<script type='text/javascript' src='https://vuild.co.jp/wp-content/plugins/contact-form-7/includes/swv/js/index.js?ver=5.7.6' id='swv-js'></script>
+<script type='text/javascript' id='contact-form-7-js-extra'>
+/* <![CDATA[ */
+var wpcf7 = {"api":{"root":"https:\/\/vuild.co.jp\/wp-json\/","namespace":"contact-form-7\/v1"}};
+/* ]]> */
+</script>
+<script type='text/javascript' src='https://vuild.co.jp/wp-content/plugins/contact-form-7/includes/js/index.js?ver=5.7.6' id='contact-form-7-js'></script>
+<script type='text/javascript' src='https://www.google.com/recaptcha/api.js?render=6LeOTJImAAAAAP7L_dXg3I7s4xqHAxgsKdMPALBt&#038;ver=3.0' id='google-recaptcha-js'></script>
+<script type='text/javascript' src='https://vuild.co.jp/wp-includes/js/dist/vendor/wp-polyfill-inert.min.js?ver=3.1.2' id='wp-polyfill-inert-js'></script>
+<script type='text/javascript' src='https://vuild.co.jp/wp-includes/js/dist/vendor/regenerator-runtime.min.js?ver=0.13.11' id='regenerator-runtime-js'></script>
+<script type='text/javascript' src='https://vuild.co.jp/wp-includes/js/dist/vendor/wp-polyfill.min.js?ver=3.15.0' id='wp-polyfill-js'></script>
+<script type='text/javascript' id='wpcf7-recaptcha-js-extra'>
+/* <![CDATA[ */
+var wpcf7_recaptcha = {"sitekey":"6LeOTJImAAAAAP7L_dXg3I7s4xqHAxgsKdMPALBt","actions":{"homepage":"homepage","contactform":"contactform"}};
+/* ]]> */
+</script>
+<script type='text/javascript' src='https://vuild.co.jp/wp-content/plugins/contact-form-7/modules/recaptcha/index.js?ver=5.7.6' id='wpcf7-recaptcha-js'></script>
+		</div>
+	</main>
+</body>
+
+</html>

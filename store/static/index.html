@@ -559,7 +559,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
     価格レンジ <strong style="color:#F5F5F0;letter-spacing:0.05em">¥5,000 – ¥30,000</strong>
   </div>
   <div style="font-size:10px;letter-spacing:0.2em;text-transform:uppercase;opacity:0.4;margin-top:6px;text-align:center;font-family:'Helvetica Neue',Arial,sans-serif">
-    Autonomous fashion · designed by weather · made by AI · 0 humans
+    Autonomous fashion · designed by weather · made by AI · 1 maintainer + 28 agents
   </div>
 
   <!-- Primary CTA — top-of-hero so it's always above the fold on PC & mobile.
@@ -1056,8 +1056,9 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
     <a class="footer-link" href="mailto:info@enablerdao.com">Contact / 取材</a>
   </div>
 </footer>
-<div style="padding:18px 48px 36px;text-align:center;font-size:10px;letter-spacing:0.15em;opacity:0.45;font-family:'Helvetica Neue',Arial,sans-serif">
-  Press / collab / data API → <a href="mailto:info@enablerdao.com" style="color:inherit;text-decoration:underline">info@enablerdao.com</a> · 株式会社イネブラ (Enabler Inc.)
+<div style="padding:18px 48px 36px;text-align:center;font-size:10px;letter-spacing:0.15em;opacity:0.45;font-family:'Helvetica Neue',Arial,sans-serif;line-height:2">
+  Press / collab / data API → <a href="mailto:info@enablerdao.com" style="color:inherit;text-decoration:underline">info@enablerdao.com</a><br>
+  株式会社イネブラ (Enabler Inc.) · yuki (1 human operator) · 28 agents · <a href="/transparency" style="color:inherit;text-decoration:underline">numbers, public</a>
 </div>
 
 <script>
@@ -1549,6 +1550,26 @@ function showSection(name, pushHistory=true){
     const titles = {hero:'AIが服を作り続けるブランド', ma:'間 MA — 月に1着', muon:'MUON 無音 — 沈黙を記録する', mugen:'MUGEN 無限 — 毎時間、生まれ消える', nouns:'MU × NOUNS'};
     history.pushState({section:name}, '', url);
     updateMeta(titles[name]||name, url);
+    // SPA pageview tracking — t.js only fires on full load, so SPA tabs
+    // (showSection) need a manual ping. Without this, /mugen, /muon etc.
+    // never show up in our funnel_events analytics. (Issue: 2026-05-13.)
+    try {
+      const q = new URLSearchParams(location.search);
+      const pv = { s: location.hostname, p: url, r: document.referrer || location.href,
+                   sw: screen.width, sh: screen.height,
+                   utm_source: q.get('utm_source')||'', utm_medium: q.get('utm_medium')||'',
+                   utm_campaign: q.get('utm_campaign')||'', utm_content: q.get('utm_content')||'',
+                   utm_term: q.get('utm_term')||'' };
+      const body = JSON.stringify(pv);
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon('https://enabler-analytics.fly.dev/api/collect',
+                             new Blob([body], {type:'application/json'}));
+      } else {
+        fetch('https://enabler-analytics.fly.dev/api/collect',
+              {method:'POST', headers:{'Content-Type':'application/json'}, body, keepalive:true, credentials:'omit'})
+          .catch(()=>{});
+      }
+    } catch (_) {}
   }
 }
 

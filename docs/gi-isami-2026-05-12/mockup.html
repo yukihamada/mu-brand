@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>MU × JiuFlow Sponsored Gi — レイアウト仕様書</title>
+<style>
+  @page { size: A4 portrait; margin: 14mm 12mm; }
+  * { box-sizing: border-box; }
+  body { font-family: 'Hiragino Sans', 'Yu Gothic', sans-serif; color: #111; font-size: 10pt; margin: 0; line-height: 1.55; }
+  h1 { font-size: 16pt; margin: 0 0 4pt; letter-spacing: 0.08em; }
+  h2 { font-size: 11pt; margin: 16pt 0 6pt; letter-spacing: 0.06em; border-bottom: 1px solid #ccc; padding-bottom: 2pt; }
+  h3 { font-size: 10pt; margin: 8pt 0 4pt; color: #444; }
+  .meta { font-size: 9pt; color: #666; margin-bottom: 8pt; }
+  .row { display: flex; gap: 14pt; }
+  .col { flex: 1; }
+  .gi-mock {
+    border: 1px solid #999;
+    background: #1a1a1a; color: #fff;
+    padding: 16pt 12pt; border-radius: 4pt;
+    position: relative;
+    min-height: 320pt;
+    font-size: 8.5pt;
+  }
+  .gi-mock.pants { min-height: 180pt; }
+  .gi-mock .label-title {
+    font-size: 9.5pt; letter-spacing: 0.18em; text-transform: uppercase;
+    color: #e6c449; margin-bottom: 10pt; text-align: center;
+  }
+  .silhouette {
+    margin: 0 auto; width: 90%; aspect-ratio: 3 / 4;
+    background:
+      linear-gradient(to bottom, #222 0%, #222 25%, transparent 25%, transparent 40%, #222 40%, #222 100%);
+    border: 1px dashed #555; border-radius: 4pt;
+    position: relative;
+  }
+  .pos {
+    position: absolute; border: 1px solid #e6c449; background: rgba(230,196,73,0.12);
+    color: #fff; text-align: center;
+    padding: 2pt 3pt; font-size: 7pt; line-height: 1.2; border-radius: 2pt;
+  }
+  .pos b { display: block; font-size: 7.5pt; color: #e6c449; }
+  table { width: 100%; border-collapse: collapse; font-size: 8.5pt; margin-top: 4pt; }
+  th, td { border: 1px solid #ddd; padding: 4pt 6pt; text-align: left; vertical-align: top; }
+  th { background: #f0f0f0; font-weight: 600; }
+  tr.host { background: #fff7e0; }
+  tr.main { background: #e8f4ff; }
+  .badge { display: inline-block; background: #111; color: #fff; padding: 1pt 5pt; border-radius: 2pt; font-size: 7pt; letter-spacing: 0.08em; }
+  .footer-note { margin-top: 10pt; font-size: 8pt; color: #666; line-height: 1.6; }
+  .legend {
+    display: inline-block; margin-right: 14pt; font-size: 8pt;
+  }
+  .legend .swatch { display:inline-block; width:10pt; height:10pt; vertical-align:middle; margin-right:3pt; border:1px solid #aaa; }
+</style>
+</head>
+<body>
+
+<h1>MU × JiuFlow Sponsored Gi — レイアウト仕様書</h1>
+<div class="meta">
+  作成: 2026-05-12 ／ 発注主: 株式会社イネブラ (Enabler Inc.) ／ ベース: 黒 BJJ 道着 (上下) ／ 試作 1 着
+</div>
+
+<!-- ─── レイアウト図 ────────────────────────────── -->
+<div class="row">
+  <div class="col">
+    <h3>① 上着 — 前面</h3>
+    <div class="gi-mock">
+      <div class="silhouette" style="background:linear-gradient(to bottom,#0a0a0a 0%,#0a0a0a 100%);">
+        <!-- 左胸 -->
+        <div class="pos" style="left:12%; top:14%; width:24%; height:14%;">
+          <b>左胸</b>MU<br>8×8cm
+        </div>
+        <!-- 右胸 -->
+        <div class="pos" style="left:64%; top:14%; width:24%; height:14%;">
+          <b>右胸</b>JiuFlow<br>8×8cm
+        </div>
+        <!-- 左袖 -->
+        <div class="pos" style="left:-4%; top:34%; width:16%; height:36%;">
+          <b>左袖 外</b>SOLUNA / KAGI / PASHA / ZAMNA<br>4 連 各 6×6cm
+        </div>
+        <!-- 右袖 -->
+        <div class="pos" style="left:88%; top:34%; width:16%; height:36%;">
+          <b>右袖 外</b>NOT A HOTEL / 令和Tra / NEWT / ATSUME<br>4 連 各 6×6cm
+        </div>
+        <!-- 左裾 -->
+        <div class="pos" style="left:12%; top:72%; width:30%; height:14%;">
+          <b>左裾</b>焼肉古今 ／ ギフトモール<br>各 6×6cm
+        </div>
+        <!-- 右裾 -->
+        <div class="pos" style="left:58%; top:72%; width:30%; height:14%;">
+          <b>右裾</b>VUILD ／ NESTING<br>各 6×6cm
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <h3>② 上着 — 背面</h3>
+    <div class="gi-mock">
+      <div class="silhouette" style="background:linear-gradient(to bottom,#0a0a0a 0%,#0a0a0a 100%);">
+        <!-- 背中大 -->
+        <div class="pos" style="left:14%; top:22%; width:72%; height:24%;">
+          <b>背中メイン (大)</b>ENABLER<br>26×10cm 直線配置
+        </div>
+        <!-- 背中下ティッカー -->
+        <div class="pos" style="left:8%; top:52%; width:84%; height:10%;">
+          <b>背中下 ティッカー帯 (任意)</b>追加スポンサー横並び<br>22×4cm
+        </div>
+        <!-- 左裾内 / 襟内 隠れ -->
+        <div class="pos" style="left:20%; top:8%; width:60%; height:8%;">
+          <b>襟下 (内側)</b>CASTER<br>8×3cm 控えめ
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row" style="margin-top:8pt;">
+  <div class="col">
+    <h3>③ パンツ — 前面 / 側面</h3>
+    <div class="gi-mock pants">
+      <div class="silhouette" style="aspect-ratio: 5 / 3;">
+        <!-- 左腿 外 -->
+        <div class="pos" style="left:6%; top:25%; width:22%; height:50%;">
+          <b>左腿 外</b>FiNANCiE<br>10×10cm
+        </div>
+        <!-- 右腿 外 -->
+        <div class="pos" style="left:72%; top:25%; width:22%; height:50%;">
+          <b>右腿 外</b>(追加枠 — 予備)<br>10×10cm
+        </div>
+        <!-- ベルト位置 -->
+        <div class="pos" style="left:30%; top:5%; width:40%; height:14%;">
+          <b>ベルト 片端 1 箇所</b>MU monogram<br>4×4cm 金糸
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col">
+    <h3>④ 仕様サマリ</h3>
+    <table>
+      <tr><th>項目</th><th>仕様</th></tr>
+      <tr><td>ベース</td><td>黒 BJJ 道着 上下 (パールウィーブ 350-450 GSM)</td></tr>
+      <tr><td>サイズ</td><td>A2 (身長 170-175cm / 体重 75-80kg) — 着用者: 濱田優貴</td></tr>
+      <tr><td>本体色</td><td>マットブラック (墨黒)</td></tr>
+      <tr><td>刺繍 色数</td><td>糸色 ホワイト / Old Gold (#A67843) を基本、ブランド指定色があれば優先</td></tr>
+      <tr><td>刺繍 / Patch</td><td>原則 刺繍 (Embroidery)。データはベクター AI/EPS/SVG で別途支給</td></tr>
+      <tr><td>合計 刺繍箇所</td><td>15 ロゴ ＋ MU/JiuFlow 計 17 箇所 (詳細は次ページ表)</td></tr>
+      <tr><td>納期希望</td><td>サンプル 1 着、5〜6 週以内</td></tr>
+      <tr><td>用途</td><td>濱田個人着用 + SNS / 大会 / プロモーション撮影</td></tr>
+      <tr><td>IBJJF 規定</td><td>大会着用も想定するため、可能な範囲で IBJJF gi 規定内に収めたい</td></tr>
+    </table>
+
+    <h3 style="margin-top:10pt;">⑤ 凡例</h3>
+    <span class="legend"><span class="swatch" style="background:#e6c449;"></span>刺繍配置エリア</span>
+    <span class="legend"><span class="swatch" style="background:#fff7e0;"></span>ホスト (MU/JiuFlow)</span>
+    <span class="legend"><span class="swatch" style="background:#e8f4ff;"></span>メインスポンサー</span>
+  </div>
+</div>
+
+<!-- ─── 詳細表 ────────────────────────────── -->
+<h2>刺繍 配置 ・ サイズ 詳細</h2>
+
+<table>
+  <tr><th>#</th><th>位置</th><th>ロゴ</th><th>仕上がりサイズ</th><th>糸色</th><th>備考</th></tr>
+  <tr class="host"><td>00</td><td>左胸</td><td>MU (主催)</td><td>8 × 8 cm</td><td>白 / Old Gold</td><td>主催者マーク</td></tr>
+  <tr class="host"><td>00</td><td>右胸</td><td>JiuFlow (主催)</td><td>8 × 8 cm</td><td>白</td><td>主催者マーク</td></tr>
+  <tr class="main"><td>01</td><td>背中 メイン</td><td>ENABLER</td><td>26 × 10 cm</td><td>白</td><td>背中 横長 直線配置。最大スポット</td></tr>
+  <tr><td>02</td><td>左袖外 上</td><td>SOLUNA</td><td>6 × 6 cm</td><td>白</td><td></td></tr>
+  <tr><td>03</td><td>左袖外 中上</td><td>KAGI</td><td>6 × 6 cm</td><td>白</td><td></td></tr>
+  <tr><td>04</td><td>左袖外 中下</td><td>PASHA</td><td>6 × 6 cm</td><td>白</td><td></td></tr>
+  <tr><td>05</td><td>左袖外 下</td><td>ZAMNA HAWAII</td><td>6 × 6 cm</td><td>白</td><td></td></tr>
+  <tr><td>06</td><td>右袖外 上</td><td>NOT A HOTEL</td><td>6 × 6 cm</td><td>白</td><td></td></tr>
+  <tr><td>07</td><td>右袖外 中上</td><td>令和トラベル</td><td>6 × 6 cm</td><td>白</td><td></td></tr>
+  <tr><td>08</td><td>右袖外 中下</td><td>NEWT</td><td>6 × 6 cm</td><td>白</td><td></td></tr>
+  <tr><td>09</td><td>右袖外 下</td><td>ATSUME</td><td>6 × 6 cm</td><td>白</td><td></td></tr>
+  <tr><td>10</td><td>左裾外 上</td><td>焼肉古今 (KOKON)</td><td>6 × 6 cm</td><td>Old Gold</td><td>濃色アクセント</td></tr>
+  <tr><td>11</td><td>左裾外 下</td><td>ギフトモール</td><td>6 × 6 cm</td><td>白</td><td></td></tr>
+  <tr><td>12</td><td>右裾外 上</td><td>VUILD</td><td>6 × 6 cm</td><td>白</td><td></td></tr>
+  <tr><td>13</td><td>右裾外 下</td><td>NESTING</td><td>6 × 6 cm</td><td>白</td><td></td></tr>
+  <tr><td>14</td><td>襟内側</td><td>CASTER (株式会社キャスター)</td><td>8 × 3 cm</td><td>白</td><td>内側 控えめ配置</td></tr>
+  <tr><td>15</td><td>パンツ 左腿外</td><td>FiNANCiE (株式会社フィナンシェ — 国光宏尚)</td><td>10 × 10 cm</td><td>白</td><td></td></tr>
+  <tr><td>16</td><td>ベルト 片端</td><td>MU monogram</td><td>4 × 4 cm</td><td>Old Gold (金糸)</td><td>帯の片端のみ</td></tr>
+</table>
+
+<div class="footer-note">
+  ※ 上記は試作 1 着 (濱田優貴 着用) を前提とした初期案です。<br>
+  ※ 各ブランドのロゴ ベクターデータ (AI / EPS / SVG) は、御見積後に別途まとめてお送りします。<br>
+  ※ IBJJF 公式試合での着用も想定しており、規定 (sleeve patches 必ず縫付け、無許可ロゴ位置回避など) に抵触する箇所があれば、御社のご経験から再配置案をご提案いただけると助かります。<br>
+  ※ サンプル仕上がり後、量産 (10〜30 着) を予定。スポンサー各社へ着用写真を共有し、本量産時のスポンサー枠調整・追加発注を行います。<br>
+  ※ 連絡先: 濱田優貴 (mail@yukihamada.jp / 090-7409-0407) 株式会社イネブラ
+</div>
+
+</body>
+</html>

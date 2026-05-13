@@ -10313,6 +10313,48 @@ async fn cron_health_handler(State(db): State<Db>) -> impl IntoResponse {
     }))
 }
 
+/// Render the PII-safe recent-purchases list (last 10) for /transparency.
+/// `lang` is "ja" or "en" — only the wrapper text differs; the data is the same.
+fn render_recent_purchases_rows(snap: &serde_json::Value, lang: &str) -> String {
+    let rows = snap["recent_purchases"].as_array();
+    let Some(rows) = rows else { return String::new(); };
+    if rows.is_empty() {
+        return match lang {
+            "en" => r#"<div class="row"><span class="k">(no external purchases yet)</span><span class="v">—</span></div>"#.to_string(),
+            _    => r#"<div class="row"><span class="k">(まだ第三者購入なし)</span><span class="v">—</span></div>"#.to_string(),
+        };
+    }
+    rows.iter().map(|r| {
+        let buyer    = r["buyer"].as_str().unwrap_or("MU-????");
+        let brand    = r["brand"].as_str().unwrap_or("");
+        let drop_num = r["drop_num"].as_i64();
+        let name     = r["name"].as_str().unwrap_or("");
+        let price    = r["price_jpy"].as_i64().unwrap_or(0);
+        let at_jst   = r["at_jst"].as_str().unwrap_or("");
+        let badge_color = match brand {
+            "mugen" => "#C8362C",
+            "muon"  => "#888",
+            "ma"    => "#e6c449",
+            "you"   => "#5a9e6f",
+            "nouns" => "#e6c449",
+            _ => "#666",
+        };
+        let drop_label = match (brand, drop_num) {
+            (b, Some(n)) if !b.is_empty() => format!("{} #{:04}", b.to_uppercase(), n),
+            (b, _) if !b.is_empty()       => b.to_uppercase(),
+            _ => name.to_string(),
+        };
+        format!(
+            r#"<div class="row"><span class="k"><span style="display:inline-block;width:8px;height:8px;background:{color};margin-right:8px;border-radius:50%;vertical-align:middle"></span><strong style="color:var(--fg);font-weight:500">{drop}</strong> · <span style="opacity:0.65">{at}</span> · <span style="font-family:'SF Mono','Menlo',monospace;font-size:11.5px;opacity:0.55">{buyer}</span></span><span class="v">¥{price}</span></div>"#,
+            color = badge_color,
+            drop  = html_escape(&drop_label),
+            at    = html_escape(at_jst),
+            buyer = html_escape(buyer),
+            price = fmt_commas(price),
+        )
+    }).collect::<String>()
+}
+
 /// Comma-separator for JPY / count display (`52800` → `52,800`).
 fn fmt_commas(n: i64) -> String {
     let neg = n < 0;
@@ -10529,6 +10571,19 @@ footer a:hover{{color:var(--y)}}
     <div class="row"><span class="k">MUON 欠番日付</span><span class="v warn">{muon_missing_s}</span></div>
   </div>
 
+  <!-- Recent purchases (PII-safe) -->
+  <div class="section">
+    <h2>最近の購入 (匿名 · 直近 10 件)</h2>
+    <p>
+      第三者購入だけを抜粋 (yuki の dogfood は除外)。お客様は <code style="background:rgba(230,196,73,0.10);color:var(--y);padding:1px 5px">MU-XXXX</code> 形式の匿名 ID (SHA-256 由来) で表示。<br>
+      個人名・メール・住所・追跡番号は一切載せません ([[feedback-pii-protection]] ルール準拠)。
+    </p>
+    {recent_purch_rows}
+    <p style="margin-top:14px;font-size:11.5px;opacity:0.55">
+      ID は同一購入者で常に同じになります (再購入を追跡しやすいように)。逆引きは不可。
+    </p>
+  </div>
+
   <!-- Traffic -->
   <div class="section">
     <h2>トラフィック (last 7d)</h2>
@@ -10660,6 +10715,7 @@ footer a:hover{{color:var(--y)}}
         as_of_str = as_of_str,
         pv_7d_s = pv_7d_s,
         traffic_rows = traffic_rows,
+        recent_purch_rows = render_recent_purchases_rows(&snap, "ja"),
         you_paid_class = if you_paid == 0 { "bad" } else { "good" },
         mrr_class = if you_mrr == 0 { "bad" } else { "good" },
     );
@@ -10871,6 +10927,18 @@ footer a:hover{{color:var(--y)}}
   </div>
 
   <div class="section">
+    <h2>Recent purchases (anonymized · last 10)</h2>
+    <p>
+      Third-party purchases only (yuki's dogfooding excluded). Buyers shown as <code style="background:rgba(230,196,73,0.10);color:var(--y);padding:1px 5px">MU-XXXX</code> (SHA-256 derived, deterministic per email, non-reversible).<br>
+      Personal name / email / address / tracking ID are never published.
+    </p>
+    {recent_purch_rows}
+    <p style="margin-top:14px;font-size:11.5px;opacity:0.55">
+      Same buyer always shows the same ID (so repeat purchases are visible). The mapping is one-way; you cannot reverse it.
+    </p>
+  </div>
+
+  <div class="section">
     <h2>Traffic (last 7d)</h2>
     <p>
       Pageviews in the last 7 days: <strong style="color:var(--y)">{pv_7d_s}</strong>. Source breakdown is published unedited
@@ -11013,6 +11081,7 @@ footer a:hover{{color:var(--y)}}
         as_of_str = as_of_str,
         pv_7d_s = pv_7d_s,
         traffic_rows = traffic_rows,
+        recent_purch_rows = render_recent_purchases_rows(&snap, "en"),
         you_paid_class = if you_paid == 0 { "bad" } else { "good" },
         mrr_class = if you_mrr == 0 { "bad" } else { "good" },
     );
@@ -11129,6 +11198,58 @@ fn public_transparency_inner(conn: &rusqlite::Connection) -> serde_json::Value {
     // as `real.revenue_jpy` so `revenue_jpy` and `real.revenue_jpy` always agree.
     let total_revenue_jpy = real_revenue_jpy;
 
+    // Recent external purchases — PII-safe feed (purchase_pseudonym + brand + drop_num + JST date).
+    // We surface this so /transparency feels alive and the "8 lifetime purchases"
+    // number becomes tangible. Excludes yuki's own dogfood. Limit 10.
+    let recent_purchases: Vec<serde_json::Value> = {
+        let mut stmt = match conn.prepare(
+            "SELECT mp.email, mp.brand, mp.drop_num, mp.created_at,
+                    COALESCE(p.name, '/you tee'), COALESCE(p.price_jpy, 6800)
+             FROM mu_purchases mp
+             LEFT JOIN products p ON p.id = mp.product_id AND mp.brand != 'you'
+             WHERE mp.session_id LIKE 'cs_live_%'
+               AND mp.email NOT IN (?, ?)
+             ORDER BY mp.id DESC LIMIT 10"
+        ) { Ok(s) => s, Err(_) => return serde_json::json!({}) };
+        let rows: Vec<serde_json::Value> = stmt.query_map(
+            params![yuki_emails[0], yuki_emails[1]],
+            |r| {
+                let email: String = r.get(0)?;
+                let brand: String = r.get(1)?;
+                let drop_num: Option<i64> = r.get(2)?;
+                let created_at: String = r.get(3)?;
+                let name: String = r.get(4)?;
+                let price: i64 = r.get(5)?;
+                let buyer = purchase_pseudonym(&email);
+                // Try to interpret created_at as either unix seconds or ISO 8601.
+                let when_jst = created_at.parse::<i64>()
+                    .ok()
+                    .map(|s| {
+                        let jst = s + 9 * 3600;
+                        let day_n = jst / 86_400;
+                        let (y, m, d) = civil_from_days(day_n);
+                        let secs = jst.rem_euclid(86_400);
+                        let hh = secs / 3600; let mm = (secs % 3600) / 60;
+                        format!("{:04}-{:02}-{:02} {:02}:{:02} JST", y, m, d, hh, mm)
+                    })
+                    .unwrap_or_else(|| {
+                        // ISO-ish — keep yyyy-mm-dd HH:MM if available
+                        let trimmed: String = created_at.chars().take(16).collect();
+                        trimmed.replace('T', " ")
+                    });
+                Ok(serde_json::json!({
+                    "buyer":    buyer,
+                    "brand":    brand,
+                    "drop_num": drop_num,
+                    "name":     name,
+                    "price_jpy": price,
+                    "at_jst":   when_jst,
+                }))
+            }
+        ).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+        rows
+    };
+
     serde_json::json!({
         // ── 旧フィールド (互換のため残す) — Stripe live のみ集計 (test 除外) ──
         "revenue_jpy": total_revenue_jpy,
@@ -11161,6 +11282,7 @@ fn public_transparency_inner(conn: &rusqlite::Connection) -> serde_json::Value {
             "approx_mrr_jpy": approx_mrr_jpy,
         },
         "missing_drops": detect_missing_drops(conn),
+        "recent_purchases": recent_purchases,
         "as_of": chrono_now(),
     })
 }
@@ -14506,6 +14628,23 @@ fn lottery_pseudonym(draw_id: i64, email: &str) -> String {
     }
     s.reverse();
     format!("relay:{:03}:{}", draw_id, String::from_utf8_lossy(&s))
+}
+
+/// Public pseudonym for the recent-purchases feed on /transparency.
+/// Deterministic per email (same buyer always shows the same tag) but
+/// non-reversible. Format: "MU-XXXX" — 4 base32 chars from a SHA-256
+/// truncate. Salt is distinct from the lottery so the two pseudonyms
+/// cannot be cross-correlated.
+fn purchase_pseudonym(email: &str) -> String {
+    use sha2::{Sha256, Digest};
+    const SALT: &str = "mu-purchase-feed-2026";
+    let h = Sha256::digest(format!("{SALT}{}", email.trim().to_lowercase()).as_bytes());
+    let alphabet = b"23456789ABCDEFGHJKLMNPQRSTUVWXYZ"; // 32 chars, base32-like, no 0/1/I/O
+    let mut s = String::with_capacity(4);
+    for byte in &h[..4] {
+        s.push(alphabet[(*byte as usize) % alphabet.len()] as char);
+    }
+    format!("MU-{}", s)
 }
 
 
