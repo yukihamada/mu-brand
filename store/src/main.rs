@@ -9800,10 +9800,207 @@ async fn cron_health_handler(State(db): State<Db>) -> impl IntoResponse {
     }))
 }
 
+/// GET /transparency — full-page HTML rendering of /api/transparency, designed
+/// for tweet-share. URL points here from social posts that say "公開ダッシュボード".
+/// Same data as the JSON endpoint, server-side rendered with the MU dark theme.
+async fn public_transparency_page(State(db): State<Db>) -> Html<String> {
+    let snap = gather_transparency_snapshot(&db);
+    let real_rev      = snap["real"]["revenue_jpy"].as_i64().unwrap_or(0);
+    let real_purch    = snap["real"]["purchases"].as_i64().unwrap_or(0);
+    let ext_rev       = snap["external"]["revenue_jpy"].as_i64().unwrap_or(0);
+    let ext_purch     = snap["external"]["purchases"].as_i64().unwrap_or(0);
+    let ext_cust      = snap["external"]["distinct_customers"].as_i64().unwrap_or(0);
+    let shirts_sold   = snap["shirts_sold"].as_i64().unwrap_or(0);
+    let you_paid      = snap["you"]["subscribers_paid"].as_i64().unwrap_or(0);
+    let you_lifetime  = snap["you"]["lifetime_members"].as_i64().unwrap_or(0);
+    let you_free      = snap["you"]["subscribers_free"].as_i64().unwrap_or(0);
+    let you_mrr       = snap["you"]["approx_mrr_jpy"].as_i64().unwrap_or(0);
+    let you_designs   = snap["you"]["designs_generated"].as_i64().unwrap_or(0);
+    let mugen_missing = snap["missing_drops"]["mugen_missing_drops"].as_array()
+        .map(|a| a.len() as i64).unwrap_or(0);
+    let muon_missing  = snap["missing_drops"]["muon_missing_dates"].as_array()
+        .map(|a| a.len() as i64).unwrap_or(0);
+    let as_of_unix: i64 = snap["as_of"].as_str().and_then(|s| s.parse().ok()).unwrap_or(0);
+    // JST timestamp
+    let jst = as_of_unix + 9 * 3600;
+    let day_n = jst / 86_400;
+    let (y, m, d) = civil_from_days(day_n);
+    let secs_today = jst.rem_euclid(86_400);
+    let (hh, mm) = (secs_today / 3600, (secs_today % 3600) / 60);
+    let as_of_str = format!("{:04}-{:02}-{:02} {:02}:{:02} JST", y, m, d, hh, mm);
+
+    let html = format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Transparency — MU の数字、全部 | wearmu.com</title>
+<meta name="description" content="MU の売上・購入・購読・欠番。一切隠さない数字を、毎リクエストで再計算して返します。">
+<meta property="og:title" content="MU Transparency — 数字を全部晒します">
+<meta property="og:description" content="累計売上 ¥{real_rev}・第三者購入 {ext_purch} 件・MRR ¥{you_mrr}。0 人組織のリアル。">
+<meta property="og:image" content="https://wearmu.com/og.jpg">
+<meta property="og:url" content="https://wearmu.com/transparency">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="MU Transparency">
+<meta name="twitter:description" content="累計売上 ¥{real_rev}・第三者購入 {ext_purch} 件・MRR ¥{you_mrr}">
+<meta name="twitter:image" content="https://wearmu.com/og.jpg">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<style>
+:root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.55);--y:#e6c449;--line:rgba(255,255,255,0.08);--card:#111}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.7;font-size:15px;-webkit-font-smoothing:antialiased;font-feature-settings:"palt"}}
+a{{color:var(--y);text-decoration:none}}
+a:hover{{text-decoration:underline;text-underline-offset:3px}}
+nav{{position:sticky;top:0;background:rgba(10,10,10,0.9);backdrop-filter:blur(12px);border-bottom:1px solid var(--line);padding:16px 28px;display:flex;justify-content:space-between;align-items:center;z-index:50;font-size:11px;letter-spacing:0.3em;text-transform:uppercase}}
+nav .logo{{font-weight:700;letter-spacing:0.45em}}
+.wrap{{max-width:920px;margin:0 auto;padding:60px 28px 100px}}
+.eyebrow{{font-size:10px;letter-spacing:0.42em;text-transform:uppercase;color:var(--y);opacity:0.85;margin-bottom:18px}}
+h1{{font-size:clamp(34px,6vw,64px);font-weight:200;letter-spacing:-0.012em;line-height:1.15;margin-bottom:18px}}
+h1 em{{color:var(--y);font-style:normal;font-weight:300}}
+.lede{{color:var(--mute);font-size:15px;max-width:640px;line-height:2;margin-bottom:8px}}
+.as-of{{font-size:10px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.45;margin-top:6px}}
+
+/* Hero number */
+.hero-num{{margin:56px 0 16px;text-align:center}}
+.hero-num .v{{font-size:clamp(72px,16vw,160px);font-weight:200;color:var(--y);letter-spacing:-0.03em;line-height:1;font-variant-numeric:tabular-nums}}
+.hero-num .l{{margin-top:14px;font-size:11px;letter-spacing:0.32em;text-transform:uppercase;color:var(--mute)}}
+.hero-num .s{{font-size:13px;color:var(--mute);margin-top:8px}}
+
+/* KPI grid */
+.kpi{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1px;background:var(--line);border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin:48px 0 24px}}
+.cell{{background:var(--bg);padding:32px 24px;text-align:center}}
+.cell .v{{font-size:clamp(28px,3.6vw,42px);font-weight:200;color:var(--fg);letter-spacing:-0.015em;line-height:1;font-variant-numeric:tabular-nums}}
+.cell .v.y{{color:var(--y)}}
+.cell .l{{margin-top:12px;font-size:10px;letter-spacing:0.3em;text-transform:uppercase;color:var(--mute)}}
+.cell .s{{margin-top:6px;font-size:11px;color:var(--mute);line-height:1.5}}
+
+/* Section */
+.section{{margin:64px 0 0;padding-top:32px;border-top:1px solid var(--line)}}
+.section h2{{font-size:13px;letter-spacing:0.28em;text-transform:uppercase;color:var(--y);font-weight:500;margin-bottom:18px}}
+.section p{{color:var(--mute);font-size:14px;line-height:2;max-width:680px}}
+
+/* Stat row */
+.row{{display:grid;grid-template-columns:1fr auto;gap:14px;padding:14px 0;border-bottom:1px solid var(--line);align-items:baseline}}
+.row:last-child{{border-bottom:0}}
+.row .k{{font-size:13px;color:var(--mute)}}
+.row .v{{font-variant-numeric:tabular-nums;font-weight:500;font-size:15px}}
+.row .v.bad{{color:#ff8a7a}}
+.row .v.warn{{color:#ffb37a}}
+.row .v.good{{color:#a8d99a}}
+
+/* missing drops chips */
+.chips{{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 0}}
+.chip{{font-size:11px;font-variant-numeric:tabular-nums;padding:4px 10px;background:rgba(255,150,80,0.10);color:#ffb37a;border:1px solid rgba(255,150,80,0.3);border-radius:2px;letter-spacing:0.05em}}
+
+/* Footer */
+footer{{margin-top:80px;padding-top:32px;border-top:1px solid var(--line);color:var(--mute);font-size:11.5px;letter-spacing:0.1em;line-height:2}}
+footer a{{color:var(--mute);text-decoration:underline;text-decoration-color:rgba(255,255,255,0.18)}}
+footer a:hover{{color:var(--y)}}
+</style></head><body>
+
+<nav>
+  <a class="logo" href="/">MU</a>
+  <span style="opacity:0.55">Transparency</span>
+  <a href="/api/transparency" style="opacity:0.55">JSON ↗</a>
+</nav>
+
+<div class="wrap">
+  <div class="eyebrow">Transparency · live</div>
+  <h1>MU の数字を、<em>全部</em>晒します。</h1>
+  <p class="lede">
+    毎リクエストで再計算。キャッシュなし。inflated counter は別フィールドに隔離。<br>
+    第三者購入 (yuki の dogfood を除いた数字) を <strong style="color:var(--y)">external</strong> として分離公開しています。
+  </p>
+  <p class="as-of">As of {as_of_str}</p>
+
+  <!-- Hero: real revenue -->
+  <div class="hero-num">
+    <div class="v">¥{real_rev}</div>
+    <div class="l">累計実売上 (Stripe live)</div>
+    <div class="s">うち第三者 (非 yuki) は <strong style="color:var(--y)">¥{ext_rev}</strong> / {ext_cust} 名 / {ext_purch} 件</div>
+  </div>
+
+  <!-- KPI strip -->
+  <div class="kpi">
+    <div class="cell"><div class="v">{real_purch}</div><div class="l">累計購入</div><div class="s">cs_live_* のみ</div></div>
+    <div class="cell"><div class="v y">{ext_cust}</div><div class="l">第三者顧客 (人)</div><div class="s">yuki の dogfood 除外</div></div>
+    <div class="cell"><div class="v">{shirts_sold}</div><div class="l">出荷済み枚数</div><div class="s">products.sold 合計</div></div>
+    <div class="cell"><div class="v">{designs}</div><div class="l">AI 生成済デザイン</div><div class="s">/you tee 含む</div></div>
+  </div>
+
+  <!-- /you -->
+  <div class="section">
+    <h2>/you サブスクリプション</h2>
+    <p>毎朝あなた専用の T シャツが AI に生成される /you。30日間無料トライアル、その後 ¥1,480/月 (または ¥980/月年払い)。MUGEN/MUON を 1 着でも買うと一生 ¥0。</p>
+    <div class="row"><span class="k">有料サブスク</span><span class="v {you_paid_class}">{you_paid}</span></div>
+    <div class="row"><span class="k">ライフタイムメンバー</span><span class="v">{you_lifetime}</span></div>
+    <div class="row"><span class="k">無料トライアル中</span><span class="v">{you_free}</span></div>
+    <div class="row"><span class="k">概算 MRR</span><span class="v {mrr_class}">¥{you_mrr}</span></div>
+    <div class="row"><span class="k">累計デザイン生成</span><span class="v">{you_designs}</span></div>
+  </div>
+
+  <!-- Missing drops -->
+  <div class="section">
+    <h2>欠番 (cron 失敗 / 意図的 skip)</h2>
+    <p>MUGEN は毎時間 1 ドロップが理想ですが、cron 失敗や Vision §14「negative space を尊重」で skip した日があります。隠さずそのまま公開。</p>
+    <div class="row"><span class="k">MUGEN 欠番 drop_num</span><span class="v warn">{mugen_missing}</span></div>
+    <div class="row"><span class="k">MUON 欠番日付</span><span class="v warn">{muon_missing}</span></div>
+  </div>
+
+  <!-- Methodology -->
+  <div class="section">
+    <h2>計測方法</h2>
+    <p>
+      • <strong style="color:var(--fg)">real.revenue_jpy</strong>: Stripe live セッション (cs_live_*) の SUM。test セッションは除外。<br>
+      • <strong style="color:var(--fg)">external</strong>: real から yuki の dogfood (yuki@hamada.tokyo / mail@yukihamada.jp) を除外。<br>
+      • <strong style="color:var(--fg)">approx_mrr</strong>: 有料サブスク数 × 月額単価。年払いは月割換算。<br>
+      • <strong style="color:var(--fg)">designs_generated</strong>: products + you_designs の累計行数。
+    </p>
+    <p style="margin-top:16px">
+      ソース: <a href="https://github.com/yukihamada/mu-brand">github.com/yukihamada/mu-brand</a> · 計算ロジックは <code style="background:rgba(230,196,73,0.10);color:var(--y);padding:1px 5px">store/src/main.rs::public_transparency</code> を参照。
+    </p>
+  </div>
+
+  <footer>
+    数字に矛盾があったら <a href="mailto:info@enablerdao.com">info@enablerdao.com</a> または <a href="/bounty">/bounty</a> へ。<br>
+    Raw JSON: <a href="/api/transparency">wearmu.com/api/transparency</a> · Constitution: <a href="/constitution.md">wearmu.com/constitution.md</a><br>
+    株式会社イネブラ (Enabler Inc.) · 0 humans · 28 agents
+  </footer>
+</div>
+
+</body></html>"##,
+        real_rev = real_rev,
+        ext_rev = ext_rev,
+        ext_purch = ext_purch,
+        ext_cust = ext_cust,
+        real_purch = real_purch,
+        shirts_sold = shirts_sold,
+        you_paid = you_paid,
+        you_lifetime = you_lifetime,
+        you_free = you_free,
+        you_mrr = you_mrr,
+        you_designs = you_designs,
+        designs = you_designs,
+        mugen_missing = mugen_missing,
+        muon_missing = muon_missing,
+        as_of_str = as_of_str,
+        you_paid_class = if you_paid == 0 { "bad" } else { "good" },
+        mrr_class = if you_mrr == 0 { "bad" } else { "good" },
+    );
+    Html(html)
+}
+
 /// `/api/transparency` — public stats for the blog. Honest, computed live,
 /// no caching. If a number is wrong on the blog it's wrong here too.
 async fn public_transparency(State(db): State<Db>) -> impl IntoResponse {
+    Json(gather_transparency_snapshot(&db))
+}
+
+/// Shared snapshot builder for /api/transparency (JSON) + /transparency (HTML).
+fn gather_transparency_snapshot(db: &Db) -> serde_json::Value {
     let conn = db.lock().unwrap();
+    public_transparency_inner(&conn)
+}
+
+fn public_transparency_inner(conn: &rusqlite::Connection) -> serde_json::Value {
     let revenue_shirts_jpy: i64 = conn.query_row(
         "SELECT COALESCE(SUM(price_jpy * sold), 0) FROM products WHERE active=1",
         [], |r| r.get(0),
@@ -9901,7 +10098,7 @@ async fn public_transparency(State(db): State<Db>) -> impl IntoResponse {
     // as `real.revenue_jpy` so `revenue_jpy` and `real.revenue_jpy` always agree.
     let total_revenue_jpy = real_revenue_jpy;
 
-    Json(serde_json::json!({
+    serde_json::json!({
         // ── 旧フィールド (互換のため残す) — Stripe live のみ集計 (test 除外) ──
         "revenue_jpy": total_revenue_jpy,
         "revenue_breakdown": {
@@ -9932,9 +10129,9 @@ async fn public_transparency(State(db): State<Db>) -> impl IntoResponse {
             "designs_generated": you_designs_generated,
             "approx_mrr_jpy": approx_mrr_jpy,
         },
-        "missing_drops": detect_missing_drops(&conn),
+        "missing_drops": detect_missing_drops(conn),
         "as_of": chrono_now(),
-    }))
+    })
 }
 
 /// Inspect the drop history and surface gaps. MUGEN has a strictly increasing
@@ -24212,6 +24409,7 @@ async fn main() {
         .route("/api/stripe/pubkey", get(stripe_pubkey))
         .route("/api/health/cron", get(cron_health_handler))
         .route("/api/transparency", get(public_transparency))
+        .route("/transparency", get(public_transparency_page))
         .route("/api/sample_personas", get(list_sample_personas))
         .route("/api/admin/sample_grow", post(admin_sample_grow))
         .route("/api/admin/lifestyle", axum::routing::patch(admin_lifestyle))
