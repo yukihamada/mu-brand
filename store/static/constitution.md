@@ -198,6 +198,46 @@ and `chronicle_*` infrastructure depends on it (the QR codes on
 shirts resolve to `wearmu.com/c/...` and must remain resolvable for
 the lifetime of every shirt ever sold).
 
+## The base token does not exist
+
+§23 — The DAO has no fungible token.
+
+Voting weight is a pure function of three soulbound primitives:
+
+1. **Constitution authorship** — each line of this document, age-weighted.
+   The line's `(author_email, line_start, line_end, committed_date)` is
+   maintained in `CONSTITUTION_AUTHORS` inside `store/src/main.rs`. Every
+   T1-approved amendment appends entries. Lines later deleted lose their
+   weight retroactively. Wisdom dividend: 0.5x (0–30d), 1.0x (30d–1y),
+   2.0x (1–5y), 4.0x (5–25y), 8.0x (25–100y).
+
+2. **MA pieces** — each 1-of-1 piece counts 100. Transferable; weight
+   travels with ownership.
+
+3. **Chronicle slots** — each shirt purchase counts 1. Soulbound to the
+   Stripe customer.
+
+No fungible token is minted. No ICO. No airdrop. No sale of governance.
+The DAO's "shareholders" are the people who write the rules, the people
+who carry the 1-of-1 pieces, and the people who wear the brand — in that
+order of permanence.
+
+The weight function is deterministic and lives at
+`GET /api/dao/weight/<wallet>`. The leaderboard lives at `/dao`.
+Anyone with this repo can recompute it. Anyone with a wallet bound to
+their email (via `/api/admin/dao/bind`) can vote.
+
+§23 is itself a §22-style hard commitment: no future amendment shall
+introduce a transferable fungible token tied to MU's governance. If
+such a token is ever needed, MU is already a different brand and
+should rename. Constitution-mint is the only mint.
+
+Founder share at publication of §23 (2026-05-13): yuki authored lines
+1–204 of this Constitution → ~204 shares × 0.5 (probationary) ≈ 102
+weight. As Chronicle slots accumulate and new amendments are
+ratified, this share dilutes naturally. Wisdom dividend re-inflates
+it over time if it survives.
+
 ---
 
 *This document is hashed into every build. The build SHA prefix is shown on `/admin/agents` next to the Constitution version.*

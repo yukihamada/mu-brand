@@ -13823,6 +13823,376 @@ async fn agent_ma_lineage_daily(db: Db) -> Result<AgentReport, String> {
     })
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// DAO — Constitution §23. Token does not exist. Weight is a pure function
+// of (a) authored lines of constitution.md, age-weighted; (b) MA pieces;
+// (c) Chronicle slots (= collab_orders entries). All keyed by email →
+// wallet via dao_email_wallets binding.
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Authorship table for constitution.md. Initial snapshot at §23 ratification
+/// (2026-05-13): yuki authored all 204 lines. Every T1-approved amendment
+/// appends new entries here. Deletions retroactively shrink an author's range.
+const CONSTITUTION_AUTHORS: &[(&str, u32, u32, &str)] = &[
+    // (author_email, line_start_inclusive, line_end_inclusive, committed_date YYYY-MM-DD)
+    ("yuki@hamada.tokyo", 1, 203, "2026-05-12"),
+    ("yuki@hamada.tokyo", 204, 243, "2026-05-13"),  // §23 itself
+];
+
+/// Wisdom dividend: line weight grows with age. See §23.
+fn dao_age_factor(committed: &str, today: &str) -> f64 {
+    let days = dao_days_between(committed, today);
+    match days {
+        d if d < 30      => 0.5,
+        d if d < 365     => 1.0,
+        d if d < 1_825   => 2.0,
+        d if d < 9_125   => 4.0,
+        _                => 8.0,
+    }
+}
+
+/// Days between two YYYY-MM-DD dates (inclusive of today). Returns 0 on
+/// parse failure to avoid runaway weight from malformed entries.
+fn dao_days_between(a: &str, b: &str) -> i64 {
+    fn parse_ymd(s: &str) -> Option<(i64, i64, i64)> {
+        let s = &s[..10.min(s.len())];
+        let parts: Vec<&str> = s.splitn(3, '-').collect();
+        if parts.len() != 3 { return None; }
+        Some((parts[0].parse().ok()?, parts[1].parse().ok()?, parts[2].parse().ok()?))
+    }
+    fn days(y: i64, m: i64, d: i64) -> i64 {
+        // Howard Hinnant civil_from_days reverse.
+        let y_adj = if m <= 2 { y - 1 } else { y };
+        let era = y_adj.div_euclid(400);
+        let yoe = y_adj - era * 400;
+        let mp  = if m > 2 { m - 3 } else { m + 9 };
+        let doy = (153 * mp + 2) / 5 + d - 1;
+        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+        era * 146_097 + doe - 719_468
+    }
+    let (ay, am, ad) = match parse_ymd(a) { Some(t) => t, None => return 0 };
+    let (by, bm, bd) = match parse_ymd(b) { Some(t) => t, None => return 0 };
+    (days(by, bm, bd) - days(ay, am, ad)).abs()
+}
+
+/// JST today as YYYY-MM-DD (UTC+9).
+fn dao_today_jst() -> String {
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let jst_s = now_s + 9 * 3600;
+    let z = jst_s / 86_400 + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as i64;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp  = (5 * doy + 2) / 153;
+    let d   = doy - (153 * mp + 2) / 5 + 1;
+    let m   = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y_final = if m <= 2 { y + 1 } else { y };
+    format!("{:04}-{:02}-{:02}", y_final, m, d)
+}
+
+/// Authorship weight for a single email, summed across all
+/// CONSTITUTION_AUTHORS entries.
+fn dao_weight_authorship(email: &str, today: &str) -> f64 {
+    CONSTITUTION_AUTHORS.iter()
+        .filter(|(e, _, _, _)| *e == email)
+        .map(|(_, start, end, committed)| {
+            let lines = (*end as i64 - *start as i64 + 1).max(0);
+            dao_age_factor(committed, today) * lines as f64
+        }).sum()
+}
+
+#[derive(serde::Serialize, Default, Clone)]
+struct DaoWeightBreakdown {
+    email: Option<String>,
+    wallet: String,
+    bound_at: Option<String>,
+    constitution_lines: i64,
+    constitution_weight: f64,
+    ma_pieces: i64,
+    ma_weight: f64,
+    chronicle_slots: i64,
+    chronicle_weight: f64,
+    total_weight: f64,
+}
+
+const DAO_MA_WEIGHT: f64 = 100.0;
+const DAO_CHRONICLE_WEIGHT: f64 = 1.0;
+
+/// Look up the email bound to `wallet`. Returns None if unbound.
+fn dao_email_for_wallet(conn: &Connection, wallet: &str) -> Option<(String, String)> {
+    conn.query_row(
+        "SELECT email, bound_at FROM dao_email_wallets WHERE wallet=?",
+        params![wallet], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+    ).ok()
+}
+
+/// Compute a wallet's DAO weight + breakdown. Wallet must be bound to an email.
+fn dao_weight_compute(conn: &Connection, wallet: &str) -> DaoWeightBreakdown {
+    let today = dao_today_jst();
+    let mut out = DaoWeightBreakdown {
+        wallet: wallet.to_string(), ..Default::default()
+    };
+    let (email, bound_at) = match dao_email_for_wallet(conn, wallet) {
+        Some(t) => t,
+        None => return out,
+    };
+    out.email = Some(email.clone());
+    out.bound_at = Some(bound_at);
+
+    out.constitution_lines = CONSTITUTION_AUTHORS.iter()
+        .filter(|(e, _, _, _)| *e == email)
+        .map(|(_, s, e, _)| (*e as i64 - *s as i64 + 1).max(0))
+        .sum();
+    out.constitution_weight = dao_weight_authorship(&email, &today);
+
+    out.ma_pieces = conn.query_row(
+        "SELECT COUNT(*) FROM ma_gifts WHERE LOWER(claim_email)=LOWER(?)",
+        params![email], |r| r.get(0),
+    ).unwrap_or(0);
+    out.ma_weight = DAO_MA_WEIGHT * out.ma_pieces as f64;
+
+    out.chronicle_slots = conn.query_row(
+        "SELECT COUNT(*) FROM collab_orders WHERE LOWER(email)=LOWER(?)",
+        params![email], |r| r.get(0),
+    ).unwrap_or(0);
+    out.chronicle_weight = DAO_CHRONICLE_WEIGHT * out.chronicle_slots as f64;
+
+    out.total_weight = out.constitution_weight + out.ma_weight + out.chronicle_weight;
+    out
+}
+
+/// GET /api/dao/weight/:wallet — public.
+async fn dao_weight_api(
+    Path(wallet): Path<String>,
+    State(db): State<Db>,
+) -> Response {
+    let conn = db.lock().unwrap();
+    let bk = dao_weight_compute(&conn, &wallet);
+    let total_supply = dao_total_supply_weight(&conn);
+    Json(serde_json::json!({
+        "wallet": bk.wallet,
+        "email": bk.email,
+        "bound_at": bk.bound_at,
+        "today": dao_today_jst(),
+        "constitution": {"lines": bk.constitution_lines, "weight": bk.constitution_weight},
+        "ma":            {"pieces": bk.ma_pieces, "weight": bk.ma_weight},
+        "chronicle":     {"slots": bk.chronicle_slots, "weight": bk.chronicle_weight},
+        "total_weight":  bk.total_weight,
+        "share_pct":     if total_supply > 0.0 { bk.total_weight / total_supply * 100.0 } else { 0.0 },
+        "total_supply_weight": total_supply,
+    })).into_response()
+}
+
+/// Aggregate weight across all bound wallets + unbound authorship/MA/chronicle.
+/// This is the divisor for share %.
+fn dao_total_supply_weight(conn: &Connection) -> f64 {
+    let today = dao_today_jst();
+    // Authorship: sum every entry regardless of binding (so dilution math is honest).
+    let auth: f64 = CONSTITUTION_AUTHORS.iter().map(|(_, s, e, c)| {
+        let lines = (*e as i64 - *s as i64 + 1).max(0) as f64;
+        dao_age_factor(c, &today) * lines
+    }).sum();
+    let ma_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM ma_gifts", [], |r| r.get(0)
+    ).unwrap_or(0);
+    let chr_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM collab_orders", [], |r| r.get(0)
+    ).unwrap_or(0);
+    auth + DAO_MA_WEIGHT * ma_count as f64 + DAO_CHRONICLE_WEIGHT * chr_count as f64
+}
+
+/// GET /api/dao/leaderboard — top bound wallets by weight + meta.
+async fn dao_leaderboard_api(
+    State(db): State<Db>,
+) -> Response {
+    let conn = db.lock().unwrap();
+    let wallets: Vec<String> = conn.prepare(
+        "SELECT DISTINCT wallet FROM dao_email_wallets"
+    ).ok().and_then(|mut s| s.query_map([], |r| r.get::<_, String>(0))
+        .ok().map(|it| it.filter_map(|r| r.ok()).collect())
+    ).unwrap_or_default();
+    let mut rows: Vec<DaoWeightBreakdown> = wallets.iter()
+        .map(|w| dao_weight_compute(&conn, w))
+        .filter(|b| b.total_weight > 0.0)
+        .collect();
+    rows.sort_by(|a, b| b.total_weight.partial_cmp(&a.total_weight).unwrap_or(std::cmp::Ordering::Equal));
+    let total = dao_total_supply_weight(&conn);
+    let json: Vec<serde_json::Value> = rows.iter().map(|b| serde_json::json!({
+        "wallet": b.wallet,
+        "email_redacted": b.email.as_deref().map(dao_redact_email),
+        "constitution_lines": b.constitution_lines,
+        "ma_pieces": b.ma_pieces,
+        "chronicle_slots": b.chronicle_slots,
+        "total_weight": b.total_weight,
+        "share_pct": if total > 0.0 { b.total_weight / total * 100.0 } else { 0.0 },
+    })).collect();
+    Json(serde_json::json!({
+        "today": dao_today_jst(),
+        "total_supply_weight": total,
+        "constitution_lines_total": CONSTITUTION_AUTHORS.iter()
+            .map(|(_, s, e, _)| (*e as i64 - *s as i64 + 1).max(0)).sum::<i64>(),
+        "ma_pieces_total": conn.query_row("SELECT COUNT(*) FROM ma_gifts", [], |r| r.get::<_, i64>(0)).unwrap_or(0),
+        "chronicle_slots_total": conn.query_row("SELECT COUNT(*) FROM collab_orders", [], |r| r.get::<_, i64>(0)).unwrap_or(0),
+        "bound_wallets": rows.len(),
+        "ranking": json,
+    })).into_response()
+}
+
+fn dao_redact_email(e: &str) -> String {
+    let (local, domain) = match e.split_once('@') { Some(t) => t, None => return "***".into() };
+    let head: String = local.chars().take(2).collect();
+    format!("{}***@{}", head, domain)
+}
+
+#[derive(Deserialize)]
+struct DaoBindBody {
+    email: String,
+    wallet: String,
+}
+
+/// POST /api/admin/dao/bind?token=…  body: { email, wallet }
+async fn admin_dao_bind(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<DaoBindBody>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let email = body.email.trim().to_lowercase();
+    let wallet = body.wallet.trim().to_string();
+    if !email.contains('@') || wallet.is_empty() {
+        return (StatusCode::BAD_REQUEST, "bad email or wallet").into_response();
+    }
+    let conn = db.lock().unwrap();
+    let _ = conn.execute(
+        "INSERT INTO dao_email_wallets (email, wallet, bound_at, bound_by)
+         VALUES (?,?,?, 'admin')
+         ON CONFLICT(email) DO UPDATE SET wallet=excluded.wallet, bound_at=excluded.bound_at",
+        params![email, wallet, chrono_now()],
+    );
+    Json(serde_json::json!({"ok": true, "email": email, "wallet": wallet})).into_response()
+}
+
+/// GET /dao — public leaderboard + how-to-participate.
+async fn dao_page(State(db): State<Db>) -> Html<String> {
+    let conn = db.lock().unwrap();
+    let total_supply = dao_total_supply_weight(&conn);
+    let lines_total: i64 = CONSTITUTION_AUTHORS.iter().map(|(_, s, e, _)| (*e as i64 - *s as i64 + 1).max(0)).sum();
+    let ma_total: i64 = conn.query_row("SELECT COUNT(*) FROM ma_gifts", [], |r| r.get(0)).unwrap_or(0);
+    let chr_total: i64 = conn.query_row("SELECT COUNT(*) FROM collab_orders", [], |r| r.get(0)).unwrap_or(0);
+    let wallets: Vec<String> = conn.prepare(
+        "SELECT DISTINCT wallet FROM dao_email_wallets"
+    ).ok().and_then(|mut s| s.query_map([], |r| r.get::<_, String>(0))
+        .ok().map(|it| it.filter_map(|r| r.ok()).collect())
+    ).unwrap_or_default();
+    let mut rows: Vec<DaoWeightBreakdown> = wallets.iter()
+        .map(|w| dao_weight_compute(&conn, w))
+        .filter(|b| b.total_weight > 0.0)
+        .collect();
+    drop(conn);
+    rows.sort_by(|a, b| b.total_weight.partial_cmp(&a.total_weight).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut tbody = String::new();
+    for (i, b) in rows.iter().enumerate().take(50) {
+        let pct = if total_supply > 0.0 { b.total_weight / total_supply * 100.0 } else { 0.0 };
+        let short: String = b.wallet.chars().take(6).collect::<String>()
+            + "…" + &b.wallet.chars().rev().take(4).collect::<String>().chars().rev().collect::<String>();
+        let email_red = b.email.as_deref().map(dao_redact_email).unwrap_or_else(|| "—".into());
+        tbody.push_str(&format!(
+            "<tr><td>{rank}</td><td><code>{short}</code></td><td>{email}</td>\
+             <td>{lines}</td><td>{ma}</td><td>{chr}</td>\
+             <td>{w:.1}</td><td>{pct:.2}%</td></tr>",
+            rank = i + 1, short = html_escape(&short), email = html_escape(&email_red),
+            lines = b.constitution_lines, ma = b.ma_pieces, chr = b.chronicle_slots,
+            w = b.total_weight, pct = pct,
+        ));
+    }
+    if rows.is_empty() {
+        tbody.push_str("<tr><td colspan=\"8\" style=\"text-align:center;color:#666;padding:24px\">no wallets bound yet · use /api/admin/dao/bind</td></tr>");
+    }
+    let today = dao_today_jst();
+    let html = format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DAO · MU</title>
+<link rel="icon" href="/favicon.svg">
+<meta property="og:title" content="MU DAO — no token, just shares of who wrote, who wore, who carries">
+<meta property="og:description" content="Constitution §23: the base token does not exist. Voting weight = authored lines + MA pieces + Chronicle slots.">
+<meta property="og:image" content="https://wearmu.com/og-default.jpg">
+<style>
+  :root {{ color-scheme: dark; }}
+  body {{ background:#0a0a0a; color:#f5f5f0; font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif; margin:0; padding: 32px 16px 80px; max-width: 920px; margin-inline: auto; }}
+  h1 {{ font-weight:300; font-size:28px; margin: 0 0 6px; letter-spacing: -0.01em; }}
+  .lede {{ color:#888; font-size:14px; margin-bottom:32px; }}
+  .lede b {{ color:#f5f5f0; font-weight:500; }}
+  .stats {{ display:grid; grid-template-columns: repeat(auto-fit, minmax(160px,1fr)); gap:12px; margin-bottom:32px; }}
+  .stat {{ background:#141414; padding:14px; border-radius:6px; }}
+  .stat .n {{ font-size:22px; font-weight:300; }}
+  .stat .l {{ font-size:11px; color:#888; margin-top:4px; }}
+  table {{ width:100%; border-collapse:collapse; background:#141414; border-radius:6px; overflow:hidden; }}
+  th, td {{ padding:10px 12px; text-align:left; font-size:13px; border-bottom:1px solid #222; }}
+  th {{ background:#1a1a1a; color:#888; font-weight:500; font-size:11px; text-transform:uppercase; letter-spacing:0.05em; }}
+  tr:last-child td {{ border-bottom: none; }}
+  td code {{ background:#0a0a0a; padding:2px 6px; border-radius:3px; font-size:11px; }}
+  .formula {{ background:#141414; padding:20px; border-radius:6px; margin-top: 32px; font-family: ui-monospace, Menlo, monospace; font-size:12px; color:#aaa; white-space: pre; overflow-x:auto; }}
+  .how {{ background:#141414; padding:20px; border-radius:6px; margin-top:24px; }}
+  .how h3 {{ font-weight:400; font-size:15px; margin: 0 0 10px; color:#f5f5f0; }}
+  .how li {{ font-size:13px; color:#bbb; margin: 4px 0; }}
+  a {{ color:#9bc8e3; }}
+</style>
+</head><body>
+<h1>MU DAO · §23</h1>
+<p class="lede"><b>基軸トークンは存在しない。</b>投票重みは 3 つの soulbound primitive の純粋関数。Constitution の各行 + MA 1-of-1 piece + Chronicle slot。譲渡 token なし、ICO なし、speculator の入口なし。今日: <code>{today}</code></p>
+<div class="stats">
+  <div class="stat"><div class="n">{lines_total}</div><div class="l">constitution lines (authored)</div></div>
+  <div class="stat"><div class="n">{ma_total}</div><div class="l">MA 1-of-1 pieces</div></div>
+  <div class="stat"><div class="n">{chr_total}</div><div class="l">Chronicle slots</div></div>
+  <div class="stat"><div class="n">{total_supply:.0}</div><div class="l">total weight (today)</div></div>
+  <div class="stat"><div class="n">{n_wallets}</div><div class="l">bound wallets</div></div>
+</div>
+
+<h2 style="font-weight:300;font-size:18px;margin-top:24px">Leaderboard</h2>
+<table>
+  <thead><tr>
+    <th>#</th><th>wallet</th><th>email</th>
+    <th>lines</th><th>MA</th><th>chronicle</th>
+    <th>weight</th><th>share</th>
+  </tr></thead>
+  <tbody>{tbody}</tbody>
+</table>
+
+<div class="formula">weight(wallet, today) =
+    Σ  age_factor(today − committed) × lines_authored
+       (CONSTITUTION_AUTHORS で email-bound な行)
+  + 100 × |MA pieces (claim_email = bound email)|
+  +   1 × |chronicle slots (collab_orders.email = bound email)|
+
+age_factor:
+  0..30d   → 0.5 (probationary)
+  30d..1y  → 1.0
+  1..5y    → 2.0
+  5..25y   → 4.0
+  25..100y → 8.0  (wisdom dividend)</div>
+
+<div class="how">
+  <h3>参加方法</h3>
+  <ul>
+    <li><b>書く</b> — Constitution に PR、T1 governance で通れば mint event (永続)</li>
+    <li><b>運ぶ</b> — MA 1-of-1 piece を持つ (= +100 weight)</li>
+    <li><b>着る</b> — シャツ買えば自動で chronicle slot = 1 weight</li>
+    <li>email → wallet bind は <code>/api/admin/dao/bind</code> (現在は admin)。magic-link 自己 bind は Phase 2</li>
+    <li>weight 確認 → <code>GET /api/dao/weight/&lt;wallet&gt;</code></li>
+    <li>Constitution: <a href="/constitution">/constitution</a> · §23 (this)</li>
+  </ul>
+</div>
+</body></html>"##,
+        today = today, lines_total = lines_total, ma_total = ma_total, chr_total = chr_total,
+        total_supply = total_supply, n_wallets = rows.len(), tbody = tbody,
+    );
+    Html(html)
+}
+
 /// GET /claim/ma/:token — public claim page.
 async fn ma_gift_claim_page(
     Path(token): Path<String>,
@@ -29147,6 +29517,17 @@ async fn main() {
         CREATE INDEX IF NOT EXISTS idx_ma_lineage_token ON ma_lineage(ma_token, day_date);
         CREATE INDEX IF NOT EXISTS idx_ma_lineage_status ON ma_lineage(status, created_at);
 
+        -- DAO §23: email → wallet binding. Authorship + MA + Chronicle are
+        -- keyed by email throughout the codebase, so we bind email→wallet
+        -- once and dao_weight_compute() looks up everything via that.
+        CREATE TABLE IF NOT EXISTS dao_email_wallets (
+            email     TEXT PRIMARY KEY,
+            wallet    TEXT NOT NULL,
+            bound_at  TEXT NOT NULL,
+            bound_by  TEXT NOT NULL DEFAULT 'admin'
+        );
+        CREATE INDEX IF NOT EXISTS idx_dao_email_wallets_wallet ON dao_email_wallets(wallet);
+
         -- Moon-phase marker: events for entry check-in via T-shirt scan.
         CREATE TABLE IF NOT EXISTS mu_events (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -29369,6 +29750,10 @@ async fn main() {
         .route("/api/v1/ma/gifts", get(public_ma_gifts))
         .route("/lineage/:short", get(ma_lineage_page))
         .route("/api/lineage/claim", post(ma_lineage_claim_submit))
+        .route("/dao", get(dao_page))
+        .route("/api/dao/weight/:wallet", get(dao_weight_api))
+        .route("/api/dao/leaderboard", get(dao_leaderboard_api))
+        .route("/api/admin/dao/bind", post(admin_dao_bind))
         .route("/api/mark/:product_id/:position.svg", get(moon_marker_svg))
         .route("/api/mark/decode/:value", get(moon_marker_decode))
         .route("/scan", get(moon_scan_page))
