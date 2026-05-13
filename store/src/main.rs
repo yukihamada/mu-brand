@@ -12175,6 +12175,278 @@ async function submitVote(e){{
     ))
 }
 
+// ── MA gifts (HAMADAO veteran 1-of-1 commemoratives) ─────────────────────
+// yuki issues a token via admin endpoint; the recipient claims at
+// /claim/ma/<token> with shipping info. design_url is filled async by
+// m5 generate.py once Gemini 3 Pro Image finishes the design_brief.
+
+/// POST /api/admin/ma/gift/issue?token=…
+/// body: { label, design_brief }  →  returns { token, claim_url }
+async fn admin_ma_gift_issue(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let label = body["label"].as_str().unwrap_or("").trim().to_string();
+    let brief = body["design_brief"].as_str().unwrap_or("").trim().to_string();
+    let note = body["note"].as_str().unwrap_or("").trim().to_string();
+    if label.is_empty() || label.len() > 200 {
+        return (StatusCode::BAD_REQUEST, "label required (<=200)").into_response();
+    }
+    if brief.is_empty() || brief.len() > 4000 {
+        return (StatusCode::BAD_REQUEST, "design_brief required (<=4000)").into_response();
+    }
+    let token = uuid::Uuid::new_v4().to_string().replace('-', "");
+    let now = chrono_now();
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO ma_gifts (token, label, design_brief, status, created_at, note)
+             VALUES (?,?,?,'issued',?,?)",
+            params![token, label, brief, now, note],
+        );
+    }
+    Json(serde_json::json!({
+        "ok": true,
+        "token": token,
+        "claim_url": format!("https://wearmu.com/claim/ma/{}", token),
+        "label": label,
+        "note": "design_url is initially NULL — m5 generate.py picks up rows where status='issued' AND design_url IS NULL and fills it. Until then /claim/ma/<token> renders a 'design pending' message but still accepts shipping info."
+    })).into_response()
+}
+
+/// GET /admin/ma/gifts?token=… — list all gifts + their status.
+async fn admin_ma_gift_list(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let conn = db.lock().unwrap();
+    let mut stmt = match conn.prepare(
+        "SELECT id, token, label, status, claim_email, ship_country,
+                printful_order_id, design_url, created_at, claimed_at
+         FROM ma_gifts ORDER BY id DESC LIMIT 100"
+    ) { Ok(s) => s, Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("db: {}", e)).into_response() };
+    let rows: Vec<serde_json::Value> = stmt.query_map([], |r| Ok(serde_json::json!({
+        "id":           r.get::<_, i64>(0)?,
+        "token":        r.get::<_, String>(1)?,
+        "label":        r.get::<_, String>(2)?,
+        "status":       r.get::<_, String>(3)?,
+        "claim_email":  r.get::<_, Option<String>>(4)?,
+        "ship_country": r.get::<_, Option<String>>(5)?,
+        "printful_order_id": r.get::<_, Option<String>>(6)?,
+        "design_ready": r.get::<_, Option<String>>(7)?.map(|s| !s.is_empty()).unwrap_or(false),
+        "created_at":   r.get::<_, String>(8)?,
+        "claimed_at":   r.get::<_, Option<String>>(9)?,
+    }))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+    Json(serde_json::json!({"count": rows.len(), "gifts": rows})).into_response()
+}
+
+/// GET /claim/ma/:token — public claim page.
+async fn ma_gift_claim_page(
+    Path(token): Path<String>,
+    State(db): State<Db>,
+) -> Html<String> {
+    let row: Option<(String, String, Option<String>, Option<String>, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT label, status, design_url, mockup_url, claim_email
+             FROM ma_gifts WHERE token=?",
+            params![token], |r| Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, Option<String>>(3)?,
+                r.get::<_, Option<String>>(4)?,
+            ))
+        ).ok()
+    };
+    let Some((label, status, design_url, mockup_url, claim_email)) = row else {
+        return Html(r##"<!doctype html><html><body style="background:#0A0A0A;color:#F5F5F0;font-family:sans-serif;padding:48px;text-align:center"><p>このリンクは無効、または期限切れです。<br><a href="/" style="color:#e6c449">wearmu.com</a></p></body></html>"##.to_string());
+    };
+    let preview = mockup_url.or(design_url).filter(|s| !s.is_empty());
+    let preview_block = if let Some(u) = preview.as_ref() {
+        format!(r#"<div style="margin:24px 0;text-align:center"><img src="{u}" alt="MA preview" style="max-width:100%;height:auto;border:1px solid rgba(255,255,255,0.1);border-radius:2px"></div>"#, u = html_escape(u))
+    } else {
+        r#"<div style="margin:24px 0;padding:24px;background:#0e0e0e;border:1px dashed rgba(255,255,255,0.15);text-align:center;font-size:12px;letter-spacing:0.2em;text-transform:uppercase;opacity:0.7;color:#e6c449">DESIGN GENERATING — AI が作成中。<br>受取情報を先に登録いただけます (発送はデザイン完成後 1-3 日)。</div>"#.to_string()
+    };
+    let already = if status == "claimed" || status == "shipped" {
+        let mask = claim_email.as_deref().map(mask_email).unwrap_or_default();
+        format!(r#"<div style="margin:24px 0;padding:14px 18px;background:rgba(168,217,154,0.10);border-left:2px solid #a8d99a;color:#a8d99a;font-size:13px;line-height:1.8">✓ 受取登録済み ({}) · status = {}</div>"#, html_escape(&mask), html_escape(&status))
+    } else { String::new() };
+    let form_disabled = status == "claimed" || status == "shipped";
+    Html(format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{label} · MA Gift — 受取登録 | MU</title>
+<meta name="description" content="MU 間 MA の commemorative piece、受取登録ページ。1-of-1、世界に 1 着。">
+<meta name="robots" content="noindex,nofollow">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+:root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--line:rgba(255,255,255,0.08)}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue','Hiragino Sans',sans-serif;line-height:1.8;font-size:14.5px;padding:48px 24px}}
+.wrap{{max-width:520px;margin:0 auto}}
+.eyebrow{{font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:var(--y);opacity:0.85;margin-bottom:12px}}
+h1{{font-size:clamp(24px,5vw,34px);font-weight:200;letter-spacing:0.01em;line-height:1.25;margin:0 0 18px}}
+p{{color:var(--mute);margin:0 0 12px}}
+label{{display:block;font-size:9px;letter-spacing:0.3em;text-transform:uppercase;color:var(--mute);margin:18px 0 6px}}
+input,select{{width:100%;background:#000;border:1px solid var(--line);color:var(--fg);padding:13px 15px;font-family:inherit;font-size:14px;border-radius:2px}}
+input:focus,select:focus{{outline:none;border-color:var(--y)}}
+button{{margin-top:24px;background:var(--y);color:#000;border:0;padding:16px 32px;font-family:inherit;font-size:11px;letter-spacing:0.32em;text-transform:uppercase;font-weight:700;cursor:pointer;border-radius:2px;width:100%}}
+button:disabled{{opacity:0.3;cursor:not-allowed}}
+.foot{{margin-top:36px;padding-top:24px;border-top:1px solid var(--line);font-size:11px;opacity:0.5;line-height:2;letter-spacing:0.08em}}
+.row2{{display:grid;grid-template-columns:1fr 1fr;gap:10px}}
+#msg{{margin-top:14px;padding:12px 16px;font-size:12px;line-height:1.7;border-radius:2px;display:none}}
+#msg.ok{{background:rgba(168,217,154,0.10);border-left:2px solid #a8d99a;color:#a8d99a;display:block}}
+#msg.err{{background:rgba(255,138,122,0.10);border-left:2px solid #ff8a7a;color:#ff8a7a;display:block}}
+a{{color:var(--y)}}
+</style></head><body>
+<div class="wrap">
+  <div class="eyebrow">MA · Commemorative · 1-of-1</div>
+  <h1>{label}</h1>
+  <p>MU 間 MA の commemorative piece をお贈りします。<strong style="color:var(--fg)">送料・本体ともに MU 負担</strong>、受取情報のみご登録ください。</p>
+  {preview_block}
+  {already}
+  <form id="f" onsubmit="return submitForm(event)">
+    <label>Email</label>
+    <input type="email" name="email" placeholder="your@email" required {disabled}>
+
+    <label>お名前 / Recipient</label>
+    <input type="text" name="ship_name" placeholder="山田 太郎 / Taro Yamada" required {disabled}>
+
+    <label>住所 1 / Address line 1</label>
+    <input type="text" name="ship_addr1" placeholder="例: 港区三田 2-7-1" required {disabled}>
+
+    <label>住所 2 / Address line 2 (任意)</label>
+    <input type="text" name="ship_addr2" {disabled}>
+
+    <div class="row2">
+      <div><label>市 / City</label><input type="text" name="ship_city" required {disabled}></div>
+      <div><label>都道府県 / State</label><input type="text" name="ship_state" {disabled}></div>
+    </div>
+    <div class="row2">
+      <div><label>郵便 / ZIP</label><input type="text" name="ship_zip" required {disabled}></div>
+      <div><label>国コード / Country</label><input type="text" name="ship_country" value="JP" maxlength="2" required {disabled}></div>
+    </div>
+    <div class="row2">
+      <div><label>電話 (任意)</label><input type="text" name="ship_phone" {disabled}></div>
+      <div><label>サイズ</label><select name="size" required {disabled}><option value="S">S</option><option value="M" selected>M</option><option value="L">L</option><option value="XL">XL</option><option value="2XL">2XL</option></select></div>
+    </div>
+
+    <button type="submit" {disabled}>受取情報を登録 →</button>
+    <div id="msg"></div>
+  </form>
+  <div class="foot">
+    1-of-1 commemorative · MA の他の auction とは別ライン<br>
+    お問い合わせ <a href="mailto:info@enablerdao.com">info@enablerdao.com</a> · <a href="/transparency">/transparency</a><br>
+    株式会社イネブラ (Enabler Inc.) · yuki (1 human operator) · 28 agents
+  </div>
+</div>
+<script>
+async function submitForm(e){{
+  e.preventDefault();
+  const f = document.getElementById('f');
+  const msg = document.getElementById('msg');
+  const data = Object.fromEntries(new FormData(f).entries());
+  const btn = f.querySelector('button');
+  btn.disabled = true; btn.textContent = '送信中…';
+  try {{
+    const r = await fetch('/api/claim/ma/{token}', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify(data),
+    }});
+    const d = await r.json();
+    if (d.ok) {{
+      msg.className = 'ok';
+      msg.textContent = d.message || '受取情報を登録しました。デザインが完成次第、Printful から発送します。';
+      btn.textContent = '登録完了 ✓';
+    }} else {{
+      msg.className = 'err';
+      msg.textContent = d.error || 'エラー';
+      btn.textContent = '受取情報を登録 →';
+      btn.disabled = false;
+    }}
+  }} catch(_) {{
+    msg.className = 'err';
+    msg.textContent = 'ネットワークエラー。少し待って再試行してください。';
+    btn.textContent = '受取情報を登録 →';
+    btn.disabled = false;
+  }}
+  return false;
+}}
+</script>
+</body></html>"##,
+        label = html_escape(&label),
+        preview_block = preview_block,
+        already = already,
+        disabled = if form_disabled { "disabled" } else { "" },
+        token = token,
+    ))
+}
+
+/// POST /api/claim/ma/:token — receiver fills shipping info.
+async fn ma_gift_claim_submit(
+    Path(token): Path<String>,
+    State(db): State<Db>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let g = |k: &str| body[k].as_str().unwrap_or("").trim().to_string();
+    let email = g("email").to_lowercase();
+    if !email.contains('@') || email.len() > 200 {
+        return Json(serde_json::json!({"ok": false, "error": "email invalid"})).into_response();
+    }
+    let ship = (
+        g("ship_name"), g("ship_addr1"), g("ship_addr2"),
+        g("ship_city"), g("ship_state"), g("ship_country"),
+        g("ship_zip"), g("ship_phone"), g("size"),
+    );
+    if ship.0.is_empty() || ship.1.is_empty() || ship.3.is_empty() || ship.5.is_empty() || ship.6.is_empty() {
+        return Json(serde_json::json!({"ok": false, "error": "必須項目が未入力です"})).into_response();
+    }
+    let (status, design_url, label): (String, Option<String>, String) = {
+        let conn = db.lock().unwrap();
+        let row = conn.query_row(
+            "SELECT status, design_url, label FROM ma_gifts WHERE token=?",
+            params![token], |r| Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        );
+        match row {
+            Ok(r) => r,
+            Err(_) => return Json(serde_json::json!({"ok": false, "error": "invalid token"})).into_response(),
+        }
+    };
+    if status == "claimed" || status == "shipped" {
+        return Json(serde_json::json!({"ok": false, "error": "このトークンは既に claim 済みです"})).into_response();
+    }
+    let now = chrono_now();
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE ma_gifts SET
+                status='claimed', claim_email=?, ship_name=?, ship_addr1=?, ship_addr2=?,
+                ship_city=?, ship_state=?, ship_country=?, ship_zip=?, ship_phone=?,
+                size=?, claimed_at=?
+             WHERE token=? AND status='issued'",
+            params![email, ship.0, ship.1, ship.2, ship.3, ship.4, ship.5, ship.6, ship.7, ship.8, now, token],
+        );
+    }
+    send_telegram_message(&format!(
+        "🎁 MA gift claimed — token={}\nlabel: {}\nemail: {}\nship_country: {}\nstatus: claimed (design_ready={})",
+        &token[..8.min(token.len())], label, mask_email(&email), ship.5, design_url.is_some()
+    )).await;
+    let msg = if design_url.is_some() {
+        "受取情報を登録しました。デザインは生成済みなので、Printful から 7-10 営業日で発送します。"
+    } else {
+        "受取情報を登録しました。AI がデザインを生成中なので、完成次第 (1-3 日以内) Printful から発送します。"
+    };
+    Json(serde_json::json!({"ok": true, "message": msg, "design_ready": design_url.is_some()})).into_response()
+}
+
 /// Shared snapshot builder for /api/transparency (JSON) + /transparency (HTML).
 fn gather_transparency_snapshot(db: &Db) -> serde_json::Value {
     let conn = db.lock().unwrap();
@@ -27137,6 +27409,38 @@ async fn main() {
         );
         CREATE INDEX IF NOT EXISTS idx_chronicle_tokens_email ON chronicle_vote_tokens(email);
 
+        -- MA gifts: 1-of-1 commemorative MA pieces for past contributors
+        -- (HAMADAO veterans, council seed members, etc.). yuki issues a
+        -- token via admin endpoint; the recipient claims at /claim/ma/<token>
+        -- with shipping info. design_url is filled async by m5 generate.py
+        -- once the Gemini 3 Pro Image generation finishes for the design_brief.
+        CREATE TABLE IF NOT EXISTS ma_gifts (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            token           TEXT UNIQUE NOT NULL,
+            label           TEXT NOT NULL,
+            design_brief    TEXT NOT NULL,
+            design_url      TEXT,
+            mockup_url      TEXT,
+            status          TEXT NOT NULL DEFAULT 'issued',
+                            -- 'issued' | 'claimed' | 'design_ready' | 'shipped'
+            claim_email     TEXT,
+            ship_name       TEXT,
+            ship_addr1      TEXT,
+            ship_addr2      TEXT,
+            ship_city       TEXT,
+            ship_state      TEXT,
+            ship_country    TEXT,
+            ship_zip        TEXT,
+            ship_phone      TEXT,
+            size            TEXT,
+            printful_order_id TEXT,
+            created_at      TEXT NOT NULL,
+            claimed_at      TEXT,
+            shipped_at      TEXT,
+            note            TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_ma_gifts_status ON ma_gifts(status, created_at);
+
         CREATE TABLE IF NOT EXISTS bounty_submissions (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             severity        TEXT NOT NULL,
@@ -27325,6 +27629,10 @@ async fn main() {
         .route("/chronicle-vote", get(chronicle_vote_page))
         .route("/api/chronicle/vote/request", post(chronicle_vote_request))
         .route("/chronicle/vote/confirm/:token", get(chronicle_vote_confirm))
+        .route("/api/admin/ma/gift/issue", post(admin_ma_gift_issue))
+        .route("/admin/ma/gifts", get(admin_ma_gift_list))
+        .route("/claim/ma/:token", get(ma_gift_claim_page))
+        .route("/api/claim/ma/:token", post(ma_gift_claim_submit))
         // matchit (axum's router) treats `:pos.svg` and `:pos.png` as
         // conflicting because both reduce to a single capture segment. Use
         // ONE route that captures the full last segment (e.g. "5.png") and
