@@ -5165,6 +5165,173 @@ async fn public_stats_page(State(db): State<Db>) -> Response {
     axum::response::Html(page).into_response()
 }
 
+/// GET /agents — public page documenting every AI agent + its prompt.
+/// Brand moat: no fashion brand shows their actual prompts. 透明性 = 信頼。
+async fn public_agents_page(State(db): State<Db>) -> Response {
+    // Per-agent display info: human-readable purpose + model + visible prompt.
+    // The prompt strings are excerpted from the const declarations elsewhere
+    // in this file so what you see IS what runs.
+    struct AgentDoc {
+        name: &'static str,
+        interval: &'static str,
+        purpose: &'static str,
+        model: &'static str,
+        prompt: &'static str,
+    }
+    const AGENT_DOCS: &[AgentDoc] = &[
+        AgentDoc {
+            name: "email_critic", interval: "24h",
+            purpose: "全 26 種類のメールテンプレを Musk/Bezos/Jobs/Buyer 4 ペルソナで採点。1 テンプレを 3 回採点して median をスコアとして採用。",
+            model: "Gemini 2.5 Flash · temperature 0.0 · 3-run median",
+            prompt: EMAIL_CRITIC_PROMPT,
+        },
+        AgentDoc {
+            name: "email_rewriter", interval: "24h",
+            purpose: "median score < 0.70 のテンプレ上位 3 件に、4 ペルソナの suggestion を統合した rewrite を生成。pending として保存、人間が /admin/email-rewrites で承認。",
+            model: "Gemini 2.5 Pro · temperature 0.4",
+            prompt: EMAIL_REWRITE_PROMPT,
+        },
+        AgentDoc {
+            name: "bounty_triage", interval: "30 min",
+            purpose: "新着 bug bounty 報告を 1 次仕分け。severity_final 推定 + scope外 / spam を auto-reject、本物は triaging 化。報酬支払いは必ず人間経由。",
+            model: "Gemini 2.5 Flash · temperature 0.0",
+            prompt: BOUNTY_TRIAGE_PROMPT,
+        },
+        AgentDoc {
+            name: "production_watcher", interval: "30 min",
+            purpose: "新規 collab_order を検出して受領メール (kind=received) を Resend で送信。Printful 状態遷移を検知して production / shipped / cohort30 メールも自動発火。",
+            model: "(no LLM — rules engine)",
+            prompt: "// 直近 24h の collab_orders を順に処理\n// status を見て kind を決定 → send_buyer_email\n// UTM 自動付与 (utm_source=mu_email&utm_campaign=<kind>_<variant>)\n// 同じ (order_id, kind) は重複送信しない",
+        },
+        AgentDoc {
+            name: "price_micro", interval: "24h",
+            purpose: "active な collab_products の 7 日売上を見て価格を ±¥200 微調整。±10%/¥1000 を超えたら T1 governance へ escalate。",
+            model: "(no LLM — heuristic)",
+            prompt: "// sold_7d > 3   → +¥300\n// sold_7d == 0 & age > 14日 → -¥300\n// 絶対 floor: ¥1,000 / 絶対 ceiling: ¥100,000\n// margin floor: cost × 1.2",
+        },
+        AgentDoc {
+            name: "customer_support", interval: "30 min",
+            purpose: "customer_feedback を kind 分類 (refund/complaint/praise/request) + AI 返信草案を生成。inbox からの受信 email もここに合流。",
+            model: "Gemini 2.5 Flash",
+            prompt: "// 受信した text + subject + 顧客の過去注文を読んで:\n//  kind: refund | complaint | praise | request | shipping | other\n//  draft: <= 300字, 顧客向けの丁寧な返信\n// 返信送信は agent_support_reply_sender が 24h 後に判定",
+        },
+        AgentDoc {
+            name: "support_reply_sender", interval: "30 min",
+            purpose: "customer_support が作った草案を 24h 経過 + 低 severity なら自動で Resend で送信。complaint / refund は常に人間経由。",
+            model: "(no LLM — gating)",
+            prompt: "// SELECT customer_feedback WHERE ai_reply IS NOT NULL\n//   AND kind IN ('praise','request','shipping','other')\n//   AND ai_reply_at < now - 24h\n//   AND NOT sent → Resend send + mark sent",
+        },
+        AgentDoc {
+            name: "strategist", interval: "weekly (Mon)",
+            purpose: "次 7 日の最大の動き 1 つ (drop / 価格 / 広告 / deprecate) を提案。governance_queue に T1 として追加、人間承認待ち。",
+            model: "Gemini 2.5 Pro · web search ON",
+            prompt: "// 直近 30 日の: 売上 / CVR / refund rate / X impressions / journal 異常\n// + 過去類似の決定 (autonomy_decision_log) を embedding 検索で 5 件 inject\n// → 「来週やる 1 つの大きな動き」を JSON で提案",
+        },
+        AgentDoc {
+            name: "vision_drift", interval: "24h",
+            purpose: "MU のビジョン (詩 4 行) からの drift を Gemini で検知。drift があれば Telegram に通知 + 改善案。",
+            model: "Gemini 2.5 Flash",
+            prompt: "// 直近 7 日の agent_journal をビジョンに照らして:\n//  - drift_score: 0.0-1.0 (どれくらい逸脱したか)\n//  - drift_reason: 何が逸脱の兆候か\n//  - suggestion: ビジョンに戻すための具体策",
+        },
+        AgentDoc {
+            name: "self_evolve", interval: "24h",
+            purpose: "コード / プロンプト / param の小改善を 1〜3 件提案。auto-merge-eligible な範囲は self-evolve label の GitHub PR 化。",
+            model: "Gemini 2.5 Pro",
+            prompt: "// agent_journal の low-score / repeat-error 行を集計\n// 改善案を ai_decisions に書く:\n//  area: code | prompt | param | forbid_token\n//  diff: 提案する変更 (unified diff or prompt change)\n// auto-merge-eligible: 安全な範囲か (test 追加 / lint 通過必須)",
+        },
+        AgentDoc {
+            name: "checkout_health", interval: "15 min",
+            purpose: "wearmu.com 購入導線を 15 分ごとに synthetic probe。4xx/5xx が出たら CRITICAL Telegram + T1 governance escalate。",
+            model: "(no LLM — health check)",
+            prompt: "// GET / → 200 想定\n// GET /mugen → 200 想定\n// POST /api/checkout/embedded (test product) → client_secret 返却想定\n// 異常時: 即 Telegram + governance_queue で T1 escalate",
+        },
+    ];
+
+    // For each agent: pull last 3 journal entries.
+    fn recent(db: &Db, agent: &str) -> Vec<(String, String)> {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT datetime(CAST(cycle_at AS INTEGER),'unixepoch','+9 hours'), summary
+             FROM agent_journal WHERE agent_name=? ORDER BY id DESC LIMIT 3"
+        ) { Ok(s) => s, Err(_) => return vec![] };
+        stmt.query_map(params![agent], |r| Ok((r.get::<_,String>(0)?, r.get::<_,String>(1)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    }
+
+    let mut cards = String::new();
+    for a in AGENT_DOCS {
+        let runs = recent(&db, a.name);
+        let runs_html = if runs.is_empty() {
+            "<div style=\"color:#555;font-size:11px\">まだ起動履歴なし</div>".to_string()
+        } else {
+            runs.iter().map(|(t,s)| {
+                format!(r#"<div style="color:#888;font-size:11.5px;line-height:1.55;padding:5px 0;border-top:1px solid #1a1a1a"><span style="color:#666;font-family:ui-monospace,Menlo,monospace">{}</span> · {}</div>"#,
+                    html_escape(t), html_escape(s))
+            }).collect()
+        };
+        cards.push_str(&format!(
+            r#"<div style="margin:0 0 24px;padding:22px;background:#0a0a0a;border:1px solid #1a1a1a;border-radius:5px">
+<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:8px">
+  <h3 style="margin:0;font-size:18px;font-weight:500;color:#e6c449;font-family:ui-monospace,Menlo,monospace">{name}</h3>
+  <span style="color:#888;font-size:11px;letter-spacing:0.1em">{interval}</span>
+</div>
+<div style="color:#bbb;font-size:13px;line-height:1.65;margin:0 0 12px">{purpose}</div>
+<div style="color:#666;font-size:11px;margin:0 0 8px;letter-spacing:0.06em">MODEL: {model}</div>
+<details style="margin:8px 0 0"><summary style="color:#888;font-size:11.5px;cursor:pointer;letter-spacing:0.04em;user-select:none">▶ プロンプトを見る</summary>
+<pre style="white-space:pre-wrap;color:#ddd;font-size:11.5px;line-height:1.55;background:#050505;padding:14px;border-radius:3px;margin:10px 0 0;font-family:ui-monospace,Menlo,monospace;border:1px solid #1a1a1a;max-height:380px;overflow:auto">{prompt}</pre>
+</details>
+<div style="margin-top:14px">
+<div style="color:#666;font-size:10px;letter-spacing:0.16em;text-transform:uppercase;margin-bottom:4px">直近 3 回の実行</div>
+{runs}
+</div>
+</div>"#,
+            name = html_escape(a.name),
+            interval = html_escape(a.interval),
+            purpose = html_escape(a.purpose),
+            model = html_escape(a.model),
+            prompt = html_escape(a.prompt),
+            runs = runs_html));
+    }
+
+    let page = format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>MU · AI agents — 動作とプロンプト全公開</title>
+<meta name="description" content="MU を動かす AI agent 一覧。各エージェントが何を、いつ、どんなプロンプトで実行しているか全公開。"/>
+<meta property="og:title" content="MU · AI agents"/>
+<meta property="og:description" content="人間 0 人で動く apparel ブランドの全エージェント、プロンプト含めて公開。"/>
+<meta property="og:image" content="https://wearmu.com/static/x/banner.png"/>
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:site" content="@wearMUcom"/>
+<style>
+  :root{{--bg:#000;--fg:#f5f5f0;--mute:#888;--gold:#e6c449}}
+  *{{box-sizing:border-box}}
+  html,body{{background:var(--bg);color:var(--fg);margin:0;font-family:-apple-system,sans-serif;font-feature-settings:"palt"}}
+  a{{color:var(--gold)}}
+  .wrap{{max-width:780px;margin:0 auto;padding:56px 22px 80px}}
+  .kicker{{font-size:10.5px;letter-spacing:0.22em;color:#666;text-transform:uppercase;margin-bottom:14px}}
+  h1{{font-size:32px;font-weight:300;letter-spacing:0.02em;line-height:1.3;margin:0 0 12px}}
+  h1 em{{color:var(--gold);font-style:normal;font-weight:400}}
+  .meta{{color:var(--mute);font-size:13.5px;line-height:1.7;margin:0 0 36px;max-width:640px}}
+  nav{{font-size:12px;margin:0 0 20px}}
+  nav a{{margin-right:14px;color:#888}}
+  details summary::-webkit-details-marker{{display:none}}
+  details[open] summary{{color:var(--gold) !important}}
+  footer{{margin-top:48px;color:#555;font-size:11px;line-height:1.8}}
+</style></head><body><div class="wrap">
+  <nav><a href="/">/</a> <a href="/stats">/stats</a> <a href="/agents">/agents</a> <a href="/mugen">/mugen</a> <a href="/you">/you</a></nav>
+  <div class="kicker">MU · AI agents</div>
+  <h1>動かしている <em>AI エージェント</em>、<br>プロンプトまで全公開。</h1>
+  <p class="meta">下の各エージェントが、メール文面の採点・書き直し・価格調整・カスタマーサポート・バグ報告仕分けまで全部回しています。<br>プロンプトは「▶ プロンプトを見る」をクリックすると展開。文字どおり、これがサーバで実行されているものです。</p>
+  {cards}
+  <footer>
+    全部 open: <a href="https://x.com/wearMUcom">@wearMUcom</a> · <a href="/stats">live stats</a> · <a href="https://github.com/yukihamada/mu-brand">github</a> (検討中)<br>
+    買う: <a href="/mugen">/mugen</a> · 試す (¥0): <a href="/you">/you</a>
+  </footer>
+</div></body></html>"#, cards = cards);
+    axum::response::Html(page).into_response()
+}
+
 async fn resend_inbound_webhook(
     State(db): State<Db>,
     headers: HeaderMap,
@@ -24754,6 +24921,7 @@ async fn main() {
         .route("/api/webhook/resend-inbound", post(resend_inbound_webhook))
         .route("/api/webhook/resend-events", post(resend_events_webhook))
         .route("/stats", get(public_stats_page))
+        .route("/agents", get(public_agents_page))
         .route("/api/kyc/identity-session", post(payments::create_stripe_identity_session))
         .route("/api/admin/exports/kyc.csv", get(payments::admin_export_kyc))
         .route("/api/admin/exports/crypto.csv", get(payments::admin_export_crypto))
