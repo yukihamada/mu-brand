@@ -13216,21 +13216,611 @@ async fn admin_ma_gift_list(
                 printful_order_id, design_url, mockup_url, created_at, claimed_at
          FROM ma_gifts ORDER BY id DESC LIMIT 100"
     ) { Ok(s) => s, Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("db: {}", e)).into_response() };
-    let rows: Vec<serde_json::Value> = stmt.query_map([], |r| Ok(serde_json::json!({
-        "id":           r.get::<_, i64>(0)?,
-        "token":        r.get::<_, String>(1)?,
-        "label":        r.get::<_, String>(2)?,
-        "status":       r.get::<_, String>(3)?,
-        "claim_email":  r.get::<_, Option<String>>(4)?,
-        "ship_country": r.get::<_, Option<String>>(5)?,
-        "printful_order_id": r.get::<_, Option<String>>(6)?,
-        "design_url":   r.get::<_, Option<String>>(7)?,
-        "mockup_url":   r.get::<_, Option<String>>(8)?,
-        "design_ready": r.get::<_, Option<String>>(7)?.map(|s: String| !s.is_empty()).unwrap_or(false),
-        "created_at":   r.get::<_, String>(9)?,
-        "claimed_at":   r.get::<_, Option<String>>(10)?,
-    }))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+    let rows: Vec<serde_json::Value> = stmt.query_map([], |r| {
+        let tok: String = r.get(1)?;
+        let short: String = tok.chars().take(12).collect();
+        let key = lineage_url_key(&tok);
+        Ok(serde_json::json!({
+            "id":           r.get::<_, i64>(0)?,
+            "token":        tok,
+            "label":        r.get::<_, String>(2)?,
+            "status":       r.get::<_, String>(3)?,
+            "claim_email":  r.get::<_, Option<String>>(4)?,
+            "ship_country": r.get::<_, Option<String>>(5)?,
+            "printful_order_id": r.get::<_, Option<String>>(6)?,
+            "design_url":   r.get::<_, Option<String>>(7)?,
+            "mockup_url":   r.get::<_, Option<String>>(8)?,
+            "design_ready": r.get::<_, Option<String>>(7)?.map(|s: String| !s.is_empty()).unwrap_or(false),
+            "created_at":   r.get::<_, String>(9)?,
+            "claimed_at":   r.get::<_, Option<String>>(10)?,
+            "lineage_url":  format!("https://wearmu.com/lineage/{}?k={}", short, key),
+        }))
+    }).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
     Json(serde_json::json!({"count": rows.len(), "gifts": rows})).into_response()
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// MA Lineage — every MA holder gets a fresh 1-of-1 daily generated design.
+// Browse at /lineage/<ma_token_short>?k=<hmac_short>. Claim any past day
+// at one of 4 tiers: sticker / print / cut&sew / archive. All claim flows
+// are T1 (enqueue to autonomy_governance_queue), so yuki ratifies each
+// before any Printful order fires.
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Tier price ladder for Lineage claims (Constitution §22 ratification gate).
+const LINEAGE_TIER_STICKER_JPY: i64 = 4_800;
+const LINEAGE_TIER_PRINT_JPY:   i64 = 7_800;
+const LINEAGE_TIER_CUTSEW_JPY:  i64 = 15_000;
+const LINEAGE_TIER_ARCHIVE_JPY: i64 = 30_000;
+
+fn lineage_tier_jpy(tier: &str) -> Option<i64> {
+    match tier {
+        "sticker" => Some(LINEAGE_TIER_STICKER_JPY),
+        "print"   => Some(LINEAGE_TIER_PRINT_JPY),
+        "cutsew"  => Some(LINEAGE_TIER_CUTSEW_JPY),
+        "archive" => Some(LINEAGE_TIER_ARCHIVE_JPY),
+        _ => None,
+    }
+}
+
+fn lineage_tier_label(tier: &str) -> &'static str {
+    match tier {
+        "sticker" => "ステッカー (vinyl, 10cm)",
+        "print"   => "Tシャツ (DTG, Bella+Canvas 3001 Black)",
+        "cutsew"  => "Cut & Sew Tシャツ (premium, design lock)",
+        "archive" => "Archive Print (額装、デザイン引退)",
+        _ => "?",
+    }
+}
+
+/// Short HMAC over MA token — used as URL key so the lineage page isn't
+/// guessable from the token alone. Uses COUNCIL_TOKEN_SECRET (already a
+/// Fly secret). Truncated to 16 hex chars (64 bits) — enough to make
+/// brute-force impractical while keeping URLs shareable.
+fn lineage_url_key(ma_token: &str) -> String {
+    let secret = env::var("COUNCIL_TOKEN_SECRET")
+        .unwrap_or_else(|_| "lineage-fallback-key-not-set".into());
+    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(secret.as_bytes())
+        .expect("hmac key");
+    mac.update(b"ma_lineage:");
+    mac.update(ma_token.as_bytes());
+    let sig = mac.finalize().into_bytes();
+    hex::encode(&sig[..8])  // 16 hex chars
+}
+
+/// Find a `ma_gifts` row by URL-friendly token-prefix (first 12 chars).
+/// Returns the full token + label if there's exactly one match.
+fn lineage_resolve_ma_token(conn: &Connection, prefix: &str) -> Option<(String, String)> {
+    if prefix.len() < 6 || prefix.len() > 64 { return None; }
+    let like = format!("{}%", prefix);
+    let rows: Vec<(String, String)> = conn.prepare(
+        "SELECT token, label FROM ma_gifts WHERE token LIKE ? LIMIT 2"
+    ).ok()?
+    .query_map([&like], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+    .ok()?
+    .filter_map(|x| x.ok()).collect();
+    if rows.len() == 1 { Some(rows.into_iter().next().unwrap()) } else { None }
+}
+
+/// GET /lineage/:short — grid of all daily designs for one MA holder.
+/// `:short` is the first ~12 chars of the MA token. Query param `k=`
+/// must match `lineage_url_key(full_token)`.
+async fn ma_lineage_page(
+    Path(short): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    State(db): State<Db>,
+) -> Html<String> {
+    let resolved = {
+        let conn = db.lock().unwrap();
+        lineage_resolve_ma_token(&conn, &short)
+    };
+    let Some((ma_token, label)) = resolved else {
+        return Html("<h1>not found</h1>".to_string());
+    };
+    let expected = lineage_url_key(&ma_token);
+    if q.get("k").map(String::as_str) != Some(expected.as_str()) {
+        return Html("<h1>not authorized — missing or invalid k</h1>".to_string());
+    }
+    let rows: Vec<(i64, String, i64, Option<String>, Option<String>, String)> = {
+        let conn = db.lock().unwrap();
+        conn.prepare(
+            "SELECT id, day_date, seq, design_url, mockup_url, status
+             FROM ma_lineage WHERE ma_token=? ORDER BY day_date DESC LIMIT 365"
+        ).ok().and_then(|mut s| s.query_map(
+            [&ma_token], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+        ).ok().map(|it| it.filter_map(|r| r.ok()).collect())).unwrap_or_default()
+    };
+    let count = rows.len();
+    let mut cards = String::new();
+    for (id, day, seq, design_url, mockup_url, status) in &rows {
+        let img = mockup_url.clone().or_else(|| design_url.clone()).unwrap_or_default();
+        let img_block = if img.is_empty() {
+            "<div class=\"placeholder\">generating…</div>".to_string()
+        } else {
+            format!("<img src=\"{}\" alt=\"day {}\" loading=\"lazy\">", html_escape(&img), seq)
+        };
+        cards.push_str(&format!(
+            r#"<article class="card" data-id="{id}" data-status="{status}">
+              {img_block}
+              <div class="meta">
+                <span class="seq">#{seq}</span>
+                <time>{day}</time>
+                <span class="status status-{status}">{status}</span>
+              </div>
+              <button class="claim-btn" data-id="{id}" data-day="{day}" data-img="{img_safe}">claim this day</button>
+            </article>"#,
+            id = id, status = html_escape(status), seq = seq, day = html_escape(day),
+            img_block = img_block, img_safe = html_escape(&img),
+        ));
+    }
+    let label_safe = html_escape(&label);
+    let short_safe = html_escape(&short);
+    let key_safe   = html_escape(&expected);
+    let html = format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lineage · {label_safe} · MU</title>
+<meta name="robots" content="noindex,nofollow">
+<link rel="icon" href="/favicon.svg">
+<style>
+  :root {{ color-scheme: dark; }}
+  body {{ background:#0a0a0a; color:#f5f5f0; font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif; margin:0; padding: 24px 16px 80px; }}
+  h1 {{ font-weight:300; font-size: 22px; margin: 0 0 4px; }}
+  .sub {{ color:#888; font-size: 13px; margin-bottom: 28px; }}
+  .grid {{ display:grid; grid-template-columns: repeat(auto-fill, minmax(220px,1fr)); gap: 16px; }}
+  .card {{ background:#141414; border-radius:8px; overflow:hidden; display:flex; flex-direction:column; }}
+  .card img, .placeholder {{ width:100%; aspect-ratio:1/1; object-fit:cover; background:#222; }}
+  .placeholder {{ display:flex; align-items:center; justify-content:center; color:#666; font-size:12px; }}
+  .meta {{ display:flex; align-items:center; gap:8px; padding: 8px 12px; font-size:12px; color:#aaa; }}
+  .meta .seq {{ color:#f5f5f0; font-weight:500; }}
+  .meta time {{ flex:1; }}
+  .status {{ font-size: 10px; padding: 2px 6px; border-radius: 3px; background:#222; }}
+  .status-design_ready {{ background:#1f3b1f; color:#9be39b; }}
+  .status-claim_queued, .status-claim_approved {{ background:#3b2f1f; color:#e3c89b; }}
+  .status-shipped {{ background:#1f2f3b; color:#9bc8e3; }}
+  .claim-btn {{ margin: 0 12px 12px; padding: 10px; border:1px solid #333; background:#0a0a0a; color:#f5f5f0; border-radius:6px; cursor:pointer; font-size:13px; }}
+  .claim-btn:hover {{ border-color:#888; }}
+  /* modal */
+  .modal-bg {{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.85); z-index:50; align-items:center; justify-content:center; padding:16px; }}
+  .modal-bg.open {{ display:flex; }}
+  .modal {{ background:#141414; border-radius:8px; max-width:480px; width:100%; padding: 24px; }}
+  .modal h2 {{ font-weight:400; font-size: 18px; margin: 0 0 4px; }}
+  .modal p {{ color:#888; font-size:13px; margin: 4px 0 16px; }}
+  .tier {{ display:flex; align-items:center; gap:12px; padding:12px; border:1px solid #222; border-radius:6px; margin: 8px 0; cursor:pointer; }}
+  .tier:hover {{ border-color:#555; }}
+  .tier input {{ margin:0; }}
+  .tier .price {{ color:#f5f5f0; font-weight:500; min-width: 80px; text-align:right; }}
+  .tier .name {{ flex:1; font-size:13px; }}
+  .modal-actions {{ display:flex; gap:8px; margin-top: 16px; }}
+  .modal-actions button {{ flex:1; padding: 12px; border-radius:6px; border:1px solid #333; background:#0a0a0a; color:#f5f5f0; cursor:pointer; }}
+  .modal-actions .primary {{ background:#f5f5f0; color:#0a0a0a; border-color:#f5f5f0; }}
+  .field {{ display:flex; flex-direction:column; gap:4px; margin-bottom: 10px; }}
+  .field label {{ font-size: 11px; color:#888; }}
+  .field input {{ background:#0a0a0a; color:#f5f5f0; border:1px solid #333; border-radius:4px; padding: 8px; font-size:13px; }}
+  .step {{ display:none; }} .step.active {{ display:block; }}
+  .ok {{ color:#9be39b; }} .err {{ color:#e39b9b; }}
+</style>
+</head><body>
+<h1>{label_safe} · Lineage</h1>
+<p class="sub">{count}日分のデザイン · あなたのMAから派生した1-of-1 · クレーム後は yuki が T1 承認します</p>
+<div class="grid">{cards}</div>
+
+<div class="modal-bg" id="modal-bg">
+  <div class="modal">
+    <div class="step active" id="step-tier">
+      <h2>Claim this day</h2>
+      <p>4つのフォーマットから選んでください。クレームは予約のみ。yuki の T1 承認後に Printful 発注します。</p>
+      <label class="tier"><input type="radio" name="tier" value="sticker"><span class="name">ステッカー · vinyl 10cm</span><span class="price">¥{p_sticker}</span></label>
+      <label class="tier"><input type="radio" name="tier" value="print" checked><span class="name">Tシャツ · DTG Bella+Canvas</span><span class="price">¥{p_print}</span></label>
+      <label class="tier"><input type="radio" name="tier" value="cutsew"><span class="name">Cut & Sew · premium 仕立て</span><span class="price">¥{p_cutsew}</span></label>
+      <label class="tier"><input type="radio" name="tier" value="archive"><span class="name">Archive · 額装 + デザイン引退</span><span class="price">¥{p_archive}</span></label>
+      <div class="modal-actions">
+        <button onclick="closeModal()">cancel</button>
+        <button class="primary" onclick="goAddress()">next</button>
+      </div>
+    </div>
+    <div class="step" id="step-addr">
+      <h2>shipping & email</h2>
+      <p>サイズ・住所。<b>autofill 推奨</b>。記録は MU 内部のみ。</p>
+      <div class="field"><label>email</label><input id="f-email" type="email" autocomplete="email" required></div>
+      <div class="field"><label>name</label><input id="f-name" autocomplete="name" required></div>
+      <div class="field"><label>size (Tシャツのみ)</label><input id="f-size" placeholder="M / L / XL …" autocomplete="off"></div>
+      <div class="field"><label>postal (例 105-0000)</label><input id="f-zip" autocomplete="postal-code" inputmode="numeric"></div>
+      <div class="field"><label>address</label><input id="f-addr1" autocomplete="address-line1"></div>
+      <div class="field"><label>address line 2</label><input id="f-addr2" autocomplete="address-line2"></div>
+      <div class="field"><label>city</label><input id="f-city" autocomplete="address-level2"></div>
+      <div class="field"><label>state / 都道府県</label><input id="f-state" autocomplete="address-level1"></div>
+      <div class="field"><label>country</label><input id="f-country" autocomplete="country" value="JP"></div>
+      <div class="modal-actions">
+        <button onclick="backToTier()">back</button>
+        <button class="primary" onclick="submitClaim()">queue T1</button>
+      </div>
+      <p id="claim-result"></p>
+    </div>
+  </div>
+</div>
+
+<script>
+const SHORT = "{short_safe}";
+const KEY = "{key_safe}";
+let cur = null;
+document.querySelectorAll('.claim-btn').forEach(b => {{
+  b.addEventListener('click', () => {{
+    cur = {{ id: +b.dataset.id, day: b.dataset.day }};
+    document.getElementById('step-tier').classList.add('active');
+    document.getElementById('step-addr').classList.remove('active');
+    document.getElementById('modal-bg').classList.add('open');
+  }});
+}});
+function closeModal() {{ document.getElementById('modal-bg').classList.remove('open'); cur = null; }}
+function goAddress() {{
+  document.getElementById('step-tier').classList.remove('active');
+  document.getElementById('step-addr').classList.add('active');
+}}
+function backToTier() {{
+  document.getElementById('step-addr').classList.remove('active');
+  document.getElementById('step-tier').classList.add('active');
+}}
+// zipcloud autofill
+document.getElementById('f-zip').addEventListener('blur', async (ev) => {{
+  const zip = ev.target.value.replace(/[^0-9]/g, '');
+  if (zip.length !== 7) return;
+  try {{
+    const r = await fetch(`https://zipcloud.ibsnet.co.jp/api/search?zipcode=${{zip}}`);
+    const j = await r.json();
+    if (j.results && j.results[0]) {{
+      const k = j.results[0];
+      document.getElementById('f-state').value = k.address1;
+      document.getElementById('f-city').value = k.address2;
+      if (!document.getElementById('f-addr1').value) document.getElementById('f-addr1').value = k.address3;
+    }}
+  }} catch (e) {{}}
+}});
+async function submitClaim() {{
+  if (!cur) return;
+  const tier = document.querySelector('input[name=tier]:checked').value;
+  const body = {{
+    short: SHORT, k: KEY, lineage_id: cur.id, tier,
+    email: document.getElementById('f-email').value.trim(),
+    ship_name: document.getElementById('f-name').value.trim(),
+    size: document.getElementById('f-size').value.trim(),
+    ship_zip: document.getElementById('f-zip').value.trim(),
+    ship_addr1: document.getElementById('f-addr1').value.trim(),
+    ship_addr2: document.getElementById('f-addr2').value.trim(),
+    ship_city: document.getElementById('f-city').value.trim(),
+    ship_state: document.getElementById('f-state').value.trim(),
+    ship_country: (document.getElementById('f-country').value.trim() || 'JP').toUpperCase(),
+  }};
+  if (!body.email || !body.ship_name) {{
+    document.getElementById('claim-result').innerHTML = '<span class="err">email + name required</span>';
+    return;
+  }}
+  const r = await fetch('/api/lineage/claim', {{
+    method:'POST', headers: {{'content-type':'application/json'}}, body: JSON.stringify(body)
+  }});
+  const j = await r.json().catch(() => ({{}}));
+  if (r.ok && j.ok) {{
+    document.getElementById('claim-result').innerHTML = '<span class="ok">queued · governance #' + (j.governance_queue_id || '?') + '</span>';
+    setTimeout(() => location.reload(), 1500);
+  }} else {{
+    document.getElementById('claim-result').innerHTML = '<span class="err">' + (j.error || 'error') + '</span>';
+  }}
+}}
+</script>
+</body></html>"##,
+        label_safe = label_safe, short_safe = short_safe, key_safe = key_safe,
+        count = count, cards = cards,
+        p_sticker = LINEAGE_TIER_STICKER_JPY, p_print = LINEAGE_TIER_PRINT_JPY,
+        p_cutsew = LINEAGE_TIER_CUTSEW_JPY, p_archive = LINEAGE_TIER_ARCHIVE_JPY,
+    );
+    Html(html)
+}
+
+#[derive(Deserialize)]
+struct LineageClaimBody {
+    short: String,
+    k: String,
+    lineage_id: i64,
+    tier: String,
+    email: String,
+    ship_name: String,
+    #[serde(default)] size: String,
+    #[serde(default)] ship_zip: String,
+    #[serde(default)] ship_addr1: String,
+    #[serde(default)] ship_addr2: String,
+    #[serde(default)] ship_city: String,
+    #[serde(default)] ship_state: String,
+    #[serde(default)] ship_country: String,
+}
+
+/// POST /api/lineage/claim — enqueue a T1 lineage claim. yuki ratifies at
+/// /admin/governance before any Printful order fires.
+async fn ma_lineage_claim_submit(
+    State(db): State<Db>,
+    Json(body): Json<LineageClaimBody>,
+) -> Response {
+    // Resolve + verify URL key
+    let ma_token = {
+        let conn = db.lock().unwrap();
+        match lineage_resolve_ma_token(&conn, &body.short) {
+            Some((t, _)) => t,
+            None => return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error":"unknown short"}))).into_response(),
+        }
+    };
+    if body.k != lineage_url_key(&ma_token) {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error":"bad key"}))).into_response();
+    }
+    let Some(amount) = lineage_tier_jpy(&body.tier) else {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"unknown tier"}))).into_response();
+    };
+    if body.email.trim().is_empty() || !body.email.contains('@') {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"bad email"}))).into_response();
+    }
+
+    // Lookup the lineage row + verify it belongs to this MA token + is in claimable state.
+    let row: Option<(String, i64, Option<String>, String)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT ma_token, seq, design_url, status FROM ma_lineage WHERE id=?",
+            params![body.lineage_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        ).ok()
+    };
+    let Some((row_token, seq, design_url, status)) = row else {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error":"lineage not found"}))).into_response();
+    };
+    if row_token != ma_token {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error":"lineage belongs to a different MA"}))).into_response();
+    }
+    if status != "design_ready" {
+        return (StatusCode::CONFLICT, Json(serde_json::json!({"error": format!("not claimable: {}", status)}))).into_response();
+    }
+    if design_url.as_deref().filter(|s| !s.is_empty()).is_none() {
+        return (StatusCode::CONFLICT, Json(serde_json::json!({"error":"design not yet ready"}))).into_response();
+    }
+
+    let payload = serde_json::json!({
+        "size": body.size, "ship_name": body.ship_name,
+        "ship_zip": body.ship_zip, "ship_addr1": body.ship_addr1,
+        "ship_addr2": body.ship_addr2, "ship_city": body.ship_city,
+        "ship_state": body.ship_state, "ship_country": body.ship_country.to_uppercase(),
+    }).to_string();
+
+    let title = format!("Lineage claim · {} · day #{} · {}", &ma_token[..8.min(ma_token.len())], seq, body.tier);
+    let description = format!(
+        "tier={} ({}) amount=¥{} email={} name={} country={}\nlineage_id={}\npayload={}",
+        body.tier, lineage_tier_label(&body.tier), amount,
+        body.email, body.ship_name, body.ship_country.to_uppercase(),
+        body.lineage_id, payload,
+    );
+
+    let q_id = {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE ma_lineage SET status='claim_queued', claim_tier=?, claim_amount_jpy=?,
+                                    claim_email=?, claim_payload=?, claimed_at=?
+             WHERE id=?",
+            params![body.tier, amount, body.email, payload, chrono_now(), body.lineage_id],
+        );
+        enqueue_governance(&conn, None, "ma_lineage_claim", &title, &description)
+    };
+
+    if let Some(qid) = q_id {
+        let _ = {
+            let conn = db.lock().unwrap();
+            conn.execute(
+                "UPDATE ma_lineage SET governance_queue_id=? WHERE id=?",
+                params![qid, body.lineage_id],
+            )
+        };
+        send_telegram_message(&format!(
+            "🪞 lineage claim queued · {} · day #{} · ¥{} ({})\nlineage_id={} gov_id={}",
+            &ma_token[..8.min(ma_token.len())], seq, amount, body.tier,
+            body.lineage_id, qid,
+        )).await;
+    }
+
+    Json(serde_json::json!({
+        "ok": true,
+        "governance_queue_id": q_id,
+        "tier": body.tier,
+        "amount_jpy": amount,
+    })).into_response()
+}
+
+/// Generate today's lineage design for one MA holder. Inserts a
+/// `ma_lineage` row with status=pending and kicks off Gemini; on success
+/// updates the row to design_ready and uploads to R2.
+async fn generate_ma_lineage_design(
+    ma_token: String, day: String, seq: i64, brief: String, db: Db,
+) {
+    // Insert pending row first (so retries don't dupe).
+    let lineage_id: Option<i64> = {
+        let conn = db.lock().unwrap();
+        match conn.execute(
+            "INSERT OR IGNORE INTO ma_lineage
+                 (ma_token, day_date, seq, design_brief, status, created_at)
+             VALUES (?,?,?,?, 'pending', ?)",
+            params![ma_token, day, seq, brief, chrono_now()],
+        ) {
+            Ok(n) if n > 0 => Some(conn.last_insert_rowid()),
+            _ => conn.query_row(
+                "SELECT id FROM ma_lineage WHERE ma_token=? AND day_date=?",
+                params![ma_token, day], |r| r.get::<_, i64>(0),
+            ).ok(),
+        }
+    };
+    let Some(lineage_id) = lineage_id else {
+        eprintln!("[ma_lineage] {} {}: insert failed", ma_token, day);
+        return;
+    };
+
+    let key = env::var("GEMINI_API_KEY").or_else(|_| env::var("GOOGLE_API_KEY")).unwrap_or_default();
+    if key.is_empty() {
+        eprintln!("[ma_lineage] no GEMINI_API_KEY");
+        return;
+    }
+    let prompt = format!(
+        "T-shirt graphic design. {brief}\n\
+        This is day #{seq} of the lineage for MA holder {short}.\n\
+        Constraints:\n\
+        - Output: square 1024x1024 PNG with TRANSPARENT background\n\
+        - White ink only (will print on a black Bella+Canvas 3001)\n\
+        - Crisp vector-like shapes, no anti-aliasing fuzz\n\
+        - Total composition should occupy ~70% of the canvas, centered\n\
+        - Quiet, sober, no decorative flourish (Vision §14)\n\
+        - The kanji 間 (MA) must look like a confident single-stroke sumi brushwork — not a font\n\
+        - This day's design should be tonally distinct from prior days yet visually a sibling",
+        brief = brief, seq = seq, short = &ma_token[..6.min(ma_token.len())],
+    );
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image-preview:generateContent?key={}",
+        key
+    );
+    let body = serde_json::json!({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"responseModalities": ["IMAGE", "TEXT"]}
+    });
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build().unwrap_or_else(|_| reqwest::Client::new());
+    let resp = match client.post(&url).json(&body).send().await {
+        Ok(r) => r,
+        Err(e) => { eprintln!("[ma_lineage] gemini req err: {}", e); return; }
+    };
+    if !resp.status().is_success() {
+        let s = resp.status();
+        let t = resp.text().await.unwrap_or_default();
+        eprintln!("[ma_lineage] gemini {}: {}", s, t.chars().take(300).collect::<String>());
+        return;
+    }
+    let j: serde_json::Value = match resp.json().await {
+        Ok(v) => v, Err(_) => return,
+    };
+    let b64 = j["candidates"][0]["content"]["parts"].as_array().and_then(|parts| {
+        parts.iter().find_map(|p| {
+            p.get("inlineData").or_else(|| p.get("inline_data"))
+                .and_then(|d| d.get("data"))
+                .and_then(|v| v.as_str())
+        })
+    });
+    let Some(b64) = b64 else { eprintln!("[ma_lineage] no inlineData"); return; };
+    use base64::Engine;
+    let bytes = match base64::engine::general_purpose::STANDARD.decode(b64) {
+        Ok(b) => b, Err(_) => return,
+    };
+    let key_r2 = format!("ma_lineage_{}_{}.png", &ma_token[..8.min(ma_token.len())], day);
+    let stored_url = if let Some(cfg) = r2_config() {
+        match cfg.bucket.put_object_with_content_type(&key_r2, &bytes, "image/png").await {
+            Ok(r) if r.status_code() == 200 => {
+                Some(format!("{}/{}", cfg.public_base.trim_end_matches('/'), key_r2))
+            }
+            Ok(r) => { eprintln!("[ma_lineage] r2 status {}", r.status_code()); None }
+            Err(e) => { eprintln!("[ma_lineage] r2 err: {}", e); None }
+        }
+    } else {
+        let dir = mockups_dir();
+        let _ = tokio::fs::create_dir_all(&dir).await;
+        let path = dir.join(&key_r2);
+        if tokio::fs::write(&path, &bytes).await.is_ok() {
+            Some(format!("https://wearmu.com/mockups/{}", key_r2))
+        } else { None }
+    };
+    let Some(stored) = stored_url else { return; };
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE ma_lineage SET design_url=?, status='design_ready' WHERE id=?",
+            params![stored, lineage_id],
+        );
+    }
+}
+
+/// Cron tick: generate today's lineage for every MA holder that doesn't
+/// already have today's row. Holders = ma_gifts rows that have a recipient
+/// (status in claimed / design_ready / shipped). Runs daily.
+async fn agent_ma_lineage_daily(db: Db) -> Result<AgentReport, String> {
+    // JST date (UTC+9). Avoid pulling in chrono — manual rollover.
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let jst_s = now_s + 9 * 3600;
+    let days = jst_s / 86_400;
+    let day = {
+        // Days since 1970-01-01 → YYYY-MM-DD via Howard Hinnant reverse.
+        let z = days + 719_468;
+        let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+        let doe = (z - era * 146_097) as i64;
+        let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+        let y = yoe + era * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let m = if mp < 10 { mp + 3 } else { mp - 9 };
+        let y_final = if m <= 2 { y + 1 } else { y };
+        format!("{:04}-{:02}-{:02}", y_final, m, d)
+    };
+
+    // Find all MA holders (gifts that have been claimed / shipped — meaning
+    // a real human is on the other end). For each, compute seq = count of
+    // existing lineage rows + 1, and queue today's design if not yet present.
+    let holders: Vec<(String, String, String)> = {
+        let conn = db.lock().unwrap();
+        conn.prepare(
+            "SELECT token, label, COALESCE(design_brief,'')
+             FROM ma_gifts
+             WHERE status IN ('claimed','design_ready','shipped')
+             ORDER BY id ASC"
+        ).ok().and_then(|mut s| s.query_map([], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+        ))).ok().map(|it| it.filter_map(|r| r.ok()).collect())).unwrap_or_default()
+    };
+    let total_holders = holders.len();
+
+    let mut spawned = 0;
+    let mut skipped = 0;
+    for (token, label, base_brief) in holders {
+        let already_today: bool = {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT 1 FROM ma_lineage WHERE ma_token=? AND day_date=?",
+                params![token, day], |_| Ok(()),
+            ).is_ok()
+        };
+        if already_today {
+            skipped += 1;
+            continue;
+        }
+        let seq: i64 = {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT COUNT(*)+1 FROM ma_lineage WHERE ma_token=?",
+                params![token], |r| r.get(0),
+            ).unwrap_or(1)
+        };
+        // Brief: ascending day index + base brief from ma_gifts.
+        let brief = if base_brief.is_empty() {
+            format!("Daily MA piece for holder \"{}\". Day #{}.", label, seq)
+        } else {
+            format!("Daily MA piece. Continuation of: {}. Day #{}.", base_brief, seq)
+        };
+        let day_for_task = day.clone();
+        let token_for_task = token.clone();
+        let db_for_task = db.clone();
+        tokio::spawn(async move {
+            generate_ma_lineage_design(token_for_task, day_for_task, seq, brief, db_for_task).await;
+        });
+        spawned += 1;
+    }
+
+    Ok(AgentReport {
+        observations: serde_json::json!({
+            "day": day, "total_holders": total_holders,
+            "spawned": spawned, "skipped_already_today": skipped,
+        }),
+        decisions: vec![],
+        actions: vec![],
+        summary: format!("day={} holders={} spawned={} skipped={}", day, total_holders, spawned, skipped),
+        notable: spawned > 0,
+    })
 }
 
 /// GET /claim/ma/:token — public claim page.
@@ -28528,6 +29118,35 @@ async fn main() {
         );
         CREATE INDEX IF NOT EXISTS idx_ma_gifts_status ON ma_gifts(status, created_at);
 
+        -- MA Lineage: every MA holder gets a fresh 1-of-1 design generated daily,
+        -- tied to their ma_gifts.token. Holders can browse the lineage grid at
+        -- /lineage/<token> and claim any past design at one of 4 tiers
+        -- (sticker / print / cut&sew / archive). Claims are T1 — they enqueue
+        -- to autonomy_governance_queue for yuki ratification before fulfillment.
+        CREATE TABLE IF NOT EXISTS ma_lineage (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            ma_token        TEXT NOT NULL,
+            day_date        TEXT NOT NULL,        -- YYYY-MM-DD JST
+            seq             INTEGER NOT NULL,     -- 1-indexed nth day in the lineage
+            design_brief    TEXT NOT NULL,
+            design_url      TEXT,
+            mockup_url      TEXT,
+            status          TEXT NOT NULL DEFAULT 'pending',
+                            -- pending | design_ready | claim_queued | claim_approved | shipped
+            claim_tier      TEXT,                 -- sticker | print | cutsew | archive
+            claim_amount_jpy INTEGER,
+            claim_email     TEXT,
+            claim_payload   TEXT,                 -- JSON: ship_* + size
+            printful_order_id TEXT,
+            governance_queue_id INTEGER,
+            created_at      TEXT NOT NULL,
+            claimed_at      TEXT,
+            shipped_at      TEXT,
+            UNIQUE(ma_token, day_date)
+        );
+        CREATE INDEX IF NOT EXISTS idx_ma_lineage_token ON ma_lineage(ma_token, day_date);
+        CREATE INDEX IF NOT EXISTS idx_ma_lineage_status ON ma_lineage(status, created_at);
+
         -- Moon-phase marker: events for entry check-in via T-shirt scan.
         CREATE TABLE IF NOT EXISTS mu_events (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28748,6 +29367,8 @@ async fn main() {
         .route("/claim/ma/:token", get(ma_gift_claim_page))
         .route("/api/claim/ma/:token", post(ma_gift_claim_submit))
         .route("/api/v1/ma/gifts", get(public_ma_gifts))
+        .route("/lineage/:short", get(ma_lineage_page))
+        .route("/api/lineage/claim", post(ma_lineage_claim_submit))
         .route("/api/mark/:product_id/:position.svg", get(moon_marker_svg))
         .route("/api/mark/decode/:value", get(moon_marker_decode))
         .route("/scan", get(moon_scan_page))
@@ -29323,6 +29944,11 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         interval_secs: 300, // 5 min
         description: "全 agent の last_seen を agent_journal で監視。2x interval を超えて止まってる agent を見つけたら force-run + Telegram。誰か止まっても他の agent が治す cross-heal。",
     },
+    AgentDef {
+        name: "ma_lineage_daily",
+        interval_secs: 86_400, // 24h
+        description: "MA holder 1 名につき 1 日 1 デザインを Gemini で生成 → ma_lineage。/lineage/<short>?k=… でグリッド閲覧、claim は T1。",
+    },
 ];
 
 /// agent_journal から指定 agent の最後の cycle_at (epoch sec) を取得。
@@ -29374,6 +30000,7 @@ async fn run_agent(name: &str, db: Db) -> Result<AgentReport, String> {
         "purchase_celebrate"=> agent_purchase_celebrate(db).await,
         "feedback_learner"  => agent_feedback_learner(db).await,
         "domain_watch"      => agent_domain_watch(db).await,
+        "ma_lineage_daily"  => agent_ma_lineage_daily(db).await,
         _ => Err(format!("unknown agent: {}", name)),
     }
 }
