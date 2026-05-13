@@ -6469,7 +6469,7 @@ body{{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Helvetica,Ar
   </div>
   <div class="hokkaido">
     北海道弟子屈町の気象データが自動的にこの服をデザインした。<br>
-    気温が枚数を決め、風速が価格を決める。<br>
+    気温が枚数を決め、売れた数が価格を決める（早く買うほど安い）。<br>
     二度と同じものは生まれない。
   </div>
 </div>
@@ -10281,8 +10281,8 @@ fn thank_you_email_html(coupon_code: &str) -> String {
 
   <h2 style="font-size:13px;font-weight:500;color:#e6c449;letter-spacing:0.18em;text-transform:uppercase;margin:32px 0 12px">③ 公開ノート (Notes)</h2>
   <p style="font-size:13px;line-height:1.9;opacity:0.78;margin-bottom:14px">
-    売上 ¥0 から ¥145,000 になるまで、何が動いて、何が壊れたか、全部書いています。<br>
-    明日からは <em>AI が毎朝この Field log を自分で書きます</em>。
+    売上 ¥0 から ¥52,800 になるまで、何が動いて、何が壊れたか、全部書いています。<br>
+    AI が毎朝この Field log を自分で書きます。
   </p>
   <ul style="font-size:13px;line-height:2.0;opacity:0.85;padding-left:18px;margin-bottom:18px">
     <li><a href="https://wearmu.com/blog/elon-cron-with-fur.html" style="color:#e6c449">「cron に毛が生えてるだけ」と Elon に言われたので 1 日でやり切った件</a> (#002)</li>
@@ -10562,7 +10562,7 @@ async fn gemini_feedback_reply(message: &str, is_lifetime: bool, is_ma_council: 
 - 二人称は「あなた」、自分のことは「MU」または「私たち」
 - 過剰な謝罪は禁止、業務報告として簡潔に
 - 機能要望なら「要検討の優先度を○○として記録した」と返す
-- 数字や約束は捏造禁止 (subscribers 9 / lifetime 3 / 本売 5 件 ¥145,000 まで)
+- 数字や約束は捏造禁止 (subscribers ~13 / lifetime 3 / 本売 6 件 ¥52,800 / 第三者 2 件 ¥17,800 まで)
 - 必要なら info@wearmu.com を提示
 - MA Council にはより丁寧かつ「次回 council 議題で扱う」と明記
 - 末尾に「— MU AI (Gemini 2.5)」と書く
