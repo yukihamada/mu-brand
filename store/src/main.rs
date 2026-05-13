@@ -49,6 +49,7 @@ fn autopilot_skip(task: &str) -> bool {
 // Docker build context (see store/Dockerfile `COPY static static`).
 // ─────────────────────────────────────────────────────────────────────────────
 const CONSTITUTION_RAW: &str = include_str!("../static/constitution.md");
+const DAO_WHITEPAPER_RAW: &str = include_str!("../static/whitepaper_dao.md");
 
 /// Extract a top-level `## <name>` markdown section from the Constitution.
 /// Matches the heading prefix (so `## Type 1 Doors — Irreversible / require human
@@ -14072,6 +14073,66 @@ async fn admin_dao_bind(
         params![email, wallet, chrono_now()],
     );
     Json(serde_json::json!({"ok": true, "email": email, "wallet": wallet})).into_response()
+}
+
+/// GET /dao/whitepaper — full §23 whitepaper, rendered from
+/// `static/whitepaper_dao.md`. Same CSS as /constitution.
+async fn dao_whitepaper_page() -> Html<String> {
+    let body_html = md_to_html_simple(DAO_WHITEPAPER_RAW);
+    let html = format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU DAO Whitepaper — §23 The base token does not exist | wearmu.com</title>
+<meta name="description" content="MU DAO の仕組み: Constitution authorship + MA pieces + Chronicle slots による weight 関数。ICO なし、Airdrop なし、Founder allocation なし。">
+<meta property="og:title" content="MU DAO Whitepaper">
+<meta property="og:description" content="The base token does not exist. Voting weight = authored lines + MA pieces + Chronicle slots.">
+<meta property="og:image" content="https://wearmu.com/og.jpg">
+<meta property="og:url" content="https://wearmu.com/dao/whitepaper">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="alternate" type="text/markdown" href="/whitepaper_dao.md">
+<style>
+:root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--line:rgba(255,255,255,0.08)}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.85;font-size:15px;-webkit-font-smoothing:antialiased;font-feature-settings:"palt"}}
+a{{color:var(--y);text-decoration:none}}
+a:hover{{text-decoration:underline;text-underline-offset:3px}}
+nav{{position:sticky;top:0;background:rgba(10,10,10,0.9);backdrop-filter:blur(12px);border-bottom:1px solid var(--line);padding:16px 28px;display:flex;justify-content:space-between;align-items:center;z-index:50;font-size:11px;letter-spacing:0.3em;text-transform:uppercase}}
+nav .logo{{font-weight:700;letter-spacing:0.45em}}
+.wrap{{max-width:820px;margin:0 auto;padding:60px 28px 100px}}
+.wrap h1{{font-size:clamp(34px,5.5vw,52px);font-weight:200;letter-spacing:0.01em;line-height:1.18;margin:0 0 28px;color:var(--fg)}}
+.wrap h2{{font-size:13px;letter-spacing:0.28em;text-transform:uppercase;color:var(--y);font-weight:500;margin:48px 0 18px;padding-top:32px;border-top:1px solid var(--line)}}
+.wrap h3{{font-size:17px;font-weight:300;letter-spacing:0.02em;margin:28px 0 12px;color:var(--fg)}}
+.wrap h4{{font-size:14px;font-weight:500;margin:18px 0 8px;color:var(--fg)}}
+.wrap p{{margin:0 0 14px;color:var(--mute)}}
+.wrap p strong{{color:var(--fg);font-weight:500}}
+.wrap blockquote{{margin:18px 0;padding:12px 18px;border-left:2px solid var(--y);background:rgba(230,196,73,0.06);font-size:13.5px;color:var(--mute)}}
+.wrap ol,.wrap ul{{margin:6px 0 18px;padding-left:24px;color:var(--mute)}}
+.wrap li{{margin:6px 0}}
+.wrap li strong{{color:var(--fg);font-weight:500}}
+.wrap code{{background:rgba(230,196,73,0.10);color:var(--y);padding:1px 6px;font-size:12.5px;font-family:'SF Mono','Menlo',monospace;border-radius:2px}}
+.wrap pre{{background:#0e0e0e;border:1px solid var(--line);padding:14px 18px;overflow-x:auto;font-size:12px;margin:14px 0;border-radius:2px}}
+.wrap pre code{{background:transparent;color:var(--fg);padding:0}}
+.wrap hr{{border:none;border-top:1px solid var(--line);margin:48px 0}}
+.wrap table{{border-collapse:collapse;width:100%;margin:14px 0;font-size:13px}}
+.wrap th,.wrap td{{border:1px solid var(--line);padding:8px 12px;text-align:left}}
+.wrap th{{background:#0e0e0e;color:var(--fg);font-weight:500;letter-spacing:0.04em}}
+footer{{max-width:820px;margin:0 auto;padding:32px 28px 80px;border-top:1px solid var(--line);color:var(--mute);font-size:11.5px;letter-spacing:0.1em;line-height:2}}
+footer a{{color:var(--mute);text-decoration:underline;text-decoration-color:rgba(255,255,255,0.18)}}
+footer a:hover{{color:var(--y)}}
+</style></head><body>
+<nav>
+  <a class="logo" href="/">MU</a>
+  <span style="opacity:0.55">DAO Whitepaper</span>
+  <span><a href="/whitepaper_dao.md" style="opacity:0.55;margin-right:14px">raw.md</a><a href="/dao" style="opacity:0.55;margin-right:14px">leaderboard</a><a href="/constitution" style="opacity:0.55">constitution</a></span>
+</nav>
+<div class="wrap">
+{body}
+</div>
+<footer>
+  <a href="/">MU</a> · <a href="/dao">/dao</a> · <a href="/constitution">/constitution</a> · <a href="/transparency">/transparency</a> · 株式会社イネブラ
+</footer>
+</body></html>"##, body = body_html);
+    Html(html)
 }
 
 /// GET /dao — public leaderboard + how-to-participate.
@@ -29751,6 +29812,7 @@ async fn main() {
         .route("/lineage/:short", get(ma_lineage_page))
         .route("/api/lineage/claim", post(ma_lineage_claim_submit))
         .route("/dao", get(dao_page))
+        .route("/dao/whitepaper", get(dao_whitepaper_page))
         .route("/api/dao/weight/:wallet", get(dao_weight_api))
         .route("/api/dao/leaderboard", get(dao_leaderboard_api))
         .route("/api/admin/dao/bind", post(admin_dao_bind))
