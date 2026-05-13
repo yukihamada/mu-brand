@@ -765,13 +765,23 @@ const MUGEN_108_PRICE_JPY: i64 = 30_000;
 // IMPORTANT: this constant gates pricing for FUTURE drops only. Drops
 // 1-147 (Bella+Canvas 3001 era) retain their Bella-era base price as
 // preserved by Constitution §21 (purchase path sacrosanct).
-const MU_FABRIC_SATU001_FIRST_DROP: i64 = 148;
-/// Base ¥7,800: cost ~¥5,700 → 27% start margin. Bonding curve at +¥250/sale
-/// hits ¥34,800 at position 108, so cap ¥35,000 plateaus naturally.
-/// (Previously set to ¥9,800 / cap ¥40,000 — relaxed 2026-05-13 to lower
-/// entry barrier; floor §21 cost × 1.2 = ¥6,840 still respected.)
+// Constitution §24 — Stanley/Stella SATU001 fabric era cutoffs per brand.
+// Drop_num thresholds (drops at-or-above use the new fabric + new pricing).
+// Bella+Canvas era drops below the cutoff are immutable per §21 (sacrosanct).
+const MU_FABRIC_SATU001_FIRST_DROP: i64 = 148;       // MUGEN: next drop after 147
+const MUON_FABRIC_SATU001_FIRST_DROP: i64 = 10;      // MUON: next drop after 9
+const MA_FABRIC_SATU001_FIRST_DROP: i64 = 3;         // MA: next auction after 2
+
+/// MUGEN base ¥7,800 / cap ¥35,000 (hits ¥34,800 at 108 sales — natural plateau)
 const PRICE_BASE_SATU001_JPY: i64 = 7_800;
 const PRICE_CAP_SATU001_JPY: i64 = 35_000;
+/// MUON same fabric, daily drop → cap a bit lower since per-drop volume varies
+const PRICE_BASE_MUON_SATU001_JPY: i64 = 7_800;
+const PRICE_CAP_MUON_SATU001_JPY: i64 = 30_000;
+/// MA 1-of-1 auction starting bid — lowered to ¥18,000 (Visvim Jumbo
+/// equivalent) since fabric cost is the same as MUGEN now. Auctions go
+/// up from here via bidding; cap remains the §21 ¥100,000 ceiling.
+const PRICE_BASE_MA_SATU001_JPY: i64 = 18_000;
 
 /// Stanley/Stella SATU001 Ribbed Neck Creator 2.0, BLACK, Printful variant
 /// IDs by size. Source: GET /products/818 from Printful catalog.
@@ -791,18 +801,16 @@ const SATU001_BLACK_VARIANT_IDS: &[(&str, u32)] = &[
 /// Returns "era-1 (Bella+Canvas 3001)" or "era-2 (Stanley/Stella SATU001)"
 /// for a given mugen drop_num. Other brands return their own era string.
 fn fabric_era_for(brand: &str, drop_num: i64) -> &'static str {
-    if brand == "mugen" {
-        if drop_num >= MU_FABRIC_SATU001_FIRST_DROP {
-            "era-2 (Stanley/Stella SATU001, 180gsm organic, EU)"
-        } else {
-            "era-1 (Bella+Canvas 3001, 4.2oz cotton, US)"
-        }
-    } else if brand == "ma" {
-        "MA 1-of-1 (Bella+Canvas 3001, hand-fulfilled by yuki)"
-    } else if brand == "muon" {
-        "MUON daily (Bella+Canvas 3001)"
+    let cutoff = match brand {
+        "mugen" => MU_FABRIC_SATU001_FIRST_DROP,
+        "muon"  => MUON_FABRIC_SATU001_FIRST_DROP,
+        "ma"    => MA_FABRIC_SATU001_FIRST_DROP,
+        _       => return "collab / other",
+    };
+    if drop_num >= cutoff {
+        "era-2 (Stanley/Stella SATU001, 180gsm organic, EU made, ribbed neck)"
     } else {
-        "collab"
+        "era-1 (Bella+Canvas 3001, 4.2oz cotton, US made)"
     }
 }
 /// MA auction starting bid. 2026-05-11: ¥120,000 → ¥30,000, monthly → weekly.
@@ -916,8 +924,13 @@ fn budget_record(
 }
 
 fn dynamic_price(brand: &str, drop_num: i64, sold: i64, name: &str) -> i64 {
+    // Constitution §24 — Stanley/Stella SATU001 era per-brand cutoffs.
+    // Era-1 drops (below cutoff) keep their Bella+Canvas pricing per §21.
     if brand == "ma" {
-        return MA_BASE_PRICE_JPY;
+        if drop_num >= MA_FABRIC_SATU001_FIRST_DROP {
+            return PRICE_BASE_MA_SATU001_JPY; // ¥18,000 starting bid (era-2)
+        }
+        return MA_BASE_PRICE_JPY; // ¥30,000 starting bid (era-1)
     }
     if brand == "nouns" {
         let nm = name.to_uppercase();
@@ -928,11 +941,11 @@ fn dynamic_price(brand: &str, drop_num: i64, sold: i64, name: &str) -> i64 {
     if brand == "mugen" && drop_num == 108 {
         return MUGEN_108_PRICE_JPY;
     }
-    // Constitution §24: drops ≥ 148 (Stanley/Stella SATU001 era) use a
-    // higher base (¥9,800) and a tighter cap (¥40,000). Drops 1-147
-    // (Bella+Canvas era) keep their original curve. §21 sacrosanct.
     if brand == "mugen" && drop_num >= MU_FABRIC_SATU001_FIRST_DROP {
         return (PRICE_BASE_SATU001_JPY + sold.max(0) * PRICE_STEP_JPY).min(PRICE_CAP_SATU001_JPY);
+    }
+    if brand == "muon" && drop_num >= MUON_FABRIC_SATU001_FIRST_DROP {
+        return (PRICE_BASE_MUON_SATU001_JPY + sold.max(0) * PRICE_STEP_JPY).min(PRICE_CAP_MUON_SATU001_JPY);
     }
     (PRICE_BASE_JPY + sold.max(0) * PRICE_STEP_JPY).min(PRICE_CAP_JPY)
 }

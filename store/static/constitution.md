@@ -240,9 +240,13 @@ it over time if it survives.
 
 ## Fabric
 
-§24 — From `mugen` drop_num **148** onward, the default fabric is
-**Stanley/Stella SATU001 Creator 2.0 Ribbed Neck T-Shirt**
-(Printful product 818).
+§24 — From the cutoffs below, the default fabric for **MUGEN, MUON, and
+MA** is **Stanley/Stella SATU001 Creator 2.0 Ribbed Neck T-Shirt**
+(Printful product 818). Per-brand era-2 cutoffs (drops at-or-above):
+
+- MUGEN: drop_num **148**
+- MUON:  drop_num **10**
+- MA:    drop_num **3** (auction starting bid lowered to ¥18,000 — Visvim Jumbo parity, fabric cost is the same as MUGEN now)
 
 Spec:
 - 180gsm / 100% organic combed ring-spun cotton
@@ -272,6 +276,25 @@ price clears the §Cessation ¥30,000 net threshold by ~2x.
 (History: §24 initially set base ¥9,800 / cap ¥40,000 on 2026-05-13;
 relaxed to ¥7,800 / cap ¥35,000 the same day to lower the entry
 barrier for first-time buyers while keeping the §21 floor.)
+
+Pricing summary by brand (era-2):
+- MUGEN: base ¥7,800, step +¥250/sale, cap ¥35,000 (108-sale plateau)
+- MUON:  base ¥7,800, step +¥250/sale, cap ¥30,000 (smaller per-drop volume)
+- MA:    base ¥18,000 starting bid, no bonding (auction), ceiling §21 ¥100,000
+
+## Design directive
+
+§25 — MUGEN designs from drop_num 148 onward (era-2) follow this brief:
+
+- 1–3 vector shapes maximum on the front
+- 70% negative space (the shirt's empty area is the design)
+- Single-stroke quality (sumi-brush integrity, no decorative flourish)
+- White ink only, transparent PNG background
+- The kanji 間 (MA), the symbol ━◯━, weather glyphs, or temperature
+  numerals are the only motifs
+
+This directive is mirrored in `cv_config['mugen_design_directive']` for
+m5 `generate.py` to read at compile-time. Updates to §25 require T1.
 
 Why this fabric:
 1. 180gsm + ribbed neck is the "touched detail" Visvim/Comme buyers register without being told. Bella+Canvas 3001 had no such signal.
