@@ -17853,7 +17853,7 @@ recalc();
 fn partner_proposal_gate_html(partner: &str, label: &str) -> String {
     let pretty = match partner {
         "sweep" => "SIIIEEP",
-        "kokon" => "kokon.tokyo",
+        "kokon" => "焼肉古今",
         "jiuflow" => "JiuFlow",
         _ => partner,
     };
@@ -17916,7 +17916,7 @@ async fn show_kokon_proposal_page(
     headers: HeaderMap,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Response {
-    show_partner_proposal_page(db, "kokon", "kokon.tokyo", "/kokon", headers, q).await
+    show_partner_proposal_page(db, "kokon", "焼肉古今 (kokon.tokyo)", "/kokon", headers, q).await
 }
 
 /// GET /api/v1/collab/:partner — public JSON catalog of collab products for
@@ -33654,13 +33654,82 @@ async fn admin_agent_run(
     })).into_response()
 }
 
-/// GET /healthz — Liveness probe. Returns "ok" plain text (200) when the
-/// process can respond. Used by external monitors and Fly health checks.
-async fn healthz() -> impl IntoResponse {
-    (
-        [(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-        "ok\n",
-    )
+/// GET /healthz — Deep liveness probe. Returns 200 with a JSON body when ALL
+/// of:
+///   - the agent scheduler is firing (any agent_journal write < 600s ago)
+///   - the DB is writable (BEGIN/ROLLBACK a no-op tx)
+///   - /data has > 100 MB free
+/// pass. Anything else returns 503 so the Fly platform health check (which
+/// triggers VM auto-restart on 3 consecutive failures) catches a degraded
+/// process where HTTP is still up but the app is silently dead.
+///
+/// We expose the JSON so the external GH Actions watcher can also inspect
+/// detail (e.g. watchdog stale → alert even when overall is 200).
+async fn healthz(State(db): State<Db>) -> Response {
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+
+    // (a) Scheduler liveness: any journal write in the last 10 min.
+    //     If the tokio scheduler hangs, this gap grows.
+    let last_journal_age: i64 = {
+        let conn = db.lock().unwrap();
+        let last: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(CAST(cycle_at AS INTEGER)), 0) FROM agent_journal",
+            [], |r| r.get(0),
+        ).unwrap_or(0);
+        if last == 0 { i64::MAX } else { now_s - last }
+    };
+    let scheduler_ok = last_journal_age < 600;
+
+    // (b) DB writable: open a tx and roll it back. Cheap, no schema impact.
+    let db_writable = {
+        let conn = db.lock().unwrap();
+        conn.execute("BEGIN IMMEDIATE", []).is_ok()
+            && conn.execute("ROLLBACK", []).is_ok()
+    };
+
+    // (b2) Watchdog itself ran recently — guards against scheduler-skipped-just-watchdog.
+    let last_watchdog_age: i64 = {
+        let conn = db.lock().unwrap();
+        let last: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(CAST(cycle_at AS INTEGER)), 0)
+             FROM agent_journal WHERE agent_name='watchdog'",
+            [], |r| r.get(0),
+        ).unwrap_or(0);
+        if last == 0 { i64::MAX } else { now_s - last }
+    };
+    // Watchdog runs every 5min; allow 2x interval + grace.
+    let watchdog_ok = last_watchdog_age < 900;
+
+    // (c) Disk free on /data (the volume backing products.db).
+    //     statvfs not in std; shell out to df. Best-effort — if df is
+    //     missing on the image we treat as OK rather than fail-closed.
+    let disk_free_mb: i64 = match std::process::Command::new("df")
+        .args(["-B1M", "--output=avail", "/data"])
+        .output()
+    {
+        Ok(out) if out.status.success() => {
+            String::from_utf8_lossy(&out.stdout)
+                .lines().nth(1).and_then(|s| s.trim().parse::<i64>().ok())
+                .unwrap_or(-1)
+        }
+        _ => -1,
+    };
+    let disk_ok = disk_free_mb == -1 || disk_free_mb >= 100;
+
+    let overall_ok = scheduler_ok && db_writable && watchdog_ok && disk_ok;
+    let status = if overall_ok { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE };
+
+    let body = serde_json::json!({
+        "ok": overall_ok,
+        "scheduler_ok": scheduler_ok,
+        "db_writable": db_writable,
+        "watchdog_ok": watchdog_ok,
+        "disk_ok": disk_ok,
+        "last_journal_age_secs":  if last_journal_age == i64::MAX { -1 } else { last_journal_age },
+        "last_watchdog_age_secs": if last_watchdog_age == i64::MAX { -1 } else { last_watchdog_age },
+        "disk_free_mb": disk_free_mb,
+    });
+    (status, Json(body)).into_response()
 }
 
 /// GET /admin/auth_log?token=… — Recent admin auth attempts (audit trail)
