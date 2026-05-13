@@ -31343,17 +31343,20 @@ async fn agent_watchdog(db: Db) -> Result<AgentReport, String> {
     }
 
     // Generation pipeline cross-check: if no MUGEN was inserted in the last
-    // 6h despite the GH Actions hourly cron, alert. (gen pipeline lives
-    // off-Fly so watchdog can't restart it — but a Telegram nudge lets a
-    // human flip it back on.)
+    // 6h despite the GH Actions hourly cron, alert. created_at may be
+    // epoch seconds (new path via /api/admin/import) or ISO 8601 (legacy
+    // local-write path) — SQLite's strftime handles both transparently.
     let last_mugen_age: i64 = {
         let conn = db.lock().unwrap();
-        let last_iso: String = conn.query_row(
-            "SELECT COALESCE(MAX(created_at), '0')
-             FROM products WHERE brand='mugen'",
+        let last_s: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(
+                CASE
+                  WHEN created_at GLOB '[0-9]*' THEN CAST(created_at AS INTEGER)
+                  ELSE CAST(strftime('%s', created_at) AS INTEGER)
+                END
+             ), 0) FROM products WHERE brand='mugen'",
             [], |r| r.get(0),
-        ).unwrap_or_else(|_| "0".to_string());
-        let last_s = last_iso.parse::<i64>().unwrap_or(0);
+        ).unwrap_or(0);
         if last_s == 0 { i64::MAX } else { now_s - last_s }
     };
     obs.insert("last_mugen_age_secs".into(), serde_json::Value::from(last_mugen_age));
