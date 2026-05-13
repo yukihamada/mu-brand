@@ -4949,6 +4949,222 @@ fn svix_constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     diff == 0
 }
 
+/// Inject utm_source=mu_email&utm_medium=transactional&utm_campaign=<kind>_<v>
+/// into every https://wearmu.com/ link in the rendered HTML. Skips links that
+/// already have utm_source. Tracking_token=resend_id is appended later by
+/// Resend's own click-tracker.
+fn utm_tag_email_body(html: &str, kind: &str, variant: &str) -> String {
+    let utm = format!("utm_source=mu_email&utm_medium=transactional&utm_campaign={}_{}", kind, variant);
+    // simple regex-free pass: find each href="https://wearmu.com..."
+    let mut out = String::with_capacity(html.len() + 200);
+    let mut i = 0;
+    let bytes = html.as_bytes();
+    while i < bytes.len() {
+        let rest = &html[i..];
+        let needle = "href=\"https://wearmu.com";
+        if let Some(start) = rest.find(needle) {
+            let url_start = i + start + 6; // after href="
+            let after = &html[url_start..];
+            // Find end of URL (before closing ")
+            let url_end_rel = after.find('"').unwrap_or(after.len());
+            let url = &after[..url_end_rel];
+            // Push everything up to and including href=" and url
+            out.push_str(&html[i..url_start]);
+            if url.contains("utm_source=") {
+                out.push_str(url);
+            } else {
+                let sep = if url.contains('?') { '&' } else { '?' };
+                out.push_str(url);
+                out.push(sep);
+                out.push_str(&utm);
+            }
+            i = url_start + url_end_rel;
+        } else {
+            out.push_str(rest);
+            break;
+        }
+    }
+    out
+}
+
+/// POST /api/webhook/resend-events — Resend webhook for email events
+/// (delivered / opened / clicked / bounced / complained). Updates the
+/// corresponding email_sends row by resend_id.
+///
+/// Setup:
+///   Resend Dashboard → Webhooks → Add → URL: /api/webhook/resend-events
+///   Events: ☑ email.delivered  ☑ email.opened  ☑ email.clicked
+///           ☑ email.bounced    ☑ email.complained
+///   → Copy signing secret → fly secrets set RESEND_EVENTS_SVIX_SECRET=whsec_...
+async fn resend_events_webhook(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    raw_body: String,
+) -> Response {
+    // Same Svix verification flow as inbound. Prefers a dedicated secret,
+    // falls back to inbound secret (Resend uses one per webhook URL but
+    // they may share if user wires both endpoints with same secret).
+    let secret = env::var("RESEND_EVENTS_SVIX_SECRET").unwrap_or_default();
+    let secret = if secret.is_empty() {
+        env::var("RESEND_INBOUND_SVIX_SECRET").unwrap_or_default()
+    } else { secret };
+    if secret.is_empty() {
+        eprintln!("[resend-events] no svix secret configured — rejecting");
+        return (StatusCode::SERVICE_UNAVAILABLE, "events disabled").into_response();
+    }
+    let msg_id = headers.get("svix-id").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let ts     = headers.get("svix-timestamp").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let sig    = headers.get("svix-signature").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    if msg_id.is_empty() || ts.is_empty() || sig.is_empty() {
+        return (StatusCode::UNAUTHORIZED, "missing svix headers").into_response();
+    }
+    if !svix_verify(&secret, &msg_id, &ts, &raw_body, &sig) {
+        return (StatusCode::UNAUTHORIZED, "bad signature").into_response();
+    }
+    let body: serde_json::Value = match serde_json::from_str(&raw_body) {
+        Ok(v) => v, Err(_) => return (StatusCode::BAD_REQUEST, "bad json").into_response(),
+    };
+
+    let ev_type = body["type"].as_str().unwrap_or("");
+    let email_id = body["data"]["email_id"].as_str()
+        .or_else(|| body["data"]["id"].as_str())
+        .unwrap_or("").to_string();
+    if email_id.is_empty() {
+        return (StatusCode::OK, "no email_id").into_response();
+    }
+
+    let now = chrono_now();
+    let column = match ev_type {
+        "email.delivered"  => "delivered_at",
+        "email.opened"     => "opened_at",
+        "email.clicked"    => "clicked_at",
+        "email.bounced"    => "bounced_at",
+        "email.complained" => "complained_at",
+        _ => return (StatusCode::OK, "ignored").into_response(),
+    };
+    let sql = format!(
+        "UPDATE email_sends SET {col} = COALESCE({col}, ?) WHERE resend_id = ?", col = column);
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(&sql, params![now, email_id]);
+    }
+
+    // Bonus: 'opened' fires a synthetic funnel event so we can correlate
+    // mail opens with later pageviews in analytics.
+    if ev_type == "email.opened" {
+        funnel_track_server(&db, "email_opened", "/email",
+            None, serde_json::json!({"resend_id": email_id})).await;
+    }
+    if ev_type == "email.clicked" {
+        let link = body["data"]["click"]["link"].as_str().unwrap_or("");
+        funnel_track_server(&db, "email_clicked", "/email",
+            None, serde_json::json!({"resend_id": email_id, "link": link})).await;
+    }
+
+    StatusCode::OK.into_response()
+}
+
+/// GET /stats — public marketing page showing live AI activity numbers.
+/// Brand moat: no fashion brand discloses this. Customer-facing proof.
+async fn public_stats_page(State(db): State<Db>) -> Response {
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let h24 = now_s - 86_400;
+    let h7d = now_s - 7 * 86_400;
+    let h30 = now_s - 30 * 86_400;
+
+    let q_i = |sql: &str, t: i64| -> i64 {
+        let conn = db.lock().unwrap();
+        conn.query_row(sql, params![t], |r| r.get(0)).unwrap_or(0)
+    };
+    let drops_24h    = q_i("SELECT COUNT(*) FROM products WHERE CAST(COALESCE(created_at,'0') AS INTEGER) > ?", h24);
+    let designs_24h  = q_i("SELECT COUNT(*) FROM you_designs WHERE CAST(COALESCE(created_at,'0') AS INTEGER) > ?", h24);
+    let drops_7d     = q_i("SELECT COUNT(*) FROM products WHERE CAST(COALESCE(created_at,'0') AS INTEGER) > ?", h7d);
+    let pv_24h       = q_i("SELECT COUNT(*) FROM funnel_events WHERE event='pageview' AND CAST(COALESCE(created_at,'0') AS INTEGER) > ?", h24);
+    let orders_30d   = q_i("SELECT COUNT(*) FROM collab_orders WHERE CAST(COALESCE(created_at,'0') AS INTEGER) > ?", h30);
+    let mail_24h     = q_i("SELECT COUNT(*) FROM email_sends WHERE CAST(COALESCE(sent_at,'0') AS INTEGER) > ?", h24);
+    let mail_op_24h  = q_i("SELECT COUNT(*) FROM email_sends WHERE opened_at IS NOT NULL AND CAST(COALESCE(sent_at,'0') AS INTEGER) > ?", h24);
+    let critic_avg: f64 = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT AVG(score) FROM email_critique
+             WHERE id IN (SELECT MAX(id) FROM email_critique GROUP BY kind, variant, persona)",
+            [], |r| r.get(0)).unwrap_or(0.0)
+    };
+    let rewrites_pending: i64 = {
+        let conn = db.lock().unwrap();
+        conn.query_row("SELECT COUNT(*) FROM email_rewrite_drafts WHERE status='pending'", [], |r| r.get(0)).unwrap_or(0)
+    };
+    let agent_runs_24h = q_i(
+        "SELECT COUNT(*) FROM agent_journal WHERE CAST(COALESCE(cycle_at,'0') AS INTEGER) > ?", h24);
+
+    let open_rate = if mail_24h > 0 { 100.0 * mail_op_24h as f64 / mail_24h as f64 } else { 0.0 };
+
+    let page = format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>MU · 今日の AI 活動 (live stats)</title>
+<meta name="description" content="MU は 0-human apparel ブランド。AI agent の活動ログを公開しています。"/>
+<meta property="og:title" content="MU · live stats"/>
+<meta property="og:description" content="人間 0 人で動く apparel ブランドの裏側、全部公開。"/>
+<meta property="og:image" content="https://wearmu.com/static/x/banner.png"/>
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:site" content="@wearMUcom"/>
+<style>
+  :root{{--bg:#000;--fg:#f5f5f0;--mute:#888;--gold:#e6c449}}
+  *{{box-sizing:border-box}}
+  html,body{{background:var(--bg);color:var(--fg);margin:0;padding:0;font-family:-apple-system,sans-serif;font-feature-settings:"palt"}}
+  a{{color:var(--gold)}}
+  .wrap{{max-width:780px;margin:0 auto;padding:60px 22px 80px}}
+  .kicker{{font-size:10.5px;letter-spacing:0.22em;color:#666;text-transform:uppercase;margin-bottom:14px}}
+  h1{{font-size:36px;font-weight:300;letter-spacing:0.02em;line-height:1.25;margin:0 0 14px}}
+  h1 em{{color:var(--gold);font-style:normal;font-weight:400}}
+  .meta{{color:var(--mute);font-size:13.5px;line-height:1.7;margin:0 0 36px;max-width:600px}}
+  h2{{font-size:11px;letter-spacing:0.22em;color:#777;text-transform:uppercase;margin:40px 0 12px}}
+  .grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px}}
+  .card{{background:#0a0a0a;border:1px solid #1a1a1a;padding:18px 16px;border-radius:4px}}
+  .card .v{{font-size:30px;font-weight:300;color:var(--fg);font-variant-numeric:tabular-nums;line-height:1.1}}
+  .card .l{{font-size:10.5px;letter-spacing:0.14em;color:var(--mute);text-transform:uppercase;margin-top:6px;line-height:1.4}}
+  footer{{margin-top:64px;color:#555;font-size:11px;line-height:1.8}}
+</style></head><body><div class="wrap">
+  <div class="kicker">MU · live stats</div>
+  <h1>人間 0 人で<br>これだけ <em>動いています</em>。</h1>
+  <p class="meta">下の数字はサーバから直接読んでいます。捏造できません。<br>更新間隔: ページ再読込のたび。fashion brand がこの情報を出すのは、たぶん MU だけです。</p>
+
+  <h2>今日 (24h)</h2>
+  <div class="grid">
+    <div class="card"><div class="v">{drops_24h}</div><div class="l">新しい MUGEN</div></div>
+    <div class="card"><div class="v">{designs_24h}</div><div class="l">AI 生成デザイン</div></div>
+    <div class="card"><div class="v">{pv_24h}</div><div class="l">ページビュー</div></div>
+    <div class="card"><div class="v">{agent_runs_24h}</div><div class="l">agent 起動回数</div></div>
+  </div>
+
+  <h2>メール (今日)</h2>
+  <div class="grid">
+    <div class="card"><div class="v">{mail_24h}</div><div class="l">送信</div></div>
+    <div class="card"><div class="v">{mail_op_24h}</div><div class="l">開封</div></div>
+    <div class="card"><div class="v">{open_rate:.1}<span style="font-size:18px;color:var(--mute)">%</span></div><div class="l">開封率</div></div>
+    <div class="card"><div class="v">{rewrites_pending}</div><div class="l">AI 改善草案 (pending)</div></div>
+  </div>
+
+  <h2>累計</h2>
+  <div class="grid">
+    <div class="card"><div class="v">{drops_7d}</div><div class="l">直近 7 日の MUGEN</div></div>
+    <div class="card"><div class="v">{orders_30d}</div><div class="l">直近 30 日の注文</div></div>
+    <div class="card"><div class="v">{critic_avg:.2}</div><div class="l">メール採点 平均</div></div>
+  </div>
+
+  <footer>
+    全部 open: <a href="https://x.com/wearMUcom">@wearMUcom</a> / <a href="https://wearmu.com">wearmu.com</a><br>
+    買う: <a href="/mugen">/mugen</a> (¥5,000〜) · 試す: <a href="/you">/you</a> (¥0)
+  </footer>
+</div></body></html>"#,
+        drops_24h = drops_24h, designs_24h = designs_24h, pv_24h = pv_24h, agent_runs_24h = agent_runs_24h,
+        mail_24h = mail_24h, mail_op_24h = mail_op_24h, open_rate = open_rate,
+        rewrites_pending = rewrites_pending,
+        drops_7d = drops_7d, orders_30d = orders_30d, critic_avg = critic_avg);
+    axum::response::Html(page).into_response()
+}
+
 async fn resend_inbound_webhook(
     State(db): State<Db>,
     headers: HeaderMap,
@@ -12497,7 +12713,7 @@ async fn admin_x_rebrand_once(
     }
 
     // 4. Thread tweet 2 (reply to 1).
-    let t2 = "1/ MU の中身を全部公開してます。\n\nなぜ自動運転?\n人間0人で動く apparel ブランドを作ってる。デザイン生成、価格調整、カスタマーサポート、メール文面の改善、すべて AI agent が回す。\n\n濱田 (元 Mercari US CEO) が監査だけする。";
+    let t2 = "1/ MU の中身を全部公開してます。\n\nなぜ自動運転?\n人間0人で動く apparel ブランドを作ってる。デザイン生成、価格調整、カスタマーサポート、メール文面の改善、すべて AI agent が回す。\n\n濱田 (元 Mercari CPO) が監査だけする。";
     let t2_id = if let Some(rid) = &t1_id {
         match x_post_tweet_v2(&db, t2, Some(rid)).await {
             Ok(id) => { result.insert("tweet2".into(), serde_json::Value::from(id.clone())); Some(id) }
@@ -22821,6 +23037,10 @@ async fn main() {
         )",
         "CREATE INDEX IF NOT EXISTS idx_rewrite_drafts_status ON email_rewrite_drafts(status, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_rewrite_drafts_slot   ON email_rewrite_drafts(kind, variant, created_at DESC)",
+        // Email event tracking (Resend webhook → these columns).
+        "ALTER TABLE email_sends ADD COLUMN delivered_at TEXT",
+        "ALTER TABLE email_sends ADD COLUMN bounced_at TEXT",
+        "ALTER TABLE email_sends ADD COLUMN complained_at TEXT",
     ] {
         conn.execute(col, []).ok();
     }
@@ -24532,6 +24752,8 @@ async fn main() {
         .route("/api/webhook/alchemy", post(payments::alchemy_webhook))
         .route("/api/webhook/stripe-identity", post(payments::stripe_identity_webhook))
         .route("/api/webhook/resend-inbound", post(resend_inbound_webhook))
+        .route("/api/webhook/resend-events", post(resend_events_webhook))
+        .route("/stats", get(public_stats_page))
         .route("/api/kyc/identity-session", post(payments::create_stripe_identity_session))
         .route("/api/admin/exports/kyc.csv", get(payments::admin_export_kyc))
         .route("/api/admin/exports/crypto.csv", get(payments::admin_export_crypto))
@@ -28640,6 +28862,11 @@ async fn send_buyer_email(
             extra.get("year_n").and_then(|x| x.as_i64()).unwrap_or(1)),
         _ => return Err(format!("unknown kind: {}", kind)),
     };
+
+    // Auto-UTM every wearmu.com link in the body so we can attribute pageviews
+    // back to which email kind/variant brought the click. Idempotent (re-tags
+    // are safe since we only inject when no utm_source= present).
+    let html = utm_tag_email_body(&html, kind, variant);
 
     let is_dry = dry_run_active("production_watcher");
     if is_dry {
