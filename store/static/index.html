@@ -1896,17 +1896,30 @@ function openModal(p, pushHistory=true){
   const sizeSection = document.querySelector('#modal .select-row')?.closest('div');
   if(sizeSection) sizeSection.style.display = p.brand==='ma' ? 'none' : 'block';
 
+  // ── Channel split (Constitution §24-v2): JP = SUZURI のみ、海外 = Printful (Stripe) のみ ──
+  // Buyer locale is detected from navigator.language. ?force=jp/intl overrides.
+  // Fallback: if a product hasn't been mirrored to SUZURI yet (suzuri_url null),
+  // JP buyers also see the Stripe path so the drop is still purchasable.
+  const _override = new URLSearchParams(location.search).get('force');
+  const isJP = _override === 'jp' ? true
+             : _override === 'intl' ? false
+             : /^ja\b/i.test(navigator.language || '');
+  const hasSuzuri = !!(p.suzuri_url && rem > 0);
+  const showSuzuriOnly = isJP && hasSuzuri;
+
   const btn = document.getElementById('btn-buy');
   btn.textContent = `Purchase — ¥${p.price_jpy.toLocaleString()} (≈ $${usd})`;
   btn.className = 'btn-primary'+(p.brand==='mugen'?' red':'');
   btn.disabled = rem<=0;
+  // JP buyers go through SUZURI for ¥4,900 国内発送 — hide the Stripe Purchase
+  // button entirely so the channel is unambiguous.
+  btn.style.display = showSuzuriOnly ? 'none' : '';
 
-  // Quick-buy via Stripe Payment Link (skips our /api/checkout roundtrip).
-  // Shown only when the product has a pre-generated payment_link_url AND
-  // there is at least 1 unit remaining.
+  // Quick-buy via Stripe Payment Link — same channel split as the main Purchase
+  // button. Hidden for JP when SUZURI is available.
   const quick = document.getElementById('btn-quick');
   if (quick) {
-    if (p.payment_link_url && rem > 0) {
+    if (p.payment_link_url && rem > 0 && !showSuzuriOnly) {
       quick.href = p.payment_link_url;
       quick.style.display = 'block';
     } else {
@@ -1915,13 +1928,10 @@ function openModal(p, pushHistory=true){
     }
   }
 
-  // SUZURI marketplace mirror (§24-v2). Visible only for JP-shipping
-  // buyers when product has been published to suzuri.jp. We don't
-  // geo-gate — the button shows whenever suzuri_url is set and rem>0;
-  // the label calls out 国内発送 so non-JP visitors self-select away.
+  // SUZURI marketplace mirror (§24-v2): JP のお客様にだけ表示。海外には非表示。
   const suzuri = document.getElementById('btn-suzuri');
   if (suzuri) {
-    if (p.suzuri_url && rem > 0) {
+    if (hasSuzuri && isJP) {
       suzuri.href = p.suzuri_url;
       suzuri.style.display = 'block';
     } else {
@@ -1929,6 +1939,28 @@ function openModal(p, pushHistory=true){
       suzuri.removeAttribute('href');
     }
   }
+
+  // Apple Pay / Google Pay (Stripe Embedded Checkout) — also Stripe channel,
+  // so hide it for JP visitors when SUZURI is available.
+  const expressBtn = document.getElementById('btn-express');
+  if (expressBtn && showSuzuriOnly) expressBtn.style.display = 'none';
+
+  // When SUZURI-only: hide every other form child (email input, NFT details,
+  // size hint, checkout-msg) so JP buyers see ONE clear CTA — the SUZURI link.
+  // The size <select> lives outside the form; hide it via sizeSection too.
+  document.querySelectorAll('#checkout-form > *').forEach(el => {
+    if (el.id === 'btn-suzuri') return;
+    if (!showSuzuriOnly) {
+      // Restore — only btn-buy / btn-quick / btn-express keep their own
+      // display logic above; everything else clears the inline override.
+      if (!['btn-buy','btn-quick','btn-express','stripe-embedded'].includes(el.id || '')) {
+        el.style.display = '';
+      }
+      return;
+    }
+    el.style.display = 'none';
+  });
+  if (sizeSection && showSuzuriOnly) sizeSection.style.display = 'none';
 
   document.getElementById('modal').classList.add('open');
 
