@@ -5294,6 +5294,24 @@ async fn public_agents_page(State(db): State<Db>) -> Response {
             prompt: "// SELECT agent_journal WHERE embedding IS NULL LIMIT 100\n// 各行の (summary + decisions + actions) を embedding\n// journal_embeddings に upsert (768-dim float vector)",
         },
         AgentDoc {
+            name: "mugen_announce", interval: "30 min",
+            purpose: "新規 MUGEN drop (x_posted_at NULL) を 30 分以内に @wearMUcom に自動投稿。urgency 起爆装置: 「今、これが生まれた」というライブ感が買い動機の即起動装置。",
+            model: "(no LLM — template)",
+            prompt: "// SELECT products WHERE brand='mugen' AND active=1\n//   AND x_posted_at IS NULL ORDER BY id ASC LIMIT 1\n// → ツイート文面:\n//   MUGEN #XXXX just dropped.\n//   seed: 弟子屈 N°C · {cycle}/108 周期\n//   ¥{price}〜\n//   → wearmu.com/products/{slug}\n// 投稿成功 → UPDATE products SET x_posted_at=NOW, x_tweet_id=tid",
+        },
+        AgentDoc {
+            name: "weather_pulse", interval: "1h",
+            purpose: "弟子屈の今気温と直近 announce 比 ±5°C 動いてたら @wearMUcom に投稿。fashion ブランドが「自然と接続している」感を毎日演出。",
+            model: "(no LLM — heuristic)",
+            prompt: "// now_c = cv_config 'weather_temp_c' (api_weather が更新)\n// prev_c = cv_config 'weather_last_announced_c'\n// if |now_c - prev_c| >= 5.0:\n//   color_hint = -10°以下→白と銀 / 0°以下→青と灰 / 10°→ネイビーと白 /\n//                20°→緑と土 / 28°→金と赤 / それ以上→オレンジと黒\n//   text: 弟子屈、{prev}°C → {now}°C ({dir})。\n//         今日の MUGEN は <{color_hint}> 系統で生成されます。\n//   → 投稿 → cv_set 'weather_last_announced_c' = now",
+        },
+        AgentDoc {
+            name: "mention_responder", interval: "15 min",
+            purpose: "@wearMUcom のメンションを GET /2/users/:id/mentions で since_id 進めながら取得、Gemini で positive/question/spam/negative/other 分類、positive と question に AI が日本語で 180 字以内の丁寧返信。",
+            model: "Gemini 2.5 Flash · temperature 0.0",
+            prompt: "// MENTION_CLASSIFY_PROMPT (Gemini に渡す):\n//  Classify a @wearMUcom mention and (if appropriate) draft a SHORT, polite Japanese reply.\n//  Output JSON: {kind: positive|question|spam|negative|other, reply: <=180 chars, reason: <=100 chars}\n//  Rules:\n//   - positive → 短い感謝 + 1 link (自然なら)\n//   - question → 事実回答 + 正しい link (/mugen /you /agents /stats)\n//   - spam/negative/other → empty reply\n//   - No 過剰絵文字、URL は bare https://wearmu.com or 具体 subpath\n// 返信成功 → 次の since_id を進める",
+        },
+        AgentDoc {
             name: "self_improvement", interval: "24h",
             purpose: "Fly logs と agent_journal を読んで、繰り返し出てるエラー (3 回以上) を検知。改善案を journal に書く (実コード変更は self_evolve が PR 化)。",
             model: "Gemini 2.5 Flash",
@@ -25475,6 +25493,21 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         description: "median score < 0.70 なテンプレを persona suggestion 統合で Gemini に rewrite させ email_rewrite_drafts に保存 (適用は /admin/email-rewrites で人間が承認)",
     },
     AgentDef {
+        name: "mugen_announce",
+        interval_secs: 1800, // 30 min
+        description: "active=1 で x_posted_at NULL な MUGEN を見つけて即 @wearMUcom にツイート。新 drop の urgency 起爆装置。",
+    },
+    AgentDef {
+        name: "weather_pulse",
+        interval_secs: 3600, // 1h
+        description: "弟子屈の気温が直近 announce 比 ±5°C 動いたら @wearMUcom にツイート。世界観強化。",
+    },
+    AgentDef {
+        name: "mention_responder",
+        interval_secs: 900, // 15 min
+        description: "@wearMUcom メンションを 15 分ごとに取得、Gemini で positive/question/spam 分類、本物に AI 返信。",
+    },
+    AgentDef {
         name: "drop_filler",
         interval_secs: 21_600, // 6h
         description: "MUGEN drop_num + MUON 日付の欠番を検知し、generate.py の正確なコマンドを Telegram で yuki に提示 (Fly app から Python 実行不可なので nudge 型)",
@@ -25522,6 +25555,9 @@ async fn run_agent(name: &str, db: Db) -> Result<AgentReport, String> {
         "email_critic"      => agent_email_critic(db).await,
         "bounty_triage"     => agent_bounty_triage(db).await,
         "email_rewriter"    => agent_email_rewriter(db).await,
+        "mugen_announce"    => agent_mugen_announce(db).await,
+        "weather_pulse"     => agent_weather_pulse(db).await,
+        "mention_responder" => agent_mention_responder(db).await,
         "drop_filler"       => agent_drop_filler(db).await,
         _ => Err(format!("unknown agent: {}", name)),
     }
@@ -30261,6 +30297,341 @@ async fn agent_email_rewriter(db: Db) -> Result<AgentReport, String> {
         observations: serde_json::Value::Object(obs),
         decisions, actions, summary,
         notable: written > 0,
+    })
+}
+
+// ── agent_mugen_announce ────────────────────────────────────────────────
+// 30 分ごとに「まだ X に投稿してない MUGEN」を 1 件だけ取って即ツイート。
+// x_posted_at NULL → 投稿後に NOW + tweet_id を埋める。urgency 起爆装置。
+async fn agent_mugen_announce(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut decisions: Vec<serde_json::Value> = Vec::new();
+    let mut actions: Vec<serde_json::Value> = Vec::new();
+    let is_dry = dry_run_active("mugen_announce");
+    obs.insert("dry_run".into(), serde_json::Value::from(is_dry));
+
+    // Find oldest unposted MUGEN (FIFO so backlog drains).
+    struct Row { id: i64, drop_num: i64, slug: String, price_jpy: i64 }
+    let row: Option<Row> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT id, drop_num, COALESCE(slug,''), COALESCE(price_jpy, 5000)
+             FROM products
+             WHERE brand='mugen' AND active=1
+               AND (x_posted_at IS NULL OR x_posted_at='')
+             ORDER BY id ASC LIMIT 1",
+            [], |r| Ok(Row {
+                id: r.get(0)?, drop_num: r.get(1)?,
+                slug: r.get(2)?, price_jpy: r.get(3)?,
+            }),
+        ).ok()
+    };
+    let Some(row) = row else {
+        return Ok(AgentReport {
+            observations: serde_json::Value::Object(obs),
+            decisions, actions,
+            summary: "mugen_announce: no unposted MUGEN".into(),
+            notable: false,
+        });
+    };
+    obs.insert("picked_id".into(), serde_json::Value::from(row.id));
+    obs.insert("drop_num".into(),  serde_json::Value::from(row.drop_num));
+
+    // Optional weather context.
+    let temp_c: String = {
+        let conn = db.lock().unwrap();
+        cv_get(&conn, "weather_temp_c", "")
+    };
+    let temp_part = if temp_c.is_empty() { String::new() } else { format!("seed: 弟子屈 {}°C · ", temp_c) };
+
+    let cycle_pos = ((row.drop_num - 1).rem_euclid(108)) + 1;
+    let text = format!(
+        "MUGEN #{:04} just dropped.\n{}{}/108 周期\n¥{}〜\n→ wearmu.com/products/{}",
+        row.drop_num, temp_part, cycle_pos, fmt_jpy(row.price_jpy), row.slug);
+
+    if is_dry {
+        actions.push(serde_json::json!({"type":"dry_run","text":text}));
+        return Ok(AgentReport {
+            observations: serde_json::Value::Object(obs),
+            decisions, actions,
+            summary: format!("mugen_announce DRY: {}", text.chars().take(60).collect::<String>()),
+            notable: false,
+        });
+    }
+
+    match x_post_tweet_v2(&db, &text, None).await {
+        Ok(tweet_id) => {
+            {
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "UPDATE products SET x_posted_at=?, x_tweet_id=? WHERE id=?",
+                    params![chrono_now(), tweet_id.clone(), row.id]);
+            }
+            actions.push(serde_json::json!({"type":"posted","id":row.id,"tweet_id":tweet_id,"drop_num":row.drop_num}));
+            Ok(AgentReport {
+                observations: serde_json::Value::Object(obs),
+                decisions, actions,
+                summary: format!("mugen_announce: MUGEN #{:04} posted", row.drop_num),
+                notable: true,
+            })
+        }
+        Err(e) => {
+            decisions.push(serde_json::json!({"type":"x_post_err","id":row.id,"err":e.clone()}));
+            Ok(AgentReport {
+                observations: serde_json::Value::Object(obs),
+                decisions, actions,
+                summary: format!("mugen_announce: post failed — {}", e.chars().take(80).collect::<String>()),
+                notable: true,
+            })
+        }
+    }
+}
+
+// ── agent_weather_pulse ─────────────────────────────────────────────────
+// 1 時間ごとに 弟子屈気温を読み、直近 X 投稿時 (cv:weather_last_announced_c)
+// から ±5°C 以上動いてたらツイート。世界観 (北海道接続) 強化用。
+async fn agent_weather_pulse(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut decisions: Vec<serde_json::Value> = Vec::new();
+    let mut actions: Vec<serde_json::Value> = Vec::new();
+    let is_dry = dry_run_active("weather_pulse");
+
+    let (now_temp_str, last_announced_str) = {
+        let conn = db.lock().unwrap();
+        (cv_get(&conn, "weather_temp_c", ""),
+         cv_get(&conn, "weather_last_announced_c", ""))
+    };
+    let Ok(now_t) = now_temp_str.parse::<f64>() else {
+        return Ok(AgentReport {
+            observations: serde_json::Value::Object(obs), decisions, actions,
+            summary: "weather_pulse: no current temp in cv_config".into(),
+            notable: false,
+        });
+    };
+    obs.insert("now_c".into(), serde_json::Value::from(now_t));
+
+    let prev_t: Option<f64> = last_announced_str.parse::<f64>().ok();
+    if let Some(prev) = prev_t {
+        let delta = (now_t - prev).abs();
+        obs.insert("prev_c".into(), serde_json::Value::from(prev));
+        obs.insert("delta_c".into(), serde_json::Value::from(delta));
+        if delta < 5.0 {
+            return Ok(AgentReport {
+                observations: serde_json::Value::Object(obs), decisions, actions,
+                summary: format!("weather_pulse: only {:.1}°C delta (< 5)", delta),
+                notable: false,
+            });
+        }
+    }
+
+    let dir_jp = if let Some(p) = prev_t {
+        if now_t > p { "上昇" } else { "降下" }
+    } else { "計測開始" };
+
+    let color_hint = match now_t as i64 {
+        i if i <= -10 => "白と銀 (極寒)",
+        i if i <= 0   => "青と灰 (氷点下)",
+        i if i <= 10  => "ネイビーと白 (初冬)",
+        i if i <= 20  => "緑と土 (春・秋)",
+        i if i <= 28  => "金と赤 (晩夏)",
+        _             => "オレンジと黒 (真夏)",
+    };
+
+    let text = if let Some(p) = prev_t {
+        format!(
+            "弟子屈、{}°C → {}°C ({})。\n今日の MUGEN は <{}> 系統で生成されます。\n→ wearmu.com",
+            p as i64, now_t as i64, dir_jp, color_hint)
+    } else {
+        format!(
+            "弟子屈、今 {}°C。\n今日の MUGEN は <{}> 系統で生成されます。\n→ wearmu.com",
+            now_t as i64, color_hint)
+    };
+
+    if is_dry {
+        actions.push(serde_json::json!({"type":"dry_run","text":text}));
+        return Ok(AgentReport {
+            observations: serde_json::Value::Object(obs), decisions, actions,
+            summary: format!("weather_pulse DRY: {}", text.chars().take(60).collect::<String>()),
+            notable: false,
+        });
+    }
+
+    match x_post_tweet_v2(&db, &text, None).await {
+        Ok(tid) => {
+            // Remember the announced temp.
+            {
+                let conn = db.lock().unwrap();
+                cv_set(&conn, "weather_last_announced_c", &now_t.to_string(), "weather_pulse");
+            }
+            actions.push(serde_json::json!({"type":"posted","tweet_id":tid,"now_c":now_t}));
+            Ok(AgentReport {
+                observations: serde_json::Value::Object(obs), decisions, actions,
+                summary: format!("weather_pulse: {:.1}°C posted", now_t),
+                notable: true,
+            })
+        }
+        Err(e) => {
+            decisions.push(serde_json::json!({"type":"x_post_err","err":e.clone()}));
+            Ok(AgentReport {
+                observations: serde_json::Value::Object(obs), decisions, actions,
+                summary: format!("weather_pulse: post failed — {}", e.chars().take(80).collect::<String>()),
+                notable: true,
+            })
+        }
+    }
+}
+
+// ── agent_mention_responder ─────────────────────────────────────────────
+// 15 分ごとに /2/users/<wearMUcom>/mentions を pull。
+// Gemini Flash で positive/question/spam 分類、本物には AI 返信。
+// 状態は cv_config 'mention_last_seen_id' で since_id を進める。
+const MENTION_CLASSIFY_PROMPT: &str = r#"You are a brand-safe mention triage for MU (wearmu.com), a 0-human apparel brand.
+A tweet just mentioned @wearMUcom. Classify it and (if appropriate) draft a SHORT, polite Japanese reply.
+
+Output STRICT JSON:
+{
+  "kind":   "positive|question|spam|negative|other",
+  "reply":  "<=180 chars Japanese reply, OR empty string if kind is spam/negative/other",
+  "reason": "<=100 chars internal note (why this classification)"
+}
+
+Rules:
+- positive: praise, excitement, fan tweet → reply with brief thank-you + 1 link if natural
+- question: asking how something works, pricing, etc. → answer factually + correct link
+- spam: link spam, account farming, irrelevant → empty reply
+- negative: complaint, criticism → empty reply (defer to human)
+- other: unclear / off-topic → empty reply
+- Never include "ありがとうございます" + excited tone for non-positive.
+- All wearmu URLs must be the bare https://wearmu.com or a specific subpath (/mugen, /you, /agents, /stats).
+- No emoji unless the original mention used emoji.
+"#;
+
+async fn agent_mention_responder(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut decisions: Vec<serde_json::Value> = Vec::new();
+    let mut actions: Vec<serde_json::Value> = Vec::new();
+    let is_dry = dry_run_active("mention_responder");
+    obs.insert("dry_run".into(), serde_json::Value::from(is_dry));
+
+    let bearer = env::var("X_BEARER_TOKEN").unwrap_or_default();
+    if bearer.is_empty() {
+        return Ok(AgentReport::idle("X_BEARER_TOKEN missing"));
+    }
+    let key = match env::var("GEMINI_API_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => return Ok(AgentReport::idle("GEMINI_API_KEY missing")),
+    };
+
+    let since_id = {
+        let conn = db.lock().unwrap();
+        cv_get(&conn, "mention_last_seen_id", "")
+    };
+    let mut url = String::from("https://api.twitter.com/2/users/2053797881262555136/mentions?tweet.fields=author_id,text,created_at&max_results=20");
+    if !since_id.is_empty() {
+        url.push_str(&format!("&since_id={}", since_id));
+    }
+    let resp = match reqwest::Client::new()
+        .get(&url).bearer_auth(&bearer).send().await {
+        Ok(r) if r.status().is_success() => r,
+        Ok(r) => {
+            let s = r.status();
+            let t = r.text().await.unwrap_or_default();
+            decisions.push(serde_json::json!({"type":"x_get_err","status":s.as_u16(),"body":t.chars().take(200).collect::<String>()}));
+            return Ok(AgentReport {
+                observations: serde_json::Value::Object(obs), decisions, actions,
+                summary: format!("mention_responder: x get {}", s), notable: true,
+            });
+        }
+        Err(e) => return Ok(AgentReport::idle(&format!("x http: {e}"))),
+    };
+    let body: serde_json::Value = match resp.json().await {
+        Ok(v) => v, Err(e) => return Ok(AgentReport::idle(&format!("x json: {e}"))),
+    };
+    let mentions = body["data"].as_array().cloned().unwrap_or_default();
+    obs.insert("fetched".into(), serde_json::Value::from(mentions.len() as i64));
+    if mentions.is_empty() {
+        return Ok(AgentReport {
+            observations: serde_json::Value::Object(obs), decisions, actions,
+            summary: "mention_responder: 0 new mentions".into(),
+            notable: false,
+        });
+    }
+
+    // The newest id (mentions are returned newest first). Save at end.
+    let newest_id = mentions[0]["id"].as_str().unwrap_or("").to_string();
+
+    let mut replied = 0i64;
+    let mut skipped = 0i64;
+
+    for m in &mentions {
+        let tweet_id = m["id"].as_str().unwrap_or("").to_string();
+        let text     = m["text"].as_str().unwrap_or("").to_string();
+        if tweet_id.is_empty() || text.is_empty() { continue; }
+
+        // Classify + draft via Gemini Flash.
+        let prompt = format!(
+            "{}\n---\nMENTION TEXT (Japanese or English):\n{}\n",
+            MENTION_CLASSIFY_PROMPT, text);
+        let req = serde_json::json!({
+            "contents": [{"parts":[{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": 0.0,
+                "maxOutputTokens": 800,
+                "responseMimeType": "application/json",
+                "thinkingConfig": {"thinkingBudget": 0},
+            },
+        });
+        let u = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
+            key);
+        let r = match reqwest::Client::new().post(&u).json(&req).send().await {
+            Ok(r) if r.status().is_success() => r,
+            _ => { skipped += 1; continue; }
+        };
+        let v: serde_json::Value = match r.json().await { Ok(v)=>v, _=>{skipped+=1;continue;} };
+        let raw = v["candidates"][0]["content"]["parts"][0]["text"].as_str().unwrap_or("").trim().to_string();
+        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap_or_else(|_| {
+            let s = raw.find('{'); let e = raw.rfind('}');
+            match (s,e) { (Some(s),Some(e)) if e>s => serde_json::from_str(&raw[s..=e]).unwrap_or_default(), _=>serde_json::Value::Null }
+        });
+        let kind = parsed["kind"].as_str().unwrap_or("other").to_string();
+        let reply = parsed["reply"].as_str().unwrap_or("").chars().take(180).collect::<String>();
+        let reason = parsed["reason"].as_str().unwrap_or("").chars().take(100).collect::<String>();
+
+        if !matches!(kind.as_str(), "positive" | "question") || reply.trim().is_empty() {
+            decisions.push(serde_json::json!({"type":"skipped","tweet_id":tweet_id,"kind":kind,"reason":reason}));
+            skipped += 1;
+            continue;
+        }
+        if is_dry {
+            actions.push(serde_json::json!({"type":"dry_run","tweet_id":tweet_id,"kind":kind,"reply":reply}));
+            continue;
+        }
+        match x_post_tweet_v2(&db, &reply, Some(&tweet_id)).await {
+            Ok(reply_id) => {
+                actions.push(serde_json::json!({"type":"replied","tweet_id":tweet_id,"reply_id":reply_id,"kind":kind}));
+                replied += 1;
+            }
+            Err(e) => {
+                decisions.push(serde_json::json!({"type":"reply_err","tweet_id":tweet_id,"err":e.clone()}));
+                skipped += 1;
+            }
+        }
+    }
+
+    // Advance since_id only after processing all (next run skips these).
+    if !newest_id.is_empty() && !is_dry {
+        let conn = db.lock().unwrap();
+        cv_set(&conn, "mention_last_seen_id", &newest_id, "mention_responder");
+    }
+
+    obs.insert("replied".into(), serde_json::Value::from(replied));
+    obs.insert("skipped".into(), serde_json::Value::from(skipped));
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs),
+        decisions, actions,
+        summary: format!("mention_responder: {} replied, {} skipped", replied, skipped),
+        notable: replied > 0,
     })
 }
 
