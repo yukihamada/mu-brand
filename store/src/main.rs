@@ -11862,6 +11862,190 @@ async fn x_post_tweet_oauth1a(
     Ok(v["data"]["id"].as_str().map(String::from))
 }
 
+// ── X OAuth 1.0a helpers (reuse existing creds, full signing) ──────────────
+fn x_oauth1a_creds() -> Option<(String, String, String, String)> {
+    let ck = env::var("X_CONSUMER_KEY").ok().filter(|s| !s.is_empty())?;
+    let cs = env::var("X_CONSUMER_SECRET").ok().filter(|s| !s.is_empty())?;
+    let at = env::var("X_ACCESS_TOKEN").ok().filter(|s| !s.is_empty())?;
+    let ats = env::var("X_ACCESS_TOKEN_SECRET").ok().filter(|s| !s.is_empty())?;
+    Some((ck, cs, at, ats))
+}
+fn x_oauth_enc(s: &str) -> String {
+    urlencoding::encode(s).into_owned().replace('+', "%20").replace('*', "%2A")
+}
+/// Build OAuth1.0a Authorization header. `extra_params` are signed-but-NOT-
+/// included in the actual request — pass query params here for v1.1 GET, and
+/// form body params for v1.1 POST (form-urlencoded). For JSON body APIs (v2),
+/// pass empty `extra_params`.
+fn x_oauth1a_sign(
+    method: &str, url: &str,
+    consumer_key: &str, consumer_secret: &str,
+    access_token: &str, access_token_secret: &str,
+    extra_params: &[(&str, String)],
+) -> String {
+    use hmac::{Hmac, Mac};
+    use sha1::Sha1;
+    use base64::Engine;
+    type HmacSha1 = Hmac<Sha1>;
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let nonce = uuid::Uuid::new_v4().simple().to_string();
+    let mut oauth_params: Vec<(&str, String)> = vec![
+        ("oauth_consumer_key",     consumer_key.to_string()),
+        ("oauth_nonce",            nonce.clone()),
+        ("oauth_signature_method", "HMAC-SHA1".to_string()),
+        ("oauth_timestamp",        now_s.to_string()),
+        ("oauth_token",            access_token.to_string()),
+        ("oauth_version",          "1.0".to_string()),
+    ];
+    // Build signature base: oauth_params + extra_params, sorted, percent-encoded.
+    let mut all: Vec<(String, String)> = oauth_params.iter()
+        .map(|(k,v)| (k.to_string(), v.clone()))
+        .chain(extra_params.iter().map(|(k,v)| (k.to_string(), v.clone())))
+        .collect();
+    all.sort_by(|a,b| a.0.cmp(&b.0));
+    let param_string = all.iter()
+        .map(|(k,v)| format!("{}={}", x_oauth_enc(k), x_oauth_enc(v)))
+        .collect::<Vec<_>>().join("&");
+    let base_string = format!("{}&{}&{}", method, x_oauth_enc(url), x_oauth_enc(&param_string));
+    let signing_key = format!("{}&{}", x_oauth_enc(consumer_secret), x_oauth_enc(access_token_secret));
+    let mut mac = HmacSha1::new_from_slice(signing_key.as_bytes()).expect("hmac");
+    mac.update(base_string.as_bytes());
+    let signature = base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes());
+    oauth_params.push(("oauth_signature", signature));
+    oauth_params.sort_by(|a,b| a.0.cmp(b.0));
+    let header_inner = oauth_params.iter()
+        .map(|(k,v)| format!("{}=\"{}\"", x_oauth_enc(k), x_oauth_enc(v)))
+        .collect::<Vec<_>>().join(", ");
+    format!("OAuth {}", header_inner)
+}
+
+/// Update profile via X v1.1 (form-encoded, params signed).
+async fn x_update_profile(
+    name: Option<&str>, description: Option<&str>,
+    url_field: Option<&str>, location: Option<&str>,
+) -> Result<serde_json::Value, String> {
+    let (ck, cs, at, ats) = x_oauth1a_creds().ok_or("X creds missing")?;
+    let api = "https://api.twitter.com/1.1/account/update_profile.json";
+    let mut form: Vec<(&str, String)> = vec![];
+    if let Some(v) = name { form.push(("name", v.to_string())); }
+    if let Some(v) = description { form.push(("description", v.to_string())); }
+    if let Some(v) = url_field { form.push(("url", v.to_string())); }
+    if let Some(v) = location { form.push(("location", v.to_string())); }
+    if form.is_empty() { return Err("no fields to update".into()); }
+    let auth = x_oauth1a_sign("POST", api, &ck, &cs, &at, &ats, &form);
+    let body_str = form.iter()
+        .map(|(k,v)| format!("{}={}", x_oauth_enc(k), x_oauth_enc(v)))
+        .collect::<Vec<_>>().join("&");
+    let resp = reqwest::Client::new()
+        .post(api).header("Authorization", auth)
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(body_str).send().await
+        .map_err(|e| format!("http: {e}"))?;
+    let s = resp.status();
+    let b = resp.text().await.unwrap_or_default();
+    if !s.is_success() { return Err(format!("update_profile {}: {}", s, &b[..b.len().min(400)])); }
+    serde_json::from_str(&b).map_err(|e| format!("json: {e}"))
+}
+
+/// Post a tweet (optionally as a reply). Returns tweet id.
+async fn x_post_tweet_v2(text: &str, in_reply_to: Option<&str>) -> Result<String, String> {
+    let (ck, cs, at, ats) = x_oauth1a_creds().ok_or("X creds missing")?;
+    let api = "https://api.twitter.com/2/tweets";
+    let auth = x_oauth1a_sign("POST", api, &ck, &cs, &at, &ats, &[]);
+    let mut body = serde_json::json!({"text": text});
+    if let Some(rid) = in_reply_to {
+        body["reply"] = serde_json::json!({"in_reply_to_tweet_id": rid});
+    }
+    let resp = reqwest::Client::new()
+        .post(api).header("Authorization", auth)
+        .header("Content-Type", "application/json")
+        .json(&body).send().await
+        .map_err(|e| format!("http: {e}"))?;
+    let s = resp.status();
+    let b = resp.text().await.unwrap_or_default();
+    if !s.is_success() { return Err(format!("post tweet {}: {}", s, &b[..b.len().min(400)])); }
+    let v: serde_json::Value = serde_json::from_str(&b).map_err(|e| format!("json: {e}"))?;
+    v["data"]["id"].as_str().map(String::from).ok_or_else(|| "no id".into())
+}
+
+/// Pin a tweet (v2 user-context). user_id of @wearMU = 905113460.
+async fn x_pin_tweet(tweet_id: &str) -> Result<(), String> {
+    let (ck, cs, at, ats) = x_oauth1a_creds().ok_or("X creds missing")?;
+    let api = "https://api.twitter.com/2/users/905113460/pinned_tweets";
+    let auth = x_oauth1a_sign("POST", api, &ck, &cs, &at, &ats, &[]);
+    let body = serde_json::json!({"tweet_id": tweet_id});
+    let resp = reqwest::Client::new()
+        .post(api).header("Authorization", auth)
+        .header("Content-Type", "application/json")
+        .json(&body).send().await
+        .map_err(|e| format!("http: {e}"))?;
+    let s = resp.status();
+    let b = resp.text().await.unwrap_or_default();
+    if !s.is_success() { return Err(format!("pin {}: {}", s, &b[..b.len().min(400)])); }
+    Ok(())
+}
+
+/// POST /admin/x/rebrand-once — one-shot: profile + pinned tweet + 3-tweet thread.
+async fn admin_x_rebrand_once(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/x/rebrand-once").await { return r; }
+    let mut result = serde_json::Map::new();
+
+    // 1. Profile update.
+    let bio = "北海道弟子屈の気象 × AI が、世界に 1 人のための T シャツを毎日描く。\nHokkaido weather → AI → 1/1 T-shirt. Autopilot apparel.\n/collab /bounty /you · Enabler Inc.";
+    match x_update_profile(Some("MU / wearmu.com"), Some(bio), Some("https://wearmu.com"), Some("弟子屈 / Tokyo")).await {
+        Ok(_) => { result.insert("profile".into(), serde_json::Value::from("updated")); }
+        Err(e) => { result.insert("profile_err".into(), serde_json::Value::from(e)); }
+    }
+
+    // 2. Rebrand tweet (head of thread).
+    let t1 = "@wearMU はもう \"More Upstairs\" じゃなくなりました。\n\nこれからは「自動運転のアパレル」:\n\n🌡️ 北海道弟子屈の気象を AI が毎日読む\n🎨 1日1着、世界に1人のためのTシャツを生成\n📦 Printful 直接発注、7-10日でお届け\n🔗 Solana 永続記録、布が消えても記録は残る\n🤖 メール文面まで AI が自分で書き直す\n\n10年眠ってたアカウント、今日から起きます。\n→ wearmu.com";
+    let t1_id = match x_post_tweet_v2(t1, None).await {
+        Ok(id) => { result.insert("tweet1".into(), serde_json::Value::from(id.clone())); Some(id) }
+        Err(e) => { result.insert("tweet1_err".into(), serde_json::Value::from(e)); None }
+    };
+
+    // 3. Pin tweet 1.
+    if let Some(id) = &t1_id {
+        match x_pin_tweet(id).await {
+            Ok(()) => { result.insert("pinned".into(), serde_json::Value::from(true)); }
+            Err(e) => { result.insert("pin_err".into(), serde_json::Value::from(e)); }
+        }
+    }
+
+    // 4. Thread tweet 2 (reply to 1).
+    let t2 = "1/ MU の中身を全部公開してます。\n\nなぜ自動運転?\n人間0人で動く apparel ブランドを作ってる。デザイン生成、価格調整、カスタマーサポート、メール文面の改善、すべて AI agent が回す。\n\n濱田 (元 Mercari US CEO) が監査だけする。";
+    let t2_id = if let Some(rid) = &t1_id {
+        match x_post_tweet_v2(t2, Some(rid)).await {
+            Ok(id) => { result.insert("tweet2".into(), serde_json::Value::from(id.clone())); Some(id) }
+            Err(e) => { result.insert("tweet2_err".into(), serde_json::Value::from(e)); None }
+        }
+    } else { None };
+
+    // 5. Thread tweet 3 (reply to 2).
+    let t3 = "2/ 仕組みは全部 open:\n\n- agent_email_critic: 4 ペルソナ (Musk/Bezos/Jobs/Buyer) が毎日採点\n- agent_email_rewriter: 0.7 以下を Gemini Pro が書き直し\n- agent_bounty_triage: バグ報告を AI が 1 次仕分け\n- agent_price_micro: 価格を ±¥200 で自動調整\n- agent_strategist: 週次戦略を Gemini Pro が提案";
+    let t3_id = if let Some(rid) = &t2_id {
+        match x_post_tweet_v2(t3, Some(rid)).await {
+            Ok(id) => { result.insert("tweet3".into(), serde_json::Value::from(id.clone())); Some(id) }
+            Err(e) => { result.insert("tweet3_err".into(), serde_json::Value::from(e)); None }
+        }
+    } else { None };
+
+    // 6. Thread tweet 4 (reply to 3) — new features.
+    let t4 = "3/ 今日 live になった追加機能:\n\n✅ /mypage — email リンクログイン + NFT 受け取り\n✅ /buyer/:token — 各オーナーの公開プロフィール\n✅ Resend Inbound — info@wearmu.com → AI 自動分類\n✅ 13 種 × A/B = 26 メールテンプレ自動運用\n\n服が届くまで体験を作ってる。\n→ wearmu.com";
+    if let Some(rid) = &t3_id {
+        match x_post_tweet_v2(t4, Some(rid)).await {
+            Ok(id) => { result.insert("tweet4".into(), serde_json::Value::from(id)); }
+            Err(e) => { result.insert("tweet4_err".into(), serde_json::Value::from(e)); }
+        }
+    }
+
+    Json(serde_json::Value::Object(result)).into_response()
+}
+
 /// "Cultural moment" daily cron — JST 12:00. Asks Gemini if there's an
 /// observation MU should make today that lands cleanly with the brand voice
 /// (fashion week timing, season turn, AI industry milestone, weather extreme,
@@ -23968,6 +24152,7 @@ async fn main() {
         .route("/admin/email-critique/run", post(admin_email_critique_run))
         .route("/admin/email-rewrites", get(admin_email_rewrites))
         .route("/admin/email-rewrites/run", post(admin_email_rewrites_run))
+        .route("/admin/x/rebrand-once", post(admin_x_rebrand_once))
         .route("/admin/email-rewrites/:id/decide", post(admin_email_rewrites_decide))
         .route("/webhooks/resend", post(webhook_resend))
         .route("/api/v1/event", post(api_funnel_event))
