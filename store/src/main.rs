@@ -12180,6 +12180,209 @@ async function submitVote(e){{
 // /claim/ma/<token> with shipping info. design_url is filled async by
 // m5 generate.py once Gemini 3 Pro Image finishes the design_brief.
 
+/// Generate a 1024×1024 PNG via Gemini 3 Pro Image, upload to R2,
+/// return the public URL. Background-spawned for each new MA gift.
+async fn generate_ma_gift_design(token: String, brief: String, db: Db) {
+    let key = env::var("GEMINI_API_KEY").or_else(|_| env::var("GOOGLE_API_KEY")).unwrap_or_default();
+    if key.is_empty() {
+        eprintln!("[ma_gift_design] {}: no GEMINI_API_KEY", token);
+        return;
+    }
+    let prompt = format!(
+        "T-shirt graphic design. {}\n\
+        Constraints:\n\
+        - Output: square 1024x1024 PNG with TRANSPARENT background\n\
+        - White ink only (will print on a black Bella+Canvas 3001)\n\
+        - Crisp vector-like shapes, no anti-aliasing fuzz\n\
+        - Total composition should occupy ~70% of the canvas, centered\n\
+        - Quiet, sober, no decorative flourish (Vision §14)\n\
+        - The kanji 間 (MA) must look like a confident single-stroke sumi brushwork — not a font",
+        brief
+    );
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image-preview:generateContent?key={}",
+        key
+    );
+    let body = serde_json::json!({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"responseModalities": ["IMAGE", "TEXT"]}
+    });
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build().unwrap_or_else(|_| reqwest::Client::new());
+    let resp = match client.post(&url).json(&body).send().await {
+        Ok(r) => r,
+        Err(e) => { eprintln!("[ma_gift_design] {}: gemini request err: {}", token, e); return; }
+    };
+    if !resp.status().is_success() {
+        let s = resp.status();
+        let t = resp.text().await.unwrap_or_default();
+        eprintln!("[ma_gift_design] {}: gemini {}: {}", token, s, t.chars().take(300).collect::<String>());
+        return;
+    }
+    let j: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(e) => { eprintln!("[ma_gift_design] {}: json parse: {}", token, e); return; }
+    };
+    let b64 = j["candidates"][0]["content"]["parts"]
+        .as_array().and_then(|parts| {
+            parts.iter().find_map(|p| {
+                p.get("inlineData").or_else(|| p.get("inline_data"))
+                    .and_then(|d| d.get("data"))
+                    .and_then(|v| v.as_str())
+            })
+        });
+    let Some(b64) = b64 else {
+        eprintln!("[ma_gift_design] {}: no inline_data in response", token);
+        return;
+    };
+    use base64::Engine;
+    let bytes = match base64::engine::general_purpose::STANDARD.decode(b64) {
+        Ok(b) => b,
+        Err(e) => { eprintln!("[ma_gift_design] {}: base64 decode: {}", token, e); return; }
+    };
+    // Upload to R2 (or local fallback).
+    let key_r2 = format!("ma_gift_{}.png", token);
+    let stored_url = if let Some(cfg) = r2_config() {
+        match cfg.bucket.put_object_with_content_type(&key_r2, &bytes, "image/png").await {
+            Ok(r) if r.status_code() == 200 => {
+                Some(format!("{}/{}", cfg.public_base.trim_end_matches('/'), key_r2))
+            }
+            Ok(r) => {
+                eprintln!("[ma_gift_design] r2 status {}", r.status_code());
+                None
+            }
+            Err(e) => { eprintln!("[ma_gift_design] r2 err: {}", e); None }
+        }
+    } else {
+        // Fallback: write to local mockups dir.
+        let dir = mockups_dir();
+        let _ = tokio::fs::create_dir_all(&dir).await;
+        let path = dir.join(&key_r2);
+        if tokio::fs::write(&path, &bytes).await.is_ok() {
+            Some(format!("/mockups/{}", key_r2))
+        } else { None }
+    };
+    let Some(stored) = stored_url else {
+        eprintln!("[ma_gift_design] {}: storage failed", token);
+        return;
+    };
+    // Persist URL on the row.
+    let now = chrono_now();
+    let (claim_email, ship_name): (Option<String>, Option<String>) = {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE ma_gifts SET design_url=?, mockup_url=?,
+                status=CASE WHEN status='claimed' THEN 'design_ready' ELSE status END
+             WHERE token=?",
+            params![stored, stored, token],
+        );
+        conn.query_row(
+            "SELECT claim_email, ship_name FROM ma_gifts WHERE token=?",
+            params![token], |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?))
+        ).unwrap_or((None, None))
+    };
+    send_telegram_message(&format!(
+        "🎨 MA gift design ready · token={}\nurl: {}\nstatus: {}",
+        &token[..8.min(token.len())],
+        stored,
+        if claim_email.is_some() { "design_ready (recipient already claimed, firing Printful)" } else { "design_ready (waiting for claim)" }
+    )).await;
+    // If already claimed, fire Printful order now.
+    if let (Some(_), Some(_)) = (claim_email.clone(), ship_name.clone()) {
+        let _ = now;
+        fire_ma_gift_printful_order(db.clone(), token.clone()).await;
+    }
+}
+
+/// Fire a free Printful order for a fully-ready MA gift (status='design_ready'
+/// with shipping info filled in). Idempotent via printful_order_id.
+async fn fire_ma_gift_printful_order(db: Db, token: String) {
+    let key = env::var("PRINTFUL_API_KEY").unwrap_or_default();
+    if key.is_empty() { eprintln!("[ma_gift_pf] no PRINTFUL_API_KEY"); return; }
+    type Row = (
+        String, String, String, String, String, String, String, String,
+        Option<String>, String, Option<String>, Option<String>, String,
+    );
+    let row: Option<Row> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT label, ship_name, ship_addr1, COALESCE(ship_addr2,''),
+                    ship_city, COALESCE(ship_state,''), ship_country, ship_zip,
+                    ship_phone, size, design_url, printful_order_id, claim_email
+             FROM ma_gifts WHERE token=?",
+            params![token], |r| Ok((
+                r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?,
+                r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?,
+                r.get(8)?, r.get(9)?, r.get(10)?, r.get(11)?, r.get(12)?,
+            ))
+        ).ok()
+    };
+    let Some((label, ship_name, addr1, addr2, city, state, country, zip, phone, size, design_url, pf_existing, email)) = row else { return };
+    if pf_existing.as_deref().filter(|s| !s.is_empty()).is_some() {
+        eprintln!("[ma_gift_pf] {} already has printful_order_id", token);
+        return;
+    }
+    let Some(design) = design_url.filter(|s| !s.is_empty()) else {
+        eprintln!("[ma_gift_pf] {} design_url empty", token);
+        return;
+    };
+    // Bella+Canvas 3001 Black variant ids — same as kokon-tee / sweep-tee.
+    let variant_id: u64 = match size.as_str() {
+        "XS" => 9527, "S" => 4016, "M" => 4017, "L" => 4018,
+        "XL" => 4019, "2XL" => 4020, _ => 4017,
+    };
+    let order = serde_json::json!({
+        "recipient": {
+            "name": ship_name, "address1": addr1, "address2": addr2,
+            "city": city, "state_code": state, "country_code": country,
+            "zip": zip, "phone": phone.unwrap_or_default(),
+            "email": email.clone(),
+        },
+        "items": [{
+            "variant_id": variant_id,
+            "quantity": 1,
+            "files": [{"url": design, "placement": "front"}],
+        }],
+        "confirm": true,
+    });
+    let resp = reqwest::Client::new()
+        .post("https://api.printful.com/orders")
+        .bearer_auth(&key).json(&order).send().await;
+    let now = chrono_now();
+    match resp {
+        Ok(r) if r.status().is_success() => {
+            let body: serde_json::Value = r.json().await.unwrap_or_default();
+            let pf_id = body["result"]["id"].as_i64()
+                .map(|n| n.to_string())
+                .or_else(|| body["result"]["id"].as_str().map(String::from))
+                .unwrap_or_default();
+            {
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "UPDATE ma_gifts SET status='shipped', printful_order_id=?, shipped_at=?
+                     WHERE token=?",
+                    params![pf_id, now, token],
+                );
+            }
+            send_telegram_message(&format!(
+                "✅ MA gift Printful order created · token={} pf_id={} · {}",
+                &token[..8.min(token.len())], pf_id, label
+            )).await;
+        }
+        Ok(r) => {
+            let s = r.status();
+            let b = r.text().await.unwrap_or_default();
+            eprintln!("[ma_gift_pf] printful {}: {}", s, b.chars().take(400).collect::<String>());
+            send_telegram_message(&format!(
+                "⚠️ MA gift Printful order failed · token={} status={}",
+                &token[..8.min(token.len())], s
+            )).await;
+        }
+        Err(e) => eprintln!("[ma_gift_pf] request err: {}", e),
+    }
+}
+
 /// POST /api/admin/ma/gift/issue?token=…
 /// body: { label, design_brief }  →  returns { token, claim_url }
 async fn admin_ma_gift_issue(
@@ -12207,13 +12410,49 @@ async fn admin_ma_gift_issue(
             params![token, label, brief, now, note],
         );
     }
+    // Kick off Gemini 3 Pro Image generation now — typically completes
+    // in ~30-60s, so by the time the recipient claims their URL the
+    // design + Printful order can fire immediately.
+    let tk = token.clone();
+    let br = brief.clone();
+    let db2 = db.clone();
+    tokio::spawn(async move { generate_ma_gift_design(tk, br, db2).await; });
+
     Json(serde_json::json!({
         "ok": true,
         "token": token,
         "claim_url": format!("https://wearmu.com/claim/ma/{}", token),
         "label": label,
-        "note": "design_url is initially NULL — m5 generate.py picks up rows where status='issued' AND design_url IS NULL and fills it. Until then /claim/ma/<token> renders a 'design pending' message but still accepts shipping info."
+        "note": "Gemini 3 Pro Image generation kicked off. Typically ~30-60s. Once design_url is populated, any claim with full shipping info will trigger a Printful order immediately."
     })).into_response()
+}
+
+/// POST /api/admin/ma/gift/generate_now?token=…&gift_token=…
+/// Re-fires the design generation for an existing token (use this for
+/// the 3 gifts that were issued before instant-generation existed).
+async fn admin_ma_gift_generate_now(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let gift_token = q.get("gift_token").cloned().unwrap_or_default();
+    if gift_token.is_empty() {
+        return (StatusCode::BAD_REQUEST, "?gift_token=… required").into_response();
+    }
+    let brief: Option<String> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT design_brief FROM ma_gifts WHERE token=?",
+            params![gift_token], |r| r.get::<_, String>(0),
+        ).ok()
+    };
+    let Some(brief) = brief else {
+        return (StatusCode::NOT_FOUND, "no such gift_token").into_response();
+    };
+    let tk = gift_token.clone();
+    let db2 = db.clone();
+    tokio::spawn(async move { generate_ma_gift_design(tk, brief, db2).await; });
+    Json(serde_json::json!({"ok": true, "gift_token": gift_token, "spawned": true})).into_response()
 }
 
 /// GET /admin/ma/gifts?token=… — list all gifts + their status.
@@ -12439,10 +12678,17 @@ async fn ma_gift_claim_submit(
         "🎁 MA gift claimed — token={}\nlabel: {}\nemail: {}\nship_country: {}\nstatus: claimed (design_ready={})",
         &token[..8.min(token.len())], label, mask_email(&email), ship.5, design_url.is_some()
     )).await;
+    // If the design is already generated, fire Printful immediately.
+    // Otherwise generate_ma_gift_design will fire once it completes.
+    if design_url.is_some() {
+        let db2 = db.clone();
+        let tk = token.clone();
+        tokio::spawn(async move { fire_ma_gift_printful_order(db2, tk).await; });
+    }
     let msg = if design_url.is_some() {
-        "受取情報を登録しました。デザインは生成済みなので、Printful から 7-10 営業日で発送します。"
+        "受取情報を登録しました。デザインは生成済み — Printful へ発注済み、7-10 営業日で発送します。"
     } else {
-        "受取情報を登録しました。AI がデザインを生成中なので、完成次第 (1-3 日以内) Printful から発送します。"
+        "受取情報を登録しました。AI がデザインを生成中 — 完了し次第 (~30-60 秒) 自動で Printful 発注されます。"
     };
     Json(serde_json::json!({"ok": true, "message": msg, "design_ready": design_url.is_some()})).into_response()
 }
@@ -27630,6 +27876,7 @@ async fn main() {
         .route("/api/chronicle/vote/request", post(chronicle_vote_request))
         .route("/chronicle/vote/confirm/:token", get(chronicle_vote_confirm))
         .route("/api/admin/ma/gift/issue", post(admin_ma_gift_issue))
+        .route("/api/admin/ma/gift/generate_now", post(admin_ma_gift_generate_now))
         .route("/admin/ma/gifts", get(admin_ma_gift_list))
         .route("/claim/ma/:token", get(ma_gift_claim_page))
         .route("/api/claim/ma/:token", post(ma_gift_claim_submit))
