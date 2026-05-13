@@ -4511,6 +4511,29 @@ async fn get_product_chronicle(
 /// Printful's order API needs PNG/JPG, not SVG, so this endpoint serves the
 /// same QR as the .svg variant but as a 1024×1024 PNG with transparent
 /// background and tonal charcoal modules.
+/// GET /api/qr/c/:id/:pos.{svg,png} — single matchit-friendly route.
+/// Parses the trailing `.svg` / `.png` extension off the captured segment
+/// and delegates to the format-specific handler.
+async fn chronicle_qr_dispatch(
+    Path((id, pos_with_ext)): Path<(i64, String)>,
+) -> Response {
+    let (pos_str, fmt) = if let Some(p) = pos_with_ext.strip_suffix(".svg") {
+        (p, "svg")
+    } else if let Some(p) = pos_with_ext.strip_suffix(".png") {
+        (p, "png")
+    } else {
+        return (StatusCode::NOT_FOUND, "expected .svg or .png").into_response();
+    };
+    let pos: i64 = match pos_str.parse() {
+        Ok(n) => n,
+        Err(_) => return (StatusCode::BAD_REQUEST, "bad pos").into_response(),
+    };
+    match fmt {
+        "svg" => chronicle_qr_svg(Path((id, pos))).await,
+        _     => chronicle_qr_png(Path((id, pos))).await,
+    }
+}
+
 async fn chronicle_qr_png(
     Path((id, pos)): Path<(i64, i64)>,
 ) -> Response {
@@ -27296,8 +27319,13 @@ async fn main() {
         .route("/chronicle-vote", get(chronicle_vote_page))
         .route("/api/chronicle/vote/request", post(chronicle_vote_request))
         .route("/chronicle/vote/confirm/:token", get(chronicle_vote_confirm))
-        .route("/api/qr/c/:id/:pos.svg", get(chronicle_qr_svg))
-        .route("/api/qr/c/:id/:pos.png", get(chronicle_qr_png))
+        // matchit (axum's router) treats `:pos.svg` and `:pos.png` as
+        // conflicting because both reduce to a single capture segment. Use
+        // ONE route that captures the full last segment (e.g. "5.png") and
+        // branch on the extension inside the handler. This preserves the
+        // external URLs /api/qr/c/<id>/<pos>.svg | .png that are already
+        // baked into Printful labels and the chronicle page.
+        .route("/api/qr/c/:id/:pos_with_ext", get(chronicle_qr_dispatch))
         .route("/api/weather", get(weather_handler))
         .route("/api/bid", post(place_bid))
         .route("/api/checkout", post(checkout))
