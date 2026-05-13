@@ -13127,7 +13127,7 @@ async fn admin_ma_gift_list(
     let conn = db.lock().unwrap();
     let mut stmt = match conn.prepare(
         "SELECT id, token, label, status, claim_email, ship_country,
-                printful_order_id, design_url, created_at, claimed_at
+                printful_order_id, design_url, mockup_url, created_at, claimed_at
          FROM ma_gifts ORDER BY id DESC LIMIT 100"
     ) { Ok(s) => s, Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("db: {}", e)).into_response() };
     let rows: Vec<serde_json::Value> = stmt.query_map([], |r| Ok(serde_json::json!({
@@ -13138,9 +13138,11 @@ async fn admin_ma_gift_list(
         "claim_email":  r.get::<_, Option<String>>(4)?,
         "ship_country": r.get::<_, Option<String>>(5)?,
         "printful_order_id": r.get::<_, Option<String>>(6)?,
-        "design_ready": r.get::<_, Option<String>>(7)?.map(|s| !s.is_empty()).unwrap_or(false),
-        "created_at":   r.get::<_, String>(8)?,
-        "claimed_at":   r.get::<_, Option<String>>(9)?,
+        "design_url":   r.get::<_, Option<String>>(7)?,
+        "mockup_url":   r.get::<_, Option<String>>(8)?,
+        "design_ready": r.get::<_, Option<String>>(7)?.map(|s: String| !s.is_empty()).unwrap_or(false),
+        "created_at":   r.get::<_, String>(9)?,
+        "claimed_at":   r.get::<_, Option<String>>(10)?,
     }))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
     Json(serde_json::json!({"count": rows.len(), "gifts": rows})).into_response()
 }
@@ -13365,11 +13367,12 @@ async function submitForm(e){{
 </script>
 </body></html>"##,
         label = html_escape(&label),
-        og_image = html_attr_escape(
-            preview.as_deref()
-                .filter(|u| u.starts_with("http"))
-                .unwrap_or("https://wearmu.com/og.jpg")
-        ),
+        og_image = html_attr_escape(&{
+            let u = preview.as_deref().unwrap_or("");
+            if u.starts_with("http") { u.to_string() }
+            else if u.starts_with('/') { format!("https://wearmu.com{}", u) }
+            else { "https://wearmu.com/og.jpg".to_string() }
+        }),
         preview_block = preview_block,
         already = already,
         disabled = if form_disabled { "disabled" } else { "" },
