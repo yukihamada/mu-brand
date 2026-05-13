@@ -58,6 +58,16 @@ Stanley/Stella SATU001 を選んだ理由:
 
 (era-1 / Bella+Canvas の原価は ¥2,850 だった。 単純に **2 倍** になった)
 
+**SUZURI 経路 (国内 Printstar 5.6oz) の場合:**
+
+| 内訳 | 金額 |
+|---|---:|
+| SUZURI base (Printstar 00148-HVT black M + 国内 DTG + 国内配送) | **¥3,500** (SUZURI 側で完結) |
+| MU creator margin | **¥1,400** |
+| **販売価格** | **¥4,900** |
+
+国内 SUZURI の場合、 在庫管理・印刷・配送はすべて SUZURI 側 (GMO ペパボ運営) で完結します。 wearmu.com は デザイン (texture) を API で送るだけ。 MU には 1 着売れるごとに ¥1,400 (creator margin) が入金されます。 原価という概念は MU には発生せず、 「印刷チャネル提供料」 ¥3,500 を SUZURI 側に支払う形。 これも Constitution §2 (0 humans) の継続のため、 倉庫も発送も触らない。
+
 ---
 
 ## 価格設計
@@ -80,6 +90,30 @@ MA を値**下げ**したのは矛盾に見えるかも知れない。 理由:
 - 原価が同じになった (MA も MUGEN も Stanley/Stella SATU001 ¥5,700)
 - ¥30,000 starting bid は cost に対して 5.3 倍、 1-of-1 として scarcity premium は 取りすぎ
 - Visvim Jumbo (¥18,000) と並ぶ価格点に下げて、 auction で「上がる」 余地を作る方が誠実
+
+---
+
+## SUZURI 経由 (国内発送) の場合は **生地が違います**
+
+ここまで書いた Stanley/Stella SATU001 はすべて **wearmu.com → Stripe → Printful EU 経路** (海外発送・¥7,800〜) の話です。
+
+国内のお客様向けに用意した **SUZURI 経由 ¥4,900 (2-3 日 国内発送)** は、 SUZURI 側のヘビーウェイト T シャツ (Printstar 00148-HVT) を使います。 Stanley/Stella SATU001 とは別物です。
+
+| 経路 | 生地 | リブ襟 | 認証 | プリント | 配送 | 価格 |
+|---|---|---|---|---|---|---|
+| **SUZURI** (JP) | Printstar 00148-HVT 5.6oz | なし (generic crew) | なし | 国内 DTG | 2-3 日 | **¥4,900** |
+| **wearmu.com Stripe** (海外 / collectors) | Stanley/Stella SATU001 180gsm | **あり** (織りリブ) | **GOTS** organic | Printful EU DTG | 1-2 週 | ¥7,800 |
+
+正直に言うと、 SUZURI の Printstar は普通のしっかりした 5.6oz ヘビーT で、 触った瞬間に分かる「Visvim 級のリブ襟ディテール」 はありません。 ただ:
+
+- 国内 2-3 日着、 ¥4,900 (Stripe + EU 経路の **63%**)
+- 「お客様 が気楽に試す MUGEN」 として正しい価格点
+- 同じデザイン、 同じ気温 seed、 同じ 1-of-108 ナンバリング
+- DTG プリント、 ホワイトインクのみ (§25 デザイン directive 準拠)
+
+**Stanley/Stella SATU001 のリブ襟が必要な方は wearmu.com の Stripe 購入を選んでください。** 海外発送扱いになりますが (国内へも届きます)、 生地は EU organic + リブ襟 + GOTS 認証 の正規です。 SUZURI 経路は「気軽に MU を着てみる」ためのチャネル、 Stripe 経路は「Stanley/Stella 正規」 と区別しています。
+
+§24-v2 として Constitution に明文化されています (国内 SUZURI / 海外 Stanley/Stella の dual-channel)。
 
 ---
 
@@ -112,12 +146,13 @@ m5 generate.py の prompt directive を更新済み。 era-2 の MUGEN は era-1
 
 ## 何をしたい人にどれをすすめるか
 
-| あなたが | おすすめ | 理由 |
-|---|---|---|
-| MU を試しに 1 着 | era-2 MUGEN ¥7,800 | リブ襟 + EU organic、 価格カーブの根元 |
-| 既に MU を 1 着持っている | era-2 MUON daily (¥7,800〜) | 自分のシャツの履歴と並ぶ別 era ピース |
-| コレクター | era-2 MA ¥18,000〜 | 1-of-1、 auction で更に上がる |
-| era-1 (Bella) を確保しておきたい | drop 1-147 の MUGEN | 今しか買えない、 fabric era アーカイブ |
+| あなたが | おすすめ | 経路 | 理由 |
+|---|---|---|---|
+| 国内のお客様で気軽に試したい | **SUZURI 経由 ¥4,900** | suzuri.jp | Printstar 5.6oz、 国内 2-3 日着、 価格カーブ的にも一番ライト |
+| Stanley/Stella リブ襟が欲しい | era-2 MUGEN **¥7,800** | wearmu.com Stripe (Printful EU) | リブ襟 + GOTS organic + EU 製、 「触って気付く」 ディテール込み |
+| 既に MU を 1 着持っている | era-2 MUON daily (¥7,800〜) | wearmu.com Stripe | 自分のシャツの履歴と並ぶ別 era ピース |
+| コレクター | era-2 MA ¥18,000〜 | wearmu.com Stripe | 1-of-1、 auction で更に上がる、 Stanley/Stella 正規 |
+| era-1 (Bella) を確保しておきたい | drop 1-147 の MUGEN | wearmu.com Stripe | 今しか買えない、 fabric era アーカイブ |
 
 ---
 
