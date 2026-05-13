@@ -303,12 +303,40 @@ footer a{color:inherit;text-decoration:underline}
   <p>これは「お客様の声を聞く」ではなく「<strong>お客様 = brand</strong>」という構造。Amazon にはこれが作れなかった。理由は単純で、人間 154 万人を従わせる組織のコアロジックと矛盾するから。MU は最初から作るので、矛盾しない。</p>
 </section>
 
+<!-- Protocol: what you can do with this -->
+<section>
+  <div class="eyebrow">08 — Use the protocol</div>
+  <h2>MU はプロトコルでもある。<br>これで何ができるか。</h2>
+  <p>
+    MU のコードはすべて <a href="https://github.com/yukihamada/mu-brand"><strong>github.com/yukihamada/mu-brand</strong></a> に MIT ライセンスで公開しています。
+    Rust + libsql + Gemini + Stripe + Printful の組み合わせ。<strong>30,000 LOC、1 つのリポジトリ、Fly.io 1 process、月 ~$57 で運用</strong>。
+    fork してできることの例:
+  </p>
+  <ul>
+    <li><strong>あなたの街の気温で T シャツを作る</strong> — Teshikaga (北海道) を東京・ホノルル・サンパウロに差し替えれば、その街の気温が枚数を決めるブランドが立ち上がる</li>
+    <li><strong>無人 EC ラインを 24h で立ち上げる</strong> — 焼肉店なら焼肉古今 ([kokon.tokyo](https://kokon.tokyo))、柔術メディアなら JiuFlow ([jiuflow.com](https://jiuflow.com))。ロゴ・トーン・素材を渡すと 30 SKU が AI で生成され、Printful で受注生産、Stripe で課金</li>
+    <li><strong>「お客様 1 人専用」のサブスク</strong> — /you と同じパターンで、毎朝 1 案が AI から届くサブスクを fork できる</li>
+    <li><strong>透明性 API を自社に</strong> — <code>/api/transparency</code> と同じく、Stripe / DB から live 集計して数字を全公開するエンドポイントを 1 関数で生成</li>
+    <li><strong>0 人運営の audit trail</strong> — <code>git log</code> が監査ログ、Constitution v1 (Vision §1-4 + 20 原則) が AI agent の挙動ルール</li>
+  </ul>
+  <p>
+    最初の一歩は 2 つ:
+  </p>
+  <div style="display:flex;flex-wrap:wrap;gap:12px;margin:18px 0">
+    <a class="btn" href="/you" style="flex:1;min-width:240px">B2C で試す — /you に登録 (30日無料)</a>
+    <a class="btn alt" href="/collab" style="flex:1;min-width:240px">B2B で立ち上げる — /collab で 24h ライン</a>
+  </div>
+  <p style="font-size:11px;opacity:0.6;line-height:1.9">
+    どちらのフォームから来ても、24 時間以内に <strong>AI が生成した 3 SKU プレビュー</strong>がメールに自動配信されます。気に入れば残り 27 SKU で本ローンチ、気に入らなければ返信不要 — リソース消費はメール 1 通だけ。
+  </p>
+</section>
+
 <!-- CTA -->
 <div class="cta">
   <h2>このビジョンに、1 行で参加する。</h2>
   <p>登録は 1 分、トライアル 30 日、一生 ¥0 への道は MU Tシャツ 1 着。</p>
   <a class="btn" href="/you">MUer になる →</a>
-  <a class="btn alt" href="/ma">MA Council を狙う →</a>
+  <a class="btn alt" href="/collab">/collab で B2B ラインを立てる →</a>
 </div>
 
 <footer>
