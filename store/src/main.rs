@@ -12288,11 +12288,115 @@ async fn generate_ma_gift_design(token: String, brief: String, db: Db) {
         stored,
         if claim_email.is_some() { "design_ready (recipient already claimed, firing Printful)" } else { "design_ready (waiting for claim)" }
     )).await;
+    // Kick off a Printful mockup-generator task in parallel so the OGP shows
+    // a real T-shirt-on-model image (not the raw design). Saves to mockup_url.
+    let tk_for_mockup = token.clone();
+    let design_for_mockup = stored.clone();
+    let db_for_mockup = db.clone();
+    tokio::spawn(async move {
+        generate_ma_gift_mockup(tk_for_mockup, design_for_mockup, db_for_mockup).await;
+    });
     // If already claimed, fire Printful order now.
     if let (Some(_), Some(_)) = (claim_email.clone(), ship_name.clone()) {
         let _ = now;
         fire_ma_gift_printful_order(db.clone(), token.clone()).await;
     }
+}
+
+/// Call Printful's Mockup Generator to render the design on a Bella+Canvas 3001
+/// Black tee photo. Async task: POST /mockup-generator/create-task, poll
+/// /mockup-generator/task?task_key=... until complete, then store the result
+/// URL in ma_gifts.mockup_url. The product-detail / claim page uses this for
+/// the og:image so DM previews on FB Messenger / X show a real shirt.
+async fn generate_ma_gift_mockup(token: String, design_url: String, db: Db) {
+    let key = env::var("PRINTFUL_API_KEY").unwrap_or_default();
+    if key.is_empty() {
+        eprintln!("[ma_gift_mockup] {}: no PRINTFUL_API_KEY", token);
+        return;
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build().unwrap_or_else(|_| reqwest::Client::new());
+    // Black Bella+Canvas 3001 variant range = 4015..4029 (one per size).
+    // Use M (4017) for the showcase mockup.
+    let create_body = serde_json::json!({
+        "variant_ids": [4017],
+        "format": "png",
+        "files": [{
+            "placement": "front",
+            "image_url": design_url,
+            "position": {
+                "area_width": 1800, "area_height": 2400,
+                "width": 1260, "height": 1260,
+                "top": 380, "left": 270,
+            }
+        }]
+    });
+    let create_url = "https://api.printful.com/mockup-generator/create-task/71";
+    let task_key: Option<String> = match client.post(create_url)
+        .bearer_auth(&key).json(&create_body).send().await
+    {
+        Ok(r) if r.status().is_success() => {
+            r.json::<serde_json::Value>().await.ok()
+                .and_then(|j| j["result"]["task_key"].as_str().map(String::from))
+        }
+        Ok(r) => {
+            let s = r.status();
+            let b = r.text().await.unwrap_or_default();
+            eprintln!("[ma_gift_mockup] {}: create-task {}: {}", token, s, b.chars().take(300).collect::<String>());
+            None
+        }
+        Err(e) => { eprintln!("[ma_gift_mockup] {}: create-task err: {}", token, e); None }
+    };
+    let Some(task_key) = task_key else {
+        send_telegram_message(&format!(
+            "⚠️ MA gift mockup create-task failed · token={}",
+            &token[..8.min(token.len())]
+        )).await;
+        return;
+    };
+    // Poll task until 'completed' (Printful needs ~10-60s).
+    let mut mockup_url: Option<String> = None;
+    for attempt in 0..30 {
+        tokio::time::sleep(std::time::Duration::from_secs(if attempt == 0 { 5 } else { 4 })).await;
+        let poll = format!("https://api.printful.com/mockup-generator/task?task_key={}", task_key);
+        let r = match client.get(&poll).bearer_auth(&key).send().await {
+            Ok(r) => r,
+            Err(e) => { eprintln!("[ma_gift_mockup] poll err: {}", e); continue; }
+        };
+        if !r.status().is_success() { continue; }
+        let j: serde_json::Value = match r.json().await { Ok(v) => v, Err(_) => continue };
+        let status = j["result"]["status"].as_str().unwrap_or("");
+        if status == "completed" {
+            mockup_url = j["result"]["mockups"][0]["mockup_url"].as_str().map(String::from);
+            break;
+        }
+        if status == "failed" {
+            eprintln!("[ma_gift_mockup] {}: task failed: {}", token, j);
+            break;
+        }
+    }
+    let Some(remote_url) = mockup_url else {
+        send_telegram_message(&format!(
+            "⚠️ MA gift mockup never completed · token={}",
+            &token[..8.min(token.len())]
+        )).await;
+        return;
+    };
+    // Persist the Printful mockup URL (it's already a CDN URL; we just save it).
+    // For OG image stability, optionally we could mirror to R2 — for now,
+    // direct Printful CDN is fine (FB / X cache the preview).
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE ma_gifts SET mockup_url=? WHERE token=?",
+            params![remote_url, token],
+        );
+    }
+    send_telegram_message(&format!(
+        "📸 MA gift mockup ready · token={}\nmockup: {}",
+        &token[..8.min(token.len())], remote_url
+    )).await;
 }
 
 /// Fire a free Printful order for a fully-ready MA gift (status='design_ready'
@@ -12520,6 +12624,19 @@ async fn ma_gift_claim_page(
 <title>{label} · MA Gift — 受取登録 | MU</title>
 <meta name="description" content="MU 間 MA の commemorative piece、受取登録ページ。1-of-1、世界に 1 着。">
 <meta name="robots" content="noindex,nofollow">
+<meta property="og:title" content="{label} · 世界に 1 着の MA を受け取る">
+<meta property="og:description" content="MU からの 1-of-1 commemorative Tシャツ。AI が生成したデザイン、送料込みで MU 負担。住所を入力すれば Printful から発送。">
+<meta property="og:image" content="{og_image}">
+<meta property="og:image:width" content="1024">
+<meta property="og:image:height" content="1024">
+<meta property="og:url" content="https://wearmu.com/claim/ma/{token}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="MU / wearmu.com">
+<meta property="og:locale" content="ja_JP">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{label} · 世界に 1 着の MA を受け取る">
+<meta name="twitter:description" content="MU からの 1-of-1 commemorative T シャツ。住所入力で受取登録。">
+<meta name="twitter:image" content="{og_image}">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
 :root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--line:rgba(255,255,255,0.08)}}
@@ -12618,10 +12735,15 @@ async function submitForm(e){{
 </script>
 </body></html>"##,
         label = html_escape(&label),
+        og_image = html_attr_escape(
+            preview.as_deref()
+                .filter(|u| u.starts_with("http"))
+                .unwrap_or("https://wearmu.com/og.jpg")
+        ),
         preview_block = preview_block,
         already = already,
         disabled = if form_disabled { "disabled" } else { "" },
-        token = token,
+        token = html_escape(&token),
     ))
 }
 
