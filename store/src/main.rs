@@ -4357,28 +4357,76 @@ async fn checkout(
 // info@wearmu.com 等への受信 email を customer_feedback に保存し、
 // 既存の agent_customer_support (30min cron) が AI 返信草案を作る。
 //
-// Resend ダッシュボード設定:
-//   1) Domains → wearmu.com → MX records を Resend 指示通りに DNS 設定
-//   2) Webhooks → Add → URL: https://wearmu.com/api/webhook/resend-inbound?secret=<RESEND_INBOUND_SECRET>
-//      Events: email.received
-//   3) fly secrets set RESEND_INBOUND_SECRET=<長いランダム文字列> -a mu-store
+// Resend Dashboard:
+//   1) Domains → wearmu.com → Inbound 有効化 + MX records を DNS に設定
+//   2) Webhooks → Add → URL: https://wearmu.com/api/webhook/resend-inbound
+//      Events: email.received → Signing secret (whsec_...) を copy
+//   3) fly secrets set RESEND_INBOUND_SVIX_SECRET=whsec_... -a mu-store
 //
-// Svix 署名検証は TODO (現状は URL の ?secret= による事前共有鍵)。
+// 署名検証: Svix HMAC-SHA256 over (svix-id + "." + svix-timestamp + "." + body)
+fn svix_verify(secret: &str, msg_id: &str, ts: &str, body: &str, sig_header: &str) -> bool {
+    use sha2::Sha256;
+    use hmac::{Hmac, Mac};
+    type HmacSha256 = Hmac<Sha256>;
+    let key_b64 = secret.strip_prefix("whsec_").unwrap_or(secret);
+    let key = match svix_base64_decode(key_b64) {
+        Some(k) => k,
+        None => return false,
+    };
+    let to_sign = format!("{}.{}.{}", msg_id, ts, body);
+    let mut mac = match HmacSha256::new_from_slice(&key) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    mac.update(to_sign.as_bytes());
+    let expected = mac.finalize().into_bytes();
+    let expected_b64 = svix_base64_encode(&expected);
+    sig_header.split(' ').any(|part| {
+        match part.split_once(',') {
+            Some(("v1", sig)) => svix_constant_time_eq(sig.as_bytes(), expected_b64.as_bytes()),
+            _ => false,
+        }
+    })
+}
+fn svix_base64_decode(s: &str) -> Option<Vec<u8>> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.decode(s.as_bytes()).ok()
+        .or_else(|| base64::engine::general_purpose::STANDARD_NO_PAD.decode(s.as_bytes()).ok())
+}
+fn svix_base64_encode(b: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(b)
+}
+fn svix_constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() { return false; }
+    let mut diff: u8 = 0;
+    for (x, y) in a.iter().zip(b.iter()) { diff |= x ^ y; }
+    diff == 0
+}
+
 async fn resend_inbound_webhook(
     State(db): State<Db>,
-    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
-    Json(body): Json<serde_json::Value>,
+    headers: HeaderMap,
+    raw_body: String,
 ) -> Response {
-    // Shared-secret gate (TODO: replace with Svix signature verify)
-    let expected = env::var("RESEND_INBOUND_SECRET").unwrap_or_default();
-    let provided = q.get("secret").map(String::as_str).unwrap_or("");
-    if expected.is_empty() {
-        eprintln!("[resend-inbound] RESEND_INBOUND_SECRET env var is not set — rejecting");
+    let secret = env::var("RESEND_INBOUND_SVIX_SECRET").unwrap_or_default();
+    if secret.is_empty() {
+        eprintln!("[resend-inbound] RESEND_INBOUND_SVIX_SECRET env var is not set");
         return (StatusCode::SERVICE_UNAVAILABLE, "inbound disabled").into_response();
     }
-    if provided != expected {
-        return (StatusCode::UNAUTHORIZED, "bad secret").into_response();
+    let msg_id = headers.get("svix-id").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let ts     = headers.get("svix-timestamp").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let sig    = headers.get("svix-signature").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    if msg_id.is_empty() || ts.is_empty() || sig.is_empty() {
+        return (StatusCode::UNAUTHORIZED, "missing svix headers").into_response();
     }
+    if !svix_verify(&secret, &msg_id, &ts, &raw_body, &sig) {
+        return (StatusCode::UNAUTHORIZED, "bad signature").into_response();
+    }
+    let body: serde_json::Value = match serde_json::from_str(&raw_body) {
+        Ok(v) => v,
+        Err(_) => return (StatusCode::BAD_REQUEST, "bad json").into_response(),
+    };
 
     // Resend's email.received payload (loose parse — schema may evolve).
     //   { type: "email.received", data: { from: {email,...}, to: [{email}],
@@ -23166,7 +23214,9 @@ async fn main() {
         .route("/ma", get(index))
         .route("/muon", get(index))
         .route("/mugen", get(index))
-        .route("/nouns", get(index))
+        // /nouns: DAO approval pending → section hidden from nav (2026-05-13).
+        // Proposal text remains at /nouns-proposal.html for transparency.
+        .route("/nouns", get(|| async { axum::response::Redirect::permanent("/nouns-proposal.html") }))
         // Product detail SPA routes
         .route("/products/:brand/:id", get(index))
         // API routes
@@ -23688,6 +23738,11 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         interval_secs: 86_400, // 24h
         description: "median score < 0.70 なテンプレを persona suggestion 統合で Gemini に rewrite させ email_rewrite_drafts に保存 (適用は /admin/email-rewrites で人間が承認)",
     },
+    AgentDef {
+        name: "drop_filler",
+        interval_secs: 21_600, // 6h
+        description: "MUGEN drop_num + MUON 日付の欠番を検知し、generate.py の正確なコマンドを Telegram で yuki に提示 (Fly app から Python 実行不可なので nudge 型)",
+    },
 ];
 
 /// agent_journal から指定 agent の最後の cycle_at (epoch sec) を取得。
@@ -23729,6 +23784,7 @@ async fn run_agent(name: &str, db: Db) -> Result<AgentReport, String> {
         "email_critic"      => agent_email_critic(db).await,
         "bounty_triage"     => agent_bounty_triage(db).await,
         "email_rewriter"    => agent_email_rewriter(db).await,
+        "drop_filler"       => agent_drop_filler(db).await,
         _ => Err(format!("unknown agent: {}", name)),
     }
 }
@@ -27801,6 +27857,7 @@ async fn agent_email_critic(db: Db) -> Result<AgentReport, String> {
     };
 
     let mut scored = 0i64;
+    let mut skipped_unchanged = 0i64;
     let mut total_in_tok = 0i64;
     let mut total_out_tok = 0i64;
     let mut worst: Vec<(String, String, String, f64)> = Vec::new();
@@ -27830,6 +27887,36 @@ async fn agent_email_critic(db: Db) -> Result<AgentReport, String> {
                 _ => continue,
             };
             let plain = strip_html_tags(&html);
+
+            // Diff trigger: skip the 12 Gemini calls per (kind, variant) when the
+            // template content hasn't changed since the last successful score.
+            // Hash subject+plain SHA-256 (first 16 hex chars) and compare to the
+            // value cached in cv_config from the previous run. Rescore anyway
+            // if the cache is older than 14 days (safety net).
+            let template_hash = {
+                use sha2::{Digest, Sha256};
+                let mut h = Sha256::new();
+                h.update(subject.as_bytes());
+                h.update(b"||");
+                h.update(plain.as_bytes());
+                hex::encode(&h.finalize()[..16])
+            };
+            let cache_hash_key = format!("email_critic_hash_{}_{}", kind, variant);
+            let cache_at_key   = format!("email_critic_at_{}_{}", kind, variant);
+            let (cached_hash, cached_at) = {
+                let conn = db.lock().unwrap();
+                let h = cv_get(&conn, &cache_hash_key, "");
+                let a: i64 = cv_get(&conn, &cache_at_key, "0").parse().unwrap_or(0);
+                (h, a)
+            };
+            let now_s: i64 = chrono_now().parse().unwrap_or(0);
+            let unchanged = cached_hash == template_hash
+                && (now_s - cached_at).abs() < 14 * 86_400;
+            if unchanged {
+                skipped_unchanged += 1;
+                continue;  // skip the 4 × 3 = 12 Gemini calls for this (kind,variant)
+            }
+
             let prompt = format!(
                 "{}\n---\nEMAIL UNDER REVIEW:\nkind: {}  variant: {}\nsubject: {}\nbody (plain text):\n{}\n",
                 EMAIL_CRITIC_PROMPT, kind, variant, subject, plain);
@@ -27925,6 +28012,12 @@ async fn agent_email_critic(db: Db) -> Result<AgentReport, String> {
                     worst.push((format!("{}/{}", kind, variant), (*persona).into(), suggestion.clone(), score));
                 }
             }
+            // Persist template hash + scored_at so next cycle can skip when unchanged.
+            {
+                let conn = db.lock().unwrap();
+                cv_set(&conn, &cache_hash_key, &template_hash, "email_critic");
+                cv_set(&conn, &cache_at_key, &now_s.to_string(), "email_critic");
+            }
         }
     }
     {
@@ -27932,6 +28025,7 @@ async fn agent_email_critic(db: Db) -> Result<AgentReport, String> {
         let _ = budget_record(&conn, "email_critic", "gemini-2.5-flash", total_in_tok, total_out_tok);
     }
     obs.insert("scored_rows".into(), serde_json::Value::from(scored));
+    obs.insert("skipped_unchanged".into(), serde_json::Value::from(skipped_unchanged));
     obs.insert("low_score_count".into(), serde_json::Value::from(worst.len() as i64));
     actions.push(serde_json::json!({"rows": scored, "tok_in": total_in_tok, "tok_out": total_out_tok}));
 
@@ -28923,6 +29017,61 @@ async fn agent_funnel_anomaly(db: Db) -> Result<AgentReport, String> {
 // ── Agent 20: musk_review (founder persona) ────────────────────────────
 async fn agent_musk_review(db: Db) -> Result<AgentReport, String> {
     founder_review(db, "musk", MUSK_PROMPT).await
+}
+
+// ── Agent: drop_filler ─────────────────────────────────────────────────
+// Detect missing MUGEN drop_num + MUON dates and surface them as actionable
+// Telegram notifications. Fly app cannot execute generate.py (Python runs on
+// m5 Mac cron). This agent prompts yuki with the exact command to backfill,
+// so the 11+7 visible "ops gaps" close without a Python-in-Fly migration.
+//
+// Cadence: 6h. Notable=true only when gap_count > 0 AND last_nudge > 18h
+// (dedup so we don't spam yuki).
+async fn agent_drop_filler(db: Db) -> Result<AgentReport, String> {
+    let (mugen_missing, muon_missing) = {
+        let conn = db.lock().unwrap();
+        let dm = detect_missing_drops(&conn);
+        let mugen: Vec<i64> = dm["mugen_missing_drops"].as_array()
+            .map(|a| a.iter().filter_map(|v| v.as_i64()).collect())
+            .unwrap_or_default();
+        let muon: Vec<String> = dm["muon_missing_dates"].as_array()
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        (mugen, muon)
+    };
+    let total_gaps = (mugen_missing.len() + muon_missing.len()) as i64;
+    if total_gaps == 0 {
+        return Ok(AgentReport::idle("no missing drops"));
+    }
+    let commands: Vec<String> = mugen_missing.iter().take(3)
+        .map(|n| format!("python3 generate.py --mugen={}", n))
+        .chain(muon_missing.iter().take(2)
+            .map(|d| format!("python3 generate.py --muon={}", d)))
+        .collect();
+    let summary = format!(
+        "drop_filler: MUGEN {} / MUON {} ホール検出。優先 {} 件のコマンド提示",
+        mugen_missing.len(), muon_missing.len(), commands.len()
+    );
+    let observations = serde_json::json!({
+        "mugen_missing_count": mugen_missing.len(),
+        "muon_missing_count": muon_missing.len(),
+        "mugen_first5": mugen_missing.iter().take(5).collect::<Vec<_>>(),
+        "muon_first5": muon_missing.iter().take(5).collect::<Vec<_>>(),
+    });
+    let actions: Vec<serde_json::Value> = commands.iter().enumerate()
+        .map(|(i, c)| serde_json::json!({"priority": i+1, "cmd": c}))
+        .collect();
+    Ok(AgentReport {
+        observations,
+        decisions: vec![serde_json::json!({
+            "type": "backfill_nudge",
+            "total_gaps": total_gaps,
+            "cmds_proposed": commands.len(),
+        })],
+        actions,
+        summary,
+        notable: total_gaps > 0,
+    })
 }
 
 // ── Agent 21: bezos_review (founder persona) ───────────────────────────
