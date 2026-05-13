@@ -37,6 +37,10 @@ on:
     # Hourly :25 — MUGEN auto-generate (Gemini 3 Pro Image → Printful → DB).
     # Watchdog on Fly alerts if no new MUGEN in 6h.
     - cron: '25 * * * *'
+    # Every 5 min — external uptime watcher. Pings /healthz from outside Fly
+    # so a Fly outage / DNS issue / panic-loop trips Telegram even when the
+    # internal Fly watchdog is also down.
+    - cron: '*/5 * * * *'
   workflow_dispatch:
     inputs:
       target:
@@ -56,6 +60,7 @@ on:
           - sample_grow_force
           - konbini_reminder
           - mugen_generate
+          - uptime_ping
 
 permissions:
   contents: read
@@ -400,4 +405,41 @@ jobs:
             curl -fsS -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
               -d "chat_id=${TG_CHAT}" \
               -d "text=⚠️ mugen_generate cron failed (${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}). Fly watchdog will alert again if this persists."
+          fi
+
+  uptime_ping:
+    # Every 5 min — external uptime probe (3-retry + 30s spacing). Failure
+    # path Telegram-alerts the user. Cheap insurance against the Fly
+    # internal watchdog itself going down or DNS regressions.
+    if: github.event.schedule == '*/5 * * * *' || github.event.inputs.target == 'uptime_ping'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Probe /healthz
+        id: probe
+        run: |
+          set +e
+          for i in 1 2 3; do
+            code=$(curl -sS -o /tmp/body -w "%{http_code}" --max-time 12 "${BASE_URL}/healthz")
+            if [ "$code" = "200" ]; then
+              echo "ok ($code)"
+              echo "ok=1" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+            echo "attempt $i: code=$code"
+            sleep 30
+          done
+          echo "ok=0" >> $GITHUB_OUTPUT
+          echo "last_code=$code" >> $GITHUB_OUTPUT
+          exit 1
+      - name: Telegram alert on persistent failure
+        if: failure()
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT:  ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT" ]; then
+            curl -fsS -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+              -d "chat_id=${TG_CHAT}" \
+              -d "text=🚨 wearmu.com /healthz DOWN — 3x retries failed. ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           fi
