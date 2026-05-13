@@ -1346,7 +1346,7 @@ async fn cron_konbini_reminder(
                  "<p>こんにちは,</p>\
                   <p>MU でのご注文 <b>{name}</b> (¥{amt}) のコンビニ払込番号をお送りします。</p>\
                   <p>有効期限: <b>{exp}</b><br><a href=\"{url}\">こちら</a> から払込番号を表示し、お近くのコンビニ (ローソン / ファミマ / セイコーマート / ミニストップ) でお支払いください。</p>\
-                  <p>ご質問は本メールへの返信、または info@enablerdao.com まで。<br>— MU / 株式会社イネブラ</p>",
+                  <p>ご質問は本メールへの返信、または info@wearmu.com まで。<br>— MU / 株式会社イネブラ</p>",
                  name = html_escape(&item_name), amt = fmt_jpy(amount_total),
                  exp = html_escape(&exp_str), url = html_attr_escape(&session_url),
              ))
@@ -1357,11 +1357,11 @@ async fn cron_konbini_reminder(
                 .post("https://api.resend.com/emails")
                 .bearer_auth(&resend_key)
                 .json(&serde_json::json!({
-                    "from": "MU <info@enablerdao.com>",
+                    "from": "MU <info@wearmu.com>",
                     "to": [email.clone()],
                     "subject": subject,
                     "html": html,
-                    "reply_to": "info@enablerdao.com",
+                    "reply_to": "info@wearmu.com",
                 }))
                 .timeout(std::time::Duration::from_secs(15))
                 .send().await;
@@ -2135,7 +2135,7 @@ async fn buyer_profile_page(
   <h2>orders</h2>
   <div>{orders_html}</div>
   <footer>
-    bio を編集したい場合は <a href="mailto:info@enablerdao.com?subject=buyer-bio">info@enablerdao.com</a> まで。<br>
+    bio を編集したい場合は <a href="mailto:info@wearmu.com?subject=buyer-bio">info@wearmu.com</a> まで。<br>
     この URL を取り消したい場合も同じ宛先へどうぞ (24h 以内に対応)。
   </footer>
 </div></body></html>"#,
@@ -2230,7 +2230,7 @@ async fn api_bounty_submit(
                 |r| r.get(0),
             ).unwrap_or(0);
             if recent >= 5 { return (StatusCode::TOO_MANY_REQUESTS,
-                Json(serde_json::json!({"ok":false,"error":"rate limit (5 reports / 24h per IP); please email info@enablerdao.com directly"}))).into_response(); }
+                Json(serde_json::json!({"ok":false,"error":"rate limit (5 reports / 24h per IP); please email info@wearmu.com directly"}))).into_response(); }
         }
         let _ = conn.execute(
             "INSERT INTO bounty_submissions
@@ -2277,7 +2277,7 @@ async fn api_bounty_submit(
                     "to": [r_email.clone()],
                     "subject": ack_subject,
                     "html": ack_body,
-                    "reply_to": "info@enablerdao.com",
+                    "reply_to": "info@wearmu.com",
                 }))
                 .send().await;
         }
@@ -3717,7 +3717,7 @@ async fn api_collab_signup(
                 |r| r.get(0),
             ).unwrap_or(0);
             if recent >= 3 { return (StatusCode::TOO_MANY_REQUESTS,
-                Json(serde_json::json!({"ok":false,"error":"rate limit (3 signups / 24h per IP); please email info@enablerdao.com"}))).into_response(); }
+                Json(serde_json::json!({"ok":false,"error":"rate limit (3 signups / 24h per IP); please email info@wearmu.com"}))).into_response(); }
         }
         let _ = conn.execute(
             "INSERT INTO collab_signups
@@ -3766,7 +3766,7 @@ async fn api_collab_signup(
                     "to": [contact_email.clone()],
                     "subject": subj,
                     "html": html,
-                    "reply_to": "info@enablerdao.com",
+                    "reply_to": "info@wearmu.com",
                 }))
                 .send().await;
         }
@@ -10292,7 +10292,7 @@ fn thank_you_email_html(coupon_code: &str) -> String {
   </ul>
 
   <p style="font-size:13px;line-height:1.95;opacity:0.85;margin:30px 0 8px">
-    返信はそのまま <a href="mailto:info@enablerdao.com" style="color:#e6c449">info@enablerdao.com</a> に届きます。または <a href="https://wearmu.com/you" style="color:#e6c449">/you</a> の「MU AI に直接送る」フォームでも (Gemini が即返答 + 私が今日中に読みます)。
+    返信はそのまま <a href="mailto:info@wearmu.com" style="color:#e6c449">info@wearmu.com</a> に届きます。または <a href="https://wearmu.com/you" style="color:#e6c449">/you</a> の「MU AI に直接送る」フォームでも (Gemini が即返答 + 私が今日中に読みます)。
   </p>
   <p style="font-size:13px;line-height:1.95;opacity:0.85">
     本当に、ありがとう。
@@ -10404,7 +10404,7 @@ async fn admin_thank_buyers(
                 "to": [email],
                 "subject": subject,
                 "html": html,
-                "reply_to": "info@enablerdao.com",
+                "reply_to": "info@wearmu.com",
             }))
             .send().await;
         match send_res {
@@ -10563,7 +10563,7 @@ async fn gemini_feedback_reply(message: &str, is_lifetime: bool, is_ma_council: 
 - 過剰な謝罪は禁止、業務報告として簡潔に
 - 機能要望なら「要検討の優先度を○○として記録した」と返す
 - 数字や約束は捏造禁止 (subscribers 9 / lifetime 3 / 本売 5 件 ¥145,000 まで)
-- 必要なら info@enablerdao.com を提示
+- 必要なら info@wearmu.com を提示
 - MA Council にはより丁寧かつ「次回 council 議題で扱う」と明記
 - 末尾に「— MU AI (Gemini 2.5)」と書く
 
@@ -10801,7 +10801,7 @@ async fn send_blog_digest(db: &Db, slug: &str, title: &str, body_md: &str) -> Re
     let mut sent = 0i64;
     for to in recipients {
         let body = serde_json::json!({
-            "from": "MU <info@enablerdao.com>",
+            "from": "MU <info@wearmu.com>",
             "to": [to],
             "subject": format!("📓 {} — MU Field log", title),
             "html": html,
@@ -13133,7 +13133,7 @@ footer{{padding:48px 32px;border-top:1px solid rgba(255,255,255,0.06);text-align
 
 <div class="cta">
 <h2>Your city, your MU.</h2>
-<p>自分の都市の MU operator になりたい場合は、<a href="https://github.com/yukihamada/mu-brand/blob/main/docs/MU_PROTOCOL.md" style="color:#e6c449">MU_PROTOCOL.md</a> を読んで <a href="mailto:info@enablerdao.com" style="color:#e6c449">info@enablerdao.com</a> まで。Honolulu satellite #001 は pilot 中。</p>
+<p>自分の都市の MU operator になりたい場合は、<a href="https://github.com/yukihamada/mu-brand/blob/main/docs/MU_PROTOCOL.md" style="color:#e6c449">MU_PROTOCOL.md</a> を読んで <a href="mailto:info@wearmu.com" style="color:#e6c449">info@wearmu.com</a> まで。Honolulu satellite #001 は pilot 中。</p>
 </div>
 </div>
 <footer>MU — wearmu.com / MU is a wearable timestamp.</footer>
@@ -13648,7 +13648,7 @@ footer a{{color:inherit;text-decoration:underline}}
 <div class="note">
   パスワードは知り合いに渡して下さい。リンクには <code>?pass={pw}</code> が必要 (このページが見えてるという事はあなたは合っています)。
   cookie は 30 日間有効。<br>
-  公開を急ぐ場合は <a href="mailto:info@enablerdao.com">info@enablerdao.com</a>。
+  公開を急ぐ場合は <a href="mailto:info@wearmu.com">info@wearmu.com</a>。
 </div>
 <div class="grid">
 {cards}
@@ -13661,7 +13661,7 @@ footer a{{color:inherit;text-decoration:underline}}
 </div>
 <footer>
   MU × SWEEP draft preview · 株式会社イネブラ (Enabler Inc.) ·
-  <a href="mailto:info@enablerdao.com">info@enablerdao.com</a> ·
+  <a href="mailto:info@wearmu.com">info@wearmu.com</a> ·
   <a href="/sweep?logout=1">ログアウト</a>
 </footer>
 <script>
@@ -13958,7 +13958,7 @@ footer a{{color:inherit;text-decoration:underline}}
 </div>
 <footer>
   MU × kokon.tokyo — 公式ローンチ · 株式会社イネブラ (Enabler Inc.) ·
-  <a href="mailto:info@enablerdao.com">info@enablerdao.com</a> ·
+  <a href="mailto:info@wearmu.com">info@wearmu.com</a> ·
   <a href="/collab">他のブランドの方は MU Collab →</a>
 </footer>
 <script>
@@ -17421,7 +17421,7 @@ async fn api_collab_apply(
             .post("https://api.resend.com/emails")
             .bearer_auth(&resend_key)
             .json(&serde_json::json!({
-                "from": "MU <info@enablerdao.com>",
+                "from": "MU <info@wearmu.com>",
                 "to": [email],
                 "subject": format!("MU × {} コラボ提案サマリ (AI 自動生成)", company),
                 "html": html,
@@ -17588,7 +17588,7 @@ button:hover{opacity:0.85}
 <form class="box" method="get" action="/sweep">
   <div class="logo">MU × SWEEP</div>
   <h1>Draft preview · password required</h1>
-  <p>SWEEP社 サインオフ前のため、このページは関係者限定です。<br>パスワードをお持ちでない方は <a style="color:#e6c449" href="mailto:info@enablerdao.com">info@enablerdao.com</a> までご連絡ください。</p>
+  <p>SWEEP社 サインオフ前のため、このページは関係者限定です。<br>パスワードをお持ちでない方は <a style="color:#e6c449" href="mailto:info@wearmu.com">info@wearmu.com</a> までご連絡ください。</p>
   <input name="pass" type="password" placeholder="password" autofocus autocomplete="current-password">
   <button type="submit">Enter →</button>
   <div class="foot"><a href="/">← MU トップへ戻る</a></div>
@@ -21830,7 +21830,7 @@ async fn main() {
          Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
          Some(r#"[{"id":"stitch_color","value":"black"}]"#), 10, 1),
         ("sweep-iphone-case",   "iPhone クリアケース",   "MU × SIIIEEP Clear Case for iPhone",
-         "Printful Clear Case for iPhone® (pid 181)、iPhone 15 標準。背面に SIIIEEP wordmark を UV 印刷。MagSafe 非対応。サイズで機種選択不可のため、最新 iPhone 15 を出荷。他機種は info@enablerdao.com まで。",
+         "Printful Clear Case for iPhone® (pid 181)、iPhone 15 標準。背面に SIIIEEP wordmark を UV 印刷。MagSafe 非対応。サイズで機種選択不可のため、最新 iPhone 15 を出荷。他機種は info@wearmu.com まで。",
          3_800,  "printful", Some(181), Some(17616),
          Some(r#"{"OS":17616,"ONE SIZE":17616,"S":17616,"M":17616,"L":17616,"XL":17616}"#),
          Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
@@ -25074,7 +25074,7 @@ async fn agent_support_reply_sender(db: Db) -> Result<AgentReport, String> {
                 "to": [email],
                 "subject": "MU からの返信",
                 "html": body_html,
-                "reply_to": "info@enablerdao.com",
+                "reply_to": "info@wearmu.com",
             }))
             .send().await;
         let ok = matches!(resp, Ok(ref r) if r.status().is_success());
@@ -26661,7 +26661,7 @@ fn template_received(ctx: &EmailContext, variant: &str) -> (String, String) {
                 img = image_block(ctx),
                 order = order_block,
                 timeline = timeline,
-                accent = accent_block("追跡番号は出荷時に別 email で届きます。<br>到着しなければ <a href=\"mailto:info@enablerdao.com\" style=\"color:#e6c449;\">info@enablerdao.com</a>。"),
+                accent = accent_block("追跡番号は出荷時に別 email で届きます。<br>到着しなければ <a href=\"mailto:info@wearmu.com\" style=\"color:#e6c449;\">info@wearmu.com</a>。"),
                 dt = ctx.designs_today, dd = ctx.drops_today,
                 rev = fmt_jpy(ctx.revenue_7d), ord7 = ctx.orders_7d);
             let html = email_shell(&subject, hero, &now_jst, &body);
@@ -26860,7 +26860,7 @@ fn template_quarter(ctx: &EmailContext, variant: &str) -> (String, String) {
             let body = format!(
                 r#"<p style="margin:0 0 14px;color:#bbb;">90 日前にあなたが買ったのはこのシャツ:</p>{img}<p style="margin:0 0 6px;color:#bbb;">MU はあなたの買い物以降、これを実行しました。</p>{table}{accent}"#,
                 img = image_block(ctx), table = table_html,
-                accent = accent_block("次の email は 275 日後 (1 周年)。<br>それまで沈黙します。<br>もしシャツが届いてなければ <a href=\"mailto:info@enablerdao.com\" style=\"color:#e6c449;\">info@enablerdao.com</a> へ。"));
+                accent = accent_block("次の email は 275 日後 (1 周年)。<br>それまで沈黙します。<br>もしシャツが届いてなければ <a href=\"mailto:info@wearmu.com\" style=\"color:#e6c449;\">info@wearmu.com</a> へ。"));
             let html = email_shell(&subject, "90 日ログ", &now_jst, &body);
             (subject, html)
         }
@@ -26963,7 +26963,7 @@ fn template_cohort30(ctx: &EmailContext, variant: &str, cohort_size: i64) -> (St
                 name = html_escape(&ctx.product_name),
                 img = image_block(ctx),
                 table = table_html,
-                accent = accent_block("次の email は 1 年後 (annual log)。<br>それまで沈黙します。<br>到着していなければ <a href=\"mailto:info@enablerdao.com\" style=\"color:#e6c449;\">info@enablerdao.com</a>。"));
+                accent = accent_block("次の email は 1 年後 (annual log)。<br>それまで沈黙します。<br>到着していなければ <a href=\"mailto:info@wearmu.com\" style=\"color:#e6c449;\">info@wearmu.com</a>。"));
             (subject.clone(), email_shell(&subject, "30 日報告", &now_jst, &body))
         }
     }
@@ -27100,7 +27100,7 @@ fn template_anniversary(ctx: &EmailContext, variant: &str, year_n: i64) -> (Stri
         _ => {
             let subject = format!("{} 年前、あなたが選んだ 1 着について", year_disp);
             let body = format!(
-                r#"<p style="margin:0 0 14px;color:#bbb;font-size:15px;line-height:1.6;"><b style="color:#e6c449;">{y} 年前のあなたの選択は、{name} でした。</b></p>{img}<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.6;">MU はあれから {n} 日生きています。<br>あなたはあの 1 着を、まだ着ていますか。<br>着ていなくても構いません。記録は Solana 上に残っています。</p><p style="margin:18px 0 0;color:#888;font-size:12px;line-height:1.6;">次の email は 1 年後。<br>もし住所が変わったら <a href="mailto:info@enablerdao.com" style="color:#e6c449;">info@enablerdao.com</a>。</p>"#,
+                r#"<p style="margin:0 0 14px;color:#bbb;font-size:15px;line-height:1.6;"><b style="color:#e6c449;">{y} 年前のあなたの選択は、{name} でした。</b></p>{img}<p style="margin:0 0 14px;color:#bbb;font-size:14px;line-height:1.6;">MU はあれから {n} 日生きています。<br>あなたはあの 1 着を、まだ着ていますか。<br>着ていなくても構いません。記録は Solana 上に残っています。</p><p style="margin:18px 0 0;color:#888;font-size:12px;line-height:1.6;">次の email は 1 年後。<br>もし住所が変わったら <a href="mailto:info@wearmu.com" style="color:#e6c449;">info@wearmu.com</a>。</p>"#,
                 y = year_disp, n = year_disp * 365, name = html_escape(&name_disp), img = image_block(ctx));
             (subject.clone(), email_shell(&subject, &format!("{} 周年", year_disp), &now_jst, &body))
         }
@@ -27207,7 +27207,7 @@ async fn send_buyer_email(
                 {"name":"kind","value":kind},
                 {"name":"variant","value":variant}
             ],
-            "reply_to": "info@enablerdao.com",
+            "reply_to": "info@wearmu.com",
         }))
         .send().await.map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
@@ -28055,7 +28055,7 @@ async fn agent_bounty_triage(db: Db) -> Result<AgentReport, String> {
                 if !resend_key.is_empty() {
                     let subj = format!("[MU Bounty #{}] 判定結果 (1 次トリアージ)", row.id);
                     let html = format!(
-                        "<p>{} さん、</p><p>ご報告ありがとうございます。<br>1 次トリアージの結果、本件は対象外と判定しました。</p><hr><p>{}</p><hr><p>判断に異議がある場合は <a href=\"mailto:info@enablerdao.com\">info@enablerdao.com</a> までご返信ください。人間の判定者が再確認します。</p><p>— MU Autopilot / 株式会社イネブラ</p>",
+                        "<p>{} さん、</p><p>ご報告ありがとうございます。<br>1 次トリアージの結果、本件は対象外と判定しました。</p><hr><p>{}</p><hr><p>判断に異議がある場合は <a href=\"mailto:info@wearmu.com\">info@wearmu.com</a> までご返信ください。人間の判定者が再確認します。</p><p>— MU Autopilot / 株式会社イネブラ</p>",
                         html_escape(row.reporter_email.split('@').next().unwrap_or("報告者")),
                         html_escape(&reply).replace('\n', "<br>"));
                     let _ = reqwest::Client::new()
@@ -28066,7 +28066,7 @@ async fn agent_bounty_triage(db: Db) -> Result<AgentReport, String> {
                             "to": [row.reporter_email.clone()],
                             "subject": subj,
                             "html": html,
-                            "reply_to": "info@enablerdao.com",
+                            "reply_to": "info@wearmu.com",
                         }))
                         .send().await;
                 }
