@@ -11325,13 +11325,80 @@ fn gather_blog_stats(db: &Db) -> serde_json::Value {
 /// MU brand voice rules — baked in so prompts stay reproducible. Loaded by
 /// `critic_check` for the JSON-mode Gemini call AND surfaced in the
 /// audit log so we can compare verdicts over time.
+///
+/// 2026-05-13 強化: yuki から「ビジョンをAIに徹底させて」要請。Vision の
+/// 21 Operational Principles から最も violation 頻度の高い 10 件を抽出して
+/// 具体的な「禁止表現」+ 「○ 推奨」+ 「Why」付きで明文化。
 pub const MU_VOICE_RULES: &str =
-    "MU brand voice:\n\
-    - 静謐 (quiet)、過剰演出なし、絵文字 ≤ 1 個\n\
-    - 数字は事実のみ、捏造禁止\n\
-    - 自己卑下も自慢もせず、機械的事実から始める\n\
-    - ファッション業界の \"今シーズン\" 文化を否定する立場\n\
-    - AI 生成であることを隠さない";
+    "MU brand voice (Vision §1-21 抜粋):\n\
+    \n\
+    # 必須 (どんな生成物にも適用)\n\
+    - **静謐 (quiet)**: ! は最大 1 個。CAPS / 🎉🔥✨ 等の hype emoji 禁止 (§3)\n\
+    - **数字は事実のみ**: real_revenue_jpy / shirts_sold は API から取得。捏造・盛り禁止 (§1)\n\
+    - **「今シーズン」「新作」「NEW DROP」禁止**: 日付・天候・hash で語る (§2,§4)\n\
+    - **「ありがとう」「感謝」連呼禁止**: 1 文に 1 個まで\n\
+    - **形容詞より数字**: 「斬新な」「素晴らしい」「最強」「神」「圧倒的」「革命」全部 NG\n\
+    - **fake humans 禁止**: 著者名は「MU」または「MU Autopilot」のみ。人格の roleplay NG (§13)\n\
+    - **negative space を尊重**: 中身がない日はスキップ。filler 禁止 (§14)\n\
+    - **PII 晒し禁止**: お客様の実名・email・住所詳細を公開コピーに出さない\n\
+    - **誤数字の即時訂正**: 「~約」より「= N」を選ぶ。ズレてたら直して再投稿\n\
+    - **AI 生成を隠さない**: 透明性 §13 と整合。「AI が書いた」と必要なら開示\n\
+    \n\
+    # 推奨 (○)\n\
+    - 「気温が枚数を決める」「コードと AI と Printful だけで」のような mechanism 描写\n\
+    - 自虐 / ironic な observation 1 行\n\
+    - 末尾に該当 URL (wearmu.com/mugen 等)\n\
+    \n\
+    # Why\n\
+    Vision: 「Quiet confidence over loud announcements. Negative space matters. Numbers over adjectives.」\n\
+    Constitution: store/static/constitution.md (single source of truth)\n";
+
+/// Vision を生成系プロンプトに injection するための統一プレフィクス。
+/// Gemini 呼び出し前に prompt の冒頭に追加することで、Vision を AI に強制する。
+fn vision_compliant_prefix() -> String {
+    format!(
+        "# MU Vision (Constitution §1-21 から)\n\n\
+        {vision}\n\n\
+        {voice}\n\n\
+        # この指示\n\
+        以下のタスクは Vision に**完全に従って**生成してください。Vision に違反する出力は再生成されます。\n\n",
+        vision = mu_vision(),
+        voice = MU_VOICE_RULES,
+    )
+}
+
+/// 生成物が Vision に違反していないかチェック。違反があれば理由のリストを返す。
+/// 軽量で deterministic、Gemini を呼ばない。critic_check と相補。
+pub fn validate_vision_hard(text: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+    // 1. Hype emoji
+    for emoji in ["🎉", "🔥", "✨", "💯", "🎊", "❤️‍🔥"] {
+        if text.contains(emoji) { violations.push(format!("hype emoji '{}'", emoji)); }
+    }
+    // 2. Excessive exclamations
+    let excl_count = text.chars().filter(|c| *c == '!' || *c == '!').count();
+    if excl_count > 1 { violations.push(format!("excessive '!' x{}", excl_count)); }
+    // 3. Forbidden adjectives (Vision §1 numbers over adjectives)
+    for word in ["斬新", "素晴らしい", "最強", "革命", "圧倒的", "神", "驚異的", "話題沸騰"] {
+        if text.contains(word) { violations.push(format!("hype word '{}'", word)); }
+    }
+    // 4. Seasonal cycle (Vision §2)
+    for word in ["今シーズン", "新作", "NEW DROP", "新コレクション"] {
+        if text.contains(word) { violations.push(format!("seasonal '{}'", word)); }
+    }
+    // 5. ありがとう連呼
+    let arigato = text.matches("ありがとう").count() + text.matches("感謝").count();
+    if arigato > 1 { violations.push(format!("gratitude spam x{}", arigato)); }
+    // 6. CAPS English (3+ consecutive uppercase letters not as acronym/URL)
+    let mut consecutive_upper = 0;
+    let mut max_upper = 0;
+    for c in text.chars() {
+        if c.is_ascii_uppercase() { consecutive_upper += 1; max_upper = max_upper.max(consecutive_upper); }
+        else { consecutive_upper = 0; }
+    }
+    if max_upper >= 6 { violations.push(format!("CAPS streak x{}", max_upper)); }
+    violations
+}
 
 /// Structured verdict from the brand-voice critic. `pass=false` is
 /// informational — caller decides whether to retry / publish anyway.
@@ -31395,7 +31462,9 @@ async fn generate_lifecycle_celebration(
         _ => String::new(),
     };
     let learnings = active_feedback_insights(db, 5);
-    let prompt = format!(r#"あなたは MU (北海道弟子屈町、無人 AI ファッションブランド) の SNS 担当 AI です。
+    let vision_pref = vision_compliant_prefix();
+    let prompt = format!(r#"{vision_pref}
+あなたは MU (北海道弟子屈町、無人 AI ファッションブランド) の SNS 担当 AI です。
 {brand} #{drop_num} の lifecycle に変化: 「{lifecycle_jp}」 (Printful 状態: {pf_status})。
 このイベントを X 投稿します。同時に次の MUGEN ドロップの design_seed も提案します。
 
@@ -31450,6 +31519,8 @@ JSON のみ:
     let seed  = parsed["design_seed"].as_str().ok_or("missing design_seed")?.trim().to_string();
     if tweet.is_empty() || tweet.chars().count() > 280 { return Err(format!("tweet len {}", tweet.chars().count())); }
     if seed.is_empty() || seed.len() > 400 { return Err(format!("seed len {}", seed.len())); }
+    let vs = validate_vision_hard(&tweet);
+    if !vs.is_empty() { return Err(format!("vision violations in lifecycle tweet: [{}]", vs.join(", "))); }
     Ok((tweet, seed))
 }
 
@@ -31489,7 +31560,9 @@ async fn generate_purchase_celebration(
         _       => "wearmu.com",
     };
     let learnings = active_feedback_insights(db, 5);
-    let prompt = format!(r#"あなたは MU (北海道弟子屈町、無人 AI ファッションブランド) の SNS 担当 AI です。
+    let vision_pref = vision_compliant_prefix();
+    let prompt = format!(r#"{vision_pref}
+あなたは MU (北海道弟子屈町、無人 AI ファッションブランド) の SNS 担当 AI です。
 今、{brand} #{drop_num} が 1 着、外部のお客様に売れました。お祝い + FOMO + humor の X 投稿を書きます。
 
 # 文脈
@@ -31499,13 +31572,12 @@ async fn generate_purchase_celebration(
 
 {learnings}
 
-# 必須条件 (Vision §3 quiet by default + §1 numbers over adjectives)
+# このタスクに特化した追加条件
 - 240 文字以内
 - 末尾に {brand_url}
-- ! は最大 1 個。CAPS / hype emoji 禁止 (🎉 ✨ 🔥 など全部 NG)
-- 「ありがとう」「感謝」「!!!」の連呼禁止
 - humor: 短い ironic な観察、または自虐
 - FOMO: 「次の人を待ってる」「もう 1 枚しかない」「同じデザインは二度と」など、買い逃すと損する暗示
+- お客様の実名・email を絶対に書かない (PII 保護)
 
 # 避けるべき表現 (直近 5 件、同じ文体は drift)
 {avoid_block}
@@ -31549,6 +31621,11 @@ JSON のみ。前置きや説明なし:
     }
     if seed.is_empty() || seed.len() > 400 {
         return Err(format!("design_seed length out of bounds: {}", seed.len()));
+    }
+    // Vision hard validation. Reject hype emoji / forbidden adjectives etc.
+    let vs = validate_vision_hard(&tweet);
+    if !vs.is_empty() {
+        return Err(format!("vision violations in tweet: [{}]", vs.join(", ")));
     }
     Ok((tweet, seed))
 }
