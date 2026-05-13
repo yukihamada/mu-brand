@@ -9,14 +9,132 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Pre-deploy gate: build the release binary AND actually start it briefly.
+  # cargo check alone misses runtime panics like axum router conflicts
+  # (which crashed prod on 2026-05-13 — `:pos.svg` vs `:pos.png`). A binary
+  # that won't boot can never serve /healthz, no matter how good the
+  # post-deploy watchdog is. So we boot it in CI first.
+  smoke_test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build release binary
+        working-directory: store
+        run: cargo build --release
+      - name: Start binary + probe /healthz
+        working-directory: store
+        run: |
+          mkdir -p /tmp/smoke_data/mockups
+          export DB_PATH=/tmp/smoke_data/smoke.db
+          export PORT=13000
+          export ADMIN_TOKEN=smoke-test-token-do-not-use
+          export MOCKUPS_DIR=/tmp/smoke_data/mockups
+          export MU_AUTOPILOT=0
+          export AGENT_KILL_ALL=1
+          export DRY_RUN_ALL=1
+          ./target/release/mu-store > /tmp/smoke.log 2>&1 &
+          BIN_PID=$!
+          # Give it up to 60s to start serving.
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 3 "http://localhost:13000/healthz" > /tmp/smoke.json 2>/dev/null; then
+              echo "✓ /healthz responded after ${i}x2s"
+              cat /tmp/smoke.json
+              kill $BIN_PID 2>/dev/null || true
+              # Wait briefly for the process to exit cleanly.
+              wait $BIN_PID 2>/dev/null || true
+              exit 0
+            fi
+            # Detect early panic — if the process is already dead, fail fast.
+            if ! kill -0 $BIN_PID 2>/dev/null; then
+              echo "❌ binary exited before /healthz was reachable"
+              echo "---log---"
+              cat /tmp/smoke.log
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "❌ /healthz never responded after 60s"
+          echo "---log---"
+          cat /tmp/smoke.log
+          kill -9 $BIN_PID 2>/dev/null || true
+          exit 1
+
   deploy:
+    needs: smoke_test
     runs-on: ubuntu-latest
     concurrency: deploy-mu-store
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: superfly/flyctl-actions/setup-flyctl@master
-      - name: Deploy
-        working-directory: store
-        run: flyctl deploy --remote-only --app mu-store --wait-timeout=180
+      - name: Capture previous version (for rollback)
+        id: prev
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          # The current (about to become previous) version number.
+          ver=$(flyctl releases -a mu-store --json 2>/dev/null \
+            | jq -r '.[0].version' 2>/dev/null || echo "")
+          echo "previous_version=${ver}" >> "$GITHUB_OUTPUT"
+          echo "previous=v${ver}"
+
+      - name: Deploy
+        working-directory: store
+        run: flyctl deploy --remote-only --app mu-store --wait-timeout=240
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Post-deploy smoke test (live /healthz, 5 min)
+        id: postcheck
+        run: |
+          # Look for ok:true (warming_up:true is fine — that's the grace
+          # window after deploy; still 200).
+          for i in $(seq 1 30); do
+            code=$(curl -sS -o /tmp/body -w "%{http_code}" --max-time 8 \
+              "https://mu-store.fly.dev/healthz" || echo "000")
+            if [ "$code" = "200" ] && grep -q '"ok":true' /tmp/body; then
+              echo "✓ live /healthz 200 after $((i*10))s"
+              head -c 400 /tmp/body
+              exit 0
+            fi
+            echo "attempt $i: code=$code body=$(head -c 200 /tmp/body 2>/dev/null)"
+            sleep 10
+          done
+          echo "❌ live /healthz never returned 200 ok:true in 5 min"
+          exit 1
+
+      - name: Auto-rollback on post-deploy failure
+        if: failure() && steps.prev.outputs.previous_version != ''
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          PREV: ${{ steps.prev.outputs.previous_version }}
+        run: |
+          echo "rolling back to v${PREV}"
+          # Pin to previous image. `releases rollback` was deprecated;
+          # use the explicit previous image via machines update.
+          # Simpler: just trigger a re-deploy of HEAD~ — but if HEAD~ was the
+          # broken commit we'd loop. Use the previous Fly RELEASE image:
+          prev_img=$(flyctl releases -a mu-store --json \
+            | jq -r --arg v "$PREV" '[.[] | select(.version|tonumber == ($v|tonumber)) | .image_ref] | .[0]')
+          if [ -z "$prev_img" ] || [ "$prev_img" = "null" ]; then
+            echo "could not resolve previous image — manual rollback required"
+            exit 1
+          fi
+          echo "previous image: $prev_img"
+          flyctl deploy -a mu-store --image "$prev_img" --strategy immediate --wait-timeout=180
+          echo "rolled back to v${PREV}"
+
+      - name: Telegram alert on rollback / final failure
+        if: failure()
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT:  ${{ secrets.TELEGRAM_CHAT_ID }}
+          PREV: ${{ steps.prev.outputs.previous_version }}
+        run: |
+          if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT" ]; then
+            curl -fsS -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+              -d "chat_id=${TG_CHAT}" \
+              --data-urlencode "text=🚨 mu-store deploy failed post-deploy smoke. Auto-rollback to v${PREV} attempted. commit=${GITHUB_SHA::8} run=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          fi

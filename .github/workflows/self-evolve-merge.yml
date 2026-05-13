@@ -57,10 +57,46 @@ jobs:
         if: steps.allowcheck.outputs.result == 'pass'
         uses: dtolnay/rust-toolchain@stable
 
-      - name: cargo check (final sanity gate)
+      - name: cargo check (cheap sanity gate)
         if: steps.allowcheck.outputs.result == 'pass'
         working-directory: store
         run: cargo check --quiet
+
+      # cargo check doesn't catch axum router conflicts (panic at boot)
+      # or any other startup-time failure. Boot the release binary
+      # briefly to catch those before auto-merge.
+      - name: Binary boot smoke test
+        if: steps.allowcheck.outputs.result == 'pass'
+        working-directory: store
+        run: |
+          cargo build --release --quiet
+          mkdir -p /tmp/se_data/mockups
+          export DB_PATH=/tmp/se_data/se.db
+          export PORT=13001
+          export ADMIN_TOKEN=self-evolve-smoke
+          export MOCKUPS_DIR=/tmp/se_data/mockups
+          export MU_AUTOPILOT=0
+          export AGENT_KILL_ALL=1
+          export DRY_RUN_ALL=1
+          ./target/release/mu-store > /tmp/se.log 2>&1 &
+          BIN_PID=$!
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 3 "http://localhost:13001/healthz" > /dev/null 2>&1; then
+              echo "✓ boot smoke passed"
+              kill $BIN_PID 2>/dev/null || true
+              exit 0
+            fi
+            if ! kill -0 $BIN_PID 2>/dev/null; then
+              echo "❌ binary panicked before /healthz"
+              cat /tmp/se.log
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "❌ /healthz never responded"
+          cat /tmp/se.log
+          kill -9 $BIN_PID 2>/dev/null || true
+          exit 1
 
       - name: Comment success + enable auto-merge
         if: steps.allowcheck.outputs.result == 'pass'
