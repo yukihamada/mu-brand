@@ -13917,6 +13917,66 @@ async fn admin_blog_unpublish(
     })).into_response()
 }
 
+/// GET /api/admin/funnel/top_paths?token=…&days=7 — page-level traffic
+/// summary for the funnel_events table. yuki uses this to decide which
+/// pages to invest copy/design effort in.
+async fn admin_funnel_top_paths(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let days: i64 = q.get("days").and_then(|s| s.parse().ok()).unwrap_or(7).clamp(1, 90);
+    let limit: i64 = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(40).clamp(1, 200);
+    let conn = db.lock().unwrap();
+    let mut stmt = match conn.prepare(
+        "SELECT path,
+                COUNT(*) AS pv,
+                COUNT(DISTINCT visitor_id) AS uv
+         FROM funnel_events
+         WHERE event='pageview'
+           AND CAST(created_at AS INTEGER) > strftime('%s','now')-?1*86400
+         GROUP BY path
+         ORDER BY pv DESC
+         LIMIT ?2"
+    ) { Ok(s) => s, Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("db: {}", e)).into_response() };
+    let rows: Vec<serde_json::Value> = stmt.query_map(params![days, limit], |r| {
+        Ok(serde_json::json!({
+            "path": r.get::<_, String>(0)?,
+            "pv":   r.get::<_, i64>(1)?,
+            "uv":   r.get::<_, i64>(2)?,
+        }))
+    }).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+    // Referrer breakdown
+    let mut ref_stmt = match conn.prepare(
+        "SELECT
+            CASE
+                WHEN referrer IS NULL OR referrer = '' THEN '(direct)'
+                WHEN referrer LIKE '%t.co%' OR referrer LIKE '%twitter.com%' OR referrer LIKE '%x.com%' THEN 'X / Twitter'
+                WHEN referrer LIKE '%google%' THEN 'Google'
+                WHEN referrer LIKE '%threads%' THEN 'Threads'
+                WHEN referrer LIKE '%instagram%' THEN 'Instagram'
+                WHEN referrer LIKE '%news.ycombinator.com%' THEN 'Hacker News'
+                WHEN referrer LIKE '%reddit%' THEN 'Reddit'
+                WHEN referrer LIKE '%producthunt%' THEN 'Product Hunt'
+                ELSE referrer
+            END AS source,
+            COUNT(*) AS pv
+         FROM funnel_events
+         WHERE event='pageview'
+           AND CAST(created_at AS INTEGER) > strftime('%s','now')-?1*86400
+         GROUP BY source ORDER BY pv DESC LIMIT 20"
+    ) { Ok(s) => s, Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("db: {}", e)).into_response() };
+    let refs: Vec<serde_json::Value> = ref_stmt.query_map(params![days], |r| Ok(serde_json::json!({
+        "source": r.get::<_, String>(0)?,
+        "pv":     r.get::<_, i64>(1)?,
+    }))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+    Json(serde_json::json!({
+        "window_days": days,
+        "paths": rows,
+        "referrers": refs,
+    })).into_response()
+}
+
 #[derive(Deserialize)]
 struct AdminTokenOnly { admin_token: String }
 
@@ -25562,6 +25622,7 @@ async fn main() {
         .route("/api/blog/stats_for_today", get(blog_stats_for_today))
         .route("/api/admin/blog_publish", post(admin_blog_publish))
         .route("/api/admin/blog_unpublish", post(admin_blog_unpublish))
+        .route("/api/admin/funnel/top_paths", get(admin_funnel_top_paths))
         .route("/api/admin/blog_update", post(admin_blog_update))
         .route("/api/admin/products_reconcile_sold", post(admin_products_reconcile_sold))
         .route("/api/admin/deactivate_brand", post(admin_deactivate_brand))
