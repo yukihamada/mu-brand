@@ -1,0 +1,44 @@
+name: constitution blame → JSON
+
+# Runs on every push that touches the Constitution OR the generator
+# script. Re-runs `git blame --line-porcelain` and commits the resulting
+# `store/static/constitution_blame.json` back to main with [skip ci]
+# so the deploy workflow doesn't get re-triggered.
+#
+# Constitution §23 — this file is the single source of truth for DAO
+# authorship weight (mounted into main.rs via include_str! at build
+# time). The action below ensures every Constitution edit immediately
+# updates DAO weight on the next deploy.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'store/static/constitution.md'
+      - 'scripts/gen_constitution_blame.py'
+      - '.github/workflows/constitution-blame.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  regen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history needed for accurate git blame
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Regenerate blame JSON
+        run: python3 scripts/gen_constitution_blame.py
+      - name: Commit if changed
+        run: |
+          if git diff --quiet store/static/constitution_blame.json; then
+            echo "no changes — skipping commit"
+            exit 0
+          fi
+          git config user.name  "mu-blame-bot"
+          git config user.email "bot@wearmu.com"
+          git add store/static/constitution_blame.json
+          git commit -m "chore(dao): regenerate constitution_blame.json [skip ci]"
+          git push

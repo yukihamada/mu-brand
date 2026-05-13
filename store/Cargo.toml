@@ -26,6 +26,10 @@ uuid = { version = "1", features = ["v4"] }
 # Solana Pay `reference` must be a base58-encoded 32-byte ed25519 pubkey-format
 # value — UUID strings fail Helius confirmation lookup (R2).
 bs58 = "0.5"
+# Verify Phantom/Backpack/Solflare `signMessage` outputs server-side, so
+# /api/dao/bind can lift the binding from email-only ("magic_link") to
+# cryptographically wallet-proven ("wallet_sig"). Pure-Rust ed25519, no openssl.
+ed25519-dalek = "2"
 rand = "0.8"
 rust-s3 = { version = "0.34", default-features = false, features = ["tokio-rustls-tls"] }
 urlencoding = "2.1"

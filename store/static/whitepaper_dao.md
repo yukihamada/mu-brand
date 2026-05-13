@@ -248,11 +248,15 @@ CREATE TABLE IF NOT EXISTS dao_email_wallets (
 - `GET /dao/bind/confirm/:token` で `dao_email_wallets` row insert
 - rate limit: 1 email / hour
 
-### 9.2 Wallet signature verification 📋 未実装
+### 9.2 Wallet signature verification ✅ 実装ずみ (Solana)
 
-現状: email→wallet を email 確認ベースで信頼している (wallet 所有権の暗号証明はない)。
-予定: bind 時に wallet の Solana ed25519 / EVM secp256k1 署名を要求。Phantom / MetaMask signMessage で proof.
-工数: 1 日。
+- `POST /api/dao/bind/request` が optional `signature` + `signed_ts` を受理
+- Solana 32B base58 pubkey + 64B base58 ed25519 sig を `ed25519-dalek` で検証
+- 署名 message = `MU DAO bind\nemail: ...\nwallet: ...\nts: ...\ndomain: wearmu.com\nspec: §23`
+- replay 防御: signed_ts は ±600 秒以内
+- 検証成功時は **email 確認なしで即 bind** ・ `bound_by='wallet_sig'`
+- `/dao/bind` ページに「Phantom で署名」ボタン (window.solana 検出 → connect → signMessage)
+- EVM (MetaMask 等) はまだ未対応 — 現状 email 確認のみ。Phase 2.6 で secp256k1 対応予定
 
 ### 9.3 On-chain voting bridge ✅ DB 版実装ずみ (on-chain は別途)
 
@@ -263,18 +267,20 @@ CREATE TABLE IF NOT EXISTS dao_email_wallets (
 - 投票結果は `dao_votes` テーブルに永続化
 - 未実装: on-chain signing (Phase 2.1 — wallet sig と統合)
 
-### 9.4 git blame 統合 (deletion-aware) 📋 未実装
+### 9.4 git blame 統合 (deletion-aware) ✅ 実装ずみ
 
-現状: `CONSTITUTION_AUTHORS` は coarse range。amendment が既存行を部分編集すると粒度が崩れる。
-予定: build.rs (or GH Actions step) で `git blame --line-porcelain` を JSON 化。
-工数: 1 日。
-注: Fly remote builder が `.git` を見れないため、GH Actions で pre-generate して `store/static/constitution_blame.json` を repo にコミットする方式が現実的。
+- `scripts/gen_constitution_blame.py` が `git blame --line-porcelain` をパースして `store/static/constitution_blame.json` を生成 (連続する同一 author/date run に coalesce)
+- main.rs は `CONSTITUTION_BLAME_JSON` を `include_str!` で取り込み、起動時に `OnceLock<Vec<ConstitutionAuthorRun>>` にパース
+- `dao_weight_authorship` / `dao_weight_compute` / `dao_total_supply_weight` が JSON 駆動
+- 削除行は次回 JSON 生成時に消える → deletion-aware
 
-### 9.5 T1 governance ↔ CONSTITUTION_AUTHORS 自動更新 📋 未実装
+### 9.5 PR → 自動更新 ✅ 実装ずみ
 
-現状: §23 を追加した時に const を手動で更新。
-予定: Constitution 編集 PR が T1 承認後、PR diff から author + 行範囲を自動抽出して const に append する GH Action。
-工数: 1 日。
+- `.github/workflows/constitution-blame.yml` が `store/static/constitution.md` への push を検知
+- `fetch-depth: 0` で full history をクローン → `gen_constitution_blame.py` 実行
+- 変更があれば `[skip ci]` 付きで commit + push (deploy 再起動を起こさない)
+- 次の意図的 deploy で新しい blame JSON が反映 → const 手動更新は不要
+- yuki が PR をマージするだけで、merged PR の author + 編集日が author run として記録される
 
 ### 9.6 MA piece の Solana NFT 化 📋 未実装
 
@@ -282,11 +288,11 @@ CREATE TABLE IF NOT EXISTS dao_email_wallets (
 予定: Solana 上で soulbound-but-transferable NFT (transfer は yuki 承認制 = T1)。Metaplex Core でメタデータ管理。
 工数: 2 日 (Solana program 単体)。
 
-### 9.7 Stripe checkout 後の 1-click bind 📋 未実装
+### 9.7 Stripe checkout 後の bind CTA ✅ 実装ずみ
 
-現状: シャツを買った後に `/dao/bind` に手動で行く必要あり。
-予定: Stripe checkout success 画面に DAO bind CTA を追加、purchaser email がプリフィル。
-工数: 0.5 日。
+- `/success` ページに DAO §23 セクション追加
+- weight 構造の説明 (slot ×1 / MA ×100 / 1 行 ×0.5〜8) + `/dao/bind` への CTA ボタン
+- email プリフィルは Stripe session lookup を要するため Phase 2.6 で対応 (現状は手入力)
 
 ### 9.8 /dao ページの拡張 ✅ 実装ずみ
 
@@ -389,6 +395,7 @@ GitHub: <https://github.com/yukihamada/mu-brand>
 |---|---|---|
 | 2026-05-13 | v0.1 | 初版。§23 実装 + Phase 1 API + leaderboard ページ + 本 whitepaper |
 | 2026-05-13 | v0.2 | Phase 2: magic-link self-bind / /dao/propose / /api/dao/vote 自動 tally / Sybil merge / /dao 拡張 (active proposals + 投票 UI)。残: wallet sig、git blame 統合、Solana NFT、Stripe success bind |
+| 2026-05-13 | v0.3 | Phase 2.5: Solana ed25519 wallet sig verify (Phantom signMessage) / git blame → constitution_blame.json + GH Action 自動再生成 / `/success` ページ DAO CTA。残: EVM secp256k1 sig (Phase 2.6) / MA piece Solana soulbound NFT (Phase 3) / Stripe email prefill |
 
 ---
 
