@@ -12797,7 +12797,9 @@ async fn generate_ma_gift_design(token: String, brief: String, db: Db) {
         let _ = tokio::fs::create_dir_all(&dir).await;
         let path = dir.join(&key_r2);
         if tokio::fs::write(&path, &bytes).await.is_ok() {
-            Some(format!("/mockups/{}", key_r2))
+            // Absolute URL — Printful's mockup-generator must be able to
+            // fetch this from the public web, and OGP needs an absolute URL too.
+            Some(format!("https://wearmu.com/mockups/{}", key_r2))
         } else { None }
     };
     let Some(stored) = stored_url else {
@@ -12851,6 +12853,15 @@ async fn generate_ma_gift_mockup(token: String, design_url: String, db: Db) {
         eprintln!("[ma_gift_mockup] {}: no PRINTFUL_API_KEY", token);
         return;
     }
+    // Printful must fetch the design URL from the public web. Local
+    // /mockups/... paths get prepended with the canonical host.
+    let public_design_url = if design_url.starts_with("http") {
+        design_url.clone()
+    } else if design_url.starts_with('/') {
+        format!("https://wearmu.com{}", design_url)
+    } else {
+        design_url.clone()
+    };
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build().unwrap_or_else(|_| reqwest::Client::new());
@@ -12861,7 +12872,7 @@ async fn generate_ma_gift_mockup(token: String, design_url: String, db: Db) {
         "format": "png",
         "files": [{
             "placement": "front",
-            "image_url": design_url,
+            "image_url": public_design_url,
             "position": {
                 "area_width": 1800, "area_height": 2400,
                 "width": 1260, "height": 1260,
@@ -12880,18 +12891,24 @@ async fn generate_ma_gift_mockup(token: String, design_url: String, db: Db) {
         Ok(r) => {
             let s = r.status();
             let b = r.text().await.unwrap_or_default();
-            eprintln!("[ma_gift_mockup] {}: create-task {}: {}", token, s, b.chars().take(300).collect::<String>());
+            let snippet = b.chars().take(400).collect::<String>();
+            eprintln!("[ma_gift_mockup] {}: create-task {}: {}", token, s, snippet);
+            send_telegram_message(&format!(
+                "⚠️ MA gift mockup create-task http {} · token={}\nbody: {}",
+                s, &token[..8.min(token.len())], snippet
+            )).await;
             None
         }
-        Err(e) => { eprintln!("[ma_gift_mockup] {}: create-task err: {}", token, e); None }
+        Err(e) => {
+            eprintln!("[ma_gift_mockup] {}: create-task err: {}", token, e);
+            send_telegram_message(&format!(
+                "⚠️ MA gift mockup create-task net err · token={} err={}",
+                &token[..8.min(token.len())], e
+            )).await;
+            None
+        }
     };
-    let Some(task_key) = task_key else {
-        send_telegram_message(&format!(
-            "⚠️ MA gift mockup create-task failed · token={}",
-            &token[..8.min(token.len())]
-        )).await;
-        return;
-    };
+    let Some(task_key) = task_key else { return; };
     // Poll task until 'completed' (Printful needs ~10-60s).
     let mut mockup_url: Option<String> = None;
     for attempt in 0..30 {
@@ -13088,6 +13105,46 @@ async fn admin_ma_gift_issue(
         "label": label,
         "note": "Gemini 3 Pro Image generation kicked off. Typically ~30-60s. Once design_url is populated, any claim with full shipping info will trigger a Printful order immediately."
     })).into_response()
+}
+
+/// POST /api/admin/ma/gift/regen_mockup?token=…&gift_token=…
+/// Re-fires only the Printful mockup generation (uses existing design_url).
+/// Use this to refresh the OGP T-shirt-on-model preview without re-running
+/// the expensive Gemini Image step.
+async fn admin_ma_gift_regen_mockup(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let gift_token = q.get("gift_token").cloned().unwrap_or_default();
+    if gift_token.is_empty() {
+        return (StatusCode::BAD_REQUEST, "?gift_token=… required").into_response();
+    }
+    let design_url: Option<String> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT design_url FROM ma_gifts WHERE token=?",
+            params![gift_token], |r| r.get::<_, Option<String>>(0),
+        ).ok().flatten()
+    };
+    let Some(design) = design_url.filter(|s| !s.is_empty()) else {
+        return (StatusCode::NOT_FOUND, "no design_url yet — call generate_now first").into_response();
+    };
+    // Upgrade pre-existing relative URLs to absolute so Printful can fetch.
+    let upgraded = if design.starts_with('/') {
+        format!("https://wearmu.com{}", design)
+    } else { design.clone() };
+    if upgraded != design {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE ma_gifts SET design_url=? WHERE token=?",
+            params![upgraded, gift_token],
+        );
+    }
+    let tk = gift_token.clone();
+    let db2 = db.clone();
+    tokio::spawn(async move { generate_ma_gift_mockup(tk, upgraded, db2).await; });
+    Json(serde_json::json!({"ok": true, "gift_token": gift_token, "spawned": true})).into_response()
 }
 
 /// POST /api/admin/ma/gift/generate_now?token=…&gift_token=…
@@ -28657,6 +28714,7 @@ async fn main() {
         .route("/chronicle/vote/confirm/:token", get(chronicle_vote_confirm))
         .route("/api/admin/ma/gift/issue", post(admin_ma_gift_issue))
         .route("/api/admin/ma/gift/generate_now", post(admin_ma_gift_generate_now))
+        .route("/api/admin/ma/gift/regen_mockup", post(admin_ma_gift_regen_mockup))
         .route("/admin/ma/gifts", get(admin_ma_gift_list))
         .route("/claim/ma/:token", get(ma_gift_claim_page))
         .route("/api/claim/ma/:token", post(ma_gift_claim_submit))
