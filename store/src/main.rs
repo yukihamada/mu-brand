@@ -3918,14 +3918,16 @@ async fn get_product(
     }
 }
 
-async fn weather_handler() -> impl IntoResponse {
+/// Fetch + parse weather from wttr.in. Returns the JSON we expose at
+/// /api/weather, or a placeholder if wttr.in is unreachable.
+async fn fetch_weather_json() -> serde_json::Value {
     let w = tokio::task::spawn_blocking(|| {
         reqwest::blocking::get("https://wttr.in/Teshikaga?format=j1")
             .ok()
             .and_then(|r| r.json::<serde_json::Value>().ok())
     }).await.unwrap_or(None);
 
-    let result = w.and_then(|d| {
+    w.and_then(|d| {
         let c = d["current_condition"].get(0)?;
         Some(serde_json::json!({
             "temp_c":    c["temp_C"].as_str()?.parse::<i64>().ok()?,
@@ -3938,7 +3940,26 @@ async fn weather_handler() -> impl IntoResponse {
     }).unwrap_or_else(|| serde_json::json!({
         "temp_c": null, "humidity": null, "wind_kmh": null,
         "wind_dir": null, "condition": "取得中", "location": "Teshikaga, Hokkaido"
-    }));
+    }))
+}
+
+/// Persist the latest weather into cv_config so the SSR `index` handler can
+/// avoid the wttr.in round-trip on the page-render path. Only writes when
+/// we have a real numeric temp (no overwriting cache with placeholder).
+fn cache_weather(db: &Db, w: &serde_json::Value) {
+    let Some(temp) = w.get("temp_c").and_then(|v| v.as_i64()) else { return };
+    let now_s = chrono_now();
+    let conn = db.lock().unwrap();
+    cv_set(&conn, "weather_temp_c", &temp.to_string(), "weather_cache");
+    cv_set(&conn, "weather_cached_at", &now_s, "weather_cache");
+    if let Some(c) = w.get("condition").and_then(|v| v.as_str()) {
+        cv_set(&conn, "weather_condition", c, "weather_cache");
+    }
+}
+
+async fn weather_handler(State(db): State<Db>) -> impl IntoResponse {
+    let result = fetch_weather_json().await;
+    cache_weather(&db, &result);
     Json(result)
 }
 
@@ -6667,8 +6688,132 @@ async fn you_active_count(State(db): State<Db>) -> impl IntoResponse {
     }))).into_response()
 }
 
-async fn index() -> Html<&'static str> {
-    Html(include_str!("../static/index.html"))
+async fn index(State(db): State<Db>) -> Html<String> {
+    let raw = include_str!("../static/index.html");
+
+    // ── SSR fill: pre-fill the dynamic placeholders so the page never
+    // ── renders "—°C / —着 / —:— / #—" during the JS fetch window.
+    //
+    // Sources (best-effort, falls back to "—" if missing):
+    //   - mugen latest drop_num     → products WHERE brand='mugen' ORDER BY drop_num DESC
+    //   - muon remaining today      → products WHERE brand='muon' (latest row)
+    //   - weather temp_c            → cv_config('weather_temp_c') populated by /api/weather
+    //   - mugen-timer mm:ss         → seconds-to-next-hour computed server-side
+
+    let (mugen_drop, mugen_cycle, muon_qty, temp_c): (Option<i64>, Option<i64>, Option<i64>, Option<i64>) = {
+        let conn = db.lock().unwrap();
+        let mugen = conn.query_row(
+            "SELECT drop_num FROM products WHERE brand='mugen' AND active=1
+             ORDER BY drop_num DESC LIMIT 1",
+            [], |r| r.get::<_, i64>(0),
+        ).ok();
+        let muon = conn.query_row(
+            "SELECT MAX(0, inventory - sold) FROM products WHERE brand='muon' AND active=1
+             ORDER BY id DESC LIMIT 1",
+            [], |r| r.get::<_, i64>(0),
+        ).ok();
+        let cycle = mugen.map(|d| ((d - 1).rem_euclid(108)) + 1);
+        // Weather: only trust if cached within 60 min (else stale; let JS retry)
+        let temp = {
+            let raw = cv_get(&conn, "weather_temp_c", "");
+            let at_str = cv_get(&conn, "weather_cached_at", "0");
+            let at: i64 = at_str.parse().unwrap_or(0);
+            let now_s: i64 = chrono_now().parse().unwrap_or(0);
+            if !raw.is_empty() && (now_s - at).abs() < 3600 {
+                raw.parse::<i64>().ok()
+            } else { None }
+        };
+        (mugen, cycle, muon, temp)
+    };
+
+    // Timer: seconds to next whole hour (UTC, mirrors JS implementation).
+    let timer_str: String = {
+        let now_s: i64 = chrono_now().parse().unwrap_or(0);
+        let secs_into_hour = now_s.rem_euclid(3600);
+        let remaining = 3600 - secs_into_hour;
+        let m = remaining / 60;
+        let s = remaining % 60;
+        format!("{:02}:{:02}", m, s)
+    };
+
+    let drop_str   = mugen_drop.map(|d| format!("#{}", d)).unwrap_or_else(|| "—".into());
+    let cycle_str  = mugen_cycle.map(|c| format!("{}/108", c)).unwrap_or_else(|| "—/108".into());
+    let temp_str   = temp_c.map(|t| t.to_string()).unwrap_or_else(|| "—".into());
+    let qty_from_temp = temp_c.map(|t| t.unsigned_abs().max(1) as i64);
+    let qty_str    = qty_from_temp.map(|q| q.to_string()).unwrap_or_else(|| "—".into());
+    let muon_qty_str = muon_qty.map(|q| q.to_string()).unwrap_or_else(|| "—".into());
+    let temp_deg_str = temp_c.map(|t| format!("{}°", t)).unwrap_or_else(|| "—".into());
+    // For hero stat that displays "MUON Today", prefer the live MUON inventory
+    // if present, fall back to temp-derived qty (the original JS behavior).
+    let hero_qty_str = if muon_qty.is_some() { muon_qty_str.clone() } else { qty_str.clone() };
+
+    // Substitute placeholder spans. Each replace targets the exact static markup
+    // shipped in static/index.html — adding new placeholders is safe (becomes no-op).
+    let html = raw
+        // Ticker: drop number (2 occurrences)
+        .replace(
+            r#"<span class="ticker-item">MUGEN 無限 — AIが毎時間デザインを生成中 <span id="t-drop">—</span></span>"#,
+            &format!(r#"<span class="ticker-item">MUGEN 無限 — AIが毎時間デザインを生成中 <span id="t-drop">{}</span></span>"#, drop_str),
+        )
+        .replace(
+            r#"<span class="ticker-item">MUGEN 無限 — AIが毎時間デザインを生成中 <span id="t-drop2">—</span></span>"#,
+            &format!(r#"<span class="ticker-item">MUGEN 無限 — AIが毎時間デザインを生成中 <span id="t-drop2">{}</span></span>"#, drop_str),
+        )
+        // Ticker: temp + qty
+        .replace(
+            r#"<span class="ticker-item">MUON 無音 — 今日の気温 <span id="t-temp">—</span>°C → <span id="t-qty">—</span>着</span>"#,
+            &format!(r#"<span class="ticker-item">MUON 無音 — 今日の気温 <span id="t-temp">{}</span>°C → <span id="t-qty">{}</span>着</span>"#, temp_str, qty_str),
+        )
+        .replace(
+            r#"<span class="ticker-item">MUON 無音 — 今日の気温 <span id="t-temp2">—</span>°C → <span id="t-qty2">—</span>着</span>"#,
+            &format!(r#"<span class="ticker-item">MUON 無音 — 今日の気温 <span id="t-temp2">{}</span>°C → <span id="t-qty2">{}</span>着</span>"#, temp_str, qty_str),
+        )
+        // Ticker: next-drop timer
+        .replace(
+            r#"<span class="ticker-item">次のMUGENドロップまで <span id="t-timer">—</span></span>"#,
+            &format!(r#"<span class="ticker-item">次のMUGENドロップまで <span id="t-timer">{}</span></span>"#, timer_str),
+        )
+        .replace(
+            r#"<span class="ticker-item">次のMUGENドロップまで <span id="t-timer2">—</span></span>"#,
+            &format!(r#"<span class="ticker-item">次のMUGENドロップまで <span id="t-timer2">{}</span></span>"#, timer_str),
+        )
+        // Hero stats — strip loading-shimmer + data-loading when SSR fills the value
+        .replace(
+            r#"<div class="hero-stat-num loading-shimmer" id="stat-mugen" data-loading="true" aria-label="MUGEN drop number, loading">···</div>"#,
+            &format!(r#"<div class="hero-stat-num" id="stat-mugen" aria-label="MUGEN drop number">{}</div>"#, drop_str),
+        )
+        .replace(
+            r#"<div class="hero-stat-num loading-shimmer" id="stat-temp" data-loading="true" aria-label="Today's temperature in Hokkaido, loading">···</div>"#,
+            &format!(r#"<div class="hero-stat-num" id="stat-temp" aria-label="Today's temperature in Hokkaido">{}</div>"#, temp_deg_str),
+        )
+        .replace(
+            r#"<div class="hero-stat-num loading-shimmer" id="stat-qty" data-loading="true" aria-label="MUON pieces today, loading">···</div>"#,
+            &format!(r#"<div class="hero-stat-num" id="stat-qty" aria-label="MUON pieces today">{}</div>"#, hero_qty_str),
+        )
+        // MUON section live-info
+        .replace(
+            r#"<span id="weather-temp">—</span>°C"#,
+            &format!(r#"<span id="weather-temp">{}</span>°C"#, temp_str),
+        )
+        .replace(
+            r#"今日の発行枚数 <span id="weather-qty">—</span>着"#,
+            &format!(r#"今日の発行枚数 <span id="weather-qty">{}</span>着"#, hero_qty_str),
+        )
+        // MUGEN section
+        .replace(
+            r#"<div class="drop-counter" id="mugen-drop-num">#—</div>"#,
+            &format!(r#"<div class="drop-counter" id="mugen-drop-num">{}</div>"#, drop_str),
+        )
+        .replace(
+            r#"<div class="drop-sub" id="mugen-cycle">—/108</div>"#,
+            &format!(r#"<div class="drop-sub" id="mugen-cycle">{}</div>"#, cycle_str),
+        )
+        .replace(
+            r#"<div class="drop-counter next-drop-timer" id="mugen-timer">—:—</div>"#,
+            &format!(r#"<div class="drop-counter next-drop-timer" id="mugen-timer">{}</div>"#, timer_str),
+        );
+
+    Html(html)
 }
 
 async fn blog_index(State(db): State<Db>) -> Html<String> {
@@ -22979,6 +23124,7 @@ async fn main() {
         .fallback_service(ServeDir::new("static"));
     let watcher_db = db.clone();
     let agent_db = db.clone();
+    let weather_db = db.clone();
 
     // CORS — allow any origin to read public APIs + embed.js.
     // Restricted to GET/OPTIONS so write endpoints (POST /api/checkout etc.)
@@ -23001,6 +23147,18 @@ async fn main() {
                 .on_request(DefaultOnRequest::new().level(Level::INFO))
                 .on_response(DefaultOnResponse::new().level(Level::INFO)),
         );
+
+    // Background weather warmer — populate cv_config('weather_temp_c') on boot
+    // so the SSR index handler never renders "—°C". Refresh every 15 min.
+    tokio::spawn(async move {
+        // Initial fetch with brief delay so the listener is ready first.
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        loop {
+            let w = fetch_weather_json().await;
+            cache_weather(&weather_db, &w);
+            tokio::time::sleep(std::time::Duration::from_secs(15 * 60)).await;
+        }
+    });
 
     // Background self-heal watcher — runs hourly inside the Fly app itself,
     // independent of m5 cron. Detects stale brands (MUGEN > 2h, MUON > 30h,
