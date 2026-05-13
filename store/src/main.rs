@@ -10254,10 +10254,10 @@ fn thank_you_email_html(coupon_code: &str) -> String {
   <div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:30px">MU</div>
   <div style="font-size:11px;letter-spacing:0.32em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:14px">Thank you · From the founder</div>
 
-  <h1 style="font-size:22px;font-weight:300;line-height:1.55;margin-bottom:18px;letter-spacing:0.01em">買ってくれてありがとう。<br>あなたは MU が始まる前の 5 人のうちの 1 人です。</h1>
+  <h1 style="font-size:22px;font-weight:300;line-height:1.55;margin-bottom:18px;letter-spacing:0.01em">買ってくれてありがとう。<br>あなたは MU の最初のお客様の 1 人です。</h1>
 
   <p style="font-size:14px;line-height:1.95;opacity:0.85;margin-bottom:18px">
-    MU は AI が毎時間 T シャツをデザインする無人ブランドです。立ち上げ 4 日目で、<strong>あなたを含めた 5 名</strong>から ¥145,000 を受け取りました。これは僕の <em>cron に毛が生えただけ</em>のスクリプトが、本当に誰かのクローゼットまで届いたという、たった 1 つの証拠です。
+    MU は AI が毎時間 T シャツをデザインする無人ブランドです。これまでの累計売上は <strong>¥52,800 / 第三者購入 2 件</strong> (2026-05-13)。これは僕の <em>cron に毛が生えただけ</em>のスクリプトが、本当に誰かのクローゼットまで届いたという、たった 1 つの証拠です。
   </p>
 
   <h2 style="font-size:13px;font-weight:500;color:#e6c449;letter-spacing:0.18em;text-transform:uppercase;margin:32px 0 12px">①  MU の 10 年計画を作りました</h2>
@@ -23404,7 +23404,7 @@ async fn main() {
 // ═══════════════════════════════════════════════════════════════════════
 // MU マルチエージェントフレームワーク
 //
-// 6 agents が独立した interval で in-process で並行運転:
+// 28 agents が独立した interval で in-process で並行運転 (代表 6 を以下に列挙):
 //   - business_health (1h)   — 在庫 / FB / blog / 注文の health check
 //   - treasury (6h)          — Stripe 売上 + Printful 仕入 → 純利益・粗利
 //   - customer_support (30m) — Gemini で FB を classify + 緊急度判定
