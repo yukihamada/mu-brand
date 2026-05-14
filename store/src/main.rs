@@ -3261,7 +3261,7 @@ async fn buyer_profile_page(
     };
 
     // Orders list (most recent 12).
-    struct OrderRow { slug: String, size: String, created_at: i64, amount_jpy: i64, status: String, product_name: String, image_url: String }
+    struct OrderRow { slug: String, size: String, created_at: i64, amount_jpy: i64, status: String, product_name: String, image_url: String, partner: String }
     let orders: Vec<OrderRow> = {
         let conn = db.lock().unwrap();
         let mut stmt = match conn.prepare(
@@ -3272,7 +3272,8 @@ async fn buyer_profile_page(
                 COALESCE(o.amount_jpy, 0),
                 COALESCE(o.status,'received'),
                 COALESCE((SELECT name FROM collab_products cp WHERE cp.slug=o.slug), o.slug) AS pname,
-                COALESCE((SELECT image_url FROM collab_products cp WHERE cp.slug=o.slug), '') AS img
+                COALESCE((SELECT image_url FROM collab_products cp WHERE cp.slug=o.slug), '') AS img,
+                COALESCE((SELECT partner FROM collab_products cp WHERE cp.slug=o.slug), '') AS partner
              FROM collab_orders o
              WHERE o.buyer_token = ?
              ORDER BY CAST(COALESCE(o.created_at,'0') AS INTEGER) DESC
@@ -3283,6 +3284,7 @@ async fn buyer_profile_page(
             amount_jpy: r.get(3)?, status: r.get(4)?,
             product_name: r.get::<_, Option<String>>(5)?.unwrap_or_default(),
             image_url: r.get(6)?,
+            partner: r.get::<_, Option<String>>(7)?.unwrap_or_default(),
         })).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
     };
 
@@ -3319,9 +3321,14 @@ async fn buyer_profile_page(
             format!(r#"<img src="{}" alt="{}" width="120" height="120" loading="lazy" style="display:inline-block;width:120px;height:120px;object-fit:cover;background:#0f0f0f;border:1px solid #1f1f1f;border-radius:4px;"/>"#,
                 html_attr_escape(&o.image_url), html_escape(&pname))
         };
+        // Link target: /<partner> for collab products (kokon, sweep, jiuflow).
+        // Fallback to "#" when partner unknown so we never 404.
+        let link_target = if !o.partner.is_empty() {
+            format!("/{}", o.partner.to_lowercase())
+        } else { "#".to_string() };
         orders_html.push_str(&format!(
-            r#"<a href="/products/{slug}" style="display:flex;gap:14px;padding:12px 0;border-bottom:1px solid #1a1a1a;text-decoration:none;align-items:center"><div>{img}</div><div style="flex:1;color:#bbb;font-size:13.5px;line-height:1.55"><div style="color:#e6c449;font-size:14px;font-weight:500">{name}</div><div style="color:#888;font-size:11.5px;margin-top:3px">{ago} 日前 · size {sz} · ¥{amt} · {st}</div></div></a>"#,
-            slug = html_attr_escape(&o.slug),
+            r#"<a href="{href}" style="display:flex;gap:14px;padding:12px 0;border-bottom:1px solid #1a1a1a;text-decoration:none;align-items:center"><div>{img}</div><div style="flex:1;color:#bbb;font-size:13.5px;line-height:1.55"><div style="color:#e6c449;font-size:14px;font-weight:500">{name}</div><div style="color:#888;font-size:11.5px;margin-top:3px">{ago} 日前 · size {sz} · ¥{amt} · {st}</div></div></a>"#,
+            href = html_attr_escape(&link_target),
             img = img_html,
             name = html_escape(&pname),
             ago = d,
