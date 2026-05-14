@@ -8636,10 +8636,27 @@ async fn create_printful_order(key: String, db: Db, product_id: i64, session: se
         }
     } else { session.clone() };
 
-    // Stripe puts shipping address in shipping_details, not metadata
+    // Stripe puts shipping address in shipping_details, with fallback to
+    // customer_details.address when Stripe didn't collect shipping separately
+    // (happens when buyer used same billing address). 2026-05-14 incident:
+    // a kokon-tote-v2 buyer was charged but Printful order failed because
+    // shipping_details was empty and we didn't fall back.
     let shipping = &full_session["shipping_details"];
-    let addr = &shipping["address"];
-    let name = shipping["name"].as_str().unwrap_or("");
+    let cust     = &full_session["customer_details"];
+    fn pick_addr(obj: &serde_json::Value) -> Option<&serde_json::Value> {
+        let a = obj.get("address")?;
+        if a.get("line1").and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false) {
+            Some(a)
+        } else { None }
+    }
+    let addr_val = pick_addr(shipping)
+        .or_else(|| pick_addr(cust))
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let addr = &addr_val;
+    let name = shipping["name"].as_str()
+        .or_else(|| cust["name"].as_str())
+        .unwrap_or("");
     let address1 = addr["line1"].as_str().unwrap_or("");
     let address2 = addr["line2"].as_str().unwrap_or("");
     let city = addr["city"].as_str().unwrap_or("");
@@ -8907,9 +8924,25 @@ async fn handle_collab_sweep_order(db: Db, session: &serde_json::Value) {
             _ => session.clone(),
         }
     } else { session.clone() };
+    // Stripe sometimes leaves shipping_details empty when the customer fills
+    // the billing address only (and shipping_address_collection is set but
+    // the customer reused the same address). Fall back to customer_details.
     let shipping = &full_session["shipping_details"];
-    let addr = &shipping["address"];
-    let ship_name = shipping["name"].as_str().unwrap_or("").to_string();
+    let cust    = &full_session["customer_details"];
+    fn pick_addr(obj: &serde_json::Value) -> Option<&serde_json::Value> {
+        let a = obj.get("address")?;
+        if a.get("line1").and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false) {
+            Some(a)
+        } else { None }
+    }
+    let addr_val = pick_addr(shipping)
+        .or_else(|| pick_addr(cust))
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let addr = &addr_val;
+    let ship_name = shipping["name"].as_str()
+        .or_else(|| cust["name"].as_str())
+        .unwrap_or("").to_string();
     let address1 = addr["line1"].as_str().unwrap_or("");
     let address2 = addr["line2"].as_str().unwrap_or("");
     let city = addr["city"].as_str().unwrap_or("");
