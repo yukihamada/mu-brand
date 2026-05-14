@@ -36518,22 +36518,18 @@ async fn main() {
     seed_proposal_sample_products(&db, "asoview", ASOVIEW_DESIGNS, "Asoview Inc.");
     seed_proposal_sample_products(&db, "elsoul",  ELSOUL_DESIGNS,  "ELSOUL LABO B.V.");
     seed_proposal_sample_products(&db, "ele",     ELE_DESIGNS,     "ELE / yuki");
-    // If asoview / elsoul / ele approvals exist, re-assert active=1 on SKUs.
+    // asoview / elsoul / ele SKUs are real, buyable MU products. Flip them
+    // to active=1 unconditionally so they appear in /api/v1/embed/products
+    // and at /products/<brand>/<id>. The approval gate controls only the
+    // public top-level URL (e.g. /asoview), not buyability — the sample +
+    // bundle endpoints work either way.
     {
         let conn = db.lock().unwrap();
-        for slug in &["asoview", "elsoul", "ele"] {
-            let approved = match *slug {
-                "asoview" => asoview_is_approved(&conn),
-                "elsoul"  => elsoul_is_approved(&conn),
-                "ele"     => ele_is_approved(&conn),
-                _ => false,
-            };
-            if approved {
-                let _ = conn.execute(
-                    &format!("UPDATE products SET active=1 WHERE brand LIKE '{}\\_%' ESCAPE '\\' AND active=0", slug),
-                    [],
-                );
-            }
+        for prefix in &["asoview_", "elsoul_", "ele_"] {
+            let _ = conn.execute(
+                "UPDATE products SET active=1 WHERE brand LIKE ?||'%' AND active=0",
+                params![prefix],
+            );
         }
     }
     // If the kichinan collab has already been approved, re-assert active=1
