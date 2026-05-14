@@ -13396,14 +13396,14 @@ async fn proposal_kichinan_sample(
     let client = reqwest::Client::new();
     // ASCII-only name to avoid any Stripe form-encoding edge cases with
     // multi-byte chars (━◯━ × · …). Localized label still rides in metadata.
+    // NB: /v1/prices does NOT accept product_data[images] — that's a /v1/products
+    // parameter. Stripe surfaces the parameter via PaymentLink line_items later.
     let product_name = format!("MU x KICHINAN sample - {} - {} - {}",
         design_lower.to_uppercase(), label, size);
-    let mockup_url = format!("https://wearmu.com/proposals/mockup-{}.png", design_lower);
     let price_form: Vec<(&str, String)> = vec![
         ("currency", "jpy".into()),
         ("unit_amount", price_jpy.to_string()),
         ("product_data[name]", product_name),
-        ("product_data[images][0]", mockup_url),
     ];
     let raw_resp = match client.post("https://api.stripe.com/v1/prices")
         .basic_auth(&stripe_key, Some("")).form(&price_form).send().await {
