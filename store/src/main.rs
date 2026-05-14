@@ -11322,35 +11322,69 @@ async fn collab_create(
         ).unwrap();
         conn.last_insert_rowid()
     };
-    // Spawn Stripe Payment Link creation (uses existing admin endpoint logic).
-    let db_for_link = db.clone();
-    let _slug_clone = slug.clone();
-    tokio::spawn(async move {
-        // Call internal payment-link create logic via direct DB access.
-        // Simplest: hit the public endpoint (server-internal).
-        let admin = env::var("ADMIN_TOKEN").unwrap_or_default();
-        if admin.is_empty() { return; }
-        let url = format!("http://127.0.0.1:8080/api/admin/products/{}/payment-link?token={}",
-            inserted, admin);
-        if let Ok(r) = reqwest::Client::new().post(&url).send().await {
-            if let Ok(j) = r.json::<serde_json::Value>().await {
-                if let Some(pl) = j.get("url").and_then(|v| v.as_str()) {
-                    let conn = db_for_link.lock().unwrap();
-                    let _ = conn.execute(
-                        "UPDATE products SET payment_link_url=? WHERE id=?",
-                        params![pl, inserted],
-                    );
+    // Stripe Payment Link inline (synchronous so the URL ships in the
+    // response and errors surface to the user instead of being lost in spawn).
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    let mut payment_link_url: Option<String> = None;
+    let mut payment_link_error: Option<String> = None;
+    if stripe_key.is_empty() {
+        payment_link_error = Some("STRIPE_SECRET_KEY missing".to_string());
+    } else {
+        let client = reqwest::Client::new();
+        let price_form: Vec<(&str, String)> = vec![
+            ("currency", "jpy".to_string()),
+            ("unit_amount", price_jpy.to_string()),
+            ("product_data[name]", event_name.clone()),
+        ];
+        let price_id: Option<String> = match client.post("https://api.stripe.com/v1/prices")
+            .basic_auth(&stripe_key, Some("")).form(&price_form).send().await {
+            Ok(r) => {
+                let v: serde_json::Value = r.json().await.unwrap_or(serde_json::Value::Null);
+                v.get("id").and_then(|x| x.as_str()).map(String::from)
+            }
+            Err(e) => { payment_link_error = Some(format!("stripe price: {}", e)); None }
+        };
+        if let Some(pid) = price_id {
+            let pl_form: Vec<(&str, String)> = vec![
+                ("line_items[0][price]", pid.clone()),
+                ("line_items[0][quantity]", "1".to_string()),
+                ("line_items[0][adjustable_quantity][enabled]", "true".to_string()),
+                ("line_items[0][adjustable_quantity][minimum]", "1".to_string()),
+                ("line_items[0][adjustable_quantity][maximum]", inventory.to_string()),
+                ("after_completion[type]", "redirect".to_string()),
+                ("after_completion[redirect][url]",
+                    format!("https://wearmu.com/success?from=collab_{}", slug)),
+                ("allow_promotion_codes", "true".to_string()),
+                ("metadata[brand]", format!("collab_{}", slug)),
+                ("metadata[slug]", slug.clone()),
+            ];
+            match client.post("https://api.stripe.com/v1/payment_links")
+                .basic_auth(&stripe_key, Some("")).form(&pl_form).send().await {
+                Ok(r) => {
+                    let v: serde_json::Value = r.json().await.unwrap_or(serde_json::Value::Null);
+                    if let Some(u) = v.get("url").and_then(|x| x.as_str()) {
+                        payment_link_url = Some(u.to_string());
+                        let conn = db.lock().unwrap();
+                        let _ = conn.execute(
+                            "UPDATE products SET payment_link_url=?, payment_link_id=?, stripe_price_id=? WHERE id=?",
+                            params![u, v.get("id").and_then(|x| x.as_str()).unwrap_or(""), pid, inserted],
+                        );
+                    } else {
+                        payment_link_error = Some(format!("no url in stripe payment_links response: {}", v.to_string().chars().take(300).collect::<String>()));
+                    }
                 }
+                Err(e) => { payment_link_error = Some(format!("stripe payment_links: {}", e)); }
             }
         }
-    });
+    }
     Json(serde_json::json!({
         "ok": true,
         "product_id": inserted,
         "slug": slug,
         "url": format!("https://wearmu.com/collab/{}", slug),
         "admin_url": format!("https://wearmu.com/collab/{}/admin?token={}", slug, admin_secret),
-        "note": "payment link is being created — poll /api/product/collab/<slug> for url",
+        "payment_link_url": payment_link_url,
+        "payment_link_error": payment_link_error,
     })).into_response()
 }
 
