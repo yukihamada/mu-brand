@@ -11483,11 +11483,17 @@ fn collab_chat_system() -> String {
 4. 価格・inventory は default を仮定せず聞く。 参考: T-shirt のみ ¥4,900-¥7,800、 イベント込み ¥8,000、 1-of-1 ¥18,000+。
 5. slug は英数小文字 + ハイフン (漢字/カナ → ローマ字)。
 
-【売れる LP の追加 field — 重要】
-- **tagline**: ツイート 1 行で伝わる感情フック (例: "プロデビュー戦の証人になる夜。")。 ユーザが明示しなければ description から生成。
-- **description**: 80-160 字、 「なぜこの数で、 なぜこの日に、 なぜあなたに」 が伝わる文。 ユーザの説明が短い場合は「もう少し背景書く?」 と 1 回聞く。
-- **image_url**: 主役/event の写真 URL (任意)。 「写真ある?」 と 1 回聞く、 無くてもスキップ。
-- **first_n_discount_jpy** + **first_n_count**: 「最初の N 人特別 ¥X off」 (任意)。 売れにくそうな event なら「最初 5 名 ¥1,000 off にする?」 と提案。
+【売れる LP の追加 field — 重要 / 絶対 drop しない】
+ユーザが下記の値を 1 回でも口にした瞬間、 以後の全 <draft> に **必ず** 入れて持ち越す。 値が確定してから dropping するのは禁止。
+- **tagline**: ツイート 1 行の感情フック (例: "プロデビュー戦の証人になる夜。")。 ユーザが明示しなければ自動生成して埋める。
+- **description**: 80-160 字、 「なぜこの数で、 なぜこの日に、 なぜあなたに」。 短ければ 1 回「膨らませる?」 と提案。
+- **image_url**: 主役/event の写真 URL (http/https で始まる文字列)。 ユーザが URL を含むメッセージを送ったら **即その値を image_url に入れる** (確認なし、 そのまま採用)。
+- **first_n_discount_jpy** + **first_n_count**: 「最初の N 人 ¥X off」。 ユーザが「最初 5 名 ¥1,000 off」 等の文字列を送ったら **first_n_count=5, first_n_discount_jpy=1000** に必ず変換。 ops 対応が必要というメタな返答はしない、 LP 側が自動で urgency strip と FIRST<N> コード指示を出してくれる前提。
+
+【NG 行動 (絶対やらない)】
+- ユーザが image_url を出したのに draft から消す → 禁止
+- 「schema が対応してないので…」 等のメタな断り → 禁止 (schema は対応している)
+- 「ops 手動」 と description に書く → 禁止 (LP 側が UI で出すので不要)
 
 【MU 文脈】
 - 通貨 ¥、 Stanley/Stella SATU001 standard fabric
@@ -11752,6 +11758,124 @@ async fn collab_create(
         "payment_link_url": payment_link_url,
         "payment_link_error": payment_link_error,
     })).into_response()
+}
+
+/// POST /api/collab/upload — accepts multipart image file, stores via R2
+/// (or Fly volume fallback), returns the public URL for use in collab drafts.
+/// Open endpoint (no admin token) so the chat UI can call it. Rate-limited
+/// by content size only (5MB max).
+async fn collab_upload(
+    mut multipart: axum::extract::Multipart,
+) -> Response {
+    let mut file_bytes: Option<axum::body::Bytes> = None;
+    let mut ext = String::from("jpg");
+    while let Some(field) = match multipart.next_field().await {
+        Ok(f) => f,
+        Err(e) => return (StatusCode::BAD_REQUEST, format!("multipart: {}", e)).into_response(),
+    } {
+        if field.name().unwrap_or("") == "file" {
+            let ct = field.content_type().unwrap_or("").to_string();
+            ext = match ct.as_str() {
+                "image/png" => "png",
+                "image/webp" => "webp",
+                "image/gif" => "gif",
+                _ => "jpg",
+            }.to_string();
+            file_bytes = field.bytes().await.ok();
+        }
+    }
+    let bytes = match file_bytes {
+        Some(b) if !b.is_empty() && b.len() <= 5 * 1024 * 1024 => b,
+        Some(_) => return (StatusCode::BAD_REQUEST, "file too large (5MB max)").into_response(),
+        None => return (StatusCode::BAD_REQUEST, "missing file").into_response(),
+    };
+    // sha8 hash naming for stable, dedupe-friendly URLs.
+    use sha2::{Sha256, Digest};
+    let mut h = Sha256::new();
+    h.update(&bytes);
+    let sha = hex::encode(&h.finalize()[..8]);
+    let key = format!("collab/{}.{}", sha, ext);
+    let ct = match ext.as_str() {
+        "png" => "image/png", "webp" => "image/webp", "gif" => "image/gif", _ => "image/jpeg",
+    };
+    if let Some(cfg) = r2_config() {
+        match cfg.bucket.put_object_with_content_type(&key, &bytes, ct).await {
+            Ok(r) if r.status_code() == 200 => {
+                let url = format!("{}/{}", cfg.public_base.trim_end_matches('/'), key);
+                return Json(serde_json::json!({"ok": true, "url": url, "size": bytes.len()})).into_response();
+            }
+            Ok(r) => {
+                eprintln!("[collab_upload] r2 put {} status {}", key, r.status_code());
+            }
+            Err(e) => eprintln!("[collab_upload] r2 error: {}", e),
+        }
+    }
+    // Fallback: local mockups dir (served via /mockups)
+    let dir = mockups_dir();
+    if std::fs::create_dir_all(&dir).is_err() {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "mkdir fail").into_response();
+    }
+    let path = dir.join(format!("collab-{}.{}", sha, ext));
+    if std::fs::write(&path, &bytes).is_err() {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "write fail").into_response();
+    }
+    let public_url = format!("/mockups/collab-{}.{}", sha, ext);
+    Json(serde_json::json!({"ok": true, "url": public_url, "size": bytes.len()})).into_response()
+}
+
+/// POST /api/admin/collab/:slug/patch?token=… — backfill fields on an existing
+/// collab page. Body: {image_url?, tagline?, description?, first_n_count?,
+/// first_n_discount_jpy?, password?}. Merges into the meta JSON.
+#[derive(Deserialize)]
+struct CollabPatchBody {
+    #[serde(default)] image_url: Option<String>,
+    #[serde(default)] tagline: Option<String>,
+    #[serde(default)] description: Option<String>,
+    #[serde(default)] first_n_count: Option<i64>,
+    #[serde(default)] first_n_discount_jpy: Option<i64>,
+    #[serde(default)] password: Option<String>,
+    #[serde(default)] featured: Option<String>,
+    #[serde(default)] venue: Option<String>,
+}
+
+async fn admin_collab_patch(
+    Path(slug): Path<String>,
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<CollabPatchBody>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let row: Option<(i64, String)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT id, COALESCE(weather_data,'{}') FROM products WHERE brand=? AND active=1",
+            params![format!("collab_{}", slug)],
+            |r| Ok((r.get(0)?, r.get(1)?))
+        ).ok()
+    };
+    let (pid, meta_raw) = match row {
+        Some(r) => r,
+        None => return (StatusCode::NOT_FOUND, "collab not found").into_response(),
+    };
+    let mut meta: serde_json::Value = serde_json::from_str(&meta_raw).unwrap_or(serde_json::json!({}));
+    let m = meta.as_object_mut().unwrap();
+    if let Some(v) = body.image_url.as_deref()           { m.insert("image_url".into(), serde_json::Value::String(v.to_string())); }
+    if let Some(v) = body.tagline.as_deref()             { m.insert("tagline".into(), serde_json::Value::String(v.to_string())); }
+    if let Some(v) = body.description.as_deref()         { m.insert("description".into(), serde_json::Value::String(v.to_string())); }
+    if let Some(v) = body.first_n_count                  { m.insert("first_n_count".into(), serde_json::json!(v)); }
+    if let Some(v) = body.first_n_discount_jpy           { m.insert("first_n_discount_jpy".into(), serde_json::json!(v)); }
+    if let Some(v) = body.password.as_deref()            { m.insert("password".into(), serde_json::Value::String(v.to_string())); }
+    if let Some(v) = body.featured.as_deref()            { m.insert("featured".into(), serde_json::Value::String(v.to_string())); }
+    if let Some(v) = body.venue.as_deref()               { m.insert("venue".into(), serde_json::Value::String(v.to_string())); }
+    let new_raw = meta.to_string();
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE products SET weather_data=? WHERE id=?",
+            params![new_raw, pid],
+        );
+    }
+    Json(serde_json::json!({"ok": true, "slug": slug, "meta": meta})).into_response()
 }
 
 /// GET /api/product/collab/:slug — slim info for the LP.
@@ -34328,6 +34452,8 @@ async fn main() {
         .route("/collab/chat", get(collab_chat_page))
         .route("/api/collab/chat", post(collab_chat))
         .route("/api/collab/create", post(collab_create))
+        .route("/api/collab/upload", post(collab_upload))
+        .route("/api/admin/collab/:slug/patch", post(admin_collab_patch))
         .route("/api/product/collab/:slug", get(api_product_collab))
         .route("/collab/:slug", get(collab_public_page))
         .route("/buy", get(buy_page))

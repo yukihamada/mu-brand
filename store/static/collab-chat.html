@@ -98,9 +98,16 @@ h1 em{color:var(--y);font-style:normal}
 <div id="composer">
   <div class="inner">
     <textarea id="input" placeholder="例: 5/17 にイオンって MMA 選手のプロデビュー応援、kokon で BBQ も同日、30 人で ¥8,000" rows="2"></textarea>
+    <button id="attach-btn" type="button" title="画像を添付" style="background:transparent;color:var(--y);border:1px solid var(--line);padding:0;width:48px;height:48px;font-size:18px;cursor:pointer;border-radius:3px">📎</button>
+    <input id="file-input" type="file" accept="image/png,image/jpeg,image/webp" style="display:none">
     <button id="send">送信</button>
   </div>
-  <div class="hint">Cmd/Ctrl + Enter で送信 · <code>session</code> は localStorage に保存</div>
+  <div id="upload-preview" style="display:none;max-width:720px;margin:8px auto 0;padding:8px 10px;background:rgba(230,196,73,0.06);border:1px solid rgba(230,196,73,0.3);border-radius:3px;font-size:11px;color:var(--mute);display:flex;gap:10px;align-items:center">
+    <img id="upload-thumb" src="" style="width:48px;height:48px;object-fit:cover;border-radius:2px">
+    <div style="flex:1">添付: <span id="upload-name" style="color:var(--fg)"></span> · <a href="#" id="upload-url" target="_blank" style="font-size:10px">URL</a></div>
+    <button type="button" id="upload-clear" style="background:transparent;color:var(--mute);border:0;cursor:pointer;font-size:16px">✕</button>
+  </div>
+  <div class="hint">Cmd/Ctrl + Enter で送信 · 📎 で画像添付 (PNG/JPG/WebP, 5MB) · <code>session</code> は localStorage</div>
 </div>
 
 <script>
@@ -264,6 +271,57 @@ inputEl.addEventListener('keydown', (e) => {
   }
 });
 tokenEl.addEventListener('change', persist);
+
+// File upload — 📎 button
+const attachBtn = document.getElementById('attach-btn');
+const fileInput = document.getElementById('file-input');
+const uploadPreview = document.getElementById('upload-preview');
+const uploadThumb = document.getElementById('upload-thumb');
+const uploadName = document.getElementById('upload-name');
+const uploadUrlEl = document.getElementById('upload-url');
+const uploadClear = document.getElementById('upload-clear');
+let attachedUrl = null;
+
+attachBtn.addEventListener('click', () => fileInput.click());
+uploadClear.addEventListener('click', () => {
+  attachedUrl = null;
+  uploadPreview.style.display = 'none';
+  fileInput.value = '';
+});
+fileInput.addEventListener('change', async () => {
+  const file = fileInput.files?.[0];
+  if (!file) return;
+  if (file.size > 5 * 1024 * 1024) {
+    setError('画像は 5MB 以下にしてください'); return;
+  }
+  attachBtn.disabled = true; attachBtn.textContent = '↑';
+  setError('');
+  try {
+    const fd = new FormData();
+    fd.append('file', file);
+    const r = await fetch('/api/collab/upload', { method: 'POST', body: fd });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    if (!d.ok || !d.url) throw new Error('no url');
+    attachedUrl = d.url;
+    uploadThumb.src = d.url;
+    uploadName.textContent = file.name;
+    uploadUrlEl.href = d.url;
+    uploadUrlEl.textContent = d.url.slice(-20);
+    uploadPreview.style.display = 'flex';
+    // Auto-inject the URL into the input so Opus sees it
+    const hint = `\n[image_url: ${d.url}]`;
+    if (!inputEl.value.includes(d.url)) {
+      inputEl.value = (inputEl.value || '').trim() + hint;
+    }
+    inputEl.focus();
+  } catch (e) {
+    setError('アップロード失敗: ' + (e.message || '?'));
+  } finally {
+    attachBtn.disabled = false; attachBtn.textContent = '📎';
+  }
+});
+
 inputEl.focus();
 </script>
 
