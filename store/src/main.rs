@@ -11490,8 +11490,18 @@ fn collab_chat_system() -> String {
 - **image_url**: 主役/event の写真 URL (http/https で始まる文字列)。 ユーザが URL を含むメッセージを送ったら **即その値を image_url に入れる** (確認なし、 そのまま採用)。
 - **first_n_discount_jpy** + **first_n_count**: 「最初の N 人 ¥X off」。 ユーザが「最初 5 名 ¥1,000 off」 等の文字列を送ったら **first_n_count=5, first_n_discount_jpy=1000** に必ず変換。 ops 対応が必要というメタな返答はしない、 LP 側が自動で urgency strip と FIRST<N> コード指示を出してくれる前提。
 
+【URL コンテキスト 自動取得】
+ユーザ message に http(s):// URL が含まれていると、 server 側で自動で fetch して `[URL コンテキスト 自動取得]` ブロックを末尾に追加してある。 そこに含まれる:
+- title / site_name → event_name / featured / venue の参考に
+- description → description / tagline の元ネタに
+- og:image → **これを image_url に default 設定** (ユーザが別の image を指定するまで)
+- favicon → 補助ロゴ
+
+URL を貼ってくれたら、 「サイト見ました」 と 1 行返してから (例: 「kokon.tokyo 見ました — 焼肉古今ですね、 image_url にロゴ使います」)、 draft に image_url を入れる。 確認は不要、 即採用。
+
 【NG 行動 (絶対やらない)】
 - ユーザが image_url を出したのに draft から消す → 禁止
+- URL の og:image を image_url に入れない → 禁止 (理由問わず採用)
 - 「schema が対応してないので…」 等のメタな断り → 禁止 (schema は対応している)
 - 「ops 手動」 と description に書く → 禁止 (LP 側が UI で出すので不要)
 
@@ -11508,6 +11518,152 @@ fn collab_chat_system() -> String {
 - T4: 確定 → complete=true
 4 turn 以内に終わらせる
 "#, today = today, year = &today[..4])
+}
+
+/// Inspect a URL and pull OG / Twitter / favicon meta tags so Opus can use them
+/// as default image/title/description for the collab. ~ 5s timeout, first 100KB
+/// only. Returns None on any error.
+#[derive(Debug, Serialize)]
+struct UrlInspect {
+    url: String,
+    title: Option<String>,
+    description: Option<String>,
+    image_url: Option<String>,
+    favicon: Option<String>,
+    site_name: Option<String>,
+}
+
+async fn inspect_url(url: &str) -> Option<UrlInspect> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .user_agent("MU-Drop/1.0 (+https://wearmu.com)")
+        .redirect(reqwest::redirect::Policy::limited(3))
+        .build().ok()?;
+    let resp = client.get(url).send().await.ok()?;
+    if !resp.status().is_success() { return None; }
+    let html = resp.text().await.ok()?;
+    let head: String = html.chars().take(80_000).collect();
+    let og_image = extract_meta(&head, "og:image");
+    let og_title = extract_meta(&head, "og:title");
+    let og_desc  = extract_meta(&head, "og:description");
+    let og_site  = extract_meta(&head, "og:site_name");
+    let tw_image = extract_meta(&head, "twitter:image");
+    let title_tag = extract_title_tag(&head);
+    let favicon = extract_link_rel(&head, "icon")
+        .or_else(|| extract_link_rel(&head, "shortcut icon"))
+        .or_else(|| extract_link_rel(&head, "apple-touch-icon"));
+    // Resolve relative paths to absolute
+    let base = parse_base(url);
+    Some(UrlInspect {
+        url: url.to_string(),
+        title: og_title.or(title_tag),
+        description: og_desc,
+        image_url: og_image.or(tw_image).map(|u| absolutize(&base, &u)),
+        favicon: favicon.map(|u| absolutize(&base, &u)),
+        site_name: og_site,
+    })
+}
+
+fn extract_meta(html: &str, key: &str) -> Option<String> {
+    // Try both `property="..."` and `name="..."`. Quote can be ' or ".
+    for q in ['"', '\''] {
+        for attr in ["property", "name"] {
+            let needle = format!("{}={}{}{}", attr, q, key, q);
+            if let Some(idx) = html.find(&needle) {
+                // Search forward for content=
+                let scan = &html[idx..idx + 600.min(html.len() - idx)];
+                if let Some(cidx) = scan.find("content=") {
+                    let after_c = &scan[cidx + 8..];
+                    // Strip leading quote
+                    let (qc, rest) = if let Some(c) = after_c.chars().next() {
+                        if c == '"' || c == '\'' { (c, &after_c[1..]) } else { (' ', after_c) }
+                    } else { return None; };
+                    if let Some(eidx) = rest.find(qc) {
+                        let val = rest[..eidx].trim().to_string();
+                        if !val.is_empty() { return Some(val); }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn extract_title_tag(html: &str) -> Option<String> {
+    let start = html.find("<title")?;
+    let after = &html[start..];
+    let gt = after.find('>')?;
+    let rest = &after[gt + 1..];
+    let end = rest.find("</title>")?;
+    let raw = rest[..end].trim();
+    if raw.is_empty() { None } else { Some(raw.to_string()) }
+}
+
+fn extract_link_rel(html: &str, rel: &str) -> Option<String> {
+    for q in ['"', '\''] {
+        let needle = format!("rel={}{}{}", q, rel, q);
+        if let Some(idx) = html.to_lowercase().find(&needle.to_lowercase()) {
+            // Scan forward / backward for href="..."
+            let win_start = idx.saturating_sub(200);
+            let win_end = (idx + 400).min(html.len());
+            let scan = &html[win_start..win_end];
+            if let Some(hidx) = scan.find("href=") {
+                let after = &scan[hidx + 5..];
+                let (qc, rest) = if let Some(c) = after.chars().next() {
+                    if c == '"' || c == '\'' { (c, &after[1..]) } else { (' ', after) }
+                } else { continue; };
+                if let Some(eidx) = rest.find(qc) {
+                    let val = rest[..eidx].trim().to_string();
+                    if !val.is_empty() { return Some(val); }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn parse_base(url: &str) -> String {
+    if let Some(after_scheme) = url.split("://").nth(1) {
+        let host = after_scheme.split('/').next().unwrap_or("");
+        let scheme = url.split("://").next().unwrap_or("https");
+        return format!("{}://{}", scheme, host);
+    }
+    url.to_string()
+}
+
+fn absolutize(base: &str, u: &str) -> String {
+    if u.starts_with("http://") || u.starts_with("https://") { u.to_string() }
+    else if u.starts_with("//") { format!("https:{}", u) }
+    else if u.starts_with('/') { format!("{}{}", base.trim_end_matches('/'), u) }
+    else { format!("{}/{}", base.trim_end_matches('/'), u) }
+}
+
+/// Find URLs in a user message (max 2, http/https only, no fragments).
+fn detect_urls(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let lower = text.to_lowercase();
+    let mut pos = 0;
+    while pos < lower.len() && out.len() < 2 {
+        let rest = &lower[pos..];
+        let idx = rest.find("http://").or_else(|| rest.find("https://"));
+        match idx {
+            Some(i) => {
+                let start = pos + i;
+                // End: whitespace, ", ', <, >, ), 】, 」, , (Japanese punctuation)
+                let end_chars = [' ', '\t', '\n', '\r', '"', '\'', '<', '>', ')', '）', '】', '」', '、', '。', ','];
+                let mut end = text.len();
+                for (i_off, c) in text[start..].char_indices() {
+                    if i_off == 0 { continue; }
+                    if end_chars.contains(&c) { end = start + i_off; break; }
+                }
+                let u = text[start..end].trim_end_matches(&['/', '.', ',', ';'][..]).to_string();
+                if u.len() >= 10 && u.len() <= 500 { out.push(u); }
+                pos = end;
+            }
+            None => break,
+        }
+    }
+    out
 }
 
 /// Today's date as YYYY-MM-DD in JST. Lightweight — used for system prompt.
@@ -11548,7 +11704,35 @@ async fn collab_chat(
         .take(20)
         .map(|m| serde_json::json!({"role": m.role, "content": m.content}))
         .collect();
-    messages.push(serde_json::json!({"role": "user", "content": msg}));
+
+    // Auto-inspect URLs in the user message. If any kokon.tokyo / band site /
+    // gym site etc. is pasted, fetch og:image + title + description so Opus
+    // gets the design taste + logo for free, without asking the user.
+    let urls = detect_urls(msg);
+    let mut url_context = String::new();
+    if !urls.is_empty() {
+        let mut inspections: Vec<UrlInspect> = Vec::new();
+        for u in urls.iter().take(2) {
+            if let Some(ctx) = inspect_url(u).await {
+                inspections.push(ctx);
+            }
+        }
+        if !inspections.is_empty() {
+            url_context.push_str("\n\n[URL コンテキスト 自動取得 — image_url の default として使ってよい]\n");
+            for ctx in &inspections {
+                url_context.push_str(&format!("- {}\n", ctx.url));
+                if let Some(t) = &ctx.title       { url_context.push_str(&format!("  title: {}\n", t.chars().take(120).collect::<String>())); }
+                if let Some(s) = &ctx.site_name   { url_context.push_str(&format!("  site_name: {}\n", s.chars().take(80).collect::<String>())); }
+                if let Some(d) = &ctx.description { url_context.push_str(&format!("  description: {}\n", d.chars().take(200).collect::<String>())); }
+                if let Some(i) = &ctx.image_url   { url_context.push_str(&format!("  og:image (← image_url 候補): {}\n", i)); }
+                if let Some(f) = &ctx.favicon     { url_context.push_str(&format!("  favicon: {}\n", f)); }
+            }
+        }
+    }
+    let augmented_msg = if url_context.is_empty() { msg.to_string() } else {
+        format!("{}{}", msg, url_context)
+    };
+    messages.push(serde_json::json!({"role": "user", "content": augmented_msg}));
     let req_body = serde_json::json!({
         "model": "claude-opus-4-7",
         "max_tokens": 1200,
