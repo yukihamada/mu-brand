@@ -13623,6 +13623,7 @@ async fn proposal_kichinan_sample(
         ("line_items[0][price]", price_id),
         ("line_items[0][quantity]", "1".into()),
         ("shipping_address_collection[allowed_countries][0]", "JP".into()),
+        ("allow_promotion_codes", "true".into()),
         ("after_completion[type]", "redirect".into()),
         ("after_completion[redirect][url]", "https://wearmu.com/proposals/kichinan?sample=ok".into()),
         ("metadata[kind]", "kichinan_sample".into()),
@@ -14297,6 +14298,7 @@ async fn issue_proposal_sample_link(
         ("line_items[0][price]", price_id),
         ("line_items[0][quantity]", "1".into()),
         ("shipping_address_collection[allowed_countries][0]", "JP".into()),
+        ("allow_promotion_codes", "true".into()),
         ("after_completion[type]", "redirect".into()),
         ("after_completion[redirect][url]", redirect_url),
         ("metadata[kind]", format!("{}_sample", slug_prefix)),
@@ -14383,6 +14385,7 @@ async fn issue_proposal_bundle_link(
     // Step 2: build one Payment Link with all of them as line_items.
     let mut pl_form: Vec<(&str, String)> = vec![
         ("shipping_address_collection[allowed_countries][0]", "JP".into()),
+        ("allow_promotion_codes", "true".into()),
         ("after_completion[type]", "redirect".into()),
         ("after_completion[redirect][url]", format!("https://wearmu.com/{}?bundle=ok", slug_prefix)),
         ("metadata[kind]", format!("{}_bundle", slug_prefix)),
