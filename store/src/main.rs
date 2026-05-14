@@ -11071,6 +11071,385 @@ async fn grachan82_page(headers: HeaderMap, axum::extract::Query(q): axum::extra
     resp
 }
 
+// ───── MU Drop チャット (Opus で collab page を作る) ─────
+// Creator が自然言語で依頼 → Anthropic API が必要情報を聞き出す →
+// すべて揃ったら proposal を出す → ユーザが「作成」 → /api/collab/create
+// が product DB 行 + Stripe Payment Link + static page を生成。
+
+const COLLAB_CHAT_SYSTEM: &str = r#"あなたは MU Drop の collab アシスタント。 ユーザの「ざっくり依頼」 から T シャツ collab page を作るのを手伝う。
+
+【絶対ルール】
+1. 1 turn に質問は最大 2 個。 矢継ぎ早にしない。
+2. 日本語で、 短く返す (2-4 行)。
+3. 必ず最後に proposal JSON ブロックを付ける (未確定フィールドは null OK):
+   <draft>{"slug":"…","event_name":"…","event_date":"YYYY-MM-DD","venue":"…","featured":"…","description":"…","price_jpy":8000,"inventory":30,"password":null,"schrodinger_mode":false}</draft>
+4. すべての必須項目 (event_name, event_date, price_jpy, inventory) が埋まり、 ユーザが確定的に「作成して」「OK」 と言ったら最後に:
+   <draft complete="true">{…full json…}</draft>
+   と出して 「作成しますね」 と返す。
+5. 既存 MU の文脈:
+   - 通貨は ¥ (JPY)、 1 着 ¥4,900-¥35,000 が想定レンジ
+   - Stanley/Stella SATU001 が standard fabric
+   - Schrödinger mode = 結果分岐 (試合等で勝敗で edition 違う)
+   - slug は英数小文字 + ハイフン (例 grachan82, ion-debut)
+   - kokon password で身内 gate 可能
+
+【会話の進め方】
+- 最初の質問は: 何のイベント? どの選手/誰の応援?
+- 次: 日付・会場・価格・数量
+- 最後に: description + 必要なら password + schrodinger
+- 6 turn 以内に終わらせる
+"#;
+
+#[derive(Deserialize)]
+struct CollabChatBody {
+    history: Vec<CollabChatMsg>,
+    message: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct CollabChatMsg {
+    role: String,   // "user" | "assistant"
+    content: String,
+}
+
+async fn collab_chat(
+    State(_db): State<Db>,
+    Json(body): Json<CollabChatBody>,
+) -> Response {
+    let key = env::var("ANTHROPIC_API_KEY").unwrap_or_default();
+    if key.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({
+            "error": "ANTHROPIC_API_KEY missing — set via `fly secrets set ANTHROPIC_API_KEY=… -a mu-store`"
+        }))).into_response();
+    }
+    let msg = body.message.trim();
+    if msg.is_empty() || msg.len() > 2000 {
+        return (StatusCode::BAD_REQUEST, "message 1-2000 chars").into_response();
+    }
+    let mut messages: Vec<serde_json::Value> = body.history.iter()
+        .take(20)
+        .map(|m| serde_json::json!({"role": m.role, "content": m.content}))
+        .collect();
+    messages.push(serde_json::json!({"role": "user", "content": msg}));
+    let req_body = serde_json::json!({
+        "model": "claude-opus-4-7",
+        "max_tokens": 1200,
+        "system": COLLAB_CHAT_SYSTEM,
+        "messages": messages,
+    });
+    let client = reqwest::Client::new();
+    let resp = match client.post("https://api.anthropic.com/v1/messages")
+        .header("x-api-key", &key)
+        .header("anthropic-version", "2023-06-01")
+        .header("content-type", "application/json")
+        .json(&req_body).send().await {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::BAD_GATEWAY, format!("anthropic: {}", e)).into_response(),
+    };
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        eprintln!("[collab_chat] anthropic {} → {}", status, text.chars().take(400).collect::<String>());
+        return (StatusCode::BAD_GATEWAY, format!("anthropic {}: see logs", status)).into_response();
+    }
+    let parsed: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(v) => v, Err(e) => return (StatusCode::BAD_GATEWAY, format!("parse: {}", e)).into_response(),
+    };
+    let raw_text = parsed["content"][0]["text"].as_str().unwrap_or_default().to_string();
+    // Extract <draft …>{…}</draft> block; pass back to UI separately.
+    let mut draft_json: Option<serde_json::Value> = None;
+    let mut complete = false;
+    if let Some(start) = raw_text.find("<draft") {
+        if let Some(close_lt) = raw_text[start..].find('>') {
+            let tag_close = start + close_lt + 1;
+            if let Some(end) = raw_text[tag_close..].find("</draft>") {
+                let inner = &raw_text[tag_close..tag_close + end];
+                if raw_text[start..tag_close].contains("complete=\"true\"")
+                   || raw_text[start..tag_close].contains("complete=true") {
+                    complete = true;
+                }
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(inner.trim()) {
+                    draft_json = Some(v);
+                }
+            }
+        }
+    }
+    // Strip <draft …>…</draft> from the reply shown to the user.
+    let mut reply_clean = raw_text.clone();
+    if let (Some(s), Some(e)) = (reply_clean.find("<draft"), reply_clean.find("</draft>")) {
+        if s < e { reply_clean.replace_range(s..e + "</draft>".len(), ""); }
+    }
+    Json(serde_json::json!({
+        "reply": reply_clean.trim(),
+        "draft": draft_json,
+        "complete": complete,
+    })).into_response()
+}
+
+#[derive(Deserialize)]
+struct CollabCreateBody {
+    admin_token: String,
+    draft: serde_json::Value,
+}
+
+async fn collab_create(
+    State(db): State<Db>,
+    Json(body): Json<CollabCreateBody>,
+) -> Response {
+    if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+    let d = &body.draft;
+    let event_name = d["event_name"].as_str().unwrap_or("").trim().to_string();
+    let event_date = d["event_date"].as_str().unwrap_or("").trim().to_string();
+    let venue      = d["venue"].as_str().unwrap_or("").trim().to_string();
+    let featured   = d["featured"].as_str().unwrap_or("").trim().to_string();
+    let description= d["description"].as_str().unwrap_or("").trim().to_string();
+    let price_jpy: i64 = d["price_jpy"].as_i64().unwrap_or(0);
+    let inventory: i64 = d["inventory"].as_i64().unwrap_or(0);
+    let password   = d["password"].as_str().map(|s| s.to_string());
+    let _schrodinger = d["schrodinger_mode"].as_bool().unwrap_or(false);
+    let slug_raw   = d["slug"].as_str().unwrap_or("").trim().to_lowercase();
+    if event_name.is_empty() || event_date.is_empty() || price_jpy <= 0 || inventory <= 0 {
+        return (StatusCode::BAD_REQUEST, "missing required fields").into_response();
+    }
+    // Slugify
+    let slug: String = if !slug_raw.is_empty() {
+        slug_raw.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').take(40).collect()
+    } else {
+        let mut s: String = event_name.chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .take(20).collect::<String>().to_lowercase();
+        if s.is_empty() { s = format!("collab{}", chrono_now().chars().take(6).collect::<String>()); }
+        s
+    };
+    let admin_secret = {
+        use sha2::{Sha256, Digest};
+        let mut h = Sha256::new();
+        h.update(slug.as_bytes());
+        h.update(chrono_now().as_bytes());
+        h.update(env::var("ADMIN_TOKEN").unwrap_or_default().as_bytes());
+        hex::encode(&h.finalize()[..8])
+    };
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let inserted = {
+        let conn = db.lock().unwrap();
+        // Idempotent: if slug already exists, return error.
+        let exists: Option<i64> = conn.query_row(
+            "SELECT id FROM products WHERE brand=? LIMIT 1",
+            params![format!("collab_{}", slug)], |r| r.get(0)
+        ).ok();
+        if exists.is_some() {
+            return (StatusCode::CONFLICT, Json(serde_json::json!({
+                "error": "slug already exists", "slug": slug
+            }))).into_response();
+        }
+        conn.execute(
+            "INSERT INTO products
+             (brand, drop_num, name, design_url, mockup_url, price_jpy, inventory,
+              created_at, weather_data)
+             VALUES (?,?,?,?,?,?,?,?,?)",
+            params![
+                format!("collab_{}", slug), 1,
+                event_name.clone(),
+                "https://mockups.wearmu.com/hero.png",
+                "https://mockups.wearmu.com/hero.png",
+                price_jpy, inventory,
+                now_s.to_string(),
+                serde_json::json!({
+                    "collab": true,
+                    "slug": slug,
+                    "event_date": event_date,
+                    "venue": venue,
+                    "featured": featured,
+                    "description": description,
+                    "password": password,
+                    "admin_secret": admin_secret,
+                }).to_string(),
+            ],
+        ).unwrap();
+        conn.last_insert_rowid()
+    };
+    // Spawn Stripe Payment Link creation (uses existing admin endpoint logic).
+    let db_for_link = db.clone();
+    let _slug_clone = slug.clone();
+    tokio::spawn(async move {
+        // Call internal payment-link create logic via direct DB access.
+        // Simplest: hit the public endpoint (server-internal).
+        let admin = env::var("ADMIN_TOKEN").unwrap_or_default();
+        if admin.is_empty() { return; }
+        let url = format!("http://127.0.0.1:8080/api/admin/products/{}/payment-link?token={}",
+            inserted, admin);
+        if let Ok(r) = reqwest::Client::new().post(&url).send().await {
+            if let Ok(j) = r.json::<serde_json::Value>().await {
+                if let Some(pl) = j.get("url").and_then(|v| v.as_str()) {
+                    let conn = db_for_link.lock().unwrap();
+                    let _ = conn.execute(
+                        "UPDATE products SET payment_link_url=? WHERE id=?",
+                        params![pl, inserted],
+                    );
+                }
+            }
+        }
+    });
+    Json(serde_json::json!({
+        "ok": true,
+        "product_id": inserted,
+        "slug": slug,
+        "url": format!("https://wearmu.com/collab/{}", slug),
+        "admin_url": format!("https://wearmu.com/collab/{}/admin?token={}", slug, admin_secret),
+        "note": "payment link is being created — poll /api/product/collab/<slug> for url",
+    })).into_response()
+}
+
+/// GET /api/product/collab/:slug — slim info for the LP.
+async fn api_product_collab(
+    Path(slug): Path<String>,
+    State(db): State<Db>,
+) -> Response {
+    let row: Option<(i64, String, i64, i64, i64, Option<String>, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT id, name, price_jpy, inventory, sold, payment_link_url, weather_data
+             FROM products WHERE brand=? AND active=1 LIMIT 1",
+            params![format!("collab_{}", slug)], |r| Ok((
+                r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5).ok(), r.get(6).ok(),
+            )),
+        ).ok()
+    };
+    match row {
+        Some((id, name, price, inv, sold, pl, meta_json)) => {
+            let meta: serde_json::Value = meta_json.as_deref()
+                .and_then(|s| serde_json::from_str(s).ok())
+                .unwrap_or(serde_json::Value::Null);
+            Json(serde_json::json!({
+                "id": id, "name": name, "price_jpy": price,
+                "inventory": inv, "sold": sold,
+                "payment_link_url": pl, "meta": meta,
+            })).into_response()
+        }
+        None => (StatusCode::NOT_FOUND, "collab not found").into_response(),
+    }
+}
+
+/// GET /collab/chat — chat UI for creating new collab pages.
+async fn collab_chat_page() -> Html<&'static str> {
+    Html(include_str!("../static/collab-chat.html"))
+}
+
+/// GET /collab/:slug — public collab landing using the grachan82 template
+/// shape. Pulls data from products row by brand=collab_<slug>.
+async fn collab_public_page(
+    Path(slug): Path<String>,
+    State(db): State<Db>,
+    headers: HeaderMap,
+) -> Response {
+    let row: Option<(String, i64, i64, i64, Option<String>, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT name, price_jpy, inventory, sold, payment_link_url, weather_data
+             FROM products WHERE brand=? AND active=1",
+            params![format!("collab_{}", slug)], |r| Ok((
+                r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4).ok(), r.get(5).ok(),
+            )),
+        ).ok()
+    };
+    let (name, price, inv, sold, pl, meta_json) = match row {
+        Some(r) => r,
+        None => return (StatusCode::NOT_FOUND, Html(include_str!("../static/404.html"))).into_response(),
+    };
+    let meta: serde_json::Value = meta_json.as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or(serde_json::Value::Null);
+    // Password gate (if set in meta).
+    let pw = meta["password"].as_str().filter(|s| !s.is_empty()).map(|s| s.to_string());
+    if let Some(pw_val) = &pw {
+        let cookie_ok = headers.get("cookie").and_then(|v| v.to_str().ok())
+            .map(|c| c.split(';').any(|p| p.trim() == format!("mu_collab_{}={}", slug, pw_val)))
+            .unwrap_or(false);
+        let entered = headers.get("referer").and_then(|_| None::<&str>); // simple gate: pass via ?pass=
+        let _ = entered;
+        // We can't read query in this signature; allow access if cookie OR public.
+        // For MVP: any collab with a password silently shows the gate via the
+        // partner_proposal_gate_html helper.
+        if !cookie_ok {
+            return Html(partner_proposal_gate_html("collab", &name)).into_response();
+        }
+    }
+    let rem = inv - sold;
+    let pl_str = pl.unwrap_or_else(|| "#".to_string());
+    let event_date = meta["event_date"].as_str().unwrap_or("");
+    let venue      = meta["venue"].as_str().unwrap_or("");
+    let featured   = meta["featured"].as_str().unwrap_or("");
+    let description= meta["description"].as_str().unwrap_or("");
+    let html = format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{name} — MU Drop</title>
+<meta name="robots" content="noindex,nofollow">
+<meta property="og:title" content="{name}">
+<meta property="og:description" content="{desc}">
+<meta property="og:image" content="https://mockups.wearmu.com/hero.png">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<script defer src="/mu-funnel.js"></script>
+<style>
+:root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--red:#ff5a5a;--line:rgba(255,255,255,0.08)}}
+*{{margin:0;padding:0;box-sizing:border-box}}body{{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;-webkit-font-smoothing:antialiased;line-height:1.8}}
+a{{color:var(--y);text-decoration:none}}a:hover{{text-decoration:underline}}
+nav{{position:sticky;top:0;background:rgba(10,10,10,0.92);backdrop-filter:blur(14px);border-bottom:1px solid var(--line);padding:14px 28px;display:flex;justify-content:space-between;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;z-index:50}}
+nav .logo{{font-weight:700;letter-spacing:0.45em}}
+main{{max-width:780px;margin:0 auto;padding:40px 24px 100px}}
+.eyebrow{{font-size:10px;letter-spacing:0.42em;text-transform:uppercase;color:var(--y);opacity:0.9;margin-bottom:12px;font-weight:700}}
+h1{{font-size:clamp(24px,4vw,34px);font-weight:300;line-height:1.3;margin-bottom:14px}}
+.subhead{{color:var(--mute);font-size:14.5px;line-height:2;margin-bottom:32px}}
+.card{{background:linear-gradient(180deg,rgba(230,196,73,0.08),rgba(230,196,73,0.02));border:1px solid rgba(230,196,73,0.4);border-radius:6px;padding:24px;margin-bottom:24px}}
+.price{{font-size:34px;font-weight:300;color:#fff;font-variant-numeric:tabular-nums;letter-spacing:0.02em}}
+.price small{{font-size:13px;color:var(--mute);margin-left:8px}}
+.stock{{font-size:11px;color:var(--y);letter-spacing:0.18em;text-transform:uppercase;font-weight:600;margin-top:8px}}
+.btn-buy{{display:block;width:100%;background:var(--y);color:#0A0A0A;border:0;padding:18px;font-size:13px;letter-spacing:0.3em;text-transform:uppercase;font-weight:700;border-radius:3px;text-decoration:none;text-align:center;margin-top:16px}}
+.btn-buy:hover{{background:#f5d56f;text-decoration:none}}
+.btn-buy.disabled{{background:rgba(255,255,255,0.1);color:var(--mute);cursor:not-allowed;pointer-events:none}}
+.spec-row{{display:grid;grid-template-columns:120px 1fr;gap:12px;padding:12px 0;border-bottom:1px solid var(--line);font-size:13px}}
+.spec-row .k{{font-size:10px;letter-spacing:0.3em;text-transform:uppercase;color:var(--y);font-weight:600}}
+.spec-row .v{{color:var(--mute)}}
+footer{{text-align:center;padding:32px 24px;font-size:10px;letter-spacing:0.2em;text-transform:uppercase;color:var(--mute);opacity:0.55;border-top:1px solid var(--line)}}
+</style></head><body>
+<nav><a href="/" class="logo">MU</a><span><a href="/collab/chat" style="opacity:0.55;font-size:10px">+ NEW COLLAB</a></span></nav>
+<main>
+<div class="eyebrow">▶ MU Drop · Collab</div>
+<h1>{name}</h1>
+<p class="subhead">{desc}</p>
+<div class="card">
+  <div class="price">¥{price_fmt}<small>/ 1 名</small></div>
+  <div class="stock">のこり {rem} / {inv}</div>
+  <a href="{pl}" class="btn-buy {disabled}" data-funnel="cta_click" data-funnel-cta="collab_buy_{slug}">
+    {btn_label}
+  </a>
+</div>
+<div>
+  <div class="spec-row"><div class="k">日付</div><div class="v">{event_date}</div></div>
+  <div class="spec-row"><div class="k">会場</div><div class="v">{venue}</div></div>
+  <div class="spec-row"><div class="k">主役</div><div class="v">{featured}</div></div>
+  <div class="spec-row"><div class="k">限定</div><div class="v">{inv} 名</div></div>
+</div>
+</main>
+<footer>MU · wearmu.com · <a href="mailto:mail@yukihamada.jp" style="color:inherit">mail@yukihamada.jp</a></footer>
+</body></html>"##,
+        name = html_escape(&name),
+        desc = html_attr_escape(description),
+        price_fmt = price.to_string().chars().rev().collect::<Vec<_>>().chunks(3)
+            .map(|c| c.iter().collect::<String>()).collect::<Vec<_>>().join(",")
+            .chars().rev().collect::<String>(),
+        rem = rem,
+        inv = inv,
+        pl = pl_str,
+        slug = slug,
+        disabled = if rem <= 0 || pl_str == "#" { "disabled" } else { "" },
+        btn_label = if rem <= 0 { "SOLD OUT" } else if pl_str == "#" { "Stripe link 準備中" } else { "今すぐ買う · Stripe へ" },
+        event_date = html_escape(event_date),
+        venue = html_escape(venue),
+        featured = html_escape(featured),
+    );
+    Html(html).into_response()
+}
+
 /// GET /api/product/grachan82 — slim product info for the LP (stock + payment link).
 async fn api_product_grachan82(State(db): State<Db>) -> Response {
     let row: Option<(i64, String, i64, i64, i64, Option<String>)> = {
@@ -33420,6 +33799,11 @@ async fn main() {
         .route("/grachan82", get(grachan82_page))
         .route("/sato-ion", get(grachan82_page))
         .route("/api/product/grachan82", get(api_product_grachan82))
+        .route("/collab/chat", get(collab_chat_page))
+        .route("/api/collab/chat", post(collab_chat))
+        .route("/api/collab/create", post(collab_create))
+        .route("/api/product/collab/:slug", get(api_product_collab))
+        .route("/collab/:slug", get(collab_public_page))
         .route("/buy", get(buy_page))
         .route("/survey/quality", get(survey_quality_page))
         .route("/api/poll/quality", get(quality_poll_results))

@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU Drop — collab を チャットで作る</title>
+<meta name="robots" content="noindex,nofollow">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+:root{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--line:rgba(255,255,255,0.08)}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;-webkit-font-smoothing:antialiased;line-height:1.7;font-feature-settings:"palt"}
+a{color:var(--y);text-decoration:none}
+
+nav{position:sticky;top:0;background:rgba(10,10,10,0.92);backdrop-filter:blur(14px);border-bottom:1px solid var(--line);padding:14px 28px;display:flex;justify-content:space-between;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;z-index:50}
+nav .logo{font-weight:700;letter-spacing:0.45em}
+nav .right{font-size:10px;opacity:0.55}
+nav .right a{margin-left:14px;color:inherit}
+
+.wrap{max-width:720px;margin:0 auto;padding:30px 22px 200px;min-height:100vh;display:flex;flex-direction:column}
+
+h1{font-size:24px;font-weight:300;letter-spacing:0.02em;margin-bottom:6px;line-height:1.4}
+h1 em{color:var(--y);font-style:normal}
+.lede{color:var(--mute);font-size:13px;line-height:1.95;margin-bottom:28px;max-width:560px}
+.lede strong{color:var(--fg);font-weight:500}
+
+#chat{display:flex;flex-direction:column;gap:14px;flex:1;margin-bottom:24px}
+.msg{display:flex;gap:12px;align-items:flex-start;font-size:14px;line-height:1.85}
+.msg .who{font-size:10px;letter-spacing:0.32em;text-transform:uppercase;opacity:0.55;min-width:48px;padding-top:4px;font-weight:600}
+.msg.user .who{color:var(--fg)}
+.msg.assistant .who{color:var(--y)}
+.msg .body{flex:1;padding:14px 16px;border-radius:4px;background:rgba(255,255,255,0.03);border:1px solid var(--line);white-space:pre-wrap}
+.msg.user .body{background:rgba(230,196,73,0.05);border-color:rgba(230,196,73,0.2)}
+.msg.assistant .body{background:rgba(255,255,255,0.025)}
+
+.preview{margin-top:18px;padding:18px 20px;background:rgba(230,196,73,0.06);border:1px solid var(--y);border-radius:4px;font-size:13px;line-height:2}
+.preview h3{font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:var(--y);margin-bottom:10px;font-weight:600}
+.preview .row{display:grid;grid-template-columns:110px 1fr;gap:10px;padding:4px 0;font-size:12.5px}
+.preview .row .k{font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:var(--y);opacity:0.85;padding-top:3px}
+.preview .row .v{color:var(--fg);word-break:break-word}
+.create-btn{display:block;width:100%;background:var(--y);color:#0A0A0A;border:0;padding:16px;font-family:inherit;font-size:12px;letter-spacing:0.32em;text-transform:uppercase;font-weight:700;border-radius:3px;cursor:pointer;margin-top:14px}
+.create-btn:hover{background:#f5d56f}
+.create-btn:disabled{opacity:0.5;cursor:wait}
+
+#composer{position:fixed;bottom:0;left:0;right:0;background:rgba(10,10,10,0.95);backdrop-filter:blur(14px);border-top:1px solid var(--line);padding:14px 22px;padding-bottom:calc(14px + env(safe-area-inset-bottom,0px))}
+#composer .inner{max-width:720px;margin:0 auto;display:flex;gap:10px;align-items:flex-end}
+#composer textarea{flex:1;background:#000;color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:12px 14px;font-family:inherit;font-size:14px;resize:none;min-height:48px;max-height:140px;line-height:1.65}
+#composer textarea:focus{outline:none;border-color:var(--y)}
+#composer button{background:var(--y);color:#0A0A0A;border:0;padding:0 20px;font-family:inherit;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;font-weight:700;border-radius:3px;cursor:pointer;height:48px;flex-shrink:0}
+#composer button:disabled{opacity:0.45;cursor:wait}
+#composer .hint{max-width:720px;margin:6px auto 0;font-size:9.5px;letter-spacing:0.15em;opacity:0.5;text-transform:uppercase;color:var(--mute)}
+#composer .hint code{background:rgba(255,255,255,0.06);padding:1px 5px;border-radius:2px;color:var(--y);font-family:'SF Mono','Menlo',monospace;font-size:9.5px;letter-spacing:0}
+
+.token-bar{margin-bottom:18px;padding:8px 12px;font-size:11px;color:var(--mute);background:rgba(255,255,255,0.02);border:1px solid var(--line);border-radius:3px;display:flex;align-items:center;gap:10px;letter-spacing:0.04em}
+.token-bar input{flex:1;background:transparent;color:var(--fg);border:0;font-family:'SF Mono','Menlo',monospace;font-size:11px;letter-spacing:0.05em}
+.token-bar input:focus{outline:none}
+.token-bar label{font-size:9px;letter-spacing:0.3em;text-transform:uppercase;color:var(--y);font-weight:600}
+
+.thinking{font-style:italic;opacity:0.6;animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:0.45}50%{opacity:0.85}}
+
+.err{color:#ff8a8a;font-size:12px;padding:8px 12px;background:rgba(200,54,44,0.08);border:1px solid rgba(200,54,44,0.3);border-radius:3px;margin:8px 0}
+</style>
+</head>
+<body>
+
+<nav>
+  <a href="/" class="logo">MU</a>
+  <span class="right">
+    <a href="/grachan82">/grachan82 (例)</a>
+    <a href="/constitution">§</a>
+  </span>
+</nav>
+
+<div class="wrap">
+  <h1>MU Drop — collab を <em>チャットで</em>作る</h1>
+  <p class="lede">
+    「<strong>5/17 にイオン応援したい、 kokon で BBQ 30 人</strong>」 みたいに <strong>ざっくり書く</strong> だけで、 Opus が必要な情報を聞いて、 1 click で <strong>/collab/&lt;slug&gt; LP + Stripe Payment Link + 商品 DB 行</strong>を全自動で作ります。
+  </p>
+
+  <div class="token-bar">
+    <label>ADMIN_TOKEN</label>
+    <input id="admin-token" type="password" placeholder="作成時に必要 (yuki のみ)" autocomplete="off">
+  </div>
+
+  <div id="chat">
+    <div class="msg assistant">
+      <div class="who">MU</div>
+      <div class="body">どんな collab page を作りますか? 何のイベントで、 誰の応援/コラボか教えてください。</div>
+    </div>
+  </div>
+
+  <div id="preview-slot"></div>
+
+  <div id="err-slot"></div>
+</div>
+
+<div id="composer">
+  <div class="inner">
+    <textarea id="input" placeholder="例: 5/17 にイオンって MMA 選手のプロデビュー応援、kokon で BBQ も同日、30 人で ¥8,000" rows="2"></textarea>
+    <button id="send">送信</button>
+  </div>
+  <div class="hint">Cmd/Ctrl + Enter で送信 · <code>session</code> は localStorage に保存</div>
+</div>
+
+<script>
+const HISTORY_KEY = 'mu_collab_chat_v1';
+let history = [];
+let currentDraft = null;
+
+const chatEl = document.getElementById('chat');
+const inputEl = document.getElementById('input');
+const sendBtn = document.getElementById('send');
+const tokenEl = document.getElementById('admin-token');
+const previewSlot = document.getElementById('preview-slot');
+const errSlot = document.getElementById('err-slot');
+
+try {
+  const saved = JSON.parse(localStorage.getItem(HISTORY_KEY) || 'null');
+  if (saved?.history) history = saved.history;
+  if (saved?.draft) currentDraft = saved.draft;
+  if (saved?.adminToken) tokenEl.value = saved.adminToken;
+  renderAll();
+} catch (_) {}
+
+function persist() {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify({
+      history, draft: currentDraft, adminToken: tokenEl.value || '',
+    }));
+  } catch (_) {}
+}
+
+function renderAll() {
+  chatEl.innerHTML = '';
+  if (history.length === 0) {
+    addMsg('assistant', 'どんな collab page を作りますか? 何のイベントで、 誰の応援/コラボか教えてください。', false);
+  } else {
+    for (const m of history) addMsg(m.role, m.content, false);
+  }
+  renderPreview();
+}
+
+function addMsg(role, content, save = true) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  div.innerHTML = `<div class="who">${role === 'user' ? 'YOU' : 'MU'}</div><div class="body"></div>`;
+  div.querySelector('.body').textContent = content;
+  chatEl.appendChild(div);
+  if (save) {
+    history.push({ role, content });
+    persist();
+  }
+  window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+}
+
+function setError(msg) {
+  errSlot.innerHTML = msg ? `<div class="err">${msg}</div>` : '';
+}
+
+function renderPreview() {
+  if (!currentDraft || !currentDraft.event_name) {
+    previewSlot.innerHTML = '';
+    return;
+  }
+  const d = currentDraft;
+  previewSlot.innerHTML = `
+    <div class="preview">
+      <h3>▶ Draft preview</h3>
+      <div class="row"><div class="k">slug</div><div class="v">${d.slug || '(auto)'}</div></div>
+      <div class="row"><div class="k">event</div><div class="v">${d.event_name || '—'}</div></div>
+      <div class="row"><div class="k">date</div><div class="v">${d.event_date || '—'}</div></div>
+      <div class="row"><div class="k">venue</div><div class="v">${d.venue || '—'}</div></div>
+      <div class="row"><div class="k">featured</div><div class="v">${d.featured || '—'}</div></div>
+      <div class="row"><div class="k">price</div><div class="v">${d.price_jpy ? '¥' + d.price_jpy.toLocaleString() : '—'}</div></div>
+      <div class="row"><div class="k">inventory</div><div class="v">${d.inventory ?? '—'}</div></div>
+      <div class="row"><div class="k">password</div><div class="v">${d.password || '(なし・公開)'}</div></div>
+      <div class="row"><div class="k">schrödinger</div><div class="v">${d.schrodinger_mode ? 'on (結果分岐あり)' : 'off'}</div></div>
+      <div class="row"><div class="k">説明</div><div class="v">${d.description || '—'}</div></div>
+      <button class="create-btn" id="create-btn"
+              ${(!d.event_name || !d.event_date || !d.price_jpy || !d.inventory) ? 'disabled' : ''}>
+        ${(!d.event_name || !d.event_date || !d.price_jpy || !d.inventory) ? '必須項目が足りません' : '✓ これで作成する → /collab/' + (d.slug || 'auto') }
+      </button>
+    </div>
+  `;
+  const cb = document.getElementById('create-btn');
+  if (cb) cb.addEventListener('click', () => doCreate());
+}
+
+async function send() {
+  const text = inputEl.value.trim();
+  if (!text) return;
+  setError('');
+  addMsg('user', text);
+  inputEl.value = '';
+  sendBtn.disabled = true;
+  // thinking placeholder
+  const ph = document.createElement('div');
+  ph.className = 'msg assistant';
+  ph.innerHTML = '<div class="who">MU</div><div class="body thinking">考えています…</div>';
+  chatEl.appendChild(ph);
+  try {
+    const r = await fetch('/api/collab/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ history: history.slice(0, -1), message: text }),
+    });
+    if (!r.ok) {
+      const t = await r.text();
+      throw new Error(t || ('HTTP ' + r.status));
+    }
+    const d = await r.json();
+    chatEl.removeChild(ph);
+    addMsg('assistant', d.reply || '(返答なし)');
+    if (d.draft) currentDraft = { ...(currentDraft || {}), ...d.draft };
+    persist();
+    renderPreview();
+  } catch (e) {
+    chatEl.removeChild(ph);
+    setError('エラー: ' + (e.message || '通信できませんでした'));
+  } finally {
+    sendBtn.disabled = false;
+    inputEl.focus();
+  }
+}
+
+async function doCreate() {
+  const token = tokenEl.value.trim();
+  if (!token) {
+    setError('ADMIN_TOKEN が必要です (上の input)');
+    return;
+  }
+  const btn = document.getElementById('create-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '作成中…'; }
+  setError('');
+  try {
+    const r = await fetch('/api/collab/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ admin_token: token, draft: currentDraft }),
+    });
+    if (!r.ok) {
+      const t = await r.text();
+      throw new Error(t || ('HTTP ' + r.status));
+    }
+    const d = await r.json();
+    addMsg('assistant', `✓ 作成しました!\n\nLP: ${d.url}\n管理画面: ${d.admin_url}\n\nStripe Payment Link は数秒で接続されます (poll /api/product/collab/${d.slug})。`);
+    // Reset chat for next collab
+    history = [];
+    currentDraft = null;
+    persist();
+    setTimeout(() => { window.location.href = d.url; }, 3000);
+  } catch (e) {
+    setError('作成失敗: ' + (e.message || '不明'));
+    if (btn) { btn.disabled = false; btn.textContent = '✓ これで作成する'; }
+  }
+}
+
+sendBtn.addEventListener('click', send);
+inputEl.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+    e.preventDefault();
+    send();
+  }
+});
+tokenEl.addEventListener('change', persist);
+inputEl.focus();
+</script>
+
+</body>
+</html>
