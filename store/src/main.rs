@@ -8705,11 +8705,11 @@ async fn stripe_webhook(
                 .to_lowercase();
             let session_id = session["id"].as_str().unwrap_or("").to_string();
             let conn = db.lock().unwrap();
-            let (brand, drop_num): (String, i64) = conn.query_row(
-                "SELECT brand, drop_num FROM products WHERE id=?",
+            let (brand, drop_num, price_jpy): (String, i64, i64) = conn.query_row(
+                "SELECT brand, drop_num, COALESCE(price_jpy, 0) FROM products WHERE id=?",
                 params![product_id],
-                |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
-            ).unwrap_or((String::new(), 0));
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)),
+            ).unwrap_or((String::new(), 0, 0));
             if !buyer_email.is_empty() {
                 conn.execute(
                     "INSERT OR IGNORE INTO mu_purchases (email, product_id, brand, drop_num, session_id, created_at)
@@ -8719,8 +8719,8 @@ async fn stripe_webhook(
                      )",
                     params![buyer_email, product_id, brand, drop_num, session_id, chrono_now(), session_id, product_id],
                 ).ok();
-                // MU credit grant: +1 MU (=¥1,000) per shirt. Idempotent on session_id.
-                mu_credit_grant_for_purchase(&conn, &buyer_email, &brand, drop_num, &session_id);
+                // MU credit grant: min(¥1,000, 20% of price_jpy) — 景表法 cap.
+                mu_credit_grant_for_purchase(&conn, &buyer_email, &brand, drop_num, &session_id, price_jpy);
                 let reason = format!("purchased {} #{}", brand.to_uppercase(), drop_num);
                 let updated = conn.execute(
                     "UPDATE you_users
@@ -12077,15 +12077,29 @@ fn mu_credit_balance(conn: &rusqlite::Connection, email: &str) -> i64 {
 }
 
 // Grant for a shirt purchase (called after mu_purchases insert). 1 MU = ¥1,000.
-fn mu_credit_grant_for_purchase(conn: &rusqlite::Connection, email: &str, brand: &str, drop_num: i64, session_id: &str) {
-    if email.is_empty() { return; }
+/// Grants MU credit on shirt purchase. 景表法 (Premiums and Representations Act)
+/// caps "総付景品" at 20% of the underlying transaction value, so we grant
+/// min(¥1,000, 0.2 × price_jpy). A ¥4,500 shirt → ¥900 credit. ¥6,000+ shirt
+/// → ¥1,000 (the cap). Idempotent on stripe session_id.
+fn mu_credit_grant_for_purchase(
+    conn: &rusqlite::Connection,
+    email: &str,
+    brand: &str,
+    drop_num: i64,
+    session_id: &str,
+    price_jpy: i64,
+) {
+    if email.is_empty() || price_jpy <= 0 { return; }
     let reason = format!("purchase:{}:{}", brand, drop_num);
     let already: i64 = conn.query_row(
         "SELECT COUNT(*) FROM mu_credit_ledger WHERE email=? AND ref_id=?",
         params![email.to_lowercase(), session_id], |r| r.get(0)
     ).unwrap_or(0);
     if already > 0 { return; } // idempotent — already granted for this session
-    let _ = mu_credit_apply(conn, email, 1000, &reason, Some(session_id));
+    let cap_20pct = price_jpy / 5; // 20% of price
+    let grant = std::cmp::min(1000_i64, cap_20pct);
+    if grant <= 0 { return; }
+    let _ = mu_credit_apply(conn, email, grant, &reason, Some(session_id));
 }
 
 // ───── Collab service auth (email verify + freemium gate) ─────
@@ -12962,6 +12976,64 @@ async fn admin_funnel_clicks(
 
 async fn tokushoho_page() -> Html<&'static str> {
     Html(include_str!("../static/tokushoho.html"))
+}
+
+async fn privacy_page() -> Html<&'static str> {
+    Html(include_str!("../static/privacy.html"))
+}
+
+async fn tos_page() -> Html<&'static str> {
+    Html(include_str!("../static/tos.html"))
+}
+
+/// POST /api/collab/account/delete — self-service erasure
+/// (個人情報保護法 第三十四条 利用停止等 / 開示請求等).
+/// Idempotent. Logs deletion to a separate retention-log table (which only
+/// retains the SHA-256 of the email, the deletion timestamp, and ledger
+/// balance at deletion — so we can prove erasure compliance without
+/// retaining the personal data itself).
+async fn collab_account_delete(
+    State(db): State<Db>,
+    headers: HeaderMap,
+) -> Response {
+    let (email, _, _, _) = match collab_session_email(&db, &headers) {
+        Some(s) => s,
+        None => return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({
+            "error": "verify email first", "verify": "/api/collab/auth/start"
+        }))).into_response(),
+    };
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let email_hash = {
+        use sha2::{Sha256, Digest};
+        let mut h = Sha256::new();
+        h.update(email.as_bytes());
+        hex::encode(&h.finalize()[..16])
+    };
+    let conn = db.lock().unwrap();
+    let balance = mu_credit_balance(&conn, &email);
+    // Compliance-log: keep proof of erasure, not the personal data.
+    let _ = conn.execute(
+        "INSERT INTO collab_account_deletions (email_hash, deleted_at, mu_balance_at_delete) VALUES (?,?,?)",
+        params![email_hash, now_s, balance],
+    );
+    // Erase from primary tables. mu_credit_ledger rows are anonymized
+    // (we can't drop them — they're tied to Stripe sessions for tax records —
+    // but we hash the email column).
+    let _ = conn.execute("DELETE FROM collab_users WHERE email=?", params![email]);
+    let _ = conn.execute("UPDATE mu_credit_ledger SET email=? WHERE email=?", params![format!("deleted:{}", email_hash), email]);
+    let _ = conn.execute("UPDATE mu_credits SET email=? WHERE email=?", params![format!("deleted:{}", email_hash), email]);
+    // Clear cookie.
+    let mut resp = Json(serde_json::json!({
+        "ok": true,
+        "deleted_email": email,
+        "deleted_at": now_s,
+        "note": "Compliance-log retained (email-hash + timestamp only, no PII).",
+    })).into_response();
+    resp.headers_mut().insert(
+        header::SET_COOKIE,
+        HeaderValue::from_str("mu_collab_session=; Path=/; Max-Age=0; SameSite=Lax").unwrap()
+    );
+    resp
 }
 
 async fn city_page() -> Html<&'static str> {
@@ -32134,7 +32206,7 @@ footer{{padding:40px 24px;border-top:1px solid rgba(255,255,255,0.05);
 </main>
 <footer>
   <div>MU × YOU © wearmu.com</div>
-  <div style="display:flex;gap:24px"><a href="/">MU</a><a href="/you">/you</a><a href="/tokushoho">特商法</a></div>
+  <div style="display:flex;gap:24px;flex-wrap:wrap"><a href="/">MU</a><a href="/you">/you</a><a href="/tokushoho">特商法</a><a href="/privacy">プライバシー</a><a href="/tos">利用規約</a></div>
 </footer>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 <script src="/exit-funnel.js" defer></script>
@@ -33654,6 +33726,14 @@ async fn main() {
             created_at      INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_collab_users_session ON collab_users(session_token);
+        -- 削除請求の compliance log。 個人情報そのものは残さず、 SHA-256 の prefix
+        -- + timestamp + 削除時残高 のみ保持 (個人情報保護法 第34条 削除権の遵守証明用)。
+        CREATE TABLE IF NOT EXISTS collab_account_deletions (
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            email_hash            TEXT NOT NULL,
+            deleted_at            INTEGER NOT NULL,
+            mu_balance_at_delete  INTEGER NOT NULL DEFAULT 0
+        );
         -- 100-in-20 sprint referral codes. Each buyer can get a code
         -- (issued in the post-purchase flow). Visitors arrive at /r/:code
         -- and the REF500 Stripe coupon (¥500 off) is pre-applied. Referrer
@@ -34877,6 +34957,11 @@ async fn main() {
         .route("/v/:brand/:drop_num", get(verify_page))
         .route("/tokushoho", get(tokushoho_page))
         .route("/tokushoho.html", get(tokushoho_page))
+        .route("/privacy", get(privacy_page))
+        .route("/privacy.html", get(privacy_page))
+        .route("/tos", get(tos_page))
+        .route("/terms", get(tos_page))
+        .route("/api/collab/account/delete", post(collab_account_delete))
         .route("/city", get(city_page))
         .route("/city.html", get(city_page))
         // MU × YOU collab

@@ -97,6 +97,10 @@ h1 em{color:var(--y);font-style:normal}
       </div>
     </div>
     <div id="email-msg" style="margin-top:12px;font-size:12px;min-height:18px;letter-spacing:0.04em"></div>
+    <div style="margin-top:14px;font-size:10.5px;color:var(--mute);opacity:0.7;line-height:1.7">
+      コード送信 = <a href="/tos" target="_blank" style="color:var(--y);text-decoration:underline">利用規約</a> および <a href="/privacy" target="_blank" style="color:var(--y);text-decoration:underline">プライバシーポリシー</a> に同意したものとみなします。<br>
+      collab page に記載する内容の真実性・第三者の権利 (肖像・商標・著作権) の許諾は creator (作成者) の責任です。 違反通報を受けた場合、 当社は事前通知なく page を非公開化することがあります。
+    </div>
   </div>
 
   <!-- Authed bar: shows once verified -->
@@ -107,8 +111,9 @@ h1 em{color:var(--y);font-style:normal}
     <span id="authed-balance" style="color:var(--y)">—</span>
     <span style="opacity:0.5">·</span>
     <span id="authed-budget" title="無料予算 ¥20,000 (Opus API 利用分)">budget —</span>
-    <span style="margin-left:auto">
+    <span style="margin-left:auto;display:flex;gap:6px">
       <button id="logout-btn" type="button" style="background:transparent;color:var(--mute);border:1px solid var(--line);padding:5px 10px;font-size:9px;letter-spacing:0.2em;text-transform:uppercase;cursor:pointer;border-radius:2px;font-family:inherit">logout</button>
+      <button id="delete-btn" type="button" title="アカウントとデータを完全削除 (個人情報保護法 §34)" style="background:transparent;color:#ff8a8a;border:1px solid rgba(255,138,138,0.4);padding:5px 10px;font-size:9px;letter-spacing:0.2em;text-transform:uppercase;cursor:pointer;border-radius:2px;font-family:inherit">delete</button>
     </span>
   </div>
 
@@ -163,6 +168,7 @@ const authedEmail  = document.getElementById('authed-email');
 const authedBalance= document.getElementById('authed-balance');
 const authedBudget = document.getElementById('authed-budget');
 const logoutBtn    = document.getElementById('logout-btn');
+const deleteBtn    = document.getElementById('delete-btn');
 
 const PLACEHOLDERS = [
   '5/17 にイオン応援したい、 kokon で BBQ 30 人 ¥8,000',
@@ -477,6 +483,22 @@ emailInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preve
 codeVerifyBtn.addEventListener('click', verifyCode);
 codeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); verifyCode(); }});
 logoutBtn.addEventListener('click', doLogout);
+deleteBtn.addEventListener('click', async () => {
+  if (!confirm('アカウント・collab履歴・MU credit残高を完全削除します。\n取引履歴 (法令保存義務分) を除き元に戻せません。本当に削除しますか？')) return;
+  try {
+    const r = await fetch('/api/collab/account/delete', { method: 'POST', credentials: 'same-origin' });
+    if (!r.ok) throw new Error(await r.text());
+    alert('✓ 削除しました。ご利用ありがとうございました。');
+  } catch (e) {
+    alert('削除失敗: ' + (e.message || '?'));
+    return;
+  }
+  session = null;
+  history = [];
+  currentDraft = null;
+  try { localStorage.removeItem(HISTORY_KEY); } catch (_) {}
+  showEmailGate();
+});
 
 // File upload — 📎 button
 const attachBtn = document.getElementById('attach-btn');
