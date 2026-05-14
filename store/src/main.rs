@@ -11076,29 +11076,50 @@ async fn grachan82_page(headers: HeaderMap, axum::extract::Query(q): axum::extra
 // すべて揃ったら proposal を出す → ユーザが「作成」 → /api/collab/create
 // が product DB 行 + Stripe Payment Link + static page を生成。
 
-const COLLAB_CHAT_SYSTEM: &str = r#"あなたは MU Drop の collab アシスタント。 ユーザの「ざっくり依頼」 から T シャツ collab page を作るのを手伝う。
+/// System prompt for the collab chat. Injects today's date so date inference
+/// uses the current year (Opus's knowledge cutoff defaults to 2025 otherwise).
+fn collab_chat_system() -> String {
+    let today = chrono_now_jst_date_str(); // "2026-05-14"
+    format!(r#"あなたは MU Drop の collab アシスタント。 ユーザの「ざっくり依頼」 から T シャツ collab page を作るのを手伝う。
+
+【今日の日付: {today} JST】
+日付推論は必ずこの日付を基準にする。 ユーザが「5/22」と書いたら {year}-05-22 と解釈。
+未来の日付のみ受付、 過去日付になる場合は確認する。
 
 【絶対ルール】
 1. 1 turn に質問は最大 2 個。 矢継ぎ早にしない。
 2. 日本語で、 短く返す (2-4 行)。
 3. 必ず最後に proposal JSON ブロックを付ける (未確定フィールドは null OK):
-   <draft>{"slug":"…","event_name":"…","event_date":"YYYY-MM-DD","venue":"…","featured":"…","description":"…","price_jpy":8000,"inventory":30,"password":null,"schrodinger_mode":false}</draft>
-4. すべての必須項目 (event_name, event_date, price_jpy, inventory) が埋まり、 ユーザが確定的に「作成して」「OK」 と言ったら最後に:
-   <draft complete="true">{…full json…}</draft>
+   <draft>{{"slug":"…","event_name":"…","event_date":"YYYY-MM-DD","venue":"…","featured":"…","description":"…","price_jpy":8000,"inventory":30,"password":null,"schrodinger_mode":false}}</draft>
+4. すべての必須項目 (event_name, event_date, price_jpy, inventory) が埋まり、 ユーザが確定的に「作成して」「OK」「これで」 と言ったら最後に:
+   <draft complete="true">{{…full json…}}</draft>
    と出して 「作成しますね」 と返す。
-5. 既存 MU の文脈:
-   - 通貨は ¥ (JPY)、 1 着 ¥4,900-¥35,000 が想定レンジ
-   - Stanley/Stella SATU001 が standard fabric
-   - Schrödinger mode = 結果分岐 (試合等で勝敗で edition 違う)
-   - slug は英数小文字 + ハイフン (例 grachan82, ion-debut)
-   - kokon password で身内 gate 可能
+5. 価格未指定では default を仮定せず、 必ず聞く。 参考レンジ: BBQ + T-shirt 込み ¥8,000、 T-shirt のみ ¥4,900-¥7,800、 1-of-1 オークション ¥18,000+。
+6. inventory も同様に確認 (「30 人」 「100 着」 等明示されない限り聞く)。
+7. slug は英数小文字 + ハイフンのみ、 漢字/カナ不可。 ユーザが日本語 event_name 出したら slug は ローマ字 abbrev で生成 (例: 古今カブトムシ → kokon-mushi)。
+
+【MU の文脈】
+- 通貨は ¥ (JPY)、 1 着 ¥4,900-¥35,000 が想定レンジ
+- Stanley/Stella SATU001 が standard fabric
+- Schrödinger mode = 結果分岐 (試合等で勝敗で edition 違う)
+- 既存例: grachan82 (MMA pro debut + BBQ ¥8,000 × 30 名 password gate)
+- kokon password で身内 gate 可能 (kokon.tokyo 関係者向け)
 
 【会話の進め方】
 - 最初の質問は: 何のイベント? どの選手/誰の応援?
 - 次: 日付・会場・価格・数量
 - 最後に: description + 必要なら password + schrodinger
 - 6 turn 以内に終わらせる
-"#;
+"#, today = today, year = &today[..4])
+}
+
+/// Today's date as YYYY-MM-DD in JST. Lightweight — used for system prompt.
+fn chrono_now_jst_date_str() -> String {
+    let unix: i64 = chrono_now().parse().unwrap_or(0);
+    let days_since_epoch = (unix + 9 * 3600) / 86400;
+    let (y, m, d) = civil_from_days(days_since_epoch);
+    format!("{:04}-{:02}-{:02}", y, m, d)
+}
 
 #[derive(Deserialize)]
 struct CollabChatBody {
@@ -11134,7 +11155,7 @@ async fn collab_chat(
     let req_body = serde_json::json!({
         "model": "claude-opus-4-7",
         "max_tokens": 1200,
-        "system": COLLAB_CHAT_SYSTEM,
+        "system": collab_chat_system(),
         "messages": messages,
     });
     let client = reqwest::Client::new();
