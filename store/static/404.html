@@ -207,6 +207,21 @@ footer a:hover{color:var(--y)}
       MU は毎時 1 着、 毎日 1 着、 毎週 1 着の自律生成ブランド。 <strong>その瞬間にしか存在しないページ</strong>もあります。
     </p>
 
+    <!-- 404 → 1-of-1 Tee -->
+    <div class="design-card" style="margin:36px 0 28px;padding:24px 22px;background:linear-gradient(180deg, rgba(245,245,240,0.94), rgba(245,245,240,0.86));border-radius:6px;color:#0A0A0A;text-align:left;border:1px solid rgba(0,0,0,0.08);box-shadow:0 12px 40px rgba(0,0,0,0.4)">
+      <div style="font-size:9px;letter-spacing:0.42em;text-transform:uppercase;color:#8a7c2f;font-weight:700;margin-bottom:18px">▸ THIS 404 = A 1-OF-1 TEE</div>
+      <div style="font-family:'SF Mono','Menlo',monospace;font-size:11.5px;letter-spacing:0.04em;color:#666;line-height:1.85;border-left:2px solid #0A0A0A;padding-left:14px;margin-bottom:8px">URL</div>
+      <div style="font-family:'SF Mono','Menlo',monospace;font-size:clamp(16px,3.6vw,22px);font-weight:600;color:#0A0A0A;word-break:break-all;line-height:1.4;margin-bottom:18px">wearmu.com<span style="color:#c8a32a">{{path}}</span></div>
+      <div style="font-family:'SF Mono','Menlo',monospace;font-size:11.5px;letter-spacing:0.04em;color:#666;line-height:1.85;border-left:2px solid #0A0A0A;padding-left:14px;margin-bottom:8px">accessed at</div>
+      <div style="font-family:'SF Mono','Menlo',monospace;font-size:15px;font-weight:500;color:#0A0A0A;letter-spacing:0.04em">{{ts}}</div>
+      <div style="margin-top:18px;padding-top:18px;border-top:1px dashed rgba(0,0,0,0.18);font-size:11.5px;color:#444;line-height:1.85">
+        この URL + 秒単位の JST 時刻が、 そのまま design として 1 着の Tシャツに印刷されます。<br>
+        <strong>世界に 1 着</strong>。 二度と同じ秒は来ないので、 これ以降この組み合わせは存在しません。
+      </div>
+      <button id="buy404" type="button" style="display:block;width:100%;margin-top:18px;background:#0A0A0A;color:#e6c449;border:0;padding:16px;font-family:inherit;font-size:11px;letter-spacing:0.32em;text-transform:uppercase;font-weight:700;border-radius:3px;cursor:pointer">この 404 を Tシャツにする — ¥5,400</button>
+      <div id="buy404-msg" style="margin-top:10px;font-size:11px;color:#666;min-height:14px;letter-spacing:0.04em"></div>
+    </div>
+
     <div class="cta">
       <a href="/" class="primary">↩ MU トップ</a>
       <a href="/mugen" class="ghost">MUGEN を見る</a>
@@ -219,6 +234,36 @@ footer a:hover{color:var(--y)}
     </div>
 
     <div class="fortune">— wearmu.com · 100 年計画 1/100 年目 —</div>
+
+    <script>
+    (function(){
+      var btn = document.getElementById('buy404');
+      var msg = document.getElementById('buy404-msg');
+      if (!btn) return;
+      btn.addEventListener('click', async function(){
+        btn.disabled = true;
+        var orig = btn.textContent;
+        btn.textContent = 'Stripe へ遷移中…';
+        msg.textContent = '';
+        try {
+          var r = await fetch('/api/404/buy', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ path: decodeURIComponent('{{path_enc}}'), ts: decodeURIComponent('{{ts_enc}}') }),
+          });
+          if (!r.ok) throw new Error(await r.text() || ('HTTP ' + r.status));
+          var d = await r.json();
+          if (!d.url) throw new Error('no checkout URL');
+          window.location.href = d.url;
+        } catch(e) {
+          btn.disabled = false;
+          btn.textContent = orig;
+          msg.textContent = '失敗: ' + (e.message || '?');
+          msg.style.color = '#c8362c';
+        }
+      });
+    })();
+    </script>
   </div>
 </main>
 

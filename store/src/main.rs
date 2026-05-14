@@ -4,7 +4,7 @@ mod payments;
 
 use axum::{
     extract::{Path, State},
-    http::{HeaderMap, HeaderValue, Request, StatusCode, header},
+    http::{HeaderMap, HeaderValue, Request, StatusCode, Uri, header},
     middleware::{self, Next},
     response::{Html, IntoResponse, Json, Response},
     routing::{get, patch, post},
@@ -11676,6 +11676,19 @@ fn chrono_now_jst_date_str() -> String {
     format!("{:04}-{:02}-{:02}", y, m, d)
 }
 
+/// JST datetime "2026-05-14 12:34:56 JST" — used to stamp 404 tees.
+fn chrono_now_jst_datetime_str() -> String {
+    let unix: i64 = chrono_now().parse().unwrap_or(0);
+    let jst = unix + 9 * 3600;
+    let days = jst / 86400;
+    let secs_of_day = (jst % 86400) as i64;
+    let (y, m, d) = civil_from_days(days);
+    let h = secs_of_day / 3600;
+    let mi = (secs_of_day / 60) % 60;
+    let s = secs_of_day % 60;
+    format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02} JST", y, m, d, h, mi, s)
+}
+
 #[derive(Deserialize)]
 struct CollabChatBody {
     history: Vec<CollabChatMsg>,
@@ -12757,9 +12770,135 @@ async fn buy_page() -> Html<&'static str> {
 
 /// Branded 404 — served when no route/static file matches. Returns 404
 /// status with the static/404.html body so links + navigation are intact.
-async fn not_found_page() -> Response {
-    let body: &str = include_str!("../static/404.html");
+/// Now the page also OFFERS the unique 404 tee: each 404 hit captures
+/// (path, JST timestamp) which become the design printed on a 1-of-1 shirt.
+async fn not_found_page(uri: Uri) -> Response {
+    let raw_path = uri.path();
+    // Truncate to keep designs printable; strip control chars.
+    let path: String = raw_path.chars().filter(|c| !c.is_control()).take(60).collect();
+    let ts = chrono_now_jst_datetime_str();
+    // Pass to template via marker substitution.
+    let template = include_str!("../static/404.html");
+    let body = template
+        .replace("{{path}}", &html_escape(&path))
+        .replace("{{ts}}", &html_escape(&ts))
+        .replace("{{path_enc}}", &urlencoding::encode(&path).into_owned())
+        .replace("{{ts_enc}}", &urlencoding::encode(&ts).into_owned());
     (StatusCode::NOT_FOUND, Html(body)).into_response()
+}
+
+const NOT_FOUND_TEE_PRICE_JPY: i64 = 5400;
+
+#[derive(Deserialize)]
+struct NotFoundBuyBody {
+    path: String,
+    ts: String,
+}
+
+/// POST /api/404/buy — creates a 1-of-1 product row for the captured
+/// (path, JST timestamp) pair and returns a Stripe Payment Link.
+/// On checkout webhook the design will be generated and a Printful order
+/// placed (handled by the existing fulfillment path keyed on brand="s404").
+async fn not_found_buy(
+    State(db): State<Db>,
+    Json(body): Json<NotFoundBuyBody>,
+) -> Response {
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "stripe key missing").into_response();
+    }
+    // Sanitize inputs: keep path printable, max 80 chars; ts is fixed format.
+    let path: String = body.path.chars().filter(|c| !c.is_control()).take(80).collect();
+    let ts:   String = body.ts.chars().filter(|c| !c.is_control()).take(40).collect();
+    if path.is_empty() {
+        return (StatusCode::BAD_REQUEST, "path required").into_response();
+    }
+    // Deterministic slug from sha256(path|ts) — first 10 hex chars.
+    let slug = {
+        use sha2::{Sha256, Digest};
+        let mut h = Sha256::new();
+        h.update(path.as_bytes());
+        h.update(b"|");
+        h.update(ts.as_bytes());
+        hex::encode(&h.finalize()[..5])
+    };
+    let now_s = chrono_now();
+    let product_id: i64 = {
+        let conn = db.lock().unwrap();
+        let existing: Option<i64> = conn.query_row(
+            "SELECT id FROM products WHERE brand='s404' AND name=? LIMIT 1",
+            params![format!("404 · {} · {}", path, ts)],
+            |r| r.get(0),
+        ).ok();
+        if let Some(id) = existing { id } else {
+            conn.execute(
+                "INSERT INTO products (brand, drop_num, name, design_url, mockup_url, price_jpy, inventory, created_at, weather_data)
+                 VALUES (?,?,?,?,?,?,?,?,?)",
+                params![
+                    "s404", 1,
+                    format!("404 · {} · {}", path, ts),
+                    "https://mockups.wearmu.com/hero.png",
+                    "https://mockups.wearmu.com/hero.png",
+                    NOT_FOUND_TEE_PRICE_JPY, 1,
+                    now_s,
+                    serde_json::json!({
+                        "kind": "s404",
+                        "path": path,
+                        "ts_jst": ts,
+                        "slug": slug,
+                    }).to_string(),
+                ],
+            ).ok();
+            conn.last_insert_rowid()
+        }
+    };
+    // One-off Stripe Price + Payment Link with metadata so webhook can
+    // route fulfillment.
+    let client = reqwest::Client::new();
+    let price_form: Vec<(&str, String)> = vec![
+        ("currency", "jpy".into()),
+        ("unit_amount", NOT_FOUND_TEE_PRICE_JPY.to_string()),
+        ("product_data[name]", format!("MU · 404 Tee · {}", path)),
+    ];
+    let price_id: String = match client.post("https://api.stripe.com/v1/prices")
+        .basic_auth(&stripe_key, Some("")).form(&price_form).send().await {
+        Ok(r) => match r.json::<serde_json::Value>().await {
+            Ok(v) => v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+            Err(_) => return (StatusCode::BAD_GATEWAY, "stripe price parse").into_response(),
+        },
+        Err(e) => return (StatusCode::BAD_GATEWAY, format!("stripe price: {}", e)).into_response(),
+    };
+    if price_id.is_empty() {
+        return (StatusCode::BAD_GATEWAY, "stripe returned no price id").into_response();
+    }
+    let pl_form: Vec<(&str, String)> = vec![
+        ("line_items[0][price]", price_id),
+        ("line_items[0][quantity]", "1".into()),
+        ("shipping_address_collection[allowed_countries][0]", "JP".into()),
+        ("shipping_address_collection[allowed_countries][1]", "US".into()),
+        ("shipping_address_collection[allowed_countries][2]", "GB".into()),
+        ("after_completion[type]", "redirect".into()),
+        ("after_completion[redirect][url]", format!("https://wearmu.com/thank-you?slug={}", slug)),
+        ("metadata[kind]", "s404".into()),
+        ("metadata[product_id]", product_id.to_string()),
+        ("metadata[s404_path]", path.clone()),
+        ("metadata[s404_ts_jst]", ts.clone()),
+        ("metadata[s404_slug]", slug.clone()),
+    ];
+    match client.post("https://api.stripe.com/v1/payment_links")
+        .basic_auth(&stripe_key, Some("")).form(&pl_form).send().await {
+        Ok(r) => {
+            let v: serde_json::Value = r.json().await.unwrap_or(serde_json::Value::Null);
+            if let Some(u) = v.get("url").and_then(|x| x.as_str()) {
+                return Json(serde_json::json!({
+                    "ok": true, "url": u, "slug": slug, "product_id": product_id,
+                    "price_jpy": NOT_FOUND_TEE_PRICE_JPY,
+                })).into_response();
+            }
+            (StatusCode::BAD_GATEWAY, format!("payment_link: {}", v.to_string().chars().take(300).collect::<String>())).into_response()
+        }
+        Err(e) => (StatusCode::BAD_GATEWAY, format!("stripe: {}", e)).into_response(),
+    }
 }
 
 // ───── Quality upgrade poll (§24-v3 検討) ─────
@@ -34962,6 +35101,7 @@ async fn main() {
         .route("/tos", get(tos_page))
         .route("/terms", get(tos_page))
         .route("/api/collab/account/delete", post(collab_account_delete))
+        .route("/api/404/buy", post(not_found_buy))
         .route("/city", get(city_page))
         .route("/city.html", get(city_page))
         // MU × YOU collab
