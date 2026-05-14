@@ -34199,6 +34199,7 @@ async fn main() {
         .route("/api/admin/wearing/decide",  post(admin_wearing_decide))
         // F: Death-Defined Drops (MA retirement)
         .route("/ma/retired",                get(ma_retired_ledger))
+        .route("/retired", get(|| async { axum::response::Redirect::permanent("/ma/retired") }))
         .route("/api/ma/retire",             post(ma_retire))
         .route("/api/admin/ma_retire/notify", post(admin_ma_retire_notify))
         // B: Multi-city
