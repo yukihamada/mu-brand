@@ -13135,6 +13135,13 @@ async fn press_page_ja() -> Html<&'static str> {
     Html(include_str!("../static/press.html"))
 }
 
+/// GET /proposals/kichinan — confidential B2B proposal LP for Kichinan
+/// Group (Yamaguchi). noindex via the page's own meta tag. URL is
+/// obscure enough that it functions as a soft password.
+async fn proposal_kichinan() -> Html<&'static str> {
+    Html(include_str!("../static/proposals/kichinan.html"))
+}
+
 /// GET /en/press — English-default version. Same content, but we flip
 /// <html lang>, canonical, og:locale, and inject auto-switch JS so the
 /// English `.lang-content.en` div is shown without a click.
@@ -35190,6 +35197,8 @@ async fn main() {
         .route("/press", get(press_page_ja))
         .route("/en/press", get(press_page_en))
         .route("/press.html", get(press_html_redirect))
+        .route("/proposals/kichinan", get(proposal_kichinan))
+        .nest_service("/proposals", ServeDir::new("static/proposals"))
         .route("/api/collab/account/delete", post(collab_account_delete))
         .route("/api/404/buy", post(not_found_buy))
         .route("/city", get(city_page))
