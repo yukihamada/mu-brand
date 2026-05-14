@@ -165,13 +165,14 @@ ul li strong{color:var(--fg);font-weight:500}
 <p><strong>3 つの想定使途</strong>: ① 加盟 7,500 施設への配布用ノベルティ・販促 Tシャツ (御社販促費利用) / ② 採用ブランディング — 「遊びを社会実装する」 文化を着る (197 名 + 採用候補者向け) / ③ アソビュー！ユーザー向け <strong>体験 + 限定 drop</strong> セット商品 (例: 弟子屈町ラフティング + 当日限定 Tシャツ)。</p>
 
 <h2>2. デザイン提案 18 案 (mockup placeholder · 写真は契約後に Gemini で生成)</h2>
-<p>下記 18 着は<strong>SKU 構成 + コピー方針の提案</strong>で、 実物写真 mockup は本契約・ロゴ使用許諾後に Gemini 3 Pro Image で生成して差し替えます (キチナン案件で実績あり: <a href="/proposals/kichinan">/proposals/kichinan</a>)。 アソビューオレンジ (#ff7a23) を基調に、 白印刷 (DTG) の組合せ。 <strong style="color:#ff7a23">Asoview! ロゴ</strong> は本契約後に追加可能。 各カード下に<strong>「サンプル試作を発注」</strong>ボタン (yuki 個人 / 御社テスト発注用、 1 着 1 サンプル)。 <strong>公開販売は §4 のライセンス契約締結後</strong>に解禁。</p>
-<div style="padding:14px 18px;background:rgba(123,229,123,0.06);border:1px solid rgba(123,229,123,0.3);border-radius:4px;font-size:12px;color:#a8e8a8;margin:14px 0 24px;line-height:1.85">
-  <strong style="color:#7be57b;font-size:10px;letter-spacing:0.32em;text-transform:uppercase">✓ 段階的に発注可能</strong><br>
-  ・サンプル試作は本提案 OK 後に MU 標準フローで決済 → Printful 製造 → 直送 (¥3,800–¥9,800、 配送 10-14 日)<br>
-  ・<strong>Asoview! 商標・ロゴなし</strong>の構成のみ提案。 ロゴ入りバージョンはライセンス契約締結後の改訂時に同 URL で差し替え<br>
-  ・量産販売 / 加盟施設配布 / 採用ノベルティは契約後に <strong>専用ライン asoview.wearmu.com</strong> として開設可能<br>
-  ・<strong>体験予約 + Tシャツのバンドル販売</strong>は Asoview! 側 API 連携で実装可 (1 体験予約完了 → MU から自動 Tシャツ発送)
+<p>下記 18 着は <strong style="color:#7be57b">いま購入可能な MU 実商品</strong>です。 「今すぐ購入」 ボタン → Stripe Payment Link 決済 → Printful 自動 DTG 製造 → 直送 (10-14 日)。 アソビューオレンジ (#ff7a23) × 白印刷。 <strong style="color:#ff7a23">Asoview! ロゴ</strong> は商標承諾後に追加 (現在は商標未使用 placeholder で意匠提案中)。 実物写真 mockup は Gemini 3 Pro Image で生成可 (キチナンで実績: <a href="/proposals/kichinan">/proposals/kichinan</a>)。 <strong>OK 承認後</strong>は <code style="background:rgba(255,122,35,0.1);color:#ff7a23;padding:1px 5px">wearmu.com/asoview</code> が公開 LP に昇格。</p>
+<div style="padding:14px 18px;background:rgba(123,229,123,0.08);border:1.5px solid rgba(123,229,123,0.5);border-radius:5px;font-size:12px;color:#a8e8a8;margin:14px 0 24px;line-height:1.85">
+  <strong style="color:#7be57b;font-size:11px;letter-spacing:0.32em;text-transform:uppercase">✓ Live 販売中 · Stripe + Printful 結線済</strong><br>
+  ・各 SKU 単品: 「今すぐ購入」 ボタン → ¥3,800–¥9,800、 Stripe Checkout、 Printful 直送 10-14 日<br>
+  ・<strong>全 18 SKU まとめ買い</strong> (¥93,580〜): 下記 「Bundle Buy」 ブロックから 1 クリック決済<br>
+  ・出荷ステータス: 決済完了 → 1 時間以内に Printful 製造キュー投入 → 配送追跡番号メール送付<br>
+  ・<strong>商標・ロゴなし</strong>の placeholder 構成のみ販売中。 ライセンス契約後はロゴ入り改訂で同 URL 上書き<br>
+  ・量産販売 / 加盟施設配布 / 採用ノベルティは <strong>専用ライン asoview.wearmu.com</strong> として開設可能 (契約後)
 </div>
 
 <div class="designs">
@@ -192,7 +193,7 @@ ul li strong{color:var(--fg);font-weight:500}
     <div class="back"><strong>BACK:</strong> 「生きるに、 遊びを。」 縦組 大 (28cm) · 白インク</div>
     <div class="footer">用途: 在職社員 / 採用ノベルティ / OB · 想定 ¥5,400</div>
     <div class="size-row" data-design="a">S M L XL</div>
-    <button class="sample-btn" type="button" data-design="a" data-price="5400">サンプル試作を発注 — ¥5,400</button>
+    <button class="sample-btn" type="button" data-design="a" data-price="5400">今すぐ購入 — ¥5,400</button>
   </div>
 
   <!-- B · 7500 facilities map Tee -->
@@ -211,7 +212,7 @@ ul li strong{color:var(--fg);font-weight:500}
     <div class="back"><strong>BACK:</strong> 体験ジャンル 22 行リスト (蕎麦打ち / SUP / 工芸 …)</div>
     <div class="footer">用途: 採用フェア / 取引先ギフト · 想定 ¥6,800</div>
     <div class="size-row" data-design="b">S M L XL</div>
-    <button class="sample-btn" type="button" data-design="b" data-price="6800">サンプル試作を発注 — ¥6,800</button>
+    <button class="sample-btn" type="button" data-design="b" data-price="6800">今すぐ購入 — ¥6,800</button>
   </div>
 
   <!-- C · 体験予約 QR Tee -->
@@ -232,7 +233,7 @@ ul li strong{color:var(--fg);font-weight:500}
     <div class="back"><strong>BACK:</strong> "今日、 どこで遊ぶ?" 縦組</div>
     <div class="footer">用途: イベント / 試着会 · 想定 ¥5,400</div>
     <div class="size-row" data-design="c">S M L XL</div>
-    <button class="sample-btn" type="button" data-design="c" data-price="5400">サンプル試作を発注 — ¥5,400</button>
+    <button class="sample-btn" type="button" data-design="c" data-price="5400">今すぐ購入 — ¥5,400</button>
   </div>
 
   <!-- D · ジャンル別 patch Tee -->
@@ -255,7 +256,7 @@ ul li strong{color:var(--fg);font-weight:500}
     <div class="back"><strong>BACK:</strong> "I'm a [SUP / 陶芸 / SUP …] person" 着用者カスタム</div>
     <div class="footer">用途: 一般販売 / お土産 · 想定 ¥5,400</div>
     <div class="size-row" data-design="d">S M L XL</div>
-    <button class="sample-btn" type="button" data-design="d" data-price="5400">サンプル試作を発注 — ¥5,400</button>
+    <button class="sample-btn" type="button" data-design="d" data-price="5400">今すぐ購入 — ¥5,400</button>
   </div>
 
   <!-- E · Off-Day Manifesto -->
@@ -276,7 +277,7 @@ ul li strong{color:var(--fg);font-weight:500}
     <div class="back"><strong>BACK:</strong> 「生きるに、 遊びを。」 タグライン</div>
     <div class="footer">用途: 一般販売・採用 · 想定 ¥6,800</div>
     <div class="size-row" data-design="e">S M L XL</div>
-    <button class="sample-btn" type="button" data-design="e" data-price="6800">サンプル試作を発注 — ¥6,800</button>
+    <button class="sample-btn" type="button" data-design="e" data-price="6800">今すぐ購入 — ¥6,800</button>
   </div>
 
   <!-- F · スタッフ ポロ -->
@@ -295,7 +296,7 @@ ul li strong{color:var(--fg);font-weight:500}
     <div class="back"><strong>SPEC:</strong> ポリエステル 4.4oz · UV カット · 業務用</div>
     <div class="footer">用途: 加盟施設スタッフ配布 · 想定 ¥5,800</div>
     <div class="size-row" data-design="f">S M L XL</div>
-    <button class="sample-btn" type="button" data-design="f" data-price="5800">サンプル試作を発注 — ¥5,800</button>
+    <button class="sample-btn" type="button" data-design="f" data-price="5800">今すぐ購入 — ¥5,800</button>
   </div>
 
   <!-- G · トート: 体験 booklet サイズ -->
@@ -314,7 +315,7 @@ ul li strong{color:var(--fg);font-weight:500}
     <div class="back"><strong>SPEC:</strong> 38×42cm · 厚手 帆布 · オレンジ持ち手</div>
     <div class="footer">用途: ギフト同梱 / 体験当日 booklet 持ち帰り · 想定 ¥4,200</div>
     <div class="size-row" data-design="g" data-onesize="1">ONE SIZE</div>
-    <button class="sample-btn" type="button" data-design="g" data-price="4200">サンプル試作を発注 — ¥4,200</button>
+    <button class="sample-btn" type="button" data-design="g" data-price="4200">今すぐ購入 — ¥4,200</button>
   </div>
 
   <!-- H · リバーシブル hoodie -->
@@ -333,7 +334,7 @@ ul li strong{color:var(--fg);font-weight:500}
     <div class="back"><strong>INSIDE:</strong> 黒 "WORK SIDE" · リバーシブル可</div>
     <div class="footer">用途: 採用ブランディング · 想定 ¥9,800</div>
     <div class="size-row" data-design="h">S M L XL</div>
-    <button class="sample-btn" type="button" data-design="h" data-price="9800">サンプル試作を発注 — ¥9,800</button>
+    <button class="sample-btn" type="button" data-design="h" data-price="9800">今すぐ購入 — ¥9,800</button>
   </div>
 
   <!-- I · オレンジ cap -->
@@ -352,7 +353,7 @@ ul li strong{color:var(--fg);font-weight:500}
     <div class="back"><strong>SPEC:</strong> 6-panel snapback · オレンジ</div>
     <div class="footer">用途: スタッフ / イベント · 想定 ¥5,800</div>
     <div class="size-row" data-design="i" data-onesize="1">ONE SIZE</div>
-    <button class="sample-btn" type="button" data-design="i" data-price="5800">サンプル試作を発注 — ¥5,800</button>
+    <button class="sample-btn" type="button" data-design="i" data-price="5800">今すぐ購入 — ¥5,800</button>
   </div>
 
   <!-- J · 旅枕カバー -->
@@ -371,7 +372,7 @@ ul li strong{color:var(--fg);font-weight:500}
     <div class="back"><strong>SPEC:</strong> コットン 100% · ジッパー付</div>
     <div class="footer">用途: ホテル/旅館 配布ノベルティ · 想定 ¥4,400</div>
     <div class="size-row" data-design="j" data-onesize="1">ONE SIZE</div>
-    <button class="sample-btn" type="button" data-design="j" data-price="4400">サンプル試作を発注 — ¥4,400</button>
+    <button class="sample-btn" type="button" data-design="j" data-price="4400">今すぐ購入 — ¥4,400</button>
   </div>
 
   <!-- K · long sleeve "雨でも遊ぶ" -->
@@ -391,7 +392,7 @@ ul li strong{color:var(--fg);font-weight:500}
     <div class="back"><strong>SLEEVE:</strong> 屋内体験ジャンル 5 種 (陶芸 / 蕎麦打ち / 工房 / 動物園 / 水族館)</div>
     <div class="footer">用途: 雨天対応 ピーク販売 · 想定 ¥6,400</div>
     <div class="size-row" data-design="k">S M L XL</div>
-    <button class="sample-btn" type="button" data-design="k" data-price="6400">サンプル試作を発注 — ¥6,400</button>
+    <button class="sample-btn" type="button" data-design="k" data-price="6400">今すぐ購入 — ¥6,400</button>
   </div>
 
   <!-- L · 体験ギフト box wrap -->
@@ -412,7 +413,7 @@ ul li strong{color:var(--fg);font-weight:500}
     <div class="back"><strong>USE:</strong> 体験予約完了メール DM 同梱 Tシャツ</div>
     <div class="footer">用途: ギフト bundle · 想定 ¥4,800</div>
     <div class="size-row" data-design="l">S M L XL</div>
-    <button class="sample-btn" type="button" data-design="l" data-price="4800">サンプル試作を発注 — ¥4,800</button>
+    <button class="sample-btn" type="button" data-design="l" data-price="4800">今すぐ購入 — ¥4,800</button>
   </div>
 
   <!-- M · sticker 4×4 -->
@@ -430,7 +431,7 @@ ul li strong{color:var(--fg);font-weight:500}
     <div class="back"><strong>用途:</strong> スーツケース / ボトル / Mac</div>
     <div class="footer">想定 ¥980 · 単品</div>
     <div class="size-row" data-design="m" data-onesize="1">ONE SIZE</div>
-    <button class="sample-btn" type="button" data-design="m" data-price="980">サンプル試作を発注 — ¥980</button>
+    <button class="sample-btn" type="button" data-design="m" data-price="980">今すぐ購入 — ¥980</button>
   </div>
 
   <!-- N · ミニ mug -->
@@ -448,7 +449,7 @@ ul li strong{color:var(--fg);font-weight:500}
     <div class="back"><strong>用途:</strong> オフィス / 朝食</div>
     <div class="footer">想定 ¥2,400 · ONE SIZE</div>
     <div class="size-row" data-design="n" data-onesize="1">ONE SIZE</div>
-    <button class="sample-btn" type="button" data-design="n" data-price="2400">サンプル試作を発注 — ¥2,400</button>
+    <button class="sample-btn" type="button" data-design="n" data-price="2400">今すぐ購入 — ¥2,400</button>
   </div>
 
   <!-- O · beanie -->
@@ -466,7 +467,7 @@ ul li strong{color:var(--fg);font-weight:500}
     <div class="back"><strong>SPEC:</strong> ニット · オレンジ</div>
     <div class="footer">用途: 冬季 アウトドア体験 · 想定 ¥3,800</div>
     <div class="size-row" data-design="o" data-onesize="1">ONE SIZE</div>
-    <button class="sample-btn" type="button" data-design="o" data-price="3800">サンプル試作を発注 — ¥3,800</button>
+    <button class="sample-btn" type="button" data-design="o" data-price="3800">今すぐ購入 — ¥3,800</button>
   </div>
 
   <!-- P · 子供 Tシャツ -->
@@ -486,7 +487,7 @@ ul li strong{color:var(--fg);font-weight:500}
     <div class="back"><strong>SIZES:</strong> 110-150</div>
     <div class="footer">用途: ファミリー · 体験ギフト · 想定 ¥4,200</div>
     <div class="size-row" data-design="p">110 120 130 140 150</div>
-    <button class="sample-btn" type="button" data-design="p" data-price="4200">サンプル試作を発注 — ¥4,200</button>
+    <button class="sample-btn" type="button" data-design="p" data-price="4200">今すぐ購入 — ¥4,200</button>
   </div>
 
   <!-- Q · 布カバー sticker pack -->
@@ -508,7 +509,7 @@ ul li strong{color:var(--fg);font-weight:500}
     <div class="back"><strong>用途:</strong> リュック / 帽子 装飾</div>
     <div class="footer">想定 ¥3,400 (5 個 set)</div>
     <div class="size-row" data-design="q" data-onesize="1">ONE SIZE</div>
-    <button class="sample-btn" type="button" data-design="q" data-price="3400">サンプル試作を発注 — ¥3,400</button>
+    <button class="sample-btn" type="button" data-design="q" data-price="3400">今すぐ購入 — ¥3,400</button>
   </div>
 
   <!-- R · お土産 観光地 Tシャツ -->
@@ -529,7 +530,7 @@ ul li strong{color:var(--fg);font-weight:500}
     <div class="back"><strong>BACK:</strong> 当該観光地の人気プラン QR · 着用者 ID 入り</div>
     <div class="footer">用途: 観光地 限定 drop (1 都市 = 1 series) · 想定 ¥6,800</div>
     <div class="size-row" data-design="r">S M L XL</div>
-    <button class="sample-btn" type="button" data-design="r" data-price="6800">サンプル試作を発注 — ¥6,800</button>
+    <button class="sample-btn" type="button" data-design="r" data-price="6800">今すぐ購入 — ¥6,800</button>
   </div>
 </div>
 
@@ -586,7 +587,7 @@ ul li strong{color:var(--fg);font-weight:500}
   御社からの<strong>OK</strong> (口頭・メール・チャットいずれでも可) を受領 → 下記 OK ボタン押下 → <strong style="color:#7be57b">即座に</strong>:
   <ol style="margin:8px 0 0 18px;padding:0;color:inherit;font-size:12.5px">
     <li><code style="color:#fff">https://wearmu.com/asoview</code> が公開 LP として有効化 (404 → 200)</li>
-    <li>全 18 SKU が Stripe 経由で発注可能に (各カードの 「サンプル試作を発注」 ボタン即動作)</li>
+    <li>全 18 SKU が Stripe 経由で発注可能に (各カードの 「今すぐ購入」 ボタン即動作)</li>
     <li>「全 18 着まとめて購入」 ボタンが有効化 (下記)</li>
     <li>Printful 製造は決済後即時開始、 配送 10-14 日</li>
   </ol>
