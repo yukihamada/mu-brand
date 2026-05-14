@@ -16236,9 +16236,34 @@ async fn public_transparency(State(db): State<Db>) -> impl IntoResponse {
     let mut snap = gather_transparency_snapshot(&db);
     // Brand mark — every API consumer sees ━◯━ as a top-level field so it
     // propagates to any dashboard / aggregator pulling this JSON.
+    // Teshikaga pledge (Constitution §27): estimate the 50% obligation
+    // from real revenue. This is a coarse estimate (not audited net
+    // profit) — the true figure lands annually after the audited PL.
     if let Some(obj) = snap.as_object_mut() {
         obj.insert("mark".into(), serde_json::json!("━◯━"));
         obj.insert("brand".into(), serde_json::json!("MU"));
+        let revenue_jpy: i64 = obj.get("real")
+            .and_then(|r| r.get("revenue_jpy"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        // Coarse estimate: assume ~25% pre-tax margin, ~30% tax → ~17%
+        // post-tax net. Then 50% of that = ~8.75% of revenue. Floor at
+        // ¥100,000/year per §27.
+        let est_net_after_tax = (revenue_jpy as f64 * 0.175) as i64;
+        let pledge_jpy = std::cmp::max(100_000, est_net_after_tax / 2);
+        obj.insert("teshikaga_pledge".into(), serde_json::json!({
+            "constitution": "§27",
+            "rule": "max(¥100,000, 50% × net-after-tax)",
+            "fiscal_year_revenue_jpy": revenue_jpy,
+            "estimated_net_after_tax_jpy": est_net_after_tax,
+            "estimated_pledge_jpy": pledge_jpy,
+            "floor_jpy": 100_000,
+            "historical_pre_mu": {
+                "teshikaga_total_jpy": 5_000_000,
+                "hokkaido_total_jpy": 100_000_000,
+                "note": "creator yuki's pre-MU personal donations to Hokkaido, all without 返礼品"
+            }
+        }));
     }
     Json(snap)
 }
@@ -32406,7 +32431,8 @@ footer{{padding:40px 24px;border-top:1px solid rgba(255,255,255,0.05);
 </main>
 <footer>
   <div><span style="opacity:0.6;letter-spacing:0.1em;margin-right:8px">━◯━</span>MU × YOU © wearmu.com</div>
-  <div style="display:flex;gap:24px;flex-wrap:wrap"><a href="/">MU</a><a href="/you">/you</a><a href="/tokushoho">特商法</a><a href="/privacy">プライバシー</a><a href="/tos">利用規約</a></div>
+  <div style="font-size:9.5px;letter-spacing:0.2em;opacity:0.55;margin-top:6px">利益の 50%、 北海道 弟子屈町へ · <a href="/constitution" style="color:inherit;text-decoration:underline">Constitution §27</a></div>
+  <div style="display:flex;gap:24px;flex-wrap:wrap;margin-top:8px"><a href="/">MU</a><a href="/you">/you</a><a href="/tokushoho">特商法</a><a href="/privacy">プライバシー</a><a href="/tos">利用規約</a></div>
 </footer>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 <script src="/exit-funnel.js" defer></script>

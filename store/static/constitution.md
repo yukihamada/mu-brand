@@ -305,6 +305,23 @@ Substitution to a different default fabric requires a new amendment
 to §24. MA pieces, MUON, and collab lines retain their own fabric
 decisions (recorded per-line, not in this §).
 
+## Teshikaga 50% pledge
+
+§27 — MU は、 各年度 (4 月 1 日 〜 翌 3 月 31 日) の<strong>税引き後純利益</strong>の<strong>50%</strong>、 もしくは<strong>最低 ¥100,000</strong> (どちらか大きい方) を、 毎年 4 月末までに北海道弟子屈町へ寄付する。
+
+- 寄付先は原則として弟子屈町 (役場 ふるさと納税課 経由 もしくは 直接寄付) とする
+- 計算基準は会計監査済の損益計算書に基づく税引き後純利益 (法人税・住民税・事業税控除後)
+- 黒字赤字に関わらず最低額 (¥100,000) は実行する
+- 実行履歴は `/transparency` および当年度の `/blog/donations-YYYY` に公開する
+- 本義務に違反した場合、 株主・お客様 (MUer)・MA Council 加入者は、 株式会社イネブラに対し履行請求・株主代表訴訟を提起できる
+
+背景:
+- 創業者 yuki は MU の設立 (2026) 以前から北海道へ累計 1 億円超 (うち弟子屈町に 500 万円超) の寄付を、 すべて<strong>返礼品を辞退する形</strong>で継続している
+- 弟子屈町からの感謝状/勲章受章はその継続の結果である
+- §27 はこの個人の継続関係を、 MU (法人) に正式に引き継ぐ条文である
+
+更新には T1 (人間承認) を要する。
+
 ---
 
 *This document is hashed into every build. The build SHA prefix is shown on `/admin/agents` next to the Constitution version.*
