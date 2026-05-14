@@ -13142,6 +13142,83 @@ async fn proposal_kichinan() -> Html<&'static str> {
     Html(include_str!("../static/proposals/kichinan.html"))
 }
 
+#[derive(Deserialize)]
+struct KichinanSampleBody {
+    design: String,    // "a" | "b" | "c" | "d" | "e"
+    price_jpy: i64,
+}
+
+/// POST /api/proposals/kichinan/sample — issues a one-off Stripe Payment
+/// Link for a single sample T-shirt. Character-free design (text/silhouette
+/// only); a future contract enables full kichinan-branded production.
+async fn proposal_kichinan_sample(
+    Json(body): Json<KichinanSampleBody>,
+) -> Response {
+    let allowed: &[(&str, &str)] = &[
+        ("a", "後方支援 back-print"),
+        ("b", "one truck. 1962."),
+        ("c", "workshirt patch · SINCE 1962"),
+        ("d", "K-helmet quiet"),
+        ("e", "Yamaguchi coast"),
+    ];
+    let design_lower = body.design.to_lowercase();
+    let label = match allowed.iter().find(|(k, _)| *k == design_lower).map(|(_, v)| *v) {
+        Some(v) => v,
+        None => return (StatusCode::BAD_REQUEST, "unknown design id").into_response(),
+    };
+    if !(4000..=8000).contains(&body.price_jpy) {
+        return (StatusCode::BAD_REQUEST, "price out of range").into_response();
+    }
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "stripe key missing").into_response();
+    }
+    let client = reqwest::Client::new();
+    let product_name = format!("━◯━ MU × KICHINAN sample · {} · {}", design_lower.to_uppercase(), label);
+    let mockup_url = format!("https://wearmu.com/proposals/mockup-{}.png", design_lower);
+    let price_form: Vec<(&str, String)> = vec![
+        ("currency", "jpy".into()),
+        ("unit_amount", body.price_jpy.to_string()),
+        ("product_data[name]", product_name),
+        ("product_data[images][0]", mockup_url),
+    ];
+    let price_id: String = match client.post("https://api.stripe.com/v1/prices")
+        .basic_auth(&stripe_key, Some("")).form(&price_form).send().await {
+        Ok(r) => match r.json::<serde_json::Value>().await {
+            Ok(v) => v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+            Err(_) => return (StatusCode::BAD_GATEWAY, "stripe price parse").into_response(),
+        },
+        Err(e) => return (StatusCode::BAD_GATEWAY, format!("stripe price: {}", e)).into_response(),
+    };
+    if price_id.is_empty() {
+        return (StatusCode::BAD_GATEWAY, "stripe returned no price id").into_response();
+    }
+    let pl_form: Vec<(&str, String)> = vec![
+        ("line_items[0][price]", price_id),
+        ("line_items[0][quantity]", "1".into()),
+        ("shipping_address_collection[allowed_countries][0]", "JP".into()),
+        ("after_completion[type]", "redirect".into()),
+        ("after_completion[redirect][url]", "https://wearmu.com/proposals/kichinan?sample=ok".into()),
+        ("metadata[kind]", "kichinan_sample".into()),
+        ("metadata[design]", design_lower.clone()),
+        ("metadata[license_status]", "pending".into()),
+        ("metadata[ip_owner]", "Kichinan Group".into()),
+    ];
+    match client.post("https://api.stripe.com/v1/payment_links")
+        .basic_auth(&stripe_key, Some("")).form(&pl_form).send().await {
+        Ok(r) => {
+            let v: serde_json::Value = r.json().await.unwrap_or(serde_json::Value::Null);
+            if let Some(u) = v.get("url").and_then(|x| x.as_str()) {
+                return Json(serde_json::json!({
+                    "ok": true, "url": u, "design": design_lower, "price_jpy": body.price_jpy
+                })).into_response();
+            }
+            (StatusCode::BAD_GATEWAY, format!("payment_link: {}", v.to_string().chars().take(300).collect::<String>())).into_response()
+        }
+        Err(e) => (StatusCode::BAD_GATEWAY, format!("stripe: {}", e)).into_response(),
+    }
+}
+
 /// GET /en/press — English-default version. Same content, but we flip
 /// <html lang>, canonical, og:locale, and inject auto-switch JS so the
 /// English `.lang-content.en` div is shown without a click.
@@ -35198,6 +35275,7 @@ async fn main() {
         .route("/en/press", get(press_page_en))
         .route("/press.html", get(press_html_redirect))
         .route("/proposals/kichinan", get(proposal_kichinan))
+        .route("/api/proposals/kichinan/sample", post(proposal_kichinan_sample))
         .nest_service("/proposals", ServeDir::new("static/proposals"))
         .route("/api/collab/account/delete", post(collab_account_delete))
         .route("/api/404/buy", post(not_found_buy))
