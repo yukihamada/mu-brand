@@ -2918,12 +2918,8 @@ async fn buyer_profile_page(
                 CAST(COALESCE(o.created_at,'0') AS INTEGER),
                 COALESCE(o.amount_jpy, 0),
                 COALESCE(o.status,'received'),
-                COALESCE((SELECT name FROM products p WHERE p.slug=o.slug), (SELECT name FROM collab_products cp WHERE cp.slug=o.slug), o.slug) AS pname,
-                COALESCE(
-                  (SELECT image_url FROM collab_products cp WHERE cp.slug=o.slug),
-                  (SELECT 'https://wearmu.com/mockups/' || p.id || '.jpg' FROM products p WHERE p.slug=o.slug),
-                  ''
-                ) AS img
+                COALESCE((SELECT name FROM collab_products cp WHERE cp.slug=o.slug), o.slug) AS pname,
+                COALESCE((SELECT image_url FROM collab_products cp WHERE cp.slug=o.slug), '') AS img
              FROM collab_orders o
              WHERE o.buyer_token = ?
              ORDER BY CAST(COALESCE(o.created_at,'0') AS INTEGER) DESC
@@ -3368,14 +3364,9 @@ async fn mypage_dashboard(db: Db, email: String, buyer_token: String) -> Respons
                 CAST(COALESCE(o.created_at,'0') AS INTEGER),
                 COALESCE(o.amount_jpy, 0),
                 COALESCE(o.status,'received'),
-                COALESCE((SELECT name FROM products p WHERE p.slug=o.slug),
-                         (SELECT name FROM collab_products cp WHERE cp.slug=o.slug),
+                COALESCE((SELECT name FROM collab_products cp WHERE cp.slug=o.slug),
                          o.slug) AS pname,
-                COALESCE(
-                  (SELECT image_url FROM collab_products cp WHERE cp.slug=o.slug),
-                  (SELECT 'https://wearmu.com/mockups/' || p.id || '.jpg' FROM products p WHERE p.slug=o.slug),
-                  ''
-                ) AS img,
+                COALESCE((SELECT image_url FROM collab_products cp WHERE cp.slug=o.slug), '') AS img,
                 COALESCE(o.printful_order_id, '')
              FROM collab_orders o
              WHERE o.email = ?
