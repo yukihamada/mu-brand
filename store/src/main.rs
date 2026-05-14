@@ -8954,13 +8954,13 @@ async fn handle_you_purchase_webhook(db: Db, design_id: i64, session: serde_json
 }
 
 async fn create_printful_order(key: String, db: Db, product_id: i64, session: serde_json::Value) {
-    let (design_url, mockup_url) = {
+    let (design_url, mockup_url, brand) = {
         let conn = db.lock().unwrap();
         conn.query_row(
-            "SELECT design_url, mockup_url FROM products WHERE id=?",
+            "SELECT design_url, mockup_url, brand FROM products WHERE id=?",
             params![product_id],
-            |row| Ok((row.get::<_,Option<String>>(0)?, row.get::<_,Option<String>>(1)?))
-        ).unwrap_or((None, None))
+            |row| Ok((row.get::<_,Option<String>>(0)?, row.get::<_,Option<String>>(1)?, row.get::<_,String>(2)?))
+        ).unwrap_or((None, None, String::new()))
     };
 
     // Prefer design_url (raw artwork) but fall back to mockup_url if missing
@@ -9020,14 +9020,21 @@ async fn create_printful_order(key: String, db: Db, product_id: i64, session: se
     let zip = addr["postal_code"].as_str().unwrap_or("");
     let state = addr["state"].as_str().unwrap_or("");
 
-    // Determine variant by size from metadata
+    // Determine variant by size from metadata. Caps are one-size — when the
+    // product's brand identifies a cap, we override size selection with the
+    // snapback variant.
     let size = full_session["metadata"]["size"].as_str().unwrap_or("M");
-    let variant_id: u64 = match size {
-        "S"  => 4016,
-        "M"  => 4017,
-        "L"  => 4018,
-        "XL" => 4019,
-        _    => 4017,
+    let variant_id: u64 = if brand == "kichinan_cap_sample" {
+        // Printful catalog 92 (Yupoong Snapback Trucker Cap) — one-size black.
+        7854
+    } else {
+        match size {
+            "S"  => 4016,
+            "M"  => 4017,
+            "L"  => 4018,
+            "XL" => 4019,
+            _    => 4017,
+        }
     };
 
     let client = reqwest::Client::new();
@@ -13153,12 +13160,14 @@ struct KichinanSampleBody {
 /// products table at startup so the existing checkout.session.completed
 /// webhook (which calls create_printful_order keyed on metadata.product_id)
 /// can fulfill orders end-to-end without any new fulfillment path.
-const KICHINAN_DESIGNS: &[(&str, i64, i64, &str)] = &[
-    ("a", 1, 5400, "後方支援 back-print"),
-    ("b", 2, 6800, "one truck. 1962."),
-    ("c", 3, 5400, "workshirt patch · SINCE 1962"),
-    ("d", 4, 4500, "K-helmet quiet"),
-    ("e", 5, 6800, "Yamaguchi coast"),
+/// Tuple: (slug, drop_num, price_jpy, label, kind)  kind = "tee" | "cap".
+const KICHINAN_DESIGNS: &[(&str, i64, i64, &str, &str)] = &[
+    ("a", 1, 5400, "後方支援 back-print",         "tee"),
+    ("b", 2, 6800, "one truck. 1962.",            "tee"),
+    ("c", 3, 5400, "workshirt patch · SINCE 1962","tee"),
+    ("d", 4, 4500, "K-helmet quiet",              "tee"),
+    ("e", 5, 6800, "Yamaguchi coast",             "tee"),
+    ("f", 6, 5800, "K-emblem snapback cap",       "cap"),
 ];
 
 /// Idempotent: ensures one products row per kichinan design so Printful
@@ -13167,10 +13176,11 @@ const KICHINAN_DESIGNS: &[(&str, i64, i64, &str)] = &[
 /// product shot for OG / receipt thumbnails.
 fn seed_kichinan_sample_products(db: &Db) {
     let conn = db.lock().unwrap();
-    for (slug, drop_num, price_jpy, label) in KICHINAN_DESIGNS {
+    for (slug, drop_num, price_jpy, label, kind) in KICHINAN_DESIGNS {
+        let brand = if *kind == "cap" { "kichinan_cap_sample" } else { "kichinan_sample" };
         let exists: bool = conn.query_row(
-            "SELECT 1 FROM products WHERE brand='kichinan_sample' AND drop_num=? LIMIT 1",
-            params![drop_num], |r| r.get::<_, i64>(0),
+            "SELECT 1 FROM products WHERE brand=? AND drop_num=? LIMIT 1",
+            params![brand, drop_num], |r| r.get::<_, i64>(0),
         ).is_ok();
         if exists { continue; }
         let now_s = chrono_now();
@@ -13181,12 +13191,12 @@ fn seed_kichinan_sample_products(db: &Db) {
              (brand, drop_num, name, design_url, mockup_url, price_jpy, inventory, active, created_at, weather_data)
              VALUES (?,?,?,?,?,?,?,?,?,?)",
             params![
-                "kichinan_sample", drop_num,
+                brand, drop_num,
                 format!("━◯━ MU × KICHINAN sample · {} · {}", slug.to_uppercase(), label),
                 design_url, mockup_url, price_jpy, 50, 0,  // active=0 so it stays off public listings
                 now_s,
                 serde_json::json!({
-                    "kind": "kichinan_sample",
+                    "kind": format!("kichinan_{}", kind),
                     "design_slug": slug,
                     "license_status": "pending",
                     "ip_owner": "Kichinan Group",
@@ -13206,27 +13216,33 @@ async fn proposal_kichinan_sample(
     Json(body): Json<KichinanSampleBody>,
 ) -> Response {
     let design_lower = body.design.to_lowercase();
-    let (drop_num, default_price, label) = match KICHINAN_DESIGNS.iter()
-        .find(|(s, _, _, _)| *s == design_lower)
-        .map(|(_, d, p, l)| (*d, *p, *l)) {
+    let (drop_num, default_price, label, kind) = match KICHINAN_DESIGNS.iter()
+        .find(|(s, _, _, _, _)| *s == design_lower)
+        .map(|(_, d, p, l, k)| (*d, *p, *l, *k)) {
         Some(v) => v,
         None => return (StatusCode::BAD_REQUEST, "unknown design id").into_response(),
     };
     let price_jpy = if (4000..=8000).contains(&body.price_jpy) { body.price_jpy } else { default_price };
-    let size = body.size.as_deref().unwrap_or("M").to_uppercase();
-    if !["S","M","L","XL"].contains(&size.as_str()) {
-        return (StatusCode::BAD_REQUEST, "size must be S/M/L/XL").into_response();
-    }
+    // Caps are one-size — accept any size from frontend but force ONESIZE.
+    let size = if kind == "cap" {
+        "ONESIZE".to_string()
+    } else {
+        let s = body.size.as_deref().unwrap_or("M").to_uppercase();
+        if !["S","M","L","XL"].contains(&s.as_str()) {
+            return (StatusCode::BAD_REQUEST, "size must be S/M/L/XL").into_response();
+        }
+        s
+    };
     let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
     if stripe_key.is_empty() {
         return (StatusCode::SERVICE_UNAVAILABLE, "stripe key missing").into_response();
     }
-    // Look up the seeded product row.
+    let brand = if kind == "cap" { "kichinan_cap_sample" } else { "kichinan_sample" };
     let product_id: i64 = {
         let conn = db.lock().unwrap();
         match conn.query_row(
-            "SELECT id FROM products WHERE brand='kichinan_sample' AND drop_num=? LIMIT 1",
-            params![drop_num], |r| r.get(0),
+            "SELECT id FROM products WHERE brand=? AND drop_num=? LIMIT 1",
+            params![brand, drop_num], |r| r.get(0),
         ) {
             Ok(id) => id,
             Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, "kichinan products not seeded").into_response(),

@@ -214,6 +214,22 @@ ul li strong{color:var(--fg);font-weight:500}
     <div class="size-row" data-design="e">S M L XL</div>
     <button class="sample-btn" type="button" data-design="e" data-price="6800">サンプル試作を発注 — ¥6,800</button>
   </div>
+
+  <!-- DESIGN F · cap -->
+  <div class="design">
+    <div class="id">F · 帽子</div>
+    <h4>K-emblem snapback cap</h4>
+    <div class="mockup">
+      <div class="view"><span class="label">FRONT</span>
+        <img src="/proposals/mockup-f.png" alt="黒スナップバック K-emblem 刺繍 cap mockup" loading="lazy">
+      </div>
+    </div>
+    <div class="front"><strong>FRONT:</strong> 白丸 × <strong style="color:#ff2c2c">K</strong> 刺繍 emblem (3cm)</div>
+    <div class="back"><strong>BACK:</strong> プレーン / one size flat brim 6-panel snapback</div>
+    <div class="footer">用途: 採用 / 現場 / 一般販売 · 想定 ¥5,800</div>
+    <div class="size-row" data-design="f" data-onesize="1">ONE SIZE</div>
+    <button class="sample-btn" type="button" data-design="f" data-price="5800">サンプル試作を発注 — ¥5,800</button>
+  </div>
 </div>
 
 <h2>3. 料金プラン — 基本料 ¥0 + revenue share</h2>
@@ -290,12 +306,14 @@ ul li strong{color:var(--fg);font-weight:500}
 <script>
 // Build size buttons inside each .size-row
 document.querySelectorAll('.size-row').forEach(row => {
-  const design = row.dataset.design;
+  const onesize = row.dataset.onesize === '1';
+  const sizes = onesize ? ['ONESIZE'] : ['S','M','L','XL'];
+  const defaultSize = onesize ? 'ONESIZE' : 'M';
   row.innerHTML = '';
-  ['S','M','L','XL'].forEach((sz, i) => {
+  sizes.forEach((sz) => {
     const b = document.createElement('button');
     b.type = 'button';
-    b.className = 'sz' + (sz === 'M' ? ' on' : '');
+    b.className = 'sz' + (sz === defaultSize ? ' on' : '');
     b.textContent = sz;
     b.dataset.size = sz;
     b.addEventListener('click', () => {
