@@ -10168,6 +10168,26 @@ async fn import_product(
         enqueue_sns_post(&conn, "x", "drop", Some(new_id), None,
             &composed, body.mockup_url.as_deref());
     }
+    // Auto-mirror new MUGEN/MUON drops to SUZURI for JP shipping
+    // (Constitution §24-v2 dual-channel). Fire-and-forget — failure
+    // does not block the import (SUZURI may be rate-limited or down,
+    // and yuki can re-fire manually via /api/admin/suzuri/publish/:id).
+    if matches!(body.brand.as_str(), "mugen" | "muon") && autopilot_on() {
+        let db_for_mirror = db.clone();
+        tokio::spawn(async move {
+            // Small grace period so mockup_url is settled in R2.
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            match suzuri_publish_drop(db_for_mirror, new_id, false).await {
+                Ok((mid, spid, url)) => {
+                    eprintln!("[suzuri] auto-mirrored product {} → material {} product {} url {}",
+                        new_id, mid, spid, url);
+                }
+                Err(e) => {
+                    eprintln!("[suzuri] auto-mirror failed for product {}: {}", new_id, e);
+                }
+            }
+        });
+    }
     Json(serde_json::json!({"ok": true, "id": new_id})).into_response()
 }
 
