@@ -13129,6 +13129,43 @@ async fn tos_page() -> Html<&'static str> {
     Html(include_str!("../static/tos.html"))
 }
 
+/// GET /press — Japanese-default press release. Same dual-language file,
+/// canonical = /press, hreflang JA→/press EN→/en/press already in <head>.
+async fn press_page_ja() -> Html<&'static str> {
+    Html(include_str!("../static/press.html"))
+}
+
+/// GET /en/press — English-default version. Same content, but we flip
+/// <html lang>, canonical, og:locale, and inject auto-switch JS so the
+/// English `.lang-content.en` div is shown without a click.
+async fn press_page_en() -> Html<String> {
+    let raw = include_str!("../static/press.html");
+    let body = raw
+        .replace(r#"<html lang="ja">"#, r#"<html lang="en">"#)
+        .replace(
+            r#"<link rel="canonical" href="https://wearmu.com/press">"#,
+            r#"<link rel="canonical" href="https://wearmu.com/en/press">"#,
+        )
+        .replace(r#"og:locale" content="ja_JP""#, r#"og:locale" content="en_US""#)
+        .replace(
+            "// Honor ?lang=en|ja on load",
+            "// Default to English on /en/press\nsetLang(null,'en');\n// Honor ?lang=en|ja on load",
+        );
+    Html(body)
+}
+
+/// GET /press.html — old URL. 301 redirect to /press (or /en/press if
+/// ?lang=en query was present) to consolidate the SEO link equity.
+async fn press_html_redirect(uri: Uri) -> Response {
+    let lang_en = uri.query().map(|q| q.contains("lang=en")).unwrap_or(false);
+    let target = if lang_en { "/en/press" } else { "/press" };
+    Response::builder()
+        .status(StatusCode::MOVED_PERMANENTLY)
+        .header("location", target)
+        .body(axum::body::Body::empty())
+        .unwrap()
+}
+
 /// POST /api/collab/account/delete — self-service erasure
 /// (個人情報保護法 第三十四条 利用停止等 / 開示請求等).
 /// Idempotent. Logs deletion to a separate retention-log table (which only
@@ -35124,6 +35161,9 @@ async fn main() {
         .route("/privacy.html", get(privacy_page))
         .route("/tos", get(tos_page))
         .route("/terms", get(tos_page))
+        .route("/press", get(press_page_ja))
+        .route("/en/press", get(press_page_en))
+        .route("/press.html", get(press_html_redirect))
         .route("/api/collab/account/delete", post(collab_account_delete))
         .route("/api/404/buy", post(not_found_buy))
         .route("/city", get(city_page))

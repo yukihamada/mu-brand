@@ -391,7 +391,11 @@ async function loadProduct() {
       stockEl.textContent = 'のこり ' + rem + ' / ' + pick.inventory + ' · ' + pick.sold + ' 着 売れ済';
     }
     document.getElementById('product-link').href = '/products/mugen/' + pick.drop_num + '?from=buy_page';
-    if (pick.suzuri_url) {
+    // SUZURI は国内 (日本) 顧客向け fulfillment のみ。 navigator.language が
+    // ja で始まる、 または ?lang=ja の場合のみ表示。 海外からは Printful EU 経路だけ。
+    const isJa = (navigator.language || '').toLowerCase().startsWith('ja')
+              || /[?&]lang=ja\b/.test(location.search);
+    if (pick.suzuri_url && isJa) {
       const sl = document.getElementById('suzuri-link');
       sl.href = pick.suzuri_url;
       sl.style.display = 'block';

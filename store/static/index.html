@@ -11,6 +11,9 @@
 <meta name="theme-color" content="#0A0A0A">
 <link rel="canonical" href="https://wearmu.com/">
 <link rel="alternate" hreflang="ja" href="https://wearmu.com/">
+<link rel="alternate" hreflang="en" href="https://wearmu.com/en/">
+<link rel="alternate" hreflang="x-default" href="https://wearmu.com/">
+<link rel="alternate" hreflang="ja" href="https://wearmu.com/">
 <link rel="alternate" hreflang="en" href="https://wearmu.com/">
 <link rel="alternate" hreflang="x-default" href="https://wearmu.com/">
 
@@ -2031,9 +2034,12 @@ function openModal(p, pushHistory=true){
   const fcStripe = fabricPicker?.querySelector('[data-variant="stripe"]');
   const fcStripePrice = document.getElementById('fc-stripe-price');
   if (fcStripePrice) fcStripePrice.textContent = '¥' + p.price_jpy.toLocaleString();
+  // SUZURI mirror surface is JP-only (suzuri.jp ships domestic 国内 only).
+  // 海外 visitors never see the SUZURI variant or fabric card.
+  const showSuzuriUi = hasSuzuri && isJP;
   if (fabricPicker) {
-    fabricPicker.style.display = hasSuzuri ? 'block' : 'none';
-    if (fcSuzuri) fcSuzuri.style.display = hasSuzuri ? 'flex' : 'none';
+    fabricPicker.style.display = showSuzuriUi ? 'block' : 'none';
+    if (fcSuzuri) fcSuzuri.style.display = showSuzuriUi ? 'flex' : 'none';
   }
 
   // Apply the visible state given the currently-chosen variant.
