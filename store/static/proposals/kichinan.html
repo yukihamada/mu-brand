@@ -88,6 +88,33 @@ ul li strong{color:var(--fg);font-weight:500}
 .fineprint strong{color:var(--y);opacity:1}
 
 .ascii-mark{font-family:'SF Mono','Menlo',monospace;font-size:18px;letter-spacing:0.18em;color:var(--y);opacity:0.7;text-align:center;margin:24px 0}
+
+/* Approval banner — shows above the hero, swaps copy on /api/proposals/kichinan/status */
+.status-banner{margin:0 auto 18px;padding:14px 18px;border-radius:4px;display:flex;align-items:center;gap:14px;font-size:12px;letter-spacing:0.08em;line-height:1.7}
+.status-banner .dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;box-shadow:0 0 14px currentColor}
+.status-banner.pending{background:rgba(230,196,73,0.08);border:1px solid rgba(230,196,73,0.4);color:#e6c449}
+.status-banner.approved{background:rgba(123,229,123,0.10);border:1px solid rgba(123,229,123,0.5);color:#7be57b}
+.status-banner b{font-weight:700;letter-spacing:0.22em;text-transform:uppercase;margin-right:6px}
+.status-banner .meta{color:var(--mute);font-size:11px;letter-spacing:0.04em;margin-left:auto;text-align:right;text-transform:none}
+
+/* Approval modal — admin-only "OK・販売開始" gate */
+.approve-card{margin-top:42px;padding:30px 28px;background:linear-gradient(180deg,rgba(230,196,73,0.07),transparent);border:1.5px solid rgba(230,196,73,0.45);border-radius:6px}
+.approve-card h3{font-size:17px;font-weight:400;color:var(--fg);margin-bottom:8px;letter-spacing:0.04em}
+.approve-card .sub{font-size:12px;color:var(--mute);margin-bottom:18px;line-height:1.85}
+.approve-card .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.approve-card .grid input,.approve-card .grid select,.approve-card .pw{width:100%;background:rgba(0,0,0,0.4);border:1px solid var(--line);border-radius:3px;color:var(--fg);font-family:inherit;padding:11px 12px;font-size:13px;letter-spacing:0.02em}
+.approve-card .grid input:focus,.approve-card .grid select:focus,.approve-card .pw:focus{outline:none;border-color:var(--y)}
+.approve-card .pw{margin-bottom:14px}
+.approve-card textarea{width:100%;min-height:60px;background:rgba(0,0,0,0.4);border:1px solid var(--line);border-radius:3px;color:var(--fg);font-family:inherit;padding:11px 12px;font-size:13px;margin-bottom:14px;resize:vertical}
+.approve-card textarea:focus{outline:none;border-color:var(--y)}
+.approve-card .agree{font-size:12px;color:var(--mute);display:flex;gap:8px;align-items:flex-start;margin-bottom:14px;line-height:1.7}
+.approve-card .agree input{flex-shrink:0;margin-top:3px;accent-color:var(--y)}
+.approve-card .approve-btn{width:100%;padding:15px 18px;background:var(--y);color:#0a0a0a;border:none;border-radius:3px;font-family:inherit;font-size:11px;letter-spacing:0.32em;text-transform:uppercase;font-weight:700;cursor:pointer;transition:all 0.15s}
+.approve-card .approve-btn:hover:not(:disabled){background:#ffd454}
+.approve-card .approve-btn:disabled{opacity:0.45;cursor:wait}
+.approve-card .approve-msg{margin-top:12px;font-size:12px;color:var(--mute);line-height:1.7;min-height:16px}
+.approve-card .approve-note{font-size:10.5px;color:var(--mute);opacity:0.7;line-height:1.85;margin-top:14px;padding-top:14px;border-top:1px dashed var(--line)}
+.approve-card.is-approved{background:linear-gradient(180deg,rgba(123,229,123,0.06),transparent);border-color:rgba(123,229,123,0.4)}
 </style>
 </head>
 <body>
@@ -100,6 +127,13 @@ ul li strong{color:var(--fg);font-weight:500}
 <div class="wrap">
 
 <div class="ascii-mark">━◯━</div>
+
+<!-- Approval status banner — filled in by /api/proposals/kichinan/status on load. -->
+<div id="statusBanner" class="status-banner pending" role="status">
+  <span class="dot" aria-hidden="true"></span>
+  <span><b>Proposal · 提案中</b>本資料は社外秘の初期提案です。 御社の正式 OK 後に全 SKU が公式販売へ切り替わります。</span>
+  <span class="meta" id="statusMeta">0 / 36 products active</span>
+</div>
 
 <div class="eyebrow">PROPOSAL · 2026-05-14 · 株式会社イネブラ → キチナングループ 御中</div>
 <h1>後方支援を、 <em>着る</em>。<br><span style="font-size:0.7em;color:var(--mute);font-weight:200">キチナングループ × MU collab 提案</span></h1>
@@ -628,6 +662,38 @@ ul li strong{color:var(--fg);font-weight:500}
   <li><strong>Step 4.</strong> 1 着目の正式 mockup → 御社最終承認 → 販売開始 (契約から 3 週間目処)</li>
 </ul>
 
+<!-- ────── OK・販売開始 ゲート ────── -->
+<!-- 御社からの正式 OK を受領後、 yuki が ADMIN_TOKEN で承認 → 36 SKU 全てが公式販売へ。 -->
+<div id="approveCard" class="approve-card">
+  <h3 id="approveTitle">🤝 OK・販売開始 — 36 SKU を公式リリース</h3>
+  <p class="sub" id="approveSub">
+    本資料へのご承認後、 下記フォームを送信すると <strong style="color:#7be57b">全 36 SKU が即時公式販売開始</strong>になります (active=1)。 各商品ページ・/api/v1/embed/products・/api/transparency にも反映。 取消は同フォームから revoke 可能。
+  </p>
+  <div class="grid">
+    <input id="apprName"  type="text"  placeholder="ご担当者氏名 (例: 山口 太郎)" autocomplete="name">
+    <input id="apprEmail" type="email" placeholder="ご担当者メール (例: yamaguchi@kichinan.example)" autocomplete="email">
+  </div>
+  <div class="grid">
+    <select id="apprPlan">
+      <option value="starter">Starter — 基本料 ¥0 / RS 30% (推奨)</option>
+      <option value="growth">Growth — ¥150,000 / RS 20%</option>
+      <option value="enterprise">Enterprise — ¥500,000 / RS 10%</option>
+    </select>
+    <input id="apprToken" type="password" class="pw" placeholder="ADMIN_TOKEN (yuki 管理者専用)" autocomplete="off" style="margin-bottom:0">
+  </div>
+  <textarea id="apprNote" placeholder="メモ (任意): 担当者役職・特記事項・割引条件など"></textarea>
+  <label class="agree">
+    <input id="apprAgree" type="checkbox">
+    <span>本提案 (デザイン 36 案・料金プラン・ライセンス条件) に同意し、 マスコット「きちにゃん」の MU collab 利用を許諾します。 承認時刻・承認者情報は kichinan_approval テーブルに永続記録されます。</span>
+  </label>
+  <button id="apprBtn" class="approve-btn" type="button" disabled>🟢 OK・販売開始する</button>
+  <div id="apprMsg" class="approve-msg"></div>
+  <div class="approve-note">
+    <strong style="color:var(--y)">管理者 (yuki) 専用フィールド</strong>: <code style="color:#8ec5ff">ADMIN_TOKEN</code> は MU 本部側で保持。 御社からの OK 受領後、 yuki が本フォームから flip します。 OK は<strong>口頭・メール・チャット</strong>のいずれでも構いません (本フォーム送信は yuki が代理実施)。
+    <br><br>取消したい場合: <code>POST /api/proposals/kichinan/revoke</code> with <code>Authorization: Bearer &lt;ADMIN_TOKEN&gt;</code> — 即座に 36 SKU を active=0 に戻し、 LP も proposal モードに復帰します。
+  </div>
+</div>
+
 <div class="cta">
   <div class="eyebrow">— ご連絡先 —</div>
   <h3>濱田 優貴 (株式会社イネブラ 代表取締役)</h3>
@@ -669,6 +735,95 @@ document.querySelectorAll('.size-row').forEach(row => {
   });
 });
 
+// ─── Approval status: fetched on load, swaps banner + per-card button copy. ───
+let KICHINAN_APPROVED = false;
+async function refreshKichinanStatus() {
+  try {
+    const r = await fetch('/api/proposals/kichinan/status', { cache: 'no-store' });
+    if (!r.ok) return;
+    const d = await r.json();
+    KICHINAN_APPROVED = !!d.approved;
+    const b = document.getElementById('statusBanner');
+    const m = document.getElementById('statusMeta');
+    if (KICHINAN_APPROVED) {
+      b.classList.remove('pending'); b.classList.add('approved');
+      const at = (d.approved_at || '').replace('T',' ').split('.')[0];
+      const tier = (d.plan_tier || 'starter').toUpperCase();
+      b.querySelector('span:nth-child(2)').innerHTML =
+        '<b>Approved · 公式販売中</b>' + (d.approver_first_name ? (d.approver_first_name + ' 様の承認済 · ') : '') +
+        tier + ' プラン · ' + at + ' に契約成立。 全 ' + (d.products_total||36) + ' SKU 公式販売中です。';
+      if (m) m.textContent = (d.products_active||0) + ' / ' + (d.products_total||36) + ' products active';
+      // Per-card button copy → "今すぐ購入"
+      document.querySelectorAll('.sample-btn').forEach(btn => {
+        const price = btn.dataset.price;
+        btn.textContent = '今すぐ購入 — ¥' + Number(price).toLocaleString();
+      });
+      // Approval card → approved state
+      const card = document.getElementById('approveCard');
+      if (card) {
+        card.classList.add('is-approved');
+        const t = document.getElementById('approveTitle');
+        const s = document.getElementById('approveSub');
+        if (t) t.textContent = '✅ 公式販売中 — ' + tier + ' プラン契約済';
+        if (s) s.innerHTML = '本ライセンス契約は成立済みです (' + at + ')。 全 36 SKU が <a href="/api/v1/embed/products?brand=kichinan_tee_sample">/api/v1/embed/products</a> 経由で公開販売中。 取消は ADMIN_TOKEN で <code>POST /api/proposals/kichinan/revoke</code>。';
+        // Hide form inputs — the approval is done.
+        card.querySelectorAll('input,select,textarea,label.agree,button.approve-btn,.approve-msg').forEach(el => { el.style.display = 'none'; });
+      }
+    } else {
+      if (m) m.textContent = (d.products_active||0) + ' / ' + (d.products_total||36) + ' products active';
+    }
+  } catch (_) { /* silent — banner already shows pending by default */ }
+}
+refreshKichinanStatus();
+
+// ─── Approval form submit handler. ───
+(() => {
+  const btn   = document.getElementById('apprBtn');
+  const agree = document.getElementById('apprAgree');
+  const msg   = document.getElementById('apprMsg');
+  const name  = document.getElementById('apprName');
+  const email = document.getElementById('apprEmail');
+  const plan  = document.getElementById('apprPlan');
+  const tok   = document.getElementById('apprToken');
+  const note  = document.getElementById('apprNote');
+  if (!btn) return;
+  const refresh = () => {
+    btn.disabled = !(agree.checked && name.value.trim() && /@/.test(email.value) && tok.value.trim());
+  };
+  [agree, name, email, tok].forEach(el => el.addEventListener('input', refresh));
+  agree.addEventListener('change', refresh);
+  btn.addEventListener('click', async () => {
+    const adminToken = tok.value.trim();
+    btn.disabled = true;
+    btn.textContent = '承認中…';
+    msg.style.color = 'var(--mute)';
+    msg.textContent = '';
+    try {
+      const r = await fetch('/api/proposals/kichinan/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + adminToken },
+        body: JSON.stringify({
+          approver_name:  name.value.trim(),
+          approver_email: email.value.trim(),
+          plan_tier:      plan.value,
+          note:           note.value.trim(),
+        }),
+      });
+      const text = await r.text();
+      if (!r.ok) throw new Error(text || ('HTTP ' + r.status));
+      const d = JSON.parse(text);
+      msg.style.color = '#7be57b';
+      msg.textContent = '✓ 承認成立 — ' + d.products_activated + ' / ' + d.products_total + ' SKU を公式販売へ。 ページを更新します…';
+      setTimeout(() => location.reload(), 1200);
+    } catch (e) {
+      msg.style.color = '#ff8a8a';
+      msg.textContent = '失敗: ' + (e.message || '?');
+      btn.disabled = false;
+      btn.textContent = '🟢 OK・販売開始する';
+    }
+  });
+})();
+
 document.querySelectorAll('.sample-btn').forEach(btn => {
   btn.addEventListener('click', async () => {
     const design = btn.dataset.design;
@@ -678,7 +833,7 @@ document.querySelectorAll('.sample-btn').forEach(btn => {
     const size = sizeBtn ? sizeBtn.dataset.size : 'M';
     const orig = btn.textContent;
     btn.disabled = true;
-    btn.textContent = 'Stripe へ遷移中…';
+    btn.textContent = (KICHINAN_APPROVED ? '購入手続きへ…' : 'Stripe へ遷移中…');
     let msg = btn.parentElement.querySelector('.sample-msg');
     if (!msg) {
       msg = document.createElement('div');

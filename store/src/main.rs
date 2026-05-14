@@ -2179,8 +2179,14 @@ async fn embed_products(
     let available_only = q.get("available").map(|s| s == "1").unwrap_or(false);
 
     // Build query — if `brand` is set, filter; otherwise include all main brands.
+    // Kichinan_* brands are allow-listed by prefix so the 36-SKU collab line
+    // (each SKU is its own brand: kichinan_tee_sample, kichinan_cap_sample…)
+    // is queryable via /api/v1/embed/products?brand=kichinan_tee_sample
+    // once the kichinan_approval gate has flipped them to active=1.
     let allowed = ["mugen","muon","ma","nouns"];
-    let brand_filter = q.get("brand").map(String::as_str).filter(|b| allowed.contains(b));
+    let brand_filter = q.get("brand")
+        .map(String::as_str)
+        .filter(|b| allowed.contains(b) || b.starts_with("kichinan_"));
 
     let conn = db.lock().unwrap();
     let sql = if brand_filter.is_some() {
@@ -8490,6 +8496,20 @@ async fn stripe_webhook(
             product_id,
             serde_json::json!({"amount_total": amount_total, "session": session_id})).await;
 
+        // ── 404 tee — mark the hourly slot as sold so the 1-per-hour cap
+        // becomes durable. Falls through to product_id fulfillment below.
+        if meta["kind"].as_str() == Some("s404") {
+            if let Some(hour_str) = meta["s404_hour_id"].as_str() {
+                if let Ok(hour_id) = hour_str.parse::<i64>() {
+                    let conn = db.lock().unwrap();
+                    let _ = conn.execute(
+                        "UPDATE s404_hourly SET sold_session_id=? WHERE hour_id=?",
+                        params![session_id, hour_id],
+                    );
+                }
+            }
+        }
+
         // ── Collab order (MU × SWEEP / MU × kokon.tokyo / etc.) ──
         // Records a row in collab_orders. Production route:
         //   - printful → POST to Printful /v2/orders (auto-fulfill)
@@ -12875,22 +12895,82 @@ async fn buy_page() -> Html<&'static str> {
 /// status with the static/404.html body so links + navigation are intact.
 /// Now the page also OFFERS the unique 404 tee: each 404 hit captures
 /// (path, JST timestamp) which become the design printed on a 1-of-1 shirt.
-async fn not_found_page(uri: Uri) -> Response {
-    render_404_tee_page(uri.path())
+async fn not_found_page(State(db): State<Db>, uri: Uri) -> Response {
+    render_404_tee_page(&db, uri.path())
+}
+
+/// Hourly anchor for the 404 tee. The first 404 hit each hour becomes the
+/// "official" URL/ts for that hour, and only ONE shirt can be sold per hour.
+/// Visitors later in the hour see the anchor as the main design but their
+/// own visited URL appears as a secondary line on the shirt.
+fn s404_hour_id_now() -> i64 {
+    let unix: i64 = chrono_now().parse().unwrap_or(0);
+    unix / 3600
+}
+
+struct S404HourAnchor {
+    hour_id: i64,
+    anchor_path: String,
+    anchor_ts: String,
+    sold_session_id: Option<String>,
+}
+
+/// Returns the hourly anchor, creating one if this is the first 404 visit
+/// of the hour. Idempotent: if the row already exists, the visitor's path
+/// is NOT overwritten — only the first visit "wins".
+fn s404_get_or_create_anchor(db: &Db, visitor_path: &str, visitor_ts: &str) -> S404HourAnchor {
+    let hour_id = s404_hour_id_now();
+    let conn = db.lock().unwrap();
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS s404_hourly (
+            hour_id INTEGER PRIMARY KEY,
+            anchor_path TEXT NOT NULL,
+            anchor_ts TEXT NOT NULL,
+            sold_session_id TEXT,
+            created_at INTEGER NOT NULL
+        )",
+        [],
+    );
+    let existing: Option<(String, String, Option<String>)> = conn.query_row(
+        "SELECT anchor_path, anchor_ts, sold_session_id FROM s404_hourly WHERE hour_id=?",
+        params![hour_id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ).ok();
+    if let Some((p, t, sold)) = existing {
+        return S404HourAnchor { hour_id, anchor_path: p, anchor_ts: t, sold_session_id: sold };
+    }
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let _ = conn.execute(
+        "INSERT INTO s404_hourly (hour_id, anchor_path, anchor_ts, sold_session_id, created_at)
+         VALUES (?, ?, ?, NULL, ?)",
+        params![hour_id, visitor_path, visitor_ts, now_s],
+    );
+    S404HourAnchor {
+        hour_id, anchor_path: visitor_path.to_string(),
+        anchor_ts: visitor_ts.to_string(), sold_session_id: None,
+    }
 }
 
 /// Renders the 404-as-tee page for a given visited path. Shared by the
 /// axum fallback handler AND the /:slug catch-all (serve_static_or_404).
-fn render_404_tee_page(raw_path: &str) -> Response {
-    let path: String = raw_path.chars().filter(|c| !c.is_control()).take(60).collect();
-    let path = if path.starts_with('/') { path } else { format!("/{}", path) };
-    let ts = chrono_now_jst_datetime_str();
+fn render_404_tee_page(db: &Db, raw_path: &str) -> Response {
+    let visitor_path: String = raw_path.chars().filter(|c| !c.is_control()).take(60).collect();
+    let visitor_path = if visitor_path.starts_with('/') { visitor_path } else { format!("/{}", visitor_path) };
+    let visitor_ts = chrono_now_jst_datetime_str();
+    let anchor = s404_get_or_create_anchor(db, &visitor_path, &visitor_ts);
+    // The visitor sees the design as: anchor URL (main) + their own visited URL/ts (sub).
     let template = include_str!("../static/404.html");
     let body = template
-        .replace("{{path}}", &html_escape(&path))
-        .replace("{{ts}}", &html_escape(&ts))
-        .replace("{{path_enc}}", &urlencoding::encode(&path).into_owned())
-        .replace("{{ts_enc}}", &urlencoding::encode(&ts).into_owned());
+        .replace("{{path}}", &html_escape(&anchor.anchor_path))
+        .replace("{{ts}}", &html_escape(&anchor.anchor_ts))
+        .replace("{{visitor_path}}", &html_escape(&visitor_path))
+        .replace("{{visitor_ts}}", &html_escape(&visitor_ts))
+        .replace("{{hour_id}}", &anchor.hour_id.to_string())
+        .replace("{{sold_class}}", if anchor.sold_session_id.is_some() { "sold" } else { "available" })
+        .replace("{{path_enc}}", &urlencoding::encode(&anchor.anchor_path).into_owned())
+        .replace("{{ts_enc}}", &urlencoding::encode(&anchor.anchor_ts).into_owned())
+        .replace("{{visitor_path_enc}}", &urlencoding::encode(&visitor_path).into_owned())
+        .replace("{{visitor_ts_enc}}", &urlencoding::encode(&visitor_ts).into_owned());
     (StatusCode::NOT_FOUND, Html(body)).into_response()
 }
 
@@ -12898,14 +12978,21 @@ const NOT_FOUND_TEE_PRICE_JPY: i64 = 5400;
 
 #[derive(Deserialize)]
 struct NotFoundBuyBody {
+    /// Anchor path (the hour's official 404 URL)
     path: String,
+    /// Anchor JST timestamp
     ts: String,
+    /// The visitor's own URL (subline on the printed shirt)
+    visitor_path: Option<String>,
+    /// The visitor's own JST timestamp (subline)
+    visitor_ts: Option<String>,
 }
 
-/// POST /api/404/buy — creates a 1-of-1 product row for the captured
-/// (path, JST timestamp) pair and returns a Stripe Payment Link.
-/// On checkout webhook the design will be generated and a Printful order
-/// placed (handled by the existing fulfillment path keyed on brand="s404").
+/// POST /api/404/buy — issues a Stripe Payment Link for the current hour's
+/// anchor 404 tee. Cap = 1 per hour: if the hour is already sold, returns
+/// 409 Conflict so the LP can lock the buy button. On webhook completion,
+/// the s404_hourly row is marked sold so subsequent attempts that same
+/// hour fail-fast even if the LP cache was stale.
 async fn not_found_buy(
     State(db): State<Db>,
     Json(body): Json<NotFoundBuyBody>,
@@ -12914,13 +13001,60 @@ async fn not_found_buy(
     if stripe_key.is_empty() {
         return (StatusCode::SERVICE_UNAVAILABLE, "stripe key missing").into_response();
     }
-    // Sanitize inputs: keep path printable, max 80 chars; ts is fixed format.
     let path: String = body.path.chars().filter(|c| !c.is_control()).take(80).collect();
     let ts:   String = body.ts.chars().filter(|c| !c.is_control()).take(40).collect();
+    let visitor_path: String = body.visitor_path.as_deref().unwrap_or(&path)
+        .chars().filter(|c| !c.is_control()).take(80).collect();
+    let visitor_ts: String = body.visitor_ts.as_deref().unwrap_or(&ts)
+        .chars().filter(|c| !c.is_control()).take(40).collect();
     if path.is_empty() {
         return (StatusCode::BAD_REQUEST, "path required").into_response();
     }
-    // Deterministic slug from sha256(path|ts) — first 10 hex chars.
+    // Hourly cap: anchor must match this hour's stored anchor, and the
+    // hour's slot must not already be sold.
+    let hour_id = s404_hour_id_now();
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "CREATE TABLE IF NOT EXISTS s404_hourly (
+                hour_id INTEGER PRIMARY KEY,
+                anchor_path TEXT NOT NULL,
+                anchor_ts TEXT NOT NULL,
+                sold_session_id TEXT,
+                created_at INTEGER NOT NULL
+            )", [],
+        );
+        let row: Option<(String, Option<String>)> = conn.query_row(
+            "SELECT anchor_path, sold_session_id FROM s404_hourly WHERE hour_id=?",
+            params![hour_id], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).ok();
+        match row {
+            Some((anchor_p, sold)) => {
+                if anchor_p != path {
+                    return (StatusCode::CONFLICT, Json(serde_json::json!({
+                        "error": "this hour's anchor URL has changed — reload and try again",
+                        "expected_anchor": anchor_p,
+                        "received": path,
+                    }))).into_response();
+                }
+                if let Some(sid) = sold {
+                    return (StatusCode::CONFLICT, Json(serde_json::json!({
+                        "error": "this hour's 404 tee is already sold (1-of-1 per hour). Wait for the next hour.",
+                        "sold_session": sid,
+                        "next_hour_at": (hour_id + 1) * 3600,
+                    }))).into_response();
+                }
+            }
+            None => {
+                let now_s: i64 = chrono_now().parse().unwrap_or(0);
+                let _ = conn.execute(
+                    "INSERT INTO s404_hourly (hour_id, anchor_path, anchor_ts, sold_session_id, created_at)
+                     VALUES (?, ?, ?, NULL, ?)",
+                    params![hour_id, path, ts, now_s],
+                );
+            }
+        }
+    }
     let slug = {
         use sha2::{Sha256, Digest};
         let mut h = Sha256::new();
@@ -12942,7 +13076,7 @@ async fn not_found_buy(
                 "INSERT INTO products (brand, drop_num, name, design_url, mockup_url, price_jpy, inventory, created_at, weather_data)
                  VALUES (?,?,?,?,?,?,?,?,?)",
                 params![
-                    "s404", 1,
+                    "s404", hour_id,
                     format!("404 · {} · {}", path, ts),
                     "https://mockups.wearmu.com/hero.png",
                     "https://mockups.wearmu.com/hero.png",
@@ -12950,8 +13084,11 @@ async fn not_found_buy(
                     now_s,
                     serde_json::json!({
                         "kind": "s404",
-                        "path": path,
-                        "ts_jst": ts,
+                        "anchor_path": path,
+                        "anchor_ts": ts,
+                        "visitor_path": visitor_path,
+                        "visitor_ts": visitor_ts,
+                        "hour_id": hour_id,
                         "slug": slug,
                     }).to_string(),
                 ],
@@ -12988,8 +13125,11 @@ async fn not_found_buy(
         ("after_completion[redirect][url]", format!("https://wearmu.com/thank-you?slug={}", slug)),
         ("metadata[kind]", "s404".into()),
         ("metadata[product_id]", product_id.to_string()),
-        ("metadata[s404_path]", path.clone()),
-        ("metadata[s404_ts_jst]", ts.clone()),
+        ("metadata[s404_anchor_path]", path.clone()),
+        ("metadata[s404_anchor_ts]", ts.clone()),
+        ("metadata[s404_visitor_path]", visitor_path.clone()),
+        ("metadata[s404_visitor_ts]", visitor_ts.clone()),
+        ("metadata[s404_hour_id]", hour_id.to_string()),
         ("metadata[s404_slug]", slug.clone()),
     ];
     match client.post("https://api.stripe.com/v1/payment_links")
@@ -13497,6 +13637,182 @@ async fn proposal_kichinan_sample(
         }
         Err(e) => (StatusCode::BAD_GATEWAY, format!("stripe: {}", e)).into_response(),
     }
+}
+
+// ── Kichinan approval gate ────────────────────────────────────────────────
+// Workflow:
+//   1. /proposals/kichinan is seeded with active=0 (proposal only). Public
+//      catalog endpoints filter active=1 so no kichinan SKU is publicly
+//      buyable at this stage.
+//   2. After the kichinan group signs off (verbal/email OK), the admin POSTs
+//      /api/proposals/kichinan/approve with ADMIN_TOKEN and the approver's
+//      name + email + tier. All kichinan_* products flip to active=1 and a
+//      permanent contract record lands in the `kichinan_approval` table.
+//   3. The LP polls /api/proposals/kichinan/status to swap banner + button
+//      copy from "proposal" to "公式販売中" and "今すぐ購入".
+//   4. /api/proposals/kichinan/revoke (admin-gated) undoes the activation
+//      if the agreement is later cancelled — kept reversible by design.
+
+fn ensure_kichinan_approval_table(db: &Db) {
+    let conn = db.lock().unwrap();
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS kichinan_approval (
+            id            INTEGER PRIMARY KEY,
+            approved_at   TEXT,
+            approver_name TEXT,
+            approver_email TEXT,
+            approver_ip   TEXT,
+            plan_tier     TEXT,
+            note          TEXT,
+            revoked_at    TEXT
+         )",
+        [],
+    );
+}
+
+fn kichinan_approval_row(conn: &rusqlite::Connection) -> Option<(String, String, String, String, Option<String>)> {
+    conn.query_row(
+        "SELECT approved_at, approver_name, approver_email, COALESCE(plan_tier,''), revoked_at
+         FROM kichinan_approval WHERE id=1 AND approved_at IS NOT NULL",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+    ).ok()
+}
+
+fn kichinan_is_approved(conn: &rusqlite::Connection) -> bool {
+    kichinan_approval_row(conn).map(|t| t.4.is_none()).unwrap_or(false)
+}
+
+/// GET /api/proposals/kichinan/status — public. Used by the LP JS to
+/// swap banner + button copy. No PII (returns first name only).
+async fn proposal_kichinan_status(State(db): State<Db>) -> impl IntoResponse {
+    let conn = db.lock().unwrap();
+    let row = kichinan_approval_row(&conn);
+    let approved = row.as_ref().map(|t| t.4.is_none()).unwrap_or(false);
+    let (approved_at, approver_name, plan_tier) = match &row {
+        Some((at, n, _e, p, _r)) => (
+            Some(at.clone()),
+            // First name only — never leak full identity on a public endpoint.
+            Some(n.split_whitespace().next().unwrap_or("—").to_string()),
+            Some(p.clone()),
+        ),
+        None => (None, None, None),
+    };
+    let active_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM products WHERE brand LIKE 'kichinan_%' AND active=1",
+        [], |r| r.get(0),
+    ).unwrap_or(0);
+    Json(serde_json::json!({
+        "approved": approved,
+        "approved_at": approved_at,
+        "approver_first_name": approver_name,
+        "plan_tier": plan_tier,
+        "products_active": active_count,
+        "products_total": KICHINAN_DESIGNS.len(),
+    }))
+}
+
+#[derive(Deserialize)]
+struct KichinanApproveBody {
+    approver_name: String,
+    approver_email: String,
+    #[serde(default)]
+    plan_tier: String, // "starter" | "growth" | "enterprise"
+    #[serde(default)]
+    note: String,
+}
+
+/// POST /api/proposals/kichinan/approve — admin-gated. Flips every kichinan_*
+/// product to active=1 and lands a permanent approval record. Idempotent —
+/// a second call updates the row in place without unsetting active=1.
+async fn proposal_kichinan_approve(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<KichinanApproveBody>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/proposals/kichinan/approve").await {
+        return r;
+    }
+    let name = body.approver_name.trim();
+    let email = body.approver_email.trim().to_lowercase();
+    if name.is_empty() || !email.contains('@') {
+        return (StatusCode::BAD_REQUEST, "approver_name + valid approver_email required").into_response();
+    }
+    let plan = match body.plan_tier.trim().to_lowercase().as_str() {
+        "starter" | "growth" | "enterprise" => body.plan_tier.trim().to_lowercase(),
+        _ => "starter".into(),
+    };
+    let ip = client_ip(&headers);
+    let now = chrono_now();
+    let activated: usize = {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO kichinan_approval
+                (id, approved_at, approver_name, approver_email, approver_ip, plan_tier, note, revoked_at)
+             VALUES (1, ?, ?, ?, ?, ?, ?, NULL)
+             ON CONFLICT(id) DO UPDATE SET
+                approved_at=excluded.approved_at,
+                approver_name=excluded.approver_name,
+                approver_email=excluded.approver_email,
+                approver_ip=excluded.approver_ip,
+                plan_tier=excluded.plan_tier,
+                note=excluded.note,
+                revoked_at=NULL",
+            params![now, name, email, ip, plan, body.note.trim()],
+        );
+        conn.execute(
+            "UPDATE products SET active=1 WHERE brand LIKE 'kichinan_%' AND active=0",
+            [],
+        ).unwrap_or(0)
+    };
+    eprintln!("[kichinan] approved by {} <{}> plan={} activated_rows={}", name, email, plan, activated);
+    let alert = format!(
+        "━◯━ kichinan collab APPROVED\n\
+         approver: {} <{}>\n\
+         plan: {}\n\
+         products activated: {}/{}\n\
+         at: {}\n\
+         next: 全 SKU が公式販売中 (https://wearmu.com/proposals/kichinan)",
+        name, email, plan, activated, KICHINAN_DESIGNS.len(), now,
+    );
+    tokio::spawn(async move { send_telegram_message(&alert).await; });
+    Json(serde_json::json!({
+        "ok": true,
+        "approved_at": now,
+        "products_activated": activated,
+        "products_total": KICHINAN_DESIGNS.len(),
+        "plan_tier": plan,
+    })).into_response()
+}
+
+/// POST /api/proposals/kichinan/revoke — admin-gated. Sets revoked_at and
+/// flips active=0 on every kichinan_* product so the LP reverts to proposal
+/// mode and the catalog hides them.
+async fn proposal_kichinan_revoke(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/proposals/kichinan/revoke").await {
+        return r;
+    }
+    let now = chrono_now();
+    let deactivated: usize = {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE kichinan_approval SET revoked_at=? WHERE id=1",
+            params![now],
+        );
+        conn.execute(
+            "UPDATE products SET active=0 WHERE brand LIKE 'kichinan_%' AND active=1",
+            [],
+        ).unwrap_or(0)
+    };
+    eprintln!("[kichinan] revoked at {} products_deactivated={}", now, deactivated);
+    Json(serde_json::json!({
+        "ok": true, "revoked_at": now, "products_deactivated": deactivated,
+    })).into_response()
 }
 
 /// GET /en/press — English-default version. Same content, but we flip
@@ -16615,6 +16931,29 @@ async fn public_transparency(State(db): State<Db>) -> impl IntoResponse {
         // ¥100,000/year per §27.
         let est_net_after_tax = (revenue_jpy as f64 * 0.175) as i64;
         let pledge_jpy = std::cmp::max(100_000, est_net_after_tax / 2);
+        // Kichinan collab state — surfaces the approval/active-products gate
+        // so anyone reading /api/transparency can see whether the line is
+        // public-sellable (approved=true → 36 SKUs at kichinan.*.sample brands).
+        let (kc_approved, kc_at, kc_first, kc_plan, kc_active): (bool, Option<String>, Option<String>, Option<String>, i64) = {
+            let conn = db.lock().unwrap();
+            let row = kichinan_approval_row(&conn);
+            let approved = row.as_ref().map(|t| t.4.is_none()).unwrap_or(false);
+            let first = row.as_ref().map(|t| t.1.split_whitespace().next().unwrap_or("—").to_string());
+            let active: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM products WHERE brand LIKE 'kichinan_%' AND active=1",
+                [], |r| r.get(0),
+            ).unwrap_or(0);
+            (approved, row.as_ref().map(|t| t.0.clone()), first, row.as_ref().map(|t| t.3.clone()), active)
+        };
+        obj.insert("kichinan_collab".into(), serde_json::json!({
+            "approved": kc_approved,
+            "approved_at": kc_at,
+            "approver_first_name": kc_first,
+            "plan_tier": kc_plan,
+            "products_active": kc_active,
+            "products_total": KICHINAN_DESIGNS.len(),
+            "proposal_url": "https://wearmu.com/proposals/kichinan",
+        }));
         obj.insert("teshikaga_pledge".into(), serde_json::json!({
             "constitution": "§27",
             "rule": "max(¥100,000, 50% × net-after-tax)",
@@ -32426,11 +32765,11 @@ async fn slug_or_static(
 
     // Reserved names → never claim them. Try static fallback then 404.
     if slug_reserved(&slug_lo) {
-        return serve_static_or_404(&slug);
+        return serve_static_or_404(&slug, &db);
     }
     // Invalid slug shape → static fallback then 404.
     if !slug_valid(&slug_lo) {
-        return serve_static_or_404(&slug);
+        return serve_static_or_404(&slug, &db);
     }
     // Look up user
     let row: Option<(i64, String, Option<String>)> = {
@@ -32444,7 +32783,7 @@ async fn slug_or_static(
     };
     let (uid, _email, display_name) = match row {
         Some(v) => v,
-        None => return serve_static_or_404(&slug),
+        None => return serve_static_or_404(&slug, &db),
     };
 
     // Pull recent designs (history) for the share page + user bio
@@ -32485,10 +32824,10 @@ async fn slug_or_static(
 /// This preserves wearmu.com/<asset>.<ext> access for legitimate static
 /// files (about.html, robots.txt, og.jpg, etc.) when the slug doesn't
 /// belong to a user.
-fn serve_static_or_404(name: &str) -> Response {
+fn serve_static_or_404(name: &str, db: &Db) -> Response {
     // Sanitize: no path traversal, no leading slash.
     if name.contains('/') || name.contains("..") {
-        return render_404_tee_page(&format!("/{}", name));
+        return render_404_tee_page(db, &format!("/{}", name));
     }
     let path = std::path::Path::new("static").join(name);
     let bytes = std::fs::read(&path).ok();
@@ -32499,7 +32838,7 @@ fn serve_static_or_404(name: &str) -> Response {
             let path2 = std::path::Path::new("static").join(format!("{}.html", name));
             match std::fs::read(&path2) {
                 Ok(b) => return html_response(b),
-                Err(_) => return render_404_tee_page(&format!("/{}", name)),
+                Err(_) => return render_404_tee_page(db, &format!("/{}", name)),
             }
         }
     };
@@ -35394,7 +35733,22 @@ async fn main() {
     // Idempotent: ensure the 5 kichinan_sample products exist so the
     // Stripe webhook can fulfill /api/proposals/kichinan/sample orders
     // via the standard create_printful_order path.
+    ensure_kichinan_approval_table(&db);
     seed_kichinan_sample_products(&db);
+    // If the kichinan collab has already been approved, re-assert active=1
+    // on every kichinan_* product. This catches the case where a new SKU was
+    // added to KICHINAN_DESIGNS after approval — the seed inserts active=0
+    // and this line bumps it to active=1 so the new SKU goes live with the
+    // rest. No-op if approval is missing or revoked.
+    {
+        let conn = db.lock().unwrap();
+        if kichinan_is_approved(&conn) {
+            let _ = conn.execute(
+                "UPDATE products SET active=1 WHERE brand LIKE 'kichinan_%' AND active=0",
+                [],
+            );
+        }
+    }
 
     // ── Phase 3.4 + 3.7: Pyth rate refresh + pending payment sweep ──
     payments::start_crons(db.clone());
@@ -35561,6 +35915,9 @@ async fn main() {
         .route("/press.html", get(press_html_redirect))
         .route("/proposals/kichinan", get(proposal_kichinan))
         .route("/api/proposals/kichinan/sample", post(proposal_kichinan_sample))
+        .route("/api/proposals/kichinan/status",  get(proposal_kichinan_status))
+        .route("/api/proposals/kichinan/approve", post(proposal_kichinan_approve))
+        .route("/api/proposals/kichinan/revoke",  post(proposal_kichinan_revoke))
         .nest_service("/proposals", ServeDir::new("static/proposals"))
         .route("/api/collab/account/delete", post(collab_account_delete))
         .route("/api/404/buy", post(not_found_buy))
@@ -35812,7 +36169,7 @@ async fn main() {
         .nest_service("/mockups", ServeDir::new(mockups_dir()))
         .fallback_service(
             ServeDir::new("static")
-                .not_found_service(get(not_found_page))
+                .not_found_service(get(not_found_page).with_state(db.clone()))
         );
     let watcher_db = db.clone();
     let agent_db = db.clone();
