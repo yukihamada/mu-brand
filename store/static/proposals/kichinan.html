@@ -44,16 +44,20 @@ ul{padding-left:24px;margin-bottom:18px;color:var(--mute);font-size:14px}
 ul li{margin-bottom:6px}
 ul li strong{color:var(--fg);font-weight:500}
 
-.designs{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px;margin:24px 0 8px}
-.design{padding:22px 20px;background:rgba(255,255,255,0.025);border:1px solid var(--line);border-radius:4px}
+.designs{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px;margin:24px 0 8px}
+.design{padding:18px 18px 20px;background:rgba(255,255,255,0.025);border:1px solid var(--line);border-radius:4px;display:flex;flex-direction:column}
 .design .id{font-size:9px;letter-spacing:0.4em;text-transform:uppercase;color:var(--y);font-weight:700;margin-bottom:10px}
-.design h4{font-size:14px;font-weight:500;margin-bottom:8px;color:var(--fg);letter-spacing:0.02em}
-.design .front,.design .back{font-size:11.5px;color:var(--mute);line-height:1.85;margin-bottom:6px}
+.design h4{font-size:14px;font-weight:500;margin-bottom:10px;color:var(--fg);letter-spacing:0.02em}
+.design .mockup{display:grid;grid-template-columns:1fr 1fr;gap:6px;background:rgba(0,0,0,0.4);padding:10px;border-radius:3px;margin-bottom:12px}
+.design .mockup .view{position:relative}
+.design .mockup .view .label{position:absolute;top:4px;left:4px;font-size:7.5px;letter-spacing:0.28em;font-weight:700;color:rgba(255,255,255,0.55);text-transform:uppercase;z-index:2}
+.design .mockup svg{width:100%;height:auto;display:block}
+.design .front,.design .back{font-size:11.5px;color:var(--mute);line-height:1.85;margin-bottom:4px}
 .design .front strong,.design .back strong{color:var(--y);font-weight:600}
-.design .footer{margin-top:14px;padding-top:12px;border-top:1px dashed rgba(255,255,255,0.08);font-size:10.5px;color:var(--mute);letter-spacing:0.04em}
+.design .footer{margin-top:auto;padding-top:12px;border-top:1px dashed rgba(255,255,255,0.08);font-size:10.5px;color:var(--mute);letter-spacing:0.04em}
 .design.recommended{background:linear-gradient(180deg,rgba(230,196,73,0.08),rgba(255,255,255,0.025));border-color:rgba(230,196,73,0.4)}
 .design.recommended .id{color:var(--y)}
-.design.recommended::after{content:"⭐ MU 推し";position:relative;display:inline-block;font-size:9px;letter-spacing:0.25em;color:var(--y);background:rgba(230,196,73,0.15);padding:3px 8px;border-radius:2px;margin-top:10px}
+.design.recommended::after{content:"⭐ MU 推し";position:relative;display:inline-block;font-size:9px;letter-spacing:0.25em;color:var(--y);background:rgba(230,196,73,0.15);padding:3px 8px;border-radius:2px;margin-top:10px;align-self:flex-start}
 
 .tier-table{width:100%;border-collapse:collapse;font-size:13px;margin:14px 0}
 .tier-table th,.tier-table td{padding:12px 10px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
@@ -112,43 +116,154 @@ ul li strong{color:var(--fg);font-weight:500}
 <p>キチナングループ様の<strong>「後方支援」</strong>というコアコンセプトは、 そのまま brand 化できる強い言葉だと感じました。 「いつもお願いできる安定感」 + 「突発の事も何とかしてくれる安心感」 — この 2 行は、 物流業界のお客様だけでなく<strong>採用候補者の親世代・内定者・在職社員 1,000+ 名</strong>に対しても刺さる物語です。</p>
 <p>MU は AI が 1 着ずつデザインを生成する自律ブランドです (Constitution + Vision は <a href="https://wearmu.com/constitution">/constitution</a>)。 御社のような 60 年継続する物語と、 MU のような 0 人運営 AI ブランドが組むことで、 「アナログの安心感 × デジタルの新しさ」 という反対極を 1 着で表現できます。</p>
 
-<h2>2. デザイン提案 5 案</h2>
-<p>front (表) と back (背中) の組合せ案。 きちにゃん の使用箇所は赤強調 — 商品化時に正式ライセンス契約を結ぶ前提です。</p>
+<h2>2. デザイン提案 5 案 (mockup)</h2>
+<p>front (表) と back (背中) の組合せ案。 各 svg は実物 mockup の<strong>原寸感プレビュー</strong>です (Tシャツ シルエット = キチナンブルー アクセント縁、 デザイン部分 = 白印刷 主体)。 きちにゃん の使用箇所は<strong style="color:#ff8a8a">赤強調</strong> — 商品化は正式ライセンス契約 (§4) 締結後となります。</p>
 
 <div class="designs">
+  <!-- DESIGN A · 後方支援 -->
   <div class="design recommended">
     <div class="id">A · MU 推し</div>
-    <h4>後方支援、背中で語る</h4>
-    <div class="front"><strong>FRONT:</strong> <strong style="color:#ff8a8a">きちにゃん</strong> 胸元 小 (5cm)</div>
+    <h4>後方支援、 背中で語る</h4>
+    <div class="mockup">
+      <div class="view"><span class="label">FRONT</span>
+        <svg viewBox="0 0 200 240" xmlns="http://www.w3.org/2000/svg">
+          <path d="M 50 30 L 70 20 Q 100 12 130 20 L 150 30 L 195 60 L 175 90 L 155 70 L 155 230 L 45 230 L 45 70 L 25 90 L 5 60 Z" fill="#0a0a0a" stroke="#3aa8d6" stroke-width="0.8"/>
+          <path d="M 80 26 Q 100 36 120 26" fill="none" stroke="#3aa8d6" stroke-width="1.2"/>
+          <!-- breast K patch -->
+          <circle cx="135" cy="95" r="10" fill="#fff"/>
+          <text x="135" y="100" text-anchor="middle" font-family="Helvetica" font-size="14" font-weight="900" fill="#ff2c2c">K</text>
+        </svg>
+      </div>
+      <div class="view"><span class="label">BACK</span>
+        <svg viewBox="0 0 200 240" xmlns="http://www.w3.org/2000/svg">
+          <path d="M 50 30 L 70 22 Q 100 18 130 22 L 150 30 L 195 60 L 175 90 L 155 70 L 155 230 L 45 230 L 45 70 L 25 90 L 5 60 Z" fill="#0a0a0a" stroke="#3aa8d6" stroke-width="0.8"/>
+          <text x="100" y="100" text-anchor="middle" font-family="'Noto Serif JP',serif" font-size="36" font-weight="900" fill="#fff">後方</text>
+          <text x="100" y="150" text-anchor="middle" font-family="'Noto Serif JP',serif" font-size="36" font-weight="900" fill="#fff">支援</text>
+        </svg>
+      </div>
+    </div>
+    <div class="front"><strong>FRONT:</strong> <strong style="color:#ff8a8a">きちにゃん K</strong> 胸元 小 (5cm)</div>
     <div class="back"><strong>BACK:</strong> 「後方支援」 漢字 大 (30cm) · 白インク</div>
     <div class="footer">用途: 在職社員 / OB / 取引先<br>想定 ¥5,400</div>
   </div>
+
+  <!-- DESIGN B · 1 truck 1962 -->
   <div class="design">
     <div class="id">B</div>
     <h4>1 truck. 1962. 12 companies.</h4>
-    <div class="front"><strong>FRONT:</strong> "1 truck. 1962." タイポ + 年号</div>
-    <div class="back"><strong>BACK:</strong> グループ 12 社シンボル + <strong style="color:#ff8a8a">きちにゃん</strong></div>
+    <div class="mockup">
+      <div class="view"><span class="label">FRONT</span>
+        <svg viewBox="0 0 200 240" xmlns="http://www.w3.org/2000/svg">
+          <path d="M 50 30 L 70 20 Q 100 12 130 20 L 150 30 L 195 60 L 175 90 L 155 70 L 155 230 L 45 230 L 45 70 L 25 90 L 5 60 Z" fill="#0a0a0a" stroke="#3aa8d6" stroke-width="0.8"/>
+          <path d="M 80 26 Q 100 36 120 26" fill="none" stroke="#3aa8d6" stroke-width="1.2"/>
+          <text x="100" y="115" text-anchor="middle" font-family="Helvetica" font-size="16" font-weight="200" fill="#fff" letter-spacing="2">1 truck.</text>
+          <text x="100" y="148" text-anchor="middle" font-family="Helvetica" font-size="32" font-weight="700" fill="#e6c449" letter-spacing="3">1962.</text>
+        </svg>
+      </div>
+      <div class="view"><span class="label">BACK</span>
+        <svg viewBox="0 0 200 240" xmlns="http://www.w3.org/2000/svg">
+          <path d="M 50 30 L 70 22 Q 100 18 130 22 L 150 30 L 195 60 L 175 90 L 155 70 L 155 230 L 45 230 L 45 70 L 25 90 L 5 60 Z" fill="#0a0a0a" stroke="#3aa8d6" stroke-width="0.8"/>
+          <!-- 12 dots grid (3×4) -->
+          <g fill="#fff">
+            <circle cx="65" cy="100" r="4"/><circle cx="100" cy="100" r="4"/><circle cx="135" cy="100" r="4"/>
+            <circle cx="65" cy="120" r="4"/><circle cx="100" cy="120" r="4"/><circle cx="135" cy="120" r="4"/>
+            <circle cx="65" cy="140" r="4"/><circle cx="100" cy="140" r="4"/><circle cx="135" cy="140" r="4"/>
+            <circle cx="65" cy="160" r="4"/><circle cx="100" cy="160" r="4"/><circle cx="135" cy="160" r="4"/>
+          </g>
+          <text x="100" y="195" text-anchor="middle" font-family="Helvetica" font-size="8" font-weight="700" fill="#888" letter-spacing="2">12 GROUP COMPANIES</text>
+        </svg>
+      </div>
+    </div>
+    <div class="front"><strong>FRONT:</strong> "1 truck. 1962." タイポ + 創業年号</div>
+    <div class="back"><strong>BACK:</strong> グループ 12 社 シンボル + <strong style="color:#ff8a8a">きちにゃん</strong> 小</div>
     <div class="footer">用途: 創業記念 / 内定式 / 周年<br>想定 ¥6,800</div>
   </div>
+
+  <!-- DESIGN C · workshirt -->
   <div class="design">
     <div class="id">C</div>
     <h4>「いつもお願いできる」 workshirt</h4>
-    <div class="front"><strong>FRONT:</strong> <strong style="color:#ff8a8a">きちにゃん</strong> workwear print (左胸)</div>
+    <div class="mockup">
+      <div class="view"><span class="label">FRONT</span>
+        <svg viewBox="0 0 200 240" xmlns="http://www.w3.org/2000/svg">
+          <path d="M 50 30 L 70 20 Q 100 12 130 20 L 150 30 L 195 60 L 175 90 L 155 70 L 155 230 L 45 230 L 45 70 L 25 90 L 5 60 Z" fill="#0a0a0a" stroke="#3aa8d6" stroke-width="0.8"/>
+          <path d="M 80 26 Q 100 36 120 26" fill="none" stroke="#3aa8d6" stroke-width="1.2"/>
+          <!-- breast workshirt patch -->
+          <rect x="58" y="88" width="36" height="22" fill="none" stroke="#fff" stroke-width="1"/>
+          <text x="76" y="100" text-anchor="middle" font-family="Helvetica" font-size="7" font-weight="700" fill="#fff" letter-spacing="1">KICHINAN</text>
+          <text x="76" y="108" text-anchor="middle" font-family="Helvetica" font-size="5" fill="#888" letter-spacing="1">SINCE 1962</text>
+        </svg>
+      </div>
+      <div class="view"><span class="label">BACK</span>
+        <svg viewBox="0 0 200 240" xmlns="http://www.w3.org/2000/svg">
+          <path d="M 50 30 L 70 22 Q 100 18 130 22 L 150 30 L 195 60 L 175 90 L 155 70 L 155 230 L 45 230 L 45 70 L 25 90 L 5 60 Z" fill="#0a0a0a" stroke="#3aa8d6" stroke-width="0.8"/>
+          <text x="100" y="110" text-anchor="middle" font-family="'Noto Serif JP',serif" font-size="14" font-weight="500" fill="#fff">いつもお願いできる、</text>
+          <text x="100" y="135" text-anchor="middle" font-family="'Noto Serif JP',serif" font-size="14" font-weight="500" fill="#fff">を、</text>
+          <text x="100" y="160" text-anchor="middle" font-family="'Noto Serif JP',serif" font-size="20" font-weight="900" fill="#e6c449">着る。</text>
+        </svg>
+      </div>
+    </div>
+    <div class="front"><strong>FRONT:</strong> <strong style="color:#ff8a8a">きちにゃん workwear</strong> patch (左胸)</div>
     <div class="back"><strong>BACK:</strong> 「いつもお願いできる、 を、 着る。」</div>
     <div class="footer">用途: 取引先ギフト / 年末挨拶<br>想定 ¥5,400</div>
   </div>
+
+  <!-- DESIGN D · K-helmet quiet -->
   <div class="design">
     <div class="id">D</div>
-    <h4>K-helmet — 静かなノベルティ</h4>
-    <div class="front"><strong>FRONT:</strong> K ヘルメット ロゴだけ (3cm)</div>
+    <h4>K-helmet · 静かなノベルティ</h4>
+    <div class="mockup">
+      <div class="view"><span class="label">FRONT</span>
+        <svg viewBox="0 0 200 240" xmlns="http://www.w3.org/2000/svg">
+          <path d="M 50 30 L 70 20 Q 100 12 130 20 L 150 30 L 195 60 L 175 90 L 155 70 L 155 230 L 45 230 L 45 70 L 25 90 L 5 60 Z" fill="#0a0a0a" stroke="#3aa8d6" stroke-width="0.8"/>
+          <path d="M 80 26 Q 100 36 120 26" fill="none" stroke="#3aa8d6" stroke-width="1.2"/>
+          <!-- tiny K hexagon center chest -->
+          <circle cx="100" cy="120" r="11" fill="#fff"/>
+          <text x="100" y="125" text-anchor="middle" font-family="Helvetica" font-size="14" font-weight="900" fill="#ff2c2c">K</text>
+        </svg>
+      </div>
+      <div class="view"><span class="label">BACK</span>
+        <svg viewBox="0 0 200 240" xmlns="http://www.w3.org/2000/svg">
+          <path d="M 50 30 L 70 22 Q 100 18 130 22 L 150 30 L 195 60 L 175 90 L 155 70 L 155 230 L 45 230 L 45 70 L 25 90 L 5 60 Z" fill="#0a0a0a" stroke="#3aa8d6" stroke-width="0.8"/>
+          <text x="100" y="230" text-anchor="middle" font-family="Helvetica" font-size="6" fill="#444" letter-spacing="3">— 無地 (BLANK BACK) —</text>
+        </svg>
+      </div>
+    </div>
+    <div class="front"><strong>FRONT:</strong> K ヘルメット ロゴ 1 点 (3cm)</div>
     <div class="back"><strong>BACK:</strong> 無地</div>
     <div class="footer">用途: 採用イベント ノベルティ (匿名性 ◎)<br>想定 ¥4,500</div>
   </div>
+
+  <!-- DESIGN E · 4-line manifesto -->
   <div class="design">
     <div class="id">E</div>
     <h4>4 行 manifesto · 山口を着る</h4>
+    <div class="mockup">
+      <div class="view"><span class="label">FRONT</span>
+        <svg viewBox="0 0 200 240" xmlns="http://www.w3.org/2000/svg">
+          <path d="M 50 30 L 70 20 Q 100 12 130 20 L 150 30 L 195 60 L 175 90 L 155 70 L 155 230 L 45 230 L 45 70 L 25 90 L 5 60 Z" fill="#0a0a0a" stroke="#3aa8d6" stroke-width="0.8"/>
+          <path d="M 80 26 Q 100 36 120 26" fill="none" stroke="#3aa8d6" stroke-width="1.2"/>
+          <text x="100" y="108" text-anchor="middle" font-family="'Noto Serif JP',serif" font-size="9" fill="#fff">価値を届けるための、</text>
+          <text x="100" y="124" text-anchor="middle" font-family="'Noto Serif JP',serif" font-size="9" fill="#fff">ロジスティクスを。</text>
+          <text x="100" y="150" text-anchor="middle" font-family="'Noto Serif JP',serif" font-size="12" font-weight="700" fill="#e6c449">後方支援</text>
+          <text x="100" y="170" text-anchor="middle" font-family="'Noto Serif JP',serif" font-size="7" fill="#aaa">安定感 · 安心感</text>
+        </svg>
+      </div>
+      <div class="view"><span class="label">BACK</span>
+        <svg viewBox="0 0 200 240" xmlns="http://www.w3.org/2000/svg">
+          <path d="M 50 30 L 70 22 Q 100 18 130 22 L 150 30 L 195 60 L 175 90 L 155 70 L 155 230 L 45 230 L 45 70 L 25 90 L 5 60 Z" fill="#0a0a0a" stroke="#3aa8d6" stroke-width="0.8"/>
+          <!-- Yamaguchi coast silhouette (abstract wave) -->
+          <path d="M 50 145 Q 70 130 90 145 T 130 142 T 165 148" fill="none" stroke="#3aa8d6" stroke-width="1.5"/>
+          <path d="M 50 165 Q 75 155 100 165 T 145 162 T 170 168" fill="none" stroke="#3aa8d6" stroke-width="1" opacity="0.6"/>
+          <text x="100" y="100" text-anchor="middle" font-family="Helvetica" font-size="8" fill="#666" letter-spacing="2">YAMAGUCHI · JAPAN</text>
+          <!-- tiny K helmet bottom -->
+          <circle cx="100" cy="195" r="6" fill="#fff"/>
+          <text x="100" y="198" text-anchor="middle" font-family="Helvetica" font-size="8" font-weight="900" fill="#ff2c2c">K</text>
+        </svg>
+      </div>
+    </div>
     <div class="front"><strong>FRONT:</strong> 4 行 manifesto (タグライン + 後方支援 + 安定感 + 安心感)</div>
-    <div class="back"><strong>BACK:</strong> 山口 海岸線シルエット + <strong style="color:#ff8a8a">きちにゃん</strong> 小</div>
+    <div class="back"><strong>BACK:</strong> 山口 海岸線シルエット + <strong style="color:#ff8a8a">きちにゃん K</strong> 小</div>
     <div class="footer">用途: 一般販売 / ブランド露出<br>想定 ¥6,800</div>
   </div>
 </div>
