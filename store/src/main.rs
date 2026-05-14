@@ -8719,6 +8719,8 @@ async fn stripe_webhook(
                      )",
                     params![buyer_email, product_id, brand, drop_num, session_id, chrono_now(), session_id, product_id],
                 ).ok();
+                // MU credit grant: +1 MU (=¥1,000) per shirt. Idempotent on session_id.
+                mu_credit_grant_for_purchase(&conn, &buyer_email, &brand, drop_num, &session_id);
                 let reason = format!("purchased {} #{}", brand.to_uppercase(), drop_num);
                 let updated = conn.execute(
                     "UPDATE you_users
@@ -11687,9 +11689,16 @@ struct CollabChatMsg {
 }
 
 async fn collab_chat(
-    State(_db): State<Db>,
+    State(db): State<Db>,
+    headers: HeaderMap,
     Json(body): Json<CollabChatBody>,
 ) -> Response {
+    // Require verified email (no anonymous chat — every session gates on email)
+    if collab_session_email(&db, &headers).is_none() {
+        return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({
+            "error": "verify email first", "verify": "/api/collab/auth/start"
+        }))).into_response();
+    }
     let key = env::var("ANTHROPIC_API_KEY").unwrap_or_default();
     if key.is_empty() {
         return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({
@@ -11796,9 +11805,30 @@ struct CollabCreateBody {
 
 async fn collab_create(
     State(db): State<Db>,
+    headers: HeaderMap,
     Json(body): Json<CollabCreateBody>,
 ) -> Response {
-    if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+    // Admin token (yuki internal) OR verified collab user with quota.
+    let admin_ok = require_admin_token(Some(&body.admin_token)).is_ok();
+    let mut creator_email: Option<String> = None;
+    if !admin_ok {
+        let session = match collab_session_email(&db, &headers) {
+            Some(s) => s,
+            None => return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({
+                "error": "verify email first", "verify_endpoint": "/api/collab/auth/start"
+            }))).into_response(),
+        };
+        let (allowed, reason) = collab_quota_check(&db, &session.0);
+        if !allowed {
+            return (StatusCode::PAYMENT_REQUIRED, Json(serde_json::json!({
+                "error": "quota exceeded — buy MUGEN or subscribe ¥980/mo",
+                "reason": reason,
+                "sub_checkout": "/api/collab/sub/checkout",
+                "mugen_url": "/mugen",
+            }))).into_response();
+        }
+        creator_email = Some(session.0);
+    }
     let d = &body.draft;
     let event_name = d["event_name"].as_str().unwrap_or("").trim().to_string();
     let event_date = d["event_date"].as_str().unwrap_or("").trim().to_string();
@@ -11933,6 +11963,26 @@ async fn collab_create(
             }
         }
     }
+    // Post-create accounting: increment collabs_created + deduct MU credit
+    // (unless first-free or sub-active). Admin (yuki internal) skips this.
+    let mut mu_charged_jpy: i64 = 0;
+    if let Some(em) = creator_email.as_ref() {
+        let conn = db.lock().unwrap();
+        let (created, sub): (i64, bool) = conn.query_row(
+            "SELECT collabs_created, sub_active FROM collab_users WHERE email=?",
+            params![em], |r| Ok((r.get(0)?, r.get::<_,i64>(1)? != 0))
+        ).unwrap_or((0, false));
+        let cost = if created == 0 || sub { 0 } else { COLLAB_CREATE_COST_JPY };
+        if cost > 0 {
+            if mu_credit_apply(&conn, em, -cost, &format!("collab_create:{}", slug), Some(&slug)) {
+                mu_charged_jpy = cost;
+            }
+        }
+        let _ = conn.execute(
+            "UPDATE collab_users SET collabs_created = collabs_created + 1 WHERE email=?",
+            params![em],
+        );
+    }
     Json(serde_json::json!({
         "ok": true,
         "product_id": inserted,
@@ -11941,7 +11991,299 @@ async fn collab_create(
         "admin_url": format!("https://wearmu.com/collab/{}/admin?token={}", slug, admin_secret),
         "payment_link_url": payment_link_url,
         "payment_link_error": payment_link_error,
+        "mu_charged_jpy": mu_charged_jpy,
     })).into_response()
+}
+
+// ───── MU credit ledger ─────
+// 1 着購入 → +1 MU (=¥1,000)。 collab 作成 -1 MU、 Opus chat -0.1 MU、
+// Gemini 画像 -0.5 MU。 全イベントを mu_credit_ledger に records。
+// Apply credit changes inside an existing DB lock (caller-provided conn).
+
+fn mu_credit_apply(conn: &rusqlite::Connection, email: &str, delta_jpy: i64, reason: &str, ref_id: Option<&str>) -> bool {
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let email_lc = email.to_lowercase();
+    let _ = conn.execute(
+        "INSERT INTO mu_credits (email, balance_jpy, total_earned_jpy, total_spent_jpy, updated_at)
+         VALUES (?, 0, 0, 0, ?)
+         ON CONFLICT(email) DO NOTHING",
+        params![email_lc, now_s],
+    );
+    if delta_jpy > 0 {
+        let _ = conn.execute(
+            "UPDATE mu_credits SET balance_jpy = balance_jpy + ?, total_earned_jpy = total_earned_jpy + ?, updated_at=? WHERE email=?",
+            params![delta_jpy, delta_jpy, now_s, email_lc],
+        );
+    } else if delta_jpy < 0 {
+        let spent = -delta_jpy;
+        let current: i64 = conn.query_row("SELECT balance_jpy FROM mu_credits WHERE email=?", params![email_lc], |r| r.get(0)).unwrap_or(0);
+        if current < spent { return false; }
+        let _ = conn.execute(
+            "UPDATE mu_credits SET balance_jpy = balance_jpy - ?, total_spent_jpy = total_spent_jpy + ?, updated_at=? WHERE email=?",
+            params![spent, spent, now_s, email_lc],
+        );
+    }
+    let _ = conn.execute(
+        "INSERT INTO mu_credit_ledger (email, delta_jpy, reason, ref_id, created_at) VALUES (?, ?, ?, ?, ?)",
+        params![email_lc, delta_jpy, reason, ref_id, now_s],
+    );
+    true
+}
+
+fn mu_credit_balance(conn: &rusqlite::Connection, email: &str) -> i64 {
+    conn.query_row(
+        "SELECT balance_jpy FROM mu_credits WHERE email=?",
+        params![email.to_lowercase()], |r| r.get(0)
+    ).unwrap_or(0)
+}
+
+// Grant for a shirt purchase (called after mu_purchases insert). 1 MU = ¥1,000.
+fn mu_credit_grant_for_purchase(conn: &rusqlite::Connection, email: &str, brand: &str, drop_num: i64, session_id: &str) {
+    if email.is_empty() { return; }
+    let reason = format!("purchase:{}:{}", brand, drop_num);
+    let already: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM mu_credit_ledger WHERE email=? AND ref_id=?",
+        params![email.to_lowercase(), session_id], |r| r.get(0)
+    ).unwrap_or(0);
+    if already > 0 { return; } // idempotent — already granted for this session
+    let _ = mu_credit_apply(conn, email, 1000, &reason, Some(session_id));
+}
+
+// ───── Collab service auth (email verify + freemium gate) ─────
+// 1 collab free per verified email. 2 個目以降は MUGEN 購入 OR ¥980/月 sub。
+// /collab/chat に到達した瞬間に「作り始めました」 メール (verification code 込み)
+// を送り、 6 桁 code 入力後にチャット解放。
+
+fn collab_user_session_for(email: &str) -> Option<(i64, String, i64, bool)> { let _ = email; None }
+
+#[derive(Deserialize)]
+struct CollabAuthStartBody { email: String }
+
+async fn collab_auth_start(
+    State(db): State<Db>,
+    Json(body): Json<CollabAuthStartBody>,
+) -> Response {
+    let email = body.email.trim().to_lowercase();
+    if !email.contains('@') || email.len() > 254 {
+        return (StatusCode::BAD_REQUEST, "invalid email").into_response();
+    }
+    // 6-digit code
+    use rand::Rng;
+    let code: String = format!("{:06}", rand::thread_rng().gen_range(0..1_000_000));
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let expires = now_s + 900; // 15 min
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO collab_users (email, code, code_expires_at, created_at)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(email) DO UPDATE SET code=excluded.code, code_expires_at=excluded.code_expires_at",
+            params![email, code, expires, now_s],
+        );
+    }
+    // Send the email via Resend (verification code + "始めました" notification combined)
+    let key = env::var("RESEND_API_KEY").unwrap_or_default();
+    if !key.is_empty() {
+        let body_html = format!(r#"<!doctype html><html><body style="font-family:-apple-system,sans-serif;background:#0A0A0A;color:#F5F5F0;padding:32px;line-height:1.85">
+<div style="max-width:520px;margin:0 auto">
+<div style="font-size:14px;letter-spacing:0.4em;font-weight:700;margin-bottom:18px">MU DROP</div>
+<h1 style="font-size:22px;font-weight:300;margin-bottom:14px">T シャツ作成を開始しました</h1>
+<p style="color:#aaa;font-size:14px">下記の 6 桁コードをチャット画面に入力してください。 15 分有効です。</p>
+<div style="font-size:38px;letter-spacing:0.3em;font-weight:600;color:#e6c449;background:#111;padding:22px;text-align:center;border-radius:6px;font-family:'SF Mono',monospace;margin:24px 0">{code}</div>
+<p style="font-size:12px;color:#888;line-height:2">
+1 つ目の collab page は無料で作成できます。<br>
+2 個目以降は <strong style="color:#fff">MUGEN を 1 着購入</strong> または <strong style="color:#fff">¥980/月のサブスク</strong> でご利用いただけます。
+</p>
+<p style="font-size:11px;color:#666;margin-top:32px;border-top:1px solid #222;padding-top:18px">
+MU · wearmu.com · 株式会社イネブラ<br>
+このメールに心当たりがない場合は無視してください。
+</p>
+</div></body></html>"#, code = code);
+        let payload = serde_json::json!({
+            "from": "MU Drop <info@enablerdao.com>",
+            "to": [email],
+            "subject": "MU Drop — T シャツ作成を開始しました (verification code)",
+            "html": body_html,
+        });
+        let _ = reqwest::Client::new()
+            .post("https://api.resend.com/emails")
+            .bearer_auth(&key)
+            .json(&payload)
+            .send().await;
+    }
+    Json(serde_json::json!({"ok": true, "message": "verification code sent (15 min valid)"})).into_response()
+}
+
+#[derive(Deserialize)]
+struct CollabAuthVerifyBody { email: String, code: String }
+
+async fn collab_auth_verify(
+    State(db): State<Db>,
+    Json(body): Json<CollabAuthVerifyBody>,
+) -> Response {
+    let email = body.email.trim().to_lowercase();
+    let code = body.code.trim().to_string();
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let row: Option<(String, i64)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(code,''), COALESCE(code_expires_at,0) FROM collab_users WHERE email=?",
+            params![email], |r| Ok((r.get(0)?, r.get(1)?))
+        ).ok()
+    };
+    let (db_code, expires) = match row {
+        Some(r) => r,
+        None => return (StatusCode::NOT_FOUND, "email not registered").into_response(),
+    };
+    if db_code != code || db_code.is_empty() {
+        return (StatusCode::UNAUTHORIZED, "invalid code").into_response();
+    }
+    if expires < now_s {
+        return (StatusCode::UNAUTHORIZED, "code expired").into_response();
+    }
+    // Mint a session token, persist.
+    use sha2::{Sha256, Digest};
+    let mut h = Sha256::new();
+    h.update(email.as_bytes());
+    h.update(now_s.to_string().as_bytes());
+    h.update(env::var("ADMIN_TOKEN").unwrap_or_default().as_bytes());
+    let token = hex::encode(&h.finalize()[..16]);
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE collab_users SET verified=1, verified_at=?, session_token=?, code=NULL, code_expires_at=NULL WHERE email=?",
+            params![now_s, token, email],
+        );
+    }
+    let mut resp = Json(serde_json::json!({"ok": true, "session": token})).into_response();
+    resp.headers_mut().insert(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&format!("mu_collab_session={}; Path=/; Max-Age=2592000; SameSite=Lax", token)).unwrap()
+    );
+    resp
+}
+
+/// Look up the verified email from the request cookie. Returns None if unauth.
+fn collab_session_email(db: &Db, headers: &HeaderMap) -> Option<(String, i64, bool, bool)> {
+    let token = headers.get("cookie")
+        .and_then(|v| v.to_str().ok())?
+        .split(';')
+        .filter_map(|p| {
+            let p = p.trim();
+            if p.starts_with("mu_collab_session=") { Some(p[18..].to_string()) } else { None }
+        })
+        .next()?;
+    let conn = db.lock().unwrap();
+    conn.query_row(
+        "SELECT email, collabs_created, sub_active, verified
+         FROM collab_users WHERE session_token=? AND verified=1",
+        params![token],
+        |r| Ok((r.get::<_,String>(0)?, r.get::<_,i64>(1)?, r.get::<_,i64>(2)? != 0, r.get::<_,i64>(3)? != 0)),
+    ).ok()
+}
+
+/// Returns (allowed, reason). Allowed if:
+/// - 0 collabs (first free), OR
+/// - active ¥980/月 sub, OR
+/// - balance ≥ ¥1,000 (1 MU). Caller deducts on success.
+const COLLAB_CREATE_COST_JPY: i64 = 1000;
+
+fn collab_quota_check(db: &Db, email: &str) -> (bool, String) {
+    let conn = db.lock().unwrap();
+    let (created, sub): (i64, bool) = conn.query_row(
+        "SELECT collabs_created, sub_active FROM collab_users WHERE email=?",
+        params![email], |r| Ok((r.get(0)?, r.get::<_,i64>(1)? != 0))
+    ).unwrap_or((0, false));
+    if created == 0 { return (true, "first-free".into()); }
+    if sub { return (true, "subscription".into()); }
+    let balance = mu_credit_balance(&conn, email);
+    if balance >= COLLAB_CREATE_COST_JPY {
+        return (true, format!("mu_credit:¥{}", balance));
+    }
+    (false, format!("quota_exceeded:balance=¥{} need=¥{}", balance, COLLAB_CREATE_COST_JPY))
+}
+
+/// GET /api/collab/session — checks cookie, returns user state.
+async fn collab_session_info(
+    State(db): State<Db>,
+    headers: HeaderMap,
+) -> Response {
+    match collab_session_email(&db, &headers) {
+        Some((email, created, sub, _)) => {
+            let balance = {
+                let conn = db.lock().unwrap();
+                mu_credit_balance(&conn, &email)
+            };
+            let (allowed, reason) = collab_quota_check(&db, &email);
+            Json(serde_json::json!({
+                "ok": true,
+                "email": email,
+                "collabs_created": created,
+                "subscription_active": sub,
+                "mu_balance_jpy": balance,
+                "mu_balance_units": balance / 1000,
+                "can_create": allowed,
+                "gate_reason": if allowed { None } else { Some(reason) },
+                "sub_price_jpy": 980,
+                "sub_checkout_url": "/api/collab/sub/checkout",
+                "create_cost_jpy": COLLAB_CREATE_COST_JPY,
+            })).into_response()
+        }
+        None => Json(serde_json::json!({"ok": false, "verified": false})).into_response(),
+    }
+}
+
+/// POST /api/collab/sub/checkout — create a Stripe Subscription Payment Link
+/// for ¥980/月. Returns the URL.
+async fn collab_sub_checkout(
+    State(db): State<Db>,
+    headers: HeaderMap,
+) -> Response {
+    let user = match collab_session_email(&db, &headers) {
+        Some(u) => u,
+        None => return (StatusCode::UNAUTHORIZED, "verify email first").into_response(),
+    };
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() { return (StatusCode::SERVICE_UNAVAILABLE, "stripe key missing").into_response(); }
+    let client = reqwest::Client::new();
+    // Create or fetch a recurring price ¥980/month for "MU Drop creator sub"
+    let price_form: Vec<(&str, String)> = vec![
+        ("currency", "jpy".into()),
+        ("unit_amount", "980".into()),
+        ("recurring[interval]", "month".into()),
+        ("product_data[name]", "MU Drop — Creator subscription".into()),
+        ("lookup_key", "mu_drop_creator_980_month".into()),
+    ];
+    let price_id: Option<String> = match client.post("https://api.stripe.com/v1/prices")
+        .basic_auth(&stripe_key, Some("")).form(&price_form).send().await {
+        Ok(r) => r.json::<serde_json::Value>().await.ok()
+            .and_then(|v| v.get("id").and_then(|x| x.as_str()).map(String::from)),
+        Err(_) => None,
+    };
+    let pid = match price_id {
+        Some(p) => p,
+        None => return (StatusCode::BAD_GATEWAY, "price create failed").into_response(),
+    };
+    let pl_form: Vec<(&str, String)> = vec![
+        ("line_items[0][price]", pid),
+        ("line_items[0][quantity]", "1".into()),
+        ("after_completion[type]", "redirect".into()),
+        ("after_completion[redirect][url]", "https://wearmu.com/collab/chat?sub=ok".into()),
+        ("subscription_data[metadata][collab_email]", user.0.clone()),
+        ("metadata[collab_email]", user.0.clone()),
+        ("metadata[purpose]", "mu_drop_creator_sub".into()),
+    ];
+    match client.post("https://api.stripe.com/v1/payment_links")
+        .basic_auth(&stripe_key, Some("")).form(&pl_form).send().await {
+        Ok(r) => {
+            let v: serde_json::Value = r.json().await.unwrap_or(serde_json::Value::Null);
+            if let Some(u) = v.get("url").and_then(|x| x.as_str()) {
+                return Json(serde_json::json!({"ok": true, "url": u, "price_jpy": 980})).into_response();
+            }
+            (StatusCode::BAD_GATEWAY, format!("payment_link: {}", v.to_string().chars().take(300).collect::<String>())).into_response()
+        }
+        Err(e) => (StatusCode::BAD_GATEWAY, format!("stripe: {}", e)).into_response(),
+    }
 }
 
 /// POST /api/collab/upload — accepts multipart image file, stores via R2
@@ -33188,6 +33530,42 @@ async fn main() {
             UNIQUE(slug, ip_hash)
         );
         CREATE INDEX IF NOT EXISTS idx_quality_poll_slug ON quality_poll_votes(slug, option_id);
+        -- MU credit ledger. 1 着購入 → +1 MU (=¥1,000 internal).
+        -- Consumed by collab creation, image generation, Opus tokens.
+        CREATE TABLE IF NOT EXISTS mu_credits (
+            email           TEXT PRIMARY KEY,
+            balance_jpy     INTEGER NOT NULL DEFAULT 0,
+            total_earned_jpy INTEGER NOT NULL DEFAULT 0,
+            total_spent_jpy INTEGER NOT NULL DEFAULT 0,
+            updated_at      INTEGER NOT NULL
+        );
+        -- Each grant / spend event for auditability.
+        CREATE TABLE IF NOT EXISTS mu_credit_ledger (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            email      TEXT NOT NULL,
+            delta_jpy  INTEGER NOT NULL,    -- +1000 for shirt purchase; -1000 for collab; etc
+            reason     TEXT NOT NULL,       -- e.g. purchase:mugen:149, collab_create:slug, opus_chat, gemini_image
+            ref_id     TEXT,                -- product_id / slug / session_id reference
+            created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_mu_ledger_email ON mu_credit_ledger(email, created_at DESC);
+        -- Collab service email-verified users. 1 collab free; further
+        -- creations require a MUGEN purchase or an active ¥980/月 sub.
+        CREATE TABLE IF NOT EXISTS collab_users (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            email           TEXT NOT NULL UNIQUE,
+            verified        INTEGER NOT NULL DEFAULT 0,
+            verified_at     INTEGER,
+            code            TEXT,          -- last sent 6-digit code
+            code_expires_at INTEGER,
+            session_token   TEXT,          -- cookie value when verified
+            collabs_created INTEGER NOT NULL DEFAULT 0,
+            sub_active      INTEGER NOT NULL DEFAULT 0,  -- ¥980/月 sub on/off
+            sub_until       INTEGER,                     -- unix ts of next billing
+            stripe_customer TEXT,                        -- cus_xxx for sub tracking
+            created_at      INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_collab_users_session ON collab_users(session_token);
         -- 100-in-20 sprint referral codes. Each buyer can get a code
         -- (issued in the post-purchase flow). Visitors arrive at /r/:code
         -- and the REF500 Stripe coupon (¥500 off) is pre-applied. Referrer
@@ -34638,6 +35016,10 @@ async fn main() {
         .route("/api/collab/create", post(collab_create))
         .route("/api/collab/upload", post(collab_upload))
         .route("/api/admin/collab/:slug/patch", post(admin_collab_patch))
+        .route("/api/collab/auth/start", post(collab_auth_start))
+        .route("/api/collab/auth/verify", post(collab_auth_verify))
+        .route("/api/collab/session", get(collab_session_info))
+        .route("/api/collab/sub/checkout", post(collab_sub_checkout))
         .route("/api/product/collab/:slug", get(api_product_collab))
         .route("/collab/:slug", get(collab_public_page))
         .route("/buy", get(buy_page))
