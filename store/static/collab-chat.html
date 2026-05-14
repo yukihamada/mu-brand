@@ -78,15 +78,44 @@ h1 em{color:var(--y);font-style:normal}
     「<strong>5/17 にイオン応援したい、 kokon で BBQ 30 人</strong>」 みたいに <strong>ざっくり書く</strong> だけで、 Opus が必要な情報を聞いて、 1 click で <strong>/collab/&lt;slug&gt; LP + Stripe Payment Link + 商品 DB 行</strong>を全自動で作ります。
   </p>
 
-  <div class="token-bar">
-    <label>ADMIN_TOKEN</label>
-    <input id="admin-token" type="password" placeholder="作成時に必要 (yuki のみ)" autocomplete="off">
+  <!-- Email gate: shown until session cookie is set. -->
+  <div id="email-gate" style="display:none;margin:24px 0 0;padding:22px;background:rgba(230,196,73,0.06);border:1px solid rgba(230,196,73,0.4);border-radius:6px">
+    <div style="font-size:10px;letter-spacing:0.42em;text-transform:uppercase;color:var(--y);font-weight:700;margin-bottom:14px">▶ STEP 1 / 2 · メール認証</div>
+    <p style="font-size:13px;line-height:1.95;color:var(--mute);margin-bottom:14px">
+      collab 作成を始める前に、 メール認証してください。 「作り始めました」 メール + 6 桁コードをお送りします。<br>
+      1 つ目の collab page は無料、 2 個目以降は MU シャツを 1 着買う (= 1 MU credit = ¥1,000 分) または ¥980/月 サブスクで作成できます。
+    </p>
+    <div id="email-step" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <input id="email-input" type="email" placeholder="your@email" style="flex:1;min-width:200px;background:#000;color:var(--fg);border:1px solid var(--line);padding:12px 14px;font-family:inherit;font-size:13px;border-radius:3px;letter-spacing:0.04em" autocomplete="email">
+      <button id="email-send" type="button" style="background:var(--y);color:#0A0A0A;border:0;padding:0 22px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;font-weight:700;border-radius:3px;cursor:pointer;height:46px;font-family:inherit">コード送信</button>
+    </div>
+    <div id="code-step" style="display:none;margin-top:14px;display:none">
+      <p style="font-size:12px;color:var(--mute);margin-bottom:10px">メールに届いた 6 桁を入力 (15 分有効)</p>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input id="code-input" type="text" maxlength="6" inputmode="numeric" placeholder="000000" style="flex:1;min-width:180px;background:#000;color:var(--y);border:1px solid var(--y);padding:14px 18px;font-family:'SF Mono','Menlo',monospace;font-size:22px;letter-spacing:0.35em;border-radius:3px;text-align:center" autocomplete="one-time-code">
+        <button id="code-verify" type="button" style="background:var(--y);color:#0A0A0A;border:0;padding:0 24px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;font-weight:700;border-radius:3px;cursor:pointer;height:48px;font-family:inherit">認証</button>
+      </div>
+    </div>
+    <div id="email-msg" style="margin-top:12px;font-size:12px;min-height:18px;letter-spacing:0.04em"></div>
   </div>
 
-  <div id="chat">
+  <!-- Authed bar: shows once verified -->
+  <div id="authed-bar" style="display:none;margin:18px 0;padding:10px 14px;background:rgba(255,255,255,0.02);border:1px solid var(--line);border-radius:3px;align-items:center;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--mute);letter-spacing:0.04em">
+    <span style="font-size:9px;letter-spacing:0.3em;text-transform:uppercase;color:var(--y);font-weight:600">✓ AUTHED</span>
+    <span id="authed-email" style="color:var(--fg)"></span>
+    <span style="opacity:0.5">·</span>
+    <span id="authed-balance" style="color:var(--y)">—</span>
+    <span style="opacity:0.5">·</span>
+    <span id="authed-budget" title="無料予算 ¥20,000 (Opus API 利用分)">budget —</span>
+    <span style="margin-left:auto">
+      <button id="logout-btn" type="button" style="background:transparent;color:var(--mute);border:1px solid var(--line);padding:5px 10px;font-size:9px;letter-spacing:0.2em;text-transform:uppercase;cursor:pointer;border-radius:2px;font-family:inherit">logout</button>
+    </span>
+  </div>
+
+  <div id="chat" style="display:none">
     <div class="msg assistant">
       <div class="who">MU</div>
-      <div class="body">どんな collab page を作りますか? 何のイベントで、 誰の応援/コラボか教えてください。</div>
+      <div class="body">どんな collab page を作りますか? 何のイベントで、 誰の応援/コラボか教えてください。 サイト URL を貼れば自動でロゴやテイストを抽出します。</div>
     </div>
   </div>
 
@@ -97,45 +126,120 @@ h1 em{color:var(--y);font-style:normal}
 
 <div id="composer">
   <div class="inner">
-    <textarea id="input" placeholder="例: 5/17 にイオンって MMA 選手のプロデビュー応援、kokon で BBQ も同日、30 人で ¥8,000" rows="2"></textarea>
+    <textarea id="input" placeholder="ざっくり書いてください — 日付・場所・人数・価格" rows="2"></textarea>
     <button id="attach-btn" type="button" title="画像を添付" style="background:transparent;color:var(--y);border:1px solid var(--line);padding:0;width:48px;height:48px;font-size:18px;cursor:pointer;border-radius:3px">📎</button>
     <input id="file-input" type="file" accept="image/png,image/jpeg,image/webp" style="display:none">
     <button id="send">送信</button>
   </div>
-  <div id="upload-preview" style="display:none;max-width:720px;margin:8px auto 0;padding:8px 10px;background:rgba(230,196,73,0.06);border:1px solid rgba(230,196,73,0.3);border-radius:3px;font-size:11px;color:var(--mute);display:flex;gap:10px;align-items:center">
+  <div id="upload-preview" style="max-width:720px;margin:8px auto 0;padding:8px 10px;background:rgba(230,196,73,0.06);border:1px solid rgba(230,196,73,0.3);border-radius:3px;font-size:11px;color:var(--mute);gap:10px;align-items:center;display:none">
     <img id="upload-thumb" src="" style="width:48px;height:48px;object-fit:cover;border-radius:2px">
     <div style="flex:1">添付: <span id="upload-name" style="color:var(--fg)"></span> · <a href="#" id="upload-url" target="_blank" style="font-size:10px">URL</a></div>
     <button type="button" id="upload-clear" style="background:transparent;color:var(--mute);border:0;cursor:pointer;font-size:16px">✕</button>
   </div>
-  <div class="hint">Cmd/Ctrl + Enter で送信 · 📎 で画像添付 (PNG/JPG/WebP, 5MB) · <code>session</code> は localStorage</div>
+  <div class="hint">Cmd/Ctrl + Enter で送信 · 📎 で画像添付 (PNG/JPG/WebP, 5MB) · localStorage 保存</div>
 </div>
 
 <script>
 const HISTORY_KEY = 'mu_collab_chat_v1';
 let history = [];
 let currentDraft = null;
+let session = null; // { email, mu_balance_jpy, can_create, budget_remaining_jpy, ... }
 
-const chatEl = document.getElementById('chat');
-const inputEl = document.getElementById('input');
-const sendBtn = document.getElementById('send');
-const tokenEl = document.getElementById('admin-token');
-const previewSlot = document.getElementById('preview-slot');
-const errSlot = document.getElementById('err-slot');
+const chatEl       = document.getElementById('chat');
+const inputEl      = document.getElementById('input');
+const sendBtn      = document.getElementById('send');
+const previewSlot  = document.getElementById('preview-slot');
+const errSlot      = document.getElementById('err-slot');
+const emailGate    = document.getElementById('email-gate');
+const emailStep    = document.getElementById('email-step');
+const codeStep     = document.getElementById('code-step');
+const emailInput   = document.getElementById('email-input');
+const codeInput    = document.getElementById('code-input');
+const emailSendBtn = document.getElementById('email-send');
+const codeVerifyBtn= document.getElementById('code-verify');
+const emailMsg     = document.getElementById('email-msg');
+const authedBar    = document.getElementById('authed-bar');
+const authedEmail  = document.getElementById('authed-email');
+const authedBalance= document.getElementById('authed-balance');
+const authedBudget = document.getElementById('authed-budget');
+const logoutBtn    = document.getElementById('logout-btn');
+
+const PLACEHOLDERS = [
+  '5/17 にイオン応援したい、 kokon で BBQ 30 人 ¥8,000',
+  '6/2 自主企画ライブ 渋谷 30 人 物販 T ¥4,500',
+  '7/10 結婚式の二次会、 名前入り T 50 着',
+  '4 月の e-sports 大会 大阪 8 人 チーム T',
+  '保護犬譲渡会 横浜 月一回 寄付込み T ¥5,000',
+  '少年野球チーム ジュニアカップ T 18 着',
+  '高校文化祭 クラス T 35 着、 締切 3/15',
+  'バンドの全国ツアー 8 公演 限定 T 各 50 着',
+  '柔術ジム新店オープン記念 ラッシュガード 40 着',
+  '町内会の夏祭り お揃い T 80 着 ¥3,500',
+  'カフェ 1 周年記念 スタッフ T + お客様向け',
+  '寺の年末イベント 30 人 限定 T ¥6,000',
+  'スタートアップのキックオフ T 25 着 1 週間',
+  '友達 5 人の旅行記念 オリジナル T',
+  'ガザ支援のチャリティー T 寄付込み ¥5,000',
+  'マラソン大会 自分の応援団 T 12 着',
+];
 
 try {
   const saved = JSON.parse(localStorage.getItem(HISTORY_KEY) || 'null');
   if (saved?.history) history = saved.history;
   if (saved?.draft) currentDraft = saved.draft;
-  if (saved?.adminToken) tokenEl.value = saved.adminToken;
-  renderAll();
 } catch (_) {}
+
+function pickPlaceholder() {
+  const p = PLACEHOLDERS[Math.floor(Math.random() * PLACEHOLDERS.length)];
+  inputEl.placeholder = p;
+}
 
 function persist() {
   try {
-    localStorage.setItem(HISTORY_KEY, JSON.stringify({
-      history, draft: currentDraft, adminToken: tokenEl.value || '',
-    }));
+    localStorage.setItem(HISTORY_KEY, JSON.stringify({ history, draft: currentDraft }));
   } catch (_) {}
+}
+
+async function loadSession() {
+  try {
+    const r = await fetch('/api/collab/session', { credentials: 'same-origin' });
+    const d = await r.json();
+    if (d.ok && d.email) {
+      session = d;
+      showAuthed();
+    } else {
+      showEmailGate();
+    }
+  } catch (_) {
+    showEmailGate();
+  }
+}
+
+function showAuthed() {
+  emailGate.style.display = 'none';
+  authedBar.style.display = 'flex';
+  chatEl.style.display = 'flex';
+  authedEmail.textContent = session.email;
+  const bal = session.mu_balance_units || 0;
+  authedBalance.textContent = `${bal} MU (¥${(session.mu_balance_jpy||0).toLocaleString()})`;
+  const remain = session.budget_remaining_jpy ?? null;
+  const cap = session.budget_cap_jpy ?? 20000;
+  if (remain != null) {
+    authedBudget.textContent = `budget ¥${remain.toLocaleString()}/¥${cap.toLocaleString()}`;
+    if (remain < 2000) authedBudget.style.color = '#ff8a8a';
+  } else {
+    authedBudget.textContent = `budget ¥${cap.toLocaleString()}`;
+  }
+  pickPlaceholder();
+  renderAll();
+}
+
+function showEmailGate() {
+  emailGate.style.display = 'block';
+  authedBar.style.display = 'none';
+  chatEl.style.display = 'none';
+  previewSlot.innerHTML = '';
+  pickPlaceholder();
 }
 
 function renderAll() {
@@ -209,9 +313,23 @@ async function send() {
   try {
     const r = await fetch('/api/collab/chat', {
       method: 'POST',
+      credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ history: history.slice(0, -1), message: text }),
     });
+    if (r.status === 401) {
+      chatEl.removeChild(ph);
+      setError('メール認証が切れました。 もう一度認証してください。');
+      session = null;
+      showEmailGate();
+      return;
+    }
+    if (r.status === 402) {
+      chatEl.removeChild(ph);
+      const j = await r.json().catch(() => ({}));
+      setError(`無料予算 ¥${(j.budget_cap_jpy||20000).toLocaleString()} を使い切りました。 MU シャツを 1 着買うと枠が増えます (1 MU = ¥1,000)。`);
+      return;
+    }
     if (!r.ok) {
       const t = await r.text();
       throw new Error(t || ('HTTP ' + r.status));
@@ -220,6 +338,11 @@ async function send() {
     chatEl.removeChild(ph);
     addMsg('assistant', d.reply || '(返答なし)');
     if (d.draft) currentDraft = { ...(currentDraft || {}), ...d.draft };
+    if (typeof d.budget_remaining_jpy === 'number' && session) {
+      session.budget_remaining_jpy = d.budget_remaining_jpy;
+      authedBudget.textContent = `budget ¥${d.budget_remaining_jpy.toLocaleString()}/¥${(session.budget_cap_jpy||20000).toLocaleString()}`;
+      if (d.budget_remaining_jpy < 2000) authedBudget.style.color = '#ff8a8a';
+    }
     persist();
     renderPreview();
   } catch (e) {
@@ -232,27 +355,35 @@ async function send() {
 }
 
 async function doCreate() {
-  const token = tokenEl.value.trim();
-  if (!token) {
-    setError('ADMIN_TOKEN が必要です (上の input)');
-    return;
-  }
   const btn = document.getElementById('create-btn');
   if (btn) { btn.disabled = true; btn.textContent = '作成中…'; }
   setError('');
   try {
     const r = await fetch('/api/collab/create', {
       method: 'POST',
+      credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ admin_token: token, draft: currentDraft }),
+      body: JSON.stringify({ admin_token: '', draft: currentDraft }),
     });
+    if (r.status === 401) {
+      setError('メール認証が切れました。 もう一度認証してください。');
+      await loadSession();
+      return;
+    }
+    if (r.status === 402) {
+      const j = await r.json().catch(() => ({}));
+      setError(`枠を超えました: ${j.reason || ''} — MUGEN を 1 着買う (= 1 MU) または ¥980/月 サブスクで作れます。`);
+      // Offer sub link
+      previewSlot.innerHTML += `<div style="margin-top:14px"><a href="/api/collab/sub/checkout" data-sub-cta>¥980/月 サブスクで作る →</a> · <a href="/mugen">MUGEN を買う →</a></div>`;
+      if (btn) { btn.disabled = false; btn.textContent = '✓ これで作成する'; }
+      return;
+    }
     if (!r.ok) {
       const t = await r.text();
       throw new Error(t || ('HTTP ' + r.status));
     }
     const d = await r.json();
     addMsg('assistant', `✓ 作成しました!\n\nLP: ${d.url}\n管理画面: ${d.admin_url}\n\nStripe Payment Link は数秒で接続されます (poll /api/product/collab/${d.slug})。`);
-    // Reset chat for next collab
     history = [];
     currentDraft = null;
     persist();
@@ -263,6 +394,77 @@ async function doCreate() {
   }
 }
 
+async function sendEmailCode() {
+  const email = (emailInput.value || '').trim();
+  if (!email || !email.includes('@')) {
+    emailMsg.textContent = 'メールアドレスを入力してください';
+    emailMsg.style.color = '#ff8a8a';
+    return;
+  }
+  emailSendBtn.disabled = true; emailSendBtn.textContent = '送信中…';
+  emailMsg.textContent = '';
+  try {
+    const r = await fetch('/api/collab/auth/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    if (!r.ok) {
+      const t = await r.text();
+      throw new Error(t || ('HTTP ' + r.status));
+    }
+    emailStep.style.display = 'none';
+    codeStep.style.display = 'block';
+    emailMsg.style.color = 'var(--y)';
+    emailMsg.textContent = `✓ ${email} に 6 桁コードを送信しました (15 分有効)`;
+    codeInput.focus();
+  } catch (e) {
+    emailMsg.style.color = '#ff8a8a';
+    emailMsg.textContent = '送信失敗: ' + (e.message || '?');
+  } finally {
+    emailSendBtn.disabled = false; emailSendBtn.textContent = 'コード送信';
+  }
+}
+
+async function verifyCode() {
+  const email = (emailInput.value || '').trim();
+  const code = (codeInput.value || '').trim();
+  if (code.length !== 6) {
+    emailMsg.style.color = '#ff8a8a';
+    emailMsg.textContent = '6 桁のコードを入力してください';
+    return;
+  }
+  codeVerifyBtn.disabled = true; codeVerifyBtn.textContent = '認証中…';
+  try {
+    const r = await fetch('/api/collab/auth/verify', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, code }),
+    });
+    if (!r.ok) {
+      const t = await r.text();
+      throw new Error(t || ('HTTP ' + r.status));
+    }
+    emailMsg.style.color = 'var(--y)';
+    emailMsg.textContent = '✓ 認証成功 — chat を開きます';
+    await loadSession();
+  } catch (e) {
+    emailMsg.style.color = '#ff8a8a';
+    emailMsg.textContent = '認証失敗: ' + (e.message || 'コードが違います');
+  } finally {
+    codeVerifyBtn.disabled = false; codeVerifyBtn.textContent = '認証';
+  }
+}
+
+async function doLogout() {
+  try {
+    await fetch('/api/collab/auth/logout', { method: 'POST', credentials: 'same-origin' });
+  } catch (_) {}
+  session = null;
+  showEmailGate();
+}
+
 sendBtn.addEventListener('click', send);
 inputEl.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
@@ -270,7 +472,11 @@ inputEl.addEventListener('keydown', (e) => {
     send();
   }
 });
-tokenEl.addEventListener('change', persist);
+emailSendBtn.addEventListener('click', sendEmailCode);
+emailInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); sendEmailCode(); }});
+codeVerifyBtn.addEventListener('click', verifyCode);
+codeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); verifyCode(); }});
+logoutBtn.addEventListener('click', doLogout);
 
 // File upload — 📎 button
 const attachBtn = document.getElementById('attach-btn');
@@ -322,7 +528,9 @@ fileInput.addEventListener('change', async () => {
   }
 });
 
-inputEl.focus();
+// Bootstrap
+pickPlaceholder();
+loadSession();
 </script>
 
 </body>

@@ -11694,10 +11694,30 @@ async fn collab_chat(
     Json(body): Json<CollabChatBody>,
 ) -> Response {
     // Require verified email (no anonymous chat — every session gates on email)
-    if collab_session_email(&db, &headers).is_none() {
-        return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({
+    let session_email = match collab_session_email(&db, &headers) {
+        Some(s) => s.0,
+        None => return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({
             "error": "verify email first", "verify": "/api/collab/auth/start"
-        }))).into_response();
+        }))).into_response(),
+    };
+    // Free-budget gate: ¥20,000 of Opus API spend per verified email.
+    // Admin token (yuki) bypasses the cap entirely. Skip the check if the
+    // header is missing so we don't fire Telegram alerts on every public call.
+    let admin_hdr = headers.get("x-admin-token").and_then(|v| v.to_str().ok()).map(String::from);
+    let admin_ok = match &admin_hdr {
+        Some(t) if !t.is_empty() => require_admin_token(Some(t)).is_ok(),
+        _ => false,
+    };
+    if !admin_ok {
+        let used = { let c = db.lock().unwrap(); collab_budget_used(&c, &session_email) };
+        if used >= COLLAB_CHAT_BUDGET_CAP_JPY {
+            return (StatusCode::PAYMENT_REQUIRED, Json(serde_json::json!({
+                "error": "free chat budget exhausted",
+                "budget_used_jpy": used,
+                "budget_cap_jpy": COLLAB_CHAT_BUDGET_CAP_JPY,
+                "hint": "MUシャツを1着買うと collab 作成枠が増えます (1 MU = ¥1,000)",
+            }))).into_response();
+        }
     }
     let key = env::var("ANTHROPIC_API_KEY").unwrap_or_default();
     if key.is_empty() {
@@ -11790,10 +11810,26 @@ async fn collab_chat(
     if let (Some(s), Some(e)) = (reply_clean.find("<draft"), reply_clean.find("</draft>")) {
         if s < e { reply_clean.replace_range(s..e + "</draft>".len(), ""); }
     }
+    // Track Anthropic spend per verified user. Increment budget_jpy_used.
+    let in_toks = parsed["usage"]["input_tokens"].as_i64().unwrap_or(0);
+    let out_toks = parsed["usage"]["output_tokens"].as_i64().unwrap_or(0);
+    let cost_jpy = opus_cost_jpy(in_toks, out_toks);
+    let budget_remaining = {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE collab_users SET budget_jpy_used = COALESCE(budget_jpy_used,0) + ? WHERE email=?",
+            params![cost_jpy, session_email],
+        );
+        let used = collab_budget_used(&conn, &session_email);
+        (COLLAB_CHAT_BUDGET_CAP_JPY - used).max(0)
+    };
     Json(serde_json::json!({
         "reply": reply_clean.trim(),
         "draft": draft_json,
         "complete": complete,
+        "budget_remaining_jpy": budget_remaining,
+        "budget_cap_jpy": COLLAB_CHAT_BUDGET_CAP_JPY,
+        "turn_cost_jpy": cost_jpy,
     })).into_response()
 }
 
@@ -11809,7 +11845,10 @@ async fn collab_create(
     Json(body): Json<CollabCreateBody>,
 ) -> Response {
     // Admin token (yuki internal) OR verified collab user with quota.
-    let admin_ok = require_admin_token(Some(&body.admin_token)).is_ok();
+    // Skip admin check when body.admin_token is empty — Telegram-alerts on
+    // empty mismatches are noise (every public session call would fire).
+    let admin_ok = !body.admin_token.trim().is_empty()
+        && require_admin_token(Some(&body.admin_token)).is_ok();
     let mut creator_email: Option<String> = None;
     if !admin_ok {
         let session = match collab_session_email(&db, &headers) {
@@ -12163,6 +12202,26 @@ async fn collab_auth_verify(
     resp
 }
 
+/// POST /api/collab/auth/logout — clear session cookie + DB token.
+async fn collab_auth_logout(
+    State(db): State<Db>,
+    headers: HeaderMap,
+) -> Response {
+    if let Some((email, _, _, _)) = collab_session_email(&db, &headers) {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE collab_users SET session_token=NULL WHERE email=?",
+            params![email],
+        );
+    }
+    let mut resp = Json(serde_json::json!({"ok": true})).into_response();
+    resp.headers_mut().insert(
+        header::SET_COOKIE,
+        HeaderValue::from_str("mu_collab_session=; Path=/; Max-Age=0; SameSite=Lax").unwrap()
+    );
+    resp
+}
+
 /// Look up the verified email from the request cookie. Returns None if unauth.
 fn collab_session_email(db: &Db, headers: &HeaderMap) -> Option<(String, i64, bool, bool)> {
     let token = headers.get("cookie")
@@ -12188,6 +12247,28 @@ fn collab_session_email(db: &Db, headers: &HeaderMap) -> Option<(String, i64, bo
 /// - balance ≥ ¥1,000 (1 MU). Caller deducts on success.
 const COLLAB_CREATE_COST_JPY: i64 = 1000;
 
+/// Free Anthropic budget per verified user (yuki rule 2026-05-14:
+/// 「トークンなくても 2 万円分予算使っていいよ」). After this cap, chat
+/// returns 402 — buying MU or subscribing recharges nothing automatically;
+/// MU credit & sub are for collab create, not chat. (Future: convert MU to budget.)
+const COLLAB_CHAT_BUDGET_CAP_JPY: i64 = 20000;
+
+/// Opus 4.7 pricing in JPY/token, rounded up for safety:
+/// input $15/Mtok, output $75/Mtok, ~¥155/USD → ~¥2.5/¥12 per 1k tok.
+fn opus_cost_jpy(input_tokens: i64, output_tokens: i64) -> i64 {
+    // Use scaled integer math: (in * 25 + out * 120) / 10000 = JPY
+    let total = input_tokens.saturating_mul(25)
+        .saturating_add(output_tokens.saturating_mul(120));
+    (total / 10_000).max(1) // never charge 0 for a real call
+}
+
+fn collab_budget_used(conn: &rusqlite::Connection, email: &str) -> i64 {
+    conn.query_row(
+        "SELECT COALESCE(budget_jpy_used, 0) FROM collab_users WHERE email=?",
+        params![email], |r| r.get::<_, i64>(0),
+    ).unwrap_or(0)
+}
+
 fn collab_quota_check(db: &Db, email: &str) -> (bool, String) {
     let conn = db.lock().unwrap();
     let (created, sub): (i64, bool) = conn.query_row(
@@ -12210,11 +12291,12 @@ async fn collab_session_info(
 ) -> Response {
     match collab_session_email(&db, &headers) {
         Some((email, created, sub, _)) => {
-            let balance = {
+            let (balance, budget_used) = {
                 let conn = db.lock().unwrap();
-                mu_credit_balance(&conn, &email)
+                (mu_credit_balance(&conn, &email), collab_budget_used(&conn, &email))
             };
             let (allowed, reason) = collab_quota_check(&db, &email);
+            let budget_remaining = (COLLAB_CHAT_BUDGET_CAP_JPY - budget_used).max(0);
             Json(serde_json::json!({
                 "ok": true,
                 "email": email,
@@ -12227,6 +12309,9 @@ async fn collab_session_info(
                 "sub_price_jpy": 980,
                 "sub_checkout_url": "/api/collab/sub/checkout",
                 "create_cost_jpy": COLLAB_CREATE_COST_JPY,
+                "budget_cap_jpy": COLLAB_CHAT_BUDGET_CAP_JPY,
+                "budget_used_jpy": budget_used,
+                "budget_remaining_jpy": budget_remaining,
             })).into_response()
         }
         None => Json(serde_json::json!({"ok": false, "verified": false})).into_response(),
@@ -32412,6 +32497,8 @@ async fn main() {
         "ALTER TABLE mu_purchases ADD COLUMN printful_order_id TEXT",
         "ALTER TABLE mu_purchases ADD COLUMN last_printful_status TEXT",
         "ALTER TABLE mu_purchases ADD COLUMN last_status_at TEXT",
+        // 2026-05-14: free ¥20,000 Opus budget per verified collab user.
+        "ALTER TABLE collab_users ADD COLUMN budget_jpy_used INTEGER NOT NULL DEFAULT 0",
         // X (Twitter) auto-post — set when twitter_post.py succeeds.
         "ALTER TABLE products ADD COLUMN x_posted_at TEXT",
         "ALTER TABLE products ADD COLUMN x_tweet_id TEXT",
@@ -33563,6 +33650,7 @@ async fn main() {
             sub_active      INTEGER NOT NULL DEFAULT 0,  -- ¥980/月 sub on/off
             sub_until       INTEGER,                     -- unix ts of next billing
             stripe_customer TEXT,                        -- cus_xxx for sub tracking
+            budget_jpy_used INTEGER NOT NULL DEFAULT 0,  -- Opus chat spend (¥20,000 cap)
             created_at      INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_collab_users_session ON collab_users(session_token);
@@ -35018,6 +35106,7 @@ async fn main() {
         .route("/api/admin/collab/:slug/patch", post(admin_collab_patch))
         .route("/api/collab/auth/start", post(collab_auth_start))
         .route("/api/collab/auth/verify", post(collab_auth_verify))
+        .route("/api/collab/auth/logout", post(collab_auth_logout))
         .route("/api/collab/session", get(collab_session_info))
         .route("/api/collab/sub/checkout", post(collab_sub_checkout))
         .route("/api/product/collab/:slug", get(api_product_collab))
