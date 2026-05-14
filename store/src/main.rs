@@ -12228,10 +12228,15 @@ async fn collab_auth_start(
     }
     // Send the email via Resend (verification code + "始めました" notification combined)
     let key = env::var("RESEND_API_KEY").unwrap_or_default();
-    if !key.is_empty() {
-        let body_html = format!(r#"<!doctype html><html><body style="font-family:-apple-system,sans-serif;background:#0A0A0A;color:#F5F5F0;padding:32px;line-height:1.85">
+    if key.is_empty() {
+        eprintln!("[collab_auth_start] RESEND_API_KEY missing — code generated but no email sent (email={})", email);
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({
+            "error": "email service not configured",
+        }))).into_response();
+    }
+    let body_html = format!(r#"<!doctype html><html><body style="font-family:-apple-system,sans-serif;background:#0A0A0A;color:#F5F5F0;padding:32px;line-height:1.85">
 <div style="max-width:520px;margin:0 auto">
-<div style="font-size:14px;letter-spacing:0.4em;font-weight:700;margin-bottom:18px">MU DROP</div>
+<div style="font-size:14px;letter-spacing:0.4em;font-weight:700;margin-bottom:18px">━◯━ MU DROP</div>
 <h1 style="font-size:22px;font-weight:300;margin-bottom:14px">T シャツ作成を開始しました</h1>
 <p style="color:#aaa;font-size:14px">下記の 6 桁コードをチャット画面に入力してください。 15 分有効です。</p>
 <div style="font-size:38px;letter-spacing:0.3em;font-weight:600;color:#e6c449;background:#111;padding:22px;text-align:center;border-radius:6px;font-family:'SF Mono',monospace;margin:24px 0">{code}</div>
@@ -12244,17 +12249,36 @@ MU · wearmu.com · 株式会社イネブラ<br>
 このメールに心当たりがない場合は無視してください。
 </p>
 </div></body></html>"#, code = code);
-        let payload = serde_json::json!({
-            "from": "━◯━ MU Drop <info@enablerdao.com>",
-            "to": [email],
-            "subject": "MU Drop — T シャツ作成を開始しました (verification code)",
-            "html": body_html,
-        });
-        let _ = reqwest::Client::new()
-            .post("https://api.resend.com/emails")
-            .bearer_auth(&key)
-            .json(&payload)
-            .send().await;
+    let payload = serde_json::json!({
+        "from": "━◯━ MU Drop <info@enablerdao.com>",
+        "to": [email],
+        "subject": "MU Drop — T シャツ作成を開始しました (verification code)",
+        "html": body_html,
+    });
+    match reqwest::Client::new()
+        .post("https://api.resend.com/emails")
+        .bearer_auth(&key)
+        .json(&payload)
+        .send().await
+    {
+        Ok(r) => {
+            let status = r.status();
+            let body = r.text().await.unwrap_or_default();
+            if !status.is_success() {
+                eprintln!("[collab_auth_start] resend {} for email={} → {}", status, email, body.chars().take(400).collect::<String>());
+                return (StatusCode::BAD_GATEWAY, Json(serde_json::json!({
+                    "error": format!("resend {}: {}", status, body.chars().take(200).collect::<String>()),
+                }))).into_response();
+            } else {
+                eprintln!("[collab_auth_start] email sent to {} (resend id: {})", email, body.chars().take(200).collect::<String>());
+            }
+        }
+        Err(e) => {
+            eprintln!("[collab_auth_start] resend http error for email={}: {}", email, e);
+            return (StatusCode::BAD_GATEWAY, Json(serde_json::json!({
+                "error": format!("resend http: {}", e),
+            }))).into_response();
+        }
     }
     Json(serde_json::json!({"ok": true, "message": "verification code sent (15 min valid)"})).into_response()
 }

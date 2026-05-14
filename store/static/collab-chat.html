@@ -75,7 +75,7 @@ h1 em{color:var(--y);font-style:normal}
 <div class="wrap">
   <h1>MU Drop — collab を <em>チャットで</em>作る</h1>
   <p class="lede">
-    「<strong>5/17 にイオン応援したい、 kokon で BBQ 30 人</strong>」 みたいに <strong>ざっくり書く</strong> だけで、 Opus が必要な情報を聞いて、 1 click で <strong>/collab/&lt;slug&gt; LP + Stripe Payment Link + 商品 DB 行</strong>を全自動で作ります。
+    「<strong id="lede-example">5/17 にイオン応援したい、 kokon で BBQ 30 人</strong>」 みたいに <strong>ざっくり書く</strong> だけで、 Opus が必要な情報を聞いて、 1 click で <strong>/collab/&lt;slug&gt; LP + Stripe Payment Link + 商品 DB 行</strong>を全自動で作ります。
   </p>
 
   <!-- Email gate: shown until session cookie is set. -->
@@ -188,6 +188,29 @@ const PLACEHOLDERS = [
   'ガザ支援のチャリティー T 寄付込み ¥5,000',
   'マラソン大会 自分の応援団 T 12 着',
 ];
+// Examples used in the page lede ("...みたいに...") — picked random on load
+const LEDE_EXAMPLES = [
+  '5/17 にイオン応援したい、 kokon で BBQ 30 人',
+  '6/2 自主企画ライブ 渋谷 30 人 物販 T 4500 円',
+  '7 月の結婚式の二次会で 名前入り T 50 着',
+  '保護犬譲渡会 横浜 月一回 寄付込み T',
+  '少年野球チーム ジュニアカップ 18 着',
+  '高校文化祭 3 年 B 組のクラス T 35 着',
+  '柔術ジムの新店オープン記念 ラッシュガード 40 着',
+  '町内会の夏祭り お揃い T 80 着',
+  '寺の年末イベント 30 人 限定 T',
+  'バンドの全国ツアー 8 公演 限定 T 各 50 着',
+  '父の還暦祝い 家族 12 人で 統一 T',
+  'スタートアップのキックオフ 社員 25 人 1 週間納期',
+  '友達 5 人の卒業旅行記念 T',
+  'ガザ支援のチャリティー T 寄付込み 5000 円',
+  '大学のサークル夏合宿 32 人 限定 T',
+  '将棋大会 アマ三段の応援団 8 着',
+  '法人 30 周年記念 OB 含めて 200 着',
+  '保育園 卒園記念 親子で揃い T 18 組',
+  '中学校の合唱コンクール お揃い T 35 着',
+  '会社の運動会 部署対抗 4 色 各 20 着',
+];
 
 try {
   const saved = JSON.parse(localStorage.getItem(HISTORY_KEY) || 'null');
@@ -199,6 +222,14 @@ function pickPlaceholder() {
   const p = PLACEHOLDERS[Math.floor(Math.random() * PLACEHOLDERS.length)];
   inputEl.placeholder = p;
 }
+
+function pickLedeExample() {
+  const el = document.getElementById('lede-example');
+  if (!el) return;
+  const e = LEDE_EXAMPLES[Math.floor(Math.random() * LEDE_EXAMPLES.length)];
+  el.textContent = e;
+}
+pickLedeExample();
 
 function persist() {
   try {
