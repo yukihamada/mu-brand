@@ -11153,6 +11153,132 @@ async fn survey_quality_page() -> Html<&'static str> {
     Html(include_str!("../static/survey-quality.html"))
 }
 
+// ───── Referral codes (Constitution §11 + 100/20 sprint) ─────
+// REF500 is a flat-rate Stripe coupon (¥500 off, max 500 redemptions,
+// expires 2026-06-03). Buyers get a personal code in the thank-you flow;
+// /r/:code lands on /buy with the banner highlighted. clicks/uses are
+// tracked so we can see which codes pull traffic.
+
+fn referral_code_for(seed: &str) -> String {
+    use sha2::{Sha256, Digest};
+    let mut h = Sha256::new();
+    h.update(seed.as_bytes());
+    let digest = h.finalize();
+    let alpha = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // base32 minus look-alikes
+    let mut out = String::with_capacity(6);
+    for i in 0..6 {
+        out.push(alpha[(digest[i] as usize) % alpha.len()] as char);
+    }
+    out
+}
+
+/// GET /r/:code — public referral landing. Records a click, redirects to
+/// /buy with ?ref=:code so the LP can highlight the REF500 banner.
+async fn referral_landing(
+    Path(code): Path<String>,
+    State(db): State<Db>,
+) -> Response {
+    let code_clean: String = code.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .take(8).collect::<String>().to_uppercase();
+    if code_clean.len() < 4 {
+        return (StatusCode::NOT_FOUND, Html(include_str!("../static/404.html"))).into_response();
+    }
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO mu_referrals (code, clicks, created_at)
+             VALUES (?, 1, ?)
+             ON CONFLICT(code) DO UPDATE SET clicks = clicks + 1",
+            params![code_clean, chrono_now().parse::<i64>().unwrap_or(0)],
+        );
+    }
+    let target = format!("/buy?ref={}&utm_source=referral&utm_medium=link&utm_campaign=ref_{}",
+        code_clean, code_clean);
+    axum::response::Redirect::temporary(&target).into_response()
+}
+
+/// GET /api/referral/:code — JSON for /buy LP to display the banner.
+async fn referral_info(
+    Path(code): Path<String>,
+    State(db): State<Db>,
+) -> Response {
+    let code_clean: String = code.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .take(8).collect::<String>().to_uppercase();
+    if code_clean.len() < 4 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"invalid code"}))).into_response();
+    }
+    let row: Option<(i64, i64)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT clicks, uses FROM mu_referrals WHERE code=?",
+            params![code_clean], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).ok()
+    };
+    let (clicks, uses) = row.unwrap_or((0, 0));
+    Json(serde_json::json!({
+        "code": code_clean,
+        "coupon": "REF500",
+        "discount_jpy": 500,
+        "clicks": clicks,
+        "uses": uses,
+        "active": true,
+    })).into_response()
+}
+
+/// GET /api/admin/funnel/clicks?token=…&days=7 — per-CTA click counts.
+/// Aggregates funnel_events where event='cta_click' and extracts the
+/// cta tag from the extra JSON. Useful for seeing which buttons convert.
+async fn admin_funnel_clicks(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let days: i64 = q.get("days").and_then(|s| s.parse().ok()).unwrap_or(7).clamp(1, 90);
+    let conn = db.lock().unwrap();
+    let mut stmt = match conn.prepare(
+        "SELECT
+            COALESCE(json_extract(extra, '$.cta'), '(untagged)') AS cta,
+            COUNT(*)                            AS clicks,
+            COUNT(DISTINCT visitor_id)          AS uniq_visitors,
+            COUNT(DISTINCT path)                AS distinct_paths
+         FROM funnel_events
+         WHERE event='cta_click'
+           AND CAST(created_at AS INTEGER) > strftime('%s','now')-?1*86400
+         GROUP BY cta
+         ORDER BY clicks DESC
+         LIMIT 50"
+    ) { Ok(s) => s, Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("db: {}", e)).into_response() };
+    let rows: Vec<serde_json::Value> = stmt.query_map(params![days], |r| {
+        Ok(serde_json::json!({
+            "cta":            r.get::<_, String>(0)?,
+            "clicks":         r.get::<_, i64>(1)?,
+            "uniq_visitors":  r.get::<_, i64>(2)?,
+            "distinct_paths": r.get::<_, i64>(3)?,
+        }))
+    }).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+    // Per-product clicks (for product detail flows)
+    let mut prod_stmt = match conn.prepare(
+        "SELECT product_id, COUNT(*) AS clicks
+         FROM funnel_events
+         WHERE event='cta_click' AND product_id IS NOT NULL
+           AND CAST(created_at AS INTEGER) > strftime('%s','now')-?1*86400
+         GROUP BY product_id ORDER BY clicks DESC LIMIT 20"
+    ) { Ok(s) => s, Err(_) => return Json(serde_json::json!({"clicks_by_cta": rows, "clicks_by_product": []})).into_response() };
+    let prod_rows: Vec<serde_json::Value> = prod_stmt.query_map(params![days], |r| {
+        Ok(serde_json::json!({
+            "product_id": r.get::<_, i64>(0)?,
+            "clicks":     r.get::<_, i64>(1)?,
+        }))
+    }).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+    Json(serde_json::json!({
+        "window_days":      days,
+        "clicks_by_cta":    rows,
+        "clicks_by_product":prod_rows,
+    })).into_response()
+}
+
 async fn tokushoho_page() -> Html<&'static str> {
     Html(include_str!("../static/tokushoho.html"))
 }
@@ -31808,6 +31934,22 @@ async fn main() {
             UNIQUE(slug, ip_hash)
         );
         CREATE INDEX IF NOT EXISTS idx_quality_poll_slug ON quality_poll_votes(slug, option_id);
+        -- 100-in-20 sprint referral codes. Each buyer can get a code
+        -- (issued in the post-purchase flow). Visitors arrive at /r/:code
+        -- and the REF500 Stripe coupon (¥500 off) is pre-applied. Referrer
+        -- earns credit on each successful redemption.
+        CREATE TABLE IF NOT EXISTS mu_referrals (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            code          TEXT NOT NULL UNIQUE,
+            owner_email   TEXT,
+            owner_session TEXT,         -- Stripe session_id of the issuing purchase
+            clicks        INTEGER NOT NULL DEFAULT 0,
+            uses          INTEGER NOT NULL DEFAULT 0,
+            credit_jpy    INTEGER NOT NULL DEFAULT 0,
+            created_at    INTEGER NOT NULL,
+            expires_at    INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_mu_referrals_email ON mu_referrals(owner_email);
         -- MA Council weekly briefs: Gemini が customer_feedback (MA Council
         -- 投稿) を要約して N 件の議題を生成。MA owner だけが /api/council/vote
         -- で投票できる。集計は public で晒される。
@@ -33236,6 +33378,9 @@ async fn main() {
         .route("/survey/quality", get(survey_quality_page))
         .route("/api/poll/quality", get(quality_poll_results))
         .route("/api/poll/quality/vote", post(quality_poll_vote))
+        .route("/r/:code", get(referral_landing))
+        .route("/api/referral/:code", get(referral_info))
+        .route("/api/admin/funnel/clicks", get(admin_funnel_clicks))
         .route("/sitemap.xml", get(dynamic_sitemap))
         // Per-user share page — REGISTER LAST so literal routes win
         .route("/:slug", get(slug_or_static))

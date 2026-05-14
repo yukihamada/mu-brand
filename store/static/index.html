@@ -990,7 +990,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
       <div id="m-fabric-picker" style="display:none">
         <div style="font-size:8px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.55;margin-bottom:10px">素材を選ぶ / Choose fabric</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px" id="fabric-cards">
-          <label class="fabric-card" data-variant="suzuri"
+          <label class="fabric-card" data-variant="suzuri" data-funnel="cta_click" data-funnel-cta="fabric_pick_suzuri"
                  style="cursor:pointer;padding:11px 12px;border:1px solid rgba(255,138,138,0.35);background:rgba(255,138,138,0.04);border-radius:3px;display:flex;flex-direction:column;gap:4px;transition:all 0.15s ease">
             <input type="radio" name="fabric" value="suzuri" style="display:none">
             <div style="display:flex;justify-content:space-between;align-items:baseline">
@@ -1000,7 +1000,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
             <div style="font-size:10.5px;line-height:1.55;color:rgba(245,245,240,0.78)">Printstar 5.6oz · generic crew</div>
             <div style="font-size:9px;letter-spacing:0.04em;opacity:0.55">国内 SUZURI · 2-3 日着</div>
           </label>
-          <label class="fabric-card" data-variant="stripe"
+          <label class="fabric-card" data-variant="stripe" data-funnel="cta_click" data-funnel-cta="fabric_pick_stripe"
                  style="cursor:pointer;padding:11px 12px;border:1px solid rgba(230,196,73,0.35);background:rgba(230,196,73,0.05);border-radius:3px;display:flex;flex-direction:column;gap:4px;transition:all 0.15s ease">
             <input type="radio" name="fabric" value="stripe" style="display:none">
             <div style="display:flex;justify-content:space-between;align-items:baseline">
@@ -1018,10 +1018,10 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
       <div>
         <div style="font-size:8px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5;margin-bottom:10px">Size</div>
         <div class="select-row" id="size-btns">
-          <button class="size-btn selected" data-size="S">S</button>
-          <button class="size-btn" data-size="M">M</button>
-          <button class="size-btn" data-size="L">L</button>
-          <button class="size-btn" data-size="XL">XL</button>
+          <button class="size-btn selected" data-size="S" data-funnel="cta_click" data-funnel-cta="modal_size_S">S</button>
+          <button class="size-btn" data-size="M" data-funnel="cta_click" data-funnel-cta="modal_size_M">M</button>
+          <button class="size-btn" data-size="L" data-funnel="cta_click" data-funnel-cta="modal_size_L">L</button>
+          <button class="size-btn" data-size="XL" data-funnel="cta_click" data-funnel-cta="modal_size_XL">XL</button>
         </div>
       </div>
       <form id="checkout-form" onsubmit="doCheckout(event)">
@@ -1055,16 +1055,16 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
           </span>
         </div>
         <div id="checkout-msg" style="font-size:9px;letter-spacing:0.1em;min-height:16px;margin-bottom:4px"></div>
-        <button type="submit" class="btn-primary" id="btn-buy">Purchase</button>
+        <button type="submit" class="btn-primary" id="btn-buy" data-funnel="cta_click" data-funnel-cta="modal_purchase">Purchase</button>
         <!-- Stripe Payment Link quick-buy (shown only when present on product) -->
-        <a id="btn-quick" href="#" target="_blank" rel="noopener"
+        <a id="btn-quick" href="#" target="_blank" rel="noopener" data-funnel="cta_click" data-funnel-cta="modal_quick_stripe"
            style="display:none;margin-top:8px;text-align:center;background:rgba(230,196,73,0.08);border:1px solid rgba(230,196,73,0.35);color:#e6c449;padding:10px 14px;border-radius:2px;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;font-weight:600;text-decoration:none">
           ⚡ クイック購入 (Stripe へ直行)
         </a>
         <!-- SUZURI marketplace mirror (Constitution §24-v2 dual-channel).
              Shown only when product has been published to suzuri.jp. JP
              customers get ~¥4,900 + 2-3 day domestic shipping. -->
-        <a id="btn-suzuri" href="#" target="_blank" rel="noopener"
+        <a id="btn-suzuri" href="#" target="_blank" rel="noopener" data-funnel="cta_click" data-funnel-cta="modal_suzuri_buy"
            style="display:none;margin-top:8px;text-align:center;background:rgba(255,107,107,0.06);border:1px solid rgba(255,107,107,0.4);color:#ff8a8a;padding:10px 14px;border-radius:2px;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;font-weight:600;text-decoration:none">
           🇯🇵 SUZURI で買う (¥4,900 国内発送)
         </a>
@@ -1075,7 +1075,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
           inside #stripe-embedded. The native sheet handles confirmation and
           redirects to /success on completion.
         -->
-        <button type="button" id="btn-express" onclick="openExpressCheckout(event)"
+        <button type="button" id="btn-express" onclick="openExpressCheckout(event)" data-funnel="cta_click" data-funnel-cta="modal_express_pay"
                 style="display:none;margin-top:8px;width:100%;background:#000;color:#fff;border:1px solid rgba(255,255,255,0.2);padding:12px 14px;border-radius:2px;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;font-weight:600;cursor:pointer">
            Apple Pay / Google Pay
         </button>
