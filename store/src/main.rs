@@ -11052,6 +11052,49 @@ async fn blog_100_in_20() -> Html<String> {
     Html(render_blog_md("100 着 / 20 日 — 素材・価格・クーポン戦略の全部出し", BLOG_100_IN_20_RAW))
 }
 
+/// /grachan82 — Sato Ion (佐藤生穏) MMA pro debut 応援パック.
+/// Password-gated insiders-only landing for kokon BBQ + Schrödinger T-shirt.
+async fn grachan82_page(headers: HeaderMap, axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>) -> Response {
+    let pw = kokon_partner_password();
+    let entered = q.get("pass").map(String::as_str).unwrap_or("");
+    let authed = entered == pw || has_kokon_partner_cookie(&headers, &pw);
+    if !authed {
+        return axum::response::Html(partner_proposal_gate_html("kokon", "kokon × GRACHAN.82")).into_response();
+    }
+    let mut resp = axum::response::Html(include_str!("../static/grachan82.html")).into_response();
+    if entered == pw {
+        let _ = resp.headers_mut().insert(
+            header::SET_COOKIE,
+            HeaderValue::from_str(&format!("mu_kokon_partner={}; Path=/; Max-Age=2592000; SameSite=Lax", pw)).unwrap(),
+        );
+    }
+    resp
+}
+
+/// GET /api/product/grachan82 — slim product info for the LP (stock + payment link).
+async fn api_product_grachan82(State(db): State<Db>) -> Response {
+    let row: Option<(i64, String, i64, i64, i64, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT id, name, price_jpy, inventory, sold, payment_link_url
+             FROM products WHERE brand='grachan82' AND active=1 LIMIT 1",
+            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5).ok())),
+        ).ok()
+    };
+    match row {
+        Some((id, name, price, inv, sold, pl)) => Json(serde_json::json!({
+            "id": id, "name": name, "price_jpy": price,
+            "inventory": inv, "sold": sold,
+            "payment_link_url": pl,
+        })).into_response(),
+        None => Json(serde_json::json!({
+            "id": 0, "name": "GRACHAN.82 応援パック",
+            "price_jpy": 8000, "inventory": 30, "sold": 0,
+            "payment_link_url": null,
+        })).into_response(),
+    }
+}
+
 /// /buy — single-product friction-minimum LP for paid/SNS traffic. Renders
 /// the latest available MUGEN drop in a 2-column hero with price, stock,
 /// countdown, size picker, and a 1-click Stripe checkout button. Targeted
@@ -33374,6 +33417,9 @@ async fn main() {
         .route("/blog/suzuri-vs-printful-spec", get(blog_suzuri_vs_printful))
         .route("/blog/spec-and-prompt", get(blog_spec_and_prompt))
         .route("/blog/100-in-20-days-strategy", get(blog_100_in_20))
+        .route("/grachan82", get(grachan82_page))
+        .route("/sato-ion", get(grachan82_page))
+        .route("/api/product/grachan82", get(api_product_grachan82))
         .route("/buy", get(buy_page))
         .route("/survey/quality", get(survey_quality_page))
         .route("/api/poll/quality", get(quality_poll_results))
