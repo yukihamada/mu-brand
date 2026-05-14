@@ -34844,6 +34844,26 @@ async fn main() {
          Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
          None, 10, 1),
 
+        // ── v4 追加 3 SKU (2026-05-14) — ポロライン (前室・接客・厨房) ──
+        ("kokon-polo",       "金糸ポロ (K500)",      "MU × KOKON Premium Polo | Port Authority K500",
+         "Printful Port Authority K500 (pid 340)、Black silk-touch。左胸に KOKON wordmark を金糸 (#A67843 Old Gold) で刺繍。前室・接客・予約対応スタッフ向けの正装ポロ。 シルクのような滑らかな質感が、 完全個室の落ち着いた空気感とちょうど良く同調する。",
+         8_800,  "printful", Some(340), Some(9899),
+         Some(r#"{"S":9898,"M":9899,"L":9900,"XL":9901,"2XL":9902,"3XL":15427,"4XL":15428,"5XL":15556}"#),
+         Some(r#"[{"type":"embroidery_chest_left","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         Some(r##"[{"id":"thread_colors_chest_left","value":["#A67843"]}]"##), 12, 1),
+        ("kokon-polo-pique", "ピケポロ (SOL'S)",     "MU × KOKON Pique Polo | SOL'S 11362",
+         "Printful SOL'S 11362 (pid 810)、Black premium pique。左胸に KOKON wordmark を金糸 (#A67843 Old Gold) で刺繍。 ピケ織りの程よい立体感で、 焼き場前のスタッフ・ホール接客の両方で活躍。 動きやすさと品の良さを両立。",
+         7_800,  "printful", Some(810), Some(20610),
+         Some(r#"{"S":20624,"M":20610,"L":20617,"XL":20631,"2XL":20638,"3XL":20645,"4XL":20652,"5XL":20659}"#),
+         Some(r#"[{"type":"embroidery_chest_left","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         Some(r##"[{"id":"thread_colors_chest_left","value":["#A67843"]}]"##), 10, 1),
+        ("kokon-polo-soft",  "ソフトポロ (Gildan)",  "MU × KOKON Soft Polo | Gildan 64800",
+         "Printful Gildan 64800 Softstyle (pid 670)、Black。 左胸に KOKON wordmark を金糸 (#A67843 Old Gold) で刺繍。 軽量で動きやすく、 厨房・バックヤード・焼き場補助スタッフ向け。 価格を抑えた配布用ポロとしても適合。",
+         5_800,  "printful", Some(670), Some(16753),
+         Some(r#"{"S":16752,"M":16753,"L":16754,"XL":16755,"2XL":16756,"3XL":16757,"4XL":16758}"#),
+         Some(r#"[{"type":"embroidery_chest_left","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         Some(r##"[{"id":"thread_colors_chest_left","value":["#A67843"]}]"##), 10, 1),
+
         // ── v1 旧 SKU (KOKON 世界観ミスマッチ) は active=0 で hide ──
         ("kokon-hoodie",    "ヘビーフーディ",   "MU × kokon.tokyo Heavy Hoodie (旧)",
          "[非表示] v2 で kokon-crewneck に集約 (T+クルーネックで十分)。",
