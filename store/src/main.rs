@@ -9055,6 +9055,8 @@ async fn create_printful_order(key: String, db: Db, product_id: i64, session: se
         format!("kichinan_{}", rest)
     } else if let Some(rest) = brand.strip_prefix("elsoul_") {
         format!("kichinan_{}", rest)
+    } else if let Some(rest) = brand.strip_prefix("ele_") {
+        format!("kichinan_{}", rest)
     } else { brand.clone() };
     let variant_id: u64 = match (brand_lookup.as_str(), size) {
         // ── One-size accessories ──
@@ -14421,6 +14423,153 @@ async fn proposal_asoview_bundle(State(db): State<Db>, Json(body): Json<Proposal
 }
 async fn proposal_elsoul_bundle(State(db): State<Db>, Json(body): Json<ProposalBundleBody>) -> Response {
     issue_proposal_bundle_link(db, "elsoul", ELSOUL_DESIGNS, body).await
+}
+
+// ── ELE pet-line approval gate ────────────────────────────────────────────
+// Internal collab — yuki's dog ELE (bichon frisé × toy poodle mix, 2 yo)
+// as a non-corporate MU mascot for a 12-SKU pet line. Same gate pattern:
+// /ele 404 until ele_approval row is non-revoked, then public LP at /ele.
+fn ensure_ele_approval_table(db: &Db) {
+    let conn = db.lock().unwrap();
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS ele_approval (
+            id INTEGER PRIMARY KEY,
+            approved_at TEXT, approver_name TEXT, approver_email TEXT,
+            approver_ip TEXT, plan_tier TEXT, note TEXT, revoked_at TEXT
+         )", [],
+    );
+}
+fn ele_approval_row(conn: &rusqlite::Connection) -> Option<(String, String, String, String, Option<String>)> {
+    conn.query_row(
+        "SELECT approved_at, approver_name, approver_email, COALESCE(plan_tier,''), revoked_at
+         FROM ele_approval WHERE id=1 AND approved_at IS NOT NULL",
+        [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+    ).ok()
+}
+fn ele_is_approved(conn: &rusqlite::Connection) -> bool {
+    ele_approval_row(conn).map(|t| t.4.is_none()).unwrap_or(false)
+}
+async fn proposal_ele() -> Html<&'static str> {
+    Html(include_str!("../static/proposals/ele.html"))
+}
+async fn proposal_ele_status(State(db): State<Db>) -> impl IntoResponse {
+    let conn = db.lock().unwrap();
+    let row = ele_approval_row(&conn);
+    let approved = row.as_ref().map(|t| t.4.is_none()).unwrap_or(false);
+    let (approved_at, approver_name, plan_tier) = match &row {
+        Some((at, n, _, p, _)) => (
+            Some(at.clone()),
+            Some(n.split_whitespace().next().unwrap_or("—").to_string()),
+            Some(p.clone()),
+        ),
+        None => (None, None, None),
+    };
+    let active_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM products WHERE brand LIKE 'ele_%' AND active=1",
+        [], |r| r.get(0),
+    ).unwrap_or(0);
+    Json(serde_json::json!({
+        "approved": approved, "approved_at": approved_at,
+        "approver_first_name": approver_name, "plan_tier": plan_tier,
+        "products_active": active_count, "products_total": ELE_DESIGNS.len(),
+        "public_url": "https://wearmu.com/ele",
+    }))
+}
+#[derive(Deserialize)]
+struct EleApproveBody {
+    approver_name: String, approver_email: String,
+    #[serde(default)] plan_tier: String,
+    #[serde(default)] note: String,
+}
+async fn proposal_ele_approve(
+    State(db): State<Db>, headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<EleApproveBody>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/proposals/ele/approve").await { return r; }
+    let name = body.approver_name.trim();
+    let email = body.approver_email.trim().to_lowercase();
+    if name.is_empty() || !email.contains('@') {
+        return (StatusCode::BAD_REQUEST, "approver_name + valid approver_email required").into_response();
+    }
+    let plan = body.plan_tier.trim().to_lowercase();
+    let plan = if plan.is_empty() { "starter".into() } else { plan };
+    let ip = client_ip(&headers);
+    let now = chrono_now();
+    let activated: usize = {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO ele_approval
+                (id, approved_at, approver_name, approver_email, approver_ip, plan_tier, note, revoked_at)
+             VALUES (1, ?, ?, ?, ?, ?, ?, NULL)
+             ON CONFLICT(id) DO UPDATE SET
+                approved_at=excluded.approved_at, approver_name=excluded.approver_name,
+                approver_email=excluded.approver_email, approver_ip=excluded.approver_ip,
+                plan_tier=excluded.plan_tier, note=excluded.note, revoked_at=NULL",
+            params![now, name, email, ip, plan, body.note.trim()],
+        );
+        conn.execute(
+            "UPDATE products SET active=1 WHERE brand LIKE 'ele_%' AND active=0",
+            [],
+        ).unwrap_or(0)
+    };
+    eprintln!("[ele] approved by {} <{}> activated={}", name, email, activated);
+    let alert = format!(
+        "━◯━ ele pet-line APPROVED\napprover: {} <{}>\nactivated: {}/{}\nat: {}\npublic LP: https://wearmu.com/ele",
+        name, email, activated, ELE_DESIGNS.len(), now,
+    );
+    tokio::spawn(async move { send_telegram_message(&alert).await; });
+    Json(serde_json::json!({
+        "ok": true, "approved_at": now, "public_url": "https://wearmu.com/ele",
+        "products_activated": activated, "plan_tier": plan,
+    })).into_response()
+}
+async fn proposal_ele_revoke(
+    State(db): State<Db>, headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/proposals/ele/revoke").await { return r; }
+    let now = chrono_now();
+    let deactivated: usize = {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute("UPDATE ele_approval SET revoked_at=? WHERE id=1", params![now]);
+        conn.execute("UPDATE products SET active=0 WHERE brand LIKE 'ele_%' AND active=1", [])
+            .unwrap_or(0)
+    };
+    Json(serde_json::json!({ "ok": true, "revoked_at": now, "products_deactivated": deactivated })).into_response()
+}
+
+async fn ele_public_page(State(db): State<Db>) -> Response {
+    let approved = { let c = db.lock().unwrap(); ele_is_approved(&c) };
+    if !approved {
+        return render_404_tee_page(&db, "/ele");
+    }
+    Html(include_str!("../static/proposals/ele.html")).into_response()
+}
+
+// 12 SKU pet line for ELE (bichon × poodle mix, 2yo). Kinds mirror the
+// kichinan catalog so the existing variant-id table services them via the
+// ele_*/asoview_*/elsoul_* → kichinan_* normalization in create_printful_order.
+const ELE_DESIGNS: &[(&str, i64, i64, &str, &str, &str)] = &[
+    ("a", 1, 5400, "ele name back-print",         "tee",        "a"),
+    ("b", 2, 5400, "MIX = BEST",                  "tee",        "b"),
+    ("c", 3, 4800, "I'm ELE's human (pair tee)",  "tee",        "c"),
+    ("d", 4, 2800, "ELE bandana",                 "sticker",    "d"), // bandana fallback → sticker (small)
+    ("e", 5, 4200, "paw trace tote",              "tote",       "e"),
+    ("f", 6, 7800, "ELE name embroidery polo",    "polo",       "f"),
+    ("g", 7, 5400, "bichon x poodle = ele math",  "tee",        "g"),
+    ("h", 8, 2400, "ELE silhouette mug",          "mug",        "h"),
+    ("i", 9, 5400, "Walked by ELE",               "tee",        "i"),
+    ("j",10, 1800, "ELE sticker pack 5",          "sticker",    "j"),
+    ("k",11, 9800, "Still sleeping with ELE",     "hoodie",     "k"),
+    ("l",12, 5800, "ELE walk reflective cap",     "cap",        "l"),
+];
+
+async fn proposal_ele_sample(State(db): State<Db>, Json(body): Json<ProposalSampleBody>) -> Response {
+    issue_proposal_sample_link(db, "ele", ELE_DESIGNS, body).await
+}
+async fn proposal_ele_bundle(State(db): State<Db>, Json(body): Json<ProposalBundleBody>) -> Response {
+    issue_proposal_bundle_link(db, "ele", ELE_DESIGNS, body).await
 }
 
 /// GET /en/press — English-default version. Same content, but we flip
@@ -36364,23 +36513,27 @@ async fn main() {
     ensure_kichinan_approval_table(&db);
     ensure_asoview_approval_table(&db);
     ensure_elsoul_approval_table(&db);
+    ensure_ele_approval_table(&db);
     seed_kichinan_sample_products(&db);
     seed_proposal_sample_products(&db, "asoview", ASOVIEW_DESIGNS, "Asoview Inc.");
     seed_proposal_sample_products(&db, "elsoul",  ELSOUL_DESIGNS,  "ELSOUL LABO B.V.");
-    // If asoview / elsoul approvals exist, re-assert active=1 on every SKU.
+    seed_proposal_sample_products(&db, "ele",     ELE_DESIGNS,     "ELE / yuki");
+    // If asoview / elsoul / ele approvals exist, re-assert active=1 on SKUs.
     {
         let conn = db.lock().unwrap();
-        if asoview_is_approved(&conn) {
-            let _ = conn.execute(
-                "UPDATE products SET active=1 WHERE brand LIKE 'asoview_%' AND active=0",
-                [],
-            );
-        }
-        if elsoul_is_approved(&conn) {
-            let _ = conn.execute(
-                "UPDATE products SET active=1 WHERE brand LIKE 'elsoul_%' AND active=0",
-                [],
-            );
+        for slug in &["asoview", "elsoul", "ele"] {
+            let approved = match *slug {
+                "asoview" => asoview_is_approved(&conn),
+                "elsoul"  => elsoul_is_approved(&conn),
+                "ele"     => ele_is_approved(&conn),
+                _ => false,
+            };
+            if approved {
+                let _ = conn.execute(
+                    &format!("UPDATE products SET active=1 WHERE brand LIKE '{}\\_%' ESCAPE '\\' AND active=0", slug),
+                    [],
+                );
+            }
         }
     }
     // If the kichinan collab has already been approved, re-assert active=1
@@ -36581,6 +36734,13 @@ async fn main() {
         .route("/api/proposals/elsoul/sample",   post(proposal_elsoul_sample))
         .route("/api/proposals/elsoul/bundle",   post(proposal_elsoul_bundle))
         .route("/elsoul", get(elsoul_public_page))
+        .route("/proposals/ele",                 get(proposal_ele))
+        .route("/api/proposals/ele/status",      get(proposal_ele_status))
+        .route("/api/proposals/ele/approve",     post(proposal_ele_approve))
+        .route("/api/proposals/ele/revoke",      post(proposal_ele_revoke))
+        .route("/api/proposals/ele/sample",      post(proposal_ele_sample))
+        .route("/api/proposals/ele/bundle",      post(proposal_ele_bundle))
+        .route("/ele", get(ele_public_page))
         .nest_service("/proposals", ServeDir::new("static/proposals"))
         .route("/api/collab/account/delete", post(collab_account_delete))
         .route("/api/404/buy", post(not_found_buy))
