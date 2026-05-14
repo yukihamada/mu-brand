@@ -983,6 +983,38 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
       </div>
 
       <div class="divider"></div>
+      <!-- Fabric / route picker — Constitution §24-v2 dual-channel.
+           Two variant cards. Default selection = locale (ja* → SUZURI,
+           else → Stripe), but お客様 can override either way. Hidden
+           when the product has no SUZURI mirror yet (suzuri_url null). -->
+      <div id="m-fabric-picker" style="display:none">
+        <div style="font-size:8px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.55;margin-bottom:10px">素材を選ぶ / Choose fabric</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px" id="fabric-cards">
+          <label class="fabric-card" data-variant="suzuri"
+                 style="cursor:pointer;padding:11px 12px;border:1px solid rgba(255,138,138,0.35);background:rgba(255,138,138,0.04);border-radius:3px;display:flex;flex-direction:column;gap:4px;transition:all 0.15s ease">
+            <input type="radio" name="fabric" value="suzuri" style="display:none">
+            <div style="display:flex;justify-content:space-between;align-items:baseline">
+              <span style="font-size:10px;letter-spacing:0.3em;text-transform:uppercase;color:#ff8a8a;font-weight:600">🇯🇵 Standard</span>
+              <span style="font-size:14px;color:#fff;font-weight:600" id="fc-suzuri-price">¥4,900</span>
+            </div>
+            <div style="font-size:10.5px;line-height:1.55;color:rgba(245,245,240,0.78)">Printstar 5.6oz · generic crew</div>
+            <div style="font-size:9px;letter-spacing:0.04em;opacity:0.55">国内 SUZURI · 2-3 日着</div>
+          </label>
+          <label class="fabric-card" data-variant="stripe"
+                 style="cursor:pointer;padding:11px 12px;border:1px solid rgba(230,196,73,0.35);background:rgba(230,196,73,0.05);border-radius:3px;display:flex;flex-direction:column;gap:4px;transition:all 0.15s ease">
+            <input type="radio" name="fabric" value="stripe" style="display:none">
+            <div style="display:flex;justify-content:space-between;align-items:baseline">
+              <span style="font-size:10px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;font-weight:600">★ Premium</span>
+              <span style="font-size:14px;color:#fff;font-weight:600" id="fc-stripe-price">¥—</span>
+            </div>
+            <div style="font-size:10.5px;line-height:1.55;color:rgba(245,245,240,0.78)">Stanley/Stella SATU001 · 180gsm · リブ襟</div>
+            <div style="font-size:9px;letter-spacing:0.04em;opacity:0.55">GOTS organic · EU 製 · Printful 1-2 週</div>
+          </label>
+        </div>
+        <div style="font-size:10px;line-height:1.7;opacity:0.6;margin-bottom:14px">
+          仕様差 ・ 価格差の詳細は <a href="/blog/suzuri-vs-printful-spec" style="color:#e6c449" data-funnel="cta_click" data-funnel-cta="modal_to_spec_blog">記事</a> で。
+        </div>
+      </div>
       <div>
         <div style="font-size:8px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5;margin-bottom:10px">Size</div>
         <div class="select-row" id="size-btns">
@@ -1971,82 +2003,111 @@ function openModal(p, pushHistory=true){
   const sizeSection = document.querySelector('#modal .select-row')?.closest('div');
   if(sizeSection) sizeSection.style.display = p.brand==='ma' ? 'none' : 'block';
 
-  // ── Channel split (Constitution §24-v2): JP = SUZURI のみ、海外 = Printful (Stripe) のみ ──
-  // Buyer locale is detected from navigator.language. ?force=jp/intl overrides.
-  // Fallback: if a product hasn't been mirrored to SUZURI yet (suzuri_url null),
-  // JP buyers also see the Stripe path so the drop is still purchasable.
+  // ── Fabric picker (Constitution §24-v2 dual-channel) ──
+  // お客様 explicitly chooses between SUZURI (¥4,900 国内 Printstar) and
+  // Stripe (¥7,800 Stanley/Stella SATU001). Default is locale-based
+  // (ja* → suzuri, else → stripe), but the picker can override.
+  // If a drop hasn't been SUZURI-mirrored yet, Stripe is the only option.
   const _override = new URLSearchParams(location.search).get('force');
   const isJP = _override === 'jp' ? true
              : _override === 'intl' ? false
              : /^ja\b/i.test(navigator.language || '');
   const hasSuzuri = !!(p.suzuri_url && rem > 0);
-  const showSuzuriOnly = isJP && hasSuzuri;
+  // Default selection: JP+SUZURI → suzuri, otherwise → stripe.
+  let CHOSEN_VARIANT = (hasSuzuri && isJP) ? 'suzuri' : 'stripe';
 
   const btn = document.getElementById('btn-buy');
-  btn.textContent = `Purchase — ¥${p.price_jpy.toLocaleString()} (≈ $${usd})`;
   btn.className = 'btn-primary'+(p.brand==='mugen'?' red':'');
   btn.disabled = rem<=0;
-  // JP buyers go through SUZURI for ¥4,900 国内発送 — hide the Stripe Purchase
-  // button entirely so the channel is unambiguous.
-  btn.style.display = showSuzuriOnly ? 'none' : '';
 
-  // Quick-buy via Stripe Payment Link — same channel split as the main Purchase
-  // button. Hidden for JP when SUZURI is available.
   const quick = document.getElementById('btn-quick');
-  if (quick) {
-    if (p.payment_link_url && rem > 0 && !showSuzuriOnly) {
-      quick.href = p.payment_link_url;
-      quick.style.display = 'block';
-    } else {
-      quick.style.display = 'none';
-      quick.removeAttribute('href');
-    }
-  }
-
-  // SUZURI marketplace mirror (§24-v2): JP のお客様にだけ表示。海外には非表示。
   const suzuri = document.getElementById('btn-suzuri');
-  if (suzuri) {
-    if (hasSuzuri && isJP) {
-      suzuri.href = p.suzuri_url;
-      suzuri.style.display = 'block';
-    } else {
-      suzuri.style.display = 'none';
-      suzuri.removeAttribute('href');
-    }
-  }
-
-  // Apple Pay / Google Pay (Stripe Embedded Checkout) — also Stripe channel,
-  // so hide it for JP visitors when SUZURI is available.
   const expressBtn = document.getElementById('btn-express');
-  if (expressBtn && showSuzuriOnly) expressBtn.style.display = 'none';
-
-  // Fabric note — show JP or 海外 variant based on the resolved channel.
-  // The note links to /blog/fabric-shift for the full breakdown.
   const fabricNote = document.getElementById('fabric-note');
-  if (fabricNote) {
-    const jp = fabricNote.querySelector('.note-jp');
-    const intl = fabricNote.querySelector('.note-intl');
-    if (jp)   jp.style.display   = showSuzuriOnly ? 'block' : 'none';
-    if (intl) intl.style.display = showSuzuriOnly ? 'none'  : 'block';
+  const fabricPicker = document.getElementById('m-fabric-picker');
+
+  // Configure fabric cards
+  const fcSuzuri = fabricPicker?.querySelector('[data-variant="suzuri"]');
+  const fcStripe = fabricPicker?.querySelector('[data-variant="stripe"]');
+  const fcStripePrice = document.getElementById('fc-stripe-price');
+  if (fcStripePrice) fcStripePrice.textContent = '¥' + p.price_jpy.toLocaleString();
+  if (fabricPicker) {
+    fabricPicker.style.display = hasSuzuri ? 'block' : 'none';
+    if (fcSuzuri) fcSuzuri.style.display = hasSuzuri ? 'flex' : 'none';
   }
 
-  // When SUZURI-only: hide every other form child (email input, NFT details,
-  // size hint, checkout-msg) so JP buyers see ONE clear CTA — the SUZURI link.
-  // The size <select> lives outside the form; hide it via sizeSection too.
-  document.querySelectorAll('#checkout-form > *').forEach(el => {
-    if (el.id === 'btn-suzuri') return;
-    if (el.id === 'fabric-note') return;
-    if (!showSuzuriOnly) {
-      // Restore — only btn-buy / btn-quick / btn-express keep their own
-      // display logic above; everything else clears the inline override.
-      if (!['btn-buy','btn-quick','btn-express','stripe-embedded'].includes(el.id || '')) {
-        el.style.display = '';
-      }
-      return;
+  // Apply the visible state given the currently-chosen variant.
+  function applyFabricVariant(variant) {
+    CHOSEN_VARIANT = variant;
+    const showSuzuri = (variant === 'suzuri' && hasSuzuri);
+    // Card highlight
+    if (fcSuzuri) {
+      fcSuzuri.style.borderColor = showSuzuri ? '#ff8a8a' : 'rgba(255,138,138,0.35)';
+      fcSuzuri.style.background  = showSuzuri ? 'rgba(255,138,138,0.10)' : 'rgba(255,138,138,0.04)';
+      const r = fcSuzuri.querySelector('input'); if (r) r.checked = showSuzuri;
     }
-    el.style.display = 'none';
+    if (fcStripe) {
+      fcStripe.style.borderColor = !showSuzuri ? '#e6c449' : 'rgba(230,196,73,0.35)';
+      fcStripe.style.background  = !showSuzuri ? 'rgba(230,196,73,0.12)' : 'rgba(230,196,73,0.05)';
+      const r = fcStripe.querySelector('input'); if (r) r.checked = !showSuzuri;
+    }
+    // Buttons
+    btn.textContent = showSuzuri
+      ? `¥4,900 で SUZURI へ進む →`
+      : `Purchase — ¥${p.price_jpy.toLocaleString()} (≈ $${usd})`;
+    btn.style.display = showSuzuri ? 'none' : '';
+    if (suzuri) {
+      if (showSuzuri) {
+        suzuri.href = p.suzuri_url; suzuri.style.display = 'block';
+      } else {
+        suzuri.style.display = 'none'; suzuri.removeAttribute('href');
+      }
+    }
+    if (quick) {
+      if (p.payment_link_url && rem > 0 && !showSuzuri) {
+        quick.href = p.payment_link_url; quick.style.display = 'block';
+      } else {
+        quick.style.display = 'none'; quick.removeAttribute('href');
+      }
+    }
+    if (expressBtn) expressBtn.style.display = showSuzuri ? 'none' : '';
+    if (fabricNote) {
+      const jp = fabricNote.querySelector('.note-jp');
+      const intl = fabricNote.querySelector('.note-intl');
+      if (jp)   jp.style.display   = showSuzuri ? 'block' : 'none';
+      if (intl) intl.style.display = showSuzuri ? 'none'  : 'block';
+    }
+    // Stripe-form children: hide everything but the SUZURI link + fabric-note
+    // when SUZURI path is chosen (no email/NFT/size form needed there).
+    document.querySelectorAll('#checkout-form > *').forEach(el => {
+      if (el.id === 'btn-suzuri') return;
+      if (el.id === 'fabric-note') return;
+      if (!showSuzuri) {
+        if (!['btn-buy','btn-quick','btn-express','stripe-embedded'].includes(el.id || '')) {
+          el.style.display = '';
+        }
+        return;
+      }
+      el.style.display = 'none';
+    });
+    if (sizeSection) sizeSection.style.display = (p.brand==='ma' || showSuzuri) ? 'none' : 'block';
+  }
+
+  // Click handler — let お客様 override the default.
+  fabricPicker?.querySelectorAll('.fabric-card').forEach(card => {
+    card.addEventListener('click', (e) => {
+      e.preventDefault();
+      const v = card.getAttribute('data-variant');
+      if (v === 'suzuri' && !hasSuzuri) return;
+      applyFabricVariant(v);
+      // Track per-pick funnel signal
+      if (window.MU_FUNNEL?.send) {
+        window.MU_FUNNEL.send('cta_click', { product_id: p.id, cta: 'fabric_pick_' + v });
+      }
+    });
   });
-  if (sizeSection && showSuzuriOnly) sizeSection.style.display = 'none';
+
+  applyFabricVariant(CHOSEN_VARIANT);
 
   document.getElementById('modal').classList.add('open');
 
