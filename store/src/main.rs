@@ -13233,7 +13233,10 @@ async fn proposal_kichinan_sample(
         }
     };
     let client = reqwest::Client::new();
-    let product_name = format!("━◯━ MU × KICHINAN sample · {} · {} · {}", design_lower.to_uppercase(), label, size);
+    // ASCII-only name to avoid any Stripe form-encoding edge cases with
+    // multi-byte chars (━◯━ × · …). Localized label still rides in metadata.
+    let product_name = format!("MU x KICHINAN sample - {} - {} - {}",
+        design_lower.to_uppercase(), label, size);
     let mockup_url = format!("https://wearmu.com/proposals/mockup-{}.png", design_lower);
     let price_form: Vec<(&str, String)> = vec![
         ("currency", "jpy".into()),
@@ -13241,15 +13244,25 @@ async fn proposal_kichinan_sample(
         ("product_data[name]", product_name),
         ("product_data[images][0]", mockup_url),
     ];
-    let price_id: String = match client.post("https://api.stripe.com/v1/prices")
+    let raw_resp = match client.post("https://api.stripe.com/v1/prices")
         .basic_auth(&stripe_key, Some("")).form(&price_form).send().await {
-        Ok(r) => match r.json::<serde_json::Value>().await {
-            Ok(v) => v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-            Err(_) => return (StatusCode::BAD_GATEWAY, "stripe price parse").into_response(),
-        },
-        Err(e) => return (StatusCode::BAD_GATEWAY, format!("stripe price: {}", e)).into_response(),
+        Ok(r) => {
+            let status = r.status();
+            let body = r.text().await.unwrap_or_default();
+            if !status.is_success() {
+                eprintln!("[kichinan_sample] stripe price {} → {}", status, body.chars().take(500).collect::<String>());
+                return (StatusCode::BAD_GATEWAY, format!("stripe {}: {}", status, body.chars().take(300).collect::<String>())).into_response();
+            }
+            body
+        }
+        Err(e) => return (StatusCode::BAD_GATEWAY, format!("stripe price http: {}", e)).into_response(),
     };
+    let price_id: String = serde_json::from_str::<serde_json::Value>(&raw_resp)
+        .ok()
+        .and_then(|v| v.get("id").and_then(|x| x.as_str()).map(String::from))
+        .unwrap_or_default();
     if price_id.is_empty() {
+        eprintln!("[kichinan_sample] stripe 200 but no id in body: {}", raw_resp.chars().take(500).collect::<String>());
         return (StatusCode::BAD_GATEWAY, "stripe returned no price id").into_response();
     }
     let pl_form: Vec<(&str, String)> = vec![
