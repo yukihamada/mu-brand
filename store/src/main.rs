@@ -9025,63 +9025,83 @@ async fn create_printful_order(key: String, db: Db, product_id: i64, session: se
     // Variant IDs are Printful catalog ids; for kichinan_*_sample they
     // may need adjustment to match yuki's actual Printful catalog.
     let size = full_session["metadata"]["size"].as_str().unwrap_or("M");
+    // Printful variant IDs verified against catalog API on 2026-05-14.
+    // Black/default color where available; one-size for accessories.
     let variant_id: u64 = match (brand.as_str(), size) {
-        // One-size accessories
-        ("kichinan_cap_sample", _)       => 7854,  // Yupoong Snapback (cat 92)
-        ("kichinan_tote_sample", _)      => 7763,  // Natural canvas tote (cat 256)
-        ("kichinan_mug_sample", _)       => 1320,  // 11oz white ceramic mug (cat 19)
-        ("kichinan_beanie_sample", _)    => 7858,  // Yupoong cuffed beanie (cat 24)
-        ("kichinan_sticker_sample", _)   => 10164, // Kiss-cut sticker 4×4 (cat 358)
-        ("kichinan_mousepad_sample", _)  => 14942, // Mouse pad (cat 162)
-        ("kichinan_phonecase_sample", _) => 9620,  // Tough iPhone case (cat 181)
-        ("kichinan_notebook_sample", _)  => 14997, // Hardcover notebook (cat 433)
-        ("kichinan_puzzle_sample", _)    => 13651, // 100-piece puzzle (cat 358)
-        ("kichinan_pillow_sample", _)    => 6480,  // 18×18 throw pillow (cat 73)
-        ("kichinan_blanket_sample", _)   => 12605, // Sherpa blanket (cat 354)
-        ("kichinan_pin_sample", _)       => 7706,  // 38mm round pin (cat 158)
-        ("kichinan_magnet_sample", _)    => 11420, // Magnet square (cat 326)
-        ("kichinan_postcard_sample", _)  => 13252, // Postcard (cat 379)
-        ("kichinan_poster_sample", _)    => 1,     // Poster A3 (cat 1)
-        ("kichinan_canvas_sample", _)    => 1320,  // Canvas 30×30 (cat 142) — placeholder
-        ("kichinan_socks_sample", _)     => 11883, // Crew socks (cat 343)
-        ("kichinan_bandana_sample", _)   => 16037, // Bandana (cat 451)
-        ("kichinan_kids_tote_sample", _) => 7763,  // Smaller tote — placeholder
-        ("kichinan_baby_bib_sample", _)  => 6700,  // Baby bib (cat 181)
-        // Sized adult outerwear
-        ("kichinan_hoodie_sample", "S")  => 5530,  // Gildan 18500
-        ("kichinan_hoodie_sample", "M")  => 5531,
-        ("kichinan_hoodie_sample", "L")  => 5532,
-        ("kichinan_hoodie_sample", "XL") => 5533,
-        ("kichinan_hoodie_sample", _)    => 5531,
-        ("kichinan_longsleeve_sample", "S")  => 4279, // BC 3501
-        ("kichinan_longsleeve_sample", "M")  => 4280,
-        ("kichinan_longsleeve_sample", "L")  => 4281,
-        ("kichinan_longsleeve_sample", "XL") => 4282,
-        ("kichinan_longsleeve_sample", _)    => 4280,
-        // Kids' sized apparel — BC 3001Y youth tee + Gildan kids hoodie
-        ("kichinan_kids_hoodie_sample", "S")  => 5400, // approx Gildan 18500B
-        ("kichinan_kids_hoodie_sample", "M")  => 5401,
-        ("kichinan_kids_hoodie_sample", "L")  => 5402,
-        ("kichinan_kids_hoodie_sample", "XL") => 5403,
-        ("kichinan_kids_hoodie_sample", _)    => 5401,
-        ("kichinan_kids_longsleeve_sample", _) => 5410, // placeholder kids LS
-        ("kichinan_kids_sweat_sample", _)      => 5420, // placeholder kids crewneck
-        ("kichinan_baby_onesie_sample", _)     => 5000, // Rabbit Skins 4400 baby
-        // — L/N/O/P new Printful kinds —
-        ("kichinan_plush_sample", _)         => 17000, // Custom plush (cat 469, placeholder)
-        ("kichinan_acrylic_charm_sample", _) => 13088, // Acrylic charm (cat 274, placeholder)
-        ("kichinan_drawstring_sample", _)    => 9090,  // Drawstring sport bag (cat 290)
-        ("kichinan_kids_tee_sample", "S")    => 8867,  // Bella+Canvas 3001Y youth
-        ("kichinan_kids_tee_sample", "M")    => 8868,
-        ("kichinan_kids_tee_sample", "L")    => 8869,
-        ("kichinan_kids_tee_sample", "XL")   => 8870,
-        ("kichinan_kids_tee_sample", "110")  => 8867,
-        ("kichinan_kids_tee_sample", "120")  => 8867,
-        ("kichinan_kids_tee_sample", "130")  => 8868,
-        ("kichinan_kids_tee_sample", "140")  => 8869,
-        ("kichinan_kids_tee_sample", "150")  => 8870,
-        ("kichinan_kids_tee_sample", _)      => 8868,
-        // Default tee — Bella+Canvas 3001 / Stanley-Stella SATU001
+        // ── One-size accessories ──
+        ("kichinan_cap_sample", _)       => 4792,  // Yupoong 6089M Snapback Black
+        ("kichinan_tote_sample", _)      => 4533,  // All-Over Tote Black 15×15
+        ("kichinan_mug_sample", _)       => 1320,  // White Glossy Mug 11oz
+        ("kichinan_beanie_sample", _)    => 8936,  // Yupoong 1501KC Cuffed Beanie Black
+        ("kichinan_sticker_sample", _)   => 10164, // Kiss-Cut Stickers 4″×4″
+        ("kichinan_mousepad_sample", _)  => 13097, // Mouse Pad 8.7×7.1 White
+        ("kichinan_phonecase_sample", _) => 11705, // Clear iPhone Case 12 Pro Max (default)
+        ("kichinan_notebook_sample", _)  => 24305, // Ruled Line Spiral Notebook
+        ("kichinan_puzzle_sample", _)    => 13431, // Jigsaw Puzzle 252 pieces (no 100pc in cat)
+        ("kichinan_pillow_sample", _)    => 4532,  // All-Over Print Basic Pillow 18″×18″
+        ("kichinan_blanket_sample", _)   => 13222, // Throw blanket 60″×80″
+        ("kichinan_pin_sample", _)       => 20250, // Acrylic Ornaments Circle (Printful has no pin)
+        ("kichinan_magnet_sample", _)    => 22710, // Car Magnets 5″×5″ White
+        ("kichinan_postcard_sample", _)  => 23719, // Post-it® 4×6 (closest to postcard)
+        ("kichinan_poster_sample", _)    => 8948,  // Matte Poster 30×40 cm (cat 268)
+        ("kichinan_canvas_sample", _)    => 4464,  // Matte Poster 12×12 in — canvas fallback
+        ("kichinan_socks_sample", _)     => 7290,  // Black Foot Sublimated Socks M
+        ("kichinan_bandana_sample", _)   => 16032, // All-Over Print Bandana White M
+        ("kichinan_kids_tote_sample", _) => 4533,  // Tote (same as G)
+        ("kichinan_baby_bib_sample", _)  => 22328, // RS 3322 Baby Jersey Tee 6M Black (no bib in cat)
+        ("kichinan_plush_sample", _)     => 20425, // Teddy Bear with a T-shirt White
+        ("kichinan_acrylic_charm_sample", _) => 20250, // Acrylic Ornaments Circle
+        ("kichinan_drawstring_sample", _)    => 8894,  // All-Over Print Drawstring Bag 15×17
+        // ── Sized adult apparel ──
+        // Hoodie: Bella+Canvas 3719 Black
+        ("kichinan_hoodie_sample", "S")  => 9227,
+        ("kichinan_hoodie_sample", "M")  => 9228,
+        ("kichinan_hoodie_sample", "L")  => 9229,
+        ("kichinan_hoodie_sample", "XL") => 9230,
+        ("kichinan_hoodie_sample", _)    => 9228,
+        // Long sleeve: Bella+Canvas 3501 Black
+        ("kichinan_longsleeve_sample", "S")  => 10094,
+        ("kichinan_longsleeve_sample", "M")  => 10095,
+        ("kichinan_longsleeve_sample", "L")  => 10096,
+        ("kichinan_longsleeve_sample", "XL") => 10097,
+        ("kichinan_longsleeve_sample", _)    => 10095,
+        // ── Sized kids' apparel ──
+        // Kids tee: Bella+Canvas 3001Y Youth Black
+        ("kichinan_kids_tee_sample", "S")    => 9430,
+        ("kichinan_kids_tee_sample", "M")    => 9431,
+        ("kichinan_kids_tee_sample", "L")    => 9432,
+        ("kichinan_kids_tee_sample", "XL")   => 9433,
+        ("kichinan_kids_tee_sample", "110")  => 9430,
+        ("kichinan_kids_tee_sample", "120")  => 9430,
+        ("kichinan_kids_tee_sample", "130")  => 9431,
+        ("kichinan_kids_tee_sample", "140")  => 9432,
+        ("kichinan_kids_tee_sample", "150")  => 9433,
+        ("kichinan_kids_tee_sample", _)      => 9431,
+        // Kids LS: Bella+Canvas 3501Y Youth Black
+        ("kichinan_kids_longsleeve_sample", "S") => 12856,
+        ("kichinan_kids_longsleeve_sample", "M") => 12857,
+        ("kichinan_kids_longsleeve_sample", "L") => 12858,
+        ("kichinan_kids_longsleeve_sample", "XL")=> 12858, // fallback to L (XL not found yet)
+        ("kichinan_kids_longsleeve_sample", _)   => 12857,
+        // Kids hoodie: Gildan 18500B Youth Black
+        ("kichinan_kids_hoodie_sample", "S")  => 17260,
+        ("kichinan_kids_hoodie_sample", "M")  => 17262,
+        ("kichinan_kids_hoodie_sample", "L")  => 17263,
+        ("kichinan_kids_hoodie_sample", "XL") => 17264,
+        ("kichinan_kids_hoodie_sample", _)    => 17262,
+        // Kids crewneck sweat: Gildan 18000B Youth Black
+        ("kichinan_kids_sweat_sample", "S")  => 16788,
+        ("kichinan_kids_sweat_sample", "M")  => 16789,
+        ("kichinan_kids_sweat_sample", "L")  => 16790,
+        ("kichinan_kids_sweat_sample", "XL") => 16791,
+        ("kichinan_kids_sweat_sample", _)    => 16789,
+        // Baby onesie: Bella+Canvas 100B Black
+        ("kichinan_baby_onesie_sample", "S")  => 9446,  // 3-6m
+        ("kichinan_baby_onesie_sample", "M")  => 9447,  // 6-12m
+        ("kichinan_baby_onesie_sample", "L")  => 9448,  // 12-18m
+        ("kichinan_baby_onesie_sample", "XL") => 9448,
+        ("kichinan_baby_onesie_sample", _)    => 9447,
+        // ── Default tee (existing MUGEN/MUON path) — Bella+Canvas 3001 Black ──
         (_, "S")  => 4016,
         (_, "M")  => 4017,
         (_, "L")  => 4018,
