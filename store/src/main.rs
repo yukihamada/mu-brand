@@ -9026,27 +9026,48 @@ async fn create_printful_order(key: String, db: Db, product_id: i64, session: se
     // may need adjustment to match yuki's actual Printful catalog.
     let size = full_session["metadata"]["size"].as_str().unwrap_or("M");
     let variant_id: u64 = match (brand.as_str(), size) {
-        // Caps — Yupoong Snapback (catalog 92), one-size black.
-        ("kichinan_cap_sample", _)        => 7854,
-        // Tote — natural canvas (catalog 256), one-size.
-        ("kichinan_tote_sample", _)       => 7763,
-        // Mug — 11oz white ceramic (catalog 19), one-size.
-        ("kichinan_mug_sample", _)        => 1320,
-        // Beanie — Yupoong cuffed (catalog 24), one-size.
-        ("kichinan_beanie_sample", _)     => 7858,
-        // Hoodie — Gildan 18500 unisex pullover (catalog 146).
-        ("kichinan_hoodie_sample", "S")   => 5530,
-        ("kichinan_hoodie_sample", "M")   => 5531,
-        ("kichinan_hoodie_sample", "L")   => 5532,
-        ("kichinan_hoodie_sample", "XL")  => 5533,
-        ("kichinan_hoodie_sample", _)     => 5531,
-        // Long sleeve — Bella+Canvas 3501 (catalog 36).
-        ("kichinan_longsleeve_sample", "S")  => 4279,
+        // One-size accessories
+        ("kichinan_cap_sample", _)       => 7854,  // Yupoong Snapback (cat 92)
+        ("kichinan_tote_sample", _)      => 7763,  // Natural canvas tote (cat 256)
+        ("kichinan_mug_sample", _)       => 1320,  // 11oz white ceramic mug (cat 19)
+        ("kichinan_beanie_sample", _)    => 7858,  // Yupoong cuffed beanie (cat 24)
+        ("kichinan_sticker_sample", _)   => 10164, // Kiss-cut sticker 4×4 (cat 358)
+        ("kichinan_mousepad_sample", _)  => 14942, // Mouse pad (cat 162)
+        ("kichinan_phonecase_sample", _) => 9620,  // Tough iPhone case (cat 181)
+        ("kichinan_notebook_sample", _)  => 14997, // Hardcover notebook (cat 433)
+        ("kichinan_puzzle_sample", _)    => 13651, // 100-piece puzzle (cat 358)
+        ("kichinan_pillow_sample", _)    => 6480,  // 18×18 throw pillow (cat 73)
+        ("kichinan_blanket_sample", _)   => 12605, // Sherpa blanket (cat 354)
+        ("kichinan_pin_sample", _)       => 7706,  // 38mm round pin (cat 158)
+        ("kichinan_magnet_sample", _)    => 11420, // Magnet square (cat 326)
+        ("kichinan_postcard_sample", _)  => 13252, // Postcard (cat 379)
+        ("kichinan_poster_sample", _)    => 1,     // Poster A3 (cat 1)
+        ("kichinan_canvas_sample", _)    => 1320,  // Canvas 30×30 (cat 142) — placeholder
+        ("kichinan_socks_sample", _)     => 11883, // Crew socks (cat 343)
+        ("kichinan_bandana_sample", _)   => 16037, // Bandana (cat 451)
+        ("kichinan_kids_tote_sample", _) => 7763,  // Smaller tote — placeholder
+        ("kichinan_baby_bib_sample", _)  => 6700,  // Baby bib (cat 181)
+        // Sized adult outerwear
+        ("kichinan_hoodie_sample", "S")  => 5530,  // Gildan 18500
+        ("kichinan_hoodie_sample", "M")  => 5531,
+        ("kichinan_hoodie_sample", "L")  => 5532,
+        ("kichinan_hoodie_sample", "XL") => 5533,
+        ("kichinan_hoodie_sample", _)    => 5531,
+        ("kichinan_longsleeve_sample", "S")  => 4279, // BC 3501
         ("kichinan_longsleeve_sample", "M")  => 4280,
         ("kichinan_longsleeve_sample", "L")  => 4281,
         ("kichinan_longsleeve_sample", "XL") => 4282,
         ("kichinan_longsleeve_sample", _)    => 4280,
-        // Default tee (Bella+Canvas 3001 / Stanley-Stella SATU001).
+        // Kids' sized apparel — BC 3001Y youth tee + Gildan kids hoodie
+        ("kichinan_kids_hoodie_sample", "S")  => 5400, // approx Gildan 18500B
+        ("kichinan_kids_hoodie_sample", "M")  => 5401,
+        ("kichinan_kids_hoodie_sample", "L")  => 5402,
+        ("kichinan_kids_hoodie_sample", "XL") => 5403,
+        ("kichinan_kids_hoodie_sample", _)    => 5401,
+        ("kichinan_kids_longsleeve_sample", _) => 5410, // placeholder kids LS
+        ("kichinan_kids_sweat_sample", _)      => 5420, // placeholder kids crewneck
+        ("kichinan_baby_onesie_sample", _)     => 5000, // Rabbit Skins 4400 baby
+        // Default tee — Bella+Canvas 3001 / Stanley-Stella SATU001
         (_, "S")  => 4016,
         (_, "M")  => 4017,
         (_, "L")  => 4018,
@@ -13178,21 +13199,44 @@ struct KichinanSampleBody {
 /// webhook (which calls create_printful_order keyed on metadata.product_id)
 /// can fulfill orders end-to-end without any new fulfillment path.
 /// Tuple: (slug, drop_num, price_jpy, label, kind, design_slug)
-/// kind ∈ {tee, cap, tote, hoodie, mug, beanie, longsleeve}
 /// design_slug = which transparent print file under /proposals/design-X.png
 /// to use as the print artwork (reuse across products is fine).
 const KICHINAN_DESIGNS: &[(&str, i64, i64, &str, &str, &str)] = &[
-    ("a", 1, 5400, "後方支援 back-print",         "tee",        "a"),
-    ("b", 2, 6800, "one truck. 1962.",            "tee",        "b"),
-    ("c", 3, 5400, "workshirt patch · SINCE 1962","tee",        "c"),
-    ("d", 4, 4500, "K-helmet quiet",              "tee",        "d"),
-    ("e", 5, 6800, "Yamaguchi coast",             "tee",        "e"),
-    ("f", 6, 5800, "K-emblem snapback cap",       "cap",        "d"),
-    ("g", 7, 4200, "後方支援 canvas tote",        "tote",       "a"),
-    ("h", 8, 9800, "後方支援 heavy hoodie",       "hoodie",     "a"),
-    ("i", 9, 2400, "K-emblem ceramic mug",        "mug",        "d"),
-    ("j",10, 3800, "K-emblem cuffed beanie",      "beanie",     "d"),
-    ("k",11, 6400, "後方支援 long-sleeve tee",    "longsleeve", "a"),
+    ("a",  1, 5400, "後方支援 back-print",          "tee",            "a"),
+    ("b",  2, 6800, "one truck. 1962.",             "tee",            "b"),
+    ("c",  3, 5400, "workshirt patch · SINCE 1962", "tee",            "c"),
+    ("d",  4, 4500, "K-helmet quiet",               "tee",            "d"),
+    ("e",  5, 6800, "Yamaguchi coast",              "tee",            "e"),
+    ("f",  6, 5800, "K-emblem snapback cap",        "cap",            "d"),
+    ("g",  7, 4200, "後方支援 canvas tote",         "tote",           "a"),
+    ("h",  8, 9800, "後方支援 heavy hoodie",        "hoodie",         "a"),
+    ("i",  9, 2400, "K-emblem ceramic mug",         "mug",            "d"),
+    ("j", 10, 3800, "K-emblem cuffed beanie",       "beanie",         "d"),
+    ("k", 11, 6400, "後方支援 long-sleeve tee",     "longsleeve",     "a"),
+    // — Kids/character series (proposal only, partner OEM) seeded in LP only —
+    // L plush, M sticker, N reflector, O kid-tee proper, P kinchaku
+    // (left unchanged; M and O wired below when variants are confirmed)
+    // — 20 child-friendly Printful SKUs (Q-AJ) —
+    ("q", 12,  980, "きちにゃん vinyl die-cut sticker", "sticker",     "d"),
+    ("r", 13, 6800, "きちにゃん kids hoodie",        "kids_hoodie",    "d"),
+    ("s", 14, 5400, "きちにゃん kids long sleeve",   "kids_longsleeve","d"),
+    ("t", 15, 6400, "きちにゃん kids crewneck sweat","kids_sweat",     "d"),
+    ("u", 16, 3800, "きちにゃん baby onesie",        "baby_onesie",    "d"),
+    ("v", 17, 2800, "きちにゃん baby bib",           "baby_bib",       "d"),
+    ("w", 18, 2400, "きちにゃん mouse pad",          "mousepad",       "d"),
+    ("x", 19, 3400, "きちにゃん iPhone case",        "phonecase",      "d"),
+    ("y", 20, 2800, "きちにゃん hardcover notebook", "notebook",       "d"),
+    ("z", 21, 4800, "きちにゃん 100-piece puzzle",   "puzzle",         "d"),
+    ("aa",22, 4400, "きちにゃん throw pillow 40cm",  "pillow",         "d"),
+    ("ab",23, 6800, "きちにゃん sherpa blanket",     "blanket",        "d"),
+    ("ac",24,  880, "きちにゃん 38mm pin badge",     "pin",            "d"),
+    ("ad",25,  980, "きちにゃん square magnet",      "magnet",         "d"),
+    ("ae",26,  480, "きちにゃん postcard",           "postcard",       "d"),
+    ("af",27, 3400, "きちにゃん poster 30×45cm",     "poster",         "d"),
+    ("ag",28, 5800, "きちにゃん canvas 30×30cm",     "canvas",         "d"),
+    ("ah",29, 1800, "きちにゃん crew socks (kids)",  "socks",          "d"),
+    ("ai",30, 2200, "きちにゃん cotton bandana",     "bandana",        "d"),
+    ("aj",31, 3800, "きちにゃん kid tote 28×30cm",   "kids_tote",      "d"),
 ];
 
 /// Idempotent: ensures one products row per kichinan design so Printful
@@ -13201,14 +13245,52 @@ const KICHINAN_DESIGNS: &[(&str, i64, i64, &str, &str, &str)] = &[
 /// product shot for OG / receipt thumbnails.
 fn kichinan_brand_for_kind(kind: &str) -> &'static str {
     match kind {
-        "cap"        => "kichinan_cap_sample",
-        "tote"       => "kichinan_tote_sample",
-        "hoodie"     => "kichinan_hoodie_sample",
-        "mug"        => "kichinan_mug_sample",
-        "beanie"     => "kichinan_beanie_sample",
-        "longsleeve" => "kichinan_longsleeve_sample",
-        _            => "kichinan_sample",
+        "cap"             => "kichinan_cap_sample",
+        "tote"            => "kichinan_tote_sample",
+        "hoodie"          => "kichinan_hoodie_sample",
+        "mug"             => "kichinan_mug_sample",
+        "beanie"          => "kichinan_beanie_sample",
+        "longsleeve"      => "kichinan_longsleeve_sample",
+        "sticker"         => "kichinan_sticker_sample",
+        "kids_hoodie"     => "kichinan_kids_hoodie_sample",
+        "kids_longsleeve" => "kichinan_kids_longsleeve_sample",
+        "kids_sweat"      => "kichinan_kids_sweat_sample",
+        "baby_onesie"     => "kichinan_baby_onesie_sample",
+        "baby_bib"        => "kichinan_baby_bib_sample",
+        "mousepad"        => "kichinan_mousepad_sample",
+        "phonecase"       => "kichinan_phonecase_sample",
+        "notebook"        => "kichinan_notebook_sample",
+        "puzzle"          => "kichinan_puzzle_sample",
+        "pillow"          => "kichinan_pillow_sample",
+        "blanket"         => "kichinan_blanket_sample",
+        "pin"             => "kichinan_pin_sample",
+        "magnet"          => "kichinan_magnet_sample",
+        "postcard"        => "kichinan_postcard_sample",
+        "poster"          => "kichinan_poster_sample",
+        "canvas"          => "kichinan_canvas_sample",
+        "socks"           => "kichinan_socks_sample",
+        "bandana"         => "kichinan_bandana_sample",
+        "kids_tote"       => "kichinan_kids_tote_sample",
+        _                 => "kichinan_sample",
     }
+}
+
+/// One-size Kichinan SKU brands — size selection is hidden in the LP and
+/// metadata is forced to "ONESIZE" so the webhook variant lookup uses the
+/// one-size Printful variant.
+fn kichinan_brand_is_onesize(brand: &str) -> bool {
+    matches!(brand,
+        "kichinan_cap_sample" | "kichinan_tote_sample" | "kichinan_mug_sample" |
+        "kichinan_beanie_sample" | "kichinan_sticker_sample" |
+        "kichinan_mousepad_sample" | "kichinan_phonecase_sample" |
+        "kichinan_notebook_sample" | "kichinan_puzzle_sample" |
+        "kichinan_pillow_sample" | "kichinan_blanket_sample" |
+        "kichinan_pin_sample" | "kichinan_magnet_sample" |
+        "kichinan_postcard_sample" | "kichinan_poster_sample" |
+        "kichinan_canvas_sample" | "kichinan_socks_sample" |
+        "kichinan_bandana_sample" | "kichinan_kids_tote_sample" |
+        "kichinan_baby_bib_sample"
+    )
 }
 
 fn seed_kichinan_sample_products(db: &Db) {
@@ -13259,15 +13341,16 @@ async fn proposal_kichinan_sample(
         Some(v) => v,
         None => return (StatusCode::BAD_REQUEST, "unknown design id").into_response(),
     };
-    let price_jpy = if (2000..=12000).contains(&body.price_jpy) { body.price_jpy } else { default_price };
-    // One-size products: cap, tote, mug, beanie. Sized: tee, hoodie, longsleeve.
-    let onesize_kinds = ["cap", "tote", "mug", "beanie"];
-    let size = if onesize_kinds.contains(&kind) {
+    let price_jpy = if (400..=12000).contains(&body.price_jpy) { body.price_jpy } else { default_price };
+    let brand = kichinan_brand_for_kind(kind);
+    let size = if kichinan_brand_is_onesize(brand) {
         "ONESIZE".to_string()
     } else {
+        // Kids size labels accepted: S/M/L/XL or 110/120/130/140/150.
         let s = body.size.as_deref().unwrap_or("M").to_uppercase();
-        if !["S","M","L","XL"].contains(&s.as_str()) {
-            return (StatusCode::BAD_REQUEST, "size must be S/M/L/XL").into_response();
+        let kids_sizes = ["110","120","130","140","150"];
+        if !["S","M","L","XL"].contains(&s.as_str()) && !kids_sizes.contains(&s.as_str()) {
+            return (StatusCode::BAD_REQUEST, "size must be S/M/L/XL or 110-150").into_response();
         }
         s
     };
@@ -13275,7 +13358,6 @@ async fn proposal_kichinan_sample(
     if stripe_key.is_empty() {
         return (StatusCode::SERVICE_UNAVAILABLE, "stripe key missing").into_response();
     }
-    let brand = kichinan_brand_for_kind(kind);
     let product_id: i64 = {
         let conn = db.lock().unwrap();
         match conn.query_row(
