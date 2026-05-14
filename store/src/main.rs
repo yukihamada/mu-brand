@@ -9047,7 +9047,16 @@ async fn create_printful_order(key: String, db: Db, product_id: i64, session: se
     let size = full_session["metadata"]["size"].as_str().unwrap_or("M");
     // Printful variant IDs verified against catalog API on 2026-05-14.
     // Black/default color where available; one-size for accessories.
-    let variant_id: u64 = match (brand.as_str(), size) {
+    // asoview_* and elsoul_* brands share the kichinan_* Printful variant
+    // catalog mapping (same Bella+Canvas / Yupoong base products, different
+    // print artwork) — normalize the brand-prefix here so we only maintain
+    // one variant table.
+    let brand_lookup: String = if let Some(rest) = brand.strip_prefix("asoview_") {
+        format!("kichinan_{}", rest)
+    } else if let Some(rest) = brand.strip_prefix("elsoul_") {
+        format!("kichinan_{}", rest)
+    } else { brand.clone() };
+    let variant_id: u64 = match (brand_lookup.as_str(), size) {
         // ── One-size accessories ──
         ("kichinan_cap_sample", _)       => 4792,  // Yupoong 6089M Snapback Black
         ("kichinan_tote_sample", _)      => 4533,  // All-Over Tote Black 15×15
@@ -13986,6 +13995,429 @@ async fn kichinan_public_page(State(db): State<Db>) -> Response {
         return render_404_tee_page(&db, "/kichinan");
     }
     Html(include_str!("../static/proposals/kichinan.html")).into_response()
+}
+
+/// GET /elsoul — public top-level URL. Same gate as /asoview, /kichinan.
+async fn elsoul_public_page(State(db): State<Db>) -> Response {
+    let approved = { let c = db.lock().unwrap(); elsoul_is_approved(&c) };
+    if !approved {
+        return render_404_tee_page(&db, "/elsoul");
+    }
+    Html(include_str!("../static/proposals/elsoul.html")).into_response()
+}
+
+// ── ELSOUL LABO B.V. approval gate ───────────────────────────────────────
+// Solana infra (ERPC / SLV / Skeet · ASN AS200261 · Amsterdam HQ).
+fn ensure_elsoul_approval_table(db: &Db) {
+    let conn = db.lock().unwrap();
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS elsoul_approval (
+            id INTEGER PRIMARY KEY,
+            approved_at TEXT, approver_name TEXT, approver_email TEXT,
+            approver_ip TEXT, plan_tier TEXT, note TEXT, revoked_at TEXT
+         )", [],
+    );
+}
+fn elsoul_approval_row(conn: &rusqlite::Connection) -> Option<(String, String, String, String, Option<String>)> {
+    conn.query_row(
+        "SELECT approved_at, approver_name, approver_email, COALESCE(plan_tier,''), revoked_at
+         FROM elsoul_approval WHERE id=1 AND approved_at IS NOT NULL",
+        [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+    ).ok()
+}
+fn elsoul_is_approved(conn: &rusqlite::Connection) -> bool {
+    elsoul_approval_row(conn).map(|t| t.4.is_none()).unwrap_or(false)
+}
+async fn proposal_elsoul() -> Html<&'static str> {
+    Html(include_str!("../static/proposals/elsoul.html"))
+}
+async fn proposal_elsoul_status(State(db): State<Db>) -> impl IntoResponse {
+    let conn = db.lock().unwrap();
+    let row = elsoul_approval_row(&conn);
+    let approved = row.as_ref().map(|t| t.4.is_none()).unwrap_or(false);
+    let (approved_at, approver_name, plan_tier) = match &row {
+        Some((at, n, _, p, _)) => (
+            Some(at.clone()),
+            Some(n.split_whitespace().next().unwrap_or("—").to_string()),
+            Some(p.clone()),
+        ),
+        None => (None, None, None),
+    };
+    let active_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM products WHERE brand LIKE 'elsoul_%' AND active=1",
+        [], |r| r.get(0),
+    ).unwrap_or(0);
+    Json(serde_json::json!({
+        "approved": approved, "approved_at": approved_at,
+        "approver_first_name": approver_name, "plan_tier": plan_tier,
+        "products_active": active_count, "products_total": ELSOUL_DESIGNS.len(),
+        "public_url": "https://wearmu.com/elsoul",
+    }))
+}
+#[derive(Deserialize)]
+struct ElsoulApproveBody {
+    approver_name: String, approver_email: String,
+    #[serde(default)] plan_tier: String,
+    #[serde(default)] note: String,
+}
+async fn proposal_elsoul_approve(
+    State(db): State<Db>, headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<ElsoulApproveBody>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/proposals/elsoul/approve").await { return r; }
+    let name = body.approver_name.trim();
+    let email = body.approver_email.trim().to_lowercase();
+    if name.is_empty() || !email.contains('@') {
+        return (StatusCode::BAD_REQUEST, "approver_name + valid approver_email required").into_response();
+    }
+    let plan = match body.plan_tier.trim().to_lowercase().as_str() {
+        "starter" | "growth" | "enterprise" => body.plan_tier.trim().to_lowercase(),
+        _ => "starter".into(),
+    };
+    let ip = client_ip(&headers);
+    let now = chrono_now();
+    let activated: usize = {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO elsoul_approval
+                (id, approved_at, approver_name, approver_email, approver_ip, plan_tier, note, revoked_at)
+             VALUES (1, ?, ?, ?, ?, ?, ?, NULL)
+             ON CONFLICT(id) DO UPDATE SET
+                approved_at=excluded.approved_at, approver_name=excluded.approver_name,
+                approver_email=excluded.approver_email, approver_ip=excluded.approver_ip,
+                plan_tier=excluded.plan_tier, note=excluded.note, revoked_at=NULL",
+            params![now, name, email, ip, plan, body.note.trim()],
+        );
+        conn.execute(
+            "UPDATE products SET active=1 WHERE brand LIKE 'elsoul_%' AND active=0",
+            [],
+        ).unwrap_or(0)
+    };
+    eprintln!("[elsoul] approved by {} <{}> plan={} activated={}", name, email, plan, activated);
+    let alert = format!(
+        "━◯━ elsoul collab APPROVED\napprover: {} <{}>\nplan: {}\nactivated: {}/{}\nat: {}\npublic LP: https://wearmu.com/elsoul",
+        name, email, plan, activated, ELSOUL_DESIGNS.len(), now,
+    );
+    tokio::spawn(async move { send_telegram_message(&alert).await; });
+    Json(serde_json::json!({
+        "ok": true, "approved_at": now, "public_url": "https://wearmu.com/elsoul",
+        "products_activated": activated, "plan_tier": plan,
+    })).into_response()
+}
+async fn proposal_elsoul_revoke(
+    State(db): State<Db>, headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/proposals/elsoul/revoke").await { return r; }
+    let now = chrono_now();
+    let deactivated: usize = {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute("UPDATE elsoul_approval SET revoked_at=? WHERE id=1", params![now]);
+        conn.execute("UPDATE products SET active=0 WHERE brand LIKE 'elsoul_%' AND active=1", [])
+            .unwrap_or(0)
+    };
+    eprintln!("[elsoul] revoked at {} deactivated={}", now, deactivated);
+    Json(serde_json::json!({ "ok": true, "revoked_at": now, "products_deactivated": deactivated })).into_response()
+}
+
+// ── ASOVIEW SKU catalog (18 designs) — kinds match kichinan_*_sample so
+//    Printful variant resolution piggybacks via brand-prefix normalization. ──
+//    (slug, drop_num, price_jpy, label, kind, design_slug)
+const ASOVIEW_DESIGNS: &[(&str, i64, i64, &str, &str, &str)] = &[
+    ("a", 1, 6400, "ikiruni asobiwo back-print",  "tee",        "a"),
+    ("b", 2, 6800, "7500 places map",             "tee",        "b"),
+    ("c", 3, 5400, "scan-to-play QR tee",         "tee",        "c"),
+    ("d", 4, 5400, "22 jouken icon grid",         "tee",        "d"),
+    ("e", 5, 6800, "off-day manifesto",           "tee",        "e"),
+    ("f", 6, 5800, "asoview crew polo",           "polo",       "f"),
+    ("g", 7, 4200, "gift tote",                   "tote",       "g"),
+    ("h", 8, 9800, "play-side reversible hoodie", "hoodie",     "h"),
+    ("i", 9, 5800, "orange snapback cap",         "cap",        "i"),
+    ("j",10, 4400, "yume miru no wa soto de",     "pillow",     "j"),
+    ("k",11, 6400, "ame demo asobu longsleeve",   "longsleeve", "k"),
+    ("l",12, 4800, "unwrap-me gift tee",          "tee",        "l"),
+    ("m",13,  980, "orange die-cut sticker",      "sticker",    "m"),
+    ("n",14, 2400, "asobu yotei mug",             "mug",        "n"),
+    ("o",15, 3800, "soto de asobu beanie",        "beanie",     "o"),
+    ("p",16, 4200, "ashita nani shite asobu kids","kids_tee",   "p"),
+    ("q",17, 3400, "jouken pin set 5",            "pin",        "q"),
+    ("r",18, 6800, "place-name limited tee",      "tee",        "r"),
+];
+
+const ELSOUL_DESIGNS: &[(&str, i64, i64, &str, &str, &str)] = &[
+    ("a", 1, 6400, "sustainable env manifesto",      "tee",        "a"),
+    ("b", 2, 7800, "300+ edge nodes map",            "tee",        "b"),
+    ("c", 3, 8800, "validator pubkey 1-of-1",        "tee",        "c"),
+    ("d", 4, 6400, "AS200261 commemorative",         "tee",        "d"),
+    ("e", 5, 5800, "green hosting certified",        "tee",        "e"),
+    ("f", 6, 6400, "ELSOUL crew polo Amsterdam",     "polo",       "f"),
+    ("g", 7, 6800, "Solana co-brand stripes",        "tee",        "g"),
+    ("h", 8, 9800, "validator night-ops hoodie",     "hoodie",     "h"),
+    ("i", 9, 5800, "Shinobi #3 commemorative cap",   "cap",        "i"),
+    ("j",10, 3400, "Skeet OSS contributor pin set",  "pin",        "j"),
+    ("k",11, 7800, "ERPC SLV Enterprise launch",     "tee",        "k"),
+    ("l",12, 6800, "Circle Alliance Partner",        "tee",        "l"),
+    ("m",13, 1800, "Green RPC sticker pack",         "sticker",    "m"),
+    ("n",14, 2400, "stake de seikatsu shiteru mug",  "mug",        "n"),
+    ("o",15, 3800, "Amsterdam 020 beanie",           "beanie",     "o"),
+    ("p",16, 4400, "epoch made nekasete pillow",     "pillow",     "p"),
+    ("q",17, 6400, "Cloudflare $250K commemorative", "tee",        "q"),
+    ("r",18, 6400, "off-chain demo off-grid janai",  "tee",        "r"),
+];
+
+fn proposal_brand_for_kind(slug_prefix: &str, kind: &str) -> String {
+    // Mirrors kichinan_brand_for_kind but parametrized on slug ("asoview"/"elsoul").
+    match kind {
+        "tee"         => format!("{}_tee_sample", slug_prefix),
+        "polo"        => format!("{}_polo_sample", slug_prefix),
+        "cap"         => format!("{}_cap_sample", slug_prefix),
+        "tote"        => format!("{}_tote_sample", slug_prefix),
+        "hoodie"      => format!("{}_hoodie_sample", slug_prefix),
+        "mug"         => format!("{}_mug_sample", slug_prefix),
+        "beanie"      => format!("{}_beanie_sample", slug_prefix),
+        "longsleeve"  => format!("{}_longsleeve_sample", slug_prefix),
+        "sticker"     => format!("{}_sticker_sample", slug_prefix),
+        "kids_tee"    => format!("{}_kids_tee_sample", slug_prefix),
+        "pin"         => format!("{}_pin_sample", slug_prefix),
+        "pillow"      => format!("{}_pillow_sample", slug_prefix),
+        _             => format!("{}_tee_sample", slug_prefix),
+    }
+}
+
+fn proposal_brand_is_onesize(brand: &str) -> bool {
+    brand.ends_with("_cap_sample") || brand.ends_with("_tote_sample")
+        || brand.ends_with("_mug_sample") || brand.ends_with("_beanie_sample")
+        || brand.ends_with("_sticker_sample") || brand.ends_with("_pin_sample")
+        || brand.ends_with("_pillow_sample")
+        || brand.ends_with("_polo_sample") // treat polo one-size for now
+}
+
+fn seed_proposal_sample_products(db: &Db, slug_prefix: &str,
+    designs: &[(&str, i64, i64, &str, &str, &str)],
+    ip_owner: &str,
+) {
+    let conn = db.lock().unwrap();
+    for (slug, drop_num, price_jpy, label, kind, design_slug) in designs {
+        let brand = proposal_brand_for_kind(slug_prefix, kind);
+        let exists: bool = conn.query_row(
+            "SELECT 1 FROM products WHERE brand=? AND drop_num=? LIMIT 1",
+            params![brand, drop_num], |r| r.get::<_, i64>(0),
+        ).is_ok();
+        if exists { continue; }
+        let now_s = chrono_now();
+        let design_url = format!("https://wearmu.com/proposals/design-{}.png", design_slug);
+        let mockup_url = format!("https://wearmu.com/proposals/{}-mockup-{}.png", slug_prefix, slug);
+        let _ = conn.execute(
+            "INSERT INTO products
+             (brand, drop_num, name, design_url, mockup_url, price_jpy, inventory, active, created_at, weather_data)
+             VALUES (?,?,?,?,?,?,?,?,?,?)",
+            params![
+                brand, drop_num,
+                format!("━◯━ MU × {} sample · {} · {}", ip_owner, slug.to_uppercase(), label),
+                design_url, mockup_url, price_jpy, 50, 0, now_s,
+                serde_json::json!({
+                    "kind": format!("{}_{}", slug_prefix, kind),
+                    "design_slug": design_slug,
+                    "license_status": "pending",
+                    "ip_owner": ip_owner,
+                    "note": "Sample / public order — public sales require approval on /proposals/<slug>"
+                }).to_string(),
+            ],
+        );
+    }
+}
+
+#[derive(Deserialize)]
+struct ProposalSampleBody {
+    design: String,
+    size: Option<String>,
+    price_jpy: i64,
+}
+
+async fn issue_proposal_sample_link(
+    db: Db, slug_prefix: &'static str,
+    designs: &'static [(&'static str, i64, i64, &'static str, &'static str, &'static str)],
+    body: ProposalSampleBody,
+) -> Response {
+    let design_lower = body.design.to_lowercase();
+    let (drop_num, default_price, label, kind) = match designs.iter()
+        .find(|(s, _, _, _, _, _)| *s == design_lower)
+        .map(|(_, d, p, l, k, _)| (*d, *p, *l, *k)) {
+        Some(v) => v,
+        None => return (StatusCode::BAD_REQUEST, "unknown design id").into_response(),
+    };
+    let price_jpy = if (400..=12000).contains(&body.price_jpy) { body.price_jpy } else { default_price };
+    let brand = proposal_brand_for_kind(slug_prefix, kind);
+    let size = if proposal_brand_is_onesize(&brand) {
+        "ONESIZE".to_string()
+    } else {
+        let s = body.size.as_deref().unwrap_or("M").to_uppercase();
+        let kids = ["110","120","130","140","150"];
+        if !["S","M","L","XL"].contains(&s.as_str()) && !kids.contains(&s.as_str()) {
+            return (StatusCode::BAD_REQUEST, "size must be S/M/L/XL or 110-150").into_response();
+        }
+        s
+    };
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() { return (StatusCode::SERVICE_UNAVAILABLE, "stripe key missing").into_response(); }
+    let product_id: i64 = {
+        let conn = db.lock().unwrap();
+        match conn.query_row(
+            "SELECT id FROM products WHERE brand=? AND drop_num=? LIMIT 1",
+            params![brand, drop_num], |r| r.get(0),
+        ) { Ok(id) => id, Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, "products not seeded").into_response() }
+    };
+    let client = reqwest::Client::new();
+    let product_name = format!("MU x {} - {} - {} - {}",
+        slug_prefix.to_uppercase(), design_lower.to_uppercase(), label, size);
+    let price_form: Vec<(&str, String)> = vec![
+        ("currency", "jpy".into()),
+        ("unit_amount", price_jpy.to_string()),
+        ("product_data[name]", product_name),
+    ];
+    let raw_resp = match client.post("https://api.stripe.com/v1/prices")
+        .basic_auth(&stripe_key, Some("")).form(&price_form).send().await {
+        Ok(r) => {
+            let status = r.status();
+            let body = r.text().await.unwrap_or_default();
+            if !status.is_success() {
+                eprintln!("[{}_sample] stripe price {} → {}", slug_prefix, status, body.chars().take(500).collect::<String>());
+                return (StatusCode::BAD_GATEWAY, format!("stripe {}: {}", status, body.chars().take(300).collect::<String>())).into_response();
+            }
+            body
+        }
+        Err(e) => return (StatusCode::BAD_GATEWAY, format!("stripe price http: {}", e)).into_response(),
+    };
+    let price_id: String = serde_json::from_str::<serde_json::Value>(&raw_resp)
+        .ok().and_then(|v| v.get("id").and_then(|x| x.as_str()).map(String::from)).unwrap_or_default();
+    if price_id.is_empty() { return (StatusCode::BAD_GATEWAY, "stripe returned no price id").into_response(); }
+    let redirect_url = format!("https://wearmu.com/{}?sample=ok", slug_prefix);
+    let pl_form: Vec<(&str, String)> = vec![
+        ("line_items[0][price]", price_id),
+        ("line_items[0][quantity]", "1".into()),
+        ("shipping_address_collection[allowed_countries][0]", "JP".into()),
+        ("after_completion[type]", "redirect".into()),
+        ("after_completion[redirect][url]", redirect_url),
+        ("metadata[kind]", format!("{}_sample", slug_prefix)),
+        ("metadata[design]", design_lower.clone()),
+        ("metadata[size]", size.clone()),
+        ("metadata[product_id]", product_id.to_string()),
+    ];
+    match client.post("https://api.stripe.com/v1/payment_links")
+        .basic_auth(&stripe_key, Some("")).form(&pl_form).send().await {
+        Ok(r) => {
+            let v: serde_json::Value = r.json().await.unwrap_or(serde_json::Value::Null);
+            if let Some(u) = v.get("url").and_then(|x| x.as_str()) {
+                Json(serde_json::json!({
+                    "ok": true, "url": u, "design": design_lower, "size": size,
+                    "price_jpy": price_jpy, "product_id": product_id,
+                })).into_response()
+            } else {
+                (StatusCode::BAD_GATEWAY, format!("payment_link: {}", v.to_string().chars().take(300).collect::<String>())).into_response()
+            }
+        }
+        Err(e) => (StatusCode::BAD_GATEWAY, format!("stripe: {}", e)).into_response(),
+    }
+}
+
+async fn proposal_asoview_sample(State(db): State<Db>, Json(body): Json<ProposalSampleBody>) -> Response {
+    issue_proposal_sample_link(db, "asoview", ASOVIEW_DESIGNS, body).await
+}
+async fn proposal_elsoul_sample(State(db): State<Db>, Json(body): Json<ProposalSampleBody>) -> Response {
+    issue_proposal_sample_link(db, "elsoul", ELSOUL_DESIGNS, body).await
+}
+
+#[derive(Deserialize)]
+struct ProposalBundleBody {
+    #[serde(default)] size: String, // applied to every sized SKU (S/M/L/XL); accessories ignore it
+}
+
+/// POST /api/proposals/:slug/bundle — issues ONE Stripe Payment Link with
+/// every SKU as a separate line_item. Useful for "全ノベルティまとめ買い"
+/// (the whole asoview/elsoul drop in one checkout). Stripe caps line_items
+/// at 20 so 18 SKUs fits comfortably.
+async fn issue_proposal_bundle_link(
+    db: Db, slug_prefix: &'static str,
+    designs: &'static [(&'static str, i64, i64, &'static str, &'static str, &'static str)],
+    body: ProposalBundleBody,
+) -> Response {
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() { return (StatusCode::SERVICE_UNAVAILABLE, "stripe key missing").into_response(); }
+    let raw_size = body.size.trim().to_uppercase();
+    let default_size = if ["S","M","L","XL"].contains(&raw_size.as_str()) { raw_size } else { "M".to_string() };
+    let client = reqwest::Client::new();
+    // Step 1: create one Stripe price per design (1 → 18). Parallelizable
+    // but keep sequential to stay under Stripe's rate limit (default ~25/s).
+    let mut price_ids: Vec<(String, String, i64)> = Vec::new(); // (price_id, design, price_jpy)
+    let mut total_jpy: i64 = 0;
+    for (slug, _drop, price_jpy, label, kind, _ds) in designs {
+        let brand = proposal_brand_for_kind(slug_prefix, kind);
+        let size = if proposal_brand_is_onesize(&brand) { "ONESIZE".to_string() } else { default_size.clone() };
+        let product_name = format!("MU x {} - {} - {} - {}",
+            slug_prefix.to_uppercase(), slug.to_uppercase(), label, size);
+        let price_form: Vec<(&str, String)> = vec![
+            ("currency", "jpy".into()),
+            ("unit_amount", price_jpy.to_string()),
+            ("product_data[name]", product_name),
+        ];
+        let resp = match client.post("https://api.stripe.com/v1/prices")
+            .basic_auth(&stripe_key, Some("")).form(&price_form).send().await {
+            Ok(r) => r,
+            Err(e) => return (StatusCode::BAD_GATEWAY, format!("stripe price http: {}", e)).into_response(),
+        };
+        let status = resp.status();
+        let raw = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            eprintln!("[{}_bundle] stripe price {} for {} → {}", slug_prefix, status, slug, raw.chars().take(300).collect::<String>());
+            return (StatusCode::BAD_GATEWAY, format!("stripe price {}: {}", status, raw.chars().take(300).collect::<String>())).into_response();
+        }
+        let pid: String = serde_json::from_str::<serde_json::Value>(&raw)
+            .ok().and_then(|v| v.get("id").and_then(|x| x.as_str()).map(String::from)).unwrap_or_default();
+        if pid.is_empty() {
+            return (StatusCode::BAD_GATEWAY, "stripe returned no price id (bundle)").into_response();
+        }
+        total_jpy += *price_jpy;
+        price_ids.push((pid, slug.to_string(), *price_jpy));
+    }
+    // Step 2: build one Payment Link with all of them as line_items.
+    let mut pl_form: Vec<(&str, String)> = vec![
+        ("shipping_address_collection[allowed_countries][0]", "JP".into()),
+        ("after_completion[type]", "redirect".into()),
+        ("after_completion[redirect][url]", format!("https://wearmu.com/{}?bundle=ok", slug_prefix)),
+        ("metadata[kind]", format!("{}_bundle", slug_prefix)),
+        ("metadata[size]", default_size.clone()),
+        ("metadata[bundle_count]", price_ids.len().to_string()),
+        ("metadata[bundle_total_jpy]", total_jpy.to_string()),
+    ];
+    for (i, (pid, _design, _p)) in price_ids.iter().enumerate() {
+        pl_form.push((Box::leak(format!("line_items[{}][price]", i).into_boxed_str()), pid.clone()));
+        pl_form.push((Box::leak(format!("line_items[{}][quantity]", i).into_boxed_str()), "1".into()));
+    }
+    match client.post("https://api.stripe.com/v1/payment_links")
+        .basic_auth(&stripe_key, Some("")).form(&pl_form).send().await {
+        Ok(r) => {
+            let v: serde_json::Value = r.json().await.unwrap_or(serde_json::Value::Null);
+            if let Some(u) = v.get("url").and_then(|x| x.as_str()) {
+                let _ = db; // suppress unused
+                return Json(serde_json::json!({
+                    "ok": true, "url": u,
+                    "bundle_count": price_ids.len(),
+                    "bundle_total_jpy": total_jpy,
+                    "size": default_size,
+                })).into_response();
+            }
+            (StatusCode::BAD_GATEWAY, format!("payment_link: {}", v.to_string().chars().take(300).collect::<String>())).into_response()
+        }
+        Err(e) => (StatusCode::BAD_GATEWAY, format!("stripe: {}", e)).into_response(),
+    }
+}
+
+async fn proposal_asoview_bundle(State(db): State<Db>, Json(body): Json<ProposalBundleBody>) -> Response {
+    issue_proposal_bundle_link(db, "asoview", ASOVIEW_DESIGNS, body).await
+}
+async fn proposal_elsoul_bundle(State(db): State<Db>, Json(body): Json<ProposalBundleBody>) -> Response {
+    issue_proposal_bundle_link(db, "elsoul", ELSOUL_DESIGNS, body).await
 }
 
 /// GET /en/press — English-default version. Same content, but we flip
@@ -35908,7 +36340,26 @@ async fn main() {
     // via the standard create_printful_order path.
     ensure_kichinan_approval_table(&db);
     ensure_asoview_approval_table(&db);
+    ensure_elsoul_approval_table(&db);
     seed_kichinan_sample_products(&db);
+    seed_proposal_sample_products(&db, "asoview", ASOVIEW_DESIGNS, "Asoview Inc.");
+    seed_proposal_sample_products(&db, "elsoul",  ELSOUL_DESIGNS,  "ELSOUL LABO B.V.");
+    // If asoview / elsoul approvals exist, re-assert active=1 on every SKU.
+    {
+        let conn = db.lock().unwrap();
+        if asoview_is_approved(&conn) {
+            let _ = conn.execute(
+                "UPDATE products SET active=1 WHERE brand LIKE 'asoview_%' AND active=0",
+                [],
+            );
+        }
+        if elsoul_is_approved(&conn) {
+            let _ = conn.execute(
+                "UPDATE products SET active=1 WHERE brand LIKE 'elsoul_%' AND active=0",
+                [],
+            );
+        }
+    }
     // If the kichinan collab has already been approved, re-assert active=1
     // on every kichinan_* product. This catches the case where a new SKU was
     // added to KICHINAN_DESIGNS after approval — the seed inserts active=0
@@ -36097,7 +36548,16 @@ async fn main() {
         .route("/api/proposals/asoview/status",  get(proposal_asoview_status))
         .route("/api/proposals/asoview/approve", post(proposal_asoview_approve))
         .route("/api/proposals/asoview/revoke",  post(proposal_asoview_revoke))
+        .route("/api/proposals/asoview/sample",  post(proposal_asoview_sample))
+        .route("/api/proposals/asoview/bundle",  post(proposal_asoview_bundle))
         .route("/asoview", get(asoview_public_page))
+        .route("/proposals/elsoul",              get(proposal_elsoul))
+        .route("/api/proposals/elsoul/status",   get(proposal_elsoul_status))
+        .route("/api/proposals/elsoul/approve",  post(proposal_elsoul_approve))
+        .route("/api/proposals/elsoul/revoke",   post(proposal_elsoul_revoke))
+        .route("/api/proposals/elsoul/sample",   post(proposal_elsoul_sample))
+        .route("/api/proposals/elsoul/bundle",   post(proposal_elsoul_bundle))
+        .route("/elsoul", get(elsoul_public_page))
         .nest_service("/proposals", ServeDir::new("static/proposals"))
         .route("/api/collab/account/delete", post(collab_account_delete))
         .route("/api/404/buy", post(not_found_buy))
