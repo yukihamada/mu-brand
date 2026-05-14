@@ -57,6 +57,10 @@ ul li strong{color:var(--fg);font-weight:500}
 .design .sample-btn:hover{background:rgba(123,229,123,0.18)}
 .design .sample-btn[disabled]{opacity:0.45;cursor:wait}
 .sample-msg{font-size:10.5px;color:var(--mute);margin-top:6px;min-height:14px;letter-spacing:0.04em}
+.size-row{display:flex;gap:6px;margin-top:8px;font-size:0;flex-wrap:wrap}
+.size-row .sz{flex:1;min-width:44px;font-family:inherit;font-size:11px;letter-spacing:0.15em;padding:9px 0;background:transparent;color:var(--mute);border:1px solid var(--line);border-radius:2px;cursor:pointer;text-align:center;transition:all 0.15s;font-weight:600}
+.size-row .sz:hover{color:var(--fg);border-color:var(--mute)}
+.size-row .sz.on{background:var(--y);color:#0a0a0a;border-color:var(--y)}
 .design .front,.design .back{font-size:11.5px;color:var(--mute);line-height:1.85;margin-bottom:4px}
 .design .front strong,.design .back strong{color:var(--y);font-weight:600}
 .design .footer{margin-top:auto;padding-top:12px;border-top:1px dashed rgba(255,255,255,0.08);font-size:10.5px;color:var(--mute);letter-spacing:0.04em}
@@ -143,6 +147,7 @@ ul li strong{color:var(--fg);font-weight:500}
     <div class="front"><strong>FRONT:</strong> <strong style="color:#ff8a8a">きちにゃん K</strong> 胸元 小 (5cm) — 契約後追加</div>
     <div class="back"><strong>BACK:</strong> 「後方支援」 漢字 大 (30cm) · 白インク</div>
     <div class="footer">用途: 在職社員 / OB / 取引先 · 想定 ¥5,400</div>
+    <div class="size-row" data-design="a">S M L XL</div>
     <button class="sample-btn" type="button" data-design="a" data-price="5400">サンプル試作を発注 — ¥5,400</button>
   </div>
 
@@ -158,6 +163,7 @@ ul li strong{color:var(--fg);font-weight:500}
     <div class="front"><strong>FRONT:</strong> "one truck. 1962." タイポ (白 + マスタード)</div>
     <div class="back"><strong>BACK:</strong> グループ 12 社 シンボル + <strong style="color:#ff8a8a">きちにゃん</strong> — 契約後追加</div>
     <div class="footer">用途: 創業記念 / 内定式 / 周年 · 想定 ¥6,800</div>
+    <div class="size-row" data-design="b">S M L XL</div>
     <button class="sample-btn" type="button" data-design="b" data-price="6800">サンプル試作を発注 — ¥6,800</button>
   </div>
 
@@ -173,6 +179,7 @@ ul li strong{color:var(--fg);font-weight:500}
     <div class="front"><strong>FRONT:</strong> 左胸 woven patch (KICHINAN · SINCE 1962)</div>
     <div class="back"><strong>BACK:</strong> 「いつもお願いできる、 を、 着る。」 — 契約後追加</div>
     <div class="footer">用途: 取引先ギフト / 年末挨拶 · 想定 ¥5,400</div>
+    <div class="size-row" data-design="c">S M L XL</div>
     <button class="sample-btn" type="button" data-design="c" data-price="5400">サンプル試作を発注 — ¥5,400</button>
   </div>
 
@@ -188,6 +195,7 @@ ul li strong{color:var(--fg);font-weight:500}
     <div class="front"><strong>FRONT:</strong> K ヘルメット ロゴ 1 点 (3cm)</div>
     <div class="back"><strong>BACK:</strong> 無地 (blank back)</div>
     <div class="footer">用途: 採用イベント ノベルティ (匿名性 ◎) · 想定 ¥4,500</div>
+    <div class="size-row" data-design="d">S M L XL</div>
     <button class="sample-btn" type="button" data-design="d" data-price="4500">サンプル試作を発注 — ¥4,500</button>
   </div>
 
@@ -203,6 +211,7 @@ ul li strong{color:var(--fg);font-weight:500}
     <div class="front"><strong>FRONT:</strong> 4 行 manifesto (タグライン + 後方支援 + 安定感 + 安心感) — 契約後追加</div>
     <div class="back"><strong>BACK:</strong> 山口 海岸線シルエット + <strong style="color:#ff8a8a">K helmet</strong> 小</div>
     <div class="footer">用途: 一般販売 / ブランド露出 · 想定 ¥6,800</div>
+    <div class="size-row" data-design="e">S M L XL</div>
     <button class="sample-btn" type="button" data-design="e" data-price="6800">サンプル試作を発注 — ¥6,800</button>
   </div>
 </div>
@@ -279,10 +288,31 @@ ul li strong{color:var(--fg);font-weight:500}
 <div class="watermark">CONFIDENTIAL · DRAFT · 提案資料</div>
 
 <script>
+// Build size buttons inside each .size-row
+document.querySelectorAll('.size-row').forEach(row => {
+  const design = row.dataset.design;
+  row.innerHTML = '';
+  ['S','M','L','XL'].forEach((sz, i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'sz' + (sz === 'M' ? ' on' : '');
+    b.textContent = sz;
+    b.dataset.size = sz;
+    b.addEventListener('click', () => {
+      row.querySelectorAll('.sz').forEach(x => x.classList.remove('on'));
+      b.classList.add('on');
+    });
+    row.appendChild(b);
+  });
+});
+
 document.querySelectorAll('.sample-btn').forEach(btn => {
   btn.addEventListener('click', async () => {
     const design = btn.dataset.design;
     const price = parseInt(btn.dataset.price, 10);
+    const card = btn.closest('.design');
+    const sizeBtn = card?.querySelector('.size-row .sz.on');
+    const size = sizeBtn ? sizeBtn.dataset.size : 'M';
     const orig = btn.textContent;
     btn.disabled = true;
     btn.textContent = 'Stripe へ遷移中…';
@@ -298,7 +328,7 @@ document.querySelectorAll('.sample-btn').forEach(btn => {
       const r = await fetch('/api/proposals/kichinan/sample', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ design, price_jpy: price }),
+        body: JSON.stringify({ design, size, price_jpy: price }),
       });
       if (!r.ok) throw new Error(await r.text() || ('HTTP ' + r.status));
       const d = await r.json();

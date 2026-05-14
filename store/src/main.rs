@@ -13145,40 +13145,99 @@ async fn proposal_kichinan() -> Html<&'static str> {
 #[derive(Deserialize)]
 struct KichinanSampleBody {
     design: String,    // "a" | "b" | "c" | "d" | "e"
+    size: Option<String>, // S/M/L/XL — defaults to M
     price_jpy: i64,
 }
 
-/// POST /api/proposals/kichinan/sample — issues a one-off Stripe Payment
-/// Link for a single sample T-shirt. Character-free design (text/silhouette
-/// only); a future contract enables full kichinan-branded production.
+/// Catalog of kichinan_sample designs. Each row gets seeded into the
+/// products table at startup so the existing checkout.session.completed
+/// webhook (which calls create_printful_order keyed on metadata.product_id)
+/// can fulfill orders end-to-end without any new fulfillment path.
+const KICHINAN_DESIGNS: &[(&str, i64, i64, &str)] = &[
+    ("a", 1, 5400, "後方支援 back-print"),
+    ("b", 2, 6800, "one truck. 1962."),
+    ("c", 3, 5400, "workshirt patch · SINCE 1962"),
+    ("d", 4, 4500, "K-helmet quiet"),
+    ("e", 5, 6800, "Yamaguchi coast"),
+];
+
+/// Idempotent: ensures one products row per kichinan design so Printful
+/// fulfillment piggybacks on the existing MUGEN/MA pipeline. design_url is
+/// the print-ready transparent PNG, mockup_url is the photoreal Gemini
+/// product shot for OG / receipt thumbnails.
+fn seed_kichinan_sample_products(db: &Db) {
+    let conn = db.lock().unwrap();
+    for (slug, drop_num, price_jpy, label) in KICHINAN_DESIGNS {
+        let exists: bool = conn.query_row(
+            "SELECT 1 FROM products WHERE brand='kichinan_sample' AND drop_num=? LIMIT 1",
+            params![drop_num], |r| r.get::<_, i64>(0),
+        ).is_ok();
+        if exists { continue; }
+        let now_s = chrono_now();
+        let design_url = format!("https://wearmu.com/proposals/design-{}.png", slug);
+        let mockup_url = format!("https://wearmu.com/proposals/mockup-{}.png", slug);
+        let _ = conn.execute(
+            "INSERT INTO products
+             (brand, drop_num, name, design_url, mockup_url, price_jpy, inventory, active, created_at, weather_data)
+             VALUES (?,?,?,?,?,?,?,?,?,?)",
+            params![
+                "kichinan_sample", drop_num,
+                format!("━◯━ MU × KICHINAN sample · {} · {}", slug.to_uppercase(), label),
+                design_url, mockup_url, price_jpy, 50, 0,  // active=0 so it stays off public listings
+                now_s,
+                serde_json::json!({
+                    "kind": "kichinan_sample",
+                    "design_slug": slug,
+                    "license_status": "pending",
+                    "ip_owner": "Kichinan Group",
+                    "note": "Sample order only — public sales require licensing contract"
+                }).to_string(),
+            ],
+        );
+    }
+}
+
+/// POST /api/proposals/kichinan/sample — issues a Stripe Payment Link for
+/// a real T-shirt with the chosen design + size. Fulfillment is the standard
+/// MU webhook flow (checkout.session.completed → create_printful_order)
+/// because we seed products with brand=kichinan_sample at startup.
 async fn proposal_kichinan_sample(
+    State(db): State<Db>,
     Json(body): Json<KichinanSampleBody>,
 ) -> Response {
-    let allowed: &[(&str, &str)] = &[
-        ("a", "後方支援 back-print"),
-        ("b", "one truck. 1962."),
-        ("c", "workshirt patch · SINCE 1962"),
-        ("d", "K-helmet quiet"),
-        ("e", "Yamaguchi coast"),
-    ];
     let design_lower = body.design.to_lowercase();
-    let label = match allowed.iter().find(|(k, _)| *k == design_lower).map(|(_, v)| *v) {
+    let (drop_num, default_price, label) = match KICHINAN_DESIGNS.iter()
+        .find(|(s, _, _, _)| *s == design_lower)
+        .map(|(_, d, p, l)| (*d, *p, *l)) {
         Some(v) => v,
         None => return (StatusCode::BAD_REQUEST, "unknown design id").into_response(),
     };
-    if !(4000..=8000).contains(&body.price_jpy) {
-        return (StatusCode::BAD_REQUEST, "price out of range").into_response();
+    let price_jpy = if (4000..=8000).contains(&body.price_jpy) { body.price_jpy } else { default_price };
+    let size = body.size.as_deref().unwrap_or("M").to_uppercase();
+    if !["S","M","L","XL"].contains(&size.as_str()) {
+        return (StatusCode::BAD_REQUEST, "size must be S/M/L/XL").into_response();
     }
     let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
     if stripe_key.is_empty() {
         return (StatusCode::SERVICE_UNAVAILABLE, "stripe key missing").into_response();
     }
+    // Look up the seeded product row.
+    let product_id: i64 = {
+        let conn = db.lock().unwrap();
+        match conn.query_row(
+            "SELECT id FROM products WHERE brand='kichinan_sample' AND drop_num=? LIMIT 1",
+            params![drop_num], |r| r.get(0),
+        ) {
+            Ok(id) => id,
+            Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, "kichinan products not seeded").into_response(),
+        }
+    };
     let client = reqwest::Client::new();
-    let product_name = format!("━◯━ MU × KICHINAN sample · {} · {}", design_lower.to_uppercase(), label);
+    let product_name = format!("━◯━ MU × KICHINAN sample · {} · {} · {}", design_lower.to_uppercase(), label, size);
     let mockup_url = format!("https://wearmu.com/proposals/mockup-{}.png", design_lower);
     let price_form: Vec<(&str, String)> = vec![
         ("currency", "jpy".into()),
-        ("unit_amount", body.price_jpy.to_string()),
+        ("unit_amount", price_jpy.to_string()),
         ("product_data[name]", product_name),
         ("product_data[images][0]", mockup_url),
     ];
@@ -13201,6 +13260,8 @@ async fn proposal_kichinan_sample(
         ("after_completion[redirect][url]", "https://wearmu.com/proposals/kichinan?sample=ok".into()),
         ("metadata[kind]", "kichinan_sample".into()),
         ("metadata[design]", design_lower.clone()),
+        ("metadata[size]", size.clone()),
+        ("metadata[product_id]", product_id.to_string()),
         ("metadata[license_status]", "pending".into()),
         ("metadata[ip_owner]", "Kichinan Group".into()),
     ];
@@ -13210,7 +13271,8 @@ async fn proposal_kichinan_sample(
             let v: serde_json::Value = r.json().await.unwrap_or(serde_json::Value::Null);
             if let Some(u) = v.get("url").and_then(|x| x.as_str()) {
                 return Json(serde_json::json!({
-                    "ok": true, "url": u, "design": design_lower, "price_jpy": body.price_jpy
+                    "ok": true, "url": u, "design": design_lower, "size": size,
+                    "price_jpy": price_jpy, "product_id": product_id,
                 })).into_response();
             }
             (StatusCode::BAD_GATEWAY, format!("payment_link: {}", v.to_string().chars().take(300).collect::<String>())).into_response()
@@ -35110,6 +35172,11 @@ async fn main() {
     // Ensure mockups dir exists for persisted images
     std::fs::create_dir_all(mockups_dir()).ok();
     let db: Db = Arc::new(Mutex::new(conn));
+
+    // Idempotent: ensure the 5 kichinan_sample products exist so the
+    // Stripe webhook can fulfill /api/proposals/kichinan/sample orders
+    // via the standard create_printful_order path.
+    seed_kichinan_sample_products(&db);
 
     // ── Phase 3.4 + 3.7: Pyth rate refresh + pending payment sweep ──
     payments::start_crons(db.clone());
