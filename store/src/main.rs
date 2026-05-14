@@ -12773,11 +12773,15 @@ async fn buy_page() -> Html<&'static str> {
 /// Now the page also OFFERS the unique 404 tee: each 404 hit captures
 /// (path, JST timestamp) which become the design printed on a 1-of-1 shirt.
 async fn not_found_page(uri: Uri) -> Response {
-    let raw_path = uri.path();
-    // Truncate to keep designs printable; strip control chars.
+    render_404_tee_page(uri.path())
+}
+
+/// Renders the 404-as-tee page for a given visited path. Shared by the
+/// axum fallback handler AND the /:slug catch-all (serve_static_or_404).
+fn render_404_tee_page(raw_path: &str) -> Response {
     let path: String = raw_path.chars().filter(|c| !c.is_control()).take(60).collect();
+    let path = if path.starts_with('/') { path } else { format!("/{}", path) };
     let ts = chrono_now_jst_datetime_str();
-    // Pass to template via marker substitution.
     let template = include_str!("../static/404.html");
     let body = template
         .replace("{{path}}", &html_escape(&path))
@@ -32038,7 +32042,7 @@ async fn slug_or_static(
 fn serve_static_or_404(name: &str) -> Response {
     // Sanitize: no path traversal, no leading slash.
     if name.contains('/') || name.contains("..") {
-        return (StatusCode::NOT_FOUND, "not found").into_response();
+        return render_404_tee_page(&format!("/{}", name));
     }
     let path = std::path::Path::new("static").join(name);
     let bytes = std::fs::read(&path).ok();
@@ -32049,7 +32053,7 @@ fn serve_static_or_404(name: &str) -> Response {
             let path2 = std::path::Path::new("static").join(format!("{}.html", name));
             match std::fs::read(&path2) {
                 Ok(b) => return html_response(b),
-                Err(_) => return (StatusCode::NOT_FOUND, "not found").into_response(),
+                Err(_) => return render_404_tee_page(&format!("/{}", name)),
             }
         }
     };

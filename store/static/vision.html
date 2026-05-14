@@ -126,6 +126,7 @@ footer a{color:inherit;text-decoration:underline}
 
 <!-- HERO -->
 <div class="hero">
+  <div style="font-family:'SF Mono','Menlo',monospace;font-size:22px;letter-spacing:0.2em;color:var(--y);opacity:0.65;margin-bottom:14px">━◯━</div>
   <div class="eyebrow">MU Vision · 2026 → 2036</div>
   <h1>地球で最初の<br><em>完全無人ブランド</em>。<br>Amazon を超える方法は、<br>たぶんこれしかない。</h1>
   <div class="lede">
@@ -139,6 +140,32 @@ footer a{color:inherit;text-decoration:underline}
     <span style="display:block;margin-top:14px;font-size:11px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.7;font-style:normal">— MU founding principle</span>
   </div>
 </div>
+
+<!-- 00. 直近 30 日のターゲット ─────────────────────── -->
+<section style="background:linear-gradient(180deg,rgba(230,196,73,0.06),transparent);border-top:1px solid rgba(230,196,73,0.2);border-bottom:1px solid rgba(230,196,73,0.2);padding-top:60px;padding-bottom:60px">
+  <div class="eyebrow">00 — Right now · 2026-05-14 → 2026-06-13</div>
+  <h2>向こう <em>30 日</em>で、 Tシャツを <em>100 枚</em>売る。</h2>
+  <p>10 年計画の話の前に、 まず<strong>直近 30 日</strong>。 2026-05-14 から 6 月 13 日まで、 累計 100 枚の MU Tシャツを売るのが、 今このページを書いている週の目標です。</p>
+  <p style="margin-top:14px">この数字は <em>大きすぎる</em>でも <em>小さすぎる</em>でもなく、 ちょうど <strong>現状 (累計実売 ~8 枚 / 月の進捗) を 1 桁上げる</strong> 数。 100 枚売れれば 「ブランドは存在する」 と言える。 売れなければ 「ブランドはまだ存在しない」 と言える。</p>
+  <div class="kpi-grid" style="margin-top:24px">
+    <div class="kpi"><div class="v" id="kpi-sold-today">…</div><div class="l">今までに売れた数</div></div>
+    <div class="kpi"><div class="v" id="kpi-target">100</div><div class="l">30 日 目標</div></div>
+    <div class="kpi"><div class="v" id="kpi-deadline">6/13</div><div class="l">期限 (JST)</div></div>
+    <div class="kpi"><div class="v" id="kpi-daily">3.3</div><div class="l">/日 必要</div></div>
+  </div>
+  <h3 style="margin-top:30px">この 30 日にやっていること</h3>
+  <ul>
+    <li><strong>collab page を誰でも作れる</strong> — <a href="/collab/chat">/collab/chat</a> に email で入って、 「6/17 古今 BBQ 30 人 ¥8,000」 みたいに書くだけで LP + Stripe Payment Link が 5 秒で出来る。 認証メール 1 つ目は無料、 2 つ目以降は Tシャツ 1 着で +1 collab (¥980/月 サブも可)。</li>
+    <li><strong>無料 ¥20,000 分の Opus 予算</strong> — 認証したお客様 1 人につき、 Opus API 利用枠を ¥20,000 分まで負担。 「色々作って遊ぶ」 だけで終わって構いません。</li>
+    <li><strong>404 = 1-of-1 Tシャツ</strong> — 存在しない URL を踏むと、 その URL + アクセスした秒単位の JST 時刻が design として印刷される 1 着が、 その瞬間だけ買える。 同じ秒は二度と来ません。</li>
+    <li><strong>REF500 紹介コード</strong> — 1 着買うと自分の紹介コードが発行され、 使ってもらえると ¥500 OFF が紹介先に、 紹介元には credit が積み上がる。</li>
+    <li><strong>SUZURI 同時ミラー</strong> — 国内のお客様は SUZURI (国内 3〜5 日発送) で、 海外は Printful EU で、 同じデザインを 2 系統で発送。</li>
+    <li><strong>法律対応完了</strong> — <a href="/privacy">プライバシーポリシー</a> / <a href="/tos">利用規約</a> / <a href="/tokushoho">特商法</a> / 景表法 20% 上限 / 削除権 endpoint まで一括整備済。</li>
+  </ul>
+  <p style="font-size:11.5px;opacity:0.6;line-height:1.85;margin-top:20px">
+    100 枚売れる、 売れない、 どちらでもこの実況は <a href="/transparency">/transparency</a> に毎日 fetch されて公開され続けます。 結果は隠せません。
+  </p>
+</section>
 
 <!-- 1. WHY ─────────────────────────── -->
 <section>
@@ -228,8 +255,8 @@ footer a{color:inherit;text-decoration:underline}
   <div class="roadmap">
     <div class="step now">
       <div class="year">2026.05 ← 今ここ</div>
-      <div class="title">無人運営 v1 — automation</div>
-      <div class="desc">1 founder + 28 in-process agents + Gemini Pro。1 日 24 ドロップ × 365 日 = 8,760 案/年。<strong>実売 ¥52,800 / 第三者購入 2 名 / 累計 6 件</strong> (2026-05-13)。<em>人間が判断する部分が多い</em>。</div>
+      <div class="title">無人運営 v1 + collab service ローンチ</div>
+      <div class="desc">1 founder + 28 agents + Gemini/Opus。 1 日 24 ドロップ × 365 = 8,760 案/年。 2026-05-14 時点: <strong>実売 ~8 枚 (うち 1 名 = 純外部顧客 Kenny)</strong>。 直近 30 日のターゲット = <strong>累計 100 枚</strong>。 新しく動いているもの: <em>/collab/chat (email でログイン → ¥20k Opus 予算 → 5 秒で LP 発行)</em>、 <em>404 → 1-of-1 Tシャツ</em>、 <em>SUZURI / Printful 二系統発送</em>、 <em>景表法 20% 上限 + プライバシー + 利用規約 一括整備</em>。</div>
     </div>
     <div class="step now">
       <div class="year">2026.07 — 実装済</div>
@@ -267,7 +294,7 @@ footer a{color:inherit;text-decoration:underline}
 <!-- 5. Live state ───────────── -->
 <section>
   <div class="eyebrow">05 — Today (live)</div>
-  <h2>2026 年 5 月 11 日 — 今この瞬間。</h2>
+  <h2>2026 年 5 月 14 日 — 今この瞬間。</h2>
   <p>ビジョンは大言壮語。だから現在地は <em>毎朝 /api/transparency に晒す</em>。今、live で取れる数字:</p>
   <div class="kpi-grid">
     <div class="kpi"><div class="v" data-stat="muer">…</div><div class="l">MUer (total)</div></div>
@@ -370,6 +397,18 @@ footer a{color:inherit;text-decoration:underline}
     const ma = await fetch('/api/products/ma').then(r => r.json());
     const councilCount = (ma||[]).reduce((s,p) => s + (p.sold||0), 0);
     setStat('ma_council', councilCount);
+    // 30 日 100 枚カウンター
+    try {
+      const sold_today = (t.real && t.real.units_sold) || (t.real && t.real.shirts_sold) || 0;
+      const el = document.getElementById('kpi-sold-today');
+      if (el) el.textContent = sold_today + ' / 100';
+      const daily = document.getElementById('kpi-daily');
+      const remain = Math.max(0, 100 - sold_today);
+      // Days remaining until 2026-06-13
+      const deadline = new Date('2026-06-13T23:59:59+09:00');
+      const days_left = Math.max(1, Math.ceil((deadline - new Date()) / 86400000));
+      if (daily) daily.textContent = (remain / days_left).toFixed(1);
+    } catch (_) {}
   } catch (e) {
     document.querySelectorAll('[data-stat]').forEach(el => el.textContent = '—');
   }
