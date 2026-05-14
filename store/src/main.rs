@@ -9067,6 +9067,20 @@ async fn create_printful_order(key: String, db: Db, product_id: i64, session: se
         ("kichinan_kids_longsleeve_sample", _) => 5410, // placeholder kids LS
         ("kichinan_kids_sweat_sample", _)      => 5420, // placeholder kids crewneck
         ("kichinan_baby_onesie_sample", _)     => 5000, // Rabbit Skins 4400 baby
+        // — L/N/O/P new Printful kinds —
+        ("kichinan_plush_sample", _)         => 17000, // Custom plush (cat 469, placeholder)
+        ("kichinan_acrylic_charm_sample", _) => 13088, // Acrylic charm (cat 274, placeholder)
+        ("kichinan_drawstring_sample", _)    => 9090,  // Drawstring sport bag (cat 290)
+        ("kichinan_kids_tee_sample", "S")    => 8867,  // Bella+Canvas 3001Y youth
+        ("kichinan_kids_tee_sample", "M")    => 8868,
+        ("kichinan_kids_tee_sample", "L")    => 8869,
+        ("kichinan_kids_tee_sample", "XL")   => 8870,
+        ("kichinan_kids_tee_sample", "110")  => 8867,
+        ("kichinan_kids_tee_sample", "120")  => 8867,
+        ("kichinan_kids_tee_sample", "130")  => 8868,
+        ("kichinan_kids_tee_sample", "140")  => 8869,
+        ("kichinan_kids_tee_sample", "150")  => 8870,
+        ("kichinan_kids_tee_sample", _)      => 8868,
         // Default tee — Bella+Canvas 3001 / Stanley-Stella SATU001
         (_, "S")  => 4016,
         (_, "M")  => 4017,
@@ -13237,6 +13251,11 @@ const KICHINAN_DESIGNS: &[(&str, i64, i64, &str, &str, &str)] = &[
     ("ah",29, 1800, "きちにゃん crew socks (kids)",  "socks",          "d"),
     ("ai",30, 2200, "きちにゃん cotton bandana",     "bandana",        "d"),
     ("aj",31, 3800, "きちにゃん kid tote 28×30cm",   "kids_tote",      "d"),
+    // — L/N/O/P upgraded from "partner-only" to Printful catalog —
+    ("l", 32, 5800, "きちにゃん plush 18cm",          "plush",          "d"),
+    ("n", 33, 1800, "きちにゃん acrylic charm",       "acrylic_charm",  "d"),
+    ("o", 34, 4200, "きちにゃん kids' Tシャツ",       "kids_tee",       "d"),
+    ("p", 35, 2800, "きちにゃん drawstring sport bag","drawstring",     "d"),
 ];
 
 /// Idempotent: ensures one products row per kichinan design so Printful
@@ -13271,6 +13290,10 @@ fn kichinan_brand_for_kind(kind: &str) -> &'static str {
         "socks"           => "kichinan_socks_sample",
         "bandana"         => "kichinan_bandana_sample",
         "kids_tote"       => "kichinan_kids_tote_sample",
+        "plush"           => "kichinan_plush_sample",
+        "acrylic_charm"   => "kichinan_acrylic_charm_sample",
+        "kids_tee"        => "kichinan_kids_tee_sample",
+        "drawstring"      => "kichinan_drawstring_sample",
         _                 => "kichinan_sample",
     }
 }
@@ -13289,7 +13312,9 @@ fn kichinan_brand_is_onesize(brand: &str) -> bool {
         "kichinan_postcard_sample" | "kichinan_poster_sample" |
         "kichinan_canvas_sample" | "kichinan_socks_sample" |
         "kichinan_bandana_sample" | "kichinan_kids_tote_sample" |
-        "kichinan_baby_bib_sample"
+        "kichinan_baby_bib_sample" |
+        "kichinan_plush_sample" | "kichinan_acrylic_charm_sample" |
+        "kichinan_drawstring_sample"
     )
 }
 
