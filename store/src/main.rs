@@ -2748,7 +2748,7 @@ async fn api_itto_checkout(
         ("mode".into(), "payment".into()),
         ("currency".into(), "jpy".into()),
         ("allow_promotion_codes".into(), "true".into()),
-        ("success_url".into(), format!("{}/itto?paid=ok&sid={{CHECKOUT_SESSION_ID}}", base_url)),
+        ("success_url".into(), format!("{}/itto/success?sid={{CHECKOUT_SESSION_ID}}", base_url)),
         ("cancel_url".into(),  format!("{}/itto?paid=cancel", base_url)),
         ("phone_number_collection[enabled]".into(), "true".into()),
         ("shipping_address_collection[allowed_countries][0]".into(), "JP".into()),
@@ -2815,6 +2815,359 @@ async fn api_itto_checkout(
 async fn bounty_page() -> impl IntoResponse {
     let body = include_str!("../static/bounty.html");
     axum::response::Html(body)
+}
+
+/// Helper used by /itto/success — list public-facing cuts text per tier.
+fn itto_tier_label(seat_type: &str) -> &'static str {
+    match seat_type {
+        "序" => "序 — Chateaubriand-heavy",
+        "本" => "本 — Sirloin-heavy",
+        "続" => "続 — Tongue-heavy",
+        "尽" => "尽 — Tail / 骨髄 only",
+        _    => "—",
+    }
+}
+
+#[derive(Deserialize)]
+struct IttoSuccessQuery {
+    #[serde(default)]
+    sid: String,
+}
+
+/// GET /itto/success?sid=cs_xxx
+/// Rich post-purchase page. Renders directly off the Stripe Checkout Session
+/// metadata (immediate) and the itto_seats row (after webhook fires).
+/// Standalone — never gates on the webhook landing because Stripe sometimes
+/// redirects ~1s before the webhook arrives.
+async fn itto_success_page(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<IttoSuccessQuery>,
+) -> Response {
+    let sid = q.sid.trim().to_string();
+    if sid.is_empty() || !sid.starts_with("cs_") {
+        return axum::response::Redirect::to("/itto").into_response();
+    }
+
+    // Pull Stripe session for verified metadata. Fail soft: if Stripe is
+    // unreachable we still render a generic confirmation rather than 500.
+    let mut seat_type = String::new();
+    let mut serial = ITTO_CURRENT_SERIAL.to_string();
+    let mut takeaway_g: i64 = 0;
+    let mut amount_total: i64 = 0;
+    let mut buyer_email = String::new();
+    let mut paid = false;
+
+    if let Ok(stripe_key) = env::var("STRIPE_SECRET_KEY") {
+        if !stripe_key.is_empty() {
+            let url = format!("https://api.stripe.com/v1/checkout/sessions/{}", sid);
+            if let Ok(r) = reqwest::Client::new()
+                .get(&url)
+                .basic_auth(&stripe_key, None::<&str>)
+                .send().await
+            {
+                if r.status().is_success() {
+                    let j: serde_json::Value = r.json().await.unwrap_or_default();
+                    paid = j["payment_status"].as_str() == Some("paid");
+                    amount_total = j["amount_total"].as_i64().unwrap_or(0);
+                    buyer_email = j["customer_details"]["email"].as_str()
+                        .or_else(|| j["customer_email"].as_str())
+                        .unwrap_or("").to_string();
+                    if let Some(m) = j["metadata"].as_object() {
+                        seat_type = m.get("seat_type").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        serial    = m.get("serial").and_then(|v| v.as_str()).unwrap_or(ITTO_CURRENT_SERIAL).to_string();
+                        takeaway_g = m.get("takeaway_g").and_then(|v| v.as_str()).and_then(|s| s.parse().ok()).unwrap_or(0);
+                    }
+                }
+            }
+        }
+    }
+
+    // Look up seat row (set by webhook). May not exist yet — that's OK.
+    let seat_row: Option<(i64, String, i64)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT seat_tier_num, COALESCE(buyer_email,''), COALESCE(amount_paid_jpy,0)
+             FROM itto_seats WHERE stripe_session_id = ?",
+            params![sid],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).ok()
+    };
+    let seat_num = seat_row.as_ref().map(|x| x.0).unwrap_or(0);
+    if buyer_email.is_empty() {
+        if let Some((_, em, _)) = &seat_row { buyer_email = em.clone(); }
+    }
+    if amount_total == 0 {
+        if let Some((_, _, amt)) = &seat_row { amount_total = *amt; }
+    }
+
+    // Calf metadata for context.
+    let (birthdate, farm, event_date): (String, String, String) = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(birthdate,''), COALESCE(farm,''), COALESCE(event_date,'')
+             FROM itto_calves WHERE serial=?",
+            params![serial],
+            |r| Ok((r.get::<_,String>(0)?, r.get::<_,String>(1)?, r.get::<_,String>(2)?)),
+        ).unwrap_or_default()
+    };
+
+    let cuts = itto_cuts_for_tier(&seat_type);
+    let tier_label = itto_tier_label(&seat_type);
+    let takeaway_line = match takeaway_g {
+        500  => "持ち帰り但馬牛 500g (真空パック・冷蔵便)",
+        1000 => "持ち帰り但馬牛 1,000g (真空パック・冷蔵便)",
+        _    => "なし",
+    };
+    let buyer_token = buyer_token_for(&buyer_email);
+    let masked_email = if buyer_email.is_empty() { "—".into() } else { mask_email_public(&buyer_email) };
+    let seat_label = if seat_num > 0 {
+        format!("一頭 ittō #{} — 席 {} / {}番", serial, seat_type, seat_num)
+    } else {
+        format!("一頭 ittō #{} — 席 {}", serial, seat_type)
+    };
+    let amount_jpy_disp = if amount_total > 0 {
+        format!("¥{}", amount_total.to_string().as_bytes().rchunks(3).rev()
+            .map(|c| std::str::from_utf8(c).unwrap_or("")).collect::<Vec<_>>().join(","))
+    } else { "—".into() };
+
+    // SUZURI-mirrored MUGEN products (cross-sell domestic fulfillment).
+    struct Suz { name: String, url: String, image: String, price_jpy: i64 }
+    let suzuri_list: Vec<Suz> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT name, COALESCE(suzuri_url,''), COALESCE(mockup_url,''), COALESCE(price_jpy,0)
+             FROM products
+             WHERE brand='mugen' AND active=1
+               AND suzuri_url IS NOT NULL AND suzuri_url <> ''
+             ORDER BY drop_num DESC LIMIT 6"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map([], |r| Ok(Suz {
+            name: r.get(0)?, url: r.get(1)?, image: r.get(2)?, price_jpy: r.get(3)?,
+        })).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+
+    // SUZURI cards (or empty placeholder).
+    let suzuri_cards = if suzuri_list.is_empty() {
+        r#"<div class="muted">在庫 0 — 新作生成中。SUZURI ストア: <a href="https://suzuri.jp/wearmu" target="_blank" rel="noopener">suzuri.jp/wearmu</a></div>"#.to_string()
+    } else {
+        suzuri_list.iter().map(|s| format!(
+            r#"<a class="suz-card" href="{url}" target="_blank" rel="noopener">
+                 <div class="suz-img" style="background-image:url('{img}')"></div>
+                 <div class="suz-name">{name}</div>
+                 <div class="suz-meta">SUZURI · ¥{price}</div>
+               </a>"#,
+            url = s.url, img = s.image, name = s.name, price = s.price_jpy,
+        )).collect::<Vec<_>>().join("")
+    };
+
+    let status_banner = if paid {
+        r#"<div class="banner ok">決済完了 · お席を確保しました</div>"#
+    } else if seat_num > 0 {
+        r#"<div class="banner ok">お席を確保しました</div>"#
+    } else {
+        r#"<div class="banner pending">決済を確認中 (5–10 秒) … このページを開いたままお待ちください</div>"#
+    };
+
+    let event_line = if event_date.is_empty() {
+        "1 夜限定 · 日程は確定次第ご連絡 (4 週前まで)".to_string()
+    } else {
+        format!("開催日 {}", event_date)
+    };
+    let birth_line = if birthdate.is_empty() { String::new() } else {
+        format!(r#"<div class="row"><span class="k">誕生日</span><span class="v">{}</span></div>"#, birthdate)
+    };
+    let farm_line = if farm.is_empty() { String::new() } else {
+        format!(r#"<div class="row"><span class="k">産地</span><span class="v">{}</span></div>"#, farm)
+    };
+
+    let buyer_link = if buyer_token.is_empty() { String::new() } else {
+        format!(r#"<a class="btn-ghost" href="/buyer/{token}">マイページ /buyer/{short}</a>"#,
+            token = buyer_token, short = &buyer_token[..8])
+    };
+
+    let html = format!(r##"<!DOCTYPE html>
+<html lang="ja"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>{seat_label} — 確保完了 · MU × 焼肉古今</title>
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<style>
+  :root {{
+    --bg:#0A0A0A; --fg:#F5F5F0; --muted:#9a9a90; --line:#1F1F1A;
+    --accent:#A67843; --ok:#3a7a3a; --warn:#7a5a3a;
+  }}
+  * {{ box-sizing:border-box }}
+  body {{ background:var(--bg); color:var(--fg); margin:0; padding:48px 20px 96px;
+         font-family:'Hiragino Mincho ProN','Yu Mincho',serif; line-height:1.85; }}
+  .wrap {{ max-width:720px; margin:0 auto }}
+  h1 {{ font-size:14px; letter-spacing:0.4em; text-transform:uppercase; font-weight:400;
+        opacity:0.7; margin:0 0 32px }}
+  h2 {{ font-size:11px; letter-spacing:0.35em; text-transform:uppercase; color:var(--accent);
+        margin:48px 0 16px; font-weight:500 }}
+  .hero {{ background:#121210; border:1px solid var(--line); padding:32px 28px; margin-bottom:24px }}
+  .hero .seat {{ font-size:22px; letter-spacing:0.06em; margin:0 0 6px }}
+  .hero .tier {{ font-size:11px; letter-spacing:0.3em; color:var(--muted); text-transform:uppercase }}
+  .banner {{ display:inline-block; font-size:10px; letter-spacing:0.3em; text-transform:uppercase;
+             padding:6px 12px; border-radius:2px; margin-bottom:18px }}
+  .banner.ok {{ background:var(--ok); color:#fff }}
+  .banner.pending {{ background:var(--warn); color:#fff }}
+  .row {{ display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--line); font-size:13px }}
+  .row .k {{ color:var(--muted); letter-spacing:0.15em; font-size:11px; text-transform:uppercase }}
+  .row .v {{ color:var(--fg); font-family:ui-monospace,Menlo,monospace; font-size:12px }}
+  .card {{ background:#121210; border:1px solid var(--line); padding:24px; margin-bottom:24px }}
+  p {{ font-size:13.5px; line-height:2; opacity:0.85; margin:0 0 12px }}
+  .muted {{ color:var(--muted); font-size:12px }}
+  .cuts {{ font-family:ui-monospace,Menlo,monospace; font-size:12px; line-height:2.0;
+           background:#0d0d0c; border:1px dashed var(--line); padding:14px; }}
+  .timeline {{ list-style:none; padding:0; margin:0 }}
+  .timeline li {{ display:flex; gap:14px; padding:10px 0; font-size:12.5px }}
+  .timeline .dot {{ width:8px; height:8px; border-radius:50%; background:var(--accent); margin-top:8px; flex-shrink:0 }}
+  .timeline .dot.next {{ background:#444; border:1px solid var(--accent) }}
+  .timeline .when {{ color:var(--muted); font-size:10.5px; letter-spacing:0.2em; text-transform:uppercase; margin-right:8px }}
+  .grid-suz {{ display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:14px }}
+  .suz-card {{ display:block; background:#121210; border:1px solid var(--line); padding:0;
+               text-decoration:none; color:var(--fg); overflow:hidden; transition:border-color .2s }}
+  .suz-card:hover {{ border-color:var(--accent) }}
+  .suz-img {{ width:100%; aspect-ratio:1; background:#0d0d0c center/cover no-repeat }}
+  .suz-name {{ padding:10px 12px 2px; font-size:11.5px; line-height:1.5 }}
+  .suz-meta {{ padding:0 12px 12px; font-size:10px; color:var(--muted); letter-spacing:0.15em }}
+  .actions {{ display:flex; flex-wrap:wrap; gap:10px; margin-top:18px }}
+  .btn {{ display:inline-block; background:var(--accent); color:#fff; text-decoration:none;
+          padding:11px 22px; font-size:11px; letter-spacing:0.22em; text-transform:uppercase; border-radius:2px;
+          border:none; cursor:pointer; font-family:inherit }}
+  .btn-ghost {{ display:inline-block; background:transparent; color:var(--fg); border:1px solid var(--line);
+                text-decoration:none; padding:10px 20px; font-size:10.5px; letter-spacing:0.22em;
+                text-transform:uppercase; border-radius:2px }}
+  .btn-ghost:hover {{ border-color:var(--accent); color:var(--accent) }}
+  .ascii {{ font-family:ui-monospace,Menlo,monospace; font-size:10.5px; line-height:1.4;
+            color:var(--muted); white-space:pre; opacity:0.55 }}
+  footer {{ margin-top:64px; padding-top:24px; border-top:1px solid var(--line);
+            font-size:10px; letter-spacing:0.2em; color:var(--muted); text-transform:uppercase }}
+  a {{ color:var(--accent); text-decoration:none }} a:hover {{ text-decoration:underline }}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>MU × 焼肉古今 — 一頭 ittō</h1>
+
+{status_banner}
+
+<div class="hero">
+  <div class="tier">{tier_label}</div>
+  <h2 class="seat" style="margin:6px 0 14px;color:var(--fg);font-size:22px;letter-spacing:0.06em">{seat_label}</h2>
+  <div class="row"><span class="k">支払い</span><span class="v">{amount_jpy_disp}</span></div>
+  <div class="row"><span class="k">メール</span><span class="v">{masked_email}</span></div>
+  <div class="row"><span class="k">持ち帰り</span><span class="v">{takeaway_line}</span></div>
+  <div class="row"><span class="k">セッション</span><span class="v">{sid_short}</span></div>
+</div>
+
+<h2>あなたの皿にのる 7 品</h2>
+<p>席のグレードごとに、あらかじめ確定したカットとグラム数。あとから変わりません。</p>
+<div class="cuts">{cuts}</div>
+<p class="muted">炭は備長ではなく、紀州 (くぬぎ・なら混合) を使う予定です。
+但馬と紀州の組み合わせは、煙が少なく、香りが残る。</p>
+
+<h2>あなたが食べる牛</h2>
+<div class="card">
+  <div class="row"><span class="k">個体識別番号</span><span class="v">一頭 ittō #{serial}</span></div>
+  {birth_line}
+  {farm_line}
+  <div class="row"><span class="k">開催</span><span class="v">{event_line}</span></div>
+  <p class="muted" style="margin-top:14px">1 頭まるごと 28 人で分けます。あなた以外の 27 席に「誰が何のカットを食べるか」も予め決まっています。</p>
+  <div class="actions">
+    <a class="btn-ghost" href="/itto/{serial}">この牛のページを見る</a>
+  </div>
+</div>
+
+<h2>1/1 記念 T シャツ</h2>
+<div class="card">
+  <p>あなたの席ごとに、「いつ・どの牛から・何のカットを何 g 食べたか」を刻んだ
+  1 枚物の T シャツが、AI ( Gemini 3 Pro Image ) で自動デザインされます。</p>
+  <p class="muted">— 当日、お席にレシートとして置いてあります。あとから配送はしません。<br>
+  — デザインの試作は <a href="/agents">/agents</a> から `itto_tshirt_designer` の出力で見られます。</p>
+  <pre class="ascii">  ┌─────────────────────────────┐
+  │  一頭 ittō #{serial}          │
+  │  席 {seat_type}  · tier {seat_num_disp}              │
+  │  ─                          │
+  │  {cuts_first_line:<28} │
+  │  ─                          │
+  │  served {event_disp:<19}  │
+  └─────────────────────────────┘</pre>
+</div>
+
+<h2>これから (タイムライン)</h2>
+<ul class="timeline">
+  <li><span class="dot"></span><div><span class="when">今</span>お席確保。決済完了メールが届きます (Stripe)。</div></li>
+  <li><span class="dot next"></span><div><span class="when">~ 2 週間</span>kokon オーナー (馬場) から直接、開催日・集合場所・アレルギー再確認のメール。</div></li>
+  <li><span class="dot next"></span><div><span class="when">~ 4 週前</span>当夜のメニューと飲み合わせのご案内。1/1 T シャツのプレビュー。</div></li>
+  <li><span class="dot next"></span><div><span class="when">当夜</span>20:00 集合・着席・序 → 本 → 続 → 尽 (約 2.5h)。お席に T シャツが置かれています。</div></li>
+  <li><span class="dot next"></span><div><span class="when">翌日</span>あなたの食べたカット詳細をメールで送付。希望者は <code>/itto/{serial}</code> に名前を載せます (任意)。</div></li>
+</ul>
+
+<h2>もし、もっと連れて行きたい</h2>
+<div class="card">
+  <p>同じ 1 頭の中で、他の席もまだ取れます。同行 1 人ぶんなら隣の席 ( 同 tier ) を、別 tier なら別のカット体験を。</p>
+  <div class="actions">
+    <a class="btn" href="/itto">/itto に戻る (残席を見る)</a>
+    {buyer_link}
+  </div>
+</div>
+
+<h2>日本国内なら、SUZURI でも買えます</h2>
+<p>イベントまでに何か手元に欲しい場合、MU の MUGEN ラインは SUZURI で
+ミラー販売しています ( 国内配送 ・JPY 決済 )。</p>
+<div class="grid-suz">{suzuri_cards}</div>
+<div class="actions" style="margin-top:18px">
+  <a class="btn-ghost" href="https://suzuri.jp/wearmu" target="_blank" rel="noopener">SUZURI ストア全件 →</a>
+  <a class="btn-ghost" href="/kokon">/kokon (一頭 と一緒に注文できるグッズ)</a>
+</div>
+
+<h2>シェア (任意)</h2>
+<div class="card">
+  <p class="muted">「一頭 #{serial} の {seat_type} に席を取った」だけ呟いていただけると、残席の動きが速くなります。
+  ペルソナや席番号は出ません。</p>
+  <div class="actions">
+    <a class="btn-ghost" target="_blank" rel="noopener"
+       href="https://twitter.com/intent/tweet?text=%E4%B8%80%E9%A0%AD%20itt%C5%8D%20%23{serial}%20%E3%81%AE%20{seat_enc}%20%E3%81%AB%E5%B8%AD%E3%82%92%E5%8F%96%E3%81%A3%E3%81%9F&url=https%3A%2F%2Fwearmu.com%2Fitto">X に投稿</a>
+    <a class="btn-ghost" href="mailto:hello@wearmu.com?subject=itto%20%23{serial}%20question">問い合わせ</a>
+  </div>
+</div>
+
+<footer>
+  MU × 焼肉古今 (kokon.tokyo)<br>
+  receipt sid {sid_short} · 一頭 #{serial} · 席 {seat_type}
+</footer>
+
+</div>
+</body></html>"##,
+        seat_label = seat_label,
+        tier_label = tier_label,
+        status_banner = status_banner,
+        amount_jpy_disp = amount_jpy_disp,
+        masked_email = masked_email,
+        takeaway_line = takeaway_line,
+        sid_short = sid.chars().take(18).collect::<String>(),
+        cuts = cuts,
+        serial = serial,
+        birth_line = birth_line,
+        farm_line = farm_line,
+        event_line = event_line,
+        seat_type = seat_type,
+        seat_num_disp = if seat_num > 0 { seat_num.to_string() } else { "—".into() },
+        cuts_first_line = cuts.split(" · ").next().unwrap_or(""),
+        event_disp = if event_date.is_empty() { "TBD".into() } else { event_date.clone() },
+        buyer_link = buyer_link,
+        suzuri_cards = suzuri_cards,
+        seat_enc = match seat_type.as_str() {
+            "序" => "%E5%BA%8F", "本" => "%E6%9C%AC",
+            "続" => "%E7%B6%9A", "尽" => "%E5%B0%BD",
+            _    => "",
+        },
+    );
+
+    axum::response::Html(html).into_response()
 }
 
 /// Stable per-buyer token: sha256(email_lower | BUYER_TOKEN_SALT)[:20].
@@ -33761,6 +34114,7 @@ async fn main() {
         .route("/developers", get(developers_page))
         .route("/collab", get(collab_page))
         .route("/itto", get(itto_page))
+        .route("/itto/success", get(itto_success_page))
         .route("/itto/:serial", get(itto_serial_page))
         .route("/baba", get(show_baba_owner_proposal))
         .route("/api/itto/availability", get(api_itto_availability))
