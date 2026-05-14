@@ -13815,6 +13815,179 @@ async fn proposal_kichinan_revoke(
     })).into_response()
 }
 
+// ── Asoview approval gate ─────────────────────────────────────────────────
+// Parallel to the kichinan flow but for アソビュー株式会社 (山野智久 CEO,
+// 体験予約 platform). Once approved, https://wearmu.com/asoview becomes a
+// public LP — until then /asoview 404s. The proposal LP at /proposals/asoview
+// is always reachable for internal review + approval form.
+
+fn ensure_asoview_approval_table(db: &Db) {
+    let conn = db.lock().unwrap();
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS asoview_approval (
+            id            INTEGER PRIMARY KEY,
+            approved_at   TEXT,
+            approver_name TEXT,
+            approver_email TEXT,
+            approver_ip   TEXT,
+            plan_tier     TEXT,
+            note          TEXT,
+            revoked_at    TEXT
+         )", [],
+    );
+}
+
+fn asoview_approval_row(conn: &rusqlite::Connection) -> Option<(String, String, String, String, Option<String>)> {
+    conn.query_row(
+        "SELECT approved_at, approver_name, approver_email, COALESCE(plan_tier,''), revoked_at
+         FROM asoview_approval WHERE id=1 AND approved_at IS NOT NULL",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+    ).ok()
+}
+
+fn asoview_is_approved(conn: &rusqlite::Connection) -> bool {
+    asoview_approval_row(conn).map(|t| t.4.is_none()).unwrap_or(false)
+}
+
+/// GET /proposals/asoview — confidential B2B proposal LP. noindex via the
+/// page's own meta tag. Always reachable (the approval gate is per-product,
+/// not per-LP). Approval form lives on the page itself.
+async fn proposal_asoview() -> Html<&'static str> {
+    Html(include_str!("../static/proposals/asoview.html"))
+}
+
+/// GET /api/proposals/asoview/status — public, drives the LP banner/JS.
+async fn proposal_asoview_status(State(db): State<Db>) -> impl IntoResponse {
+    let conn = db.lock().unwrap();
+    let row = asoview_approval_row(&conn);
+    let approved = row.as_ref().map(|t| t.4.is_none()).unwrap_or(false);
+    let (approved_at, approver_name, plan_tier) = match &row {
+        Some((at, n, _e, p, _r)) => (
+            Some(at.clone()),
+            Some(n.split_whitespace().next().unwrap_or("—").to_string()),
+            Some(p.clone()),
+        ),
+        None => (None, None, None),
+    };
+    Json(serde_json::json!({
+        "approved": approved,
+        "approved_at": approved_at,
+        "approver_first_name": approver_name,
+        "plan_tier": plan_tier,
+        "public_url": "https://wearmu.com/asoview",
+        "products_active": 0,
+        "products_total": 18,
+    }))
+}
+
+#[derive(Deserialize)]
+struct AsoviewApproveBody {
+    approver_name: String,
+    approver_email: String,
+    #[serde(default)]
+    plan_tier: String,
+    #[serde(default)]
+    note: String,
+}
+
+/// POST /api/proposals/asoview/approve — admin-gated. Once landed, /asoview
+/// becomes a publicly reachable LP. SKU Printful wiring is a separate step
+/// (the seed_asoview_sample_products fn — TODO once variant IDs confirmed).
+async fn proposal_asoview_approve(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<AsoviewApproveBody>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/proposals/asoview/approve").await {
+        return r;
+    }
+    let name = body.approver_name.trim();
+    let email = body.approver_email.trim().to_lowercase();
+    if name.is_empty() || !email.contains('@') {
+        return (StatusCode::BAD_REQUEST, "approver_name + valid approver_email required").into_response();
+    }
+    let plan = match body.plan_tier.trim().to_lowercase().as_str() {
+        "starter" | "growth" | "enterprise" => body.plan_tier.trim().to_lowercase(),
+        _ => "starter".into(),
+    };
+    let ip = client_ip(&headers);
+    let now = chrono_now();
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO asoview_approval
+                (id, approved_at, approver_name, approver_email, approver_ip, plan_tier, note, revoked_at)
+             VALUES (1, ?, ?, ?, ?, ?, ?, NULL)
+             ON CONFLICT(id) DO UPDATE SET
+                approved_at=excluded.approved_at,
+                approver_name=excluded.approver_name,
+                approver_email=excluded.approver_email,
+                approver_ip=excluded.approver_ip,
+                plan_tier=excluded.plan_tier,
+                note=excluded.note,
+                revoked_at=NULL",
+            params![now, name, email, ip, plan, body.note.trim()],
+        );
+    }
+    eprintln!("[asoview] approved by {} <{}> plan={}", name, email, plan);
+    let alert = format!(
+        "━◯━ asoview collab APPROVED\n\
+         approver: {} <{}>\n\
+         plan: {}\n\
+         at: {}\n\
+         public LP: https://wearmu.com/asoview (now live)",
+        name, email, plan, now,
+    );
+    tokio::spawn(async move { send_telegram_message(&alert).await; });
+    Json(serde_json::json!({
+        "ok": true,
+        "approved_at": now,
+        "public_url": "https://wearmu.com/asoview",
+        "plan_tier": plan,
+    })).into_response()
+}
+
+/// POST /api/proposals/asoview/revoke — admin-gated. /asoview reverts to 404.
+async fn proposal_asoview_revoke(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/proposals/asoview/revoke").await {
+        return r;
+    }
+    let now = chrono_now();
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute("UPDATE asoview_approval SET revoked_at=? WHERE id=1", params![now]);
+    }
+    eprintln!("[asoview] revoked at {}", now);
+    Json(serde_json::json!({ "ok": true, "revoked_at": now })).into_response()
+}
+
+/// GET /asoview — public top-level URL. Returns the asoview LP only if the
+/// proposal is approved & non-revoked. Otherwise: the 404 tee page (the
+/// existence of /asoview is itself part of the brand-stamp).
+async fn asoview_public_page(State(db): State<Db>) -> Response {
+    let approved = { let c = db.lock().unwrap(); asoview_is_approved(&c) };
+    if !approved {
+        return render_404_tee_page(&db, "/asoview");
+    }
+    Html(include_str!("../static/proposals/asoview.html")).into_response()
+}
+
+/// GET /kichinan — public top-level URL. Mirrors /asoview semantics: live
+/// once the kichinan approval row is non-revoked, 404 tee otherwise.
+async fn kichinan_public_page(State(db): State<Db>) -> Response {
+    let approved = { let c = db.lock().unwrap(); kichinan_is_approved(&c) };
+    if !approved {
+        return render_404_tee_page(&db, "/kichinan");
+    }
+    Html(include_str!("../static/proposals/kichinan.html")).into_response()
+}
+
 /// GET /en/press — English-default version. Same content, but we flip
 /// <html lang>, canonical, og:locale, and inject auto-switch JS so the
 /// English `.lang-content.en` div is shown without a click.
@@ -35734,6 +35907,7 @@ async fn main() {
     // Stripe webhook can fulfill /api/proposals/kichinan/sample orders
     // via the standard create_printful_order path.
     ensure_kichinan_approval_table(&db);
+    ensure_asoview_approval_table(&db);
     seed_kichinan_sample_products(&db);
     // If the kichinan collab has already been approved, re-assert active=1
     // on every kichinan_* product. This catches the case where a new SKU was
@@ -35918,6 +36092,12 @@ async fn main() {
         .route("/api/proposals/kichinan/status",  get(proposal_kichinan_status))
         .route("/api/proposals/kichinan/approve", post(proposal_kichinan_approve))
         .route("/api/proposals/kichinan/revoke",  post(proposal_kichinan_revoke))
+        .route("/kichinan",          get(kichinan_public_page))
+        .route("/proposals/asoview", get(proposal_asoview))
+        .route("/api/proposals/asoview/status",  get(proposal_asoview_status))
+        .route("/api/proposals/asoview/approve", post(proposal_asoview_approve))
+        .route("/api/proposals/asoview/revoke",  post(proposal_asoview_revoke))
+        .route("/asoview", get(asoview_public_page))
         .nest_service("/proposals", ServeDir::new("static/proposals"))
         .route("/api/collab/account/delete", post(collab_account_delete))
         .route("/api/404/buy", post(not_found_buy))
