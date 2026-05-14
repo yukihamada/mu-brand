@@ -9020,21 +9020,38 @@ async fn create_printful_order(key: String, db: Db, product_id: i64, session: se
     let zip = addr["postal_code"].as_str().unwrap_or("");
     let state = addr["state"].as_str().unwrap_or("");
 
-    // Determine variant by size from metadata. Caps are one-size — when the
-    // product's brand identifies a cap, we override size selection with the
-    // snapback variant.
+    // Determine Printful variant by (brand, size). Some kichinan products
+    // are one-size (cap/tote/mug/beanie) and override size selection.
+    // Variant IDs are Printful catalog ids; for kichinan_*_sample they
+    // may need adjustment to match yuki's actual Printful catalog.
     let size = full_session["metadata"]["size"].as_str().unwrap_or("M");
-    let variant_id: u64 = if brand == "kichinan_cap_sample" {
-        // Printful catalog 92 (Yupoong Snapback Trucker Cap) — one-size black.
-        7854
-    } else {
-        match size {
-            "S"  => 4016,
-            "M"  => 4017,
-            "L"  => 4018,
-            "XL" => 4019,
-            _    => 4017,
-        }
+    let variant_id: u64 = match (brand.as_str(), size) {
+        // Caps — Yupoong Snapback (catalog 92), one-size black.
+        ("kichinan_cap_sample", _)        => 7854,
+        // Tote — natural canvas (catalog 256), one-size.
+        ("kichinan_tote_sample", _)       => 7763,
+        // Mug — 11oz white ceramic (catalog 19), one-size.
+        ("kichinan_mug_sample", _)        => 1320,
+        // Beanie — Yupoong cuffed (catalog 24), one-size.
+        ("kichinan_beanie_sample", _)     => 7858,
+        // Hoodie — Gildan 18500 unisex pullover (catalog 146).
+        ("kichinan_hoodie_sample", "S")   => 5530,
+        ("kichinan_hoodie_sample", "M")   => 5531,
+        ("kichinan_hoodie_sample", "L")   => 5532,
+        ("kichinan_hoodie_sample", "XL")  => 5533,
+        ("kichinan_hoodie_sample", _)     => 5531,
+        // Long sleeve — Bella+Canvas 3501 (catalog 36).
+        ("kichinan_longsleeve_sample", "S")  => 4279,
+        ("kichinan_longsleeve_sample", "M")  => 4280,
+        ("kichinan_longsleeve_sample", "L")  => 4281,
+        ("kichinan_longsleeve_sample", "XL") => 4282,
+        ("kichinan_longsleeve_sample", _)    => 4280,
+        // Default tee (Bella+Canvas 3001 / Stanley-Stella SATU001).
+        (_, "S")  => 4016,
+        (_, "M")  => 4017,
+        (_, "L")  => 4018,
+        (_, "XL") => 4019,
+        _         => 4017,
     };
 
     let client = reqwest::Client::new();
@@ -13156,35 +13173,55 @@ struct KichinanSampleBody {
     price_jpy: i64,
 }
 
-/// Catalog of kichinan_sample designs. Each row gets seeded into the
+/// Catalog of kichinan_sample products. Each row gets seeded into the
 /// products table at startup so the existing checkout.session.completed
 /// webhook (which calls create_printful_order keyed on metadata.product_id)
 /// can fulfill orders end-to-end without any new fulfillment path.
-/// Tuple: (slug, drop_num, price_jpy, label, kind)  kind = "tee" | "cap".
-const KICHINAN_DESIGNS: &[(&str, i64, i64, &str, &str)] = &[
-    ("a", 1, 5400, "後方支援 back-print",         "tee"),
-    ("b", 2, 6800, "one truck. 1962.",            "tee"),
-    ("c", 3, 5400, "workshirt patch · SINCE 1962","tee"),
-    ("d", 4, 4500, "K-helmet quiet",              "tee"),
-    ("e", 5, 6800, "Yamaguchi coast",             "tee"),
-    ("f", 6, 5800, "K-emblem snapback cap",       "cap"),
+/// Tuple: (slug, drop_num, price_jpy, label, kind, design_slug)
+/// kind ∈ {tee, cap, tote, hoodie, mug, beanie, longsleeve}
+/// design_slug = which transparent print file under /proposals/design-X.png
+/// to use as the print artwork (reuse across products is fine).
+const KICHINAN_DESIGNS: &[(&str, i64, i64, &str, &str, &str)] = &[
+    ("a", 1, 5400, "後方支援 back-print",         "tee",        "a"),
+    ("b", 2, 6800, "one truck. 1962.",            "tee",        "b"),
+    ("c", 3, 5400, "workshirt patch · SINCE 1962","tee",        "c"),
+    ("d", 4, 4500, "K-helmet quiet",              "tee",        "d"),
+    ("e", 5, 6800, "Yamaguchi coast",             "tee",        "e"),
+    ("f", 6, 5800, "K-emblem snapback cap",       "cap",        "d"),
+    ("g", 7, 4200, "後方支援 canvas tote",        "tote",       "a"),
+    ("h", 8, 9800, "後方支援 heavy hoodie",       "hoodie",     "a"),
+    ("i", 9, 2400, "K-emblem ceramic mug",        "mug",        "d"),
+    ("j",10, 3800, "K-emblem cuffed beanie",      "beanie",     "d"),
+    ("k",11, 6400, "後方支援 long-sleeve tee",    "longsleeve", "a"),
 ];
 
 /// Idempotent: ensures one products row per kichinan design so Printful
 /// fulfillment piggybacks on the existing MUGEN/MA pipeline. design_url is
 /// the print-ready transparent PNG, mockup_url is the photoreal Gemini
 /// product shot for OG / receipt thumbnails.
+fn kichinan_brand_for_kind(kind: &str) -> &'static str {
+    match kind {
+        "cap"        => "kichinan_cap_sample",
+        "tote"       => "kichinan_tote_sample",
+        "hoodie"     => "kichinan_hoodie_sample",
+        "mug"        => "kichinan_mug_sample",
+        "beanie"     => "kichinan_beanie_sample",
+        "longsleeve" => "kichinan_longsleeve_sample",
+        _            => "kichinan_sample",
+    }
+}
+
 fn seed_kichinan_sample_products(db: &Db) {
     let conn = db.lock().unwrap();
-    for (slug, drop_num, price_jpy, label, kind) in KICHINAN_DESIGNS {
-        let brand = if *kind == "cap" { "kichinan_cap_sample" } else { "kichinan_sample" };
+    for (slug, drop_num, price_jpy, label, kind, design_slug) in KICHINAN_DESIGNS {
+        let brand = kichinan_brand_for_kind(kind);
         let exists: bool = conn.query_row(
             "SELECT 1 FROM products WHERE brand=? AND drop_num=? LIMIT 1",
             params![brand, drop_num], |r| r.get::<_, i64>(0),
         ).is_ok();
         if exists { continue; }
         let now_s = chrono_now();
-        let design_url = format!("https://wearmu.com/proposals/design-{}.png", slug);
+        let design_url = format!("https://wearmu.com/proposals/design-{}.png", design_slug);
         let mockup_url = format!("https://wearmu.com/proposals/mockup-{}.png", slug);
         let _ = conn.execute(
             "INSERT INTO products
@@ -13197,7 +13234,7 @@ fn seed_kichinan_sample_products(db: &Db) {
                 now_s,
                 serde_json::json!({
                     "kind": format!("kichinan_{}", kind),
-                    "design_slug": slug,
+                    "design_slug": design_slug,
                     "license_status": "pending",
                     "ip_owner": "Kichinan Group",
                     "note": "Sample order only — public sales require licensing contract"
@@ -13217,14 +13254,15 @@ async fn proposal_kichinan_sample(
 ) -> Response {
     let design_lower = body.design.to_lowercase();
     let (drop_num, default_price, label, kind) = match KICHINAN_DESIGNS.iter()
-        .find(|(s, _, _, _, _)| *s == design_lower)
-        .map(|(_, d, p, l, k)| (*d, *p, *l, *k)) {
+        .find(|(s, _, _, _, _, _)| *s == design_lower)
+        .map(|(_, d, p, l, k, _)| (*d, *p, *l, *k)) {
         Some(v) => v,
         None => return (StatusCode::BAD_REQUEST, "unknown design id").into_response(),
     };
-    let price_jpy = if (4000..=8000).contains(&body.price_jpy) { body.price_jpy } else { default_price };
-    // Caps are one-size — accept any size from frontend but force ONESIZE.
-    let size = if kind == "cap" {
+    let price_jpy = if (2000..=12000).contains(&body.price_jpy) { body.price_jpy } else { default_price };
+    // One-size products: cap, tote, mug, beanie. Sized: tee, hoodie, longsleeve.
+    let onesize_kinds = ["cap", "tote", "mug", "beanie"];
+    let size = if onesize_kinds.contains(&kind) {
         "ONESIZE".to_string()
     } else {
         let s = body.size.as_deref().unwrap_or("M").to_uppercase();
@@ -13237,7 +13275,7 @@ async fn proposal_kichinan_sample(
     if stripe_key.is_empty() {
         return (StatusCode::SERVICE_UNAVAILABLE, "stripe key missing").into_response();
     }
-    let brand = if kind == "cap" { "kichinan_cap_sample" } else { "kichinan_sample" };
+    let brand = kichinan_brand_for_kind(kind);
     let product_id: i64 = {
         let conn = db.lock().unwrap();
         match conn.query_row(
