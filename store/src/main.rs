@@ -11467,36 +11467,40 @@ async fn grachan82_page(headers: HeaderMap, axum::extract::Query(q): axum::extra
 /// uses the current year (Opus's knowledge cutoff defaults to 2025 otherwise).
 fn collab_chat_system() -> String {
     let today = chrono_now_jst_date_str(); // "2026-05-14"
-    format!(r#"あなたは MU Drop の collab アシスタント。 ユーザの「ざっくり依頼」 から T シャツ collab page を作るのを手伝う。
+    format!(r#"あなたは MU Drop の collab アシスタント。 ユーザの「ざっくり依頼」 から **売れる** T シャツ collab page を作るのを手伝う。
 
 【今日の日付: {today} JST】
 日付推論は必ずこの日付を基準にする。 ユーザが「5/22」と書いたら {year}-05-22 と解釈。
-未来の日付のみ受付、 過去日付になる場合は確認する。
+過去日付は確認する。
 
 【絶対ルール】
-1. 1 turn に質問は最大 2 個。 矢継ぎ早にしない。
-2. 日本語で、 短く返す (2-4 行)。
-3. 必ず最後に proposal JSON ブロックを付ける (未確定フィールドは null OK):
-   <draft>{{"slug":"…","event_name":"…","event_date":"YYYY-MM-DD","venue":"…","featured":"…","description":"…","price_jpy":8000,"inventory":30,"password":null,"schrodinger_mode":false}}</draft>
-4. すべての必須項目 (event_name, event_date, price_jpy, inventory) が埋まり、 ユーザが確定的に「作成して」「OK」「これで」 と言ったら最後に:
+1. 1 turn に質問は最大 2 個。 友達感、 短く (2-4 行)。
+2. 必ず最後に proposal JSON ブロックを付ける:
+   <draft>{{"slug":"…","event_name":"…","event_date":"YYYY-MM-DD","venue":"…","featured":"…","tagline":"…","description":"…","image_url":"…","price_jpy":8000,"inventory":30,"password":null,"schrodinger_mode":false,"first_n_discount_jpy":0,"first_n_count":0}}</draft>
+3. 必須項目 (event_name, event_date, price_jpy, inventory) が揃い、 ユーザが「作成して」「OK」「これで」 と言ったら:
    <draft complete="true">{{…full json…}}</draft>
    と出して 「作成しますね」 と返す。
-5. 価格未指定では default を仮定せず、 必ず聞く。 参考レンジ: BBQ + T-shirt 込み ¥8,000、 T-shirt のみ ¥4,900-¥7,800、 1-of-1 オークション ¥18,000+。
-6. inventory も同様に確認 (「30 人」 「100 着」 等明示されない限り聞く)。
-7. slug は英数小文字 + ハイフンのみ、 漢字/カナ不可。 ユーザが日本語 event_name 出したら slug は ローマ字 abbrev で生成 (例: 古今カブトムシ → kokon-mushi)。
+4. 価格・inventory は default を仮定せず聞く。 参考: T-shirt のみ ¥4,900-¥7,800、 イベント込み ¥8,000、 1-of-1 ¥18,000+。
+5. slug は英数小文字 + ハイフン (漢字/カナ → ローマ字)。
 
-【MU の文脈】
-- 通貨は ¥ (JPY)、 1 着 ¥4,900-¥35,000 が想定レンジ
-- Stanley/Stella SATU001 が standard fabric
-- Schrödinger mode = 結果分岐 (試合等で勝敗で edition 違う)
-- 既存例: grachan82 (MMA pro debut + BBQ ¥8,000 × 30 名 password gate)
-- kokon password で身内 gate 可能 (kokon.tokyo 関係者向け)
+【売れる LP の追加 field — 重要】
+- **tagline**: ツイート 1 行で伝わる感情フック (例: "プロデビュー戦の証人になる夜。")。 ユーザが明示しなければ description から生成。
+- **description**: 80-160 字、 「なぜこの数で、 なぜこの日に、 なぜあなたに」 が伝わる文。 ユーザの説明が短い場合は「もう少し背景書く?」 と 1 回聞く。
+- **image_url**: 主役/event の写真 URL (任意)。 「写真ある?」 と 1 回聞く、 無くてもスキップ。
+- **first_n_discount_jpy** + **first_n_count**: 「最初の N 人特別 ¥X off」 (任意)。 売れにくそうな event なら「最初 5 名 ¥1,000 off にする?」 と提案。
 
-【会話の進め方】
-- 最初の質問は: 何のイベント? どの選手/誰の応援?
-- 次: 日付・会場・価格・数量
-- 最後に: description + 必要なら password + schrodinger
-- 6 turn 以内に終わらせる
+【MU 文脈】
+- 通貨 ¥、 Stanley/Stella SATU001 standard fabric
+- Schrödinger mode = 結果分岐 design
+- 例: grachan82 (MMA + BBQ ¥8,000 × 30 名)
+- kokon password で身内 gate
+
+【会話進行】
+- T1: event_name + featured
+- T2: date + venue + price + inventory
+- T3: description (膨らませる提案) + image_url + first_n 提案
+- T4: 確定 → complete=true
+4 turn 以内に終わらせる
 "#, today = today, year = &today[..4])
 }
 
@@ -11611,6 +11615,10 @@ async fn collab_create(
     let venue      = d["venue"].as_str().unwrap_or("").trim().to_string();
     let featured   = d["featured"].as_str().unwrap_or("").trim().to_string();
     let description= d["description"].as_str().unwrap_or("").trim().to_string();
+    let tagline    = d["tagline"].as_str().unwrap_or("").trim().to_string();
+    let image_url  = d["image_url"].as_str().unwrap_or("").trim().to_string();
+    let first_n_count    = d["first_n_count"].as_i64().unwrap_or(0);
+    let first_n_discount = d["first_n_discount_jpy"].as_i64().unwrap_or(0);
     let price_jpy: i64 = d["price_jpy"].as_i64().unwrap_or(0);
     let inventory: i64 = d["inventory"].as_i64().unwrap_or(0);
     let password   = d["password"].as_str().map(|s| s.to_string());
@@ -11668,7 +11676,11 @@ async fn collab_create(
                     "event_date": event_date,
                     "venue": venue,
                     "featured": featured,
+                    "tagline": tagline,
                     "description": description,
+                    "image_url": image_url,
+                    "first_n_count": first_n_count,
+                    "first_n_discount_jpy": first_n_discount,
                     "password": password,
                     "admin_secret": admin_secret,
                 }).to_string(),
@@ -11822,48 +11834,97 @@ async fn collab_public_page(
     let venue      = meta["venue"].as_str().unwrap_or("");
     let featured   = meta["featured"].as_str().unwrap_or("");
     let description= meta["description"].as_str().unwrap_or("");
+    let tagline    = meta["tagline"].as_str().unwrap_or("");
+    let image_url  = meta["image_url"].as_str().filter(|s| !s.is_empty()).unwrap_or("https://mockups.wearmu.com/hero.png");
+    let first_n    = meta["first_n_count"].as_i64().unwrap_or(0);
+    let first_n_off= meta["first_n_discount_jpy"].as_i64().unwrap_or(0);
+    let first_n_left = (first_n - sold).max(0);
+    // Stripe URL with FIRST<N> coupon code preselected isn't possible via simple
+    // payment_link URL, so just surface the message and let the buyer enter the
+    // coupon "FIRST{N}" at the Stripe page (allow_promotion_codes is on).
+    let urgency_first_n = if first_n_left > 0 && first_n_off > 0 {
+        format!("<div style=\"padding:11px 14px;background:rgba(230,196,73,0.10);border:1px solid rgba(230,196,73,0.45);border-radius:3px;font-size:12px;letter-spacing:0.04em;margin-bottom:14px;color:#fff\">⚡ <strong style=\"color:#e6c449\">最初の {first_n} 名 ¥{off_fmt} OFF</strong> (のこり {first_n_left} 名 · Stripe で <code style=\"background:#000;color:#e6c449;padding:1px 6px;font-family:'SF Mono',monospace\">FIRST{first_n}</code> 入力)</div>",
+            first_n = first_n, first_n_left = first_n_left,
+            off_fmt = first_n_off.to_string().chars().rev().collect::<Vec<_>>().chunks(3)
+                .map(|c| c.iter().collect::<String>()).collect::<Vec<_>>().join(",")
+                .chars().rev().collect::<String>())
+    } else { String::new() };
+    let urgency_low_stock = if rem > 0 && rem <= 5 {
+        format!("<div style=\"padding:11px 14px;background:rgba(255,90,90,0.10);border:1px solid rgba(255,90,90,0.45);border-radius:3px;font-size:12px;color:#ff8a8a;margin-bottom:14px\">🔥 <strong>のこり {} 着 · 完売間近</strong></div>", rem)
+    } else { String::new() };
+    let tagline_html = if !tagline.is_empty() {
+        format!("<div style=\"font-size:clamp(16px,2.4vw,22px);font-weight:400;letter-spacing:0.01em;line-height:1.55;color:#e6c449;margin:0 0 22px;padding:14px 18px;border-left:3px solid #e6c449;background:rgba(230,196,73,0.04)\">「{}」</div>",
+            html_escape(tagline))
+    } else { String::new() };
+    let share_text = if !tagline.is_empty() {
+        format!("{} — wearmu.com/collab/{}", tagline, slug)
+    } else {
+        format!("{} — wearmu.com/collab/{}", name, slug)
+    };
+    let share_x_url = format!("https://twitter.com/intent/tweet?text={}", urlencoding_encode(&share_text));
+    let share_line_url = format!("https://social-plugins.line.me/lineit/share?url=https%3A%2F%2Fwearmu.com%2Fcollab%2F{}", slug);
     let html = format!(r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{name} — MU Drop</title>
+<meta name="description" content="{desc}">
 <meta name="robots" content="noindex,nofollow">
 <meta property="og:title" content="{name}">
 <meta property="og:description" content="{desc}">
-<meta property="og:image" content="https://mockups.wearmu.com/hero.png">
+<meta property="og:image" content="{img}">
+<meta property="og:url" content="https://wearmu.com/collab/{slug}">
+<meta property="og:type" content="product">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="{img}">
+<meta name="twitter:title" content="{name}">
+<meta name="twitter:description" content="{desc}">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <script defer src="/mu-funnel.js"></script>
 <style>
 :root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--red:#ff5a5a;--line:rgba(255,255,255,0.08)}}
-*{{margin:0;padding:0;box-sizing:border-box}}body{{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;-webkit-font-smoothing:antialiased;line-height:1.8}}
+*{{margin:0;padding:0;box-sizing:border-box}}body{{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;-webkit-font-smoothing:antialiased;line-height:1.8;font-feature-settings:"palt"}}
 a{{color:var(--y);text-decoration:none}}a:hover{{text-decoration:underline}}
 nav{{position:sticky;top:0;background:rgba(10,10,10,0.92);backdrop-filter:blur(14px);border-bottom:1px solid var(--line);padding:14px 28px;display:flex;justify-content:space-between;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;z-index:50}}
 nav .logo{{font-weight:700;letter-spacing:0.45em}}
-main{{max-width:780px;margin:0 auto;padding:40px 24px 100px}}
+main{{max-width:820px;margin:0 auto;padding:40px 24px 100px}}
+.hero-img{{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:6px;background:#000;margin-bottom:22px;border:1px solid var(--line)}}
 .eyebrow{{font-size:10px;letter-spacing:0.42em;text-transform:uppercase;color:var(--y);opacity:0.9;margin-bottom:12px;font-weight:700}}
-h1{{font-size:clamp(24px,4vw,34px);font-weight:300;line-height:1.3;margin-bottom:14px}}
-.subhead{{color:var(--mute);font-size:14.5px;line-height:2;margin-bottom:32px}}
-.card{{background:linear-gradient(180deg,rgba(230,196,73,0.08),rgba(230,196,73,0.02));border:1px solid rgba(230,196,73,0.4);border-radius:6px;padding:24px;margin-bottom:24px}}
+h1{{font-size:clamp(26px,4.5vw,36px);font-weight:300;line-height:1.3;margin-bottom:14px;letter-spacing:0.01em}}
+.subhead{{color:var(--mute);font-size:14.5px;line-height:2;margin-bottom:28px}}
+.card{{background:linear-gradient(180deg,rgba(230,196,73,0.08),rgba(230,196,73,0.02));border:1px solid rgba(230,196,73,0.4);border-radius:6px;padding:22px;margin-bottom:24px}}
 .price{{font-size:34px;font-weight:300;color:#fff;font-variant-numeric:tabular-nums;letter-spacing:0.02em}}
 .price small{{font-size:13px;color:var(--mute);margin-left:8px}}
 .stock{{font-size:11px;color:var(--y);letter-spacing:0.18em;text-transform:uppercase;font-weight:600;margin-top:8px}}
 .btn-buy{{display:block;width:100%;background:var(--y);color:#0A0A0A;border:0;padding:18px;font-size:13px;letter-spacing:0.3em;text-transform:uppercase;font-weight:700;border-radius:3px;text-decoration:none;text-align:center;margin-top:16px}}
 .btn-buy:hover{{background:#f5d56f;text-decoration:none}}
 .btn-buy.disabled{{background:rgba(255,255,255,0.1);color:var(--mute);cursor:not-allowed;pointer-events:none}}
+.share-row{{display:flex;gap:8px;margin-top:14px}}
+.share-row a{{flex:1;padding:11px;text-align:center;border:1px solid var(--line);border-radius:3px;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;color:var(--fg);font-weight:600;opacity:0.85;transition:all 0.15s}}
+.share-row a:hover{{border-color:var(--y);color:var(--y);text-decoration:none;opacity:1}}
 .spec-row{{display:grid;grid-template-columns:120px 1fr;gap:12px;padding:12px 0;border-bottom:1px solid var(--line);font-size:13px}}
 .spec-row .k{{font-size:10px;letter-spacing:0.3em;text-transform:uppercase;color:var(--y);font-weight:600}}
 .spec-row .v{{color:var(--mute)}}
 footer{{text-align:center;padding:32px 24px;font-size:10px;letter-spacing:0.2em;text-transform:uppercase;color:var(--mute);opacity:0.55;border-top:1px solid var(--line)}}
 </style></head><body>
-<nav><a href="/" class="logo">MU</a><span><a href="/collab/chat" style="opacity:0.55;font-size:10px">+ NEW COLLAB</a></span></nav>
+<nav><a href="/" class="logo">MU</a><span><a href="/collab/chat" style="opacity:0.55;font-size:10px" data-funnel="cta_click" data-funnel-cta="collab_to_chat">+ NEW COLLAB</a></span></nav>
 <main>
+<img class="hero-img" src="{img}" alt="{name}" loading="eager" fetchpriority="high"
+     onerror="this.src='https://mockups.wearmu.com/hero.png';this.style.opacity='0.7'">
 <div class="eyebrow">▶ MU Drop · Collab</div>
 <h1>{name}</h1>
+{tagline_html}
 <p class="subhead">{desc}</p>
+{urgency_first_n}{urgency_low_stock}
 <div class="card">
   <div class="price">¥{price_fmt}<small>/ 1 名</small></div>
   <div class="stock">のこり {rem} / {inv}</div>
   <a href="{pl}" class="btn-buy {disabled}" data-funnel="cta_click" data-funnel-cta="collab_buy_{slug}">
     {btn_label}
   </a>
+  <div class="share-row">
+    <a href="{share_x}" target="_blank" rel="noopener" data-funnel="cta_click" data-funnel-cta="collab_share_x_{slug}">🦅 X でシェア</a>
+    <a href="{share_line}" target="_blank" rel="noopener" data-funnel="cta_click" data-funnel-cta="collab_share_line_{slug}">💬 LINE</a>
+    <a href="#" onclick="navigator.clipboard.writeText(location.href);this.textContent='✓ コピー済';return false" data-funnel="cta_click" data-funnel-cta="collab_share_copy_{slug}">🔗 URL コピー</a>
+  </div>
 </div>
 <div>
   <div class="spec-row"><div class="k">日付</div><div class="v">{event_date}</div></div>
@@ -11876,6 +11937,12 @@ footer{{text-align:center;padding:32px 24px;font-size:10px;letter-spacing:0.2em;
 </body></html>"##,
         name = html_escape(&name),
         desc = html_attr_escape(description),
+        img = html_attr_escape(image_url),
+        tagline_html = tagline_html,
+        urgency_first_n = urgency_first_n,
+        urgency_low_stock = urgency_low_stock,
+        share_x = html_attr_escape(&share_x_url),
+        share_line = html_attr_escape(&share_line_url),
         price_fmt = price.to_string().chars().rev().collect::<Vec<_>>().chunks(3)
             .map(|c| c.iter().collect::<String>()).collect::<Vec<_>>().join(",")
             .chars().rev().collect::<String>(),
@@ -11890,6 +11957,21 @@ footer{{text-align:center;padding:32px 24px;font-size:10px;letter-spacing:0.2em;
         featured = html_escape(featured),
     );
     Html(html).into_response()
+}
+
+/// Minimal URL-encoder for share URLs (only handles the chars we ship).
+fn urlencoding_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 3);
+    for byte in s.as_bytes() {
+        let b = *byte;
+        if b.is_ascii_alphanumeric() || b == b'-' || b == b'.' || b == b'_' || b == b'~' {
+            out.push(b as char);
+        } else {
+            use std::fmt::Write;
+            write!(out, "%{:02X}", b).ok();
+        }
+    }
+    out
 }
 
 /// GET /api/product/grachan82 — slim product info for the LP (stock + payment link).
