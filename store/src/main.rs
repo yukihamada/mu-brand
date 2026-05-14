@@ -32344,7 +32344,7 @@ footer{{padding:40px 24px;border-top:1px solid rgba(255,255,255,0.05);
   </div>
 </main>
 <footer>
-  <div>MU × YOU © wearmu.com</div>
+  <div><span style="opacity:0.6;letter-spacing:0.1em;margin-right:8px">━◯━</span>MU × YOU © wearmu.com</div>
   <div style="display:flex;gap:24px;flex-wrap:wrap"><a href="/">MU</a><a href="/you">/you</a><a href="/tokushoho">特商法</a><a href="/privacy">プライバシー</a><a href="/tos">利用規約</a></div>
 </footer>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
