@@ -8623,11 +8623,14 @@ async fn create_printful_order(key: String, db: Db, product_id: i64, session: se
     let stripe_key = std::env::var("STRIPE_SECRET_KEY").unwrap_or_default();
     let session_id = session["id"].as_str().unwrap_or("").to_string();
 
-    // Re-fetch with shipping_details expanded
+    // Re-fetch the session. NB: don't add ?expand[]=shipping_details — Stripe
+    // quirk that, when expand is set, returns customer_details as {}; only
+    // the explicitly expanded field gets populated. The default response
+    // already includes both shipping_details AND customer_details fully.
+    // 2026-05-14 incident: kokon-tote-v2 order failed to fulfill on this.
     let full_session: serde_json::Value = if !session_id.is_empty() && !stripe_key.is_empty() {
         let resp = reqwest::Client::new()
             .get(format!("https://api.stripe.com/v1/checkout/sessions/{}", session_id))
-            .query(&[("expand[]", "shipping_details")])
             .basic_auth(&stripe_key, None::<&str>)
             .send().await;
         match resp {
