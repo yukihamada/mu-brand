@@ -10963,6 +10963,7 @@ const BLOG_WEEK_ONE_RAW: &str = include_str!("../static/blog/week-one-7-buyers.m
 const BLOG_QUALITY_UPGRADE_RAW: &str = include_str!("../static/blog/quality-upgrade-muon-ma.md");
 const BLOG_SUZURI_VS_PRINTFUL_RAW: &str = include_str!("../static/blog/suzuri-vs-printful-spec.md");
 const BLOG_SPEC_AND_PROMPT_RAW: &str = include_str!("../static/blog/spec-and-prompt.md");
+const BLOG_100_IN_20_RAW: &str = include_str!("../static/blog/100-in-20-days-strategy.md");
 
 fn render_blog_md(title: &str, md: &str) -> String {
     let body = md_to_html_simple(md);
@@ -11025,6 +11026,10 @@ async fn blog_suzuri_vs_printful() -> Html<String> {
 
 async fn blog_spec_and_prompt() -> Html<String> {
     Html(render_blog_md("今の MU の T シャツ仕様 + デザインプロンプト全公開", BLOG_SPEC_AND_PROMPT_RAW))
+}
+
+async fn blog_100_in_20() -> Html<String> {
+    Html(render_blog_md("100 着 / 20 日 — 素材・価格・クーポン戦略の全部出し", BLOG_100_IN_20_RAW))
 }
 
 /// /buy — single-product friction-minimum LP for paid/SNS traffic. Renders
@@ -33206,6 +33211,7 @@ async fn main() {
         .route("/blog/quality-upgrade-muon-ma", get(blog_quality_upgrade))
         .route("/blog/suzuri-vs-printful-spec", get(blog_suzuri_vs_printful))
         .route("/blog/spec-and-prompt", get(blog_spec_and_prompt))
+        .route("/blog/100-in-20-days-strategy", get(blog_100_in_20))
         .route("/buy", get(buy_page))
         .route("/survey/quality", get(survey_quality_page))
         .route("/api/poll/quality", get(quality_poll_results))
