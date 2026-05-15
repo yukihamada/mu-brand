@@ -41271,6 +41271,10 @@ async fn agent_ma_cycle(db: Db) -> Result<AgentReport, String> {
     let jst_s = now_s + 9 * 3600;
     let jst_h = (jst_s % 86_400) / 3600;
     let jst_today_2300 = (jst_s / 86_400) * 86_400 + 23 * 3600;
+    // auction_end is stored as JST naive ISO ("YYYY-MM-DDTHH:MM:SS"),
+    // e.g. set by admin_ma_set_end or by the launch step below. Compare
+    // against the same format so lexicographic SQL ordering works.
+    let jst_now_iso = format_jst_naive(jst_s);
     let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
 
     // ── Step 1: settle any active MA whose auction_end has passed ──
@@ -41282,7 +41286,7 @@ async fn agent_ma_cycle(db: Db) -> Result<AgentReport, String> {
                AND auction_end IS NOT NULL AND auction_end != ''
                AND auction_end < ?"
         ).and_then(|mut stmt| {
-            let rows = stmt.query_map(params![&now[..19]], |r| {
+            let rows = stmt.query_map(params![jst_now_iso], |r| {
                 Ok((r.get::<_,i64>(0)?, r.get::<_,String>(1)?, r.get::<_,Option<String>>(2)?))
             })?;
             Ok(rows.flatten().collect())
