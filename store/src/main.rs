@@ -14207,6 +14207,11 @@ const ELSOUL_DESIGNS: &[(&str, i64, i64, &str, &str, &str)] = &[
 fn proposal_brand_for_kind(slug_prefix: &str, kind: &str) -> String {
     // Mirrors kichinan_brand_for_kind but parametrized on slug.
     // Any "<kind>" here must also exist in the create_printful_order match.
+    // Kichinan has its own historical naming (tee → kichinan_sample, not
+    // kichinan_tee_sample), so delegate to its dedicated mapper for that slug.
+    if slug_prefix == "kichinan" {
+        return kichinan_brand_for_kind(kind).to_string();
+    }
     match kind {
         "tee"            => format!("{}_tee_sample",            slug_prefix),
         "polo"           => format!("{}_polo_sample",           slug_prefix),
