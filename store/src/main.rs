@@ -36726,6 +36726,38 @@ async fn main() {
                 params![prefix],
             );
         }
+        // NOJIMAHAL: each SKU gets its real design PNG (white wordmark +
+        // volt accent on transparent bg, rendered from SVG via rsvg-convert).
+        // The Printful "front" placement uses these files at fulfillment time.
+        let nojimahal_designs: &[(&str, &str)] = &[
+            ("nojimahal_rashguard_ls_sample",  "stacked"),
+            ("nojimahal_athletic_tee_sample",  "stacked"),
+            ("nojimahal_fight_shorts_sample",  "stripe"),
+            ("nojimahal_spats_sample",         "stripe"),
+            ("nojimahal_hoodie_sample",        "stacked"),
+            ("nojimahal_bomber_jacket_sample", "stacked"),
+            ("nojimahal_windbreaker_sample",   "wordmark"),
+            ("nojimahal_track_pants_sample",   "stripe"),
+            ("nojimahal_sweatpants_sample",    "stripe"),
+            ("nojimahal_crewneck_sample",      "wordmark"),
+            ("nojimahal_tee_sample",           "wordmark"),
+            ("nojimahal_longsleeve_sample",    "wordmark"),
+            ("nojimahal_polo_sample",          "monogram"),
+            ("nojimahal_dad_hat_sample",       "monogram"),
+            ("nojimahal_bucket_hat_sample",    "monogram"),
+            ("nojimahal_beanie_sample",        "monogram"),
+            ("nojimahal_tote_sample",          "wordmark"),
+            ("nojimahal_drawstring_sample",    "wordmark"),
+            ("nojimahal_socks_sample",         "stripe"),
+            ("nojimahal_sticker_sample",       "sticker-pack"),
+        ];
+        for (brand, design) in nojimahal_designs {
+            let url = format!("https://wearmu.com/proposals/nojimahal-design-{}.png", design);
+            let _ = conn.execute(
+                "UPDATE products SET design_url=? WHERE brand=?",
+                params![url, brand],
+            );
+        }
     }
     // If the kichinan collab has already been approved, re-assert active=1
     // on every kichinan_* product. This catches the case where a new SKU was
