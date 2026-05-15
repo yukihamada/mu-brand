@@ -80,9 +80,29 @@ def fetch(url, headers=None, timeout=10):
 def fetch_json(url, headers=None):
     return json.loads(fetch(url, headers))
 
+def load_spec_meta(slug):
+    """Pull "meta" block out of scripts/partner_proposals/<slug>.json if it exists.
+    This is the per-brand override file that scripts/new_proposal.sh writes
+    alongside the admin POST. Falls back to the in-file META dict so legacy
+    partners (sweep, kokon, …) keep working."""
+    candidates = [
+        os.path.join(ROOT, "scripts", "partner_proposals", f"{slug}.json"),
+        os.path.join(ROOT, "scripts", "partner_proposals", slug, "spec.json"),
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            try:
+                with open(path) as f:
+                    spec = json.load(f)
+                if isinstance(spec.get("meta"), dict):
+                    return spec["meta"]
+            except (OSError, json.JSONDecodeError):
+                continue
+    return None
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("partner", help="partner slug (sweep | kokon)")
+    ap.add_argument("partner", help="partner slug (sweep | kokon | <new>)")
     ap.add_argument("--source", default="https://wearmu.com",
                     help="origin to pull /api/v1/collab/<partner> from")
     ap.add_argument("--pf-fallback", action="store_true",
@@ -90,14 +110,44 @@ def main():
     args = ap.parse_args()
 
     slug = args.partner.strip().lower()
-    meta = META.get(slug)
+    # spec.json["meta"] (written by scripts/new_proposal.sh) takes precedence;
+    # legacy in-file META is the fallback so sweep/kokon keep rendering.
+    meta = load_spec_meta(slug) or META.get(slug)
     if not meta:
-        sys.exit(f"no META for partner={slug}; add an entry first")
+        sys.exit(
+            f"no meta for partner={slug}. either:\n"
+            f"  1) write scripts/partner_proposals/{slug}.json with a 'meta' block, or\n"
+            f"  2) add a META entry in {os.path.basename(__file__)}"
+        )
 
-    data = fetch_json(f"{args.source}/api/v1/collab/{slug}")
-    items = data if isinstance(data, list) else (data.get("products") or [])
+    # Try legacy /api/v1/collab/<slug> first (sweep / kokon style — items live
+    # in collab_products). Fall back to /api/proposal/<slug>/skus (new brands
+    # registered via POST /admin/proposal — items live in proposal_skus).
+    items = []
+    try:
+        data = fetch_json(f"{args.source}/api/v1/collab/{slug}")
+        items = data if isinstance(data, list) else (data.get("products") or [])
+    except (urllib.error.HTTPError, urllib.error.URLError):
+        items = []
     if not items:
-        sys.exit(f"no items for partner={slug}")
+        try:
+            data = fetch_json(f"{args.source}/api/proposal/{slug}/skus")
+            skus = data.get("skus") or []
+            # Adapt proposal_skus shape → collab item shape.
+            items = [{
+                "slug":        f"{slug}-{s['letter']}",
+                "name":        s.get("label", s['letter'].upper()),
+                "price_jpy":   s.get("price_jpy", 4900),
+                "category":    s.get("kind", "SKU"),
+                "description": s.get("label", ""),
+                "image_url":   None,
+                "printful_variant_id": None,
+                "lead_time_days": 10,
+            } for s in skus]
+        except (urllib.error.HTTPError, urllib.error.URLError):
+            items = []
+    if not items:
+        sys.exit(f"no items for partner={slug} (neither /api/v1/collab nor /api/proposal/.../skus had data)")
 
     pf_key = os.environ.get("PRINTFUL_API_KEY", "")
     img_map = {}
