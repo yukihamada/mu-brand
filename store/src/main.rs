@@ -10457,12 +10457,16 @@ async fn handle_collab_sample_order(db: Db, session: &serde_json::Value) {
         return;
     }
 
-    // Re-fetch with shipping_details expanded (same as single-item flow).
+    // Re-fetch session. 2026-05-14 incident: DO NOT use ?expand[]=shipping_details
+    // here — Stripe quirk that, when expand is set, returns customer_details as {};
+    // only the explicitly expanded field gets populated. The default response
+    // already includes both shipping_details AND customer_details fully.
+    // 2026-05-16 incident: harley1801cc kokon sample order (id 21-23) lost
+    // shipping address for this exact reason → Printful order not created.
     let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
     let full_session: serde_json::Value = if !session_id.is_empty() && !stripe_key.is_empty() {
         let resp = reqwest::Client::new()
             .get(format!("https://api.stripe.com/v1/checkout/sessions/{}", session_id))
-            .query(&[("expand[]", "shipping_details")])
             .basic_auth(&stripe_key, None::<&str>)
             .send().await;
         match resp {
@@ -10470,9 +10474,26 @@ async fn handle_collab_sample_order(db: Db, session: &serde_json::Value) {
             _ => session.clone(),
         }
     } else { session.clone() };
+    // Stripe puts shipping address in shipping_details, with fallback to
+    // customer_details.address when Stripe didn't collect shipping separately
+    // (happens when buyer used same billing address). Mirror the single-item
+    // handler's pick_addr fallback.
     let shipping = &full_session["shipping_details"];
-    let addr = &shipping["address"];
-    let ship_name = shipping["name"].as_str().unwrap_or("").to_string();
+    let cust     = &full_session["customer_details"];
+    fn pick_addr(obj: &serde_json::Value) -> Option<&serde_json::Value> {
+        let a = obj.get("address")?;
+        if a.get("line1").and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false) {
+            Some(a)
+        } else { None }
+    }
+    let addr_val = pick_addr(shipping)
+        .or_else(|| pick_addr(cust))
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let addr = &addr_val;
+    let ship_name = shipping["name"].as_str()
+        .or_else(|| cust["name"].as_str())
+        .unwrap_or("").to_string();
     let address1 = addr["line1"].as_str().unwrap_or("");
     let address2 = addr["line2"].as_str().unwrap_or("");
     let city = addr["city"].as_str().unwrap_or("");
@@ -10481,6 +10502,18 @@ async fn handle_collab_sample_order(db: Db, session: &serde_json::Value) {
     let state = addr["state"].as_str().unwrap_or("");
     let ship_address = format!("{} {} {} {} {} {}", address1, address2, city, state, zip, country)
         .split_whitespace().collect::<Vec<_>>().join(" ");
+
+    // Defensive: if shipping is still empty (rare — Stripe didn't collect it
+    // OR there's a downstream Stripe outage), log loudly and bail before
+    // hitting Printful with garbage. Telegram alert below still fires so the
+    // partner can fulfill manually.
+    let address_ok = !address1.is_empty() && !ship_name.is_empty();
+    if !address_ok {
+        eprintln!("[{}/sample-webhook] WARNING: shipping address incomplete \
+                   (session={}, ship_name={:?}, line1={:?}). \
+                   Skipping Printful submission — will fall through to Telegram.",
+                  partner, session_id, ship_name, address1);
+    }
 
     // Per-item DB lookup and Printful line item build.
     let mut printful_items: Vec<serde_json::Value> = Vec::new();
@@ -10621,8 +10654,9 @@ async fn handle_collab_sample_order(db: Db, session: &serde_json::Value) {
     }
 
     // Single consolidated Printful order for all printful-routed items.
+    // Guarded by address_ok so we never submit with empty recipient name/line1.
     let printful_key = env::var("PRINTFUL_API_KEY").unwrap_or_default();
-    let pf_order_id: Option<String> = if !printful_items.is_empty() && !printful_key.is_empty() {
+    let pf_order_id: Option<String> = if !printful_items.is_empty() && !printful_key.is_empty() && address_ok {
         let state_code = jp_prefecture_to_iso(state).unwrap_or(state).to_string();
         let order = serde_json::json!({
             "recipient": {
