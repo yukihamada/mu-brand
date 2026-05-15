@@ -36801,6 +36801,26 @@ async fn main() {
         conn.execute(col, []).ok();
     }
 
+    // ── One-time data backfill: 2026-05-16 stranded kokon sample order ──
+    // 馬場 祐次 (harley1801cc@yahoo.co.jp) paid ¥14,934 on 2026-05-15 for
+    // 3 kokon samples (tee×3, apron, snapback). The webhook's
+    // ?expand[]=shipping_details Stripe quirk lost the shipping address →
+    // Printful order was never submitted. Recovered manually 2026-05-16
+    // via scripts/recover_kokon_sample_order.py:
+    //   Printful order #158583483, confirm=true, dashboard:
+    //   https://www.printful.com/dashboard?order_id=158583483
+    // This backfill annotates the 3 collab_orders rows with the recovered
+    // Printful ID so the admin UI and webhook idempotency match production.
+    // Idempotent: WHERE printful_order_id IS NULL means re-runs are no-ops.
+    conn.execute(
+        "UPDATE collab_orders
+            SET printful_order_id='158583483',
+                status='sample_printful_draft'
+          WHERE stripe_session LIKE 'cs_live_b10sUIwHbPD9CPNqTmXN9kKbIHCVgNOSo5D3PkYdIfNpSr0J8diPtgM5kY|%'
+            AND printful_order_id IS NULL",
+        [],
+    ).ok();
+
     // Seed MU × SWEEP items (idempotent on slug).
     //
     // 13 商品が正式販売可能 (active=1):

@@ -22,11 +22,16 @@ SESSION_ID = "cs_live_b10sUIwHbPD9CPNqTmXN9kKbIHCVgNOSo5D3PkYdIfNpSr0J8diPtgM5kY
 ORDER_IDS  = [21, 22, 23]
 
 # Printful product/variant IDs from seed (src/main.rs lines 37088-37104)
+# Quantities verified against Stripe line_items 2026-05-16:
+#   kokon-tee   ×3 @¥2,318 = ¥6,954
+#   kokon-apron ×1 @¥4,600 = ¥4,600
+#   kokon-snap  ×1 @¥3,380 = ¥3,380
+#   total      5 pcs       = ¥14,934
 LINE_ITEMS = [
-    # slug             variant_id  files_url
-    ("kokon-tee",      4017, "https://lifestyle.wearmu.com/kokon/_logo_v2.png", None),
-    ("kokon-apron",    23723,"https://lifestyle.wearmu.com/kokon/_logo_v2.png", [{"id":"stitch_color","value":"black"}]),
-    ("kokon-snapback", 4792, "https://lifestyle.wearmu.com/kokon/_logo_v2.png", [{"id":"thread_colors_front_large","value":["#A67843"]}]),
+    # slug             variant_id  qty  files_url                                          options
+    ("kokon-tee",      4017, 3, "https://lifestyle.wearmu.com/kokon/_logo_v2.png", None),
+    ("kokon-apron",    23723,1, "https://lifestyle.wearmu.com/kokon/_logo_v2.png", [{"id":"stitch_color","value":"black"}]),
+    ("kokon-snapback", 4792, 1, "https://lifestyle.wearmu.com/kokon/_logo_v2.png", [{"id":"thread_colors_front_large","value":["#A67843"]}]),
 ]
 
 # Printful file `type` per product
@@ -37,6 +42,7 @@ FILE_TYPE = {
 }
 
 JP_PREFECTURE_ISO = {
+    # English names
     "Hokkaido":"JP-01","Aomori":"JP-02","Iwate":"JP-03","Miyagi":"JP-04","Akita":"JP-05","Yamagata":"JP-06",
     "Fukushima":"JP-07","Ibaraki":"JP-08","Tochigi":"JP-09","Gunma":"JP-10","Saitama":"JP-11","Chiba":"JP-12",
     "Tokyo":"JP-13","Kanagawa":"JP-14","Niigata":"JP-15","Toyama":"JP-16","Ishikawa":"JP-17","Fukui":"JP-18",
@@ -45,6 +51,15 @@ JP_PREFECTURE_ISO = {
     "Tottori":"JP-31","Shimane":"JP-32","Okayama":"JP-33","Hiroshima":"JP-34","Yamaguchi":"JP-35",
     "Tokushima":"JP-36","Kagawa":"JP-37","Ehime":"JP-38","Kochi":"JP-39","Fukuoka":"JP-40","Saga":"JP-41",
     "Nagasaki":"JP-42","Kumamoto":"JP-43","Oita":"JP-44","Miyazaki":"JP-45","Kagoshima":"JP-46","Okinawa":"JP-47",
+    # Japanese names (Stripe Checkout で JP locale 入力時に来る値)
+    "北海道":"JP-01","青森県":"JP-02","岩手県":"JP-03","宮城県":"JP-04","秋田県":"JP-05","山形県":"JP-06",
+    "福島県":"JP-07","茨城県":"JP-08","栃木県":"JP-09","群馬県":"JP-10","埼玉県":"JP-11","千葉県":"JP-12",
+    "東京都":"JP-13","神奈川県":"JP-14","新潟県":"JP-15","富山県":"JP-16","石川県":"JP-17","福井県":"JP-18",
+    "山梨県":"JP-19","長野県":"JP-20","岐阜県":"JP-21","静岡県":"JP-22","愛知県":"JP-23","三重県":"JP-24",
+    "滋賀県":"JP-25","京都府":"JP-26","大阪府":"JP-27","兵庫県":"JP-28","奈良県":"JP-29","和歌山県":"JP-30",
+    "鳥取県":"JP-31","島根県":"JP-32","岡山県":"JP-33","広島県":"JP-34","山口県":"JP-35",
+    "徳島県":"JP-36","香川県":"JP-37","愛媛県":"JP-38","高知県":"JP-39","福岡県":"JP-40","佐賀県":"JP-41",
+    "長崎県":"JP-42","熊本県":"JP-43","大分県":"JP-44","宮崎県":"JP-45","鹿児島県":"JP-46","沖縄県":"JP-47",
 }
 
 def http_get_basic(url, user):
@@ -111,8 +126,8 @@ def main():
 
     # Build Printful order
     items = []
-    for slug, vid, file_url, opts in LINE_ITEMS:
-        item = {"variant_id": vid, "quantity": 1,
+    for slug, vid, qty, file_url, opts in LINE_ITEMS:
+        item = {"variant_id": vid, "quantity": qty,
                 "files": [{"type": FILE_TYPE.get(slug, "default"), "url": file_url}]}
         if opts: item["options"] = opts
         items.append(item)
