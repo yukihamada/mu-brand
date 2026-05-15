@@ -37288,6 +37288,40 @@ async fn main() {
          Some(r#"{"OS":19461}"#),
          Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
          None, 10, 0),
+
+        // ── v4 拡張 10 SKU (2026-05-16) — 黒×金トーンの追加ライン ──
+        // Printful IDs 未確定のため route='pre_order'。Stripe決済 + Telegram alert
+        // で kokon staff が手動 fulfill。IDs 確定後は route='printful' に切替。
+        ("kokon-zip-hoodie", "黒ジップフーディ", "MU × KOKON Heavy Zip-Up Hoodie",
+         "重量級ジップアップ。左胸に金色 KOKON wordmark を刺繍。冬の店外動線・タクシー移動・自宅で。",
+         12_800, "pre_order", None, None, None, None, None, 14, 1),
+        ("kokon-joggers", "黒ジョガーパンツ", "MU × KOKON Tapered Joggers",
+         "テーパード黒ジョガー。右脚に金色 KOKON wordmark を縦プリント。スタッフのオフ移動 / 自宅用ラウンジパンツとしても上品。",
+         10_800, "pre_order", None, None, None, None, None, 14, 1),
+        ("kokon-sweatpants", "黒スウェットパンツ", "MU × KOKON Heavyweight Sweatpants",
+         "重量級フリース。左腿に控えめな金色 KOKON wordmark。練習後のリカバリー、自宅、別荘で。",
+         9_800, "pre_order", None, None, None, None, None, 14, 1),
+        ("kokon-bucket-hat", "黒バケットハット", "MU × KOKON Bucket Hat",
+         "黒バケットハット、フロントに金糸 KOKON 刺繍。スタッフのオフ装い / 真夏の店外動線で。",
+         5_800, "pre_order", None, None, None, None, None, 10, 1),
+        ("kokon-bandana", "黒バンダナ (53cm)", "MU × KOKON Bandana",
+         "53×53cm 黒コットン。金色 KOKON モノグラム + 炭火モチーフのドット柄を一面に。焼き師の襟首・ポケットチーフとして。",
+         2_800, "pre_order", None, None, None, None, None, 10, 1),
+        ("kokon-beach-towel", "黒×金ビーチタオル (76×152cm)", "MU × KOKON Beach Towel",
+         "76×152cm 大判。両面プリント。黒地に金色 KOKON wordmark。サウナ・温泉・サマーリゾートで。お店からのVIPギフトにも。",
+         8_800, "pre_order", None, None, None, None, None, 12, 1),
+        ("kokon-throw-pillow", "クッションカバー (45×45cm)", "MU × KOKON Throw Pillow Cover",
+         "45×45cm スウェード調カバー。中綿込み。黒地に金色 KOKON wordmark。店内 VIP 席・自宅ソファで。",
+         5_800, "pre_order", None, None, None, None, None, 10, 1),
+        ("kokon-sherpa-blanket", "シェルパフリースブランケット", "MU × KOKON Sherpa Fleece Blanket",
+         "シェルパフリース裏地、表面マイクロファイバー。黒地に金色 KOKON wordmark。冬の店外席・別荘・遠征宿泊で。",
+         9_800, "pre_order", None, None, None, None, None, 14, 1),
+        ("kokon-bottle-water", "ステンレスボトル 17oz", "MU × KOKON Stainless Bottle",
+         "17oz (500ml) ステンレス真空二重構造。黒マットに金色 KOKON wordmark レーザー刻印。お店のロゴ入りで贈答用にも。",
+         3_800, "pre_order", None, None, None, None, None, 10, 1),
+        ("kokon-coaster-cork", "コルクコースター 4枚セット", "MU × KOKON Cork Coaster Set",
+         "9.5×9.5cm 円形コルク 4 枚。金色 KOKON wordmark + 但馬牛シルエット + 炭火モチーフ 4 種のセット。常連へのお土産に。",
+         2_800, "pre_order", None, None, None, None, None, 10, 1),
     ];
     for (slug, cat, name, desc, price, route, pf_prod, pf_var, var_map, files, opts, lead, active) in kokon_items {
         conn.execute(
@@ -37484,6 +37518,40 @@ async fn main() {
          Some(r#"{"OS":13452,"ONE SIZE":13452,"M":13452,"S":13452,"L":13453,"13":13452,"15":13453}"#),
          Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/jiuflow/_logo.png"}]"#),
          None, 10, 1),
+
+        // ── v2 拡張 10 SKU (2026-05-16) — BJJ アクセサリー / 防具系 ──
+        // Printful IDs 未確定のため route='pre_order'。Stripe決済 + Telegram alert
+        // で JiuFlow staff が手動 fulfill。IDs 確定後は route='printful' に切替。
+        ("jiuflow-spats", "スパッツ / グラップリングタイツ", "JiuFlow Grappling Spats",
+         "圧縮ニット、UPF50+。膝・脛のスリ傷防止。Gi下・ノーギ両用。サイドに JiuFlow ロゴ縦プリント。",
+         8_800, "pre_order", None, None, None, None, None, 14, 1),
+        ("jiuflow-patch-embroidered", "刺繍 Gi パッチ (4インチ)", "JiuFlow Embroidered Gi Patch (4\")",
+         "Velcro裏地で柔術 Gi の袖/胸/背中に取り付け可能。BJJ コミュニティ必需品。チームパッチとして揃えても良い。",
+         3_800, "pre_order", None, None, None, None, None, 21, 1),
+        ("jiuflow-patch-iron-on", "アイロンパッチ (3インチ)", "JiuFlow Iron-On Patch (3\")",
+         "アイロン圧着式。デニム・コットンキャップ・ジムバッグに装着可能。複数枚で道場のチームウェアに統一感。",
+         1_800, "pre_order", None, None, None, None, None, 14, 1),
+        ("jiuflow-bandana", "バンダナ / Gi ヘッドラップ", "JiuFlow Bandana / Gi Headwrap",
+         "53×53cm コットン100%。Gi下に巻く・練習中の汗止め・スパー前の儀式に。JiuFlow ロゴ + 帯の段を表すグラフィック。",
+         2_800, "pre_order", None, None, None, None, None, 10, 1),
+        ("jiuflow-headband", "ヘッドバンド (汗止め)", "JiuFlow Sweatband Headband",
+         "練習中の汗止め。前頭部 JiuFlow ロゴ刺繍、ストレッチ素材。ペア (左右各1枚) パッケージ。",
+         3_800, "pre_order", None, None, None, None, None, 10, 1),
+        ("jiuflow-wristband", "リストバンド (ペア)", "JiuFlow Wristband Pair",
+         "両手首用のペア。練習中の汗・スパー時の手首保護。JiuFlow ロゴ刺繍。コーチ/競技者バッジとしても。",
+         2_800, "pre_order", None, None, None, None, None, 10, 1),
+        ("jiuflow-belt-bag", "ヒップパック (大)", "JiuFlow Hip Pack (Large)",
+         "通常 Fanny Pack より一回り大きい。スマホ+鍵+マウスガード+フィンガーテープが入る、道場通いの必需品。前掛け/たすき掛け両対応。",
+         7_800, "pre_order", None, None, None, None, None, 14, 1),
+        ("jiuflow-bucket-hat", "バケットハット", "JiuFlow Bucket Hat",
+         "黒バケットハット、フロントに JiuFlow ロゴ刺繍。トーナメント観戦・夏の道場行きに。BJJ コミュニティでの人気カテゴリ。",
+         5_800, "pre_order", None, None, None, None, None, 10, 1),
+        ("jiuflow-sherpa-blanket", "シェルパフリースブランケット", "JiuFlow Sherpa Fleece Blanket",
+         "シェルパフリース裏地、ふわふわで暖かい。練習後のリカバリー・遠征宿泊・観戦時のマット座布団としても。",
+         9_800, "pre_order", None, None, None, None, None, 14, 1),
+        ("jiuflow-throw-pillow", "クッションカバー (45×45cm)", "JiuFlow Throw Pillow Cover",
+         "45×45cm 中綿込み。JiuFlow ロゴ + Gi の帯モチーフ。練習後のリカバリー・道場休憩スペース・自宅で。",
+         5_800, "pre_order", None, None, None, None, None, 10, 1),
     ];
     for (slug, cat, name, desc, price, route, pf_prod, pf_var, var_map, files, opts, lead, active) in jiuflow_items {
         conn.execute(
