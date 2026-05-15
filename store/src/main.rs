@@ -15114,6 +15114,20 @@ fn ensure_proposal_tables(db: &Db) {
             PRIMARY KEY (slug, letter)
          )", [],
     );
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS proposal_feedback (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug TEXT NOT NULL,
+            design_letter TEXT NOT NULL,
+            action TEXT NOT NULL,           -- 'like' | 'dislike' | 'comment'
+            comment TEXT,
+            voter_email TEXT,
+            voter_ip TEXT,
+            voter_pseudonym TEXT,           -- anonymous device hash for rate-limit
+            created_at TEXT NOT NULL
+         )", [],
+    );
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_proposal_feedback_slug ON proposal_feedback(slug, created_at DESC)", []);
 }
 
 fn migrate_legacy_proposal(
@@ -15460,6 +15474,131 @@ async fn proposal_generic_skus(
         })
     }).collect();
     Json(serde_json::json!({ "slug": slug, "skus": json })).into_response()
+}
+
+#[derive(Deserialize)]
+struct ProposalFeedbackBody {
+    design: String,
+    action: String,           // "like" | "dislike" | "comment"
+    #[serde(default)] comment: String,
+}
+
+/// POST /api/proposal/:slug/feedback — public, rate-limited by IP.
+/// Powers the Tinder-style swipe UI at /proposals/<slug>-swipe.html.
+async fn proposal_generic_feedback(
+    State(db): State<Db>,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<ProposalFeedbackBody>,
+) -> Response {
+    let design = body.design.trim().to_lowercase();
+    let action = body.action.trim().to_lowercase();
+    if !["like", "dislike", "comment"].contains(&action.as_str()) {
+        return (StatusCode::BAD_REQUEST, "action must be like|dislike|comment").into_response();
+    }
+    if design.is_empty() {
+        return (StatusCode::BAD_REQUEST, "design required").into_response();
+    }
+    let comment = body.comment.chars().take(500).collect::<String>();
+    if action == "comment" && comment.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, "comment requires non-empty text").into_response();
+    }
+    let ip = client_ip(&headers);
+    let now = chrono_now();
+    // Anonymous pseudonym: sha256(ip + slug + day) — keeps rate-limit + dedupe
+    // without storing raw IP forever.
+    use sha2::{Sha256, Digest};
+    let mut h = Sha256::new();
+    h.update(ip.as_bytes()); h.update(b":"); h.update(slug.as_bytes());
+    h.update(now[..10].as_bytes()); // day-bucket
+    let pseudonym = hex::encode(&h.finalize()[..12]);
+    // Optional verified email if collab session present.
+    let voter_email = collab_session_email(&db, &headers).map(|t| t.0);
+    let voter_email_ref = voter_email.as_deref().unwrap_or("");
+    {
+        let conn = db.lock().unwrap();
+        // Verify slug + design exist before logging junk.
+        let sku_ok: bool = conn.query_row(
+            "SELECT 1 FROM proposal_skus WHERE slug=? AND letter=?",
+            params![slug, design], |_| Ok(())
+        ).is_ok();
+        if !sku_ok {
+            return (StatusCode::NOT_FOUND, "unknown design for this slug").into_response();
+        }
+        // Soft rate-limit: 200 feedbacks per pseudonym per slug per day.
+        let count_today: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proposal_feedback
+             WHERE slug=? AND voter_pseudonym=? AND substr(created_at,1,10)=substr(?,1,10)",
+            params![slug, pseudonym, now], |r| r.get(0),
+        ).unwrap_or(0);
+        if count_today > 200 {
+            return (StatusCode::TOO_MANY_REQUESTS, "rate limit (200/day)").into_response();
+        }
+        let _ = conn.execute(
+            "INSERT INTO proposal_feedback
+              (slug, design_letter, action, comment, voter_email, voter_ip, voter_pseudonym, created_at)
+             VALUES (?,?,?,?,?,?,?,?)",
+            params![slug, design, action, comment, voter_email_ref, ip, pseudonym, now],
+        );
+    }
+    Json(serde_json::json!({ "ok": true })).into_response()
+}
+
+/// GET /api/proposal/:slug/feedback — admin-gated. Returns aggregate +
+/// recent comments for the dashboard.
+async fn proposal_generic_feedback_list(
+    State(db): State<Db>,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), &format!("/api/proposal/{}/feedback", slug)).await { return r; }
+    let conn = db.lock().unwrap();
+    // Per-design totals
+    let mut agg = std::collections::BTreeMap::<String, (i64, i64, i64)>::new(); // letter → (likes, dislikes, comments)
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT design_letter, action, COUNT(*)
+         FROM proposal_feedback
+         WHERE slug=?
+         GROUP BY design_letter, action"
+    ) {
+        let _ = stmt.query_map(params![slug], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?))
+        }).map(|rows| {
+            for row in rows.flatten() {
+                let entry = agg.entry(row.0).or_insert((0,0,0));
+                match row.1.as_str() {
+                    "like" => entry.0 += row.2,
+                    "dislike" => entry.1 += row.2,
+                    "comment" => entry.2 += row.2,
+                    _ => {}
+                }
+            }
+        });
+    }
+    let per_design: Vec<serde_json::Value> = agg.into_iter().map(|(letter, (l,d,c))| {
+        serde_json::json!({"letter": letter, "likes": l, "dislikes": d, "comments": c, "score": l - d})
+    }).collect();
+    // Recent comments (last 100)
+    let mut comments: Vec<serde_json::Value> = Vec::new();
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT design_letter, comment, COALESCE(voter_email,''), created_at
+         FROM proposal_feedback
+         WHERE slug=? AND action='comment'
+         ORDER BY created_at DESC LIMIT 100"
+    ) {
+        let _ = stmt.query_map(params![slug], |r| {
+            Ok(serde_json::json!({
+                "letter": r.get::<_, String>(0)?,
+                "comment": r.get::<_, String>(1)?,
+                "voter_email": r.get::<_, String>(2)?,
+                "created_at": r.get::<_, String>(3)?,
+            }))
+        }).map(|rows| {
+            for row in rows.flatten() { comments.push(row); }
+        });
+    }
+    Json(serde_json::json!({ "slug": slug, "per_design": per_design, "recent_comments": comments })).into_response()
 }
 
 /// True iff `brand` looks like `<known-proposal-slug>_*`. Used by
@@ -38108,6 +38247,7 @@ async fn main() {
         .route("/api/proposal/:slug/sample",   post(proposal_generic_sample))
         .route("/api/proposal/:slug/bundle",   post(proposal_generic_bundle))
         .route("/api/proposal/:slug/bulk",     post(proposal_generic_bulk))
+        .route("/api/proposal/:slug/feedback", post(proposal_generic_feedback).get(proposal_generic_feedback_list))
         .route("/api/proposal/:slug/approve",  post(proposal_generic_approve))
         .route("/api/proposal/:slug/revoke",   post(proposal_generic_revoke))
         .route("/admin/proposal",              post(proposal_generic_create))
