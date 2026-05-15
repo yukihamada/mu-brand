@@ -15060,6 +15060,10 @@ const JIUFIGHT_DESIGNS: &[(&str, i64, i64, &str, &str, &str)] = &[
     ("al",38, 4900, "Event Tee · Tokyo Tower",    "tee",           "tokyotower"),
     ("am",39, 4900, "Event Tee · Bracket",        "tee",           "bracket"),
     ("an",40, 4900, "Event Tee · Vintage",        "tee",           "wordmark"),
+    // ── 3 new tee patterns @ 30 pcs inventory each (per goal 2026-05-15) ──
+    ("ao",41, 4900, "Event Tee · 柔 (Kanji)",     "tee",           "kanji"),
+    ("ap",42, 4900, "Event Tee · 2026 Bib",       "tee",           "bib"),
+    ("aq",43, 4900, "Event Tee · Podium",          "tee",           "podium"),
 ];
 
 async fn proposal_jiufight_sample(State(db): State<Db>, Json(body): Json<ProposalSampleBody>) -> Response {
@@ -38017,6 +38021,22 @@ async fn main() {
             let _ = conn.execute(
                 "UPDATE products SET design_url=? WHERE brand=?",
                 params![url, brand],
+            );
+        }
+        // 3 fresh tee SKUs (drop_num 41-43) use distinct designs that share
+        // the kind=tee brand. Update design_url by drop_num so they don't get
+        // overwritten by the brand-wide UPDATE above.
+        let jiufight_new_tees: &[(i64, &str)] = &[
+            (41, "kanji"),
+            (42, "bib"),
+            (43, "podium"),
+        ];
+        for (drop_num, design) in jiufight_new_tees {
+            let url = format!("https://wearmu.com/proposals/jiufight-design-{}.png", design);
+            let _ = conn.execute(
+                "UPDATE products SET design_url=?, inventory=30
+                 WHERE brand='jiufight_tee_sample' AND drop_num=?",
+                params![url, drop_num],
             );
         }
     }
