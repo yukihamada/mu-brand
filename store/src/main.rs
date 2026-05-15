@@ -2184,17 +2184,10 @@ async fn embed_products(
     // is queryable via /api/v1/embed/products?brand=kichinan_tee_sample
     // once the kichinan_approval gate has flipped them to active=1.
     let allowed = ["mugen","muon","ma","nouns"];
+    let conn = db.lock().unwrap();
     let brand_filter = q.get("brand")
         .map(String::as_str)
-        .filter(|b| allowed.contains(b)
-            || b.starts_with("kichinan_")
-            || b.starts_with("asoview_")
-            || b.starts_with("elsoul_")
-            || b.starts_with("ele_")
-            || b.starts_with("nojimahal_")
-            || b.starts_with("ryozo_"));
-
-    let conn = db.lock().unwrap();
+        .filter(|b| allowed.contains(b) || is_proposal_brand(&conn, b));
     let sql = if brand_filter.is_some() {
         "SELECT id, brand, drop_num, name,
                 CASE
@@ -14960,6 +14953,409 @@ async fn proposal_ryozo_sample(State(db): State<Db>, Json(body): Json<ProposalSa
 }
 async fn proposal_ryozo_bundle(State(db): State<Db>, Json(body): Json<ProposalBundleBody>) -> Response {
     issue_proposal_bundle_link(db, "ryozo", RYOZO_DESIGNS, body).await
+}
+
+// ── Unified proposal system ───────────────────────────────────────────────
+// Replaces the per-brand approval table + const DESIGNS array pattern with
+// two generic tables. New collab brands no longer need Rust changes — a
+// single POST /admin/proposal call seeds everything.
+//
+//   proposals(slug PK, name, ip_owner, approved_at, approver_*, plan_tier,
+//             note, revoked_at, created_at)
+//   proposal_skus(slug, letter, drop_num, price_jpy, label, kind,
+//                 design_slug, design_url, PRIMARY KEY (slug, letter))
+//
+// Existing per-brand routes keep working — at startup the const arrays +
+// *_approval rows are mirrored into the new tables. Generic routes live at
+// /api/proposal/:slug/* (singular) so they don't collide with the legacy
+// /api/proposals/<brand>/* (plural) routes.
+
+fn ensure_proposal_tables(db: &Db) {
+    let conn = db.lock().unwrap();
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS proposals (
+            slug TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            ip_owner TEXT NOT NULL,
+            approved_at TEXT,
+            approver_name TEXT,
+            approver_email TEXT,
+            approver_ip TEXT,
+            plan_tier TEXT,
+            note TEXT,
+            revoked_at TEXT,
+            created_at TEXT NOT NULL
+         )", [],
+    );
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS proposal_skus (
+            slug TEXT NOT NULL,
+            letter TEXT NOT NULL,
+            drop_num INTEGER NOT NULL,
+            price_jpy INTEGER NOT NULL,
+            label TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            design_slug TEXT NOT NULL,
+            design_url TEXT,
+            PRIMARY KEY (slug, letter)
+         )", [],
+    );
+}
+
+fn migrate_legacy_proposal(
+    db: &Db, slug: &str, ip_owner: &str,
+    designs: &[(&str, i64, i64, &str, &str, &str)],
+    approval_table: &str,
+) {
+    let conn = db.lock().unwrap();
+    let now = chrono_now();
+    let _ = conn.execute(
+        "INSERT OR IGNORE INTO proposals
+            (slug, name, ip_owner, created_at)
+         VALUES (?, ?, ?, ?)",
+        params![slug, ip_owner, ip_owner, now],
+    );
+    // Mirror approval row if the legacy table exists & has data.
+    let migrated = conn.query_row(
+        &format!("SELECT approved_at, approver_name, approver_email, approver_ip, COALESCE(plan_tier,''), COALESCE(note,''), revoked_at FROM {} WHERE id=1", approval_table),
+        [],
+        |r| Ok((
+            r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?,
+            r.get::<_, Option<String>>(2)?, r.get::<_, Option<String>>(3)?,
+            r.get::<_, String>(4)?,        r.get::<_, String>(5)?,
+            r.get::<_, Option<String>>(6)?,
+        )),
+    ).ok();
+    if let Some((at, n, e, ip, plan, note, rev)) = migrated {
+        let _ = conn.execute(
+            "UPDATE proposals SET
+                approved_at=?, approver_name=?, approver_email=?, approver_ip=?,
+                plan_tier=?, note=?, revoked_at=?
+             WHERE slug=?",
+            params![at, n, e, ip, plan, note, rev, slug],
+        );
+    }
+    // Mirror SKUs from the legacy const array.
+    for (letter, drop_num, price_jpy, label, kind, design_slug) in designs {
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO proposal_skus
+                (slug, letter, drop_num, price_jpy, label, kind, design_slug)
+             VALUES (?,?,?,?,?,?,?)",
+            params![slug, letter, drop_num, price_jpy, label, kind, design_slug],
+        );
+    }
+}
+
+fn proposal_row(conn: &rusqlite::Connection, slug: &str)
+    -> Option<(String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)> {
+    conn.query_row(
+        "SELECT name, ip_owner, approved_at, approver_name, approver_email, plan_tier, revoked_at
+         FROM proposals WHERE slug=?",
+        params![slug],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
+    ).ok()
+}
+
+fn proposal_is_approved(conn: &rusqlite::Connection, slug: &str) -> bool {
+    conn.query_row(
+        "SELECT approved_at IS NOT NULL AND revoked_at IS NULL FROM proposals WHERE slug=?",
+        params![slug], |r| r.get::<_, bool>(0),
+    ).unwrap_or(false)
+}
+
+fn proposal_skus_for(conn: &rusqlite::Connection, slug: &str)
+    -> Vec<(String, i64, i64, String, String, String)> {
+    let mut out = Vec::new();
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT letter, drop_num, price_jpy, label, kind, design_slug
+         FROM proposal_skus WHERE slug=? ORDER BY drop_num ASC",
+    ) {
+        if let Ok(rows) = stmt.query_map(params![slug], |r| {
+            Ok((
+                r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?,
+                r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, String>(5)?,
+            ))
+        }) {
+            for row in rows.flatten() { out.push(row); }
+        }
+    }
+    out
+}
+
+/// GET /api/proposal/:slug/state — generic public state endpoint.
+async fn proposal_generic_state(
+    State(db): State<Db>,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+) -> Response {
+    let conn = db.lock().unwrap();
+    let row = match proposal_row(&conn, &slug) {
+        Some(r) => r,
+        None => return (StatusCode::NOT_FOUND, "unknown proposal slug").into_response(),
+    };
+    let approved = row.2.is_some() && row.6.is_none();
+    let active_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM products WHERE brand LIKE ?||'%' AND active=1",
+        params![format!("{}_", slug)], |r| r.get(0),
+    ).unwrap_or(0);
+    let total: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM proposal_skus WHERE slug=?",
+        params![slug], |r| r.get(0),
+    ).unwrap_or(0);
+    Json(serde_json::json!({
+        "slug": slug,
+        "name": row.0,
+        "approved": approved,
+        "approved_at": row.2,
+        "approver_first_name": row.3.as_ref().map(|n| n.split_whitespace().next().unwrap_or("—").to_string()),
+        "plan_tier": row.5,
+        "products_active": active_count,
+        "products_total": total,
+    })).into_response()
+}
+
+#[derive(Deserialize)]
+struct ProposalApproveBody {
+    approver_name: String,
+    approver_email: String,
+    #[serde(default)] plan_tier: String,
+    #[serde(default)] note: String,
+}
+
+/// POST /api/proposal/:slug/approve — admin-gated.
+async fn proposal_generic_approve(
+    State(db): State<Db>,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<ProposalApproveBody>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), &format!("/api/proposal/{}/approve", slug)).await { return r; }
+    let name = body.approver_name.trim();
+    let email = body.approver_email.trim().to_lowercase();
+    if name.is_empty() || !email.contains('@') {
+        return (StatusCode::BAD_REQUEST, "approver_name + valid approver_email required").into_response();
+    }
+    let plan = match body.plan_tier.trim().to_lowercase().as_str() {
+        "starter" | "growth" | "enterprise" => body.plan_tier.trim().to_lowercase(),
+        _ => "starter".into(),
+    };
+    let ip = client_ip(&headers);
+    let now = chrono_now();
+    let (activated, total) = {
+        let conn = db.lock().unwrap();
+        if proposal_row(&conn, &slug).is_none() {
+            return (StatusCode::NOT_FOUND, "unknown proposal slug").into_response();
+        }
+        let _ = conn.execute(
+            "UPDATE proposals SET
+                approved_at=?, approver_name=?, approver_email=?, approver_ip=?,
+                plan_tier=?, note=?, revoked_at=NULL
+             WHERE slug=?",
+            params![now, name, email, ip, plan, body.note.trim(), slug],
+        );
+        let activated = conn.execute(
+            "UPDATE products SET active=1 WHERE brand LIKE ?||'%' AND active=0",
+            params![format!("{}_", slug)],
+        ).unwrap_or(0);
+        let total: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proposal_skus WHERE slug=?",
+            params![slug], |r| r.get(0),
+        ).unwrap_or(0);
+        (activated, total)
+    };
+    let alert = format!(
+        "━◯━ {} collab APPROVED\napprover: {} <{}>\nplan: {}\nproducts activated: {}/{}\nat: {}\nnext: 全 SKU が公式販売中 (https://wearmu.com/proposals/{})",
+        slug, name, email, plan, activated, total, now, slug,
+    );
+    tokio::spawn(async move { send_telegram_message(&alert).await; });
+    Json(serde_json::json!({
+        "ok": true, "slug": slug, "approved_at": now,
+        "products_activated": activated, "products_total": total, "plan_tier": plan,
+    })).into_response()
+}
+
+/// POST /api/proposal/:slug/revoke — admin-gated.
+async fn proposal_generic_revoke(
+    State(db): State<Db>,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), &format!("/api/proposal/{}/revoke", slug)).await { return r; }
+    let now = chrono_now();
+    let deactivated = {
+        let conn = db.lock().unwrap();
+        if proposal_row(&conn, &slug).is_none() {
+            return (StatusCode::NOT_FOUND, "unknown proposal slug").into_response();
+        }
+        let _ = conn.execute(
+            "UPDATE proposals SET revoked_at=? WHERE slug=?",
+            params![now, slug],
+        );
+        conn.execute(
+            "UPDATE products SET active=0 WHERE brand LIKE ?||'%' AND active=1",
+            params![format!("{}_", slug)],
+        ).unwrap_or(0)
+    };
+    Json(serde_json::json!({
+        "ok": true, "slug": slug, "revoked_at": now, "products_deactivated": deactivated,
+    })).into_response()
+}
+
+#[derive(Deserialize)]
+struct ProposalCreateBody {
+    slug: String,
+    name: String,
+    #[serde(default)] ip_owner: String,
+    skus: Vec<ProposalCreateSku>,
+}
+#[derive(Deserialize)]
+struct ProposalCreateSku {
+    letter: String,
+    drop_num: i64,
+    price_jpy: i64,
+    label: String,
+    kind: String,
+    design_slug: String,
+    #[serde(default)] design_url: Option<String>,
+}
+
+/// POST /admin/proposal — create a new brand in one call. Admin-gated.
+/// Seeds proposals + proposal_skus rows + matching products rows. Idempotent
+/// on slug — re-running upserts the SKU list. Does NOT auto-approve.
+async fn proposal_generic_create(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<ProposalCreateBody>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/proposal").await { return r; }
+    let slug = body.slug.trim().to_lowercase();
+    if slug.is_empty() || !slug.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') {
+        return (StatusCode::BAD_REQUEST, "slug must be [a-z0-9_]+").into_response();
+    }
+    if body.name.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, "name required").into_response();
+    }
+    if body.skus.is_empty() {
+        return (StatusCode::BAD_REQUEST, "at least one SKU required").into_response();
+    }
+    let ip_owner = if body.ip_owner.trim().is_empty() { body.name.clone() } else { body.ip_owner.clone() };
+    let now = chrono_now();
+    let mut inserted = 0i64;
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO proposals (slug, name, ip_owner, created_at)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(slug) DO UPDATE SET name=excluded.name, ip_owner=excluded.ip_owner",
+            params![slug, body.name.trim(), ip_owner, now],
+        );
+        for s in &body.skus {
+            let letter = s.letter.trim().to_lowercase();
+            let kind = s.kind.trim();
+            let design_slug = s.design_slug.trim();
+            if letter.is_empty() || kind.is_empty() || design_slug.is_empty() { continue; }
+            let _ = conn.execute(
+                "INSERT INTO proposal_skus (slug, letter, drop_num, price_jpy, label, kind, design_slug, design_url)
+                 VALUES (?,?,?,?,?,?,?,?)
+                 ON CONFLICT(slug, letter) DO UPDATE SET
+                    drop_num=excluded.drop_num, price_jpy=excluded.price_jpy,
+                    label=excluded.label, kind=excluded.kind,
+                    design_slug=excluded.design_slug,
+                    design_url=COALESCE(excluded.design_url, proposal_skus.design_url)",
+                params![slug, letter, s.drop_num, s.price_jpy, s.label.trim(), kind, design_slug, s.design_url],
+            );
+            // Seed the matching products row.
+            let brand = proposal_brand_for_kind(&slug, kind);
+            let exists: bool = conn.query_row(
+                "SELECT 1 FROM products WHERE brand=? AND drop_num=? LIMIT 1",
+                params![brand, s.drop_num], |r| r.get::<_, i64>(0),
+            ).is_ok();
+            if !exists {
+                let design_url = s.design_url.clone().unwrap_or_else(|| {
+                    format!("https://wearmu.com/proposals/design-{}.png", design_slug)
+                });
+                let mockup_url = format!("https://wearmu.com/proposals/{}-mockup-{}.png", slug, letter);
+                let _ = conn.execute(
+                    "INSERT INTO products
+                        (brand, drop_num, name, design_url, mockup_url, price_jpy, inventory, active, created_at, weather_data)
+                     VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    params![
+                        brand, s.drop_num,
+                        format!("━◯━ MU × {} · {} · {}", ip_owner, letter.to_uppercase(), s.label.trim()),
+                        design_url, mockup_url, s.price_jpy, 50, 1, now,
+                        serde_json::json!({
+                            "kind": format!("{}_{}", slug, kind),
+                            "design_slug": design_slug,
+                            "license_status": "pending",
+                            "ip_owner": ip_owner,
+                        }).to_string(),
+                    ],
+                );
+                inserted += 1;
+            }
+        }
+    }
+    Json(serde_json::json!({
+        "ok": true, "slug": slug, "name": body.name.trim(),
+        "skus_total": body.skus.len(), "products_inserted": inserted,
+        "next": format!("POST /api/proposal/{}/approve to activate sales", slug),
+    })).into_response()
+}
+
+/// GET /admin/proposals — admin-gated. Lists every proposal + state.
+async fn proposal_generic_list(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/proposals").await { return r; }
+    let conn = db.lock().unwrap();
+    let mut stmt = match conn.prepare(
+        "SELECT p.slug, p.name, p.ip_owner, p.approved_at, p.revoked_at,
+                (SELECT COUNT(*) FROM proposal_skus s WHERE s.slug=p.slug) AS sku_count,
+                (SELECT COUNT(*) FROM products pr WHERE pr.brand LIKE p.slug||'_%' AND pr.active=1) AS active
+         FROM proposals p ORDER BY p.created_at ASC",
+    ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+    let rows: Vec<serde_json::Value> = stmt.query_map([], |r| {
+        Ok(serde_json::json!({
+            "slug": r.get::<_, String>(0)?,
+            "name": r.get::<_, String>(1)?,
+            "ip_owner": r.get::<_, String>(2)?,
+            "approved_at": r.get::<_, Option<String>>(3)?,
+            "revoked_at": r.get::<_, Option<String>>(4)?,
+            "sku_count": r.get::<_, i64>(5)?,
+            "products_active": r.get::<_, i64>(6)?,
+        }))
+    }).map(|i| i.flatten().collect()).unwrap_or_default();
+    Json(serde_json::json!({ "proposals": rows })).into_response()
+}
+
+/// GET /api/proposal/:slug/skus — public catalog read.
+async fn proposal_generic_skus(
+    State(db): State<Db>,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+) -> Response {
+    let conn = db.lock().unwrap();
+    let skus = proposal_skus_for(&conn, &slug);
+    let json: Vec<serde_json::Value> = skus.into_iter().map(|(letter, drop_num, price_jpy, label, kind, design_slug)| {
+        serde_json::json!({
+            "letter": letter, "drop_num": drop_num, "price_jpy": price_jpy,
+            "label": label, "kind": kind, "design_slug": design_slug,
+        })
+    }).collect();
+    Json(serde_json::json!({ "slug": slug, "skus": json })).into_response()
+}
+
+/// True iff `brand` looks like `<known-proposal-slug>_*`. Used by
+/// embed_products to allow-list any proposal brand without code changes.
+fn is_proposal_brand(conn: &rusqlite::Connection, brand: &str) -> bool {
+    if let Some((slug, _)) = brand.split_once('_') {
+        conn.query_row(
+            "SELECT 1 FROM proposals WHERE slug=?", params![slug], |_| Ok(())
+        ).is_ok()
+    } else { false }
 }
 
 /// GET /en/press — English-default version. Same content, but we flip
@@ -36912,6 +37308,18 @@ async fn main() {
     seed_proposal_sample_products(&db, "ele",       ELE_DESIGNS,       "ELE / yuki");
     seed_proposal_sample_products(&db, "nojimahal", NOJIMAHAL_DESIGNS, "NOJIMAHAL / 野島繁昭");
     seed_proposal_sample_products(&db, "ryozo",     RYOZO_DESIGNS,     "RYOZO TOP TEAM");
+
+    // ── Unified proposal system migration ─────────────────────────────────
+    // Mirror legacy per-brand approval tables + const DESIGNS arrays into
+    // the new proposals + proposal_skus tables. Idempotent (INSERT OR IGNORE
+    // on first run; UPDATE keeps approval state in sync on later boots).
+    ensure_proposal_tables(&db);
+    migrate_legacy_proposal(&db, "kichinan",  "Kichinan / 富士見町",      KICHINAN_DESIGNS,  "kichinan_approval");
+    migrate_legacy_proposal(&db, "asoview",   "Asoview Inc.",             ASOVIEW_DESIGNS,   "asoview_approval");
+    migrate_legacy_proposal(&db, "elsoul",    "ELSOUL LABO B.V.",         ELSOUL_DESIGNS,    "elsoul_approval");
+    migrate_legacy_proposal(&db, "ele",       "ELE / yuki",               ELE_DESIGNS,       "ele_approval");
+    migrate_legacy_proposal(&db, "nojimahal", "NOJIMAHAL / 野島繁昭",     NOJIMAHAL_DESIGNS, "nojimahal_approval");
+    migrate_legacy_proposal(&db, "ryozo",     "RYOZO TOP TEAM",           RYOZO_DESIGNS,     "ryozo_approval");
     // Proposal SKUs are real, buyable MU products. Flip them to active=1
     // unconditionally so they appear in /api/v1/embed/products and at
     // /products/<brand>/<id>. The approval gate controls only the public
@@ -37218,6 +37626,13 @@ async fn main() {
         .route("/api/proposals/ryozo/sample",      post(proposal_ryozo_sample))
         .route("/api/proposals/ryozo/bundle",      post(proposal_ryozo_bundle))
         .route("/ryozo", get(ryozo_public_page))
+        // ── Unified proposal system (DB-driven, works for any new brand) ──
+        .route("/api/proposal/:slug/state",    get(proposal_generic_state))
+        .route("/api/proposal/:slug/skus",     get(proposal_generic_skus))
+        .route("/api/proposal/:slug/approve",  post(proposal_generic_approve))
+        .route("/api/proposal/:slug/revoke",   post(proposal_generic_revoke))
+        .route("/admin/proposal",              post(proposal_generic_create))
+        .route("/admin/proposals",             get(proposal_generic_list))
         .nest_service("/proposals", ServeDir::new("static/proposals"))
         .route("/api/collab/account/delete", post(collab_account_delete))
         .route("/api/404/buy", post(not_found_buy))
