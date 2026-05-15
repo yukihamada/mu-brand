@@ -15048,6 +15048,18 @@ const JIUFIGHT_DESIGNS: &[(&str, i64, i64, &str, &str, &str)] = &[
     ("ab",28, 4800, "Bench Apron · Cornerman",    "apron",         "wordmark"),
     ("ac",29, 2400, "Insulated Water Bottle",     "water_bottle",  "monogram"),
     ("ad",30, 3800, "Lifestyle Polo",             "polo",          "monogram"),
+    // ── +10 Tee variants (per user request 2026-05-15) — same kind=tee,
+    //    distinct event-narrative designs. Drop numbers 31..40.
+    ("ae",31, 4900, "Event Tee · 個人戦",          "tee",           "wordmark"),
+    ("af",32, 4900, "Event Tee · 団体戦",          "tee",           "stripe"),
+    ("ag",33, 4900, "Event Tee · 昇格式",          "tee",           "stacked"),
+    ("ah",34, 4900, "Event Tee · Champion Gold",  "tee",           "date"),
+    ("ai",35, 4900, "Event Tee · Underdog",       "tee",           "monogram"),
+    ("aj",36, 4900, "Event Tee · 早稲田 (赤)",     "tee",           "versus"),
+    ("ak",37, 4900, "Event Tee · 慶應 (青)",       "tee",           "versus"),
+    ("al",38, 4900, "Event Tee · Tokyo Tower",    "tee",           "tokyotower"),
+    ("am",39, 4900, "Event Tee · Bracket",        "tee",           "bracket"),
+    ("an",40, 4900, "Event Tee · Vintage",        "tee",           "wordmark"),
 ];
 
 async fn proposal_jiufight_sample(State(db): State<Db>, Json(body): Json<ProposalSampleBody>) -> Response {
@@ -37705,34 +37717,40 @@ async fn main() {
         }
         // JiuFight — combat-red event accent, 4 design variants currently
         // (wordmark / monogram / stacked / stripe). All 20 SKUs map to one.
+        // JiuFight design palette expanded with 4 event-specific variants:
+        //   date       — 2026·05·24 prominent
+        //   versus     — 早稲田 vs 慶應 inter-university bracket banner
+        //   tokyotower — Tokyo Tower silhouette
+        //   bracket    — tournament bracket geometry
+        // Plus the 4 base variants (wordmark/monogram/stacked/stripe).
         let jiufight_designs: &[(&str, &str)] = &[
-            ("jiufight_tee_sample",          "wordmark"),
-            ("jiufight_longsleeve_sample",   "wordmark"),
-            ("jiufight_tank_top_sample",     "stripe"),
-            ("jiufight_athletic_tee_sample", "stacked"),
+            ("jiufight_tee_sample",          "date"),        // ← date-stamped event tee
+            ("jiufight_longsleeve_sample",   "versus"),      // ← 早慶対抗 LS
+            ("jiufight_tank_top_sample",     "tokyotower"),  // ← Tokyo Tower tank
+            ("jiufight_athletic_tee_sample", "bracket"),     // ← bracket motif athletic tee
             ("jiufight_rashguard_ls_sample", "stacked"),
             ("jiufight_fight_shorts_sample", "stripe"),
             ("jiufight_spats_sample",        "stripe"),
-            ("jiufight_hoodie_sample",       "wordmark"),
-            ("jiufight_crewneck_sample",     "stacked"),
+            ("jiufight_hoodie_sample",       "date"),        // ← date-stamped hoodie
+            ("jiufight_crewneck_sample",     "versus"),      // ← 早慶対抗 crewneck
             ("jiufight_cap_sample",          "monogram"),
             ("jiufight_beanie_sample",       "monogram"),
             ("jiufight_bucket_hat_sample",   "monogram"),
-            ("jiufight_tote_sample",         "wordmark"),
-            ("jiufight_drawstring_sample",   "stripe"),
+            ("jiufight_tote_sample",         "tokyotower"),  // ← Tokyo Tower tote
+            ("jiufight_drawstring_sample",   "bracket"),     // ← bracket drawstring
             ("jiufight_sticker_sample",      "monogram"),
-            ("jiufight_beach_towel_sample",  "wordmark"),
-            ("jiufight_mug_sample",          "monogram"),
+            ("jiufight_beach_towel_sample",  "date"),        // ← date-stamped towel
+            ("jiufight_mug_sample",          "tokyotower"),  // ← Tokyo Tower mug
             ("jiufight_crossbody_sample",    "monogram"),
             ("jiufight_joggers_sample",      "stripe"),
             ("jiufight_track_pants_sample",  "stripe"),
-            ("jiufight_zip_hoodie_sample",   "stacked"),
+            ("jiufight_zip_hoodie_sample",   "versus"),      // ← 早慶対抗 zip hoodie
             ("jiufight_quarter_zip_sample",  "wordmark"),
-            ("jiufight_bomber_jacket_sample","wordmark"),
+            ("jiufight_bomber_jacket_sample","versus"),      // ← 早慶対抗 bomber
             ("jiufight_windbreaker_sample",  "wordmark"),
             ("jiufight_patch_sample",        "monogram"),
             ("jiufight_apron_sample",        "wordmark"),
-            ("jiufight_water_bottle_sample", "monogram"),
+            ("jiufight_water_bottle_sample", "tokyotower"),  // ← Tokyo Tower bottle
             ("jiufight_polo_sample",         "monogram"),
         ];
         for (brand, design) in jiufight_designs {
