@@ -14456,25 +14456,28 @@ async fn issue_proposal_bundle_link(
         total_jpy += *price_jpy;
         price_ids.push((pid, slug.to_string(), *price_jpy));
     }
-    // Step 2: build one Payment Link with all of them as line_items.
-    let mut pl_form: Vec<(&str, String)> = vec![
+    // Step 2: build a Checkout Session (cap 100 line_items vs Payment Links' 20).
+    let mut cs_form: Vec<(&str, String)> = vec![
+        ("mode", "payment".into()),
+        ("success_url", format!("https://wearmu.com/{}?bundle=ok&session_id={{CHECKOUT_SESSION_ID}}", slug_prefix)),
+        ("cancel_url", format!("https://wearmu.com/{}?bundle=cancel", slug_prefix)),
         ("shipping_address_collection[allowed_countries][0]", "JP".into()),
         ("allow_promotion_codes", "true".into()),
-        ("after_completion[type]", "redirect".into()),
-        ("after_completion[redirect][url]", format!("https://wearmu.com/{}?bundle=ok", slug_prefix)),
         ("metadata[kind]", format!("{}_bundle", slug_prefix)),
         ("metadata[size]", default_size.clone()),
         ("metadata[bundle_count]", price_ids.len().to_string()),
         ("metadata[bundle_total_jpy]", total_jpy.to_string()),
     ];
     for (i, (pid, _design, _p)) in price_ids.iter().enumerate() {
-        pl_form.push((Box::leak(format!("line_items[{}][price]", i).into_boxed_str()), pid.clone()));
-        pl_form.push((Box::leak(format!("line_items[{}][quantity]", i).into_boxed_str()), "1".into()));
+        cs_form.push((Box::leak(format!("line_items[{}][price]", i).into_boxed_str()), pid.clone()));
+        cs_form.push((Box::leak(format!("line_items[{}][quantity]", i).into_boxed_str()), "1".into()));
     }
-    match client.post("https://api.stripe.com/v1/payment_links")
-        .basic_auth(&stripe_key, Some("")).form(&pl_form).send().await {
+    match client.post("https://api.stripe.com/v1/checkout/sessions")
+        .basic_auth(&stripe_key, Some("")).form(&cs_form).send().await {
         Ok(r) => {
-            let v: serde_json::Value = r.json().await.unwrap_or(serde_json::Value::Null);
+            let status = r.status();
+            let raw = r.text().await.unwrap_or_default();
+            let v: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
             if let Some(u) = v.get("url").and_then(|x| x.as_str()) {
                 let _ = db; // suppress unused
                 return Json(serde_json::json!({
@@ -14484,7 +14487,7 @@ async fn issue_proposal_bundle_link(
                     "size": default_size,
                 })).into_response();
             }
-            (StatusCode::BAD_GATEWAY, format!("payment_link: {}", v.to_string().chars().take(300).collect::<String>())).into_response()
+            (StatusCode::BAD_GATEWAY, format!("checkout_session {}: {}", status, raw.chars().take(300).collect::<String>())).into_response()
         }
         Err(e) => (StatusCode::BAD_GATEWAY, format!("stripe: {}", e)).into_response(),
     }
