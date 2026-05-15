@@ -50,6 +50,7 @@ fn autopilot_skip(task: &str) -> bool {
 // ─────────────────────────────────────────────────────────────────────────────
 const CONSTITUTION_RAW: &str = include_str!("../static/constitution.md");
 const DAO_WHITEPAPER_RAW: &str = include_str!("../static/whitepaper_dao.md");
+const DONATIONS_RAW: &str = include_str!("../static/donations.md");
 
 /// Extract a top-level `## <name>` markdown section from the Constitution.
 /// Matches the heading prefix (so `## Type 1 Doors — Irreversible / require human
@@ -19900,6 +19901,8 @@ async fn public_transparency(State(db): State<Db>) -> impl IntoResponse {
             "estimated_net_after_tax_jpy": est_net_after_tax,
             "estimated_pledge_jpy": pledge_jpy,
             "floor_jpy": 100_000,
+            "public_ledger_url": "https://wearmu.com/donations",
+            "raw_md_source": "https://github.com/yukihamada/mu-brand/blob/main/store/static/donations.md",
             "historical_pre_mu": {
                 "teshikaga_total_jpy": 5_000_000,
                 "hokkaido_total_jpy": 100_000_000,
@@ -19968,6 +19971,67 @@ footer a:hover{{color:var(--y)}}
 <footer>
   <div>raw markdown: <a href="/constitution.md">wearmu.com/constitution.md</a> · source: <a href="https://github.com/yukihamada/mu-brand/blob/main/store/static/constitution.md">github.com/yukihamada/mu-brand</a></div>
   <div style="margin-top:6px">株式会社イネブラ (Enabler Inc.) · yuki (1 human operator) · 28 agents</div>
+</footer>
+</body></html>"##,
+        body = body_html,
+    );
+    Html(html)
+}
+
+/// GET /donations — Constitution §27 公開記録. The actual list of (date,
+/// recipient, ¥, ref) is in store/static/donations.md — an append-only file
+/// edited by yuki when a real bank transfer to 弟子屈町 / 北海道 lands.
+/// No DB, no automation: §27 is a creator-level commitment that a program
+/// should not pretend to fulfill on his behalf.
+async fn public_donations_page() -> Html<String> {
+    let body_html = md_to_html_simple(DONATIONS_RAW);
+    let html = format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>━◯━ MU · 寄付公開記録 (Constitution §27) | wearmu.com</title>
+<meta name="description" content="MU の Constitution §27 — MA 落札額の 50% (post-tax) を 弟子屈町 / 北海道 に寄付する commitment の公開記録。 append-only。">
+<meta property="og:title" content="MU · §27 寄付公開記録">
+<meta property="og:description" content="MA 落札額の 50% (post-tax) を 弟子屈町 / 北海道 に寄付する。 実際の送金記録は append-only。">
+<meta property="og:url" content="https://wearmu.com/donations">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="alternate" type="text/markdown" href="https://github.com/yukihamada/mu-brand/blob/main/store/static/donations.md">
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<style>
+:root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--line:rgba(255,255,255,0.08)}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.85;font-size:15px;-webkit-font-smoothing:antialiased;font-feature-settings:"palt"}}
+a{{color:var(--y);text-decoration:none}}
+a:hover{{text-decoration:underline;text-underline-offset:3px}}
+nav{{position:sticky;top:0;background:rgba(10,10,10,0.9);backdrop-filter:blur(12px);border-bottom:1px solid var(--line);padding:16px 28px;display:flex;justify-content:space-between;align-items:center;z-index:50;font-size:11px;letter-spacing:0.3em;text-transform:uppercase}}
+nav .logo{{font-weight:700;letter-spacing:0.45em}}
+.wrap{{max-width:760px;margin:0 auto;padding:60px 28px 100px}}
+.wrap h1{{font-size:clamp(28px,4.6vw,44px);font-weight:200;letter-spacing:0.01em;line-height:1.22;margin:0 0 28px;color:var(--fg)}}
+.wrap h2{{font-size:13px;letter-spacing:0.28em;text-transform:uppercase;color:var(--y);font-weight:500;margin:48px 0 18px;padding-top:32px;border-top:1px solid var(--line)}}
+.wrap h3{{font-size:17px;font-weight:300;letter-spacing:0.02em;margin:28px 0 12px;color:var(--fg)}}
+.wrap p{{margin:0 0 14px;color:var(--mute)}}
+.wrap p strong{{color:var(--fg);font-weight:500}}
+.wrap ol,.wrap ul{{margin:6px 0 18px;padding-left:24px;color:var(--mute)}}
+.wrap li{{margin:6px 0}}
+.wrap code{{background:rgba(230,196,73,0.10);color:var(--y);padding:1px 6px;font-size:12.5px;font-family:'SF Mono','Menlo',monospace;border-radius:2px}}
+.wrap hr{{border:none;border-top:1px solid var(--line);margin:48px 0}}
+.wrap table{{border-collapse:collapse;width:100%;margin:14px 0;font-size:13px}}
+.wrap th,.wrap td{{border:1px solid var(--line);padding:8px 12px;text-align:left}}
+.wrap th{{background:#0e0e0e;color:var(--fg);font-weight:500;letter-spacing:0.04em}}
+footer{{max-width:760px;margin:0 auto;padding:32px 28px 80px;border-top:1px solid var(--line);color:var(--mute);font-size:11.5px;letter-spacing:0.1em;line-height:2}}
+footer a{{color:var(--mute);text-decoration:underline;text-decoration-color:rgba(255,255,255,0.18)}}
+footer a:hover{{color:var(--y)}}
+</style></head><body>
+<nav>
+  <a class="logo" href="/">MU</a>
+  <span style="opacity:0.55">§27 寄付公開記録</span>
+  <span><a href="/constitution#27" style="opacity:0.55;margin-right:14px">§27 全文</a><a href="/transparency" style="opacity:0.55">数字</a></span>
+</nav>
+<div class="wrap">
+{body}
+</div>
+<footer>
+  <div>raw markdown: <a href="https://github.com/yukihamada/mu-brand/blob/main/store/static/donations.md">github.com/yukihamada/mu-brand/store/static/donations.md</a> · append-only — 過去エントリは git history に残ります</div>
+  <div style="margin-top:6px">株式会社イネブラ (Enabler Inc.) · Constitution §27</div>
 </footer>
 </body></html>"##,
         body = body_html,
@@ -39696,6 +39760,7 @@ async fn main() {
         .route("/transparency", get(public_transparency_page))
         .route("/en/transparency", get(public_transparency_page_en))
         .route("/constitution", get(public_constitution_page))
+        .route("/donations", get(public_donations_page))
         .route("/api/sample_personas", get(list_sample_personas))
         .route("/api/admin/sample_grow", post(admin_sample_grow))
         .route("/api/admin/lifestyle", axum::routing::patch(admin_lifestyle))
