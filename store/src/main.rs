@@ -2191,7 +2191,8 @@ async fn embed_products(
             || b.starts_with("asoview_")
             || b.starts_with("elsoul_")
             || b.starts_with("ele_")
-            || b.starts_with("nojimahal_"));
+            || b.starts_with("nojimahal_")
+            || b.starts_with("ryozo_"));
 
     let conn = db.lock().unwrap();
     let sql = if brand_filter.is_some() {
@@ -9064,6 +9065,8 @@ async fn create_printful_order(key: String, db: Db, product_id: i64, session: se
         format!("kichinan_{}", rest)
     } else if let Some(rest) = brand.strip_prefix("nojimahal_") {
         format!("kichinan_{}", rest)
+    } else if let Some(rest) = brand.strip_prefix("ryozo_") {
+        format!("kichinan_{}", rest)
     } else { brand.clone() };
     let variant_id: u64 = match (brand_lookup.as_str(), size) {
         // ── One-size accessories ──
@@ -14769,6 +14772,155 @@ async fn proposal_nojimahal_sample(State(db): State<Db>, Json(body): Json<Propos
 }
 async fn proposal_nojimahal_bundle(State(db): State<Db>, Json(body): Json<ProposalBundleBody>) -> Response {
     issue_proposal_bundle_link(db, "nojimahal", NOJIMAHAL_DESIGNS, body).await
+}
+
+// ── RYOZO TOP TEAM — BJJ team apparel 20 SKU brand ────────────────────────
+// Patch-style gi badge aesthetic. Black + Gold + green dot on the T.
+fn ensure_ryozo_approval_table(db: &Db) {
+    let conn = db.lock().unwrap();
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS ryozo_approval (
+            id INTEGER PRIMARY KEY,
+            approved_at TEXT, approver_name TEXT, approver_email TEXT,
+            approver_ip TEXT, plan_tier TEXT, note TEXT, revoked_at TEXT
+         )", [],
+    );
+}
+fn ryozo_approval_row(conn: &rusqlite::Connection) -> Option<(String, String, String, String, Option<String>)> {
+    conn.query_row(
+        "SELECT approved_at, approver_name, approver_email, COALESCE(plan_tier,''), revoked_at
+         FROM ryozo_approval WHERE id=1 AND approved_at IS NOT NULL",
+        [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+    ).ok()
+}
+fn ryozo_is_approved(conn: &rusqlite::Connection) -> bool {
+    ryozo_approval_row(conn).map(|t| t.4.is_none()).unwrap_or(false)
+}
+async fn proposal_ryozo() -> Html<&'static str> {
+    Html(include_str!("../static/proposals/ryozo.html"))
+}
+async fn proposal_ryozo_status(State(db): State<Db>) -> impl IntoResponse {
+    let conn = db.lock().unwrap();
+    let row = ryozo_approval_row(&conn);
+    let approved = row.as_ref().map(|t| t.4.is_none()).unwrap_or(false);
+    let (approved_at, approver_name, plan_tier) = match &row {
+        Some((at, n, _, p, _)) => (
+            Some(at.clone()),
+            Some(n.split_whitespace().next().unwrap_or("—").to_string()),
+            Some(p.clone()),
+        ),
+        None => (None, None, None),
+    };
+    let active_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM products WHERE brand LIKE 'ryozo_%' AND active=1",
+        [], |r| r.get(0),
+    ).unwrap_or(0);
+    Json(serde_json::json!({
+        "approved": approved, "approved_at": approved_at,
+        "approver_first_name": approver_name, "plan_tier": plan_tier,
+        "products_active": active_count, "products_total": RYOZO_DESIGNS.len(),
+        "public_url": "https://wearmu.com/ryozo",
+    }))
+}
+#[derive(Deserialize)]
+struct RyozoApproveBody {
+    approver_name: String, approver_email: String,
+    #[serde(default)] plan_tier: String,
+    #[serde(default)] note: String,
+}
+async fn proposal_ryozo_approve(
+    State(db): State<Db>, headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<RyozoApproveBody>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/proposals/ryozo/approve").await { return r; }
+    let name = body.approver_name.trim();
+    let email = body.approver_email.trim().to_lowercase();
+    if name.is_empty() || !email.contains('@') {
+        return (StatusCode::BAD_REQUEST, "approver_name + valid approver_email required").into_response();
+    }
+    let plan = body.plan_tier.trim().to_lowercase();
+    let plan = if plan.is_empty() { "starter".into() } else { plan };
+    let ip = client_ip(&headers);
+    let now = chrono_now();
+    let activated: usize = {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO ryozo_approval
+                (id, approved_at, approver_name, approver_email, approver_ip, plan_tier, note, revoked_at)
+             VALUES (1, ?, ?, ?, ?, ?, ?, NULL)
+             ON CONFLICT(id) DO UPDATE SET
+                approved_at=excluded.approved_at, approver_name=excluded.approver_name,
+                approver_email=excluded.approver_email, approver_ip=excluded.approver_ip,
+                plan_tier=excluded.plan_tier, note=excluded.note, revoked_at=NULL",
+            params![now, name, email, ip, plan, body.note.trim()],
+        );
+        conn.execute(
+            "UPDATE products SET active=1 WHERE brand LIKE 'ryozo_%' AND active=0",
+            [],
+        ).unwrap_or(0)
+    };
+    eprintln!("[ryozo] approved by {} <{}>", name, email);
+    let alert = format!(
+        "━◯━ RYOZO TOP TEAM APPROVED\napprover: {} <{}>\nactivated: {}/{}\nat: {}\npublic LP: https://wearmu.com/ryozo",
+        name, email, activated, RYOZO_DESIGNS.len(), now,
+    );
+    tokio::spawn(async move { send_telegram_message(&alert).await; });
+    Json(serde_json::json!({
+        "ok": true, "approved_at": now, "public_url": "https://wearmu.com/ryozo",
+        "products_activated": activated, "plan_tier": plan,
+    })).into_response()
+}
+async fn proposal_ryozo_revoke(
+    State(db): State<Db>, headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/proposals/ryozo/revoke").await { return r; }
+    let now = chrono_now();
+    let deactivated: usize = {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute("UPDATE ryozo_approval SET revoked_at=? WHERE id=1", params![now]);
+        conn.execute("UPDATE products SET active=0 WHERE brand LIKE 'ryozo_%' AND active=1", [])
+            .unwrap_or(0)
+    };
+    Json(serde_json::json!({ "ok": true, "revoked_at": now, "products_deactivated": deactivated })).into_response()
+}
+async fn ryozo_public_page(State(db): State<Db>) -> Response {
+    let approved = { let c = db.lock().unwrap(); ryozo_is_approved(&c) };
+    if !approved { return render_404_tee_page(&db, "/ryozo"); }
+    Html(include_str!("../static/proposals/ryozo.html")).into_response()
+}
+
+// 20 BJJ-team SKUs. Kinds map through proposal_brand_for_kind → kichinan_*
+// variant table via ryozo_ → kichinan_ normalization in create_printful_order.
+const RYOZO_DESIGNS: &[(&str, i64, i64, &str, &str, &str)] = &[
+    ("a",  1, 11800, "Team Rashguard LS",          "rashguard_ls",  "patch"),
+    ("b",  2,  8800, "Team Athletic Tee",          "athletic_tee",  "wordmark"),
+    ("c",  3,  9800, "Competition Fight Shorts",   "fight_shorts",  "stripe"),
+    ("d",  4, 10800, "Team Grappling Spats",       "spats",         "stripe"),
+    ("e",  5, 12800, "Academy Heavy Hoodie",       "hoodie",        "stacked"),
+    ("f",  6, 18800, "Team Bomber (warmup)",       "bomber_jacket", "stacked"),
+    ("g",  7, 14800, "Coach Windbreaker",          "windbreaker",   "wordmark"),
+    ("h",  8, 10800, "Warmup Track Pants",         "track_pants",   "stripe"),
+    ("i",  9, 11800, "Lounge Sweatpants",          "sweatpants",    "stripe"),
+    ("j", 10,  9800, "Academy Crewneck",           "crewneck",      "wordmark"),
+    ("k", 11,  6800, "Black Belt Tee",             "tee",           "patch"),
+    ("l", 12,  8800, "Team Long Sleeve",           "longsleeve",    "wordmark"),
+    ("m", 13,  9800, "Coach Polo (gold thread)",   "polo",          "monogram"),
+    ("n", 14,  6800, "Team Dad Hat (gold-thread)", "dad_hat",       "monogram"),
+    ("o", 15,  5800, "Team Bucket Hat",            "bucket_hat",    "monogram"),
+    ("p", 16,  4800, "Team Beanie (gold-thread)",  "beanie",        "monogram"),
+    ("q", 17,  6800, "Gi Carry Tote",              "tote",          "wordmark"),
+    ("r", 18,  5800, "Drawstring Gi Bag",          "drawstring",    "wordmark"),
+    ("s", 19,  3800, "Team Crew Socks",            "socks",         "stripe"),
+    ("t", 20,  2400, "Team Sticker Pack (5)",      "sticker",       "patch"),
+];
+
+async fn proposal_ryozo_sample(State(db): State<Db>, Json(body): Json<ProposalSampleBody>) -> Response {
+    issue_proposal_sample_link(db, "ryozo", RYOZO_DESIGNS, body).await
+}
+async fn proposal_ryozo_bundle(State(db): State<Db>, Json(body): Json<ProposalBundleBody>) -> Response {
+    issue_proposal_bundle_link(db, "ryozo", RYOZO_DESIGNS, body).await
 }
 
 /// GET /en/press — English-default version. Same content, but we flip
@@ -36714,18 +36866,20 @@ async fn main() {
     ensure_elsoul_approval_table(&db);
     ensure_ele_approval_table(&db);
     ensure_nojimahal_approval_table(&db);
+    ensure_ryozo_approval_table(&db);
     seed_kichinan_sample_products(&db);
     seed_proposal_sample_products(&db, "asoview",   ASOVIEW_DESIGNS,   "Asoview Inc.");
     seed_proposal_sample_products(&db, "elsoul",    ELSOUL_DESIGNS,    "ELSOUL LABO B.V.");
     seed_proposal_sample_products(&db, "ele",       ELE_DESIGNS,       "ELE / yuki");
     seed_proposal_sample_products(&db, "nojimahal", NOJIMAHAL_DESIGNS, "NOJIMAHAL / 野島繁昭");
+    seed_proposal_sample_products(&db, "ryozo",     RYOZO_DESIGNS,     "RYOZO TOP TEAM");
     // Proposal SKUs are real, buyable MU products. Flip them to active=1
     // unconditionally so they appear in /api/v1/embed/products and at
     // /products/<brand>/<id>. The approval gate controls only the public
     // top-level URL (e.g. /asoview, /nojimahal), not buyability.
     {
         let conn = db.lock().unwrap();
-        for prefix in &["asoview_", "elsoul_", "ele_", "nojimahal_"] {
+        for prefix in &["asoview_", "elsoul_", "ele_", "nojimahal_", "ryozo_"] {
             let _ = conn.execute(
                 "UPDATE products SET active=1 WHERE brand LIKE ?||'%' AND active=0",
                 params![prefix],
@@ -36758,6 +36912,36 @@ async fn main() {
         ];
         for (brand, design) in nojimahal_designs {
             let url = format!("https://wearmu.com/proposals/nojimahal-design-{}.png", design);
+            let _ = conn.execute(
+                "UPDATE products SET design_url=? WHERE brand=?",
+                params![url, brand],
+            );
+        }
+        // RYOZO TOP TEAM: gi-patch aesthetic — gold wordmark + green-T accent.
+        let ryozo_designs: &[(&str, &str)] = &[
+            ("ryozo_rashguard_ls_sample",  "patch"),
+            ("ryozo_athletic_tee_sample",  "wordmark"),
+            ("ryozo_fight_shorts_sample",  "stripe"),
+            ("ryozo_spats_sample",         "stripe"),
+            ("ryozo_hoodie_sample",        "stacked"),
+            ("ryozo_bomber_jacket_sample", "stacked"),
+            ("ryozo_windbreaker_sample",   "wordmark"),
+            ("ryozo_track_pants_sample",   "stripe"),
+            ("ryozo_sweatpants_sample",    "stripe"),
+            ("ryozo_crewneck_sample",      "wordmark"),
+            ("ryozo_tee_sample",           "patch"),
+            ("ryozo_longsleeve_sample",    "wordmark"),
+            ("ryozo_polo_sample",          "monogram"),
+            ("ryozo_dad_hat_sample",       "monogram"),
+            ("ryozo_bucket_hat_sample",    "monogram"),
+            ("ryozo_beanie_sample",        "monogram"),
+            ("ryozo_tote_sample",          "wordmark"),
+            ("ryozo_drawstring_sample",    "wordmark"),
+            ("ryozo_socks_sample",         "stripe"),
+            ("ryozo_sticker_sample",       "patch"),
+        ];
+        for (brand, design) in ryozo_designs {
+            let url = format!("https://wearmu.com/proposals/ryozo-design-{}.png", design);
             let _ = conn.execute(
                 "UPDATE products SET design_url=? WHERE brand=?",
                 params![url, brand],
@@ -36978,6 +37162,13 @@ async fn main() {
         .route("/api/proposals/nojimahal/sample",      post(proposal_nojimahal_sample))
         .route("/api/proposals/nojimahal/bundle",      post(proposal_nojimahal_bundle))
         .route("/nojimahal", get(nojimahal_public_page))
+        .route("/proposals/ryozo",                 get(proposal_ryozo))
+        .route("/api/proposals/ryozo/status",      get(proposal_ryozo_status))
+        .route("/api/proposals/ryozo/approve",     post(proposal_ryozo_approve))
+        .route("/api/proposals/ryozo/revoke",      post(proposal_ryozo_revoke))
+        .route("/api/proposals/ryozo/sample",      post(proposal_ryozo_sample))
+        .route("/api/proposals/ryozo/bundle",      post(proposal_ryozo_bundle))
+        .route("/ryozo", get(ryozo_public_page))
         .nest_service("/proposals", ServeDir::new("static/proposals"))
         .route("/api/collab/account/delete", post(collab_account_delete))
         .route("/api/404/buy", post(not_found_buy))
