@@ -15091,6 +15091,15 @@ async fn proposal_jiufight_bundle(State(db): State<Db>, Json(body): Json<Proposa
     issue_proposal_bundle_link(db, "jiufight", JIUFIGHT_DESIGNS, body).await
 }
 
+// ── MU × BLANK_ Executive Retreat for AI (2026.05.27-29 Minakami) ──────
+// Single-SKU collab: 1 MA-style day-stamped tee for the retreat
+// participants. Per-participant 1-of-N — they go home with this tee on
+// day 3. Uses the unified proposal system; reachable at
+// /api/proposal/blank/{state,sample,skus} once seeded.
+const BLANK_DESIGNS: &[(&str, i64, i64, &str, &str, &str)] = &[
+    ("a", 1, 6500, "BLANK_ MA Tee · 260527 day-stamp", "tee", "ma"),
+];
+
 // ── Unified proposal system ───────────────────────────────────────────────
 // Replaces the per-brand approval table + const DESIGNS array pattern with
 // two generic tables. New collab brands no longer need Rust changes — a
@@ -37885,6 +37894,7 @@ async fn main() {
     seed_proposal_sample_products(&db, "nojimahal", NOJIMAHAL_DESIGNS, "NOJIMAHAL / 野島繁昭");
     seed_proposal_sample_products(&db, "ryozo",     RYOZO_DESIGNS,     "RYOZO TOP TEAM");
     seed_proposal_sample_products(&db, "jiufight",  JIUFIGHT_DESIGNS,  "JiuFight Tournament");
+    seed_proposal_sample_products(&db, "blank",     BLANK_DESIGNS,     "BLANK_ Executive Retreat for AI");
 
     // ── Unified proposal system migration ─────────────────────────────────
     // Mirror legacy per-brand approval tables + const DESIGNS arrays into
@@ -37900,13 +37910,14 @@ async fn main() {
     // JiuFight has no legacy approval table — pass a non-existent name so
     // the table lookup fails silently and only the SKU seed runs.
     migrate_legacy_proposal(&db, "jiufight",  "JiuFight Tournament",      JIUFIGHT_DESIGNS,  "_no_legacy_table");
+    migrate_legacy_proposal(&db, "blank",     "BLANK_ Executive Retreat", BLANK_DESIGNS,     "_no_legacy_table");
     // Proposal SKUs are real, buyable MU products. Flip them to active=1
     // unconditionally so they appear in /api/v1/embed/products and at
     // /products/<brand>/<id>. The approval gate controls only the public
     // top-level URL (e.g. /asoview, /nojimahal), not buyability.
     {
         let conn = db.lock().unwrap();
-        for prefix in &["asoview_", "elsoul_", "ele_", "nojimahal_", "ryozo_", "jiufight_"] {
+        for prefix in &["asoview_", "elsoul_", "ele_", "nojimahal_", "ryozo_", "jiufight_", "blank_"] {
             let _ = conn.execute(
                 "UPDATE products SET active=1 WHERE brand LIKE ?||'%' AND active=0",
                 params![prefix],
@@ -38063,6 +38074,12 @@ async fn main() {
                 params![url, drop_num],
             );
         }
+        // BLANK_ retreat — single MA-style day-stamped tee
+        let _ = conn.execute(
+            "UPDATE products SET design_url='https://wearmu.com/proposals/blank-design-ma.png'
+             WHERE brand='blank_tee_sample'",
+            [],
+        );
     }
     // If the kichinan collab has already been approved, re-assert active=1
     // on every kichinan_* product. This catches the case where a new SKU was
