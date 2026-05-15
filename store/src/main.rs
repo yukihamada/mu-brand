@@ -14301,6 +14301,12 @@ fn proposal_brand_for_kind(slug_prefix: &str, kind: &str) -> String {
         "tank_top"       => format!("{}_tank_top_sample",       slug_prefix),
         "crossbody"      => format!("{}_crossbody_sample",      slug_prefix),
         "mug_team"       => format!("{}_mug_team_sample",       slug_prefix),
+        // Spectator / cheering kit
+        "bandana"        => format!("{}_bandana_sample",        slug_prefix),
+        "fan"            => format!("{}_fan_sample",            slug_prefix),
+        "wristband"      => format!("{}_wristband_sample",      slug_prefix),
+        "lanyard"        => format!("{}_lanyard_sample",        slug_prefix),
+        "flag"           => format!("{}_flag_sample",           slug_prefix),
         _                => format!("{}_tee_sample",            slug_prefix),
     }
 }
@@ -14315,6 +14321,10 @@ fn proposal_brand_is_onesize(brand: &str) -> bool {
         || brand.ends_with("_water_bottle_sample") || brand.ends_with("_beach_towel_sample")
         || brand.ends_with("_patch_sample") || brand.ends_with("_apron_sample")
         || brand.ends_with("_crossbody_sample") || brand.ends_with("_mug_team_sample")
+        // Spectator kit (one-size all)
+        || brand.ends_with("_bandana_sample") || brand.ends_with("_fan_sample")
+        || brand.ends_with("_wristband_sample") || brand.ends_with("_lanyard_sample")
+        || brand.ends_with("_flag_sample")
 }
 
 fn seed_proposal_sample_products(db: &Db, slug_prefix: &str,
@@ -15064,6 +15074,14 @@ const JIUFIGHT_DESIGNS: &[(&str, i64, i64, &str, &str, &str)] = &[
     ("ao",41, 4900, "Event Tee · 柔 (Kanji)",     "tee",           "kanji"),
     ("ap",42, 4900, "Event Tee · 2026 Bib",       "tee",           "bib"),
     ("aq",43, 4900, "Event Tee · Podium",          "tee",           "podium"),
+    // ── 応援グッズ (spectator / cheering kit) — drop 44-50 ─────────────
+    ("ar",44, 1200, "応援ピン · 単品",               "pin",           "podium"),
+    ("as",45, 3800, "観戦クッション (座布団)",       "pillow",        "versus"),
+    ("at",46, 2800, "応援バンダナ (ヘッドラップ)",   "bandana",       "kanji"),
+    ("au",47, 1800, "応援ハンドタオル",              "beach_towel",   "date"),
+    ("av",48, 2400, "応援フラッグ (手旗)",           "flag",          "versus"),
+    ("aw",49, 1400, "応援リストバンド",              "wristband",     "wordmark"),
+    ("ax",50,  900, "応援ステッカーシート",          "sticker",       "podium"),
 ];
 
 async fn proposal_jiufight_sample(State(db): State<Db>, Json(body): Json<ProposalSampleBody>) -> Response {
@@ -38015,6 +38033,12 @@ async fn main() {
             ("jiufight_apron_sample",        "wordmark"),
             ("jiufight_water_bottle_sample", "tokyotower"),  // ← Tokyo Tower bottle
             ("jiufight_polo_sample",         "monogram"),
+            // Spectator/cheering goods (ar..ax)
+            ("jiufight_pin_sample",          "podium"),
+            ("jiufight_pillow_sample",       "versus"),
+            ("jiufight_bandana_sample",      "kanji"),
+            ("jiufight_flag_sample",         "versus"),
+            ("jiufight_wristband_sample",    "wordmark"),
         ];
         for (brand, design) in jiufight_designs {
             let url = format!("https://wearmu.com/proposals/jiufight-design-{}.png", design);
