@@ -7473,6 +7473,86 @@ mod council_token_tests {
     }
 }
 
+/// POST /api/admin/ma/cancel_auction?product_id=:id — admin-gated.
+/// Aborts an MA auction without selling it:
+///   1. Cancels every authorized bid's Stripe PI (releases the holds).
+///   2. Marks every bid on this product auth_status='cancelled'.
+///   3. Sets the product active=0 (hides from /ma) and current_bid/bid_count=0.
+/// Used when an auction was launched in error or the design needs to be
+/// pulled. Different from /settle (which captures the winner).
+async fn admin_ma_cancel_auction(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/ma/cancel_auction").await { return r; }
+    let product_id: i64 = match q.get("product_id").and_then(|s| s.parse().ok()) {
+        Some(v) => v, None => return (StatusCode::BAD_REQUEST, "product_id required").into_response(),
+    };
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    // Pull all authorized bids that have a PI to cancel.
+    let bids: Vec<(i64, String)> = {
+        let conn = db.lock().unwrap();
+        conn.prepare(
+            "SELECT id, COALESCE(stripe_pi_id,'') FROM bids
+             WHERE product_id=? AND auth_status='authorized' AND stripe_pi_id IS NOT NULL AND stripe_pi_id != ''",
+        ).and_then(|mut stmt| {
+            let rows = stmt.query_map(params![product_id], |r| {
+                Ok((r.get::<_,i64>(0)?, r.get::<_,String>(1)?))
+            })?;
+            let v: Vec<(i64, String)> = rows.flatten().collect();
+            Ok(v)
+        }).unwrap_or_default()
+    };
+    let client = reqwest::Client::new();
+    let mut cancelled = 0i64;
+    for (bid_id, pi_id) in &bids {
+        if pi_id.is_empty() || stripe_key.is_empty() { continue; }
+        let r = client.post(format!("https://api.stripe.com/v1/payment_intents/{}/cancel", pi_id))
+            .basic_auth(&stripe_key, Some(""))
+            .form(&[("cancellation_reason", "abandoned")])
+            .send().await;
+        match r {
+            Ok(r) if r.status().is_success() => {
+                cancelled += 1;
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "UPDATE bids SET auth_status='cancelled' WHERE id=?", params![bid_id],
+                );
+            }
+            Ok(r) => {
+                let t = r.text().await.unwrap_or_default();
+                eprintln!("[ma_cancel_auction] cancel {} → {}", pi_id, t.chars().take(200).collect::<String>());
+            }
+            Err(e) => eprintln!("[ma_cancel_auction] http err: {}", e),
+        }
+    }
+    // Wipe state on the product so it disappears from /ma + reset bid totals.
+    let (rows_updated, deactivated) = {
+        let conn = db.lock().unwrap();
+        let bid_rows = conn.execute(
+            "UPDATE bids SET auth_status='cancelled'
+             WHERE product_id=? AND auth_status NOT IN ('captured','cancelled')",
+            params![product_id],
+        ).unwrap_or(0);
+        let prod_rows = conn.execute(
+            "UPDATE products SET active=0, current_bid=0, bid_count=0,
+                                  auction_end=COALESCE(auction_end,'') ,
+                                  sold_out_at=COALESCE(sold_out_at, ?)
+             WHERE id=?",
+            params![chrono_now(), product_id],
+        ).unwrap_or(0);
+        (bid_rows, prod_rows)
+    };
+    Json(serde_json::json!({
+        "ok": true,
+        "product_id": product_id,
+        "stripe_pi_cancelled": cancelled,
+        "bid_rows_marked_cancelled": rows_updated,
+        "product_deactivated": deactivated > 0,
+    })).into_response()
+}
+
 /// GET /api/admin/db/overview — admin-gated. One-shot snapshot of the
 /// DB shape: per-table row counts + key business stats. Powers /admin/db.
 /// Tables it doesn't know about still show up with just a row count.
@@ -38927,6 +39007,7 @@ async fn main() {
         .route("/api/admin/ma/set_end", post(admin_ma_set_end))
         .route("/api/admin/ma/launch",  post(admin_ma_launch))
         .route("/api/admin/ma/settle_legacy", post(admin_ma_settle_legacy))
+        .route("/api/admin/ma/cancel_auction", post(admin_ma_cancel_auction))
         .route("/api/admin/db/overview", get(admin_db_overview))
         .route("/admin/db", get(admin_db_page))
         .route("/api/checkout", post(checkout))
