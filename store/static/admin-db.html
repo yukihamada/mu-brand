@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU · DB overview</title>
+<meta name="robots" content="noindex">
+<style>
+  :root { --bg:#0A0A0A; --fg:#F5F5F0; --mute:#888; --accent:#e6c449; --line:#1c1c1c; --green:#7be57b; --red:#ff4a3d; }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { background: var(--bg); color: var(--fg); margin: 0; font-family: ui-monospace, "SF Mono", Menlo, "Helvetica Neue", Arial, sans-serif; line-height: 1.65; font-size: 13px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  header { padding: 18px 24px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; }
+  header h1 { font-size: 14px; letter-spacing: 0.4em; margin: 0; font-weight: 700; }
+  header .snapshot { color: var(--mute); font-size: 11px; letter-spacing: 0.18em; }
+  .wrap { padding: 32px 24px 80px; max-width: 1280px; margin: 0 auto; }
+  section { margin-bottom: 48px; }
+  h2 { font-size: 11px; letter-spacing: 0.42em; color: var(--accent); text-transform: uppercase; margin: 0 0 14px; font-weight: 700; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .kpi { background: #0f0f0f; border: 1px solid var(--line); border-radius: 8px; padding: 14px 18px; }
+  .kpi .label { font-size: 10px; letter-spacing: 0.26em; color: var(--mute); text-transform: uppercase; margin-bottom: 6px; }
+  .kpi .v { font-size: 24px; font-weight: 200; color: var(--fg); letter-spacing: 0.02em; }
+  .kpi .sub { font-size: 11px; color: var(--mute); margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; background: #0c0c0c; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid #161616; font-size: 12px; }
+  th { font-size: 10px; color: var(--mute); letter-spacing: 0.22em; text-transform: uppercase; background: #0a0a0a; font-weight: 700; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr:last-child td { border-bottom: 0; }
+  tr:hover td { background: rgba(245,245,240,0.03); }
+  .tag { display: inline-block; padding: 1px 7px; border-radius: 99px; font-size: 10px; letter-spacing: 0.12em; font-weight: 600; }
+  .tag.ok { background: rgba(123,229,123,0.10); color: var(--green); border: 1px solid rgba(123,229,123,0.30); }
+  .tag.no { background: rgba(255,74,61,0.10); color: var(--red); border: 1px solid rgba(255,74,61,0.30); }
+  .tag.muted { background: #1a1a1a; color: var(--mute); }
+  .muted { color: var(--mute); }
+  .err { color: var(--red); padding: 20px; text-align: center; }
+  .loading { color: var(--mute); padding: 40px; text-align: center; }
+  .filter { background: #0f0f0f; border: 1px solid var(--line); color: var(--fg); padding: 8px 12px; font-family: inherit; font-size: 12px; border-radius: 4px; width: 240px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  @media (max-width: 720px) { .grid-2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>━◯━ MU · DB OVERVIEW</h1>
+  <div class="snapshot" id="snapshot">loading…</div>
+</header>
+
+<div class="wrap" id="content">
+  <div class="loading" id="status">━◯━ loading...</div>
+</div>
+
+<script>
+async function load() {
+  // The page is admin-auth gated by the Rust handler. Same token mechanism
+  // as /api/admin/* so we just hit /api/admin/db/overview which inherits the
+  // session/cookie auth.
+  const url = new URL(window.location.href);
+  const tok = url.searchParams.get('admin_token') || url.searchParams.get('token') || '';
+  const qs = tok ? '?admin_token=' + encodeURIComponent(tok) : '';
+  const r = await fetch('/api/admin/db/overview' + qs, { credentials: 'include' });
+  if (!r.ok) {
+    document.getElementById('content').innerHTML = `<div class="err">HTTP ${r.status} — admin_token クエリで再アクセスしてください: /admin/db?admin_token=…</div>`;
+    return;
+  }
+  const d = await r.json();
+  document.getElementById('snapshot').textContent = 'snapshot · ' + d.snapshot_at;
+  render(d);
+}
+
+function render(d) {
+  const s = d.summary;
+  const html = `
+  <section>
+    <h2>━◯━ 全体スナップショット</h2>
+    <div class="kpis">
+      <div class="kpi">
+        <div class="label">Products</div>
+        <div class="v">${s.products.active.toLocaleString()}<span class="muted" style="font-size:14px"> / ${s.products.total.toLocaleString()}</span></div>
+        <div class="sub">active / total</div>
+      </div>
+      <div class="kpi">
+        <div class="label">Proposals (collabs)</div>
+        <div class="v">${s.proposals.approved.toLocaleString()}<span class="muted" style="font-size:14px"> / ${s.proposals.total.toLocaleString()}</span></div>
+        <div class="sub">approved · ${s.proposals.skus_total} SKU 合計</div>
+      </div>
+      <div class="kpi">
+        <div class="label">Bids (MA auction)</div>
+        <div class="v">${s.bids.total.toLocaleString()}</div>
+        <div class="sub">¥${s.bids.sum_jpy.toLocaleString()} 累計入札額</div>
+      </div>
+      <div class="kpi">
+        <div class="label">Design Feedback</div>
+        <div class="v">${s.feedback.total.toLocaleString()}</div>
+        <div class="sub">${s.feedback.by_action.map(x => x.action+': '+x.count).join(' · ') || '—'}</div>
+      </div>
+      <div class="kpi">
+        <div class="label">Verified MU Users</div>
+        <div class="v">${s.collab_users.verified.toLocaleString()}<span class="muted" style="font-size:14px"> / ${s.collab_users.total.toLocaleString()}</span></div>
+        <div class="sub">verified email / total signup</div>
+      </div>
+      <div class="kpi">
+        <div class="label">MA Lineage</div>
+        <div class="v">${s.ma_lineage.total.toLocaleString()}</div>
+        <div class="sub">day-stamped MA designs</div>
+      </div>
+      <div class="kpi">
+        <div class="label">DAO email→wallet</div>
+        <div class="v">${s.dao_email_wallets.total.toLocaleString()}</div>
+        <div class="sub">Constitution §23 bound</div>
+      </div>
+      <div class="kpi">
+        <div class="label">Collab Orders</div>
+        <div class="v">${s.collab_orders.total.toLocaleString()}</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="grid-2">
+    <div>
+      <h2>━◯━ Proposals — collab brand 一覧</h2>
+      <table>
+        <thead><tr><th>slug</th><th>name</th><th>status</th><th class="num">SKU</th><th class="num">active</th></tr></thead>
+        <tbody>
+          ${s.proposals.list.map(p => {
+            let state, klass;
+            if (p.revoked_at) { state = 'revoked'; klass = 'no'; }
+            else if (p.approved_at) { state = 'approved'; klass = 'ok'; }
+            else { state = 'pending'; klass = 'muted'; }
+            return `<tr>
+              <td><strong>${p.slug}</strong></td>
+              <td>${p.name}</td>
+              <td><span class="tag ${klass}">${state}</span></td>
+              <td class="num">${p.sku_count}</td>
+              <td class="num">${p.active}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <h2>━◯━ Bids — auction 入札状態</h2>
+      <table>
+        <thead><tr><th>auth_status</th><th class="num">件数</th><th class="num">合計</th></tr></thead>
+        <tbody>
+          ${s.bids.by_status.map(b => `<tr>
+            <td><span class="tag ${b.status==='captured' ? 'ok' : (b.status==='cancelled' ? 'no' : 'muted')}">${b.status}</span></td>
+            <td class="num">${b.count}</td>
+            <td class="num">¥${b.sum_jpy.toLocaleString()}</td>
+          </tr>`).join('') || '<tr><td colspan="3" class="muted">no bids yet</td></tr>'}
+        </tbody>
+      </table>
+      <h2 style="margin-top:32px">━◯━ Feedback — Tinder swipe</h2>
+      <table>
+        <thead><tr><th>action</th><th class="num">件数</th></tr></thead>
+        <tbody>
+          ${s.feedback.by_action.map(f => `<tr>
+            <td>${f.action}</td>
+            <td class="num">${f.count}</td>
+          </tr>`).join('') || '<tr><td colspan="2" class="muted">no feedback yet</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>━◯━ Products by brand — トップ 50</h2>
+    <input class="filter" placeholder="brand でフィルタ…" oninput="filterRows(this.value, 'brand-tbody')">
+    <table style="margin-top:10px">
+      <thead><tr><th>brand</th><th class="num">total</th><th class="num">active</th><th class="num">sold</th></tr></thead>
+      <tbody id="brand-tbody">
+        ${s.products.by_brand.map(b => `<tr>
+          <td><strong>${b.brand}</strong></td>
+          <td class="num">${b.total}</td>
+          <td class="num">${b.active}</td>
+          <td class="num">${b.sold}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>━◯━ DB tables — 全 ${d.tables.length} テーブル</h2>
+    <input class="filter" placeholder="table 名でフィルタ…" oninput="filterRows(this.value, 'tables-tbody')">
+    <table style="margin-top:10px">
+      <thead><tr><th>table</th><th class="num">rows</th><th>最新更新</th></tr></thead>
+      <tbody id="tables-tbody">
+        ${d.tables.map(t => `<tr>
+          <td><strong>${t.name}</strong></td>
+          <td class="num">${t.rows.toLocaleString()}</td>
+          <td class="muted">${t.stats.latest_created || '—'}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+  </section>
+  `;
+  document.getElementById('content').innerHTML = html;
+}
+
+function filterRows(q, tbodyId) {
+  const tb = document.getElementById(tbodyId);
+  if (!tb) return;
+  const needle = q.toLowerCase();
+  for (const tr of tb.querySelectorAll('tr')) {
+    tr.style.display = tr.textContent.toLowerCase().includes(needle) ? '' : 'none';
+  }
+}
+
+load();
+</script>
+</body>
+</html>

@@ -7473,6 +7473,128 @@ mod council_token_tests {
     }
 }
 
+/// GET /api/admin/db/overview — admin-gated. One-shot snapshot of the
+/// DB shape: per-table row counts + key business stats. Powers /admin/db.
+/// Tables it doesn't know about still show up with just a row count.
+async fn admin_db_overview(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/db/overview").await { return r; }
+    let conn = db.lock().unwrap();
+    // List user tables (sqlite_master) sorted alphabetically.
+    let mut all_tables: Vec<String> = Vec::new();
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
+            for n in rows.flatten() { all_tables.push(n); }
+        }
+    }
+    let now = chrono_now();
+    // Per-table row count + best-effort latest created_at
+    let mut tables: Vec<serde_json::Value> = Vec::new();
+    for name in &all_tables {
+        let rows: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM \"{}\"", name), [],
+            |r| r.get(0)).unwrap_or(0);
+        let mut stats = serde_json::Map::new();
+        // Best-effort: probe a "created_at" column for newest-row time.
+        if let Ok(latest) = conn.query_row::<String, _, _>(
+            &format!("SELECT MAX(created_at) FROM \"{}\"", name), [], |r| r.get(0))
+        {
+            if !latest.is_empty() { stats.insert("latest_created".into(), serde_json::Value::String(latest)); }
+        }
+        tables.push(serde_json::json!({ "name": name, "rows": rows, "stats": stats }));
+    }
+    // ── Business-specific stats (hand-rolled — the high-signal ones) ──
+    let products_total: i64 = conn.query_row("SELECT COUNT(*) FROM products", [], |r| r.get(0)).unwrap_or(0);
+    let products_active: i64 = conn.query_row("SELECT COUNT(*) FROM products WHERE active=1", [], |r| r.get(0)).unwrap_or(0);
+    let mut products_by_brand: Vec<serde_json::Value> = Vec::new();
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT brand, COUNT(*), SUM(CASE WHEN active=1 THEN 1 ELSE 0 END), SUM(sold)
+         FROM products GROUP BY brand ORDER BY COUNT(*) DESC LIMIT 50"
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| Ok(serde_json::json!({
+            "brand": r.get::<_,String>(0)?,
+            "total": r.get::<_,i64>(1)?,
+            "active": r.get::<_,i64>(2)?,
+            "sold":   r.get::<_,i64>(3)?,
+        }))) { for row in rows.flatten() { products_by_brand.push(row); } }
+    }
+    let bids_total: i64 = conn.query_row("SELECT COUNT(*) FROM bids", [], |r| r.get(0)).unwrap_or(0);
+    let bids_sum: i64 = conn.query_row("SELECT COALESCE(SUM(amount),0) FROM bids", [], |r| r.get(0)).unwrap_or(0);
+    let mut bids_by_status: Vec<serde_json::Value> = Vec::new();
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT COALESCE(auth_status,'(null)'), COUNT(*), COALESCE(SUM(amount),0)
+         FROM bids GROUP BY auth_status"
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| Ok(serde_json::json!({
+            "status": r.get::<_,String>(0)?, "count": r.get::<_,i64>(1)?, "sum_jpy": r.get::<_,i64>(2)?,
+        }))) { for row in rows.flatten() { bids_by_status.push(row); } }
+    }
+    let proposals_total: i64 = conn.query_row("SELECT COUNT(*) FROM proposals", [], |r| r.get(0)).unwrap_or(0);
+    let proposals_approved: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM proposals WHERE approved_at IS NOT NULL AND revoked_at IS NULL",
+        [], |r| r.get(0)).unwrap_or(0);
+    let proposal_skus_total: i64 = conn.query_row("SELECT COUNT(*) FROM proposal_skus", [], |r| r.get(0)).unwrap_or(0);
+    let mut proposals_list: Vec<serde_json::Value> = Vec::new();
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT p.slug, p.name, p.approved_at, p.revoked_at,
+                (SELECT COUNT(*) FROM proposal_skus s WHERE s.slug=p.slug),
+                (SELECT COUNT(*) FROM products pr WHERE pr.brand LIKE p.slug||'_%' AND pr.active=1)
+         FROM proposals p ORDER BY p.created_at ASC"
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| Ok(serde_json::json!({
+            "slug": r.get::<_,String>(0)?,
+            "name": r.get::<_,String>(1)?,
+            "approved_at": r.get::<_, Option<String>>(2)?,
+            "revoked_at":  r.get::<_, Option<String>>(3)?,
+            "sku_count":   r.get::<_,i64>(4)?,
+            "active":      r.get::<_,i64>(5)?,
+        }))) { for row in rows.flatten() { proposals_list.push(row); } }
+    }
+    let feedback_total: i64 = conn.query_row("SELECT COUNT(*) FROM proposal_feedback", [], |r| r.get(0)).unwrap_or(0);
+    let mut feedback_by_action: Vec<serde_json::Value> = Vec::new();
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT action, COUNT(*) FROM proposal_feedback GROUP BY action"
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| Ok(serde_json::json!({
+            "action": r.get::<_,String>(0)?, "count": r.get::<_,i64>(1)?,
+        }))) { for row in rows.flatten() { feedback_by_action.push(row); } }
+    }
+    let collab_users_total: i64 = conn.query_row("SELECT COUNT(*) FROM collab_users", [], |r| r.get(0)).unwrap_or(0);
+    let collab_users_verified: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM collab_users WHERE verified=1", [], |r| r.get(0)).unwrap_or(0);
+    let dao_email_wallets_total: i64 = conn.query_row("SELECT COUNT(*) FROM dao_email_wallets", [], |r| r.get(0)).unwrap_or(0);
+    let ma_lineage_total: i64 = conn.query_row("SELECT COUNT(*) FROM ma_lineage", [], |r| r.get(0)).unwrap_or(0);
+    let collab_orders_total: i64 = conn.query_row("SELECT COUNT(*) FROM collab_orders", [], |r| r.get(0)).unwrap_or(0);
+    Json(serde_json::json!({
+        "snapshot_at": now,
+        "tables": tables,
+        "summary": {
+            "products":   { "total": products_total, "active": products_active, "by_brand": products_by_brand },
+            "bids":       { "total": bids_total, "sum_jpy": bids_sum, "by_status": bids_by_status },
+            "proposals":  { "total": proposals_total, "approved": proposals_approved, "skus_total": proposal_skus_total, "list": proposals_list },
+            "feedback":   { "total": feedback_total, "by_action": feedback_by_action },
+            "collab_users": { "total": collab_users_total, "verified": collab_users_verified },
+            "ma_lineage": { "total": ma_lineage_total },
+            "dao_email_wallets": { "total": dao_email_wallets_total },
+            "collab_orders": { "total": collab_orders_total },
+        },
+    })).into_response()
+}
+
+/// GET /admin/db — admin-gated HTML view of the DB overview.
+async fn admin_db_page(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/db").await { return r; }
+    Html(include_str!("../static/admin-db.html")).into_response()
+}
+
 /// POST /api/admin/ma/set_end?product_id=:id&end_at=YYYY-MM-DDTHH:MM:SS
 /// Admin: re-time an auction. Used for early termination (set end_at to
 /// the past) or extension. Does NOT settle; just changes the end time.
@@ -38805,6 +38927,8 @@ async fn main() {
         .route("/api/admin/ma/set_end", post(admin_ma_set_end))
         .route("/api/admin/ma/launch",  post(admin_ma_launch))
         .route("/api/admin/ma/settle_legacy", post(admin_ma_settle_legacy))
+        .route("/api/admin/db/overview", get(admin_db_overview))
+        .route("/admin/db", get(admin_db_page))
         .route("/api/checkout", post(checkout))
         .route("/api/checkout/crypto", post(payments::checkout_crypto))
         .route("/api/checkout/crypto/status/:reference", get(payments::checkout_crypto_status))
