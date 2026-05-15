@@ -80,8 +80,22 @@
     <div class="grid" id="grid"></div>
   </section>
 
+  <!-- Bulk order — pick T-shirt designs + S/M/LL qty defaults (10/30/40). -->
+  <section style="margin-top:64px;padding:28px;background:#0c0c0c;border:1px solid var(--line);border-radius:8px">
+    <h2 style="margin-top:0">━◯━ 大会まとめ発注 (T-Shirt)</h2>
+    <p style="font-size:13.5px;color:var(--mute);margin:0 0 20px;line-height:1.95">
+      選手・スタッフ用の <strong style="color:var(--fg)">Tシャツまとめ買い</strong>。 デザインを複数選択 → サイズ別の枚数を入力 → 1 つの Stripe Checkout で発注。 デフォルト <strong style="color:var(--red)">S=10 / M=30 / LL=40 (= 80 枚/デザイン)</strong>。
+    </p>
+    <div id="bulk-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;margin-bottom:24px"></div>
+    <div id="bulk-summary" style="padding:16px 20px;background:#000;border:1px solid var(--line);border-radius:6px;font-size:13.5px;line-height:1.95;margin-bottom:18px">
+      <span id="bulk-line-count">0</span> ラインアイテム · 合計 <strong id="bulk-qty">0</strong> 枚 · ¥<strong id="bulk-total">0</strong>
+    </div>
+    <button class="buy-btn" id="bulk-btn" style="max-width:380px;margin:0 auto;display:block">━◯━ まとめて発注する</button>
+    <p style="font-size:11px;color:#666;text-align:center;margin:14px 0 0">複数デザイン選択可。 サイズごとの枚数を 0 にすると line item から除外されます。 ライン数は 100 まで。</p>
+  </section>
+
   <div class="bundle">
-    <h3>全 20 SKU まとめ買い</h3>
+    <h3>全 SKU まとめ買い (1 枚ずつ)</h3>
     <p>大会選手 / スタッフ用に全種類 1 枚ずつ。 サイズは下で指定。</p>
     <div class="size-row" id="bundle-size-row" style="justify-content:center;margin-bottom:18px">
       <button data-size="S">S</button>
@@ -207,8 +221,116 @@ document.getElementById('bundle-btn').addEventListener('click', async (ev) => {
   }
 });
 
+// ── Bulk order (T-shirts only) ─────────────────────────────────────────
+const BULK_DEFAULT = { S: 10, M: 30, LL: 40 }; // LL → server maps to XL
+let bulkTees = []; // [{letter, label, price_jpy, design_slug}]
+
+async function loadBulkTees() {
+  try {
+    const r = await fetch(`/api/proposal/${SLUG}/skus`);
+    const d = await r.json();
+    bulkTees = d.skus.filter(s => s.kind === 'tee');
+    renderBulkGrid();
+  } catch (e) {
+    document.getElementById('bulk-grid').innerHTML = '<p style="color:#888">tee SKU の読み込みに失敗</p>';
+  }
+}
+
+function renderBulkGrid() {
+  const grid = document.getElementById('bulk-grid');
+  grid.innerHTML = '';
+  for (const tee of bulkTees) {
+    const card = document.createElement('label');
+    card.className = 'bulk-card';
+    card.dataset.letter = tee.letter;
+    card.style.cssText = 'background:#0f0f0f;border:1px solid #222;border-radius:6px;padding:12px;cursor:pointer;display:block';
+    const mockup = `/proposals/jiufight-pf-${tee.letter}.jpg`;
+    const fallback = `/proposals/jiufight-design-${tee.design_slug}.png`;
+    card.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <input type="checkbox" data-letter="${tee.letter}" style="margin:0;accent-color:var(--red)">
+        <span style="font-size:10px;letter-spacing:0.28em;color:var(--red);font-weight:700">${tee.letter.toUpperCase()}</span>
+        <span style="font-size:13px;flex:1">${tee.label}</span>
+      </div>
+      <div style="aspect-ratio:1;background:#000;border-radius:4px;overflow:hidden;margin-bottom:10px">
+        <img src="${mockup}" data-fallback="${fallback}" alt="${tee.label}" loading="lazy"
+             style="width:100%;height:100%;object-fit:contain;padding:6%;display:block"
+             onerror="this.onerror=null;this.src=this.dataset.fallback">
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-size:11px">
+        <div><label style="display:block;color:var(--mute);letter-spacing:0.2em;margin-bottom:2px">S</label><input type="number" min="0" max="999" value="${BULK_DEFAULT.S}" data-size="S" style="width:100%;background:#000;border:1px solid #222;color:var(--fg);padding:6px;font-family:inherit;border-radius:3px;text-align:center"></div>
+        <div><label style="display:block;color:var(--mute);letter-spacing:0.2em;margin-bottom:2px">M</label><input type="number" min="0" max="999" value="${BULK_DEFAULT.M}" data-size="M" style="width:100%;background:#000;border:1px solid #222;color:var(--fg);padding:6px;font-family:inherit;border-radius:3px;text-align:center"></div>
+        <div><label style="display:block;color:var(--mute);letter-spacing:0.2em;margin-bottom:2px">LL</label><input type="number" min="0" max="999" value="${BULK_DEFAULT.LL}" data-size="LL" style="width:100%;background:#000;border:1px solid #222;color:var(--fg);padding:6px;font-family:inherit;border-radius:3px;text-align:center"></div>
+      </div>
+      <div style="font-size:11px;color:var(--mute);margin-top:8px;text-align:right">¥${tee.price_jpy.toLocaleString()} × <span class="row-qty">${BULK_DEFAULT.S+BULK_DEFAULT.M+BULK_DEFAULT.LL}</span> 枚</div>
+    `;
+    // recompute summary on any input change
+    card.querySelectorAll('input').forEach(inp => inp.addEventListener('input', recomputeBulk));
+    grid.appendChild(card);
+  }
+  recomputeBulk();
+}
+
+function recomputeBulk() {
+  let totalQty = 0, totalJpy = 0, lines = 0;
+  document.querySelectorAll('.bulk-card').forEach(card => {
+    const cb = card.querySelector('input[type=checkbox]');
+    const letter = card.dataset.letter;
+    const tee = bulkTees.find(t => t.letter === letter);
+    const inputs = card.querySelectorAll('input[type=number]');
+    let rowQty = 0;
+    inputs.forEach(inp => { rowQty += parseInt(inp.value) || 0; });
+    card.querySelector('.row-qty').textContent = rowQty;
+    if (cb.checked && tee) {
+      inputs.forEach(inp => {
+        const qty = parseInt(inp.value) || 0;
+        if (qty > 0) { lines += 1; totalQty += qty; totalJpy += qty * tee.price_jpy; }
+      });
+    }
+    card.style.opacity = cb.checked ? '1' : '0.55';
+  });
+  document.getElementById('bulk-line-count').textContent = lines;
+  document.getElementById('bulk-qty').textContent = totalQty;
+  document.getElementById('bulk-total').textContent = totalJpy.toLocaleString();
+}
+
+// recompute also on checkbox toggle
+document.addEventListener('change', (e) => {
+  if (e.target.type === 'checkbox' && e.target.closest('.bulk-card')) recomputeBulk();
+});
+
+document.getElementById('bulk-btn').addEventListener('click', async (ev) => {
+  const btn = ev.currentTarget;
+  const items = [];
+  document.querySelectorAll('.bulk-card').forEach(card => {
+    const cb = card.querySelector('input[type=checkbox]');
+    if (!cb.checked) return;
+    const letter = card.dataset.letter;
+    card.querySelectorAll('input[type=number]').forEach(inp => {
+      const qty = parseInt(inp.value) || 0;
+      if (qty > 0) items.push({ design: letter, size: inp.dataset.size, qty });
+    });
+  });
+  if (items.length === 0) { alert('デザインを 1 つ以上選択し、 サイズ別の枚数を入力してください。'); return; }
+  if (items.length > 100) { alert('ライン数が 100 を超えています。 デザイン / サイズの組み合わせを減らしてください。'); return; }
+  btn.disabled = true;
+  const orig = btn.textContent; btn.textContent = '━◯━ Stripe 発行中…';
+  try {
+    const r = await fetch(`/api/proposal/${SLUG}/bulk`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items })
+    });
+    const d = await r.json();
+    if (d.url) { window.location.href = d.url; } else { throw new Error(d.error || JSON.stringify(d).slice(0,200)); }
+  } catch (e) {
+    alert('まとめ発注リンクの発行に失敗しました: ' + e.message);
+    btn.disabled = false; btn.textContent = orig;
+  }
+});
+
 loadState();
 loadSkus();
+loadBulkTees();
 </script>
 </body>
 </html>

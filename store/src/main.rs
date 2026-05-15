@@ -15568,6 +15568,126 @@ async fn proposal_generic_sample(
     }
 }
 
+#[derive(Deserialize)]
+struct ProposalBulkBody {
+    /// One entry per (design letter, size, qty>0). Up to 100 lines per session.
+    items: Vec<ProposalBulkItem>,
+}
+#[derive(Deserialize)]
+struct ProposalBulkItem {
+    design: String,
+    size: String,
+    qty: i64,
+}
+
+/// POST /api/proposal/:slug/bulk — team / event bulk order. Each item is
+/// (design letter, size, qty); we look up the SKU price + brand, batch-build
+/// Stripe prices once per (design,size) bucket, and create one Checkout
+/// Session with quantities. Same shipping + promo settings as /bundle.
+async fn proposal_generic_bulk(
+    State(db): State<Db>,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+    Json(body): Json<ProposalBulkBody>,
+) -> Response {
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() { return (StatusCode::SERVICE_UNAVAILABLE, "stripe key missing").into_response(); }
+    if body.items.is_empty() { return (StatusCode::BAD_REQUEST, "no items").into_response(); }
+    if body.items.len() > 100 { return (StatusCode::BAD_REQUEST, "max 100 line items per order").into_response(); }
+    // Materialize SKUs for this slug once.
+    let skus_by_letter: std::collections::HashMap<String, (i64, i64, String, String)> = {
+        let conn = db.lock().unwrap();
+        proposal_skus_for(&conn, &slug).into_iter()
+            .map(|(letter, drop_num, price_jpy, label, kind, _ds)| (letter, (drop_num, price_jpy, label, kind)))
+            .collect()
+    };
+    if skus_by_letter.is_empty() {
+        return (StatusCode::NOT_FOUND, "no SKUs for this slug").into_response();
+    }
+    let client = reqwest::Client::new();
+    let mut line_items: Vec<(String, i64)> = Vec::new(); // (price_id, qty)
+    let mut total_jpy: i64 = 0;
+    let mut total_qty: i64 = 0;
+    for item in &body.items {
+        let design = item.design.trim().to_lowercase();
+        let size_raw = item.size.trim().to_uppercase();
+        // Map LL → XL (Japanese sizing convention).
+        let size = if size_raw == "LL" { "XL".to_string() } else { size_raw };
+        if item.qty <= 0 || item.qty > 9999 {
+            return (StatusCode::BAD_REQUEST, format!("invalid qty for {} {}: {}", design, size, item.qty)).into_response();
+        }
+        let (drop_num, price_jpy, label, kind) = match skus_by_letter.get(&design) {
+            Some(v) => v.clone(),
+            None => return (StatusCode::BAD_REQUEST, format!("unknown design: {}", design)).into_response(),
+        };
+        let brand = proposal_brand_for_kind(&slug, &kind);
+        let final_size = if proposal_brand_is_onesize(&brand) { "ONESIZE".to_string() } else {
+            if !["S","M","L","XL"].contains(&size.as_str()) {
+                return (StatusCode::BAD_REQUEST, format!("size must be S/M/L/XL/LL: got {}", size)).into_response();
+            }
+            size.clone()
+        };
+        let _ = drop_num; // already used via brand lookup
+        let product_name = format!("MU x {} - {} - {} - {}",
+            slug.to_uppercase(), design.to_uppercase(), label, final_size);
+        let price_form: Vec<(&str, String)> = vec![
+            ("currency", "jpy".into()),
+            ("unit_amount", price_jpy.to_string()),
+            ("product_data[name]", product_name),
+        ];
+        let resp = match client.post("https://api.stripe.com/v1/prices")
+            .basic_auth(&stripe_key, Some("")).form(&price_form).send().await {
+            Ok(r) => r,
+            Err(e) => return (StatusCode::BAD_GATEWAY, format!("stripe price http: {}", e)).into_response(),
+        };
+        let status = resp.status();
+        let raw = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return (StatusCode::BAD_GATEWAY, format!("stripe price {}: {}", status, raw.chars().take(300).collect::<String>())).into_response();
+        }
+        let pid: String = serde_json::from_str::<serde_json::Value>(&raw)
+            .ok().and_then(|v| v.get("id").and_then(|x| x.as_str()).map(String::from)).unwrap_or_default();
+        if pid.is_empty() {
+            return (StatusCode::BAD_GATEWAY, "stripe returned no price id (bulk)").into_response();
+        }
+        total_jpy += price_jpy * item.qty;
+        total_qty += item.qty;
+        line_items.push((pid, item.qty));
+    }
+    let mut cs_form: Vec<(&str, String)> = vec![
+        ("mode", "payment".into()),
+        ("success_url", format!("https://wearmu.com/{}?bulk=ok&session_id={{CHECKOUT_SESSION_ID}}", slug)),
+        ("cancel_url", format!("https://wearmu.com/{}?bulk=cancel", slug)),
+        ("shipping_address_collection[allowed_countries][0]", "JP".into()),
+        ("allow_promotion_codes", "true".into()),
+        ("metadata[kind]", format!("{}_bulk", slug)),
+        ("metadata[bulk_lines]", line_items.len().to_string()),
+        ("metadata[bulk_qty]", total_qty.to_string()),
+        ("metadata[bulk_total_jpy]", total_jpy.to_string()),
+    ];
+    for (i, (pid, qty)) in line_items.iter().enumerate() {
+        cs_form.push((Box::leak(format!("line_items[{}][price]", i).into_boxed_str()), pid.clone()));
+        cs_form.push((Box::leak(format!("line_items[{}][quantity]", i).into_boxed_str()), qty.to_string()));
+    }
+    match client.post("https://api.stripe.com/v1/checkout/sessions")
+        .basic_auth(&stripe_key, Some("")).form(&cs_form).send().await {
+        Ok(r) => {
+            let status = r.status();
+            let raw = r.text().await.unwrap_or_default();
+            let v: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
+            if let Some(u) = v.get("url").and_then(|x| x.as_str()) {
+                return Json(serde_json::json!({
+                    "ok": true, "url": u,
+                    "lines": line_items.len(),
+                    "total_qty": total_qty,
+                    "total_jpy": total_jpy,
+                })).into_response();
+            }
+            (StatusCode::BAD_GATEWAY, format!("checkout_session {}: {}", status, raw.chars().take(300).collect::<String>())).into_response()
+        }
+        Err(e) => (StatusCode::BAD_GATEWAY, format!("stripe: {}", e)).into_response(),
+    }
+}
+
 /// POST /api/proposal/:slug/bundle — DB-backed all-SKU Stripe checkout session.
 /// Uses /v1/checkout/sessions (100-item cap) instead of payment_links (20).
 async fn proposal_generic_bundle(
@@ -37987,6 +38107,7 @@ async fn main() {
         .route("/api/proposal/:slug/skus",     get(proposal_generic_skus))
         .route("/api/proposal/:slug/sample",   post(proposal_generic_sample))
         .route("/api/proposal/:slug/bundle",   post(proposal_generic_bundle))
+        .route("/api/proposal/:slug/bulk",     post(proposal_generic_bulk))
         .route("/api/proposal/:slug/approve",  post(proposal_generic_approve))
         .route("/api/proposal/:slug/revoke",   post(proposal_generic_revoke))
         .route("/admin/proposal",              post(proposal_generic_create))
