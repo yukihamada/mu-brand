@@ -7574,6 +7574,162 @@ async fn admin_ma_launch(
     })).into_response()
 }
 
+/// POST /api/admin/ma/settle_legacy?product_id=:id[&send_email=1]
+/// Admin: for legacy bids (no Stripe pre-auth on the card) issue a
+/// Stripe Payment Link for the top bid so the bidder can settle by
+/// clicking + entering card. By default returns the URL + email preview;
+/// adds &send_email=1 to actually send via Resend (requires the global
+/// "real customer email" sanity — feedback_email_blast_radius.md).
+async fn admin_ma_settle_legacy(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/ma/settle_legacy").await { return r; }
+    let product_id: i64 = match q.get("product_id").and_then(|s| s.parse().ok()) {
+        Some(v) => v, None => return (StatusCode::BAD_REQUEST, "product_id required").into_response(),
+    };
+    let send_email = q.get("send_email").map(|s| s == "1").unwrap_or(false);
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "stripe key missing").into_response();
+    }
+    // Find top legacy bid (no PI hold) for this product.
+    let top: Option<(i64, i64, String, String, String)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT b.id, b.amount, b.email, COALESCE(b.wallet,''), COALESCE(p.name,'MA')
+             FROM bids b JOIN products p ON p.id = b.product_id
+             WHERE b.product_id=? AND (b.auth_status='legacy' OR b.auth_status IS NULL)
+             ORDER BY b.amount DESC, b.created_at ASC LIMIT 1",
+            params![product_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        ).ok()
+    };
+    let Some((bid_id, amount, email, _wallet, product_name)) = top else {
+        return Json(serde_json::json!({
+            "ok": false,
+            "error": "no legacy bids to settle for this product_id",
+        })).into_response();
+    };
+    let client = reqwest::Client::new();
+    // 1) Create a Price ()
+    let price_form: Vec<(&str, String)> = vec![
+        ("currency", "jpy".into()),
+        ("unit_amount", amount.to_string()),
+        ("product_data[name]", format!("MU 間 MA — {} 落札 (legacy settle)", product_name)),
+    ];
+    let resp = match client.post("https://api.stripe.com/v1/prices")
+        .basic_auth(&stripe_key, Some("")).form(&price_form).send().await {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::BAD_GATEWAY, format!("stripe price http: {}", e)).into_response(),
+    };
+    let status = resp.status();
+    let raw = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return (StatusCode::BAD_GATEWAY,
+            format!("stripe price {}: {}", status, raw.chars().take(300).collect::<String>())).into_response();
+    }
+    let price_id: String = serde_json::from_str::<serde_json::Value>(&raw)
+        .ok().and_then(|v| v.get("id").and_then(|x| x.as_str()).map(String::from)).unwrap_or_default();
+    if price_id.is_empty() {
+        return (StatusCode::BAD_GATEWAY, "stripe returned no price id").into_response();
+    }
+    // 2) Create the Payment Link
+    let pl_form: Vec<(&str, String)> = vec![
+        ("line_items[0][price]", price_id),
+        ("line_items[0][quantity]", "1".into()),
+        ("shipping_address_collection[allowed_countries][0]", "JP".into()),
+        ("allow_promotion_codes", "false".into()),
+        ("metadata[kind]", "ma_legacy_settle".into()),
+        ("metadata[product_id]", product_id.to_string()),
+        ("metadata[bid_id]", bid_id.to_string()),
+        ("metadata[bid_email]", email.clone()),
+        ("metadata[bid_amount]", amount.to_string()),
+    ];
+    let pl_url = match client.post("https://api.stripe.com/v1/payment_links")
+        .basic_auth(&stripe_key, Some("")).form(&pl_form).send().await {
+        Ok(r) => {
+            let s = r.status();
+            let t = r.text().await.unwrap_or_default();
+            if !s.is_success() {
+                return (StatusCode::BAD_GATEWAY,
+                    format!("stripe payment_link {}: {}", s, t.chars().take(300).collect::<String>())).into_response();
+            }
+            let v: serde_json::Value = serde_json::from_str(&t).unwrap_or(serde_json::Value::Null);
+            v["url"].as_str().unwrap_or("").to_string()
+        }
+        Err(e) => return (StatusCode::BAD_GATEWAY, format!("stripe http: {}", e)).into_response(),
+    };
+    if pl_url.is_empty() {
+        return (StatusCode::BAD_GATEWAY, "stripe returned no payment_link url").into_response();
+    }
+    // Mark bid as pending_legacy so re-runs don't issue duplicate links.
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE bids SET auth_status='pending_legacy' WHERE id=?",
+            params![bid_id],
+        );
+    }
+    // Compose email
+    let subject = format!("━◯━ MU 間 MA 落札ご報告 — お支払いリンク (¥{:})", amount);
+    let body_html = format!(r#"<!doctype html><html><body style="font-family:-apple-system,sans-serif;background:#0A0A0A;color:#F5F5F0;padding:32px;line-height:1.9">
+<div style="max-width:520px;margin:0 auto">
+<div style="font-size:13px;letter-spacing:0.4em;font-weight:700;margin-bottom:24px">━◯━ MU · 間 MA</div>
+<h1 style="font-size:22px;font-weight:300;margin-bottom:14px">{product} を落札されました</h1>
+<p style="color:#aaa;font-size:14px">この度はオークション参加ありがとうございます。 落札額 <strong style="color:#fff">¥{amount}</strong> のお支払いを下記リンクからお願いします (Stripe / カード)。</p>
+<p style="margin:32px 0"><a href="{url}" style="background:#F5F5F0;color:#0A0A0A;padding:14px 22px;text-decoration:none;letter-spacing:0.3em;font-weight:700;font-size:13px;border-radius:4px">お支払い → ¥{amount}</a></p>
+<p style="font-size:12px;color:#888;line-height:2">
+お支払い完了後、 配送先フォーム (氏名・住所・サイズ) を別途お送りします。<br>
+DTG 1 枚プリント → 約 10 営業日で発送します。<br>
+配送先確定後、 制作開始 (一度作ったデザインは二度と作りません — Constitution §10)。</p>
+<p style="font-size:11px;color:#666;margin-top:36px;border-top:1px solid #222;padding-top:18px">
+MU · wearmu.com · 株式会社イネブラ<br>
+お心当たりがない場合は破棄してください。 mail@wearmu.com に連絡を入れます。
+</p>
+</div></body></html>"#, product = html_escape(&product_name), amount = amount, url = html_escape(&pl_url));
+    let mut email_sent = false;
+    let mut email_error: Option<String> = None;
+    if send_email {
+        let key = env::var("RESEND_API_KEY").unwrap_or_default();
+        if key.is_empty() {
+            email_error = Some("RESEND_API_KEY missing".into());
+        } else {
+            let payload = serde_json::json!({
+                "from": "━◯━ MU · 間 MA <info@enablerdao.com>",
+                "to": [email],
+                "subject": subject,
+                "html": body_html,
+            });
+            match client.post("https://api.resend.com/emails")
+                .bearer_auth(&key).json(&payload).send().await
+            {
+                Ok(r) => {
+                    let s = r.status();
+                    let t = r.text().await.unwrap_or_default();
+                    if s.is_success() { email_sent = true; }
+                    else { email_error = Some(format!("resend {}: {}", s, t.chars().take(200).collect::<String>())); }
+                }
+                Err(e) => email_error = Some(format!("resend http: {}", e)),
+            }
+        }
+    }
+    Json(serde_json::json!({
+        "ok": true,
+        "product_id": product_id,
+        "bid_id": bid_id,
+        "winner_email": email,
+        "winner_amount_jpy": amount,
+        "payment_link": pl_url,
+        "email_sent": email_sent,
+        "email_error": email_error,
+        "email_preview_html": if !send_email { Some(body_html) } else { None },
+        "note": if send_email { "email_sent — お支払い完了で webhook が走り auth_status='captured' に更新。" }
+                 else { "ドライラン: send_email=1 を付けて本送信。 メール文面は email_preview_html を確認。" },
+    })).into_response()
+}
+
 /// POST /api/admin/ma/settle?product_id=:id — admin-gated. Closes the
 /// auction:
 ///   1. Captures the top authorized bid's Stripe PaymentIntent (charges
@@ -8814,6 +8970,29 @@ async fn stripe_webhook(
             "/api/webhook/stripe",
             product_id,
             serde_json::json!({"amount_total": amount_total, "session": session_id})).await;
+
+        // ── MA legacy bid settle (Payment Link from /api/admin/ma/settle_legacy) ──
+        // Card was charged (full capture) — mark bid 'captured', product sold_out.
+        if meta["kind"].as_str() == Some("ma_legacy_settle") {
+            let product_id: i64 = meta["product_id"].as_str()
+                .and_then(|s| s.parse().ok()).unwrap_or(0);
+            let bid_id: i64 = meta["bid_id"].as_str()
+                .and_then(|s| s.parse().ok()).unwrap_or(0);
+            let now = chrono_now();
+            {
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "UPDATE bids SET auth_status='captured' WHERE id=?", params![bid_id],
+                );
+                let _ = conn.execute(
+                    "UPDATE products SET sold_out_at=?, sold=sold+1 WHERE id=? AND sold_out_at IS NULL",
+                    params![now, product_id],
+                );
+            }
+            eprintln!("[ma_legacy_settle] CAPTURED bid_id={} product_id={} (legacy payment link)",
+                bid_id, product_id);
+            return StatusCode::OK.into_response();
+        }
 
         // ── MA bid pre-auth (capture_method=manual) ──
         // Card has been authorized for the bid amount but not captured.
@@ -38613,6 +38792,7 @@ async fn main() {
         .route("/api/admin/ma/settle", post(admin_ma_settle))
         .route("/api/admin/ma/set_end", post(admin_ma_set_end))
         .route("/api/admin/ma/launch",  post(admin_ma_launch))
+        .route("/api/admin/ma/settle_legacy", post(admin_ma_settle_legacy))
         .route("/api/checkout", post(checkout))
         .route("/api/checkout/crypto", post(payments::checkout_crypto))
         .route("/api/checkout/crypto/status/:reference", get(payments::checkout_crypto_status))
