@@ -9157,6 +9157,17 @@ async fn create_printful_order(key: String, db: Db, product_id: i64, session: se
         ("kichinan_polo_sample", _)          => 9899,  // Port Authority K500 Black M
         ("kichinan_dad_hat_sample", _)       => 16244, // Adidas Dad Hat Black M
         ("kichinan_bucket_hat_sample", _)    => 8760,  // Flexfit 5003 Black M
+        // RYOZO TOP TEAM extensions (BJJ team gear)
+        ("kichinan_joggers_sample", _)       => 9928,  // Jerzees 975MPR Black M
+        ("kichinan_zip_hoodie_sample", _)    => 17296, // Gildan 18600 Black M
+        ("kichinan_quarter_zip_sample", _)   => 46093, // Lane Seven LS14014 Black M
+        ("kichinan_water_bottle_sample", _)  => 16030, // Stainless Steel Bottle Black M
+        ("kichinan_beach_towel_sample", _)   => 8874,  // Beach Towel White M
+        ("kichinan_patch_sample", _)         => 44245, // Embroidered Tactical Patches Black M
+        ("kichinan_apron_sample", _)         => 9287,  // Liberty Bags 5502 Black M
+        ("kichinan_tank_top_sample", _)      => 8630,  // Bella+Canvas 3480 Black M
+        ("kichinan_crossbody_sample", _)     => 49308, // QS309 Black M
+        ("kichinan_mug_team_sample", _)      => 1320,  // alias for team mug
         // ── Default tee (existing MUGEN/MUON path) — Bella+Canvas 3001 Black ──
         (_, "S")  => 4016,
         (_, "M")  => 4017,
@@ -14230,6 +14241,17 @@ fn proposal_brand_for_kind(slug_prefix: &str, kind: &str) -> String {
         "track_pants"    => format!("{}_track_pants_sample",    slug_prefix),
         "sweatpants"     => format!("{}_sweatpants_sample",     slug_prefix),
         "crewneck"       => format!("{}_crewneck_sample",       slug_prefix),
+        // RYOZO TOP TEAM additions
+        "joggers"        => format!("{}_joggers_sample",        slug_prefix),
+        "zip_hoodie"     => format!("{}_zip_hoodie_sample",     slug_prefix),
+        "quarter_zip"    => format!("{}_quarter_zip_sample",    slug_prefix),
+        "water_bottle"   => format!("{}_water_bottle_sample",   slug_prefix),
+        "beach_towel"    => format!("{}_beach_towel_sample",    slug_prefix),
+        "patch"          => format!("{}_patch_sample",          slug_prefix),
+        "apron"          => format!("{}_apron_sample",          slug_prefix),
+        "tank_top"       => format!("{}_tank_top_sample",       slug_prefix),
+        "crossbody"      => format!("{}_crossbody_sample",      slug_prefix),
+        "mug_team"       => format!("{}_mug_team_sample",       slug_prefix),
         _                => format!("{}_tee_sample",            slug_prefix),
     }
 }
@@ -14241,6 +14263,9 @@ fn proposal_brand_is_onesize(brand: &str) -> bool {
         || brand.ends_with("_pillow_sample")
         || brand.ends_with("_dad_hat_sample") || brand.ends_with("_bucket_hat_sample")
         || brand.ends_with("_drawstring_sample") || brand.ends_with("_socks_sample")
+        || brand.ends_with("_water_bottle_sample") || brand.ends_with("_beach_towel_sample")
+        || brand.ends_with("_patch_sample") || brand.ends_with("_apron_sample")
+        || brand.ends_with("_crossbody_sample") || brand.ends_with("_mug_team_sample")
 }
 
 fn seed_proposal_sample_products(db: &Db, slug_prefix: &str,
@@ -14914,6 +14939,17 @@ const RYOZO_DESIGNS: &[(&str, i64, i64, &str, &str, &str)] = &[
     ("r", 18,  5800, "Drawstring Gi Bag",          "drawstring",    "wordmark"),
     ("s", 19,  3800, "Team Crew Socks",            "socks",         "stripe"),
     ("t", 20,  2400, "Team Sticker Pack (5)",      "sticker",       "patch"),
+    // ── v2 additions (BJJ team essentials) ──────────────────────────────
+    ("u", 21,  9800, "Team Joggers (Jerzees)",     "joggers",       "stripe"),
+    ("v", 22, 13800, "Team Zip Hoodie (Gildan)",   "zip_hoodie",    "stacked"),
+    ("w", 23, 11800, "Coach Quarter-Zip (Lane7)",  "quarter_zip",   "wordmark"),
+    ("x", 24,  4800, "Stainless Water Bottle",     "water_bottle",  "monogram"),
+    ("y", 25,  4400, "Recovery Beach Towel",       "beach_towel",   "wordmark"),
+    ("z", 26,  3800, "Gi Patch (the real thing)",  "patch",         "patch"),
+    ("aa",27,  6800, "Post-training Apron",        "apron",         "monogram"),
+    ("ab",28,  4800, "Summer Training Tank Top",   "tank_top",      "patch"),
+    ("ac",29,  6800, "Crossbody Sling (training)", "crossbody",     "monogram"),
+    ("ad",30,  3400, "Team Mug (recovery shake)",  "mug_team",      "monogram"),
 ];
 
 async fn proposal_ryozo_sample(State(db): State<Db>, Json(body): Json<ProposalSampleBody>) -> Response {
@@ -36939,6 +36975,16 @@ async fn main() {
             ("ryozo_drawstring_sample",    "wordmark"),
             ("ryozo_socks_sample",         "stripe"),
             ("ryozo_sticker_sample",       "patch"),
+            ("ryozo_joggers_sample",       "stripe"),
+            ("ryozo_zip_hoodie_sample",    "stacked"),
+            ("ryozo_quarter_zip_sample",   "wordmark"),
+            ("ryozo_water_bottle_sample",  "monogram"),
+            ("ryozo_beach_towel_sample",   "wordmark"),
+            ("ryozo_patch_sample",         "patch"),
+            ("ryozo_apron_sample",         "monogram"),
+            ("ryozo_tank_top_sample",      "patch"),
+            ("ryozo_crossbody_sample",     "monogram"),
+            ("ryozo_mug_team_sample",      "monogram"),
         ];
         for (brand, design) in ryozo_designs {
             let url = format!("https://wearmu.com/proposals/ryozo-design-{}.png", design);
