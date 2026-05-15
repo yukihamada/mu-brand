@@ -38074,9 +38074,15 @@ async fn main() {
                 params![url, drop_num],
             );
         }
-        // BLANK_ retreat — single MA-style day-stamped tee
+        // BLANK_ retreat — single MA-style day-stamped tee. Override the
+        // placeholder mockup_url + clean up the seeded product name so the
+        // embed/catalog shows the real Gemini sumi 間 design without the
+        // "sample" boilerplate.
         let _ = conn.execute(
-            "UPDATE products SET design_url='https://wearmu.com/proposals/blank-design-ma.png'
+            "UPDATE products SET
+                design_url = 'https://wearmu.com/proposals/blank-design-ma.png',
+                mockup_url = 'https://wearmu.com/proposals/blank-pf-a.jpg',
+                name = '━◯━ MU × BLANK_ · MA day-stamp 2026·05·27 · Minakami Executive Retreat'
              WHERE brand='blank_tee_sample'",
             [],
         );
