@@ -15011,6 +15011,41 @@ async fn proposal_ryozo_bundle(State(db): State<Db>, Json(body): Json<ProposalBu
     issue_proposal_bundle_link(db, "ryozo", RYOZO_DESIGNS, body).await
 }
 
+// ── JiuFight (BJJ tournament event) — 20 SKU lineup ────────────────────
+// Tournament-event apparel: tee variants + competition gear + spectator gear.
+// Brand-prefix `jiufight_` is handled by the generic proposal_brand_for_kind
+// + migrate_legacy_proposal pipeline — no per-brand Rust scaffolding needed.
+const JIUFIGHT_DESIGNS: &[(&str, i64, i64, &str, &str, &str)] = &[
+    // letter, drop, jpy, label, kind, design
+    ("a", 1,  4900, "Event Tee · Black",          "tee",           "wordmark"),
+    ("b", 2,  4900, "Event Tee · White",          "tee",           "monogram"),
+    ("c", 3,  4900, "Event Tee · Vintage Black",  "tee",           "stacked"),
+    ("d", 4,  5400, "Long Sleeve Tee",            "longsleeve",    "wordmark"),
+    ("e", 5,  4400, "Athletic Tank",              "tank_top",      "stripe"),
+    ("f", 6,  7800, "Rashguard Short Sleeve",     "athletic_tee",  "stacked"),
+    ("g", 7,  8800, "Rashguard Long Sleeve",      "rashguard_ls",  "stacked"),
+    ("h", 8,  7400, "Fight Shorts",               "fight_shorts",  "stripe"),
+    ("i", 9,  6800, "Spats / Compression Tights", "spats",         "stripe"),
+    ("j",10,  7900, "Tournament Hoodie",          "hoodie",        "wordmark"),
+    ("k",11,  6900, "Crewneck Sweatshirt",        "crewneck",      "stacked"),
+    ("l",12,  3800, "Snapback Cap",               "cap",           "monogram"),
+    ("m",13,  3400, "Beanie",                     "beanie",        "monogram"),
+    ("n",14,  4200, "Bucket Hat",                 "bucket_hat",    "monogram"),
+    ("o",15,  2900, "Event Tote",                 "tote",          "wordmark"),
+    ("p",16,  3200, "Drawstring Bag",             "drawstring",    "stripe"),
+    ("q",17,   800, "Sticker Pack",               "sticker",       "monogram"),
+    ("r",18,  3800, "Cold Towel",                 "beach_towel",   "wordmark"),
+    ("s",19,  3200, "Medal Mug",                  "mug",           "monogram"),
+    ("t",20,  4800, "Crossbody Pouch",            "crossbody",     "monogram"),
+];
+
+async fn proposal_jiufight_sample(State(db): State<Db>, Json(body): Json<ProposalSampleBody>) -> Response {
+    issue_proposal_sample_link(db, "jiufight", JIUFIGHT_DESIGNS, body).await
+}
+async fn proposal_jiufight_bundle(State(db): State<Db>, Json(body): Json<ProposalBundleBody>) -> Response {
+    issue_proposal_bundle_link(db, "jiufight", JIUFIGHT_DESIGNS, body).await
+}
+
 // ── Unified proposal system ───────────────────────────────────────────────
 // Replaces the per-brand approval table + const DESIGNS array pattern with
 // two generic tables. New collab brands no longer need Rust changes — a
@@ -37545,6 +37580,7 @@ async fn main() {
     seed_proposal_sample_products(&db, "ele",       ELE_DESIGNS,       "ELE / yuki");
     seed_proposal_sample_products(&db, "nojimahal", NOJIMAHAL_DESIGNS, "NOJIMAHAL / 野島繁昭");
     seed_proposal_sample_products(&db, "ryozo",     RYOZO_DESIGNS,     "RYOZO TOP TEAM");
+    seed_proposal_sample_products(&db, "jiufight",  JIUFIGHT_DESIGNS,  "JiuFight Tournament");
 
     // ── Unified proposal system migration ─────────────────────────────────
     // Mirror legacy per-brand approval tables + const DESIGNS arrays into
@@ -37557,13 +37593,16 @@ async fn main() {
     migrate_legacy_proposal(&db, "ele",       "ELE / yuki",               ELE_DESIGNS,       "ele_approval");
     migrate_legacy_proposal(&db, "nojimahal", "NOJIMAHAL / 野島繁昭",     NOJIMAHAL_DESIGNS, "nojimahal_approval");
     migrate_legacy_proposal(&db, "ryozo",     "RYOZO TOP TEAM",           RYOZO_DESIGNS,     "ryozo_approval");
+    // JiuFight has no legacy approval table — pass a non-existent name so
+    // the table lookup fails silently and only the SKU seed runs.
+    migrate_legacy_proposal(&db, "jiufight",  "JiuFight Tournament",      JIUFIGHT_DESIGNS,  "_no_legacy_table");
     // Proposal SKUs are real, buyable MU products. Flip them to active=1
     // unconditionally so they appear in /api/v1/embed/products and at
     // /products/<brand>/<id>. The approval gate controls only the public
     // top-level URL (e.g. /asoview, /nojimahal), not buyability.
     {
         let conn = db.lock().unwrap();
-        for prefix in &["asoview_", "elsoul_", "ele_", "nojimahal_", "ryozo_"] {
+        for prefix in &["asoview_", "elsoul_", "ele_", "nojimahal_", "ryozo_", "jiufight_"] {
             let _ = conn.execute(
                 "UPDATE products SET active=1 WHERE brand LIKE ?||'%' AND active=0",
                 params![prefix],
@@ -37602,40 +37641,81 @@ async fn main() {
             );
         }
         // RYOZO TOP TEAM: gi-patch aesthetic — gold wordmark + green-T accent.
+        // RYOZO design palette now blends gi-patch (gold + green-T) with
+        // AMERI-influenced vintage Americana + baller energy. Variants:
+        //   patch    — original gi-patch crest
+        //   wordmark — heavy block RYOZO
+        //   monogram — RTT mark in framed square
+        //   stacked  — RYOZO over TOP TEAM with rules
+        //   stripe   — vertical gold stripe + small mark
+        //   varsity  — arched RYOZO over TOP TEAM, stars, vintage NCAA feel
+        //   jersey   — large "23" basketball jersey number
+        //   script   — italic "Top Team" handwriting + RTT mark
+        //   athletic — block stripe Americana flag-style framing
         let ryozo_designs: &[(&str, &str)] = &[
+            // Compete-oriented BJJ pieces keep the gi-patch DNA
             ("ryozo_rashguard_ls_sample",  "patch"),
-            ("ryozo_athletic_tee_sample",  "wordmark"),
+            ("ryozo_athletic_tee_sample",  "varsity"),    // ← varsity Americana
             ("ryozo_fight_shorts_sample",  "stripe"),
             ("ryozo_spats_sample",         "stripe"),
-            ("ryozo_hoodie_sample",        "stacked"),
-            ("ryozo_bomber_jacket_sample", "stacked"),
-            ("ryozo_windbreaker_sample",   "wordmark"),
+            ("ryozo_hoodie_sample",        "athletic"),   // ← block-stripe Americana
+            ("ryozo_bomber_jacket_sample", "varsity"),    // ← bomber + varsity = classic
+            ("ryozo_windbreaker_sample",   "athletic"),
             ("ryozo_track_pants_sample",   "stripe"),
             ("ryozo_sweatpants_sample",    "stripe"),
-            ("ryozo_crewneck_sample",      "wordmark"),
-            ("ryozo_tee_sample",           "patch"),
-            ("ryozo_longsleeve_sample",    "wordmark"),
+            ("ryozo_crewneck_sample",      "varsity"),    // ← collegiate crewneck
+            ("ryozo_tee_sample",           "jersey"),     // ← jersey "23" tee
+            ("ryozo_longsleeve_sample",    "script"),     // ← script Americana LS
             ("ryozo_polo_sample",          "monogram"),
             ("ryozo_dad_hat_sample",       "monogram"),
             ("ryozo_bucket_hat_sample",    "monogram"),
             ("ryozo_beanie_sample",        "monogram"),
-            ("ryozo_tote_sample",          "wordmark"),
-            ("ryozo_drawstring_sample",    "wordmark"),
+            ("ryozo_tote_sample",          "script"),     // ← script tote (AMERI feel)
+            ("ryozo_drawstring_sample",    "athletic"),
             ("ryozo_socks_sample",         "stripe"),
             ("ryozo_sticker_sample",       "patch"),
-            ("ryozo_joggers_sample",       "stripe"),
-            ("ryozo_zip_hoodie_sample",    "stacked"),
-            ("ryozo_quarter_zip_sample",   "wordmark"),
+            ("ryozo_joggers_sample",       "athletic"),
+            ("ryozo_zip_hoodie_sample",    "varsity"),    // ← varsity zip = baller classic
+            ("ryozo_quarter_zip_sample",   "stacked"),
             ("ryozo_water_bottle_sample",  "monogram"),
-            ("ryozo_beach_towel_sample",   "wordmark"),
+            ("ryozo_beach_towel_sample",   "script"),     // ← script beach towel
             ("ryozo_patch_sample",         "patch"),
             ("ryozo_apron_sample",         "monogram"),
-            ("ryozo_tank_top_sample",      "patch"),
+            ("ryozo_tank_top_sample",      "jersey"),     // ← jersey tank (baller signature)
             ("ryozo_crossbody_sample",     "monogram"),
-            ("ryozo_mug_team_sample",      "monogram"),
+            ("ryozo_mug_team_sample",      "varsity"),
         ];
         for (brand, design) in ryozo_designs {
             let url = format!("https://wearmu.com/proposals/ryozo-design-{}.png", design);
+            let _ = conn.execute(
+                "UPDATE products SET design_url=? WHERE brand=?",
+                params![url, brand],
+            );
+        }
+        // JiuFight — combat-red event accent, 4 design variants currently
+        // (wordmark / monogram / stacked / stripe). All 20 SKUs map to one.
+        let jiufight_designs: &[(&str, &str)] = &[
+            ("jiufight_tee_sample",          "wordmark"),
+            ("jiufight_longsleeve_sample",   "wordmark"),
+            ("jiufight_tank_top_sample",     "stripe"),
+            ("jiufight_athletic_tee_sample", "stacked"),
+            ("jiufight_rashguard_ls_sample", "stacked"),
+            ("jiufight_fight_shorts_sample", "stripe"),
+            ("jiufight_spats_sample",        "stripe"),
+            ("jiufight_hoodie_sample",       "wordmark"),
+            ("jiufight_crewneck_sample",     "stacked"),
+            ("jiufight_cap_sample",          "monogram"),
+            ("jiufight_beanie_sample",       "monogram"),
+            ("jiufight_bucket_hat_sample",   "monogram"),
+            ("jiufight_tote_sample",         "wordmark"),
+            ("jiufight_drawstring_sample",   "stripe"),
+            ("jiufight_sticker_sample",      "monogram"),
+            ("jiufight_beach_towel_sample",  "wordmark"),
+            ("jiufight_mug_sample",          "monogram"),
+            ("jiufight_crossbody_sample",    "monogram"),
+        ];
+        for (brand, design) in jiufight_designs {
+            let url = format!("https://wearmu.com/proposals/jiufight-design-{}.png", design);
             let _ = conn.execute(
                 "UPDATE products SET design_url=? WHERE brand=?",
                 params![url, brand],
