@@ -37032,6 +37032,41 @@ async fn main() {
          Some(r#"{"2XS":20182,"XS":20183,"S":20184,"M":20185,"L":20186,"XL":20187,"2XL":20188,"3XL":20189,"4XL":20190,"5XL":20191,"6XL":20192}"#),
          Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
          Some(r#"[{"id":"stitch_color","value":"black"}]"#), 14, 1),
+
+        // ── v3 拡張 10 SKU (2026-05-16) — BJJ アクセサリー / リカバリー ────────
+        // Printful product/variant IDs は未確定のため production_route='pre_order'。
+        // Stripe checkout は動作、Telegram alert + Resend ops mail で SIIIEEP社 手動 fulfill。
+        // Printful 確定後は route='printful' + IDs 埋めて再デプロイで自動化。
+        ("sweep-patch-embroidered", "刺繍 Gi パッチ (4インチ)", "MU × SIIIEEP Embroidered Gi Patch (4\")",
+         "Velcro裏地で柔術 Gi の袖/胸/背中に取り付け可能。MU×SIIIEEP モノグラム刺繍、白糸×黒地。トーナメント時の chapter patch としても使用可。",
+         3_800, "pre_order", None, None, None, None, None, 21, 1),
+        ("sweep-patch-iron-on", "アイロンプリント パッチ (3インチ)", "MU × SIIIEEP Iron-On Patch (3\")",
+         "アイロン圧着式。デニムジャケット・コットンキャップ・ジムバッグに装着可能。複数枚購入で道場のチームウェアに統一感を出せる。",
+         1_800, "pre_order", None, None, None, None, None, 14, 1),
+        ("sweep-bandana", "バンダナ / Gi ヘッドラップ", "MU × SIIIEEP Bandana / Gi Headwrap",
+         "53×53cm コットン100%。Gi下に巻く・練習中の汗止め・スパー前の儀式に。MU×SIIIEEP モノグラム + 北参道の方角を示すコンパスマーク。",
+         2_800, "pre_order", None, None, None, None, None, 10, 1),
+        ("sweep-polo-tech", "パフォーマンスポロ (テック)", "MU × SIIIEEP Performance Polo (Tech)",
+         "速乾・通気・吸汗のテック素材ポロ。SJJJF 公認トーナメント審判・コーチ・運営スタッフ向け。左胸に小さく SIIIEEP wordmark を刺繍。",
+         9_800, "pre_order", None, None, None, None, None, 14, 1),
+        ("sweep-tech-tee", "テックTシャツ (速乾)", "MU × SIIIEEP Tech Tee (Quick-Dry)",
+         "ポリエステル100%。毎日の練習用 daily driver。汗を吸っても重くならない速乾素材。コットンよりタフで、3〜5日連続練習でも崩れない。",
+         5_800, "pre_order", None, None, None, None, None, 10, 1),
+        ("sweep-hip-pack-large", "ヒップパック (大)", "MU × SIIIEEP Hip Pack (Large)",
+         "通常 Fanny Pack より一回り大きい。スマホ+鍵+小銭入れ+マウスガード+フィンガーテープが入る、道場通いの必需品。前掛け/たすき掛け両対応。",
+         7_800, "pre_order", None, None, None, None, None, 14, 1),
+        ("sweep-beach-towel", "ビーチタオル (76×152cm)", "MU × SIIIEEP Beach Towel (76×152cm)",
+         "76×152cm の大判。練習後・サウナ・温泉・ビーチ。両面プリント可能、MU×SIIIEEP の大判モノグラム。",
+         6_800, "pre_order", None, None, None, None, None, 12, 1),
+        ("sweep-hand-towel", "ハンドタオル", "MU × SIIIEEP Hand Towel",
+         "マットサイドに置く小型タオル (約 40×70cm)。練習中の汗・スパー間の拭き取り・冬場の暖機用。MU monogram 小ロゴ。",
+         3_800, "pre_order", None, None, None, None, None, 10, 1),
+        ("sweep-cinch-sack", "ドローストリングバッグ (シンチ)", "MU × SIIIEEP Drawstring Cinch Sack",
+         "軽量ドローストリング。Gi+ラッシュガード+ボトル+タオルがギリギリ入る最小ジムバッグ。週末トーナメント遠征時のサブバッグにも。",
+         4_800, "pre_order", None, None, None, None, None, 10, 1),
+        ("sweep-sherpa-blanket", "シェルパフリースブランケット", "MU × SIIIEEP Sherpa Fleece Blanket",
+         "シェルパフリース裏地、ふわふわで暖かい。練習後のリカバリー・自宅・別荘・遠征宿泊のホテルで。マットに座って観戦するときの座布団にも。",
+         9_800, "pre_order", None, None, None, None, None, 14, 1),
     ];
     let now = chrono_now();
     for (slug, cat, name, desc, price, route, pf_prod, pf_var, var_map, files, opts, lead, active) in sweep_items {
