@@ -9057,6 +9057,8 @@ async fn create_printful_order(key: String, db: Db, product_id: i64, session: se
         format!("kichinan_{}", rest)
     } else if let Some(rest) = brand.strip_prefix("ele_") {
         format!("kichinan_{}", rest)
+    } else if let Some(rest) = brand.strip_prefix("nojimahal_") {
+        format!("kichinan_{}", rest)
     } else { brand.clone() };
     let variant_id: u64 = match (brand_lookup.as_str(), size) {
         // ── One-size accessories ──
@@ -9132,6 +9134,21 @@ async fn create_printful_order(key: String, db: Db, product_id: i64, session: se
         ("kichinan_baby_onesie_sample", "L")  => 9448,  // 12-18m
         ("kichinan_baby_onesie_sample", "XL") => 9448,
         ("kichinan_baby_onesie_sample", _)    => 9447,
+        // ── NOJIMAHAL extensions (mode-Y3 + BJJ) — pulled live from
+        //    Printful catalog on 2026-05-15. AOP (all-over print) products
+        //    only have white-blank variants; color comes from the design.
+        ("kichinan_rashguard_ls_sample", _)  => 9328,  // AOP Men's Rash Guard M
+        ("kichinan_athletic_tee_sample", _)  => 9954,  // AOP Men's Athletic Tee M
+        ("kichinan_fight_shorts_sample", _)  => 9813,  // AOP Unisex Athletic Long Shorts M
+        ("kichinan_spats_sample", _)         => 9146,  // AOP Men's Leggings M
+        ("kichinan_bomber_jacket_sample", _) => 10879, // AOP Unisex Bomber Jacket M
+        ("kichinan_windbreaker_sample", _)   => 15709, // AOP Men's Windbreaker M Black
+        ("kichinan_track_pants_sample", _)   => 15744, // AOP Unisex Track Pants M Black
+        ("kichinan_sweatpants_sample", _)    => 11267, // Cotton Heritage M7580 Black M
+        ("kichinan_crewneck_sample", _)      => 5435,  // Gildan 18000 Black M
+        ("kichinan_polo_sample", _)          => 9899,  // Port Authority K500 Black M
+        ("kichinan_dad_hat_sample", _)       => 16244, // Adidas Dad Hat Black M
+        ("kichinan_bucket_hat_sample", _)    => 8760,  // Flexfit 5003 Black M
         // ── Default tee (existing MUGEN/MUON path) — Bella+Canvas 3001 Black ──
         (_, "S")  => 4016,
         (_, "M")  => 4017,
@@ -14176,21 +14193,36 @@ const ELSOUL_DESIGNS: &[(&str, i64, i64, &str, &str, &str)] = &[
 ];
 
 fn proposal_brand_for_kind(slug_prefix: &str, kind: &str) -> String {
-    // Mirrors kichinan_brand_for_kind but parametrized on slug ("asoview"/"elsoul").
+    // Mirrors kichinan_brand_for_kind but parametrized on slug.
+    // Any "<kind>" here must also exist in the create_printful_order match.
     match kind {
-        "tee"         => format!("{}_tee_sample", slug_prefix),
-        "polo"        => format!("{}_polo_sample", slug_prefix),
-        "cap"         => format!("{}_cap_sample", slug_prefix),
-        "tote"        => format!("{}_tote_sample", slug_prefix),
-        "hoodie"      => format!("{}_hoodie_sample", slug_prefix),
-        "mug"         => format!("{}_mug_sample", slug_prefix),
-        "beanie"      => format!("{}_beanie_sample", slug_prefix),
-        "longsleeve"  => format!("{}_longsleeve_sample", slug_prefix),
-        "sticker"     => format!("{}_sticker_sample", slug_prefix),
-        "kids_tee"    => format!("{}_kids_tee_sample", slug_prefix),
-        "pin"         => format!("{}_pin_sample", slug_prefix),
-        "pillow"      => format!("{}_pillow_sample", slug_prefix),
-        _             => format!("{}_tee_sample", slug_prefix),
+        "tee"            => format!("{}_tee_sample",            slug_prefix),
+        "polo"           => format!("{}_polo_sample",           slug_prefix),
+        "cap"            => format!("{}_cap_sample",            slug_prefix),
+        "dad_hat"        => format!("{}_dad_hat_sample",        slug_prefix),
+        "bucket_hat"     => format!("{}_bucket_hat_sample",     slug_prefix),
+        "tote"           => format!("{}_tote_sample",           slug_prefix),
+        "hoodie"         => format!("{}_hoodie_sample",         slug_prefix),
+        "mug"            => format!("{}_mug_sample",            slug_prefix),
+        "beanie"         => format!("{}_beanie_sample",         slug_prefix),
+        "longsleeve"     => format!("{}_longsleeve_sample",     slug_prefix),
+        "sticker"        => format!("{}_sticker_sample",        slug_prefix),
+        "kids_tee"       => format!("{}_kids_tee_sample",       slug_prefix),
+        "pin"            => format!("{}_pin_sample",            slug_prefix),
+        "pillow"         => format!("{}_pillow_sample",         slug_prefix),
+        "drawstring"     => format!("{}_drawstring_sample",     slug_prefix),
+        "socks"          => format!("{}_socks_sample",          slug_prefix),
+        // mode-Y3 / BJJ extensions (NOJIMAHAL)
+        "rashguard_ls"   => format!("{}_rashguard_ls_sample",   slug_prefix),
+        "athletic_tee"   => format!("{}_athletic_tee_sample",   slug_prefix),
+        "fight_shorts"   => format!("{}_fight_shorts_sample",   slug_prefix),
+        "spats"          => format!("{}_spats_sample",          slug_prefix),
+        "bomber_jacket"  => format!("{}_bomber_jacket_sample",  slug_prefix),
+        "windbreaker"    => format!("{}_windbreaker_sample",    slug_prefix),
+        "track_pants"    => format!("{}_track_pants_sample",    slug_prefix),
+        "sweatpants"     => format!("{}_sweatpants_sample",     slug_prefix),
+        "crewneck"       => format!("{}_crewneck_sample",       slug_prefix),
+        _                => format!("{}_tee_sample",            slug_prefix),
     }
 }
 
@@ -14199,7 +14231,8 @@ fn proposal_brand_is_onesize(brand: &str) -> bool {
         || brand.ends_with("_mug_sample") || brand.ends_with("_beanie_sample")
         || brand.ends_with("_sticker_sample") || brand.ends_with("_pin_sample")
         || brand.ends_with("_pillow_sample")
-        || brand.ends_with("_polo_sample") // treat polo one-size for now
+        || brand.ends_with("_dad_hat_sample") || brand.ends_with("_bucket_hat_sample")
+        || brand.ends_with("_drawstring_sample") || brand.ends_with("_socks_sample")
 }
 
 fn seed_proposal_sample_products(db: &Db, slug_prefix: &str,
@@ -14576,6 +14609,161 @@ async fn proposal_ele_sample(State(db): State<Db>, Json(body): Json<ProposalSamp
 }
 async fn proposal_ele_bundle(State(db): State<Db>, Json(body): Json<ProposalBundleBody>) -> Response {
     issue_proposal_bundle_link(db, "ele", ELE_DESIGNS, body).await
+}
+
+// ── NOJIMAHAL — 野島繁昭プロデュース mode-Y3 + BJJ 20 SKU brand ────────────
+// New-third-party-style collab: approval gate, public /nojimahal URL, 20
+// SKUs covering rashguard / fight shorts / spats / hoodie / open collar
+// shirt / track pants / windbreaker / bomber + standard MU lifestyle.
+fn ensure_nojimahal_approval_table(db: &Db) {
+    let conn = db.lock().unwrap();
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS nojimahal_approval (
+            id INTEGER PRIMARY KEY,
+            approved_at TEXT, approver_name TEXT, approver_email TEXT,
+            approver_ip TEXT, plan_tier TEXT, note TEXT, revoked_at TEXT
+         )", [],
+    );
+}
+fn nojimahal_approval_row(conn: &rusqlite::Connection) -> Option<(String, String, String, String, Option<String>)> {
+    conn.query_row(
+        "SELECT approved_at, approver_name, approver_email, COALESCE(plan_tier,''), revoked_at
+         FROM nojimahal_approval WHERE id=1 AND approved_at IS NOT NULL",
+        [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+    ).ok()
+}
+fn nojimahal_is_approved(conn: &rusqlite::Connection) -> bool {
+    nojimahal_approval_row(conn).map(|t| t.4.is_none()).unwrap_or(false)
+}
+async fn proposal_nojimahal() -> Html<&'static str> {
+    Html(include_str!("../static/proposals/nojimahal.html"))
+}
+async fn proposal_nojimahal_status(State(db): State<Db>) -> impl IntoResponse {
+    let conn = db.lock().unwrap();
+    let row = nojimahal_approval_row(&conn);
+    let approved = row.as_ref().map(|t| t.4.is_none()).unwrap_or(false);
+    let (approved_at, approver_name, plan_tier) = match &row {
+        Some((at, n, _, p, _)) => (
+            Some(at.clone()),
+            Some(n.split_whitespace().next().unwrap_or("—").to_string()),
+            Some(p.clone()),
+        ),
+        None => (None, None, None),
+    };
+    let active_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM products WHERE brand LIKE 'nojimahal_%' AND active=1",
+        [], |r| r.get(0),
+    ).unwrap_or(0);
+    Json(serde_json::json!({
+        "approved": approved, "approved_at": approved_at,
+        "approver_first_name": approver_name, "plan_tier": plan_tier,
+        "products_active": active_count, "products_total": NOJIMAHAL_DESIGNS.len(),
+        "public_url": "https://wearmu.com/nojimahal",
+    }))
+}
+#[derive(Deserialize)]
+struct NojimahalApproveBody {
+    approver_name: String, approver_email: String,
+    #[serde(default)] plan_tier: String,
+    #[serde(default)] note: String,
+}
+async fn proposal_nojimahal_approve(
+    State(db): State<Db>, headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<NojimahalApproveBody>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/proposals/nojimahal/approve").await { return r; }
+    let name = body.approver_name.trim();
+    let email = body.approver_email.trim().to_lowercase();
+    if name.is_empty() || !email.contains('@') {
+        return (StatusCode::BAD_REQUEST, "approver_name + valid approver_email required").into_response();
+    }
+    let plan = body.plan_tier.trim().to_lowercase();
+    let plan = if plan.is_empty() { "starter".into() } else { plan };
+    let ip = client_ip(&headers);
+    let now = chrono_now();
+    let activated: usize = {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO nojimahal_approval
+                (id, approved_at, approver_name, approver_email, approver_ip, plan_tier, note, revoked_at)
+             VALUES (1, ?, ?, ?, ?, ?, ?, NULL)
+             ON CONFLICT(id) DO UPDATE SET
+                approved_at=excluded.approved_at, approver_name=excluded.approver_name,
+                approver_email=excluded.approver_email, approver_ip=excluded.approver_ip,
+                plan_tier=excluded.plan_tier, note=excluded.note, revoked_at=NULL",
+            params![now, name, email, ip, plan, body.note.trim()],
+        );
+        conn.execute(
+            "UPDATE products SET active=1 WHERE brand LIKE 'nojimahal_%' AND active=0",
+            [],
+        ).unwrap_or(0)
+    };
+    eprintln!("[nojimahal] approved by {} <{}>", name, email);
+    let alert = format!(
+        "━◯━ NOJIMAHAL APPROVED\napprover: {} <{}>\nactivated: {}/{}\nat: {}\npublic LP: https://wearmu.com/nojimahal",
+        name, email, activated, NOJIMAHAL_DESIGNS.len(), now,
+    );
+    tokio::spawn(async move { send_telegram_message(&alert).await; });
+    Json(serde_json::json!({
+        "ok": true, "approved_at": now, "public_url": "https://wearmu.com/nojimahal",
+        "products_activated": activated, "plan_tier": plan,
+    })).into_response()
+}
+async fn proposal_nojimahal_revoke(
+    State(db): State<Db>, headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/proposals/nojimahal/revoke").await { return r; }
+    let now = chrono_now();
+    let deactivated: usize = {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute("UPDATE nojimahal_approval SET revoked_at=? WHERE id=1", params![now]);
+        conn.execute("UPDATE products SET active=0 WHERE brand LIKE 'nojimahal_%' AND active=1", [])
+            .unwrap_or(0)
+    };
+    Json(serde_json::json!({ "ok": true, "revoked_at": now, "products_deactivated": deactivated })).into_response()
+}
+
+async fn nojimahal_public_page(State(db): State<Db>) -> Response {
+    let approved = { let c = db.lock().unwrap(); nojimahal_is_approved(&c) };
+    if !approved {
+        return render_404_tee_page(&db, "/nojimahal");
+    }
+    Html(include_str!("../static/proposals/nojimahal.html")).into_response()
+}
+
+// 20 SKU mode-Y3 + BJJ lineup. Kinds map through proposal_brand_for_kind
+// and create_printful_order's variant_id match (with nojimahal_ → kichinan_
+// brand-prefix normalization).
+const NOJIMAHAL_DESIGNS: &[(&str, i64, i64, &str, &str, &str)] = &[
+    ("a",  1, 11800, "Signature Rashguard LS",      "rashguard_ls",  "a"),
+    ("b",  2,  8800, "Athletic Tee (AOP)",          "athletic_tee",  "b"),
+    ("c",  3,  9800, "Fight Shorts (long)",         "fight_shorts",  "c"),
+    ("d",  4, 10800, "Grappling Spats",             "spats",         "d"),
+    ("e",  5, 12800, "Heavy Hoodie",                "hoodie",        "e"),
+    ("f",  6, 18800, "Bomber Jacket (mode)",        "bomber_jacket", "f"),
+    ("g",  7, 14800, "Windbreaker (lightweight)",   "windbreaker",   "g"),
+    ("h",  8, 10800, "Track Pants (AOP)",           "track_pants",   "h"),
+    ("i",  9, 11800, "Fleece Sweatpants",           "sweatpants",    "i"),
+    ("j", 10,  9800, "Crewneck Sweatshirt",         "crewneck",      "j"),
+    ("k", 11,  6800, "Heavy Cotton Tee",            "tee",           "k"),
+    ("l", 12,  8800, "Long Sleeve Tee",             "longsleeve",    "l"),
+    ("m", 13,  9800, "Open Collar Polo",            "polo",          "m"),
+    ("n", 14,  6800, "Dad Hat (adidas)",            "dad_hat",       "n"),
+    ("o", 15,  5800, "Bucket Hat (Flexfit)",        "bucket_hat",    "o"),
+    ("p", 16,  4800, "Ribbed Knit Beanie",          "beanie",        "p"),
+    ("q", 17,  5800, "All-Over Print Tote",         "tote",          "q"),
+    ("r", 18,  4800, "Drawstring Gym Bag",          "drawstring",    "r"),
+    ("s", 19,  3800, "Athletic Crew Socks",         "socks",         "s"),
+    ("t", 20,  1800, "NOJIMAHAL Sticker Pack",      "sticker",       "t"),
+];
+
+async fn proposal_nojimahal_sample(State(db): State<Db>, Json(body): Json<ProposalSampleBody>) -> Response {
+    issue_proposal_sample_link(db, "nojimahal", NOJIMAHAL_DESIGNS, body).await
+}
+async fn proposal_nojimahal_bundle(State(db): State<Db>, Json(body): Json<ProposalBundleBody>) -> Response {
+    issue_proposal_bundle_link(db, "nojimahal", NOJIMAHAL_DESIGNS, body).await
 }
 
 /// GET /en/press — English-default version. Same content, but we flip
@@ -36520,18 +36708,19 @@ async fn main() {
     ensure_asoview_approval_table(&db);
     ensure_elsoul_approval_table(&db);
     ensure_ele_approval_table(&db);
+    ensure_nojimahal_approval_table(&db);
     seed_kichinan_sample_products(&db);
-    seed_proposal_sample_products(&db, "asoview", ASOVIEW_DESIGNS, "Asoview Inc.");
-    seed_proposal_sample_products(&db, "elsoul",  ELSOUL_DESIGNS,  "ELSOUL LABO B.V.");
-    seed_proposal_sample_products(&db, "ele",     ELE_DESIGNS,     "ELE / yuki");
-    // asoview / elsoul / ele SKUs are real, buyable MU products. Flip them
-    // to active=1 unconditionally so they appear in /api/v1/embed/products
-    // and at /products/<brand>/<id>. The approval gate controls only the
-    // public top-level URL (e.g. /asoview), not buyability — the sample +
-    // bundle endpoints work either way.
+    seed_proposal_sample_products(&db, "asoview",   ASOVIEW_DESIGNS,   "Asoview Inc.");
+    seed_proposal_sample_products(&db, "elsoul",    ELSOUL_DESIGNS,    "ELSOUL LABO B.V.");
+    seed_proposal_sample_products(&db, "ele",       ELE_DESIGNS,       "ELE / yuki");
+    seed_proposal_sample_products(&db, "nojimahal", NOJIMAHAL_DESIGNS, "NOJIMAHAL / 野島繁昭");
+    // Proposal SKUs are real, buyable MU products. Flip them to active=1
+    // unconditionally so they appear in /api/v1/embed/products and at
+    // /products/<brand>/<id>. The approval gate controls only the public
+    // top-level URL (e.g. /asoview, /nojimahal), not buyability.
     {
         let conn = db.lock().unwrap();
-        for prefix in &["asoview_", "elsoul_", "ele_"] {
+        for prefix in &["asoview_", "elsoul_", "ele_", "nojimahal_"] {
             let _ = conn.execute(
                 "UPDATE products SET active=1 WHERE brand LIKE ?||'%' AND active=0",
                 params![prefix],
@@ -36745,6 +36934,13 @@ async fn main() {
         .route("/api/proposals/ele/sample",      post(proposal_ele_sample))
         .route("/api/proposals/ele/bundle",      post(proposal_ele_bundle))
         .route("/ele", get(ele_public_page))
+        .route("/proposals/nojimahal",                 get(proposal_nojimahal))
+        .route("/api/proposals/nojimahal/status",      get(proposal_nojimahal_status))
+        .route("/api/proposals/nojimahal/approve",     post(proposal_nojimahal_approve))
+        .route("/api/proposals/nojimahal/revoke",      post(proposal_nojimahal_revoke))
+        .route("/api/proposals/nojimahal/sample",      post(proposal_nojimahal_sample))
+        .route("/api/proposals/nojimahal/bundle",      post(proposal_nojimahal_bundle))
+        .route("/nojimahal", get(nojimahal_public_page))
         .nest_service("/proposals", ServeDir::new("static/proposals"))
         .route("/api/collab/account/delete", post(collab_account_delete))
         .route("/api/404/buy", post(not_found_buy))
