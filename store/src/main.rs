@@ -7473,6 +7473,51 @@ mod council_token_tests {
     }
 }
 
+/// GET /api/admin/bids?product_id=:id — admin-gated, returns the full bid
+/// history for a product (PII: email + wallet are visible — admin only).
+async fn admin_bids_list(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/bids").await { return r; }
+    let product_id: i64 = match q.get("product_id").and_then(|s| s.parse().ok()) {
+        Some(v) => v,
+        None => return (StatusCode::BAD_REQUEST, "product_id query param required").into_response(),
+    };
+    let conn = db.lock().unwrap();
+    let (name, current_bid, auction_end): (String, i64, Option<String>) = conn.query_row(
+        "SELECT name, COALESCE(current_bid, 0), auction_end FROM products WHERE id=?",
+        params![product_id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+    ).unwrap_or_else(|_| ("(unknown)".into(), 0, None));
+    let mut bids = Vec::new();
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT id, amount, email, COALESCE(wallet,''), created_at
+         FROM bids WHERE product_id=? ORDER BY amount DESC, created_at ASC",
+    ) {
+        if let Ok(rows) = stmt.query_map(params![product_id], |r| {
+            Ok(serde_json::json!({
+                "id":         r.get::<_, i64>(0)?,
+                "amount_jpy": r.get::<_, i64>(1)?,
+                "email":      r.get::<_, String>(2)?,
+                "wallet":     r.get::<_, String>(3)?,
+                "created_at": r.get::<_, String>(4)?,
+            }))
+        }) {
+            for row in rows.flatten() { bids.push(row); }
+        }
+    }
+    Json(serde_json::json!({
+        "product_id":  product_id,
+        "product":     name,
+        "current_bid": current_bid,
+        "auction_end": auction_end,
+        "bid_count":   bids.len(),
+        "bids":        bids,
+    })).into_response()
+}
+
 async fn place_bid(
     State(db): State<Db>,
     Json(body): Json<BidBody>,
@@ -38221,6 +38266,7 @@ async fn main() {
         .route("/api/qr/c/:id/:pos_with_ext", get(chronicle_qr_dispatch))
         .route("/api/weather", get(weather_handler))
         .route("/api/bid", post(place_bid))
+        .route("/api/admin/bids", get(admin_bids_list))
         .route("/api/checkout", post(checkout))
         .route("/api/checkout/crypto", post(payments::checkout_crypto))
         .route("/api/checkout/crypto/status/:reference", get(payments::checkout_crypto_status))
