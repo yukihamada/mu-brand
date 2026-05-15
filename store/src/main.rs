@@ -15037,6 +15037,17 @@ const JIUFIGHT_DESIGNS: &[(&str, i64, i64, &str, &str, &str)] = &[
     ("r",18,  3800, "Cold Towel",                 "beach_towel",   "wordmark"),
     ("s",19,  3200, "Medal Mug",                  "mug",           "monogram"),
     ("t",20,  4800, "Crossbody Pouch",            "crossbody",     "monogram"),
+    // ── Expansion: training accessories + spectator gear ──
+    ("u",21,  6900, "Sweatpants · Joggers",       "joggers",       "stripe"),
+    ("v",22,  7400, "Track Pants · Side Stripe",  "track_pants",   "stripe"),
+    ("w",23,  9800, "Zip-Up Hoodie",              "zip_hoodie",    "stacked"),
+    ("x",24,  8400, "Quarter-Zip Pullover",       "quarter_zip",   "wordmark"),
+    ("y",25,  6800, "Bomber Jacket",              "bomber_jacket", "wordmark"),
+    ("z",26,  8800, "Windbreaker · Coach",        "windbreaker",   "wordmark"),
+    ("aa",27, 1600, "Bracket Patch · Iron-on",    "patch",         "monogram"),
+    ("ab",28, 4800, "Bench Apron · Cornerman",    "apron",         "wordmark"),
+    ("ac",29, 2400, "Insulated Water Bottle",     "water_bottle",  "monogram"),
+    ("ad",30, 3800, "Lifestyle Polo",             "polo",          "monogram"),
 ];
 
 async fn proposal_jiufight_sample(State(db): State<Db>, Json(body): Json<ProposalSampleBody>) -> Response {
@@ -37713,6 +37724,16 @@ async fn main() {
             ("jiufight_beach_towel_sample",  "wordmark"),
             ("jiufight_mug_sample",          "monogram"),
             ("jiufight_crossbody_sample",    "monogram"),
+            ("jiufight_joggers_sample",      "stripe"),
+            ("jiufight_track_pants_sample",  "stripe"),
+            ("jiufight_zip_hoodie_sample",   "stacked"),
+            ("jiufight_quarter_zip_sample",  "wordmark"),
+            ("jiufight_bomber_jacket_sample","wordmark"),
+            ("jiufight_windbreaker_sample",  "wordmark"),
+            ("jiufight_patch_sample",        "monogram"),
+            ("jiufight_apron_sample",        "wordmark"),
+            ("jiufight_water_bottle_sample", "monogram"),
+            ("jiufight_polo_sample",         "monogram"),
         ];
         for (brand, design) in jiufight_designs {
             let url = format!("https://wearmu.com/proposals/jiufight-design-{}.png", design);
