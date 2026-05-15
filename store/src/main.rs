@@ -7518,7 +7518,12 @@ async fn admin_ma_launch(
     let days: i64 = q.get("days").and_then(|s| s.parse().ok()).unwrap_or(7).clamp(1, 90);
     let design_url = q.get("design_url").cloned()
         .unwrap_or_else(|| "https://wearmu.com/proposals/blank-design-ma.png".to_string());
-    let mockup_url = q.get("mockup_url").cloned().unwrap_or_default();
+    // If mockup_url isn't supplied, reuse design_url so the embed/catalog
+    // has something to render — the design PNG works fine as a placeholder
+    // mockup (white-on-transparent → shown on the black /ma card bg).
+    let mockup_url = q.get("mockup_url").cloned()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| design_url.clone());
     let now_unix: i64 = chrono_now().parse().unwrap_or(0);
     let end_unix = now_unix + days * 86_400;
     // ISO-ish end time in JST.
@@ -36146,6 +36151,13 @@ async fn main() {
             // 'authorized'  = card authorized, funds on hold
             // 'captured'    = settled (winner)
             // 'cancelled'   = released (loser, expired, or replaced by higher bid)
+        // Idempotent fix-up: any MA row missing mockup_url falls back to
+        // design_url so the embed/catalog has something to render. Catches
+        // /api/admin/ma/launch invocations from before the auto-default.
+        "UPDATE products SET mockup_url = design_url
+         WHERE brand = 'ma'
+           AND (mockup_url IS NULL OR mockup_url = '')
+           AND design_url IS NOT NULL AND design_url != ''",
         "ALTER TABLE you_designs ADD COLUMN image_bytes BLOB",
         "ALTER TABLE you_designs ADD COLUMN image_mime TEXT",
         "ALTER TABLE you_designs ADD COLUMN gen_status TEXT NOT NULL DEFAULT 'pending'",
