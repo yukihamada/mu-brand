@@ -64,6 +64,22 @@ h1 em{color:var(--y);font-style:normal}
 </head>
 <body>
 
+<!-- Server-stamped session banner. Empty when there's no session (the page
+     handler renders collab-chat-gate.html instead in that case). -->
+<div id="session-banner" style="background:#0d0d0d;border-bottom:1px solid #222;padding:8px 24px;font-size:11.5px;color:#aaa;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+  <div>
+    <span style="opacity:0.55;letter-spacing:0.25em">LOGGED IN</span>
+    &nbsp;<strong style="color:#F5F5F0"><!--MU_SESSION_EMAIL--></strong>
+  </div>
+  <div style="display:flex;gap:6px">
+    <style>
+      #session-banner .badge { background:rgba(123,229,123,0.10); color:#7be57b; border:1px solid rgba(123,229,123,0.35); padding:2px 9px; border-radius:99px; font-size:10px; letter-spacing:0.12em; font-weight:600; }
+    </style>
+    <!--MU_SESSION_BADGES-->
+    <a href="#" onclick="fetch('/api/collab/auth/logout',{method:'POST'}).then(()=>location.reload());return false" style="color:#666;text-decoration:none;font-size:10.5px">ログアウト</a>
+  </div>
+</div>
+
 <nav>
   <a href="/" class="logo"><span style="opacity:0.7;font-weight:400;letter-spacing:0.1em;margin-right:8px">━◯━</span>MU</a>
   <span class="right">

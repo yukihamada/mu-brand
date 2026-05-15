@@ -12710,8 +12710,59 @@ async fn api_product_collab(
 }
 
 /// GET /collab/chat — chat UI for creating new collab pages.
-async fn collab_chat_page() -> Html<&'static str> {
-    Html(include_str!("../static/collab-chat.html"))
+///
+/// Gated: only visible to (a) verified-email MU accounts (collab_users)
+/// or (b) wallets holding any MU signal (DAO bind / MA / past Stripe
+/// purchase). Verified email alone is sufficient since other signals
+/// usually share the same email; the chat header shows badges for the
+/// extra signals when present.
+///
+/// Unauth visitors get a lightweight gate page with the email magic-link
+/// form so they can self-onboard without leaving /collab/chat.
+async fn collab_chat_page(State(db): State<Db>, headers: HeaderMap) -> Response {
+    let session = collab_session_email(&db, &headers);
+    if let Some((email, _, _, verified)) = session {
+        if verified {
+            // Stamp the email + signal badges into the HTML so the chat UI
+            // can render "logged in as …" without an extra round-trip.
+            let signals = collab_chat_signals(&db, &email).await;
+            let badges = signals.iter().map(|s| format!(r#"<span class="badge">{}</span>"#, s)).collect::<Vec<_>>().join(" ");
+            let html = include_str!("../static/collab-chat.html")
+                .replace("<!--MU_SESSION_EMAIL-->", &email)
+                .replace("<!--MU_SESSION_BADGES-->", &badges);
+            return Html(html).into_response();
+        }
+    }
+    Html(include_str!("../static/collab-chat-gate.html")).into_response()
+}
+
+/// Returns the list of MU signals attached to this email — used to render
+/// trust badges on the chat header. Empty list = email-only verified user.
+async fn collab_chat_signals(db: &Db, email: &str) -> Vec<&'static str> {
+    let mut badges = Vec::new();
+    // Bound the MutexGuard to this scope so it can't be held across the
+    // await below (would make the future non-Send and break Handler trait).
+    let (dao_bound, ma_holder) = {
+        let conn = db.lock().unwrap();
+        let d = conn.query_row(
+            "SELECT 1 FROM dao_email_wallets WHERE email=?", params![email], |_| Ok(())
+        ).is_ok();
+        let m = conn.query_row(
+            "SELECT 1 FROM ma_lineage WHERE claim_email=? LIMIT 1", params![email], |_| Ok(())
+        ).is_ok();
+        (d, m)
+    };
+    if dao_bound { badges.push("DAO bound"); }
+    if ma_holder { badges.push("MA holder"); }
+    if badges.is_empty() {
+        let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+        if !stripe_key.is_empty()
+            && find_stripe_customer_by_email(&stripe_key, email).await.is_some()
+        {
+            badges.push("MU customer");
+        }
+    }
+    badges
 }
 
 /// GET /collab/:slug — public collab landing using the grachan82 template
