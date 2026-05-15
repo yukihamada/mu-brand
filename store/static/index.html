@@ -1785,10 +1785,23 @@ async function placeBid(productId){
     })
   });
   if(r.ok){
+    // 2026-05-16: /api/bid now returns a Stripe Checkout URL (capture_method=manual).
+    // Redirect to authorize the bid amount on the bidder's card; the bid only
+    // counts once Stripe sends back checkout.session.completed (webhook).
+    let d = null;
+    try { d = await r.json(); } catch(e){}
+    if (d && d.checkout_url) {
+      if(msg){msg.style.color='#5a9e6f';msg.textContent='カードオーソリ画面に移動します…'}
+      window.location.href = d.checkout_url;
+      return;
+    }
+    // Fallback for the legacy flow (shouldn't fire post-2026-05-16).
     if(msg){msg.style.color='#5a9e6f';msg.textContent='入札しました。落札の際にメールでご連絡します。'}
     loadMA();
   } else {
-    if(msg){msg.style.color='#C8362C';msg.textContent='エラーが発生しました。再度お試しください。'}
+    let err = '';
+    try { err = (await r.text()).slice(0,140); } catch(e){}
+    if(msg){msg.style.color='#C8362C';msg.textContent='エラー: ' + (err || r.status)}
   }
 }
 

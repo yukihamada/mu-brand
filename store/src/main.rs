@@ -7473,6 +7473,227 @@ mod council_token_tests {
     }
 }
 
+/// POST /api/admin/ma/set_end?product_id=:id&end_at=YYYY-MM-DDTHH:MM:SS
+/// Admin: re-time an auction. Used for early termination (set end_at to
+/// the past) or extension. Does NOT settle; just changes the end time.
+async fn admin_ma_set_end(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/ma/set_end").await { return r; }
+    let product_id: i64 = match q.get("product_id").and_then(|s| s.parse().ok()) {
+        Some(v) => v, None => return (StatusCode::BAD_REQUEST, "product_id required").into_response(),
+    };
+    let end_at = match q.get("end_at") {
+        Some(v) => v.clone(),
+        None => return (StatusCode::BAD_REQUEST, "end_at (YYYY-MM-DDTHH:MM:SS) required").into_response(),
+    };
+    let updated = {
+        let conn = db.lock().unwrap();
+        conn.execute(
+            "UPDATE products SET auction_end=? WHERE id=? AND brand='ma'",
+            params![end_at, product_id],
+        ).unwrap_or(0)
+    };
+    Json(serde_json::json!({ "ok": updated > 0, "product_id": product_id, "auction_end": end_at })).into_response()
+}
+
+/// POST /api/admin/ma/launch
+///   start_jpy=30000        — opening price
+///   days=7                 — auction duration in days
+///   design_url=...         — design PNG public URL (e.g. /proposals/blank-design-ma.png)
+///   mockup_url=... (opt)   — mockup JPG, otherwise blank
+///   name=... (opt)         — display name, defaults to "間 YYYY.MM"
+///   serial=... (opt)
+/// Inserts a new active products row with brand='ma'. Auto-increments
+/// drop_num. Picks up where the MA series left off. Auction starts now.
+async fn admin_ma_launch(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/ma/launch").await { return r; }
+    let start_jpy: i64 = q.get("start_jpy").and_then(|s| s.parse().ok()).unwrap_or(30_000);
+    let days: i64 = q.get("days").and_then(|s| s.parse().ok()).unwrap_or(7).clamp(1, 90);
+    let design_url = q.get("design_url").cloned()
+        .unwrap_or_else(|| "https://wearmu.com/proposals/blank-design-ma.png".to_string());
+    let mockup_url = q.get("mockup_url").cloned().unwrap_or_default();
+    let now_unix: i64 = chrono_now().parse().unwrap_or(0);
+    let end_unix = now_unix + days * 86_400;
+    // ISO-ish end time in JST.
+    let jst = end_unix + 9 * 3600;
+    let (y, m, d, hh, mm) = {
+        let z = jst / 86_400 + 719_468;
+        let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+        let doe = (z - era * 146_097) as i64;
+        let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+        let y = yoe + era * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = (doy - (153 * mp + 2) / 5 + 1) as i64;
+        let m = (mp + if mp < 10 { 3 } else { -9 }) as i64;
+        let y = if m <= 2 { y + 1 } else { y };
+        let secs = jst % 86_400;
+        let hh = secs / 3600;
+        let mm = (secs % 3600) / 60;
+        (y, m, d, hh, mm)
+    };
+    let end_str = format!("{:04}-{:02}-{:02}T{:02}:{:02}:00", y, m, d, hh, mm);
+    let drop_num: i64 = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(MAX(drop_num),0)+1 FROM products WHERE brand='ma'",
+            [], |r| r.get(0),
+        ).unwrap_or(1)
+    };
+    let name = q.get("name").cloned().unwrap_or_else(|| format!("間 {:04}.{:02}", y, m));
+    let serial = q.get("serial").cloned().unwrap_or_else(|| format!("{:04}{:02}{:02}-#{:03}", y, m, d, drop_num));
+    let inserted = {
+        let conn = db.lock().unwrap();
+        conn.execute(
+            "INSERT INTO products
+              (brand, drop_num, name, serial_code, mockup_url, design_url, price_jpy,
+               inventory, sold, active, created_at, auction_end, current_bid, bid_count)
+             VALUES ('ma',?,?,?,?,?,?, 1, 0, 1, ?, ?, 0, 0)",
+            params![drop_num, name, serial, mockup_url, design_url, start_jpy, chrono_now(), end_str],
+        ).unwrap_or(0)
+    };
+    let id: i64 = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT id FROM products WHERE brand='ma' AND drop_num=?", params![drop_num],
+            |r| r.get(0)).unwrap_or(0)
+    };
+    Json(serde_json::json!({
+        "ok": inserted > 0, "id": id, "drop_num": drop_num,
+        "name": name, "serial": serial,
+        "start_jpy": start_jpy, "auction_end": end_str, "days": days,
+        "design_url": design_url,
+        "next": format!("https://wearmu.com/products/ma/{}", drop_num),
+    })).into_response()
+}
+
+/// POST /api/admin/ma/settle?product_id=:id — admin-gated. Closes the
+/// auction:
+///   1. Captures the top authorized bid's Stripe PaymentIntent (charges
+///      the winner's card for the bid amount).
+///   2. Cancels every other authorized PI (releases the holds).
+///   3. Marks the product sold_out_at = now, sets auction_end past.
+///   4. Logs a settlement summary. Sending winner email + shipping form is
+///      a separate step (avoid accidental customer blast — see
+///      feedback_email_blast_radius.md).
+async fn admin_ma_settle(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/ma/settle").await { return r; }
+    let product_id: i64 = match q.get("product_id").and_then(|s| s.parse().ok()) {
+        Some(v) => v,
+        None => return (StatusCode::BAD_REQUEST, "product_id query param required").into_response(),
+    };
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "stripe key missing").into_response();
+    }
+    // Collect every authorized bid for this product. Top = highest amount,
+    // earliest at the same amount.
+    let bids: Vec<(i64, i64, String, String)> = {
+        let conn = db.lock().unwrap();
+        let res: Result<Vec<_>, _> = conn.prepare(
+            "SELECT id, amount, email, COALESCE(stripe_pi_id,'')
+             FROM bids
+             WHERE product_id=? AND auth_status='authorized' AND stripe_pi_id IS NOT NULL
+             ORDER BY amount DESC, created_at ASC",
+        ).and_then(|mut stmt| {
+            let rows = stmt.query_map(params![product_id], |r| {
+                Ok((
+                    r.get::<_,i64>(0)?,
+                    r.get::<_,i64>(1)?,
+                    r.get::<_,String>(2)?,
+                    r.get::<_,String>(3)?,
+                ))
+            })?;
+            let v: Vec<(i64, i64, String, String)> = rows.flatten().collect();
+            Ok(v)
+        });
+        res.unwrap_or_default()
+    };
+    if bids.is_empty() {
+        return Json(serde_json::json!({
+            "ok": false,
+            "error": "no authorized bids to settle. legacy (pre-auth) bidders need to be settled manually via Stripe Payment Link.",
+        })).into_response();
+    }
+    let client = reqwest::Client::new();
+    let (winner_id, winner_amt, winner_email, winner_pi) = bids[0].clone();
+    // Capture the winner.
+    let cap = client.post(format!("https://api.stripe.com/v1/payment_intents/{}/capture", winner_pi))
+        .basic_auth(&stripe_key, Some("")).form(&[("amount_to_capture", winner_amt.to_string())])
+        .send().await;
+    let winner_ok = match cap {
+        Ok(r) => {
+            let s = r.status();
+            let t = r.text().await.unwrap_or_default();
+            if !s.is_success() {
+                eprintln!("[ma_settle] capture {} {} → {}", winner_pi, s, t.chars().take(200).collect::<String>());
+                false
+            } else { true }
+        }
+        Err(e) => { eprintln!("[ma_settle] capture http err: {}", e); false }
+    };
+    // Cancel every loser PI.
+    let mut released = 0i64;
+    for (bid_id, _amt, _em, pi) in bids.iter().skip(1) {
+        let r = client.post(format!("https://api.stripe.com/v1/payment_intents/{}/cancel", pi))
+            .basic_auth(&stripe_key, Some(""))
+            .form(&[("cancellation_reason", "abandoned")])
+            .send().await;
+        match r {
+            Ok(r) if r.status().is_success() => {
+                released += 1;
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "UPDATE bids SET auth_status='cancelled' WHERE id=?", params![bid_id],
+                );
+            }
+            Ok(r) => {
+                let t = r.text().await.unwrap_or_default();
+                eprintln!("[ma_settle] cancel {} → {}", pi, t.chars().take(200).collect::<String>());
+            }
+            Err(e) => eprintln!("[ma_settle] cancel http err: {}", e),
+        }
+    }
+    // Update DB: winner status + product flags.
+    let now = chrono_now();
+    {
+        let conn = db.lock().unwrap();
+        if winner_ok {
+            let _ = conn.execute(
+                "UPDATE bids SET auth_status='captured' WHERE id=?", params![winner_id],
+            );
+            let _ = conn.execute(
+                "UPDATE products SET sold_out_at=?, sold=sold+1, auction_end=? WHERE id=?",
+                params![now, now, product_id],
+            );
+        }
+    }
+    Json(serde_json::json!({
+        "ok": winner_ok,
+        "product_id": product_id,
+        "winner": {
+            "bid_id": winner_id,
+            "amount_jpy": winner_amt,
+            "email": winner_email,
+            "stripe_pi_id": winner_pi,
+            "captured": winner_ok,
+        },
+        "losers_released": released,
+        "next": "落札者にメール (Stripe charge は完了済み) + 配送フォーム送付は別途.",
+    })).into_response()
+}
+
 /// GET /api/admin/bids?product_id=:id — admin-gated, returns the full bid
 /// history for a product (PII: email + wallet are visible — admin only).
 async fn admin_bids_list(
@@ -7522,26 +7743,33 @@ async fn place_bid(
     State(db): State<Db>,
     Json(body): Json<BidBody>,
 ) -> impl IntoResponse {
-    let conn = db.lock().unwrap();
-    let row = conn.query_row(
-        "SELECT price_jpy, current_bid, auction_end FROM products WHERE id=? AND active=1 AND brand='ma'",
-        params![body.product_id],
-        |row| Ok((row.get::<_,i64>(0)?, row.get::<_,i64>(1).unwrap_or(0), row.get::<_,Option<String>>(2)?))
-    );
-    let (base_price, current_bid, _auction_end) = match row {
-        Ok(r) => r,
-        Err(_) => return (StatusCode::NOT_FOUND, "not found").into_response(),
+    // All synchronous validation + KYC writes happen inside this block so
+    // the MutexGuard is dropped before any .await.
+    let validate = {
+        let conn = db.lock().unwrap();
+        let row = conn.query_row(
+            "SELECT price_jpy, current_bid, auction_end FROM products WHERE id=? AND active=1 AND brand='ma'",
+            params![body.product_id],
+            |row| Ok((row.get::<_,i64>(0)?, row.get::<_,i64>(1).unwrap_or(0), row.get::<_,Option<String>>(2)?))
+        );
+        let (base_price, current_bid, _auction_end) = match row {
+            Ok(r) => r,
+            Err(_) => return (StatusCode::NOT_FOUND, "not found").into_response(),
+        };
+        let min_bid = current_bid.max(base_price) + 1000;
+        if body.amount < min_bid {
+            return (StatusCode::BAD_REQUEST,
+                format!("最低入札額は¥{}です", min_bid)).into_response();
+        }
+        Ok::<(), Response>(())
     };
-    let min_bid = current_bid.max(base_price) + 1000;
-    if body.amount < min_bid {
-        return (StatusCode::BAD_REQUEST,
-            format!("最低入札額は¥{}です", min_bid)).into_response();
-    }
+    if let Err(r) = validate { return r; }
 
     // KYC gate for high-value bids — settlement at ¥300k+ would require it
     // anyway, so catch at bid time to avoid unverified high bids stuck in
     // limbo at auction settlement.
     if body.amount >= KYC_THRESHOLD_JPY {
+        let conn = db.lock().unwrap();
         let Some(kyc) = body.kyc.as_ref() else {
             return (StatusCode::BAD_REQUEST,
                 "KYC required for bids at or above ¥300,000").into_response();
@@ -7584,40 +7812,87 @@ async fn place_bid(
         let _ = (_new_id, kyc_token); // silence unused-var warning
     }
 
-    let now = chrono_now();
+    // 2026-05-16: switched to Stripe pre-auth (capture_method=manual). At
+    // bid time we issue a Stripe Checkout Session that authorizes the bid
+    // amount on the card without capturing. The bid row is INSERTed by the
+    // checkout.session.completed webhook with auth_status='authorized'.
+    // At auction settle, the winner's PI is captured and losers' are
+    // cancelled (releasing the hold).
+    // (All MutexGuards above are already scoped to their blocks — safe to await.)
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "stripe key missing").into_response();
+    }
     let wallet_token = uuid::Uuid::new_v4().to_string();
-    // Soulbound NFT opt-in: prefer the dedicated `nft_wallet` (entered in
-    // the modal's NFT checkbox row); fall back to `wallet` (legacy field).
     let nft_wallet = body.nft_wallet.clone()
         .filter(|s| !s.trim().is_empty())
         .or_else(|| body.wallet.clone().filter(|s| !s.trim().is_empty()));
     let nft_opt_in_flag: i64 = if body.nft_opt_in && nft_wallet.is_some() { 1 } else { 0 };
-    conn.execute(
-        "INSERT INTO bids
-            (product_id, amount, email, wallet, wallet_token, created_at, nft_opt_in, nft_wallet)
-         VALUES (?,?,?,?,?,?,?,?)",
-        params![
-            body.product_id, body.amount, body.email, body.wallet, wallet_token, now,
-            nft_opt_in_flag, nft_wallet
-        ]
-    ).unwrap();
-    conn.execute(
-        "UPDATE products SET current_bid=?, bid_count=bid_count+1 WHERE id=?",
-        params![body.amount, body.product_id]
-    ).unwrap();
-    // MA Council trial-tier auto-enrollment. Anyone who places a bid joins
-    // the council in trial tier; full membership requires a winning settlement.
-    let _ = council_enroll(&conn, &body.email, "trial", None);
-    let council_token = council_token_for(&body.email);
-    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
-    Json(serde_json::json!({
-        "ok": true,
-        "wallet_token": wallet_token,
-        "wallet_url": format!("{}/wallet/{}", base_url, wallet_token),
-        "council_token": council_token,
-        "council_url": council_token.as_ref()
-            .map(|t| format!("{}/council?token={}", base_url, t)),
-    })).into_response()
+    let product_name = {
+        let conn = db.lock().unwrap();
+        conn.query_row("SELECT name FROM products WHERE id=?", params![body.product_id],
+            |r| r.get::<_, String>(0)).unwrap_or_else(|_| format!("MA #{}", body.product_id))
+    };
+    let success_url = format!("https://wearmu.com/products/ma/2?bid_auth=ok&session_id={{CHECKOUT_SESSION_ID}}");
+    let cancel_url  = "https://wearmu.com/products/ma/2?bid_auth=cancel".to_string();
+    let mut cs_form: Vec<(&str, String)> = vec![
+        ("mode", "payment".into()),
+        ("customer_email", body.email.clone()),
+        ("success_url", success_url),
+        ("cancel_url", cancel_url),
+        ("allow_promotion_codes", "false".into()),
+        // capture_method=manual → funds AUTHORIZED but not captured.
+        ("payment_intent_data[capture_method]", "manual".into()),
+        ("payment_intent_data[description]", format!("MA bid hold · {} · ¥{}", product_name, body.amount)),
+        ("payment_intent_data[metadata][kind]", "ma_bid".into()),
+        ("payment_intent_data[metadata][product_id]", body.product_id.to_string()),
+        ("payment_intent_data[metadata][bid_amount]", body.amount.to_string()),
+        ("payment_intent_data[metadata][bid_email]", body.email.clone()),
+        ("payment_intent_data[metadata][wallet_token]", wallet_token.clone()),
+        ("payment_intent_data[metadata][nft_opt_in]", nft_opt_in_flag.to_string()),
+        ("payment_intent_data[metadata][nft_wallet]", nft_wallet.clone().unwrap_or_default()),
+        // Also surface on the session level so the webhook can match by either path.
+        ("metadata[kind]", "ma_bid".into()),
+        ("metadata[product_id]", body.product_id.to_string()),
+        ("metadata[bid_amount]", body.amount.to_string()),
+        ("line_items[0][price_data][currency]", "jpy".into()),
+        ("line_items[0][price_data][unit_amount]", body.amount.to_string()),
+        ("line_items[0][price_data][product_data][name]",
+            format!("MA bid hold · {}", product_name)),
+        ("line_items[0][quantity]", "1".into()),
+    ];
+    if let Some(w) = &body.wallet { if !w.trim().is_empty() {
+        cs_form.push(("payment_intent_data[metadata][bidder_wallet]", w.clone()));
+    }}
+    let client = reqwest::Client::new();
+    match client.post("https://api.stripe.com/v1/checkout/sessions")
+        .basic_auth(&stripe_key, Some("")).form(&cs_form).send().await {
+        Ok(r) => {
+            let status = r.status();
+            let raw = r.text().await.unwrap_or_default();
+            if !status.is_success() {
+                eprintln!("[ma_bid] stripe checkout {} → {}", status,
+                    raw.chars().take(400).collect::<String>());
+                return (StatusCode::BAD_GATEWAY,
+                    format!("stripe {}: {}", status, raw.chars().take(300).collect::<String>())
+                ).into_response();
+            }
+            let v: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
+            let url = v.get("url").and_then(|x| x.as_str()).unwrap_or_default();
+            let sid = v.get("id").and_then(|x| x.as_str()).unwrap_or_default();
+            if url.is_empty() {
+                return (StatusCode::BAD_GATEWAY, "stripe returned no checkout url").into_response();
+            }
+            Json(serde_json::json!({
+                "ok": true,
+                "checkout_url": url,
+                "session_id": sid,
+                "auth_hold_jpy": body.amount,
+                "note": "カードに ¥{amount} のオーソリ (与信枠) がかかります。 落札時のみ請求、 そうでなければ取消 (cancel) で枠が開放されます。",
+            })).into_response()
+        }
+        Err(e) => (StatusCode::BAD_GATEWAY, format!("stripe checkout http: {}", e)).into_response(),
+    }
 }
 
 async fn checkout(
@@ -8539,6 +8814,64 @@ async fn stripe_webhook(
             "/api/webhook/stripe",
             product_id,
             serde_json::json!({"amount_total": amount_total, "session": session_id})).await;
+
+        // ── MA bid pre-auth (capture_method=manual) ──
+        // Card has been authorized for the bid amount but not captured.
+        // INSERT the bid row now with auth_status='authorized', bump
+        // products.current_bid + bid_count, send confirmation email.
+        if meta["kind"].as_str() == Some("ma_bid") {
+            let product_id: i64 = meta["product_id"].as_str()
+                .and_then(|s| s.parse().ok()).unwrap_or(0);
+            let bid_amount: i64 = meta["bid_amount"].as_str()
+                .and_then(|s| s.parse().ok()).unwrap_or(0);
+            let pi_id = session["payment_intent"].as_str().unwrap_or("").to_string();
+            // Pull PI to get the buyer email + metadata fields the session
+            // doesn't carry verbatim.
+            let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+            let (bid_email, wallet_token, nft_opt_in, nft_wallet, bidder_wallet) = if !pi_id.is_empty() && !stripe_key.is_empty() {
+                let client = reqwest::Client::new();
+                let r = client.get(format!("https://api.stripe.com/v1/payment_intents/{}", pi_id))
+                    .basic_auth(&stripe_key, Some("")).send().await;
+                if let Ok(r) = r {
+                    let v: serde_json::Value = r.json().await.unwrap_or(serde_json::Value::Null);
+                    let m = &v["metadata"];
+                    (
+                        m["bid_email"].as_str().unwrap_or("").to_string(),
+                        m["wallet_token"].as_str().unwrap_or("").to_string(),
+                        m["nft_opt_in"].as_str().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0),
+                        Some(m["nft_wallet"].as_str().unwrap_or("").to_string()).filter(|s| !s.is_empty()),
+                        Some(m["bidder_wallet"].as_str().unwrap_or("").to_string()).filter(|s| !s.is_empty()),
+                    )
+                } else { (String::new(), String::new(), 0, None, None) }
+            } else { (String::new(), String::new(), 0, None, None) };
+            let final_email = if !bid_email.is_empty() { bid_email } else {
+                session["customer_details"]["email"].as_str().unwrap_or("").to_string()
+            };
+            let now = chrono_now();
+            {
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "INSERT INTO bids
+                        (product_id, amount, email, wallet, wallet_token, created_at,
+                         nft_opt_in, nft_wallet, stripe_session_id, stripe_pi_id, auth_status)
+                     VALUES (?,?,?,?,?,?,?,?,?,?, 'authorized')",
+                    params![
+                        product_id, bid_amount, final_email,
+                        bidder_wallet, wallet_token, now,
+                        nft_opt_in, nft_wallet, session_id.clone(), pi_id,
+                    ],
+                );
+                let _ = conn.execute(
+                    "UPDATE products SET current_bid=?, bid_count=bid_count+1
+                     WHERE id=? AND (current_bid IS NULL OR current_bid < ?)",
+                    params![bid_amount, product_id, bid_amount],
+                );
+                let _ = council_enroll(&conn, &final_email, "trial", None);
+            }
+            eprintln!("[ma_bid] AUTHORIZED ¥{} on {} for {} (pi={})",
+                bid_amount, product_id, final_email, &pi_id[..16.min(pi_id.len())]);
+            return StatusCode::OK.into_response();
+        }
 
         // ── 404 tee — mark the hourly slot as sold so the 1-per-hour cap
         // becomes durable. Falls through to product_id fulfillment below.
@@ -35624,6 +35957,16 @@ async fn main() {
         // Soulbound NFT pilot opt-in (per-bid; carried to settle_auction).
         "ALTER TABLE bids ADD COLUMN nft_opt_in INTEGER DEFAULT 0",
         "ALTER TABLE bids ADD COLUMN nft_wallet TEXT",
+        // Stripe pre-auth flow (manual capture). populated by /api/bid →
+        // checkout.session.completed webhook → /api/admin/ma/settle.
+        "ALTER TABLE bids ADD COLUMN stripe_session_id TEXT",
+        "ALTER TABLE bids ADD COLUMN stripe_pi_id TEXT",
+        "ALTER TABLE bids ADD COLUMN auth_status TEXT NOT NULL DEFAULT 'legacy'",
+            // 'legacy'      = bid placed before pre-auth was enabled (no PI)
+            // 'pending'     = Stripe Checkout URL issued, not yet completed
+            // 'authorized'  = card authorized, funds on hold
+            // 'captured'    = settled (winner)
+            // 'cancelled'   = released (loser, expired, or replaced by higher bid)
         "ALTER TABLE you_designs ADD COLUMN image_bytes BLOB",
         "ALTER TABLE you_designs ADD COLUMN image_mime TEXT",
         "ALTER TABLE you_designs ADD COLUMN gen_status TEXT NOT NULL DEFAULT 'pending'",
@@ -38267,6 +38610,9 @@ async fn main() {
         .route("/api/weather", get(weather_handler))
         .route("/api/bid", post(place_bid))
         .route("/api/admin/bids", get(admin_bids_list))
+        .route("/api/admin/ma/settle", post(admin_ma_settle))
+        .route("/api/admin/ma/set_end", post(admin_ma_set_end))
+        .route("/api/admin/ma/launch",  post(admin_ma_launch))
         .route("/api/checkout", post(checkout))
         .route("/api/checkout/crypto", post(payments::checkout_crypto))
         .route("/api/checkout/crypto/status/:reference", get(payments::checkout_crypto_status))
