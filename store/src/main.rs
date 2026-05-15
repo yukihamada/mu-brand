@@ -40090,6 +40090,11 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         interval_secs: 3600, // 1h
         description: "MA auction の終了→落札 capture/cancel→次の ¥30k 24h を毎時自動回転",
     },
+    AgentDef {
+        name: "ma_design_daily",
+        interval_secs: 86_400, // 24h
+        description: "毎日 Gemini で新しい sumi 間 design を生成し ma_lineage(daily_ma) に追加",
+    },
     // self_improvement / vision_drift / self_evolve / pr_writer は self_review に統合
     // (2026-05-13)。個別関数は debug 用に残るが、スケジュール対象は self_review のみ。
     AgentDef {
@@ -40273,6 +40278,7 @@ async fn run_agent(name: &str, db: Db) -> Result<AgentReport, String> {
         "auto_refund"       => agent_auto_refund(db).await,
         "compliance_watch"  => agent_compliance_watch(db).await,
         "ma_cycle"          => agent_ma_cycle(db).await,
+        "ma_design_daily"   => agent_ma_design_daily(db).await,
         "self_review"       => agent_self_review(db).await,
         // Kept dispatchable individually for /admin debug + dry-run isolation.
         "self_improvement"  => agent_self_improvement(db).await,
@@ -41161,6 +41167,81 @@ async fn agent_compliance_watch(db: Db) -> Result<AgentReport, String> {
     Ok(AgentReport {
         observations: serde_json::Value::Object(obs),
         decisions, actions: vec![], summary, notable,
+    })
+}
+
+// ── Agent: ma_design_daily ─────────────────────────────────────────────
+// Daily Gemini drop of a fresh sumi-brush 間 design into ma_lineage so
+// ma_cycle has new artwork ready when it auto-launches the next auction.
+// Idempotent — if today's row already exists, skips.
+//
+// Mirrors generate_ma_lineage_design's prompt exactly but with a generic
+// "MU daily MA" brief (no individual recipient). Row uses ma_token='daily_ma'
+// so it lives in the same lineage table without colliding with per-holder
+// streams.
+async fn agent_ma_design_daily(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut actions: Vec<serde_json::Value> = Vec::new();
+    let now = chrono_now();
+    let now_s: i64 = now.parse().unwrap_or(0);
+    let jst_s = now_s + 9 * 3600;
+    let (y, m, d) = ymd_from_jst_secs(jst_s);
+    let day = format!("{:04}-{:02}-{:02}", y, m, d);
+    let ma_token = "daily_ma";
+    obs.insert("day".into(), serde_json::Value::from(day.clone()));
+    // Skip if today's row already exists.
+    let exists: bool = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT 1 FROM ma_lineage WHERE ma_token=? AND day_date=?",
+            params![ma_token, &day], |_| Ok(())
+        ).is_ok()
+    };
+    if exists {
+        obs.insert("status".into(), serde_json::Value::from("already_generated"));
+        return Ok(AgentReport {
+            observations: serde_json::Value::Object(obs),
+            decisions: vec![], actions, summary: format!("ma_design_daily: skip {} (exists)", day), notable: false,
+        });
+    }
+    // Day count = days since the lineage epoch (we'll just use a rolling counter).
+    let seq: i64 = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(MAX(seq),0)+1 FROM ma_lineage WHERE ma_token=?",
+            params![ma_token], |r| r.get(0),
+        ).unwrap_or(1)
+    };
+    let brief = format!(
+        "Daily MU 間 (MA) — JST {}. Today's piece in the public MA lineage. \
+         Tonal influence from the day's date and the quiet of Teshikaga, Hokkaido. \
+         A confident single-stroke sumi-ink 間 character is the dominant feature.",
+        day
+    );
+    generate_ma_lineage_design(ma_token.to_string(), day.clone(), seq, brief, db.clone()).await;
+    // Check if it landed.
+    let url: Option<String> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT design_url FROM ma_lineage WHERE ma_token=? AND day_date=?",
+            params![ma_token, &day],
+            |r| r.get(0),
+        ).ok().flatten()
+    };
+    if let Some(u) = &url {
+        actions.push(serde_json::json!({
+            "type": "ma_design_generated", "day": day, "seq": seq, "design_url": u,
+        }));
+    }
+    let notable = url.is_some();
+    let summary = if let Some(u) = url {
+        format!("ma_design_daily: generated {} (seq {}) → {}", day, seq, u)
+    } else {
+        format!("ma_design_daily: gemini missing / failed for {}", day)
+    };
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs),
+        decisions: vec![], actions, summary, notable,
     })
 }
 
