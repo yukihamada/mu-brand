@@ -7675,6 +7675,16 @@ async fn admin_db_page(
     Html(include_str!("../static/admin-db.html")).into_response()
 }
 
+/// GET /admin/bids — admin-gated HTML bid table for a given product_id.
+async fn admin_bids_page(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/bids").await { return r; }
+    Html(include_str!("../static/admin-bids.html")).into_response()
+}
+
 /// POST /api/admin/ma/set_end?product_id=:id&end_at=YYYY-MM-DDTHH:MM:SS
 /// Admin: re-time an auction. Used for early termination (set end_at to
 /// the past) or extension. Does NOT settle; just changes the end time.
@@ -8077,16 +8087,19 @@ async fn admin_bids_list(
     ).unwrap_or_else(|_| ("(unknown)".into(), 0, None));
     let mut bids = Vec::new();
     if let Ok(mut stmt) = conn.prepare(
-        "SELECT id, amount, email, COALESCE(wallet,''), created_at
+        "SELECT id, amount, email, COALESCE(wallet,''), created_at,
+                COALESCE(auth_status,'legacy'), COALESCE(stripe_pi_id,'')
          FROM bids WHERE product_id=? ORDER BY amount DESC, created_at ASC",
     ) {
         if let Ok(rows) = stmt.query_map(params![product_id], |r| {
             Ok(serde_json::json!({
-                "id":         r.get::<_, i64>(0)?,
-                "amount_jpy": r.get::<_, i64>(1)?,
-                "email":      r.get::<_, String>(2)?,
-                "wallet":     r.get::<_, String>(3)?,
-                "created_at": r.get::<_, String>(4)?,
+                "id":          r.get::<_, i64>(0)?,
+                "amount_jpy":  r.get::<_, i64>(1)?,
+                "email":       r.get::<_, String>(2)?,
+                "wallet":      r.get::<_, String>(3)?,
+                "created_at":  r.get::<_, String>(4)?,
+                "auth_status": r.get::<_, String>(5)?,
+                "stripe_pi_id": r.get::<_, String>(6)?,
             }))
         }) {
             for row in rows.flatten() { bids.push(row); }
@@ -39545,6 +39558,7 @@ async fn main() {
         .route("/api/admin/ma/cancel_auction", post(admin_ma_cancel_auction))
         .route("/api/admin/db/overview", get(admin_db_overview))
         .route("/admin/db", get(admin_db_page))
+        .route("/admin/bids", get(admin_bids_page))
         .route("/api/checkout", post(checkout))
         .route("/api/checkout/crypto", post(payments::checkout_crypto))
         .route("/api/checkout/crypto/status/:reference", get(payments::checkout_crypto_status))
@@ -40071,6 +40085,11 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         interval_secs: 86_400, // 24h
         description: "特商法・PP の更新日が古くなってないか日次チェック",
     },
+    AgentDef {
+        name: "ma_cycle",
+        interval_secs: 3600, // 1h
+        description: "MA auction の終了→落札 capture/cancel→次の ¥30k 24h を毎時自動回転",
+    },
     // self_improvement / vision_drift / self_evolve / pr_writer は self_review に統合
     // (2026-05-13)。個別関数は debug 用に残るが、スケジュール対象は self_review のみ。
     AgentDef {
@@ -40253,6 +40272,7 @@ async fn run_agent(name: &str, db: Db) -> Result<AgentReport, String> {
         "customer_support"  => agent_customer_support(db).await,
         "auto_refund"       => agent_auto_refund(db).await,
         "compliance_watch"  => agent_compliance_watch(db).await,
+        "ma_cycle"          => agent_ma_cycle(db).await,
         "self_review"       => agent_self_review(db).await,
         // Kept dispatchable individually for /admin debug + dry-run isolation.
         "self_improvement"  => agent_self_improvement(db).await,
@@ -41142,6 +41162,305 @@ async fn agent_compliance_watch(db: Db) -> Result<AgentReport, String> {
         observations: serde_json::Value::Object(obs),
         decisions, actions: vec![], summary, notable,
     })
+}
+
+// ── Agent: ma_cycle ────────────────────────────────────────────────────
+// Hourly tick that keeps the MA auction cadence going automatically:
+//   1. Settles any active brand='ma' product whose auction_end has passed.
+//      - Authorized bids → admin_ma_settle logic inline (capture winner,
+//        cancel losers, mark sold_out_at=now).
+//      - Only legacy/zero bids → just active=0 + sold_out_at=now (no sale).
+//      - Top bidder == seller (yuki) → skip capture, mark active=0
+//        (auction cancelled because no real outside buyer).
+//   2. If now JST >= 23:00 AND no active MA exists, launch a fresh one:
+//      - ¥30,000 starting bid
+//      - auction_end = tomorrow 22:59:59 JST (rolling 24h cycle)
+//      - design_url = the latest /ma-style sumi 間 from ma_lineage if
+//        available, else BLANK_ design as a placeholder.
+//
+// Run hourly so we get at most ~1h drift around the 22:59:59 → 23:00
+// boundary. Idempotent — re-runs at the same hour are safe.
+async fn agent_ma_cycle(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut decisions: Vec<serde_json::Value> = Vec::new();
+    let mut actions: Vec<serde_json::Value> = Vec::new();
+    let now = chrono_now();
+    let now_s: i64 = now.parse().unwrap_or(0);
+    // JST clock for boundary checks.
+    let jst_s = now_s + 9 * 3600;
+    let jst_h = (jst_s % 86_400) / 3600;
+    let jst_today_2300 = (jst_s / 86_400) * 86_400 + 23 * 3600;
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+
+    // ── Step 1: settle any active MA whose auction_end has passed ──
+    let expired: Vec<(i64, String, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        conn.prepare(
+            "SELECT id, name, auction_end FROM products
+             WHERE brand='ma' AND active=1
+               AND auction_end IS NOT NULL AND auction_end != ''
+               AND auction_end < ?"
+        ).and_then(|mut stmt| {
+            let rows = stmt.query_map(params![&now[..19]], |r| {
+                Ok((r.get::<_,i64>(0)?, r.get::<_,String>(1)?, r.get::<_,Option<String>>(2)?))
+            })?;
+            Ok(rows.flatten().collect())
+        }).unwrap_or_default()
+    };
+    obs.insert("expired_count".into(), serde_json::Value::from(expired.len()));
+    let client = reqwest::Client::new();
+    for (pid, pname, _end) in &expired {
+        // Pull authorized bids for this product.
+        let bids: Vec<(i64, i64, String, String)> = {
+            let conn = db.lock().unwrap();
+            conn.prepare(
+                "SELECT id, amount, email, COALESCE(stripe_pi_id,'')
+                 FROM bids
+                 WHERE product_id=? AND auth_status='authorized' AND stripe_pi_id IS NOT NULL AND stripe_pi_id != ''
+                 ORDER BY amount DESC, created_at ASC"
+            ).and_then(|mut stmt| {
+                let rows = stmt.query_map(params![pid], |r| {
+                    Ok((r.get::<_,i64>(0)?, r.get::<_,i64>(1)?, r.get::<_,String>(2)?, r.get::<_,String>(3)?))
+                })?;
+                Ok(rows.flatten().collect())
+            }).unwrap_or_default()
+        };
+        if bids.is_empty() {
+            // No real winner — just close.
+            let conn = db.lock().unwrap();
+            let _ = conn.execute(
+                "UPDATE products SET active=0, sold_out_at=COALESCE(sold_out_at,?) WHERE id=?",
+                params![now, pid],
+            );
+            actions.push(serde_json::json!({
+                "type": "ma_close_no_winner", "product_id": pid, "name": pname,
+            }));
+            continue;
+        }
+        let (winner_bid_id, winner_amt, winner_email, winner_pi) = bids[0].clone();
+        // Skip capture if winner is the seller (yuki) — auction had no real outside buyer.
+        let is_seller = winner_email.eq_ignore_ascii_case("mail@yukihamada.jp")
+            || winner_email.eq_ignore_ascii_case("yuki@hamada.tokyo")
+            || winner_email.contains("yukihamada");
+        if is_seller {
+            // Cancel all PIs (including yuki's own — money returned to him)
+            for (_id, _amt, _em, pi) in &bids {
+                if pi.is_empty() || stripe_key.is_empty() { continue; }
+                let _ = client.post(format!("https://api.stripe.com/v1/payment_intents/{}/cancel", pi))
+                    .basic_auth(&stripe_key, Some(""))
+                    .form(&[("cancellation_reason", "abandoned")])
+                    .send().await;
+            }
+            let conn = db.lock().unwrap();
+            let _ = conn.execute(
+                "UPDATE bids SET auth_status='cancelled' WHERE product_id=? AND auth_status='authorized'",
+                params![pid],
+            );
+            let _ = conn.execute(
+                "UPDATE products SET active=0, sold_out_at=COALESCE(sold_out_at,?) WHERE id=?",
+                params![now, pid],
+            );
+            actions.push(serde_json::json!({
+                "type": "ma_close_seller_top_bid", "product_id": pid, "name": pname,
+                "seller_email": winner_email,
+            }));
+            continue;
+        }
+        // Real winner: capture top, cancel rest.
+        let cap = client.post(format!("https://api.stripe.com/v1/payment_intents/{}/capture", winner_pi))
+            .basic_auth(&stripe_key, Some(""))
+            .form(&[("amount_to_capture", winner_amt.to_string())])
+            .send().await;
+        let captured = matches!(cap, Ok(ref r) if r.status().is_success());
+        if !captured {
+            if let Ok(r) = cap {
+                let t = r.text().await.unwrap_or_default();
+                eprintln!("[ma_cycle] capture fail {} → {}", winner_pi, t.chars().take(200).collect::<String>());
+            }
+        }
+        let mut released = 0i64;
+        for (_id, _amt, _em, pi) in bids.iter().skip(1) {
+            if pi.is_empty() { continue; }
+            let r = client.post(format!("https://api.stripe.com/v1/payment_intents/{}/cancel", pi))
+                .basic_auth(&stripe_key, Some(""))
+                .form(&[("cancellation_reason", "abandoned")])
+                .send().await;
+            if matches!(r, Ok(ref rr) if rr.status().is_success()) { released += 1; }
+        }
+        {
+            let conn = db.lock().unwrap();
+            if captured {
+                let _ = conn.execute(
+                    "UPDATE bids SET auth_status='captured' WHERE id=?",
+                    params![winner_bid_id],
+                );
+                let _ = conn.execute(
+                    "UPDATE products SET active=0, sold=sold+1, sold_out_at=COALESCE(sold_out_at,?)
+                     WHERE id=?",
+                    params![now, pid],
+                );
+            }
+            let _ = conn.execute(
+                "UPDATE bids SET auth_status='cancelled'
+                 WHERE product_id=? AND auth_status='authorized' AND id != ?",
+                params![pid, winner_bid_id],
+            );
+        }
+        actions.push(serde_json::json!({
+            "type": "ma_settle_capture",
+            "product_id": pid, "name": pname,
+            "winner_email": winner_email, "winner_amount_jpy": winner_amt,
+            "captured": captured, "losers_released": released,
+        }));
+        // Fire winner email (best-effort)
+        if captured {
+            ma_send_winner_email(&db, *pid, winner_bid_id, &winner_email, winner_amt, pname).await;
+        }
+    }
+
+    // ── Step 2: ensure exactly one active MA exists past 23:00 JST ──
+    let still_active: i64 = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM products WHERE brand='ma' AND active=1",
+            [], |r| r.get(0),
+        ).unwrap_or(0)
+    };
+    obs.insert("still_active".into(), serde_json::Value::from(still_active));
+    obs.insert("jst_hour".into(), serde_json::Value::from(jst_h));
+    // Only launch past 23:00 JST AND no active MA. The first hourly tick at
+    // or after 23:00 fires it; subsequent ticks see active>0 and skip.
+    if still_active == 0 && jst_s >= jst_today_2300 {
+        // Tomorrow 22:59:59 JST = today_2300 + 24h - 1s
+        let end_s = jst_today_2300 + 24 * 3600 - 1;
+        // Format as YYYY-MM-DDTHH:MM:SS (JST naive — same format set_end uses).
+        let end_str = format_jst_naive(end_s);
+        // Use latest /ma-style design from ma_lineage if any, else BLANK_.
+        let design_url: String = {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT design_url FROM ma_lineage
+                 WHERE design_url IS NOT NULL AND design_url != ''
+                 ORDER BY created_at DESC LIMIT 1",
+                [], |r| r.get::<_, String>(0),
+            ).unwrap_or_else(|_| "https://wearmu.com/proposals/blank-design-ma.png".into())
+        };
+        // Compute drop_num + serial.
+        let drop_num: i64 = {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT COALESCE(MAX(drop_num),0)+1 FROM products WHERE brand='ma'",
+                [], |r| r.get(0),
+            ).unwrap_or(1)
+        };
+        let (y, m, d) = ymd_from_jst_secs(jst_s);
+        let name = format!("間 {:04}.{:02}.{:02}", y, m, d);
+        let serial = format!("{:04}{:02}{:02}-#{:03}", y, m, d, drop_num);
+        let inserted = {
+            let conn = db.lock().unwrap();
+            conn.execute(
+                "INSERT INTO products
+                  (brand, drop_num, name, serial_code, mockup_url, design_url, price_jpy,
+                   inventory, sold, active, created_at, auction_end, current_bid, bid_count)
+                 VALUES ('ma',?,?,?,?,?,30000, 1, 0, 1, ?, ?, 0, 0)",
+                params![drop_num, name, serial, design_url, design_url, now, end_str],
+            ).unwrap_or(0)
+        };
+        if inserted > 0 {
+            actions.push(serde_json::json!({
+                "type": "ma_launch",
+                "drop_num": drop_num, "name": name, "serial": serial,
+                "start_jpy": 30000, "auction_end": end_str,
+                "design_url": design_url,
+            }));
+            decisions.push(serde_json::json!({
+                "type": "ma_auto_launch_30k_24h",
+                "hint": "23:00 JST 過ぎ + active MA 無し → 自動で ¥30k / 24h auction を開始",
+            }));
+        }
+    }
+
+    let notable = !actions.is_empty();
+    let summary = if actions.is_empty() {
+        format!("ma_cycle: active={} jst_h={}", still_active, jst_h)
+    } else {
+        format!("ma_cycle: {} action(s) — {}",
+            actions.len(),
+            actions.iter().filter_map(|a| a.get("type").and_then(|t| t.as_str())).collect::<Vec<_>>().join(", "))
+    };
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs),
+        decisions, actions, summary, notable,
+    })
+}
+
+/// Format a JST UNIX-seconds value as "YYYY-MM-DDTHH:MM:SS" (no TZ suffix).
+fn format_jst_naive(jst_s: i64) -> String {
+    let (y, m, d) = ymd_from_jst_secs(jst_s);
+    let secs = jst_s % 86_400;
+    let hh = secs / 3600;
+    let mm = (secs % 3600) / 60;
+    let ss = secs % 60;
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}", y, m, d, hh, mm, ss)
+}
+
+/// Hinnant's reverse algorithm: JST UNIX-seconds → (Y, M, D).
+fn ymd_from_jst_secs(jst_s: i64) -> (i64, i64, i64) {
+    let days = jst_s / 86_400;
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as i64;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as i64;
+    let m = (mp + if mp < 10 { 3 } else { -9 }) as i64;
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}
+
+/// Send the winner an email with the Stripe receipt + shipping form prompt.
+/// Fire-and-forget; best-effort. Logs to stderr on any failure.
+async fn ma_send_winner_email(_db: &Db, product_id: i64, bid_id: i64, email: &str, amount: i64, product_name: &str) {
+    let key = env::var("RESEND_API_KEY").unwrap_or_default();
+    if key.is_empty() || email.is_empty() { return; }
+    let claim_url = format!("https://wearmu.com/wallet?bid={}", bid_id);
+    let subject = format!("━◯━ MU 間 MA 落札おめでとうございます — {} (¥{})", product_name, amount);
+    let body = format!(r#"<!doctype html><html><body style="font-family:-apple-system,sans-serif;background:#0A0A0A;color:#F5F5F0;padding:32px;line-height:1.9">
+<div style="max-width:520px;margin:0 auto">
+<div style="font-size:13px;letter-spacing:0.4em;font-weight:700;margin-bottom:24px">━◯━ MU · 間 MA</div>
+<h1 style="font-size:22px;font-weight:300;margin-bottom:14px">{name} を落札されました</h1>
+<p style="color:#aaa;font-size:14px">この度はオークション落札ありがとうございます。 落札額 <strong style="color:#fff">¥{amount}</strong> はカードから既に決済済みです (Stripe オーソリ → 自動 capture)。</p>
+<p style="margin:24px 0"><a href="{url}" style="background:#F5F5F0;color:#0A0A0A;padding:13px 20px;text-decoration:none;letter-spacing:0.3em;font-weight:700;font-size:13px;border-radius:4px">配送先を入力 →</a></p>
+<p style="font-size:12px;color:#888;line-height:2">
+DTG 1 枚プリント → 約 10 営業日で発送します。<br>
+配送先確定後、 制作開始 (一度作ったデザインは二度と作りません — Constitution §10)。<br>
+落札額の 50% は Constitution §27 に従い 弟子屈町 に寄付されます。</p>
+<p style="font-size:11px;color:#666;margin-top:36px;border-top:1px solid #222;padding-top:18px">
+MU · wearmu.com · 株式会社イネブラ<br>
+返信先: mail@wearmu.com
+</p>
+</div></body></html>"#, name = html_escape(product_name), amount = amount, url = html_escape(&claim_url));
+    let payload = serde_json::json!({
+        "from": "━◯━ MU · 間 MA <info@enablerdao.com>",
+        "to": [email],
+        "subject": subject,
+        "html": body,
+    });
+    let client = reqwest::Client::new();
+    match client.post("https://api.resend.com/emails")
+        .bearer_auth(&key).json(&payload).send().await
+    {
+        Ok(r) if r.status().is_success() => {
+            eprintln!("[ma_cycle] winner email sent to {} (product_id={})", email, product_id);
+        }
+        Ok(r) => {
+            let t = r.text().await.unwrap_or_default();
+            eprintln!("[ma_cycle] winner email FAIL: {} → {}", email, t.chars().take(200).collect::<String>());
+        }
+        Err(e) => eprintln!("[ma_cycle] winner email http err: {}", e),
+    }
 }
 
 // ── Agent 6: self_improvement ──────────────────────────────────────────
