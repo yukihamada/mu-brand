@@ -13868,6 +13868,12 @@ fn asoview_is_approved(conn: &rusqlite::Connection) -> bool {
 async fn proposal_asoview() -> Html<&'static str> {
     Html(include_str!("../static/proposals/asoview.html"))
 }
+async fn proposal_sweep_pitch() -> Html<&'static str> {
+    Html(include_str!("../static/proposals/sweep.html"))
+}
+async fn proposal_kokon_pitch() -> Html<&'static str> {
+    Html(include_str!("../static/proposals/kokon.html"))
+}
 
 /// GET /api/proposals/asoview/status — public, drives the LP banner/JS.
 async fn proposal_asoview_status(State(db): State<Db>) -> impl IntoResponse {
@@ -36730,6 +36736,8 @@ async fn main() {
         .route("/api/proposals/elsoul/sample",   post(proposal_elsoul_sample))
         .route("/api/proposals/elsoul/bundle",   post(proposal_elsoul_bundle))
         .route("/elsoul", get(elsoul_public_page))
+        .route("/proposals/sweep",               get(proposal_sweep_pitch))
+        .route("/proposals/kokon",               get(proposal_kokon_pitch))
         .route("/proposals/ele",                 get(proposal_ele))
         .route("/api/proposals/ele/status",      get(proposal_ele_status))
         .route("/api/proposals/ele/approve",     post(proposal_ele_approve))
