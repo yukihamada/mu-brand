@@ -2186,7 +2186,12 @@ async fn embed_products(
     let allowed = ["mugen","muon","ma","nouns"];
     let brand_filter = q.get("brand")
         .map(String::as_str)
-        .filter(|b| allowed.contains(b) || b.starts_with("kichinan_"));
+        .filter(|b| allowed.contains(b)
+            || b.starts_with("kichinan_")
+            || b.starts_with("asoview_")
+            || b.starts_with("elsoul_")
+            || b.starts_with("ele_")
+            || b.starts_with("nojimahal_"));
 
     let conn = db.lock().unwrap();
     let sql = if brand_filter.is_some() {
