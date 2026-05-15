@@ -53,9 +53,31 @@ After initial setup, no human touches MU's day-to-day decisions.
 |---------------|-----------------|--------------------------------------------------------|--------------------------------|
 | **MUGEN 無限** | Hourly          | Drop number = pieces (cycle of #1–#108, #1 is rarest)  | ¥5,000–¥30,000 (progressive)   |
 | **MUON 無音**  | Daily           | Temperature in Teshikaga, Hokkaido (°C) = pieces       | ¥5,000+ (progressive)          |
-| **間 MA**      | Weekly (Mon)    | One piece in the world. 7-day auction.                 | ¥30,000+                       |
+| **間 MA**      | Daily/Weekly    | One piece in the world. Stripe pre-auth at bid time, capture on settle. | ¥30,000+ (auction) |
 | **MU × NOUNS** | On request      | NOUNS DAO collab                                       | varies                         |
-| **MU × SIIIEEP** | curated        | BJJ apparel collab with [SIIIEEP](https://shop.sweep.love) (Kita-Sandō) — 23 SKUs auto-fulfilled via Printful | ¥1,200–¥38,800 |
+
+### Collab proposal system (8 partners live, 2026-05)
+
+Unified DB-driven engine — adding a new collab is **one CLI command, zero new Rust code**.
+
+| Slug | Partner | SKUs | Status |
+|---|---|---|---|
+| `kichinan` | Kichinan / 富士見町 | 35 | Approved · live |
+| `sweep` | MU × SIIIEEP (北参道 BJJ) | 60+ | Live (gated) |
+| `kokon` | 焼肉古今 (kokon.tokyo) | 12 polos + tees | Live (gated) |
+| `asoview` | Asoview Inc. | 18 | Active |
+| `elsoul` | ELSOUL LABO B.V. | 18 | Active |
+| `ele` | ELE (yuki's dog) | 12 | Active |
+| `nojimahal` | NOJIMAHAL / 野島繁昭 | 20 | Active |
+| `ryozo` | RYOZO TOP TEAM (BJJ) | 30 | Active |
+| `jiufight` | SUPER YAWARA SWEEP CUP 2026 | 50 | Active (tournament 5/24) |
+| `blank` | BLANK_ Executive Retreat for AI | 1 (MA tee) | Active |
+
+Every collab gets:
+- `/proposals/<slug>` LP (photos, bulk-order picker, Tinder-style feedback)
+- Generic API: `GET /api/proposal/:slug/{state,skus}` · `POST /:slug/{sample,bundle,bulk,feedback,approve,revoke}`
+- Stripe Checkout Sessions (100-item bundle cap) + Printful Mockup Generator pipeline
+- DB-driven allow-list in `/api/v1/embed/products` — no code changes for new partners
 
 ### Progressive pricing — the more it sells, the more it costs
 
@@ -185,20 +207,32 @@ CORS allows `GET` / `OPTIONS` from any origin. Write endpoints (`POST /api/check
 ```
 mu-brand/
 ├── store/                    # The Rust web store (Fly.io: mu-store)
-│   ├── src/main.rs           # All routes, agents, pricing, Stripe, Printful, NFT
+│   ├── src/main.rs           # All routes, agents, pricing, Stripe, Printful, NFT, collab system
 │   ├── src/nft.rs            # Solana cNFT minting (dry-run pilot)
 │   ├── src/payments.rs       # Stripe payment helpers
 │   ├── src/gemini.rs         # Gemini API helpers
-│   ├── static/               # index.html, embed.js, developers.html, sweep page, etc.
-│   ├── Cargo.toml
-│   ├── Dockerfile
-│   └── fly.toml
+│   ├── static/
+│   │   ├── index.html        # Homepage + MA auction UI
+│   │   ├── admin-db.html     # /admin/db overview dashboard
+│   │   ├── collab-chat.html  # /collab/chat AI proposal generator (gated)
+│   │   ├── collab-chat-gate.html  # email-only login
+│   │   ├── proposals/        # per-collab LPs + Printful mockups + Gemini hero shots
+│   │   │   ├── <slug>.html        # collab LP
+│   │   │   ├── <slug>-swipe.html  # Tinder-style design feedback (e.g. jiufight)
+│   │   │   ├── <slug>-design-*.png  # 4–8 design variants per brand
+│   │   │   ├── <slug>-pf-*.jpg      # Printful Mockup Generator output per SKU
+│   │   │   └── <slug>-hero-*.jpg    # Gemini lifestyle / hero images
+│   │   ├── embed.js, developers.html, sweep page, …
+│   ├── Cargo.toml, Dockerfile, fly.toml
+├── scripts/
+│   ├── new_proposal.sh       # One-shot brand bootstrap (designs + admin POST + LP)
+│   ├── gen_brand_designs.py  # Gemini 3 → 4 SVG variants → PNG (template fallback)
+│   ├── gen_partner_proposal.py  # Render /proposals/<slug>.html from spec
+│   ├── partner_proposals/<slug>.json  # per-partner meta (LP copy + accent)
 ├── generate.py               # Hourly/daily AI design generation (cron)
 ├── generate_nouns.py         # NOUNS DAO collab variant
 ├── sweep_images.py           # MU × SIIIEEP product image generation
-├── reprice.py                # Admin-only repricing utility
-├── retry_mockups.py          # Printful mockup re-fetch
-├── verify.py                 # Sanity checks
+├── reprice.py, retry_mockups.py, verify.py
 ├── designs/                  # Generated PNGs (read-only artifacts)
 ├── .github/workflows/        # Auto-deploy + cron workflows
 │   ├── deploy.yml            # push to main → Fly.io deploy
@@ -207,6 +241,19 @@ mu-brand/
 │   └── cron-ads-tune.yml     # Google Ads CPC tuning
 └── README.md
 ```
+
+### Bootstrap a new collab brand in one CLI call
+
+```bash
+MU_ADMIN_TOKEN=$T ./scripts/new_proposal.sh newbrand spec.json
+# 1. Generates 4 design PNGs (wordmark/monogram/stacked/stripe) via Gemini 3
+#    — falls back to deterministic template if no GEMINI_API_KEY
+# 2. POST /admin/proposal — proposals + proposal_skus + products rows seeded
+# 3. python3 scripts/gen_partner_proposal.py — renders /proposals/newbrand.html
+# 4. Brand is buyable at https://wearmu.com/proposals/newbrand
+```
+
+`spec.json` carries `{slug, name, ip_owner, design: {monogram, accent}, meta: {…}, skus: [...]}`. No Rust changes needed for new collabs — the generic `/api/proposal/:slug/*` routes serve every brand.
 
 ---
 
@@ -331,10 +378,18 @@ are **not** under MIT — please fork the engine, not the brand.
 - [x] Open-source release (you're reading it)
 - [x] MA Council foundation — auctioneers get voting rights
 - [x] Solana cNFT pilot (dry-run mode, MA line)
-- [x] MU × SIIIEEP collab — 23 SKUs Printful auto-fulfill
 - [x] **Multi-agent autonomous operation** — 7 agents covering health / treasury / support / refunds / compliance / vision / self-improvement
 - [x] **External embed API** — `/embed.js`, `/embed/products`, `/api/v1/embed/products`, CORS-open
 - [x] Stripe auto-refund for small disputes
+- [x] **Unified collab proposal system** — 8 partners live, one-shot CLI bootstrap
+- [x] **MA auction Stripe pre-auth** — capture_method=manual, auto-capture winner / auto-cancel losers at settle
+- [x] **Tinder-style design feedback** — `/proposals/<slug>-swipe.html` with rate-limited public POST
+- [x] **/collab/chat gate** — verified MU members only (email + DAO/MA/customer signals)
+- [x] **/admin/db dashboard** — one-page DB overview (KPIs, bids, proposals, products by brand)
+- [x] **§27 Pledge** — 50% post-tax → 弟子屈 published in `/vision` + `/constitution` + `/tokushoho`
+- [ ] **Daily MA auto-cycle** — 22:59:59 settle + 23:00 ¥30k launch as a recurring cron
+- [ ] **Settlement automation** — winner email + Printful order trigger on auction capture
+- [ ] **MA design generation auto** — Gemini daily, no hand-launch
 - [ ] MU CITY drops 001 — Tokyo data variant
 - [ ] NOUNS DAO formal proposal submission
 - [ ] Automated MA Council treasury distribution
