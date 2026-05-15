@@ -1696,12 +1696,23 @@ async function loadMA(){
   loadMaGifts();
   try{
     const r = await fetch('/api/products/ma');
-    const products = await r.json();
+    let products = await r.json();
     if(!products||!products.length){
       cont.innerHTML='<div class="empty">Next drop: 次の月曜 00:00 JST</div>';
       return;
     }
+    // Sort: the auction ending soonest is "current"; later ones are queued.
+    // Falls back to drop_num DESC if auction_end is missing.
+    products = products.slice().sort((a, b) => {
+      if (a.auction_end && b.auction_end) {
+        return new Date(a.auction_end) - new Date(b.auction_end);
+      }
+      if (a.auction_end) return -1;
+      if (b.auction_end) return 1;
+      return (b.drop_num || 0) - (a.drop_num || 0);
+    });
     const p = products[0];
+    const nextP = products[1];  // optional "next" queued auction
     const rem = p.inventory - p.sold;
     cont.innerHTML = `
     <div class="ma-piece">
@@ -1741,8 +1752,19 @@ async function loadMA(){
         <div class="soulbound-note">📧 落札後、NFT 受け取り方法を Email でお送りします。wallet を今ここで入力しなくても OK — メールから後で登録できます。Soulbound = 転売不可の真正証明書、所有が変わる際は NFT の移転手続きが必要です。</div>
         `:'<div class="empty" style="padding:20px 0">Sold</div>'}
       </div>
-    </div>`;
+    </div>
+    ${nextP ? `
+    <div class="ma-next" style="margin-top:18px;padding:14px 16px;background:#0d0d0d;border:1px solid #1c1c1c;border-radius:6px;display:flex;align-items:center;gap:12px;font-size:11px;letter-spacing:0.04em">
+      ${nextP.mockup_url ? `<img src="${nextP.mockup_url}" alt="${nextP.name}" style="width:48px;height:48px;object-fit:cover;border-radius:4px;background:#000" onerror="this.style.opacity='0.3'">` : ''}
+      <div style="flex:1;line-height:1.7">
+        <div style="opacity:0.5;letter-spacing:0.32em;text-transform:uppercase;font-size:9px;font-weight:700">▶ Next</div>
+        <div><strong>${nextP.name}</strong>  ¥${(nextP.current_bid||nextP.price_jpy).toLocaleString()} 〜  <span style="opacity:0.55">${nextP.bid_count||0} bids</span></div>
+        <div style="opacity:0.55;font-size:10px" id="ma-next-timer">—</div>
+      </div>
+    </div>
+    ` : ''}`;
     if(p.auction_end) startMATimer(p.auction_end);
+    if(nextP && nextP.auction_end) startMANextTimer(nextP.auction_end);
   }catch(e){cont.innerHTML='<div class="empty">—</div>'}
 }
 
@@ -1759,6 +1781,20 @@ function startMATimer(endISO){
     if(el) el.textContent=`${d}d ${h}h ${m}m ${s}s`;
   }
   tick(); setInterval(tick,1000);
+}
+
+function startMANextTimer(endISO){
+  const end = new Date(endISO);
+  function tick(){
+    const el=document.getElementById('ma-next-timer');
+    if(!el) return;
+    const diff = end - new Date();
+    if(diff<=0){el.textContent='Ended';return}
+    const d=Math.floor(diff/86400000);
+    const h=Math.floor((diff%86400000)/3600000);
+    el.textContent=`ends in ${d}d ${h}h`;
+  }
+  tick(); setInterval(tick,60000);
 }
 
 async function placeBid(productId){
