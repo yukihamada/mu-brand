@@ -993,6 +993,244 @@ async fn admin_suzuri_publish(
     }
 }
 
+// ───── Gelato POD admin (Constitution §24-v3 — JP-domestic POD) ──────
+//
+// Gelato is the only POD with documented API + JP-local print. Admin
+// /admin/gelato lets us inspect a curated catalog (current wholesale
+// price + production country + delivery window) and link each Gelato
+// SKU to MU products so fulfillment knows what to manufacture.
+//
+// Curated to avoid hammering the Gelato API. Sync runs on-demand.
+
+/// (productUid, friendly label). Add new rows here to grow catalog coverage.
+const GELATO_CURATED_UIDS: &[(&str, &str)] = &[
+    ("apparel_product_gca_t-shirt_gsc_crewneck_gcu_unisex_gqa_classic_gsi_m_gco_black_gpr_0-4_gildan_h000",
+        "Gildan H000 Hammer 6.0oz Heavy Tee · Black · M · DTG front"),
+    ("apparel_product_gca_t-shirt_gsc_crewneck_gcu_unisex_gqa_classic_gsi_m_gco_black_gpr_0-4_gildan_5300",
+        "Gildan 5300 Heavy Cotton 5.3oz Tee · Black · M · DTG front"),
+    ("apparel_product_gca_t-shirt_gsc_crewneck_gcu_unisex_gqa_classic_gsi_m_gco_black_gpr_0-4_gildan_64000",
+        "Gildan 64000 Softstyle 4.5oz Tee · Black · M · DTG front"),
+    ("apparel_product_gca_hoodie_gsc_pullover_gcu_unisex_gqa_classic_gsi_m_gco_black_gpr_0-4_gildan_18500",
+        "Gildan 18500 Heavy Hoodie · Black · M · DTG front"),
+    ("bag_product_bsc_tote-bag_bqa_clc_bsi_std-t_bco_black_bpr_0-4",
+        "Tote bag · Black · DTG front"),
+    ("mug_product_msz_11-oz_mmat_ceramic-black_cl_4-0",
+        "Mug 11oz ceramic · Black"),
+    ("canvas_11x14-inch-270x350-mm_canvas_wood-fsc-slim_4-0_hor",
+        "Canvas 11x14\" · Slim · Horizontal"),
+];
+
+/// Category guess from a Gelato productUid. Keeps the admin filterable
+/// without a second round-trip for catalog metadata.
+fn gelato_category_of(uid: &str) -> &'static str {
+    if uid.contains("_gca_hoodie")     { "hoodie" }
+    else if uid.contains("_gca_t-shirt")    { "t-shirt" }
+    else if uid.contains("_gca_sweatshirt") { "sweatshirt" }
+    else if uid.starts_with("bag_product")  { "tote" }
+    else if uid.starts_with("mug_product")  { "mug" }
+    else if uid.starts_with("canvas_")      { "canvas" }
+    else if uid.starts_with("cards_")       { "poster" }
+    else if uid.starts_with("apparel_")     { "apparel" }
+    else { "other" }
+}
+
+/// Hit Gelato's `/v4/orders:quote` endpoint with a single-item probe so we
+/// learn the live wholesale price + production country + delivery window.
+/// Returns (price, currency, production_country, min_d, max_d).
+async fn gelato_probe_jp(uid: &str) -> Result<(f64, String, String, i32, i32), String> {
+    let key = env::var("GELATO_API_KEY").map_err(|_| "GELATO_API_KEY unset".to_string())?;
+    let body = serde_json::json!({
+        "orderReferenceId":   format!("mu-probe-{}", chrono_now()),
+        "customerReferenceId":"mu-admin-probe",
+        "currencyIsoCode":    "JPY",
+        "recipient": {
+            "country":"JP","firstName":"MU","lastName":"Admin",
+            "addressLine1":"九段南1-5-6 りそな九段ビル5F","city":"千代田区","postCode":"102-0074",
+            "stateCode":"JP-13","email":"info@enablerdao.com"
+        },
+        "products": [{
+            "itemReferenceId":"i1","quantity":1,"productUid":uid,"pageCount":1,
+            "files":[{"type":"default","url":"https://wearmu.com/static/sample_design.png"}],
+        }],
+    });
+    let client = reqwest::Client::new();
+    let resp = client.post("https://order.gelatoapis.com/v4/orders:quote")
+        .header("X-API-KEY", &key)
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send().await.map_err(|e| format!("gelato POST: {}", e))?;
+    let status = resp.status();
+    let v: serde_json::Value = resp.json().await.map_err(|e| format!("gelato json: {}", e))?;
+    if !status.is_success() {
+        return Err(format!("gelato {} {}", status, v));
+    }
+    let q = &v["quotes"][0];
+    let prod = &q["products"][0];
+    let ship = &q["shipmentMethods"][0];
+    let price = prod["price"].as_f64().ok_or_else(|| "no price".to_string())?;
+    let currency = prod["currency"].as_str().unwrap_or("USD").to_string();
+    let country = q["productionCountry"].as_str().unwrap_or("?").to_string();
+    let min_d = ship["minDeliveryDays"].as_i64().unwrap_or(0) as i32;
+    let max_d = ship["maxDeliveryDays"].as_i64().unwrap_or(0) as i32;
+    Ok((price, currency, country, min_d, max_d))
+}
+
+/// GET /admin/gelato — static admin page (uses fetch() against /api/admin/gelato/*).
+async fn admin_gelato_page(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/gelato").await { return r; }
+    Html(include_str!("../static/admin-gelato.html")).into_response()
+}
+
+/// GET /api/admin/gelato/catalog — return cached Gelato catalog + linked MU products.
+async fn admin_gelato_catalog(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/gelato/catalog").await { return r; }
+    let conn = db.lock().unwrap();
+    let rows: Vec<(String, String, Option<String>, f64, String, String, i64, i64, String)> = {
+        let mut st = match conn.prepare(
+            "SELECT product_uid, title, category, price_value, price_currency,
+                    production_country, min_delivery_days, max_delivery_days, last_priced_at
+               FROM gelato_catalog
+              ORDER BY (production_country='JP') DESC, price_value ASC") {
+            Ok(s) => s,
+            Err(e) => return Json(serde_json::json!({"error": e.to_string()})).into_response(),
+        };
+        st.query_map([], |r| Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1).unwrap_or_default(),
+            r.get::<_, Option<String>>(2).unwrap_or(None),
+            r.get::<_, f64>(3).unwrap_or(0.0),
+            r.get::<_, String>(4).unwrap_or_default(),
+            r.get::<_, String>(5).unwrap_or_default(),
+            r.get::<_, i64>(6).unwrap_or(0),
+            r.get::<_, i64>(7).unwrap_or(0),
+            r.get::<_, String>(8).unwrap_or_default(),
+        ))).map(|it| it.flatten().collect()).unwrap_or_default()
+    };
+    let mut items: Vec<serde_json::Value> = Vec::new();
+    for (uid, title, category, price, currency, country, min_d, max_d, when) in rows {
+        let linked: Vec<serde_json::Value> = {
+            let mut lst = match conn.prepare(
+                "SELECT p.id, p.brand, p.drop_num, p.name, p.price_jpy, p.active
+                   FROM product_gelato_links l
+                   JOIN products p ON p.id = l.product_id
+                  WHERE l.gelato_uid = ?1 ORDER BY p.id DESC") {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            lst.query_map(params![&uid], |r| Ok(serde_json::json!({
+                "id":        r.get::<_, i64>(0)?,
+                "brand":     r.get::<_, String>(1).unwrap_or_default(),
+                "drop_num":  r.get::<_, i64>(2).unwrap_or(0),
+                "name":      r.get::<_, String>(3).unwrap_or_default(),
+                "price_jpy": r.get::<_, i64>(4).unwrap_or(0),
+                "active":    r.get::<_, i64>(5).unwrap_or(0) != 0,
+            }))).map(|it| it.flatten().collect()).unwrap_or_default()
+        };
+        items.push(serde_json::json!({
+            "uid": uid, "title": title, "category": category,
+            "price_value": price, "price_currency": currency,
+            "production_country": country,
+            "min_delivery_days": min_d, "max_delivery_days": max_d,
+            "last_priced_at": when,
+            "linked_products": linked,
+        }));
+    }
+    Json(serde_json::json!({"items": items, "total": items.len()})).into_response()
+}
+
+/// POST /api/admin/gelato/sync — refresh all curated SKUs from Gelato.
+async fn admin_gelato_sync(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/gelato/sync").await { return r; }
+    let mut synced: Vec<serde_json::Value> = Vec::new();
+    let mut errors: Vec<serde_json::Value> = Vec::new();
+    for (uid, label) in GELATO_CURATED_UIDS {
+        match gelato_probe_jp(uid).await {
+            Ok((price, currency, country, min_d, max_d)) => {
+                let cat = gelato_category_of(uid);
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "INSERT INTO gelato_catalog
+                       (product_uid, title, category, price_value, price_currency,
+                        production_country, min_delivery_days, max_delivery_days, last_priced_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                     ON CONFLICT(product_uid) DO UPDATE SET
+                       title=excluded.title,
+                       category=excluded.category,
+                       price_value=excluded.price_value,
+                       price_currency=excluded.price_currency,
+                       production_country=excluded.production_country,
+                       min_delivery_days=excluded.min_delivery_days,
+                       max_delivery_days=excluded.max_delivery_days,
+                       last_priced_at=excluded.last_priced_at",
+                    params![uid, label, cat, price, currency, country, min_d as i64, max_d as i64, chrono_now()],
+                );
+                synced.push(serde_json::json!({"uid": uid, "price": price, "country": country}));
+            }
+            Err(e) => {
+                errors.push(serde_json::json!({"uid": uid, "error": e}));
+            }
+        }
+    }
+    Json(serde_json::json!({"ok": true, "synced": synced, "errors": errors})).into_response()
+}
+
+#[derive(Deserialize)]
+struct GelatoLinkReq {
+    product_id: i64,
+    gelato_uid: String,
+}
+
+/// POST /api/admin/gelato/link — bind a Gelato SKU to an MU product.
+async fn admin_gelato_link(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(req): Json<GelatoLinkReq>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/gelato/link").await { return r; }
+    let conn = db.lock().unwrap();
+    match conn.execute(
+        "INSERT OR IGNORE INTO product_gelato_links (product_id, gelato_uid, created_at)
+         VALUES (?1, ?2, ?3)",
+        params![req.product_id, req.gelato_uid, chrono_now()],
+    ) {
+        Ok(n) => Json(serde_json::json!({"ok": true, "inserted": n})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()}))).into_response(),
+    }
+}
+
+/// POST /api/admin/gelato/unlink — remove a Gelato↔MU link.
+async fn admin_gelato_unlink(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(req): Json<GelatoLinkReq>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/gelato/unlink").await { return r; }
+    let conn = db.lock().unwrap();
+    match conn.execute(
+        "DELETE FROM product_gelato_links WHERE product_id=?1 AND gelato_uid=?2",
+        params![req.product_id, req.gelato_uid],
+    ) {
+        Ok(n) => Json(serde_json::json!({"ok": true, "deleted": n})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()}))).into_response(),
+    }
+}
+
 /// Returns "era-1 (Bella+Canvas 3001)" or "era-2 (Stanley/Stella SATU001)"
 /// for a given mugen drop_num. Other brands return their own era string.
 fn fabric_era_for(brand: &str, drop_num: i64) -> &'static str {
@@ -8561,6 +8799,77 @@ async fn admin_product_new(
         "ok": true, "new_id": new_id, "drop_num": next_drop,
         "name": name, "design_url": url,
     })).into_response()
+}
+
+/// GET /api/admin/collab_orders?token=…&limit=50&partner=kokon — admin-gated
+/// dump of recent collab_orders joined with the matching collab_products row
+/// so yuki can quickly check what image / Printful linkage was used at order time.
+async fn admin_collab_orders(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/collab_orders").await { return r; }
+    let limit: i64 = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50).clamp(1, 500);
+    let partner: Option<String> = q.get("partner").filter(|s| !s.is_empty()).cloned();
+    let conn = db.lock().unwrap();
+    let base_select = "SELECT o.id, o.slug, COALESCE(o.size,''), o.amount_jpy, COALESCE(o.status,''),
+                 COALESCE(o.email,''), COALESCE(o.created_at,''),
+                 COALESCE(o.printful_order_id,''), COALESCE(o.stripe_session,''),
+                 COALESCE(cp.id, 0), COALESCE(cp.name,''), COALESCE(cp.partner,''),
+                 COALESCE(cp.image_url,''), COALESCE(cp.production_route,''),
+                 COALESCE(cp.printful_product_id, 0), COALESCE(cp.printful_variant_id, 0),
+                 COALESCE(cp.printful_cost_jpy, 0)
+          FROM collab_orders o
+          LEFT JOIN collab_products cp ON cp.slug = o.slug";
+    let sql = if partner.is_some() {
+        format!("{} WHERE cp.partner = ? ORDER BY CAST(COALESCE(o.created_at,'0') AS INTEGER) DESC LIMIT ?", base_select)
+    } else {
+        format!("{} ORDER BY CAST(COALESCE(o.created_at,'0') AS INTEGER) DESC LIMIT ?", base_select)
+    };
+    let mut st = match conn.prepare(&sql) {
+        Ok(s) => s,
+        Err(e) => return Json(serde_json::json!({"error": format!("{}", e)})).into_response(),
+    };
+    let row_mapper = |r: &rusqlite::Row| Ok(serde_json::json!({
+        "id": r.get::<_, i64>(0)?,
+        "slug": r.get::<_, String>(1).unwrap_or_default(),
+        "size": r.get::<_, String>(2).unwrap_or_default(),
+        "amount_jpy": r.get::<_, i64>(3).unwrap_or(0),
+        "status": r.get::<_, String>(4).unwrap_or_default(),
+        "email_masked": mask_email_admin(&r.get::<_, String>(5).unwrap_or_default()),
+        "created_at": r.get::<_, String>(6).unwrap_or_default(),
+        "printful_order_id": r.get::<_, String>(7).unwrap_or_default(),
+        "stripe_session": r.get::<_, String>(8).unwrap_or_default(),
+        "cp_id": r.get::<_, i64>(9).unwrap_or(0),
+        "cp_name": r.get::<_, String>(10).unwrap_or_default(),
+        "cp_partner": r.get::<_, String>(11).unwrap_or_default(),
+        "cp_image_url": r.get::<_, String>(12).unwrap_or_default(),
+        "cp_production_route": r.get::<_, String>(13).unwrap_or_default(),
+        "cp_printful_product_id": r.get::<_, i64>(14).unwrap_or(0),
+        "cp_printful_variant_id": r.get::<_, i64>(15).unwrap_or(0),
+        "cp_printful_cost_jpy": r.get::<_, i64>(16).unwrap_or(0),
+    }));
+    let rows: Vec<serde_json::Value> = if let Some(p) = partner {
+        st.query_map(params![p, limit], row_mapper).map(|it| it.flatten().collect()).unwrap_or_default()
+    } else {
+        st.query_map(params![limit], row_mapper).map(|it| it.flatten().collect()).unwrap_or_default()
+    };
+    Json(serde_json::json!({ "orders": rows, "count": rows.len() })).into_response()
+}
+
+/// Helper: mask "user@example.com" → "u****r@example.com" so admin views
+/// don't leak full PII even when shared.
+fn mask_email_admin(email: &str) -> String {
+    let (local, domain) = match email.split_once('@') {
+        Some(v) => v,
+        None => return email.to_string(),
+    };
+    if local.len() <= 2 { return format!("{}@{}", local, domain); }
+    let first = local.chars().next().unwrap_or('?');
+    let last = local.chars().last().unwrap_or('?');
+    let stars = "*".repeat(local.len().saturating_sub(2).min(6));
+    format!("{}{}{}@{}", first, stars, last, domain)
 }
 
 /// POST /api/admin/costs/sweep_losses?token=… — find all active SKUs whose
@@ -44375,6 +44684,34 @@ async fn main() {
             created_at        TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_scorecard_agent ON agent_scorecard(agent_name, period_end);
+
+        -- ───── Gelato POD catalog (Constitution §24-v3) ─────────────────────
+        -- Cached price + production-country probe for a curated set of
+        -- Gelato SKUs. Refreshed manually from /admin/gelato.
+        CREATE TABLE IF NOT EXISTS gelato_catalog (
+            product_uid        TEXT PRIMARY KEY,
+            title              TEXT NOT NULL,
+            category           TEXT,
+            price_value        REAL NOT NULL,
+            price_currency     TEXT NOT NULL,
+            production_country TEXT NOT NULL,
+            min_delivery_days  INTEGER NOT NULL DEFAULT 0,
+            max_delivery_days  INTEGER NOT NULL DEFAULT 0,
+            last_priced_at     TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_gelato_country ON gelato_catalog(production_country);
+
+        -- Links Gelato SKUs ⇄ MU products (products.id).
+        -- One MU product may map to multiple Gelato SKUs (size variants etc).
+        CREATE TABLE IF NOT EXISTS product_gelato_links (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_id  INTEGER NOT NULL,
+            gelato_uid  TEXT NOT NULL,
+            created_at  TEXT NOT NULL,
+            UNIQUE(product_id, gelato_uid)
+        );
+        CREATE INDEX IF NOT EXISTS idx_pgl_pid ON product_gelato_links(product_id);
+        CREATE INDEX IF NOT EXISTS idx_pgl_uid ON product_gelato_links(gelato_uid);
     ").ok();
 
     // /itto first calf (#0001) — admin can later update fields via /admin/itto/calf.
@@ -44810,9 +45147,15 @@ async fn main() {
         .route("/api/admin/products/:id/regen_design", post(admin_regen_design))
         .route("/api/admin/products/:id/regen_lifestyle", post(admin_regen_lifestyle))
         .route("/api/admin/products/:id/regen_similar", post(admin_regen_similar))
+        .route("/admin/gelato", get(admin_gelato_page))
+        .route("/api/admin/gelato/catalog", get(admin_gelato_catalog))
+        .route("/api/admin/gelato/sync",    post(admin_gelato_sync))
+        .route("/api/admin/gelato/link",    post(admin_gelato_link))
+        .route("/api/admin/gelato/unlink",  post(admin_gelato_unlink))
         .route("/admin/costs", get(admin_costs_page))
         .route("/api/admin/costs", get(admin_costs_list))
         .route("/api/admin/costs/sweep_losses", post(admin_sweep_losses))
+        .route("/api/admin/collab_orders", get(admin_collab_orders))
         .route("/api/products/:id/design.png", get(product_design_image))
         .route("/api/products/:id/mockup.png", get(product_mockup_image))
         .route("/api/collab/:id/image.png", get(collab_product_image))
