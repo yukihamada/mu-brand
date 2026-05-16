@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU · POD</title>
+<meta name="robots" content="noindex">
+<style>
+  :root { --bg:#0A0A0A; --fg:#F5F5F0; --mute:#888; --accent:#e6c449; --line:#1c1c1c; --green:#7be57b; --red:#ff4a3d; --card:#101010; --jp:#7be57b; --intl:#ff9933; }
+  /* Vendor brand colors */
+  :root { --v-gelato:#ff5a3c; --v-printful:#5b8def; --v-suzuri:#7eb33a; }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { background: var(--bg); color: var(--fg); margin: 0; font-family: ui-monospace, "SF Mono", Menlo, "Helvetica Neue", Arial, sans-serif; line-height: 1.55; font-size: 13px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  header { padding: 18px 24px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; position: sticky; top: 0; background: var(--bg); z-index: 50; }
+  header h1 { font-size: 14px; letter-spacing: 0.4em; margin: 0; font-weight: 700; }
+  header .nav { color: var(--mute); font-size: 11px; letter-spacing: 0.16em; }
+  header .nav a { margin-left: 14px; }
+  .wrap { padding: 24px 24px 120px; max-width: 1700px; margin: 0 auto; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 18px; }
+  .toolbar select { background: #0f0f0f; border: 1px solid var(--line); color: var(--fg); padding: 9px 12px; font-family: inherit; font-size: 12px; border-radius: 4px; }
+  .toolbar .grow { margin-left: auto; }
+  .btn { background: #0f0f0f; border: 1px solid var(--line); color: var(--fg); padding: 9px 14px; font-family: inherit; font-size: 11px; border-radius: 4px; cursor: pointer; letter-spacing: 0.12em; text-transform: uppercase; }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn.primary { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 700; }
+  .btn.primary:hover { color: #000; opacity: 0.9; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-sm { padding: 5px 10px; font-size: 10px; letter-spacing: 0.08em; }
+  .count { color: var(--mute); font-size: 11px; letter-spacing: 0.14em; }
+
+  /* Vendor summary cards */
+  .vendors { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 18px; }
+  .v-card { background: var(--card); border: 1px solid var(--line); border-left: 4px solid; border-radius: 6px; padding: 14px 16px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .v-card.v-gelato   { border-left-color: var(--v-gelato); }
+  .v-card.v-printful { border-left-color: var(--v-printful); }
+  .v-card.v-suzuri   { border-left-color: var(--v-suzuri); }
+  .v-card .name { font-size: 13px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; }
+  .v-card .meta { color: var(--mute); font-size: 10px; letter-spacing: 0.12em; margin-top: 4px; }
+  .v-card .btn-sync { font-size: 10px; padding: 6px 10px; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--mute); font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; font-weight: 600; background: #080808; position: sticky; top: 0; z-index: 5; }
+  tbody tr:hover { background: #141414; }
+  td.num { font-variant-numeric: tabular-nums; text-align: right; }
+  td .uid { color: var(--mute); font-size: 10px; word-break: break-all; line-height: 1.3; display: block; margin-top: 4px; }
+  td .title { color: var(--fg); font-size: 12px; font-weight: 600; }
+  td .cat { display: inline-block; padding: 2px 8px; border: 1px solid var(--line); border-radius: 99px; color: var(--mute); font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; }
+  .vendor-pill { display: inline-block; padding: 3px 10px; border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; }
+  .vendor-pill.gelato   { background: rgba(255,90,60,0.15);  color: var(--v-gelato);   border:1px solid rgba(255,90,60,0.30); }
+  .vendor-pill.printful { background: rgba(91,141,239,0.15); color: var(--v-printful); border:1px solid rgba(91,141,239,0.30); }
+  .vendor-pill.suzuri   { background: rgba(126,179,58,0.15); color: var(--v-suzuri);   border:1px solid rgba(126,179,58,0.30); }
+  .flag { display: inline-block; padding: 3px 10px; border-radius: 99px; font-size: 10px; font-weight: 700; letter-spacing: 0.14em; }
+  .flag.jp { background: rgba(123,229,123,0.16); color: var(--jp); border: 1px solid rgba(123,229,123,0.30); }
+  .flag.intl { background: rgba(255,153,51,0.16); color: var(--intl); border: 1px solid rgba(255,153,51,0.30); }
+  .price-main { font-size: 13px; color: var(--fg); font-weight: 600; }
+  .price-alt { font-size: 11px; color: var(--mute); }
+  .delivery { font-size: 11px; color: var(--mute); }
+
+  .linked { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { background: #0f0f0f; border: 1px solid var(--line); border-radius: 4px; padding: 4px 8px; font-size: 10px; display: inline-flex; align-items: center; gap: 6px; }
+  .chip .name { color: var(--fg); }
+  .chip .brand { color: var(--accent); font-weight: 600; }
+  .chip .x { color: var(--mute); cursor: pointer; padding: 0 4px; }
+  .chip .x:hover { color: var(--red); }
+  .chip.inactive { opacity: 0.45; }
+
+  .empty { color: var(--mute); font-size: 11px; letter-spacing: 0.14em; padding: 60px; text-align: center; }
+  .err { color: var(--red); padding: 20px; text-align: center; }
+
+  /* Modal for link picker */
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.88); display: none; align-items: flex-start; justify-content: center; z-index: 1000; overflow-y: auto; padding: 60px 16px; }
+  .modal-bg.open { display: flex; }
+  .modal { background: #0c0c0c; border: 1px solid var(--line); border-radius: 12px; max-width: 720px; width: 100%; padding: 24px; }
+  .modal-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 16px; }
+  .modal-head h3 { margin: 0; font-size: 14px; letter-spacing: 0.18em; text-transform: uppercase; }
+  .modal-head .close { cursor: pointer; color: var(--mute); padding: 6px 14px; border: 1px solid var(--line); border-radius: 4px; }
+  .modal-head .close:hover { color: var(--fg); }
+  .modal input { background: #050505; border: 1px solid var(--line); color: var(--fg); padding: 10px 12px; font-family: inherit; font-size: 12px; border-radius: 4px; width: 100%; margin-bottom: 14px; }
+  .pick-list { max-height: 420px; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; }
+  .pick-row { padding: 10px 14px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; gap: 12px; cursor: pointer; }
+  .pick-row:hover { background: #141414; }
+  .pick-row:last-child { border-bottom: 0; }
+  .pick-row .info { flex: 1; min-width: 0; }
+  .pick-row .pname { color: var(--fg); font-size: 12px; }
+  .pick-row .pmeta { color: var(--mute); font-size: 10px; letter-spacing: 0.12em; margin-top: 2px; }
+  .target-hint { color: var(--mute); font-size: 11px; margin-bottom: 10px; }
+  .target-hint .uid-hint { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>MU · POD CATALOG</h1>
+  <div class="nav">
+    <a href="/admin/products">PRODUCTS</a>
+    <a href="/admin/bids">BIDS</a>
+    <a href="/admin/db">DB</a>
+    <a href="/admin/costs">COSTS</a>
+    <a href="/admin/pod" style="color:var(--accent)">POD</a>
+  </div>
+</header>
+<div class="wrap">
+  <div class="vendors">
+    <div class="v-card v-gelato">
+      <div>
+        <div class="name">GELATO</div>
+        <div class="meta" id="v-stat-gelato">— SKUs</div>
+      </div>
+      <button class="btn btn-sync" data-sync-vendor="gelato">🔄 SYNC</button>
+    </div>
+    <div class="v-card v-printful">
+      <div>
+        <div class="name">PRINTFUL</div>
+        <div class="meta" id="v-stat-printful">— SKUs</div>
+      </div>
+      <button class="btn btn-sync" data-sync-vendor="printful">🔄 SYNC</button>
+    </div>
+    <div class="v-card v-suzuri">
+      <div>
+        <div class="name">SUZURI</div>
+        <div class="meta" id="v-stat-suzuri">— SKUs</div>
+      </div>
+      <button class="btn btn-sync" data-sync-vendor="suzuri">🔄 SYNC</button>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <select id="vendor-filter">
+      <option value="">All vendors</option>
+      <option value="gelato">Gelato</option>
+      <option value="printful">Printful</option>
+      <option value="suzuri">SUZURI</option>
+    </select>
+    <select id="category-filter">
+      <option value="">All categories</option>
+      <option value="t-shirt">T-shirt</option>
+      <option value="hoodie">Hoodie</option>
+      <option value="sweatshirt">Sweatshirt</option>
+      <option value="tote">Tote</option>
+      <option value="mug">Mug</option>
+      <option value="canvas">Canvas</option>
+      <option value="poster">Poster</option>
+      <option value="other">Other</option>
+    </select>
+    <select id="country-filter">
+      <option value="">All origins</option>
+      <option value="JP">🇯🇵 JP only</option>
+      <option value="non-JP">Non-JP only</option>
+    </select>
+    <span class="count" id="count">—</span>
+    <div class="grow"></div>
+    <button class="btn primary" id="btn-sync-all">🔄 SYNC ALL VENDORS</button>
+  </div>
+
+  <div id="status"></div>
+  <table id="catalog-table" style="display:none">
+    <thead>
+      <tr>
+        <th style="width:8%">Vendor</th>
+        <th style="width:32%">Product</th>
+        <th style="width:9%">Cat</th>
+        <th style="width:9%">Origin</th>
+        <th style="width:11%" class="num">Wholesale</th>
+        <th style="width:8%">Delivery</th>
+        <th style="width:23%">Linked MU products</th>
+      </tr>
+    </thead>
+    <tbody id="catalog-body"></tbody>
+  </table>
+</div>
+
+<!-- Link picker modal -->
+<div class="modal-bg" id="link-modal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>Link to MU product</h3>
+      <span class="close" id="link-close">CLOSE</span>
+    </div>
+    <div class="target-hint" id="target-hint"></div>
+    <input id="pick-search" placeholder="Search by name or brand (e.g. mugen 0042)">
+    <div class="pick-list" id="pick-list"></div>
+  </div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+
+const USD_JPY = 160;
+const tokenFromUrl = () => new URLSearchParams(location.search).get('token') || '';
+const adminQs = (extra) => {
+  const t = tokenFromUrl();
+  const p = new URLSearchParams();
+  if (t) p.set('token', t);
+  if (extra) Object.entries(extra).forEach(([k, v]) => p.set(k, v));
+  const s = p.toString();
+  return s ? `?${s}` : '';
+};
+
+let allItems = [];
+let allProducts = [];
+let pickContext = { vendor: null, uid: null, title: '' };
+
+function fmtPrice(p, cur) {
+  if (cur === 'USD') return `$${p.toFixed(2)}`;
+  if (cur === 'JPY') return `¥${Math.round(p).toLocaleString()}`;
+  return `${p.toFixed(2)} ${cur}`;
+}
+function fmtAltPrice(p, cur) {
+  if (cur === 'USD') return `≈¥${Math.round(p * USD_JPY).toLocaleString()}`;
+  if (cur === 'JPY') return `≈$${(p / USD_JPY).toFixed(2)}`;
+  return '';
+}
+function timeAgo(iso) {
+  if (!iso) return '';
+  const s = parseInt(iso, 10);
+  if (isNaN(s)) return iso;
+  const now = Math.floor(Date.now() / 1000);
+  const d = now - s;
+  if (d < 60)    return `${d}s ago`;
+  if (d < 3600)  return `${Math.floor(d / 60)}m ago`;
+  if (d < 86400) return `${Math.floor(d / 3600)}h ago`;
+  return `${Math.floor(d / 86400)}d ago`;
+}
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function renderRow(it) {
+  const isJp = it.production_country === 'JP';
+  const flag = isJp ? `<span class="flag jp">🇯🇵 ${it.production_country}</span>`
+                    : `<span class="flag intl">${it.production_country}</span>`;
+  const linkedHtml = (it.linked_products || []).map(p => `
+    <span class="chip ${p.active ? '' : 'inactive'}">
+      <span class="brand">${escapeHtml(p.brand)}#${p.drop_num}</span>
+      <span class="name">${escapeHtml(p.name)}</span>
+      <span class="x" title="Unlink" data-pid="${p.id}" data-vendor="${escapeHtml(it.vendor)}" data-uid="${escapeHtml(it.uid)}">✕</span>
+    </span>`).join('');
+  return `
+    <tr data-vendor="${escapeHtml(it.vendor)}" data-cat="${escapeHtml(it.category || '')}" data-country="${escapeHtml(it.production_country)}">
+      <td><span class="vendor-pill ${it.vendor}">${it.vendor}</span></td>
+      <td>
+        <div class="title">${escapeHtml(it.title)}</div>
+        <div class="uid">${escapeHtml(it.uid)}</div>
+      </td>
+      <td><span class="cat">${escapeHtml(it.category || '—')}</span></td>
+      <td>${flag}</td>
+      <td class="num">
+        <div class="price-main">${fmtPrice(it.price_value, it.price_currency)}</div>
+        <div class="price-alt">${fmtAltPrice(it.price_value, it.price_currency)}</div>
+      </td>
+      <td><span class="delivery">${it.min_delivery_days}–${it.max_delivery_days}d</span></td>
+      <td>
+        <div class="linked">
+          ${linkedHtml || '<span class="count" style="font-size:10px">— none</span>'}
+          <button class="btn btn-sm" data-link-vendor="${escapeHtml(it.vendor)}" data-link-uid="${escapeHtml(it.uid)}" data-link-title="${escapeHtml(it.title)}">+ LINK</button>
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function applyFilters() {
+  const vendor  = $('#vendor-filter').value;
+  const cat     = $('#category-filter').value;
+  const country = $('#country-filter').value;
+  let shown = 0;
+  for (const tr of $('#catalog-body').querySelectorAll('tr')) {
+    let ok = true;
+    if (vendor  && vendor  !== tr.dataset.vendor) ok = false;
+    if (cat     && cat     !== tr.dataset.cat)    ok = false;
+    if (country === 'JP'     && tr.dataset.country !== 'JP') ok = false;
+    if (country === 'non-JP' && tr.dataset.country === 'JP') ok = false;
+    tr.style.display = ok ? '' : 'none';
+    if (ok) shown++;
+  }
+  $('#count').textContent = `${shown} of ${allItems.length} SKUs`;
+}
+
+function updateVendorStats() {
+  const grouped = { gelato: [], printful: [], suzuri: [] };
+  for (const it of allItems) {
+    if (grouped[it.vendor]) grouped[it.vendor].push(it);
+  }
+  for (const v of Object.keys(grouped)) {
+    const arr = grouped[v];
+    const newest = arr.reduce((acc, it) => Math.max(acc, parseInt(it.last_priced_at || '0', 10)), 0);
+    const txt = arr.length
+      ? `${arr.length} SKUs · synced ${timeAgo(String(newest))}`
+      : 'not synced yet';
+    $(`#v-stat-${v}`).textContent = txt;
+  }
+}
+
+async function loadCatalog() {
+  const status = $('#status');
+  status.innerHTML = '<div class="empty">LOADING…</div>';
+  try {
+    const r = await fetch(`/api/admin/pod/catalog${adminQs()}`);
+    const data = await r.json();
+    if (data.error) { status.innerHTML = `<div class="err">${escapeHtml(data.error)}</div>`; return; }
+    allItems = data.items || [];
+    if (allItems.length === 0) {
+      status.innerHTML = '<div class="empty">CATALOG EMPTY · CLICK SYNC TO POPULATE</div>';
+      $('#catalog-table').style.display = 'none';
+      $('#count').textContent = '0 SKUs';
+      updateVendorStats();
+      return;
+    }
+    $('#catalog-body').innerHTML = allItems.map(renderRow).join('');
+    $('#catalog-table').style.display = '';
+    status.innerHTML = '';
+    applyFilters();
+    updateVendorStats();
+  } catch (e) {
+    status.innerHTML = `<div class="err">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function syncVendor(vendor, btn) {
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = '⏳ Syncing…';
+  try {
+    const r = await fetch(`/api/admin/pod/sync${adminQs({vendor})}`, { method: 'POST' });
+    const data = await r.json();
+    if (data.error) { alert('Sync failed: ' + data.error); return; }
+    const okN  = (data.synced || []).length;
+    const errN = (data.errors || []).length;
+    btn.textContent = `✓ ${okN}` + (errN ? ` (${errN} err)` : '');
+    if (errN && data.errors[0]) console.warn('Sync errors:', data.errors);
+    setTimeout(() => { btn.textContent = orig; }, 2500);
+    await loadCatalog();
+  } catch (e) {
+    alert('Sync error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    if (btn.textContent.startsWith('⏳')) btn.textContent = orig;
+  }
+}
+
+async function loadProducts() {
+  if (allProducts.length) return;
+  const r = await fetch(`/api/admin/products${adminQs({limit:'500', no_summary:'1'})}`);
+  const data = await r.json();
+  allProducts = data.products || [];
+}
+
+function renderPicker(filter) {
+  const f = (filter || '').toLowerCase();
+  const items = allProducts.filter(p => {
+    if (!f) return true;
+    return (p.name || '').toLowerCase().includes(f)
+        || (p.brand || '').toLowerCase().includes(f)
+        || String(p.drop_num).includes(f)
+        || String(p.id) === f;
+  }).slice(0, 80);
+  $('#pick-list').innerHTML = items.map(p => `
+    <div class="pick-row" data-pid="${p.id}">
+      <div class="info">
+        <div class="pname">${escapeHtml(p.name)}</div>
+        <div class="pmeta">${escapeHtml(p.brand)} · #${p.drop_num} · ¥${(p.price_jpy||0).toLocaleString()} · id ${p.id}</div>
+      </div>
+      <span class="btn btn-sm primary">LINK</span>
+    </div>`).join('') || '<div class="empty">No matches</div>';
+}
+
+async function openPicker(vendor, uid, title) {
+  pickContext = { vendor, uid, title };
+  $('#target-hint').innerHTML =
+    `Linking to <span class="vendor-pill ${vendor}">${vendor}</span> · <span class="uid-hint">${escapeHtml(title)}</span>`;
+  $('#link-modal').classList.add('open');
+  $('#pick-search').value = '';
+  $('#pick-list').innerHTML = '<div class="empty">LOADING…</div>';
+  await loadProducts();
+  renderPicker('');
+  $('#pick-search').focus();
+}
+
+async function linkProduct(pid) {
+  const r = await fetch(`/api/admin/pod/link${adminQs()}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      product_id: pid,
+      vendor: pickContext.vendor,
+      pod_uid: pickContext.uid,
+    }),
+  });
+  const data = await r.json();
+  if (data.error) { alert('Link failed: ' + data.error); return; }
+  $('#link-modal').classList.remove('open');
+  await loadCatalog();
+}
+
+async function unlinkProduct(pid, vendor, uid) {
+  if (!confirm(`Unlink this product from the ${vendor} SKU?`)) return;
+  const r = await fetch(`/api/admin/pod/unlink${adminQs()}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ product_id: pid, vendor, pod_uid: uid }),
+  });
+  const data = await r.json();
+  if (data.error) { alert('Unlink failed: ' + data.error); return; }
+  await loadCatalog();
+}
+
+// Wire up
+$('#btn-sync-all').addEventListener('click', e => syncVendor('all', e.target));
+document.querySelectorAll('[data-sync-vendor]').forEach(btn => {
+  btn.addEventListener('click', () => syncVendor(btn.dataset.syncVendor, btn));
+});
+$('#vendor-filter').addEventListener('change', applyFilters);
+$('#category-filter').addEventListener('change', applyFilters);
+$('#country-filter').addEventListener('change', applyFilters);
+$('#link-close').addEventListener('click', () => $('#link-modal').classList.remove('open'));
+$('#link-modal').addEventListener('click', e => { if (e.target.id === 'link-modal') $('#link-modal').classList.remove('open'); });
+$('#pick-search').addEventListener('input', e => renderPicker(e.target.value));
+
+document.addEventListener('click', e => {
+  const linkBtn = e.target.closest('[data-link-uid]');
+  if (linkBtn) {
+    openPicker(linkBtn.dataset.linkVendor, linkBtn.dataset.linkUid, linkBtn.dataset.linkTitle);
+    return;
+  }
+  const pickRow = e.target.closest('.pick-row');
+  if (pickRow) { linkProduct(parseInt(pickRow.dataset.pid, 10)); return; }
+  const unlinkX = e.target.closest('.chip .x');
+  if (unlinkX) {
+    unlinkProduct(parseInt(unlinkX.dataset.pid, 10), unlinkX.dataset.vendor, unlinkX.dataset.uid);
+  }
+});
+
+loadCatalog();
+</script>
+</body>
+</html>
