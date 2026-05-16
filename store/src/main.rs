@@ -12153,17 +12153,19 @@ fn donation_destination_for(conn: &Connection, source: &str) -> String {
     "pending-partner-choice".to_string()
 }
 
-/// Constitution §27 accrual: insert one donation_ledger row for this sale.
-/// gross_jpy = what the buyer paid (incl. tax). cost_jpy = an honest estimate
-/// of fulfillment cost (Printful base + Stripe 3.6% + 10% buffer for refunds/
-/// printing errors). Destination is auto-resolved from source:
-///   MUGEN / MUON / MA / you → 弟子屈町 (Constitution §27 commitment)
-///   collab partners → cv_config['donation_dest__<source>'] override
-/// Returns the donation_jpy that was accrued (0 if no profit, or if a
-/// duplicate sale_ref was deduped by the UNIQUE constraint).
+/// Constitution §27 accrual: insert donation_ledger row(s) for this sale.
+/// Hybrid 50/50 split (2026-05-16):
+///   MU-brand sources (mugen/muon/ma/you) → single row, full donation to
+///     弟子屈町 (the original §27 commitment, unchanged)
+///   Collab partner sources (kokon/sweep/jiuflow/…) → TWO rows:
+///     • ¥(donation/2) to 弟子屈町 (MU's narrative anchor)
+///     • ¥(donation − half) to partner-chosen destination (community tie)
+///   The remainder takes the rounding ¥1 so totals reconcile exactly.
 ///
-/// Idempotent on (source, sale_ref) — re-running the webhook never double-
-/// accrues.
+/// Returns total donation_jpy accrued across all rows (= profit / 2).
+///
+/// Idempotent on each row's (source, sale_ref+suffix) — webhook retries
+/// don't double-accrue.
 fn record_donation_accrual(
     conn: &Connection,
     source: &str,
@@ -12173,25 +12175,78 @@ fn record_donation_accrual(
     project_tag: Option<&str>,
 ) -> i64 {
     let profit = (gross_jpy - cost_jpy).max(0);
-    let donation = profit / 2;  // §27: 50%
-    if donation <= 0 { return 0; }
-    let destination = donation_destination_for(conn, source);
-    // Idempotent: UNIQUE(source, sale_ref) guarantees only one row per sale.
+    let total = profit / 2;  // §27: 50%
+    if total <= 0 { return 0; }
     let now = chrono_now();
-    let inserted = conn.execute(
+
+    // Decide split: collab partner sources get hybrid; MU-brand sources
+    // (and bare 'collab' fallback) keep single-row 弟子屈.
+    let is_partner_split = matches!(source, "kokon" | "sweep" | "jiuflow");
+
+    if !is_partner_split {
+        // MU-brand single-row path: full donation to 弟子屈町.
+        let destination = donation_destination_for(conn, source);
+        let inserted = conn.execute(
+            "INSERT OR IGNORE INTO donation_ledger
+             (source, sale_ref, gross_jpy, cost_jpy, profit_jpy, donation_jpy,
+              status, project_tag, destination, accrued_at)
+             VALUES (?, ?, ?, ?, ?, ?, 'accrued', ?, ?, ?)",
+            params![source, sale_ref, gross_jpy, cost_jpy, profit, total,
+                    project_tag, destination, now],
+        ).unwrap_or(0);
+        if inserted > 0 {
+            eprintln!("[§27] accrued ¥{} ({}|{}) → {} — profit ¥{} of ¥{} gross",
+                total, source, sale_ref, destination, profit, gross_jpy);
+            return total;
+        }
+        return 0;
+    }
+
+    // Hybrid 50/50 split — collab partner.
+    let teshikaga_share = total / 2;
+    let partner_share = total - teshikaga_share;  // takes the rounding ¥1
+    let partner_dest = donation_destination_for(conn, source);
+
+    // Row 1: 弟子屈町 (suffix "#t" keeps UNIQUE(source, sale_ref) intact)
+    let _ = conn.execute(
+        "INSERT OR IGNORE INTO donation_ledger
+         (source, sale_ref, gross_jpy, cost_jpy, profit_jpy, donation_jpy,
+          status, project_tag, destination, accrued_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'accrued', ?, '弟子屈町', ?)",
+        params![source, format!("{}#t", sale_ref),
+                gross_jpy, cost_jpy, profit, teshikaga_share,
+                project_tag, now],
+    );
+    // Row 2: partner-chosen destination
+    let _ = conn.execute(
         "INSERT OR IGNORE INTO donation_ledger
          (source, sale_ref, gross_jpy, cost_jpy, profit_jpy, donation_jpy,
           status, project_tag, destination, accrued_at)
          VALUES (?, ?, ?, ?, ?, ?, 'accrued', ?, ?, ?)",
-        params![source, sale_ref, gross_jpy, cost_jpy, profit, donation,
-                project_tag, destination, now],
-    ).unwrap_or(0);
-    if inserted > 0 {
-        eprintln!("[§27] accrued ¥{} ({}|{}) → {} — profit ¥{} of ¥{} gross",
-            donation, source, sale_ref, destination, profit, gross_jpy);
-        donation
-    } else {
-        0
+        params![source, format!("{}#p", sale_ref),
+                gross_jpy, cost_jpy, profit, partner_share,
+                project_tag, partner_dest, now],
+    );
+    eprintln!("[§27] hybrid ¥{}/¥{} ({}|{}) → 弟子屈町 + {} — profit ¥{} of ¥{} gross",
+        teshikaga_share, partner_share, source, sale_ref, partner_dest, profit, gross_jpy);
+    total
+}
+
+/// Seed partner default donation destinations on startup. Idempotent —
+/// uses `INSERT OR IGNORE` so yuki's later admin overrides (cv_set) are
+/// never clobbered.
+fn seed_donation_destinations(conn: &Connection) {
+    let seeds: &[(&str, &str)] = &[
+        ("donation_dest__kokon",   "港区社会福祉協議会 こども宅食"),
+        ("donation_dest__sweep",   "SJJJF 公益法人化推進"),
+        ("donation_dest__jiuflow", "SJJJF 公益法人化推進"),
+    ];
+    for (key, value) in seeds {
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO cv_config (key, value, updated_at, reason)
+             VALUES (?, ?, ?, '§27 hybrid split seed (2026-05-16)')",
+            params![key, value, chrono_now()],
+        );
     }
 }
 
@@ -40966,6 +41021,8 @@ async fn main() {
     // (2026-05-16) Per-partner donation recipient: MUGEN/MUON/MA/you → 弟子屈,
     //   collab partners → recipient picked by the partner (cv_config map).
     let _ = conn.execute("ALTER TABLE donation_ledger ADD COLUMN destination TEXT", []);
+    // (2026-05-16) Seed default partner destinations — overridable via cv_set.
+    seed_donation_destinations(&conn);
     conn.execute_batch("
 
         -- MA Lottery (4/7 Founder Relay): 100日に1回 ランダム1人に MA を贈与。
