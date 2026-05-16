@@ -10417,7 +10417,7 @@ async fn handle_you_purchase_webhook(db: Db, design_id: i64, session: serde_json
   <p style="font-size:12px;line-height:1.85;opacity:0.75;margin-bottom:24px">
     7〜14 営業日で世界配送。Printful より発送します。<br>
     NFT 証明書（Soulbound）は発送後にお送りします。<br><br>
-    あなたは MU の所有者です。<a href="https://wearmu.com/you" style="color:#e6c449">MU × YOU</a> は今日からあなたにとって <strong>一生無料</strong> です。
+    あなたは MU の所有者です。 支払額分の PT が貯まりました — <a href="https://wearmu.com/you" style="color:#e6c449">MU × YOU</a> の生成は 30 PT/SKU で何度でもできます。
   </p>
 </div>"#,
             name = design_name, serial = serial, size = size,
@@ -20955,7 +20955,7 @@ async fn you_subscribe(
   </p>
   <div style="margin-top:24px;padding:16px 20px;background:#1C1C1C;border-left:2px solid #e6c449;font-size:11px;line-height:1.85;opacity:0.85">
     <strong>無料トライアルは 30 日間。</strong><br>
-    その間に MU の T シャツを 1 着でも手に入れていただければ、MU × YOU は <strong>一生無料</strong>になります。
+    MU Tシャツを買うと支払額分の PT が貯まります (¥1 = 1 PT)。 1 SKU 作成は 30 PT、 ¥6,800 で 226 回生成。
   </div>
   <a href="https://wearmu.com/you?t={tk}" style="display:inline-block;margin-top:32px;background:#F5F5F0;color:#0A0A0A;padding:14px 28px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:700">
     本日の案を見る →
@@ -22586,7 +22586,7 @@ footer a:hover{{color:var(--y)}}
   <!-- /you -->
   <div class="section">
     <h2>/you サブスクリプション</h2>
-    <p>毎朝あなた専用の T シャツが AI に生成される /you。30日間無料トライアル、その後 ¥1,480/月 (または ¥980/月年払い)。MUGEN/MUON を 1 着でも買うと一生 ¥0。</p>
+    <p>毎朝あなた専用の T シャツが AI に生成される /you。 30 日無料トライアル、 その後 ¥1,480/月 (または ¥980/月年払い)。 MU Tシャツを買うと <strong style="color:#e6c449">支払額分の PT</strong> が貯まる (¥1 = 1 PT)、 1 SKU 作成 = 30 PT 消費。 PT は /you 生成・次の購入・collab 等に使える。</p>
     <div class="row"><span class="k">有料サブスク</span><span class="v {you_paid_class}">{you_paid_s}</span></div>
     <div class="row"><span class="k">ライフタイムメンバー</span><span class="v">{you_lifetime_s}</span></div>
     <div class="row"><span class="k">無料トライアル中</span><span class="v">{you_free_s}</span></div>
@@ -22700,7 +22700,7 @@ footer a:hover{{color:var(--y)}}
     <div class="row"><span class="k">/you — 毎朝あなた専用の AI デザイン</span><span class="v">30 日無料 → ¥1,480/月</span></div>
     <div class="row"><span class="k">バウンティ — バグ発見で MUGEN 報酬</span><span class="v">最大 5 着 + ¥50,000</span></div>
     <p style="margin-top:14px">
-      MUGEN/MUON/MA を 1 着でも買うと <strong style="color:var(--y)">/you が一生 ¥0</strong>。
+      MU Tシャツを買うと <strong style="color:var(--y)">支払額分の PT</strong> が貯まる (¥1 = 1 PT)、 1 SKU 作成 = 30 PT 消費。
       ご注文は <a href="/">wearmu.com</a> から、サブスクは <a href="/you">wearmu.com/you</a>。
     </p>
   </div>
@@ -22713,7 +22713,7 @@ footer a:hover{{color:var(--y)}}
       気に入ったら ¥6,800 でその場で発注、興味なければ翌朝の案を待つ。在庫はゼロ、未注文の案はその日でただ流れていきます。
     </p>
     <p style="margin-top:14px">
-      30 日トライアル無料。MU を 1 着買ったお客様は<strong style="color:var(--y)">一生 ¥0</strong>。
+      30 日トライアル無料。 MU Tシャツを買うと <strong style="color:var(--y)">支払額分の PT</strong> (¥1 = 1 PT) が貯まり、 1 SKU 作成 30 PT で何度でも生成できる。
       → <a href="/you">/you に登録する</a>
     </p>
   </div>
@@ -39106,8 +39106,8 @@ fn send_trial_reminder_if_needed(
   <p style="font-size:12px;line-height:1.85;opacity:0.78;margin-bottom:24px">
     ここまで {days_done} 案を見てきました。<br>
     その「あなただけの方向性」を <strong>失わない</strong> 方法はひとつ —<br>
-    MU の T シャツを 1 着、手に入れること。1 着で MU × YOU は <strong>一生無料</strong>。<br>
-    日割りすると 1 日 4 円以下。コーヒー 1 杯にも届きません。
+    MU の T シャツを 1 着、 手に入れること。 ¥6,800 払うと <strong>6,800 PT</strong> 貯まり、 1 SKU 作成 30 PT で <strong>226 回 生成</strong> できる。<br>
+    日割りすると 1 日 30 円以下。
   </p>
   <a href="https://wearmu.com/mugen" style="display:inline-block;background:#e6c449;color:#000;padding:14px 28px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:700;margin-right:8px">MUGEN を見る →</a>
   <a href="https://wearmu.com/ma" style="display:inline-block;border:1px solid rgba(255,255,255,0.2);color:#F5F5F0;padding:13px 22px;font-size:10px;letter-spacing:0.25em;text-transform:uppercase;text-decoration:none;opacity:0.8">週次 MA オークション</a>
@@ -39158,7 +39158,7 @@ fn send_trial_expired_notice_if_needed(
   <p style="font-size:12px;line-height:1.85;opacity:0.75;margin-bottom:24px">
     今日からは、毎朝 9 時のデザイン配信は一旦停止します。<br><br>
     <strong>もう一度 ON にする方法は 2 つ</strong>:<br>
-    ① MU の T シャツを <strong>1 着</strong> 買う (¥6,800〜) → <strong>一生 ¥0</strong>。<br>
+    ① MU の T シャツを <strong>1 着</strong> 買う (¥6,800〜) → 支払額分の PT が貯まり、 1 SKU 30 PT で生成できる (¥6,800 = 226 回)。<br>
     ② サブスク <strong>¥980/月</strong> (いつでも解約)。<br><br>
     どちらでも、明日からまた毎朝、あなただけの一着が届きます。
   </p>

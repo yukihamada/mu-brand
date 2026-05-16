@@ -325,11 +325,12 @@ footer a:hover{opacity:1}
       気に入った日だけ、 ¥6,800 で 1 着仕立てる。 30 日 経っても続けたい場合のみ料金 (詳細は登録後に表示)。
     </div>
     <details style="font-size:11px;opacity:0.55;text-align:left">
-      <summary style="cursor:pointer;letter-spacing:0.18em;text-transform:uppercase;list-style:none">+ 価格詳細を見る</summary>
+      <summary style="cursor:pointer;letter-spacing:0.18em;text-transform:uppercase;list-style:none">+ 価格詳細 / PT 経済を見る</summary>
       <div style="margin-top:10px;line-height:1.95">
-        ① <strong>MUGEN を 1 着 ¥5,000〜</strong> 買う → /you サブスクが一生 ¥0 (推奨)<br>
+        ① <strong>MU Tシャツを 1 着買う</strong> → 支払額分の <strong style="color:#e6c449">PT が貯まる</strong> (¥6,800 → 6,800 PT)<br>
         ② <strong>3 ヶ月パック ¥2,500</strong> (自動更新なし)<br>
-        ③ <strong>サブスク ¥1,480/月</strong> (いつでも解約 OK)
+        ③ <strong>サブスク ¥1,480/月</strong> (いつでも解約 OK)<br>
+        <span style="font-size:10.5px;opacity:0.75;margin-top:6px;display:block">— burn: <strong>1 SKU 作成 = 30 PT</strong>。 ¥6,800 = 226 回生成。 PT は /you 生成、 次の購入、 collab 等に使える MU エコ内ユニット。</span>
       </div>
     </details>
   </div>
@@ -362,10 +363,9 @@ footer a:hover{opacity:1}
     const a = d.active_subscribers || 0;
     const lf = d.lifetime_members || 0;
     const dg = d.designs_generated || 0;
-    if (a < 3) return; // hide until we have meaningful numbers
+    if (a < 10) return; // hide until we have meaningful numbers
     el.style.display = 'block';
     el.innerHTML = `今、${a} 人があなただけのデザインを育てています。 ` +
-      (lf > 0 ? `うち ${lf} 人が MU を所有して一生無料。 ` : '') +
       (dg > 0 ? `これまでに ${dg.toLocaleString()} 案を生成。` : '');
   } catch (_) { /* offline — leave the badge hidden */ }
 })();
@@ -489,7 +489,7 @@ footer a:hover{opacity:1}
         <div id="pv-progress-bar" style="display:none;height:3px;background:rgba(255,255,255,0.06);border-radius:2px;overflow:hidden">
           <div id="pv-progress-fill" style="height:100%;background:linear-gradient(90deg,#e6c449,#C8362C);width:0%;transition:width 0.6s ease"></div>
         </div>
-        <div id="pv-lifetime" style="display:none;font-size:11px;letter-spacing:0.15em;color:#5a9e6f;background:rgba(90,158,111,0.08);padding:8px 14px;border-left:2px solid #5a9e6f">★ MU 所有者 — 一生無料 (lifetime)</div>
+        <div id="pv-lifetime" style="display:none;font-size:11px;letter-spacing:0.15em;color:#5a9e6f;background:rgba(90,158,111,0.08);padding:8px 14px;border-left:2px solid #5a9e6f">★ MU 所有者 — PT 残高で生成 (1 SKU = 30 PT)</div>
         <!-- Paid-plan / portal switch — shows the right button for the user's current state. -->
         <div id="pv-paid-cta" style="display:none;margin:8px 0">
           <button id="paid-subscribe-btn" type="button" class="btn btn-secondary" style="font-size:11px;padding:9px 14px">¥980/月で続ける →</button>
