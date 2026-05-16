@@ -15052,55 +15052,6 @@ struct KichinanSampleBody {
     price_jpy: i64,
 }
 
-/// Catalog of kichinan_sample products. Each row gets seeded into the
-/// products table at startup so the existing checkout.session.completed
-/// webhook (which calls create_printful_order keyed on metadata.product_id)
-/// can fulfill orders end-to-end without any new fulfillment path.
-/// Tuple: (slug, drop_num, price_jpy, label, kind, design_slug)
-/// design_slug = which transparent print file under /proposals/design-X.png
-/// to use as the print artwork (reuse across products is fine).
-const KICHINAN_DESIGNS: &[(&str, i64, i64, &str, &str, &str)] = &[
-    ("a",  1, 5400, "後方支援 back-print",          "tee",            "a"),
-    ("b",  2, 6800, "one truck. 1962.",             "tee",            "b"),
-    ("c",  3, 5400, "workshirt patch · SINCE 1962", "tee",            "c"),
-    ("d",  4, 4500, "K-helmet quiet",               "tee",            "d"),
-    ("e",  5, 6800, "Yamaguchi coast",              "tee",            "e"),
-    ("f",  6, 5800, "K-emblem snapback cap",        "cap",            "d"),
-    ("g",  7, 4200, "後方支援 canvas tote",         "tote",           "a"),
-    ("h",  8, 9800, "後方支援 heavy hoodie",        "hoodie",         "a"),
-    ("i",  9, 2400, "K-emblem ceramic mug",         "mug",            "d"),
-    ("j", 10, 3800, "K-emblem cuffed beanie",       "beanie",         "d"),
-    ("k", 11, 6400, "後方支援 long-sleeve tee",     "longsleeve",     "a"),
-    // — Kids/character series (proposal only, partner OEM) seeded in LP only —
-    // L plush, M sticker, N reflector, O kid-tee proper, P kinchaku
-    // (left unchanged; M and O wired below when variants are confirmed)
-    // — 20 child-friendly Printful SKUs (Q-AJ) —
-    ("q", 12,  980, "きちにゃん vinyl die-cut sticker", "sticker",     "d"),
-    ("r", 13, 6800, "きちにゃん kids hoodie",        "kids_hoodie",    "d"),
-    ("s", 14, 5400, "きちにゃん kids long sleeve",   "kids_longsleeve","d"),
-    ("t", 15, 6400, "きちにゃん kids crewneck sweat","kids_sweat",     "d"),
-    ("u", 16, 3800, "きちにゃん baby onesie",        "baby_onesie",    "d"),
-    ("v", 17, 2800, "きちにゃん baby bib",           "baby_bib",       "d"),
-    ("w", 18, 2400, "きちにゃん mouse pad",          "mousepad",       "d"),
-    ("x", 19, 3400, "きちにゃん iPhone case",        "phonecase",      "d"),
-    ("y", 20, 2800, "きちにゃん hardcover notebook", "notebook",       "d"),
-    ("z", 21, 4800, "きちにゃん 100-piece puzzle",   "puzzle",         "d"),
-    ("aa",22, 4400, "きちにゃん throw pillow 40cm",  "pillow",         "d"),
-    ("ab",23, 6800, "きちにゃん sherpa blanket",     "blanket",        "d"),
-    ("ac",24,  880, "きちにゃん 38mm pin badge",     "pin",            "d"),
-    ("ad",25,  980, "きちにゃん square magnet",      "magnet",         "d"),
-    ("ae",26,  480, "きちにゃん postcard",           "postcard",       "d"),
-    ("af",27, 3400, "きちにゃん poster 30×45cm",     "poster",         "d"),
-    ("ag",28, 5800, "きちにゃん canvas 30×30cm",     "canvas",         "d"),
-    ("ah",29, 1800, "きちにゃん crew socks (kids)",  "socks",          "d"),
-    ("ai",30, 2200, "きちにゃん cotton bandana",     "bandana",        "d"),
-    ("aj",31, 3800, "きちにゃん kid tote 28×30cm",   "kids_tote",      "d"),
-    // — L/N/O/P upgraded from "partner-only" to Printful catalog —
-    ("l", 32, 5800, "きちにゃん plush 18cm",          "plush",          "d"),
-    ("n", 33, 1800, "きちにゃん acrylic charm",       "acrylic_charm",  "d"),
-    ("o", 34, 4200, "きちにゃん kids' Tシャツ",       "kids_tee",       "d"),
-    ("p", 35, 2800, "きちにゃん drawstring sport bag","drawstring",     "d"),
-];
 
 /// Idempotent: ensures one products row per kichinan design so Printful
 /// fulfillment piggybacks on the existing MUGEN/MA pipeline. design_url is
@@ -15162,39 +15113,6 @@ fn kichinan_brand_is_onesize(brand: &str) -> bool {
     )
 }
 
-fn seed_kichinan_sample_products(db: &Db) {
-    let conn = db.lock().unwrap();
-    for (slug, drop_num, price_jpy, label, kind, design_slug) in KICHINAN_DESIGNS {
-        let brand = kichinan_brand_for_kind(kind);
-        let exists: bool = conn.query_row(
-            "SELECT 1 FROM products WHERE brand=? AND drop_num=? LIMIT 1",
-            params![brand, drop_num], |r| r.get::<_, i64>(0),
-        ).is_ok();
-        if exists { continue; }
-        let now_s = chrono_now();
-        let design_url = format!("https://wearmu.com/proposals/design-{}.png", design_slug);
-        let mockup_url = format!("https://wearmu.com/proposals/mockup-{}.png", slug);
-        let _ = conn.execute(
-            "INSERT INTO products
-             (brand, drop_num, name, design_url, mockup_url, price_jpy, inventory, active, created_at, weather_data)
-             VALUES (?,?,?,?,?,?,?,?,?,?)",
-            params![
-                brand, drop_num,
-                format!("━◯━ MU × KICHINAN sample · {} · {}", slug.to_uppercase(), label),
-                design_url, mockup_url, price_jpy, 50, 0,  // active=0 so it stays off public listings
-                now_s,
-                serde_json::json!({
-                    "kind": format!("kichinan_{}", kind),
-                    "design_slug": design_slug,
-                    "license_status": "pending",
-                    "ip_owner": "Kichinan Group",
-                    "note": "Sample order only — public sales require licensing contract"
-                }).to_string(),
-            ],
-        );
-    }
-}
-
 /// POST /api/proposals/kichinan/sample — issues a Stripe Payment Link for
 /// a real T-shirt with the chosen design + size. Fulfillment is the standard
 /// MU webhook flow (checkout.session.completed → create_printful_order)
@@ -15204,14 +15122,17 @@ async fn proposal_kichinan_sample(
     Json(body): Json<KichinanSampleBody>,
 ) -> Response {
     let design_lower = body.design.to_lowercase();
-    let (drop_num, default_price, label, kind) = match KICHINAN_DESIGNS.iter()
-        .find(|(s, _, _, _, _, _)| *s == design_lower)
-        .map(|(_, d, p, l, k, _)| (*d, *p, *l, *k)) {
-        Some(v) => v,
-        None => return (StatusCode::BAD_REQUEST, "unknown design id").into_response(),
+    let (drop_num, default_price, label, kind): (i64, i64, String, String) = {
+        let conn = db.lock().unwrap();
+        match conn.query_row(
+            "SELECT drop_num, price_jpy, label, kind FROM proposal_skus WHERE slug='kichinan' AND letter=?",
+            params![design_lower],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?,
+                    r.get::<_, String>(2)?, r.get::<_, String>(3)?)),
+        ) { Ok(v) => v, Err(_) => return (StatusCode::BAD_REQUEST, "unknown design id").into_response() }
     };
     let price_jpy = if (400..=12000).contains(&body.price_jpy) { body.price_jpy } else { default_price };
-    let brand = kichinan_brand_for_kind(kind);
+    let brand = kichinan_brand_for_kind(&kind);
     let size = if kichinan_brand_is_onesize(brand) {
         "ONESIZE".to_string()
     } else {
@@ -15369,7 +15290,7 @@ async fn proposal_kichinan_status(State(db): State<Db>) -> impl IntoResponse {
         "approver_first_name": approver_name,
         "plan_tier": plan_tier,
         "products_active": active_count,
-        "products_total": KICHINAN_DESIGNS.len(),
+        "products_total": proposal_skus_for(&conn, "kichinan").len(),
     }))
 }
 
@@ -15406,7 +15327,7 @@ async fn proposal_kichinan_approve(
     };
     let ip = client_ip(&headers);
     let now = chrono_now();
-    let activated: usize = {
+    let (activated, products_total): (usize, usize) = {
         let conn = db.lock().unwrap();
         let _ = conn.execute(
             "INSERT INTO kichinan_approval
@@ -15422,10 +15343,12 @@ async fn proposal_kichinan_approve(
                 revoked_at=NULL",
             params![now, name, email, ip, plan, body.note.trim()],
         );
-        conn.execute(
+        let act = conn.execute(
             "UPDATE products SET active=1 WHERE brand LIKE 'kichinan_%' AND active=0",
             [],
-        ).unwrap_or(0)
+        ).unwrap_or(0);
+        let tot = proposal_skus_for(&conn, "kichinan").len();
+        (act, tot)
     };
     eprintln!("[kichinan] approved by {} <{}> plan={} activated_rows={}", name, email, plan, activated);
     let alert = format!(
@@ -15435,14 +15358,14 @@ async fn proposal_kichinan_approve(
          products activated: {}/{}\n\
          at: {}\n\
          next: 全 SKU が公式販売中 (https://wearmu.com/proposals/kichinan)",
-        name, email, plan, activated, KICHINAN_DESIGNS.len(), now,
+        name, email, plan, activated, products_total, now,
     );
     tokio::spawn(async move { send_telegram_message(&alert).await; });
     Json(serde_json::json!({
         "ok": true,
         "approved_at": now,
         "products_activated": activated,
-        "products_total": KICHINAN_DESIGNS.len(),
+        "products_total": products_total,
         "plan_tier": plan,
     })).into_response()
 }
@@ -15708,7 +15631,7 @@ async fn proposal_elsoul_status(State(db): State<Db>) -> impl IntoResponse {
     Json(serde_json::json!({
         "approved": approved, "approved_at": approved_at,
         "approver_first_name": approver_name, "plan_tier": plan_tier,
-        "products_active": active_count, "products_total": ELSOUL_DESIGNS.len(),
+        "products_active": active_count, "products_total": proposal_skus_for(&conn, "elsoul").len(),
         "public_url": "https://wearmu.com/elsoul",
     }))
 }
@@ -15735,7 +15658,7 @@ async fn proposal_elsoul_approve(
     };
     let ip = client_ip(&headers);
     let now = chrono_now();
-    let activated: usize = {
+    let (activated, products_total): (usize, usize) = {
         let conn = db.lock().unwrap();
         let _ = conn.execute(
             "INSERT INTO elsoul_approval
@@ -15747,15 +15670,17 @@ async fn proposal_elsoul_approve(
                 plan_tier=excluded.plan_tier, note=excluded.note, revoked_at=NULL",
             params![now, name, email, ip, plan, body.note.trim()],
         );
-        conn.execute(
+        let act = conn.execute(
             "UPDATE products SET active=1 WHERE brand LIKE 'elsoul_%' AND active=0",
             [],
-        ).unwrap_or(0)
+        ).unwrap_or(0);
+        let tot = proposal_skus_for(&conn, "elsoul").len();
+        (act, tot)
     };
     eprintln!("[elsoul] approved by {} <{}> plan={} activated={}", name, email, plan, activated);
     let alert = format!(
         "━◯━ elsoul collab APPROVED\napprover: {} <{}>\nplan: {}\nactivated: {}/{}\nat: {}\npublic LP: https://wearmu.com/elsoul",
-        name, email, plan, activated, ELSOUL_DESIGNS.len(), now,
+        name, email, plan, activated, products_total, now,
     );
     tokio::spawn(async move { send_telegram_message(&alert).await; });
     Json(serde_json::json!({
@@ -15779,50 +15704,7 @@ async fn proposal_elsoul_revoke(
     Json(serde_json::json!({ "ok": true, "revoked_at": now, "products_deactivated": deactivated })).into_response()
 }
 
-// ── ASOVIEW SKU catalog (18 designs) — kinds match kichinan_*_sample so
-//    Printful variant resolution piggybacks via brand-prefix normalization. ──
-//    (slug, drop_num, price_jpy, label, kind, design_slug)
-const ASOVIEW_DESIGNS: &[(&str, i64, i64, &str, &str, &str)] = &[
-    ("a", 1, 6400, "ikiruni asobiwo back-print",  "tee",        "a"),
-    ("b", 2, 6800, "7500 places map",             "tee",        "b"),
-    ("c", 3, 5400, "scan-to-play QR tee",         "tee",        "c"),
-    ("d", 4, 5400, "22 jouken icon grid",         "tee",        "d"),
-    ("e", 5, 6800, "off-day manifesto",           "tee",        "e"),
-    ("f", 6, 5800, "asoview crew polo",           "polo",       "f"),
-    ("g", 7, 4200, "gift tote",                   "tote",       "g"),
-    ("h", 8, 9800, "play-side reversible hoodie", "hoodie",     "h"),
-    ("i", 9, 5800, "orange snapback cap",         "cap",        "i"),
-    ("j",10, 4400, "yume miru no wa soto de",     "pillow",     "j"),
-    ("k",11, 6400, "ame demo asobu longsleeve",   "longsleeve", "k"),
-    ("l",12, 4800, "unwrap-me gift tee",          "tee",        "l"),
-    ("m",13,  980, "orange die-cut sticker",      "sticker",    "m"),
-    ("n",14, 2400, "asobu yotei mug",             "mug",        "n"),
-    ("o",15, 3800, "soto de asobu beanie",        "beanie",     "o"),
-    ("p",16, 4200, "ashita nani shite asobu kids","kids_tee",   "p"),
-    ("q",17, 3400, "jouken pin set 5",            "pin",        "q"),
-    ("r",18, 6800, "place-name limited tee",      "tee",        "r"),
-];
 
-const ELSOUL_DESIGNS: &[(&str, i64, i64, &str, &str, &str)] = &[
-    ("a", 1, 6400, "sustainable env manifesto",      "tee",        "a"),
-    ("b", 2, 7800, "300+ edge nodes map",            "tee",        "b"),
-    ("c", 3, 8800, "validator pubkey 1-of-1",        "tee",        "c"),
-    ("d", 4, 6400, "AS200261 commemorative",         "tee",        "d"),
-    ("e", 5, 5800, "green hosting certified",        "tee",        "e"),
-    ("f", 6, 6400, "ELSOUL crew polo Amsterdam",     "polo",       "f"),
-    ("g", 7, 6800, "Solana co-brand stripes",        "tee",        "g"),
-    ("h", 8, 9800, "validator night-ops hoodie",     "hoodie",     "h"),
-    ("i", 9, 5800, "Shinobi #3 commemorative cap",   "cap",        "i"),
-    ("j",10, 3400, "Skeet OSS contributor pin set",  "pin",        "j"),
-    ("k",11, 7800, "ERPC SLV Enterprise launch",     "tee",        "k"),
-    ("l",12, 6800, "Circle Alliance Partner",        "tee",        "l"),
-    ("m",13, 1800, "Green RPC sticker pack",         "sticker",    "m"),
-    ("n",14, 2400, "stake de seikatsu shiteru mug",  "mug",        "n"),
-    ("o",15, 3800, "Amsterdam 020 beanie",           "beanie",     "o"),
-    ("p",16, 4400, "epoch made nekasete pillow",     "pillow",     "p"),
-    ("q",17, 6400, "Cloudflare $250K commemorative", "tee",        "q"),
-    ("r",18, 6400, "off-chain demo off-grid janai",  "tee",        "r"),
-];
 
 fn proposal_brand_for_kind(slug_prefix: &str, kind: &str) -> String {
     // Mirrors kichinan_brand_for_kind but parametrized on slug.
@@ -15896,41 +15778,6 @@ fn proposal_brand_is_onesize(brand: &str) -> bool {
         || brand.ends_with("_flag_sample")
 }
 
-fn seed_proposal_sample_products(db: &Db, slug_prefix: &str,
-    designs: &[(&str, i64, i64, &str, &str, &str)],
-    ip_owner: &str,
-) {
-    let conn = db.lock().unwrap();
-    for (slug, drop_num, price_jpy, label, kind, design_slug) in designs {
-        let brand = proposal_brand_for_kind(slug_prefix, kind);
-        let exists: bool = conn.query_row(
-            "SELECT 1 FROM products WHERE brand=? AND drop_num=? LIMIT 1",
-            params![brand, drop_num], |r| r.get::<_, i64>(0),
-        ).is_ok();
-        if exists { continue; }
-        let now_s = chrono_now();
-        let design_url = format!("https://wearmu.com/proposals/design-{}.png", design_slug);
-        let mockup_url = format!("https://wearmu.com/proposals/{}-mockup-{}.png", slug_prefix, slug);
-        let _ = conn.execute(
-            "INSERT INTO products
-             (brand, drop_num, name, design_url, mockup_url, price_jpy, inventory, active, created_at, weather_data)
-             VALUES (?,?,?,?,?,?,?,?,?,?)",
-            params![
-                brand, drop_num,
-                format!("━◯━ MU × {} sample · {} · {}", ip_owner, slug.to_uppercase(), label),
-                design_url, mockup_url, price_jpy, 50, 0, now_s,
-                serde_json::json!({
-                    "kind": format!("{}_{}", slug_prefix, kind),
-                    "design_slug": design_slug,
-                    "license_status": "pending",
-                    "ip_owner": ip_owner,
-                    "note": "Sample / public order — public sales require approval on /proposals/<slug>"
-                }).to_string(),
-            ],
-        );
-    }
-}
-
 #[derive(Deserialize)]
 struct ProposalSampleBody {
     design: String,
@@ -15939,19 +15786,21 @@ struct ProposalSampleBody {
 }
 
 async fn issue_proposal_sample_link(
-    db: Db, slug_prefix: &'static str,
-    designs: &'static [(&'static str, i64, i64, &'static str, &'static str, &'static str)],
+    db: Db, slug_prefix: &str,
     body: ProposalSampleBody,
 ) -> Response {
     let design_lower = body.design.to_lowercase();
-    let (drop_num, default_price, label, kind) = match designs.iter()
-        .find(|(s, _, _, _, _, _)| *s == design_lower)
-        .map(|(_, d, p, l, k, _)| (*d, *p, *l, *k)) {
-        Some(v) => v,
-        None => return (StatusCode::BAD_REQUEST, "unknown design id").into_response(),
+    let (drop_num, default_price, label, kind): (i64, i64, String, String) = {
+        let conn = db.lock().unwrap();
+        match conn.query_row(
+            "SELECT drop_num, price_jpy, label, kind FROM proposal_skus WHERE slug=? AND letter=?",
+            params![slug_prefix, design_lower],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?,
+                    r.get::<_, String>(2)?, r.get::<_, String>(3)?)),
+        ) { Ok(v) => v, Err(_) => return (StatusCode::BAD_REQUEST, "unknown design id").into_response() }
     };
     let price_jpy = if (400..=12000).contains(&body.price_jpy) { body.price_jpy } else { default_price };
-    let brand = proposal_brand_for_kind(slug_prefix, kind);
+    let brand = proposal_brand_for_kind(slug_prefix, &kind);
     let size = if proposal_brand_is_onesize(&brand) {
         "ONESIZE".to_string()
     } else {
@@ -16026,10 +15875,10 @@ async fn issue_proposal_sample_link(
 }
 
 async fn proposal_asoview_sample(State(db): State<Db>, Json(body): Json<ProposalSampleBody>) -> Response {
-    issue_proposal_sample_link(db, "asoview", ASOVIEW_DESIGNS, body).await
+    issue_proposal_sample_link(db, "asoview", body).await
 }
 async fn proposal_elsoul_sample(State(db): State<Db>, Json(body): Json<ProposalSampleBody>) -> Response {
-    issue_proposal_sample_link(db, "elsoul", ELSOUL_DESIGNS, body).await
+    issue_proposal_sample_link(db, "elsoul", body).await
 }
 
 #[derive(Deserialize)]
@@ -16042,8 +15891,7 @@ struct ProposalBundleBody {
 /// (the whole asoview/elsoul drop in one checkout). Stripe caps line_items
 /// at 20 so 18 SKUs fits comfortably.
 async fn issue_proposal_bundle_link(
-    db: Db, slug_prefix: &'static str,
-    designs: &'static [(&'static str, i64, i64, &'static str, &'static str, &'static str)],
+    db: Db, slug_prefix: &str,
     body: ProposalBundleBody,
 ) -> Response {
     let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
@@ -16051,15 +15899,24 @@ async fn issue_proposal_bundle_link(
     let raw_size = body.size.trim().to_uppercase();
     let default_size = if ["S","M","L","XL"].contains(&raw_size.as_str()) { raw_size } else { "M".to_string() };
     let client = reqwest::Client::new();
-    // Step 1: create one Stripe price per design (1 → 18). Parallelizable
-    // but keep sequential to stay under Stripe's rate limit (default ~25/s).
-    let mut price_ids: Vec<(String, String, i64)> = Vec::new(); // (price_id, design, price_jpy)
+    // Pull SKUs for this partner from proposal_skus (single source of truth).
+    let designs: Vec<(String, i64, String, String)> = {
+        let conn = db.lock().unwrap();
+        proposal_skus_for(&conn, slug_prefix).into_iter()
+            .map(|(letter, _drop, price_jpy, label, kind, _ds)| (letter, price_jpy, label, kind))
+            .collect()
+    };
+    if designs.is_empty() {
+        return (StatusCode::NOT_FOUND, "no SKUs for this slug").into_response();
+    }
+    // Step 1: create one Stripe price per design.
+    let mut price_ids: Vec<(String, String, i64)> = Vec::new();
     let mut total_jpy: i64 = 0;
-    for (slug, _drop, price_jpy, label, kind, _ds) in designs {
+    for (letter, price_jpy, label, kind) in &designs {
         let brand = proposal_brand_for_kind(slug_prefix, kind);
         let size = if proposal_brand_is_onesize(&brand) { "ONESIZE".to_string() } else { default_size.clone() };
         let product_name = format!("MU x {} - {} - {} - {}",
-            slug_prefix.to_uppercase(), slug.to_uppercase(), label, size);
+            slug_prefix.to_uppercase(), letter.to_uppercase(), label, size);
         let price_form: Vec<(&str, String)> = vec![
             ("currency", "jpy".into()),
             ("unit_amount", price_jpy.to_string()),
@@ -16073,7 +15930,7 @@ async fn issue_proposal_bundle_link(
         let status = resp.status();
         let raw = resp.text().await.unwrap_or_default();
         if !status.is_success() {
-            eprintln!("[{}_bundle] stripe price {} for {} → {}", slug_prefix, status, slug, raw.chars().take(300).collect::<String>());
+            eprintln!("[{}_bundle] stripe price {} for {} → {}", slug_prefix, status, letter, raw.chars().take(300).collect::<String>());
             return (StatusCode::BAD_GATEWAY, format!("stripe price {}: {}", status, raw.chars().take(300).collect::<String>())).into_response();
         }
         let pid: String = serde_json::from_str::<serde_json::Value>(&raw)
@@ -16082,7 +15939,7 @@ async fn issue_proposal_bundle_link(
             return (StatusCode::BAD_GATEWAY, "stripe returned no price id (bundle)").into_response();
         }
         total_jpy += *price_jpy;
-        price_ids.push((pid, slug.to_string(), *price_jpy));
+        price_ids.push((pid, letter.clone(), *price_jpy));
     }
     // Step 2: build a Checkout Session (cap 100 line_items vs Payment Links' 20).
     let mut cs_form: Vec<(&str, String)> = vec![
@@ -16122,10 +15979,10 @@ async fn issue_proposal_bundle_link(
 }
 
 async fn proposal_asoview_bundle(State(db): State<Db>, Json(body): Json<ProposalBundleBody>) -> Response {
-    issue_proposal_bundle_link(db, "asoview", ASOVIEW_DESIGNS, body).await
+    issue_proposal_bundle_link(db, "asoview", body).await
 }
 async fn proposal_elsoul_bundle(State(db): State<Db>, Json(body): Json<ProposalBundleBody>) -> Response {
-    issue_proposal_bundle_link(db, "elsoul", ELSOUL_DESIGNS, body).await
+    issue_proposal_bundle_link(db, "elsoul", body).await
 }
 
 // ── ELE pet-line approval gate ────────────────────────────────────────────
@@ -16174,7 +16031,7 @@ async fn proposal_ele_status(State(db): State<Db>) -> impl IntoResponse {
     Json(serde_json::json!({
         "approved": approved, "approved_at": approved_at,
         "approver_first_name": approver_name, "plan_tier": plan_tier,
-        "products_active": active_count, "products_total": ELE_DESIGNS.len(),
+        "products_active": active_count, "products_total": proposal_skus_for(&conn, "ele").len(),
         "public_url": "https://wearmu.com/ele",
     }))
 }
@@ -16199,7 +16056,7 @@ async fn proposal_ele_approve(
     let plan = if plan.is_empty() { "starter".into() } else { plan };
     let ip = client_ip(&headers);
     let now = chrono_now();
-    let activated: usize = {
+    let (activated, products_total): (usize, usize) = {
         let conn = db.lock().unwrap();
         let _ = conn.execute(
             "INSERT INTO ele_approval
@@ -16211,15 +16068,17 @@ async fn proposal_ele_approve(
                 plan_tier=excluded.plan_tier, note=excluded.note, revoked_at=NULL",
             params![now, name, email, ip, plan, body.note.trim()],
         );
-        conn.execute(
+        let act = conn.execute(
             "UPDATE products SET active=1 WHERE brand LIKE 'ele_%' AND active=0",
             [],
-        ).unwrap_or(0)
+        ).unwrap_or(0);
+        let tot = proposal_skus_for(&conn, "ele").len();
+        (act, tot)
     };
     eprintln!("[ele] approved by {} <{}> activated={}", name, email, activated);
     let alert = format!(
         "━◯━ ele pet-line APPROVED\napprover: {} <{}>\nactivated: {}/{}\nat: {}\npublic LP: https://wearmu.com/ele",
-        name, email, activated, ELE_DESIGNS.len(), now,
+        name, email, activated, products_total, now,
     );
     tokio::spawn(async move { send_telegram_message(&alert).await; });
     Json(serde_json::json!({
@@ -16250,29 +16109,12 @@ async fn ele_public_page(State(db): State<Db>) -> Response {
     Html(include_str!("../static/proposals/ele.html")).into_response()
 }
 
-// 12 SKU pet line for ELE (bichon × poodle mix, 2yo). Kinds mirror the
-// kichinan catalog so the existing variant-id table services them via the
-// ele_*/asoview_*/elsoul_* → kichinan_* normalization in create_printful_order.
-const ELE_DESIGNS: &[(&str, i64, i64, &str, &str, &str)] = &[
-    ("a", 1, 5400, "ele name back-print",         "tee",        "a"),
-    ("b", 2, 5400, "MIX = BEST",                  "tee",        "b"),
-    ("c", 3, 4800, "I'm ELE's human (pair tee)",  "tee",        "c"),
-    ("d", 4, 2800, "ELE bandana",                 "sticker",    "d"), // bandana fallback → sticker (small)
-    ("e", 5, 4200, "paw trace tote",              "tote",       "e"),
-    ("f", 6, 7800, "ELE name embroidery polo",    "polo",       "f"),
-    ("g", 7, 5400, "bichon x poodle = ele math",  "tee",        "g"),
-    ("h", 8, 2400, "ELE silhouette mug",          "mug",        "h"),
-    ("i", 9, 5400, "Walked by ELE",               "tee",        "i"),
-    ("j",10, 1800, "ELE sticker pack 5",          "sticker",    "j"),
-    ("k",11, 9800, "Still sleeping with ELE",     "hoodie",     "k"),
-    ("l",12, 5800, "ELE walk reflective cap",     "cap",        "l"),
-];
 
 async fn proposal_ele_sample(State(db): State<Db>, Json(body): Json<ProposalSampleBody>) -> Response {
-    issue_proposal_sample_link(db, "ele", ELE_DESIGNS, body).await
+    issue_proposal_sample_link(db, "ele", body).await
 }
 async fn proposal_ele_bundle(State(db): State<Db>, Json(body): Json<ProposalBundleBody>) -> Response {
-    issue_proposal_bundle_link(db, "ele", ELE_DESIGNS, body).await
+    issue_proposal_bundle_link(db, "ele", body).await
 }
 
 // ── NOJIMAHAL — 野島繁昭プロデュース mode-Y3 + BJJ 20 SKU brand ────────────
@@ -16321,7 +16163,7 @@ async fn proposal_nojimahal_status(State(db): State<Db>) -> impl IntoResponse {
     Json(serde_json::json!({
         "approved": approved, "approved_at": approved_at,
         "approver_first_name": approver_name, "plan_tier": plan_tier,
-        "products_active": active_count, "products_total": NOJIMAHAL_DESIGNS.len(),
+        "products_active": active_count, "products_total": proposal_skus_for(&conn, "nojimahal").len(),
         "public_url": "https://wearmu.com/nojimahal",
     }))
 }
@@ -16346,7 +16188,7 @@ async fn proposal_nojimahal_approve(
     let plan = if plan.is_empty() { "starter".into() } else { plan };
     let ip = client_ip(&headers);
     let now = chrono_now();
-    let activated: usize = {
+    let (activated, products_total): (usize, usize) = {
         let conn = db.lock().unwrap();
         let _ = conn.execute(
             "INSERT INTO nojimahal_approval
@@ -16358,15 +16200,17 @@ async fn proposal_nojimahal_approve(
                 plan_tier=excluded.plan_tier, note=excluded.note, revoked_at=NULL",
             params![now, name, email, ip, plan, body.note.trim()],
         );
-        conn.execute(
+        let act = conn.execute(
             "UPDATE products SET active=1 WHERE brand LIKE 'nojimahal_%' AND active=0",
             [],
-        ).unwrap_or(0)
+        ).unwrap_or(0);
+        let tot = proposal_skus_for(&conn, "nojimahal").len();
+        (act, tot)
     };
     eprintln!("[nojimahal] approved by {} <{}>", name, email);
     let alert = format!(
         "━◯━ NOJIMAHAL APPROVED\napprover: {} <{}>\nactivated: {}/{}\nat: {}\npublic LP: https://wearmu.com/nojimahal",
-        name, email, activated, NOJIMAHAL_DESIGNS.len(), now,
+        name, email, activated, products_total, now,
     );
     tokio::spawn(async move { send_telegram_message(&alert).await; });
     Json(serde_json::json!({
@@ -16397,37 +16241,12 @@ async fn nojimahal_public_page(State(db): State<Db>) -> Response {
     Html(include_str!("../static/proposals/nojimahal.html")).into_response()
 }
 
-// 20 SKU mode-Y3 + BJJ lineup. Kinds map through proposal_brand_for_kind
-// and create_printful_order's variant_id match (with nojimahal_ → kichinan_
-// brand-prefix normalization).
-const NOJIMAHAL_DESIGNS: &[(&str, i64, i64, &str, &str, &str)] = &[
-    ("a",  1, 11800, "Signature Rashguard LS",      "rashguard_ls",  "a"),
-    ("b",  2,  8800, "Athletic Tee (AOP)",          "athletic_tee",  "b"),
-    ("c",  3,  9800, "Fight Shorts (long)",         "fight_shorts",  "c"),
-    ("d",  4, 10800, "Grappling Spats",             "spats",         "d"),
-    ("e",  5, 12800, "Heavy Hoodie",                "hoodie",        "e"),
-    ("f",  6, 18800, "Bomber Jacket (mode)",        "bomber_jacket", "f"),
-    ("g",  7, 14800, "Windbreaker (lightweight)",   "windbreaker",   "g"),
-    ("h",  8, 10800, "Track Pants (AOP)",           "track_pants",   "h"),
-    ("i",  9, 11800, "Fleece Sweatpants",           "sweatpants",    "i"),
-    ("j", 10,  9800, "Crewneck Sweatshirt",         "crewneck",      "j"),
-    ("k", 11,  6800, "Heavy Cotton Tee",            "tee",           "k"),
-    ("l", 12,  8800, "Long Sleeve Tee",             "longsleeve",    "l"),
-    ("m", 13,  9800, "Open Collar Polo",            "polo",          "m"),
-    ("n", 14,  6800, "Dad Hat (adidas)",            "dad_hat",       "n"),
-    ("o", 15,  5800, "Bucket Hat (Flexfit)",        "bucket_hat",    "o"),
-    ("p", 16,  4800, "Ribbed Knit Beanie",          "beanie",        "p"),
-    ("q", 17,  5800, "All-Over Print Tote",         "tote",          "q"),
-    ("r", 18,  4800, "Drawstring Gym Bag",          "drawstring",    "r"),
-    ("s", 19,  3800, "Athletic Crew Socks",         "socks",         "s"),
-    ("t", 20,  1800, "NOJIMAHAL Sticker Pack",      "sticker",       "t"),
-];
 
 async fn proposal_nojimahal_sample(State(db): State<Db>, Json(body): Json<ProposalSampleBody>) -> Response {
-    issue_proposal_sample_link(db, "nojimahal", NOJIMAHAL_DESIGNS, body).await
+    issue_proposal_sample_link(db, "nojimahal", body).await
 }
 async fn proposal_nojimahal_bundle(State(db): State<Db>, Json(body): Json<ProposalBundleBody>) -> Response {
-    issue_proposal_bundle_link(db, "nojimahal", NOJIMAHAL_DESIGNS, body).await
+    issue_proposal_bundle_link(db, "nojimahal", body).await
 }
 
 // ── RYOZO TOP TEAM — BJJ team apparel 20 SKU brand ────────────────────────
@@ -16474,7 +16293,7 @@ async fn proposal_ryozo_status(State(db): State<Db>) -> impl IntoResponse {
     Json(serde_json::json!({
         "approved": approved, "approved_at": approved_at,
         "approver_first_name": approver_name, "plan_tier": plan_tier,
-        "products_active": active_count, "products_total": RYOZO_DESIGNS.len(),
+        "products_active": active_count, "products_total": proposal_skus_for(&conn, "ryozo").len(),
         "public_url": "https://wearmu.com/ryozo",
     }))
 }
@@ -16499,7 +16318,7 @@ async fn proposal_ryozo_approve(
     let plan = if plan.is_empty() { "starter".into() } else { plan };
     let ip = client_ip(&headers);
     let now = chrono_now();
-    let activated: usize = {
+    let (activated, products_total): (usize, usize) = {
         let conn = db.lock().unwrap();
         let _ = conn.execute(
             "INSERT INTO ryozo_approval
@@ -16511,15 +16330,17 @@ async fn proposal_ryozo_approve(
                 plan_tier=excluded.plan_tier, note=excluded.note, revoked_at=NULL",
             params![now, name, email, ip, plan, body.note.trim()],
         );
-        conn.execute(
+        let act = conn.execute(
             "UPDATE products SET active=1 WHERE brand LIKE 'ryozo_%' AND active=0",
             [],
-        ).unwrap_or(0)
+        ).unwrap_or(0);
+        let tot = proposal_skus_for(&conn, "ryozo").len();
+        (act, tot)
     };
     eprintln!("[ryozo] approved by {} <{}>", name, email);
     let alert = format!(
         "━◯━ RYOZO TOP TEAM APPROVED\napprover: {} <{}>\nactivated: {}/{}\nat: {}\npublic LP: https://wearmu.com/ryozo",
-        name, email, activated, RYOZO_DESIGNS.len(), now,
+        name, email, activated, products_total, now,
     );
     tokio::spawn(async move { send_telegram_message(&alert).await; });
     Json(serde_json::json!({
@@ -16547,127 +16368,22 @@ async fn ryozo_public_page(State(db): State<Db>) -> Response {
     Html(include_str!("../static/proposals/ryozo.html")).into_response()
 }
 
-// 20 BJJ-team SKUs. Kinds map through proposal_brand_for_kind → kichinan_*
-// variant table via ryozo_ → kichinan_ normalization in create_printful_order.
-const RYOZO_DESIGNS: &[(&str, i64, i64, &str, &str, &str)] = &[
-    ("a",  1, 11800, "Team Rashguard LS",          "rashguard_ls",  "patch"),
-    ("b",  2,  8800, "Team Athletic Tee",          "athletic_tee",  "wordmark"),
-    ("c",  3,  9800, "Competition Fight Shorts",   "fight_shorts",  "stripe"),
-    ("d",  4, 10800, "Team Grappling Spats",       "spats",         "stripe"),
-    ("e",  5, 12800, "Academy Heavy Hoodie",       "hoodie",        "stacked"),
-    ("f",  6, 18800, "Team Bomber (warmup)",       "bomber_jacket", "stacked"),
-    ("g",  7, 14800, "Coach Windbreaker",          "windbreaker",   "wordmark"),
-    ("h",  8, 10800, "Warmup Track Pants",         "track_pants",   "stripe"),
-    ("i",  9, 11800, "Lounge Sweatpants",          "sweatpants",    "stripe"),
-    ("j", 10,  9800, "Academy Crewneck",           "crewneck",      "wordmark"),
-    ("k", 11,  6800, "Black Belt Tee",             "tee",           "patch"),
-    ("l", 12,  8800, "Team Long Sleeve",           "longsleeve",    "wordmark"),
-    ("m", 13,  9800, "Coach Polo (gold thread)",   "polo",          "monogram"),
-    ("n", 14,  6800, "Team Dad Hat (gold-thread)", "dad_hat",       "monogram"),
-    ("o", 15,  5800, "Team Bucket Hat",            "bucket_hat",    "monogram"),
-    ("p", 16,  4800, "Team Beanie (gold-thread)",  "beanie",        "monogram"),
-    ("q", 17,  6800, "Gi Carry Tote",              "tote",          "wordmark"),
-    ("r", 18,  5800, "Drawstring Gi Bag",          "drawstring",    "wordmark"),
-    ("s", 19,  3800, "Team Crew Socks",            "socks",         "stripe"),
-    ("t", 20,  2400, "Team Sticker Pack (5)",      "sticker",       "patch"),
-    // ── v2 additions (BJJ team essentials) ──────────────────────────────
-    ("u", 21,  9800, "Team Joggers (Jerzees)",     "joggers",       "stripe"),
-    ("v", 22, 13800, "Team Zip Hoodie (Gildan)",   "zip_hoodie",    "stacked"),
-    ("w", 23, 11800, "Coach Quarter-Zip (Lane7)",  "quarter_zip",   "wordmark"),
-    ("x", 24,  4800, "Stainless Water Bottle",     "water_bottle",  "monogram"),
-    ("y", 25,  4400, "Recovery Beach Towel",       "beach_towel",   "wordmark"),
-    ("z", 26,  3800, "Gi Patch (the real thing)",  "patch",         "patch"),
-    ("aa",27,  6800, "Post-training Apron",        "apron",         "monogram"),
-    ("ab",28,  4800, "Summer Training Tank Top",   "tank_top",      "patch"),
-    ("ac",29,  6800, "Crossbody Sling (training)", "crossbody",     "monogram"),
-    ("ad",30,  3400, "Team Mug (recovery shake)",  "mug_team",      "monogram"),
-];
 
 async fn proposal_ryozo_sample(State(db): State<Db>, Json(body): Json<ProposalSampleBody>) -> Response {
-    issue_proposal_sample_link(db, "ryozo", RYOZO_DESIGNS, body).await
+    issue_proposal_sample_link(db, "ryozo", body).await
 }
 async fn proposal_ryozo_bundle(State(db): State<Db>, Json(body): Json<ProposalBundleBody>) -> Response {
-    issue_proposal_bundle_link(db, "ryozo", RYOZO_DESIGNS, body).await
+    issue_proposal_bundle_link(db, "ryozo", body).await
 }
 
-// ── JiuFight (BJJ tournament event) — 20 SKU lineup ────────────────────
-// Tournament-event apparel: tee variants + competition gear + spectator gear.
-// Brand-prefix `jiufight_` is handled by the generic proposal_brand_for_kind
-// + migrate_legacy_proposal pipeline — no per-brand Rust scaffolding needed.
-const JIUFIGHT_DESIGNS: &[(&str, i64, i64, &str, &str, &str)] = &[
-    // letter, drop, jpy, label, kind, design
-    ("a", 1,  4900, "Event Tee · Black",          "tee",           "wordmark"),
-    ("b", 2,  4900, "Event Tee · White",          "tee",           "monogram"),
-    ("c", 3,  4900, "Event Tee · Vintage Black",  "tee",           "stacked"),
-    ("d", 4,  5400, "Long Sleeve Tee",            "longsleeve",    "wordmark"),
-    ("e", 5,  4400, "Athletic Tank",              "tank_top",      "stripe"),
-    ("f", 6,  7800, "Rashguard Short Sleeve",     "athletic_tee",  "stacked"),
-    ("g", 7,  8800, "Rashguard Long Sleeve",      "rashguard_ls",  "stacked"),
-    ("h", 8,  7400, "Fight Shorts",               "fight_shorts",  "stripe"),
-    ("i", 9,  6800, "Spats / Compression Tights", "spats",         "stripe"),
-    ("j",10,  7900, "Tournament Hoodie",          "hoodie",        "wordmark"),
-    ("k",11,  6900, "Crewneck Sweatshirt",        "crewneck",      "stacked"),
-    ("l",12,  3800, "Snapback Cap",               "cap",           "monogram"),
-    ("m",13,  3400, "Beanie",                     "beanie",        "monogram"),
-    ("n",14,  4200, "Bucket Hat",                 "bucket_hat",    "monogram"),
-    ("o",15,  2900, "Event Tote",                 "tote",          "wordmark"),
-    ("p",16,  3200, "Drawstring Bag",             "drawstring",    "stripe"),
-    ("q",17,   800, "Sticker Pack",               "sticker",       "monogram"),
-    ("r",18,  3800, "Cold Towel",                 "beach_towel",   "wordmark"),
-    ("s",19,  3200, "Medal Mug",                  "mug",           "monogram"),
-    ("t",20,  4800, "Crossbody Pouch",            "crossbody",     "monogram"),
-    // ── Expansion: training accessories + spectator gear ──
-    ("u",21,  6900, "Sweatpants · Joggers",       "joggers",       "stripe"),
-    ("v",22,  7400, "Track Pants · Side Stripe",  "track_pants",   "stripe"),
-    ("w",23,  9800, "Zip-Up Hoodie",              "zip_hoodie",    "stacked"),
-    ("x",24,  8400, "Quarter-Zip Pullover",       "quarter_zip",   "wordmark"),
-    ("y",25,  6800, "Bomber Jacket",              "bomber_jacket", "wordmark"),
-    ("z",26,  8800, "Windbreaker · Coach",        "windbreaker",   "wordmark"),
-    ("aa",27, 1600, "Bracket Patch · Iron-on",    "patch",         "monogram"),
-    ("ab",28, 4800, "Bench Apron · Cornerman",    "apron",         "wordmark"),
-    ("ac",29, 2400, "Insulated Water Bottle",     "water_bottle",  "monogram"),
-    ("ad",30, 3800, "Lifestyle Polo",             "polo",          "monogram"),
-    // ── +10 Tee variants (per user request 2026-05-15) — same kind=tee,
-    //    distinct event-narrative designs. Drop numbers 31..40.
-    ("ae",31, 4900, "Event Tee · 個人戦",          "tee",           "wordmark"),
-    ("af",32, 4900, "Event Tee · 団体戦",          "tee",           "stripe"),
-    ("ag",33, 4900, "Event Tee · 昇格式",          "tee",           "stacked"),
-    ("ah",34, 4900, "Event Tee · Champion Gold",  "tee",           "date"),
-    ("ai",35, 4900, "Event Tee · Underdog",       "tee",           "monogram"),
-    ("aj",36, 4900, "Event Tee · 早稲田 (赤)",     "tee",           "versus"),
-    ("ak",37, 4900, "Event Tee · 慶應 (青)",       "tee",           "versus"),
-    ("al",38, 4900, "Event Tee · Tokyo Tower",    "tee",           "tokyotower"),
-    ("am",39, 4900, "Event Tee · Bracket",        "tee",           "bracket"),
-    ("an",40, 4900, "Event Tee · Vintage",        "tee",           "wordmark"),
-    // ── 3 new tee patterns @ 30 pcs inventory each (per goal 2026-05-15) ──
-    ("ao",41, 4900, "Event Tee · 柔 (Kanji)",     "tee",           "kanji"),
-    ("ap",42, 4900, "Event Tee · 2026 Bib",       "tee",           "bib"),
-    ("aq",43, 4900, "Event Tee · Podium",          "tee",           "podium"),
-    // ── 応援グッズ (spectator / cheering kit) — drop 44-50 ─────────────
-    ("ar",44, 1200, "応援ピン · 単品",               "pin",           "podium"),
-    ("as",45, 3800, "観戦クッション (座布団)",       "pillow",        "versus"),
-    ("at",46, 2800, "応援バンダナ (ヘッドラップ)",   "bandana",       "kanji"),
-    ("au",47, 1800, "応援ハンドタオル",              "beach_towel",   "date"),
-    ("av",48, 2400, "応援フラッグ (手旗)",           "flag",          "versus"),
-    ("aw",49, 1400, "応援リストバンド",              "wristband",     "wordmark"),
-    ("ax",50,  900, "応援ステッカーシート",          "sticker",       "podium"),
-];
 
 async fn proposal_jiufight_sample(State(db): State<Db>, Json(body): Json<ProposalSampleBody>) -> Response {
-    issue_proposal_sample_link(db, "jiufight", JIUFIGHT_DESIGNS, body).await
+    issue_proposal_sample_link(db, "jiufight", body).await
 }
 async fn proposal_jiufight_bundle(State(db): State<Db>, Json(body): Json<ProposalBundleBody>) -> Response {
-    issue_proposal_bundle_link(db, "jiufight", JIUFIGHT_DESIGNS, body).await
+    issue_proposal_bundle_link(db, "jiufight", body).await
 }
 
-// ── MU × BLANK_ Executive Retreat for AI (2026.05.27-29 Minakami) ──────
-// Single-SKU collab: 1 MA-style day-stamped tee for the retreat
-// participants. Per-participant 1-of-N — they go home with this tee on
-// day 3. Uses the unified proposal system; reachable at
-// /api/proposal/blank/{state,sample,skus} once seeded.
-const BLANK_DESIGNS: &[(&str, i64, i64, &str, &str, &str)] = &[
-    ("a", 1, 6500, "BLANK_ MA Tee · 260527 day-stamp", "tee", "ma"),
-];
 
 // ── Unified proposal system ───────────────────────────────────────────────
 // Replaces the per-brand approval table + const DESIGNS array pattern with
@@ -16914,47 +16630,40 @@ fn mark_free_30_used(conn: &rusqlite::Connection, email: &str) {
     );
 }
 
-fn migrate_legacy_proposal(
-    db: &Db, slug: &str, ip_owner: &str,
-    designs: &[(&str, i64, i64, &str, &str, &str)],
-    approval_table: &str,
-) {
+/// Mirror approval state from legacy `<brand>_approval` tables into the
+/// unified `proposals` row. The spec.json loader handles SKU seeding;
+/// this only carries forward approval state for the 6 brands that have a
+/// legacy *_approval table.
+fn migrate_legacy_approval_into_proposals(db: &Db) {
     let conn = db.lock().unwrap();
-    let now = chrono_now();
-    let _ = conn.execute(
-        "INSERT OR IGNORE INTO proposals
-            (slug, name, ip_owner, created_at)
-         VALUES (?, ?, ?, ?)",
-        params![slug, ip_owner, ip_owner, now],
-    );
-    // Mirror approval row if the legacy table exists & has data.
-    let migrated = conn.query_row(
-        &format!("SELECT approved_at, approver_name, approver_email, approver_ip, COALESCE(plan_tier,''), COALESCE(note,''), revoked_at FROM {} WHERE id=1", approval_table),
-        [],
-        |r| Ok((
-            r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?,
-            r.get::<_, Option<String>>(2)?, r.get::<_, Option<String>>(3)?,
-            r.get::<_, String>(4)?,        r.get::<_, String>(5)?,
-            r.get::<_, Option<String>>(6)?,
-        )),
-    ).ok();
-    if let Some((at, n, e, ip, plan, note, rev)) = migrated {
-        let _ = conn.execute(
-            "UPDATE proposals SET
-                approved_at=?, approver_name=?, approver_email=?, approver_ip=?,
-                plan_tier=?, note=?, revoked_at=?
-             WHERE slug=?",
-            params![at, n, e, ip, plan, note, rev, slug],
-        );
-    }
-    // Mirror SKUs from the legacy const array.
-    for (letter, drop_num, price_jpy, label, kind, design_slug) in designs {
-        let _ = conn.execute(
-            "INSERT OR IGNORE INTO proposal_skus
-                (slug, letter, drop_num, price_jpy, label, kind, design_slug)
-             VALUES (?,?,?,?,?,?,?)",
-            params![slug, letter, drop_num, price_jpy, label, kind, design_slug],
-        );
+    let pairs: &[(&str, &str)] = &[
+        ("kichinan",  "kichinan_approval"),
+        ("asoview",   "asoview_approval"),
+        ("elsoul",    "elsoul_approval"),
+        ("ele",       "ele_approval"),
+        ("nojimahal", "nojimahal_approval"),
+        ("ryozo",     "ryozo_approval"),
+    ];
+    for (slug, approval_table) in pairs {
+        let migrated = conn.query_row(
+            &format!("SELECT approved_at, approver_name, approver_email, approver_ip, COALESCE(plan_tier,''), COALESCE(note,''), revoked_at FROM {} WHERE id=1", approval_table),
+            [],
+            |r| Ok((
+                r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?,
+                r.get::<_, Option<String>>(2)?, r.get::<_, Option<String>>(3)?,
+                r.get::<_, String>(4)?,        r.get::<_, String>(5)?,
+                r.get::<_, Option<String>>(6)?,
+            )),
+        ).ok();
+        if let Some((at, n, e, ip, plan, note, rev)) = migrated {
+            let _ = conn.execute(
+                "UPDATE proposals SET
+                    approved_at=?, approver_name=?, approver_email=?, approver_ip=?,
+                    plan_tier=?, note=?, revoked_at=?
+                 WHERE slug=?",
+                params![at, n, e, ip, plan, note, rev, slug],
+            );
+        }
     }
 }
 
@@ -22980,7 +22689,7 @@ async fn public_transparency(State(db): State<Db>) -> impl IntoResponse {
         // Kichinan collab state — surfaces the approval/active-products gate
         // so anyone reading /api/transparency can see whether the line is
         // public-sellable (approved=true → 36 SKUs at kichinan.*.sample brands).
-        let (kc_approved, kc_at, kc_first, kc_plan, kc_active): (bool, Option<String>, Option<String>, Option<String>, i64) = {
+        let (kc_approved, kc_at, kc_first, kc_plan, kc_active, kc_total): (bool, Option<String>, Option<String>, Option<String>, i64, usize) = {
             let conn = db.lock().unwrap();
             let row = kichinan_approval_row(&conn);
             let approved = row.as_ref().map(|t| t.4.is_none()).unwrap_or(false);
@@ -22989,7 +22698,8 @@ async fn public_transparency(State(db): State<Db>) -> impl IntoResponse {
                 "SELECT COUNT(*) FROM products WHERE brand LIKE 'kichinan_%' AND active=1",
                 [], |r| r.get(0),
             ).unwrap_or(0);
-            (approved, row.as_ref().map(|t| t.0.clone()), first, row.as_ref().map(|t| t.3.clone()), active)
+            let total = proposal_skus_for(&conn, "kichinan").len();
+            (approved, row.as_ref().map(|t| t.0.clone()), first, row.as_ref().map(|t| t.3.clone()), active, total)
         };
         obj.insert("kichinan_collab".into(), serde_json::json!({
             "approved": kc_approved,
@@ -22997,7 +22707,7 @@ async fn public_transparency(State(db): State<Db>) -> impl IntoResponse {
             "approver_first_name": kc_first,
             "plan_tier": kc_plan,
             "products_active": kc_active,
-            "products_total": KICHINAN_DESIGNS.len(),
+            "products_total": kc_total,
             "proposal_url": "https://wearmu.com/proposals/kichinan",
         }));
         obj.insert("teshikaga_pledge".into(), serde_json::json!({
@@ -42918,35 +42628,13 @@ async fn main() {
     ensure_ele_approval_table(&db);
     ensure_nojimahal_approval_table(&db);
     ensure_ryozo_approval_table(&db);
-    seed_kichinan_sample_products(&db);
-    seed_proposal_sample_products(&db, "asoview",   ASOVIEW_DESIGNS,   "Asoview Inc.");
-    seed_proposal_sample_products(&db, "elsoul",    ELSOUL_DESIGNS,    "ELSOUL LABO B.V.");
-    seed_proposal_sample_products(&db, "ele",       ELE_DESIGNS,       "ELE / yuki");
-    seed_proposal_sample_products(&db, "nojimahal", NOJIMAHAL_DESIGNS, "NOJIMAHAL / 野島繁昭");
-    seed_proposal_sample_products(&db, "ryozo",     RYOZO_DESIGNS,     "RYOZO TOP TEAM");
-    seed_proposal_sample_products(&db, "jiufight",  JIUFIGHT_DESIGNS,  "JiuFight Tournament");
-    seed_proposal_sample_products(&db, "blank",     BLANK_DESIGNS,     "BLANK_ Executive Retreat for AI");
-
-    // ── Unified proposal system migration ─────────────────────────────────
-    // Mirror legacy per-brand approval tables + const DESIGNS arrays into
-    // the new proposals + proposal_skus tables. Idempotent (INSERT OR IGNORE
-    // on first run; UPDATE keeps approval state in sync on later boots).
+    // ── Unified ③ path: every partner ships as scripts/partner_proposals/<slug>.json ──
+    // Embedded into the binary via include_dir + replayed on boot. Idempotent
+    // INSERT OR IGNORE means safe to re-run. The legacy const X_DESIGNS arrays
+    // + per-brand seed_* functions have been removed (2026-05-16).
     ensure_proposal_tables(&db);
-    migrate_legacy_proposal(&db, "kichinan",  "Kichinan / 富士見町",      KICHINAN_DESIGNS,  "kichinan_approval");
-    migrate_legacy_proposal(&db, "asoview",   "Asoview Inc.",             ASOVIEW_DESIGNS,   "asoview_approval");
-    migrate_legacy_proposal(&db, "elsoul",    "ELSOUL LABO B.V.",         ELSOUL_DESIGNS,    "elsoul_approval");
-    migrate_legacy_proposal(&db, "ele",       "ELE / yuki",               ELE_DESIGNS,       "ele_approval");
-    migrate_legacy_proposal(&db, "nojimahal", "NOJIMAHAL / 野島繁昭",     NOJIMAHAL_DESIGNS, "nojimahal_approval");
-    migrate_legacy_proposal(&db, "ryozo",     "RYOZO TOP TEAM",           RYOZO_DESIGNS,     "ryozo_approval");
-    // JiuFight has no legacy approval table — pass a non-existent name so
-    // the table lookup fails silently and only the SKU seed runs.
-    migrate_legacy_proposal(&db, "jiufight",  "JiuFight Tournament",      JIUFIGHT_DESIGNS,  "_no_legacy_table");
-    migrate_legacy_proposal(&db, "blank",     "BLANK_ Executive Retreat", BLANK_DESIGNS,     "_no_legacy_table");
-    // ── Unified ③ path: spec.json files in scripts/partner_proposals/ ──
-    // Embedded into the binary via include_dir. New partners ship as a
-    // single spec.json + redeploy — no Rust const arrays needed. Idempotent
-    // alongside the legacy const seeding above.
     seed_partners_from_spec_dir(&db);
+    migrate_legacy_approval_into_proposals(&db);
     // Proposal SKUs are real, buyable MU products. Flip them to active=1
     // unconditionally so they appear in /api/v1/embed/products and at
     // /products/<brand>/<id>. The approval gate controls only the public
