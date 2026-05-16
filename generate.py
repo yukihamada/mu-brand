@@ -11,6 +11,26 @@ from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 
 os.environ.pop("GOOGLE_API_KEY", None)  # expired key takes precedence otherwise
+# Force-override GEMINI_API_KEY from /Users/yuki/.env when present —
+# .zshrc has a revoked key that wins via shell-export precedence (see
+# feedback_gemini_key_env memory). cron.sh does `set -a && source $ENV_FILE`
+# which handles this, but manual interactive runs need the explicit reload.
+_env_path = Path("/Users/yuki/.env") if False else None  # placeholder for type
+try:
+    from pathlib import Path as _P
+    _env = _P("/Users/yuki/.env")
+    if _env.exists():
+        for _ln in _env.read_text().splitlines():
+            _ln = _ln.strip()
+            if "=" in _ln and not _ln.startswith("#"):
+                _k, _v = _ln.split("=", 1)
+                if _k.strip() in ("GEMINI_API_KEY", "PRINTFUL_API_KEY",
+                                  "MU_ADMIN_TOKEN", "HELIUS_API_KEY",
+                                  "CLOUDFLARE_R2_ACCESS_KEY_ID",
+                                  "CLOUDFLARE_R2_SECRET_ACCESS_KEY"):
+                    os.environ[_k.strip()] = _v.strip().strip('"').strip("'")
+except Exception:
+    pass
 
 from google import genai
 from google.genai import types
@@ -253,6 +273,9 @@ def embed_serial_number(image_bytes: bytes, brand: str, drop_num: int, quantity:
         iso = now.isocalendar()
         line1 = f"MA {iso.year}.W{iso.week:02d}"
         line2 = f"1 of 1 · {now.strftime('%Y.%m.%d')} · 7-day auction"
+    elif brand == "staple":
+        line1 = f"STAPLE #{drop_num:04d}"
+        line2 = f"1 of {quantity} · {now.strftime('%Y.%m.%d')}"
     else:
         line1 = f"NOUNS × MU #{drop_num:04d}"
         line2 = f"1 of {quantity} · {now.strftime('%Y.%m.%d')}"
@@ -754,6 +777,112 @@ Execution:
     return name, prompt, quantity, price
 
 
+# ── STAPLE: timeless single-character concepts on a rotating cadence ────────
+# Brand = "staple". Daily cron picks the next concept by drop_num mod len.
+# Higher-value concepts (marked HIGH) ship at ¥6,800; the rest at ¥5,400.
+# All are bilingual: big kanji + tiny romaji + English meaning + date.
+#
+# Curation: these are concepts proven to sell in minimalist Japanese apparel
+# (一文字 kanji tees, philosophical brands like Visvim / Kapital / Beams).
+# The list is deliberately curated, NOT randomly generated — staple = bestseller.
+STAPLE_CONCEPTS: list[dict] = [
+    {"k": "無",   "r": "mu",       "en": "nothing / void",      "tier": "HIGH"},
+    {"k": "間",   "r": "ma",       "en": "gap / interval",      "tier": "HIGH"},
+    {"k": "静",   "r": "shizuka",  "en": "silence / quiet",     "tier": "HIGH"},
+    {"k": "道",   "r": "michi",    "en": "the way / path",      "tier": "HIGH"},
+    {"k": "風",   "r": "kaze",     "en": "wind",                "tier": "STD"},
+    {"k": "月",   "r": "tsuki",    "en": "moon",                "tier": "STD"},
+    {"k": "雨",   "r": "ame",      "en": "rain",                "tier": "STD"},
+    {"k": "山",   "r": "yama",     "en": "mountain",            "tier": "STD"},
+    {"k": "海",   "r": "umi",      "en": "sea / ocean",         "tier": "STD"},
+    {"k": "森",   "r": "mori",     "en": "forest",              "tier": "STD"},
+    {"k": "光",   "r": "hikari",   "en": "light",               "tier": "STD"},
+    {"k": "影",   "r": "kage",     "en": "shadow",              "tier": "STD"},
+    {"k": "音",   "r": "oto",      "en": "sound",               "tier": "STD"},
+    {"k": "線",   "r": "sen",      "en": "line",                "tier": "STD"},
+    {"k": "点",   "r": "ten",      "en": "dot / point",         "tier": "STD"},
+    {"k": "円",   "r": "en",       "en": "circle",              "tier": "STD"},
+    {"k": "火",   "r": "hi",       "en": "fire",                "tier": "STD"},
+    {"k": "水",   "r": "mizu",     "en": "water",               "tier": "STD"},
+    {"k": "雪",   "r": "yuki",     "en": "snow",                "tier": "STD"},
+    {"k": "空",   "r": "sora",     "en": "sky / empty",         "tier": "STD"},
+    {"k": "侘",   "r": "wabi",     "en": "subdued beauty",      "tier": "HIGH"},
+    {"k": "寂",   "r": "sabi",     "en": "patina of time",      "tier": "HIGH"},
+    {"k": "禅",   "r": "zen",      "en": "meditation",          "tier": "HIGH"},
+    {"k": "0",    "r": "zero",     "en": "the zero",            "tier": "STD"},
+    {"k": "1",    "r": "ichi",     "en": "one",                 "tier": "STD"},
+    {"k": "7",    "r": "shichi",   "en": "seven",               "tier": "STD"},
+    {"k": "47",   "r": "yon-juu-nana", "en": "47 prefectures",  "tier": "STD"},
+    {"k": "108",  "r": "hyaku-hachi", "en": "Buddhist passions","tier": "HIGH"},
+    {"k": "∞",    "r": "mugen",    "en": "infinity",            "tier": "HIGH"},
+    {"k": "今",   "r": "ima",      "en": "now",                 "tier": "STD"},
+]
+
+
+def prompt_staple(weather: dict, drop_num: int) -> tuple[str, str, int, int]:
+    """Pick concept by drop_num mod list-length. Deterministic so re-runs
+    of the same drop produce identical art (within Gemini stochasticity)."""
+    idx = (drop_num - 1) % len(STAPLE_CONCEPTS)
+    concept = STAPLE_CONCEPTS[idx]
+    today = date.today()
+    quantity = 47  # 47 都道府県 — philosophical constant
+    price = 6800 if concept["tier"] == "HIGH" else 5400
+    name = f"STAPLE — 「{concept['k']}」{concept['r']} #{drop_num:04d}"
+
+    # Two visual treatments rotate by drop parity for variety:
+    treatment = "black-on-cream"  # the default
+    if drop_num % 2 == 0:
+        treatment = "white-on-charcoal"
+
+    if treatment == "black-on-cream":
+        bg = "off-white / cream / unbleached cotton color (#F5F0E6)"
+        ink = "deep black (#0A0A0A) ink, brushwork allowed"
+        text_color = "deep black"
+    else:
+        bg = "deep charcoal (#1A1A1A)"
+        ink = "warm off-white (#F0EDE3) ink, brushwork allowed"
+        text_color = "warm off-white"
+
+    prompt = f"""
+FLAT PRINT ARTWORK — high-fidelity museum-quality minimalist typography.
+THIS IS A 2D GRAPHIC, not a photo of a t-shirt. No clothing shape, no model, no fabric in the output. Solid background fills the entire canvas.
+
+Brand: STAPLE — MU's daily timeless edition. Drop #{drop_num}.
+Date stamp: {today.isoformat()}.
+Concept: 「{concept['k']}」 — {concept['r']} — {concept['en']}.
+
+Background: {bg} (solid, fills entire canvas, no texture except very faint cotton-grain implied).
+Ink: {ink}.
+
+Composition (strict):
+  1. CENTER (occupies 55-65% of canvas height):
+     A single character "{concept['k']}" — rendered in DEEP, HEAVY, contemplative
+     brushstroke style (think 書道 by a master calligrapher, 1 single fluid
+     stroke or composed of 2-3 deliberate strokes). The character must feel
+     ALIVE — slight asymmetry, ink-bleed where natural, dry-brush texture
+     at the stroke end. NOT a digital font. NOT computer-perfect.
+
+  2. ABOVE THE CHARACTER (very small {text_color} sans-serif, ~10mm equivalent height):
+     {concept['r'].upper()}
+
+  3. BELOW THE CHARACTER (very small {text_color} sans-serif, ~10mm equivalent):
+     {concept['en']}
+
+  4. BOTTOM-RIGHT CORNER (very small {text_color} monospace, ~6mm equivalent):
+     {today.isoformat()} · STAPLE #{drop_num:04d}
+
+Anti-requirements (do NOT include):
+- No watermarks, no logos other than the kanji.
+- No additional symbols, no borders, no frames, no decorations.
+- No gradients, no shadows, no 3D effect.
+- No multiple colors — strictly the 2 colors specified above.
+
+Output: 2400×2400 flat artwork. Calligraphy must read as "made by a human
+master, captured by a machine" — quiet, confident, museum-grade.
+"""
+    return name, prompt, quantity, price
+
+
 def prompt_mugen(weather: dict, drop_num: int) -> tuple[str, str, int, int]:
     now = datetime.now()
     cycle_num = ((drop_num - 1) % 108) + 1  # 1-108 cycle
@@ -805,6 +934,7 @@ def random_delay(brand: str):
         "mugen":  (0, 55 * 60),      # 0–55 min: fires at random minute within the hour
         "muon":   (0, 8 * 3600),     # 0–8 h: appears at a random time of day
         "nouns":  (0, 30 * 60),      # 0–30 min
+        "staple": (0, 4 * 3600),     # 0–4 h: 朝〜昼の間に上がる気軽さ
     }
     lo, hi = delays.get(brand.split("_")[0], (0, 0))
     if hi == 0:
@@ -863,6 +993,12 @@ def run(brand: str):
         is_ice = False
         auction_end = None
         brand = "nouns"  # normalize so all go to same API endpoint
+
+    elif brand == "staple":
+        name, prompt, quantity, price = prompt_staple(weather, drop_num)
+        cycle_num = None
+        is_ice = False
+        auction_end = None
 
     else:
         print(f"Unknown brand: {brand}")
@@ -1031,7 +1167,7 @@ def push_mockup_to_r2(product_id: int, source_url: str) -> None:
 
 if __name__ == "__main__":
     brand = sys.argv[1] if len(sys.argv) > 1 else "mugen"
-    valid = ("ma", "muon", "mugen", "nouns", "nouns_mugen", "nouns_muon", "nouns_ma")
+    valid = ("ma", "muon", "mugen", "nouns", "nouns_mugen", "nouns_muon", "nouns_ma", "staple")
     if brand not in valid:
         print(f"usage: python generate.py [{' | '.join(valid)}]")
         sys.exit(1)
