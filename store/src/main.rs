@@ -13363,15 +13363,92 @@ async fn collab_create(
             params![em],
         );
     }
+    let manage_url = format!("https://wearmu.com/collab/{}/manage?t={}", slug, admin_secret);
+    let lp_url     = format!("https://wearmu.com/collab/{}", slug);
+
+    // Send a "✅ collab created" email to the partner so they keep the
+    // manage URL forever (chat UI used to auto-redirect away in 3s, so the
+    // URL was lost). Fire-and-forget; webhook never blocks on email.
+    if let Some(em) = creator_email.as_ref() {
+        if let Ok(resend_key) = env::var("RESEND_API_KEY") {
+            if !resend_key.is_empty() {
+                let to = em.clone();
+                let event = event_name.clone();
+                let slug_email = slug.clone();
+                let lp_url2 = lp_url.clone();
+                let manage_url2 = manage_url.clone();
+                let pl = payment_link_url.clone().unwrap_or_default();
+                tokio::spawn(async move {
+                    let pl_block = if pl.is_empty() {
+                        r#"<p style="font-size:12.5px;color:#888;margin:0 0 18px">Stripe Payment Link はあと数十秒で接続されます (作成直後の一時的なラグです)。"#.to_string()
+                    } else {
+                        format!(
+                            r#"<p style="font-size:12.5px;color:#c4c4bc;margin:0 0 18px">決済 URL: <a href="{pl}" style="color:#e6c449">{pl}</a></p>"#,
+                            pl = pl,
+                        )
+                    };
+                    let html = format!(r##"<!doctype html><html><body style="background:#0A0A0A;color:#F5F5F0;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;line-height:1.85;padding:32px 0;margin:0">
+<div style="max-width:560px;margin:0 auto;padding:0 28px">
+  <div style="font-size:14px;letter-spacing:0.4em;font-weight:700;margin-bottom:24px">━◯━ MU COLLAB</div>
+  <div style="font-size:11px;letter-spacing:0.32em;text-transform:uppercase;color:#e6c449;margin-bottom:8px">作成完了</div>
+  <h1 style="font-size:22px;font-weight:300;line-height:1.4;margin:0 0 18px">「{event}」のコラボを作成しました。</h1>
+  <p style="font-size:13.5px;color:#c4c4bc;margin:0 0 26px">LP / 管理画面 / Stripe 決済リンクが揃いました。 商品はあとから 1 つずつ追加できます。 このメールを大切に保存してください — <strong style="color:#F5F5F0">管理 URL は再発行できません</strong>。</p>
+
+  <a href="{manage}" style="display:block;background:#e6c449;color:#000;padding:16px 22px;text-decoration:none;font-weight:700;font-size:12px;letter-spacing:0.28em;text-transform:uppercase;border-radius:2px;margin-bottom:10px;text-align:center">📦 管理画面を開く (商品追加)</a>
+  <a href="{lp}" style="display:block;border:1px solid rgba(255,255,255,0.18);color:#F5F5F0;padding:14px 22px;text-decoration:none;font-size:11px;letter-spacing:0.24em;text-transform:uppercase;border-radius:2px;margin-bottom:24px;text-align:center;opacity:0.85">🛍 LP を見る (公開ページ)</a>
+
+  <div style="background:#1c1c1c;border-left:2px solid #e6c449;padding:16px 18px;margin:0 0 22px;font-size:12.5px;line-height:1.95">
+    <div style="font-size:9.5px;letter-spacing:0.32em;text-transform:uppercase;color:#888;margin-bottom:10px">3 つの URL (保存推奨)</div>
+    <div style="color:#888;margin-bottom:6px">公開 LP:</div>
+    <div style="font-family:'SF Mono',ui-monospace,monospace;font-size:11.5px;margin-bottom:14px;word-break:break-all"><a href="{lp}" style="color:#e6c449">{lp}</a></div>
+    <div style="color:#888;margin-bottom:6px">管理 URL (このメール以外の場所に出ません):</div>
+    <div style="font-family:'SF Mono',ui-monospace,monospace;font-size:11.5px;margin-bottom:14px;word-break:break-all"><a href="{manage}" style="color:#e6c449">{manage}</a></div>
+    <div style="color:#888;margin-bottom:6px">slug:</div>
+    <code style="background:rgba(230,196,73,0.10);color:#e6c449;padding:2px 8px;border-radius:2px;font-size:11.5px">{slug}</code>
+  </div>
+
+  {pl_block}
+
+  <h2 style="font-size:13px;letter-spacing:0.28em;text-transform:uppercase;color:#e6c449;margin:32px 0 12px;padding-top:24px;border-top:1px solid rgba(255,255,255,0.08);font-weight:500">次にできること</h2>
+  <ol style="font-size:13px;color:#c4c4bc;padding-left:22px;line-height:1.95;margin:0 0 24px">
+    <li>管理画面 (上のボタン) を開く</li>
+    <li>「+ 商品を 1 つ追加」フォームで T シャツ / フーディ / ステッカー等を 1 つずつ追加 (design 画像 URL + 名前 + 種別 + 価格)</li>
+    <li>LP に即反映、 SKU が並ぶ</li>
+    <li>Stripe 決済 URL を SNS / 顧客に共有して販売開始</li>
+  </ol>
+
+  <p style="font-size:11.5px;color:#888;margin:24px 0 0;line-height:1.85">困ったとき: 返信 (このメールに) or <a href="mailto:info@enablerdao.com" style="color:#e6c449">info@enablerdao.com</a><br>1 営業日内に yuki が個別対応します。</p>
+  <p style="font-size:10px;color:#666;margin:32px 0 0;letter-spacing:0.12em">株式会社イネブラ (Enabler Inc.) · MU Collab · Constitution §27</p>
+</div></body></html>"##,
+                        event = event, manage = manage_url2, lp = lp_url2,
+                        slug = slug_email, pl_block = pl_block,
+                    );
+                    let _ = reqwest::Client::new()
+                        .post("https://api.resend.com/emails")
+                        .bearer_auth(&resend_key)
+                        .json(&serde_json::json!({
+                            "from": "━◯━ MU Collab <noreply@wearmu.com>",
+                            "to": [to],
+                            "subject": format!("✅ コラボ完成: {} — 次は商品を追加", event),
+                            "html": html,
+                        }))
+                        .send().await;
+                });
+            }
+        }
+    }
+
     Json(serde_json::json!({
         "ok": true,
         "product_id": inserted,
         "slug": slug,
-        "url": format!("https://wearmu.com/collab/{}", slug),
-        "admin_url": format!("https://wearmu.com/collab/{}/admin?token={}", slug, admin_secret),
+        "url": lp_url,
+        "admin_url": manage_url.clone(),
+        "manage_url": manage_url,
         "payment_link_url": payment_link_url,
         "payment_link_error": payment_link_error,
         "mu_charged_jpy": mu_charged_jpy,
+        "email_sent_to": creator_email,
     })).into_response()
 }
 
@@ -13952,6 +14029,314 @@ async fn collab_chat_signals(db: &Db, email: &str) -> Vec<&'static str> {
         }
     }
     badges
+}
+
+/// Verify the partner manage token by comparing query `t=…` against the
+/// admin_secret embedded in products.weather_data JSON. Constant-time
+/// comparison via SHA-256 to avoid leak.
+fn verify_collab_manage_token(db: &Db, slug: &str, provided: &str) -> bool {
+    if provided.is_empty() { return false; }
+    let conn = db.lock().unwrap();
+    let meta_json: Option<String> = conn.query_row(
+        "SELECT weather_data FROM products WHERE brand=? AND active=1",
+        params![format!("collab_{}", slug)],
+        |r| r.get(0),
+    ).ok();
+    let meta: serde_json::Value = meta_json.as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or(serde_json::Value::Null);
+    let expected = meta["admin_secret"].as_str().unwrap_or("");
+    if expected.is_empty() { return false; }
+    // Constant-time compare
+    if expected.len() != provided.len() { return false; }
+    let mut diff: u8 = 0;
+    for (a, b) in expected.bytes().zip(provided.bytes()) { diff |= a ^ b; }
+    diff == 0
+}
+
+/// GET /collab/:slug/manage?t=<admin_secret> — partner self-serve admin
+/// page. Lists existing SKUs (from proposal_skus joined with collab_products
+/// if the partner already has a collab namespace) + a small "+1 SKU" form
+/// that POSTs to /api/collab/:slug/sku/add. The admin_secret token is the
+/// 16-hex chars baked into the collab on create — only the partner has it
+/// (in their welcome email).
+async fn collab_manage_page(
+    Path(slug): Path<String>,
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let token = q.get("t").cloned().unwrap_or_default();
+    if !verify_collab_manage_token(&db, &slug, &token) {
+        return (
+            StatusCode::FORBIDDEN,
+            Html(r##"<!doctype html><html><body style="background:#0A0A0A;color:#F5F5F0;font-family:-apple-system,Arial,sans-serif;padding:60px 28px;line-height:1.85;max-width:520px;margin:0 auto">
+<h1 style="font-size:22px;font-weight:300">この管理 URL は無効です</h1>
+<p style="color:#888;font-size:13px">管理 URL は作成時に partner email に送信された 1 通だけに含まれます。 メールが見つからない場合は <a href="mailto:info@enablerdao.com" style="color:#e6c449">info@enablerdao.com</a> までご連絡ください。</p>
+</body></html>"##.to_string()),
+        ).into_response();
+    }
+    // Fetch the collab's basic info + Stripe link.
+    let (name, lp_path, payment_link, _meta): (String, String, Option<String>, serde_json::Value) = {
+        let conn = db.lock().unwrap();
+        let row: Option<(String, Option<String>, Option<String>)> = conn.query_row(
+            "SELECT name, payment_link_url, weather_data FROM products
+             WHERE brand=? AND active=1",
+            params![format!("collab_{}", slug)],
+            |r| Ok((r.get(0)?, r.get(1).ok(), r.get(2).ok())),
+        ).ok();
+        let (n, pl, m) = row.unwrap_or((slug.clone(), None, None));
+        let meta: serde_json::Value = m.as_deref()
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or(serde_json::Value::Null);
+        (n, format!("/collab/{}", slug), pl, meta)
+    };
+    // Existing SKUs from proposal_skus (works for both AI-extras and manual-add).
+    let existing: Vec<(String, String, String, i64, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT letter, label, kind, price_jpy, design_url
+             FROM proposal_skus WHERE slug=? ORDER BY drop_num DESC LIMIT 200"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map(params![slug], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+            r.get::<_, i64>(3)?, r.get::<_, Option<String>>(4)?,
+        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    let rows_html: String = existing.iter().map(|(letter, label, kind, price, url)| {
+        let img = url.as_deref().filter(|u| u.starts_with("http")).unwrap_or("");
+        format!(
+            r##"<tr><td><code>{l}</code></td><td>{lbl}</td><td>{k}</td><td style="text-align:right;color:#e6c449;font-variant-numeric:tabular-nums">¥{p}</td><td>{img_html}</td></tr>"##,
+            l = html_escape(letter), lbl = html_escape(label),
+            k = html_escape(kind), p = format_jpy(*price),
+            img_html = if img.is_empty() { "—".to_string() }
+                       else { format!(r##"<a href="{u}" target="_blank"><img src="{u}" style="height:48px;width:48px;object-fit:cover;border-radius:2px;background:#222"></a>"##, u = html_attr_escape(img)) },
+        )
+    }).collect();
+    let pl_block = match payment_link {
+        Some(pl) if !pl.is_empty() => format!(
+            r##"<div style="background:#1a1a1a;border-left:2px solid #e6c449;padding:14px 18px;margin:0 0 24px;font-size:13px">
+              <div style="font-size:9.5px;letter-spacing:0.3em;text-transform:uppercase;color:#888;margin-bottom:6px">Stripe 決済 URL</div>
+              <a href="{pl}" style="color:#e6c449;font-family:'SF Mono',monospace;font-size:11.5px;word-break:break-all">{pl}</a>
+            </div>"##, pl = html_attr_escape(&pl)),
+        _ => String::new(),
+    };
+    let html = format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{name} — 管理画面 | MU Collab</title>
+<meta name="robots" content="noindex,nofollow">
+<style>
+  body{{background:#0A0A0A;color:#F5F5F0;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;margin:0;line-height:1.7}}
+  .wrap{{max-width:880px;margin:0 auto;padding:48px 28px 100px}}
+  .breadcrumb{{font-size:11px;letter-spacing:0.28em;text-transform:uppercase;color:#888;margin-bottom:24px}}
+  .breadcrumb a{{color:#888;text-decoration:none}}
+  .breadcrumb a:hover{{color:#e6c449}}
+  h1{{font-size:26px;font-weight:300;margin-bottom:8px;color:#F5F5F0}}
+  .sub{{color:#888;font-size:13px;margin-bottom:36px}}
+  .top-cta{{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:30px}}
+  .top-cta a{{padding:12px 14px;text-align:center;text-decoration:none;font-size:10.5px;letter-spacing:0.24em;text-transform:uppercase;border-radius:2px;font-weight:700}}
+  .top-cta a.lp{{background:#e6c449;color:#000}}
+  .top-cta a.help{{border:1px solid rgba(255,255,255,0.18);color:#F5F5F0;font-weight:400;opacity:0.85}}
+  h2{{font-size:11px;letter-spacing:0.32em;text-transform:uppercase;color:#e6c449;margin:36px 0 14px;padding-top:24px;border-top:1px solid rgba(255,255,255,0.08)}}
+  form{{background:#111;border:1px solid rgba(255,255,255,0.08);border-left:3px solid #e6c449;border-radius:2px;padding:24px 28px;margin-bottom:24px}}
+  label{{display:block;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;color:#888;margin-bottom:6px;margin-top:14px}}
+  input,select{{width:100%;background:#0a0a0a;color:#F5F5F0;border:1px solid rgba(255,255,255,0.12);padding:11px 13px;border-radius:2px;font-size:14px;font-family:inherit}}
+  input:focus,select:focus{{outline:1px solid #e6c449;border-color:#e6c449}}
+  button{{background:#e6c449;color:#000;border:none;padding:14px 28px;margin-top:22px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;font-weight:700;cursor:pointer;border-radius:2px}}
+  button:hover{{background:#f0d05a}}
+  table{{width:100%;border-collapse:collapse;font-size:13px;border:1px solid rgba(255,255,255,0.08);background:#111;border-radius:2px}}
+  thead{{background:rgba(255,255,255,0.03)}}
+  th,td{{padding:10px 14px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.05)}}
+  th{{font-size:10px;letter-spacing:0.22em;text-transform:uppercase;color:#888}}
+  .msg{{margin-top:14px;padding:12px 16px;border-radius:2px;font-size:13px;display:none}}
+  .msg.ok{{background:rgba(79,168,104,0.12);border:1px solid rgba(79,168,104,0.4);color:#9ae3a8}}
+  .msg.err{{background:rgba(200,54,44,0.12);border:1px solid rgba(200,54,44,0.4);color:#f0a4a0}}
+  code{{background:rgba(230,196,73,0.08);color:#e6c449;padding:1px 5px;border-radius:2px;font-size:11.5px;font-family:'SF Mono',ui-monospace,monospace}}
+  .row{{display:grid;grid-template-columns:1fr 1fr;gap:14px}}
+  .hint{{font-size:11px;color:#888;margin-top:4px;line-height:1.7}}
+</style>
+</head><body>
+<div class="wrap">
+  <div class="breadcrumb">🏠 <a href="/">MU</a> · MU Collab · <span style="color:#e6c449">{slug}</span> · 管理画面</div>
+
+  <h1>📦 {name}</h1>
+  <p class="sub">商品を 1 つずつ追加・公開。 letter は <code>m001</code>, <code>m002</code>… で自動採番。 編集は今のところ追加のみ — 削除や修正は <a href="mailto:info@enablerdao.com" style="color:#e6c449">info@enablerdao.com</a> まで。</p>
+
+  <div class="top-cta">
+    <a class="lp" href="{lp}" target="_blank">🛍 LP を見る (公開ページ)</a>
+    <a class="help" href="mailto:info@enablerdao.com?subject=Collab%20Support%3A%20{slug}">❓ サポートに問い合わせ</a>
+  </div>
+
+  {pl_block}
+
+  <h2>+ 商品を 1 つ追加</h2>
+  <form id="add-form">
+    <label>商品名 (日本語、 LP に表示)</label>
+    <input name="label" required maxlength="120" placeholder="例: KOKON 黒 T (Heavy Cotton)">
+
+    <div class="row">
+      <div>
+        <label>種別 (Printful 商品カテゴリ)</label>
+        <select name="kind" required>
+          <option value="tee">tee — T シャツ (¥4,800)</option>
+          <option value="longsleeve">longsleeve — ロング (¥6,800)</option>
+          <option value="tank_top">tank_top — タンク (¥4,400)</option>
+          <option value="hoodie">hoodie — フーディ (¥9,800)</option>
+          <option value="crewneck">crewneck — クルー (¥8,800)</option>
+          <option value="zip_hoodie">zip_hoodie — ジップ (¥10,800)</option>
+          <option value="joggers">joggers — ジョガー (¥8,800)</option>
+          <option value="cap">cap — キャップ (¥5,800)</option>
+          <option value="beanie">beanie — ビーニー (¥5,800)</option>
+          <option value="bucket_hat">bucket_hat — バケット (¥5,800)</option>
+          <option value="tote">tote — トート (¥3,800)</option>
+          <option value="mug">mug — マグ (¥3,400)</option>
+          <option value="sticker">sticker — ステッカー (¥1,200)</option>
+          <option value="patch">patch — パッチ (¥3,800)</option>
+        </select>
+      </div>
+      <div>
+        <label>価格 ¥ (空欄なら種別デフォルト)</label>
+        <input name="price_jpy" type="number" min="100" max="100000" placeholder="例: 4800">
+      </div>
+    </div>
+
+    <label>デザイン画像 URL (公開アクセス可能なもの)</label>
+    <input name="design_url" required type="url" placeholder="https://lifestyle.wearmu.com/your-brand/logo.png">
+    <div class="hint">Google Drive / Dropbox / Notion / R2 / 自社サイト どこでも OK。 公開リンク (誰でも開ける) にしてください。 PNG / JPG / SVG 推奨。</div>
+
+    <button type="submit">追加する →</button>
+    <div id="msg" class="msg"></div>
+  </form>
+
+  <h2>既存 SKU 一覧 ({count} 件)</h2>
+  <table>
+    <thead><tr><th>letter</th><th>label</th><th>種別</th><th>価格</th><th>画像</th></tr></thead>
+    <tbody>{rows}</tbody>
+  </table>
+</div>
+
+<script>
+const form = document.getElementById('add-form');
+const msg  = document.getElementById('msg');
+form.addEventListener('submit', async (e) => {{
+  e.preventDefault();
+  msg.style.display = 'none';
+  const data = {{
+    label:       form.label.value.trim(),
+    kind:        form.kind.value,
+    design_url:  form.design_url.value.trim(),
+  }};
+  if (form.price_jpy.value) data.price_jpy = parseInt(form.price_jpy.value, 10);
+  try {{
+    const r = await fetch('/api/collab/{slug}/sku/add?t={token_q}', {{
+      method:'POST',
+      headers:{{'Content-Type':'application/json'}},
+      body:JSON.stringify(data),
+    }});
+    const j = await r.json();
+    if (r.ok && j.ok) {{
+      msg.className = 'msg ok';
+      msg.style.display = 'block';
+      msg.innerHTML = '✅ 追加完了: <code>'+j.letter+'</code> · ' +
+                      '<a href="'+(j.lp_url||'{lp}')+'" target="_blank" style="color:#9ae3a8">LP で確認</a> · ' +
+                      '<a href="javascript:location.reload()" style="color:#9ae3a8">↻ 一覧更新</a>';
+      form.reset();
+    }} else {{
+      msg.className = 'msg err';
+      msg.style.display = 'block';
+      msg.textContent = '❌ ' + (j.error || ('HTTP '+r.status));
+    }}
+  }} catch (err) {{
+    msg.className = 'msg err';
+    msg.style.display = 'block';
+    msg.textContent = '❌ network: ' + err.message;
+  }}
+}});
+</script>
+</body></html>"##,
+        slug = html_escape(&slug), name = html_escape(&name),
+        lp = html_attr_escape(&lp_path),
+        pl_block = pl_block,
+        count = existing.len(),
+        rows = if rows_html.is_empty() {
+            r##"<tr><td colspan="5" style="text-align:center;color:#888;padding:24px">まだ商品はありません。 上のフォームから 1 つずつ追加してください。</td></tr>"##.to_string()
+        } else { rows_html },
+        token_q = html_attr_escape(&token),
+    );
+    Html(html).into_response()
+}
+
+/// POST /api/collab/:slug/sku/add?t=<admin_secret> — partner self-serve
+/// SKU add. Verified via admin_secret query param (one per collab) so
+/// partners can add SKUs without exposing the global ADMIN_TOKEN.
+/// Wraps the existing admin_proposal_sku_add logic.
+async fn collab_partner_sku_add(
+    State(db): State<Db>,
+    Path(slug): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let token = q.get("t").cloned().unwrap_or_default();
+    if !verify_collab_manage_token(&db, &slug, &token) {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({
+            "ok": false, "error": "invalid manage token"
+        }))).into_response();
+    }
+    let label = body["label"].as_str().unwrap_or("").trim().to_string();
+    let kind  = body["kind"].as_str().unwrap_or("").trim().to_string();
+    let url   = body["design_url"].as_str().unwrap_or("").trim().to_string();
+    let price_jpy = body["price_jpy"].as_i64();
+    if label.is_empty() || kind.is_empty() || url.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "ok": false, "error": "label, kind, design_url are required"
+        }))).into_response();
+    }
+    let conn = db.lock().unwrap();
+    // Auto-assign letter (m001, m002…).
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM proposal_skus WHERE slug=? AND letter LIKE 'm%'",
+        params![slug], |r| r.get(0),
+    ).unwrap_or(0);
+    let letter = format!("m{:03}", n + 1);
+    let final_price: i64 = price_jpy.unwrap_or_else(|| match kind.as_str() {
+        "tee" => 4_800, "longsleeve" => 6_800, "tank_top" => 4_400,
+        "hoodie" => 9_800, "crewneck" => 8_800, "zip_hoodie" => 10_800,
+        "joggers" => 8_800, "cap" => 5_800, "beanie" => 5_800,
+        "bucket_hat" => 5_800, "tote" => 3_800, "mug" => 3_400,
+        "sticker" => 1_200, "patch" => 3_800, _ => 4_800,
+    });
+    let max_manual: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(drop_num),7_999_999) FROM proposal_skus
+         WHERE slug=? AND drop_num BETWEEN 8_000_000 AND 8_999_999",
+        params![slug], |r| r.get(0),
+    ).unwrap_or(7_999_999);
+    let drop_num = max_manual + 1;
+    let now = chrono_now();
+    let _ = conn.execute(
+        "INSERT INTO proposal_extras_skus
+         (job_id, slug, letter, label, kind, price_jpy, image_url,
+          approval_status, reviewed_at, created_at)
+         VALUES (0, ?, ?, ?, ?, ?, ?, 'approved', ?, ?)",
+        params![slug, letter, label, kind, final_price, url, now, now],
+    );
+    let extras_id = conn.last_insert_rowid();
+    let inserted = conn.execute(
+        "INSERT OR IGNORE INTO proposal_skus
+         (slug, letter, drop_num, price_jpy, label, kind, design_slug, design_url)
+         VALUES (?, ?, ?, ?, ?, ?, 'partner-manual', ?)",
+        params![slug, letter, drop_num, final_price, label, kind, url],
+    ).unwrap_or(0);
+    eprintln!("[partner] {} added SKU {} as {} (price ¥{}) {}",
+        slug, label, letter, final_price,
+        if inserted == 0 { "[ALREADY EXISTS]" } else { "" });
+    Json(serde_json::json!({
+        "ok": true,
+        "sku_id": extras_id,
+        "slug": slug,
+        "letter": letter,
+        "drop_num": drop_num,
+        "price_jpy": final_price,
+        "lp_url": format!("/collab/{}", slug),
+    })).into_response()
 }
 
 /// GET /collab/:slug — public collab landing using the grachan82 template
@@ -42451,6 +42836,8 @@ async fn main() {
         .route("/api/proposal/extras/sku/:sku_id/regenerate",   post(extras_sku_regenerate))
         .route("/api/admin/proposal/:slug/sku/add",             post(admin_proposal_sku_add))
         .route("/admin/proposal/:slug/add",                     get(admin_proposal_sku_add_form))
+        .route("/collab/:slug/manage",                          get(collab_manage_page))
+        .route("/api/collab/:slug/sku/add",                     post(collab_partner_sku_add))
         .route("/admin/proposal",              post(proposal_generic_create))
         .route("/admin/proposals",             get(proposal_generic_list))
         .route("/admin/proposal/extras/retroactive-claim",      post(admin_extras_retroactive_claim))

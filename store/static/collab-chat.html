@@ -436,11 +436,39 @@ async function doCreate() {
       throw new Error(t || ('HTTP ' + r.status));
     }
     const d = await r.json();
-    addMsg('assistant', `✓ 作成しました!\n\nLP: ${d.url}\n管理画面: ${d.admin_url}\n\nStripe Payment Link は数秒で接続されます (poll /api/product/collab/${d.slug})。`);
     history = [];
     currentDraft = null;
     persist();
-    setTimeout(() => { window.location.href = d.url; }, 3000);
+    // Render 3 buttons inline (no auto-redirect — partner needs to keep
+    // the manage URL). Also tell them the email is on its way.
+    const esc = (s) => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    const manage = d.manage_url || d.admin_url || '';
+    const lp     = d.url || '';
+    const sent   = d.email_sent_to || '';
+    const card = document.createElement('div');
+    card.className = 'msg assistant';
+    card.style.background = 'rgba(230,196,73,0.05)';
+    card.style.borderLeft = '3px solid #e6c449';
+    card.style.padding = '20px 22px';
+    card.style.margin = '18px 0';
+    card.style.borderRadius = '2px';
+    card.innerHTML = `
+      <div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;margin-bottom:10px">✅ 作成完了</div>
+      <div style="font-size:16px;font-weight:300;line-height:1.45;margin-bottom:8px;color:#F5F5F0">${esc(d.slug)} のコラボページを公開しました。</div>
+      <div style="font-size:12px;color:#c4c4bc;margin-bottom:18px">
+        ${sent ? `📧 <strong style="color:#F5F5F0">${esc(sent)}</strong> 宛に管理 URL を含む確認メールを送りました。 大事に保管してください。<br>` : ''}
+        商品はあとから 1 つずつ追加できます。
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+        <a href="${esc(manage)}" style="background:#e6c449;color:#000;padding:13px 16px;text-decoration:none;font-weight:700;font-size:10.5px;letter-spacing:0.24em;text-transform:uppercase;border-radius:2px;text-align:center">📦 管理 / 商品追加</a>
+        <a href="${esc(lp)}" target="_blank" style="border:1px solid rgba(255,255,255,0.18);color:#F5F5F0;padding:12px 16px;text-decoration:none;font-size:10.5px;letter-spacing:0.22em;text-transform:uppercase;border-radius:2px;text-align:center;opacity:0.85">🛍 LP を見る</a>
+      </div>
+      <div style="font-size:10.5px;color:#888;line-height:1.85;margin-top:14px">
+        管理 URL: <code style="background:rgba(230,196,73,0.10);color:#e6c449;padding:1px 6px;font-size:10px;font-family:'SF Mono',monospace;word-break:break-all">${esc(manage)}</code>
+      </div>
+    `;
+    chatEl.appendChild(card);
+    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
   } catch (e) {
     setError('作成失敗: ' + (e.message || '不明'));
     if (btn) { btn.disabled = false; btn.textContent = '✓ これで作成する'; }
