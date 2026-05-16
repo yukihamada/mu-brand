@@ -8043,6 +8043,25 @@ async fn admin_regen_product_mockup(
     }))).into_response()
 }
 
+/// Brand-default cost (JPY) used when a product row has NULL cost_jpy.
+/// Covers Printful base + DTG + JP送料 ざっくり。yuki が `/admin/costs` で
+/// 個別上書き可能。env `BRAND_COST_<BRAND>` で外部上書きも可能。
+fn brand_default_cost_jpy(brand: &str) -> i64 {
+    if let Ok(v) = env::var(format!("BRAND_COST_{}", brand.to_uppercase())) {
+        if let Ok(n) = v.parse::<i64>() { return n; }
+    }
+    match brand {
+        // tee (Bella+Canvas 3001, DTG, JP-domestic ship via Printful EU is heavy
+        // so /you orders are routed via SUZURI mirror when possible — but treat
+        // baseline as Printful EU for /admin/costs honesty).
+        "mugen" | "regional" | "teshikaga" | "you" => 3_200,
+        "jiufight" | "sweep" => 3_500,
+        // hoodie / MA limited
+        "ma" => 6_500,
+        _ => 3_500,
+    }
+}
+
 /// GET /api/admin/products/:id — single product detail with prompt + 3 lifestyle photos.
 async fn admin_product_detail(
     State(db): State<Db>,
@@ -8056,7 +8075,7 @@ async fn admin_product_detail(
         conn.query_row(
             "SELECT id, brand, drop_num, name, design_url, mockup_url, lifestyle_url,
                     lifestyle_urls_json, price_jpy, inventory, sold, active, created_at,
-                    prompt_text, seed_data, weather_data, parent_design, city_slug
+                    prompt_text, seed_data, weather_data, parent_design, city_slug, cost_jpy
              FROM products WHERE id=?",
             params![id], |r| Ok(serde_json::json!({
                 "id":            r.get::<_, i64>(0)?,
@@ -8077,6 +8096,7 @@ async fn admin_product_detail(
                 "weather_data":  r.get::<_, Option<String>>(15).unwrap_or(None),
                 "parent_design": r.get::<_, Option<String>>(16).unwrap_or(None),
                 "city_slug":     r.get::<_, Option<String>>(17).unwrap_or(None),
+                "cost_jpy":      r.get::<_, Option<i64>>(18).unwrap_or(None),
             }))
         ).ok()
     };
@@ -8087,8 +8107,11 @@ async fn admin_product_detail(
                 .and_then(|x| x.as_str())
                 .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
                 .unwrap_or_default();
+            let brand = v.get("brand").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let default_cost = brand_default_cost_jpy(&brand);
             let mut out = v.clone();
             out["lifestyle_urls"] = serde_json::json!(lifestyle_urls);
+            out["brand_default_cost_jpy"] = serde_json::json!(default_cost);
             Json(out).into_response()
         }
         None => (StatusCode::NOT_FOUND, "product not found").into_response(),
@@ -8134,6 +8157,12 @@ async fn admin_product_update(
     }
     if let Some(v) = body.get("lifestyle_url").and_then(|x| x.as_str()) {
         sets.push("lifestyle_url=?"); binds.push(Box::new(v.to_string()));
+    }
+    if let Some(v) = body.get("cost_jpy").and_then(|x| x.as_i64()) {
+        sets.push("cost_jpy=?"); binds.push(Box::new(v));
+    } else if body.get("cost_jpy").map(|x| x.is_null()).unwrap_or(false) {
+        // Explicit null = reset to brand default.
+        sets.push("cost_jpy=NULL");
     }
     if let Some(arr) = body.get("lifestyle_urls").and_then(|x| x.as_array()) {
         let urls: Vec<String> = arr.iter().filter_map(|v| v.as_str().map(String::from)).collect();
@@ -8464,6 +8493,331 @@ async fn admin_product_new(
     Json(serde_json::json!({
         "ok": true, "new_id": new_id, "drop_num": next_drop,
         "name": name, "design_url": url,
+    })).into_response()
+}
+
+/// GET /admin/costs — admin-gated HTML costs/margin overview page.
+async fn admin_costs_page(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/costs").await { return r; }
+    Html(include_str!("../static/admin-costs.html")).into_response()
+}
+
+/// GET /api/admin/costs — per-product cost / margin + brand aggregates.
+/// Pagination via offset+limit (default 100, max 500). Filter by brand=.
+async fn admin_costs_list(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/costs").await { return r; }
+    let offset: i64 = q.get("offset").and_then(|s| s.parse().ok()).unwrap_or(0).max(0);
+    let limit:  i64 = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(100).clamp(1, 500);
+    let brand_filter: Option<String> = q.get("brand").filter(|s| !s.is_empty()).cloned();
+
+    let conn = db.lock().unwrap();
+    let (where_sql, bind_brand) = if brand_filter.is_some() {
+        (" WHERE brand=?".to_string(), brand_filter.clone())
+    } else { (String::new(), None) };
+    let sql = format!(
+        "SELECT id, brand, drop_num, name, price_jpy, cost_jpy, inventory, sold, active
+         FROM products{} ORDER BY id DESC LIMIT ? OFFSET ?",
+        where_sql,
+    );
+    let mut st = match conn.prepare(&sql) {
+        Ok(s) => s,
+        Err(_) => return Json(serde_json::json!({"error":"costs query failed"})).into_response(),
+    };
+    let mut binds: Vec<&dyn rusqlite::ToSql> = Vec::new();
+    if let Some(b) = &bind_brand { binds.push(b as &dyn rusqlite::ToSql); }
+    binds.push(&limit); binds.push(&offset);
+    let products: Vec<serde_json::Value> = st.query_map(
+        rusqlite::params_from_iter(binds.iter()),
+        |r| {
+            let brand: String = r.get(1).unwrap_or_default();
+            let price: i64 = r.get::<_, i64>(4).unwrap_or(0);
+            let cost_explicit: Option<i64> = r.get(5).unwrap_or(None);
+            let cost = cost_explicit.unwrap_or_else(|| brand_default_cost_jpy(&brand));
+            let sold: i64 = r.get::<_, i64>(7).unwrap_or(0);
+            let revenue = price * sold;
+            let total_cost = cost * sold;
+            let margin_unit = price - cost;
+            let margin_pct: f64 = if price > 0 { (margin_unit as f64 / price as f64) * 100.0 } else { 0.0 };
+            Ok(serde_json::json!({
+                "id":            r.get::<_, i64>(0)?,
+                "brand":         brand,
+                "drop_num":      r.get::<_, i64>(2).unwrap_or(0),
+                "name":          r.get::<_, String>(3).unwrap_or_default(),
+                "price_jpy":     price,
+                "cost_jpy":      cost_explicit,
+                "cost_effective_jpy": cost,
+                "is_cost_default": cost_explicit.is_none(),
+                "inventory":     r.get::<_, i64>(6).unwrap_or(0),
+                "sold":          sold,
+                "active":        r.get::<_, i64>(8).unwrap_or(0),
+                "revenue_jpy":   revenue,
+                "total_cost_jpy": total_cost,
+                "profit_jpy":    revenue - total_cost,
+                "margin_unit_jpy": margin_unit,
+                "margin_pct":    (margin_pct * 10.0).round() / 10.0,
+            }))
+        },
+    ).map(|it| it.flatten().collect()).unwrap_or_default();
+
+    // Brand aggregates (whole table — independent of pagination).
+    let agg_sql = "SELECT brand, COUNT(*), COALESCE(SUM(sold),0),
+                          COALESCE(SUM(sold*price_jpy),0),
+                          COALESCE(SUM(sold*COALESCE(cost_jpy, 0)),0),
+                          COALESCE(SUM(CASE WHEN cost_jpy IS NULL THEN 1 ELSE 0 END), 0)
+                   FROM products GROUP BY brand ORDER BY brand";
+    let mut agg_st = match conn.prepare(agg_sql) {
+        Ok(s) => s,
+        Err(_) => return Json(serde_json::json!({"error":"agg query failed"})).into_response(),
+    };
+    let brand_aggs: Vec<serde_json::Value> = agg_st.query_map([], |r| {
+        let brand: String = r.get(0).unwrap_or_default();
+        let skus: i64 = r.get::<_, i64>(1).unwrap_or(0);
+        let sold: i64 = r.get::<_, i64>(2).unwrap_or(0);
+        let revenue: i64 = r.get::<_, i64>(3).unwrap_or(0);
+        let cost_explicit: i64 = r.get::<_, i64>(4).unwrap_or(0);
+        let unset_cost_skus: i64 = r.get::<_, i64>(5).unwrap_or(0);
+        // For SKUs missing cost_jpy, count default × sold (need second query).
+        let default_cost = brand_default_cost_jpy(&brand);
+        // Conservative: add (default × sold) for rows with NULL cost_jpy.
+        // Computing precise per-brand-default total via separate query for accuracy.
+        Ok(serde_json::json!({
+            "brand": brand,
+            "skus": skus,
+            "sold": sold,
+            "revenue_jpy": revenue,
+            "explicit_cost_jpy": cost_explicit,
+            "default_cost_jpy": default_cost,
+            "skus_unset_cost": unset_cost_skus,
+        }))
+    }).map(|it| it.flatten().collect()).unwrap_or_default();
+
+    // Refine total cost per brand: explicit_cost + sum(sold * default_cost) for NULL-cost rows.
+    let mut brand_aggs_final: Vec<serde_json::Value> = Vec::new();
+    for mut a in brand_aggs {
+        let brand = a["brand"].as_str().unwrap_or("").to_string();
+        let default_cost = a["default_cost_jpy"].as_i64().unwrap_or(0);
+        let null_cost_sold: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(sold),0) FROM products WHERE brand=? AND cost_jpy IS NULL",
+            params![brand], |r| r.get(0)
+        ).unwrap_or(0);
+        let total_cost = a["explicit_cost_jpy"].as_i64().unwrap_or(0) + (null_cost_sold * default_cost);
+        let revenue = a["revenue_jpy"].as_i64().unwrap_or(0);
+        let profit = revenue - total_cost;
+        let margin_pct: f64 = if revenue > 0 { (profit as f64 / revenue as f64) * 100.0 } else { 0.0 };
+        a["total_cost_jpy"] = serde_json::json!(total_cost);
+        a["profit_jpy"] = serde_json::json!(profit);
+        a["margin_pct"] = serde_json::json!((margin_pct * 10.0).round() / 10.0);
+        brand_aggs_final.push(a);
+    }
+
+    // Brand list for the filter dropdown.
+    let brands: Vec<String> = {
+        let mut s2 = match conn.prepare("SELECT DISTINCT brand FROM products ORDER BY brand") {
+            Ok(s) => s, Err(_) => return Json(serde_json::json!({"error":"brand list"})).into_response(),
+        };
+        s2.query_map([], |r| r.get::<_, String>(0))
+            .map(|it| it.flatten().collect()).unwrap_or_default()
+    };
+
+    Json(serde_json::json!({
+        "products": products,
+        "brand_aggs": brand_aggs_final,
+        "brands": brands,
+        "offset": offset, "limit": limit,
+        "has_more": products.len() as i64 == limit,
+    })).into_response()
+}
+
+/// POST /api/admin/products/candidates — generate N Gemini print-file
+/// candidates in parallel. Body: { brand, name, prompt, count?=3 }.
+/// Uploads each to R2 under `admin-gen/_candidates/<ts>-<i>.png` and returns
+/// `[ { idx, design_url } ]`. No DB insert — user picks one via the
+/// follow-up `/from_candidate` call.
+async fn admin_product_candidates(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/products/candidates").await { return r; }
+    let brand = body.get("brand").and_then(|v| v.as_str()).unwrap_or("mugen").to_string();
+    let name = body.get("name").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    let prompt = match body.get("prompt").and_then(|v| v.as_str()) {
+        Some(s) if !s.trim().is_empty() => s.to_string(),
+        _ => return (StatusCode::BAD_REQUEST, "prompt required").into_response(),
+    };
+    let count = body.get("count").and_then(|v| v.as_i64()).unwrap_or(3).clamp(1, 6) as usize;
+    let now = chrono_now();
+
+    // Fire all Gemini calls in parallel. Each call uses a unique seed so the
+    // outputs diverge meaningfully.
+    let mut handles = Vec::with_capacity(count);
+    for i in 0..count {
+        let prompt_i = prompt.clone();
+        let name_i = if name.is_empty() { format!("候補 {}", i + 1) } else { name.clone() };
+        let brand_i = brand.clone();
+        let now_i = now.clone();
+        let seed = format!("cand-{}-{}-{}", brand_i, now_i, i);
+        handles.push(tokio::spawn(async move {
+            let brief = crate::gemini::TeeDesign {
+                name: &name_i,
+                prompt: &prompt_i,
+                mood: &[], palette: &[], scene: &[],
+                seed: &seed,
+                bio: "",
+                wear_log_overlay: "",
+            };
+            let img = match crate::gemini::generate_print_file(&brief).await {
+                Ok(g) => g,
+                Err(e) => return (i, Err(e)),
+            };
+            let key = format!("admin-gen/_candidates/{}-{}-{}-{}.png",
+                brand_i, now_i.replace([':', '-', '.'], ""), i,
+                rand::random::<u32>());
+            match r2_put_bytes(&key, &img.bytes, &img.mime).await {
+                Some(u) => (i, Ok(u)),
+                None => (i, Err("r2 upload failed".to_string())),
+            }
+        }));
+    }
+    let mut results: Vec<serde_json::Value> = Vec::with_capacity(count);
+    let mut errors: Vec<serde_json::Value> = Vec::new();
+    for h in handles {
+        match h.await {
+            Ok((i, Ok(u))) => results.push(serde_json::json!({ "idx": i, "design_url": u })),
+            Ok((i, Err(e))) => errors.push(serde_json::json!({ "idx": i, "error": e })),
+            Err(e) => errors.push(serde_json::json!({ "error": format!("join: {}", e) })),
+        }
+    }
+    if results.is_empty() {
+        return (StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({"ok": false, "errors": errors}))).into_response();
+    }
+    Json(serde_json::json!({
+        "ok": true,
+        "candidates": results,
+        "errors": errors,
+        "echo": { "brand": brand, "name": name, "prompt": prompt, "count": count },
+    })).into_response()
+}
+
+/// POST /api/admin/products/from_candidate — finalize a candidate into a real
+/// products row. Body: { brand, name, prompt, price_jpy, cost_jpy?,
+/// inventory?, design_url (from /candidates), auto_lifestyle?=true,
+/// auto_mockup?=true }. Background-spawns 着画 + Printful mockup.
+async fn admin_product_from_candidate(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/products/from_candidate").await { return r; }
+    let brand = body.get("brand").and_then(|v| v.as_str()).unwrap_or("mugen").to_string();
+    let name = match body.get("name").and_then(|v| v.as_str()) {
+        Some(s) if !s.trim().is_empty() => s.trim().to_string(),
+        _ => return (StatusCode::BAD_REQUEST, "name required").into_response(),
+    };
+    let prompt = body.get("prompt").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let design_url = match body.get("design_url").and_then(|v| v.as_str()) {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => return (StatusCode::BAD_REQUEST, "design_url required").into_response(),
+    };
+    let price_jpy: i64 = body.get("price_jpy").and_then(|v| v.as_i64()).unwrap_or(6800);
+    let cost_jpy: Option<i64> = body.get("cost_jpy").and_then(|v| v.as_i64());
+    let inventory: i64 = body.get("inventory").and_then(|v| v.as_i64()).unwrap_or(1);
+    let auto_life = body.get("auto_lifestyle").and_then(|v| v.as_bool()).unwrap_or(true);
+    let auto_mockup = body.get("auto_mockup").and_then(|v| v.as_bool()).unwrap_or(true);
+
+    let next_drop: i64 = {
+        let conn = db.lock().unwrap();
+        conn.query_row("SELECT COALESCE(MAX(drop_num),0)+1 FROM products WHERE brand=?",
+            params![brand], |r| r.get(0)).unwrap_or(1)
+    };
+    let now: String = chrono_now();
+
+    // Fetch design bytes from the candidate URL so we can cache inline.
+    let (design_bytes_opt, design_mime_opt) = match fetch_image_bytes(&design_url).await {
+        Some((b, m)) => (Some(b), Some(m)),
+        None => (None, None),
+    };
+
+    let new_id: i64 = {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO products (brand, drop_num, name, design_url, design_bytes, design_mime,
+                price_jpy, cost_jpy, inventory, sold, created_at, active, prompt_text, bytes_fetched_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 1, ?, ?)",
+            params![brand, next_drop, name, design_url, design_bytes_opt, design_mime_opt,
+                price_jpy, cost_jpy, inventory, now, prompt, now],
+        );
+        conn.last_insert_rowid()
+    };
+
+    // Background: 着画 3 枚 + Printful mockup.
+    if auto_life {
+        let db2 = db.clone();
+        let name2 = name.clone();
+        let brand2 = brand.clone();
+        let prompt2 = prompt.clone();
+        tokio::spawn(async move {
+            let default_scenes = vec![
+                "young person walking a quiet Tokyo street at golden hour, cinematic, candid".to_string(),
+                "model standing in a sunlit minimalist concrete studio, soft window light, editorial".to_string(),
+                "person sitting at a small cafe table reading a book, warm interior, film grain".to_string(),
+            ];
+            let mut urls: Vec<String> = Vec::new();
+            for (i, scene) in default_scenes.iter().enumerate() {
+                let p = format!(
+                    "Editorial 4:5 lifestyle photograph of a person wearing a cream / off-white \
+                     heavyweight cotton T-shirt that has the following chest graphic printed on it: \
+                     \"{}\". Centered, ~15% of the shirt's width, tonal earth ink. Scene: {}. \
+                     Photorealistic, soft natural light, slight film grain, candid. NO additional text.",
+                    prompt2.replace('"', "'"), scene,
+                );
+                let brief = crate::gemini::TeeDesign {
+                    name: &name2, prompt: &p,
+                    mood: &[], palette: &[], scene: &[scene.clone()],
+                    seed: &format!("life-{}-{}-{}", brand2, new_id, i),
+                    bio: "", wear_log_overlay: "",
+                };
+                if let Ok(img) = crate::gemini::generate_tee(&brief).await {
+                    let key = format!("admin-gen/{}/life-{}-{}-{}.png", brand2, new_id, i, chrono_now());
+                    if let Some(u) = r2_put_bytes(&key, &img.bytes, &img.mime).await {
+                        urls.push(u);
+                    }
+                }
+            }
+            if !urls.is_empty() {
+                let urls_json = serde_json::to_string(&urls).unwrap_or_else(|_| "[]".into());
+                let conn = db2.lock().unwrap();
+                let _ = conn.execute(
+                    "UPDATE products SET lifestyle_urls_json=?,
+                        lifestyle_url=COALESCE(NULLIF(lifestyle_url,''), ?)
+                     WHERE id=?",
+                    params![urls_json, urls.first().cloned().unwrap_or_default(), new_id],
+                );
+            }
+        });
+    }
+    if auto_mockup {
+        let db3 = db.clone();
+        let design_url_for_mockup = design_url.clone();
+        tokio::spawn(async move {
+            regen_product_mockup(new_id, design_url_for_mockup, db3).await;
+        });
+    }
+
+    Json(serde_json::json!({
+        "ok": true, "new_id": new_id, "drop_num": next_drop, "brand": brand,
+        "design_url": design_url, "queued_lifestyle": auto_life, "queued_mockup": auto_mockup,
     })).into_response()
 }
 
@@ -40900,6 +41254,9 @@ async fn main() {
         "ALTER TABLE products ADD COLUMN stripe_price_id  TEXT",
         // Admin 商品管理: 着画 3 枚を JSON で持つ。 lifestyle_url は legacy 単数フィールド。
         "ALTER TABLE products ADD COLUMN lifestyle_urls_json TEXT",
+        // 原価 (Printful 実費 + JP 送料 + DTG 手数料 を JPY 換算)。
+        // NULL の SKU は brand_default を /admin/costs で適用。手動上書き可。
+        "ALTER TABLE products ADD COLUMN cost_jpy INTEGER",
         // Cash-payout fields for bounty rewards. Solana is the primary
         // method (treasury sends USDC). Stripe Connect Express is for
         // recipients who prefer fiat / JP-domestic bank. PayPay is a
@@ -44297,6 +44654,8 @@ async fn main() {
         .route("/admin/products", get(admin_products_page))
         .route("/api/admin/products", get(admin_products_list))
         .route("/api/admin/products/new", post(admin_product_new))
+        .route("/api/admin/products/candidates", post(admin_product_candidates))
+        .route("/api/admin/products/from_candidate", post(admin_product_from_candidate))
         .route("/api/admin/products/cache_bytes", post(admin_cache_product_bytes))
         .route("/api/admin/products/:id", get(admin_product_detail))
         .route("/api/admin/products/:id/update", post(admin_product_update))
@@ -44304,6 +44663,8 @@ async fn main() {
         .route("/api/admin/products/:id/regen_design", post(admin_regen_design))
         .route("/api/admin/products/:id/regen_lifestyle", post(admin_regen_lifestyle))
         .route("/api/admin/products/:id/regen_similar", post(admin_regen_similar))
+        .route("/admin/costs", get(admin_costs_page))
+        .route("/api/admin/costs", get(admin_costs_list))
         .route("/api/products/:id/design.png", get(product_design_image))
         .route("/api/products/:id/mockup.png", get(product_mockup_image))
         .route("/api/collab/:id/image.png", get(collab_product_image))

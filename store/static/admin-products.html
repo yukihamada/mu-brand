@@ -93,9 +93,9 @@
 <header>
   <h1>━◯━ MU · PRODUCTS</h1>
   <div class="nav">
+    <a href="/admin/costs">costs</a>
     <a href="/admin/db">db overview</a>
     <a href="/admin/bids">bids</a>
-    <a href="/admin/approvals">approvals</a>
   </div>
 </header>
 
@@ -116,33 +116,71 @@
   </div>
 
   <div class="new-panel" id="new-panel">
-    <h3>━ NEW SKU</h3>
-    <div class="edit-grid">
-      <div class="edit-field">
-        <label>brand</label>
-        <input id="n-brand" value="mugen">
+    <!-- STEP 1: input -->
+    <div id="wiz-step1">
+      <h3>━ NEW SKU · STEP 1 / 3 — テーマ入力</h3>
+      <div class="edit-grid">
+        <div class="edit-field">
+          <label>brand</label>
+          <input id="n-brand" value="mugen">
+        </div>
+        <div class="edit-field">
+          <label>name (テーマ / 仮名)</label>
+          <input id="n-name" placeholder="例: 静 #1003 / 雨脚 / 弟子屈の朝">
+        </div>
+        <div class="edit-field">
+          <label>price (¥)</label>
+          <input id="n-price" type="number" value="6800">
+        </div>
+        <div class="edit-field">
+          <label>cost (¥, 空 = ブランド default)</label>
+          <input id="n-cost" type="number" placeholder="例: 3200">
+        </div>
+        <div class="edit-field">
+          <label>inventory (1/1 なら 1)</label>
+          <input id="n-inventory" type="number" value="1">
+        </div>
+        <div class="edit-field">
+          <label>候補生成数</label>
+          <select id="n-count">
+            <option value="3" selected>3 (推奨)</option>
+            <option value="4">4</option>
+            <option value="6">6</option>
+          </select>
+        </div>
+        <div class="edit-field full">
+          <label>prompt — chest graphic description (Gemini に投げる)</label>
+          <textarea id="n-prompt" placeholder="抽象ミニマル, 黒の墨で雨脚を描いた、左肩寄り..."></textarea>
+        </div>
       </div>
-      <div class="edit-field">
-        <label>name (display)</label>
-        <input id="n-name" placeholder="例: 静 #1003">
-      </div>
-      <div class="edit-field">
-        <label>price (¥)</label>
-        <input id="n-price" type="number" value="6800">
-      </div>
-      <div class="edit-field">
-        <label>inventory</label>
-        <input id="n-inventory" type="number" value="1">
-      </div>
-      <div class="edit-field full">
-        <label>prompt — chest graphic description (Gemini に投げる)</label>
-        <textarea id="n-prompt" placeholder="抽象ミニマル, 黒のサミ墨で雨脚を描いた...etc"></textarea>
+      <div class="edit-actions">
+        <button class="btn primary" onclick="genCandidates()">━◯━ 候補を Gemini で並列生成</button>
+        <button class="btn" onclick="closeWizard()">cancel</button>
+        <div id="new-status" class="status-line" style="display:none"></div>
       </div>
     </div>
-    <div class="edit-actions">
-      <button class="btn primary" onclick="createNew()">━◯━ 生成して登録</button>
-      <button class="btn" onclick="document.getElementById('new-panel').classList.remove('open')">cancel</button>
-      <div id="new-status" class="status-line" style="display:none"></div>
+
+    <!-- STEP 2: pick a candidate -->
+    <div id="wiz-step2" style="display:none">
+      <h3>━ NEW SKU · STEP 2 / 3 — 1 つピック</h3>
+      <p class="sub" style="color:var(--mute);font-size:11px;letter-spacing:0.08em;margin:0 0 14px">気に入った 1 つをクリックして SKU 化。気に入らなければ ↩ 戻って prompt 調整 → 再生成。</p>
+      <div id="cand-grid" class="grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr));margin-bottom:14px"></div>
+      <div class="edit-actions">
+        <button class="btn" onclick="backToStep1()">↩ もう一度生成</button>
+        <button class="btn" onclick="closeWizard()">cancel</button>
+        <div id="wiz2-status" class="status-line" style="display:none"></div>
+      </div>
+    </div>
+
+    <!-- STEP 3: finalized -->
+    <div id="wiz-step3" style="display:none">
+      <h3>━ NEW SKU · STEP 3 / 3 — 公開完了 ✓</h3>
+      <p style="color:var(--green);font-size:13px;margin:0 0 14px" id="wiz3-msg"></p>
+      <p style="color:var(--mute);font-size:11px;letter-spacing:0.06em;margin:0 0 14px">着画 3 枚 + Printful 実物 mockup はバックグラウンドで生成中 (約 1〜3 分)。完成したら SKU 詳細で確認。</p>
+      <div class="edit-actions">
+        <button class="btn primary" onclick="closeWizard(); resetAndReload();">━ もう 1 件作る</button>
+        <button class="btn" id="wiz3-open" onclick="">━ この SKU を開く</button>
+      </div>
     </div>
   </div>
 
@@ -173,6 +211,11 @@ function withTok(url) {
   const t = adminToken();
   return t ? url + (url.includes('?') ? '&' : '?') + 'admin_token=' + encodeURIComponent(t) : url;
 }
+// Propagate admin_token to nav links on page load.
+document.querySelectorAll('header .nav a').forEach(a => {
+  const href = a.getAttribute('href');
+  if (href && href.startsWith('/')) a.setAttribute('href', withTok(href));
+});
 function escapeHtml(s) {
   if (s == null) return '';
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -342,6 +385,10 @@ function renderDetail(d) {
         <input id="e-price" type="number" value="${d.price_jpy}">
       </div>
       <div class="edit-field">
+        <label>cost (¥) ${d.cost_jpy == null ? `<span style="color:var(--mute);font-size:9px">default ¥${d.brand_default_cost_jpy}</span>` : ''}</label>
+        <input id="e-cost" type="number" value="${d.cost_jpy != null ? d.cost_jpy : ''}" placeholder="default ¥${d.brand_default_cost_jpy}">
+      </div>
+      <div class="edit-field">
         <label>inventory</label>
         <input id="e-inventory" type="number" value="${d.inventory}">
       </div>
@@ -385,10 +432,12 @@ function setStatus(elId, kind, msg) {
 }
 
 async function saveEdits(id) {
+  const costStr = document.getElementById('e-cost').value.trim();
   const body = {
     name: document.getElementById('e-name').value,
     prompt_text: document.getElementById('e-prompt').value,
     price_jpy: parseInt(document.getElementById('e-price').value || '0', 10),
+    cost_jpy: costStr === '' ? null : parseInt(costStr, 10),
     inventory: parseInt(document.getElementById('e-inventory').value || '0', 10),
     active: parseInt(document.getElementById('e-active').value || '1', 10),
     design_url: document.getElementById('e-design').value,
@@ -468,36 +517,92 @@ async function regenSimilar(id) {
   } catch (e) { setStatus('detail-status', 'err', String(e)); }
 }
 
-// ── New SKU panel ─────────────────────────────────────────────────
+// ── New SKU wizard (3 candidates) ─────────────────────────────────
+let wizardEcho = null;
+let wizardCandidates = [];
+
 function openNewPanel() {
   document.getElementById('new-panel').classList.add('open');
+  showWizStep(1);
 }
-async function createNew() {
+function closeWizard() {
+  document.getElementById('new-panel').classList.remove('open');
+  showWizStep(1);
+}
+function showWizStep(n) {
+  document.getElementById('wiz-step1').style.display = n===1 ? 'block' : 'none';
+  document.getElementById('wiz-step2').style.display = n===2 ? 'block' : 'none';
+  document.getElementById('wiz-step3').style.display = n===3 ? 'block' : 'none';
+}
+
+async function genCandidates() {
   const body = {
     brand: document.getElementById('n-brand').value.trim() || 'mugen',
-    name: document.getElementById('n-name').value.trim(),
+    name: document.getElementById('n-name').value.trim() || 'untitled',
     prompt: document.getElementById('n-prompt').value.trim(),
+    count: parseInt(document.getElementById('n-count').value || '3', 10),
+  };
+  if (!body.prompt) { setStatus('new-status', 'err', '━ prompt 必須'); return; }
+  wizardEcho = {
+    ...body,
     price_jpy: parseInt(document.getElementById('n-price').value || '6800', 10),
+    cost_jpy: (() => { const v = document.getElementById('n-cost').value.trim(); return v ? parseInt(v, 10) : null; })(),
     inventory: parseInt(document.getElementById('n-inventory').value || '1', 10),
   };
-  if (!body.name || !body.prompt) {
-    setStatus('new-status', 'err', '━ name と prompt 必須');
-    return;
-  }
-  setStatus('new-status', 'info', '━ Gemini で生成中… (約20秒)');
+  setStatus('new-status', 'info', `━ Gemini で ${body.count} 候補を並列生成中… (約 25〜35 秒)`);
   try {
-    const r = await fetch(withTok('/api/admin/products/new'), {
+    const r = await fetch(withTok('/api/admin/products/candidates'), {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(body),
     });
     const j = await r.json();
-    if (!r.ok || !j.ok) { setStatus('new-status', 'err', `create failed: ${JSON.stringify(j)}`); return; }
-    setStatus('new-status', 'ok', `━ 作成完了 (id ${j.new_id} #${j.drop_num})`);
-    setTimeout(() => {
-      document.getElementById('new-panel').classList.remove('open');
-      resetAndReload();
-    }, 800);
+    if (!r.ok || !j.ok) { setStatus('new-status', 'err', `候補生成失敗: ${JSON.stringify(j.errors||j)}`); return; }
+    wizardCandidates = j.candidates || [];
+    renderCandidates();
+    showWizStep(2);
   } catch (e) { setStatus('new-status', 'err', String(e)); }
+}
+
+function renderCandidates() {
+  const grid = document.getElementById('cand-grid');
+  grid.innerHTML = wizardCandidates.map((c, i) => `
+    <div class="card" style="cursor:pointer" onclick="pickCandidate(${i})">
+      <div class="thumb"><img src="${escapeHtml(c.design_url)}" alt="candidate ${c.idx+1}"></div>
+      <div class="meta">
+        <div class="row1"><span class="brand">候補 ${c.idx+1}</span><span>click to pick →</span></div>
+        <div class="name" style="min-height:auto">${escapeHtml(wizardEcho.name)}</div>
+      </div>
+    </div>`).join('');
+}
+
+function backToStep1() { showWizStep(1); }
+
+async function pickCandidate(i) {
+  const c = wizardCandidates[i];
+  if (!c) return;
+  setStatus('wiz2-status', 'info', `━ 候補 ${c.idx+1} で SKU 化中… 着画 3 + Printful mockup は背景で開始`);
+  try {
+    const r = await fetch(withTok('/api/admin/products/from_candidate'), {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        brand: wizardEcho.brand,
+        name: wizardEcho.name,
+        prompt: wizardEcho.prompt,
+        price_jpy: wizardEcho.price_jpy,
+        cost_jpy: wizardEcho.cost_jpy,
+        inventory: wizardEcho.inventory,
+        design_url: c.design_url,
+        auto_lifestyle: true,
+        auto_mockup: true,
+      }),
+    });
+    const j = await r.json();
+    if (!r.ok || !j.ok) { setStatus('wiz2-status', 'err', `SKU 化失敗: ${JSON.stringify(j)}`); return; }
+    document.getElementById('wiz3-msg').textContent = `━ id ${j.new_id} #${j.drop_num} (${j.brand}) を作成 → design_url 保存済み`;
+    const btn = document.getElementById('wiz3-open');
+    btn.onclick = () => { closeWizard(); openDetail(j.new_id); };
+    showWizStep(3);
+  } catch (e) { setStatus('wiz2-status', 'err', String(e)); }
 }
 
 // Initial load
