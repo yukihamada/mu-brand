@@ -7686,6 +7686,126 @@ async fn admin_bids_page(
     Html(include_str!("../static/admin-bids.html")).into_response()
 }
 
+/// GET /admin/products — admin-gated HTML product browser (core + collab tables).
+async fn admin_products_page(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/products").await { return r; }
+    Html(include_str!("../static/admin-products.html")).into_response()
+}
+
+/// GET /api/admin/products — JSON dump of products + collab_products with summary.
+async fn admin_products_list(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/products").await { return r; }
+
+    let conn = db.lock().unwrap();
+
+    // Core products
+    let products: Vec<serde_json::Value> = {
+        let mut st = match conn.prepare(
+            "SELECT id, brand, drop_num, name, design_url, mockup_url, price_jpy, inventory, sold,
+                    created_at, active, parent_design, nft_mint, auction_end, current_bid, bid_count
+             FROM products ORDER BY id DESC"
+        ) {
+            Ok(s) => s,
+            Err(_) => return Json(serde_json::json!({"error":"products query failed"})).into_response(),
+        };
+        let rows: Vec<serde_json::Value> = st.query_map([], |r| {
+            Ok(serde_json::json!({
+                "id":            r.get::<_, i64>(0)?,
+                "brand":         r.get::<_, String>(1).unwrap_or_default(),
+                "drop_num":      r.get::<_, i64>(2).unwrap_or(0),
+                "name":          r.get::<_, String>(3).unwrap_or_default(),
+                "design_url":    r.get::<_, Option<String>>(4).unwrap_or(None),
+                "mockup_url":    r.get::<_, Option<String>>(5).unwrap_or(None),
+                "price_jpy":     r.get::<_, i64>(6).unwrap_or(0),
+                "inventory":     r.get::<_, i64>(7).unwrap_or(0),
+                "sold":          r.get::<_, i64>(8).unwrap_or(0),
+                "created_at":    r.get::<_, String>(9).unwrap_or_default(),
+                "active":        r.get::<_, i64>(10).unwrap_or(0),
+                "parent_design": r.get::<_, Option<String>>(11).unwrap_or(None),
+                "nft_mint":      r.get::<_, Option<String>>(12).unwrap_or(None),
+                "auction_end":   r.get::<_, Option<String>>(13).unwrap_or(None),
+                "current_bid":   r.get::<_, i64>(14).unwrap_or(0),
+                "bid_count":     r.get::<_, i64>(15).unwrap_or(0),
+            }))
+        }).map(|it| it.flatten().collect()).unwrap_or_default();
+        rows
+    };
+
+    // Collab products
+    let collab_products: Vec<serde_json::Value> = {
+        let mut st = match conn.prepare(
+            "SELECT id, slug, partner, category, name, description, image_url, price_jpy,
+                    sizes_json, active, draft, created_at
+             FROM collab_products ORDER BY id DESC"
+        ) {
+            Ok(s) => s,
+            Err(_) => return Json(serde_json::json!({"error":"collab_products query failed"})).into_response(),
+        };
+        let rows: Vec<serde_json::Value> = st.query_map([], |r| {
+            Ok(serde_json::json!({
+                "id":          r.get::<_, i64>(0)?,
+                "slug":        r.get::<_, String>(1).unwrap_or_default(),
+                "partner":     r.get::<_, String>(2).unwrap_or_default(),
+                "category":    r.get::<_, String>(3).unwrap_or_default(),
+                "name":        r.get::<_, String>(4).unwrap_or_default(),
+                "description": r.get::<_, Option<String>>(5).unwrap_or(None),
+                "image_url":   r.get::<_, Option<String>>(6).unwrap_or(None),
+                "price_jpy":   r.get::<_, i64>(7).unwrap_or(0),
+                "sizes_json":  r.get::<_, Option<String>>(8).unwrap_or(None),
+                "active":      r.get::<_, i64>(9).unwrap_or(0),
+                "draft":       r.get::<_, i64>(10).unwrap_or(0),
+                "created_at":  r.get::<_, String>(11).unwrap_or_default(),
+            }))
+        }).map(|it| it.flatten().collect()).unwrap_or_default();
+        rows
+    };
+
+    // Distinct brands / partners
+    let brands: Vec<String> = {
+        let mut st = match conn.prepare("SELECT DISTINCT brand FROM products ORDER BY brand") {
+            Ok(s) => s, Err(_) => return Json(serde_json::json!({"error":"brand query failed"})).into_response(),
+        };
+        st.query_map([], |r| r.get::<_, String>(0))
+            .map(|it| it.flatten().collect()).unwrap_or_default()
+    };
+    let partners: Vec<String> = {
+        let mut st = match conn.prepare("SELECT DISTINCT partner FROM collab_products ORDER BY partner") {
+            Ok(s) => s, Err(_) => return Json(serde_json::json!({"error":"partner query failed"})).into_response(),
+        };
+        st.query_map([], |r| r.get::<_, String>(0))
+            .map(|it| it.flatten().collect()).unwrap_or_default()
+    };
+
+    // Summary
+    let core_total: i64 = conn.query_row("SELECT COUNT(*) FROM products", [], |r| r.get(0)).unwrap_or(0);
+    let core_active: i64 = conn.query_row("SELECT COUNT(*) FROM products WHERE active=1", [], |r| r.get(0)).unwrap_or(0);
+    let core_sold: i64 = conn.query_row("SELECT COALESCE(SUM(sold),0) FROM products", [], |r| r.get(0)).unwrap_or(0);
+    let core_revenue: i64 = conn.query_row("SELECT COALESCE(SUM(sold*price_jpy),0) FROM products", [], |r| r.get(0)).unwrap_or(0);
+    let collab_total: i64 = conn.query_row("SELECT COUNT(*) FROM collab_products", [], |r| r.get(0)).unwrap_or(0);
+    let collab_active: i64 = conn.query_row("SELECT COUNT(*) FROM collab_products WHERE active=1", [], |r| r.get(0)).unwrap_or(0);
+    let collab_draft: i64 = conn.query_row("SELECT COUNT(*) FROM collab_products WHERE draft=1", [], |r| r.get(0)).unwrap_or(0);
+
+    Json(serde_json::json!({
+        "snapshot_at": chrono_now(),
+        "summary": {
+            "core":   { "total": core_total, "active": core_active, "sold": core_sold, "revenue_jpy": core_revenue },
+            "collab": { "total": collab_total, "active": collab_active, "draft": collab_draft },
+        },
+        "brands":  brands,
+        "partners": partners,
+        "products":         products,
+        "collab_products":  collab_products,
+    })).into_response()
+}
+
 /// POST /api/admin/ma/set_end?product_id=:id&end_at=YYYY-MM-DDTHH:MM:SS
 /// Admin: re-time an auction. Used for early termination (set end_at to
 /// the past) or extension. Does NOT settle; just changes the end time.
@@ -42979,6 +43099,8 @@ async fn main() {
         .route("/api/admin/db/overview", get(admin_db_overview))
         .route("/admin/db", get(admin_db_page))
         .route("/admin/bids", get(admin_bids_page))
+        .route("/admin/products", get(admin_products_page))
+        .route("/api/admin/products", get(admin_products_list))
         .route("/api/checkout", post(checkout))
         .route("/api/checkout/crypto", post(payments::checkout_crypto))
         .route("/api/checkout/crypto/status/:reference", get(payments::checkout_crypto_status))

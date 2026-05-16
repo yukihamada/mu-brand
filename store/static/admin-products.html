@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU · Products</title>
+<meta name="robots" content="noindex">
+<style>
+  :root { --bg:#0A0A0A; --fg:#F5F5F0; --mute:#888; --accent:#e6c449; --line:#1c1c1c; --green:#7be57b; --red:#ff4a3d; }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { background: var(--bg); color: var(--fg); margin: 0; font-family: ui-monospace, "SF Mono", Menlo, "Helvetica Neue", Arial, sans-serif; line-height: 1.55; font-size: 13px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  header { padding: 18px 24px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  header h1 { font-size: 14px; letter-spacing: 0.4em; margin: 0; font-weight: 700; }
+  header .nav { color: var(--mute); font-size: 11px; letter-spacing: 0.16em; }
+  header .nav a { margin-left: 14px; }
+  .wrap { padding: 24px 24px 80px; max-width: 1480px; margin: 0 auto; }
+  section { margin-bottom: 40px; }
+  h2 { font-size: 11px; letter-spacing: 0.42em; color: var(--accent); text-transform: uppercase; margin: 0 0 14px; font-weight: 700; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .kpi { background: #0f0f0f; border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; }
+  .kpi .label { font-size: 10px; letter-spacing: 0.26em; color: var(--mute); text-transform: uppercase; margin-bottom: 4px; }
+  .kpi .v { font-size: 22px; font-weight: 200; color: var(--fg); letter-spacing: 0.02em; }
+  .kpi .sub { font-size: 11px; color: var(--mute); margin-top: 2px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; align-items: center; }
+  .toolbar input, .toolbar select { background: #0f0f0f; border: 1px solid var(--line); color: var(--fg); padding: 8px 10px; font-family: inherit; font-size: 12px; border-radius: 4px; }
+  .toolbar input.search { width: 280px; }
+  .toolbar select { min-width: 140px; }
+  .toolbar .count { color: var(--mute); font-size: 11px; letter-spacing: 0.14em; margin-left: auto; }
+  table { width: 100%; border-collapse: collapse; background: #0c0c0c; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #161616; font-size: 12px; vertical-align: middle; }
+  th { font-size: 10px; color: var(--mute); letter-spacing: 0.22em; text-transform: uppercase; background: #0a0a0a; font-weight: 700; cursor: pointer; user-select: none; }
+  th.sorted { color: var(--accent); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr:last-child td { border-bottom: 0; }
+  tr:hover td { background: rgba(245,245,240,0.03); }
+  .tag { display: inline-block; padding: 1px 7px; border-radius: 99px; font-size: 10px; letter-spacing: 0.12em; font-weight: 600; }
+  .tag.ok { background: rgba(123,229,123,0.10); color: var(--green); border: 1px solid rgba(123,229,123,0.30); }
+  .tag.no { background: rgba(255,74,61,0.10); color: var(--red); border: 1px solid rgba(255,74,61,0.30); }
+  .tag.muted { background: #1a1a1a; color: var(--mute); }
+  .muted { color: var(--mute); }
+  .err { color: var(--red); padding: 20px; text-align: center; }
+  .loading { color: var(--mute); padding: 40px; text-align: center; }
+  .thumb { width: 48px; height: 48px; object-fit: cover; border-radius: 4px; background: #1a1a1a; display: block; }
+  .thumb.placeholder { display: flex; align-items: center; justify-content: center; color: var(--mute); font-size: 10px; }
+  .row-name { display: flex; flex-direction: column; gap: 2px; max-width: 320px; }
+  .row-name strong { color: var(--fg); font-weight: 500; }
+  .row-name .meta { color: var(--mute); font-size: 10px; letter-spacing: 0.06em; }
+  .pager { display: flex; gap: 6px; align-items: center; margin-top: 12px; justify-content: center; }
+  .pager button { background: #0f0f0f; border: 1px solid var(--line); color: var(--fg); padding: 6px 12px; font-family: inherit; font-size: 11px; border-radius: 4px; cursor: pointer; }
+  .pager button:disabled { color: var(--mute); cursor: default; }
+  .pager .page { color: var(--mute); font-size: 11px; letter-spacing: 0.16em; padding: 0 8px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 14px; border-bottom: 1px solid var(--line); }
+  .tab { padding: 9px 14px; cursor: pointer; color: var(--mute); border-bottom: 2px solid transparent; font-size: 11px; letter-spacing: 0.24em; text-transform: uppercase; font-weight: 600; }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab .n { color: var(--mute); margin-left: 6px; font-weight: 400; }
+  .tab.active .n { color: var(--fg); }
+</style>
+</head>
+<body>
+<header>
+  <h1>━◯━ MU · PRODUCTS</h1>
+  <div class="nav">
+    <a href="/admin/db">db overview</a>
+    <a href="/admin/bids">bids</a>
+    <a href="/admin/approvals">approvals</a>
+  </div>
+</header>
+
+<div class="wrap" id="content">
+  <div class="loading" id="status">━◯━ loading...</div>
+</div>
+
+<script>
+let DATA = null;
+let activeTab = 'core';
+let sortKey = 'id';
+let sortDir = 'desc';
+let page = 1;
+const PER = 100;
+
+async function load() {
+  const url = new URL(window.location.href);
+  const tok = url.searchParams.get('admin_token') || url.searchParams.get('token') || '';
+  const qs = tok ? '?admin_token=' + encodeURIComponent(tok) : '';
+  const r = await fetch('/api/admin/products' + qs, { credentials: 'include' });
+  if (!r.ok) {
+    document.getElementById('content').innerHTML = `<div class="err">HTTP ${r.status} — admin_token クエリで再アクセスしてください: /admin/products?admin_token=…</div>`;
+    return;
+  }
+  DATA = await r.json();
+  renderShell();
+  renderTable();
+}
+
+function renderShell() {
+  const s = DATA.summary;
+  const brands = ['', ...DATA.brands].map(b => `<option value="${b}">${b || '— all brands —'}</option>`).join('');
+  const partners = ['', ...DATA.partners].map(p => `<option value="${p}">${p || '— all partners —'}</option>`).join('');
+  document.getElementById('content').innerHTML = `
+    <section>
+      <div class="kpis">
+        <div class="kpi">
+          <div class="label">Core products</div>
+          <div class="v">${s.core.active.toLocaleString()}<span class="muted" style="font-size:14px"> / ${s.core.total.toLocaleString()}</span></div>
+          <div class="sub">active / total</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Collab products</div>
+          <div class="v">${s.collab.active.toLocaleString()}<span class="muted" style="font-size:14px"> / ${s.collab.total.toLocaleString()}</span></div>
+          <div class="sub">active / total · ${s.collab.draft} draft</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Sold (core)</div>
+          <div class="v">${s.core.sold.toLocaleString()}</div>
+          <div class="sub">¥${s.core.revenue_jpy.toLocaleString()} 累計</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Brands</div>
+          <div class="v">${DATA.brands.length}</div>
+          <div class="sub">${DATA.partners.length} collab partners</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="tabs">
+      <div class="tab ${activeTab==='core'?'active':''}" onclick="setTab('core')">━ Core products <span class="n">${s.core.total.toLocaleString()}</span></div>
+      <div class="tab ${activeTab==='collab'?'active':''}" onclick="setTab('collab')">━ Collab products <span class="n">${s.collab.total.toLocaleString()}</span></div>
+    </div>
+
+    <div class="toolbar" id="toolbar-core" style="display:${activeTab==='core'?'flex':'none'}">
+      <input class="search" id="search-core" placeholder="search by name / id / drop_num…" oninput="page=1; renderTable()">
+      <select id="brand-core" onchange="page=1; renderTable()">${brands}</select>
+      <select id="active-core" onchange="page=1; renderTable()">
+        <option value="">— all states —</option>
+        <option value="1">active only</option>
+        <option value="0">inactive only</option>
+        <option value="soldout">sold out</option>
+      </select>
+      <span class="count" id="count-core"></span>
+    </div>
+
+    <div class="toolbar" id="toolbar-collab" style="display:${activeTab==='collab'?'flex':'none'}">
+      <input class="search" id="search-collab" placeholder="search by name / slug / category…" oninput="page=1; renderTable()">
+      <select id="partner-collab" onchange="page=1; renderTable()">${partners}</select>
+      <select id="active-collab" onchange="page=1; renderTable()">
+        <option value="">— all states —</option>
+        <option value="1">active only</option>
+        <option value="0">inactive only</option>
+        <option value="draft">draft only</option>
+      </select>
+      <span class="count" id="count-collab"></span>
+    </div>
+
+    <div id="table-mount"></div>
+    <div class="pager" id="pager"></div>
+  `;
+}
+
+function setTab(t) {
+  activeTab = t;
+  page = 1;
+  sortKey = (t === 'core') ? 'id' : 'id';
+  sortDir = 'desc';
+  renderShell();
+  renderTable();
+}
+
+function setSort(k) {
+  if (sortKey === k) { sortDir = (sortDir === 'asc' ? 'desc' : 'asc'); }
+  else { sortKey = k; sortDir = 'desc'; }
+  renderTable();
+}
+
+function applyFilters(rows, scope) {
+  const q = (document.getElementById('search-' + scope)?.value || '').toLowerCase().trim();
+  const brand = document.getElementById(scope==='core'?'brand-core':'partner-collab')?.value || '';
+  const state = document.getElementById('active-' + scope)?.value || '';
+  return rows.filter(r => {
+    if (brand) {
+      if (scope==='core' && r.brand !== brand) return false;
+      if (scope==='collab' && r.partner !== brand) return false;
+    }
+    if (state === '1' && r.active !== 1) return false;
+    if (state === '0' && r.active !== 0) return false;
+    if (state === 'soldout' && scope==='core' && r.sold < r.inventory) return false;
+    if (state === 'draft' && scope==='collab' && r.draft !== 1) return false;
+    if (q) {
+      const hay = scope==='core'
+        ? `${r.id} ${r.brand} ${r.drop_num} ${r.name}`.toLowerCase()
+        : `${r.id} ${r.slug} ${r.partner} ${r.category} ${r.name}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function sortRows(rows) {
+  const k = sortKey, dir = sortDir === 'asc' ? 1 : -1;
+  return rows.slice().sort((a, b) => {
+    const av = a[k], bv = b[k];
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
+    return String(av).localeCompare(String(bv)) * dir;
+  });
+}
+
+function thumbCell(url, fallback) {
+  if (url) return `<img class="thumb" src="${escapeHtml(url)}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'thumb placeholder',textContent:'—'}))">`;
+  return `<div class="thumb placeholder">${fallback || '—'}</div>`;
+}
+
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function renderTable() {
+  if (!DATA) return;
+  if (activeTab === 'core') renderCoreTable();
+  else renderCollabTable();
+}
+
+function renderCoreTable() {
+  const rows = sortRows(applyFilters(DATA.products, 'core'));
+  document.getElementById('count-core').textContent = rows.length.toLocaleString() + ' rows';
+  const pages = Math.max(1, Math.ceil(rows.length / PER));
+  if (page > pages) page = pages;
+  const slice = rows.slice((page-1)*PER, page*PER);
+  const arrow = (k) => sortKey === k ? (sortDir === 'asc' ? ' ↑' : ' ↓') : '';
+  const cls = (k) => sortKey === k ? 'sorted' : '';
+  document.getElementById('table-mount').innerHTML = `
+    <table>
+      <thead><tr>
+        <th></th>
+        <th class="${cls('id')}" onclick="setSort('id')">id${arrow('id')}</th>
+        <th class="${cls('brand')}" onclick="setSort('brand')">brand${arrow('brand')}</th>
+        <th class="${cls('drop_num')}" onclick="setSort('drop_num')">drop${arrow('drop_num')}</th>
+        <th>name</th>
+        <th class="num ${cls('price_jpy')}" onclick="setSort('price_jpy')">price${arrow('price_jpy')}</th>
+        <th class="num ${cls('sold')}" onclick="setSort('sold')">sold${arrow('sold')}</th>
+        <th class="num ${cls('inventory')}" onclick="setSort('inventory')">stock${arrow('inventory')}</th>
+        <th class="num ${cls('current_bid')}" onclick="setSort('current_bid')">bid${arrow('current_bid')}</th>
+        <th>state</th>
+        <th class="${cls('created_at')}" onclick="setSort('created_at')">created${arrow('created_at')}</th>
+      </tr></thead>
+      <tbody>
+        ${slice.map(r => `
+          <tr>
+            <td>${thumbCell(r.mockup_url, '?')}</td>
+            <td><strong>${r.id}</strong></td>
+            <td>${escapeHtml(r.brand)}</td>
+            <td>#${r.drop_num}</td>
+            <td>
+              <div class="row-name">
+                <strong>${escapeHtml(r.name)}</strong>
+                <span class="meta">${r.parent_design ? 'parent: '+escapeHtml(r.parent_design) : ''}${r.nft_mint ? ' · NFT' : ''}${r.auction_end ? ' · auction' : ''}</span>
+              </div>
+            </td>
+            <td class="num">¥${r.price_jpy.toLocaleString()}</td>
+            <td class="num">${r.sold}</td>
+            <td class="num">${r.inventory}</td>
+            <td class="num">${r.current_bid ? '¥'+r.current_bid.toLocaleString() : '<span class="muted">—</span>'}</td>
+            <td>${stateTag(r)}</td>
+            <td class="muted">${escapeHtml((r.created_at||'').slice(0,10))}</td>
+          </tr>
+        `).join('') || '<tr><td colspan="11" class="muted" style="text-align:center;padding:30px">no products match the filter</td></tr>'}
+      </tbody>
+    </table>
+  `;
+  renderPager(rows.length, pages);
+}
+
+function renderCollabTable() {
+  const rows = sortRows(applyFilters(DATA.collab_products, 'collab'));
+  document.getElementById('count-collab').textContent = rows.length.toLocaleString() + ' rows';
+  const pages = Math.max(1, Math.ceil(rows.length / PER));
+  if (page > pages) page = pages;
+  const slice = rows.slice((page-1)*PER, page*PER);
+  const arrow = (k) => sortKey === k ? (sortDir === 'asc' ? ' ↑' : ' ↓') : '';
+  const cls = (k) => sortKey === k ? 'sorted' : '';
+  document.getElementById('table-mount').innerHTML = `
+    <table>
+      <thead><tr>
+        <th></th>
+        <th class="${cls('id')}" onclick="setSort('id')">id${arrow('id')}</th>
+        <th class="${cls('partner')}" onclick="setSort('partner')">partner${arrow('partner')}</th>
+        <th class="${cls('category')}" onclick="setSort('category')">category${arrow('category')}</th>
+        <th>slug</th>
+        <th>name</th>
+        <th class="num ${cls('price_jpy')}" onclick="setSort('price_jpy')">price${arrow('price_jpy')}</th>
+        <th>state</th>
+        <th class="${cls('created_at')}" onclick="setSort('created_at')">created${arrow('created_at')}</th>
+      </tr></thead>
+      <tbody>
+        ${slice.map(r => `
+          <tr>
+            <td>${thumbCell(r.image_url, '?')}</td>
+            <td><strong>${r.id}</strong></td>
+            <td>${escapeHtml(r.partner)}</td>
+            <td><span class="tag muted">${escapeHtml(r.category)}</span></td>
+            <td><code style="font-size:11px;color:var(--mute)">${escapeHtml(r.slug)}</code></td>
+            <td>
+              <div class="row-name">
+                <strong>${escapeHtml(r.name)}</strong>
+                <span class="meta">${escapeHtml((r.description||'').slice(0,60))}${(r.description||'').length>60?'…':''}</span>
+              </div>
+            </td>
+            <td class="num">¥${r.price_jpy.toLocaleString()}</td>
+            <td>${collabStateTag(r)}</td>
+            <td class="muted">${escapeHtml((r.created_at||'').slice(0,10))}</td>
+          </tr>
+        `).join('') || '<tr><td colspan="9" class="muted" style="text-align:center;padding:30px">no collab products match the filter</td></tr>'}
+      </tbody>
+    </table>
+  `;
+  renderPager(rows.length, pages);
+}
+
+function stateTag(r) {
+  if (r.active !== 1) return '<span class="tag muted">inactive</span>';
+  if (r.sold >= r.inventory && r.inventory > 0) return '<span class="tag no">sold out</span>';
+  return '<span class="tag ok">active</span>';
+}
+
+function collabStateTag(r) {
+  if (r.active !== 1) return '<span class="tag muted">inactive</span>';
+  if (r.draft === 1) return '<span class="tag muted">draft</span>';
+  return '<span class="tag ok">live</span>';
+}
+
+function renderPager(total, pages) {
+  const el = document.getElementById('pager');
+  if (pages <= 1) { el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <button onclick="page=1; renderTable()" ${page===1?'disabled':''}>« first</button>
+    <button onclick="page--; renderTable()" ${page===1?'disabled':''}>‹ prev</button>
+    <span class="page">page ${page} / ${pages}</span>
+    <button onclick="page++; renderTable()" ${page===pages?'disabled':''}>next ›</button>
+    <button onclick="page=${pages}; renderTable()" ${page===pages?'disabled':''}>last »</button>
+  `;
+}
+
+load();
+</script>
+</body>
+</html>
