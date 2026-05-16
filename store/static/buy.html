@@ -269,22 +269,8 @@ footer{
     MUGEN は北海道弟子屈町の気温・月相・時刻を seed に AI が生成する <strong>1 時間に 1 着</strong>の T シャツです。 同じデザインは二度と作られません。 早く買うほど安い bonding curve、 完売したらそれで終わり。
   </p>
 
-  <!-- Coupon banner — FIRST30 by default, REF500 when ?ref=CODE present.
-       Both apply at Stripe-hosted checkout (allow_promotion_codes=true). -->
-  <div id="coupon-banner-first30" style="margin:0 0 16px;padding:14px 18px;background:linear-gradient(180deg,rgba(230,196,73,0.10),rgba(230,196,73,0.04));border:1px solid rgba(230,196,73,0.5);border-radius:4px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-    <span style="font-size:10px;letter-spacing:0.42em;text-transform:uppercase;color:#e6c449;font-weight:700">ローンチ クーポン</span>
-    <code style="background:#0A0A0A;color:#e6c449;padding:6px 12px;font-size:14px;letter-spacing:0.18em;font-weight:600;border-radius:2px;font-family:'SF Mono','Menlo',monospace">FIRST30</code>
-    <span style="font-size:12.5px;color:rgba(245,245,240,0.85);line-height:1.7">
-      <strong style="color:#fff">¥1,000 OFF</strong> · 最初の 30 名様限定 · Stripe 決済画面で入力 · 2026-06-03 まで
-    </span>
-  </div>
-  <div id="coupon-banner-ref500" style="display:none;margin:0 0 16px;padding:14px 18px;background:linear-gradient(180deg,rgba(255,138,138,0.10),rgba(255,138,138,0.04));border:1px solid rgba(255,138,138,0.5);border-radius:4px;display:none;align-items:center;gap:14px;flex-wrap:wrap">
-    <span style="font-size:10px;letter-spacing:0.42em;text-transform:uppercase;color:#ff8a8a;font-weight:700">🔗 紹介 経由</span>
-    <code style="background:#0A0A0A;color:#ff8a8a;padding:6px 12px;font-size:14px;letter-spacing:0.18em;font-weight:600;border-radius:2px;font-family:'SF Mono','Menlo',monospace">REF500</code>
-    <span style="font-size:12.5px;color:rgba(245,245,240,0.85);line-height:1.7">
-      <strong style="color:#fff">¥500 OFF</strong> · 紹介コード <code id="ref-code-label" style="color:#ff8a8a;background:rgba(255,255,255,0.06);padding:0 4px">—</code> 経由 · Stripe 決済画面で入力
-    </span>
-  </div>
+  <!-- 2026-05-16: ローンチ/紹介クーポン (FIRST30 / REF500) は廃止。 価格は
+       原価ベースで透明設計 (/transparency)。 -->
 
   <a id="product-link" href="#" data-funnel="cta_click" data-funnel-cta="buy_page_card" style="text-decoration:none;color:inherit">
     <div class="product-card" id="product-card">
@@ -418,25 +404,17 @@ setInterval(tickCountdown, 1000);
 tickCountdown();
 loadProduct();
 
-// Referral code handling — when ?ref=CODE present, swap the FIRST30 banner
-// for the REF500 banner and log the click to mu_referrals.
+// 2026-05-16: 紹介クーポン (REF500) は廃止。 ?ref=CODE のクリックだけ
+// /api/referral/:code が記録する (アトリビューション目的)。
 (async () => {
   const ref = new URLSearchParams(location.search).get('ref');
   if (!ref) return;
   const code = ref.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
   if (code.length < 4) return;
   try {
-    const r = await fetch('/api/referral/' + code);
-    if (!r.ok) return;
-    const d = await r.json();
-    if (!d.active) return;
-    document.getElementById('coupon-banner-first30').style.display = 'none';
-    const banner = document.getElementById('coupon-banner-ref500');
-    if (banner) banner.style.display = 'flex';
-    const label = document.getElementById('ref-code-label');
-    if (label) label.textContent = d.code;
+    await fetch('/api/referral/' + code);
     if (window.MU_FUNNEL?.send) {
-      window.MU_FUNNEL.send('cta_click', { cta: 'ref_landing', ref_code: d.code });
+      window.MU_FUNNEL.send('cta_click', { cta: 'ref_landing', ref_code: code });
     }
   } catch (e) {}
 })();

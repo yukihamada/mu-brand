@@ -14386,19 +14386,11 @@ async fn collab_public_page(
     let description= meta["description"].as_str().unwrap_or("");
     let tagline    = meta["tagline"].as_str().unwrap_or("");
     let image_url  = meta["image_url"].as_str().filter(|s| !s.is_empty()).unwrap_or("https://mockups.wearmu.com/hero.png");
-    let first_n    = meta["first_n_count"].as_i64().unwrap_or(0);
-    let first_n_off= meta["first_n_discount_jpy"].as_i64().unwrap_or(0);
-    let first_n_left = (first_n - sold).max(0);
-    // Stripe URL with FIRST<N> coupon code preselected isn't possible via simple
-    // payment_link URL, so just surface the message and let the buyer enter the
-    // coupon "FIRST{N}" at the Stripe page (allow_promotion_codes is on).
-    let urgency_first_n = if first_n_left > 0 && first_n_off > 0 {
-        format!("<div style=\"padding:11px 14px;background:rgba(230,196,73,0.10);border:1px solid rgba(230,196,73,0.45);border-radius:3px;font-size:12px;letter-spacing:0.04em;margin-bottom:14px;color:#fff\">⚡ <strong style=\"color:#e6c449\">最初の {first_n} 名 ¥{off_fmt} OFF</strong> (のこり {first_n_left} 名 · Stripe で <code style=\"background:#000;color:#e6c449;padding:1px 6px;font-family:'SF Mono',monospace\">FIRST{first_n}</code> 入力)</div>",
-            first_n = first_n, first_n_left = first_n_left,
-            off_fmt = first_n_off.to_string().chars().rev().collect::<Vec<_>>().chunks(3)
-                .map(|c| c.iter().collect::<String>()).collect::<Vec<_>>().join(",")
-                .chars().rev().collect::<String>())
-    } else { String::new() };
+    // 2026-05-16: first_n_discount urgency banner も廃止 (discount coupons OFF
+    // 方針)。 meta が古くて first_n_count > 0 のままでも LP には何も出さない。
+    let _ = (meta["first_n_count"].as_i64().unwrap_or(0),
+             meta["first_n_discount_jpy"].as_i64().unwrap_or(0));
+    let urgency_first_n = String::new();
     let urgency_low_stock = if rem > 0 && rem <= 5 {
         format!("<div style=\"padding:11px 14px;background:rgba(255,90,90,0.10);border:1px solid rgba(255,90,90,0.45);border-radius:3px;font-size:12px;color:#ff8a8a;margin-bottom:14px\">🔥 <strong>のこり {} 着 · 完売間近</strong></div>", rem)
     } else { String::new() };
@@ -14963,13 +14955,16 @@ async fn referral_info(
         ).ok()
     };
     let (clicks, uses) = row.unwrap_or((0, 0));
+    // DISCONTINUED 2026-05-16: REF500 retired alongside other discount coupons.
+    // We still record the click on /r/:code (for share-attribution analytics),
+    // but the LP no longer renders the REF500 banner (active=false).
     Json(serde_json::json!({
         "code": code_clean,
-        "coupon": "REF500",
-        "discount_jpy": 500,
+        "coupon": null,
+        "discount_jpy": 0,
         "clicks": clicks,
         "uses": uses,
-        "active": true,
+        "active": false,
     })).into_response()
 }
 
@@ -17327,6 +17322,57 @@ fn validate_email(e: &str) -> Result<String, &'static str> {
     Ok(em)
 }
 
+/// Per-email sandbox slug. Each MU buyer has a stable, private slug like
+/// `personal-3a1b9c2d4e5f` under /proposals/. The slug is the truncated
+/// sha256 of the lowercased email — same email always resolves to the same
+/// slug, no need to store a mapping.
+fn personal_slug_for(email: &str) -> String {
+    use sha2::Digest;
+    let mut h = sha2::Sha256::new();
+    h.update(b"extras-personal:");
+    h.update(normalize_email(email).as_bytes());
+    let bytes = h.finalize();
+    let hex_str: String = bytes.iter().take(6).map(|b| format!("{:02x}", b)).collect();
+    format!("personal-{}", hex_str)
+}
+
+/// Magic token bound to a single email, used in the /extras/my URL we mail
+/// to past MU buyers. Truncated HMAC-SHA256 keyed by ADMIN_TOKEN so the
+/// token rotates if/when the admin token rotates. Short on purpose
+/// (16 hex chars = 64 bits) — sufficient for a per-email magic link.
+fn extras_my_token(email: &str) -> String {
+    let secret = env::var("ADMIN_TOKEN").unwrap_or_else(|_| "fallback-link-secret".into());
+    use hmac::Mac;
+    type HmacSha = hmac::Hmac<sha2::Sha256>;
+    let mut mac = HmacSha::new_from_slice(secret.as_bytes()).expect("hmac key");
+    mac.update(b"extras-my:");
+    mac.update(normalize_email(email).as_bytes());
+    let bytes = mac.finalize().into_bytes();
+    bytes.iter().take(8).map(|b| format!("{:02x}", b)).collect()
+}
+
+fn extras_my_token_valid(email: &str, supplied: &str) -> bool {
+    extras_my_token(email) == supplied.trim()
+}
+
+/// Idempotent insert of the personal proposal row. Returns the slug.
+fn ensure_personal_proposal(conn: &rusqlite::Connection, email: &str) -> String {
+    let slug = personal_slug_for(email);
+    let now = chrono_now();
+    let _ = conn.execute(
+        "INSERT OR IGNORE INTO proposals (slug, name, ip_owner, created_at)
+         VALUES (?, ?, ?, ?)",
+        params![slug, format!("Personal · {}", email), email, now],
+    );
+    slug
+}
+
+/// Build the email URL that lands a past buyer in their private sandbox.
+fn extras_my_url(email: &str) -> String {
+    format!("https://wearmu.com/extras/my?email={}&t={}",
+            urlencoding::encode(email), extras_my_token(email))
+}
+
 fn extras_qty_is_valid(q: i64) -> bool { q == 30 || q == 50 || q == 100 }
 
 /// Compute cost for a {email, qty} pair. Returns (cost_points, free_applied).
@@ -17336,6 +17382,163 @@ fn extras_compute_cost(conn: &rusqlite::Connection, email: &str, qty: i64) -> (i
     let (_, free_used) = points_balance(conn, email);
     let free = qty == EXTRAS_FREE_SKUS && !free_used;
     if free { (0, true) } else { (qty * EXTRAS_POINTS_PER_SKU, false) }
+}
+
+/// GET /extras/my — personal sandbox page. Magic-link gated. Past MU buyers
+/// receive a URL `/extras/my?email=X&t=TOKEN` in their retroactive email;
+/// we validate the token, ensure the personal proposal slug exists, and
+/// redirect to /proposals/<personal-slug>?email=X&from=my for the actual
+/// widget (which already does everything we need). This keeps a single
+/// rendering path while still giving each user a stable personal URL.
+async fn extras_my_page(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let email_raw = q.get("email").map(String::as_str).unwrap_or("");
+    let token = q.get("t").map(String::as_str).unwrap_or("");
+    let email = match validate_email(email_raw) {
+        Ok(e) => e,
+        Err(_) => return Html(extras_my_landing_html(None)).into_response(),
+    };
+    if !extras_my_token_valid(&email, token) {
+        return Html(extras_my_landing_html(Some("invalid or expired link — request a new one by replying to the MU email"))).into_response();
+    }
+    let slug = {
+        let conn = db.lock().unwrap();
+        ensure_personal_proposal(&conn, &email)
+    };
+    // Redirect into the standard proposal widget. The page picks up
+    // ?email=&from=my so extras.js can pre-fill + show personalized chrome.
+    let url = format!("/proposals/{}?email={}&from=my",
+                      slug, urlencoding::encode(&email));
+    axum::response::Redirect::temporary(&url).into_response()
+}
+
+/// GET /proposals/personal-:hash — dynamic LP for per-email sandboxes.
+/// Same widget chrome, no SKU grid (personal pages have no seed catalog),
+/// but `extras.js` mounts and uses `personal-<hash>` as its slug.
+async fn proposal_personal_page(
+    State(db): State<Db>,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if !slug.starts_with("personal-") || slug.len() < 12 {
+        return (StatusCode::NOT_FOUND, "not found").into_response();
+    }
+    let owner_email: Option<String> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT ip_owner FROM proposals WHERE slug=?",
+            params![slug], |r| r.get::<_, String>(0),
+        ).ok()
+    };
+    let email_param = q.get("email").map(String::as_str).unwrap_or("");
+    let from_my = q.get("from").map(String::as_str).unwrap_or("") == "my";
+    // Light personalization in the chrome — if URL has an email and it
+    // matches the owner, greet them.
+    let greeting = match (owner_email.as_deref(), validate_email(email_param)) {
+        (Some(owner), Ok(em)) if normalize_email(owner) == em =>
+            format!(r#"<p style="font-size:13px;color:rgba(245,245,240,0.62);margin-bottom:10px">{em} さん、 おかえりなさい。 ここは <strong style="color:#fff">あなた専用の sandbox</strong> です。 公開はされません。</p>"#, em = em),
+        _ => String::new(),
+    };
+    let arrive_banner = if from_my {
+        r#"<div style="background:rgba(230,196,73,0.08);border:1px solid rgba(230,196,73,0.4);padding:18px 22px;border-radius:6px;margin-bottom:24px"><div style="font-size:11px;letter-spacing:0.22em;text-transform:uppercase;color:#e6c449;font-weight:700;margin-bottom:6px">SANDBOX — 公開されません</div><div style="font-size:13.5px;line-height:1.85">これは MU を買ってくれたあなた専用の AI SKU 試作スペースです。 ページ下の <strong>「もっと SKU を追加」</strong> から無料 30 個を試してみてください。 出来た SKU はあなたが ✓ を押したもののみ、 後で公開できます。</div></div>"#
+    } else { "" };
+    let html = format!(r#"<!doctype html><html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>━◯━ MU Sandbox — {slug}</title>
+<meta name="robots" content="noindex,nofollow">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+body{{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;-webkit-font-smoothing:antialiased;line-height:1.85;margin:0;padding:0;font-feature-settings:"palt"}}
+a{{color:#e6c449;text-decoration:none}}a:hover{{text-decoration:underline}}
+nav{{position:sticky;top:0;background:rgba(10,10,10,0.92);backdrop-filter:blur(14px);border-bottom:1px solid rgba(255,255,255,0.08);padding:14px 28px;display:flex;justify-content:space-between;align-items:center;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;z-index:50}}
+nav .logo{{font-weight:700;letter-spacing:0.45em}}
+.wrap{{max-width:820px;margin:0 auto;padding:48px 24px 80px}}
+h1{{font-size:clamp(26px,4.6vw,40px);font-weight:200;letter-spacing:0.01em;line-height:1.25;margin-bottom:14px}}
+h1 em{{color:#e6c449;font-style:normal;font-weight:300}}
+.feedback{{margin:48px auto 0;max-width:820px;padding:0 24px}}
+.feedback h3{{font-size:14px;font-weight:600;letter-spacing:0.16em;text-transform:uppercase;color:#e6c449;margin-bottom:12px}}
+.feedback textarea{{width:100%;min-height:100px;background:#0a0a0a;border:1px solid rgba(255,255,255,0.15);color:#fff;padding:12px;font-family:inherit;font-size:13.5px;border-radius:4px;box-sizing:border-box}}
+.feedback button{{margin-top:10px;background:#e6c449;color:#0a0a0a;border:0;padding:11px 22px;font-size:11px;letter-spacing:0.22em;text-transform:uppercase;font-weight:700;border-radius:3px;cursor:pointer;font-family:inherit}}
+.feedback button:disabled{{opacity:0.5;cursor:not-allowed}}
+.feedback .msg{{font-size:12px;color:rgba(245,245,240,0.7);margin-top:8px;min-height:18px}}
+</style>
+</head><body>
+<nav>
+  <a href="/" class="logo"><span style="opacity:0.7;font-weight:400;letter-spacing:0.1em;margin-right:8px">━◯━</span>MU</a>
+  <span style="font-size:9px;letter-spacing:0.35em;color:rgba(245,245,240,0.4)">PRIVATE SANDBOX</span>
+</nav>
+<div class="wrap">
+{arrive_banner}
+<h1>あなたのブランドを、<em>AI で試作</em>。</h1>
+{greeting}
+<p style="font-size:14px;color:rgba(245,245,240,0.62);line-height:1.95;margin-bottom:24px">MU の AI SKU ジェネレーターを、 あなただけが見える状態で使えます。 出来た SKU は ✓ を押したものだけ後で正式リリース可能。 これは MUGEN/MUON/MA を買ってくれた方への "実験権" です。</p>
+<p style="font-size:13px;color:rgba(245,245,240,0.55);margin-bottom:8px">使い方:</p>
+<ol style="font-size:13px;color:rgba(245,245,240,0.62);padding-left:22px;line-height:1.9">
+  <li>下の「もっと SKU を追加」セクションで <strong style="color:#fff">+30 (無料)</strong> を押す</li>
+  <li>30 枚生成完了 (5〜15 分) — メール通知も可能</li>
+  <li>1 枚ずつ <strong style="color:#7be57b">✓</strong> / <strong style="color:#ff8a8a">✗</strong> で選別</li>
+  <li>気に入った → このまま正式 collab に進める / もしくは画像だけ持ち帰る</li>
+</ol>
+</div>
+<div class="feedback" id="mu-fb">
+  <h3>使ってみた感想を聞かせて</h3>
+  <p style="font-size:12.5px;color:rgba(245,245,240,0.62);margin-bottom:10px">何でも書いて OK。 「ここダルい」「ここ嬉しい」「これ追加して」 — 改善のヒント全部欲しいです。 直接 yuki@hamada.tokyo にも届きます。</p>
+  <textarea id="mu-fb-text" placeholder="使ってみてどうでしたか?"></textarea>
+  <div style="display:flex;gap:10px;align-items:center;margin-top:10px">
+    <button type="button" id="mu-fb-send">送信</button>
+    <span class="msg" id="mu-fb-msg"></span>
+  </div>
+</div>
+<script src="/proposals/extras.js" defer></script>
+<script>
+(function(){{
+  var slug = "{slug}";
+  document.getElementById("mu-fb-send").addEventListener("click", function() {{
+    var t = document.getElementById("mu-fb-text").value.trim();
+    var msg = document.getElementById("mu-fb-msg");
+    if (!t) {{ msg.textContent = "感想を入力してください"; return; }}
+    var em = "";
+    try {{ em = localStorage.getItem("mu_proposal_email") || ""; }} catch(_) {{}}
+    msg.textContent = "送信中…";
+    fetch("/api/proposal/extras/feedback", {{
+      method: "POST",
+      headers: {{"content-type":"application/json"}},
+      body: JSON.stringify({{slug: slug, email: em, text: t}})
+    }}).then(function(r){{return r.json().catch(function(){{return{{}};}})}}).then(function(r){{
+      if (r && r.ok) {{
+        msg.textContent = "✅ ありがとうございます。 yuki が直接読みます。";
+        msg.style.color = "#7be57b";
+        document.getElementById("mu-fb-text").value = "";
+      }} else {{
+        msg.textContent = (r && r.error) || "送信失敗";
+        msg.style.color = "#ff8a8a";
+      }}
+    }});
+  }});
+}})();
+</script>
+</body></html>"#);
+    Html(html).into_response()
+}
+
+fn extras_my_landing_html(error: Option<&str>) -> String {
+    let err_block = error.map(|e| format!(
+        r#"<div style="background:#ff8a8a22;border:1px solid #ff8a8a;padding:14px 18px;border-radius:4px;margin-bottom:24px;font-size:13px;color:#ff8a8a">{}</div>"#,
+        html_escape::encode_text(e)
+    )).unwrap_or_default();
+    format!(r#"<!doctype html><html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>MU Sandbox — リンクが正しくありません</title>
+<style>body{{background:#0a0a0a;color:#f5f5f0;font-family:'Helvetica Neue','Hiragino Sans',sans-serif;line-height:1.7;padding:48px 24px;max-width:560px;margin:0 auto}}h1{{font-size:22px;font-weight:300;letter-spacing:0.02em;color:#e6c449;margin-bottom:18px}}a{{color:#e6c449}}</style>
+</head><body>
+<h1>━◯━ MU Sandbox</h1>
+{err_block}
+<p>このページは MU 商品 (MUGEN/MUON/MA) を購入した方への AI SKU 試作 sandbox です。 メールに記載された専用リンクからアクセスしてください。</p>
+<p style="font-size:13px;color:#888;margin-top:24px">問い合わせ: <a href="mailto:info@wearmu.com">info@wearmu.com</a></p>
+</body></html>"#)
 }
 
 async fn extras_balance(
@@ -17373,10 +17576,18 @@ async fn extras_order(
         Ok(e) => e,
         Err(m) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok": false, "error": m}))).into_response(),
     };
-    // Sanity-check the slug looks like a real partner. Two valid sources:
+    // Sanity-check the slug looks like a real partner. Three valid sources:
     //   - proposals table (new DB-driven brands)
     //   - collab_products.partner (legacy sweep / kokon style brands)
-    {
+    //   - personal-<hash> sandbox slugs (auto-created here if matches email)
+    if slug.starts_with("personal-") {
+        let derived = personal_slug_for(&email);
+        if derived != slug {
+            return (StatusCode::FORBIDDEN, Json(serde_json::json!({"ok": false, "error": "personal sandbox slug does not belong to this email"}))).into_response();
+        }
+        let conn = db.lock().unwrap();
+        ensure_personal_proposal(&conn, &email);
+    } else {
         let conn = db.lock().unwrap();
         let in_proposals: bool = conn.query_row(
             "SELECT 1 FROM proposals WHERE slug=?",
@@ -21227,15 +21438,15 @@ async fn cv_pulse(
             decisions.push(format!("modal_scroll_required {} → {}", prev_scroll, target_scroll));
         }
 
-        // Rule 2: coupon strength based on conversion drought.
-        // No purchases in 24h AND no discounts redeemed → boost to 60%.
-        // Any purchase in 24h → relax back to 50%.
-        let target_pct = if purchases_24h == 0 && signups_24h >= 5 { "60" }
-            else { "50" };
-        if target_pct != prev_pct {
-            cv_set(&conn, "coupon_percent_off", target_pct,
-                &format!("purchases_24h={} signups_24h={}", purchases_24h, signups_24h));
-            decisions.push(format!("coupon_percent_off {}% → {}%", prev_pct, target_pct));
+        // Rule 2: DISCONTINUED 2026-05-16 — discount coupon auto-tuning is off.
+        // We no longer issue exit-funnel / thank-you coupons. Pin the legacy
+        // cv_config value to "0" so any cached client snapshot reads 0%-off
+        // (defensive — the UI no longer renders coupon UI either).
+        let _ = (prev_pct, purchases_24h, signups_24h);
+        if cv_get(&conn, "coupon_percent_off", "0") != "0" {
+            cv_set(&conn, "coupon_percent_off", "0",
+                "discount coupons discontinued 2026-05-16");
+            decisions.push("coupon_percent_off → 0% (discontinued)".to_string());
         }
 
         // Rule 3: rotate email subject variant if signups stalled for 48h.
@@ -27210,6 +27421,17 @@ async fn admin_thank_buyers(
     Json(body): Json<AdminThankYouBody>,
 ) -> impl IntoResponse {
     if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+    // DISCONTINUED 2026-05-16: thank-you 50% MUON coupon retired alongside
+    // exit-funnel coupons. Keep the admin endpoint behind admin_token so a
+    // future "no-coupon thank-you" can reuse the same trigger.
+    return (
+        StatusCode::GONE,
+        Json(serde_json::json!({
+            "error": "thank-you 50% MUON coupon discontinued",
+            "note": "MU no longer issues discount coupons. Send thank-you without a coupon manually via Resend if needed.",
+        })),
+    ).into_response();
+    #[allow(unreachable_code)] {
     let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
     let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
     if stripe_key.is_empty() || resend_key.is_empty() {
@@ -27340,6 +27562,7 @@ async fn admin_thank_buyers(
         "sent": sent,
         "errors": errors,
     })).into_response()
+    }
 }
 
 // ── AI Feedback Loop (お客様 → AI → MA Council 通知) ───────────────────────
@@ -37315,13 +37538,23 @@ struct ExitDiscountBody {
     email: String,
 }
 
-/// Step 2: mint a Stripe one-time-use 50%-off coupon (≒ "原価レベル") for the
-/// email and return the code. Idempotent within 24h: returns the same code if
-/// the same email has already claimed today.
+/// DISCONTINUED 2026-05-16. The exit-intent funnel no longer mints coupons —
+/// the front-end (exit-funnel.js) is survey-only now. We keep this handler
+/// as a 410 Gone so any stale tab still in someone's browser fails closed
+/// instead of silently 404-ing. Body is intentionally unused.
+#[allow(dead_code)]
 async fn exit_discount_claim(
     State(db): State<Db>,
     Json(body): Json<ExitDiscountBody>,
 ) -> impl IntoResponse {
+    return (
+        StatusCode::GONE,
+        Json(serde_json::json!({
+            "error": "discount coupons discontinued",
+            "note": "MU no longer issues discount coupons. Surveys remain at /api/exit/survey.",
+        })),
+    ).into_response();
+    #[allow(unreachable_code)] {
     let email = body.email.trim().to_lowercase();
     if email.is_empty() || !email.contains('@') {
         return (StatusCode::BAD_REQUEST, "invalid email").into_response();
@@ -37441,6 +37674,7 @@ async fn exit_discount_claim(
         "percent_off": pct_clamped.parse::<i64>().unwrap_or(50),
         "valid_days": 30, "reused": false,
     })).into_response()
+    }
 }
 
 #[derive(Deserialize)]
@@ -37449,13 +37683,22 @@ struct ExitLotteryBody {
     #[serde(default)] referrer: String,
 }
 
-/// Step 3: open lottery entry (オープン懸賞 — purchase NOT required, no
-/// statutory prize cap in Japan). Weekly draw selects winners for
-/// ¥1,000–¥3,000 cashback coupons.
+/// DISCONTINUED 2026-05-16 alongside [[exit_discount_claim]]. The weekly
+/// cashback lottery was also a discount-coupon mechanism. Returns 410 Gone
+/// so any stale tab fails closed.
+#[allow(dead_code)]
 async fn exit_lottery_enter(
     State(db): State<Db>,
     Json(body): Json<ExitLotteryBody>,
 ) -> impl IntoResponse {
+    return (
+        StatusCode::GONE,
+        Json(serde_json::json!({
+            "error": "weekly cashback lottery discontinued",
+            "note": "MU no longer issues discount coupons. Surveys remain at /api/exit/survey.",
+        })),
+    ).into_response();
+    #[allow(unreachable_code)] {
     let email = body.email.trim().to_lowercase();
     if email.is_empty() || !email.contains('@') {
         return (StatusCode::BAD_REQUEST, "invalid email").into_response();
@@ -37498,6 +37741,7 @@ async fn exit_lottery_enter(
         "draw_at": "weekly Monday 9:00 JST",
         "reused": false,
     })).into_response()
+    }
 }
 
 /// Public purchase: anyone (not just the design's owner) can buy a /you

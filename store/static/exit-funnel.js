@@ -1,20 +1,19 @@
-/* MU exit-intent funnel — survey → 50% coupon → no-purchase open lottery.
-   Loaded on /you, /mugen, /muon, /ma, and the slug share pages.
+/* MU exit-intent funnel — SURVEY ONLY (2026-05-16〜).
+   割引クーポン/抽選経路は廃止。 アンケートだけ残し、 取得した回答で
+   プロンプト / 価格設計 / コピーを磨く。
+   Loaded on /you, /mugen, /muon, /ma, you.html, index.html.
    Idempotent: shows once per 24h per browser; respects URL ?noexit=1. */
 (async () => {
   const KEY = 'mu_exit_seen_at';
-  const LAST_STEP_KEY = 'mu_exit_last_step';
   // Defaults — overridden by /api/cv/config (cv_pulse cron tunes these).
   let SHOW_AGAIN_HOURS = 24;
   let SCROLL_REQUIRED = true;
-  let COUPON_PCT = 50;
   try {
     const r = await fetch('/api/cv/config', {cache: 'force-cache'});
     if (r.ok) {
       const c = await r.json();
       if (c.modal_cooldown_hours) SHOW_AGAIN_HOURS = Number(c.modal_cooldown_hours) || 24;
       if (c.modal_scroll_required) SCROLL_REQUIRED = c.modal_scroll_required === '1';
-      if (c.coupon_percent_off) COUPON_PCT = Number(c.coupon_percent_off) || 50;
     }
   } catch (_) {}
   const params = new URLSearchParams(location.search);
@@ -30,8 +29,6 @@
 
   function trigger(reason) {
     if (shown) return;
-    // Engagement gate — disabled when cv_pulse decides modal_scroll_required=0
-    // (aggressive mode used when signups are flatlined).
     if (SCROLL_REQUIRED && !scrolledOnce && reason === 'mouseleave') return;
     shown = true;
     localStorage.setItem(KEY, String(now));
@@ -52,7 +49,7 @@
       trigger('scrollup');
     }
   }, {passive: true});
-  // Tab hide → also a leave signal but only after 30s engagement
+  // Tab hide → leave signal after 30s engagement
   let firstView = now;
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden' && (Date.now() - firstView) > 30 * 1000) {
@@ -64,8 +61,7 @@
   const css = `
 .mu-x-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.78);backdrop-filter:blur(6px);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;color:#F5F5F0;animation:muxFade 0.25s ease}
 @keyframes muxFade{from{opacity:0}to{opacity:1}}
-.mu-x-card{background:#0A0A0A;border:1px solid rgba(230,196,73,0.25);max-width:520px;width:100%;padding:36px 32px 32px;position:relative;border-radius:2px;box-shadow:0 30px 80px rgba(0,0,0,0.6)}
-.mu-x-card.lg{max-width:600px}
+.mu-x-card{background:#0A0A0A;border:1px solid rgba(230,196,73,0.25);max-width:540px;width:100%;padding:36px 32px 32px;position:relative;border-radius:2px;box-shadow:0 30px 80px rgba(0,0,0,0.6)}
 .mu-x-close{position:absolute;top:14px;right:14px;background:transparent;border:0;color:rgba(255,255,255,0.45);cursor:pointer;font-size:22px;line-height:1;padding:6px 10px}
 .mu-x-close:hover{color:#fff}
 .mu-x-eyebrow{font-size:10px;letter-spacing:0.32em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:10px}
@@ -88,7 +84,6 @@
 .mu-x-msg{font-size:11px;letter-spacing:0.04em;min-height:16px;margin-top:8px;opacity:0.7}
 .mu-x-msg.err{color:#C8362C;opacity:1}
 .mu-x-msg.ok{color:#5a9e6f;opacity:1}
-.mu-x-coupon{background:#1C1C1C;padding:16px 18px;text-align:center;font-family:monospace;font-size:18px;letter-spacing:0.18em;color:#e6c449;margin:14px 0}
 .mu-x-foot{font-size:9px;letter-spacing:0.15em;opacity:0.45;margin-top:14px;line-height:1.7}
 @media(max-width:520px){.mu-x-card{padding:28px 22px 22px}.mu-x-h{font-size:18px}}
 `;
@@ -112,30 +107,19 @@
   }
 
   let surveyState = {why: '', priceFeel: '', would: 0, comment: ''};
-  let userEmail = '';
 
-  function showModal() { renderStep('survey'); }
+  function showModal() { renderSurvey(); }
 
-  function renderStep(step) {
-    localStorage.setItem(LAST_STEP_KEY, step);
-    close();
-    if (step === 'survey') return renderSurvey();
-    if (step === 'discount') return renderDiscount();
-    if (step === 'discountResult') return renderDiscountResult();
-    if (step === 'lottery') return renderLottery();
-    if (step === 'lotteryResult') return renderLotteryResult();
-  }
-
-  // ── Survey step ───────────────────────────────────────────────
+  // ── Survey step (only step — discount / lottery 経路は廃止) ─────────────
   function renderSurvey() {
-    const card = el('div', {class: 'mu-x-card lg'});
+    const card = el('div', {class: 'mu-x-card'});
     card.innerHTML = `
       <button class="mu-x-close" aria-label="閉じる">×</button>
       <div class="mu-x-eyebrow">立ち去る前に — 30 秒 アンケート</div>
-      <div class="mu-x-h">なぜ今日は仕立てなかったのか、教えてもらえますか？</div>
-      <div class="mu-x-sub">理由を 1 つ選んでお送りいただくと、<strong style="color:#e6c449">原価レベル(50% OFF)のクーポン</strong>を発行します。回答は次の生成プロンプトの調整に使います。</div>
+      <div class="mu-x-h">どうしたら買いたくなりますか？</div>
+      <div class="mu-x-sub">割引クーポンは出していません。 その代わり、 ここで頂いたご意見を直接 AI のプロンプトと価格設計に反映します。 1 つ選んで送ってください。</div>
       <div class="mu-x-row">
-        <label>理由</label>
+        <label>今日 買わなかった理由</label>
         <div class="mu-x-chips" data-name="why">
           <button class="mu-x-chip" data-v="too_expensive">価格が高い</button>
           <button class="mu-x-chip" data-v="not_my_style">デザインが好みじゃない</button>
@@ -146,7 +130,7 @@
         </div>
       </div>
       <div class="mu-x-row">
-        <label>感じた価格(¥6,800 / 1着)</label>
+        <label>感じた価格 (¥6,800 / 1 着)</label>
         <div class="mu-x-chips" data-name="price">
           <button class="mu-x-chip" data-v="cheap">安い</button>
           <button class="mu-x-chip" data-v="fair">適正</button>
@@ -159,16 +143,16 @@
         <input type="number" inputmode="numeric" name="would" placeholder="例: 4500" min="0" max="50000" step="100">
       </div>
       <div class="mu-x-row">
-        <label>その他コメント (任意)</label>
+        <label>コメント (任意)</label>
         <textarea name="comment" maxlength="500" placeholder="ひと言でも"></textarea>
       </div>
       <div class="mu-x-row">
-        <label>メールアドレス (クーポン送付用)</label>
+        <label>メール (任意 / 改善通知だけお送りします)</label>
         <input type="email" name="email" placeholder="you@example.com">
       </div>
       <div class="mu-x-actions">
-        <button class="mu-x-btn" data-act="survey-submit">回答してクーポンを受け取る</button>
-        <button class="mu-x-btn alt" data-act="skip-to-lottery">回答せずに抽選だけ</button>
+        <button class="mu-x-btn" data-act="survey-submit">送って閉じる</button>
+        <button class="mu-x-btn alt" data-act="bye">そのまま閉じる</button>
       </div>
       <div class="mu-x-msg"></div>
       <div class="mu-x-foot">回答内容は MU の改善目的のみで使用、第三者提供しません。</div>
@@ -178,6 +162,7 @@
     document.body.appendChild(overlay);
 
     card.querySelector('.mu-x-close').onclick = close;
+    card.querySelector('[data-act="bye"]').onclick = close;
     card.querySelectorAll('.mu-x-chips').forEach(group => {
       const name = group.getAttribute('data-name');
       group.querySelectorAll('.mu-x-chip').forEach(chip => {
@@ -197,13 +182,8 @@
       const comment = card.querySelector('textarea[name="comment"]').value.trim();
       surveyState.would = would;
       surveyState.comment = comment;
-      userEmail = email;
-      if (!surveyState.why) {
-        msg.className = 'mu-x-msg err'; msg.textContent = '理由を 1 つ選んでください';
-        return;
-      }
-      if (!email || !email.includes('@')) {
-        msg.className = 'mu-x-msg err'; msg.textContent = 'メールアドレスを入力してください';
+      if (!surveyState.why && !surveyState.priceFeel && !comment && !would) {
+        msg.className = 'mu-x-msg err'; msg.textContent = '少なくとも 1 つは選ぶか書いてください';
         return;
       }
       btn.disabled = true; msg.className = 'mu-x-msg'; msg.textContent = '送信中…';
@@ -219,130 +199,23 @@
           }),
         });
       } catch (_) { /* survey endpoint always returns OK; ignore network */ }
-      renderStep('discount');
-    };
-    card.querySelector('[data-act="skip-to-lottery"]').onclick = () => renderStep('lottery');
-  }
-
-  // ── Discount step ─────────────────────────────────────────────
-  async function renderDiscount() {
-    const card = el('div', {class: 'mu-x-card'});
-    card.innerHTML = `
-      <button class="mu-x-close">×</button>
-      <div class="mu-x-eyebrow">原価レベル クーポン 発行中…</div>
-      <div class="mu-x-h">¥6,800 → <span style="color:#e6c449">¥${Math.round(6800 * (100 - COUPON_PCT) / 100).toLocaleString()}</span> (${COUPON_PCT}% OFF)</div>
-      <div class="mu-x-sub">アンケートにご協力ありがとうございます。Stripe にクーポンを発行しています…</div>
-      <div class="mu-x-msg">読み込み中</div>
-    `;
-    const overlay = el('div', {class: 'mu-x-overlay'}, card);
-    document.body.appendChild(overlay);
-    card.querySelector('.mu-x-close').onclick = close;
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-
-    try {
-      const r = await fetch('/api/exit/discount', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({email: userEmail}),
-      });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      const d = await r.json();
-      window.__muExitCoupon = d.coupon;
-      renderDiscountResult();
-    } catch (e) {
-      card.querySelector('.mu-x-msg').className = 'mu-x-msg err';
-      card.querySelector('.mu-x-msg').textContent = 'エラー: ' + e.message + ' — 後ほど抽選にどうぞ';
-      setTimeout(() => renderStep('lottery'), 2000);
-    }
-  }
-
-  function renderDiscountResult() {
-    const code = window.__muExitCoupon || 'MU-COST-XXXXXXXX';
-    const card = el('div', {class: 'mu-x-card'});
-    card.innerHTML = `
-      <button class="mu-x-close">×</button>
-      <div class="mu-x-eyebrow">¥3,400 / 1 回限り / 30 日有効</div>
-      <div class="mu-x-h">原価レベル クーポンを発行しました</div>
-      <div class="mu-x-sub">Stripe チェックアウトの「プロモーションコード」欄に下記を貼ってください。<br>同じクーポンをメールでもお送りしました。</div>
-      <div class="mu-x-coupon">${code}</div>
-      <div class="mu-x-actions">
-        <a class="mu-x-btn" href="/mugen?coupon=${encodeURIComponent(code)}" style="text-align:center;text-decoration:none;line-height:1.6">MUGEN に行く →</a>
-        <button class="mu-x-btn alt" data-act="copy">コードをコピー</button>
-      </div>
-      <div class="mu-x-msg ok">回答ありがとうございました。プロンプトの改善に使わせていただきます。</div>
-      <div class="mu-x-foot">クーポンは 1 回限り。MUGEN / MUON / MA / /you の購入で使えます。</div>
-    `;
-    const overlay = el('div', {class: 'mu-x-overlay'}, card);
-    document.body.appendChild(overlay);
-    card.querySelector('.mu-x-close').onclick = close;
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-    card.querySelector('[data-act="copy"]').onclick = () => {
-      navigator.clipboard.writeText(code).then(() => {
-        card.querySelector('.mu-x-msg').textContent = 'コピーしました';
-      });
+      renderThanks();
     };
   }
 
-  // ── Lottery step ──────────────────────────────────────────────
-  function renderLottery() {
+  function renderThanks() {
+    close();
     const card = el('div', {class: 'mu-x-card'});
     card.innerHTML = `
       <button class="mu-x-close">×</button>
-      <div class="mu-x-eyebrow">最後にひとつ — 無料抽選</div>
-      <div class="mu-x-h">¥1,000〜¥3,000 のキャッシュバック クーポンが当たります</div>
-      <div class="mu-x-sub">オープン懸賞 (購入不要)。毎週月曜 9:00 JST に当選者を抽選。当選者にはメールでクーポン コードを送付します。</div>
-      <div class="mu-x-row">
-        <label>メールアドレス</label>
-        <input type="email" name="email" placeholder="you@example.com" value="${userEmail || ''}">
-      </div>
+      <div class="mu-x-eyebrow">ありがとうございます</div>
+      <div class="mu-x-h">受け取りました。</div>
+      <div class="mu-x-sub">頂いた声は、 AI が次に作るデザインと、 ブランドの方向性に直接反映します。 また、 公開ノート (<a href="/blog/" style="color:#e6c449">/blog</a>) で「お客様の声でこう変えた」 を書きます。</div>
       <div class="mu-x-actions">
-        <button class="mu-x-btn" data-act="lottery-submit">抽選に応募する</button>
-        <button class="mu-x-btn alt" data-act="bye">いいえ、結構です</button>
-      </div>
-      <div class="mu-x-msg"></div>
-      <div class="mu-x-foot">景品は当選者にのみ通知。当選確率はその週の応募者数次第。応募 1 人 1 週 1 回まで。</div>
-    `;
-    const overlay = el('div', {class: 'mu-x-overlay'}, card);
-    document.body.appendChild(overlay);
-    card.querySelector('.mu-x-close').onclick = close;
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-    card.querySelector('[data-act="bye"]').onclick = close;
-    card.querySelector('[data-act="lottery-submit"]').onclick = async (ev) => {
-      const btn = ev.currentTarget;
-      const msg = card.querySelector('.mu-x-msg');
-      const email = card.querySelector('input[name="email"]').value.trim();
-      if (!email || !email.includes('@')) {
-        msg.className = 'mu-x-msg err'; msg.textContent = 'メールアドレスを確認してください';
-        return;
-      }
-      btn.disabled = true; msg.className = 'mu-x-msg'; msg.textContent = '送信中…';
-      try {
-        const r = await fetch('/api/exit/lottery', {
-          method: 'POST', headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({email, referrer: location.pathname}),
-        });
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        const d = await r.json();
-        window.__muExitTicket = d.ticket;
-        renderLotteryResult();
-      } catch (e) {
-        msg.className = 'mu-x-msg err'; msg.textContent = 'エラー: ' + e.message;
-        btn.disabled = false;
-      }
-    };
-  }
-
-  function renderLotteryResult() {
-    const t = (window.__muExitTicket || '').slice(0, 8);
-    const card = el('div', {class: 'mu-x-card'});
-    card.innerHTML = `
-      <button class="mu-x-close">×</button>
-      <div class="mu-x-eyebrow">応募完了 — 来週月曜まで お待ちください</div>
-      <div class="mu-x-h">抽選チケット <span style="color:#e6c449;font-family:monospace">${t}</span></div>
-      <div class="mu-x-sub">当選した場合、月曜 9:00 JST 以降に登録メールへ ¥1,000〜¥3,000 のクーポン コードをお送りします。<br>抽選結果に関わらず、これからもお気軽にどうぞ。</div>
-      <div class="mu-x-actions">
-        <a class="mu-x-btn" href="/mugen" style="text-align:center;text-decoration:none;line-height:1.6">MUGEN を見る →</a>
+        <a class="mu-x-btn" href="/you" style="text-align:center;text-decoration:none;line-height:1.6">あなた専用に 1 着作る (/you) →</a>
         <button class="mu-x-btn alt" data-act="close">閉じる</button>
       </div>
+      <div class="mu-x-foot">割引クーポンは MU の方針として出していません。 価格は原価ベースの透明設計です (<a href="/transparency" style="color:#888">/transparency</a>)。</div>
     `;
     const overlay = el('div', {class: 'mu-x-overlay'}, card);
     document.body.appendChild(overlay);
