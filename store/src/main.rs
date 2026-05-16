@@ -19719,6 +19719,7 @@ async fn success_page() -> Html<&'static str> {
     a.back:hover{opacity:1}
     </style>
     <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+    <script src="/tracking.js" defer></script>
     </head><body>
     <h1>Order Confirmed</h1>
     <p>確認メールをお送りしました。Printful より発送します。</p>
@@ -19729,7 +19730,46 @@ async fn success_page() -> Html<&'static str> {
       <a class="btn" href="/dao/bind">/dao/bind に進む →</a>
     </div>
     <a class="back" href="/">← Back to MU</a>
+    <script>
+    // Fire purchase conversion on the success page. Value defaults to the
+    // sticker price when not in URL (most Stripe success_url variants don't
+    // pass amount, so we fall back to the MUGEN/MA average; better to send
+    // an under-stated value than to skip the event entirely).
+    (function () {
+      var p = new URLSearchParams(location.search);
+      var sid = p.get('sid') || p.get('session_id') || p.get('cs') || '';
+      var value = Number(p.get('value') || p.get('amount') || 6800);
+      var currency = (p.get('currency') || 'JPY').toUpperCase();
+      function send() {
+        if (window.MU_TRACK && window.MU_TRACK.purchase) {
+          window.MU_TRACK.purchase({ value: value, currency: currency, transaction_id: sid || ('mu_' + Date.now()) });
+        } else { setTimeout(send, 250); }
+      }
+      send();
+    })();
+    </script>
     </body></html>"#)
+}
+
+/// GET /api/tracking/config — returns GA4 + Google Ads IDs read from env.
+/// Empty fields are omitted; tracking.js no-ops when nothing is set, so the
+/// shim can be embedded everywhere safely before Ads is configured.
+async fn tracking_config() -> impl IntoResponse {
+    let ga4 = env::var("GA4_MEASUREMENT_ID").unwrap_or_default();
+    let gads = env::var("GADS_CONVERSION_ID").unwrap_or_default();
+    let plabel = env::var("GADS_PURCHASE_LABEL").unwrap_or_default();
+    let llabel = env::var("GADS_LEAD_LABEL").unwrap_or_default();
+    let mut out = serde_json::Map::new();
+    if !ga4.is_empty()    { out.insert("ga4".into(),            serde_json::json!(ga4)); }
+    if !gads.is_empty()   { out.insert("gads".into(),           serde_json::json!(gads)); }
+    if !plabel.is_empty() { out.insert("purchase_label".into(), serde_json::json!(plabel)); }
+    if !llabel.is_empty() { out.insert("lead_label".into(),     serde_json::json!(llabel)); }
+    let mut resp = Json(serde_json::Value::Object(out)).into_response();
+    resp.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=300"),
+    );
+    resp
 }
 
 async fn fragment_request(
@@ -43013,6 +43053,7 @@ async fn main() {
     let app = Router::new()
         .route("/", get(index))
         .route("/success", get(success_page))
+        .route("/api/tracking/config", get(tracking_config))
         // Brand SPA routes
         .route("/ma", get(index))
         .route("/muon", get(index))
