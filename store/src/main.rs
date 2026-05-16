@@ -9535,13 +9535,14 @@ async fn stripe_webhook(
                 |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)),
             ).unwrap_or((String::new(), 0, 0));
             if !buyer_email.is_empty() {
+                let amt_jpy: i64 = session["amount_total"].as_i64().unwrap_or(price_jpy);
                 conn.execute(
-                    "INSERT OR IGNORE INTO mu_purchases (email, product_id, brand, drop_num, session_id, created_at)
-                     SELECT ?, ?, ?, ?, ?, ?
+                    "INSERT OR IGNORE INTO mu_purchases (email, product_id, brand, drop_num, session_id, amount_jpy, created_at)
+                     SELECT ?, ?, ?, ?, ?, ?, ?
                      WHERE NOT EXISTS (
                        SELECT 1 FROM mu_purchases WHERE session_id=? AND product_id=?
                      )",
-                    params![buyer_email, product_id, brand, drop_num, session_id, chrono_now(), session_id, product_id],
+                    params![buyer_email, product_id, brand, drop_num, session_id, amt_jpy, chrono_now(), session_id, product_id],
                 ).ok();
                 // MU credit grant: min(¥1,000, 20% of price_jpy) — 景表法 cap.
                 mu_credit_grant_for_purchase(&conn, &buyer_email, &brand, drop_num, &session_id, price_jpy);
@@ -29233,6 +29234,21 @@ async fn admin_ma_lottery_draw(
     Json(body): Json<LotteryDrawBody>,
 ) -> impl IntoResponse {
     if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+    // 2026-05-16: 4/7 Founder Relay 廃止 — MA は今後 MUGEN+stack か yuki の
+    // 個別判断 (info@enablerdao.com) でのみ発行。 ランダム抽選は中止。
+    // 第 1 回 (kenny@atsume.io) の履歴は ma_lottery_draws / _relays に永続。
+    // 既発行 action_token は /ma-lottery/:token で引き続き機能する。
+    let _ = body; let _ = db;
+    return (
+        StatusCode::GONE,
+        Json(serde_json::json!({
+            "ok": false,
+            "error": "discontinued",
+            "reason": "4/7 Founder Relay ended 2026-05-16. MA is now MUGEN+stack or hand-picked invite only. See /constitution#27.",
+            "contact": "info@enablerdao.com",
+        }))
+    ).into_response();
+    #[allow(unreachable_code)] {
     let kind = body.kind.clone().unwrap_or_else(|| "manual".into());
     let dry  = body.dry_run.unwrap_or(false);
     let enai = body.enai_grant.unwrap_or(LOTTERY_DEFAULT_ENAI_GRANT);
@@ -29306,6 +29322,7 @@ async fn admin_ma_lottery_draw(
         "dry_run": dry,
         "next_eligible_at": format!("now + {} days", LOTTERY_PERIOD_DAYS),
     })).into_response()
+    } // close #[allow(unreachable_code)] block (廃止 2026-05-16)
 }
 
 async fn send_lottery_winner_email(email: &str, action_url: &str, enai: i64) {
@@ -29586,7 +29603,12 @@ async function decide(kind) {{
     Html(html).into_response()
 }
 
-/// GET /ma-lottery (no token) — public explainer page.
+/// GET /ma-lottery — public page (formerly the Founder Relay explainer).
+/// 2026-05-16: 廃止 — MA はもはや lottery では配らない。 MUGEN+stack 経由
+/// (= 高購入者の自動 unlock) または yuki の個別 invite のみ。 第 1 回
+/// (kenny@atsume.io) の履歴は ma_lottery_draws テーブルに永続。 既発行
+/// action_token は /ma-lottery/:token で動作し続ける (kenny がまだ受領
+/// していない / 譲渡を選んでいる場合に備えて)。
 async fn ma_lottery_explainer(State(db): State<Db>) -> Html<String> {
     let recent: Vec<(String, i64, String, String)> = {
         let conn = db.lock().unwrap();
@@ -29596,7 +29618,7 @@ async fn ma_lottery_explainer(State(db): State<Db>) -> Html<String> {
                      THEN date(CAST(drawn_at AS INTEGER), 'unixepoch', '+9 hours')
                      ELSE SUBSTR(drawn_at,1,10) END,
                 id, status, kind
-             FROM ma_lottery_draws ORDER BY id DESC LIMIT 5"
+             FROM ma_lottery_draws ORDER BY id DESC LIMIT 10"
         ) { Ok(s) => s, Err(_) => return Html(String::new()) };
         let rows: Vec<(String, i64, String, String)> = stmt.query_map([], |r| Ok((
             r.get::<_, String>(0)?, r.get::<_, i64>(1)?,
@@ -29605,7 +29627,7 @@ async fn ma_lottery_explainer(State(db): State<Db>) -> Html<String> {
         rows
     };
     let history_rows: String = if recent.is_empty() {
-        r#"<li style="color:rgba(245,245,240,0.5)">まだ発火履歴はありません</li>"#.to_string()
+        r#"<li style="color:rgba(245,245,240,0.5)">発火履歴は残っていません</li>"#.to_string()
     } else {
         recent.iter().map(|(d, id, status, kind)| format!(
             r#"<li>#{id:03} · {d} · {kind} → <strong>{status}</strong></li>"#,
@@ -29615,11 +29637,9 @@ async fn ma_lottery_explainer(State(db): State<Db>) -> Html<String> {
     };
     Html(format!(r#"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>4/7 Founder Relay — 100日に1回、MA を誰かに贈る | MU</title>
-<meta name="description" content="MU の Founder Relay。100 日に 1 回、過去購入者から weighted random で 1 人に MA を贈与。受/譲/寄付の 3 択。連鎖は 7 人で reset。">
-<meta property="og:title" content="4/7 Founder Relay — MU">
-<meta property="og:description" content="ロトではなく、贈与の連鎖。100 日に 1 回、MA を誰かに贈る。">
-<meta property="og:image" content="https://mockups.wearmu.com/hero.png">
+<title>4/7 Founder Relay — 終了 | MU</title>
+<meta name="description" content="MU の 4/7 Founder Relay (100 日に 1 回 MA を誰かに贈る) は 2026-05-16 に終了しました。今後 MA は MUGEN+stack 経由 または 個別 invite のみ。">
+<meta name="robots" content="noindex,follow">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
 body{{margin:0;padding:0;background:#0A0A0A;color:#F5F5F0;font-family:'Noto Serif JP','Helvetica Neue',serif;line-height:1.95;font-size:15px}}
@@ -29627,50 +29647,49 @@ nav{{position:sticky;top:0;background:rgba(10,10,10,0.85);backdrop-filter:blur(1
 nav a{{color:#F5F5F0;text-decoration:none;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.85}}
 nav .logo{{font-weight:700;letter-spacing:0.45em}}
 .wrap{{max-width:680px;margin:0 auto;padding:60px 32px 100px}}
-.eyebrow{{font-family:'Helvetica Neue',Arial,sans-serif;font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:#e6c449;margin-bottom:14px}}
-h1{{font-size:clamp(28px,4.5vw,42px);font-weight:300;letter-spacing:0.02em;line-height:1.3;margin:0 0 18px}}
-h2{{font-size:18px;font-weight:300;letter-spacing:0.02em;margin:36px 0 12px;padding-top:22px;border-top:1px solid rgba(255,255,255,0.08);font-family:'Helvetica Neue',Arial,sans-serif;color:#e6c449}}
-p{{margin:0 0 14px}}
+.eyebrow{{font-family:'Helvetica Neue',Arial,sans-serif;font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:#C8362C;margin-bottom:14px}}
+h1{{font-size:clamp(26px,4vw,38px);font-weight:300;letter-spacing:0.02em;line-height:1.3;margin:0 0 18px}}
+h2{{font-size:16px;font-weight:300;letter-spacing:0.02em;margin:36px 0 12px;padding-top:22px;border-top:1px solid rgba(255,255,255,0.08);font-family:'Helvetica Neue',Arial,sans-serif;color:#e6c449}}
+p{{margin:0 0 14px;color:rgba(245,245,240,0.78)}}
 strong{{color:#F5F5F0;font-weight:500}}
 em{{color:#e6c449;font-style:normal}}
-ol,ul{{padding-left:22px;color:rgba(245,245,240,0.7);margin:0 0 18px}}
-ol li,ul li{{margin-bottom:8px}}
-.history{{background:#1c1c1c;border-left:2px solid #e6c449;padding:14px 18px;margin:20px 0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px}}
+ul{{padding-left:22px;color:rgba(245,245,240,0.7);margin:0 0 18px}}
+ul li{{margin-bottom:8px}}
+.notice{{background:rgba(200,54,44,0.08);border:1px solid rgba(200,54,44,0.4);border-left:3px solid #C8362C;padding:18px 22px;border-radius:2px;margin:0 0 28px}}
+.history{{background:#1c1c1c;border-left:2px solid rgba(245,245,240,0.3);padding:14px 18px;margin:20px 0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px}}
 .history li{{list-style:none;margin-bottom:6px;font-feature-settings:"tnum"}}
+.next{{background:rgba(230,196,73,0.06);border:1px solid rgba(230,196,73,0.3);padding:18px 22px;border-radius:2px;margin:32px 0 0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px}}
+.next h3{{font-size:11px;letter-spacing:0.32em;text-transform:uppercase;color:#e6c449;margin:0 0 12px;font-weight:500}}
+.next a{{color:#e6c449}}
 footer{{padding:48px 32px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;font-size:11px;letter-spacing:0.2em;opacity:0.5}}
 </style></head><body>
 <nav><a href="/" class="logo">MU</a><a href="/blog/">/ Notes</a></nav>
 <div class="wrap">
-<div class="eyebrow">MU · 4/7 Founder Relay</div>
-<h1>100 日に 1 回、MA を誰かに贈る。</h1>
-<p>MU は、100 日に 1 回、過去に MUGEN / MUON / MA / YOU / NOUNS を購入した方の中から weighted random で 1 人を選び、その人に <strong>次の MA (1-of-1)</strong> を贈与します。当選者は次の 3 つから 1 つを選びます。</p>
+<div class="eyebrow">MU · 4/7 Founder Relay — 終了</div>
+<h1>このプログラムは終了しました。</h1>
 
-<ol>
-<li><strong>受け取る</strong> — 次の MA を完全無料で受け取る。ENAI 100 unit も同時に Treasury から贈与 (MU エコ内 utility、換金不可)。</li>
-<li><strong>譲る</strong> — 別の人を指名。指名された人にも同じ 3 択メールが届く。連鎖は最大 7 人。7 人目で reset。</li>
-<li><strong>チャリティに転換</strong> — Enabler Inc. の指定先 (CO₂ オフセット / 教育) に転換。MA はオークションに戻り、収益が指定先に。</li>
-</ol>
+<div class="notice">
+<strong>2026-05-16:</strong> 「100 日に 1 回、 ランダムに 1 人へ MA を贈与」 という 4/7 Founder Relay は終了しました。 ランダム抽選は MA の希少性と物語性 (誰が、 なぜ、 何の文脈で) を弱めると判断したためです。 第 1 回 (<a href="/blog/4-7-founder-relay-001.html" style="color:#e6c449">記録</a>) の贈与は履歴として残ります。
+</div>
 
-<h2>なぜロトではなく贈与か</h2>
-<p>ロトは「確率に当たる」体験。Relay は「贈与の連鎖を起こす」体験。MU の vision にあるのは <em>numbers over adjectives</em> と <em>quiet confidence</em>。確率を煽る言葉は両方を犯します。だから連鎖にしました。</p>
+<h2>これからの MA の入手方法</h2>
+<ul>
+<li><strong>MUGEN を 1 着以上保有</strong> + その他 MU NFT (Constitution / MUON) を stack → 自動 unlock</li>
+<li><strong>yuki の個別 invite</strong> — その時々の「MU っぽい」 振る舞いをした方に静かに発行</li>
+<li>新規 MA 取得を希望する場合は <a href="mailto:info@enablerdao.com" style="color:#e6c449">info@enablerdao.com</a> まで</li>
+</ul>
 
-<h2>選定の重み</h2>
-<p>過去 24 ヶ月の累計支払額をそのまま重みにします。重みは公開できませんが、コードは <a href="https://github.com/yukihamada/mu-brand/blob/main/store/src/main.rs" style="color:#e6c449">main.rs</a> にあり、誰でも検証できます (関数名 <code>lottery_pick_winner</code>)。</p>
-
-<h2>発火条件</h2>
-<ol>
-<li>前回発火から <strong>100 日経過</strong></li>
-<li>または「沈黙の日」(売上 ¥0 の日) が発生した時、その日のうちに前倒し発火</li>
-</ol>
-
-<h2>これまでの発火履歴</h2>
+<h2>過去の発火履歴 (永続)</h2>
 <div class="history">
 <ul>
 {history_rows}
 </ul>
 </div>
 
-<p style="margin-top:48px;font-size:12px;color:rgba(245,245,240,0.5)">— MU × Enabler Inc. (株式会社イネブラ) · <a href="/blog/4-7-founder-relay-001.html" style="color:#e6c449">第 1 回ノートを読む →</a></p>
+<div class="next">
+<h3>関連</h3>
+<a href="/constitution#27">/constitution#27</a> · <a href="/donations">/donations</a> · <a href="/blog/4-7-founder-relay-001.html">第 1 回ノート</a> · <a href="/transparency">/transparency</a>
+</div>
 </div>
 <footer>MU — wearmu.com</footer>
 </body></html>"#, history_rows = history_rows))

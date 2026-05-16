@@ -494,6 +494,33 @@
     if (resume) pollJob(parseInt(resume, 10));
   } catch (_) { }
 
-  // Auto-load balance if email is already remembered.
-  if (emailInput.value) refreshBalance();
+  // Stripe Payment Link redirect lands here with ?points=ok after payment.
+  // Webhook fires asynchronously (1-5s), so poll balance a few times.
+  if (location.search.indexOf("points=ok") >= 0) {
+    section.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (emailInput.value) {
+      setStatus("✅ 支払い完了。 webhook 経由で残高を反映中…", "ok");
+      var prevBal = null;
+      var tries = 0;
+      var retryPoll = function () {
+        tries++;
+        refreshBalance().then(function (b) {
+          if (!b) return;
+          if (prevBal === null) prevBal = b.balance;
+          if (b.balance > prevBal) {
+            setStatus("✅ 残高に +" + (b.balance - prevBal).toLocaleString() + " pt が反映されました。", "ok");
+            return;
+          }
+          if (tries < 6) setTimeout(retryPoll, 4000);
+          else setStatus("⚠️ webhook の反映が遅れています。 数分後に「残高を確認」を押すと反映されます。", "err");
+        });
+      };
+      setTimeout(retryPoll, 3000);
+    } else {
+      setStatus("✅ 支払い完了。 email を入れて「残高を確認」を押すと反映されます。", "ok");
+    }
+  } else if (emailInput.value) {
+    // Auto-load balance if email is already remembered.
+    refreshBalance();
+  }
 })();
