@@ -16045,10 +16045,20 @@ fn ensure_proposal_tables(db: &Db) {
             price_jpy  INTEGER NOT NULL,
             image_url  TEXT,
             prompt     TEXT,
+            -- Approval gate: every generated SKU is 'pending' until the
+            -- partner reviews it. Only 'approved' rows are mirrored into
+            -- proposal_skus so we never publish an unreviewed AI image on
+            -- the partner's LP.
+            approval_status TEXT NOT NULL DEFAULT 'pending', -- 'pending'|'approved'|'rejected'
+            reviewed_at TEXT,
             created_at TEXT NOT NULL
          )", [],
     );
     let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_extras_skus_job ON proposal_extras_skus(job_id)", []);
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_extras_skus_approval ON proposal_extras_skus(slug, approval_status)", []);
+    // ALTER for already-deployed tables — ignored when columns exist.
+    let _ = conn.execute("ALTER TABLE proposal_extras_skus ADD COLUMN approval_status TEXT NOT NULL DEFAULT 'pending'", []);
+    let _ = conn.execute("ALTER TABLE proposal_extras_skus ADD COLUMN reviewed_at TEXT", []);
     // Prevent double-claim of the same MUGEN purchase.
     let _ = conn.execute(
         "CREATE TABLE IF NOT EXISTS proposal_mugen_claims (
@@ -16678,16 +16688,20 @@ async fn extras_job_status(
         };
     let mut items: Vec<serde_json::Value> = Vec::new();
     if let Ok(mut st) = conn.prepare(
-        "SELECT letter, label, kind, price_jpy, COALESCE(image_url,''), created_at
+        "SELECT id, letter, label, kind, price_jpy, COALESCE(image_url,''),
+                COALESCE(approval_status,'pending'), COALESCE(reviewed_at,''), created_at
          FROM proposal_extras_skus WHERE job_id=? ORDER BY id ASC LIMIT 200"
     ) {
         if let Ok(rows) = st.query_map(params![job_id], |r| Ok(serde_json::json!({
-            "letter":    r.get::<_, String>(0)?,
-            "label":     r.get::<_, String>(1)?,
-            "kind":      r.get::<_, String>(2)?,
-            "price_jpy": r.get::<_, i64>(3)?,
-            "image_url": r.get::<_, String>(4)?,
-            "created_at":r.get::<_, String>(5)?,
+            "id":              r.get::<_, i64>(0)?,
+            "letter":          r.get::<_, String>(1)?,
+            "label":           r.get::<_, String>(2)?,
+            "kind":            r.get::<_, String>(3)?,
+            "price_jpy":       r.get::<_, i64>(4)?,
+            "image_url":       r.get::<_, String>(5)?,
+            "approval_status": r.get::<_, String>(6)?,
+            "reviewed_at":     r.get::<_, String>(7)?,
+            "created_at":      r.get::<_, String>(8)?,
         }))) { for row in rows.flatten() { items.push(row); } }
     }
     Json(serde_json::json!({
@@ -16698,6 +16712,171 @@ async fn extras_job_status(
         "last_error": if last_err.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(last_err) },
         "created_at": created, "started_at": started, "completed_at": completed,
         "items": items,
+    })).into_response()
+}
+
+#[derive(Deserialize)]
+struct ExtrasReviewBody {
+    /// Email that owns the parent job. Must match the original buyer so a
+    /// third party can't approve/reject someone else's generated SKUs.
+    #[serde(default)] email: String,
+}
+
+/// Shared validation + lookup for /approve and /reject. Returns the
+/// (slug, letter, label, kind, price_jpy, image_url, current_status, job_email).
+fn lookup_extras_sku_for_review(
+    conn: &rusqlite::Connection, sku_id: i64,
+) -> Result<(String, String, String, String, i64, Option<String>, String, String), &'static str> {
+    conn.query_row(
+        "SELECT s.slug, s.letter, s.label, s.kind, s.price_jpy, s.image_url,
+                COALESCE(s.approval_status,'pending'), j.email
+         FROM proposal_extras_skus s
+         JOIN proposal_extras_jobs j ON j.id = s.job_id
+         WHERE s.id = ?",
+        params![sku_id],
+        |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+            r.get::<_, String>(3)?, r.get::<_, i64>(4)?, r.get::<_, Option<String>>(5)?,
+            r.get::<_, String>(6)?, r.get::<_, String>(7)?,
+        )),
+    ).map_err(|_| "sku not found")
+}
+
+/// POST /api/proposal/extras/sku/:sku_id/approve — partner approves one
+/// generated SKU. Copies into proposal_skus so it appears on the LP, and
+/// stamps approval_status='approved'.
+async fn extras_sku_approve(
+    State(db): State<Db>,
+    axum::extract::Path(sku_id): axum::extract::Path<i64>,
+    Json(body): Json<ExtrasReviewBody>,
+) -> Response {
+    let email = match validate_email(&body.email) {
+        Ok(e) => e,
+        Err(m) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok": false, "error": m}))).into_response(),
+    };
+    let conn = db.lock().unwrap();
+    let (slug, letter, label, kind, price_jpy, image_url, status, job_email) =
+        match lookup_extras_sku_for_review(&conn, sku_id) {
+            Ok(v) => v,
+            Err(m) => return (StatusCode::NOT_FOUND, Json(serde_json::json!({"ok": false, "error": m}))).into_response(),
+        };
+    if normalize_email(&job_email) != email {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"ok": false, "error": "email does not match the job"}))).into_response();
+    }
+    if status == "approved" {
+        return Json(serde_json::json!({"ok": true, "already": true, "status": "approved", "sku_id": sku_id})).into_response();
+    }
+    if status == "rejected" {
+        return (StatusCode::CONFLICT, Json(serde_json::json!({"ok": false, "error": "sku is rejected; cannot approve"}))).into_response();
+    }
+    let now = chrono_now();
+    let drop_num = 9_000_000 + sku_id; // synthetic
+    let _ = conn.execute(
+        "UPDATE proposal_extras_skus SET approval_status='approved', reviewed_at=? WHERE id=?",
+        params![now, sku_id],
+    );
+    let img = image_url.unwrap_or_default();
+    let _ = conn.execute(
+        "INSERT OR IGNORE INTO proposal_skus
+            (slug, letter, drop_num, price_jpy, label, kind, design_slug, design_url)
+         VALUES (?,?,?,?,?,?,?,?)",
+        params![slug, letter, drop_num, price_jpy, label, kind, "extras", img],
+    );
+    Json(serde_json::json!({
+        "ok": true, "sku_id": sku_id, "slug": slug, "status": "approved",
+    })).into_response()
+}
+
+/// POST /api/proposal/extras/sku/:sku_id/reject — partner rejects.
+/// Marks the row rejected; never copies into proposal_skus.
+async fn extras_sku_reject(
+    State(db): State<Db>,
+    axum::extract::Path(sku_id): axum::extract::Path<i64>,
+    Json(body): Json<ExtrasReviewBody>,
+) -> Response {
+    let email = match validate_email(&body.email) {
+        Ok(e) => e,
+        Err(m) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok": false, "error": m}))).into_response(),
+    };
+    let conn = db.lock().unwrap();
+    let (slug, _, _, _, _, _, status, job_email) =
+        match lookup_extras_sku_for_review(&conn, sku_id) {
+            Ok(v) => v,
+            Err(m) => return (StatusCode::NOT_FOUND, Json(serde_json::json!({"ok": false, "error": m}))).into_response(),
+        };
+    if normalize_email(&job_email) != email {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"ok": false, "error": "email does not match the job"}))).into_response();
+    }
+    if status == "rejected" {
+        return Json(serde_json::json!({"ok": true, "already": true, "status": "rejected", "sku_id": sku_id})).into_response();
+    }
+    if status == "approved" {
+        return (StatusCode::CONFLICT, Json(serde_json::json!({"ok": false, "error": "sku is already approved; reload to refresh"}))).into_response();
+    }
+    let now = chrono_now();
+    let _ = conn.execute(
+        "UPDATE proposal_extras_skus SET approval_status='rejected', reviewed_at=? WHERE id=?",
+        params![now, sku_id],
+    );
+    Json(serde_json::json!({
+        "ok": true, "sku_id": sku_id, "slug": slug, "status": "rejected",
+    })).into_response()
+}
+
+/// POST /api/proposal/extras/job/:job_id/approve-all — bulk approve every
+/// still-pending SKU in a job. Same auth (email matches the job).
+async fn extras_job_approve_all(
+    State(db): State<Db>,
+    axum::extract::Path(job_id): axum::extract::Path<i64>,
+    Json(body): Json<ExtrasReviewBody>,
+) -> Response {
+    let email = match validate_email(&body.email) {
+        Ok(e) => e,
+        Err(m) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok": false, "error": m}))).into_response(),
+    };
+    let conn = db.lock().unwrap();
+    let job_email: String = match conn.query_row(
+        "SELECT email FROM proposal_extras_jobs WHERE id=?",
+        params![job_id], |r| r.get(0),
+    ) {
+        Ok(e) => e,
+        Err(_) => return (StatusCode::NOT_FOUND, Json(serde_json::json!({"ok": false, "error": "unknown job"}))).into_response(),
+    };
+    if normalize_email(&job_email) != email {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"ok": false, "error": "email does not match the job"}))).into_response();
+    }
+    // Mirror all pending SKUs to proposal_skus, then flip them to approved.
+    let now = chrono_now();
+    let mut approved_count: i64 = 0;
+    let pending: Vec<(i64, String, String, String, String, i64, String)> = {
+        let mut st = match conn.prepare(
+            "SELECT id, slug, letter, label, kind, price_jpy, COALESCE(image_url,'')
+             FROM proposal_extras_skus
+             WHERE job_id=? AND approval_status='pending' AND image_url IS NOT NULL AND image_url <> ''"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "prepare").into_response() };
+        let rows = st.query_map(params![job_id], |r| Ok((
+            r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+            r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, i64>(5)?,
+            r.get::<_, String>(6)?,
+        )));
+        match rows { Ok(it) => it.flatten().collect(), Err(_) => Vec::new() }
+    };
+    for (id, slug, letter, label, kind, price_jpy, image_url) in pending.iter() {
+        let drop_num = 9_000_000 + id;
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO proposal_skus
+                (slug, letter, drop_num, price_jpy, label, kind, design_slug, design_url)
+             VALUES (?,?,?,?,?,?,?,?)",
+            params![slug, letter, drop_num, price_jpy, label, kind, "extras", image_url],
+        );
+        let _ = conn.execute(
+            "UPDATE proposal_extras_skus SET approval_status='approved', reviewed_at=? WHERE id=?",
+            params![now, id],
+        );
+        approved_count += 1;
+    }
+    Json(serde_json::json!({
+        "ok": true, "job_id": job_id, "approved": approved_count,
     })).into_response()
 }
 
@@ -16810,8 +16989,32 @@ const EXTRAS_CATEGORIES: &[(&str, &str, i64)] = &[
     ("jersey",     "button-front baseball jersey, white with tonal pattern, model",   8900),
     ("socks",      "crew socks 3-pack, white/black/grey, stacked product shot",       2400),
     ("spats",      "compression grappling spats, matte black, action half-body",      6800),
-    ("shorts",     "MMA fight shorts, all-black with subtle side line, athlete",      6800),
+    ("fight-shorts","MMA fight shorts, all-black with subtle side line, athlete",     6800),
 ];
+
+/// Categories that are BJJ / combat-sports specific. We hide these from
+/// partners whose mood does not match (F&B, hospitality, lifestyle brands).
+const EXTRAS_BJJ_ONLY_KINDS: &[&str] = &["spats", "fight-shorts"];
+
+/// True iff this partner is allowed to receive BJJ-flavoured categories.
+fn partner_allows_bjj(slug: &str) -> bool {
+    matches!(slug,
+        "sweep" | "jiuflow" | "jiufight" | "ryozo" | "nojimahal"
+        // any future BJJ partners can be appended here without DB changes
+    )
+}
+
+/// Returns the categories to rotate through for `slug`. BJJ-only kinds
+/// are stripped for non-BJJ partners so e.g. kokon never gets fight-shorts.
+fn extras_categories_for(slug: &str) -> Vec<(&'static str, &'static str, i64)> {
+    if partner_allows_bjj(slug) {
+        return EXTRAS_CATEGORIES.to_vec();
+    }
+    EXTRAS_CATEGORIES.iter()
+        .filter(|(kind, _, _)| !EXTRAS_BJJ_ONLY_KINDS.contains(kind))
+        .copied()
+        .collect()
+}
 
 async fn proposal_extras_worker(db: Db) {
     // Honour a kill switch so the worker can be disabled on Fly via env.
@@ -16881,8 +17084,12 @@ async fn process_extras_job(
     let now_seed = chrono_now();
     let mut succeeded: i64 = 0;
     let mut last_err: Option<String> = None;
+    let categories = extras_categories_for(&slug);
+    if categories.is_empty() {
+        return (0, Some("no allowed categories for this partner".to_string()));
+    }
     for i in 0..qty {
-        let (kind, label_tmpl, price_jpy) = EXTRAS_CATEGORIES[(i as usize) % EXTRAS_CATEGORIES.len()];
+        let (kind, label_tmpl, price_jpy) = categories[(i as usize) % categories.len()];
         let label = format!("MU × {} — {}", partner_name, label_tmpl);
         let seed = format!("job{}-{}-{}", job_id, i, now_seed.chars().filter(|c| c.is_ascii_alphanumeric()).take(8).collect::<String>());
         let tagline = format!("quiet, premium, 1着 = 1 シグナル");
@@ -16917,21 +17124,18 @@ async fn process_extras_job(
             }
         };
         let letter = format!("x{}{:03}", job_id, i);
-        let drop_num = 9_000_000 + job_id * 1000 + i; // synthetic, far above natural drop_num range
         let now = chrono_now();
         let conn = db.lock().unwrap();
+        // Only the extras audit table is written during generation. The
+        // partner's LP (proposal_skus) is only populated on approve — this
+        // is the approval-gate fix from the persona review (P0.1).
         let _ = conn.execute(
             "INSERT INTO proposal_extras_skus
-                (job_id, slug, letter, label, kind, price_jpy, image_url, prompt, created_at)
-             VALUES (?,?,?,?,?,?,?,?,?)",
+                (job_id, slug, letter, label, kind, price_jpy, image_url, prompt,
+                 approval_status, created_at)
+             VALUES (?,?,?,?,?,?,?,?, 'pending', ?)",
             params![job_id, slug, letter, label, kind, price_jpy, url,
                     gemini::build_partner_sku_prompt(&brief), now],
-        );
-        let _ = conn.execute(
-            "INSERT OR IGNORE INTO proposal_skus
-                (slug, letter, drop_num, price_jpy, label, kind, design_slug, design_url)
-             VALUES (?,?,?,?,?,?,?,?)",
-            params![slug, letter, drop_num, price_jpy, label, kind, "extras", url],
         );
         let _ = conn.execute(
             "UPDATE proposal_extras_jobs SET done_count=done_count+1 WHERE id=?",
@@ -16968,9 +17172,12 @@ fn finalize_extras_job(
                                   Some(&job_id.to_string()), Some(slug));
         }
     }
-    // If the job was free and all SKUs failed, give the free credit back so
-    // the user isn't stuck without ever having used it.
-    if free_applied && succeeded == 0 {
+    // P1.3 fix from persona review: the free 30-pack is only consumed when
+    // the run is fully successful (30/30). Any partial/total fail returns
+    // the free token so the partner can try again. Worst case: we eat the
+    // cost of a few extra Gemini calls — fairer than burning the freebie
+    // on a half-broken batch.
+    if free_applied && succeeded < qty {
         let _ = conn.execute(
             "UPDATE proposal_points SET free_30_used=0, updated_at=? WHERE email=?",
             params![now, normalize_email(email)],
@@ -40699,11 +40906,14 @@ async fn main() {
         .route("/api/proposal/:slug/approve",  post(proposal_generic_approve))
         .route("/api/proposal/:slug/revoke",   post(proposal_generic_revoke))
         // Proposal extras (shared 30/50/100 SKU generator widget).
-        .route("/api/proposal/extras/balance",       post(extras_balance))
-        .route("/api/proposal/extras/claim-mugen",   post(extras_claim_mugen))
-        .route("/api/proposal/extras/job/:job_id",   get(extras_job_status))
-        .route("/api/proposal/:slug/extras/quote",   post(extras_quote))
-        .route("/api/proposal/:slug/extras/order",   post(extras_order))
+        .route("/api/proposal/extras/balance",                  post(extras_balance))
+        .route("/api/proposal/extras/claim-mugen",              post(extras_claim_mugen))
+        .route("/api/proposal/extras/job/:job_id",              get(extras_job_status))
+        .route("/api/proposal/extras/job/:job_id/approve-all",  post(extras_job_approve_all))
+        .route("/api/proposal/extras/sku/:sku_id/approve",      post(extras_sku_approve))
+        .route("/api/proposal/extras/sku/:sku_id/reject",       post(extras_sku_reject))
+        .route("/api/proposal/:slug/extras/quote",              post(extras_quote))
+        .route("/api/proposal/:slug/extras/order",              post(extras_order))
         .route("/admin/proposal",              post(proposal_generic_create))
         .route("/admin/proposals",             get(proposal_generic_list))
         .nest_service("/proposals", ServeDir::new("static/proposals"))
