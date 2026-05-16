@@ -17198,7 +17198,7 @@ fn extras_my_token_valid(email: &str, supplied: &str) -> bool {
 // idempotently to the same tables.
 
 static PARTNER_PROPOSALS_DIR: include_dir::Dir<'_> =
-    include_dir::include_dir!("$CARGO_MANIFEST_DIR/../scripts/partner_proposals");
+    include_dir::include_dir!("$CARGO_MANIFEST_DIR/partner_specs");
 
 #[derive(Deserialize)]
 struct PartnerSpec {

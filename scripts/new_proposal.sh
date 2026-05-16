@@ -57,11 +57,13 @@ fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-# Mirror spec.json into scripts/partner_proposals/<slug>.json so the LP renderer
-# (gen_partner_proposal.py) can read spec.json["meta"] on its next invocation.
-mkdir -p scripts/partner_proposals
-cp "$SPEC" "scripts/partner_proposals/$SLUG.json"
-echo "━◯━ mirrored spec → scripts/partner_proposals/$SLUG.json"
+# Mirror spec.json into store/partner_specs/<slug>.json. That directory is
+# embedded into the mu-store binary via include_dir!, so a new partner
+# auto-appears in the unified LP renderer (gen_partner_proposal.py) AND in
+# the running Fly app after the next deploy.
+mkdir -p store/partner_specs
+cp "$SPEC" "store/partner_specs/$SLUG.json"
+echo "━◯━ mirrored spec → store/partner_specs/$SLUG.json"
 
 # [1/3] Designs ────────────────────────────────────────────────────────────
 DESIGN_MG=$(python3 -c "import json; d=json.load(open('$SPEC')).get('design',{}); print(d.get('monogram') or d.get('mark') or '$SLUG'[:2].upper())")

@@ -3,7 +3,7 @@
 
 Usage:
     GET /api/v1/collab/<partner> drives the data, optionally backed up by a
-    yaml/JSON meta file at scripts/partner_proposals/<slug>.json for the
+    yaml/JSON meta file at store/partner_specs/<slug>.json for the
     pieces that aren't in the catalog (hero copy, accent color, etc.).
 
     PRINTFUL_API_KEY=...  STRIPE_OK=1  python3 gen_partner_proposal.py sweep
@@ -81,13 +81,13 @@ def fetch_json(url, headers=None):
     return json.loads(fetch(url, headers))
 
 def load_spec_meta(slug):
-    """Pull "meta" block out of scripts/partner_proposals/<slug>.json if it exists.
+    """Pull "meta" block out of store/partner_specs/<slug>.json if it exists.
     This is the per-brand override file that scripts/new_proposal.sh writes
     alongside the admin POST. Falls back to the in-file META dict so legacy
     partners (sweep, kokon, …) keep working."""
     candidates = [
-        os.path.join(ROOT, "scripts", "partner_proposals", f"{slug}.json"),
-        os.path.join(ROOT, "scripts", "partner_proposals", slug, "spec.json"),
+        os.path.join(ROOT, "store", "partner_specs", f"{slug}.json"),
+        os.path.join(ROOT, "store", "partner_specs", slug, "spec.json"),
     ]
     for path in candidates:
         if os.path.exists(path):
@@ -102,6 +102,7 @@ def load_spec_meta(slug):
 
 def main():
     ap = argparse.ArgumentParser()
+    # NOTE: meta override files now live at store/partner_specs/<slug>.json
     ap.add_argument("partner", help="partner slug (sweep | kokon | <new>)")
     ap.add_argument("--source", default="https://wearmu.com",
                     help="origin to pull /api/v1/collab/<partner> from")
@@ -116,7 +117,7 @@ def main():
     if not meta:
         sys.exit(
             f"no meta for partner={slug}. either:\n"
-            f"  1) write scripts/partner_proposals/{slug}.json with a 'meta' block, or\n"
+            f"  1) write store/partner_specs/{slug}.json with a 'meta' block, or\n"
             f"  2) add a META entry in {os.path.basename(__file__)}"
         )
 
