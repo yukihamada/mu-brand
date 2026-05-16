@@ -34164,32 +34164,12 @@ async fn show_kokon_page(State(db): State<Db>) -> Response {
         ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
     };
 
-    // 元々あった ITTO 牛 mascot デザイン (yuki が「前のも好きだった」のでサブ画像として復活)。
-    // 6 SKU のみ、対応する legacy アート URL を 2 枚目画像として表示する。
-    fn kokon_legacy_design(slug: &str) -> Option<&'static str> {
-        match slug {
-            "kokon-iphone-case"   => Some("/static/itto/goods/lineup/mascot_cow.jpg"),
-            "kokon-laptop-sleeve" => Some("/static/itto/goods/lineup/tote_logo_natural.jpg"),
-            "kokon-tote-v2"       => Some("/static/itto/goods/lineup/tote_cow_black.jpg"),
-            "kokon-tank-top"      => Some("/static/itto/goods/lineup/tshirt_cow_white.jpg"),
-            "kokon-beanie"        => Some("/static/itto/goods/lineup/cap_cow_beige.jpg"),
-            "kokon-longsleeve"    => Some("/static/itto/goods/lineup/tshirt_kanji_grey.jpg"),
-            _ => None,
-        }
-    }
-
     let cards = items.iter().map(|(id, slug, cat, name, desc, price, image, lead)| {
-        let primary = image.as_deref().filter(|u| !u.is_empty() && u.starts_with("http"));
-        let legacy = kokon_legacy_design(slug);
-        let image_block = match (primary, legacy) {
-            (Some(u), Some(l)) => format!(
-                r##"<button type="button" class="img-wrap zoom" data-full="{src}" data-name="{name_attr}" aria-label="拡大: {name_attr}"><img src="{src}" alt="{name_attr}" loading="lazy"><span class="zoom-hint">⤢</span></button>
-<div class="legacy-row" title="前あった MU mascot デザインも好評につき復活"><img src="{leg}" alt="{name_attr} · MU mascot design" loading="lazy"><small>MU mascot ver.</small></div>"##,
-                src = html_attr_escape(u), leg = html_attr_escape(l), name_attr = html_attr_escape(name)),
-            (Some(u), None) => format!(
+        let image_block = match image.as_deref().filter(|u| !u.is_empty() && u.starts_with("http")) {
+            Some(u) => format!(
                 r##"<button type="button" class="img-wrap zoom" data-full="{src}" data-name="{name_attr}" aria-label="拡大: {name_attr}"><img src="{src}" alt="{name_attr}" loading="lazy"><span class="zoom-hint">⤢</span></button>"##,
                 src = html_attr_escape(u), name_attr = html_attr_escape(name)),
-            _ => format!(
+            None => format!(
                 r#"<div class="img-wrap placeholder"><span>{glyph}</span><small>生成中…</small></div>"#,
                 glyph = html_attr_escape(cat.chars().next().map(|c| c.to_string()).unwrap_or("•".into()).as_str())),
         };
