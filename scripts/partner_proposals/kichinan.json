@@ -1,0 +1,287 @@
+{
+  "slug": "kichinan",
+  "name": "Kichinan / 富士見町",
+  "ip_owner": "Kichinan / 富士見町",
+  "skus": [
+    {
+      "letter": "a",
+      "drop_num": 1,
+      "price_jpy": 5400,
+      "label": "後方支援 back-print",
+      "kind": "tee",
+      "design_slug": "a"
+    },
+    {
+      "letter": "b",
+      "drop_num": 2,
+      "price_jpy": 6800,
+      "label": "one truck. 1962.",
+      "kind": "tee",
+      "design_slug": "b"
+    },
+    {
+      "letter": "c",
+      "drop_num": 3,
+      "price_jpy": 5400,
+      "label": "workshirt patch · SINCE 1962",
+      "kind": "tee",
+      "design_slug": "c"
+    },
+    {
+      "letter": "d",
+      "drop_num": 4,
+      "price_jpy": 4500,
+      "label": "K-helmet quiet",
+      "kind": "tee",
+      "design_slug": "d"
+    },
+    {
+      "letter": "e",
+      "drop_num": 5,
+      "price_jpy": 6800,
+      "label": "Yamaguchi coast",
+      "kind": "tee",
+      "design_slug": "e"
+    },
+    {
+      "letter": "f",
+      "drop_num": 6,
+      "price_jpy": 5800,
+      "label": "K-emblem snapback cap",
+      "kind": "cap",
+      "design_slug": "d"
+    },
+    {
+      "letter": "g",
+      "drop_num": 7,
+      "price_jpy": 4200,
+      "label": "後方支援 canvas tote",
+      "kind": "tote",
+      "design_slug": "a"
+    },
+    {
+      "letter": "h",
+      "drop_num": 8,
+      "price_jpy": 9800,
+      "label": "後方支援 heavy hoodie",
+      "kind": "hoodie",
+      "design_slug": "a"
+    },
+    {
+      "letter": "i",
+      "drop_num": 9,
+      "price_jpy": 2400,
+      "label": "K-emblem ceramic mug",
+      "kind": "mug",
+      "design_slug": "d"
+    },
+    {
+      "letter": "j",
+      "drop_num": 10,
+      "price_jpy": 3800,
+      "label": "K-emblem cuffed beanie",
+      "kind": "beanie",
+      "design_slug": "d"
+    },
+    {
+      "letter": "k",
+      "drop_num": 11,
+      "price_jpy": 6400,
+      "label": "後方支援 long-sleeve tee",
+      "kind": "longsleeve",
+      "design_slug": "a"
+    },
+    {
+      "letter": "q",
+      "drop_num": 12,
+      "price_jpy": 980,
+      "label": "きちにゃん vinyl die-cut sticker",
+      "kind": "sticker",
+      "design_slug": "d"
+    },
+    {
+      "letter": "r",
+      "drop_num": 13,
+      "price_jpy": 6800,
+      "label": "きちにゃん kids hoodie",
+      "kind": "kids_hoodie",
+      "design_slug": "d"
+    },
+    {
+      "letter": "s",
+      "drop_num": 14,
+      "price_jpy": 5400,
+      "label": "きちにゃん kids long sleeve",
+      "kind": "kids_longsleeve",
+      "design_slug": "d"
+    },
+    {
+      "letter": "t",
+      "drop_num": 15,
+      "price_jpy": 6400,
+      "label": "きちにゃん kids crewneck sweat",
+      "kind": "kids_sweat",
+      "design_slug": "d"
+    },
+    {
+      "letter": "u",
+      "drop_num": 16,
+      "price_jpy": 3800,
+      "label": "きちにゃん baby onesie",
+      "kind": "baby_onesie",
+      "design_slug": "d"
+    },
+    {
+      "letter": "v",
+      "drop_num": 17,
+      "price_jpy": 2800,
+      "label": "きちにゃん baby bib",
+      "kind": "baby_bib",
+      "design_slug": "d"
+    },
+    {
+      "letter": "w",
+      "drop_num": 18,
+      "price_jpy": 2400,
+      "label": "きちにゃん mouse pad",
+      "kind": "mousepad",
+      "design_slug": "d"
+    },
+    {
+      "letter": "x",
+      "drop_num": 19,
+      "price_jpy": 3400,
+      "label": "きちにゃん iPhone case",
+      "kind": "phonecase",
+      "design_slug": "d"
+    },
+    {
+      "letter": "y",
+      "drop_num": 20,
+      "price_jpy": 2800,
+      "label": "きちにゃん hardcover notebook",
+      "kind": "notebook",
+      "design_slug": "d"
+    },
+    {
+      "letter": "z",
+      "drop_num": 21,
+      "price_jpy": 4800,
+      "label": "きちにゃん 100-piece puzzle",
+      "kind": "puzzle",
+      "design_slug": "d"
+    },
+    {
+      "letter": "aa",
+      "drop_num": 22,
+      "price_jpy": 4400,
+      "label": "きちにゃん throw pillow 40cm",
+      "kind": "pillow",
+      "design_slug": "d"
+    },
+    {
+      "letter": "ab",
+      "drop_num": 23,
+      "price_jpy": 6800,
+      "label": "きちにゃん sherpa blanket",
+      "kind": "blanket",
+      "design_slug": "d"
+    },
+    {
+      "letter": "ac",
+      "drop_num": 24,
+      "price_jpy": 880,
+      "label": "きちにゃん 38mm pin badge",
+      "kind": "pin",
+      "design_slug": "d"
+    },
+    {
+      "letter": "ad",
+      "drop_num": 25,
+      "price_jpy": 980,
+      "label": "きちにゃん square magnet",
+      "kind": "magnet",
+      "design_slug": "d"
+    },
+    {
+      "letter": "ae",
+      "drop_num": 26,
+      "price_jpy": 480,
+      "label": "きちにゃん postcard",
+      "kind": "postcard",
+      "design_slug": "d"
+    },
+    {
+      "letter": "af",
+      "drop_num": 27,
+      "price_jpy": 3400,
+      "label": "きちにゃん poster 30×45cm",
+      "kind": "poster",
+      "design_slug": "d"
+    },
+    {
+      "letter": "ag",
+      "drop_num": 28,
+      "price_jpy": 5800,
+      "label": "きちにゃん canvas 30×30cm",
+      "kind": "canvas",
+      "design_slug": "d"
+    },
+    {
+      "letter": "ah",
+      "drop_num": 29,
+      "price_jpy": 1800,
+      "label": "きちにゃん crew socks (kids)",
+      "kind": "socks",
+      "design_slug": "d"
+    },
+    {
+      "letter": "ai",
+      "drop_num": 30,
+      "price_jpy": 2200,
+      "label": "きちにゃん cotton bandana",
+      "kind": "bandana",
+      "design_slug": "d"
+    },
+    {
+      "letter": "aj",
+      "drop_num": 31,
+      "price_jpy": 3800,
+      "label": "きちにゃん kid tote 28×30cm",
+      "kind": "kids_tote",
+      "design_slug": "d"
+    },
+    {
+      "letter": "l",
+      "drop_num": 32,
+      "price_jpy": 5800,
+      "label": "きちにゃん plush 18cm",
+      "kind": "plush",
+      "design_slug": "d"
+    },
+    {
+      "letter": "n",
+      "drop_num": 33,
+      "price_jpy": 1800,
+      "label": "きちにゃん acrylic charm",
+      "kind": "acrylic_charm",
+      "design_slug": "d"
+    },
+    {
+      "letter": "o",
+      "drop_num": 34,
+      "price_jpy": 4200,
+      "label": "きちにゃん kids' Tシャツ",
+      "kind": "kids_tee",
+      "design_slug": "d"
+    },
+    {
+      "letter": "p",
+      "drop_num": 35,
+      "price_jpy": 2800,
+      "label": "きちにゃん drawstring sport bag",
+      "kind": "drawstring",
+      "design_slug": "d"
+    }
+  ]
+}

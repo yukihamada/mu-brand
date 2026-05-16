@@ -1,0 +1,103 @@
+{
+  "slug": "ele",
+  "name": "ELE / yuki",
+  "ip_owner": "ELE / yuki",
+  "skus": [
+    {
+      "letter": "a",
+      "drop_num": 1,
+      "price_jpy": 5400,
+      "label": "ele name back-print",
+      "kind": "tee",
+      "design_slug": "a"
+    },
+    {
+      "letter": "b",
+      "drop_num": 2,
+      "price_jpy": 5400,
+      "label": "MIX = BEST",
+      "kind": "tee",
+      "design_slug": "b"
+    },
+    {
+      "letter": "c",
+      "drop_num": 3,
+      "price_jpy": 4800,
+      "label": "I'm ELE's human (pair tee)",
+      "kind": "tee",
+      "design_slug": "c"
+    },
+    {
+      "letter": "d",
+      "drop_num": 4,
+      "price_jpy": 2800,
+      "label": "ELE bandana",
+      "kind": "sticker",
+      "design_slug": "d"
+    },
+    {
+      "letter": "e",
+      "drop_num": 5,
+      "price_jpy": 4200,
+      "label": "paw trace tote",
+      "kind": "tote",
+      "design_slug": "e"
+    },
+    {
+      "letter": "f",
+      "drop_num": 6,
+      "price_jpy": 7800,
+      "label": "ELE name embroidery polo",
+      "kind": "polo",
+      "design_slug": "f"
+    },
+    {
+      "letter": "g",
+      "drop_num": 7,
+      "price_jpy": 5400,
+      "label": "bichon x poodle = ele math",
+      "kind": "tee",
+      "design_slug": "g"
+    },
+    {
+      "letter": "h",
+      "drop_num": 8,
+      "price_jpy": 2400,
+      "label": "ELE silhouette mug",
+      "kind": "mug",
+      "design_slug": "h"
+    },
+    {
+      "letter": "i",
+      "drop_num": 9,
+      "price_jpy": 5400,
+      "label": "Walked by ELE",
+      "kind": "tee",
+      "design_slug": "i"
+    },
+    {
+      "letter": "j",
+      "drop_num": 10,
+      "price_jpy": 1800,
+      "label": "ELE sticker pack 5",
+      "kind": "sticker",
+      "design_slug": "j"
+    },
+    {
+      "letter": "k",
+      "drop_num": 11,
+      "price_jpy": 9800,
+      "label": "Still sleeping with ELE",
+      "kind": "hoodie",
+      "design_slug": "k"
+    },
+    {
+      "letter": "l",
+      "drop_num": 12,
+      "price_jpy": 5800,
+      "label": "ELE walk reflective cap",
+      "kind": "cap",
+      "design_slug": "l"
+    }
+  ]
+}

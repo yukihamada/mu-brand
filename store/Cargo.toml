@@ -46,3 +46,7 @@ png = "0.17"
 # of pass.json + manifest.json + signature + icons. We construct it
 # in-memory and stream the bytes via Axum.
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# Embed scripts/partner_proposals/*.json into the binary at compile time.
+# New partners go through spec.json (unified ③ path) instead of being
+# hard-coded as const arrays in main.rs.
+include_dir = "0.7"

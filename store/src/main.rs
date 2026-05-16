@@ -17355,6 +17355,123 @@ fn extras_my_token_valid(email: &str, supplied: &str) -> bool {
     extras_my_token(email) == supplied.trim()
 }
 
+// ── Unified partner spec-json loader (③ path) ───────────────────────────
+// scripts/partner_proposals/<slug>.json is the canonical way to add a new
+// partner. The JSON files are embedded into the binary via include_dir so
+// fresh-volume boots can seed proposals + proposal_skus + products from
+// the repo without an external filesystem mount.
+//
+// Legacy const X_DESIGNS arrays (kichinan / asoview / elsoul / ele /
+// nojimahal / ryozo / jiufight / blank) still exist for backwards-compat
+// with the per-brand legacy endpoints (/api/proposals/<brand>/{sample,bundle,
+// status,approve,revoke}) and the static LP pages. Both paths write
+// idempotently to the same tables.
+
+static PARTNER_PROPOSALS_DIR: include_dir::Dir<'_> =
+    include_dir::include_dir!("$CARGO_MANIFEST_DIR/../scripts/partner_proposals");
+
+#[derive(Deserialize)]
+struct PartnerSpec {
+    slug: String,
+    name: String,
+    #[serde(default)] ip_owner: Option<String>,
+    skus: Vec<PartnerSpecSku>,
+}
+
+#[derive(Deserialize)]
+struct PartnerSpecSku {
+    letter: String,
+    drop_num: i64,
+    price_jpy: i64,
+    label: String,
+    kind: String,
+    design_slug: String,
+    #[serde(default)] design_url: Option<String>,
+}
+
+/// Seed proposals + proposal_skus + products from every spec.json embedded
+/// in the binary. Idempotent — INSERT OR IGNORE means re-runs are safe and
+/// existing rows are preserved. Designed to run alongside the legacy const
+/// seeding so new partners can ship via spec.json with zero Rust changes.
+fn seed_partners_from_spec_dir(db: &Db) {
+    let conn = db.lock().unwrap();
+    let now = chrono_now();
+    let mut partners = 0i64;
+    let mut skus = 0i64;
+    let mut products = 0i64;
+    for file in PARTNER_PROPOSALS_DIR.files() {
+        let path = file.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") { continue; }
+        let raw = match file.contents_utf8() { Some(s) => s, None => continue };
+        let spec: PartnerSpec = match serde_json::from_str(raw) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("[partner-spec] {} parse error: {}", path.display(), e);
+                continue;
+            }
+        };
+        let slug = spec.slug.trim().to_lowercase();
+        if slug.is_empty() || !slug.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') {
+            continue;
+        }
+        let ip_owner = spec.ip_owner.unwrap_or_else(|| spec.name.clone());
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO proposals (slug, name, ip_owner, created_at)
+             VALUES (?,?,?,?)",
+            params![slug, spec.name, ip_owner, now],
+        );
+        partners += 1;
+        for s in &spec.skus {
+            let letter = s.letter.trim().to_lowercase();
+            let kind = s.kind.trim();
+            let design_slug = s.design_slug.trim();
+            if letter.is_empty() || kind.is_empty() || design_slug.is_empty() { continue; }
+            let _ = conn.execute(
+                "INSERT OR IGNORE INTO proposal_skus
+                    (slug, letter, drop_num, price_jpy, label, kind, design_slug, design_url)
+                 VALUES (?,?,?,?,?,?,?,?)",
+                params![slug, letter, s.drop_num, s.price_jpy, s.label.trim(), kind,
+                        design_slug, s.design_url],
+            );
+            skus += 1;
+            // Mirror into products table so the brand becomes buyable. Same
+            // shape the const-seed pipeline uses — kept consistent on purpose.
+            let brand = proposal_brand_for_kind(&slug, kind);
+            let exists: bool = conn.query_row(
+                "SELECT 1 FROM products WHERE brand=? AND drop_num=? LIMIT 1",
+                params![brand, s.drop_num], |r| r.get::<_, i64>(0),
+            ).is_ok();
+            if !exists {
+                let design_url = s.design_url.clone().unwrap_or_else(|| {
+                    format!("https://wearmu.com/proposals/design-{}.png", design_slug)
+                });
+                let mockup_url = format!("https://wearmu.com/proposals/{}-mockup-{}.png", slug, letter);
+                let _ = conn.execute(
+                    "INSERT INTO products
+                        (brand, drop_num, name, design_url, mockup_url, price_jpy, inventory, active, created_at, weather_data)
+                     VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    params![
+                        brand, s.drop_num,
+                        format!("━◯━ MU × {} · {} · {}", ip_owner, letter.to_uppercase(), s.label.trim()),
+                        design_url, mockup_url, s.price_jpy, 50, 0, now,
+                        serde_json::json!({
+                            "kind": format!("{}_{}", slug, kind),
+                            "design_slug": design_slug,
+                            "license_status": "pending",
+                            "ip_owner": ip_owner,
+                            "note": "Sample / public order — public sales require approval on /proposals/<slug>",
+                            "source": "spec.json",
+                        }).to_string(),
+                    ],
+                );
+                products += 1;
+            }
+        }
+    }
+    tracing::info!("[partner-spec] seeded {} partners / {} SKUs / {} new product rows from spec.json",
+                    partners, skus, products);
+}
+
 /// Idempotent insert of the personal proposal row. Returns the slug.
 fn ensure_personal_proposal(conn: &rusqlite::Connection, email: &str) -> String {
     let slug = personal_slug_for(email);
@@ -42825,6 +42942,11 @@ async fn main() {
     // the table lookup fails silently and only the SKU seed runs.
     migrate_legacy_proposal(&db, "jiufight",  "JiuFight Tournament",      JIUFIGHT_DESIGNS,  "_no_legacy_table");
     migrate_legacy_proposal(&db, "blank",     "BLANK_ Executive Retreat", BLANK_DESIGNS,     "_no_legacy_table");
+    // ── Unified ③ path: spec.json files in scripts/partner_proposals/ ──
+    // Embedded into the binary via include_dir. New partners ship as a
+    // single spec.json + redeploy — no Rust const arrays needed. Idempotent
+    // alongside the legacy const seeding above.
+    seed_partners_from_spec_dir(&db);
     // Proposal SKUs are real, buyable MU products. Flip them to active=1
     // unconditionally so they appear in /api/v1/embed/products and at
     // /products/<brand>/<id>. The approval gate controls only the public
