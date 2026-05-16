@@ -227,6 +227,7 @@ async fn admin_auth(
         if let Some(t) = auth_h { (Some(t), "header") }
         else if let Some(t) = xat { (Some(t), "header") }
         else if let Some(t) = q.get("token") { (Some(t.clone()), "query") }
+        else if let Some(t) = q.get("admin_token") { (Some(t.clone()), "query") }
         else { (None, "none") }
     };
 
