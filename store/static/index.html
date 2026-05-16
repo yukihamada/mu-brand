@@ -1283,7 +1283,10 @@ window.currentProduct = null;
 window.selectedSize = selectedSize;
 const productMap = {};
 
-const BRAND_LABELS = {ma:'間 MA',muon:'MUON 無音',mugen:'MUGEN 無限'};
+const BRAND_LABELS = {ma:'間 MA',muon:'MUON 無音',mugen:'MUGEN 無限',
+  regional_tokyo:'TOKYO EDITION', regional_kyoto:'KYOTO EDITION',
+  regional_osaka:'OSAKA EDITION', regional_sapporo:'SAPPORO EDITION',
+  regional_fukuoka:'FUKUOKA EDITION', regional_okinawa:'OKINAWA EDITION'};
 
 // ── Hero grid ──
 (function(){
@@ -1854,7 +1857,10 @@ function initRouter(){
     else showSection('hero', false);
   } else if(parts[0] === 'products' && parts.length === 3){
     const brand = parts[1], id = parts[2];
-    showSection(brand, false);
+    // Known SPA sections: mugen/muon/ma/nouns. For regional_* etc, fall back
+    // to hero (no broken empty-section flash) and open the modal on top.
+    const knownSection = ['mugen','muon','ma','nouns'].includes(brand);
+    showSection(knownSection ? brand : 'hero', false);
     waitForProduct(brand, id).then(p => { if(p) openModal(p, false); });
   } else {
     showSection('hero', false);
