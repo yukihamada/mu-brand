@@ -29236,7 +29236,7 @@ async fn admin_ma_lottery_draw(
     if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
     // 2026-05-16: 4/7 Founder Relay 廃止 — MA は今後 MUGEN+stack か yuki の
     // 個別判断 (info@enablerdao.com) でのみ発行。 ランダム抽選は中止。
-    // 第 1 回 (kenny@atsume.io) の履歴は ma_lottery_draws / _relays に永続。
+    // 第 1 回 (relay:001) の履歴は ma_lottery_draws / _relays に永続。
     // 既発行 action_token は /ma-lottery/:token で引き続き機能する。
     let _ = body; let _ = db;
     return (
@@ -29606,8 +29606,8 @@ async function decide(kind) {{
 /// GET /ma-lottery — public page (formerly the Founder Relay explainer).
 /// 2026-05-16: 廃止 — MA はもはや lottery では配らない。 MUGEN+stack 経由
 /// (= 高購入者の自動 unlock) または yuki の個別 invite のみ。 第 1 回
-/// (kenny@atsume.io) の履歴は ma_lottery_draws テーブルに永続。 既発行
-/// action_token は /ma-lottery/:token で動作し続ける (kenny がまだ受領
+/// (公開 ID relay:001) の履歴は ma_lottery_draws テーブルに永続。 既発行
+/// action_token は /ma-lottery/:token で動作し続ける (winner がまだ受領
 /// していない / 譲渡を選んでいる場合に備えて)。
 async fn ma_lottery_explainer(State(db): State<Db>) -> Html<String> {
     let recent: Vec<(String, i64, String, String)> = {
