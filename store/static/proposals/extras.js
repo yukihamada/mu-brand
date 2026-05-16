@@ -14,8 +14,10 @@
   if (window.__muExtrasMounted) return;
   window.__muExtrasMounted = true;
 
-  // Derive slug from the URL: /proposals/<slug>(.html)? optionally with query.
-  var m = location.pathname.match(/\/proposals\/([a-z0-9_\-]+)(?:\.html)?\/?$/i);
+  // Derive slug from the URL. Supported shapes:
+  //   /proposals/<slug>(.html)?           — partner LPs
+  //   /sandbox/<slug>                     — personal MU-buyer sandboxes
+  var m = location.pathname.match(/\/(?:proposals|sandbox)\/([a-z0-9_\-]+)(?:\.html)?\/?$/i);
   if (!m) return;
   var SLUG = m[1].toLowerCase();
   if (/-swipe$/i.test(SLUG)) return;  // skip swipe variant pages

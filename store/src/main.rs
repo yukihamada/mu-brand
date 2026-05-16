@@ -17407,9 +17407,9 @@ async fn extras_my_page(
         let conn = db.lock().unwrap();
         ensure_personal_proposal(&conn, &email)
     };
-    // Redirect into the standard proposal widget. The page picks up
-    // ?email=&from=my so extras.js can pre-fill + show personalized chrome.
-    let url = format!("/proposals/{}?email={}&from=my",
+    // Redirect into the standard widget chrome at /sandbox/<slug>. The page
+    // picks up ?email=&from=my so extras.js can pre-fill + show banner.
+    let url = format!("/sandbox/{}?email={}&from=my",
                       slug, urlencoding::encode(&email));
     axum::response::Redirect::temporary(&url).into_response()
 }
@@ -17444,7 +17444,7 @@ async fn proposal_personal_page(
     let arrive_banner = if from_my {
         r#"<div style="background:rgba(230,196,73,0.08);border:1px solid rgba(230,196,73,0.4);padding:18px 22px;border-radius:6px;margin-bottom:24px"><div style="font-size:11px;letter-spacing:0.22em;text-transform:uppercase;color:#e6c449;font-weight:700;margin-bottom:6px">SANDBOX — 公開されません</div><div style="font-size:13.5px;line-height:1.85">これは MU を買ってくれたあなた専用の AI SKU 試作スペースです。 ページ下の <strong>「もっと SKU を追加」</strong> から無料 30 個を試してみてください。 出来た SKU はあなたが ✓ を押したもののみ、 後で公開できます。</div></div>"#
     } else { "" };
-    let html = format!(r#"<!doctype html><html lang="ja"><head><meta charset="utf-8">
+    let html = format!(r##"<!doctype html><html lang="ja"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>━◯━ MU Sandbox — {slug}</title>
 <meta name="robots" content="noindex,nofollow">
@@ -17519,14 +17519,14 @@ h1 em{{color:#e6c449;font-style:normal;font-weight:300}}
   }});
 }})();
 </script>
-</body></html>"#);
+</body></html>"##);
     Html(html).into_response()
 }
 
 fn extras_my_landing_html(error: Option<&str>) -> String {
     let err_block = error.map(|e| format!(
-        r#"<div style="background:#ff8a8a22;border:1px solid #ff8a8a;padding:14px 18px;border-radius:4px;margin-bottom:24px;font-size:13px;color:#ff8a8a">{}</div>"#,
-        html_escape::encode_text(e)
+        r##"<div style="background:#ff8a8a22;border:1px solid #ff8a8a;padding:14px 18px;border-radius:4px;margin-bottom:24px;font-size:13px;color:#ff8a8a">{}</div>"##,
+        html_escape(e)
     )).unwrap_or_default();
     format!(r#"<!doctype html><html lang="ja"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -18389,6 +18389,61 @@ fn extras_resolve_pack(amount_yen: i64) -> Option<(i64, i64, i64)> {
 }
 
 /// POST /api/proposal/extras/buy-points → Stripe Payment Link URL.
+#[derive(Deserialize)]
+struct ExtrasFeedbackBody {
+    #[serde(default)] slug: String,
+    #[serde(default)] email: String,
+    #[serde(default)] text: String,
+}
+
+/// POST /api/proposal/extras/feedback — free-form feedback from a sandbox
+/// or proposal page visitor. Stored in proposal_feedback (existing table)
+/// + forwarded to Telegram so yuki sees it in real time.
+async fn extras_feedback(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Json(body): Json<ExtrasFeedbackBody>,
+) -> Response {
+    let text = body.text.trim();
+    if text.is_empty() || text.len() > 4000 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok": false, "error": "text required (1-4000 chars)"}))).into_response();
+    }
+    let slug = if body.slug.is_empty() { "_general".to_string() }
+               else { body.slug.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').take(40).collect() };
+    let email = validate_email(&body.email).ok();
+    let ip = headers.get("fly-client-ip")
+        .or_else(|| headers.get("x-forwarded-for"))
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(',').next().unwrap_or("").trim().to_string());
+    let now = chrono_now();
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO proposal_feedback
+                (slug, design_letter, action, comment, voter_email, voter_ip, voter_pseudonym, created_at)
+             VALUES (?, '', 'comment', ?, ?, ?, NULL, ?)",
+            params![slug, text, email, ip, now],
+        );
+    }
+    // Telegram alert (best-effort, fire-and-forget).
+    let tg_token = env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default();
+    let tg_chat  = env::var("TELEGRAM_CHAT_ID").unwrap_or_else(|_| "1136442501".into());
+    if !tg_token.is_empty() {
+        let msg = format!(
+            "💬 sandbox feedback\n\nslug: {}\nemail: {}\n\n{}",
+            slug, email.as_deref().unwrap_or("(anon)"), text.chars().take(2000).collect::<String>(),
+        );
+        tokio::spawn(async move {
+            let _ = reqwest::Client::new()
+                .post(format!("https://api.telegram.org/bot{}/sendMessage", tg_token))
+                .json(&serde_json::json!({"chat_id": tg_chat, "text": msg, "disable_web_page_preview": true}))
+                .timeout(std::time::Duration::from_secs(8))
+                .send().await;
+        });
+    }
+    Json(serde_json::json!({"ok": true})).into_response()
+}
+
 async fn extras_buy_points(
     State(_db): State<Db>,
     Json(body): Json<ExtrasBuyPointsBody>,
@@ -18919,16 +18974,22 @@ async fn proposal_extras_reminder_cron(db: Db) {
     }
     tracing::info!("[extras-reminder] sending {} nudge emails", n);
     for (email, balance) in rows {
+        let my_url = extras_my_url(&email);
         let html = format!(
-            r#"<div style="font-family:'Helvetica Neue',Arial,sans-serif;line-height:1.7;color:#222;max-width:520px">
-            <h2 style="font-size:18px;font-weight:500">━◯━ MU Collab pt のお知らせ</h2>
-            <p style="font-size:14px">{email} 様 — MU Collab の SKU 生成残高に <strong>{bal} pt (¥{bal})</strong> が残っています。 失効はありませんが、 使い忘れていませんか？</p>
-            <p style="font-size:14px">提案ページ末尾の <strong>「もっと SKU を追加」</strong> セクションで生成ジョブを発注できます。 1 SKU = 30 pt = ¥30。</p>
-            <p style="font-size:11.5px;color:#888;margin-top:18px">このメールは 90 日以上アクティビティのない残高保有者にのみ送信しています。 配信停止希望は info@wearmu.com まで。<br>— MU / 株式会社イネブラ</p>
-            </div>"#,
-            email = email, bal = balance,
+            r##"<div style="font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.75;color:#222;max-width:520px;margin:0 auto;padding:8px">
+<p style="font-size:14px">{email} さん、 こんにちは。 MU の濱田です。</p>
+<p style="font-size:14px">前にお渡しした AI 試作用ポイント、 <strong>{bal} pt (¥{bal}) がまだ残っています</strong>。 失効はありませんが、 90 日以上触れてなさそうだったので念のため。</p>
+<p style="margin:24px 0;text-align:center">
+  <a href="{my_url}" style="background:#0a0a0a;color:#e6c449;text-decoration:none;padding:13px 26px;font-weight:700;border-radius:4px;letter-spacing:0.06em;font-size:13px;display:inline-block">🎨 sandbox を開く →</a>
+</p>
+<p style="font-size:13px;color:#555">気が向いたら触ってみてください。 1 SKU = 30 pt = ¥30 で、 自分のブランドの雰囲気で AI 生成 → 良いやつだけ ✓ で選別、 という使い方です。</p>
+<p style="font-size:13px;color:#555;margin-top:18px"><strong>「使わなさそう」「忘れてた」「興味なくなった」</strong> どれでも素直な感想あったらメール返信ください。 次の改善に活かします。</p>
+<p style="font-size:14px;margin-top:28px">— 濱田 優貴</p>
+<p style="font-size:11px;color:#aaa;margin-top:28px;border-top:1px solid #eee;padding-top:12px">配信停止: <a href="mailto:info@wearmu.com" style="color:#aaa">info@wearmu.com</a><br>MU / 株式会社イネブラ</p>
+</div>"##,
+            email = html_escape(&email), bal = balance, my_url = html_attr_escape(&my_url),
         );
-        let ok = send_extras_email(&resend_key, &email, "MU Collab — pt 残高のお知らせ", &html).await;
+        let ok = send_extras_email(&resend_key, &email, "MU Collab — まだ残ってるポイントのこと", &html).await;
         if ok {
             let conn = db.lock().unwrap();
             let _ = conn.execute(
@@ -18944,6 +19005,63 @@ async fn proposal_extras_reminder_cron(db: Db) {
 /// to every past MU buyer (mugen/muon/ma) that hasn't yet been claimed,
 /// and emails each buyer one summary. Idempotent via proposal_mugen_claims.
 /// Body: {dry_run?, max?, send_email?}.
+struct PurchaseDetail { id: i64, brand: String, amount: i64, drop_num: i64, name: String, mockup_url: String }
+
+/// Yuki-voice retro email. Personalized with the actual past designs the
+/// buyer purchased (with thumbnail images when available) + a big CTA into
+/// their personal sandbox + an explicit feedback ask.
+fn build_retro_email_html(email: &str, total: i64, ps: &[PurchaseDetail]) -> String {
+    let my_url = extras_my_url(email);
+    let collab_url = "https://wearmu.com/collab";
+    let purchase_cards: String = ps.iter().map(|p| {
+        let label = if p.name.is_empty() {
+            format!("{} #{}", p.brand.to_uppercase(), p.drop_num)
+        } else { p.name.clone() };
+        let thumb = if p.mockup_url.is_empty() {
+            r##"<div style="width:64px;height:84px;background:#f0f0f0;border-radius:3px;flex-shrink:0"></div>"##.to_string()
+        } else {
+            format!(r##"<img src="{}" alt="" width="64" height="84" style="width:64px;height:84px;object-fit:cover;border-radius:3px;flex-shrink:0">"##,
+                    html_attr_escape(&p.mockup_url))
+        };
+        format!(r##"<div style="display:flex;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid #eee">{thumb}<div style="flex:1"><div style="font-size:11px;letter-spacing:0.14em;color:#888;text-transform:uppercase">{brand} #{drop}</div><div style="font-size:13px;color:#222;margin-top:2px">{label}</div></div><div style="font-size:13px;font-weight:600;color:#7a6520">+{amt} pt</div></div>"##,
+            thumb=thumb, brand=html_escape(&p.brand.to_uppercase()), drop=p.drop_num,
+            label=html_escape(&label), amt=p.amount)
+    }).collect();
+    format!(
+        r##"<div style="font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.75;color:#222;max-width:560px;margin:0 auto;padding:8px">
+<p style="font-size:14px;margin-bottom:18px">{email} さん、 こんにちは。 MU の濱田です。</p>
+
+<p style="font-size:14px">あなたが MU を買ってくれた頃から、 ずっと「もしこの作り方を他のブランドにも開放したらどうなるかな」 と考えてきました。</p>
+
+<p style="font-size:14px">こないだ <strong>AI で SKU をブランドの雰囲気に合わせて自動生成する仕組み</strong>を作ったので、 試作用のポイントを <strong>あなたが買ってくれた額と同じ分 (¥{total})</strong> お渡しします。 失効はありません。</p>
+
+<div style="background:#fafaf6;border:1px solid #eee;border-radius:6px;padding:18px;margin:18px 0">
+  <div style="font-size:11px;letter-spacing:0.2em;color:#888;text-transform:uppercase;margin-bottom:8px">あなたが買ってくれた MU</div>
+  {purchase_cards}
+  <div style="margin-top:14px;padding-top:12px;border-top:2px solid #e6c449;display:flex;justify-content:space-between;font-size:14px"><span>合計</span><strong style="color:#7a6520">+{total} pt (¥{total})</strong></div>
+</div>
+
+<p style="margin:28px 0;text-align:center">
+  <a href="{my_url}" style="background:#0a0a0a;color:#e6c449;text-decoration:none;padding:14px 28px;font-weight:700;border-radius:4px;letter-spacing:0.06em;font-size:14px;display:inline-block">🎨 自分のブランドで AI 試作 →</a>
+</p>
+
+<p style="font-size:13px;color:#555">上のボタンから、 <strong>あなた専用の sandbox</strong> が開きます (公開されません)。 30 SKU を無料で試作 → ✓ / ✗ で選別 → 気に入ったやつだけ正式 collab に進める、 という流れです。</p>
+
+<p style="font-size:13px;color:#555;margin-top:24px"><strong>試したら、 どう感じたか教えてください。</strong> 「ここダルい」「ここ嬉しい」「これ追加して」 — 改善のヒント全部欲しいです。 このメールに直接返信でも、 sandbox ページ下部のフォームでも、 どちらでも届きます。</p>
+
+<p style="font-size:14px;margin-top:32px">— 濱田 優貴<br>
+<span style="font-size:12px;color:#888">MU / 株式会社イネブラ · <a href="mailto:yuki@hamada.tokyo" style="color:#888">yuki@hamada.tokyo</a></span></p>
+
+<p style="font-size:11px;color:#aaa;margin-top:32px;border-top:1px solid #eee;padding-top:14px">
+このメールは MU 商品 (MUGEN/MUON/MA) を購入した方に 1 回のみ自動送信されています。<br>
+正式 collab について: <a href="{collab_url}" style="color:#aaa">{collab_url}</a> · 配信停止: <a href="mailto:info@wearmu.com" style="color:#aaa">info@wearmu.com</a>
+</p>
+</div>"##,
+        email = html_escape(email), total = total, purchase_cards = purchase_cards,
+        my_url = html_attr_escape(&my_url), collab_url = collab_url,
+    )
+}
+
 #[derive(Deserialize, Default)]
 struct AdminRetroBody {
     #[serde(default)] dry_run: bool,
@@ -18962,33 +19080,39 @@ async fn admin_extras_retroactive_claim(
         return r;
     }
     let max_n = body.max.unwrap_or(2000).max(1);
-    let rows: Vec<(i64, String, String, i64)> = {
+    // Per-purchase: (id, email, brand, amount, drop_num, name, mockup_url)
+    let rows: Vec<(i64, String, String, i64, i64, String, String)> = {
         let conn = db.lock().unwrap();
         let mut st = match conn.prepare(
             "SELECT mp.id, mp.email, mp.brand,
-                    COALESCE(mp.amount_jpy, (SELECT p.price_jpy FROM products p WHERE p.id = mp.product_id), 0)
+                    COALESCE(mp.amount_jpy, p.price_jpy, 0),
+                    COALESCE(mp.drop_num, p.drop_num, 0),
+                    COALESCE(p.name, ''),
+                    COALESCE(p.mockup_url, p.design_url, '')
              FROM mu_purchases mp
+             LEFT JOIN products p ON p.id = mp.product_id
              LEFT JOIN proposal_mugen_claims c ON c.mu_purchase_id = mp.id
              WHERE mp.brand IN ('mugen','muon','ma')
                AND c.mu_purchase_id IS NULL
-               AND COALESCE(mp.amount_jpy, (SELECT p.price_jpy FROM products p WHERE p.id = mp.product_id), 0) > 0
+               AND COALESCE(mp.amount_jpy, p.price_jpy, 0) > 0
              ORDER BY mp.id ASC
              LIMIT ?"
         ) { Ok(s) => s, Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("prepare: {}", e)).into_response() };
         let it = st.query_map(params![max_n], |r| Ok((
-            r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, i64>(3)?,
+            r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+            r.get::<_, i64>(3)?, r.get::<_, i64>(4)?, r.get::<_, String>(5)?, r.get::<_, String>(6)?,
         )));
         match it { Ok(rs) => rs.flatten().collect(), Err(_) => Vec::new() }
     };
     // Group by email so one buyer gets one summary email.
     use std::collections::HashMap;
-    let mut by_email: HashMap<String, (i64, Vec<(i64, String, i64)>)> = HashMap::new();
-    for (id, email, brand, amount) in rows {
+    let mut by_email: HashMap<String, (i64, Vec<PurchaseDetail>)> = HashMap::new();
+    for (id, email, brand, amount, drop_num, name, mockup_url) in rows {
         if validate_email(&email).is_err() || amount <= 0 { continue; }
         let em = normalize_email(&email);
         let entry = by_email.entry(em).or_insert((0, Vec::new()));
         entry.0 += amount;
-        entry.1.push((id, brand, amount));
+        entry.1.push(PurchaseDetail { id, brand, amount, drop_num, name, mockup_url });
     }
     if body.dry_run {
         let preview: Vec<serde_json::Value> = by_email.iter().map(|(em, (total, ps))| serde_json::json!({
@@ -19011,45 +19135,36 @@ async fn admin_extras_retroactive_claim(
         let mut credited_here = 0_i64;
         {
             let conn = db.lock().unwrap();
-            for (id, brand, amount) in ps {
+            for p in ps {
                 let already: bool = conn.query_row(
                     "SELECT 1 FROM proposal_mugen_claims WHERE mu_purchase_id=?",
-                    params![id], |_| Ok(true),
+                    params![p.id], |_| Ok(true),
                 ).unwrap_or(false);
                 if already { continue; }
-                let reason = format!("{}_claim_retro", brand);
-                if points_mutate(&conn, em, *amount, &reason,
-                                 Some(&id.to_string()), None).is_ok() {
+                let reason = format!("{}_claim_retro", p.brand);
+                if points_mutate(&conn, em, p.amount, &reason,
+                                 Some(&p.id.to_string()), None).is_ok() {
                     let _ = conn.execute(
                         "INSERT INTO proposal_mugen_claims
                             (mu_purchase_id, email, slug, points_added, claimed_at)
                          VALUES (?,?,NULL,?,?)",
-                        params![id, em, amount, now],
+                        params![p.id, em, p.amount, now],
                     );
-                    credited_here += amount;
+                    credited_here += p.amount;
                 }
             }
+            // Auto-create the personal sandbox slug for this buyer so the
+            // CTA link in the email lands somewhere ready to use.
+            ensure_personal_proposal(&conn, em);
         }
         if credited_here > 0 {
             applied_emails += 1;
             applied_pt += credited_here;
         }
         if body.send_email && credited_here > 0 && !resend_key.is_empty() {
-            let purchases_html: String = ps.iter().map(|(_, brand, amount)|
-                format!("<li>{} — <strong>+{} pt</strong> (¥{})</li>",
-                    brand.to_uppercase(), amount, amount))
-                .collect();
-            let html = format!(
-                r#"<div style="font-family:'Helvetica Neue',Arial,sans-serif;line-height:1.7;color:#222;max-width:520px">
-                <h2 style="font-size:18px;font-weight:500">━◯━ 過去の MU 購入分にポイントを付与しました</h2>
-                <p style="font-size:14px">{email} 様の過去 MU 商品購入に対して、 <strong>合計 +{total} pt (¥{total})</strong> を加算しました（失効なし）。</p>
-                <ul style="font-size:13px;padding-left:18px">{items}</ul>
-                <p style="font-size:14px">これらの pt は、 MU Collab の提案ページ末尾「もっと SKU を追加」セクションで AI SKU 生成に使えます (1 SKU = 30 pt)。 collab 開始のご相談は本メールへ返信ください。</p>
-                <p style="font-size:11.5px;color:#888;margin-top:18px">このメールは MU 商品 (MUGEN/MUON/MA) を購入した方に 1 回のみ自動送信されます。<br>— MU / 株式会社イネブラ</p>
-                </div>"#,
-                email = em, total = credited_here, items = purchases_html,
-            );
-            let ok = send_extras_email(&resend_key, em, "MU — 過去購入分のポイント付与のお知らせ", &html).await;
+            let html = build_retro_email_html(em, credited_here, ps);
+            let subj = format!("あなたが買ってくれた MU の話 (¥{} 分のポイント同封)", credited_here);
+            let ok = send_extras_email(&resend_key, em, &subj, &html).await;
             if ok { emailed += 1; }
             tokio::time::sleep(std::time::Duration::from_millis(700)).await;
         }
@@ -43065,6 +43180,10 @@ async fn main() {
         .route("/api/proposal/:slug/approve",  post(proposal_generic_approve))
         .route("/api/proposal/:slug/revoke",   post(proposal_generic_revoke))
         // ── Proposal extras (shared 30/50/100 SKU generator widget) ──
+        // Personal sandbox + feedback
+        .route("/extras/my",                                    get(extras_my_page))
+        .route("/sandbox/:slug",                                get(proposal_personal_page))
+        .route("/api/proposal/extras/feedback",                 post(extras_feedback))
         // Wallet (email-keyed)
         .route("/api/proposal/extras/balance",                  post(extras_balance))
         .route("/api/proposal/extras/claim",                    post(extras_claim_mu))
