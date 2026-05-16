@@ -8043,6 +8043,430 @@ async fn admin_regen_product_mockup(
     }))).into_response()
 }
 
+/// GET /api/admin/products/:id — single product detail with prompt + 3 lifestyle photos.
+async fn admin_product_detail(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/products/detail").await { return r; }
+    let row = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT id, brand, drop_num, name, design_url, mockup_url, lifestyle_url,
+                    lifestyle_urls_json, price_jpy, inventory, sold, active, created_at,
+                    prompt_text, seed_data, weather_data, parent_design, city_slug
+             FROM products WHERE id=?",
+            params![id], |r| Ok(serde_json::json!({
+                "id":            r.get::<_, i64>(0)?,
+                "brand":         r.get::<_, String>(1).unwrap_or_default(),
+                "drop_num":      r.get::<_, i64>(2).unwrap_or(0),
+                "name":          r.get::<_, String>(3).unwrap_or_default(),
+                "design_url":    r.get::<_, Option<String>>(4).unwrap_or(None),
+                "mockup_url":    r.get::<_, Option<String>>(5).unwrap_or(None),
+                "lifestyle_url": r.get::<_, Option<String>>(6).unwrap_or(None),
+                "lifestyle_urls_json": r.get::<_, Option<String>>(7).unwrap_or(None),
+                "price_jpy":     r.get::<_, i64>(8).unwrap_or(0),
+                "inventory":     r.get::<_, i64>(9).unwrap_or(0),
+                "sold":          r.get::<_, i64>(10).unwrap_or(0),
+                "active":        r.get::<_, i64>(11).unwrap_or(0),
+                "created_at":    r.get::<_, String>(12).unwrap_or_default(),
+                "prompt_text":   r.get::<_, Option<String>>(13).unwrap_or(None),
+                "seed_data":     r.get::<_, Option<String>>(14).unwrap_or(None),
+                "weather_data":  r.get::<_, Option<String>>(15).unwrap_or(None),
+                "parent_design": r.get::<_, Option<String>>(16).unwrap_or(None),
+                "city_slug":     r.get::<_, Option<String>>(17).unwrap_or(None),
+            }))
+        ).ok()
+    };
+    match row {
+        Some(v) => {
+            // Parse lifestyle_urls_json into a Vec for convenience.
+            let lifestyle_urls: Vec<String> = v.get("lifestyle_urls_json")
+                .and_then(|x| x.as_str())
+                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+                .unwrap_or_default();
+            let mut out = v.clone();
+            out["lifestyle_urls"] = serde_json::json!(lifestyle_urls);
+            Json(out).into_response()
+        }
+        None => (StatusCode::NOT_FOUND, "product not found").into_response(),
+    }
+}
+
+/// POST /api/admin/products/:id/update — admin-only PATCH for the product
+/// row. Accepts JSON body with any subset of: name, prompt_text, price_jpy,
+/// inventory, active, design_url, mockup_url, lifestyle_url, lifestyle_urls
+/// (array of strings, persisted as JSON in lifestyle_urls_json).
+async fn admin_product_update(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), &format!("/api/admin/products/{}/update", id)).await { return r; }
+    let mut sets: Vec<&str> = Vec::new();
+    let mut binds: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    if let Some(v) = body.get("name").and_then(|x| x.as_str()) {
+        sets.push("name=?"); binds.push(Box::new(v.to_string()));
+    }
+    if let Some(v) = body.get("prompt_text").and_then(|x| x.as_str()) {
+        sets.push("prompt_text=?"); binds.push(Box::new(v.to_string()));
+    }
+    if let Some(v) = body.get("price_jpy").and_then(|x| x.as_i64()) {
+        sets.push("price_jpy=?"); binds.push(Box::new(v));
+    }
+    if let Some(v) = body.get("inventory").and_then(|x| x.as_i64()) {
+        sets.push("inventory=?"); binds.push(Box::new(v));
+    }
+    if let Some(v) = body.get("active").and_then(|x| x.as_i64()) {
+        sets.push("active=?"); binds.push(Box::new(v.clamp(0, 1)));
+    } else if let Some(v) = body.get("active").and_then(|x| x.as_bool()) {
+        sets.push("active=?"); binds.push(Box::new(if v {1i64} else {0i64}));
+    }
+    if let Some(v) = body.get("design_url").and_then(|x| x.as_str()) {
+        sets.push("design_url=?"); binds.push(Box::new(v.to_string()));
+    }
+    if let Some(v) = body.get("mockup_url").and_then(|x| x.as_str()) {
+        sets.push("mockup_url=?"); binds.push(Box::new(v.to_string()));
+    }
+    if let Some(v) = body.get("lifestyle_url").and_then(|x| x.as_str()) {
+        sets.push("lifestyle_url=?"); binds.push(Box::new(v.to_string()));
+    }
+    if let Some(arr) = body.get("lifestyle_urls").and_then(|x| x.as_array()) {
+        let urls: Vec<String> = arr.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+        let json = serde_json::to_string(&urls).unwrap_or_else(|_| "[]".into());
+        sets.push("lifestyle_urls_json=?"); binds.push(Box::new(json));
+    }
+    if sets.is_empty() {
+        return (StatusCode::BAD_REQUEST, "no editable fields supplied").into_response();
+    }
+    binds.push(Box::new(id));
+    let sql = format!("UPDATE products SET {} WHERE id=?", sets.join(", "));
+    let updated = {
+        let conn = db.lock().unwrap();
+        let refs: Vec<&dyn rusqlite::ToSql> = binds.iter().map(|b| b.as_ref()).collect();
+        conn.execute(&sql, rusqlite::params_from_iter(refs.iter())).unwrap_or(0)
+    };
+    Json(serde_json::json!({"ok": updated > 0, "id": id, "rows": updated})).into_response()
+}
+
+/// Helper: upload bytes to R2 using key. Returns the public URL.
+async fn r2_put_bytes(key: &str, bytes: &[u8], content_type: &str) -> Option<String> {
+    let cfg = r2_config()?;
+    match cfg.bucket.put_object_with_content_type(key, bytes, content_type).await {
+        Ok(r) if r.status_code() == 200 || r.status_code() == 204 => {
+            Some(format!("{}/{}", cfg.public_base.trim_end_matches('/'), key))
+        }
+        Ok(r) => {
+            eprintln!("[r2_put_bytes] {} status {}: {}", key, r.status_code(),
+                      String::from_utf8_lossy(r.bytes()));
+            None
+        }
+        Err(e) => { eprintln!("[r2_put_bytes] {} err: {}", key, e); None }
+    }
+}
+
+/// POST /api/admin/products/:id/regen_design — regenerate the design.png via
+/// Gemini using the row's stored prompt_text (or override via body.prompt).
+/// Uploads to R2 under `admin-gen/<brand>/<id>-<ts>.png`, updates design_url
+/// + design_bytes inline. Returns the new URL.
+async fn admin_regen_design(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), &format!("/api/admin/products/{}/regen_design", id)).await { return r; }
+    let (brand, name, stored_prompt) = {
+        let conn = db.lock().unwrap();
+        match conn.query_row(
+            "SELECT brand, name, prompt_text FROM products WHERE id=?",
+            params![id],
+            |r| Ok((
+                r.get::<_, String>(0).unwrap_or_default(),
+                r.get::<_, String>(1).unwrap_or_default(),
+                r.get::<_, Option<String>>(2).unwrap_or(None),
+            ))
+        ) {
+            Ok(v) => v,
+            Err(_) => return (StatusCode::NOT_FOUND, "product not found").into_response(),
+        }
+    };
+    let prompt_override = body.get("prompt").and_then(|v| v.as_str()).map(String::from);
+    let prompt = prompt_override.clone()
+        .or(stored_prompt.clone())
+        .unwrap_or_else(|| format!("Minimal abstract artwork inspired by \"{}\".", name));
+    let seed = format!("{}-{}-{}", brand, id, chrono_now());
+    let brief = crate::gemini::TeeDesign {
+        name: &name,
+        prompt: &prompt,
+        mood: &[],
+        palette: &[],
+        scene: &[],
+        seed: &seed,
+        bio: "",
+        wear_log_overlay: "",
+    };
+    let img = match crate::gemini::generate_print_file(&brief).await {
+        Ok(g) => g,
+        Err(e) => return (StatusCode::BAD_GATEWAY, format!("gemini: {}", e)).into_response(),
+    };
+    let now: String = chrono_now();
+    let key = format!("admin-gen/{}/{}-{}.png", brand, id, now);
+    let url = match r2_put_bytes(&key, &img.bytes, &img.mime).await {
+        Some(u) => u,
+        None => return (StatusCode::BAD_GATEWAY, "r2 upload failed").into_response(),
+    };
+    let conn = db.lock().unwrap();
+    let _ = conn.execute(
+        "UPDATE products SET design_url=?, design_bytes=?, design_mime=?,
+            bytes_fetched_at=?, prompt_text=COALESCE(?, prompt_text)
+         WHERE id=?",
+        params![url, img.bytes, img.mime, now, prompt_override, id],
+    );
+    Json(serde_json::json!({"ok": true, "id": id, "design_url": url})).into_response()
+}
+
+/// POST /api/admin/products/:id/regen_lifestyle — generate N (default 3)
+/// lifestyle "wearing" photos for this product. Each photo is a separate
+/// Gemini call using the design + a different scene/pose seed. Stored as
+/// JSON array in lifestyle_urls_json. lifestyle_url (legacy single) gets
+/// the first one. Body params: { "count": 3, "scenes": ["cafe","street",...] }
+async fn admin_regen_lifestyle(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), &format!("/api/admin/products/{}/regen_lifestyle", id)).await { return r; }
+    let (brand, name, prompt_text, design_url) = {
+        let conn = db.lock().unwrap();
+        match conn.query_row(
+            "SELECT brand, name, prompt_text, design_url FROM products WHERE id=?",
+            params![id],
+            |r| Ok((
+                r.get::<_, String>(0).unwrap_or_default(),
+                r.get::<_, String>(1).unwrap_or_default(),
+                r.get::<_, Option<String>>(2).unwrap_or(None),
+                r.get::<_, Option<String>>(3).unwrap_or(None),
+            ))
+        ) {
+            Ok(v) => v,
+            Err(_) => return (StatusCode::NOT_FOUND, "product not found").into_response(),
+        }
+    };
+    let count = body.get("count").and_then(|v| v.as_i64()).unwrap_or(3).clamp(1, 5) as usize;
+    let default_scenes = vec![
+        "young person walking a quiet Tokyo street at golden hour, cinematic, candid".to_string(),
+        "model standing in a sunlit minimalist concrete studio, soft window light, editorial".to_string(),
+        "person sitting at a small cafe table reading a book, warm interior, film grain".to_string(),
+        "casual lifestyle portrait outdoors near nature (parc / wood), overcast soft light".to_string(),
+        "low-angle street style shot at night under neon, slight grain, fashion editorial".to_string(),
+    ];
+    let scenes: Vec<String> = body.get("scenes")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .filter(|v: &Vec<String>| !v.is_empty())
+        .unwrap_or(default_scenes);
+    let prompt_for_design = prompt_text.clone().unwrap_or_else(|| format!("Abstract artwork \"{}\"", name));
+    let mut urls: Vec<String> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+    for i in 0..count {
+        let scene = &scenes[i % scenes.len()];
+        let p = format!(
+            "Editorial 4:5 lifestyle photograph of a person wearing a cream / off-white \
+             heavyweight cotton T-shirt that has the following chest graphic printed on it: \
+             \"{}\". The graphic is centered, ~15% of the shirt's width, in tonal earth ink. \
+             Scene: {}. Photorealistic, magazine quality, soft natural light, slight film grain. \
+             The wearer's pose feels candid, not posed. NO additional text, NO watermark, NO logos. \
+             Variation key: {}-{}.",
+            prompt_for_design.replace('"', "'"), scene, id, i,
+        );
+        let brief = crate::gemini::TeeDesign {
+            name: &name,
+            prompt: &p,
+            mood: &[],
+            palette: &[],
+            scene: &[scene.clone()],
+            seed: &format!("life-{}-{}-{}", id, i, chrono_now()),
+            bio: "",
+            wear_log_overlay: "",
+        };
+        let _ = design_url.clone();
+        let img = match crate::gemini::generate_tee(&brief).await {
+            Ok(g) => g,
+            Err(e) => { errors.push(format!("[{}] {}", i, e)); continue; }
+        };
+        let key = format!("admin-gen/{}/life-{}-{}-{}.png", brand, id, i, chrono_now());
+        match r2_put_bytes(&key, &img.bytes, &img.mime).await {
+            Some(u) => urls.push(u),
+            None => errors.push(format!("[{}] r2 upload failed", i)),
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    if urls.is_empty() {
+        return (StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({"ok": false, "errors": errors}))).into_response();
+    }
+    let urls_json = serde_json::to_string(&urls).unwrap_or_else(|_| "[]".into());
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE products SET lifestyle_urls_json=?,
+                lifestyle_url=COALESCE(NULLIF(lifestyle_url,''), ?)
+             WHERE id=?",
+            params![urls_json, urls.first().cloned().unwrap_or_default(), id],
+        );
+    }
+    Json(serde_json::json!({
+        "ok": true, "id": id, "lifestyle_urls": urls, "errors": errors,
+    })).into_response()
+}
+
+/// POST /api/admin/products/:id/regen_similar — generate a NEW product row
+/// based on the source row's prompt_text (with variant tweak). Returns the
+/// new product id + design URL. Useful for "make me more like this".
+async fn admin_regen_similar(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), &format!("/api/admin/products/{}/regen_similar", id)).await { return r; }
+    let (brand, name, prompt_text, price_jpy, city_slug) = {
+        let conn = db.lock().unwrap();
+        match conn.query_row(
+            "SELECT brand, name, prompt_text, price_jpy, city_slug FROM products WHERE id=?",
+            params![id],
+            |r| Ok((
+                r.get::<_, String>(0).unwrap_or_default(),
+                r.get::<_, String>(1).unwrap_or_default(),
+                r.get::<_, Option<String>>(2).unwrap_or(None),
+                r.get::<_, i64>(3).unwrap_or(6800),
+                r.get::<_, Option<String>>(4).unwrap_or(None),
+            ))
+        ) {
+            Ok(v) => v,
+            Err(_) => return (StatusCode::NOT_FOUND, "source product not found").into_response(),
+        }
+    };
+    let variant_hint = body.get("hint").and_then(|v| v.as_str()).unwrap_or("subtle variant").to_string();
+    let base_prompt = prompt_text.unwrap_or_else(|| format!("Abstract minimal artwork inspired by \"{}\".", name));
+    let new_prompt = format!("{}. Variation hint: {}.", base_prompt, variant_hint);
+    let next_drop: i64 = {
+        let conn = db.lock().unwrap();
+        conn.query_row("SELECT COALESCE(MAX(drop_num),0)+1 FROM products WHERE brand=?",
+            params![brand], |r| r.get(0)).unwrap_or(1)
+    };
+    let new_name = format!("{} · v{}", name, next_drop);
+    let seed = format!("similar-{}-{}-{}", brand, next_drop, chrono_now());
+    let brief = crate::gemini::TeeDesign {
+        name: &new_name,
+        prompt: &new_prompt,
+        mood: &[],
+        palette: &[],
+        scene: &[],
+        seed: &seed,
+        bio: "",
+        wear_log_overlay: "",
+    };
+    let img = match crate::gemini::generate_print_file(&brief).await {
+        Ok(g) => g,
+        Err(e) => return (StatusCode::BAD_GATEWAY, format!("gemini: {}", e)).into_response(),
+    };
+    let now: String = chrono_now();
+    let key = format!("admin-gen/{}/{}-{}.png", brand, next_drop, now);
+    let url = match r2_put_bytes(&key, &img.bytes, &img.mime).await {
+        Some(u) => u,
+        None => return (StatusCode::BAD_GATEWAY, "r2 upload failed").into_response(),
+    };
+    let new_id: i64 = {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO products (brand, drop_num, name, design_url, design_bytes, design_mime,
+                price_jpy, inventory, sold, created_at, active, prompt_text, parent_design,
+                bytes_fetched_at, city_slug)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, 1, ?, ?, ?, ?)",
+            params![brand, next_drop, new_name, url, img.bytes, img.mime,
+                price_jpy, now, new_prompt, id.to_string(), now, city_slug],
+        );
+        conn.last_insert_rowid()
+    };
+    Json(serde_json::json!({
+        "ok": true, "new_id": new_id, "drop_num": next_drop,
+        "name": new_name, "design_url": url, "parent_id": id,
+    })).into_response()
+}
+
+/// POST /api/admin/products/new — create a brand-new SKU from a prompt.
+/// Body: { brand, name, prompt, price_jpy, inventory }
+async fn admin_product_new(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/products/new").await { return r; }
+    let brand = body.get("brand").and_then(|v| v.as_str()).unwrap_or("mugen").to_string();
+    let name = match body.get("name").and_then(|v| v.as_str()) {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => return (StatusCode::BAD_REQUEST, "name required").into_response(),
+    };
+    let prompt = match body.get("prompt").and_then(|v| v.as_str()) {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => return (StatusCode::BAD_REQUEST, "prompt required").into_response(),
+    };
+    let price_jpy: i64 = body.get("price_jpy").and_then(|v| v.as_i64()).unwrap_or(6800);
+    let inventory: i64 = body.get("inventory").and_then(|v| v.as_i64()).unwrap_or(1);
+    let next_drop: i64 = {
+        let conn = db.lock().unwrap();
+        conn.query_row("SELECT COALESCE(MAX(drop_num),0)+1 FROM products WHERE brand=?",
+            params![brand], |r| r.get(0)).unwrap_or(1)
+    };
+    let seed = format!("new-{}-{}-{}", brand, next_drop, chrono_now());
+    let brief = crate::gemini::TeeDesign {
+        name: &name,
+        prompt: &prompt,
+        mood: &[],
+        palette: &[],
+        scene: &[],
+        seed: &seed,
+        bio: "",
+        wear_log_overlay: "",
+    };
+    let img = match crate::gemini::generate_print_file(&brief).await {
+        Ok(g) => g,
+        Err(e) => return (StatusCode::BAD_GATEWAY, format!("gemini: {}", e)).into_response(),
+    };
+    let now: String = chrono_now();
+    let key = format!("admin-gen/{}/{}-{}.png", brand, next_drop, now);
+    let url = match r2_put_bytes(&key, &img.bytes, &img.mime).await {
+        Some(u) => u,
+        None => return (StatusCode::BAD_GATEWAY, "r2 upload failed").into_response(),
+    };
+    let new_id: i64 = {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO products (brand, drop_num, name, design_url, design_bytes, design_mime,
+                price_jpy, inventory, sold, created_at, active, prompt_text, bytes_fetched_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 1, ?, ?)",
+            params![brand, next_drop, name, url, img.bytes, img.mime,
+                price_jpy, inventory, now, prompt, now],
+        );
+        conn.last_insert_rowid()
+    };
+    Json(serde_json::json!({
+        "ok": true, "new_id": new_id, "drop_num": next_drop,
+        "name": name, "design_url": url,
+    })).into_response()
+}
+
 /// GET /admin/products — admin-gated HTML product browser (core + collab tables).
 async fn admin_products_page(
     State(db): State<Db>,
@@ -8054,6 +8478,9 @@ async fn admin_products_page(
 }
 
 /// GET /api/admin/products — JSON dump of products + collab_products with summary.
+/// Supports pagination via offset + limit (default 50). Filter by brand=, search=.
+/// When offset > 0, only `products` array is returned (no summary/brands/partners,
+/// since the page already loaded them on the first call).
 async fn admin_products_list(
     State(db): State<Db>,
     headers: HeaderMap,
@@ -8061,11 +8488,98 @@ async fn admin_products_list(
 ) -> Response {
     if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/products").await { return r; }
 
+    let offset: i64 = q.get("offset").and_then(|s| s.parse().ok()).unwrap_or(0).max(0);
+    let limit: i64 = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50).clamp(1, 500);
+    let brand_filter: Option<String> = q.get("brand").filter(|s| !s.is_empty()).cloned();
+    let search: Option<String> = q.get("search").filter(|s| !s.is_empty()).cloned();
+    let no_summary: bool = q.get("no_summary").map(|s| s == "1" || s == "true").unwrap_or(false);
+
     let conn = db.lock().unwrap();
 
-    // Core products — design_bytes IS NOT NULL → has_design_bytes flag, same
-    // for mockup. We don't ship the bytes themselves (too heavy); the admin
-    // page loads them via /api/products/:id/design.png on demand.
+    // Build WHERE clause dynamically for the paginated products query.
+    let mut where_parts: Vec<String> = Vec::new();
+    let mut param_vals: Vec<String> = Vec::new();
+    if let Some(b) = &brand_filter { where_parts.push("brand=?".into()); param_vals.push(b.clone()); }
+    if let Some(s) = &search {
+        where_parts.push("(name LIKE ? OR brand LIKE ?)".into());
+        let pat = format!("%{}%", s);
+        param_vals.push(pat.clone()); param_vals.push(pat);
+    }
+    let where_sql = if where_parts.is_empty() { String::new() }
+        else { format!(" WHERE {}", where_parts.join(" AND ")) };
+    let products_sql = format!(
+        "SELECT id, brand, drop_num, name, design_url, mockup_url, price_jpy, inventory, sold,
+                created_at, active, parent_design, nft_mint, auction_end, current_bid, bid_count,
+                design_bytes IS NOT NULL, mockup_bytes IS NOT NULL, bytes_fetched_at
+         FROM products{} ORDER BY id DESC LIMIT ? OFFSET ?",
+        where_sql,
+    );
+
+    let products: Vec<serde_json::Value> = {
+        let mut st = match conn.prepare(&products_sql) {
+            Ok(s) => s,
+            Err(_) => return Json(serde_json::json!({"error":"products query failed"})).into_response(),
+        };
+        // rusqlite params! macro can't take dynamic Vec; use params_from_iter
+        let mut binds: Vec<&dyn rusqlite::ToSql> = param_vals.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+        binds.push(&limit);
+        binds.push(&offset);
+        let rows: Vec<serde_json::Value> = st.query_map(rusqlite::params_from_iter(binds.iter()), |r| {
+            Ok(serde_json::json!({
+                "id":            r.get::<_, i64>(0)?,
+                "brand":         r.get::<_, String>(1).unwrap_or_default(),
+                "drop_num":      r.get::<_, i64>(2).unwrap_or(0),
+                "name":          r.get::<_, String>(3).unwrap_or_default(),
+                "design_url":    r.get::<_, Option<String>>(4).unwrap_or(None),
+                "mockup_url":    r.get::<_, Option<String>>(5).unwrap_or(None),
+                "price_jpy":     r.get::<_, i64>(6).unwrap_or(0),
+                "inventory":     r.get::<_, i64>(7).unwrap_or(0),
+                "sold":          r.get::<_, i64>(8).unwrap_or(0),
+                "created_at":    r.get::<_, String>(9).unwrap_or_default(),
+                "active":        r.get::<_, i64>(10).unwrap_or(0),
+                "parent_design": r.get::<_, Option<String>>(11).unwrap_or(None),
+                "nft_mint":      r.get::<_, Option<String>>(12).unwrap_or(None),
+                "auction_end":   r.get::<_, Option<String>>(13).unwrap_or(None),
+                "current_bid":   r.get::<_, i64>(14).unwrap_or(0),
+                "bid_count":     r.get::<_, i64>(15).unwrap_or(0),
+                "has_design_bytes": r.get::<_, i64>(16).unwrap_or(0) != 0,
+                "has_mockup_bytes": r.get::<_, i64>(17).unwrap_or(0) != 0,
+                "bytes_fetched_at": r.get::<_, Option<String>>(18).unwrap_or(None),
+            }))
+        }).map(|it| it.flatten().collect()).unwrap_or_default();
+        rows
+    };
+
+    // If paginating (offset > 0) or no_summary, return only the products slice
+    // for fast infinite-scroll appends. First page (offset=0) also includes
+    // brand list so the filter <select> can populate without a second full-dump.
+    if offset > 0 || no_summary {
+        let brands_slim: Vec<String> = if offset == 0 {
+            let mut st = match conn.prepare("SELECT DISTINCT brand FROM products ORDER BY brand") {
+                Ok(s) => s,
+                Err(_) => return Json(serde_json::json!({
+                    "products": products, "offset": offset, "limit": limit,
+                    "has_more": products.len() as i64 == limit,
+                })).into_response(),
+            };
+            st.query_map([], |r| r.get::<_, String>(0))
+                .map(|it| it.flatten().collect()).unwrap_or_default()
+        } else { Vec::new() };
+        return Json(serde_json::json!({
+            "products": products,
+            "offset": offset,
+            "limit": limit,
+            "has_more": products.len() as i64 == limit,
+            "brands": brands_slim,
+        })).into_response();
+    }
+
+    // Legacy callers (no pagination params) get the full dump below for back-compat
+    // — the `products` variable already holds first-page results, but legacy clients
+    // expect ALL rows. Re-query without the LIMIT to preserve old behavior on the
+    // first call (offset=0, no_summary=false).
+    drop(conn);
+    let conn = db.lock().unwrap();
     let products: Vec<serde_json::Value> = {
         let mut st = match conn.prepare(
             "SELECT id, brand, drop_num, name, design_url, mockup_url, price_jpy, inventory, sold,
@@ -40384,6 +40898,8 @@ async fn main() {
         "ALTER TABLE products ADD COLUMN payment_link_url TEXT",
         "ALTER TABLE products ADD COLUMN payment_link_id  TEXT",
         "ALTER TABLE products ADD COLUMN stripe_price_id  TEXT",
+        // Admin 商品管理: 着画 3 枚を JSON で持つ。 lifestyle_url は legacy 単数フィールド。
+        "ALTER TABLE products ADD COLUMN lifestyle_urls_json TEXT",
         // Cash-payout fields for bounty rewards. Solana is the primary
         // method (treasury sends USDC). Stripe Connect Express is for
         // recipients who prefer fiat / JP-domestic bank. PayPay is a
@@ -43780,8 +44296,14 @@ async fn main() {
         .route("/admin/bids", get(admin_bids_page))
         .route("/admin/products", get(admin_products_page))
         .route("/api/admin/products", get(admin_products_list))
+        .route("/api/admin/products/new", post(admin_product_new))
         .route("/api/admin/products/cache_bytes", post(admin_cache_product_bytes))
+        .route("/api/admin/products/:id", get(admin_product_detail))
+        .route("/api/admin/products/:id/update", post(admin_product_update))
         .route("/api/admin/products/:id/regen_mockup", post(admin_regen_product_mockup))
+        .route("/api/admin/products/:id/regen_design", post(admin_regen_design))
+        .route("/api/admin/products/:id/regen_lifestyle", post(admin_regen_lifestyle))
+        .route("/api/admin/products/:id/regen_similar", post(admin_regen_similar))
         .route("/api/products/:id/design.png", get(product_design_image))
         .route("/api/products/:id/mockup.png", get(product_mockup_image))
         .route("/api/collab/:id/image.png", get(collab_product_image))

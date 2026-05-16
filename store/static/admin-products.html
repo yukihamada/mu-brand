@@ -6,91 +6,87 @@
 <title>MU · Products</title>
 <meta name="robots" content="noindex">
 <style>
-  :root { --bg:#0A0A0A; --fg:#F5F5F0; --mute:#888; --accent:#e6c449; --line:#1c1c1c; --green:#7be57b; --red:#ff4a3d; }
+  :root { --bg:#0A0A0A; --fg:#F5F5F0; --mute:#888; --accent:#e6c449; --line:#1c1c1c; --green:#7be57b; --red:#ff4a3d; --card:#101010; }
   *, *::before, *::after { box-sizing: border-box; }
   html, body { background: var(--bg); color: var(--fg); margin: 0; font-family: ui-monospace, "SF Mono", Menlo, "Helvetica Neue", Arial, sans-serif; line-height: 1.55; font-size: 13px; }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
-  header { padding: 18px 24px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  header { padding: 18px 24px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; position: sticky; top: 0; background: var(--bg); z-index: 50; }
   header h1 { font-size: 14px; letter-spacing: 0.4em; margin: 0; font-weight: 700; }
   header .nav { color: var(--mute); font-size: 11px; letter-spacing: 0.16em; }
   header .nav a { margin-left: 14px; }
-  .wrap { padding: 24px 24px 80px; max-width: 1480px; margin: 0 auto; }
-  section { margin-bottom: 40px; }
-  h2 { font-size: 11px; letter-spacing: 0.42em; color: var(--accent); text-transform: uppercase; margin: 0 0 14px; font-weight: 700; }
-  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 18px; }
-  .kpi { background: #0f0f0f; border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; }
-  .kpi .label { font-size: 10px; letter-spacing: 0.26em; color: var(--mute); text-transform: uppercase; margin-bottom: 4px; }
-  .kpi .v { font-size: 22px; font-weight: 200; color: var(--fg); letter-spacing: 0.02em; }
-  .kpi .sub { font-size: 11px; color: var(--mute); margin-top: 2px; }
-  .kpi.warn { border-color: rgba(255,74,61,0.30); }
-  .kpi.warn .v { color: var(--red); }
-  .actions-bar { display: flex; gap: 8px; margin: 0 0 18px; flex-wrap: wrap; }
-  .btn { background: #0f0f0f; border: 1px solid var(--line); color: var(--fg); padding: 8px 14px; font-family: inherit; font-size: 11px; border-radius: 4px; cursor: pointer; letter-spacing: 0.12em; text-transform: uppercase; }
+  .wrap { padding: 24px 24px 120px; max-width: 1640px; margin: 0 auto; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 18px; }
+  .toolbar input, .toolbar select { background: #0f0f0f; border: 1px solid var(--line); color: var(--fg); padding: 9px 12px; font-family: inherit; font-size: 12px; border-radius: 4px; }
+  .toolbar input.search { width: 280px; }
+  .toolbar .grow { margin-left: auto; }
+  .btn { background: #0f0f0f; border: 1px solid var(--line); color: var(--fg); padding: 9px 14px; font-family: inherit; font-size: 11px; border-radius: 4px; cursor: pointer; letter-spacing: 0.12em; text-transform: uppercase; }
   .btn:hover { border-color: var(--accent); color: var(--accent); }
   .btn.primary { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 700; }
   .btn.primary:hover { color: #000; opacity: 0.9; }
   .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; align-items: center; }
-  .toolbar input, .toolbar select { background: #0f0f0f; border: 1px solid var(--line); color: var(--fg); padding: 8px 10px; font-family: inherit; font-size: 12px; border-radius: 4px; }
-  .toolbar input.search { width: 280px; }
-  .toolbar select { min-width: 140px; }
-  .toolbar .count { color: var(--mute); font-size: 11px; letter-spacing: 0.14em; margin-left: auto; }
-  table { width: 100%; border-collapse: collapse; background: #0c0c0c; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #161616; font-size: 12px; vertical-align: middle; }
-  th { font-size: 10px; color: var(--mute); letter-spacing: 0.22em; text-transform: uppercase; background: #0a0a0a; font-weight: 700; cursor: pointer; user-select: none; }
-  th.sorted { color: var(--accent); }
-  td.num { text-align: right; font-variant-numeric: tabular-nums; }
-  tbody tr { cursor: pointer; }
-  tr:last-child td { border-bottom: 0; }
-  tr:hover td { background: rgba(245,245,240,0.03); }
-  .tag { display: inline-block; padding: 1px 7px; border-radius: 99px; font-size: 10px; letter-spacing: 0.12em; font-weight: 600; }
-  .tag.ok { background: rgba(123,229,123,0.10); color: var(--green); border: 1px solid rgba(123,229,123,0.30); }
-  .tag.no { background: rgba(255,74,61,0.10); color: var(--red); border: 1px solid rgba(255,74,61,0.30); }
-  .tag.muted { background: #1a1a1a; color: var(--mute); }
-  .muted { color: var(--mute); }
-  .err { color: var(--red); padding: 20px; text-align: center; }
-  .loading { color: var(--mute); padding: 40px; text-align: center; }
-  .thumb { width: 40px; height: 40px; object-fit: cover; border-radius: 4px; background: #1a1a1a; display: block; }
-  .thumb.placeholder { display: flex; align-items: center; justify-content: center; color: var(--mute); font-size: 10px; }
-  .thumb.cached { box-shadow: 0 0 0 1px var(--green) inset; }
-  .thumb-stack { display: flex; gap: 4px; align-items: center; }
-  .row-name { display: flex; flex-direction: column; gap: 2px; max-width: 320px; }
-  .row-name strong { color: var(--fg); font-weight: 500; }
-  .row-name .meta { color: var(--mute); font-size: 10px; letter-spacing: 0.06em; }
-  .pager { display: flex; gap: 6px; align-items: center; margin-top: 12px; justify-content: center; }
-  .pager button { background: #0f0f0f; border: 1px solid var(--line); color: var(--fg); padding: 6px 12px; font-family: inherit; font-size: 11px; border-radius: 4px; cursor: pointer; }
-  .pager button:disabled { color: var(--mute); cursor: default; }
-  .pager .page { color: var(--mute); font-size: 11px; letter-spacing: 0.16em; padding: 0 8px; }
-  .tabs { display: flex; gap: 8px; margin-bottom: 14px; border-bottom: 1px solid var(--line); }
-  .tab { padding: 9px 14px; cursor: pointer; color: var(--mute); border-bottom: 2px solid transparent; font-size: 11px; letter-spacing: 0.24em; text-transform: uppercase; font-weight: 600; }
-  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
-  .tab .n { color: var(--mute); margin-left: 6px; font-weight: 400; }
-  .tab.active .n { color: var(--fg); }
+  .btn-sm { padding: 5px 10px; font-size: 10px; letter-spacing: 0.08em; }
+  .count { color: var(--mute); font-size: 11px; letter-spacing: 0.14em; }
 
-  /* Detail modal */
-  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: none; align-items: flex-start; justify-content: center; z-index: 1000; overflow-y: auto; padding: 40px 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; cursor: pointer; transition: border-color 0.12s, transform 0.12s; }
+  .card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .card .thumb { width: 100%; aspect-ratio: 1/1; background: #050505; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .card .thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .card .thumb.placeholder { color: var(--mute); font-size: 10px; letter-spacing: 0.16em; }
+  .card .meta { padding: 10px 12px 12px; }
+  .card .row1 { display: flex; gap: 8px; justify-content: space-between; align-items: center; font-size: 11px; color: var(--mute); letter-spacing: 0.08em; margin-bottom: 4px; }
+  .card .brand { color: var(--accent); font-weight: 600; }
+  .card .name { color: var(--fg); font-size: 12px; line-height: 1.35; min-height: 32px; word-break: break-word; }
+  .card .row2 { display: flex; gap: 8px; justify-content: space-between; align-items: center; font-size: 11px; margin-top: 6px; }
+  .card .price { color: var(--fg); font-variant-numeric: tabular-nums; }
+  .card .stock { color: var(--mute); font-size: 10px; }
+  .card.inactive { opacity: 0.45; }
+  .card.soldout .stock { color: var(--red); }
+
+  .sentinel { padding: 30px; text-align: center; color: var(--mute); font-size: 11px; letter-spacing: 0.18em; }
+  .err { color: var(--red); padding: 20px; text-align: center; }
+
+  /* Modal */
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.88); display: none; align-items: flex-start; justify-content: center; z-index: 1000; overflow-y: auto; padding: 40px 16px; }
   .modal-bg.open { display: flex; }
-  .modal { background: #0c0c0c; border: 1px solid var(--line); border-radius: 12px; max-width: 1280px; width: 100%; padding: 24px; }
-  .modal h3 { margin: 0 0 6px; font-size: 16px; letter-spacing: 0.06em; }
-  .modal .sub { color: var(--mute); margin-bottom: 22px; font-size: 12px; letter-spacing: 0.08em; }
-  .modal .close { float: right; cursor: pointer; color: var(--mute); padding: 4px 12px; border: 1px solid var(--line); border-radius: 4px; }
-  .modal .close:hover { color: var(--fg); }
-  .img-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
-  .img-card { background: #0a0a0a; border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
-  .img-card .img-label { font-size: 10px; letter-spacing: 0.32em; color: var(--accent); text-transform: uppercase; margin-bottom: 8px; font-weight: 700; }
-  .img-card .img-hint { font-size: 11px; color: var(--mute); margin-bottom: 10px; line-height: 1.5; }
-  .img-card .preview { width: 100%; aspect-ratio: 1/1; background: #050505; border-radius: 4px; display: flex; align-items: center; justify-content: center; overflow: hidden; margin-bottom: 10px; }
-  .img-card .preview img { width: 100%; height: 100%; object-fit: contain; }
-  .img-card .preview .empty { color: var(--mute); font-size: 11px; letter-spacing: 0.14em; }
-  .img-card .url-box { background: #050505; border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px; font-size: 11px; word-break: break-all; color: var(--mute); margin-bottom: 8px; max-height: 60px; overflow-y: auto; }
-  .img-card .url-box.empty { color: rgba(255,74,61,0.7); }
-  .img-card .actions { display: flex; gap: 6px; flex-wrap: wrap; }
-  .img-card .actions .btn { padding: 6px 10px; font-size: 10px; }
-  .status-line { padding: 8px 12px; border-radius: 4px; margin-top: 12px; font-size: 11px; letter-spacing: 0.06em; }
+  .modal { background: #0c0c0c; border: 1px solid var(--line); border-radius: 12px; max-width: 1380px; width: 100%; padding: 28px; }
+  .modal-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 22px; flex-wrap: wrap; }
+  .modal-head h3 { margin: 0 0 4px; font-size: 16px; letter-spacing: 0.04em; }
+  .modal-head .sub { color: var(--mute); font-size: 11px; letter-spacing: 0.10em; }
+  .modal-head .close { cursor: pointer; color: var(--mute); padding: 6px 14px; border: 1px solid var(--line); border-radius: 4px; }
+  .modal-head .close:hover { color: var(--fg); }
+
+  .photos { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 26px; }
+  .photo-section h4 { font-size: 10px; letter-spacing: 0.32em; color: var(--accent); text-transform: uppercase; margin: 0 0 10px; font-weight: 700; }
+  .photo-frame { width: 100%; aspect-ratio: 1/1; background: #050505; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center; margin-bottom: 8px; }
+  .photo-frame img { width: 100%; height: 100%; object-fit: contain; }
+  .photo-frame .empty { color: var(--mute); font-size: 11px; letter-spacing: 0.14em; }
+  .photo-url { font-size: 10px; word-break: break-all; color: var(--mute); margin-bottom: 6px; }
+  .photo-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+
+  .life-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .life-card { background: #0a0a0a; border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+  .life-card .frame { aspect-ratio: 4/5; background: #050505; border-radius: 4px; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+  .life-card .frame img { width: 100%; height: 100%; object-fit: cover; }
+  .life-card .frame .empty { color: var(--mute); font-size: 10px; }
+
+  .edit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+  .edit-field { display: flex; flex-direction: column; gap: 6px; }
+  .edit-field label { font-size: 10px; letter-spacing: 0.22em; color: var(--mute); text-transform: uppercase; }
+  .edit-field input, .edit-field textarea { background: #050505; border: 1px solid var(--line); color: var(--fg); padding: 9px 11px; font-family: inherit; font-size: 12px; border-radius: 4px; resize: vertical; }
+  .edit-field textarea { min-height: 110px; line-height: 1.6; }
+  .edit-field.full { grid-column: 1 / -1; }
+  .edit-actions { display: flex; gap: 10px; flex-wrap: wrap; padding-top: 14px; border-top: 1px solid var(--line); }
+  .status-line { padding: 9px 14px; border-radius: 4px; margin-top: 12px; font-size: 11px; letter-spacing: 0.06em; }
   .status-line.info { background: rgba(230,196,73,0.08); color: var(--accent); }
   .status-line.ok { background: rgba(123,229,123,0.08); color: var(--green); }
   .status-line.err { background: rgba(255,74,61,0.08); color: var(--red); }
+
+  /* New SKU panel — slide-down on click */
+  .new-panel { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 18px; margin-bottom: 20px; display: none; }
+  .new-panel.open { display: block; }
+  .new-panel h3 { margin: 0 0 14px; font-size: 12px; letter-spacing: 0.22em; color: var(--accent); }
 </style>
 </head>
 <body>
@@ -103,8 +99,55 @@
   </div>
 </header>
 
-<div class="wrap" id="content">
-  <div class="loading" id="status">━◯━ loading...</div>
+<div class="wrap">
+  <div class="toolbar">
+    <input class="search" id="search" placeholder="search by name / id / brand…" oninput="onFilterChange()">
+    <select id="brand" onchange="onFilterChange()">
+      <option value="">— all brands —</option>
+    </select>
+    <select id="state" onchange="onFilterChange()">
+      <option value="">— all states —</option>
+      <option value="active">active</option>
+      <option value="inactive">inactive</option>
+      <option value="soldout">sold out</option>
+    </select>
+    <button class="btn primary" onclick="openNewPanel()">+ NEW SKU</button>
+    <span class="count grow" id="count">0 loaded</span>
+  </div>
+
+  <div class="new-panel" id="new-panel">
+    <h3>━ NEW SKU</h3>
+    <div class="edit-grid">
+      <div class="edit-field">
+        <label>brand</label>
+        <input id="n-brand" value="mugen">
+      </div>
+      <div class="edit-field">
+        <label>name (display)</label>
+        <input id="n-name" placeholder="例: 静 #1003">
+      </div>
+      <div class="edit-field">
+        <label>price (¥)</label>
+        <input id="n-price" type="number" value="6800">
+      </div>
+      <div class="edit-field">
+        <label>inventory</label>
+        <input id="n-inventory" type="number" value="1">
+      </div>
+      <div class="edit-field full">
+        <label>prompt — chest graphic description (Gemini に投げる)</label>
+        <textarea id="n-prompt" placeholder="抽象ミニマル, 黒のサミ墨で雨脚を描いた...etc"></textarea>
+      </div>
+    </div>
+    <div class="edit-actions">
+      <button class="btn primary" onclick="createNew()">━◯━ 生成して登録</button>
+      <button class="btn" onclick="document.getElementById('new-panel').classList.remove('open')">cancel</button>
+      <div id="new-status" class="status-line" style="display:none"></div>
+    </div>
+  </div>
+
+  <div id="grid" class="grid"></div>
+  <div class="sentinel" id="sentinel">━◯━ loading…</div>
 </div>
 
 <div class="modal-bg" id="modal" onclick="if(event.target===this)closeModal()">
@@ -112,12 +155,15 @@
 </div>
 
 <script>
-let DATA = null;
-let activeTab = 'core';
-let sortKey = 'id';
-let sortDir = 'desc';
-let page = 1;
-const PER = 100;
+const PER = 60;
+let offset = 0;
+let hasMore = true;
+let loading = false;
+let currentBrand = '';
+let currentSearch = '';
+let currentState = '';
+let products = [];
+let brandsLoaded = false;
 
 function adminToken() {
   const u = new URL(window.location.href);
@@ -127,468 +173,335 @@ function withTok(url) {
   const t = adminToken();
   return t ? url + (url.includes('?') ? '&' : '?') + 'admin_token=' + encodeURIComponent(t) : url;
 }
-
-async function load() {
-  const r = await fetch(withTok('/api/admin/products'), { credentials: 'include' });
-  if (!r.ok) {
-    document.getElementById('content').innerHTML = `<div class="err">HTTP ${r.status} — admin_token クエリで再アクセスしてください: /admin/products?admin_token=…</div>`;
-    return;
-  }
-  DATA = await r.json();
-  renderShell();
-  renderTable();
-}
-
-function renderShell() {
-  const s = DATA.summary;
-  const missing = (s.core.no_design + s.core.no_mockup + s.collab.no_image);
-  const missingBytes = (s.core.no_design_bytes + s.core.no_mockup_bytes + s.collab.no_image_bytes);
-  const brands = ['', ...DATA.brands].map(b => `<option value="${b}">${b || '— all brands —'}</option>`).join('');
-  const partners = ['', ...DATA.partners].map(p => `<option value="${p}">${p || '— all partners —'}</option>`).join('');
-  document.getElementById('content').innerHTML = `
-    <section>
-      <div class="kpis">
-        <div class="kpi">
-          <div class="label">Core products</div>
-          <div class="v">${s.core.active.toLocaleString()}<span class="muted" style="font-size:14px"> / ${s.core.total.toLocaleString()}</span></div>
-          <div class="sub">active / total</div>
-        </div>
-        <div class="kpi">
-          <div class="label">Collab products</div>
-          <div class="v">${s.collab.active.toLocaleString()}<span class="muted" style="font-size:14px"> / ${s.collab.total.toLocaleString()}</span></div>
-          <div class="sub">${s.collab.draft} draft</div>
-        </div>
-        <div class="kpi">
-          <div class="label">Sold (core)</div>
-          <div class="v">${s.core.sold.toLocaleString()}</div>
-          <div class="sub">¥${s.core.revenue_jpy.toLocaleString()} 累計</div>
-        </div>
-        <div class="kpi ${missing>0?'warn':''}">
-          <div class="label">Missing URLs</div>
-          <div class="v">${missing}</div>
-          <div class="sub">design ${s.core.no_design} · mockup ${s.core.no_mockup} · collab ${s.collab.no_image}</div>
-        </div>
-        <div class="kpi ${missingBytes>0?'warn':''}">
-          <div class="label">Not cached in DB</div>
-          <div class="v">${missingBytes}</div>
-          <div class="sub">design ${s.core.no_design_bytes} · mockup ${s.core.no_mockup_bytes} · collab ${s.collab.no_image_bytes}</div>
-        </div>
-      </div>
-
-      <div class="actions-bar">
-        <button class="btn primary" onclick="cacheBytes(50,false)">━◯━ DBに画像を取り込む (50件)</button>
-        <button class="btn" onclick="cacheBytes(200,false)">+200件</button>
-        <button class="btn" onclick="cacheBytes(50,true)">強制更新 (50件)</button>
-        <span id="cache-status" class="muted" style="margin-left:12px;font-size:11px;align-self:center"></span>
-      </div>
-    </section>
-
-    <div class="tabs">
-      <div class="tab ${activeTab==='core'?'active':''}" onclick="setTab('core')">━ Core products <span class="n">${s.core.total.toLocaleString()}</span></div>
-      <div class="tab ${activeTab==='collab'?'active':''}" onclick="setTab('collab')">━ Collab products <span class="n">${s.collab.total.toLocaleString()}</span></div>
-    </div>
-
-    <div class="toolbar" id="toolbar-core" style="display:${activeTab==='core'?'flex':'none'}">
-      <input class="search" id="search-core" placeholder="search by name / id / drop_num…" oninput="page=1; renderTable()">
-      <select id="brand-core" onchange="page=1; renderTable()">${brands}</select>
-      <select id="active-core" onchange="page=1; renderTable()">
-        <option value="">— all states —</option>
-        <option value="1">active only</option>
-        <option value="0">inactive only</option>
-        <option value="soldout">sold out</option>
-        <option value="no-design">missing design</option>
-        <option value="no-mockup">missing mockup</option>
-        <option value="no-bytes">not cached</option>
-      </select>
-      <span class="count" id="count-core"></span>
-    </div>
-
-    <div class="toolbar" id="toolbar-collab" style="display:${activeTab==='collab'?'flex':'none'}">
-      <input class="search" id="search-collab" placeholder="search by name / slug / category…" oninput="page=1; renderTable()">
-      <select id="partner-collab" onchange="page=1; renderTable()">${partners}</select>
-      <select id="active-collab" onchange="page=1; renderTable()">
-        <option value="">— all states —</option>
-        <option value="1">active only</option>
-        <option value="0">inactive only</option>
-        <option value="draft">draft only</option>
-        <option value="no-image">missing image</option>
-        <option value="no-bytes">not cached</option>
-      </select>
-      <span class="count" id="count-collab"></span>
-    </div>
-
-    <div id="table-mount"></div>
-    <div class="pager" id="pager"></div>
-  `;
-}
-
-function setTab(t) { activeTab = t; page = 1; sortKey = 'id'; sortDir = 'desc'; renderShell(); renderTable(); }
-function setSort(k) {
-  if (sortKey === k) { sortDir = (sortDir === 'asc' ? 'desc' : 'asc'); }
-  else { sortKey = k; sortDir = 'desc'; }
-  renderTable();
-}
-
-function applyFilters(rows, scope) {
-  const q = (document.getElementById('search-' + scope)?.value || '').toLowerCase().trim();
-  const brand = document.getElementById(scope==='core'?'brand-core':'partner-collab')?.value || '';
-  const state = document.getElementById('active-' + scope)?.value || '';
-  return rows.filter(r => {
-    if (brand) {
-      if (scope==='core' && r.brand !== brand) return false;
-      if (scope==='collab' && r.partner !== brand) return false;
-    }
-    if (state === '1' && r.active !== 1) return false;
-    if (state === '0' && r.active !== 0) return false;
-    if (state === 'soldout' && scope==='core' && r.sold < r.inventory) return false;
-    if (state === 'draft' && scope==='collab' && r.draft !== 1) return false;
-    if (state === 'no-design' && scope==='core' && r.design_url) return false;
-    if (state === 'no-mockup' && scope==='core' && r.mockup_url) return false;
-    if (state === 'no-image' && scope==='collab' && r.image_url) return false;
-    if (state === 'no-bytes') {
-      if (scope==='core' && r.has_design_bytes && r.has_mockup_bytes) return false;
-      if (scope==='collab' && r.has_image_bytes) return false;
-    }
-    if (q) {
-      const hay = scope==='core'
-        ? `${r.id} ${r.brand} ${r.drop_num} ${r.name}`.toLowerCase()
-        : `${r.id} ${r.slug} ${r.partner} ${r.category} ${r.name}`.toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
-    return true;
-  });
-}
-
-function sortRows(rows) {
-  const k = sortKey, dir = sortDir === 'asc' ? 1 : -1;
-  return rows.slice().sort((a, b) => {
-    const av = a[k], bv = b[k];
-    if (av == null && bv == null) return 0;
-    if (av == null) return 1;
-    if (bv == null) return -1;
-    if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
-    return String(av).localeCompare(String(bv)) * dir;
-  });
-}
-
-function thumbCell(url, dbUrl, cached, fallback) {
-  const src = cached ? dbUrl : (url || '');
-  if (!src) return `<div class="thumb placeholder">${fallback || '—'}</div>`;
-  const cls = cached ? 'thumb cached' : 'thumb';
-  return `<img class="${cls}" src="${escapeHtml(src)}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'thumb placeholder',textContent:'!'}))">`;
-}
-
 function escapeHtml(s) {
   if (s == null) return '';
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
-
-function renderTable() {
-  if (!DATA) return;
-  if (activeTab === 'core') renderCoreTable();
-  else renderCollabTable();
+function thumbSrc(p) {
+  return p.mockup_url || p.design_url || `/api/products/${p.id}/mockup.png`;
 }
 
-function renderCoreTable() {
-  const rows = sortRows(applyFilters(DATA.products, 'core'));
-  document.getElementById('count-core').textContent = rows.length.toLocaleString() + ' rows';
-  const pages = Math.max(1, Math.ceil(rows.length / PER));
-  if (page > pages) page = pages;
-  const slice = rows.slice((page-1)*PER, page*PER);
-  const arrow = (k) => sortKey === k ? (sortDir === 'asc' ? ' ↑' : ' ↓') : '';
-  const cls = (k) => sortKey === k ? 'sorted' : '';
-  document.getElementById('table-mount').innerHTML = `
-    <table>
-      <thead><tr>
-        <th>img</th>
-        <th class="${cls('id')}" onclick="setSort('id')">id${arrow('id')}</th>
-        <th class="${cls('brand')}" onclick="setSort('brand')">brand${arrow('brand')}</th>
-        <th class="${cls('drop_num')}" onclick="setSort('drop_num')">drop${arrow('drop_num')}</th>
-        <th>name</th>
-        <th class="num ${cls('price_jpy')}" onclick="setSort('price_jpy')">price${arrow('price_jpy')}</th>
-        <th class="num ${cls('sold')}" onclick="setSort('sold')">sold</th>
-        <th class="num ${cls('inventory')}" onclick="setSort('inventory')">stock</th>
-        <th>state</th>
-        <th class="${cls('created_at')}" onclick="setSort('created_at')">created${arrow('created_at')}</th>
-      </tr></thead>
-      <tbody>
-        ${slice.map(r => `
-          <tr onclick="openDetail('core', ${r.id})">
-            <td><div class="thumb-stack">
-              ${thumbCell(r.design_url, `/api/products/${r.id}/design.png`, r.has_design_bytes, 'D')}
-              ${thumbCell(r.mockup_url, `/api/products/${r.id}/mockup.png`, r.has_mockup_bytes, 'M')}
-            </div></td>
-            <td><strong>${r.id}</strong></td>
-            <td>${escapeHtml(r.brand)}</td>
-            <td>#${r.drop_num}</td>
-            <td>
-              <div class="row-name">
-                <strong>${escapeHtml(r.name)}</strong>
-                <span class="meta">${imageStateInline(r)}</span>
-              </div>
-            </td>
-            <td class="num">¥${r.price_jpy.toLocaleString()}</td>
-            <td class="num">${r.sold}</td>
-            <td class="num">${r.inventory}</td>
-            <td>${stateTag(r)}</td>
-            <td class="muted">${escapeHtml((r.created_at||'').slice(0,10))}</td>
-          </tr>
-        `).join('') || '<tr><td colspan="10" class="muted" style="text-align:center;padding:30px">no products match the filter</td></tr>'}
-      </tbody>
-    </table>
-  `;
-  renderPager(rows.length, pages);
+async function fetchPage() {
+  if (loading || !hasMore) return;
+  loading = true;
+  document.getElementById('sentinel').textContent = '━◯━ loading…';
+  const params = new URLSearchParams();
+  params.set('offset', String(offset));
+  params.set('limit', String(PER));
+  params.set('no_summary', '1');
+  if (currentBrand) params.set('brand', currentBrand);
+  if (currentSearch) params.set('search', currentSearch);
+  const url = withTok('/api/admin/products?' + params.toString());
+  try {
+    const r = await fetch(url, { credentials: 'include' });
+    if (!r.ok) {
+      document.getElementById('sentinel').innerHTML = `<span class="err">HTTP ${r.status} — admin_token クエリで再アクセス</span>`;
+      loading = false; return;
+    }
+    const data = await r.json();
+    const incoming = data.products || [];
+    let filtered = incoming;
+    if (currentState === 'active') filtered = filtered.filter(p => p.active === 1);
+    else if (currentState === 'inactive') filtered = filtered.filter(p => p.active !== 1);
+    else if (currentState === 'soldout') filtered = filtered.filter(p => p.sold >= p.inventory);
+    products = products.concat(filtered);
+    offset += incoming.length;
+    hasMore = !!data.has_more;
+    renderGridAppend(filtered);
+    document.getElementById('count').textContent = products.length.toLocaleString() + ' loaded';
+    document.getElementById('sentinel').textContent = hasMore ? '━ scroll for more ━' : '━◯━ end';
+    if (!brandsLoaded && Array.isArray(data.brands)) {
+      brandsLoaded = true;
+      const sel = document.getElementById('brand');
+      while (sel.options.length > 1) sel.remove(1);
+      data.brands.forEach(b => {
+        const o = document.createElement('option');
+        o.value = b; o.textContent = b; sel.appendChild(o);
+      });
+    }
+  } catch (e) {
+    document.getElementById('sentinel').innerHTML = `<span class="err">${escapeHtml(String(e))}</span>`;
+  } finally { loading = false; }
 }
 
-function renderCollabTable() {
-  const rows = sortRows(applyFilters(DATA.collab_products, 'collab'));
-  document.getElementById('count-collab').textContent = rows.length.toLocaleString() + ' rows';
-  const pages = Math.max(1, Math.ceil(rows.length / PER));
-  if (page > pages) page = pages;
-  const slice = rows.slice((page-1)*PER, page*PER);
-  const arrow = (k) => sortKey === k ? (sortDir === 'asc' ? ' ↑' : ' ↓') : '';
-  const cls = (k) => sortKey === k ? 'sorted' : '';
-  document.getElementById('table-mount').innerHTML = `
-    <table>
-      <thead><tr>
-        <th>img</th>
-        <th class="${cls('id')}" onclick="setSort('id')">id${arrow('id')}</th>
-        <th class="${cls('partner')}" onclick="setSort('partner')">partner${arrow('partner')}</th>
-        <th class="${cls('category')}" onclick="setSort('category')">category</th>
-        <th>slug</th>
-        <th>name</th>
-        <th class="num ${cls('price_jpy')}" onclick="setSort('price_jpy')">price</th>
-        <th>state</th>
-      </tr></thead>
-      <tbody>
-        ${slice.map(r => `
-          <tr onclick="openDetail('collab', ${r.id})">
-            <td>${thumbCell(r.image_url, `/api/collab/${r.id}/image.png`, r.has_image_bytes, '?')}</td>
-            <td><strong>${r.id}</strong></td>
-            <td>${escapeHtml(r.partner)}</td>
-            <td><span class="tag muted">${escapeHtml(r.category)}</span></td>
-            <td><code style="font-size:11px;color:var(--mute)">${escapeHtml(r.slug)}</code></td>
-            <td><div class="row-name"><strong>${escapeHtml(r.name)}</strong><span class="meta">${escapeHtml((r.description||'').slice(0,60))}${(r.description||'').length>60?'…':''}</span></div></td>
-            <td class="num">¥${r.price_jpy.toLocaleString()}</td>
-            <td>${collabStateTag(r)}</td>
-          </tr>
-        `).join('') || '<tr><td colspan="8" class="muted" style="text-align:center;padding:30px">no collab products match the filter</td></tr>'}
-      </tbody>
-    </table>
-  `;
-  renderPager(rows.length, pages);
+function renderGridAppend(rows) {
+  const grid = document.getElementById('grid');
+  for (const p of rows) {
+    const el = document.createElement('div');
+    const stock = Math.max(0, p.inventory - p.sold);
+    let cls = 'card';
+    if (p.active !== 1) cls += ' inactive';
+    if (stock === 0 && p.inventory > 0) cls += ' soldout';
+    el.className = cls;
+    el.onclick = () => openDetail(p.id);
+    el.innerHTML = `
+      <div class="thumb">
+        <img src="${escapeHtml(thumbSrc(p))}" loading="lazy" alt="${escapeHtml(p.name)}" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'thumb placeholder',textContent:'no image'}))">
+      </div>
+      <div class="meta">
+        <div class="row1"><span class="brand">${escapeHtml(p.brand)}</span><span>#${p.drop_num} · id ${p.id}</span></div>
+        <div class="name">${escapeHtml(p.name || '—')}</div>
+        <div class="row2">
+          <span class="price">¥${p.price_jpy.toLocaleString()}</span>
+          <span class="stock">${p.sold}/${p.inventory}</span>
+        </div>
+      </div>`;
+    grid.appendChild(el);
+  }
 }
 
-function imageStateInline(r) {
-  const parts = [];
-  if (!r.design_url) parts.push('<span style="color:var(--red)">no design</span>');
-  else parts.push(r.has_design_bytes ? '<span style="color:var(--green)">D ✓</span>' : '<span class="muted">D (uncached)</span>');
-  if (!r.mockup_url) parts.push('<span style="color:var(--red)">no mockup</span>');
-  else parts.push(r.has_mockup_bytes ? '<span style="color:var(--green)">M ✓</span>' : '<span class="muted">M (uncached)</span>');
-  if (r.parent_design) parts.push('parent: '+escapeHtml(r.parent_design));
-  if (r.nft_mint) parts.push('NFT');
-  if (r.auction_end) parts.push('auction');
-  return parts.join(' · ');
+function resetAndReload() {
+  offset = 0; hasMore = true; products = [];
+  document.getElementById('grid').innerHTML = '';
+  document.getElementById('count').textContent = '0 loaded';
+  fetchPage();
+}
+function onFilterChange() {
+  currentBrand = document.getElementById('brand').value;
+  currentState = document.getElementById('state').value;
+  currentSearch = document.getElementById('search').value.trim();
+  resetAndReload();
 }
 
-function stateTag(r) {
-  if (r.active !== 1) return '<span class="tag muted">inactive</span>';
-  if (r.sold >= r.inventory && r.inventory > 0) return '<span class="tag no">sold out</span>';
-  return '<span class="tag ok">active</span>';
-}
-function collabStateTag(r) {
-  if (r.active !== 1) return '<span class="tag muted">inactive</span>';
-  if (r.draft === 1) return '<span class="tag muted">draft</span>';
-  return '<span class="tag ok">live</span>';
-}
+const io = new IntersectionObserver(entries => {
+  for (const e of entries) if (e.isIntersecting) fetchPage();
+}, { rootMargin: '600px' });
+io.observe(document.getElementById('sentinel'));
 
-function renderPager(total, pages) {
-  const el = document.getElementById('pager');
-  if (pages <= 1) { el.innerHTML = ''; return; }
-  el.innerHTML = `
-    <button onclick="page=1; renderTable()" ${page===1?'disabled':''}>« first</button>
-    <button onclick="page--; renderTable()" ${page===1?'disabled':''}>‹ prev</button>
-    <span class="page">page ${page} / ${pages}</span>
-    <button onclick="page++; renderTable()" ${page===pages?'disabled':''}>next ›</button>
-    <button onclick="page=${pages}; renderTable()" ${page===pages?'disabled':''}>last »</button>
-  `;
-}
+// ── Detail modal ──────────────────────────────────────────────────
+let currentDetail = null;
 
-// ── Detail modal ───────────────────────────────────────────────────
-function openDetail(scope, id) {
-  const r = (scope === 'core' ? DATA.products : DATA.collab_products).find(x => x.id === id);
-  if (!r) return;
+async function openDetail(id) {
+  const m = document.getElementById('modal');
   const body = document.getElementById('modal-body');
-  body.innerHTML = renderDetail(scope, r);
-  document.getElementById('modal').classList.add('open');
-}
-function closeModal() {
-  document.getElementById('modal').classList.remove('open');
-}
-
-function renderDetail(scope, r) {
-  if (scope === 'core') return renderCoreDetail(r);
-  return renderCollabDetail(r);
-}
-
-function renderCoreDetail(r) {
-  const designUrl = r.design_url || '';
-  const mockupUrl = r.mockup_url || '';
-  const dbDesign = `/api/products/${r.id}/design.png`;
-  const dbMockup = `/api/products/${r.id}/mockup.png`;
-  return `
-    <span class="close" onclick="closeModal()">close ✕</span>
-    <h3>#${r.id} · ${escapeHtml(r.name)}</h3>
-    <div class="sub">${escapeHtml(r.brand)} · drop #${r.drop_num} · ¥${r.price_jpy.toLocaleString()} · sold ${r.sold}/${r.inventory}</div>
-
-    <div class="img-grid">
-      ${imgCard({
-        label: 'デザイン (source)',
-        hint: 'Gemini が生成した PNG (透過背景)。これが「作品」の原本。',
-        previewSrc: r.has_design_bytes ? dbDesign : designUrl,
-        url: designUrl,
-        cached: r.has_design_bytes,
-        dbUrl: dbDesign,
-        scope: 'core', id: r.id, kind: 'design',
-      })}
-      ${imgCard({
-        label: 'Printful に渡す画像 (print file)',
-        hint: 'お客様購入時に Printful の <code>files[].url</code> で送る画像。Core products では design と同じ URL を使用 (placement: front, chest 12×16in 自動配置)。',
-        previewSrc: r.has_design_bytes ? dbDesign : designUrl,
-        url: designUrl,
-        cached: r.has_design_bytes,
-        dbUrl: dbDesign,
-        scope: 'core', id: r.id, kind: 'design',
-        readonly: true,
-      })}
-      ${imgCard({
-        label: 'Printful 着用写真 (mockup)',
-        hint: 'Printful の mockup-generator が返した T シャツ着用画像。OGP / 商品一覧表示用。',
-        previewSrc: r.has_mockup_bytes ? dbMockup : mockupUrl,
-        url: mockupUrl,
-        cached: r.has_mockup_bytes,
-        dbUrl: dbMockup,
-        scope: 'core', id: r.id, kind: 'mockup',
-        regen: true,
-      })}
-    </div>
-    <div id="detail-status"></div>
-  `;
-}
-
-function renderCollabDetail(r) {
-  const url = r.image_url || '';
-  const dbUrl = `/api/collab/${r.id}/image.png`;
-  return `
-    <span class="close" onclick="closeModal()">close ✕</span>
-    <h3>#${r.id} · ${escapeHtml(r.name)}</h3>
-    <div class="sub">${escapeHtml(r.partner)} · ${escapeHtml(r.category)} · ¥${r.price_jpy.toLocaleString()} · slug ${escapeHtml(r.slug)}</div>
-    <div class="img-grid">
-      ${imgCard({
-        label: '商品画像',
-        hint: 'collab_products.image_url。コラボ系 (sweep / kokon / partner LPs) の商品写真。',
-        previewSrc: r.has_image_bytes ? dbUrl : url,
-        url, cached: r.has_image_bytes, dbUrl,
-        scope: 'collab', id: r.id, kind: 'image',
-      })}
-    </div>
-    <div id="detail-status"></div>
-  `;
-}
-
-function imgCard(o) {
-  const hasPreview = !!o.previewSrc;
-  const preview = hasPreview
-    ? `<img src="${escapeHtml(o.previewSrc)}" loading="lazy" onerror="this.parentElement.innerHTML='<div class=&quot;empty&quot;>load failed</div>'">`
-    : `<div class="empty">no image</div>`;
-  const cachedBadge = o.cached
-    ? `<span class="tag ok" style="margin-left:6px">DB cached</span>`
-    : (o.url ? `<span class="tag muted" style="margin-left:6px">remote only</span>` : '');
-  const urlBox = o.url
-    ? `<div class="url-box"><a href="${escapeHtml(o.url)}" target="_blank">${escapeHtml(o.url)}</a></div>`
-    : `<div class="url-box empty">URL not set</div>`;
-  const actions = [];
-  actions.push(`<a class="btn" href="${escapeHtml(o.dbUrl)}" target="_blank">DB 経由で開く</a>`);
-  if (o.url) actions.push(`<a class="btn" href="${escapeHtml(o.url)}" target="_blank">原本</a>`);
-  if (!o.readonly && o.url && !o.cached) {
-    actions.push(`<button class="btn" onclick="cacheOne('${o.scope}', ${o.id})">DB に取り込む</button>`);
-  }
-  if (o.regen && o.url) {
-    actions.push(`<button class="btn" onclick="regenMockup(${o.id})">Printful で再生成</button>`);
-  }
-  return `
-    <div class="img-card">
-      <div class="img-label">${o.label}${cachedBadge}</div>
-      <div class="img-hint">${o.hint}</div>
-      <div class="preview">${preview}</div>
-      ${urlBox}
-      <div class="actions">${actions.join('')}</div>
-    </div>
-  `;
-}
-
-// ── Actions ────────────────────────────────────────────────────────
-async function cacheBytes(limit, force) {
-  const el = document.getElementById('cache-status');
-  el.textContent = `fetching up to ${limit} rows…`;
+  body.innerHTML = `<div class="sub">━◯━ loading…</div>`;
+  m.classList.add('open');
   try {
-    const r = await fetch(withTok('/api/admin/products/cache_bytes'), {
-      method: 'POST', credentials: 'include',
-      headers: {'content-type': 'application/json'},
-      body: JSON.stringify({ limit, force }),
+    const r = await fetch(withTok('/api/admin/products/' + id));
+    if (!r.ok) { body.innerHTML = `<div class="err">HTTP ${r.status}</div>`; return; }
+    currentDetail = await r.json();
+    renderDetail(currentDetail);
+  } catch (e) {
+    body.innerHTML = `<div class="err">${escapeHtml(String(e))}</div>`;
+  }
+}
+function closeModal() { document.getElementById('modal').classList.remove('open'); currentDetail = null; }
+
+function renderDetail(d) {
+  const body = document.getElementById('modal-body');
+  const life = d.lifestyle_urls || [];
+  while (life.length < 3) life.push(null);
+  body.innerHTML = `
+    <div class="modal-head">
+      <div>
+        <h3>${escapeHtml(d.brand)} · #${d.drop_num} · ${escapeHtml(d.name || '—')}</h3>
+        <div class="sub">id ${d.id} · ${escapeHtml(d.created_at)} · ${d.active ? 'active' : 'inactive'} · ${d.sold}/${d.inventory}</div>
+      </div>
+      <div class="close" onclick="closeModal()">close</div>
+    </div>
+
+    <div class="photos">
+      <div class="photo-section">
+        <h4>━ デザイン (chest graphic / print file)</h4>
+        <div class="photo-frame">${d.design_url ? `<img src="${escapeHtml(d.design_url)}">` : `<div class="empty">no design</div>`}</div>
+        <div class="photo-url">${escapeHtml(d.design_url || '—')}</div>
+        <div class="photo-actions">
+          <button class="btn btn-sm" onclick="regenDesign(${d.id})">━ regen design (Gemini)</button>
+        </div>
+      </div>
+      <div class="photo-section">
+        <h4>━ プリントフル実物 (mockup)</h4>
+        <div class="photo-frame">${d.mockup_url ? `<img src="${escapeHtml(d.mockup_url)}">` : `<div class="empty">no mockup</div>`}</div>
+        <div class="photo-url">${escapeHtml(d.mockup_url || '—')}</div>
+        <div class="photo-actions">
+          <button class="btn btn-sm" onclick="regenMockup(${d.id})">━ regen mockup (Printful)</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="photo-section" style="margin-bottom: 22px">
+      <h4>━ 着画 3枚 (lifestyle)</h4>
+      <div class="life-grid">
+        ${life.slice(0,3).map((u,i) => `
+          <div class="life-card">
+            <div class="frame">${u ? `<img src="${escapeHtml(u)}">` : `<div class="empty">slot ${i+1}</div>`}</div>
+          </div>`).join('')}
+      </div>
+      <div class="photo-actions" style="margin-top: 10px">
+        <button class="btn btn-sm primary" onclick="regenLifestyle(${d.id})">━◯━ 着画 3 枚を Gemini で生成</button>
+      </div>
+    </div>
+
+    <div class="edit-grid">
+      <div class="edit-field">
+        <label>name</label>
+        <input id="e-name" value="${escapeHtml(d.name || '')}">
+      </div>
+      <div class="edit-field">
+        <label>price (¥)</label>
+        <input id="e-price" type="number" value="${d.price_jpy}">
+      </div>
+      <div class="edit-field">
+        <label>inventory</label>
+        <input id="e-inventory" type="number" value="${d.inventory}">
+      </div>
+      <div class="edit-field">
+        <label>active</label>
+        <select id="e-active">
+          <option value="1" ${d.active===1?'selected':''}>active</option>
+          <option value="0" ${d.active===0?'selected':''}>inactive</option>
+        </select>
+      </div>
+      <div class="edit-field full">
+        <label>prompt_text (Gemini に投げるデザインの説明)</label>
+        <textarea id="e-prompt">${escapeHtml(d.prompt_text || '')}</textarea>
+      </div>
+      <div class="edit-field full">
+        <label>design_url</label>
+        <input id="e-design" value="${escapeHtml(d.design_url || '')}">
+      </div>
+      <div class="edit-field full">
+        <label>mockup_url</label>
+        <input id="e-mockup" value="${escapeHtml(d.mockup_url || '')}">
+      </div>
+    </div>
+
+    <div class="edit-actions">
+      <button class="btn primary" onclick="saveEdits(${d.id})">━ save</button>
+      <button class="btn" onclick="regenSimilar(${d.id})">━ 類似品を生成 (新 SKU)</button>
+      <a class="btn" href="/products/${d.id}" target="_blank" rel="noopener">━ open product page ↗</a>
+      <a class="btn" href="${escapeHtml(d.design_url || '#')}" target="_blank" rel="noopener">━ open design ↗</a>
+    </div>
+    <div id="detail-status" class="status-line" style="display:none"></div>
+  `;
+}
+
+function setStatus(elId, kind, msg) {
+  const e = document.getElementById(elId);
+  if (!e) return;
+  e.className = 'status-line ' + kind;
+  e.textContent = msg;
+  e.style.display = 'block';
+}
+
+async function saveEdits(id) {
+  const body = {
+    name: document.getElementById('e-name').value,
+    prompt_text: document.getElementById('e-prompt').value,
+    price_jpy: parseInt(document.getElementById('e-price').value || '0', 10),
+    inventory: parseInt(document.getElementById('e-inventory').value || '0', 10),
+    active: parseInt(document.getElementById('e-active').value || '1', 10),
+    design_url: document.getElementById('e-design').value,
+    mockup_url: document.getElementById('e-mockup').value,
+  };
+  setStatus('detail-status', 'info', '━ saving…');
+  try {
+    const r = await fetch(withTok(`/api/admin/products/${id}/update`), {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) { setStatus('detail-status', 'err', `HTTP ${r.status}`); return; }
+    const j = await r.json();
+    setStatus('detail-status', 'ok', `━ saved (${j.rows || 1} rows)`);
+    // Refresh card in grid
+    const card = [...document.querySelectorAll('#grid .card')].find(c => c.querySelector('.row1')?.textContent.includes(`id ${id}`));
+    if (card) {
+      const p = products.find(x => x.id === id);
+      if (p) { p.name = body.name; p.price_jpy = body.price_jpy; p.inventory = body.inventory; p.active = body.active; p.design_url = body.design_url; p.mockup_url = body.mockup_url; }
+    }
+  } catch (e) { setStatus('detail-status', 'err', String(e)); }
+}
+
+async function regenDesign(id) {
+  setStatus('detail-status', 'info', '━ Gemini で design を再生成中… (約20秒)');
+  try {
+    const promptOverride = document.getElementById('e-prompt')?.value || '';
+    const r = await fetch(withTok(`/api/admin/products/${id}/regen_design`), {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(promptOverride ? { prompt: promptOverride } : {}),
     });
     const j = await r.json();
-    if (j.ok) {
-      el.innerHTML = `<span style="color:var(--green)">✓ products done=${j.products.done} failed=${j.products.failed} · collab done=${j.collab.done} failed=${j.collab.failed}</span>`;
-      setTimeout(() => load(), 1200);
-    } else {
-      el.innerHTML = `<span style="color:var(--red)">✗ ${escapeHtml(JSON.stringify(j))}</span>`;
-    }
-  } catch (e) {
-    el.innerHTML = `<span style="color:var(--red)">✗ ${escapeHtml(String(e))}</span>`;
-  }
-}
-
-async function cacheOne(scope, id) {
-  const st = document.getElementById('detail-status');
-  st.innerHTML = `<div class="status-line info">caching id=${id}…</div>`;
-  const body = scope === 'core' ? { product_ids: [id] } : { collab_ids: [id] };
-  try {
-    const r = await fetch(withTok('/api/admin/products/cache_bytes'), {
-      method: 'POST', credentials: 'include',
-      headers: {'content-type': 'application/json'}, body: JSON.stringify(body),
-    });
-    const j = await r.json();
-    if (j.ok) {
-      st.innerHTML = `<div class="status-line ok">✓ cached. reloading…</div>`;
-      setTimeout(() => { closeModal(); load(); }, 800);
-    } else {
-      st.innerHTML = `<div class="status-line err">✗ ${escapeHtml(JSON.stringify(j))}</div>`;
-    }
-  } catch (e) {
-    st.innerHTML = `<div class="status-line err">✗ ${escapeHtml(String(e))}</div>`;
-  }
+    if (!r.ok || !j.ok) { setStatus('detail-status', 'err', `regen failed: ${JSON.stringify(j)}`); return; }
+    setStatus('detail-status', 'ok', `━ design updated → ${j.design_url}`);
+    if (currentDetail) { currentDetail.design_url = j.design_url; renderDetail(currentDetail); }
+  } catch (e) { setStatus('detail-status', 'err', String(e)); }
 }
 
 async function regenMockup(id) {
-  const st = document.getElementById('detail-status');
-  st.innerHTML = `<div class="status-line info">Printful mockup-generator にリクエスト送信中… (10〜60秒)</div>`;
+  setStatus('detail-status', 'info', '━ Printful mockup 再生成キュー中…');
   try {
-    const r = await fetch(withTok(`/api/admin/products/${id}/regen_mockup`), {
-      method: 'POST', credentials: 'include',
-    });
-    const j = await r.json().catch(() => ({}));
-    if (r.status === 202) {
-      st.innerHTML = `<div class="status-line ok">✓ 送信完了。1〜2分後にこのページを再読み込みすると mockup_url が更新されてます。</div>`;
-    } else {
-      st.innerHTML = `<div class="status-line err">✗ ${escapeHtml(JSON.stringify(j))}</div>`;
-    }
-  } catch (e) {
-    st.innerHTML = `<div class="status-line err">✗ ${escapeHtml(String(e))}</div>`;
-  }
+    const r = await fetch(withTok(`/api/admin/products/${id}/regen_mockup`), { method: 'POST' });
+    const j = await r.json();
+    if (!r.ok) { setStatus('detail-status', 'err', `regen failed: ${JSON.stringify(j)}`); return; }
+    setStatus('detail-status', 'ok', '━ Printful 生成キュー入りました (2〜3 分後に reload)');
+  } catch (e) { setStatus('detail-status', 'err', String(e)); }
 }
 
-load();
+async function regenLifestyle(id) {
+  setStatus('detail-status', 'info', '━ 着画 3 枚を Gemini で生成中… (1〜2分かかります)');
+  try {
+    const r = await fetch(withTok(`/api/admin/products/${id}/regen_lifestyle`), {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ count: 3 }),
+    });
+    const j = await r.json();
+    if (!r.ok || !j.ok) { setStatus('detail-status', 'err', `regen lifestyle failed: ${JSON.stringify(j)}`); return; }
+    setStatus('detail-status', 'ok', `━ 着画 ${j.lifestyle_urls.length} 枚生成済み`);
+    if (currentDetail) { currentDetail.lifestyle_urls = j.lifestyle_urls; renderDetail(currentDetail); }
+  } catch (e) { setStatus('detail-status', 'err', String(e)); }
+}
+
+async function regenSimilar(id) {
+  const hint = prompt('変奏ヒント (空 OK)：', '同じ系統の別案');
+  if (hint === null) return;
+  setStatus('detail-status', 'info', '━ 類似品を Gemini で生成中…');
+  try {
+    const r = await fetch(withTok(`/api/admin/products/${id}/regen_similar`), {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ hint }),
+    });
+    const j = await r.json();
+    if (!r.ok || !j.ok) { setStatus('detail-status', 'err', `regen similar failed: ${JSON.stringify(j)}`); return; }
+    setStatus('detail-status', 'ok', `━ 新 SKU 作成 (id ${j.new_id} #${j.drop_num})`);
+    setTimeout(() => { closeModal(); resetAndReload(); }, 800);
+  } catch (e) { setStatus('detail-status', 'err', String(e)); }
+}
+
+// ── New SKU panel ─────────────────────────────────────────────────
+function openNewPanel() {
+  document.getElementById('new-panel').classList.add('open');
+}
+async function createNew() {
+  const body = {
+    brand: document.getElementById('n-brand').value.trim() || 'mugen',
+    name: document.getElementById('n-name').value.trim(),
+    prompt: document.getElementById('n-prompt').value.trim(),
+    price_jpy: parseInt(document.getElementById('n-price').value || '6800', 10),
+    inventory: parseInt(document.getElementById('n-inventory').value || '1', 10),
+  };
+  if (!body.name || !body.prompt) {
+    setStatus('new-status', 'err', '━ name と prompt 必須');
+    return;
+  }
+  setStatus('new-status', 'info', '━ Gemini で生成中… (約20秒)');
+  try {
+    const r = await fetch(withTok('/api/admin/products/new'), {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const j = await r.json();
+    if (!r.ok || !j.ok) { setStatus('new-status', 'err', `create failed: ${JSON.stringify(j)}`); return; }
+    setStatus('new-status', 'ok', `━ 作成完了 (id ${j.new_id} #${j.drop_num})`);
+    setTimeout(() => {
+      document.getElementById('new-panel').classList.remove('open');
+      resetAndReload();
+    }, 800);
+  } catch (e) { setStatus('new-status', 'err', String(e)); }
+}
+
+// Initial load
+fetchPage();
 </script>
 </body>
 </html>
