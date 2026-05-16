@@ -1,0 +1,48 @@
+name: MU cron — STAPLE daily drop (JST 10:00)
+
+# generate.py staple — daily timeless single-character drop.
+# 30-concept rotation (無 → 間 → 静 → 道 → 風 → 月 → …), 47着/drop,
+# ¥5,400 STD / ¥6,800 HIGH tier alternating black-on-cream / white-on-charcoal.
+#
+# Required secrets:
+#   GEMINI_API_KEY
+#   PRINTFUL_API_KEY
+#   MU_ADMIN_TOKEN
+#   HELIUS_API_KEY              (optional — NFT mint, OK to omit)
+#   CLOUDFLARE_R2_ACCESS_KEY_ID (mockup → R2 push)
+#   CLOUDFLARE_R2_SECRET_ACCESS_KEY
+#   CLOUDFLARE_R2_ACCOUNT_ID
+
+on:
+  schedule:
+    # JST 10:00 = UTC 01:00 daily
+    - cron: '0 1 * * *'
+  workflow_dispatch:  # allow manual trigger
+
+permissions:
+  contents: read
+
+jobs:
+  staple:
+    runs-on: ubuntu-latest
+    env:
+      MU_STORE_URL: https://wearmu.com
+      MU_ADMIN_TOKEN: ${{ secrets.MU_ADMIN_TOKEN }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      PRINTFUL_API_KEY: ${{ secrets.PRINTFUL_API_KEY }}
+      HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+      CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+      CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+      CLOUDFLARE_R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}
+      NO_DELAY: "1"   # skip random_delay; cron itself fires at JST 10:00 sharp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install deps
+        run: |
+          pip install --quiet requests Pillow numpy qrcode google-genai
+      - name: Generate STAPLE drop
+        run: python generate.py staple

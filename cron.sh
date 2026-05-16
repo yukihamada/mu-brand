@@ -38,8 +38,8 @@ install_crons() {
     cat >> /tmp/mu_crontab_tmp << EOF
 # mu-brand MUGEN (every hour — random sleep 0-55min inside script makes actual time unpredictable)
 0 * * * * set -a && source $ENV_FILE && set +a && $PYTHON $GENERATE mugen >> $LOG_DIR/mugen.log 2>&1
-# mu-brand STAPLE (daily JST 10:00 = UTC 1:00 — single-kanji "timeless" drops, 30-day rotation)
-0 1 * * * set -a && source $ENV_FILE && set +a && $PYTHON $GENERATE staple >> $LOG_DIR/staple.log 2>&1
+# NOTE: STAPLE は GitHub Actions に配置 (.github/workflows/cron-staple.yml)。
+# m5 cron からは外してある — 2026-05-16 user 要望で「m5 は使わない」方針。
 # mu-brand MUON (daily midnight UTC — random sleep 0-8h inside script, so appears at random time of day)
 0 0 * * * set -a && source $ENV_FILE && set +a && $PYTHON $GENERATE muon >> $LOG_DIR/muon.log 2>&1
 # mu-brand MA (monthly 1st)
