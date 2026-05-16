@@ -20123,9 +20123,13 @@ async fn success_page() -> Html<&'static str> {
 /// Empty fields are omitted; tracking.js no-ops when nothing is set, so the
 /// shim can be embedded everywhere safely before Ads is configured.
 async fn tracking_config() -> impl IntoResponse {
+    // Defaults are the actual live Google Ads conversion IDs created for MU
+    // (customer 9591303572, action "MU Purchase"). These values are public —
+    // they're emitted in every page's gtag snippet anyway. Env vars still
+    // override (e.g. for staging or to disable tracking).
     let ga4 = env::var("GA4_MEASUREMENT_ID").unwrap_or_default();
-    let gads = env::var("GADS_CONVERSION_ID").unwrap_or_default();
-    let plabel = env::var("GADS_PURCHASE_LABEL").unwrap_or_default();
+    let gads = env::var("GADS_CONVERSION_ID").unwrap_or_else(|_| "AW-18007146784".to_string());
+    let plabel = env::var("GADS_PURCHASE_LABEL").unwrap_or_else(|_| "LRlrCLCDkq4cEKCCvYpD".to_string());
     let llabel = env::var("GADS_LEAD_LABEL").unwrap_or_default();
     let mut out = serde_json::Map::new();
     if !ga4.is_empty()    { out.insert("ga4".into(),            serde_json::json!(ga4)); }
