@@ -9692,6 +9692,22 @@ async fn handle_you_purchase_webhook(db: Db, design_id: i64, session: serde_json
         row.unwrap_or((String::new(), 0, String::new()))
     };
 
+    // ── Constitution §27 — Teshikaga 50% pledge accrual ───────────────
+    // Cost = Printful Bella+Canvas 3001 Soft Cream (~¥2,400 incl. printing)
+    //        + Stripe 3.6% on gross
+    //        + ¥300 estimated DTG ink/refund buffer
+    // Donation accrues immediately on webhook (status='accrued'). Quarterly
+    // batch flips to 'sent' when a real bank transfer / 企業版ふるさと納税
+    // 申込番号 lands.
+    let you_donation_accrued: i64 = {
+        let stripe_fee  = (amount as f64 * 0.036) as i64;
+        let printful_cost: i64 = 2_400;
+        let buffer: i64 = 300;
+        let cost = printful_cost + stripe_fee + buffer;
+        let conn = db.lock().unwrap();
+        record_donation_accrual(&conn, "you", &session_id, amount, cost, None)
+    };
+
     // ── Phase 1: Auto Printful order ─────────────────────────────────
     // Bella+Canvas 3001 Soft Cream (Printful pid 71) — closest match to the
     // "cream / off-white heavyweight cotton" in the Gemini mockup prompt so
@@ -9877,6 +9893,17 @@ async fn handle_you_purchase_webhook(db: Db, design_id: i64, session: serde_json
     // Buyer confirmation
     if !buyer_email.is_empty() && !resend_key.is_empty() {
         let buyer = buyer_email.clone();
+        // Constitution §27 block (only when this sale actually accrued; 0 means
+        // either no profit or duplicate webhook). Format as a calm, factual
+        // line — not a marketing brag.
+        let teshikaga_block = if you_donation_accrued > 0 {
+            format!(
+                r#"<div style="background:rgba(230,196,73,0.06);border-left:2px solid #e6c449;padding:14px 16px;margin-bottom:22px;font-size:11.5px;line-height:1.95;color:#c4c4bc">
+    <span style="color:#e6c449;font-weight:500">¥{don}</span> をこの一着の利益の半分として、 北海道 <strong style="color:#F5F5F0">弟子屈町</strong> 寄付基金に accrue しました (Constitution §27)。 四半期にまとめて 弟子屈町ふるさと納税 (返礼品なし、 SOLUNA 連携の認定プロジェクト枠) として送金されます。 残高は <a href="https://wearmu.com/donations" style="color:#e6c449">/donations</a> で随時公開。
+  </div>"#,
+                don = format_jpy(you_donation_accrued),
+            )
+        } else { String::new() };
         let html = format!(
             r#"<div style="background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;padding:48px;max-width:560px;margin:0 auto">
   <div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:32px">MU × YOU</div>
@@ -9888,6 +9915,7 @@ async fn handle_you_purchase_webhook(db: Db, design_id: i64, session: serde_json
     <div style="font-size:11px;opacity:0.7">Serial {serial} · Size {size} · ¥{amount}</div>
     <div style="font-size:11px;opacity:0.5;margin-top:6px">designed by @{owner}</div>
   </div>
+  {teshikaga_block}
   <p style="font-size:12px;line-height:1.85;opacity:0.75;margin-bottom:24px">
     7〜14 営業日で世界配送。Printful より発送します。<br>
     NFT 証明書（Soulbound）は発送後にお送りします。<br><br>
@@ -9896,6 +9924,7 @@ async fn handle_you_purchase_webhook(db: Db, design_id: i64, session: serde_json
 </div>"#,
             name = design_name, serial = serial, size = size,
             amount = amount, owner = owner_slug,
+            teshikaga_block = teshikaga_block,
         );
         tokio::spawn(async move {
             let _ = reqwest::Client::new()
@@ -10435,6 +10464,25 @@ async fn handle_collab_sweep_order(db: Db, session: &serde_json::Value) {
                 amount, route, chrono_now(),
             ],
         );
+    }
+
+    // ── Constitution §27 — Teshikaga 50% pledge accrual ────────────
+    // Cost = printful_cost_jpy column on collab_products (when set) or 40% of
+    // gross as a conservative fallback, + Stripe 3.6% + ¥300 buffer.
+    {
+        let conn = db.lock().unwrap();
+        let pf_cost: Option<i64> = conn.query_row(
+            "SELECT printful_cost_jpy FROM collab_products WHERE slug=?",
+            params![slug], |r| r.get(0),
+        ).unwrap_or(None);
+        let stripe_fee = (amount as f64 * 0.036) as i64;
+        let cost = pf_cost.unwrap_or((amount as f64 * 0.40) as i64) + stripe_fee + 300;
+        // Source = partner name; falls back to 'collab' if route/partner are unset
+        let source = if slug.starts_with("kokon-")   { "kokon" }
+                     else if slug.starts_with("sweep-")   { "sweep" }
+                     else if slug.starts_with("jiuflow-") { "jiuflow" }
+                     else { "collab" };
+        record_donation_accrual(&conn, source, &session_id, amount, cost, None);
     }
 
     // Place Printful draft order for 'printful' route (when variant_id + key present)
@@ -12082,6 +12130,102 @@ fn chrono_now() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
     format!("{}", secs)
+}
+
+/// Resolve the donation destination for a given sale source. MUGEN / MUON /
+/// MA / you and any other MU-brand product default to 弟子屈町 (Constitution
+/// §27 — the original commitment). Collab partners (kokon / sweep / jiuflow /
+/// …) can override via the cv_config key `donation_dest__<source>`. If a
+/// partner has no override set yet, the destination is recorded as
+/// 'pending-partner-choice' so /donations surfaces "needs config" rather
+/// than silently bucketing it into 弟子屈.
+fn donation_destination_for(conn: &Connection, source: &str) -> String {
+    // 1. MU-brand sources go straight to 弟子屈町
+    match source {
+        "you" | "mugen" | "muon" | "ma" | "mu" => return "弟子屈町".to_string(),
+        _ => {}
+    }
+    // 2. Partner-specific override via cv_config
+    let key = format!("donation_dest__{}", source);
+    let cfg = cv_get(conn, &key, "");
+    if !cfg.is_empty() { return cfg; }
+    // 3. Unconfigured partner — explicit "needs choice" marker
+    "pending-partner-choice".to_string()
+}
+
+/// Constitution §27 accrual: insert one donation_ledger row for this sale.
+/// gross_jpy = what the buyer paid (incl. tax). cost_jpy = an honest estimate
+/// of fulfillment cost (Printful base + Stripe 3.6% + 10% buffer for refunds/
+/// printing errors). Destination is auto-resolved from source:
+///   MUGEN / MUON / MA / you → 弟子屈町 (Constitution §27 commitment)
+///   collab partners → cv_config['donation_dest__<source>'] override
+/// Returns the donation_jpy that was accrued (0 if no profit, or if a
+/// duplicate sale_ref was deduped by the UNIQUE constraint).
+///
+/// Idempotent on (source, sale_ref) — re-running the webhook never double-
+/// accrues.
+fn record_donation_accrual(
+    conn: &Connection,
+    source: &str,
+    sale_ref: &str,
+    gross_jpy: i64,
+    cost_jpy: i64,
+    project_tag: Option<&str>,
+) -> i64 {
+    let profit = (gross_jpy - cost_jpy).max(0);
+    let donation = profit / 2;  // §27: 50%
+    if donation <= 0 { return 0; }
+    let destination = donation_destination_for(conn, source);
+    // Idempotent: UNIQUE(source, sale_ref) guarantees only one row per sale.
+    let now = chrono_now();
+    let inserted = conn.execute(
+        "INSERT OR IGNORE INTO donation_ledger
+         (source, sale_ref, gross_jpy, cost_jpy, profit_jpy, donation_jpy,
+          status, project_tag, destination, accrued_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'accrued', ?, ?, ?)",
+        params![source, sale_ref, gross_jpy, cost_jpy, profit, donation,
+                project_tag, destination, now],
+    ).unwrap_or(0);
+    if inserted > 0 {
+        eprintln!("[§27] accrued ¥{} ({}|{}) → {} — profit ¥{} of ¥{} gross",
+            donation, source, sale_ref, destination, profit, gross_jpy);
+        donation
+    } else {
+        0
+    }
+}
+
+/// Sum of donation_ledger.donation_jpy filtered by status. Used by the
+/// /donations page hero and /api/transparency live numbers.
+fn donations_sum(conn: &Connection, status: &str) -> i64 {
+    conn.query_row(
+        "SELECT COALESCE(SUM(donation_jpy), 0) FROM donation_ledger WHERE status=?",
+        params![status], |r| r.get(0),
+    ).unwrap_or(0)
+}
+
+/// Breakdown of donation_ledger by destination (only entries with non-empty
+/// destination). Returns (destination, total_accrued, total_sent) sorted by
+/// total_accrued DESC. Surfaces "pending-partner-choice" so /donations can
+/// nudge yuki to configure partner mapping.
+fn donations_by_destination(conn: &Connection) -> Vec<(String, i64, i64)> {
+    let mut out = Vec::new();
+    let mut stmt = match conn.prepare(
+        "SELECT COALESCE(destination, '弟子屈町') AS dest,
+                COALESCE(SUM(CASE WHEN status='accrued' THEN donation_jpy ELSE 0 END), 0) AS accr,
+                COALESCE(SUM(CASE WHEN status='sent' THEN donation_jpy ELSE 0 END), 0) AS sent
+         FROM donation_ledger
+         GROUP BY dest
+         ORDER BY accr DESC"
+    ) { Ok(s) => s, Err(_) => return out };
+    if let Ok(rows) = stmt.query_map([], |r| Ok((
+        r.get::<_, String>(0)?,
+        r.get::<_, i64>(1)?,
+        r.get::<_, i64>(2)?,
+    ))) {
+        for r in rows.flatten() { out.push(r); }
+    }
+    out
 }
 
 /// Convert a JP prefecture name (English or Japanese) to ISO 3166-2 subdivision
@@ -16156,12 +16300,19 @@ fn ensure_proposal_tables(db: &Db) {
     // SKUs are free *once per email* (free_30_used=1 after first claim).
     let _ = conn.execute(
         "CREATE TABLE IF NOT EXISTS proposal_points (
-            email          TEXT PRIMARY KEY,
-            balance        INTEGER NOT NULL DEFAULT 0,
-            free_30_used   INTEGER NOT NULL DEFAULT 0,
-            updated_at     TEXT NOT NULL
+            email                 TEXT PRIMARY KEY,
+            balance               INTEGER NOT NULL DEFAULT 0,
+            free_30_used          INTEGER NOT NULL DEFAULT 0,
+            updated_at            TEXT NOT NULL,
+            -- Inactivity reminder bookkeeping. Points themselves NEVER
+            -- expire (deliberate B2B trust choice). We just nudge wallets
+            -- that have been idle for 90+ days with a non-pushy email.
+            last_activity_at      TEXT,
+            last_reminder_sent_at TEXT
          )", [],
     );
+    let _ = conn.execute("ALTER TABLE proposal_points ADD COLUMN last_activity_at TEXT", []);
+    let _ = conn.execute("ALTER TABLE proposal_points ADD COLUMN last_reminder_sent_at TEXT", []);
     let _ = conn.execute(
         "CREATE TABLE IF NOT EXISTS proposal_point_events (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -16289,9 +16440,9 @@ fn points_mutate(
     let em = normalize_email(email);
     let now = chrono_now();
     let _ = conn.execute(
-        "INSERT OR IGNORE INTO proposal_points (email, balance, free_30_used, updated_at)
-         VALUES (?, 0, 0, ?)",
-        params![em, now],
+        "INSERT OR IGNORE INTO proposal_points (email, balance, free_30_used, updated_at, last_activity_at)
+         VALUES (?, 0, 0, ?, ?)",
+        params![em, now, now],
     );
     let cur: i64 = conn.query_row(
         "SELECT balance FROM proposal_points WHERE email=?",
@@ -16302,8 +16453,8 @@ fn points_mutate(
         return Err(format!("insufficient points (have {}, need {})", cur, -delta));
     }
     conn.execute(
-        "UPDATE proposal_points SET balance=?, updated_at=? WHERE email=?",
-        params![new_bal, now, em],
+        "UPDATE proposal_points SET balance=?, updated_at=?, last_activity_at=? WHERE email=?",
+        params![new_bal, now, now, em],
     ).map_err(|e| e.to_string())?;
     let _ = conn.execute(
         "INSERT INTO proposal_point_events (email, delta, reason, ref, slug, balance_after, created_at)
@@ -17767,18 +17918,210 @@ async fn send_extras_completion_email(
         job = job_id, state = subj_state, succ = succeeded, qty = qty,
         slug = slug, url = url,
     );
-    let _ = reqwest::Client::new()
+    let _ = send_extras_email(&resend_key, email, &subj, &html).await;
+}
+
+/// Thin Resend wrapper. Single source of truth for the from-address and
+/// timeout — used by every extras-related notification.
+async fn send_extras_email(resend_key: &str, to: &str, subject: &str, html: &str) -> bool {
+    let r = reqwest::Client::new()
         .post("https://api.resend.com/emails")
-        .bearer_auth(&resend_key)
+        .bearer_auth(resend_key)
         .json(&serde_json::json!({
             "from": "━◯━ MU <info@wearmu.com>",
-            "to": [email.to_string()],
-            "subject": subj,
+            "to": [to.to_string()],
+            "subject": subject,
             "html": html,
             "reply_to": "info@wearmu.com",
         }))
         .timeout(std::time::Duration::from_secs(15))
         .send().await;
+    matches!(r, Ok(rr) if rr.status().is_success())
+}
+
+/// Daily cron: nudge wallets that have been idle for 90+ days but still
+/// have a meaningful balance. Points NEVER expire — this is purely a
+/// "you have credit, don't forget" reminder. At most one mail per 180d.
+const EXTRAS_REMINDER_INACTIVE_DAYS: i64 = 90;
+const EXTRAS_REMINDER_COOLDOWN_DAYS: i64 = 180;
+const EXTRAS_REMINDER_MIN_BALANCE: i64 = 300; // <10 SKUs not worth nudging
+
+async fn proposal_extras_reminder_cron(db: Db) {
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    if resend_key.is_empty() {
+        tracing::info!("[extras-reminder] RESEND_API_KEY unset — skipping");
+        return;
+    }
+    // Timestamps in the DB are unix-secs strings (chrono_now()). Compare
+    // lexicographically since unix-secs strings of equal length sort
+    // correctly. We pad to 10 chars below to stay correct past 2001-2286.
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now_secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+    let cutoff_activity_s = format!("{}", now_secs - EXTRAS_REMINDER_INACTIVE_DAYS * 86_400);
+    let cutoff_remind_s   = format!("{}", now_secs - EXTRAS_REMINDER_COOLDOWN_DAYS * 86_400);
+    let rows: Vec<(String, i64)> = {
+        let conn = db.lock().unwrap();
+        let mut st = match conn.prepare(
+            "SELECT email, balance FROM proposal_points
+             WHERE balance >= ?
+               AND COALESCE(last_activity_at, updated_at) < ?
+               AND (last_reminder_sent_at IS NULL OR last_reminder_sent_at < ?)
+             ORDER BY balance DESC LIMIT 200"
+        ) { Ok(s) => s, Err(_) => return };
+        let it = st.query_map(params![EXTRAS_REMINDER_MIN_BALANCE, cutoff_activity_s, cutoff_remind_s],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)));
+        match it { Ok(rs) => rs.flatten().collect(), Err(_) => Vec::new() }
+    };
+    let n = rows.len();
+    if n == 0 {
+        tracing::info!("[extras-reminder] no idle wallets to nudge");
+        return;
+    }
+    tracing::info!("[extras-reminder] sending {} nudge emails", n);
+    for (email, balance) in rows {
+        let html = format!(
+            r#"<div style="font-family:'Helvetica Neue',Arial,sans-serif;line-height:1.7;color:#222;max-width:520px">
+            <h2 style="font-size:18px;font-weight:500">━◯━ MU Collab pt のお知らせ</h2>
+            <p style="font-size:14px">{email} 様 — MU Collab の SKU 生成残高に <strong>{bal} pt (¥{bal})</strong> が残っています。 失効はありませんが、 使い忘れていませんか？</p>
+            <p style="font-size:14px">提案ページ末尾の <strong>「もっと SKU を追加」</strong> セクションで生成ジョブを発注できます。 1 SKU = 30 pt = ¥30。</p>
+            <p style="font-size:11.5px;color:#888;margin-top:18px">このメールは 90 日以上アクティビティのない残高保有者にのみ送信しています。 配信停止希望は info@wearmu.com まで。<br>— MU / 株式会社イネブラ</p>
+            </div>"#,
+            email = email, bal = balance,
+        );
+        let ok = send_extras_email(&resend_key, &email, "MU Collab — pt 残高のお知らせ", &html).await;
+        if ok {
+            let conn = db.lock().unwrap();
+            let _ = conn.execute(
+                "UPDATE proposal_points SET last_reminder_sent_at=? WHERE email=?",
+                params![chrono_now(), email],
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+    }
+}
+
+/// POST /admin/proposal/extras/retroactive-claim — admin gated. Grants pt
+/// to every past MU buyer (mugen/muon/ma) that hasn't yet been claimed,
+/// and emails each buyer one summary. Idempotent via proposal_mugen_claims.
+/// Body: {dry_run?, max?, send_email?}.
+#[derive(Deserialize, Default)]
+struct AdminRetroBody {
+    #[serde(default)] dry_run: bool,
+    #[serde(default)] max: Option<i64>,
+    #[serde(default = "default_true")] send_email: bool,
+}
+fn default_true() -> bool { true }
+
+async fn admin_extras_retroactive_claim(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<AdminRetroBody>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/proposal/extras/retroactive-claim").await {
+        return r;
+    }
+    let max_n = body.max.unwrap_or(2000).max(1);
+    let rows: Vec<(i64, String, String, i64)> = {
+        let conn = db.lock().unwrap();
+        let mut st = match conn.prepare(
+            "SELECT mp.id, mp.email, mp.brand,
+                    COALESCE(mp.amount_jpy, (SELECT p.price_jpy FROM products p WHERE p.id = mp.product_id), 0)
+             FROM mu_purchases mp
+             LEFT JOIN proposal_mugen_claims c ON c.mu_purchase_id = mp.id
+             WHERE mp.brand IN ('mugen','muon','ma')
+               AND c.mu_purchase_id IS NULL
+               AND COALESCE(mp.amount_jpy, (SELECT p.price_jpy FROM products p WHERE p.id = mp.product_id), 0) > 0
+             ORDER BY mp.id ASC
+             LIMIT ?"
+        ) { Ok(s) => s, Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("prepare: {}", e)).into_response() };
+        let it = st.query_map(params![max_n], |r| Ok((
+            r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, i64>(3)?,
+        )));
+        match it { Ok(rs) => rs.flatten().collect(), Err(_) => Vec::new() }
+    };
+    // Group by email so one buyer gets one summary email.
+    use std::collections::HashMap;
+    let mut by_email: HashMap<String, (i64, Vec<(i64, String, i64)>)> = HashMap::new();
+    for (id, email, brand, amount) in rows {
+        if validate_email(&email).is_err() || amount <= 0 { continue; }
+        let em = normalize_email(&email);
+        let entry = by_email.entry(em).or_insert((0, Vec::new()));
+        entry.0 += amount;
+        entry.1.push((id, brand, amount));
+    }
+    if body.dry_run {
+        let preview: Vec<serde_json::Value> = by_email.iter().map(|(em, (total, ps))| serde_json::json!({
+            "email": em, "total_pt": total, "n_purchases": ps.len(),
+        })).collect();
+        return Json(serde_json::json!({
+            "ok": true, "dry_run": true,
+            "would_claim_emails": by_email.len(),
+            "would_claim_purchases": by_email.values().map(|(_, ps)| ps.len()).sum::<usize>(),
+            "would_grant_total_pt": by_email.values().map(|(t, _)| *t).sum::<i64>(),
+            "preview": preview,
+        })).into_response()
+    }
+    let now = chrono_now();
+    let mut applied_emails = 0_i64;
+    let mut applied_pt = 0_i64;
+    let mut emailed = 0_i64;
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    for (em, (_total, ps)) in &by_email {
+        let mut credited_here = 0_i64;
+        {
+            let conn = db.lock().unwrap();
+            for (id, brand, amount) in ps {
+                let already: bool = conn.query_row(
+                    "SELECT 1 FROM proposal_mugen_claims WHERE mu_purchase_id=?",
+                    params![id], |_| Ok(true),
+                ).unwrap_or(false);
+                if already { continue; }
+                let reason = format!("{}_claim_retro", brand);
+                if points_mutate(&conn, em, *amount, &reason,
+                                 Some(&id.to_string()), None).is_ok() {
+                    let _ = conn.execute(
+                        "INSERT INTO proposal_mugen_claims
+                            (mu_purchase_id, email, slug, points_added, claimed_at)
+                         VALUES (?,?,NULL,?,?)",
+                        params![id, em, amount, now],
+                    );
+                    credited_here += amount;
+                }
+            }
+        }
+        if credited_here > 0 {
+            applied_emails += 1;
+            applied_pt += credited_here;
+        }
+        if body.send_email && credited_here > 0 && !resend_key.is_empty() {
+            let purchases_html: String = ps.iter().map(|(_, brand, amount)|
+                format!("<li>{} — <strong>+{} pt</strong> (¥{})</li>",
+                    brand.to_uppercase(), amount, amount))
+                .collect();
+            let html = format!(
+                r#"<div style="font-family:'Helvetica Neue',Arial,sans-serif;line-height:1.7;color:#222;max-width:520px">
+                <h2 style="font-size:18px;font-weight:500">━◯━ 過去の MU 購入分にポイントを付与しました</h2>
+                <p style="font-size:14px">{email} 様の過去 MU 商品購入に対して、 <strong>合計 +{total} pt (¥{total})</strong> を加算しました（失効なし）。</p>
+                <ul style="font-size:13px;padding-left:18px">{items}</ul>
+                <p style="font-size:14px">これらの pt は、 MU Collab の提案ページ末尾「もっと SKU を追加」セクションで AI SKU 生成に使えます (1 SKU = 30 pt)。 collab 開始のご相談は本メールへ返信ください。</p>
+                <p style="font-size:11.5px;color:#888;margin-top:18px">このメールは MU 商品 (MUGEN/MUON/MA) を購入した方に 1 回のみ自動送信されます。<br>— MU / 株式会社イネブラ</p>
+                </div>"#,
+                email = em, total = credited_here, items = purchases_html,
+            );
+            let ok = send_extras_email(&resend_key, em, "MU — 過去購入分のポイント付与のお知らせ", &html).await;
+            if ok { emailed += 1; }
+            tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+        }
+    }
+    Json(serde_json::json!({
+        "ok": true,
+        "applied_emails": applied_emails,
+        "applied_purchases": by_email.values().map(|(_, ps)| ps.len()).sum::<usize>(),
+        "applied_pt": applied_pt,
+        "emailed": emailed,
+        "dry_run": false,
+    })).into_response()
 }
 
 #[derive(Deserialize)]
@@ -21489,8 +21832,73 @@ footer a:hover{{color:var(--y)}}
 /// edited by yuki when a real bank transfer to 弟子屈町 / 北海道 lands.
 /// No DB, no automation: §27 is a creator-level commitment that a program
 /// should not pretend to fulfill on his behalf.
-async fn public_donations_page() -> Html<String> {
-    let body_html = md_to_html_simple(DONATIONS_RAW);
+async fn public_donations_page(State(db): State<Db>) -> Html<String> {
+    let body_md_html = md_to_html_simple(DONATIONS_RAW);
+    let (accrued, sent, entries, by_dest): (i64, i64, i64, Vec<(String,i64,i64)>) = {
+        let conn = db.lock().unwrap();
+        let a = donations_sum(&conn, "accrued");
+        let s = donations_sum(&conn, "sent");
+        let e: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM donation_ledger", [], |r| r.get(0),
+        ).unwrap_or(0);
+        let by = donations_by_destination(&conn);
+        (a, s, e, by)
+    };
+    // Per-destination breakdown table — surfaces collab partners that haven't
+    // picked a recipient yet ('pending-partner-choice').
+    let dest_rows: String = by_dest.iter().map(|(d, a, s)| {
+        let label = if d == "pending-partner-choice" {
+            r##"<span style="color:#C8362C">未設定 (partner choice 待ち)</span>"##.to_string()
+        } else {
+            format!(r##"<strong style="color:#F5F5F0">{}</strong>"##, d)
+        };
+        format!(
+            r##"<tr><td>{}</td><td style="text-align:right;color:#e6c449;font-variant-numeric:tabular-nums">¥{}</td><td style="text-align:right;color:#9ae3a8;font-variant-numeric:tabular-nums">¥{}</td></tr>"##,
+            label, format_jpy(*a), format_jpy(*s),
+        )
+    }).collect();
+    let dest_table = if by_dest.is_empty() { String::new() } else {
+        format!(
+            r##"<div style="margin-top:24px">
+  <div style="font-size:10px;letter-spacing:0.32em;text-transform:uppercase;color:#888;margin-bottom:10px">寄付先別 内訳</div>
+  <table style="width:100%;border-collapse:collapse;font-size:12.5px;border:1px solid rgba(255,255,255,0.08);border-radius:2px">
+    <thead><tr style="background:rgba(255,255,255,0.03);color:#888;font-size:10px;letter-spacing:0.22em;text-transform:uppercase">
+      <th style="padding:10px 12px;text-align:left">寄付先</th>
+      <th style="padding:10px 12px;text-align:right">Accrued</th>
+      <th style="padding:10px 12px;text-align:right">Sent</th>
+    </tr></thead>
+    <tbody>{}</tbody>
+  </table>
+</div>"##, dest_rows)
+    };
+    let live_hero = format!(
+        r##"<div style="background:rgba(230,196,73,0.05);border:1px solid rgba(230,196,73,0.25);border-left:3px solid #e6c449;border-radius:3px;padding:24px 28px;margin:0 0 36px">
+  <div style="font-size:10px;letter-spacing:0.42em;text-transform:uppercase;color:#e6c449;margin-bottom:14px">Live ledger</div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:18px">
+    <div>
+      <div style="font-size:28px;font-weight:200;color:#e6c449;letter-spacing:-0.01em;line-height:1">¥{accrued_fmt}</div>
+      <div style="font-size:10px;letter-spacing:0.22em;text-transform:uppercase;color:#888;margin-top:6px">Accrued (送金待ち)</div>
+    </div>
+    <div>
+      <div style="font-size:28px;font-weight:200;color:#F5F5F0;letter-spacing:-0.01em;line-height:1">¥{sent_fmt}</div>
+      <div style="font-size:10px;letter-spacing:0.22em;text-transform:uppercase;color:#888;margin-top:6px">Sent (送金済)</div>
+    </div>
+    <div>
+      <div style="font-size:28px;font-weight:200;color:#F5F5F0;letter-spacing:-0.01em;line-height:1">{entries}</div>
+      <div style="font-size:10px;letter-spacing:0.22em;text-transform:uppercase;color:#888;margin-top:6px">Ledger entries</div>
+    </div>
+  </div>
+  <p style="font-size:11.5px;color:#888;line-height:1.85;margin-top:16px">
+    売上が立った瞬間に、 profit ÷ 2 (Constitution §27) が <code style="background:rgba(230,196,73,0.10);color:#e6c449;padding:1px 5px;border-radius:2px;font-size:11px">donation_ledger</code> に accrue されます。 <strong style="color:#F5F5F0">MUGEN / MUON / MA / /you は 弟子屈町</strong>、 コラボ各社 (kokon / sweep / jiuflow …) は各 partner が選んだ先 (例: kokon → 港区社協、 sweep → SJJJF、 jiuflow → BJJ コミュニティ団体) に振り分けられます。 四半期に 1 回 一括送金で status='sent' に flip。
+  </p>
+  {dest_table}
+</div>"##,
+        accrued_fmt = format_jpy(accrued),
+        sent_fmt    = format_jpy(sent),
+        entries     = entries,
+        dest_table  = dest_table,
+    );
+    let body_html = format!("{}\n{}", live_hero, body_md_html);
     let html = format!(r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>━◯━ MU · 寄付公開記録 (Constitution §27) | wearmu.com</title>
@@ -40522,10 +40930,42 @@ async fn main() {
         CREATE INDEX IF NOT EXISTS idx_mu_purchases_email ON mu_purchases(email);
         CREATE INDEX IF NOT EXISTS idx_mu_purchases_session ON mu_purchases(session_id);
         CREATE INDEX IF NOT EXISTS idx_you_users_email ON you_users(email);
+
+        -- Constitution §27: per-sale accrual ledger for the 50% post-tax pledge
+        -- to 弟子屈町. One row per profitable sale, written by webhooks via
+        -- record_donation_accrual(). status='accrued' until a real bank
+        -- transfer / 企業版ふるさと納税 申込 lands in donations.md, then
+        -- batched rows flip to status='sent' with sent_ref filled.
+        --
+        -- Profit-of-record is gross_jpy − cost_jpy (cost = Printful fulfillment
+        -- + Stripe fee estimate). Donation = profit × 50% rounded down to ¥1.
+        -- §27 minimum (¥100,000/year) is enforced at quarterly batch time, not
+        -- here — this table only accrues per-sale.
+        CREATE TABLE IF NOT EXISTS donation_ledger (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            source        TEXT NOT NULL,        -- 'you' | 'kokon' | 'sweep' | 'mugen' | 'muon' | 'jiuflow' | …
+            sale_ref      TEXT NOT NULL,        -- Stripe session_id or printful_order_id (unique-ish)
+            gross_jpy     INTEGER NOT NULL,     -- amount the buyer paid (JPY, including tax)
+            cost_jpy      INTEGER NOT NULL,     -- Printful fulfillment + Stripe 3.6% estimate
+            profit_jpy    INTEGER NOT NULL,     -- gross − cost
+            donation_jpy  INTEGER NOT NULL,     -- profit ÷ 2 (rounded down)
+            status        TEXT NOT NULL DEFAULT 'accrued',  -- 'accrued' | 'sent' | 'reversed'
+            project_tag   TEXT,                 -- optional: 'soluna_cl_t' | 'lodge_planting' | …
+            destination   TEXT,                 -- recipient (e.g. '弟子屈町', 'SJJJF', '港区社協', …)
+            accrued_at    TEXT NOT NULL,
+            sent_at       TEXT,
+            sent_ref      TEXT,                 -- 企業版ふるさと納税 申込番号 or bank tx
+            notes         TEXT,
+            UNIQUE(source, sale_ref)
+        );
+        CREATE INDEX IF NOT EXISTS idx_donation_ledger_status ON donation_ledger(status);
+        CREATE INDEX IF NOT EXISTS idx_donation_ledger_accrued_at ON donation_ledger(accrued_at DESC);
     ").ok();
-    // Idempotent migration for already-deployed mu_purchases (ignored when
-    // column exists).
+    // Idempotent migrations.
     let _ = conn.execute("ALTER TABLE mu_purchases ADD COLUMN amount_jpy INTEGER", []);
+    // (2026-05-16) Per-partner donation recipient: MUGEN/MUON/MA/you → 弟子屈,
+    //   collab partners → recipient picked by the partner (cv_config map).
+    let _ = conn.execute("ALTER TABLE donation_ledger ADD COLUMN destination TEXT", []);
     conn.execute_batch("
 
         -- MA Lottery (4/7 Founder Relay): 100日に1回 ランダム1人に MA を贈与。
@@ -41438,6 +41878,20 @@ async fn main() {
         }
     });
 
+    // Proposal extras: daily inactivity reminder cron (no expiry, just nudge).
+    // Runs once per JST midnight. Sends a polite "you have pt" mail to
+    // wallets idle 90+ days with >300 pt remaining.
+    let db_reminder = db.clone();
+    tokio::spawn(async move {
+        // Initial delay: 10 minutes after boot so we don't race startup
+        tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+        loop {
+            proposal_extras_reminder_cron(db_reminder.clone()).await;
+            // ~24h between runs
+            tokio::time::sleep(std::time::Duration::from_secs(24 * 3600)).await;
+        }
+    });
+
     // Proposal extras worker — drains proposal_extras_jobs every 30s. Each
     // pending row → N Gemini calls → R2 upload → proposal_extras_skus +
     // proposal_skus insert. Survives image-level failures (refunds the
@@ -41633,6 +42087,7 @@ async fn main() {
         .route("/api/proposal/extras/sku/:sku_id/regenerate",   post(extras_sku_regenerate))
         .route("/admin/proposal",              post(proposal_generic_create))
         .route("/admin/proposals",             get(proposal_generic_list))
+        .route("/admin/proposal/extras/retroactive-claim",      post(admin_extras_retroactive_claim))
         .nest_service("/proposals", ServeDir::new("static/proposals"))
         .route("/api/collab/account/delete", post(collab_account_delete))
         .route("/api/404/buy", post(not_found_buy))
