@@ -31706,21 +31706,23 @@ async fn region_landing(
         match r {
             Some((_id, drop, price, inv, sold, _)) => {
                 let rem = (*inv - *sold).max(0);
-                let urgency = if rem <= 5 && rem > 0 {
+                let urgency = if *inv > 1 && rem <= 5 && rem > 0 {
                     format!(r##"<div class="tier-urgent">🔥 残り {rem} 着 · 完売間近</div>"##, rem = rem)
                 } else { String::new() };
                 let class_attr = if primary { "tier tier-primary" } else { "tier" };
                 let cta_text = if primary { "今すぐ買う →" } else { "Entry で買う →" };
+                let stock_text = if *inv == 1 { "1 of 1 · 1点限定".to_string() }
+                                 else { format!("1 of {} (残り {})", inv, rem) };
                 format!(
                     r##"<a href="/products/regional_{slug}/{drop}" class="{cls}">
                       <div class="tier-kicker">{kicker}</div>
                       <div class="tier-price">¥{p}</div>
-                      <div class="tier-meta">{label} · 1 of {inv} (残り {rem})</div>
+                      <div class="tier-meta">{label} · {stock}</div>
                       {urgency}
                       <div class="tier-cta">{cta}</div>
                     </a>"##,
                     cls = class_attr, slug = slug, drop = drop, kicker = kicker, label = label,
-                    p = format_jpy(*price), rem = rem, inv = inv,
+                    p = format_jpy(*price), stock = stock_text,
                     urgency = urgency, cta = cta_text,
                 )
             }
@@ -31768,18 +31770,26 @@ async fn region_landing(
             let tier_badge = if *price >= 9000 { "PREMIUM" }
                 else if *price >= 6000 { "STANDARD" } else { "ENTRY" };
             let short_name = name.split(" — ").last().unwrap_or(name).chars().take(30).collect::<String>();
+            // For 1-of-1 drops show "1 of 1"; for multi-stock show "残り N"
+            let stock_html = if *inv == 1 {
+                if *sold == 0 { "1 of 1".to_string() } else { "SOLD".to_string() }
+            } else {
+                format!("残り {}", rem)
+            };
+            let sold_out = *inv > 0 && rem == 0;
+            let card_class = if sold_out { "cat cat-sold" } else { "cat" };
             format!(
-                r##"<a href="/products/regional_{slug}/{drop}" class="cat">
+                r##"<a href="/products/regional_{slug}/{drop}" class="{cls}">
                   <img src="{mockup}" alt="{name_esc}" loading="lazy">
                   <div class="cat-meta">
                     <div class="cat-row1"><span class="cat-num">#{drop:04}</span><span class="cat-badge">{tier}</span></div>
                     <div class="cat-name">{short}</div>
-                    <div class="cat-row2"><span class="cat-price">¥{p}</span><span class="cat-rem">{rem}/{inv}</span></div>
+                    <div class="cat-row2"><span class="cat-price">¥{p}</span><span class="cat-rem">{stock}</span></div>
                   </div>
                 </a>"##,
-                slug = slug, drop = drop, mockup = html_attr_escape(mockup),
+                cls = card_class, slug = slug, drop = drop, mockup = html_attr_escape(mockup),
                 name_esc = html_attr_escape(name), tier = tier_badge, short = html_escape(&short_name),
-                p = format_jpy(*price), rem = rem, inv = inv,
+                p = format_jpy(*price), stock = stock_html,
             )
         }).collect();
         format!(r##"<section>
@@ -31854,6 +31864,8 @@ h2{{font-size:clamp(20px,2.8vw,26px);font-weight:300;line-height:1.45;margin-bot
 .cat-row2{{display:flex;justify-content:space-between;align-items:baseline}}
 .cat-price{{font-size:15px;color:var(--y);font-variant-numeric:tabular-nums}}
 .cat-rem{{font-size:9.5px;color:var(--mute);font-variant-numeric:tabular-nums;letter-spacing:0.06em}}
+.cat-sold{{opacity:0.45}}
+.cat-sold .cat-rem{{color:#ff8a8a}}
 footer{{padding:40px 24px;border-top:1px solid var(--line);font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;letter-spacing:0.16em;color:var(--mute);text-align:center}}
 footer a{{color:var(--mute);margin:0 8px;text-decoration:none}}
 footer a:hover{{color:var(--y)}}
