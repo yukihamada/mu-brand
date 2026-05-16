@@ -141,7 +141,7 @@ def get_client() -> GoogleAdsClient:
             f"google-ads.yaml not found at {cfg}.\n"
             "See scripts/google_ads_README.md for OAuth bootstrap."
         )
-    return GoogleAdsClient.load_from_storage(cfg, version="v17")
+    return GoogleAdsClient.load_from_storage(cfg, version="v22")
 
 
 def find_campaign_by_name(client: GoogleAdsClient, customer_id: str, name: str) -> str | None:
@@ -192,7 +192,14 @@ def create_search_campaign(
     c.advertising_channel_type = client.enums.AdvertisingChannelTypeEnum.SEARCH
     c.status = client.enums.CampaignStatusEnum.ENABLED
     c.campaign_budget = budget_rn
-    c.manual_cpc.enhanced_cpc_enabled = True
+    # v22: must explicitly construct one of the bidding strategy oneofs.
+    # target_spend (maximize clicks within budget) is a good default for Search.
+    target_spend = client.get_type("TargetSpend")
+    c.target_spend = target_spend
+    # v22 requires explicit EU political ad declaration.
+    c.contains_eu_political_advertising = (
+        client.enums.EuPoliticalAdvertisingStatusEnum.DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING
+    )
     c.network_settings.target_google_search = True
     c.network_settings.target_search_network = False
     c.network_settings.target_content_network = False
@@ -216,6 +223,9 @@ def create_pmax_campaign(
     c.status = client.enums.CampaignStatusEnum.ENABLED
     c.campaign_budget = budget_rn
     c.maximize_conversions.target_cpa_micros = 1_100_000_000  # ¥1,100 target CPA = 1 sale profit
+    c.contains_eu_political_advertising = (
+        client.enums.EuPoliticalAdvertisingStatusEnum.DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING
+    )
     resp = client.get_service("CampaignService").mutate_campaigns(
         customer_id=customer_id, operations=[op]
     )
@@ -227,9 +237,7 @@ def add_geo_japan(client: GoogleAdsClient, customer_id: str, campaign_rn: str) -
     op = client.get_type("CampaignCriterionOperation")
     c = op.create
     c.campaign = campaign_rn
-    c.location.geo_target_constant = (
-        client.get_service("GeoTargetConstantService").geo_target_constant_path("2392")
-    )
+    c.location.geo_target_constant = "geoTargetConstants/2392"
     try:
         client.get_service("CampaignCriterionService").mutate_campaign_criteria(
             customer_id=customer_id, operations=[op]
@@ -244,9 +252,8 @@ def add_language_japanese(client: GoogleAdsClient, customer_id: str, campaign_rn
     op = client.get_type("CampaignCriterionOperation")
     c = op.create
     c.campaign = campaign_rn
-    c.language.language_constant = (
-        client.get_service("LanguageConstantService").language_constant_path("1005")
-    )
+    # v22: LanguageConstantService removed. Resource name is direct.
+    c.language.language_constant = "languageConstants/1005"
     try:
         client.get_service("CampaignCriterionService").mutate_campaign_criteria(
             customer_id=customer_id, operations=[op]
@@ -457,15 +464,12 @@ def create_all(client: GoogleAdsClient, customer_id: str) -> dict:
     )
     out["MU-Discovery"] = {"campaign": cmp_b, "ad_group": ag_b, "ad": ad_b}
 
-    # C. Performance Max
-    bud_c = upsert_budget(client, customer_id, "MU-PMax", DAILY_BUDGET_MICROS["MU-PMax"])
-    cmp_c = create_pmax_campaign(client, customer_id, "MU-PMax", bud_c)
-    # PMax asset groups require a separate flow — print a note.
+    # C. Performance Max (skipped by default — needs logo asset upload first
+    # when the account has Brand Guidelines enabled, which v22 PMax now
+    # requires. Add a square PNG logo asset in the Ads UI then re-enable.)
     out["MU-PMax"] = {
-        "campaign": cmp_c,
-        "note": "PMax asset groups (images, headlines, sitelinks) must be added in UI or via a follow-up script. Campaign skeleton + budget are live.",
+        "note": "skipped (requires manual logo asset upload — see scripts/google_ads_README.md § PMax)",
     }
-
     return out
 
 
