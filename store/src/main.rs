@@ -8985,6 +8985,75 @@ async fn admin_product_new(
     })).into_response()
 }
 
+/// POST /api/admin/collab_products/new?token=… — admin-gated insert into
+/// collab_products. Body:
+///   { slug, partner, category, name, description, image_url, price_jpy,
+///     sizes (array, optional), active (default 1), draft (default 1),
+///     printful_product_id?, printful_variant_id?, production_route?,
+///     lead_time_days?, printful_files? (raw JSON string),
+///     printful_options? (raw JSON string), printful_variant_map? }
+async fn admin_collab_product_new(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/collab_products/new").await { return r; }
+    let slug = match body.get("slug").and_then(|v| v.as_str()) {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => return (StatusCode::BAD_REQUEST, "slug required").into_response(),
+    };
+    let partner = match body.get("partner").and_then(|v| v.as_str()) {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => return (StatusCode::BAD_REQUEST, "partner required").into_response(),
+    };
+    let category = body.get("category").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let name = match body.get("name").and_then(|v| v.as_str()) {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => return (StatusCode::BAD_REQUEST, "name required").into_response(),
+    };
+    let description = body.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let image_url = body.get("image_url").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let price_jpy = body.get("price_jpy").and_then(|v| v.as_i64()).unwrap_or(6800);
+    let sizes_json = body.get("sizes").and_then(|v| v.as_array())
+        .map(|a| serde_json::to_string(a).unwrap_or_else(|_| "[\"M\"]".into()))
+        .unwrap_or_else(|| "[\"XS\",\"S\",\"M\",\"L\",\"XL\"]".into());
+    let active = body.get("active").and_then(|v| v.as_i64()).unwrap_or(1);
+    let draft = body.get("draft").and_then(|v| v.as_i64()).unwrap_or(1);
+    let pf_prod = body.get("printful_product_id").and_then(|v| v.as_i64());
+    let pf_var = body.get("printful_variant_id").and_then(|v| v.as_i64());
+    let route = body.get("production_route").and_then(|v| v.as_str()).unwrap_or("printful").to_string();
+    let lead = body.get("lead_time_days").and_then(|v| v.as_i64()).unwrap_or(14);
+    let pf_files = body.get("printful_files").and_then(|v| v.as_str()).map(String::from);
+    let pf_options = body.get("printful_options").and_then(|v| v.as_str()).map(String::from);
+    let pf_var_map = body.get("printful_variant_map").and_then(|v| v.as_str()).map(String::from);
+    let now = chrono_now();
+    let res = {
+        let conn = db.lock().unwrap();
+        conn.execute(
+            "INSERT INTO collab_products
+                 (slug, partner, category, name, description, image_url, price_jpy,
+                  sizes_json, active, draft, created_at,
+                  printful_product_id, printful_variant_id, production_route,
+                  lead_time_days, printful_variant_map,
+                  printful_files, printful_options)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            params![slug, partner, category, name, description, image_url, price_jpy,
+                    sizes_json, active, draft, now,
+                    pf_prod, pf_var, route, lead, pf_var_map, pf_files, pf_options],
+        )
+    };
+    match res {
+        Ok(_) => {
+            let id: i64 = { let c = db.lock().unwrap(); c.last_insert_rowid() };
+            Json(serde_json::json!({"ok": true, "id": id, "slug": slug})).into_response()
+        }
+        Err(e) => (StatusCode::CONFLICT,
+            Json(serde_json::json!({"ok": false, "error": format!("{}", e)})),
+        ).into_response()
+    }
+}
+
 /// GET /api/admin/collab_orders?token=…&limit=50&partner=kokon — admin-gated
 /// dump of recent collab_orders joined with the matching collab_products row
 /// so yuki can quickly check what image / Printful linkage was used at order time.
@@ -45354,6 +45423,7 @@ async fn main() {
         .route("/api/admin/costs", get(admin_costs_list))
         .route("/api/admin/costs/sweep_losses", post(admin_sweep_losses))
         .route("/api/admin/collab_orders", get(admin_collab_orders))
+        .route("/api/admin/collab_products/new", post(admin_collab_product_new))
         .route("/api/products/:id/design.png", get(product_design_image))
         .route("/api/products/:id/mockup.png", get(product_mockup_image))
         .route("/api/collab/:id/image.png", get(collab_product_image))
