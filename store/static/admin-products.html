@@ -130,11 +130,12 @@
         </div>
         <div class="edit-field">
           <label>price (¥)</label>
-          <input id="n-price" type="number" value="6800">
+          <input id="n-price" type="number" value="6800" oninput="updatePriceRecommendation()">
+          <span id="n-price-hint" style="font-size:10px;color:var(--mute);letter-spacing:0.04em"></span>
         </div>
         <div class="edit-field">
           <label>cost (¥, 空 = ブランド default)</label>
-          <input id="n-cost" type="number" placeholder="例: 3200">
+          <input id="n-cost" type="number" placeholder="例: 3200" oninput="updatePriceRecommendation()">
         </div>
         <div class="edit-field">
           <label>inventory (1/1 なら 1)</label>
@@ -445,11 +446,24 @@ async function saveEdits(id) {
   };
   setStatus('detail-status', 'info', '━ saving…');
   try {
-    const r = await fetch(withTok(`/api/admin/products/${id}/update`), {
+    let r = await fetch(withTok(`/api/admin/products/${id}/update`), {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(body),
     });
+    if (r.status === 422) {
+      const errJ = await r.json();
+      const msg = errJ.message || '価格が原価より低すぎ';
+      if (!confirm(`⚠ 赤字保存\n\n${msg}\n\n強制保存しますか？`)) {
+        setStatus('detail-status', 'err', '━ 保存中止 (赤字)');
+        return;
+      }
+      r = await fetch(withTok(`/api/admin/products/${id}/update`), {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ ...body, force_loss: true }),
+      });
+    }
     if (!r.ok) { setStatus('detail-status', 'err', `HTTP ${r.status}`); return; }
     const j = await r.json();
     setStatus('detail-status', 'ok', `━ saved (${j.rows || 1} rows)`);
@@ -524,6 +538,7 @@ let wizardCandidates = [];
 function openNewPanel() {
   document.getElementById('new-panel').classList.add('open');
   showWizStep(1);
+  updatePriceRecommendation();
 }
 function closeWizard() {
   document.getElementById('new-panel').classList.remove('open');
@@ -535,6 +550,35 @@ function showWizStep(n) {
   document.getElementById('wiz-step3').style.display = n===3 ? 'block' : 'none';
 }
 
+// brand → デフォルト原価 (Rust 側と同期)
+const BRAND_DEFAULT_COST = {
+  mugen: 3200, regional: 3200, teshikaga: 3200, you: 3200,
+  jiufight: 3500, sweep: 3500, ma: 6500,
+};
+function defaultCostFor(brand) { return BRAND_DEFAULT_COST[brand] || 3500; }
+function recommendedPrice(cost) { return Math.ceil(cost * 1.5 / 100) * 100; }
+function floorPrice(cost) { return Math.ceil(cost * 1.30 / 100) * 100; }
+
+// Live recommendation in the wizard
+function updatePriceRecommendation() {
+  const brand = document.getElementById('n-brand').value.trim() || 'mugen';
+  const costStr = document.getElementById('n-cost').value.trim();
+  const cost = costStr ? parseInt(costStr, 10) : defaultCostFor(brand);
+  const price = parseInt(document.getElementById('n-price').value || '0', 10);
+  const reco = recommendedPrice(cost);
+  const floor = floorPrice(cost);
+  const hint = document.getElementById('n-price-hint');
+  if (hint) {
+    if (price < floor) {
+      hint.style.color = 'var(--red)';
+      hint.textContent = `⚠ 赤字: price ¥${price.toLocaleString()} < floor ¥${floor.toLocaleString()} (cost ¥${cost.toLocaleString()} × 1.30) — 推奨 ¥${reco.toLocaleString()}`;
+    } else {
+      hint.style.color = 'var(--mute)';
+      hint.textContent = `cost ¥${cost.toLocaleString()} → 推奨 ¥${reco.toLocaleString()} (cost × 1.5)`;
+    }
+  }
+}
+
 async function genCandidates() {
   const body = {
     brand: document.getElementById('n-brand').value.trim() || 'mugen',
@@ -543,10 +587,18 @@ async function genCandidates() {
     count: parseInt(document.getElementById('n-count').value || '3', 10),
   };
   if (!body.prompt) { setStatus('new-status', 'err', '━ prompt 必須'); return; }
+  const costStr = document.getElementById('n-cost').value.trim();
+  const cost = costStr ? parseInt(costStr, 10) : null;
+  const effectiveCost = cost ?? defaultCostFor(body.brand);
+  const price = parseInt(document.getElementById('n-price').value || '6800', 10);
+  const floor = floorPrice(effectiveCost);
+  if (price < floor) {
+    if (!confirm(`⚠ price ¥${price.toLocaleString()} は cost ¥${effectiveCost.toLocaleString()} に対して赤字。推奨 ¥${recommendedPrice(effectiveCost).toLocaleString()}。\n\nそれでも続行?`)) return;
+  }
   wizardEcho = {
     ...body,
-    price_jpy: parseInt(document.getElementById('n-price').value || '6800', 10),
-    cost_jpy: (() => { const v = document.getElementById('n-cost').value.trim(); return v ? parseInt(v, 10) : null; })(),
+    price_jpy: price,
+    cost_jpy: cost,
     inventory: parseInt(document.getElementById('n-inventory').value || '1', 10),
   };
   setStatus('new-status', 'info', `━ Gemini で ${body.count} 候補を並列生成中… (約 25〜35 秒)`);

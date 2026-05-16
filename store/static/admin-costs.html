@@ -43,6 +43,8 @@
   tr:last-child td { border-bottom: 0; }
   tr.brand-row td { background: rgba(230,196,73,0.05); font-weight: 600; }
   tr.brand-row td.num { color: var(--accent); }
+  tr.loss-row td { background: rgba(255,74,61,0.08); }
+  tr.loss-row td:first-child::before { content: "⚠ "; color: var(--red); font-weight: 700; }
   td input.cost-edit { width: 88px; background: #050505; border: 1px solid var(--line); color: var(--fg); padding: 5px 7px; font-family: inherit; font-size: 11px; border-radius: 3px; text-align: right; font-variant-numeric: tabular-nums; }
   td .default-tag { color: var(--mute); font-size: 9px; letter-spacing: 0.10em; margin-left: 6px; }
   .sentinel { padding: 28px; text-align: center; color: var(--mute); font-size: 11px; letter-spacing: 0.18em; }
@@ -85,6 +87,10 @@
       <option value="">— all brands —</option>
     </select>
     <button class="btn" id="show-active" onclick="toggleActive()">active のみ ▢</button>
+    <button class="btn" id="show-loss" onclick="toggleLossOnly()">⚠ 赤字のみ ▢</button>
+    <button class="btn" style="border-color: var(--red); color: var(--red)" onclick="sweepLosses('report')">⚠ 赤字 SKU を一覧</button>
+    <button class="btn" onclick="sweepLosses('raise_price')">━ 推奨価格に一括引き上げ</button>
+    <button class="btn" onclick="sweepLosses('deactivate')">━ 赤字 SKU を停止</button>
     <span class="count" id="count">0 loaded</span>
   </div>
 
@@ -116,9 +122,14 @@ let hasMore = true;
 let loading = false;
 let products = [];
 let activeOnly = false;
+let lossOnly = false;
 let currentBrand = '';
 let sortKey = 'id';
 let sortDir = 'desc';
+const MIN_PRICE_OVER_COST = 1.30;
+function isLoss(p) {
+  return p.margin_pct < ((MIN_PRICE_OVER_COST - 1.0) * 100.0);
+}
 
 function adminToken() {
   const u = new URL(window.location.href);
@@ -214,7 +225,8 @@ function renderBrandTable(aggs) {
 }
 
 function sortedProducts() {
-  const rows = activeOnly ? products.filter(p => p.active === 1) : products;
+  let rows = activeOnly ? products.filter(p => p.active === 1) : products;
+  if (lossOnly) rows = rows.filter(isLoss);
   const k = sortKey, dir = sortDir === 'asc' ? 1 : -1;
   return rows.slice().sort((a, b) => {
     const av = a[k], bv = b[k];
@@ -238,7 +250,7 @@ function renderSkuTable() {
   });
   const tb = document.getElementById('sku-tbody');
   tb.innerHTML = rows.map(p => `
-    <tr>
+    <tr class="${isLoss(p) ? 'loss-row' : ''}">
       <td>${p.id}</td>
       <td>${escapeHtml(p.brand)}</td>
       <td class="num">${p.drop_num}</td>
@@ -296,6 +308,33 @@ function toggleActive() {
   activeOnly = !activeOnly;
   document.getElementById('show-active').textContent = activeOnly ? 'active のみ ☑' : 'active のみ ▢';
   renderSkuTable();
+}
+function toggleLossOnly() {
+  lossOnly = !lossOnly;
+  document.getElementById('show-loss').textContent = lossOnly ? '⚠ 赤字のみ ☑' : '⚠ 赤字のみ ▢';
+  renderSkuTable();
+}
+async function sweepLosses(mode) {
+  const verb = mode === 'deactivate' ? '停止' : (mode === 'raise_price' ? '価格引き上げ' : '一覧表示');
+  if (mode !== 'report' && !confirm(`赤字 SKU を全て ${verb} します。よろしいですか？`)) return;
+  try {
+    const r = await fetch(withTok('/api/admin/costs/sweep_losses'), {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ mode, limit: 5000 }),
+    });
+    const j = await r.json();
+    if (!r.ok || !j.ok) { alert('sweep failed: ' + JSON.stringify(j)); return; }
+    const lines = j.offenders.map(o =>
+      `  id ${o.id} (${o.brand}) price ¥${o.price_jpy.toLocaleString()} < cost ¥${o.cost_jpy.toLocaleString()} → 推奨 ¥${o.recommended_price_jpy.toLocaleString()}`
+    ).join('\n');
+    alert(`scanned ${j.scanned} active SKUs / 赤字 ${j.offenders.length} 件\n\n${lines || '(なし)'}\n\nactions: ${j.actions.length} 件実行`);
+    if (mode !== 'report') {
+      // reload to reflect changes
+      offset = 0; hasMore = true; products = [];
+      document.getElementById('sku-tbody').innerHTML = '';
+      fetchPage();
+    }
+  } catch (e) { alert(String(e)); }
 }
 function onFilter() {
   currentBrand = document.getElementById('brand-filter').value;

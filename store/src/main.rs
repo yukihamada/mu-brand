@@ -8043,6 +8043,32 @@ async fn admin_regen_product_mockup(
     }))).into_response()
 }
 
+/// Minimum profit ratio enforced on save. price >= cost × MIN_PRICE_OVER_COST.
+/// 1.30 = "must be at least 30% over cost". /admin/costs と新規 SKU wizard で
+/// 警告に使う。`body.force_loss = true` で個別上書き可能。
+const MIN_PRICE_OVER_COST: f64 = 1.30;
+
+/// Recommended price = ceil(cost × 1.5 / 100) * 100. デフォルト ¥3,200 → ¥4,800。
+fn recommended_price_jpy(cost_jpy: i64) -> i64 {
+    let raw = (cost_jpy as f64) * 1.5;
+    ((raw / 100.0).ceil() as i64) * 100
+}
+
+/// Returns Some(error_message) if the price would be a loss vs cost.
+/// Pass an Option<i64> cost — if None, falls back to brand default.
+fn check_price_floor(price_jpy: i64, cost_jpy: Option<i64>, brand: &str) -> Option<String> {
+    let effective_cost = cost_jpy.unwrap_or_else(|| brand_default_cost_jpy(brand));
+    if effective_cost <= 0 { return None; }
+    let floor = (effective_cost as f64 * MIN_PRICE_OVER_COST).ceil() as i64;
+    if price_jpy < floor {
+        Some(format!(
+            "price ¥{} は原価 ¥{} に対して低すぎ (最低 ¥{} = cost × {:.2})。\
+             force_loss=true をボディに渡すと無視できます。",
+            price_jpy, effective_cost, floor, MIN_PRICE_OVER_COST,
+        ))
+    } else { None }
+}
+
 /// Brand-default cost (JPY) used when a product row has NULL cost_jpy.
 /// Covers Printful base + DTG + JP送料 ざっくり。yuki が `/admin/costs` で
 /// 個別上書き可能。env `BRAND_COST_<BRAND>` で外部上書きも可能。
@@ -8171,6 +8197,37 @@ async fn admin_product_update(
     }
     if sets.is_empty() {
         return (StatusCode::BAD_REQUEST, "no editable fields supplied").into_response();
+    }
+    // Loss-prevention check: if the post-update (price, cost) would be a loss,
+    // refuse unless force_loss=true in the body.
+    let force_loss = body.get("force_loss").and_then(|v| v.as_bool()).unwrap_or(false);
+    if !force_loss {
+        let new_price_opt = body.get("price_jpy").and_then(|x| x.as_i64());
+        let new_cost_opt = body.get("cost_jpy").and_then(|x| x.as_i64());
+        let cost_explicit_null = body.get("cost_jpy").map(|x| x.is_null()).unwrap_or(false);
+        // If neither price nor cost being changed, skip check.
+        if new_price_opt.is_some() || new_cost_opt.is_some() || cost_explicit_null {
+            let (cur_price, cur_cost, brand) = {
+                let conn = db.lock().unwrap();
+                conn.query_row(
+                    "SELECT price_jpy, cost_jpy, brand FROM products WHERE id=?",
+                    params![id],
+                    |r| Ok((
+                        r.get::<_, i64>(0).unwrap_or(0),
+                        r.get::<_, Option<i64>>(1).unwrap_or(None),
+                        r.get::<_, String>(2).unwrap_or_default(),
+                    )),
+                ).unwrap_or((0, None, String::new()))
+            };
+            let effective_price = new_price_opt.unwrap_or(cur_price);
+            let effective_cost = if cost_explicit_null { None }
+                else { new_cost_opt.or(cur_cost) };
+            if let Some(msg) = check_price_floor(effective_price, effective_cost, &brand) {
+                return (StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(serde_json::json!({"ok": false, "error": "price_below_cost_floor", "message": msg}))
+                ).into_response();
+            }
+        }
     }
     binds.push(Box::new(id));
     let sql = format!("UPDATE products SET {} WHERE id=?", sets.join(", "));
@@ -8452,7 +8509,17 @@ async fn admin_product_new(
         _ => return (StatusCode::BAD_REQUEST, "prompt required").into_response(),
     };
     let price_jpy: i64 = body.get("price_jpy").and_then(|v| v.as_i64()).unwrap_or(6800);
+    let cost_jpy: Option<i64> = body.get("cost_jpy").and_then(|v| v.as_i64());
     let inventory: i64 = body.get("inventory").and_then(|v| v.as_i64()).unwrap_or(1);
+    let force_loss = body.get("force_loss").and_then(|v| v.as_bool()).unwrap_or(false);
+    if !force_loss {
+        if let Some(msg) = check_price_floor(price_jpy, cost_jpy, &brand) {
+            return (StatusCode::UNPROCESSABLE_ENTITY,
+                Json(serde_json::json!({"ok": false, "error": "price_below_cost_floor", "message": msg,
+                                        "recommended_price_jpy": recommended_price_jpy(cost_jpy.unwrap_or_else(|| brand_default_cost_jpy(&brand)))}))
+            ).into_response();
+        }
+    }
     let next_drop: i64 = {
         let conn = db.lock().unwrap();
         conn.query_row("SELECT COALESCE(MAX(drop_num),0)+1 FROM products WHERE brand=?",
@@ -8483,16 +8550,87 @@ async fn admin_product_new(
         let conn = db.lock().unwrap();
         let _ = conn.execute(
             "INSERT INTO products (brand, drop_num, name, design_url, design_bytes, design_mime,
-                price_jpy, inventory, sold, created_at, active, prompt_text, bytes_fetched_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 1, ?, ?)",
+                price_jpy, cost_jpy, inventory, sold, created_at, active, prompt_text, bytes_fetched_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 1, ?, ?)",
             params![brand, next_drop, name, url, img.bytes, img.mime,
-                price_jpy, inventory, now, prompt, now],
+                price_jpy, cost_jpy, inventory, now, prompt, now],
         );
         conn.last_insert_rowid()
     };
     Json(serde_json::json!({
         "ok": true, "new_id": new_id, "drop_num": next_drop,
         "name": name, "design_url": url,
+    })).into_response()
+}
+
+/// POST /api/admin/costs/sweep_losses?token=… — find all active SKUs whose
+/// price_jpy < cost_jpy × MIN_PRICE_OVER_COST and either deactivate them
+/// (default), raise the price to the recommended price, or just report.
+/// Body: { "mode": "deactivate" | "raise_price" | "report", "limit": 200 }
+async fn admin_sweep_losses(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/costs/sweep_losses").await { return r; }
+    let mode = body.get("mode").and_then(|v| v.as_str()).unwrap_or("report").to_string();
+    let limit: i64 = body.get("limit").and_then(|v| v.as_i64()).unwrap_or(200).clamp(1, 5000);
+
+    // Pull every active row + its effective cost.
+    let rows: Vec<(i64, String, i64, Option<i64>)> = {
+        let conn = db.lock().unwrap();
+        let mut st = match conn.prepare(
+            "SELECT id, brand, price_jpy, cost_jpy FROM products
+             WHERE active=1 AND price_jpy > 0 ORDER BY id DESC LIMIT ?"
+        ) {
+            Ok(s) => s,
+            Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "query failed").into_response(),
+        };
+        st.query_map(params![limit], |r| Ok((
+            r.get::<_, i64>(0)?,
+            r.get::<_, String>(1).unwrap_or_default(),
+            r.get::<_, i64>(2).unwrap_or(0),
+            r.get::<_, Option<i64>>(3).unwrap_or(None),
+        ))).map(|it| it.flatten().collect()).unwrap_or_default()
+    };
+
+    let mut offenders: Vec<serde_json::Value> = Vec::new();
+    for (id, brand, price, cost_explicit) in &rows {
+        let cost = cost_explicit.unwrap_or_else(|| brand_default_cost_jpy(brand));
+        let floor = (cost as f64 * MIN_PRICE_OVER_COST).ceil() as i64;
+        if *price < floor {
+            offenders.push(serde_json::json!({
+                "id": id, "brand": brand,
+                "price_jpy": price, "cost_jpy": cost,
+                "is_cost_default": cost_explicit.is_none(),
+                "recommended_price_jpy": recommended_price_jpy(cost),
+                "loss_per_unit_jpy": price - cost,
+            }));
+        }
+    }
+    let mut actions: Vec<serde_json::Value> = Vec::new();
+    if mode == "deactivate" {
+        let conn = db.lock().unwrap();
+        for v in &offenders {
+            let id = v["id"].as_i64().unwrap_or(0);
+            let n = conn.execute("UPDATE products SET active=0 WHERE id=?", params![id]).unwrap_or(0);
+            actions.push(serde_json::json!({"id": id, "action": "deactivated", "rows": n}));
+        }
+    } else if mode == "raise_price" {
+        let conn = db.lock().unwrap();
+        for v in &offenders {
+            let id = v["id"].as_i64().unwrap_or(0);
+            let new_price = v["recommended_price_jpy"].as_i64().unwrap_or(0);
+            let n = conn.execute("UPDATE products SET price_jpy=? WHERE id=?",
+                params![new_price, id]).unwrap_or(0);
+            actions.push(serde_json::json!({"id": id, "action": "price_raised",
+                "new_price_jpy": new_price, "rows": n}));
+        }
+    }
+    Json(serde_json::json!({
+        "ok": true, "mode": mode, "scanned": rows.len(),
+        "offenders": offenders, "actions": actions,
     })).into_response()
 }
 
@@ -8735,6 +8873,15 @@ async fn admin_product_from_candidate(
     let inventory: i64 = body.get("inventory").and_then(|v| v.as_i64()).unwrap_or(1);
     let auto_life = body.get("auto_lifestyle").and_then(|v| v.as_bool()).unwrap_or(true);
     let auto_mockup = body.get("auto_mockup").and_then(|v| v.as_bool()).unwrap_or(true);
+    let force_loss = body.get("force_loss").and_then(|v| v.as_bool()).unwrap_or(false);
+    if !force_loss {
+        if let Some(msg) = check_price_floor(price_jpy, cost_jpy, &brand) {
+            return (StatusCode::UNPROCESSABLE_ENTITY,
+                Json(serde_json::json!({"ok": false, "error": "price_below_cost_floor", "message": msg,
+                                        "recommended_price_jpy": recommended_price_jpy(cost_jpy.unwrap_or_else(|| brand_default_cost_jpy(&brand)))}))
+            ).into_response();
+        }
+    }
 
     let next_drop: i64 = {
         let conn = db.lock().unwrap();
@@ -44665,6 +44812,7 @@ async fn main() {
         .route("/api/admin/products/:id/regen_similar", post(admin_regen_similar))
         .route("/admin/costs", get(admin_costs_page))
         .route("/api/admin/costs", get(admin_costs_list))
+        .route("/api/admin/costs/sweep_losses", post(admin_sweep_losses))
         .route("/api/products/:id/design.png", get(product_design_image))
         .route("/api/products/:id/mockup.png", get(product_mockup_image))
         .route("/api/collab/:id/image.png", get(collab_product_image))
