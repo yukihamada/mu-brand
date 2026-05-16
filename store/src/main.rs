@@ -17213,6 +17213,294 @@ async fn extras_sku_reject(
     })).into_response()
 }
 
+/// Body for POST /api/admin/proposal/:slug/sku/add — yuki manually
+/// adds a single SKU to a proposal without going through extras AI gen.
+#[derive(Deserialize)]
+struct ManualSkuBody {
+    /// Admin token; required.
+    admin_token: String,
+    /// Japanese product name (displayed on the LP).
+    label: String,
+    /// Product kind — drives Printful product mapping in handle_collab_*.
+    /// Examples: 'tee', 'hoodie', 'cap', 'tote', 'mug', 'sticker'.
+    kind: String,
+    /// Public URL to the design artwork (R2 or wearmu CDN).
+    design_url: String,
+    /// Override price; falls back to proposal default for the kind if absent.
+    #[serde(default)] price_jpy: Option<i64>,
+    /// Optional custom letter (e.g. 'm042'). Auto-generated as 'm{N}' if missing.
+    #[serde(default)] letter: Option<String>,
+    /// Optional explicit drop_num. Auto = 8_000_000 + next-id range so manual
+    /// SKUs sort after AI-extras (9_000_000+) and before legacy (<8_000_000).
+    #[serde(default)] drop_num: Option<i64>,
+}
+
+/// POST /api/admin/proposal/:slug/sku/add — admin-gated single-SKU insert.
+/// Creates one row in proposal_extras_skus (approval_status='approved')
+/// and mirrors into proposal_skus so it appears on the LP immediately.
+/// Idempotent on (slug, letter) — re-POST with the same letter is a no-op.
+async fn admin_proposal_sku_add(
+    State(db): State<Db>,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+    Json(body): Json<ManualSkuBody>,
+) -> Response {
+    if let Err(r) = require_admin_token(Some(&body.admin_token)) { return r; }
+    let label = body.label.trim();
+    let kind  = body.kind.trim();
+    let url   = body.design_url.trim();
+    if label.is_empty() || kind.is_empty() || url.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "ok": false, "error": "label, kind, design_url are required"
+        }))).into_response();
+    }
+    let conn = db.lock().unwrap();
+    // Verify the proposal exists (proposals table OR collab_products partner).
+    let proposal_exists: bool = conn.query_row(
+        "SELECT 1 FROM proposals WHERE slug=?",
+        params![slug], |_| Ok(true),
+    ).unwrap_or(false);
+    let collab_exists: bool = !proposal_exists && conn.query_row(
+        "SELECT 1 FROM collab_products WHERE partner=? LIMIT 1",
+        params![slug], |_| Ok(true),
+    ).unwrap_or(false);
+    if !proposal_exists && !collab_exists {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({
+            "ok": false, "error": "unknown proposal slug"
+        }))).into_response();
+    }
+    // Auto-assign letter (m001, m002, …) if not supplied. Manual letters
+    // use the 'm' prefix to distinguish from AI-extras 'x###' / legacy.
+    let letter = match body.letter.as_ref().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+        Some(l) => l,
+        None => {
+            let n: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM proposal_skus WHERE slug=? AND letter LIKE 'm%'",
+                params![slug], |r| r.get(0),
+            ).unwrap_or(0);
+            format!("m{:03}", n + 1)
+        }
+    };
+    // Default price: proposal-defined or sensible fallback per kind.
+    let price_jpy: i64 = body.price_jpy.unwrap_or_else(|| match kind {
+        "tee"          => 4_800,
+        "longsleeve"   => 6_800,
+        "tank_top"     => 4_400,
+        "hoodie"       => 9_800,
+        "crewneck"     => 8_800,
+        "zip_hoodie"   => 10_800,
+        "joggers"      => 8_800,
+        "cap"          => 5_800,
+        "beanie"       => 5_800,
+        "bucket_hat"   => 5_800,
+        "tote"         => 3_800,
+        "mug"          => 3_400,
+        "sticker"      => 1_200,
+        "patch"        => 3_800,
+        _              => 4_800,
+    });
+    let drop_num: i64 = body.drop_num.unwrap_or_else(|| {
+        let max_manual: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(drop_num),7_999_999) FROM proposal_skus
+             WHERE slug=? AND drop_num BETWEEN 8_000_000 AND 8_999_999",
+            params![slug], |r| r.get(0),
+        ).unwrap_or(7_999_999);
+        max_manual + 1
+    });
+    let now = chrono_now();
+    // 1. Insert into proposal_extras_skus (audit trail). job_id=0 marks
+    //    "manual add" so it's distinguishable from AI batches.
+    let _ = conn.execute(
+        "INSERT INTO proposal_extras_skus
+         (job_id, slug, letter, label, kind, price_jpy, image_url,
+          approval_status, reviewed_at, created_at)
+         VALUES (0, ?, ?, ?, ?, ?, ?, 'approved', ?, ?)",
+        params![slug, letter, label, kind, price_jpy, url, now, now],
+    );
+    let extras_id = conn.last_insert_rowid();
+    // 2. Mirror into proposal_skus so the LP shows it. INSERT OR IGNORE
+    //    makes the whole call idempotent on (slug, letter).
+    let inserted = conn.execute(
+        "INSERT OR IGNORE INTO proposal_skus
+         (slug, letter, drop_num, price_jpy, label, kind, design_slug, design_url)
+         VALUES (?, ?, ?, ?, ?, ?, 'manual', ?)",
+        params![slug, letter, drop_num, price_jpy, label, kind, url],
+    ).unwrap_or(0);
+    let already = inserted == 0;
+    eprintln!("[admin] manual SKU {} added to {} as letter={} (drop_num={}) {}",
+        label, slug, letter, drop_num,
+        if already { "[ALREADY EXISTS]" } else { "" });
+    Json(serde_json::json!({
+        "ok": true,
+        "already": already,
+        "sku_id": extras_id,
+        "slug": slug,
+        "letter": letter,
+        "drop_num": drop_num,
+        "price_jpy": price_jpy,
+        "lp_url": format!("/proposals/{}", slug),
+    })).into_response()
+}
+
+/// GET /admin/proposal/:slug/add — admin HTML form for manual SKU add.
+/// Includes a list of existing SKUs (with thumbnails) so yuki can see what
+/// is already on the LP and avoid duplicates.
+async fn admin_proposal_sku_add_form(
+    State(db): State<Db>,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let existing: Vec<(String, String, String, i64, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT letter, label, kind, price_jpy, design_url
+             FROM proposal_skus WHERE slug=? ORDER BY drop_num DESC LIMIT 200"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map(params![slug], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+            r.get::<_, i64>(3)?, r.get::<_, Option<String>>(4)?,
+        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    let tok = q.get("token").cloned().unwrap_or_default();
+    let rows: String = existing.iter().map(|(letter, label, kind, price, url)| {
+        let img = url.as_deref().filter(|u| u.starts_with("http")).unwrap_or("");
+        format!(
+            r##"<tr><td><code>{l}</code></td><td>{lbl}</td><td>{k}</td><td style="text-align:right">¥{p}</td><td>{img_html}</td></tr>"##,
+            l = html_escape(letter), lbl = html_escape(label),
+            k = html_escape(kind), p = format_jpy(*price),
+            img_html = if img.is_empty() { "—".to_string() }
+                       else { format!(r##"<a href="{u}" target="_blank"><img src="{u}" style="height:48px;width:48px;object-fit:cover;border-radius:2px;background:#222"></a>"##, u = html_attr_escape(img)) },
+        )
+    }).collect();
+    let html = format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Manual SKU add — {slug} | MU admin</title>
+<meta name="robots" content="noindex,nofollow">
+<style>
+  body{{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;margin:0;line-height:1.7}}
+  .wrap{{max-width:880px;margin:0 auto;padding:48px 28px 80px}}
+  h1{{font-size:24px;font-weight:300;margin-bottom:8px}}
+  .sub{{color:#888;font-size:13px;margin-bottom:32px}}
+  h2{{font-size:11px;letter-spacing:0.32em;text-transform:uppercase;color:#e6c449;margin:36px 0 14px;padding-top:24px;border-top:1px solid rgba(255,255,255,0.08)}}
+  form{{background:#111;border:1px solid rgba(255,255,255,0.08);border-left:3px solid #e6c449;border-radius:2px;padding:24px 28px;margin-bottom:24px}}
+  label{{display:block;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;color:#888;margin-bottom:6px;margin-top:14px}}
+  input,select{{width:100%;background:#0a0a0a;color:#F5F5F0;border:1px solid rgba(255,255,255,0.12);padding:11px 13px;border-radius:2px;font-size:14px;font-family:inherit}}
+  input:focus,select:focus{{outline:1px solid #e6c449;border-color:#e6c449}}
+  button{{background:#e6c449;color:#000;border:none;padding:14px 28px;margin-top:22px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;font-weight:700;cursor:pointer;border-radius:2px}}
+  button:hover{{background:#f0d05a}}
+  table{{width:100%;border-collapse:collapse;font-size:13px;border:1px solid rgba(255,255,255,0.08);background:#111;border-radius:2px}}
+  thead{{background:rgba(255,255,255,0.03)}}
+  th,td{{padding:10px 14px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.05)}}
+  th{{font-size:10px;letter-spacing:0.22em;text-transform:uppercase;color:#888}}
+  .msg{{margin-top:14px;padding:12px 16px;border-radius:2px;font-size:13px;display:none}}
+  .msg.ok{{background:rgba(79,168,104,0.12);border:1px solid rgba(79,168,104,0.4);color:#9ae3a8}}
+  .msg.err{{background:rgba(200,54,44,0.12);border:1px solid rgba(200,54,44,0.4);color:#f0a4a0}}
+  code{{background:rgba(230,196,73,0.08);color:#e6c449;padding:1px 5px;border-radius:2px;font-size:11.5px;font-family:'SF Mono',ui-monospace,monospace}}
+  .row{{display:grid;grid-template-columns:1fr 1fr;gap:14px}}
+</style>
+</head><body>
+<div class="wrap">
+  <h1>📦 Manual SKU add — <code>{slug}</code></h1>
+  <p class="sub">この proposal に手動で SKU を 1 件追加。 letter は自動で <code>m001</code>, <code>m002</code>… で採番されます。 同じ letter 再 POST は no-op (idempotent)。</p>
+
+  <form id="add-form">
+    <label>商品名 (label, 日本語)</label>
+    <input name="label" required maxlength="120" placeholder="例: KOKON 黒 T (Heavy Cotton)">
+
+    <div class="row">
+      <div>
+        <label>kind (Printful 種別)</label>
+        <select name="kind" required>
+          <option value="tee">tee — T シャツ</option>
+          <option value="longsleeve">longsleeve — ロング</option>
+          <option value="tank_top">tank_top — タンク</option>
+          <option value="hoodie">hoodie — フーディ</option>
+          <option value="crewneck">crewneck — クルーネック</option>
+          <option value="zip_hoodie">zip_hoodie — ジップ</option>
+          <option value="joggers">joggers — ジョガー</option>
+          <option value="cap">cap — キャップ</option>
+          <option value="beanie">beanie — ビーニー</option>
+          <option value="bucket_hat">bucket_hat — バケット</option>
+          <option value="tote">tote — トート</option>
+          <option value="mug">mug — マグ</option>
+          <option value="sticker">sticker — ステッカー</option>
+          <option value="patch">patch — パッチ</option>
+        </select>
+      </div>
+      <div>
+        <label>price_jpy (空欄なら kind デフォルト)</label>
+        <input name="price_jpy" type="number" min="100" max="100000" placeholder="例: 4800">
+      </div>
+    </div>
+
+    <label>design URL (公開 URL、 R2 / wearmu CDN / Printful CDN)</label>
+    <input name="design_url" required type="url" placeholder="https://lifestyle.wearmu.com/{slug}/...jpg">
+
+    <label>letter (任意 — 空欄なら m001, m002… で自動)</label>
+    <input name="letter" maxlength="20" placeholder="自動: m{next:03}">
+
+    <button type="submit">追加 →</button>
+    <div id="msg" class="msg"></div>
+  </form>
+
+  <h2>既存 SKU 一覧 ({count} 件)</h2>
+  <table>
+    <thead><tr><th>letter</th><th>label</th><th>kind</th><th>price</th><th>image</th></tr></thead>
+    <tbody>{rows}</tbody>
+  </table>
+</div>
+
+<script>
+const form = document.getElementById('add-form');
+const msg  = document.getElementById('msg');
+form.addEventListener('submit', async (e) => {{
+  e.preventDefault();
+  msg.style.display = 'none';
+  const data = {{
+    admin_token: {token_js},
+    label:       form.label.value.trim(),
+    kind:        form.kind.value,
+    design_url:  form.design_url.value.trim(),
+  }};
+  if (form.price_jpy.value)  data.price_jpy = parseInt(form.price_jpy.value, 10);
+  if (form.letter.value)     data.letter    = form.letter.value.trim();
+  try {{
+    const r = await fetch('/api/admin/proposal/{slug}/sku/add', {{
+      method:'POST',
+      headers:{{'Content-Type':'application/json'}},
+      body:JSON.stringify(data),
+    }});
+    const j = await r.json();
+    if (r.ok && j.ok) {{
+      msg.className = 'msg ok';
+      msg.style.display = 'block';
+      msg.innerHTML = '✅ 追加完了: <code>'+j.letter+'</code> (drop_num '+j.drop_num+'). <a href="'+j.lp_url+'" style="color:#9ae3a8">/proposals/{slug}</a> で確認 · ' +
+                      '<a href="javascript:location.reload()" style="color:#9ae3a8">↻ refresh</a>';
+      form.reset();
+    }} else {{
+      msg.className = 'msg err';
+      msg.style.display = 'block';
+      msg.textContent = '❌ ' + (j.error || ('HTTP '+r.status));
+    }}
+  }} catch (err) {{
+    msg.className = 'msg err';
+    msg.style.display = 'block';
+    msg.textContent = '❌ network: ' + err.message;
+  }}
+}});
+</script>
+</body></html>"##,
+        slug  = html_escape(&slug),
+        count = existing.len(),
+        next  = existing.iter().filter(|(l,_,_,_,_)| l.starts_with('m')).count() + 1,
+        rows  = if rows.is_empty() {
+            r##"<tr><td colspan="5" style="text-align:center;color:#888;padding:24px">まだ SKU はありません</td></tr>"##.to_string()
+        } else { rows },
+        token_js = serde_json::to_string(&tok).unwrap_or_else(|_| "\"\"".into()),
+    );
+    Html(html).into_response()
+}
+
 /// POST /api/proposal/extras/job/:job_id/approve-all — bulk approve every
 /// still-pending SKU in a job. Same auth (email matches the job).
 async fn extras_job_approve_all(
@@ -42161,6 +42449,8 @@ async fn main() {
         .route("/api/proposal/extras/sku/:sku_id/approve",      post(extras_sku_approve))
         .route("/api/proposal/extras/sku/:sku_id/reject",       post(extras_sku_reject))
         .route("/api/proposal/extras/sku/:sku_id/regenerate",   post(extras_sku_regenerate))
+        .route("/api/admin/proposal/:slug/sku/add",             post(admin_proposal_sku_add))
+        .route("/admin/proposal/:slug/add",                     get(admin_proposal_sku_add_form))
         .route("/admin/proposal",              post(proposal_generic_create))
         .route("/admin/proposals",             get(proposal_generic_list))
         .route("/admin/proposal/extras/retroactive-claim",      post(admin_extras_retroactive_claim))
