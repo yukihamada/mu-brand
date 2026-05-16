@@ -31730,6 +31730,20 @@ async fn region_landing(
 
     let std_html   = tier_card(slug, "standard · Bella+Canvas Soft Cream", "推奨 · Standard", true,  standard);
     let entry_html = tier_card(slug, "entry · Bella+Canvas Soft Cream",    "Entry (¥1,900 OFF)", false, entry);
+    // Mobile sticky bottom CTA — points to Standard (recommended) tier.
+    let sticky_buy_html = match standard {
+        Some((_id, drop, price, _inv, _sold, _)) => format!(
+            r##"<div class="sticky-buy">
+              <div class="sb-info">
+                <div class="sb-label">{jp} STANDARD</div>
+                <div class="sb-price">¥{p}</div>
+              </div>
+              <a href="/products/regional_{slug}/{drop}">今すぐ買う →</a>
+            </div>"##,
+            slug = slug, jp = jp, drop = drop, p = format_jpy(*price),
+        ),
+        None => String::new(),
+    };
 
     // Catalog grid: every other drop (excluding the 2 featured tiers above).
     // Newest first by drop_num desc. Limited to 200 to keep page snappy.
@@ -31847,7 +31861,14 @@ footer a:hover{{color:var(--y)}}
   .hero{{grid-template-columns:1fr;gap:24px;padding:42px 0 28px}}
   .tiers{{grid-template-columns:1fr}}
   .specs{{grid-template-columns:1fr}}
+  main{{padding-bottom:80px}} /* room for sticky bar */
+  .sticky-buy{{display:flex !important}}
 }}
+.sticky-buy{{display:none;position:fixed;bottom:0;left:0;right:0;background:rgba(10,10,10,0.96);backdrop-filter:blur(14px);border-top:1px solid var(--line);padding:11px 16px;z-index:90;align-items:center;justify-content:space-between;gap:10px;font-family:'Helvetica Neue',Arial,sans-serif}}
+.sticky-buy .sb-info{{flex:1;min-width:0}}
+.sticky-buy .sb-label{{font-size:10px;letter-spacing:0.24em;text-transform:uppercase;color:var(--mute);margin-bottom:2px}}
+.sticky-buy .sb-price{{font-size:17px;color:var(--fg);font-variant-numeric:tabular-nums}}
+.sticky-buy a{{background:var(--y);color:#000;padding:12px 18px;font-size:11px;letter-spacing:0.26em;text-transform:uppercase;font-weight:700;text-decoration:none;border-radius:2px;white-space:nowrap}}
 </style></head><body>
 <nav>
   <a href="/" class="logo">━◯━ MU</a>
@@ -31898,11 +31919,13 @@ footer a:hover{{color:var(--y)}}
 <footer>
   MU · wearmu.com · <a href="https://github.com/yukihamada/mu-brand">GitHub</a> · <a href="mailto:info@enablerdao.com">info@enablerdao.com</a>
 </footer>
+{sticky_buy_html}
 </body></html>"##,
         jp = jp, en = en, tag = tag, slug = slug, coords = coords,
         img = html_attr_escape(&img),
         entry_html = entry_html, std_html = std_html,
         catalog_html = catalog_html,
+        sticky_buy_html = sticky_buy_html,
     );
     Html(html).into_response()
 }
