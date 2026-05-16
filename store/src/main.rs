@@ -8293,7 +8293,71 @@ async fn admin_cache_product_bytes(
 /// mockup-generator with the existing `design_url`. Mirrors the
 /// generate_ma_gift_mockup flow but writes back to `products`. Bella+Canvas
 /// 3001 black M (variant 4017) for the showcase render.
-async fn regen_product_mockup(product_id: i64, design_url: String, db: Db) {
+/// Per-brand Printful mockup-generator config. Returns (product_id, variant_id,
+/// position). Each Printful product family (tee / hoodie / longsleeve / …)
+/// needs its own product_id + its own chest position spec — the tee defaults
+/// produce silent failures for hoodies because the design area is different.
+/// Unmapped brands fall back to the Bella+Canvas 3001 tee config (product=71,
+/// variant=4017). Variant IDs picked are the standard 'black, size M' SKU
+/// for each product family; if a specific brand needs a different colour or
+/// size, add a more-specific entry above the family fallback.
+fn printful_mockup_config_for(brand: &str) -> (i64, i64, serde_json::Value) {
+    let b = brand.to_lowercase();
+    let chest_tee = serde_json::json!({
+        "area_width": 1800, "area_height": 2400,
+        "width": 1260, "height": 1260, "top": 380, "left": 270
+    });
+    let chest_hoodie = serde_json::json!({
+        "area_width": 1800, "area_height": 2400,
+        "width": 1100, "height": 1100, "top": 560, "left": 350
+    });
+    let chest_longsleeve = serde_json::json!({
+        "area_width": 1800, "area_height": 2400,
+        "width": 1200, "height": 1200, "top": 420, "left": 300
+    });
+
+    // Match longer / more specific keywords first.
+    if b.contains("zip_hoodie") || b.contains("zip-hoodie") {
+        // Independent SS4500Z zip hoodie · black · M (best-guess variant).
+        return (380, 14213, chest_hoodie);
+    }
+    if b.contains("hoodie") {
+        // Gildan 18500 pullover hoodie · black · M.
+        return (146, 5530, chest_hoodie);
+    }
+    if b.contains("crewneck") {
+        // Gildan 18000 crewneck sweatshirt · black · M.
+        return (145, 5403, chest_hoodie);
+    }
+    if b.contains("longsleeve") || b.contains("long_sleeve") || b.contains("long-sleeve") {
+        // Bella+Canvas 3501 longsleeve · black · M.
+        return (162, 5959, chest_longsleeve);
+    }
+    if b.contains("quarter_zip") || b.contains("quarter-zip") {
+        // Independent EXP4000 quarter-zip · charcoal · M.
+        return (438, 16002, chest_hoodie);
+    }
+    if b.contains("polo") {
+        // Sport-Tek polo · black · M.
+        return (181, 6483, chest_tee);
+    }
+    if b.contains("tank_top") || b.contains("tank-top") {
+        // Bella+Canvas 3480 tank · black · M.
+        return (273, 6889, chest_tee);
+    }
+    if b.contains("athletic_tee") {
+        // Sport-Tek ST350 PosiCharge competitor tee · black · M (athletic poly).
+        return (240, 7252, chest_tee);
+    }
+    if b.contains("rashguard") {
+        // Printful AOP long-sleeve rashguard (top of stack).
+        return (257, 8447, chest_tee);
+    }
+    // Default fallback: Bella+Canvas 3001 tee · black · M.
+    (71, 4017, chest_tee)
+}
+
+async fn regen_product_mockup(product_id: i64, brand: String, design_url: String, db: Db) {
     let key = env::var("PRINTFUL_API_KEY").unwrap_or_default();
     if key.is_empty() {
         eprintln!("[regen_mockup] pid={}: no PRINTFUL_API_KEY", product_id);
@@ -8306,22 +8370,24 @@ async fn regen_product_mockup(product_id: i64, design_url: String, db: Db) {
     } else {
         design_url.clone()
     };
+    let (printful_product, variant_id, position) = printful_mockup_config_for(&brand);
+    eprintln!("[regen_mockup] pid={} brand={} → printful product={} variant={}",
+              product_id, brand, printful_product, variant_id);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build().unwrap_or_else(|_| reqwest::Client::new());
     let create_body = serde_json::json!({
-        "variant_ids": [4017],
+        "variant_ids": [variant_id],
         "format": "png",
         "files": [{
             "placement": "front",
             "image_url": public_design_url,
-            "position": { "area_width": 1800, "area_height": 2400,
-                          "width": 1260, "height": 1260,
-                          "top": 380, "left": 270 }
+            "position": position
         }]
     });
+    let create_url = format!("https://api.printful.com/mockup-generator/create-task/{}", printful_product);
     let task_key: Option<String> = match client
-        .post("https://api.printful.com/mockup-generator/create-task/71")
+        .post(&create_url)
         .bearer_auth(&key).json(&create_body).send().await
     {
         Ok(r) if r.status().is_success() => r.json::<serde_json::Value>().await.ok()
@@ -8378,19 +8444,22 @@ async fn admin_regen_product_mockup(
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Response {
     if let Err(r) = admin_auth(&headers, &q, db.clone(), &format!("/api/admin/products/{}/regen_mockup", product_id)).await { return r; }
-    let design_url: Option<String> = {
+    let row: Option<(Option<String>, String)> = {
         let conn = db.lock().unwrap();
         conn.query_row(
-            "SELECT design_url FROM products WHERE id=?",
-            params![product_id], |r| r.get::<_, Option<String>>(0),
-        ).ok().flatten()
+            "SELECT design_url, brand FROM products WHERE id=?",
+            params![product_id], |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, String>(1)?)),
+        ).ok()
+    };
+    let Some((design_url, brand)) = row else {
+        return (StatusCode::NOT_FOUND, "product not found").into_response();
     };
     let Some(design_url) = design_url.filter(|s| !s.is_empty()) else {
         return (StatusCode::BAD_REQUEST,
             "product has no design_url; upload one first").into_response();
     };
     let db2 = db.clone();
-    tokio::spawn(async move { regen_product_mockup(product_id, design_url, db2).await; });
+    tokio::spawn(async move { regen_product_mockup(product_id, brand, design_url, db2).await; });
     (StatusCode::ACCEPTED, Json(serde_json::json!({
         "ok": true, "status": "regenerating", "product_id": product_id
     }))).into_response()
@@ -9381,8 +9450,9 @@ async fn admin_product_from_candidate(
     if auto_mockup {
         let db3 = db.clone();
         let design_url_for_mockup = design_url.clone();
+        let brand_for_mockup = brand.clone();
         tokio::spawn(async move {
-            regen_product_mockup(new_id, design_url_for_mockup, db3).await;
+            regen_product_mockup(new_id, brand_for_mockup, design_url_for_mockup, db3).await;
         });
     }
 
