@@ -187,15 +187,30 @@
 const $ = (s) => document.querySelector(s);
 
 const USD_JPY = 160;
-const tokenFromUrl = () => new URLSearchParams(location.search).get('token') || '';
+// Match the existing admin convention from admin-products.html:
+// accept BOTH `admin_token` and `token`, propagate as `admin_token=`,
+// and include cookies so cookie-only sessions also work.
+const adminToken = () => {
+  const u = new URL(window.location.href);
+  return u.searchParams.get('admin_token') || u.searchParams.get('token') || '';
+};
 const adminQs = (extra) => {
-  const t = tokenFromUrl();
+  const t = adminToken();
   const p = new URLSearchParams();
-  if (t) p.set('token', t);
+  if (t) p.set('admin_token', t);
   if (extra) Object.entries(extra).forEach(([k, v]) => p.set(k, v));
   const s = p.toString();
   return s ? `?${s}` : '';
 };
+const fetchAdmin = (url, opts) => fetch(url, { credentials: 'include', ...(opts || {}) });
+
+// Propagate admin_token to nav links so clicking around keeps you authed.
+document.querySelectorAll('header .nav a').forEach(a => {
+  const href = a.getAttribute('href');
+  if (!href || !href.startsWith('/')) return;
+  const t = adminToken();
+  if (t) a.setAttribute('href', href + (href.includes('?') ? '&' : '?') + 'admin_token=' + encodeURIComponent(t));
+});
 
 let allItems = [];
 let allProducts = [];
@@ -297,7 +312,11 @@ async function loadCatalog() {
   const status = $('#status');
   status.innerHTML = '<div class="empty">LOADING…</div>';
   try {
-    const r = await fetch(`/api/admin/pod/catalog${adminQs()}`);
+    const r = await fetchAdmin(`/api/admin/pod/catalog${adminQs()}`);
+    if (!r.ok) {
+      status.innerHTML = `<div class="err">HTTP ${r.status} — append <code>?admin_token=…</code> to the URL</div>`;
+      return;
+    }
     const data = await r.json();
     if (data.error) { status.innerHTML = `<div class="err">${escapeHtml(data.error)}</div>`; return; }
     allItems = data.items || [];
@@ -322,7 +341,8 @@ async function syncVendor(vendor, btn) {
   const orig = btn.textContent;
   btn.disabled = true; btn.textContent = '⏳ Syncing…';
   try {
-    const r = await fetch(`/api/admin/pod/sync${adminQs({vendor})}`, { method: 'POST' });
+    const r = await fetchAdmin(`/api/admin/pod/sync${adminQs({vendor})}`, { method: 'POST' });
+    if (!r.ok) { alert(`Sync failed: HTTP ${r.status} — try appending ?admin_token=… to the URL`); return; }
     const data = await r.json();
     if (data.error) { alert('Sync failed: ' + data.error); return; }
     const okN  = (data.synced || []).length;
@@ -341,7 +361,7 @@ async function syncVendor(vendor, btn) {
 
 async function loadProducts() {
   if (allProducts.length) return;
-  const r = await fetch(`/api/admin/products${adminQs({limit:'500', no_summary:'1'})}`);
+  const r = await fetchAdmin(`/api/admin/products${adminQs({limit:'500', no_summary:'1'})}`);
   const data = await r.json();
   allProducts = data.products || [];
 }
@@ -378,7 +398,7 @@ async function openPicker(vendor, uid, title) {
 }
 
 async function linkProduct(pid) {
-  const r = await fetch(`/api/admin/pod/link${adminQs()}`, {
+  const r = await fetchAdmin(`/api/admin/pod/link${adminQs()}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -395,7 +415,7 @@ async function linkProduct(pid) {
 
 async function unlinkProduct(pid, vendor, uid) {
   if (!confirm(`Unlink this product from the ${vendor} SKU?`)) return;
-  const r = await fetch(`/api/admin/pod/unlink${adminQs()}`, {
+  const r = await fetchAdmin(`/api/admin/pod/unlink${adminQs()}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ product_id: pid, vendor, pod_uid: uid }),
