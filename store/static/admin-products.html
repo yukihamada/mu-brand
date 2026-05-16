@@ -18,11 +18,19 @@
   .wrap { padding: 24px 24px 80px; max-width: 1480px; margin: 0 auto; }
   section { margin-bottom: 40px; }
   h2 { font-size: 11px; letter-spacing: 0.42em; color: var(--accent); text-transform: uppercase; margin: 0 0 14px; font-weight: 700; }
-  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 18px; }
   .kpi { background: #0f0f0f; border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; }
   .kpi .label { font-size: 10px; letter-spacing: 0.26em; color: var(--mute); text-transform: uppercase; margin-bottom: 4px; }
   .kpi .v { font-size: 22px; font-weight: 200; color: var(--fg); letter-spacing: 0.02em; }
   .kpi .sub { font-size: 11px; color: var(--mute); margin-top: 2px; }
+  .kpi.warn { border-color: rgba(255,74,61,0.30); }
+  .kpi.warn .v { color: var(--red); }
+  .actions-bar { display: flex; gap: 8px; margin: 0 0 18px; flex-wrap: wrap; }
+  .btn { background: #0f0f0f; border: 1px solid var(--line); color: var(--fg); padding: 8px 14px; font-family: inherit; font-size: 11px; border-radius: 4px; cursor: pointer; letter-spacing: 0.12em; text-transform: uppercase; }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn.primary { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 700; }
+  .btn.primary:hover { color: #000; opacity: 0.9; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; align-items: center; }
   .toolbar input, .toolbar select { background: #0f0f0f; border: 1px solid var(--line); color: var(--fg); padding: 8px 10px; font-family: inherit; font-size: 12px; border-radius: 4px; }
   .toolbar input.search { width: 280px; }
@@ -33,6 +41,7 @@
   th { font-size: 10px; color: var(--mute); letter-spacing: 0.22em; text-transform: uppercase; background: #0a0a0a; font-weight: 700; cursor: pointer; user-select: none; }
   th.sorted { color: var(--accent); }
   td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tbody tr { cursor: pointer; }
   tr:last-child td { border-bottom: 0; }
   tr:hover td { background: rgba(245,245,240,0.03); }
   .tag { display: inline-block; padding: 1px 7px; border-radius: 99px; font-size: 10px; letter-spacing: 0.12em; font-weight: 600; }
@@ -42,8 +51,10 @@
   .muted { color: var(--mute); }
   .err { color: var(--red); padding: 20px; text-align: center; }
   .loading { color: var(--mute); padding: 40px; text-align: center; }
-  .thumb { width: 48px; height: 48px; object-fit: cover; border-radius: 4px; background: #1a1a1a; display: block; }
+  .thumb { width: 40px; height: 40px; object-fit: cover; border-radius: 4px; background: #1a1a1a; display: block; }
   .thumb.placeholder { display: flex; align-items: center; justify-content: center; color: var(--mute); font-size: 10px; }
+  .thumb.cached { box-shadow: 0 0 0 1px var(--green) inset; }
+  .thumb-stack { display: flex; gap: 4px; align-items: center; }
   .row-name { display: flex; flex-direction: column; gap: 2px; max-width: 320px; }
   .row-name strong { color: var(--fg); font-weight: 500; }
   .row-name .meta { color: var(--mute); font-size: 10px; letter-spacing: 0.06em; }
@@ -56,6 +67,30 @@
   .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
   .tab .n { color: var(--mute); margin-left: 6px; font-weight: 400; }
   .tab.active .n { color: var(--fg); }
+
+  /* Detail modal */
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: none; align-items: flex-start; justify-content: center; z-index: 1000; overflow-y: auto; padding: 40px 16px; }
+  .modal-bg.open { display: flex; }
+  .modal { background: #0c0c0c; border: 1px solid var(--line); border-radius: 12px; max-width: 1280px; width: 100%; padding: 24px; }
+  .modal h3 { margin: 0 0 6px; font-size: 16px; letter-spacing: 0.06em; }
+  .modal .sub { color: var(--mute); margin-bottom: 22px; font-size: 12px; letter-spacing: 0.08em; }
+  .modal .close { float: right; cursor: pointer; color: var(--mute); padding: 4px 12px; border: 1px solid var(--line); border-radius: 4px; }
+  .modal .close:hover { color: var(--fg); }
+  .img-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+  .img-card { background: #0a0a0a; border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+  .img-card .img-label { font-size: 10px; letter-spacing: 0.32em; color: var(--accent); text-transform: uppercase; margin-bottom: 8px; font-weight: 700; }
+  .img-card .img-hint { font-size: 11px; color: var(--mute); margin-bottom: 10px; line-height: 1.5; }
+  .img-card .preview { width: 100%; aspect-ratio: 1/1; background: #050505; border-radius: 4px; display: flex; align-items: center; justify-content: center; overflow: hidden; margin-bottom: 10px; }
+  .img-card .preview img { width: 100%; height: 100%; object-fit: contain; }
+  .img-card .preview .empty { color: var(--mute); font-size: 11px; letter-spacing: 0.14em; }
+  .img-card .url-box { background: #050505; border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px; font-size: 11px; word-break: break-all; color: var(--mute); margin-bottom: 8px; max-height: 60px; overflow-y: auto; }
+  .img-card .url-box.empty { color: rgba(255,74,61,0.7); }
+  .img-card .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .img-card .actions .btn { padding: 6px 10px; font-size: 10px; }
+  .status-line { padding: 8px 12px; border-radius: 4px; margin-top: 12px; font-size: 11px; letter-spacing: 0.06em; }
+  .status-line.info { background: rgba(230,196,73,0.08); color: var(--accent); }
+  .status-line.ok { background: rgba(123,229,123,0.08); color: var(--green); }
+  .status-line.err { background: rgba(255,74,61,0.08); color: var(--red); }
 </style>
 </head>
 <body>
@@ -72,6 +107,10 @@
   <div class="loading" id="status">━◯━ loading...</div>
 </div>
 
+<div class="modal-bg" id="modal" onclick="if(event.target===this)closeModal()">
+  <div class="modal" id="modal-body"></div>
+</div>
+
 <script>
 let DATA = null;
 let activeTab = 'core';
@@ -80,11 +119,17 @@ let sortDir = 'desc';
 let page = 1;
 const PER = 100;
 
+function adminToken() {
+  const u = new URL(window.location.href);
+  return u.searchParams.get('admin_token') || u.searchParams.get('token') || '';
+}
+function withTok(url) {
+  const t = adminToken();
+  return t ? url + (url.includes('?') ? '&' : '?') + 'admin_token=' + encodeURIComponent(t) : url;
+}
+
 async function load() {
-  const url = new URL(window.location.href);
-  const tok = url.searchParams.get('admin_token') || url.searchParams.get('token') || '';
-  const qs = tok ? '?admin_token=' + encodeURIComponent(tok) : '';
-  const r = await fetch('/api/admin/products' + qs, { credentials: 'include' });
+  const r = await fetch(withTok('/api/admin/products'), { credentials: 'include' });
   if (!r.ok) {
     document.getElementById('content').innerHTML = `<div class="err">HTTP ${r.status} — admin_token クエリで再アクセスしてください: /admin/products?admin_token=…</div>`;
     return;
@@ -96,6 +141,8 @@ async function load() {
 
 function renderShell() {
   const s = DATA.summary;
+  const missing = (s.core.no_design + s.core.no_mockup + s.collab.no_image);
+  const missingBytes = (s.core.no_design_bytes + s.core.no_mockup_bytes + s.collab.no_image_bytes);
   const brands = ['', ...DATA.brands].map(b => `<option value="${b}">${b || '— all brands —'}</option>`).join('');
   const partners = ['', ...DATA.partners].map(p => `<option value="${p}">${p || '— all partners —'}</option>`).join('');
   document.getElementById('content').innerHTML = `
@@ -109,18 +156,30 @@ function renderShell() {
         <div class="kpi">
           <div class="label">Collab products</div>
           <div class="v">${s.collab.active.toLocaleString()}<span class="muted" style="font-size:14px"> / ${s.collab.total.toLocaleString()}</span></div>
-          <div class="sub">active / total · ${s.collab.draft} draft</div>
+          <div class="sub">${s.collab.draft} draft</div>
         </div>
         <div class="kpi">
           <div class="label">Sold (core)</div>
           <div class="v">${s.core.sold.toLocaleString()}</div>
           <div class="sub">¥${s.core.revenue_jpy.toLocaleString()} 累計</div>
         </div>
-        <div class="kpi">
-          <div class="label">Brands</div>
-          <div class="v">${DATA.brands.length}</div>
-          <div class="sub">${DATA.partners.length} collab partners</div>
+        <div class="kpi ${missing>0?'warn':''}">
+          <div class="label">Missing URLs</div>
+          <div class="v">${missing}</div>
+          <div class="sub">design ${s.core.no_design} · mockup ${s.core.no_mockup} · collab ${s.collab.no_image}</div>
         </div>
+        <div class="kpi ${missingBytes>0?'warn':''}">
+          <div class="label">Not cached in DB</div>
+          <div class="v">${missingBytes}</div>
+          <div class="sub">design ${s.core.no_design_bytes} · mockup ${s.core.no_mockup_bytes} · collab ${s.collab.no_image_bytes}</div>
+        </div>
+      </div>
+
+      <div class="actions-bar">
+        <button class="btn primary" onclick="cacheBytes(50,false)">━◯━ DBに画像を取り込む (50件)</button>
+        <button class="btn" onclick="cacheBytes(200,false)">+200件</button>
+        <button class="btn" onclick="cacheBytes(50,true)">強制更新 (50件)</button>
+        <span id="cache-status" class="muted" style="margin-left:12px;font-size:11px;align-self:center"></span>
       </div>
     </section>
 
@@ -137,6 +196,9 @@ function renderShell() {
         <option value="1">active only</option>
         <option value="0">inactive only</option>
         <option value="soldout">sold out</option>
+        <option value="no-design">missing design</option>
+        <option value="no-mockup">missing mockup</option>
+        <option value="no-bytes">not cached</option>
       </select>
       <span class="count" id="count-core"></span>
     </div>
@@ -149,6 +211,8 @@ function renderShell() {
         <option value="1">active only</option>
         <option value="0">inactive only</option>
         <option value="draft">draft only</option>
+        <option value="no-image">missing image</option>
+        <option value="no-bytes">not cached</option>
       </select>
       <span class="count" id="count-collab"></span>
     </div>
@@ -158,15 +222,7 @@ function renderShell() {
   `;
 }
 
-function setTab(t) {
-  activeTab = t;
-  page = 1;
-  sortKey = (t === 'core') ? 'id' : 'id';
-  sortDir = 'desc';
-  renderShell();
-  renderTable();
-}
-
+function setTab(t) { activeTab = t; page = 1; sortKey = 'id'; sortDir = 'desc'; renderShell(); renderTable(); }
 function setSort(k) {
   if (sortKey === k) { sortDir = (sortDir === 'asc' ? 'desc' : 'asc'); }
   else { sortKey = k; sortDir = 'desc'; }
@@ -186,6 +242,13 @@ function applyFilters(rows, scope) {
     if (state === '0' && r.active !== 0) return false;
     if (state === 'soldout' && scope==='core' && r.sold < r.inventory) return false;
     if (state === 'draft' && scope==='collab' && r.draft !== 1) return false;
+    if (state === 'no-design' && scope==='core' && r.design_url) return false;
+    if (state === 'no-mockup' && scope==='core' && r.mockup_url) return false;
+    if (state === 'no-image' && scope==='collab' && r.image_url) return false;
+    if (state === 'no-bytes') {
+      if (scope==='core' && r.has_design_bytes && r.has_mockup_bytes) return false;
+      if (scope==='collab' && r.has_image_bytes) return false;
+    }
     if (q) {
       const hay = scope==='core'
         ? `${r.id} ${r.brand} ${r.drop_num} ${r.name}`.toLowerCase()
@@ -208,9 +271,11 @@ function sortRows(rows) {
   });
 }
 
-function thumbCell(url, fallback) {
-  if (url) return `<img class="thumb" src="${escapeHtml(url)}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'thumb placeholder',textContent:'—'}))">`;
-  return `<div class="thumb placeholder">${fallback || '—'}</div>`;
+function thumbCell(url, dbUrl, cached, fallback) {
+  const src = cached ? dbUrl : (url || '');
+  if (!src) return `<div class="thumb placeholder">${fallback || '—'}</div>`;
+  const cls = cached ? 'thumb cached' : 'thumb';
+  return `<img class="${cls}" src="${escapeHtml(src)}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'thumb placeholder',textContent:'!'}))">`;
 }
 
 function escapeHtml(s) {
@@ -235,39 +300,40 @@ function renderCoreTable() {
   document.getElementById('table-mount').innerHTML = `
     <table>
       <thead><tr>
-        <th></th>
+        <th>img</th>
         <th class="${cls('id')}" onclick="setSort('id')">id${arrow('id')}</th>
         <th class="${cls('brand')}" onclick="setSort('brand')">brand${arrow('brand')}</th>
         <th class="${cls('drop_num')}" onclick="setSort('drop_num')">drop${arrow('drop_num')}</th>
         <th>name</th>
         <th class="num ${cls('price_jpy')}" onclick="setSort('price_jpy')">price${arrow('price_jpy')}</th>
-        <th class="num ${cls('sold')}" onclick="setSort('sold')">sold${arrow('sold')}</th>
-        <th class="num ${cls('inventory')}" onclick="setSort('inventory')">stock${arrow('inventory')}</th>
-        <th class="num ${cls('current_bid')}" onclick="setSort('current_bid')">bid${arrow('current_bid')}</th>
+        <th class="num ${cls('sold')}" onclick="setSort('sold')">sold</th>
+        <th class="num ${cls('inventory')}" onclick="setSort('inventory')">stock</th>
         <th>state</th>
         <th class="${cls('created_at')}" onclick="setSort('created_at')">created${arrow('created_at')}</th>
       </tr></thead>
       <tbody>
         ${slice.map(r => `
-          <tr>
-            <td>${thumbCell(r.mockup_url, '?')}</td>
+          <tr onclick="openDetail('core', ${r.id})">
+            <td><div class="thumb-stack">
+              ${thumbCell(r.design_url, `/api/products/${r.id}/design.png`, r.has_design_bytes, 'D')}
+              ${thumbCell(r.mockup_url, `/api/products/${r.id}/mockup.png`, r.has_mockup_bytes, 'M')}
+            </div></td>
             <td><strong>${r.id}</strong></td>
             <td>${escapeHtml(r.brand)}</td>
             <td>#${r.drop_num}</td>
             <td>
               <div class="row-name">
                 <strong>${escapeHtml(r.name)}</strong>
-                <span class="meta">${r.parent_design ? 'parent: '+escapeHtml(r.parent_design) : ''}${r.nft_mint ? ' · NFT' : ''}${r.auction_end ? ' · auction' : ''}</span>
+                <span class="meta">${imageStateInline(r)}</span>
               </div>
             </td>
             <td class="num">¥${r.price_jpy.toLocaleString()}</td>
             <td class="num">${r.sold}</td>
             <td class="num">${r.inventory}</td>
-            <td class="num">${r.current_bid ? '¥'+r.current_bid.toLocaleString() : '<span class="muted">—</span>'}</td>
             <td>${stateTag(r)}</td>
             <td class="muted">${escapeHtml((r.created_at||'').slice(0,10))}</td>
           </tr>
-        `).join('') || '<tr><td colspan="11" class="muted" style="text-align:center;padding:30px">no products match the filter</td></tr>'}
+        `).join('') || '<tr><td colspan="10" class="muted" style="text-align:center;padding:30px">no products match the filter</td></tr>'}
       </tbody>
     </table>
   `;
@@ -285,39 +351,44 @@ function renderCollabTable() {
   document.getElementById('table-mount').innerHTML = `
     <table>
       <thead><tr>
-        <th></th>
+        <th>img</th>
         <th class="${cls('id')}" onclick="setSort('id')">id${arrow('id')}</th>
         <th class="${cls('partner')}" onclick="setSort('partner')">partner${arrow('partner')}</th>
-        <th class="${cls('category')}" onclick="setSort('category')">category${arrow('category')}</th>
+        <th class="${cls('category')}" onclick="setSort('category')">category</th>
         <th>slug</th>
         <th>name</th>
-        <th class="num ${cls('price_jpy')}" onclick="setSort('price_jpy')">price${arrow('price_jpy')}</th>
+        <th class="num ${cls('price_jpy')}" onclick="setSort('price_jpy')">price</th>
         <th>state</th>
-        <th class="${cls('created_at')}" onclick="setSort('created_at')">created${arrow('created_at')}</th>
       </tr></thead>
       <tbody>
         ${slice.map(r => `
-          <tr>
-            <td>${thumbCell(r.image_url, '?')}</td>
+          <tr onclick="openDetail('collab', ${r.id})">
+            <td>${thumbCell(r.image_url, `/api/collab/${r.id}/image.png`, r.has_image_bytes, '?')}</td>
             <td><strong>${r.id}</strong></td>
             <td>${escapeHtml(r.partner)}</td>
             <td><span class="tag muted">${escapeHtml(r.category)}</span></td>
             <td><code style="font-size:11px;color:var(--mute)">${escapeHtml(r.slug)}</code></td>
-            <td>
-              <div class="row-name">
-                <strong>${escapeHtml(r.name)}</strong>
-                <span class="meta">${escapeHtml((r.description||'').slice(0,60))}${(r.description||'').length>60?'…':''}</span>
-              </div>
-            </td>
+            <td><div class="row-name"><strong>${escapeHtml(r.name)}</strong><span class="meta">${escapeHtml((r.description||'').slice(0,60))}${(r.description||'').length>60?'…':''}</span></div></td>
             <td class="num">¥${r.price_jpy.toLocaleString()}</td>
             <td>${collabStateTag(r)}</td>
-            <td class="muted">${escapeHtml((r.created_at||'').slice(0,10))}</td>
           </tr>
-        `).join('') || '<tr><td colspan="9" class="muted" style="text-align:center;padding:30px">no collab products match the filter</td></tr>'}
+        `).join('') || '<tr><td colspan="8" class="muted" style="text-align:center;padding:30px">no collab products match the filter</td></tr>'}
       </tbody>
     </table>
   `;
   renderPager(rows.length, pages);
+}
+
+function imageStateInline(r) {
+  const parts = [];
+  if (!r.design_url) parts.push('<span style="color:var(--red)">no design</span>');
+  else parts.push(r.has_design_bytes ? '<span style="color:var(--green)">D ✓</span>' : '<span class="muted">D (uncached)</span>');
+  if (!r.mockup_url) parts.push('<span style="color:var(--red)">no mockup</span>');
+  else parts.push(r.has_mockup_bytes ? '<span style="color:var(--green)">M ✓</span>' : '<span class="muted">M (uncached)</span>');
+  if (r.parent_design) parts.push('parent: '+escapeHtml(r.parent_design));
+  if (r.nft_mint) parts.push('NFT');
+  if (r.auction_end) parts.push('auction');
+  return parts.join(' · ');
 }
 
 function stateTag(r) {
@@ -325,7 +396,6 @@ function stateTag(r) {
   if (r.sold >= r.inventory && r.inventory > 0) return '<span class="tag no">sold out</span>';
   return '<span class="tag ok">active</span>';
 }
-
 function collabStateTag(r) {
   if (r.active !== 1) return '<span class="tag muted">inactive</span>';
   if (r.draft === 1) return '<span class="tag muted">draft</span>';
@@ -342,6 +412,180 @@ function renderPager(total, pages) {
     <button onclick="page++; renderTable()" ${page===pages?'disabled':''}>next ›</button>
     <button onclick="page=${pages}; renderTable()" ${page===pages?'disabled':''}>last »</button>
   `;
+}
+
+// ── Detail modal ───────────────────────────────────────────────────
+function openDetail(scope, id) {
+  const r = (scope === 'core' ? DATA.products : DATA.collab_products).find(x => x.id === id);
+  if (!r) return;
+  const body = document.getElementById('modal-body');
+  body.innerHTML = renderDetail(scope, r);
+  document.getElementById('modal').classList.add('open');
+}
+function closeModal() {
+  document.getElementById('modal').classList.remove('open');
+}
+
+function renderDetail(scope, r) {
+  if (scope === 'core') return renderCoreDetail(r);
+  return renderCollabDetail(r);
+}
+
+function renderCoreDetail(r) {
+  const designUrl = r.design_url || '';
+  const mockupUrl = r.mockup_url || '';
+  const dbDesign = `/api/products/${r.id}/design.png`;
+  const dbMockup = `/api/products/${r.id}/mockup.png`;
+  return `
+    <span class="close" onclick="closeModal()">close ✕</span>
+    <h3>#${r.id} · ${escapeHtml(r.name)}</h3>
+    <div class="sub">${escapeHtml(r.brand)} · drop #${r.drop_num} · ¥${r.price_jpy.toLocaleString()} · sold ${r.sold}/${r.inventory}</div>
+
+    <div class="img-grid">
+      ${imgCard({
+        label: 'デザイン (source)',
+        hint: 'Gemini が生成した PNG (透過背景)。これが「作品」の原本。',
+        previewSrc: r.has_design_bytes ? dbDesign : designUrl,
+        url: designUrl,
+        cached: r.has_design_bytes,
+        dbUrl: dbDesign,
+        scope: 'core', id: r.id, kind: 'design',
+      })}
+      ${imgCard({
+        label: 'Printful に渡す画像 (print file)',
+        hint: 'お客様購入時に Printful の <code>files[].url</code> で送る画像。Core products では design と同じ URL を使用 (placement: front, chest 12×16in 自動配置)。',
+        previewSrc: r.has_design_bytes ? dbDesign : designUrl,
+        url: designUrl,
+        cached: r.has_design_bytes,
+        dbUrl: dbDesign,
+        scope: 'core', id: r.id, kind: 'design',
+        readonly: true,
+      })}
+      ${imgCard({
+        label: 'Printful 着用写真 (mockup)',
+        hint: 'Printful の mockup-generator が返した T シャツ着用画像。OGP / 商品一覧表示用。',
+        previewSrc: r.has_mockup_bytes ? dbMockup : mockupUrl,
+        url: mockupUrl,
+        cached: r.has_mockup_bytes,
+        dbUrl: dbMockup,
+        scope: 'core', id: r.id, kind: 'mockup',
+        regen: true,
+      })}
+    </div>
+    <div id="detail-status"></div>
+  `;
+}
+
+function renderCollabDetail(r) {
+  const url = r.image_url || '';
+  const dbUrl = `/api/collab/${r.id}/image.png`;
+  return `
+    <span class="close" onclick="closeModal()">close ✕</span>
+    <h3>#${r.id} · ${escapeHtml(r.name)}</h3>
+    <div class="sub">${escapeHtml(r.partner)} · ${escapeHtml(r.category)} · ¥${r.price_jpy.toLocaleString()} · slug ${escapeHtml(r.slug)}</div>
+    <div class="img-grid">
+      ${imgCard({
+        label: '商品画像',
+        hint: 'collab_products.image_url。コラボ系 (sweep / kokon / partner LPs) の商品写真。',
+        previewSrc: r.has_image_bytes ? dbUrl : url,
+        url, cached: r.has_image_bytes, dbUrl,
+        scope: 'collab', id: r.id, kind: 'image',
+      })}
+    </div>
+    <div id="detail-status"></div>
+  `;
+}
+
+function imgCard(o) {
+  const hasPreview = !!o.previewSrc;
+  const preview = hasPreview
+    ? `<img src="${escapeHtml(o.previewSrc)}" loading="lazy" onerror="this.parentElement.innerHTML='<div class=&quot;empty&quot;>load failed</div>'">`
+    : `<div class="empty">no image</div>`;
+  const cachedBadge = o.cached
+    ? `<span class="tag ok" style="margin-left:6px">DB cached</span>`
+    : (o.url ? `<span class="tag muted" style="margin-left:6px">remote only</span>` : '');
+  const urlBox = o.url
+    ? `<div class="url-box"><a href="${escapeHtml(o.url)}" target="_blank">${escapeHtml(o.url)}</a></div>`
+    : `<div class="url-box empty">URL not set</div>`;
+  const actions = [];
+  actions.push(`<a class="btn" href="${escapeHtml(o.dbUrl)}" target="_blank">DB 経由で開く</a>`);
+  if (o.url) actions.push(`<a class="btn" href="${escapeHtml(o.url)}" target="_blank">原本</a>`);
+  if (!o.readonly && o.url && !o.cached) {
+    actions.push(`<button class="btn" onclick="cacheOne('${o.scope}', ${o.id})">DB に取り込む</button>`);
+  }
+  if (o.regen && o.url) {
+    actions.push(`<button class="btn" onclick="regenMockup(${o.id})">Printful で再生成</button>`);
+  }
+  return `
+    <div class="img-card">
+      <div class="img-label">${o.label}${cachedBadge}</div>
+      <div class="img-hint">${o.hint}</div>
+      <div class="preview">${preview}</div>
+      ${urlBox}
+      <div class="actions">${actions.join('')}</div>
+    </div>
+  `;
+}
+
+// ── Actions ────────────────────────────────────────────────────────
+async function cacheBytes(limit, force) {
+  const el = document.getElementById('cache-status');
+  el.textContent = `fetching up to ${limit} rows…`;
+  try {
+    const r = await fetch(withTok('/api/admin/products/cache_bytes'), {
+      method: 'POST', credentials: 'include',
+      headers: {'content-type': 'application/json'},
+      body: JSON.stringify({ limit, force }),
+    });
+    const j = await r.json();
+    if (j.ok) {
+      el.innerHTML = `<span style="color:var(--green)">✓ products done=${j.products.done} failed=${j.products.failed} · collab done=${j.collab.done} failed=${j.collab.failed}</span>`;
+      setTimeout(() => load(), 1200);
+    } else {
+      el.innerHTML = `<span style="color:var(--red)">✗ ${escapeHtml(JSON.stringify(j))}</span>`;
+    }
+  } catch (e) {
+    el.innerHTML = `<span style="color:var(--red)">✗ ${escapeHtml(String(e))}</span>`;
+  }
+}
+
+async function cacheOne(scope, id) {
+  const st = document.getElementById('detail-status');
+  st.innerHTML = `<div class="status-line info">caching id=${id}…</div>`;
+  const body = scope === 'core' ? { product_ids: [id] } : { collab_ids: [id] };
+  try {
+    const r = await fetch(withTok('/api/admin/products/cache_bytes'), {
+      method: 'POST', credentials: 'include',
+      headers: {'content-type': 'application/json'}, body: JSON.stringify(body),
+    });
+    const j = await r.json();
+    if (j.ok) {
+      st.innerHTML = `<div class="status-line ok">✓ cached. reloading…</div>`;
+      setTimeout(() => { closeModal(); load(); }, 800);
+    } else {
+      st.innerHTML = `<div class="status-line err">✗ ${escapeHtml(JSON.stringify(j))}</div>`;
+    }
+  } catch (e) {
+    st.innerHTML = `<div class="status-line err">✗ ${escapeHtml(String(e))}</div>`;
+  }
+}
+
+async function regenMockup(id) {
+  const st = document.getElementById('detail-status');
+  st.innerHTML = `<div class="status-line info">Printful mockup-generator にリクエスト送信中… (10〜60秒)</div>`;
+  try {
+    const r = await fetch(withTok(`/api/admin/products/${id}/regen_mockup`), {
+      method: 'POST', credentials: 'include',
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 202) {
+      st.innerHTML = `<div class="status-line ok">✓ 送信完了。1〜2分後にこのページを再読み込みすると mockup_url が更新されてます。</div>`;
+    } else {
+      st.innerHTML = `<div class="status-line err">✗ ${escapeHtml(JSON.stringify(j))}</div>`;
+    }
+  } catch (e) {
+    st.innerHTML = `<div class="status-line err">✗ ${escapeHtml(String(e))}</div>`;
+  }
 }
 
 load();

@@ -7687,6 +7687,362 @@ async fn admin_bids_page(
     Html(include_str!("../static/admin-bids.html")).into_response()
 }
 
+/// Download an image URL and return (bytes, mime). 8 MB cap so a malicious
+/// or runaway origin can't blow up SQLite. Used by the per-product /
+/// per-collab byte-cache backfill so the admin viewer keeps working when
+/// the origin CDN expires/rotates.
+async fn fetch_image_bytes(url: &str) -> Option<(Vec<u8>, String)> {
+    let abs = if url.starts_with("http") { url.to_string() }
+              else if url.starts_with('/') { format!("https://wearmu.com{}", url) }
+              else { return None };
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build().ok()?;
+    let r = client.get(&abs).send().await.ok()?;
+    if !r.status().is_success() { return None; }
+    let mime = r.headers().get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok()).map(String::from)
+        .unwrap_or_else(|| "image/png".into());
+    let bytes = r.bytes().await.ok()?;
+    if bytes.len() > 8 * 1024 * 1024 { return None; }
+    Some((bytes.to_vec(), mime))
+}
+
+/// GET /api/products/:id/design.png — serves products.design_bytes if cached,
+/// else 302 to design_url. Public, immutable, cacheable.
+async fn product_design_image(
+    State(db): State<Db>,
+    Path(id): Path<i64>,
+) -> Response {
+    let row: Option<(Option<Vec<u8>>, Option<String>, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT design_bytes, design_mime, design_url FROM products WHERE id=?",
+            params![id], |r| Ok((
+                r.get::<_, Option<Vec<u8>>>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, Option<String>>(2)?,
+            ))
+        ).ok()
+    };
+    match row {
+        Some((Some(b), mime, _)) => {
+            let mime = mime.unwrap_or_else(|| "image/png".into());
+            let mut resp = b.into_response();
+            let h = resp.headers_mut();
+            if let Ok(v) = HeaderValue::from_str(&mime) { h.insert(header::CONTENT_TYPE, v); }
+            h.insert(header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=2592000, immutable"));
+            resp
+        }
+        Some((_, _, Some(url))) if !url.is_empty() => axum::response::Redirect::temporary(&url).into_response(),
+        _ => (StatusCode::NOT_FOUND, "no design").into_response(),
+    }
+}
+
+/// GET /api/products/:id/mockup.png — serves products.mockup_bytes if cached,
+/// else 302 to mockup_url.
+async fn product_mockup_image(
+    State(db): State<Db>,
+    Path(id): Path<i64>,
+) -> Response {
+    let row: Option<(Option<Vec<u8>>, Option<String>, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT mockup_bytes, mockup_mime, mockup_url FROM products WHERE id=?",
+            params![id], |r| Ok((
+                r.get::<_, Option<Vec<u8>>>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, Option<String>>(2)?,
+            ))
+        ).ok()
+    };
+    match row {
+        Some((Some(b), mime, _)) => {
+            let mime = mime.unwrap_or_else(|| "image/png".into());
+            let mut resp = b.into_response();
+            let h = resp.headers_mut();
+            if let Ok(v) = HeaderValue::from_str(&mime) { h.insert(header::CONTENT_TYPE, v); }
+            h.insert(header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=2592000, immutable"));
+            resp
+        }
+        Some((_, _, Some(url))) if !url.is_empty() => axum::response::Redirect::temporary(&url).into_response(),
+        _ => (StatusCode::NOT_FOUND, "no mockup").into_response(),
+    }
+}
+
+/// GET /api/collab/:id/image.png — same idea for collab_products.
+async fn collab_product_image(
+    State(db): State<Db>,
+    Path(id): Path<i64>,
+) -> Response {
+    let row: Option<(Option<Vec<u8>>, Option<String>, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT image_bytes, image_mime, image_url FROM collab_products WHERE id=?",
+            params![id], |r| Ok((
+                r.get::<_, Option<Vec<u8>>>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, Option<String>>(2)?,
+            ))
+        ).ok()
+    };
+    match row {
+        Some((Some(b), mime, _)) => {
+            let mime = mime.unwrap_or_else(|| "image/png".into());
+            let mut resp = b.into_response();
+            let h = resp.headers_mut();
+            if let Ok(v) = HeaderValue::from_str(&mime) { h.insert(header::CONTENT_TYPE, v); }
+            h.insert(header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=2592000, immutable"));
+            resp
+        }
+        Some((_, _, Some(url))) if !url.is_empty() => axum::response::Redirect::temporary(&url).into_response(),
+        _ => (StatusCode::NOT_FOUND, "no image").into_response(),
+    }
+}
+
+/// POST /api/admin/products/cache_bytes?token=...
+/// Body: {"product_ids":[…], "collab_ids":[…], "limit": 100, "force": false}
+/// Fetch design_url + mockup_url for each product (or collab.image_url),
+/// store the bytes inline. Skips rows that already have bytes unless force=true.
+/// Runs in foreground (sequential, with 200 ms gap) so the admin sees results
+/// immediately; cap default 50 to stay within HTTP timeout.
+async fn admin_cache_product_bytes(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/products/cache_bytes").await { return r; }
+    let force = body.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+    let limit = body.get("limit").and_then(|v| v.as_i64()).unwrap_or(50).clamp(1, 500);
+
+    // Discover targets ─────────────────────────────────────────────
+    let product_ids: Vec<i64> = body.get("product_ids")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_i64()).collect())
+        .unwrap_or_default();
+    let collab_ids: Vec<i64> = body.get("collab_ids")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_i64()).collect())
+        .unwrap_or_default();
+
+    // Auto-pick the next N rows missing bytes if no ids given.
+    let (product_targets, collab_targets): (Vec<(i64, Option<String>, Option<String>)>, Vec<(i64, Option<String>)>) = {
+        let conn = db.lock().unwrap();
+        let prods = if product_ids.is_empty() {
+            let sql = if force {
+                "SELECT id, design_url, mockup_url FROM products WHERE active=1 ORDER BY id DESC LIMIT ?".to_string()
+            } else {
+                "SELECT id, design_url, mockup_url FROM products
+                 WHERE active=1 AND (design_bytes IS NULL OR mockup_bytes IS NULL)
+                 ORDER BY id DESC LIMIT ?".to_string()
+            };
+            let mut st = match conn.prepare(&sql) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "products query").into_response() };
+            st.query_map(params![limit], |r| Ok((
+                r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, Option<String>>(2)?
+            ))).map(|it| it.flatten().collect()).unwrap_or_default()
+        } else {
+            let placeholders = product_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let sql = format!("SELECT id, design_url, mockup_url FROM products WHERE id IN ({})", placeholders);
+            let mut st = match conn.prepare(&sql) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "products query").into_response() };
+            let params_vec: Vec<&dyn rusqlite::ToSql> = product_ids.iter().map(|i| i as &dyn rusqlite::ToSql).collect();
+            st.query_map(&params_vec[..], |r| Ok((
+                r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, Option<String>>(2)?
+            ))).map(|it| it.flatten().collect()).unwrap_or_default()
+        };
+        let collabs = if collab_ids.is_empty() {
+            let sql = if force {
+                "SELECT id, image_url FROM collab_products WHERE active=1 ORDER BY id DESC LIMIT ?".to_string()
+            } else {
+                "SELECT id, image_url FROM collab_products
+                 WHERE active=1 AND image_bytes IS NULL
+                 ORDER BY id DESC LIMIT ?".to_string()
+            };
+            let mut st = match conn.prepare(&sql) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "collab query").into_response() };
+            st.query_map(params![limit], |r| Ok((
+                r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?
+            ))).map(|it| it.flatten().collect()).unwrap_or_default()
+        } else {
+            let placeholders = collab_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let sql = format!("SELECT id, image_url FROM collab_products WHERE id IN ({})", placeholders);
+            let mut st = match conn.prepare(&sql) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "collab query").into_response() };
+            let params_vec: Vec<&dyn rusqlite::ToSql> = collab_ids.iter().map(|i| i as &dyn rusqlite::ToSql).collect();
+            st.query_map(&params_vec[..], |r| Ok((
+                r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?
+            ))).map(|it| it.flatten().collect()).unwrap_or_default()
+        };
+        (prods, collabs)
+    };
+
+    let mut products_done = 0usize;
+    let mut products_failed = 0usize;
+    let mut collab_done = 0usize;
+    let mut collab_failed = 0usize;
+
+    for (id, design_url, mockup_url) in product_targets {
+        let mut wrote_any = false;
+        // Design
+        if let Some(u) = design_url.filter(|s| !s.is_empty()) {
+            if let Some((b, mime)) = fetch_image_bytes(&u).await {
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "UPDATE products SET design_bytes=?, design_mime=? WHERE id=?",
+                    params![b, mime, id],
+                );
+                wrote_any = true;
+            }
+        }
+        // Mockup
+        if let Some(u) = mockup_url.filter(|s| !s.is_empty()) {
+            if let Some((b, mime)) = fetch_image_bytes(&u).await {
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "UPDATE products SET mockup_bytes=?, mockup_mime=? WHERE id=?",
+                    params![b, mime, id],
+                );
+                wrote_any = true;
+            }
+        }
+        if wrote_any {
+            let conn = db.lock().unwrap();
+            let _ = conn.execute(
+                "UPDATE products SET bytes_fetched_at=? WHERE id=?",
+                params![chrono_now(), id],
+            );
+            products_done += 1;
+        } else {
+            products_failed += 1;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    }
+    for (id, image_url) in collab_targets {
+        if let Some(u) = image_url.filter(|s| !s.is_empty()) {
+            if let Some((b, mime)) = fetch_image_bytes(&u).await {
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "UPDATE collab_products SET image_bytes=?, image_mime=?, bytes_fetched_at=? WHERE id=?",
+                    params![b, mime, chrono_now(), id],
+                );
+                collab_done += 1;
+            } else { collab_failed += 1; }
+        } else { collab_failed += 1; }
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    }
+
+    Json(serde_json::json!({
+        "ok": true,
+        "products": { "done": products_done, "failed": products_failed },
+        "collab":   { "done": collab_done,   "failed": collab_failed },
+    })).into_response()
+}
+
+/// Background task: regenerate a product's `mockup_url` by calling Printful's
+/// mockup-generator with the existing `design_url`. Mirrors the
+/// generate_ma_gift_mockup flow but writes back to `products`. Bella+Canvas
+/// 3001 black M (variant 4017) for the showcase render.
+async fn regen_product_mockup(product_id: i64, design_url: String, db: Db) {
+    let key = env::var("PRINTFUL_API_KEY").unwrap_or_default();
+    if key.is_empty() {
+        eprintln!("[regen_mockup] pid={}: no PRINTFUL_API_KEY", product_id);
+        return;
+    }
+    let public_design_url = if design_url.starts_with("http") {
+        design_url.clone()
+    } else if design_url.starts_with('/') {
+        format!("https://wearmu.com{}", design_url)
+    } else {
+        design_url.clone()
+    };
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build().unwrap_or_else(|_| reqwest::Client::new());
+    let create_body = serde_json::json!({
+        "variant_ids": [4017],
+        "format": "png",
+        "files": [{
+            "placement": "front",
+            "image_url": public_design_url,
+            "position": { "area_width": 1800, "area_height": 2400,
+                          "width": 1260, "height": 1260,
+                          "top": 380, "left": 270 }
+        }]
+    });
+    let task_key: Option<String> = match client
+        .post("https://api.printful.com/mockup-generator/create-task/71")
+        .bearer_auth(&key).json(&create_body).send().await
+    {
+        Ok(r) if r.status().is_success() => r.json::<serde_json::Value>().await.ok()
+            .and_then(|j| j["result"]["task_key"].as_str().map(String::from)),
+        Ok(r) => { eprintln!("[regen_mockup] pid={}: create-task {}: {}",
+                              product_id, r.status(), r.text().await.unwrap_or_default()); None }
+        Err(e) => { eprintln!("[regen_mockup] pid={}: create-task err: {}", product_id, e); None }
+    };
+    let Some(task_key) = task_key else { return; };
+    let mut remote: Option<String> = None;
+    for attempt in 0..30 {
+        tokio::time::sleep(std::time::Duration::from_secs(if attempt == 0 { 5 } else { 4 })).await;
+        let poll = format!("https://api.printful.com/mockup-generator/task?task_key={}", task_key);
+        let r = match client.get(&poll).bearer_auth(&key).send().await {
+            Ok(r) => r, Err(_) => continue,
+        };
+        if !r.status().is_success() { continue; }
+        let j: serde_json::Value = match r.json().await { Ok(v) => v, Err(_) => continue };
+        let status = j["result"]["status"].as_str().unwrap_or("");
+        if status == "completed" {
+            remote = j["result"]["mockups"][0]["mockup_url"].as_str().map(String::from);
+            break;
+        }
+        if status == "failed" { eprintln!("[regen_mockup] pid={}: task failed", product_id); break; }
+    }
+    let Some(remote_url) = remote else { return; };
+    // Mirror Printful's tmp URL into R2/local so it survives the ~24h presign.
+    let persisted = persist_mockup_if_temporary(product_id, &remote_url).await
+        .unwrap_or(remote_url.clone());
+    // Also store the bytes inline so /admin/products keeps working even when
+    // both R2 and Printful CDN fail.
+    let (bytes_opt, mime_opt) = match fetch_image_bytes(&persisted).await {
+        Some((b, m)) => (Some(b), Some(m)),
+        None => (None, None),
+    };
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE products SET mockup_url=?, mockup_bytes=COALESCE(?, mockup_bytes),
+                mockup_mime=COALESCE(?, mockup_mime), bytes_fetched_at=? WHERE id=?",
+            params![persisted, bytes_opt, mime_opt, chrono_now(), product_id],
+        );
+    }
+    eprintln!("[regen_mockup] pid={}: stored mockup → {} ({}B bytes)", product_id, persisted,
+        bytes_opt.as_ref().map(|b| b.len()).unwrap_or(0));
+}
+
+/// POST /api/admin/products/:id/regen_mockup?token=... — kicks off Printful
+/// mockup regeneration in the background. Returns immediately with 202.
+async fn admin_regen_product_mockup(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Path(product_id): axum::extract::Path<i64>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), &format!("/api/admin/products/{}/regen_mockup", product_id)).await { return r; }
+    let design_url: Option<String> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT design_url FROM products WHERE id=?",
+            params![product_id], |r| r.get::<_, Option<String>>(0),
+        ).ok().flatten()
+    };
+    let Some(design_url) = design_url.filter(|s| !s.is_empty()) else {
+        return (StatusCode::BAD_REQUEST,
+            "product has no design_url; upload one first").into_response();
+    };
+    let db2 = db.clone();
+    tokio::spawn(async move { regen_product_mockup(product_id, design_url, db2).await; });
+    (StatusCode::ACCEPTED, Json(serde_json::json!({
+        "ok": true, "status": "regenerating", "product_id": product_id
+    }))).into_response()
+}
+
 /// GET /admin/products — admin-gated HTML product browser (core + collab tables).
 async fn admin_products_page(
     State(db): State<Db>,
@@ -7707,11 +8063,14 @@ async fn admin_products_list(
 
     let conn = db.lock().unwrap();
 
-    // Core products
+    // Core products — design_bytes IS NOT NULL → has_design_bytes flag, same
+    // for mockup. We don't ship the bytes themselves (too heavy); the admin
+    // page loads them via /api/products/:id/design.png on demand.
     let products: Vec<serde_json::Value> = {
         let mut st = match conn.prepare(
             "SELECT id, brand, drop_num, name, design_url, mockup_url, price_jpy, inventory, sold,
-                    created_at, active, parent_design, nft_mint, auction_end, current_bid, bid_count
+                    created_at, active, parent_design, nft_mint, auction_end, current_bid, bid_count,
+                    design_bytes IS NOT NULL, mockup_bytes IS NOT NULL, bytes_fetched_at
              FROM products ORDER BY id DESC"
         ) {
             Ok(s) => s,
@@ -7735,6 +8094,9 @@ async fn admin_products_list(
                 "auction_end":   r.get::<_, Option<String>>(13).unwrap_or(None),
                 "current_bid":   r.get::<_, i64>(14).unwrap_or(0),
                 "bid_count":     r.get::<_, i64>(15).unwrap_or(0),
+                "has_design_bytes": r.get::<_, i64>(16).unwrap_or(0) != 0,
+                "has_mockup_bytes": r.get::<_, i64>(17).unwrap_or(0) != 0,
+                "bytes_fetched_at": r.get::<_, Option<String>>(18).unwrap_or(None),
             }))
         }).map(|it| it.flatten().collect()).unwrap_or_default();
         rows
@@ -7744,7 +8106,8 @@ async fn admin_products_list(
     let collab_products: Vec<serde_json::Value> = {
         let mut st = match conn.prepare(
             "SELECT id, slug, partner, category, name, description, image_url, price_jpy,
-                    sizes_json, active, draft, created_at
+                    sizes_json, active, draft, created_at,
+                    image_bytes IS NOT NULL, bytes_fetched_at
              FROM collab_products ORDER BY id DESC"
         ) {
             Ok(s) => s,
@@ -7764,6 +8127,8 @@ async fn admin_products_list(
                 "active":      r.get::<_, i64>(9).unwrap_or(0),
                 "draft":       r.get::<_, i64>(10).unwrap_or(0),
                 "created_at":  r.get::<_, String>(11).unwrap_or_default(),
+                "has_image_bytes":  r.get::<_, i64>(12).unwrap_or(0) != 0,
+                "bytes_fetched_at": r.get::<_, Option<String>>(13).unwrap_or(None),
             }))
         }).map(|it| it.flatten().collect()).unwrap_or_default();
         rows
@@ -7794,11 +8159,22 @@ async fn admin_products_list(
     let collab_active: i64 = conn.query_row("SELECT COUNT(*) FROM collab_products WHERE active=1", [], |r| r.get(0)).unwrap_or(0);
     let collab_draft: i64 = conn.query_row("SELECT COUNT(*) FROM collab_products WHERE draft=1", [], |r| r.get(0)).unwrap_or(0);
 
+    // Missing-image counts so the admin can backfill at a glance.
+    let core_no_design:  i64 = conn.query_row("SELECT COUNT(*) FROM products WHERE active=1 AND (design_url IS NULL OR design_url='')", [], |r| r.get(0)).unwrap_or(0);
+    let core_no_mockup:  i64 = conn.query_row("SELECT COUNT(*) FROM products WHERE active=1 AND (mockup_url IS NULL OR mockup_url='')", [], |r| r.get(0)).unwrap_or(0);
+    let core_no_design_bytes: i64 = conn.query_row("SELECT COUNT(*) FROM products WHERE active=1 AND design_bytes IS NULL AND design_url IS NOT NULL AND design_url<>''", [], |r| r.get(0)).unwrap_or(0);
+    let core_no_mockup_bytes: i64 = conn.query_row("SELECT COUNT(*) FROM products WHERE active=1 AND mockup_bytes IS NULL AND mockup_url IS NOT NULL AND mockup_url<>''", [], |r| r.get(0)).unwrap_or(0);
+    let collab_no_image: i64 = conn.query_row("SELECT COUNT(*) FROM collab_products WHERE active=1 AND (image_url IS NULL OR image_url='')", [], |r| r.get(0)).unwrap_or(0);
+    let collab_no_image_bytes: i64 = conn.query_row("SELECT COUNT(*) FROM collab_products WHERE active=1 AND image_bytes IS NULL AND image_url IS NOT NULL AND image_url<>''", [], |r| r.get(0)).unwrap_or(0);
+
     Json(serde_json::json!({
         "snapshot_at": chrono_now(),
         "summary": {
-            "core":   { "total": core_total, "active": core_active, "sold": core_sold, "revenue_jpy": core_revenue },
-            "collab": { "total": collab_total, "active": collab_active, "draft": collab_draft },
+            "core":   { "total": core_total, "active": core_active, "sold": core_sold, "revenue_jpy": core_revenue,
+                        "no_design": core_no_design, "no_mockup": core_no_mockup,
+                        "no_design_bytes": core_no_design_bytes, "no_mockup_bytes": core_no_mockup_bytes },
+            "collab": { "total": collab_total, "active": collab_active, "draft": collab_draft,
+                        "no_image": collab_no_image, "no_image_bytes": collab_no_image_bytes },
         },
         "brands":  brands,
         "partners": partners,
@@ -31280,6 +31656,181 @@ async fn admin_city_update(
     Json(serde_json::json!({"ok": n > 0, "slug": body.slug, "updated": n})).into_response()
 }
 
+// ── B': /tokyo /kyoto /osaka /sapporo /fukuoka /okinawa — single-segment
+//      cool URLs for the regional editions. Server-rendered so the URL bar
+//      shows /tokyo (not /products/regional_tokyo/101). Both tiers
+//      (entry ¥4,900 / standard ¥6,800) shown side-by-side. ────────────────
+async fn region_landing(
+    axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
+    State(db): State<Db>,
+) -> Response {
+    let city = uri.path().trim_start_matches('/').to_string();
+    let allowed: &[(&str, &str, &str, &str, &str)] = &[
+        ("tokyo",   "東京",   "都市の密度",  "TOKYO",   "35.6762°N · 139.6503°E"),
+        ("kyoto",   "京都",   "石庭の沈黙",  "KYOTO",   "35.0116°N · 135.7681°E"),
+        ("osaka",   "大阪",   "八百八橋",    "OSAKA",   "34.6937°N · 135.5023°E"),
+        ("sapporo", "札幌",   "雪の結晶",    "SAPPORO", "43.0618°N · 141.3545°E"),
+        ("fukuoka", "福岡",   "海と屋台",    "FUKUOKA", "33.5904°N · 130.4017°E"),
+        ("okinawa", "沖縄",   "南風",        "OKINAWA", "26.2124°N · 127.6809°E"),
+    ];
+    let meta = match allowed.iter().find(|(s, ..)| *s == city.as_str()) {
+        Some(m) => m,
+        None => return (StatusCode::NOT_FOUND, "no such region").into_response(),
+    };
+    let (slug, jp, tag, en, coords) = (meta.0, meta.1, meta.2, meta.3, meta.4);
+
+    // Fetch both tiers from products. entry=drop_num=1 (¥4,900),
+    // standard=drop_num=101 (¥6,800). If either is missing, we hide it.
+    let brand = format!("regional_{}", slug);
+    let rows: Vec<(i64, i64, i64, i64, i64, String)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, drop_num, price_jpy, inventory, sold, COALESCE(mockup_url,'')
+             FROM products WHERE brand=? AND active=1 ORDER BY drop_num"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map(params![brand], |r| Ok((
+            r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?,
+            r.get::<_, i64>(3)?, r.get::<_, i64>(4)?, r.get::<_, String>(5)?,
+        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    let entry = rows.iter().find(|r| r.1 == 1);
+    let standard = rows.iter().find(|r| r.1 == 101);
+    let img = entry.or(standard).map(|r| r.5.clone())
+        .unwrap_or_else(|| format!("https://lifestyle.wearmu.com/regional/{}.png", slug));
+
+    fn tier_card(slug: &str, label: &str, kicker: &str, r: Option<&(i64,i64,i64,i64,i64,String)>) -> String {
+        match r {
+            Some((id, drop, price, inv, sold, _)) => {
+                let rem = (*inv - *sold).max(0);
+                format!(
+                    r##"<a href="/products/regional_{slug}/{drop}" class="tier">
+                      <div class="tier-kicker">{kicker}</div>
+                      <div class="tier-price">¥{p}</div>
+                      <div class="tier-meta">{label} · のこり {rem}/{inv} · 1 of {inv}</div>
+                      <div class="tier-cta">これを買う →</div>
+                    </a>"##,
+                    slug = slug, drop = drop, kicker = kicker, label = label,
+                    p = format_jpy(*price), rem = rem, inv = inv,
+                )
+            }
+            None => String::new(),
+        }
+    }
+
+    let entry_html = tier_card(slug, "entry tier", "Entry · 普及版", entry);
+    let std_html   = tier_card(slug, "standard tier", "Standard · 推奨", standard);
+
+    let html = format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{jp} EDITION — MU Regional · {tag} | wearmu.com</title>
+<meta name="description" content="MU {jp} EDITION — AI が描く {jp} の {tag}。 1 着 47 名限定、 ¥4,900 (entry) / ¥6,800 (standard)。 利益の 50% を弟子屈町に寄付。">
+<meta property="og:type" content="product">
+<meta property="og:title" content="{jp} EDITION — MU Regional · {tag}">
+<meta property="og:description" content="AI が描く {jp} 限定 Tシャツ。 47 着限定、 ¥4,900〜。">
+<meta property="og:image" content="{img}">
+<meta property="og:url" content="https://wearmu.com/{slug}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="{img}">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<script defer src="/tracking.js"></script>
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<style>
+:root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--card:#141414;--line:rgba(255,255,255,0.08)}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:var(--bg);color:var(--fg);font-family:'Noto Serif JP','Helvetica Neue','Hiragino Sans',serif;line-height:1.85;font-size:16px;-webkit-font-smoothing:antialiased}}
+nav{{position:sticky;top:0;background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);border-bottom:1px solid var(--line);padding:14px 24px;display:flex;justify-content:space-between;align-items:center;z-index:50;font-family:'Helvetica Neue',Arial,sans-serif}}
+nav a{{color:var(--fg);font-size:11px;letter-spacing:0.32em;text-transform:uppercase;opacity:0.85;text-decoration:none}}
+nav .logo{{font-weight:700;letter-spacing:0.5em;font-size:14px}}
+main{{max-width:920px;margin:0 auto;padding:0 24px}}
+.hero{{padding:64px 0 32px;display:grid;grid-template-columns:1fr 1fr;gap:42px;align-items:center;border-bottom:1px solid var(--line)}}
+.hero img{{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:4px;background:#141414;border:1px solid var(--line)}}
+.eyebrow{{font-family:'Helvetica Neue',Arial,sans-serif;font-size:10px;letter-spacing:0.45em;text-transform:uppercase;color:var(--y);margin-bottom:18px}}
+h1{{font-size:clamp(28px,4.6vw,42px);font-weight:300;line-height:1.32;letter-spacing:0.01em;margin-bottom:18px}}
+h1 em{{color:var(--y);font-style:normal}}
+.lede{{color:var(--mute);font-size:15px;line-height:1.95;margin-bottom:22px}}
+.coords{{font-family:'SF Mono','Menlo',monospace;font-size:12px;color:var(--mute);margin-bottom:24px}}
+.tiers{{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:18px;font-family:'Helvetica Neue',Arial,sans-serif}}
+.tier{{display:block;background:var(--card);border:1px solid var(--line);padding:24px 22px;border-radius:4px;text-decoration:none;color:var(--fg);transition:border-color .15s,transform .15s}}
+.tier:hover{{border-color:var(--y);transform:translateY(-1px)}}
+.tier-kicker{{font-size:10px;letter-spacing:0.32em;text-transform:uppercase;color:var(--y);margin-bottom:8px}}
+.tier-price{{font-size:30px;font-weight:300;color:var(--fg);font-variant-numeric:tabular-nums;letter-spacing:0.01em;margin-bottom:6px}}
+.tier-meta{{font-size:11.5px;color:var(--mute);margin-bottom:18px}}
+.tier-cta{{font-size:11px;letter-spacing:0.28em;text-transform:uppercase;font-weight:700;color:var(--y)}}
+section{{padding:56px 0;border-bottom:1px solid var(--line)}}
+section:last-of-type{{border-bottom:0;padding-bottom:96px}}
+.sec-eyebrow{{font-family:'Helvetica Neue',Arial,sans-serif;font-size:10px;letter-spacing:0.45em;text-transform:uppercase;color:var(--y);margin-bottom:14px}}
+h2{{font-size:clamp(20px,2.8vw,26px);font-weight:300;line-height:1.45;margin-bottom:16px}}
+.specs{{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--line);border:1px solid var(--line);margin-top:18px}}
+.spec{{background:var(--bg);padding:18px 20px;font-family:'Helvetica Neue',Arial,sans-serif}}
+.spec .l{{font-size:9.5px;letter-spacing:0.3em;color:var(--mute);text-transform:uppercase;margin-bottom:6px}}
+.spec .v{{font-size:13px;color:var(--fg)}}
+.links{{margin-top:18px;font-size:12.5px;color:var(--mute)}}
+.links a{{color:var(--y);text-decoration:none;margin:0 10px 0 0}}
+.links a:hover{{text-decoration:underline}}
+footer{{padding:40px 24px;border-top:1px solid var(--line);font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;letter-spacing:0.16em;color:var(--mute);text-align:center}}
+footer a{{color:var(--mute);margin:0 8px;text-decoration:none}}
+footer a:hover{{color:var(--y)}}
+@media(max-width:760px){{
+  .hero{{grid-template-columns:1fr;gap:24px;padding:42px 0 28px}}
+  .tiers{{grid-template-columns:1fr}}
+  .specs{{grid-template-columns:1fr}}
+}}
+</style></head><body>
+<nav>
+  <a href="/" class="logo">━◯━ MU</a>
+  <a href="/cities">/ Cities</a>
+</nav>
+<main>
+  <div class="hero">
+    <img src="{img}" alt="MU {jp} EDITION — {tag}">
+    <div>
+      <div class="eyebrow">{en} EDITION · MU REGIONAL</div>
+      <h1>{jp} の <em>{tag}</em> を、<br>1 着に焼く。</h1>
+      <p class="lede">AI が描く {jp} 限定 Tシャツ。 minimalist line art の 1 of 47、 同じデザインは二度と作られません。 注文後に Printful EU で 1 枚プリント、 2-3 週間で発送。 利益の <strong style="color:#F5F5F0">50% を弟子屈町に寄付</strong> (§27)。</p>
+      <div class="coords">{coords}</div>
+      <div class="tiers">
+        {entry_html}
+        {std_html}
+      </div>
+    </div>
+  </div>
+
+  <section>
+    <div class="sec-eyebrow">Specs</div>
+    <h2>素材と工程</h2>
+    <div class="specs">
+      <div class="spec"><div class="l">Fabric</div><div class="v">Bella+Canvas 3001 Soft Cream · 4.2oz combed cotton</div></div>
+      <div class="spec"><div class="l">Print</div><div class="v">DTG · 白インクのみ</div></div>
+      <div class="spec"><div class="l">Origin</div><div class="v">Printful EU (Latvia) → 国際 EMS</div></div>
+      <div class="spec"><div class="l">Delivery</div><div class="v">注文確定後 2-3 週間</div></div>
+      <div class="spec"><div class="l">Editions</div><div class="v">1 of 47 · {jp} 限定</div></div>
+      <div class="spec"><div class="l">Brand split</div><div class="v">¥4,900 entry (普及版) · ¥6,800 standard (推奨)</div></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-eyebrow">Why MU</div>
+    <h2>値引きしない、 利益の半分は弟子屈に。</h2>
+    <p class="lede">MU は割引クーポンを出していません。 価格は <a href="/transparency" style="color:#e6c449">原価ベース透明設計</a> (原価 ¥5,700 公開)。 1 着売れる毎に、 利益の 50% が <a href="/donations" style="color:#e6c449">/donations</a> 台帳に自動で積まれます。 月次で弟子屈町に振替・公開。</p>
+    <div class="links">
+      <a href="/about">MU って何?</a>
+      <a href="/cities">他の都市</a>
+      <a href="/donations">寄付台帳</a>
+      <a href="/transparency">透明性</a>
+    </div>
+  </section>
+</main>
+<footer>
+  MU · wearmu.com · <a href="https://github.com/yukihamada/mu-brand">GitHub</a> · <a href="mailto:info@enablerdao.com">info@enablerdao.com</a>
+</footer>
+</body></html>"##,
+        jp = jp, en = en, tag = tag, slug = slug, coords = coords,
+        img = html_attr_escape(&img),
+        entry_html = entry_html, std_html = std_html,
+    );
+    Html(html).into_response()
+}
+
 // ── B: public /cities page ────────────────────────────────────────────────
 async fn cities_page(State(db): State<Db>) -> Html<String> {
     let rows: Vec<(String, String, String, String, String, i64)> = {
@@ -39561,6 +40112,18 @@ async fn main() {
         // mention → MUGEN reply: 24h soft-lock for the requester.
         "ALTER TABLE products ADD COLUMN reserved_for_handle TEXT",
         "ALTER TABLE products ADD COLUMN reserved_until INTEGER",
+        // Image bytes stored inline so /admin/products and OGP keep working
+        // even when the R2 origin or Printful tmp-CDN goes down. Backfilled
+        // from design_url / mockup_url by POST /api/admin/products/cache_all_bytes.
+        "ALTER TABLE products ADD COLUMN design_bytes BLOB",
+        "ALTER TABLE products ADD COLUMN design_mime TEXT",
+        "ALTER TABLE products ADD COLUMN mockup_bytes BLOB",
+        "ALTER TABLE products ADD COLUMN mockup_mime TEXT",
+        "ALTER TABLE products ADD COLUMN bytes_fetched_at TEXT",
+        // Same idea for collab_products (sweep / kokon / partner LPs).
+        "ALTER TABLE collab_products ADD COLUMN image_bytes BLOB",
+        "ALTER TABLE collab_products ADD COLUMN image_mime TEXT",
+        "ALTER TABLE collab_products ADD COLUMN bytes_fetched_at TEXT",
         // F: backfill expires_at for existing MA rows that were created
         // before the column existed. 100 days from created_at, applied once.
         "UPDATE products SET expires_at = CAST(CAST(created_at AS INTEGER) + 8640000 AS TEXT)
@@ -43102,6 +43665,11 @@ async fn main() {
         .route("/admin/bids", get(admin_bids_page))
         .route("/admin/products", get(admin_products_page))
         .route("/api/admin/products", get(admin_products_list))
+        .route("/api/admin/products/cache_bytes", post(admin_cache_product_bytes))
+        .route("/api/admin/products/:id/regen_mockup", post(admin_regen_product_mockup))
+        .route("/api/products/:id/design.png", get(product_design_image))
+        .route("/api/products/:id/mockup.png", get(product_mockup_image))
+        .route("/api/collab/:id/image.png", get(collab_product_image))
         .route("/api/checkout", post(checkout))
         .route("/api/checkout/crypto", post(payments::checkout_crypto))
         .route("/api/checkout/crypto/status/:reference", get(payments::checkout_crypto_status))
@@ -43413,6 +43981,14 @@ async fn main() {
         .route("/api/admin/ma_retire/notify", post(admin_ma_retire_notify))
         // B: Multi-city
         .route("/cities",                    get(cities_page))
+        // Regional cool URLs — explicit per-city routes so they don't shadow
+        // the catch-all static-file fallback (/about, /buy, etc.).
+        .route("/tokyo",   get(region_landing))
+        .route("/kyoto",   get(region_landing))
+        .route("/osaka",   get(region_landing))
+        .route("/sapporo", get(region_landing))
+        .route("/fukuoka", get(region_landing))
+        .route("/okinawa", get(region_landing))
         .route("/cities/",                   get(cities_page))
         .route("/api/cities",                get(cities_index))
         .route("/api/admin/city/update",     post(admin_city_update))
