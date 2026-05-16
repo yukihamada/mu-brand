@@ -33,11 +33,24 @@ pub struct TeeDesign<'a> {
 }
 
 pub async fn generate_tee(p: &TeeDesign<'_>) -> Result<GeneratedImage, String> {
+    call_gemini(&build_tee_prompt(p)).await
+}
+
+/// Phase 1 of automated Printful fulfillment: a SECOND Gemini call produces
+/// just the chest graphic at print-ready size (300 DPI, ~30×30 cm artwork)
+/// on a plain white background, NO T-shirt, NO photo of cloth. Printful
+/// pulls this PNG when we place the auto-order so what arrives matches the
+/// design the buyer saw in the mockup (within Gemini's reproducibility —
+/// the seed + brief are reused, so the artwork is very close).
+pub async fn generate_print_file(p: &TeeDesign<'_>) -> Result<GeneratedImage, String> {
+    call_gemini(&build_print_file_prompt(p)).await
+}
+
+async fn call_gemini(prompt: &str) -> Result<GeneratedImage, String> {
     let key = std::env::var("GEMINI_API_KEY")
         .or_else(|_| std::env::var("GOOGLE_API_KEY"))
         .map_err(|_| "GEMINI_API_KEY not set".to_string())?;
 
-    let prompt = build_tee_prompt(p);
     let url = format!(
         "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
         MODEL, key
@@ -280,5 +293,64 @@ fn build_tee_prompt(p: &TeeDesign) -> String {
         bio_clause = bio_clause,
         overlay_brief = overlay_brief,
         text_rule = text_rule,
+    )
+}
+
+/// Build the SECOND prompt: an isolated, print-ready version of the SAME
+/// design used in the mockup. Square, on a plain white background, no
+/// T-shirt, no shadows, no photography — Printful DTG can drop this PNG
+/// directly onto a cream Bella+Canvas 3001 and the result will visually
+/// match what the buyer saw in the mockup image.
+fn build_print_file_prompt(p: &TeeDesign) -> String {
+    let mood = if p.mood.is_empty() { "minimal, quiet".to_string() } else { p.mood.join(", ") };
+    let palette = if p.palette.is_empty() { "muted earth tones".to_string() } else { p.palette.join(", ") };
+    let bio_safe = sanitize_prompt_input(p.bio, 240);
+    let bio_clause = if bio_safe.trim().is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\nWearer self-description (interpret as personality, NEVER write on artwork): \"{}\"",
+            bio_safe,
+        )
+    };
+    let overlay_safe = sanitize_prompt_input(p.wear_log_overlay, 80);
+    let overlay_rule = if overlay_safe.trim().is_empty() {
+        "- NO text in the artwork. NO watermark, NO border, NO frame.".to_string()
+    } else {
+        format!(
+            "- NO text in the main artwork. The ONLY text is one small machine-tone single-line label below the main graphic: \"{}\", neutral sans-serif, ~10% of the artwork height, same ink colour as the main graphic.",
+            overlay_safe,
+        )
+    };
+    format!(
+        "Square print-ready artwork on a SOLID WHITE BACKGROUND (RGB 255,255,255), \
+         300 DPI, designed to be DTG-printed onto a cream / off-white heavyweight \
+         cotton T-shirt by Printful. This is a flat asset — NO T-shirt, NO photograph, \
+         NO mannequin, NO mockup, NO shadows, NO concrete, NO fabric, NO model.\n\n\
+         === DESIGN BRIEF (do not write any of this text as part of the artwork) ===\n\
+         Concept name (poetic, Japanese): \"{name}\"\n\
+         Description: {prompt}\n\
+         Mood: {mood}\n\
+         Palette: {palette}{bio_clause}\n\
+         Deterministic seed (variation key): {seed}\n\n\
+         === RENDERING RULES ===\n\
+         - Pure white background, edge to edge. NO border, NO frame, NO key-line.\n\
+         - The artwork itself is centered, occupies ~70% of the square canvas.\n\
+         - Artistic, abstract / minimal illustration interpreting the concept. \
+           NOT literal, NOT a logo, NOT a word mark. Aesop / Kinfolk editorial, \
+           slightly hand-drawn, slightly imperfect.\n\
+         - Use the palette colours directly as ink — these will print on cream cotton, \
+           so darks (sumi black, indigo, sage) are safest. Avoid pure white in the \
+           artwork itself (it would disappear on the cream tee).\n\
+         {overlay_rule}\n\
+         - High contrast against the white background so DTG can extract clean edges.\n\
+         - 1:1 aspect ratio (square).",
+        name = p.name,
+        prompt = p.prompt,
+        mood = mood,
+        palette = palette,
+        seed = p.seed,
+        bio_clause = bio_clause,
+        overlay_rule = overlay_rule,
     )
 }

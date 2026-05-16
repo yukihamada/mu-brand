@@ -9192,6 +9192,33 @@ async fn stripe_webhook(
             product_id,
             serde_json::json!({"amount_total": amount_total, "session": session_id})).await;
 
+        // ── Proposal extras: direct pt purchase ──
+        // Webhook fires after the Stripe Payment Link from
+        // /api/proposal/extras/buy-points settles. We credit the email's
+        // wallet with the pt amount in metadata[pts]. Idempotency: keyed
+        // on the Stripe session id via proposal_point_events.ref.
+        if meta["kind"].as_str() == Some("extras_points") {
+            let email = meta["email"].as_str().unwrap_or("").to_string();
+            let pts: i64 = meta["pts"].as_str().and_then(|s| s.parse().ok()).unwrap_or(0);
+            let slug = meta["slug"].as_str().unwrap_or("").to_string();
+            if let (Ok(em), true) = (validate_email(&email), pts > 0) {
+                let conn = db.lock().unwrap();
+                let already: bool = conn.query_row(
+                    "SELECT 1 FROM proposal_point_events WHERE reason='points_purchase' AND ref=? LIMIT 1",
+                    params![session_id], |_| Ok(true),
+                ).unwrap_or(false);
+                if !already {
+                    let slug_opt = if slug.is_empty() { None } else { Some(slug.as_str()) };
+                    let _ = points_mutate(&conn, &em, pts, "points_purchase",
+                                          Some(&session_id), slug_opt);
+                    eprintln!("[extras_points] credited +{} pt to {} (session={})", pts, em, session_id);
+                } else {
+                    eprintln!("[extras_points] session {} already credited — idempotent skip", session_id);
+                }
+            }
+            return StatusCode::OK.into_response();
+        }
+
         // ── MA legacy bid settle (Payment Link from /api/admin/ma/settle_legacy) ──
         // Card was charged (full capture) — mark bid 'captured', product sold_out.
         if meta["kind"].as_str() == Some("ma_legacy_settle") {
@@ -16021,14 +16048,17 @@ fn ensure_proposal_tables(db: &Db) {
             qty          INTEGER NOT NULL,
             free_applied INTEGER NOT NULL DEFAULT 0,
             points_charged INTEGER NOT NULL DEFAULT 0,
-            status       TEXT NOT NULL DEFAULT 'pending', -- 'pending'|'processing'|'completed'|'partial'|'failed'
+            status       TEXT NOT NULL DEFAULT 'pending', -- 'pending'|'processing'|'cancelling'|'cancelled'|'completed'|'partial'|'failed'
             done_count   INTEGER NOT NULL DEFAULT 0,
             last_error   TEXT,
+            notify_email INTEGER NOT NULL DEFAULT 0,
             created_at   TEXT NOT NULL,
             started_at   TEXT,
             completed_at TEXT
          )", [],
     );
+    // ALTER for already-deployed jobs table — ignored when column exists.
+    let _ = conn.execute("ALTER TABLE proposal_extras_jobs ADD COLUMN notify_email INTEGER NOT NULL DEFAULT 0", []);
     let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_extras_jobs_status ON proposal_extras_jobs(status, created_at)", []);
     let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_extras_jobs_slug   ON proposal_extras_jobs(slug, created_at DESC)", []);
     // Each generated SKU lives here. Mirrored to proposal_skus so it shows
@@ -16076,12 +16106,26 @@ fn ensure_proposal_tables(db: &Db) {
 // All operations are best-effort; failures are logged and silently swallowed
 // because the points economy is non-financial (no money refund obligation).
 
-/// 10 pt = 1 generated SKU. Used by the /api/proposal/:slug/extras/order route.
-const EXTRAS_POINTS_PER_SKU: i64 = 10;
-/// 30 SKU is the free-tier amount granted once per email.
+/// 1 pt = ¥1 throughout. 1 SKU generation costs EXTRAS_POINTS_PER_SKU pt.
+/// Sized to signal premium output (vs ¥10 = "AI slop" perception). With
+/// Gemini cost ~¥6/image, ¥30 leaves comfortable margin for the OS work
+/// (brand-spec prompts, R2 hosting, approve gate, Stripe wiring).
+const EXTRAS_POINTS_PER_SKU: i64 = 30;
+/// First 30 SKUs are free per email (consumed only on full 30/30 success).
 const EXTRAS_FREE_SKUS: i64 = 30;
-/// MUGEN purchase grants +1000 pt = 100 extra SKUs.
-const EXTRAS_POINTS_PER_MUGEN: i64 = 1000;
+/// MUGEN tee purchase grants 100% of yen as pt (1 MUGEN ¥9,800 → 9,800 pt
+/// = ~326 SKUs = one full collection of generation). Bundles the physical
+/// good with a generation-credit top-up.
+const EXTRAS_POINTS_PER_MUGEN: i64 = 9_800;
+
+/// Direct pt purchase tiers. (yen, pt, bonus_pct).
+/// Larger packs get a graduated bonus so big partners feel rewarded.
+const EXTRAS_POINT_PACKS: &[(i64, i64, i64)] = &[
+    (1_000,  1_000,  0),   // ¥1k    = 1,000 pt   = 33 SKU
+    (3_000,  3_300,  10),  // ¥3k    = 3,300 pt   = 110 SKU
+    (10_000, 11_500, 15),  // ¥10k   = 11,500 pt  = 383 SKU
+    (30_000, 36_000, 20),  // ¥30k   = 36,000 pt  = 1,200 SKU
+];
 
 fn normalize_email(e: &str) -> String {
     e.trim().to_ascii_lowercase()
@@ -16513,6 +16557,13 @@ struct ExtrasEmailBody { #[serde(default)] email: String }
 struct ExtrasQuoteBody { #[serde(default)] email: String, qty: i64 }
 
 #[derive(Deserialize)]
+struct ExtrasOrderBody {
+    #[serde(default)] email: String,
+    qty: i64,
+    #[serde(default)] notify_email: bool,
+}
+
+#[derive(Deserialize)]
 struct ExtrasClaimMugenBody {
     #[serde(default)] email: String,
     /// Accept either a numeric mu_purchases.id or a Stripe session_id
@@ -16590,7 +16641,7 @@ async fn extras_quote(
 async fn extras_order(
     State(db): State<Db>,
     axum::extract::Path(slug): axum::extract::Path<String>,
-    Json(body): Json<ExtrasQuoteBody>,
+    Json(body): Json<ExtrasOrderBody>,
 ) -> Response {
     if !extras_qty_is_valid(body.qty) {
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok": false, "error": "qty must be 30, 50, or 100"}))).into_response();
@@ -16626,7 +16677,7 @@ async fn extras_order(
         // this email+slug (prevents stacking 10 jobs from a panicked user).
         let in_flight: i64 = conn.query_row(
             "SELECT COUNT(*) FROM proposal_extras_jobs
-             WHERE email=? AND slug=? AND status IN ('pending','processing')",
+             WHERE email=? AND slug=? AND status IN ('pending','processing','cancelling')",
             params![email, slug], |r| r.get(0),
         ).unwrap_or(0);
         if in_flight > 0 {
@@ -16647,9 +16698,9 @@ async fn extras_order(
         }
         conn.execute(
             "INSERT INTO proposal_extras_jobs
-                (slug, email, qty, free_applied, points_charged, status, created_at)
-             VALUES (?,?,?,?,?,'pending',?)",
-            params![slug, email, body.qty, free as i64, cost, now],
+                (slug, email, qty, free_applied, points_charged, status, notify_email, created_at)
+             VALUES (?,?,?,?,?,'pending',?,?)",
+            params![slug, email, body.qty, free as i64, cost, body.notify_email as i64, now],
         ).ok();
         job_id = conn.last_insert_rowid();
     }
@@ -16660,6 +16711,7 @@ async fn extras_order(
         "qty": body.qty,
         "cost_points": cost,
         "free_applied": free_applied,
+        "notify_email": body.notify_email,
     })).into_response()
 }
 
@@ -16880,6 +16932,321 @@ async fn extras_job_approve_all(
     })).into_response()
 }
 
+/// POST /api/proposal/extras/job/:job_id/stop — partner cancels mid-run.
+/// If still 'pending' (worker hasn't picked it up), we finalize immediately
+/// (refund + reset free_30). If 'processing', we flip to 'cancelling' and
+/// the worker exits on its next iteration; finalize_extras_job stamps it
+/// 'cancelled' and handles refund.
+async fn extras_job_stop(
+    State(db): State<Db>,
+    axum::extract::Path(job_id): axum::extract::Path<i64>,
+    Json(body): Json<ExtrasReviewBody>,
+) -> Response {
+    let email = match validate_email(&body.email) {
+        Ok(e) => e,
+        Err(m) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok": false, "error": m}))).into_response(),
+    };
+    let row = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT slug, email, qty, free_applied, points_charged, status, done_count
+             FROM proposal_extras_jobs WHERE id=?",
+            params![job_id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)? != 0, r.get::<_, i64>(4)?, r.get::<_, String>(5)?,
+                    r.get::<_, i64>(6)?)),
+        )
+    };
+    let (slug, job_email, qty, free_applied, points_charged, status, done) = match row {
+        Ok(v) => v,
+        Err(_) => return (StatusCode::NOT_FOUND, Json(serde_json::json!({"ok": false, "error": "unknown job"}))).into_response(),
+    };
+    if normalize_email(&job_email) != email {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"ok": false, "error": "email does not match the job"}))).into_response();
+    }
+    match status.as_str() {
+        "completed" | "partial" | "failed" | "cancelled" => {
+            return Json(serde_json::json!({"ok": true, "already": true, "status": status, "job_id": job_id})).into_response();
+        }
+        "cancelling" => {
+            return Json(serde_json::json!({"ok": true, "already": true, "status": "cancelling", "job_id": job_id})).into_response();
+        }
+        "pending" => {
+            // Worker hasn't started — finalize directly. Refund happens via
+            // the standard finalize_extras_job path (which also flips
+            // free_30 back). We synthesise a result of (0, "cancelled before
+            // start") so it follows the same code path.
+            let _ = {
+                let conn = db.lock().unwrap();
+                conn.execute(
+                    "UPDATE proposal_extras_jobs SET status='cancelling' WHERE id=? AND status='pending'",
+                    params![job_id],
+                )
+            };
+            finalize_extras_job(&db, job_id, &email, qty, free_applied, points_charged,
+                                &slug, (done, Some("cancelled before start".to_string())));
+            return Json(serde_json::json!({"ok": true, "status": "cancelled", "job_id": job_id})).into_response();
+        }
+        "processing" => {
+            let conn = db.lock().unwrap();
+            let _ = conn.execute(
+                "UPDATE proposal_extras_jobs SET status='cancelling' WHERE id=? AND status='processing'",
+                params![job_id],
+            );
+            return Json(serde_json::json!({"ok": true, "status": "cancelling", "job_id": job_id})).into_response();
+        }
+        _ => {
+            return (StatusCode::CONFLICT, Json(serde_json::json!({"ok": false, "error": format!("unknown status: {}", status)}))).into_response();
+        }
+    }
+}
+
+/// POST /api/proposal/extras/sku/:sku_id/regenerate — re-roll a single SKU.
+/// Always costs EXTRAS_POINTS_PER_SKU (no free). Inserts a NEW pending row
+/// into proposal_extras_skus (preserving the original for audit), then
+/// fires off a tokio task that runs the Gemini + R2 dance. Frontend polls
+/// /job/:job_id and the new card appears once image_url is set.
+async fn extras_sku_regenerate(
+    State(db): State<Db>,
+    axum::extract::Path(sku_id): axum::extract::Path<i64>,
+    Json(body): Json<ExtrasReviewBody>,
+) -> Response {
+    let email = match validate_email(&body.email) {
+        Ok(e) => e,
+        Err(m) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok": false, "error": m}))).into_response(),
+    };
+    // Lookup original SKU + parent job
+    let row: Result<(i64, String, String, String, i64, String), &'static str> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT s.job_id, s.slug, s.kind, s.label, s.price_jpy, j.email
+             FROM proposal_extras_skus s
+             JOIN proposal_extras_jobs j ON j.id = s.job_id
+             WHERE s.id = ?",
+            params![sku_id],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?, r.get::<_, i64>(4)?, r.get::<_, String>(5)?)),
+        ).map_err(|_| "sku not found")
+    };
+    let (job_id, slug, kind, label, price_jpy, job_email) = match row {
+        Ok(v) => v,
+        Err(m) => return (StatusCode::NOT_FOUND, Json(serde_json::json!({"ok": false, "error": m}))).into_response(),
+    };
+    if normalize_email(&job_email) != email {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"ok": false, "error": "email does not match the job"}))).into_response();
+    }
+    // Charge 10pt unconditionally (regen is always paid — free quota is for
+    // initial batches, not retries).
+    let new_balance = {
+        let conn = db.lock().unwrap();
+        match points_mutate(&conn, &email, -EXTRAS_POINTS_PER_SKU, "extras_regen",
+                            Some(&sku_id.to_string()), Some(&slug)) {
+            Ok(b) => b,
+            Err(e) => return (StatusCode::PAYMENT_REQUIRED, Json(serde_json::json!({"ok": false, "error": e}))).into_response(),
+        }
+    };
+    // Insert placeholder row.
+    let now = chrono_now();
+    let new_id = {
+        let conn = db.lock().unwrap();
+        let letter = format!("x{}r{}", job_id, sku_id);
+        let _ = conn.execute(
+            "INSERT INTO proposal_extras_skus
+                (job_id, slug, letter, label, kind, price_jpy, image_url, prompt,
+                 approval_status, created_at)
+             VALUES (?,?,?,?,?,?,NULL,NULL,'pending',?)",
+            params![job_id, slug, letter, label, kind, price_jpy, now],
+        );
+        conn.last_insert_rowid()
+    };
+    // Fire-and-forget generation.
+    let db2 = db.clone();
+    let slug_owned = slug.clone();
+    let label_owned = label.clone();
+    let kind_owned = kind.clone();
+    let email_owned = email.clone();
+    tokio::spawn(async move {
+        regenerate_sku_task(db2, new_id, slug_owned, kind_owned, label_owned, price_jpy, email_owned).await;
+    });
+    Json(serde_json::json!({
+        "ok": true, "new_sku_id": new_id, "old_sku_id": sku_id,
+        "job_id": job_id, "balance": new_balance,
+    })).into_response()
+}
+
+async fn regenerate_sku_task(
+    db: Db, sku_id: i64, slug: String, kind: String,
+    label: String, price_jpy: i64, email: String,
+) {
+    let partner_name: String = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(name, slug) FROM proposals WHERE slug=?",
+            params![slug], |r| r.get::<_, String>(0),
+        ).ok().unwrap_or_else(|| match slug.as_str() {
+            "sweep"   => "SIIIEEP".to_string(),
+            "kokon"   => "kokon.tokyo".to_string(),
+            "jiuflow" => "JiuFlow".to_string(),
+            other     => other.to_string(),
+        })
+    };
+    let seed = format!("regen-{}-{}", sku_id, chrono_now().chars().filter(|c| c.is_ascii_alphanumeric()).take(8).collect::<String>());
+    let tagline = "quiet, premium, 1着 = 1 シグナル".to_string();
+    let brief = gemini::PartnerSkuBrief {
+        partner_display: &partner_name,
+        partner_tagline: &tagline,
+        kind: &kind, label: &label, seed: &seed,
+    };
+    let cfg = match r2_config() {
+        Some(c) => c,
+        None => {
+            refund_regen(&db, &email, sku_id, &slug, "r2-not-configured");
+            return;
+        }
+    };
+    let img = match gemini::generate_partner_sku(&brief).await {
+        Ok(g) => g,
+        Err(e) => {
+            eprintln!("[extras-regen] sku={} gemini fail: {}", sku_id, e);
+            refund_regen(&db, &email, sku_id, &slug, "gemini-failed");
+            return;
+        }
+    };
+    let key = format!("extras/{}/regen-{}.{}", slug, sku_id,
+        if img.mime.contains("png") { "png" } else { "jpg" });
+    let ct = if img.mime.contains("png") { "image/png" } else { "image/jpeg" };
+    let url = match cfg.bucket.put_object_with_content_type(&key, &img.bytes, ct).await {
+        Ok(r) if r.status_code() == 200 => format!("{}/{}", cfg.public_base.trim_end_matches('/'), key),
+        Ok(r) => {
+            eprintln!("[extras-regen] sku={} r2 status={}", sku_id, r.status_code());
+            refund_regen(&db, &email, sku_id, &slug, "r2-upload-failed");
+            return;
+        }
+        Err(e) => {
+            eprintln!("[extras-regen] sku={} r2 err: {}", sku_id, e);
+            refund_regen(&db, &email, sku_id, &slug, "r2-error");
+            return;
+        }
+    };
+    let now = chrono_now();
+    let _ = {
+        let conn = db.lock().unwrap();
+        conn.execute(
+            "UPDATE proposal_extras_skus SET image_url=?, prompt=? WHERE id=?",
+            params![url, gemini::build_partner_sku_prompt(&brief), sku_id],
+        )
+    };
+    let _ = price_jpy; // already stored; no-op
+    let _ = now;
+}
+
+fn refund_regen(db: &Db, email: &str, sku_id: i64, slug: &str, reason: &str) {
+    let conn = db.lock().unwrap();
+    // Delete the placeholder row.
+    let _ = conn.execute("DELETE FROM proposal_extras_skus WHERE id=?", params![sku_id]);
+    // Refund the 10pt charge.
+    let _ = points_mutate(&conn, email, EXTRAS_POINTS_PER_SKU, "extras_regen_refund",
+                          Some(&format!("{}:{}", sku_id, reason)), Some(slug));
+}
+
+// ── Direct pt purchase ───────────────────────────────────────────────────
+// Partners who don't want a MUGEN tee can buy points straight via Stripe.
+// Returns a Payment Link; webhook below credits the email on settle.
+
+#[derive(Deserialize)]
+struct ExtrasBuyPointsBody {
+    #[serde(default)] email: String,
+    /// Yen amount; must match one of EXTRAS_POINT_PACKS.
+    amount_yen: i64,
+    /// Optional proposal slug for the after-completion redirect.
+    #[serde(default)] slug: String,
+}
+
+fn extras_resolve_pack(amount_yen: i64) -> Option<(i64, i64, i64)> {
+    EXTRAS_POINT_PACKS.iter().copied().find(|(a, _, _)| *a == amount_yen)
+}
+
+/// POST /api/proposal/extras/buy-points → Stripe Payment Link URL.
+async fn extras_buy_points(
+    State(_db): State<Db>,
+    Json(body): Json<ExtrasBuyPointsBody>,
+) -> Response {
+    let email = match validate_email(&body.email) {
+        Ok(e) => e,
+        Err(m) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok": false, "error": m}))).into_response(),
+    };
+    let (yen, pts, bonus) = match extras_resolve_pack(body.amount_yen) {
+        Some(p) => p,
+        None => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "ok": false, "error": "amount_yen must be one of 1000 / 3000 / 10000 / 30000",
+        }))).into_response(),
+    };
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "stripe key missing").into_response();
+    }
+    let slug_clean: String = body.slug.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').take(40).collect();
+    let redirect_url = if slug_clean.is_empty() {
+        "https://wearmu.com/?points=ok".to_string()
+    } else {
+        format!("https://wearmu.com/proposals/{}?points=ok", slug_clean)
+    };
+    let client = reqwest::Client::new();
+    let bonus_label = if bonus > 0 { format!(" +{}% bonus", bonus) } else { String::new() };
+    let product_name = format!("MU Collab — {} pt 購入 (¥{}{})", pts, yen, bonus_label);
+    let price_form: Vec<(&str, String)> = vec![
+        ("currency", "jpy".into()),
+        ("unit_amount", yen.to_string()),
+        ("product_data[name]", product_name),
+    ];
+    let raw_resp = match client.post("https://api.stripe.com/v1/prices")
+        .basic_auth(&stripe_key, Some("")).form(&price_form).send().await {
+        Ok(r) => {
+            let s = r.status();
+            let b = r.text().await.unwrap_or_default();
+            if !s.is_success() {
+                return (StatusCode::BAD_GATEWAY, format!("stripe {}: {}", s, b.chars().take(300).collect::<String>())).into_response();
+            }
+            b
+        }
+        Err(e) => return (StatusCode::BAD_GATEWAY, format!("stripe price http: {}", e)).into_response(),
+    };
+    let price_id: String = serde_json::from_str::<serde_json::Value>(&raw_resp)
+        .ok().and_then(|v| v.get("id").and_then(|x| x.as_str()).map(String::from)).unwrap_or_default();
+    if price_id.is_empty() {
+        return (StatusCode::BAD_GATEWAY, "stripe returned no price id").into_response();
+    }
+    let pl_form: Vec<(&str, String)> = vec![
+        ("line_items[0][price]", price_id),
+        ("line_items[0][quantity]", "1".into()),
+        ("allow_promotion_codes", "true".into()),
+        ("after_completion[type]", "redirect".into()),
+        ("after_completion[redirect][url]", redirect_url.clone()),
+        ("metadata[kind]", "extras_points".into()),
+        ("metadata[email]", email.clone()),
+        ("metadata[slug]", slug_clean.clone()),
+        ("metadata[amount_yen]", yen.to_string()),
+        ("metadata[pts]", pts.to_string()),
+        ("metadata[bonus_pct]", bonus.to_string()),
+    ];
+    match client.post("https://api.stripe.com/v1/payment_links")
+        .basic_auth(&stripe_key, Some("")).form(&pl_form).send().await
+    {
+        Ok(r) => {
+            let v: serde_json::Value = r.json().await.unwrap_or(serde_json::Value::Null);
+            if let Some(u) = v.get("url").and_then(|x| x.as_str()) {
+                Json(serde_json::json!({
+                    "ok": true, "url": u, "email": email,
+                    "amount_yen": yen, "pts": pts, "bonus_pct": bonus,
+                })).into_response()
+            } else {
+                (StatusCode::BAD_GATEWAY, format!("payment_link: {}", v.to_string().chars().take(300).collect::<String>())).into_response()
+            }
+        }
+        Err(e) => (StatusCode::BAD_GATEWAY, format!("stripe: {}", e)).into_response(),
+    }
+}
+
 async fn extras_claim_mugen(
     State(db): State<Db>,
     Json(body): Json<ExtrasClaimMugenBody>,
@@ -17089,6 +17456,20 @@ async fn process_extras_job(
         return (0, Some("no allowed categories for this partner".to_string()));
     }
     for i in 0..qty {
+        // P2.1: honour partner-initiated cancel mid-run. Status flips to
+        // 'cancelling' via the /stop endpoint; we bail out and let
+        // finalize_extras_job mark it 'cancelled' + refund unused pt.
+        let cancelled: bool = {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT status FROM proposal_extras_jobs WHERE id=?",
+                params![job_id], |r| r.get::<_, String>(0),
+            ).map(|s| s == "cancelling" || s == "cancelled").unwrap_or(false)
+        };
+        if cancelled {
+            last_err = Some(format!("cancelled by partner at {}/{}", succeeded, qty));
+            break;
+        }
         let (kind, label_tmpl, price_jpy) = categories[(i as usize) % categories.len()];
         let label = format!("MU × {} — {}", partner_name, label_tmpl);
         let seed = format!("job{}-{}-{}", job_id, i, now_seed.chars().filter(|c| c.is_ascii_alphanumeric()).take(8).collect::<String>());
@@ -17152,7 +17533,16 @@ fn finalize_extras_job(
     res: (i64, Option<String>),
 ) {
     let (succeeded, last_err) = res;
-    let status = if succeeded == qty { "completed" }
+    let (was_cancelling, notify_email): (bool, bool) = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT status, notify_email FROM proposal_extras_jobs WHERE id=?",
+            params![job_id], |r| Ok((r.get::<_, String>(0)? == "cancelling",
+                                     r.get::<_, i64>(1)? != 0)),
+        ).unwrap_or((false, false))
+    };
+    let status = if was_cancelling { "cancelled" }
+                 else if succeeded == qty { "completed" }
                  else if succeeded == 0 { "failed" }
                  else { "partial" };
     let conn = db.lock().unwrap();
@@ -17183,6 +17573,61 @@ fn finalize_extras_job(
             params![now, normalize_email(email)],
         );
     }
+    drop(conn);
+    // P2.3: optional completion email via Resend. Fire-and-forget so a
+    // mail failure never blocks finalize.
+    if notify_email {
+        let email_owned = email.to_string();
+        let slug_owned = slug.to_string();
+        let status_owned = status.to_string();
+        tokio::spawn(async move {
+            send_extras_completion_email(&email_owned, &slug_owned, job_id,
+                                         &status_owned, succeeded, qty).await;
+        });
+    }
+}
+
+/// Sends a one-shot completion mail. Silent no-op if RESEND_API_KEY is unset.
+async fn send_extras_completion_email(
+    email: &str, slug: &str, job_id: i64,
+    status: &str, succeeded: i64, qty: i64,
+) {
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    if resend_key.is_empty() {
+        tracing::info!("[extras-notify] RESEND_API_KEY unset — skipping notification for job {}", job_id);
+        return;
+    }
+    let subj_state = match status {
+        "completed" => "完了",
+        "partial"   => "部分完了",
+        "cancelled" => "キャンセル",
+        _           => "終了",
+    };
+    let subj = format!("MU × {} · 拡張 SKU 生成 {}", slug.to_uppercase(), subj_state);
+    let url = format!("https://wearmu.com/proposals/{}", slug);
+    let html = format!(
+        r#"<div style="font-family:'Helvetica Neue',Arial,sans-serif;line-height:1.7;color:#222;max-width:520px">
+        <h2 style="font-size:18px;font-weight:500">━◯━ ジョブ #{job} が {state} しました</h2>
+        <p style="font-size:14px">生成: <strong>{succ}</strong> / {qty}<br>partner: <strong>{slug}</strong></p>
+        <p style="font-size:14px">プロポーザル LP で各 SKU を <strong>✓ 承認</strong> または <strong>✗ 却下</strong> してください。 ✓ を押した SKU だけが LP に並びます。</p>
+        <p style="margin:18px 0"><a href="{url}" style="background:#0a0a0a;color:#e6c449;text-decoration:none;padding:10px 18px;border-radius:3px;font-size:13px;letter-spacing:0.04em">→ {url}</a></p>
+        <p style="font-size:11px;color:#888;margin-top:24px">free 枠で開始し失敗・キャンセルした場合、 無料 30 個の権利は自動で復元されています。<br>— MU / 株式会社イネブラ</p>
+        </div>"#,
+        job = job_id, state = subj_state, succ = succeeded, qty = qty,
+        slug = slug, url = url,
+    );
+    let _ = reqwest::Client::new()
+        .post("https://api.resend.com/emails")
+        .bearer_auth(&resend_key)
+        .json(&serde_json::json!({
+            "from": "━◯━ MU <info@wearmu.com>",
+            "to": [email.to_string()],
+            "subject": subj,
+            "html": html,
+            "reply_to": "info@wearmu.com",
+        }))
+        .timeout(std::time::Duration::from_secs(15))
+        .send().await;
 }
 
 #[derive(Deserialize)]
@@ -18342,6 +18787,48 @@ fn spawn_gemini_for_design(db: Db, design_id: i64) {
                             "html": html,
                         }))
                         .send().await;
+                }
+
+                // ── Phase 1: print-ready PNG ─────────────────────────────
+                // Now that the mockup is delivered, fire the SECOND Gemini
+                // call to generate the print-ready artwork (white background,
+                // 1:1, no T-shirt, no shadow). This is what Printful pulls
+                // when the buyer hits "この一着を仕立てる". Generated in the
+                // same tokio task, so it doesn't block subscriber email.
+                {
+                    let c = db.lock().unwrap();
+                    let _ = c.execute(
+                        "UPDATE you_designs SET print_gen_status='generating', print_gen_error=NULL, updated_at=?
+                         WHERE id=?",
+                        params![chrono_now(), design_id],
+                    );
+                }
+                match gemini::generate_print_file(&tee).await {
+                    Ok(pf) => {
+                        let pf_len = pf.bytes.len();
+                        let c = db.lock().unwrap();
+                        let r = c.execute(
+                            "UPDATE you_designs
+                             SET print_bytes=?, print_mime=?,
+                                 print_gen_status='ready', print_gen_error=NULL, updated_at=?
+                             WHERE id=?",
+                            params![pf.bytes, pf.mime, chrono_now(), design_id],
+                        );
+                        match r {
+                            Ok(_) => eprintln!("[you/print] design {} print file ready ({} bytes)", design_id, pf_len),
+                            Err(e) => eprintln!("[you/print] failed to persist print {}: {}", design_id, e),
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[you/print] design {} print file failed: {}", design_id, e);
+                        let c = db.lock().unwrap();
+                        let _ = c.execute(
+                            "UPDATE you_designs
+                             SET print_gen_status='failed', print_gen_error=?, updated_at=?
+                             WHERE id=?",
+                            params![e, chrono_now(), design_id],
+                        );
+                    }
                 }
             }
             Err(e) => {
@@ -35956,6 +36443,60 @@ async fn you_image(
     resp
 }
 
+/// GET /api/you/design/:id/print.png — print-ready PNG for Printful DTG.
+/// Generated by a SECOND Gemini call (build_print_file_prompt) right after
+/// the mockup. Public + cacheable so Printful can pull it during order
+/// fulfillment in handle_you_purchase_webhook.
+async fn you_print_image(
+    State(db): State<Db>,
+    Path(id): Path<i64>,
+) -> Response {
+    let row: Option<(Option<Vec<u8>>, Option<String>, String)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT print_bytes, print_mime,
+                    COALESCE(print_gen_status,'pending')
+             FROM you_designs WHERE id=?",
+            params![id],
+            |r| Ok((
+                r.get::<_,Option<Vec<u8>>>(0)?,
+                r.get::<_,Option<String>>(1)?,
+                r.get::<_,String>(2)?,
+            )),
+        ).ok()
+    };
+    let (bytes, mime, status) = match row {
+        Some(v) => v,
+        None => return (StatusCode::NOT_FOUND, "design not found").into_response(),
+    };
+    if let (Some(b), m) = (bytes, mime) {
+        let mime = m.unwrap_or_else(|| "image/png".into());
+        let mut resp = b.into_response();
+        let h = resp.headers_mut();
+        if let Ok(v) = HeaderValue::from_str(&mime) {
+            h.insert(header::CONTENT_TYPE, v);
+        }
+        h.insert(header::CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=2592000, immutable"));
+        return resp;
+    }
+    // No bytes yet — for Printful, return 202 so the auto-order retry path
+    // can re-poll. For browsers, the body is a small SVG explaining state.
+    let placeholder = r##"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 800 800'>
+<rect width='800' height='800' fill='#ffffff'/>
+<text x='50%' y='50%' text-anchor='middle' fill='#888'
+  font-family='monospace' font-size='22'>print file generating…</text>
+</svg>"##;
+    let code = if status == "failed" { StatusCode::INTERNAL_SERVER_ERROR }
+               else { StatusCode::ACCEPTED };
+    let mut resp = (code, placeholder.to_string()).into_response();
+    resp.headers_mut().insert(header::CONTENT_TYPE,
+        HeaderValue::from_static("image/svg+xml"));
+    resp.headers_mut().insert(header::CACHE_CONTROL,
+        HeaderValue::from_static("no-store"));
+    resp
+}
+
 #[derive(Deserialize)]
 struct YouTasteBody {
     token: String,
@@ -37368,6 +37909,18 @@ async fn main() {
         "ALTER TABLE you_users ADD COLUMN bonus_drops_sent INTEGER DEFAULT 0",
         // Mark a design as the bonus / milestone variant for UI badges
         "ALTER TABLE you_designs ADD COLUMN kind TEXT NOT NULL DEFAULT 'daily'",
+        // Phase 1 of automated Printful fulfillment (2026-05-16): a second
+        // Gemini call produces a clean print-ready PNG of just the chest
+        // graphic on a white/transparent background, separate from the
+        // photographic mockup in image_bytes. Printful pulls this URL when
+        // we POST the auto-order in handle_you_purchase_webhook.
+        "ALTER TABLE you_designs ADD COLUMN print_bytes BLOB",
+        "ALTER TABLE you_designs ADD COLUMN print_mime TEXT",
+        "ALTER TABLE you_designs ADD COLUMN print_gen_status TEXT NOT NULL DEFAULT 'pending'",
+        "ALTER TABLE you_designs ADD COLUMN print_gen_error TEXT",
+        // Printful order tracking — set after a successful POST to /v2/orders.
+        "ALTER TABLE you_designs ADD COLUMN printful_order_id TEXT",
+        "ALTER TABLE you_designs ADD COLUMN printful_ordered_at TEXT",
         // ¥980/月 paid subscription tier (alternative to buying a MU shirt).
         "ALTER TABLE you_users ADD COLUMN stripe_customer_id TEXT",
         "ALTER TABLE you_users ADD COLUMN stripe_subscription_id TEXT",
@@ -40908,10 +41461,13 @@ async fn main() {
         // Proposal extras (shared 30/50/100 SKU generator widget).
         .route("/api/proposal/extras/balance",                  post(extras_balance))
         .route("/api/proposal/extras/claim-mugen",              post(extras_claim_mugen))
+        .route("/api/proposal/extras/buy-points",               post(extras_buy_points))
         .route("/api/proposal/extras/job/:job_id",              get(extras_job_status))
         .route("/api/proposal/extras/job/:job_id/approve-all",  post(extras_job_approve_all))
+        .route("/api/proposal/extras/job/:job_id/stop",         post(extras_job_stop))
         .route("/api/proposal/extras/sku/:sku_id/approve",      post(extras_sku_approve))
         .route("/api/proposal/extras/sku/:sku_id/reject",       post(extras_sku_reject))
+        .route("/api/proposal/extras/sku/:sku_id/regenerate",   post(extras_sku_regenerate))
         .route("/api/proposal/:slug/extras/quote",              post(extras_quote))
         .route("/api/proposal/:slug/extras/order",              post(extras_order))
         .route("/admin/proposal",              post(proposal_generic_create))
@@ -40931,6 +41487,8 @@ async fn main() {
         .route("/api/you/unsubscribe", post(you_unsubscribe))
         .route("/api/you/design/:id/image.png", get(you_image))
         .route("/api/you/design/:id/image", get(you_image))
+        .route("/api/you/design/:id/print.png", get(you_print_image))
+        .route("/api/you/design/:id/print", get(you_print_image))
         .route("/api/you/slug", post(you_slug_set))
         .route("/api/you/slug/check/:slug", get(you_slug_check))
         .route("/api/you/taste", post(you_taste_update))

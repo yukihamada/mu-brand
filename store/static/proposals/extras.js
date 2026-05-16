@@ -51,9 +51,10 @@
     +   '生成されたものは <strong style="color:#7be57b">承認ゲート</strong> を通り、 あなたが ✓ を押した SKU だけが LP に並びます。'
     + '</p>'
     + '<p style="font-size:13px;color:rgba(245,245,240,0.55);line-height:1.85;margin-bottom:18px">'
-    +   '<strong style="color:#fff">初回 30 個は無料</strong> （完走時のみ消費、 途中で失敗したらリセット）。 2 回目以降は <strong style="color:#fff">1 商品 = 10pt</strong>。 '
-    +   'ポイントは <span class="mu-ex-mugen-help" style="border-bottom:1px dotted rgba(245,245,240,0.4);cursor:help" title="MUGEN は MU の旗艦 1/1 T シャツライン。 毎日新しいデザインが 1〜108 枚限定でドロップ。 1 枚 = ¥9,800〜¥30,000、 通常 ¥9,800。">MUGEN T シャツ</span> 購入で <strong style="color:#fff">+1,000pt</strong>、 '
-    +   'サンプル購入で <strong style="color:#fff">購入額の 10% 自動還元</strong> （webhook で即反映）。'
+    +   '<strong style="color:#fff">初回 30 個は無料</strong> （完走時のみ消費、 途中失敗したらリセット）。 2 回目以降は <strong style="color:#fff">1 商品 = 30pt (=¥30)</strong>。 '
+    +   '1pt = ¥1。 ポイント獲得は 3 経路: '
+    +   '<span class="mu-ex-mugen-help" style="border-bottom:1px dotted rgba(245,245,240,0.4);cursor:help" title="MUGEN は MU の旗艦 1/1 T シャツライン。 毎日新しいデザインが 1〜108 枚限定でドロップ。 1 枚 = ¥9,800〜¥30,000。">MUGEN T シャツ</span> 購入で <strong style="color:#fff">+9,800pt</strong>、 '
+    +   'サンプル購入で <strong style="color:#fff">購入額の 10% 自動還元</strong>、 もしくは下記から <strong style="color:#fff">直接 pt 購入</strong> （¥3k 以上で +10〜20% ボーナス）。'
     + '</p>'
     + '<div id="mu-extras-card" style="padding:22px;background:rgba(255,255,255,0.025);border:1px solid rgba(255,255,255,0.08);border-radius:6px">'
     +   '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px">'
@@ -64,18 +65,24 @@
     +       'style="background:rgba(230,196,73,0.12);color:#e6c449;border:1px solid rgba(230,196,73,0.4);padding:10px 14px;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;font-weight:700;border-radius:3px;cursor:pointer">残高を確認</button>'
     +   '</div>'
     +   '<div id="mu-ex-balance" style="font-size:13px;color:rgba(245,245,240,0.85);margin-bottom:16px;display:none"></div>'
-    +   '<div id="mu-ex-buttons" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">'
+    +   '<div id="mu-ex-buttons" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">'
     +     '<button data-qty="30"  type="button" class="mu-ex-qty" style="flex:1;min-width:140px"></button>'
     +     '<button data-qty="50"  type="button" class="mu-ex-qty" style="flex:1;min-width:140px"></button>'
     +     '<button data-qty="100" type="button" class="mu-ex-qty" style="flex:1;min-width:140px"></button>'
     +   '</div>'
+    +   '<label style="display:flex;align-items:center;gap:6px;font-size:11px;color:rgba(245,245,240,0.6);margin-bottom:14px;cursor:pointer">'
+    +     '<input id="mu-ex-notify" type="checkbox" style="accent-color:#7be57b;cursor:pointer">'
+    +     '完成したらメールで通知（途中失敗・キャンセル時も）'
+    +   '</label>'
     +   '<div id="mu-ex-status" style="font-size:12.5px;color:rgba(245,245,240,0.7);line-height:1.7;margin-top:10px;display:none"></div>'
     +   '<div id="mu-ex-job" style="margin-top:18px;display:none">'
     +     '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
     +       '<div style="font-size:11px;letter-spacing:0.22em;text-transform:uppercase;color:#7be57b;font-weight:700">生成中</div>'
-    +       '<div id="mu-ex-approve-actions" style="display:none;gap:6px;display:flex">'
+    +       '<div id="mu-ex-job-actions" style="display:flex;gap:6px">'
+    +         '<button id="mu-ex-stop" type="button" '
+    +           'style="background:rgba(255,138,138,0.10);color:#ff8a8a;border:1px solid rgba(255,138,138,0.35);padding:7px 12px;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;font-weight:700;border-radius:3px;cursor:pointer;display:none">■ ジョブ停止</button>'
     +         '<button id="mu-ex-approve-all" type="button" '
-    +           'style="background:rgba(123,229,123,0.14);color:#7be57b;border:1px solid rgba(123,229,123,0.4);padding:7px 12px;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;font-weight:700;border-radius:3px;cursor:pointer">残り全て ✓ 承認</button>'
+    +           'style="background:rgba(123,229,123,0.14);color:#7be57b;border:1px solid rgba(123,229,123,0.4);padding:7px 12px;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;font-weight:700;border-radius:3px;cursor:pointer;display:none">残り全て ✓ 承認</button>'
     +       '</div>'
     +     '</div>'
     +     '<div id="mu-ex-progress" style="height:6px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden;margin-bottom:8px"><div id="mu-ex-bar" style="width:0%;height:100%;background:#7be57b;transition:width 0.4s"></div></div>'
@@ -83,6 +90,17 @@
     +     '<div id="mu-ex-job-items" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:14px"></div>'
     +   '</div>'
     +   '<details style="margin-top:18px;border-top:1px dashed rgba(255,255,255,0.08);padding-top:14px">'
+    +     '<summary style="font-size:11.5px;color:#e6c449;cursor:pointer;letter-spacing:0.04em">直接 pt を購入する（T 不要派向け）</summary>'
+    +     '<p style="font-size:11.5px;color:rgba(245,245,240,0.55);margin:8px 0 12px;line-height:1.7">Stripe Checkout 経由で pt を直接購入。 ¥3k 以上で <strong style="color:#7be57b">+10〜20% ボーナス</strong>。</p>'
+    +     '<div id="mu-ex-packs" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px">'
+    +       '<button type="button" data-yen="1000"  class="mu-ex-pack"></button>'
+    +       '<button type="button" data-yen="3000"  class="mu-ex-pack"></button>'
+    +       '<button type="button" data-yen="10000" class="mu-ex-pack"></button>'
+    +       '<button type="button" data-yen="30000" class="mu-ex-pack"></button>'
+    +     '</div>'
+    +     '<div id="mu-ex-pack-msg" style="font-size:11.5px;color:rgba(245,245,240,0.7);margin-top:8px"></div>'
+    +   '</details>'
+    +   '<details style="margin-top:8px;border-top:1px dashed rgba(255,255,255,0.08);padding-top:14px">'
     +     '<summary style="font-size:11.5px;color:#e6c449;cursor:pointer;letter-spacing:0.04em">MUGEN T シャツを購入済み → ポイントを claim する</summary>'
     +     '<p style="font-size:11.5px;color:rgba(245,245,240,0.55);margin:8px 0 12px;line-height:1.7">MUGEN は MU の旗艦 1/1 T シャツライン。 <a href="/mugen" target="_blank" style="color:#e6c449">/mugen で確認</a>。 注文確認メールの「注文 ID」 もしくは Stripe session (cs_…) を入れると即 +1,000pt が反映されます。</p>'
     +     '<div style="display:flex;gap:8px;flex-wrap:wrap">'
@@ -113,25 +131,74 @@
   var progressBar= section.querySelector("#mu-ex-bar");
   var jobMsg     = section.querySelector("#mu-ex-job-msg");
   var jobItems   = section.querySelector("#mu-ex-job-items");
-  var approveActions = section.querySelector("#mu-ex-approve-actions");
+  var jobActions = section.querySelector("#mu-ex-job-actions");
   var approveAllBtn  = section.querySelector("#mu-ex-approve-all");
+  var stopBtn        = section.querySelector("#mu-ex-stop");
+  var notifyEl       = section.querySelector("#mu-ex-notify");
   var claimInput = section.querySelector("#mu-ex-mugen");
   var claimBtn   = section.querySelector("#mu-ex-claim");
   var claimMsg   = section.querySelector("#mu-ex-claim-msg");
+  var packMsg    = section.querySelector("#mu-ex-pack-msg");
+
+  // Hardcoded for label rendering. Server validates the actual amounts.
+  var POINT_PACKS = [
+    { yen:  1000, pts:  1000, bonus:  0 },
+    { yen:  3000, pts:  3300, bonus: 10 },
+    { yen: 10000, pts: 11500, bonus: 15 },
+    { yen: 30000, pts: 36000, bonus: 20 },
+  ];
+  section.querySelectorAll(".mu-ex-pack").forEach(function (btn) {
+    var yen = parseInt(btn.getAttribute("data-yen"), 10);
+    var pack = POINT_PACKS.find(function (p) { return p.yen === yen; });
+    if (!pack) return;
+    var recommended = yen === 10000;
+    btn.style.cssText =
+      "background:" + (recommended ? "rgba(230,196,73,0.12)" : "rgba(255,255,255,0.04)") + ";"
+      + "color:" + (recommended ? "#e6c449" : "#fff") + ";"
+      + "border:1px solid " + (recommended ? "rgba(230,196,73,0.5)" : "rgba(255,255,255,0.15)") + ";"
+      + "padding:12px 10px;font-size:11px;letter-spacing:0.06em;font-weight:700;border-radius:3px;cursor:pointer;line-height:1.5;text-align:center;font-family:inherit";
+    btn.innerHTML = '<div style="font-size:15px;margin-bottom:3px">¥' + pack.yen.toLocaleString() + '</div>'
+      + '<div style="font-size:10px;opacity:0.75">' + pack.pts.toLocaleString() + ' pt'
+      + (pack.bonus > 0 ? ' <span style="color:#7be57b">+' + pack.bonus + '%</span>' : '')
+      + '</div>'
+      + '<div style="font-size:9px;opacity:0.55;margin-top:2px">≒ ' + Math.floor(pack.pts / 30) + ' SKU</div>';
+    btn.addEventListener("click", function () { buyPointPack(yen); });
+  });
+
+  function buyPointPack (yen) {
+    var em = emailInput.value.trim();
+    if (!em) { packMsg.style.color = "#ff8a8a"; packMsg.textContent = "先に email を入力してください。"; return; }
+    setEmail(em);
+    packMsg.style.color = "rgba(245,245,240,0.7)";
+    packMsg.textContent = "Stripe Payment Link を発行中…";
+    api("/api/proposal/extras/buy-points", { email: em, amount_yen: yen, slug: SLUG }).then(function (r) {
+      if (r && r.ok && r.url) {
+        packMsg.style.color = "#7be57b";
+        packMsg.innerHTML = '決済ページを開いています… <a href="' + r.url + '" target="_blank" style="color:#e6c449;text-decoration:underline">直接開く</a>';
+        window.open(r.url, "_blank");
+      } else {
+        packMsg.style.color = "#ff8a8a";
+        packMsg.textContent = (r && r.error) || "発行に失敗しました";
+      }
+    });
+  }
 
   emailInput.value = getEmail();
   paintQtyButtons(null);
 
+  var PTS_PER_SKU = 30;  // sync with EXTRAS_POINTS_PER_SKU in main.rs
+
   function paintQtyButtons (bal) {
     var freeEligible = bal && bal.free_30_eligible;
+    if (bal && bal.points_per_sku) PTS_PER_SKU = bal.points_per_sku;
     section.querySelectorAll(".mu-ex-qty").forEach(function (btn) {
       var qty = parseInt(btn.getAttribute("data-qty"), 10);
       var isFree = qty === 30 && freeEligible;
       applyQtyButtonStyle(btn, qty === 30);
-      var cost = isFree ? 0 : qty * 10;
+      var cost = isFree ? 0 : qty * PTS_PER_SKU;
       btn.innerHTML = '<div style="font-size:20px;letter-spacing:0.04em;margin-bottom:4px">+' + qty + '</div>'
         + '<div style="font-size:10px;letter-spacing:0.18em;opacity:0.7">'
-        + (isFree ? '無料（初回 / 30 完走時のみ消費）' : cost.toLocaleString() + ' pt')
+        + (isFree ? '無料（初回 / 完走時のみ消費）' : cost.toLocaleString() + ' pt = ¥' + cost.toLocaleString())
         + '</div>';
     });
   }
@@ -190,7 +257,8 @@
       }
       if (!window.confirm(msg + "\n\nよろしいですか？")) { setStatus(""); return; }
       setStatus("発注中…");
-      api("/api/proposal/" + SLUG + "/extras/order", { email: em, qty: qty }).then(function (o) {
+      var notify = !!(notifyEl && notifyEl.checked);
+      api("/api/proposal/" + SLUG + "/extras/order", { email: em, qty: qty, notify_email: notify }).then(function (o) {
         if (!o || !o.ok) { setStatus((o && o.error) || "order 失敗", "err"); return; }
         setStatus("ジョブ #" + o.job_id + " を開始しました (" + costTxt + " 消費)。", "ok");
         try { localStorage.setItem(POLL_KEY, String(o.job_id)); } catch (_) { }
@@ -205,25 +273,31 @@
     var card = document.createElement("div");
     card.dataset.skuId = it.id;
     card.dataset.status = it.approval_status || "pending";
+    card.dataset.hasImg = it.image_url ? "1" : "0";
     card.style.cssText = "background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.06);border-radius:4px;overflow:hidden;display:flex;flex-direction:column";
     var pending = card.dataset.status === "pending";
     var approved = card.dataset.status === "approved";
     var rejected = card.dataset.status === "rejected";
     card.style.opacity = rejected ? "0.35" : "1";
+    var pendingNoImg = pending && !it.image_url;
     card.innerHTML =
         (it.image_url
             ? '<a href="' + it.image_url + '" target="_blank" style="display:block"><img src="' + it.image_url + '" alt="" style="width:100%;height:auto;display:block"></a>'
-            : '<div style="aspect-ratio:1/1.25;display:flex;align-items:center;justify-content:center;font-size:10px;color:#888">…</div>')
+            : '<div style="aspect-ratio:1/1.25;display:flex;align-items:center;justify-content:center;font-size:10px;color:#888;background:#0a0a0a">' + (pendingNoImg ? '再生成中…' : '…') + '</div>')
       + '<div style="padding:6px 8px;font-size:9px;letter-spacing:0.06em;color:rgba(245,245,240,0.55);line-height:1.4">'
       +   (it.kind || "") + ' · ¥' + (it.price_jpy || 0).toLocaleString()
       + '</div>'
       + '<div class="mu-ex-actions" style="display:flex;border-top:1px solid rgba(255,255,255,0.06)">'
-      +   '<button type="button" data-action="approve" style="flex:1;padding:8px 4px;font-size:11px;border:0;background:' + (approved ? 'rgba(123,229,123,0.25)' : 'transparent') + ';color:' + (approved ? '#7be57b' : 'rgba(123,229,123,0.7)') + ';font-weight:700;cursor:' + (pending ? 'pointer' : 'default') + ';font-family:inherit">' + (approved ? '✓ 承認済' : '✓') + '</button>'
-      +   '<button type="button" data-action="reject"  style="flex:1;padding:8px 4px;font-size:11px;border:0;border-left:1px solid rgba(255,255,255,0.06);background:' + (rejected ? 'rgba(255,138,138,0.18)' : 'transparent') + ';color:' + (rejected ? '#ff8a8a' : 'rgba(255,138,138,0.7)') + ';font-weight:700;cursor:' + (pending ? 'pointer' : 'default') + ';font-family:inherit">' + (rejected ? '✗ 却下' : '✗') + '</button>'
+      +   '<button type="button" data-action="approve" title="承認" style="flex:1;padding:8px 4px;font-size:11px;border:0;background:' + (approved ? 'rgba(123,229,123,0.25)' : 'transparent') + ';color:' + (approved ? '#7be57b' : 'rgba(123,229,123,0.7)') + ';font-weight:700;cursor:' + (pending && it.image_url ? 'pointer' : 'default') + ';font-family:inherit">' + (approved ? '✓ 承認済' : '✓') + '</button>'
+      +   '<button type="button" data-action="reject"  title="却下" style="flex:1;padding:8px 4px;font-size:11px;border:0;border-left:1px solid rgba(255,255,255,0.06);background:' + (rejected ? 'rgba(255,138,138,0.18)' : 'transparent') + ';color:' + (rejected ? '#ff8a8a' : 'rgba(255,138,138,0.7)') + ';font-weight:700;cursor:' + (pending && it.image_url ? 'pointer' : 'default') + ';font-family:inherit">' + (rejected ? '✗ 却下' : '✗') + '</button>'
+      +   '<button type="button" data-action="regen"   title="10pt で再生成" style="padding:8px 10px;font-size:12px;border:0;border-left:1px solid rgba(255,255,255,0.06);background:transparent;color:rgba(230,196,73,0.7);font-weight:700;cursor:' + (it.image_url ? 'pointer' : 'default') + ';font-family:inherit">↻</button>'
       + '</div>';
-    if (pending) {
+    if (pending && it.image_url) {
       card.querySelector('[data-action="approve"]').addEventListener("click", function () { reviewSku(card, "approve"); });
       card.querySelector('[data-action="reject"]' ).addEventListener("click", function () { reviewSku(card, "reject");  });
+    }
+    if (it.image_url) {
+      card.querySelector('[data-action="regen"]'  ).addEventListener("click", function () { regenerateSku(card); });
     }
     return card;
   }
@@ -250,7 +324,11 @@
 
   function updateApproveActions () {
     var anyPending = !!jobItems.querySelector('[data-status="pending"]');
-    approveActions.style.display = anyPending ? "flex" : "none";
+    approveAllBtn.style.display = anyPending ? "inline-block" : "none";
+  }
+
+  function setRunningUi (running) {
+    stopBtn.style.display = running ? "inline-block" : "none";
   }
 
   approveAllBtn.addEventListener("click", function () {
@@ -278,7 +356,8 @@
   function pollJob (jobId) {
     jobEl.style.display = "block";
     jobItems.innerHTML = "";
-    approveActions.style.display = "none";
+    approveAllBtn.style.display = "none";
+    setRunningUi(true);
     progressBar.style.width = "0%";
     jobMsg.textContent = "ジョブ #" + jobId + " の準備中…";
     var seenIds = {};
@@ -294,10 +373,13 @@
           + (j.last_error ? " · 直近エラー: " + j.last_error : "");
         if (Array.isArray(j.items)) {
           j.items.forEach(function (it) {
-            if (seenIds[it.id]) {
-              // status may have changed — re-render only if it did
-              var existing = jobItems.querySelector('[data-sku-id="' + it.id + '"]');
-              if (existing && existing.dataset.status !== it.approval_status) {
+            var existing = jobItems.querySelector('[data-sku-id="' + it.id + '"]');
+            var hasImg = it.image_url ? "1" : "0";
+            if (existing) {
+              // Re-render when approval status changes OR an image arrives
+              // for a previously empty placeholder (regenerate flow).
+              if (existing.dataset.status !== it.approval_status
+                  || existing.dataset.hasImg !== hasImg) {
                 existing.replaceWith(renderSkuCard(it));
               }
               return;
@@ -307,17 +389,21 @@
           });
           updateApproveActions();
         }
-        if (j.status === "completed" || j.status === "failed" || j.status === "partial") {
+        var terminal = ["completed","failed","partial","cancelled"].indexOf(j.status) !== -1;
+        if (terminal) {
           stopped = true;
+          setRunningUi(false);
           try { localStorage.removeItem(POLL_KEY); } catch (_) { }
           if (j.status === "completed") {
             jobMsg.innerHTML = '<span style="color:#7be57b">生成完了 ' + j.done + ' / ' + j.total + '。 各 SKU を ✓ / ✗ で確認し、 承認したものだけが LP に並びます。</span>';
           } else if (j.status === "partial") {
-            jobMsg.innerHTML = '<span style="color:#e6c449">部分完了: ' + j.done + ' / ' + j.total + '。 未生成分のポイントは自動返却済み (free 枠の場合は再度使えます)。</span>';
+            jobMsg.innerHTML = '<span style="color:#e6c449">部分完了: ' + j.done + ' / ' + j.total + '。 未生成分の pt は返却済み (free 枠の場合は再度使えます)。</span>';
+          } else if (j.status === "cancelled") {
+            jobMsg.innerHTML = '<span style="color:#e6c449">キャンセル: ' + j.done + ' / ' + j.total + ' で停止しました。 未生成分の pt は返却済み (free 枠は復元)。</span>';
           } else {
             jobMsg.innerHTML = '<span style="color:#ff8a8a">失敗しました。 ポイントは全額返却され、 free 枠も復元されました。 ' + (j.last_error || "") + '</span>';
           }
-          // Re-store job id for the approve-all button to reach it.
+          // Re-store job id so the approve-all button can still reach it.
           try { localStorage.setItem(POLL_KEY, String(jobId)); } catch (_) { }
           return;
         }
@@ -325,6 +411,38 @@
       });
     }
     tick();
+  }
+
+  stopBtn.addEventListener("click", function () {
+    var jobId = parseInt(localStorage.getItem(POLL_KEY) || "0", 10);
+    if (!jobId) return;
+    var em = emailInput.value.trim();
+    if (!em) { alert("email を入力してください"); return; }
+    if (!confirm("ジョブ #" + jobId + " を停止しますか？\n未生成分のポイントは返却され、 free 枠も復元されます。")) return;
+    stopBtn.disabled = true;
+    api("/api/proposal/extras/job/" + jobId + "/stop", { email: em }).then(function (r) {
+      stopBtn.disabled = false;
+      if (!r || !r.ok) { alert((r && r.error) || "stop 失敗"); return; }
+      jobMsg.innerHTML = '<span style="color:#e6c449">停止リクエストを送信しました (現在の状態: ' + r.status + ')…</span>';
+    });
+  });
+
+  // Per-card regenerate button: clones the rejected/bad SKU into a new pending
+  // row. The new card appears on next poll.
+  function regenerateSku (cardEl) {
+    var em = emailInput.value.trim();
+    if (!em) { alert("email を入力してください"); return; }
+    var skuId = parseInt(cardEl.dataset.skuId, 10);
+    if (!confirm("この SKU を 10pt 消費して再生成します。 (free 枠は使えません)\nよろしいですか？")) return;
+    api("/api/proposal/extras/sku/" + skuId + "/regenerate", { email: em }).then(function (r) {
+      if (!r || !r.ok) { alert((r && r.error) || "regenerate 失敗"); return; }
+      jobMsg.innerHTML = '<span style="color:#7be57b">再生成中… 新 SKU #' + r.new_sku_id + ' を準備しています。</span>';
+      refreshBalance();
+      // Force the poller to fire immediately by removing seenIds for the new id.
+      // Simplest: kick off a fresh pollJob for the same job.
+      var jobId = parseInt(localStorage.getItem(POLL_KEY) || String(r.job_id), 10);
+      pollJob(jobId);
+    });
   }
 
   claimBtn.addEventListener("click", function () {
