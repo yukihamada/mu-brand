@@ -53,7 +53,7 @@
     + '<p style="font-size:13px;color:rgba(245,245,240,0.55);line-height:1.85;margin-bottom:18px">'
     +   '<strong style="color:#fff">初回 30 個は無料</strong> （完走時のみ消費、 途中失敗したらリセット）。 2 回目以降は <strong style="color:#fff">1 商品 = 30pt (=¥30)</strong>。 '
     +   '1pt = ¥1。 ポイント獲得は 3 経路: '
-    +   '<span class="mu-ex-mugen-help" style="border-bottom:1px dotted rgba(245,245,240,0.4);cursor:help" title="MUGEN は MU の旗艦 1/1 T シャツライン。 毎日新しいデザインが 1〜108 枚限定でドロップ。 1 枚 = ¥9,800〜¥30,000。">MUGEN T シャツ</span> 購入で <strong style="color:#fff">+9,800pt</strong>、 '
+    +   '<span class="mu-ex-mugen-help" style="border-bottom:1px dotted rgba(245,245,240,0.4);cursor:help" title="MUGEN (旗艦 1/108 T、¥7,800〜34,800) / MUON (日次無音 T、¥7,800〜30,000) / MA (週次 1/1 オークション、¥18,000〜100,000) のいずれも対象。">MU T シャツ（MUGEN・MUON・MA）</span> 購入で <strong style="color:#fff">購入額がそのまま pt 化（100%）</strong>、 '
     +   'サンプル購入で <strong style="color:#fff">購入額の 10% 自動還元</strong>、 もしくは下記から <strong style="color:#fff">直接 pt 購入</strong> （¥3k 以上で +10〜20% ボーナス）。'
     + '</p>'
     + '<div id="mu-extras-card" style="padding:22px;background:rgba(255,255,255,0.025);border:1px solid rgba(255,255,255,0.08);border-radius:6px">'
@@ -101,13 +101,16 @@
     +     '<div id="mu-ex-pack-msg" style="font-size:11.5px;color:rgba(245,245,240,0.7);margin-top:8px"></div>'
     +   '</details>'
     +   '<details style="margin-top:8px;border-top:1px dashed rgba(255,255,255,0.08);padding-top:14px">'
-    +     '<summary style="font-size:11.5px;color:#e6c449;cursor:pointer;letter-spacing:0.04em">MUGEN T シャツを購入済み → ポイントを claim する</summary>'
-    +     '<p style="font-size:11.5px;color:rgba(245,245,240,0.55);margin:8px 0 12px;line-height:1.7">MUGEN は MU の旗艦 1/1 T シャツライン。 <a href="/mugen" target="_blank" style="color:#e6c449">/mugen で確認</a>。 注文確認メールの「注文 ID」 もしくは Stripe session (cs_…) を入れると即 +1,000pt が反映されます。</p>'
+    +     '<summary style="font-size:11.5px;color:#e6c449;cursor:pointer;letter-spacing:0.04em">MU T シャツ（MUGEN・MUON・MA）を購入済み → ポイントを claim する</summary>'
+    +     '<p style="font-size:11.5px;color:rgba(245,245,240,0.55);margin:8px 0 12px;line-height:1.7">'
+    +       '対象: <a href="/mugen" target="_blank" style="color:#e6c449">MUGEN</a> / <a href="/muon" target="_blank" style="color:#e6c449">MUON</a> / <a href="/ma" target="_blank" style="color:#e6c449">MA</a>。 '
+    +       '注文確認メールの「注文 ID」 もしくは Stripe session (cs_…) を入れると、 <strong style="color:#fff">支払額がそのまま pt として加算</strong>されます。'
+    +     '</p>'
     +     '<div style="display:flex;gap:8px;flex-wrap:wrap">'
-    +       '<input id="mu-ex-mugen" type="text" placeholder="MUGEN 注文 ID もしくは Stripe session (cs_…)" '
+    +       '<input id="mu-ex-mugen" type="text" placeholder="MU 注文 ID もしくは Stripe session (cs_…)" '
     +         'style="flex:1;min-width:260px;background:#0a0a0a;border:1px solid rgba(255,255,255,0.15);color:#fff;padding:9px 11px;font-size:12px;border-radius:3px;font-family:ui-monospace,Menlo,monospace">'
     +       '<button id="mu-ex-claim" type="button" '
-    +         'style="background:rgba(123,229,123,0.12);color:#7be57b;border:1px solid rgba(123,229,123,0.4);padding:9px 14px;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;font-weight:700;border-radius:3px;cursor:pointer">+1,000pt 受け取り</button>'
+    +         'style="background:rgba(123,229,123,0.12);color:#7be57b;border:1px solid rgba(123,229,123,0.4);padding:9px 14px;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;font-weight:700;border-radius:3px;cursor:pointer">支払額を pt 化</button>'
     +     '</div>'
     +     '<div id="mu-ex-claim-msg" style="font-size:11.5px;color:rgba(245,245,240,0.7);margin-top:8px"></div>'
     +   '</details>'
@@ -240,21 +243,39 @@
     });
   });
 
+  // Server is the source of truth on free-30 / balance — but the math is
+  // 1:1 simple, so we compute the quote client-side from the last /balance
+  // result and let the server's /order do the actual validation+charge.
+  // (Saves one round trip; if balance is stale the order endpoint rejects.)
+  function quoteLocal (qty, bal) {
+    var freeApplied = qty === 30 && !!(bal && bal.free_30_eligible);
+    var cost = freeApplied ? 0 : qty * PTS_PER_SKU;
+    var balance = (bal && bal.balance) || 0;
+    return {
+      cost_points: cost,
+      free_applied: freeApplied,
+      balance: balance,
+      sufficient: balance >= cost,
+      shortfall: Math.max(cost - balance, 0),
+    };
+  }
+
   function orderExtras (qty) {
     var em = emailInput.value.trim();
     if (!em) { setStatus("先に email を入力してください。", "err"); return; }
     setEmail(em);
-    setStatus("見積もり中…");
-    api("/api/proposal/" + SLUG + "/extras/quote", { email: em, qty: qty }).then(function (q) {
-      if (!q || !q.ok) { setStatus((q && q.error) || "quote 失敗", "err"); return; }
-      var costTxt = q.free_applied ? "無料" : q.cost_points.toLocaleString() + " pt";
-      var msg = "MU × " + SLUG.toUpperCase() + " の SKU を " + qty + " 個生成します。 (" + costTxt + ")\n"
-              + "生成後、 1 つずつ承認 (✓/✗) してから LP に反映されます。";
+    setStatus("残高確認中…");
+    refreshBalance().then(function (bal) {
+      if (!bal) return;
+      var q = quoteLocal(qty, bal);
+      var costTxt = q.free_applied ? "無料" : q.cost_points.toLocaleString() + " pt = ¥" + q.cost_points.toLocaleString();
       if (!q.sufficient) {
         setStatus("ポイントが " + q.shortfall.toLocaleString()
-          + " pt 足りません。 MUGEN を購入するか、 サンプルを買ってポイントを貯めてください。", "err");
+          + " pt 足りません。 MUGEN を購入するか、 サンプル / pt パックを買ってください。", "err");
         return;
       }
+      var msg = "MU × " + SLUG.toUpperCase() + " の SKU を " + qty + " 個生成します。 (" + costTxt + ")\n"
+              + "生成後、 1 つずつ承認 (✓/✗) してから LP に反映されます。";
       if (!window.confirm(msg + "\n\nよろしいですか？")) { setStatus(""); return; }
       setStatus("発注中…");
       var notify = !!(notifyEl && notifyEl.checked);
@@ -449,14 +470,15 @@
     var em = emailInput.value.trim();
     var mu = claimInput.value.trim();
     if (!em) { claimMsg.style.color = "#ff8a8a"; claimMsg.textContent = "email を入力してください。"; return; }
-    if (!mu) { claimMsg.style.color = "#ff8a8a"; claimMsg.textContent = "MUGEN 注文 ID もしくは cs_… を入力してください。"; return; }
+    if (!mu) { claimMsg.style.color = "#ff8a8a"; claimMsg.textContent = "MU 注文 ID もしくは cs_… を入力してください。"; return; }
     setEmail(em);
     claimMsg.style.color = "rgba(245,245,240,0.7)";
     claimMsg.textContent = "claim 中…";
-    api("/api/proposal/extras/claim-mugen", { email: em, mu_purchase: mu }).then(function (r) {
+    api("/api/proposal/extras/claim", { email: em, mu_purchase: mu }).then(function (r) {
       if (r && r.ok) {
         claimMsg.style.color = "#7be57b";
-        claimMsg.textContent = "+" + r.added.toLocaleString() + " pt が加算されました (残高 " + r.balance.toLocaleString() + " pt)";
+        var brandTag = r.brand ? " (" + r.brand.toUpperCase() + ")" : "";
+        claimMsg.textContent = "+" + r.added.toLocaleString() + " pt" + brandTag + " 加算 (残高 " + r.balance.toLocaleString() + " pt)";
         refreshBalance();
       } else {
         claimMsg.style.color = "#ff8a8a";

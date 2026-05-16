@@ -16248,10 +16248,13 @@ fn ensure_proposal_tables(db: &Db) {
 const EXTRAS_POINTS_PER_SKU: i64 = 30;
 /// First 30 SKUs are free per email (consumed only on full 30/30 success).
 const EXTRAS_FREE_SKUS: i64 = 30;
-/// MUGEN tee purchase grants 100% of yen as pt (1 MUGEN ¥9,800 → 9,800 pt
-/// = ~326 SKUs = one full collection of generation). Bundles the physical
-/// good with a generation-credit top-up.
-const EXTRAS_POINTS_PER_MUGEN: i64 = 9_800;
+/// MUGEN tee purchase grants 100% of *actual yen paid* as pt. Looked up
+/// dynamically from products.price_jpy at claim time. Range follows the
+/// MUGEN bonding curve (¥7,800 base → ¥34,800 at 108 sales; #108 is fixed
+/// ¥30,000). One full early-cycle MUGEN at ¥7,800 → 260 SKUs at ¥30 each.
+/// A late-cycle MUGEN at ¥30,000 → 1,000 SKUs.
+/// This constant is the *displayed-floor* used by /balance for UI hints.
+const EXTRAS_POINTS_PER_MUGEN_FLOOR: i64 = 7_800;
 
 /// Direct pt purchase tiers. (yen, pt, bonus_pct).
 /// Larger packs get a graduated bonus so big partners feel rewarded.
@@ -16672,18 +16675,32 @@ async fn proposal_generic_skus(
 
 // ── Proposal extras API (shared widget on every /proposals/<slug> page) ──
 //
-// 1 SKU costs EXTRAS_POINTS_PER_SKU (=10) pt.
-// First EXTRAS_FREE_SKUS (=30) per email are free (toggled by
-// proposal_points.free_30_used). Paid pt come from MUGEN-tee purchases
-// (+1000 pt per claim, via claim-mugen) and from sample purchases
-// (+10% of yen amount, via the existing sample_paid webhook hook).
+// Economy:
+//   1 pt = ¥1. 1 SKU generation = EXTRAS_POINTS_PER_SKU (30) pt.
+//   First EXTRAS_FREE_SKUS (30) per email are free (free_30_used flag,
+//   only consumed on full 30/30 success). Paid pt come from:
+//     - MU-tee purchase claim (MUGEN ¥7,800〜34,800 / MUON ¥7,800〜30,000 /
+//       MA ¥18,000〜100,000) → 100% of actual yen paid, via /claim
+//     - sample purchase (+10% of yen, via existing sample_paid webhook)
+//     - direct Stripe pt-pack purchase (¥1k/3k/10k/30k with 0/10/15/20% bonus)
 //
-// Routes (all public, identified by email — kept simple per product spec):
-//   POST /api/proposal/extras/balance        { email } → { balance, free_30_eligible }
-//   POST /api/proposal/:slug/extras/quote    { email, qty } → cost breakdown
-//   POST /api/proposal/:slug/extras/order    { email, qty } → { job_id, ... }
-//   GET  /api/proposal/extras/job/:job_id    → { status, done, total, items, ... }
-//   POST /api/proposal/extras/claim-mugen    { email, mu_purchase } → { added, balance }
+// Surface (10 routes, identified by email — no auth beyond that):
+//
+//   Wallet:
+//     POST /api/proposal/extras/balance              { email }
+//     POST /api/proposal/extras/claim                { email, mu_purchase }
+//     POST /api/proposal/extras/buy-points           { email, amount_yen, slug? }
+//
+//   Jobs (creation + queue read + admin actions):
+//     POST /api/proposal/:slug/extras/order          { email, qty, notify_email }
+//     GET  /api/proposal/extras/job/:job_id
+//     POST /api/proposal/extras/job/:job_id/stop             { email }
+//     POST /api/proposal/extras/job/:job_id/approve-all      { email }
+//
+//   SKUs (per-card review):
+//     POST /api/proposal/extras/sku/:sku_id/approve          { email }
+//     POST /api/proposal/extras/sku/:sku_id/reject           { email }
+//     POST /api/proposal/extras/sku/:sku_id/regenerate       { email }
 
 #[derive(Deserialize)]
 struct ExtrasEmailBody { #[serde(default)] email: String }
@@ -16696,11 +16713,18 @@ struct ExtrasOrderBody {
 }
 
 #[derive(Deserialize)]
-struct ExtrasClaimMugenBody {
+struct ExtrasClaimMuBody {
     #[serde(default)] email: String,
     /// Accept either a numeric mu_purchases.id or a Stripe session_id
-    /// ("cs_..."). The MUGEN order confirmation email includes both.
+    /// ("cs_..."). The MU order confirmation email includes both.
     #[serde(default)] mu_purchase: String,
+}
+
+/// Brand allowlist for MU claim. Buying any of these tees grants
+/// 100% of yen-paid as pt (looked up dynamically). 'you' explicitly
+/// excluded — MU × YOU is a separate product line, not eligible.
+fn extras_brand_is_claimable(brand: &str) -> bool {
+    matches!(brand, "mugen" | "muon" | "ma")
 }
 
 fn validate_email(e: &str) -> Result<String, &'static str> {
@@ -16738,7 +16762,10 @@ async fn extras_balance(
         "balance": balance,
         "free_30_eligible": !free_used,
         "points_per_sku": EXTRAS_POINTS_PER_SKU,
-        "points_per_mugen": EXTRAS_POINTS_PER_MUGEN,
+        // MU claim is variable (100% of yen paid). Floor is the brand's
+        // base price (¥7,800 for MUGEN/MUON, ¥18,000 for MA). Kept here
+        // as a UI hint only — not the actual grant amount.
+        "mu_claim_floor_jpy": EXTRAS_POINTS_PER_MUGEN_FLOOR,
     })).into_response()
 }
 
@@ -17351,9 +17378,13 @@ async fn extras_buy_points(
     }
 }
 
-async fn extras_claim_mugen(
+/// POST /api/proposal/extras/claim — claim MU-tee purchase as pt grant.
+/// Eligible brands: mugen / muon / ma. Grants 100% of the actual yen paid
+/// (from mu_purchases.amount_jpy; falls back to products.price_jpy for
+/// legacy rows that pre-date the column). Idempotent per purchase id.
+async fn extras_claim_mu(
     State(db): State<Db>,
-    Json(body): Json<ExtrasClaimMugenBody>,
+    Json(body): Json<ExtrasClaimMuBody>,
 ) -> Response {
     let email = match validate_email(&body.email) {
         Ok(e) => e,
@@ -17363,32 +17394,47 @@ async fn extras_claim_mugen(
     if token.is_empty() {
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok": false, "error": "missing mu_purchase id or session"}))).into_response();
     }
-    // Resolve token → mu_purchases.id. Accept numeric id or Stripe session_id.
-    let (purchase_id, brand, purchase_email): (i64, String, String) = {
+    // Resolve token → mu_purchases row (id, brand, email, paid amount).
+    // amount_jpy may be NULL for legacy rows — fall back to products.price_jpy.
+    let (purchase_id, brand, purchase_email, amount_jpy): (i64, String, String, i64) = {
         let conn = db.lock().unwrap();
+        let sql = "SELECT mp.id, mp.brand, mp.email,
+                          COALESCE(mp.amount_jpy, (SELECT p.price_jpy FROM products p WHERE p.id = mp.product_id), 0)
+                   FROM mu_purchases mp
+                   WHERE";
         let row = if let Ok(id) = token.parse::<i64>() {
             conn.query_row(
-                "SELECT id, brand, email FROM mu_purchases WHERE id=?",
+                &format!("{} mp.id=?", sql),
                 params![id],
-                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, i64>(3)?)),
             )
         } else {
             conn.query_row(
-                "SELECT id, brand, email FROM mu_purchases WHERE session_id=?",
+                &format!("{} mp.session_id=?", sql),
                 params![token],
-                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, i64>(3)?)),
             )
         };
         match row {
             Ok(v) => v,
-            Err(_) => return (StatusCode::NOT_FOUND, Json(serde_json::json!({"ok": false, "error": "purchase not found — check the order id from your MUGEN receipt"}))).into_response(),
+            Err(_) => return (StatusCode::NOT_FOUND, Json(serde_json::json!({"ok": false, "error": "purchase not found — check the order id from your MU receipt"}))).into_response(),
         }
     };
-    if !brand.eq_ignore_ascii_case("mugen") {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok": false, "error": format!("brand={} is not eligible (only MUGEN purchases grant points)", brand) }))).into_response();
+    if !extras_brand_is_claimable(&brand) {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "ok": false, "error": format!("brand={} is not eligible (only mugen/muon/ma purchases grant points)", brand),
+        }))).into_response();
     }
     if normalize_email(&purchase_email) != email {
         return (StatusCode::FORBIDDEN, Json(serde_json::json!({"ok": false, "error": "email does not match the purchase"}))).into_response();
+    }
+    // Floor guard: skip if we can't resolve a positive amount (e.g. amount_jpy
+    // is NULL and products.price_jpy is 0 for some reason). Better to fail
+    // loudly than silently grant 0.
+    if amount_jpy <= 0 {
+        return (StatusCode::CONFLICT, Json(serde_json::json!({
+            "ok": false, "error": "could not resolve purchase amount; contact info@wearmu.com",
+        }))).into_response();
     }
     let conn = db.lock().unwrap();
     let already: bool = conn.query_row(
@@ -17403,7 +17449,8 @@ async fn extras_claim_mugen(
         })).into_response();
     }
     let now = chrono_now();
-    let new_balance = match points_mutate(&conn, &email, EXTRAS_POINTS_PER_MUGEN, "mugen_claim",
+    let reason = format!("{}_claim", brand);
+    let new_balance = match points_mutate(&conn, &email, amount_jpy, &reason,
                                           Some(&purchase_id.to_string()), None) {
         Ok(b) => b,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"ok": false, "error": e}))).into_response(),
@@ -17411,10 +17458,10 @@ async fn extras_claim_mugen(
     let _ = conn.execute(
         "INSERT INTO proposal_mugen_claims (mu_purchase_id, email, slug, points_added, claimed_at)
          VALUES (?,?,NULL,?,?)",
-        params![purchase_id, email, EXTRAS_POINTS_PER_MUGEN, now],
+        params![purchase_id, email, amount_jpy, now],
     );
     Json(serde_json::json!({
-        "ok": true, "added": EXTRAS_POINTS_PER_MUGEN,
+        "ok": true, "added": amount_jpy, "brand": brand,
         "balance": new_balance, "mu_purchase_id": purchase_id,
     })).into_response()
 }
@@ -19675,13 +19722,15 @@ async fn admin_backfill_purchases(
             let inserted = {
                 let conn = db.lock().unwrap();
                 let created: i64 = s["created"].as_i64().unwrap_or_else(|| chrono_now().parse().unwrap_or(0));
+                let session_amount: i64 = s["amount_total"].as_i64().unwrap_or(0);
                 conn.execute(
-                    "INSERT INTO mu_purchases (email, product_id, brand, drop_num, session_id, created_at)
-                     SELECT ?, ?, ?, ?, ?, ?
+                    "INSERT INTO mu_purchases (email, product_id, brand, drop_num, session_id, amount_jpy, created_at)
+                     SELECT ?, ?, ?, ?, ?, ?, ?
                      WHERE NOT EXISTS (SELECT 1 FROM mu_purchases WHERE session_id=?)",
                     params![
                         buyer_email, if product_id != 0 { product_id } else { you_design_id },
-                        brand, drop_num, session_id, created.to_string(), session_id,
+                        brand, drop_num, session_id, session_amount,
+                        created.to_string(), session_id,
                     ],
                 ).unwrap_or(0)
             };
@@ -40467,11 +40516,17 @@ async fn main() {
             brand       TEXT NOT NULL,
             drop_num    INTEGER,
             session_id  TEXT,
+            amount_jpy  INTEGER,                 -- actual yen paid; used for MU claim grant
             created_at  TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_mu_purchases_email ON mu_purchases(email);
         CREATE INDEX IF NOT EXISTS idx_mu_purchases_session ON mu_purchases(session_id);
         CREATE INDEX IF NOT EXISTS idx_you_users_email ON you_users(email);
+    ").ok();
+    // Idempotent migration for already-deployed mu_purchases (ignored when
+    // column exists).
+    let _ = conn.execute("ALTER TABLE mu_purchases ADD COLUMN amount_jpy INTEGER", []);
+    conn.execute_batch("
 
         -- MA Lottery (4/7 Founder Relay): 100日に1回 ランダム1人に MA を贈与。
         -- 当選者は 受け取る / 別の人へ譲渡指名 / チャリティに転換 を選べる。
@@ -41562,18 +41617,20 @@ async fn main() {
         .route("/api/proposal/:slug/feedback", post(proposal_generic_feedback).get(proposal_generic_feedback_list))
         .route("/api/proposal/:slug/approve",  post(proposal_generic_approve))
         .route("/api/proposal/:slug/revoke",   post(proposal_generic_revoke))
-        // Proposal extras (shared 30/50/100 SKU generator widget).
+        // ── Proposal extras (shared 30/50/100 SKU generator widget) ──
+        // Wallet (email-keyed)
         .route("/api/proposal/extras/balance",                  post(extras_balance))
-        .route("/api/proposal/extras/claim-mugen",              post(extras_claim_mugen))
+        .route("/api/proposal/extras/claim",                    post(extras_claim_mu))
         .route("/api/proposal/extras/buy-points",               post(extras_buy_points))
+        // Jobs (generation queue)
+        .route("/api/proposal/:slug/extras/order",              post(extras_order))
         .route("/api/proposal/extras/job/:job_id",              get(extras_job_status))
-        .route("/api/proposal/extras/job/:job_id/approve-all",  post(extras_job_approve_all))
         .route("/api/proposal/extras/job/:job_id/stop",         post(extras_job_stop))
+        .route("/api/proposal/extras/job/:job_id/approve-all",  post(extras_job_approve_all))
+        // SKUs (individual review)
         .route("/api/proposal/extras/sku/:sku_id/approve",      post(extras_sku_approve))
         .route("/api/proposal/extras/sku/:sku_id/reject",       post(extras_sku_reject))
         .route("/api/proposal/extras/sku/:sku_id/regenerate",   post(extras_sku_regenerate))
-        .route("/api/proposal/:slug/extras/quote",              post(extras_quote))
-        .route("/api/proposal/:slug/extras/order",              post(extras_order))
         .route("/admin/proposal",              post(proposal_generic_create))
         .route("/admin/proposals",             get(proposal_generic_list))
         .nest_service("/proposals", ServeDir::new("static/proposals"))
