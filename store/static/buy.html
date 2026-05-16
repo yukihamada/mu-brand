@@ -359,17 +359,32 @@ document.querySelectorAll('.size-btn').forEach(btn => {
 
 async function loadProduct() {
   try {
-    const r = await fetch('/api/products/mugen?limit=20');
-    if (!r.ok) return;
-    const ps = await r.json();
-    const pick = ps.find(p => (p.inventory - (p.sold||0)) > 0);
-    if (!pick) return;
+    // Allow ad / SNS traffic to pin a specific product via ?product_id=<id>
+    // (used by MU-AdsTees-Search campaign landing URLs for ads_* brands).
+    // Falls back to the latest in-stock MUGEN drop if no param given.
+    const params = new URLSearchParams(location.search);
+    const pinId = params.get('product_id');
+    let pick;
+    if (pinId) {
+      const r = await fetch('/api/products/item/' + encodeURIComponent(pinId));
+      if (!r.ok) return;
+      pick = await r.json();
+      if (!pick || !pick.id) return;
+    } else {
+      const r = await fetch('/api/products/mugen?limit=20');
+      if (!r.ok) return;
+      const ps = await r.json();
+      pick = ps.find(p => (p.inventory - (p.sold||0)) > 0);
+      if (!pick) return;
+    }
     CURRENT_PRODUCT = pick;
 
     document.getElementById('product-img').src = pick.mockup_url || ('https://mockups.wearmu.com/' + pick.id + '.jpg');
     document.getElementById('product-img').onerror = (e) => { e.target.src = 'https://mockups.wearmu.com/hero.png'; };
-    document.getElementById('product-name').textContent = 'MUGEN · drop #' + pick.drop_num;
-    document.getElementById('product-title').textContent = pick.name || 'MUGEN';
+    // Brand label: show "ads_jujitsu · #1" for ads_*, "MUGEN · #N" for mugen, etc.
+    const brandLabel = (pick.brand || 'MUGEN').toUpperCase().replace('ADS_', '');
+    document.getElementById('product-name').textContent = brandLabel + ' · #' + pick.drop_num;
+    document.getElementById('product-title').textContent = pick.name || brandLabel;
     document.getElementById('product-price').textContent = '¥' + (pick.price_jpy||0).toLocaleString();
     const rem = (pick.inventory||0) - (pick.sold||0);
     const stockEl = document.getElementById('product-stock');
@@ -378,7 +393,7 @@ async function loadProduct() {
     } else {
       stockEl.textContent = 'のこり ' + rem + ' / ' + pick.inventory + ' · ' + pick.sold + ' 着 売れ済';
     }
-    document.getElementById('product-link').href = '/products/mugen/' + pick.drop_num + '?from=buy_page';
+    document.getElementById('product-link').href = '/products/' + (pick.brand || 'mugen') + '/' + pick.id + '?from=buy_page';
     // SUZURI は国内 (日本) 顧客向け fulfillment のみ。 navigator.language が
     // ja で始まる、 または ?lang=ja の場合のみ表示。 海外からは Printful EU 経路だけ。
     const isJa = (navigator.language || '').toLowerCase().startsWith('ja')
