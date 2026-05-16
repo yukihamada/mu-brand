@@ -18978,7 +18978,7 @@ async fn proposal_extras_reminder_cron(db: Db) {
         let html = format!(
             r##"<div style="font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.75;color:#222;max-width:520px;margin:0 auto;padding:8px">
 <p style="font-size:14px">{email} さん、 こんにちは。 MU の濱田です。</p>
-<p style="font-size:14px">前にお渡しした AI 試作用ポイント、 <strong>{bal} pt (¥{bal}) がまだ残っています</strong>。 失効はありませんが、 90 日以上触れてなさそうだったので念のため。</p>
+<p style="font-size:14px">前にお渡しした AI 試作用ポイント、 <strong>{bal_fmt} pt (¥{bal_fmt}) がまだ残っています</strong>。 失効はありませんが、 90 日以上触れてなさそうだったので念のため。</p>
 <p style="margin:24px 0;text-align:center">
   <a href="{my_url}" style="background:#0a0a0a;color:#e6c449;text-decoration:none;padding:13px 26px;font-weight:700;border-radius:4px;letter-spacing:0.06em;font-size:13px;display:inline-block">🎨 sandbox を開く →</a>
 </p>
@@ -18987,7 +18987,7 @@ async fn proposal_extras_reminder_cron(db: Db) {
 <p style="font-size:14px;margin-top:28px">— 濱田 優貴</p>
 <p style="font-size:11px;color:#aaa;margin-top:28px;border-top:1px solid #eee;padding-top:12px">配信停止: <a href="mailto:info@wearmu.com" style="color:#aaa">info@wearmu.com</a><br>MU / 株式会社イネブラ</p>
 </div>"##,
-            email = html_escape(&email), bal = balance, my_url = html_attr_escape(&my_url),
+            email = html_escape(&email), bal_fmt = fmt_jpy(balance), my_url = html_attr_escape(&my_url),
         );
         let ok = send_extras_email(&resend_key, &email, "MU Collab — まだ残ってるポイントのこと", &html).await;
         if ok {
@@ -19025,7 +19025,7 @@ fn build_retro_email_html(email: &str, total: i64, ps: &[PurchaseDetail]) -> Str
         };
         format!(r##"<div style="display:flex;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid #eee">{thumb}<div style="flex:1"><div style="font-size:11px;letter-spacing:0.14em;color:#888;text-transform:uppercase">{brand} #{drop}</div><div style="font-size:13px;color:#222;margin-top:2px">{label}</div></div><div style="font-size:13px;font-weight:600;color:#7a6520">+{amt} pt</div></div>"##,
             thumb=thumb, brand=html_escape(&p.brand.to_uppercase()), drop=p.drop_num,
-            label=html_escape(&label), amt=p.amount)
+            label=html_escape(&label), amt=fmt_jpy(p.amount))
     }).collect();
     format!(
         r##"<div style="font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.75;color:#222;max-width:560px;margin:0 auto;padding:8px">
@@ -19033,12 +19033,12 @@ fn build_retro_email_html(email: &str, total: i64, ps: &[PurchaseDetail]) -> Str
 
 <p style="font-size:14px">あなたが MU を買ってくれた頃から、 ずっと「もしこの作り方を他のブランドにも開放したらどうなるかな」 と考えてきました。</p>
 
-<p style="font-size:14px">こないだ <strong>AI で SKU をブランドの雰囲気に合わせて自動生成する仕組み</strong>を作ったので、 試作用のポイントを <strong>あなたが買ってくれた額と同じ分 (¥{total})</strong> お渡しします。 失効はありません。</p>
+<p style="font-size:14px">こないだ <strong>AI で SKU をブランドの雰囲気に合わせて自動生成する仕組み</strong>を作ったので、 試作用のポイントを <strong>あなたが買ってくれた額と同じ分 (¥{total_fmt})</strong> お渡しします。 失効はありません。</p>
 
 <div style="background:#fafaf6;border:1px solid #eee;border-radius:6px;padding:18px;margin:18px 0">
   <div style="font-size:11px;letter-spacing:0.2em;color:#888;text-transform:uppercase;margin-bottom:8px">あなたが買ってくれた MU</div>
   {purchase_cards}
-  <div style="margin-top:14px;padding-top:12px;border-top:2px solid #e6c449;display:flex;justify-content:space-between;font-size:14px"><span>合計</span><strong style="color:#7a6520">+{total} pt (¥{total})</strong></div>
+  <div style="margin-top:14px;padding-top:12px;border-top:2px solid #e6c449;display:flex;justify-content:space-between;font-size:14px"><span>合計</span><strong style="color:#7a6520">+{total_fmt} pt (¥{total_fmt})</strong></div>
 </div>
 
 <p style="margin:28px 0;text-align:center">
@@ -19057,7 +19057,7 @@ fn build_retro_email_html(email: &str, total: i64, ps: &[PurchaseDetail]) -> Str
 正式 collab について: <a href="{collab_url}" style="color:#aaa">{collab_url}</a> · 配信停止: <a href="mailto:info@wearmu.com" style="color:#aaa">info@wearmu.com</a>
 </p>
 </div>"##,
-        email = html_escape(email), total = total, purchase_cards = purchase_cards,
+        email = html_escape(email), total_fmt = fmt_jpy(total), purchase_cards = purchase_cards,
         my_url = html_attr_escape(&my_url), collab_url = collab_url,
     )
 }
@@ -19069,6 +19069,51 @@ struct AdminRetroBody {
     #[serde(default = "default_true")] send_email: bool,
 }
 fn default_true() -> bool { true }
+
+/// GET /admin/proposal/extras/email-preview?email=X — render retroactive
+/// email HTML for that buyer without sending. Admin-gated. QA helper.
+async fn admin_extras_email_preview(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/proposal/extras/email-preview").await {
+        return r;
+    }
+    let email_raw = q.get("email").map(String::as_str).unwrap_or("");
+    let email = match validate_email(email_raw) {
+        Ok(e) => e,
+        Err(m) => return (StatusCode::BAD_REQUEST, m).into_response(),
+    };
+    let ps: Vec<PurchaseDetail> = {
+        let conn = db.lock().unwrap();
+        let mut st = match conn.prepare(
+            "SELECT mp.id, mp.brand,
+                    COALESCE(mp.amount_jpy, p.price_jpy, 0),
+                    COALESCE(mp.drop_num, p.drop_num, 0),
+                    COALESCE(p.name, ''),
+                    COALESCE(p.mockup_url, p.design_url, '')
+             FROM mu_purchases mp
+             LEFT JOIN products p ON p.id = mp.product_id
+             WHERE mp.email=? AND mp.brand IN ('mugen','muon','ma')
+             ORDER BY mp.id ASC"
+        ) { Ok(s) => s, Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("prepare: {}", e)).into_response() };
+        let rows: Vec<PurchaseDetail> = match st.query_map(params![email], |r| Ok(PurchaseDetail {
+            id: r.get(0)?, brand: r.get(1)?, amount: r.get(2)?,
+            drop_num: r.get(3)?, name: r.get(4)?, mockup_url: r.get(5)?,
+        })) {
+            Ok(it) => it.flatten().collect(),
+            Err(_) => Vec::new(),
+        };
+        rows
+    };
+    if ps.is_empty() {
+        return (StatusCode::NOT_FOUND, "no MU purchases for this email").into_response();
+    }
+    let total: i64 = ps.iter().map(|p| p.amount).sum();
+    let html = build_retro_email_html(&email, total, &ps);
+    Html(html).into_response()
+}
 
 async fn admin_extras_retroactive_claim(
     State(db): State<Db>,
@@ -19163,7 +19208,7 @@ async fn admin_extras_retroactive_claim(
         }
         if body.send_email && credited_here > 0 && !resend_key.is_empty() {
             let html = build_retro_email_html(em, credited_here, ps);
-            let subj = format!("あなたが買ってくれた MU の話 (¥{} 分のポイント同封)", credited_here);
+            let subj = format!("あなたが買ってくれた MU の話 (¥{} 分のポイント同封)", fmt_jpy(credited_here));
             let ok = send_extras_email(&resend_key, em, &subj, &html).await;
             if ok { emailed += 1; }
             tokio::time::sleep(std::time::Duration::from_millis(700)).await;
@@ -43245,6 +43290,7 @@ async fn main() {
         .route("/admin/proposal",              post(proposal_generic_create))
         .route("/admin/proposals",             get(proposal_generic_list))
         .route("/admin/proposal/extras/retroactive-claim",      post(admin_extras_retroactive_claim))
+        .route("/admin/proposal/extras/email-preview",          get(admin_extras_email_preview))
         .nest_service("/proposals", ServeDir::new("static/proposals"))
         .route("/api/collab/account/delete", post(collab_account_delete))
         .route("/api/404/buy", post(not_found_buy))

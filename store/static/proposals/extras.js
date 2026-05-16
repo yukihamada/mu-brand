@@ -188,6 +188,15 @@
     });
   }
 
+  // If we arrived via magic-link (/extras/my → /sandbox/<slug>?email=...),
+  // pre-fill the email field so the buyer doesn't have to re-type it.
+  (function preloadEmailFromUrl () {
+    var u = new URL(location.href);
+    var em = u.searchParams.get("email");
+    if (em && /@/.test(em)) {
+      try { localStorage.setItem(EMAIL_KEY, em); } catch (_) { }
+    }
+  })();
   emailInput.value = getEmail();
   paintQtyButtons(null);
 
