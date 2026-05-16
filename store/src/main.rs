@@ -31720,6 +31720,51 @@ async fn region_landing(
     let entry_html = tier_card(slug, "entry tier", "Entry · 普及版", entry);
     let std_html   = tier_card(slug, "standard tier", "Standard · 推奨", standard);
 
+    // Catalog grid: every other drop (excluding the 2 featured tiers above).
+    // Newest first by drop_num desc. Limited to 200 to keep page snappy.
+    let catalog_rows: Vec<(i64, i64, String, i64, i64, i64, String)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, drop_num, name, price_jpy, inventory, sold, COALESCE(mockup_url,'')
+             FROM products WHERE brand=? AND active=1 AND drop_num NOT IN (1, 101)
+             ORDER BY drop_num DESC LIMIT 200"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map(params![brand], |r| Ok((
+            r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?,
+            r.get::<_, i64>(3)?, r.get::<_, i64>(4)?, r.get::<_, i64>(5)?,
+            r.get::<_, String>(6)?,
+        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    let catalog_html: String = if catalog_rows.is_empty() {
+        String::new()
+    } else {
+        let cards: String = catalog_rows.iter().map(|(_id, drop, name, price, inv, sold, mockup)| {
+            let rem = (*inv - *sold).max(0);
+            let tier_badge = if *price >= 9000 { "PREMIUM" }
+                else if *price >= 6000 { "STANDARD" } else { "ENTRY" };
+            let short_name = name.split(" — ").last().unwrap_or(name).chars().take(30).collect::<String>();
+            format!(
+                r##"<a href="/products/regional_{slug}/{drop}" class="cat">
+                  <img src="{mockup}" alt="{name_esc}" loading="lazy">
+                  <div class="cat-meta">
+                    <div class="cat-row1"><span class="cat-num">#{drop:04}</span><span class="cat-badge">{tier}</span></div>
+                    <div class="cat-name">{short}</div>
+                    <div class="cat-row2"><span class="cat-price">¥{p}</span><span class="cat-rem">{rem}/{inv}</span></div>
+                  </div>
+                </a>"##,
+                slug = slug, drop = drop, mockup = html_attr_escape(mockup),
+                name_esc = html_attr_escape(name), tier = tier_badge, short = html_escape(&short_name),
+                p = format_jpy(*price), rem = rem, inv = inv,
+            )
+        }).collect();
+        format!(r##"<section>
+  <div class="sec-eyebrow">Catalog · {n} drops</div>
+  <h2>過去ドロップ — 全て 1 of 1。</h2>
+  <p class="lede">バックフィル {n} 件。 各 drop は別の motif × 時間帯 × 季節 × 仕上げ の組み合わせ。 同じデザインは二度と作られません。</p>
+  <div class="catalog">{cards}</div>
+</section>"##, n = catalog_rows.len(), cards = cards)
+    };
+
     let html = format!(r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{jp} EDITION — MU Regional · {tag} | wearmu.com</title>
@@ -31767,6 +31812,18 @@ h2{{font-size:clamp(20px,2.8vw,26px);font-weight:300;line-height:1.45;margin-bot
 .links{{margin-top:18px;font-size:12.5px;color:var(--mute)}}
 .links a{{color:var(--y);text-decoration:none;margin:0 10px 0 0}}
 .links a:hover{{text-decoration:underline}}
+.catalog{{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px;margin-top:18px;font-family:'Helvetica Neue',Arial,sans-serif}}
+.cat{{background:var(--card);border:1px solid var(--line);border-radius:4px;overflow:hidden;text-decoration:none;color:var(--fg);transition:transform .15s,border-color .15s;display:block}}
+.cat:hover{{transform:translateY(-2px);border-color:var(--y)}}
+.cat img{{width:100%;aspect-ratio:1/1;object-fit:cover;background:#1a1a1a;display:block}}
+.cat-meta{{padding:11px 12px 13px}}
+.cat-row1{{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}}
+.cat-num{{font-size:10.5px;letter-spacing:0.18em;color:var(--mute);font-variant-numeric:tabular-nums}}
+.cat-badge{{font-size:8.5px;letter-spacing:0.24em;color:var(--y);text-transform:uppercase}}
+.cat-name{{font-size:12px;color:var(--fg);margin-bottom:8px;line-height:1.4;min-height:34px}}
+.cat-row2{{display:flex;justify-content:space-between;align-items:baseline}}
+.cat-price{{font-size:15px;color:var(--y);font-variant-numeric:tabular-nums}}
+.cat-rem{{font-size:9.5px;color:var(--mute);font-variant-numeric:tabular-nums;letter-spacing:0.06em}}
 footer{{padding:40px 24px;border-top:1px solid var(--line);font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;letter-spacing:0.16em;color:var(--mute);text-align:center}}
 footer a{{color:var(--mute);margin:0 8px;text-decoration:none}}
 footer a:hover{{color:var(--y)}}
@@ -31794,6 +31851,8 @@ footer a:hover{{color:var(--y)}}
       </div>
     </div>
   </div>
+
+  {catalog_html}
 
   <section>
     <div class="sec-eyebrow">Specs</div>
@@ -31827,6 +31886,7 @@ footer a:hover{{color:var(--y)}}
         jp = jp, en = en, tag = tag, slug = slug, coords = coords,
         img = html_attr_escape(&img),
         entry_html = entry_html, std_html = std_html,
+        catalog_html = catalog_html,
     );
     Html(html).into_response()
 }
