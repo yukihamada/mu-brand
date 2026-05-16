@@ -4313,6 +4313,321 @@ async fn mypage_claim_nft(
     Json(serde_json::json!({"ok":true})).into_response()
 }
 
+// ── /vault — T-shirt holder exclusive content ────────────────────────────
+// Gating rule: any row in mu_purchases for this session's email = tee holder.
+// Articles live in store/static/vault/<slug>.md (compiled in via include_str!).
+// Live dashboard pulls from donation_ledger / agent_journal / products.
+
+fn vault_is_tee_holder(conn: &Connection, email: &str) -> bool {
+    conn.query_row(
+        "SELECT 1 FROM mu_purchases WHERE email = ? LIMIT 1",
+        params![email], |_| Ok(())
+    ).is_ok()
+}
+
+fn vault_session_email(db: &Db, headers: &HeaderMap) -> Option<String> {
+    let sid = mypage_session_from_cookie(headers)?;
+    let conn = db.lock().unwrap();
+    mypage_lookup_session(&conn, &sid).map(|(e, _)| e)
+}
+
+/// Vault articles registered at compile time. Add an entry here + drop the
+/// matching markdown file in store/static/vault/<slug>.md.
+const VAULT_ARTICLES: &[(&str, &str, &str)] = &[
+    ("stack",
+     "MUの裏側 — Rust + Gemini + Printful の全レイヤー",
+     include_str!("../static/vault/stack.md")),
+    ("prompt-cookbook",
+     "プロンプト・クックブック — 実運用しているGemini 3プロンプト10本",
+     include_str!("../static/vault/prompt-cookbook.md")),
+    ("open-ops",
+     "オープン・オペレーション — 原価帳簿の見方とAIエージェントの動き",
+     include_str!("../static/vault/open-ops.md")),
+];
+
+fn vault_locked_page(reason: &str) -> Response {
+    let body = format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>VAULT · MU</title>
+<style>
+  body{{background:#000;color:#f5f5f0;font-family:-apple-system,sans-serif;margin:0;padding:60px 22px}}
+  .wrap{{max-width:520px;margin:0 auto;text-align:center}}
+  .kicker{{font-size:10.5px;letter-spacing:0.22em;color:#666;text-transform:uppercase;margin-bottom:18px}}
+  h1{{font-size:32px;font-weight:300;margin:0 0 14px}}
+  h1 em{{color:#e6c449;font-style:normal}}
+  p{{color:#888;font-size:14px;line-height:1.75;margin:0 0 22px}}
+  a.btn{{display:inline-block;background:#e6c449;color:#000;text-decoration:none;padding:14px 28px;font-size:14px;font-weight:600;letter-spacing:0.06em;border-radius:3px;margin:6px}}
+  a.btn.ghost{{background:transparent;border:1px solid #2a2a2a;color:#aaa}}
+  ul.what{{text-align:left;color:#aaa;font-size:13.5px;line-height:2;margin:24px auto;max-width:380px;padding-left:0;list-style:none}}
+  ul.what li::before{{content:"🔑";margin-right:10px}}
+</style></head><body><div class="wrap">
+  <div class="kicker">VAULT — TEE HOLDER ONLY</div>
+  <h1>Tシャツが <em>鍵</em> になります</h1>
+  <p>{reason}</p>
+  <ul class="what">
+    <li>MUの全プロンプト・コードベース解説</li>
+    <li>リアルタイム原価帳簿 / 寄付台帳</li>
+    <li>次回MUGEN / 間MA の事前プレビュー</li>
+    <li>AI agent の生ログ (tail -f)</li>
+  </ul>
+  <a class="btn" href="/mypage">ログイン (購入時のメール)</a>
+  <a class="btn ghost" href="/buy">Tシャツを買う →</a>
+</div></body></html>"#, reason = html_escape(reason));
+    (StatusCode::OK, [("content-type", "text/html; charset=utf-8")], body).into_response()
+}
+
+async fn vault_index(State(db): State<Db>, headers: HeaderMap) -> Response {
+    let email = match vault_session_email(&db, &headers) {
+        Some(e) => e,
+        None => return vault_locked_page("ログインしてください — ご購入時のメールアドレスで magic link を送ります。"),
+    };
+    let is_holder = {
+        let conn = db.lock().unwrap();
+        vault_is_tee_holder(&conn, &email)
+    };
+    if !is_holder {
+        return vault_locked_page("このメールアドレスでの購入履歴が見つかりません。Tシャツを購入すると vault が開きます。");
+    }
+    let masked = mask_email_public(&email);
+
+    let mut cards = String::new();
+    cards.push_str(&format!(
+        r#"<a class="card live" href="/api/vault/dashboard"><div class="tag">LIVE</div><h3>MUの今、全部見せる</h3><p>原価・寄付・在庫・agent動作を毎秒。透明性ブランドの透明性そのもの。</p></a>"#
+    ));
+    for (slug, title, body) in VAULT_ARTICLES {
+        let words = body.chars().count();
+        let mins = ((words / 400).max(1)).min(30);
+        cards.push_str(&format!(
+            r#"<a class="card" href="/vault/{slug}"><h3>{title}</h3><p>{mins} 分で読める</p></a>"#,
+            slug = html_attr_escape(slug),
+            title = html_escape(title),
+            mins = mins
+        ));
+    }
+
+    let html = format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>VAULT · MU</title>
+<style>
+  body{{background:#000;color:#f5f5f0;font-family:-apple-system,sans-serif;margin:0;padding:48px 22px 80px}}
+  .wrap{{max-width:780px;margin:0 auto}}
+  .top{{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:32px;border-bottom:1px solid #1a1a1a;padding-bottom:18px}}
+  .kicker{{font-size:10.5px;letter-spacing:0.22em;color:#666;text-transform:uppercase}}
+  .meta{{font-size:11.5px;color:#666}}
+  h1{{font-size:36px;font-weight:300;margin:6px 0 6px;letter-spacing:0.01em}}
+  h1 em{{color:#e6c449;font-style:normal}}
+  .intro{{color:#888;font-size:14px;line-height:1.8;margin:0 0 32px}}
+  .grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}}
+  .card{{background:#0a0a0a;border:1px solid #1f1f1f;padding:22px 22px 20px;text-decoration:none;color:inherit;border-radius:4px;display:block;transition:border-color 0.15s}}
+  .card:hover{{border-color:#e6c449}}
+  .card h3{{font-size:16px;font-weight:500;margin:0 0 8px;line-height:1.45;color:#f5f5f0}}
+  .card p{{font-size:12.5px;color:#888;line-height:1.65;margin:0}}
+  .card.live{{border-color:#e6c449;background:linear-gradient(180deg,#0f0c00 0%,#0a0a0a 80%)}}
+  .tag{{display:inline-block;font-size:9.5px;letter-spacing:0.2em;color:#000;background:#e6c449;padding:3px 8px;border-radius:2px;margin-bottom:10px;font-weight:600}}
+  footer{{margin-top:48px;font-size:11.5px;color:#555;text-align:center}}
+  footer a{{color:#888}}
+</style></head><body><div class="wrap">
+  <div class="top">
+    <div>
+      <div class="kicker">VAULT</div>
+      <h1>あなたが <em>鍵</em></h1>
+    </div>
+    <div class="meta">{masked}<br><a href="/mypage" style="color:#666">/mypage</a></div>
+  </div>
+  <p class="intro">Tシャツ所有者だけが入れる場所です。MUがどう動いているか、何をどう作っているか、今この瞬間に何が起きているか — 全部見えます。</p>
+  <div class="grid">{cards}</div>
+  <footer>
+    持っていない人にはこれが見えません。<a href="/buy">Tシャツを購入 →</a>
+  </footer>
+</div></body></html>"#);
+    (StatusCode::OK, [("content-type", "text/html; charset=utf-8")], html).into_response()
+}
+
+async fn vault_article(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+) -> Response {
+    let email = match vault_session_email(&db, &headers) {
+        Some(e) => e,
+        None => return vault_locked_page("ログインしてください。"),
+    };
+    let is_holder = {
+        let conn = db.lock().unwrap();
+        vault_is_tee_holder(&conn, &email)
+    };
+    if !is_holder {
+        return vault_locked_page("Tシャツ購入履歴が見つかりません。");
+    }
+    let article = VAULT_ARTICLES.iter().find(|(s, _, _)| *s == slug);
+    let (title, body) = match article {
+        Some((_, t, b)) => (*t, *b),
+        None => return (StatusCode::NOT_FOUND, "vault article not found").into_response(),
+    };
+    let html_body = md_to_html_simple(body);
+    let html = format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>{title} · VAULT · MU</title>
+<style>
+  body{{background:#000;color:#e8e8e0;font-family:-apple-system,system-ui,sans-serif;margin:0;padding:48px 22px 100px;line-height:1.75}}
+  .wrap{{max-width:680px;margin:0 auto}}
+  .back{{color:#888;font-size:12px;text-decoration:none;letter-spacing:0.06em;text-transform:uppercase}}
+  .back:hover{{color:#e6c449}}
+  h1{{font-size:32px;font-weight:300;letter-spacing:0.01em;line-height:1.35;margin:24px 0 28px}}
+  h2{{font-size:20px;font-weight:500;margin:42px 0 16px;color:#f5f5f0;border-bottom:1px solid #1a1a1a;padding-bottom:8px}}
+  h3{{font-size:16px;font-weight:500;margin:28px 0 12px;color:#e6c449}}
+  p{{margin:0 0 18px;color:#cfcfc8;font-size:15px}}
+  code{{background:#111;color:#e6c449;padding:2px 6px;border-radius:3px;font-size:13.5px;font-family:ui-monospace,Menlo,monospace}}
+  pre{{background:#0a0a0a;border:1px solid #1f1f1f;padding:16px;overflow-x:auto;border-radius:4px;font-size:13px;line-height:1.6}}
+  pre code{{background:transparent;padding:0;color:#cfcfc8}}
+  ul,ol{{padding-left:24px;color:#cfcfc8;margin:0 0 20px}}
+  li{{margin:6px 0}}
+  table{{border-collapse:collapse;margin:18px 0;font-size:13.5px}}
+  th,td{{border:1px solid #1f1f1f;padding:8px 12px;text-align:left}}
+  th{{background:#0a0a0a;color:#e6c449}}
+  blockquote{{border-left:3px solid #e6c449;padding:6px 16px;margin:18px 0;color:#aaa;font-style:italic}}
+  a{{color:#e6c449}}
+  hr{{border:0;border-top:1px solid #1a1a1a;margin:32px 0}}
+  footer{{margin-top:60px;font-size:11.5px;color:#555;text-align:center;border-top:1px solid #1a1a1a;padding-top:24px}}
+</style></head><body><div class="wrap">
+  <a class="back" href="/vault">← VAULT</a>
+  <h1>{title}</h1>
+  {html_body}
+  <footer>VAULT · MU — Tシャツ所有者限定 · 転載は引用元 https://wearmu.com/vault を明記すれば歓迎</footer>
+</div></body></html>"#,
+    title = html_escape(title),
+    html_body = html_body);
+    (StatusCode::OK, [("content-type", "text/html; charset=utf-8")], html).into_response()
+}
+
+async fn vault_dashboard_api(State(db): State<Db>, headers: HeaderMap) -> Response {
+    let email = match vault_session_email(&db, &headers) {
+        Some(e) => e,
+        None => return (StatusCode::UNAUTHORIZED, "not logged in").into_response(),
+    };
+    let is_holder = {
+        let conn = db.lock().unwrap();
+        vault_is_tee_holder(&conn, &email)
+    };
+    if !is_holder {
+        return (StatusCode::FORBIDDEN, "tee holder only").into_response();
+    }
+
+    // Wants: HTML dashboard (not pure JSON) for browser viewing.
+    let (gross_today, donation_total, profit_total, orders_total, latest_summary): (i64, i64, i64, i64, String) = {
+        let conn = db.lock().unwrap();
+        let now_s: i64 = chrono_now().parse().unwrap_or(0);
+        let today_start = now_s - (now_s % 86_400);
+        let gross_today: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(gross_jpy),0) FROM donation_ledger WHERE CAST(created_at AS INTEGER) >= ?",
+            params![today_start], |r| r.get(0)).unwrap_or(0);
+        let donation_total: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(donation_jpy),0) FROM donation_ledger",
+            [], |r| r.get(0)).unwrap_or(0);
+        let profit_total: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(profit_jpy),0) FROM donation_ledger",
+            [], |r| r.get(0)).unwrap_or(0);
+        let orders_total: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mu_purchases", [], |r| r.get(0)).unwrap_or(0);
+        let latest_summary: String = conn.query_row(
+            "SELECT COALESCE(summary,'') FROM agent_journal ORDER BY id DESC LIMIT 1",
+            [], |r| r.get(0)).unwrap_or_default();
+        (gross_today, donation_total, profit_total, orders_total, latest_summary)
+    };
+
+    // Recent agent journal entries (last 8).
+    let journal_rows: Vec<(String, String, String)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT COALESCE(agent_name,''), COALESCE(summary,''), created_at
+             FROM agent_journal ORDER BY id DESC LIMIT 8"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map([], |r| Ok((r.get::<_,String>(0)?, r.get::<_,String>(1)?, r.get::<_,String>(2)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+
+    // Recent purchases (anonymized: brand + drop + masked email).
+    let recent_rows: Vec<(String, i64, String, i64)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT brand, COALESCE(drop_num,0), email, CAST(created_at AS INTEGER)
+             FROM mu_purchases ORDER BY id DESC LIMIT 12"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map([], |r| Ok((r.get::<_,String>(0)?, r.get::<_,i64>(1)?, r.get::<_,String>(2)?, r.get::<_,i64>(3)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let mut journal_html = String::new();
+    for (agent, summary, created_at) in &journal_rows {
+        let ago_s = now_s - created_at.parse::<i64>().unwrap_or(now_s);
+        let ago = if ago_s < 60 { format!("{}秒前", ago_s) }
+                  else if ago_s < 3600 { format!("{}分前", ago_s/60) }
+                  else if ago_s < 86400 { format!("{}時間前", ago_s/3600) }
+                  else { format!("{}日前", ago_s/86400) };
+        journal_html.push_str(&format!(
+            r#"<div class="row"><span class="agent">{a}</span><span class="msg">{m}</span><span class="ago">{ago}</span></div>"#,
+            a = html_escape(agent), m = html_escape(summary), ago = html_escape(&ago)
+        ));
+    }
+    let mut recent_html = String::new();
+    for (brand, drop, email, ts) in &recent_rows {
+        let ago_s = now_s - ts;
+        let ago = if ago_s < 3600 { format!("{}分前", ago_s/60) } else { format!("{}時間前", ago_s/3600) };
+        recent_html.push_str(&format!(
+            r#"<div class="row"><span class="agent">{brand} #{drop}</span><span class="msg">{e}</span><span class="ago">{ago}</span></div>"#,
+            brand = html_escape(brand), drop = drop, e = html_escape(&mask_email_public(email)), ago = html_escape(&ago)
+        ));
+    }
+
+    let html = format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>LIVE · VAULT · MU</title>
+<meta http-equiv="refresh" content="60"/>
+<style>
+  body{{background:#000;color:#f5f5f0;font-family:-apple-system,sans-serif;margin:0;padding:32px 22px 80px}}
+  .wrap{{max-width:780px;margin:0 auto}}
+  .back{{color:#888;font-size:11.5px;text-decoration:none;letter-spacing:0.06em;text-transform:uppercase}}
+  h1{{font-size:30px;font-weight:300;margin:14px 0 6px;letter-spacing:0.01em}}
+  h1 em{{color:#e6c449;font-style:normal}}
+  .sub{{color:#666;font-size:12px;margin-bottom:32px}}
+  .stats{{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:36px}}
+  .stat{{background:#0a0a0a;border:1px solid #1f1f1f;padding:14px 16px;border-radius:4px}}
+  .stat .k{{font-size:10.5px;letter-spacing:0.18em;color:#666;text-transform:uppercase}}
+  .stat .v{{font-size:22px;font-weight:300;margin-top:4px;color:#f5f5f0}}
+  .stat .v.gold{{color:#e6c449}}
+  h2{{font-size:13px;letter-spacing:0.16em;color:#888;text-transform:uppercase;margin:32px 0 12px;font-weight:500}}
+  .row{{display:grid;grid-template-columns:140px 1fr 70px;gap:14px;padding:10px 0;border-bottom:1px solid #131313;font-size:13px}}
+  .row .agent{{color:#e6c449;font-family:ui-monospace,Menlo,monospace;font-size:11.5px}}
+  .row .msg{{color:#cfcfc8}}
+  .row .ago{{color:#666;font-size:11.5px;text-align:right}}
+  .note{{color:#555;font-size:11px;margin-top:36px;text-align:center}}
+</style></head><body><div class="wrap">
+  <a class="back" href="/vault">← VAULT</a>
+  <h1>MUの <em>今</em>、全部見せる</h1>
+  <div class="sub">60秒ごとに自動更新</div>
+  <div class="stats">
+    <div class="stat"><div class="k">今日の総売上</div><div class="v gold">¥{gross_today}</div></div>
+    <div class="stat"><div class="k">累計購入数</div><div class="v">{orders_total}</div></div>
+    <div class="stat"><div class="k">累計利益</div><div class="v">¥{profit_total}</div></div>
+    <div class="stat"><div class="k">弟子屈寄付累計</div><div class="v gold">¥{donation_total}</div></div>
+  </div>
+  <h2>Agent journal</h2>
+  {journal_html}
+  <h2>Recent purchases</h2>
+  {recent_html}
+  <div class="note">最新の agent サマリー: {latest}</div>
+</div></body></html>"#,
+    gross_today = format_jpy(gross_today),
+    orders_total = orders_total,
+    profit_total = format_jpy(profit_total),
+    donation_total = format_jpy(donation_total),
+    journal_html = journal_html,
+    recent_html = recent_html,
+    latest = html_escape(&latest_summary));
+    (StatusCode::OK, [("content-type", "text/html; charset=utf-8")], html).into_response()
+}
+
 /// POST /api/bounty/submit — public endpoint, accepts a bug bounty report.
 /// Rate-limited per email + per ip_hash (10/h via in-memory bucket would be
 /// nice; for now we rely on body-size + uniqueness checks at DB layer).
@@ -45672,6 +45987,9 @@ async fn main() {
         .route("/mypage/auth/:token", get(mypage_auth_consume))
         .route("/mypage/logout", post(mypage_logout))
         .route("/api/mypage/claim-nft", post(mypage_claim_nft))
+        .route("/vault", get(vault_index))
+        .route("/vault/:slug", get(vault_article))
+        .route("/api/vault/dashboard", get(vault_dashboard_api))
         .route("/admin/bounty", get(admin_bounty))
         .route("/admin/bounty/:id/triage", post(admin_bounty_triage))
         .route("/admin/bounty/:id/issue-reward", post(admin_bounty_issue_reward))
