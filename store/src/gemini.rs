@@ -90,6 +90,103 @@ pub async fn generate_tee(p: &TeeDesign<'_>) -> Result<GeneratedImage, String> {
     Err("no image data in gemini response".into())
 }
 
+/// Brand spec for `/api/proposal/:slug/extras/order` — partner-flavoured
+/// product mockup generation. Used by the background worker that turns
+/// 1 job → N SKU mockups via Gemini 3 Pro Image. The output style mirrors
+/// sweep_images.py: editorial 4:5 product photo, tonal logo embroidery,
+/// no overt text — but the brand cues come from the partner meta block.
+pub struct PartnerSkuBrief<'a> {
+    /// Display name like "SIIIEEP" / "kokon.tokyo". Used as the embroidery
+    /// wordmark on the chest / collar tag of every garment.
+    pub partner_display: &'a str,
+    /// Short tagline / mood line for the partner.
+    pub partner_tagline: &'a str,
+    /// SKU category — "tee", "hoodie", "cap", "tote", "mug", etc.
+    pub kind: &'a str,
+    /// Human-readable label for this specific SKU (e.g. "long-sleeve tee, faded olive").
+    pub label: &'a str,
+    /// Deterministic variation token.
+    pub seed: &'a str,
+}
+
+/// Generate a single partner-flavoured product photo. Returns the raw image
+/// bytes (PNG/JPEG depending on Gemini). Caller is responsible for uploading
+/// to R2 and storing the URL in proposal_extras_skus + proposal_skus.
+pub async fn generate_partner_sku(b: &PartnerSkuBrief<'_>) -> Result<GeneratedImage, String> {
+    let key = std::env::var("GEMINI_API_KEY")
+        .or_else(|_| std::env::var("GOOGLE_API_KEY"))
+        .map_err(|_| "GEMINI_API_KEY not set".to_string())?;
+
+    let prompt = build_partner_sku_prompt(b);
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+        MODEL, key
+    );
+    let body = json!({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"responseModalities": ["IMAGE", "TEXT"]}
+    });
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(180))
+        .build()
+        .map_err(|e| format!("client: {}", e))?;
+    let resp = client.post(&url).json(&body).send().await
+        .map_err(|e| format!("send: {}", e))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let txt = resp.text().await.unwrap_or_default();
+        return Err(format!("gemini {}: {}", status, &txt[..txt.len().min(400)]));
+    }
+    let json: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {}", e))?;
+    let parts = json["candidates"][0]["content"]["parts"]
+        .as_array()
+        .ok_or_else(|| {
+            let pf = json["promptFeedback"].clone();
+            format!("no parts (promptFeedback={})", pf)
+        })?
+        .clone();
+    for part in parts {
+        for k in &["inline_data", "inlineData"] {
+            if let Some(d_obj) = part.get(*k) {
+                if let Some(b64) = d_obj.get("data").and_then(|v| v.as_str()) {
+                    let mime = d_obj
+                        .get("mimeType")
+                        .or_else(|| d_obj.get("mime_type"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("image/png")
+                        .to_string();
+                    let bytes = base64::engine::general_purpose::STANDARD
+                        .decode(b64)
+                        .map_err(|e| format!("b64 decode: {}", e))?;
+                    return Ok(GeneratedImage { bytes, mime });
+                }
+            }
+        }
+    }
+    Err("no image data in gemini response".into())
+}
+
+pub fn build_partner_sku_prompt(b: &PartnerSkuBrief) -> String {
+    let partner = sanitize_prompt_input(b.partner_display, 60);
+    let tagline = sanitize_prompt_input(b.partner_tagline, 80);
+    let kind = sanitize_prompt_input(b.kind, 24);
+    let label = sanitize_prompt_input(b.label, 140);
+    let seed = sanitize_prompt_input(b.seed, 32);
+    format!(
+        "Editorial 4:5 product photo of a {kind} from the MU × {partner} collab — {label}. \
+         Studio or candid lifestyle setting depending on the garment (apparel = on a model, \
+         small goods = still life on concrete or wood). Soft natural light, premium minimalist \
+         styling, magazine quality, slight film grain, photographic realism. \
+         Brand cues (apply tonally, never loud): small embroidered \"{partner}\" wordmark on \
+         left chest in matching tonal thread; tiny MU × {partner} serial number stitched on \
+         the inside neck label or hem; respect the partner's mood ({tagline}). \
+         No big graphics, no overlay text, no slogans, no extra logos. \
+         Deterministic variation key: {seed}. \
+         OUTPUT: single 4:5 portrait product image, editorial composition.",
+        kind = kind, partner = partner, label = label, tagline = tagline, seed = seed,
+    )
+}
+
 /// Strip control characters, quotes, brackets, backticks, and prompt-injection
 /// sentinels from wearer-supplied free text before splicing into the Gemini
 /// prompt. R5 fix: previous quote-only escape allowed a wearer's bio /

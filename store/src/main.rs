@@ -10746,6 +10746,21 @@ async fn handle_collab_sample_order(db: Db, session: &serde_json::Value) {
         );
     }
 
+    // ── Proposal extras points: +10% of yen amount → buyer's wallet. ──
+    // Powers the "サンプル買うと買った 10% がポイント" rule advertised on
+    // every /proposals/<slug> extras widget.
+    if amount > 0 {
+        if let Ok(em) = validate_email(&email) {
+            let pts = amount / 10;  // 10% → 1 pt = 1 yen
+            if pts > 0 {
+                let conn = db.lock().unwrap();
+                let ref_ = format!("{}:{}", partner, session_id);
+                let _ = points_mutate(&conn, &em, pts, "sample_back",
+                                      Some(&ref_), Some(partner.as_str()));
+            }
+        }
+    }
+
     // Telegram alert (always)
     let tg_token = env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default();
     let tg_chat  = env::var("TELEGRAM_CHAT_ID").unwrap_or_else(|_| "1136442501".into());
@@ -15971,6 +15986,153 @@ fn ensure_proposal_tables(db: &Db) {
          )", [],
     );
     let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_proposal_feedback_slug ON proposal_feedback(slug, created_at DESC)", []);
+
+    // ── Proposal Extras (Points + AI SKU generation) ─────────────────────
+    // Email-keyed points wallet. Earned via MUGEN-tee purchase (+1000 pt)
+    // and sample purchases (+10% of yen amount). Spent on /api/proposal/:slug
+    // /extras/order to AI-generate N extra SKUs (10 pt per SKU). First 30
+    // SKUs are free *once per email* (free_30_used=1 after first claim).
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS proposal_points (
+            email          TEXT PRIMARY KEY,
+            balance        INTEGER NOT NULL DEFAULT 0,
+            free_30_used   INTEGER NOT NULL DEFAULT 0,
+            updated_at     TEXT NOT NULL
+         )", [],
+    );
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS proposal_point_events (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            email       TEXT NOT NULL,
+            delta       INTEGER NOT NULL,        -- positive=credit, negative=charge
+            reason      TEXT NOT NULL,           -- 'sample_back'|'mugen_claim'|'extras_order'|'extras_refund'|'admin_grant'
+            ref         TEXT,                    -- order id / job id / partner slug / etc.
+            slug        TEXT,                    -- partner slug if applicable
+            balance_after INTEGER NOT NULL,
+            created_at  TEXT NOT NULL
+         )", [],
+    );
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_point_events_email ON proposal_point_events(email, created_at DESC)", []);
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS proposal_extras_jobs (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug         TEXT NOT NULL,
+            email        TEXT NOT NULL,
+            qty          INTEGER NOT NULL,
+            free_applied INTEGER NOT NULL DEFAULT 0,
+            points_charged INTEGER NOT NULL DEFAULT 0,
+            status       TEXT NOT NULL DEFAULT 'pending', -- 'pending'|'processing'|'completed'|'partial'|'failed'
+            done_count   INTEGER NOT NULL DEFAULT 0,
+            last_error   TEXT,
+            created_at   TEXT NOT NULL,
+            started_at   TEXT,
+            completed_at TEXT
+         )", [],
+    );
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_extras_jobs_status ON proposal_extras_jobs(status, created_at)", []);
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_extras_jobs_slug   ON proposal_extras_jobs(slug, created_at DESC)", []);
+    // Each generated SKU lives here. Mirrored to proposal_skus so it shows
+    // on the LP; this table is the canonical record for the extras workflow
+    // (audit + display order + image URL).
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS proposal_extras_skus (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id     INTEGER NOT NULL,
+            slug       TEXT NOT NULL,
+            letter     TEXT NOT NULL,        -- e.g. 'x031', 'x032' (proposal_skus PK piece)
+            label      TEXT NOT NULL,
+            kind       TEXT NOT NULL,        -- 'tee'|'hoodie'|'cap'|...
+            price_jpy  INTEGER NOT NULL,
+            image_url  TEXT,
+            prompt     TEXT,
+            created_at TEXT NOT NULL
+         )", [],
+    );
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_extras_skus_job ON proposal_extras_skus(job_id)", []);
+    // Prevent double-claim of the same MUGEN purchase.
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS proposal_mugen_claims (
+            mu_purchase_id INTEGER PRIMARY KEY,
+            email          TEXT NOT NULL,
+            slug           TEXT,
+            points_added   INTEGER NOT NULL,
+            claimed_at     TEXT NOT NULL
+         )", [],
+    );
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_mugen_claims_email ON proposal_mugen_claims(email)", []);
+}
+
+// ── Points wallet helpers ────────────────────────────────────────────────
+// All operations are best-effort; failures are logged and silently swallowed
+// because the points economy is non-financial (no money refund obligation).
+
+/// 10 pt = 1 generated SKU. Used by the /api/proposal/:slug/extras/order route.
+const EXTRAS_POINTS_PER_SKU: i64 = 10;
+/// 30 SKU is the free-tier amount granted once per email.
+const EXTRAS_FREE_SKUS: i64 = 30;
+/// MUGEN purchase grants +1000 pt = 100 extra SKUs.
+const EXTRAS_POINTS_PER_MUGEN: i64 = 1000;
+
+fn normalize_email(e: &str) -> String {
+    e.trim().to_ascii_lowercase()
+}
+
+fn points_balance(conn: &rusqlite::Connection, email: &str) -> (i64, bool) {
+    let em = normalize_email(email);
+    conn.query_row(
+        "SELECT balance, free_30_used FROM proposal_points WHERE email=?",
+        params![em],
+        |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)? != 0)),
+    ).unwrap_or((0, false))
+}
+
+/// Credit (positive delta) or charge (negative delta) `email`'s wallet.
+/// Returns the new balance, or Err if charging would overdraw.
+fn points_mutate(
+    conn: &rusqlite::Connection,
+    email: &str, delta: i64, reason: &str,
+    ref_: Option<&str>, slug: Option<&str>,
+) -> Result<i64, String> {
+    if delta == 0 { return Ok(points_balance(conn, email).0); }
+    let em = normalize_email(email);
+    let now = chrono_now();
+    let _ = conn.execute(
+        "INSERT OR IGNORE INTO proposal_points (email, balance, free_30_used, updated_at)
+         VALUES (?, 0, 0, ?)",
+        params![em, now],
+    );
+    let cur: i64 = conn.query_row(
+        "SELECT balance FROM proposal_points WHERE email=?",
+        params![em], |r| r.get(0),
+    ).unwrap_or(0);
+    let new_bal = cur + delta;
+    if new_bal < 0 {
+        return Err(format!("insufficient points (have {}, need {})", cur, -delta));
+    }
+    conn.execute(
+        "UPDATE proposal_points SET balance=?, updated_at=? WHERE email=?",
+        params![new_bal, now, em],
+    ).map_err(|e| e.to_string())?;
+    let _ = conn.execute(
+        "INSERT INTO proposal_point_events (email, delta, reason, ref, slug, balance_after, created_at)
+         VALUES (?,?,?,?,?,?,?)",
+        params![em, delta, reason, ref_, slug, new_bal, now],
+    );
+    Ok(new_bal)
+}
+
+fn mark_free_30_used(conn: &rusqlite::Connection, email: &str) {
+    let em = normalize_email(email);
+    let now = chrono_now();
+    let _ = conn.execute(
+        "INSERT OR IGNORE INTO proposal_points (email, balance, free_30_used, updated_at)
+         VALUES (?, 0, 1, ?)",
+        params![em, now],
+    );
+    let _ = conn.execute(
+        "UPDATE proposal_points SET free_30_used=1, updated_at=? WHERE email=?",
+        params![now, em],
+    );
 }
 
 fn migrate_legacy_proposal(
@@ -16317,6 +16479,503 @@ async fn proposal_generic_skus(
         })
     }).collect();
     Json(serde_json::json!({ "slug": slug, "skus": json })).into_response()
+}
+
+// ── Proposal extras API (shared widget on every /proposals/<slug> page) ──
+//
+// 1 SKU costs EXTRAS_POINTS_PER_SKU (=10) pt.
+// First EXTRAS_FREE_SKUS (=30) per email are free (toggled by
+// proposal_points.free_30_used). Paid pt come from MUGEN-tee purchases
+// (+1000 pt per claim, via claim-mugen) and from sample purchases
+// (+10% of yen amount, via the existing sample_paid webhook hook).
+//
+// Routes (all public, identified by email — kept simple per product spec):
+//   POST /api/proposal/extras/balance        { email } → { balance, free_30_eligible }
+//   POST /api/proposal/:slug/extras/quote    { email, qty } → cost breakdown
+//   POST /api/proposal/:slug/extras/order    { email, qty } → { job_id, ... }
+//   GET  /api/proposal/extras/job/:job_id    → { status, done, total, items, ... }
+//   POST /api/proposal/extras/claim-mugen    { email, mu_purchase } → { added, balance }
+
+#[derive(Deserialize)]
+struct ExtrasEmailBody { #[serde(default)] email: String }
+
+#[derive(Deserialize)]
+struct ExtrasQuoteBody { #[serde(default)] email: String, qty: i64 }
+
+#[derive(Deserialize)]
+struct ExtrasClaimMugenBody {
+    #[serde(default)] email: String,
+    /// Accept either a numeric mu_purchases.id or a Stripe session_id
+    /// ("cs_..."). The MUGEN order confirmation email includes both.
+    #[serde(default)] mu_purchase: String,
+}
+
+fn validate_email(e: &str) -> Result<String, &'static str> {
+    let em = normalize_email(e);
+    if em.len() < 5 || em.len() > 254 { return Err("invalid email"); }
+    if !em.contains('@') || !em.contains('.') { return Err("invalid email"); }
+    if em.chars().any(|c| c.is_whitespace() || c.is_control()) { return Err("invalid email"); }
+    Ok(em)
+}
+
+fn extras_qty_is_valid(q: i64) -> bool { q == 30 || q == 50 || q == 100 }
+
+/// Compute cost for a {email, qty} pair. Returns (cost_points, free_applied).
+/// free_applied=true only when qty==30 and the email has not yet used its
+/// one free 30-pack.
+fn extras_compute_cost(conn: &rusqlite::Connection, email: &str, qty: i64) -> (i64, bool) {
+    let (_, free_used) = points_balance(conn, email);
+    let free = qty == EXTRAS_FREE_SKUS && !free_used;
+    if free { (0, true) } else { (qty * EXTRAS_POINTS_PER_SKU, false) }
+}
+
+async fn extras_balance(
+    State(db): State<Db>,
+    Json(body): Json<ExtrasEmailBody>,
+) -> Response {
+    let email = match validate_email(&body.email) {
+        Ok(e) => e,
+        Err(m) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok": false, "error": m}))).into_response(),
+    };
+    let conn = db.lock().unwrap();
+    let (balance, free_used) = points_balance(&conn, &email);
+    Json(serde_json::json!({
+        "ok": true,
+        "email": email,
+        "balance": balance,
+        "free_30_eligible": !free_used,
+        "points_per_sku": EXTRAS_POINTS_PER_SKU,
+        "points_per_mugen": EXTRAS_POINTS_PER_MUGEN,
+    })).into_response()
+}
+
+async fn extras_quote(
+    State(db): State<Db>,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+    Json(body): Json<ExtrasQuoteBody>,
+) -> Response {
+    if !extras_qty_is_valid(body.qty) {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok": false, "error": "qty must be 30, 50, or 100"}))).into_response();
+    }
+    let email = match validate_email(&body.email) {
+        Ok(e) => e,
+        Err(m) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok": false, "error": m}))).into_response(),
+    };
+    let conn = db.lock().unwrap();
+    let (balance, _) = points_balance(&conn, &email);
+    let (cost, free_applied) = extras_compute_cost(&conn, &email, body.qty);
+    Json(serde_json::json!({
+        "ok": true,
+        "slug": slug,
+        "email": email,
+        "qty": body.qty,
+        "cost_points": cost,
+        "free_applied": free_applied,
+        "balance": balance,
+        "sufficient": balance >= cost,
+        "shortfall": (cost - balance).max(0),
+    })).into_response()
+}
+
+async fn extras_order(
+    State(db): State<Db>,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+    Json(body): Json<ExtrasQuoteBody>,
+) -> Response {
+    if !extras_qty_is_valid(body.qty) {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok": false, "error": "qty must be 30, 50, or 100"}))).into_response();
+    }
+    let email = match validate_email(&body.email) {
+        Ok(e) => e,
+        Err(m) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok": false, "error": m}))).into_response(),
+    };
+    // Sanity-check the slug looks like a real partner. Two valid sources:
+    //   - proposals table (new DB-driven brands)
+    //   - collab_products.partner (legacy sweep / kokon style brands)
+    {
+        let conn = db.lock().unwrap();
+        let in_proposals: bool = conn.query_row(
+            "SELECT 1 FROM proposals WHERE slug=?",
+            params![slug], |_| Ok(true),
+        ).unwrap_or(false);
+        let in_collab: bool = !in_proposals && conn.query_row(
+            "SELECT 1 FROM collab_products WHERE partner=? LIMIT 1",
+            params![slug], |_| Ok(true),
+        ).unwrap_or(false);
+        if !in_proposals && !in_collab {
+            return (StatusCode::NOT_FOUND, Json(serde_json::json!({"ok": false, "error": "unknown proposal slug"}))).into_response();
+        }
+    }
+    let now = chrono_now();
+    let job_id: i64;
+    let cost: i64;
+    let free_applied: bool;
+    {
+        let conn = db.lock().unwrap();
+        // Rate limit: reject if there's already a pending/processing job for
+        // this email+slug (prevents stacking 10 jobs from a panicked user).
+        let in_flight: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proposal_extras_jobs
+             WHERE email=? AND slug=? AND status IN ('pending','processing')",
+            params![email, slug], |r| r.get(0),
+        ).unwrap_or(0);
+        if in_flight > 0 {
+            return (StatusCode::CONFLICT, Json(serde_json::json!({
+                "ok": false, "error": "an extras job is already running for this email — wait for it to finish",
+            }))).into_response();
+        }
+        let (cost_pts, free) = extras_compute_cost(&conn, &email, body.qty);
+        cost = cost_pts;
+        free_applied = free;
+        if !free {
+            if let Err(e) = points_mutate(&conn, &email, -cost, "extras_order", Some(&slug), Some(&slug)) {
+                return (StatusCode::PAYMENT_REQUIRED, Json(serde_json::json!({"ok": false, "error": e}))).into_response();
+            }
+        }
+        if free {
+            mark_free_30_used(&conn, &email);
+        }
+        conn.execute(
+            "INSERT INTO proposal_extras_jobs
+                (slug, email, qty, free_applied, points_charged, status, created_at)
+             VALUES (?,?,?,?,?,'pending',?)",
+            params![slug, email, body.qty, free as i64, cost, now],
+        ).ok();
+        job_id = conn.last_insert_rowid();
+    }
+    Json(serde_json::json!({
+        "ok": true,
+        "job_id": job_id,
+        "slug": slug,
+        "qty": body.qty,
+        "cost_points": cost,
+        "free_applied": free_applied,
+    })).into_response()
+}
+
+async fn extras_job_status(
+    State(db): State<Db>,
+    axum::extract::Path(job_id): axum::extract::Path<i64>,
+) -> Response {
+    let conn = db.lock().unwrap();
+    let row = conn.query_row(
+        "SELECT slug, email, qty, free_applied, points_charged, status, done_count,
+                COALESCE(last_error,''), created_at, COALESCE(started_at,''),
+                COALESCE(completed_at,'')
+         FROM proposal_extras_jobs WHERE id=?",
+        params![job_id],
+        |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?,
+            r.get::<_, i64>(3)?, r.get::<_, i64>(4)?, r.get::<_, String>(5)?,
+            r.get::<_, i64>(6)?, r.get::<_, String>(7)?, r.get::<_, String>(8)?,
+            r.get::<_, String>(9)?, r.get::<_, String>(10)?,
+        )),
+    );
+    let (slug, email, qty, free_applied, points_charged, status, done, last_err, created, started, completed) =
+        match row {
+            Ok(r) => r,
+            Err(_) => return (StatusCode::NOT_FOUND, Json(serde_json::json!({"ok": false, "error": "unknown job"}))).into_response(),
+        };
+    let mut items: Vec<serde_json::Value> = Vec::new();
+    if let Ok(mut st) = conn.prepare(
+        "SELECT letter, label, kind, price_jpy, COALESCE(image_url,''), created_at
+         FROM proposal_extras_skus WHERE job_id=? ORDER BY id ASC LIMIT 200"
+    ) {
+        if let Ok(rows) = st.query_map(params![job_id], |r| Ok(serde_json::json!({
+            "letter":    r.get::<_, String>(0)?,
+            "label":     r.get::<_, String>(1)?,
+            "kind":      r.get::<_, String>(2)?,
+            "price_jpy": r.get::<_, i64>(3)?,
+            "image_url": r.get::<_, String>(4)?,
+            "created_at":r.get::<_, String>(5)?,
+        }))) { for row in rows.flatten() { items.push(row); } }
+    }
+    Json(serde_json::json!({
+        "ok": true, "job_id": job_id, "slug": slug, "email": email,
+        "qty": qty, "free_applied": free_applied != 0,
+        "points_charged": points_charged, "status": status,
+        "done": done, "total": qty,
+        "last_error": if last_err.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(last_err) },
+        "created_at": created, "started_at": started, "completed_at": completed,
+        "items": items,
+    })).into_response()
+}
+
+async fn extras_claim_mugen(
+    State(db): State<Db>,
+    Json(body): Json<ExtrasClaimMugenBody>,
+) -> Response {
+    let email = match validate_email(&body.email) {
+        Ok(e) => e,
+        Err(m) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok": false, "error": m}))).into_response(),
+    };
+    let token = body.mu_purchase.trim();
+    if token.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok": false, "error": "missing mu_purchase id or session"}))).into_response();
+    }
+    // Resolve token → mu_purchases.id. Accept numeric id or Stripe session_id.
+    let (purchase_id, brand, purchase_email): (i64, String, String) = {
+        let conn = db.lock().unwrap();
+        let row = if let Ok(id) = token.parse::<i64>() {
+            conn.query_row(
+                "SELECT id, brand, email FROM mu_purchases WHERE id=?",
+                params![id],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+            )
+        } else {
+            conn.query_row(
+                "SELECT id, brand, email FROM mu_purchases WHERE session_id=?",
+                params![token],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+            )
+        };
+        match row {
+            Ok(v) => v,
+            Err(_) => return (StatusCode::NOT_FOUND, Json(serde_json::json!({"ok": false, "error": "purchase not found — check the order id from your MUGEN receipt"}))).into_response(),
+        }
+    };
+    if !brand.eq_ignore_ascii_case("mugen") {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok": false, "error": format!("brand={} is not eligible (only MUGEN purchases grant points)", brand) }))).into_response();
+    }
+    if normalize_email(&purchase_email) != email {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"ok": false, "error": "email does not match the purchase"}))).into_response();
+    }
+    let conn = db.lock().unwrap();
+    let already: bool = conn.query_row(
+        "SELECT 1 FROM proposal_mugen_claims WHERE mu_purchase_id=?",
+        params![purchase_id], |_| Ok(true),
+    ).unwrap_or(false);
+    if already {
+        let (balance, _) = points_balance(&conn, &email);
+        return Json(serde_json::json!({
+            "ok": false, "error": "this purchase has already been claimed",
+            "balance": balance,
+        })).into_response();
+    }
+    let now = chrono_now();
+    let new_balance = match points_mutate(&conn, &email, EXTRAS_POINTS_PER_MUGEN, "mugen_claim",
+                                          Some(&purchase_id.to_string()), None) {
+        Ok(b) => b,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"ok": false, "error": e}))).into_response(),
+    };
+    let _ = conn.execute(
+        "INSERT INTO proposal_mugen_claims (mu_purchase_id, email, slug, points_added, claimed_at)
+         VALUES (?,?,NULL,?,?)",
+        params![purchase_id, email, EXTRAS_POINTS_PER_MUGEN, now],
+    );
+    Json(serde_json::json!({
+        "ok": true, "added": EXTRAS_POINTS_PER_MUGEN,
+        "balance": new_balance, "mu_purchase_id": purchase_id,
+    })).into_response()
+}
+
+// ── Proposal extras worker (background Gemini SKU generator) ─────────────
+//
+// Picks one pending job at a time, marks it 'processing', generates `qty`
+// SKU mockups, uploads each to R2 under extras/<slug>/<job>-<idx>.jpg, and
+// inserts a row into proposal_extras_skus + proposal_skus. On per-image
+// failure, refunds the unused fraction of points (when the job was paid).
+//
+// Polls every 30s; back-off on empty queue.
+
+/// 30 categories × colour rotation. Cycled by (idx % CATEGORIES.len()) so
+/// 50 and 100-piece runs naturally spread across the same palette.
+const EXTRAS_CATEGORIES: &[(&str, &str, i64)] = &[
+    ("tee",        "heavy cotton T-shirt, black, half-body on model",                 4900),
+    ("tee",        "lightweight T-shirt, off-white, half-body on model",              4900),
+    ("longsleeve", "long-sleeve tee, faded olive, half-body on model",                6200),
+    ("longsleeve", "long-sleeve tee, deep navy, half-body on model",                  6200),
+    ("hoodie",     "heavy loop-back hoodie, charcoal, candid lifestyle",              9800),
+    ("hoodie",     "heavy loop-back hoodie, sand, candid lifestyle",                  9800),
+    ("zip-hoodie", "zip-up hoodie, black cotton blend, half-body on model",          10800),
+    ("crewneck",   "fleece crewneck sweatshirt, off-white, half-body on model",       8900),
+    ("cap",        "5-panel strapback cap, charcoal grey, front-view product shot",   4200),
+    ("cap",        "flat-brim snapback, solid black wool, front-view product shot",   4500),
+    ("beanie",     "ribbed knit beanie, deep navy, plinth product shot",              3900),
+    ("bucket-hat", "bucket hat, black canvas, candid portrait on model",              4500),
+    ("tote",       "raw canvas tote, natural off-white, hanging product shot",        3800),
+    ("duffle",     "duffle bag, black with subtle all-over wordmark, rack shot",      9800),
+    ("backpack",   "mid-size daypack, white with subtle all-over wordmark, floor",   11800),
+    ("fanny-pack", "fanny pack, white with subtle pattern, cross-body on model",      4900),
+    ("iphone-case","clear iPhone 15 case, brand wordmark on back panel, desk macro",  3800),
+    ("mug",        "black glossy ceramic mug, wordmark sublimated white, table",      2900),
+    ("bottle",     "matte black stainless 17oz bottle, plinth product shot",          4200),
+    ("stickers",   "sticker sheet with wordmark variants, flat-lay on concrete",      1200),
+    ("tank",       "athletic tank top, solid black cotton, half-body on model",       4500),
+    ("joggers",    "recycled poly joggers, white with tonal pattern, lower-half",     6800),
+    ("shorts",     "cotton shorts, solid black with faint pattern, lower-half",       5200),
+    ("windbreaker","pull-over nylon windbreaker, matte black, candid on model",       9800),
+    ("bomber",     "all-over print bomber, white satin shell, 3/4 view on model",    14800),
+    ("track-jkt",  "track jacket, off-white with tonal pattern, half-body on model",  9800),
+    ("jersey",     "button-front baseball jersey, white with tonal pattern, model",   8900),
+    ("socks",      "crew socks 3-pack, white/black/grey, stacked product shot",       2400),
+    ("spats",      "compression grappling spats, matte black, action half-body",      6800),
+    ("shorts",     "MMA fight shorts, all-black with subtle side line, athlete",      6800),
+];
+
+async fn proposal_extras_worker(db: Db) {
+    // Honour a kill switch so the worker can be disabled on Fly via env.
+    if env::var("PROPOSAL_EXTRAS_DISABLED").ok().as_deref() == Some("1") {
+        eprintln!("[extras-worker] PROPOSAL_EXTRAS_DISABLED=1 — exiting");
+        return;
+    }
+    loop {
+        let job = pick_one_pending_extras_job(&db);
+        match job {
+            Some((id, slug, email, qty, free_applied, points_charged)) => {
+                let res = process_extras_job(db.clone(), id, slug.clone(), email.clone(), qty).await;
+                finalize_extras_job(&db, id, &email, qty, free_applied, points_charged, &slug, res);
+            }
+            None => {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            }
+        }
+    }
+}
+
+fn pick_one_pending_extras_job(db: &Db) -> Option<(i64, String, String, i64, bool, i64)> {
+    let conn = db.lock().unwrap();
+    let row = conn.query_row(
+        "SELECT id, slug, email, qty, free_applied, points_charged
+         FROM proposal_extras_jobs WHERE status='pending'
+         ORDER BY id ASC LIMIT 1",
+        [],
+        |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?, r.get::<_, i64>(4)? != 0, r.get::<_, i64>(5)?)),
+    ).ok()?;
+    let now = chrono_now();
+    let _ = conn.execute(
+        "UPDATE proposal_extras_jobs SET status='processing', started_at=? WHERE id=? AND status='pending'",
+        params![now, row.0],
+    );
+    Some(row)
+}
+
+/// Returns (succeeded_count, last_error). last_error is Some only if at
+/// least one image failed; succeeded_count is the number of SKUs actually
+/// inserted into proposal_extras_skus.
+async fn process_extras_job(
+    db: Db, job_id: i64, slug: String, _email: String, qty: i64,
+) -> (i64, Option<String>) {
+    // Look up partner display name. Fall back to a hand-curated map for the
+    // legacy sweep/kokon brands that don't have a proposals row.
+    let partner_name: String = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(name, slug) FROM proposals WHERE slug=?",
+            params![slug], |r| r.get::<_, String>(0),
+        ).ok().unwrap_or_else(|| match slug.as_str() {
+            "sweep"   => "SIIIEEP".to_string(),
+            "kokon"   => "kokon.tokyo".to_string(),
+            "jiuflow" => "JiuFlow".to_string(),
+            other     => other.to_string(),
+        })
+    };
+    // Offset to keep generated letters unique within proposal_skus(slug, letter)
+    // — use 'x' + job_id + idx so even if two jobs interleave we don't clash.
+    let r2 = r2_config();
+    if r2.is_none() {
+        return (0, Some("R2 not configured — set R2_ENDPOINT/R2_BUCKET/R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY".to_string()));
+    }
+    let cfg = r2.unwrap();
+    let now_seed = chrono_now();
+    let mut succeeded: i64 = 0;
+    let mut last_err: Option<String> = None;
+    for i in 0..qty {
+        let (kind, label_tmpl, price_jpy) = EXTRAS_CATEGORIES[(i as usize) % EXTRAS_CATEGORIES.len()];
+        let label = format!("MU × {} — {}", partner_name, label_tmpl);
+        let seed = format!("job{}-{}-{}", job_id, i, now_seed.chars().filter(|c| c.is_ascii_alphanumeric()).take(8).collect::<String>());
+        let tagline = format!("quiet, premium, 1着 = 1 シグナル");
+        let brief = gemini::PartnerSkuBrief {
+            partner_display: &partner_name,
+            partner_tagline: &tagline,
+            kind, label: &label, seed: &seed,
+        };
+        let img = match gemini::generate_partner_sku(&brief).await {
+            Ok(g) => g,
+            Err(e) => {
+                eprintln!("[extras-worker] job={} idx={} gemini fail: {}", job_id, i, e);
+                last_err = Some(format!("gemini #{}: {}", i, e.chars().take(120).collect::<String>()));
+                continue;
+            }
+        };
+        let key = format!("extras/{}/{}-{:03}.{}", slug, job_id, i,
+            if img.mime.contains("png") { "png" } else { "jpg" });
+        let ct = if img.mime.contains("png") { "image/png" } else { "image/jpeg" };
+        let url = match cfg.bucket.put_object_with_content_type(&key, &img.bytes, ct).await {
+            Ok(r) if r.status_code() == 200 => format!("{}/{}", cfg.public_base.trim_end_matches('/'), key),
+            Ok(r) => {
+                eprintln!("[extras-worker] job={} idx={} r2 status={}: {}",
+                    job_id, i, r.status_code(), String::from_utf8_lossy(r.bytes()));
+                last_err = Some(format!("r2 #{}: status {}", i, r.status_code()));
+                continue;
+            }
+            Err(e) => {
+                eprintln!("[extras-worker] job={} idx={} r2 err: {}", job_id, i, e);
+                last_err = Some(format!("r2 #{}: {}", i, e.to_string().chars().take(120).collect::<String>()));
+                continue;
+            }
+        };
+        let letter = format!("x{}{:03}", job_id, i);
+        let drop_num = 9_000_000 + job_id * 1000 + i; // synthetic, far above natural drop_num range
+        let now = chrono_now();
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO proposal_extras_skus
+                (job_id, slug, letter, label, kind, price_jpy, image_url, prompt, created_at)
+             VALUES (?,?,?,?,?,?,?,?,?)",
+            params![job_id, slug, letter, label, kind, price_jpy, url,
+                    gemini::build_partner_sku_prompt(&brief), now],
+        );
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO proposal_skus
+                (slug, letter, drop_num, price_jpy, label, kind, design_slug, design_url)
+             VALUES (?,?,?,?,?,?,?,?)",
+            params![slug, letter, drop_num, price_jpy, label, kind, "extras", url],
+        );
+        let _ = conn.execute(
+            "UPDATE proposal_extras_jobs SET done_count=done_count+1 WHERE id=?",
+            params![job_id],
+        );
+        succeeded += 1;
+    }
+    (succeeded, last_err)
+}
+
+fn finalize_extras_job(
+    db: &Db, job_id: i64, email: &str, qty: i64,
+    free_applied: bool, points_charged: i64, slug: &str,
+    res: (i64, Option<String>),
+) {
+    let (succeeded, last_err) = res;
+    let status = if succeeded == qty { "completed" }
+                 else if succeeded == 0 { "failed" }
+                 else { "partial" };
+    let conn = db.lock().unwrap();
+    let now = chrono_now();
+    let _ = conn.execute(
+        "UPDATE proposal_extras_jobs
+         SET status=?, completed_at=?, last_error=COALESCE(?, last_error)
+         WHERE id=?",
+        params![status, now, last_err.as_deref(), job_id],
+    );
+    // Refund unused points on partial/failed jobs (only when actually paid).
+    if !free_applied && succeeded < qty && points_charged > 0 {
+        let failed = qty - succeeded;
+        let refund = failed * EXTRAS_POINTS_PER_SKU;
+        if refund > 0 {
+            let _ = points_mutate(&conn, email, refund, "extras_refund",
+                                  Some(&job_id.to_string()), Some(slug));
+        }
+    }
+    // If the job was free and all SKUs failed, give the free credit back so
+    // the user isn't stuck without ever having used it.
+    if free_applied && succeeded == 0 {
+        let _ = conn.execute(
+            "UPDATE proposal_points SET free_30_used=0, updated_at=? WHERE email=?",
+            params![now, normalize_email(email)],
+        );
+    }
 }
 
 #[derive(Deserialize)]
@@ -32179,7 +32838,15 @@ async fn admin_sponsor_apps_status(
 /// GET /collab/apply — public landing page with form to request a proposal.
 /// Explains what MU does, why it works, and pulls website URL + email +
 /// merch interests. POSTs to /api/collab/apply.
+/// (2026-05-16) /collab/apply is deprecated. Funnel everything through
+/// /collab/chat now — the AI chat replaces the static "request a proposal"
+/// form. Inbound API (/api/collab/apply) still works for admin / API users.
 async fn show_collab_apply_page() -> Response {
+    axum::response::Redirect::to("/collab/chat").into_response()
+}
+
+#[allow(dead_code)]
+async fn show_collab_apply_page_legacy() -> Response {
     let body = r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>MU で コラボグッズを作る — 提案リクエスト</title>
@@ -37170,83 +37837,149 @@ async fn main() {
         // Printful 確定後は route='printful' + IDs 埋めて再デプロイで自動化。
         ("sweep-patch-embroidered", "刺繍 Gi パッチ (4インチ)", "MU × SIIIEEP Embroidered Gi Patch (4\")",
          "Velcro裏地で柔術 Gi の袖/胸/背中に取り付け可能。MU×SIIIEEP モノグラム刺繍、白糸×黒地。トーナメント時の chapter patch としても使用可。",
-         3_800, "pre_order", None, None, None, None, None, 21, 1),
+         3_800, "printful", Some(1439), Some(44246),
+         Some(r#"{"OS":44246,"ONE SIZE":44246,"S":44246,"M":44246,"L":44246,"XL":44246,"2XL":44246,"3XL":44246,"XS":44246}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r##"[{"id":"thread_colors","value":["#FFFFFF"]}]"##), 21, 1),
         ("sweep-patch-iron-on", "アイロンプリント パッチ (3インチ)", "MU × SIIIEEP Iron-On Patch (3\")",
          "アイロン圧着式。デニムジャケット・コットンキャップ・ジムバッグに装着可能。複数枚購入で道場のチームウェアに統一感を出せる。",
          1_800, "pre_order", None, None, None, None, None, 14, 1),
         ("sweep-bandana", "バンダナ / Gi ヘッドラップ", "MU × SIIIEEP Bandana / Gi Headwrap",
          "53×53cm コットン100%。Gi下に巻く・練習中の汗止め・スパー前の儀式に。MU×SIIIEEP モノグラム + 北参道の方角を示すコンパスマーク。",
-         2_800, "pre_order", None, None, None, None, None, 10, 1),
+         2_800, "printful", Some(630), Some(16032),
+         Some(r#"{"S":16031,"M":16032,"L":16033,"OS":16032,"ONE SIZE":16032,"XL":16032,"2XL":16032,"3XL":16032,"XS":16032}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 10, 1),
         ("sweep-polo-tech", "パフォーマンスポロ (テック)", "MU × SIIIEEP Performance Polo (Tech)",
          "速乾・通気・吸汗のテック素材ポロ。SJJJF 公認トーナメント審判・コーチ・運営スタッフ向け。左胸に小さく SIIIEEP wordmark を刺繍。",
-         9_800, "pre_order", None, None, None, None, None, 14, 1),
+         9_800, "printful", Some(766), Some(19494),
+         Some(r#"{"S":19489,"M":19494,"L":19499,"XL":19504,"2XL":19509,"OS":19494,"ONE SIZE":19494,"3XL":19494,"XS":19494}"#),
+         Some(r#"[{"type":"embroidery_chest_left","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r##"[{"id":"thread_colors","value":["#FFFFFF"]}]"##), 14, 1),
         ("sweep-tech-tee", "テックTシャツ (速乾)", "MU × SIIIEEP Tech Tee (Quick-Dry)",
          "ポリエステル100%。毎日の練習用 daily driver。汗を吸っても重くならない速乾素材。コットンよりタフで、3〜5日連続練習でも崩れない。",
-         5_800, "pre_order", None, None, None, None, None, 10, 1),
+         5_800, "printful", Some(679), Some(17005),
+         Some(r#"{"S":17004,"M":17005,"L":17006,"XL":17007,"2XL":17008,"3XL":17009,"4XL":17080,"OS":17005,"ONE SIZE":17005,"XS":17005}"#),
+         Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 10, 1),
         ("sweep-hip-pack-large", "ヒップパック (大)", "MU × SIIIEEP Hip Pack (Large)",
          "通常 Fanny Pack より一回り大きい。スマホ+鍵+小銭入れ+マウスガード+フィンガーテープが入る、道場通いの必需品。前掛け/たすき掛け両対応。",
-         7_800, "pre_order", None, None, None, None, None, 14, 1),
+         7_800, "printful", Some(350), Some(9986),
+         Some(r#"{"OS":9986,"ONE SIZE":9986,"S":9986,"M":9986,"L":9986,"XL":9986,"2XL":9986,"3XL":9986,"XS":9986}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 14, 1),
         ("sweep-beach-towel", "ビーチタオル (76×152cm)", "MU × SIIIEEP Beach Towel (76×152cm)",
          "76×152cm の大判。練習後・サウナ・温泉・ビーチ。両面プリント可能、MU×SIIIEEP の大判モノグラム。",
-         6_800, "pre_order", None, None, None, None, None, 12, 1),
+         6_800, "printful", Some(259), Some(8874),
+         Some(r#"{"OS":8874,"ONE SIZE":8874,"S":8874,"M":8874,"L":8874,"XL":8874,"2XL":8874,"3XL":8874,"XS":8874}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 12, 1),
         ("sweep-hand-towel", "ハンドタオル", "MU × SIIIEEP Hand Towel",
          "マットサイドに置く小型タオル (約 40×70cm)。練習中の汗・スパー間の拭き取り・冬場の暖機用。MU monogram 小ロゴ。",
-         3_800, "pre_order", None, None, None, None, None, 10, 1),
+         3_800, "printful", Some(883), Some(22792),
+         Some(r#"{"OS":22792,"ONE SIZE":22792,"S":22792,"M":22792,"L":22792,"XL":22792,"2XL":22792,"3XL":22792,"XS":22792}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 10, 1),
         ("sweep-cinch-sack", "ドローストリングバッグ (シンチ)", "MU × SIIIEEP Drawstring Cinch Sack",
          "軽量ドローストリング。Gi+ラッシュガード+ボトル+タオルがギリギリ入る最小ジムバッグ。週末トーナメント遠征時のサブバッグにも。",
-         4_800, "pre_order", None, None, None, None, None, 10, 1),
+         4_800, "printful", Some(262), Some(8894),
+         Some(r#"{"OS":8894,"ONE SIZE":8894,"S":8894,"M":8894,"L":8894,"XL":8894,"2XL":8894,"3XL":8894,"XS":8894}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 10, 1),
         ("sweep-sherpa-blanket", "シェルパフリースブランケット", "MU × SIIIEEP Sherpa Fleece Blanket",
          "シェルパフリース裏地、ふわふわで暖かい。練習後のリカバリー・自宅・別荘・遠征宿泊のホテルで。マットに座って観戦するときの座布団にも。",
-         9_800, "pre_order", None, None, None, None, None, 14, 1),
+         9_800, "printful", Some(711), Some(17483),
+         Some(r#"{"OS":17483,"ONE SIZE":17483,"S":17483,"M":17483,"L":17483,"XL":17483,"2XL":17483,"3XL":17483,"XS":17483}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 14, 1),
 
         // ── v4 拡張 10 SKU (2026-05-16) — リカバリー & 周辺アクセサリー ────────
         ("sweep-leggings", "レギンス (圧縮)", "MU × SIIIEEP Compression Leggings",
          "圧縮ニット、UPF50+。Gi下・ヨガ・ランニング・冬の練習に。サイドに SIIIEEP ロゴ縦プリント。",
-         7_800, "pre_order", None, None, None, None, None, 14, 1),
+         7_800, "printful", Some(189), Some(7678),
+         Some(r#"{"XS":7676,"S":7677,"M":7678,"L":7679,"XL":7680,"OS":7678,"ONE SIZE":7678,"2XL":7678,"3XL":7678}"#),
+         Some(r#"[{"type":"leg_right","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 14, 1),
         ("sweep-tumbler-20oz", "ステンレスタンブラー (20oz)", "MU × SIIIEEP Stainless Tumbler (20oz)",
          "真空二重構造、20oz/591ml。練習中・移動中のドリンクをキープ。マットブラック仕上げに SIIIEEP wordmark レーザー刻印。",
-         4_800, "pre_order", None, None, None, None, None, 10, 1),
+         4_800, "printful", Some(585), Some(15005),
+         Some(r#"{"OS":15005,"ONE SIZE":15005,"S":15005,"M":15005,"L":15005,"XL":15005,"2XL":15005,"3XL":15005,"XS":15005}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         None, 10, 1),
         ("sweep-mouse-pad", "マウスパッド (大判)", "MU × SIIIEEP Large Mouse Pad",
          "36×30cm 大判ゲーミングサイズ。在宅トレーニング日のデスクサイドに。SIIIEEP 全面プリント、北海道気象データグラフィック。",
-         3_800, "pre_order", None, None, None, None, None, 10, 1),
+         3_800, "printful", Some(583), Some(14943),
+         Some(r#"{"OS":14943,"ONE SIZE":14943,"S":14943,"M":14943,"L":14943,"XL":14943,"2XL":14943,"3XL":14943,"XS":14943}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         None, 10, 1),
         ("sweep-wall-print-canvas", "キャンバスウォールプリント (S)", "MU × SIIIEEP Canvas Wall Print (Small)",
          "30×40cm 木製額装キャンバス。SIIIEEP wordmark + 北海道地図。自宅の練習スペース・道場の壁に。",
-         5_800, "pre_order", None, None, None, None, None, 12, 1),
+         5_800, "printful", Some(614), Some(16041),
+         Some(r#"{"OS":16041,"ONE SIZE":16041,"S":16041,"M":16041,"L":16041,"XL":16041,"2XL":16041,"3XL":16041,"XS":16041}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         None, 12, 1),
         ("sweep-fleece-blanket", "フリースブランケット (軽量)", "MU × SIIIEEP Polyester Fleece Blanket",
          "150×200cm 軽量フリース。Sherpa より軽い・乾きやすい。観戦時のマット座布団・遠征宿泊で。",
-         7_800, "pre_order", None, None, None, None, None, 12, 1),
+         7_800, "printful", Some(395), Some(13222),
+         Some(r#"{"OS":13222,"ONE SIZE":13222,"S":13222,"M":13222,"L":13222,"XL":13222,"2XL":13222,"3XL":13222,"XS":13222}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 12, 1),
         ("sweep-yoga-mat", "ヨガマット (リカバリー)", "MU × SIIIEEP Recovery Yoga Mat",
          "61×173cm、6mm 厚。練習後のストレッチ・呼吸法・ヨガに。SIIIEEP 全面プリント、北海道の海岸線。",
-         9_800, "pre_order", None, None, None, None, None, 14, 1),
+         9_800, "printful", Some(675), Some(16714),
+         Some(r#"{"OS":16714,"ONE SIZE":16714,"S":16714,"M":16714,"L":16714,"XL":16714,"2XL":16714,"3XL":16714,"XS":16714}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 14, 1),
         ("sweep-throw-pillow", "クッションカバー (45×45cm)", "MU × SIIIEEP Throw Pillow Cover",
          "45×45cm 中綿込み。SIIIEEP wordmark + サイドステッチ。練習後のリカバリー・道場休憩スペース。",
-         5_800, "pre_order", None, None, None, None, None, 10, 1),
+         5_800, "printful", Some(83), Some(4532),
+         Some(r#"{"OS":4532,"ONE SIZE":4532,"S":4532,"M":4532,"L":4532,"XL":4532,"2XL":4532,"3XL":4532,"XS":4532}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 10, 1),
         ("sweep-headband-sweat", "汗止めヘッドバンド", "MU × SIIIEEP Sweatband Headband",
          "前頭部 SIIIEEP ロゴ刺繍、ストレッチ素材。練習中の汗止め。ペア (左右各1枚) パッケージ。",
-         3_800, "pre_order", None, None, None, None, None, 10, 1),
+         3_800, "printful", Some(545), Some(16363),
+         Some(r#"{"M":16363,"L":13802,"OS":16363,"ONE SIZE":16363,"S":16363,"XL":16363,"2XL":16363,"3XL":16363,"XS":16363}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 10, 1),
         ("sweep-wristband", "リストバンド (ペア)", "MU × SIIIEEP Wristband Pair",
          "両手首用のペア。練習中の汗止め・スパー時の手首保護。SIIIEEP ロゴ刺繍。",
          2_800, "pre_order", None, None, None, None, None, 10, 1),
         ("sweep-shaker-bottle", "プロテインシェイカー", "MU × SIIIEEP Protein Shaker Bottle",
          "20oz/591ml シェイカー、ウィスクボール内蔵。SIIIEEP wordmark プリント。練習後のプロテイン・BCAA に。",
-         3_800, "pre_order", None, None, None, None, None, 10, 1),
+         3_800, "printful", Some(653), Some(16359),
+         Some(r#"{"OS":16359,"ONE SIZE":16359,"S":16359,"M":16359,"L":16359,"XL":16359,"2XL":16359,"3XL":16359,"XS":16359}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         None, 10, 1),
 
         // ── v5 拡張 15 SKU (2026-05-16) — 女性 / キッズ / アクセサリー / ホーム ──
         ("sweep-sports-bra", "スポーツブラ (女性)", "MU × SIIIEEP Women's Sports Bra",
          "圧縮ニット、UPF50+。中強度サポート、Gi下・ヨガ・ノーギ用。アンダーバストに SIIIEEP wordmark プリント。",
-         5_800, "pre_order", None, None, None, None, None, 14, 1),
+         5_800, "printful", Some(282), Some(9106),
+         Some(r#"{"XS":9104,"S":9105,"M":9106,"L":9107,"XL":9108,"2XL":9109,"OS":9106,"ONE SIZE":9106,"3XL":9106}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 14, 1),
         ("sweep-crop-top", "クロップトップ (女性)", "MU × SIIIEEP Women's Crop Top",
          "コットン100%。ヘビーコットン素材、ノーギ練習・夏のジム移動着に。フロントに SIIIEEP wordmark。",
-         4_800, "pre_order", None, None, None, None, None, 10, 1),
+         4_800, "printful", Some(200), Some(7814),
+         Some(r#"{"XS":7812,"S":7813,"M":7814,"L":7815,"XL":7816,"OS":7814,"ONE SIZE":7814,"2XL":7814,"3XL":7814}"#),
+         Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 10, 1),
         ("sweep-leggings-highwaist", "ハイウエストレギンス", "MU × SIIIEEP High-Waist Leggings",
          "圧縮ニット、ハイウエスト + ポケット付き。練習・ヨガ・ジム移動に。サイドに SIIIEEP ロゴ。",
          8_800, "pre_order", None, None, None, None, None, 14, 1),
         ("sweep-kids-tee", "キッズ T シャツ", "MU × SIIIEEP Kids T-Shirt",
          "コットン100%、サイズ 3T〜YXL。次世代の BJJer 用。胸に SIIIEEP wordmark + 北海道アイコン。",
-         3_800, "pre_order", None, None, None, None, None, 10, 1),
+         3_800, "printful", Some(384), Some(10817),
+         Some(r#"{"OS":10817,"ONE SIZE":10817,"S":10817,"M":10817,"L":10817,"XL":10817,"2XL":10817,"3XL":10817,"XS":10817}"#),
+         Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 10, 1),
         ("sweep-onesie-baby", "ベビーオネズィ", "MU × SIIIEEP Baby Bodysuit",
          "コットン100%、新生児〜24M。スナップボタン式。「Future Champion」プリント + SIIIEEP ロゴ。",
-         3_800, "pre_order", None, None, None, None, None, 10, 1),
+         3_800, "printful", Some(234), Some(8177),
+         Some(r#"{"OS":8177,"ONE SIZE":8177,"S":8177,"M":8177,"L":8177,"XL":8177,"2XL":8177,"3XL":8177,"XS":8177}"#),
+         Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         None, 10, 1),
         ("sweep-enamel-pin", "エナメルピン (1.5\")", "MU × SIIIEEP Enamel Pin (1.5\")",
          "ハードエナメル仕上げ。SIIIEEP wordmark + 北海道シルエット。Gi 襟・キャップ・カバンに。",
          2_400, "pre_order", None, None, None, None, None, 14, 1),
@@ -37258,7 +37991,10 @@ async fn main() {
          1_800, "pre_order", None, None, None, None, None, 10, 1),
         ("sweep-airpods-case", "AirPods ケース", "MU × SIIIEEP AirPods Pro Case",
          "シリコン保護ケース。AirPods Pro 2 対応。SIIIEEP wordmark エンボス。",
-         3_200, "pre_order", None, None, None, None, None, 10, 1),
+         3_200, "printful", Some(605), Some(15533),
+         Some(r#"{"OS":15533,"ONE SIZE":15533,"S":15533,"M":15533,"L":15533,"XL":15533,"2XL":15533,"3XL":15533,"XS":15533}"#),
+         Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         None, 10, 1),
         ("sweep-apple-watch-band", "Apple Watch バンド", "MU × SIIIEEP Apple Watch Band",
          "シリコン製、38/40/41/44/45mm 対応。練習中の汗にも強い。SIIIEEP wordmark プリント。",
          4_800, "pre_order", None, None, None, None, None, 14, 1),
@@ -37270,13 +38006,22 @@ async fn main() {
          2_800, "pre_order", None, None, None, None, None, 10, 1),
         ("sweep-notebook", "ハードカバーノート", "MU × SIIIEEP Hardcover Notebook (A5)",
          "A5 サイズ、200 ページ、横罫線。練習ログ・テクニック記録・遠征メモに。表紙に SIIIEEP wordmark。",
-         3_800, "pre_order", None, None, None, None, None, 12, 1),
+         3_800, "printful", Some(682), Some(16958),
+         Some(r#"{"OS":16958,"ONE SIZE":16958,"S":16958,"M":16958,"L":16958,"XL":16958,"2XL":16958,"3XL":16958,"XS":16958}"#),
+         Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         None, 12, 1),
         ("sweep-tapestry", "タペストリー (150×200cm)", "MU × SIIIEEP Wall Tapestry",
          "150×200cm 大判タペストリー。SIIIEEP wordmark + 北海道地図全景。道場の壁・自宅トレーニングスペース。",
-         9_800, "pre_order", None, None, None, None, None, 14, 1),
+         9_800, "printful", Some(973), Some(24970),
+         Some(r#"{"OS":24970,"ONE SIZE":24970,"S":24970,"M":24970,"L":24970,"XL":24970,"2XL":24970,"3XL":24970,"XS":24970}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         None, 14, 1),
         ("sweep-candle", "リカバリーキャンドル", "MU × SIIIEEP Recovery Soy Candle",
          "ソイワックス、香り: 杉 + ヒノキ + ペパーミント。練習後のリカバリー・瞑想に。SIIIEEP wordmark エンボスガラス。",
-         4_800, "pre_order", None, None, None, None, None, 14, 1),
+         4_800, "printful", Some(645), Some(16270),
+         Some(r#"{"OS":16270,"ONE SIZE":16270,"S":16270,"M":16270,"L":16270,"XL":16270,"2XL":16270,"3XL":16270,"XS":16270}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/sweep/_logo.png"}]"#),
+         None, 14, 1),
 
         // ── v6 拡張 15 SKU (2026-05-16) — アウター / ホームデコ / トラベル / ペット ──
         ("sweep-anorak", "アノラックジャケット", "MU × SIIIEEP Anorak Jacket",
@@ -37352,6 +38097,53 @@ async fn main() {
              WHERE slug = ?",
             params![route, lead, pf_prod, pf_var, var_map, files, opts, active,
                     cat, name, desc, price, slug],
+        ).ok();
+    }
+
+    // ── v3/v4/v5 拡張 SKU の image_url を Printful catalog 画像で埋める ──
+    // lifestyle.wearmu.com にカスタム写真がアップされたら sweep_images.py が
+    // 上書きする運用なので COALESCE で「既に他で設定済みなら触らない」とする。
+    let v3_v5_images: &[(&str, &str)] = &[
+        ("sweep-airpods-case", "https://files.cdn.printful.com/o/upload/product-catalog-img/ef/ef181b7a0c99f895af52b60c017d6d03_l"),
+        ("sweep-apple-watch-band", "https://files.cdn.printful.com/o/upload/product-catalog-img/e2/e27e7c277d9e21d1c66bca5be286bada_l"),
+        ("sweep-bandana", "https://files.cdn.printful.com/o/upload/product-catalog-img/89/89110ee2718a4b86e369141ca3d882c4_l"),
+        ("sweep-bath-towel", "https://files.cdn.printful.com/o/products/259/product_1606198364.jpg"),
+        ("sweep-beach-towel", "https://files.cdn.printful.com/o/products/259/product_1606198364.jpg"),
+        ("sweep-candle", "https://files.cdn.printful.com/o/upload/product-catalog-img/0a/0a996b0eb6387b9d936fbf6170d67f8c_l"),
+        ("sweep-cinch-sack", "https://files.cdn.printful.com/o/upload/product-catalog-img/0f/0f04d73474287ef01d6f5541c3a63de2_l"),
+        ("sweep-crop-top", "https://files.cdn.printful.com/o/upload/product-catalog-img/7d/7d644235519c96a5336d49b4a84ff9c4_l"),
+        ("sweep-enamel-pin", "https://files.cdn.printful.com/o/upload/product-catalog-img/7a/7acefe20374440b06a3b2b32da880524_l"),
+        ("sweep-fleece-blanket", "https://files.cdn.printful.com/o/upload/product-catalog-img/7a/7a7486c4b4144d3f02d9484a231242e1_l"),
+        ("sweep-hand-towel", "https://files.cdn.printful.com/o/upload/product-catalog-img/8d/8de2e4f34ac87cfcb72dcea526c572fe_l"),
+        ("sweep-headband-sweat", "https://files.cdn.printful.com/o/upload/product-catalog-img/e2/e27e7c277d9e21d1c66bca5be286bada_l"),
+        ("sweep-hip-pack-large", "https://files.cdn.printful.com/o/upload/product-catalog-img/a5/a5b065fbef259cc4554b04bcad64f006_l"),
+        ("sweep-keychain-acrylic", "https://files.cdn.printful.com/o/upload/product-catalog-img/95/95cd4a3b32550902b33655279d454489_l"),
+        ("sweep-kids-tee", "https://files.cdn.printful.com/o/upload/product-catalog-img/1c/1c17a67ab90975c4b8181db65b0f3363_l"),
+        ("sweep-lanyard", "https://files.cdn.printful.com/o/upload/product-catalog-img/e2/e27e7c277d9e21d1c66bca5be286bada_l"),
+        ("sweep-leggings", "https://files.cdn.printful.com/o/upload/product-catalog-img/d9/d9df6470d54437c30c4e561cd735abfe_l"),
+        ("sweep-leggings-highwaist", "https://files.cdn.printful.com/o/upload/product-catalog-img/d9/d9df6470d54437c30c4e561cd735abfe_l"),
+        ("sweep-mouse-pad", "https://files.cdn.printful.com/o/upload/product-catalog-img/17/1753cc3ed8f6b1f796c1f86bc140ee37_l"),
+        ("sweep-notebook", "https://files.cdn.printful.com/o/upload/product-catalog-img/95/95cd4a3b32550902b33655279d454489_l"),
+        ("sweep-onesie-baby", "https://files.cdn.printful.com/o/upload/product-catalog-img/a4/a4a610d0eef95a237a998e519939db45_l"),
+        ("sweep-patch-embroidered", "https://files.cdn.printful.com/o/upload/product-catalog-img/7a/7acefe20374440b06a3b2b32da880524_l"),
+        ("sweep-patch-iron-on", "https://files.cdn.printful.com/o/upload/product-catalog-img/7a/7acefe20374440b06a3b2b32da880524_l"),
+        ("sweep-polo-tech", "https://files.cdn.printful.com/o/upload/product-catalog-img/fc/fcb1355ef3ceb9a670a9072e5a3c4b96_l"),
+        ("sweep-shaker-bottle", "https://files.cdn.printful.com/o/upload/product-catalog-img/62/6225a66e6c7a4f34734e3ddb668e4a49_l"),
+        ("sweep-sherpa-blanket", "https://files.cdn.printful.com/o/upload/product-catalog-img/e2/e289ece99c6c7971336034b3597d6509_l"),
+        ("sweep-sports-bra", "https://files.cdn.printful.com/o/upload/product-catalog-img/55/5535a484351bcb70a93142595b4b0f30_l"),
+        ("sweep-tapestry", "https://files.cdn.printful.com/o/upload/product-catalog-img/4f/4f9e96f6b0dab46d94fa5472563eae3a_l"),
+        ("sweep-tea-towel", "https://files.cdn.printful.com/o/upload/product-catalog-img/8d/8de2e4f34ac87cfcb72dcea526c572fe_l"),
+        ("sweep-tech-tee", "https://files.cdn.printful.com/o/upload/product-catalog-img/e2/e239b78e54f77c63f3ec3bcda3be8e62_l"),
+        ("sweep-throw-pillow", "https://files.cdn.printful.com/o/products/83/product_1573737219.jpg"),
+        ("sweep-tumbler-20oz", "https://files.cdn.printful.com/o/upload/product-catalog-img/cf/cf742bc2278471fa6e9a74aeb76192d9_l"),
+        ("sweep-wall-print-canvas", "https://files.cdn.printful.com/o/upload/product-catalog-img/6e/6ed851bb13949c3f4af7c7a266cc50d1_l"),
+        ("sweep-wristband", "https://files.cdn.printful.com/o/upload/product-catalog-img/e2/e27e7c277d9e21d1c66bca5be286bada_l"),
+        ("sweep-yoga-mat", "https://files.cdn.printful.com/o/upload/product-catalog-img/7f/7f5b93c735bf44dc657fd20da58dba97_l"),
+    ];
+    for (slug, url) in v3_v5_images {
+        conn.execute(
+            "UPDATE collab_products SET image_url = COALESCE(image_url, ?) WHERE slug = ?",
+            params![url, slug],
         ).ok();
     }
 
@@ -37497,63 +38289,120 @@ async fn main() {
         // で kokon staff が手動 fulfill。IDs 確定後は route='printful' に切替。
         ("kokon-zip-hoodie", "黒ジップフーディ", "MU × KOKON Heavy Zip-Up Hoodie",
          "重量級ジップアップ。左胸に金色 KOKON wordmark を刺繍。冬の店外動線・タクシー移動・自宅で。",
-         12_800, "pre_order", None, None, None, None, None, 14, 1),
+         12_800, "printful", Some(692), Some(17296),
+         Some(r#"{"S":17295,"M":17296,"L":17297,"XL":17298,"2XL":17299,"3XL":17300,"4XL":17301,"5XL":17302,"OS":17296,"ONE SIZE":17296,"XS":17296}"#),
+         Some(r#"[{"type":"embroidery_chest_left","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         Some(r##"[{"id":"thread_colors","value":["#A67843"]}]"##), 14, 1),
         ("kokon-joggers", "黒ジョガーパンツ", "MU × KOKON Tapered Joggers",
          "テーパード黒ジョガー。右脚に金色 KOKON wordmark を縦プリント。スタッフのオフ移動 / 自宅用ラウンジパンツとしても上品。",
-         10_800, "pre_order", None, None, None, None, None, 14, 1),
+         10_800, "printful", Some(400), Some(11035),
+         Some(r#"{"XS":11033,"S":11034,"M":11035,"L":11036,"XL":11037,"2XL":11038,"3XL":11039,"OS":11035,"ONE SIZE":11035}"#),
+         Some(r#"[{"type":"leg_right","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 14, 1),
         ("kokon-sweatpants", "黒スウェットパンツ", "MU × KOKON Heavyweight Sweatpants",
          "重量級フリース。左腿に控えめな金色 KOKON wordmark。練習後のリカバリー、自宅、別荘で。",
-         9_800, "pre_order", None, None, None, None, None, 14, 1),
+         9_800, "printful", Some(412), Some(11267),
+         Some(r#"{"XS":11265,"S":11266,"M":11267,"L":11268,"XL":11269,"2XL":11270,"OS":11267,"ONE SIZE":11267,"3XL":11267}"#),
+         Some(r#"[{"type":"embroidery_chest_left","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         Some(r##"[{"id":"thread_colors","value":["#A67843"]}]"##), 14, 1),
         ("kokon-bucket-hat", "黒バケットハット", "MU × KOKON Bucket Hat",
          "黒バケットハット、フロントに金糸 KOKON 刺繍。スタッフのオフ装い / 真夏の店外動線で。",
-         5_800, "pre_order", None, None, None, None, None, 10, 1),
+         5_800, "printful", Some(379), Some(10735),
+         Some(r#"{"OS":10735,"ONE SIZE":10735,"S":10735,"M":10735,"L":10735,"XL":10735,"2XL":10735,"3XL":10735,"XS":10735}"#),
+         Some(r#"[{"type":"embroidery_front","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         Some(r##"[{"id":"thread_colors","value":["#A67843"]}]"##), 10, 1),
         ("kokon-bandana", "黒バンダナ (53cm)", "MU × KOKON Bandana",
          "53×53cm 黒コットン。金色 KOKON モノグラム + 炭火モチーフのドット柄を一面に。焼き師の襟首・ポケットチーフとして。",
-         2_800, "pre_order", None, None, None, None, None, 10, 1),
+         2_800, "printful", Some(630), Some(16032),
+         Some(r#"{"S":16031,"M":16032,"L":16033,"OS":16032,"ONE SIZE":16032,"XL":16032,"2XL":16032,"3XL":16032,"XS":16032}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 10, 1),
         ("kokon-beach-towel", "黒×金ビーチタオル (76×152cm)", "MU × KOKON Beach Towel",
          "76×152cm 大判。両面プリント。黒地に金色 KOKON wordmark。サウナ・温泉・サマーリゾートで。お店からのVIPギフトにも。",
-         8_800, "pre_order", None, None, None, None, None, 12, 1),
+         8_800, "printful", Some(259), Some(8874),
+         Some(r#"{"OS":8874,"ONE SIZE":8874,"S":8874,"M":8874,"L":8874,"XL":8874,"2XL":8874,"3XL":8874,"XS":8874}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 12, 1),
         ("kokon-throw-pillow", "クッションカバー (45×45cm)", "MU × KOKON Throw Pillow Cover",
          "45×45cm スウェード調カバー。中綿込み。黒地に金色 KOKON wordmark。店内 VIP 席・自宅ソファで。",
-         5_800, "pre_order", None, None, None, None, None, 10, 1),
+         5_800, "printful", Some(83), Some(4532),
+         Some(r#"{"OS":4532,"ONE SIZE":4532,"S":4532,"M":4532,"L":4532,"XL":4532,"2XL":4532,"3XL":4532,"XS":4532}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 10, 1),
         ("kokon-sherpa-blanket", "シェルパフリースブランケット", "MU × KOKON Sherpa Fleece Blanket",
          "シェルパフリース裏地、表面マイクロファイバー。黒地に金色 KOKON wordmark。冬の店外席・別荘・遠征宿泊で。",
-         9_800, "pre_order", None, None, None, None, None, 14, 1),
+         9_800, "printful", Some(711), Some(17483),
+         Some(r#"{"OS":17483,"ONE SIZE":17483,"S":17483,"M":17483,"L":17483,"XL":17483,"2XL":17483,"3XL":17483,"XS":17483}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 14, 1),
         ("kokon-bottle-water", "ステンレスボトル 17oz", "MU × KOKON Stainless Bottle",
          "17oz (500ml) ステンレス真空二重構造。黒マットに金色 KOKON wordmark レーザー刻印。お店のロゴ入りで贈答用にも。",
-         3_800, "pre_order", None, None, None, None, None, 10, 1),
+         3_800, "printful", Some(382), Some(16030),
+         Some(r#"{"OS":16030,"ONE SIZE":16030,"S":16030,"M":16030,"L":16030,"XL":16030,"2XL":16030,"3XL":16030,"XS":16030}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         None, 10, 1),
         ("kokon-coaster-cork", "コルクコースター 4枚セット", "MU × KOKON Cork Coaster Set",
          "9.5×9.5cm 円形コルク 4 枚。金色 KOKON wordmark + 但馬牛シルエット + 炭火モチーフ 4 種のセット。常連へのお土産に。",
-         2_800, "pre_order", None, None, None, None, None, 10, 1),
+         2_800, "printful", Some(611), Some(15662),
+         Some(r#"{"OS":15662,"ONE SIZE":15662,"S":15662,"M":15662,"L":15662,"XL":15662,"2XL":15662,"3XL":15662,"XS":15662}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         None, 10, 1),
 
         // ── v5 拡張 10 SKU (2026-05-16) — 店舗グッズ & VIP ギフト ────────
         ("kokon-leggings", "黒レギンス (圧縮)", "MU × KOKON Compression Leggings",
          "圧縮ニット、UPF50+。スタッフのインナー / ホットヨガに。サイドに金色 KOKON wordmark 縦プリント。",
-         7_800, "pre_order", None, None, None, None, None, 14, 1),
+         7_800, "printful", Some(189), Some(7678),
+         Some(r#"{"XS":7676,"S":7677,"M":7678,"L":7679,"XL":7680,"OS":7678,"ONE SIZE":7678,"2XL":7678,"3XL":7678}"#),
+         Some(r#"[{"type":"leg_right","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 14, 1),
         ("kokon-tumbler-20oz", "ステンレスタンブラー (20oz)", "MU × KOKON Stainless Tumbler (20oz)",
          "真空二重構造、20oz/591ml。マットブラックに金色 KOKON wordmark レーザー刻印。常連客への上品なギフトに。",
-         4_800, "pre_order", None, None, None, None, None, 10, 1),
+         4_800, "printful", Some(585), Some(15004),
+         Some(r#"{"OS":15004,"ONE SIZE":15004,"S":15004,"M":15004,"L":15004,"XL":15004,"2XL":15004,"3XL":15004,"XS":15004}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         None, 10, 1),
         ("kokon-mouse-pad", "マウスパッド (大判)", "MU × KOKON Large Mouse Pad",
          "36×30cm 大判。在宅ワーク・経理担当のデスクサイドに。黒地に金色 KOKON wordmark + 炭火モチーフ。",
-         3_800, "pre_order", None, None, None, None, None, 10, 1),
+         3_800, "printful", Some(518), Some(13097),
+         Some(r#"{"OS":13097,"ONE SIZE":13097,"S":13097,"M":13097,"L":13097,"XL":13097,"2XL":13097,"3XL":13097,"XS":13097}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         None, 10, 1),
         ("kokon-wall-print", "キャンバスウォールプリント (M)", "MU × KOKON Canvas Wall Print (Medium)",
          "40×60cm 木製額装キャンバス。金色 KOKON wordmark + 但馬牛シルエット。店内 VIP 個室 / オーナー応接間 / 別荘の壁に。",
-         9_800, "pre_order", None, None, None, None, None, 14, 1),
+         9_800, "printful", Some(614), Some(17630),
+         Some(r#"{"OS":17630,"ONE SIZE":17630,"S":17630,"M":17630,"L":17630,"XL":17630,"2XL":17630,"3XL":17630,"XS":17630}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         None, 14, 1),
         ("kokon-fleece-blanket", "フリースブランケット (軽量)", "MU × KOKON Polyester Fleece Blanket",
          "150×200cm 軽量フリース。黒地に金色 KOKON wordmark + 但馬牛シルエットを大胆に配置。冬の店外席・VIP 個室で。",
-         7_800, "pre_order", None, None, None, None, None, 12, 1),
+         7_800, "printful", Some(1426), Some(44155),
+         Some(r#"{"OS":44155,"ONE SIZE":44155,"S":44155,"M":44155,"L":44155,"XL":44155,"2XL":44155,"3XL":44155,"XS":44155}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 12, 1),
         ("kokon-sticker-die-cut", "ダイカットステッカー (単品)", "MU × KOKON Die-Cut Sticker",
          "8×8cm 金色 KOKON wordmark シングル。屋外用ビニール、5 年耐久。常連へのお土産・お店の名刺代わりに。",
-         800, "pre_order", None, None, None, None, None, 7, 1),
+         800, "printful", Some(358), Some(10163),
+         Some(r#"{"OS":10163,"ONE SIZE":10163,"S":10163,"M":10163,"L":10163,"XL":10163,"2XL":10163,"3XL":10163,"XS":10163}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         None, 7, 1),
         ("kokon-magnet", "車用マグネット (大)", "MU × KOKON Car Magnet (Large)",
          "8×8cm 屋外用マグネット。黒地に金色 KOKON wordmark。車のリアに貼って動く看板に。スタッフ車両用。",
-         1_200, "pre_order", None, None, None, None, None, 10, 1),
+         1_200, "printful", Some(874), Some(22711),
+         Some(r#"{"OS":22711,"ONE SIZE":22711,"S":22711,"M":22711,"L":22711,"XL":22711,"2XL":22711,"3XL":22711,"XS":22711}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         None, 10, 1),
         ("kokon-yoga-mat", "ヨガマット (リカバリー)", "MU × KOKON Recovery Yoga Mat",
          "61×173cm、6mm 厚。長時間立ち仕事のスタッフのストレッチ / リカバリー用。黒地に金色 KOKON wordmark。",
-         9_800, "pre_order", None, None, None, None, None, 14, 1),
+         9_800, "printful", Some(675), Some(16714),
+         Some(r#"{"OS":16714,"ONE SIZE":16714,"S":16714,"M":16714,"L":16714,"XL":16714,"2XL":16714,"3XL":16714,"XS":16714}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 14, 1),
         ("kokon-shaker-bottle", "プロテインシェイカー (黒)", "MU × KOKON Protein Shaker Bottle",
          "20oz/591ml ブラックシェイカー、ウィスクボール内蔵。金色 KOKON wordmark。スタッフのプロテイン用 / カジュアルギフトに。",
-         3_800, "pre_order", None, None, None, None, None, 10, 1),
+         3_800, "printful", Some(653), Some(16359),
+         Some(r#"{"OS":16359,"ONE SIZE":16359,"S":16359,"M":16359,"L":16359,"XL":16359,"2XL":16359,"3XL":16359,"XS":16359}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         None, 10, 1),
         ("kokon-pop-socket", "ポップソケット (黒×金)", "MU × KOKON Pop Socket Grip",
          "スマホ背面用グリップ。黒ベースに金色 KOKON wordmark エンボス。お会計時の小物ギフトに。",
          2_800, "pre_order", None, None, None, None, None, 10, 1),
@@ -37561,19 +38410,34 @@ async fn main() {
         // ── v6 拡張 15 SKU (2026-05-16) — VIP ギフト / 店内アート / アクセサリー ──
         ("kokon-cotton-polo", "コットンポロ (基本黒)", "MU × KOKON Cotton Polo (Black)",
          "ベーシックコットンポロ。スタッフ制服 / カジュアル接客に。胸ポケット下に金色 KOKON wordmark 刺繍。",
-         5_800, "pre_order", None, None, None, None, None, 14, 1),
+         5_800, "printful", Some(340), Some(9899),
+         Some(r#"{"S":9898,"M":9899,"L":9900,"XL":9901,"2XL":9902,"3XL":15427,"4XL":15428,"5XL":15556,"OS":9899,"ONE SIZE":9899,"XS":9899}"#),
+         Some(r#"[{"type":"embroidery_chest_left","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         Some(r##"[{"id":"thread_colors","value":["#A67843"]}]"##), 14, 1),
         ("kokon-cap-flexfit", "フレックスフィットキャップ", "MU × KOKON FlexFit Cap",
          "S/M/L/XL の 4 段階フィット。スナップバックより仕立てが良い。前面に金糸 KOKON 刺繍。",
-         6_800, "pre_order", None, None, None, None, None, 10, 1),
+         6_800, "printful", Some(140), Some(5277),
+         Some(r#"{"OS":5277,"ONE SIZE":5277,"S":5277,"M":5277,"L":5277,"XL":5277,"2XL":5277,"3XL":5277,"XS":5277}"#),
+         Some(r#"[{"type":"embroidery_front_large","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         Some(r##"[{"id":"thread_colors","value":["#A67843"]}]"##), 10, 1),
         ("kokon-bandana-large", "バンダナ (大判 70×70cm)", "MU × KOKON Large Bandana",
          "70×70cm 大判。風呂敷代わり・差し入れの包装にも。黒地に金色 KOKON モノグラム全面プリント。",
-         4_800, "pre_order", None, None, None, None, None, 10, 1),
+         4_800, "printful", Some(630), Some(16032),
+         Some(r#"{"S":16031,"M":16032,"L":16033,"OS":16032,"ONE SIZE":16032,"XL":16032,"2XL":16032,"3XL":16032,"XS":16032}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 10, 1),
         ("kokon-blanket-throw-large", "スローブランケット (大判)", "MU × KOKON Large Throw Blanket",
          "180×230cm 大判フリース。VIP 個室の備え付け、自宅・別荘用。黒地に金色 KOKON wordmark センター大。",
-         12_800, "pre_order", None, None, None, None, None, 14, 1),
+         12_800, "printful", Some(395), Some(13222),
+         Some(r#"{"OS":13222,"ONE SIZE":13222,"S":13222,"M":13222,"L":13222,"XL":13222,"2XL":13222,"3XL":13222,"XS":13222}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 14, 1),
         ("kokon-art-print-large", "アートプリント (60×90cm)", "MU × KOKON Art Print (Large)",
          "60×90cm 高品質キャンバス + 木製額装。但馬牛シルエット + 炭火のグラデーション。店内 VIP 席のシンボル。",
-         18_800, "pre_order", None, None, None, None, None, 18, 1),
+         18_800, "printful", Some(2), Some(4398),
+         Some(r#"{"OS":4398,"ONE SIZE":4398,"S":4398,"M":4398,"L":4398,"XL":4398,"2XL":4398,"3XL":4398,"XS":4398}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         None, 18, 1),
         ("kokon-keychain-leather", "レザーキーホルダー", "MU × KOKON Leather Keychain",
          "本革 (ブラック) + 金属金具。金色 KOKON wordmark 箔押し。VIP 顧客への高級ギフトに。",
          3_800, "pre_order", None, None, None, None, None, 14, 1),
@@ -37582,7 +38446,10 @@ async fn main() {
          2_400, "pre_order", None, None, None, None, None, 14, 1),
         ("kokon-airpods-case", "AirPods ケース (黒×金)", "MU × KOKON AirPods Pro Case",
          "シリコン保護ケース、AirPods Pro 2 対応。黒地に金色 KOKON wordmark エンボス。常連ギフトに。",
-         3_200, "pre_order", None, None, None, None, None, 10, 1),
+         3_200, "printful", Some(605), Some(15533),
+         Some(r#"{"OS":15533,"ONE SIZE":15533,"S":15533,"M":15533,"L":15533,"XL":15533,"2XL":15533,"3XL":15533,"XS":15533}"#),
+         Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         None, 10, 1),
         ("kokon-watch-band", "Apple Watch バンド (黒)", "MU × KOKON Apple Watch Band",
          "シリコン製、全機種対応。マットブラックに小さく金色 KOKON wordmark。",
          4_800, "pre_order", None, None, None, None, None, 14, 1),
@@ -37594,13 +38461,22 @@ async fn main() {
          2_800, "pre_order", None, None, None, None, None, 10, 1),
         ("kokon-notebook-leather", "レザー風ノート (A5)", "MU × KOKON Leatherette Notebook (A5)",
          "A5、200 ページ。レザー風ハードカバー (黒) に金色 KOKON wordmark 箔押し。仕入帳・接客メモ用。",
-         5_800, "pre_order", None, None, None, None, None, 12, 1),
+         5_800, "printful", Some(682), Some(16952),
+         Some(r#"{"OS":16952,"ONE SIZE":16952,"S":16952,"M":16952,"L":16952,"XL":16952,"2XL":16952,"3XL":16952,"XS":16952}"#),
+         Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         None, 12, 1),
         ("kokon-candle-charcoal", "炭の香りキャンドル", "MU × KOKON Charcoal Scent Candle",
          "ソイワックス、香り: 備長炭 + ウィスキー + シダーウッド。お店の余韻を自宅で。黒ガラス + 金色 KOKON 刻印。",
-         5_800, "pre_order", None, None, None, None, None, 14, 1),
+         5_800, "printful", Some(645), Some(16270),
+         Some(r#"{"OS":16270,"ONE SIZE":16270,"S":16270,"M":16270,"L":16270,"XL":16270,"2XL":16270,"3XL":16270,"XS":16270}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         None, 14, 1),
         ("kokon-tapestry", "タペストリー (150×200cm)", "MU × KOKON Wall Tapestry",
          "150×200cm 大判。黒地に金色 KOKON wordmark + 但馬牛 + 炭火モチーフ。VIP 個室の主役。",
-         12_800, "pre_order", None, None, None, None, None, 14, 1),
+         12_800, "printful", Some(973), Some(24970),
+         Some(r#"{"OS":24970,"ONE SIZE":24970,"S":24970,"M":24970,"L":24970,"XL":24970,"2XL":24970,"3XL":24970,"XS":24970}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         None, 14, 1),
         ("kokon-tablet-sleeve", "タブレットスリーブ (11\")", "MU × KOKON Tablet Sleeve (11\")",
          "11\" タブレット用キャンバススリーブ。注文管理タブレット用。黒地に金色 KOKON wordmark。",
          4_800, "pre_order", None, None, None, None, None, 10, 1),
@@ -37608,13 +38484,22 @@ async fn main() {
         // ── v7 拡張 15 SKU (2026-05-16) — アウター / ドリンクウェア / インテリア / トラベル ──
         ("kokon-anorak", "黒アノラック", "MU × KOKON Anorak Jacket",
          "ハーフジップ・撥水素材。スタッフの店外動線・移動着。胸に金色 KOKON wordmark 刺繍。",
-         14_800, "pre_order", None, None, None, None, None, 14, 1),
+         14_800, "printful", Some(399), Some(11009),
+         Some(r#"{"S":11008,"M":11009,"L":11010,"XL":11011,"2XL":11012,"OS":11009,"ONE SIZE":11009,"3XL":11009,"XS":11009}"#),
+         Some(r#"[{"type":"embroidery_chest_left","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         Some(r##"[{"id":"thread_colors","value":["#A67843"]}]"##), 14, 1),
         ("kokon-coach-jacket", "コーチジャケット (黒)", "MU × KOKON Coach Jacket",
          "ナイロン製コーチジャケット。バックパネルに金色 KOKON wordmark 大プリント。VIP 顧客来店時のスタッフユニフォーム。",
-         11_800, "pre_order", None, None, None, None, None, 14, 1),
+         11_800, "printful", Some(399), Some(11009),
+         Some(r#"{"S":11008,"M":11009,"L":11010,"XL":11011,"2XL":11012,"OS":11009,"ONE SIZE":11009,"3XL":11009,"XS":11009}"#),
+         Some(r#"[{"type":"embroidery_chest_left","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         Some(r##"[{"id":"thread_colors","value":["#A67843"]}]"##), 14, 1),
         ("kokon-vest", "黒ベスト", "MU × KOKON Vest",
          "コットンキャンバスベスト。Black on Black、左胸に金色 KOKON wordmark。バーテンダー / ソムリエ用。",
-         9_800, "pre_order", None, None, None, None, None, 14, 1),
+         9_800, "printful", Some(858), Some(22430),
+         Some(r#"{"XS":22428,"S":22429,"M":22430,"L":22431,"XL":22432,"2XL":22433,"3XL":22434,"OS":22430,"ONE SIZE":22430}"#),
+         Some(r#"[{"type":"embroidery_chest_left","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         Some(r##"[{"id":"thread_colors","value":["#A67843"]}]"##), 14, 1),
         ("kokon-shotglass-set", "ショットグラス (2oz × 4個セット)", "MU × KOKON Shot Glass Set (4 pcs)",
          "2oz クリアガラス 4 個。金色 KOKON wordmark 焼き付け。ウィスキー・焼酎の少量出しに。VIP コース用。",
          5_800, "pre_order", None, None, None, None, None, 14, 1),
@@ -37623,16 +38508,25 @@ async fn main() {
          6_800, "pre_order", None, None, None, None, None, 14, 1),
         ("kokon-wine-glass-set", "ワイングラス (2個セット)", "MU × KOKON Wine Glass Set",
          "ステムレスタイプ ×2。金色 KOKON wordmark エッチング。VIP 個室・お酒メイン会員様用。",
-         7_800, "pre_order", None, None, None, None, None, 14, 1),
+         7_800, "printful", Some(691), Some(17353),
+         Some(r#"{"OS":17353,"ONE SIZE":17353,"S":17353,"M":17353,"L":17353,"XL":17353,"2XL":17353,"3XL":17353,"XS":17353}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         None, 14, 1),
         ("kokon-doormat", "ドアマット (店舗用)", "MU × KOKON Doormat",
          "60×40cm、エコシリコン裏地。店舗エントランス / 自宅玄関用。金色 KOKON wordmark + 但馬牛シルエット。",
          6_800, "pre_order", None, None, None, None, None, 12, 1),
         ("kokon-bath-mat", "バスマット", "MU × KOKON Bath Mat",
          "60×40cm、メモリーフォーム。VIP 顧客への高級ギフト・自宅用。金色 KOKON wordmark。",
-         5_800, "pre_order", None, None, None, None, None, 12, 1),
+         5_800, "printful", Some(884), Some(22789),
+         Some(r#"{"OS":22789,"ONE SIZE":22789,"S":22789,"M":22789,"L":22789,"XL":22789,"2XL":22789,"3XL":22789,"XS":22789}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         None, 12, 1),
         ("kokon-area-rug", "エリアラグ (店内用)", "MU × KOKON Area Rug",
          "120×170cm。VIP 個室の床・自宅リビング用。黒地に金色 KOKON wordmark + 炭火モチーフ。",
-         24_800, "pre_order", None, None, None, None, None, 21, 1),
+         24_800, "printful", Some(924), Some(23702),
+         Some(r#"{"OS":23702,"ONE SIZE":23702,"S":23702,"M":23702,"L":23702,"XL":23702,"2XL":23702,"3XL":23702,"XS":23702}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         None, 21, 1),
         ("kokon-eye-mask", "アイマスク (シルク)", "MU × KOKON Silk Eye Mask",
          "シルク 100%。一流ホテルの amenity 感覚。金色 KOKON wordmark 箔押し。VIP 顧客の女性ギフトに。",
          4_800, "pre_order", None, None, None, None, None, 12, 1),
@@ -37641,16 +38535,25 @@ async fn main() {
          5_800, "pre_order", None, None, None, None, None, 14, 1),
         ("kokon-planner", "プランナー / 手帳 (2027)", "MU × KOKON Annual Planner (2027)",
          "A5、365 日 + 月間カレンダー。レザー風ハードカバー、金色 KOKON wordmark 箔押し。店長 / オーナー用。",
-         6_800, "pre_order", None, None, None, None, None, 14, 1),
+         6_800, "printful", Some(946), Some(24305),
+         Some(r#"{"OS":24305,"ONE SIZE":24305,"S":24305,"M":24305,"L":24305,"XL":24305,"2XL":24305,"3XL":24305,"XS":24305}"#),
+         Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         None, 14, 1),
         ("kokon-passport-holder", "パスポートホルダー", "MU × KOKON Passport Holder",
          "本革風、カード ×4 + 紙幣ポケット。海外出張のオーナー / VIP 顧客用。金色 KOKON wordmark 箔押し。",
          5_800, "pre_order", None, None, None, None, None, 14, 1),
         ("kokon-pet-bandana", "ペット用バンダナ", "MU × KOKON Pet Bandana",
          "犬用バンダナ。黒地に金色 KOKON wordmark。VIP 顧客のペット用ギフト。",
-         2_800, "pre_order", None, None, None, None, None, 10, 1),
+         2_800, "printful", Some(902), Some(23141),
+         Some(r#"{"S":23142,"M":23141,"L":23140,"XL":23143,"OS":23141,"ONE SIZE":23141,"2XL":23141,"3XL":23141,"XS":23141}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         Some(r#"[{"id":"stitch_color","value":"black"}]"#), 10, 1),
         ("kokon-sticker-pack-deluxe", "ステッカーパック デラックス (10枚)", "MU × KOKON Deluxe Sticker Pack (10 pcs)",
          "ダイカット 10 種類セット。金色 KOKON wordmark + 但馬牛 + 炭火 + 各種パターン。常連へのお土産パック。",
-         3_800, "pre_order", None, None, None, None, None, 7, 1),
+         3_800, "printful", Some(957), Some(24964),
+         Some(r#"{"OS":24964,"ONE SIZE":24964,"S":24964,"M":24964,"L":24964,"XL":24964,"2XL":24964,"3XL":24964,"XS":24964}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         None, 7, 1),
     ];
     for (slug, cat, name, desc, price, route, pf_prod, pf_var, var_map, files, opts, lead, active) in kokon_items {
         conn.execute(
@@ -37707,6 +38610,72 @@ async fn main() {
              SET image_url = ?
              WHERE slug = ? AND (image_url IS NULL OR image_url = '')",
             params![absolute, slug],
+        ).ok();
+    }
+
+    // ── kokon Printful catalog images (v3+ extension SKUs) ──
+    // 49 SKU をカタログ画像で埋める。 37 は printful route 確定済、 12 は
+    // Printful catalog に直接 equivalent がない (bath-towel / doormat / enamel-pin /
+    // eye-mask / flask-hip / keychain-leather / passport-holder / pen-premium /
+    // pop-socket / shotglass-set / tablet-sleeve / tea-towel / watch-band) ので、
+    // 近傍の Printful product 画像を当てて表示だけ復活させる。
+    let kokon_printful_images: &[(&str, &str)] = &[
+        ("kokon-airpods-case", "https://files.cdn.printful.com/o/upload/product-catalog-img/ef/ef181b7a0c99f895af52b60c017d6d03_l"),
+        ("kokon-anorak", "https://files.cdn.printful.com/o/upload/product-catalog-img/ec/ec71abac9c9cc97a5532a108e45eb401_l"),
+        ("kokon-area-rug", "https://files.cdn.printful.com/o/upload/product-catalog-img/ff/ffb57c4bdb5235917d3ad7cae6594de5_l"),
+        ("kokon-art-print-large", "https://files.cdn.printful.com/o/products/2/product_1613463227.jpg"),
+        ("kokon-bandana", "https://files.cdn.printful.com/o/upload/product-catalog-img/89/89110ee2718a4b86e369141ca3d882c4_l"),
+        ("kokon-bandana-large", "https://files.cdn.printful.com/o/upload/product-catalog-img/89/89110ee2718a4b86e369141ca3d882c4_l"),
+        ("kokon-bath-mat", "https://files.cdn.printful.com/o/upload/product-catalog-img/48/482aba86e1c88a3282efaf031317d66e_l"),
+        ("kokon-bath-towel", "https://files.cdn.printful.com/o/products/259/product_1606198364.jpg"),
+        ("kokon-beach-towel", "https://files.cdn.printful.com/o/products/259/product_1606198364.jpg"),
+        ("kokon-blanket-throw-large", "https://files.cdn.printful.com/o/upload/product-catalog-img/7a/7a7486c4b4144d3f02d9484a231242e1_l"),
+        ("kokon-bottle-water", "https://files.cdn.printful.com/o/products/382/product_1614007264.jpg"),
+        ("kokon-bucket-hat", "https://files.cdn.printful.com/o/products/379/product_1584958536.jpg"),
+        ("kokon-candle-charcoal", "https://files.cdn.printful.com/o/upload/product-catalog-img/0a/0a996b0eb6387b9d936fbf6170d67f8c_l"),
+        ("kokon-cap-flexfit", "https://files.cdn.printful.com/o/products/140/product_1586182449.jpg"),
+        ("kokon-coach-jacket", "https://files.cdn.printful.com/o/upload/product-catalog-img/ec/ec71abac9c9cc97a5532a108e45eb401_l"),
+        ("kokon-coaster-cork", "https://files.cdn.printful.com/o/upload/product-catalog-img/d4/d41d6e69b8c865b6a4546ce030775f2f_l"),
+        ("kokon-cotton-polo", "https://files.cdn.printful.com/o/upload/product-catalog-img/23/23d7331453bc52729e632d586a377cba_l"),
+        ("kokon-doormat", "https://files.cdn.printful.com/o/upload/product-catalog-img/ff/ffb57c4bdb5235917d3ad7cae6594de5_l"),
+        ("kokon-enamel-pin", "https://files.cdn.printful.com/o/products/358/product_1553084472.jpg"),
+        ("kokon-eye-mask", "https://files.cdn.printful.com/o/upload/product-catalog-img/7a/7a7486c4b4144d3f02d9484a231242e1_l"),
+        ("kokon-flask-hip", "https://files.cdn.printful.com/o/products/382/product_1614007264.jpg"),
+        ("kokon-fleece-blanket", "https://files.cdn.printful.com/o/upload/product-catalog-img/c7/c7715f40a705ff6bec5d912333da5180_l"),
+        ("kokon-joggers", "https://files.cdn.printful.com/o/upload/product-catalog-img/78/78d3733ecee5366cecf127f555d446d2_l"),
+        ("kokon-keychain-leather", "https://files.cdn.printful.com/o/products/358/product_1553084472.jpg"),
+        ("kokon-leggings", "https://files.cdn.printful.com/o/upload/product-catalog-img/d9/d9df6470d54437c30c4e561cd735abfe_l"),
+        ("kokon-magnet", "https://files.cdn.printful.com/o/upload/product-catalog-img/ed/ed0afbd732b23caca7feaf526cb189ee_l"),
+        ("kokon-mouse-pad", "https://files.cdn.printful.com/o/upload/product-catalog-img/83/83dfc4934273f68021ef5d0324168e39_l"),
+        ("kokon-notebook-leather", "https://files.cdn.printful.com/o/upload/product-catalog-img/95/95cd4a3b32550902b33655279d454489_l"),
+        ("kokon-passport-holder", "https://files.cdn.printful.com/o/upload/product-catalog-img/95/95cd4a3b32550902b33655279d454489_l"),
+        ("kokon-pen-premium", "https://files.cdn.printful.com/o/upload/product-catalog-img/95/95cd4a3b32550902b33655279d454489_l"),
+        ("kokon-pet-bandana", "https://files.cdn.printful.com/o/upload/product-catalog-img/9c/9c74adba0beaa01bf15330ab4bf4c86b_l"),
+        ("kokon-planner", "https://files.cdn.printful.com/o/upload/product-catalog-img/da/da814bd953e12363d5b957473d9b5998_l"),
+        ("kokon-pop-socket", "https://files.cdn.printful.com/o/upload/product-catalog-img/ef/ef181b7a0c99f895af52b60c017d6d03_l"),
+        ("kokon-shaker-bottle", "https://files.cdn.printful.com/o/upload/product-catalog-img/62/6225a66e6c7a4f34734e3ddb668e4a49_l"),
+        ("kokon-sherpa-blanket", "https://files.cdn.printful.com/o/upload/product-catalog-img/e2/e289ece99c6c7971336034b3597d6509_l"),
+        ("kokon-shotglass-set", "https://files.cdn.printful.com/o/upload/product-catalog-img/06/065551c12680307a55f80f781666ec68_l"),
+        ("kokon-sticker-die-cut", "https://files.cdn.printful.com/o/products/358/product_1553084472.jpg"),
+        ("kokon-sticker-pack-deluxe", "https://files.cdn.printful.com/o/upload/product-catalog-img/6a/6ac009e08af2f2e0a0d16cc0230e4817_l"),
+        ("kokon-sweatpants", "https://files.cdn.printful.com/o/upload/product-catalog-img/ee/eef7b9dfab618e09e003e116e563611b_l"),
+        ("kokon-tapestry", "https://files.cdn.printful.com/o/upload/product-catalog-img/4f/4f9e96f6b0dab46d94fa5472563eae3a_l"),
+        ("kokon-tea-towel", "https://files.cdn.printful.com/o/upload/product-catalog-img/8d/8de2e4f34ac87cfcb72dcea526c572fe_l"),
+        ("kokon-throw-pillow", "https://files.cdn.printful.com/o/products/83/product_1573737219.jpg"),
+        ("kokon-tumbler-20oz", "https://files.cdn.printful.com/o/upload/product-catalog-img/cf/cf742bc2278471fa6e9a74aeb76192d9_l"),
+        ("kokon-vest", "https://files.cdn.printful.com/o/upload/product-catalog-img/2d/2d4c5ebaf59b27add9782ba710b3b287_l"),
+        ("kokon-wall-print", "https://files.cdn.printful.com/o/upload/product-catalog-img/6e/6ed851bb13949c3f4af7c7a266cc50d1_l"),
+        ("kokon-watch-band", "https://files.cdn.printful.com/o/upload/product-catalog-img/e2/e27e7c277d9e21d1c66bca5be286bada_l"),
+        ("kokon-wine-glass-set", "https://files.cdn.printful.com/o/upload/product-catalog-img/06/065551c12680307a55f80f781666ec68_l"),
+        ("kokon-yoga-mat", "https://files.cdn.printful.com/o/upload/product-catalog-img/7f/7f5b93c735bf44dc657fd20da58dba97_l"),
+        ("kokon-zip-hoodie", "https://files.cdn.printful.com/o/upload/product-catalog-img/f0/f0f4a79ce7e3067e166ea941f24cdce5_l"),
+    ];
+    for (slug, url) in kokon_printful_images {
+        conn.execute(
+            "UPDATE collab_products
+             SET image_url = ?
+             WHERE slug = ? AND (image_url IS NULL OR image_url = '')",
+            params![url, slug],
         ).ok();
     }
 
@@ -39550,6 +40519,16 @@ async fn main() {
         }
     });
 
+    // Proposal extras worker — drains proposal_extras_jobs every 30s. Each
+    // pending row → N Gemini calls → R2 upload → proposal_extras_skus +
+    // proposal_skus insert. Survives image-level failures (refunds the
+    // unused points if any image fails so the partner isn't charged for
+    // a blank slot).
+    let db_extras = db.clone();
+    tokio::spawn(async move {
+        proposal_extras_worker(db_extras).await;
+    });
+
     let app = Router::new()
         .route("/", get(index))
         .route("/success", get(success_page))
@@ -39719,6 +40698,12 @@ async fn main() {
         .route("/api/proposal/:slug/feedback", post(proposal_generic_feedback).get(proposal_generic_feedback_list))
         .route("/api/proposal/:slug/approve",  post(proposal_generic_approve))
         .route("/api/proposal/:slug/revoke",   post(proposal_generic_revoke))
+        // Proposal extras (shared 30/50/100 SKU generator widget).
+        .route("/api/proposal/extras/balance",       post(extras_balance))
+        .route("/api/proposal/extras/claim-mugen",   post(extras_claim_mugen))
+        .route("/api/proposal/extras/job/:job_id",   get(extras_job_status))
+        .route("/api/proposal/:slug/extras/quote",   post(extras_quote))
+        .route("/api/proposal/:slug/extras/order",   post(extras_order))
         .route("/admin/proposal",              post(proposal_generic_create))
         .route("/admin/proposals",             get(proposal_generic_list))
         .nest_service("/proposals", ServeDir::new("static/proposals"))

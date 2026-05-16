@@ -341,6 +341,7 @@ ul li strong{{color:var(--fg);font-weight:500}}
 </div>
 </div>
 <div class="watermark">CONFIDENTIAL · DRAFT · pitch deck</div>
+<script src="/proposals/extras.js" defer></script>
 <script>
 document.querySelectorAll('.size-row').forEach(row => {{
   const tokens = (row.textContent || '').trim().split(/\\s+/).filter(Boolean);
