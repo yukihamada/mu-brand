@@ -31698,27 +31698,38 @@ async fn region_landing(
     let img = entry.or(standard).map(|r| r.5.clone())
         .unwrap_or_else(|| format!("https://lifestyle.wearmu.com/regional/{}.png", slug));
 
-    fn tier_card(slug: &str, label: &str, kicker: &str, r: Option<&(i64,i64,i64,i64,i64,String)>) -> String {
+    // Tier cards. Standard is the recommended default (larger card + badge),
+    // Entry is the "save ¥1,900" downgrade. Hick's law: lead with 1 obvious
+    // choice, second option appears as a price-down toggle.
+    fn tier_card(slug: &str, label: &str, kicker: &str, primary: bool,
+                 r: Option<&(i64,i64,i64,i64,i64,String)>) -> String {
         match r {
-            Some((id, drop, price, inv, sold, _)) => {
+            Some((_id, drop, price, inv, sold, _)) => {
                 let rem = (*inv - *sold).max(0);
+                let urgency = if rem <= 5 && rem > 0 {
+                    format!(r##"<div class="tier-urgent">🔥 残り {rem} 着 · 完売間近</div>"##, rem = rem)
+                } else { String::new() };
+                let class_attr = if primary { "tier tier-primary" } else { "tier" };
+                let cta_text = if primary { "今すぐ買う →" } else { "Entry で買う →" };
                 format!(
-                    r##"<a href="/products/regional_{slug}/{drop}" class="tier">
+                    r##"<a href="/products/regional_{slug}/{drop}" class="{cls}">
                       <div class="tier-kicker">{kicker}</div>
                       <div class="tier-price">¥{p}</div>
-                      <div class="tier-meta">{label} · のこり {rem}/{inv} · 1 of {inv}</div>
-                      <div class="tier-cta">これを買う →</div>
+                      <div class="tier-meta">{label} · 1 of {inv} (残り {rem})</div>
+                      {urgency}
+                      <div class="tier-cta">{cta}</div>
                     </a>"##,
-                    slug = slug, drop = drop, kicker = kicker, label = label,
+                    cls = class_attr, slug = slug, drop = drop, kicker = kicker, label = label,
                     p = format_jpy(*price), rem = rem, inv = inv,
+                    urgency = urgency, cta = cta_text,
                 )
             }
             None => String::new(),
         }
     }
 
-    let entry_html = tier_card(slug, "entry tier", "Entry · 普及版", entry);
-    let std_html   = tier_card(slug, "standard tier", "Standard · 推奨", standard);
+    let std_html   = tier_card(slug, "standard · Bella+Canvas Soft Cream", "推奨 · Standard", true,  standard);
+    let entry_html = tier_card(slug, "entry · Bella+Canvas Soft Cream",    "Entry (¥1,900 OFF)", false, entry);
 
     // Catalog grid: every other drop (excluding the 2 featured tiers above).
     // Newest first by drop_num desc. Limited to 200 to keep page snappy.
@@ -31794,13 +31805,18 @@ h1{{font-size:clamp(28px,4.6vw,42px);font-weight:300;line-height:1.32;letter-spa
 h1 em{{color:var(--y);font-style:normal}}
 .lede{{color:var(--mute);font-size:15px;line-height:1.95;margin-bottom:22px}}
 .coords{{font-family:'SF Mono','Menlo',monospace;font-size:12px;color:var(--mute);margin-bottom:24px}}
-.tiers{{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:18px;font-family:'Helvetica Neue',Arial,sans-serif}}
-.tier{{display:block;background:var(--card);border:1px solid var(--line);padding:24px 22px;border-radius:4px;text-decoration:none;color:var(--fg);transition:border-color .15s,transform .15s}}
+.tiers{{display:flex;flex-direction:column;gap:10px;margin-top:18px;font-family:'Helvetica Neue',Arial,sans-serif}}
+.tier{{display:block;background:var(--card);border:1px solid var(--line);padding:20px 22px;border-radius:4px;text-decoration:none;color:var(--fg);transition:border-color .15s,transform .15s,box-shadow .15s}}
 .tier:hover{{border-color:var(--y);transform:translateY(-1px)}}
+.tier-primary{{padding:26px 24px;background:linear-gradient(180deg,rgba(230,196,73,0.08),rgba(230,196,73,0.02));border-color:rgba(230,196,73,0.45);box-shadow:0 6px 22px rgba(230,196,73,0.08)}}
+.tier-primary:hover{{border-color:var(--y);box-shadow:0 8px 28px rgba(230,196,73,0.15)}}
 .tier-kicker{{font-size:10px;letter-spacing:0.32em;text-transform:uppercase;color:var(--y);margin-bottom:8px}}
-.tier-price{{font-size:30px;font-weight:300;color:var(--fg);font-variant-numeric:tabular-nums;letter-spacing:0.01em;margin-bottom:6px}}
-.tier-meta{{font-size:11.5px;color:var(--mute);margin-bottom:18px}}
-.tier-cta{{font-size:11px;letter-spacing:0.28em;text-transform:uppercase;font-weight:700;color:var(--y)}}
+.tier-price{{font-size:26px;font-weight:300;color:var(--fg);font-variant-numeric:tabular-nums;letter-spacing:0.01em;margin-bottom:6px}}
+.tier-primary .tier-price{{font-size:34px}}
+.tier-meta{{font-size:11.5px;color:var(--mute);margin-bottom:14px}}
+.tier-urgent{{font-size:11px;color:#ff8a8a;letter-spacing:0.04em;margin-bottom:14px;font-weight:600}}
+.tier-cta{{display:inline-block;background:transparent;color:var(--y);font-size:11px;letter-spacing:0.28em;text-transform:uppercase;font-weight:700;padding-top:4px}}
+.tier-primary .tier-cta{{background:var(--y);color:#000;padding:11px 18px;border-radius:2px;display:block;text-align:center;letter-spacing:0.24em}}
 section{{padding:56px 0;border-bottom:1px solid var(--line)}}
 section:last-of-type{{border-bottom:0;padding-bottom:96px}}
 .sec-eyebrow{{font-family:'Helvetica Neue',Arial,sans-serif;font-size:10px;letter-spacing:0.45em;text-transform:uppercase;color:var(--y);margin-bottom:14px}}
@@ -31846,8 +31862,8 @@ footer a:hover{{color:var(--y)}}
       <p class="lede">AI が描く {jp} 限定 Tシャツ。 minimalist line art の 1 of 47、 同じデザインは二度と作られません。 注文後に Printful EU で 1 枚プリント、 2-3 週間で発送。 利益の <strong style="color:#F5F5F0">50% を弟子屈町に寄付</strong> (§27)。</p>
       <div class="coords">{coords}</div>
       <div class="tiers">
-        {entry_html}
         {std_html}
+        {entry_html}
       </div>
     </div>
   </div>
