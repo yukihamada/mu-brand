@@ -9692,8 +9692,121 @@ async fn handle_you_purchase_webhook(db: Db, design_id: i64, session: serde_json
         row.unwrap_or((String::new(), 0, String::new()))
     };
 
-    // Notify ops (yuki) so the order can be hand-fulfilled via Printful UI
-    // until the design-bytes-to-Printful-files automation lands.
+    // ── Phase 1: Auto Printful order ─────────────────────────────────
+    // Bella+Canvas 3001 Soft Cream (Printful pid 71) — closest match to the
+    // "cream / off-white heavyweight cotton" in the Gemini mockup prompt so
+    // what arrives matches what the buyer saw. Size lookup table built from
+    // a one-shot Printful API call (see /tmp/kokon_fetch_variants.py).
+    let variant_id: Option<i64> = match size.to_uppercase().as_str() {
+        "XS"  => Some(9554),
+        "S"   => Some(4151),
+        "M"   => Some(4152),
+        "L"   => Some(4153),
+        "XL"  => Some(4154),
+        "2XL" | "XXL"  => Some(4155),
+        "3XL" | "XXXL" => Some(5305),
+        "4XL" | "XXXXL" => Some(5320),
+        _     => Some(4152),  // default M
+    };
+    let printful_key = env::var("PRINTFUL_API_KEY").unwrap_or_default();
+    let printful_succeeded;
+    let printful_order_id: String;
+    let printful_error: String;
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    let print_file_url = format!("{}/api/you/design/{}/print.png",
+        base_url.trim_end_matches('/'), design_id);
+
+    let recipient = session["shipping_details"].clone();
+    let recipient_addr = if recipient.is_object() { recipient }
+        else { session["customer_details"]["address"].clone() };
+    let ship_name = recipient_addr["name"].as_str()
+        .or_else(|| session["customer_details"]["name"].as_str())
+        .unwrap_or("").to_string();
+    let addr = recipient_addr["address"].clone();
+    let address1 = addr["line1"].as_str().unwrap_or("").to_string();
+    let address2 = addr["line2"].as_str().unwrap_or("").to_string();
+    let city     = addr["city"].as_str().unwrap_or("").to_string();
+    let state    = addr["state"].as_str().unwrap_or("").to_string();
+    let country  = addr["country"].as_str().unwrap_or("JP").to_string();
+    let zip      = addr["postal_code"].as_str().unwrap_or("").to_string();
+
+    let have_shipping = !address1.is_empty() && !city.is_empty() && !zip.is_empty();
+    if !printful_key.is_empty() && variant_id.is_some() && have_shipping {
+        let order_body = serde_json::json!({
+            "external_id": format!("you-{}-{}", design_id, &session_id[..session_id.len().min(24)]),
+            "recipient": {
+                "name":         ship_name,
+                "email":        buyer_email,
+                "address1":     address1,
+                "address2":     address2,
+                "city":         city,
+                "state_code":   state,
+                "country_code": country,
+                "zip":          zip,
+            },
+            "items": [{
+                "variant_id": variant_id.unwrap(),
+                "quantity": 1,
+                "files": [{
+                    "url":       print_file_url,
+                    "placement": "front",
+                    // Printful auto-positions on the chest at 12"×16" max
+                }],
+            }],
+            "confirm": true,
+        });
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(40))
+            .build().unwrap_or_default();
+        let resp = client.post("https://api.printful.com/orders")
+            .bearer_auth(&printful_key)
+            .json(&order_body)
+            .send().await;
+        match resp {
+            Ok(r) if r.status().is_success() => {
+                let body: serde_json::Value = r.json().await.unwrap_or_default();
+                printful_order_id = body["result"]["id"].as_i64()
+                    .map(|n| n.to_string())
+                    .unwrap_or_default();
+                printful_succeeded = true;
+                printful_error = String::new();
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "UPDATE you_designs
+                     SET printful_order_id=?, printful_ordered_at=?, updated_at=?
+                     WHERE id=?",
+                    params![printful_order_id, chrono_now(), chrono_now(), design_id],
+                );
+                eprintln!("[you/printful] design {} auto-ordered → pf_id={}", design_id, printful_order_id);
+            }
+            Ok(r) => {
+                printful_succeeded = false;
+                printful_order_id = String::new();
+                let status = r.status();
+                let txt = r.text().await.unwrap_or_default();
+                printful_error = format!("HTTP {}: {}", status, &txt[..txt.len().min(300)]);
+                eprintln!("[you/printful] design {} order failed: {}", design_id, printful_error);
+            }
+            Err(e) => {
+                printful_succeeded = false;
+                printful_order_id = String::new();
+                printful_error = format!("{}", e);
+                eprintln!("[you/printful] design {} order error: {}", design_id, printful_error);
+            }
+        }
+    } else {
+        printful_succeeded = false;
+        printful_order_id = String::new();
+        printful_error = format!(
+            "skipped (key={} variant={} shipping={})",
+            if printful_key.is_empty() { "missing" } else { "ok" },
+            variant_id.is_some(),
+            have_shipping,
+        );
+    }
+
+    // Notify ops (yuki). Auto-order success → confirmation. Failure → fall
+    // back to the legacy manual-fulfillment email with download links.
     let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
     if !resend_key.is_empty() {
         let buyer = buyer_email.clone();
@@ -9703,10 +9816,32 @@ async fn handle_you_purchase_webhook(db: Db, design_id: i64, session: serde_json
         let serial2 = serial.clone();
         let size2 = size.clone();
         let resend_key_ops = resend_key.clone();
+        let pf_ok = printful_succeeded;
+        let pf_id = printful_order_id.clone();
+        let pf_err = printful_error.clone();
         tokio::spawn(async move {
+            let status_block = if pf_ok {
+                format!(
+                    r#"<div style="background:rgba(79,168,104,0.15);border-left:3px solid #4FA868;padding:14px 18px;margin-bottom:18px">
+                    <b style="color:#9ae3a8">✅ Printful order placed automatically</b><br>
+                    pf_id = <code>{pf_id}</code> · print file pulled from <a href="https://wearmu.com/api/you/design/{design_id}/print.png" style="color:#e6c449">print.png</a>
+                    </div>"#
+                )
+            } else {
+                format!(
+                    r#"<div style="background:rgba(200,54,44,0.15);border-left:3px solid #C8362C;padding:14px 18px;margin-bottom:18px">
+                    <b style="color:#f0a4a0">⚠ Printful auto-order FAILED</b> — manual fulfillment required<br>
+                    <code>{pf_err}</code><br>
+                    Action: download both <a href="https://wearmu.com/api/you/design/{design_id}/image.png" style="color:#e6c449">image.png (mockup)</a> and
+                    <a href="https://wearmu.com/api/you/design/{design_id}/print.png" style="color:#e6c449">print.png</a>,
+                    upload print.png to Printful, Bella+Canvas 3001 Soft Cream, place manually.
+                    </div>"#
+                )
+            };
             let html = format!(
                 r#"<div style="font-family:monospace;font-size:13px;line-height:1.7;background:#0A0A0A;color:#F5F5F0;padding:32px">
-<h2 style="color:#e6c449">/you purchase — needs fulfillment</h2>
+<h2 style="color:#e6c449">/you purchase #{design_id}</h2>
+{status_block}
 <table>
 <tr><td>design id</td><td>{design_id}</td></tr>
 <tr><td>serial</td><td>{serial}</td></tr>
@@ -9718,22 +9853,22 @@ async fn handle_you_purchase_webhook(db: Db, design_id: i64, session: serde_json
 <tr><td>owner</td><td>@{owner} ({owner_email})</td></tr>
 <tr><td>public buy</td><td>{public}</td></tr>
 <tr><td>session</td><td>{session_id}</td></tr>
-<tr><td>image</td><td><a href="https://wearmu.com/api/you/design/{design_id}/image.png" style="color:#e6c449">design PNG</a></td></tr>
 </table>
-<p>Action: download the image, upload to Printful, place order with the buyer's shipping address (in Stripe dashboard).</p>
 </div>"#,
-                design_id = design_id, serial = serial2, name = name,
+                design_id = design_id, status_block = status_block,
+                serial = serial2, name = name,
                 day_num = day_num, size = size2, amount = amount,
                 buyer = buyer, owner = owner_slug2, owner_email = owner_email2,
                 public = public_buy, session_id = session_id,
             );
+            let subj_prefix = if pf_ok { "[auto-fulfilled]" } else { "[FULFILL NEEDED]" };
             let _ = reqwest::Client::new()
                 .post("https://api.resend.com/emails")
                 .bearer_auth(&resend_key_ops)
                 .json(&serde_json::json!({
                     "from": "━◯━ MU ops <noreply@wearmu.com>",
                     "to": ["mail@yukihamada.jp"],
-                    "subject": format!("[fulfill] /you {} — ¥{} from {}", serial2, amount, buyer),
+                    "subject": format!("{} /you {} — ¥{} from {}", subj_prefix, serial2, amount, buyer),
                     "html": html,
                 }))
                 .send().await;
@@ -16554,9 +16689,6 @@ async fn proposal_generic_skus(
 struct ExtrasEmailBody { #[serde(default)] email: String }
 
 #[derive(Deserialize)]
-struct ExtrasQuoteBody { #[serde(default)] email: String, qty: i64 }
-
-#[derive(Deserialize)]
 struct ExtrasOrderBody {
     #[serde(default)] email: String,
     qty: i64,
@@ -16607,34 +16739,6 @@ async fn extras_balance(
         "free_30_eligible": !free_used,
         "points_per_sku": EXTRAS_POINTS_PER_SKU,
         "points_per_mugen": EXTRAS_POINTS_PER_MUGEN,
-    })).into_response()
-}
-
-async fn extras_quote(
-    State(db): State<Db>,
-    axum::extract::Path(slug): axum::extract::Path<String>,
-    Json(body): Json<ExtrasQuoteBody>,
-) -> Response {
-    if !extras_qty_is_valid(body.qty) {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok": false, "error": "qty must be 30, 50, or 100"}))).into_response();
-    }
-    let email = match validate_email(&body.email) {
-        Ok(e) => e,
-        Err(m) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok": false, "error": m}))).into_response(),
-    };
-    let conn = db.lock().unwrap();
-    let (balance, _) = points_balance(&conn, &email);
-    let (cost, free_applied) = extras_compute_cost(&conn, &email, body.qty);
-    Json(serde_json::json!({
-        "ok": true,
-        "slug": slug,
-        "email": email,
-        "qty": body.qty,
-        "cost_points": cost,
-        "free_applied": free_applied,
-        "balance": balance,
-        "sufficient": balance >= cost,
-        "shortfall": (cost - balance).max(0),
     })).into_response()
 }
 
