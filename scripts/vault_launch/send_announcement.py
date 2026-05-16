@@ -5,15 +5,17 @@ CRITICAL safety per memory feedback_email_blast_radius.md:
   - Always confirm dry_run results before sending production
   - Default behavior is --dry-run; --send required to actually mail
 
-Usage:
-  # 1. Preview the recipient list + sample render
-  python3 scripts/vault_launch/send_announcement.py
+The recipient list comes from local store/products.db (DEV mirror — likely 0
+matches for fresh checkouts). For the real 170-customer blast, run this ON
+the prod machine where /data/products.db has the live mu_purchases rows:
 
-  # 2. Send to a single test address
+  # Production blast (on Fly):
+  flyctl ssh console -a mu-store
+  cd /app && DB_PATH=/data/products.db RESEND_API_KEY=$RESEND_API_KEY \\
+    python3 scripts/vault_launch/send_announcement.py --send --confirm
+
+  # Or test locally first with a single address:
   python3 scripts/vault_launch/send_announcement.py --send --only mail@yukihamada.jp
-
-  # 3. Production blast (170 customers, ~¥0 cost on Resend free tier)
-  python3 scripts/vault_launch/send_announcement.py --send --confirm
 """
 import argparse, os, sys, time
 from pathlib import Path
@@ -34,9 +36,8 @@ SUBJ = (ROOT / "scripts" / "vault_launch" / "email_subject.txt").read_text().str
 TXT  = (ROOT / "scripts" / "vault_launch" / "email_body.txt").read_text()
 HTML = (ROOT / "scripts" / "vault_launch" / "email_body.html").read_text()
 
-# Use local DB to enumerate recipients (matches prod since mu_purchases is the
-# canonical buyer list — synced from Stripe via webhook).
-DB = ROOT / "store" / "products.db"
+# Use $DB_PATH if set (e.g. /data/products.db on Fly) else local dev DB.
+DB = Path(os.environ.get("DB_PATH") or (ROOT / "store" / "products.db"))
 
 RESEND_KEY = os.environ.get("RESEND_API_KEY")
 FROM = "MU <info@wearmu.com>"
