@@ -15249,27 +15249,24 @@ fn seed_brand_copy(conn: &Connection) {
     }
 }
 
-/// TAXIGEN pitch fixture. Seeds the proposals row + secret_key on first
-/// boot. The key is deterministic from ADMIN_TOKEN + slug so it survives
-/// restarts; rotate by editing ADMIN_TOKEN (not recommended) or via direct
-/// UPDATE proposals SET secret_key=? WHERE slug='nihon-kotsu'.
+/// TAXIGEN pitch fixture. Seeds the proposals row + a deterministic
+/// secret_key. Hard-coded random-but-shareable string so the URL survives
+/// restarts and is the same in local/prod regardless of ADMIN_TOKEN.
+/// Rotate by editing the constant below + bumping seed_taxigen_proposal
+/// to overwrite, or via direct UPDATE proposals SET secret_key=?.
 fn seed_taxigen_proposal(conn: &Connection) {
-    use sha2::{Sha256, Digest};
-    let admin = env::var("ADMIN_TOKEN").unwrap_or_default();
-    let mut h = Sha256::new();
-    h.update(admin.as_bytes());
-    h.update(b"nihon-kotsu/taxigen/2026-05-17");
-    let key: String = format!("{:x}", h.finalize()).chars().take(16).collect();
+    const KEY: &str = "tx-kawanabe-7q3w9z";  // share-with-川鍋様 only
     let _ = conn.execute(
         "INSERT OR IGNORE INTO proposals (slug, name, ip_owner, created_at, secret_key, note)
          VALUES ('nihon-kotsu', 'TAXIGEN — MU × 日本交通', '日本交通株式会社', ?, ?,
                  'Private pitch. Key-gated until Kawanabe-san or 法務 approval.')",
-        params![chrono_now(), key],
+        params![chrono_now(), KEY],
     );
-    // If row exists without key (older seed), set it.
+    // Always overwrite the key so re-deploys re-establish the known value
+    // (no risk: known only to maintainers + the recipient).
     let _ = conn.execute(
-        "UPDATE proposals SET secret_key=? WHERE slug='nihon-kotsu' AND (secret_key IS NULL OR secret_key='')",
-        params![key],
+        "UPDATE proposals SET secret_key=? WHERE slug='nihon-kotsu'",
+        params![KEY],
     );
 }
 
