@@ -65,6 +65,15 @@ footer{padding:48px 32px;border-top:1px solid var(--border);text-align:center;fo
     &nbsp;·&nbsp;
     <a href="/.well-known/mu/releases" style="color:var(--y);text-decoration:underline">/.well-known/mu/releases (conformance ep)</a>
   </div>
+  <div style="background:rgba(230,196,73,0.06);border:1px solid rgba(230,196,73,0.25);border-radius:8px;padding:0.9rem 1.1rem;margin:0 0 1.5rem;font-size:0.85rem;line-height:1.6">
+    <strong>🔓 30pt paywall ウィジェット</strong> — 任意のコンテンツを「もっと見るには30pt」化できます。初回30ptは無料 (メアド単位)。
+<pre style="margin:0.5rem 0 0;background:rgba(0,0,0,0.45);padding:0.7rem 0.9rem;font-size:0.78rem;overflow-x:auto"><code>&lt;script src="/pt_gate.js" defer&gt;&lt;/script&gt;
+
+&lt;div data-pt-gate data-pt-target="my-page:section-1" data-pt-cost="30"
+     data-pt-label="続きを見る"&gt;
+  &lt;div data-pt-content&gt;…locked content…&lt;/div&gt;
+&lt;/div&gt;</code></pre>
+  </div>
 
   <h2>1. 最速で埋め込む — JS ウィジェット</h2>
   <p>HTML に以下を貼るだけ:</p>

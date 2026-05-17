@@ -3112,6 +3112,20 @@ async fn embed_js() -> impl IntoResponse {
     )
 }
 
+/// GET /pt_gate.js — universal "もっと見るには30pt" paywall widget.
+/// Drop-in: include `<script src="/pt_gate.js" defer></script>` and tag any
+/// section with `<div data-pt-gate data-pt-target="X" data-pt-cost="30">…</div>`.
+async fn pt_gate_js() -> impl IntoResponse {
+    let body = include_str!("../static/pt_gate.js");
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "application/javascript; charset=utf-8"),
+            (axum::http::header::CACHE_CONTROL, "public, max-age=300"),
+        ],
+        body,
+    )
+}
+
 /// GET /embed/products?brand=mugen&count=6&theme=dark
 /// Iframe-friendly mini page. For sites that prefer <iframe> over JS widget.
 async fn embed_iframe_page(
@@ -22084,6 +22098,141 @@ struct ExtrasFeedbackBody {
     #[serde(default)] slug: String,
     #[serde(default)] email: String,
     #[serde(default)] text: String,
+}
+
+// ── Universal pt gate (もっと見るには30pt) ─────────────────────────────
+// Reusable paywall for any page/section. Cost defaults to EXTRAS_POINTS_PER_SKU (30pt).
+// First-time visitors get the free 30pt grant automatically (free_30_used flag).
+// Once unlocked, the (email, target) row in proposal_points_unlocks persists forever.
+
+#[derive(Deserialize)]
+struct PointsUnlockBody {
+    email: String,
+    /// Stable gate id, e.g. "kokon:section-2", "jiuflow:deep-dive". Letters/digits/:-_ only.
+    target: String,
+    /// Cost in pt. Defaults to 30 if 0 or missing.
+    #[serde(default)] cost: i64,
+}
+
+fn sanitize_pt_target(t: &str) -> String {
+    t.chars().filter(|c| c.is_ascii_alphanumeric() || matches!(*c, '-'|'_'|':'|'.')).take(80).collect()
+}
+
+/// GET /api/points/balance?email=X
+async fn points_balance_api(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let email = match q.get("email").and_then(|e| validate_email(e).ok()) {
+        Some(e) => e,
+        None => return Json(serde_json::json!({"ok": false, "error": "email required"})).into_response(),
+    };
+    let conn = db.lock().unwrap();
+    let (balance, free_used) = points_balance(&conn, &email);
+    let free_remaining = if free_used { 0 } else { EXTRAS_FREE_SKUS };
+    Json(serde_json::json!({
+        "ok": true, "email": email, "balance": balance,
+        "free_used": free_used, "free_remaining": free_remaining,
+        "pt_per_unlock": EXTRAS_POINTS_PER_SKU,
+    })).into_response()
+}
+
+/// GET /api/points/unlocked?email=X[&target=Y] — list (or single check) of unlocks.
+async fn points_unlocked_api(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let email = match q.get("email").and_then(|e| validate_email(e).ok()) {
+        Some(e) => e,
+        None => return Json(serde_json::json!({"ok": false, "error": "email required"})).into_response(),
+    };
+    let target = q.get("target").map(|s| sanitize_pt_target(s));
+    let conn = db.lock().unwrap();
+    if let Some(t) = target.as_deref() {
+        let ok: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proposal_points_unlocks WHERE email=? AND target=?",
+            params![normalize_email(&email), t], |r| r.get(0),
+        ).unwrap_or(0);
+        return Json(serde_json::json!({"ok": true, "unlocked": ok > 0, "target": t})).into_response();
+    }
+    let mut stmt = match conn.prepare(
+        "SELECT target, cost, free_used, created_at FROM proposal_points_unlocks WHERE email=? ORDER BY created_at DESC LIMIT 200"
+    ) { Ok(s) => s, Err(_) => return Json(serde_json::json!({"ok": true, "unlocks": []})).into_response() };
+    let rows: Vec<serde_json::Value> = stmt.query_map(params![normalize_email(&email)], |r| {
+        Ok(serde_json::json!({
+            "target": r.get::<_, String>(0)?, "cost": r.get::<_, i64>(1)?,
+            "free_used": r.get::<_, i64>(2)? != 0, "at": r.get::<_, String>(3)?,
+        }))
+    }).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+    Json(serde_json::json!({"ok": true, "unlocks": rows})).into_response()
+}
+
+/// POST /api/points/unlock — spend points (or free 30) to unlock target content.
+/// Returns {ok:true, balance, free_used} on success.
+/// Returns {ok:false, need_buy:true, balance, shortfall, buy_url} if insufficient.
+async fn points_unlock_api(
+    State(db): State<Db>,
+    Json(body): Json<PointsUnlockBody>,
+) -> Response {
+    let email = match validate_email(&body.email) {
+        Ok(e) => e,
+        Err(m) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok": false, "error": m}))).into_response(),
+    };
+    let target = sanitize_pt_target(&body.target);
+    if target.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok": false, "error": "target required"}))).into_response();
+    }
+    let cost = if body.cost <= 0 { EXTRAS_POINTS_PER_SKU } else { body.cost.min(10_000) };
+    let conn = db.lock().unwrap();
+    let em = normalize_email(&email);
+    // Idempotent: already unlocked?
+    let already: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM proposal_points_unlocks WHERE email=? AND target=?",
+        params![em, target], |r| r.get(0),
+    ).unwrap_or(0);
+    if already > 0 {
+        let (bal, free_used) = points_balance(&conn, &email);
+        return Json(serde_json::json!({
+            "ok": true, "already_unlocked": true, "balance": bal, "free_used": free_used,
+            "target": target,
+        })).into_response();
+    }
+    let (balance, free_used) = points_balance(&conn, &email);
+    let use_free = !free_used && cost <= EXTRAS_FREE_SKUS;
+    if !use_free && balance < cost {
+        // Insufficient → return buy_url for ¥1000 = 1000pt pack
+        let shortfall = cost - balance;
+        let buy_url = format!("https://wearmu.com/?need_pt={}&email={}", shortfall, urlencoding::encode(&email));
+        return Json(serde_json::json!({
+            "ok": false, "need_buy": true, "balance": balance, "cost": cost,
+            "shortfall": shortfall, "buy_url": buy_url,
+            "free_used": free_used,
+        })).into_response();
+    }
+    let now = chrono_now();
+    if use_free {
+        mark_free_30_used(&conn, &email);
+        let _ = conn.execute(
+            "INSERT INTO proposal_point_events (email, delta, reason, ref, slug, balance_after, created_at)
+             VALUES (?,0,'pt_gate_unlock_free',?,?,?,?)",
+            params![em, target, target.split(':').next().unwrap_or(""), balance, now],
+        );
+    } else {
+        // Charge balance
+        if let Err(e) = points_mutate(&conn, &email, -cost, "pt_gate_unlock", Some(&target), Some(target.split(':').next().unwrap_or(""))) {
+            return (StatusCode::PAYMENT_REQUIRED, Json(serde_json::json!({"ok": false, "error": e}))).into_response();
+        }
+    }
+    let _ = conn.execute(
+        "INSERT OR IGNORE INTO proposal_points_unlocks (email, target, cost, free_used, created_at)
+         VALUES (?,?,?,?,?)",
+        params![em, target, if use_free {0} else {cost}, if use_free {1} else {0}, now],
+    );
+    let (new_bal, new_free_used) = points_balance(&conn, &email);
+    Json(serde_json::json!({
+        "ok": true, "unlocked": true, "balance": new_bal, "free_used": new_free_used,
+        "target": target, "cost_charged": if use_free {0} else {cost}, "used_free": use_free,
+    })).into_response()
 }
 
 /// POST /api/proposal/extras/feedback — free-form feedback from a sandbox
@@ -47496,6 +47645,9 @@ async fn main() {
         .route("/api/proposal/extras/balance",                  post(extras_balance))
         .route("/api/proposal/extras/claim",                    post(extras_claim_mu))
         .route("/api/proposal/extras/buy-points",               post(extras_buy_points))
+        .route("/api/points/balance",                            get(points_balance_api))
+        .route("/api/points/unlocked",                           get(points_unlocked_api))
+        .route("/api/points/unlock",                             post(points_unlock_api))
         // Jobs (generation queue)
         .route("/api/proposal/:slug/extras/order",              post(extras_order))
         .route("/api/proposal/extras/job/:job_id",              get(extras_job_status))
@@ -47620,6 +47772,7 @@ async fn main() {
         .route("/api/v1/products", get(list_brands))
         .route("/api/v1/products/:brand", get(list_products))
         .route("/embed.js", get(embed_js))
+        .route("/pt_gate.js", get(pt_gate_js))
         .route("/embed/products", get(embed_iframe_page))
         .route("/developers", get(developers_page))
         .route("/protocol", get(protocol_page))

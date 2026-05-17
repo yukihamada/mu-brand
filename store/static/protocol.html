@@ -11,6 +11,7 @@
 <meta property="og:url" content="https://wearmu.com/protocol">
 <link rel="canonical" href="https://wearmu.com/protocol">
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<script defer src="/pt_gate.js"></script>
 <style>
   :root {
     --ink:#0A0A0A; --paper:#F5F5F0; --line:#1a1a1a; --muted:#6b6b6b;
@@ -227,6 +228,32 @@
   <li>respects the identity anti-pattern (no PII in public emits)</li>
 </ol>
 <p>(1)+(2)+(4) = <strong>Discoverable</strong> · (3) = <strong>Settled</strong> · (5) = <strong>Compliant</strong>.<br>All three = full conformance, eligible for the public node directory at <code>wearmu.com/protocol/nodes</code>.</p>
+
+<h2>Live demo: 30pt paywall</h2>
+<p>This is the universal "もっと見るには30pt" gate. <strong>初回30ptは無料</strong>。一度 unlock したら同じメアドではどのページでも再課金なし。</p>
+<div data-pt-gate data-pt-cost="30" data-pt-target="protocol:appendix-a" data-pt-label="付録A: 実装サンプルコードを見る">
+  <div data-pt-content>
+    <h3>付録 A · 第三者ノード登録の最小実装 (Rust)</h3>
+    <pre><code>use mu_engine::{NodeBuilder, Treasury, Pin};
+
+let node = NodeBuilder::new("my-cafe-shibuya")
+    .industry("food")
+    .anchor(35.6595, 139.7004)
+    .operator_pubkey("&lt;solana_pubkey&gt;")
+    .adapter("github.com/me/mu-adapter-cafe")
+    .register(&treasury).await?;
+
+let pin = Pin::from_weather(node.anchor()).await?;
+let release = node.adapter().generate(pin);
+release.publish(&node).await?;
+// origin fee (5%) settles automatically on first sale.</code></pre>
+    <p>必要なのは <code>NodeBuilder</code> + <code>IndustryAdapter</code> trait の実装1つだけ。Treasury は origin 5% を自動 settle、残り95% は node の operator pubkey へ。</p>
+    <h3>付録 B · `.well-known/mu/releases` を読む側</h3>
+    <pre><code>curl https://wearmu.com/.well-known/mu/releases | jq '.releases[0]'
+# → { "schema": "mu.release.v2", "id": "...", "pinned_at": "...", ... }</code></pre>
+    <p>conformance level 4 endpoint。任意の MU ノードからこの形で取得できれば、検索・集計・支払い導線を共通化できる。</p>
+  </div>
+</div>
 
 <h2 id="enables">What this enables</h2>
 <ul>
