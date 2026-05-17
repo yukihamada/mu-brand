@@ -20328,6 +20328,20 @@ fn ensure_proposal_tables(db: &Db) {
          )", [],
     );
     let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_point_events_email ON proposal_point_events(email, created_at DESC)", []);
+    // pt_gate unlocks (universal "もっと見るには30pt" pattern).
+    // Persists which (email, target) pairs have spent points to unlock a content gate
+    // so revisits stay unlocked without re-charging.
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS proposal_points_unlocks (
+            email       TEXT NOT NULL,
+            target      TEXT NOT NULL,           -- gate id, e.g. 'kokon:section-2', 'jiuflow:deep-dive'
+            cost        INTEGER NOT NULL,
+            free_used   INTEGER NOT NULL DEFAULT 0,
+            created_at  TEXT NOT NULL,
+            PRIMARY KEY (email, target)
+         )", [],
+    );
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_points_unlocks_email ON proposal_points_unlocks(email, created_at DESC)", []);
     let _ = conn.execute(
         "CREATE TABLE IF NOT EXISTS proposal_extras_jobs (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
