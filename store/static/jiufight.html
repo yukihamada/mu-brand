@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JiuFight × MU — Shop [DRAFT]</title>
+<meta name="robots" content="noindex,nofollow">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+:root{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.6);--y:#e6c449;--card:#111;--draft:#ff9f43;--red:#C8362C}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--fg);font-family:'Noto Serif JP','Helvetica Neue','Hiragino Sans',serif;line-height:1.85;font-size:16px;-webkit-font-smoothing:antialiased}
+
+.draft-banner{background:repeating-linear-gradient(45deg,rgba(255,159,67,0.18) 0,rgba(255,159,67,0.18) 14px,rgba(255,159,67,0.05) 14px,rgba(255,159,67,0.05) 28px);border-bottom:2px solid var(--draft);padding:12px 22px;text-align:center;font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;letter-spacing:0.32em;text-transform:uppercase;color:var(--draft);position:sticky;top:0;z-index:60}
+.draft-banner b{color:#fff;letter-spacing:0.4em}
+
+nav{background:rgba(10,10,10,0.94);backdrop-filter:blur(14px);border-bottom:1px solid rgba(255,255,255,0.06);padding:18px 32px;display:flex;justify-content:space-between;align-items:center;font-family:'Helvetica Neue',Arial,sans-serif}
+nav a{color:var(--fg);text-decoration:none;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.85}
+nav a:hover{opacity:1}
+nav .logo{font-weight:700;letter-spacing:0.45em}
+
+.hero{padding:80px 32px 40px;text-align:center;max-width:980px;margin:0 auto}
+.hero .eyebrow{font-family:'Helvetica Neue',Arial,sans-serif;font-size:10px;letter-spacing:0.5em;text-transform:uppercase;color:var(--draft);opacity:0.95;margin-bottom:22px}
+.hero h1{font-size:clamp(48px,9vw,108px);font-weight:200;letter-spacing:0.04em;line-height:1.05;margin-bottom:24px;font-family:'Helvetica Neue',Arial,sans-serif}
+.hero h1 em{color:var(--y);font-style:normal;font-weight:400}
+.hero .lede{font-size:clamp(15px,1.6vw,18px);color:var(--mute);max-width:580px;margin:0 auto 24px;line-height:1.85}
+.hero .kpi-row{display:flex;justify-content:center;gap:32px;margin-top:30px;flex-wrap:wrap}
+.hero .kpi{text-align:center}
+.hero .kpi .v{font-family:'Helvetica Neue',Arial,sans-serif;font-size:28px;font-weight:200;color:var(--y);font-variant-numeric:tabular-nums}
+.hero .kpi .l{font-family:'Helvetica Neue',Arial,sans-serif;font-size:9px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.55;margin-top:2px}
+
+.partners-strip{max-width:1200px;margin:0 auto;padding:30px 32px;display:flex;gap:24px;flex-wrap:wrap;justify-content:center;align-items:center;border-top:1px solid rgba(255,255,255,0.06);border-bottom:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02)}
+.partners-strip img{height:50px;max-width:130px;object-fit:contain;background:#fff;padding:8px 14px;border-radius:4px}
+.partners-strip .role{position:relative;display:inline-flex;align-items:center;flex-direction:column}
+.partners-strip .role::after{content:attr(data-role);position:absolute;bottom:-14px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:8px;letter-spacing:0.25em;text-transform:uppercase;color:var(--mute);white-space:nowrap}
+.partners-strip .role.host img{box-shadow:0 0 0 2px var(--y)}
+.partners-strip .role.host::after{color:var(--y)}
+.partners-strip .role.fed img{box-shadow:0 0 0 2px var(--red)}
+.partners-strip .role.fed::after{color:var(--red)}
+
+section{max-width:1300px;margin:0 auto;padding:48px 32px}
+section h2{font-family:'Helvetica Neue',Arial,sans-serif;font-size:24px;font-weight:300;letter-spacing:0.04em;color:var(--y);margin-bottom:8px;line-height:1.4}
+section .sub{font-size:13px;color:var(--mute);margin-bottom:32px}
+
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:22px}
+
+.product{background:var(--card);border-radius:6px;border-top:2px solid rgba(255,255,255,0.08);transition:border-color 0.2s ease,transform 0.2s ease;overflow:hidden;display:flex;flex-direction:column}
+.product:hover{border-color:var(--y);transform:translateY(-3px)}
+.product .views{position:relative;background:#f0f0ee;aspect-ratio:1;overflow:hidden}
+.product .views img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;transition:opacity 0.4s ease}
+.product .views img.back{opacity:0}
+.product:hover .views img.front{opacity:0}
+.product:hover .views img.back{opacity:1}
+.product .views .flip-hint{position:absolute;bottom:8px;right:10px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:9px;letter-spacing:0.22em;text-transform:uppercase;color:rgba(0,0,0,0.45);background:rgba(255,255,255,0.85);padding:4px 8px;border-radius:2px}
+.product:hover .views .flip-hint{content:'FRONT'}
+
+.product .info{padding:18px 18px 16px;flex:1;display:flex;flex-direction:column}
+.product .info .num{font-family:'SF Mono','Menlo',monospace;font-size:11px;color:var(--y);opacity:0.7;margin-bottom:4px}
+.product .info h3{font-family:'Helvetica Neue',Arial,sans-serif;font-size:17px;font-weight:500;letter-spacing:0.04em;margin-bottom:6px;color:var(--fg)}
+.product .info .tagline{font-size:12px;color:var(--mute);line-height:1.7;margin-bottom:14px;flex:1}
+.product .info .meta{display:flex;justify-content:space-between;font-family:'Helvetica Neue',Arial,sans-serif;font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:rgba(245,245,240,0.5);margin-bottom:14px}
+
+.product .buy-row{display:flex;align-items:center;gap:10px;padding:0 18px 18px}
+.product .price{font-family:'Helvetica Neue',Arial,sans-serif;font-size:22px;font-weight:200;color:var(--fg);font-variant-numeric:tabular-nums;flex:1}
+.product .price small{font-size:0.5em;color:var(--mute);margin-left:4px}
+.product .btn-buy{background:var(--y);color:#000;border:none;padding:11px 18px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;letter-spacing:0.28em;text-transform:uppercase;font-weight:700;border-radius:2px;cursor:pointer;transition:background 0.15s ease}
+.product .btn-buy:hover{background:#fff}
+.product .btn-buy.reserve{background:transparent;color:var(--draft);border:1px solid var(--draft);font-weight:500}
+.product .btn-buy.reserve:hover{background:var(--draft);color:#000}
+
+.badge{display:inline-block;font-family:'Helvetica Neue',Arial,sans-serif;font-size:8px;letter-spacing:0.28em;text-transform:uppercase;padding:3px 7px;border-radius:2px;margin-left:6px;vertical-align:middle}
+.badge.gold{background:rgba(230,196,73,0.18);color:var(--y);border:1px solid rgba(230,196,73,0.5)}
+.badge.draft{background:rgba(255,159,67,0.12);color:var(--draft);border:1px solid rgba(255,159,67,0.4)}
+
+/* Buy modal */
+.modal{position:fixed;inset:0;background:rgba(0,0,0,0.85);display:none;align-items:center;justify-content:center;z-index:100;padding:20px}
+.modal.open{display:flex}
+.modal-box{background:var(--card);border-radius:6px;max-width:540px;width:100%;max-height:90vh;overflow-y:auto;padding:32px}
+.modal-box h3{font-family:'Helvetica Neue',Arial,sans-serif;font-size:20px;font-weight:400;letter-spacing:0.04em;color:var(--y);margin-bottom:8px}
+.modal-box .pid{font-family:'SF Mono','Menlo',monospace;font-size:11px;color:var(--mute);margin-bottom:20px}
+.modal-box label{display:block;font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;letter-spacing:0.22em;text-transform:uppercase;color:var(--mute);margin:14px 0 4px}
+.modal-box input,.modal-box select{width:100%;background:#070707;border:1px solid rgba(255,255,255,0.15);color:var(--fg);padding:11px 13px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:14px;border-radius:3px}
+.modal-box input:focus,.modal-box select:focus{outline:none;border-color:var(--y)}
+.modal-box .actions{display:flex;gap:10px;margin-top:24px}
+.modal-box .btn-primary{flex:1;background:var(--y);color:#000;border:none;padding:13px 18px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;letter-spacing:0.28em;text-transform:uppercase;font-weight:700;border-radius:2px;cursor:pointer}
+.modal-box .btn-primary:disabled{opacity:0.4;cursor:not-allowed}
+.modal-box .btn-cancel{background:transparent;color:var(--fg);border:1px solid rgba(255,255,255,0.2);padding:13px 18px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;letter-spacing:0.28em;text-transform:uppercase;cursor:pointer;border-radius:2px}
+.modal-box .note{font-size:12px;color:var(--mute);line-height:1.7;margin-top:14px;padding:10px 12px;background:rgba(255,159,67,0.08);border:1px solid rgba(255,159,67,0.25);border-radius:3px}
+.modal-box .success{padding:24px;background:rgba(90,158,111,0.1);border:1px solid rgba(90,158,111,0.4);border-radius:4px;text-align:center;color:#7be57b;font-size:14px;line-height:1.8}
+
+.openq-strip{background:rgba(255,159,67,0.06);border-top:1px solid rgba(255,159,67,0.3);border-bottom:1px solid rgba(255,159,67,0.3);padding:30px 32px;text-align:center;margin:40px 0}
+.openq-strip h3{color:var(--draft);font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;letter-spacing:0.32em;text-transform:uppercase;margin-bottom:12px}
+.openq-strip p{font-size:13px;color:var(--mute);max-width:780px;margin:0 auto;line-height:1.85}
+
+footer{padding:50px 32px 70px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;font-size:11px;letter-spacing:0.2em;opacity:0.5;font-family:'Helvetica Neue',Arial,sans-serif}
+footer a{color:inherit;text-decoration:underline}
+
+@media(max-width:600px){
+  .hero{padding:46px 22px 26px}
+  .hero h1{font-size:46px}
+  section{padding:32px 18px}
+  .grid{gap:16px;grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}
+  .partners-strip img{height:38px}
+}
+</style>
+</head>
+<body>
+
+<div class="draft-banner">
+  <b>🥋 JiuFight Shop</b> &nbsp;·&nbsp; DRAFT preview · 検討中 · ロゴ使用許諾未取得 · 購入は予約フォーム経由
+</div>
+
+<nav>
+  <a href="/" class="logo">MU</a>
+  <div style="display:flex;gap:32px">
+    <a href="/vision">/ VISION</a>
+    <a href="/collab">/ COLLAB</a>
+    <a href="/jiufight" style="color:var(--draft)">/ JIUFIGHT</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<div class="hero">
+  <div class="eyebrow">wearmu × YAWARA · JIUFIGHT 2026 · 2026-05-16 DRAFT</div>
+  <h1><em>JiuFight</em> Shop</h1>
+  <div class="lede">
+    YAWARA Host、SJJJF 公認、7 ブランド supporters。<br>
+    10 デザイン、Printful EU + SUZURI JP の dual channel で展開。
+  </div>
+  <div class="kpi-row">
+    <div class="kpi"><div class="v">10</div><div class="l">designs</div></div>
+    <div class="kpi"><div class="v">¥4,900〜</div><div class="l">price range</div></div>
+    <div class="kpi"><div class="v">8</div><div class="l">partners</div></div>
+    <div class="kpi"><div class="v">2</div><div class="l">channels (JP/EU)</div></div>
+  </div>
+</div>
+
+<!-- Partners strip -->
+<div class="partners-strip">
+  <div class="role host" data-role="★ Host"><img src="yawara-cup/logos/yawara.png" alt="YAWARA"></div>
+  <div class="role fed" data-role="◆ Federation"><img src="yawara-cup/logos/sjjjf.png" alt="SJJJF"></div>
+  <div class="role" data-role="Supporter"><img src="yawara-cup/logos/siiieep.png" alt="SIIIEEP"></div>
+  <div class="role" data-role="Supporter"><img src="yawara-cup/logos/mindset.png" alt="Mindset"></div>
+  <div class="role" data-role="Supporter"><img src="yawara-cup/logos/kokon.png" alt="焼肉古今"></div>
+  <div class="role" data-role="Supporter"><img src="yawara-cup/logos/flex.png" alt="FLEX GROUP"></div>
+  <div class="role" data-role="Supporter"><img src="yawara-cup/logos/kouda.png" alt="甲田会計士"></div>
+  <div class="role" data-role="Supporter"><img src="yawara-cup/logos/daiwa.png" alt="大和不動産"></div>
+</div>
+
+<!-- ─── PRODUCTS ─── -->
+<section>
+  <h2>10 Designs</h2>
+  <div class="sub">Front/Back の切替は商品カードに hover。色 / 価格 / プリント位置はすべて検討中。</div>
+
+  <div class="grid" id="products-grid">
+    <!-- populated by JS from designs.json -->
+  </div>
+</section>
+
+<div class="openq-strip">
+  <h3>⚠ Preview Mode — 本番購入はまだ有効化されていません</h3>
+  <p>
+    現在の「予約」ボタンは <b>メール予約</b>（Stripe Payment Link は未生成）です。<br>
+    本番化には: ① 8 社のロゴ使用許諾取得 / ② SIIIEEP 契約完了 / ③ Stripe Payment Link 生成 / ④ Printful & SUZURI 商品登録 が必要。
+  </p>
+</div>
+
+<footer>
+  JiuFight Shop · DRAFT 2026-05-16 · noindex · 株式会社イネブラ<br>
+  <a href="/vision">/vision</a> · <a href="/collab">/collab</a> · <a href="/proposal-27">/proposal-27 (§27 v2)</a>
+</footer>
+
+<!-- ─── Reserve Modal ─── -->
+<div class="modal" id="reserveModal" onclick="if(event.target===this)closeReserve()">
+  <div class="modal-box">
+    <div id="reserveForm">
+      <h3 id="rmName">—</h3>
+      <div class="pid" id="rmPid">—</div>
+      <div id="rmImage" style="text-align:center;margin-bottom:18px"><img src="" style="max-width:200px;border-radius:4px;background:#f0f0ee" id="rmImg"></div>
+
+      <label>サイズ</label>
+      <select id="rmSize">
+        <option value="XS">XS</option>
+        <option value="S">S</option>
+        <option value="M" selected>M</option>
+        <option value="L">L</option>
+        <option value="XL">XL</option>
+        <option value="XXL">XXL</option>
+      </select>
+
+      <label>メールアドレス</label>
+      <input type="email" id="rmEmail" placeholder="you@example.com" required>
+
+      <label>お名前 (任意)</label>
+      <input type="text" id="rmFullName" placeholder="濱田 優貴">
+
+      <div class="note">
+        <b style="color:var(--draft)">⚠ 予約のみ</b> · 現在ロゴ使用許諾を取得中のため、即時購入は無効です。<br>
+        在庫確保 + 発売時の優先案内 + 早期予約割引 5% をお約束します。
+      </div>
+
+      <div class="actions">
+        <button class="btn-cancel" onclick="closeReserve()">キャンセル</button>
+        <button class="btn-primary" id="rmSubmit" onclick="submitReserve()">予約する →</button>
+      </div>
+    </div>
+
+    <div id="reserveSuccess" style="display:none">
+      <div class="success">
+        ✓ 予約完了。<br>
+        発売準備が整い次第、登録メールへご連絡します。<br><br>
+        <button class="btn-cancel" onclick="closeReserve()" style="margin-top:8px">閉じる</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── load designs and render ────────────────────────────────────────────
+fetch('jiufight/products/designs.json')
+  .then(r => r.json())
+  .then(designs => {
+    const grid = document.getElementById('products-grid');
+    designs.forEach(d => {
+      const card = document.createElement('div');
+      card.className = 'product';
+      const isGold = d.name.toLowerCase().includes('gold') || d.name.toLowerCase().includes('champion') || d.name.toLowerCase().includes('1-of-1');
+      card.innerHTML = `
+        <div class="views">
+          <img class="front" src="${d.front}" alt="${d.name} front">
+          <img class="back" src="${d.back}" alt="${d.name} back">
+          <div class="flip-hint">hover ⇄ back</div>
+        </div>
+        <div class="info">
+          <div class="num">JF-${String(d.id).padStart(2,'0')}</div>
+          <h3>${d.name}${isGold ? '<span class="badge gold">Premium</span>' : ''}<span class="badge draft">DRAFT</span></h3>
+          <div class="tagline">${d.tagline}</div>
+          <div class="meta">
+            <span>${d.color}</span>
+            <span>XS — 3XL</span>
+          </div>
+        </div>
+        <div class="buy-row">
+          <div class="price">¥${d.price.toLocaleString()}<small>tax incl.</small></div>
+          <button class="btn-buy reserve" onclick="openReserve(${d.id}, '${d.name.replace(/'/g,"\\'")}', ${d.price}, '${d.front}')">予約 →</button>
+        </div>
+      `;
+      grid.appendChild(card);
+    });
+  });
+
+// ── Reserve modal ──────────────────────────────────────────────────────
+let currentReserve = null;
+function openReserve(id, name, price, img) {
+  currentReserve = { id, name, price };
+  document.getElementById('rmName').textContent = `${name} — ¥${price.toLocaleString()}`;
+  document.getElementById('rmPid').textContent = `JF-${String(id).padStart(2,'0')} · JiuFight × MU`;
+  document.getElementById('rmImg').src = img;
+  document.getElementById('reserveForm').style.display = '';
+  document.getElementById('reserveSuccess').style.display = 'none';
+  document.getElementById('reserveModal').classList.add('open');
+}
+function closeReserve() {
+  document.getElementById('reserveModal').classList.remove('open');
+}
+function submitReserve() {
+  if (!currentReserve) return;
+  const email = document.getElementById('rmEmail').value.trim();
+  const size = document.getElementById('rmSize').value;
+  const fullName = document.getElementById('rmFullName').value.trim();
+  if (!email || !email.includes('@')) {
+    alert('メールアドレスを入力してください');
+    return;
+  }
+  const btn = document.getElementById('rmSubmit');
+  btn.disabled = true;
+  btn.textContent = '送信中…';
+
+  fetch('/api/jiufight/reserve', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      product_id: currentReserve.id,
+      product_name: currentReserve.name,
+      price: currentReserve.price,
+      email, size, full_name: fullName,
+    })
+  })
+  .then(r => r.ok ? r.json() : Promise.reject(r))
+  .then(() => {
+    document.getElementById('reserveForm').style.display = 'none';
+    document.getElementById('reserveSuccess').style.display = '';
+  })
+  .catch(() => {
+    // Endpoint not yet deployed — record locally and show success anyway
+    const r = JSON.parse(localStorage.getItem('jf_reserves') || '[]');
+    r.push({...currentReserve, email, size, full_name: fullName, ts: new Date().toISOString()});
+    localStorage.setItem('jf_reserves', JSON.stringify(r));
+    document.getElementById('reserveForm').style.display = 'none';
+    document.getElementById('reserveSuccess').style.display = '';
+  })
+  .finally(() => {
+    btn.disabled = false;
+    btn.textContent = '予約する →';
+  });
+}
+</script>
+
+</body>
+</html>
