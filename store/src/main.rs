@@ -4696,6 +4696,9 @@ fn vault_session_email(db: &Db, headers: &HeaderMap) -> Option<String> {
 /// Vault articles registered at compile time. Add an entry here + drop the
 /// matching markdown file in store/static/vault/<slug>.md.
 const VAULT_ARTICLES: &[(&str, &str, &str)] = &[
+    ("genesis",
+     "MU の誕生 — 公開からの最初の 11 日間",
+     include_str!("../static/vault/genesis.md")),
     ("stack",
      "MUの裏側 — Rust + Gemini + Printful の全レイヤー",
      include_str!("../static/vault/stack.md")),
