@@ -1,525 +1,148 @@
 <!doctype html>
-<html lang="ja">
-<head>
+<html lang="ja"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>JIUFIGHT × MU — Event Tee Designs · 2026.05.24</title>
-<meta name="description" content="SUPER YAWARA SWEEP CUP 2026 公式 Event Tee デザイン一覧。AI生成のミニマル意匠4種 + 既存11種。">
-<meta name="robots" content="index, follow">
-<meta name="theme-color" content="#0A0A0A">
-
-<meta property="og:type" content="website">
-<meta property="og:title" content="JIUFIGHT × MU — Event Tee Designs">
-<meta property="og:description" content="SUPER YAWARA SWEEP CUP 2026 公式 Event Tee デザイン一覧">
-<meta property="og:image" content="./inspired/03_kanji_seal.png">
-
+<title>JIUFIGHT — Super Yawara Sweep Cup | wearmu.com</title>
+<meta property="og:title" content="JIUFIGHT — Super Yawara Sweep Cup">
+<meta property="og:description" content="2026.05.24 / Tokyo Tower · 10柄のイベント限定Tシャツ">
+<meta property="og:image" content="https://lifestyle.wearmu.com/jiufight/v3/02_kanji_jyu_brushwork.png">
+<meta name="description" content="2026.05.24 / Tokyo Tower · 10柄のイベント限定Tシャツ">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
-  :root { --bg:#0A0A0A; --fg:#F5F5F0; --mute:#888; --accent:#e6c449; --line:#1c1c1c; --green:#7be57b; }
-  *, *::before, *::after { box-sizing: border-box; }
-  html, body { background: var(--bg); color: var(--fg); margin: 0; font-family: ui-monospace, "SF Mono", Menlo, "Helvetica Neue", Arial, sans-serif; line-height: 1.55; font-size: 14px; }
-  a { color: var(--accent); text-decoration: none; }
-  a:hover { text-decoration: underline; }
-
-  header { padding: 32px 24px 24px; border-bottom: 1px solid var(--line); }
-  header .crumb { color: var(--mute); font-size: 11px; letter-spacing: 0.32em; text-transform: uppercase; margin-bottom: 10px; }
-  header h1 { font-size: 28px; font-weight: 200; letter-spacing: 0.06em; margin: 0 0 6px; }
-  header .meta { color: var(--mute); font-size: 12px; letter-spacing: 0.12em; }
-  header .meta strong { color: var(--fg); }
-
-  .wrap { padding: 40px 24px 80px; max-width: 1280px; margin: 0 auto; }
-  h2 { font-size: 12px; letter-spacing: 0.42em; color: var(--accent); text-transform: uppercase; margin: 48px 0 18px; font-weight: 700; }
-  h2:first-of-type { margin-top: 0; }
-  h2 .sub { color: var(--mute); letter-spacing: 0.14em; font-weight: 400; margin-left: 12px; }
-
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
-  .card { background: #0f0f0f; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; transition: border-color 0.18s; }
-  .card:hover { border-color: var(--accent); }
-  .card .preview { aspect-ratio: 1 / 1; background: #050505; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-  .card .preview img { width: 88%; height: 88%; object-fit: contain; }
-  .card .meta { padding: 14px 16px 18px; }
-  .card .meta .slug { font-size: 10px; letter-spacing: 0.24em; color: var(--mute); text-transform: uppercase; margin-bottom: 4px; }
-  .card .meta .title { font-size: 15px; color: var(--fg); margin-bottom: 6px; font-weight: 500; }
-  .card .meta .hint { font-size: 11px; color: var(--mute); line-height: 1.6; min-height: 32px; }
-  .card .meta .price-row { display: flex; justify-content: space-between; align-items: baseline; margin-top: 10px; }
-  .card .meta .price { color: var(--accent); font-size: 14px; letter-spacing: 0.08em; }
-  .card .meta .status { font-size: 10px; letter-spacing: 0.16em; color: var(--mute); }
-  .card .meta .status.live { color: var(--green); }
-
-  footer { padding: 24px; text-align: center; color: var(--mute); font-size: 11px; letter-spacing: 0.18em; border-top: 1px solid var(--line); margin-top: 40px; }
-  footer a { color: var(--mute); }
-
-  /* Tee preview: 2-up (Printful / SUZURI) inside one card */
-  .card .tees { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); }
-  .card .tees .tee { background: #050505; aspect-ratio: 1/1; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
-  .card .tees .tee img { width: 100%; height: 100%; object-fit: cover; }
-  .card .tees .tee .tag { position: absolute; top: 8px; left: 8px; font-size: 9px; letter-spacing: 0.18em; padding: 3px 6px; background: rgba(0,0,0,0.7); color: var(--accent); border-radius: 2px; font-weight: 700; text-transform: uppercase; }
-  .card .tees .tee .price-overlay { position: absolute; bottom: 8px; right: 8px; font-size: 10px; padding: 3px 7px; background: rgba(0,0,0,0.7); color: var(--fg); border-radius: 2px; }
-  .card .tees .tee .design-only { position: absolute; bottom: 8px; left: 8px; font-size: 9px; color: var(--mute); letter-spacing: 0.12em; }
-  .card .buy-row { display: flex; gap: 1px; background: var(--line); }
-  .card .buy-row a { flex: 1; padding: 11px 14px; text-align: center; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 600; }
-  .card .buy-row a.suzuri { background: #f5f5f0; color: #000; }
-  .card .buy-row a.printful { background: var(--accent); color: #000; }
-  .card .buy-row a:hover { opacity: 0.85; text-decoration: none; }
+:root{--bg:#0a0a0a;--fg:#f5f5f0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--card:#111}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.7;-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}
+nav{position:sticky;top:0;background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);border-bottom:1px solid rgba(255,255,255,0.06);padding:16px 28px;display:flex;justify-content:space-between;align-items:center;z-index:50}
+nav .logo{font-size:12px;font-weight:700;letter-spacing:0.45em}
+nav a.back{font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.7}
+.hero{padding:64px 24px 36px;text-align:center;max-width:880px;margin:0 auto}
+.hero .eyebrow{font-size:10px;letter-spacing:0.5em;text-transform:uppercase;color:var(--y);margin-bottom:18px}
+.hero h1{font-size:clamp(36px,7vw,82px);font-weight:200;letter-spacing:0.03em;line-height:1.05;margin-bottom:14px}
+.hero .sub{font-size:clamp(13px,1.4vw,16px);color:var(--mute);max-width:540px;margin:0 auto}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:24px;padding:28px 24px 80px;max-width:1280px;margin:0 auto}
+.card{background:var(--card);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;border:1px solid rgba(255,255,255,0.06);transition:transform 0.2s, border-color 0.2s}
+.card:hover{transform:translateY(-3px);border-color:rgba(230,196,73,0.4)}
+.card .img{aspect-ratio:1/1;background:#fff;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.card .img img{width:100%;height:100%;object-fit:contain}
+.card .body{padding:16px 18px 20px;display:flex;flex-direction:column;gap:8px;flex:1}
+.card .name{font-size:15px;line-height:1.4;font-weight:500}
+.card .desc{font-size:12px;color:var(--mute);line-height:1.55;min-height:36px}
+.card .price{font-size:18px;font-weight:300;color:var(--y);font-variant-numeric:tabular-nums;margin-top:auto}
+.card .buy{display:flex;gap:8px;margin-top:8px}
+.btn{flex:1;display:inline-block;text-align:center;padding:11px 14px;border-radius:8px;font-size:12px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;cursor:pointer;border:none}
+.btn.suzuri{background:#e6c449;color:#0a0a0a}
+.btn.suzuri:hover{background:#fff}
+.btn.soon{background:transparent;border:1px solid rgba(255,255,255,0.18);color:var(--mute);cursor:default}
+.note{padding:0 24px 40px;max-width:880px;margin:0 auto;font-size:12px;color:var(--mute);text-align:center;line-height:1.7}
+footer{padding:36px 24px;text-align:center;font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:var(--mute);border-top:1px solid rgba(255,255,255,0.06)}
 </style>
-</head>
-<body>
+</head><body>
+<nav><span class="logo">WEARMU</span><a href="/" class="back">← back to shop</a></nav>
 
-<header>
-  <div class="crumb">━◯━ JIUFIGHT × MU · EVENT TEE</div>
-  <h1>SUPER YAWARA SWEEP CUP · 2026</h1>
-  <div class="meta">
-    <strong>2026.05.24 (日)</strong> · 12:30 開場 · 港区芝公園 · 4セット / MAX 45分 per set ·
-    色帯 2分×3R / 白帯 3分×1
-  </div>
+<header class="hero">
+  <div class="eyebrow">WEARMU × JIUFIGHT</div>
+  <h1>JIUFIGHT — Super Yawara Sweep Cup</h1>
+  <p class="sub">2026.05.24 / Tokyo Tower · 10柄のイベント限定Tシャツ</p>
 </header>
 
-<main class="wrap">
-
-  <!-- Sponsor back panel — shared across all 12 event tees -->
-  <section style="margin:0 0 56px;padding:30px;background:#0c0c0c;border:1px solid var(--line);border-radius:6px">
-    <div style="display:grid;grid-template-columns:minmax(0,360px) 1fr;gap:32px;align-items:center">
-      <div>
-        <img src="https://mockups.wearmu.com/jiufight/back_mockup.jpg" alt="JIUFIGHT 2026 sponsor back" style="width:100%;border:1px solid var(--line);border-radius:4px;display:block">
-      </div>
-      <div>
-        <div style="font-size:10px;letter-spacing:0.32em;color:var(--accent);text-transform:uppercase;margin-bottom:8px">━◯━ Back · Sponsors</div>
-        <h3 style="font-size:18px;font-weight:300;margin:0 0 12px;letter-spacing:0.04em">背中に大会協賛 8 社のロゴを印刷</h3>
-        <p style="color:var(--mute);font-size:12px;line-height:1.85;margin:0 0 14px">
-          全 12 種類の Event Tee 共通の背中デザイン。SUPER YAWARA SWEEP CUP 2026 を支える協賛各社のロゴを「SPONSORED BY」のもと配置 — 試合場で着用、観戦で着用、そのまま街に出ても違和感のないトーン。
-        </p>
-        <div style="display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin:14px 0 0">
-          <img src="https://lifestyle.wearmu.com/jiufight/sponsors/sweep.png" alt="SIIIEEP" style="height:22px;opacity:0.85">
-          <img src="https://lifestyle.wearmu.com/jiufight/sponsors/mindset.png" alt="Mindset" style="height:22px;opacity:0.85">
-          <img src="https://lifestyle.wearmu.com/jiufight/sponsors/sjjjf.png" alt="SJJJF" style="height:34px;opacity:0.85">
-          <img src="https://lifestyle.wearmu.com/jiufight/sponsors/flex.png" alt="FLEX GROUP" style="height:22px;opacity:0.85">
-          <img src="https://lifestyle.wearmu.com/jiufight/sponsors/koda.png" alt="甲田拓也事務所" style="height:24px;opacity:0.85">
-          <img src="https://lifestyle.wearmu.com/jiufight/sponsors/kokon.png" alt="焼肉古今" style="height:22px;opacity:0.85">
-          <img src="https://lifestyle.wearmu.com/jiufight/sponsors/yamato.png" alt="大和不動産" style="height:30px;opacity:0.85">
-        </div>
-        <div style="margin-top:14px;font-size:10px;letter-spacing:0.18em;color:var(--mute)">SPONSORED BY · SIIIEEP / Mindset / Yawara / SJJJF / FLEX GROUP / 甲田拓也事務所 / 焼肉古今 / 大和不動産</div>
-      </div>
+<section class="grid">
+  <article class="card">
+    <div class="img"><img src="https://lifestyle.wearmu.com/jiufight/v3/01_classic_typography.png" alt="JIUFIGHT — Classic Typography Tee" loading="lazy"></div>
+    <div class="body">
+      <div class="name">JIUFIGHT — Classic Typography Tee</div>
+      <div class="desc">SUPER YAWARA SWEEP CUP 2026 限定。Mindset / yawara / FLEX GROUP / 甲田事務所 / 焼肉古今 / SJJJF / 大和不動産 7社協賛。</div>
+      <div class="price">¥4,900</div>
+      <div class="buy"><span class="btn soon">近日販売開始</span></div>
     </div>
-  </section>
-
-  <h2>━ Inspired (新) <span class="sub">jiufight.jp の意匠を参考に AI 生成した 4 種 · Tシャツ実物</span></h2>
-  <p style="color:var(--mute);font-size:11px;letter-spacing:0.08em;max-width:880px;margin:0 0 18px">左 = SUZURI (国内発送・¥4,900) / 右 = Printful (海外・¥7,800)。同じデザインを 2 つの POD で印刷した実物プレビュー。前面は各デザイン、<strong style="color:var(--accent)">背面は共通で上記スポンサー</strong>。</p>
-  <div class="grid">
-
-    <div class="card">
-      <div class="tees">
-        <a class="tee" href="https://suzuri.jp/yukihama/19988974/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">
-          <img src="https://og.suzuri.jp/products/85436438.webp" alt="SUZURI: Date Stamp Tee">
-          <span class="tag">SUZURI</span><span class="price-overlay">¥4,900</span>
-        </a>
-        <a class="tee" href="https://wearmu.com/api/products/1028/mockup.png" target="_blank" rel="noopener">
-          <img src="https://mockups.wearmu.com/1028.jpg" alt="Printful: Date Stamp Tee">
-          <span class="tag">Printful</span><span class="price-overlay">¥7,800</span>
-        </a>
-      </div>
-      <div class="meta">
-        <div class="slug">01 · datestamp</div>
-        <div class="title">2026.05.24 Date Stamp</div>
-        <div class="hint">大会日を主役にした極小タイポ。細い幾何 sans-serif。</div>
-      </div>
-      <div class="buy-row">
-        <a class="suzuri" href="https://suzuri.jp/yukihama/19988974/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">SUZURI で買う</a>
-        <a class="printful" href="https://wearmu.com/buy?product_id=1028" target="_blank" rel="noopener">海外発送 Printful</a>
-      </div>
+  </article>
+  <article class="card">
+    <div class="img"><img src="https://lifestyle.wearmu.com/jiufight/v3/02_kanji_jyu_brushwork.png" alt="JIUFIGHT — Kanji Jyu Brushwork Tee ★" loading="lazy"></div>
+    <div class="body">
+      <div class="name">JIUFIGHT — Kanji Jyu Brushwork Tee ★</div>
+      <div class="desc">SUPER YAWARA SWEEP CUP 2026 限定。Mindset / yawara / FLEX GROUP / 甲田事務所 / 焼肉古今 / SJJJF / 大和不動産 7社協賛。</div>
+      <div class="price">¥4,900</div>
+      <div class="buy"><a class="btn suzuri" href="https://suzuri.jp/yukihama/19989618/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">SUZURI で買う →</a></div>
     </div>
-
-    <div class="card">
-      <div class="tees">
-        <a class="tee" href="https://suzuri.jp/yukihama/19988975/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">
-          <img src="https://og.suzuri.jp/products/85436440.webp" alt="SUZURI: Bracket Tee">
-          <span class="tag">SUZURI</span><span class="price-overlay">¥4,900</span>
-        </a>
-        <a class="tee" href="https://wearmu.com/api/products/1029/mockup.png" target="_blank" rel="noopener">
-          <img src="https://mockups.wearmu.com/1029.jpg" alt="Printful: Bracket Tee">
-          <span class="tag">Printful</span><span class="price-overlay">¥7,800</span>
-        </a>
-      </div>
-      <div class="meta">
-        <div class="slug">02 · bracket</div>
-        <div class="title">Tournament Bracket</div>
-        <div class="hint">8→1 のシングルエリミ線画。アーキテクチュアル。</div>
-      </div>
-      <div class="buy-row">
-        <a class="suzuri" href="https://suzuri.jp/yukihama/19988975/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">SUZURI で買う</a>
-        <a class="printful" href="https://wearmu.com/buy?product_id=1029" target="_blank" rel="noopener">海外発送 Printful</a>
-      </div>
+  </article>
+  <article class="card">
+    <div class="img"><img src="https://lifestyle.wearmu.com/jiufight/v3/03_triangle_choke_silhouette.png" alt="JIUFIGHT — Triangle Choke Silhouette Tee" loading="lazy"></div>
+    <div class="body">
+      <div class="name">JIUFIGHT — Triangle Choke Silhouette Tee</div>
+      <div class="desc">SUPER YAWARA SWEEP CUP 2026 限定。Mindset / yawara / FLEX GROUP / 甲田事務所 / 焼肉古今 / SJJJF / 大和不動産 7社協賛。</div>
+      <div class="price">¥4,900</div>
+      <div class="buy"><span class="btn soon">近日販売開始</span></div>
     </div>
-
-    <div class="card">
-      <div class="tees">
-        <a class="tee" href="https://suzuri.jp/yukihama/19988976/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">
-          <img src="https://og.suzuri.jp/products/85436442.webp" alt="SUZURI: 柔 Brushstroke Tee">
-          <span class="tag">SUZURI</span><span class="price-overlay">¥4,900</span>
-        </a>
-        <a class="tee" href="https://wearmu.com/api/products/1030/mockup.png" target="_blank" rel="noopener">
-          <img src="https://mockups.wearmu.com/1030.jpg" alt="Printful: 柔 Brushstroke Tee">
-          <span class="tag">Printful</span><span class="price-overlay">¥7,800</span>
-        </a>
-      </div>
-      <div class="meta">
-        <div class="slug">03 · kanji</div>
-        <div class="title">柔 Brushstroke</div>
-        <div class="hint">一筆描き 柔 + 日付キャプション。伝統的な静謐。</div>
-      </div>
-      <div class="buy-row">
-        <a class="suzuri" href="https://suzuri.jp/yukihama/19988976/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">SUZURI で買う</a>
-        <a class="printful" href="https://wearmu.com/buy?product_id=1030" target="_blank" rel="noopener">海外発送 Printful</a>
-      </div>
+  </article>
+  <article class="card">
+    <div class="img"><img src="https://lifestyle.wearmu.com/jiufight/v3/04_tokyo_tower_fusion.png" alt="JIUFIGHT — Tokyo Tower Fusion Tee ★" loading="lazy"></div>
+    <div class="body">
+      <div class="name">JIUFIGHT — Tokyo Tower Fusion Tee ★</div>
+      <div class="desc">SUPER YAWARA SWEEP CUP 2026 限定。Mindset / yawara / FLEX GROUP / 甲田事務所 / 焼肉古今 / SJJJF / 大和不動産 7社協賛。</div>
+      <div class="price">¥4,900</div>
+      <div class="buy"><a class="btn suzuri" href="https://suzuri.jp/yukihama/19989619/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">SUZURI で買う →</a></div>
     </div>
-
-    <div class="card">
-      <div class="tees">
-        <a class="tee" href="https://suzuri.jp/yukihama/19988977/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">
-          <img src="https://og.suzuri.jp/products/85436443.webp" alt="SUZURI: Versus Tee">
-          <span class="tag">SUZURI</span><span class="price-overlay">¥4,900</span>
-        </a>
-        <a class="tee" href="https://wearmu.com/api/products/1031/mockup.png" target="_blank" rel="noopener">
-          <img src="https://mockups.wearmu.com/1031.jpg" alt="Printful: Versus Tee">
-          <span class="tag">Printful</span><span class="price-overlay">¥7,800</span>
-        </a>
-      </div>
-      <div class="meta">
-        <div class="slug">04 · versus</div>
-        <div class="title">East vs West Bars</div>
-        <div class="hint">対抗戦を示す両側バー。テクニカル・ドローイング風。</div>
-      </div>
-      <div class="buy-row">
-        <a class="suzuri" href="https://suzuri.jp/yukihama/19988977/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">SUZURI で買う</a>
-        <a class="printful" href="https://wearmu.com/buy?product_id=1031" target="_blank" rel="noopener">海外発送 Printful</a>
-      </div>
+  </article>
+  <article class="card">
+    <div class="img"><img src="https://lifestyle.wearmu.com/jiufight/v3/05_dragon_japanese.png" alt="JIUFIGHT — Dragon Japanese Tee" loading="lazy"></div>
+    <div class="body">
+      <div class="name">JIUFIGHT — Dragon Japanese Tee</div>
+      <div class="desc">SUPER YAWARA SWEEP CUP 2026 限定。Mindset / yawara / FLEX GROUP / 甲田事務所 / 焼肉古今 / SJJJF / 大和不動産 7社協賛。</div>
+      <div class="price">¥4,900</div>
+      <div class="buy"><span class="btn soon">近日販売開始</span></div>
     </div>
-
-  </div>
-
-  <h2>━ Existing Tシャツ <span class="sub">既存 MU × JiuFight collab Tシャツ 8 種 · 実物プレビュー</span></h2>
-  <p style="color:var(--mute);font-size:11px;letter-spacing:0.08em;max-width:880px;margin:0 0 18px">同じく左 = SUZURI (国内 ¥4,900) / 右 = Printful (海外 ¥7,800)。jiufight.jp の意匠を流用した既存サンプル 8 枚。</p>
-  <div class="grid">
-
-    <div class="card">
-      <div class="tees">
-        <a class="tee" href="https://suzuri.jp/yukihama/19988978/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">
-          <img src="https://og.suzuri.jp/products/85436445.webp" alt="SUZURI 早稲田 Tee">
-          <span class="tag">SUZURI</span><span class="price-overlay">¥4,900</span>
-        </a>
-        <a class="tee" href="https://wearmu.com/api/products/371/mockup.png" target="_blank" rel="noopener">
-          <img src="https://mockups.wearmu.com/371.jpg" alt="Printful 早稲田 Tee">
-          <span class="tag">Printful</span><span class="price-overlay">¥7,800</span>
-        </a>
-      </div>
-      <div class="meta">
-        <div class="slug">e01 · 早稲田</div>
-        <div class="title">Event Tee · 早稲田 (赤)</div>
-        <div class="hint">大学カラー赤。日付スタンプ意匠。</div>
-      </div>
-      <div class="buy-row">
-        <a class="suzuri" href="https://suzuri.jp/yukihama/19988978/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">SUZURI で買う</a>
-        <a class="printful" href="https://wearmu.com/buy?product_id=371" target="_blank" rel="noopener">海外発送 Printful</a>
-      </div>
+  </article>
+  <article class="card">
+    <div class="img"><img src="https://lifestyle.wearmu.com/jiufight/v3/06_belt_gradient_stack.png" alt="JIUFIGHT — Belt Gradient Stack Tee" loading="lazy"></div>
+    <div class="body">
+      <div class="name">JIUFIGHT — Belt Gradient Stack Tee</div>
+      <div class="desc">SUPER YAWARA SWEEP CUP 2026 限定。Mindset / yawara / FLEX GROUP / 甲田事務所 / 焼肉古今 / SJJJF / 大和不動産 7社協賛。</div>
+      <div class="price">¥4,900</div>
+      <div class="buy"><span class="btn soon">近日販売開始</span></div>
     </div>
-
-    <div class="card">
-      <div class="tees">
-        <a class="tee" href="https://suzuri.jp/yukihama/19988980/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">
-          <img src="https://og.suzuri.jp/products/85436447.webp" alt="SUZURI 慶應 Tee">
-          <span class="tag">SUZURI</span><span class="price-overlay">¥4,900</span>
-        </a>
-        <a class="tee" href="https://wearmu.com/api/products/372/mockup.png" target="_blank" rel="noopener">
-          <img src="https://mockups.wearmu.com/372.jpg" alt="Printful 慶應 Tee">
-          <span class="tag">Printful</span><span class="price-overlay">¥7,800</span>
-        </a>
-      </div>
-      <div class="meta">
-        <div class="slug">e02 · 慶應</div>
-        <div class="title">Event Tee · 慶應 (青)</div>
-        <div class="hint">大学カラー青。日付スタンプ意匠。</div>
-      </div>
-      <div class="buy-row">
-        <a class="suzuri" href="https://suzuri.jp/yukihama/19988980/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">SUZURI で買う</a>
-        <a class="printful" href="https://wearmu.com/buy?product_id=372" target="_blank" rel="noopener">海外発送 Printful</a>
-      </div>
+  </article>
+  <article class="card">
+    <div class="img"><img src="https://lifestyle.wearmu.com/jiufight/v3/07_grappler_action.png" alt="JIUFIGHT — Grappler Action Tee ★" loading="lazy"></div>
+    <div class="body">
+      <div class="name">JIUFIGHT — Grappler Action Tee ★</div>
+      <div class="desc">SUPER YAWARA SWEEP CUP 2026 限定。Mindset / yawara / FLEX GROUP / 甲田事務所 / 焼肉古今 / SJJJF / 大和不動産 7社協賛。</div>
+      <div class="price">¥4,900</div>
+      <div class="buy"><a class="btn suzuri" href="https://suzuri.jp/yukihama/19989623/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">SUZURI で買う →</a></div>
     </div>
-
-    <div class="card">
-      <div class="tees">
-        <a class="tee" href="https://suzuri.jp/yukihama/19988981/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">
-          <img src="https://og.suzuri.jp/products/85436449.webp" alt="SUZURI Tokyo Tower Tee">
-          <span class="tag">SUZURI</span><span class="price-overlay">¥4,900</span>
-        </a>
-        <a class="tee" href="https://wearmu.com/api/products/373/mockup.png" target="_blank" rel="noopener">
-          <img src="https://mockups.wearmu.com/373.jpg" alt="Printful Tokyo Tower Tee">
-          <span class="tag">Printful</span><span class="price-overlay">¥7,800</span>
-        </a>
-      </div>
-      <div class="meta">
-        <div class="slug">e03 · tokyotower</div>
-        <div class="title">Event Tee · Tokyo Tower</div>
-        <div class="hint">芝公園会場の暗喩。</div>
-      </div>
-      <div class="buy-row">
-        <a class="suzuri" href="https://suzuri.jp/yukihama/19988981/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">SUZURI で買う</a>
-        <a class="printful" href="https://wearmu.com/buy?product_id=373" target="_blank" rel="noopener">海外発送 Printful</a>
-      </div>
+  </article>
+  <article class="card">
+    <div class="img"><img src="https://lifestyle.wearmu.com/jiufight/v3/08_circle_emblem.png" alt="JIUFIGHT — Circle Emblem Tee" loading="lazy"></div>
+    <div class="body">
+      <div class="name">JIUFIGHT — Circle Emblem Tee</div>
+      <div class="desc">SUPER YAWARA SWEEP CUP 2026 限定。Mindset / yawara / FLEX GROUP / 甲田事務所 / 焼肉古今 / SJJJF / 大和不動産 7社協賛。</div>
+      <div class="price">¥4,900</div>
+      <div class="buy"><span class="btn soon">近日販売開始</span></div>
     </div>
-
-    <div class="card">
-      <div class="tees">
-        <a class="tee" href="https://suzuri.jp/yukihama/19988982/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">
-          <img src="https://og.suzuri.jp/products/85436452.webp" alt="SUZURI Bracket Tee">
-          <span class="tag">SUZURI</span><span class="price-overlay">¥4,900</span>
-        </a>
-        <a class="tee" href="https://wearmu.com/api/products/374/mockup.png" target="_blank" rel="noopener">
-          <img src="https://mockups.wearmu.com/374.jpg" alt="Printful Bracket Tee">
-          <span class="tag">Printful</span><span class="price-overlay">¥7,800</span>
-        </a>
-      </div>
-      <div class="meta">
-        <div class="slug">e04 · bracket</div>
-        <div class="title">Event Tee · Bracket (旧)</div>
-        <div class="hint">既存バージョン。新 02_bracket と比較推奨。</div>
-      </div>
-      <div class="buy-row">
-        <a class="suzuri" href="https://suzuri.jp/yukihama/19988982/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">SUZURI で買う</a>
-        <a class="printful" href="https://wearmu.com/buy?product_id=374" target="_blank" rel="noopener">海外発送 Printful</a>
-      </div>
+  </article>
+  <article class="card">
+    <div class="img"><img src="https://lifestyle.wearmu.com/jiufight/v3/09_minimal_geometric.png" alt="JIUFIGHT — Minimal Geometric Tee" loading="lazy"></div>
+    <div class="body">
+      <div class="name">JIUFIGHT — Minimal Geometric Tee</div>
+      <div class="desc">SUPER YAWARA SWEEP CUP 2026 限定。Mindset / yawara / FLEX GROUP / 甲田事務所 / 焼肉古今 / SJJJF / 大和不動産 7社協賛。</div>
+      <div class="price">¥4,900</div>
+      <div class="buy"><span class="btn soon">近日販売開始</span></div>
     </div>
-
-    <div class="card">
-      <div class="tees">
-        <a class="tee" href="https://suzuri.jp/yukihama/19988983/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">
-          <img src="https://og.suzuri.jp/products/85436453.webp" alt="SUZURI Vintage Tee">
-          <span class="tag">SUZURI</span><span class="price-overlay">¥4,900</span>
-        </a>
-        <a class="tee" href="https://wearmu.com/api/products/375/mockup.png" target="_blank" rel="noopener">
-          <img src="https://mockups.wearmu.com/375.jpg" alt="Printful Vintage Tee">
-          <span class="tag">Printful</span><span class="price-overlay">¥7,800</span>
-        </a>
-      </div>
-      <div class="meta">
-        <div class="slug">e05 · vintage</div>
-        <div class="title">Event Tee · Vintage</div>
-        <div class="hint">日付スタンプの古典版。</div>
-      </div>
-      <div class="buy-row">
-        <a class="suzuri" href="https://suzuri.jp/yukihama/19988983/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">SUZURI で買う</a>
-        <a class="printful" href="https://wearmu.com/buy?product_id=375" target="_blank" rel="noopener">海外発送 Printful</a>
-      </div>
+  </article>
+  <article class="card">
+    <div class="img"><img src="https://lifestyle.wearmu.com/jiufight/v3/10_graffiti_street.png" alt="JIUFIGHT — Graffiti Street Tee" loading="lazy"></div>
+    <div class="body">
+      <div class="name">JIUFIGHT — Graffiti Street Tee</div>
+      <div class="desc">SUPER YAWARA SWEEP CUP 2026 限定。Mindset / yawara / FLEX GROUP / 甲田事務所 / 焼肉古今 / SJJJF / 大和不動産 7社協賛。</div>
+      <div class="price">¥4,900</div>
+      <div class="buy"><span class="btn soon">近日販売開始</span></div>
     </div>
+  </article>
+</section>
 
-    <div class="card">
-      <div class="tees">
-        <a class="tee" href="https://suzuri.jp/yukihama/19988984/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">
-          <img src="https://og.suzuri.jp/products/85436454.webp" alt="SUZURI 柔 Kanji Tee">
-          <span class="tag">SUZURI</span><span class="price-overlay">¥4,900</span>
-        </a>
-        <a class="tee" href="https://wearmu.com/api/products/377/mockup.png" target="_blank" rel="noopener">
-          <img src="https://mockups.wearmu.com/377.jpg" alt="Printful 柔 Kanji Tee">
-          <span class="tag">Printful</span><span class="price-overlay">¥7,800</span>
-        </a>
-      </div>
-      <div class="meta">
-        <div class="slug">e06 · kanji</div>
-        <div class="title">Event Tee · 柔 (旧)</div>
-        <div class="hint">既存バージョン。新 03_kanji_seal と比較推奨。</div>
-      </div>
-      <div class="buy-row">
-        <a class="suzuri" href="https://suzuri.jp/yukihama/19988984/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">SUZURI で買う</a>
-        <a class="printful" href="https://wearmu.com/buy?product_id=377" target="_blank" rel="noopener">海外発送 Printful</a>
-      </div>
-    </div>
+<p class="note">
+  ★印あり = SUZURI（国内2–3日発送・¥4,900）で即購入可<br>
+  その他デザインは順次SUZURI/Printfulで公開予定。先行予約・サンプル希望は <a href="mailto:mail@yukihamada.jp" style="color:var(--y)">mail@yukihamada.jp</a>
+</p>
 
-    <div class="card">
-      <div class="tees">
-        <a class="tee" href="https://suzuri.jp/yukihama/19988985/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">
-          <img src="https://og.suzuri.jp/products/85436456.webp" alt="SUZURI 2026 Bib Tee">
-          <span class="tag">SUZURI</span><span class="price-overlay">¥4,900</span>
-        </a>
-        <a class="tee" href="https://wearmu.com/api/products/378/mockup.png" target="_blank" rel="noopener">
-          <img src="https://mockups.wearmu.com/378.jpg" alt="Printful 2026 Bib Tee">
-          <span class="tag">Printful</span><span class="price-overlay">¥7,800</span>
-        </a>
-      </div>
-      <div class="meta">
-        <div class="slug">e07 · bib</div>
-        <div class="title">Event Tee · 2026 Bib</div>
-        <div class="hint">ゼッケン風意匠。</div>
-      </div>
-      <div class="buy-row">
-        <a class="suzuri" href="https://suzuri.jp/yukihama/19988985/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">SUZURI で買う</a>
-        <a class="printful" href="https://wearmu.com/buy?product_id=378" target="_blank" rel="noopener">海外発送 Printful</a>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="tees">
-        <a class="tee" href="https://suzuri.jp/yukihama/19988986/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">
-          <img src="https://og.suzuri.jp/products/85436457.webp" alt="SUZURI Podium Tee">
-          <span class="tag">SUZURI</span><span class="price-overlay">¥4,900</span>
-        </a>
-        <a class="tee" href="https://wearmu.com/api/products/379/mockup.png" target="_blank" rel="noopener">
-          <img src="https://mockups.wearmu.com/379.jpg" alt="Printful Podium Tee">
-          <span class="tag">Printful</span><span class="price-overlay">¥7,800</span>
-        </a>
-      </div>
-      <div class="meta">
-        <div class="slug">e08 · podium</div>
-        <div class="title">Event Tee · Podium</div>
-        <div class="hint">表彰台モチーフ。</div>
-      </div>
-      <div class="buy-row">
-        <a class="suzuri" href="https://suzuri.jp/yukihama/19988986/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">SUZURI で買う</a>
-        <a class="printful" href="https://wearmu.com/buy?product_id=379" target="_blank" rel="noopener">海外発送 Printful</a>
-      </div>
-    </div>
-
-  </div>
-
-  <h2>━ V2 (新作 6 種) <span class="sub">Gemini 3 Pro Image · 大会前最終ドロップ</span></h2>
-  <p style="color:var(--mute);font-size:11px;letter-spacing:0.08em;max-width:880px;margin:0 0 18px">無 / Tap or Nap / Champion 黒帯 / 押忍 OSS! / Mat Time / 8-Player Bracket。同じく SUZURI (¥4,900) / Printful (¥7,800)。</p>
-  <div class="grid">
-
-    <div class="card">
-      <div class="tees">
-        <a class="tee" href="https://suzuri.jp/yukihama/19989278/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">
-          <img src="https://og.suzuri.jp/products/85437679.webp" alt="SUZURI 無 Tee">
-          <span class="tag">SUZURI</span><span class="price-overlay">¥4,900</span>
-        </a>
-        <a class="tee" href="https://wearmu.com/api/products/1059/mockup.png" target="_blank" rel="noopener">
-          <img src="https://mockups.wearmu.com/1059.jpg" alt="Printful 無 Tee">
-          <span class="tag">Printful</span><span class="price-overlay">¥7,800</span>
-        </a>
-      </div>
-      <div class="meta">
-        <div class="slug">v01 · 無</div>
-        <div class="title">無 (Mu Kanji)</div>
-        <div class="hint">一筆描き 無。沈黙を着る。</div>
-      </div>
-      <div class="buy-row">
-        <a class="suzuri" href="https://suzuri.jp/yukihama/19989278/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">SUZURI で買う</a>
-        <a class="printful" href="https://wearmu.com/buy?product_id=1059" target="_blank" rel="noopener">海外発送 Printful</a>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="tees">
-        <a class="tee" href="https://suzuri.jp/yukihama/19989279/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">
-          <img src="https://og.suzuri.jp/products/85437681.webp" alt="SUZURI Tap or Nap Tee">
-          <span class="tag">SUZURI</span><span class="price-overlay">¥4,900</span>
-        </a>
-        <a class="tee" href="https://wearmu.com/api/products/1060/mockup.png" target="_blank" rel="noopener">
-          <img src="https://mockups.wearmu.com/1060.jpg" alt="Printful Tap or Nap Tee">
-          <span class="tag">Printful</span><span class="price-overlay">¥7,800</span>
-        </a>
-      </div>
-      <div class="meta">
-        <div class="slug">v02 · tap</div>
-        <div class="title">Tap or Nap</div>
-        <div class="hint">BJJ 古典 phrase。タップするか、寝るか。</div>
-      </div>
-      <div class="buy-row">
-        <a class="suzuri" href="https://suzuri.jp/yukihama/19989279/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">SUZURI で買う</a>
-        <a class="printful" href="https://wearmu.com/buy?product_id=1060" target="_blank" rel="noopener">海外発送 Printful</a>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="tees">
-        <a class="tee" href="https://suzuri.jp/yukihama/19989280/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">
-          <img src="https://og.suzuri.jp/products/85437684.webp" alt="SUZURI Champion 黒帯 Tee">
-          <span class="tag">SUZURI</span><span class="price-overlay">¥4,900</span>
-        </a>
-        <a class="tee" href="https://wearmu.com/api/products/1061/mockup.png" target="_blank" rel="noopener">
-          <img src="https://mockups.wearmu.com/1061.jpg" alt="Printful Champion 黒帯 Tee">
-          <span class="tag">Printful</span><span class="price-overlay">¥7,800</span>
-        </a>
-      </div>
-      <div class="meta">
-        <div class="slug">v03 · 黒帯</div>
-        <div class="title">Champion 黒帯</div>
-        <div class="hint">優勝者用 emblem。閉会式で着る。</div>
-      </div>
-      <div class="buy-row">
-        <a class="suzuri" href="https://suzuri.jp/yukihama/19989280/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">SUZURI で買う</a>
-        <a class="printful" href="https://wearmu.com/buy?product_id=1061" target="_blank" rel="noopener">海外発送 Printful</a>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="tees">
-        <a class="tee" href="https://suzuri.jp/yukihama/19989285/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">
-          <img src="https://og.suzuri.jp/products/85437686.webp" alt="SUZURI 押忍 OSS Tee">
-          <span class="tag">SUZURI</span><span class="price-overlay">¥4,900</span>
-        </a>
-        <a class="tee" href="https://wearmu.com/api/products/1062/mockup.png" target="_blank" rel="noopener">
-          <img src="https://mockups.wearmu.com/1062.jpg" alt="Printful 押忍 OSS Tee">
-          <span class="tag">Printful</span><span class="price-overlay">¥7,800</span>
-        </a>
-      </div>
-      <div class="meta">
-        <div class="slug">v04 · 押忍</div>
-        <div class="title">押忍 OSS!</div>
-        <div class="hint">道場の挨拶を胸に。</div>
-      </div>
-      <div class="buy-row">
-        <a class="suzuri" href="https://suzuri.jp/yukihama/19989285/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">SUZURI で買う</a>
-        <a class="printful" href="https://wearmu.com/buy?product_id=1062" target="_blank" rel="noopener">海外発送 Printful</a>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="tees">
-        <a class="tee" href="https://suzuri.jp/yukihama/19989286/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">
-          <img src="https://og.suzuri.jp/products/85437687.webp" alt="SUZURI Mat Time Tee">
-          <span class="tag">SUZURI</span><span class="price-overlay">¥4,900</span>
-        </a>
-        <a class="tee" href="https://wearmu.com/api/products/1063/mockup.png" target="_blank" rel="noopener">
-          <img src="https://mockups.wearmu.com/1063.jpg" alt="Printful Mat Time Tee">
-          <span class="tag">Printful</span><span class="price-overlay">¥7,800</span>
-        </a>
-      </div>
-      <div class="meta">
-        <div class="slug">v05 · time</div>
-        <div class="title">Mat Time</div>
-        <div class="hint">時計じゃない、マットに居た時間。</div>
-      </div>
-      <div class="buy-row">
-        <a class="suzuri" href="https://suzuri.jp/yukihama/19989286/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">SUZURI で買う</a>
-        <a class="printful" href="https://wearmu.com/buy?product_id=1063" target="_blank" rel="noopener">海外発送 Printful</a>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="tees">
-        <a class="tee" href="https://suzuri.jp/yukihama/19989287/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">
-          <img src="https://og.suzuri.jp/products/85437690.webp" alt="SUZURI 8-Player Bracket Tee">
-          <span class="tag">SUZURI</span><span class="price-overlay">¥4,900</span>
-        </a>
-        <a class="tee" href="https://wearmu.com/api/products/1064/mockup.png" target="_blank" rel="noopener">
-          <img src="https://mockups.wearmu.com/1064.jpg" alt="Printful 8-Player Bracket Tee">
-          <span class="tag">Printful</span><span class="price-overlay">¥7,800</span>
-        </a>
-      </div>
-      <div class="meta">
-        <div class="slug">v06 · bracket</div>
-        <div class="title">8-Player Bracket</div>
-        <div class="hint">8→4→2→1 の階段を背負う。</div>
-      </div>
-      <div class="buy-row">
-        <a class="suzuri" href="https://suzuri.jp/yukihama/19989287/heavyweight-t-shirt/m/black" target="_blank" rel="noopener">SUZURI で買う</a>
-        <a class="printful" href="https://wearmu.com/buy?product_id=1064" target="_blank" rel="noopener">海外発送 Printful</a>
-      </div>
-    </div>
-
-  </div>
-
-</main>
-
-<footer>
-  ━◯━ MU × JIUFIGHT · <a href="https://wearmu.com">wearmu.com</a> · <a href="https://www.jiufight.jp">jiufight.jp</a>
-</footer>
-
-</body>
-</html>
+<footer>WEARMU × JIUFIGHT — SUPER YAWARA SWEEP CUP 2026</footer>
+</body></html>
