@@ -15299,6 +15299,45 @@ async fn api_brand_copy(
     }
 }
 
+/// POST /api/admin/taxigen/activate?token=…&pattern=metro|weather|haneda&state=1|0
+/// Flips cv_config flag that scripts/taxigen/cron_runner.py reads each hour.
+/// Idempotent. Returns current state of all 3 patterns.
+async fn admin_taxigen_activate(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/taxigen/activate").await { return r; }
+    let pattern = q.get("pattern").cloned().unwrap_or_default();
+    let state = q.get("state").cloned().unwrap_or_else(|| "1".into());
+    let valid = ["metro", "weather", "haneda"];
+    if !valid.contains(&pattern.as_str()) {
+        return (StatusCode::BAD_REQUEST,
+            format!("pattern must be one of {:?}", valid)).into_response();
+    }
+    let key = format!("taxigen_{}_active", pattern);
+    let normalized = if state == "1" || state == "true" || state == "on" { "1" } else { "0" };
+    {
+        let conn = db.lock().unwrap();
+        cv_set(&conn, &key, normalized, "/api/admin/taxigen/activate");
+    }
+    let mut states = std::collections::HashMap::new();
+    {
+        let conn = db.lock().unwrap();
+        for p in &valid {
+            let k = format!("taxigen_{}_active", p);
+            let v = cv_get(&conn, &k, "0");
+            states.insert(p.to_string(), v == "1");
+        }
+    }
+    Json(serde_json::json!({
+        "ok": true,
+        "changed": {"pattern": pattern, "state": normalized == "1"},
+        "all": states,
+        "note": "Cron picks up the change on next hourly tick. First gen ≤30min after pickup."
+    })).into_response()
+}
+
 /// GET /proposals/nihon-kotsu?key=… — key-gated TAXIGEN pitch.
 /// Compares against proposals.secret_key (constant-time-ish via simple eq —
 /// the surface is so small + the key is 16 hex chars so attack is impractical).
@@ -15318,24 +15357,39 @@ async fn proposal_nihon_kotsu(
         return (StatusCode::NOT_FOUND, "Not Found").into_response();
     }
 
-    // Pull TAXIGEN sample products to embed in the deck.
-    let samples: Vec<(i64, i64, String, Option<String>)> = {
+    // Pull TAXIGEN sample products from each pattern brand (4 each).
+    let fetch_samples = |brand: &str, lim: i64| -> Vec<(i64, i64, String, Option<String>)> {
         let conn = db.lock().unwrap();
         let mut stmt = match conn.prepare(
             "SELECT id, drop_num, name, mockup_url FROM products
-             WHERE brand='taxigen' ORDER BY drop_num ASC LIMIT 12"
-        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
-        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get::<_, Option<String>>(3)?)))
+             WHERE brand=? ORDER BY drop_num ASC LIMIT ?"
+        ) { Ok(s) => s, Err(_) => return vec![] };
+        stmt.query_map(params![brand, lim], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get::<_, Option<String>>(3)?)))
             .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
     };
+    let metro_samples   = fetch_samples("taxigen_metro", 4);
+    let weather_samples = fetch_samples("taxigen_weather", 4);
+    let haneda_samples  = fetch_samples("taxigen_haneda", 4);
+    let legacy_samples  = fetch_samples("taxigen", 6);
 
-    let mut sample_cards = String::new();
-    for (id, drop, sname, mockup) in &samples {
-        let img = mockup.as_deref().unwrap_or("https://mockups.wearmu.com/hero.png");
-        sample_cards.push_str(&format!(
-            r#"<a class="sample" href="/buy/{id}"><img src="{img}" alt="{n_esc}" loading="lazy"/><div class="meta"><span class="num">#{drop:03}</span><span class="name">{n_esc}</span></div></a>"#,
-            id=id, img=html_attr_escape(img), n_esc=html_escape(sname), drop=drop));
-    }
+    let render_cards = |rows: &[(i64, i64, String, Option<String>)]| -> String {
+        let mut out = String::new();
+        for (id, drop, sname, mockup) in rows {
+            let img = mockup.as_deref().unwrap_or("https://mockups.wearmu.com/hero.png");
+            out.push_str(&format!(
+                r#"<a class="sample" href="/buy/{id}"><img src="{img}" alt="{n_esc}" loading="lazy"/><div class="meta"><span class="num">#{drop:03}</span><span class="name">{n_esc}</span></div></a>"#,
+                id=id, img=html_attr_escape(img), n_esc=html_escape(sname), drop=drop));
+        }
+        if out.is_empty() {
+            out = r#"<div style="color:#666;grid-column:1/-1;text-align:center;padding:30px;font-size:13px">(承認 + cron 開始後 30分以内に最初の1着がここに表示されます)</div>"#.to_string();
+        }
+        out
+    };
+    let metro_cards   = render_cards(&metro_samples);
+    let weather_cards = render_cards(&weather_samples);
+    let haneda_cards  = render_cards(&haneda_samples);
+    let legacy_cards  = render_cards(&legacy_samples);
+    let sample_cards = legacy_cards;  // kept for backwards-compat below
 
     let html = format!(r#"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
@@ -15393,51 +15447,78 @@ async fn proposal_nihon_kotsu(
     日本交通のデータ — 人の動きそのもの — を seed に、東京の鼓動を1着にするのが TAXIGEN です。</p>
   <blockquote class="quote">MUGEN が「自然」を着るブランドなら、TAXIGEN は「都市」を着るブランド。</blockquote>
 
-  <h2>2. 何が起きるか (商品の生成)</h2>
+  <h2>2. 仕組み — 100% 公開データのみ</h2>
+  <p>内部データへのアクセス交渉は不要です。下記3パターン全て、公開ソースだけで1時間ごとに自動生成。
+    日本交通様にお願いするのは <strong>ブランド名義のご承認のみ</strong>。</p>
   <table>
-    <tr><th>項目</th><th>仕様</th></tr>
-    <tr><td>生成周期</td><td>1時間ごとに1着 (MUGEN同様)</td></tr>
-    <tr><td>Seed データ</td><td>「過去1時間で最も配車されたエリア (1kmメッシュ)」+ 時刻 + 推定配車件数</td></tr>
-    <tr><td>データソース</td><td>GO/Mobility Tech 集計指標 (公開分) + 東京都統計 + 必要なら 日本交通 内部データ提供</td></tr>
-    <tr><td>表現</td><td>AREA 名 + HH:00 + 件数 を broadcast-board レイアウトで typography 化</td></tr>
-    <tr><td>1着</td><td>Bella+Canvas 3001 黒 / Printful EU プリント / DTG / ¥5,000-30,000 bonding curve</td></tr>
-    <tr><td>在庫</td><td>受注生産・在庫ゼロ・同じデザインは二度と作られない</td></tr>
+    <tr><th>パターン</th><th>データソース (公開)</th><th>取得方法</th><th>取得SLA</th></tr>
+    <tr><td><strong>METRO</strong> 遅延</td><td>Yahoo路線運行情報 (関東エリア)</td><td>HTML scrape</td><td>1時間</td></tr>
+    <tr><td><strong>WEATHER</strong> 気象</td><td>wttr.in (Tokyo)</td><td>JSON API (key不要)</td><td>1時間</td></tr>
+    <tr><td><strong>HANEDA</strong> 到着</td><td>国土交通省 空港管理状況 + 統計</td><td>公開統計</td><td>常時 (時刻決定論的)</td></tr>
   </table>
+  <p>表現: 各 snapshot を「kicker × タイトル × 大きな数字 × サブ情報」の broadcast-board レイアウトで typography 化。
+    1着 Bella+Canvas 3001 黒 / Printful EU DTG / ¥5,000-30,000 bonding curve / 受注生産・在庫ゼロ・1点もの。</p>
 
-  <h2>3. サンプル — 既に生成済 (本日)</h2>
-  <p>下記は本日 model run で 12時間分を試作したもの。実運用では cron で 1時間ごと 24/365 で稼働。</p>
+  <h2>3. サンプル — 各パターン</h2>
+
+  <h3>Pattern A · METRO (電車遅延)</h3>
+  <div class="grid">{metro_cards}</div>
+
+  <h3>Pattern B · WEATHER (気象)</h3>
+  <div class="grid">{weather_cards}</div>
+
+  <h3>Pattern C · HANEDA (空港)</h3>
+  <div class="grid">{haneda_cards}</div>
+
+  <h3 style="color:#666">参考 — 初回プロト (地名×時刻×件数 静的)</h3>
   <div class="grid">{sample_cards}</div>
-  <p style="font-size:12px;color:#888;margin-top:14px">※ クリックで個別商品ページへ (¥5,000、test用)</p>
+  <p style="font-size:12px;color:#888;margin-top:14px">クリックで個別商品ページ (¥5,000、test購入可)</p>
 
   <h2>4. 数字 (収益・寄付・規模)</h2>
   <div class="stat-grid">
     <div class="stat"><div class="k">想定 単価</div><div class="v">¥5,000<small>～¥30,000</small></div></div>
-    <div class="stat"><div class="k">年間生成数</div><div class="v">8,760<small>着</small></div></div>
-    <div class="stat"><div class="k">想定 完売率</div><div class="v">8%<small>初年度</small></div></div>
-    <div class="stat"><div class="k">推定年商</div><div class="v">¥3.5M<small>初年度</small></div></div>
+    <div class="stat"><div class="k">年間生成数</div><div class="v">8,760<small>着 × 3 = 26,280</small></div></div>
+    <div class="stat"><div class="k">想定 完売率</div><div class="v">5-10%<small>初年度</small></div></div>
+    <div class="stat"><div class="k">推定年商</div><div class="v">¥6-12M<small>3パターン合計</small></div></div>
   </div>
-  <p>利益 50% は §27 に基づき寄付。寄付先は MU 既定の <strong>弟子屈町</strong> または日本交通様ご指定 (例: 港区社協・タクシードライバー就労支援基金等)。</p>
+  <p>利益 50% は §27 に基づき寄付。寄付先は MU 既定 <strong>弟子屈町</strong> または日本交通様ご指定 (例: タクシー乗務員ご家族支援基金等)。</p>
 
   <h2>5. 日本交通様にしていただきたいこと</h2>
-  <ul>
-    <li>(A) GO/MobilityTech の <strong>公開可能な集計データ</strong> へのアクセス指針 — どの粒度なら公開可能か、コンプライアンス上の制約</li>
-    <li>(B) ブランド共同名義の可否 — "TAXIGEN by MU × 日本交通" として展開してよいか</li>
-    <li>(C) 寄付先のご指定 — タクシー乗務員ご家族支援基金等あれば優先</li>
-    <li>(D) 拡張: 100周年 (2028) アーカイブ Tee の同時pitch可否</li>
-  </ul>
+  <div class="ask" style="margin:14px 0 24px">
+    <h3>たった1つ</h3>
+    <p style="font-size:15px"><strong>"TAXIGEN by MU × 日本交通" としてブランド名義に日本交通様の名前を載せて良いか</strong>のご承認のみ。</p>
+    <p style="font-size:13px;color:#aaa">データへのアクセス、契約書面、運営参加、ロゴ提供 — いずれも <strong>不要</strong> です。
+      お約束いただいた直後から MU 側で全て対応します。</p>
+  </div>
+  <p><strong>承認頂ければ、30分以内に1着目が生成されます</strong> (admin endpoint 1回 hit で cron 起動)。
+    気に入らなければ即日停止 (sunset 自由)。後で名義を外す判断も可能。</p>
 
   <h2>6. MU 側でお約束すること</h2>
   <ul>
     <li>運営・印刷・発送・サポート全て MU 単独。日本交通様の運営負荷ゼロ。</li>
     <li>商標的に問題のあるデザイン (日本交通ロゴ・GOロゴ等) は使わない。</li>
     <li>原価・売上・寄付額は全て <a href="https://wearmu.com/transparency" style="color:#e6c449">/transparency</a> で公開。</li>
-    <li>サンセット条項: 日本交通様の判断でいつでも停止可能。</li>
+    <li>データソースURLは商品ページに常時表示 (誰でも一次ソース検証可)。</li>
+    <li>サンセット: 日本交通様の判断でいつでも停止可。当日 admin 1コマンドで OFF。</li>
   </ul>
+
+  <h2>7. 起動シーケンス (承認後)</h2>
+  <table>
+    <tr><th>分</th><th>動作</th></tr>
+    <tr><td>T+0</td><td>承認メール (一行)</td></tr>
+    <tr><td>T+1</td><td>MU 側 admin endpoint 叩いて 3パターン ON</td></tr>
+    <tr><td>T+2</td><td>Yahoo / wttr / 統計 から最新データfetch (各 ~5秒)</td></tr>
+    <tr><td>T+3</td><td>Gemini が 3着デザイン生成 (各 ~30秒)</td></tr>
+    <tr><td>T+5</td><td>Printful にデザインpush + mockup生成 (各 ~60秒)</td></tr>
+    <tr><td>T+8</td><td>3着 wearmu.com/buy/&lt;id&gt; に LIVE</td></tr>
+    <tr><td>T+30</td><td>1時間後にrecur (cron) 開始、24/365 自律運用へ</td></tr>
+  </table>
 
   <div class="ask">
     <h3>初回 ASK</h3>
-    <p>30分のオンラインmtg を1回いただけませんか。本ピッチへのご感想 + 上記 (A)〜(D) のすり合わせ。</p>
-    <p>日程: ご都合のよい候補を <a href="mailto:info@wearmu.com" style="color:#e6c449">info@wearmu.com</a> までいただければ即合わせます。</p>
+    <p>30分のオンラインmtg を1回いただけませんか。本ピッチへのご感想 + 「名義承認の可否」のすり合わせ。</p>
+    <p>もしくは、メール一行 (「OK」「修正点 X」「お断り」) でも結構です。<br>
+      <a href="mailto:info@wearmu.com" style="color:#e6c449">info@wearmu.com</a> 宛にお願いします。</p>
   </div>
 
   <footer>
@@ -15447,6 +15528,9 @@ async fn proposal_nihon_kotsu(
 </div>
 </body></html>"#,
         name = html_escape(&name),
+        metro_cards = metro_cards,
+        weather_cards = weather_cards,
+        haneda_cards = haneda_cards,
         sample_cards = sample_cards,
         date = chrono_now_human());
     (StatusCode::OK, [("content-type", "text/html; charset=utf-8")], html).into_response()
@@ -47103,6 +47187,7 @@ async fn main() {
         .route("/collections/:brand", get(collection_page))
         .route("/api/brand_copy/:brand", get(api_brand_copy))
         .route("/proposals/nihon-kotsu", get(proposal_nihon_kotsu))
+        .route("/api/admin/taxigen/activate", post(admin_taxigen_activate))
         .route("/survey/quality", get(survey_quality_page))
         .route("/api/poll/quality", get(quality_poll_results))
         .route("/api/poll/quality/vote", post(quality_poll_vote))
