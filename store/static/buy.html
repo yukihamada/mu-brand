@@ -359,11 +359,13 @@ document.querySelectorAll('.size-btn').forEach(btn => {
 
 async function loadProduct() {
   try {
-    // Allow ad / SNS traffic to pin a specific product via ?product_id=<id>
-    // (used by MU-AdsTees-Search campaign landing URLs for ads_* brands).
+    // Allow ad / SNS traffic to pin a specific product via:
+    //   - pretty URL: /buy/<id>
+    //   - or query param: /buy?product_id=<id>
     // Falls back to the latest in-stock MUGEN drop if no param given.
     const params = new URLSearchParams(location.search);
-    const pinId = params.get('product_id');
+    const pathMatch = location.pathname.match(/^\/buy\/(\d+)/);
+    const pinId = pathMatch ? pathMatch[1] : params.get('product_id');
     let pick;
     if (pinId) {
       const r = await fetch('/api/products/item/' + encodeURIComponent(pinId));

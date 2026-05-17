@@ -15239,6 +15239,10 @@ fn seed_brand_copy(conn: &Connection) {
          "▶ イベント記念",
          "イベントの<em>記憶</em>を着る。",
          "SOLUNA FEST・グラップリング大会・父の日。期間限定の記念Tee。"),
+        ("taxigen",
+         "▶ TAXIGEN — MU × 日本交通 (private pitch)",
+         "東京の<em>人の動き</em>を、<br>1時間ごと 1着に。",
+         "MUGEN (北海道の天気) と対(つい)の兄弟ライン。AREA × 時刻 × 推定配車件数 を seed に AI が typography 化。本サンプルは pitch 用、未承認 — 公開禁止。"),
     ];
     for (brand, eyebrow, h1, lede) in seeds {
         let _ = conn.execute(
