@@ -127,7 +127,7 @@ def main():
                 (i, name, now, prompt[:500], f"TAXIGEN-{i:03d}", rel, rel),
             )
             print(f"  ✓ inserted ({len(img):,} bytes) → {rel}")
-    db.commit()
+        db.commit()  # commit per-row so killed scripts don't lose progress
     print("\n✅ TAXIGEN samples generated (active=0, brand=taxigen)")
 
 
