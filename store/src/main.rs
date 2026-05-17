@@ -5039,9 +5039,11 @@ async fn vault_dashboard_api(State(db): State<Db>, headers: HeaderMap) -> Respon
 // Auth: standard admin_auth (MU_ADMIN_TOKEN).
 // Safety: dry_run=true by default. Pass ?dry_run=false to actually send.
 
-const VAULT_WAITLIST_SUBJECT: &str = include_str!("../../scripts/vault_launch/waitlist_email_subject.txt");
-const VAULT_WAITLIST_TEXT:    &str = include_str!("../../scripts/vault_launch/waitlist_email_body.txt");
-const VAULT_WAITLIST_HTML:    &str = include_str!("../../scripts/vault_launch/waitlist_email_body.html");
+// Canonical source: scripts/vault_launch/. Mirrored into store/static/vault/
+// so the Rust build context (store/) can include them via include_str!.
+const VAULT_WAITLIST_SUBJECT: &str = include_str!("../static/vault/waitlist_email_subject.txt");
+const VAULT_WAITLIST_TEXT:    &str = include_str!("../static/vault/waitlist_email_body.txt");
+const VAULT_WAITLIST_HTML:    &str = include_str!("../static/vault/waitlist_email_body.html");
 
 async fn admin_email_vault_waitlist_blast(
     State(db): State<Db>,
