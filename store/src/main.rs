@@ -29976,7 +29976,7 @@ async fn ma_gift_claim_page(
 <meta name="description" content="MU 間 MA の commemorative piece、受取登録ページ。1-of-1、世界に 1 着。">
 <meta name="robots" content="noindex,nofollow">
 <meta property="og:title" content="{label} · 世界に 1 着の MA を受け取る">
-<meta property="og:description" content="MU からの 1-of-1 commemorative Tシャツ。AI が生成したデザイン、送料込みで MU 負担。住所を入力すれば Printful から発送。">
+<meta property="og:description" content="MU からの 1-of-1 commemorative Tシャツ。AI が生成したデザイン、送料込みで MU 負担。住所を入力すれば POD 各社 (Printful / SUZURI / Gelato 等、地域で自動振り分け) から発送。">
 <meta property="og:image" content="{og_image}">
 <meta property="og:image:width" content="1024">
 <meta property="og:image:height" content="1024">
@@ -30138,7 +30138,7 @@ async function submitForm(e){{
     const d = await r.json();
     if (d.ok) {{
       msg.className = 'ok';
-      msg.textContent = d.message || '受取情報を登録しました。デザインが完成次第、Printful から発送します。';
+      msg.textContent = d.message || '受取情報を登録しました。デザインが完成次第、POD 各社 (Printful / SUZURI / Gelato 等、地域で自動振り分け) から発送します。';
       btn.textContent = '登録完了 ✓';
     }} else {{
       msg.className = 'err';
@@ -36038,7 +36038,7 @@ async fn show_sweep_page(
     <div class="cat">{cat}</div>
     <h3 id="buy-{id}">{name}</h3>
     <p class="desc">{desc}</p>
-    <div class="lead">📦 {lead}日でお届け · Printful 経由</div>
+    <div class="lead">📦 {lead}日でお届け · POD 各社 (Printful / SUZURI / Gelato 等) 経由</div>
     <div class="row">
       <span class="price">¥{price_fmt}</span>
       <select id="size-{id}" class="size" aria-label="size">
@@ -36371,7 +36371,7 @@ async fn show_kokon_page(State(db): State<Db>) -> Response {
     <div class="cat">{cat}</div>
     <h3 id="buy-{id}">{name}</h3>
     <p class="desc">{desc}</p>
-    <div class="lead">📦 {lead}日でお届け · Printful 経由</div>
+    <div class="lead">📦 {lead}日でお届け · POD 各社 (Printful / SUZURI / Gelato 等) 経由</div>
     <div class="row">
       <span class="price">¥{price_fmt}</span>
       <select id="size-{id}" class="size" aria-label="size">
@@ -36390,9 +36390,9 @@ async fn show_kokon_page(State(db): State<Db>) -> Response {
     let body = format!(r#"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>MU × kokon.tokyo — 焼肉店ブランド公式グッズ | wearmu.com</title>
-<meta name="description" content="MU と kokon.tokyo (都内焼肉店) のコラボ。T / クルーネック / トート / エナメルマグ / エプロン / キャップ / ステッカー / 缶クーラー。Printful 経由で 10-14 日に発送。">
+<meta name="description" content="MU と kokon.tokyo (都内焼肉店) のコラボ。T / クルーネック / トート / エナメルマグ / エプロン / キャップ / ステッカー / 缶クーラー。POD 各社 (Printful / SUZURI / Gelato 等) から 10-14 日に発送。">
 <meta property="og:title" content="MU × kokon.tokyo — 焼肉店ブランド公式グッズ">
-<meta property="og:description" content="都内焼肉店 kokon.tokyo のブランドグッズ 8 SKU を Printful 経由で。在庫ゼロ、注文即発送。">
+<meta property="og:description" content="都内焼肉店 kokon.tokyo のブランドグッズ 8 SKU を POD 各社 (Printful / SUZURI / Gelato 等) から。在庫ゼロ、注文即発送。">
 <meta property="og:image" content="https://mockups.wearmu.com/hero.png">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>

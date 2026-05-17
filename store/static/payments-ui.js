@@ -301,7 +301,7 @@
         <div style="font-size:9px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.6;margin-bottom:12px">Shipping</div>
         <h3 style="font-size:16px;letter-spacing:0.04em;margin:0 0 8px">配送先 / Shipping address</h3>
         <p style="font-size:10px;line-height:1.6;opacity:0.6;margin:0 0 18px">
-          クリプト決済では、送金確認後に Printful から自動発送します。発送先を先にご入力ください。<br>
+          クリプト決済では、送金確認後に POD 各社 (Printful / SUZURI / Gelato 等、地域で自動振り分け) から自動発送します。発送先を先にご入力ください。<br>
           Worldwide via DHL/FedEx — typically 7-10 business days.
         </p>
         <form id="shipping-form-mu">
