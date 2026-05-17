@@ -35,9 +35,12 @@
   .v-card.v-gelato   { border-left-color: var(--v-gelato); }
   .v-card.v-printful { border-left-color: var(--v-printful); }
   .v-card.v-suzuri   { border-left-color: var(--v-suzuri); }
+  .v-card .v-info { flex: 1; min-width: 0; }
+  .v-card .v-btns { display: flex; flex-direction: column; gap: 4px; }
   .v-card .name { font-size: 13px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; }
   .v-card .meta { color: var(--mute); font-size: 10px; letter-spacing: 0.12em; margin-top: 4px; }
   .v-card .btn-sync { font-size: 10px; padding: 6px 10px; }
+  .price-pending { color: var(--mute); font-style: italic; font-size: 10px; }
 
   table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
   th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
@@ -112,25 +115,34 @@
 <div class="wrap">
   <div class="vendors">
     <div class="v-card v-gelato">
-      <div>
+      <div class="v-info">
         <div class="name">GELATO</div>
         <div class="meta" id="v-stat-gelato">— SKUs</div>
       </div>
-      <button class="btn btn-sync" data-sync-vendor="gelato">🔄 SYNC</button>
+      <div class="v-btns">
+        <button class="btn btn-sm" data-seed-vendor="gelato" title="Fetch full Gelato catalog">🌱 SEED</button>
+        <button class="btn btn-sm btn-sync" data-sync-vendor="gelato" title="Price-probe stale rows (24h)">🔄 PRICE</button>
+      </div>
     </div>
     <div class="v-card v-printful">
-      <div>
+      <div class="v-info">
         <div class="name">PRINTFUL</div>
         <div class="meta" id="v-stat-printful">— SKUs</div>
       </div>
-      <button class="btn btn-sync" data-sync-vendor="printful">🔄 SYNC</button>
+      <div class="v-btns">
+        <button class="btn btn-sm" data-seed-vendor="printful">🌱 SEED</button>
+        <button class="btn btn-sm btn-sync" data-sync-vendor="printful">🔄 PRICE</button>
+      </div>
     </div>
     <div class="v-card v-suzuri">
-      <div>
+      <div class="v-info">
         <div class="name">SUZURI</div>
         <div class="meta" id="v-stat-suzuri">— SKUs</div>
       </div>
-      <button class="btn btn-sync" data-sync-vendor="suzuri">🔄 SYNC</button>
+      <div class="v-btns">
+        <button class="btn btn-sm" data-seed-vendor="suzuri">🌱 SEED</button>
+        <button class="btn btn-sm btn-sync" data-sync-vendor="suzuri">🔄 PRICE</button>
+      </div>
     </div>
   </div>
 
@@ -159,7 +171,8 @@
     </select>
     <span class="count" id="count">—</span>
     <div class="grow"></div>
-    <button class="btn primary" id="btn-sync-all">🔄 SYNC ALL VENDORS</button>
+    <button class="btn" id="btn-seed-all" title="Bulk-fetch all vendor catalogs (no prices)">🌱 SEED ALL</button>
+    <button class="btn primary" id="btn-sync-all" title="Price-probe stale rows across all vendors">🔄 REFRESH PRICES</button>
   </div>
 
   <div id="status"></div>
@@ -252,9 +265,11 @@ function escapeHtml(s) {
 }
 
 function renderRow(it) {
+  const priced = it.price_value > 0;
   const isJp = it.production_country === 'JP';
-  const flag = isJp ? `<span class="flag jp">🇯🇵 ${it.production_country}</span>`
-                    : `<span class="flag intl">${it.production_country}</span>`;
+  const flag = !priced ? `<span class="price-pending">unpriced</span>`
+    : (isJp ? `<span class="flag jp">🇯🇵 ${it.production_country}</span>`
+            : `<span class="flag intl">${it.production_country}</span>`);
   const linkedHtml = (it.linked_products || []).map(p => `
     <span class="chip ${p.active ? '' : 'inactive'}">
       <span class="brand">${escapeHtml(p.brand)}#${p.drop_num}</span>
@@ -271,10 +286,11 @@ function renderRow(it) {
       <td><span class="cat">${escapeHtml(it.category || '—')}</span></td>
       <td>${flag}</td>
       <td class="num">
-        <div class="price-main">${fmtPrice(it.price_value, it.price_currency)}</div>
-        <div class="price-alt">${fmtAltPrice(it.price_value, it.price_currency)}</div>
+        ${priced ? `<div class="price-main">${fmtPrice(it.price_value, it.price_currency)}</div>
+                    <div class="price-alt">${fmtAltPrice(it.price_value, it.price_currency)}</div>`
+                 : `<div class="price-pending">— click PRICE</div>`}
       </td>
-      <td><span class="delivery">${it.min_delivery_days}–${it.max_delivery_days}d</span></td>
+      <td>${priced ? `<span class="delivery">${it.min_delivery_days}–${it.max_delivery_days}d</span>` : '<span class="price-pending">—</span>'}</td>
       <td>
         <div class="linked">
           ${linkedHtml || '<span class="count" style="font-size:10px">— none</span>'}
@@ -309,11 +325,48 @@ function updateVendorStats() {
   }
   for (const v of Object.keys(grouped)) {
     const arr = grouped[v];
-    const newest = arr.reduce((acc, it) => Math.max(acc, parseInt(it.last_priced_at || '0', 10)), 0);
+    const priced = arr.filter(it => it.price_value > 0).length;
+    const newest = arr.reduce((acc, it) => {
+      const ts = parseInt(it.last_priced_at || '0', 10);
+      return ts > acc ? ts : acc;
+    }, 0);
     const txt = arr.length
-      ? `${arr.length} SKUs · synced ${timeAgo(String(newest))}`
-      : 'not synced yet';
+      ? `${arr.length} SKUs · ${priced} priced${newest ? ` · ${timeAgo(String(newest))}` : ''}`
+      : 'empty — click SEED';
     $(`#v-stat-${v}`).textContent = txt;
+  }
+}
+
+async function seedVendor(vendor, btn) {
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = '🌱 Seeding…';
+  try {
+    const r = await fetchAdmin(`/api/admin/pod/seed${adminQs({vendor})}`, { method: 'POST' });
+    if (!r.ok) {
+      $('#status').innerHTML = `<div class="err">Seed HTTP ${r.status} — append <code>?admin_token=…</code></div>`;
+      return;
+    }
+    const data = await r.json();
+    const results = data.results || [];
+    const totalIns = results.reduce((a, r) => a + (r.inserted || 0), 0);
+    const lines = results.map(r => {
+      if (r.error) return `<div class="err-row"><span class="vendor-pill ${r.vendor}">${r.vendor}</span><span class="err-msg">${escapeHtml(r.error)}</span></div>`;
+      const errLen = Array.isArray(r.errors) ? r.errors.length : 0;
+      return `<div class="err-row"><span class="vendor-pill ${r.vendor}">${r.vendor}</span><span>${r.inserted} SKUs ingested${errLen ? ` · ${errLen} catalogs failed` : ''}</span></div>`;
+    }).join('');
+    $('#status').innerHTML = `
+      <div class="sync-report">
+        <div class="sync-summary"><strong>Seed</strong>: <span class="ok">${totalIns} rows</span> ingested</div>
+        <div class="err-list">${lines}</div>
+      </div>`;
+    btn.textContent = `✓ ${totalIns}`;
+    setTimeout(() => { btn.textContent = orig; }, 4000);
+    await loadCatalog(true);
+  } catch (e) {
+    $('#status').innerHTML = `<div class="err">${escapeHtml(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    if (btn.textContent.startsWith('🌱')) btn.textContent = orig;
   }
 }
 
@@ -350,17 +403,21 @@ function renderSyncReport(data) {
   const status = $('#status');
   const synced = data.synced || [];
   const errors = data.errors || [];
+  const remaining = data.remaining_stale || 0;
   const errHtml = errors.map(e => `
     <div class="err-row">
       <span class="vendor-pill ${escapeHtml(e.vendor || '?')}">${escapeHtml(e.vendor || '?')}</span>
       <code>${escapeHtml(e.uid || '')}</code>
       <span class="err-msg">${escapeHtml(e.error || 'unknown error')}</span>
     </div>`).join('');
+  const remainBadge = remaining
+    ? ` · <span class="bad">${remaining} still stale (re-click PRICE to continue)</span>`
+    : '';
   status.innerHTML = `
     <div class="sync-report">
       <div class="sync-summary">
-        <strong>Sync ${escapeHtml(data.vendor || 'all')}</strong>:
-        <span class="ok">${synced.length} ok</span>${errors.length ? ` · <span class="bad">${errors.length} failed</span>` : ''}
+        <strong>Price refresh — ${escapeHtml(data.vendor || 'all')}</strong>:
+        <span class="ok">${synced.length} priced</span>${errors.length ? ` · <span class="bad">${errors.length} failed</span>` : ''}${remainBadge}
       </div>
       ${errors.length ? `<div class="err-list">${errHtml}</div>` : ''}
     </div>`;
@@ -463,8 +520,12 @@ async function unlinkProduct(pid, vendor, uid) {
 
 // Wire up
 $('#btn-sync-all').addEventListener('click', e => syncVendor('all', e.target));
+$('#btn-seed-all').addEventListener('click', e => seedVendor('all', e.target));
 document.querySelectorAll('[data-sync-vendor]').forEach(btn => {
   btn.addEventListener('click', () => syncVendor(btn.dataset.syncVendor, btn));
+});
+document.querySelectorAll('[data-seed-vendor]').forEach(btn => {
+  btn.addEventListener('click', () => seedVendor(btn.dataset.seedVendor, btn));
 });
 $('#vendor-filter').addEventListener('change', applyFilters);
 $('#category-filter').addEventListener('change', applyFilters);

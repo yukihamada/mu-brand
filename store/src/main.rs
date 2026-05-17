@@ -1238,6 +1238,207 @@ async fn pod_probe(vendor: &str, uid: &str) -> Result<(f64, String, String, i32,
     }
 }
 
+// ───── Bulk catalog seed (per vendor) ───────────────────────────────
+//
+// SEED fetches each vendor's full product list and stores rows in
+// pod_catalog with price_value=0 and last_priced_at='0'. SYNC then
+// price-probes each entry on demand. Decoupling lets us pull thousands
+// of SKUs without burning quota — pricing is fetched only for SKUs the
+// user actually cares about (linked to MU products, or hit Refresh on).
+
+/// Gelato catalogs we want to expose for MU. Excludes wallpaper /
+/// stationery / blank-envelopes etc that we have no immediate use for.
+const GELATO_SEED_CATALOGS: &[&str] = &[
+    "apparel", "tote-bags", "mugs", "posters", "canvas",
+    "phone-cases", "stickers", "hanging-posters", "framed-posters",
+    "wood-prints", "fine-art", "framed-canvas", "mounted-fine-art",
+    "fine-art-framed-poster", "mounted-framed-posters", "poster-hangers",
+    "foam-print-product", "aprons", "baby-clothing", "beanies", "bottles",
+];
+
+/// Pretty-print a Gelato productUid like
+/// `apparel_product_gca_t-shirt_gsc_crewneck_gcu_unisex_gqa_classic_gsi_m_gco_black_gpr_0-4_gildan_h000`
+/// into something a human can read. Best-effort — falls back to the raw
+/// uid if no underscore-segmented attributes are present.
+fn gelato_label_from_uid(uid: &str) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let mut iter = uid.split('_').peekable();
+    while let Some(seg) = iter.next() {
+        match seg {
+            // Apparel: gca=category, gsc=sub, gcu=cut, gqa=quality, gsi=size, gco=color
+            "gca" | "gsc" | "gcu" | "gqa" | "gsi" | "gco" => {
+                if let Some(val) = iter.next() {
+                    parts.push(val.replace('-', " "));
+                }
+            }
+            // Mug size, material; canvas size, frame type, etc — only meaningful tokens
+            "msz" | "mmat" | "bsc" | "bqa" | "bsi" | "bco" => {
+                if let Some(val) = iter.next() {
+                    parts.push(val.replace('-', " "));
+                }
+            }
+            _ => {}
+        }
+    }
+    if parts.is_empty() { uid.to_string() } else {
+        let mut s = parts.join(" · ");
+        // Capitalize first letter for visual cleanliness.
+        if let Some(c) = s.get_mut(0..1) { c.make_ascii_uppercase(); }
+        s
+    }
+}
+
+/// Insert a row into pod_catalog with price=0 (= "seeded, not priced yet").
+/// Existing rows are left untouched so a re-seed doesn't clobber prices.
+fn pod_catalog_upsert_unpriced(conn: &rusqlite::Connection, vendor: &str, uid: &str, title: &str, category: &str) -> rusqlite::Result<usize> {
+    conn.execute(
+        "INSERT INTO pod_catalog
+           (vendor, product_uid, title, category, price_value, price_currency,
+            production_country, min_delivery_days, max_delivery_days, last_priced_at)
+         VALUES (?1, ?2, ?3, ?4, 0.0, '?', '?', 0, 0, '0')
+         ON CONFLICT(vendor, product_uid) DO UPDATE SET
+           title=excluded.title,
+           category=excluded.category",
+        params![vendor, uid, title, category],
+    )
+}
+
+/// Seed Gelato — iterate target catalogs, save productUid + parsed label.
+/// Returns (inserted_or_updated, errors).
+async fn pod_seed_gelato(db: &Db) -> Result<(usize, Vec<String>), String> {
+    let key = env::var("GELATO_API_KEY").map_err(|_| "GELATO_API_KEY unset".to_string())?;
+    let client = pod_http_client();
+    let mut count = 0usize;
+    let mut errors: Vec<String> = Vec::new();
+    for catalog in GELATO_SEED_CATALOGS {
+        let url = format!("https://product.gelatoapis.com/v3/catalogs/{}/products:search", catalog);
+        let body = serde_json::json!({"limit": 100});
+        let resp = match client.post(&url).header("X-API-KEY", &key)
+            .header("Content-Type", "application/json").json(&body).send().await {
+            Ok(r) => r,
+            Err(e) => { errors.push(format!("{}: {}", catalog, e)); continue; }
+        };
+        if !resp.status().is_success() {
+            errors.push(format!("{}: HTTP {}", catalog, resp.status()));
+            continue;
+        }
+        let v: serde_json::Value = match resp.json().await {
+            Ok(j) => j,
+            Err(e) => { errors.push(format!("{}: json {}", catalog, e)); continue; }
+        };
+        let prods = match v["products"].as_array() { Some(a) => a.clone(), None => continue };
+        let cat_key: String = (*catalog).into();
+        let conn = db.lock().unwrap();
+        for p in &prods {
+            let uid = match p["productUid"].as_str() { Some(s) => s.to_string(), None => continue };
+            let label = gelato_label_from_uid(&uid);
+            let category = if cat_key == "apparel" {
+                // Refine: look at attributes for GarmentCategory
+                p["attributes"].as_array().and_then(|arr| {
+                    arr.iter().find(|a| a["productAttributeUid"].as_str() == Some("GarmentCategory"))
+                        .and_then(|a| a["productAttributeValueUid"].as_str())
+                        .map(|s| s.to_string())
+                }).unwrap_or(cat_key.clone())
+            } else { cat_key.clone() };
+            if pod_catalog_upsert_unpriced(&conn, "gelato", &uid, &label, &category).is_ok() {
+                count += 1;
+            }
+        }
+    }
+    Ok((count, errors))
+}
+
+/// Seed Printful — fetch /products (all top-level products) and store each
+/// with the product_id as the uid and product.title as the title.
+async fn pod_seed_printful(db: &Db) -> Result<(usize, Vec<String>), String> {
+    let key = env::var("PRINTFUL_API_KEY").map_err(|_| "PRINTFUL_API_KEY unset".to_string())?;
+    let resp = pod_http_client()
+        .get("https://api.printful.com/products")
+        .bearer_auth(&key)
+        .send().await.map_err(|e| format!("printful GET: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("printful HTTP {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().await.map_err(|e| format!("printful json: {}", e))?;
+    let items = v["result"].as_array().ok_or_else(|| "no result array".to_string())?;
+    let mut count = 0usize;
+    let conn = db.lock().unwrap();
+    for it in items {
+        let pid = match it["id"].as_i64() { Some(n) => n, None => continue };
+        let title = it["title"].as_str().unwrap_or("(untitled)").to_string();
+        let cat = it["type_name"].as_str().or_else(|| it["type"].as_str()).unwrap_or("other").to_string();
+        if pod_catalog_upsert_unpriced(&conn, "printful", &pid.to_string(), &title, &cat).is_ok() {
+            count += 1;
+        }
+    }
+    Ok((count, vec![]))
+}
+
+/// Seed SUZURI — fetch /api/v1/items (item templates), store all.
+/// Wholesale prices come from SUZURI_BASE_PRICES_JPY at probe time;
+/// items not in that map will show price=0 until added.
+async fn pod_seed_suzuri(db: &Db) -> Result<(usize, Vec<String>), String> {
+    let token = env::var("SUZURI_ACCESS_TOKEN").map_err(|_| "SUZURI_ACCESS_TOKEN unset".to_string())?;
+    let resp = pod_http_client()
+        .get("https://suzuri.jp/api/v1/items")
+        .bearer_auth(&token)
+        .send().await.map_err(|e| format!("suzuri GET: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("suzuri HTTP {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().await.map_err(|e| format!("suzuri json: {}", e))?;
+    let items = v["items"].as_array().ok_or_else(|| "no items array".to_string())?;
+    let mut count = 0usize;
+    let conn = db.lock().unwrap();
+    for it in items {
+        let id = match it["id"].as_u64() { Some(n) => n, None => continue };
+        let title = it["humanizeName"].as_str()
+            .or_else(|| it["name"].as_str())
+            .unwrap_or("(untitled)").to_string();
+        // Loose category from name keywords.
+        let lower = title.to_lowercase();
+        let cat = if title.contains("Tシャツ") || lower.contains("t-shirt") || lower.contains("tee") { "t-shirt" }
+            else if title.contains("パーカー") || title.contains("フーディ") || lower.contains("hoodie") { "hoodie" }
+            else if title.contains("スウェット") || lower.contains("sweat") { "sweatshirt" }
+            else if title.contains("トート") || title.contains("バッグ") || lower.contains("bag") { "tote" }
+            else if title.contains("マグ") || lower.contains("mug") { "mug" }
+            else if title.contains("ステッカー") || lower.contains("sticker") { "sticker" }
+            else if title.contains("ポスター") || lower.contains("poster") { "poster" }
+            else if title.contains("ケース") || lower.contains("case") { "phone-case" }
+            else { "other" };
+        if pod_catalog_upsert_unpriced(&conn, "suzuri", &id.to_string(), &title, cat).is_ok() {
+            count += 1;
+        }
+    }
+    Ok((count, vec![]))
+}
+
+/// POST /api/admin/pod/seed?vendor=<all|gelato|printful|suzuri> — bulk
+/// catalog ingest. Stores rows with price=0; later sync probes prices.
+async fn admin_pod_seed(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/pod/seed").await { return r; }
+    let vendor_filter = q.get("vendor").cloned().unwrap_or_else(|| "all".into());
+    let mut results: Vec<serde_json::Value> = Vec::new();
+    for v in &["gelato", "printful", "suzuri"] {
+        if vendor_filter != "all" && vendor_filter != *v { continue; }
+        let r = match *v {
+            "gelato"   => pod_seed_gelato(&db).await,
+            "printful" => pod_seed_printful(&db).await,
+            "suzuri"   => pod_seed_suzuri(&db).await,
+            _          => Err("?".into()),
+        };
+        match r {
+            Ok((n, errs)) => results.push(serde_json::json!({"vendor": v, "inserted": n, "errors": errs})),
+            Err(e)        => results.push(serde_json::json!({"vendor": v, "error":    e})),
+        }
+    }
+    Json(serde_json::json!({"ok": true, "results": results})).into_response()
+}
+
 /// GET /admin/pod — unified static admin page.
 async fn admin_pod_page(
     State(db): State<Db>,
@@ -1318,41 +1519,101 @@ async fn admin_pod_sync(
 ) -> Response {
     if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/pod/sync").await { return r; }
     let vendor_filter = q.get("vendor").cloned().unwrap_or_else(|| "all".into());
+    let limit: i64 = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50).clamp(1, 500);
+    // `force=1` reprices everything; default skips rows with a fresh price (<24h).
+    let force = matches!(q.get("force").map(|s| s.as_str()), Some("1") | Some("true"));
+    // First-time bootstrap: if the catalog is empty for the requested vendor,
+    // sync the legacy curated constants so the admin sees *something* even
+    // before the user clicks SEED.
+    {
+        let conn = db.lock().unwrap();
+        let n: i64 = if vendor_filter == "all" {
+            conn.query_row("SELECT COUNT(*) FROM pod_catalog", [], |r| r.get(0)).unwrap_or(0)
+        } else {
+            conn.query_row("SELECT COUNT(*) FROM pod_catalog WHERE vendor=?1",
+                params![vendor_filter.as_str()], |r| r.get(0)).unwrap_or(0)
+        };
+        if n == 0 {
+            for sku in POD_CURATED_SKUS {
+                if vendor_filter != "all" && vendor_filter != sku.vendor { continue; }
+                let _ = pod_catalog_upsert_unpriced(&conn, sku.vendor, sku.uid, sku.label, sku.category);
+            }
+        }
+    }
+    // Pick rows to probe: stale (or all if force=1), limited.
+    let now_sec: i64 = chrono_now().parse().unwrap_or(0);
+    let stale_cutoff = now_sec - 24 * 3600;
+    let rows: Vec<(String, String, String, String)> = {
+        let conn = db.lock().unwrap();
+        let sql = if vendor_filter == "all" {
+            if force { "SELECT vendor, product_uid, title, COALESCE(category,'?') FROM pod_catalog ORDER BY CAST(last_priced_at AS INTEGER) ASC LIMIT ?1".to_string() }
+            else     { "SELECT vendor, product_uid, title, COALESCE(category,'?') FROM pod_catalog WHERE CAST(last_priced_at AS INTEGER) < ?2 ORDER BY CAST(last_priced_at AS INTEGER) ASC LIMIT ?1".to_string() }
+        } else {
+            if force { "SELECT vendor, product_uid, title, COALESCE(category,'?') FROM pod_catalog WHERE vendor=?3 ORDER BY CAST(last_priced_at AS INTEGER) ASC LIMIT ?1".to_string() }
+            else     { "SELECT vendor, product_uid, title, COALESCE(category,'?') FROM pod_catalog WHERE vendor=?3 AND CAST(last_priced_at AS INTEGER) < ?2 ORDER BY CAST(last_priced_at AS INTEGER) ASC LIMIT ?1".to_string() }
+        };
+        let mut st = match conn.prepare(&sql) { Ok(s) => s, Err(_) => return Json(serde_json::json!({"error":"prep"})).into_response() };
+        let mapper = |r: &rusqlite::Row| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?,
+            r.get::<_, String>(2).unwrap_or_default(),
+            r.get::<_, String>(3).unwrap_or_default(),
+        ));
+        let it_result = if vendor_filter == "all" {
+            if force { st.query_map(params![limit], mapper) }
+            else     { st.query_map(params![limit, stale_cutoff], mapper) }
+        } else {
+            if force { st.query_map(params![limit, vendor_filter.as_str()], mapper) }
+            else     { st.query_map(params![limit, stale_cutoff, vendor_filter.as_str()], mapper) }
+        };
+        match it_result {
+            Ok(it) => it.flatten().collect(),
+            Err(_) => Vec::new(),
+        }
+    };
+    let total_to_probe = rows.len();
     let mut synced: Vec<serde_json::Value> = Vec::new();
     let mut errors: Vec<serde_json::Value> = Vec::new();
-    for sku in POD_CURATED_SKUS {
-        if vendor_filter != "all" && vendor_filter != sku.vendor { continue; }
-        match pod_probe(sku.vendor, sku.uid).await {
+    for (vendor, uid, _title, _cat) in rows {
+        match pod_probe(&vendor, &uid).await {
             Ok((price, currency, country, min_d, max_d)) => {
                 let conn = db.lock().unwrap();
                 let _ = conn.execute(
-                    "INSERT INTO pod_catalog
-                       (vendor, product_uid, title, category, price_value, price_currency,
-                        production_country, min_delivery_days, max_delivery_days, last_priced_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-                     ON CONFLICT(vendor, product_uid) DO UPDATE SET
-                       title=excluded.title,
-                       category=excluded.category,
-                       price_value=excluded.price_value,
-                       price_currency=excluded.price_currency,
-                       production_country=excluded.production_country,
-                       min_delivery_days=excluded.min_delivery_days,
-                       max_delivery_days=excluded.max_delivery_days,
-                       last_priced_at=excluded.last_priced_at",
-                    params![sku.vendor, sku.uid, sku.label, sku.category, price, currency,
-                            country, min_d as i64, max_d as i64, chrono_now()],
+                    "UPDATE pod_catalog SET
+                       price_value=?1, price_currency=?2, production_country=?3,
+                       min_delivery_days=?4, max_delivery_days=?5, last_priced_at=?6
+                     WHERE vendor=?7 AND product_uid=?8",
+                    params![price, currency, country, min_d as i64, max_d as i64, chrono_now(), vendor, uid],
                 );
                 synced.push(serde_json::json!({
-                    "vendor": sku.vendor, "uid": sku.uid,
+                    "vendor": vendor, "uid": uid,
                     "price": price, "currency": currency, "country": country
                 }));
             }
             Err(e) => {
-                errors.push(serde_json::json!({"vendor": sku.vendor, "uid": sku.uid, "error": e}));
+                errors.push(serde_json::json!({"vendor": vendor, "uid": uid, "error": e}));
             }
         }
     }
-    Json(serde_json::json!({"ok": true, "vendor": vendor_filter, "synced": synced, "errors": errors})).into_response()
+    // Count remaining stale rows so the UI can show "more to sync".
+    let remaining_stale: i64 = {
+        let conn = db.lock().unwrap();
+        let sql = if vendor_filter == "all" {
+            "SELECT COUNT(*) FROM pod_catalog WHERE CAST(last_priced_at AS INTEGER) < ?1".to_string()
+        } else {
+            "SELECT COUNT(*) FROM pod_catalog WHERE vendor=?2 AND CAST(last_priced_at AS INTEGER) < ?1".to_string()
+        };
+        if vendor_filter == "all" {
+            conn.query_row(&sql, params![stale_cutoff], |r| r.get(0)).unwrap_or(0)
+        } else {
+            conn.query_row(&sql, params![stale_cutoff, vendor_filter.as_str()], |r| r.get(0)).unwrap_or(0)
+        }
+    };
+    Json(serde_json::json!({
+        "ok": true, "vendor": vendor_filter,
+        "probed": total_to_probe, "limit": limit, "force": force,
+        "remaining_stale": remaining_stale,
+        "synced": synced, "errors": errors,
+    })).into_response()
 }
 
 #[derive(Deserialize)]
@@ -45992,6 +46253,7 @@ async fn main() {
         .route("/api/admin/products/:id/regen_similar", post(admin_regen_similar))
         .route("/admin/pod",             get(admin_pod_page))
         .route("/api/admin/pod/catalog", get(admin_pod_catalog))
+        .route("/api/admin/pod/seed",    post(admin_pod_seed))
         .route("/api/admin/pod/sync",    post(admin_pod_sync))
         .route("/api/admin/pod/link",    post(admin_pod_link))
         .route("/api/admin/pod/unlink",  post(admin_pod_unlink))
