@@ -14,17 +14,25 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 STATIC = REPO / "store" / "static"
 
-# admin pages: own auth flow, badge irrelevant.
-# buy.html: own Stripe checkout, the badge would compete with the buy CTA.
-# 404.html: error page, no UX value.
-SKIP_PATTERNS = ("admin-", "buy.html", "404.html")
+# Filename prefixes/exact names that should not get the badge.
+#   admin-*       — own auth flow
+#   buy.html      — own Stripe checkout (badge would compete)
+#   404.html      — error page
+SKIP_NAMES = ("admin-", "buy.html", "404.html")
+
+# Subdirectories whose HTML is NOT for browsing (email bodies etc).
+# Anything under these is skipped entirely.
+SKIP_SUBDIRS = ("blast", "vault")
 
 TAG = '<script src="/pt_gate.js" defer></script>'
 MARKER = "/pt_gate.js"  # idempotency check
 
 
 def should_skip(p: Path) -> bool:
-    return any(p.name.startswith(s) or p.name == s for s in SKIP_PATTERNS)
+    rel = p.relative_to(STATIC)
+    if rel.parts[0] in SKIP_SUBDIRS:
+        return True
+    return any(p.name.startswith(s) or p.name == s for s in SKIP_NAMES)
 
 
 def inject(html: str) -> str | None:
@@ -47,7 +55,7 @@ def main():
                     help="report what would change without writing")
     args = ap.parse_args()
 
-    files = sorted(STATIC.glob("*.html"))
+    files = sorted(STATIC.rglob("*.html"))
     injected, already, skipped = [], [], []
     for f in files:
         if should_skip(f):

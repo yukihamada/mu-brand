@@ -82,6 +82,7 @@ footer{{padding:36px 24px;text-align:center;font-size:10px;letter-spacing:0.4em;
 </p>
 
 <footer>WEARMU × JIUFIGHT — SUPER YAWARA SWEEP CUP 2026</footer>
+<script src="/pt_gate.js" defer></script>
 </body></html>
 """
 

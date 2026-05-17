@@ -89,6 +89,7 @@ footer{{padding:60px 28px 120px;text-align:center;font-size:11px;letter-spacing:
 
 <footer>WEARMU × JIUFIGHT — Design Preview v{version}</footer>
 
+<script src="/pt_gate.js" defer></script>
 <script>
 const cards = document.querySelectorAll('.card');
 const bar = document.getElementById('bar');
