@@ -591,23 +591,28 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
 <!-- HERO -->
 <div id="section-hero" class="visible" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding-top:80px;position:relative">
   <div class="hero-bg" id="hero-bg"></div>
-  <!-- On Kawara homage — today's date + origin stamp. Quiet, datestamp-as-identity.
-       JS below fills the current JST date. Constitution §1: numbers over adjectives. -->
+  <!-- Datestamp + origin. Numbers come first per Constitution §1. -->
   <div class="hero-eyebrow" id="hero-today" style="font-variant-numeric:tabular-nums">— · — TESHIKAGA · HOKKAIDO</div>
   <div class="hero-mu" aria-label="MU">MU</div>
-  <h1 class="hero-tagline" style="font-size:clamp(22px,4.4vw,46px);font-weight:200;letter-spacing:0.03em;line-height:1.45;color:#F5F5F0;text-align:center;max-width:780px;padding:0 24px;margin-top:18px;opacity:1">
+
+  <!-- Line 1: the number. Per Constitution §1: numbers over adjectives. -->
+  <div style="font-size:clamp(34px,5.4vw,58px);font-weight:200;letter-spacing:0.02em;line-height:1.15;color:#F5F5F0;text-align:center;margin-top:22px;font-variant-numeric:tabular-nums">
+    ¥7,800<span style="font-size:0.48em;font-weight:300;opacity:0.5;margin-left:14px;letter-spacing:0.18em;text-transform:uppercase">原価 ¥5,700 公開</span>
+  </div>
+
+  <!-- Line 2: what it is. -->
+  <h1 class="hero-tagline" style="font-size:clamp(20px,3.8vw,38px);font-weight:200;letter-spacing:0.03em;line-height:1.45;color:#F5F5F0;text-align:center;max-width:780px;padding:0 24px;margin-top:24px;opacity:1">
     今日も、一着だけ生まれた。
   </h1>
-  <p style="font-size:13.5px;font-weight:300;letter-spacing:0.04em;color:rgba(245,245,240,0.72);line-height:2;text-align:center;max-width:600px;padding:0 24px;margin-top:18px">
-    弟子屈町の気温と月相が、AI に絵を描かせる。<br>
+  <p style="font-size:13.5px;font-weight:300;letter-spacing:0.04em;color:rgba(245,245,240,0.7);line-height:2;text-align:center;max-width:600px;padding:0 24px;margin-top:16px">
+    弟子屈町の気温と月相を、AI が読む。<br>
     人間は介在しない。同じ一着は、二度と作られない。
   </p>
-  <p style="font-size:12px;font-weight:300;letter-spacing:0.06em;color:rgba(245,245,240,0.48);line-height:1.95;text-align:center;max-width:600px;padding:0 24px;margin-top:14px">
-    そして、私たちが死んでも、<span style="color:#e6c449;opacity:0.9">明日も一着が生まれる。</span><br>
-    <span style="font-size:10px;letter-spacing:0.2em;text-transform:uppercase;opacity:0.6">— ブランドは 0 人で運営できる。Constitution §0.2</span>
+  <p style="font-size:13px;font-weight:300;letter-spacing:0.04em;color:rgba(245,245,240,0.55);line-height:1.95;text-align:center;max-width:600px;padding:0 24px;margin-top:14px">
+    <span style="color:#e6c449;opacity:0.92">私が死んでも、明日も一着が生まれる。</span>
   </p>
-  <div style="font-size:10px;letter-spacing:0.24em;text-transform:uppercase;opacity:0.4;margin-top:22px;text-align:center">
-    ¥7,800 — 原価 ¥5,700 公開 (<a href="/blog/fabric-shift" style="color:#e6c449;opacity:0.85">なぜ?</a>) · Stanley/Stella organic · EU print
+  <div style="font-size:10px;letter-spacing:0.24em;text-transform:uppercase;opacity:0.38;margin-top:18px;text-align:center">
+    Stanley/Stella organic · EU print · <a href="/blog/fabric-shift" style="color:inherit;border-bottom:1px dotted rgba(245,245,240,0.4)">なぜ ¥7,800</a>
   </div>
   <script>
   // Fill today's date in the On Kawara-style stamp. JST.
@@ -623,37 +628,73 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
   })();
   </script>
 
-  <!-- Hero shirt — the single anchor image MU is recognized by. AI-generated
-       (Gemini 3 Pro Image, 2026-05-13). Constitution §13: faceless, just the
-       fabric. Sits ABOVE the CTA so passers-by see what they're buying first. -->
-  <a href="#section-mugen" onclick="showSection('mugen');return false;"
-     style="display:block;width:100%;max-width:880px;margin:32px auto 0;text-decoration:none;cursor:pointer">
-    <img src="https://mockups.wearmu.com/hero.png"
-         alt="MU — black short-sleeve T-shirt with the ━◯━ mark on the chest"
-         width="1424" height="752"
-         loading="eager"
-         fetchpriority="high"
-         style="width:100%;height:auto;display:block;border-radius:2px;opacity:0.92"
-         onmouseover="this.style.opacity='1'"
-         onmouseout="this.style.opacity='0.92'">
-    <div style="text-align:center;font-size:10px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.45;margin-top:10px">
-      black tee · ━◯━ · ¥5,000 → ¥30,000 (bonding curve)
+  <!-- TODAY'S ONE PIECE — primary visual + buy entry.
+       Replaces both the static hero shirt and the dual CTA. The same fetch
+       as the old hero-latest-card, but bigger and the only CTA above fold.
+       Falls back to the static hero shirt if /api/products/mugen has no
+       available drop. -->
+  <a id="hero-today-shirt" href="/mugen" data-funnel="cta_click" data-funnel-cta="hero_today_one"
+     style="display:block;width:100%;max-width:520px;margin:36px auto 0;text-decoration:none;color:inherit;background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent);border:1px solid rgba(255,255,255,0.06);border-radius:4px;padding:18px;transition:border-color 0.2s, transform 0.2s">
+    <div id="hero-today-img-wrap" style="width:100%;aspect-ratio:1/1;background:#0d0d0d;border-radius:2px;overflow:hidden;display:flex;align-items:center;justify-content:center">
+      <img id="hero-today-img" src="https://mockups.wearmu.com/hero.png"
+           alt="MU — 今日の一着"
+           width="880" height="880"
+           loading="eager"
+           fetchpriority="high"
+           style="width:100%;height:100%;object-fit:cover;display:block">
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:14px;gap:12px">
+      <div style="text-align:left;min-width:0;flex:1">
+        <div style="font-size:9px;letter-spacing:0.4em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:4px">▶ 今日の一着</div>
+        <div id="hero-today-name" style="font-size:13.5px;font-weight:500;color:#F5F5F0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">MUGEN — 今日 ━◯━</div>
+        <div style="font-size:11px;opacity:0.62;margin-top:4px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <span id="hero-today-price" style="color:#fff;font-weight:600;font-variant-numeric:tabular-nums">¥7,800</span>
+          <span id="hero-today-stock" style="opacity:0.75">—</span>
+          <span id="hero-today-next" style="color:#ff8a8a;opacity:0.7;letter-spacing:0.08em;font-variant-numeric:tabular-nums">next: --:--</span>
+        </div>
+      </div>
+      <span style="font-size:10px;letter-spacing:0.34em;text-transform:uppercase;color:#0A0A0A;background:#e6c449;padding:11px 18px;border-radius:3px;flex-shrink:0;font-weight:700;white-space:nowrap">買う →</span>
     </div>
   </a>
+  <script>
+  // Fetch today's available MUGEN piece + wire as primary CTA.
+  // Falls back gracefully — if /api fails the static hero.png remains.
+  (async () => {
+    try {
+      const r = await fetch('/api/products/mugen?limit=20');
+      if (!r.ok) return;
+      const ps = await r.json();
+      const pick = ps.find(p => (p.inventory - (p.sold||0)) > 0);
+      if (!pick) return;
+      const card = document.getElementById('hero-today-shirt');
+      if (!card) return;
+      const img = document.getElementById('hero-today-img');
+      img.src = pick.mockup_url || ('https://mockups.wearmu.com/' + pick.id + '.jpg');
+      img.onerror = () => { img.src = 'https://mockups.wearmu.com/hero.png'; };
+      document.getElementById('hero-today-name').textContent = pick.name || ('MUGEN #' + pick.drop_num);
+      document.getElementById('hero-today-price').textContent = '¥' + (pick.price_jpy||0).toLocaleString();
+      const rem = (pick.inventory||0) - (pick.sold||0);
+      document.getElementById('hero-today-stock').textContent = 'のこり ' + rem;
+      card.href = '/products/mugen/' + pick.drop_num + '?from=hero_today';
+      // Countdown to next top-of-hour drop (JST).
+      const tickCountdown = () => {
+        const now = new Date();
+        const next = new Date(now);
+        next.setMinutes(0, 0, 0);
+        next.setHours(next.getHours() + 1);
+        const ms = next - now;
+        const mm = Math.floor(ms / 60000).toString().padStart(2,'0');
+        const ss = Math.floor((ms % 60000) / 1000).toString().padStart(2,'0');
+        const el = document.getElementById('hero-today-next');
+        if (el) el.textContent = 'next ' + mm + ':' + ss;
+      };
+      tickCountdown();
+      setInterval(tickCountdown, 1000);
+    } catch (e) {}
+  })();
+  </script>
 
-  <!-- Primary CTA — top-of-hero so it's always above the fold on PC & mobile.
-       Real <button> for max click reliability + accessibility. -->
-  <button type="button"
-          class="hero-cta-primary"
-          onclick="showSection('mugen');return false;"
-          data-funnel="cta_click" data-funnel-cta="hero_buy_now"
-          aria-label="MUGEN を見る — 1 時間ごとに 1 着、毎回違うデザインの T シャツ"
-          style="margin-top:24px">
-    <span class="cta-main">今日の一着を見る</span>
-    <span class="cta-sub">MUGEN · 毎時 1 着 · 売れる前なら ¥7,800 ↓</span>
-  </button>
-
-  <!-- Lifestyle hero strip — below CTA, lazy. Click any photo to enter MUGEN. -->
+  <!-- Lifestyle hero strip — kept for "people wearing MU" social proof. -->
   <div id="hero-lifestyle" style="margin-top:28px;width:100%;max-width:880px;display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;padding:0 12px">
     <div style="grid-column:1/-1;text-align:center;font-size:9px;letter-spacing:0.3em;opacity:0.35;text-transform:uppercase">people wearing MU</div>
   </div>
@@ -671,66 +712,6 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
       <div class="hero-stat-label">MUON Today</div>
     </div>
   </div>
-
-  <!-- Hero "今買える 1 着" — fetches the latest available MUGEN drop and
-       renders a direct buy link with live price, stock, and a countdown
-       to the next MUGEN drop (drops happen at the top of every hour JST).
-       Persona FB (Toru): hero shirt image was static + no urgency. This
-       card injects "current drop + 残り stock + 次まで XX:XX" above the
-       brand selector so the buyer doesn't have to scroll. -->
-  <a id="hero-latest-card" href="/mugen" data-funnel="cta_click" data-funnel-cta="hero_latest"
-     style="display:none;margin:32px auto 0;max-width:560px;width:90%;text-decoration:none;color:inherit;background:linear-gradient(180deg,rgba(230,196,73,0.05),rgba(230,196,73,0.02));border:1px solid rgba(230,196,73,0.4);border-radius:4px;padding:14px 18px;align-items:center;gap:18px;transition:all 0.18s ease">
-    <img id="hero-latest-img" src="" alt="latest MUGEN" style="width:84px;height:84px;object-fit:cover;border-radius:2px;background:#000;flex-shrink:0">
-    <div style="flex:1;min-width:0;text-align:left">
-      <div style="font-size:9px;letter-spacing:0.4em;text-transform:uppercase;color:#e6c449;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center">
-        <span>▶ 今買える 1 着</span>
-        <span id="hero-latest-countdown" style="color:#ff8a8a;letter-spacing:0.18em">next: --:--</span>
-      </div>
-      <div id="hero-latest-name" style="font-size:13.5px;font-weight:500;margin-bottom:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">—</div>
-      <div style="font-size:11px;opacity:0.78;display:flex;gap:12px;align-items:center">
-        <span id="hero-latest-price" style="color:#fff;font-weight:600">—</span>
-        <span id="hero-latest-stock" style="opacity:0.75">—</span>
-      </div>
-    </div>
-    <span style="font-size:10.5px;letter-spacing:0.32em;text-transform:uppercase;color:#e6c449;flex-shrink:0;align-self:center;font-weight:600">Buy →</span>
-  </a>
-  <script>
-  (async () => {
-    try {
-      const r = await fetch('/api/products/mugen?limit=20');
-      if (!r.ok) return;
-      const ps = await r.json();
-      const pick = ps.find(p => (p.inventory - (p.sold||0)) > 0);
-      if (!pick) return;
-      const c = document.getElementById('hero-latest-card');
-      if (!c) return;
-      const img = document.getElementById('hero-latest-img');
-      img.src = pick.mockup_url || ('https://mockups.wearmu.com/' + pick.id + '.jpg');
-      img.onerror = () => { img.src = '/og.jpg'; img.style.opacity = '0.4'; };
-      document.getElementById('hero-latest-name').textContent = pick.name || ('MUGEN #' + pick.drop_num);
-      document.getElementById('hero-latest-price').textContent = '¥' + (pick.price_jpy||0).toLocaleString();
-      const rem = (pick.inventory||0) - (pick.sold||0);
-      document.getElementById('hero-latest-stock').textContent = 'のこり ' + rem + ' / ' + (pick.inventory||0);
-      c.href = '/products/mugen/' + pick.drop_num + '?from=hero_latest';
-      c.style.display = 'flex';
-      // Countdown: MUGEN drops at the top of every hour JST (UTC+9).
-      const tickCountdown = () => {
-        const now = new Date();
-        // ms until next top-of-hour
-        const next = new Date(now);
-        next.setMinutes(0, 0, 0);
-        next.setHours(next.getHours() + 1);
-        const ms = next - now;
-        const mm = Math.floor(ms / 60000).toString().padStart(2,'0');
-        const ss = Math.floor((ms % 60000) / 1000).toString().padStart(2,'0');
-        const el = document.getElementById('hero-latest-countdown');
-        if (el) el.textContent = 'next drop ' + mm + ':' + ss;
-      };
-      tickCountdown();
-      setInterval(tickCountdown, 1000);
-    } catch (e) {}
-  })();
-  </script>
 
   <div class="hero-brands">
     <div class="hero-brand-btn" onclick="showSection('ma')">
@@ -769,18 +750,16 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
     <div>
       <div style="font-size:9px;letter-spacing:0.45em;text-transform:uppercase;opacity:0.45;margin-bottom:24px">— 01 / 03 · 毎日</div>
       <p style="font-size:clamp(20px,3.2vw,30px);font-weight:200;letter-spacing:0.02em;line-height:1.7;color:#F5F5F0">
-        河原温は、生きていることを<br>
-        毎日「<span style="font-family:ui-monospace,Menlo,monospace;font-size:0.85em;letter-spacing:0">I AM STILL ALIVE</span>」<br>
-        と打電し続けた。
+        毎日、ひとつ生まれる。<br>
+        <span style="color:rgba(245,245,240,0.55)">今日のは、今日のだけ。</span>
       </p>
       <p style="font-size:14px;font-weight:300;line-height:2;color:rgba(245,245,240,0.6);margin-top:24px">
-        MU の一着は、その電報の現代版です。<br>
-        生まれた日の気温・月相・時刻が、そのまま絵になる。<br>
-        毎日、たった一着。<span style="color:rgba(245,245,240,0.9)">— 今日は、今日のだけ。</span>
+        生まれた日の気温と月相が、そのまま絵になる。<br>
+        同じ一着は二度と作られない。明日また、別の一着が生まれる。
       </p>
     </div>
 
-    <!-- Block 2: born after death -->
+    <!-- Block 2: born after death — singular 私 -->
     <div>
       <div style="font-size:9px;letter-spacing:0.45em;text-transform:uppercase;opacity:0.45;margin-bottom:24px">— 02 / 03 · 死んでも生まれ続ける</div>
       <p style="font-size:clamp(20px,3.2vw,30px);font-weight:200;letter-spacing:0.02em;line-height:1.7;color:#F5F5F0">
@@ -788,28 +767,27 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
         <span style="color:#e6c449;opacity:0.92">死んでも生まれ続けるのも、いい。</span>
       </p>
       <p style="font-size:14px;font-weight:300;line-height:2;color:rgba(245,245,240,0.6);margin-top:24px">
-        MU は 0 人で運営できるブランドです。<br>
-        28 のエージェントが、気象を読み、絵を描き、価格を決め、注文を刷り、寄付し、ノートを書きます。<br>
-        創業者がいなくなっても、明日も一着が生まれる。<br>
-        <span style="opacity:0.85">— これは仮説検証のフィールド実験です。</span>
+        MU は私 1 人 + AI で運営している。<br>
+        私が死んでも、明日も一着が生まれる仕組みにしてある。<br>
+        — これは仮説検証のフィールド実験です。
       </p>
     </div>
 
-    <!-- Block 3: numbers over adjectives (proof) -->
+    <!-- Block 3: selectivity (24 born → 1 selected) over agent-counting brag -->
     <div>
       <div style="font-size:9px;letter-spacing:0.45em;text-transform:uppercase;opacity:0.45;margin-bottom:24px">— 03 / 03 · 数字で語る</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:32px;margin-top:8px;font-variant-numeric:tabular-nums">
         <div>
-          <div style="font-size:36px;font-weight:200;letter-spacing:0.02em;color:#F5F5F0">1</div>
-          <div style="font-size:9px;letter-spacing:0.28em;text-transform:uppercase;opacity:0.5;margin-top:6px">human</div>
+          <div style="font-size:36px;font-weight:200;letter-spacing:0.02em;color:#F5F5F0">24</div>
+          <div style="font-size:9px;letter-spacing:0.28em;text-transform:uppercase;opacity:0.5;margin-top:6px">1日に生まれる絵</div>
         </div>
         <div>
-          <div style="font-size:36px;font-weight:200;letter-spacing:0.02em;color:#F5F5F0">28</div>
-          <div style="font-size:9px;letter-spacing:0.28em;text-transform:uppercase;opacity:0.5;margin-top:6px">AI agents</div>
+          <div style="font-size:36px;font-weight:200;letter-spacing:0.02em;color:#e6c449">1</div>
+          <div style="font-size:9px;letter-spacing:0.28em;text-transform:uppercase;opacity:0.5;margin-top:6px">採用される枚数</div>
         </div>
         <div>
           <div style="font-size:36px;font-weight:200;letter-spacing:0.02em;color:#F5F5F0">0</div>
-          <div style="font-size:9px;letter-spacing:0.28em;text-transform:uppercase;opacity:0.5;margin-top:6px">designers</div>
+          <div style="font-size:9px;letter-spacing:0.28em;text-transform:uppercase;opacity:0.5;margin-top:6px">designers / 在庫廃棄</div>
         </div>
         <div>
           <div style="font-size:36px;font-weight:200;letter-spacing:0.02em;color:#e6c449">50%</div>
@@ -817,21 +795,34 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
         </div>
       </div>
       <p style="font-size:13px;font-weight:300;line-height:2;color:rgba(245,245,240,0.55);margin-top:32px">
+        毎時、AI が候補を生む。 残るのは 1 日にひとつ。<br>
         注文が来てから刷る。在庫廃棄は <span style="color:#F5F5F0;opacity:0.9">0</span>。<br>
         利益の <span style="color:#F5F5F0;opacity:0.9">50%</span> は、生まれた町 — 北海道弟子屈町に寄付。<br>
         原価 ¥5,700 を公開しています。
       </p>
     </div>
 
-    <!-- Soft CTA into vault — owner-only member content -->
-    <div style="margin-top:32px;padding:28px 32px;background:rgba(230,196,73,0.04);border:1px solid rgba(230,196,73,0.18);border-radius:2px">
-      <div style="font-size:9px;letter-spacing:0.4em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:12px">VAULT — 所有者だけの場所</div>
-      <p style="font-size:14px;font-weight:300;line-height:1.95;color:rgba(245,245,240,0.78);margin:0 0 18px">
-        一着でも持っている人は、MU の運営ノートを読めます。<br>
-        Constitution、原価帳簿、Gemini プロンプト、エージェントの判断ログ、そして CEO の手で書かれた <span style="color:#e6c449">エンジニアリング SOP</span>。
+    <!-- Vault — show the lock first. Tension over invitation. -->
+    <a href="/vault" id="vault-locked-card"
+       style="display:block;margin-top:32px;padding:28px 32px;background:rgba(255,255,255,0.015);border:1px solid rgba(255,255,255,0.08);border-radius:2px;text-decoration:none;color:inherit;transition:background 0.25s,border-color 0.25s"
+       onmouseover="this.style.background='rgba(230,196,73,0.04)';this.style.borderColor='rgba(230,196,73,0.3)';document.getElementById('vault-whisper').style.opacity='1';document.getElementById('vault-icon').style.color='#e6c449'"
+       onmouseout="this.style.background='rgba(255,255,255,0.015)';this.style.borderColor='rgba(255,255,255,0.08)';document.getElementById('vault-whisper').style.opacity='0.5';document.getElementById('vault-icon').style.color='rgba(245,245,240,0.4)'">
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">
+        <!-- Padlock SVG, monochrome. Hover → gold. -->
+        <svg id="vault-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(245,245,240,0.4);flex-shrink:0;transition:color 0.25s">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+        </svg>
+        <div style="font-size:9px;letter-spacing:0.4em;text-transform:uppercase;color:rgba(245,245,240,0.5)">VAULT — Tシャツ所有者だけが読める</div>
+      </div>
+      <p style="font-size:14px;font-weight:300;line-height:1.95;color:rgba(245,245,240,0.5);margin:0 0 14px">
+        Constitution の運用裏側、原価帳簿、Gemini プロンプト、エージェント判断ログ、<br>
+        そして「<span style="color:rgba(245,245,240,0.85)">MU の動かし方 — CEO の Claude Code SOP</span>」 (新規)。
       </p>
-      <a href="/vault" style="display:inline-block;font-size:10px;letter-spacing:0.35em;text-transform:uppercase;color:#e6c449;border-bottom:1px solid rgba(230,196,73,0.4);padding-bottom:3px">VAULT を開く →</a>
-    </div>
+      <div id="vault-whisper" style="font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:rgba(245,245,240,0.5);opacity:0.5;transition:opacity 0.25s">
+        持っていれば、読めます。 ¥7,800 で開く →
+      </div>
+    </a>
   </div>
 </section>
 
