@@ -1128,8 +1128,11 @@ async fn pod_probe_gelato(uid: &str) -> Result<(f64, String, String, i32, i32), 
         "currencyIsoCode":    "JPY",
         "recipient": {
             "country":"JP","firstName":"MU","lastName":"Admin",
-            "addressLine1":"九段南1-5-6 りそな九段ビル5F","city":"千代田区","postCode":"102-0074",
-            "stateCode":"JP-13","email":"info@enablerdao.com"
+            // Synthetic Tokyo Station address — Gelato logs the recipient
+            // forever even on quote-only calls, so we deliberately avoid
+            // exposing the company's real HQ on every price probe.
+            "addressLine1":"丸の内1-9-1","city":"千代田区","postCode":"100-0005",
+            "stateCode":"JP-13","email":"probe@wearmu.com"
         },
         "products": [{
             "itemReferenceId":"i1","quantity":1,"productUid":uid,"pageCount":1,
@@ -1413,30 +1416,37 @@ async fn pod_seed_suzuri(db: &Db) -> Result<(usize, Vec<String>), String> {
     Ok((count, vec![]))
 }
 
-/// POST /api/admin/pod/seed?vendor=<all|gelato|printful|suzuri> — bulk
-/// catalog ingest. Stores rows with price=0; later sync probes prices.
+/// POST /api/admin/pod/seed?vendor=<gelato|printful|suzuri> — bulk catalog
+/// ingest. Stores rows with price=0; later sync probes prices.
+///
+/// `vendor=all` is REJECTED because Gelato alone takes ~21 catalogs ×
+/// up to 20s = ~420s, well past Fly's 60s edge proxy timeout. The UI
+/// fires three sequential per-vendor requests instead. See the SEED ALL
+/// button handler in admin-pod.html.
 async fn admin_pod_seed(
     State(db): State<Db>,
     headers: HeaderMap,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Response {
     if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/pod/seed").await { return r; }
-    let vendor_filter = q.get("vendor").cloned().unwrap_or_else(|| "all".into());
-    let mut results: Vec<serde_json::Value> = Vec::new();
-    for v in &["gelato", "printful", "suzuri"] {
-        if vendor_filter != "all" && vendor_filter != *v { continue; }
-        let r = match *v {
-            "gelato"   => pod_seed_gelato(&db).await,
-            "printful" => pod_seed_printful(&db).await,
-            "suzuri"   => pod_seed_suzuri(&db).await,
-            _          => Err("?".into()),
-        };
-        match r {
-            Ok((n, errs)) => results.push(serde_json::json!({"vendor": v, "inserted": n, "errors": errs})),
-            Err(e)        => results.push(serde_json::json!({"vendor": v, "error":    e})),
-        }
-    }
-    Json(serde_json::json!({"ok": true, "results": results})).into_response()
+    let vendor = match q.get("vendor").map(|s| s.as_str()) {
+        Some("gelato") | Some("printful") | Some("suzuri") => q.get("vendor").unwrap().clone(),
+        Some("all") => return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error":"vendor=all is not allowed — call once per vendor (Fly proxy timeout)"}))).into_response(),
+        _ => return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error":"vendor param required (gelato|printful|suzuri)"}))).into_response(),
+    };
+    let r = match vendor.as_str() {
+        "gelato"   => pod_seed_gelato(&db).await,
+        "printful" => pod_seed_printful(&db).await,
+        "suzuri"   => pod_seed_suzuri(&db).await,
+        _          => Err("?".into()),
+    };
+    let payload = match r {
+        Ok((n, errs)) => serde_json::json!({"ok": true,  "vendor": vendor, "inserted": n, "errors": errs, "results": [{"vendor": vendor, "inserted": n, "errors": errs}]}),
+        Err(e)        => serde_json::json!({"ok": false, "vendor": vendor, "error":    e, "results": [{"vendor": vendor, "error":    e}]}),
+    };
+    Json(payload).into_response()
 }
 
 /// GET /admin/pod — unified static admin page.
@@ -1462,7 +1472,7 @@ async fn admin_pod_catalog(
             "SELECT vendor, product_uid, title, category, price_value, price_currency,
                     production_country, min_delivery_days, max_delivery_days, last_priced_at
                FROM pod_catalog
-              ORDER BY vendor, (production_country='JP') DESC, price_value ASC") {
+              ORDER BY vendor, (price_value=0) ASC, (production_country='JP') DESC, price_value ASC") {
             Ok(s) => s,
             Err(e) => return Json(serde_json::json!({"error": e.to_string()})).into_response(),
         };
@@ -1519,7 +1529,10 @@ async fn admin_pod_sync(
 ) -> Response {
     if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/pod/sync").await { return r; }
     let vendor_filter = q.get("vendor").cloned().unwrap_or_else(|| "all".into());
-    let limit: i64 = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50).clamp(1, 500);
+    // Default 20 SKUs/call so even worst-case 20s probes total ≤400s. Typical
+    // Gelato quote is ~1s, so 20 SKUs ≈ 20s — well under Fly's 60s edge proxy
+    // timeout. User re-clicks PRICE until `remaining_stale` hits 0.
+    let limit: i64 = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(20).clamp(1, 200);
     // `force=1` reprices everything; default skips rows with a fresh price (<24h).
     let force = matches!(q.get("force").map(|s| s.as_str()), Some("1") | Some("true"));
     // First-time bootstrap: if the catalog is empty for the requested vendor,
@@ -1573,9 +1586,34 @@ async fn admin_pod_sync(
     let total_to_probe = rows.len();
     let mut synced: Vec<serde_json::Value> = Vec::new();
     let mut errors: Vec<serde_json::Value> = Vec::new();
+    let mut rejected: Vec<serde_json::Value> = Vec::new();
     for (vendor, uid, _title, _cat) in rows {
         match pod_probe(&vendor, &uid).await {
             Ok((price, currency, country, min_d, max_d)) => {
+                // Sanity guard: reject prices that diverge >2× from the
+                // previous value. Defends against vendor APIs briefly
+                // returning garbage (a single bad 1 ¥ would tank margins
+                // until a human notices).
+                let prev: Option<f64> = {
+                    let conn = db.lock().unwrap();
+                    conn.query_row(
+                        "SELECT price_value FROM pod_catalog WHERE vendor=?1 AND product_uid=?2",
+                        params![&vendor, &uid], |r| r.get::<_, f64>(0),
+                    ).ok().filter(|p| *p > 0.0)
+                };
+                if let Some(p) = prev {
+                    let ratio = if price > 0.0 { price / p } else { 0.0 };
+                    if ratio > 2.0 || ratio < 0.5 {
+                        eprintln!("[pod_sync] reject {} {}: new={} prev={} ratio={:.2}", vendor, uid, price, p, ratio);
+                        rejected.push(serde_json::json!({
+                            "vendor": vendor, "uid": uid,
+                            "rejected_price": price, "currency": currency,
+                            "previous_price": p,
+                            "reason": format!("price diverged {:.2}x from previous (guard: 0.5-2.0)", ratio),
+                        }));
+                        continue;
+                    }
+                }
                 let conn = db.lock().unwrap();
                 let _ = conn.execute(
                     "UPDATE pod_catalog SET
@@ -1583,6 +1621,13 @@ async fn admin_pod_sync(
                        min_delivery_days=?4, max_delivery_days=?5, last_priced_at=?6
                      WHERE vendor=?7 AND product_uid=?8",
                     params![price, currency, country, min_d as i64, max_d as i64, chrono_now(), vendor, uid],
+                );
+                let _ = conn.execute(
+                    "INSERT INTO pod_catalog_price_history
+                       (vendor, product_uid, price_value, price_currency,
+                        production_country, min_delivery_days, max_delivery_days, at, source)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'sync')",
+                    params![&vendor, &uid, price, &currency, &country, min_d as i64, max_d as i64, chrono_now()],
                 );
                 synced.push(serde_json::json!({
                     "vendor": vendor, "uid": uid,
@@ -1613,6 +1658,7 @@ async fn admin_pod_sync(
         "probed": total_to_probe, "limit": limit, "force": force,
         "remaining_stale": remaining_stale,
         "synced": synced, "errors": errors,
+        "rejected": rejected,
     })).into_response()
 }
 
@@ -45817,6 +45863,23 @@ async fn main() {
         );
         CREATE INDEX IF NOT EXISTS idx_ppl_pid    ON product_pod_links(product_id);
         CREATE INDEX IF NOT EXISTS idx_ppl_vendor ON product_pod_links(vendor, pod_uid);
+
+        -- Audit trail for pod_catalog price changes. Every successful probe
+        -- writes a row here before updating pod_catalog, so a vendor briefly
+        -- returning garbage can be diagnosed and reverted. Append-only.
+        CREATE TABLE IF NOT EXISTS pod_catalog_price_history (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            vendor             TEXT NOT NULL,
+            product_uid        TEXT NOT NULL,
+            price_value        REAL NOT NULL,
+            price_currency     TEXT NOT NULL,
+            production_country TEXT NOT NULL,
+            min_delivery_days  INTEGER NOT NULL DEFAULT 0,
+            max_delivery_days  INTEGER NOT NULL DEFAULT 0,
+            at                 TEXT NOT NULL,        -- unix seconds string
+            source             TEXT NOT NULL         -- 'sync' | 'manual' | 'webhook'
+        );
+        CREATE INDEX IF NOT EXISTS idx_pcph_sku ON pod_catalog_price_history(vendor, product_uid, at DESC);
     ").ok();
 
     // /itto first calf (#0001) — admin can later update fields via /admin/itto/calf.
