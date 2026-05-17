@@ -4708,6 +4708,9 @@ const VAULT_ARTICLES: &[(&str, &str, &str)] = &[
     ("open-ops",
      "オープン・オペレーション — 原価帳簿の見方とAIエージェントの動き",
      include_str!("../static/vault/open-ops.md")),
+    ("claude-md",
+     "MU の動かし方 — CEO の Claude Code SOP",
+     include_str!("../static/vault/claude-md.md")),
 ];
 
 /// Shared CSS + header injected into every vault page. `logged_in_email`
@@ -42265,7 +42268,7 @@ async fn you_unsubscribe(
 const RESERVED_SLUGS: &[&str] = &[
     "ma", "muon", "mugen", "nouns", "you", "city", "tokushoho", "success",
     "wallet", "v", "products", "api", "static", "mockups", "u",
-    "about", "press", "vision", "muer", "council", "sweep", "collab",
+    "about", "press", "vision", "muer", "council", "sweep", "collab", "love",
     "robots.txt", "sitemap.xml", "manifest.json",
     "favicon.ico", "favicon.svg", "favicon-16x16.png", "favicon-32x32.png",
     "apple-touch-icon.png", "icon-192.png", "icon-512.png", "og.jpg",

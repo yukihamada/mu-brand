@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>MU — 北海道の天気がデザインする服 | wearmu.com</title>
-<meta name="description" content="気温が枚数を決め、売れた数が価格を決める（早く買うほど安い）。毎時・毎日・毎週、AIが北海道の気象データから限定Tシャツを自律生成するブランド。MUGEN 108枚サイクル、MUON 気温連動、MA 週次7日間オークション。">
+<title>MU — 今日も、一着だけ生まれた。 | wearmu.com</title>
+<meta name="description" content="北海道弟子屈町の気温と月相が、AI に絵を描かせる。人間は介在しない。同じ一着は、二度と作られない。— 私たちが死んでも、明日も一着が生まれる。">
 <meta name="keywords" content="MU, wearmu, AI fashion, autonomous brand, 間 MA, MUON, MUGEN, NOUNS, AIブランド, 限定Tシャツ, 自律型ファッション, NFTファッション, 北海道, 弟子屈">
 <meta name="author" content="MU">
 <meta name="robots" content="index, follow">
@@ -32,8 +32,8 @@
 <!-- Open Graph -->
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://wearmu.com/">
-<meta property="og:title" content="MU — 北海道の天気がデザインする服">
-<meta property="og:description" content="気温が枚数を決め、売れた数が価格を決める（早く買うほど安い）。毎時・毎日・毎週、AIが生成する限定Tシャツ。売り切れたら二度と同じものは生まれない。">
+<meta property="og:title" content="MU — 今日も、一着だけ生まれた。">
+<meta property="og:description" content="北海道弟子屈町の気温と月相が、AI に絵を描かせる。同じ一着は二度と作られない。私たちが死んでも、明日も一着が生まれる。">
 <meta property="og:image" content="https://mockups.wearmu.com/hero.png">
 <meta property="og:image:width" content="1424">
 <meta property="og:image:height" content="752">
@@ -591,19 +591,37 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
 <!-- HERO -->
 <div id="section-hero" class="visible" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding-top:80px;position:relative">
   <div class="hero-bg" id="hero-bg"></div>
-  <div class="hero-eyebrow">天気がデザインする服</div>
-  <div class="hero-mu" aria-label="MU — Hokkaido weather designs">MU</div>
-  <div class="hero-tagline">北海道弟子屈町の今の気温が、今日の T シャツの枚数を決める。</div>
-  <div style="font-size:14px;font-weight:400;letter-spacing:0.02em;color:#F5F5F0;opacity:0.85;margin-top:18px;text-align:center;line-height:1.95;max-width:560px;padding:0 24px">
-    着る人へ: あなたが手にする T シャツは、生まれた日の<strong style="color:#e6c449">気温・月相・時刻</strong>がそのまま落とし込まれた一枚です。同じデザインは二度と作られません。<br>
-    <span style="opacity:0.65;font-size:12px;display:inline-block;margin-top:8px">Stanley/Stella SATU001 · 180gsm · 100% GOTS organic · リブ襟 · EU 製 · 7-10 day delivery (era-2)</span>
+  <!-- On Kawara homage — today's date + origin stamp. Quiet, datestamp-as-identity.
+       JS below fills the current JST date. Constitution §1: numbers over adjectives. -->
+  <div class="hero-eyebrow" id="hero-today" style="font-variant-numeric:tabular-nums">— · — TESHIKAGA · HOKKAIDO</div>
+  <div class="hero-mu" aria-label="MU">MU</div>
+  <h1 class="hero-tagline" style="font-size:clamp(22px,4.4vw,46px);font-weight:200;letter-spacing:0.03em;line-height:1.45;color:#F5F5F0;text-align:center;max-width:780px;padding:0 24px;margin-top:18px;opacity:1">
+    今日も、一着だけ生まれた。
+  </h1>
+  <p style="font-size:13.5px;font-weight:300;letter-spacing:0.04em;color:rgba(245,245,240,0.72);line-height:2;text-align:center;max-width:600px;padding:0 24px;margin-top:18px">
+    弟子屈町の気温と月相が、AI に絵を描かせる。<br>
+    人間は介在しない。同じ一着は、二度と作られない。
+  </p>
+  <p style="font-size:12px;font-weight:300;letter-spacing:0.06em;color:rgba(245,245,240,0.48);line-height:1.95;text-align:center;max-width:600px;padding:0 24px;margin-top:14px">
+    そして、私たちが死んでも、<span style="color:#e6c449;opacity:0.9">明日も一着が生まれる。</span><br>
+    <span style="font-size:10px;letter-spacing:0.2em;text-transform:uppercase;opacity:0.6">— ブランドは 0 人で運営できる。Constitution §0.2</span>
+  </p>
+  <div style="font-size:10px;letter-spacing:0.24em;text-transform:uppercase;opacity:0.4;margin-top:22px;text-align:center">
+    ¥7,800 — 原価 ¥5,700 公開 (<a href="/blog/fabric-shift" style="color:#e6c449;opacity:0.85">なぜ?</a>) · Stanley/Stella organic · EU print
   </div>
-  <div style="font-size:11px;letter-spacing:0.24em;text-transform:uppercase;opacity:0.55;margin-top:20px;text-align:center">
-    価格レンジ <strong style="color:#F5F5F0;letter-spacing:0.05em">¥7,800 – ¥35,000</strong> · 原価 ¥5,700 公開 (<a href="/blog/fabric-shift" style="color:#e6c449">なぜ?</a>)
-  </div>
-  <div style="font-size:10px;letter-spacing:0.2em;text-transform:uppercase;opacity:0.4;margin-top:6px;text-align:center;font-family:'Helvetica Neue',Arial,sans-serif">
-    Autonomous fashion · designed by weather · made by AI · 1 maintainer + 28 agents
-  </div>
+  <script>
+  // Fill today's date in the On Kawara-style stamp. JST.
+  (function(){
+    try{
+      var d = new Date(Date.now() + 9*3600*1000);
+      var Y = d.getUTCFullYear();
+      var M = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getUTCMonth()];
+      var D = String(d.getUTCDate()).padStart(2,'0');
+      var el = document.getElementById('hero-today');
+      if(el) el.textContent = D + ' ' + M + ' ' + Y + ' · TESHIKAGA · HOKKAIDO';
+    }catch(e){}
+  })();
+  </script>
 
   <!-- Hero shirt — the single anchor image MU is recognized by. AI-generated
        (Gemini 3 Pro Image, 2026-05-13). Constitution §13: faceless, just the
@@ -631,8 +649,8 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
           data-funnel="cta_click" data-funnel-cta="hero_buy_now"
           aria-label="MUGEN を見る — 1 時間ごとに 1 着、毎回違うデザインの T シャツ"
           style="margin-top:24px">
-    <span class="cta-main">今すぐ買う</span>
-    <span class="cta-sub">MUGEN ¥5,000〜 · 早く買うほど安い ↓</span>
+    <span class="cta-main">今日の一着を見る</span>
+    <span class="cta-sub">MUGEN · 毎時 1 着 · 売れる前なら ¥7,800 ↓</span>
   </button>
 
   <!-- Lifestyle hero strip — below CTA, lazy. Click any photo to enter MUGEN. -->
@@ -739,6 +757,83 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
   </a>
   <a href="/about.html" style="display:inline-block;margin-top:24px;font-size:8px;letter-spacing:0.4em;text-transform:uppercase;border:1px solid rgba(245,245,240,0.2);padding:12px 28px;opacity:0.6;transition:opacity 0.2s" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.6" aria-label="初めての方はこちら — MUについて詳しく知る">NEW? START HERE →</a>
 </div>
+
+<!-- MANIFESTO — quiet scroll-triggered story.
+     Wraps the philosophy (every day / born after death / 0-human brand)
+     in datestamp-driven minimal text. Designed to convert a first-time
+     visitor into a fan in one scroll. Constitution §3: quiet by default. -->
+<section id="manifesto" style="background:#0A0A0A;padding:140px 24px 120px;border-top:1px solid rgba(255,255,255,0.04);border-bottom:1px solid rgba(255,255,255,0.04)">
+  <div style="max-width:680px;margin:0 auto;display:flex;flex-direction:column;gap:96px">
+
+    <!-- Block 1: every day -->
+    <div>
+      <div style="font-size:9px;letter-spacing:0.45em;text-transform:uppercase;opacity:0.45;margin-bottom:24px">— 01 / 03 · 毎日</div>
+      <p style="font-size:clamp(20px,3.2vw,30px);font-weight:200;letter-spacing:0.02em;line-height:1.7;color:#F5F5F0">
+        河原温は、生きていることを<br>
+        毎日「<span style="font-family:ui-monospace,Menlo,monospace;font-size:0.85em;letter-spacing:0">I AM STILL ALIVE</span>」<br>
+        と打電し続けた。
+      </p>
+      <p style="font-size:14px;font-weight:300;line-height:2;color:rgba(245,245,240,0.6);margin-top:24px">
+        MU の一着は、その電報の現代版です。<br>
+        生まれた日の気温・月相・時刻が、そのまま絵になる。<br>
+        毎日、たった一着。<span style="color:rgba(245,245,240,0.9)">— 今日は、今日のだけ。</span>
+      </p>
+    </div>
+
+    <!-- Block 2: born after death -->
+    <div>
+      <div style="font-size:9px;letter-spacing:0.45em;text-transform:uppercase;opacity:0.45;margin-bottom:24px">— 02 / 03 · 死んでも生まれ続ける</div>
+      <p style="font-size:clamp(20px,3.2vw,30px);font-weight:200;letter-spacing:0.02em;line-height:1.7;color:#F5F5F0">
+        死ぬまで作品があるのもいい。<br>
+        <span style="color:#e6c449;opacity:0.92">死んでも生まれ続けるのも、いい。</span>
+      </p>
+      <p style="font-size:14px;font-weight:300;line-height:2;color:rgba(245,245,240,0.6);margin-top:24px">
+        MU は 0 人で運営できるブランドです。<br>
+        28 のエージェントが、気象を読み、絵を描き、価格を決め、注文を刷り、寄付し、ノートを書きます。<br>
+        創業者がいなくなっても、明日も一着が生まれる。<br>
+        <span style="opacity:0.85">— これは仮説検証のフィールド実験です。</span>
+      </p>
+    </div>
+
+    <!-- Block 3: numbers over adjectives (proof) -->
+    <div>
+      <div style="font-size:9px;letter-spacing:0.45em;text-transform:uppercase;opacity:0.45;margin-bottom:24px">— 03 / 03 · 数字で語る</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:32px;margin-top:8px;font-variant-numeric:tabular-nums">
+        <div>
+          <div style="font-size:36px;font-weight:200;letter-spacing:0.02em;color:#F5F5F0">1</div>
+          <div style="font-size:9px;letter-spacing:0.28em;text-transform:uppercase;opacity:0.5;margin-top:6px">human</div>
+        </div>
+        <div>
+          <div style="font-size:36px;font-weight:200;letter-spacing:0.02em;color:#F5F5F0">28</div>
+          <div style="font-size:9px;letter-spacing:0.28em;text-transform:uppercase;opacity:0.5;margin-top:6px">AI agents</div>
+        </div>
+        <div>
+          <div style="font-size:36px;font-weight:200;letter-spacing:0.02em;color:#F5F5F0">0</div>
+          <div style="font-size:9px;letter-spacing:0.28em;text-transform:uppercase;opacity:0.5;margin-top:6px">designers</div>
+        </div>
+        <div>
+          <div style="font-size:36px;font-weight:200;letter-spacing:0.02em;color:#e6c449">50%</div>
+          <div style="font-size:9px;letter-spacing:0.28em;text-transform:uppercase;opacity:0.5;margin-top:6px">→ 弟子屈町 寄付</div>
+        </div>
+      </div>
+      <p style="font-size:13px;font-weight:300;line-height:2;color:rgba(245,245,240,0.55);margin-top:32px">
+        注文が来てから刷る。在庫廃棄は <span style="color:#F5F5F0;opacity:0.9">0</span>。<br>
+        利益の <span style="color:#F5F5F0;opacity:0.9">50%</span> は、生まれた町 — 北海道弟子屈町に寄付。<br>
+        原価 ¥5,700 を公開しています。
+      </p>
+    </div>
+
+    <!-- Soft CTA into vault — owner-only member content -->
+    <div style="margin-top:32px;padding:28px 32px;background:rgba(230,196,73,0.04);border:1px solid rgba(230,196,73,0.18);border-radius:2px">
+      <div style="font-size:9px;letter-spacing:0.4em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:12px">VAULT — 所有者だけの場所</div>
+      <p style="font-size:14px;font-weight:300;line-height:1.95;color:rgba(245,245,240,0.78);margin:0 0 18px">
+        一着でも持っている人は、MU の運営ノートを読めます。<br>
+        Constitution、原価帳簿、Gemini プロンプト、エージェントの判断ログ、そして CEO の手で書かれた <span style="color:#e6c449">エンジニアリング SOP</span>。
+      </p>
+      <a href="/vault" style="display:inline-block;font-size:10px;letter-spacing:0.35em;text-transform:uppercase;color:#e6c449;border-bottom:1px solid rgba(230,196,73,0.4);padding-bottom:3px">VAULT を開く →</a>
+    </div>
+  </div>
+</section>
 
 <!-- MA -->
 <div id="section-ma" class="section" style="display:none">
