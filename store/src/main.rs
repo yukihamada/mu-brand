@@ -4769,6 +4769,103 @@ async fn vault_dashboard_api(State(db): State<Db>, headers: HeaderMap) -> Respon
     (StatusCode::OK, [("content-type", "text/html; charset=utf-8")], html).into_response()
 }
 
+// ── /api/admin/email/vault_waitlist_blast ────────────────────────────────
+// One-shot endpoint to email the vault-launch announcement to the /you free
+// waitlist. Subject + body baked in at compile time (no injection surface).
+// Recipient list = you_users WHERE lifetime_free=0 AND no active sub AND
+// not unsubscribed AND NOT in mu_purchases (tee holders get DMs instead).
+//
+// Auth: standard admin_auth (MU_ADMIN_TOKEN).
+// Safety: dry_run=true by default. Pass ?dry_run=false to actually send.
+
+const VAULT_WAITLIST_SUBJECT: &str = include_str!("../../scripts/vault_launch/waitlist_email_subject.txt");
+const VAULT_WAITLIST_TEXT:    &str = include_str!("../../scripts/vault_launch/waitlist_email_body.txt");
+const VAULT_WAITLIST_HTML:    &str = include_str!("../../scripts/vault_launch/waitlist_email_body.html");
+
+async fn admin_email_vault_waitlist_blast(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/email/vault_waitlist_blast").await { return r; }
+    let dry_run = q.get("dry_run").map(|v| v != "false").unwrap_or(true);
+    let limit: usize = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(200);
+
+    let recipients: Vec<String> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT DISTINCT u.email FROM you_users u
+             WHERE COALESCE(u.lifetime_free, 0) = 0
+               AND (u.subscription_status IS NULL OR u.subscription_status = '')
+               AND u.unsubscribed_at IS NULL
+               AND u.email IS NOT NULL AND u.email != ''
+               AND u.email NOT LIKE '%@example.com'
+               AND u.email NOT LIKE 'test%'
+               AND NOT EXISTS (
+                   SELECT 1 FROM mu_purchases p WHERE p.email = u.email
+               )
+             ORDER BY u.email
+             LIMIT ?"
+        ) { Ok(s) => s, Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("db: {}", e)).into_response() };
+        stmt.query_map(params![limit as i64], |r| r.get::<_, String>(0))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+
+    let subj = VAULT_WAITLIST_SUBJECT.trim().to_string();
+    if dry_run {
+        return Json(serde_json::json!({
+            "ok": true, "dry_run": true,
+            "would_send_to": recipients.len(),
+            "recipients": recipients,
+            "subject": subj,
+            "text_preview": VAULT_WAITLIST_TEXT.lines().take(6).collect::<Vec<_>>().join("\n"),
+        })).into_response();
+    }
+
+    let resend_key = match env::var("RESEND_API_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => return (StatusCode::INTERNAL_SERVER_ERROR, "RESEND_API_KEY not set on server").into_response(),
+    };
+    let client = reqwest::Client::new();
+    let mut sent = 0;
+    let mut failed = 0;
+    let mut errors: Vec<serde_json::Value> = Vec::new();
+    for email in &recipients {
+        let local = email.split('@').next().unwrap_or(email);
+        let text = VAULT_WAITLIST_TEXT.replace("{{name_or_san}}", local);
+        let html = VAULT_WAITLIST_HTML.replace("{{name_or_san}}", local);
+        let body = serde_json::json!({
+            "from": "MU <info@wearmu.com>",
+            "to": [email],
+            "reply_to": "info@wearmu.com",
+            "subject": subj,
+            "text": text,
+            "html": html,
+        });
+        match client.post("https://api.resend.com/emails")
+            .bearer_auth(&resend_key).json(&body).send().await
+        {
+            Ok(r) if r.status().is_success() => { sent += 1; }
+            Ok(r) => {
+                failed += 1;
+                let status = r.status().as_u16();
+                let msg = r.text().await.unwrap_or_default();
+                errors.push(serde_json::json!({"email": email, "status": status, "msg": msg.chars().take(200).collect::<String>()}));
+            }
+            Err(e) => {
+                failed += 1;
+                errors.push(serde_json::json!({"email": email, "error": format!("{}", e)}));
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    }
+    Json(serde_json::json!({
+        "ok": failed == 0, "dry_run": false,
+        "sent": sent, "failed": failed,
+        "errors": errors,
+    })).into_response()
+}
+
 /// POST /api/bounty/submit — public endpoint, accepts a bug bounty report.
 /// Rate-limited per email + per ip_hash (10/h via in-memory bucket would be
 /// nice; for now we rely on body-size + uniqueness checks at DB layer).
@@ -46154,6 +46251,7 @@ async fn main() {
         .route("/vault", get(vault_index))
         .route("/vault/:slug", get(vault_article))
         .route("/api/vault/dashboard", get(vault_dashboard_api))
+        .route("/api/admin/email/vault_waitlist_blast", post(admin_email_vault_waitlist_blast))
         .route("/admin/bounty", get(admin_bounty))
         .route("/admin/bounty/:id/triage", post(admin_bounty_triage))
         .route("/admin/bounty/:id/issue-reward", post(admin_bounty_issue_reward))
