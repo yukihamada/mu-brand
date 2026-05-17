@@ -533,6 +533,21 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
 <script defer src="/mu-funnel.js"></script>
 <script defer src="/tracking.js"></script>
 <script src="/exit-funnel.js" defer></script>
+<script>
+// Capture gclid / utm into sessionStorage on first load so they survive
+// nav within the SPA and reach /api/checkout body. Mirrors what each /lp/*
+// landing page does — needed here too because a visitor can land directly
+// at / from organic search or a non-LP ad link.
+(function(){
+  try{
+    var u = new URL(location.href);
+    ['gclid','utm_source','utm_medium','utm_campaign','utm_content','utm_term'].forEach(function(k){
+      var v = u.searchParams.get(k);
+      if(v) sessionStorage.setItem('mu_'+k, v);
+    });
+  }catch(e){}
+})();
+</script>
 </head>
 <body>
 
@@ -2329,6 +2344,21 @@ async function doCheckout(e){
   btn.disabled=true; btn.textContent='Processing...';
   const fd = new FormData(e.target);
   const _em = (fd.get('email') || '').trim();
+  // Ad attribution: prefer freshest URL params, fall back to sessionStorage
+  // (LPs persist gclid + utm there so the chain survives a navigation).
+  // JiuFlow 2026-05-07/09 spent ¥42K with 0 trackable conv because this chain
+  // wasn't wired — keep it.
+  const _attr = (() => {
+    const u = new URL(location.href);
+    const get = k => (u.searchParams.get(k) || sessionStorage.getItem('mu_'+k) || '').trim();
+    const out = {};
+    for (const k of ['gclid','utm_source','utm_medium','utm_campaign','utm_term','utm_content']) {
+      const v = get(k);
+      if (v) out[k] = v.slice(0, 500);
+    }
+    return out;
+  })();
+
   const body = {
     product_id: currentProduct.id,
     quantity: 1,
@@ -2336,6 +2366,7 @@ async function doCheckout(e){
     ...(_em ? { email: _em } : {}),
     size: selectedSize,
     wallet: fd.get('wallet') || undefined,
+    ..._attr,
   };
   try{
     const r = await fetch('/api/checkout',{
@@ -2487,6 +2518,17 @@ window.addEventListener('popstate', ()=>{
 
     try {
       const stripe = await getStripe();
+      // Ad attribution — same chain as the legacy /api/checkout path.
+      const _attr2 = (() => {
+        const u = new URL(location.href);
+        const get = k => (u.searchParams.get(k) || sessionStorage.getItem('mu_'+k) || '').trim();
+        const out = {};
+        for (const k of ['gclid','utm_source','utm_medium','utm_campaign','utm_term','utm_content']) {
+          const v = get(k);
+          if (v) out[k] = v.slice(0, 500);
+        }
+        return out;
+      })();
       const r = await fetch('/api/checkout/embedded', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
@@ -2494,6 +2536,7 @@ window.addEventListener('popstate', ()=>{
           product_id: window.currentProduct.id,
           quantity: 1,
           size: window.selectedSize || 'M',
+          ..._attr2,
         })
       });
       if (!r.ok) {

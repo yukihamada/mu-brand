@@ -484,6 +484,22 @@ struct CheckoutBody {
     /// Required when the final billed total (unit_price × quantity) is at or
     /// above `KYC_THRESHOLD_JPY` (¥300,000). Stored in `kyc_records`.
     kyc: Option<KycInfo>,
+    /// Ad attribution. Client reads gclid + utm_* from URL params on the
+    /// landing page, persists in sessionStorage, then echoes here on
+    /// checkout POST so Stripe metadata carries them through to the order.
+    /// All optional — absent values are simply not stored.
+    #[serde(default)]
+    gclid: Option<String>,
+    #[serde(default)]
+    utm_source: Option<String>,
+    #[serde(default)]
+    utm_medium: Option<String>,
+    #[serde(default)]
+    utm_campaign: Option<String>,
+    #[serde(default)]
+    utm_term: Option<String>,
+    #[serde(default)]
+    utm_content: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1958,6 +1974,17 @@ pub struct StripeCheckoutFields<'a> {
     pub total_jpy: Option<i64>,
     pub kyc_required: bool,
     pub collect_shipping: bool,
+    /// Ad attribution — captured from URL params on landing pages, stored in
+    /// sessionStorage, and threaded into checkout so Stripe Dashboard exports
+    /// can be reconciled with Google Ads Offline Conversion Imports.
+    /// JiuFlow 2026-05-07/09 spent ¥42K with 0 trackable conversions because
+    /// this chain wasn't wired through; this exists to not repeat that.
+    pub gclid:        Option<&'a str>,
+    pub utm_source:   Option<&'a str>,
+    pub utm_medium:   Option<&'a str>,
+    pub utm_campaign: Option<&'a str>,
+    pub utm_term:     Option<&'a str>,
+    pub utm_content:  Option<&'a str>,
 }
 
 /// Build the Stripe Checkout Session form payload tuned for the JP market.
@@ -2064,6 +2091,21 @@ fn stripe_checkout_form_jp(f: StripeCheckoutFields) -> Vec<(String, String)> {
     if let Some(bp)   = f.base_price_jpy  { push(&mut form, "metadata[base_price_jpy]",  bp.to_string()); }
     push(&mut form, "metadata[unit_price_jpy]", f.unit_amount.to_string());
     if let Some(tot)  = f.total_jpy       { push(&mut form, "metadata[total_price_jpy]", tot.to_string()); }
+    // Ad attribution — only push non-empty values so we don't pollute metadata
+    // with empty keys that hurt readability in the Stripe Dashboard exports.
+    let push_attr = |form: &mut Vec<(String, String)>, key: &str, val: Option<&str>| {
+        if let Some(v) = val.map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            // Stripe metadata values capped at 500 chars; gclid/utm are well under.
+            let truncated = if v.len() > 500 { &v[..500] } else { v };
+            form.push((format!("metadata[{}]", key), truncated.to_string()));
+        }
+    };
+    push_attr(&mut form, "gclid",        f.gclid);
+    push_attr(&mut form, "utm_source",   f.utm_source);
+    push_attr(&mut form, "utm_medium",   f.utm_medium);
+    push_attr(&mut form, "utm_campaign", f.utm_campaign);
+    push_attr(&mut form, "utm_term",     f.utm_term);
+    push_attr(&mut form, "utm_content",  f.utm_content);
     push(&mut form, "metadata[kyc_required]",
         if f.kyc_required { "true".into() } else { "false".into() });
 
@@ -2182,6 +2224,12 @@ async fn checkout_embedded(
             total_jpy: Some(total_jpy),
             kyc_required: total_jpy >= KYC_THRESHOLD_JPY,
             collect_shipping: true,
+            gclid:        body.gclid.as_deref(),
+            utm_source:   body.utm_source.as_deref(),
+            utm_medium:   body.utm_medium.as_deref(),
+            utm_campaign: body.utm_campaign.as_deref(),
+            utm_term:     body.utm_term.as_deref(),
+            utm_content:  body.utm_content.as_deref(),
         });
         f.push(("ui_mode".into(), "embedded".into()));
         f.push(("return_url".into(),
@@ -2685,6 +2733,12 @@ mod stripe_cvr_tests {
             total_jpy: Some(5_000),
             kyc_required: false,
             collect_shipping: true,
+            gclid: None,
+            utm_source: None,
+            utm_medium: None,
+            utm_campaign: None,
+            utm_term: None,
+            utm_content: None,
         }
     }
 
@@ -5193,6 +5247,234 @@ async fn vault_dashboard_api(State(db): State<Db>, headers: HeaderMap) -> Respon
     recent_html = recent_html,
     latest = html_escape(&latest_summary));
     (StatusCode::OK, [("content-type", "text/html; charset=utf-8")], html).into_response()
+}
+
+// ── /api/admin/email/buyer_thanks_blast ──────────────────────────────────
+// One-shot endpoint to email a personalised thank-you + feedback + referral
+// ask to MU's existing buyers. Subject + body baked in (no injection).
+//
+// Recipient list = DISTINCT email FROM mu_purchases WHERE email is non-empty
+// AND not test/example. Dry-run default. Each recipient gets a unique
+// /r/<code> referral link derived from `referral_code_for(email)`.
+//
+// Auth: standard admin_auth (MU_ADMIN_TOKEN).
+// Safety: dry_run=true by default. Pass ?dry_run=false to actually send.
+// Per [[feedback_email_blast_radius]]: human OK required before production.
+
+const BUYER_THANKS_SUBJECT: &str = include_str!("../static/blast/buyer_thanks_subject.txt");
+const BUYER_THANKS_TEXT:    &str = include_str!("../static/blast/buyer_thanks_body.txt");
+const BUYER_THANKS_HTML:    &str = include_str!("../static/blast/buyer_thanks_body.html");
+
+// ── /api/admin/sns/stage_renewal_posts ───────────────────────────────────
+// Stages the 4 prepared X posts (renewal launch — On Kawara / 0-human /
+// 20-for-1 / quiet hook) into sns_post_queue. The existing x_post_worker
+// drains 1/min so 4 posts emerge over ~4 minutes. Per
+// [[feedback_email_blast_radius]] the broadcast boundary needs human OK,
+// so this endpoint defaults to dry_run=true.
+//
+// FB has no auto-poster — those drafts are returned in the dry-run JSON
+// so the user can copy/paste manually.
+//
+// Auth: standard admin_auth.
+
+const RENEWAL_X_POSTS: &[(&str, &str)] = &[
+    ("renewal_a_pinned",
+     "20 個作ってきた。\n\
+そのうち 19 個は、 私が死ぬと止まる。\n\
+MU だけが、 私が死んでも明日も一つの絵が生まれる。\n\
+\n\
+そこに賭けます。 今日からの時間配分を変える。\n\
+\n\
+https://wearmu.com/blog/all-in-on-mu"),
+    ("renewal_b_list",
+     "ここまで作ったもの:\n\
+chatweb.ai / パシャ / Koe / Koe Device / Elio /\n\
+JiuFlow / StayFlow / BANTO / KAGI / SOLUNA /\n\
+Trio / ポン / チャリン / サクッ / ミセバン /\n\
+TAXIGEN / Deru / bim.house / enablerdao / MU\n\
+\n\
+これからは MU。\n\
+理由 → https://wearmu.com/blog/all-in-on-mu"),
+    ("renewal_c_thread_lead",
+     "ここ数年で 20 個プロダクト作って気づいたこと。\n\
+\n\
+仮説は全部違うように見えて、 共通項は 1 行だった:\n\
+「需要は予測しなくていい。 起きてから刷れば、 在庫廃棄も予測誤差も 0 になる」\n\
+\n\
+それを一番先まで突き詰めるなら MU だけ。\n\
+だから今日から MU に賭けます ↓\n\
+https://wearmu.com/blog/all-in-on-mu"),
+    ("renewal_d_quiet",
+     "20 個作って、 MU 1 つに賭ける。\n\
+死んでも、 生まれ続けるブランドを作る側に回ります。\n\
+\n\
+→ https://wearmu.com/blog/all-in-on-mu"),
+];
+
+const RENEWAL_FB_POST: &str = "今日も、 一つの絵が生まれた。\n\
+\n\
+MU というブランドを 11 日前に書き直しました。\n\
+リンク: https://wearmu.com/love\n\
+\n\
+毎日、 北海道弟子屈町の気温と月相を AI に渡して、\n\
+一つの絵が生まれる。 同じ絵は二度と生まれない。\n\
+\n\
+そして — これがやりたかったこと —\n\
+私が死んでも、 明日も一つの絵が生まれる。\n\
+\n\
+ブランドは 0 人で運営できる。 それを毎日証明しているフィールド実験です。\n\
+\n\
+人間 1 人 / AI エージェント 28 / デザイナー 0 / 利益の 50% は弟子屈町に寄付\n\
+原価 ¥5,700 を公開しています。 一つの絵 ¥7,800。\n\
+\n\
+買った人にだけ見える Vault に、 今日新しいノートを置きました — 「MU の動かし方」。\n\
+私が毎朝 AI に向かって書いている SOP の、 共有できる全文です。\n\
+これを読むと MU の運用そのものをコピーできます。\n\
+\n\
+→ https://wearmu.com/love";
+
+async fn admin_sns_stage_renewal_posts(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/sns/stage_renewal_posts").await { return r; }
+    let dry_run = q.get("dry_run").map(|v| v != "false").unwrap_or(true);
+
+    if dry_run {
+        return Json(serde_json::json!({
+            "ok": true, "dry_run": true,
+            "would_enqueue_x": RENEWAL_X_POSTS.len(),
+            "x_posts": RENEWAL_X_POSTS.iter().map(|(kind, text)| serde_json::json!({
+                "trigger_kind": kind, "text": text,
+                "len_chars": text.chars().count(),
+            })).collect::<Vec<_>>(),
+            "fb_post": RENEWAL_FB_POST,
+            "fb_note": "FB has no auto-poster — copy/paste manually after approval",
+            "note": "to actually enqueue: re-call with ?dry_run=false",
+        })).into_response();
+    }
+
+    let mut enqueued: Vec<(i64, String)> = Vec::new();
+    {
+        let conn = db.lock().unwrap();
+        for (kind, text) in RENEWAL_X_POSTS {
+            // Dedup: if same text already in queue, skip.
+            let exists: bool = conn.query_row(
+                "SELECT 1 FROM sns_post_queue WHERE network='x' AND text=?",
+                params![*text], |r| r.get::<_, i64>(0),
+            ).is_ok();
+            if exists { continue; }
+            let id = enqueue_sns_post(&conn, "x", kind, None, None, text, None);
+            enqueued.push((id, (*kind).to_string()));
+        }
+    }
+    Json(serde_json::json!({
+        "ok": true, "dry_run": false,
+        "enqueued": enqueued.iter().map(|(id, kind)| serde_json::json!({
+            "id": id, "trigger_kind": kind,
+        })).collect::<Vec<_>>(),
+        "note": "x_post_worker drains 1/min; spaced out over ~4 minutes",
+        "fb_post": RENEWAL_FB_POST,
+    })).into_response()
+}
+
+async fn admin_email_buyer_thanks_blast(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/email/buyer_thanks_blast").await { return r; }
+    let dry_run = q.get("dry_run").map(|v| v != "false").unwrap_or(true);
+    let limit: usize = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50);
+
+    let recipients: Vec<String> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT DISTINCT email FROM mu_purchases
+             WHERE email IS NOT NULL AND email != ''
+               AND email NOT LIKE '%@example.com'
+               AND email NOT LIKE 'test%'
+               AND email NOT LIKE '%@mu.test'
+             ORDER BY email
+             LIMIT ?"
+        ) { Ok(s) => s, Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("db: {}", e)).into_response() };
+        stmt.query_map(params![limit as i64], |r| r.get::<_, String>(0))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+
+    let subj = BUYER_THANKS_SUBJECT.trim().to_string();
+    if dry_run {
+        let masked: Vec<String> = recipients.iter().map(|e| mask_email_public(e)).collect();
+        let sample = recipients.first().map(|email| {
+            let local = email.split('@').next().unwrap_or(email);
+            let ref_code = referral_code_for(email);
+            let email_url = urlencoding::encode(email).to_string();
+            BUYER_THANKS_TEXT
+                .replace("{{name_or_san}}", local)
+                .replace("{{referral_code}}", &ref_code)
+                .replace("{{email_url}}", &email_url)
+        });
+        return Json(serde_json::json!({
+            "ok": true, "dry_run": true,
+            "would_send_to": recipients.len(),
+            "recipients_masked": masked,
+            "subject": subj,
+            "sample_body_text": sample,
+            "note": "to send: re-call with ?dry_run=false",
+        })).into_response();
+    }
+
+    let resend_key = match env::var("RESEND_API_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => return (StatusCode::INTERNAL_SERVER_ERROR, "RESEND_API_KEY not set on server").into_response(),
+    };
+    let client = reqwest::Client::new();
+    let mut sent = 0;
+    let mut failed = 0;
+    let mut errors: Vec<serde_json::Value> = Vec::new();
+    for email in &recipients {
+        let local = email.split('@').next().unwrap_or(email);
+        let ref_code = referral_code_for(email);
+        let email_url = urlencoding::encode(email).to_string();
+        let text = BUYER_THANKS_TEXT
+            .replace("{{name_or_san}}", local)
+            .replace("{{referral_code}}", &ref_code)
+            .replace("{{email_url}}", &email_url);
+        let html = BUYER_THANKS_HTML
+            .replace("{{name_or_san}}", local)
+            .replace("{{referral_code}}", &ref_code)
+            .replace("{{email_url}}", &email_url);
+        let body = serde_json::json!({
+            "from": "MU yuki <yuki@wearmu.com>",
+            "to": [email],
+            "reply_to": "yuki@wearmu.com",
+            "subject": subj,
+            "text": text,
+            "html": html,
+        });
+        match client.post("https://api.resend.com/emails")
+            .bearer_auth(&resend_key).json(&body).send().await
+        {
+            Ok(r) if r.status().is_success() => { sent += 1; }
+            Ok(r) => {
+                failed += 1;
+                let status = r.status().as_u16();
+                let msg = r.text().await.unwrap_or_default();
+                errors.push(serde_json::json!({"email": mask_email_public(email), "status": status, "msg": msg.chars().take(200).collect::<String>()}));
+            }
+            Err(e) => {
+                failed += 1;
+                errors.push(serde_json::json!({"email": mask_email_public(email), "error": format!("{}", e)}));
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(900)).await;
+    }
+    Json(serde_json::json!({
+        "ok": failed == 0, "dry_run": false,
+        "sent": sent, "failed": failed,
+        "errors": errors,
+    })).into_response()
 }
 
 // ── /api/admin/email/vault_waitlist_blast ────────────────────────────────
@@ -11471,6 +11753,12 @@ async fn checkout(
             total_jpy: Some(total_jpy),
             kyc_required: total_jpy >= KYC_THRESHOLD_JPY,
             collect_shipping: true,
+            gclid:        body.gclid.as_deref(),
+            utm_source:   body.utm_source.as_deref(),
+            utm_medium:   body.utm_medium.as_deref(),
+            utm_campaign: body.utm_campaign.as_deref(),
+            utm_term:     body.utm_term.as_deref(),
+            utm_content:  body.utm_content.as_deref(),
         },
     );
     let send_request = |form: Vec<(String, String)>| {
@@ -14236,6 +14524,12 @@ async fn settle_auction(
         total_jpy: Some(amount),
         kyc_required: amount >= KYC_THRESHOLD_JPY,
         collect_shipping: true,
+        // MA auctions reach Stripe via /api/ma/bid (BidBody) which doesn't
+        // currently carry attribution. Left None for now — MA buyers are
+        // typically engaged enough that gclid attribution isn't the bottleneck.
+        gclid: None,
+        utm_source: None, utm_medium: None, utm_campaign: None,
+        utm_term: None,   utm_content: None,
     });
     let session_resp = client
         .post("https://api.stripe.com/v1/checkout/sessions")
@@ -37519,6 +37813,14 @@ async fn show_jiufight_page() -> Response {
     axum::response::Html(html).into_response()
 }
 
+/// GET /jiufight/preview — design candidate picker (private review page).
+/// noindex; generated by scripts/gen_preview_gallery.py.
+async fn show_jiufight_preview() -> Response {
+    let html = std::fs::read_to_string("static/jiufight/preview.html")
+        .unwrap_or_else(|_| "<h1>JIUFIGHT preview</h1><p>not generated yet</p>".to_string());
+    axum::response::Html(html).into_response()
+}
+
 async fn jiuflow_sample_checkout(
     State(db): State<Db>,
     headers: HeaderMap,
@@ -38784,6 +39086,10 @@ async fn gi_sponsor_apply(
                     total_jpy: Some(tier.price_jpy),
                     kyc_required: tier.price_jpy >= KYC_THRESHOLD_JPY,
                     collect_shipping: false,
+                    // /gi sponsor sponsorship flow — no ad attribution wired.
+                    gclid: None,
+                    utm_source: None, utm_medium: None, utm_campaign: None,
+                    utm_term: None,   utm_content: None,
                 });
                 // Webhook routing + bookkeeping metadata.
                 f.push(("metadata[product]".into(), "gi_sponsor_app".into()));
@@ -47269,6 +47575,7 @@ async fn main() {
         .route("/jiuflow/proposal", get(show_jiuflow_proposal_page))
         .route("/jiufight", get(show_jiufight_page))
         .route("/jiufight/", get(show_jiufight_page))
+        .route("/jiufight/preview", get(show_jiufight_preview))
         .route("/gi/:id", get(show_gi_edition_page))
         .route("/gi/:id/sponsor", get(show_gi_sponsor_recruit_page))
         .route("/api/gi/:id/checkout", post(gi_edition_checkout))
@@ -47326,6 +47633,8 @@ async fn main() {
         .route("/vault/:slug", get(vault_article))
         .route("/api/vault/dashboard", get(vault_dashboard_api))
         .route("/api/admin/email/vault_waitlist_blast", post(admin_email_vault_waitlist_blast))
+        .route("/api/admin/email/buyer_thanks_blast", post(admin_email_buyer_thanks_blast))
+        .route("/api/admin/sns/stage_renewal_posts", post(admin_sns_stage_renewal_posts))
         .route("/admin/bounty", get(admin_bounty))
         .route("/admin/bounty/:id/triage", post(admin_bounty_triage))
         .route("/admin/bounty/:id/issue-reward", post(admin_bounty_issue_reward))
