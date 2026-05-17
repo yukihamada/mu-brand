@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU Protocol — Universal Autonomous Brand Protocol</title>
+<meta name="description" content="MU Protocol v2 — apparel, food, lodging, service, music. One spec, one Treasury, infinite nodes. RFC, MIT license.">
+<meta property="og:title" content="MU Protocol — Universal Autonomous Brand Protocol">
+<meta property="og:description" content="Any time-and-place-pinned, autonomously-operated product can be a MU node. v2 covers all industries.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://wearmu.com/protocol">
+<link rel="canonical" href="https://wearmu.com/protocol">
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<style>
+  :root {
+    --ink:#0A0A0A; --paper:#F5F5F0; --line:#1a1a1a; --muted:#6b6b6b;
+    --accent:#e6c449; --code:#0d0d10;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--paper);color:var(--ink);font-family:-apple-system,'Helvetica Neue','Hiragino Sans','Yu Gothic UI',sans-serif;line-height:1.6}
+  .wrap{max-width:780px;margin:0 auto;padding:3rem 1.5rem 6rem}
+  header{border-bottom:1px solid var(--line);padding-bottom:2rem;margin-bottom:2.5rem}
+  .eyebrow{font-size:0.72rem;letter-spacing:0.18em;text-transform:uppercase;color:var(--muted);margin:0 0 0.75rem}
+  h1{font-size:2.4rem;line-height:1.15;margin:0 0 1rem;font-weight:800;letter-spacing:-0.01em}
+  .lede{font-size:1.05rem;color:#3a3a3a;margin:0 0 1.5rem;max-width:62ch}
+  .meta{display:flex;gap:1rem;flex-wrap:wrap;font-size:0.78rem;color:var(--muted)}
+  .meta span{padding:0.25rem 0.6rem;background:rgba(0,0,0,0.04);border-radius:4px}
+  h2{font-size:1.35rem;margin:3rem 0 1rem;font-weight:700;letter-spacing:-0.005em;padding-bottom:0.5rem;border-bottom:1px solid #e5e5e0}
+  h3{font-size:1.05rem;margin:2rem 0 0.5rem;font-weight:700}
+  p{margin:0 0 1rem}
+  code,pre{font-family:'SF Mono',Menlo,Monaco,Consolas,monospace}
+  code{background:rgba(0,0,0,0.06);padding:0.12em 0.4em;border-radius:3px;font-size:0.88em}
+  pre{background:var(--code);color:#e8e8e8;padding:1rem 1.1rem;border-radius:8px;overflow-x:auto;font-size:0.78rem;line-height:1.55;margin:1rem 0}
+  pre code{background:transparent;padding:0;color:inherit;font-size:inherit}
+  table{width:100%;border-collapse:collapse;font-size:0.85rem;margin:1rem 0}
+  th,td{padding:0.55rem 0.7rem;text-align:left;border-bottom:1px solid #e5e5e0;vertical-align:top}
+  th{background:rgba(0,0,0,0.03);font-weight:700;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.05em;color:#444}
+  ul{padding-left:1.3rem;margin:0.75rem 0}
+  li{margin-bottom:0.35rem}
+  .callout{background:#fffbe6;border-left:3px solid var(--accent);padding:0.9rem 1.1rem;margin:1.25rem 0;border-radius:0 6px 6px 0;font-size:0.92rem}
+  .layer-stack{font-family:'SF Mono',Menlo,monospace;background:var(--code);color:#e8e8e8;padding:1.4rem 1.2rem;border-radius:8px;font-size:0.78rem;line-height:1.5;margin:1rem 0;white-space:pre}
+  a{color:var(--ink);text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px}
+  a:hover{color:#444}
+  .toc{font-size:0.85rem;margin:1.5rem 0 2.5rem;padding:1rem 1.2rem;background:rgba(0,0,0,0.03);border-radius:6px}
+  .toc ol{margin:0.4rem 0 0;padding-left:1.4rem}
+  .toc li{margin-bottom:0.25rem}
+  .pill{display:inline-block;padding:0.15rem 0.55rem;border-radius:12px;font-size:0.7rem;font-weight:700;letter-spacing:0.02em;background:var(--ink);color:var(--paper)}
+  .pill.rfc{background:var(--accent);color:#1a1a00}
+  footer{margin-top:5rem;padding-top:2rem;border-top:1px solid #e5e5e0;font-size:0.78rem;color:var(--muted);text-align:center}
+  footer a{color:var(--muted)}
+  hr{border:0;border-top:1px solid #e5e5e0;margin:2.5rem 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">RFC · v2.0 · 2026-05-18</p>
+  <h1>MU Protocol</h1>
+  <p class="lede">Universal autonomous brand protocol. Apparel was the first reference implementation; the spec is industry-agnostic.</p>
+  <div class="meta">
+    <span class="pill rfc">RFC v2</span>
+    <span>License: MIT</span>
+    <span>Reference: wearmu.com</span>
+    <span>Supersedes: MU_PROTOCOL v1 (apparel + cities)</span>
+  </div>
+</header>
+
+<div class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#oneline">One-line spec</a></li>
+    <li><a href="#why">Why generalize (v1 → v2)</a></li>
+    <li><a href="#primitives">Universal primitives</a></li>
+    <li><a href="#adapters">Industry adapters</a></li>
+    <li><a href="#conformance">Conformance levels</a></li>
+    <li><a href="#enables">What this enables</a></li>
+    <li><a href="#triggers">Trigger conditions</a></li>
+  </ol>
+</div>
+
+<h2 id="oneline">One-line spec</h2>
+<div class="callout">
+  <strong>MU Protocol turns any time-and-place-stamped, autonomously-operated product into a forkable, settlement-bound brand.</strong> Apparel was the first reference implementation. The protocol is industry-agnostic.
+</div>
+
+<h2 id="why">Why generalize (v1 → v2)</h2>
+<p>v1 of the protocol scoped itself to <strong>apparel + cities</strong>: <code>drop_generator</code> assumed T-shirts and image generation, <code>weather_provider</code> assumed climate-pinned designs, "satellite city" framing assumed geographic operators. The core insight — <em>autonomous brand operation tied to a moment</em> — applies to any industry where a release is time-pinned, an operator is autonomous, and a treasury settles fees.</p>
+
+<table>
+  <thead><tr><th>Industry</th><th>"Release" is…</th><th>"Node" is…</th><th>"Pin" is…</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Apparel</strong> (MU origin)</td><td>a T-shirt drop</td><td>a city</td><td>weather + AI design</td></tr>
+    <tr><td><strong>Food</strong> (kokon.tokyo)</td><td>tonight's tasting menu</td><td>a restaurant</td><td>ingredients of the day</td></tr>
+    <tr><td><strong>Lodging</strong> (SOLUNA / StayFlow)</td><td>a room-night</td><td>a property</td><td>season + occupancy</td></tr>
+    <tr><td><strong>Service</strong> (JiuFlow)</td><td>tournament entry, training plan</td><td>a dojo</td><td>athlete + division</td></tr>
+    <tr><td><strong>Music</strong></td><td>a 30s field recording</td><td>a city or venue</td><td>exact time + GPS</td></tr>
+    <tr><td><strong>Real estate</strong></td><td>a parcel allotment</td><td>a region</td><td>coordinates + cadastre</td></tr>
+    <tr><td><strong>Hospitality</strong></td><td>tonight's playlist + cocktail</td><td>a venue</td><td>weather + crowd</td></tr>
+  </tbody>
+</table>
+
+<p>The same five primitives reappear. The protocol abstracts them so one engine serves all.</p>
+
+<h2 id="primitives">Universal primitives</h2>
+<div class="layer-stack">┌─────────────────────────────────────────────┐
+│ 1. RELEASE   immutable time/place-pinned    │
+│              product event                  │
+├─────────────────────────────────────────────┤
+│ 2. NODE      autonomous operator            │
+│              (city, venue, dojo, parcel)    │
+├─────────────────────────────────────────────┤
+│ 3. TREASURY  settlement + fee split         │
+│              (origin / node / pool)         │
+├─────────────────────────────────────────────┤
+│ 4. IDENTITY  pseudonymous participant log   │
+│              (wearer, diner, guest, …)      │
+├─────────────────────────────────────────────┤
+│ 5. LIFECYCLE optional expiry → retire/refund│
+└─────────────────────────────────────────────┘</div>
+
+<h3>1 · Release — <code>mu.release.v2</code></h3>
+<p>A <code>Release</code> is a JSON document with stable, content-addressable identity:</p>
+<pre><code>{
+  "schema": "mu.release.v2",
+  "id": "rel_2026-05-18T15:00Z_teshikaga_t01",
+  "node": "teshikaga",
+  "kind": "apparel.tee",
+  "pinned_at": "2026-05-18T15:00:00Z",
+  "pinned_to": { "lat": 43.490, "lon": 144.460,
+                 "temperature_c": 14.2,
+                 "weather_code": "scattered_clouds" },
+  "generator": { "model": "gemini-3-pro-image",
+                 "prompt_hash": "sha256:…",
+                 "output_hash": "sha256:…" },
+  "supply": { "kind": "open|fixed|bonding", "amount": 0 },
+  "price": { "currency": "JPY", "base": 4900,
+             "curve": "linear_micro_bond" },
+  "lifecycle": { "expires_at": null },
+  "settlement": { "treasury": "DK29rB…",
+                  "node_split_pct": 95,
+                  "origin_fee_pct": 5 },
+  "embeds": ["wearmu.com/p/&lt;id&gt;"]
+}</code></pre>
+<p>Required: <code>schema</code>, <code>id</code>, <code>node</code>, <code>kind</code>, <code>pinned_at</code>, <code>settlement</code>. Everything else is industry-optional.</p>
+
+<h3>2 · Node — <code>mu.node.v2</code></h3>
+<pre><code>{
+  "schema": "mu.node.v2",
+  "slug": "teshikaga",
+  "name": "Teshikaga",
+  "industry": "apparel",
+  "operator": { "pubkey": "&lt;solana_pubkey&gt;",
+                "contact": "ops@…",
+                "human_in_loop": false },
+  "anchor": { "lat": 43.490, "lon": 144.460 },
+  "adapter": "github.com/enabler/mu-adapter-apparel",
+  "status": "active|pilot|paused",
+  "registered_at": "2026-05-12T00:00:00Z",
+  "origin_approval_sig": "&lt;signature&gt;"
+}</code></pre>
+<p><strong>Naming rule</strong>: nodes using the literal string "MU" in branding need a one-time origin approval. Nodes forking the protocol under a different name are free to operate without approval.</p>
+
+<h3>3 · Treasury</h3>
+<p>Settlement is industry-agnostic. Default contract (<code>mu-settlement</code>) exposes 4 ABI calls:</p>
+<table>
+  <thead><tr><th>Call</th><th>Effect</th></tr></thead>
+  <tbody>
+    <tr><td><code>register_node(slug, pubkey)</code></td><td>creates node entry, emits <code>NodeRegistered</code></td></tr>
+    <tr><td><code>record_sale(release_id, gross_amount, ccy)</code></td><td>logs sale + splits</td></tr>
+    <tr><td><code>distribute_fee(release_id)</code></td><td>sends 5% origin / 95% node</td></tr>
+    <tr><td><code>retire(release_id, owner_sig)</code></td><td>marks retired, optional refund</td></tr>
+  </tbody>
+</table>
+<p>Reference implementation: Solana + Anchor at <code>contracts/mu-settlement/</code>. Other chains (Base, Ethereum L2) are protocol-compliant if they expose the same 4 calls.</p>
+<p><strong>Fee floor</strong>: 5% to origin Treasury. Nodes raising their split above 95% require a one-time slot fee (v2 placeholder).</p>
+
+<h3>4 · Identity — <code>mu.identity.v2</code></h3>
+<pre><code>{
+  "schema": "mu.identity.v2",
+  "participant_id": "p_&lt;base32_hash&gt;",
+  "kind": "wearer|diner|guest|listener|player",
+  "node": "teshikaga",
+  "first_seen_at": "…",
+  "release_count": 7,
+  "log_entries": ["log_…"]
+}</code></pre>
+<div class="callout"><strong>Explicit anti-pattern</strong>: the protocol never stores identifying name/face data by default. Reference implementations enforce this at the schema layer.</div>
+
+<h3>5 · Lifecycle — <code>mu.lifecycle.v2</code></h3>
+<pre><code>{
+  "schema": "mu.lifecycle.v2",
+  "release_id": "rel_…",
+  "expires_at": "2026-08-26T15:00:00Z",
+  "on_expire": { "action": "retire", "refund_pct": 50 },
+  "retired_at": null,
+  "retired_by_participant": null
+}</code></pre>
+
+<h2 id="adapters">Industry adapters</h2>
+<p>Each industry implements an <code>IndustryAdapter</code> trait against <code>mu-engine</code>:</p>
+<pre><code>trait IndustryAdapter: Send + Sync {
+    fn kind_prefix(&self) -&gt; &amp;'static str;
+    fn generate(&self, pin: Pin) -&gt; Release;
+    fn fulfill(&self, release: &amp;Release, buyer: ParticipantId) -&gt; Fulfillment;
+    fn validate(&self, release: &amp;Release) -&gt; Result&lt;(), Error&gt;;
+}</code></pre>
+<table>
+  <thead><tr><th>Adapter</th><th>Kind</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr><td><code>mu-adapter-apparel</code></td><td>apparel.tee, apparel.hood</td><td><strong>live</strong> (apps/origin/)</td></tr>
+    <tr><td><code>mu-adapter-food</code></td><td>food.menu, food.tasting</td><td>reference (kokon.tokyo)</td></tr>
+    <tr><td><code>mu-adapter-lodging</code></td><td>lodging.room_night</td><td>reference (SOLUNA / StayFlow)</td></tr>
+    <tr><td><code>mu-adapter-service</code></td><td>service.tournament, service.lesson</td><td>reference (JiuFlow)</td></tr>
+    <tr><td><code>mu-adapter-music</code></td><td>music.field_recording</td><td>sketch</td></tr>
+  </tbody>
+</table>
+<p>Anyone may publish a third-party adapter. Discovery via <code>mu-adapter-registry.json</code> (PR-curated until v3).</p>
+
+<h2 id="conformance">Conformance levels</h2>
+<p>A node is <strong>MU Protocol Compliant</strong> if it:</p>
+<ol>
+  <li>emits Release documents with <code>schema: mu.release.v2</code></li>
+  <li>registers as a Node with the protocol Treasury</li>
+  <li>routes ≥5% of gross sales to origin Treasury via <code>mu-settlement</code></li>
+  <li>exposes a public read endpoint at <code>/.well-known/mu/releases</code> returning Release JSON</li>
+  <li>respects the identity anti-pattern (no PII in public emits)</li>
+</ol>
+<p>(1)+(2)+(4) = <strong>Discoverable</strong> · (3) = <strong>Settled</strong> · (5) = <strong>Compliant</strong>.<br>All three = full conformance, eligible for the public node directory at <code>wearmu.com/protocol/nodes</code>.</p>
+
+<h2 id="enables">What this enables</h2>
+<ul>
+  <li><strong>Cross-industry composability</strong>: a Soluna lodging release can be paid in ENAI alongside a MU apparel drop and a JiuFlow tournament entry — same Treasury, same identity, single checkout.</li>
+  <li><strong>Forkable brand operations</strong>: anyone can stand up a <code>mu-adapter-&lt;industry&gt;</code> and operate a node with their own brand and treasury, paying only the 5% origin fee.</li>
+  <li><strong>Provenance for any product</strong>: the <code>pinned_at</code>/<code>pinned_to</code> + <code>output_hash</code> fields give every product a permanent, content-addressable history.</li>
+  <li><strong>Industry-neutral retirement</strong>: the lifecycle layer means "death-defined" products are not an apparel-only oddity — they work for food (expires end of night), lodging (check-out date), services (event date).</li>
+</ul>
+
+<h2 id="triggers">Trigger conditions for v2 → final</h2>
+<ol>
+  <li>≥1 non-apparel reference adapter shipped (food: kokon.tokyo, OR lodging: SOLUNA)</li>
+  <li>≥1 third-party node successfully registers via the protocol (not Enabler-operated)</li>
+  <li>Origin fee distribution executes on-chain at least once for a non-origin node</li>
+</ol>
+<p>Until then v2 remains an RFC; v1 is canonical for the apparel/cities subset.</p>
+
+<hr>
+
+<p style="font-size:0.95rem;color:#3a3a3a">
+MU は、衣服を超えて、すべての autonomous brand 運営の共通 protocol になる。<br>
+このドキュメントは v1 の apparel-only スコープを超え、food / lodging / service / music / real-estate を等しく包含する初の試みである。
+</p>
+
+<p style="font-size:0.9rem;color:var(--muted);font-style:italic">
+The protocol is the brand. The brand is the protocol. The product is incidental.
+</p>
+
+<footer>
+<p>Canonical: <a href="https://wearmu.com/protocol">wearmu.com/protocol</a> · Spec source: <code>docs/MU_PROTOCOL_V2.md</code> · MIT</p>
+<p><a href="/developers">/developers</a> · <a href="/.well-known/mu/releases">/.well-known/mu/releases</a> · <a href="/">wearmu.com</a></p>
+</footer>
+
+</div>
+</body>
+</html>
