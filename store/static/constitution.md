@@ -322,6 +322,27 @@ decisions (recorded per-line, not in this §).
 
 更新には T1 (人間承認) を要する。
 
+## Profit split 6-way (§28)
+
+§28 — MU 事業の<strong>税引後 当期純利益 P</strong> を、 各事業年度の期末監査確定後に、 以下の <strong>6 セグメント</strong>に分配する (合計 100%):
+
+| # | セグメント | 比率 | 受益主体 | 法的性格 |
+|---|---|---:|---|---|
+| 1 | 寄付 | 50% | 弟子屈町 (企業版ふるさと納税) | 損金算入 + 法人税特別控除 (~9割) |
+| 2 | Yuki 報酬 | 10% | 濱田優貴 (代表取締役) | 定期同額給与 (翌期 12 等分) |
+| 3 | 株主配当 | 10% | Enabler 全株主 (持分比率、 East Ventures 5% 含む) | 株主総会決議後配当 |
+| 4 | MA ホルダー還元 | 10% | MUGEN+stack ホルダー | MU クーポン (前払式支払手段 自家型) |
+| 5 | MU Community Fund | 10% | コミュニティ (50% を公募 grant 枠) | Enabler 内 引当金 |
+| 6 | 運転備金 | 10% | Enabler Inc. 内部留保 | 利益剰余金 (端数吸収) |
+
+- §28 は §27 (寄付 50%) を包含・拡張する正式版
+- 詳細仕様: `/profit-split` (HTML) と `/api/profit-split` (JSON)
+- 端数 ¥1 は運転備金に寄せ、 6 segment の合計が必ず P と一致するように担保
+- 日本法令準拠: 会社法 (剰余金処分)、 法人税法 (役員給与・寄付金損金性)、 金融商品取引法 (NFT 配当規制回避)、 資金決済法 (前払式支払手段)、 暗号資産税制 (新規トークン発行は当面行わない)
+- 実装 (計算ロジック): `store/src/main.rs::profit_split_breakdown`
+
+§27 と §28 の関係: §27 の「寄付 50%」 は §28 の segment #1 に対応。 §27 の最低額条項 (¥100,000/年) は §28 でも継承され、 推定 P × 50% < ¥100,000 のときは floor ¥100,000 が適用される。
+
 ---
 
 *This document is hashed into every build. The build SHA prefix is shown on `/admin/agents` next to the Constitution version.*

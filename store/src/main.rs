@@ -51,6 +51,55 @@ fn autopilot_skip(task: &str) -> bool {
 const CONSTITUTION_RAW: &str = include_str!("../static/constitution.md");
 const DAO_WHITEPAPER_RAW: &str = include_str!("../static/whitepaper_dao.md");
 const DONATIONS_RAW: &str = include_str!("../static/donations.md");
+const PROFIT_SPLIT_RAW: &str = include_str!("../static/profit_split.md");
+
+/// §28 利益分配スキーム — 税引後 当期純利益 P を 6 セグメントに分配。
+/// 全比率の合計が 1.0 になっていることはデバッグ assert で担保 (下記 test)。
+/// 端数 ¥1 は reserve に寄せる ([profit_split.md §3.1]).
+pub const PROFIT_SPLIT_DONATION: f64    = 0.50; // 弟子屈町 (企業版ふるさと納税)
+pub const PROFIT_SPLIT_YUKI: f64        = 0.10; // 代表取締役 報酬 (定期同額給与)
+pub const PROFIT_SPLIT_SHAREHOLDER: f64 = 0.10; // 株主全員 (持分比率配当)
+pub const PROFIT_SPLIT_MA_HOLDER: f64   = 0.10; // MUGEN+stack ホルダー (MUクーポン)
+pub const PROFIT_SPLIT_COMMUNITY: f64   = 0.10; // MU Community Fund (50% は grant 枠)
+pub const PROFIT_SPLIT_RESERVE: f64     = 0.10; // 運転備金 (内部留保, 端数吸収)
+
+#[cfg(test)]
+mod profit_split_tests {
+    use super::*;
+    #[test]
+    fn ratios_sum_to_one() {
+        let sum = PROFIT_SPLIT_DONATION + PROFIT_SPLIT_YUKI + PROFIT_SPLIT_SHAREHOLDER
+                + PROFIT_SPLIT_MA_HOLDER + PROFIT_SPLIT_COMMUNITY + PROFIT_SPLIT_RESERVE;
+        assert!((sum - 1.0).abs() < 1e-9, "ratios must sum to 1.0, got {}", sum);
+    }
+    #[test]
+    fn breakdown_segments_sum_to_p_with_fraction_in_reserve() {
+        // P = 1,000,003 — 端数 ¥3 が reserve に寄せられることを確認
+        let p = 1_000_003i64;
+        let br = profit_split_breakdown(p);
+        let segs = br["segments"].as_array().unwrap();
+        let sum: i64 = segs.iter().map(|s| s["jpy"].as_i64().unwrap()).sum();
+        assert_eq!(sum, p, "segments must sum exactly to P");
+        // donation = 50%, yuki = 10%, shareholder = 10%, ma = 10%, community = 10%, reserve = 残り
+        assert_eq!(segs[0]["jpy"].as_i64().unwrap(), 500_001);    // donation
+        assert_eq!(segs[1]["jpy"].as_i64().unwrap(), 100_000);    // yuki (floor)
+        assert_eq!(segs[5]["jpy"].as_i64().unwrap(), 100_002);    // reserve (端数吸収)
+    }
+    #[test]
+    fn breakdown_handles_zero_p() {
+        let br = profit_split_breakdown(0);
+        let segs = br["segments"].as_array().unwrap();
+        for s in segs {
+            assert_eq!(s["jpy"].as_i64().unwrap(), 0);
+        }
+    }
+    #[test]
+    fn breakdown_clamps_negative_p_to_zero() {
+        // 赤字 P を渡しても 全 segment = 0 (負配分を防ぐ)
+        let br = profit_split_breakdown(-100_000);
+        assert_eq!(br["net_after_tax_jpy"].as_i64().unwrap(), 0);
+    }
+}
 
 /// Extract a top-level `## <name>` markdown section from the Constitution.
 /// Matches the heading prefix (so `## Type 1 Doors — Irreversible / require human
@@ -26140,6 +26189,14 @@ async fn public_transparency(State(db): State<Db>) -> impl IntoResponse {
                 "note": "creator yuki's pre-MU personal donations to Hokkaido, all without 返礼品"
             }
         }));
+        // §28 利益分配スキーム (寄付 50 / Yuki 10 / 株主 10 / MA 10 / Community 10 / Reserve 10)
+        // /api/profit-split で詳細、 /profit-split で HTML spec
+        obj.insert("profit_split".into(), serde_json::json!({
+            "constitution": "§28",
+            "breakdown": profit_split_breakdown(est_net_after_tax),
+            "rule_doc_url": "https://wearmu.com/profit-split",
+            "api_url": "https://wearmu.com/api/profit-split",
+        }));
     }
     Json(snap)
 }
@@ -26328,6 +26385,113 @@ footer a:hover{{color:var(--y)}}
 <footer>
   <div>raw markdown: <a href="https://github.com/yukihamada/mu-brand/blob/main/store/static/donations.md">github.com/yukihamada/mu-brand/store/static/donations.md</a> · append-only — 過去エントリは git history に残ります</div>
   <div style="margin-top:6px">株式会社イネブラ (Enabler Inc.) · Constitution §27</div>
+</footer>
+</body></html>"##,
+        body = body_html,
+    );
+    Html(html)
+}
+
+/// §28 利益分配スキーム — 推定 P から 6 セグメントの金額を返す。
+/// `net_after_tax_jpy` は /api/transparency で使われている `estimated_net_after_tax`
+/// (revenue × 0.175 概算、 §27 の est と整合) と同じ前提を使う。
+/// 端数 ¥1 は reserve に寄せて 合計が必ず P と一致するように担保する。
+pub fn profit_split_breakdown(net_after_tax_jpy: i64) -> serde_json::Value {
+    let p = net_after_tax_jpy.max(0);
+    let donation    = (p as f64 * PROFIT_SPLIT_DONATION) as i64;
+    let yuki        = (p as f64 * PROFIT_SPLIT_YUKI) as i64;
+    let shareholder = (p as f64 * PROFIT_SPLIT_SHAREHOLDER) as i64;
+    let ma_holder   = (p as f64 * PROFIT_SPLIT_MA_HOLDER) as i64;
+    let community   = (p as f64 * PROFIT_SPLIT_COMMUNITY) as i64;
+    let reserve     = p - (donation + yuki + shareholder + ma_holder + community);
+    serde_json::json!({
+        "net_after_tax_jpy": p,
+        "segments": [
+            {"key":"donation",   "ratio":PROFIT_SPLIT_DONATION,   "jpy":donation,    "recipient":"弟子屈町 (企業版ふるさと納税)",                       "legal":"法人税損金算入 + 特別控除 (~9割税控除)"},
+            {"key":"yuki",       "ratio":PROFIT_SPLIT_YUKI,       "jpy":yuki,        "recipient":"濱田優貴 (代表取締役)",                                "legal":"定期同額給与 12 等分 (翌期支払)"},
+            {"key":"shareholder","ratio":PROFIT_SPLIT_SHAREHOLDER,"jpy":shareholder, "recipient":"Enabler 全株主 (East Ventures 5% 含む 持分比率)",      "legal":"株主総会決議後の利益配当"},
+            {"key":"ma_holder",  "ratio":PROFIT_SPLIT_MA_HOLDER,  "jpy":ma_holder,   "recipient":"MUGEN+stack ホルダー",                                 "legal":"MU クーポン発行 (前払式支払手段 自家型)"},
+            {"key":"community",  "ratio":PROFIT_SPLIT_COMMUNITY,  "jpy":community,   "recipient":"MU Community Fund (50% は公募 grant 枠)",              "legal":"Enabler 内 引当金 (将来トークン化原資 含む)"},
+            {"key":"reserve",    "ratio":PROFIT_SPLIT_RESERVE,    "jpy":reserve,     "recipient":"Enabler Inc. 内部留保",                                "legal":"利益剰余金 (端数吸収)"},
+        ],
+        "rule_doc_url": "https://wearmu.com/profit-split",
+        "raw_md_source": "https://github.com/yukihamada/mu-brand/blob/main/store/static/profit_split.md",
+        "constitution_section": "§28",
+    })
+}
+
+/// GET /api/profit-split — 現在の推定 P + 6 セグメント分配額を返す。
+async fn public_profit_split_api(State(db): State<Db>) -> Json<serde_json::Value> {
+    let revenue_jpy = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(SUM(amount_jpy),0) FROM mu_purchases WHERE session_id LIKE 'cs_live_%'",
+            [], |r| r.get::<_, i64>(0),
+        ).unwrap_or(0)
+    };
+    // §27 と同じ前提: 売上 → 推定 PBT (利益率 25%) → 法人税 30% → 税引後 P (revenue × 0.175)
+    let est_net_after_tax = (revenue_jpy as f64 * 0.175) as i64;
+    let breakdown = profit_split_breakdown(est_net_after_tax);
+    Json(serde_json::json!({
+        "fiscal_year_revenue_jpy": revenue_jpy,
+        "estimated_net_after_tax_jpy": est_net_after_tax,
+        "breakdown": breakdown,
+        "note": "推定値。実支払は期末監査確定後、株主総会決議に基づく。",
+        "schedule_url": "https://wearmu.com/profit-split#4-支払スケジュール-disbursement-schedule",
+    }))
+}
+
+/// GET /profit-split — §28 spec HTML (markdown レンダリング)
+async fn public_profit_split_page() -> Html<String> {
+    let body_html = md_to_html_simple(PROFIT_SPLIT_RAW);
+    let html = format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>━◯━ MU · §28 利益分配スキーム | wearmu.com</title>
+<meta name="description" content="MU の §28 利益分配スキーム — 税引後純利益を 寄付 50% / Yuki 10% / 株主 10% / MA ホルダー 10% / Community 10% / 運転備金 10% の 6 セグメントに分配。日本法令準拠 (会社法・法人税法・金商法・資金決済法・暗号資産税制)。">
+<meta property="og:title" content="MU · §28 利益分配スキーム">
+<meta property="og:description" content="税引後純利益を 6 セグメントに分配。50% 寄付 (弟子屈町 企業版ふるさと納税)・10% Yuki・10% 株主・10% MA・10% Community・10% 運転備金。">
+<meta property="og:url" content="https://wearmu.com/profit-split">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="alternate" type="application/json" href="/api/profit-split">
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<style>
+:root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--line:rgba(255,255,255,0.08)}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.85;font-size:15px;-webkit-font-smoothing:antialiased;font-feature-settings:"palt"}}
+a{{color:var(--y);text-decoration:none}} a:hover{{text-decoration:underline;text-underline-offset:3px}}
+nav{{position:sticky;top:0;background:rgba(10,10,10,0.9);backdrop-filter:blur(12px);border-bottom:1px solid var(--line);padding:16px 28px;display:flex;justify-content:space-between;align-items:center;z-index:50;font-size:11px;letter-spacing:0.3em;text-transform:uppercase}}
+nav .logo{{font-weight:700;letter-spacing:0.45em}}
+.wrap{{max-width:760px;margin:0 auto;padding:60px 28px 100px}}
+.wrap h1{{font-size:clamp(28px,4.6vw,44px);font-weight:200;letter-spacing:0.01em;line-height:1.22;margin:0 0 28px;color:var(--fg)}}
+.wrap h2{{font-size:13px;letter-spacing:0.28em;text-transform:uppercase;color:var(--y);font-weight:500;margin:48px 0 18px;padding-top:32px;border-top:1px solid var(--line)}}
+.wrap h3{{font-size:17px;font-weight:300;letter-spacing:0.02em;margin:28px 0 12px;color:var(--fg)}}
+.wrap p{{margin:0 0 14px;color:var(--mute)}}
+.wrap p strong{{color:var(--fg);font-weight:500}}
+.wrap ol,.wrap ul{{margin:6px 0 18px;padding-left:24px;color:var(--mute)}}
+.wrap li{{margin:6px 0}} .wrap li strong{{color:var(--fg);font-weight:500}}
+.wrap code{{background:rgba(230,196,73,0.10);color:var(--y);padding:1px 6px;font-size:12.5px;font-family:'SF Mono','Menlo',monospace;border-radius:2px}}
+.wrap pre{{background:#0e0e0e;border:1px solid var(--line);padding:14px 18px;overflow-x:auto;font-size:12px;margin:14px 0;border-radius:2px}}
+.wrap pre code{{background:transparent;color:var(--fg);padding:0}}
+.wrap hr{{border:none;border-top:1px solid var(--line);margin:48px 0}}
+.wrap table{{border-collapse:collapse;width:100%;margin:14px 0;font-size:13px}}
+.wrap th,.wrap td{{border:1px solid var(--line);padding:8px 12px;text-align:left}}
+.wrap th{{background:#0e0e0e;color:var(--fg);font-weight:500;letter-spacing:0.04em}}
+.wrap blockquote{{margin:18px 0;padding:12px 18px;border-left:2px solid var(--y);background:rgba(230,196,73,0.06);font-size:13.5px;color:var(--mute)}}
+footer{{max-width:760px;margin:0 auto;padding:32px 28px 80px;border-top:1px solid var(--line);color:var(--mute);font-size:11.5px;letter-spacing:0.1em;line-height:2}}
+footer a{{color:var(--mute);text-decoration:underline;text-decoration-color:rgba(255,255,255,0.18)}} footer a:hover{{color:var(--y)}}
+</style></head><body>
+<nav>
+  <a class="logo" href="/">MU</a>
+  <span style="opacity:0.55">§28 利益分配</span>
+  <span><a href="/api/profit-split" style="opacity:0.55;margin-right:14px">JSON ↗</a><a href="/transparency" style="opacity:0.55">数字</a></span>
+</nav>
+<div class="wrap">
+{body}
+</div>
+<footer>
+  <div>raw markdown: <a href="https://github.com/yukihamada/mu-brand/blob/main/store/static/profit_split.md">github.com/yukihamada/mu-brand/store/static/profit_split.md</a> · 計算ロジック: <code>store/src/main.rs::profit_split_breakdown</code></div>
+  <div style="margin-top:6px">株式会社イネブラ (Enabler Inc.) · Constitution §28 · 監査 → 株主総会 → 分配</div>
 </footer>
 </body></html>"##,
         body = body_html,
@@ -46975,6 +47139,8 @@ async fn main() {
         .route("/en/transparency", get(public_transparency_page_en))
         .route("/constitution", get(public_constitution_page))
         .route("/donations", get(public_donations_page))
+        .route("/profit-split", get(public_profit_split_page))
+        .route("/api/profit-split", get(public_profit_split_api))
         .route("/api/sample_personas", get(list_sample_personas))
         .route("/api/admin/sample_grow", post(admin_sample_grow))
         .route("/api/admin/lifestyle", axum::routing::patch(admin_lifestyle))
