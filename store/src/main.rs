@@ -15249,6 +15249,30 @@ fn seed_brand_copy(conn: &Connection) {
     }
 }
 
+/// TAXIGEN pitch fixture. Seeds the proposals row + secret_key on first
+/// boot. The key is deterministic from ADMIN_TOKEN + slug so it survives
+/// restarts; rotate by editing ADMIN_TOKEN (not recommended) or via direct
+/// UPDATE proposals SET secret_key=? WHERE slug='nihon-kotsu'.
+fn seed_taxigen_proposal(conn: &Connection) {
+    use sha2::{Sha256, Digest};
+    let admin = env::var("ADMIN_TOKEN").unwrap_or_default();
+    let mut h = Sha256::new();
+    h.update(admin.as_bytes());
+    h.update(b"nihon-kotsu/taxigen/2026-05-17");
+    let key: String = format!("{:x}", h.finalize()).chars().take(16).collect();
+    let _ = conn.execute(
+        "INSERT OR IGNORE INTO proposals (slug, name, ip_owner, created_at, secret_key, note)
+         VALUES ('nihon-kotsu', 'TAXIGEN — MU × 日本交通', '日本交通株式会社', ?, ?,
+                 'Private pitch. Key-gated until Kawanabe-san or 法務 approval.')",
+        params![chrono_now(), key],
+    );
+    // If row exists without key (older seed), set it.
+    let _ = conn.execute(
+        "UPDATE proposals SET secret_key=? WHERE slug='nihon-kotsu' AND (secret_key IS NULL OR secret_key='')",
+        params![key],
+    );
+}
+
 async fn api_brand_copy(
     State(db): State<Db>,
     axum::extract::Path(brand): axum::extract::Path<String>,
@@ -15266,6 +15290,186 @@ async fn api_brand_copy(
         })).into_response(),
         None => (StatusCode::NOT_FOUND, "no brand_copy").into_response(),
     }
+}
+
+/// GET /proposals/nihon-kotsu?key=… — key-gated TAXIGEN pitch.
+/// Compares against proposals.secret_key (constant-time-ish via simple eq —
+/// the surface is so small + the key is 16 hex chars so attack is impractical).
+async fn proposal_nihon_kotsu(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let provided = q.get("key").cloned().unwrap_or_default();
+    let (stored_key, name): (String, String) = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(secret_key,''), name FROM proposals WHERE slug='nihon-kotsu'",
+            [], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap_or_else(|_| (String::new(), String::new()))
+    };
+    if stored_key.is_empty() || provided != stored_key {
+        return (StatusCode::NOT_FOUND, "Not Found").into_response();
+    }
+
+    // Pull TAXIGEN sample products to embed in the deck.
+    let samples: Vec<(i64, i64, String, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, drop_num, name, mockup_url FROM products
+             WHERE brand='taxigen' ORDER BY drop_num ASC LIMIT 12"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get::<_, Option<String>>(3)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+
+    let mut sample_cards = String::new();
+    for (id, drop, sname, mockup) in &samples {
+        let img = mockup.as_deref().unwrap_or("https://mockups.wearmu.com/hero.png");
+        sample_cards.push_str(&format!(
+            r#"<a class="sample" href="/buy/{id}"><img src="{img}" alt="{n_esc}" loading="lazy"/><div class="meta"><span class="num">#{drop:03}</span><span class="name">{n_esc}</span></div></a>"#,
+            id=id, img=html_attr_escape(img), n_esc=html_escape(sname), drop=drop));
+    }
+
+    let html = format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="robots" content="noindex,nofollow"/>
+<title>{name} — Private Pitch</title>
+<style>
+  *{{box-sizing:border-box;-webkit-text-size-adjust:100%}}
+  body{{background:#000;color:#f5f5f0;font-family:-apple-system,system-ui,sans-serif;margin:0;font-feature-settings:"palt";line-height:1.7}}
+  .priv{{position:fixed;top:0;left:0;right:0;background:#e6c449;color:#000;text-align:center;font-size:11px;letter-spacing:0.18em;font-weight:600;padding:8px;z-index:99;text-transform:uppercase}}
+  .wrap{{max-width:880px;margin:0 auto;padding:80px 22px 80px}}
+  .hero{{text-align:center;margin:30px 0 60px}}
+  .kicker{{font-size:11px;letter-spacing:0.22em;color:#888;text-transform:uppercase;margin-bottom:14px}}
+  h1{{font-size:48px;font-weight:300;letter-spacing:0.02em;line-height:1.2;margin:0 0 16px}}
+  h1 em{{color:#e6c449;font-style:normal;font-weight:400}}
+  .pitch-line{{color:#bbb;font-size:17px;max-width:580px;margin:0 auto;line-height:1.75}}
+  h2{{font-size:22px;font-weight:500;margin:50px 0 14px;color:#e6c449;border-bottom:1px solid #2a2a1a;padding-bottom:10px}}
+  h3{{font-size:14px;letter-spacing:0.1em;color:#aaa;margin:24px 0 6px;text-transform:uppercase}}
+  p{{color:#cfcfc8;margin:0 0 16px}}
+  .stat-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:24px 0}}
+  .stat{{background:#0a0a0a;border:1px solid #1f1f1f;border-radius:4px;padding:18px 20px}}
+  .stat .k{{font-size:10px;letter-spacing:0.18em;color:#666;text-transform:uppercase}}
+  .stat .v{{font-size:28px;font-weight:300;color:#e6c449;margin-top:6px}}
+  .stat .v small{{font-size:13px;color:#888;margin-left:6px;font-weight:400}}
+  .grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin:24px 0}}
+  .sample{{background:#0a0a0a;border:1px solid #1f1f1f;border-radius:4px;overflow:hidden;text-decoration:none;color:inherit;display:block;transition:border-color 0.15s}}
+  .sample:hover{{border-color:#e6c449}}
+  .sample img{{width:100%;aspect-ratio:1/1;object-fit:cover;background:#000;display:block}}
+  .sample .meta{{padding:10px 12px;display:flex;justify-content:space-between;font-size:11.5px}}
+  .sample .num{{color:#e6c449;font-family:ui-monospace,Menlo,monospace}}
+  .sample .name{{color:#888;text-align:right;margin-left:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+  table{{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px}}
+  th,td{{border-bottom:1px solid #1f1f1f;padding:10px 14px;text-align:left;color:#cfcfc8}}
+  th{{color:#e6c449;font-weight:500;text-transform:uppercase;font-size:10.5px;letter-spacing:0.14em}}
+  .ask{{background:#0a0a0a;border:1px solid #e6c449;border-radius:6px;padding:24px;margin:40px 0}}
+  .ask h3{{color:#e6c449;font-size:13px;margin:0 0 12px}}
+  .ask p{{color:#f5f5f0;margin:6px 0}}
+  ul{{padding-left:22px;color:#cfcfc8}}
+  li{{margin:6px 0}}
+  footer{{margin-top:60px;border-top:1px solid #1a1a1a;padding-top:20px;font-size:11px;color:#555;text-align:center}}
+  .quote{{font-size:18px;color:#e6c449;font-style:italic;border-left:3px solid #e6c449;padding-left:18px;margin:20px 0;line-height:1.65}}
+</style></head><body>
+<div class="priv">CONFIDENTIAL · 日本交通 様向け · 共有不可</div>
+<div class="wrap">
+
+  <div class="hero">
+    <div class="kicker">PRIVATE PITCH · MU × 日本交通</div>
+    <h1>TAX<em>I</em>GEN</h1>
+    <p class="pitch-line">東京タクシーの<strong>人の動き</strong>を1時間ごと、1着のTシャツに。<br>北海道の天気を着る MUGEN の、対(つい)となる兄弟ライン。</p>
+  </div>
+
+  <h2>1. なぜいま</h2>
+  <p>MU (wearmu.com) は AI が <strong>北海道弟子屈町の気温・月相</strong> を seed に1時間ごと1着の Tシャツを自律生成する、透明性ブランドです。
+    <a href="https://wearmu.com" style="color:#e6c449">wearmu.com</a> / <a href="https://github.com/yukihamada/mu-brand" style="color:#e6c449">github.com/yukihamada/mu-brand</a></p>
+  <p>「気温が決める服」は <strong>静</strong> の側。次は <strong>動</strong> の側を作りたい。
+    日本交通のデータ — 人の動きそのもの — を seed に、東京の鼓動を1着にするのが TAXIGEN です。</p>
+  <blockquote class="quote">MUGEN が「自然」を着るブランドなら、TAXIGEN は「都市」を着るブランド。</blockquote>
+
+  <h2>2. 何が起きるか (商品の生成)</h2>
+  <table>
+    <tr><th>項目</th><th>仕様</th></tr>
+    <tr><td>生成周期</td><td>1時間ごとに1着 (MUGEN同様)</td></tr>
+    <tr><td>Seed データ</td><td>「過去1時間で最も配車されたエリア (1kmメッシュ)」+ 時刻 + 推定配車件数</td></tr>
+    <tr><td>データソース</td><td>GO/Mobility Tech 集計指標 (公開分) + 東京都統計 + 必要なら 日本交通 内部データ提供</td></tr>
+    <tr><td>表現</td><td>AREA 名 + HH:00 + 件数 を broadcast-board レイアウトで typography 化</td></tr>
+    <tr><td>1着</td><td>Bella+Canvas 3001 黒 / Printful EU プリント / DTG / ¥5,000-30,000 bonding curve</td></tr>
+    <tr><td>在庫</td><td>受注生産・在庫ゼロ・同じデザインは二度と作られない</td></tr>
+  </table>
+
+  <h2>3. サンプル — 既に生成済 (本日)</h2>
+  <p>下記は本日 model run で 12時間分を試作したもの。実運用では cron で 1時間ごと 24/365 で稼働。</p>
+  <div class="grid">{sample_cards}</div>
+  <p style="font-size:12px;color:#888;margin-top:14px">※ クリックで個別商品ページへ (¥5,000、test用)</p>
+
+  <h2>4. 数字 (収益・寄付・規模)</h2>
+  <div class="stat-grid">
+    <div class="stat"><div class="k">想定 単価</div><div class="v">¥5,000<small>～¥30,000</small></div></div>
+    <div class="stat"><div class="k">年間生成数</div><div class="v">8,760<small>着</small></div></div>
+    <div class="stat"><div class="k">想定 完売率</div><div class="v">8%<small>初年度</small></div></div>
+    <div class="stat"><div class="k">推定年商</div><div class="v">¥3.5M<small>初年度</small></div></div>
+  </div>
+  <p>利益 50% は §27 に基づき寄付。寄付先は MU 既定の <strong>弟子屈町</strong> または日本交通様ご指定 (例: 港区社協・タクシードライバー就労支援基金等)。</p>
+
+  <h2>5. 日本交通様にしていただきたいこと</h2>
+  <ul>
+    <li>(A) GO/MobilityTech の <strong>公開可能な集計データ</strong> へのアクセス指針 — どの粒度なら公開可能か、コンプライアンス上の制約</li>
+    <li>(B) ブランド共同名義の可否 — "TAXIGEN by MU × 日本交通" として展開してよいか</li>
+    <li>(C) 寄付先のご指定 — タクシー乗務員ご家族支援基金等あれば優先</li>
+    <li>(D) 拡張: 100周年 (2028) アーカイブ Tee の同時pitch可否</li>
+  </ul>
+
+  <h2>6. MU 側でお約束すること</h2>
+  <ul>
+    <li>運営・印刷・発送・サポート全て MU 単独。日本交通様の運営負荷ゼロ。</li>
+    <li>商標的に問題のあるデザイン (日本交通ロゴ・GOロゴ等) は使わない。</li>
+    <li>原価・売上・寄付額は全て <a href="https://wearmu.com/transparency" style="color:#e6c449">/transparency</a> で公開。</li>
+    <li>サンセット条項: 日本交通様の判断でいつでも停止可能。</li>
+  </ul>
+
+  <div class="ask">
+    <h3>初回 ASK</h3>
+    <p>30分のオンラインmtg を1回いただけませんか。本ピッチへのご感想 + 上記 (A)〜(D) のすり合わせ。</p>
+    <p>日程: ご都合のよい候補を <a href="mailto:info@wearmu.com" style="color:#e6c449">info@wearmu.com</a> までいただければ即合わせます。</p>
+  </div>
+
+  <footer>
+    本ピッチは confidential、日本交通様 (川鍋一朗様) のみへの限定共有です。<br>
+    提案者: 株式会社イネブラ · 濱田優貴 (ex-Mercari US CEO) · {date}
+  </footer>
+</div>
+</body></html>"#,
+        name = html_escape(&name),
+        sample_cards = sample_cards,
+        date = chrono_now_human());
+    (StatusCode::OK, [("content-type", "text/html; charset=utf-8")], html).into_response()
+}
+
+fn chrono_now_human() -> String {
+    // Cheap "today" string — not localized, fine for pitch footer.
+    let s = chrono_now();
+    let ts: i64 = s.parse().unwrap_or(0);
+    let days = ts / 86_400;
+    // approximate Y/M/D — produces a coarse stamp that's good-enough for footer
+    let mut year = 1970_i64;
+    let mut day_of_year = days;
+    loop {
+        let leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+        let yd = if leap { 366 } else { 365 };
+        if day_of_year < yd { break; }
+        day_of_year -= yd;
+        year += 1;
+    }
+    let months: [i64; 12] = [31,28,31,30,31,30,31,31,30,31,30,31];
+    let mut m = 1_i64;
+    let mut d = day_of_year + 1;
+    for (i, len) in months.iter().enumerate() {
+        let leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+        let l = if i == 1 && leap { 29 } else { *len };
+        if d <= l { m = (i as i64) + 1; break; }
+        d -= l;
+    }
+    format!("{}-{:02}-{:02}", year, m, d)
 }
 
 /// Sum of donation_ledger.donation_jpy filtered by status. Used by the
@@ -45429,6 +45633,9 @@ async fn main() {
         );
     ").ok();
     seed_brand_copy(&conn);
+    // TAXIGEN pitch (private, key-gated until Nihon Kotsu sign-off).
+    let _ = conn.execute("ALTER TABLE proposals ADD COLUMN secret_key TEXT", []);
+    seed_taxigen_proposal(&conn);
     // Idempotent migrations.
     let _ = conn.execute("ALTER TABLE mu_purchases ADD COLUMN amount_jpy INTEGER", []);
     // (2026-05-16) Per-partner donation recipient: MUGEN/MUON/MA/you → 弟子屈,
@@ -46888,6 +47095,7 @@ async fn main() {
         .route("/buy/:id", get(buy_page_with_id))
         .route("/collections/:brand", get(collection_page))
         .route("/api/brand_copy/:brand", get(api_brand_copy))
+        .route("/proposals/nihon-kotsu", get(proposal_nihon_kotsu))
         .route("/survey/quality", get(survey_quality_page))
         .route("/api/poll/quality", get(quality_poll_results))
         .route("/api/poll/quality/vote", post(quality_poll_vote))
