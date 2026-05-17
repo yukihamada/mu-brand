@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JIUFIGHT × MU · SKU Dashboard</title>
+<meta name="robots" content="noindex">
+<style>
+  :root { --bg:#0A0A0A; --fg:#F5F5F0; --mute:#888; --accent:#e6c449; --line:#1c1c1c; --green:#7be57b; --red:#ff4a3d; --card:#101010; }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { background: var(--bg); color: var(--fg); margin: 0; font-family: ui-monospace, "SF Mono", Menlo, "Helvetica Neue", Arial, sans-serif; line-height: 1.55; font-size: 13px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  header { padding: 22px 24px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; position: sticky; top: 0; background: var(--bg); z-index: 50; }
+  header h1 { font-size: 14px; letter-spacing: 0.4em; margin: 0; font-weight: 700; }
+  header .meta { color: var(--mute); font-size: 11px; letter-spacing: 0.16em; }
+  header .meta strong { color: var(--accent); }
+  header a.btn { background: #0f0f0f; border: 1px solid var(--line); padding: 8px 14px; color: var(--fg); border-radius: 4px; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; }
+  header a.btn:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
+  .wrap { padding: 28px 24px 80px; max-width: 1640px; margin: 0 auto; }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 14px 18px; }
+  .stat .l { font-size: 10px; letter-spacing: 0.28em; color: var(--mute); text-transform: uppercase; margin-bottom: 6px; }
+  .stat .v { font-size: 26px; font-weight: 200; color: var(--fg); }
+  .stat .v .small { color: var(--mute); font-size: 14px; }
+  .stat.ok .v { color: var(--green); }
+  .stat.warn .v { color: var(--red); }
+  .stat .sub { color: var(--mute); font-size: 11px; margin-top: 4px; }
+
+  .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 18px; flex-wrap: wrap; }
+  .toolbar input, .toolbar select { background: #0f0f0f; border: 1px solid var(--line); color: var(--fg); padding: 8px 12px; font-family: inherit; font-size: 12px; border-radius: 4px; }
+  .toolbar input.search { width: 280px; }
+  .toolbar .count { color: var(--mute); font-size: 11px; letter-spacing: 0.14em; margin-left: auto; }
+  .refresh-btn { background: var(--accent); border: 1px solid var(--accent); color: #000; padding: 8px 14px; font-family: inherit; font-size: 11px; border-radius: 4px; cursor: pointer; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 700; }
+
+  h2 { font-size: 11px; letter-spacing: 0.42em; color: var(--accent); text-transform: uppercase; margin: 32px 0 14px; font-weight: 700; }
+  h2:first-child { margin-top: 0; }
+  h2 .n { color: var(--mute); margin-left: 8px; font-weight: 400; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; transition: border-color 0.12s; }
+  .card:hover { border-color: var(--accent); }
+  .card .photos { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+  .card .photo { aspect-ratio: 1/1; background: #050505; overflow: hidden; position: relative; display: flex; align-items: center; justify-content: center; }
+  .card .photo img { width: 100%; height: 100%; object-fit: contain; }
+  .card .photo .empty { color: var(--mute); font-size: 9px; letter-spacing: 0.14em; }
+  .card .photo .label { position: absolute; top: 6px; left: 6px; background: rgba(0,0,0,0.7); color: var(--accent); padding: 2px 6px; font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; border-radius: 3px; }
+  .card .meta { padding: 12px 14px 14px; }
+  .card .name { font-size: 12px; color: var(--fg); margin-bottom: 4px; line-height: 1.4; min-height: 32px; }
+  .card .sub { color: var(--mute); font-size: 10px; letter-spacing: 0.10em; margin-bottom: 10px; display: flex; gap: 8px; justify-content: space-between; }
+  .card .status { display: inline-block; padding: 1px 7px; border-radius: 99px; font-size: 9px; letter-spacing: 0.16em; font-weight: 700; text-transform: uppercase; }
+  .card .status.done { background: rgba(123,229,123,0.10); color: var(--green); border: 1px solid rgba(123,229,123,0.30); }
+  .card .status.pending { background: rgba(230,196,73,0.10); color: var(--accent); border: 1px solid rgba(230,196,73,0.30); }
+  .card .status.failed { background: rgba(255,74,61,0.10); color: var(--red); border: 1px solid rgba(255,74,61,0.30); }
+
+  .card .options { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .card .opt label { font-size: 9px; letter-spacing: 0.20em; color: var(--mute); text-transform: uppercase; margin-bottom: 4px; display: block; }
+  .card .opt select { width: 100%; background: #050505; border: 1px solid var(--line); color: var(--fg); padding: 5px 6px; font-family: inherit; font-size: 11px; border-radius: 3px; }
+  .card .opt select:focus { outline: none; border-color: var(--accent); }
+  .card .opt select.modified { border-color: var(--accent); background: #1a1a0a; }
+
+  .actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .actions button { background: #0f0f0f; border: 1px solid var(--line); color: var(--fg); padding: 5px 10px; font-family: inherit; font-size: 10px; border-radius: 3px; cursor: pointer; letter-spacing: 0.06em; }
+  .actions button:hover { border-color: var(--accent); color: var(--accent); }
+  .actions button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .loading, .err { padding: 60px; text-align: center; color: var(--mute); }
+  .err { color: var(--red); }
+  .info-banner { background: rgba(230,196,73,0.06); border: 1px solid rgba(230,196,73,0.20); padding: 10px 14px; border-radius: 6px; margin-bottom: 18px; font-size: 11px; line-height: 1.6; color: var(--mute); }
+  .info-banner strong { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>━◯━ JIUFIGHT · SKU DASHBOARD</h1>
+    <div class="meta">SUPER YAWARA SWEEP CUP · <strong>2026.05.24 (日)</strong> 港区芝公園</div>
+  </div>
+  <div>
+    <button class="refresh-btn" onclick="load()">━ refresh</button>
+    <a class="btn" href="/admin/products" id="adminLink">/admin/products</a>
+  </div>
+</header>
+
+<div class="wrap" id="content">
+  <div class="loading">━◯━ loading...</div>
+</div>
+
+<script>
+let DATA = null;
+const PLACEMENT_OPTIONS = ['front_chest', 'full_back', 'left_sleeve', 'right_sleeve', 'inside_neck'];
+const QUALITY_OPTIONS = {
+  'tee':         ['B+C 3001 standard (recommend)', 'B+C 3413 triblend', 'AS Colour Heavy Faded', 'Stanley/Stella SATU001 heavy'],
+  'longsleeve':  ['B+C 3501 (recommend)', 'Champion S700', 'Independent SS3000Z'],
+  'hoodie':      ['Gildan 18500 (recommend)', 'Champion S101 Reverse', 'AOP Premium'],
+  'zip_hoodie':  ['Independent SS4500Z (recommend)', 'AOP Zip'],
+  'crewneck':    ['Gildan 18000 (recommend)', 'Champion S101'],
+  'polo':        ['Sport-Tek (recommend)', 'AS Colour Pique'],
+  'tank_top':    ['B+C 3480 (recommend)', 'AOP Tank'],
+  'cap':         ['Yupoong 6606 (recommend)', 'Flexfit Curved'],
+  'beanie':      ['Yupoong 1500KC (recommend)'],
+  'bucket_hat':  ['Big Accessories BX003 (recommend)'],
+  'mug':         ['11oz White (recommend)', '15oz White'],
+  'tote':        ['Liberty Bags 8869 (recommend)', 'Bella+Canvas 8868'],
+  'drawstring':  ['Liberty Bags A136 (recommend)'],
+  'crossbody':   ['AOP Crossbody (recommend)'],
+  'sticker':     ['Die-cut Vinyl 4×4 (recommend)', 'Kiss-cut 5×7'],
+  'pin':         ['Enamel pin 1in (recommend)'],
+  'patch':       ['Embroidered patch 3in (recommend)'],
+  'apron':       ['Liberty Bags 5505 (recommend)'],
+  'beach_towel': ['AOP Beach Towel (recommend)'],
+  'bandana':     ['AOP 22×22in (recommend)'],
+  'flag':        ['Custom Flag 3×5 (recommend)'],
+  'wristband':   ['Silicon wristband (recommend)'],
+  'pillow':      ['AOP Pillow Throw 16×16 (recommend)'],
+  'water_bottle':['Mizu Stainless 17oz (recommend)'],
+  'spats':       ['AOP Spats (recommend)'],
+  'fight_shorts':['AOP Fight Shorts (recommend)'],
+  'rashguard':   ['AOP Rashguard LS (recommend)'],
+  'joggers':     ['B+C 3727 (recommend)', 'Independent IND20PNT'],
+  'track_pants': ['Sport-Tek (recommend)'],
+  'windbreaker': ['Independent EXP54LWP (recommend)'],
+  'bomber_jacket':['Independent EXP99BMR (recommend)'],
+  'quarter_zip': ['Independent EXP4000 (recommend)'],
+  'athletic_tee':['Sport-Tek ST350 (recommend)'],
+};
+
+function adminToken() {
+  const u = new URL(window.location.href);
+  return u.searchParams.get('admin_token') || u.searchParams.get('token') || '';
+}
+function withTok(url) {
+  const t = adminToken();
+  return t ? url + (url.includes('?') ? '&' : '?') + 'admin_token=' + encodeURIComponent(t) : url;
+}
+
+async function load() {
+  document.getElementById('content').innerHTML = '<div class="loading">━◯━ loading...</div>';
+  const r = await fetch(withTok('/api/admin/products'), { credentials: 'include' });
+  if (!r.ok) {
+    document.getElementById('content').innerHTML =
+      `<div class="err">HTTP ${r.status} — admin_token クエリ付きで再アクセス: /jiufight/dashboard.html?admin_token=…</div>`;
+    return;
+  }
+  DATA = await r.json();
+  document.getElementById('adminLink').href = withTok('/admin/products');
+  render();
+}
+
+function brandToKind(brand) {
+  const m = brand.match(/jiufight_(.+?)_(sample|inspired)$/);
+  if (m) return m[1];
+  return 'tee';
+}
+
+function isDone(p) {
+  return (p.mockup_url || '').startsWith('https://mockups.wearmu.com/');
+}
+function statusLabel(p) {
+  if (isDone(p)) return '<span class="status done">done</span>';
+  if (!p.design_url) return '<span class="status failed">no design</span>';
+  return '<span class="status pending">pending</span>';
+}
+
+function persistLocal(id, field, value) {
+  const k = 'jf_meta_' + id;
+  const cur = JSON.parse(localStorage.getItem(k) || '{}');
+  cur[field] = value;
+  localStorage.setItem(k, JSON.stringify(cur));
+}
+function loadLocal(id) {
+  return JSON.parse(localStorage.getItem('jf_meta_' + id) || '{}');
+}
+
+function render() {
+  const jf = DATA.products.filter(p =>
+    p.brand && p.brand.toLowerCase().includes('jiufight') && p.active === 1
+  );
+  const done = jf.filter(isDone);
+  const pending = jf.filter(p => !isDone(p) && p.design_url);
+  const noDesign = jf.filter(p => !p.design_url);
+
+  // Group by kind
+  const byKind = {};
+  jf.forEach(p => {
+    const k = brandToKind(p.brand);
+    (byKind[k] = byKind[k] || []).push(p);
+  });
+
+  const KIND_ORDER = ['tee', 'longsleeve', 'tank_top', 'athletic_tee', 'rashguard',
+                      'hoodie', 'zip_hoodie', 'crewneck', 'quarter_zip',
+                      'polo', 'joggers', 'track_pants', 'windbreaker', 'bomber_jacket',
+                      'fight_shorts', 'spats',
+                      'cap', 'beanie', 'bucket_hat',
+                      'sticker', 'pin', 'patch', 'flag', 'wristband', 'bandana',
+                      'tote', 'drawstring', 'crossbody',
+                      'mug', 'water_bottle', 'apron',
+                      'beach_towel', 'pillow'];
+  const orderedKinds = KIND_ORDER.filter(k => byKind[k]).concat(
+    Object.keys(byKind).filter(k => !KIND_ORDER.includes(k))
+  );
+
+  document.getElementById('content').innerHTML = `
+    <div class="info-banner">
+      <strong>表示の見方</strong>: 左=デザイン (Printful に送る画像) / 右=モックアップ (実写)。
+      Placement と Quality はおすすめがデフォルト。各カードで変更すると localStorage に保存され、
+      次回読み込み時も保持されます (現状クライアント側のみ、Printful 再生成に反映する API は次フェーズ)。
+    </div>
+
+    <div class="stats">
+      <div class="stat ok">
+        <div class="l">━ Mockup 完成</div>
+        <div class="v">${done.length}<span class="small"> / ${jf.length}</span></div>
+        <div class="sub">${jf.length ? Math.round(done.length / jf.length * 100) : 0}%</div>
+      </div>
+      <div class="stat ${pending.length ? 'warn' : ''}">
+        <div class="l">━ Pending</div>
+        <div class="v">${pending.length}</div>
+        <div class="sub">design 有・mockup 未取得</div>
+      </div>
+      <div class="stat ${noDesign.length ? 'warn' : ''}">
+        <div class="l">━ No design</div>
+        <div class="v">${noDesign.length}</div>
+        <div class="sub">design_url が空</div>
+      </div>
+      <div class="stat">
+        <div class="l">━ Product kinds</div>
+        <div class="v">${orderedKinds.length}</div>
+        <div class="sub">tee / hoodie / polo …</div>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <input class="search" id="search" placeholder="brand / name / drop で検索…" oninput="filter()">
+      <select id="filterStatus" onchange="filter()">
+        <option value="">— all states —</option>
+        <option value="done">done only</option>
+        <option value="pending">pending only</option>
+        <option value="failed">no design only</option>
+      </select>
+      <span class="count" id="count"></span>
+    </div>
+
+    ${orderedKinds.map(kind => renderKindSection(kind, byKind[kind])).join('')}
+  `;
+  filter();
+}
+
+function renderKindSection(kind, items) {
+  return `
+    <h2>━ ${kind} <span class="n">${items.length}</span></h2>
+    <div class="grid">
+      ${items.map(p => renderCard(p, kind)).join('')}
+    </div>
+  `;
+}
+
+function renderCard(p, kind) {
+  const designSrc = p.has_design_bytes ? `/api/products/${p.id}/design.png` : (p.design_url || '');
+  const mockupSrc = p.has_mockup_bytes ? `/api/products/${p.id}/mockup.png` : (p.mockup_url || '');
+  const local = loadLocal(p.id);
+  const placement = local.placement || 'front_chest';
+  const qualities = QUALITY_OPTIONS[kind] || QUALITY_OPTIONS['tee'];
+  const quality = local.quality || qualities[0];
+  return `
+    <div class="card" data-id="${p.id}" data-brand="${escapeHtml(p.brand)}" data-status="${isDone(p) ? 'done' : (!p.design_url ? 'failed' : 'pending')}">
+      <div class="photos">
+        <div class="photo">
+          ${designSrc ? `<img src="${escapeHtml(designSrc)}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'empty',textContent:'load failed'}))"><span class="label">design</span>` : '<div class="empty">no design</div>'}
+        </div>
+        <div class="photo">
+          ${mockupSrc ? `<img src="${escapeHtml(mockupSrc)}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'empty',textContent:'load failed'}))"><span class="label">mockup</span>` : `<div class="empty">${isDone(p) ? '—' : 'generating'}</div>`}
+        </div>
+      </div>
+      <div class="meta">
+        <div class="name">${escapeHtml(p.name || '')}</div>
+        <div class="sub">
+          <span>${escapeHtml(kind)} · #${p.drop_num} · ¥${(p.price_jpy || 0).toLocaleString()}</span>
+          ${statusLabel(p)}
+        </div>
+        <div class="options">
+          <div class="opt">
+            <label>Placement</label>
+            <select onchange="updateMeta(${p.id}, 'placement', this.value, this)" class="${local.placement ? 'modified' : ''}">
+              ${PLACEMENT_OPTIONS.map(o => `<option value="${o}" ${o === placement ? 'selected' : ''}>${o}</option>`).join('')}
+            </select>
+          </div>
+          <div class="opt">
+            <label>Quality</label>
+            <select onchange="updateMeta(${p.id}, 'quality', this.value, this)" class="${local.quality ? 'modified' : ''}">
+              ${qualities.map(q => `<option value="${escapeHtml(q)}" ${q === quality ? 'selected' : ''}>${escapeHtml(q)}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="actions">
+          <button onclick="regen(${p.id})" ${isDone(p) ? '' : ''}>📷 Re-fire Printful</button>
+          <button onclick="window.open('/products/${escapeHtml(p.brand)}/${p.drop_num}', '_blank')">↗ open product page</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function updateMeta(id, field, value, el) {
+  persistLocal(id, field, value);
+  el.classList.add('modified');
+}
+
+async function regen(id) {
+  const r = await fetch(withTok(`/api/admin/products/${id}/regen_mockup`), {
+    method: 'POST', credentials: 'include'
+  });
+  if (r.status === 202) {
+    setTimeout(() => load(), 1500);
+  } else {
+    alert(`re-fire failed: HTTP ${r.status}`);
+  }
+}
+
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function filter() {
+  const q = (document.getElementById('search')?.value || '').toLowerCase().trim();
+  const st = document.getElementById('filterStatus')?.value || '';
+  let shown = 0;
+  let total = 0;
+  document.querySelectorAll('.card').forEach(c => {
+    total++;
+    const matchQ = !q || c.dataset.brand.toLowerCase().includes(q) || c.textContent.toLowerCase().includes(q);
+    const matchSt = !st || c.dataset.status === st;
+    const show = matchQ && matchSt;
+    c.style.display = show ? '' : 'none';
+    if (show) shown++;
+  });
+  const cnt = document.getElementById('count');
+  if (cnt) cnt.textContent = `${shown} / ${total} cards`;
+  // hide empty section headers
+  document.querySelectorAll('h2').forEach(h => {
+    const grid = h.nextElementSibling;
+    const visible = Array.from(grid.children).some(c => c.style.display !== 'none');
+    h.style.display = visible ? '' : 'none';
+    grid.style.display = visible ? '' : 'none';
+  });
+}
+
+load();
+</script>
+</body>
+</html>
