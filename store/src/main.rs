@@ -197,7 +197,13 @@ async fn admin_auth(
     // 1. クライアント IP (R1 fix: fly-client-ip 優先、XFF は LAST hop)
     let ip = client_ip(headers);
 
-    // 2. レート制限: 同一 IP の失敗が直近 1h で 30 回超 → 429
+    // 2. レート制限: 同一 IP の失敗が直近 1h で 200 回超 → 429
+    // (2026-05-17 bumped 30→200 — bulk admin operations like the jiufight
+    // mockup regen flow can easily emit 30 mismatches just from one bash
+    // off-by-one. 200 is still well below brute-force territory and Telegram
+    // alerts fire on each individual mismatch via admin_token_mismatch_alert.)
+    // /api/admin/unlock_self provides an escape hatch when this trips
+    // anyway — it skips the rate-limit gate so a legit admin can recover.
     if !ip.is_empty() {
         let now_s: i64 = chrono_now().parse().unwrap_or(0);
         let h1 = now_s - 3600;
@@ -209,10 +215,10 @@ async fn admin_auth(
                 params![ip, h1], |r| r.get(0),
             ).unwrap_or(0)
         };
-        if fails > 30 {
+        if fails > 200 {
             eprintln!("[security] admin rate-limit blocked ip={} fails_1h={}", ip, fails);
             return Err((StatusCode::TOO_MANY_REQUESTS,
-                "admin auth: too many failed attempts; locked for 1h").into_response());
+                "admin auth: too many failed attempts; locked for 1h. POST /api/admin/unlock_self?token=… to clear.").into_response());
         }
     }
 
@@ -248,6 +254,45 @@ async fn admin_auth(
         );
     }
     result
+}
+
+/// POST /api/admin/unlock_self?token=<ADMIN_TOKEN>
+/// Clears admin_auth_log fails for the caller's IP. Crucially this endpoint
+/// SKIPS the rate-limit gate in admin_auth so it works even when the calling
+/// IP is currently locked out — that's the whole point.
+/// Validates ADMIN_TOKEN directly via require_admin_token instead of going
+/// through admin_auth.
+async fn admin_unlock_self(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let provided: Option<String> = {
+        let auth_h = headers.get("authorization").and_then(|v| v.to_str().ok())
+            .and_then(|s| s.strip_prefix("Bearer ").or_else(|| s.strip_prefix("bearer ")))
+            .map(String::from);
+        let xat = headers.get("x-admin-token").and_then(|v| v.to_str().ok()).map(String::from);
+        auth_h.or(xat)
+            .or_else(|| q.get("token").cloned())
+            .or_else(|| q.get("admin_token").cloned())
+    };
+    if let Err(r) = require_admin_token(provided.as_ref()) { return r; }
+    let ip = client_ip(&headers);
+    if ip.is_empty() {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok": false, "error": "no client IP"}))).into_response();
+    }
+    let cleared: usize = {
+        let conn = db.lock().unwrap();
+        conn.execute(
+            "DELETE FROM admin_auth_log WHERE ip=? AND ok=0",
+            params![ip],
+        ).unwrap_or(0)
+    };
+    eprintln!("[security] unlock_self: ip={} cleared {} fail-logs", ip, cleared);
+    Json(serde_json::json!({
+        "ok": true, "ip": ip, "cleared_fails": cleared
+    })).into_response()
 }
 
 fn require_admin_token(provided: Option<&String>) -> Result<(), Response> {
@@ -45841,6 +45886,7 @@ async fn main() {
         .route("/api/admin/products/candidates", post(admin_product_candidates))
         .route("/api/admin/products/from_candidate", post(admin_product_from_candidate))
         .route("/api/admin/products/cache_bytes", post(admin_cache_product_bytes))
+        .route("/api/admin/unlock_self", post(admin_unlock_self))
         .route("/api/admin/products/:id", get(admin_product_detail))
         .route("/api/admin/products/:id/update", post(admin_product_update))
         .route("/api/admin/products/:id/regen_mockup", post(admin_regen_product_mockup))
