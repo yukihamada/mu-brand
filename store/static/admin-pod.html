@@ -68,6 +68,15 @@
 
   .empty { color: var(--mute); font-size: 11px; letter-spacing: 0.14em; padding: 60px; text-align: center; }
   .err { color: var(--red); padding: 20px; text-align: center; }
+  .sync-report { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 14px 18px; margin-bottom: 16px; }
+  .sync-summary { font-size: 12px; color: var(--fg); margin-bottom: 8px; letter-spacing: 0.06em; }
+  .sync-summary strong { color: var(--accent); font-weight: 700; }
+  .sync-summary .ok { color: var(--green); }
+  .sync-summary .bad { color: var(--red); }
+  .err-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .err-row { display: flex; gap: 10px; align-items: center; font-size: 11px; }
+  .err-row code { background: #050505; padding: 2px 6px; border-radius: 3px; color: var(--mute); font-size: 10px; word-break: break-all; max-width: 280px; overflow: hidden; }
+  .err-msg { color: var(--red); flex: 1; word-break: break-word; }
 
   /* Modal for link picker */
   .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.88); display: none; align-items: flex-start; justify-content: center; z-index: 1000; overflow-y: auto; padding: 60px 16px; }
@@ -308,9 +317,9 @@ function updateVendorStats() {
   }
 }
 
-async function loadCatalog() {
+async function loadCatalog(keepReport) {
   const status = $('#status');
-  status.innerHTML = '<div class="empty">LOADING…</div>';
+  if (!keepReport) status.innerHTML = '<div class="empty">LOADING…</div>';
   try {
     const r = await fetchAdmin(`/api/admin/pod/catalog${adminQs()}`);
     if (!r.ok) {
@@ -321,7 +330,7 @@ async function loadCatalog() {
     if (data.error) { status.innerHTML = `<div class="err">${escapeHtml(data.error)}</div>`; return; }
     allItems = data.items || [];
     if (allItems.length === 0) {
-      status.innerHTML = '<div class="empty">CATALOG EMPTY · CLICK SYNC TO POPULATE</div>';
+      if (!keepReport) status.innerHTML = '<div class="empty">CATALOG EMPTY · CLICK SYNC TO POPULATE</div>';
       $('#catalog-table').style.display = 'none';
       $('#count').textContent = '0 SKUs';
       updateVendorStats();
@@ -329,7 +338,7 @@ async function loadCatalog() {
     }
     $('#catalog-body').innerHTML = allItems.map(renderRow).join('');
     $('#catalog-table').style.display = '';
-    status.innerHTML = '';
+    if (!keepReport) status.innerHTML = '';
     applyFilters();
     updateVendorStats();
   } catch (e) {
@@ -337,22 +346,49 @@ async function loadCatalog() {
   }
 }
 
+function renderSyncReport(data) {
+  const status = $('#status');
+  const synced = data.synced || [];
+  const errors = data.errors || [];
+  const errHtml = errors.map(e => `
+    <div class="err-row">
+      <span class="vendor-pill ${escapeHtml(e.vendor || '?')}">${escapeHtml(e.vendor || '?')}</span>
+      <code>${escapeHtml(e.uid || '')}</code>
+      <span class="err-msg">${escapeHtml(e.error || 'unknown error')}</span>
+    </div>`).join('');
+  status.innerHTML = `
+    <div class="sync-report">
+      <div class="sync-summary">
+        <strong>Sync ${escapeHtml(data.vendor || 'all')}</strong>:
+        <span class="ok">${synced.length} ok</span>${errors.length ? ` · <span class="bad">${errors.length} failed</span>` : ''}
+      </div>
+      ${errors.length ? `<div class="err-list">${errHtml}</div>` : ''}
+    </div>`;
+}
+
 async function syncVendor(vendor, btn) {
   const orig = btn.textContent;
   btn.disabled = true; btn.textContent = '⏳ Syncing…';
   try {
     const r = await fetchAdmin(`/api/admin/pod/sync${adminQs({vendor})}`, { method: 'POST' });
-    if (!r.ok) { alert(`Sync failed: HTTP ${r.status} — try appending ?admin_token=… to the URL`); return; }
+    if (!r.ok) {
+      $('#status').innerHTML = `<div class="err">Sync HTTP ${r.status} — append <code>?admin_token=…</code> to the URL</div>`;
+      return;
+    }
     const data = await r.json();
-    if (data.error) { alert('Sync failed: ' + data.error); return; }
+    if (data.error) {
+      $('#status').innerHTML = `<div class="err">${escapeHtml(data.error)}</div>`;
+      return;
+    }
     const okN  = (data.synced || []).length;
     const errN = (data.errors || []).length;
     btn.textContent = `✓ ${okN}` + (errN ? ` (${errN} err)` : '');
-    if (errN && data.errors[0]) console.warn('Sync errors:', data.errors);
-    setTimeout(() => { btn.textContent = orig; }, 2500);
-    await loadCatalog();
+    renderSyncReport(data);
+    if (errN) console.warn('POD sync errors:', data.errors);
+    setTimeout(() => { btn.textContent = orig; }, 4000);
+    await loadCatalog(/*keepReport=*/true);
   } catch (e) {
-    alert('Sync error: ' + e.message);
+    $('#status').innerHTML = `<div class="err">${escapeHtml(e.message)}</div>`;
   } finally {
     btn.disabled = false;
     if (btn.textContent.startsWith('⏳')) btn.textContent = orig;

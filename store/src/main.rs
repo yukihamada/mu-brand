@@ -1063,6 +1063,16 @@ const SUZURI_BASE_PRICES_JPY: &[(&str, f64)] = &[
     ("3",   1650.0),   // マグカップ
 ];
 
+/// reqwest client with explicit 20s timeout. Fly→vendor network has
+/// occasional long stalls; without a timeout a single slow probe can wedge
+/// the entire sync loop.
+fn pod_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
 /// Probe Gelato `/v4/orders:quote` for live JP-delivered pricing.
 /// Returns (price, currency, production_country, min_d, max_d).
 async fn pod_probe_gelato(uid: &str) -> Result<(f64, String, String, i32, i32), String> {
@@ -1081,7 +1091,7 @@ async fn pod_probe_gelato(uid: &str) -> Result<(f64, String, String, i32, i32), 
             "files":[{"type":"default","url":"https://wearmu.com/static/sample_design.png"}],
         }],
     });
-    let resp = reqwest::Client::new()
+    let resp = pod_http_client()
         .post("https://order.gelatoapis.com/v4/orders:quote")
         .header("X-API-KEY", &key)
         .header("Content-Type", "application/json")
@@ -1115,7 +1125,7 @@ async fn pod_probe_gelato(uid: &str) -> Result<(f64, String, String, i32, i32), 
 async fn pod_probe_printful(uid: &str) -> Result<(f64, String, String, i32, i32), String> {
     let key = env::var("PRINTFUL_API_KEY").map_err(|_| "PRINTFUL_API_KEY unset".to_string())?;
     let pid: u64 = uid.parse().map_err(|_| format!("bad printful uid: {}", uid))?;
-    let resp = reqwest::Client::new()
+    let resp = pod_http_client()
         .get(format!("https://api.printful.com/products/{}", pid))
         .bearer_auth(&key)
         .send().await.map_err(|e| format!("printful GET: {}", e))?;
@@ -1154,7 +1164,7 @@ async fn pod_probe_printful(uid: &str) -> Result<(f64, String, String, i32, i32)
 async fn pod_probe_suzuri(uid: &str) -> Result<(f64, String, String, i32, i32), String> {
     let token = env::var("SUZURI_ACCESS_TOKEN").map_err(|_| "SUZURI_ACCESS_TOKEN unset".to_string())?;
     let item_id: u32 = uid.parse().map_err(|_| format!("bad suzuri uid: {}", uid))?;
-    let resp = reqwest::Client::new()
+    let resp = pod_http_client()
         .get("https://suzuri.jp/api/v1/items")
         .bearer_auth(&token)
         .send().await.map_err(|e| format!("suzuri GET: {}", e))?;
