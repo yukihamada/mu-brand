@@ -16013,6 +16013,7 @@ const BLOG_QUALITY_UPGRADE_RAW: &str = include_str!("../static/blog/quality-upgr
 const BLOG_SUZURI_VS_PRINTFUL_RAW: &str = include_str!("../static/blog/suzuri-vs-printful-spec.md");
 const BLOG_SPEC_AND_PROMPT_RAW: &str = include_str!("../static/blog/spec-and-prompt.md");
 const BLOG_100_IN_20_RAW: &str = include_str!("../static/blog/100-in-20-days-strategy.md");
+const BLOG_ALL_IN_ON_MU_RAW: &str = include_str!("../static/blog/all-in-on-mu.md");
 
 fn render_blog_md(title: &str, md: &str) -> String {
     let body = md_to_html_simple(md);
@@ -16079,6 +16080,10 @@ async fn blog_spec_and_prompt() -> Html<String> {
 
 async fn blog_100_in_20() -> Html<String> {
     Html(render_blog_md("100 着 / 20 日 — 素材・価格・クーポン戦略の全部出し", BLOG_100_IN_20_RAW))
+}
+
+async fn blog_all_in_on_mu() -> Html<String> {
+    Html(render_blog_md("20 個作って、 MU 1 つに賭ける", BLOG_ALL_IN_ON_MU_RAW))
 }
 
 /// /grachan82 — Sato Ion (佐藤生穏) MMA pro debut 応援パック.
@@ -47167,6 +47172,7 @@ async fn main() {
         .route("/blog/suzuri-vs-printful-spec", get(blog_suzuri_vs_printful))
         .route("/blog/spec-and-prompt", get(blog_spec_and_prompt))
         .route("/blog/100-in-20-days-strategy", get(blog_100_in_20))
+        .route("/blog/all-in-on-mu", get(blog_all_in_on_mu))
         .route("/grachan82", get(grachan82_page))
         .route("/sato-ion", get(grachan82_page))
         .route("/api/product/grachan82", get(api_product_grachan82))
