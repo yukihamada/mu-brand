@@ -4345,34 +4345,111 @@ const VAULT_ARTICLES: &[(&str, &str, &str)] = &[
      include_str!("../static/vault/open-ops.md")),
 ];
 
+/// Shared CSS + header injected into every vault page. `logged_in_email`
+/// (already masked) controls the right-side nav (login vs. mypage+logout).
+fn vault_chrome_css() -> &'static str {
+    r#"
+  *{box-sizing:border-box}
+  body{background:#000;color:#f5f5f0;font-family:-apple-system,system-ui,sans-serif;margin:0;font-feature-settings:"palt"}
+  .site-header{position:sticky;top:0;background:rgba(0,0,0,0.92);backdrop-filter:saturate(140%) blur(8px);border-bottom:1px solid #1a1a1a;z-index:50}
+  .site-header .inner{max-width:1100px;margin:0 auto;padding:14px 22px;display:flex;align-items:center;justify-content:space-between;gap:16px}
+  .site-header .logo{color:#f5f5f0;text-decoration:none;font-size:18px;letter-spacing:0.06em;font-weight:500;display:flex;align-items:center;gap:10px;white-space:nowrap}
+  .site-header .logo .ring{font-weight:400;letter-spacing:0.1em;opacity:0.7;font-size:13px}
+  .site-header nav{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .site-header nav a{color:#aaa;font-size:11.5px;letter-spacing:0.18em;text-transform:uppercase;text-decoration:none;transition:color 0.15s}
+  .site-header nav a:hover{color:#f5f5f0}
+  .site-header nav a.current{color:#e6c449}
+  .site-header .me{color:#666;font-size:11px;font-family:ui-monospace,Menlo,monospace}
+  .site-header .me a{color:#888;margin-left:10px}
+  .site-header .btn-login{color:#000 !important;background:#e6c449;padding:7px 14px;border-radius:3px;font-weight:600;letter-spacing:0.06em}
+  @media (max-width:640px){
+    .site-header nav a:not(.current):not(.btn-login){display:none}
+    .site-header .inner{padding:12px 16px}
+    .site-header .me{display:none}
+  }
+  .site-footer{max-width:1100px;margin:60px auto 0;padding:28px 22px 40px;border-top:1px solid #1a1a1a;color:#555;font-size:11px;letter-spacing:0.04em;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}
+  .site-footer a{color:#888;text-decoration:none;margin-left:14px}
+  .site-footer a:hover{color:#e6c449}
+"#
+}
+
+fn vault_header_html(current: &str, masked_email: Option<&str>) -> String {
+    let cls = |slug: &str| if slug == current { "current" } else { "" };
+    let right = match masked_email {
+        Some(email) => format!(
+            r#"<div class="me">{e}<a href="/mypage">マイページ</a></div>"#,
+            e = html_escape(email)
+        ),
+        None => format!(
+            r#"<a class="btn-login" href="/mypage">ログイン</a>"#
+        ),
+    };
+    format!(r#"<header class="site-header"><div class="inner">
+      <a class="logo" href="/"><span class="ring">━◯━</span>MU</a>
+      <nav>
+        <a href="/" class="{home}">HOME</a>
+        <a href="/buy" class="{buy}">BUY</a>
+        <a href="/vault" class="{vault}">VAULT</a>
+        <a href="/blog" class="{blog}">運営ノート</a>
+        <a href="/about.html" class="{about}">ABOUT</a>
+      </nav>
+      {right}
+    </div></header>"#,
+        home  = cls("home"),
+        buy   = cls("buy"),
+        vault = cls("vault"),
+        blog  = cls("blog"),
+        about = cls("about"),
+    )
+}
+
+fn vault_footer_html() -> &'static str {
+    r#"<footer class="site-footer">
+      <div>VAULT · MU — Tシャツ所有者限定の場所</div>
+      <div>
+        <a href="/transparency">数字</a>
+        <a href="/constitution">§27 寄付</a>
+        <a href="/about.html">About</a>
+        <a href="https://github.com/yukihamada/mu-brand">GitHub</a>
+      </div>
+    </footer>"#
+}
+
 fn vault_locked_page(reason: &str) -> Response {
     let body = format!(r#"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>VAULT · MU</title>
-<style>
-  body{{background:#000;color:#f5f5f0;font-family:-apple-system,sans-serif;margin:0;padding:60px 22px}}
-  .wrap{{max-width:520px;margin:0 auto;text-align:center}}
+<style>{css}
+  .wrap{{max-width:520px;margin:0 auto;text-align:center;padding:60px 22px}}
   .kicker{{font-size:10.5px;letter-spacing:0.22em;color:#666;text-transform:uppercase;margin-bottom:18px}}
   h1{{font-size:32px;font-weight:300;margin:0 0 14px}}
   h1 em{{color:#e6c449;font-style:normal}}
-  p{{color:#888;font-size:14px;line-height:1.75;margin:0 0 22px}}
+  p.lead{{color:#888;font-size:14px;line-height:1.75;margin:0 0 22px}}
   a.btn{{display:inline-block;background:#e6c449;color:#000;text-decoration:none;padding:14px 28px;font-size:14px;font-weight:600;letter-spacing:0.06em;border-radius:3px;margin:6px}}
   a.btn.ghost{{background:transparent;border:1px solid #2a2a2a;color:#aaa}}
   ul.what{{text-align:left;color:#aaa;font-size:13.5px;line-height:2;margin:24px auto;max-width:380px;padding-left:0;list-style:none}}
   ul.what li::before{{content:"🔑";margin-right:10px}}
-</style></head><body><div class="wrap">
-  <div class="kicker">VAULT — TEE HOLDER ONLY</div>
-  <h1>Tシャツが <em>鍵</em> になります</h1>
-  <p>{reason}</p>
-  <ul class="what">
-    <li>MUの全プロンプト・コードベース解説</li>
-    <li>リアルタイム原価帳簿 / 寄付台帳</li>
-    <li>次回MUGEN / 間MA の事前プレビュー</li>
-    <li>AI agent の生ログ (tail -f)</li>
-  </ul>
-  <a class="btn" href="/mypage">ログイン (購入時のメール)</a>
-  <a class="btn ghost" href="/buy">Tシャツを買う →</a>
-</div></body></html>"#, reason = html_escape(reason));
+</style></head><body>
+  {header}
+  <div class="wrap">
+    <div class="kicker">VAULT — TEE HOLDER ONLY</div>
+    <h1>Tシャツが <em>鍵</em> になります</h1>
+    <p class="lead">{reason}</p>
+    <ul class="what">
+      <li>MUの全プロンプト・コードベース解説</li>
+      <li>リアルタイム原価帳簿 / 寄付台帳</li>
+      <li>次回MUGEN / 間MA の事前プレビュー</li>
+      <li>AI agent の生ログ (tail -f)</li>
+    </ul>
+    <a class="btn" href="/mypage">ログイン (購入時のメール)</a>
+    <a class="btn ghost" href="/buy">Tシャツを買う →</a>
+  </div>
+  {footer}
+</body></html>"#,
+        css = vault_chrome_css(),
+        header = vault_header_html("vault", None),
+        footer = vault_footer_html(),
+        reason = html_escape(reason));
     (StatusCode::OK, [("content-type", "text/html; charset=utf-8")], body).into_response()
 }
 
@@ -4408,12 +4485,9 @@ async fn vault_index(State(db): State<Db>, headers: HeaderMap) -> Response {
     let html = format!(r#"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>VAULT · MU</title>
-<style>
-  body{{background:#000;color:#f5f5f0;font-family:-apple-system,sans-serif;margin:0;padding:48px 22px 80px}}
-  .wrap{{max-width:780px;margin:0 auto}}
-  .top{{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:32px;border-bottom:1px solid #1a1a1a;padding-bottom:18px}}
+<style>{css}
+  .wrap{{max-width:780px;margin:0 auto;padding:48px 22px 0}}
   .kicker{{font-size:10.5px;letter-spacing:0.22em;color:#666;text-transform:uppercase}}
-  .meta{{font-size:11.5px;color:#666}}
   h1{{font-size:36px;font-weight:300;margin:6px 0 6px;letter-spacing:0.01em}}
   h1 em{{color:#e6c449;font-style:normal}}
   .intro{{color:#888;font-size:14px;line-height:1.8;margin:0 0 32px}}
@@ -4424,22 +4498,20 @@ async fn vault_index(State(db): State<Db>, headers: HeaderMap) -> Response {
   .card p{{font-size:12.5px;color:#888;line-height:1.65;margin:0}}
   .card.live{{border-color:#e6c449;background:linear-gradient(180deg,#0f0c00 0%,#0a0a0a 80%)}}
   .tag{{display:inline-block;font-size:9.5px;letter-spacing:0.2em;color:#000;background:#e6c449;padding:3px 8px;border-radius:2px;margin-bottom:10px;font-weight:600}}
-  footer{{margin-top:48px;font-size:11.5px;color:#555;text-align:center}}
-  footer a{{color:#888}}
-</style></head><body><div class="wrap">
-  <div class="top">
-    <div>
-      <div class="kicker">VAULT</div>
-      <h1>あなたが <em>鍵</em></h1>
-    </div>
-    <div class="meta">{masked}<br><a href="/mypage" style="color:#666">/mypage</a></div>
+</style></head><body>
+  {header}
+  <div class="wrap">
+    <div class="kicker">VAULT</div>
+    <h1>あなたが <em>鍵</em></h1>
+    <p class="intro">Tシャツ所有者だけが入れる場所です。MUがどう動いているか、何をどう作っているか、今この瞬間に何が起きているか — 全部見えます。</p>
+    <div class="grid">{cards}</div>
   </div>
-  <p class="intro">Tシャツ所有者だけが入れる場所です。MUがどう動いているか、何をどう作っているか、今この瞬間に何が起きているか — 全部見えます。</p>
-  <div class="grid">{cards}</div>
-  <footer>
-    持っていない人にはこれが見えません。<a href="/buy">Tシャツを購入 →</a>
-  </footer>
-</div></body></html>"#);
+  {footer}
+</body></html>"#,
+        css = vault_chrome_css(),
+        header = vault_header_html("vault", Some(&masked)),
+        footer = vault_footer_html(),
+        cards = cards);
     (StatusCode::OK, [("content-type", "text/html; charset=utf-8")], html).into_response()
 }
 
@@ -4465,15 +4537,15 @@ async fn vault_article(
         None => return (StatusCode::NOT_FOUND, "vault article not found").into_response(),
     };
     let html_body = md_to_html_simple(body);
+    let masked = mask_email_public(&email);
     let html = format!(r#"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>{title} · VAULT · MU</title>
-<style>
-  body{{background:#000;color:#e8e8e0;font-family:-apple-system,system-ui,sans-serif;margin:0;padding:48px 22px 100px;line-height:1.75}}
-  .wrap{{max-width:680px;margin:0 auto}}
+<style>{css}
+  .wrap{{max-width:680px;margin:0 auto;padding:40px 22px 0;line-height:1.75;color:#e8e8e0}}
   .back{{color:#888;font-size:12px;text-decoration:none;letter-spacing:0.06em;text-transform:uppercase}}
   .back:hover{{color:#e6c449}}
-  h1{{font-size:32px;font-weight:300;letter-spacing:0.01em;line-height:1.35;margin:24px 0 28px}}
+  h1{{font-size:32px;font-weight:300;letter-spacing:0.01em;line-height:1.35;margin:18px 0 28px}}
   h2{{font-size:20px;font-weight:500;margin:42px 0 16px;color:#f5f5f0;border-bottom:1px solid #1a1a1a;padding-bottom:8px}}
   h3{{font-size:16px;font-weight:500;margin:28px 0 12px;color:#e6c449}}
   p{{margin:0 0 18px;color:#cfcfc8;font-size:15px}}
@@ -4488,13 +4560,20 @@ async fn vault_article(
   blockquote{{border-left:3px solid #e6c449;padding:6px 16px;margin:18px 0;color:#aaa;font-style:italic}}
   a{{color:#e6c449}}
   hr{{border:0;border-top:1px solid #1a1a1a;margin:32px 0}}
-  footer{{margin-top:60px;font-size:11.5px;color:#555;text-align:center;border-top:1px solid #1a1a1a;padding-top:24px}}
-</style></head><body><div class="wrap">
-  <a class="back" href="/vault">← VAULT</a>
-  <h1>{title}</h1>
-  {html_body}
-  <footer>VAULT · MU — Tシャツ所有者限定 · 転載は引用元 https://wearmu.com/vault を明記すれば歓迎</footer>
-</div></body></html>"#,
+  .article-meta{{margin-top:60px;padding-top:18px;border-top:1px solid #1a1a1a;font-size:11.5px;color:#666;text-align:center}}
+</style></head><body>
+  {header}
+  <div class="wrap">
+    <a class="back" href="/vault">← VAULT</a>
+    <h1>{title}</h1>
+    {html_body}
+    <div class="article-meta">Tシャツ所有者限定 · 転載は引用元 https://wearmu.com/vault を明記すれば歓迎</div>
+  </div>
+  {footer}
+</body></html>"#,
+    css = vault_chrome_css(),
+    header = vault_header_html("vault", Some(&masked)),
+    footer = vault_footer_html(),
     title = html_escape(title),
     html_body = html_body);
     (StatusCode::OK, [("content-type", "text/html; charset=utf-8")], html).into_response()
@@ -4580,13 +4659,13 @@ async fn vault_dashboard_api(State(db): State<Db>, headers: HeaderMap) -> Respon
         ));
     }
 
+    let masked = mask_email_public(&email);
     let html = format!(r#"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>LIVE · VAULT · MU</title>
 <meta http-equiv="refresh" content="60"/>
-<style>
-  body{{background:#000;color:#f5f5f0;font-family:-apple-system,sans-serif;margin:0;padding:32px 22px 80px}}
-  .wrap{{max-width:780px;margin:0 auto}}
+<style>{css}
+  .wrap{{max-width:780px;margin:0 auto;padding:32px 22px 0}}
   .back{{color:#888;font-size:11.5px;text-decoration:none;letter-spacing:0.06em;text-transform:uppercase}}
   h1{{font-size:30px;font-weight:300;margin:14px 0 6px;letter-spacing:0.01em}}
   h1 em{{color:#e6c449;font-style:normal}}
@@ -4602,22 +4681,29 @@ async fn vault_dashboard_api(State(db): State<Db>, headers: HeaderMap) -> Respon
   .row .msg{{color:#cfcfc8}}
   .row .ago{{color:#666;font-size:11.5px;text-align:right}}
   .note{{color:#555;font-size:11px;margin-top:36px;text-align:center}}
-</style></head><body><div class="wrap">
-  <a class="back" href="/vault">← VAULT</a>
-  <h1>MUの <em>今</em>、全部見せる</h1>
-  <div class="sub">60秒ごとに自動更新</div>
-  <div class="stats">
-    <div class="stat"><div class="k">今日の総売上</div><div class="v gold">¥{gross_today}</div></div>
-    <div class="stat"><div class="k">累計購入数</div><div class="v">{orders_total}</div></div>
-    <div class="stat"><div class="k">累計利益</div><div class="v">¥{profit_total}</div></div>
-    <div class="stat"><div class="k">弟子屈寄付累計</div><div class="v gold">¥{donation_total}</div></div>
+</style></head><body>
+  {header}
+  <div class="wrap">
+    <a class="back" href="/vault">← VAULT</a>
+    <h1>MUの <em>今</em>、全部見せる</h1>
+    <div class="sub">60秒ごとに自動更新</div>
+    <div class="stats">
+      <div class="stat"><div class="k">今日の総売上</div><div class="v gold">¥{gross_today}</div></div>
+      <div class="stat"><div class="k">累計購入数</div><div class="v">{orders_total}</div></div>
+      <div class="stat"><div class="k">累計利益</div><div class="v">¥{profit_total}</div></div>
+      <div class="stat"><div class="k">弟子屈寄付累計</div><div class="v gold">¥{donation_total}</div></div>
+    </div>
+    <h2>Agent journal</h2>
+    {journal_html}
+    <h2>Recent purchases</h2>
+    {recent_html}
+    <div class="note">最新の agent サマリー: {latest}</div>
   </div>
-  <h2>Agent journal</h2>
-  {journal_html}
-  <h2>Recent purchases</h2>
-  {recent_html}
-  <div class="note">最新の agent サマリー: {latest}</div>
-</div></body></html>"#,
+  {footer}
+</body></html>"#,
+    css = vault_chrome_css(),
+    header = vault_header_html("vault", Some(&masked)),
+    footer = vault_footer_html(),
     gross_today = format_jpy(gross_today),
     orders_total = orders_total,
     profit_total = format_jpy(profit_total),
@@ -8688,17 +8774,31 @@ async fn regen_product_mockup(product_id: i64, brand: String, design_url: String
     let (printful_product, variant_id, position) = printful_mockup_config_for(&brand);
     eprintln!("[regen_mockup] pid={} brand={} → printful product={} variant={}",
               product_id, brand, printful_product, variant_id);
+    // Brand-aware back placement: jiufight event tees ship with a shared
+    // sponsor back. Other brands stay front-only.
+    let back_url: Option<&'static str> = if brand.starts_with("jiufight") || brand == "ads_jujitsu" {
+        Some("https://lifestyle.wearmu.com/jiufight/back_v1.png")
+    } else { None };
+    let mut files = vec![serde_json::json!({
+        "placement": "front",
+        "image_url": public_design_url,
+        "position": position
+    })];
+    if let Some(b) = back_url {
+        files.push(serde_json::json!({
+            "placement": "back",
+            "image_url": b,
+            "position": {"area_width":1800,"area_height":2400,
+                         "width":1800,"height":2400,"top":0,"left":0}
+        }));
+    }
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build().unwrap_or_else(|_| reqwest::Client::new());
     let create_body = serde_json::json!({
         "variant_ids": [variant_id],
         "format": "png",
-        "files": [{
-            "placement": "front",
-            "image_url": public_design_url,
-            "position": position
-        }]
+        "files": files,
     });
     let create_url = format!("https://api.printful.com/mockup-generator/create-task/{}", printful_product);
     let task_key: Option<String> = match client
@@ -12559,6 +12659,14 @@ async fn create_printful_order(key: String, db: Db, product_id: i64, session: se
     let mut files = vec![
         serde_json::json!({"url": composited_design_url, "placement": "front"})
     ];
+    // jiufight event tees: shared sponsor back design (+$3.95/着 DTG back).
+    // ads_jujitsu shares the same back since they're sold via the same /jiufight/ page.
+    if brand.starts_with("jiufight") || brand == "ads_jujitsu" {
+        files.push(serde_json::json!({
+            "url": "https://lifestyle.wearmu.com/jiufight/back_v1.png",
+            "placement": "back",
+        }));
+    }
     if eligible_for_chronicle && strategy == "qr_label_outside" {
         // Strategy 2: separate label_outside placement (+$2/shirt).
         let qr_url = format!(

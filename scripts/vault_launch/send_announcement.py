@@ -6,8 +6,10 @@ CRITICAL safety per memory feedback_email_blast_radius.md:
   - Default behavior is --dry-run; --send required to actually mail
 
 The recipient list comes from local store/products.db (DEV mirror — likely 0
-matches for fresh checkouts). For the real 170-customer blast, run this ON
-the prod machine where /data/products.db has the live mu_purchases rows:
+matches for fresh checkouts). For the real customer blast, run this ON
+the prod machine where /data/products.db has the live mu_purchases rows.
+(As of 2026-05-17: 5 distinct customers / 10 shirts sold per /api/transparency.
+A "170 customer" figure earlier was a confusion with JiuFlow subscriber count.)
 
   # Production blast (on Fly):
   flyctl ssh console -a mu-store
