@@ -16135,6 +16135,38 @@ async fn blog_all_in_on_mu() -> Html<String> {
     Html(render_blog_md("20 個作って、 MU 1 つに賭ける", BLOG_ALL_IN_ON_MU_RAW))
 }
 
+/// /lp/:persona — Google Ads landing pages, persona-keyed.
+/// Allowlist of personas prevents path traversal / arbitrary file reads.
+/// Each LP is a single-screen, single-CTA, ad-traffic-optimized page that
+/// deep-links to today's MUGEN piece (live API fetch), captures gclid/utm
+/// into the checkout chain, and has a honeypot for bot defense.
+const LP_TODAY: &str = include_str!("../static/lp/today.html");
+const LP_ART:   &str = include_str!("../static/lp/art.html");
+const LP_AI:    &str = include_str!("../static/lp/ai.html");
+const LP_ECO:   &str = include_str!("../static/lp/eco.html");
+const LP_GIFT:  &str = include_str!("../static/lp/gift.html");
+
+async fn landing_page(
+    axum::extract::Path(persona): axum::extract::Path<String>,
+) -> Response {
+    let body: &'static str = match persona.as_str() {
+        "today" => LP_TODAY,
+        "art"   => LP_ART,
+        "ai"    => LP_AI,
+        "eco"   => LP_ECO,
+        "gift"  => LP_GIFT,
+        _ => return (StatusCode::NOT_FOUND, "unknown landing page").into_response(),
+    };
+    let mut resp = Html(body).into_response();
+    // Short cache — LPs are static but we serve live data via JS so the HTML
+    // shell can be cached. 5min keeps CDN happy without staling new copy.
+    resp.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=300, s-maxage=300"),
+    );
+    resp
+}
+
 /// /grachan82 — Sato Ion (佐藤生穏) MMA pro debut 応援パック.
 /// Password-gated insiders-only landing for kokon BBQ + Schrödinger T-shirt.
 async fn grachan82_page(headers: HeaderMap, axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>) -> Response {
@@ -47339,6 +47371,7 @@ async fn main() {
         .route("/blog/spec-and-prompt", get(blog_spec_and_prompt))
         .route("/blog/100-in-20-days-strategy", get(blog_100_in_20))
         .route("/blog/all-in-on-mu", get(blog_all_in_on_mu))
+        .route("/lp/:persona", get(landing_page))
         .route("/grachan82", get(grachan82_page))
         .route("/sato-ion", get(grachan82_page))
         .route("/api/product/grachan82", get(api_product_grachan82))
