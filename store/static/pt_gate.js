@@ -64,7 +64,24 @@
       ".mu-pt-bullets{font-size:0.82rem;color:rgba(255,255,255,0.65);margin:0.75rem 0 1.25rem;padding-left:1.1rem}",
       ".mu-pt-bullets li{margin-bottom:0.25rem}",
       ".mu-pt-status{font-size:0.82rem;margin-top:0.7rem;color:#e6c449;line-height:1.5}",
-      ".mu-pt-error{color:#ef4444}"
+      ".mu-pt-error{color:#ef4444}",
+      /* ── floating discoverability badge (bottom-right) ─────────────── */
+      ".mu-pt-badge{position:fixed;right:18px;bottom:18px;z-index:9000;display:flex;align-items:center;gap:8px;background:#1a1a1a;color:#e6c449;font-weight:700;font-size:13px;padding:11px 16px 11px 14px;border-radius:999px;border:1px solid rgba(230,196,73,0.4);box-shadow:0 6px 22px rgba(0,0,0,0.28);cursor:pointer;font-family:-apple-system,BlinkMacSystemFont,'Hiragino Sans','Noto Sans JP',sans-serif;letter-spacing:0.02em;transition:transform 0.18s,box-shadow 0.18s,opacity 0.18s;opacity:0;transform:translateY(8px);user-select:none}",
+      ".mu-pt-badge.show{opacity:1;transform:translateY(0)}",
+      ".mu-pt-badge:hover{transform:translateY(-2px);box-shadow:0 10px 28px rgba(230,196,73,0.22)}",
+      ".mu-pt-badge .ico{font-size:15px}",
+      ".mu-pt-badge .x{margin-left:4px;width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;color:rgba(230,196,73,0.55);font-size:14px;line-height:1}",
+      ".mu-pt-badge .x:hover{color:#e6c449;background:rgba(230,196,73,0.12)}",
+      "@media (max-width:520px){.mu-pt-badge{right:12px;bottom:12px;font-size:12px;padding:9px 13px 9px 12px}}",
+      /* info modal styling extends mu-pt-modal */
+      ".mu-pt-info-bal{display:flex;align-items:baseline;gap:8px;background:rgba(230,196,73,0.08);border:1px solid rgba(230,196,73,0.22);border-radius:10px;padding:12px 14px;margin:0 0 14px;font-size:13px;color:rgba(255,255,255,0.78)}",
+      ".mu-pt-info-bal b{color:#e6c449;font-size:20px;font-weight:800;font-variant-numeric:tabular-nums}",
+      ".mu-pt-info-list{margin:14px 0 0;padding:0;list-style:none;border-top:1px solid rgba(255,255,255,0.08)}",
+      ".mu-pt-info-list li{border-bottom:1px solid rgba(255,255,255,0.06);padding:10px 0}",
+      ".mu-pt-info-list a{color:#e6c449;text-decoration:none;font-size:13px;font-weight:600;display:block}",
+      ".mu-pt-info-list a:hover{text-decoration:underline}",
+      ".mu-pt-info-list .sub{font-size:11px;color:rgba(255,255,255,0.5);font-weight:400;margin-top:2px}",
+      ".mu-pt-info-empty{font-size:12px;color:rgba(255,255,255,0.48);text-align:center;padding:14px 0 4px;font-style:italic}"
     ].join("");
     document.head.appendChild(s);
   }
@@ -204,6 +221,120 @@
     css();
     var gates = document.querySelectorAll("[data-pt-gate]");
     for (var i = 0; i < gates.length; i++) mountGate(gates[i]);
+    mountBadge(gates);
+  }
+
+  // ── floating discoverability badge ──────────────────────────────────
+  // Auto-mounts on every page except /admin*, /buy* (own checkout UI),
+  // and pages that opt out via <meta name="mu-pt-badge" content="off">.
+  // Dismissible — once user closes it, stays hidden for 7d (localStorage).
+
+  var BADGE_HIDE_KEY = "mu_pt_badge_hidden_until";
+
+  function badgeSuppressed() {
+    var p = location.pathname || "";
+    if (p.indexOf("/admin") === 0) return true;
+    if (p.indexOf("/buy") === 0) return true;
+    var meta = document.querySelector('meta[name="mu-pt-badge"]');
+    if (meta && (meta.content || "").toLowerCase() === "off") return true;
+    try {
+      var until = parseInt(localStorage.getItem(BADGE_HIDE_KEY) || "0", 10);
+      if (until && Date.now() < until) return true;
+    } catch (e) {}
+    return false;
+  }
+
+  function mountBadge(gates) {
+    if (badgeSuppressed()) return;
+    if (document.getElementById("mu-pt-badge")) return;
+    var b = document.createElement("button");
+    b.id = "mu-pt-badge";
+    b.className = "mu-pt-badge";
+    b.type = "button";
+    b.setAttribute("aria-label", "30ポイントで限定コンテンツを開く");
+    var n = gates ? gates.length : 0;
+    var label = n > 0
+      ? "🔓 このページに " + n + " 件の 30pt unlock"
+      : "🔓 30pt で限定コンテンツ unlock";
+    b.innerHTML = '<span class="ico">🔓</span><span class="lbl">' + (n > 0 ? "このページに " + n + " 件・30pt" : "30pt で続きを見る") + '</span><span class="x" data-act="dismiss" aria-label="今は閉じる">×</span>';
+    document.body.appendChild(b);
+    setTimeout(function () { b.classList.add("show"); }, 250);
+
+    b.addEventListener("click", function (e) {
+      if (e.target && e.target.getAttribute("data-act") === "dismiss") {
+        e.stopPropagation();
+        try { localStorage.setItem(BADGE_HIDE_KEY, String(Date.now() + 7 * 24 * 3600 * 1000)); } catch (_) {}
+        b.classList.remove("show");
+        setTimeout(function () { try { b.parentNode.removeChild(b); } catch (_) {} }, 200);
+        return;
+      }
+      openInfoModal();
+    });
+  }
+
+  function openInfoModal() {
+    var gates = document.querySelectorAll("[data-pt-gate]");
+    var em = getEmail();
+
+    var bg = document.createElement("div");
+    bg.className = "mu-pt-modal-bg";
+    var gateListHTML = "";
+    if (gates.length > 0) {
+      gateListHTML = '<ul class="mu-pt-info-list" id="mu-pt-info-list">';
+      for (var i = 0; i < gates.length; i++) {
+        var g = gates[i];
+        var lbl = g.getAttribute("data-pt-label") || ("限定セクション #" + (i + 1));
+        var cost = g.getAttribute("data-pt-cost") || "30";
+        var tgt = g.getAttribute("data-pt-target") || "";
+        var unlocked = getCachedUnlocks().indexOf(tgt) >= 0;
+        if (!g.id) g.id = "mu-pt-gate-" + i;
+        gateListHTML += '<li><a href="#' + g.id + '" data-pt-jump>' +
+          (unlocked ? "✓ " : "🔓 ") + lbl +
+          '<div class="sub">' + (unlocked ? "unlock 済み" : (cost + "pt で開く")) + "</div>" +
+          "</a></li>";
+      }
+      gateListHTML += "</ul>";
+    } else {
+      gateListHTML = '<div class="mu-pt-info-empty">このページには現在 unlock 可能なセクションはありません。<br>他ページ (/protocol など) でお試しください。</div>';
+    }
+
+    bg.innerHTML = '<div class="mu-pt-modal">' +
+      '<button class="mu-pt-modal-close" aria-label="close" data-act="cancel">×</button>' +
+      "<h3>🔓 30pt unlock とは</h3>" +
+      "<p>メアドだけで限定コンテンツ・先行予約・追加カラー・PDF を unlock できる仕組み。<br>" +
+      "<strong style=\"color:#e6c449\">初回 30pt は完全無料</strong> · 以降 ¥1,000 で 1,000pt 補充 (1pt = ¥1)</p>" +
+      '<div class="mu-pt-info-bal">' +
+        (em
+          ? '<span>残高 <b id="mu-pt-bal">…</b> pt</span><span style="opacity:0.6">(' + em + ')</span>'
+          : '<span style="font-size:12px">メアド未登録 — 最初の unlock 時に登録</span>'
+        ) +
+      "</div>" +
+      "<div style=\"font-size:12px;color:rgba(255,255,255,0.55);margin:-6px 0 4px\">このページの unlock 候補:</div>" +
+      gateListHTML +
+      '<div style="margin-top:18px;display:flex;gap:8px">' +
+        '<a href="/developers" class="mu-pt-btn-cancel" style="text-decoration:none;text-align:center;flex:1">仕組み詳細</a>' +
+        '<button class="mu-pt-btn-go" data-act="cancel">閉じる</button>' +
+      "</div>" +
+    "</div>";
+    document.body.appendChild(bg);
+
+    function close() { try { document.body.removeChild(bg); } catch (e) {} }
+    Array.prototype.forEach.call(bg.querySelectorAll('[data-act="cancel"]'), function (b) {
+      b.addEventListener("click", close);
+    });
+    bg.addEventListener("click", function (e) { if (e.target === bg) close(); });
+    Array.prototype.forEach.call(bg.querySelectorAll('[data-pt-jump]'), function (a) {
+      a.addEventListener("click", function () { setTimeout(close, 50); });
+    });
+
+    if (em) {
+      api("GET", "/api/points/balance?email=" + encodeURIComponent(em), null)
+        .then(function (r) {
+          var bal = bg.querySelector("#mu-pt-bal");
+          if (bal) bal.textContent = (r && typeof r.balance === "number") ? r.balance : "—";
+        })
+        .catch(function () {});
+    }
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mountAll);
