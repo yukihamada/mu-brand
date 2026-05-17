@@ -76,19 +76,21 @@
 </header>
 
 <div class="toc">
-  <strong>Contents</strong>
+  <strong>目次</strong>
   <ol>
-    <li><a href="#oneline">One-line spec</a></li>
-    <li><a href="#why">Why generalize (v1 → v2)</a></li>
-    <li><a href="#primitives">Universal primitives</a></li>
-    <li><a href="#adapters">Industry adapters</a></li>
-    <li><a href="#conformance">Conformance levels</a></li>
-    <li><a href="#enables">What this enables</a></li>
-    <li><a href="#triggers">Trigger conditions</a></li>
+    <li><a href="#tribe">誰に向けて書いてるか</a></li>
+    <li><a href="#cases">あなたの場合こうなる (5 業界の実例)</a></li>
+    <li><a href="#fastest">最短で立てる手順</a> <span style="color:var(--muted);font-size:0.78rem">(30pt unlock)</span></li>
+    <li><a href="#oneline">仕様の核 (one-line spec)</a></li>
+    <li><a href="#primitives">5つの primitives (Release/Node/Treasury/Identity/Lifecycle)</a></li>
+    <li><a href="#adapters">業界別 adapter</a></li>
+    <li><a href="#conformance">準拠レベル (Discoverable/Settled/Compliant)</a></li>
+    <li><a href="#enables">これが解放するもの</a></li>
+    <li><a href="#nexttonight">あなたが今夜やれる3つ</a></li>
   </ol>
 </div>
 
-<h2>誰に向けて書いてるか</h2>
+<h2 id="tribe">誰に向けて書いてるか</h2>
 <p>
 あなたは、こういう人:
 </p>
@@ -103,7 +105,7 @@
 あなたが <strong>違う人</strong> なら (大量集客したい・ブランド帝国作りたい・SaaS 売りたい)、これは合いません。Shopify 等を使ってください。
 </p>
 
-<h2>MU を作ってきた経験で分かったこと</h2>
+<h2 id="cases">あなたの場合こうなる (5 業界の実例)</h2>
 <p>
 2年間 wearmu.com を自分で運用して、AI が毎時デザインし、在庫ゼロで Printful 経由で発送し、価格は売れるたびに上がる、という autonomous brand を作った。<br>
 やってみて分かったのは「<strong>これは服に限らない</strong>」ということ。時間と場所を刻んだ「今日のこれ」を release する形は、ほぼあらゆる小さな商売に応用できる。
@@ -133,7 +135,7 @@
   サブスクじゃない。毎日 release があって、買いたい人が買う。在庫を抱えない設計。
 </div>
 
-<h2 id="oneline">One-line spec (技術側向け)</h2>
+<h2 id="oneline">仕様の核 (one-line spec / 技術側向け)</h2>
 <div class="callout">
   <strong>MU Protocol turns any time-and-place-stamped, autonomously-operated product into a forkable, settlement-bound brand.</strong> Apparel was the first reference implementation. The protocol is industry-agnostic.
 </div>
@@ -156,7 +158,7 @@
 
 <p>The same five primitives reappear. The protocol abstracts them so one engine serves all.</p>
 
-<h2 id="primitives">Universal primitives</h2>
+<h2 id="primitives">5つの primitives</h2>
 <div class="layer-stack">┌─────────────────────────────────────────────┐
 │ 1. RELEASE   immutable time/place-pinned    │
 │              product event                  │
@@ -255,7 +257,7 @@
   "retired_by_participant": null
 }</code></pre>
 
-<h2 id="adapters">Industry adapters</h2>
+<h2 id="adapters">業界別 adapter</h2>
 <p>Each industry implements an <code>IndustryAdapter</code> trait against <code>mu-engine</code>:</p>
 <pre><code>trait IndustryAdapter: Send + Sync {
     fn kind_prefix(&self) -&gt; &amp;'static str;
@@ -275,7 +277,7 @@
 </table>
 <p>Anyone may publish a third-party adapter. Discovery via <code>mu-adapter-registry.json</code> (PR-curated until v3).</p>
 
-<h2 id="conformance">Conformance levels</h2>
+<h2 id="conformance">準拠レベル</h2>
 <p>A node is <strong>MU Protocol Compliant</strong> if it:</p>
 <ol>
   <li>emits Release documents with <code>schema: mu.release.v2</code></li>
@@ -292,34 +294,61 @@
   <li><strong>Approval</strong> &mdash; 1営業日。MIT fork で MU 名称使わないなら approval 不要、自由 deploy 可。</li>
 </ol>
 
-<h2>下に「最短で立てる手順」を埋めてる</h2>
+<h2 id="fastest">最短で立てる手順 (今夜やれる)</h2>
 <p>本気で「自分のMU 持ちたい」なら、これだけ読めば今夜から動かせる。<br>
 ただ全公開すると spec ハンターに荒らされるので、30pt の壁 (初回 完全無料、メアド1個) を置いた。MU の流儀。</p>
 <div data-pt-gate data-pt-cost="30" data-pt-target="protocol:appendix-a" data-pt-label="最短セットアップを見る">
   <div data-pt-content>
-    <h3>付録 A · 第三者ノード登録の最小実装 (Rust)</h3>
-    <pre><code>use mu_engine::{NodeBuilder, Treasury, Pin};
+    <h3>0. 前提</h3>
+    <ul>
+      <li>あなたのドメイン (例: <code>mycafe.tokyo</code>) があること</li>
+      <li>商品 (1日1個でも) を出せる気持ちがあること</li>
+      <li>Stripe か他の決済を1つ持ってる (なければ Stripe を取りに行ってください、30分)</li>
+    </ul>
 
-let node = NodeBuilder::new("my-cafe-shibuya")
-    .industry("food")
-    .anchor(35.6595, 139.7004)
-    .operator_pubkey("&lt;solana_pubkey&gt;")
-    .adapter("github.com/me/mu-adapter-cafe")
-    .register(&treasury).await?;
+    <h3>1. <code>/.well-known/mu/releases</code> を立てる (15分)</h3>
+    <p>JSON を返す endpoint を1つ自分のサイトに立てる。例 (Rust + axum):</p>
+    <pre><code>// あなたの今夜の "1個" を返す
+async fn well_known_releases() -&gt; impl IntoResponse {
+    Json(json!({
+        "schema": "mu.release.v2",
+        "node": { "slug": "mycafe", "industry": "food",
+                  "anchor": { "lat": 35.65, "lon": 139.70 } },
+        "releases": [{
+            "schema": "mu.release.v2",
+            "id": "rel_2026-05-18T17:00Z_mycafe_omakase",
+            "node": "mycafe",
+            "kind": "food.tasting",
+            "pinned_at": "2026-05-18T17:00:00Z",
+            "lifecycle": { "expires_at": "2026-05-18T23:00:00Z" },
+            "price": { "currency": "JPY", "base": 7800 },
+            "settlement": { "treasury": "&lt;your_solana_pubkey&gt;",
+                            "node_split_pct": 95, "origin_fee_pct": 5 }
+        }]
+    }))
+}</code></pre>
 
-let pin = Pin::from_weather(node.anchor()).await?;
-let release = node.adapter().generate(pin);
-release.publish(&node).await?;
-// origin fee (5%) settles automatically on first sale.</code></pre>
-    <p>必要なのは <code>NodeBuilder</code> + <code>IndustryAdapter</code> trait の実装1つだけ。Treasury は origin 5% を自動 settle、残り95% は node の operator pubkey へ。</p>
-    <h3>付録 B · `.well-known/mu/releases` を読む側</h3>
-    <pre><code>curl https://wearmu.com/.well-known/mu/releases | jq '.releases[0]'
-# → { "schema": "mu.release.v2", "id": "...", "pinned_at": "...", ... }</code></pre>
-    <p>conformance level 4 endpoint。任意の MU ノードからこの形で取得できれば、検索・集計・支払い導線を共通化できる。</p>
+    <h3>2. yuki にメールする (5分)</h3>
+    <p><a href="mailto:mail@yukihamada.jp?subject=MU%20Node%20%5B分野%5D">mail@yukihamada.jp</a> に「<code>slug, industry, anchor, operator_pubkey</code>」と「あなたが何を release したいか」を書いて送る。返事します。原則 1営業日。</p>
+
+    <h3>3. 売れたら自動で配分される (0分)</h3>
+    <p>Stripe webhook が settlement contract を叩いて、95% があなた、5% が origin Treasury (Solana: <code style="font-size:0.78rem">DK29rBGCvP83LUNjUGVM6xt6qPy6rycBFopXbFkg9XvQ</code>) に流れる。あなたは何もしない。</p>
+
+    <h3>4. 翌日また release する (1分)</h3>
+    <p>cron か手動で次の release を JSON に書く。<code>expires_at</code> が来たら前のは自動 retire。これだけ。</p>
+
+    <div style="background:rgba(0,0,0,0.04);padding:1rem;border-radius:8px;margin-top:1.5rem">
+      <strong>ハマるポイント</strong>:
+      <ul>
+        <li>release id は必ず一意 (時刻+slug+短文)。content-addressable にすると重複検出が楽</li>
+        <li><code>pinned_at</code> は UTC ISO8601 固定 (タイムゾーン書かないと崩れる)</li>
+        <li><code>operator_pubkey</code> は最初空でも OK。先に「動く」を見せて、決済は後で繋いでもいい</li>
+      </ul>
+    </div>
   </div>
 </div>
 
-<h2 id="enables">What this enables</h2>
+<h2 id="enables">これが解放するもの</h2>
 <ul>
   <li><strong>Cross-industry composability</strong>: a Soluna lodging release can be paid in ENAI alongside a MU apparel drop and a JiuFlow tournament entry — same Treasury, same identity, single checkout.</li>
   <li><strong>Forkable brand operations</strong>: anyone can stand up a <code>mu-adapter-&lt;industry&gt;</code> and operate a node with their own brand and treasury, paying only the 5% origin fee.</li>
@@ -337,7 +366,7 @@ release.publish(&node).await?;
 
 <hr>
 
-<h2 style="margin-top:0">あなたが今夜やれる3つ</h2>
+<h2 id="nexttonight" style="margin-top:0">あなたが今夜やれる3つ</h2>
 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1rem;margin:1.5rem 0">
   <a href="https://github.com/yukihamada/mu-brand" style="display:block;padding:1.1rem 1.2rem;background:var(--ink);color:var(--paper);border-radius:8px;text-decoration:none">
     <strong style="font-size:1rem">① コード読む</strong><br>
