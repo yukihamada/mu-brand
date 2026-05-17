@@ -57,13 +57,21 @@
 
 <header>
   <p class="eyebrow">RFC · v2.0 · 2026-05-18</p>
-  <h1>MU Protocol</h1>
-  <p class="lede">Universal autonomous brand protocol. Apparel was the first reference implementation; the spec is industry-agnostic.</p>
+  <h1>あなたの MU を持つ</h1>
+  <p class="lede">
+    MU を見てきて「自分でもこういうの作りたい」と一度でも思ったなら、これはあなた向け。<br>
+    服でも、食でも、宿でも、音でも — 自分の小さな MU を立てて、ほぼ自動で回せる仕組みです。
+  </p>
   <div class="meta">
     <span class="pill rfc">RFC v2</span>
-    <span>License: MIT</span>
-    <span>Reference: wearmu.com</span>
-    <span>Supersedes: MU_PROTOCOL v1 (apparel + cities)</span>
+    <span>MIT · 黙って fork して OK</span>
+    <span>動いてる実例: wearmu.com</span>
+  </div>
+  <div style="background:rgba(230,196,73,0.07);border:1px solid rgba(230,196,73,0.35);padding:1rem 1.2rem;margin-top:1.5rem;border-radius:8px;font-size:0.92rem">
+    <strong>これは何 (3行で)</strong><br>
+    1. 自分のドメインに endpoint を1つ立てる<br>
+    2. 商品を Release として JSON で吐く (時間と場所を刻む)<br>
+    3. 売上の 95% はあなた、5% は origin Treasury に自動分配
   </div>
 </header>
 
@@ -80,7 +88,52 @@
   </ol>
 </div>
 
-<h2 id="oneline">One-line spec</h2>
+<h2>誰に向けて書いてるか</h2>
+<p>
+あなたは、こういう人:
+</p>
+<ul style="font-size:0.95rem">
+  <li>MU を見て「面白い、似たようなの自分でやれそう」と思った</li>
+  <li>1〜3人で何かを作って売ってる/売りたい (服・食・宿・コーチ・音楽・場・小さい何か)</li>
+  <li>マーケや SNS 運用に時間取られたくない。商品作るのは好き</li>
+  <li>毎月決まった売上欲しいけど、サブスク化はピンとこない</li>
+  <li>「moment が刻まれる」という MU の体験を、自分の領域でやってみたい</li>
+</ul>
+<p>
+あなたが <strong>違う人</strong> なら (大量集客したい・ブランド帝国作りたい・SaaS 売りたい)、これは合いません。Shopify 等を使ってください。
+</p>
+
+<h2>MU を作ってきた経験で分かったこと</h2>
+<p>
+2年間 wearmu.com を自分で運用して、AI が毎時デザインし、在庫ゼロで Printful 経由で発送し、価格は売れるたびに上がる、という autonomous brand を作った。<br>
+やってみて分かったのは「<strong>これは服に限らない</strong>」ということ。時間と場所を刻んだ「今日のこれ」を release する形は、ほぼあらゆる小さな商売に応用できる。
+</p>
+<table style="font-size:0.86rem;margin-top:1rem">
+  <thead><tr><th style="width:90px">こういう人</th><th>あなたの Release はこうなる</th><th>運用負担</th></tr></thead>
+  <tbody>
+    <tr><td><strong>個人の服</strong><br><span style="font-size:0.74rem;color:#666">(MU origin)</span></td>
+        <td>毎時 AI がその時刻・場所の moment を読んでTシャツを生成。注文が来たら Printful 印刷。</td>
+        <td>朝起きて死活確認するだけ。ほぼ何もしない。</td></tr>
+    <tr><td><strong>1人で回す焼肉/居酒屋</strong></td>
+        <td>17:00 に「本日のおまかせコース」を release。23:00 に expires。予約と決済は MU 側。</td>
+        <td>朝に食材を1度入力、夜に閉店処理。客リストや決済管理は持たなくて良い。</td></tr>
+    <tr><td><strong>小さな宿/別荘</strong><br><span style="font-size:0.74rem;color:#666">(SOLUNA 系)</span></td>
+        <td>季節と占有率で room-night を release。check-out で expires、retire flow に。</td>
+        <td>清掃のみ。空室カレンダーは Beds24 から自動同期。</td></tr>
+    <tr><td><strong>個人コーチ/講師</strong></td>
+        <td>その週の「今夜の60分セッション」を毎日19:00に release。終了で expires。</td>
+        <td>レッスン自体に集中。集客・決済・申込管理は protocol 任せ。</td></tr>
+    <tr><td><strong>音を撮る人</strong></td>
+        <td>その瞬間に録った30秒の field recording を release。GPS+timestamp が刻まれる。</td>
+        <td>録って upload するだけ。販売・配信は全部自動。</td></tr>
+  </tbody>
+</table>
+<div class="callout" style="margin-top:0.5rem">
+  共通: <strong>売上の 95% はあなた</strong>、5% は origin Treasury に流れて MU のインフラ維持と次の adapter 開発に使う。<br>
+  サブスクじゃない。毎日 release があって、買いたい人が買う。在庫を抱えない設計。
+</div>
+
+<h2 id="oneline">One-line spec (技術側向け)</h2>
 <div class="callout">
   <strong>MU Protocol turns any time-and-place-stamped, autonomously-operated product into a forkable, settlement-bound brand.</strong> Apparel was the first reference implementation. The protocol is industry-agnostic.
 </div>
@@ -163,7 +216,11 @@
 <p><strong>Naming rule</strong>: nodes using the literal string "MU" in branding need a one-time origin approval. Nodes forking the protocol under a different name are free to operate without approval.</p>
 
 <h3>3 · Treasury</h3>
-<p>Settlement is industry-agnostic. Default contract (<code>mu-settlement</code>) exposes 4 ABI calls:</p>
+<p>Settlement is industry-agnostic. Default contract (<code>mu-settlement</code>) exposes 4 ABI calls.<br>
+<strong>Origin Treasury</strong> (現行 reference 実装): Solana mainnet · <code style="font-size:0.78rem">DK29rBGCvP83LUNjUGVM6xt6qPy6rycBFopXbFkg9XvQ</code>
+&nbsp;·&nbsp;<a href="https://solscan.io/account/DK29rBGCvP83LUNjUGVM6xt6qPy6rycBFopXbFkg9XvQ">Solscan で見る</a>
+&nbsp;·&nbsp;<a href="https://github.com/yukihamada/mu-brand/tree/main/contracts/mu-settlement">contracts/mu-settlement/</a> (Anchor program、v2 移行中)
+</p>
 <table>
   <thead><tr><th>Call</th><th>Effect</th></tr></thead>
   <tbody>
@@ -209,10 +266,10 @@
 <table>
   <thead><tr><th>Adapter</th><th>Kind</th><th>Status</th></tr></thead>
   <tbody>
-    <tr><td><code>mu-adapter-apparel</code></td><td>apparel.tee, apparel.hood</td><td><strong>live</strong> (apps/origin/)</td></tr>
-    <tr><td><code>mu-adapter-food</code></td><td>food.menu, food.tasting</td><td>reference (kokon.tokyo)</td></tr>
-    <tr><td><code>mu-adapter-lodging</code></td><td>lodging.room_night</td><td>reference (SOLUNA / StayFlow)</td></tr>
-    <tr><td><code>mu-adapter-service</code></td><td>service.tournament, service.lesson</td><td>reference (JiuFlow)</td></tr>
+    <tr><td><code>mu-adapter-apparel</code></td><td>apparel.tee, apparel.hood</td><td><strong>live</strong> · <a href="https://github.com/yukihamada/mu-brand/tree/main/store">store/</a> (現在は1binで同居、v2.1で crate 分離)</td></tr>
+    <tr><td><code>mu-adapter-food</code></td><td>food.menu, food.tasting</td><td>reference 候補 (kokon.tokyo)</td></tr>
+    <tr><td><code>mu-adapter-lodging</code></td><td>lodging.room_night</td><td>reference 候補 (SOLUNA / StayFlow)</td></tr>
+    <tr><td><code>mu-adapter-service</code></td><td>service.tournament, service.lesson</td><td>reference 候補 (JiuFlow)</td></tr>
     <tr><td><code>mu-adapter-music</code></td><td>music.field_recording</td><td>sketch</td></tr>
   </tbody>
 </table>
@@ -227,11 +284,18 @@
   <li>exposes a public read endpoint at <code>/.well-known/mu/releases</code> returning Release JSON</li>
   <li>respects the identity anti-pattern (no PII in public emits)</li>
 </ol>
-<p>(1)+(2)+(4) = <strong>Discoverable</strong> · (3) = <strong>Settled</strong> · (5) = <strong>Compliant</strong>.<br>All three = full conformance, eligible for the public node directory at <code>wearmu.com/protocol/nodes</code>.</p>
+<p>(1)+(2)+(4) = <strong>Discoverable</strong> · (3) = <strong>Settled</strong> · (5) = <strong>Compliant</strong>.<br>All three = full conformance, eligible for the public node directory at <code>wearmu.com/protocol/nodes</code> (v2.1).</p>
+<h3>Discovery 経路 (Node 登録の実際)</h3>
+<ol>
+  <li><strong>Self-host</strong> &mdash; あなたのドメインに <code>/.well-known/mu/releases</code> を立てる。<a href="/.well-known/mu/releases">こちらが live サンプル</a>。</li>
+  <li><strong>Register</strong> &mdash; <a href="mailto:hi@enabler.fun?subject=MU%20Node%20Registration">hi@enabler.fun</a> に <code>{slug, industry, operator_pubkey, anchor_url}</code> を送る。GH PR でも可 (<code>mu-adapter-registry.json</code>)。</li>
+  <li><strong>Approval</strong> &mdash; 1営業日。MIT fork で MU 名称使わないなら approval 不要、自由 deploy 可。</li>
+</ol>
 
-<h2>Live demo: 30pt paywall</h2>
-<p>This is the universal "もっと見るには30pt" gate. <strong>初回30ptは無料</strong>。一度 unlock したら同じメアドではどのページでも再課金なし。</p>
-<div data-pt-gate data-pt-cost="30" data-pt-target="protocol:appendix-a" data-pt-label="付録A: 実装サンプルコードを見る">
+<h2>下に「最短で立てる手順」を埋めてる</h2>
+<p>本気で「自分のMU 持ちたい」なら、これだけ読めば今夜から動かせる。<br>
+ただ全公開すると spec ハンターに荒らされるので、30pt の壁 (初回 完全無料、メアド1個) を置いた。MU の流儀。</p>
+<div data-pt-gate data-pt-cost="30" data-pt-target="protocol:appendix-a" data-pt-label="最短セットアップを見る">
   <div data-pt-content>
     <h3>付録 A · 第三者ノード登録の最小実装 (Rust)</h3>
     <pre><code>use mu_engine::{NodeBuilder, Treasury, Pin};
@@ -273,13 +337,29 @@ release.publish(&node).await?;
 
 <hr>
 
+<h2 style="margin-top:0">あなたが今夜やれる3つ</h2>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1rem;margin:1.5rem 0">
+  <a href="https://github.com/yukihamada/mu-brand" style="display:block;padding:1.1rem 1.2rem;background:var(--ink);color:var(--paper);border-radius:8px;text-decoration:none">
+    <strong style="font-size:1rem">① コード読む</strong><br>
+    <span style="font-size:0.82rem;opacity:0.8">2年間で僕が試したことが全部入ってる。MIT。fork して自分用に削ってください。</span>
+  </a>
+  <a href="/.well-known/mu/releases" style="display:block;padding:1.1rem 1.2rem;background:rgba(0,0,0,0.04);color:var(--ink);border:1px solid #ccc;border-radius:8px;text-decoration:none">
+    <strong style="font-size:1rem">② 動いてる JSON を見る</strong><br>
+    <span style="font-size:0.82rem;opacity:0.8">wearmu.com が今 release してるもの。あなたの Node もこの形を吐けば OK。</span>
+  </a>
+  <a href="mailto:mail@yukihamada.jp?subject=MU%20を%20%5B分野%5D%20でやってみたい" style="display:block;padding:1.1rem 1.2rem;background:var(--ink);color:var(--paper);border-radius:8px;text-decoration:none">
+    <strong style="font-size:1rem">③ 僕にメールする</strong><br>
+    <span style="font-size:0.82rem;opacity:0.8">何を作ろうとしてるか書いてください。返事します。承認とか不要、ただ知りたい。</span>
+  </a>
+</div>
+
 <p style="font-size:0.95rem;color:#3a3a3a">
-MU は、衣服を超えて、すべての autonomous brand 運営の共通 protocol になる。<br>
-このドキュメントは v1 の apparel-only スコープを超え、food / lodging / service / music / real-estate を等しく包含する初の試みである。
+2年間ずっと1人でMUを回してきて、ようやく「これは服に限らないな」と思えるようになった。<br>
+あなたの「小さなMU」を、僕の MU の隣に並べたい。それだけのために書いた spec。
 </p>
 
-<p style="font-size:0.9rem;color:var(--muted);font-style:italic">
-The protocol is the brand. The brand is the protocol. The product is incidental.
+<p style="font-size:0.88rem;color:var(--muted);font-style:italic;margin-top:1.5rem">
+— yuki (<a href="https://wearmu.com" style="color:var(--muted)">wearmu.com</a> 運営)
 </p>
 
 <footer>
