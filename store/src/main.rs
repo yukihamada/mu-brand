@@ -3117,6 +3117,70 @@ async fn developers_page() -> impl IntoResponse {
     axum::response::Html(body)
 }
 
+/// GET /protocol — MU Protocol v2 RFC (universal, all industries).
+async fn protocol_page() -> impl IntoResponse {
+    let body = include_str!("../static/protocol.html");
+    axum::response::Html(body)
+}
+
+/// GET /.well-known/mu/releases — MU Protocol conformance level 4 endpoint.
+/// Returns recent active products as `mu.release.v2` JSON for protocol discovery.
+async fn well_known_mu_releases(State(db): State<Db>) -> impl IntoResponse {
+    let releases: Vec<serde_json::Value> = (|| -> Option<Vec<serde_json::Value>> {
+        let conn = db.lock().ok()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, brand, drop_num, name, design_url, mockup_url, price_jpy, created_at, weather_data, prompt_hash
+             FROM products WHERE active=1 ORDER BY created_at DESC LIMIT 50"
+        ).ok()?;
+        let rows = stmt.query_map([], |r| {
+            let id: i64 = r.get(0)?;
+            let brand: String = r.get(1)?;
+            let drop_num: i64 = r.get(2)?;
+            let name: String = r.get(3)?;
+            let design_url: Option<String> = r.get(4).ok();
+            let mockup_url: Option<String> = r.get(5).ok();
+            let price_jpy: i64 = r.get(6)?;
+            let created_at: String = r.get(7)?;
+            let weather_data: Option<String> = r.get(8).ok();
+            let prompt_hash: Option<String> = r.get(9).ok();
+            let pinned_to: serde_json::Value = weather_data
+                .as_deref()
+                .and_then(|w| serde_json::from_str(w).ok())
+                .unwrap_or_else(|| serde_json::json!({}));
+            Ok(serde_json::json!({
+                "schema": "mu.release.v2",
+                "id": format!("rel_{}_{}_{}", created_at.replace(' ', "T"), brand.to_lowercase(), id),
+                "node": "teshikaga",
+                "kind": format!("apparel.{}", brand.to_lowercase()),
+                "pinned_at": created_at,
+                "pinned_to": pinned_to,
+                "generator": { "model": "gemini-3-pro-image-preview", "prompt_hash": prompt_hash },
+                "supply": { "kind": "fixed" },
+                "price": { "currency": "JPY", "base": price_jpy },
+                "settlement": { "treasury": "DK29rBGCvP83LUNjUGVM6xt6qPy6rycBFopXbFkg9XvQ",
+                                "node_split_pct": 95, "origin_fee_pct": 5 },
+                "embeds": [format!("https://wearmu.com/p/{}", id)],
+                "_brand": brand, "_drop_num": drop_num, "_name": name,
+                "_design_url": design_url, "_mockup_url": mockup_url,
+            }))
+        }).ok()?;
+        Some(rows.filter_map(|r| r.ok()).collect())
+    })().unwrap_or_default();
+    Json(serde_json::json!({
+        "schema": "mu.release.v2",
+        "node": {
+            "slug": "teshikaga",
+            "name": "Teshikaga (MU origin)",
+            "industry": "apparel",
+            "operator": { "human_in_loop": false },
+            "anchor": { "lat": 43.490, "lon": 144.460 },
+            "status": "active",
+        },
+        "count": releases.len(),
+        "releases": releases,
+    }))
+}
+
 /// GET /collab — MU Collab 法人向け資料 (pitch deck + pricing).
 async fn collab_page() -> impl IntoResponse {
     let body = include_str!("../static/collab.html");
@@ -47237,6 +47301,8 @@ async fn main() {
         .route("/embed.js", get(embed_js))
         .route("/embed/products", get(embed_iframe_page))
         .route("/developers", get(developers_page))
+        .route("/protocol", get(protocol_page))
+        .route("/.well-known/mu/releases", get(well_known_mu_releases))
         .route("/collab", get(collab_page))
         .route("/itto", get(itto_page))
         .route("/itto/success", get(itto_success_page))
@@ -47584,6 +47650,11 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         description: "特商法・PP の更新日が古くなってないか日次チェック",
     },
     AgentDef {
+        name: "printful_draft_watchdog",
+        interval_secs: 1800, // 30min
+        description: "Printful の draft 滞留を自動 confirm。Stripe webhook 漏れの保険",
+    },
+    AgentDef {
         name: "ma_cycle",
         interval_secs: 3600, // 1h
         description: "MA auction の終了→落札 capture/cancel→次の ¥30k 24h を毎時自動回転",
@@ -47775,6 +47846,7 @@ async fn run_agent(name: &str, db: Db) -> Result<AgentReport, String> {
         "customer_support"  => agent_customer_support(db).await,
         "auto_refund"       => agent_auto_refund(db).await,
         "compliance_watch"  => agent_compliance_watch(db).await,
+        "printful_draft_watchdog" => agent_printful_draft_watchdog(db).await,
         "ma_cycle"          => agent_ma_cycle(db).await,
         "ma_design_daily"   => agent_ma_design_daily(db).await,
         "self_review"       => agent_self_review(db).await,
@@ -47868,6 +47940,7 @@ async fn journal_agent_report(db: Db, name: &str, report: &AgentReport) {
         "customer_support" => "📮",
         "auto_refund"      => "↩️",
         "compliance_watch" => "📜",
+        "printful_draft_watchdog" => "🐕‍🦺",
         "self_improvement" => "🧠",
         "vision_drift"     => "🎯",
         _ => "🤖",
@@ -52328,6 +52401,113 @@ const CRITIC_TARGETS: &[(&str, &[&str])] = &[
     ("council",          &["A", "B"]),
     ("anniversary",      &["A", "B"]),
 ];
+
+// ── Agent: printful_draft_watchdog ─────────────────────────────────────
+//
+// Background: 2026-05-18 incident. 馬場様 (kokon collab) のサンプル
+// ¥14,276 が Stripe 決済成功後も Printful 側で `draft` のまま 2 日間
+// 滞留した。webhook → fire_collab_printful_order の path の一部で
+// confirm が完了しないケースが残っていた。手動 confirm で復旧したが、
+// 静かに失敗する再発を防ぐため定期的な掃き出し agent を入れる。
+//
+// 動作: 30 min ごとに /orders?status=draft を fetch し、created から
+// 30 分以上経過した行を `POST /orders/{id}/confirm` で生産投入。
+// 結果は journal + Telegram alert。
+async fn agent_printful_draft_watchdog(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut decisions: Vec<serde_json::Value> = Vec::new();
+    let mut actions: Vec<serde_json::Value> = Vec::new();
+    let is_dry = dry_run_active("printful_draft_watchdog");
+    obs.insert("dry_run".into(), serde_json::Value::from(is_dry));
+
+    let key = match env::var("PRINTFUL_API_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => return Ok(AgentReport::idle("PRINTFUL_API_KEY unset")),
+    };
+    let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(15)).build() {
+        Ok(c) => c, Err(_) => reqwest::Client::new(),
+    };
+    let resp = match client.get("https://api.printful.com/orders?status=draft&limit=50")
+        .bearer_auth(&key).send().await {
+        Ok(r) => r,
+        Err(e) => return Err(format!("printful GET: {}", e)),
+    };
+    let status = resp.status();
+    let v: serde_json::Value = match resp.json().await {
+        Ok(j) => j,
+        Err(e) => return Err(format!("printful json: {}", e)),
+    };
+    if !status.is_success() {
+        return Err(format!("printful {} {}", status, v));
+    }
+    let orders = v["result"].as_array().cloned().unwrap_or_default();
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let stale_cutoff = now_s - 30 * 60;     // 30 min
+    obs.insert("draft_total".into(), serde_json::Value::from(orders.len()));
+
+    let mut stale: Vec<(i64, String, i64)> = Vec::new();
+    for o in &orders {
+        let id = match o["id"].as_i64() { Some(n) => n, None => continue };
+        let created = o["created"].as_i64().unwrap_or(0);
+        let recipient = o["recipient"]["name"].as_str().unwrap_or("?").to_string();
+        if created > 0 && created < stale_cutoff {
+            stale.push((id, recipient, created));
+        }
+    }
+    obs.insert("stale_count".into(), serde_json::Value::from(stale.len()));
+
+    let mut confirmed = 0i64;
+    let mut failed = 0i64;
+    for (oid, recipient, created) in &stale {
+        if is_dry {
+            decisions.push(serde_json::json!({
+                "type": "would_confirm", "order_id": oid,
+                "recipient": recipient, "age_min": (now_s - created) / 60,
+            }));
+            continue;
+        }
+        let r = client.post(format!("https://api.printful.com/orders/{}/confirm", oid))
+            .bearer_auth(&key).send().await;
+        match r {
+            Ok(resp) if resp.status().is_success() => {
+                confirmed += 1;
+                actions.push(serde_json::json!({
+                    "type": "confirmed", "order_id": oid,
+                    "recipient": recipient, "age_min": (now_s - created) / 60,
+                }));
+            }
+            Ok(resp) => {
+                let s = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                failed += 1;
+                decisions.push(serde_json::json!({
+                    "type": "confirm_fail", "order_id": oid,
+                    "http": s.as_u16(),
+                    "body": body.chars().take(300).collect::<String>(),
+                }));
+            }
+            Err(e) => {
+                failed += 1;
+                decisions.push(serde_json::json!({
+                    "type": "confirm_err", "order_id": oid, "error": e.to_string(),
+                }));
+            }
+        }
+    }
+    obs.insert("confirmed".into(), serde_json::Value::from(confirmed));
+    obs.insert("failed".into(),    serde_json::Value::from(failed));
+
+    let notable = confirmed > 0 || failed > 0;
+    let summary = if stale.is_empty() {
+        format!("draft watchdog: {} drafts, none stale", orders.len())
+    } else {
+        format!("draft watchdog: {} stale → {} confirmed, {} failed", stale.len(), confirmed, failed)
+    };
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs),
+        decisions, actions, summary, notable,
+    })
+}
 
 async fn agent_email_critic(db: Db) -> Result<AgentReport, String> {
     let mut obs = serde_json::Map::new();
