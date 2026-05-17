@@ -116,12 +116,15 @@ def main():
     ap.add_argument("--title", required=True)
     ap.add_argument("--subtitle", default="")
     ap.add_argument("--eyebrow", default="WEARMU × COLLAB")
-    ap.add_argument("--results", required=True, help="path to _shirt_results_*.json")
+    ap.add_argument("--results", required=True, action="append",
+                    help="path to _shirt_results_*.json (repeatable to merge multiple versions)")
     ap.add_argument("--desc", default="SUPER YAWARA SWEEP CUP 2026 限定。Mindset / yawara / FLEX GROUP / 甲田事務所 / 焼肉古今 / SJJJF / 大和不動産 7社協賛。")
     ap.add_argument("--og", default="https://lifestyle.wearmu.com/jiufight/v3/02_kanji_jyu_brushwork.png")
     args = ap.parse_args()
 
-    results = json.loads(Path(args.results).read_text())
+    results = []
+    for r in args.results:
+        results.extend(json.loads(Path(r).read_text()))
     cards = "\n".join(build_card(p, args.desc) for p in results)
 
     html = TEMPLATE.format(
