@@ -45,17 +45,18 @@ nav a.back{{font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity
 .hero .eyebrow{{font-size:10px;letter-spacing:0.5em;text-transform:uppercase;color:var(--y);margin-bottom:18px}}
 .hero h1{{font-size:clamp(36px,7vw,82px);font-weight:200;letter-spacing:0.03em;line-height:1.05;margin-bottom:14px}}
 .hero .sub{{font-size:clamp(13px,1.4vw,16px);color:var(--mute);max-width:540px;margin:0 auto}}
-.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:24px;padding:28px 24px 80px;max-width:1280px;margin:0 auto}}
-.card{{background:var(--card);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;border:1px solid rgba(255,255,255,0.06);transition:transform 0.2s, border-color 0.2s}}
-.card:hover{{transform:translateY(-3px);border-color:rgba(230,196,73,0.4)}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:36px;padding:36px 32px 100px;max-width:1640px;margin:0 auto}}
+@media (max-width:520px){{.grid{{grid-template-columns:1fr;gap:24px;padding:24px 16px 80px}}}}
+.card{{background:var(--card);border-radius:18px;overflow:hidden;display:flex;flex-direction:column;border:1px solid rgba(255,255,255,0.06);transition:transform 0.2s, border-color 0.2s}}
+.card:hover{{transform:translateY(-4px);border-color:rgba(230,196,73,0.5)}}
 .card .img{{aspect-ratio:1/1;background:#fff;display:flex;align-items:center;justify-content:center;overflow:hidden}}
 .card .img img{{width:100%;height:100%;object-fit:contain}}
-.card .body{{padding:16px 18px 20px;display:flex;flex-direction:column;gap:8px;flex:1}}
-.card .name{{font-size:15px;line-height:1.4;font-weight:500}}
-.card .desc{{font-size:12px;color:var(--mute);line-height:1.55;min-height:36px}}
-.card .price{{font-size:18px;font-weight:300;color:var(--y);font-variant-numeric:tabular-nums;margin-top:auto}}
+.card .body{{padding:22px 24px 26px;display:flex;flex-direction:column;gap:10px;flex:1}}
+.card .name{{font-size:18px;line-height:1.35;font-weight:500}}
+.card .desc{{font-size:13px;color:var(--mute);line-height:1.6;min-height:42px}}
+.card .price{{font-size:22px;font-weight:300;color:var(--y);font-variant-numeric:tabular-nums;margin-top:auto}}
 .card .buy{{display:flex;gap:8px;margin-top:8px}}
-.btn{{flex:1;display:inline-block;text-align:center;padding:11px 14px;border-radius:8px;font-size:12px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;cursor:pointer;border:none}}
+.btn{{flex:1;display:inline-block;text-align:center;padding:14px 18px;border-radius:10px;font-size:13px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;border:none}}
 .btn.suzuri{{background:#e6c449;color:#0a0a0a}}
 .btn.suzuri:hover{{background:#fff}}
 .btn.soon{{background:transparent;border:1px solid rgba(255,255,255,0.18);color:var(--mute);cursor:default}}
