@@ -32,8 +32,19 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 GEMINI_MODEL = "gemini-3-pro-image-preview"
 
 SYSTEM_TMPL = """You are a professional apparel graphic designer for MU (wearmu.com).
-Produce a single T-shirt print design as a square 2940×2940 PNG with a
-transparent background. Optimized for direct-to-garment printing.
+Produce a single T-shirt print design as a square 2940×2940 PNG.
+
+CRITICAL OUTPUT FORMAT:
+- PNG must have a REAL alpha channel (RGBA mode).
+- Background pixels MUST be fully transparent (alpha = 0).
+- DO NOT draw a checkerboard / grid / transparency-indicator pattern
+  into the image. The background should be true empty pixels, not a
+  visual representation of transparency.
+- Only the design elements (text, shapes, icons) should have visible
+  pixels. Everything else = invisible/transparent.
+
+Optimized for direct-to-garment printing on a BLACK t-shirt (so the
+tee color shows through wherever you leave pixels transparent).
 
 This is a COLLABORATION with a Tokyo taxi heritage theme. The MU
 co-branding MUST be visible somewhere in the design:

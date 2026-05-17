@@ -15210,6 +15210,64 @@ fn seed_donation_destinations(conn: &Connection) {
     }
 }
 
+/// Per-brand eyebrow/h1/lede shown on /buy and /buy/:id. Seeded once on
+/// startup; admins can update via /api/admin/brand_copy/:brand (or direct
+/// SQL). Falls back to default MUGEN copy when no row exists.
+fn seed_brand_copy(conn: &Connection) {
+    let seeds: &[(&str, &str, &str, &str)] = &[
+        ("kawanabe_personal",
+         "▶ Personal Gift — Kawanabe-san 候補",
+         "MU × <em>東京タクシー</em>。<br>個人向けの一着候補。",
+         "MUの哲学 (透明性・AI生成・弟子屈寄付) で作った、東京タクシー文化への一着。10案 候補。1点もの・受注生産・DTGプリント。"),
+        ("ads_jujitsu",
+         "▶ 柔術ライン",
+         "ノーギ・帯色・技名。<br><em>柔術家</em>のための一着。",
+         "ノーギから黒帯、Berimboloまで。MUのDTGで1点ずつプリント。在庫ゼロ受注生産、利益50%は弟子屈町へ。"),
+        ("ads_regional",
+         "▶ 地域シリーズ",
+         "地名を<em>着る</em>。<br>MU 地域シリーズ。",
+         "三田・北参道・弟子屈・川湯温泉。地元の友人/お客様への手土産にも。DTG プリント1枚ずつ。"),
+        ("ads_kokon",
+         "▶ 焼肉古今 公式コラボ",
+         "焼肉好きの<em>一着</em>。<br>kokon.tokyo Official.",
+         "西麻布の名店 焼肉古今 公式コラボ。誕生日・父の日・「肉好きの彼/夫」へのギフトに。"),
+        ("ads_profession",
+         "▶ 職業部族",
+         "職業の<em>内輪ネタ</em>を着る。",
+         "ICU夜勤・エンジニア。同じ仕事の人にだけ刺さる一着。退職祝い・誕生日に。"),
+        ("ads_event",
+         "▶ イベント記念",
+         "イベントの<em>記憶</em>を着る。",
+         "SOLUNA FEST・グラップリング大会・父の日。期間限定の記念Tee。"),
+    ];
+    for (brand, eyebrow, h1, lede) in seeds {
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO brand_copy (brand, eyebrow, h1, lede, updated_at)
+             VALUES (?, ?, ?, ?, ?)",
+            params![brand, eyebrow, h1, lede, chrono_now()],
+        );
+    }
+}
+
+async fn api_brand_copy(
+    State(db): State<Db>,
+    axum::extract::Path(brand): axum::extract::Path<String>,
+) -> Response {
+    let row: Option<(String, String, String)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT eyebrow, h1, lede FROM brand_copy WHERE brand = ?",
+            params![brand], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).ok()
+    };
+    match row {
+        Some((eyebrow, h1, lede)) => Json(serde_json::json!({
+            "brand": brand, "eyebrow": eyebrow, "h1": h1, "lede": lede,
+        })).into_response(),
+        None => (StatusCode::NOT_FOUND, "no brand_copy").into_response(),
+    }
+}
+
 /// Sum of donation_ledger.donation_jpy filtered by status. Used by the
 /// /donations page hero and /api/transparency live numbers.
 fn donations_sum(conn: &Connection, status: &str) -> i64 {
@@ -17505,6 +17563,100 @@ async fn api_product_grachan82(State(db): State<Db>) -> Response {
 /// at the Toru persona for cold paid acquisition + DM cold-share.
 async fn buy_page() -> Html<&'static str> {
     Html(include_str!("../static/buy.html"))
+}
+
+/// /buy/:id — pretty URL for paid/SNS landing pages. Serves the same
+/// buy.html as /buy; the JS reads the id from `location.pathname` first,
+/// falling back to ?product_id=…
+async fn buy_page_with_id(
+    axum::extract::Path(_id): axum::extract::Path<i64>,
+) -> Html<&'static str> {
+    Html(include_str!("../static/buy.html"))
+}
+
+/// /collections/:brand — gallery page listing every active product of a brand.
+/// Each card links to /buy/:id. Useful for kawanabe_personal (10 candidates)
+/// and the ads_* niche bundles. Falls back to "no products" message.
+async fn collection_page(
+    State(db): State<Db>,
+    axum::extract::Path(brand): axum::extract::Path<String>,
+) -> Response {
+    let rows: Vec<(i64, i64, String, Option<String>, i64, i64, i64)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, drop_num, name, mockup_url, price_jpy, inventory, sold
+             FROM products WHERE brand = ? AND active = 1
+             ORDER BY drop_num ASC"
+        ) { Ok(s) => s, Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("db: {}", e)).into_response() };
+        stmt.query_map(params![brand], |r| Ok((
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get::<_, Option<String>>(3)?,
+            r.get(4)?, r.get(5)?, r.get(6)?
+        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    let brand_label = brand.to_uppercase().replace("ADS_", "").replace("_", " ");
+
+    let mut cards = String::new();
+    if rows.is_empty() {
+        cards.push_str(r#"<div class="empty">商品が見つかりません</div>"#);
+    } else {
+        for (id, drop, name, mockup, price, inventory, sold) in &rows {
+            let img = mockup.as_deref().unwrap_or("https://mockups.wearmu.com/hero.png");
+            let remaining: i64 = inventory - sold;
+            let stock = if remaining <= 0 { "<span class=\"sold\">SOLD</span>".to_string() }
+                       else { format!("のこり {}/{}", remaining, inventory) };
+            cards.push_str(&format!(
+                r#"<a class="card" href="/buy/{id}">
+                  <div class="thumb"><img src="{img}" alt="{name_esc}" loading="lazy"></div>
+                  <div class="meta">
+                    <div class="num">#{drop:03}</div>
+                    <div class="name">{name_esc}</div>
+                    <div class="row"><span class="price">¥{price}</span><span class="stock">{stock}</span></div>
+                  </div>
+                </a>"#,
+                id=id, img=html_attr_escape(img), name_esc=html_escape(name),
+                drop=drop, price=format_jpy(*price), stock=stock));
+        }
+    }
+
+    let html = format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>{label} — MU</title>
+<style>{css}
+  .wrap{{max-width:1100px;margin:0 auto;padding:32px 22px 0}}
+  .kicker{{font-size:10.5px;letter-spacing:0.22em;color:#666;text-transform:uppercase}}
+  h1{{font-size:32px;font-weight:300;margin:8px 0 6px;letter-spacing:0.01em}}
+  h1 em{{color:#e6c449;font-style:normal}}
+  .sub{{color:#888;font-size:13.5px;margin-bottom:30px}}
+  .grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}}
+  .card{{background:#0a0a0a;border:1px solid #1f1f1f;border-radius:6px;overflow:hidden;text-decoration:none;color:inherit;display:block;transition:border-color 0.15s,transform 0.15s}}
+  .card:hover{{border-color:#e6c449;transform:translateY(-2px)}}
+  .card .thumb{{aspect-ratio:1/1;background:#000;display:flex;align-items:center;justify-content:center}}
+  .card .thumb img{{width:100%;height:100%;object-fit:cover;display:block}}
+  .card .meta{{padding:14px 16px}}
+  .card .num{{font-size:10.5px;letter-spacing:0.2em;color:#e6c449;font-family:ui-monospace,Menlo,monospace}}
+  .card .name{{font-size:14px;font-weight:500;margin:4px 0 10px;line-height:1.4;color:#f5f5f0}}
+  .card .row{{display:flex;justify-content:space-between;align-items:baseline;font-size:12.5px}}
+  .card .price{{color:#e6c449;font-weight:500}}
+  .card .stock{{color:#888}}
+  .card .sold{{color:#e07b7b;font-weight:600;letter-spacing:0.08em}}
+  .empty{{color:#888;text-align:center;padding:80px 0;grid-column:1/-1}}
+</style></head><body>
+  {header}
+  <div class="wrap">
+    <div class="kicker">COLLECTION</div>
+    <h1><em>{label}</em></h1>
+    <div class="sub">{count} 着のデザイン。クリックで個別購入ページへ。</div>
+    <div class="grid">{cards}</div>
+  </div>
+  {footer}
+</body></html>"#,
+        css=vault_chrome_css(),
+        header=vault_header_html("home", None),
+        footer=vault_footer_html(),
+        label=html_escape(&brand_label),
+        count=rows.len(),
+        cards=cards);
+    (StatusCode::OK, [("content-type", "text/html; charset=utf-8")], html).into_response()
 }
 
 /// Branded 404 — served when no route/static file matches. Returns 404
@@ -45250,7 +45402,19 @@ async fn main() {
         );
         CREATE INDEX IF NOT EXISTS idx_donation_ledger_status ON donation_ledger(status);
         CREATE INDEX IF NOT EXISTS idx_donation_ledger_accrued_at ON donation_ledger(accrued_at DESC);
+
+        -- /buy/:id and /buy?product_id=… look up brand-level marketing copy
+        -- here so non-MUGEN products (kawanabe_personal, ads_*, collabs) show
+        -- the right framing instead of the default MUGEN weather copy.
+        CREATE TABLE IF NOT EXISTS brand_copy (
+            brand     TEXT PRIMARY KEY,
+            eyebrow   TEXT NOT NULL DEFAULT '',
+            h1        TEXT NOT NULL DEFAULT '',
+            lede      TEXT NOT NULL DEFAULT '',
+            updated_at TEXT
+        );
     ").ok();
+    seed_brand_copy(&conn);
     // Idempotent migrations.
     let _ = conn.execute("ALTER TABLE mu_purchases ADD COLUMN amount_jpy INTEGER", []);
     // (2026-05-16) Per-partner donation recipient: MUGEN/MUON/MA/you → 弟子屈,
@@ -46705,6 +46869,9 @@ async fn main() {
         .route("/api/product/collab/:slug", get(api_product_collab))
         .route("/collab/:slug", get(collab_public_page))
         .route("/buy", get(buy_page))
+        .route("/buy/:id", get(buy_page_with_id))
+        .route("/collections/:brand", get(collection_page))
+        .route("/api/brand_copy/:brand", get(api_brand_copy))
         .route("/survey/quality", get(survey_quality_page))
         .route("/api/poll/quality", get(quality_poll_results))
         .route("/api/poll/quality/vote", post(quality_poll_vote))

@@ -262,11 +262,11 @@ footer{
 </nav>
 
 <main>
-  <div class="eyebrow">▶ Buy / 今買える 1 着</div>
-  <h1>気温が決めたデザイン。<br>
+  <div class="eyebrow" id="eyebrow">▶ Buy / 今買える 1 着</div>
+  <h1 id="buy-h1">気温が決めたデザイン。<br>
     <em>今日の 1 着</em>を、 1 click で。
   </h1>
-  <p class="lede">
+  <p class="lede" id="buy-lede">
     MUGEN は北海道弟子屈町の気温・月相・時刻を seed に AI が生成する <strong>1 時間に 1 着</strong>の T シャツです。 同じデザインは二度と作られません。 早く買うほど安い bonding curve、 完売したらそれで終わり。
   </p>
 
@@ -378,6 +378,20 @@ async function loadProduct() {
       if (!pick) return;
     }
     CURRENT_PRODUCT = pick;
+
+    // Fetch brand-level copy from DB so /buy/:id shows the right framing
+    // for kawanabe_personal / ads_* / collabs instead of MUGEN's weather copy.
+    // Falls back silently to the default MUGEN copy when brand_copy returns 404.
+    try {
+      const brand = (pick.brand || 'mugen').toLowerCase();
+      const cr = await fetch('/api/brand_copy/' + encodeURIComponent(brand));
+      if (cr.ok) {
+        const c = await cr.json();
+        if (c.eyebrow) document.getElementById('eyebrow').textContent = c.eyebrow;
+        if (c.h1)      document.getElementById('buy-h1').innerHTML  = c.h1;
+        if (c.lede)    document.getElementById('buy-lede').innerHTML = c.lede;
+      }
+    } catch (_) {}
 
     document.getElementById('product-img').src = pick.mockup_url || ('https://mockups.wearmu.com/' + pick.id + '.jpg');
     document.getElementById('product-img').onerror = (e) => { e.target.src = 'https://mockups.wearmu.com/hero.png'; };
