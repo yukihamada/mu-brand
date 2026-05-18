@@ -14461,6 +14461,7 @@ async fn stripe_webhook(
                 session["customer_details"]["email"].as_str().unwrap_or("").to_string()
             };
             let now = chrono_now();
+            let mut extended_to: Option<String> = None;
             {
                 let conn = db.lock().unwrap();
                 let _ = conn.execute(
@@ -14480,6 +14481,45 @@ async fn stripe_webhook(
                     params![bid_amount, product_id, bid_amount],
                 );
                 let _ = council_enroll(&conn, &final_email, "trial", None);
+
+                // Anti-snipe / 自動延長: a bid landing inside the last
+                // ANTI_SNIPE_WINDOW_S of auction_end pushes the close out so
+                // the new bidder cannot be cut off by zero response time.
+                // - Window:  300s (last 5 min)
+                // - Extend:  end = max(end, now_jst + 300s)
+                // No upper cap — repeated late bids will keep pushing the
+                // close, which is the desired anti-snipe behavior.
+                const ANTI_SNIPE_WINDOW_S: i64 = 300;
+                let now_unix: i64 = now.parse().unwrap_or(0);
+                let jst_now = now_unix + 9 * 3600;
+                let current_end_opt: Option<String> = conn.query_row(
+                    "SELECT auction_end FROM products
+                     WHERE id=? AND brand='ma' AND active=1",
+                    params![product_id], |r| r.get::<_, Option<String>>(0),
+                ).ok().flatten();
+                if let Some(end_str) = current_end_opt {
+                    if let Some(end_jst) = parse_jst_naive_to_secs(&end_str) {
+                        let remaining = end_jst - jst_now;
+                        if remaining > 0 && remaining < ANTI_SNIPE_WINDOW_S {
+                            let new_end_jst = jst_now + ANTI_SNIPE_WINDOW_S;
+                            let new_end_str = format_jst_naive(new_end_jst);
+                            let n = conn.execute(
+                                "UPDATE products SET auction_end=?
+                                 WHERE id=? AND brand='ma' AND active=1",
+                                params![new_end_str, product_id],
+                            ).unwrap_or(0);
+                            if n > 0 { extended_to = Some(new_end_str); }
+                        }
+                    }
+                }
+            }
+            if let Some(new_end) = &extended_to {
+                eprintln!("[ma_bid] ANTI_SNIPE extended product {} → {} (bid ¥{} from {})",
+                    product_id, new_end, bid_amount, final_email);
+                send_telegram_message(&format!(
+                    "⏱ MA auction auto-extended\n\nproduct: {}\nnew end (JST): {}\ntrigger bid: ¥{} from {}",
+                    product_id, new_end, bid_amount, final_email,
+                )).await;
             }
             eprintln!("[ma_bid] AUTHORIZED ¥{} on {} for {} (pi={})",
                 bid_amount, product_id, final_email, &pi_id[..16.min(pi_id.len())]);
@@ -54396,6 +54436,32 @@ fn format_jst_naive(jst_s: i64) -> String {
     let mm = (secs % 3600) / 60;
     let ss = secs % 60;
     format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}", y, m, d, hh, mm, ss)
+}
+
+/// Parse a JST naive "YYYY-MM-DDTHH:MM:SS[.fff]" string back to JST UNIX
+/// seconds (i.e. the same domain `format_jst_naive` operates on).
+/// Returns None if the prefix doesn't match. Microseconds are truncated.
+fn parse_jst_naive_to_secs(s: &str) -> Option<i64> {
+    let head: String = s.chars().take(19).collect();
+    if head.len() < 19 { return None; }
+    let b = head.as_bytes();
+    if b[4] != b'-' || b[7] != b'-' || b[10] != b'T' || b[13] != b':' || b[16] != b':' {
+        return None;
+    }
+    let y: i64 = head[0..4].parse().ok()?;
+    let m: i64 = head[5..7].parse().ok()?;
+    let d: i64 = head[8..10].parse().ok()?;
+    let hh: i64 = head[11..13].parse().ok()?;
+    let mm: i64 = head[14..16].parse().ok()?;
+    let ss: i64 = head[17..19].parse().ok()?;
+    // Inverse of ymd_from_jst_secs (Hinnant): (y,m,d) → days since 1970-01-01.
+    let (yy, mm_h) = if m <= 2 { (y - 1, m + 9) } else { (y, m - 3) };
+    let era = if yy >= 0 { yy } else { yy - 399 } / 400;
+    let yoe = yy - era * 400;
+    let doy = (153 * mm_h + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some(days * 86_400 + hh * 3600 + mm * 60 + ss)
 }
 
 /// Hinnant's reverse algorithm: JST UNIX-seconds → (Y, M, D).
