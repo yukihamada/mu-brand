@@ -291,7 +291,21 @@ async fn admin_auth(
         else { (None, "none") }
     };
 
-    // 4. 検証 + 監査ログ
+    // 4a. Email-session admin (preferred — no token in URL). If a verified
+    // session cookie matches ADMIN_EMAIL, accept and audit-log as `session`.
+    if let Some(email) = is_admin_email_session(&db, headers) {
+        let ua = headers.get("user-agent").and_then(|v| v.to_str().ok())
+            .map(|s| s.chars().take(200).collect::<String>()).unwrap_or_default();
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO admin_auth_log
+                 (ip, path, method, user_agent, ok, token_prefix, via, at)
+             VALUES (?,?,?,?,?,?,?,?)",
+            params![ip, path, "?", ua, 1i64, email, "session", chrono_now()],
+        );
+        return Ok(());
+    }
+    // 4b. Token fallback (existing behavior — Authorization / X-Admin-Token / ?token).
     let result = require_admin_token(provided.as_ref());
     let ok = result.is_ok();
     let ua = headers.get("user-agent").and_then(|v| v.to_str().ok())
@@ -19301,6 +19315,18 @@ async fn collab_auth_logout(
     resp
 }
 
+/// True if the request carries a verified `mu_collab_session` cookie for an
+/// email listed in ADMIN_EMAIL (comma-separated; default `mail@yukihamada.jp`).
+/// Use this for read-only admin features so the admin doesn't have to paste
+/// tokens into URLs. For destructive endpoints prefer admin_auth() which also
+/// honors session-as-admin via `admin_auth_or_session_email_match`.
+fn is_admin_email_session(db: &Db, headers: &HeaderMap) -> Option<String> {
+    let email = collab_session_email(db, headers)?.0.to_lowercase();
+    let raw = std::env::var("ADMIN_EMAIL").unwrap_or_else(|_| "mail@yukihamada.jp".into());
+    let allowed: Vec<String> = raw.split(',').map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()).collect();
+    if allowed.iter().any(|a| a == &email) { Some(email) } else { None }
+}
+
 /// Look up the verified email from the request cookie. Returns None if unauth.
 fn collab_session_email(db: &Db, headers: &HeaderMap) -> Option<(String, i64, bool, bool)> {
     let token = headers.get("cookie")
@@ -23000,16 +23026,24 @@ async fn admin_ls_page(
         }
         out
     };
-    // Token to embed in preview links. We can't read it back from admin_auth
-    // because we only have the request — pull from the request itself.
-    let token = q.get("admin_token").or_else(|| q.get("token")).cloned()
-        .or_else(|| headers.get("authorization")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.strip_prefix("Bearer ").or_else(|| s.strip_prefix("bearer ")))
-            .map(String::from))
-        .or_else(|| headers.get("x-admin-token").and_then(|v| v.to_str().ok()).map(String::from))
-        .unwrap_or_default();
+    // Auth mode: prefer cookie session (no token in URL). If admin reached
+    // /ls via legacy ?admin_token=… we keep propagating it onto preview links
+    // so they still bypass the public gate from the dashboard.
+    let session_email = is_admin_email_session(&db, &headers);
+    let token = if session_email.is_some() {
+        String::new()
+    } else {
+        q.get("admin_token").or_else(|| q.get("token")).cloned()
+            .or_else(|| headers.get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.strip_prefix("Bearer ").or_else(|| s.strip_prefix("bearer ")))
+                .map(String::from))
+            .or_else(|| headers.get("x-admin-token").and_then(|v| v.to_str().ok()).map(String::from))
+            .unwrap_or_default()
+    };
     let tok_q = if token.is_empty() { String::new() } else { format!("?admin_token={}", html_attr_escape(&token)) };
+    let auth_mode = if session_email.is_some() { "cookie" } else { "token" };
+    let session_email_display = session_email.clone().unwrap_or_else(|| admin_email.clone());
 
     let mut tbody = String::new();
     let mut n_approved = 0i64;
@@ -23088,9 +23122,9 @@ a.slug:hover{{text-decoration:underline}}
   <div class="head">
     <div>
       <h1>━◯━ /ls — proposal admin</h1>
-      <div class="meta">all proposals in <code>proposals</code> table · DB-driven · 1 source of truth</div>
+      <div class="meta">all proposals in <code>proposals</code> table · DB-driven · auth: <code>{auth_mode}</code></div>
     </div>
-    <div class="admin">{admin_email}</div>
+    <div class="admin">{session_email_display}</div>
   </div>
   <div class="stats">
     <div>total<b>{n_total}</b></div>
@@ -23122,8 +23156,11 @@ a.slug:hover{{text-decoration:underline}}
       var slug = btn.dataset.slug, act = btn.dataset.act;
       btn.disabled = true;
       try {{
-        var r = await fetch('/api/proposal/'+encodeURIComponent(slug)+'/'+act+'?admin_token='+encodeURIComponent(TOKEN), {{
+        var url = '/api/proposal/'+encodeURIComponent(slug)+'/'+act
+                + (TOKEN ? ('?admin_token='+encodeURIComponent(TOKEN)) : '');
+        var r = await fetch(url, {{
           method:'POST',
+          credentials:'same-origin',
           headers:{{'Content-Type':'application/json'}},
           body: act==='approve' ? JSON.stringify(approverBody()) : '{{}}',
         }});
@@ -23138,7 +23175,8 @@ a.slug:hover{{text-decoration:underline}}
 }})();
 </script>
 </body></html>"#,
-        admin_email = html_escape(&admin_email),
+        session_email_display = html_escape(&session_email_display),
+        auth_mode = auth_mode,
         n_total = n_total,
         n_approved = n_approved,
         n_gated = n_total - n_approved,
@@ -47648,16 +47686,17 @@ async fn slug_or_static(
     if !slug_valid(&slug_lo) {
         return serve_static_or_404(&slug, &db);
     }
-    // Admin preview short-circuit: if a valid admin token is present in the
-    // query / headers AND the slug matches a (possibly unapproved) proposal,
-    // render it with a preview banner — bypassing the public approval gate.
-    // Only run admin_auth when a token is actually present, otherwise every
-    // public /<slug> visit would spam the admin_auth audit log.
+    // Admin preview short-circuit: if the caller is logged in as the admin
+    // email (mu_collab_session cookie matches ADMIN_EMAIL), render even
+    // unapproved proposals with a private cache header. Token fallback is
+    // kept for scripts / curl flows.
+    let is_admin_via_session = is_admin_email_session(&db, &headers).is_some();
     let has_admin_token = q.contains_key("admin_token") || q.contains_key("token")
         || headers.contains_key("x-admin-token") || headers.contains_key("authorization");
-    if has_admin_token
-        && admin_auth(&headers, &q, db.clone(), &format!("/{} (preview)", slug_lo)).await.is_ok()
-    {
+    let is_admin = is_admin_via_session
+        || (has_admin_token
+            && admin_auth(&headers, &q, db.clone(), &format!("/{} (preview)", slug_lo)).await.is_ok());
+    if is_admin {
         if let Some(html) = try_render_proposal_lp_inner(&slug_lo, &db, true) {
             let mut resp = Html(html).into_response();
             resp.headers_mut().insert(
