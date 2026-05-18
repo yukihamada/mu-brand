@@ -13491,7 +13491,7 @@ async fn stripe_webhook(
         //   - sweep_manual / pre_order → Telegram alert; partner が個別対応
         // metadata[sample]=1 のときは partner 専用 proposal page 経由の
         // サンプルまとめ買いとして multi-item ハンドラに分岐。
-        if matches!(meta["collab"].as_str(), Some("sweep") | Some("kokon") | Some("jiuflow")) {
+        if matches!(meta["collab"].as_str(), Some("sweep") | Some("kokon") | Some("jiuflow") | Some("nakamura")) {
             if meta["sample"].as_str() == Some("1") {
                 handle_collab_sample_order(db.clone(), &session).await;
             } else {
@@ -15185,7 +15185,7 @@ async fn handle_collab_sample_order(db: Db, session: &serde_json::Value) {
             .unwrap_or_default();
         let manual_block = if manual_lines.is_empty() { "".to_string() }
             else { format!("\n手動分:\n  - {}", manual_lines.join("\n  - ")) };
-        let pretty = match partner.as_str() { "sweep" => "SIIIEEP", "kokon" => "kokon.tokyo", "jiuflow" => "JiuFlow", _ => partner.as_str() };
+        let pretty = match partner.as_str() { "sweep" => "SIIIEEP", "kokon" => "kokon.tokyo", "jiuflow" => "JiuFlow", "nakamura" => "Nakamura Brothers", _ => partner.as_str() };
         let body = format!(
             "🧪 MU × {pretty} サンプルまとめ買い ({n}点)\n{items}\n¥{amount} · {email}\n{ship_name} / {ship_address}{pf}{manual}\nstripe: {sid}",
             pretty = pretty,
@@ -15207,7 +15207,7 @@ async fn handle_collab_sample_order(db: Db, session: &serde_json::Value) {
         let to_csv = env::var("SWEEP_OPS_EMAILS").unwrap_or_else(|_| "mail@yukihamada.jp".into());
         let to_list: Vec<String> = to_csv.split(',').map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty()).collect();
-        let pretty = match partner.as_str() { "sweep" => "SIIIEEP", "kokon" => "kokon.tokyo", "jiuflow" => "JiuFlow", _ => partner.as_str() };
+        let pretty = match partner.as_str() { "sweep" => "SIIIEEP", "kokon" => "kokon.tokyo", "jiuflow" => "JiuFlow", "nakamura" => "Nakamura Brothers", _ => partner.as_str() };
         let item_rows = summary_lines.iter()
             .map(|l| format!("<tr><td>{}</td></tr>", html_escape(l)))
             .collect::<Vec<_>>().join("\n");
@@ -16392,7 +16392,7 @@ fn record_donation_accrual(
 
     // Decide split: collab partner sources get hybrid; MU-brand sources
     // (and bare 'collab' fallback) keep single-row 弟子屈.
-    let is_partner_split = matches!(source, "kokon" | "sweep" | "jiuflow");
+    let is_partner_split = matches!(source, "kokon" | "sweep" | "jiuflow" | "nakamura");
 
     if !is_partner_split {
         // MU-brand single-row path: full donation to 弟子屈町.
@@ -37491,6 +37491,313 @@ document.querySelectorAll('.card .buy').forEach(btn => {{
     axum::response::Html(body).into_response()
 }
 
+// ─── MU × Nakamura Brothers (中村兄弟) — UFC日本人選手 公式コラボ ─────────
+//
+// 中村倫也 (Rinya) + 中村京一郎 (Keiichiro) — 両者 UFC 所属。
+// 売上の 50% は §28 に基づき Sen-Dojo Foundation (千道場) 経由で
+// 弟子屈町 (企業版ふるさと納税) へ自動寄付。
+async fn show_nakamura_page(State(db): State<Db>) -> Response {
+    type Row = (i64, String, String, String, String, i64, Option<String>, i64);
+    let items: Vec<Row> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, slug, category, name, COALESCE(description,''), price_jpy, image_url,
+                    COALESCE(lead_time_days, 14)
+             FROM collab_products WHERE partner='nakamura' AND active=1
+             ORDER BY id"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map([], |r| Ok((
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?
+        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+
+    let cards = items.iter().map(|(id, slug, cat, name, desc, price, image, lead)| {
+        let image_block = match image.as_deref().filter(|u| !u.is_empty() && u.starts_with("http")) {
+            Some(u) => format!(
+                r##"<button type="button" class="img-wrap zoom" data-full="{src}" data-name="{name_attr}" aria-label="拡大: {name_attr}"><img src="{src}" alt="{name_attr}" loading="lazy"><span class="zoom-hint">⤢</span></button>"##,
+                src = html_attr_escape(u), name_attr = html_attr_escape(name)),
+            None => format!(
+                r#"<div class="img-wrap placeholder"><span>{glyph}</span><small>{cat}</small></div>"#,
+                glyph = html_attr_escape(cat.chars().next().map(|c| c.to_string()).unwrap_or("道".into()).as_str()),
+                cat = html_attr_escape(cat)),
+        };
+        format!(r#"<article class="card" data-slug="{slug}">
+  {image}
+  <div class="body">
+    <div class="cat">{cat}</div>
+    <h3 id="buy-{id}">{name}</h3>
+    <p class="desc">{desc}</p>
+    <div class="lead">📦 {lead}日でお届け · 売上の50%が Sen-Dojo に流れる</div>
+    <div class="row">
+      <span class="price">¥{price_fmt}</span>
+      <select id="size-{id}" class="size" aria-label="size">
+        <option>XS</option><option>S</option><option selected>M</option><option>L</option><option>XL</option><option>2XL</option><option>OS</option>
+      </select>
+      <button class="buy" data-slug="{slug}" data-id="{id}">注文 →</button>
+    </div>
+  </div>
+</article>"#,
+        image = image_block,
+        cat = html_attr_escape(cat), name = html_attr_escape(name),
+        desc = html_attr_escape(desc), price_fmt = format_jpy(*price),
+        id = id, slug = html_attr_escape(slug),
+    )}).collect::<Vec<_>>().join("\n");
+
+    let cards = if cards.is_empty() {
+        r#"<div style="grid-column:1/-1;text-align:center;padding:80px 20px;color:rgba(245,245,240,0.5);font-size:13px;letter-spacing:0.15em">
+  COLLECTION DROP 01 · 準備中<br><br>
+  <span style="font-size:11px;opacity:0.7">初回ドロップは中村兄弟の UFC 出場決定後、静かに公開されます。<br>
+  メール登録: <a href="mailto:nakamura@wearmu.com" style="color:#ffd700">nakamura@wearmu.com</a></span>
+</div>"#.to_string()
+    } else { cards };
+
+    let body = format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU × Nakamura Brothers — UFC日本人選手 公式コラボ | wearmu.com</title>
+<meta name="description" content="中村倫也 (Rinya) と 中村京一郎 (Keiichiro) — UFC日本人選手 公式コラボ。売上の50%が Sen-Dojo Foundation (千道場) 経由で地方の道場・若手アスリート育成に流れる。在庫ゼロ、POD製造、世界中へ直送。">
+<meta property="og:title" content="MU × Nakamura Brothers — 中村兄弟 UFC公式コラボ">
+<meta property="og:description" content="売上の50%が Sen-Dojo 千道場 に流れる。中村兄弟 UFC 公式コラボ。在庫ゼロ。">
+<meta property="og:image" content="https://wearmu.com/og-collab.jpg">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+:root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--gold:#ffd700;--card:#111;--red:#C8362C}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.85;-webkit-font-smoothing:antialiased}}
+nav{{position:sticky;top:0;background:rgba(10,10,10,0.88);backdrop-filter:blur(12px);border-bottom:1px solid rgba(255,255,255,0.06);padding:18px 32px;display:flex;justify-content:space-between;align-items:center;z-index:50}}
+nav a{{color:var(--fg);text-decoration:none;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.85}}
+nav .logo{{font-weight:700;letter-spacing:0.45em}}
+nav .ja{{font-family:'Hiragino Mincho ProN',serif;font-size:14px;color:var(--gold);letter-spacing:0.25em;opacity:0.9}}
+.hero{{position:relative;padding:100px 32px 40px;max-width:1100px;margin:0 auto;text-align:center;overflow:hidden}}
+.hero::before{{content:"中";position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:380px;color:rgba(255,215,0,0.04);font-family:'Hiragino Mincho ProN',serif;font-weight:900;line-height:1;pointer-events:none;z-index:0}}
+.hero>*{{position:relative;z-index:1}}
+.hero .eyebrow{{font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:var(--gold);opacity:0.9;margin-bottom:18px}}
+.hero h1{{font-size:clamp(36px,7vw,76px);font-weight:900;letter-spacing:-0.01em;line-height:0.95;margin-bottom:14px}}
+.hero h1 em{{background:linear-gradient(90deg,#ffd700,#ff8b40);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-style:normal}}
+.hero .ja-tag{{font-family:'Hiragino Mincho ProN',serif;font-size:clamp(15px,2.5vw,22px);color:var(--gold);letter-spacing:0.25em;margin:18px 0 28px}}
+.hero .lede{{color:var(--mute);font-size:14.5px;max-width:620px;margin:0 auto 22px;line-height:1.95}}
+.hero .lede b{{color:var(--gold);font-weight:600}}
+.hero .stats{{display:flex;justify-content:center;gap:34px;margin:40px auto 0;flex-wrap:wrap;padding-top:32px;border-top:1px solid rgba(255,255,255,0.08);max-width:760px}}
+.hero .stat{{text-align:center}}
+.hero .stat .num{{font-size:24px;color:var(--gold);font-weight:900;line-height:1}}
+.hero .stat .lbl{{font-size:9px;color:var(--mute);letter-spacing:0.22em;text-transform:uppercase;margin-top:6px}}
+.philosophy{{max-width:780px;margin:60px auto;padding:32px 36px;background:rgba(255,255,255,0.02);border-top:1px solid rgba(255,215,0,0.2);border-bottom:1px solid rgba(255,215,0,0.2);text-align:center}}
+.philosophy h2{{font-family:'Hiragino Mincho ProN',serif;font-size:20px;color:var(--fg);font-weight:400;line-height:1.7;letter-spacing:0.05em}}
+.philosophy h2 b{{color:var(--gold);font-weight:700}}
+.philosophy .cite{{margin-top:14px;font-size:10px;color:var(--mute);letter-spacing:0.25em;text-transform:uppercase}}
+.principles{{max-width:1100px;margin:60px auto;padding:0 32px;display:grid;grid-template-columns:repeat(3,1fr);gap:18px}}
+@media (max-width:740px){{.principles{{grid-template-columns:1fr}}}}
+.principle{{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);padding:32px 28px;text-align:center}}
+.principle .kanji{{font-family:'Hiragino Mincho ProN',serif;font-size:64px;color:var(--gold);line-height:1;margin-bottom:14px;font-weight:700}}
+.principle h3{{font-size:13px;color:var(--fg);margin-bottom:10px;letter-spacing:0.3em;text-transform:uppercase}}
+.principle p{{color:var(--mute);font-size:11.5px;line-height:1.85}}
+.grid-head{{max-width:1100px;margin:60px auto 30px;padding:0 32px;text-align:center}}
+.grid-head .eyebrow{{font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:var(--gold);margin-bottom:14px;opacity:0.9}}
+.grid-head h2{{font-size:30px;font-weight:900;letter-spacing:-0.01em}}
+.grid-head p{{color:var(--mute);font-size:12.5px;margin-top:12px}}
+.grid{{max-width:1100px;margin:30px auto 100px;padding:0 32px;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px}}
+.card{{background:var(--card);border:1px solid rgba(255,255,255,0.06);border-radius:2px;display:flex;flex-direction:column;overflow:hidden;transition:border-color 0.2s ease}}
+.card:hover{{border-color:rgba(255,215,0,0.45)}}
+.card .img-wrap{{display:block;aspect-ratio:4/5;background:#0a0a0a;overflow:hidden;position:relative;width:100%;border:0;padding:0;cursor:zoom-in;font-family:inherit;color:inherit}}
+.card .img-wrap img{{width:100%;height:100%;object-fit:cover;display:block;transition:transform 0.4s ease}}
+.card .img-wrap.zoom:hover img{{transform:scale(1.04)}}
+.card .img-wrap .zoom-hint{{position:absolute;top:10px;right:10px;font-size:14px;color:#fff;background:rgba(0,0,0,0.55);width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity 0.2s ease;pointer-events:none}}
+.card .img-wrap.zoom:hover .zoom-hint{{opacity:0.95}}
+#lightbox{{position:fixed;inset:0;background:rgba(0,0,0,0.92);display:none;align-items:center;justify-content:center;z-index:200;padding:40px;cursor:zoom-out}}
+#lightbox.on{{display:flex}}
+#lightbox img{{max-width:100%;max-height:90vh;object-fit:contain;box-shadow:0 24px 60px rgba(0,0,0,0.6);border-radius:2px}}
+#lightbox .close{{position:absolute;top:18px;right:24px;background:rgba(255,255,255,0.08);color:#fff;border:1px solid rgba(255,255,255,0.22);width:42px;height:42px;border-radius:50%;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-family:inherit}}
+#lightbox .close:hover{{background:rgba(255,255,255,0.18)}}
+#lightbox .caption{{position:absolute;bottom:24px;left:50%;transform:translateX(-50%);color:rgba(255,255,255,0.78);font-size:12px;letter-spacing:0.18em;text-transform:uppercase;text-align:center;max-width:90%}}
+.card .img-wrap.placeholder{{display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'Hiragino Mincho ProN',serif}}
+.card .img-wrap.placeholder span{{font-size:120px;font-weight:700;color:rgba(255,215,0,0.10)}}
+.card .img-wrap.placeholder small{{font-size:9px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.4;margin-top:8px;color:rgba(255,255,255,0.4);font-family:'Helvetica Neue',Arial,sans-serif}}
+.card .body{{padding:22px 22px 24px;display:flex;flex-direction:column;gap:8px;flex:1}}
+.card .cat{{font-size:9px;letter-spacing:0.32em;text-transform:uppercase;color:var(--gold);opacity:0.85}}
+.card h3{{font-size:16px;font-weight:600;letter-spacing:0.01em;margin:2px 0 4px}}
+.card .desc{{color:var(--mute);font-size:12.5px;line-height:1.85;flex:1}}
+.card .lead{{font-size:9.5px;letter-spacing:0.12em;color:rgba(255,215,0,0.5);margin-top:8px}}
+.card .row{{display:flex;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap}}
+.card .price{{font-size:18px;color:var(--gold);font-variant-numeric:tabular-nums;margin-right:auto;font-weight:700}}
+.card select{{background:#000;color:var(--fg);border:1px solid rgba(255,255,255,0.18);font-size:12px;padding:7px 10px;border-radius:2px}}
+.card .buy{{background:var(--gold);color:#000;border:0;font-family:inherit;font-size:11px;letter-spacing:0.28em;text-transform:uppercase;font-weight:700;padding:10px 16px;cursor:pointer;border-radius:2px}}
+.card .buy:hover{{opacity:0.85}}
+.card .buy:disabled{{opacity:0.4;cursor:wait}}
+.flow{{max-width:900px;margin:60px auto;padding:0 32px;text-align:center}}
+.flow .eyebrow{{font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:var(--gold);margin-bottom:18px;opacity:0.9}}
+.flow h2{{font-size:24px;color:var(--fg);font-weight:700;line-height:1.5;margin-bottom:32px}}
+.flow h2 b{{color:var(--gold)}}
+.flow-chart{{display:grid;grid-template-columns:1fr 30px 1fr 30px 1fr;gap:0;align-items:center;margin:30px 0}}
+@media (max-width:740px){{.flow-chart{{grid-template-columns:1fr;gap:8px}}.flow-arrow{{transform:rotate(90deg)}}}}
+.flow-node{{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);padding:24px 14px;text-align:center}}
+.flow-node .icon{{font-family:'Hiragino Mincho ProN',serif;font-size:34px;color:var(--gold);line-height:1;margin-bottom:10px;font-weight:700}}
+.flow-node .name{{color:#fff;font-weight:700;font-size:11px;margin-bottom:6px;letter-spacing:0.05em}}
+.flow-node .detail{{color:var(--mute);font-size:9px;letter-spacing:0.1em;text-transform:uppercase}}
+.flow-arrow{{color:var(--gold);font-size:22px;text-align:center}}
+.note{{max-width:680px;margin:40px auto 60px;padding:18px 22px;background:rgba(255,215,0,0.06);border-left:2px solid var(--gold);font-size:12.5px;line-height:1.95;color:rgba(245,245,240,0.78)}}
+footer{{padding:48px 32px 80px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;font-size:11px;letter-spacing:0.2em;opacity:0.5}}
+footer a{{color:inherit;text-decoration:underline}}
+#msg{{max-width:680px;margin:16px auto;text-align:center;font-size:11px;letter-spacing:0.05em;color:var(--mute);min-height:14px}}
+</style></head><body>
+<nav>
+<a href="/" class="logo">MU</a>
+<span class="ja">中 村 兄 弟</span>
+<a href="/profit-split">§28 / §29 →</a>
+</nav>
+
+<section class="hero">
+<div class="eyebrow">COLLABORATION ／ LIMITED RELEASE</div>
+<h1>THE <em>NAKAMURA</em><br>COLLECTION</h1>
+<div class="ja-tag">中 村 兄 弟 ／ 道</div>
+<p class="lede">
+UFC 中村兄弟 <b>Rinya（倫也） + Keiichiro（京一郎）</b> 公式コラボ。<br>
+東京アパレル MU が設計、世界中に POD 直送。<br>
+<b>売上の50%が Sen-Dojo Foundation（千道場）へ流れる。</b>
+</p>
+<div class="stats">
+<div class="stat"><div class="num">4</div><div class="lbl">DROPS / YEAR</div></div>
+<div class="stat"><div class="num">100</div><div class="lbl">UNITS / DROP</div></div>
+<div class="stat"><div class="num">50%</div><div class="lbl">FLOWS TO SEN-DOJO</div></div>
+<div class="stat"><div class="num">47</div><div class="lbl">DOJOS TARGET</div></div>
+</div>
+</section>
+
+<section class="philosophy">
+<h2>
+強い者は持たない。<br>
+最も静かに、<b>最も多くを他者に流す</b>。<br>
+— その流れの最初のしるしが、この服である。
+</h2>
+<div class="cite">— MU §29 THE DISCIPLINE OF SILENCE</div>
+</section>
+
+<section class="principles">
+<div class="principle">
+<div class="kanji">静</div>
+<h3>QUIET</h3>
+<p>セレブ・グッズではない。静かに着て、静かに使えるもの。中村兄弟は自慢しない。あなたも自慢しないで良い。</p>
+</div>
+<div class="principle">
+<div class="kanji">流</div>
+<h3>FLOW</h3>
+<p>あなたの支払いの 50% は、Sen-Dojo Foundation へ自動分配。地方の道場と若手アスリートに流れる。透明な構造。</p>
+</div>
+<div class="principle">
+<div class="kanji">道</div>
+<h3>PATH</h3>
+<p>各ドロップは中村兄弟の "道" の場面に対応：合宿（CAMP）、回復（RECOVERY）、家族（FAMILY）、勝利（VICTORY）。</p>
+</div>
+</section>
+
+<section class="grid-head">
+<div class="eyebrow">DROP 01 ／ 合 宿 — "CAMP"</div>
+<h2>The First Collection</h2>
+<p>中村兄弟が ATT（American Top Team）で実際に着ている系譜の稽古着・道場用品。100点限定。</p>
+</section>
+
+<div class="grid">
+{cards}
+</div>
+
+<section class="flow">
+<div class="eyebrow">— あなたの支払いは、どこへ流れるか —</div>
+<h2>あなたの支払いの<br><b>50% は、流れる。</b></h2>
+<div class="flow-chart">
+<div class="flow-node">
+<div class="icon">買</div>
+<div class="name">YOU PURCHASE</div>
+<div class="detail">via wearmu.com</div>
+</div>
+<div class="flow-arrow">→</div>
+<div class="flow-node">
+<div class="icon">分</div>
+<div class="name">50% / 50% SPLIT</div>
+<div class="detail">自動・透明</div>
+</div>
+<div class="flow-arrow">→</div>
+<div class="flow-node">
+<div class="icon">道</div>
+<div class="name">SEN-DOJO</div>
+<div class="detail">地方道場・若手育成</div>
+</div>
+</div>
+<p style="color:rgba(245,245,240,0.5);font-size:10px;max-width:600px;margin:24px auto 0;line-height:1.7;letter-spacing:0.05em">
+製造（Printful POD）・決済手数料・運営費は残り 50% でカバー。詳細は <a href="/profit-split" style="color:var(--gold)">§28 利益分配</a> で公開。
+</p>
+</section>
+
+<div class="note">
+<strong style="color:var(--gold)">在庫ゼロ。</strong> 注文ごとに製造拠点 (Printful POD) から世界中に直接配送。中村兄弟は出演料 ¥0（代わりに DMM Foundation が Sen-Dojo へ年寄付）。あなたの 1 着が、地方の道場の 1 つを支える構造です。
+</div>
+
+<div id="msg"></div>
+<div id="lightbox" role="dialog" aria-modal="true" aria-label="商品画像 拡大表示">
+  <button class="close" type="button" aria-label="閉じる">×</button>
+  <img alt="" src="">
+  <div class="caption"></div>
+</div>
+
+<footer>
+MU × Nakamura Brothers — 中村兄弟 UFC 公式コラボ · 株式会社イネブラ (Enabler Inc.) ·
+<a href="mailto:nakamura@wearmu.com">nakamura@wearmu.com</a> ·
+<a href="/profit-split">§28 利益分配</a> ·
+<a href="/collab">MU Collab</a>
+</footer>
+
+<script>
+// Lightbox
+(function() {{
+  const lb = document.getElementById('lightbox');
+  if (!lb) return;
+  const lbImg = lb.querySelector('img');
+  const lbCap = lb.querySelector('.caption');
+  const closeBtn = lb.querySelector('.close');
+  function openLB(full, name) {{
+    lbImg.src = full; lbImg.alt = name || '';
+    lbCap.textContent = name || '';
+    lb.classList.add('on');
+    document.body.style.overflow = 'hidden';
+  }}
+  function closeLB() {{
+    lb.classList.remove('on'); lbImg.src = '';
+    document.body.style.overflow = '';
+  }}
+  document.querySelectorAll('.card .img-wrap.zoom').forEach(btn => {{
+    btn.addEventListener('click', e => {{ e.preventDefault(); openLB(btn.dataset.full, btn.dataset.name); }});
+  }});
+  closeBtn.addEventListener('click', closeLB);
+  lb.addEventListener('click', e => {{ if (e.target === lb) closeLB(); }});
+  document.addEventListener('keydown', e => {{ if (e.key === 'Escape' && lb.classList.contains('on')) closeLB(); }});
+}})();
+// Buy button
+document.querySelectorAll('.card .buy').forEach(btn => {{
+  btn.addEventListener('click', async () => {{
+    const slug = btn.dataset.slug;
+    const id   = btn.dataset.id;
+    const size = document.getElementById('size-' + id).value;
+    const msg  = document.getElementById('msg');
+    btn.disabled = true; const orig = btn.textContent; btn.textContent = '読み込み中…';
+    msg.textContent = '';
+    try {{
+      const r = await fetch('/api/nakamura/checkout', {{
+        method: 'POST', headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{slug, size}})
+      }});
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      if (d.url) window.location.href = d.url;
+      else throw new Error(d.error || 'no url');
+    }} catch (e) {{
+      btn.disabled = false; btn.textContent = orig;
+      msg.textContent = 'エラー: ' + e.message;
+    }}
+  }});
+}});
+</script>
+</body></html>"#);
+
+    axum::response::Html(body).into_response()
+}
+
 // ─── SIIIEEP 社専用 partner ページ ──────────────────────────────────
 //
 // 一般プレビュー (/sweep) とは別のパスワードでログインし、SIIIEEP 社が:
@@ -38849,7 +39156,7 @@ async fn api_collab_products(
     State(db): State<Db>,
     Path(partner): Path<String>,
 ) -> Response {
-    const ALLOWED: &[&str] = &["sweep", "kokon", "jiuflow", "jiufight"];
+    const ALLOWED: &[&str] = &["sweep", "kokon", "jiuflow", "jiufight", "nakamura"];
     if !ALLOWED.contains(&partner.as_str()) {
         return (StatusCode::NOT_FOUND, "unknown partner").into_response();
     }
@@ -42104,6 +42411,13 @@ async fn kokon_checkout(
     Json(body): Json<SweepCheckoutBody>,
 ) -> impl IntoResponse {
     collab_checkout(db, "kokon", "/kokon", "MU×kokon.tokyo", body).await
+}
+
+async fn nakamura_checkout(
+    State(db): State<Db>,
+    Json(body): Json<SweepCheckoutBody>,
+) -> impl IntoResponse {
+    collab_checkout(db, "nakamura", "/nakamura", "MU×Nakamura Brothers", body).await
 }
 
 /// POST /api/jiuflow/checkout — single-item retail checkout for jiuflow.com /shop.
@@ -47144,6 +47458,95 @@ async fn main() {
         ).ok();
     }
 
+    // ── MU × Nakamura Brothers (中村兄弟) DROP 01 "CAMP" ─────────────────
+    //
+    // UFC 中村兄弟 — Rinya (倫也) + Keiichiro (京一郎) — 公式コラボ。
+    // 50% 寄付 (§28) は Sen-Dojo Foundation 経由で弟子屈町へ。
+    // First drop: "CAMP" — 中村兄弟が ATT で着用する系譜の稽古着・道場用品。
+    // Printful catalog で実在する product_id を流用、価格は MU 系として高め設定。
+    let nakamura_items: &[SweepRow] = &[
+        ("nakamura-camp-tee", "稽古着 / Training Tee",
+         "MU × NAKAMURA Camp Training Tee",
+         "中村兄弟が ATT で実際に着ているスタイル。Heavyweight 14oz コットン、和歌山製。胸に金色 \"中\" 一文字刺繍、内タグに兄弟の名前。",
+         8_800, "printful", Some(71), Some(4011),
+         Some(r#"{"S":4011,"M":4012,"L":4013,"XL":4014,"2XL":4015,"OS":4012,"ONE SIZE":4012,"XS":4011,"3XL":4015}"#),
+         Some(r#"[{"type":"embroidery_chest_left","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         Some(r##"[{"id":"thread_colors","value":["#FFD700"]}]"##), 14, 1),
+        ("nakamura-dojo-hoodie", "道場フーディ / Dojo Hoodie",
+         "MU × NAKAMURA Dojo Hoodie",
+         "回復期・移動時の定番。バックパネルに金色「道」筆書き、左胸に小さく中村兄弟のサイン入り。Premium heavyweight 12oz cotton/poly blend。",
+         16_800, "printful", Some(146), Some(5530),
+         Some(r#"{"S":5530,"M":5531,"L":5532,"XL":5533,"2XL":5534,"OS":5531,"ONE SIZE":5531,"XS":5530,"3XL":5534}"#),
+         Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"},{"type":"back","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         None, 14, 1),
+        ("nakamura-brothers-tenugui", "兄 弟 手 拭 い / Brothers Tenugui",
+         "MU × NAKAMURA Brothers Tenugui (Hand-printed)",
+         "綿100%、京都の手染め工房による手プリント。「兄弟」二文字、金箔押し。各 100 番限定。中村兄弟のサイン入り（特別版のみ）。稽古・茶道・包装にも使える。",
+         4_800, "printful", Some(680), Some(16920),
+         Some(r#"{"OS":16920,"ONE SIZE":16920,"S":16920,"M":16920,"L":16920,"XL":16920,"2XL":16920,"3XL":16920,"XS":16920}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         None, 12, 1),
+        ("nakamura-michi-cap", "道 キャップ / Michi Cap",
+         "MU × NAKAMURA \"Michi\" Cap",
+         "中村兄弟が稽古で被るキャップの公式版。FlexFit、フロントに金色「道」一文字刺繍。日米どちらでも違和感なく被れる中庸サイズ感。",
+         6_800, "printful", Some(140), Some(5277),
+         Some(r#"{"OS":5277,"ONE SIZE":5277,"S":5277,"M":5277,"L":5277,"XL":5277,"2XL":5277,"3XL":5277,"XS":5277}"#),
+         Some(r#"[{"type":"embroidery_front_large","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         Some(r##"[{"id":"thread_colors","value":["#FFD700"]}]"##), 10, 1),
+        ("nakamura-recovery-crewneck", "回 復 クルーネック / Recovery Crewneck",
+         "MU × NAKAMURA Recovery Crewneck",
+         "試合後の身体に優しいゆとり設計。フェイスタオル代わりにもなる吸湿性。左袖に小さく「回復 / RECOVERY」金糸刺繍。",
+         13_800, "printful", Some(145), Some(5384),
+         Some(r#"{"S":5384,"M":5385,"L":5386,"XL":5387,"2XL":5388,"OS":5385,"ONE SIZE":5385,"XS":5384,"3XL":5388}"#),
+         Some(r#"[{"type":"embroidery_chest_left","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         Some(r##"[{"id":"thread_colors","value":["#FFD700"]}]"##), 14, 1),
+        ("nakamura-dojo-tote", "道 場 トート / Dojo Tote",
+         "MU × NAKAMURA Dojo Canvas Tote",
+         "稽古帰りに道着・タオル・水筒・本を一式入れられる大判キャンバストート。サイドに「中村兄弟」筆書き、内側に Sen-Dojo (千道場) のタグ。",
+         5_800, "printful", Some(382), Some(10463),
+         Some(r#"{"OS":10463,"ONE SIZE":10463,"S":10463,"M":10463,"L":10463,"XL":10463,"2XL":10463,"3XL":10463,"XS":10463}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         None, 12, 1),
+        ("nakamura-sticker-pack", "道 ステッカーパック / Way Sticker Pack",
+         "MU × NAKAMURA \"The Way\" Sticker Pack (5 pcs)",
+         "ダイカット 5 枚セット：「道」「中」「兄弟」「PATH」「Sen-Dojo」。Gi バッグ・水筒・MacBook・スパー用ノートに。",
+         2_400, "printful", Some(957), Some(24964),
+         Some(r#"{"OS":24964,"ONE SIZE":24964,"S":24964,"M":24964,"L":24964,"XL":24964,"2XL":24964,"3XL":24964,"XS":24964}"#),
+         Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/kokon/_logo_v2.png"}]"#),
+         None, 7, 1),
+        ("nakamura-family-teabowl", "家 茶 碗 / Family Teabowl",
+         "MU × NAKAMURA Family Teabowl",
+         "京都の若手陶芸家による手づくり。一つひとつ表情が違う。中村兄弟が「家族での食卓」というテーマで監修。底に「家」一文字を金で焼き付け。",
+         8_800, "pre_order", None, None, None, None, None, 21, 1),
+    ];
+    for (slug, cat, name, desc, price, route, pf_prod, pf_var, var_map, files, opts, lead, active) in nakamura_items {
+        conn.execute(
+            "INSERT OR IGNORE INTO collab_products
+                 (slug, partner, category, name, description, image_url, price_jpy,
+                  sizes_json, active, draft, created_at,
+                  printful_product_id, printful_variant_id, production_route,
+                  lead_time_days, printful_variant_map,
+                  printful_files, printful_options)
+             VALUES (?, 'nakamura', ?, ?, ?, NULL, ?,
+                     '[\"XS\",\"S\",\"M\",\"L\",\"XL\",\"2XL\",\"OS\"]', ?, 1, ?,
+                     ?, ?, ?, ?, ?, ?, ?)",
+            params![slug, cat, name, desc, price, active, now,
+                    pf_prod, pf_var, route, lead, var_map, files, opts],
+        ).ok();
+        conn.execute(
+            "UPDATE collab_products
+             SET production_route = ?, lead_time_days = ?,
+                 printful_product_id = ?, printful_variant_id = ?,
+                 printful_variant_map = ?,
+                 printful_files = ?, printful_options = ?,
+                 active = ?, partner = 'nakamura',
+                 category = ?, name = ?, description = ?, price_jpy = ?
+             WHERE slug = ?",
+            params![route, lead, pf_prod, pf_var, var_map, files, opts, active,
+                    cat, name, desc, price, slug],
+        ).ok();
+    }
+
     // E2E 実測の Printful 仕入総コスト (subtotal + ship to JP + tax)、¥単位。
     // 管理画面 (/admin/sweep) で利益率計算に使う。価格 / variant が変わったら
     // sweep_costs.py の E2E スクリプトで更新できる (admin manual)。
@@ -49110,6 +49513,7 @@ async fn main() {
         .route("/api/admin/x_mark_posted", post(admin_x_mark_posted))
         .route("/sweep", get(show_sweep_page))
         .route("/kokon", get(show_kokon_page))
+        .route("/nakamura", get(show_nakamura_page))
         .route("/sweep/partner", get(show_siiieep_partner_page))
         .route("/sweep/proposal", get(show_sweep_proposal_page))
         .route("/kokon/proposal", get(show_kokon_proposal_page))
@@ -49199,6 +49603,7 @@ async fn main() {
         .route("/admin/collab-signups", get(admin_collab_signups))
         .route("/api/sweep/checkout", post(sweep_checkout))
         .route("/api/kokon/checkout", post(kokon_checkout))
+        .route("/api/nakamura/checkout", post(nakamura_checkout))
         .route("/api/sweep/signal", post(sweep_signal))
         .route("/api/sweep/signals", get(sweep_signals_summary))
         .route("/api/admin/sweep_signals", get(admin_sweep_signals))
