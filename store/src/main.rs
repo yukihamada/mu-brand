@@ -953,6 +953,65 @@ const SUZURI_CREATOR_MARGIN_JPY: i64 = 1_400;
 /// rendered with large transparent margins (most of our Gemini-generated drops)
 /// end up printed much smaller than the available area. Returns the cropped
 /// PNG bytes, or the original bytes if the input isn't RGBA / can't be parsed.
+/// Pad an RGBA PNG with transparent pixels so the resulting aspect ratio
+/// matches SUZURI's Heavy Tee print bed (~30cm × 36cm = 5:6 portrait).
+/// SUZURI uses contain-fit, so a square design only fills the width of
+/// the print bed; padding to the bed's aspect maximizes the print size.
+/// Used for jiufight + all SUZURI publishes to make prints larger.
+fn pad_to_suzuri_aspect(png_bytes: &[u8]) -> Result<Vec<u8>, String> {
+    // Target ratio width / height = 5 / 6 (Heavy Tee #148 print area).
+    let target_w = 5u32;
+    let target_h = 6u32;
+
+    let decoder = png::Decoder::new(std::io::Cursor::new(png_bytes));
+    let mut reader = decoder.read_info().map_err(|e| format!("png decode: {}", e))?;
+    let info = reader.info().clone();
+    if info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
+        return Ok(png_bytes.to_vec());
+    }
+    let (w, h) = (info.width, info.height);
+    // current ratio = w/h, target = 5/6
+    // If w * 6 > h * 5 → too wide → pad vertically (taller)
+    // If w * 6 < h * 5 → too tall → pad horizontally (wider)
+    let cur_wh = (w as u64) * (target_h as u64);
+    let tgt_wh = (h as u64) * (target_w as u64);
+    if cur_wh == tgt_wh { return Ok(png_bytes.to_vec()); }
+
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    reader.next_frame(&mut buf).map_err(|e| format!("png frame: {}", e))?;
+    let row_stride = (w as usize) * 4;
+
+    let (new_w, new_h) = if cur_wh > tgt_wh {
+        // too wide → make taller: new_h = w * 6 / 5
+        let nh = ((w as u64) * (target_h as u64) / (target_w as u64)) as u32;
+        (w, nh.max(h))
+    } else {
+        // too tall → make wider: new_w = h * 5 / 6
+        let nw = ((h as u64) * (target_w as u64) / (target_h as u64)) as u32;
+        (nw.max(w), h)
+    };
+
+    let pad_top  = ((new_h - h) / 2) as usize;
+    let pad_left = ((new_w - w) / 2) as usize;
+    let new_row_stride = (new_w as usize) * 4;
+    let mut out_rgba = vec![0u8; (new_w as usize) * (new_h as usize) * 4];
+    for y in 0..(h as usize) {
+        let src_off = y * row_stride;
+        let dst_off = (pad_top + y) * new_row_stride + pad_left * 4;
+        out_rgba[dst_off..dst_off + row_stride].copy_from_slice(&buf[src_off..src_off + row_stride]);
+    }
+
+    let mut encoded = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut encoded, new_w, new_h);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().map_err(|e| format!("png header: {}", e))?;
+        writer.write_image_data(&out_rgba).map_err(|e| format!("png write: {}", e))?;
+    }
+    Ok(encoded)
+}
+
 fn crop_transparent_borders(png_bytes: &[u8]) -> Result<Vec<u8>, String> {
     let decoder = png::Decoder::new(std::io::Cursor::new(png_bytes));
     let mut reader = decoder.read_info().map_err(|e| format!("png decode: {}", e))?;
@@ -1039,8 +1098,14 @@ async fn suzuri_publish_drop(
         Ok(b) => b,
         Err(e) => { eprintln!("[suzuri] crop failed, using original: {}", e); raw.to_vec() }
     };
+    // Pad to SUZURI Heavy Tee aspect ratio (5:6 portrait) so contain-fit
+    // renders the print at full bed size instead of leaving margins.
+    let padded = match pad_to_suzuri_aspect(&cropped) {
+        Ok(b) => b,
+        Err(e) => { eprintln!("[suzuri] pad failed, using cropped: {}", e); cropped.clone() }
+    };
     use base64::Engine;
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&cropped);
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&padded);
     let body = serde_json::json!({
         "texture": format!("data:image/png;base64,{}", b64),
         "title": name,
@@ -6327,6 +6392,81 @@ fn product_variants_matrix() -> serde_json::Value {
 /// data designs only render on tee/hoodie/longsleeve).
 async fn product_variants_api() -> Response {
     Json(product_variants_matrix()).into_response()
+}
+
+/// POST /api/admin/vault/hint?token=…&kind=tomorrow|founder
+/// Body: {"value": "…"}
+/// Updates the cv_config key powering the holder-only "明日の予告" / "Founder
+/// note" sections in /api/vault/dashboard.
+#[derive(serde::Deserialize)]
+struct VaultHintBody { value: String }
+
+async fn admin_vault_hint(
+    State(db): State<Db>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<VaultHintBody>,
+) -> Response {
+    let token = q.get("token").cloned().unwrap_or_default();
+    if !admin_auth(&token) {
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    }
+    let kind = q.get("kind").map(String::as_str).unwrap_or("");
+    let key = match kind {
+        "tomorrow" => "vault_tomorrow_hint",
+        "founder"  => "vault_founder_note",
+        _ => return (StatusCode::BAD_REQUEST, "kind=tomorrow|founder").into_response(),
+    };
+    {
+        let conn = db.lock().unwrap();
+        cv_set(&conn, key, body.value.trim(), "admin_vault_hint");
+    }
+    Json(serde_json::json!({"ok": true, "key": key, "len": body.value.len()})).into_response()
+}
+
+/// POST /api/admin/anchor/run?token=…&limit=N — anchors any active product
+/// missing a tee_anchors row. Designed for hourly cron; safe to hit manually.
+async fn admin_anchor_run(
+    State(db): State<Db>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let token = q.get("token").cloned().unwrap_or_default();
+    if !admin_auth(&token) {
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    }
+    let limit: i64 = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50);
+    let conn = db.lock().unwrap();
+    let ids: Vec<i64> = {
+        let mut stmt = match conn.prepare(
+            "SELECT p.id FROM products p
+             LEFT JOIN tee_anchors t ON t.product_id = p.id
+             WHERE p.active = 1 AND t.id IS NULL
+             ORDER BY p.id DESC LIMIT ?"
+        ) {
+            Ok(s) => s,
+            Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response(),
+        };
+        stmt.query_map(params![limit], |r| r.get::<_, i64>(0))
+            .map(|it| it.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default()
+    };
+    let mut newly = Vec::<serde_json::Value>::new();
+    let mut failed = Vec::<i64>::new();
+    for id in &ids {
+        match ensure_tee_anchor(&conn, *id) {
+            Some(sha) => newly.push(serde_json::json!({"id": id, "sha256": sha})),
+            None => failed.push(*id),
+        }
+    }
+    let total: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM tee_anchors", [], |r| r.get(0)
+    ).unwrap_or(0);
+    Json(serde_json::json!({
+        "ok": true,
+        "candidates_scanned": ids.len(),
+        "newly_anchored": newly,
+        "failed_ids": failed,
+        "total_anchors": total,
+    })).into_response()
 }
 
 /// Validate (variant_type, pod_provider) against the matrix and return the
@@ -51174,6 +51314,8 @@ async fn main() {
         .route("/anchor/:id", get(anchor_page))
         .route("/api/anchor/:id", get(anchor_api))
         .route("/api/product_variants", get(product_variants_api))
+        .route("/api/admin/vault/hint", post(admin_vault_hint))
+        .route("/api/admin/anchor/run", post(admin_anchor_run))
         .route("/api/vault/dashboard", get(vault_dashboard_api))
         .route("/api/admin/email/vault_waitlist_blast", post(admin_email_vault_waitlist_blast))
         .route("/api/admin/email/buyer_thanks_blast", post(admin_email_buyer_thanks_blast))
