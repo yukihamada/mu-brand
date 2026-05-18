@@ -51878,6 +51878,7 @@ async fn main() {
         .route("/admin/proposal/extras/retroactive-claim",      post(admin_extras_retroactive_claim))
         .route("/admin/proposal/extras/email-preview",          get(admin_extras_email_preview))
         .nest_service("/proposals", ServeDir::new("static/proposals"))
+        .nest_service("/will", ServeDir::new("static/will"))
         .route("/api/collab/account/delete", post(collab_account_delete))
         .route("/api/404/buy", post(not_found_buy))
         .route("/city", get(city_page))
