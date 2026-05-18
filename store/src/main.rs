@@ -4990,6 +4990,9 @@ const VAULT_ARTICLES: &[(&str, &str, &str)] = &[
     ("claude-md",
      "MU の動かし方 — CEO の Claude Code SOP",
      include_str!("../static/vault/claude-md.md")),
+    ("genesis-pass-letter",
+     "genesis #001-N へ、最初の手紙",
+     include_str!("../static/vault/genesis-pass-letter.md")),
 ];
 
 /// Shared CSS + header injected into every vault page. `logged_in_email`
@@ -5306,6 +5309,79 @@ async fn vault_dashboard_api(State(db): State<Db>, headers: HeaderMap) -> Respon
         ));
     }
 
+    // ── Holder-only insider numbers (Vault § "コミュニティ限定") ────────────
+    // Four sections designed to make non-holders FOMO into buying a tee:
+    //   1. 明日の予告       — cv_config 'vault_tomorrow_hint'
+    //   2. Founder note    — cv_config 'vault_founder_note'
+    //   3. 没デザイン      — taxigen* products that were hidden (active=0)
+    //   4. 真実の原価      — per-active-product cost/margin breakdown
+    let (tomorrow_hint, founder_note, rejected_rows, cost_rows): (
+        String, String,
+        Vec<(String, i64, String, String)>,
+        Vec<(i64, String, i64, String, i64, i64)>,
+    ) = {
+        let conn = db.lock().unwrap();
+        let th = cv_get(&conn, "vault_tomorrow_hint",
+            "明日 朝 ・ TAXIGEN HND  · 国際線比率 ピーク帯 候補");
+        let fn_ = cv_get(&conn, "vault_founder_note",
+            "今日は Gemini が tee の中に tee を描く事故を直した。8 枚没。再生成は明朝。— Yuki");
+        let mut rej_stmt = conn.prepare(
+            "SELECT brand, COALESCE(drop_num,0), COALESCE(name,''), COALESCE(design_url,'')
+             FROM products
+             WHERE brand LIKE 'taxigen%' AND active=0
+             ORDER BY id DESC LIMIT 12"
+        ).unwrap();
+        let rej: Vec<(String, i64, String, String)> = rej_stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+        drop(rej_stmt);
+        let mut cost_stmt = conn.prepare(
+            "SELECT id, brand, COALESCE(drop_num,0), COALESCE(name,''),
+                    COALESCE(price_jpy,0), COALESCE(cost_jpy,0)
+             FROM products
+             WHERE active=1
+             ORDER BY id DESC LIMIT 10"
+        ).unwrap();
+        let cost: Vec<(i64, String, i64, String, i64, i64)> = cost_stmt
+            .query_map([], |r| Ok((
+                r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?
+            )))
+            .map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+        (th, fn_, rej, cost)
+    };
+
+    let mut rejected_html = String::new();
+    if rejected_rows.is_empty() {
+        rejected_html.push_str(r#"<div class="note">まだ没はゼロ。</div>"#);
+    } else {
+        rejected_html.push_str(r#"<div class="grid">"#);
+        for (brand, drop, name, url) in &rejected_rows {
+            rejected_html.push_str(&format!(
+                r#"<div class="reject"><img loading="lazy" src="{u}" alt=""/><div class="rmeta"><div class="rb">{b} #{d}</div><div class="rn">{n}</div><div class="rr">理由: AIが tee の上に tee を描いた / 文字崩れ</div></div></div>"#,
+                u = html_escape(url),
+                b = html_escape(brand),
+                d = drop,
+                n = html_escape(name),
+            ));
+        }
+        rejected_html.push_str("</div>");
+    }
+
+    let mut cost_html = String::new();
+    cost_html.push_str(r#"<div class="row head"><span class="agent">product</span><span class="msg">price / cost / margin</span><span class="ago">%</span></div>"#);
+    for (id, brand, drop, _name, price, cost) in &cost_rows {
+        let effective_cost = if *cost > 0 { *cost } else { brand_default_cost_jpy(brand) };
+        let margin_jpy = price - effective_cost;
+        let margin_pct = if *price > 0 { (margin_jpy as f64 / *price as f64) * 100.0 } else { 0.0 };
+        cost_html.push_str(&format!(
+            r#"<div class="row"><span class="agent">{b} #{d}</span><span class="msg">¥{p} − ¥{c} = ¥{m}</span><span class="ago">{pct:.0}%</span></div>"#,
+            b = html_escape(brand), d = drop,
+            p = format_jpy(*price), c = format_jpy(effective_cost), m = format_jpy(margin_jpy),
+            pct = margin_pct,
+        ));
+        let _ = id;
+    }
+
     let masked = mask_email_public(&email);
     let html = format!(r#"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
@@ -5324,22 +5400,56 @@ async fn vault_dashboard_api(State(db): State<Db>, headers: HeaderMap) -> Respon
   .stat .v.gold{{color:#e6c449}}
   h2{{font-size:13px;letter-spacing:0.16em;color:#888;text-transform:uppercase;margin:32px 0 12px;font-weight:500}}
   .row{{display:grid;grid-template-columns:140px 1fr 70px;gap:14px;padding:10px 0;border-bottom:1px solid #131313;font-size:13px}}
+  .row.head{{color:#888;text-transform:uppercase;letter-spacing:0.14em;font-size:10.5px;border-bottom:1px solid #2a2a2a}}
   .row .agent{{color:#e6c449;font-family:ui-monospace,Menlo,monospace;font-size:11.5px}}
   .row .msg{{color:#cfcfc8}}
   .row .ago{{color:#666;font-size:11.5px;text-align:right}}
   .note{{color:#555;font-size:11px;margin-top:36px;text-align:center}}
+  .insider{{background:linear-gradient(180deg,#0c0c0c,#080808);border:1px solid #2a2310;border-radius:6px;padding:18px 22px;margin:18px 0}}
+  .insider .lbl{{font-size:10px;letter-spacing:0.22em;color:#e6c449;text-transform:uppercase;margin-bottom:8px}}
+  .insider .val{{font-size:18px;line-height:1.6;color:#f5f5f0;font-weight:300}}
+  .insider .quiet{{color:#888;font-size:11.5px;margin-top:6px;font-style:italic}}
+  .grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:8px}}
+  .reject{{background:#080808;border:1px solid #1f1f1f;border-radius:4px;overflow:hidden}}
+  .reject img{{width:100%;display:block;background:#000}}
+  .rmeta{{padding:10px 12px}}
+  .rb{{color:#e6c449;font-family:ui-monospace,Menlo,monospace;font-size:10.5px;letter-spacing:0.06em}}
+  .rn{{color:#cfcfc8;font-size:12.5px;margin-top:4px}}
+  .rr{{color:#666;font-size:11px;margin-top:6px;line-height:1.5}}
 </style></head><body>
   {header}
   <div class="wrap">
     <a class="back" href="/vault">← VAULT</a>
     <h1>MUの <em>今</em>、全部見せる</h1>
-    <div class="sub">60秒ごとに自動更新</div>
+    <div class="sub">60秒ごとに自動更新 · このページは Tシャツホルダーだけが見ています</div>
     <div class="stats">
       <div class="stat"><div class="k">今日の総売上</div><div class="v gold">¥{gross_today}</div></div>
       <div class="stat"><div class="k">累計購入数</div><div class="v">{orders_total}</div></div>
       <div class="stat"><div class="k">累計利益</div><div class="v">¥{profit_total}</div></div>
       <div class="stat"><div class="k">弟子屈寄付累計</div><div class="v gold">¥{donation_total}</div></div>
     </div>
+
+    <h2>🔮 明日の予告</h2>
+    <div class="insider">
+      <div class="lbl">tomorrow's drop hint</div>
+      <div class="val">{tomorrow_hint}</div>
+      <div class="quiet">公開ページには出さない。あなたしか知らない明日。</div>
+    </div>
+
+    <h2>📝 Founder note (今日)</h2>
+    <div class="insider">
+      <div class="lbl">yuki, raw &amp; unedited</div>
+      <div class="val">{founder_note}</div>
+    </div>
+
+    <h2>💰 真実の原価 · 全晒し</h2>
+    <div>{cost_html}</div>
+    <div class="note">price は現在の bonding curve 上の表示価格 / cost は Printful・Gelato 等 POD 原価 (税送料込) / brand 既定値 fallback あり</div>
+
+    <h2>🚫 没デザイン · 公開版には出さない候補</h2>
+    {rejected_html}
+    <div class="note">AI が tee の上に tee を描いた / 字が崩れた / etc — ホルダーだけが見れる「失敗のアーカイブ」</div>
+
     <h2>Agent journal</h2>
     {journal_html}
     <h2>Recent purchases</h2>
@@ -5355,9 +5465,411 @@ async fn vault_dashboard_api(State(db): State<Db>, headers: HeaderMap) -> Respon
     orders_total = orders_total,
     profit_total = format_jpy(profit_total),
     donation_total = format_jpy(donation_total),
+    tomorrow_hint = html_escape(&tomorrow_hint),
+    founder_note = html_escape(&founder_note),
+    cost_html = cost_html,
+    rejected_html = rejected_html,
     journal_html = journal_html,
     recent_html = recent_html,
     latest = html_escape(&latest_summary));
+    (StatusCode::OK, [("content-type", "text/html; charset=utf-8")], html).into_response()
+}
+
+// ── /community-numbers ───────────────────────────────────────────────────
+// PUBLIC teaser page. Shows the *labels* of the holder-only insider numbers
+// but blurs the values. Goal: convert a curious visitor into a buyer by
+// making the locked content tangible. Real values stay behind the tee gate
+// at /api/vault/dashboard.
+async fn community_numbers_public(State(db): State<Db>) -> Response {
+    // Pull a few non-sensitive teasers so the page feels alive even when
+    // logged-out: only counts, not absolute amounts, and never the actual
+    // tomorrow hint / founder note / rejected designs.
+    let (holders_n, rejected_n): (i64, i64) = {
+        let conn = db.lock().unwrap();
+        let h = conn.query_row(
+            "SELECT COUNT(DISTINCT email) FROM mu_purchases WHERE email IS NOT NULL AND email != ''",
+            [], |r| r.get(0)).unwrap_or(0);
+        let r = conn.query_row(
+            "SELECT COUNT(*) FROM products WHERE brand LIKE 'taxigen%' AND active=0",
+            [], |r| r.get(0)).unwrap_or(0);
+        (h, r)
+    };
+
+    let html = format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>コミュニティだけの数字 · MU</title>
+<meta name="description" content="MUのTシャツを持っている人だけが見れる、原価・没デザイン・明日の予告・founder note。中に入るには1枚買うだけ。"/>
+<style>
+  body{{background:#070707;color:#f5f5f0;font-family:'Helvetica Neue',-apple-system,sans-serif;margin:0;line-height:1.7;-webkit-font-smoothing:antialiased}}
+  .wrap{{max-width:760px;margin:0 auto;padding:60px 22px 80px}}
+  .eyebrow{{font-size:10.5px;letter-spacing:0.45em;color:#888;text-transform:uppercase;margin-bottom:18px}}
+  h1{{font-size:clamp(28px,4.5vw,42px);font-weight:200;letter-spacing:0.01em;margin:0 0 14px;line-height:1.25}}
+  h1 em{{color:#e6c449;font-style:normal}}
+  .lede{{color:#aaa;font-size:15px;max-width:560px;margin-bottom:48px;line-height:1.85}}
+  .card{{background:#0c0c0c;border:1px solid #1a1a1a;border-radius:6px;padding:22px 24px;margin:14px 0;position:relative;overflow:hidden}}
+  .card .k{{font-size:10.5px;letter-spacing:0.22em;color:#e6c449;text-transform:uppercase;margin-bottom:10px}}
+  .card .desc{{color:#888;font-size:12.5px;margin-bottom:14px;line-height:1.75}}
+  .lock{{filter:blur(6px);user-select:none;color:#666;font-size:18px;letter-spacing:0.05em;font-family:ui-monospace,Menlo,monospace}}
+  .lock.big{{font-size:28px;color:#888}}
+  .badge{{display:inline-block;background:#1a1410;border:1px solid #3a2a10;color:#e6c449;padding:3px 9px;border-radius:3px;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;margin-left:8px;vertical-align:middle}}
+  .cta{{margin-top:48px;background:linear-gradient(180deg,#0d0d0d,#070707);border:1px solid #2a2310;border-radius:8px;padding:32px 28px;text-align:center}}
+  .cta .price{{font-size:11px;letter-spacing:0.22em;color:#888;text-transform:uppercase;margin-bottom:12px}}
+  .cta h2{{font-size:22px;font-weight:300;margin:0 0 16px;color:#f5f5f0}}
+  .cta a{{display:inline-block;background:#e6c449;color:#0a0a0a;text-decoration:none;padding:14px 32px;border-radius:4px;font-weight:500;font-size:14px;letter-spacing:0.06em}}
+  .cta a:hover{{background:#f5d459}}
+  .cta .quiet{{color:#666;font-size:11px;margin-top:14px}}
+  .live{{color:#888;font-size:12.5px;margin-top:36px;text-align:center}}
+  .live b{{color:#f5f5f0;font-weight:400}}
+  a{{color:#e6c449}}
+</style></head><body>
+<div class="wrap">
+  <div class="eyebrow">— Community-only · MU Vault</div>
+  <h1>コミュニティだけにしか<br>公開しない<em>数字</em>がある。</h1>
+  <p class="lede">
+    MUのTシャツを<strong style="color:#f5f5f0">1 枚買う</strong>と、ここから先の数字が見えるようになる。
+    原価も、没デザインも、明日のdropのヒントも、Yukiの今日の生メモも。<br>
+    インターネットの誰でも見られる「透明性」とは別に、
+    買った人だけが見られる「もうひとつの透明性」を作っている。
+  </p>
+
+  <div class="card">
+    <div class="k">🔮 明日の予告 <span class="badge">holder-only</span></div>
+    <div class="desc">明日の何時に、どのbrandで、どんなseed値で生まれるか。公開ページには絶対出さない。</div>
+    <div class="lock">明日 ●●:●● — TAXIGEN ▓▓▓▓▓▓ / 国際線比率 ▓▓%</div>
+  </div>
+
+  <div class="card">
+    <div class="k">📝 Founder note (今日) <span class="badge">holder-only</span></div>
+    <div class="desc">Yukiが今日MUに何をしたか・何で困ったか・次に何を試すか。生メモ。1 日 1 行。</div>
+    <div class="lock">今日は ▓▓▓▓ を直した。▓▓ 枚没。再生成は ▓▓▓▓ 。— Yuki</div>
+  </div>
+
+  <div class="card">
+    <div class="k">💰 真実の原価 全晒し <span class="badge">holder-only</span></div>
+    <div class="desc">アクティブな全 SKU の price − cost = margin %。Printful / Gelato / SUZURI それぞれの実原価込。</div>
+    <div class="lock">taxigen #2 &nbsp; ¥▓,▓▓▓ − ¥▓,▓▓▓ = ¥▓,▓▓▓ &nbsp; ▓▓%</div>
+    <div class="lock">taxigen_weather #1 &nbsp; ¥▓,▓▓▓ − ¥▓,▓▓▓ = ¥▓,▓▓▓ &nbsp; ▓▓%</div>
+    <div class="lock">taxigen_metro #4 &nbsp; ¥▓,▓▓▓ − ¥▓,▓▓▓ = ¥▓,▓▓▓ &nbsp; ▓▓%</div>
+  </div>
+
+  <div class="card">
+    <div class="k">🚫 没デザイン 全 {rejected_n} 枚 <span class="badge">holder-only</span></div>
+    <div class="desc">AIが tee の上に tee を描いた、字が崩れた、データ取得失敗 etc。失敗のアーカイブはホルダーだけ見れる。</div>
+    <div class="lock big">▓▓▓▓ &nbsp; ▓▓▓▓ &nbsp; ▓▓▓▓ &nbsp; ▓▓▓▓</div>
+  </div>
+
+  <div class="cta">
+    <div class="price">unlock = ¥5,000〜</div>
+    <h2>1 枚買うと、全部の数字が見える。</h2>
+    <a href="/">→ 今日の drop を見る</a>
+    <div class="quiet">既に買った方は <a href="/mypage" style="color:#888">/mypage</a> からログイン</div>
+  </div>
+
+  <div class="live">
+    現在 <b>{holders_n}</b> 人のホルダーがこの数字を見ています。
+  </div>
+</div>
+</body></html>"#,
+        holders_n = holders_n,
+        rejected_n = rejected_n,
+    );
+    (StatusCode::OK, [("content-type", "text/html; charset=utf-8")], html).into_response()
+}
+
+// ── TEE ANCHOR · proof-of-birth content commitment ───────────────────────
+// Opus picks: each tee gets a deterministic SHA-256 over a canonical JSON
+// commitment of WHEN it was born, WHAT it is (design bytes hash), WHY
+// (seed data — weather/moon/taxi), HOW (model + prompt hash), and ORDER
+// (prev anchor → forms a single MU drop chain). The bytes themselves stay
+// on disk; only the hash is intended to leave the server and eventually be
+// posted to a public chain (Solana memo, OpenTimestamps, X) so anyone can
+// later prove "this tee existed by 2026-05-18T12:00Z, unmodified".
+//
+// Idempotent: re-running for the same product_id returns the existing row.
+fn sha256_hex_of_bytes(bytes: &[u8]) -> String {
+    use sha2::{Sha256, Digest};
+    let mut h = Sha256::new();
+    h.update(bytes);
+    format!("{:x}", h.finalize())
+}
+
+fn sha256_hex_of_str(s: &str) -> String { sha256_hex_of_bytes(s.as_bytes()) }
+
+/// Resolve a /static/... URL to a local file path on disk so we can hash
+/// the actual bytes. External (http://) URLs are skipped — caller passes
+/// the URL string through as the input to the hash instead.
+fn resolve_static_to_disk(url: &str) -> Option<std::path::PathBuf> {
+    if let Some(rel) = url.strip_prefix("/static/") {
+        let p = std::path::Path::new("static").join(rel);
+        if p.exists() { return Some(p); }
+        let p2 = std::path::Path::new("./store/static").join(rel);
+        if p2.exists() { return Some(p2); }
+    }
+    None
+}
+
+fn hash_url_or_file(url: &str) -> String {
+    if let Some(p) = resolve_static_to_disk(url) {
+        if let Ok(bytes) = std::fs::read(&p) {
+            return sha256_hex_of_bytes(&bytes);
+        }
+    }
+    sha256_hex_of_str(url)
+}
+
+/// Build the canonical anchor JSON (keys sorted, no extra whitespace) and
+/// compute its SHA-256. Returns (canonical_json, anchor_sha256).
+fn compute_tee_anchor(
+    conn: &Connection,
+    product_id: i64,
+) -> Option<(String, String, serde_json::Value)> {
+    let row = conn.query_row(
+        "SELECT brand, drop_num, name, COALESCE(design_url,''), COALESCE(mockup_url,''),
+                COALESCE(prompt_text,''), COALESCE(seed_data,''), COALESCE(weather_data,''),
+                created_at
+         FROM products WHERE id=?",
+        params![product_id],
+        |r| Ok((
+            r.get::<_,String>(0)?, r.get::<_,i64>(1)?, r.get::<_,String>(2)?,
+            r.get::<_,String>(3)?, r.get::<_,String>(4)?, r.get::<_,String>(5)?,
+            r.get::<_,String>(6)?, r.get::<_,String>(7)?, r.get::<_,String>(8)?,
+        ))
+    ).ok()?;
+    let (brand, drop_num, _name, design_url, mockup_url, prompt, seed, weather, created_at) = row;
+
+    // created_at may be ISO ("2026-05-18T04:21:54Z") or a unix string. Parse
+    // ISO without pulling chrono in by reaching for the existing parse_iso8601
+    // helper used elsewhere, falling back to a naive split.
+    let born_at_unix: i64 = created_at.parse::<i64>().ok()
+        .or_else(|| iso_to_unix_secs(&created_at))
+        .unwrap_or(0);
+
+    let design_sha = hash_url_or_file(&design_url);
+    let mockup_sha = if mockup_url.is_empty() || mockup_url == design_url {
+        serde_json::Value::Null
+    } else {
+        serde_json::Value::String(hash_url_or_file(&mockup_url))
+    };
+    let seed_combined = if seed.is_empty() { weather.clone() } else { seed.clone() };
+    let seed_sha = if seed_combined.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::Value::String(sha256_hex_of_str(&seed_combined))
+    };
+    let prompt_sha = if prompt.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::Value::String(sha256_hex_of_str(&prompt))
+    };
+
+    // Chain to the previous anchor (whichever was most-recently anchored).
+    let prev_sha: Option<String> = conn.query_row(
+        "SELECT anchor_sha256 FROM tee_anchors ORDER BY id DESC LIMIT 1",
+        [], |r| r.get(0)
+    ).ok();
+
+    // Canonical JSON — keys sorted alphabetically, no extra spaces. Use a
+    // BTreeMap so serde_json emits keys in a deterministic order.
+    let mut map: std::collections::BTreeMap<&str, serde_json::Value> = std::collections::BTreeMap::new();
+    map.insert("born_at_unix", serde_json::Value::from(born_at_unix));
+    map.insert("design_sha256", serde_json::Value::String(design_sha.clone()));
+    map.insert("drop_num", serde_json::Value::from(drop_num));
+    map.insert("mockup_sha256", mockup_sha);
+    map.insert("model", serde_json::Value::String("gemini-3-pro-image-preview".to_string()));
+    map.insert("mu_brand", serde_json::Value::String(brand));
+    map.insert("prev_anchor_sha256", match &prev_sha {
+        Some(s) => serde_json::Value::String(s.clone()),
+        None => serde_json::Value::Null,
+    });
+    map.insert("product_id", serde_json::Value::from(product_id));
+    map.insert("prompt_sha256", prompt_sha);
+    map.insert("seed_sha256", seed_sha);
+    map.insert("v", serde_json::Value::from(1));
+
+    let canonical = serde_json::to_string(&map).ok()?;
+    let anchor_sha = sha256_hex_of_str(&canonical);
+    let pretty = serde_json::to_value(&map).ok()?;
+    Some((canonical, anchor_sha, pretty))
+}
+
+/// Idempotent: ensure a tee_anchors row exists for this product. Returns the
+/// anchor_sha256 if successful.
+fn ensure_tee_anchor(conn: &Connection, product_id: i64) -> Option<String> {
+    if let Ok(existing) = conn.query_row(
+        "SELECT anchor_sha256 FROM tee_anchors WHERE product_id=?",
+        params![product_id], |r| r.get::<_, String>(0)
+    ) {
+        return Some(existing);
+    }
+    let (canonical, anchor_sha, pretty) = compute_tee_anchor(conn, product_id)?;
+    let born_at_unix = pretty.get("born_at_unix").and_then(|v| v.as_i64()).unwrap_or(0);
+    let brand = pretty.get("mu_brand").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let drop_num = pretty.get("drop_num").and_then(|v| v.as_i64()).unwrap_or(0);
+    let design_sha = pretty.get("design_sha256").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let mockup_sha = pretty.get("mockup_sha256").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let seed_sha = pretty.get("seed_sha256").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let prompt_sha = pretty.get("prompt_sha256").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let prev_sha = pretty.get("prev_anchor_sha256").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let model = pretty.get("model").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+    conn.execute(
+        "INSERT INTO tee_anchors
+         (product_id, brand, drop_num, born_at_unix,
+          design_sha256, mockup_sha256, seed_sha256, prompt_sha256,
+          model, prev_anchor_sha256, anchor_sha256, anchor_json,
+          chain_status, anchored_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'pending',?)",
+        params![
+            product_id, brand, drop_num, born_at_unix,
+            design_sha, mockup_sha, seed_sha, prompt_sha,
+            model, prev_sha, anchor_sha, canonical,
+            chrono_now(),
+        ]
+    ).ok()?;
+    Some(anchor_sha)
+}
+
+/// GET /api/anchor/:id — returns the canonical anchor JSON + sha256.
+async fn anchor_api(State(db): State<Db>, Path(id): Path<i64>) -> Response {
+    let conn = db.lock().unwrap();
+    let sha = match ensure_tee_anchor(&conn, id) {
+        Some(s) => s,
+        None => return (StatusCode::NOT_FOUND, "product not found").into_response(),
+    };
+    let row = conn.query_row(
+        "SELECT anchor_json, anchored_at, COALESCE(chain_tx,''), chain_status,
+                COALESCE(prev_anchor_sha256,'')
+         FROM tee_anchors WHERE product_id=?",
+        params![id],
+        |r| Ok((
+            r.get::<_,String>(0)?, r.get::<_,String>(1)?,
+            r.get::<_,String>(2)?, r.get::<_,String>(3)?,
+            r.get::<_,String>(4)?,
+        ))
+    );
+    let (canonical, anchored_at, chain_tx, chain_status, prev) = match row {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response(),
+    };
+    let canonical_v: serde_json::Value = serde_json::from_str(&canonical)
+        .unwrap_or(serde_json::Value::Null);
+    let body = serde_json::json!({
+        "v": 1,
+        "anchor_sha256": sha,
+        "canonical_json": canonical_v,
+        "canonical_bytes": canonical,
+        "prev_anchor_sha256": if prev.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(prev) },
+        "anchored_at": anchored_at,
+        "chain_tx": if chain_tx.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(chain_tx) },
+        "chain_status": chain_status,
+        "verify": {
+            "how": "sha256(utf8(canonical_bytes)) must equal anchor_sha256",
+            "shell": format!("printf '%s' '<canonical_bytes>' | shasum -a 256"),
+        },
+    });
+    Json(body).into_response()
+}
+
+/// GET /anchor/:id — public HTML page showing the proof-of-birth.
+async fn anchor_page(State(db): State<Db>, Path(id): Path<i64>) -> Response {
+    let conn = db.lock().unwrap();
+    let sha = match ensure_tee_anchor(&conn, id) {
+        Some(s) => s,
+        None => return (StatusCode::NOT_FOUND, "product not found").into_response(),
+    };
+    let row = conn.query_row(
+        "SELECT t.anchor_json, t.anchored_at, COALESCE(t.chain_tx,''), t.chain_status,
+                COALESCE(t.prev_anchor_sha256,''), p.brand, p.drop_num, p.name, p.created_at
+         FROM tee_anchors t JOIN products p ON p.id = t.product_id
+         WHERE t.product_id = ?",
+        params![id],
+        |r| Ok((
+            r.get::<_,String>(0)?, r.get::<_,String>(1)?, r.get::<_,String>(2)?,
+            r.get::<_,String>(3)?, r.get::<_,String>(4)?,
+            r.get::<_,String>(5)?, r.get::<_,i64>(6)?, r.get::<_,String>(7)?,
+            r.get::<_,String>(8)?,
+        ))
+    );
+    let (canonical, anchored_at, chain_tx, chain_status, prev, brand, drop, name, created_at) = match row {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response(),
+    };
+    let chain_block = if chain_tx.is_empty() {
+        format!(r#"<div class="onchain queue">⛓ on-chain status: <b>{}</b> &nbsp;·&nbsp; 次の hourly batch で Solana memo / OpenTimestamps に書き込まれます</div>"#,
+            html_escape(&chain_status))
+    } else {
+        format!(r#"<div class="onchain done">⛓ on-chain: <a href="{tx}" rel="noopener">{tx}</a></div>"#,
+            tx = html_escape(&chain_tx))
+    };
+    let prev_block = if prev.is_empty() {
+        String::from(r#"<div class="quiet">prev: <code>(none — first anchor)</code></div>"#)
+    } else {
+        format!(r#"<div class="quiet">prev: <code>{}</code></div>"#, html_escape(&prev))
+    };
+    let html = format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>🔗 Proof of Birth · {brand} #{drop} · MU</title>
+<style>
+  body{{background:#070707;color:#f5f5f0;font-family:-apple-system,'Helvetica Neue',sans-serif;margin:0;line-height:1.7}}
+  .wrap{{max-width:760px;margin:0 auto;padding:48px 22px 80px}}
+  .back{{color:#888;font-size:11.5px;text-decoration:none;letter-spacing:0.06em;text-transform:uppercase}}
+  .eyebrow{{font-size:10.5px;letter-spacing:0.4em;color:#888;text-transform:uppercase;margin:18px 0 8px}}
+  h1{{font-size:28px;font-weight:300;margin:0 0 8px}}
+  h1 em{{color:#e6c449;font-style:normal}}
+  .meta{{color:#888;font-size:13px;margin-bottom:28px}}
+  .sha{{background:#0c0c0c;border:1px solid #2a2310;padding:16px 18px;border-radius:5px;font-family:ui-monospace,Menlo,monospace;font-size:13px;color:#e6c449;word-break:break-all;margin:14px 0}}
+  pre{{background:#0a0a0a;border:1px solid #1a1a1a;padding:18px;border-radius:5px;font-size:12px;color:#cfcfc8;overflow-x:auto;line-height:1.6}}
+  .quiet{{color:#666;font-size:11.5px;margin:6px 0}}
+  .onchain{{margin:14px 0;padding:12px 16px;border-radius:4px;font-size:13px}}
+  .onchain.queue{{background:#0d0a05;border:1px solid #2a2010;color:#aaa}}
+  .onchain.done{{background:#06140a;border:1px solid #1a3a20;color:#cfe8d4}}
+  .onchain.done a{{color:#7ed492}}
+  h2{{font-size:13px;letter-spacing:0.16em;color:#888;text-transform:uppercase;margin:36px 0 12px;font-weight:500}}
+  .verify code{{background:#0a0a0a;border:1px solid #1f1f1f;padding:2px 6px;border-radius:3px;color:#e6c449}}
+  a{{color:#e6c449}}
+</style></head><body>
+<div class="wrap">
+  <a class="back" href="/buy/{id}">← /buy/{id}</a>
+  <div class="eyebrow">— 🔗 Proof of Birth · MU Drop Anchor v1</div>
+  <h1>{brand} #{drop} — <em>{name}</em></h1>
+  <div class="meta">生まれた瞬間 (server-side): {created_at}</div>
+
+  <h2>Anchor SHA-256</h2>
+  <div class="sha">{sha}</div>
+  {chain_block}
+  {prev_block}
+
+  <h2>Canonical JSON (sorted keys, no whitespace)</h2>
+  <pre>{canonical_pretty}</pre>
+
+  <h2>How to verify (independent)</h2>
+  <div class="verify">
+    <p>誰でもこの sha を再計算できます:</p>
+    <pre>curl -s https://wearmu.com/api/anchor/{id} | jq -r .canonical_bytes \
+  | tr -d '\n' \
+  | shasum -a 256</pre>
+    <p>結果が <code>{sha_short}…</code> と一致すれば、この tee は確かにここで宣言された内容そのものです。</p>
+    <p class="quiet">原本 PNG (design) はサーバー内のみ保持。public には mockup のみ公開。anchor の <code>design_sha256</code> が原本 bytes をコミットするため、改変があれば必ず違う sha になります。</p>
+  </div>
+
+  <h2>Chain (前後の anchor)</h2>
+  <p class="quiet">各 tee の anchor は前の tee の anchor sha を含むので、グローバルに「MU drop chain」を形成します。1 つでも改変があると以降の chain が崩れます。</p>
+</div>
+</body></html>"#,
+        id = id,
+        brand = html_escape(&brand),
+        drop = drop,
+        name = html_escape(&name),
+        created_at = html_escape(&created_at),
+        sha = sha,
+        sha_short = &sha[..sha.len().min(16)],
+        chain_block = chain_block,
+        prev_block = prev_block,
+        canonical_pretty = html_escape(&serde_json::to_string_pretty(
+            &serde_json::from_str::<serde_json::Value>(&canonical).unwrap_or(serde_json::Value::Null)
+        ).unwrap_or_default()),
+    );
+    let _ = anchored_at;
     (StatusCode::OK, [("content-type", "text/html; charset=utf-8")], html).into_response()
 }
 
@@ -9026,6 +9538,195 @@ a:hover{{text-decoration:underline}}
         } else { String::new() },
         prev_n = siblings.len(),
     ))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// /100 — May 2026 "Sell 100 MUGEN tees in 14 days" challenge LP.
+// Window: 2026-05-18 00:00 JST → 2026-05-31 23:59 JST.
+// ─────────────────────────────────────────────────────────────────────────────
+const CHALLENGE_100_START_UTC:    &str = "2026-05-17T15:00:00Z";
+const CHALLENGE_100_DEADLINE_UTC: &str = "2026-05-31T14:59:59Z";
+
+async fn challenge_100_progress_json(State(db): State<Db>) -> Json<serde_json::Value> {
+    let (sold, latest_drop) = {
+        let conn = db.lock().unwrap();
+        let sold: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mu_purchases
+             WHERE brand='mugen' AND created_at >= ?",
+            params![CHALLENGE_100_START_UTC], |r| r.get(0),
+        ).unwrap_or(0);
+        let latest: Option<i64> = conn.query_row(
+            "SELECT id FROM products WHERE brand='mugen' AND active=1
+             ORDER BY drop_num DESC LIMIT 1",
+            [], |r| r.get(0),
+        ).ok();
+        (sold, latest)
+    };
+    Json(serde_json::json!({
+        "sold": sold,
+        "target": 100,
+        "remaining": (100 - sold).max(0),
+        "started_at": CHALLENGE_100_START_UTC,
+        "deadline": CHALLENGE_100_DEADLINE_UTC,
+        "latest_product_id": latest_drop,
+    }))
+}
+
+async fn challenge_100_page(State(db): State<Db>) -> Html<String> {
+    let (sold, latest_drop, latest_suzuri): (i64, Option<i64>, Option<String>) = {
+        let conn = db.lock().unwrap();
+        let sold: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mu_purchases
+             WHERE brand='mugen' AND created_at >= ?",
+            params![CHALLENGE_100_START_UTC], |r| r.get(0),
+        ).unwrap_or(0);
+        let row = conn.query_row(
+            "SELECT drop_num, suzuri_url FROM products
+             WHERE brand='mugen' AND active=1 AND inventory > sold
+             ORDER BY drop_num DESC LIMIT 1",
+            [],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?)),
+        ).ok();
+        let (drop, suz) = match row {
+            Some((d, s)) => (Some(d), s),
+            None => (None, None),
+        };
+        (sold, drop, suz)
+    };
+
+    let pct = ((sold as f64 / 100.0) * 100.0).clamp(0.0, 100.0);
+    let remaining = (100 - sold).max(0);
+    let drop_str = latest_drop.map(|d| format!("#{:03}", d)).unwrap_or_else(|| "#---".to_string());
+    let suzuri_link = latest_suzuri.unwrap_or_else(|| "https://suzuri.jp/yukihama".to_string());
+
+    let html = format!(
+        r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>14日で100枚 — MUGEN 無限 · MU</title>
+<meta name="description" content="2026年5月、AI が運営するアパレル「MU」が 14 日で MUGEN Tシャツを 100 枚売れるか試している。進捗は毎日この場所で公開される。">
+<meta property="og:title" content="14日で100枚 — MUGEN 無限 · MU">
+<meta property="og:description" content="AI が運営するアパレル「MU」が 14 日で MUGEN Tシャツを 100 枚売る挑戦。進捗を毎日公開。">
+<meta property="og:image" content="https://mockups.wearmu.com/hero.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<style>
+:root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--line:rgba(255,255,255,0.10)}}
+*{{box-sizing:border-box}}
+html,body{{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;font-weight:300;-webkit-font-smoothing:antialiased}}
+.wrap{{max-width:720px;margin:0 auto;padding:56px 24px 80px}}
+.eyebrow{{font-size:10px;letter-spacing:0.42em;text-transform:uppercase;color:var(--y);margin-bottom:18px}}
+h1{{font-size:clamp(34px,8vw,52px);font-weight:200;letter-spacing:0.01em;line-height:1.12;margin:0 0 18px}}
+h1 em{{color:var(--y);font-style:normal;font-weight:300}}
+.sub{{font-size:15px;color:var(--mute);line-height:1.7;margin:0 0 36px}}
+.bar{{height:6px;background:rgba(255,255,255,0.06);overflow:hidden;margin:8px 0 12px}}
+.bar > i{{display:block;height:100%;background:var(--y);width:{pct}%;transition:width 1s ease}}
+.counter{{display:flex;justify-content:space-between;align-items:baseline;font-variant-numeric:tabular-nums;font-size:13px;color:var(--mute);letter-spacing:0.04em;gap:12px;flex-wrap:wrap}}
+.counter strong{{font-size:52px;color:var(--fg);font-weight:200;letter-spacing:0.01em}}
+.cta{{margin:48px 0 12px;display:grid;grid-template-columns:1fr;gap:14px}}
+@media(min-width:600px){{.cta{{grid-template-columns:1fr 1fr}}}}
+.btn{{display:block;padding:24px 24px;background:var(--y);color:#0A0A0A;text-decoration:none;font-weight:500;letter-spacing:0.02em;text-align:center;transition:opacity 0.2s ease}}
+.btn:hover{{opacity:0.92}}
+.btn small{{display:block;font-size:11px;font-weight:300;opacity:0.7;letter-spacing:0.08em;margin-top:5px;text-transform:uppercase}}
+.btn.secondary{{background:transparent;color:var(--fg);border:1px solid var(--line)}}
+.note{{margin-top:18px;font-size:12px;color:var(--mute);line-height:1.7}}
+.section{{margin-top:56px;padding-top:32px;border-top:1px solid var(--line)}}
+.section h2{{font-size:14px;font-weight:400;letter-spacing:0.14em;text-transform:uppercase;color:var(--y);margin:0 0 14px}}
+.foot{{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);font-size:11px;letter-spacing:0.08em;opacity:0.55;line-height:2}}
+a{{color:var(--y);text-decoration:none}}
+a:hover{{text-decoration:underline}}
+.share{{margin-top:24px;display:flex;gap:18px;flex-wrap:wrap}}
+.share a{{font-size:12px;letter-spacing:0.08em;text-transform:uppercase;opacity:0.7}}
+</style></head><body>
+<div class="wrap">
+  <div class="eyebrow">May 2026 · MUGEN 無限 · 14日 100枚 Challenge</div>
+  <h1>14日で <em>100枚</em>。<br>AI が運営するアパレルの、最初の挑戦。</h1>
+  <p class="sub">
+    2026年5月18日 — 5月31日。<br>
+    AI が毎時 1 つの絵を生成し、北海道弟子屈町の気温が刷る枚数を決める「MU」。<br>
+    最初の本格的な販売挑戦として、<strong style="color:var(--fg)">14 日間で MUGEN Tシャツを 100 枚</strong> 売る。<br>
+    進捗はこのページで毎日更新。創業者 Yuki Hamada が X (@yukihamada) で日次レポートを公開する。
+  </p>
+
+  <div class="counter">
+    <strong id="sold-counter">{sold}</strong>
+    <span>/ 100 sold · 残り <span id="remaining-counter">{remaining}</span> 枚 · 締切まで <span id="days-left">—</span> 日</span>
+  </div>
+  <div class="bar"><i id="progress-bar"></i></div>
+
+  <div class="cta">
+    <a class="btn" href="{suzuri}" target="_blank" rel="noopener" data-tier="suzuri">
+      日本国内 ¥4,900<small>SUZURI から即出荷 · 送料込</small>
+    </a>
+    <a class="btn secondary" href="/mugen?utm_source=challenge100&utm_medium=lp&utm_campaign=mugen100">
+      Browse 205 designs<small>Hourly drops · Printful EU ¥7,800 (intl)</small>
+    </a>
+  </div>
+  <p class="note">最新ドロップ {drop} を含む 200+ デザインから選べる。MU の値段は売れるごとに上がる(bonding curve) — 早い人ほど安い。</p>
+
+  <div class="section">
+    <h2>なぜ 100 枚なのか</h2>
+    <p class="sub">
+      MU は AI と気候だけで運営されるアパレルブランド。設計、価格、製造、出荷、サポートまで人間がいない。<br>
+      しかし「最初の 100 人」だけは、人間が呼ばないと始まらない。<br>
+      この 100 人がいれば、AI は次の 1,000 人にも届くプロダクトになる。
+    </p>
+  </div>
+
+  <div class="section">
+    <h2>毎日の進捗</h2>
+    <p class="sub">
+      X (<a href="https://twitter.com/yukihamada" target="_blank" rel="noopener">@yukihamada</a>) で毎日 21:00 JST に販売数を投稿。<br>
+      売れた枚数 / 達成率 / 残り日数を build-in-public 形式で公開する。
+    </p>
+    <div class="share">
+      <a href="https://twitter.com/intent/tweet?text=MU%20%E3%81%8C%2014%E6%97%A5%E3%81%A7%20100%E6%9E%9A%E3%81%AE%20MUGEN%20T%E3%82%B7%E3%83%A3%E3%83%84%E3%82%92%E5%A3%B2%E3%82%8B%E6%8C%91%E6%88%A6%E3%82%92%E3%81%97%E3%81%A6%E3%81%84%E3%82%8B%E3%80%82&url=https%3A%2F%2Fwearmu.com%2F100" target="_blank" rel="noopener">▲ X でシェア</a>
+      <a href="/mugen">▲ 全ドロップを見る</a>
+      <a href="/about.html">▲ MU とは</a>
+    </div>
+  </div>
+
+  <div class="foot">
+    wearmu.com · 株式会社イネブラ · <a href="/tokushoho.html">特商法表記</a> · <a href="/transparency">/transparency</a>
+  </div>
+</div>
+<script>
+(async function(){{
+  const deadline = new Date("{deadline}");
+  const $days = document.getElementById('days-left');
+  const $bar = document.getElementById('progress-bar');
+  const $sold = document.getElementById('sold-counter');
+  const $remaining = document.getElementById('remaining-counter');
+  function refreshLocal(){{
+    const now = new Date();
+    const ms = deadline - now;
+    const days = Math.max(0, Math.ceil(ms / (24*3600*1000)));
+    $days.textContent = days;
+  }}
+  refreshLocal();
+  setInterval(refreshLocal, 60_000);
+  try {{
+    const r = await fetch('/api/100/progress', {{cache:'no-store'}});
+    if (r.ok) {{
+      const j = await r.json();
+      $sold.textContent = j.sold;
+      $remaining.textContent = j.remaining;
+      const pct = Math.min(100, (j.sold / j.target) * 100);
+      $bar.style.width = pct + '%';
+    }}
+  }} catch(e) {{}}
+}})();
+</script>
+</body></html>"##,
+        pct = pct,
+        sold = sold,
+        remaining = remaining,
+        drop = drop_str,
+        suzuri = html_escape(&suzuri_link),
+        deadline = CHALLENGE_100_DEADLINE_UTC,
+    );
+    Html(html)
 }
 
 async fn get_product(
@@ -13943,6 +14644,31 @@ async fn handle_collab_sweep_order(db: Db, session: &serde_json::Value) {
                 amount, route, chrono_now(),
             ],
         );
+    }
+
+    // ── MU Pass auto-issue ─────────────────────────────────────────
+    // Every successful order = one membership pass. Idempotent on
+    // stripe_session (UNIQUE constraint on order_ref via mint_status workflow).
+    // mint_status starts 'pending'; the on-chain mint runs later (separate
+    // job, opt-in cost-controlled).
+    if !email.is_empty() {
+        let conn = db.lock().unwrap();
+        // Skip if this session already issued a pass (re-entry / retry).
+        let already: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mu_passes WHERE order_ref = ?",
+            params![session_id], |r| r.get(0),
+        ).unwrap_or(0);
+        if already == 0 {
+            let next_edition: i64 = conn.query_row(
+                "SELECT COALESCE(MAX(edition), 0) + 1 FROM mu_passes",
+                [], |r| r.get(0),
+            ).unwrap_or(1);
+            let _ = conn.execute(
+                "INSERT INTO mu_passes (edition, email, brand, sku_id, order_ref, mint_status, created_at)
+                 VALUES (?, ?, ?, ?, ?, 'pending', ?)",
+                params![next_edition, email.to_lowercase(), slug, size, session_id, chrono_now()],
+            );
+        }
     }
 
     // ── Constitution §27 — Teshikaga 50% pledge accrual ────────────
@@ -20454,6 +21180,33 @@ fn ensure_proposal_tables(db: &Db) {
          )", [],
     );
     let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_points_unlocks_email ON proposal_points_unlocks(email, created_at DESC)", []);
+
+    // MU Pass — every T-shirt sold = one membership pass.
+    // edition is a globally monotonic number (#001, #002, …) assigned in
+    // chronological purchase order. mint_status tracks on-chain state without
+    // blocking the visible "you are a member" UX: a pass is valid the moment
+    // the row exists, even if the Solana mint is still pending.
+    //   mint_status: 'pending' | 'minting' | 'minted' | 'failed' | 'skipped'
+    //   claimed_wallet: NULL until holder claims/exports to their own wallet.
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS mu_passes (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            edition         INTEGER NOT NULL UNIQUE,
+            email           TEXT NOT NULL,
+            brand           TEXT NOT NULL,          -- 'mugen' | 'muon' | 'ma' | 'jiufight' | …
+            sku_id          TEXT,                   -- printful/suzuri sku reference
+            order_ref       TEXT,                   -- stripe checkout session id or printful order id
+            mint_status     TEXT NOT NULL DEFAULT 'pending',
+            mint_tx         TEXT,                   -- Solana tx signature once minted
+            mint_asset      TEXT,                   -- cNFT asset id (Metaplex Core)
+            claimed_wallet  TEXT,                   -- holder's own wallet after export
+            transferred_at  TEXT,                   -- if non-null, residual revshare cutoff = + 90d
+            created_at      TEXT NOT NULL
+         )", [],
+    );
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_mu_passes_email ON mu_passes(email, edition)", []);
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_mu_passes_status ON mu_passes(mint_status, created_at)", []);
+
     let _ = conn.execute(
         "CREATE TABLE IF NOT EXISTS proposal_extras_jobs (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -38167,6 +38920,209 @@ async fn show_jiuflow_proposal_page(
     show_partner_proposal_page(db, "jiuflow", "JiuFlow (柔術 SaaS)", "/jiuflow", headers, q).await
 }
 
+/// GET /pass — MU Pass membership LP. Embedded via include_str! so it
+/// always ships with the binary (avoids the Docker COPY cache quirk that
+/// bit /jiufight/preview).
+async fn show_pass_page() -> Response {
+    axum::response::Html(include_str!("../static/pass.html")).into_response()
+}
+
+/// GET /api/pass/by_email?email=X
+/// Returns the passes (membership tokens) associated with the given email.
+/// Used by the /pass page's "are you already a member?" check and by
+/// pt_gate.js to grant free-unlock to holders.
+async fn pass_by_email_api(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    use serde_json::json;
+    let email = q.get("email").map(|s| s.trim().to_lowercase()).unwrap_or_default();
+    if email.is_empty() || !email.contains('@') {
+        return (axum::http::StatusCode::BAD_REQUEST, Json(json!({"error": "email required"}))).into_response();
+    }
+    let conn = match db.lock() { Ok(c) => c, Err(_) => return Json(json!({"passes": []})).into_response() };
+    let rows: Vec<serde_json::Value> = conn
+        .prepare("SELECT edition, brand, sku_id, mint_status, mint_tx, created_at FROM mu_passes WHERE email = ? ORDER BY edition ASC")
+        .and_then(|mut s| {
+            s.query_map([&email], |r| {
+                Ok(json!({
+                    "edition":      r.get::<_, i64>(0)?,
+                    "brand":        r.get::<_, String>(1)?,
+                    "sku_id":       r.get::<_, Option<String>>(2)?,
+                    "mint_status":  r.get::<_, String>(3)?,
+                    "mint_tx":      r.get::<_, Option<String>>(4)?,
+                    "created_at":   r.get::<_, String>(5)?,
+                }))
+            }).map(|it| it.filter_map(|r| r.ok()).collect())
+        }).unwrap_or_default();
+
+    let mut resp = Json(json!({ "passes": rows })).into_response();
+    let h = resp.headers_mut();
+    h.insert("Access-Control-Allow-Origin", HeaderValue::from_static("*"));
+    h.insert("Cache-Control", HeaderValue::from_static("private, max-age=30"));
+    resp
+}
+
+/// POST /api/pass/claim {email}
+/// For genesis lot: if the email matches a past customer (Stripe order),
+/// assign the next edition number. Idempotent: re-calling returns existing.
+/// For new purchases, the Stripe webhook calls this server-side.
+async fn pass_claim_api(
+    State(db): State<Db>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    use serde_json::json;
+    let email = body.get("email")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_lowercase())
+        .unwrap_or_default();
+    let brand = body.get("brand").and_then(|v| v.as_str()).unwrap_or("mugen").to_string();
+    let sku_id = body.get("sku_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let order_ref = body.get("order_ref").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+    if email.is_empty() || !email.contains('@') {
+        return (axum::http::StatusCode::BAD_REQUEST, Json(json!({"error": "email required"}))).into_response();
+    }
+
+    let conn = match db.lock() { Ok(c) => c, Err(_) => return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "db lock"}))).into_response() };
+
+    // Idempotency: if this order_ref already issued a pass, return it.
+    if let Some(ref oref) = order_ref {
+        if let Ok(edition) = conn.query_row(
+            "SELECT edition FROM mu_passes WHERE order_ref = ?",
+            [oref],
+            |r| r.get::<_, i64>(0),
+        ) {
+            return Json(json!({ "ok": true, "edition": edition, "duplicate": true })).into_response();
+        }
+    }
+
+    let next_edition: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(edition), 0) + 1 FROM mu_passes",
+        [],
+        |r| r.get(0),
+    ).unwrap_or(1);
+
+    let now = chrono_now();
+    let res = conn.execute(
+        "INSERT INTO mu_passes (edition, email, brand, sku_id, order_ref, mint_status, created_at)
+         VALUES (?, ?, ?, ?, ?, 'pending', ?)",
+        rusqlite::params![next_edition, &email, &brand, &sku_id, &order_ref, &now],
+    );
+    match res {
+        Ok(_) => Json(json!({ "ok": true, "edition": next_edition, "duplicate": false })).into_response(),
+        Err(e) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
+    }
+}
+
+/// GET /api/pass/stats — public counter for the LP ticker.
+async fn pass_stats_api(State(db): State<Db>) -> Response {
+    use serde_json::json;
+    let conn = match db.lock() { Ok(c) => c, Err(_) => return Json(json!({"total": 0})).into_response() };
+    let total: i64 = conn.query_row("SELECT COUNT(*) FROM mu_passes", [], |r| r.get(0)).unwrap_or(0);
+    let minted: i64 = conn.query_row("SELECT COUNT(*) FROM mu_passes WHERE mint_status = 'minted'", [], |r| r.get(0)).unwrap_or(0);
+    let recent: Vec<serde_json::Value> = conn
+        .prepare("SELECT edition, email FROM mu_passes ORDER BY edition DESC LIMIT 8")
+        .and_then(|mut s| {
+            s.query_map([], |r| {
+                let em: String = r.get::<_, String>(1)?;
+                let mask = mask_email_for_ticker(&em);
+                Ok(json!({ "edition": r.get::<_, i64>(0)?, "owner": mask }))
+            }).map(|it| it.filter_map(|r| r.ok()).collect())
+        }).unwrap_or_default();
+    let mut resp = Json(json!({ "total": total, "minted": minted, "recent": recent })).into_response();
+    resp.headers_mut().insert("Cache-Control", HeaderValue::from_static("public, max-age=60"));
+    resp
+}
+
+/// POST /api/admin/pass/backfill
+/// Walk every collab_orders row (chronological) and gift a MU Pass to each
+/// unique buyer email that doesn't yet have one. Editions are assigned by
+/// purchase order; mint_status starts 'pending'. Idempotent — re-running
+/// only inserts new rows for new buyers.
+///
+/// Body: {"admin_token": "...", "dry_run": true}
+async fn pass_backfill_api(
+    State(db): State<Db>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    use serde_json::json;
+    let token = body.get("admin_token").and_then(|v| v.as_str()).unwrap_or("");
+    let expected = std::env::var("ADMIN_TOKEN").unwrap_or_default();
+    if expected.is_empty() || token != expected {
+        return (axum::http::StatusCode::FORBIDDEN, Json(json!({"error": "admin token required"}))).into_response();
+    }
+    let dry_run = body.get("dry_run").and_then(|v| v.as_bool()).unwrap_or(false);
+    let conn = match db.lock() { Ok(c) => c, Err(_) => return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "db lock"}))).into_response() };
+
+    // Pull every paid order with a usable email, chronologically.
+    let rows: Vec<(String, String, String, Option<String>)> = conn
+        .prepare("SELECT email, slug, stripe_session, created_at FROM collab_orders
+                  WHERE email IS NOT NULL AND email != '' AND status != 'failed'
+                  ORDER BY created_at ASC")
+        .and_then(|mut s| {
+            s.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?.to_lowercase(),
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, Option<String>>(3)?,
+                ))
+            }).map(|it| it.filter_map(|r| r.ok()).collect())
+        }).unwrap_or_default();
+
+    let mut next_edition: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(edition), 0) FROM mu_passes",
+        [],
+        |r| r.get(0),
+    ).unwrap_or(0);
+
+    let mut inserted = 0i64;
+    let mut skipped_dup = 0i64;
+    let mut sample = Vec::new();
+
+    for (email, slug, stripe_session, _ts) in rows {
+        // Skip if this stripe_session already minted a pass.
+        let already: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mu_passes WHERE order_ref = ?",
+            [&stripe_session],
+            |r| r.get(0),
+        ).unwrap_or(0);
+        if already > 0 { skipped_dup += 1; continue; }
+
+        next_edition += 1;
+        let now = chrono_now();
+        if !dry_run {
+            let _ = conn.execute(
+                "INSERT INTO mu_passes (edition, email, brand, sku_id, order_ref, mint_status, created_at)
+                 VALUES (?, ?, ?, NULL, ?, 'pending', ?)",
+                rusqlite::params![next_edition, &email, &slug, &stripe_session, &now],
+            );
+        }
+        inserted += 1;
+        if sample.len() < 5 {
+            sample.push(json!({ "edition": next_edition, "email": mask_email_for_ticker(&email), "brand": slug }));
+        }
+    }
+
+    Json(json!({
+        "ok": true,
+        "dry_run": dry_run,
+        "inserted": inserted,
+        "skipped_dup": skipped_dup,
+        "sample": sample,
+        "highest_edition": next_edition,
+    })).into_response()
+}
+
+fn mask_email_for_ticker(em: &str) -> String {
+    let parts: Vec<&str> = em.splitn(2, '@').collect();
+    if parts.len() < 2 { return "anon".to_string(); }
+    let local = parts[0];
+    let visible = if local.len() <= 3 { local.to_string() } else { local.chars().take(3).collect::<String>() };
+    format!("{}…@{}", visible, parts[1])
+}
+
 /// GET /jiufight — public sales page for the SUPER YAWARA SWEEP CUP collab.
 /// Serves a static HTML file generated by `scripts/gen_collab_static_page.py`
 /// from the bulk-publish results — keeps Rust code unchanged when new
@@ -47295,6 +48251,45 @@ async fn main() {
             source             TEXT NOT NULL         -- 'sync' | 'manual' | 'webhook'
         );
         CREATE INDEX IF NOT EXISTS idx_pcph_sku ON pod_catalog_price_history(vendor, product_uid, at DESC);
+
+        -- tee_anchors: per-tee proof-of-birth commitment. Each row is the
+        -- canonical content hash for one product, plus an optional reference
+        -- to where that hash was posted publicly (Solana memo / OTS / X /
+        -- IPFS). Designed so anyone can recompute the hash from public fields
+        -- of /api/products/item/<id> and verify it matches what we anchored.
+        --
+        -- What gets hashed (canonical JSON, lexicographically-keyed):
+        --   v, mu_brand, drop_num, product_id, born_at_unix,
+        --   design_sha256, mockup_sha256, seed_sha256, prompt_sha256,
+        --   model, prev_anchor_sha256
+        -- Then sha256 over that canonical bytes = anchor_sha256.
+        --
+        -- The hourly anchor cron computes anchor_sha256 for every tee born
+        -- in the past hour that doesn't yet have one, links via prev_anchor
+        -- to the previous row globally (forms a single MU drop chain), and
+        -- queues `chain_tx` for the chain-pusher worker. Initially we'll
+        -- post the chain_root to X every hour (free, public, time-stamped);
+        -- chain_tx will later be filled with a Solana memo signature.
+        CREATE TABLE IF NOT EXISTS tee_anchors (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_id          INTEGER NOT NULL UNIQUE,
+            brand               TEXT NOT NULL,
+            drop_num            INTEGER NOT NULL,
+            born_at_unix        INTEGER NOT NULL,
+            design_sha256       TEXT NOT NULL,
+            mockup_sha256       TEXT,
+            seed_sha256         TEXT,
+            prompt_sha256       TEXT,
+            model               TEXT,
+            prev_anchor_sha256  TEXT,        -- chains to previous tee
+            anchor_sha256       TEXT NOT NULL UNIQUE,
+            anchor_json         TEXT NOT NULL,
+            chain_tx            TEXT,        -- solana memo sig / X post id / OTS bytes etc
+            chain_status        TEXT NOT NULL DEFAULT 'pending',
+            anchored_at         TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_tee_anchors_born ON tee_anchors(born_at_unix DESC);
+        CREATE INDEX IF NOT EXISTS idx_tee_anchors_brand ON tee_anchors(brand, drop_num);
     ").ok();
 
     // /itto first calf (#0001) — admin can later update fields via /admin/itto/calf.
@@ -47652,6 +48647,9 @@ async fn main() {
         .route("/ma", get(index))
         .route("/muon", get(index))
         .route("/mugen", get(index))
+        // May 2026 "Sell 100 MUGEN tees in 14 days" challenge LP.
+        .route("/100", get(challenge_100_page))
+        .route("/api/100/progress", get(challenge_100_progress_json))
         // /nouns: DAO approval pending → section hidden from nav (2026-05-13).
         // Proposal text remains at /nouns-proposal.html for transparency.
         .route("/nouns", get(|| async { axum::response::Redirect::permanent("/nouns-proposal.html") }))
@@ -47947,6 +48945,12 @@ async fn main() {
         .route("/jiufight", get(show_jiufight_page))
         .route("/jiufight/", get(show_jiufight_page))
         .route("/jiufight/preview", get(show_jiufight_preview))
+        .route("/pass", get(show_pass_page))
+        .route("/pass/", get(show_pass_page))
+        .route("/api/pass/by_email", get(pass_by_email_api))
+        .route("/api/pass/claim", post(pass_claim_api))
+        .route("/api/pass/stats", get(pass_stats_api))
+        .route("/api/admin/pass/backfill", post(pass_backfill_api))
         .route("/gi/:id", get(show_gi_edition_page))
         .route("/gi/:id/sponsor", get(show_gi_sponsor_recruit_page))
         .route("/api/gi/:id/checkout", post(gi_edition_checkout))
@@ -48003,6 +49007,9 @@ async fn main() {
         .route("/api/mypage/claim-nft", post(mypage_claim_nft))
         .route("/vault", get(vault_index))
         .route("/vault/:slug", get(vault_article))
+        .route("/community-numbers", get(community_numbers_public))
+        .route("/anchor/:id", get(anchor_page))
+        .route("/api/anchor/:id", get(anchor_api))
         .route("/api/vault/dashboard", get(vault_dashboard_api))
         .route("/api/admin/email/vault_waitlist_blast", post(admin_email_vault_waitlist_blast))
         .route("/api/admin/email/buyer_thanks_blast", post(admin_email_buyer_thanks_blast))

@@ -306,6 +306,48 @@ footer{
     </div>
   </a>
 
+  <!-- 「あなたが受け取る 4 つ」: 1 着で何が手に入るか可視化。
+       MU Pass (NFT 会員証) を期待値に含めることで「単なるTシャツ」ではなく
+       「永久メンバーシップ」を買う体験にする。詳細は /pass。 -->
+  <div style="margin:28px 0 8px;padding:22px 22px 18px;background:linear-gradient(180deg,rgba(230,196,73,0.04),rgba(230,196,73,0.01));border:1px solid rgba(230,196,73,0.25);border-radius:10px">
+    <div style="font-size:10.5px;letter-spacing:0.32em;color:#e6c449;text-transform:uppercase;margin-bottom:14px;font-weight:600">あなたが受け取る 4 つ</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px">
+      <div style="background:rgba(0,0,0,0.3);border-radius:6px;padding:13px 14px">
+        <div style="font-size:11px;color:#e6c449;letter-spacing:0.15em;margin-bottom:5px">① モノ</div>
+        <div style="font-size:13px;line-height:1.5">1 着の T シャツ<br><span style="font-size:11px;opacity:0.6">EU print · 国内発送</span></div>
+      </div>
+      <div style="background:rgba(0,0,0,0.3);border-radius:6px;padding:13px 14px">
+        <div style="font-size:11px;color:#e6c449;letter-spacing:0.15em;margin-bottom:5px">② 会員証</div>
+        <div style="font-size:13px;line-height:1.5">MU Pass NFT<br><span style="font-size:11px;opacity:0.6">Solana · 永久・剥奪不可</span></div>
+      </div>
+      <div style="background:rgba(0,0,0,0.3);border-radius:6px;padding:13px 14px">
+        <div style="font-size:11px;color:#e6c449;letter-spacing:0.15em;margin-bottom:5px">③ Vault</div>
+        <div style="font-size:13px;line-height:1.5">永久アクセス<br><span style="font-size:11px;opacity:0.6">手書きログ + 投票権</span></div>
+      </div>
+      <div style="background:rgba(0,0,0,0.3);border-radius:6px;padding:13px 14px">
+        <div style="font-size:11px;color:#e6c449;letter-spacing:0.15em;margin-bottom:5px">④ 還元</div>
+        <div style="font-size:13px;line-height:1.5">§28 Community<br><span style="font-size:11px;opacity:0.6">10% を保有数比で</span></div>
+      </div>
+    </div>
+    <div style="text-align:right;margin-top:10px;font-size:11px;letter-spacing:0.1em">
+      <a href="/pass" style="color:#e6c449;text-decoration:none;border-bottom:1px dotted rgba(230,196,73,0.4);padding-bottom:1px">仕組み詳細 → /pass</a>
+    </div>
+  </div>
+
+  <!-- Holder-only teaser + on-chain proof — wired into /community-numbers
+       and /anchor/:id. JS below fills product-anchor-link with the active
+       product id once loadProduct() resolves. -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:18px 0 32px">
+    <a href="/community-numbers" style="background:#0c0c0c;border:1px solid #2a2310;border-radius:6px;padding:14px 16px;text-decoration:none;color:#f5f5f0;display:block">
+      <div style="font-size:10.5px;letter-spacing:0.22em;color:#e6c449;text-transform:uppercase;margin-bottom:6px">🔒 holder-only</div>
+      <div style="font-size:13px;line-height:1.55">買った人だけが見られる<br/>原価・没デザイン・明日の予告 →</div>
+    </a>
+    <a id="product-anchor-link" href="#" style="background:#0c0c0c;border:1px solid #1a2a20;border-radius:6px;padding:14px 16px;text-decoration:none;color:#f5f5f0;display:block">
+      <div style="font-size:10.5px;letter-spacing:0.22em;color:#7ed492;text-transform:uppercase;margin-bottom:6px">🔗 proof of birth</div>
+      <div style="font-size:13px;line-height:1.55">この 1 着の SHA-256 anchor を<br/>誰でも検証 → on-chain hourly</div>
+    </a>
+  </div>
+
   <div class="specs">
     <div class="spec"><div class="l">Fabric</div><div class="v">Stanley/Stella SATU001 · 180gsm · GOTS organic (Premium 経路) / Printstar 5.6oz (SUZURI 経路)</div></div>
     <div class="spec"><div class="l">Neck</div><div class="v">織りリブ襟 (Premium のみ)</div></div>
@@ -410,6 +452,8 @@ async function loadProduct() {
       stockEl.textContent = 'のこり ' + rem + ' / ' + pick.inventory + ' · ' + pick.sold + ' 着 売れ済';
     }
     document.getElementById('product-link').href = '/products/' + (pick.brand || 'mugen') + '/' + pick.id + '?from=buy_page';
+    const anchorLink = document.getElementById('product-anchor-link');
+    if (anchorLink) anchorLink.href = '/anchor/' + pick.id;
     // SUZURI は国内 (日本) 顧客向け fulfillment のみ。 navigator.language が
     // ja で始まる、 または ?lang=ja の場合のみ表示。 海外からは Printful EU 経路だけ。
     const isJa = (navigator.language || '').toLowerCase().startsWith('ja')

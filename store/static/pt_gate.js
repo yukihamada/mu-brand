@@ -23,10 +23,14 @@
 
   var EMAIL_KEY = "mu_pt_email";
   var UNLOCKED_KEY = "mu_pt_unlocked";  // JSON array of target ids
+  var PASS_KEY = "mu_pass_count";       // last-known pass count for this email
   var DEFAULT_COST = 30;
 
   function getEmail() { try { return localStorage.getItem(EMAIL_KEY) || ""; } catch (e) { return ""; } }
   function setEmail(e) { try { localStorage.setItem(EMAIL_KEY, e); } catch (e2) {} }
+  function getPassCount() { try { return parseInt(localStorage.getItem(PASS_KEY) || "0", 10) || 0; } catch (e) { return 0; } }
+  function setPassCount(n) { try { localStorage.setItem(PASS_KEY, String(n)); } catch (e) {} }
+  function isHolder() { return getPassCount() > 0; }
   function getCachedUnlocks() {
     try { return JSON.parse(localStorage.getItem(UNLOCKED_KEY) || "[]") || []; }
     catch (e) { return []; }
@@ -187,7 +191,8 @@
     }
 
     // ① Instant reveal from localStorage cache (no API hop, no flash).
-    if (getCachedUnlocks().indexOf(target) >= 0) { reveal(); }
+    //    Pass holders bypass all gates — their shirt IS the membership.
+    if (isHolder() || getCachedUnlocks().indexOf(target) >= 0) { reveal(); }
 
     // On click: known email? auto-unlock. Else open modal.
     ctaWrap.querySelector(".mu-pt-cta").addEventListener("click", function () {
@@ -222,6 +227,47 @@
     var gates = document.querySelectorAll("[data-pt-gate]");
     for (var i = 0; i < gates.length; i++) mountGate(gates[i]);
     mountBadge(gates);
+    refreshPassCount();  // background: ask server if this email holds passes
+  }
+
+  // Background sync: if email is known, ask /api/pass/by_email how many
+  // MU Pass NFTs this person holds. Any count > 0 → bypass all gates,
+  // change badge label to "✓ Pass holder · 全コンテンツ unlock 済".
+  function refreshPassCount() {
+    var em = getEmail();
+    if (!em) return;
+    api("GET", "/api/pass/by_email?email=" + encodeURIComponent(em), null)
+      .then(function (r) {
+        var n = (r && r.passes && r.passes.length) ? r.passes.length : 0;
+        var prev = getPassCount();
+        setPassCount(n);
+        if (n > 0 && prev === 0) {
+          // First time we noticed they hold a pass — reveal every gate.
+          document.querySelectorAll("[data-pt-gate]").forEach(function (g) {
+            var fade = g.querySelector(".mu-pt-fade-wrap");
+            var cta = g.querySelector(".mu-pt-cta-wrap");
+            var content = g.querySelector("[data-pt-content]");
+            if (content) content.style.display = "";
+            if (fade) fade.style.display = "none";
+            if (cta) cta.style.display = "none";
+            g.classList.add("mu-pt-unlocked");
+          });
+          updateBadgeForHolder(n);
+        } else if (n > 0) {
+          updateBadgeForHolder(n);
+        }
+      })
+      .catch(function () {});
+  }
+
+  function updateBadgeForHolder(n) {
+    var b = document.getElementById("mu-pt-badge");
+    if (!b) return;
+    var lbl = b.querySelector(".lbl");
+    if (lbl) lbl.textContent = "✓ Pass × " + n + " 保有 · 全 unlock";
+    b.style.background = "#0a3a14";
+    b.style.color = "#7ed492";
+    b.style.borderColor = "rgba(126,212,146,0.4)";
   }
 
   // ── floating discoverability badge ──────────────────────────────────
