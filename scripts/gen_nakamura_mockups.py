@@ -4,7 +4,7 @@
 Pipeline:
   1. Generate the brand design (gold "中"/"道" on transparent) using Gemini
      3 Pro image-preview (nano banana). Save to
-     store/static/nakamura/_logo_v1.png.
+     store/static/nakamura/_logo_v2.png.
   2. For each Nakamura SKU in the seed (8 items), call Printful's mockup-
      generator with the design URL, get back a presigned mockup URL, fetch
      the PNG, save to store/static/nakamura/<slug>.jpg.
@@ -177,18 +177,18 @@ def main():
     print("== MU × Nakamura mockup pipeline ==")
     print()
     print("Step 1: Generate brand design via Gemini (nano banana)")
-    design_path = OUT_DIR / "_logo_v1.png"
+    design_path = OUT_DIR / "_logo_v2.png"
     if design_path.exists() and design_path.stat().st_size > 1000:
         print(f"  ⏩ {design_path} already exists ({design_path.stat().st_size} bytes), skip")
     else:
         gemini_generate(DESIGN_PROMPT, design_path)
 
     # We need a PUBLIC HTTPS URL for Printful to fetch.
-    # In production this will be served at https://wearmu.com/static/nakamura/_logo_v1.png
+    # In production this will be served at https://wearmu.com/static/nakamura/_logo_v2.png
     # — but we need to commit + push first before that's live. So we use the
     # existing kokon logo as a fallback for the design URL during initial
     # generation, then swap to the nakamura logo on next run.
-    public_design_url = "https://wearmu.com/static/nakamura/_logo_v1.png"
+    public_design_url = "https://wearmu.com/static/nakamura/_logo_v2.png"
     # Probe whether the URL is live yet:
     try:
         with urlopen(Request(public_design_url, method="HEAD"), timeout=10) as r:
