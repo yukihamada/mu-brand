@@ -183,16 +183,16 @@
   </ul>
 </section>
 
-<!-- Owners ticker -->
+<!-- Owners ticker — populated live from /api/pass/stats -->
 <div class="owners">
-  <h3>genesis lot · 直近の保有者</h3>
+  <h3>genesis lot · <span id="owners-count">—</span> 名 (on-chain 確定)</h3>
   <div class="owners-list" id="owners-list">
-    <span class="owner-chip">#001 yuki@…</span>
-    <span class="owner-chip">#002 mail@…</span>
-    <span class="owner-chip">#003 anon-rabbit</span>
-    <span class="owner-chip">#004 kenny@…</span>
-    <span class="owner-chip">#005 anon-pine</span>
-    <span class="owner-chip" style="opacity:0.55">+ N people</span>
+    <span class="owner-chip" style="opacity:0.55">読み込み中…</span>
+  </div>
+  <div style="text-align:center;margin-top:18px;font-size:11px;letter-spacing:0.12em;color:var(--mute)">
+    Merkle tree:
+    <a href="https://solscan.io/account/2fpSZ1rwZsvupiavocgnyksYu2RSUfrw6yM1ZfEDtrBN" target="_blank" rel="noopener" style="font-family:ui-monospace,Menlo,monospace;color:var(--y);text-decoration:none;border-bottom:1px dotted rgba(230,196,73,0.4);padding-bottom:1px">2fpSZ1…trBN</a>
+    · Solana mainnet · Bubblegum cNFT
   </div>
 </div>
 
@@ -244,10 +244,58 @@
 
 <script>
 (function(){
+  // ── Live owners ticker — pulls real recent holders from API ─────
+  function hydrateOwners() {
+    fetch('/api/pass/stats')
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        var c = document.getElementById('owners-count');
+        var list = document.getElementById('owners-list');
+        if (c && typeof d.total === 'number') c.textContent = d.total;
+        if (!list) return;
+        if (!d.recent || d.recent.length === 0) {
+          list.innerHTML = '<span class="owner-chip" style="opacity:0.55">まだ誰もいません — あなたが #001 になります</span>';
+          return;
+        }
+        // recent is desc by edition; show as chips with #edition + masked owner
+        list.innerHTML = d.recent.map(function(r){
+          var ed = '#' + String(r.edition).padStart(3,'0');
+          return '<span class="owner-chip">' + ed + ' ' + r.owner + '</span>';
+        }).join('');
+        if (d.total > d.recent.length) {
+          list.innerHTML += '<span class="owner-chip" style="opacity:0.55">+ ' + (d.total - d.recent.length) + ' more</span>';
+        }
+      })
+      .catch(function(){
+        var list = document.getElementById('owners-list');
+        if (list) list.innerHTML = '<span class="owner-chip" style="opacity:0.45">読み込み失敗</span>';
+      });
+  }
+  hydrateOwners();
+
+  // ── Pass lookup form ────────────────────────────────────────────
   var btn = document.getElementById('pass-check-btn');
   var input = document.getElementById('pass-email');
   var status = document.getElementById('pass-status');
   if (!btn || !input) return;
+
+  function renderPasses(passes) {
+    return passes.map(function(p){
+      var ed = '#' + String(p.edition).padStart(3,'0');
+      var line = '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06);font-size:13px">';
+      line += '<span style="font-family:ui-monospace,Menlo,monospace;color:#e6c449">' + ed + '</span>';
+      line += '<span style="font-size:11px;color:rgba(255,255,255,0.6)">' + (p.brand || '—') + '</span>';
+      if (p.mint_status === 'minted' && p.mint_tx) {
+        line += '<a href="https://solscan.io/tx/' + encodeURIComponent(p.mint_tx) + '" target="_blank" rel="noopener" style="font-size:11px;color:#7ed492;text-decoration:none">on-chain ↗</a>';
+      } else if (p.mint_status === 'minting') {
+        line += '<span style="font-size:11px;color:#facc15">minting…</span>';
+      } else {
+        line += '<span style="font-size:11px;color:rgba(255,255,255,0.4)">pending mint</span>';
+      }
+      line += '</div>';
+      return line;
+    }).join('');
+  }
 
   function check() {
     var em = (input.value || '').trim();
@@ -260,8 +308,10 @@
       .then(function(d){
         btn.disabled = false; btn.textContent = 'パスを確認 →';
         if (d && d.passes && d.passes.length > 0) {
-          var ids = d.passes.map(function(p){ return '#' + String(p.edition).padStart(3,'0'); }).join(' · ');
-          status.innerHTML = '✓ あなたは ' + d.passes.length + ' 枚保有しています: <span style="font-family:ui-monospace,Menlo,monospace;color:#e6c449">' + ids + '</span><br>→ <a href="/vault" style="color:#e6c449">Vault を開く</a>';
+          var hdr = '<div style="font-size:14px;color:#7ed492;margin-bottom:6px">✓ ' + d.passes.length + ' 枚保有 (' + d.passes.filter(function(p){return p.mint_status==='minted';}).length + ' on-chain)</div>';
+          var rows = '<div style="margin-top:10px">' + renderPasses(d.passes) + '</div>';
+          var foot = '<div style="margin-top:14px;font-size:12px">→ <a href="/vault/genesis-pass-letter" style="color:#e6c449">最初の手紙を読む</a> · <a href="/vault" style="color:#e6c449">全 Vault</a></div>';
+          status.innerHTML = hdr + rows + foot;
         } else {
           status.innerHTML = 'このメアドに紐づくパスはまだありません。<br>→ <a href="/collections" style="color:#e6c449">T シャツを買って参加する</a>';
         }

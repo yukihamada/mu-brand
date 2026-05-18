@@ -30276,6 +30276,83 @@ async fn agent_ma_lineage_daily(db: Db) -> Result<AgentReport, String> {
     })
 }
 
+/// `agent_pass_pending_alert` — surfaces unminted MU Passes to operator.
+///
+/// MU Pass on-chain mint runs from yuki's local Mac (Treasury key stays
+/// off-server). This agent polls every 30 min, and if pending passes are
+/// piling up, sends a Telegram alert with the exact `bun batch X-Y`
+/// command. Membership itself is valid the moment the DB row exists; this
+/// just nudges yuki to anchor it on-chain in a timely batch.
+async fn agent_pass_pending_alert(db: Db) -> Result<AgentReport, String> {
+    use serde_json::json;
+    let (pending_count, min_ed, max_ed, total) = {
+        let conn = db.lock().map_err(|e| e.to_string())?;
+        let (n, mn, mx): (i64, Option<i64>, Option<i64>) = conn.query_row(
+            "SELECT COUNT(*), MIN(edition), MAX(edition) FROM mu_passes
+             WHERE mint_status IN ('pending','failed')",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).unwrap_or((0, None, None));
+        let total: i64 = conn.query_row("SELECT COUNT(*) FROM mu_passes", [], |r| r.get(0)).unwrap_or(0);
+        (n, mn, mx, total)
+    };
+
+    if pending_count == 0 {
+        return Ok(AgentReport {
+            observations: json!({"pending": 0, "total": total}),
+            decisions: vec![],
+            actions: vec![],
+            summary: format!("all {} passes already minted on-chain", total),
+            notable: false,
+        });
+    }
+
+    // Dedup: only alert once per (min_ed,max_ed) range so a stuck batch
+    // doesn't spam Telegram every 30 minutes.
+    let key = format!("pass_pending_alert_{}_{}", min_ed.unwrap_or(0), max_ed.unwrap_or(0));
+    let already_alerted = {
+        let conn = db.lock().map_err(|e| e.to_string())?;
+        !cv_get(&conn, &key, "").is_empty()
+    };
+
+    let cmd = format!(
+        "bun run scripts/mu-pass-mint/index.ts batch {}-{}",
+        min_ed.unwrap_or(1), max_ed.unwrap_or(1),
+    );
+    let mut notable = false;
+    if !already_alerted {
+        if let Ok(tg_token) = std::env::var("TELEGRAM_BOT_TOKEN") {
+            let tg_chat = std::env::var("TELEGRAM_CHAT_ID").unwrap_or_else(|_| "1136442501".into());
+            if !tg_token.is_empty() {
+                let msg = format!(
+                    "🪪 MU Pass: {} pending mint (#{:03}-#{:03}) — run on Mac:\n\n`cd ~/workspace/mu-brand && {}`\n\nTotal issued: {} / on-chain so far: {}.",
+                    pending_count, min_ed.unwrap_or(0), max_ed.unwrap_or(0), cmd,
+                    total, total - pending_count,
+                );
+                let _ = reqwest::Client::new()
+                    .post(format!("https://api.telegram.org/bot{}/sendMessage", tg_token))
+                    .json(&json!({"chat_id": tg_chat, "text": msg, "parse_mode": "Markdown", "disable_web_page_preview": true}))
+                    .send().await;
+            }
+        }
+        let conn = db.lock().map_err(|e| e.to_string())?;
+        cv_set(&conn, &key, "1", "agent_pass_pending_alert");
+        notable = true;
+    }
+
+    Ok(AgentReport {
+        observations: json!({"pending": pending_count, "total": total, "min_ed": min_ed, "max_ed": max_ed, "already_alerted": already_alerted}),
+        decisions: if notable {
+            vec![json!({"alert": format!("{} pending passes need mint", pending_count)})]
+        } else { vec![] },
+        actions: if notable {
+            vec![json!({"channel": "telegram", "cmd": cmd})]
+        } else { vec![] },
+        summary: format!("pending={} (alerted={})", pending_count, notable),
+        notable,
+    })
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // DAO — Constitution §23. Token does not exist. Weight is a pure function
 // of (a) authored lines of constitution.md, age-weighted; (b) MA pieces;
@@ -51017,6 +51094,11 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         interval_secs: 86_400, // 24h
         description: "MA holder 1 名につき 1 日 1 デザインを Gemini で生成 → ma_lineage。/lineage/<short>?k=… でグリッド閲覧、claim は T1。",
     },
+    AgentDef {
+        name: "pass_pending_alert",
+        interval_secs: 1800, // 30 min
+        description: "MU Pass の DB row はあるが on-chain mint 未実行な edition を検知し、Telegram に `bun batch X-Y` コマンドを通知。Treasury key を Mac 側に保つ前提のオペレーション補助。",
+    },
 ];
 
 /// agent_journal から指定 agent の最後の cycle_at (epoch sec) を取得。
@@ -51077,6 +51159,7 @@ async fn run_agent(name: &str, db: Db) -> Result<AgentReport, String> {
         "feedback_learner"  => agent_feedback_learner(db).await,
         "domain_watch"      => agent_domain_watch(db).await,
         "ma_lineage_daily"  => agent_ma_lineage_daily(db).await,
+        "pass_pending_alert"=> agent_pass_pending_alert(db).await,
         _ => Err(format!("unknown agent: {}", name)),
     }
 }
