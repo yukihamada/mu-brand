@@ -32,8 +32,11 @@ import {
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { base58 } from "@metaplex-foundation/umi/serializers";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+const b58 = (sig: Uint8Array) => base58.deserialize(sig)[0];
 
 // ── config ──────────────────────────────────────────────────────────
 const RPC_URL = process.env.SOLANA_RPC || "https://api.mainnet-beta.solana.com";
@@ -42,8 +45,11 @@ const KEYPAIR_PATH =
 const PASS_HOST = process.env.PASS_HOST || "https://wearmu.com";
 const ADMIN_TOKEN = process.env.MU_ADMIN_TOKEN || "";
 const TREE_FILE = path.join(__dirname, ".tree.json");
-const TREE_DEPTH = 14;   // up to 16,384 leaves
-const TREE_BUFFER = 64;
+// Bubblegum supports only specific (maxDepth, maxBufferSize) combos.
+// (5, 8) is the smallest valid one above the demo (3, 8) — gives 32 leaves
+// for ~0.0028 SOL. Enough for the 20-pass genesis lot.
+const TREE_DEPTH = 5;
+const TREE_BUFFER = 8;
 
 // ── helpers ─────────────────────────────────────────────────────────
 function loadUmi() {
@@ -70,7 +76,7 @@ async function ensureTree(umi: ReturnType<typeof loadUmi>) {
     maxBufferSize: TREE_BUFFER,
   });
   const sig = await builder.sendAndConfirm(umi);
-  const txSig = Buffer.from(sig.signature).toString("hex");
+  const txSig = b58(sig.signature);
   console.log(`✓ tree created: ${merkleTreeSigner.publicKey}`);
   console.log(`  tx: ${txSig}`);
   fs.writeFileSync(
@@ -131,7 +137,7 @@ async function mintOne(umi: ReturnType<typeof loadUmi>, treeKey: any, edition: n
     },
   });
   const sig = await builder.sendAndConfirm(umi);
-  const txSig = Buffer.from(sig.signature).toString("hex");
+  const txSig = b58(sig.signature);
   // For cNFTs the "asset id" is derived from tree+leaf index; we'll write
   // the tx for now and let the DAS index pick up the asset id later.
   console.log(`  ✓ #${edPad} minted — tx: ${txSig}`);
