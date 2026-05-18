@@ -1773,6 +1773,149 @@ async fn admin_pod_unlink(
     }
 }
 
+// ───── /admin/funnel — the drop-off diagnostic per Plan-agent W1 ──────
+//
+// Aggregates funnel_events over a 7-day window into the canonical sales
+// funnel pageview → cta_click → checkout_start → checkout_paid. Shows
+// the absolute count, the step-over-step conversion rate, and the
+// biggest drop-off so the founder (Yuki) can fix one thing at a time.
+//
+// Why this matters today (2026-05-18): Google Ads burned ¥42K over 3
+// days with 0 conversions. Without a per-step view we cannot tell if
+// the loss was at landing, CTA, checkout init, or Stripe completion.
+// Three-device manual testing is one diagnostic; this is the other.
+
+async fn admin_funnel_page(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/funnel").await { return r; }
+    let days: i64 = q.get("days").and_then(|s| s.parse().ok()).unwrap_or(7).clamp(1, 90);
+    let cutoff: i64 = chrono_now().parse::<i64>().unwrap_or(0) - days * 86_400;
+
+    let conn = db.lock().unwrap();
+    let count = |event: &str| -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM funnel_events
+             WHERE event=?1 AND CAST(COALESCE(created_at,'0') AS INTEGER) > ?2",
+            params![event, cutoff], |r| r.get(0),
+        ).unwrap_or(0)
+    };
+    let uniq = |event: &str| -> i64 {
+        conn.query_row(
+            "SELECT COUNT(DISTINCT visitor_id) FROM funnel_events
+             WHERE event=?1 AND CAST(COALESCE(created_at,'0') AS INTEGER) > ?2",
+            params![event, cutoff], |r| r.get(0),
+        ).unwrap_or(0)
+    };
+
+    let pv      = count("pageview");
+    let pv_u    = uniq("pageview");
+    let cta     = count("cta_click");
+    let cta_u   = uniq("cta_click");
+    let st      = count("checkout_start");
+    let st_u    = uniq("checkout_start");
+    let paid    = count("checkout_paid");
+    let paid_u  = uniq("checkout_paid");
+
+    let pct = |a: i64, b: i64| -> String {
+        if b <= 0 { return "—".into(); }
+        format!("{:.1}%", 100.0 * a as f64 / b as f64)
+    };
+    let drop = |a: i64, b: i64| -> String {
+        if b <= 0 { return "—".into(); }
+        let d = b - a;
+        format!("-{} ({:.1}%)", d, 100.0 * d as f64 / b as f64)
+    };
+
+    // Top paths by pageview (where traffic actually lands)
+    let mut path_rows = String::new();
+    {
+        let mut st_ = match conn.prepare(
+            "SELECT path, COUNT(*) AS pv, COUNT(DISTINCT visitor_id) AS uv
+             FROM funnel_events
+             WHERE event='pageview' AND CAST(COALESCE(created_at,'0') AS INTEGER) > ?1
+             GROUP BY path ORDER BY pv DESC LIMIT 15"
+        ) { Ok(s) => Some(s), Err(_) => None };
+        if let Some(s) = st_.as_mut() {
+            let rows: Vec<(String, i64, i64)> = s.query_map(params![cutoff], |r| {
+                Ok((r.get::<_, String>(0).unwrap_or_default(),
+                    r.get::<_, i64>(1).unwrap_or(0),
+                    r.get::<_, i64>(2).unwrap_or(0)))
+            }).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+            for (p, pv_, uv) in &rows {
+                let escaped = p.replace('<', "&lt;").replace('>', "&gt;");
+                path_rows.push_str(&format!(
+                    "<tr><td><code>{}</code></td><td class='num'>{}</td><td class='num'>{}</td></tr>",
+                    escaped, pv_, uv
+                ));
+            }
+        }
+    }
+    if path_rows.is_empty() {
+        path_rows = "<tr><td colspan='3' style='text-align:center;color:#666;padding:40px'>まだ pageview なし</td></tr>".into();
+    }
+
+    let html = format!(r##"<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><title>MU · funnel</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<style>
+  body{{background:#0A0A0A;color:#F5F5F0;font-family:ui-monospace,Menlo,monospace;margin:0;padding:24px;font-size:13px;line-height:1.55}}
+  .wrap{{max-width:1100px;margin:0 auto}}
+  h1{{font-size:14px;letter-spacing:0.4em;margin:0 0 4px}}
+  .sub{{color:#888;font-size:11px;letter-spacing:0.16em;margin-bottom:24px}}
+  table{{width:100%;border-collapse:collapse;background:#101010;border:1px solid #1c1c1c;border-radius:6px;overflow:hidden;margin-bottom:24px}}
+  th,td{{padding:10px 14px;text-align:left;border-bottom:1px solid #1c1c1c;font-size:12px}}
+  th{{color:#888;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;background:#080808}}
+  td.num{{text-align:right;font-variant-numeric:tabular-nums}}
+  td.step{{font-weight:600;color:#e6c449;letter-spacing:0.14em}}
+  td.drop{{color:#ff4a3d;font-variant-numeric:tabular-nums;font-size:11px}}
+  td.conv{{color:#7be57b;font-variant-numeric:tabular-nums}}
+  code{{background:#050505;padding:2px 6px;border-radius:3px;color:#aaa;font-size:11px}}
+  .note{{color:#666;font-size:11px;line-height:1.9;border-top:1px solid #1c1c1c;padding-top:16px}}
+  a{{color:#e6c449}}
+</style></head><body>
+<div class="wrap">
+  <h1>MU · FUNNEL ({days}d)</h1>
+  <div class="sub">Plan agent W1 — drop-off を 数字 で 見る</div>
+  <table>
+    <thead><tr><th>step</th><th class='num'>events</th><th class='num'>uniq visitors</th><th class='num'>conv vs prev</th><th>drop-off</th></tr></thead>
+    <tbody>
+      <tr><td class='step'>1. PAGEVIEW</td><td class='num'>{pv}</td><td class='num'>{pv_u}</td><td class='num conv'>—</td><td>—</td></tr>
+      <tr><td class='step'>2. CTA_CLICK</td><td class='num'>{cta}</td><td class='num'>{cta_u}</td><td class='num conv'>{cta_pct}</td><td class='drop'>{cta_drop}</td></tr>
+      <tr><td class='step'>3. CHECKOUT_START</td><td class='num'>{st}</td><td class='num'>{st_u}</td><td class='num conv'>{st_pct}</td><td class='drop'>{st_drop}</td></tr>
+      <tr><td class='step'>4. CHECKOUT_PAID</td><td class='num'>{paid}</td><td class='num'>{paid_u}</td><td class='num conv'>{paid_pct}</td><td class='drop'>{paid_drop}</td></tr>
+      <tr><td class='step' style='color:#888'>TOTAL CVR</td><td colspan='4' class='num' style='color:#7be57b'>{total_cvr} (paid / pageview)</td></tr>
+    </tbody>
+  </table>
+  <table>
+    <thead><tr><th>top paths (pageview)</th><th class='num'>events</th><th class='num'>uniq</th></tr></thead>
+    <tbody>{path_rows}</tbody>
+  </table>
+  <div class="note">
+    drop-off が 一番 大きい step が <strong>修正 すべき #1 箇所</strong>。 普通の e-comm の 目安:
+    <br>· pageview → cta_click: 5-15% 健康
+    <br>· cta_click → checkout_start: 30-60% 健康 (低い と CTA UX 不調 か 価格 ショック)
+    <br>· checkout_start → checkout_paid: 50-80% 健康 (低い と Stripe ページ で 落ちてる、 カード入力 失敗 / 3DS 失敗 等)
+    <br><br>
+    今回 の Google Ads ¥42K で 0 conv の 原因 は ここ で 見える はず。 step 2 or 3 で 100% drop なら CTA ボタン or checkout init 関数 (`/api/checkout/v2`) が 壊れてる。
+    <br><br>
+    <a href="/admin/retention">→ retention</a> · <a href="/admin/db">→ db</a> · <a href="/admin/costs">→ costs</a>
+  </div>
+</div></body></html>"##,
+        days = days,
+        pv = pv, pv_u = pv_u,
+        cta = cta, cta_u = cta_u, cta_pct = pct(cta, pv), cta_drop = drop(cta, pv),
+        st = st, st_u = st_u, st_pct = pct(st, cta), st_drop = drop(st, cta),
+        paid = paid, paid_u = paid_u, paid_pct = pct(paid, st), paid_drop = drop(paid, st),
+        total_cvr = pct(paid, pv),
+        path_rows = path_rows,
+    );
+    Html(html).into_response()
+}
+
 // ───── /admin/retention — the only metric that proves §29 is real ─────
 //
 // Why this exists: Plan agent / 6-persona review identified that all the
@@ -50041,6 +50184,7 @@ async fn main() {
         .route("/api/pt/spawn-mugen",      post(pt_spawn_mugen_handler))
         .route("/admin/costs", get(admin_costs_page))
         .route("/admin/retention", get(admin_retention_page))
+        .route("/admin/funnel", get(admin_funnel_page))
         .route("/api/admin/costs", get(admin_costs_list))
         .route("/api/admin/costs/sweep_losses", post(admin_sweep_losses))
         .route("/api/admin/collab_orders", get(admin_collab_orders))
