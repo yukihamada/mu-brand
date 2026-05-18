@@ -22521,7 +22521,23 @@ fn try_render_approved_proposal_lp(slug: &str, db: &Db) -> Option<String> {
             "SELECT meta_json FROM proposals WHERE slug=?",
             params![slug], |r| r.get(0),
         ).ok().flatten();
-        let skus = proposal_skus_for(&conn, slug);
+        // Inline query so we can pull design_url too (proposal_skus_for is shared
+        // and doesn't return it — changing that helper would ripple to ~10 call sites).
+        let mut skus: Vec<(String, i64, i64, String, String, String, Option<String>)> = Vec::new();
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT letter, drop_num, price_jpy, label, kind, design_slug, design_url
+             FROM proposal_skus WHERE slug=? ORDER BY drop_num ASC",
+        ) {
+            if let Ok(rows) = stmt.query_map(params![slug], |r| {
+                Ok((
+                    r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?,
+                    r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, String>(5)?,
+                    r.get::<_, Option<String>>(6)?,
+                ))
+            }) {
+                for row in rows.flatten() { skus.push(row); }
+            }
+        }
         (row.0, row.1, plan, meta.unwrap_or_default(), skus)
     };
     let meta_json: serde_json::Value = serde_json::from_str(&meta_json_str)
@@ -22535,7 +22551,7 @@ fn render_proposal_lp(
     ip_owner: &str,
     approved: bool,
     plan_tier: &str,
-    skus: &[(String, i64, i64, String, String, String)],
+    skus: &[(String, i64, i64, String, String, String, Option<String>)],
     meta: &serde_json::Value,
 ) -> String {
     let m = |k: &str| meta.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -22577,12 +22593,21 @@ fn render_proposal_lp(
 
     let n_sku = skus.len();
     let total_jpy: i64 = skus.iter().map(|s| s.2).sum();
-    let cards_html: String = skus.iter().map(|(letter, _drop, price, label, kind, design_slug)| {
+    let cards_html: String = skus.iter().map(|(letter, _drop, price, label, kind, design_slug, design_url)| {
+        // Image: prefer the design_url stored in DB; fall back to the
+        // generated PNG that gen_brand_designs.py wrote for this brand.
+        let img = design_url.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| {
+            format!("/static/proposals/{}-design-{}.png", slug, design_slug)
+        });
         format!(
-            "<div class=\"card\"><div class=\"id\">{letter}</div>\
-             <h4>{label}</h4>\
-             <div class=\"kind\">{kind} · design {design_slug}</div>\
-             <div class=\"price\">¥{price}</div></div>",
+            "<div class=\"card\">\
+               <div class=\"thumb\" style=\"background-image:url('{img}')\"></div>\
+               <div class=\"id\">{letter}</div>\
+               <h4>{label}</h4>\
+               <div class=\"kind\">{kind} · design {design_slug}</div>\
+               <div class=\"price\">¥{price}</div>\
+             </div>",
+            img = html_attr_escape(&img),
             letter = html_escape(&letter.to_uppercase()),
             label = html_escape(label),
             kind = html_escape(kind),
@@ -22629,12 +22654,25 @@ ul.use-cases{{margin:0 0 32px;padding:0;list-style:none}}
 ul.use-cases li{{padding:10px 0;border-bottom:1px solid var(--line);color:#ccc;font-size:14px}}
 ul.use-cases li:before{{content:'━◯━ ';color:var(--accent);font-weight:700;margin-right:8px}}
 .grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin-top:24px}}
-.card{{background:#111;border:1px solid var(--line);padding:16px;border-radius:4px;transition:border-color 0.2s}}
+.card{{background:#111;border:1px solid var(--line);padding:0;border-radius:6px;transition:border-color 0.2s;overflow:hidden}}
 .card:hover{{border-color:var(--accent)}}
-.card .id{{font-size:10px;letter-spacing:0.3em;color:var(--accent);font-weight:700;margin-bottom:6px}}
+.card .thumb{{aspect-ratio:1/1;background:#0a0a0a center/cover no-repeat;border-bottom:1px solid var(--line)}}
+.card > .id,.card > h4,.card > .kind,.card > .price{{padding-left:14px;padding-right:14px}}
+.card .id{{font-size:10px;letter-spacing:0.3em;color:var(--accent);font-weight:700;margin:12px 0 4px}}
 .card h4{{margin:0 0 6px;font-size:13px;line-height:1.45;font-weight:600}}
-.card .kind{{font-size:10px;color:var(--mute);letter-spacing:0.16em;text-transform:uppercase;margin-bottom:10px}}
-.card .price{{font-size:15px;font-weight:700;color:var(--fg)}}
+.card .kind{{font-size:10px;color:var(--mute);letter-spacing:0.16em;text-transform:uppercase;margin-bottom:8px}}
+.card .price{{font-size:15px;font-weight:700;color:var(--fg);padding-bottom:14px}}
+.extras-cta{{margin-top:48px;padding:24px;border:1px solid var(--line);background:#111;border-radius:6px}}
+.extras-cta h3{{margin:0 0 8px;font-size:18px;font-weight:700;color:var(--accent)}}
+.extras-cta p{{margin:0 0 16px;color:#ccc;font-size:13px;line-height:1.8}}
+.extras-cta form{{display:flex;gap:8px;flex-wrap:wrap;align-items:center}}
+.extras-cta input[type=email]{{flex:1;min-width:220px;background:#0a0a0a;border:1px solid var(--line);color:var(--fg);padding:10px 12px;font-family:inherit;font-size:14px;border-radius:4px}}
+.extras-cta input[type=email]:focus{{border-color:var(--accent);outline:none}}
+.extras-cta button{{background:var(--accent);color:#000;border:0;font-weight:700;padding:10px 18px;font-size:13px;letter-spacing:0.04em;cursor:pointer;border-radius:4px;font-family:inherit}}
+.extras-cta button:disabled{{opacity:0.5;cursor:not-allowed}}
+.extras-cta .result{{margin-top:14px;font-size:12px;color:var(--mute);line-height:1.7;font-family:'SF Mono',monospace}}
+.extras-cta .result.ok{{color:var(--accent)}}
+.extras-cta .result.err{{color:#ff6464}}
 footer{{margin-top:96px;padding-top:24px;border-top:1px solid var(--line);color:var(--mute);font-size:12px;line-height:1.8}}
 footer code{{background:#111;border:1px solid var(--line);padding:1px 6px;border-radius:3px;font-size:11px}}
 footer a{{color:var(--accent);text-decoration:none}}
@@ -22659,6 +22697,49 @@ footer a{{color:var(--accent);text-decoration:none}}
   <ul class="use-cases">{use_cases_html}</ul>
   <h2>カタログ {n_sku} SKU</h2>
   <div class="grid">{cards_html}</div>
+  <div class="extras-cta">
+    <h3>+30 SKU 追加</h3>
+    <p>初回 30 SKU は無料 (10 pt/SKU、首回エミルで free_30 適用)。AI 自動生成 → 個別承認後に <code>proposal_skus</code> へ追記されます。</p>
+    <form id="extras-form-{slug}" onsubmit="return false">
+      <input type="email" id="extras-email-{slug}" placeholder="email — 初回 30 SKU 無料アクセス用" required autocomplete="email">
+      <button type="submit" id="extras-submit-{slug}">+30 SKU 生成キューに投入</button>
+    </form>
+    <div class="result" id="extras-result-{slug}">qty=30 固定 · 50 / 100 は <code>POST /api/proposal/{slug}/extras/order</code> 直叩きで指定可。job 状況は <code>GET /api/proposal/extras/job/&lt;job_id&gt;</code>。</div>
+  </div>
+  <script>
+  (function(){{
+    var form  = document.getElementById('extras-form-{slug}');
+    var btn   = document.getElementById('extras-submit-{slug}');
+    var inp   = document.getElementById('extras-email-{slug}');
+    var out   = document.getElementById('extras-result-{slug}');
+    if (!form) return;
+    form.addEventListener('submit', async function(e){{
+      e.preventDefault();
+      var email = (inp.value || '').trim();
+      if (!email || email.indexOf('@') < 0) {{
+        out.className='result err'; out.textContent='valid email required'; return;
+      }}
+      btn.disabled = true; out.className='result'; out.textContent='submitting …';
+      try {{
+        var r = await fetch('/api/proposal/{slug}/extras/order', {{
+          method:'POST',
+          headers:{{'Content-Type':'application/json'}},
+          body: JSON.stringify({{email: email, qty: 30, notify_email: true}}),
+        }});
+        var j = await r.json();
+        if (r.ok && j.ok !== false) {{
+          out.className='result ok';
+          out.innerHTML = '✓ queued · job_id=<code>'+(j.job_id||'?')+'</code> · cost=<code>'+(j.cost||0)+' pt</code>' + (j.free_applied?' (free_30 applied)':'') + ' — 完了で <code>'+email+'</code> 宛にメール通知。';
+        }} else {{
+          out.className='result err';
+          out.textContent = '✗ ' + (j.error || ('HTTP '+r.status));
+        }}
+      }} catch (err) {{
+        out.className='result err'; out.textContent = '✗ ' + err.message;
+      }} finally {{ btn.disabled = false; }}
+    }});
+  }})();
+  </script>
   <footer>
     <p>© 株式会社イネブラ / MU · <a href="https://wearmu.com">wearmu.com</a> · IP owner: {ip_owner}</p>
     <p>承認後の公開販売は <code>POST /api/proposal/{slug}/approve</code> 経由。state: <code>GET /api/proposal/{slug}/state</code> · SKUs: <code>GET /api/proposal/{slug}/skus</code></p>
