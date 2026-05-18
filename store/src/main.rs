@@ -27092,9 +27092,112 @@ async fn public_profit_split_api(State(db): State<Db>) -> Json<serde_json::Value
     }))
 }
 
-/// GET /profit-split — §28 spec HTML (markdown レンダリング)
-async fn public_profit_split_page() -> Html<String> {
-    let body_html = md_to_html_simple(PROFIT_SPLIT_RAW);
+/// GET /profit-split — §28 spec HTML (markdown レンダリング) + live P hero
+async fn public_profit_split_page(State(db): State<Db>) -> Html<String> {
+    let body_md_html = md_to_html_simple(PROFIT_SPLIT_RAW);
+
+    // ── live P 計算 (公開 API と同じ前提) ─────────────────────────────────
+    let revenue_jpy: i64 = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(SUM(amount_jpy),0) FROM mu_purchases WHERE session_id LIKE 'cs_live_%'",
+            [], |r| r.get::<_, i64>(0),
+        ).unwrap_or(0)
+    };
+    let est_net_after_tax = (revenue_jpy as f64 * 0.175) as i64;
+    let breakdown = profit_split_breakdown(est_net_after_tax);
+    let segments = breakdown["segments"].as_array().cloned().unwrap_or_default();
+
+    // segment 別 色トークン
+    let seg_color = |key: &str| -> &'static str {
+        match key {
+            "donation"    => "#e6c449", // gold
+            "yuki"        => "#9ae3a8", // green
+            "shareholder" => "#7fb8ff", // blue
+            "ma_holder"   => "#c89eff", // purple
+            "community"   => "#ffae6b", // orange
+            "reserve"     => "#6b7280", // gray
+            _ => "#888",
+        }
+    };
+    let seg_label = |key: &str| -> &'static str {
+        match key {
+            "donation"    => "寄付",
+            "yuki"        => "Yuki 報酬",
+            "shareholder" => "株主配当",
+            "ma_holder"   => "MA 還元",
+            "community"   => "Community",
+            "reserve"     => "運転備金",
+            _ => "segment",
+        }
+    };
+
+    // horizontal bar (segment 幅 = ratio %)
+    let bar_segments: String = segments.iter().map(|s| {
+        let key = s["key"].as_str().unwrap_or("");
+        let ratio = s["ratio"].as_f64().unwrap_or(0.0);
+        format!(
+            r##"<div title="{label} {pct:.0}%" style="flex:{ratio};background:{color};height:100%"></div>"##,
+            label = seg_label(key),
+            pct = ratio * 100.0,
+            ratio = ratio,
+            color = seg_color(key),
+        )
+    }).collect();
+
+    // segment 別 ¥ amount grid
+    let seg_cards: String = segments.iter().map(|s| {
+        let key = s["key"].as_str().unwrap_or("");
+        let jpy = s["jpy"].as_i64().unwrap_or(0);
+        let ratio = s["ratio"].as_f64().unwrap_or(0.0);
+        let color = seg_color(key);
+        let label = seg_label(key);
+        format!(
+            r##"<div style="border-left:2px solid {color};padding:8px 12px;background:rgba(255,255,255,0.02)">
+  <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+    <span style="font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:#bbb">{label}</span>
+    <span style="font-size:10px;color:#666;font-variant-numeric:tabular-nums">{pct:.0}%</span>
+  </div>
+  <div style="font-size:17px;font-weight:300;color:{color};font-variant-numeric:tabular-nums;letter-spacing:-0.01em;margin-top:4px">¥{jpy_fmt}</div>
+</div>"##,
+            color = color,
+            label = label,
+            pct = ratio * 100.0,
+            jpy_fmt = format_jpy(jpy),
+        )
+    }).collect();
+
+    let live_hero = format!(
+        r##"<div style="background:rgba(230,196,73,0.05);border:1px solid rgba(230,196,73,0.25);border-left:3px solid #e6c449;border-radius:3px;padding:24px 28px;margin:0 0 36px">
+  <div style="font-size:10px;letter-spacing:0.42em;text-transform:uppercase;color:#e6c449;margin-bottom:14px">Live P (推定)</div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:18px;margin-bottom:18px">
+    <div>
+      <div style="font-size:32px;font-weight:200;color:#e6c449;letter-spacing:-0.01em;line-height:1">¥{p_fmt}</div>
+      <div style="font-size:10px;letter-spacing:0.22em;text-transform:uppercase;color:#888;margin-top:6px">税引後 純利益 (推定)</div>
+    </div>
+    <div>
+      <div style="font-size:24px;font-weight:200;color:#F5F5F0;letter-spacing:-0.01em;line-height:1">¥{rev_fmt}</div>
+      <div style="font-size:10px;letter-spacing:0.22em;text-transform:uppercase;color:#888;margin-top:6px">当期 売上 (live)</div>
+    </div>
+  </div>
+  <div style="display:flex;width:100%;height:18px;border-radius:2px;overflow:hidden;border:1px solid rgba(255,255,255,0.08);margin-bottom:16px">
+    {bar}
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px">
+    {cards}
+  </div>
+  <p style="font-size:11.5px;color:#888;line-height:1.85;margin-top:18px">
+    P は <code style="background:rgba(230,196,73,0.10);color:#e6c449;padding:1px 5px;border-radius:2px;font-size:11px">revenue × 0.175</code> (粗利率 25% × 税後 70%) で常時 推定。 実支払は期末監査確定 → 株主総会 決議に基づく。 JSON: <a href="/api/profit-split">/api/profit-split</a>
+  </p>
+</div>"##,
+        p_fmt = format_jpy(est_net_after_tax),
+        rev_fmt = format_jpy(revenue_jpy),
+        bar = bar_segments,
+        cards = seg_cards,
+    );
+
+    let body_html = format!("{}\n{}", live_hero, body_md_html);
+
     let html = format!(r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>━◯━ MU · §28 利益分配スキーム | wearmu.com</title>
@@ -27129,6 +27232,10 @@ nav .logo{{font-weight:700;letter-spacing:0.45em}}
 .wrap th,.wrap td{{border:1px solid var(--line);padding:8px 12px;text-align:left}}
 .wrap th{{background:#0e0e0e;color:var(--fg);font-weight:500;letter-spacing:0.04em}}
 .wrap blockquote{{margin:18px 0;padding:12px 18px;border-left:2px solid var(--y);background:rgba(230,196,73,0.06);font-size:13.5px;color:var(--mute)}}
+@media (max-width: 640px) {{
+  .wrap table {{ display:block; overflow-x:auto; white-space:nowrap; font-size:11px; -webkit-overflow-scrolling:touch }}
+  .wrap th, .wrap td {{ padding:6px 8px }}
+}}
 footer{{max-width:760px;margin:0 auto;padding:32px 28px 80px;border-top:1px solid var(--line);color:var(--mute);font-size:11.5px;letter-spacing:0.1em;line-height:2}}
 footer a{{color:var(--mute);text-decoration:underline;text-decoration-color:rgba(255,255,255,0.18)}} footer a:hover{{color:var(--y)}}
 </style></head><body>
