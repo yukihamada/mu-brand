@@ -3255,6 +3255,104 @@ async fn collab_page() -> impl IntoResponse {
     axum::response::Html(body)
 }
 
+// ────────────────────────────────────────────────────────────────
+// /memory-vault — sanitized snapshot of yuki's Claude Code memory.
+// Gated by MU_VAULT_PASSWORD env var. Returns 503 if not configured.
+//
+// Auth model (MVP):
+//   GET  /memory-vault            → password form (or content if token in query)
+//   GET  /memory-vault/:file      → serve sanitized .md / index.html if token matches
+//
+// Files live in data/memory-vault/ (built by scripts/build_memory_vault.py).
+// Distribution: T-shirt purchasers get the token in their order-confirm email
+// (manual for now; automated later).
+// ────────────────────────────────────────────────────────────────
+fn vault_password() -> Option<String> {
+    env::var("MU_VAULT_PASSWORD").ok().filter(|s| !s.trim().is_empty())
+}
+
+fn vault_token_matches(supplied: &str) -> bool {
+    let Some(expected) = vault_password() else { return false; };
+    // Constant-time compare via length+xor sum (good enough for low-value gate).
+    let a = expected.as_bytes();
+    let b = supplied.as_bytes();
+    if a.len() != b.len() { return false; }
+    let mut diff = 0u8;
+    for i in 0..a.len() { diff |= a[i] ^ b[i]; }
+    diff == 0
+}
+
+async fn memory_vault_index(
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if vault_password().is_none() {
+        return (StatusCode::SERVICE_UNAVAILABLE,
+                "memory vault not configured — set MU_VAULT_PASSWORD").into_response();
+    }
+    let token = q.get("t").map(|s| s.as_str()).unwrap_or("");
+    if !token.is_empty() && vault_token_matches(token) {
+        // Token OK → serve index.html
+        let path = std::path::Path::new("data/memory-vault/index.html");
+        match tokio::fs::read_to_string(path).await {
+            Ok(body) => {
+                // Rewrite only relative "./<file>" links into token-gated URLs.
+                // External https://... links are left alone.
+                let rewritten = body.replace(
+                    "href=\"./",
+                    &format!("href=\"/memory-vault/files/?t={token}&f="),
+                );
+                return Html(rewritten).into_response();
+            }
+            Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "vault not built").into_response(),
+        }
+    }
+    Html(r#"<!doctype html><html lang="ja"><head><meta charset="utf-8">
+<title>MU Memory Vault</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:480px;margin:80px auto;padding:0 20px;color:#222}
+h1{font-size:20px}.note{color:#666;font-size:13px;line-height:1.7;margin:18px 0}
+input{width:100%;padding:12px;border:1px solid #ddd;border-radius:6px;font-size:15px;box-sizing:border-box}
+button{margin-top:12px;background:#000;color:#fff;border:0;padding:12px 22px;border-radius:6px;cursor:pointer;font-size:14px}</style>
+</head><body><h1>MU Memory Vault</h1>
+<p class="note">wearmu.com で T シャツを買ってくれた方に届く <strong>vault token</strong> を入力してください。<br>
+yuki の Claude Code 用 <code>memory/</code> (74 ファイル) の sanitize 版にアクセスできます。</p>
+<form method="get" action="/memory-vault">
+  <input type="password" name="t" placeholder="vault token" autocomplete="off" required>
+  <button type="submit">unlock</button>
+</form></body></html>"#).into_response()
+}
+
+async fn memory_vault_file(
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if vault_password().is_none() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "vault not configured").into_response();
+    }
+    let token = q.get("t").map(|s| s.as_str()).unwrap_or("");
+    if !vault_token_matches(token) {
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    }
+    let f = q.get("f").map(|s| s.as_str()).unwrap_or("");
+    // path traversal guard — only allow plain basenames matching whitelist chars.
+    if f.is_empty() || f.contains('/') || f.contains("..")
+        || !f.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.') {
+        return (StatusCode::BAD_REQUEST, "bad filename").into_response();
+    }
+    let path = std::path::Path::new("data/memory-vault").join(f);
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => {
+            let ct = if f.ends_with(".md") { "text/markdown; charset=utf-8" }
+                     else if f.ends_with(".html") { "text/html; charset=utf-8" }
+                     else { "text/plain; charset=utf-8" };
+            let mut resp = bytes.into_response();
+            resp.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static(ct));
+            resp.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("private, no-store"));
+            resp
+        }
+        Err(_) => (StatusCode::NOT_FOUND, "not found").into_response(),
+    }
+}
+
 /// GET /itto/:serial — public page for one calf. Shows farm / birthdate /
 /// photos / status / per-tier sold counts. Pulled by buyers from the
 /// success page after checkout (deep-linkable).
@@ -47942,6 +48040,8 @@ async fn main() {
         .route("/api/referral/:code", get(referral_info))
         .route("/api/admin/funnel/clicks", get(admin_funnel_clicks))
         .route("/sitemap.xml", get(dynamic_sitemap))
+        .route("/memory-vault", get(memory_vault_index))
+        .route("/memory-vault/files/", get(memory_vault_file))
         // Per-user share page — REGISTER LAST so literal routes win
         .route("/:slug", get(slug_or_static))
         .nest_service("/static", ServeDir::new("static"))
