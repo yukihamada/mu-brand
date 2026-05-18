@@ -22500,6 +22500,185 @@ async fn proposal_generic_state(
     })).into_response()
 }
 
+/// Try to render an approved proposal LP from DB, for the /:slug catch-all.
+/// Returns Some(html) ONLY when the proposal exists, has `approved_at`, and
+/// has not been revoked. Unapproved / revoked / non-existent → None (caller
+/// falls through to the static-or-404 path so the brand is invisible).
+fn try_render_approved_proposal_lp(slug: &str, db: &Db) -> Option<String> {
+    let (name, ip_owner, plan_tier, skus) = {
+        let conn = db.lock().unwrap();
+        let row = proposal_row(&conn, slug)?;
+        // Must be approved + not revoked.
+        if row.2.is_none() || row.6.is_some() { return None; }
+        let plan = row.5.clone().unwrap_or_default();
+        let skus = proposal_skus_for(&conn, slug);
+        (row.0, row.1, plan, skus)
+    };
+    let meta_json: serde_json::Value = PARTNER_PROPOSALS_DIR
+        .get_file(format!("{}.json", slug))
+        .and_then(|f| f.contents_utf8())
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+        .and_then(|v| v.get("meta").cloned())
+        .unwrap_or(serde_json::json!({}));
+    Some(render_proposal_lp(slug, &name, &ip_owner, true, &plan_tier, &skus, &meta_json))
+}
+
+fn render_proposal_lp(
+    slug: &str,
+    name: &str,
+    ip_owner: &str,
+    approved: bool,
+    plan_tier: &str,
+    skus: &[(String, i64, i64, String, String, String)],
+    meta: &serde_json::Value,
+) -> String {
+    let m = |k: &str| meta.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let display_name = if !m("display_name").is_empty() { m("display_name") } else { name.to_string() };
+    let tagline      = m("tagline");
+    let h1           = if !m("h1").is_empty() { m("h1") } else { html_escape(&display_name) };
+    let subtitle     = m("subtitle");
+    let lede         = m("lede");
+    let why_md       = m("why_md");
+    let accent       = if !m("accent_hex").is_empty() { m("accent_hex") } else { "#7be57b".into() };
+
+    let accent_rgba = {
+        let h = accent.trim_start_matches('#');
+        let r = u8::from_str_radix(h.get(0..2).unwrap_or("7b"), 16).unwrap_or(0x7b);
+        let g = u8::from_str_radix(h.get(2..4).unwrap_or("e5"), 16).unwrap_or(0xe5);
+        let b = u8::from_str_radix(h.get(4..6).unwrap_or("7b"), 16).unwrap_or(0x7b);
+        format!("rgba({},{},{},0.10)", r, g, b)
+    };
+
+    let hero_kv_html: String = meta.get("hero_kv")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|p| {
+            let pair = p.as_array()?;
+            let k = pair.first()?.as_str()?;
+            let v = pair.get(1)?.as_str()?;
+            Some(format!(
+                "<hr><div class=\"k\">{}</div><div class=\"v\">{}</div>",
+                html_escape(k), html_escape(v)
+            ))
+        }).collect::<Vec<_>>().join(""))
+        .unwrap_or_default();
+
+    let use_cases_html: String = meta.get("use_cases")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|u| u.as_str())
+            .map(|u| format!("<li>{}</li>", html_escape(u)))
+            .collect::<Vec<_>>().join(""))
+        .unwrap_or_default();
+
+    let n_sku = skus.len();
+    let total_jpy: i64 = skus.iter().map(|s| s.2).sum();
+    let cards_html: String = skus.iter().map(|(letter, _drop, price, label, kind, design_slug)| {
+        format!(
+            "<div class=\"card\"><div class=\"id\">{letter}</div>\
+             <h4>{label}</h4>\
+             <div class=\"kind\">{kind} · design {design_slug}</div>\
+             <div class=\"price\">¥{price}</div></div>",
+            letter = html_escape(&letter.to_uppercase()),
+            label = html_escape(label),
+            kind = html_escape(kind),
+            design_slug = html_escape(design_slug),
+            price = format_jpy(*price),
+        )
+    }).collect::<Vec<_>>().join("\n");
+
+    let status_label = if approved {
+        format!("LIVE / 公開販売中 ({})", html_escape(plan_tier))
+    } else {
+        "社外秘 · pitch deck (gated)".to_string()
+    };
+
+    format!(r#"<!doctype html>
+<html lang="ja"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{display_name} × MU — collab pitch</title>
+<meta name="robots" content="noindex,nofollow">
+<meta name="description" content="社外秘 — {display_name} 様への collab pitch deck (株式会社イネブラ / MU)。{n_sku} SKU、 拡張・リブランド相談用。">
+<style>
+:root{{--bg:#0a0a0a;--fg:#f5f5f5;--mute:#888;--line:#222;--accent:{accent};--accent-rgba:{accent_rgba}}}
+*{{box-sizing:border-box}}
+body{{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue',Arial,sans-serif;margin:0;line-height:1.7;-webkit-font-smoothing:antialiased}}
+.wrap{{max-width:980px;margin:0 auto;padding:48px 24px}}
+.status-banner{{background:var(--accent-rgba);border:1px solid var(--accent);border-left:4px solid var(--accent);padding:14px 20px;margin-bottom:32px;display:flex;align-items:center;gap:16px;font-size:12px;letter-spacing:0.04em;flex-wrap:wrap}}
+.status-banner .label{{color:var(--accent);font-weight:700;text-transform:uppercase}}
+.status-banner .meta{{color:var(--mute);font-size:11px;margin-left:auto;text-align:right}}
+.tagline{{color:var(--accent);font-weight:600;font-size:12px;letter-spacing:0.20em;text-transform:uppercase;margin-bottom:12px}}
+h1{{font-size:48px;line-height:1.15;letter-spacing:-0.02em;margin:0 0 16px;font-weight:800}}
+.subtitle{{color:var(--mute);font-size:13px;letter-spacing:0.18em;text-transform:uppercase;margin-bottom:48px}}
+.hero{{display:grid;grid-template-columns:1fr 320px;gap:48px;margin-bottom:64px;align-items:start}}
+@media(max-width:760px){{.hero{{grid-template-columns:1fr}} h1{{font-size:36px}}}}
+.lede{{font-size:16px;line-height:1.95;color:#ddd}}
+.hero-card{{background:#111;border:1px solid var(--line);padding:24px;border-radius:4px}}
+.hero-card .k{{font-size:9px;letter-spacing:0.32em;text-transform:uppercase;color:var(--mute);font-weight:700;margin-bottom:6px}}
+.hero-card .v{{font-size:13px;color:var(--fg)}}
+.hero-card hr{{border:0;border-top:1px solid var(--line);margin:14px 0}}
+.hero-card hr:first-child{{display:none}}
+h2{{font-size:22px;letter-spacing:-0.01em;margin:48px 0 16px;font-weight:700}}
+.why{{font-size:15px;line-height:2;color:#ccc;margin-bottom:32px}}
+ul.use-cases{{margin:0 0 32px;padding:0;list-style:none}}
+ul.use-cases li{{padding:10px 0;border-bottom:1px solid var(--line);color:#ccc;font-size:14px}}
+ul.use-cases li:before{{content:'━◯━ ';color:var(--accent);font-weight:700;margin-right:8px}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin-top:24px}}
+.card{{background:#111;border:1px solid var(--line);padding:16px;border-radius:4px;transition:border-color 0.2s}}
+.card:hover{{border-color:var(--accent)}}
+.card .id{{font-size:10px;letter-spacing:0.3em;color:var(--accent);font-weight:700;margin-bottom:6px}}
+.card h4{{margin:0 0 6px;font-size:13px;line-height:1.45;font-weight:600}}
+.card .kind{{font-size:10px;color:var(--mute);letter-spacing:0.16em;text-transform:uppercase;margin-bottom:10px}}
+.card .price{{font-size:15px;font-weight:700;color:var(--fg)}}
+footer{{margin-top:96px;padding-top:24px;border-top:1px solid var(--line);color:var(--mute);font-size:12px;line-height:1.8}}
+footer code{{background:#111;border:1px solid var(--line);padding:1px 6px;border-radius:3px;font-size:11px}}
+footer a{{color:var(--accent);text-decoration:none}}
+</style>
+</head><body>
+<div class="wrap">
+  <div class="status-banner">
+    <span class="label">━◯━ {status_label}</span>
+    <span style="color:var(--fg);font-weight:600">{display_name} × MU</span>
+    <span class="meta">{n_sku} SKUs · ¥{total_jpy} catalog</span>
+  </div>
+  <div class="tagline">{tagline}</div>
+  <h1>{h1}</h1>
+  <div class="subtitle">{subtitle}</div>
+  <div class="hero">
+    <div class="lede">{lede}</div>
+    <div class="hero-card">{hero_kv_html}</div>
+  </div>
+  <h2>Why ━◯━ {display_name}</h2>
+  <div class="why">{why_md}</div>
+  <h2>想定ユースケース</h2>
+  <ul class="use-cases">{use_cases_html}</ul>
+  <h2>カタログ {n_sku} SKU</h2>
+  <div class="grid">{cards_html}</div>
+  <footer>
+    <p>© 株式会社イネブラ / MU · <a href="https://wearmu.com">wearmu.com</a> · IP owner: {ip_owner}</p>
+    <p>承認後の公開販売は <code>POST /api/proposal/{slug}/approve</code> 経由。state: <code>GET /api/proposal/{slug}/state</code> · SKUs: <code>GET /api/proposal/{slug}/skus</code></p>
+    <p style="opacity:0.6;margin-top:12px">このページは <code>proposals</code> + <code>proposal_skus</code> テーブルから動的に生成されています。静的ファイルなし。</p>
+  </footer>
+</div>
+</body></html>"#,
+        display_name = html_escape(&display_name),
+        tagline = html_escape(&tagline),
+        h1 = h1,
+        subtitle = html_escape(&subtitle),
+        lede = lede,
+        why_md = why_md,
+        accent = accent,
+        accent_rgba = accent_rgba,
+        status_label = status_label,
+        n_sku = n_sku,
+        total_jpy = format_jpy(total_jpy),
+        hero_kv_html = hero_kv_html,
+        use_cases_html = use_cases_html,
+        cards_html = cards_html,
+        ip_owner = html_escape(ip_owner),
+        slug = slug,
+    )
+}
+
 #[derive(Deserialize)]
 struct ProposalApproveBody {
     approver_name: String,
@@ -47191,7 +47370,20 @@ async fn slug_or_static(
     };
     let (uid, _email, display_name) = match row {
         Some(v) => v,
-        None => return serve_static_or_404(&slug, &db),
+        None => {
+            // Try as an approved proposal slug (atsume, future DB-driven brands).
+            // Unapproved / revoked / non-existent → fall through to 404 so the
+            // brand stays invisible until POST /api/proposal/<slug>/approve.
+            if let Some(html) = try_render_approved_proposal_lp(&slug_lo, &db) {
+                let mut resp = Html(html).into_response();
+                resp.headers_mut().insert(
+                    header::CACHE_CONTROL,
+                    HeaderValue::from_static("public, max-age=60"),
+                );
+                return resp;
+            }
+            return serve_static_or_404(&slug, &db);
+        }
     };
 
     // Pull recent designs (history) for the share page + user bio
@@ -51840,6 +52032,9 @@ async fn main() {
         .route("/api/proposals/ryozo/bundle",      post(proposal_ryozo_bundle))
         .route("/ryozo", get(ryozo_public_page))
         // ── Unified proposal system (DB-driven, works for any new brand) ──
+        // No /proposals/:slug route — approved brands surface at /:slug via
+        // slug_or_static (try_render_approved_proposal_lp). Unapproved =
+        // invisible.
         .route("/api/proposal/:slug/state",    get(proposal_generic_state))
         .route("/api/proposal/:slug/skus",     get(proposal_generic_skus))
         .route("/api/proposal/:slug/sample",   post(proposal_generic_sample))
