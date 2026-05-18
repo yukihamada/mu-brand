@@ -75,12 +75,13 @@ Constitution は単調拡大しない、消えうる。
 
 ### 2.3 Chronicle slots (the wear)
 
-`collab_orders` テーブルの 1 行 = 1 個の Chronicle slot (= シャツ 1 枚購入)。
+`mu_purchases` + `collab_orders` テーブルの **配送完了 1 行 = 1 個の Chronicle slot** (= シャツ 1 枚到着)。
 `email` が weight binding の key。
 
 - 1 slot = **1 weight**
 - Soulbound (Stripe customer に固定、転送不能)
-- 100 枚買えば 100 weight。普通に着るだけで自動参加。
+- 100 枚買って到着すれば 100 weight。 普通に着るだけで自動参加。
+- 投票するには `wallet bind` ([§9.1 magic-link self-bind](#91-magic-link-self-bind--実装ずみ)) が必要。 binding 前は slot は存在するが weight 計算に未反映。
 
 ---
 
@@ -124,12 +125,16 @@ yuki が 2026-05-12 に書いた 203 行は:
 
 §23 の DAO は **burn-to-vote にしない**。Sybil 防御が物理層で成立しているから、投票コストを乗せる必要がない。
 
-| 提案種別 | 必要 weight | 通過閾値 |
-|---|---:|---|
-| T2 (reversible) | 100 | 単純多数決 |
-| T1 (irreversible) | 500 | quorum 5%, 賛成 60% |
-| Constitution amendment | 2,000 | quorum 20%, 賛成 75% |
-| Cessation (§Cessation) | 5,000 | quorum 40%, 賛成 90% |
+提案を出すための **最低 weight (proposal floor)** は total supply の % で定義する。 これは weight 総量が時間で希釈するためで、 定数 threshold だと 100 年後に「シャツ 1 枚で cessation 提案できる」という非対称が発生する ([§6 100 年後](#100-年後-2126-05-13-仮定-chronicle-100000-件--ma-500-件--amendment-50) 参照)。
+
+| 提案種別 | 最低 weight (proposer) | 通過閾値 | 最低 weight 下限 |
+|---|---|---|---:|
+| T2 (reversible) | total の **0.5%** | 単純多数決 | min 100 |
+| T1 (irreversible) | total の **2%**   | quorum 5%, 賛成 60% | min 500 |
+| Constitution amendment | total の **5%** | quorum 20%, 賛成 75% | min 2,000 |
+| Cessation (§Cessation) | total の **10%** | quorum 40%, 賛成 90% | min 5,000 |
+
+「**最低 weight 下限**」 は早期 (total < 100K) のフロアで、 計算結果がこれを下回るときに採用される。 total > 100K になった後は % 計算が優位になる。
 
 投票 = 署名 + on-chain or signed-API call。weight 0 の wallet は投票拒否される。
 
@@ -146,16 +151,31 @@ yuki が 2026-05-12 に書いた 203 行は:
 
 yuki が唯一の share holder。普通の DAO で言えば 100% 保有。
 
-### 1 年後 (2027-05-13, 仮定: Chronicle 800 件 + MA 5 件 追加)
+### 1 年後 (2027-05-13)
+
+**Scenario A — 現状ペース継続** (Chronicle 365 件、 MA 追加なし、 MA claimed = 3 (現状 1) と仮定):
 
 | holder | weight | share |
 |---|---:|---:|
-| yuki (lines: 1.0x × 243 = 243) | 243 + 100 (MA #3) + N (yuki が買ったシャツ) | |
-| veteran #1 (MA + 0 chronicle) | 100 + ... | |
-| 顧客 (Chronicle slot のみ) | 1〜N | |
-| **total** | 243 + 6×100 + 800 = **1,643** | 100% |
+| yuki (lines 1.0x × 243 = 243) + MA #3 (100) | **343** | |
+| veteran (MA #1, #2 が claim + bind されたケース) | 100 × 2 = **200** | |
+| 顧客 (Chronicle 365 件 bind 完了) | 1 × 365 = **365** | |
+| **total** | **908** | 100% |
 
-yuki share ≈ 243/1,643 = **14.8%**。1 年で 100% → 15% に自然希釈。
+yuki share ≈ 343 / 908 = **37.8%**。 単独 majority は失うが過半数前後。
+
+**Scenario B — ストレッチ目標** (Chronicle 800 件 + MA 5 件追加で計 8 個 claimed):
+
+| holder | weight | share |
+|---|---:|---:|
+| yuki (243 + 100 = MA #3 持参) | **343** | |
+| veteran #1〜#7 (新規 MA claimed 7 名 × 100) | 7 × 100 = **700** | |
+| 顧客 (Chronicle 800 件 bind) | 1 × 800 = **800** | |
+| **total** | 343 + 700 + 800 = **1,843** | 100% |
+
+yuki share ≈ 343 / 1,843 = **18.6%**。 1 年で 100% → ~19% に希釈。
+
+**注**: いずれのシナリオも `wallet bind 100% 完了` を前提。 実際は bind 率が小さいほど yuki の実効 share は高い (相対多数を維持しやすい)。
 
 ### 100 年後 (2126-05-13, 仮定: Chronicle 100,000 件 + MA 500 件 + amendment 50)
 
@@ -180,11 +200,14 @@ Constitution §Cessation:
 
 可決後 30 日間:
 
-1. 全 share holder の weight snapshot 取得
-2. 残 inventory を SWEEP at cost で売却
-3. 売上 から **JPY pro-rata** で share holder に配当 (Stripe credit / refund)
-4. 最後の blog post: 寿命 N 日 + 累計売上 ¥N の 2 数字のみ
-5. weight 配列を `/transparency` に永久 hash 化、Constitution §22 (domain 100年) は独立して履行
+1. 全 Chronicle slot holder の購入履歴 snapshot 取得 (= Stripe payment_intent ID + 金額)
+2. 残 inventory を SWEEP at cost で売却 (= 廃棄しない、 単に在庫を解消)
+3. **過去購入分のうち、 未着 / 不良 / 未履行のもの** を Stripe refund (個別に対する債務履行)
+4. 売上残余 (有形固定資産売却益等) は §27 通り 弟子屈町 寄付の最終 accrual に追加 — share holder への分配は行わない
+5. 最後の blog post: 寿命 N 日 + 累計売上 ¥N + 累計寄付 ¥N の 3 数字のみ
+6. weight 配列を `/transparency` に永久 hash 化、Constitution §22 (domain 100年) は独立して履行
+
+**設計意図 (§10 法務 と整合):** Cessation 時に share holder に「pro-rata 配当」 は行わない。 これは Howey Test 「expectation of profit」 不成立を維持するため。 Cessation = 業務終了 + 既存債務 (未履行注文の return + 寄付 pledge) の完済 + 残余の寄付追加のみ。 weight は **意思決定 (governance) の指標であって 経済的配当の指標ではない**。
 
 **重要:** Cessation 後も Chronicle slot (シャツの QR) は wearmu.com で resolve され続ける。Domain は 100 年生きる。DAO は死んでも brand は死なない。
 
@@ -282,6 +305,8 @@ CREATE TABLE IF NOT EXISTS dao_email_wallets (
 - 次の意図的 deploy で新しい blame JSON が反映 → const 手動更新は不要
 - yuki が PR をマージするだけで、merged PR の author + 編集日が author run として記録される
 
+**§4 Sybil 防御との整合 (重要)**: GH Actions の bot user (`github-actions[bot]`) は **author run の source としては使用されない**。 `gen_constitution_blame.py` は `git blame` を **constitution.md 自体の commit history** に対して走らせ、 author = constitution.md を編集した **merged PR の author** を取得する。 Bot による `[skip ci]` commit は constitution.md 本体に触らない (= blame.json のみ更新する deploy 副作用) ため、 fake author は構造的に生成されない。
+
 ### 9.6 MA piece の Solana NFT 化 📋 未実装
 
 現状: MA は `ma_gifts.claim_email` 固定、譲渡 = email 変更で対応。
@@ -368,7 +393,8 @@ A. §23 に「no future amendment shall introduce a transferable fungible token 
 | 現在の bound wallet 数 | **0** (yuki 未 bind) |
 | 現在の Constitution authored lines | **243** |
 | 現在の MA pieces | **3** (うち claimed 1) |
-| 現在の Chronicle slots | **0** (Chronicle vote 進行中、まだ slot 化前) |
+| 現在の Chronicle slots (発生済) | **11** (= `shirts_sold` from `/api/transparency`) |
+| 現在の Chronicle slots (wallet bind 済) | **0** (bind は §9.1 経由、 まだ holder からの bind 着信ゼロ) |
 | 現在の total supply weight | **~222** (yuki 単独想定、bind 後) |
 | 100 年後 yuki share 予測 (1 シナリオ) | **~1.2%** |
 
@@ -396,6 +422,7 @@ GitHub: <https://github.com/yukihamada/mu-brand>
 | 2026-05-13 | v0.1 | 初版。§23 実装 + Phase 1 API + leaderboard ページ + 本 whitepaper |
 | 2026-05-13 | v0.2 | Phase 2: magic-link self-bind / /dao/propose / /api/dao/vote 自動 tally / Sybil merge / /dao 拡張 (active proposals + 投票 UI)。残: wallet sig、git blame 統合、Solana NFT、Stripe success bind |
 | 2026-05-13 | v0.3 | Phase 2.5: Solana ed25519 wallet sig verify (Phantom signMessage) / git blame → constitution_blame.json + GH Action 自動再生成 / `/success` ページ DAO CTA。残: EVM secp256k1 sig (Phase 2.6) / MA piece Solana soulbound NFT (Phase 3) / Stripe email prefill |
+| 2026-05-18 | v0.4 | 矛盾 6 件修正: ①§7 Cessation の pro-rata 配当 → 残余を §27 寄付に追加 (Howey 回避維持) / ②§2.3 + §12 Chronicle slot を実態 (11 件、 bind 0) に整合 / ③§6 1 年シナリオを 「現状ペース 365 件」 + 「ストレッチ 800 件」 の 2 つに分割 / ④§9.5 に 「bot commit は author run の source にしない」 を明示 / ⑤§5 voting threshold を total supply の % + 下限 fallback に変更 (希釈耐性) / ⑥§Cessation の「§番号未定」状態を文章内で明示。 ライブ表示 (`/dao/whitepaper`) と整合済。 |
 
 ---
 
