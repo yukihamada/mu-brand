@@ -22139,9 +22139,12 @@ fn ensure_proposal_tables(db: &Db) {
             plan_tier TEXT,
             note TEXT,
             revoked_at TEXT,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            meta_json TEXT
          )", [],
     );
+    // Backfill for older volumes that pre-date meta_json.
+    let _ = conn.execute("ALTER TABLE proposals ADD COLUMN meta_json TEXT", []);
     let _ = conn.execute(
         "CREATE TABLE IF NOT EXISTS proposal_skus (
             slug TEXT NOT NULL,
@@ -22504,21 +22507,24 @@ async fn proposal_generic_state(
 /// Returns Some(html) ONLY when the proposal exists, has `approved_at`, and
 /// has not been revoked. Unapproved / revoked / non-existent → None (caller
 /// falls through to the static-or-404 path so the brand is invisible).
+///
+/// All inputs (name, ip_owner, meta, SKUs) come from the DB. No file or
+/// embedded asset is read at request time.
 fn try_render_approved_proposal_lp(slug: &str, db: &Db) -> Option<String> {
-    let (name, ip_owner, plan_tier, skus) = {
+    let (name, ip_owner, plan_tier, meta_json_str, skus) = {
         let conn = db.lock().unwrap();
         let row = proposal_row(&conn, slug)?;
         // Must be approved + not revoked.
         if row.2.is_none() || row.6.is_some() { return None; }
         let plan = row.5.clone().unwrap_or_default();
+        let meta: Option<String> = conn.query_row(
+            "SELECT meta_json FROM proposals WHERE slug=?",
+            params![slug], |r| r.get(0),
+        ).ok().flatten();
         let skus = proposal_skus_for(&conn, slug);
-        (row.0, row.1, plan, skus)
+        (row.0, row.1, plan, meta.unwrap_or_default(), skus)
     };
-    let meta_json: serde_json::Value = PARTNER_PROPOSALS_DIR
-        .get_file(format!("{}.json", slug))
-        .and_then(|f| f.contents_utf8())
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-        .and_then(|v| v.get("meta").cloned())
+    let meta_json: serde_json::Value = serde_json::from_str(&meta_json_str)
         .unwrap_or(serde_json::json!({}));
     Some(render_proposal_lp(slug, &name, &ip_owner, true, &plan_tier, &skus, &meta_json))
 }
@@ -22773,6 +22779,7 @@ struct ProposalCreateBody {
     slug: String,
     name: String,
     #[serde(default)] ip_owner: String,
+    #[serde(default)] meta: Option<serde_json::Value>,
     skus: Vec<ProposalCreateSku>,
 }
 #[derive(Deserialize)]
@@ -22807,15 +22814,19 @@ async fn proposal_generic_create(
         return (StatusCode::BAD_REQUEST, "at least one SKU required").into_response();
     }
     let ip_owner = if body.ip_owner.trim().is_empty() { body.name.clone() } else { body.ip_owner.clone() };
+    let meta_json: Option<String> = body.meta.as_ref().map(|m| m.to_string());
     let now = chrono_now();
     let mut inserted = 0i64;
     {
         let conn = db.lock().unwrap();
         let _ = conn.execute(
-            "INSERT INTO proposals (slug, name, ip_owner, created_at)
-             VALUES (?, ?, ?, ?)
-             ON CONFLICT(slug) DO UPDATE SET name=excluded.name, ip_owner=excluded.ip_owner",
-            params![slug, body.name.trim(), ip_owner, now],
+            "INSERT INTO proposals (slug, name, ip_owner, created_at, meta_json)
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(slug) DO UPDATE SET
+                name=excluded.name,
+                ip_owner=excluded.ip_owner,
+                meta_json=COALESCE(excluded.meta_json, proposals.meta_json)",
+            params![slug, body.name.trim(), ip_owner, now, meta_json],
         );
         for s in &body.skus {
             let letter = s.letter.trim().to_lowercase();
@@ -23029,6 +23040,7 @@ struct PartnerSpec {
     slug: String,
     name: String,
     #[serde(default)] ip_owner: Option<String>,
+    #[serde(default)] meta: Option<serde_json::Value>,
     skus: Vec<PartnerSpecSku>,
 }
 
@@ -23069,11 +23081,20 @@ fn seed_partners_from_spec_dir(db: &Db) {
             continue;
         }
         let ip_owner = spec.ip_owner.unwrap_or_else(|| spec.name.clone());
+        let meta_json: Option<String> = spec.meta.as_ref().map(|m| m.to_string());
+        // Insert row if missing; backfill meta_json on existing rows so a
+        // brand created before this column existed picks up its embedded meta.
         let _ = conn.execute(
-            "INSERT OR IGNORE INTO proposals (slug, name, ip_owner, created_at)
-             VALUES (?,?,?,?)",
-            params![slug, spec.name, ip_owner, now],
+            "INSERT OR IGNORE INTO proposals (slug, name, ip_owner, created_at, meta_json)
+             VALUES (?,?,?,?,?)",
+            params![slug, spec.name, ip_owner, now, meta_json],
         );
+        if meta_json.is_some() {
+            let _ = conn.execute(
+                "UPDATE proposals SET meta_json=? WHERE slug=? AND (meta_json IS NULL OR meta_json='')",
+                params![meta_json, slug],
+            );
+        }
         partners += 1;
         for s in &spec.skus {
             let letter = s.letter.trim().to_lowercase();
