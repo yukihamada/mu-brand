@@ -119,14 +119,24 @@ def printful_get(path):
         return None
 
 def generate_printful_mockup(slug, product_id, variant_id, placement, design_url):
-    """Returns the mockup PNG URL (presigned, ~24h expiry)."""
-    # Position spec — same logic as printful_mockup_config_for in main.rs.
-    if "hoodie" in slug or "crewneck" in slug:
+    """Returns the mockup PNG URL (presigned, ~24h expiry).
+
+    Design size policy: 30pt-equivalent small chest-patch (600x600 px on
+    the 1800x2400 print bed ≈ 5cm wide). Premium brand-badge style, not
+    full-front blast. Caps + totes use slightly different placements.
+    """
+    if "cap" in slug:
+        # Cap front (smaller area)
+        position = {"area_width": 2000, "area_height": 880,
+                    "width": 600, "height": 600, "top": 140, "left": 700}
+    elif "tote" in slug or "sticker" in slug or "tenugui" in slug:
+        # Tote / sticker / tenugui: front-center, medium
         position = {"area_width": 1800, "area_height": 2400,
-                    "width": 1100, "height": 1100, "top": 560, "left": 350}
+                    "width": 900, "height": 900, "top": 600, "left": 450}
     else:
+        # Tee / hoodie / crewneck: small chest-patch (30pt-style)
         position = {"area_width": 1800, "area_height": 2400,
-                    "width": 1260, "height": 1260, "top": 380, "left": 270}
+                    "width": 600, "height": 600, "top": 380, "left": 1000}
 
     body = {
         "variant_ids": [variant_id],
