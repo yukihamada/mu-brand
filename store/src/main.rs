@@ -3934,7 +3934,7 @@ async fn flow_now_page_en() -> impl IntoResponse {
 }
 
 /// GET /api/flow-now — JSON of needs_now.json, sorted by urgency_score desc.
-/// Consumed by /flow-now page + checkout B-4 destination picker (future).
+/// Consumed by /flow-now page + checkout B-4 destination picker.
 async fn api_flow_now() -> impl IntoResponse {
     let raw = include_str!("../static/needs_now.json");
     let mut v: serde_json::Value = serde_json::from_str(raw)
@@ -3945,6 +3945,14 @@ async fn api_flow_now() -> impl IntoResponse {
                 .cmp(&a.get("urgency_score").and_then(|x| x.as_i64()).unwrap_or(0))
         });
     }
+    Json(v)
+}
+
+/// GET /api/today-is-yours — §29 C-3 schedule for the Wednesday brand slot.
+async fn api_today_is_yours() -> impl IntoResponse {
+    let raw = include_str!("../static/today_is_yours.json");
+    let v: serde_json::Value = serde_json::from_str(raw)
+        .unwrap_or_else(|_| serde_json::json!({"schema":"mu.today_is_yours.v1","current_week":{"brand":null}}));
     Json(v)
 }
 
@@ -51996,6 +52004,7 @@ async fn main() {
         .route("/flow-now", get(flow_now_page))
         .route("/en/flow-now", get(flow_now_page_en))
         .route("/api/flow-now", get(api_flow_now))
+        .route("/api/today-is-yours", get(api_today_is_yours))
         .route("/.well-known/mu/releases", get(well_known_mu_releases))
         .route("/collab", get(collab_page))
         .route("/itto", get(itto_page))

@@ -1,0 +1,31 @@
+{
+  "schema": "mu.today_is_yours.v1",
+  "policy": "Every Wednesday, wearmu.com top is dedicated to one outside brand. MU takes 0% commission. Annual capacity: 52 small/local brands.",
+  "rotation_day": "wed",
+  "current_week": {
+    "iso_week": "2026-W20",
+    "starts_at": "2026-05-13T00:00:00+09:00",
+    "ends_at":   "2026-05-19T23:59:59+09:00",
+    "brand": {
+      "slug": null,
+      "name": null,
+      "name_en": null,
+      "homepage": null,
+      "one_line_ja": null,
+      "one_line_en": null,
+      "image_url": null,
+      "buy_url": null,
+      "invited_by": null,
+      "_status": "open — not yet invited. First 4 invites pending (Pro Bono Tier candidates)."
+    }
+  },
+  "next_4_weeks": [
+    { "iso_week": "2026-W21", "brand": null, "status": "open for invite" },
+    { "iso_week": "2026-W22", "brand": null, "status": "open for invite" },
+    { "iso_week": "2026-W23", "brand": null, "status": "open for invite" },
+    { "iso_week": "2026-W24", "brand": null, "status": "open for invite" }
+  ],
+  "past_30": [],
+  "_note_ja": "編集は Friday の Yuki 無償時間に。silent commit、press 出さない。",
+  "_note_en": "Edited during Friday no-pay hours. Silent commit, no press."
+}

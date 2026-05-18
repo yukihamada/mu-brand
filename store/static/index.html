@@ -590,6 +590,25 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
 })();
 </script>
 
+<!-- §29 C-3: "今日はあなたの店" — Wed only banner, hidden when no brand or non-Wed -->
+<div id="today-yours-banner" style="display:none;background:linear-gradient(90deg,rgba(230,196,73,0.12),rgba(230,196,73,0.04));border-bottom:1px solid rgba(230,196,73,0.3);padding:10px 16px;text-align:center;font-size:12px;color:#e6c449;letter-spacing:0.05em">
+  <strong>今日はあなたの店</strong> · 毎週水曜 = 別ブランドの日 · <span id="today-yours-name">—</span> · <a id="today-yours-buy" style="color:#e6c449;text-decoration:underline" href="#">買う →</a>
+</div>
+<script>
+(function(){
+  var now = new Date();
+  if (now.getDay() !== 3) return; // 0=Sun, 3=Wed
+  fetch('/api/today-is-yours',{cache:'no-store'}).then(r=>r.json()).then(d=>{
+    var b = d && d.current_week && d.current_week.brand;
+    if(!b || !b.slug) return;
+    document.getElementById('today-yours-name').textContent = b.name + (b.one_line_ja ? ' — ' + b.one_line_ja : '');
+    var buy = document.getElementById('today-yours-buy');
+    buy.href = b.buy_url || b.homepage || '#';
+    document.getElementById('today-yours-banner').style.display = 'block';
+  }).catch(function(){});
+})();
+</script>
+
 <!-- NAV -->
 <nav id="nav">
   <a class="nav-logo" href="#" onclick="showSection('hero')"><span style="opacity:0.7;font-weight:400;letter-spacing:0.1em;margin-right:8px">━◯━</span>MU</a>
