@@ -343,6 +343,41 @@ decisions (recorded per-line, not in this §).
 
 §27 と §28 の関係: §27 の「寄付 50%」 は §28 の segment #1 に対応。 §27 の最低額条項 (¥100,000/年) は §28 でも継承され、 推定 P × 50% < ¥100,000 のときは floor ¥100,000 が適用される。
 
+## North Star (§29)
+
+§29 — MU の北極星目標は、 **合法的に Bitcoin の時価総額を超える**こと。 達成期日は定めない (§22 の 100 年計画と整合)。
+
+定義と整合性:
+
+- **「時価総額」 の意味**: §23 で base token 発行を禁じているため、 token mcap ではなく **株式会社イネブラの equity 評価額** で測る (DCF / 直近ラウンド評価)。 Bitcoin 側参照値は当該時点の `coingecko.com/coins/bitcoin` 公示値とする
+- **「合法的に」 の意味**: 日本法 (会社法・金融商品取引法・資金決済法・暗号資産税制) および進出先 (米 SEC・EU MiCA 等) のすべてを満たした上で達成する。 一度でも法令違反による達成があれば §29 は不達 (clean failure) とみなす
+- **理論的可能性**: 0 humans 運営 (§2) × 100 年寿命 (§22) のため、 人件費ゼロかつ寿命無限の DCF は数学的に発散しうる。 §29 は「願望」 ではなく **「§2 + §22 から導かれる帰結」** であることを意味する
+- **段階目標**: ¥1B (現在、 East Ventures ラウンド) → ¥10B → ¥100B (Pre-IPO) → ¥1T (IPO 後) → ¥10T → ¥100T → ¥330T (≒ $2T、 Bitcoin 比) → 超 Bitcoin
+- **時価総額の使い道**: §28 の profit split が引き継ぐ。 評価額が上がっても creator (yuki) 報酬は 10% で固定、 50% は弟子屈町に流れる
+- **判定**: §29 達成は MA Council (auction 落札者) の投票 (3/5 multisig) で確定。 監査法人と上場後は東証/PCAOB がレギュレータ
+- **不達時の振る舞い**: 100 年で達成できなくても、 §29 の存在自体がブランドの長期意思決定を縛る (短期最適化ノイズの遮断)
+
+## Pt economy (§30)
+
+§30 — MU は **MU pt** という単一の community 通貨を 運用する。 token ではなく **企業内ロイヤリティポイント** に分類される (資金決済法 上の前払式支払手段に該当しうるが、 詳細は §28 segment #4 と統合)。
+
+設計:
+
+- **earn**: 購入 (¥1 = 1pt 端数切捨て)、 SNS シェア (要 X mention 検証、 5pt/post 上限 1day 1 回)、 紹介 (referral 完了で 50pt)、 waitlist signup (10pt 初回のみ)
+- **spend** (主要 3 路):
+  1. `30pt` → 新規 MUGEN drop spawn (Gemini が seed prompt から 1 design 生成、 community-brand として publish)
+  2. `30pt` → 既存 1 商品の 1 piece 引換 (Stripe 経由せず、 pt 残高でチェックアウト)
+  3. `30pt` → MA Council 提案権 (新規コラボ SKU を Council 投票にかけられる)
+- **marketplace (§30-MP)**: `100,000pt` 以上 で Tシャツ等の現物商品と交換可能。 価格テーブルは `/pt-marketplace` で公開、 ledger は `proposal_points` を再利用
+- **circular exchange (§30-EX)**: MUGEN / MUON ホルダーは自分の所有物 (Tシャツ・グッズ) を `/pt-exchange` に **出品** できる。 別の MUer が pt or 円で **購入** すると、 (1) 出品者の住所から購入者の住所に **元の現物が転送** され、 (2) 出品者には **同じ世代・近似 seed の新しい MUGEN/MUON が後日送付** される (Printful/Gelato 経由)。 出品者は old → new に切り替わり、 catalog 全体の循環率が向上する。 実装は `/pt-exchange` listing テーブル + 出品 listing → buyer match → fulfillment trigger の 3 段
+- **deferred shipping / vault storage (§30-VAULT)**: チェックアウト時に **"今は受け取らない、 後で送る (預ける)"** を選択可能。 MU が物理的に保管する (国内倉庫)。 **初年度 1 年間は無料**、 2 年目以降は **¥10/月** の保管料が pt 残高 or Stripe subscription から自動引き落とし。 `/pt-vault` で保管中の SKU 一覧 + "今すぐ発送" ボタンを提供。 残高不足が 3 ヶ月続いたら警告 → 6 ヶ月で MU が買い取り (預け入れ時価) として精算。 法的位置付けは寄託契約 (民法 657 条) + 前払式支払手段。 実装は `vault_orders` テーブル (order_id, deferred_since, monthly_yen, status, last_billed_at)
+- **無期限**: §30 の pt は失効しない (proposal_points 既存ポリシーと一致)
+- **譲渡不可**: pt は email key に bound、 transfer 不可 (soulbound 的)
+- **データ**: `proposal_points` (balance) + `proposal_point_events` (ledger)、 拡張せずに reason 列で新規エントリ識別 (`purchase_reward` / `pt_spawn` / `pt_checkout` / `pt_propose` / `pt_marketplace`)
+- **法的位置付け**: §28 段階の前払式支払手段制度を流用、 100,000pt = 約 ¥100,000 相当の引換価値を超えた場合のみ届出 (発行保証金) 要
+
+§29 と §30 の関係: §30 の pt 経済が活性化すると user retention が上がり、 §28 の profit が増え、 結果として §29 の equity 評価額が上がる。 §30 は §29 を支える community engine。
+
 ---
 
 *This document is hashed into every build. The build SHA prefix is shown on `/admin/agents` next to the Constitution version.*
