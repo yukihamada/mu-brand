@@ -43666,6 +43666,653 @@ async fn nakamura_checkout(
 //   3. Persists mockup bytes via persist_mockup_if_temporary
 //   4. Inserts into collab_products with partner='nakamura'
 //   5. Returns JSON with the new SKU
+// ─── Public self-serve SKU creation (point-gated) ──────────────────────
+//
+// /nakamura/create — anyone can spend NAKAMURA_SKU_COST points (30 pt) to
+// add 1 SKU to the public /nakamura catalog. After creation the user can
+// customize: category / name / description / price / variant / placement /
+// active flag. Ownership tracked by email in the nakamura_sku_owners
+// table (auto-created on startup).
+const NAKAMURA_SKU_COST: i64 = 30;
+
+fn ensure_nakamura_sku_owners_table(conn: &rusqlite::Connection) {
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS nakamura_sku_owners (
+            slug TEXT PRIMARY KEY,
+            email TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )", [],
+    );
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_nakamura_owners_email ON nakamura_sku_owners(email)",
+        [],
+    );
+}
+
+async fn show_nakamura_create_page() -> Response {
+    let body = r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SKU を追加する — MU × NAKAMURA / wearmu.com</title>
+<meta name="description" content="30 pt で 1 SKU を /nakamura に追加。Printful Mockup 自動生成、追加後にカスタマイズ可能。売上 50% は Sen-Dojo へ。">
+<style>
+:root{--bg:#0a0a0a;--fg:#f5f5f0;--mute:rgba(245,245,240,0.62);--gold:#ffd700;--card:#111;--red:#ff3b30}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.6;font-size:14px}
+nav{padding:18px 30px;border-bottom:1px solid rgba(255,255,255,0.08);display:flex;justify-content:space-between;align-items:center}
+nav a{color:var(--fg);text-decoration:none;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.85}
+nav .ja{font-family:'Hiragino Mincho ProN',serif;color:var(--gold);font-size:15px;letter-spacing:0.25em}
+.hero{padding:50px 30px 30px;max-width:780px;margin:0 auto;text-align:center}
+.hero h1{font-size:34px;font-weight:900;letter-spacing:-0.01em;margin-bottom:14px}
+.hero h1 em{color:var(--gold);font-style:normal}
+.hero p{color:var(--mute);font-size:13.5px;max-width:560px;margin:0 auto;line-height:1.85}
+.hero p b{color:var(--gold)}
+.container{max-width:780px;margin:30px auto 80px;padding:0 30px}
+.panel{background:var(--card);border:1px solid rgba(255,255,255,0.08);padding:28px 30px;border-radius:6px;margin-bottom:16px}
+.panel h2{font-size:13px;color:var(--gold);letter-spacing:0.2em;text-transform:uppercase;margin-bottom:18px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,0.08)}
+.balance{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.balance .num{font-size:32px;color:var(--gold);font-weight:900;font-family:monospace}
+.balance .lbl{font-size:10px;color:var(--mute);letter-spacing:0.2em;text-transform:uppercase}
+.row{margin-bottom:14px}
+label{display:block;font-size:10px;color:var(--mute);letter-spacing:0.15em;text-transform:uppercase;margin-bottom:5px}
+input,textarea,select{width:100%;background:#000;color:var(--fg);border:1px solid rgba(255,255,255,0.15);padding:11px 13px;font-size:14px;font-family:inherit;border-radius:3px}
+input:focus,textarea:focus,select:focus{outline:none;border-color:var(--gold)}
+textarea{resize:vertical;min-height:60px}
+.row-2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.row-3{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:10px}
+.hint{font-size:10px;color:var(--mute);margin-top:5px;letter-spacing:0.05em}
+button.cta{background:var(--gold);color:#000;border:0;font-family:inherit;font-size:12px;font-weight:700;letter-spacing:0.25em;text-transform:uppercase;padding:14px 20px;cursor:pointer;border-radius:3px;width:100%;margin-top:6px}
+button.cta:hover{opacity:0.85}
+button.cta:disabled{opacity:0.4;cursor:wait}
+button.outline{background:transparent;color:var(--gold);border:1px solid var(--gold)}
+.preset-row{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
+.preset-row button{background:rgba(255,215,0,0.1);color:var(--gold);border:1px solid rgba(255,215,0,0.3);padding:6px 12px;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;border-radius:3px;cursor:pointer;font-family:inherit}
+.preset-row button:hover,.preset-row button.on{background:rgba(255,215,0,0.25)}
+#status{margin-top:14px;padding:12px;border-radius:3px;font-size:12px;display:none;line-height:1.7}
+#status.ok{background:rgba(50,200,100,0.1);color:#5ec97f;border:1px solid rgba(50,200,100,0.3);display:block}
+#status.err{background:rgba(255,59,48,0.1);color:#ff8b80;border:1px solid rgba(255,59,48,0.3);display:block}
+#status.busy{background:rgba(255,215,0,0.1);color:var(--gold);border:1px solid rgba(255,215,0,0.3);display:block}
+.hidden{display:none !important}
+.success-block{background:rgba(255,215,0,0.06);border:1px solid var(--gold);padding:24px;border-radius:6px;text-align:center;margin-bottom:16px}
+.success-block .thumb{width:140px;height:170px;object-fit:cover;border-radius:4px;margin:0 auto 14px;display:block;background:#000}
+.success-block .ok-icon{color:var(--gold);font-size:30px;margin-bottom:8px}
+.cost-tag{display:inline-block;background:var(--gold);color:#000;padding:3px 10px;border-radius:10px;font-size:10px;font-weight:700;letter-spacing:0.15em;margin-left:8px}
+.print-info{background:rgba(255,215,0,0.05);border-left:3px solid var(--gold);padding:10px 14px;margin-bottom:18px;font-size:11.5px;color:var(--mute);line-height:1.7}
+.print-info b{color:var(--gold)}
+</style></head><body>
+
+<nav>
+  <a href="/" style="font-weight:700;letter-spacing:0.45em">MU</a>
+  <span class="ja">中 村 兄 弟 ／ SKU を追加</span>
+  <a href="/nakamura">→ /nakamura</a>
+</nav>
+
+<div class="hero">
+  <h1>30 pt で <em>1 SKU</em><br>あなたが追加する。</h1>
+  <p>
+    Printful で実物プリント、Stripe で世界中から購入可能、<br>
+    <b>売上の 50% は Sen-Dojo Foundation</b> へ自動で流れます。<br>
+    追加後はあなたが <b>カラー / サイズ / 位置</b> を自由に調整できます。
+  </p>
+</div>
+
+<div class="container">
+
+<!-- ── State 1: Email + balance ── -->
+<div class="panel" id="step-email">
+<h2>1. メールアドレスとポイント残高</h2>
+<div class="row">
+  <label>あなたのメール</label>
+  <input id="email" type="email" required placeholder="you@example.com" autocomplete="email">
+  <div class="hint">ポイント残高 + SKU の所有権をこのアドレスで管理</div>
+</div>
+<button class="cta" type="button" id="btn-check">残高を確認</button>
+<div id="status"></div>
+</div>
+
+<!-- ── State 2: Insufficient — buy more ── -->
+<div class="panel hidden" id="step-buy">
+<h2>2. ポイントが足りません <span class="cost-tag">必要 30 pt</span></h2>
+<div class="balance">
+  <div>
+    <div class="num" id="cur-balance">0</div>
+    <div class="lbl">CURRENT BALANCE (pt)</div>
+  </div>
+  <button class="cta outline" type="button" id="btn-buy">3,000円分 (30 pt) を買う →</button>
+</div>
+<p class="hint" style="margin-top:14px">Stripe Checkout に遷移します。支払い完了後このページに戻り、続行できます。</p>
+</div>
+
+<!-- ── State 3: Add SKU form ── -->
+<div class="panel hidden" id="step-add">
+<h2>3. SKU を追加 <span class="cost-tag">−30 pt</span></h2>
+
+<div class="print-info">
+<b>プリント設定</b>: 30pt 胸ワッペン（約5cm）、金色「中」漢字。
+</div>
+
+<div class="preset-row" id="presets">
+  <button type="button" data-preset="tee">Tee</button>
+  <button type="button" data-preset="hoodie">Hoodie</button>
+  <button type="button" data-preset="polo">Polo</button>
+  <button type="button" data-preset="cap">Cap</button>
+  <button type="button" data-preset="tote">Tote</button>
+  <button type="button" data-preset="longsleeve">L/S</button>
+</div>
+
+<form id="add">
+  <div class="row">
+    <label>slug (URL に使う識別子)</label>
+    <input name="slug" required pattern="^nakamura-[a-z0-9-]+$" placeholder="nakamura-myitem" maxlength="60">
+    <div class="hint">先頭は <code>nakamura-</code>、小文字英数字 + ハイフン</div>
+  </div>
+  <div class="row row-3">
+    <div><label>カテゴリ</label><input name="cat" required placeholder="ポロ / Polo"></div>
+    <div><label>価格 (JPY)</label><input name="price" type="number" required value="6800" min="500" max="200000"></div>
+    <div><label>placement</label><select name="placement">
+      <option value="embroidery_chest_left" selected>胸左 (推奨)</option>
+      <option value="embroidery_chest_right">胸右</option>
+      <option value="embroidery_front">前面 (cap)</option>
+      <option value="front">前面センター</option>
+    </select></div>
+  </div>
+  <div class="row"><label>商品名</label>
+    <input name="name" required placeholder="MU × NAKAMURA Polo"></div>
+  <div class="row"><label>説明</label>
+    <textarea name="desc" required placeholder="胸に小さく金色「中」刺繍。"></textarea></div>
+  <div class="row row-2">
+    <div><label>Printful product_id</label><input name="product_id" type="number" required value="71" min="1"></div>
+    <div><label>Printful variant_id</label><input name="variant_id" type="number" required value="4017" min="1"></div>
+  </div>
+  <button class="cta" type="submit">30 pt で追加 → Printful Mockup 生成</button>
+</form>
+</div>
+
+<!-- ── State 4: Success + customize ── -->
+<div class="panel hidden" id="step-done">
+<h2>4. ✓ 追加完了 — カスタマイズ</h2>
+<div class="success-block">
+  <div class="ok-icon">✓</div>
+  <img id="done-thumb" alt="" class="thumb">
+  <div id="done-name" style="font-weight:700;font-size:16px;color:var(--fg);margin-bottom:6px"></div>
+  <div style="font-size:11px;color:var(--mute);margin-bottom:10px">
+    <code id="done-slug" style="color:var(--gold)"></code>
+  </div>
+  <a id="done-link" href="" target="_blank" style="color:var(--gold);font-size:11px;letter-spacing:0.2em;text-transform:uppercase">/nakamura で見る ↗</a>
+</div>
+
+<form id="customize">
+  <input type="hidden" name="slug" id="cust-slug">
+  <div class="row row-2">
+    <div><label>カテゴリ</label><input name="cat" id="cust-cat"></div>
+    <div><label>価格 (JPY)</label><input name="price" type="number" id="cust-price" min="500" max="200000"></div>
+  </div>
+  <div class="row"><label>商品名</label><input name="name" id="cust-name"></div>
+  <div class="row"><label>説明</label><textarea name="desc" id="cust-desc"></textarea></div>
+  <div class="row row-2">
+    <div>
+      <label>Printful variant_id (カラー / サイズ)</label>
+      <input name="variant_id" id="cust-variant" type="number" min="1">
+      <div class="hint">変更すると Mockup 再生成</div>
+    </div>
+    <div>
+      <label>placement (位置)</label>
+      <select name="placement" id="cust-placement">
+        <option value="embroidery_chest_left">胸左</option>
+        <option value="embroidery_chest_right">胸右</option>
+        <option value="embroidery_front">前面 (cap)</option>
+        <option value="front">前面センター</option>
+      </select>
+    </div>
+  </div>
+  <div class="row">
+    <label><input type="checkbox" id="cust-active" style="width:auto;margin-right:6px"> 販売中 (active)</label>
+  </div>
+  <button class="cta" type="submit">更新 (無料)</button>
+</form>
+<div id="cust-status"></div>
+</div>
+
+</div>
+
+<script>
+const PRESETS = {
+  tee:        {product_id: 71,  variant_id: 4017,  placement: 'embroidery_chest_left', cat: 'Tシャツ / Tee',         price: 6800},
+  hoodie:     {product_id: 146, variant_id: 5530,  placement: 'embroidery_chest_left', cat: 'フーディ / Hoodie',      price: 12800},
+  polo:       {product_id: 181, variant_id: 6483,  placement: 'embroidery_chest_left', cat: 'ポロ / Polo',           price: 8800},
+  cap:        {product_id: 140, variant_id: 5277,  placement: 'embroidery_front',      cat: 'キャップ / Cap',         price: 5800},
+  tote:       {product_id: 84,  variant_id: 4533,  placement: 'default',               cat: 'トート / Tote',         price: 4800},
+  longsleeve: {product_id: 162, variant_id: 5959,  placement: 'embroidery_chest_left', cat: 'ロングスリーブ / L/S',   price: 9800},
+};
+const $ = sel => document.querySelector(sel);
+const show = id => $(id).classList.remove('hidden');
+const hide = id => $(id).classList.add('hidden');
+const setStatus = (cls, html) => { const s=$('#status'); s.className=cls; s.innerHTML=html; };
+
+let CURRENT_EMAIL = '';
+
+$('#btn-check').onclick = async () => {
+  const em = $('#email').value.trim();
+  if (!em || em.indexOf('@')<1) { setStatus('err', 'メールアドレスを入力してください'); return; }
+  setStatus('busy', '残高確認中…');
+  try {
+    const r = await fetch('/api/proposal/extras/balance', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({email: em}),
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    CURRENT_EMAIL = em;
+    setStatus('', '');
+    $('#cur-balance').textContent = d.balance || 0;
+    hide('#step-email');
+    if ((d.balance || 0) < 30) {
+      show('#step-buy');
+    } else {
+      show('#step-add');
+    }
+  } catch (e) { setStatus('err', 'エラー: ' + e.message); }
+};
+
+$('#btn-buy').onclick = async () => {
+  try {
+    const r = await fetch('/api/proposal/extras/buy-points', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({email: CURRENT_EMAIL, amount_yen: 3000}),
+    });
+    const d = await r.json();
+    if (d.url) window.location.href = d.url;
+    else alert('Stripe URL を取得できませんでした');
+  } catch (e) { alert('エラー: ' + e.message); }
+};
+
+document.querySelectorAll('#presets button').forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll('#presets button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    const p = PRESETS[b.dataset.preset]; if (!p) return;
+    const f = document.forms['add'];
+    f.product_id.value = p.product_id; f.variant_id.value = p.variant_id;
+    f.placement.value = p.placement; f.cat.value = p.cat; f.price.value = p.price;
+  };
+});
+
+document.forms['add'].onsubmit = async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const body = Object.fromEntries(new FormData(f).entries());
+  body.product_id = parseInt(body.product_id);
+  body.variant_id = parseInt(body.variant_id);
+  body.price = parseInt(body.price);
+  body.email = CURRENT_EMAIL;
+
+  const btn = f.querySelector('button[type=submit]');
+  btn.disabled = true; btn.textContent = 'Printful 生成中… (10-60秒)';
+  try {
+    const r = await fetch('/api/nakamura/user_create', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (!r.ok || d.error) throw new Error(d.error || ('HTTP ' + r.status));
+    // populate done state
+    $('#done-thumb').src = d.image_url || '';
+    $('#done-name').textContent = d.name;
+    $('#done-slug').textContent = d.slug;
+    $('#done-link').href = '/nakamura';
+    $('#cust-slug').value = d.slug;
+    $('#cust-cat').value = body.cat;
+    $('#cust-price').value = body.price;
+    $('#cust-name').value = body.name;
+    $('#cust-desc').value = body.desc;
+    $('#cust-variant').value = body.variant_id;
+    $('#cust-placement').value = body.placement;
+    $('#cust-active').checked = true;
+    hide('#step-add'); show('#step-done');
+  } catch (err) {
+    btn.disabled = false; btn.textContent = '30 pt で追加 → Printful Mockup 生成';
+    alert('エラー: ' + err.message);
+  }
+};
+
+document.forms['customize'].onsubmit = async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const body = {
+    email: CURRENT_EMAIL,
+    slug: $('#cust-slug').value,
+    cat: $('#cust-cat').value,
+    name: $('#cust-name').value,
+    desc: $('#cust-desc').value,
+    price: parseInt($('#cust-price').value),
+    variant_id: parseInt($('#cust-variant').value),
+    placement: $('#cust-placement').value,
+    active: $('#cust-active').checked,
+  };
+  const s = $('#cust-status');
+  const btn = f.querySelector('button[type=submit]');
+  btn.disabled = true; btn.textContent = '更新中…';
+  s.className = 'busy'; s.style.display='block'; s.style.marginTop='14px'; s.style.padding='10px'; s.style.borderRadius='3px';
+  s.style.color = 'var(--gold)';
+  s.textContent = 'Printful 再生成中…';
+  try {
+    const r = await fetch('/api/nakamura/user_update', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (!r.ok || d.error) throw new Error(d.error || ('HTTP ' + r.status));
+    if (d.image_url) $('#done-thumb').src = d.image_url + '?t=' + Date.now();
+    $('#done-name').textContent = body.name;
+    s.style.background = 'rgba(50,200,100,0.1)'; s.style.color = '#5ec97f';
+    s.textContent = '✓ 更新しました';
+    btn.disabled = false; btn.textContent = '更新 (無料)';
+  } catch (err) {
+    s.style.background = 'rgba(255,59,48,0.1)'; s.style.color = '#ff8b80';
+    s.textContent = 'エラー: ' + err.message;
+    btn.disabled = false; btn.textContent = '更新 (無料)';
+  }
+};
+</script>
+
+</body></html>"##;
+    axum::response::Html(body.to_string()).into_response()
+}
+
+#[derive(Deserialize)]
+struct NakamuraUserCreate {
+    email: String,
+    slug: String,
+    cat: String,
+    name: String,
+    desc: String,
+    price: i64,
+    product_id: i64,
+    variant_id: i64,
+    #[serde(default = "default_placement")]
+    placement: String,
+}
+
+#[derive(Deserialize)]
+struct NakamuraUserUpdate {
+    email: String,
+    slug: String,
+    cat: String,
+    name: String,
+    desc: String,
+    price: i64,
+    variant_id: i64,
+    placement: String,
+    #[serde(default)]
+    active: bool,
+}
+
+async fn nakamura_user_create(
+    State(db): State<Db>,
+    Json(body): Json<NakamuraUserCreate>,
+) -> Response {
+    let email = match validate_email(&body.email) {
+        Ok(e) => e,
+        Err(m) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": m}))).into_response(),
+    };
+    if !body.slug.starts_with("nakamura-") || body.slug.len() < 10 || body.slug.len() > 80
+        || !body.slug.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"slug must be 'nakamura-…' lowercase alphanumeric+hyphens (10-80 chars)"}))).into_response();
+    }
+    if body.price < 500 || body.price > 200_000 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"price out of range"}))).into_response();
+    }
+    if body.name.is_empty() || body.desc.is_empty() || body.cat.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"name/desc/cat required"}))).into_response();
+    }
+
+    // Check balance + reserve slug.
+    {
+        let conn = db.lock().unwrap();
+        ensure_nakamura_sku_owners_table(&conn);
+        let (bal, _) = points_balance(&conn, &email);
+        if bal < NAKAMURA_SKU_COST {
+            return (StatusCode::PAYMENT_REQUIRED,
+                    Json(serde_json::json!({"error": format!("need {} pt, have {}", NAKAMURA_SKU_COST, bal)}))).into_response();
+        }
+        // Slug uniqueness pre-check (avoids charging user for failed insert).
+        let exists: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM collab_products WHERE slug=?",
+            params![body.slug], |r| r.get(0),
+        ).unwrap_or(0);
+        if exists > 0 {
+            return (StatusCode::CONFLICT,
+                    Json(serde_json::json!({"error":"slug already exists"}))).into_response();
+        }
+    }
+
+    // Call Printful (same flow as admin endpoint).
+    let key = env::var("PRINTFUL_API_KEY").unwrap_or_default();
+    if key.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error":"PRINTFUL_API_KEY unset"}))).into_response();
+    }
+    let position = nakamura_position_for(&body.placement);
+    let design_url = "https://wearmu.com/static/nakamura/_logo_v2.png";
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build().unwrap_or_else(|_| reqwest::Client::new());
+
+    let task_key = match printful_create_mockup_task(&client, &key, body.product_id, body.variant_id, &body.placement, design_url, &position).await {
+        Ok(k) => k,
+        Err(m) => return (StatusCode::BAD_GATEWAY,
+                          Json(serde_json::json!({"error": m}))).into_response(),
+    };
+    let mockup_url = match printful_poll_mockup(&client, &key, &task_key).await {
+        Ok(u) => u,
+        Err(m) => return (StatusCode::BAD_GATEWAY,
+                          Json(serde_json::json!({"error": m}))).into_response(),
+    };
+    let final_url = persist_mockup_if_temporary(0, &mockup_url).await
+        .unwrap_or_else(|| mockup_url.clone());
+
+    // Charge points + INSERT + record ownership (atomic-ish).
+    let now = chrono_now();
+    {
+        let conn = db.lock().unwrap();
+        ensure_nakamura_sku_owners_table(&conn);
+        // Charge
+        match points_mutate(&conn, &email, -NAKAMURA_SKU_COST,
+                            "nakamura_sku_add", Some(&body.slug), Some(&body.slug)) {
+            Ok(_) => {}
+            Err(m) => return (StatusCode::PAYMENT_REQUIRED,
+                              Json(serde_json::json!({"error": m}))).into_response(),
+        }
+        // Insert SKU
+        let var_map = format!(r#"{{"M":{},"OS":{},"S":{},"L":{},"XL":{}}}"#,
+                              body.variant_id, body.variant_id, body.variant_id,
+                              body.variant_id, body.variant_id);
+        let files_json = format!(r#"[{{"type":"{}","url":"{}"}}]"#, body.placement, design_url);
+        let opts_json = r##"[{"id":"thread_colors","value":["#FFD700"]}]"##;
+        let inserted = conn.execute(
+            "INSERT INTO collab_products
+                 (slug, partner, category, name, description, image_url, price_jpy,
+                  sizes_json, active, draft, created_at,
+                  printful_product_id, printful_variant_id, production_route,
+                  lead_time_days, printful_variant_map,
+                  printful_files, printful_options)
+             VALUES (?, 'nakamura', ?, ?, ?, ?, ?,
+                     '[\"XS\",\"S\",\"M\",\"L\",\"XL\",\"2XL\",\"OS\"]', 1, 0, ?,
+                     ?, ?, 'printful', 14, ?, ?, ?)",
+            params![body.slug, body.cat, body.name, body.desc, final_url, body.price, now,
+                    body.product_id, body.variant_id, var_map, files_json, opts_json],
+        );
+        if let Err(e) = inserted {
+            // Refund on insert failure.
+            let _ = points_mutate(&conn, &email, NAKAMURA_SKU_COST,
+                                  "nakamura_sku_refund_insert_fail", Some(&body.slug), Some(&body.slug));
+            return (StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": format!("db insert: {}", e)}))).into_response();
+        }
+        // Record ownership
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO nakamura_sku_owners (slug, email, created_at) VALUES (?,?,?)",
+            params![body.slug, email, now],
+        );
+    }
+
+    Json(serde_json::json!({
+        "ok": true,
+        "slug": body.slug,
+        "name": body.name,
+        "image_url": final_url,
+        "url": "/nakamura",
+    })).into_response()
+}
+
+async fn nakamura_user_update(
+    State(db): State<Db>,
+    Json(body): Json<NakamuraUserUpdate>,
+) -> Response {
+    let email = match validate_email(&body.email) {
+        Ok(e) => e,
+        Err(m) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": m}))).into_response(),
+    };
+    if body.price < 500 || body.price > 200_000 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"price out of range"}))).into_response();
+    }
+
+    // Ownership check.
+    let (owner_email, current_product_id): (String, i64) = {
+        let conn = db.lock().unwrap();
+        ensure_nakamura_sku_owners_table(&conn);
+        let owner: Option<String> = conn.query_row(
+            "SELECT email FROM nakamura_sku_owners WHERE slug=?",
+            params![body.slug], |r| r.get(0),
+        ).ok();
+        let pid: Option<i64> = conn.query_row(
+            "SELECT printful_product_id FROM collab_products WHERE slug=? AND partner='nakamura'",
+            params![body.slug], |r| r.get(0),
+        ).ok();
+        match (owner, pid) {
+            (Some(o), Some(p)) => (o, p),
+            _ => return (StatusCode::NOT_FOUND,
+                         Json(serde_json::json!({"error":"SKU not found"}))).into_response(),
+        }
+    };
+    if owner_email != email {
+        return (StatusCode::FORBIDDEN,
+                Json(serde_json::json!({"error":"this SKU belongs to another email"}))).into_response();
+    }
+
+    // Regenerate mockup with new variant/placement.
+    let key = env::var("PRINTFUL_API_KEY").unwrap_or_default();
+    let new_image_url: Option<String> = if !key.is_empty() {
+        let position = nakamura_position_for(&body.placement);
+        let design_url = "https://wearmu.com/static/nakamura/_logo_v2.png";
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(60))
+            .build().unwrap_or_else(|_| reqwest::Client::new());
+        let task = printful_create_mockup_task(&client, &key, current_product_id, body.variant_id, &body.placement, design_url, &position).await;
+        if let Ok(tk) = task {
+            if let Ok(u) = printful_poll_mockup(&client, &key, &tk).await {
+                Some(persist_mockup_if_temporary(0, &u).await.unwrap_or(u))
+            } else { None }
+        } else { None }
+    } else { None };
+
+    // Update DB.
+    {
+        let conn = db.lock().unwrap();
+        let active_int: i64 = if body.active { 1 } else { 0 };
+        match &new_image_url {
+            Some(img) => {
+                let _ = conn.execute(
+                    "UPDATE collab_products SET category=?, name=?, description=?, price_jpy=?,
+                        printful_variant_id=?, image_url=?, active=?
+                     WHERE slug=? AND partner='nakamura'",
+                    params![body.cat, body.name, body.desc, body.price,
+                            body.variant_id, img, active_int, body.slug],
+                );
+            }
+            None => {
+                let _ = conn.execute(
+                    "UPDATE collab_products SET category=?, name=?, description=?, price_jpy=?,
+                        printful_variant_id=?, active=?
+                     WHERE slug=? AND partner='nakamura'",
+                    params![body.cat, body.name, body.desc, body.price,
+                            body.variant_id, active_int, body.slug],
+                );
+            }
+        }
+    }
+
+    Json(serde_json::json!({
+        "ok": true,
+        "slug": body.slug,
+        "image_url": new_image_url,
+    })).into_response()
+}
+
+// ─── Shared Printful helpers (used by both admin + user endpoints) ─────
+fn nakamura_position_for(placement: &str) -> serde_json::Value {
+    match placement {
+        "embroidery_front" | "embroidery_front_large" => serde_json::json!({
+            "area_width": 2000, "area_height": 880,
+            "width": 600, "height": 600, "top": 140, "left": 700,
+        }),
+        "front" | "default" => serde_json::json!({
+            "area_width": 1800, "area_height": 2400,
+            "width": 900, "height": 900, "top": 600, "left": 450,
+        }),
+        _ => serde_json::json!({
+            "area_width": 1800, "area_height": 2400,
+            "width": 600, "height": 600, "top": 380, "left": 1000,
+        }),
+    }
+}
+
+async fn printful_create_mockup_task(
+    client: &reqwest::Client, key: &str,
+    product_id: i64, variant_id: i64, placement: &str,
+    design_url: &str, position: &serde_json::Value,
+) -> Result<String, String> {
+    let body = serde_json::json!({
+        "variant_ids": [variant_id],
+        "format": "png",
+        "files": [{"placement": placement, "image_url": design_url, "position": position}],
+    });
+    let url = format!("https://api.printful.com/mockup-generator/create-task/{}", product_id);
+    let r = client.post(&url).bearer_auth(key).json(&body).send().await
+        .map_err(|e| format!("printful http: {}", e))?;
+    if !r.status().is_success() {
+        let s = r.status(); let t = r.text().await.unwrap_or_default();
+        return Err(format!("printful create-task {}: {}", s, t.chars().take(200).collect::<String>()));
+    }
+    let j: serde_json::Value = r.json().await.map_err(|e| format!("json: {}", e))?;
+    j["result"]["task_key"].as_str().map(String::from)
+        .ok_or_else(|| "no task_key".to_string())
+}
+
+async fn printful_poll_mockup(
+    client: &reqwest::Client, key: &str, task_key: &str,
+) -> Result<String, String> {
+    for attempt in 0..30 {
+        tokio::time::sleep(std::time::Duration::from_secs(if attempt == 0 { 3 } else { 4 })).await;
+        let poll = format!("https://api.printful.com/mockup-generator/task?task_key={}", task_key);
+        let r = match client.get(&poll).bearer_auth(key).send().await {
+            Ok(r) => r, Err(_) => continue,
+        };
+        if !r.status().is_success() { continue; }
+        let j: serde_json::Value = match r.json().await { Ok(v) => v, Err(_) => continue };
+        let status = j["result"]["status"].as_str().unwrap_or("");
+        if status == "completed" {
+            if let Some(u) = j["result"]["mockups"][0]["mockup_url"].as_str() {
+                return Ok(u.to_string());
+            }
+        }
+        if status == "failed" {
+            return Err("printful task failed".to_string());
+        }
+    }
+    Err("printful task timeout".to_string())
+}
+
 async fn admin_nakamura_page(
     State(db): State<Db>,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
@@ -51395,6 +52042,9 @@ async fn main() {
         .route("/api/nakamura/checkout", post(nakamura_checkout))
         .route("/admin/nakamura", get(admin_nakamura_page))
         .route("/api/admin/nakamura/add_sku", post(admin_nakamura_add_sku))
+        .route("/nakamura/create", get(show_nakamura_create_page))
+        .route("/api/nakamura/user_create", post(nakamura_user_create))
+        .route("/api/nakamura/user_update", post(nakamura_user_update))
         .route("/api/sweep/signal", post(sweep_signal))
         .route("/api/sweep/signals", get(sweep_signals_summary))
         .route("/api/admin/sweep_signals", get(admin_sweep_signals))
