@@ -3914,6 +3914,40 @@ async fn protocol_page() -> impl IntoResponse {
     axum::response::Html(body)
 }
 
+/// GET /en/protocol — MU Protocol v2 RFC (English).
+async fn protocol_page_en() -> impl IntoResponse {
+    let body = include_str!("../static/protocol.en.html");
+    axum::response::Html(body)
+}
+
+/// GET /flow-now — §29 priority list: where the flow is most needed RIGHT NOW.
+/// Public page, weekly-updated, manually curated by Enabler Inc.
+async fn flow_now_page() -> impl IntoResponse {
+    let body = include_str!("../static/flow_now.html");
+    axum::response::Html(body)
+}
+
+/// GET /en/flow-now — English version.
+async fn flow_now_page_en() -> impl IntoResponse {
+    let body = include_str!("../static/flow_now.en.html");
+    axum::response::Html(body)
+}
+
+/// GET /api/flow-now — JSON of needs_now.json, sorted by urgency_score desc.
+/// Consumed by /flow-now page + checkout B-4 destination picker (future).
+async fn api_flow_now() -> impl IntoResponse {
+    let raw = include_str!("../static/needs_now.json");
+    let mut v: serde_json::Value = serde_json::from_str(raw)
+        .unwrap_or_else(|_| serde_json::json!({"schema":"mu.needs_now.v1","needs":[]}));
+    if let Some(arr) = v.get_mut("needs").and_then(|x| x.as_array_mut()) {
+        arr.sort_by(|a, b| {
+            b.get("urgency_score").and_then(|x| x.as_i64()).unwrap_or(0)
+                .cmp(&a.get("urgency_score").and_then(|x| x.as_i64()).unwrap_or(0))
+        });
+    }
+    Json(v)
+}
+
 /// GET /.well-known/mu/releases — MU Protocol conformance level 4 endpoint.
 /// Returns recent active products as `mu.release.v2` JSON for protocol discovery.
 async fn well_known_mu_releases(State(db): State<Db>) -> impl IntoResponse {
@@ -51311,6 +51345,10 @@ async fn main() {
         .route("/embed/products", get(embed_iframe_page))
         .route("/developers", get(developers_page))
         .route("/protocol", get(protocol_page))
+        .route("/en/protocol", get(protocol_page_en))
+        .route("/flow-now", get(flow_now_page))
+        .route("/en/flow-now", get(flow_now_page_en))
+        .route("/api/flow-now", get(api_flow_now))
         .route("/.well-known/mu/releases", get(well_known_mu_releases))
         .route("/collab", get(collab_page))
         .route("/itto", get(itto_page))

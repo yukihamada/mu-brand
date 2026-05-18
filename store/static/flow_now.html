@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>/flow-now — 今、最も流す場所 · MU</title>
+<meta name="description" content="MU §29 The Discipline of Silence. 今もっとも流れが必要な場所のリスト。週次更新、静かに。">
+<meta name="robots" content="index,follow">
+<link rel="canonical" href="https://wearmu.com/flow-now">
+<link rel="alternate" hreflang="ja" href="https://wearmu.com/flow-now">
+<link rel="alternate" hreflang="en" href="https://wearmu.com/en/flow-now">
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<style>
+  :root{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.55);--y:#e6c449;--line:rgba(255,255,255,0.08)}
+  *{box-sizing:border-box}
+  body{margin:0;padding:0;background:var(--bg);color:var(--fg);font-family:-apple-system,'Hiragino Sans','Yu Gothic UI',sans-serif;line-height:1.7;font-weight:300}
+  .wrap{max-width:680px;margin:0 auto;padding:48px 24px 96px}
+  .lang{font-size:11px;color:var(--mute);margin-bottom:32px}
+  .lang a{color:var(--mute);text-decoration:underline}
+  .eyebrow{font-size:10px;letter-spacing:0.3em;text-transform:uppercase;color:var(--y);margin:0 0 12px}
+  h1{font-size:32px;font-weight:200;letter-spacing:0.02em;margin:0 0 16px;line-height:1.2}
+  .lede{font-size:14px;color:var(--mute);margin:0 0 8px;max-width:54ch;line-height:1.85}
+  .quiet{font-size:11px;color:rgba(245,245,240,0.35);margin:48px 0 16px;font-style:italic}
+  .need{padding:24px 0;border-top:1px solid var(--line)}
+  .need:last-child{border-bottom:1px solid var(--line)}
+  .need-head{display:flex;align-items:baseline;gap:14px;margin-bottom:6px}
+  .urg{font-variant-numeric:tabular-nums;font-size:22px;font-weight:400;color:var(--y);min-width:44px}
+  .name{font-size:16px;font-weight:400;color:var(--fg)}
+  .cat{font-size:10px;color:var(--mute);text-transform:uppercase;letter-spacing:0.15em;margin-left:auto;white-space:nowrap}
+  .why{font-size:13px;color:rgba(245,245,240,0.7);margin:6px 0 12px;line-height:1.7;max-width:60ch}
+  .meta{font-size:11px;color:var(--mute);display:flex;gap:18px;flex-wrap:wrap}
+  .meta a{color:var(--y);text-decoration:none;border-bottom:1px solid rgba(230,196,73,0.3)}
+  footer{margin-top:64px;font-size:11px;color:var(--mute);text-align:center;line-height:1.9}
+  footer a{color:var(--mute)}
+  .signal{margin:24px 0 36px;padding:14px 18px;background:rgba(230,196,73,0.05);border-left:2px solid var(--y);font-size:12px;color:rgba(245,245,240,0.7);line-height:1.7}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<p class="lang">日本語 · <a href="/en/flow-now">English</a></p>
+
+<p class="eyebrow">MU §29 · Flow Now</p>
+<h1>今、最も流す場所</h1>
+<p class="lede">
+  「最も強い者は最も多くを持つ者ではない。最も静かに、最も多くを他者に流す者である。」
+</p>
+<p class="lede">
+  これは MU の利益と、顧客が purchase 時に指定できる寄付先の、優先順位リスト。
+  毎週金曜の午後 (Yuki の「無償時間」)、 urgency_score を再評価する。
+</p>
+
+<div class="signal">
+  <strong>使い方</strong>: <br>
+  · MU の利益の §29 累進寄付分 (50→90%) は、デフォルトでこの上位 entry に流れる。<br>
+  · 顧客は purchase の checkout で「ここに流したい」と1つを指定可能 (B-4 機能、近日 ship)。<br>
+  · MU Foundation 設立 (M05) 後は、寄付を 公益団体名 で発出する。
+</div>
+
+<div id="needs-list">読み込み中…</div>
+
+<p class="quiet">
+  受益者個人 ID は公開しない (§29 A-3)。組織名のみ。<br>
+  実額の ledger は <a href="/donations" style="color:var(--mute)">/donations</a> で append-only に開示 (法令対応上の最小限)。
+</p>
+
+<footer>
+  <p>更新: 毎週金曜午後 · データ: <a href="/api/flow-now">/api/flow-now</a> · §29: <a href="/profit-split">/profit-split</a></p>
+  <p><a href="/">wearmu.com</a></p>
+</footer>
+
+</div>
+
+<script>
+(async function(){
+  const r = await fetch('/api/flow-now', {cache:'no-store'});
+  if(!r.ok){ document.getElementById('needs-list').textContent = '取得失敗'; return; }
+  const data = await r.json();
+  const out = data.needs.map(function(n){
+    var capLine = n.cap_jpy_monthly
+      ? '月上限 ¥' + Number(n.cap_jpy_monthly).toLocaleString()
+      : '上限なし';
+    var evidenceLine = n.evidence_url
+      ? '<a href="' + n.evidence_url + '" target="_blank" rel="noopener">出典 ↗</a>'
+      : '';
+    return '<div class="need">'
+      + '<div class="need-head">'
+        + '<span class="urg">' + n.urgency_score + '</span>'
+        + '<span class="name">' + n.name + '</span>'
+        + '<span class="cat">' + n.category.replace(/_/g,' ') + '</span>'
+      + '</div>'
+      + '<p class="why">' + n.why_now_ja + '</p>'
+      + '<div class="meta">'
+        + '<span>' + n.channel + '</span>'
+        + '<span>' + capLine + '</span>'
+        + evidenceLine
+      + '</div>'
+    + '</div>';
+  }).join('');
+  document.getElementById('needs-list').innerHTML = out;
+})();
+</script>
+</body>
+</html>

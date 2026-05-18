@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>/flow-now — where the most flow is needed · MU</title>
+<meta name="description" content="MU §29 The Discipline of Silence. A weekly-updated list of where the flow is most needed.">
+<meta name="robots" content="index,follow">
+<link rel="canonical" href="https://wearmu.com/en/flow-now">
+<link rel="alternate" hreflang="ja" href="https://wearmu.com/flow-now">
+<link rel="alternate" hreflang="en" href="https://wearmu.com/en/flow-now">
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<style>
+  :root{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.55);--y:#e6c449;--line:rgba(255,255,255,0.08)}
+  *{box-sizing:border-box}
+  body{margin:0;padding:0;background:var(--bg);color:var(--fg);font-family:-apple-system,'Helvetica Neue','Hiragino Sans','Yu Gothic UI',sans-serif;line-height:1.7;font-weight:300}
+  .wrap{max-width:680px;margin:0 auto;padding:48px 24px 96px}
+  .lang{font-size:11px;color:var(--mute);margin-bottom:32px}
+  .lang a{color:var(--mute);text-decoration:underline}
+  .eyebrow{font-size:10px;letter-spacing:0.3em;text-transform:uppercase;color:var(--y);margin:0 0 12px}
+  h1{font-size:32px;font-weight:200;letter-spacing:0.02em;margin:0 0 16px;line-height:1.2}
+  .lede{font-size:14px;color:var(--mute);margin:0 0 8px;max-width:54ch;line-height:1.85}
+  .quiet{font-size:11px;color:rgba(245,245,240,0.35);margin:48px 0 16px;font-style:italic}
+  .need{padding:24px 0;border-top:1px solid var(--line)}
+  .need:last-child{border-bottom:1px solid var(--line)}
+  .need-head{display:flex;align-items:baseline;gap:14px;margin-bottom:6px}
+  .urg{font-variant-numeric:tabular-nums;font-size:22px;font-weight:400;color:var(--y);min-width:44px}
+  .name{font-size:16px;font-weight:400;color:var(--fg)}
+  .cat{font-size:10px;color:var(--mute);text-transform:uppercase;letter-spacing:0.15em;margin-left:auto;white-space:nowrap}
+  .why{font-size:13px;color:rgba(245,245,240,0.7);margin:6px 0 12px;line-height:1.7;max-width:60ch}
+  .meta{font-size:11px;color:var(--mute);display:flex;gap:18px;flex-wrap:wrap}
+  .meta a{color:var(--y);text-decoration:none;border-bottom:1px solid rgba(230,196,73,0.3)}
+  footer{margin-top:64px;font-size:11px;color:var(--mute);text-align:center;line-height:1.9}
+  footer a{color:var(--mute)}
+  .signal{margin:24px 0 36px;padding:14px 18px;background:rgba(230,196,73,0.05);border-left:2px solid var(--y);font-size:12px;color:rgba(245,245,240,0.7);line-height:1.7}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<p class="lang"><a href="/flow-now">日本語</a> · English</p>
+
+<p class="eyebrow">MU §29 · Flow Now</p>
+<h1>Where the flow is most needed</h1>
+<p class="lede">
+  "The strongest is not the one who holds the most. It is the one who, most quietly, flows the most to others."
+</p>
+<p class="lede">
+  This is the priority list for MU's profit donation, and for what customers can select as their preferred donation destination at checkout.
+  Re-rated every Friday afternoon (Yuki's "no-pay hours").
+</p>
+
+<div class="signal">
+  <strong>How it works</strong>:<br>
+  · MU's §29 progressive donation (50→90%) defaults to the top-ranked entry below.<br>
+  · Customers can pick one at checkout (B-4, shipping soon).<br>
+  · After MU Foundation founding (M05), donations are issued under the public-interest entity name.
+</div>
+
+<div id="needs-list">Loading…</div>
+
+<p class="quiet">
+  Individual beneficiary IDs are never published (§29 A-3) — organization names only.<br>
+  The actual disbursement ledger is at <a href="/donations" style="color:var(--mute)">/donations</a> (append-only, minimal-legal disclosure).
+</p>
+
+<footer>
+  <p>Updated: every Friday afternoon · Data: <a href="/api/flow-now">/api/flow-now</a> · §29: <a href="/profit-split">/profit-split</a></p>
+  <p><a href="/">wearmu.com</a></p>
+</footer>
+
+</div>
+
+<script>
+(async function(){
+  const r = await fetch('/api/flow-now', {cache:'no-store'});
+  if(!r.ok){ document.getElementById('needs-list').textContent = 'Fetch failed'; return; }
+  const data = await r.json();
+  const out = data.needs.map(function(n){
+    var capLine = n.cap_jpy_monthly
+      ? 'Monthly cap ¥' + Number(n.cap_jpy_monthly).toLocaleString()
+      : 'No cap';
+    var evidenceLine = n.evidence_url
+      ? '<a href="' + n.evidence_url + '" target="_blank" rel="noopener">source ↗</a>'
+      : '';
+    var nameEn = n.name_en || n.name;
+    var whyEn = n.why_now_en || n.why_now_ja;
+    return '<div class="need">'
+      + '<div class="need-head">'
+        + '<span class="urg">' + n.urgency_score + '</span>'
+        + '<span class="name">' + nameEn + '</span>'
+        + '<span class="cat">' + n.category.replace(/_/g,' ') + '</span>'
+      + '</div>'
+      + '<p class="why">' + whyEn + '</p>'
+      + '<div class="meta">'
+        + '<span>' + n.channel + '</span>'
+        + '<span>' + capLine + '</span>'
+        + evidenceLine
+      + '</div>'
+    + '</div>';
+  }).join('');
+  document.getElementById('needs-list').innerHTML = out;
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,78 @@
+{
+  "schema": "mu.needs_now.v1",
+  "last_updated": "2026-05-18T00:00:00Z",
+  "next_review": "2026-05-25T00:00:00Z",
+  "curator": "Enabler Inc.",
+  "rotation_policy": "weekly review on Friday afternoon (Yuki's no-pay hours). Add via PR to needs_now.json — silent commit, no announcement.",
+  "priority_signal": "Higher urgency_score = more in need RIGHT NOW. Score is a snapshot, not historical importance. Recalibrated weekly.",
+  "default_route": "When customer picks 'route to where most needed', donation flows to the top-ranked entry (urgency_score desc). If top is capped, falls through to #2.",
+  "needs": [
+    {
+      "id": "teshikaga-2026-spring",
+      "name": "弟子屈町 (Teshikaga, Hokkaido)",
+      "name_en": "Teshikaga Town, Hokkaido",
+      "urgency_score": 80,
+      "category": "regional_development",
+      "why_now_ja": "MU origin city。地方創生・教育・武道文化の継承拠点。企業版ふるさと納税認定で実質負担 ~10%。",
+      "why_now_en": "MU origin city. Funding regional revitalization, education, and martial-arts heritage. Corporate hometown-tax certified — effective cost ~10% of donation.",
+      "cap_jpy_monthly": null,
+      "received_ytd_jpy": 0,
+      "channel": "企業版ふるさと納税",
+      "evidence_url": "https://www.town.teshikaga.hokkaido.jp/"
+    },
+    {
+      "id": "sen-dojo-2026",
+      "name": "Sen-Dojo (柔道・柔術武道支援)",
+      "name_en": "Sen-Dojo (judo / jiu-jitsu martial-arts support)",
+      "urgency_score": 70,
+      "category": "education_and_martial_arts",
+      "why_now_ja": "公益認定済の道場ネットワーク。子供・低所得家庭向け道場費補助。MU Foundation 設立後の主要 grant 先候補。",
+      "why_now_en": "Certified dojo network. Subsidizes dojo fees for kids and low-income families. Primary grant target after MU Foundation founding.",
+      "cap_jpy_monthly": 1000000,
+      "received_ytd_jpy": 0,
+      "channel": "MU Community Fund grant",
+      "evidence_url": null
+    },
+    {
+      "id": "minato-children-shokutaku",
+      "name": "港区社会福祉協議会 こども宅食",
+      "name_en": "Minato-ku Council of Social Welfare — Children's Home-Delivered Meals",
+      "urgency_score": 65,
+      "category": "food_security",
+      "why_now_ja": "三田周辺の困窮家庭への食事配達。継続的に資金不足、シーズン特に冬・春休み期に需要急増。",
+      "why_now_en": "Meal delivery for households in need around Mita. Chronically underfunded; demand spikes in winter and spring breaks.",
+      "cap_jpy_monthly": null,
+      "received_ytd_jpy": 0,
+      "channel": "認定NPO 寄付",
+      "evidence_url": "https://www.shakyo-minato.jp/"
+    },
+    {
+      "id": "sjjjf-public-interest-transition",
+      "name": "SJJJF (柔術連盟) 公益法人化",
+      "name_en": "SJJJF (Jiu-Jitsu Federation) — public-interest legal transition",
+      "urgency_score": 60,
+      "category": "sport_governance",
+      "why_now_ja": "公益法人化の手続き費用と理事会運営費。完了後は地方道場・選手助成の主体に。",
+      "why_now_en": "Filing costs and board operating expenses for transition to a public-interest corporation. After completion, becomes a primary granter to regional dojos and athletes.",
+      "cap_jpy_monthly": 500000,
+      "received_ytd_jpy": 0,
+      "channel": "賛助会員 / 法人寄付",
+      "evidence_url": "https://sjjjf.com/"
+    },
+    {
+      "id": "yawara-dojo-yamaguchi",
+      "name": "YAWARA道場 (山口・李英俊)",
+      "name_en": "YAWARA Dojo (Yamaguchi, Lee Yong-jun)",
+      "urgency_score": 55,
+      "category": "regional_dojo",
+      "why_now_ja": "地方道場の運営継続。村田・粟田・濱田の長期パートナー。設備更新と若手選手強化費。",
+      "why_now_en": "Sustaining a regional dojo's operation. Long-term partner with Murata / Awata / Hamada. Equipment renewal and young-athlete support.",
+      "cap_jpy_monthly": 300000,
+      "received_ytd_jpy": 0,
+      "channel": "直接寄付 / Pro Bono Tier",
+      "evidence_url": null
+    }
+  ],
+  "_note_ja": "「最も静かに、最も多くを他者に流す」(§29)。urgency_score は週次で見直す。受益者個人 ID は出さない、組織名のみ。",
+  "_note_en": "'Flow the most, most quietly' (§29). urgency_score is re-rated weekly. Beneficiary individual IDs are never published — organization names only."
+}
