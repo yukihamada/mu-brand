@@ -13717,6 +13717,32 @@ async fn stripe_webhook(
                 ).ok();
                 // MU credit grant: min(¥1,000, 20% of price_jpy) — 景表法 cap.
                 mu_credit_grant_for_purchase(&conn, &buyer_email, &brand, drop_num, &session_id, price_jpy);
+                // §30 pt earn — 1 pt per ¥100 actually paid (rounded down).
+                // Idempotent on session_id (Stripe re-delivers events
+                // identically), so retries don't double-credit.
+                let pt_earned: i64 = (amt_jpy / 100).max(0);
+                if pt_earned > 0 {
+                    let already_pt: bool = conn.query_row(
+                        "SELECT 1 FROM proposal_point_events WHERE reason='purchase_reward' AND ref=? LIMIT 1",
+                        params![&session_id], |_| Ok(true),
+                    ).unwrap_or(false);
+                    if !already_pt {
+                        let _ = points_mutate(&conn, &buyer_email, pt_earned, "purchase_reward",
+                                              Some(&session_id), Some(&brand));
+                        eprintln!("[§30 pt] +{} pt → {} (purchase {}#{}, ¥{})",
+                                  pt_earned, buyer_email, brand, drop_num, amt_jpy);
+                    }
+                }
+                // §30 pt_certificates — mint a soulbound ownership cert for
+                // this purchase so future §30-EX swaps have something to
+                // transfer. Idempotent via session_id-derived cert_id.
+                let cert_id = format!("cert_{}_{}", session_id.chars().take(24).collect::<String>(), product_id);
+                let _ = conn.execute(
+                    "INSERT OR IGNORE INTO pt_certificates
+                       (cert_id, owner_email, product_id, issued_at, issued_via)
+                     VALUES (?1, ?2, ?3, ?4, 'purchase')",
+                    params![cert_id, buyer_email, product_id, chrono_now()],
+                );
                 let reason = format!("purchased {} #{}", brand.to_uppercase(), drop_num);
                 let updated = conn.execute(
                     "UPDATE you_users
