@@ -21509,7 +21509,26 @@ fn proposal_brand_for_kind(slug_prefix: &str, kind: &str) -> String {
         "wristband"      => format!("{}_wristband_sample",      slug_prefix),
         "lanyard"        => format!("{}_lanyard_sample",        slug_prefix),
         "flag"           => format!("{}_flag_sample",           slug_prefix),
-        _                => format!("{}_tee_sample",            slug_prefix),
+        // Lifestyle / desk / wall / home (added so atsume etc. land on the
+        // right brand row instead of the _tee_sample catch-all).
+        "magnet"         => format!("{}_magnet_sample",         slug_prefix),
+        "postcard"       => format!("{}_postcard_sample",       slug_prefix),
+        "notebook"       => format!("{}_notebook_sample",       slug_prefix),
+        "mousepad"       => format!("{}_mousepad_sample",       slug_prefix),
+        "phonecase"      => format!("{}_phonecase_sample",      slug_prefix),
+        "poster"         => format!("{}_poster_sample",         slug_prefix),
+        "canvas"         => format!("{}_canvas_sample",         slug_prefix),
+        "blanket"        => format!("{}_blanket_sample",        slug_prefix),
+        "kids_hoodie"    => format!("{}_kids_hoodie_sample",    slug_prefix),
+        "kids_longsleeve"=> format!("{}_kids_longsleeve_sample",slug_prefix),
+        "kids_sweat"     => format!("{}_kids_sweat_sample",     slug_prefix),
+        "kids_tote"      => format!("{}_kids_tote_sample",      slug_prefix),
+        "baby_onesie"    => format!("{}_baby_onesie_sample",    slug_prefix),
+        "baby_bib"       => format!("{}_baby_bib_sample",       slug_prefix),
+        "plush"          => format!("{}_plush_sample",          slug_prefix),
+        "acrylic_charm"  => format!("{}_acrylic_charm_sample",  slug_prefix),
+        "puzzle"         => format!("{}_puzzle_sample",         slug_prefix),
+        _                => format!("{}_{}_sample",             slug_prefix, kind),
     }
 }
 
