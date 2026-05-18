@@ -4,7 +4,10 @@
 # Probes every endpoint, sanity-checks DB consistency, decodes one cNFT
 # tx, and prints a PASS/FAIL table. Exits non-zero if anything is wrong.
 
-set -uo pipefail
+set -u
+# Intentionally NOT enabling -o pipefail: `curl … | grep -q` would get
+# SIGPIPE (exit 141) when grep returns early, flagging healthy probes as
+# failures. We rely on the explicit `&& echo yes || echo no` pattern.
 
 HOST="${HOST:-https://wearmu.com}"
 ADMIN_TOKEN="$(grep '^MU_ADMIN_TOKEN=' /Users/yuki/.env 2>/dev/null | head -1 | cut -d= -f2- | tr -d $'\r"'\')"
