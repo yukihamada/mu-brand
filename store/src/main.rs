@@ -1773,6 +1773,233 @@ async fn admin_pod_unlink(
     }
 }
 
+// ───── §30-EX v3 circular exchange handlers ────────────────────────────
+//
+// Endpoints:
+//   POST /api/pt/exchange/list   — owner lists their cert into the pool
+//   POST /api/pt/exchange/claim  — another user claims for 30pt
+//   GET  /api/pt/exchange/pool   — public read-only listing of pool
+//   GET  /pt-exchange            — public HTML page
+//
+// Fulfillment (printing both sides) is deferred to agent_pt_swap_processor.
+
+const PT_SWAP_COST: i64 = 30;
+const PT_SWAP_LISTING_DAYS: i64 = 30;
+
+#[derive(Deserialize)]
+struct PtExchangeListReq {
+    email: String,
+    cert_id: String,
+}
+
+/// POST /api/pt/exchange/list — owner releases a cert into the swap pool.
+/// No pt cost to list — the cert is given to MU as 黙示の贈与 (silent gift).
+async fn pt_exchange_list_handler(
+    State(db): State<Db>,
+    Json(req): Json<PtExchangeListReq>,
+) -> Response {
+    let email = normalize_email(&req.email);
+    if validate_email(&email).is_err() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid email"}))).into_response();
+    }
+    let conn = db.lock().unwrap();
+    let cert: Option<(i64, Option<String>)> = conn.query_row(
+        "SELECT product_id, retired_at FROM pt_certificates
+         WHERE cert_id=?1 AND owner_email=?2",
+        params![&req.cert_id, &email],
+        |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?)),
+    ).ok();
+    let (product_id, retired_at) = match cert {
+        Some(c) => c,
+        None => return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "cert not found or not owned by this email"}))).into_response(),
+    };
+    if retired_at.is_some() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "cert already retired (swapped, redeemed, or expired)"}))).into_response();
+    }
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let expire_s = now_s + PT_SWAP_LISTING_DAYS * 86_400;
+    // Atomically: retire cert + insert pool row.
+    let _ = conn.execute(
+        "UPDATE pt_certificates SET retired_at=?1, retire_reason='listed_for_exchange' WHERE cert_id=?2",
+        params![chrono_now(), &req.cert_id],
+    );
+    let inserted = conn.execute(
+        "INSERT INTO pt_swap_pool
+           (owner_email, product_id, cert_id, listed_at, status, expire_at)
+         VALUES (?1, ?2, ?3, ?4, 'listed', ?5)",
+        params![&email, product_id, &req.cert_id, chrono_now(), expire_s.to_string()],
+    );
+    match inserted {
+        Ok(_) => {
+            let listing_id: i64 = conn.last_insert_rowid();
+            Json(serde_json::json!({
+                "ok": true,
+                "listing_id": listing_id,
+                "product_id": product_id,
+                "expire_at": expire_s,
+                "pt_cost_to_claim": PT_SWAP_COST,
+            })).into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct PtExchangeClaimReq {
+    email: String,
+    listing_id: i64,
+}
+
+/// POST /api/pt/exchange/claim — another MUer pays 30 pt to claim a listing.
+/// The pt is deducted immediately; the actual Printful fulfillment runs
+/// asynchronously via agent_pt_swap_processor.
+async fn pt_exchange_claim_handler(
+    State(db): State<Db>,
+    Json(req): Json<PtExchangeClaimReq>,
+) -> Response {
+    let email = normalize_email(&req.email);
+    if validate_email(&email).is_err() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid email"}))).into_response();
+    }
+    let conn = db.lock().unwrap();
+    let row: Option<(String, i64, String, String)> = conn.query_row(
+        "SELECT owner_email, product_id, cert_id, status FROM pt_swap_pool WHERE id=?1",
+        params![req.listing_id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+    ).ok();
+    let (owner_email, product_id, cert_id, status) = match row {
+        Some(t) => t,
+        None => return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "listing not found"}))).into_response(),
+    };
+    if status != "listed" {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": format!("listing not claimable (status={})", status)}))).into_response();
+    }
+    if owner_email == email {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "cannot claim your own listing"}))).into_response();
+    }
+    // Deduct pt — points_mutate enforces sufficient balance.
+    let ref_str = format!("swap-{}", req.listing_id);
+    match points_mutate(&conn, &email, -PT_SWAP_COST, "pt_swap_claim", Some(&ref_str), None) {
+        Ok(new_bal) => {
+            let _ = conn.execute(
+                "UPDATE pt_swap_pool
+                   SET claimed_by=?1, claimed_at=?2, status='claimed'
+                 WHERE id=?3 AND status='listed'",
+                params![&email, chrono_now(), req.listing_id],
+            );
+            Json(serde_json::json!({
+                "ok": true,
+                "listing_id": req.listing_id,
+                "product_id": product_id,
+                "cert_id": cert_id,
+                "pt_balance_after": new_bal,
+                "note": "fulfillment queued — agent_pt_swap_processor will print both items",
+            })).into_response()
+        }
+        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e}))).into_response(),
+    }
+}
+
+/// GET /api/pt/exchange/pool — public read of available listings (no auth).
+/// Returns the first N unexpired, unclaimed listings with design preview.
+async fn pt_exchange_pool_handler(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let limit: i64 = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50).clamp(1, 200);
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let conn = db.lock().unwrap();
+    let mut stmt = match conn.prepare(
+        "SELECT s.id, s.product_id, s.listed_at, s.expire_at,
+                p.brand, p.drop_num, p.name, p.design_url, p.mockup_url
+         FROM pt_swap_pool s
+         JOIN products p ON p.id = s.product_id
+         WHERE s.status='listed' AND CAST(s.expire_at AS INTEGER) > ?1
+         ORDER BY s.id DESC
+         LIMIT ?2"
+    ) {
+        Ok(s) => s,
+        Err(e) => return Json(serde_json::json!({"error": e.to_string()})).into_response(),
+    };
+    let items: Vec<serde_json::Value> = stmt.query_map(params![now_s, limit], |r| Ok(serde_json::json!({
+        "listing_id": r.get::<_, i64>(0)?,
+        "product_id": r.get::<_, i64>(1)?,
+        "listed_at":  r.get::<_, String>(2).unwrap_or_default(),
+        "expire_at":  r.get::<_, String>(3).unwrap_or_default(),
+        "brand":      r.get::<_, String>(4).unwrap_or_default(),
+        "drop_num":   r.get::<_, i64>(5).unwrap_or(0),
+        "name":       r.get::<_, String>(6).unwrap_or_default(),
+        "design_url": r.get::<_, Option<String>>(7).unwrap_or(None),
+        "mockup_url": r.get::<_, Option<String>>(8).unwrap_or(None),
+    }))).map(|it| it.flatten().collect()).unwrap_or_default();
+    Json(serde_json::json!({
+        "items": items,
+        "pt_cost": PT_SWAP_COST,
+        "policy": "§30-EX v3 (Constitution): list = release cert as silent gift, claim costs 30pt, both sides receive freshly printed items, no second-hand transfer between users",
+    })).into_response()
+}
+
+/// GET /pt-exchange — public minimal HTML browse page.
+async fn pt_exchange_page() -> Response {
+    Html(r##"<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><title>MU · pt-exchange</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  body{background:#0a0a0a;color:#f5f5f0;font-family:ui-monospace,Menlo,monospace;margin:0;padding:24px;max-width:980px;margin:0 auto}
+  h1{font-size:14px;letter-spacing:0.4em;margin:8px 0 4px}
+  .sub{color:#888;font-size:12px;letter-spacing:0.16em;margin-bottom:24px}
+  .item{display:flex;gap:14px;padding:14px;border:1px solid #1c1c1c;border-radius:6px;margin-bottom:10px;background:#101010}
+  .item img{width:120px;height:120px;object-fit:cover;background:#050505;border-radius:4px}
+  .meta{flex:1;min-width:0}
+  .brand{color:#e6c449;font-weight:700;letter-spacing:0.14em;font-size:12px}
+  .name{color:#f5f5f0;margin-top:6px;font-size:13px;line-height:1.45}
+  .id{color:#666;font-size:10px;margin-top:6px;font-family:ui-monospace,Menlo,monospace}
+  .pt-cost{display:inline-block;padding:6px 12px;background:#e6c449;color:#000;border-radius:4px;font-weight:700;font-size:11px;letter-spacing:0.18em;margin-top:8px}
+  a{color:#e6c449}
+  .empty{color:#888;text-align:center;padding:60px}
+  .policy{margin-top:30px;color:#666;font-size:11px;line-height:1.8;border-top:1px solid #1c1c1c;padding-top:18px}
+</style></head><body>
+<h1>MU · PT-EXCHANGE</h1>
+<div class="sub">Constitution §30-EX v3 / Circular Design Exchange</div>
+<div id="list"><div class="empty">LOADING…</div></div>
+<div class="policy">
+  <strong>How it works.</strong>
+  An MUer lists their MUGEN/MUON ownership cert here. Another MUer can
+  <strong>claim it for 30 pt</strong>. Once claimed, MU prints a fresh item
+  to the claimant (Printful/Gelato) AND prints a fresh new MUGEN to the
+  original lister. No used T-shirts ever change hands. The physical
+  garment in the lister's possession stays where it is — they can keep
+  it, donate it, gift it, whatever feels right.
+  <br><br>
+  <strong>Why this shape.</strong>
+  Routing physical goods between users would trigger Japan's 古物営業法
+  (used-goods broker registration). §30-EX v3 sidesteps this entirely by
+  separating ownership (digital, transferable) from physical artefacts
+  (stay with their first owner forever). The design circulates; the
+  T-shirt doesn't.
+</div>
+<script>
+async function load(){
+  const r = await fetch('/api/pt/exchange/pool?limit=80');
+  const d = await r.json();
+  const root = document.getElementById('list');
+  if (!d.items || !d.items.length) { root.innerHTML = '<div class="empty">No listings yet. Be the first via POST /api/pt/exchange/list.</div>'; return; }
+  root.innerHTML = d.items.map(it => `
+    <div class="item">
+      <img src="${it.mockup_url || it.design_url || ''}" loading="lazy" alt="">
+      <div class="meta">
+        <div class="brand">${(it.brand||'?').toUpperCase()} · #${it.drop_num}</div>
+        <div class="name">${escapeHtml(it.name||'')}</div>
+        <div class="id">listing #${it.listing_id} · expires ${new Date(parseInt(it.expire_at||'0',10)*1000).toLocaleDateString('ja-JP')}</div>
+        <span class="pt-cost">${d.pt_cost} pt to claim</span>
+      </div>
+    </div>`).join('');
+}
+function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+load();
+</script></body></html>"##).into_response()
+}
+
 /// Returns "era-1 (Bella+Canvas 3001)" or "era-2 (Stanley/Stella SATU001)"
 /// for a given mugen drop_num. Other brands return their own era string.
 fn fabric_era_for(brand: &str, drop_num: i64) -> &'static str {
@@ -49429,6 +49656,10 @@ async fn main() {
         .route("/api/admin/pod/sync",    post(admin_pod_sync))
         .route("/api/admin/pod/link",    post(admin_pod_link))
         .route("/api/admin/pod/unlink",  post(admin_pod_unlink))
+        .route("/pt-exchange",             get(pt_exchange_page))
+        .route("/api/pt/exchange/pool",    get(pt_exchange_pool_handler))
+        .route("/api/pt/exchange/list",    post(pt_exchange_list_handler))
+        .route("/api/pt/exchange/claim",   post(pt_exchange_claim_handler))
         .route("/admin/costs", get(admin_costs_page))
         .route("/api/admin/costs", get(admin_costs_list))
         .route("/api/admin/costs/sweep_losses", post(admin_sweep_losses))
