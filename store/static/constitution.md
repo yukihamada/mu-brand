@@ -369,7 +369,15 @@ decisions (recorded per-line, not in this §).
   2. `30pt` → 既存 1 商品の 1 piece 引換 (Stripe 経由せず、 pt 残高でチェックアウト)
   3. `30pt` → MA Council 提案権 (新規コラボ SKU を Council 投票にかけられる)
 - **marketplace (§30-MP)**: `100,000pt` 以上 で Tシャツ等の現物商品と交換可能。 価格テーブルは `/pt-marketplace` で公開、 ledger は `proposal_points` を再利用
-- **circular exchange (§30-EX)**: MUGEN / MUON ホルダーは自分の所有物 (Tシャツ・グッズ) を `/pt-exchange` に **出品** できる。 別の MUer が pt or 円で **購入** すると、 (1) 出品者の住所から購入者の住所に **元の現物が転送** され、 (2) 出品者には **同じ世代・近似 seed の新しい MUGEN/MUON が後日送付** される (Printful/Gelato 経由)。 出品者は old → new に切り替わり、 catalog 全体の循環率が向上する。 実装は `/pt-exchange` listing テーブル + 出品 listing → buyer match → fulfillment trigger の 3 段
+- **circular exchange (§30-EX v3)**: 物理 T シャツとデジタル所有権を**完全分離**して循環させる。
+  1. A (元 owner) が `/pt-exchange` で「exchange 表明」 → A の所有 cert が swap pool に放出 (= 黙示の贈与)。 A の手元の物理 T シャツは A の判断で保持/廃棄/寄付 (MU は関知しない)
+  2. B (別の MUer) が pool から `30pt` で claim
+  3. MU が B 宛に **新規プリント** を Printful/Gelato で発注 → 送付
+  4. MU が A 宛に **新 MUGEN seed** を発行 (新規プリントを A に贈与) + cert 発行
+  - 物理は MU から 2 件新規プリント。 古物 (= 一度使用された物) の流通なし。 古物営業法適用外
+  - 所有権 cert (`pt_certificates`) は soulbound 風 (email key)、 譲渡履歴は `pt_swap_pool` に永続
+  - 30 日 unclaimed の listing は自動 expire (A の cert は復活)
+  - §30-EX v1 (A → B 直接物理移送) は法務 / §2 リスクから廃案、 v3 を正式採用
 - **deferred shipping / vault storage (§30-VAULT)**: チェックアウト時に **"今は受け取らない、 後で送る (預ける)"** を選択可能。 MU が物理的に保管する (国内倉庫)。 **初年度 1 年間は無料**、 2 年目以降は **¥10/月** の保管料が pt 残高 or Stripe subscription から自動引き落とし。 `/pt-vault` で保管中の SKU 一覧 + "今すぐ発送" ボタンを提供。 残高不足が 3 ヶ月続いたら警告 → 6 ヶ月で MU が買い取り (預け入れ時価) として精算。 法的位置付けは寄託契約 (民法 657 条) + 前払式支払手段。 実装は `vault_orders` テーブル (order_id, deferred_since, monthly_yen, status, last_billed_at)
 - **無期限**: §30 の pt は失効しない (proposal_points 既存ポリシーと一致)
 - **譲渡不可**: pt は email key に bound、 transfer 不可 (soulbound 的)

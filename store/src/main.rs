@@ -48853,6 +48853,73 @@ async fn main() {
         );
         CREATE INDEX IF NOT EXISTS idx_pcph_sku ON pod_catalog_price_history(vendor, product_uid, at DESC);
 
+        -- §30 MU pt economy (Constitution §30 / §30-EX v3 / §30-MP / §30-VAULT)
+        -- Soulbound ownership cert per email + product. One row = one right
+        -- to receive a fresh print, plus a record of which design.
+        -- issued_via values: purchase | swap | gift | spawn | admin
+        CREATE TABLE IF NOT EXISTS pt_certificates (
+            cert_id      TEXT PRIMARY KEY,
+            owner_email  TEXT NOT NULL,
+            product_id   INTEGER NOT NULL,
+            issued_at    TEXT NOT NULL,
+            issued_via   TEXT NOT NULL,
+            retired_at   TEXT,
+            retire_reason TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_pt_cert_owner ON pt_certificates(owner_email, issued_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_pt_cert_prod  ON pt_certificates(product_id);
+
+        -- §30-EX v3 swap pool. owner lists by inserting with claimed_by NULL.
+        -- claimant fills claimed_by + pays 30pt. pt_swap_processor agent
+        -- then fulfills (Printful orders for both sides + cert moves).
+        -- status: listed | claimed | fulfilling | done | expired
+        CREATE TABLE IF NOT EXISTS pt_swap_pool (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_email   TEXT NOT NULL,
+            product_id    INTEGER NOT NULL,
+            cert_id       TEXT NOT NULL,
+            listed_at     TEXT NOT NULL,
+            claimed_by    TEXT,
+            claimed_at    TEXT,
+            fulfilled_at  TEXT,
+            status        TEXT NOT NULL DEFAULT 'listed',
+            expire_at     TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_pt_swap_status ON pt_swap_pool(status, expire_at);
+        CREATE INDEX IF NOT EXISTS idx_pt_swap_owner  ON pt_swap_pool(owner_email);
+        CREATE INDEX IF NOT EXISTS idx_pt_swap_claim  ON pt_swap_pool(claimed_by);
+
+        -- §30-VAULT: deferred shipping. Year 1 free, then 10 yen per month.
+        -- last_billed_at gates the monthly debit.
+        -- status: stored | shipping | shipped | forfeited
+        CREATE TABLE IF NOT EXISTS pt_vault_orders (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            email           TEXT NOT NULL,
+            product_id      INTEGER NOT NULL,
+            cert_id         TEXT NOT NULL,
+            deferred_since  TEXT NOT NULL,
+            free_until      TEXT NOT NULL,
+            monthly_yen     INTEGER NOT NULL DEFAULT 10,
+            last_billed_at  TEXT,
+            status          TEXT NOT NULL DEFAULT 'stored'
+        );
+        CREATE INDEX IF NOT EXISTS idx_pt_vault_email ON pt_vault_orders(email, status);
+
+        -- §30-MP marketplace catalog. Admin curates which physical items
+        -- are redeemable for pt, at what cost.
+        CREATE TABLE IF NOT EXISTS pt_marketplace_listings (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            sku_label       TEXT NOT NULL,
+            pt_cost         INTEGER NOT NULL,
+            vendor          TEXT NOT NULL,
+            pod_uid         TEXT NOT NULL,
+            stock_limit     INTEGER,
+            stock_consumed  INTEGER NOT NULL DEFAULT 0,
+            active          INTEGER NOT NULL DEFAULT 1,
+            created_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_pt_mp_active ON pt_marketplace_listings(active, pt_cost);
+
         -- tee_anchors: per-tee proof-of-birth commitment. Each row is the
         -- canonical content hash for one product, plus an optional reference
         -- to where that hash was posted publicly (Solana memo / OTS / X /
