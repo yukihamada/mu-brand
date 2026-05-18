@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>公正証書遺言作成 事前資料 ／ 濱田 優貴</title>
+<style>
+  @page {
+    size: A4;
+    margin: 22mm 20mm 20mm;
+    @bottom-center { content: counter(page) " / " counter(pages); font-size: 8pt; color: #666; }
+    @top-right { content: "公証人役場 提出資料 ／ 濱田 優貴"; font-size: 8pt; color: #666; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif CJK JP", serif;
+    color: #000;
+    line-height: 1.85;
+    font-size: 10.5pt;
+    margin: 0;
+    padding: 0;
+  }
+  /* Cover */
+  .cover {
+    page-break-after: always;
+    text-align: center;
+    padding: 80px 40px 0;
+    background: white;
+    min-height: 95vh;
+    position: relative;
+  }
+  .cover .corner-line {
+    position: absolute;
+    top: 30px;
+    left: 30px;
+    right: 30px;
+    bottom: 30px;
+    border: 1.5px solid #000;
+  }
+  .cover .inner-line {
+    position: absolute;
+    top: 36px;
+    left: 36px;
+    right: 36px;
+    bottom: 36px;
+    border: 0.5px solid #000;
+  }
+  .cover > .content {
+    position: relative;
+    padding-top: 100px;
+  }
+  .cover h1 {
+    font-size: 28pt;
+    font-weight: 700;
+    margin: 60px 0 30px;
+    letter-spacing: 0.3em;
+    line-height: 1.4;
+  }
+  .cover .subtitle {
+    font-size: 14pt;
+    color: #333;
+    margin: 30px 0;
+    letter-spacing: 0.2em;
+  }
+  .cover .testator {
+    margin-top: 100px;
+    font-size: 13pt;
+    letter-spacing: 0.15em;
+  }
+  .cover .testator .label {
+    font-size: 10pt;
+    color: #555;
+    letter-spacing: 0.3em;
+    margin-bottom: 14px;
+  }
+  .cover .testator .name {
+    font-size: 22pt;
+    font-weight: 700;
+    margin: 14px 0;
+    letter-spacing: 0.4em;
+  }
+  .cover .date {
+    position: absolute;
+    bottom: 100px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 11pt;
+    letter-spacing: 0.2em;
+  }
+  /* Body */
+  h1 {
+    font-size: 15pt;
+    color: #000;
+    border-bottom: 2px solid #000;
+    padding-bottom: 6px;
+    margin-top: 32px;
+    margin-bottom: 16px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+  }
+  h1 .num {
+    margin-right: 12px;
+    color: #444;
+  }
+  h2 {
+    font-size: 12pt;
+    color: #000;
+    margin-top: 24px;
+    margin-bottom: 10px;
+    padding-left: 10px;
+    border-left: 4px solid #000;
+    font-weight: 700;
+  }
+  h3 { font-size: 11pt; margin-top: 14px; margin-bottom: 6px; font-weight: 700; }
+  p { margin: 8px 0; text-align: justify; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 10pt;
+  }
+  th, td {
+    border: 0.5px solid #000;
+    padding: 8px 10px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background: #f0f0f0;
+    font-weight: 700;
+  }
+  td.fill {
+    background: #fafafa;
+    color: #888;
+    font-style: italic;
+  }
+  td.num { font-family: "SF Mono", Menlo, monospace; text-align: right; }
+  ul, ol { padding-left: 24px; margin: 6px 0; }
+  li { margin: 5px 0; }
+  .frame {
+    border: 1px solid #000;
+    padding: 14px 18px;
+    margin: 14px 0;
+  }
+  .placeholder {
+    color: #888;
+    font-style: italic;
+    border-bottom: 1px dotted #888;
+    padding: 0 4px;
+  }
+  .signature-area {
+    margin-top: 60px;
+    border-top: 1px solid #000;
+    padding-top: 30px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 40px;
+  }
+  .sign-block .label {
+    font-size: 9.5pt;
+    color: #555;
+    margin-bottom: 8px;
+    letter-spacing: 0.15em;
+  }
+  .sign-block .line {
+    border-bottom: 1px solid #000;
+    height: 50px;
+  }
+  .footer-note {
+    margin-top: 30px;
+    font-size: 8.5pt;
+    color: #444;
+    border-top: 1px solid #ccc;
+    padding-top: 10px;
+    line-height: 1.65;
+  }
+  .page-break { page-break-before: always; }
+  .checkbox {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 1px solid #000;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+  .info-row {
+    display: grid;
+    grid-template-columns: 140px 1fr;
+    gap: 14px;
+    padding: 8px 0;
+    border-bottom: 1px solid #e5e5e5;
+    font-size: 10pt;
+  }
+  .info-row .k {
+    color: #444;
+    letter-spacing: 0.05em;
+  }
+  .info-row .v {
+    color: #000;
+  }
+  .important {
+    background: #fffbeb;
+    border: 1px solid #d68910;
+    padding: 12px 16px;
+    margin: 14px 0;
+    font-size: 10pt;
+    line-height: 1.75;
+  }
+  .important b { color: #7c5e10; }
+  .preamble-quote {
+    background: #fafafa;
+    border-left: 3px solid #000;
+    padding: 16px 22px;
+    margin: 18px 0;
+    font-style: italic;
+    line-height: 2.0;
+    font-size: 11pt;
+  }
+  pre { font-family: "SF Mono", "Menlo", monospace; background: #f5f5f5; padding: 10px 14px; font-size: 9pt; overflow-x: auto; border: 0.5px solid #ccc; }
+  code { font-family: "SF Mono", Menlo, monospace; background: #f0f0f0; padding: 1px 5px; font-size: 9.5pt; }
+  .seal-area {
+    display: inline-block;
+    width: 60px;
+    height: 60px;
+    border: 1px dashed #aaa;
+    text-align: center;
+    line-height: 56px;
+    color: #aaa;
+    font-size: 9pt;
+    margin: 10px 0 10px 12px;
+    vertical-align: middle;
+  }
+  .toc {
+    background: #fafafa;
+    border: 1px solid #000;
+    padding: 20px 30px;
+    margin: 20px 0;
+  }
+  .toc h2 { margin-top: 0; border: none; padding: 0; }
+  .toc ol { padding-left: 22px; }
+  .toc li { margin: 6px 0; font-size: 10.5pt; }
+  .small { font-size: 8.5pt; color: #555; }
+</style>
+</head>
+<body>
+
+<!-- ============ COVER ============ -->
+<div class="cover">
+<div class="corner-line"></div>
+<div class="inner-line"></div>
+<div class="content">
+
+<div style="font-size:11pt;letter-spacing:0.4em;color:#444">公証人役場 提出資料</div>
+
+<h1>公 正 証 書 遺 言<br>作 成 の た め の<br>事 前 資 料</h1>
+
+<div class="subtitle">― 遺言者用 控え兼 公証人事前打合せ資料 ―</div>
+
+<div class="testator">
+<div class="label">遺　言　者</div>
+<div class="name">濱 田 　優 貴</div>
+<div style="font-size:10pt;color:#555;letter-spacing:0.2em;margin-top:6px">
+HAMADA YUKI ／ 株式会社イネブラ 代表取締役
+</div>
+</div>
+
+</div>
+
+<div class="date">令 和 ８ 年 ５ 月 　 日 作 成</div>
+</div>
+
+<!-- ============ TOC ============ -->
+<div class="toc">
+<h2>目　次</h2>
+<ol>
+<li>遺言者本人 基本情報</li>
+<li>推定相続人 一覧</li>
+<li>遺言執行者 / 証人 候補</li>
+<li>財産目録</li>
+<li>遺言内容（条項案）</li>
+<li>付言事項（テンプレートに戻らない遺言）</li>
+<li>ブロックチェーン記録（電子的存在証明）</li>
+<li>当日 持参書類 チェックリスト</li>
+<li>公証人 事前確認事項</li>
+</ol>
+</div>
+
+<div class="page-break"></div>
+
+<!-- ============ 1. 遺言者情報 ============ -->
+
+<h1><span class="num">第1</span>遺言者本人 基本情報</h1>
+
+<table>
+<tr><th style="width:30%">氏名</th><td>濱田 優貴 （はまだ ゆうき）</td></tr>
+<tr><th>生年月日</th><td class="fill">昭和　年　月　日 （※戸籍謄本のとおり）</td></tr>
+<tr><th>本籍</th><td class="fill">（※戸籍謄本のとおり）</td></tr>
+<tr><th>住所</th><td>東京都港区三田２丁目７番１号　THE RESIDENCE三田　1913号室</td></tr>
+<tr><th>職業</th><td>株式会社イネブラ 代表取締役<br>（その他事業体については財産目録参照）</td></tr>
+<tr><th>連絡先（携帯）</th><td>090-7409-0407</td></tr>
+<tr><th>連絡先（メール）</th><td>mail@yukihamada.jp</td></tr>
+</table>
+
+<div class="important">
+<b>遺言能力に関する確認</b>：本件遺言作成時点において、遺言者は満〇〇歳、健康状態は良好、判断能力に何ら問題はない。本人の自由意思に基づくものである。
+</div>
+
+<h2>1-1. 本人確認書類（当日持参）</h2>
+<ul>
+<li><span class="checkbox"></span>戸籍謄本（発行3か月以内）</li>
+<li><span class="checkbox"></span>住民票（発行3か月以内、本籍記載あり）</li>
+<li><span class="checkbox"></span>印鑑登録証明書（発行3か月以内）</li>
+<li><span class="checkbox"></span>実印</li>
+<li><span class="checkbox"></span>運転免許証 / マイナンバーカード（顔写真付き本人確認）</li>
+</ul>
+
+<!-- ============ 2. 推定相続人 ============ -->
+
+<h1><span class="num">第2</span>推定相続人 一覧</h1>
+
+<p class="small">※民法上の法定相続人を全員列挙。本籍・住所・生年月日は戸籍謄本のとおり。</p>
+
+<table>
+<thead><tr><th>続柄</th><th>氏名</th><th>生年月日</th><th>住所</th><th>備考</th></tr></thead>
+<tbody>
+<tr>
+<td>配偶者</td>
+<td class="fill">　</td>
+<td class="fill">　</td>
+<td class="fill">　</td>
+<td>法定相続分 1/2</td>
+</tr>
+<tr>
+<td>長子</td>
+<td class="fill">（該当ある場合のみ記入）</td>
+<td class="fill">　</td>
+<td class="fill">　</td>
+<td>―</td>
+</tr>
+<tr>
+<td>その他</td>
+<td class="fill">　</td>
+<td class="fill">　</td>
+<td class="fill">　</td>
+<td>―</td>
+</tr>
+</tbody>
+</table>
+
+<p>※ 推定相続人がいない場合は、その旨も記載。本件遺言においては<b>遺留分</b>を尊重した分配を基本とする（民法1042条以下）。</p>
+
+<!-- ============ 3. 遺言執行者 / 証人 ============ -->
+
+<h1><span class="num">第3</span>遺言執行者 ／ 証人 候補</h1>
+
+<h2>3-1. 遺言執行者</h2>
+
+<p>本遺言の執行については、以下を指定する：</p>
+
+<div class="frame">
+<div class="info-row"><div class="k">第1順位</div><div class="v" style="color:#888;font-style:italic">氏名・住所・職業を記入（弁護士・司法書士・信託銀行・配偶者 等）</div></div>
+<div class="info-row"><div class="k">第2順位</div><div class="v" style="color:#888;font-style:italic">第1順位が辞退した場合の予備</div></div>
+<div class="info-row"><div class="k">権限</div><div class="v">本遺言の全項目につき執行に必要な一切の権限を有する。報酬は別紙のとおり。</div></div>
+</div>
+
+<h2>3-2. 証人 2名（民法969条 ―― 推定相続人 / 受遺者 / これらの配偶者・直系血族は不可）</h2>
+
+<table>
+<thead><tr><th>順</th><th>氏名</th><th>生年月日</th><th>職業</th><th>住所</th></tr></thead>
+<tbody>
+<tr><td>1</td><td class="fill">　</td><td class="fill">　</td><td class="fill">　</td><td class="fill">　</td></tr>
+<tr><td>2</td><td class="fill">　</td><td class="fill">　</td><td class="fill">　</td><td class="fill">　</td></tr>
+</tbody>
+</table>
+
+<p class="small">※ 公証人役場で証人を紹介してもらうことも可能（手数料別途、1人あたり7,000円〜10,000円程度）。</p>
+
+<div class="page-break"></div>
+
+<!-- ============ 4. 財産目録 ============ -->
+
+<h1><span class="num">第4</span>財　産　目　録</h1>
+
+<p class="small">※ 全て遺言者個人名義の財産。法人名義のもの（株式会社イネブラ保有資産等）は含まず、別途遺言者の保有株式として記載。</p>
+
+<h2>4-1. 不動産</h2>
+
+<table>
+<thead><tr><th>種別</th><th>所在</th><th>地番／家屋番号</th><th>登記簿評価額</th></tr></thead>
+<tbody>
+<tr><td>― 該当なし（自宅は賃借）</td><td colspan="3" class="fill">※ 賃貸住居は対象外。所有不動産があれば追記</td></tr>
+</tbody>
+</table>
+
+<h2>4-2. 金融資産</h2>
+
+<table>
+<thead><tr><th>金融機関</th><th>支店</th><th>種別</th><th>口座番号</th><th>概算残高</th></tr></thead>
+<tbody>
+<tr><td class="fill">　</td><td class="fill">　</td><td class="fill">普通／定期</td><td class="fill">下4桁</td><td class="num fill">¥　</td></tr>
+<tr><td class="fill">　</td><td class="fill">　</td><td class="fill">　</td><td class="fill">　</td><td class="num fill">¥　</td></tr>
+<tr><td class="fill">　</td><td class="fill">　</td><td class="fill">　</td><td class="fill">　</td><td class="num fill">¥　</td></tr>
+</tbody>
+</table>
+
+<h2>4-3. 有価証券・事業持分</h2>
+
+<table>
+<thead><tr><th>銘柄／会社名</th><th>種別</th><th>持株数 ／ 持分</th><th>概算評価額</th></tr></thead>
+<tbody>
+<tr><td><b>株式会社イネブラ</b></td><td>非上場 普通株</td><td class="fill">　株</td><td class="num fill">¥　</td></tr>
+<tr><td class="fill">East Ventures 等の優先株</td><td class="fill">優先株</td><td class="fill">　%</td><td class="num fill">参考評価額</td></tr>
+<tr><td class="fill">その他</td><td class="fill">　</td><td class="fill">　</td><td class="num fill">¥　</td></tr>
+</tbody>
+</table>
+
+<h2>4-4. デジタル資産・暗号資産</h2>
+
+<div class="important">
+<b>重要</b>：本項は <b>本日時点で「特定可能なウォレットアドレスとシードフレーズの保管場所」</b> を記載するもの。実際の残高は変動するため、評価額は記載しない。シードフレーズは公証人役場で開示しない（封筒に封印して遺言執行者に渡す）。
+</div>
+
+<table>
+<thead><tr><th>種別</th><th>識別情報</th><th>シードフレーズ保管</th></tr></thead>
+<tbody>
+<tr>
+<td>Solana ウォレット<br>（ENAI Treasury）</td>
+<td><code>DK29rBGCvP83LUNjUGVM6xt6qPy6rycBFopXbFkg9XvQ</code></td>
+<td class="fill">封印封筒 No.____<br>（信託会社 or 銀行貸金庫）</td>
+</tr>
+<tr>
+<td>Solana ウォレット<br>（Liquidator）</td>
+<td><code>RSwHm9jqDNTwUkok3wsY4h8AaZV9LLwscY6ZyrJHb9d</code></td>
+<td class="fill">封印封筒 No.____</td>
+</tr>
+<tr>
+<td>その他（追記）</td><td class="fill">　</td><td class="fill">　</td>
+</tr>
+</tbody>
+</table>
+
+<h2>4-5. 知的財産・ドメイン・著作物</h2>
+
+<table>
+<thead><tr><th>種別</th><th>名称</th><th>登録 / 所有</th></tr></thead>
+<tbody>
+<tr><td>ドメイン</td><td>wearmu.com, jiuflow.com, chatweb.ai, teai.io, enablerdao.com, koe.live, kagi.app 他</td><td>Cloudflare DNS（API資格情報は遺言執行者向け封印）</td></tr>
+<tr><td>GitHub</td><td>github.com/yukihamada 配下リポジトリ</td><td>個人アカウント</td></tr>
+<tr><td>商標</td><td class="fill">登録番号を追記（MU・SOLUNA 等）</td><td class="fill">　</td></tr>
+<tr><td>著作物</td><td>ブログ記事、写真、コード一式</td><td>原則 MIT または Apache 2.0 にて公開済み</td></tr>
+</tbody>
+</table>
+
+<h2>4-6. 動産</h2>
+
+<table>
+<thead><tr><th>品目</th><th>概要</th><th>概算評価額</th></tr></thead>
+<tbody>
+<tr><td>家財一式</td><td>港区三田1913号室内</td><td class="num fill">¥　</td></tr>
+<tr><td>柔術帯・道着等</td><td>個人練習用</td><td class="num fill">参考価値のみ</td></tr>
+<tr><td>その他</td><td class="fill">　</td><td class="num fill">¥　</td></tr>
+</tbody>
+</table>
+
+<h2>4-7. 債務・負債</h2>
+
+<table>
+<thead><tr><th>債権者</th><th>債務内容</th><th>残高</th></tr></thead>
+<tbody>
+<tr><td class="fill">該当ある場合のみ記入</td><td class="fill">　</td><td class="num fill">¥　</td></tr>
+</tbody>
+</table>
+
+<div class="page-break"></div>
+
+<!-- ============ 5. 遺言内容 ============ -->
+
+<h1><span class="num">第5</span>遺言内容（条項案）</h1>
+
+<p class="small">※ 以下は公証人との打合せ用の<b>原案</b>。公証人が法的に適切な文言に整える。</p>
+
+<div class="frame">
+
+<h2 style="margin-top:0">第1条（祭祀の主宰者）</h2>
+<p>祖先の祭祀を主宰する者として、配偶者　<span class="placeholder">______</span>　を指定する。</p>
+
+<h2>第2条（配偶者への遺贈）</h2>
+<p>遺言者は、配偶者　<span class="placeholder">______</span>　に対し、遺言者の有する一切の財産のうち、配偶者の生活に必要な金額（少なくとも法定相続分以上）を相続させる。具体的金額および配分の決定は、遺言執行者と配偶者の協議に委ねる。</p>
+
+<h2>第3条（事業の継続）</h2>
+<p>株式会社イネブラ（本店所在地：東京都千代田区九段南１丁目５番６号 りそな九段ビル５階）の株式議決権を相続する者は、以下の事業構造の維持に努めるものとする。</p>
+<ol>
+<li>MU ブランド（wearmu.com）の自律運営構造（Constitution §28・§29）の継続</li>
+<li>利益の50%を弟子屈町その他指定先へ寄付するスキームの維持</li>
+<li>新規方針追加を行わないこと（メンテナンスのみ）</li>
+</ol>
+
+<h2>第4条（公益財団法人への寄付）</h2>
+<p>本遺言の効力発生時点で、遺言者が代表理事 / 評議員等として関与する公益財団法人 Sen-Dojo Foundation（仮称、設立後正式名称を本遺言に追記）が存在する場合、配偶者の生活費および相続税納付に必要な額を控除した後の遺産の<b>大部分</b>を当該財団に寄付する。</p>
+<p>当該財団が未設立または解散している場合は、社会福祉法人・公益財団法人で「地方創生・武道教育・若年層支援」を主目的とする団体を遺言執行者が選定する。</p>
+
+<h2>第5条（遺贈の優先順位）</h2>
+<ol>
+<li>配偶者の生活維持（相続税納付分含む）</li>
+<li>未成年の直系卑属の養育費（該当者がいる場合）</li>
+<li>Sen-Dojo Foundation 等への寄付</li>
+<li>その他の法定相続人への分配</li>
+</ol>
+
+<h2>第6条（デジタル資産の取り扱い）</h2>
+<p>遺言者が保有する暗号資産、ドメイン、GitHub アカウント、その他のデジタル資産については、別紙「デジタル資産目録」（封印封筒）の指示に従い、遺言執行者が処分または承継させる。シードフレーズが復元不能な場合、当該資産は「最初から存在しなかったもの」として扱い、誰の損失とも見做さない。</p>
+
+<h2>第7条（遺言執行者）</h2>
+<p>本遺言の執行者として　<span class="placeholder">______</span>　を指定する。執行者は、本遺言の趣旨に従い、必要な一切の処分・登記・解約・寄付等の権限を有する。執行報酬は別紙のとおり。</p>
+
+<h2>第8条（付言事項の参照）</h2>
+<p>本遺言の精神的趣旨および非法的指示は、別紙「付言事項」（次節および <code>https://wearmu.com/will/</code> に公開のJSON文書）を参照のこと。法的拘束力は本公正証書遺言が優先する。</p>
+
+</div>
+
+<div class="page-break"></div>
+
+<!-- ============ 6. 付言事項 ============ -->
+
+<h1><span class="num">第6</span>付　言　事　項</h1>
+
+<p class="small">※ 付言事項は法的拘束力はないが、遺言者の意思を明確に伝える役割を持つ。公証人もこれを尊重する。</p>
+
+<div class="preamble-quote">
+これを書いている時点で、特に死ぬ予定はありません。<br>
+ただ、いつ死んでもおかしくない、というのは万人に共通する事実なので、<br>
+信託会社の更新案内をきっかけに少し書き直しておきます。<br>
+前回のテンプレ感が個人的に気になっていたので。
+</div>
+
+<h2>6-1. 遺産の使い方について</h2>
+
+<p>私の意思は、生前にすでに動いている事業構造そのものに書き込んであります。文書として残すのは念のため、です。</p>
+
+<ol>
+<li><b>MU / wearmu.com の運営は、可能な限り停止しないでください。</b>§28（利益の50%を弟子屈町に寄付する規定）と§29（派手に宣伝しない規定）は、私の代わりに動き続ける装置として設計してあります。私が死んだ翌日も、誰かが Tシャツを1着買って、半分が弟子屈町に流れる ―― それが続いていれば、私はちゃんと死ねたことになります。</li>
+
+<li><b>株式の議決権を相続される方へ：</b>「経営判断をしない」という判断をしてください。MU の Constitution に従って自動運転されている状態を維持することが、私の遺志です。新しい方針、新しい商品、新しい寄付先を「足す」必要はありません。</li>
+
+<li><b>Sen-Dojo Foundation（一般財団）への追加寄付：</b>私が個人で保有する資産のうち、家族の生活と相続税納付に必要な分を控除した残りは、Sen-Dojo Foundation 経由で弟子屈町その他の地方の道場ネットワークへ寄付してください。具体的金額の指定はしません ―― 家族が「これで困らない」と判断した範囲で十分です。</li>
+
+<li><b>仮想通貨ウォレットの取り扱い：</b>シードフレーズが復元できる方は換金し、上記(3)と同じ扱いにしてください。換金できないなら、それで終わりで構いません。最初からなかったものとして処理してください。</li>
+</ol>
+
+<h2>6-2. 葬儀について</h2>
+
+<p>小さくしてください。会場は本当に近しい人だけで十分です。<br>
+もし可能なら、その日の参加者全員に「wearmu.com で一着、自分の好きなTシャツを発注する」ことをお願いしてください。費用は遺産から精算してください。それが、私が一番嬉しい弔いです。</p>
+
+<h2>6-3. 残された人たちへ</h2>
+
+<p><b>配偶者へ：</b>ありがとうございました。私の事業のことは何も気にしなくていいです。上記の構造で動くようにしてあります。あなたは、あなた自身の人生を続けてください。</p>
+
+<p><b>共同事業者・パートナーの皆さんへ：</b>私が抜けた後の事業判断は、全て皆さんの自由でお願いします。「Yuki ならこう判断した」を推測する必要はないです。Constitution に書いていないことは、書いていない、で構いません。</p>
+
+<h2>6-4. 最後に</h2>
+
+<p>20個並列で作ってきた事業のうち、MU だけは私が死んでも止まらない設計です。それ以外は、止まっていいです。止まることもまた、自然なことです。</p>
+
+<div class="preamble-quote" style="text-align:center;font-size:12pt">
+死ぬまで作品があるのもいい。<br>
+死んでも、生まれ続けるのも、いい。
+</div>
+
+<p>これは生前のブログ（<code>wearmu.com/blog/all-in-on-mu</code>）にも書きました。本気でそう思っていました。</p>
+
+<p>最後に一つだけ。<br>この付言を書いてから何年で実際に効力を持つことになるか分かりませんが、それまでに私はもう一回、二回、この文書を書き直す予定です。テンプレートに戻らないように。</p>
+
+<p style="margin-top:30px">ありがとうございました。</p>
+
+<div class="signature-area">
+<div class="sign-block">
+<div class="label">遺言者 署名</div>
+<div class="line"></div>
+<p style="margin-top:8px;font-size:9.5pt;color:#555">濱田 優貴</p>
+</div>
+<div class="sign-block">
+<div class="label">実印</div>
+<div class="seal-area">印</div>
+</div>
+</div>
+
+<div class="page-break"></div>
+
+<!-- ============ 7. ブロックチェーン記録 ============ -->
+
+<h1><span class="num">第7</span>ブロックチェーン記録（電子的存在証明）</h1>
+
+<p>本付言事項および遺言者の意思を機械可読な形式（JSON）でも保存し、<b>改ざん不能なブロックチェーン上に記録</b>しています。これは法的拘束力を持たせる目的ではなく、本書類の<b>「存在時刻」と「内容の同一性」</b>を第三者が独立に検証できるようにするための補助記録です。</p>
+
+<h2>7-1. JSON 文書</h2>
+
+<table>
+<tr><th style="width:30%">ファイル名</th><td><code>v1.0.0-draft.json</code></td></tr>
+<tr><th>公開 URL</th><td><code>https://wearmu.com/will/v1.0.0-draft.json</code></td></tr>
+<tr><th>SHA-256 ハッシュ</th><td style="font-family:monospace;font-size:9pt;word-break:break-all">071f3f77ba04b484478d67cd31032ee61d482b259f42c7927378354ad26add64</td></tr>
+<tr><th>バージョン</th><td>1.0.0-draft</td></tr>
+<tr><th>記録日時</th><td>2026年5月18日 16:00:00 JST</td></tr>
+<tr><th>言語</th><td>日本語</td></tr>
+<tr><th>サイズ</th><td>3,450 bytes（canonical化後）</td></tr>
+</table>
+
+<h2>7-2. Solana メインネット アンカー</h2>
+
+<table>
+<tr><th style="width:30%">トランザクション署名</th><td style="font-family:monospace;font-size:8.5pt;word-break:break-all">2JsjC4vvG9CaYH2HYhNGPuNQ8edQBM4cSpQAWe7UdejTD86G4wvWJGBDFkzJMyLRz7KxMv9egPb1c8HpzrgXZYar</td></tr>
+<tr><th>ブロック確定時刻</th><td>2026年5月18日 15:58:05 JST（slot 420503564）</td></tr>
+<tr><th>送信ウォレット</th><td><code style="font-size:9pt">DK29rBGCvP83LUNjUGVM6xt6qPy6rycBFopXbFkg9XvQ</code><br>（ENAI Treasury、遺言者本人保有）</td></tr>
+<tr><th>使用プログラム</th><td>Solana Memo Program (<code style="font-size:9pt">MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr</code>)</td></tr>
+<tr><th>検証 URL</th><td>https://solscan.io/tx/2JsjC4vvG9CaYH2HYhNGPuNQ8edQBM4cSpQAWe7UdejTD86G4wvWJGBDFkzJMyLRz7KxMv9egPb1c8HpzrgXZYar</td></tr>
+</table>
+
+<h2>7-3. Bitcoin OpenTimestamps プルーフ</h2>
+
+<table>
+<tr><th style="width:30%">プルーフファイル</th><td><code>v1.0.0-draft.json.ots</code></td></tr>
+<tr><th>公開 URL</th><td><code>https://wearmu.com/will/v1.0.0-draft.json.ots</code></td></tr>
+<tr><th>確定方式</th><td>Bitcoin ブロックチェーン経由（OpenTimestamps 標準）</td></tr>
+<tr><th>確定までの目安</th><td>3〜6 時間後にビットコインブロックに記録される</td></tr>
+</table>
+
+<h2>7-4. 検証方法（誰でも独立に可能）</h2>
+
+<pre>$ curl https://wearmu.com/will/v1.0.0-draft.json | \
+  python3 -c 'import sys,json,hashlib;
+  d=json.load(sys.stdin);
+  c=json.dumps(d,ensure_ascii=False,sort_keys=True,separators=(",",":")).encode();
+  print(hashlib.sha256(c).hexdigest())'
+
+# 出力が下記と一致すれば、JSON はブロックチェーンに記録された時点から
+# 一切改ざんされていないことが、暗号学的に保証される：
+#
+#   071f3f77ba04b484478d67cd31032ee61d482b259f42c7927378354ad26add64</pre>
+
+<div class="important">
+<b>公証人の方へ</b>：本ブロックチェーン記録は、付言事項の「存在時刻の証明」「内容の真正性確認」のための<b>補助的記録</b>であり、民法上の遺言の方式（公正証書遺言）を満たすものではありません。法的効力は本公正証書のみが持ち、ブロックチェーン記録は <b>あくまで補強材料</b> である旨、ご理解ください。
+</div>
+
+<div class="page-break"></div>
+
+<!-- ============ 8. 持参書類チェックリスト ============ -->
+
+<h1><span class="num">第8</span>当日 持参書類 チェックリスト</h1>
+
+<h2>8-1. 遺言者本人</h2>
+
+<table>
+<thead><tr><th style="width:30px">✓</th><th>書類</th><th>取得先 / 注意</th></tr></thead>
+<tbody>
+<tr><td><span class="checkbox"></span></td><td>戸籍謄本</td><td>本籍地役所 / 発行3か月以内</td></tr>
+<tr><td><span class="checkbox"></span></td><td>住民票（本籍記載あり）</td><td>住所地役所 / 発行3か月以内</td></tr>
+<tr><td><span class="checkbox"></span></td><td>印鑑登録証明書</td><td>住所地役所 / 発行3か月以内</td></tr>
+<tr><td><span class="checkbox"></span></td><td>実印</td><td>―</td></tr>
+<tr><td><span class="checkbox"></span></td><td>運転免許証 / マイナンバーカード</td><td>顔写真付き本人確認用</td></tr>
+<tr><td><span class="checkbox"></span></td><td>本資料一式（A4 PDF）</td><td>事前打合せ用</td></tr>
+</tbody>
+</table>
+
+<h2>8-2. 推定相続人・受遺者関連</h2>
+
+<table>
+<thead><tr><th style="width:30px">✓</th><th>書類</th><th>取得先 / 注意</th></tr></thead>
+<tbody>
+<tr><td><span class="checkbox"></span></td><td>推定相続人全員の戸籍謄本</td><td>続柄の確認のため</td></tr>
+<tr><td><span class="checkbox"></span></td><td>受遺者（公益財団等）の登記事項証明書</td><td>該当ある場合のみ</td></tr>
+<tr><td><span class="checkbox"></span></td><td>株式会社イネブラの登記事項証明書</td><td>本店所在地の法務局</td></tr>
+</tbody>
+</table>
+
+<h2>8-3. 財産関連</h2>
+
+<table>
+<thead><tr><th style="width:30px">✓</th><th>書類</th><th>取得先 / 注意</th></tr></thead>
+<tbody>
+<tr><td><span class="checkbox"></span></td><td>金融機関残高証明書 or 通帳コピー</td><td>各金融機関</td></tr>
+<tr><td><span class="checkbox"></span></td><td>不動産の登記事項証明書（所有あれば）</td><td>法務局</td></tr>
+<tr><td><span class="checkbox"></span></td><td>固定資産評価証明書（所有あれば）</td><td>市区町村役場</td></tr>
+<tr><td><span class="checkbox"></span></td><td>株式会社イネブラの株主名簿</td><td>会社本体</td></tr>
+<tr><td><span class="checkbox"></span></td><td>暗号資産ウォレットアドレス一覧（本資料 第4-4 節）</td><td>本資料に記載済</td></tr>
+<tr><td><span class="checkbox"></span></td><td>シードフレーズ封印封筒</td><td>公証人役場では開封せず、執行者に手渡し or 信託保管</td></tr>
+</tbody>
+</table>
+
+<h2>8-4. 証人</h2>
+
+<table>
+<thead><tr><th style="width:30px">✓</th><th>書類</th><th>取得先 / 注意</th></tr></thead>
+<tbody>
+<tr><td><span class="checkbox"></span></td><td>証人2名の本人確認書類</td><td>運転免許証 / マイナンバーカード等</td></tr>
+<tr><td><span class="checkbox"></span></td><td>証人2名の印鑑（認印可）</td><td>―</td></tr>
+</tbody>
+</table>
+
+<h2>8-5. 費用</h2>
+
+<table>
+<thead><tr><th>項目</th><th>概算</th></tr></thead>
+<tbody>
+<tr><td>公証人手数料</td><td>遺産総額により変動<br>例：1億円〜3億円 ⇒ 43,000円〜95,000円</td></tr>
+<tr><td>遺言加算（11,000円）</td><td>遺産総額が1億円未満の場合のみ</td></tr>
+<tr><td>用紙代</td><td>正本・謄本ともに 250円/枚</td></tr>
+<tr><td>証人手配（公証人役場経由）</td><td>1人あたり 7,000円〜10,000円</td></tr>
+<tr><td><b>概算 合計</b></td><td><b>5万円〜15万円程度</b>（遺産規模による）</td></tr>
+</tbody>
+</table>
+
+<div class="page-break"></div>
+
+<!-- ============ 9. 公証人事前確認事項 ============ -->
+
+<h1><span class="num">第9</span>公証人 事前確認事項</h1>
+
+<p>事前打ち合わせの際、以下を公証人に確認・相談する：</p>
+
+<ol>
+<li><b>条項案の法的有効性チェック</b><br>第5節「遺言内容（条項案）」の各条項につき、民法上有効な文言かを公証人に確認。特に第3条（事業継続義務）、第4条（公益財団寄付）の条件付き遺贈の有効性。</li>
+
+<li><b>遺留分への配慮</b><br>配偶者・直系卑属の遺留分（相続財産の1/2）を侵害しない範囲で寄付・遺贈が成り立つよう、公証人と相談して文言調整。</li>
+
+<li><b>付言事項の取り扱い</b><br>第6節「付言事項」は法的拘束力を持たないが、公正証書に「付言」として記載するか、別紙として添付するかを選択。本書では「別紙添付」+「公正証書中での参照」を推奨。</li>
+
+<li><b>ブロックチェーン記録の言及</b><br>第7節のブロックチェーン記録について、公正証書本文または別紙に「補助記録として上記URLおよびSHA-256ハッシュを参照」と1行記載できるか確認。これは将来の改訂時に同一の枠組みを継承するために重要。</li>
+
+<li><b>遺言の保管</b><br>原本は公証人役場で保管（半永久）。正本・謄本は遺言者と遺言執行者が各1部保管。デジタル資産用の封印封筒は、別途<b>信託銀行の貸金庫</b>または<b>遺言信託会社</b>に預けることを推奨。</li>
+
+<li><b>改訂手続き</b><br>付言事項を JSON 形式で改訂する都度（年1-2回想定）、本公正証書を全面改訂する必要はないが、JSON のバージョン更新と SHA-256 ハッシュの再アンカーは独立して行えることを確認。</li>
+
+<li><b>遺言執行者の指定方法</b><br>個人を指定するか、信託銀行を指定するか。個人指定の場合、第1順位が辞退した場合の予備指定をどう書くか。</li>
+
+<li><b>暗号資産（仮想通貨）の遺言記載</b><br>金融庁・国税庁の見解では暗号資産は相続税の課税対象。シードフレーズの所在を遺言本文に書くか、別紙にするか。<b>本書では別紙（封印封筒）+ 遺言本文でその所在を示す方式</b>を推奨。</li>
+
+<li><b>海外資産の取り扱い</b><br>米国法人/海外口座があれば、準拠法・管轄裁判所を明示。本件では現時点で該当なし。</li>
+
+<li><b>本資料 (PDF) の取り扱い</b><br>本資料は遺言者の事前控えであり、公正証書には組み込まれない。ただし、公証人が事前打ち合わせ資料として参照することを希望。<b>本資料の改訂版は wearmu.com/will/ に常時公開される</b>旨を伝える。</li>
+</ol>
+
+<div class="frame" style="background:#fafafa">
+<h3 style="margin-top:0">事前予約の流れ（一般的）</h3>
+<ol style="margin-bottom:0">
+<li>本資料を公証人役場に郵送 or メール送付（事前確認）</li>
+<li>公証人より、条項案の修正・追加事項についてフィードバック</li>
+<li>修正後の文案を確定</li>
+<li>遺言作成日の予約（証人手配含む）</li>
+<li>当日：本人 + 証人2名で出頭、内容読み聞かせ、署名・押印 → 完成</li>
+<li>正本・謄本の受領（後日郵送 or その場で）</li>
+</ol>
+</div>
+
+<div class="footer-note">
+<b>本資料について</b><br>
+本資料は公正証書遺言の作成にあたり、遺言者本人が公証人および関係者との事前打ち合わせのために作成した参考資料です。本資料自体には法的拘束力はありません。法的に有効な遺言は、公証人が作成する公正証書遺言の原本によります。<br><br>
+本資料の電子版（およびその将来の改訂版）は <code>https://wearmu.com/will/</code> にて公開・改訂履歴付きで管理されます。
+</div>
+
+<div style="margin-top:50px;text-align:right;font-size:10pt">
+<p>令和８年５月　日 作成</p>
+<p style="margin-top:30px">遺言者　 濱田 優貴 <span class="seal-area" style="margin-left:20px">印</span></p>
+</div>
+
+</body>
+</html>
