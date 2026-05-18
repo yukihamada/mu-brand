@@ -1939,6 +1939,53 @@ async fn pt_exchange_pool_handler(
     })).into_response()
 }
 
+#[derive(Deserialize)]
+struct PtSpawnReq {
+    email: String,
+    seed_text: Option<String>,
+}
+
+/// POST /api/pt/spawn-mugen — 30 pt → new MUGEN drop request.
+/// Enqueues; pt_spawn_processor agent runs Gemini asynchronously since
+/// image generation is slow + costly + susceptible to upstream blips.
+async fn pt_spawn_mugen_handler(
+    State(db): State<Db>,
+    Json(req): Json<PtSpawnReq>,
+) -> Response {
+    let email = normalize_email(&req.email);
+    if validate_email(&email).is_err() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid email"}))).into_response();
+    }
+    let seed = req.seed_text.as_deref().unwrap_or("").trim().to_string();
+    if seed.len() > 400 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "seed_text too long (max 400 chars)"}))).into_response();
+    }
+    let conn = db.lock().unwrap();
+    // Enqueue first so we get an id, then charge pt against that id for
+    // idempotency. If pt fails we delete the queue row.
+    let inserted = conn.execute(
+        "INSERT INTO pt_spawn_queue (email, seed_text, requested_at, status)
+         VALUES (?1, ?2, ?3, 'pending')",
+        params![&email, &seed, chrono_now()],
+    );
+    let spawn_id = match inserted {
+        Ok(_) => conn.last_insert_rowid(),
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response(),
+    };
+    let ref_str = format!("spawn-{}", spawn_id);
+    match points_mutate(&conn, &email, -PT_SWAP_COST, "pt_spawn_mugen", Some(&ref_str), None) {
+        Ok(bal) => Json(serde_json::json!({
+            "ok": true, "spawn_id": spawn_id, "pt_balance_after": bal,
+            "note": "queued — pt_spawn_processor agent will run Gemini and publish",
+        })).into_response(),
+        Err(e) => {
+            // refund the queue row
+            let _ = conn.execute("DELETE FROM pt_spawn_queue WHERE id=?1", params![spawn_id]);
+            (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e}))).into_response()
+        }
+    }
+}
+
 /// GET /pt-exchange — public minimal HTML browse page.
 async fn pt_exchange_page() -> Response {
     Html(r##"<!doctype html>
@@ -49173,6 +49220,24 @@ async fn main() {
         );
         CREATE INDEX IF NOT EXISTS idx_pt_mp_active ON pt_marketplace_listings(active, pt_cost);
 
+        -- §30 spend route 1: spawn a new MUGEN drop for 30pt.
+        -- Endpoint enqueues here; pt_spawn_processor agent runs Gemini
+        -- async (slow + costly so we batch).
+        -- status: pending | generating | ready | failed
+        CREATE TABLE IF NOT EXISTS pt_spawn_queue (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            email         TEXT NOT NULL,
+            seed_text     TEXT,
+            requested_at  TEXT NOT NULL,
+            picked_at     TEXT,
+            completed_at  TEXT,
+            product_id    INTEGER,
+            error_msg     TEXT,
+            status        TEXT NOT NULL DEFAULT 'pending'
+        );
+        CREATE INDEX IF NOT EXISTS idx_pt_spawn_status ON pt_spawn_queue(status, requested_at);
+        CREATE INDEX IF NOT EXISTS idx_pt_spawn_email  ON pt_spawn_queue(email);
+
         -- tee_anchors: per-tee proof-of-birth commitment. Each row is the
         -- canonical content hash for one product, plus an optional reference
         -- to where that hash was posted publicly (Solana memo / OTS / X /
@@ -49660,6 +49725,7 @@ async fn main() {
         .route("/api/pt/exchange/pool",    get(pt_exchange_pool_handler))
         .route("/api/pt/exchange/list",    post(pt_exchange_list_handler))
         .route("/api/pt/exchange/claim",   post(pt_exchange_claim_handler))
+        .route("/api/pt/spawn-mugen",      post(pt_spawn_mugen_handler))
         .route("/admin/costs", get(admin_costs_page))
         .route("/api/admin/costs", get(admin_costs_list))
         .route("/api/admin/costs/sweep_losses", post(admin_sweep_losses))
