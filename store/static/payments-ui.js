@@ -399,6 +399,14 @@
     if (pendingShipping) body.shipping = pendingShipping;
 
     try {
+      if (window.MuFunnel?.track) {
+        window.MuFunnel.track('checkout_attempt', {
+          product_id: window.currentProduct.id,
+          size: window.selectedSize || 'M',
+          payment_method: selectedPayMethod,
+          source: 'payments-ui.js',
+        });
+      }
       if (selectedPayMethod === 'jpy') {
         const r = await fetch('/api/checkout', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },

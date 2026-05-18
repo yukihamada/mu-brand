@@ -90,7 +90,31 @@ hr{border:0;border-top:1px solid rgba(255,255,255,0.08);margin:36px 0}
   </ul>
   <p>成功 指標: 13 名 から 2 名 以上 が 戻って くれば repeat_rate 15.4% で <a href="/constitution#section-30">§30 復活 ゲート</a> を クリア。 そう なら なければ §30 は 静か に 削除 します。</p>
 
-  <h2>6. なぜ これ を 書く か</h2>
+  <h2>6. Plan W1 — 出荷した 4 修正 (2026-05-18)</h2>
+  <p>Plan agent (独立 review) の W1 thesis 「checkout funnel の 沈黙 を 計測 する」 に 沿って、 今日 4 つ ship しました。 大規模 機能 追加 は ゼロ、 まず <strong>「数字 が 取れる 状態」</strong> に 戻す こと だけ に 集中。</p>
+  <div class="fact">
+    <div class="lbl">W1 ship log · 2026-05-18</div>
+    <div class="val">A · <span class="good">checkout_attempt</span> funnel event 追加</div>
+    <div class="note">client (buy.html / index.html / payments-ui.js / index.html embedded) が <code>fetch('/api/checkout')</code> を 叩く <strong>直前</strong> に MuFunnel.track で 送信。 server-side <code>checkout_start</code> との 差分 で、 JS / network エラー で 黙って 落ちて いる 件数 を 初めて 可視化 します。 Plan agent の suspect #1 を 1 週間 以内 に YES / NO で 判定 する データ が 取れる ように なりました。</div>
+  </div>
+  <div class="fact">
+    <div class="lbl">B · 特定商取引法 表記 の era-2 修正</div>
+    <div class="val">MUGEN <span class="bad">¥5,000〜¥30,000</span> → <span class="good">¥7,800〜¥35,000</span></div>
+    <div class="note">5 月 9 日 に §24-v2 で 生地 を Bella+Canvas 7400 へ アップ、 base ¥7,800 / cap ¥35,000 へ 切り替え 済 だった が、 <code>/tokushoho</code> は 旧 era-1 価格 を 9 日間 表示 し 続けて いた。 景品表示 法 上 の 二重価格 リスク を 黙って 放置 した 形 です。 加えて 「Fragment System」 (§30-EX v1, 既に 廃止) と 「MU credit (¥1,000=1MU)」 (§30 の ¥1=1pt と 矛盾) を 削除 / 統一 しました。</div>
+  </div>
+  <div class="fact">
+    <div class="lbl">C · /about/honest 公開 (このページ)</div>
+    <div class="val">SEO index 可 · GitHub commit 全 履歴 公開</div>
+    <div class="note">馬場様 への 嘘、 ¥42K / 0 conv の 広告、 §30 仕様 過剰、 retention 計測 漏れ を 文章 で 整理。 「失敗 を 即座 に 書ける」 仕組み を 1 ページ に 集約 しました。</div>
+  </div>
+  <div class="fact">
+    <div class="lbl">D · §30-EX (pt 交換) を 静かに 隠した</div>
+    <div class="val">/pt-exchange → 「工事中」 表示 + retention 4 週 計測 ゲート</div>
+    <div class="note">Plan agent の 「§29 が 詩、 §30 は 折り畳む か 殺せ」 という 結論 を 受け、 4 サブ条 (pt / marketplace / exchange / vault) を 一旦 隠匿。 13 名 から 2 名 戻れば 復活、 戻らなければ 削除 します。</div>
+  </div>
+  <p>次 (W2): <strong>13 名 全員 に yuki 名義 で 個別 メール</strong> + ¥500 OFF 14 日 クーポン。 funnel data が 2 日 たまった ら #1 drop-off を 1 つ だけ 修正。 これ 以外 は 触りません。</p>
+
+  <h2>7. なぜ これ を 書く か</h2>
   <p>MU は <a href="/constitution">Constitution §22</a> で 「100 年 続ける」 と 約束 して います。 100 年 続ける ため に 必要 な のは、 完璧 な ローンチ では なく、 <strong>失敗 を 即座 に 書ける 透明性</strong> です。</p>
   <p>馬場様 に 嘘 を 書いた こと、 ¥42K を 0 件 で 燃やした こと、 仕様 過剰 を Plan agent に 叱られた こと — 全て 書いて、 改善 の 数字 と 並べる。 こうして 信頼 が 蓄積 する と 仮定 して います。</p>
   <p>反論・指摘 は <a href="mailto:mail@yukihamada.jp">mail@yukihamada.jp</a> へ 直接。 24 時間 以内 に yuki が 返信 します。</p>

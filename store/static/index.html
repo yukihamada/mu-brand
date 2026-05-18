@@ -2395,6 +2395,13 @@ async function doCheckout(e){
     ..._attr,
   };
   try{
+    if (window.MuFunnel?.track) {
+      window.MuFunnel.track('checkout_attempt', {
+        product_id: currentProduct.id,
+        size: selectedSize,
+        source: 'index.html',
+      });
+    }
     const r = await fetch('/api/checkout',{
       method:'POST',headers:{'Content-Type':'application/json'},
       body: JSON.stringify(body)
@@ -2555,6 +2562,13 @@ window.addEventListener('popstate', ()=>{
         }
         return out;
       })();
+      if (window.MuFunnel?.track) {
+        window.MuFunnel.track('checkout_attempt', {
+          product_id: window.currentProduct.id,
+          size: window.selectedSize || 'M',
+          source: 'index.html#embedded',
+        });
+      }
       const r = await fetch('/api/checkout/embedded', {
         method:'POST',
         headers:{'Content-Type':'application/json'},

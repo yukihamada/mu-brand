@@ -502,6 +502,13 @@ document.getElementById('btn-buy').addEventListener('click', async (e) => {
   const btn = e.currentTarget;
   btn.disabled = true; btn.textContent = '...';
   try {
+    if (window.MuFunnel?.track) {
+      window.MuFunnel.track('checkout_attempt', {
+        product_id: CURRENT_PRODUCT.id,
+        size: SELECTED_SIZE,
+        source: 'buy.html',
+      });
+    }
     const r = await fetch('/api/checkout', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},

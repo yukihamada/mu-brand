@@ -4,13 +4,17 @@
 //   <script defer src="/mu-funnel.js"></script>
 //
 // To mark a click as funnel-relevant, add data-funnel="<event_name>" to
-// the element. Allowed event names: pageview, cta_click, checkout_start,
-// checkout_paid, you_register, you_skip, you_like, share.
+// the element. Allowed event names: pageview, cta_click, checkout_attempt,
+// checkout_start, checkout_paid, you_register, you_skip, you_like, share.
+//
+// checkout_attempt fires CLIENT-side just before the /api/checkout fetch.
+// checkout_start fires SERVER-side after Stripe session creation. The gap
+// reveals JS / network failures that otherwise look like silent 0-conv.
 (function () {
   'use strict';
   var STORAGE = 'mu_funnel_v1';
   var ENDPOINT = '/api/v1/event';
-  var ALLOWED = ['pageview','cta_click','checkout_start','checkout_paid',
+  var ALLOWED = ['pageview','cta_click','checkout_attempt','checkout_start','checkout_paid',
                  'you_register','you_skip','you_like','share'];
 
   function uuid() {
@@ -91,6 +95,9 @@
     send(name, extra.product_id !== undefined ? extra : (Object.keys(extra).length ? { product_id: null, ...extra } : null));
   }, true);
 
-  // Expose for inline send (e.g. after a Stripe checkout success)
+  // Expose for inline send (e.g. before /api/checkout fetch, or after
+  // a Stripe checkout success). Both spellings are accepted because
+  // older pages call MU_FUNNEL.send and newer ones call MuFunnel.track.
   window.MU_FUNNEL = { send: send };
+  window.MuFunnel  = { track: send, send: send };
 })();

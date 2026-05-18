@@ -59449,7 +59449,13 @@ async fn api_funnel_event(
         return (StatusCode::BAD_REQUEST, "field length").into_response();
     }
     const ALLOWED: &[&str] = &[
-        "pageview", "cta_click", "checkout_start", "checkout_paid",
+        // Funnel staging order: pageview → cta_click → checkout_attempt
+        // → checkout_start → checkout_paid.
+        // - `checkout_attempt` fires CLIENT-side just before fetch('/api/checkout')
+        // - `checkout_start` fires SERVER-side after Stripe session is created
+        // The gap between them reveals JS/network errors that otherwise look
+        // like a silent 0-conv (Plan-agent W1 #2 diagnosis).
+        "pageview", "cta_click", "checkout_attempt", "checkout_start", "checkout_paid",
         "you_register", "you_skip", "you_like", "share",
     ];
     if !ALLOWED.contains(&req.event.as_str()) {
