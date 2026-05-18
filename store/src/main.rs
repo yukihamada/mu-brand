@@ -39115,6 +39115,178 @@ async fn pass_backfill_api(
     })).into_response()
 }
 
+/// POST /api/admin/pass/mint
+/// Mints the cNFT for a specific pass edition via Crossmint API.
+/// Crossmint handles email→custodial-wallet, cNFT compression, and chain
+/// submission. We just call one POST and poll status.
+///
+/// Body: {"admin_token": "...", "edition": 1}
+/// Env required: CROSSMINT_API_KEY, CROSSMINT_COLLECTION_ID
+///   (CROSSMINT_ENV = "production" | "staging", default "staging")
+async fn pass_mint_api(
+    State(db): State<Db>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    use serde_json::json;
+    let token = body.get("admin_token").and_then(|v| v.as_str()).unwrap_or("");
+    let expected = std::env::var("ADMIN_TOKEN").unwrap_or_default();
+    if expected.is_empty() || token != expected {
+        return (axum::http::StatusCode::FORBIDDEN, Json(json!({"error": "admin token required"}))).into_response();
+    }
+    let edition = body.get("edition").and_then(|v| v.as_i64()).unwrap_or(0);
+    if edition <= 0 {
+        return (axum::http::StatusCode::BAD_REQUEST, Json(json!({"error": "edition required"}))).into_response();
+    }
+
+    // Env check first — fail loud if Crossmint isn't configured yet (so the
+    // endpoint can ship safely without auto-burning SOL the moment it deploys).
+    let api_key = std::env::var("CROSSMINT_API_KEY").unwrap_or_default();
+    let collection_id = std::env::var("CROSSMINT_COLLECTION_ID").unwrap_or_default();
+    let env_label = std::env::var("CROSSMINT_ENV").unwrap_or_else(|_| "staging".to_string());
+    if api_key.is_empty() || collection_id.is_empty() {
+        return Json(json!({
+            "ok": false,
+            "error": "Crossmint not configured",
+            "needed_env": ["CROSSMINT_API_KEY", "CROSSMINT_COLLECTION_ID", "CROSSMINT_ENV"],
+            "hint": "Get a server-side API key at crossmint.com → Console → API keys",
+        })).into_response();
+    }
+
+    // Pull the row + the brand's display image (for cNFT metadata).
+    let (email, brand, sku_id, status, image_url): (String, String, Option<String>, String, Option<String>) = {
+        let conn = match db.lock() { Ok(c) => c, Err(_) => return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "db lock"}))).into_response() };
+        let row = conn.query_row(
+            "SELECT p.email, p.brand, p.sku_id, p.mint_status,
+                    (SELECT image_url FROM collab_products WHERE slug = p.brand LIMIT 1)
+             FROM mu_passes p WHERE p.edition = ?",
+            [edition],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, String>(3)?, r.get::<_, Option<String>>(4)?)),
+        );
+        match row {
+            Ok(r) => r,
+            Err(_) => return (axum::http::StatusCode::NOT_FOUND, Json(json!({"error": "edition not found"}))).into_response(),
+        }
+    };
+    if status == "minted" {
+        return Json(json!({"ok": true, "already_minted": true})).into_response();
+    }
+
+    // Mark as minting (so concurrent calls don't double-mint).
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE mu_passes SET mint_status = 'minting' WHERE edition = ? AND mint_status != 'minted'",
+            [edition],
+        );
+    }
+
+    // Crossmint API call. Recipient format: "email:user@example.com:solana"
+    // for email-custodial Solana wallets. compressed=true → cNFT.
+    let host = if env_label == "production" {
+        "https://www.crossmint.com"
+    } else {
+        "https://staging.crossmint.com"
+    };
+    let url = format!("{}/api/2022-06-09/collections/{}/nfts", host, collection_id);
+    let image = image_url.unwrap_or_else(|| "https://mockups.wearmu.com/hero.png".to_string());
+    let edition_pad = format!("{:03}", edition);
+    let req_body = json!({
+        "recipient": format!("email:{}:solana", email),
+        "metadata": {
+            "name": format!("MU Pass #{}", edition_pad),
+            "description": format!("MU community membership · genesis edition #{}. \
+                Holder of this pass has permanent access to /vault, voting rights, \
+                and a share of the §28 Community fund's discretionary送金.", edition_pad),
+            "image": image,
+            "attributes": [
+                {"trait_type": "Edition", "value": edition_pad},
+                {"trait_type": "Brand", "value": brand},
+                {"trait_type": "Sku", "value": sku_id.unwrap_or_default()},
+                {"trait_type": "Issued", "value": chrono_now()}
+            ]
+        },
+        "compressed": true,
+    });
+
+    let resp = reqwest::Client::new()
+        .post(&url)
+        .header("x-api-key", &api_key)
+        .header("content-type", "application/json")
+        .json(&req_body)
+        .send().await;
+
+    match resp {
+        Ok(r) => {
+            let status = r.status();
+            let body_json: serde_json::Value = r.json().await.unwrap_or(serde_json::Value::Null);
+            if status.is_success() {
+                let asset_id = body_json.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let chain_tx = body_json.pointer("/onChain/mintHash").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                {
+                    let conn = db.lock().unwrap();
+                    let _ = conn.execute(
+                        "UPDATE mu_passes SET mint_status='minted', mint_asset=?, mint_tx=? WHERE edition=?",
+                        params![asset_id, chain_tx, edition],
+                    );
+                }
+                Json(json!({"ok": true, "edition": edition, "mint_asset": asset_id, "mint_tx": chain_tx, "raw": body_json})).into_response()
+            } else {
+                // Revert mint_status so we can retry safely.
+                {
+                    let conn = db.lock().unwrap();
+                    let _ = conn.execute(
+                        "UPDATE mu_passes SET mint_status='failed' WHERE edition=?",
+                        [edition],
+                    );
+                }
+                (axum::http::StatusCode::BAD_GATEWAY, Json(json!({"ok": false, "edition": edition, "crossmint_status": status.as_u16(), "crossmint_body": body_json}))).into_response()
+            }
+        }
+        Err(e) => {
+            let conn = db.lock().unwrap();
+            let _ = conn.execute(
+                "UPDATE mu_passes SET mint_status='failed' WHERE edition=?",
+                [edition],
+            );
+            (axum::http::StatusCode::BAD_GATEWAY, Json(json!({"ok": false, "error": e.to_string()}))).into_response()
+        }
+    }
+}
+
+/// POST /api/admin/pass/mint_batch
+/// Mint up to N (default 5) pending passes. Use this from a cron after the
+/// first 2 manual tests pass.
+async fn pass_mint_batch_api(
+    State(db): State<Db>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    use serde_json::json;
+    let token = body.get("admin_token").and_then(|v| v.as_str()).unwrap_or("");
+    let expected = std::env::var("ADMIN_TOKEN").unwrap_or_default();
+    if expected.is_empty() || token != expected {
+        return (axum::http::StatusCode::FORBIDDEN, Json(json!({"error": "admin token required"}))).into_response();
+    }
+    let limit = body.get("limit").and_then(|v| v.as_i64()).unwrap_or(5).clamp(1, 50);
+
+    let pending: Vec<i64> = {
+        let conn = db.lock().unwrap();
+        conn.prepare("SELECT edition FROM mu_passes WHERE mint_status IN ('pending','failed') ORDER BY edition ASC LIMIT ?")
+            .and_then(|mut s| s.query_map([limit], |r| r.get::<_, i64>(0)).map(|it| it.filter_map(|r| r.ok()).collect()))
+            .unwrap_or_default()
+    };
+
+    let mut results = Vec::new();
+    for ed in pending {
+        let single = serde_json::json!({"admin_token": token, "edition": ed});
+        let resp = pass_mint_api(State(db.clone()), Json(single)).await;
+        let status = resp.status().as_u16();
+        results.push(json!({"edition": ed, "status": status}));
+        // Be polite to Crossmint's rate limits.
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    Json(json!({"ok": true, "processed": results.len(), "results": results})).into_response()
+}
+
 fn mask_email_for_ticker(em: &str) -> String {
     let parts: Vec<&str> = em.splitn(2, '@').collect();
     if parts.len() < 2 { return "anon".to_string(); }
@@ -48951,6 +49123,8 @@ async fn main() {
         .route("/api/pass/claim", post(pass_claim_api))
         .route("/api/pass/stats", get(pass_stats_api))
         .route("/api/admin/pass/backfill", post(pass_backfill_api))
+        .route("/api/admin/pass/mint", post(pass_mint_api))
+        .route("/api/admin/pass/mint_batch", post(pass_mint_batch_api))
         .route("/gi/:id", get(show_gi_edition_page))
         .route("/gi/:id/sponsor", get(show_gi_sponsor_recruit_page))
         .route("/api/gi/:id/checkout", post(gi_edition_checkout))
