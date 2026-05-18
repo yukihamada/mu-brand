@@ -28795,27 +28795,49 @@ footer a:hover{{color:var(--y)}}
 /// `net_after_tax_jpy` は /api/transparency で使われている `estimated_net_after_tax`
 /// (revenue × 0.175 概算、 §27 の est と整合) と同じ前提を使う。
 /// 端数 ¥1 は reserve に寄せて 合計が必ず P と一致するように担保する。
+/// §29 Progressive Donation: P レンジから (寄付率, community_bonus_ratio, label) を返す。
+/// donation_ratio: 50/60/70/80/90%
+/// community_bonus_ratio: ¥10M~¥50M 帯だけ +10% を community/Sen-Dojo に追加
+fn progressive_donation_rate(p_jpy: i64) -> (f64, f64, &'static str) {
+    if p_jpy <= 10_000_000        { (0.50, 0.00, "tier_0_lte_10M") }
+    else if p_jpy <= 50_000_000   { (0.60, 0.10, "tier_1_lte_50M") }
+    else if p_jpy <= 100_000_000  { (0.70, 0.00, "tier_2_lte_100M") }
+    else if p_jpy <= 500_000_000  { (0.80, 0.00, "tier_3_lte_500M") }
+    else                          { (0.90, 0.00, "tier_4_gt_500M") }
+}
+
 pub fn profit_split_breakdown(net_after_tax_jpy: i64) -> serde_json::Value {
     let p = net_after_tax_jpy.max(0);
-    let donation    = (p as f64 * PROFIT_SPLIT_DONATION) as i64;
-    let yuki        = (p as f64 * PROFIT_SPLIT_YUKI) as i64;
+    let (donation_ratio, community_bonus, tier_label) = progressive_donation_rate(p);
+
+    // Yuki は §29 で ¥10M キャップ固定。低帯 (P ≤ ¥10M) では従来 10%。
+    let yuki = if p <= YUKI_CAP_JPY { (p as f64 * PROFIT_SPLIT_YUKI) as i64 } else { YUKI_CAP_JPY };
+
+    // 株主配当は全帯 10% 維持。MA/community は base 10%、community は tier_1 で +10%。
+    let donation    = (p as f64 * donation_ratio) as i64;
     let shareholder = (p as f64 * PROFIT_SPLIT_SHAREHOLDER) as i64;
     let ma_holder   = (p as f64 * PROFIT_SPLIT_MA_HOLDER) as i64;
-    let community   = (p as f64 * PROFIT_SPLIT_COMMUNITY) as i64;
+    let community_base  = (p as f64 * PROFIT_SPLIT_COMMUNITY) as i64;
+    let community_bonus_jpy = (p as f64 * community_bonus) as i64;
+    let community   = community_base + community_bonus_jpy;
     let reserve     = p - (donation + yuki + shareholder + ma_holder + community);
     serde_json::json!({
         "net_after_tax_jpy": p,
+        "tier": tier_label,
+        "donation_ratio": donation_ratio,
+        "yuki_cap_jpy": YUKI_CAP_JPY,
         "segments": [
-            {"key":"donation",   "ratio":PROFIT_SPLIT_DONATION,   "jpy":donation,    "recipient":"弟子屈町 (企業版ふるさと納税)",                       "legal":"法人税損金算入 + 特別控除 (~9割税控除)"},
-            {"key":"yuki",       "ratio":PROFIT_SPLIT_YUKI,       "jpy":yuki,        "recipient":"濱田優貴 (代表取締役)",                                "legal":"定期同額給与 12 等分 (翌期支払)"},
-            {"key":"shareholder","ratio":PROFIT_SPLIT_SHAREHOLDER,"jpy":shareholder, "recipient":"Enabler 全株主 (East Ventures 5% 含む 持分比率)",      "legal":"株主総会決議後の利益配当"},
+            {"key":"donation",   "ratio":donation_ratio,          "jpy":donation,    "recipient":"認定自治体 (企業版ふるさと納税)",                       "legal":"法人税損金算入 + 特別控除 (~9割税控除)、§29 累進"},
+            {"key":"yuki",       "ratio":(yuki as f64 / p.max(1) as f64), "jpy":yuki,"recipient":"Enabler Inc. 代表報酬 (¥10M キャップ)",                "legal":"定期同額給与 12 等分 (翌期支払)、§29 でキャップ固定"},
+            {"key":"shareholder","ratio":PROFIT_SPLIT_SHAREHOLDER,"jpy":shareholder, "recipient":"Enabler 全株主 (持分比率配当、配当替えオプション提示)","legal":"株主総会決議後の利益配当"},
             {"key":"ma_holder",  "ratio":PROFIT_SPLIT_MA_HOLDER,  "jpy":ma_holder,   "recipient":"MUGEN+stack ホルダー",                                 "legal":"MU クーポン発行 (前払式支払手段 自家型)"},
-            {"key":"community",  "ratio":PROFIT_SPLIT_COMMUNITY,  "jpy":community,   "recipient":"MU Community Fund (50% は公募 grant 枠)",              "legal":"Enabler 内 引当金 (将来トークン化原資 含む)"},
+            {"key":"community",  "ratio":PROFIT_SPLIT_COMMUNITY + community_bonus, "jpy":community, "recipient":"MU Community Fund + Sen-Dojo 助成",      "legal":"Enabler 内 引当金 / 公募 grant 枠"},
             {"key":"reserve",    "ratio":PROFIT_SPLIT_RESERVE,    "jpy":reserve,     "recipient":"Enabler Inc. 内部留保",                                "legal":"利益剰余金 (端数吸収)"},
         ],
         "rule_doc_url": "https://wearmu.com/profit-split",
         "raw_md_source": "https://github.com/yukihamada/mu-brand/blob/main/store/static/profit_split.md",
-        "constitution_section": "§28",
+        "constitution_section": "§29",
+        "supersedes": "§28 (flat 50/10/10/10/10/10) → §29 progressive 50→90%",
     })
 }
 
