@@ -20360,6 +20360,14 @@ async fn tokushoho_page() -> Html<&'static str> {
     Html(include_str!("../static/tokushoho.html"))
 }
 
+/// GET /about/honest — public trust-repair log per Plan-agent W1 #5.
+/// Permanent live document of what went wrong in the first weeks and
+/// how it got fixed. New entries append as field-log style; this is
+/// the v1 covering 2026-05-07 launch → 2026-05-18.
+async fn about_honest_page() -> Html<&'static str> {
+    Html(include_str!("../static/about-honest.html"))
+}
+
 async fn privacy_page() -> Html<&'static str> {
     Html(include_str!("../static/privacy.html"))
 }
@@ -50229,6 +50237,7 @@ async fn main() {
         .route("/v/:brand/:drop_num", get(verify_page))
         .route("/tokushoho", get(tokushoho_page))
         .route("/tokushoho.html", get(tokushoho_page))
+        .route("/about/honest", get(about_honest_page))
         .route("/privacy", get(privacy_page))
         .route("/privacy.html", get(privacy_page))
         .route("/tos", get(tos_page))
