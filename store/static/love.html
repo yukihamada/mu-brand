@@ -134,18 +134,45 @@ footer{padding:40px 24px;text-align:center;font-size:9px;letter-spacing:0.3em;te
       <div class="proof-lbl">1日に生まれる絵</div>
     </div>
     <div>
-      <div class="proof-num gold">1</div>
-      <div class="proof-lbl">採用される枚数</div>
+      <div class="proof-num gold" data-mugen-total>—</div>
+      <div class="proof-lbl">これまで生まれた絵</div>
+    </div>
+    <div>
+      <div class="proof-num" data-shirts-sold>—</div>
+      <div class="proof-lbl">着られた絵 (枚)</div>
     </div>
     <div>
       <div class="proof-num">0</div>
-      <div class="proof-lbl">designers / 在庫廃棄</div>
+      <div class="proof-lbl">倉庫 在庫</div>
     </div>
     <div>
       <div class="proof-num gold">50%</div>
       <div class="proof-lbl">→ 弟子屈町 寄付</div>
     </div>
   </div>
+  <p style="margin-top:32px;font-size:13px;color:rgba(245,245,240,0.55);line-height:2;max-width:520px;text-align:center;padding:0 24px">
+    <span data-mugen-total style="color:#F5F5F0">—</span> 枚生まれて、 <span data-shirts-sold style="color:#F5F5F0">—</span> 枚着られた。<br>
+    残りの <span data-gap style="color:#e6c449">—</span> 枚は、 まだ誰にも選ばれていない。
+  </p>
+  <script>
+  (async function(){
+    try{
+      var [a, b] = await Promise.all([
+        fetch('/api/products/mugen?limit=1', {cache:'no-store'}),
+        fetch('/api/transparency',           {cache:'no-store'}),
+      ]);
+      var m = a.ok ? await a.json() : [];
+      var t = b.ok ? await b.json() : {};
+      var total = (m[0] && m[0].drop_num) | 0;
+      var sold  = (t.shirts_sold | 0);
+      if(!total) return;
+      var gap = Math.max(0, total - sold);
+      document.querySelectorAll('[data-mugen-total]').forEach(function(el){ el.textContent = total.toLocaleString(); });
+      document.querySelectorAll('[data-shirts-sold]').forEach(function(el){ el.textContent = sold.toLocaleString();  });
+      document.querySelectorAll('[data-gap]'        ).forEach(function(el){ el.textContent = gap.toLocaleString();   });
+    }catch(e){}
+  })();
+  </script>
 
   <div class="tertiary">
     <a href="/about.html">MU について</a>

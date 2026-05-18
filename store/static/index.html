@@ -820,33 +820,65 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
       </p>
     </div>
 
-    <!-- Block 3: selectivity (24 born → 1 selected) over agent-counting brag -->
+    <!-- Block 3: live numbers + dramatic "gap" between generated and worn.
+         Constitution §1: numbers over adjectives. Numbers live-fetched so
+         they stay honest as the brand grows. Two endpoints:
+         /api/products/mugen?limit=1 → latest drop_num (= total designs)
+         /api/transparency           → shirts_sold (lifetime physical units) -->
     <div>
       <div style="font-size:9px;letter-spacing:0.45em;text-transform:uppercase;opacity:0.45;margin-bottom:24px">— 03 / 03 · 数字で語る</div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:32px;margin-top:8px;font-variant-numeric:tabular-nums">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:28px;margin-top:8px;font-variant-numeric:tabular-nums">
         <div>
           <div style="font-size:36px;font-weight:200;letter-spacing:0.02em;color:#F5F5F0">24</div>
-          <div style="font-size:9px;letter-spacing:0.28em;text-transform:uppercase;opacity:0.5;margin-top:6px">1日に生まれる絵</div>
+          <div style="font-size:9px;letter-spacing:0.28em;text-transform:uppercase;opacity:0.5;margin-top:6px;line-height:1.5">1日に生まれる絵</div>
         </div>
         <div>
-          <div style="font-size:36px;font-weight:200;letter-spacing:0.02em;color:#e6c449">1</div>
-          <div style="font-size:9px;letter-spacing:0.28em;text-transform:uppercase;opacity:0.5;margin-top:6px">採用される枚数</div>
+          <div style="font-size:36px;font-weight:200;letter-spacing:0.02em;color:#e6c449" data-mugen-total>—</div>
+          <div style="font-size:9px;letter-spacing:0.28em;text-transform:uppercase;opacity:0.5;margin-top:6px;line-height:1.5">これまで生まれた絵<br><span style="opacity:0.7;font-size:8.5px;letter-spacing:0.12em;text-transform:none">live</span></div>
+        </div>
+        <div>
+          <div style="font-size:36px;font-weight:200;letter-spacing:0.02em;color:#F5F5F0" data-shirts-sold>—</div>
+          <div style="font-size:9px;letter-spacing:0.28em;text-transform:uppercase;opacity:0.5;margin-top:6px;line-height:1.5">着られた絵 (枚)<br><span style="opacity:0.7;font-size:8.5px;letter-spacing:0.12em;text-transform:none">live</span></div>
         </div>
         <div>
           <div style="font-size:36px;font-weight:200;letter-spacing:0.02em;color:#F5F5F0">0</div>
-          <div style="font-size:9px;letter-spacing:0.28em;text-transform:uppercase;opacity:0.5;margin-top:6px">designers / 在庫廃棄</div>
+          <div style="font-size:9px;letter-spacing:0.28em;text-transform:uppercase;opacity:0.5;margin-top:6px;line-height:1.5">倉庫 在庫<br><span style="opacity:0.7;font-size:8.5px;letter-spacing:0.12em;text-transform:none">受注後 1 枚ずつ生産</span></div>
         </div>
         <div>
           <div style="font-size:36px;font-weight:200;letter-spacing:0.02em;color:#e6c449">50%</div>
-          <div style="font-size:9px;letter-spacing:0.28em;text-transform:uppercase;opacity:0.5;margin-top:6px">→ 弟子屈町 寄付</div>
+          <div style="font-size:9px;letter-spacing:0.28em;text-transform:uppercase;opacity:0.5;margin-top:6px;line-height:1.5">→ 弟子屈町 寄付</div>
         </div>
       </div>
       <p style="font-size:13px;font-weight:300;line-height:2;color:rgba(245,245,240,0.55);margin-top:32px">
-        毎時、AI が候補を生む。 残るのは 1 日にひとつ。<br>
-        注文が来てから刷る。在庫廃棄は <span style="color:#F5F5F0;opacity:0.9">0</span>。<br>
-        利益の <span style="color:#F5F5F0;opacity:0.9">50%</span> は、生まれた町 — 北海道弟子屈町に寄付。<br>
+        <span data-mugen-total style="color:#F5F5F0;opacity:0.9">—</span> 枚生まれて、 <span data-shirts-sold style="color:#F5F5F0;opacity:0.9">—</span> 枚着られた。<br>
+        残りの <span data-gap style="color:#e6c449;opacity:0.9">—</span> 枚は、 まだ誰にも選ばれていない。<br>
+        <br>
+        毎時、AI が候補を生む。 注文が来てから刷る、 倉庫在庫は <span style="color:#F5F5F0;opacity:0.9">0</span>。<br>
+        利益の <span style="color:#F5F5F0;opacity:0.9">50%</span> は、 生まれた町 — 北海道弟子屈町に寄付。<br>
         原価 ¥5,700 を公開しています。
       </p>
+      <script>
+      // Live-fetch lifetime MUGEN designs + lifetime shirts sold, fill all
+      // data-mugen-total / data-shirts-sold / data-gap slots. JST 5-min cache
+      // is fine: numbers move slowly. Quiet failure if either endpoint dies.
+      (async function(){
+        try{
+          var [mugenRes, transRes] = await Promise.all([
+            fetch('/api/products/mugen?limit=1', {cache:'no-store'}),
+            fetch('/api/transparency',           {cache:'no-store'}),
+          ]);
+          var mugen = mugenRes.ok ? await mugenRes.json() : [];
+          var trans = transRes.ok ? await transRes.json() : {};
+          var total = (mugen[0] && mugen[0].drop_num) | 0;
+          var sold  = (trans.shirts_sold | 0);
+          if(!total) return;
+          var gap   = Math.max(0, total - sold);
+          document.querySelectorAll('[data-mugen-total]').forEach(function(el){ el.textContent = total.toLocaleString(); });
+          document.querySelectorAll('[data-shirts-sold]').forEach(function(el){ el.textContent = sold.toLocaleString();  });
+          document.querySelectorAll('[data-gap]'        ).forEach(function(el){ el.textContent = gap.toLocaleString();   });
+        }catch(e){}
+      })();
+      </script>
     </div>
 
     <!-- Vault — show the lock first. Tension over invitation. -->
