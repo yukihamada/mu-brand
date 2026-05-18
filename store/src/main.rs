@@ -10195,7 +10195,7 @@ async fn challenge_100_progress_json(State(db): State<Db>) -> Json<serde_json::V
 }
 
 async fn challenge_100_page(State(db): State<Db>) -> Html<String> {
-    let (sold, latest_drop, latest_suzuri): (i64, Option<i64>, Option<String>) = {
+    let (sold, latest_drop, latest_suzuri, latest_six): (i64, Option<i64>, Option<String>, Vec<(i64, i64, String)>) = {
         let conn = db.lock().unwrap();
         let sold: i64 = conn.query_row(
             "SELECT COUNT(*) FROM mu_purchases
@@ -10213,13 +10213,40 @@ async fn challenge_100_page(State(db): State<Db>) -> Html<String> {
             Some((d, s)) => (Some(d), s),
             None => (None, None),
         };
-        (sold, drop, suz)
+        let six: Vec<(i64, i64, String)> = conn.prepare(
+            "SELECT id, drop_num, COALESCE(mockup_url, '') FROM products
+             WHERE brand='mugen' AND active=1
+               AND mockup_url IS NOT NULL AND mockup_url != ''
+             ORDER BY drop_num DESC LIMIT 6"
+        ).ok().and_then(|mut stmt| {
+            stmt.query_map([], |r| Ok((
+                r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?,
+            ))).ok().map(|it| it.filter_map(|r| r.ok()).collect())
+        }).unwrap_or_default();
+        (sold, drop, suz, six)
     };
 
     let pct = ((sold as f64 / 100.0) * 100.0).clamp(0.0, 100.0);
     let remaining = (100 - sold).max(0);
     let drop_str = latest_drop.map(|d| format!("#{:03}", d)).unwrap_or_else(|| "#---".to_string());
     let suzuri_link = latest_suzuri.unwrap_or_else(|| "https://suzuri.jp/yukihama".to_string());
+
+    let designs_grid = if latest_six.is_empty() {
+        String::new()
+    } else {
+        let tiles: String = latest_six.iter().map(|(id, d, url)| format!(
+            r#"<a href="/mugen?utm_source=challenge100_grid&utm_medium=lp&utm_campaign=mugen100#drop-{id}" style="display:block;aspect-ratio:1/1;overflow:hidden;background:rgba(255,255,255,0.04);border:1px solid var(--line);position:relative" aria-label="MUGEN #{d:03}"><img src="{url}" alt="MUGEN #{d:03}" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block"><span style="position:absolute;bottom:6px;left:8px;font-size:10px;letter-spacing:0.18em;color:#e6c449;background:rgba(10,10,10,0.78);padding:2px 6px">#{d:03}</span></a>"#,
+            id = id, d = d, url = html_escape(url),
+        )).collect();
+        format!(
+            r##"<div class="section">
+    <h2>直近 6 デザイン</h2>
+    <p class="sub" style="margin:0 0 20px">AI が毎時 1 枚生成。すべて 1 デザイン最大 108 枚。クリックで /mugen のフルブラウズへ。</p>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">{tiles}</div>
+  </div>"##,
+            tiles = tiles,
+        )
+    };
 
     let html = format!(
         r##"<!doctype html><html lang="ja"><head>
@@ -10287,6 +10314,8 @@ a:hover{{text-decoration:underline}}
   </div>
   <p class="note">最新ドロップ {drop} を含む 200+ デザインから選べる。MU の値段は売れるごとに上がる(bonding curve) — 早い人ほど安い。</p>
 
+  {designs_grid}
+
   <div class="section">
     <h2>なぜ 100 枚なのか</h2>
     <p class="sub">
@@ -10347,6 +10376,7 @@ a:hover{{text-decoration:underline}}
         drop = drop_str,
         suzuri = html_escape(&suzuri_link),
         deadline = CHALLENGE_100_DEADLINE_UTC,
+        designs_grid = designs_grid,
     );
     Html(html)
 }
