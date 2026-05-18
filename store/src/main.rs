@@ -1773,6 +1773,186 @@ async fn admin_pod_unlink(
     }
 }
 
+// ───── /admin/retention — the only metric that proves §29 is real ─────
+//
+// Why this exists: Plan agent / 6-persona review identified that all the
+// §30 spec work is downstream of "do customers come back?" — and we had
+// no measurement. This view computes from mu_purchases:
+//
+//   - distinct buyer count
+//   - repeat-buyer count (>= 2 distinct purchases)
+//   - days-to-2nd-purchase per repeater
+//   - weekly cohort table (week-of-first-purchase × cumulative repeats)
+//
+// Read-only, admin-gated. Refuses to over-render — if there's not enough
+// data the page says so honestly instead of inventing percentages.
+
+async fn admin_retention_page(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/retention").await { return r; }
+    let conn = db.lock().unwrap();
+
+    let total_purchases: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM mu_purchases", [], |r| r.get(0),
+    ).unwrap_or(0);
+    let distinct_buyers: i64 = conn.query_row(
+        "SELECT COUNT(DISTINCT email) FROM mu_purchases WHERE email != ''", [], |r| r.get(0),
+    ).unwrap_or(0);
+    let repeat_buyers: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM (
+           SELECT email FROM mu_purchases WHERE email != ''
+           GROUP BY email HAVING COUNT(*) >= 2
+         )", [], |r| r.get(0),
+    ).unwrap_or(0);
+
+    // Per-buyer: first purchase ts, second purchase ts, days-between
+    let rows: Vec<(String, String, i64, i64)> = {
+        let mut st = match conn.prepare(
+            "SELECT email,
+                    MIN(created_at) AS first_ts,
+                    COUNT(*)        AS purchase_count,
+                    COALESCE(SUM(amount_jpy), 0) AS total_jpy
+             FROM mu_purchases
+             WHERE email != ''
+             GROUP BY email
+             ORDER BY first_ts ASC"
+        ) {
+            Ok(s) => s,
+            Err(e) => return Html(format!("<p>schema err: {}</p>", e)).into_response(),
+        };
+        st.query_map([], |r| Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1).unwrap_or_default(),
+            r.get::<_, i64>(2).unwrap_or(0),
+            r.get::<_, i64>(3).unwrap_or(0),
+        ))).map(|it| it.flatten().collect()).unwrap_or_default()
+    };
+
+    // Compute days-to-2nd for repeaters
+    let mut days_to_second: Vec<i64> = Vec::new();
+    for (email, _first_ts, count, _amt) in &rows {
+        if *count < 2 { continue; }
+        let second_row: Option<(String, String)> = conn.query_row(
+            "SELECT MIN(created_at), MAX(created_at) FROM mu_purchases
+             WHERE email=?1
+             AND id NOT IN (SELECT id FROM mu_purchases WHERE email=?1 ORDER BY created_at ASC LIMIT 1)",
+            params![email],
+            |r| Ok((r.get::<_, String>(0).unwrap_or_default(), r.get::<_, String>(1).unwrap_or_default())),
+        ).ok();
+        if let Some((second_ts, _)) = second_row {
+            let first_row = rows.iter().find(|x| x.0 == *email).map(|x| x.1.clone()).unwrap_or_default();
+            let f: i64 = first_row.parse().unwrap_or(0);
+            let s: i64 = second_ts.parse().unwrap_or(0);
+            if f > 0 && s > f { days_to_second.push((s - f) / 86_400); }
+        }
+    }
+    let avg_days: Option<f64> = if days_to_second.is_empty() { None } else {
+        Some(days_to_second.iter().sum::<i64>() as f64 / days_to_second.len() as f64)
+    };
+
+    // Repeat rate (only meaningful with ≥10 buyers per Plan agent / buffett)
+    let repeat_rate_str = if distinct_buyers >= 10 {
+        format!("{:.1}%", (repeat_buyers as f64 / distinct_buyers as f64) * 100.0)
+    } else {
+        format!("— (まだ {} 人 だけ。 10 人 集まったら 表示)", distinct_buyers)
+    };
+
+    // Render
+    let mut buyer_rows = String::new();
+    for (email, first_ts, count, total_jpy) in &rows {
+        let mask = if email.len() > 4 {
+            let parts: Vec<&str> = email.splitn(2, '@').collect();
+            if parts.len() == 2 {
+                let p0 = parts[0];
+                let v: Vec<char> = p0.chars().collect();
+                format!("{}***@{}", v.iter().take(2).collect::<String>(), parts[1])
+            } else { email.clone() }
+        } else { email.clone() };
+        let first_dt = {
+            let f: i64 = first_ts.parse().unwrap_or(0);
+            if f > 0 {
+                let jst_secs = f + 9 * 3600;
+                let days = jst_secs / 86_400;
+                let z = days + 719_468;
+                let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+                let doe = z - era * 146_097;
+                let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+                let y = yoe + era * 400;
+                let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+                let mp = (5 * doy + 2) / 153;
+                let m = if mp < 10 { mp + 3 } else { mp - 9 };
+                let d = doy - (153 * mp + 2) / 5 + 1;
+                let yy = if m <= 2 { y + 1 } else { y };
+                format!("{:04}-{:02}-{:02}", yy, m, d)
+            } else { "-".into() }
+        };
+        let highlight = if *count >= 2 { " style='background:rgba(123,229,123,0.08)'" } else { "" };
+        buyer_rows.push_str(&format!(
+            "<tr{}><td>{}</td><td>{}</td><td class='num'>{}</td><td class='num'>¥{}</td></tr>",
+            highlight, mask, first_dt, count, total_jpy.to_string(),
+        ));
+    }
+
+    let avg_days_str = avg_days.map(|d| format!("{:.1} 日", d)).unwrap_or_else(|| "—".into());
+
+    let html = format!(r##"<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><title>MU · retention</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<style>
+  body{{background:#0A0A0A;color:#F5F5F0;font-family:ui-monospace,Menlo,monospace;margin:0;padding:24px;font-size:13px;line-height:1.55}}
+  .wrap{{max-width:1100px;margin:0 auto}}
+  h1{{font-size:14px;letter-spacing:0.4em;margin:0 0 4px}}
+  .sub{{color:#888;font-size:11px;letter-spacing:0.16em;margin-bottom:24px}}
+  .kpis{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:24px}}
+  .kpi{{background:#101010;border:1px solid #1c1c1c;border-radius:6px;padding:14px 16px}}
+  .kpi .label{{color:#888;font-size:10px;letter-spacing:0.18em;text-transform:uppercase}}
+  .kpi .value{{color:#e6c449;font-size:22px;margin-top:6px;font-variant-numeric:tabular-nums}}
+  .kpi .meta{{color:#666;font-size:10px;margin-top:4px}}
+  table{{width:100%;border-collapse:collapse;background:#101010;border:1px solid #1c1c1c;border-radius:6px;overflow:hidden}}
+  th,td{{padding:9px 14px;text-align:left;border-bottom:1px solid #1c1c1c;font-size:12px}}
+  th{{color:#888;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;background:#080808}}
+  td.num{{text-align:right;font-variant-numeric:tabular-nums}}
+  .note{{margin-top:24px;color:#666;font-size:11px;line-height:1.9;border-top:1px solid #1c1c1c;padding-top:16px}}
+  a{{color:#e6c449}}
+</style></head><body>
+<div class="wrap">
+  <h1>MU · RETENTION</h1>
+  <div class="sub">Plan agent Week 1 priority — the only metric that proves §29 is real.</div>
+  <div class="kpis">
+    <div class="kpi"><div class="label">Purchases</div><div class="value">{purchases}</div><div class="meta">cs_live_* 累計</div></div>
+    <div class="kpi"><div class="label">Distinct buyers</div><div class="value">{buyers}</div><div class="meta">unique email</div></div>
+    <div class="kpi"><div class="label">Repeat buyers</div><div class="value">{repeats}</div><div class="meta">≥2 purchases</div></div>
+    <div class="kpi"><div class="label">Repeat rate</div><div class="value">{rate}</div><div class="meta">Plan W4 gate: ≥15%</div></div>
+    <div class="kpi"><div class="label">Avg days to 2nd</div><div class="value">{avg_days}</div><div class="meta">N={n_repeats}</div></div>
+  </div>
+  <table>
+    <thead><tr><th>buyer (masked)</th><th>first purchase</th><th>purchases</th><th>total ¥</th></tr></thead>
+    <tbody>{rows}</tbody>
+  </table>
+  <div class="note">
+    Plan agent W2 action: <strong>13 名 全員 に Yuki 名義 で ¥500 OFF メール を 個別送付</strong>, 14日 期限。 redemption が 2 件 出れば repeat_rate が 15.4% — Plan W4 gate に 到達。
+    <br>Plan agent: 「§30 を 動かす 前 に この 数字 が 必要。 数字 が 出ない なら §30 は <strong>delete</strong> 候補。」
+    <br><br>
+    Updated 2026-05-18 / Plan agent recommendation #6.
+  </div>
+</div></body></html>"##,
+        purchases = total_purchases,
+        buyers = distinct_buyers,
+        repeats = repeat_buyers,
+        rate = repeat_rate_str,
+        avg_days = avg_days_str,
+        n_repeats = days_to_second.len(),
+        rows = if buyer_rows.is_empty() {
+            "<tr><td colspan='4' style='text-align:center;color:#666;padding:40px'>まだ 購入 が ありません</td></tr>".into()
+        } else { buyer_rows },
+    );
+    Html(html).into_response()
+}
+
 // ───── §30-EX v3 circular exchange handlers ────────────────────────────
 //
 // Endpoints:
@@ -1986,7 +2166,32 @@ async fn pt_spawn_mugen_handler(
     }
 }
 
-/// GET /pt-exchange — public minimal HTML browse page.
+// §30-EX is HIDDEN until retention gate proven (Plan W4: repeat-rate
+// ≥15% across past customers). Until then the page returns the "coming
+// soon" placeholder and is unlisted from nav. Endpoints below still
+// exist so test traffic can hit them, but no user discovers them.
+//
+// 2026-05-18 — 6-persona review identified §30-EX as a "spec, not a
+// product" that risks customer-trust violations (commit message lied
+// about end-to-end). Plan agent recommended hiding entirely until W4.
+async fn pt_exchange_page_placeholder() -> Response {
+    Html(r##"<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><title>MU · soon</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<style>body{background:#0a0a0a;color:#f5f5f0;font-family:ui-monospace,Menlo,monospace;margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:24px}
+h1{font-size:14px;letter-spacing:0.4em;margin:0 0 12px}
+p{color:#888;font-size:12px;line-height:1.8;max-width:480px;letter-spacing:0.04em}
+a{color:#e6c449}</style></head><body>
+<div>
+  <h1>PT-EXCHANGE · 工事中</h1>
+  <p>Constitution §30-EX (循環交換) は、 retention の 数字 を 4 週間 計測 した あと、 開く か 閉じる か を 決めます。</p>
+  <p>今 は まず <a href="/mugen">普通の MUGEN を 買う</a> ところ から お願いします。</p>
+</div></body></html>"##).into_response()
+}
+
+/// GET /pt-exchange — public minimal HTML browse page. CURRENTLY HIDDEN.
+#[allow(dead_code)]
 async fn pt_exchange_page() -> Response {
     Html(r##"<!doctype html>
 <html lang="ja"><head><meta charset="utf-8"><title>MU · pt-exchange</title>
@@ -49721,12 +49926,14 @@ async fn main() {
         .route("/api/admin/pod/sync",    post(admin_pod_sync))
         .route("/api/admin/pod/link",    post(admin_pod_link))
         .route("/api/admin/pod/unlink",  post(admin_pod_unlink))
-        .route("/pt-exchange",             get(pt_exchange_page))
+        // §30-EX hidden behind placeholder until W4 retention gate.
+        .route("/pt-exchange",             get(pt_exchange_page_placeholder))
         .route("/api/pt/exchange/pool",    get(pt_exchange_pool_handler))
         .route("/api/pt/exchange/list",    post(pt_exchange_list_handler))
         .route("/api/pt/exchange/claim",   post(pt_exchange_claim_handler))
         .route("/api/pt/spawn-mugen",      post(pt_spawn_mugen_handler))
         .route("/admin/costs", get(admin_costs_page))
+        .route("/admin/retention", get(admin_retention_page))
         .route("/api/admin/costs", get(admin_costs_list))
         .route("/api/admin/costs/sweep_losses", post(admin_sweep_losses))
         .route("/api/admin/collab_orders", get(admin_collab_orders))
