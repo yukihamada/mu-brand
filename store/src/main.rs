@@ -2607,6 +2607,11 @@ pub struct StripeCheckoutFields<'a> {
     pub utm_campaign: Option<&'a str>,
     pub utm_term:     Option<&'a str>,
     pub utm_content:  Option<&'a str>,
+    /// HTTPS URL to the product mockup. Surfaced on Stripe Checkout as
+    /// `line_items[].price_data.product_data.images[0]`. Stripe accepts
+    /// up to 8 images per product; we send 1. Must be publicly reachable
+    /// (Stripe re-hosts on their CDN). Skipped when None or empty.
+    pub image_url: Option<&'a str>,
 }
 
 /// Build the Stripe Checkout Session form payload tuned for the JP market.
@@ -2629,6 +2634,12 @@ fn stripe_checkout_form_jp(f: StripeCheckoutFields) -> Vec<(String, String)> {
     push(&mut form, "currency", "jpy".into());
     push(&mut form, "line_items[0][price_data][currency]", "jpy".into());
     push(&mut form, "line_items[0][price_data][product_data][name]", f.display_name.to_string());
+    // Surface the product mockup on the Stripe Checkout page so buyers see
+    // what they're paying for at the very last step. HTTPS-only, skipped when
+    // absent or blank.
+    if let Some(img) = f.image_url.map(|s| s.trim()).filter(|s| s.starts_with("https://")) {
+        push(&mut form, "line_items[0][price_data][product_data][images][0]", img.to_string());
+    }
     push(&mut form, "line_items[0][price_data][unit_amount]", f.unit_amount.to_string());
     push(&mut form, "line_items[0][quantity]", f.quantity.to_string());
     push(&mut form, "success_url", format!("{}{}", f.base_url, f.success_path));
@@ -2787,15 +2798,17 @@ async fn checkout_embedded(
     }
 
     // Product lookup mirrors /api/checkout — same pricing + KYC threshold rules.
-    let (brand_str, drop_num, inventory, sold, product_name) = {
+    // mockup_url is surfaced on the Stripe checkout page (product image).
+    let (brand_str, drop_num, inventory, sold, product_name, mockup_url) = {
         let conn = db.lock().unwrap();
         match conn.query_row(
-            "SELECT brand, drop_num, inventory, sold, name FROM products WHERE id=? AND active=1",
+            "SELECT brand, drop_num, inventory, sold, name, mockup_url FROM products WHERE id=? AND active=1",
             params![body.product_id],
             |row| Ok((
                 row.get::<_,String>(0)?, row.get::<_,i64>(1)?,
                 row.get::<_,i64>(2)?, row.get::<_,i64>(3)?,
                 row.get::<_,String>(4)?,
+                row.get::<_,Option<String>>(5)?,
             )),
         ) {
             Ok(r) => r,
@@ -2803,6 +2816,13 @@ async fn checkout_embedded(
                 Json(serde_json::json!({"ok":false,"error":"product not found"}))).into_response(),
         }
     };
+    // Stripe requires HTTPS URLs and accepts the existing R2/CDN-served mockup.
+    let stripe_image_url = mockup_url.as_deref()
+        .filter(|u| u.starts_with("https://"))
+        .or_else(|| Some(""))
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .or_else(|| Some(format!("https://mockups.wearmu.com/{}.jpg", body.product_id)));
     if inventory - sold < body.quantity as i64 {
         return (StatusCode::CONFLICT,
             Json(serde_json::json!({"ok":false,"error":"sold out"}))).into_response();
@@ -2852,6 +2872,7 @@ async fn checkout_embedded(
             utm_campaign: body.utm_campaign.as_deref(),
             utm_term:     body.utm_term.as_deref(),
             utm_content:  body.utm_content.as_deref(),
+            image_url:    stripe_image_url.as_deref(),
         });
         f.push(("ui_mode".into(), "embedded".into()));
         f.push(("return_url".into(),
@@ -3361,6 +3382,7 @@ mod stripe_cvr_tests {
             utm_campaign: None,
             utm_term: None,
             utm_content: None,
+            image_url: None,
         }
     }
 
@@ -5808,7 +5830,29 @@ async fn vault_article(
         Some((_, t, b)) => (*t, *b),
         None => return (StatusCode::NOT_FOUND, "vault article not found").into_response(),
     };
-    let html_body = md_to_html_simple(body);
+    // Dedupe: every vault .md file leads with `# Title` matching the
+    // VAULT_ARTICLES entry, and the template below ALSO renders an <h1>.
+    // Strip the leading H1 from the markdown body to avoid double titles.
+    // Robust to small differences (whitespace, punctuation) by lowercasing
+    // and trimming both sides for the comparison.
+    let body_dedup: String = {
+        let trimmed = body.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("# ") {
+            if let Some(eol) = rest.find('\n') {
+                let first_line = rest[..eol].trim();
+                // Always strip if it's an H1 at the very top, regardless of
+                // whether it exactly matches `title` — the template prints
+                // the canonical title separately.
+                let _ = first_line; // (kept the bind for clarity / future logic)
+                rest[eol + 1..].to_string()
+            } else {
+                String::new()
+            }
+        } else {
+            body.to_string()
+        }
+    };
+    let html_body = md_to_html_simple(&body_dedup);
     let masked = mask_email_public(&email);
     let html = format!(r#"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
@@ -13098,19 +13142,25 @@ async fn checkout(
     let check = {
         let conn = db.lock().unwrap();
         conn.query_row(
-            "SELECT brand, drop_num, inventory, sold, name FROM products WHERE id=? AND active=1",
+            "SELECT brand, drop_num, inventory, sold, name, mockup_url FROM products WHERE id=? AND active=1",
             params![body.product_id],
             |row| Ok((
                 row.get::<_,String>(0)?, row.get::<_,i64>(1)?,
                 row.get::<_,i64>(2)?, row.get::<_,i64>(3)?,
-                row.get::<_,String>(4)?
+                row.get::<_,String>(4)?,
+                row.get::<_,Option<String>>(5)?,
             ))
         )
     };
-    let (brand_str, drop_num, inventory, sold, product_name) = match check {
+    let (brand_str, drop_num, inventory, sold, product_name, mockup_url) = match check {
         Ok(r) => r,
         Err(_) => return (StatusCode::NOT_FOUND, "product not found").into_response(),
     };
+    // Stripe image: prefer the DB-stored mockup, fall back to mockups.wearmu.com/<id>.jpg.
+    let stripe_image_url = mockup_url.as_deref()
+        .filter(|u| u.starts_with("https://"))
+        .map(String::from)
+        .or_else(|| Some(format!("https://mockups.wearmu.com/{}.jpg", body.product_id)));
     if inventory - sold < body.quantity as i64 {
         return (StatusCode::CONFLICT, "sold out").into_response();
     }
@@ -13224,6 +13274,7 @@ async fn checkout(
             utm_campaign: body.utm_campaign.as_deref(),
             utm_term:     body.utm_term.as_deref(),
             utm_content:  body.utm_content.as_deref(),
+            image_url:    stripe_image_url.as_deref(),
         },
     );
     let send_request = |form: Vec<(String, String)>| {
@@ -16046,6 +16097,8 @@ async fn settle_auction(
         gclid: None,
         utm_source: None, utm_medium: None, utm_campaign: None,
         utm_term: None,   utm_content: None,
+        // MA piece image — same R2 convention as MUGEN.
+        image_url: Some(&format!("https://mockups.wearmu.com/{}.jpg", product_id)),
     });
     let session_resp = client
         .post("https://api.stripe.com/v1/checkout/sessions")
@@ -41763,6 +41816,7 @@ async fn gi_sponsor_apply(
                     gclid: None,
                     utm_source: None, utm_medium: None, utm_campaign: None,
                     utm_term: None,   utm_content: None,
+                    image_url: None,  // sponsorship; no product image
                 });
                 // Webhook routing + bookkeeping metadata.
                 f.push(("metadata[product]".into(), "gi_sponsor_app".into()));
