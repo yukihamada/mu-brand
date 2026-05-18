@@ -50274,6 +50274,11 @@ const AGENT_REGISTRY: &[AgentDef] = &[
         description: "Printful の draft 滞留を自動 confirm。Stripe webhook 漏れの保険",
     },
     AgentDef {
+        name: "pt_swap_processor",
+        interval_secs: 600, // 10min
+        description: "§30-EX swap pool: claimed → cert mint (両者), expire 切れ listing は un-retire",
+    },
+    AgentDef {
         name: "ma_cycle",
         interval_secs: 3600, // 1h
         description: "MA auction の終了→落札 capture/cancel→次の ¥30k 24h を毎時自動回転",
@@ -50466,6 +50471,7 @@ async fn run_agent(name: &str, db: Db) -> Result<AgentReport, String> {
         "auto_refund"       => agent_auto_refund(db).await,
         "compliance_watch"  => agent_compliance_watch(db).await,
         "printful_draft_watchdog" => agent_printful_draft_watchdog(db).await,
+        "pt_swap_processor" => agent_pt_swap_processor(db).await,
         "ma_cycle"          => agent_ma_cycle(db).await,
         "ma_design_daily"   => agent_ma_design_daily(db).await,
         "self_review"       => agent_self_review(db).await,
@@ -50560,6 +50566,7 @@ async fn journal_agent_report(db: Db, name: &str, report: &AgentReport) {
         "auto_refund"      => "↩️",
         "compliance_watch" => "📜",
         "printful_draft_watchdog" => "🐕‍🦺",
+        "pt_swap_processor" => "🔁",
         "self_improvement" => "🧠",
         "vision_drift"     => "🎯",
         _ => "🤖",
@@ -55125,6 +55132,110 @@ async fn agent_printful_draft_watchdog(db: Db) -> Result<AgentReport, String> {
     Ok(AgentReport {
         observations: serde_json::Value::Object(obs),
         decisions, actions, summary, notable,
+    })
+}
+
+// ── Agent: pt_swap_processor (§30-EX v3 fulfillment) ──────────────────
+//
+// Picks claimed-but-not-fulfilled listings from pt_swap_pool and:
+//   1. Mints a new cert for the claimant (issued_via='swap')
+//   2. Mints a new cert for the original lister as 感謝 gift (issued_via='gift')
+//   3. Records actions in agent_journal so we have an audit trail
+//
+// Physical Printful orders are NOT fired by this agent on purpose — the
+// claimant supplies a shipping address via the (forthcoming) checkout
+// step, and only then does a separate fire path call Printful. This
+// keeps swap state purely in the DB until address is collected.
+//
+// Also: expires listings whose expire_at passed without a claim. The
+// owner's cert is automatically un-retired so they're whole again.
+async fn agent_pt_swap_processor(db: Db) -> Result<AgentReport, String> {
+    let mut obs = serde_json::Map::new();
+    let mut actions: Vec<serde_json::Value> = Vec::new();
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+
+    // 1. Expire stale listings — un-retire the owner's cert.
+    let expired: Vec<(i64, String, String)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, cert_id, owner_email FROM pt_swap_pool
+             WHERE status='listed' AND CAST(expire_at AS INTEGER) < ?1
+             LIMIT 50"
+        ) { Ok(s) => s, Err(_) => return Ok(AgentReport::idle("schema not ready")) };
+        stmt.query_map(params![now_s], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .map(|it| it.flatten().collect()).unwrap_or_default()
+    };
+    let mut expired_count = 0i64;
+    for (id, cert_id, owner) in &expired {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE pt_swap_pool SET status='expired' WHERE id=?1",
+            params![id],
+        );
+        let _ = conn.execute(
+            "UPDATE pt_certificates SET retired_at=NULL, retire_reason=NULL WHERE cert_id=?1",
+            params![cert_id],
+        );
+        actions.push(serde_json::json!({
+            "type":"expired_listing", "listing_id": id,
+            "owner": owner, "cert_id": cert_id,
+        }));
+        expired_count += 1;
+    }
+    obs.insert("expired".into(), serde_json::Value::from(expired_count));
+
+    // 2. Fulfill claimed listings (mint cert moves, no Printful yet).
+    let claimed: Vec<(i64, String, i64, String, String)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, owner_email, product_id, cert_id, claimed_by FROM pt_swap_pool
+             WHERE status='claimed' AND fulfilled_at IS NULL
+             LIMIT 25"
+        ) { Ok(s) => s, Err(_) => return Ok(AgentReport::idle("schema not ready")) };
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+            .map(|it| it.flatten().collect()).unwrap_or_default()
+    };
+    let mut fulfilled = 0i64;
+    for (lid, owner, pid, _old_cert, claimant) in &claimed {
+        let conn = db.lock().unwrap();
+        // New cert for claimant (the original cert stays retired with
+        // reason 'listed_for_exchange'; claimant gets a fresh issuance).
+        let claim_cert = format!("cert_swap_{}_{}", lid, pid);
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO pt_certificates
+               (cert_id, owner_email, product_id, issued_at, issued_via)
+             VALUES (?1, ?2, ?3, ?4, 'swap')",
+            params![&claim_cert, claimant, pid, chrono_now()],
+        );
+        // Gratitude new MUGEN cert for the original lister — points at
+        // the SAME product_id for now; future enhancement: assign the
+        // next MUGEN drop instead so 感謝 feels fresh.
+        let gift_cert = format!("cert_gift_{}_{}", lid, pid);
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO pt_certificates
+               (cert_id, owner_email, product_id, issued_at, issued_via)
+             VALUES (?1, ?2, ?3, ?4, 'gift')",
+            params![&gift_cert, owner, pid, chrono_now()],
+        );
+        let _ = conn.execute(
+            "UPDATE pt_swap_pool SET status='done', fulfilled_at=?1 WHERE id=?2",
+            params![chrono_now(), lid],
+        );
+        actions.push(serde_json::json!({
+            "type": "swap_fulfilled", "listing_id": lid,
+            "owner": owner, "claimant": claimant,
+            "claim_cert": claim_cert, "gift_cert": gift_cert,
+            "note": "Printful order pending — claimant address required",
+        }));
+        fulfilled += 1;
+    }
+    obs.insert("fulfilled".into(), serde_json::Value::from(fulfilled));
+
+    let notable = fulfilled > 0 || expired_count > 0;
+    let summary = format!("pt_swap: {} fulfilled, {} expired", fulfilled, expired_count);
+    Ok(AgentReport {
+        observations: serde_json::Value::Object(obs),
+        decisions: vec![], actions, summary, notable,
     })
 }
 
