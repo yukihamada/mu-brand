@@ -22508,14 +22508,23 @@ async fn proposal_generic_state(
 /// has not been revoked. Unapproved / revoked / non-existent → None (caller
 /// falls through to the static-or-404 path so the brand is invisible).
 ///
+/// `as_admin_preview = true` bypasses the approval gate so the admin /ls
+/// dashboard can show every brand (with a PREVIEW banner). Public callers
+/// must pass `false`.
+///
 /// All inputs (name, ip_owner, meta, SKUs) come from the DB. No file or
 /// embedded asset is read at request time.
 fn try_render_approved_proposal_lp(slug: &str, db: &Db) -> Option<String> {
-    let (name, ip_owner, plan_tier, meta_json_str, skus) = {
+    try_render_proposal_lp_inner(slug, db, false)
+}
+
+fn try_render_proposal_lp_inner(slug: &str, db: &Db, as_admin_preview: bool) -> Option<String> {
+    let (name, ip_owner, plan_tier, meta_json_str, skus, approved) = {
         let conn = db.lock().unwrap();
         let row = proposal_row(&conn, slug)?;
-        // Must be approved + not revoked.
-        if row.2.is_none() || row.6.is_some() { return None; }
+        let approved = row.2.is_some() && row.6.is_none();
+        // Public: gate strictly on approval. Admin preview: always render.
+        if !approved && !as_admin_preview { return None; }
         let plan = row.5.clone().unwrap_or_default();
         let meta: Option<String> = conn.query_row(
             "SELECT meta_json FROM proposals WHERE slug=?",
@@ -22538,11 +22547,11 @@ fn try_render_approved_proposal_lp(slug: &str, db: &Db) -> Option<String> {
                 for row in rows.flatten() { skus.push(row); }
             }
         }
-        (row.0, row.1, plan, meta.unwrap_or_default(), skus)
+        (row.0, row.1, plan, meta.unwrap_or_default(), skus, approved)
     };
     let meta_json: serde_json::Value = serde_json::from_str(&meta_json_str)
         .unwrap_or(serde_json::json!({}));
-    Some(render_proposal_lp(slug, &name, &ip_owner, true, &plan_tier, &skus, &meta_json))
+    Some(render_proposal_lp(slug, &name, &ip_owner, approved, &plan_tier, &skus, &meta_json))
 }
 
 fn render_proposal_lp(
@@ -22960,6 +22969,183 @@ async fn proposal_generic_create(
         "skus_total": body.skus.len(), "products_inserted": inserted,
         "next": format!("POST /api/proposal/{}/approve to activate sales", slug),
     })).into_response()
+}
+
+/// GET /ls — admin-gated HTML dashboard listing every proposal in DB with
+/// approve / revoke toggles and live preview links. Single page so the admin
+/// (mail@yukihamada.jp by default; ADMIN_EMAIL env overrides) can see and
+/// switch every brand from one place. All state comes from `proposals`.
+async fn admin_ls_page(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/ls").await { return r; }
+    let admin_email = std::env::var("ADMIN_EMAIL").unwrap_or_else(|_| "mail@yukihamada.jp".into());
+    let rows: Vec<(String, String, Option<String>, Option<String>, Option<String>, i64)> = {
+        let conn = db.lock().unwrap();
+        let mut out = Vec::new();
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT p.slug, p.name, p.approved_at, p.revoked_at, p.plan_tier,
+                    (SELECT COUNT(*) FROM proposal_skus s WHERE s.slug=p.slug)
+             FROM proposals p ORDER BY p.approved_at IS NULL DESC, p.created_at DESC",
+        ) {
+            if let Ok(it) = stmt.query_map([], |r| Ok((
+                r.get::<_,String>(0)?, r.get::<_,String>(1)?,
+                r.get::<_,Option<String>>(2)?, r.get::<_,Option<String>>(3)?,
+                r.get::<_,Option<String>>(4)?, r.get::<_,i64>(5)?,
+            ))) {
+                for x in it.flatten() { out.push(x); }
+            }
+        }
+        out
+    };
+    // Token to embed in preview links. We can't read it back from admin_auth
+    // because we only have the request — pull from the request itself.
+    let token = q.get("admin_token").or_else(|| q.get("token")).cloned()
+        .or_else(|| headers.get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.strip_prefix("Bearer ").or_else(|| s.strip_prefix("bearer ")))
+            .map(String::from))
+        .or_else(|| headers.get("x-admin-token").and_then(|v| v.to_str().ok()).map(String::from))
+        .unwrap_or_default();
+    let tok_q = if token.is_empty() { String::new() } else { format!("?admin_token={}", html_attr_escape(&token)) };
+
+    let mut tbody = String::new();
+    let mut n_approved = 0i64;
+    let mut n_total = 0i64;
+    for (slug, name, approved_at, revoked_at, plan_tier, sku_count) in &rows {
+        n_total += 1;
+        let approved = approved_at.is_some() && revoked_at.is_none();
+        if approved { n_approved += 1; }
+        let status = if approved {
+            format!("<span class=\"ok\">LIVE</span> · {}", html_escape(plan_tier.as_deref().unwrap_or("—")))
+        } else if revoked_at.is_some() {
+            "<span class=\"warn\">REVOKED</span>".into()
+        } else {
+            "<span class=\"gate\">GATED</span>".into()
+        };
+        tbody.push_str(&format!(
+            "<tr data-slug=\"{slug}\">\
+              <td><a class=\"slug\" href=\"/{slug}{tok}\" target=\"_blank\">{slug}</a></td>\
+              <td>{name}</td>\
+              <td>{sku} SKU</td>\
+              <td>{status}</td>\
+              <td class=\"row-actions\">\
+                <button class=\"act approve\" data-act=\"approve\" data-slug=\"{slug}\" {ap_disabled}>approve</button>\
+                <button class=\"act revoke\" data-act=\"revoke\" data-slug=\"{slug}\" {rv_disabled}>revoke</button>\
+                <a class=\"act preview\" href=\"/{slug}{tok}\" target=\"_blank\">preview ↗</a>\
+                <a class=\"act api\" href=\"/api/proposal/{slug}/state\" target=\"_blank\">state</a>\
+              </td>\
+             </tr>",
+            slug = html_escape(slug),
+            tok = tok_q,
+            name = html_escape(name),
+            sku = sku_count,
+            status = status,
+            ap_disabled = if approved { "disabled" } else { "" },
+            rv_disabled = if !approved { "disabled" } else { "" },
+        ));
+    }
+
+    let html = format!(r#"<!doctype html>
+<html lang="ja"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>/ls — admin dashboard</title>
+<style>
+:root{{--bg:#0a0a0a;--fg:#f5f5f5;--mute:#888;--line:#222;--accent:#ff5a36;--ok:#7be57b;--warn:#ff6464}}
+*{{box-sizing:border-box}}
+body{{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue',Arial,sans-serif;margin:0;line-height:1.6;font-size:14px}}
+.wrap{{max-width:1180px;margin:0 auto;padding:32px 24px}}
+.head{{display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid var(--line);padding-bottom:12px;margin-bottom:24px;flex-wrap:wrap;gap:12px}}
+h1{{font-size:22px;margin:0;font-weight:800;letter-spacing:-0.01em}}
+.head .meta{{color:var(--mute);font-size:12px;letter-spacing:0.06em}}
+.head .admin{{color:var(--accent);font-weight:600}}
+.stats{{display:flex;gap:24px;margin-bottom:24px;font-size:12px;color:var(--mute);letter-spacing:0.08em;text-transform:uppercase}}
+.stats b{{color:var(--fg);font-size:16px;display:block;font-family:inherit}}
+table{{width:100%;border-collapse:collapse;font-size:13px}}
+th{{text-align:left;font-weight:600;color:var(--mute);font-size:11px;letter-spacing:0.16em;text-transform:uppercase;padding:8px 10px;border-bottom:1px solid var(--line)}}
+td{{padding:10px;border-bottom:1px solid var(--line);vertical-align:middle}}
+a.slug{{color:var(--accent);text-decoration:none;font-weight:700;font-family:'SF Mono',monospace}}
+a.slug:hover{{text-decoration:underline}}
+.ok{{color:var(--ok);font-weight:700;font-size:11px;letter-spacing:0.1em}}
+.warn{{color:var(--warn);font-weight:700;font-size:11px;letter-spacing:0.1em}}
+.gate{{color:var(--mute);font-weight:700;font-size:11px;letter-spacing:0.1em}}
+.row-actions{{white-space:nowrap}}
+.act{{display:inline-block;background:#181818;border:1px solid var(--line);color:var(--fg);font-family:inherit;font-size:11px;padding:6px 10px;border-radius:3px;cursor:pointer;text-decoration:none;margin-right:4px;letter-spacing:0.04em}}
+.act.approve{{border-color:var(--ok);color:var(--ok)}}
+.act.revoke{{border-color:var(--warn);color:var(--warn)}}
+.act:hover:not(:disabled){{filter:brightness(1.25)}}
+.act:disabled{{opacity:0.3;cursor:not-allowed}}
+.toast{{position:fixed;bottom:24px;right:24px;background:#181818;border:1px solid var(--line);padding:12px 16px;border-radius:4px;font-size:12px;max-width:380px;opacity:0;transition:opacity 0.2s;pointer-events:none}}
+.toast.show{{opacity:1;pointer-events:auto}}
+.toast.ok{{border-color:var(--ok)}}
+.toast.err{{border-color:var(--warn)}}
+</style></head><body>
+<div class="wrap">
+  <div class="head">
+    <div>
+      <h1>━◯━ /ls — proposal admin</h1>
+      <div class="meta">all proposals in <code>proposals</code> table · DB-driven · 1 source of truth</div>
+    </div>
+    <div class="admin">{admin_email}</div>
+  </div>
+  <div class="stats">
+    <div>total<b>{n_total}</b></div>
+    <div>approved<b>{n_approved}</b></div>
+    <div>gated<b>{n_gated}</b></div>
+  </div>
+  <table>
+    <thead><tr>
+      <th>slug</th><th>name</th><th>skus</th><th>status</th><th>actions</th>
+    </tr></thead>
+    <tbody>{tbody}</tbody>
+  </table>
+</div>
+<div id="toast" class="toast"></div>
+<script>
+(function(){{
+  var TOKEN = {token_js};
+  var toast = document.getElementById('toast');
+  function show(msg, ok){{
+    toast.textContent = msg;
+    toast.className = 'toast show ' + (ok===false?'err':'ok');
+    setTimeout(function(){{ toast.className = 'toast'; }}, 4000);
+  }}
+  function approverBody(){{
+    return {{ approver_name: 'admin-/ls', approver_email: 'mail@yukihamada.jp', plan_tier: 'starter', note: '/ls toggle' }};
+  }}
+  document.querySelectorAll('button.act').forEach(function(btn){{
+    btn.addEventListener('click', async function(){{
+      var slug = btn.dataset.slug, act = btn.dataset.act;
+      btn.disabled = true;
+      try {{
+        var r = await fetch('/api/proposal/'+encodeURIComponent(slug)+'/'+act+'?admin_token='+encodeURIComponent(TOKEN), {{
+          method:'POST',
+          headers:{{'Content-Type':'application/json'}},
+          body: act==='approve' ? JSON.stringify(approverBody()) : '{{}}',
+        }});
+        var j = await r.json();
+        if (r.ok && j.ok !== false) {{
+          show('✓ '+act+' '+slug, true);
+          setTimeout(function(){{ location.reload(); }}, 600);
+        }} else {{ show('✗ '+(j.error || ('HTTP '+r.status)), false); btn.disabled=false; }}
+      }} catch(e) {{ show('✗ '+e.message, false); btn.disabled=false; }}
+    }});
+  }});
+}})();
+</script>
+</body></html>"#,
+        admin_email = html_escape(&admin_email),
+        n_total = n_total,
+        n_approved = n_approved,
+        n_gated = n_total - n_approved,
+        tbody = tbody,
+        token_js = serde_json::to_string(&token).unwrap_or_else(|_| "\"\"".into()),
+    );
+    Html(html).into_response()
 }
 
 /// GET /admin/proposals — admin-gated. Lists every proposal + state.
@@ -47449,6 +47635,8 @@ async fn you_slug_check(
 async fn slug_or_static(
     State(db): State<Db>,
     Path(slug): Path<String>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Response {
     let slug_lo = slug.to_ascii_lowercase();
 
@@ -47459,6 +47647,25 @@ async fn slug_or_static(
     // Invalid slug shape → static fallback then 404.
     if !slug_valid(&slug_lo) {
         return serve_static_or_404(&slug, &db);
+    }
+    // Admin preview short-circuit: if a valid admin token is present in the
+    // query / headers AND the slug matches a (possibly unapproved) proposal,
+    // render it with a preview banner — bypassing the public approval gate.
+    // Only run admin_auth when a token is actually present, otherwise every
+    // public /<slug> visit would spam the admin_auth audit log.
+    let has_admin_token = q.contains_key("admin_token") || q.contains_key("token")
+        || headers.contains_key("x-admin-token") || headers.contains_key("authorization");
+    if has_admin_token
+        && admin_auth(&headers, &q, db.clone(), &format!("/{} (preview)", slug_lo)).await.is_ok()
+    {
+        if let Some(html) = try_render_proposal_lp_inner(&slug_lo, &db, true) {
+            let mut resp = Html(html).into_response();
+            resp.headers_mut().insert(
+                header::CACHE_CONTROL,
+                HeaderValue::from_static("private, no-store"),
+            );
+            return resp;
+        }
     }
     // Look up user
     let row: Option<(i64, String, Option<String>)> = {
@@ -52169,6 +52376,8 @@ async fn main() {
         .route("/api/collab/:slug/sku/add",                     post(collab_partner_sku_add))
         .route("/admin/proposal",              post(proposal_generic_create))
         .route("/admin/proposals",             get(proposal_generic_list))
+        // Admin dashboard at /ls — list + approve/revoke + preview links.
+        .route("/ls",                           get(admin_ls_page))
         .route("/admin/proposal/extras/retroactive-claim",      post(admin_extras_retroactive_claim))
         .route("/admin/proposal/extras/email-preview",          get(admin_extras_email_preview))
         // /proposals ServeDir removed. The catch-all below makes sure the
