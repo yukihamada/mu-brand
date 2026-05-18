@@ -56,12 +56,17 @@ const PROFIT_SPLIT_RAW: &str = include_str!("../static/profit_split.md");
 /// §28 利益分配スキーム — 税引後 当期純利益 P を 6 セグメントに分配。
 /// 全比率の合計が 1.0 になっていることはデバッグ assert で担保 (下記 test)。
 /// 端数 ¥1 は reserve に寄せる ([profit_split.md §3.1]).
-pub const PROFIT_SPLIT_DONATION: f64    = 0.50; // 弟子屈町 (企業版ふるさと納税)
-pub const PROFIT_SPLIT_YUKI: f64        = 0.10; // 代表取締役 報酬 (定期同額給与)
-pub const PROFIT_SPLIT_SHAREHOLDER: f64 = 0.10; // 株主全員 (持分比率配当)
+pub const PROFIT_SPLIT_DONATION: f64    = 0.50; // base — §29 累進で 50→90% に成長
+pub const PROFIT_SPLIT_YUKI: f64        = 0.10; // P ≤ ¥10M 範囲のみ。超過分は ¥10M キャップ
+pub const PROFIT_SPLIT_SHAREHOLDER: f64 = 0.10; // 株主全員 (持分比率配当、§29 で全帯維持)
 pub const PROFIT_SPLIT_MA_HOLDER: f64   = 0.10; // MUGEN+stack ホルダー (MUクーポン)
 pub const PROFIT_SPLIT_COMMUNITY: f64   = 0.10; // MU Community Fund (50% は grant 枠)
 pub const PROFIT_SPLIT_RESERVE: f64     = 0.10; // 運転備金 (内部留保, 端数吸収)
+
+/// §29 The Discipline of Silence — Progressive Donation 累進寄付率
+/// P レンジに応じて寄付比率を 50% → 90% に増やす (Yuki 報酬は ¥10M キャップ固定)。
+/// 超過分は寄付 (+ 一部 Community) に流す。"自分の取り分が比例で増えない" 設計。
+pub const YUKI_CAP_JPY: i64 = 10_000_000; // ¥10M Yuki 報酬上限
 
 #[cfg(test)]
 mod profit_split_tests {
@@ -6403,13 +6408,11 @@ struct VaultHintBody { value: String }
 
 async fn admin_vault_hint(
     State(db): State<Db>,
-    Query(q): Query<std::collections::HashMap<String, String>>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
     Json(body): Json<VaultHintBody>,
 ) -> Response {
-    let token = q.get("token").cloned().unwrap_or_default();
-    if !admin_auth(&token) {
-        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
-    }
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/vault/hint").await { return r; }
     let kind = q.get("kind").map(String::as_str).unwrap_or("");
     let key = match kind {
         "tomorrow" => "vault_tomorrow_hint",
@@ -6427,12 +6430,10 @@ async fn admin_vault_hint(
 /// missing a tee_anchors row. Designed for hourly cron; safe to hit manually.
 async fn admin_anchor_run(
     State(db): State<Db>,
-    Query(q): Query<std::collections::HashMap<String, String>>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Response {
-    let token = q.get("token").cloned().unwrap_or_default();
-    if !admin_auth(&token) {
-        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
-    }
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/anchor/run").await { return r; }
     let limit: i64 = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50);
     let conn = db.lock().unwrap();
     let ids: Vec<i64> = {

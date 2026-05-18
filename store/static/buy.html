@@ -286,6 +286,17 @@ footer{
         <div class="stock"><span id="product-stock">—</span></div>
         <div class="countdown"><span class="pulse"></span><span id="product-countdown">next drop --:--</span></div>
 
+        <!-- Variant selectors (2026-05-18): Type × POD provider with おすすめ
+             badges. JS reads /api/product_variants once and builds both rows
+             dynamically. Default for JP users = Tee × Gelato JP; EN users =
+             Tee × Printful EU. Each click recomputes the price below. -->
+        <div style="margin:14px 0 6px;font-size:10.5px;letter-spacing:0.22em;color:#e6c449;text-transform:uppercase">Type</div>
+        <div class="size-row" id="variant-type-row" style="margin-bottom:14px"></div>
+        <div style="margin:6px 0 6px;font-size:10.5px;letter-spacing:0.22em;color:#e6c449;text-transform:uppercase">POD provider</div>
+        <div class="size-row" id="variant-pod-row" style="margin-bottom:6px"></div>
+        <div id="variant-note" style="font-size:11.5px;color:rgba(245,245,240,0.6);margin:4px 0 14px;min-height:18px"></div>
+
+        <div style="margin:6px 0 6px;font-size:10.5px;letter-spacing:0.22em;color:#e6c449;text-transform:uppercase">Size</div>
         <div class="size-row" id="size-row">
           <button type="button" class="size-btn" data-size="S" data-funnel="cta_click" data-funnel-cta="buy_size_S">S</button>
           <button type="button" class="size-btn selected" data-size="M" data-funnel="cta_click" data-funnel-cta="buy_size_M">M</button>
@@ -389,15 +400,113 @@ footer{
 <script>
 let SELECTED_SIZE = 'M';
 let CURRENT_PRODUCT = null;
+// Variant state — wired by initVariants() once /api/product_variants resolves.
+let VARIANT_MATRIX = null;
+let SELECTED_TYPE = null;   // e.g. 'tee'
+let SELECTED_POD  = null;   // e.g. 'gelato_jp'
 
-document.querySelectorAll('.size-btn').forEach(btn => {
+// Size buttons: only the size-row should reset itself on click, NOT every
+// other .size-btn on the page (variant rows reuse the same class for style).
+document.getElementById('size-row').querySelectorAll('.size-btn').forEach(btn => {
   btn.addEventListener('click', (e) => {
     e.preventDefault();
-    document.querySelectorAll('.size-btn').forEach(b => b.classList.remove('selected'));
+    document.getElementById('size-row').querySelectorAll('.size-btn').forEach(b => b.classList.remove('selected'));
     btn.classList.add('selected');
     SELECTED_SIZE = btn.dataset.size;
   });
 });
+
+async function initVariants() {
+  try {
+    const r = await fetch('/api/product_variants');
+    if (!r.ok) return;
+    VARIANT_MATRIX = await r.json();
+  } catch (_) { return; }
+  const m = VARIANT_MATRIX;
+  const isJa = /^ja/.test(navigator.language || '');
+  // Default: JP user → tee × gelato_jp, EN user → tee × printful_eu
+  SELECTED_TYPE = (m.default_combo && m.default_combo.type) || 'tee';
+  SELECTED_POD  = isJa ? ((m.default_combo && m.default_combo.pod) || 'gelato_jp') : 'printful_eu';
+
+  const typeRow = document.getElementById('variant-type-row');
+  const podRow  = document.getElementById('variant-pod-row');
+  typeRow.innerHTML = '';
+  podRow.innerHTML = '';
+
+  // Build type buttons
+  for (const t of m.types) {
+    const has = !!(m.combos[t.key]);
+    if (!has) continue;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'size-btn' + (t.key === SELECTED_TYPE ? ' selected' : '');
+    b.textContent = isJa ? t.label_jp : t.label_en;
+    b.dataset.vtype = t.key;
+    b.dataset.funnel = 'cta_click';
+    b.dataset.funnelCta = 'buy_variant_type_' + t.key;
+    b.addEventListener('click', (e) => {
+      e.preventDefault();
+      SELECTED_TYPE = t.key;
+      // If current POD isn't available for new type, pick the first available.
+      if (!m.combos[t.key][SELECTED_POD]) {
+        SELECTED_POD = Object.keys(m.combos[t.key])[0];
+      }
+      renderVariantRows();
+      updateVariantPrice();
+    });
+    typeRow.appendChild(b);
+  }
+
+  renderVariantRows();
+  updateVariantPrice();
+}
+
+function renderVariantRows() {
+  if (!VARIANT_MATRIX) return;
+  const m = VARIANT_MATRIX;
+  // Re-highlight type row
+  document.querySelectorAll('#variant-type-row .size-btn').forEach(b => {
+    b.classList.toggle('selected', b.dataset.vtype === SELECTED_TYPE);
+  });
+  // Rebuild POD row (only pods available for the selected type)
+  const podRow = document.getElementById('variant-pod-row');
+  podRow.innerHTML = '';
+  const combos = m.combos[SELECTED_TYPE] || {};
+  for (const pod of m.pods) {
+    const combo = combos[pod.key];
+    if (!combo) continue;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'size-btn' + (pod.key === SELECTED_POD ? ' selected' : '');
+    b.style.position = 'relative';
+    b.style.paddingRight = combo.recommended ? '60px' : '14px';
+    b.innerHTML = pod.label + ' <span style="font-size:10px;opacity:0.65;letter-spacing:0.05em">¥' + combo.price_jpy.toLocaleString() + '</span>' +
+      (combo.recommended ? '<span style="position:absolute;top:-7px;right:-6px;background:#e6c449;color:#0a0a0a;font-size:8.5px;letter-spacing:0.18em;padding:2px 6px;border-radius:8px;font-weight:700">おすすめ</span>' : '');
+    b.dataset.vpod = pod.key;
+    b.addEventListener('click', (e) => {
+      e.preventDefault();
+      SELECTED_POD = pod.key;
+      renderVariantRows();
+      updateVariantPrice();
+    });
+    podRow.appendChild(b);
+  }
+}
+
+function updateVariantPrice() {
+  if (!VARIANT_MATRIX) return;
+  const combo = ((VARIANT_MATRIX.combos[SELECTED_TYPE]||{})[SELECTED_POD]) || null;
+  const noteEl = document.getElementById('variant-note');
+  const priceEl = document.getElementById('product-price');
+  if (combo && priceEl) {
+    priceEl.textContent = '¥' + combo.price_jpy.toLocaleString();
+  }
+  const pod = (VARIANT_MATRIX.pods.find(p => p.key === SELECTED_POD) || {});
+  if (noteEl) {
+    noteEl.textContent = (combo && combo.note ? combo.note + ' · ' : '') +
+      '配送 ' + (pod.ship_to_jp_days || '?') + '日';
+  }
+}
 
 async function loadProduct() {
   try {
@@ -463,6 +572,9 @@ async function loadProduct() {
       sl.href = pick.suzuri_url;
       sl.style.display = 'block';
     }
+    // If a variant was already picked, re-apply its price over pick.price_jpy
+    // so the variant selector remains authoritative for the displayed amount.
+    if (typeof updateVariantPrice === 'function' && VARIANT_MATRIX) updateVariantPrice();
   } catch (e) {}
 }
 
@@ -480,6 +592,7 @@ function tickCountdown() {
 setInterval(tickCountdown, 1000);
 tickCountdown();
 loadProduct();
+initVariants();
 
 // 2026-05-16: 紹介クーポン (REF500) は廃止。 ?ref=CODE のクリックだけ
 // /api/referral/:code が記録する (アトリビューション目的)。
@@ -516,6 +629,8 @@ document.getElementById('btn-buy').addEventListener('click', async (e) => {
         product_id: CURRENT_PRODUCT.id,
         quantity: 1,
         size: SELECTED_SIZE,
+        variant_type: SELECTED_TYPE || undefined,
+        pod_provider: SELECTED_POD || undefined,
       }),
     });
     if (!r.ok) throw new Error('checkout ' + r.status);
