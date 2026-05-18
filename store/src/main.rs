@@ -21999,6 +21999,9 @@ fn ryozo_is_approved(conn: &rusqlite::Connection) -> bool {
 async fn proposal_ryozo() -> Html<&'static str> {
     Html(include_str!("../static/proposals/ryozo.html"))
 }
+async fn proposal_atsume() -> Html<&'static str> {
+    Html(include_str!("../static/proposals/atsume.html"))
+}
 async fn proposal_ryozo_status(State(db): State<Db>) -> impl IntoResponse {
     let conn = db.lock().unwrap();
     let row = ryozo_approval_row(&conn);
@@ -51833,6 +51836,7 @@ async fn main() {
         .route("/api/proposals/nojimahal/bundle",      post(proposal_nojimahal_bundle))
         .route("/nojimahal", get(nojimahal_public_page))
         .route("/proposals/ryozo",                 get(proposal_ryozo))
+        .route("/proposals/atsume",                get(proposal_atsume))
         .route("/api/proposals/ryozo/status",      get(proposal_ryozo_status))
         .route("/api/proposals/ryozo/approve",     post(proposal_ryozo_approve))
         .route("/api/proposals/ryozo/revoke",      post(proposal_ryozo_revoke))

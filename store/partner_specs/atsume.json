@@ -1,0 +1,113 @@
+{
+  "slug": "atsume",
+  "name": "ATSUME / Kentaroh Awata",
+  "ip_owner": "株式会社アツメ (Atsume Inc.) / Kentaroh Awata",
+  "design": {
+    "monogram": "AT",
+    "accent": "#ff5a36"
+  },
+  "meta": {
+    "display_name": "ATSUME",
+    "tagline": "HR × Tech × 柔術",
+    "h1": "採用は、<br>試合に似ている。",
+    "subtitle": "ATSUME × MU — HR Tech founder collab pitch",
+    "accent_hex": "#ff5a36",
+    "lede": "採用とスパーリングは、同じ構造を持つ。読み合い、間合い、見極め、覚悟。Kentaroh Awata — 株式会社アツメ CEO・柔術プラクティショナー — と MU が共同で立ち上げる、HR × Tech × 柔術 のキャプセル。",
+    "hero_kv": [
+      ["カテゴリ", "HR Tech founder collab"],
+      ["商品数", "10 SKU"],
+      ["パートナー", "株式会社アツメ"],
+      ["プラクティス", "柔術"]
+    ],
+    "why_md": "Kentaroh Awata は HR Tech スタートアップの CEO であり、同時に柔術プラクティショナー。<br>採用も柔術も、「焦らず、しかし瞬間に動く」という同じ身体感覚が要る。<br>このキャプセルは、その身体感覚を着られる形にしたもの。HR Tech founder のための uniform — 採用イベントから道場まで、同じ服装で動ける。",
+    "use_cases": [
+      "採用イベントでのノベルティ配布",
+      "社員 onboarding welcome kit (1セット)",
+      "柔術アカデミーとの cross-collab gift",
+      "HR Tech founder の毎日のユニフォーム",
+      "社外 1on1・名刺交換シーンでの会話のフック"
+    ]
+  },
+  "skus": [
+    {
+      "letter": "a",
+      "drop_num": 1,
+      "price_jpy": 5400,
+      "label": "採用は試合に似ている tee · wordmark front",
+      "kind": "tee",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "b",
+      "drop_num": 2,
+      "price_jpy": 5400,
+      "label": "HR × TECH × 柔術 stacked tee",
+      "kind": "tee",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "c",
+      "drop_num": 3,
+      "price_jpy": 5400,
+      "label": "AT monogram back-print tee",
+      "kind": "tee",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "d",
+      "drop_num": 4,
+      "price_jpy": 9800,
+      "label": "ATSUME wordmark heavy hoodie",
+      "kind": "hoodie",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "e",
+      "drop_num": 5,
+      "price_jpy": 6400,
+      "label": "AT stripe long-sleeve tee",
+      "kind": "longsleeve",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "f",
+      "drop_num": 6,
+      "price_jpy": 5800,
+      "label": "AT monogram snapback cap",
+      "kind": "cap",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "g",
+      "drop_num": 7,
+      "price_jpy": 4200,
+      "label": "ATSUME stacked canvas tote",
+      "kind": "tote",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "h",
+      "drop_num": 8,
+      "price_jpy": 2400,
+      "label": "AT monogram ceramic mug",
+      "kind": "mug",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "i",
+      "drop_num": 9,
+      "price_jpy": 3800,
+      "label": "AT cuffed beanie",
+      "kind": "beanie",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "j",
+      "drop_num": 10,
+      "price_jpy": 980,
+      "label": "AT die-cut vinyl sticker",
+      "kind": "sticker",
+      "design_slug": "monogram"
+    }
+  ]
+}
