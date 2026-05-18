@@ -52090,7 +52090,10 @@ async fn main() {
         .route("/admin/proposals",             get(proposal_generic_list))
         .route("/admin/proposal/extras/retroactive-claim",      post(admin_extras_retroactive_claim))
         .route("/admin/proposal/extras/email-preview",          get(admin_extras_email_preview))
-        // /proposals ServeDir removed — no /proposals/ URL prefix at all.
+        // /proposals ServeDir removed. The catch-all below makes sure the
+        // static-dir fallback_service can't leak /proposals/<brand>.html either
+        // — brands surface ONLY at /<slug> via slug_or_static (DB-driven).
+        .route("/proposals/*rest", get(|| async { axum::http::StatusCode::NOT_FOUND }))
         .nest_service("/will", ServeDir::new("static/will"))
         .nest_service("/foundation", ServeDir::new("static/foundation"))
         .route("/api/collab/account/delete", post(collab_account_delete))
