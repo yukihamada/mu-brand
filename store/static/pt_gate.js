@@ -16,6 +16,40 @@
  * - Already-unlocked targets stay unlocked on revisit (server-side).
  * - On insufficient balance: shows a CTA to /buy-points pack.
  */
+/* May 2026 — 14日100枚チャレンジ universal banner.
+   Auto-injects a clickable top banner on every page that loads pt_gate.js
+   (~25 pages site-wide). Hides itself on /100 (would be redundant) and after
+   the campaign deadline 2026-05-31 23:59 JST. Skips pages that already
+   render a #challenge-banner element (e.g. homepage). */
+(function () {
+  "use strict";
+  if (window.__muChallenge100Mounted) return;
+  window.__muChallenge100Mounted = true;
+  try {
+    if (location.pathname === '/100') return;
+    if (document.getElementById('challenge-banner')) return;
+    var deadlineMs = Date.parse("2026-05-31T14:59:59Z");
+    if (Date.now() > deadlineMs) return;
+    function mount() {
+      if (document.getElementById('challenge-banner')) return;
+      var a = document.createElement('a');
+      a.id = 'challenge-banner';
+      a.href = '/100?utm_source=challenge_banner&utm_medium=site&utm_campaign=mugen100';
+      a.style.cssText = "display:block;background:#e6c449;color:#0A0A0A;padding:9px 18px;text-align:center;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;text-decoration:none;font-weight:500;position:relative;z-index:9999;font-family:-apple-system,BlinkMacSystemFont,'Hiragino Sans','Noto Sans JP',sans-serif";
+      var sold = '—', days = Math.max(0, Math.ceil((deadlineMs - Date.now()) / (24 * 3600 * 1000)));
+      a.innerHTML = '▲ 14日で100枚チャレンジ — <span id="cb-sold">' + sold + '</span>/100 sold · 残り <span id="cb-days">' + days + '</span>日 · wearmu.com/100';
+      if (document.body && document.body.firstChild) document.body.insertBefore(a, document.body.firstChild);
+      else document.body && document.body.appendChild(a);
+      fetch('/api/100/progress', { cache: 'no-store' })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (j) { if (!j) return; var s = document.getElementById('cb-sold'); if (s) s.textContent = j.sold; })
+        .catch(function () { });
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount);
+    else mount();
+  } catch (e) { /* never break pt_gate */ }
+})();
+
 (function () {
   "use strict";
   if (window.__muPtGateMounted) return;
