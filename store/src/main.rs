@@ -22556,12 +22556,23 @@ fn try_render_proposal_lp_inner(slug: &str, db: &Db, as_admin_preview: bool) -> 
             "SELECT meta_json FROM proposals WHERE slug=?",
             params![slug], |r| r.get(0),
         ).ok().flatten();
-        // Inline query so we can pull design_url too (proposal_skus_for is shared
-        // and doesn't return it — changing that helper would ripple to ~10 call sites).
+        // Inline query so we can pull design_url too AND join in products.mockup_url
+        // (the Printful-generated mockup, when available — that's the per-SKU,
+        // design-overlaid product photo we actually want to show).
         let mut skus: Vec<(String, i64, i64, String, String, String, Option<String>)> = Vec::new();
         if let Ok(mut stmt) = conn.prepare(
-            "SELECT letter, drop_num, price_jpy, label, kind, design_slug, design_url
-             FROM proposal_skus WHERE slug=? ORDER BY drop_num ASC",
+            "SELECT ps.letter, ps.drop_num, ps.price_jpy, ps.label, ps.kind, ps.design_slug,
+                    COALESCE(
+                        NULLIF(p.mockup_url, ''),
+                        NULLIF(ps.design_url, ''),
+                        NULLIF(p.design_url,  '')
+                    ) AS img_url
+             FROM proposal_skus ps
+             LEFT JOIN products p
+                    ON p.brand = ps.slug || '_' || ps.kind || '_sample'
+                   AND p.drop_num = ps.drop_num
+             WHERE ps.slug = ?
+             ORDER BY ps.drop_num ASC",
         ) {
             if let Ok(rows) = stmt.query_map(params![slug], |r| {
                 Ok((
@@ -22967,9 +22978,9 @@ async fn proposal_generic_create(
             ).is_ok();
             if !exists {
                 let design_url = s.design_url.clone().unwrap_or_else(|| {
-                    format!("https://wearmu.com/proposals/design-{}.png", design_slug)
+                    format!("https://wearmu.com/static/proposals/{}-design-{}.png", slug, design_slug)
                 });
-                let mockup_url = format!("https://wearmu.com/proposals/{}-mockup-{}.png", slug, letter);
+                let mockup_url = format!("https://wearmu.com/static/proposals/{}-mockup-{}.png", slug, letter);
                 let _ = conn.execute(
                     "INSERT INTO products
                         (brand, drop_num, name, design_url, mockup_url, price_jpy, inventory, active, created_at, weather_data)
@@ -22987,6 +22998,24 @@ async fn proposal_generic_create(
                     ],
                 );
                 inserted += 1;
+            } else {
+                // Backfill: products created before we moved to /static/proposals/
+                // still have /proposals/design-X.png paths in design_url which now
+                // 404. Repoint them so regen_product_mockup can fetch the design.
+                let _ = conn.execute(
+                    "UPDATE products SET
+                        design_url = ?,
+                        mockup_url = COALESCE(NULLIF(mockup_url, ''),
+                                              CASE WHEN mockup_url LIKE 'https://wearmu.com/proposals/%' THEN NULL ELSE mockup_url END,
+                                              ?)
+                     WHERE brand=? AND drop_num=?
+                       AND (design_url IS NULL OR design_url='' OR design_url LIKE 'https://wearmu.com/proposals/design-%')",
+                    params![
+                        format!("https://wearmu.com/static/proposals/{}-design-{}.png", slug, design_slug),
+                        format!("https://wearmu.com/static/proposals/{}-mockup-{}.png", slug, letter),
+                        brand, s.drop_num,
+                    ],
+                );
             }
         }
     }
@@ -23423,9 +23452,9 @@ fn seed_partners_from_spec_dir(db: &Db) {
             ).is_ok();
             if !exists {
                 let design_url = s.design_url.clone().unwrap_or_else(|| {
-                    format!("https://wearmu.com/proposals/design-{}.png", design_slug)
+                    format!("https://wearmu.com/static/proposals/{}-design-{}.png", slug, design_slug)
                 });
-                let mockup_url = format!("https://wearmu.com/proposals/{}-mockup-{}.png", slug, letter);
+                let mockup_url = format!("https://wearmu.com/static/proposals/{}-mockup-{}.png", slug, letter);
                 let _ = conn.execute(
                     "INSERT INTO products
                         (brand, drop_num, name, design_url, mockup_url, price_jpy, inventory, active, created_at, weather_data)
@@ -23439,12 +23468,23 @@ fn seed_partners_from_spec_dir(db: &Db) {
                             "design_slug": design_slug,
                             "license_status": "pending",
                             "ip_owner": ip_owner,
-                            "note": "Sample / public order — public sales require approval on /proposals/<slug>",
+                            "note": "Sample / public order — public sales gated on proposals.approved_at",
                             "source": "spec.json",
                         }).to_string(),
                     ],
                 );
                 products += 1;
+            } else {
+                // Backfill broken /proposals/ paths from earlier code revs.
+                let _ = conn.execute(
+                    "UPDATE products SET design_url = ?
+                     WHERE brand=? AND drop_num=?
+                       AND (design_url IS NULL OR design_url='' OR design_url LIKE 'https://wearmu.com/proposals/design-%')",
+                    params![
+                        format!("https://wearmu.com/static/proposals/{}-design-{}.png", slug, design_slug),
+                        brand, s.drop_num,
+                    ],
+                );
             }
         }
     }
