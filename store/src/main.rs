@@ -40107,6 +40107,113 @@ fn mask_email_for_ticker(em: &str) -> String {
     format!("{}…@{}", visible, parts[1])
 }
 
+/// GET /api/admin/pass/list?admin_token=…
+/// All pass rows for the mint tool to iterate.
+async fn pass_list_admin_api(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    use serde_json::json;
+    let token = q.get("admin_token").map(|s| s.as_str()).unwrap_or("");
+    let expected = std::env::var("ADMIN_TOKEN").unwrap_or_default();
+    if expected.is_empty() || token != expected {
+        return (axum::http::StatusCode::FORBIDDEN, Json(json!({"error": "admin token required"}))).into_response();
+    }
+    let conn = match db.lock() { Ok(c) => c, Err(_) => return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "db lock"}))).into_response() };
+    let rows: Vec<serde_json::Value> = conn
+        .prepare("SELECT p.edition, p.email, p.brand, p.sku_id, p.mint_status, p.mint_asset, p.mint_tx,
+                         (SELECT image_url FROM collab_products WHERE slug = p.brand LIMIT 1) AS image_url
+                  FROM mu_passes p ORDER BY p.edition ASC")
+        .and_then(|mut s| {
+            s.query_map([], |r| {
+                Ok(json!({
+                    "edition": r.get::<_, i64>(0)?,
+                    "email": r.get::<_, String>(1)?,
+                    "brand": r.get::<_, String>(2)?,
+                    "sku_id": r.get::<_, Option<String>>(3)?,
+                    "mint_status": r.get::<_, String>(4)?,
+                    "mint_asset": r.get::<_, Option<String>>(5)?,
+                    "mint_tx": r.get::<_, Option<String>>(6)?,
+                    "image_url": r.get::<_, Option<String>>(7)?,
+                }))
+            }).map(|it| it.filter_map(|r| r.ok()).collect())
+        }).unwrap_or_default();
+    Json(json!({"passes": rows})).into_response()
+}
+
+/// POST /api/admin/pass/record_mint
+/// External mint tool reports back to DB after a successful on-chain mint.
+async fn pass_record_mint_api(
+    State(db): State<Db>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    use serde_json::json;
+    let token = body.get("admin_token").and_then(|v| v.as_str()).unwrap_or("");
+    let expected = std::env::var("ADMIN_TOKEN").unwrap_or_default();
+    if expected.is_empty() || token != expected {
+        return (axum::http::StatusCode::FORBIDDEN, Json(json!({"error": "admin token required"}))).into_response();
+    }
+    let edition = body.get("edition").and_then(|v| v.as_i64()).unwrap_or(0);
+    let mint_tx = body.get("mint_tx").and_then(|v| v.as_str()).unwrap_or("");
+    let mint_asset = body.get("mint_asset").and_then(|v| v.as_str()).unwrap_or("");
+    if edition <= 0 || mint_tx.is_empty() {
+        return (axum::http::StatusCode::BAD_REQUEST, Json(json!({"error": "edition + mint_tx required"}))).into_response();
+    }
+    let conn = match db.lock() { Ok(c) => c, Err(_) => return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "db lock"}))).into_response() };
+    let n = conn.execute(
+        "UPDATE mu_passes SET mint_status='minted', mint_tx=?, mint_asset=? WHERE edition=?",
+        params![mint_tx, mint_asset, edition],
+    ).unwrap_or(0);
+    Json(json!({"ok": true, "rows": n})).into_response()
+}
+
+/// GET /api/pass/metadata/:edition
+/// Public metadata JSON for a pass — consumed by Bubblegum cNFT URI.
+async fn pass_metadata_api(
+    State(db): State<Db>,
+    axum::extract::Path(edition_str): axum::extract::Path<String>,
+) -> Response {
+    use serde_json::json;
+    let edition: i64 = edition_str.trim_end_matches(".json").parse().unwrap_or(0);
+    if edition <= 0 {
+        return (axum::http::StatusCode::BAD_REQUEST, Json(json!({"error": "bad edition"}))).into_response();
+    }
+    let conn = match db.lock() { Ok(c) => c, Err(_) => return Json(json!({})).into_response() };
+    let row = conn.query_row(
+        "SELECT p.brand, p.created_at,
+                (SELECT image_url FROM collab_products WHERE slug = p.brand LIMIT 1)
+         FROM mu_passes p WHERE p.edition = ?",
+        [edition],
+        |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?)),
+    );
+    let (brand, created_at, image_url) = match row {
+        Ok(r) => r,
+        Err(_) => return (axum::http::StatusCode::NOT_FOUND, Json(json!({"error": "edition not found"}))).into_response(),
+    };
+    let edition_pad = format!("{:03}", edition);
+    let image = image_url.unwrap_or_else(|| "https://mockups.wearmu.com/hero.png".to_string());
+
+    let mut resp = Json(json!({
+        "name": format!("MU Pass #{}", edition_pad),
+        "symbol": "MUPASS",
+        "description": "MU community membership pass. Holder gets permanent /vault access, voting rights in next-drop selection, and a share of the §28 Community fund's discretionary送金. Issued on purchase of a MU shirt; transferable (residual revshare承継 limited to 90 days post-transfer); burnable by holder only — Yuki cannot revoke.",
+        "image": image,
+        "external_url": format!("https://wearmu.com/pass#{}", edition_pad),
+        "attributes": [
+            {"trait_type": "Edition", "value": edition_pad},
+            {"trait_type": "Genesis Lot", "value": if edition <= 20 { "yes" } else { "no" }},
+            {"trait_type": "Brand", "value": brand},
+            {"trait_type": "Issued", "value": created_at}
+        ],
+        "properties": {
+            "category": "image",
+            "files": [{"uri": image, "type": "image/png"}]
+        }
+    })).into_response();
+    resp.headers_mut().insert("Cache-Control", HeaderValue::from_static("public, max-age=300"));
+    resp
+}
+
 /// GET /jiufight — public sales page for the SUPER YAWARA SWEEP CUP collab.
 /// Serves a static HTML file generated by `scripts/gen_collab_static_page.py`
 /// from the bulk-publish results — keeps Rust code unchanged when new
@@ -50152,6 +50259,9 @@ async fn main() {
         .route("/api/admin/pass/backfill", post(pass_backfill_api))
         .route("/api/admin/pass/mint", post(pass_mint_api))
         .route("/api/admin/pass/mint_batch", post(pass_mint_batch_api))
+        .route("/api/admin/pass/list", get(pass_list_admin_api))
+        .route("/api/admin/pass/record_mint", post(pass_record_mint_api))
+        .route("/api/pass/metadata/:edition", get(pass_metadata_api))
         .route("/gi/:id", get(show_gi_edition_page))
         .route("/gi/:id/sponsor", get(show_gi_sponsor_recruit_page))
         .route("/api/gi/:id/checkout", post(gi_edition_checkout))
