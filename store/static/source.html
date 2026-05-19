@@ -61,13 +61,23 @@ a{color:#e6c449}
   <h1>Tシャツ買うと中身全部見える。</h1>
   <p class="tagline">wearmu の Tシャツ を 1枚 でも 買って くれた 人 は、yukihamada が private に した <span class="num">21リポ</span> の ソース を ここから 読める。NFT も ウォレット も いらない、Stripe で 買った時 の メール だけ。</p>
 
-  <a class="cta" href="/shop">👉 Tシャツを買って /source に入る</a>
+  <a class="cta" href="/buy">👉 Tシャツを買って /source に入る</a>
   <span class="muted" style="margin-left:14px">¥4,900〜 · 国内 5-7日 · 全色 透過プリント対応</span>
 
+  <div style="margin:32px 0;background:#0E0E0E;border-radius:6px;padding:18px;display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+    <img src="https://mockups.wearmu.com/hero.png" alt="latest MUGEN T-shirt" loading="lazy" style="width:140px;height:auto;border-radius:4px;background:#fff" onerror="this.style.display='none'">
+    <div style="flex:1;min-width:200px">
+      <div style="font-size:11px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.55;margin-bottom:6px">今 買える Tシャツ</div>
+      <div style="font-size:15px;line-height:1.55">MUGEN は <a href="/transparency" style="color:#e6c449">気温 seed</a> の 自律生成 Tシャツ。 1時間に 1着、 同じデザインは 二度と作られない。 <strong>このTシャツ 1枚 で /source にも入れます</strong>。</div>
+      <a href="/buy" style="display:inline-block;margin-top:10px;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:#e6c449">今日のドロップを見る →</a>
+    </div>
+  </div>
+
   <div class="counter">
-    <div class="big">— / 100</div>
+    <div class="big"><span style="color:#fff">0</span> <span style="opacity:0.4">/ 100</span></div>
     <div class="lbl">First 100 MSA Members · Lifetime access to future repos</div>
-    <p style="font-size:12px;opacity:0.7;margin-top:14px">最初の <span class="num">100名</span> は、 これから増える private リポも 全部 自動でアクセス権 が 付く。 101名目以降は、 そのとき の 条件で 再加入。</p>
+    <p style="font-size:12px;opacity:0.75;margin-top:14px">最初の <span class="num">100名</span> は、 これから増える private リポも 全部 自動でアクセス権 が 付く。 101名目以降は、 そのとき の 条件で 再加入。</p>
+    <p style="font-size:11px;opacity:0.55;margin-top:10px">"Lifetime" の 定義: <strong>Enabler Inc. または 後継法人 が 運営する 限り</strong>。 Yuki 個人 の 継続性 リスク に 備え、 <a href="https://github.com/yukihamada/tsugi" style="color:#e6c449">tsugi protocol</a> の succession token と 紐付け予定 (Phase 4)。 売却・破産 時 は 残会員 への アーカイブ DL を 保証。</p>
   </div>
 
   <h2>仕組み</h2>
@@ -165,12 +175,8 @@ a{color:#e6c449}
     <div class="desc">電子手形 (約束手形) の検証ツール。日本の商習慣特化。</div>
   </div>
   <div class="repo">
-    <div class="row1"><div class="name">trio</div><div class="lang">Makefile</div></div>
-    <div class="desc">trio macOS の PKG ビルド + リリース手順 (姉妹リポ)。</div>
-  </div>
-  <div class="repo">
     <div class="row1"><div class="name">thestandard</div><div class="lang">TypeScript</div></div>
-    <div class="desc">"the standard" - 標準的なものを再定義する実験リポ。</div>
+    <div class="desc">"the standard" — 標準的なもの (UI primitive / interaction / 数値の見せ方) を再定義する実験リポ。</div>
   </div>
 
   <p class="muted" style="margin-top:18px">※ 行数 / 最終更新 / アクティビティ は GitHub 上で MSA 認証後に live で確認可。 上の リスト は 言語 と 概要 のみ で 中身 は 出さない。</p>
@@ -197,13 +203,32 @@ a{color:#e6c449}
     <p>v1 は read-only。 contribution flow は Phase 4 で 検討中。 Discord で 直接 提案して もらう のが 今の ところ ベスト。</p>
 
     <h3>Q. 正式 オープン は いつ？</h3>
-    <p>約束 しない。 「硬くなってから」。 Phase 1 (このページ) は 今日 (2026-05-19) 公開。 Phase 2 (1リポ end-to-end DL) は 翌週。</p>
+    <p>具体的に コミット する:</p>
+    <ul style="font-size:13px;opacity:0.85;margin:8px 0 12px 22px">
+      <li><strong>2026-05-31</strong>: trio リポ の zip DL が end-to-end で動く (Phase 2)。 First 5名 を 招待 して 通し テスト。</li>
+      <li><strong>2026-06-15</strong>: 全 Tier 1 リポ DL 開放 + 監査ログ ダッシュボード (Phase 3)。</li>
+      <li><strong>2026-06-30</strong>: First-100 締切 / Tier 2 検討開始 (Phase 4)。</li>
+    </ul>
+    <p style="font-size:12px;opacity:0.6">ずれたら 個別 に メールで お詫び する。 1週間以上 ずれたら 返金 受付。</p>
+
+    <h3>Q. ライセンス は？</h3>
+    <p style="margin-bottom:8px">短く 書く。 MSA License v0.1:</p>
+    <pre style="background:#0E0E0E;border:1px solid rgba(255,255,255,0.08);border-radius:4px;padding:14px 16px;font-size:11px;line-height:1.65;overflow-x:auto;font-family:'SF Mono','Menlo',monospace">MSA License v0.1
+Copyright (c) 2026 Enabler Inc. / Yuki Hamada
+
+1. You bought a wearmu T-shirt. The source is yours to read.
+2. Modify, fork, run for your own use freely.
+3. Personal projects, internal company tools — OK.
+4. Public redistribution of the source: NO (talk to us first).
+5. Commercial resale of derivative SaaS: contact info@enablerdao.com.
+6. No warranty. Use at your own risk.</pre>
+    <p style="font-size:11px;opacity:0.55;margin-top:8px">v1.0 は Phase 2 で 弁護士 レビュー 後 確定。 v0.1 は 暫定。</p>
   </div>
 
   <hr>
 
   <p style="font-size:16px;line-height:1.7">Tシャツ買うと、 21リポ の ソース が 読める。 ¥4,900〜。 単純な 話。</p>
-  <a class="cta" href="/shop">👉 今すぐ Tシャツを買う</a>
+  <a class="cta" href="/buy">👉 今すぐ Tシャツを買う</a>
 
   <a class="back" href="/">← MU トップ に 戻る</a>
 </div>
