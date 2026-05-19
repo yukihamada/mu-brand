@@ -4,6 +4,15 @@
 **Owner:** Yuki Hamada
 **Related:** [MU_PROTOCOL_V2.md](MU_PROTOCOL_V2.md), blog post `/blog/2026-05-19-open-source-stop`
 
+## 0. Name
+
+**MU Source Access** is the program name. Use it as a proper noun
+everywhere — docs, UI, copy, support replies. Short form: **MSA**.
+Don't say "MU holder access", "OSS-but-private", "source-available
+tier" etc. — one name, one promise.
+
+The one-liner for outsiders: **「Tシャツ買うと中身全部見える」**.
+
 ## 1. What we're solving
 
 On 2026-05-19 we flipped ~21 yukihamada/* repos from public to private to
@@ -11,13 +20,13 @@ buy ourselves time to harden them (enabling Dependabot exposed ~600 open
 alerts fleet-wide; we also had real prompt-injection and CORS bugs filed
 publicly against nanobot — see nanobot #42, #43).
 
-The blog promised MU holders would retain source access. This doc
-specifies how.
+The blog promised T-shirt buyers would retain source access. **MU Source
+Access** is how.
 
 **Non-goal:** Bring everything back to fully open OSS. Some repos will
-stay closed even to MU holders (anything with PII risk or active billing
-keys). The default model is "source-available to verified MU holders,
-read-only".
+stay closed even to MSA-eligible buyers (anything with PII risk or active
+billing keys). The default model is "source-available to MSA-eligible
+buyers, read-only".
 
 ## 2. Model decision
 
@@ -71,7 +80,7 @@ clones, adds GitHub-token rotation work.
 ## 4. Architecture
 
 ```
-[MU holder browser]
+[MSA-eligible browser]
        │ session cookie
        ▼
 [wearmu.com] ────────► /api/source/<repo>/grant ──────┐
@@ -108,12 +117,12 @@ from `/api/source/<repo>/grant`. Listing is public to drive funnel.
 
 ## 5. Repo allowlist
 
-**Tier 1 — source-available to T-shirt buyers (the 21 we just flipped):**
+**Tier 1 — included in MU Source Access (the 21 we just flipped):**
 trio, security-scanner, security-education, jitsuflow, phishguard,
 nemotron, gitnote, pasha, kagi, claudeterm, tsugi, hato, hypernews,
 flow-anime, Photon, makimaki, tegata, pon, factlens, NOU, thestandard.
 
-**Tier 2 — also private but T-shirt access NOT granted automatically
+**Tier 2 — private and NOT included in MU Source Access by default
 (needs opt-in per-repo decision):**
 - Anything with active billing keys in commit history (stayflowapp,
   banto — even after `.env` cleanup, key rotation pending)
@@ -145,21 +154,23 @@ Pure "here's what exists, here's why it's gated". Sets expectations.
 
 **Phase 2 (next week)** — implement `/api/source/<repo>/grant` with the
 zip path for 1 repo end-to-end (pick `trio` — small, no billing). Test
-with 2-3 MU holders.
+with 2-3 MSA-eligible buyers.
 
 **Phase 3** — open to all Tier 1 repos. Add the audit log dashboard for
 Yuki to see who's pulling what.
 
-**Phase 4 (optional)** — Tier 2 opt-in flow. Per-repo holder pool (some
-repos may require MA + additional condition).
+**Phase 4 (optional)** — Tier 2 opt-in flow. Per-repo MSA pool (some
+repos may require T-shirt + additional condition like specific design
+or quantity).
 
 ## 8. Open questions
 
 - Should the gate also serve `git log` / `git diff` views as HTML, or
   zip-only? (Vote: zip-only for v1; readable diff browser is nice but
   not load-bearing.)
-- Do we want a "MU Developer License" file in each repo declaring the
-  terms (use freely / no redistribution outside T-shirt buyer community)?
+- Do we want a "MU Source Access License" file in each repo declaring
+  the terms (use freely within the MSA community, no redistribution to
+  non-buyers)?
   Currently nanobot/thestandard/mu-brand carry `NOASSERTION`. Adding a
   custom LICENSE file at the same time we ship Phase 2 is cheap.
 - How do we treat fork-and-pull-request contributions from T-shirt
