@@ -30418,6 +30418,18 @@ async fn public_transparency_page(State(db): State<Db>) -> Html<String> {
         let days_s = if days < 0 { "—".to_string() } else { format!("{} days", fmt_commas(days)) };
         (exp[..10.min(exp.len())].to_string(), days_s, class)
     };
+    // 100枚 challenge live count (Kato FB #8): sold since CHALLENGE_100_START_UTC.
+    let t100_sold: i64 = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM mu_purchases
+             WHERE brand='mugen' AND created_at >= ?",
+            params![CHALLENGE_100_START_UTC], |r| r.get(0),
+        ).unwrap_or(0)
+    };
+    let t100_sold_s = fmt_commas(t100_sold);
+    let t100_pct: i64 = t100_sold.max(0).min(100);
+    let t100_class = if t100_sold >= 70 { "good" } else if t100_sold >= 30 { "warn" } else { "bad" };
     let as_of_unix: i64 = snap["as_of"].as_str().and_then(|s| s.parse().ok()).unwrap_or(0);
     // JST timestamp
     let jst = as_of_unix + 9 * 3600;
@@ -30556,6 +30568,34 @@ footer a:hover{{color:var(--y)}}
     <p>MUGEN は毎時間 1 ドロップが理想ですが、cron 失敗や Vision §14「negative space を尊重」で skip した日があります。隠さずそのまま公開。</p>
     <div class="row"><span class="k">MUGEN 欠番 drop_num</span><span class="v warn">{mugen_missing_s}</span></div>
     <div class="row"><span class="k">MUON 欠番日付</span><span class="v warn">{muon_missing_s}</span></div>
+  </div>
+
+  <!-- 100枚 challenge live (Kato FB #8 #9 — 数字を隠さない) -->
+  <div class="section">
+    <h2>100枚 challenge · 5/18 → 5/31</h2>
+    <p>MU の最初の商業的試金石。14日で 100着売る。結果で MSA / MU への投下時間を決める (70%+ なら倍投下、 50% 以下なら maintenance に戻す)。隠さず live で出す。</p>
+    <div class="row"><span class="k">累計 sold (mugen, since 5/18)</span><span class="v {t100_class}">{t100_sold_s} / 100</span></div>
+    <div style="background:#0e0e0e;border-radius:4px;height:8px;margin:14px 0 6px;overflow:hidden">
+      <div style="background:var(--y);height:100%;width:{t100_pct}%;transition:width .3s"></div>
+    </div>
+    <p style="font-size:11.5px;opacity:0.55;margin-top:8px"><a href="/100">/100 で 詳細</a> · 数字は毎リクエスト 再計算 · 1着 = mu_purchases.created_at &gt;= challenge start</p>
+  </div>
+
+  <!-- Fleet status (Kato FB #1 #3 — 14 product並列 を 直視) -->
+  <div class="section">
+    <h2>Fleet status · 14 product 並列</h2>
+    <p>1人 founder が 並列 で 動かしている プロダクト の honest grade。 「active dev = 新機能 / 顧客対応 を 今月 やってる」、 「maintenance = security patch + 既存顧客 サポート のみ」、 「private MSA = 中身 は MSA 経由 で読める」。</p>
+    <div class="row"><span class="k">JiuFlow (jiuflow.com)</span><span class="v good">active · MRR ¥180k · 161 active subs</span></div>
+    <div class="row"><span class="k">MU / wearmu</span><span class="v y">active · 100枚 challenge 進行中</span></div>
+    <div class="row"><span class="k">chatweb.ai / teai.io (nanobot)</span><span class="v">active · 公開 · #42 #43 fix済</span></div>
+    <div class="row"><span class="k">StayFlow (stayflowapp.com)</span><span class="v good">active · MRR — · Stripe Live · 民泊 SaaS</span></div>
+    <div class="row"><span class="k">Koe Device (koe.live)</span><span class="v">active · ハードウェア試作中</span></div>
+    <div class="row"><span class="k">SOLUNA / TAPKOP</span><span class="v">active · 弟子屈町建材 · East Ventures 出資先</span></div>
+    <div class="row"><span class="k">enablerdao.com / 会社サイト</span><span class="v">maintenance</span></div>
+    <div class="row"><span class="k">trio / kagi / pasha / pon / NOU 等 (MSA Tier 1, 21リポ)</span><span class="v warn">private · 中身は <a href="/source">/source</a></span></div>
+    <div class="row"><span class="k">Mini-agent / Photon / Hato / Factlens 等 (実験リポ)</span><span class="v warn">maintenance · private MSA</span></div>
+    <div class="row"><span class="k">nakamura兄弟 UFC project</span><span class="v bad">pause · 立石さんと再起検討</span></div>
+    <p style="margin-top:14px;font-size:12px;opacity:0.6">honest grade は Yuki が 月初 に 更新。 「active 全部」 ふりは しない。 14本 並列 を 直視 して 取捨選択 する データ点 として 公開。</p>
   </div>
 
   <!-- Recent purchases (PII-safe) -->
@@ -30723,6 +30763,9 @@ footer a:hover{{color:var(--y)}}
         domain_days_class = domain_days_class,
         you_paid_class = if you_paid == 0 { "bad" } else { "good" },
         mrr_class = if you_mrr == 0 { "bad" } else { "good" },
+        t100_sold_s = t100_sold_s,
+        t100_pct = t100_pct,
+        t100_class = t100_class,
     );
     Html(html)
 }
