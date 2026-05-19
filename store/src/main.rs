@@ -27113,24 +27113,20 @@ async fn admin_extras_email_preview(
     Html(html).into_response()
 }
 
-/// GET /jf/:token — JIU FIGHT × MU Order A affiliate landing.
+/// GET /jf/:token — JIU FIGHT × MU 150 着 edition affiliate landing.
 ///
-/// Each of the 100 numbered shirts has a UNIQUE 5-char random token
-/// (e.g. "nwtxj", "c3k9g") encoded in its QR code. Looking up the token
-/// returns the shirt number (1..=100). Visitors who scan the QR:
-///   - Get a cookie `jiufight_ref=NNN-token` (90 day TTL)
-///   - See the front + back of THEIR friend's specific shirt
-///   - Get a "buy yours" CTA → when they later check out, the cookie's
-///     ref code becomes the affiliate credit for shirt-owner #NNN.
+/// Single-edition #001..150 numbering with unique 5-char tokens:
+///   Order A (#001-100) → m71_NNN_front.png + m72_NNN_back.png (2-sided)
+///   Order B (#101-150) → orderB/NNN.png (front-only unique design)
 ///
-/// Token map lives in `jiufight_tokens.rs` (compile-time const slice,
-/// 100 entries, O(n) linear scan is plenty for n=100).
+/// Cinematic landing page: hero serial + animated countdown to 2026.05.24
+/// + shirt showcase + affiliate explanation + buy CTA. Sets cookie
+/// `jiufight_ref=NNN-token` (90 day TTL) so the wearer earns commission
+/// when the visitor purchases.
 async fn jiufight_affiliate_landing(
     axum::extract::Path(token): axum::extract::Path<String>,
 ) -> Response {
     let tok_lower = token.trim().to_ascii_lowercase();
-    // Token validity: must be exactly 5 chars from our alphabet (a-z 2-9
-    // minus i/l/o/0/1). Sanity-check before the slice scan.
     if tok_lower.len() != 5 || !tok_lower.chars().all(|c| c.is_ascii_alphanumeric()) {
         return (StatusCode::NOT_FOUND, "token format invalid").into_response();
     }
@@ -27142,82 +27138,240 @@ async fn jiufight_affiliate_landing(
         }
     };
     let nnn = format!("{:03}", num);
+    let callsign = tok_lower.to_uppercase();
+    let is_order_a = num <= 100;
+    let edition_label = if is_order_a { "Order A · JIU FIGHT 両手" } else { "Order B · UNIQUE" };
 
-    let front_url = format!("/static/jiufight/orderA/m71_{}_front.png", nnn);
-    let back_url  = format!("/static/jiufight/orderA/m72_{}_back.png", nnn);
+    // Build the shirt-showcase block. Order A has front+back; Order B
+    // has a single hero image.
+    let shirts_html = if is_order_a {
+        let front = format!("/static/jiufight/orderA/m71_{}_front.png", nnn);
+        let back  = format!("/static/jiufight/orderA/m72_{}_back.png", nnn);
+        format!(r#"<div class="shirts dual">
+  <figure class="shirt-card">
+    <div class="card-bg"><img src="{front}" alt="front #{nnn}"></div>
+    <figcaption><span class="dot"></span>FRONT</figcaption>
+  </figure>
+  <figure class="shirt-card">
+    <div class="card-bg"><img src="{back}" alt="back #{nnn}"></div>
+    <figcaption><span class="dot"></span>BACK · 2026.05.24</figcaption>
+  </figure>
+</div>"#)
+    } else {
+        let only = format!("/static/jiufight/orderB/{}.png", nnn);
+        format!(r#"<div class="shirts solo">
+  <figure class="shirt-card">
+    <div class="card-bg"><img src="{only}" alt="design #{nnn}"></div>
+    <figcaption><span class="dot"></span>UNIQUE · 1 of 1</figcaption>
+  </figure>
+</div>"#)
+    };
 
-    let body = format!(r#"<!doctype html>
+    let body = format!(r##"<!doctype html>
 <html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>JIU FIGHT #{nnn}/100 — wearmu.com</title>
+<title>#{nnn} · JIU FIGHT × MU — TOKYO 2026.05.24</title>
+<meta name="description" content="あなたの友達が JIU FIGHT × MU 150着エディションの #{nnn} を着ています。 2026年5月24日、東京で会いましょう。">
+<meta property="og:title" content="#{nnn} / 150 — JIU FIGHT × MU TOKYO 2026.05.24">
+<meta property="og:description" content="150 着限定エディションの 1 枚。 callsign: {callsign}">
+<meta property="og:image" content="https://wearmu.com{og_img}">
 <style>
-*{{box-sizing:border-box}}
-body{{background:#f5f5f0;color:#1a1a1a;font-family:-apple-system,sans-serif;margin:0;padding:0;font-size:15px;line-height:1.6}}
-header{{background:#fff;padding:24px;text-align:center;border-bottom:3px solid #1e40af}}
-h1{{margin:0 0 6px;font-size:24px;color:#1e40af;letter-spacing:0.02em}}
-.serial{{font-family:ui-monospace,Menlo,monospace;font-size:48px;color:#1e40af;font-weight:900;letter-spacing:0.04em;margin:8px 0}}
-.serial small{{font-size:18px;color:#666;font-weight:500}}
-.tok{{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#999;letter-spacing:0.1em;margin-top:4px}}
-.sub{{color:#666;font-size:13px}}
-.wrap{{max-width:720px;margin:0 auto;padding:32px 24px}}
-.shirts{{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:24px}}
-.shirts img{{width:100%;background:#fff;border:1px solid #ddd;border-radius:6px;padding:14px;display:block}}
-.shirts figure{{margin:0}}
-.shirts figcaption{{font-size:11px;color:#666;text-align:center;margin-top:6px;letter-spacing:0.1em;text-transform:uppercase}}
-@media(max-width:520px){{.shirts{{grid-template-columns:1fr}}}}
-.cta{{background:#fff;border:1px solid #ddd;border-radius:8px;padding:24px;margin:20px 0;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,0.04)}}
-.cta h2{{margin:0 0 6px;font-size:18px;color:#1e40af}}
-.cta p{{margin:4px 0 14px;color:#444;font-size:13px}}
-.cta .btn{{display:inline-block;background:#1e40af;color:#fff;font-weight:700;padding:14px 32px;border-radius:6px;text-decoration:none;font-size:15px;letter-spacing:0.04em;transition:background 0.15s}}
-.cta .btn:hover{{background:#0f2870}}
-.cta .sub-btn{{display:inline-block;margin-left:10px;color:#666;font-size:12px;text-decoration:none}}
-.cta .sub-btn:hover{{color:#1e40af}}
-.affiliate-note{{background:#fff8e1;border:1px solid #ffd54f;padding:12px 18px;border-radius:4px;font-size:12px;margin-top:18px;color:#7c5e00;line-height:1.7}}
-.affiliate-note b{{color:#bf6500}}
-.affiliate-note code{{background:rgba(0,0,0,0.05);padding:2px 6px;border-radius:3px}}
-footer{{text-align:center;padding:30px 24px;color:#888;font-size:11px;border-top:1px solid #ddd;margin-top:24px}}
+*{{box-sizing:border-box;margin:0;padding:0}}
+html,body{{background:#0a0a14;color:#e8e8f0;font-family:-apple-system,"Helvetica Neue",sans-serif;line-height:1.5;font-size:15px;overflow-x:hidden}}
+:root{{--cobalt:#3556eb;--cobalt-deep:#1e40af;--cobalt-glow:rgba(53,86,235,0.4);--gold:#e6c449}}
+
+/* ── Hero ──────────────────────────────────────────────────────────── */
+.hero{{position:relative;min-height:80vh;display:flex;flex-direction:column;justify-content:center;align-items:center;padding:60px 24px 40px;text-align:center;overflow:hidden}}
+.hero::before{{content:"";position:absolute;inset:0;background:radial-gradient(circle at 50% 30%,var(--cobalt-glow) 0%,transparent 55%);pointer-events:none;animation:pulse 4s ease-in-out infinite}}
+@keyframes pulse{{0%,100%{{opacity:0.6;transform:scale(1)}}50%{{opacity:1;transform:scale(1.08)}}}}
+
+.hero-eyebrow{{font-size:11px;letter-spacing:0.3em;color:rgba(255,255,255,0.55);text-transform:uppercase;margin-bottom:12px;animation:fadeup 0.6s 0.1s both}}
+.hero-title{{font-size:13px;letter-spacing:0.35em;color:var(--cobalt);text-transform:uppercase;margin-bottom:8px;animation:fadeup 0.6s 0.2s both;font-weight:700}}
+
+.serial-wrap{{margin:18px 0 24px;animation:fadeup 0.8s 0.3s both;position:relative;z-index:1}}
+.serial-hash{{font-size:20px;color:rgba(255,255,255,0.4);vertical-align:top;margin-right:4px;display:inline-block;line-height:0.9}}
+.serial-num{{font-size:clamp(108px,28vw,196px);font-weight:900;color:#fff;letter-spacing:-0.04em;line-height:0.85;font-family:"SF Pro Display",-apple-system,sans-serif;text-shadow:0 0 60px var(--cobalt-glow)}}
+.serial-of{{font-size:18px;color:rgba(255,255,255,0.5);letter-spacing:0.1em;margin-top:8px}}
+
+.callsign{{display:inline-block;background:rgba(53,86,235,0.16);border:1px solid var(--cobalt);color:var(--cobalt);padding:8px 18px;border-radius:24px;font-family:ui-monospace,Menlo,monospace;font-size:13px;letter-spacing:0.18em;font-weight:700;margin-top:6px;animation:fadeup 0.8s 0.45s both}}
+.callsign-label{{color:rgba(255,255,255,0.5);font-weight:400;margin-right:8px}}
+
+.tagline{{margin-top:30px;font-size:16px;color:rgba(255,255,255,0.85);max-width:480px;line-height:1.6;animation:fadeup 0.8s 0.5s both}}
+.tagline strong{{color:#fff;font-weight:700}}
+
+/* ── Countdown ─────────────────────────────────────────────────────── */
+.countdown{{margin-top:36px;padding:18px 22px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:8px;display:inline-flex;gap:14px;align-items:center;animation:fadeup 0.8s 0.6s both}}
+.countdown .label{{font-size:10px;letter-spacing:0.22em;color:rgba(255,255,255,0.5);text-transform:uppercase}}
+.countdown .nums{{font-family:ui-monospace,Menlo,monospace;font-size:18px;font-weight:700;color:var(--cobalt);letter-spacing:0.06em}}
+
+@keyframes fadeup{{from{{opacity:0;transform:translateY(20px)}}to{{opacity:1;transform:translateY(0)}}}}
+
+/* ── Showcase ──────────────────────────────────────────────────────── */
+.showcase{{padding:30px 20px 50px;background:linear-gradient(180deg,#0a0a14 0%,#101025 100%)}}
+.showcase-inner{{max-width:880px;margin:0 auto}}
+.shirts{{display:grid;gap:16px;margin-bottom:30px}}
+.shirts.dual{{grid-template-columns:1fr 1fr}}
+.shirts.solo{{grid-template-columns:minmax(0,520px);justify-content:center}}
+@media(max-width:520px){{.shirts.dual{{grid-template-columns:1fr}}}}
+
+.shirt-card{{display:flex;flex-direction:column;gap:8px}}
+.card-bg{{background:#fff;border-radius:10px;padding:18px;box-shadow:0 8px 40px rgba(53,86,235,0.18);aspect-ratio:0.72/1;display:flex;align-items:center;justify-content:center}}
+.card-bg img{{max-width:100%;max-height:100%;object-fit:contain;display:block}}
+.shirt-card figcaption{{font-size:10px;letter-spacing:0.18em;color:rgba(255,255,255,0.5);text-transform:uppercase;text-align:center;font-weight:600}}
+.shirt-card .dot{{display:inline-block;width:6px;height:6px;background:var(--cobalt);border-radius:50%;margin-right:8px;vertical-align:middle;box-shadow:0 0 8px var(--cobalt)}}
+
+/* ── Manifesto ─────────────────────────────────────────────────────── */
+.manifesto{{padding:60px 24px;text-align:center;background:#0a0a14;position:relative;overflow:hidden}}
+.manifesto::before{{content:"━◯━";position:absolute;top:-40px;left:50%;transform:translateX(-50%);font-size:36px;color:var(--cobalt);opacity:0.2;letter-spacing:0.1em}}
+.manifesto-text{{max-width:540px;margin:0 auto;font-size:17px;line-height:1.8;color:rgba(255,255,255,0.9);font-weight:300}}
+.manifesto-text em{{color:var(--cobalt);font-style:normal;font-weight:600}}
+.manifesto-text strong{{color:#fff;font-weight:700}}
+.manifesto-byline{{margin-top:24px;font-size:11px;letter-spacing:0.3em;color:rgba(255,255,255,0.4);text-transform:uppercase}}
+
+/* ── CTA Section ───────────────────────────────────────────────────── */
+.cta-section{{padding:50px 24px;background:linear-gradient(180deg,#0a0a14 0%,#1a1a3a 100%);text-align:center}}
+.cta-card{{max-width:520px;margin:0 auto;background:rgba(255,255,255,0.04);border:1px solid rgba(53,86,235,0.3);border-radius:12px;padding:32px 28px;backdrop-filter:blur(10px)}}
+.cta-card h2{{font-size:22px;color:#fff;margin-bottom:8px;letter-spacing:-0.01em}}
+.cta-card .cta-sub{{font-size:14px;color:rgba(255,255,255,0.65);margin-bottom:24px;line-height:1.7}}
+.cta-card .cta-sub strong{{color:var(--cobalt)}}
+.btn-primary{{display:inline-block;background:var(--cobalt);color:#fff;font-weight:700;padding:16px 36px;border-radius:8px;text-decoration:none;font-size:15px;letter-spacing:0.06em;transition:all 0.15s;box-shadow:0 4px 20px var(--cobalt-glow)}}
+.btn-primary:hover{{background:#fff;color:var(--cobalt);transform:translateY(-2px);box-shadow:0 8px 32px var(--cobalt-glow)}}
+.btn-secondary{{display:block;margin-top:16px;color:rgba(255,255,255,0.5);font-size:12px;text-decoration:none;letter-spacing:0.04em}}
+.btn-secondary:hover{{color:#fff}}
+
+/* ── Affiliate Mechanism Explainer ─────────────────────────────────── */
+.mechanism{{padding:50px 24px;background:#0a0a14}}
+.mechanism-inner{{max-width:560px;margin:0 auto}}
+.mechanism h3{{font-size:11px;letter-spacing:0.3em;color:var(--gold);text-transform:uppercase;text-align:center;margin-bottom:24px}}
+.flow{{display:flex;flex-direction:column;gap:14px}}
+.flow-step{{display:flex;gap:14px;padding:14px 16px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px}}
+.flow-step .step-num{{width:28px;height:28px;border-radius:50%;background:var(--cobalt);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;font-family:ui-monospace,Menlo,monospace}}
+.flow-step .step-text{{font-size:14px;color:rgba(255,255,255,0.85);line-height:1.6}}
+.flow-step .step-text strong{{color:#fff}}
+.flow-step .step-text code{{background:rgba(53,86,235,0.15);color:var(--cobalt);padding:2px 6px;border-radius:3px;font-size:12px}}
+
+/* ── Footer ────────────────────────────────────────────────────────── */
+footer{{text-align:center;padding:40px 24px;background:#050510;color:rgba(255,255,255,0.4);font-size:11px;letter-spacing:0.08em}}
+footer a{{color:rgba(255,255,255,0.6);text-decoration:none}}
+footer a:hover{{color:var(--cobalt)}}
+footer .brand{{font-size:13px;color:var(--cobalt);font-weight:700;margin-bottom:8px;letter-spacing:0.2em}}
+
+@media(max-width:520px){{
+  .hero{{padding:50px 20px 30px}}
+  .countdown{{flex-direction:column;gap:8px;padding:16px 20px}}
+  .manifesto{{padding:44px 20px}}
+  .manifesto-text{{font-size:16px}}
+}}
 </style></head>
+
 <body>
-<header>
-  <div class="sub">━◯━ JIU FIGHT × MU · TOKYO 2026</div>
-  <h1>このシャツの番号</h1>
-  <div class="serial">#{nnn} <small>/ 100</small></div>
-  <div class="tok">ref: {tok}</div>
-  <div class="sub">Limited edition · 1 of 100 · Live Event Tokyo</div>
-</header>
 
-<div class="wrap">
-  <div class="shirts">
-    <figure>
-      <img src="{front_url}" alt="front #{nnn}">
-      <figcaption>FRONT — JIU JITSU ENTERTAINMENT</figcaption>
-    </figure>
-    <figure>
-      <img src="{back_url}" alt="back #{nnn}">
-      <figcaption>BACK — TOKYO · LIVE EVENT</figcaption>
-    </figure>
+<section class="hero">
+  <div class="hero-eyebrow">JIU FIGHT × MU · TOKYO 2026</div>
+  <div class="hero-title">あなたの戦友が、これを着ている</div>
+  <div class="serial-wrap">
+    <span class="serial-hash">#</span><span class="serial-num">{nnn}</span>
+    <div class="serial-of">of 150 · {edition_label}</div>
   </div>
+  <div class="callsign">
+    <span class="callsign-label">CALLSIGN</span><strong>{callsign}</strong>
+  </div>
+  <div class="tagline">
+    150 着限定。 1 着 1 着に固有のシリアル + QR + コールサイン。<br>
+    <strong>あなたの友達が、 この戦旗を選んだ。</strong>
+  </div>
+  <div class="countdown">
+    <span class="label">━◯━ T-MINUS</span>
+    <span class="nums" id="cd">--日 --:--:--</span>
+  </div>
+</section>
 
-  <div class="cta">
-    <h2>同じ Tシャツを買う</h2>
-    <p>このシャツの着用者 (#{nnn}) があなたの紹介者として記録されます。 あなたが買うと着用者にコミッションが発生します。</p>
-    <a class="btn" href="/buy?ref=jiufight-{nnn}-{tok}">JIU FIGHT × MU を買う →</a>
-    <a class="sub-btn" href="/jiufight">他のデザインを見る</a>
+<section class="showcase">
+  <div class="showcase-inner">
+    {shirts_html}
   </div>
+</section>
 
-  <div class="affiliate-note">
-    <b>📍 アフィリエイトリンクについて</b><br>
-    あなたがこのページを開いたことが <code>jiufight_ref={nnn}-{tok}</code> として 90 日間 cookie に記録されます。
-    その間に当サイトで購入が発生すると、 シャツ #{nnn} の着用者にコミッションが発生する仕組みです。
-    詳細は <a href="/protocol" style="color:#bf6500">/protocol</a> をご覧ください。
+<section class="manifesto">
+  <div class="manifesto-text">
+    Tシャツじゃない、<em>戦旗</em>だ。<br><br>
+    150 人の柔術家が、 2026.05.24、 東京の畳の上で会う。<br>
+    そのうちの 1 人が、 <strong>#{nnn}</strong> を選んだ。<br><br>
+    <em>{callsign}</em> ― これがその callsign。<br>
+    QR を一度でもスキャンすれば、 二度と忘れない。
   </div>
-</div>
+  <div class="manifesto-byline">2026.05.24 · TOKYO LIVE EVENT</div>
+</section>
+
+<section class="cta-section">
+  <div class="cta-card">
+    <h2>あなたも 1 着を持つ</h2>
+    <div class="cta-sub">
+      このページから購入すると、 <strong>#{nnn} の着用者にコミッションが還元</strong>されます。<br>
+      150 着のうち、 まだ残っている番号を選んでください。
+    </div>
+    <a class="btn-primary" href="/buy?ref=jiufight-{nnn}-{tok}">JIU FIGHT × MU を買う &nbsp;→</a>
+    <a class="btn-secondary" href="/static/jiufight/orders/list.html">全 150 デザイン一覧を見る</a>
+  </div>
+</section>
+
+<section class="mechanism">
+  <div class="mechanism-inner">
+    <h3>━◯━ HOW IT WORKS</h3>
+    <div class="flow">
+      <div class="flow-step">
+        <div class="step-num">1</div>
+        <div class="step-text">あなたが今このページを開いた瞬間、 cookie <code>jiufight_ref={nnn}-{tok}</code> が 90 日間 セットされた。</div>
+      </div>
+      <div class="flow-step">
+        <div class="step-num">2</div>
+        <div class="step-text">あなたが wearmu.com で何かを買う → <strong>#{nnn} の着用者にコミッションが流れる</strong>。</div>
+      </div>
+      <div class="flow-step">
+        <div class="step-num">3</div>
+        <div class="step-text">あなたが買ったシャツは、 また誰かの戦友に配られる。 <strong>QR の輪が広がる</strong>。</div>
+      </div>
+      <div class="flow-step">
+        <div class="step-num">4</div>
+        <div class="step-text">仕組み詳細: <a href="/protocol" style="color:var(--cobalt)">/protocol</a></div>
+      </div>
+    </div>
+  </div>
+</section>
 
 <footer>
-  ━◯━ MU × JIU FIGHT TOKYO · wearmu.com · 株式会社イネブラ
+  <div class="brand">━◯━ MU × JIU FIGHT</div>
+  TOKYO 2026.05.24 · LIVE EVENT · 150 着限定エディション<br>
+  <a href="https://wearmu.com">wearmu.com</a> · 株式会社イネブラ
 </footer>
+
+<script>
+// Countdown to 2026.05.24 14:00 JST
+const target = new Date('2026-05-24T14:00:00+09:00').getTime();
+function tick() {{
+  const now = Date.now();
+  const diff = target - now;
+  const el = document.getElementById('cd');
+  if (diff <= 0) {{ el.textContent = 'LIVE NOW!'; return; }}
+  const d = Math.floor(diff / 86400000);
+  const h = Math.floor((diff % 86400000) / 3600000);
+  const m = Math.floor((diff % 3600000) / 60000);
+  const s = Math.floor((diff % 60000) / 1000);
+  el.textContent = d + '日 ' + String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+}}
+tick();
+setInterval(tick, 1000);
+</script>
+
 </body></html>
-"#, nnn=nnn, tok=tok_lower, front_url=front_url, back_url=back_url);
+"##,
+        nnn=nnn, tok=tok_lower, callsign=callsign,
+        edition_label=edition_label, shirts_html=shirts_html,
+        og_img=if is_order_a {
+            format!("/static/jiufight/orderA/m71_{}_front.png", nnn)
+        } else {
+            format!("/static/jiufight/orderB/{}.png", nnn)
+        });
 
     let mut resp = Html(body).into_response();
     let cookie = format!("jiufight_ref={}-{}; Path=/; Max-Age=7776000; SameSite=Lax",
@@ -27226,7 +27380,8 @@ footer{{text-align:center;padding:30px 24px;color:#888;font-size:11px;border-top
         header::SET_COOKIE,
         HeaderValue::from_str(&cookie).unwrap_or_else(|_| HeaderValue::from_static(""))
     );
-    eprintln!("[jiufight_affiliate] visit shirt=#{} token={}", nnn, tok_lower);
+    eprintln!("[jiufight_affiliate] visit shirt=#{} token={} order={}",
+              nnn, tok_lower, if is_order_a {"A"} else {"B"});
     resp
 }
 
