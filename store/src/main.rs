@@ -1146,10 +1146,17 @@ async fn suzuri_publish_drop_with_items(
     };
     use base64::Engine;
     let b64 = base64::engine::general_purpose::STANDARD.encode(&padded);
+    // resizeMode=cover → design fills the entire print area on the shirt
+    // (vs the SUZURI default which leaves a lot of empty space). Our texture
+    // is padded to 5:6 with transparent borders so `cover` won't crop visible
+    // ink — it just maps the texture edges to the print bed edges, giving
+    // the largest possible print. Required because the user complained that
+    // designs appeared tiny on the shirt mockup.
     let products_json: Vec<serde_json::Value> = items.iter().map(|iid| serde_json::json!({
         "itemId": *iid,
         "published": true,
         "resaleEnabled": false,
+        "resizeMode": "cover",
     })).collect();
     let body = serde_json::json!({
         "texture": format!("data:image/png;base64,{}", b64),
