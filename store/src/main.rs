@@ -23930,6 +23930,25 @@ async fn api_v1_sku_create(
              VALUES (?, ?, ?, ?, ?, ?, 'api-v1', ?)",
             params![slug, letter, drop_num, final_price, label, kind, url],
         );
+        // Mirror into products so PATCH/DELETE/SUZURI publish find the row.
+        // Same shape as /sku/quick and seed_partners_from_spec_dir.
+        let brand = proposal_brand_for_kind(&slug, kind);
+        let _ = conn.execute(
+            "INSERT INTO products
+                (brand, drop_num, name, design_url, mockup_url, price_jpy, inventory, active, created_at, weather_data)
+             VALUES (?,?,?,?,?,?,?,?,?,?)",
+            params![
+                brand, drop_num,
+                format!("━◯━ MU × {} · {} · {}", slug, letter.to_uppercase(), label),
+                url, url, final_price, 50, 1, now,
+                serde_json::json!({
+                    "kind": format!("{}_{}", slug, kind),
+                    "source": "api-v1-sku-create",
+                    "design_slug": "api-v1",
+                    "license_status": "self_serve",
+                }).to_string(),
+            ],
+        );
         (letter, drop_num, sku_id)
     };
 
@@ -23943,7 +23962,7 @@ async fn api_v1_sku_create(
         "cost_pt": if free_applied { 0 } else { cost },
         "free_applied": free_applied,
         "lp_url": format!("https://wearmu.com/{}", slug),
-        "next": "approve sales: POST /api/proposal/{slug}/approve (admin only)",
+        "next": "approve sales: POST /api/v1/proposal/{slug}/approve",
     })).into_response()
 }
 
@@ -24662,7 +24681,7 @@ async fn api_keys_page(
   <button class="copy" onclick="navigator.clipboard.writeText(document.getElementById('k').textContent);this.textContent='copied ✓';setTimeout(()=>this.textContent='copy',1500)">copy</button>
   <div class="kv"><div><div class="l">points balance</div><div class="v">{balance}</div></div><div><div class="l">free 30 used</div><div class="v">{free}</div></div><div><div class="l">per SKU</div><div class="v">30 pt</div></div></div>
 </div>
-<h2>Create a SKU</h2>
+<h2>Create a SKU — BYO design</h2>
 <pre>curl -X POST https://wearmu.com/api/v1/sku/create \
   -H 'Authorization: Bearer {api_key}' \
   -H 'Content-Type: application/json' \
@@ -24672,8 +24691,50 @@ async fn api_keys_page(
     "design_url": "https://example.com/my-design.png"
   }}'</pre>
 <p>レスポンス: <code>{{"ok":true,"sku_id":…,"slug":"personal-…","letter":"m001","lp_url":"https://wearmu.com/personal-…"}}</code></p>
+<h2>Create a SKU — AI generate (Gemini 3 Pro)</h2>
+<pre>curl -X POST https://wearmu.com/api/v1/sku/quick \
+  -H 'Authorization: Bearer {api_key}' \
+  -H 'Content-Type: application/json' \
+  -d '{{
+    "label":  "champion mat-time tee",
+    "kind":   "tee",
+    "prompt": "minimal japanese bjj poster — sumi ink, mat time, champion glow"
+  }}'</pre>
+<p>同期で Gemini が生成 → R2 アップロード → SUZURI material も作成（multi-variant: ビッグT / パーカー / フルグラフィック）。</p>
 <p>初回 30 枚は <strong>無料</strong>。以降 <strong>30 pt / SKU</strong>。 <a href="/extras/my">topup → /extras/my</a></p>
-<h2>Inspect & list</h2>
+
+<h2>SKU を編集 / 削除</h2>
+<pre># 価格 / ラベル / kind を更新
+curl -X PATCH https://wearmu.com/api/v1/sku/&lt;slug&gt;/&lt;letter&gt; \
+  -H 'Authorization: Bearer {api_key}' \
+  -H 'Content-Type: application/json' \
+  -d '{{"price_jpy": 5900, "label": "new title"}}'
+
+# SKU を削除（proposal_skus + products 両方を削除）
+curl -X DELETE https://wearmu.com/api/v1/sku/&lt;slug&gt;/&lt;letter&gt; \
+  -H 'Authorization: Bearer {api_key}'</pre>
+
+<h2>Proposal / brand を立ち上げ</h2>
+<pre># slug を claim（owner_email に email がセットされる）
+curl -X POST https://wearmu.com/api/v1/proposal \
+  -H 'Authorization: Bearer {api_key}' \
+  -H 'Content-Type: application/json' \
+  -d '{{"slug":"my-brand","name":"My Brand","ip_owner":"My Brand Inc."}}'
+
+# 公開する（approve）/ 取り下げ（revoke）
+curl -X POST https://wearmu.com/api/v1/proposal/my-brand/approve -H 'Authorization: Bearer {api_key}'
+curl -X POST https://wearmu.com/api/v1/proposal/my-brand/revoke  -H 'Authorization: Bearer {api_key}'</pre>
+
+<h2>外部チャネル発行</h2>
+<pre># SUZURI: material 作成（multi-variant — items のデフォルト: 100,152,8）
+curl -X POST 'https://wearmu.com/api/v1/suzuri/publish?slug=&lt;slug&gt;&letter=&lt;letter&gt;&items=100,152,8' \
+  -H 'Authorization: Bearer {api_key}'
+
+# Printful mockup を再生成（バックグラウンド）
+curl -X POST 'https://wearmu.com/api/v1/mockup/regen?slug=&lt;slug&gt;&letter=&lt;letter&gt;' \
+  -H 'Authorization: Bearer {api_key}'</pre>
+
+<h2>確認系 (public)</h2>
 <pre>curl https://wearmu.com/api/me -H 'Authorization: Bearer {api_key}'
 curl https://wearmu.com/api/proposal/&lt;slug&gt;/skus</pre>"#,
             email=html_escape(&email), api_key=html_escape(&api_key),
