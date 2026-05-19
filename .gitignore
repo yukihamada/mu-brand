@@ -47,3 +47,8 @@ node_modules
 
 # Claude Code per-agent scratch worktrees
 .claude/worktrees/
+
+# Print package ZIPs are too big for git (~250 MB). Re-host elsewhere.
+store/static/jiufight/print/orderA_*.zip
+store/static/jiufight/print/orderB_*.zip
+store/static/jiufight/print/jiufight_print_package_*.zip
