@@ -557,12 +557,6 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
   <span class="timer" id="floating-shop-timer">next drop —</span>
 </button>
 
-<!-- 100/14 CHALLENGE BANNER (May 2026) — clickable, top-of-page -->
-<a id="challenge-banner" href="/100"
-   style="display:block;background:#e6c449;color:#0A0A0A;padding:10px 20px;text-align:center;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;text-decoration:none;font-weight:500;position:relative;z-index:201;border-bottom:1px solid #0A0A0A">
-  ▲ 14日で100枚チャレンジ — <span id="challenge-sold">—</span>/100 sold · 残り <span id="challenge-days">—</span>日 · wearmu.com/100
-</a>
-
 <!-- TICKER -->
 <div id="ticker">
   <div class="ticker-inner" id="ticker-inner">
@@ -576,19 +570,6 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
     <span class="ticker-item">次のMUGENドロップまで <span id="t-timer2">—</span></span>
   </div>
 </div>
-<script>
-/* /100 challenge banner — auto-hides after deadline (2026-05-31 23:59 JST). */
-(function(){
-  var deadlineMs = Date.parse("2026-05-31T14:59:59Z");
-  if(Date.now() > deadlineMs){ var b=document.getElementById('challenge-banner'); if(b) b.style.display='none'; return; }
-  fetch('/api/100/progress',{cache:'no-store'}).then(function(r){return r.ok?r.json():null;}).then(function(j){
-    if(!j) return;
-    var s=document.getElementById('challenge-sold'); if(s) s.textContent=j.sold;
-    var days=Math.max(0, Math.ceil((deadlineMs-Date.now())/(24*3600*1000)));
-    var d=document.getElementById('challenge-days'); if(d) d.textContent=days;
-  }).catch(function(){});
-})();
-</script>
 
 <!-- §29 C-3: "今日はあなたの店" — Wed only banner, hidden when no brand or non-Wed -->
 <div id="today-yours-banner" style="display:none;background:linear-gradient(90deg,rgba(230,196,73,0.12),rgba(230,196,73,0.04));border-bottom:1px solid rgba(230,196,73,0.3);padding:10px 16px;text-align:center;font-size:12px;color:#e6c449;letter-spacing:0.05em">
