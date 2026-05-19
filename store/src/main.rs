@@ -1084,12 +1084,19 @@ fn crop_transparent_borders(png_bytes: &[u8]) -> Result<Vec<u8>, String> {
 /// Mirror a product to SUZURI: fetches design PNG, uploads as material,
 /// creates a product on item #148 (ヘビーウェイトT) with ¥1,400 creator
 /// margin. Returns (material_id, product_id, product_url) on success.
+/// SUZURI items used by default when no explicit list is passed:
+///   100  ビッグシルエットTシャツ   — canonical (~34×40cm print, +25% vs heavy)
+///   152  ヘビーウェイトパーカー    — hoodie variant
+///     8  フルグラフィックTシャツ   — sublimation, full-surface print
+/// First id becomes the canonical URL stored in products.suzuri_url.
+const SUZURI_DEFAULT_ITEMS: &[u32] = &[100, 152, 8];
+
 async fn suzuri_publish_drop(
     db: Db,
     product_id: i64,
     force: bool,
 ) -> Result<(i64, i64, String), String> {
-    suzuri_publish_drop_with_items(db, product_id, force, vec![SUZURI_HEAVY_TEE_ITEM_ID]).await
+    suzuri_publish_drop_with_items(db, product_id, force, SUZURI_DEFAULT_ITEMS.to_vec()).await
 }
 
 /// Lower-level publish that takes an explicit SUZURI items list. The first
@@ -24343,6 +24350,27 @@ async fn api_v1_sku_quick(
         (letter, drop_num, sku_id)
     };
 
+    // Auto-mirror to SUZURI with the bigger-print default items (100/152/8)
+    // so the caller gets an immediately-buyable URL back. We need the
+    // products.id that the seed inserts for this brand+drop_num.
+    let pid_opt: Option<i64> = {
+        let conn = db.lock().unwrap();
+        let brand = proposal_brand_for_kind(&slug, kind);
+        conn.query_row(
+            "SELECT id FROM products WHERE brand=? AND drop_num=? ORDER BY id DESC LIMIT 1",
+            params![brand, drop_num], |r| r.get(0),
+        ).ok()
+    };
+    let (suzuri_url, suzuri_err): (Option<String>, Option<String>) = match pid_opt {
+        Some(pid) => match suzuri_publish_drop_with_items(
+            db.clone(), pid, true, SUZURI_DEFAULT_ITEMS.to_vec()
+        ).await {
+            Ok((_mid, _spid, url)) => (Some(url), None),
+            Err(e) => (None, Some(e)),
+        },
+        None => (None, Some("no products row found for this SKU".to_string())),
+    };
+
     Json(serde_json::json!({
         "ok": true,
         "sku_id": sku_id,
@@ -24355,6 +24383,9 @@ async fn api_v1_sku_quick(
         "price_jpy": default_price,
         "cost_pt": if free_applied { 0 } else { cost },
         "free_applied": free_applied,
+        "suzuri_url": suzuri_url,
+        "suzuri_items": SUZURI_DEFAULT_ITEMS,
+        "suzuri_error": suzuri_err,
         "skus_api": format!("https://wearmu.com/api/proposal/{}/skus", slug),
         "lp_url": format!("https://wearmu.com/{}", slug),
     })).into_response()
