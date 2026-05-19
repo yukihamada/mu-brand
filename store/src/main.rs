@@ -52518,10 +52518,25 @@ async fn main() {
         .route("/ls",                           get(admin_ls_page))
         .route("/admin/proposal/extras/retroactive-claim",      post(admin_extras_retroactive_claim))
         .route("/admin/proposal/extras/email-preview",          get(admin_extras_email_preview))
-        // /proposals ServeDir removed. The catch-all below makes sure the
-        // static-dir fallback_service can't leak /proposals/<brand>.html either
-        // — brands surface ONLY at /<slug> via slug_or_static (DB-driven).
-        .route("/proposals/*rest", get(|| async { axum::http::StatusCode::NOT_FOUND }))
+        // /proposals/* — kill the URL prefix as a page surface, but keep
+        // image/asset access alive by redirecting to /static/proposals/ so
+        // legacy LPs that still reference /proposals/<slug>-pf-*.jpg etc.
+        // render their photos.
+        //   *.html / no-extension     → 404 (no page leak)
+        //   *.png/jpg/jpeg/webp/svg…   → 301 → /static/proposals/<rest>
+        .route("/proposals/*rest", get(|axum::extract::Path(rest): axum::extract::Path<String>| async move {
+            let lower = rest.to_lowercase();
+            let is_asset = matches!(
+                std::path::Path::new(&lower).extension().and_then(|e| e.to_str()),
+                Some("png") | Some("jpg") | Some("jpeg") | Some("webp") | Some("svg") | Some("gif")
+                | Some("avif") | Some("ico") | Some("css") | Some("js") | Some("woff") | Some("woff2")
+            );
+            if is_asset {
+                axum::response::Redirect::permanent(&format!("/static/proposals/{}", rest)).into_response()
+            } else {
+                (axum::http::StatusCode::NOT_FOUND, "no /proposals/ pages — see /<slug>").into_response()
+            }
+        }))
         .nest_service("/will", ServeDir::new("static/will"))
         .nest_service("/foundation", ServeDir::new("static/foundation"))
         .route("/api/collab/account/delete", post(collab_account_delete))
