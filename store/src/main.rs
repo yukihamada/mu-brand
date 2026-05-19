@@ -24107,6 +24107,190 @@ async fn api_v1_proposal_revoke(
 }
 
 #[derive(Deserialize)]
+struct SkuPatchBody {
+    #[serde(default)] label: Option<String>,
+    #[serde(default)] price_jpy: Option<i64>,
+    #[serde(default)] design_url: Option<String>,
+}
+
+/// PATCH /api/v1/sku/:slug/:letter — owner-gated. Update label / price /
+/// design_url. Mirrors to products table.
+async fn api_v1_sku_patch(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Path((slug, letter)): axum::extract::Path<(String, String)>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<SkuPatchBody>,
+) -> Response {
+    let _ = match require_slug_owner(&db, &headers, Some(&q), &slug) {
+        Ok(e) => e, Err(r) => return r,
+    };
+    let letter = letter.to_lowercase();
+    let conn = db.lock().unwrap();
+    // Ensure SKU exists.
+    let kind: String = match conn.query_row(
+        "SELECT kind FROM proposal_skus WHERE slug=? AND letter=?",
+        params![slug, letter], |r| r.get(0),
+    ) {
+        Ok(k) => k,
+        Err(_) => return (StatusCode::NOT_FOUND, Json(serde_json::json!({
+            "ok": false, "error": "no such (slug, letter)"
+        }))).into_response(),
+    };
+    let brand = proposal_brand_for_kind(&slug, &kind);
+    let mut sets_ps: Vec<String> = Vec::new();
+    let mut sets_p:  Vec<String> = Vec::new();
+    let mut vals: Vec<rusqlite::types::Value> = Vec::new();
+    if let Some(l) = body.label.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        sets_ps.push("label=?".into()); sets_p.push("name=?".into());
+        vals.push(l.to_string().into());
+        vals.push(format!("━◯━ MU × {} · {} · {}", slug, letter.to_uppercase(), l).into());
+    }
+    if let Some(p) = body.price_jpy.filter(|p| *p > 0) {
+        sets_ps.push("price_jpy=?".into()); sets_p.push("price_jpy=?".into());
+        vals.push(p.into()); vals.push(p.into());
+    }
+    if let Some(u) = body.design_url.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        sets_ps.push("design_url=?".into()); sets_p.push("design_url=?".into());
+        vals.push(u.to_string().into()); vals.push(u.to_string().into());
+    }
+    if sets_ps.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "ok": false, "error": "supply at least one of label/price_jpy/design_url"
+        }))).into_response();
+    }
+    // Emit per-field updates (simpler than dynamic param binding).
+    let _ = (sets_ps, sets_p, vals);
+    drop(conn);
+    let conn = db.lock().unwrap();
+    let mut affected_ps = 0i64;
+    let mut affected_p = 0i64;
+    if let Some(l) = body.label.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        affected_ps += conn.execute("UPDATE proposal_skus SET label=? WHERE slug=? AND letter=?",
+            params![l, slug, letter]).unwrap_or(0) as i64;
+        affected_p += conn.execute(
+            "UPDATE products SET name=? WHERE brand=? AND drop_num IN (SELECT drop_num FROM proposal_skus WHERE slug=? AND letter=?)",
+            params![format!("━◯━ MU × {} · {} · {}", slug, letter.to_uppercase(), l), brand, slug, letter]
+        ).unwrap_or(0) as i64;
+    }
+    if let Some(p) = body.price_jpy.filter(|p| *p > 0) {
+        affected_ps += conn.execute("UPDATE proposal_skus SET price_jpy=? WHERE slug=? AND letter=?",
+            params![p, slug, letter]).unwrap_or(0) as i64;
+        affected_p += conn.execute(
+            "UPDATE products SET price_jpy=? WHERE brand=? AND drop_num IN (SELECT drop_num FROM proposal_skus WHERE slug=? AND letter=?)",
+            params![p, brand, slug, letter]
+        ).unwrap_or(0) as i64;
+    }
+    if let Some(u) = body.design_url.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        affected_ps += conn.execute("UPDATE proposal_skus SET design_url=? WHERE slug=? AND letter=?",
+            params![u, slug, letter]).unwrap_or(0) as i64;
+        affected_p += conn.execute(
+            "UPDATE products SET design_url=? WHERE brand=? AND drop_num IN (SELECT drop_num FROM proposal_skus WHERE slug=? AND letter=?)",
+            params![u, brand, slug, letter]
+        ).unwrap_or(0) as i64;
+    }
+    Json(serde_json::json!({
+        "ok": true, "slug": slug, "letter": letter,
+        "rows_proposal_skus_updated": affected_ps,
+        "rows_products_updated": affected_p,
+    })).into_response()
+}
+
+/// DELETE /api/v1/sku/:slug/:letter — owner-gated soft delete. Removes
+/// the proposal_skus row and deactivates products.active=0. Hard-deletes
+/// the proposal_extras_skus row only if approval_status was 'pending'.
+async fn api_v1_sku_delete(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Path((slug, letter)): axum::extract::Path<(String, String)>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let _ = match require_slug_owner(&db, &headers, Some(&q), &slug) {
+        Ok(e) => e, Err(r) => return r,
+    };
+    let letter = letter.to_lowercase();
+    let conn = db.lock().unwrap();
+    let row: Option<(i64, String)> = conn.query_row(
+        "SELECT drop_num, kind FROM proposal_skus WHERE slug=? AND letter=?",
+        params![slug, letter], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).ok();
+    let (drop_num, kind) = match row {
+        Some(r) => r,
+        None => return (StatusCode::NOT_FOUND, Json(serde_json::json!({
+            "ok": false, "error": "no such (slug, letter)"
+        }))).into_response(),
+    };
+    let brand = proposal_brand_for_kind(&slug, &kind);
+    let deleted_ps = conn.execute("DELETE FROM proposal_skus WHERE slug=? AND letter=?",
+        params![slug, letter]).unwrap_or(0);
+    let deactivated_p = conn.execute(
+        "UPDATE products SET active=0 WHERE brand=? AND drop_num=?",
+        params![brand, drop_num]).unwrap_or(0);
+    let _ = conn.execute(
+        "UPDATE proposal_extras_skus SET approval_status='deleted'
+         WHERE slug=? AND letter=? AND approval_status IN ('approved','pending')",
+        params![slug, letter]);
+    Json(serde_json::json!({
+        "ok": true, "slug": slug, "letter": letter,
+        "proposal_skus_deleted": deleted_ps,
+        "products_deactivated": deactivated_p,
+    })).into_response()
+}
+
+#[derive(Deserialize)]
+struct MockupRegenBody {
+    slug: String,
+    letter: String,
+}
+
+/// POST /api/v1/mockup/regen — owner-gated Printful mockup regen.
+/// Triggers regen_product_mockup as a background tokio task so the
+/// caller doesn't block on the full Printful poll (~2 min). Returns
+/// immediately with status='regenerating'.
+async fn api_v1_mockup_regen(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<MockupRegenBody>,
+) -> Response {
+    let _ = match require_slug_owner(&db, &headers, Some(&q), &body.slug) {
+        Ok(e) => e, Err(r) => return r,
+    };
+    let letter = body.letter.to_lowercase();
+    let row: Option<(i64, String, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        let kind: String = match conn.query_row(
+            "SELECT kind FROM proposal_skus WHERE slug=? AND letter=?",
+            params![body.slug, letter], |r| r.get(0),
+        ) { Ok(k) => k, Err(_) => return (StatusCode::NOT_FOUND, Json(serde_json::json!({
+            "ok": false, "error": "no such (slug, letter)"
+        }))).into_response() };
+        let brand = proposal_brand_for_kind(&body.slug, &kind);
+        conn.query_row(
+            "SELECT id, brand, design_url FROM products
+             WHERE brand=? ORDER BY drop_num DESC LIMIT 1",
+            params![brand], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).ok()
+    };
+    let (pid, brand, design_url) = match row {
+        Some((p, b, Some(d))) if !d.is_empty() => (p, b, d),
+        Some(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "ok": false, "error": "product has no design_url"
+        }))).into_response(),
+        None => return (StatusCode::NOT_FOUND, Json(serde_json::json!({
+            "ok": false, "error": "no products row for this slug/letter"
+        }))).into_response(),
+    };
+    let db2 = db.clone();
+    tokio::spawn(async move { regen_product_mockup(pid, brand, design_url, db2).await; });
+    Json(serde_json::json!({
+        "ok": true, "status": "regenerating",
+        "product_id": pid, "slug": body.slug, "letter": letter,
+        "note": "Printful task takes ~30-90s. Poll GET /api/admin/products?search=<slug>&no_summary=1 for mockup_url.",
+    })).into_response()
+}
+
+#[derive(Deserialize)]
 struct SuzuriPublishApiBody {
     slug: String,
     letter: String,
@@ -53347,10 +53531,13 @@ async fn main() {
         .route("/api/v1/me",                    get(api_v1_me))
         .route("/api/v1/sku/create",           post(api_v1_sku_create))
         .route("/api/v1/sku/quick",            post(api_v1_sku_quick))
+        .route("/api/v1/sku/:slug/:letter",  patch(api_v1_sku_patch)
+                                              .delete(api_v1_sku_delete))
         .route("/api/v1/proposal",             post(api_v1_proposal_upsert))
         .route("/api/v1/proposal/:slug/approve", post(api_v1_proposal_approve))
         .route("/api/v1/proposal/:slug/revoke",  post(api_v1_proposal_revoke))
         .route("/api/v1/suzuri/publish",       post(api_v1_suzuri_publish))
+        .route("/api/v1/mockup/regen",         post(api_v1_mockup_regen))
         .route("/admin/proposal/extras/retroactive-claim",      post(admin_extras_retroactive_claim))
         .route("/admin/proposal/extras/email-preview",          get(admin_extras_email_preview))
         // /proposals/* — kill the URL prefix as a page surface, but keep
