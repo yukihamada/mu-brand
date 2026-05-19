@@ -19384,6 +19384,35 @@ fn is_admin_email_session(db: &Db, headers: &HeaderMap) -> Option<String> {
     if allowed.iter().any(|a| a == &email) { Some(email) } else { None }
 }
 
+/// Resolve the caller's verified email from either:
+///   • Authorization: Bearer <session_token>
+///   • ?api_key=<session_token>     (query for curl convenience)
+///   • mu_collab_session cookie     (browser fallback)
+/// Returns the verified email lowercased, or None.
+fn bearer_or_session_email(
+    db: &Db,
+    headers: &HeaderMap,
+    query: Option<&std::collections::HashMap<String, String>>,
+) -> Option<String> {
+    // 1. Bearer token / api_key query → look up by session_token.
+    let bearer = headers.get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer ").or_else(|| s.strip_prefix("bearer ")))
+        .map(String::from)
+        .or_else(|| query.and_then(|q| q.get("api_key").cloned()));
+    if let Some(t) = bearer.filter(|s| !s.is_empty()) {
+        let conn = db.lock().unwrap();
+        if let Ok(email) = conn.query_row(
+            "SELECT email FROM collab_users WHERE session_token=? AND verified=1",
+            params![t], |r| r.get::<_, String>(0),
+        ) {
+            return Some(email.to_lowercase());
+        }
+    }
+    // 2. Cookie fallback.
+    collab_session_email(db, headers).map(|t| t.0.to_lowercase())
+}
+
 /// Look up the verified email from the request cookie. Returns None if unauth.
 fn collab_session_email(db: &Db, headers: &HeaderMap) -> Option<(String, i64, bool, bool)> {
     let token = headers.get("cookie")
@@ -23775,6 +23804,304 @@ async fn extras_balance(
         // as a UI hint only — not the actual grant amount.
         "mu_claim_floor_jpy": EXTRAS_POINTS_PER_MUGEN_FLOOR,
     })).into_response()
+}
+
+// ── Public-developer API (MU API key = collab_users.session_token) ─────
+// Self-serve: log in via /api/collab/auth/{start,verify} (or visit /api-keys)
+// to mint a session_token, then use it as `Authorization: Bearer <token>`
+// or `?api_key=<token>` for the endpoints below.
+
+#[derive(Deserialize)]
+struct SkuCreateBody {
+    /// Target proposal slug. Defaults to the caller's personal sandbox
+    /// (`personal-<hash(email)>`) if omitted or empty.
+    #[serde(default)] slug: String,
+    label: String,
+    kind: String,                 // tee / hoodie / mug / longsleeve / ...
+    design_url: String,           // absolute URL to a PNG hosted anywhere
+    #[serde(default)] price_jpy: Option<i64>,
+}
+
+/// POST /api/v1/sku/create — auth: Bearer <api_key> (or ?api_key=).
+/// Creates one new SKU in the caller's chosen slug for 30 pt (free for
+/// the first 30 SKUs per email). Mirrors collab_partner_sku_add but
+/// is gated on the API key, not the per-slug manage token.
+async fn api_v1_sku_create(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<SkuCreateBody>,
+) -> Response {
+    let email = match bearer_or_session_email(&db, &headers, Some(&q)) {
+        Some(e) => e,
+        None => return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({
+            "ok": false, "error": "missing or invalid api_key (Authorization: Bearer <key> or ?api_key=)"
+        }))).into_response(),
+    };
+    let label = body.label.trim();
+    let kind  = body.kind.trim();
+    let url   = body.design_url.trim();
+    if label.is_empty() || kind.is_empty() || url.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "ok": false, "error": "label, kind, design_url required"
+        }))).into_response();
+    }
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "ok": false, "error": "design_url must be absolute http(s) URL"
+        }))).into_response();
+    }
+    let slug = if body.slug.trim().is_empty() {
+        let conn = db.lock().unwrap();
+        ensure_personal_proposal(&conn, &email)
+    } else {
+        body.slug.trim().to_lowercase()
+    };
+
+    let final_price: i64 = body.price_jpy.unwrap_or_else(|| match kind {
+        "tee" => 4_900, "longsleeve" => 6_400, "tank_top" => 4_800,
+        "hoodie" => 9_800, "crewneck" => 8_400, "zip_hoodie" => 10_800,
+        "cap" => 5_800, "beanie" => 3_800, "tote" => 4_200,
+        "drawstring" => 2_800, "mug" => 2_400, "socks" => 1_800,
+        "sticker" => 980, "pin" => 880, "magnet" => 980, "postcard" => 480,
+        "notebook" => 2_800, "phonecase" => 3_400, "kids_tee" => 4_200,
+        _ => 4_900,
+    });
+
+    // Charge 30 pt unless free-30 still available.
+    let (cost, free_applied) = {
+        let conn = db.lock().unwrap();
+        extras_compute_cost(&conn, &email, 1)
+    };
+    let now = chrono_now();
+    let (letter, drop_num, sku_id) = {
+        let conn = db.lock().unwrap();
+        if !free_applied {
+            if let Err(e) = points_mutate(&conn, &email, -cost, "sku_create", None, Some(&slug)) {
+                return (StatusCode::PAYMENT_REQUIRED, Json(serde_json::json!({
+                    "ok": false, "error": e, "cost_pt": cost,
+                    "topup_url": "https://wearmu.com/extras/my"
+                }))).into_response();
+            }
+        } else {
+            // Burn the free-30 entitlement on first call.
+            let _ = conn.execute(
+                "INSERT OR IGNORE INTO proposal_points (email, balance, free_30_used, updated_at)
+                 VALUES (?, 0, 0, ?)",
+                params![normalize_email(&email), now],
+            );
+            let _ = conn.execute(
+                "UPDATE proposal_points SET free_30_used=1, updated_at=? WHERE email=?",
+                params![now, normalize_email(&email)],
+            );
+        }
+        // Auto-assign letter (m001, m002, …).
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proposal_skus WHERE slug=? AND letter LIKE 'm%'",
+            params![slug], |r| r.get(0),
+        ).unwrap_or(0);
+        let letter = format!("m{:03}", n + 1);
+        let max_manual: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(drop_num),7_999_999) FROM proposal_skus
+             WHERE slug=? AND drop_num BETWEEN 8_000_000 AND 8_999_999",
+            params![slug], |r| r.get(0),
+        ).unwrap_or(7_999_999);
+        let drop_num = max_manual + 1;
+        let _ = conn.execute(
+            "INSERT INTO proposal_extras_skus
+              (job_id, slug, letter, label, kind, price_jpy, image_url,
+               approval_status, reviewed_at, created_at)
+             VALUES (0, ?, ?, ?, ?, ?, ?, 'approved', ?, ?)",
+            params![slug, letter, label, kind, final_price, url, now, now],
+        );
+        let sku_id = conn.last_insert_rowid();
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO proposal_skus
+                (slug, letter, drop_num, price_jpy, label, kind, design_slug, design_url)
+             VALUES (?, ?, ?, ?, ?, ?, 'api-v1', ?)",
+            params![slug, letter, drop_num, final_price, label, kind, url],
+        );
+        (letter, drop_num, sku_id)
+    };
+
+    Json(serde_json::json!({
+        "ok": true,
+        "sku_id": sku_id,
+        "slug": slug,
+        "letter": letter,
+        "drop_num": drop_num,
+        "price_jpy": final_price,
+        "cost_pt": if free_applied { 0 } else { cost },
+        "free_applied": free_applied,
+        "lp_url": format!("https://wearmu.com/{}", slug),
+        "next": "approve sales: POST /api/proposal/{slug}/approve (admin only)",
+    })).into_response()
+}
+
+/// GET /api/me — auth: Bearer/cookie. Returns the caller's email, API key,
+/// points balance, and a quickstart curl example.
+async fn api_v1_me(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let email = match bearer_or_session_email(&db, &headers, Some(&q)) {
+        Some(e) => e,
+        None => return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({
+            "ok": false, "error": "not authenticated; POST /api/collab/auth/start with {email} to begin"
+        }))).into_response(),
+    };
+    let (api_key, balance, free_used, personal): (String, i64, bool, String) = {
+        let conn = db.lock().unwrap();
+        let row: (String,) = conn.query_row(
+            "SELECT COALESCE(session_token,'') FROM collab_users WHERE email=?",
+            params![email], |r| Ok((r.get(0)?,)),
+        ).unwrap_or((String::new(),));
+        let (bal, free) = points_balance(&conn, &email);
+        let p = ensure_personal_proposal(&conn, &email);
+        (row.0, bal, free, p)
+    };
+    Json(serde_json::json!({
+        "ok": true,
+        "email": email,
+        "api_key": api_key,
+        "points_balance": balance,
+        "free_30_used": free_used,
+        "personal_slug": personal,
+        "endpoints": {
+            "create_sku": "POST /api/v1/sku/create",
+            "list_skus":  "GET  /api/proposal/<slug>/skus",
+            "state":      "GET  /api/proposal/<slug>/state",
+        },
+        "pricing": {
+            "per_sku_pt": EXTRAS_POINTS_PER_SKU,
+            "free_first_n_skus": EXTRAS_FREE_SKUS,
+            "topup": "https://wearmu.com/extras/my",
+        },
+        "quickstart_curl": format!(
+            "curl -X POST https://wearmu.com/api/v1/sku/create \\\n  -H 'Authorization: Bearer {}' \\\n  -H 'Content-Type: application/json' \\\n  -d '{{\"label\":\"My first tee\",\"kind\":\"tee\",\"design_url\":\"https://example.com/design.png\"}}'",
+            if api_key.is_empty() { "<your_api_key>".into() } else { api_key.clone() }
+        ),
+    })).into_response()
+}
+
+/// GET /api-keys — HTML page. Cookie-gated (mu_collab_session). Shows the
+/// caller's API key + quickstart + manage links. Unauth visitors see a
+/// minimal "log in to get a key" form that calls /api/collab/auth/start.
+async fn api_keys_page(
+    State(db): State<Db>,
+    headers: HeaderMap,
+) -> Response {
+    let session = collab_session_email(&db, &headers);
+    let (logged_in, email, api_key, balance, free_used) = match session {
+        Some((email, _, _, _)) => {
+            let conn = db.lock().unwrap();
+            let api_key: String = conn.query_row(
+                "SELECT COALESCE(session_token,'') FROM collab_users WHERE email=?",
+                params![email], |r| r.get(0),
+            ).unwrap_or_default();
+            let (bal, free) = points_balance(&conn, &email);
+            (true, email, api_key, bal, free)
+        }
+        None => (false, String::new(), String::new(), 0, false),
+    };
+    let body = if logged_in {
+        format!(r#"<div class="card">
+  <div class="eyebrow">━◯━ logged in as</div>
+  <div class="email">{email}</div>
+  <div class="eyebrow">API key</div>
+  <div class="key" id="k">{api_key}</div>
+  <button class="copy" onclick="navigator.clipboard.writeText(document.getElementById('k').textContent);this.textContent='copied ✓';setTimeout(()=>this.textContent='copy',1500)">copy</button>
+  <div class="kv"><div><div class="l">points balance</div><div class="v">{balance}</div></div><div><div class="l">free 30 used</div><div class="v">{free}</div></div><div><div class="l">per SKU</div><div class="v">30 pt</div></div></div>
+</div>
+<h2>Create a SKU</h2>
+<pre>curl -X POST https://wearmu.com/api/v1/sku/create \
+  -H 'Authorization: Bearer {api_key}' \
+  -H 'Content-Type: application/json' \
+  -d '{{
+    "label": "My first MU tee",
+    "kind":  "tee",
+    "design_url": "https://example.com/my-design.png"
+  }}'</pre>
+<p>レスポンス: <code>{{"ok":true,"sku_id":…,"slug":"personal-…","letter":"m001","lp_url":"https://wearmu.com/personal-…"}}</code></p>
+<p>初回 30 枚は <strong>無料</strong>。以降 <strong>30 pt / SKU</strong>。 <a href="/extras/my">topup → /extras/my</a></p>
+<h2>Inspect & list</h2>
+<pre>curl https://wearmu.com/api/me -H 'Authorization: Bearer {api_key}'
+curl https://wearmu.com/api/proposal/&lt;slug&gt;/skus</pre>"#,
+            email=html_escape(&email), api_key=html_escape(&api_key),
+            balance=balance, free=if free_used {"yes"} else {"no"})
+    } else {
+        r#"<div class="card">
+  <h2>API key を発行する</h2>
+  <p>email を入れて <strong>verify</strong> を押すと、 6 桁の確認コードが届きます。 そのコードでログイン → API key が即発行されます。</p>
+  <form id="auth-start"><input type="email" id="ae" placeholder="email" required><button type="submit">verify</button></form>
+  <form id="auth-verify" style="display:none"><input type="text" id="av" placeholder="6-digit code" pattern="[0-9]{6}" required><button type="submit">log in</button></form>
+  <div id="out" class="result"></div>
+</div>
+<script>
+(function(){
+  var ae=document.getElementById('ae'), af=document.getElementById('auth-start');
+  var av=document.getElementById('av'), vf=document.getElementById('auth-verify');
+  var out=document.getElementById('out');
+  af.addEventListener('submit', async function(e){e.preventDefault();
+    out.textContent='sending code …';
+    var r=await fetch('/api/collab/auth/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:ae.value.trim()})});
+    var j=await r.json();
+    if (r.ok && j.ok!==false){ out.textContent='code sent to '+ae.value+' — check inbox'; vf.style.display='flex'; }
+    else { out.style.color='#ff6464'; out.textContent='✗ '+(j.error||'HTTP '+r.status); }
+  });
+  vf.addEventListener('submit', async function(e){e.preventDefault();
+    out.textContent='verifying …';
+    var r=await fetch('/api/collab/auth/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:ae.value.trim(),code:av.value.trim()})});
+    var j=await r.json();
+    if (r.ok && j.ok!==false){ out.style.color='#7be57b'; out.textContent='✓ logged in — reloading'; setTimeout(()=>location.reload(), 600); }
+    else { out.style.color='#ff6464'; out.textContent='✗ '+(j.error||'HTTP '+r.status); }
+  });
+})();
+</script>"#.to_string()
+    };
+
+    let html = format!(r#"<!doctype html>
+<html lang="ja"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>MU API key — wearmu.com</title>
+<style>
+:root{{--bg:#0a0a0a;--fg:#f5f5f0;--mute:#888;--line:#222;--y:#e6c449}}
+*{{box-sizing:border-box}}body{{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue',Arial,sans-serif;margin:0;line-height:1.7;font-size:14px}}
+.wrap{{max-width:760px;margin:0 auto;padding:48px 24px}}
+h1{{font-size:24px;margin:0 0 6px;letter-spacing:-0.01em}}
+h2{{font-size:18px;margin:36px 0 8px;color:var(--y)}}
+.tagline{{color:var(--mute);font-size:12px;letter-spacing:0.18em;text-transform:uppercase;margin-bottom:32px}}
+.card{{background:#111;border:1px solid var(--line);border-radius:6px;padding:24px;margin-bottom:18px}}
+.eyebrow{{font-size:10px;letter-spacing:0.3em;color:var(--mute);text-transform:uppercase;margin:14px 0 6px}}
+.email{{font-size:15px;font-weight:600}}
+.key{{background:#0a0a0a;border:1px solid var(--line);padding:12px 14px;border-radius:4px;font-family:'SF Mono',monospace;font-size:13px;word-break:break-all;color:var(--y);margin-bottom:8px}}
+.copy{{background:#222;border:1px solid var(--line);color:var(--fg);font-size:12px;padding:6px 14px;border-radius:3px;cursor:pointer;font-family:inherit}}
+.copy:hover{{filter:brightness(1.3)}}
+.kv{{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:22px;padding-top:18px;border-top:1px solid var(--line)}}
+.kv .l{{font-size:10px;letter-spacing:0.16em;text-transform:uppercase;color:var(--mute)}}
+.kv .v{{font-size:16px;font-weight:700;margin-top:4px}}
+pre{{background:#0a0a0a;border:1px solid var(--line);border-radius:4px;padding:14px;font-family:'SF Mono',monospace;font-size:12px;color:#ccc;overflow-x:auto;line-height:1.7}}
+form{{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}}
+input{{flex:1;min-width:240px;background:#0a0a0a;border:1px solid var(--line);color:var(--fg);padding:11px 13px;font-family:inherit;font-size:14px;border-radius:4px}}
+input:focus{{border-color:var(--y);outline:none}}
+button{{background:var(--y);color:#000;border:0;font-weight:700;padding:11px 22px;font-size:13px;letter-spacing:0.06em;cursor:pointer;border-radius:4px;font-family:inherit}}
+.result{{margin-top:14px;font-size:12px;color:var(--mute);font-family:'SF Mono',monospace}}
+code{{background:#181818;padding:1px 6px;border-radius:3px;font-size:12px;color:var(--y)}}
+a{{color:var(--y);text-decoration:none}}a:hover{{text-decoration:underline}}
+</style></head><body>
+<div class="wrap">
+  <h1>━◯━ MU API key</h1>
+  <div class="tagline">Self-serve · 30 pt / SKU · 初回 30 枚 無料</div>
+  {body}
+  <p style="margin-top:48px;font-size:11px;opacity:0.6;line-height:1.85">
+    API key = collab session token。 <a href="/api/collab/auth/logout">logout</a> で revoke、 再ログインで再発行。 ソース: <a href="https://github.com/yukihamada/mu-brand">github.com/yukihamada/mu-brand</a>
+  </p>
+</div>
+</body></html>"#, body=body);
+    Html(html).into_response()
 }
 
 async fn extras_order(
@@ -52550,6 +52877,11 @@ async fn main() {
         .route("/admin/proposals",             get(proposal_generic_list))
         // Admin dashboard at /ls — list + approve/revoke + preview links.
         .route("/ls",                           get(admin_ls_page))
+        // ── Self-serve developer API (MU API key flow) ────────────────
+        .route("/api-keys",                     get(api_keys_page))
+        .route("/api/me",                       get(api_v1_me))
+        .route("/api/v1/me",                    get(api_v1_me))
+        .route("/api/v1/sku/create",           post(api_v1_sku_create))
         .route("/admin/proposal/extras/retroactive-claim",      post(admin_extras_retroactive_claim))
         .route("/admin/proposal/extras/email-preview",          get(admin_extras_email_preview))
         // /proposals/* — kill the URL prefix as a page surface, but keep
