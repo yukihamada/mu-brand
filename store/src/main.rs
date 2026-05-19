@@ -23938,6 +23938,204 @@ async fn api_v1_sku_create(
     })).into_response()
 }
 
+#[derive(Deserialize)]
+struct SkuQuickBody {
+    /// Target slug. Defaults to caller's personal sandbox.
+    #[serde(default)] slug: String,
+    /// Optional: pin a specific kind (tee / hoodie / longsleeve / mug / …).
+    /// If empty, picked randomly from `extras_categories_for(slug)`.
+    #[serde(default)] kind: String,
+    /// Optional label override. If empty, generated from partner_name + kind.
+    #[serde(default)] label: String,
+}
+
+/// POST /api/v1/sku/quick — SYNCHRONOUS generate + publish.
+/// Auth via Bearer / cookie / ?api_key=. Charges 30 pt (free first 30
+/// per email). Blocks for ~10-30 s while Gemini renders the design and
+/// the bytes are pushed to R2. On success the SKU is INSERTED with
+/// approval_status='approved' so it's immediately visible at
+/// GET /api/proposal/<slug>/skus and on /<slug> if the slug is approved.
+///
+/// Difference vs /api/proposal/:slug/extras/order: that endpoint queues a
+/// job + sends email when done; this one runs inline and returns the new
+/// SKU's URL in the response — for "+1 button → すぐに出てくる" UX.
+async fn api_v1_sku_quick(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<SkuQuickBody>,
+) -> Response {
+    let email = match bearer_or_session_email(&db, &headers, Some(&q)) {
+        Some(e) => e,
+        None => return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({
+            "ok": false, "error": "missing or invalid api_key (Authorization: Bearer <key> or ?api_key=)"
+        }))).into_response(),
+    };
+    let slug = if body.slug.trim().is_empty() {
+        let conn = db.lock().unwrap();
+        ensure_personal_proposal(&conn, &email)
+    } else { body.slug.trim().to_lowercase() };
+
+    // Pick category. Allow caller to pin a kind; otherwise rotate.
+    let cats = extras_categories_for(&slug);
+    if cats.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "ok": false, "error": "no allowed categories for this slug"
+        }))).into_response();
+    }
+    let (kind, label_tmpl, default_price): (&str, &str, i64) = if !body.kind.trim().is_empty() {
+        match cats.iter().find(|(k, _, _)| *k == body.kind.trim()) {
+            Some(c) => *c,
+            None => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "ok": false, "error": format!("kind '{}' not allowed for this slug", body.kind.trim()),
+                "allowed": cats.iter().map(|(k, _, _)| k.to_string()).collect::<Vec<_>>(),
+            }))).into_response(),
+        }
+    } else {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let idx = (SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_micros()).unwrap_or(0) as usize) % cats.len();
+        cats[idx]
+    };
+
+    // Charge or burn free-30.
+    let (cost, free_applied) = {
+        let conn = db.lock().unwrap();
+        extras_compute_cost(&conn, &email, 1)
+    };
+    let now = chrono_now();
+    {
+        let conn = db.lock().unwrap();
+        if !free_applied {
+            if let Err(e) = points_mutate(&conn, &email, -cost, "sku_quick", None, Some(&slug)) {
+                return (StatusCode::PAYMENT_REQUIRED, Json(serde_json::json!({
+                    "ok": false, "error": e, "cost_pt": cost,
+                    "topup_url": "https://wearmu.com/extras/my",
+                }))).into_response();
+            }
+        } else {
+            let _ = conn.execute(
+                "INSERT OR IGNORE INTO proposal_points (email, balance, free_30_used, updated_at)
+                 VALUES (?, 0, 0, ?)",
+                params![normalize_email(&email), now],
+            );
+            let _ = conn.execute(
+                "UPDATE proposal_points SET free_30_used=1, updated_at=? WHERE email=?",
+                params![now, normalize_email(&email)],
+            );
+        }
+    }
+
+    // Resolve partner display name.
+    let partner_name: String = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(name, slug) FROM proposals WHERE slug=?",
+            params![slug], |r| r.get::<_, String>(0),
+        ).ok().unwrap_or_else(|| match slug.as_str() {
+            "sweep"   => "SIIIEEP".to_string(),
+            "kokon"   => "kokon.tokyo".to_string(),
+            "jiuflow" => "JiuFlow".to_string(),
+            "jiufight" => "JIUFIGHT × MU".to_string(),
+            other     => other.to_string(),
+        })
+    };
+    let label = if !body.label.trim().is_empty() {
+        body.label.trim().to_string()
+    } else {
+        format!("MU × {} — {}", partner_name, label_tmpl)
+    };
+
+    // INLINE Gemini generation.
+    let seed = format!("quick-{}-{}", now.chars().filter(|c| c.is_ascii_alphanumeric()).take(10).collect::<String>(), email.chars().take(3).collect::<String>());
+    let tagline = "quiet, premium, 1着 = 1 シグナル".to_string();
+    let brief = gemini::PartnerSkuBrief {
+        partner_display: &partner_name, partner_tagline: &tagline,
+        kind, label: &label, seed: &seed,
+    };
+    let img = match gemini::generate_partner_sku(&brief).await {
+        Ok(g) => g,
+        Err(e) => {
+            // Refund the charge if generation failed and free wasn't used.
+            if !free_applied {
+                let conn = db.lock().unwrap();
+                let _ = points_mutate(&conn, &email, cost, "sku_quick_refund", None, Some(&slug));
+            }
+            return (StatusCode::BAD_GATEWAY, Json(serde_json::json!({
+                "ok": false, "error": format!("gemini: {}", e.chars().take(160).collect::<String>()),
+                "refunded": !free_applied,
+            }))).into_response();
+        }
+    };
+
+    // Upload to R2.
+    let r2 = match r2_config() {
+        Some(c) => c,
+        None => return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({
+            "ok": false, "error": "R2 not configured server-side"
+        }))).into_response(),
+    };
+    let ts = now.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>();
+    let key = format!("extras/{}/quick-{}-{}.{}", slug, ts, seed,
+        if img.mime.contains("png") { "png" } else { "jpg" });
+    let ct = if img.mime.contains("png") { "image/png" } else { "image/jpeg" };
+    let public_url = match r2.bucket.put_object_with_content_type(&key, &img.bytes, ct).await {
+        Ok(r) if r.status_code() == 200 => format!("{}/{}", r2.public_base.trim_end_matches('/'), key),
+        Ok(r) => return (StatusCode::BAD_GATEWAY, Json(serde_json::json!({
+            "ok": false, "error": format!("r2 upload failed: {} {}", r.status_code(), String::from_utf8_lossy(r.bytes()).chars().take(160).collect::<String>())
+        }))).into_response(),
+        Err(e) => return (StatusCode::BAD_GATEWAY, Json(serde_json::json!({
+            "ok": false, "error": format!("r2 upload err: {}", e)
+        }))).into_response(),
+    };
+
+    // Insert as APPROVED — visible immediately.
+    let (letter, drop_num, sku_id) = {
+        let conn = db.lock().unwrap();
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proposal_skus WHERE slug=? AND letter LIKE 'q%'",
+            params![slug], |r| r.get(0),
+        ).unwrap_or(0);
+        let letter = format!("q{:03}", n + 1);
+        let max_q: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(drop_num), 5_999_999) FROM proposal_skus
+             WHERE slug=? AND drop_num BETWEEN 6_000_000 AND 6_999_999",
+            params![slug], |r| r.get(0),
+        ).unwrap_or(5_999_999);
+        let drop_num = max_q + 1;
+        let _ = conn.execute(
+            "INSERT INTO proposal_extras_skus
+              (job_id, slug, letter, label, kind, price_jpy, image_url,
+               approval_status, reviewed_at, created_at)
+             VALUES (0, ?, ?, ?, ?, ?, ?, 'approved', ?, ?)",
+            params![slug, letter, label, kind, default_price, public_url, now, now],
+        );
+        let sku_id = conn.last_insert_rowid();
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO proposal_skus
+                (slug, letter, drop_num, price_jpy, label, kind, design_slug, design_url)
+             VALUES (?, ?, ?, ?, ?, ?, 'api-quick', ?)",
+            params![slug, letter, drop_num, default_price, label, kind, public_url],
+        );
+        (letter, drop_num, sku_id)
+    };
+
+    Json(serde_json::json!({
+        "ok": true,
+        "sku_id": sku_id,
+        "slug": slug,
+        "letter": letter,
+        "drop_num": drop_num,
+        "kind": kind,
+        "label": label,
+        "design_url": public_url,
+        "price_jpy": default_price,
+        "cost_pt": if free_applied { 0 } else { cost },
+        "free_applied": free_applied,
+        "skus_api": format!("https://wearmu.com/api/proposal/{}/skus", slug),
+        "lp_url": format!("https://wearmu.com/{}", slug),
+    })).into_response()
+}
+
 /// GET /api/me — auth: Bearer/cookie. Returns the caller's email, API key,
 /// points balance, and a quickstart curl example.
 async fn api_v1_me(
@@ -52882,6 +53080,7 @@ async fn main() {
         .route("/api/me",                       get(api_v1_me))
         .route("/api/v1/me",                    get(api_v1_me))
         .route("/api/v1/sku/create",           post(api_v1_sku_create))
+        .route("/api/v1/sku/quick",            post(api_v1_sku_quick))
         .route("/admin/proposal/extras/retroactive-claim",      post(admin_extras_retroactive_claim))
         .route("/admin/proposal/extras/email-preview",          get(admin_extras_email_preview))
         // /proposals/* — kill the URL prefix as a page surface, but keep
