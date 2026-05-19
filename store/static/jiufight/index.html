@@ -303,6 +303,45 @@ footer{padding:36px 24px;text-align:center;font-size:10px;letter-spacing:0.4em;t
   </article>
 </section>
 
+<section style="max-width:760px;margin:48px auto 0;padding:28px 24px;border:1px solid rgba(230,196,73,0.32);background:#101010;border-radius:8px">
+  <div style="font-size:11px;letter-spacing:0.28em;color:#e6c449;text-transform:uppercase;margin-bottom:8px">━◯━ +1 SKU 追加</div>
+  <h3 style="margin:0 0 10px;font-size:20px;font-weight:700;color:#f5f5f0">追加デザインを 1 枚だけ生成 — <span style="color:#e6c449">30 pt</span></h3>
+  <p style="margin:0 0 18px;color:#aaa;font-size:13px;line-height:1.8">AI が JIUFIGHT 文脈で 1 案を自動生成 → 個別承認後に <code>jiufight</code> カタログへ追加。 初回 30 枚は無料 (30 SKU バッチ <code>?qty=30</code>)、 ここは 1 枚から試す用。 完了時にメール通知。</p>
+  <form id="jf-add1" onsubmit="return false" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <input type="email" id="jf-email" placeholder="email" required autocomplete="email" style="flex:1;min-width:240px;background:#0a0a0a;border:1px solid #222;color:#f5f5f0;padding:11px 13px;font-family:inherit;font-size:14px;border-radius:4px">
+    <button id="jf-add1-btn" type="submit" style="background:#e6c449;color:#000;border:0;font-weight:700;padding:11px 22px;font-size:13px;letter-spacing:0.06em;cursor:pointer;border-radius:4px;font-family:inherit">+1 SKU 追加 (30 pt)</button>
+  </form>
+  <div id="jf-add1-result" style="margin-top:14px;font-size:12px;color:#888;line-height:1.7;font-family:'SF Mono',monospace"></div>
+</section>
+<script>
+(function(){
+  var f = document.getElementById('jf-add1');
+  var b = document.getElementById('jf-add1-btn');
+  var i = document.getElementById('jf-email');
+  var o = document.getElementById('jf-add1-result');
+  f.addEventListener('submit', async function(e){
+    e.preventDefault();
+    var email = (i.value||'').trim();
+    if (!email || email.indexOf('@')<0) { o.style.color='#ff6464'; o.textContent='valid email required'; return; }
+    b.disabled = true; o.style.color='#888'; o.textContent='submitting …';
+    try {
+      var r = await fetch('/api/proposal/jiufight/extras/order', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({email:email, qty:1, notify_email:true}),
+      });
+      var j = await r.json();
+      if (r.ok && j.ok !== false) {
+        o.style.color='#7be57b';
+        o.innerHTML = '✓ queued · job_id=<code>'+(j.job_id||'?')+'</code> · cost=<code>'+(j.cost||0)+' pt</code>' + (j.free_applied?' (free_30 applied)':'') + ' — 完了で <code>'+email+'</code> 宛にメール通知。';
+      } else {
+        o.style.color='#ff6464'; o.textContent = '✗ '+(j.error || ('HTTP '+r.status));
+      }
+    } catch(e){ o.style.color='#ff6464'; o.textContent='✗ '+e.message; }
+    finally { b.disabled = false; }
+  });
+})();
+</script>
+
 <p class="note">
   ★印あり = SUZURI（国内2–3日発送・¥4,900）で即購入可<br>
   その他デザインは順次SUZURI/Printfulで公開予定。先行予約・サンプル希望は <a href="mailto:mail@yukihamada.jp" style="color:var(--y)">mail@yukihamada.jp</a>

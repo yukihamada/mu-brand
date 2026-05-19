@@ -23586,7 +23586,7 @@ fn extras_my_url(email: &str) -> String {
             urlencoding::encode(email), extras_my_token(email))
 }
 
-fn extras_qty_is_valid(q: i64) -> bool { q == 30 || q == 50 || q == 100 }
+fn extras_qty_is_valid(q: i64) -> bool { q == 1 || q == 30 || q == 50 || q == 100 }
 
 /// Compute cost for a {email, qty} pair. Returns (cost_points, free_applied).
 /// free_applied=true only when qty==30 and the email has not yet used its
@@ -23783,7 +23783,7 @@ async fn extras_order(
     Json(body): Json<ExtrasOrderBody>,
 ) -> Response {
     if !extras_qty_is_valid(body.qty) {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok": false, "error": "qty must be 30, 50, or 100"}))).into_response();
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok": false, "error": "qty must be 1, 30, 50, or 100"}))).into_response();
     }
     let email = match validate_email(&body.email) {
         Ok(e) => e,
