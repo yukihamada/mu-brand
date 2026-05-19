@@ -47,4 +47,3 @@ node_modules
 
 # Claude Code per-agent scratch worktrees
 .claude/worktrees/
-store/static/jiufight/print/
