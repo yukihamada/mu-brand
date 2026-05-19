@@ -255,10 +255,11 @@ footer{
 <nav>
   <a href="/" class="logo">MU</a>
   <span class="right">
-    <a href="/api-keys">API</a>
-    <a href="/blog/fabric-shift">記事</a>
+    <a href="/about">MU とは</a>
+    <a href="/source">ソース</a>
     <a href="/transparency">数字</a>
-    <a href="/constitution">§</a>
+    <a href="/blog/fabric-shift">記事</a>
+    <a href="mailto:mail@yukihamada.jp">連絡</a>
   </span>
 </nav>
 
@@ -270,14 +271,30 @@ footer{
   <p class="lede" id="buy-lede">
     MUGEN は北海道弟子屈町の気温・月相・時刻を seed に AI が生成する <strong>1 時間に 1 着</strong>の T シャツです。 同じデザインは二度と作られません。 早く買うほど安い bonding curve、 完売したらそれで終わり。
   </p>
+  <p style="font-size:12.5px;color:rgba(245,245,240,0.6);margin:-12px 0 18px;line-height:1.6">
+    <strong style="color:#e6c449">MU</strong> はブランド名、 <strong style="color:#e6c449">MUGEN</strong> はその1番目の商品ライン (Tシャツ)。 他に MA (週1オークション) / MUON (日替わり) があります。 今このページで買えるのは MUGEN です。
+  </p>
 
-  <!-- MSA bundle banner — every wearmu T-shirt purchase unlocks MU Source Access.
-       Tanaka FB #3 + #8: connect /buy to /source so buyers know what they get. -->
-  <div style="background:linear-gradient(135deg,#1a1a1a 0%,#0f0f0f 100%);border:1px solid rgba(230,196,73,0.4);border-radius:8px;padding:16px 22px;margin:24px 0;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+  <!-- 2 価格レンジ + MSA bundle banner. -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:18px 0 8px">
+    <div style="background:#0c0c0c;border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:12px 14px">
+      <div style="font-size:10px;letter-spacing:0.22em;color:#7ed492;text-transform:uppercase;margin-bottom:4px">🇯🇵 SUZURI 経路</div>
+      <div style="font-size:18px;font-weight:600;color:#fff">¥4,900</div>
+      <div style="font-size:11px;opacity:0.6;margin-top:2px">国内 5-8 日 · Printstar</div>
+    </div>
+    <div style="background:#0c0c0c;border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:12px 14px">
+      <div style="font-size:10px;letter-spacing:0.22em;color:#e6c449;text-transform:uppercase;margin-bottom:4px">⚙️ Premium 経路</div>
+      <div style="font-size:18px;font-weight:600;color:#fff">¥6,900〜¥9,800</div>
+      <div style="font-size:11px;opacity:0.6;margin-top:2px">EU 2-3 週 · Stanley/Stella</div>
+    </div>
+  </div>
+
+  <!-- MSA bundle banner — every wearmu T-shirt purchase unlocks MU Source Access. -->
+  <div style="background:linear-gradient(135deg,#1a1a1a 0%,#0f0f0f 100%);border:1px solid rgba(230,196,73,0.4);border-radius:8px;padding:16px 22px;margin:8px 0 24px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
     <div style="font-size:32px;line-height:1">🔓</div>
     <div style="flex:1;min-width:240px">
       <div style="font-size:11px;letter-spacing:0.25em;text-transform:uppercase;color:#e6c449;margin-bottom:4px">MSA · MU SOURCE ACCESS</div>
-      <div style="font-size:15px;color:#F5F5F0;line-height:1.55">このTシャツを買うと <strong>yukihamada/* の private リポ 21本</strong>のソースが <a href="/source" style="color:#e6c449">/source</a> から DL できる。 First 100名 は 将来追加リポ も lifetime。</div>
+      <div style="font-size:15px;color:#F5F5F0;line-height:1.55"><strong>MSA = Tシャツ 買って くれた人 専用 の ソースコード 開放</strong>。 yukihamada が private にした <strong>21リポ のソース</strong> が <a href="/source" style="color:#e6c449">/source</a> から DL できる ようになる (Phase 2、 2026-05-31 開放予定)。 First 100名は将来追加リポも lifetime。</div>
     </div>
     <a href="/source" style="font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:#e6c449;border:1px solid rgba(230,196,73,0.6);padding:8px 14px;border-radius:4px;text-decoration:none;white-space:nowrap">中身を 見る →</a>
   </div>
@@ -289,22 +306,22 @@ footer{
     <div class="product-card" id="product-card">
       <img id="product-img" src="https://mockups.wearmu.com/hero.png" alt="latest MUGEN" loading="eager" fetchpriority="high">
       <div class="product-info">
-        <div class="name" id="product-name">読み込み中…</div>
+        <div class="name" id="product-name">今日の MUGEN を取得中…</div>
         <div class="title" id="product-title">MU MUGEN</div>
         <div class="price">
-          <span id="product-price">—</span>
-          <small>JPY · Stripe · 即時購入</small>
+          <span id="product-price">¥4,900〜¥9,800</span>
+          <small>JPY · Stripe · 即時購入 · 国内発送</small>
         </div>
-        <div class="stock"><span id="product-stock">—</span></div>
-        <div class="countdown"><span class="pulse"></span><span id="product-countdown">next drop --:--</span></div>
+        <div class="stock"><span id="product-stock">在庫: 取得中…</span></div>
+        <div class="countdown"><span class="pulse"></span><span id="product-countdown">次の drop: 毎時 0 分 (JST)</span></div>
 
         <!-- Variant selectors (2026-05-18): Type × POD provider with おすすめ
              badges. JS reads /api/product_variants once and builds both rows
              dynamically. Default for JP users = Tee × Gelato JP; EN users =
              Tee × Printful EU. Each click recomputes the price below. -->
-        <div style="margin:14px 0 6px;font-size:10.5px;letter-spacing:0.22em;color:#e6c449;text-transform:uppercase">Type</div>
+        <div style="margin:14px 0 6px;font-size:10.5px;letter-spacing:0.22em;color:#e6c449;text-transform:uppercase">素材タイプ</div>
         <div class="size-row" id="variant-type-row" style="margin-bottom:14px"></div>
-        <div style="margin:6px 0 6px;font-size:10.5px;letter-spacing:0.22em;color:#e6c449;text-transform:uppercase">POD provider</div>
+        <div style="margin:6px 0 6px;font-size:10.5px;letter-spacing:0.22em;color:#e6c449;text-transform:uppercase">印刷・配送</div>
         <div class="size-row" id="variant-pod-row" style="margin-bottom:6px"></div>
         <div id="variant-note" style="font-size:11.5px;color:rgba(245,245,240,0.6);margin:4px 0 14px;min-height:18px"></div>
 
@@ -341,15 +358,15 @@ footer{
       </div>
       <div style="background:rgba(0,0,0,0.3);border-radius:6px;padding:13px 14px">
         <div style="font-size:11px;color:#e6c449;letter-spacing:0.15em;margin-bottom:5px">② 会員証</div>
-        <div style="font-size:13px;line-height:1.5">MU Pass NFT<br><span style="font-size:11px;opacity:0.6">Solana · 永久・剥奪不可</span></div>
+        <div style="font-size:13px;line-height:1.5">MU Pass デジタル会員証<br><span style="font-size:11px;opacity:0.6">買えば 一生 あなたの · 譲渡 OK</span></div>
       </div>
       <div style="background:rgba(0,0,0,0.3);border-radius:6px;padding:13px 14px">
         <div style="font-size:11px;color:#e6c449;letter-spacing:0.15em;margin-bottom:5px">③ Vault</div>
-        <div style="font-size:13px;line-height:1.5">永久アクセス<br><span style="font-size:11px;opacity:0.6">手書きログ + 投票権</span></div>
+        <div style="font-size:13px;line-height:1.5">買った人限定エリア<br><span style="font-size:11px;opacity:0.6">原価・没デザイン・投票</span></div>
       </div>
       <div style="background:rgba(0,0,0,0.3);border-radius:6px;padding:13px 14px">
         <div style="font-size:11px;color:#e6c449;letter-spacing:0.15em;margin-bottom:5px">④ 還元</div>
-        <div style="font-size:13px;line-height:1.5">§28 Community<br><span style="font-size:11px;opacity:0.6">10% を保有数比で</span></div>
+        <div style="font-size:13px;line-height:1.5">売上の 10% が戻る<br><span style="font-size:11px;opacity:0.6">持ってる Tシャツ枚数 比で</span></div>
       </div>
     </div>
     <div style="text-align:right;margin-top:10px;font-size:11px;letter-spacing:0.1em">
@@ -362,8 +379,8 @@ footer{
        product id once loadProduct() resolves. -->
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:18px 0 32px">
     <a href="/community-numbers" style="background:#0c0c0c;border:1px solid #2a2310;border-radius:6px;padding:14px 16px;text-decoration:none;color:#f5f5f0;display:block">
-      <div style="font-size:10.5px;letter-spacing:0.22em;color:#e6c449;text-transform:uppercase;margin-bottom:6px">🔒 holder-only</div>
-      <div style="font-size:13px;line-height:1.55">買った人だけが見られる<br/>原価・没デザイン・明日の予告 →</div>
+      <div style="font-size:10.5px;letter-spacing:0.22em;color:#e6c449;text-transform:uppercase;margin-bottom:6px">🔒 買ってから見れる中身</div>
+      <div style="font-size:13px;line-height:1.55">原価・没デザイン・明日の予告<br/><span style="opacity:0.6;font-size:11px">プレビュー: クリックで一部公開 →</span></div>
     </a>
     <a id="product-anchor-link" href="#" style="background:#0c0c0c;border:1px solid #1a2a20;border-radius:6px;padding:14px 16px;text-decoration:none;color:#f5f5f0;display:block">
       <div style="font-size:10.5px;letter-spacing:0.22em;color:#7ed492;text-transform:uppercase;margin-bottom:6px">🔗 proof of birth</div>
@@ -389,14 +406,14 @@ footer{
   <details style="margin:18px 0;font-size:12px;color:var(--mute)">
     <summary style="cursor:pointer;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;opacity:0.65">+ NFT / DAO / moon-phase 等の詳細</summary>
     <ul class="bullet-list" style="margin-top:12px">
-      <li><strong>NFT 兄弟リンク + DAO 投票権</strong> — 1 着 = 1 vote、 同じドロップの buyer 同士が見られる</li>
+      <li><strong>デジタル会員証 (NFT) + 投票権</strong> — 1 着 = 1 vote、 同じドロップの buyer 同士が見られる</li>
       <li><strong>moon-phase marker</strong> — 内側襟下に 8 つの白円。 /scan でそのシャツの「生まれた天気」が読める</li>
-      <li><strong>ブランドは 0 人 (= AI のみ) で 100 年運営</strong>を目指す (<a href="/constitution">Constitution §22</a>)</li>
+      <li><strong>1人 founder (濱田優貴 / Yuki) が 設計、 AI が 日々 の 運営 を 担当</strong>。 「ブランド 0人 (AI のみ)」 を <strong>目標</strong> として 100 年 運営 を 目指す ( <a href="/constitution">Constitution §22</a> )。 今日 時点 で は Yuki が 全部 書いて いる、 という のが 正直 な ところ。</li>
     </ul>
   </details>
 
   <div class="trust">
-    <strong>透明性:</strong> 累計売上・在庫・Constitution・コードは全て公開 (<a href="/transparency">数字</a> / <a href="https://github.com/yukihamada/mu-brand">GitHub</a>)。 §11 で「数字で書く」 と決めている、 つまり何が売れているか・何が売れていないか・原価も全部出す。
+    <strong>透明性:</strong> 累計売上・在庫・Constitution・コードは全て公開 (<a href="/transparency">数字</a> / <a href="https://github.com/yukihamada/mu-brand">GitHub</a>)。 §11 で「数字で書く」 と決めている、 つまり何が売れているか・何が売れていないか・原価も全部出す。 進行中の <a href="/100" style="color:#e6c449">100枚チャレンジ (5/18-5/31)</a> の 残数 も live で 見れる。
   </div>
 
   <div class="links" style="font-size:11.5px;opacity:0.55">
