@@ -19261,13 +19261,25 @@ async fn collab_auth_start(
             "error": "email service not configured",
         }))).into_response();
     }
+    let magic_base = env::var("MU_BASE").unwrap_or_else(|_| "https://wearmu.com".into());
+    let magic_url = format!(
+        "{}/api/collab/auth/magic?email={}&code={}",
+        magic_base.trim_end_matches('/'),
+        urlencoding::encode(&email),
+        code,
+    );
     let body_html = format!(r#"<!doctype html><html><body style="font-family:-apple-system,sans-serif;background:#0A0A0A;color:#F5F5F0;padding:32px;line-height:1.85">
 <div style="max-width:520px;margin:0 auto">
 <div style="font-size:14px;letter-spacing:0.4em;font-weight:700;margin-bottom:18px">━◯━ MU DROP</div>
-<h1 style="font-size:22px;font-weight:300;margin-bottom:14px">T シャツ作成を開始しました</h1>
-<p style="color:#aaa;font-size:14px">下記の 6 桁コードをチャット画面に入力してください。 15 分有効です。</p>
-<div style="font-size:38px;letter-spacing:0.3em;font-weight:600;color:#e6c449;background:#111;padding:22px;text-align:center;border-radius:6px;font-family:'SF Mono',monospace;margin:24px 0">{code}</div>
-<p style="font-size:12px;color:#888;line-height:2">
+<h1 style="font-size:22px;font-weight:300;margin-bottom:14px">ログイン用リンク</h1>
+<p style="color:#aaa;font-size:14px">下のボタンを押すと、 そのまま wearmu.com にログインします。 15 分有効です。</p>
+<p style="margin:28px 0;text-align:center">
+  <a href="{magic_url}" style="display:inline-block;background:#e6c449;color:#000;font-weight:700;padding:14px 32px;border-radius:6px;text-decoration:none;letter-spacing:0.05em;font-size:15px">ログインして API key を見る →</a>
+</p>
+<p style="color:#888;font-size:12px;margin-top:24px">リンクが開けない場合は、 ブラウザで下記コードを入力してください。</p>
+<div style="font-size:38px;letter-spacing:0.3em;font-weight:600;color:#e6c449;background:#111;padding:22px;text-align:center;border-radius:6px;font-family:'SF Mono',monospace;margin:14px 0">{code}</div>
+<p style="font-size:11px;color:#555;word-break:break-all;margin-top:14px">{magic_url}</p>
+<p style="font-size:12px;color:#888;line-height:2;margin-top:24px">
 1 つ目の collab page は無料で作成できます。<br>
 2 個目以降は <strong style="color:#fff">MUGEN を 1 着購入</strong> または <strong style="color:#fff">¥980/月のサブスク</strong> でご利用いただけます。
 </p>
@@ -19275,7 +19287,7 @@ async fn collab_auth_start(
 MU · wearmu.com · 株式会社イネブラ<br>
 このメールに心当たりがない場合は無視してください。
 </p>
-</div></body></html>"#, code = code);
+</div></body></html>"#, code = code, magic_url = magic_url);
     let payload = serde_json::json!({
         "from": "━◯━ MU Drop <info@enablerdao.com>",
         "to": [email],
@@ -19352,6 +19364,64 @@ async fn collab_auth_verify(
         );
     }
     let mut resp = Json(serde_json::json!({"ok": true, "session": token})).into_response();
+    resp.headers_mut().insert(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&format!("mu_collab_session={}; Path=/; Max-Age=2592000; SameSite=Lax", token)).unwrap()
+    );
+    resp
+}
+
+/// GET /api/collab/auth/magic?email=&code= — email magic link: verifies the
+/// 6-digit code, mints a session, sets the cookie, and 302s to /api-keys.
+/// Identical contract to POST /verify, but GET-able from a mail client.
+#[derive(Deserialize)]
+struct CollabMagicQuery { email: String, code: String, next: Option<String> }
+
+async fn collab_auth_magic(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<CollabMagicQuery>,
+) -> Response {
+    let email = q.email.trim().to_lowercase();
+    let code  = q.code.trim().to_string();
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let row: Option<(String, i64)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(code,''), COALESCE(code_expires_at,0) FROM collab_users WHERE email=?",
+            params![email], |r| Ok((r.get(0)?, r.get(1)?))
+        ).ok()
+    };
+    let err_html = |msg: &str| -> Response {
+        let html = format!(r#"<!doctype html><html><head><meta charset="utf-8"><title>MU — link error</title>
+<style>body{{font-family:-apple-system,sans-serif;background:#0a0a0a;color:#f5f5f0;padding:60px 24px;text-align:center}}
+.b{{max-width:480px;margin:0 auto}}h1{{font-size:20px;color:#ff6464;font-weight:600}}
+a{{color:#e6c449}}</style></head><body><div class="b">
+<h1>✗ {msg}</h1><p style="color:#888">もう一度 <a href="/api-keys">/api-keys</a> でコード再発行してください。</p>
+</div></body></html>"#, msg = html_escape(msg));
+        (StatusCode::UNAUTHORIZED, Html(html)).into_response()
+    };
+    let (db_code, expires) = match row {
+        Some(r) => r,
+        None => return err_html("email not registered"),
+    };
+    if db_code.is_empty() || db_code != code { return err_html("invalid code"); }
+    if expires < now_s { return err_html("code expired (15 min)"); }
+
+    use sha2::{Sha256, Digest};
+    let mut h = Sha256::new();
+    h.update(email.as_bytes());
+    h.update(now_s.to_string().as_bytes());
+    h.update(env::var("ADMIN_TOKEN").unwrap_or_default().as_bytes());
+    let token = hex::encode(&h.finalize()[..16]);
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE collab_users SET verified=1, verified_at=?, session_token=?, code=NULL, code_expires_at=NULL WHERE email=?",
+            params![now_s, token, email],
+        );
+    }
+    let next = q.next.as_deref().filter(|s| s.starts_with('/')).unwrap_or("/api-keys");
+    let mut resp = axum::response::Redirect::to(next).into_response();
     resp.headers_mut().insert(
         header::SET_COOKIE,
         HeaderValue::from_str(&format!("mu_collab_session={}; Path=/; Max-Age=2592000; SameSite=Lax", token)).unwrap()
@@ -53908,6 +53978,7 @@ async fn main() {
         .route("/api/collab/upload", post(collab_upload))
         .route("/api/admin/collab/:slug/patch", post(admin_collab_patch))
         .route("/api/collab/auth/start", post(collab_auth_start))
+        .route("/api/collab/auth/magic", get(collab_auth_magic))
         .route("/api/collab/auth/verify", post(collab_auth_verify))
         .route("/api/collab/auth/logout", post(collab_auth_logout))
         .route("/api/collab/session", get(collab_session_info))
