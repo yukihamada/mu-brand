@@ -13,78 +13,101 @@ Each section says "**Action**" — Yuki sends/runs after review.
 
 ---
 
-## 1. Email to JiuFlow paying members
+## 1. Email — re-targeted (Tanaka FB #4)
 
-**Action:** Yuki reviews + sends via wearmu/jiuflow mail infra. Per
+**Tanaka FB:** 「JiuFlow 161名 一斉打ち は 焼き畑。 50人 unsubscribe する。
+柔術 文脈 で 契約してる 人 に source code 話 は context switch」.
+正論なので、 ターゲット を 分ける.
+
+**Action:** Yuki reviews + sends per-segment. Per
 `feedback_email_blast_radius.md` — real customer email requires
 explicit OK. Don't auto-send.
 
-### To
-JiuFlow active subscribers (status=active) — currently 161 members per
-[jiuflow_subscribers.md](jiuflow_subscribers.md). Filter out trialing /
-past_due / canceled.
+### Segment A: GitHub フォロワー / X dev フォロワー (送る)
 
-### From
-`info@enablerdao.com` (Resend, per workspace conventions)
+#### To
+- yukihamada GitHub フォロワー (gh api でlist 取得 可能)
+- X @yukihamada の フォロワー で **dev related bio の人** (手動 filter — 「engineer / dev / Rust / iOS / startup」 等のキーワード)
 
-### Subject
-`オープンソースをやめました。Tシャツ買うと中身全部見えるようにしました。`
+合計 想定 100-200名。
 
-### Body (Japanese, plain text + 1 link)
+#### From
+`info@enablerdao.com` (Resend)
+
+#### Subject
+`オープンソースをやめました — Tシャツ買うと中身全部見える MU Source Access`
+
+#### Body
 
 ```
-{name} さん、
+{name or there}、
 
-JiuFlow 使ってくれてありがとうございます。今日は MU のお知らせです。
+突然 失礼します。 yukihamada/* の OSS 21本 を private に した話 で
+お知らせ ある の で 1分 だけ。
 
-----
+5/19 に Dependabot を 全リポ で 有効化 したら 600件 の 脆弱性 が
+出てきて、 さらに nanobot で 自分自身 が 立てた security issue
+(prompt injection + CORS reflect) を 2ヶ月 放置 して いた 事実 にも
+気付いた ので、 21本 を private に した。
 
-5月19日、yukihamada/* の公開リポジトリ21本を private に落としました。
-
-理由はセキュリティです。Dependabot を全部有効化したら600件の脆弱性
-アラートが出てきて、nanobot で実バグ (prompt injection + CORS
-reflect) も2件見つかりました。公開で抱え続けるのが重くなった。
-
-代わりに、wearmu のTシャツを買ってくれた人にはソースを読める仕組みを
-作りました。「MU Source Access」と呼んでいます。
+代わりに **MU Source Access** という 仕組み を 作った:
 
   https://wearmu.com/source
 
-Tシャツ ¥4,900 で、21リポ全部のzipがダウンロードできます。
-最初の100名は、将来追加されるリポも自動でアクセス権が付きます。
+wearmu の Tシャツ を 買って くれた人 が、 private リポ 21本 の
+ソース を /source から zip で DL できる。 First 100名 は 永続。
 
-JiuFlow を使ってくれている柔術家のあなたには、jitsuflow と
-jiuflow 周辺のコードも当然読めるようになります。試合フロー記録、
-Cloudflare Worker での state管理、Flutter周りの試行錯誤、全部。
+dev 文脈 の メール 配信 リスト に 入って いる 君 に だけ 個別に
+お知らせ してる。 興味 ない 場合 は 無視 して 良い。 unsubscribe は
+1クリック で 下の リンク から。
 
-理由と詳細はブログに書きました:
-  https://yukihamada.jp/blog/2026-05-19-open-source-stop
-  https://yukihamada.jp/blog/2026-05-20-msa-inside
-
-JiuFlow の機能改善も続けます。MSA はそれと別軸で、 OSS への一つの
-返し方として作っています。
-
-何か質問あれば返信ください。
+詳細 ブログ 4本:
+  https://yukihamada.jp/blog/2026-05-19-open-source-stop  (なぜ閉じたか)
+  https://yukihamada.jp/blog/2026-05-20-msa-inside  (中身は何か)
+  https://yukihamada.jp/blog/2026-05-21-claudeterm-openssl  (claudeterm CVE 7発)
+  https://yukihamada.jp/blog/2026-05-22-pasha-fastlane  (pasha fastlane Apple ID)
+  https://yukihamada.jp/blog/2026-05-23-nanobot-security  (nanobot prompt injection)
 
 Yuki Hamada
 Enabler Inc.
+
+----
+[unsubscribe] https://wearmu.com/unsubscribe?t={token}
 ```
 
-### Send command
+### Segment B: JiuFlow active subscribers (送らない、 もしくは 弱い 別件)
 
-(For Yuki to verify before running.)
+**原則 送らない**。 柔術 アプリ の 課金 と source-access EC は **context が違いすぎる**。 焼き畑 リスク > 期待 CVR。
+
+どうしても 何 か アナウンス したい 場合 は **JiuFlow 機能 更新 の 文末 P.S. に 1行 のみ**:
+
+```
+P.S. 別件 で wearmu (Tシャツ ブランド) の 新しい仕組み を 作りました。
+柔術 とは 無関係 です が、 興味 あれば: https://wearmu.com/source
+```
+
+これ なら context-switch shock が 少ない。
+
+### Segment C: Mercari 元同僚 / 個人ネットワーク (個別 DM、 メール ではない)
+
+**メール blast NG**。 LINE/iMessage/Slack DM で 1人 ずつ。 charter member 候補 (MSA_CHARTER_OUTREACH.md 参照) と 重複 する 人 多し。
+
+### Send command (Segment A 用)
 
 ```bash
 # Dry-run first
-cd /Users/yuki/workspace/bjj/jiuflow-ssr  # or wherever the mail script lives
-python3 scripts/blast_msa_launch.py --dry-run
+cd /Users/yuki/workspace/mu-brand  # wherever the msa email script lives
+python3 scripts/blast_msa_launch.py --segment=github_followers --dry-run
 
 # Verify list size, sample 3 messages, then for real
-python3 scripts/blast_msa_launch.py --confirm-customer-blast
+python3 scripts/blast_msa_launch.py --segment=github_followers --confirm-customer-blast
 ```
 
-**Hard check:** count must equal 161 ± a few; subject must not contain
-"$1" or unresolved template vars; from must be `info@enablerdao.com`.
+**Hard check:**
+- Subject must not contain `$1` or unresolved template vars
+- From must be `info@enablerdao.com`
+- List size: Segment A 想定 100-200名 (もし 1000超 なら filter 失敗 を 疑え)
+- **JiuFlow 課金者 リスト と Segment A が ダブって いない か 必ず diff 取れ** — 同一人物 への 重複 配信 NG
 
 ---
 
