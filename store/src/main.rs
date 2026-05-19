@@ -20948,6 +20948,14 @@ async fn about_honest_page() -> Html<&'static str> {
     Html(include_str!("../static/about-honest.html"))
 }
 
+/// GET /source — MU Source Access (MSA) landing page.
+/// Lists the 21 private repos a T-shirt buyer unlocks. Phase 1 of MSA
+/// rollout per docs/MU_SOURCE_ACCESS.md — display + funnel only, the
+/// actual /api/source/<repo>/grant download flow ships in Phase 2.
+async fn msa_source_page() -> Html<&'static str> {
+    Html(include_str!("../static/source.html"))
+}
+
 async fn privacy_page() -> Html<&'static str> {
     Html(include_str!("../static/privacy.html"))
 }
@@ -54103,6 +54111,7 @@ async fn main() {
         .route("/tokushoho", get(tokushoho_page))
         .route("/tokushoho.html", get(tokushoho_page))
         .route("/about/honest", get(about_honest_page))
+        .route("/source", get(msa_source_page))
         .route("/privacy", get(privacy_page))
         .route("/privacy.html", get(privacy_page))
         .route("/tos", get(tos_page))
