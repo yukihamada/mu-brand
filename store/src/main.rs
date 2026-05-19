@@ -24320,7 +24320,7 @@ async fn api_v1_sku_quick(
     };
 
     // Insert as APPROVED — visible immediately.
-    let (letter, drop_num, sku_id) = {
+    let (letter, drop_num, sku_id, pid_opt) = {
         let conn = db.lock().unwrap();
         let n: i64 = conn.query_row(
             "SELECT COUNT(*) FROM proposal_skus WHERE slug=? AND letter LIKE 'q%'",
@@ -24347,19 +24347,30 @@ async fn api_v1_sku_quick(
              VALUES (?, ?, ?, ?, ?, ?, 'api-quick', ?)",
             params![slug, letter, drop_num, default_price, label, kind, public_url],
         );
-        (letter, drop_num, sku_id)
-    };
-
-    // Auto-mirror to SUZURI with the bigger-print default items (100/152/8)
-    // so the caller gets an immediately-buyable URL back. We need the
-    // products.id that the seed inserts for this brand+drop_num.
-    let pid_opt: Option<i64> = {
-        let conn = db.lock().unwrap();
+        // Mirror into products so SUZURI publish (and the rest of the
+        // POD pipeline) can find this SKU. design_url = the generated
+        // image; mockup_url left equal to it until a Printful mockup is
+        // regenerated separately.
         let brand = proposal_brand_for_kind(&slug, kind);
-        conn.query_row(
-            "SELECT id FROM products WHERE brand=? AND drop_num=? ORDER BY id DESC LIMIT 1",
-            params![brand, drop_num], |r| r.get(0),
-        ).ok()
+        let _ = conn.execute(
+            "INSERT INTO products
+                (brand, drop_num, name, design_url, mockup_url, price_jpy, inventory, active, created_at, weather_data)
+             VALUES (?,?,?,?,?,?,?,?,?,?)",
+            params![
+                brand, drop_num,
+                format!("━◯━ MU × {} · {} · {}", partner_name, letter.to_uppercase(), label),
+                public_url, public_url, default_price, 50, 1, now,
+                serde_json::json!({
+                    "kind": format!("{}_{}", slug, kind),
+                    "source": "api-v1-sku-quick",
+                    "design_slug": "api-quick",
+                    "license_status": "self_serve",
+                    "ip_owner": partner_name,
+                }).to_string(),
+            ],
+        );
+        let pid = conn.last_insert_rowid();
+        (letter, drop_num, sku_id, Some(pid))
     };
     let (suzuri_url, suzuri_err): (Option<String>, Option<String>) = match pid_opt {
         Some(pid) => match suzuri_publish_drop_with_items(
