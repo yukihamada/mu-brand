@@ -219,16 +219,44 @@ def upload_to_imgur(image_bytes: bytes, filename: str = "design.png") -> str:
     return r.json()["data"]["link"]
 
 def make_transparent_bg(image_bytes: bytes, threshold: int = 35) -> bytes:
-    """Convert near-black pixels to transparent (for dark-bg designs on black shirts)."""
+    """Auto-detect bg color (sample 4 corners) and key it out.
+
+    Handles dark-bg AND light-bg designs (Gemini emits both depending on prompt).
+    Uses a smooth alpha ramp at the design edge so anti-aliased halos stay
+    crisp on shirts of any color. Falls back to chroma-distance from the
+    sampled corner median for ambiguous mid-tone bgs.
+
+    `threshold` is kept as a no-op kwarg for backward-compat with callers.
+    """
     img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
-    pixels = img.load()
-    for y in range(img.height):
-        for x in range(img.width):
-            r, g, b, a = pixels[x, y]
-            if r < threshold and g < threshold and b < threshold:
-                pixels[x, y] = (0, 0, 0, 0)
+    arr = np.array(img).astype(np.int16)
+    h, w = arr.shape[:2]
+
+    # 4-corner median (more robust than mean against marks that touch the corner)
+    patches = np.concatenate([
+        arr[0:20, 0:20, :3].reshape(-1, 3),
+        arr[0:20, w-20:w, :3].reshape(-1, 3),
+        arr[h-20:h, 0:20, :3].reshape(-1, 3),
+        arr[h-20:h, w-20:w, :3].reshape(-1, 3),
+    ])
+    bg_color = np.median(patches, axis=0)
+    bg_brightness = float(bg_color.mean())
+
+    rgb = arr[..., :3]
+    if bg_brightness > 180:    # white-ish
+        dist = np.linalg.norm(rgb - 255, axis=-1)
+    elif bg_brightness < 60:   # black-ish
+        dist = np.linalg.norm(rgb, axis=-1)
+    else:                      # mid-tone
+        dist = np.linalg.norm(rgb - bg_color, axis=-1)
+
+    # Smooth ramp: 0..15 → transparent, 15..40 → linear, >40 → opaque
+    alpha = np.clip((dist - 15) / 25.0, 0.0, 1.0) * 255
+    arr[..., 3] = alpha.astype(np.int16)
+
+    out = Image.fromarray(arr.astype(np.uint8), "RGBA")
     buf = io.BytesIO()
-    img.save(buf, format="PNG")
+    out.save(buf, format="PNG")
     return buf.getvalue()
 
 def embed_serial_number(image_bytes: bytes, brand: str, drop_num: int, quantity: int) -> bytes:
