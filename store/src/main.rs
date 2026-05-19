@@ -24772,12 +24772,75 @@ async fn api_keys_page(
     </div>
   </div>
   <div class="key-actions">
-    <a href="/extras/my" class="btn-ghost">+ pt を買う</a>
-    <a href="/personal-{personal_hash}" class="btn-ghost" target="_blank">あなたの公開ページ →</a>
+    <a href="/personal-{personal_hash}" class="btn-ghost" target="_blank">🏠 あなたの公開ページ</a>
+    <a href="/extras/my" class="btn-ghost">💰 + pt を買う</a>
+    <a href="/api/me" class="btn-ghost" target="_blank">📊 /api/me</a>
+    <a href="/jiufight" class="btn-ghost" target="_blank">👀 jiufight サンプル</a>
+    <a href="/api/collab/auth/logout" class="btn-ghost">↩️ logout</a>
   </div>
 </section>
 
-<section class="pg">
+<section class="feat">
+  <h2 class="feat-h">━◯━ できること</h2>
+  <div class="feat-grid">
+    <a class="feat-card" href="#" data-go="quick">
+      <div class="feat-ico">⚡</div>
+      <div class="feat-name">AI で 1 枚作る</div>
+      <div class="feat-sub">プロンプトから 30 秒で生成 + SUZURI 公開</div>
+      <div class="feat-cost">30 pt</div>
+    </a>
+    <a class="feat-card" href="#" data-go="byo">
+      <div class="feat-ico">🎨</div>
+      <div class="feat-name">画像 URL から作る</div>
+      <div class="feat-sub">手元の PNG / JPG を渡して SKU 化</div>
+      <div class="feat-cost">30 pt</div>
+    </a>
+    <a class="feat-card" href="#" data-go="brand">
+      <div class="feat-ico">📛</div>
+      <div class="feat-name">ブランド (slug) を claim</div>
+      <div class="feat-sub">wearmu.com/&lt;slug&gt; を取って LP に</div>
+      <div class="feat-cost">無料</div>
+    </a>
+    <a class="feat-card" href="#" data-go="edit">
+      <div class="feat-ico">✏️</div>
+      <div class="feat-name">SKU 編集 / 削除</div>
+      <div class="feat-sub">price / label / kind を更新、 削除も</div>
+      <div class="feat-cost">無料</div>
+    </a>
+    <a class="feat-card" href="#" data-go="publish">
+      <div class="feat-ico">🛒</div>
+      <div class="feat-name">SUZURI 公開</div>
+      <div class="feat-sub">既存 SKU を material 化 (multi-variant)</div>
+      <div class="feat-cost">無料</div>
+    </a>
+    <a class="feat-card" href="#" data-go="publish">
+      <div class="feat-ico">🖼</div>
+      <div class="feat-name">Printful mockup 再生成</div>
+      <div class="feat-sub">画像差し替え / 失敗時のリトライ</div>
+      <div class="feat-cost">無料</div>
+    </a>
+    <a class="feat-card ext" href="/personal-{personal_hash}" target="_blank">
+      <div class="feat-ico">🏠</div>
+      <div class="feat-name">あなたの公開ページ</div>
+      <div class="feat-sub">/personal-{personal_hash} で sandbox LP</div>
+      <div class="feat-cost">view →</div>
+    </a>
+    <a class="feat-card ext" href="/extras/my" target="_blank">
+      <div class="feat-ico">💰</div>
+      <div class="feat-name">+ pt を買う</div>
+      <div class="feat-sub">無料 30 SKU の後の topup</div>
+      <div class="feat-cost">view →</div>
+    </a>
+    <a class="feat-card ext" href="/api/me" target="_blank">
+      <div class="feat-ico">📊</div>
+      <div class="feat-name">/api/me を確認</div>
+      <div class="feat-sub">残 pt / quickstart curl の生データ</div>
+      <div class="feat-cost">JSON</div>
+    </a>
+  </div>
+</section>
+
+<section class="pg" id="playground">
   <div class="pg-tabs" role="tablist">
     <button class="pg-tab active" data-tab="quick">⚡ AI で 1 枚作る</button>
     <button class="pg-tab" data-tab="byo">🎨 画像 URL から作る</button>
@@ -24973,12 +25036,25 @@ curl https://wearmu.com/api/proposal/&lt;slug&gt;/skus</pre>
   var API_KEY = {api_key_js};
 
   // Tabs
+  function activateTab(name){{
+    document.querySelectorAll('.pg-tab').forEach(function(x){{x.classList.remove('active')}});
+    document.querySelectorAll('.pg-panel').forEach(function(x){{x.classList.remove('active')}});
+    var t = document.querySelector('.pg-tab[data-tab="'+name+'"]');
+    var p = document.querySelector('.pg-panel[data-panel="'+name+'"]');
+    if (t) t.classList.add('active');
+    if (p) p.classList.add('active');
+  }}
   document.querySelectorAll('.pg-tab').forEach(function(t){{
-    t.addEventListener('click', function(){{
-      document.querySelectorAll('.pg-tab').forEach(function(x){{x.classList.remove('active')}});
-      document.querySelectorAll('.pg-panel').forEach(function(x){{x.classList.remove('active')}});
-      t.classList.add('active');
-      document.querySelector('.pg-panel[data-panel="'+t.dataset.tab+'"]').classList.add('active');
+    t.addEventListener('click', function(){{ activateTab(t.dataset.tab); }});
+  }});
+
+  // Feature chips → switch tab + scroll to playground
+  document.querySelectorAll('.feat-card[data-go]').forEach(function(c){{
+    c.addEventListener('click', function(e){{
+      e.preventDefault();
+      activateTab(c.dataset.go);
+      var pg = document.getElementById('playground');
+      if (pg) pg.scrollIntoView({{behavior:'smooth', block:'start'}});
     }});
   }});
 
@@ -25256,7 +25332,22 @@ body{{font-size:14.5px}}
 .btn-ghost{{display:inline-block;background:transparent;border:1px solid #2a2a2a;color:#ccc !important;padding:8px 14px;border-radius:4px;font-size:12px;letter-spacing:0.04em;text-decoration:none}}
 .btn-ghost:hover{{border-color:var(--y);color:var(--y) !important}}
 
-.pg{{margin-bottom:32px}}
+.feat{{margin:0 0 36px}}
+.feat-h{{font-size:11px;letter-spacing:0.3em;color:#888;text-transform:uppercase;margin:0 0 14px;font-weight:600}}
+.feat-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}}
+@media(max-width:780px){{.feat-grid{{grid-template-columns:repeat(2,1fr)}}}}
+@media(max-width:480px){{.feat-grid{{grid-template-columns:1fr}}}}
+.feat-card{{display:block;background:#101010;border:1px solid var(--line);border-radius:6px;padding:16px 16px 14px;text-decoration:none;color:inherit;transition:border-color 0.15s,transform 0.15s,background 0.15s;position:relative;cursor:pointer}}
+.feat-card:hover{{border-color:var(--y);background:#161106;transform:translateY(-1px)}}
+.feat-card.ext{{background:#0d0d0d}}
+.feat-card.ext:hover{{background:#141414;border-color:#3a3a3a}}
+.feat-ico{{font-size:22px;line-height:1;margin-bottom:8px}}
+.feat-name{{font-size:13.5px;font-weight:700;color:#f5f5f0;margin-bottom:4px;letter-spacing:0.01em}}
+.feat-sub{{font-size:11.5px;color:#999;line-height:1.55;margin-bottom:8px;min-height:32px}}
+.feat-cost{{font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:var(--y);font-weight:700}}
+.feat-card.ext .feat-cost{{color:#888}}
+
+.pg{{margin-bottom:32px;scroll-margin-top:80px}}
 .pg-tabs{{display:flex;gap:0;border-bottom:1px solid var(--line);overflow-x:auto;margin-bottom:0;scrollbar-width:none}}
 .pg-tabs::-webkit-scrollbar{{display:none}}
 .pg-tab{{background:transparent;border:0;color:#888;padding:12px 18px;font-size:13px;letter-spacing:0.02em;cursor:pointer;font-family:inherit;border-bottom:2px solid transparent;white-space:nowrap;font-weight:500}}
