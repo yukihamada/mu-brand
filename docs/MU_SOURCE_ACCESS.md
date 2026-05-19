@@ -21,39 +21,52 @@ read-only".
 
 ## 2. Model decision
 
+**The gate is "did this email buy a wearmu T-shirt"**. Not MA holder,
+not Solana wallet, not GitHub account. T-shirt = membership = source
+access. Simplest possible criterion.
+
 We considered three:
 
-| Model | Cost to ship | Scales? | MU-native? |
+| Model | Cost to ship | Scales? | Friction |
 |---|---|---|---|
-| A. GitHub outside-collaborator invites | ~0, manual | No (linear in users × repos) | No |
-| B. Single GitHub team in an org | 0.5 day | Yes per-user, manual per-onboard | No |
-| **C. wearmu.com gated zip download** | **1–2 days** | **Yes** | **Yes** |
+| A. GitHub outside-collaborator invites | ~0, manual | No (linear in users × repos) | High (needs GH account) |
+| B. Single GitHub team in an org | 0.5 day | Manual per-onboard | High (needs GH account) |
+| **C. wearmu.com gate, "bought a T-shirt" check** | **1–2 days** | **Yes** | **Zero** |
 
 **Pick C.** Reasons:
-- A and B require every MU holder to have a GitHub account and to give it
-  to us. Cold-friction; MU is not a developer product.
-- C reuses the existing MU holder verification (wearmu.com session, MA
-  ownership check, founder-relay graph). Zero new identity surface.
-- C decouples "source access" from GitHub permissions, so we can change
-  the storage backend later without re-inviting users.
+- Every T-shirt buyer already gave us an email at Stripe checkout. That's
+  the only identity we need.
+- T-shirts already exist, ship daily, and are the primary MU funnel.
+  Layering source access on top has zero new identity infrastructure.
+- Non-GitHub friendly: a designer/lawyer/customer who bought a shirt
+  doesn't need a GitHub account to pull source. They get a download link.
+- Reversible: if we change the gate later (NFT, MA token, etc.) the
+  page logic changes, no GitHub invites to undo.
 
 ## 3. UX (target)
 
-1. MU holder visits `https://wearmu.com/source`.
-2. wearmu checks the active session against the MA-holder set (same gate
-   as the existing dashboard). If not a holder: 403 + buy-MA CTA.
-3. Page lists every private yukihamada/* repo with: name, one-line
-   description, last-updated, language, "Download .zip" button.
-4. Clicking the button calls `POST /api/source/<repo>/grant` which:
-   - Re-checks MA ownership
-   - Calls GitHub API to clone the repo to a temp dir + zip it
-   - Returns a one-time pre-signed URL (5 min TTL) to the zip on S3 /
-     Fly Object Storage
-5. User downloads. URL expires. No persistent mirror.
+1. Visitor goes to `https://wearmu.com/source`.
+2. **Not signed in:** page shows the repo list (greyed out) + a clear
+   "Buy a T-shirt → unlock source" CTA linking to `/shop`. Same page,
+   no separate paywall flow.
+3. **Signed in but no T-shirt purchase on record:** same CTA, friendlier
+   ("You're in! Grab a shirt and the source unlocks.").
+4. **Signed in + ≥1 wearmu T-shirt purchase on record:** every repo
+   has a live "Download .zip" button.
+5. Clicking Download calls `POST /api/source/<repo>/grant` which:
+   - Re-checks Stripe / wearmu order DB for the email
+   - If hit: calls GitHub API to `git archive` the repo and stream-zip
+     to Fly tigris
+   - Returns a one-time pre-signed URL (5 min TTL)
+6. User downloads. URL expires. No persistent mirror.
+
+**No login wall on the listing.** The list itself is public so that
+non-buyers can see what they'd unlock — that's marketing. Only the
+download requires a verified T-shirt purchase.
 
 Optional v1.1: instead of `.zip`, return a one-time `git clone` token
-signed with a deploy key (PAT) that's scoped to one repo + 5 min. Cleaner
-for repeat clones but adds GitHub-token rotation work.
+signed with a deploy key scoped to one repo + 5 min. Cleaner for repeat
+clones, adds GitHub-token rotation work.
 
 ## 4. Architecture
 
@@ -80,22 +93,28 @@ TTL → S3 lifecycle deletes. Cost is negligible (~$0.01/GB ingress).
 on yukihamada/* private repos". Stored as Fly secret. Rotated quarterly.
 No per-user GitHub tokens.
 
-**Auth on MU side:** Reuse wearmu existing session middleware. Add a
-`require_ma_holder` extractor that:
-- Reads wallet from session
-- Calls Solana RPC `getTokenAccountsByOwner` for the MA mint
-- Caches result for 60 seconds per wallet
-- Returns 403 if balance is 0
+**Auth on MU side:** Reuse wearmu existing session middleware (the
+magic-link email login already shipped). Add a `require_tshirt_buyer`
+extractor that:
+- Reads `email` from session
+- Looks up `purchases WHERE email = ? AND product_type IN ('tshirt', …) AND status = 'paid'` in wearmu's order DB (or Stripe `customer.subscriptions`/`charges` if not yet mirrored)
+- Returns 200 if any hit, 403 otherwise
+- Caches the (email → buyer?) result for 5 minutes per email
+
+No wallet read, no Solana RPC, no NFT check. Just "email-bought-shirt".
+
+**Email-not-T-shirt-buyer aren't blocked from /source listing**, only
+from `/api/source/<repo>/grant`. Listing is public to drive funnel.
 
 ## 5. Repo allowlist
 
-**Tier 1 — source-available to MU holders (the 21 we just flipped):**
+**Tier 1 — source-available to T-shirt buyers (the 21 we just flipped):**
 trio, security-scanner, security-education, jitsuflow, phishguard,
 nemotron, gitnote, pasha, kagi, claudeterm, tsugi, hato, hypernews,
 flow-anime, Photon, makimaki, tegata, pon, factlens, NOU, thestandard.
 
-**Tier 2 — also private but MU access NOT granted automatically (needs
-opt-in per-repo decision):**
+**Tier 2 — also private but T-shirt access NOT granted automatically
+(needs opt-in per-repo decision):**
 - Anything with active billing keys in commit history (stayflowapp,
   banto — even after `.env` cleanup, key rotation pending)
 - Anything with customer PII risk
@@ -111,11 +130,13 @@ edited without redeploying the gate service.
 
 | Risk | Mitigation |
 |---|---|
-| MU holder leaks zip publicly | Watermark zip filenames with `<wallet>-<timestamp>` and audit logs. Don't try to DRM — futile. |
+| Buyer leaks zip publicly | Watermark zip filenames with `<email-hash>-<timestamp>` and audit logs. Don't try to DRM — futile. |
 | Pre-signed URL re-share | 5 min TTL + IP binding on the presign |
 | GitHub PAT compromise | Fine-grained, read-only, quarterly rotation, single bucket destination |
 | Repo accidentally pulls in secrets | Bundler runs `git secrets` / `trufflehog` pre-zip and refuses if hits found |
-| Cost runaway | Per-wallet rate limit: 10 downloads / day. Cache zip for 1 hour to avoid re-bundle storms |
+| Cost runaway | Per-email rate limit: 10 downloads / day. Cache zip for 1 hour to avoid re-bundle storms |
+| One-buyer-many-friends ring | Won't try to prevent. Anyone determined to leak will. T-shirts are cheap, friction-by-cost is the only practical defense. |
+| Refund after pull | If the buyer refunds the shirt, future `/api/source/grant` calls 403. Already-downloaded zips can't be revoked. Acceptable. |
 
 ## 7. Phasing
 
@@ -138,13 +159,18 @@ repos may require MA + additional condition).
   zip-only? (Vote: zip-only for v1; readable diff browser is nice but
   not load-bearing.)
 - Do we want a "MU Developer License" file in each repo declaring the
-  terms (use freely / no redistribution outside MU holder community)?
+  terms (use freely / no redistribution outside T-shirt buyer community)?
   Currently nanobot/thestandard/mu-brand carry `NOASSERTION`. Adding a
   custom LICENSE file at the same time we ship Phase 2 is cheap.
-- How do we treat fork-and-pull-request contributions from MU holders?
-  Out of scope for Phase 1, but a real ask later. Probably: contributors
-  go through the existing wearmu identity, PRs land via a managed bot
-  account.
+- How do we treat fork-and-pull-request contributions from T-shirt
+  buyers? Out of scope for Phase 1, but a real ask later. Probably:
+  contributors go through the existing wearmu identity, PRs land via a
+  managed bot account on yukihamada/*.
+
+- What counts as "a T-shirt"? Any wearmu physical product? Or only the
+  specific MU-logo shirts (excluding collabs like /sweep, /kokon)? Lean
+  toward "any wearmu physical product" — generous gate, simpler check,
+  rewards every buyer.
 
 ## 9. Cost estimate
 
