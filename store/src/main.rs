@@ -23185,16 +23185,25 @@ async fn proposal_generic_create(
                     ],
                 );
                 inserted += 1;
+            } else if let Some(new_url) = s.design_url.as_deref().map(|u| u.trim()).filter(|u| !u.is_empty()) {
+                // Always sync products.design_url to the latest from the upsert
+                // when a non-empty design_url is supplied. Previously this only
+                // ran for legacy `/proposals/design-%` paths, which left stale
+                // placeholders in products.design_url and caused SUZURI publish
+                // to upload the wrong (= often identical placeholder) design
+                // across drops sharing the seeded placeholder URL.
+                let _ = conn.execute(
+                    "UPDATE products SET design_url = ?
+                     WHERE brand=? AND drop_num=? AND COALESCE(design_url,'') != ?",
+                    params![new_url, brand, s.drop_num, new_url],
+                );
             } else {
-                // Backfill: products created before we moved to /static/proposals/
-                // still have /proposals/design-X.png paths in design_url which now
-                // 404. Repoint them so regen_product_mockup can fetch the design.
+                // No design_url supplied on this upsert — only backfill legacy
+                // `/proposals/design-%` 404 paths so we don't clobber a good URL.
                 let _ = conn.execute(
                     "UPDATE products SET
                         design_url = ?,
-                        mockup_url = COALESCE(NULLIF(mockup_url, ''),
-                                              CASE WHEN mockup_url LIKE 'https://wearmu.com/proposals/%' THEN NULL ELSE mockup_url END,
-                                              ?)
+                        mockup_url = COALESCE(NULLIF(mockup_url, ''), ?)
                      WHERE brand=? AND drop_num=?
                        AND (design_url IS NULL OR design_url='' OR design_url LIKE 'https://wearmu.com/proposals/design-%')",
                     params![
