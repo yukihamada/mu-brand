@@ -20948,6 +20948,14 @@ async fn about_honest_page() -> Html<&'static str> {
     Html(include_str!("../static/about-honest.html"))
 }
 
+/// GET /source — MU Source Access (MSA) landing page.
+/// Lists the 21 private repos a T-shirt buyer unlocks. Phase 1 of MSA
+/// rollout per docs/MU_SOURCE_ACCESS.md — display + funnel only, the
+/// actual /api/source/<repo>/grant download flow ships in Phase 2.
+async fn msa_source_page() -> Html<&'static str> {
+    Html(include_str!("../static/source.html"))
+}
+
 async fn privacy_page() -> Html<&'static str> {
     Html(include_str!("../static/privacy.html"))
 }
@@ -26988,6 +26996,110 @@ async fn proposal_extras_reminder_cron(db: Db) {
         }
         tokio::time::sleep(std::time::Duration::from_millis(700)).await;
     }
+}
+
+/// GET /jf/:n — JIU FIGHT × MU 100 着 affiliate landing.
+///
+/// Each of the 100 numbered shirts (Order A) has a QR encoding
+/// https://wearmu.com/jf/NNN. When someone scans it:
+///   - Sets cookie `jiufight_ref=NNN` (90 day TTL)
+///   - Renders a public "this shirt is #NNN/100 — buy yours" page
+///   - The "buy" CTA goes to the JIU FIGHT × MU product on wearmu.com
+///   - When the visitor later checks out, the cookie's ref code can be
+///     read by the checkout handler and credited to shirt-owner #NNN.
+async fn jiufight_affiliate_landing(
+    axum::extract::Path(n): axum::extract::Path<String>,
+) -> Response {
+    // Parse + validate: must be 1-3 digit number 1..100
+    let parsed: Option<u32> = n.trim_start_matches('0').parse().ok().or_else(|| n.parse().ok());
+    let num = match parsed {
+        Some(v) if (1..=100).contains(&v) => v,
+        _ => return (StatusCode::NOT_FOUND, "ref out of range (1-100)").into_response(),
+    };
+    let nnn = format!("{:03}", num);
+
+    let front_url = format!("/static/jiufight/orderA/m71_{}_front.png", nnn);
+    let back_url  = format!("/static/jiufight/orderA/m72_{}_back.png", nnn);
+
+    let body = format!(r#"<!doctype html>
+<html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JIU FIGHT #{nnn}/100 — wearmu.com</title>
+<style>
+*{{box-sizing:border-box}}
+body{{background:#f5f5f0;color:#1a1a1a;font-family:-apple-system,sans-serif;margin:0;padding:0;font-size:15px;line-height:1.6}}
+header{{background:#fff;padding:24px;text-align:center;border-bottom:3px solid #1e40af}}
+h1{{margin:0 0 6px;font-size:24px;color:#1e40af;letter-spacing:0.02em}}
+.serial{{font-family:ui-monospace,Menlo,monospace;font-size:48px;color:#1e40af;font-weight:900;letter-spacing:0.04em;margin:8px 0}}
+.serial small{{font-size:18px;color:#666;font-weight:500}}
+.sub{{color:#666;font-size:13px}}
+.wrap{{max-width:720px;margin:0 auto;padding:32px 24px}}
+.shirts{{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:24px}}
+.shirts img{{width:100%;background:#fff;border:1px solid #ddd;border-radius:6px;padding:14px;display:block}}
+.shirts figure{{margin:0}}
+.shirts figcaption{{font-size:11px;color:#666;text-align:center;margin-top:6px;letter-spacing:0.1em;text-transform:uppercase}}
+@media(max-width:520px){{.shirts{{grid-template-columns:1fr}}}}
+.cta{{background:#fff;border:1px solid #ddd;border-radius:8px;padding:24px;margin:20px 0;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,0.04)}}
+.cta h2{{margin:0 0 6px;font-size:18px;color:#1e40af}}
+.cta p{{margin:4px 0 14px;color:#444;font-size:13px}}
+.cta .btn{{display:inline-block;background:#1e40af;color:#fff;font-weight:700;padding:14px 32px;border-radius:6px;text-decoration:none;font-size:15px;letter-spacing:0.04em;transition:background 0.15s}}
+.cta .btn:hover{{background:#0f2870}}
+.cta .sub-btn{{display:inline-block;margin-left:10px;color:#666;font-size:12px;text-decoration:none}}
+.cta .sub-btn:hover{{color:#1e40af}}
+.affiliate-note{{background:#fff8e1;border:1px solid #ffd54f;padding:12px 18px;border-radius:4px;font-size:12px;margin-top:18px;color:#7c5e00;line-height:1.7}}
+.affiliate-note b{{color:#bf6500}}
+footer{{text-align:center;padding:30px 24px;color:#888;font-size:11px;border-top:1px solid #ddd;margin-top:24px}}
+</style></head>
+<body>
+<header>
+  <div class="sub">━◯━ JIU FIGHT × MU · TOKYO 2026</div>
+  <h1>このシャツの番号</h1>
+  <div class="serial">#{nnn} <small>/ 100</small></div>
+  <div class="sub">Limited edition · 1 of 100 · 2026 Super Yawara Sweep Cup</div>
+</header>
+
+<div class="wrap">
+  <div class="shirts">
+    <figure>
+      <img src="{front_url}" alt="front #{nnn}">
+      <figcaption>FRONT — taped hands</figcaption>
+    </figure>
+    <figure>
+      <img src="{back_url}" alt="back #{nnn}">
+      <figcaption>BACK — shaka TOKYO</figcaption>
+    </figure>
+  </div>
+
+  <div class="cta">
+    <h2>同じ Tシャツを買う</h2>
+    <p>あなたの番号 (#{nnn}) があなたの友達紹介として記録されます。 友達がこのシャツを買うとあなたに還元されます。</p>
+    <a class="btn" href="/buy?ref=jiufight-{nnn}">JIU FIGHT × MU を買う →</a>
+    <a class="sub-btn" href="/jiufight">他のデザインを見る</a>
+  </div>
+
+  <div class="affiliate-note">
+    <b>📍 アフィリエイトリンクについて</b><br>
+    あなたがこのページを開いたことが <code>jiufight_ref={nnn}</code> として 90 日間記録されます。
+    その間に当サイトで購入が発生すると、 シャツ #{nnn} の着用者にコミッションが発生する仕組みです。
+    詳細は <a href="/protocol" style="color:#bf6500">/protocol</a> をご覧ください。
+  </div>
+</div>
+
+<footer>
+  ━◯━ MU × JIU FIGHT TOKYO · wearmu.com · 株式会社イネブラ
+</footer>
+</body></html>
+"#, nnn=nnn, front_url=front_url, back_url=back_url);
+
+    let mut resp = Html(body).into_response();
+    // Set affiliate cookie - 90 day TTL
+    let cookie = format!("jiufight_ref={}; Path=/; Max-Age=7776000; SameSite=Lax", nnn);
+    resp.headers_mut().insert(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&cookie).unwrap()
+    );
+    eprintln!("[jiufight_affiliate] visit ref={}", nnn);
+    resp
 }
 
 /// POST /admin/proposal/extras/retroactive-claim — admin gated. Grants pt
@@ -54103,6 +54215,7 @@ async fn main() {
         .route("/tokushoho", get(tokushoho_page))
         .route("/tokushoho.html", get(tokushoho_page))
         .route("/about/honest", get(about_honest_page))
+        .route("/source", get(msa_source_page))
         .route("/privacy", get(privacy_page))
         .route("/privacy.html", get(privacy_page))
         .route("/tos", get(tos_page))
@@ -54206,6 +54319,11 @@ async fn main() {
         .route("/api/v1/mockup/regen",         post(api_v1_mockup_regen))
         .route("/admin/proposal/extras/retroactive-claim",      post(admin_extras_retroactive_claim))
         .route("/admin/proposal/extras/email-preview",          get(admin_extras_email_preview))
+        // /jf/:n — JIU FIGHT × MU 100 着 affiliate landing (QR target)
+        // Sets cookie `jiufight_ref=NNN` (90 day TTL) and renders a "buy this shirt"
+        // page. When the visitor later checks out, the cookie's ref code becomes
+        // the affiliate credit for shirt-owner #NNN.
+        .route("/jf/:n", get(jiufight_affiliate_landing))
         // /proposals/* — kill the URL prefix as a page surface, but keep
         // image/asset access alive by redirecting to /static/proposals/ so
         // legacy LPs that still reference /proposals/<slug>-pf-*.jpg etc.
