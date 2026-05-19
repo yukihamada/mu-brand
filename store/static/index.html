@@ -1114,6 +1114,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
       <div>
         <div class="stock-bar"><div class="stock-fill" id="m-stock-fill"></div></div>
         <div class="stock-label" id="m-stock-label"></div>
+        <div id="m-social-proof" style="display:none;margin-top:6px;font-size:10px;letter-spacing:0.1em;color:#7be57b;opacity:0.9"></div>
       </div>
       <div class="meta-grid" id="m-meta"></div>
 
@@ -1182,8 +1183,8 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
       <div>
         <div style="font-size:8px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5;margin-bottom:10px">Size</div>
         <div class="select-row" id="size-btns">
-          <button class="size-btn selected" data-size="S" data-funnel="cta_click" data-funnel-cta="modal_size_S">S</button>
-          <button class="size-btn" data-size="M" data-funnel="cta_click" data-funnel-cta="modal_size_M">M</button>
+          <button class="size-btn" data-size="S" data-funnel="cta_click" data-funnel-cta="modal_size_S">S</button>
+          <button class="size-btn selected" data-size="M" data-funnel="cta_click" data-funnel-cta="modal_size_M">M</button>
           <button class="size-btn" data-size="L" data-funnel="cta_click" data-funnel-cta="modal_size_L">L</button>
           <button class="size-btn" data-size="XL" data-funnel="cta_click" data-funnel-cta="modal_size_XL">XL</button>
         </div>
@@ -2135,6 +2136,41 @@ function openModal(p, pushHistory=true){
   document.getElementById('m-stock-fill').style.width = pct+'%';
   document.getElementById('m-stock-label').textContent = `${rem} of ${p.inventory} — never restocked`;
 
+  // Today's purchase count (real data from /api/blog/stats_for_today) — discreet
+  // social proof. Hidden when zero/unknown so we don't show "0 名" embarrassment.
+  (async () => {
+    const sp = document.getElementById('m-social-proof');
+    if (!sp) return;
+    try {
+      const r = await fetch('/api/blog/stats_for_today', {cache:'no-store'});
+      if (!r.ok) return;
+      const j = await r.json();
+      const n = j?.stats?.purchases ?? 0;
+      if (n >= 3) {
+        sp.textContent = `本日 ${n} 名が購入`;
+        sp.style.display = 'block';
+      } else {
+        sp.style.display = 'none';
+      }
+    } catch (e) { sp.style.display = 'none'; }
+  })();
+
+  // Restore last-used size from localStorage so repeat visitors don't re-pick.
+  try {
+    const last = localStorage.getItem('mu_last_size');
+    if (last && ['S','M','L','XL','XXL'].includes(last)) {
+      const target = document.querySelector('.size-btn[data-size="' + last + '"]');
+      if (target) {
+        document.querySelectorAll('.size-btn').forEach(b => b.classList.remove('selected'));
+        target.classList.add('selected');
+        selectedSize = last;
+        window.selectedSize = last;
+        const hidden = document.getElementById('selected-size');
+        if (hidden) hidden.value = last;
+      }
+    }
+  } catch (e) { /* localStorage disabled — silent */ }
+
   // Share-to-X link — uses canonical product URL so referrers / OG cards work.
   // Tone follows MU_VOICE_RULES: quiet, factual, no hype emoji.
   const shareUrl = `https://wearmu.com/products/${p.brand}/${p.drop_num || p.id}`;
@@ -2386,6 +2422,8 @@ document.querySelectorAll('.size-btn').forEach(btn=>{
     selectedSize = btn.dataset.size;
     window.selectedSize = selectedSize;  // payments-ui.js compatibility
     document.getElementById('selected-size').value = selectedSize;
+    // Persist for next visit — repeat visitors skip the size pick step.
+    try { localStorage.setItem('mu_last_size', selectedSize); } catch(e) {}
   });
 });
 
