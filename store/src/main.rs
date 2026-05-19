@@ -13285,10 +13285,25 @@ async fn place_bid(
             params![body.product_id],
             |row| Ok((row.get::<_,i64>(0)?, row.get::<_,i64>(1).unwrap_or(0), row.get::<_,Option<String>>(2)?))
         );
-        let (base_price, current_bid, _auction_end) = match row {
+        let (base_price, current_bid, auction_end_opt) = match row {
             Ok(r) => r,
             Err(_) => return (StatusCode::NOT_FOUND, "not found").into_response(),
         };
+        // Reject post-end bids before issuing a Stripe pre-auth. ma_cycle
+        // only runs hourly, so without this guard the (active=1 AND
+        // auction_end<now) window can stay open for up to ~1h after expiry,
+        // and a Stripe authorization placed in that window would still get
+        // picked up by the next settle pass.
+        if let Some(end_str) = auction_end_opt.as_deref() {
+            let now_unix = chrono_now().parse::<i64>().unwrap_or(0);
+            let jst_now = now_unix + 9 * 3600;
+            if let Some(end_jst) = parse_jst_naive_to_secs(end_str) {
+                if end_jst <= jst_now {
+                    return (StatusCode::GONE,
+                        "オークションは終了しました").into_response();
+                }
+            }
+        }
         let min_bid = current_bid.max(base_price) + 1000;
         if body.amount < min_bid {
             return (StatusCode::BAD_REQUEST,
@@ -14461,7 +14476,7 @@ async fn stripe_webhook(
                 session["customer_details"]["email"].as_str().unwrap_or("").to_string()
             };
             let now = chrono_now();
-            let mut extended_to: Option<String> = None;
+            let extended_to: Option<String>;
             {
                 let conn = db.lock().unwrap();
                 let _ = conn.execute(
@@ -14482,36 +14497,8 @@ async fn stripe_webhook(
                 );
                 let _ = council_enroll(&conn, &final_email, "trial", None);
 
-                // Anti-snipe / 自動延長: a bid landing inside the last
-                // ANTI_SNIPE_WINDOW_S of auction_end pushes the close out so
-                // the new bidder cannot be cut off by zero response time.
-                // - Window:  300s (last 5 min)
-                // - Extend:  end = max(end, now_jst + 300s)
-                // No upper cap — repeated late bids will keep pushing the
-                // close, which is the desired anti-snipe behavior.
-                const ANTI_SNIPE_WINDOW_S: i64 = 300;
                 let now_unix: i64 = now.parse().unwrap_or(0);
-                let jst_now = now_unix + 9 * 3600;
-                let current_end_opt: Option<String> = conn.query_row(
-                    "SELECT auction_end FROM products
-                     WHERE id=? AND brand='ma' AND active=1",
-                    params![product_id], |r| r.get::<_, Option<String>>(0),
-                ).ok().flatten();
-                if let Some(end_str) = current_end_opt {
-                    if let Some(end_jst) = parse_jst_naive_to_secs(&end_str) {
-                        let remaining = end_jst - jst_now;
-                        if remaining > 0 && remaining < ANTI_SNIPE_WINDOW_S {
-                            let new_end_jst = jst_now + ANTI_SNIPE_WINDOW_S;
-                            let new_end_str = format_jst_naive(new_end_jst);
-                            let n = conn.execute(
-                                "UPDATE products SET auction_end=?
-                                 WHERE id=? AND brand='ma' AND active=1",
-                                params![new_end_str, product_id],
-                            ).unwrap_or(0);
-                            if n > 0 { extended_to = Some(new_end_str); }
-                        }
-                    }
-                }
+                extended_to = maybe_extend_auction_for_snipe(&conn, product_id, now_unix);
             }
             if let Some(new_end) = &extended_to {
                 eprintln!("[ma_bid] ANTI_SNIPE extended product {} → {} (bid ¥{} from {})",
@@ -48971,6 +48958,23 @@ async fn main() {
         [],
     ).ok();
 
+    // ── One-time normalization: trim microsecond suffixes on auction_end ──
+    // Legacy MA rows (pre-2026-05) stored auction_end as
+    // "2026-05-25T00:00:08.745574" (chrono Naive with sub-second). The
+    // anti-snipe parser only reads the first 19 chars, but the countdown
+    // JS on /ma uses `new Date(...)` which is implementation-defined for
+    // a JST-naive string with microseconds — Safari can render this
+    // ~9h off vs Chrome. Trimming to "YYYY-MM-DDTHH:MM:SS" matches the
+    // format ma_cycle launches new auctions with. Idempotent: substr on
+    // an already-19-char string is a no-op.
+    conn.execute(
+        "UPDATE products
+            SET auction_end = substr(auction_end, 1, 19)
+          WHERE brand='ma' AND auction_end IS NOT NULL
+            AND length(auction_end) > 19",
+        [],
+    ).ok();
+
     // Seed MU × SWEEP items (idempotent on slug).
     //
     // 13 商品が正式販売可能 (active=1):
@@ -54451,6 +54455,172 @@ fn format_jst_naive(jst_s: i64) -> String {
     let mm = (secs % 3600) / 60;
     let ss = secs % 60;
     format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}", y, m, d, hh, mm, ss)
+}
+
+/// Anti-snipe: if a bid is being recorded inside the final
+/// `ANTI_SNIPE_WINDOW_S` seconds of `auction_end`, push the close to
+/// `now_jst + ANTI_SNIPE_WINDOW_S`. No upper cap — repeated late bids
+/// keep extending, which is the desired anti-snipe behavior.
+///
+/// Returns the new auction_end string if an extension happened, else None.
+/// Caller passes UNIX seconds for `now_unix` (UTC); JST conversion is done here.
+const ANTI_SNIPE_WINDOW_S: i64 = 300;
+
+fn maybe_extend_auction_for_snipe(
+    conn: &rusqlite::Connection,
+    product_id: i64,
+    now_unix: i64,
+) -> Option<String> {
+    let jst_now = now_unix + 9 * 3600;
+    let end_str: Option<String> = conn.query_row(
+        "SELECT auction_end FROM products
+         WHERE id=? AND brand='ma' AND active=1",
+        params![product_id], |r| r.get::<_, Option<String>>(0),
+    ).ok().flatten();
+    let end_str = end_str?;
+    let end_jst = parse_jst_naive_to_secs(&end_str)?;
+    let remaining = end_jst - jst_now;
+    if remaining <= 0 || remaining >= ANTI_SNIPE_WINDOW_S {
+        return None;
+    }
+    let new_end_str = format_jst_naive(jst_now + ANTI_SNIPE_WINDOW_S);
+    let n = conn.execute(
+        "UPDATE products SET auction_end=?
+         WHERE id=? AND brand='ma' AND active=1",
+        params![new_end_str, product_id],
+    ).unwrap_or(0);
+    if n > 0 { Some(new_end_str) } else { None }
+}
+
+#[cfg(test)]
+mod anti_snipe_tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn setup_conn_with_auction(end_jst: i64) -> Connection {
+        let conn = Connection::open_in_memory().expect("mem db");
+        conn.execute_batch("
+            CREATE TABLE products (
+                id INTEGER PRIMARY KEY,
+                brand TEXT NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1,
+                auction_end TEXT,
+                current_bid INTEGER DEFAULT 0,
+                bid_count INTEGER DEFAULT 0
+            );
+        ").unwrap();
+        let end_str = format_jst_naive(end_jst);
+        conn.execute(
+            "INSERT INTO products (id, brand, active, auction_end) VALUES (1, 'ma', 1, ?)",
+            params![end_str],
+        ).unwrap();
+        conn
+    }
+
+    fn read_end(conn: &Connection) -> String {
+        conn.query_row("SELECT auction_end FROM products WHERE id=1", [],
+            |r| r.get::<_, String>(0)).unwrap()
+    }
+
+    #[test]
+    fn extends_when_inside_window() {
+        let now_unix = 1_700_000_000_i64;
+        let jst_now = now_unix + 9 * 3600;
+        // auction ends 60s from now (inside the 5-min window)
+        let conn = setup_conn_with_auction(jst_now + 60);
+        let new = maybe_extend_auction_for_snipe(&conn, 1, now_unix)
+            .expect("should extend");
+        assert_eq!(new, format_jst_naive(jst_now + ANTI_SNIPE_WINDOW_S));
+        assert_eq!(read_end(&conn), new);
+    }
+
+    #[test]
+    fn does_not_extend_when_outside_window() {
+        let now_unix = 1_700_000_000_i64;
+        let jst_now = now_unix + 9 * 3600;
+        // 10 minutes remaining — way outside the 5-min anti-snipe window
+        let original = format_jst_naive(jst_now + 600);
+        let conn = setup_conn_with_auction(jst_now + 600);
+        assert!(maybe_extend_auction_for_snipe(&conn, 1, now_unix).is_none());
+        assert_eq!(read_end(&conn), original); // unchanged
+    }
+
+    #[test]
+    fn does_not_extend_after_close() {
+        let now_unix = 1_700_000_000_i64;
+        let jst_now = now_unix + 9 * 3600;
+        // Already 30s past close — caller is racing the cycle settler.
+        // Bid should NOT resurrect the auction.
+        let original = format_jst_naive(jst_now - 30);
+        let conn = setup_conn_with_auction(jst_now - 30);
+        assert!(maybe_extend_auction_for_snipe(&conn, 1, now_unix).is_none());
+        assert_eq!(read_end(&conn), original);
+    }
+
+    #[test]
+    fn ignores_inactive_auctions() {
+        let now_unix = 1_700_000_000_i64;
+        let jst_now = now_unix + 9 * 3600;
+        let conn = setup_conn_with_auction(jst_now + 60);
+        conn.execute("UPDATE products SET active=0 WHERE id=1", []).unwrap();
+        assert!(maybe_extend_auction_for_snipe(&conn, 1, now_unix).is_none());
+    }
+
+    #[test]
+    fn extension_is_monotonically_increasing_under_repeated_late_bids() {
+        let now_unix = 1_700_000_000_i64;
+        let jst_now = now_unix + 9 * 3600;
+        let conn = setup_conn_with_auction(jst_now + 60);
+        let after_1 = maybe_extend_auction_for_snipe(&conn, 1, now_unix).unwrap();
+        // Simulate another bid 10s later.
+        let after_2 = maybe_extend_auction_for_snipe(&conn, 1, now_unix + 10).unwrap();
+        assert!(after_2 > after_1, "second extension must push further out: {} > {}", after_2, after_1);
+    }
+}
+
+#[cfg(test)]
+mod jst_parse_tests {
+    use super::*;
+
+    #[test]
+    fn parse_format_roundtrip() {
+        // Sample a handful of dates: leap year, end-of-year, end-of-month.
+        for jst_s in [
+            1_000_000_000,
+            1_700_000_000,
+            1_779_667_208, // 2026-05-25T00:00:08 JST — the live MA end at deploy time
+            1_456_704_000, // 2026-02-29 leap day
+            1_577_836_799, // 2026-01-01T08:59:59 JST  (right before Y2K20 epoch boundary)
+        ] {
+            let s = format_jst_naive(jst_s);
+            let back = parse_jst_naive_to_secs(&s).expect("round-trip");
+            assert_eq!(back, jst_s, "round-trip failed for {} ({})", jst_s, s);
+        }
+    }
+
+    #[test]
+    fn parse_truncates_microseconds() {
+        // Legacy chrono Naive format with sub-second suffix.
+        let parsed = parse_jst_naive_to_secs("2026-05-25T00:00:08.745574")
+            .expect("microsecond-suffixed parses");
+        let canonical = parse_jst_naive_to_secs("2026-05-25T00:00:08")
+            .expect("canonical parses");
+        assert_eq!(parsed, canonical);
+    }
+
+    #[test]
+    fn parse_rejects_short() {
+        assert!(parse_jst_naive_to_secs("2026-05-25").is_none());
+        assert!(parse_jst_naive_to_secs("").is_none());
+    }
+
+    #[test]
+    fn parse_rejects_wrong_separators() {
+        // ISO 8601 with Z suffix is NOT accepted — we treat the value
+        // as JST naive (no TZ), and a Z would silently misinterpret as JST.
+        assert!(parse_jst_naive_to_secs("2026/05/25T00:00:08").is_none());
+        assert!(parse_jst_naive_to_secs("2026-05-25 00:00:08").is_none());
+    }
 }
 
 /// Parse a JST naive "YYYY-MM-DDTHH:MM:SS[.fff]" string back to JST UNIX
