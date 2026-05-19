@@ -1089,7 +1089,25 @@ async fn suzuri_publish_drop(
     product_id: i64,
     force: bool,
 ) -> Result<(i64, i64, String), String> {
+    suzuri_publish_drop_with_items(db, product_id, force, vec![SUZURI_HEAVY_TEE_ITEM_ID]).await
+}
+
+/// Lower-level publish that takes an explicit SUZURI items list. The first
+/// item's URL is stored as canonical in `products.suzuri_url`; additional
+/// items are created alongside (same material, multiple printed-on items —
+/// buyers can pick オーバーサイズ / ビッグシルエット / フルグラフィック / etc.
+/// for the same artwork).
+///
+/// Use `vec![149]` for "印刷もうちょっと大きく" (オーバーサイズTシャツ instead
+/// of standard ヘビーウェイト 148), `vec![148, 149, 8, 100]` for "種類を増やす".
+async fn suzuri_publish_drop_with_items(
+    db: Db,
+    product_id: i64,
+    force: bool,
+    items: Vec<u32>,
+) -> Result<(i64, i64, String), String> {
     let token = env::var("SUZURI_ACCESS_TOKEN").map_err(|_| "SUZURI_ACCESS_TOKEN unset".to_string())?;
+    let items: Vec<u32> = if items.is_empty() { vec![SUZURI_HEAVY_TEE_ITEM_ID] } else { items };
     let (design_url, name, suzuri_already): (Option<String>, String, Option<i64>) = {
         let conn = db.lock().unwrap();
         conn.query_row(
@@ -1108,8 +1126,6 @@ async fn suzuri_publish_drop(
     } else if design_url.starts_with('/') {
         format!("https://wearmu.com{}", design_url)
     } else { design_url.clone() };
-    // Fetch image bytes, then crop transparent borders so SUZURI's contain-fit
-    // renders the artwork at the full print area instead of leaving padding.
     let raw = reqwest::get(&abs_url).await
         .map_err(|e| format!("fetch design: {}", e))?
         .bytes().await.map_err(|e| format!("read bytes: {}", e))?;
@@ -1117,23 +1133,22 @@ async fn suzuri_publish_drop(
         Ok(b) => b,
         Err(e) => { eprintln!("[suzuri] crop failed, using original: {}", e); raw.to_vec() }
     };
-    // Pad to SUZURI Heavy Tee aspect ratio (5:6 portrait) so contain-fit
-    // renders the print at full bed size instead of leaving margins.
     let padded = match pad_to_suzuri_aspect(&cropped) {
         Ok(b) => b,
         Err(e) => { eprintln!("[suzuri] pad failed, using cropped: {}", e); cropped.clone() }
     };
     use base64::Engine;
     let b64 = base64::engine::general_purpose::STANDARD.encode(&padded);
+    let products_json: Vec<serde_json::Value> = items.iter().map(|iid| serde_json::json!({
+        "itemId": *iid,
+        "published": true,
+        "resaleEnabled": false,
+    })).collect();
     let body = serde_json::json!({
         "texture": format!("data:image/png;base64,{}", b64),
         "title": name,
         "price": SUZURI_CREATOR_MARGIN_JPY,
-        "products": [{
-            "itemId": SUZURI_HEAVY_TEE_ITEM_ID,
-            "published": true,
-            "resaleEnabled": false,
-        }],
+        "products": products_json,
     });
     let resp = reqwest::Client::new()
         .post("https://suzuri.jp/api/v1/materials")
@@ -1175,6 +1190,12 @@ struct SuzuriPublishQuery {
     token: String,
     #[serde(default)]
     force: Option<String>,
+    /// Comma-separated SUZURI item ids. Defaults to ヘビーウェイトTシャツ (148).
+    /// Examples: `149` = オーバーサイズTシャツ (bigger print bed),
+    /// `148,149,8,100` = heavy + oversize + フルグラフィック + ビッグシルエット.
+    /// First id is treated as canonical for the public URL stored back in DB.
+    #[serde(default)]
+    items: Option<String>,
 }
 
 /// POST /api/admin/suzuri/publish/:pid — yuki/cron mirrors a product to SUZURI.
@@ -1185,7 +1206,16 @@ async fn admin_suzuri_publish(
 ) -> Response {
     if let Err(r) = require_admin_token(Some(&q.token)) { return r; }
     let force = matches!(q.force.as_deref(), Some("1") | Some("true"));
-    match suzuri_publish_drop(db, pid, force).await {
+    let items: Vec<u32> = q.items.as_deref().unwrap_or("")
+        .split(',')
+        .filter_map(|s| s.trim().parse::<u32>().ok())
+        .collect();
+    let result = if items.is_empty() {
+        suzuri_publish_drop(db, pid, force).await
+    } else {
+        suzuri_publish_drop_with_items(db, pid, force, items).await
+    };
+    match result {
         Ok((mid, spid, url)) => Json(serde_json::json!({
             "ok": true, "product_id": pid,
             "suzuri_material_id": mid,
