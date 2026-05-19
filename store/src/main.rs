@@ -1,6 +1,7 @@
 mod gemini;
 mod nft;
 mod payments;
+mod jiufight_tokens;
 
 use axum::{
     extract::{Path, State},
@@ -27112,6 +27113,123 @@ async fn admin_extras_email_preview(
     Html(html).into_response()
 }
 
+/// GET /jf/:token — JIU FIGHT × MU Order A affiliate landing.
+///
+/// Each of the 100 numbered shirts has a UNIQUE 5-char random token
+/// (e.g. "nwtxj", "c3k9g") encoded in its QR code. Looking up the token
+/// returns the shirt number (1..=100). Visitors who scan the QR:
+///   - Get a cookie `jiufight_ref=NNN-token` (90 day TTL)
+///   - See the front + back of THEIR friend's specific shirt
+///   - Get a "buy yours" CTA → when they later check out, the cookie's
+///     ref code becomes the affiliate credit for shirt-owner #NNN.
+///
+/// Token map lives in `jiufight_tokens.rs` (compile-time const slice,
+/// 100 entries, O(n) linear scan is plenty for n=100).
+async fn jiufight_affiliate_landing(
+    axum::extract::Path(token): axum::extract::Path<String>,
+) -> Response {
+    let tok_lower = token.trim().to_ascii_lowercase();
+    // Token validity: must be exactly 5 chars from our alphabet (a-z 2-9
+    // minus i/l/o/0/1). Sanity-check before the slice scan.
+    if tok_lower.len() != 5 || !tok_lower.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return (StatusCode::NOT_FOUND, "token format invalid").into_response();
+    }
+    let num = match jiufight_tokens::lookup(&tok_lower) {
+        Some(n) => n,
+        None => {
+            eprintln!("[jiufight_affiliate] unknown token={}", tok_lower);
+            return (StatusCode::NOT_FOUND, "token not recognised").into_response();
+        }
+    };
+    let nnn = format!("{:03}", num);
+
+    let front_url = format!("/static/jiufight/orderA/m71_{}_front.png", nnn);
+    let back_url  = format!("/static/jiufight/orderA/m72_{}_back.png", nnn);
+
+    let body = format!(r#"<!doctype html>
+<html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JIU FIGHT #{nnn}/100 — wearmu.com</title>
+<style>
+*{{box-sizing:border-box}}
+body{{background:#f5f5f0;color:#1a1a1a;font-family:-apple-system,sans-serif;margin:0;padding:0;font-size:15px;line-height:1.6}}
+header{{background:#fff;padding:24px;text-align:center;border-bottom:3px solid #1e40af}}
+h1{{margin:0 0 6px;font-size:24px;color:#1e40af;letter-spacing:0.02em}}
+.serial{{font-family:ui-monospace,Menlo,monospace;font-size:48px;color:#1e40af;font-weight:900;letter-spacing:0.04em;margin:8px 0}}
+.serial small{{font-size:18px;color:#666;font-weight:500}}
+.tok{{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#999;letter-spacing:0.1em;margin-top:4px}}
+.sub{{color:#666;font-size:13px}}
+.wrap{{max-width:720px;margin:0 auto;padding:32px 24px}}
+.shirts{{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:24px}}
+.shirts img{{width:100%;background:#fff;border:1px solid #ddd;border-radius:6px;padding:14px;display:block}}
+.shirts figure{{margin:0}}
+.shirts figcaption{{font-size:11px;color:#666;text-align:center;margin-top:6px;letter-spacing:0.1em;text-transform:uppercase}}
+@media(max-width:520px){{.shirts{{grid-template-columns:1fr}}}}
+.cta{{background:#fff;border:1px solid #ddd;border-radius:8px;padding:24px;margin:20px 0;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,0.04)}}
+.cta h2{{margin:0 0 6px;font-size:18px;color:#1e40af}}
+.cta p{{margin:4px 0 14px;color:#444;font-size:13px}}
+.cta .btn{{display:inline-block;background:#1e40af;color:#fff;font-weight:700;padding:14px 32px;border-radius:6px;text-decoration:none;font-size:15px;letter-spacing:0.04em;transition:background 0.15s}}
+.cta .btn:hover{{background:#0f2870}}
+.cta .sub-btn{{display:inline-block;margin-left:10px;color:#666;font-size:12px;text-decoration:none}}
+.cta .sub-btn:hover{{color:#1e40af}}
+.affiliate-note{{background:#fff8e1;border:1px solid #ffd54f;padding:12px 18px;border-radius:4px;font-size:12px;margin-top:18px;color:#7c5e00;line-height:1.7}}
+.affiliate-note b{{color:#bf6500}}
+.affiliate-note code{{background:rgba(0,0,0,0.05);padding:2px 6px;border-radius:3px}}
+footer{{text-align:center;padding:30px 24px;color:#888;font-size:11px;border-top:1px solid #ddd;margin-top:24px}}
+</style></head>
+<body>
+<header>
+  <div class="sub">━◯━ JIU FIGHT × MU · TOKYO 2026</div>
+  <h1>このシャツの番号</h1>
+  <div class="serial">#{nnn} <small>/ 100</small></div>
+  <div class="tok">ref: {tok}</div>
+  <div class="sub">Limited edition · 1 of 100 · Live Event Tokyo</div>
+</header>
+
+<div class="wrap">
+  <div class="shirts">
+    <figure>
+      <img src="{front_url}" alt="front #{nnn}">
+      <figcaption>FRONT — JIU JITSU ENTERTAINMENT</figcaption>
+    </figure>
+    <figure>
+      <img src="{back_url}" alt="back #{nnn}">
+      <figcaption>BACK — TOKYO · LIVE EVENT</figcaption>
+    </figure>
+  </div>
+
+  <div class="cta">
+    <h2>同じ Tシャツを買う</h2>
+    <p>このシャツの着用者 (#{nnn}) があなたの紹介者として記録されます。 あなたが買うと着用者にコミッションが発生します。</p>
+    <a class="btn" href="/buy?ref=jiufight-{nnn}-{tok}">JIU FIGHT × MU を買う →</a>
+    <a class="sub-btn" href="/jiufight">他のデザインを見る</a>
+  </div>
+
+  <div class="affiliate-note">
+    <b>📍 アフィリエイトリンクについて</b><br>
+    あなたがこのページを開いたことが <code>jiufight_ref={nnn}-{tok}</code> として 90 日間 cookie に記録されます。
+    その間に当サイトで購入が発生すると、 シャツ #{nnn} の着用者にコミッションが発生する仕組みです。
+    詳細は <a href="/protocol" style="color:#bf6500">/protocol</a> をご覧ください。
+  </div>
+</div>
+
+<footer>
+  ━◯━ MU × JIU FIGHT TOKYO · wearmu.com · 株式会社イネブラ
+</footer>
+</body></html>
+"#, nnn=nnn, tok=tok_lower, front_url=front_url, back_url=back_url);
+
+    let mut resp = Html(body).into_response();
+    let cookie = format!("jiufight_ref={}-{}; Path=/; Max-Age=7776000; SameSite=Lax",
+                         nnn, tok_lower);
+    resp.headers_mut().insert(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&cookie).unwrap_or_else(|_| HeaderValue::from_static(""))
+    );
+    eprintln!("[jiufight_affiliate] visit shirt=#{} token={}", nnn, tok_lower);
+    resp
+}
+
 async fn admin_extras_retroactive_claim(
     State(db): State<Db>,
     headers: HeaderMap,
@@ -54215,6 +54333,11 @@ async fn main() {
         .route("/api/v1/mockup/regen",         post(api_v1_mockup_regen))
         .route("/admin/proposal/extras/retroactive-claim",      post(admin_extras_retroactive_claim))
         .route("/admin/proposal/extras/email-preview",          get(admin_extras_email_preview))
+        // /jf/:token — JIU FIGHT × MU Order A affiliate landing.
+        // 100 random 5-char tokens (jiufight_tokens.rs) → shirt #NNN.
+        // Sets cookie `jiufight_ref=NNN-token` (90 day TTL) and renders
+        // a "buy this shirt" page crediting the wearer on purchase.
+        .route("/jf/:token", get(jiufight_affiliate_landing))
         // /proposals/* — kill the URL prefix as a page surface, but keep
         // image/asset access alive by redirecting to /static/proposals/ so
         // legacy LPs that still reference /proposals/<slug>-pf-*.jpg etc.
