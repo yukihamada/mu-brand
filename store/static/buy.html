@@ -388,6 +388,31 @@ footer{
     </a>
   </div>
 
+  <!-- 100枚 challenge live progress — Sho FB #7 #11: 進捗 を 隠さず 出す.
+       JSON は /api/100/progress (sold count + period start). -->
+  <a href="/100" id="challenge-100-live" style="display:flex;align-items:center;gap:14px;background:#0c0c0c;border:1px solid rgba(230,196,73,0.3);border-radius:8px;padding:14px 18px;margin:0 0 24px;text-decoration:none;color:#F5F5F0">
+    <div style="font-size:22px">🎯</div>
+    <div style="flex:1">
+      <div style="font-size:10.5px;letter-spacing:0.22em;color:#e6c449;text-transform:uppercase;margin-bottom:4px">100枚 チャレンジ · 5/18 → 5/31</div>
+      <div style="font-size:14px"><span id="challenge-100-sold" style="font-size:22px;font-weight:700;color:#fff;font-family:'SF Mono','Menlo',monospace">—</span> <span style="opacity:0.6">/ 100 着</span></div>
+    </div>
+    <div style="font-size:11px;letter-spacing:0.15em;color:#e6c449;text-transform:uppercase">live →</div>
+  </a>
+
+  <!-- 商品 写真 ギャラリー — Sho FB #8 #12. 4枚 grid。 (a) latest mockup
+       (既存 hero.png API) (b) Yuki が 着てる 写真 (c) タグ / moon-phase
+       クローズアップ (d) 配送 / 開封. (b)-(d) は Yuki が 撮って 差し替え。 -->
+  <div style="margin:0 0 24px">
+    <div style="font-size:10.5px;letter-spacing:0.22em;color:#e6c449;text-transform:uppercase;margin-bottom:10px">写真</div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px">
+      <img src="https://mockups.wearmu.com/hero.png" alt="latest MUGEN" loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:4px;background:#fff" onerror="this.style.display='none'">
+      <img src="https://mockups.wearmu.com/yuki-wearing.jpg" alt="Yuki が 着てる" loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:4px;background:#1a1a1a" onerror="this.replaceWith(Object.assign(document.createElement('div'),{style:'aspect-ratio:1;background:#1a1a1a;border-radius:4px;display:flex;align-items:center;justify-content:center;color:#666;font-size:10px;text-align:center',innerHTML:'着てる<br>写真<br>準備中'}))">
+      <img src="https://mockups.wearmu.com/tag-closeup.jpg" alt="タグ / moon-phase クローズアップ" loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:4px;background:#1a1a1a" onerror="this.replaceWith(Object.assign(document.createElement('div'),{style:'aspect-ratio:1;background:#1a1a1a;border-radius:4px;display:flex;align-items:center;justify-content:center;color:#666;font-size:10px;text-align:center',innerHTML:'タグ<br>moon-phase<br>準備中'}))">
+      <img src="https://mockups.wearmu.com/unboxing.jpg" alt="配送 / 開封" loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:4px;background:#1a1a1a" onerror="this.replaceWith(Object.assign(document.createElement('div'),{style:'aspect-ratio:1;background:#1a1a1a;border-radius:4px;display:flex;align-items:center;justify-content:center;color:#666;font-size:10px;text-align:center',innerHTML:'配送<br>開封<br>準備中'}))">
+    </div>
+    <div style="font-size:10.5px;opacity:0.5;margin-top:8px">※ (2)-(4) は 順次 追加。 撮影 待ち。</div>
+  </div>
+
   <div class="specs">
     <div class="spec"><div class="l">Fabric</div><div class="v">Stanley/Stella SATU001 · 180gsm · GOTS organic (Premium 経路) / Printstar 5.6oz (SUZURI 経路)</div></div>
     <div class="spec"><div class="l">Neck</div><div class="v">織りリブ襟 (Premium のみ)</div></div>
@@ -396,6 +421,52 @@ footer{
     <div class="spec"><div class="l">Delivery (国内)</div><div class="v"><strong style="color:#fff">SUZURI 約 5-8 営業日</strong> · Premium (Printful EU) 約 2-3 週間</div></div>
     <div class="spec"><div class="l">Origin city</div><div class="v">北海道 弟子屈町 (気温 seed)</div></div>
     <div class="spec"><div class="l">Cycle</div><div class="v">108 枚 / drop · 完売したら永久終了</div></div>
+  </div>
+
+  <!-- サイズ表 — Sho FB #10. Stanley/Stella SATU001 基準 (Premium 経路)。
+       SUZURI 経路 (Printstar 5.6oz) は 別測定で 値 が ±1cm 程度 ズレる。
+       Yuki が 実測 で 差し替え 推奨。 -->
+  <div style="margin:24px 0">
+    <div style="font-size:10.5px;letter-spacing:0.22em;color:#e6c449;text-transform:uppercase;margin-bottom:10px">サイズ表 (cm)</div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead>
+        <tr style="border-bottom:1px solid rgba(255,255,255,0.15)">
+          <th style="padding:8px 6px;text-align:left;color:#e6c449;font-weight:600">サイズ</th>
+          <th style="padding:8px 6px;text-align:right">S</th>
+          <th style="padding:8px 6px;text-align:right">M</th>
+          <th style="padding:8px 6px;text-align:right">L</th>
+          <th style="padding:8px 6px;text-align:right">XL</th>
+          <th style="padding:8px 6px;text-align:right">XXL</th>
+        </tr>
+      </thead>
+      <tbody style="font-family:'SF Mono','Menlo',monospace">
+        <tr style="border-bottom:1px solid rgba(255,255,255,0.05)">
+          <td style="padding:8px 6px;opacity:0.75">着丈</td>
+          <td style="padding:8px 6px;text-align:right">68</td>
+          <td style="padding:8px 6px;text-align:right">71</td>
+          <td style="padding:8px 6px;text-align:right">74</td>
+          <td style="padding:8px 6px;text-align:right">77</td>
+          <td style="padding:8px 6px;text-align:right">80</td>
+        </tr>
+        <tr style="border-bottom:1px solid rgba(255,255,255,0.05)">
+          <td style="padding:8px 6px;opacity:0.75">身幅</td>
+          <td style="padding:8px 6px;text-align:right">49</td>
+          <td style="padding:8px 6px;text-align:right">52</td>
+          <td style="padding:8px 6px;text-align:right">55</td>
+          <td style="padding:8px 6px;text-align:right">58</td>
+          <td style="padding:8px 6px;text-align:right">61</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;opacity:0.75">肩幅</td>
+          <td style="padding:8px 6px;text-align:right">43</td>
+          <td style="padding:8px 6px;text-align:right">46</td>
+          <td style="padding:8px 6px;text-align:right">49</td>
+          <td style="padding:8px 6px;text-align:right">52</td>
+          <td style="padding:8px 6px;text-align:right">55</td>
+        </tr>
+      </tbody>
+    </table>
+    <div style="font-size:10.5px;opacity:0.55;margin-top:8px">Stanley/Stella SATU001 (Premium 経路) 公称値。 SUZURI 経路 (Printstar 5.6oz) は ±1cm 程度 ズレあり。 普段 着てる ユニセックス T と 同じサイズ 推奨。</div>
   </div>
 
   <ul class="bullet-list">
@@ -408,7 +479,7 @@ footer{
     <ul class="bullet-list" style="margin-top:12px">
       <li><strong>デジタル会員証 (NFT) + 投票権</strong> — 1 着 = 1 vote、 同じドロップの buyer 同士が見られる</li>
       <li><strong>moon-phase marker</strong> — 内側襟下に 8 つの白円。 /scan でそのシャツの「生まれた天気」が読める</li>
-      <li><strong>1人 founder (濱田優貴 / Yuki) が 設計、 AI が 日々 の 運営 を 担当</strong>。 「ブランド 0人 (AI のみ)」 を <strong>目標</strong> として 100 年 運営 を 目指す ( <a href="/constitution">Constitution §22</a> )。 今日 時点 で は Yuki が 全部 書いて いる、 という のが 正直 な ところ。</li>
+      <li><strong>1人 founder (濱田優貴 / Yuki) が 設計、 AI が 日々 の 運営 を 担当</strong>。 「ブランド 0人 (AI のみ)」 を <strong>目標</strong> として 100 年 運営 を 目指す ( <a href="/constitution">MU の ルール (Constitution)</a>: ブランド の §0 〜 §32 全ルール を 公開、 「数字 で 書く」 「在庫 完売 で 永久 終了」 など 32条)。 今日 時点 で は Yuki が 全部 書いて いる、 という のが 正直 な ところ。</li>
     </ul>
   </details>
 
@@ -674,6 +745,23 @@ document.getElementById('btn-buy').addEventListener('click', async (e) => {
     btn.innerHTML = 'もう一度試す<span class="sub">エラー · 別経路 → <a href="/mugen" style="color:#0A0A0A;text-decoration:underline">MUGEN 一覧</a></span>';
   }
 });
+
+// 100枚 challenge live counter (Sho FB #7 #11) — fetch /api/100/progress.
+// JSON: { sold: number, target: 100, ... }. Hide block silently on error.
+(async () => {
+  try {
+    const r = await fetch('/api/100/progress', { cache: 'no-store' });
+    if (!r.ok) return;
+    const d = await r.json();
+    const sold = (d && (d.sold ?? d.count ?? d.purchases)) ?? null;
+    if (typeof sold === 'number') {
+      const el = document.getElementById('challenge-100-sold');
+      if (el) el.textContent = sold;
+    }
+  } catch (_) {
+    // network err → leave "—" placeholder, link still goes to /100
+  }
+})();
 </script>
 
 </body>
