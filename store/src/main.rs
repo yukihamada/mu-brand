@@ -22271,11 +22271,13 @@ fn ensure_proposal_tables(db: &Db) {
             note TEXT,
             revoked_at TEXT,
             created_at TEXT NOT NULL,
-            meta_json TEXT
+            meta_json TEXT,
+            owner_email TEXT
          )", [],
     );
-    // Backfill for older volumes that pre-date meta_json.
+    // Backfill for older volumes.
     let _ = conn.execute("ALTER TABLE proposals ADD COLUMN meta_json TEXT", []);
+    let _ = conn.execute("ALTER TABLE proposals ADD COLUMN owner_email TEXT", []);
     let _ = conn.execute(
         "CREATE TABLE IF NOT EXISTS proposal_skus (
             slug TEXT NOT NULL,
@@ -23936,6 +23938,228 @@ async fn api_v1_sku_create(
         "lp_url": format!("https://wearmu.com/{}", slug),
         "next": "approve sales: POST /api/proposal/{slug}/approve (admin only)",
     })).into_response()
+}
+
+/// Returns Ok(email) if the caller (via Bearer/cookie/api_key) owns the slug,
+/// else Err(response). Ownership = proposals.owner_email match, OR the slug
+/// is the caller's personal sandbox (`personal-<hash(email)>`).
+fn require_slug_owner(
+    db: &Db, headers: &HeaderMap,
+    query: Option<&std::collections::HashMap<String, String>>,
+    slug: &str,
+) -> Result<String, Response> {
+    let email = match bearer_or_session_email(db, headers, query) {
+        Some(e) => e,
+        None => return Err((StatusCode::UNAUTHORIZED, Json(serde_json::json!({
+            "ok": false, "error": "missing or invalid api_key"
+        }))).into_response()),
+    };
+    if slug == personal_slug_for(&email) { return Ok(email); }
+    let conn = db.lock().unwrap();
+    let owner: Option<String> = conn.query_row(
+        "SELECT owner_email FROM proposals WHERE slug=?",
+        params![slug], |r| r.get(0),
+    ).ok().flatten();
+    match owner {
+        Some(o) if o.to_lowercase() == email => Ok(email),
+        Some(_) => Err((StatusCode::FORBIDDEN, Json(serde_json::json!({
+            "ok": false, "error": "this slug is owned by another email"
+        }))).into_response()),
+        None => Err((StatusCode::FORBIDDEN, Json(serde_json::json!({
+            "ok": false,
+            "error": "slug has no owner; POST /api/v1/proposal first to claim it"
+        }))).into_response()),
+    }
+}
+
+#[derive(Deserialize)]
+struct ProposalUpsertBody {
+    slug: String,
+    #[serde(default)] name: String,
+    #[serde(default)] ip_owner: String,
+    #[serde(default)] meta: Option<serde_json::Value>,
+}
+
+/// POST /api/v1/proposal — upsert a brand under the caller. Claims the slug
+/// if it has no owner; updates name/ip_owner/meta if already owned. Forbidden
+/// when the slug is owned by a different email.
+async fn api_v1_proposal_upsert(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<ProposalUpsertBody>,
+) -> Response {
+    let email = match bearer_or_session_email(&db, &headers, Some(&q)) {
+        Some(e) => e,
+        None => return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({
+            "ok": false, "error": "missing or invalid api_key"
+        }))).into_response(),
+    };
+    let slug = body.slug.trim().to_lowercase();
+    if slug.is_empty() || !slug.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-') {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "ok": false, "error": "slug must be [a-z0-9_-]+"
+        }))).into_response();
+    }
+    let name = if body.name.trim().is_empty() { slug.clone() } else { body.name.trim().to_string() };
+    let ip_owner = if body.ip_owner.trim().is_empty() { name.clone() } else { body.ip_owner.trim().to_string() };
+    let meta_json: Option<String> = body.meta.as_ref().map(|m| m.to_string());
+
+    let conn = db.lock().unwrap();
+    // Check existing ownership.
+    let existing: Option<(String, Option<String>)> = conn.query_row(
+        "SELECT name, owner_email FROM proposals WHERE slug=?",
+        params![slug], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).ok();
+    let allow_personal = slug == personal_slug_for(&email);
+    if let Some((_, Some(owner))) = &existing {
+        if owner.to_lowercase() != email && !allow_personal {
+            return (StatusCode::FORBIDDEN, Json(serde_json::json!({
+                "ok": false, "error": "this slug is owned by another email"
+            }))).into_response();
+        }
+    }
+    let now = chrono_now();
+    let _ = conn.execute(
+        "INSERT INTO proposals (slug, name, ip_owner, created_at, meta_json, owner_email)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(slug) DO UPDATE SET
+            name = excluded.name,
+            ip_owner = excluded.ip_owner,
+            meta_json = COALESCE(excluded.meta_json, proposals.meta_json),
+            owner_email = COALESCE(proposals.owner_email, excluded.owner_email)",
+        params![slug, name, ip_owner, now, meta_json, email],
+    );
+    Json(serde_json::json!({
+        "ok": true,
+        "slug": slug,
+        "name": name,
+        "owner_email": email,
+        "created": existing.is_none(),
+        "next": {
+            "create_sku":     format!("POST /api/v1/sku/create  body: {{\"slug\":\"{}\",\"label\":...}}", slug),
+            "approve_public": format!("POST /api/v1/proposal/{}/approve", slug),
+            "view_lp":        format!("https://wearmu.com/{}", slug),
+        },
+    })).into_response()
+}
+
+/// POST /api/v1/proposal/:slug/approve — owner-gated. Same effect as the
+/// admin endpoint: sets approved_at + clears revoked_at, activating the
+/// public LP at /<slug>.
+async fn api_v1_proposal_approve(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let email = match require_slug_owner(&db, &headers, Some(&q), &slug) {
+        Ok(e) => e, Err(r) => return r,
+    };
+    let now = chrono_now();
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE proposals SET
+                approved_at=?, approver_name=?, approver_email=?,
+                plan_tier='self-serve', revoked_at=NULL
+             WHERE slug=?",
+            params![now, email, email, slug],
+        );
+        let _ = conn.execute(
+            "UPDATE products SET active=1 WHERE brand LIKE ?||'%' AND active=0",
+            params![format!("{}_", slug)],
+        );
+    }
+    Json(serde_json::json!({
+        "ok": true, "slug": slug, "approved_at": now, "approver_email": email,
+        "public_url": format!("https://wearmu.com/{}", slug),
+    })).into_response()
+}
+
+/// POST /api/v1/proposal/:slug/revoke — owner-gated. Hides /<slug> from
+/// the public; SKUs remain in DB.
+async fn api_v1_proposal_revoke(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let _email = match require_slug_owner(&db, &headers, Some(&q), &slug) {
+        Ok(e) => e, Err(r) => return r,
+    };
+    let now = chrono_now();
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE proposals SET revoked_at=? WHERE slug=?",
+            params![now, slug],
+        );
+    }
+    Json(serde_json::json!({"ok": true, "slug": slug, "revoked_at": now})).into_response()
+}
+
+#[derive(Deserialize)]
+struct SuzuriPublishApiBody {
+    slug: String,
+    letter: String,
+    /// Comma-separated SUZURI item ids. Default: 100 (ビッグシルエットTシャツ).
+    /// e.g. "100,152,8" for tee + hoodie + full-graphic.
+    #[serde(default)] items: Option<String>,
+}
+
+/// POST /api/v1/suzuri/publish — owner-gated. Publishes one of the owner's
+/// SKUs to SUZURI with optional multi-item variant list.
+async fn api_v1_suzuri_publish(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<SuzuriPublishApiBody>,
+) -> Response {
+    let _email = match require_slug_owner(&db, &headers, Some(&q), &body.slug) {
+        Ok(e) => e, Err(r) => return r,
+    };
+    // Look up the products.id for this slug+letter.
+    let pid: i64 = {
+        let conn = db.lock().unwrap();
+        let kind: String = match conn.query_row(
+            "SELECT kind FROM proposal_skus WHERE slug=? AND letter=?",
+            params![body.slug, body.letter], |r| r.get(0),
+        ) {
+            Ok(k) => k,
+            Err(_) => return (StatusCode::NOT_FOUND, Json(serde_json::json!({
+                "ok": false, "error": "no such (slug, letter)"
+            }))).into_response(),
+        };
+        let brand = proposal_brand_for_kind(&body.slug, &kind);
+        match conn.query_row(
+            "SELECT id FROM products WHERE brand=? ORDER BY drop_num DESC LIMIT 1",
+            params![brand], |r| r.get::<_, i64>(0),
+        ) {
+            Ok(p) => p,
+            Err(_) => return (StatusCode::NOT_FOUND, Json(serde_json::json!({
+                "ok": false, "error": format!("no products row for brand={}", brand)
+            }))).into_response(),
+        }
+    };
+    let items: Vec<u32> = body.items.as_deref().unwrap_or("")
+        .split(',').filter_map(|s| s.trim().parse::<u32>().ok()).collect();
+    let result = if items.is_empty() {
+        suzuri_publish_drop(db.clone(), pid, true).await
+    } else {
+        suzuri_publish_drop_with_items(db.clone(), pid, true, items).await
+    };
+    match result {
+        Ok((mid, spid, url)) => Json(serde_json::json!({
+            "ok": true, "product_id": pid,
+            "suzuri_material_id": mid,
+            "suzuri_product_id": spid,
+            "suzuri_url": url,
+        })).into_response(),
+        Err(e) => (StatusCode::BAD_GATEWAY, Json(serde_json::json!({
+            "ok": false, "error": e
+        }))).into_response(),
+    }
 }
 
 #[derive(Deserialize)]
@@ -53081,6 +53305,10 @@ async fn main() {
         .route("/api/v1/me",                    get(api_v1_me))
         .route("/api/v1/sku/create",           post(api_v1_sku_create))
         .route("/api/v1/sku/quick",            post(api_v1_sku_quick))
+        .route("/api/v1/proposal",             post(api_v1_proposal_upsert))
+        .route("/api/v1/proposal/:slug/approve", post(api_v1_proposal_approve))
+        .route("/api/v1/proposal/:slug/revoke",  post(api_v1_proposal_revoke))
+        .route("/api/v1/suzuri/publish",       post(api_v1_suzuri_publish))
         .route("/admin/proposal/extras/retroactive-claim",      post(admin_extras_retroactive_claim))
         .route("/admin/proposal/extras/email-preview",          get(admin_extras_email_preview))
         // /proposals/* — kill the URL prefix as a page surface, but keep

@@ -303,47 +303,58 @@ footer{padding:36px 24px;text-align:center;font-size:10px;letter-spacing:0.4em;t
   </article>
 </section>
 
-<section style="max-width:760px;margin:48px auto 0;padding:28px 24px;border:1px solid rgba(230,196,73,0.32);background:#101010;border-radius:8px">
-  <div style="font-size:11px;letter-spacing:0.28em;color:#e6c449;text-transform:uppercase;margin-bottom:8px">━◯━ +1 SKU 追加</div>
-  <h3 style="margin:0 0 10px;font-size:20px;font-weight:700;color:#f5f5f0">追加デザインを 1 枚だけ生成 — <span style="color:#e6c449">30 pt</span> · <em style="color:#7be57b;font-style:normal">すぐ表示</em></h3>
-  <p style="margin:0 0 18px;color:#aaa;font-size:13px;line-height:1.8">AI が JIUFIGHT 文脈で 1 案をその場で生成 → 即承認 → <a href="/api/proposal/jiufight/skus" target="_blank" style="color:#e6c449">/api/proposal/jiufight/skus</a> に出現 (~15-25 s)。 初回 30 枚は無料。 ログイン (cookie) があれば email 欄は空でも OK。</p>
-  <form id="jf-add1" onsubmit="return false" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <input type="text" id="jf-key" placeholder="API key (Authorization Bearer) — /api-keys で発行" autocomplete="off" style="flex:1;min-width:240px;background:#0a0a0a;border:1px solid #222;color:#f5f5f0;padding:11px 13px;font-family:'SF Mono',monospace;font-size:13px;border-radius:4px">
-    <button id="jf-add1-btn" type="submit" style="background:#e6c449;color:#000;border:0;font-weight:700;padding:11px 22px;font-size:13px;letter-spacing:0.06em;cursor:pointer;border-radius:4px;font-family:inherit">+1 SKU 追加 (30 pt)</button>
-  </form>
-  <div id="jf-add1-result" style="margin-top:14px;font-size:12px;color:#888;line-height:1.7;font-family:'SF Mono',monospace"></div>
+<section id="jf-add1-sec" style="max-width:720px;margin:48px auto 0;padding:32px 28px;border:1px solid rgba(230,196,73,0.4);background:#101010;border-radius:10px;text-align:center">
+  <div style="font-size:11px;letter-spacing:0.32em;color:#e6c449;text-transform:uppercase;margin-bottom:14px">━◯━ あなたの 1 枚を追加</div>
+  <h3 style="margin:0 0 6px;font-size:26px;font-weight:800;color:#f5f5f0;letter-spacing:-0.01em">ボタンを押すと、AI が 15 秒で<br>JIUFIGHT デザインを 1 枚作ります。</h3>
+  <p style="margin:14px auto 22px;color:#bbb;font-size:14px;line-height:1.9;max-width:520px">価格 <strong style="color:#e6c449">30 pt</strong> (= ¥30 相当)。 生成された Tシャツはこのページに即時追加されます。<br>初回利用は <a href="/api-keys" style="color:#e6c449;font-weight:600">/api-keys でログイン (30 秒)</a> → 戻ってボタンを押すだけ。</p>
+  <button id="jf-add1-btn" style="background:#e6c449;color:#000;border:0;font-weight:800;padding:16px 36px;font-size:15px;letter-spacing:0.04em;cursor:pointer;border-radius:6px;font-family:inherit">この瞬間に 1 枚作る (30 pt)</button>
+  <div id="jf-add1-result" style="margin-top:18px;font-size:13px;color:#aaa;line-height:1.7;min-height:18px"></div>
+  <details style="margin-top:24px;text-align:left;font-size:12px;color:#666">
+    <summary style="cursor:pointer;color:#888">開発者向け · API で直接呼ぶ</summary>
+    <pre style="background:#0a0a0a;border:1px solid #222;padding:12px;border-radius:4px;font-family:'SF Mono',monospace;font-size:11px;color:#ccc;overflow-x:auto;margin-top:10px;line-height:1.7">curl -X POST https://wearmu.com/api/v1/sku/quick \
+  -H 'Authorization: Bearer &lt;your_key_from_/api-keys&gt;' \
+  -H 'Content-Type: application/json' \
+  -d '{"slug":"jiufight"}'</pre>
+  </details>
 </section>
 <script>
 (function(){
-  var f = document.getElementById('jf-add1');
   var b = document.getElementById('jf-add1-btn');
-  var k = document.getElementById('jf-key');
   var o = document.getElementById('jf-add1-result');
-  f.addEventListener('submit', async function(e){
-    e.preventDefault();
-    var key = (k.value||'').trim();
-    b.disabled = true; o.style.color='#888'; o.textContent='generating image (Gemini) … 15-25 s 待って';
+  b.addEventListener('click', async function(){
+    b.disabled = true;
+    b.textContent = '生成中… 15-25 秒待ってください';
+    o.style.color='#aaa';
+    o.textContent='AI (Gemini 3) がデザインを描いて、 SUZURI 用にアップロードしてます。 ブラウザを閉じても完了します。';
     try {
-      var headers = {'Content-Type':'application/json'};
-      if (key) headers['Authorization'] = 'Bearer '+key;
       var r = await fetch('/api/v1/sku/quick', {
-        method:'POST', credentials:'same-origin', headers:headers,
+        method:'POST', credentials:'same-origin',
+        headers:{'Content-Type':'application/json'},
         body: JSON.stringify({slug:'jiufight'}),
       });
       var j = await r.json();
       if (r.ok && j.ok !== false) {
         o.style.color='#7be57b';
-        o.innerHTML = '✓ '+j.letter+' (drop '+j.drop_num+', '+j.kind+', ¥'+j.price_jpy.toLocaleString()+') · cost <code>'+j.cost_pt+' pt</code>'
-          + (j.free_applied?' (free_30 applied)':'')
-          + '<br>image: <a href="'+j.design_url+'" target="_blank" style="color:#e6c449">'+j.design_url+'</a>'
-          + '<br><img src="'+j.design_url+'" style="margin-top:10px;max-width:280px;border:1px solid #222;border-radius:4px">';
+        o.innerHTML = '✓ 完成: <strong>'+j.letter+'</strong> · '+j.kind+' · ¥'+j.price_jpy.toLocaleString()+' · 課金 '+j.cost_pt+' pt'
+          + '<br><img src="'+j.design_url+'" style="margin-top:14px;max-width:340px;border:1px solid #222;border-radius:6px;display:block;margin-left:auto;margin-right:auto">'
+          + '<div style="margin-top:10px;font-size:11px;color:#666">drop_num='+j.drop_num+' · <a href="'+j.design_url+'" target="_blank" style="color:#e6c449">原本</a> · <a href="/api/proposal/'+j.slug+'/skus" target="_blank" style="color:#e6c449">API で確認</a></div>';
+        b.textContent = 'もう 1 枚作る (30 pt)';
       } else if (r.status === 401) {
         o.style.color='#ff6464';
-        o.innerHTML = '✗ '+(j.error||'unauthorized')+'<br>API key を <a href="/api-keys" style="color:#e6c449">/api-keys</a> で発行してから貼り付けてください';
+        o.innerHTML = '✗ ログインが必要です → <a href="/api-keys" style="color:#e6c449;font-weight:700">/api-keys</a> で email 入れて 6 桁コード入れるだけ (30 秒)。 戻ってもう一度ボタン押してください。';
+        b.textContent = 'この瞬間に 1 枚作る (30 pt)';
+      } else if (r.status === 402) {
+        o.style.color='#ff6464';
+        o.innerHTML = '✗ ポイント不足です ('+(j.error||'')+ ')。 <a href="/extras/my" style="color:#e6c449">/extras/my でチャージ</a>。';
+        b.textContent = 'この瞬間に 1 枚作る (30 pt)';
       } else {
         o.style.color='#ff6464'; o.textContent = '✗ '+(j.error || ('HTTP '+r.status));
+        b.textContent = 'この瞬間に 1 枚作る (30 pt)';
       }
-    } catch(e){ o.style.color='#ff6464'; o.textContent='✗ '+e.message; }
+    } catch(e){
+      o.style.color='#ff6464'; o.textContent='✗ '+e.message;
+      b.textContent = 'この瞬間に 1 枚作る (30 pt)';
+    }
     finally { b.disabled = false; }
   });
 })();
