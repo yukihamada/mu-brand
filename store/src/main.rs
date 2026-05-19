@@ -20957,6 +20957,11 @@ async fn msa_source_page() -> Html<&'static str> {
     Html(include_str!("../static/source.html"))
 }
 
+/// GET /en/source — English port for Alex FB (#9). Same gate logic.
+async fn msa_source_page_en() -> Html<&'static str> {
+    Html(include_str!("../static/source-en.html"))
+}
+
 async fn privacy_page() -> Html<&'static str> {
     Html(include_str!("../static/privacy.html"))
 }
@@ -54385,6 +54390,7 @@ async fn main() {
         .route("/tokushoho.html", get(tokushoho_page))
         .route("/about/honest", get(about_honest_page))
         .route("/source", get(msa_source_page))
+        .route("/en/source", get(msa_source_page_en))
         .route("/privacy", get(privacy_page))
         .route("/privacy.html", get(privacy_page))
         .route("/tos", get(tos_page))
