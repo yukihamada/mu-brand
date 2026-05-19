@@ -5856,6 +5856,7 @@ fn vault_header_html(current: &str, masked_email: Option<&str>) -> String {
         <a href="/" class="{home}">HOME</a>
         <a href="/buy" class="{buy}">BUY</a>
         <a href="/vault" class="{vault}">VAULT</a>
+        <a href="/api-keys" class="{api}">API</a>
         <a href="/blog" class="{blog}">運営ノート</a>
         <a href="/about.html" class="{about}">ABOUT</a>
       </nav>
@@ -5864,6 +5865,7 @@ fn vault_header_html(current: &str, masked_email: Option<&str>) -> String {
         home  = cls("home"),
         buy   = cls("buy"),
         vault = cls("vault"),
+        api   = cls("api"),
         blog  = cls("blog"),
         about = cls("about"),
     )
@@ -5873,6 +5875,7 @@ fn vault_footer_html() -> &'static str {
     r#"<footer class="site-footer">
       <div>VAULT · MU — Tシャツ所有者限定の場所</div>
       <div>
+        <a href="/api-keys">API</a>
         <a href="/transparency">数字</a>
         <a href="/constitution">§27 寄付</a>
         <a href="/about.html">About</a>
@@ -22971,8 +22974,8 @@ footer a{{color:var(--accent);text-decoration:none}}
   }})();
   </script>
   <footer>
-    <p>© 株式会社イネブラ / MU · <a href="https://wearmu.com">wearmu.com</a> · IP owner: {ip_owner}</p>
-    <p>承認後の公開販売は <code>POST /api/proposal/{slug}/approve</code> 経由。state: <code>GET /api/proposal/{slug}/state</code> · SKUs: <code>GET /api/proposal/{slug}/skus</code></p>
+    <p>© 株式会社イネブラ / MU · <a href="https://wearmu.com">wearmu.com</a> · IP owner: {ip_owner} · <a href="/api-keys">API key を発行</a></p>
+    <p>自分のブランドを立ち上げる: <a href="/api-keys">/api-keys</a> → email でログイン → 30 pt / SKU で公開販売可。</p>
     <p style="opacity:0.6;margin-top:12px">このページは <code>proposals</code> + <code>proposal_skus</code> テーブルから動的に生成されています。静的ファイルなし。</p>
   </footer>
 </div>
@@ -24722,9 +24725,9 @@ async fn api_v1_me(
     })).into_response()
 }
 
-/// GET /api-keys — HTML page. Cookie-gated (mu_collab_session). Shows the
-/// caller's API key + quickstart + manage links. Unauth visitors see a
-/// minimal "log in to get a key" form that calls /api/collab/auth/start.
+/// GET /api-keys — interactive API console. Logged-in users see their key
+/// + a 1-click playground (no curl needed); logged-out see a 3-step pitch
+/// + email magic-link form. Always wrapped in the shared site chrome.
 async fn api_keys_page(
     State(db): State<Db>,
     headers: HeaderMap,
@@ -24742,144 +24745,569 @@ async fn api_keys_page(
         }
         None => (false, String::new(), String::new(), 0, false),
     };
+    let masked_email = if logged_in { Some(mask_email_public(&email)) } else { None };
+
     let body = if logged_in {
-        format!(r#"<div class="card">
-  <div class="eyebrow">━◯━ logged in as</div>
-  <div class="email">{email}</div>
-  <div class="eyebrow">API key</div>
-  <div class="key" id="k">{api_key}</div>
-  <button class="copy" onclick="navigator.clipboard.writeText(document.getElementById('k').textContent);this.textContent='copied ✓';setTimeout(()=>this.textContent='copy',1500)">copy</button>
-  <div class="kv"><div><div class="l">points balance</div><div class="v">{balance}</div></div><div><div class="l">free 30 used</div><div class="v">{free}</div></div><div><div class="l">per SKU</div><div class="v">30 pt</div></div></div>
-</div>
-<h2>Create a SKU — BYO design</h2>
-<pre>curl -X POST https://wearmu.com/api/v1/sku/create \
-  -H 'Authorization: Bearer {api_key}' \
-  -H 'Content-Type: application/json' \
-  -d '{{
-    "label": "My first MU tee",
-    "kind":  "tee",
-    "design_url": "https://example.com/my-design.png"
-  }}'</pre>
-<p>レスポンス: <code>{{"ok":true,"sku_id":…,"slug":"personal-…","letter":"m001","lp_url":"https://wearmu.com/personal-…"}}</code></p>
-<h2>Create a SKU — AI generate (Gemini 3 Pro)</h2>
-<pre>curl -X POST https://wearmu.com/api/v1/sku/quick \
-  -H 'Authorization: Bearer {api_key}' \
-  -H 'Content-Type: application/json' \
-  -d '{{
-    "label":  "champion mat-time tee",
-    "kind":   "tee",
-    "prompt": "minimal japanese bjj poster — sumi ink, mat time, champion glow"
-  }}'</pre>
-<p>同期で Gemini が生成 → R2 アップロード → SUZURI material も作成（multi-variant: ビッグT / パーカー / フルグラフィック）。</p>
-<p>初回 30 枚は <strong>無料</strong>。以降 <strong>30 pt / SKU</strong>。 <a href="/extras/my">topup → /extras/my</a></p>
+        format!(r##"
+<section class="hero">
+  <div class="kicker">API · 自分のブランドを 30 秒で</div>
+  <h1>このページから <em>全部</em> できます</h1>
+  <p class="lede">SKU 作成 / AI 生成 / 編集 / SUZURI 公開 / brand claim まで、 全部 1 クリックずつ。 curl 不要。</p>
+</section>
 
-<h2>SKU を編集 / 削除</h2>
-<pre># 価格 / ラベル / kind を更新
-curl -X PATCH https://wearmu.com/api/v1/sku/&lt;slug&gt;/&lt;letter&gt; \
+<section class="key-card">
+  <div class="key-grid">
+    <div>
+      <div class="eyebrow">logged in as</div>
+      <div class="email-line">{email}</div>
+      <div class="eyebrow" style="margin-top:18px">your API key</div>
+      <div class="key" id="ak">{api_key}</div>
+      <button class="copy" id="copy-key">copy key</button>
+      <button class="copy ghost" onclick="location.href='/api/collab/auth/logout'">logout</button>
+    </div>
+    <div class="stats">
+      <div><div class="l">points</div><div class="v">{balance}</div></div>
+      <div><div class="l">free 30</div><div class="v">{free_label}</div></div>
+      <div><div class="l">per SKU</div><div class="v">30 pt</div></div>
+    </div>
+  </div>
+  <div class="key-actions">
+    <a href="/extras/my" class="btn-ghost">+ pt を買う</a>
+    <a href="/personal-{personal_hash}" class="btn-ghost" target="_blank">あなたの公開ページ →</a>
+  </div>
+</section>
+
+<section class="pg">
+  <div class="pg-tabs" role="tablist">
+    <button class="pg-tab active" data-tab="quick">⚡ AI で 1 枚作る</button>
+    <button class="pg-tab" data-tab="byo">🎨 画像 URL から作る</button>
+    <button class="pg-tab" data-tab="brand">📛 ブランド claim</button>
+    <button class="pg-tab" data-tab="edit">✏️ SKU 編集 / 削除</button>
+    <button class="pg-tab" data-tab="publish">🛒 SUZURI / mockup</button>
+  </div>
+
+  <!-- TAB: quick -->
+  <div class="pg-panel active" data-panel="quick">
+    <div class="pg-help">Gemini 3 Pro がデザイン生成 → R2 へアップ → SUZURI に multi-variant (ビッグT/パーカー/フルグラフィック) も即公開。 同期 30 秒前後。</div>
+    <div class="row">
+      <label>商品名 <span class="muted">(LP のタイトル)</span></label>
+      <input id="q-label" type="text" placeholder="例: champion mat-time tee" value="my first MU tee">
+    </div>
+    <div class="row two">
+      <div>
+        <label>種類</label>
+        <select id="q-kind">
+          <option value="tee" selected>T シャツ</option>
+          <option value="hoodie">パーカー</option>
+          <option value="tote">トート</option>
+          <option value="mug">マグ</option>
+          <option value="sticker">ステッカー</option>
+        </select>
+      </div>
+      <div>
+        <label>価格 (¥)</label>
+        <input id="q-price" type="number" min="500" step="100" value="4900">
+      </div>
+    </div>
+    <div class="row">
+      <label>AI プロンプト <span class="muted">(英語のほうが綺麗)</span></label>
+      <textarea id="q-prompt" rows="3" placeholder="minimal japanese bjj poster — sumi ink, mat time">minimal japanese poster, sumi ink, single circle and one kanji</textarea>
+    </div>
+    <button class="big" id="q-go">⚡ 生成して即公開 (30 pt)</button>
+    <div class="out" id="q-out"></div>
+  </div>
+
+  <!-- TAB: byo -->
+  <div class="pg-panel" data-panel="byo">
+    <div class="pg-help">手元の PNG を画像 URL で渡すだけ。 SUZURI 公開も自動で走ります。</div>
+    <div class="row">
+      <label>商品名</label>
+      <input id="b-label" type="text" placeholder="My first MU tee" value="my BYO tee">
+    </div>
+    <div class="row two">
+      <div>
+        <label>種類</label>
+        <select id="b-kind">
+          <option value="tee" selected>T シャツ</option>
+          <option value="hoodie">パーカー</option>
+          <option value="tote">トート</option>
+          <option value="mug">マグ</option>
+          <option value="sticker">ステッカー</option>
+        </select>
+      </div>
+      <div>
+        <label>価格 (¥)</label>
+        <input id="b-price" type="number" min="500" step="100" value="4900">
+      </div>
+    </div>
+    <div class="row">
+      <label>画像 URL <span class="muted">(透過 PNG 推奨, 2400×3200 以上)</span></label>
+      <input id="b-url" type="url" placeholder="https://example.com/my-design.png" value="https://wearmu.com/static/jiufight/products/01_front_marked.png">
+    </div>
+    <button class="big" id="b-go">🎨 この画像で SKU を作る (30 pt)</button>
+    <div class="out" id="b-out"></div>
+  </div>
+
+  <!-- TAB: brand -->
+  <div class="pg-panel" data-panel="brand">
+    <div class="pg-help">自分の URL ( <code>wearmu.com/&lt;slug&gt;</code> ) を取得します。 取った slug の下に SKU をぶら下げれば、 そこが LP になります。</div>
+    <div class="row two">
+      <div>
+        <label>slug <span class="muted">(URL に出る)</span></label>
+        <input id="p-slug" type="text" placeholder="my-brand" pattern="[a-z0-9_-]+">
+      </div>
+      <div>
+        <label>ブランド名</label>
+        <input id="p-name" type="text" placeholder="My Brand">
+      </div>
+    </div>
+    <div class="row">
+      <label>IP オーナー <span class="muted">(法人名 or 個人)</span></label>
+      <input id="p-ip" type="text" placeholder="My Brand Inc.">
+    </div>
+    <div class="row btn-row">
+      <button class="big" id="p-claim">📛 slug を claim</button>
+      <button class="big ghost" id="p-approve">公開 (approve)</button>
+      <button class="big ghost" id="p-revoke">取り下げ (revoke)</button>
+    </div>
+    <div class="out" id="p-out"></div>
+  </div>
+
+  <!-- TAB: edit -->
+  <div class="pg-panel" data-panel="edit">
+    <div class="pg-help">作った SKU の値段 / 名前 / kind を変える、 または完全削除。</div>
+    <div class="row two">
+      <div>
+        <label>slug</label>
+        <input id="e-slug" type="text" placeholder="personal-... or my-brand">
+      </div>
+      <div>
+        <label>letter <span class="muted">(m001 など)</span></label>
+        <input id="e-letter" type="text" placeholder="m001">
+      </div>
+    </div>
+    <div class="row two">
+      <div>
+        <label>新しい価格 (¥) <span class="muted">(空白なら変更しない)</span></label>
+        <input id="e-price" type="number" min="500" step="100" placeholder="5900">
+      </div>
+      <div>
+        <label>新しい商品名 <span class="muted">(空白なら変更しない)</span></label>
+        <input id="e-label" type="text" placeholder="updated title">
+      </div>
+    </div>
+    <div class="row btn-row">
+      <button class="big" id="e-patch">✏️ 更新</button>
+      <button class="big danger" id="e-del">🗑 削除</button>
+    </div>
+    <div class="out" id="e-out"></div>
+  </div>
+
+  <!-- TAB: publish -->
+  <div class="pg-panel" data-panel="publish">
+    <div class="pg-help">既存 SKU を SUZURI に上げる、 もしくは Printful mockup を再生成。 SUZURI items は 100/152/8 (ビッグT/パーカー/フルグラフィック) がデフォルト。</div>
+    <div class="row two">
+      <div>
+        <label>slug</label>
+        <input id="s-slug" type="text" placeholder="personal-... or my-brand">
+      </div>
+      <div>
+        <label>letter</label>
+        <input id="s-letter" type="text" placeholder="m001">
+      </div>
+    </div>
+    <div class="row">
+      <label>SUZURI items <span class="muted">(カンマ区切り。 100=ビッグT, 152=パーカー, 8=フルグラフィック, 149=オーバーサイズ)</span></label>
+      <input id="s-items" type="text" value="100,152,8" placeholder="100,152,8">
+    </div>
+    <div class="row btn-row">
+      <button class="big" id="s-suzuri">🛒 SUZURI に公開</button>
+      <button class="big ghost" id="s-mockup">🖼 Printful mockup を再生成</button>
+    </div>
+    <div class="out" id="s-out"></div>
+  </div>
+</section>
+
+<details class="curl-details">
+  <summary>📋 curl で叩く場合 — 全 10 endpoint のサンプル</summary>
+  <div class="curl-grid">
+    <h4>1. AI 生成 (sync)</h4>
+    <pre>curl -X POST https://wearmu.com/api/v1/sku/quick \
   -H 'Authorization: Bearer {api_key}' \
   -H 'Content-Type: application/json' \
-  -d '{{"price_jpy": 5900, "label": "new title"}}'
+  -d '{{"label":"my tee","kind":"tee","prompt":"..."}}'</pre>
 
-# SKU を削除（proposal_skus + products 両方を削除）
+    <h4>2. BYO design</h4>
+    <pre>curl -X POST https://wearmu.com/api/v1/sku/create \
+  -H 'Authorization: Bearer {api_key}' \
+  -H 'Content-Type: application/json' \
+  -d '{{"label":"my tee","kind":"tee","design_url":"https://..."}}'</pre>
+
+    <h4>3. SKU 更新 / 削除</h4>
+    <pre>curl -X PATCH  https://wearmu.com/api/v1/sku/&lt;slug&gt;/&lt;letter&gt; \
+  -H 'Authorization: Bearer {api_key}' -d '{{"price_jpy":5900}}'
 curl -X DELETE https://wearmu.com/api/v1/sku/&lt;slug&gt;/&lt;letter&gt; \
   -H 'Authorization: Bearer {api_key}'</pre>
 
-<h2>Proposal / brand を立ち上げ</h2>
-<pre># slug を claim（owner_email に email がセットされる）
-curl -X POST https://wearmu.com/api/v1/proposal \
+    <h4>4. ブランド claim / approve / revoke</h4>
+    <pre>curl -X POST https://wearmu.com/api/v1/proposal \
   -H 'Authorization: Bearer {api_key}' \
-  -H 'Content-Type: application/json' \
   -d '{{"slug":"my-brand","name":"My Brand","ip_owner":"My Brand Inc."}}'
-
-# 公開する（approve）/ 取り下げ（revoke）
 curl -X POST https://wearmu.com/api/v1/proposal/my-brand/approve -H 'Authorization: Bearer {api_key}'
 curl -X POST https://wearmu.com/api/v1/proposal/my-brand/revoke  -H 'Authorization: Bearer {api_key}'</pre>
 
-<h2>外部チャネル発行</h2>
-<pre># SUZURI: material 作成（multi-variant — items のデフォルト: 100,152,8）
-curl -X POST 'https://wearmu.com/api/v1/suzuri/publish?slug=&lt;slug&gt;&letter=&lt;letter&gt;&items=100,152,8' \
+    <h4>5. SUZURI / Printful mockup</h4>
+    <pre>curl -X POST 'https://wearmu.com/api/v1/suzuri/publish?slug=&lt;slug&gt;&letter=&lt;l&gt;&items=100,152,8' \
   -H 'Authorization: Bearer {api_key}'
-
-# Printful mockup を再生成（バックグラウンド）
-curl -X POST 'https://wearmu.com/api/v1/mockup/regen?slug=&lt;slug&gt;&letter=&lt;letter&gt;' \
+curl -X POST 'https://wearmu.com/api/v1/mockup/regen?slug=&lt;slug&gt;&letter=&lt;l&gt;' \
   -H 'Authorization: Bearer {api_key}'</pre>
 
-<h2>確認系 (public)</h2>
-<pre>curl https://wearmu.com/api/me -H 'Authorization: Bearer {api_key}'
-curl https://wearmu.com/api/proposal/&lt;slug&gt;/skus</pre>"#,
-            email=html_escape(&email), api_key=html_escape(&api_key),
-            balance=balance, free=if free_used {"yes"} else {"no"})
+    <h4>6. 確認系 (public)</h4>
+    <pre>curl https://wearmu.com/api/me -H 'Authorization: Bearer {api_key}'
+curl https://wearmu.com/api/proposal/&lt;slug&gt;/skus</pre>
+  </div>
+</details>
+
+<script>
+(function(){{
+  var API_KEY = {api_key_js};
+
+  // Tabs
+  document.querySelectorAll('.pg-tab').forEach(function(t){{
+    t.addEventListener('click', function(){{
+      document.querySelectorAll('.pg-tab').forEach(function(x){{x.classList.remove('active')}});
+      document.querySelectorAll('.pg-panel').forEach(function(x){{x.classList.remove('active')}});
+      t.classList.add('active');
+      document.querySelector('.pg-panel[data-panel="'+t.dataset.tab+'"]').classList.add('active');
+    }});
+  }});
+
+  // Copy key
+  document.getElementById('copy-key').addEventListener('click', function(){{
+    navigator.clipboard.writeText(document.getElementById('ak').textContent);
+    this.textContent='copied ✓'; var s=this;
+    setTimeout(function(){{s.textContent='copy key'}}, 1500);
+  }});
+
+  function H(){{ return {{'Authorization':'Bearer '+API_KEY, 'Content-Type':'application/json'}}; }}
+  function show(el, status, j){{
+    var ok = (status>=200 && status<300 && j && j.ok!==false);
+    var cls = ok ? 'ok' : 'err';
+    var html = '<div class="o-status '+cls+'">'+(ok?'✓':'✗')+' HTTP '+status+'</div>';
+    if (ok && j.lp_url){{ html += '<div class="o-lp"><a href="'+j.lp_url+'" target="_blank">'+j.lp_url+' を開く →</a></div>'; }}
+    if (ok && j.suzuri_url){{ html += '<div class="o-lp"><a href="'+j.suzuri_url+'" target="_blank">SUZURI 商品ページを開く →</a></div>'; }}
+    html += '<pre class="o-json">'+JSON.stringify(j||{{}}, null, 2)+'</pre>';
+    el.innerHTML = html;
+  }}
+  async function call(method, url, body){{
+    var opts = {{ method: method, headers: H() }};
+    if (body) opts.body = JSON.stringify(body);
+    var r = await fetch(url, opts);
+    var j = {{}};
+    try {{ j = await r.json(); }} catch(_) {{ }}
+    return [r.status, j];
+  }}
+  function run(btn, out, fn){{
+    btn.disabled = true;
+    out.innerHTML = '<div class="o-status">送信中 …</div>';
+    fn().catch(function(e){{ out.innerHTML = '<div class="o-status err">✗ '+e.message+'</div>'; }})
+        .finally(function(){{ btn.disabled = false; }});
+  }}
+
+  // quick (AI)
+  var qGo = document.getElementById('q-go'), qOut = document.getElementById('q-out');
+  qGo.addEventListener('click', function(){{
+    run(qGo, qOut, async function(){{
+      var [s, j] = await call('POST', '/api/v1/sku/quick', {{
+        label:  document.getElementById('q-label').value.trim(),
+        kind:   document.getElementById('q-kind').value,
+        prompt: document.getElementById('q-prompt').value.trim(),
+        price_jpy: parseInt(document.getElementById('q-price').value, 10) || 4900,
+      }});
+      show(qOut, s, j);
+    }});
+  }});
+
+  // byo (URL)
+  var bGo = document.getElementById('b-go'), bOut = document.getElementById('b-out');
+  bGo.addEventListener('click', function(){{
+    run(bGo, bOut, async function(){{
+      var [s, j] = await call('POST', '/api/v1/sku/create', {{
+        label:  document.getElementById('b-label').value.trim(),
+        kind:   document.getElementById('b-kind').value,
+        design_url: document.getElementById('b-url').value.trim(),
+        price_jpy: parseInt(document.getElementById('b-price').value, 10) || 4900,
+      }});
+      show(bOut, s, j);
+    }});
+  }});
+
+  // brand claim
+  function pSlug(){{ return (document.getElementById('p-slug').value || '').trim().toLowerCase(); }}
+  var pOut = document.getElementById('p-out');
+  document.getElementById('p-claim').addEventListener('click', function(){{
+    var btn = this;
+    run(btn, pOut, async function(){{
+      var [s, j] = await call('POST', '/api/v1/proposal', {{
+        slug: pSlug(),
+        name: document.getElementById('p-name').value.trim(),
+        ip_owner: document.getElementById('p-ip').value.trim(),
+      }});
+      show(pOut, s, j);
+    }});
+  }});
+  document.getElementById('p-approve').addEventListener('click', function(){{
+    var btn = this;
+    run(btn, pOut, async function(){{
+      var [s, j] = await call('POST', '/api/v1/proposal/'+encodeURIComponent(pSlug())+'/approve');
+      show(pOut, s, j);
+    }});
+  }});
+  document.getElementById('p-revoke').addEventListener('click', function(){{
+    var btn = this;
+    run(btn, pOut, async function(){{
+      var [s, j] = await call('POST', '/api/v1/proposal/'+encodeURIComponent(pSlug())+'/revoke');
+      show(pOut, s, j);
+    }});
+  }});
+
+  // edit
+  function eKey(){{
+    var sl = (document.getElementById('e-slug').value||'').trim().toLowerCase();
+    var lt = (document.getElementById('e-letter').value||'').trim().toLowerCase();
+    return sl && lt ? '/api/v1/sku/'+encodeURIComponent(sl)+'/'+encodeURIComponent(lt) : null;
+  }}
+  var eOut = document.getElementById('e-out');
+  document.getElementById('e-patch').addEventListener('click', function(){{
+    var btn = this; var url = eKey();
+    if (!url){{ eOut.innerHTML='<div class="o-status err">slug + letter を入力</div>'; return; }}
+    run(btn, eOut, async function(){{
+      var body = {{}};
+      var p = document.getElementById('e-price').value;
+      var l = document.getElementById('e-label').value.trim();
+      if (p) body.price_jpy = parseInt(p, 10);
+      if (l) body.label     = l;
+      if (!Object.keys(body).length){{ eOut.innerHTML='<div class="o-status err">price か label のどちらかを入力</div>'; btn.disabled=false; return; }}
+      var [s, j] = await call('PATCH', url, body);
+      show(eOut, s, j);
+    }});
+  }});
+  document.getElementById('e-del').addEventListener('click', function(){{
+    var btn = this; var url = eKey();
+    if (!url){{ eOut.innerHTML='<div class="o-status err">slug + letter を入力</div>'; return; }}
+    if (!confirm('本当に削除しますか？ proposal_skus + products 両方から消えます。')) return;
+    run(btn, eOut, async function(){{
+      var [s, j] = await call('DELETE', url);
+      show(eOut, s, j);
+    }});
+  }});
+
+  // publish
+  function sQS(){{
+    var sl = (document.getElementById('s-slug').value||'').trim().toLowerCase();
+    var lt = (document.getElementById('s-letter').value||'').trim().toLowerCase();
+    if (!sl || !lt) return null;
+    return 'slug='+encodeURIComponent(sl)+'&letter='+encodeURIComponent(lt);
+  }}
+  var sOut = document.getElementById('s-out');
+  document.getElementById('s-suzuri').addEventListener('click', function(){{
+    var btn = this; var qs = sQS();
+    if (!qs){{ sOut.innerHTML='<div class="o-status err">slug + letter を入力</div>'; return; }}
+    run(btn, sOut, async function(){{
+      var items = (document.getElementById('s-items').value||'100,152,8').trim();
+      var [s, j] = await call('POST', '/api/v1/suzuri/publish?'+qs+'&items='+encodeURIComponent(items));
+      show(sOut, s, j);
+    }});
+  }});
+  document.getElementById('s-mockup').addEventListener('click', function(){{
+    var btn = this; var qs = sQS();
+    if (!qs){{ sOut.innerHTML='<div class="o-status err">slug + letter を入力</div>'; return; }}
+    run(btn, sOut, async function(){{
+      var [s, j] = await call('POST', '/api/v1/mockup/regen?'+qs);
+      show(sOut, s, j);
+    }});
+  }});
+}})();
+</script>
+"##,
+            email = html_escape(&email),
+            api_key = html_escape(&api_key),
+            api_key_js = serde_json::to_string(&api_key).unwrap_or_else(|_| "\"\"".into()),
+            balance = balance,
+            free_label = if free_used {"used"} else {"available"},
+            personal_hash = personal_slug_for(&email).trim_start_matches("personal-"),
+        )
     } else {
-        r#"<div class="card">
-  <h2>API key を発行する</h2>
-  <p>email を入れて <strong>verify</strong> を押すと、 6 桁の確認コードが届きます。 そのコードでログイン → API key が即発行されます。</p>
-  <form id="auth-start"><input type="email" id="ae" placeholder="email" required><button type="submit">verify</button></form>
-  <form id="auth-verify" style="display:none"><input type="text" id="av" placeholder="6-digit code" pattern="[0-9]{6}" required><button type="submit">log in</button></form>
-  <div id="out" class="result"></div>
-</div>
+        r##"
+<section class="hero">
+  <div class="kicker">━◯━ MU API · 誰でも 30 秒で T シャツブランド</div>
+  <h1>1 通のメールで、 あなたのブランドが立ち上がる。</h1>
+  <p class="lede">無料 30 SKU → そのあと 30 pt / SKU。 デザイン upload も AI 生成も SUZURI 公開も、 ぜんぶ 1 つの API key で。 在庫は持たない。</p>
+</section>
+
+<section class="three-step">
+  <div class="step"><div class="n">1</div><h3>email を入れる</h3><p>verify を押すと、 ログイン用ボタン付きのメールが届く。 ボタン 1 クリックでログイン。</p></div>
+  <div class="step"><div class="n">2</div><h3>API key が発行される</h3><p>あなただけの key が即発行。 personal-&lt;hash&gt; という個人 LP も自動で立つ。</p></div>
+  <div class="step"><div class="n">3</div><h3>1 枚作る</h3><p>このページのプレイグラウンドで 1 クリック。 AI が描いて → SUZURI も即公開。</p></div>
+</section>
+
+<section class="key-card login-card">
+  <h2 style="margin-top:0">いま発行する</h2>
+  <form id="auth-start" class="row">
+    <input type="email" id="ae" placeholder="あなたの email" required>
+    <button class="big" type="submit">verify メールを送る</button>
+  </form>
+  <form id="auth-verify" class="row" style="display:none">
+    <input type="text" id="av" placeholder="メールに届いた 6 桁コード" pattern="[0-9]{6}" required>
+    <button class="big" type="submit">ログイン</button>
+  </form>
+  <div class="out" id="out"></div>
+  <p class="muted" style="margin-top:18px;font-size:12px">📨 届くメールには <strong>「ログインして API key を見る →」</strong> ボタンも入っているので、 そのまま 1 クリックでログインできます。</p>
+</section>
+
+<details class="curl-details">
+  <summary>📋 ログイン後に叩ける API (全 10 endpoint)</summary>
+  <div class="curl-grid">
+    <h4>1 つ作る (AI 生成 · sync)</h4>
+    <pre>POST /api/v1/sku/quick
+{"label":"my tee","kind":"tee","prompt":"..."}</pre>
+    <h4>1 つ作る (画像 URL から)</h4>
+    <pre>POST /api/v1/sku/create
+{"label":"my tee","kind":"tee","design_url":"https://..."}</pre>
+    <h4>SKU を編集 / 削除</h4>
+    <pre>PATCH  /api/v1/sku/&lt;slug&gt;/&lt;letter&gt;
+DELETE /api/v1/sku/&lt;slug&gt;/&lt;letter&gt;</pre>
+    <h4>自分のブランド (slug) を立ち上げ</h4>
+    <pre>POST /api/v1/proposal              ・claim
+POST /api/v1/proposal/&lt;slug&gt;/approve  ・公開
+POST /api/v1/proposal/&lt;slug&gt;/revoke   ・取り下げ</pre>
+    <h4>SUZURI / Printful</h4>
+    <pre>POST /api/v1/suzuri/publish?slug=&lt;s&gt;&letter=&lt;l&gt;&items=100,152,8
+POST /api/v1/mockup/regen?slug=&lt;s&gt;&letter=&lt;l&gt;</pre>
+  </div>
+</details>
+
 <script>
 (function(){
   var ae=document.getElementById('ae'), af=document.getElementById('auth-start');
   var av=document.getElementById('av'), vf=document.getElementById('auth-verify');
   var out=document.getElementById('out');
   af.addEventListener('submit', async function(e){e.preventDefault();
-    out.textContent='sending code …';
+    out.className='out'; out.innerHTML='<div class="o-status">送信中 …</div>';
     var r=await fetch('/api/collab/auth/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:ae.value.trim()})});
-    var j=await r.json();
-    if (r.ok && j.ok!==false){ out.textContent='code sent to '+ae.value+' — check inbox'; vf.style.display='flex'; }
-    else { out.style.color='#ff6464'; out.textContent='✗ '+(j.error||'HTTP '+r.status); }
+    var j={}; try{j=await r.json();}catch(_){}
+    if (r.ok && j.ok!==false){ out.innerHTML='<div class="o-status ok">✓ '+ae.value+' にメール送信しました — ボタンを押すか、 下に 6 桁コードを入力</div>'; vf.style.display='flex'; }
+    else { out.innerHTML='<div class="o-status err">✗ '+(j.error||'HTTP '+r.status)+'</div>'; }
   });
   vf.addEventListener('submit', async function(e){e.preventDefault();
-    out.textContent='verifying …';
+    out.innerHTML='<div class="o-status">verifying …</div>';
     var r=await fetch('/api/collab/auth/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:ae.value.trim(),code:av.value.trim()})});
-    var j=await r.json();
-    if (r.ok && j.ok!==false){ out.style.color='#7be57b'; out.textContent='✓ logged in — reloading'; setTimeout(()=>location.reload(), 600); }
-    else { out.style.color='#ff6464'; out.textContent='✗ '+(j.error||'HTTP '+r.status); }
+    var j={}; try{j=await r.json();}catch(_){}
+    if (r.ok && j.ok!==false){ out.innerHTML='<div class="o-status ok">✓ ログイン成功 — リロード中</div>'; setTimeout(function(){location.reload();}, 600); }
+    else { out.innerHTML='<div class="o-status err">✗ '+(j.error||'HTTP '+r.status)+'</div>'; }
   });
 })();
-</script>"#.to_string()
+</script>
+"##.to_string()
     };
+
+    let chrome_css = vault_chrome_css();
+    let header = vault_header_html("api", masked_email.as_deref());
+    let footer = vault_footer_html();
 
     let html = format!(r#"<!doctype html>
 <html lang="ja"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
-<title>MU API key — wearmu.com</title>
+<title>MU API — wearmu.com</title>
 <style>
-:root{{--bg:#0a0a0a;--fg:#f5f5f0;--mute:#888;--line:#222;--y:#e6c449}}
-*{{box-sizing:border-box}}body{{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue',Arial,sans-serif;margin:0;line-height:1.7;font-size:14px}}
-.wrap{{max-width:760px;margin:0 auto;padding:48px 24px}}
-h1{{font-size:24px;margin:0 0 6px;letter-spacing:-0.01em}}
-h2{{font-size:18px;margin:36px 0 8px;color:var(--y)}}
-.tagline{{color:var(--mute);font-size:12px;letter-spacing:0.18em;text-transform:uppercase;margin-bottom:32px}}
-.card{{background:#111;border:1px solid var(--line);border-radius:6px;padding:24px;margin-bottom:18px}}
-.eyebrow{{font-size:10px;letter-spacing:0.3em;color:var(--mute);text-transform:uppercase;margin:14px 0 6px}}
-.email{{font-size:15px;font-weight:600}}
-.key{{background:#0a0a0a;border:1px solid var(--line);padding:12px 14px;border-radius:4px;font-family:'SF Mono',monospace;font-size:13px;word-break:break-all;color:var(--y);margin-bottom:8px}}
-.copy{{background:#222;border:1px solid var(--line);color:var(--fg);font-size:12px;padding:6px 14px;border-radius:3px;cursor:pointer;font-family:inherit}}
-.copy:hover{{filter:brightness(1.3)}}
-.kv{{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:22px;padding-top:18px;border-top:1px solid var(--line)}}
-.kv .l{{font-size:10px;letter-spacing:0.16em;text-transform:uppercase;color:var(--mute)}}
-.kv .v{{font-size:16px;font-weight:700;margin-top:4px}}
-pre{{background:#0a0a0a;border:1px solid var(--line);border-radius:4px;padding:14px;font-family:'SF Mono',monospace;font-size:12px;color:#ccc;overflow-x:auto;line-height:1.7}}
-form{{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}}
-input{{flex:1;min-width:240px;background:#0a0a0a;border:1px solid var(--line);color:var(--fg);padding:11px 13px;font-family:inherit;font-size:14px;border-radius:4px}}
-input:focus{{border-color:var(--y);outline:none}}
-button{{background:var(--y);color:#000;border:0;font-weight:700;padding:11px 22px;font-size:13px;letter-spacing:0.06em;cursor:pointer;border-radius:4px;font-family:inherit}}
-.result{{margin-top:14px;font-size:12px;color:var(--mute);font-family:'SF Mono',monospace}}
-code{{background:#181818;padding:1px 6px;border-radius:3px;font-size:12px;color:var(--y)}}
-a{{color:var(--y);text-decoration:none}}a:hover{{text-decoration:underline}}
+{chrome_css}
+:root{{--bg:#0a0a0a;--fg:#f5f5f0;--mute:#888;--line:#1f1f1f;--y:#e6c449;--ok:#7be57b;--err:#ff6464}}
+body{{font-size:14.5px}}
+.wrap-api{{max-width:880px;margin:0 auto;padding:36px 22px 80px}}
+.hero{{margin-bottom:32px}}
+.kicker{{font-size:10.5px;letter-spacing:0.32em;text-transform:uppercase;color:#aaa;margin-bottom:14px;font-weight:600}}
+.hero h1{{font-size:32px;line-height:1.25;letter-spacing:-0.015em;font-weight:600;margin:0 0 14px}}
+.hero h1 em{{color:var(--y);font-style:normal}}
+.lede{{color:#bbb;font-size:15.5px;line-height:1.85;margin:0;max-width:640px}}
+
+.three-step{{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:32px 0 36px}}
+.step{{background:#101010;border:1px solid var(--line);padding:18px;border-radius:6px}}
+.step .n{{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--y);color:#000;font-weight:700;font-size:12px;margin-bottom:10px}}
+.step h3{{font-size:14px;margin:0 0 6px;font-weight:700}}
+.step p{{color:#aaa;font-size:12.5px;line-height:1.7;margin:0}}
+@media(max-width:680px){{.three-step{{grid-template-columns:1fr}}}}
+
+.key-card{{background:#101010;border:1px solid var(--line);border-radius:8px;padding:24px;margin-bottom:32px}}
+.key-grid{{display:grid;grid-template-columns:1fr 220px;gap:32px;align-items:start}}
+@media(max-width:680px){{.key-grid{{grid-template-columns:1fr}}}}
+.eyebrow{{font-size:10px;letter-spacing:0.28em;color:var(--mute);text-transform:uppercase;font-weight:600;margin-bottom:6px}}
+.email-line{{font-size:15px;font-weight:600;font-family:ui-monospace,Menlo,monospace;color:#fff}}
+.key{{background:#0a0a0a;border:1px solid var(--line);padding:13px 14px;border-radius:5px;font-family:ui-monospace,Menlo,monospace;font-size:12.5px;word-break:break-all;color:var(--y);margin:6px 0 10px}}
+.copy{{background:#1d1d1d;border:1px solid #2a2a2a;color:#f5f5f0;font-size:11.5px;padding:7px 14px;border-radius:4px;cursor:pointer;font-family:inherit;letter-spacing:0.04em;margin-right:6px}}
+.copy:hover{{filter:brightness(1.4)}}
+.copy.ghost{{background:transparent}}
+.stats{{display:grid;grid-template-columns:1fr;gap:12px}}
+.stats > div{{background:#0a0a0a;border:1px solid var(--line);border-radius:5px;padding:12px 14px}}
+.stats .l{{font-size:10px;letter-spacing:0.18em;color:var(--mute);text-transform:uppercase;font-weight:600}}
+.stats .v{{font-size:18px;font-weight:700;margin-top:4px;color:#fff}}
+.key-actions{{margin-top:20px;padding-top:18px;border-top:1px solid var(--line);display:flex;gap:8px;flex-wrap:wrap}}
+.btn-ghost{{display:inline-block;background:transparent;border:1px solid #2a2a2a;color:#ccc !important;padding:8px 14px;border-radius:4px;font-size:12px;letter-spacing:0.04em;text-decoration:none}}
+.btn-ghost:hover{{border-color:var(--y);color:var(--y) !important}}
+
+.pg{{margin-bottom:32px}}
+.pg-tabs{{display:flex;gap:0;border-bottom:1px solid var(--line);overflow-x:auto;margin-bottom:0;scrollbar-width:none}}
+.pg-tabs::-webkit-scrollbar{{display:none}}
+.pg-tab{{background:transparent;border:0;color:#888;padding:12px 18px;font-size:13px;letter-spacing:0.02em;cursor:pointer;font-family:inherit;border-bottom:2px solid transparent;white-space:nowrap;font-weight:500}}
+.pg-tab:hover{{color:#ddd}}
+.pg-tab.active{{color:var(--y);border-bottom-color:var(--y)}}
+.pg-panel{{display:none;background:#101010;border:1px solid var(--line);border-top:0;padding:24px;border-radius:0 0 8px 8px}}
+.pg-panel.active{{display:block}}
+.pg-help{{color:#999;font-size:12.5px;line-height:1.8;margin-bottom:18px;padding:12px 14px;background:#0a0a0a;border-left:3px solid var(--y);border-radius:0 4px 4px 0}}
+.row{{margin-bottom:14px}}
+.row.two{{display:grid;grid-template-columns:1fr 1fr;gap:12px}}
+.row.btn-row{{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}}
+@media(max-width:520px){{.row.two{{grid-template-columns:1fr}}}}
+.row label{{display:block;font-size:11px;letter-spacing:0.14em;color:#aaa;margin-bottom:6px;text-transform:uppercase;font-weight:600}}
+.row label .muted{{text-transform:none;letter-spacing:0;color:#666;font-size:10.5px;margin-left:6px;font-weight:400}}
+.row input,.row select,.row textarea{{width:100%;background:#0a0a0a;border:1px solid var(--line);color:#f5f5f0;padding:11px 13px;font-family:inherit;font-size:14px;border-radius:5px}}
+.row textarea{{resize:vertical;font-family:ui-monospace,Menlo,monospace;font-size:13px;line-height:1.6}}
+.row input:focus,.row select:focus,.row textarea:focus{{border-color:var(--y);outline:none}}
+button.big{{background:var(--y);color:#000;border:0;font-weight:700;padding:13px 24px;font-size:13.5px;letter-spacing:0.06em;cursor:pointer;border-radius:5px;font-family:inherit;margin-top:6px}}
+button.big:hover:not(:disabled){{filter:brightness(1.05)}}
+button.big:disabled{{opacity:0.5;cursor:not-allowed}}
+button.big.ghost{{background:transparent;border:1px solid #2a2a2a;color:#ccc}}
+button.big.ghost:hover:not(:disabled){{border-color:var(--y);color:var(--y)}}
+button.big.danger{{background:#3a0a0a;color:#ff8a8a;border:1px solid #5a0f0f}}
+button.big.danger:hover:not(:disabled){{background:#5a0f0f;color:#fff}}
+.out{{margin-top:18px}}
+.o-status{{font-size:12.5px;font-family:ui-monospace,Menlo,monospace;padding:10px 12px;border-radius:4px;background:#0a0a0a;border:1px solid var(--line);color:#aaa}}
+.o-status.ok{{color:var(--ok);border-color:#1c3a1c}}
+.o-status.err{{color:var(--err);border-color:#3a1c1c}}
+.o-lp{{margin-top:6px;font-size:13px}}
+.o-lp a{{color:var(--y);font-weight:600}}
+.o-json{{margin-top:8px;background:#080808;border:1px solid var(--line);padding:12px;border-radius:4px;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#bbb;overflow-x:auto;max-height:240px;line-height:1.7}}
+
+.curl-details{{margin-top:32px;background:#101010;border:1px solid var(--line);border-radius:8px;padding:18px 24px}}
+.curl-details summary{{cursor:pointer;font-weight:600;color:var(--y);font-size:13.5px;letter-spacing:0.04em;padding:6px 0}}
+.curl-grid{{margin-top:14px}}
+.curl-grid h4{{margin:18px 0 6px;font-size:12px;letter-spacing:0.16em;color:#aaa;text-transform:uppercase;font-weight:600}}
+.curl-grid pre{{background:#0a0a0a;border:1px solid var(--line);border-radius:4px;padding:12px 14px;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#cfcfcf;overflow-x:auto;line-height:1.75;margin:0}}
+
+.login-card{{max-width:560px}}
+code{{background:#181818;padding:1px 6px;border-radius:3px;font-size:12.5px;color:var(--y);font-family:ui-monospace,Menlo,monospace}}
 </style></head><body>
-<div class="wrap">
-  <h1>━◯━ MU API key</h1>
-  <div class="tagline">Self-serve · 30 pt / SKU · 初回 30 枚 無料</div>
+{header}
+<div class="wrap-api">
   {body}
-  <p style="margin-top:48px;font-size:11px;opacity:0.6;line-height:1.85">
-    API key = collab session token。 <a href="/api/collab/auth/logout">logout</a> で revoke、 再ログインで再発行。 ソース: <a href="https://github.com/yukihamada/mu-brand">github.com/yukihamada/mu-brand</a>
+  <p style="margin-top:48px;font-size:11px;opacity:0.55;line-height:1.85;color:#888">
+    API key = collab session token。 logout で revoke、 再ログインで再発行。
+    ソース: <a href="https://github.com/yukihamada/mu-brand">github.com/yukihamada/mu-brand</a>
   </p>
 </div>
-</body></html>"#, body=body);
+{footer}
+</body></html>"#, chrome_css=chrome_css, header=header, footer=footer, body=body);
     Html(html).into_response()
 }
 
