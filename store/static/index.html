@@ -577,6 +577,19 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
   <span style="margin-right:8px">🎯</span><strong style="color:#e6c449;font-family:'SF Mono','Menlo',monospace">{T100_SOLD}/100</strong> 着 · <strong>14日 100枚 challenge</strong> · 5/18→5/31 · 残り{T100_DAYS_LEFT}日 · live → /100
 </a>
 
+<!-- 今日 の Tシャツ hero card — above-the-fold MUGEN showcase + 1-click buy.
+     Drives Ads-landing → checkout in single click. SSR drop_num + static
+     mockup URL (refreshed hourly by generate.py). -->
+<a id="hero-tshirt" href="/buy?from=home_hero" style="display:flex;align-items:center;gap:18px;max-width:780px;margin:18px auto;padding:16px 20px;background:#0E0E0E;border:1px solid rgba(230,196,73,0.35);border-radius:8px;text-decoration:none;color:#F5F5F0">
+  <img src="https://mockups.wearmu.com/hero.png" alt="今日 の MUGEN" loading="eager" fetchpriority="high" style="width:96px;height:96px;object-fit:cover;border-radius:4px;background:#fff;flex-shrink:0" onerror="this.style.display='none'">
+  <div style="flex:1;min-width:200px">
+    <div style="font-size:10.5px;letter-spacing:0.28em;text-transform:uppercase;color:#e6c449;font-weight:700;margin-bottom:5px">今日 の Tシャツ · MUGEN {HERO_DROP_LABEL}</div>
+    <div style="font-size:18px;font-weight:600;color:#fff;margin-bottom:3px">¥4,900 <span style="font-size:12px;opacity:0.55;font-weight:400">≈ $33</span> · 国内 5-8 日</div>
+    <div style="font-size:12px;opacity:0.75;line-height:1.55">気温seed · AI生成 · 1時間に1着 · 同じ柄は2度と作られない · <strong style="color:#e6c449">+ MSA</strong> (21リポDL付)</div>
+  </div>
+  <div style="background:#e6c449;color:#0A0A0A;padding:13px 18px;border-radius:5px;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;font-weight:800;white-space:nowrap;flex-shrink:0">買う →</div>
+</a>
+
 <!-- §29 C-3: "今日はあなたの店" — Wed only banner, hidden when no brand or non-Wed -->
 <div id="today-yours-banner" style="display:none;background:linear-gradient(90deg,rgba(230,196,73,0.12),rgba(230,196,73,0.04));border-bottom:1px solid rgba(230,196,73,0.3);padding:10px 16px;text-align:center;font-size:12px;color:#e6c449;letter-spacing:0.05em">
   <strong>今日はあなたの店</strong> · 毎週水曜 = 別ブランドの日 · <span id="today-yours-name">—</span> · <a id="today-yours-buy" style="color:#e6c449;text-decoration:underline" href="#">買う →</a>
