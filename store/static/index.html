@@ -571,25 +571,6 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
   </div>
 </div>
 
-<!-- 100枚 challenge live counter — SSR-filled from /api/100/progress.
-     Drives Ads-landing → /buy conversion via visible scarcity. -->
-<a id="t100-banner" href="/100" style="display:block;background:linear-gradient(90deg,rgba(230,196,73,0.18),rgba(230,196,73,0.04));border-bottom:1px solid rgba(230,196,73,0.4);padding:11px 16px;text-align:center;font-size:12.5px;color:#fff;letter-spacing:0.02em;text-decoration:none">
-  <span style="margin-right:8px">🎯</span><strong style="color:#e6c449;font-family:'SF Mono','Menlo',monospace">{T100_SOLD}/100</strong> 着 · <strong>14日 100枚 challenge</strong> · 5/18→5/31 · 残り{T100_DAYS_LEFT}日 · live → /100
-</a>
-
-<!-- 今日 の Tシャツ hero card — above-the-fold MUGEN showcase + 1-click buy.
-     Drives Ads-landing → checkout in single click. SSR drop_num + static
-     mockup URL (refreshed hourly by generate.py). -->
-<a id="hero-tshirt" href="/buy?from=home_hero" style="display:flex;align-items:center;gap:18px;max-width:780px;margin:18px auto;padding:16px 20px;background:#0E0E0E;border:1px solid rgba(230,196,73,0.35);border-radius:8px;text-decoration:none;color:#F5F5F0">
-  <img src="https://mockups.wearmu.com/hero.png" alt="今日 の MUGEN" loading="eager" fetchpriority="high" style="width:96px;height:96px;object-fit:cover;border-radius:4px;background:#fff;flex-shrink:0" onerror="this.style.display='none'">
-  <div style="flex:1;min-width:200px">
-    <div style="font-size:10.5px;letter-spacing:0.28em;text-transform:uppercase;color:#e6c449;font-weight:700;margin-bottom:5px">今日 の Tシャツ · MUGEN {HERO_DROP_LABEL}</div>
-    <div style="font-size:18px;font-weight:600;color:#fff;margin-bottom:3px">¥4,900 <span style="font-size:12px;opacity:0.55;font-weight:400">≈ $33</span> · 国内 5-8 日</div>
-    <div style="font-size:12px;opacity:0.75;line-height:1.55">気温seed · AI生成 · 1時間に1着 · 同じ柄は2度と作られない · <strong style="color:#e6c449">+ MSA</strong> (21リポDL付)</div>
-  </div>
-  <div style="background:#e6c449;color:#0A0A0A;padding:13px 18px;border-radius:5px;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;font-weight:800;white-space:nowrap;flex-shrink:0">買う →</div>
-</a>
-
 <!-- §29 C-3: "今日はあなたの店" — Wed only banner, hidden when no brand or non-Wed -->
 <div id="today-yours-banner" style="display:none;background:linear-gradient(90deg,rgba(230,196,73,0.12),rgba(230,196,73,0.04));border-bottom:1px solid rgba(230,196,73,0.3);padding:10px 16px;text-align:center;font-size:12px;color:#e6c449;letter-spacing:0.05em">
   <strong>今日はあなたの店</strong> · 毎週水曜 = 別ブランドの日 · <span id="today-yours-name">—</span> · <a id="today-yours-buy" style="color:#e6c449;text-decoration:underline" href="#">買う →</a>
@@ -640,6 +621,32 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
     <span class="live-label">生成中</span>
   </div>
 </nav>
+
+<!-- ========================================
+     PROMO STRIP: 100枚 banner + 今日のTシャツ hero card.
+     Relocated 2026-05-21: was at the very top of <body> where the fixed
+     ticker (z:200) + fixed nav (z:100) covered them — clicks on the
+     hero "買う" button landed on the nav and did nothing. Now placed
+     right after </nav> with margin-top:100px (= 28px ticker + ~72px
+     nav height) so they render in normal flow BELOW the fixed bars.
+     ======================================== -->
+<div id="promo-strip" style="margin-top:100px;position:relative;z-index:5">
+  <!-- 100枚 challenge live counter — SSR-filled. -->
+  <a id="t100-banner" href="/100" style="display:block;background:linear-gradient(90deg,rgba(230,196,73,0.18),rgba(230,196,73,0.04));border-top:1px solid rgba(230,196,73,0.3);border-bottom:1px solid rgba(230,196,73,0.4);padding:11px 16px;text-align:center;font-size:12.5px;color:#fff;letter-spacing:0.02em;text-decoration:none">
+    <span style="margin-right:8px">🎯</span><strong style="color:#e6c449;font-family:'SF Mono','Menlo',monospace">{T100_SOLD}/100</strong> 着 · <strong>14日 100枚 challenge</strong> · 5/18→5/31 · 残り{T100_DAYS_LEFT}日 · live → /100
+  </a>
+
+  <!-- 今日 の Tシャツ hero card — above-the-fold MUGEN + 1-click buy. -->
+  <a id="hero-tshirt" href="/buy?from=home_hero" style="display:flex;align-items:center;gap:18px;max-width:780px;margin:18px auto;padding:16px 20px;background:#0E0E0E;border:1px solid rgba(230,196,73,0.35);border-radius:8px;text-decoration:none;color:#F5F5F0">
+    <img src="https://mockups.wearmu.com/hero.png" alt="今日 の MUGEN" loading="eager" fetchpriority="high" style="width:96px;height:96px;object-fit:cover;border-radius:4px;background:#fff;flex-shrink:0" onerror="this.style.display='none'">
+    <div style="flex:1;min-width:200px">
+      <div style="font-size:10.5px;letter-spacing:0.28em;text-transform:uppercase;color:#e6c449;font-weight:700;margin-bottom:5px">今日 の Tシャツ · MUGEN {HERO_DROP_LABEL}</div>
+      <div style="font-size:18px;font-weight:600;color:#fff;margin-bottom:3px">¥4,900 <span style="font-size:12px;opacity:0.55;font-weight:400">≈ $33</span> · 国内 5-8 日</div>
+      <div style="font-size:12px;opacity:0.75;line-height:1.55">気温seed · AI生成 · 1時間に1着 · 同じ柄は2度と作られない · <strong style="color:#e6c449">+ MSA</strong> (21リポDL付)</div>
+    </div>
+    <div style="background:#e6c449;color:#0A0A0A;padding:13px 18px;border-radius:5px;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;font-weight:800;white-space:nowrap;flex-shrink:0">買う →</div>
+  </a>
+</div>
 
 <!-- HERO -->
 <div id="section-hero" class="visible" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding-top:80px;position:relative">
