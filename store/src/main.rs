@@ -21526,6 +21526,14 @@ async fn buy_founder_page() -> Html<&'static str> {
     Html(include_str!("../static/buy-founder.html"))
 }
 
+/// /why — MU growth thesis (numbers-first) landing. Visual deck for
+/// investors / press / curious readers explaining why MU is the next
+/// retail layer after Amazon (既存) and Mercari (中古).
+/// Full doc: docs/MU_GROWTH_DECK.md
+async fn why_page() -> Html<&'static str> {
+    Html(include_str!("../static/why.html"))
+}
+
 /// /buy/event — JIU FIGHT × MU 150-piece collab cold-traffic landing.
 /// Visual-first, scarcity-driven (5/24 TOKYO LIVE countdown), single CTA
 /// to SUZURI direct purchase. Target audience: BJJ practitioners +
@@ -57165,6 +57173,7 @@ async fn main() {
         .route("/collab/:slug", get(collab_public_page))
         .route("/buy", get(buy_page))
         .route("/buy/founder", get(buy_founder_page))
+        .route("/why", get(why_page))
         .route("/api/checkout/founder", post(founder_checkout))
         // Cold-traffic ad landings (visual-first, single CTA). Each targets
         // a different paid channel + audience — see handler doc comments
