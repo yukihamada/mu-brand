@@ -227,6 +227,67 @@ footer{padding:48px 32px;border-top:1px solid var(--border);text-align:center;fo
     <li><strong>一般 ・ メディア</strong>: <a href="mailto:info@enablerdao.com" style="color:var(--y)">info@enablerdao.com</a></li>
   </ul>
 
+  <h2>tier 比較 (個人開発 ↔ 法人)</h2>
+  <table style="width:100%;border-collapse:collapse;font-size:0.85rem;margin:0.5rem 0 1rem">
+    <thead>
+      <tr style="border-bottom:1px solid rgba(255,255,255,0.18)">
+        <th style="padding:8px 6px;text-align:left;color:var(--y)">tier</th>
+        <th style="padding:8px 6px;text-align:right">月料金</th>
+        <th style="padding:8px 6px;text-align:right">req 上限</th>
+        <th style="padding:8px 6px;text-align:left">SLA</th>
+        <th style="padding:8px 6px;text-align:left">サポート</th>
+      </tr>
+    </thead>
+    <tbody style="font-variant-numeric:tabular-nums">
+      <tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
+        <td style="padding:8px 6px">Free</td>
+        <td style="padding:8px 6px;text-align:right">¥0</td>
+        <td style="padding:8px 6px;text-align:right">100k/月</td>
+        <td style="padding:8px 6px;opacity:0.7">なし (best-effort)</td>
+        <td style="padding:8px 6px;opacity:0.7">GitHub Issues</td>
+      </tr>
+      <tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
+        <td style="padding:8px 6px;color:#7be57b">Pro</td>
+        <td style="padding:8px 6px;text-align:right">¥9,800</td>
+        <td style="padding:8px 6px;text-align:right">1M/月</td>
+        <td style="padding:8px 6px;color:#7be57b">99.5%</td>
+        <td style="padding:8px 6px;color:#7be57b">メール 24h</td>
+      </tr>
+      <tr>
+        <td style="padding:8px 6px;color:var(--y)">Enterprise</td>
+        <td style="padding:8px 6px;text-align:right">個別見積</td>
+        <td style="padding:8px 6px;text-align:right">無制限</td>
+        <td style="padding:8px 6px;color:var(--y)">99.9% + 違約金</td>
+        <td style="padding:8px 6px;color:var(--y)">Slack channel · 4h Critical</td>
+      </tr>
+    </tbody>
+  </table>
+  <p style="font-size:0.78rem;opacity:0.65">Pro / Enterprise: <a href="mailto:developers@enablerdao.com" style="color:var(--y)">developers@enablerdao.com</a> まで。 現在 Pro tier は wait-list 募集中。</p>
+
+  <h2>data residency · 個人情報保護</h2>
+  <p style="font-size:0.85rem;line-height:1.85">
+    Free / Pro tier:
+  </p>
+  <ul style="font-size:0.83rem;line-height:1.85">
+    <li><strong>サーバー</strong>: Fly.io <code>nrt</code> (東京) / <code>iad</code> (Virginia). Routing は edge-aware (日本国内 visitor は nrt routed)</li>
+    <li><strong>収集 する データ</strong>: end-user の IP (rate-limit用)、 product 閲覧 ログ (改善用、 cookie なし)</li>
+    <li><strong>保存 期間</strong>: 90日 (rate-limit log)、 集計 統計 は 永続 匿名化</li>
+    <li><strong>sub-processor</strong>: Stripe (decisión), Printful (印刷), Gemini (画像生成), Cloudflare (CDN), Fly.io (host), Imgur (画像 hosting)</li>
+    <li><strong>GDPR / 個人情報保護法</strong>: 個人情報 = end-user の Stripe email (purchase時のみ)。 DPA 締結 は Enterprise tier から 対応</li>
+  </ul>
+
+  <h2>採用 例 (honest)</h2>
+  <p style="font-size:0.85rem;line-height:1.85">
+    現在 法人 採用 例 <strong>0社</strong>。 個人 hacker による 採用 数件。 <strong>1号 enterprise 採用 を 募集中</strong> (個別 onboarding + 価格 交渉 可能)。 詳細 <a href="mailto:developers@enablerdao.com" style="color:var(--y)">developers@enablerdao.com</a>。
+  </p>
+
+  <h2>observability hook (Free tier)</h2>
+  <p style="font-size:0.85rem;line-height:1.85">embed.js は <code>window.MU.on(event, callback)</code> で event を 流せる。 Sentry / DataDog 等の monitoring に転送 可能。</p>
+  <pre><code><span class="kw">window</span>.MU.on(<span class="str">'error'</span>, (e) =&gt; <span class="kw">window</span>.Sentry &amp;&amp; Sentry.captureException(e));
+<span class="kw">window</span>.MU.on(<span class="str">'product.view'</span>, (p) =&gt; analytics.track(<span class="str">'view'</span>, {{id: p.id}}));
+<span class="kw">window</span>.MU.on(<span class="str">'click'</span>, (p) =&gt; gtag(<span class="str">'event'</span>, <span class="str">'mu_click'</span>, {{id: p.id}}));</code></pre>
+  <p style="font-size:0.78rem;opacity:0.6">event: <code>load</code>, <code>error</code>, <code>product.view</code>, <code>click</code>, <code>checkout.redirect</code></p>
+
   <h2>ライブプレビュー</h2>
   <div class="preview">
     <div class="label">↓ MUGEN, 6 商品, dark テーマ</div>
