@@ -11491,6 +11491,281 @@ async fn admin_outreach_create(
     Json(serde_json::json!({"ok":true,"id":id})).into_response()
 }
 
+/// GET /admin/product/new — admin form to add a product manually
+/// (separate from the hourly MUGEN cron). Sets sensible defaults so
+/// Yuki can ship a new SKU in 30 seconds: brand, name, mockup URL,
+/// optional SUZURI URL, price (default ¥4,900), inventory (default 1).
+async fn admin_product_new_page(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/product/new").await { return r; }
+    let token = q.get("token").cloned().unwrap_or_default();
+    // Pull existing brands so the dropdown has them pre-populated; admin
+    // can also type a new brand for a new niche.
+    let existing_brands: Vec<String> = {
+        let conn = db.lock().unwrap();
+        conn.prepare("SELECT DISTINCT brand FROM products WHERE active=1 ORDER BY brand")
+            .ok().and_then(|mut s| s.query_map([], |r| r.get::<_, String>(0)).ok()
+                .map(|it| it.filter_map(|r| r.ok()).collect()))
+            .unwrap_or_default()
+    };
+    let brand_options = existing_brands.iter().map(|b| format!(
+        r#"<option value="{}">{}</option>"#, html_attr_escape(b), html_escape(b)
+    )).collect::<String>();
+
+    let html = format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>+ Product · admin</title>
+<meta name="robots" content="noindex,nofollow">
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.7;padding:32px 28px 60px;max-width:760px;margin:0 auto;font-feature-settings:"palt"}}
+h1{{font-size:24px;font-weight:300;letter-spacing:0.06em;color:#fff;margin-bottom:6px}}
+h1 b{{color:#e6c449;font-weight:700}}
+.muted{{color:rgba(245,245,240,0.55);font-size:12px;letter-spacing:0.04em;margin-bottom:24px}}
+.muted a{{color:#e6c449}}
+form{{padding:28px 24px;background:#0E0E0E;border:1px solid rgba(230,196,73,0.3);border-radius:8px}}
+.row{{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}}
+.row.single{{grid-template-columns:1fr}}
+@media (max-width:560px){{.row{{grid-template-columns:1fr}}}}
+label{{display:block;font-size:10.5px;color:#e6c449;letter-spacing:0.22em;text-transform:uppercase;font-weight:700;margin-bottom:5px}}
+label .opt{{opacity:0.5;letter-spacing:0;font-weight:500;text-transform:none;font-size:10px;margin-left:4px}}
+input,select,textarea{{width:100%;padding:12px 14px;background:rgba(255,255,255,0.06);color:#F5F5F0;border:1px solid rgba(255,255,255,0.14);border-radius:4px;font-size:14px;font-family:inherit;-webkit-appearance:none}}
+input:focus,select:focus,textarea:focus{{border-color:#e6c449;outline:none}}
+textarea{{resize:vertical;min-height:60px}}
+.brand-input{{display:grid;grid-template-columns:1fr 1fr;gap:8px}}
+button{{display:block;width:100%;padding:18px 24px;min-height:54px;background:#e6c449;color:#0A0A0A;border:none;border-radius:6px;font-weight:800;font-size:13px;letter-spacing:0.18em;text-transform:uppercase;cursor:pointer;font-family:inherit;margin-top:18px}}
+button:hover{{background:#f5d56f}}
+button[disabled]{{background:#333;color:#888;cursor:not-allowed}}
+.hint{{font-size:11.5px;color:rgba(245,245,240,0.55);margin-top:4px;line-height:1.6}}
+.preview{{margin-top:14px;padding:12px;background:#000;border:1px solid rgba(255,255,255,0.1);border-radius:4px;text-align:center;display:none}}
+.preview img{{max-width:240px;max-height:240px;border-radius:3px;display:inline-block}}
+.foot{{margin-top:30px;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:rgba(245,245,240,0.45);text-align:center}}
+.foot a{{color:rgba(245,245,240,0.65)}}
+</style></head><body>
+
+<h1>+ <b>Product</b></h1>
+<p class="muted">/admin/product/new · admin gated · 既存: <a href="/admin/outreach?token={tok_esc}">/admin/outreach</a> · <a href="/admin">/admin</a></p>
+
+<form id="prod-form" autocomplete="off">
+  <div class="row">
+    <div>
+      <label>brand <span class="opt">既存 / 新規 OK</span></label>
+      <div class="brand-input">
+        <select id="brand-sel">
+          <option value="">— 既存 から 選ぶ —</option>
+          {brand_options}
+        </select>
+        <input type="text" id="brand-new" placeholder="or 新規 (例: bjj_team_a)" maxlength="40">
+      </div>
+      <div class="hint">既存 を 選ぶ か、 新規 brand 名 を 入力 (英数字 + _ のみ)</div>
+    </div>
+    <div>
+      <label>name <span class="opt">必須</span></label>
+      <input type="text" id="name" required maxlength="120" placeholder="例: 三田 BJJ Team Tee Vol.1">
+    </div>
+  </div>
+
+  <div class="row">
+    <div>
+      <label>price_jpy <span class="opt">default ¥4,900</span></label>
+      <input type="number" id="price_jpy" value="4900" min="100" max="500000" step="100">
+    </div>
+    <div>
+      <label>inventory <span class="opt">default 1</span></label>
+      <input type="number" id="inventory" value="1" min="1" max="9999">
+    </div>
+  </div>
+
+  <div class="row single">
+    <div>
+      <label>mockup_url <span class="opt">必須・画像 URL</span></label>
+      <input type="url" id="mockup_url" required placeholder="https://mockups.wearmu.com/... or /static/...">
+      <div class="hint">商品 mockup 画像 の URL。 /static/ 内 ファイル でも 外部 URL でも OK。 入力 すると 下 に プレビュー。</div>
+      <div class="preview" id="preview"><img id="preview-img" alt=""></div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div>
+      <label>suzuri_url <span class="opt">任意</span></label>
+      <input type="url" id="suzuri_url" placeholder="https://suzuri.jp/yukihama/...">
+      <div class="hint">SUZURI 即出荷 用 (¥4,900 国内 配送 込)</div>
+    </div>
+    <div>
+      <label>design_url <span class="opt">任意・ロゴ / 原画</span></label>
+      <input type="url" id="design_url" placeholder="https://...">
+      <div class="hint">編集 元 デザイン file URL (= mockup より 高 解像度 ソース)</div>
+    </div>
+  </div>
+
+  <div class="row single">
+    <div>
+      <label>prompt_text <span class="opt">任意・AI 生成 履歴</span></label>
+      <textarea id="prompt_text" rows="2" maxlength="2000" placeholder="例: BJJ blue belt + minimalist hand graphic + JIU FIGHT lettering, black tee"></textarea>
+    </div>
+  </div>
+
+  <button type="submit" id="submit-btn">
+    + 即 追加 · /buy/:id へ
+  </button>
+  <p class="hint" style="text-align:center;margin-top:10px">drop_num は brand ごと に 自動 = MAX+1。 created_at = now。 active=1, sold=0 で 即販売 可。</p>
+</form>
+
+<p class="foot">— Enabler Inc. · admin only</p>
+
+<script>
+var ADMIN_TOKEN = {tok_js};
+var preview = document.getElementById('preview');
+var previewImg = document.getElementById('preview-img');
+document.getElementById('mockup_url').addEventListener('input', function(e){{
+  var u = (e.target.value || '').trim();
+  if (u && (u.startsWith('http') || u.startsWith('/'))) {{
+    previewImg.src = u;
+    preview.style.display = 'block';
+  }} else {{
+    preview.style.display = 'none';
+  }}
+}});
+
+document.getElementById('prod-form').addEventListener('submit', function(e){{
+  e.preventDefault();
+  var btn = document.getElementById('submit-btn');
+  var brand_sel = document.getElementById('brand-sel').value.trim();
+  var brand_new = document.getElementById('brand-new').value.trim();
+  var brand = brand_new || brand_sel;
+  if (!brand) {{
+    btn.textContent = 'brand を 選ぶ or 入力 してください';
+    setTimeout(function(){{ btn.textContent = '+ 即 追加 · /buy/:id へ'; }}, 1800);
+    return;
+  }}
+  if (brand_new && !/^[a-z0-9_]+$/i.test(brand_new)) {{
+    btn.textContent = 'brand は 英数字 + _ のみ';
+    setTimeout(function(){{ btn.textContent = '+ 即 追加 · /buy/:id へ'; }}, 1800);
+    return;
+  }}
+  var body = {{
+    brand: brand,
+    name:       (document.getElementById('name').value || '').trim(),
+    price_jpy:  parseInt(document.getElementById('price_jpy').value || '4900', 10),
+    inventory:  parseInt(document.getElementById('inventory').value || '1', 10),
+    mockup_url: (document.getElementById('mockup_url').value || '').trim(),
+    suzuri_url: (document.getElementById('suzuri_url').value || '').trim() || null,
+    design_url: (document.getElementById('design_url').value || '').trim() || null,
+    prompt_text:(document.getElementById('prompt_text').value || '').trim() || null,
+  }};
+  if (!body.name || !body.mockup_url) {{
+    btn.textContent = 'name と mockup_url は 必須';
+    setTimeout(function(){{ btn.textContent = '+ 即 追加 · /buy/:id へ'; }}, 1800);
+    return;
+  }}
+  btn.disabled = true;
+  btn.textContent = '追加 中…';
+  fetch('/api/admin/products?token=' + encodeURIComponent(ADMIN_TOKEN), {{
+    method: 'POST',
+    headers: {{ 'Content-Type': 'application/json' }},
+    body: JSON.stringify(body),
+  }})
+  .then(function(r){{ return r.json().catch(function(){{ return {{ok:false,error:'parse'}}; }}); }})
+  .then(function(j){{
+    if (j && j.ok && j.id) {{
+      window.location.href = '/buy/' + j.id;
+    }} else {{
+      btn.disabled = false;
+      btn.textContent = '失敗: ' + ((j && j.error) || 'unknown');
+    }}
+  }})
+  .catch(function(err){{
+    btn.disabled = false;
+    btn.textContent = 'エラー: ' + (err && err.message || err);
+  }});
+}});
+</script>
+</body></html>"##,
+        tok_esc = html_attr_escape(&token),
+        tok_js = serde_json::to_string(&token).unwrap_or_else(|_| "\"\"".into()),
+        brand_options = brand_options,
+    );
+    Html(html).into_response()
+}
+
+/// POST /api/admin/products — admin manual product create. Computes
+/// drop_num as MAX(brand)+1 atomically; sets active=1, sold=0,
+/// created_at=now. Returns the new id so the UI can redirect to /buy/:id.
+async fn admin_product_create(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/products").await { return r; }
+
+    let brand = body.get("brand").and_then(|v| v.as_str())
+        .unwrap_or("").trim().to_string();
+    let name = body.get("name").and_then(|v| v.as_str())
+        .unwrap_or("").trim().to_string();
+    let mockup_url = body.get("mockup_url").and_then(|v| v.as_str())
+        .unwrap_or("").trim().to_string();
+    let price_jpy = body.get("price_jpy").and_then(|v| v.as_i64()).unwrap_or(4900).max(100).min(500_000);
+    let inventory = body.get("inventory").and_then(|v| v.as_i64()).unwrap_or(1).max(1).min(9999);
+    let suzuri_url = body.get("suzuri_url").and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let design_url = body.get("design_url").and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let prompt_text = body.get("prompt_text").and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+
+    if brand.is_empty() || !brand.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":"brand required (英数 + _)"})))
+            .into_response();
+    }
+    if name.is_empty() || name.len() > 200 {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":"name required (1-200 chars)"})))
+            .into_response();
+    }
+    if !(mockup_url.starts_with("http") || mockup_url.starts_with('/')) {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":"mockup_url must be http(s):// or /static/..."})))
+            .into_response();
+    }
+
+    let now = chrono_now();
+    let (id, drop_num): (i64, i64) = {
+        let conn = db.lock().unwrap();
+        let next_drop: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(drop_num), 0) + 1 FROM products WHERE brand = ?",
+            params![brand], |r| r.get(0),
+        ).unwrap_or(1);
+        conn.execute(
+            "INSERT INTO products
+              (brand, drop_num, name, design_url, mockup_url, price_jpy,
+               inventory, sold, created_at, active, prompt_text, suzuri_url)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, 1, ?, ?)",
+            params![
+                brand, next_drop, name,
+                design_url.as_deref(),
+                mockup_url,
+                price_jpy, inventory, now,
+                prompt_text.as_deref(),
+                suzuri_url.as_deref(),
+            ],
+        ).ok();
+        (conn.last_insert_rowid(), next_drop)
+    };
+
+    Json(serde_json::json!({
+        "ok": true,
+        "id": id,
+        "brand": brand,
+        "drop_num": drop_num,
+        "buy_url": format!("/buy/{}", id),
+    })).into_response()
+}
+
 /// POST /api/admin/outreach/:id/status — update a row's status (admin).
 /// Body: { status: 'identified'|'contacted'|'replied'|'agreed'|'shipped'|
 ///                 'photo_received'|'declined'|'archived', notes? }
@@ -56566,6 +56841,8 @@ async fn main() {
         .route("/admin/outreach", get(admin_outreach_page))
         .route("/api/admin/outreach", post(admin_outreach_create))
         .route("/api/admin/outreach/:id/status", post(admin_outreach_status))
+        .route("/admin/product/new", get(admin_product_new_page))
+        .route("/api/admin/products", post(admin_product_create))
         // /nouns: DAO approval pending → section hidden from nav (2026-05-13).
         // Proposal text remains at /nouns-proposal.html for transparency.
         .route("/nouns", get(|| async { axum::response::Redirect::permanent("/nouns-proposal.html") }))
