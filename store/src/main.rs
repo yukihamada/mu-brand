@@ -10990,8 +10990,18 @@ async fn challenge_100_page(State(db): State<Db>) -> Html<String> {
             "SELECT COUNT(*) FROM products WHERE brand='mugen' AND active=1",
             [], |r| r.get(0),
         ).unwrap_or(0);
+        // Image fallback (same rule as get_product): when Printful's temp
+        // S3/CDN URL has expired, fall back to the stable design_url so the
+        // grid image never silently 404s.
         let six: Vec<(i64, i64, String)> = conn.prepare(
-            "SELECT id, drop_num, COALESCE(mockup_url, '') FROM products
+            "SELECT id, drop_num,
+                    CASE
+                      WHEN mockup_url LIKE 'https://printful-upload.s3%'
+                        OR mockup_url LIKE 'https://files.cdn.printful.com/upload%'
+                      THEN COALESCE(NULLIF(design_url, ''), mockup_url)
+                      ELSE mockup_url
+                    END AS img
+             FROM products
              WHERE brand='mugen' AND active=1
                AND mockup_url IS NOT NULL AND mockup_url != ''
              ORDER BY drop_num DESC LIMIT 6"
@@ -18662,22 +18672,8 @@ async fn index(State(db): State<Db>) -> Html<String> {
         format!("{:02}:{:02}", m, s)
     };
 
-    // 100枚 challenge — live sold count + days left to 5/31 (drives Ads-landing CVR).
-    let (t100_sold_str, t100_days_left_str): (String, String) = {
-        let conn = db.lock().unwrap();
-        let sold: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM mu_purchases WHERE brand='mugen' AND created_at >= ?",
-            params![CHALLENGE_100_START_UTC], |r| r.get(0),
-        ).unwrap_or(0);
-        // 2026-05-31T14:59:59Z (= 5/31 23:59:59 JST) per CHALLENGE_100_DEADLINE_UTC.
-        // Was 1748703599 (= 2025-05-31) before — off by 1y → "残り 0日" today.
-        // Verified: python3 -c "import datetime; print(int(datetime.datetime(2026,5,31,14,59,59,tzinfo=datetime.timezone.utc).timestamp()))"
-        let end_unix: i64 = 1780239599;
-        let now_s: i64 = chrono_now().parse().unwrap_or(end_unix);
-        let secs_left = (end_unix - now_s).max(0);
-        let days_left = ((secs_left + 86399) / 86400).max(0);
-        (sold.to_string(), days_left.to_string())
-    };
+    // (Removed 2026-05-20: t100-banner SSR fill (T100_SOLD / T100_DAYS_LEFT).
+    //  Banner removed from homepage; /100 page handler computes inline.)
 
     let drop_str   = mugen_drop.map(|d| format!("#{}", d)).unwrap_or_else(|| "—".into());
     let cycle_str  = mugen_cycle.map(|c| format!("{}/108", c)).unwrap_or_else(|| "—/108".into());
@@ -18787,11 +18783,6 @@ async fn index(State(db): State<Db>) -> Html<String> {
     } else {
         html
     };
-
-    // 100枚 challenge banner SSR-fill.
-    let html = html
-        .replace("{T100_SOLD}", &t100_sold_str)
-        .replace("{T100_DAYS_LEFT}", &t100_days_left_str);
 
     // Hero T-shirt card SSR-fill: latest mugen drop label (#N or fallback).
     let hero_drop_label = mugen_drop.map(|d| format!("#{:04}", d)).unwrap_or_else(|| "今日 の 一着".into());
@@ -56067,6 +56058,22 @@ async fn main() {
         .nest_service("/cat", ServeDir::new("static/cat"))
         .nest_service("/dad", ServeDir::new("static/dad"))
         .nest_service("/running", ServeDir::new("static/running"))
+        // Redirect /<collection> (no trailing slash) → /<collection>/ so
+        // relative asset paths in served HTML resolve correctly.
+        .route("/bjj",     get(|| async { axum::response::Redirect::permanent("/bjj/") }))
+        .route("/code",    get(|| async { axum::response::Redirect::permanent("/code/") }))
+        .route("/coffee",  get(|| async { axum::response::Redirect::permanent("/coffee/") }))
+        .route("/zen",     get(|| async { axum::response::Redirect::permanent("/zen/") }))
+        .route("/moon",    get(|| async { axum::response::Redirect::permanent("/moon/") }))
+        .route("/tokyo",   get(|| async { axum::response::Redirect::permanent("/tokyo/") }))
+        .route("/mart",    get(|| async { axum::response::Redirect::permanent("/mart/") }))
+        .route("/mu",      get(|| async { axum::response::Redirect::permanent("/mu/") }))
+        .route("/yoga",    get(|| async { axum::response::Redirect::permanent("/yoga/") }))
+        .route("/fitness", get(|| async { axum::response::Redirect::permanent("/fitness/") }))
+        .route("/gaming",  get(|| async { axum::response::Redirect::permanent("/gaming/") }))
+        .route("/cat",     get(|| async { axum::response::Redirect::permanent("/cat/") }))
+        .route("/dad",     get(|| async { axum::response::Redirect::permanent("/dad/") }))
+        .route("/running", get(|| async { axum::response::Redirect::permanent("/running/") }))
         .route("/api/collab/account/delete", post(collab_account_delete))
         .route("/api/404/buy", post(not_found_buy))
         .route("/city", get(city_page))
