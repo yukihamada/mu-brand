@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MUGEN #∞ Founder Edition — 1着 ¥48,000 / 年4回 | wearmu.com</title>
-<meta name="description" content="MU の 最強 Tシャツ。 Loopwheel 14oz garment-dyed organic cotton。 弟子屈 鉱物染料。 NFC 埋込 + on-chain anchor + MSA lifetime + DAO 投票権。 ¥48,000 / 1着 / 年4回 (春分・夏至・秋分・冬至) だけ。 100年 保証。">
+<meta name="description" content="MU の 静かな 1着。 Loopwheel 14oz garment-dyed organic cotton。 弟子屈 鉱物染料。 NFC 革ラベル。 ¥48,000 / 1着 / 年4回 (春分・夏至・秋分・冬至)。 木箱・装飾・ノベルティ なし。 先行受付中。">
 <meta property="og:title" content="MUGEN #∞ Founder Edition">
-<meta property="og:description" content="¥48,000 · 1着 · 年4回 · 100年保証 · 物 + デジタル + 物語 全部入り">
-<meta property="og:image" content="https://mockups.wearmu.com/founder-hero.png">
+<meta property="og:description" content="¥48,000 · 1着 · 年4回 · 沈黙・物体・修繕。 先行予約 受付中">
+<meta property="og:image" content="https://wearmu.com/static/founder/hero-on-model.png">
 <meta property="og:url" content="https://wearmu.com/buy/founder">
 <link rel="canonical" href="https://wearmu.com/buy/founder">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -15,225 +15,320 @@
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.75;font-feature-settings:"palt"}
 a{color:#e6c449;text-decoration:none}a:hover{text-decoration:underline}
-.wrap{max-width:880px;margin:0 auto;padding:56px 24px 100px}
 nav{position:sticky;top:0;background:rgba(10,10,10,0.92);backdrop-filter:blur(14px);border-bottom:1px solid rgba(255,255,255,0.08);padding:14px 28px;display:flex;justify-content:space-between;align-items:center;z-index:50;font-size:11px;letter-spacing:0.3em;text-transform:uppercase}
 nav .logo{font-weight:700;letter-spacing:0.45em}
-.kicker{font-size:11px;letter-spacing:0.42em;text-transform:uppercase;color:#e6c449;margin-bottom:14px}
-h1{font-size:clamp(38px,7vw,72px);font-weight:200;letter-spacing:-0.012em;line-height:1.1;margin-bottom:18px}
-h1 em{color:#e6c449;font-style:normal;font-weight:300}
-h2{font-size:14px;letter-spacing:0.28em;text-transform:uppercase;margin:64px 0 18px;color:#e6c449;font-weight:500;border-top:1px solid rgba(255,255,255,0.08);padding-top:36px}
-.lede{font-size:16px;opacity:0.85;line-height:1.95;margin-bottom:36px;max-width:680px}
 
-/* Hero box */
-.hero-buy{background:linear-gradient(135deg,#0E0E0E,#080808);border:1px solid rgba(230,196,73,0.4);border-radius:10px;padding:32px;margin:32px 0 48px}
-.hero-buy .price{font-size:48px;font-weight:200;color:#fff;letter-spacing:-0.02em;font-variant-numeric:tabular-nums}
-.hero-buy .price small{font-size:14px;opacity:0.55;letter-spacing:0.1em;margin-left:10px}
-.hero-buy .meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px;margin:22px 0 0}
-.hero-buy .meta div{font-size:11.5px;color:rgba(245,245,240,0.6);line-height:1.6}
-.hero-buy .meta div strong{display:block;color:#fff;font-size:14px;margin-bottom:4px;font-weight:600}
-.hero-buy .next-drop{margin-top:18px;font-size:12.5px;color:#e6c449;font-family:'SF Mono','Menlo',monospace}
+/* HERO: silent, photo first */
+.hero{max-width:1100px;margin:0 auto;padding:40px 24px 0}
+.hero-img-wrap{position:relative;width:100%;aspect-ratio:1/1;max-width:760px;margin:0 auto;overflow:hidden;border-radius:4px}
+.hero-img-wrap img{width:100%;height:100%;object-fit:cover;display:block;filter:saturate(0.92) contrast(1.02)}
+.hero-mark{text-align:center;margin:36px auto 8px;font-size:11px;letter-spacing:0.6em;color:rgba(245,245,240,0.55);text-transform:uppercase}
+.hero-title{text-align:center;font-size:clamp(28px,5vw,42px);font-weight:200;letter-spacing:0.18em;margin:0 auto 12px;color:#fff}
+.hero-sub{text-align:center;font-size:13px;letter-spacing:0.32em;color:#e6c449;margin-bottom:48px;text-transform:uppercase}
 
-/* CTA */
-.cta-big{display:inline-block;background:#e6c449;color:#0A0A0A;font-weight:800;padding:20px 38px;border-radius:6px;text-decoration:none;letter-spacing:0.05em;margin-top:20px;font-size:13px;text-transform:uppercase;letter-spacing:0.2em;transition:transform .15s,box-shadow .15s;box-shadow:0 4px 24px rgba(230,196,73,0.18)}
+/* Pre-order banner */
+.beta-banner{max-width:760px;margin:24px auto 0;padding:14px 20px;background:rgba(230,196,73,0.07);border:1px solid rgba(230,196,73,0.25);border-radius:4px;display:flex;gap:14px;align-items:flex-start;font-size:12.5px;color:rgba(245,245,240,0.85);line-height:1.7}
+.beta-banner b{color:#e6c449;font-weight:600;flex-shrink:0}
+
+.wrap{max-width:760px;margin:0 auto;padding:0 24px 100px}
+
+h2{font-size:11px;letter-spacing:0.4em;text-transform:uppercase;margin:88px 0 24px;color:rgba(245,245,240,0.55);font-weight:500;text-align:center}
+h2:after{content:"";display:block;width:24px;height:1px;background:rgba(230,196,73,0.4);margin:14px auto 0}
+
+/* Section copy */
+.copy{font-size:14.5px;line-height:2.05;opacity:0.85;max-width:580px;margin:0 auto 18px;text-align:left;font-feature-settings:"palt"}
+.copy.center{text-align:center}
+.copy strong{color:#fff;font-weight:600}
+
+/* Photo blocks */
+.photo{margin:48px auto;max-width:760px}
+.photo-img{width:100%;border-radius:3px;display:block;filter:saturate(0.95) contrast(1.02)}
+.photo-cap{font-size:11px;letter-spacing:0.18em;color:rgba(245,245,240,0.45);margin-top:14px;text-align:center;text-transform:uppercase}
+
+/* Spec inline minimal */
+.spec-min{font-size:13px;line-height:2;max-width:520px;margin:0 auto;opacity:0.78}
+.spec-min dt{color:#e6c449;font-size:10.5px;letter-spacing:0.24em;text-transform:uppercase;margin-top:18px;font-weight:600}
+.spec-min dd{color:rgba(245,245,240,0.9);margin-top:4px}
+
+/* Money allocation */
+.alloc{max-width:560px;margin:0 auto;font-size:12.5px;line-height:1.85}
+.alloc-row{display:grid;grid-template-columns:1fr auto auto;gap:18px;padding:11px 0;border-bottom:1px solid rgba(255,255,255,0.06);align-items:baseline}
+.alloc-row:last-child{border-bottom:none}
+.alloc-row .label{color:rgba(245,245,240,0.85)}
+.alloc-row .pct{color:#e6c449;font-variant-numeric:tabular-nums;font-weight:600;min-width:42px;text-align:right}
+.alloc-row .yen{color:rgba(245,245,240,0.55);font-variant-numeric:tabular-nums;min-width:64px;text-align:right;font-size:11.5px}
+
+/* Buy block */
+.buy-block{max-width:580px;margin:80px auto 40px;padding:36px 28px;background:linear-gradient(180deg,#0E0E0E,#080808);border:1px solid rgba(230,196,73,0.4);border-radius:8px;text-align:center}
+.buy-price{font-size:48px;font-weight:200;color:#fff;letter-spacing:-0.02em;font-variant-numeric:tabular-nums;line-height:1}
+.buy-price small{font-size:13px;opacity:0.55;letter-spacing:0.1em;margin-left:10px}
+.buy-meta{margin:20px 0 22px;font-size:11.5px;color:rgba(245,245,240,0.6);letter-spacing:0.06em;line-height:1.9}
+.buy-meta b{color:#fff;font-weight:600}
+.size-picker{display:flex;gap:8px;justify-content:center;margin:18px 0 24px;flex-wrap:wrap}
+.size-picker label{display:inline-block;padding:9px 14px;border:1px solid rgba(255,255,255,0.18);border-radius:4px;cursor:pointer;font-size:12px;letter-spacing:0.16em;background:transparent;color:#F5F5F0;min-width:48px;text-align:center;font-weight:500}
+.size-picker input{display:none}
+.size-picker input:checked + label{background:#e6c449;color:#0A0A0A;border-color:#e6c449}
+.cta-big{display:inline-block;background:#e6c449;color:#0A0A0A;font-weight:700;padding:18px 36px;border-radius:6px;text-decoration:none;font-size:12.5px;text-transform:uppercase;letter-spacing:0.22em;transition:transform .15s,box-shadow .15s;box-shadow:0 4px 24px rgba(230,196,73,0.18);border:none;cursor:pointer}
 .cta-big:hover{transform:translateY(-2px);box-shadow:0 6px 30px rgba(230,196,73,0.3);text-decoration:none}
 .cta-big[disabled],.cta-big.disabled{background:#333;color:#666;cursor:not-allowed;box-shadow:none}
-.cta-big.disabled:hover{transform:none}
+.buy-note{margin-top:18px;font-size:10.5px;color:rgba(245,245,240,0.45);letter-spacing:0.05em;line-height:1.7}
 
-/* Spec table */
-.spec{display:grid;grid-template-columns:140px 1fr;gap:14px 24px;font-size:13.5px;margin:10px 0 18px;line-height:1.8}
-.spec dt{color:#e6c449;font-weight:600;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;border-bottom:1px solid rgba(255,255,255,0.08);padding:8px 0}
-.spec dd{padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05);opacity:0.88;line-height:1.85}
-.spec dd strong{color:#fff}
+/* Legal block */
+.legal{max-width:580px;margin:48px auto;padding:22px 24px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.06);border-radius:4px;font-size:11.5px;color:rgba(245,245,240,0.65);line-height:1.85}
+.legal h3{font-size:10.5px;color:rgba(230,196,73,0.85);letter-spacing:0.22em;text-transform:uppercase;margin-bottom:10px;font-weight:600}
+.legal a{color:#e6c449;text-decoration:underline}
 
-/* Bullet list */
-ul.bullet{font-size:14px;line-height:1.95;opacity:0.88;padding-left:20px}
-ul.bullet li{margin-bottom:8px}
-ul.bullet li strong{color:#fff}
+/* FAQ minimal */
+.faq{max-width:560px;margin:0 auto}
+.faq details{border-top:1px solid rgba(255,255,255,0.08);padding:14px 0}
+.faq details:last-child{border-bottom:1px solid rgba(255,255,255,0.08)}
+.faq summary{font-size:13.5px;color:#fff;cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;font-weight:500}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary:after{content:"+";color:#e6c449;font-size:18px;font-weight:300}
+.faq details[open] summary:after{content:"−"}
+.faq p{font-size:12.5px;opacity:0.78;line-height:1.95;margin-top:10px;padding-right:24px}
+.faq p a{color:#e6c449}
 
-/* Comparison table */
-table.cmp{width:100%;border-collapse:collapse;font-size:12.5px;margin:14px 0 24px}
-table.cmp th{padding:10px 8px;text-align:left;font-size:10.5px;letter-spacing:0.22em;text-transform:uppercase;color:#e6c449;border-bottom:1px solid rgba(230,196,73,0.3);font-weight:600}
-table.cmp td{padding:10px 8px;border-bottom:1px solid rgba(255,255,255,0.06);line-height:1.7;vertical-align:top}
-table.cmp td:first-child{color:#e6c449;font-weight:500}
-
-/* FAQ */
-.faq h3{font-size:14.5px;color:#fff;margin:22px 0 6px;font-weight:600}
-.faq p{font-size:13px;opacity:0.78;line-height:1.85;margin-bottom:12px}
-
-.back{display:inline-block;margin-top:44px;font-size:10px;letter-spacing:0.32em;text-transform:uppercase;opacity:0.55;color:inherit}
-
-.muted{opacity:0.55;font-size:12px}
+.muted{opacity:0.5;font-size:11px}
+.back{display:inline-block;margin:48px auto 0;font-size:10px;letter-spacing:0.32em;text-transform:uppercase;opacity:0.5;color:inherit;text-align:center;width:100%}
 </style>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </head>
 <body>
 <nav>
   <a class="logo" href="/">━◯━ MU</a>
-  <span style="opacity:0.55">Founder Edition</span>
+  <span style="opacity:0.55;font-size:9px;letter-spacing:0.3em">MUGEN #∞</span>
   <a href="/" style="font-size:9px">← トップ</a>
 </nav>
 
+<!-- HERO: photo first, then mark, then ∞ -->
+<div class="hero">
+  <div class="hero-img-wrap">
+    <img src="/static/founder/hero-on-model.png" alt="MUGEN #∞ Founder Edition — Loopwheel 14oz mineral-dyed t-shirt" loading="eager" fetchpriority="high">
+  </div>
+  <div class="hero-mark">━◯━</div>
+  <h1 class="hero-title">MUGEN&nbsp;#∞</h1>
+  <div class="hero-sub">Founder Edition · #001 of ∞</div>
+
+  <div class="beta-banner">
+    <b>先行予約</b>
+    <span>
+      第1回 出荷予定 <strong style="color:#fff">2026-06-21 (夏至)</strong>。
+      製造 ・素材調達 完了 後 に Stripe で 課金確定 (現在 = オーソリ のみ)。
+      万一 遅延・中止 時 は <strong style="color:#fff">全額 即時返金</strong>。
+    </span>
+  </div>
+</div>
+
 <div class="wrap">
-  <div class="kicker">MUGEN · #∞ · FOUNDER EDITION</div>
-  <h1><em>1着 ¥48,000</em>。<br>年に 4 回 だけ 出る、 MU の 完全形。</h1>
-  <p class="lede">
-    Loopwheel 14 oz garment-dyed organic cotton。 弟子屈 川湯温泉 鉱物染料。 首裏 革ラベル に <strong>NFC tag</strong> 埋込 — スキャン で その 1着 の 製造ログ / 染料 配合 / 縫製職人 / past owners が 開く。 100 年 保証 (破損時 同 配合 で 修繕)。 春分・夏至・秋分・冬至 の 21:00 JST に 1着 だけ 公開。 <strong>木箱・装飾・ノベルティ なし</strong> — コスト は 「服本体 + 修繕 reserve + デジタル anchor」 にだけ 投じる。
+
+  <!-- Why this exists (silent) -->
+  <h2>1 着</h2>
+  <p class="copy center">
+    100年 着られる 1着 を 作る。<br>
+    機械 で 1 日 1着 編み、<br>
+    弟子屈町 の 鉱物 で 染め、<br>
+    手 で 縫う。<br>
+    年に 4 着 だけ 出す。
   </p>
 
-  <!-- Hero buy box -->
-  <div class="hero-buy">
-    <div class="price">¥{PRICE_JPY} <small>≈ ${PRICE_USD}</small></div>
-    <div class="meta">
-      <div><strong>1着</strong>限定 / dropあたり</div>
-      <div><strong>4回</strong>/年 (春分・夏至・秋分・冬至)</div>
-      <div><strong>100年</strong>保証 (修繕 含む)</div>
-      <div><strong>+ MSA</strong> Lifetime (全 private リポ DL 永久)</div>
-    </div>
-    <div class="next-drop">📅 次回 公開: <strong id="next-drop-iso">{NEXT_DROP_LABEL}</strong> (JST)</div>
-    <div style="margin-top:24px">
-      <a href="#" class="cta-big {BUY_BTN_CLASS}" id="founder-buy-btn">{BUY_BTN_LABEL}</a>
-      <span class="muted" style="margin-left:14px">Stripe checkout · 即時 · 領収書 OK · 海外発送 可</span>
-    </div>
+  <!-- Loopwheel macro -->
+  <div class="photo">
+    <img src="/static/founder/loopwheel-fabric.png" alt="Loopwheel 14oz organic cotton knit macro" loading="lazy" class="photo-img">
+    <div class="photo-cap">Loopwheel · 14 oz · garment-dyed</div>
   </div>
 
-  <h2>1. 物理 (本体)</h2>
-  <dl class="spec">
-    <dt>生地</dt><dd><strong>Loopwheel 吊り編み 14 oz (約 400 gsm)</strong> · garment-dyed organic cotton · 和歌山 高田馬鞍機 製。 量産品 では 出せない 重さ + 経年変化 (洗うほど 色 が 落ち着く)。</dd>
-    <dt>縫製</dt><dd>完全 ロック 縫い (脇 inside-out finish) · 首リブ 二重折り · 裾 チェーンスティッチ。 50年 持つ 構造。</dd>
-    <dt>染色</dt><dd><strong>弟子屈町 川湯温泉 由来 鉱物染料</strong> (黒褐色)。 「気温 seed」 と 同じ 「土地 由来」 narrative。 配合 比率 は Chronicle ページ で 公開。</dd>
-    <dt>印刷</dt><dd>DTG ベース。 1 着 ずつ 印刷者 サイン入り (= ハンド プロセス の 痕跡)。 装飾的 な gold foil / 過剰 ステッチ は <strong>付けない</strong>。</dd>
-    <dt>首裏 ラベル</dt><dd>黒革 ラベル に <strong>NFC tag 埋込</strong> + シリアル番号 (#001 of ∞) 箔押し。 スキャン で chronicle ページ が 開く。</dd>
-    <dt>サイズ</dt><dd>XS / S / M / L / XL / XXL (購入時 選択)。 Loopwheel の特性上 ±2 cm の 個体差 あり (= 工業 製品 では ない 証拠)。</dd>
+  <h2>素材</h2>
+  <dl class="spec-min">
+    <dt>生地</dt><dd>Loopwheel 吊り編み 14 oz (約 400 gsm)、 garment-dyed organic cotton、 和歌山 製。</dd>
+    <dt>縫製</dt><dd>完全 ロック 縫い、 首リブ 二重折り、 裾 チェーン スティッチ。</dd>
+    <dt>染色</dt><dd>弟子屈町 川湯温泉 由来 鉱物染料 (黒褐色)。 配合 比率 は 公開。</dd>
+    <dt>印刷</dt><dd>DTG ベース。 1 着 ずつ 印刷者 サイン入り。 装飾 印刷 なし。</dd>
+    <dt>サイズ</dt><dd>XS / S / M / L / XL / XXL。 Loopwheel 特性 で ±2 cm 個体差。</dd>
   </dl>
 
-  <h2>2. デジタル / IP</h2>
-  <ul class="bullet">
-    <li><strong>on-chain anchor</strong>: Solana mainnet に SHA-256 mint。 NFC スキャン で 表示 されるページ に live tx sig。</li>
-    <li><strong>MSA Lifetime</strong>: wearmu の 全 private リポ (現 21 本) + 将来 追加 全部 永久 アクセス。 First-100 charter と 同 待遇。</li>
-    <li><strong>MU Pass NFT</strong>: Founder Edition 専用 trait (<code>is_founder_edition: true</code>, <code>mint_serial: N</code>)。 Magic Eden / Tensor で 二次流通 可、 5% royalty が Founder Edition 出品者 自身 に 還元。</li>
-    <li><strong>次回 drop の vote 権</strong>: 4枚/年 の 次回 デザイン 候補 から 1票 vote。 DAO Council seat。</li>
-    <li><strong>Chronicle ページ</strong>: <code>/c/founder/{serial}</code> で 製造 ログ + 鉱物染料 配合 + 縫製職人 名 + 出荷日時 + past/future owners (匿名 ID)。</li>
-  </ul>
-
-  <h2>3. 同梱 (= 必要 な もの だけ)</h2>
-  <ul class="bullet">
-    <li><strong>本体 T シャツ</strong> 1 着 (Loopwheel 14 oz、 鉱物染色、 NFC ラベル)。</li>
-    <li><strong>鉱物染料 サンプル</strong> 5 g チューブ — <em>意味あり</em>: 10〜50年 後 の 自家修繕 / 補色 を enable する 唯一の手段。 弟子屈 で 配合 した 同 ロット を 真空 小分け。</li>
-    <li><strong>Yuki 手書き ノート 1 枚</strong> — <em>意味あり</em>: 通し番号 #N と シリアル を 一致 させ、 二次流通 で 真贋 verify される 物理 anchor。 デザイン カード では なく 紙片。</li>
-    <li><strong>配送</strong>: ヤマト宅急便 (国内) / DHL (海外、 関税別)。 配送箱 は 再生 段ボール 1 重、 緩衝材 は 古紙。 <strong>木箱・専用袋・包装紙 は 付けない</strong> — 1ヶ月 後 に 捨てられる ものに ¥10,000 投じない。</li>
-    <li><strong>(option) 手渡し</strong>: 三田 / 弟子屈 で 引取 希望 の 方 のみ、 別料金 なし。 デフォルト は 配送。 強制 しない (= Yuki 労力 を scarce にしすぎない)。</li>
-    <li><strong>保証書 は 紙では 出さない</strong> — NFC スキャン → Chronicle ページ → 100 年 保証 ステータス が 表示。 紙の 証明書 は 紛失 する。 デジタル anchor は 残る。</li>
-    <li><strong>after</strong>: 1年後 「経年変化 fitting」 メール、 5年後 「修繕 必要 か」 確認。 メール = 労力 のみ、 物理 コスト 0。</li>
-  </ul>
-
-  <h2>4. お金 の 行き先 (transparency)</h2>
-  <p style="font-size:14px;line-height:1.95;opacity:0.85;margin-bottom:14px">¥48,000 を どう 割る か。 全部 出す。</p>
-  <table class="cmp">
-    <thead><tr><th>項目</th><th>%</th><th>金額</th><th>理由</th></tr></thead>
-    <tbody>
-      <tr><td>Loopwheel 工房 + 縫製 工賃</td><td>30%</td><td>¥14,400</td><td>14 oz 吊り編み + 完全 ロック 縫い = 50年 持つ 物理 base</td></tr>
-      <tr><td>鉱物染料 + 染色 工程</td><td>15%</td><td>¥7,200</td><td>弟子屈 川湯温泉 由来、 「土地」 narrative の 中核</td></tr>
-      <tr><td>100年 修繕 reserve fund</td><td>20%</td><td>¥9,600</td><td><strong>各 1着 ごと に</strong> エスクロー、 50 年 後 の 修繕 を 法人 倒産 でも 担保</td></tr>
-      <tr><td>NFC tag + 革ラベル + 箔押し</td><td>5%</td><td>¥2,400</td><td>物理 → デジタル の 唯一 anchor、 永久 read 可能</td></tr>
-      <tr><td>on-chain mint + DAO infra</td><td>3%</td><td>¥1,440</td><td>Solana mint fee + Chronicle ホスト 永久</td></tr>
-      <tr><td>配送 + 決済 fee</td><td>7%</td><td>¥3,360</td><td>Stripe 3.6% + ヤマト/DHL 実費</td></tr>
-      <tr><td>Enabler Inc. 利益 + 運営</td><td>20%</td><td>¥9,600</td><td>MU 全体 の 開発・人件費 へ 流す (Yuki 個人 取り分 ではない)</td></tr>
-    </tbody>
-  </table>
-  <p style="font-size:12.5px;line-height:1.85;opacity:0.65;margin:6px 0 24px">
-    投じない もの: 木箱、 専用包装、 ノベルティ、 装飾 印刷、 過剰 ステッチ、 ブランド袋、 香り、 ステッカー。 「1ヶ月後 に 捨てられる もの」 と 「服 + 修繕 + デジタル の 100年」 を 区別 する。
-  </p>
-
-  <h2>5. 既存 MUGEN との 比較</h2>
-  <table class="cmp">
-    <thead><tr><th>軸</th><th>MUGEN (¥4,900)</th><th>Founder Edition (¥48,000)</th></tr></thead>
-    <tbody>
-      <tr><td>物理 品質</td><td>Stanley/Stella 180 gsm · DTG</td><td>Loopwheel 14 oz · 鉱物染色 · 完全ロック縫い</td></tr>
-      <tr><td>デジタル</td><td>(Phase 2 mint)</td><td>NFC + on-chain anchor + Founder trait + DAO seat</td></tr>
-      <tr><td>配信 頻度</td><td>1着/h、 commodity</td><td>1着/3ヶ月、 「待つ」 体験</td></tr>
-      <tr><td>同梱</td><td>本体 のみ</td><td>本体 + 染料 5g + 手書き ノート (それ以上 なし)</td></tr>
-      <tr><td>100年 narrative</td><td>"buy and forget"</td><td>50年 持つ 物 + 100年 修繕 reserve fund</td></tr>
-      <tr><td>二次流通</td><td>n/a</td><td>NFT で <code>mint #N</code> + 物 セット 引継ぎ</td></tr>
-      <tr><td>価格 心理</td><td>impulse</td><td>「いつか 1着」 tier</td></tr>
-    </tbody>
-  </table>
-
-  <h2>6. なぜ「年 4 回」 か</h2>
-  <p style="font-size:14px;line-height:1.95;opacity:0.85">
-    Loopwheel 吊り編み機 の 1日 生産量 = 約 1着。 鉱物染料 の 配合 → 染色 → 乾燥 = 2-3週間。 弟子屈町 の 季節 (春分・夏至・秋分・冬至) を 1サイクル と 定義。 急ぐ もの では ない。
-  </p>
-  <p style="font-size:14px;line-height:1.95;opacity:0.85">
-    100年 続けば <strong>400 着</strong>。 これ が 「∞」 の 意味。 1ブランド が 物理 で 残せる limit。
-  </p>
-
-  <h2>7. FAQ</h2>
-  <div class="faq">
-    <h3>Q. ¥48,000 高すぎる ?</h3>
-    <p>MA (1着/週 オークション) は ¥30k〜¥100k。 並ぶ tier。 「服 を 1着 100年 大事に する」 という 文化 を 物理化 した 値段。</p>
-
-    <h3>Q. 売り切れたら ?</h3>
-    <p>次は 3 ヶ月後。 sold out で メール登録 すると 次回 公開 30分前 に 先行 通知。 過去 sold out 時 の 競合 数 は /transparency で 公開。</p>
-
-    <h3>Q. NFC + on-chain は いつ ?</h3>
-    <p>第 1 回 (春分 2026) 時点 で NFC tag + Solana mint 完成。 詳細 は <a href="/protocol">/protocol</a> + <a href="/developers">/developers</a>。 v1 は Yuki 個人 wallet で 発行、 v2 で multisig 移行。</p>
-
-    <h3>Q. 100 年 保証 は 法人 が 倒れたら ?</h3>
-    <p>Enabler Inc. の 後継法人 が 引継ぎ。 <a href="https://github.com/yukihamada/tsugi">tsugi protocol</a> の succession token に 紐付け済。 売却・破産時 は 鉱物染料 配合 と 縫製図 を 全 owner に 開示 (= self-修繕 可能)。</p>
-
-    <h3>Q. 返品 / キャンセル ?</h3>
-    <p>サイズ 違い・配送 事故 のみ 受付。 デザイン 不満 で の キャンセル は 不可 (1着 限定 で 製造 する ため)。 NFT 部分 は 二次流通 で 売却 可能。</p>
-
-    <h3>Q. 海外 から 買える ?</h3>
-    <p>可。 DHL international、 関税 別途。 米国 / EU / アジア 主要国 OK。 詳細 は checkout で 配送先 選択。</p>
-
-    <h3>Q. なんで 木箱・包装紙 ・ノベルティ なし ?</h3>
-    <p>「100年 残る もの」 と 「1ヶ月で 捨てる もの」 を 区別 した から。 木箱 ¥3,000 + 包装 ¥1,000 + ノベルティ ¥1,000 = ¥5,000 を、 修繕 reserve fund と 鉱物染料 同梱 に 振り替えた。 unboxing 動画 では 映え ない けど、 30年後 も 着られる。</p>
-
-    <h3>Q. 領収書 ?</h3>
-    <p>Stripe receipt + Enabler Inc. 発行 の インボイス制度 適合 領収書 (適格請求書発行事業者番号 T9011001129xxx)。</p>
+  <!-- NFC label -->
+  <div class="photo">
+    <img src="/static/founder/nfc-leather-label.png" alt="Black leather neck label with gold foil MUGEN #001 of ∞ + NFC tag" loading="lazy" class="photo-img">
+    <div class="photo-cap">首裏 · 革ラベル · NFC tag + 箔押し シリアル</div>
   </div>
 
-  <h2>8. もう 1 度</h2>
-  <div class="hero-buy" style="margin-top:24px">
-    <div class="price">¥{PRICE_JPY} <small>≈ ${PRICE_USD}</small></div>
-    <p style="margin-top:14px;font-size:13.5px;color:rgba(245,245,240,0.75)">物 + デジタル + 物語、 全部 入って 1着。 1年に 4着 だけ。</p>
-    <div style="margin-top:18px">
-      <a href="#" class="cta-big {BUY_BTN_CLASS}" id="founder-buy-btn-2">{BUY_BTN_LABEL}</a>
+  <h2>記録</h2>
+  <p class="copy center">
+    首裏 革ラベル の NFC を スマホ で かざす と、<br>
+    その 1着 だけ の 製造ログ ・染料配合 ・縫製者 ・出荷日 が 開く。<br>
+    Solana mainnet に SHA-256 mint で 永久 anchor。<br>
+    <span class="muted">(NFC chip は 25 年 ごと に 法人 が 無料交換。 anchor は serial 番号 + on-chain mint で 永久に 残る。)</span>
+  </p>
+
+  <!-- Mineral dye + note -->
+  <div class="photo">
+    <img src="/static/founder/mineral-dye-vial.png" alt="弟子屈 川湯温泉 鉱物染料 5g sample vial" loading="lazy" class="photo-img">
+    <div class="photo-cap">同梱 · 弟子屈 鉱物染料 5g (修繕用)</div>
+  </div>
+
+  <div class="photo">
+    <img src="/static/founder/handwritten-note.png" alt="Yuki handwritten note: MUGEN #∞ #001 of ∞ 2026.06.21" loading="lazy" class="photo-img">
+    <div class="photo-cap">同梱 · 手書き シリアル ノート (#001-#100 は 創業者 直筆)</div>
+  </div>
+
+  <h2>同梱</h2>
+  <p class="copy center">
+    本体 1着 + 鉱物染料 5g (自家修繕用) + 手書き シリアル ノート 1枚。<br>
+    それ以上 ない。<br>
+    <span class="muted">木箱・専用包装・ノベルティ なし。 保証書 は 紙では 出さない (NFC で 常に live)。</span>
+  </p>
+
+  <!-- Money allocation -->
+  <h2>¥48,000 の 行き先</h2>
+  <div class="alloc">
+    <div class="alloc-row"><span class="label">Loopwheel 工房 + 縫製 工賃</span><span class="pct">30%</span><span class="yen">¥14,400</span></div>
+    <div class="alloc-row"><span class="label">100年 修繕 reserve fund</span><span class="pct">20%</span><span class="yen">¥9,600</span></div>
+    <div class="alloc-row"><span class="label">Enabler Inc. 運営 + 開発</span><span class="pct">20%</span><span class="yen">¥9,600</span></div>
+    <div class="alloc-row"><span class="label">鉱物染料 + 染色 工程</span><span class="pct">15%</span><span class="yen">¥7,200</span></div>
+    <div class="alloc-row"><span class="label">配送 + Stripe fee</span><span class="pct">7%</span><span class="yen">¥3,360</span></div>
+    <div class="alloc-row"><span class="label">NFC tag + 革ラベル + 箔押し</span><span class="pct">5%</span><span class="yen">¥2,400</span></div>
+    <div class="alloc-row"><span class="label">on-chain mint + Chronicle infra</span><span class="pct">3%</span><span class="yen">¥1,440</span></div>
+  </div>
+  <p class="copy center" style="margin-top:18px;font-size:12px;opacity:0.55">
+    投じない: 木箱・包装紙・ノベルティ・装飾印刷・ブランド袋・香り・ステッカー。
+  </p>
+
+  <!-- Buy block with size picker -->
+  <div class="buy-block">
+    <div class="buy-price">¥48,000 <small>≈ $320</small></div>
+    <div class="buy-meta">
+      <b>1着</b>限定 / drop &nbsp;·&nbsp; 年 <b>4回</b> (春分・夏至・秋分・冬至 21:00 JST)<br>
+      <b>+ MSA</b> Lifetime &nbsp;·&nbsp; <b>100年</b> 修繕 reserve fund &nbsp;·&nbsp; <b>NFC</b> 25年 無料 交換
     </div>
+    <div class="size-picker" role="radiogroup" aria-label="サイズ">
+      <input type="radio" id="sz-xs"  name="size" value="XS"><label for="sz-xs">XS</label>
+      <input type="radio" id="sz-s"   name="size" value="S"><label for="sz-s">S</label>
+      <input type="radio" id="sz-m"   name="size" value="M" checked><label for="sz-m">M</label>
+      <input type="radio" id="sz-l"   name="size" value="L"><label for="sz-l">L</label>
+      <input type="radio" id="sz-xl"  name="size" value="XL"><label for="sz-xl">XL</label>
+      <input type="radio" id="sz-xxl" name="size" value="XXL"><label for="sz-xxl">XXL</label>
+    </div>
+    <button type="button" class="cta-big" id="founder-buy-btn">予約 する · #001 を 確保</button>
+    <div class="buy-note">
+      Stripe Checkout (オーソリ のみ、 課金確定 は 製造完了後) &nbsp;·&nbsp; ヤマト宅急便 / DHL &nbsp;·&nbsp; 領収書 OK
+    </div>
+  </div>
+
+  <!-- Legal / 安心 -->
+  <div class="legal">
+    <h3>先行受付 に つき</h3>
+    <p>
+      ① 注文時点 は Stripe オーソリ のみ (¥0 課金)。 製造完了 = 出荷前 に 課金確定。<br>
+      ② 出荷予定: <strong>2026年6月21日 (夏至)</strong>。 万一 遅延・中止 の 際 は <strong>全額 即時返金</strong>。<br>
+      ③ 海外配送 は 鉱物染料 5g を <strong>同梱できない 場合あり</strong> (国際郵便 危険物 規制)。 修繕時 別送 で 対応。<br>
+      ④ NFC chip は 25 年 ごと に Enabler Inc. (or 後継法人) が <strong>無料 交換</strong>。 anchor は serial 番号 + on-chain mint で 永久。<br>
+      ⑤ サイズ違い / 配送事故 = 全額返金。 その他 キャンセル は 製造開始前 まで 可。 製造開始後 は 二次流通 (NFT で 物セット引継ぎ) を 推奨。
+    </p>
+    <h3 style="margin-top:18px">事業者</h3>
+    <p>
+      株式会社 イネブラ (Enabler Inc.)<br>
+      本店: 〒102-0074 東京都千代田区九段南1-5-6 りそな九段ビル 5階 KSフロア<br>
+      代表取締役: 濱田 優貴<br>
+      お問合せ: <a href="mailto:founder@enablerdao.com">founder@enablerdao.com</a><br>
+      <a href="/tokushoho">特定商取引法 に基づく 表記 →</a> &nbsp;·&nbsp; <a href="/legal">利用規約 →</a><br>
+      <span class="muted">適格請求書発行事業者番号は登録完了後にメール領収書へ記載します。</span>
+    </p>
+  </div>
+
+  <!-- FAQ -->
+  <h2>FAQ</h2>
+  <div class="faq">
+    <details>
+      <summary>¥48,000 は 高すぎる?</summary>
+      <p>VISVIM SS Pocket Tee ¥30k 台、 CDG SHIRT Forever Tee ¥20k 台、 MA オークション ¥30k〜¥100k と 並ぶ tier。 「服 を 1着 100年 大事に する」 文化 を 物理化 した 価格。 ¥9,600/着 は 修繕 reserve fund に escrow。</p>
+    </details>
+    <details>
+      <summary>「100年 保証」 は 法人 が 倒れたら?</summary>
+      <p>tsugi succession protocol で 後継法人 が 引継ぎ。 売却・破産時 は 鉱物染料 配合 と 縫製図 を 全 owner に 開示 (self-修繕 可能)。 reserve fund は 信託 口座 (詳細 確定後 公開) で 法人 倒産時 も 保全。</p>
+    </details>
+    <details>
+      <summary>NFC chip は 100年 持つ?</summary>
+      <p>持たない (NFC chip MTBF ~10-20年)。 そのため 25 年 ごと に Enabler Inc. が <strong>無料 交換</strong>。 chip 死亡時 も 革ラベル の 箔押し serial 番号 + on-chain mint で identity 復元 可能。 100年 narrative は chip ではなく <strong>serial + anchor</strong> で 担保 する。</p>
+    </details>
+    <details>
+      <summary>海外 から 買える?</summary>
+      <p>可。 DHL international 配送、 関税別。 ただし 鉱物染料 5g は 国際郵便 危険物 規制 (UN3077) で <strong>同梱できない 場合あり</strong>。 海外 buyer に は 修繕リクエスト 時 別送 (or Enabler 担当者 持参) で 対応。</p>
+    </details>
+    <details>
+      <summary>Solana wallet 持ってない けど DAO seat 行使 できる?</summary>
+      <p>可。 Phantom (Chrome 拡張) セットアップ ガイド を Chronicle ページ に 添付。 wallet 未保有 buyer は メール vote 代行 mode も 用意 (= 法人 が wallet 管理 して 投票)。 後日 self-custody へ 移行 可能。</p>
+    </details>
+    <details>
+      <summary>誰 が 作るの? Yuki 1人?</summary>
+      <p>#001-#100 (初期 25年) は 創業者 (濱田 優貴) 直接 関与 (手書き ノート + 制作 立会)。 #101 以降 は 後継 founder が 連名 で 引継ぎ (tsugi succession token)。 物理 製造 は 和歌山 Loopwheel 工房 + 弟子屈 染色 + DTG 印刷者 の 三者。</p>
+    </details>
+    <details>
+      <summary>返品 / キャンセル?</summary>
+      <p>製造開始前 = キャンセル 全額返金可。 製造開始後 = サイズ違い / 配送事故 のみ 全額返金。 デザイン 不満 で の 製造後 キャンセル は 不可 (1着 限定 製造 のため)。 NFT 部分 は 二次流通 で 物セット 売却 可能。</p>
+    </details>
+    <details>
+      <summary>領収書?</summary>
+      <p>Stripe receipt + Enabler Inc. 発行 領収書。 適格請求書発行事業者番号は 登録完了後 にメール領収書 に 記載 (お申込み時点 では 通常の 領収書 で 発行)。</p>
+    </details>
+  </div>
+
+  <!-- Final CTA -->
+  <div class="buy-block">
+    <div class="buy-price">¥48,000 <small>≈ $320</small></div>
+    <div class="buy-meta">物 + 染料 + 記録、 全部 入って 1着。 年に 4着 だけ。</div>
+    <div class="size-picker" role="radiogroup" aria-label="サイズ">
+      <input type="radio" id="sz-xs2"  name="size2" value="XS"><label for="sz-xs2">XS</label>
+      <input type="radio" id="sz-s2"   name="size2" value="S"><label for="sz-s2">S</label>
+      <input type="radio" id="sz-m2"   name="size2" value="M" checked><label for="sz-m2">M</label>
+      <input type="radio" id="sz-l2"   name="size2" value="L"><label for="sz-l2">L</label>
+      <input type="radio" id="sz-xl2"  name="size2" value="XL"><label for="sz-xl2">XL</label>
+      <input type="radio" id="sz-xxl2" name="size2" value="XXL"><label for="sz-xxl2">XXL</label>
+    </div>
+    <button type="button" class="cta-big" id="founder-buy-btn-2">予約 する · #001 を 確保</button>
+    <div class="buy-note">オーソリ のみ、 課金確定 = 製造完了後 &nbsp;·&nbsp; 全額返金 (遅延・中止時)</div>
   </div>
 
   <a class="back" href="/">← MU トップ</a>
-  <p class="muted" style="margin-top:24px;font-size:11px">設計 + 仕様 全文: <a href="https://github.com/yukihamada/mu-brand/blob/main/docs/FOUNDER_EDITION.md" style="color:#e6c449">FOUNDER_EDITION.md</a> · 問い合わせ: <a href="mailto:founder@enablerdao.com" style="color:#e6c449">founder@enablerdao.com</a></p>
+  <p class="muted" style="text-align:center;margin-top:18px;font-size:10.5px">
+    完全 設計書: <a href="https://github.com/yukihamada/mu-brand/blob/main/docs/FOUNDER_EDITION.md" style="color:#e6c449">FOUNDER_EDITION.md</a> &nbsp;·&nbsp;
+    お問合せ: <a href="mailto:founder@enablerdao.com" style="color:#e6c449">founder@enablerdao.com</a>
+  </p>
 </div>
 
 <script>
 (function () {
-  function buyClick (e) {
+  function getSize (name) {
+    var el = document.querySelector('input[name="' + name + '"]:checked');
+    return el ? el.value : 'M';
+  }
+  function buyClick (e, sizeName) {
     e.preventDefault();
     var btn = e.currentTarget;
     if (btn.classList.contains('disabled')) return;
+    var size = getSize(sizeName);
     btn.textContent = 'Stripe checkout 起動中…';
     btn.classList.add('disabled');
     fetch('/api/checkout/founder', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify({ size: 'M' }), // size picker can be added later
+      body: JSON.stringify({ size: size }),
     }).then(function (r) { return r.json().catch(function () { return {}; }); })
       .then(function (j) {
         if (j && j.url) {
           window.location.href = j.url;
         } else {
-          btn.textContent = (j && j.error) || 'checkout 失敗 — info@enablerdao.com';
+          btn.textContent = (j && j.error) || 'checkout 失敗 — founder@enablerdao.com';
         }
       })
-      .catch(function (e) {
-        btn.textContent = 'エラー: ' + (e && e.message || e);
+      .catch(function (err) {
+        btn.textContent = 'エラー: ' + (err && err.message || err);
       });
   }
-  ['founder-buy-btn', 'founder-buy-btn-2'].forEach(function (id) {
-    var b = document.getElementById(id);
-    if (b && !b.classList.contains('disabled')) b.addEventListener('click', buyClick);
-  });
+  var b1 = document.getElementById('founder-buy-btn');
+  if (b1) b1.addEventListener('click', function (e) { buyClick(e, 'size'); });
+  var b2 = document.getElementById('founder-buy-btn-2');
+  if (b2) b2.addEventListener('click', function (e) { buyClick(e, 'size2'); });
 })();
 </script>
 </body>

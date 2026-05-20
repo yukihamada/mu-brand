@@ -20861,38 +20861,9 @@ async fn buy_page_with_id(
 }
 
 /// /buy/founder — Founder Edition LP. ¥48,000, 1着, 年4回 drop.
-/// Substitutes price + next drop date into the static template.
-async fn buy_founder_page() -> Html<String> {
-    const TEMPLATE: &str = include_str!("../static/buy-founder.html");
-    let price_jpy: i64 = 48_000;
-    let price_usd: i64 = (price_jpy as f64 / 150.0).round() as i64; // rough JPY/USD
-    let (drop_iso, drop_label) = founder_next_drop_label();
-    let body = TEMPLATE
-        .replace("{PRICE_JPY}", &format!("{}", FormatThousands(price_jpy)))
-        .replace("{PRICE_USD}", &price_usd.to_string())
-        .replace("{NEXT_DROP_LABEL}", &drop_label)
-        .replace("{BUY_BTN_LABEL}", "予約購入 → 次の制作で出荷")
-        .replace("{BUY_BTN_CLASS}", "")
-        // Suppress the placeholder so the iso slot also reads the human label.
-        .replace("{NEXT_DROP_ISO}", &drop_iso);
-    Html(body)
-}
-
-/// Format an i64 with thousand-separators (e.g. 48000 → "48,000"). Small
-/// helper kept inline since main.rs avoids the `num-format` dependency.
-struct FormatThousands(i64);
-impl std::fmt::Display for FormatThousands {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = self.0.abs().to_string();
-        let bytes: Vec<char> = s.chars().collect();
-        let mut out = String::with_capacity(bytes.len() + bytes.len() / 3);
-        if self.0 < 0 { out.push('-'); }
-        for (i, c) in bytes.iter().enumerate() {
-            if i > 0 && (bytes.len() - i) % 3 == 0 { out.push(','); }
-            out.push(*c);
-        }
-        f.write_str(&out)
-    }
+/// Static HTML: price + next drop are now baked in (no placeholder substitution).
+async fn buy_founder_page() -> Html<&'static str> {
+    Html(include_str!("../static/buy-founder.html"))
 }
 
 /// Return (ISO-ish JST string, human JP label) for the next Founder Edition
@@ -20967,10 +20938,11 @@ async fn founder_checkout(
 
     let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
     let price_jpy: i64 = 48_000;
-    let display = format!("MUGEN #∞ Founder Edition (size {size})");
+    let display = format!("MUGEN #∞ Founder Edition (size {size}) — 先行予約");
     let price_str = price_jpy.to_string();
     let success_url = format!("{}/success?sid={{CHECKOUT_SESSION_ID}}&edition=founder", base_url);
     let cancel_url  = format!("{}/buy/founder", base_url);
+    let image_url   = format!("{}/static/founder/hero-on-model.png", base_url);
     let (drop_iso, _label) = founder_next_drop_label();
 
     let resp = reqwest::Client::new()
@@ -20980,10 +20952,17 @@ async fn founder_checkout(
             ("mode", "payment"),
             ("currency", "jpy"),
             ("locale", "ja"),
+            // 先行予約: authorize only, capture confirmed manually after
+            // manufacturing is complete. Stripe holds the auth for 7 days for
+            // cards; we re-auth before each drop's actual capture.
+            ("payment_intent_data[capture_method]", "manual"),
+            ("payment_intent_data[description]",
+             "MUGEN #∞ Founder Edition — 先行予約 (オーソリのみ、課金は製造完了後)"),
             ("line_items[0][price_data][currency]", "jpy"),
             ("line_items[0][price_data][product_data][name]", display.as_str()),
             ("line_items[0][price_data][product_data][description]",
-             "Loopwheel 14oz · 鉱物染色 · NFC tag · 100年修繕保証。次回 制作完了 で 出荷。"),
+             "Loopwheel 14oz · 弟子屈 鉱物染色 · NFC 革ラベル。先行予約 (課金確定 = 製造完了後、遅延・中止時は全額返金)。"),
+            ("line_items[0][price_data][product_data][images][0]", image_url.as_str()),
             ("line_items[0][price_data][unit_amount]", price_str.as_str()),
             ("line_items[0][quantity]", "1"),
             ("success_url", success_url.as_str()),
@@ -21004,6 +20983,7 @@ async fn founder_checkout(
             ("metadata[size]", size.as_str()),
             ("metadata[next_drop_iso]", drop_iso.as_str()),
             ("metadata[product]", "MUGEN_FOUNDER_INFINITY"),
+            ("metadata[reservation]", "true"),
         ])
         .send().await;
 
