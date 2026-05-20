@@ -393,7 +393,64 @@ footer a{color:var(--gold);text-decoration:none;}
     <div class="variant">Rashguard</div><div style="font-size:13px;color:var(--gold);font-weight:700;margin-top:6px;">¥4,800 〜</div>
   </div>
 </a></div>
-</section></main>
+</section>
+
+<!-- Create-your-own apply section: dojo/team/influencer/press 申込 を inline で -->
+<section id="apply" style="max-width:680px;margin:48px auto 32px;padding:0 24px">
+  <div style="text-align:center;margin-bottom:24px">
+    <div style="font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:var(--gold);margin-bottom:10px;font-weight:700">━◯━ MU × BJJ collab</div>
+    <h2 style="font-size:clamp(24px,4.5vw,36px);font-weight:200;color:#fff;letter-spacing:0.02em;line-height:1.2;margin-bottom:14px">道場・大会・店舗 で<br>あなた だけ の 1 着 を 作る</h2>
+    <p style="font-size:14px;color:rgba(245,245,240,0.78);line-height:1.95;max-width:540px;margin:0 auto">
+      在庫 リスク ゼロ。 デザイン は AI + Yuki が 提案。 売れた 分 だけ rev share (30%)。<br>
+      下 の 1 分 フォーム から。 <strong style="color:#fff">24 時間 以内</strong> に Yuki 自身 が 返信。
+    </p>
+  </div>
+
+  <form id="bjj-apply-form" autocomplete="off" style="padding:28px 24px;background:#0E0E0E;border:1px solid rgba(201,169,110,0.4);border-radius:10px">
+    <div style="margin-bottom:14px">
+      <label for="ba-kind" style="display:block;font-size:10px;color:var(--gold);letter-spacing:0.22em;text-transform:uppercase;margin-bottom:6px;font-weight:700">種別</label>
+      <select id="ba-kind" required style="width:100%;padding:14px 16px;background:rgba(255,255,255,0.06);color:#F5F5F0;border:1px solid rgba(255,255,255,0.14);border-radius:4px;font-size:14px;font-family:inherit;-webkit-appearance:none;background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%226%22 viewBox=%220 0 10 6%22><path fill=%22%23c9a96e%22 d=%22M0 0l5 6 5-6z%22/></svg>');background-repeat:no-repeat;background-position:right 16px center;background-size:10px 6px">
+        <option value="dojo">道場 / 大会 主催</option>
+        <option value="partner">飲食店 / SaaS / イベント</option>
+        <option value="influencer">影響者 / 競技者</option>
+        <option value="press">メディア / press</option>
+      </select>
+    </div>
+    <div style="margin-bottom:14px">
+      <label for="ba-name" style="display:block;font-size:10px;color:var(--gold);letter-spacing:0.22em;text-transform:uppercase;margin-bottom:6px;font-weight:700">道場・店名・お名前</label>
+      <input type="text" id="ba-name" required maxlength="200" placeholder="例: 三田 BJJ アカデミー / 田中 太郎" style="width:100%;padding:14px 16px;background:rgba(255,255,255,0.06);color:#F5F5F0;border:1px solid rgba(255,255,255,0.14);border-radius:4px;font-size:14px;font-family:inherit;-webkit-appearance:none">
+    </div>
+    <div style="margin-bottom:14px">
+      <label for="ba-email" style="display:block;font-size:10px;color:var(--gold);letter-spacing:0.22em;text-transform:uppercase;margin-bottom:6px;font-weight:700">メール</label>
+      <input type="email" id="ba-email" required maxlength="200" placeholder="返信先 メール" style="width:100%;padding:14px 16px;background:rgba(255,255,255,0.06);color:#F5F5F0;border:1px solid rgba(255,255,255,0.14);border-radius:4px;font-size:14px;font-family:inherit;-webkit-appearance:none">
+    </div>
+    <div style="margin-bottom:14px">
+      <label for="ba-url" style="display:block;font-size:10px;color:var(--gold);letter-spacing:0.22em;text-transform:uppercase;margin-bottom:6px;font-weight:700">URL <span style="opacity:0.5;letter-spacing:0">(任意)</span></label>
+      <input type="text" id="ba-url" maxlength="300" placeholder="HP / Instagram / X" style="width:100%;padding:14px 16px;background:rgba(255,255,255,0.06);color:#F5F5F0;border:1px solid rgba(255,255,255,0.14);border-radius:4px;font-size:14px;font-family:inherit;-webkit-appearance:none">
+    </div>
+    <div style="margin-bottom:18px">
+      <label for="ba-msg" style="display:block;font-size:10px;color:var(--gold);letter-spacing:0.22em;text-transform:uppercase;margin-bottom:6px;font-weight:700">メッセージ <span style="opacity:0.5;letter-spacing:0">(任意)</span></label>
+      <textarea id="ba-msg" maxlength="2000" rows="3" placeholder="会員数 / 希望 デザイン / 希望 日程" style="width:100%;padding:14px 16px;background:rgba(255,255,255,0.06);color:#F5F5F0;border:1px solid rgba(255,255,255,0.14);border-radius:4px;font-size:14px;font-family:inherit;-webkit-appearance:none;resize:vertical;min-height:80px"></textarea>
+    </div>
+    <button type="submit" id="ba-submit" style="display:block;width:100%;padding:18px 24px;min-height:54px;background:var(--gold);color:#0a0a0a;font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:0.18em;border:none;border-radius:6px;cursor:pointer;font-family:inherit">
+      送信 · 24h 以内 に 返信
+    </button>
+    <p style="margin-top:12px;font-size:11px;color:rgba(245,245,240,0.5);text-align:center;line-height:1.6">
+      <strong style="color:var(--gold)">支払い 不要</strong> · NDA OK · Yuki 自身 が 返信
+    </p>
+  </form>
+
+  <div id="ba-success" style="display:none;padding:28px 24px;background:rgba(116,217,154,0.10);border:1px solid rgba(116,217,154,0.4);border-radius:10px;text-align:center">
+    <div style="font-size:14px;color:#7ddca0;letter-spacing:0.18em;text-transform:uppercase;font-weight:800;margin-bottom:10px">✓ 受け取りました</div>
+    <p style="font-size:13.5px;color:rgba(245,245,240,0.88);line-height:1.85">
+      ご応募 ありがとうございます。<br>
+      <strong>24 時間 以内</strong> に Yuki 自身 から 返信 します。<br>
+      <span id="ba-receipt" style="font-size:11px;opacity:0.6;letter-spacing:0.1em"></span>
+    </p>
+  </div>
+</section>
+
+</main>
 <footer>
   <div>MU × BJJ — 36 mockups across 12 designs, all rendered via <a href="https://www.printful.com">Printful Mockup API</a></div>
   <div>©2026 MU · <a href="/">wearmu.com</a> · Tap or design</div>
@@ -405,4 +462,52 @@ footer a{color:var(--gold);text-decoration:none;}
 <strong style="color:#c9a96e;">株式会社イネブラ</strong> (Enabler Inc.) · 〒102-0074 東京都千代田区九段南1-5-6<br>
 ✉ <a href="mailto:mail@yukihamada.jp" style="color:#c9a96e;">mail@yukihamada.jp</a> · ☎ 090-7409-0407 · <a href="/tokushoho.html" style="color:#c9a96e;">特定商取引法表記</a> · <a href="/faq.html" style="color:#c9a96e;">FAQ · 配送 · 返品</a>
 </div></footer>
+<script>
+(function(){
+  var form = document.getElementById('bjj-apply-form');
+  var btn  = document.getElementById('ba-submit');
+  var ok   = document.getElementById('ba-success');
+  var rec  = document.getElementById('ba-receipt');
+  if (!form || !btn) return;
+  form.addEventListener('submit', function(e){
+    e.preventDefault();
+    if (btn.disabled) return;
+    var data = {
+      niche_slug: 'collab',
+      kind:          (document.getElementById('ba-kind').value || 'partner').trim(),
+      name:          (document.getElementById('ba-name').value || '').trim(),
+      contact_email: (document.getElementById('ba-email').value || '').trim(),
+      contact_url:   (document.getElementById('ba-url').value || '').trim(),
+      message:       (document.getElementById('ba-msg').value || '').trim(),
+    };
+    if (!data.name || !data.contact_email) {
+      btn.textContent = '名前 と メール を 入力 してください';
+      setTimeout(function(){ btn.textContent = '送信 · 24h 以内 に 返信'; }, 1800);
+      return;
+    }
+    btn.textContent = '送信 中…';
+    btn.disabled = true;
+    fetch('/api/outreach/apply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify(data),
+    })
+    .then(function(r){ return r.json().catch(function(){ return { ok:false, error:'parse' }; }); })
+    .then(function(j){
+      if (j && j.ok) {
+        form.style.display = 'none';
+        if (ok) ok.style.display = 'block';
+        if (rec && j.id) rec.textContent = '受付 番号 #' + j.id;
+      } else {
+        btn.textContent = '失敗: ' + ((j && j.error) || 'もう一度');
+        btn.disabled = false;
+      }
+    })
+    .catch(function(err){
+      btn.textContent = 'エラー: ' + (err && err.message || err);
+      btn.disabled = false;
+    });
+  });
+})();
+</script>
 </body></html>
