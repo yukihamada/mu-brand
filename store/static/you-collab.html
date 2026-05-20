@@ -78,14 +78,18 @@ textarea{resize:vertical;min-height:80px}
   <div class="kicker">MU × YOU · COLLAB WIZARD</div>
   <h1><em>20品</em> まで、 あなたの好みに 寄せていく。</h1>
   <p class="lede">テキスト1行 → Tシャツ1枚。 URL を 足す と ロゴ も 使う。 そこから ブランド基本 が 自動で 立ち上がり、 1, 2, 3, ... と 最大 20品 まで 連続生成。 出るたび に ✓ / ✗ で フィードバック、 次の生成 が あなたの 好み に 寄っていく。</p>
+  <div style="background:rgba(255,138,138,0.05);border:1px solid rgba(255,138,138,0.25);border-radius:6px;padding:12px 16px;margin:14px 0 28px;font-size:12px;color:rgba(245,245,240,0.75);line-height:1.7">
+    ⚠️ <strong>PT = デザイン画像 生成 のみ</strong>。 物理 Tシャツ (¥6,800) は 別 購入。 ここで 作るのは 「あなた専用 の デザイン カタログ」 (20品 まで)。 気に入った デザイン だけ <a href="/you" style="color:#e6c449">/you</a> から 仕立てる。
+  </div>
 
   <!-- Stage 0: email — always needed for PT accounting -->
   <div class="stage active" id="stage-email">
     <div class="stage-head"><span class="stage-num">STEP 0</span><span class="stage-status" id="stage-email-status">未入力</span></div>
     <div class="stage-title">あなたの email</div>
-    <p style="font-size:12px;color:rgba(245,245,240,0.55);margin:6px 0 10px">SKU 生成 の PT 消費 と、 次回 戻ってきた 時に 履歴 を 紐付ける ため。</p>
+    <p style="font-size:12px;color:rgba(245,245,240,0.55);margin:6px 0 10px">SKU 生成 の PT 消費 と、 次回 戻ってきた 時に 履歴 を 紐付ける ため。 <strong style="color:rgba(245,245,240,0.85)">marketing メール は 送りません</strong> (生成失敗 等の システム通知 のみ)。 unsubscribe いつでも 可能。</p>
     <input type="email" id="email" placeholder="you@example.com" autocomplete="email">
     <button class="btn" id="email-next">次へ</button>
+    <div id="pt-balance" style="margin-top:10px;font-size:12px;color:rgba(245,245,240,0.65);display:none">現在 PT 残高: <strong id="pt-balance-v" style="color:#e6c449">—</strong> pt</div>
     <div class="msg" id="email-msg"></div>
   </div>
 
@@ -105,6 +109,7 @@ textarea{resize:vertical;min-height:80px}
     <div class="stage-head"><span class="stage-num">STEP 2</span><span class="stage-status">URL → ロゴ も 使う</span></div>
     <div class="stage-title">参考 URL を 1つ</div>
     <p style="font-size:12px;color:rgba(245,245,240,0.55);margin:6px 0 10px">あなた の 既存 ブランド / 気に入ってる サイト / プロフィール ページ など。 og:image と favicon を ロゴ ヒント として 使います。</p>
+    <p style="font-size:11px;color:rgba(245,245,240,0.5);margin:4px 0 10px;line-height:1.7">例: <a href="#" onclick="document.getElementById('url-input').value='https://www.instagram.com/yourname/';document.getElementById('url-input').dispatchEvent(new Event('input'));return false;" style="color:#e6c449">Instagram プロフィール</a> · <a href="#" onclick="document.getElementById('url-input').value='https://www.pinterest.com/yourname/board-name/';document.getElementById('url-input').dispatchEvent(new Event('input'));return false;" style="color:#e6c449">Pinterest ボード</a> · <a href="#" onclick="document.getElementById('url-input').value='https://yourname.notion.site/';document.getElementById('url-input').dispatchEvent(new Event('input'));return false;" style="color:#e6c449">Notion ページ</a> · <a href="#" onclick="document.getElementById('url-input').value='https://yourname.github.io/';document.getElementById('url-input').dispatchEvent(new Event('input'));return false;" style="color:#e6c449">自分の サイト</a></p>
     <input type="url" id="url-input" placeholder="https://...">
     <button class="btn" id="url-go" disabled>+1 SKU 生成 (30pt)</button>
     <div class="msg" id="url-msg"></div>
@@ -296,6 +301,18 @@ textarea{resize:vertical;min-height:80px}
   var emailInput = $("#email");
   if (state.email) { emailInput.value = state.email; $("#email-next").textContent = "保存済 · 次へ"; }
   function emailValid (s) { return /@/.test(s) && s.length > 3; }
+  function refreshPtBalance () {
+    if (!state.email) return;
+    api("/api/proposal/extras/balance", { email: state.email }).then(function (r) {
+      if (!r || !r.ok) return;
+      var el = $("#pt-balance-v");
+      var holder = $("#pt-balance");
+      if (el && holder) {
+        el.textContent = (r.balance || 0).toLocaleString();
+        holder.style.display = "block";
+      }
+    });
+  }
   $("#email-next").addEventListener("click", function () {
     var em = emailInput.value.trim();
     if (!emailValid(em)) { setMsg("email-msg", "正しい email を", "err"); return; }
@@ -305,7 +322,10 @@ textarea{resize:vertical;min-height:80px}
     setStage("stage-text");
     $("#text-go").disabled = false;
     setMsg("email-msg", "");
+    refreshPtBalance();
   });
+  // Pre-load balance if email already saved
+  if (state.email) refreshPtBalance();
 
   // ─── Stage 1: text ───
   $("#text-input").value = state.text || "";
