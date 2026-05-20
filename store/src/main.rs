@@ -4473,6 +4473,55 @@ small{display:block;margin-top:16px;color:rgba(245,245,240,0.5);font-size:11px}<
     axum::response::Html(body).into_response()
 }
 
+/// GET /proposals/reversal — confidential pitch for reversal (rvddw)
+/// 2026 A/W collab proposal. Password-gated.
+async fn show_reversal_owner_proposal(
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let pw = reversal_partner_password();
+    if let Some(submitted) = q.get("pw") {
+        if submitted == &pw {
+            let cookie = format!(
+                "mu_reversal_partner={}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000",
+                pw);
+            return (
+                StatusCode::FOUND,
+                [
+                    (axum::http::header::SET_COOKIE, cookie),
+                    (axum::http::header::LOCATION, "/proposals/reversal".into()),
+                ],
+            ).into_response();
+        }
+    }
+    if !has_reversal_partner_cookie(&headers, &pw) {
+        let gate = r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>reversal × MU — 機密提案</title>
+<style>body{background:#0a0a0a;color:#f5f5f0;font-family:'Helvetica Neue',sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:24px}
+.box{max-width:380px;text-align:center;background:#111;padding:36px 28px;border:1px solid rgba(255,255,255,0.1)}
+h1{font-size:18px;font-weight:300;letter-spacing:0.04em;margin-bottom:14px}
+p{color:rgba(245,245,240,0.62);font-size:13px;margin-bottom:24px;line-height:1.8}
+input{width:100%;background:#0a0a0a;border:1px solid rgba(255,255,255,0.15);color:#fff;padding:10px 14px;font-size:14px;letter-spacing:0.04em;margin-bottom:16px;font-family:inherit;box-sizing:border-box}
+button{background:#e6c449;color:#000;border:none;padding:11px 22px;font-size:11px;letter-spacing:0.28em;text-transform:uppercase;font-weight:700;cursor:pointer;font-family:inherit;width:100%}
+small{display:block;margin-top:16px;color:rgba(245,245,240,0.5);font-size:11px}
+.mark{font-size:32px;color:#e6c449;margin-bottom:6px}</style>
+</head><body><div class="box">
+<div class="mark">無</div>
+<h1>reversal × MU 提案書</h1>
+<p>このページは reversal.dogi.design.works 関係者向けの機密提案です。<br>合言葉を入れてください。</p>
+<form method="get" action="/proposals/reversal">
+<input type="password" name="pw" placeholder="合言葉" autofocus required>
+<button type="submit">開く</button>
+</form>
+<small>合言葉は MU から個別に伝えています。<br>分からない場合は <a href="mailto:info@enablerdao.com" style="color:#e6c449">info@enablerdao.com</a></small>
+</div></body></html>"##;
+        return axum::response::Html(gate).into_response();
+    }
+    let body = include_str!("../static/reversal.html");
+    axum::response::Html(body).into_response()
+}
+
 const ITTO_CURRENT_SERIAL: &str = "0001";
 const ITTO_SEAT_PRICE_JPY: i64 = 75_000;
 const ITTO_SEATS_PER_TIER: i64 = 7;
@@ -18358,8 +18407,10 @@ async fn index(State(db): State<Db>) -> Html<String> {
             "SELECT COUNT(*) FROM mu_purchases WHERE brand='mugen' AND created_at >= ?",
             params![CHALLENGE_100_START_UTC], |r| r.get(0),
         ).unwrap_or(0);
-        // 5/31 23:59:59 JST = 5/31 14:59:59 UTC
-        let end_unix: i64 = 1748703599;
+        // 2026-05-31T14:59:59Z (= 5/31 23:59:59 JST) per CHALLENGE_100_DEADLINE_UTC.
+        // Was 1748703599 (= 2025-05-31) before — off by 1y → "残り 0日" today.
+        // Verified: python3 -c "import datetime; print(int(datetime.datetime(2026,5,31,14,59,59,tzinfo=datetime.timezone.utc).timestamp()))"
+        let end_unix: i64 = 1780239599;
         let now_s: i64 = chrono_now().parse().unwrap_or(end_unix);
         let secs_left = (end_unix - now_s).max(0);
         let days_left = ((secs_left + 86399) / 86400).max(0);
@@ -22572,7 +22623,23 @@ fn ensure_proposal_tables(db: &Db) {
             kind TEXT NOT NULL,
             design_slug TEXT NOT NULL,
             design_url TEXT,
+            published INTEGER NOT NULL DEFAULT 1,
             PRIMARY KEY (slug, letter)
+         )", [],
+    );
+    // Backfill `published` for volumes created before this column existed.
+    let _ = conn.execute("ALTER TABLE proposal_skus ADD COLUMN published INTEGER NOT NULL DEFAULT 1", []);
+    // Admin user roster — supplemental to the global ADMIN_TOKEN, lets the
+    // owner add/remove named operators without rotating the master token.
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS admin_users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT NOT NULL UNIQUE,
+            name TEXT,
+            role TEXT NOT NULL DEFAULT 'admin',
+            active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            created_by TEXT
          )", [],
     );
     let _ = conn.execute(
@@ -22887,6 +22954,100 @@ fn proposal_skus_for(conn: &rusqlite::Connection, slug: &str)
         }
     }
     out
+}
+
+/// Same as proposal_skus_for but includes the `published` flag. Used by the
+/// `/api/proposal/:slug/skus` endpoint so admin manage pages can render
+/// public/private state without a second query.
+fn proposal_skus_for_with_published(conn: &rusqlite::Connection, slug: &str)
+    -> Vec<(String, i64, i64, String, String, String, Option<String>, i64)> {
+    let mut out = Vec::new();
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT letter, drop_num, price_jpy, label, kind, design_slug, design_url, COALESCE(published, 1)
+         FROM proposal_skus WHERE slug=? ORDER BY drop_num ASC",
+    ) {
+        if let Ok(rows) = stmt.query_map(params![slug], |r| {
+            Ok((
+                r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?,
+                r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, String>(5)?,
+                r.get::<_, Option<String>>(6)?, r.get::<_, i64>(7)?,
+            ))
+        }) {
+            for row in rows.flatten() { out.push(row); }
+        }
+    }
+    out
+}
+
+/// GET /api/proposal/:slug/meta — public read of the full meta_json blob
+/// that drives the LP template. Combined with /skus this is enough for a
+/// single generic HTML template to render any partner's proposal LP.
+async fn proposal_generic_meta(
+    State(db): State<Db>,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+) -> Response {
+    let conn = db.lock().unwrap();
+    let row: Option<(String, String, Option<String>, Option<String>, Option<String>, Option<String>)> =
+        conn.query_row(
+            "SELECT slug, name, ip_owner, meta_json, approved_at, revoked_at
+             FROM proposals WHERE slug=?",
+            params![slug.to_lowercase()],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+        ).ok();
+    let (s, name, ip_owner, meta_json, approved_at, revoked_at) = match row {
+        Some(r) => r,
+        None => return (StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "proposal not found", "slug": slug}))).into_response(),
+    };
+    let meta: serde_json::Value = meta_json
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or(serde_json::Value::Null);
+    let approved = approved_at.is_some() && revoked_at.is_none();
+    Json(serde_json::json!({
+        "slug": s, "name": name,
+        "ip_owner": ip_owner.unwrap_or_default(),
+        "approved": approved,
+        "approved_at": approved_at,
+        "revoked_at": revoked_at,
+        "meta": meta,
+    })).into_response()
+}
+
+/// PATCH /api/admin/proposal/:slug/meta — admin-gated meta_json update.
+/// Body: a JSON object that is merged into the existing meta_json. Top-
+/// level keys in the request replace the existing top-level keys (shallow
+/// merge), so an admin can add `sections: [...]` without resending the
+/// rest. Returns the merged result.
+async fn api_admin_proposal_meta_patch(
+    State(db): State<Db>, headers: HeaderMap,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(patch): Json<serde_json::Value>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(),
+        &format!("/api/admin/proposal/{}/meta", slug)).await { return r; }
+    let slug = slug.to_lowercase();
+    let conn = db.lock().unwrap();
+    let existing: Option<String> = conn.query_row(
+        "SELECT meta_json FROM proposals WHERE slug=?",
+        params![slug], |r| r.get(0)).ok().flatten();
+    let mut merged: serde_json::Map<String, serde_json::Value> = existing
+        .and_then(|s| serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&s).ok())
+        .unwrap_or_default();
+    if let serde_json::Value::Object(p) = patch {
+        for (k, v) in p { merged.insert(k, v); }
+    } else {
+        return (StatusCode::BAD_REQUEST, "patch must be a JSON object").into_response();
+    }
+    let merged_str = serde_json::to_string(&merged).unwrap_or_default();
+    let n = conn.execute(
+        "UPDATE proposals SET meta_json=? WHERE slug=?",
+        params![merged_str, slug],
+    ).unwrap_or(0);
+    Json(serde_json::json!({
+        "ok": n > 0, "slug": slug,
+        "meta": serde_json::Value::Object(merged),
+    })).into_response()
 }
 
 /// GET /api/proposal/:slug/state — generic public state endpoint.
@@ -23644,19 +23805,508 @@ async fn proposal_generic_list(
 }
 
 /// GET /api/proposal/:slug/skus — public catalog read.
+/// Public callers see only published SKUs. Admin callers (admin_token in
+/// query or header) get every SKU including unpublished ones.
 async fn proposal_generic_skus(
     State(db): State<Db>,
+    headers: HeaderMap,
     axum::extract::Path(slug): axum::extract::Path<String>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Response {
+    let is_admin = {
+        let provided = q.get("admin_token").cloned()
+            .or_else(|| headers.get("x-admin-token").and_then(|v| v.to_str().ok()).map(|s| s.to_string()));
+        require_admin_token(provided.as_ref()).is_ok()
+    };
     let conn = db.lock().unwrap();
-    let skus = proposal_skus_for(&conn, &slug);
-    let json: Vec<serde_json::Value> = skus.into_iter().map(|(letter, drop_num, price_jpy, label, kind, design_slug)| {
-        serde_json::json!({
-            "letter": letter, "drop_num": drop_num, "price_jpy": price_jpy,
-            "label": label, "kind": kind, "design_slug": design_slug,
-        })
-    }).collect();
-    Json(serde_json::json!({ "slug": slug, "skus": json })).into_response()
+    let rows = proposal_skus_for_with_published(&conn, &slug);
+    let json: Vec<serde_json::Value> = rows.into_iter()
+        .filter(|r| is_admin || r.7 == 1)
+        .map(|(letter, drop_num, price_jpy, label, kind, design_slug, design_url, published)| {
+            serde_json::json!({
+                "letter": letter, "drop_num": drop_num, "price_jpy": price_jpy,
+                "label": label, "kind": kind, "design_slug": design_slug,
+                "design_url": design_url,
+                "published": published == 1,
+            })
+        }).collect();
+    Json(serde_json::json!({ "slug": slug, "skus": json, "admin_view": is_admin })).into_response()
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Admin: proposal SKU bulk add + per-SKU publish/unpublish + whole-
+// proposal publish/unpublish + admin user roster.
+// All endpoints gated on require_admin_token (ADMIN_TOKEN env var). Designed
+// so a partner-facing dashboard can grow without touching Rust.
+// ──────────────────────────────────────────────────────────────────────
+
+const PROPOSAL_SKU_BULK_HARD_CAP: usize = 3000;
+const PROPOSAL_SKU_BULK_DEFAULT_SOFT_CAP: usize = 30;
+
+#[derive(Deserialize)]
+struct ProposalSkuBulkItem {
+    letter: String,
+    #[serde(default)] drop_num: Option<i64>,
+    price_jpy: i64,
+    label: String,
+    kind: String,
+    design_slug: String,
+    #[serde(default)] design_url: Option<String>,
+    /// If unspecified, defaults to true (public) so spec.json files don't
+    /// have to set it. Set to false to silently stage an SKU before launch.
+    #[serde(default = "default_true_bool")]
+    published: bool,
+}
+
+fn default_true_bool() -> bool { true }
+
+#[derive(Deserialize)]
+struct ProposalSkuBulkBody {
+    skus: Vec<ProposalSkuBulkItem>,
+}
+
+/// POST /api/admin/proposal/:slug/skus/bulk — admin-gated. Inserts or
+/// upserts up to PROPOSAL_SKU_BULK_HARD_CAP (3000) rows in one call.
+/// drop_num auto-fills as MAX(drop_num)+i when omitted. Idempotent on
+/// (slug, letter).
+async fn api_admin_proposal_skus_bulk(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<ProposalSkuBulkBody>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(),
+        &format!("/api/admin/proposal/{}/skus/bulk", slug)).await { return r; }
+    let slug = slug.trim().to_lowercase();
+    if body.skus.is_empty() {
+        return (StatusCode::BAD_REQUEST, "skus[] required").into_response();
+    }
+    if body.skus.len() > PROPOSAL_SKU_BULK_HARD_CAP {
+        return (StatusCode::BAD_REQUEST,
+                format!("too many skus: {} > {} hard cap (default soft cap {})",
+                        body.skus.len(), PROPOSAL_SKU_BULK_HARD_CAP,
+                        PROPOSAL_SKU_BULK_DEFAULT_SOFT_CAP)).into_response();
+    }
+    let conn = db.lock().unwrap();
+    let exists: bool = conn.query_row("SELECT 1 FROM proposals WHERE slug=?",
+        params![slug], |r| r.get::<_, i64>(0)).is_ok();
+    if !exists {
+        return (StatusCode::NOT_FOUND,
+            format!("proposal '{}' not found — create it via POST /admin/proposal first", slug))
+            .into_response();
+    }
+    let next_drop: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(drop_num),0)+1 FROM proposal_skus WHERE slug=?",
+        params![slug], |r| r.get(0)).unwrap_or(1);
+    let mut upserts = 0i64;
+    let mut errors: Vec<String> = Vec::new();
+    for (idx, s) in body.skus.iter().enumerate() {
+        let letter = s.letter.trim().to_lowercase();
+        if letter.is_empty() {
+            errors.push(format!("[{}] empty letter", idx));
+            continue;
+        }
+        let drop_num = s.drop_num.unwrap_or(next_drop + idx as i64);
+        let pub_int: i64 = if s.published { 1 } else { 0 };
+        match conn.execute(
+            "INSERT INTO proposal_skus (slug, letter, drop_num, price_jpy, label, kind, design_slug, design_url, published)
+             VALUES (?,?,?,?,?,?,?,?,?)
+             ON CONFLICT(slug, letter) DO UPDATE SET
+                drop_num=excluded.drop_num,
+                price_jpy=excluded.price_jpy,
+                label=excluded.label,
+                kind=excluded.kind,
+                design_slug=excluded.design_slug,
+                design_url=COALESCE(excluded.design_url, proposal_skus.design_url),
+                published=excluded.published",
+            params![slug, letter, drop_num, s.price_jpy, s.label.trim(),
+                    s.kind.trim(), s.design_slug.trim(), s.design_url, pub_int],
+        ) {
+            Ok(_) => upserts += 1,
+            Err(e) => errors.push(format!("[{}] {}: {}", idx, letter, e)),
+        }
+    }
+    let status = if errors.is_empty() { StatusCode::OK } else { StatusCode::MULTI_STATUS };
+    (status, Json(serde_json::json!({
+        "ok": errors.is_empty(),
+        "slug": slug,
+        "upserts": upserts,
+        "errors": errors,
+        "hard_cap": PROPOSAL_SKU_BULK_HARD_CAP,
+        "soft_cap_hint": PROPOSAL_SKU_BULK_DEFAULT_SOFT_CAP,
+    }))).into_response()
+}
+
+/// Internal: set published flag on a single SKU.
+async fn set_sku_published(
+    db: Db, headers: &HeaderMap,
+    q: &std::collections::HashMap<String, String>,
+    slug: &str, letter: &str, publish: bool,
+) -> Response {
+    let route = format!("/api/admin/proposal/{}/sku/{}/{}",
+        slug, letter, if publish { "publish" } else { "unpublish" });
+    if let Err(r) = admin_auth(headers, q, db.clone(), &route).await { return r; }
+    let conn = db.lock().unwrap();
+    let n = conn.execute(
+        "UPDATE proposal_skus SET published=? WHERE slug=? AND letter=?",
+        params![if publish { 1i64 } else { 0i64 }, slug.to_lowercase(), letter.to_lowercase()],
+    ).unwrap_or(0);
+    Json(serde_json::json!({
+        "ok": n > 0, "slug": slug, "letter": letter,
+        "published": publish, "rows_updated": n,
+    })).into_response()
+}
+
+/// POST /api/admin/proposal/:slug/sku/:letter/publish
+async fn api_admin_sku_publish(
+    State(db): State<Db>, headers: HeaderMap,
+    axum::extract::Path((slug, letter)): axum::extract::Path<(String, String)>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    set_sku_published(db, &headers, &q, &slug, &letter, true).await
+}
+
+/// POST /api/admin/proposal/:slug/sku/:letter/unpublish
+async fn api_admin_sku_unpublish(
+    State(db): State<Db>, headers: HeaderMap,
+    axum::extract::Path((slug, letter)): axum::extract::Path<(String, String)>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    set_sku_published(db, &headers, &q, &slug, &letter, false).await
+}
+
+/// POST /api/admin/proposal/:slug/publish — flip the whole proposal to
+/// approved (=public). Equivalent to setting approved_at=NOW and clearing
+/// revoked_at. Distinct from the per-SKU publish so partners can stage a
+/// catalog and flip the master switch in one call.
+async fn api_admin_proposal_publish(
+    State(db): State<Db>, headers: HeaderMap,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(),
+        &format!("/api/admin/proposal/{}/publish", slug)).await { return r; }
+    let conn = db.lock().unwrap();
+    let now = chrono_now();
+    let n = conn.execute(
+        "UPDATE proposals SET approved_at=COALESCE(approved_at,?), revoked_at=NULL WHERE slug=?",
+        params![now, slug.to_lowercase()],
+    ).unwrap_or(0);
+    Json(serde_json::json!({
+        "ok": n > 0, "slug": slug, "approved_at": now, "rows": n,
+    })).into_response()
+}
+
+/// POST /api/admin/proposal/:slug/unpublish — set revoked_at=NOW. Public LP
+/// state endpoints will start reporting approved=false.
+async fn api_admin_proposal_unpublish(
+    State(db): State<Db>, headers: HeaderMap,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(),
+        &format!("/api/admin/proposal/{}/unpublish", slug)).await { return r; }
+    let conn = db.lock().unwrap();
+    let now = chrono_now();
+    let n = conn.execute(
+        "UPDATE proposals SET revoked_at=? WHERE slug=?",
+        params![now, slug.to_lowercase()],
+    ).unwrap_or(0);
+    Json(serde_json::json!({
+        "ok": n > 0, "slug": slug, "revoked_at": now, "rows": n,
+    })).into_response()
+}
+
+/// GET /admin/proposals/:slug/manage — HTML admin UI for a single proposal.
+/// Lets an admin user view every SKU, toggle publish/unpublish per row,
+/// bulk-add 30 (or up to 3000) SKUs in one form submit, and flip the whole
+/// proposal active/inactive. Auth: admin_token query param (admin_auth).
+async fn admin_proposal_manage_ui(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(),
+        &format!("/admin/proposals/{}/manage", slug)).await { return r; }
+    let admin_token = q.get("admin_token").cloned().unwrap_or_default();
+    let html = format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Admin · {slug} · MU</title>
+<style>
+body{{background:#0a0a0a;color:#f5f5f0;font-family:'Helvetica Neue',sans-serif;margin:0;padding:24px;line-height:1.6;font-size:14px}}
+.wrap{{max-width:1100px;margin:0 auto}}
+h1{{font-weight:300;font-size:24px;margin-bottom:6px;letter-spacing:0.04em}}
+h1 small{{color:#e6c449;font-size:12px;letter-spacing:0.18em;display:block;margin-top:6px;text-transform:uppercase}}
+.toolbar{{margin:18px 0 24px;padding:16px 18px;background:#141414;border:1px solid rgba(255,255,255,0.1);display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:13px}}
+.toolbar b{{color:#e6c449;letter-spacing:0.14em;font-size:11px;text-transform:uppercase}}
+.toolbar a,.toolbar button{{background:#e6c449;color:#000;text-decoration:none;padding:8px 14px;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;font-weight:700;border:none;cursor:pointer;font-family:inherit}}
+.toolbar .ghost{{background:transparent;color:#fff;border:1px solid rgba(255,255,255,0.18)}}
+table{{width:100%;border-collapse:collapse;font-size:13px;background:#0d0d0d;border:1px solid rgba(255,255,255,0.08)}}
+th,td{{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,0.08);text-align:left;vertical-align:top}}
+th{{background:#161616;color:#e6c449;font-size:10px;letter-spacing:0.16em;text-transform:uppercase;font-weight:500}}
+td.r{{text-align:right;font-variant-numeric:tabular-nums}}
+.pill{{display:inline-block;font-size:10px;letter-spacing:0.14em;padding:2px 8px;border:1px solid;border-radius:2px;text-transform:uppercase}}
+.pill.pub{{color:#4FA868;border-color:#4FA868}}
+.pill.prv{{color:#8a8a82;border-color:#8a8a82}}
+button.toggle{{background:transparent;color:#e6c449;border:1px solid rgba(230,196,73,0.4);padding:5px 11px;font-size:10px;letter-spacing:0.14em;cursor:pointer;font-family:inherit;text-transform:uppercase}}
+button.toggle:hover{{background:rgba(230,196,73,0.12)}}
+.bulk{{margin-top:24px;background:#0d0d0d;border:1px solid rgba(255,255,255,0.08);padding:18px}}
+.bulk h3{{font-weight:400;font-size:14px;color:#e6c449;margin-bottom:10px;letter-spacing:0.14em;text-transform:uppercase}}
+textarea{{width:100%;background:#070707;color:#fff;border:1px solid rgba(255,255,255,0.15);padding:12px;font-family:'SF Mono',Menlo,monospace;font-size:12px;min-height:160px;resize:vertical}}
+.bulk small{{color:#8a8a82;font-size:11.5px;display:block;margin-top:6px}}
+.bulk button{{margin-top:10px;background:#e6c449;color:#000;border:none;padding:11px 22px;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;font-weight:700;cursor:pointer;font-family:inherit}}
+#flash{{position:fixed;bottom:16px;right:16px;background:#141414;color:#e6c449;border:1px solid #e6c449;padding:10px 16px;font-size:12px;display:none;letter-spacing:0.1em}}
+</style></head><body><div class="wrap">
+<h1>Proposal: <code>{slug}</code><small>admin manage · MU partner proposals DB</small></h1>
+
+<div class="toolbar">
+  <b>Whole-proposal:</b>
+  <button onclick="proposalToggle(true)">Publish (approved)</button>
+  <button class="ghost" onclick="proposalToggle(false)">Unpublish (revoked)</button>
+  <span style="flex:1"></span>
+  <a class="ghost" href="/proposals/{slug}" target="_blank">View LP →</a>
+  <a class="ghost" href="/admin/users?admin_token={tok}">管理者管理 →</a>
+</div>
+
+<table id="skus"><thead><tr>
+  <th>letter</th><th>drop</th><th>label</th><th>kind</th><th>state</th><th class="r">price</th><th></th>
+</tr></thead><tbody id="rows"><tr><td colspan="7" style="text-align:center;color:#8a8a82;padding:24px">loading…</td></tr></tbody></table>
+
+<div class="bulk">
+<h3>SKU バルク追加 / 上書き (max 3000 / default 30)</h3>
+<textarea id="bulk" placeholder='[
+  {{"letter":"f","price_jpy":4900,"label":"...","kind":"tee","design_slug":"a","published":true}},
+  ...
+]'></textarea>
+<small>JSON 配列。<code>letter</code>/<code>price_jpy</code>/<code>label</code>/<code>kind</code>/<code>design_slug</code> 必須。<code>drop_num</code>/<code>design_url</code>/<code>published</code> 任意。30 件まで貼り付け推奨、最大 3000 件まで一括処理。</small>
+<button onclick="bulkAdd()">Bulk upsert</button>
+</div>
+
+<div id="flash"></div>
+
+<script>
+const SLUG = "{slug}";
+const TOK  = "{tok}";
+
+function flash(msg){{
+  const f = document.getElementById('flash');
+  f.textContent = msg; f.style.display = 'block';
+  setTimeout(() => f.style.display = 'none', 3500);
+}}
+
+async function loadSkus(){{
+  const r = await fetch(`/api/proposal/${{SLUG}}/skus?admin_token=${{encodeURIComponent(TOK)}}`);
+  const j = await r.json();
+  const tbody = document.getElementById('rows');
+  tbody.innerHTML = (j.skus || []).map(s => {{
+    const isPub = s.published !== false;
+    return `<tr>
+      <td><code>${{s.letter.toUpperCase()}}</code></td>
+      <td style="color:#8a8a82">${{s.drop_num}}</td>
+      <td>${{s.label || ''}}</td>
+      <td style="color:#8a8a82;font-size:11px">${{s.kind || ''}}</td>
+      <td><span class="pill ${{isPub ? 'pub' : 'prv'}}">${{isPub ? '公開' : '非公開'}}</span></td>
+      <td class="r">¥${{(s.price_jpy||0).toLocaleString()}}</td>
+      <td><button class="toggle" onclick="toggleSku('${{s.letter}}', ${{!isPub}})">${{isPub ? 'unpublish' : 'publish'}}</button></td>
+    </tr>`;
+  }}).join('') || '<tr><td colspan="7" style="text-align:center;color:#8a8a82;padding:24px">no SKUs yet</td></tr>';
+}}
+
+async function toggleSku(letter, publish){{
+  const url = `/api/admin/proposal/${{SLUG}}/sku/${{letter}}/${{publish ? 'publish' : 'unpublish'}}?admin_token=${{encodeURIComponent(TOK)}}`;
+  const r = await fetch(url, {{method:'POST'}});
+  const j = await r.json();
+  flash(j.ok ? `${{letter}} → ${{publish?'公開':'非公開'}}` : 'failed');
+  await loadSkus();
+}}
+
+async function proposalToggle(publish){{
+  if(!confirm(`${{publish ? 'PUBLISH (approved)' : 'UNPUBLISH (revoked)'}} whole proposal "${{SLUG}}" ?`)) return;
+  const url = `/api/admin/proposal/${{SLUG}}/${{publish ? 'publish' : 'unpublish'}}?admin_token=${{encodeURIComponent(TOK)}}`;
+  const r = await fetch(url, {{method:'POST'}});
+  const j = await r.json();
+  flash(j.ok ? `proposal → ${{publish?'public':'revoked'}}` : 'failed');
+}}
+
+async function bulkAdd(){{
+  let parsed;
+  try {{ parsed = JSON.parse(document.getElementById('bulk').value); }} catch(e) {{ alert('JSON parse error: ' + e.message); return; }}
+  if (!Array.isArray(parsed)) {{ alert('expected JSON array'); return; }}
+  if (parsed.length > 3000) {{ alert('max 3000 per call'); return; }}
+  const r = await fetch(`/api/admin/proposal/${{SLUG}}/skus/bulk?admin_token=${{encodeURIComponent(TOK)}}`, {{
+    method:'POST', headers:{{'Content-Type':'application/json'}},
+    body: JSON.stringify({{skus: parsed}}),
+  }});
+  const j = await r.json();
+  flash(j.ok ? `upserted ${{j.upserts}} skus` : `partial: ${{j.upserts}} ok, ${{(j.errors||[]).length}} errors`);
+  if (j.errors && j.errors.length) console.warn(j.errors);
+  await loadSkus();
+}}
+
+loadSkus();
+</script>
+</div></body></html>"##,
+        slug = slug, tok = admin_token);
+    axum::response::Html(html).into_response()
+}
+
+// ── Admin user roster (named operators in addition to the master token) ─
+
+#[derive(Deserialize)]
+struct AdminUserCreate {
+    email: String,
+    #[serde(default)] name: Option<String>,
+    #[serde(default)] role: Option<String>,
+}
+
+/// GET /api/admin/users — list active admins.
+async fn api_admin_users_list(
+    State(db): State<Db>, headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/users").await { return r; }
+    let conn = db.lock().unwrap();
+    let mut out = Vec::<serde_json::Value>::new();
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT id, email, COALESCE(name,''), role, active, created_at, COALESCE(created_by,'')
+         FROM admin_users ORDER BY created_at ASC"
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| Ok(serde_json::json!({
+            "id": r.get::<_, i64>(0)?, "email": r.get::<_, String>(1)?,
+            "name": r.get::<_, String>(2)?, "role": r.get::<_, String>(3)?,
+            "active": r.get::<_, i64>(4)? == 1,
+            "created_at": r.get::<_, String>(5)?,
+            "created_by": r.get::<_, String>(6)?,
+        }))) { for row in rows.flatten() { out.push(row); } }
+    }
+    Json(serde_json::json!({ "users": out, "count": out.len() })).into_response()
+}
+
+/// POST /api/admin/users — add a new admin user.
+async fn api_admin_users_add(
+    State(db): State<Db>, headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<AdminUserCreate>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/users").await { return r; }
+    let email = body.email.trim().to_lowercase();
+    if !email.contains('@') {
+        return (StatusCode::BAD_REQUEST, "email required").into_response();
+    }
+    let role = body.role.unwrap_or_else(|| "admin".into());
+    let name = body.name.unwrap_or_default();
+    let now = chrono_now();
+    let conn = db.lock().unwrap();
+    let res = conn.execute(
+        "INSERT INTO admin_users (email, name, role, active, created_at, created_by)
+         VALUES (?,?,?,?,?,?)
+         ON CONFLICT(email) DO UPDATE SET name=excluded.name, role=excluded.role, active=1",
+        params![email, name, role, 1i64, now, "admin_token"],
+    );
+    match res {
+        Ok(_) => Json(serde_json::json!({"ok": true, "email": email, "role": role})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {}", e)).into_response(),
+    }
+}
+
+/// DELETE /api/admin/users/:id — deactivate (active=0) rather than hard-delete.
+async fn api_admin_users_delete(
+    State(db): State<Db>, headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(),
+        &format!("/api/admin/users/{}", id)).await { return r; }
+    let conn = db.lock().unwrap();
+    let n = conn.execute("UPDATE admin_users SET active=0 WHERE id=?", params![id]).unwrap_or(0);
+    Json(serde_json::json!({"ok": n > 0, "id": id, "deactivated": n})).into_response()
+}
+
+/// GET /admin/users — HTML UI for admin user CRUD.
+async fn admin_users_ui(
+    State(db): State<Db>, headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/users").await { return r; }
+    let admin_token = q.get("admin_token").cloned().unwrap_or_default();
+    let html = format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Admin Users · MU</title>
+<style>
+body{{background:#0a0a0a;color:#f5f5f0;font-family:'Helvetica Neue',sans-serif;margin:0;padding:24px;line-height:1.6;font-size:14px}}
+.wrap{{max-width:880px;margin:0 auto}}
+h1{{font-weight:300;font-size:24px;margin-bottom:6px;letter-spacing:0.04em}}
+h1 small{{color:#e6c449;font-size:12px;letter-spacing:0.18em;display:block;margin-top:6px;text-transform:uppercase}}
+table{{width:100%;border-collapse:collapse;font-size:13px;background:#0d0d0d;border:1px solid rgba(255,255,255,0.08);margin-top:18px}}
+th,td{{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,0.08);text-align:left}}
+th{{background:#161616;color:#e6c449;font-size:10px;letter-spacing:0.16em;text-transform:uppercase;font-weight:500}}
+.add{{margin-top:24px;background:#0d0d0d;border:1px solid rgba(255,255,255,0.08);padding:20px;display:grid;grid-template-columns:1fr 1fr auto auto;gap:10px;align-items:center}}
+.add input,.add select{{background:#070707;color:#fff;border:1px solid rgba(255,255,255,0.15);padding:10px 12px;font-size:13px;font-family:inherit}}
+.add button{{background:#e6c449;color:#000;border:none;padding:10px 20px;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;font-weight:700;cursor:pointer;font-family:inherit}}
+button.del{{background:transparent;color:#8a8a82;border:1px solid rgba(255,255,255,0.18);padding:5px 11px;font-size:10px;letter-spacing:0.12em;cursor:pointer;font-family:inherit;text-transform:uppercase}}
+button.del:hover{{color:#C8362C;border-color:#C8362C}}
+.pill{{display:inline-block;font-size:10px;letter-spacing:0.14em;padding:2px 8px;border:1px solid currentColor;border-radius:2px;text-transform:uppercase}}
+.pill.on{{color:#4FA868}}
+.pill.off{{color:#8a8a82}}
+a{{color:#e6c449}}
+</style></head><body><div class="wrap">
+<h1>Admin Users<small>管理者ロスター · MU</small></h1>
+<p style="color:#8a8a82;font-size:13px">マスター ADMIN_TOKEN は環境変数として保持。下記の roster はその上にレイヤーする「名指しの操作者」リスト。<br>
+備考: 認証自体は現在 ADMIN_TOKEN 一本。roster は誰が何を触れるかの台帳としてまず登録できるようにしている。</p>
+
+<table><thead><tr><th>id</th><th>email</th><th>name</th><th>role</th><th>state</th><th>created</th><th></th></tr></thead>
+<tbody id="rows"><tr><td colspan="7" style="text-align:center;color:#8a8a82;padding:24px">loading…</td></tr></tbody></table>
+
+<div class="add">
+  <input id="email" type="email" placeholder="email@enablerdao.com" required>
+  <input id="name" type="text" placeholder="名前 (任意)">
+  <select id="role"><option value="admin">admin</option><option value="ops">ops</option><option value="readonly">readonly</option></select>
+  <button onclick="addUser()">Add</button>
+</div>
+
+<p style="margin-top:18px;color:#8a8a82;font-size:12px">
+  <a href="/admin/proposals/reversal/manage?admin_token={tok}">← reversal manage に戻る</a>
+</p>
+
+<script>
+const TOK = "{tok}";
+async function load(){{
+  const r = await fetch('/api/admin/users?admin_token=' + encodeURIComponent(TOK));
+  const j = await r.json();
+  document.getElementById('rows').innerHTML = (j.users || []).map(u => `<tr>
+    <td style="color:#8a8a82">${{u.id}}</td>
+    <td><code>${{u.email}}</code></td>
+    <td>${{u.name || ''}}</td>
+    <td style="color:#e6c449">${{u.role}}</td>
+    <td><span class="pill ${{u.active?'on':'off'}}">${{u.active?'active':'inactive'}}</span></td>
+    <td style="color:#8a8a82;font-size:11px">${{u.created_at.split('T')[0]}}</td>
+    <td><button class="del" onclick="del(${{u.id}})">remove</button></td>
+  </tr>`).join('') || '<tr><td colspan="7" style="text-align:center;color:#8a8a82;padding:24px">no admin users yet</td></tr>';
+}}
+async function addUser(){{
+  const email = document.getElementById('email').value.trim();
+  const name = document.getElementById('name').value.trim();
+  const role = document.getElementById('role').value;
+  if(!email.includes('@')){{ alert('email?'); return; }}
+  const r = await fetch('/api/admin/users?admin_token=' + encodeURIComponent(TOK), {{
+    method: 'POST', headers: {{'Content-Type':'application/json'}},
+    body: JSON.stringify({{email, name, role}}),
+  }});
+  const j = await r.json();
+  if(j.ok) {{ document.getElementById('email').value = ''; document.getElementById('name').value = ''; load(); }}
+  else alert('failed');
+}}
+async function del(id){{
+  if(!confirm('Deactivate user #' + id + ' ?')) return;
+  await fetch('/api/admin/users/' + id + '?admin_token=' + encodeURIComponent(TOK), {{method:'DELETE'}});
+  load();
+}}
+load();
+</script>
+</div></body></html>"##, tok = admin_token);
+    axum::response::Html(html).into_response()
 }
 
 // ── Proposal extras API (shared widget on every /proposals/<slug> page) ──
@@ -41016,12 +41666,24 @@ fn has_jiuflow_partner_cookie(headers: &HeaderMap, pw: &str) -> bool {
     }).unwrap_or(false)
 }
 
+/// reversal (rvddw) 専用 proposal ページのパスワード — 2026 A/W コラボ提案。
+fn reversal_partner_password() -> String {
+    env::var("REVERSAL_PARTNER_PASSWORD").unwrap_or_else(|_| "set-REVERSAL_PARTNER_PASSWORD".into())
+}
+
+fn has_reversal_partner_cookie(headers: &HeaderMap, pw: &str) -> bool {
+    headers.get("cookie").and_then(|v| v.to_str().ok()).map(|c| {
+        c.split(';').any(|p| p.trim() == format!("mu_reversal_partner={}", pw))
+    }).unwrap_or(false)
+}
+
 /// Per-partner proposal page password resolver.
 fn partner_proposal_password(partner: &str) -> String {
     match partner {
         "sweep" => siiieep_partner_password(),
         "kokon" => kokon_partner_password(),
         "jiuflow" => jiuflow_partner_password(),
+        "reversal" => reversal_partner_password(),
         _ => "set-PARTNER_PASSWORD".into(),
     }
 }
@@ -41032,6 +41694,7 @@ fn has_partner_proposal_cookie(partner: &str, headers: &HeaderMap, pw: &str) -> 
         "sweep" => has_siiieep_partner_cookie(headers, pw),
         "kokon" => has_kokon_partner_cookie(headers, pw),
         "jiuflow" => has_jiuflow_partner_cookie(headers, pw),
+        "reversal" => has_reversal_partner_cookie(headers, pw),
         _ => false,
     }
 }
@@ -41041,6 +41704,7 @@ fn partner_proposal_cookie_name(partner: &str) -> &'static str {
         "sweep" => "mu_siiieep_partner",
         "kokon" => "mu_kokon_partner",
         "jiuflow" => "mu_jiuflow_partner",
+        "reversal" => "mu_reversal_partner",
         _ => "mu_partner",
     }
 }
@@ -55105,6 +55769,19 @@ async fn main() {
         .route("/itto/success", get(itto_success_page))
         .route("/itto/:serial", get(itto_serial_page))
         .route("/baba", get(show_baba_owner_proposal))
+        .route("/proposals/reversal", get(show_reversal_owner_proposal))
+        // ── Proposal admin: bulk SKU + publish/unpublish + admin user roster
+        .route("/api/proposal/:slug/meta",                   get(proposal_generic_meta))
+        .route("/api/admin/proposal/:slug/meta",             axum::routing::patch(api_admin_proposal_meta_patch))
+        .route("/api/admin/proposal/:slug/skus/bulk",        post(api_admin_proposal_skus_bulk))
+        .route("/api/admin/proposal/:slug/sku/:letter/publish",   post(api_admin_sku_publish))
+        .route("/api/admin/proposal/:slug/sku/:letter/unpublish", post(api_admin_sku_unpublish))
+        .route("/api/admin/proposal/:slug/publish",          post(api_admin_proposal_publish))
+        .route("/api/admin/proposal/:slug/unpublish",        post(api_admin_proposal_unpublish))
+        .route("/admin/proposals/:slug/manage",              get(admin_proposal_manage_ui))
+        .route("/api/admin/users",                           get(api_admin_users_list).post(api_admin_users_add))
+        .route("/api/admin/users/:id",                       axum::routing::delete(api_admin_users_delete))
+        .route("/admin/users",                               get(admin_users_ui))
         .route("/api/itto/availability", get(api_itto_availability))
         .route("/api/itto/checkout", post(api_itto_checkout))
         .route("/admin/itto/calf", post(admin_itto_calf_update))
