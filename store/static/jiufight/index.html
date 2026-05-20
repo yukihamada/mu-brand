@@ -2,12 +2,18 @@
 <html lang="ja"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>JIUFIGHT — Super Yawara Sweep Cup | wearmu.com</title>
-<meta property="og:title" content="JIUFIGHT — Super Yawara Sweep Cup">
-<meta property="og:description" content="2026.05.24 / Tokyo Tower · 18柄全てSUZURIで購入可能 (¥4,900・国内2-3日発送)">
-<meta property="og:image" content="https://wearmu.com/static/jiufight/products/02_front_marked.png">
-<meta name="description" content="2026.05.24 / Tokyo Tower · 18柄全てSUZURIで購入可能 (¥4,900・国内2-3日発送)">
+<title>JIUFIGHT — Super Yawara Sweep Cup 2026.05.24 | ¥4,900 SUZURI 即配</title>
+<meta property="og:title" content="JIUFIGHT — Super Yawara Sweep Cup 5/24 TOKYO">
+<meta property="og:description" content="2026.05.24 / Tokyo Tower 公式 Tシャツ · 18 柄 SUZURI 即購入 ¥4,900 国内 2-3 日 発送 · 完売 で 終了">
+<meta property="og:image" content="https://wearmu.com/static/ad/jf-hero.png">
+<meta property="og:url" content="https://wearmu.com/jiufight/">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://wearmu.com/static/ad/jf-hero.png">
+<meta name="description" content="2026.05.24 / Tokyo Tower 公式 Tシャツ · 18 柄 SUZURI 即購入 ¥4,900 国内 2-3 日 発送 · 完売 で 終了">
+<meta name="theme-color" content="#0A0A0A">
+<link rel="canonical" href="https://wearmu.com/jiufight/">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 <style>
 :root{--bg:#0a0a0a;--fg:#f5f5f0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--card:#111}
 *{margin:0;padding:0;box-sizing:border-box}
@@ -41,13 +47,44 @@ footer{padding:36px 24px;text-align:center;font-size:10px;letter-spacing:0.4em;t
 </head><body>
 <nav><span class="logo">WEARMU</span><a href="/" class="back">← back to shop</a></nav>
 
-<header class="hero">
-  <div class="eyebrow">WEARMU × JIUFIGHT</div>
-  <h1>JIUFIGHT — Super Yawara Sweep Cup</h1>
-  <p class="sub">2026.05.24 / Tokyo Tower · 18柄全てSUZURIで購入可能 (¥4,900・国内2-3日発送)</p>
+<!-- Countdown banner — sticky red bar -->
+<div style="background:#cc1f1f;color:#fff;text-align:center;padding:9px 14px;font-size:12px;letter-spacing:0.18em;text-transform:uppercase;font-weight:700;position:sticky;top:60px;z-index:40">
+  ⚔️ <b id="jf-countdown" style="font-variant-numeric:tabular-nums">5/24 TOKYO LIVE まで 4 日</b> · 完売 で 終了 · ¥4,900 国内 即出荷
+</div>
+
+<!-- Lifestyle hero photo (BJJ practitioner wearing JF tee) -->
+<div style="max-width:760px;margin:0 auto;padding:24px 18px 0">
+  <img src="/static/ad/jf-hero.png" alt="ブラジリアン 柔術 選手 が 道場 で JIU FIGHT × MU の Tシャツ を 着てる" loading="eager" fetchpriority="high" style="width:100%;aspect-ratio:1/1;object-fit:cover;display:block;border-radius:6px;background:#000">
+</div>
+
+<header class="hero" style="padding:32px 24px 36px">
+  <div class="eyebrow">WEARMU × JIUFIGHT · 5/24 TOKYO TOWER</div>
+  <h1>Super Yawara Sweep Cup</h1>
+  <p class="sub">2026.05.24 (日) / Tokyo Tower<br>全 柄 SUZURI 即出荷 · ¥4,900 国内 送料込 · 完売 後 再販 なし</p>
+  <div style="margin-top:22px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+    <a href="#designs" style="display:inline-block;padding:14px 24px;background:#e6c449;color:#0A0A0A;font-weight:800;font-size:12px;letter-spacing:0.18em;text-transform:uppercase;border-radius:6px;min-height:46px">↓ 18 柄 を 見る</a>
+    <a href="/bjj/about" style="display:inline-block;padding:14px 24px;background:transparent;color:#e6c449;border:1px solid rgba(230,196,73,0.5);font-weight:600;font-size:12px;letter-spacing:0.18em;text-transform:uppercase;border-radius:6px;min-height:46px">MU × BJJ を 知る</a>
+  </div>
 </header>
 
-<section class="grid">
+<script>
+// Countdown to 5/24 19:00 JST
+(function(){
+  var target = new Date('2026-05-24T19:00:00+09:00').getTime();
+  var el = document.getElementById('jf-countdown');
+  function update(){
+    if (!el) return;
+    var ms = target - Date.now();
+    if (ms <= 0) { el.textContent = '⚔️ 5/24 大会 開催 中'; return; }
+    var d = Math.floor(ms / 86400000);
+    var h = Math.floor((ms % 86400000) / 3600000);
+    el.textContent = '⚔️ 5/24 TOKYO LIVE まで ' + (d > 0 ? d + ' 日 ' + h + ' 時間' : h + ' 時間');
+  }
+  update(); setInterval(update, 60000);
+})();
+</script>
+
+<section id="designs" class="grid">
   <article class="card">
     <div style="background:rgba(230,196,73,0.10);border:1px solid rgba(230,196,73,0.4);color:#e6c449;padding:14px 18px;border-radius:6px;margin:24px 0;font-size:13px;line-height:1.7">━◯━ 2026-05-19 リビルド: <strong>20 designs × 10 種類の SUZURI 商品 = 200 products (ビッグシルエットT / オーバーサイズ / フルグラフィック / 長袖×2 / パーカー / ジップ / スウェット×2 / ショルダーバッグ)</strong> でも展開。 SUZURI 商品ページ内のドロップダウンで切替可。 デザインには <strong>× MU + QR + timestamp</strong> footer を追加 (Qシャツ 系譜)。</div>
     <div class="img"><img src="https://wearmu.com/static/jiufight/products/01_front_marked.png" alt="JIUFIGHT — Classic Typography Tee ★" loading="lazy"></div>
