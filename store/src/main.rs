@@ -7363,26 +7363,72 @@ async fn api_bounty_submit(
             .send().await;
     }
 
-    // Auto-acknowledge email back to reporter (best effort).
-    if let Ok(resend_key) = env::var("RESEND_API_KEY") {
+    // Auto-acknowledge email back to reporter.
+    //
+    // History: this used to be a `let _ = …send().await` fire-and-forget
+    // sender with `from: mu-bounty@wearmu.com`. nbhrarys' 2026-05-14
+    // submission produced no ack at all, and because Resend's response was
+    // discarded we had zero observability — silence at receipt is
+    // indistinguishable from "Resend bounced". Fix:
+    //   1. Use `info@wearmu.com` (already-verified sender in Resend, same
+    //      address every other email in the codebase ships from).
+    //   2. Inspect Resend's response status + body and log on failure so
+    //      future ack misses leave a trail in the prod stderr / Telegram.
+    //   3. On Resend-side failure, ping Telegram so triage knows the
+    //      reporter never got auto-ack — we can manually reply.
+    let ack_status: Option<(u16, String)> = if let Ok(resend_key) = env::var("RESEND_API_KEY") {
         if !resend_key.is_empty() {
             let ack_subject = format!("[MU Bounty #{}] 受領しました — 72h 以内に判定します", id);
             let ack_body = format!(
-                "<p>{} さん、</p><p>MU バグバウンティへのご報告ありがとうございます。<br>下記内容を受領しました。72 時間以内に深刻度判定をお返しします。</p><hr><p><b>ID:</b> #{}<br><b>想定 Tier:</b> {}<br><b>カテゴリ:</b> {}<br><b>タイトル:</b> {}<br><b>影響 URL:</b> {}</p><hr><p>判定が確定次第、報酬の受け取り方法 (Printful 配送先、Solana address 等) を確認させていただきます。<br>— MU Autopilot / 株式会社イネブラ</p>",
+                "<p>{} さん、</p><p>MU バグバウンティへのご報告ありがとうございます。<br>下記内容を受領しました。72 時間以内に深刻度判定をお返しします。</p><hr><p><b>ID:</b> #{}<br><b>想定 Tier:</b> {}<br><b>カテゴリ:</b> {}<br><b>タイトル:</b> {}<br><b>影響 URL:</b> {}</p><hr><p>判定が確定次第、報酬の受け取り方法 (配送先、現金、HoF 掲載名) を確認させていただきます。<br>— MU / 株式会社イネブラ</p>",
                 html_escape(if r_name.is_empty() { "報告者" } else { &r_name }),
                 id, html_escape(&severity), html_escape(&category),
                 html_escape(&title), html_escape(&aff_url));
-            let _ = reqwest::Client::new()
+            match reqwest::Client::new()
                 .post("https://api.resend.com/emails")
                 .bearer_auth(&resend_key)
                 .json(&serde_json::json!({
-                    "from": "━◯━ MU Bounty <mu-bounty@wearmu.com>",
+                    "from": "MU Bounty <info@wearmu.com>",
                     "to": [r_email.clone()],
                     "subject": ack_subject,
                     "html": ack_body,
                     "reply_to": "info@wearmu.com",
                 }))
-                .send().await;
+                .send().await
+            {
+                Ok(resp) => {
+                    let code = resp.status().as_u16();
+                    let body = resp.text().await.unwrap_or_default();
+                    if code >= 400 {
+                        eprintln!("[bounty ack #{}] resend FAIL {} → {}", id, code,
+                            body.chars().take(400).collect::<String>());
+                    } else {
+                        eprintln!("[bounty ack #{}] resend OK ({}) → {}", id, code, r_email);
+                    }
+                    Some((code, body))
+                }
+                Err(e) => {
+                    eprintln!("[bounty ack #{}] resend HTTP ERROR → {}", id, e);
+                    Some((0, format!("http error: {}", e)))
+                }
+            }
+        } else {
+            eprintln!("[bounty ack #{}] RESEND_API_KEY empty — skipping ack", id);
+            None
+        }
+    } else {
+        eprintln!("[bounty ack #{}] RESEND_API_KEY unset — skipping ack", id);
+        None
+    };
+    // If ack failed, ping Telegram so we can hand-reply before the
+    // reporter loses faith in the bounty (this is exactly what bit us
+    // with nbhrarys #18 → 144h silence).
+    if let Some((code, body)) = &ack_status {
+        if *code >= 400 || *code == 0 {
+            send_telegram_message(&format!(
+                "⚠️ Bounty auto-ack FAILED — manual reply needed\n\nID: #{}\nto: {}\ncode: {}\nbody: {}",
+                id, r_email, code, body.chars().take(500).collect::<String>(),
+            )).await;
         }
     }
 
@@ -7776,6 +7822,131 @@ async fn admin_bounty_issue_reward(
         "cash_amount_jpy": cash_amount_jpy,
         "expires_at": expires_at,
     })).into_response()
+}
+
+/// GET /bounty/hof — Hall of Fame page. Public listing of confirmed/paid
+/// bounty submissions. Privacy posture:
+///   - hof_handle = 'OPT_OUT'  → row omitted entirely
+///   - hof_handle IS NULL/''   → row shown as "Anonymous"
+///   - hof_handle set          → shown as that string
+/// We never display reporter_email / reporter_name unless the reporter
+/// has explicitly populated hof_handle. Date is rounded to YYYY-MM so
+/// timing patterns don't fingerprint individual reporters.
+async fn bounty_hof_page(State(db): State<Db>) -> impl IntoResponse {
+    struct HofRow {
+        id: i64,
+        handle: String,
+        severity: String,
+        category: String,
+        title: String,
+        yyyymm: String,
+    }
+    let rows: Vec<HofRow> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, COALESCE(hof_handle,''),
+                    COALESCE(severity_final, severity, ''),
+                    COALESCE(category, ''), COALESCE(title, ''),
+                    received_at
+             FROM bounty_submissions
+             WHERE status IN ('confirmed','paid')
+               AND COALESCE(hof_handle,'') != 'OPT_OUT'
+             ORDER BY received_at DESC"
+        ) { Ok(s) => s, Err(_) => return Html(String::new()).into_response() };
+        stmt.query_map([], |r| {
+            let received: String = r.get(5)?;
+            let received_unix: i64 = received.parse().unwrap_or(0);
+            let jst_s = received_unix + 9 * 3600;
+            let (y, m, _d) = ymd_from_jst_secs(jst_s);
+            let yyyymm = if received_unix > 0 { format!("{:04}-{:02}", y, m) } else { "—".into() };
+            let raw_handle: String = r.get(1)?;
+            let handle = if raw_handle.trim().is_empty() {
+                "Anonymous".to_string()
+            } else {
+                html_escape(&raw_handle).to_string()
+            };
+            Ok(HofRow {
+                id: r.get(0)?, handle, severity: r.get(2)?,
+                category: r.get(3)?, title: r.get(4)?, yyyymm,
+            })
+        }).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    let badge = |sev: &str| -> &'static str {
+        match sev {
+            "critical" => "background:#3a0e0e;color:#ff8a8a;",
+            "high"     => "background:#3a1f0e;color:#ffb98a;",
+            "medium"   => "background:#3a300e;color:#e6c449;",
+            "low"      => "background:#0e2238;color:#9bd;",
+            "info"     => "background:#222;color:#999;",
+            _          => "background:#222;color:#aaa;",
+        }
+    };
+    let mut tbody = String::new();
+    for r in &rows {
+        tbody.push_str(&format!(
+            "<tr><td class=mono>#{id}</td><td>{handle}</td><td><span class=sev style=\"{badge}\">{sev}</span></td><td class=cat>{cat}</td><td class=title>{title}</td><td class=date>{date}</td></tr>",
+            id = r.id,
+            handle = r.handle,
+            badge = badge(&r.severity),
+            sev = r.severity.to_uppercase(),
+            cat = html_escape(&r.category),
+            title = html_escape(&r.title),
+            date = r.yyyymm,
+        ));
+    }
+    let empty_note = if rows.is_empty() {
+        "<p class=empty>まだ HoF 入りの報告はありません。 第 1 号を <a href=\"/bounty\">/bounty</a> から！</p>".to_string()
+    } else { String::new() };
+    let html = format!(r#"<!doctype html>
+<html lang="ja"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU Bounty Hall of Fame</title>
+<meta name="description" content="MU bug bounty に貢献してくださった研究者のリスト。 公開を希望された方のみ掲載。">
+<meta property="og:title" content="MU Bounty Hall of Fame">
+<meta property="og:image" content="https://wearmu.com/og-bounty.jpg">
+<style>
+:root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.55);--y:#e6c449;--line:rgba(255,255,255,0.08)}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;-webkit-font-smoothing:antialiased;line-height:1.6}}
+nav{{padding:18px 28px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;font-size:11px;letter-spacing:0.3em;text-transform:uppercase}}
+nav a{{color:var(--fg);text-decoration:none;opacity:0.7}}
+nav a:hover{{opacity:1}}
+main{{max-width:980px;margin:0 auto;padding:64px 28px}}
+h1{{font-size:32px;font-weight:300;letter-spacing:0.02em;margin-bottom:10px}}
+.sub{{color:var(--mute);font-size:13px;margin-bottom:36px}}
+table{{width:100%;border-collapse:collapse;font-size:13.5px}}
+th,td{{padding:14px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}}
+th{{color:var(--mute);font-size:11px;letter-spacing:0.2em;text-transform:uppercase;font-weight:500}}
+.mono{{font-family:'JetBrains Mono',ui-monospace,monospace;color:var(--mute)}}
+.sev{{display:inline-block;padding:2px 8px;border-radius:2px;font-size:10.5px;letter-spacing:0.1em;font-weight:600}}
+.cat{{color:var(--mute);font-size:12px}}
+.title{{color:var(--fg)}}
+.date{{color:var(--mute);font-family:'JetBrains Mono',ui-monospace,monospace;font-size:12px}}
+.empty{{color:var(--mute);text-align:center;padding:40px 0}}
+.empty a{{color:var(--y)}}
+.note{{margin-top:36px;padding:18px 22px;background:rgba(230,196,73,0.06);border-left:2px solid var(--y);color:var(--mute);font-size:12.5px}}
+.note a{{color:var(--y)}}
+</style>
+</head><body>
+<nav><a href="/" class=logo>━◯━ MU</a><div><a href="/bounty">/ bounty</a></div></nav>
+<main>
+<h1>Hall of Fame</h1>
+<p class=sub>MU bug bounty に貢献してくださった研究者のリスト。 掲載名は本人の同意ベース。</p>
+{empty_note}
+<table>
+<thead><tr><th>#</th><th>Researcher</th><th>Tier</th><th>Category</th><th>Title</th><th>Month</th></tr></thead>
+<tbody>{tbody}</tbody>
+</table>
+<div class=note>
+<b>掲載ポリシー:</b> 同意 (hof_handle) を頂いた方のみ。 「OPT_OUT」 を選ばれた方は表示しません。
+未指定の方は <b>Anonymous</b> として、 個別の身元が分からない形で記載しています。
+報告から HoF 掲載までの流れは <a href="/bounty">/bounty</a> を参照ください。
+</div>
+</main>
+</body></html>"#,
+        empty_note = empty_note, tbody = tbody);
+    Html(html).into_response()
 }
 
 /// GET /bounty/claim/:token — public claim page.
@@ -51943,6 +52114,10 @@ async fn main() {
         // method (treasury sends USDC). Stripe Connect Express is for
         // recipients who prefer fiat / JP-domestic bank. PayPay is a
         // last-resort manual fallback (record handle, send via app).
+        // HoF (Hall of Fame) handle for /bounty/hof. NULL = anonymous,
+        // value = display name (handle / 実名 / etc), "OPT_OUT" = hide
+        // entirely from HoF. Default NULL so consent is opt-in.
+        "ALTER TABLE bounty_submissions ADD COLUMN hof_handle TEXT",
         "ALTER TABLE bounty_rewards ADD COLUMN payout_method TEXT",
         "ALTER TABLE bounty_rewards ADD COLUMN solana_wallet TEXT",
         "ALTER TABLE bounty_rewards ADD COLUMN stripe_connect_account_id TEXT",
@@ -56039,6 +56214,7 @@ async fn main() {
         .route("/partners", get(collab_page))
         .route("/bounty", get(bounty_page))
         .route("/security", get(bounty_page))
+        .route("/bounty/hof", get(bounty_hof_page))
         .route("/api/bounty/submit", post(api_bounty_submit))
         .route("/buyer/:token", get(buyer_profile_page))
         .route("/mypage", get(mypage_entry))
