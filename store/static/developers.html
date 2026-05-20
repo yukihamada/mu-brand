@@ -54,25 +54,28 @@ footer{padding:48px 32px;border-top:1px solid var(--border);text-align:center;fo
 </nav>
 <main>
   <h1>MU <em>Developer API</em></h1>
-  <p class="lede">
-    MU の AI 生成商品 (MUGEN 無限 / MUON 無音 / 間 MA / MU × NOUNS) を、
-    あなたの EC サイト・ブログ・自社プロダクトに <strong>1 行</strong>で埋め込めます。<br>
-    CORS 公開、認証不要、無料。商品が更新されると埋め込み先でも自動で反映されます。
+  <p class="lede" style="font-size:1.05rem;line-height:1.7;margin-bottom:0.5rem">
+    <strong>気温 が seed の AI 生成 Tシャツブランド。 1時間に1着出る。 あなたの page に商品グリッドを1行で埋め込める。</strong>
+  </p>
+  <p class="lede" style="opacity:0.75;font-size:0.95rem">
+    MUGEN / MUON / MA / MU × NOUNS — 4ライン の AI 生成商品 を EC / ブログ / 自社プロダクト に 埋め込み 可能。
+    CORS 公開、 認証不要、 free tier (詳細 ↓)。 商品が更新されると 埋め込み先 でも 自動 反映。
   </p>
   <div style="background:rgba(230,196,73,0.08);border:1px solid rgba(230,196,73,0.4);border-radius:8px;padding:0.9rem 1.1rem;margin:1rem 0 1.5rem">
-    <strong>📜 MU Protocol v2 (RFC)</strong> — apparel/food/lodging/service/music を1つのスペックで包む universal protocol。
+    <strong>📜 MU Protocol v2 Spec</strong> — apparel/food/lodging/service/music を1つのスペックで包む universal protocol。 (IETF RFC ではなく MU 内部規格)
     <a href="/protocol" style="color:var(--y);text-decoration:underline">/protocol を読む →</a>
     &nbsp;·&nbsp;
     <a href="/.well-known/mu/releases" style="color:var(--y);text-decoration:underline">/.well-known/mu/releases (conformance ep)</a>
   </div>
   <div style="background:rgba(230,196,73,0.06);border:1px solid rgba(230,196,73,0.25);border-radius:8px;padding:0.9rem 1.1rem;margin:0 0 1.5rem;font-size:0.85rem;line-height:1.6">
-    <strong>🔓 30pt paywall ウィジェット</strong> — 任意のコンテンツを「もっと見るには30pt」化できます。初回30ptは無料 (メアド単位)。
+    <strong>🔓 30pt paywall ウィジェット</strong> — 任意のコンテンツを「もっと見るには30pt」化できます。 初回30ptは無料 (メアド単位)、 認証 は メール magic-link で 自動。 visitor が 30 pt 持って ない 場合 は 自動 で MU 購入 導線 に。
 <pre style="margin:0.5rem 0 0;background:rgba(0,0,0,0.45);padding:0.7rem 0.9rem;font-size:0.78rem;overflow-x:auto"><code>&lt;script src="/pt_gate.js" defer&gt;&lt;/script&gt;
 
 &lt;div data-pt-gate data-pt-target="my-page:section-1" data-pt-cost="30"
      data-pt-label="続きを見る"&gt;
   &lt;div data-pt-content&gt;…locked content…&lt;/div&gt;
 &lt;/div&gt;</code></pre>
+    <p style="margin:0.6rem 0 0;font-size:0.78rem;opacity:0.65">完全 docs (auth flow / iframe sandbox / unlock callback / 不足時 UI / commission)→ <a href="/developers/paywall" style="color:var(--y)">/developers/paywall</a> · 実装中、 質問 は <a href="mailto:developers@enablerdao.com" style="color:var(--y)">developers@enablerdao.com</a></p>
   </div>
 
   <h2>1. 最速で埋め込む — JS ウィジェット</h2>
@@ -154,22 +157,75 @@ footer{padding:48px 32px;border-top:1px solid var(--border);text-align:center;fo
     <li><strong>MU × NOUNS</strong> — NOUNS DAO とのコラボ枠</li>
   </ul>
 
-  <h2>制限事項</h2>
+  <h2>使用量 と 制限</h2>
   <div class="box">
-    <strong>レート制限</strong>: 公開 API は IP あたり 60 req/min。Burst 許容。<br>
-    <strong>キャッシュ</strong>: <code>embed.js</code> は 5 分キャッシュ。商品データはノーキャッシュ (常に最新)。<br>
-    <strong>決済</strong>: Checkout は wearmu.com 側でのみ実行。埋め込み側からは決済 API を直接叩けません (Stripe フォーム秘匿のため)。
+    <strong>レート制限</strong>: <code>/api/v1/embed/products</code> は <strong>end-user の IP あたり 60 req/min</strong>。 つまり あなたの page を 1人 が 開く と その 訪問者 の IP で 60/min。 同じ page を 100人 が 同時 に 開いて も、 各々別 IP なので OK。 burst は 短時間 (10秒) なら 倍 まで 許容。<br>
+    <strong>無料 tier</strong>: 月 <strong>100,000 req</strong> まで 完全 無料。 超過しても 当面 課金 しない (= soft limit、 突然 切らない)。 商業利用 で 月 1M req 超え そう なら 事前 連絡 を。<br>
+    <strong>キャッシュ</strong>: <code>embed.js</code> は CDN で 5 分。 商品データ は ノーキャッシュ (常に 最新)。<br>
+    <strong>SLA</strong>: 無料 tier には 公式 SLA なし。 過去 30日 uptime は <a href="/transparency" style="color:var(--y)">/transparency</a> で 公開中。 MU 落ちた 時用 の fallback は 次節 参照。<br>
+    <strong>バージョン</strong>: <code>v1</code> は 最低 <strong>2027-01-01 まで 維持</strong>。 v2 出した 場合 は 12ヶ月 並行運用 + メール 通知。<br>
+    <strong>決済</strong>: Checkout は wearmu.com 側 のみ。 埋め込み側 から 決済 API は 叩けない (Stripe form 秘匿)。
   </div>
 
-  <h2>ライセンス・利用条件</h2>
-  <p>
-    無料・無認証で誰でも埋め込み可。MU はあなたのサイトでの商品閲覧・購買導線として機能します。<br>
-    <strong>禁止</strong>: 商品画像の改変・MU/SIIIEEP のロゴ削除・"powered by MU" フッターの除去。
+  <h2>fallback パターン (MU が 落ちた時 のため)</h2>
+  <p>無料 tier なので 「自分 の page も 落ちる」 を 避ける fallback を 入れて ください。 <code>embed.js</code> は 200ms で timeout、 失敗 時 は コンテナ を 空 のまま 返します。</p>
+  <pre><code><span class="kw">window</span>.addEventListener(<span class="str">'load'</span>, () =&gt; {
+  <span class="kw">if</span> (!<span class="kw">window</span>.MU) {
+    <span class="cmt">// embed.js 読み込み失敗 (CDN 障害 or ネットワーク)</span>
+    document.querySelector(<span class="str">'#mu-mount'</span>).innerHTML =
+      <span class="str">'&lt;a href="https://wearmu.com"&gt;MU で 見る →&lt;/a&gt;'</span>;
+    <span class="kw">return</span>;
+  }
+  MU.mount({brand:<span class="str">'mugen'</span>, count:6, container:<span class="str">'#mu-mount'</span>});
+});</code></pre>
+
+  <h2>error response schema (全 エンドポイント 共通)</h2>
+  <p>失敗 時 は HTTP status + JSON body で 統一:</p>
+  <pre><code>{
+  <span class="str">"code"</span>: <span class="str">"rate_limited"</span>,        <span class="cmt">// machine-readable</span>
+  <span class="str">"message"</span>: <span class="str">"exceeded 60/min for IP a.b.c.d"</span>,
+  <span class="str">"retry_after_seconds"</span>: 30,    <span class="cmt">// 該当する場合</span>
+  <span class="str">"docs"</span>: <span class="str">"https://wearmu.com/developers#rate-limit"</span>
+}</code></pre>
+  <p style="font-size:0.85rem;line-height:1.7"><strong>code 一覧</strong>:</p>
+  <ul style="font-size:0.85rem;line-height:1.85">
+    <li><code>rate_limited</code> · 429 · 60/min 超 (retry_after_seconds 付)</li>
+    <li><code>bad_request</code> · 400 · 無効 な query param (brand=xyz 等)</li>
+    <li><code>not_found</code> · 404 · 指定 SKU/brand が 存在 しない</li>
+    <li><code>service_unavailable</code> · 503 · 一時 障害 (cron 失敗時 等、 retry_after_seconds 付)</li>
+    <li><code>internal_error</code> · 500 · 予期しない (報告 ください)</li>
+  </ul>
+
+  <h2>あなた に 入る 報酬 (commission)</h2>
+  <p style="font-size:0.9rem;line-height:1.8">
+    <strong>現状 (v1, 2026-05)</strong>: commission 0%。 「無料 で MU 商品 を 埋め込める」 だけ で、 売上 シェア は 入りません。 自分 の page で 信頼性 が 上がる (MU の "powered by" badge) + 訪問者 体験 向上 + 商品画像 を 借りられる、 の 3点 が メリット。
   </p>
-  <p>
-    商用パートナーシップ / カスタム ブランディング 希望は
-    <a href="mailto:mail@yukihamada.jp" style="color:var(--y)">mail@yukihamada.jp</a>
+  <p style="font-size:0.9rem;line-height:1.8">
+    <strong>大口 パートナー</strong> (月 ¥30k+ 売上 を 出す 想定): 個別 で <strong>10-30% commission</strong> を 設定 可能。 自分 の Stripe Connect account に 直接 送金 する 形。 詳細 は <a href="mailto:developers@enablerdao.com" style="color:var(--y)">developers@enablerdao.com</a> まで。
   </p>
+  <p style="font-size:0.9rem;line-height:1.8">
+    <strong>計測 ・ webhook (Phase 2)</strong>: 「あなたの page 経由 で 誰か 買った」 を webhook (<code>embed.purchase</code>) で 受け取り たい — 2026-Q3 ship 予定。 それ まで は <code>?ref=<your-id></code> URL param で attribution 可能 (Stripe metadata に 記録、 月次レポート 提供)。
+  </p>
+
+  <h2>利用 ガイドライン (法的拘束 ではない)</h2>
+  <p>
+    無料 ・ 無認証 で 誰でも 埋め込み 可。 以下 は <strong>お願い</strong> であって 違反 で 即訴訟 や 機能停止 を する もの ではない (まず メール で 連絡 し ます):
+  </p>
+  <ul style="font-size:0.9rem;line-height:1.9">
+    <li>商品画像 (=mockup の Tシャツ写真) は <strong>そのまま</strong> 表示 してください (切り抜き ・ クロップ ・ 色変え しない)。</li>
+    <li>「powered by MU」 footer は 表示 して ください (embed.js が 自動 で挿入)。 削除 する と "MU 商品" と わからない 状態 で 表示 される ため。</li>
+    <li>SIIIEEP / collab ロゴ が 商品 内 に 入る 場合、 ロゴ を 消し て 再販 する の は NG。 表示 そのまま なら OK。</li>
+  </ul>
+  <p style="font-size:0.85rem;opacity:0.65;line-height:1.7">
+    違反 を 発見 し た 場合 → 警告 メール → 1週間 内 修正 なし で <code>embed.js</code> を 該当 origin から 切ります。 法的措置 は 取り ません (悪意 が 明確 な 場合 を 除く)。
+  </p>
+
+  <h2>サポート ・ 連絡</h2>
+  <ul style="font-size:0.9rem;line-height:1.9">
+    <li><strong>dev 専用 メール</strong>: <a href="mailto:developers@enablerdao.com" style="color:var(--y)">developers@enablerdao.com</a> (機密 質問 ・ 法人 採用検討 ・ commission 相談)</li>
+    <li><strong>バグ報告 ・ 機能 リクエスト (public OK)</strong>: <a href="https://github.com/yukihamada/mu-brand/issues" style="color:var(--y)">GitHub Issues</a></li>
+    <li><strong>一般 ・ メディア</strong>: <a href="mailto:info@enablerdao.com" style="color:var(--y)">info@enablerdao.com</a></li>
+  </ul>
 
   <h2>ライブプレビュー</h2>
   <div class="preview">
