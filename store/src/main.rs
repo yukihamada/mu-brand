@@ -56295,7 +56295,8 @@ async fn main() {
         .route("/cities",                    get(cities_page))
         // Regional cool URLs — explicit per-city routes so they don't shadow
         // the catch-all static-file fallback (/about, /buy, etc.).
-        .route("/tokyo",   get(region_landing))
+        // /tokyo is served by nest_service above (static/tokyo/) — don't
+        // register a duplicate route here (axum 0.7 panics on conflict).
         .route("/kyoto",   get(region_landing))
         .route("/osaka",   get(region_landing))
         .route("/sapporo", get(region_landing))
