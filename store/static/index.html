@@ -571,6 +571,12 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
   </div>
 </div>
 
+<!-- 100枚 challenge live counter — SSR-filled from /api/100/progress.
+     Drives Ads-landing → /buy conversion via visible scarcity. -->
+<a id="t100-banner" href="/100" style="display:block;background:linear-gradient(90deg,rgba(230,196,73,0.18),rgba(230,196,73,0.04));border-bottom:1px solid rgba(230,196,73,0.4);padding:11px 16px;text-align:center;font-size:12.5px;color:#fff;letter-spacing:0.02em;text-decoration:none">
+  <span style="margin-right:8px">🎯</span><strong style="color:#e6c449;font-family:'SF Mono','Menlo',monospace">{T100_SOLD}/100</strong> 着 · <strong>14日 100枚 challenge</strong> · 5/18→5/31 · 残り{T100_DAYS_LEFT}日 · live → /100
+</a>
+
 <!-- §29 C-3: "今日はあなたの店" — Wed only banner, hidden when no brand or non-Wed -->
 <div id="today-yours-banner" style="display:none;background:linear-gradient(90deg,rgba(230,196,73,0.12),rgba(230,196,73,0.04));border-bottom:1px solid rgba(230,196,73,0.3);padding:10px 16px;text-align:center;font-size:12px;color:#e6c449;letter-spacing:0.05em">
   <strong>今日はあなたの店</strong> · 毎週水曜 = 別ブランドの日 · <span id="today-yours-name">—</span> · <a id="today-yours-buy" style="color:#e6c449;text-decoration:underline" href="#">買う →</a>
