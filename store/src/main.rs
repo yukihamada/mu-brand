@@ -56063,6 +56063,7 @@ async fn main() {
         .nest_service("/zen", ServeDir::new("static/zen"))
         .nest_service("/moon", ServeDir::new("static/moon"))
         .nest_service("/tokyo", ServeDir::new("static/tokyo"))
+        .nest_service("/mart", ServeDir::new("static/mart"))
         .route("/api/collab/account/delete", post(collab_account_delete))
         .route("/api/404/buy", post(not_found_buy))
         .route("/city", get(city_page))
