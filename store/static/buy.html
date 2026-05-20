@@ -275,6 +275,46 @@ footer{
     <strong style="color:#e6c449">MU</strong> はブランド名、 <strong style="color:#e6c449">MUGEN</strong> はその1番目の商品ライン (Tシャツ)。 他に MA (週1オークション) / MUON (日替わり) があります。 今このページで買えるのは MUGEN です。
   </p>
 
+  <!-- JiuFlow cross-promo coupon banner — shows when ?ref=jiuflow (or cookie set).
+       Coupon "JIUFLOW20" is created in Stripe dashboard (20% off, max 100, expires 6/30).
+       Stripe checkout's allow_promotion_codes=true (server) lets user paste the code. -->
+  <div id="jiuflow-coupon-banner" style="display:none;background:linear-gradient(135deg,rgba(123,229,123,0.12),rgba(123,229,123,0.02));border:1.5px solid rgba(123,229,123,0.4);border-radius:8px;padding:14px 22px;margin:18px 0 14px;display:none;flex-wrap:wrap;align-items:center;gap:14px">
+    <div style="font-size:28px;line-height:1">🎁</div>
+    <div style="flex:1;min-width:240px">
+      <div style="font-size:10.5px;letter-spacing:0.28em;text-transform:uppercase;color:#7ed492;font-weight:700;margin-bottom:4px">JiuFlow 紹介クーポン</div>
+      <div style="font-size:15px;color:#fff;line-height:1.55">checkout 画面で <strong style="background:#7ed492;color:#000;padding:2px 8px;border-radius:3px;font-family:'SF Mono','Menlo',monospace">JIUFLOW20</strong> を入力 → <strong style="color:#7ed492">20% off</strong> (最初の100名限定 / 6月末まで)</div>
+      <div style="font-size:11.5px;color:rgba(245,245,240,0.55);margin-top:4px">クーポンは Stripe checkout ページ で コピペ。 適用後 ¥4,900 → ¥3,920 (約 $26)。</div>
+    </div>
+    <button type="button" id="jiuflow-coupon-copy" style="background:rgba(123,229,123,0.18);color:#7ed492;border:1px solid rgba(123,229,123,0.5);padding:10px 16px;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;font-weight:700;border-radius:4px;cursor:pointer;white-space:nowrap;font-family:inherit">コードをコピー</button>
+  </div>
+  <script>
+  (function () {
+    // Detect ?ref=jiuflow (or stored cookie/localStorage). Persist across visits.
+    var key = "mu_ref_jiuflow";
+    var url = new URL(location.href);
+    var qref = (url.searchParams.get("ref") || "").toLowerCase();
+    var hasRef = qref === "jiuflow";
+    if (!hasRef) {
+      try { hasRef = localStorage.getItem(key) === "1"; } catch (_) {}
+    }
+    if (hasRef) {
+      try { localStorage.setItem(key, "1"); } catch (_) {}
+      var b = document.getElementById("jiuflow-coupon-banner");
+      if (b) b.style.display = "flex";
+      var c = document.getElementById("jiuflow-coupon-copy");
+      if (c) c.addEventListener("click", function () {
+        try {
+          navigator.clipboard.writeText("JIUFLOW20");
+          c.textContent = "✓ コピー済";
+          setTimeout(function () { c.textContent = "コードをコピー"; }, 2000);
+        } catch (_) {
+          window.prompt("コピーしてください:", "JIUFLOW20");
+        }
+      });
+    }
+  })();
+  </script>
+
   <!-- 2 価格レンジ + MSA bundle banner. -->
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:18px 0 8px">
     <div style="background:#0c0c0c;border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:12px 14px">
