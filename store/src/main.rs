@@ -11005,9 +11005,13 @@ async fn api_niche_outreach_list(
     Json(serde_json::json!({ "niche": slug, "outreach": rows, "count": rows.len() }))
 }
 
-/// POST /api/collab/apply — one-click B2B / dojo / partner / influencer
+/// POST /api/outreach/apply — one-click B2B / dojo / partner / influencer
 /// inbound application form. Replaces the mailto-only flow on /bjj/about
 /// so applicants can submit without opening their email client.
+///
+/// Note: a separate `/api/collab/apply` exists for the legacy /you/collab
+/// partner-spec scraper (different schema: requires `company`). This is a
+/// new endpoint feeding mu_outreach.
 ///
 /// Body: { niche_slug, kind, name, contact_email, contact_url?, message? }
 /// On success: row → mu_outreach, notify Yuki + ack the applicant via Resend.
@@ -56185,7 +56189,11 @@ async fn main() {
         .route("/api/100/progress", get(challenge_100_progress_json))
         .route("/api/niches", get(api_niches_list))
         .route("/api/niches/:slug/outreach", get(api_niche_outreach_list))
-        .route("/api/collab/apply", post(collab_apply))
+        // 2026-05-20: /api/collab/apply is already registered for the
+        // /you/collab partner-spec scraper (requires `company` field).
+        // The new mu_outreach-backed inbound form lives at a distinct path
+        // to avoid the route conflict that panicked PR #42's deploy.
+        .route("/api/outreach/apply", post(collab_apply))
         // /nouns: DAO approval pending → section hidden from nav (2026-05-13).
         // Proposal text remains at /nouns-proposal.html for transparency.
         .route("/nouns", get(|| async { axum::response::Redirect::permanent("/nouns-proposal.html") }))
