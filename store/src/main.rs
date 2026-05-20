@@ -18192,6 +18192,21 @@ async fn index(State(db): State<Db>) -> Html<String> {
         format!("{:02}:{:02}", m, s)
     };
 
+    // 100枚 challenge — live sold count + days left to 5/31 (drives Ads-landing CVR).
+    let (t100_sold_str, t100_days_left_str): (String, String) = {
+        let conn = db.lock().unwrap();
+        let sold: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mu_purchases WHERE brand='mugen' AND created_at >= ?",
+            params![CHALLENGE_100_START_UTC], |r| r.get(0),
+        ).unwrap_or(0);
+        // 5/31 23:59:59 JST = 5/31 14:59:59 UTC
+        let end_unix: i64 = 1748703599;
+        let now_s: i64 = chrono_now().parse().unwrap_or(end_unix);
+        let secs_left = (end_unix - now_s).max(0);
+        let days_left = ((secs_left + 86399) / 86400).max(0);
+        (sold.to_string(), days_left.to_string())
+    };
+
     let drop_str   = mugen_drop.map(|d| format!("#{}", d)).unwrap_or_else(|| "—".into());
     let cycle_str  = mugen_cycle.map(|c| format!("{}/108", c)).unwrap_or_else(|| "—/108".into());
     let temp_str   = temp_c.map(|t| t.to_string()).unwrap_or_else(|| "—".into());
@@ -18300,6 +18315,11 @@ async fn index(State(db): State<Db>) -> Html<String> {
     } else {
         html
     };
+
+    // 100枚 challenge banner SSR-fill.
+    let html = html
+        .replace("{T100_SOLD}", &t100_sold_str)
+        .replace("{T100_DAYS_LEFT}", &t100_days_left_str);
 
     Html(html)
 }
