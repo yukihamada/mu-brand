@@ -28048,6 +28048,127 @@ async fn you_page() -> Html<&'static str> {
     Html(include_str!("../static/you.html"))
 }
 
+/// GET /you/collab — Collab Wizard. Multi-stage: text → URL → brand basics
+/// → up to 20 iterative SKUs with ✓/✗ feedback that refines future gens.
+async fn you_collab_page() -> Html<&'static str> {
+    Html(include_str!("../static/you-collab.html"))
+}
+
+/// POST /api/proposal/personal/derive — returns the personal sandbox slug
+/// for an email. Idempotent (creates the personal proposal row if missing).
+async fn personal_derive(
+    State(db): State<Db>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let raw = body.get("email").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let email = match validate_email(&raw) {
+        Ok(e) => e,
+        Err(m) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok":false,"error":m}))).into_response(),
+    };
+    let slug = {
+        let conn = db.lock().unwrap();
+        ensure_personal_proposal(&conn, &email)
+    };
+    Json(serde_json::json!({"ok": true, "slug": slug, "email": email})).into_response()
+}
+
+/// POST /api/you/collab/brand — generate brand basics via Gemini 2.5 Pro.
+/// Body: { email, text, url, feedback_history: {ups[], downs[]} }
+/// Returns: { ok, brand: { name, tagline, colors[], tone, audience } }
+/// Charges 10 pt.
+async fn you_collab_brand(
+    State(db): State<Db>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let raw = body.get("email").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let email = match validate_email(&raw) {
+        Ok(e) => e,
+        Err(m) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok":false,"error":m}))).into_response(),
+    };
+    let text = body.get("text").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    let url  = body.get("url").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    let fb   = body.get("feedback_history").cloned().unwrap_or(serde_json::json!({}));
+
+    let cost: i64 = 10;
+    {
+        let conn = db.lock().unwrap();
+        if let Err(e) = points_mutate(&conn, &email, -cost, "you_collab_brand", None, None) {
+            return (StatusCode::PAYMENT_REQUIRED, Json(serde_json::json!({
+                "ok": false, "error": e, "cost_pt": cost,
+                "topup_url": "https://wearmu.com/extras/my",
+            }))).into_response();
+        }
+    }
+
+    let prompt = format!(r##"You are creating a brand identity for a personalized T-shirt collab on MU.
+User input:
+  text: "{text}"
+  url: "{url}"
+  feedback_history: {fb}
+
+Output ONLY this strict JSON (no markdown fences, no prose):
+{{
+  "name": "<short 2-12 char brand name, kanji/kana/latin OK>",
+  "tagline": "<8-25 chars JP tagline>",
+  "colors": ["#RRGGBB","#RRGGBB","#RRGGBB"],
+  "tone": "<12-40 chars JP, voice/aesthetic>",
+  "audience": "<8-30 chars JP, target>"
+}}
+
+Rules:
+- 3 colors = one accent + two neutrals, harmonious, screen-print safe.
+- Lean toward `ups`, avoid `downs`.
+- If URL empty, ignore.
+- Output JSON only.
+"##, text = text.replace('"', "'"), url = url, fb = serde_json::to_string(&fb).unwrap_or_else(|_| "{}".into()));
+
+    let key = match env::var("GEMINI_API_KEY") {
+        Ok(k) => k,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+            "ok": false, "error": "GEMINI_API_KEY missing"
+        }))).into_response(),
+    };
+    let g_url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={}",
+        key);
+    let resp = reqwest::Client::new().post(&g_url)
+        .json(&serde_json::json!({
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.7, "maxOutputTokens": 800}
+        }))
+        .send().await;
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::BAD_GATEWAY, Json(serde_json::json!({
+            "ok": false, "error": format!("gemini request: {}", e)
+        }))).into_response(),
+    };
+    if !resp.status().is_success() {
+        let s = resp.status();
+        let t = resp.text().await.unwrap_or_default();
+        return (StatusCode::BAD_GATEWAY, Json(serde_json::json!({
+            "ok": false, "error": format!("gemini {}: {}", s, t.chars().take(200).collect::<String>())
+        }))).into_response();
+    }
+    let j: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::BAD_GATEWAY, Json(serde_json::json!({
+            "ok": false, "error": format!("json: {}", e)
+        }))).into_response(),
+    };
+    let text_out = j["candidates"][0]["content"]["parts"][0]["text"]
+        .as_str().unwrap_or("").trim().to_string();
+    let cleaned = text_out
+        .trim_start_matches("```json").trim_start_matches("```")
+        .trim_end_matches("```").trim().to_string();
+    let brand: serde_json::Value = serde_json::from_str(&cleaned)
+        .unwrap_or_else(|_| serde_json::json!({
+            "name": "Untitled", "tagline": "", "colors": ["#e6c449","#0A0A0A","#F5F5F0"],
+            "tone": "", "audience": ""
+        }));
+    Json(serde_json::json!({"ok": true, "brand": brand, "cost_pt": cost})).into_response()
+}
+
 async fn success_page() -> Html<&'static str> {
     Html(r#"<!DOCTYPE html><html><head><meta charset=UTF-8><meta name="viewport" content="width=device-width,initial-scale=1"><style>
     body{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue','Hiragino Sans',sans-serif;
@@ -29767,9 +29888,56 @@ fn compute_user_preferences(conn: &Connection, user_id: i64) -> serde_json::Valu
 
 // ── CV autonomous pulse ──────────────────────────────────────────────────────
 
-/// Public config endpoint — the LP / exit-funnel script reads variant choices
-/// here so cv_pulse can adjust UX without a redeploy.
+/// GET /api/cv/config — public projection of cv_config used by the frontend
+/// hero CTA + exit-funnel modal.
+///
+/// Security note (H038 fix, 2026-05-20): this endpoint used to dump every
+/// row of `cv_config`. The table now also carries internal telemetry that
+/// must not be anonymously exposed:
+///   - `agent_tg_*`        — last-fired timestamps + content hashes
+///                            (Constitution §21 funnel_anomaly's signal
+///                             surface; revealing them lets an attacker
+///                             time bot reactions)
+///   - `email_critic_*`    — cohort names + last-send timestamps
+///                            (unannounced A/B cohorts, drop_preview etc.)
+///   - `chronicle_vote_notified:<email>` — *the key itself contains a
+///                            customer email*; this is the H038 PII bug
+///   - `next_mugen_seed_prompt`  — unreleased Gemini image prompt
+///   - `wearmu_x_user_id`         — operational X account ID
+///   - `mention_last_seen_id`     — internal cursor
+///   - `last_celebrated_purchase_id`, `last_cron_alert`, `taxigen_*` — ops
+///
+/// Strategy: default-deny via allow-list. Adding a new frontend-readable
+/// key means adding it (or its prefix) to ALLOW. Everything else stays
+/// internal — `cv_get` server-side still reads the full table.
 async fn cv_public_config(State(db): State<Db>) -> impl IntoResponse {
+    // Exact keys the public site reads (grep static/ for the consumers).
+    const ALLOW_EXACT: &[&str] = &[
+        "hero_cta_variant",        // /you  hero CTA A/B/C
+        "modal_cooldown_hours",    // exit-funnel.js cooldown
+        "modal_scroll_required",   // exit-funnel.js trigger guard
+        "monthly_price_jpy",       // PDP / pricing copy
+        "pack_3mo_price_jpy",      // PDP / pricing copy
+        "coupon_percent_off",      // PDP / pricing copy
+        "weather_condition",       // /weather widget
+        "weather_last_announced_c",
+        "weather_cached_at",
+        "domain_days_remaining",   // /domain countdown widget
+        "domain_expiry_iso",
+        "domain_expiry_unix",
+        "vault_founder_note",      // /vault page (public note)
+        "vault_tomorrow_hint",
+    ];
+    // Prefix allow-list for safe key families. Add a prefix iff every key
+    // matching it is genuinely public-by-design.
+    const ALLOW_PREFIX: &[&str] = &[
+        "donation_dest__",         // partner→destination routing, public-by-design
+    ];
+    let is_public = |k: &str| -> bool {
+        if k.contains('@') { return false; } // belt-and-suspenders against email-in-key
+        if ALLOW_EXACT.iter().any(|x| *x == k) { return true; }
+        ALLOW_PREFIX.iter().any(|p| k.starts_with(p))
+    };
     let mut out = serde_json::Map::new();
     {
         let conn = db.lock().unwrap();
@@ -29780,7 +29948,9 @@ async fn cv_public_config(State(db): State<Db>) -> impl IntoResponse {
         let it = stmt.query_map([], |r| Ok::<_, rusqlite::Error>((r.get::<_, String>(0)?, r.get::<_, String>(1)?)));
         if let Ok(rows) = it {
             for row in rows.flatten() {
-                out.insert(row.0, serde_json::Value::String(row.1));
+                if is_public(&row.0) {
+                    out.insert(row.0, serde_json::Value::String(row.1));
+                }
             }
         }
     }
@@ -54594,6 +54764,9 @@ async fn main() {
         // MU × YOU collab
         .route("/you", get(you_page))
         .route("/you.html", get(you_page))
+        .route("/you/collab", get(you_collab_page))
+        .route("/api/proposal/personal/derive", post(personal_derive))
+        .route("/api/you/collab/brand", post(you_collab_brand))
         .route("/api/you/subscribe", post(you_subscribe))
         .route("/api/you/daily/:token", get(you_daily))
         .route("/api/you/feedback", post(you_feedback))
@@ -63807,15 +63980,29 @@ async fn api_funnel_event(
     {
         return (StatusCode::BAD_REQUEST, "field length").into_response();
     }
+    // Funnel staging order: pageview → cta_click → checkout_attempt
+    // → checkout_start → checkout_paid.
+    //
+    // CLIENT-allowed events (this endpoint) — UX signals only the browser
+    // can observe. The server cannot synthesize these honestly:
+    //   - pageview / cta_click / checkout_attempt → browser-only signals
+    //   - you_skip / you_like / share             → UI engagement
+    //
+    // SERVER-only events go through `funnel_track_server` and bypass this
+    // endpoint entirely. Listed below so a reader of this file sees the
+    // full set without grepping:
+    //   - checkout_start   → after Stripe session created  (main.rs:3063)
+    //   - checkout_paid    → on Stripe webhook fulfilment   (main.rs:14439)
+    //   - email_opened/clicked → email tracking pixel       (main.rs:13863)
+    //
+    // H005 fix (2026-05-20): `checkout_paid` and `checkout_start` were
+    // previously in this allow-list, so any anonymous caller could inject
+    // synthetic conversions and corrupt funnel_anomaly / scorecard stats.
+    // Server-side firing was already happening; removing them from this
+    // list closes the spoof vector without losing any signal.
     const ALLOWED: &[&str] = &[
-        // Funnel staging order: pageview → cta_click → checkout_attempt
-        // → checkout_start → checkout_paid.
-        // - `checkout_attempt` fires CLIENT-side just before fetch('/api/checkout')
-        // - `checkout_start` fires SERVER-side after Stripe session is created
-        // The gap between them reveals JS/network errors that otherwise look
-        // like a silent 0-conv (Plan-agent W1 #2 diagnosis).
-        "pageview", "cta_click", "checkout_attempt", "checkout_start", "checkout_paid",
-        "you_register", "you_skip", "you_like", "share",
+        "pageview", "cta_click", "checkout_attempt",
+        "you_skip", "you_like", "share",
     ];
     if !ALLOWED.contains(&req.event.as_str()) {
         return (StatusCode::BAD_REQUEST, "unknown event").into_response();
