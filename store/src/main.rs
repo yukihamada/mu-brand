@@ -10870,9 +10870,21 @@ a:hover{{text-decoration:underline}}
     </p>
     <div class="share">
       <a href="https://twitter.com/intent/tweet?text=MU%20%E3%81%8C%2014%E6%97%A5%E3%81%A7%20100%E6%9E%9A%E3%81%AE%20MUGEN%20T%E3%82%B7%E3%83%A3%E3%83%84%E3%82%92%E5%A3%B2%E3%82%8B%E6%8C%91%E6%88%A6%E3%82%92%E3%81%97%E3%81%A6%E3%81%84%E3%82%8B%E3%80%82&url=https%3A%2F%2Fwearmu.com%2F100" target="_blank" rel="noopener">▲ X でシェア</a>
+      <a href="https://social-plugins.line.me/lineit/share?url=https%3A%2F%2Fwearmu.com%2F100" target="_blank" rel="noopener">▲ LINE でシェア</a>
+      <a href="#" id="t100-copy" onclick="navigator.clipboard.writeText('https://wearmu.com/100'); this.textContent='✓ コピーしました'; setTimeout(()=>{{this.textContent='▲ リンクを コピー';}}, 2000); return false;">▲ リンクを コピー</a>
       <a href="/mugen">▲ 全ドロップを見る</a>
       <a href="/about.html">▲ MU とは</a>
     </div>
+  </div>
+
+  <div class="section">
+    <h2>達成 ・ 未達 で どうなる</h2>
+    <p class="sub" style="font-size:0.85rem;line-height:1.85">
+      <strong>100枚 完売</strong>: AI 運営 が 市場 で 通用 する 証明。 5/31 23:59 に X で 結果発表 + 翌週 から Phase 2 (¥150K/月 ads 継続 + 海外 展開 検討)。<br>
+      <strong>50-99枚</strong>: 仮説 部分成立。 MU を maintenance 化 し ない、 が pace を 1着/日 等 に slow down。<br>
+      <strong>0-49枚</strong>: 仮説 不成立。 MU を maintenance に 落とし、 JiuFlow / SOLUNA に 集中。 既購入者 へ の 配送 ・ サポート は 継続。<br>
+      <span style="opacity:0.6">どの 結果 でも 数字 は 隠さず <a href="/transparency" style="color:var(--y)">/transparency</a> に 出します。</span>
+    </p>
   </div>
 
   <div class="foot">
