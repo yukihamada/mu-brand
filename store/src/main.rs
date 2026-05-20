@@ -7826,7 +7826,70 @@ async fn show_bounty_claim_page(
         return bounty_claim_error_page("このリンクは期限切れです (発行から 30 日以上経過しました)。", 410);
     }
 
-    // Up to 12 existing MU tees with artwork + stock.
+    // Bounty claim flow now goes through Stripe Checkout (¥66 symbolic
+    // charge + shipping_address_collection). The wearmu.com/bounty/claim
+    // URL exists as a stable, brand-recognizable entry point; visiting it
+    // creates a fresh Checkout Session and 303-redirects there so the
+    // recipient never has to copy a 600-char Stripe URL.
+    //
+    // Each visit makes a new Session. Stripe sessions cost nothing to
+    // create, expire in 24h, and are invalidated on first payment, so
+    // making a fresh one per visit is the cleanest reliability model
+    // (no "Stripe session expired, try again" loops).
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if !stripe_key.is_empty() {
+        let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+        let success_url = format!("{}/bounty/claim/{}?paid=ok", base_url, token);
+        let cancel_url  = format!("{}/bounty/claim/{}?paid=cancel", base_url, token);
+        let countries = [
+            "JP","US","CA","GB","DE","FR","NL","IT","ES","SE","NO","DK","FI",
+            "CH","AT","BE","IE","PL","CZ","PT","AU","NZ","SG","HK","TW","KR",
+            "TH","MY","ID","PH","VN","IN","BR","MX","AR","ZA","IL","AE",
+        ];
+        let bid = row.bounty_id;
+        let mut cs_form: Vec<(String, String)> = vec![
+            ("mode".into(), "payment".into()),
+            ("success_url".into(), success_url),
+            ("cancel_url".into(), cancel_url),
+            ("payment_intent_data[description]".into(),
+                format!("MU Bounty 受領 #{} — 配送先確認のシンボル決済", bid)),
+            ("payment_intent_data[metadata][kind]".into(), "bounty_claim".into()),
+            ("payment_intent_data[metadata][bounty_token]".into(), token.clone()),
+            ("payment_intent_data[metadata][bounty_id]".into(), bid.to_string()),
+            ("metadata[kind]".into(), "bounty_claim".into()),
+            ("metadata[bounty_token]".into(), token.clone()),
+            ("metadata[bounty_id]".into(), bid.to_string()),
+            ("line_items[0][price_data][currency]".into(), "jpy".into()),
+            ("line_items[0][price_data][unit_amount]".into(), "66".into()),
+            ("line_items[0][price_data][product_data][name]".into(),
+                format!("MU Bounty 受領 — #{} 配送先確認", bid)),
+            ("line_items[0][quantity]".into(), "1".into()),
+        ];
+        for (i, c) in countries.iter().enumerate() {
+            cs_form.push((
+                format!("shipping_address_collection[allowed_countries][{}]", i),
+                c.to_string(),
+            ));
+        }
+        let client = reqwest::Client::new();
+        if let Ok(resp) = client.post("https://api.stripe.com/v1/checkout/sessions")
+            .basic_auth(&stripe_key, Some(""))
+            .form(&cs_form).send().await
+        {
+            let raw = resp.text().await.unwrap_or_default();
+            let v: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
+            if let Some(url) = v.get("url").and_then(|x| x.as_str()) {
+                return axum::response::Redirect::to(url).into_response();
+            }
+            eprintln!("[bounty_claim_page] stripe returned no url: {}",
+                raw.chars().take(400).collect::<String>());
+        }
+        // Stripe HTTP error — fall through to legacy form so the recipient
+        // can still claim (better than 500 in the middle of accepting a bounty).
+    }
+
+    // Legacy fallback form (only reached if STRIPE_SECRET_KEY missing or
+    // Stripe API errored above). Up to 12 existing MU tees with artwork + stock.
     struct TeePick { id: i64, name: String, mockup: String, brand: String }
     let picks: Vec<TeePick> = {
         let conn = db.lock().unwrap();
