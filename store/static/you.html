@@ -380,7 +380,7 @@ footer a:hover{opacity:1}
       <div class="how-step">
         <div class="how-num">01 — Tell us</div>
         <div class="how-step-title">好みを 1 分で登録</div>
-        <div class="how-step-desc">気分のキーワード、好きな色、着るシーン、サイズ。AI のプロンプトに変換され、あなた専用の生成ループが起動します。</div>
+        <div class="how-step-desc">気分のキーワード、好きな色、着るシーン。AI のプロンプトに変換され、あなた専用の生成ループが起動します。サイズは仕立てる時に選ぶので登録は1分以下で終わります。</div>
         <div class="how-step-meta">Email + Taste</div>
       </div>
       <div class="how-step">
@@ -444,14 +444,6 @@ footer a:hover{opacity:1}
           <span class="chip">休日</span><span class="chip">旅</span>
           <span class="chip">ジム</span><span class="chip">パートナー</span>
           <span class="chip">家</span><span class="chip">夜の外出</span>
-        </div>
-      </div>
-
-      <div class="field">
-        <div class="label">サイズ <span class="req">REQUIRED</span></div>
-        <div class="size-row" data-name="size" data-multi="0">
-          <div class="size">XS</div><div class="size on">S</div><div class="size">M</div>
-          <div class="size">L</div><div class="size">XL</div>
         </div>
       </div>
 
@@ -527,6 +519,20 @@ footer a:hover{opacity:1}
           <button class="rx-btn" data-rx="meh"  type="button">😐 微妙</button>
           <button class="rx-btn" data-rx="skip" type="button">👋 Skip</button>
           <span id="rx-msg" style="font-size:10px;opacity:0.65;margin-left:6px"></span>
+        </div>
+        <!-- Size picker at PURCHASE time (Yuki 2026-05-21).
+             Removed from signup; selected here right before 仕立てる.
+             Default M, saved to localStorage so returning users pre-select. -->
+        <div class="field" style="margin:18px 0 12px">
+          <div class="label" style="font-size:11px;letter-spacing:0.2em;opacity:0.75;margin-bottom:8px">サイズ <span style="font-size:9px;opacity:0.55">(仕立てる時に選ぶ)</span></div>
+          <div class="size-row" id="claim-size-row" data-name="claim_size" data-multi="0">
+            <div class="size" data-s="XS">XS</div>
+            <div class="size" data-s="S">S</div>
+            <div class="size on" data-s="M">M</div>
+            <div class="size" data-s="L">L</div>
+            <div class="size" data-s="XL">XL</div>
+            <div class="size" data-s="XXL">XXL</div>
+          </div>
         </div>
         <div class="preview-actions">
           <button class="btn btn-primary" id="claim-btn">この一着を仕立てる</button>
@@ -1411,6 +1417,33 @@ $('#slug-save').addEventListener('click', async ()=>{
   }
 });
 
+// Wire size-row picker (sticky to localStorage) and feed it into /api/you/claim.
+(function () {
+  var savedSize = null;
+  try { savedSize = localStorage.getItem('mu_you_size'); } catch (_) {}
+  var row = document.getElementById('claim-size-row');
+  if (row) {
+    if (savedSize) {
+      row.querySelectorAll('.size').forEach(function (s) {
+        s.classList.toggle('on', s.getAttribute('data-s') === savedSize);
+      });
+    }
+    row.querySelectorAll('.size').forEach(function (s) {
+      s.addEventListener('click', function () {
+        row.querySelectorAll('.size').forEach(function (x) { x.classList.remove('on'); });
+        s.classList.add('on');
+        var v = s.getAttribute('data-s');
+        try { localStorage.setItem('mu_you_size', v); } catch (_) {}
+      });
+    });
+  }
+  function pickedSize () {
+    var sel = row ? row.querySelector('.size.on') : null;
+    return sel ? sel.getAttribute('data-s') : null;
+  }
+  window.__youPickedSize = pickedSize;
+})();
+
 $('#claim-btn').addEventListener('click', async ()=>{
   const id = $('#preview').dataset.designId;
   if (!token || !id) {
@@ -1419,7 +1452,8 @@ $('#claim-btn').addEventListener('click', async ()=>{
   $('#claim-btn').disabled = true;
   $('#claim-btn').textContent = '決済画面に移動中…';
   try {
-    const r = await api('/api/you/claim', {token, design_id: Number(id)});
+    const size = (window.__youPickedSize && window.__youPickedSize()) || 'M';
+    const r = await api('/api/you/claim', {token, design_id: Number(id), size});
     if (r.url) {
       window.location.href = r.url;
     } else {

@@ -28368,6 +28368,11 @@ struct YouFeedbackBody {
 struct YouClaimBody {
     token: String,
     design_id: i64,
+    /// Optional size override picked at purchase time (Yuki: 2026-05-21).
+    /// Falls back to you_users.size when absent. Validated against
+    /// XS/S/M/L/XL/XXL — invalid values are silently ignored (fallback).
+    #[serde(default)]
+    size: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -31666,6 +31671,15 @@ pub fn profit_split_breakdown(net_after_tax_jpy: i64) -> serde_json::Value {
         "constitution_section": "§29",
         "supersedes": "§28 (flat 50/10/10/10/10/10) → §29 progressive 50→90%",
     })
+}
+
+/// GET /sen-dojo — Sen-Dojo Initiative concept page。 §28 規範 ×
+/// Champion's Kit 物販 ¥4,900 → ¥2,450 積立 → ¥245M 累計 → 道場 1 棟（空手＋柔術
+/// 子供向け）の自動還流メカニズムを公開。 最初のパートナーは取締役会上程中で、
+/// 公表は契約決議後。 売上カウンター・道場開設実績は契約後にこのページで動く。
+const SEN_DOJO_HTML: &str = include_str!("../static/sen_dojo.html");
+async fn public_sen_dojo_page() -> Html<&'static str> {
+    Html(SEN_DOJO_HTML)
 }
 
 /// GET /api/profit-split — 現在の推定 P + 6 セグメント分配額を返す。
@@ -49082,7 +49096,7 @@ async fn you_claim(
             params![body.token],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         ).ok();
-        let (uid, email, size) = match row {
+        let (uid, email, stored_size) = match row {
             Some(v) => v,
             None => return (StatusCode::NOT_FOUND, "invalid token").into_response(),
         };
@@ -49098,13 +49112,31 @@ async fn you_claim(
         if owner_id != uid {
             return (StatusCode::FORBIDDEN, "not your design").into_response();
         }
-        (email, size, name, day_num)
+        // Size override at purchase time (Yuki 2026-05-21).
+        // Use body.size if valid, else fall back to stored. Persist override.
+        let final_size = body.size.as_deref().map(str::to_uppercase)
+            .filter(|s| ["XS","S","M","L","XL","XXL"].contains(&s.as_str()))
+            .unwrap_or_else(|| stored_size.clone());
+        if final_size != stored_size {
+            conn.execute(
+                "UPDATE you_users SET size=?, updated_at=? WHERE id=?",
+                params![final_size, chrono_now(), uid],
+            ).ok();
+        }
+        (email, final_size, name, day_num)
     };
 
     let serial = format!("YOU#{:04}", body.design_id);
     let display_name = format!("MU × YOU — {} ({}, {})", design_name, size, serial);
     let price_jpy: i64 = 6_800;
     let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    // Product image for Stripe Checkout (Yuki 2026-05-21).
+    let image_url = format!("{}/api/you/design/{}/image.png", base_url, body.design_id);
+    let day_num_str = day_num.to_string();
+    let design_id_str = body.design_id.to_string();
+    let price_str = price_jpy.to_string();
+    let success_url = format!("{}/success?sid={{CHECKOUT_SESSION_ID}}", base_url);
+    let cancel_url = format!("{}/you", base_url);
 
     let client = reqwest::Client::new();
     let resp = client
@@ -49114,12 +49146,13 @@ async fn you_claim(
             ("mode", "payment"),
             ("currency", "jpy"),
             ("line_items[0][price_data][currency]", "jpy"),
-            ("line_items[0][price_data][product_data][name]", &display_name),
-            ("line_items[0][price_data][unit_amount]", &price_jpy.to_string()),
+            ("line_items[0][price_data][product_data][name]", display_name.as_str()),
+            ("line_items[0][price_data][product_data][images][0]", image_url.as_str()),
+            ("line_items[0][price_data][unit_amount]", price_str.as_str()),
             ("line_items[0][quantity]", "1"),
-            ("success_url", &format!("{}/success?sid={{CHECKOUT_SESSION_ID}}", base_url)),
-            ("cancel_url", &format!("{}/you", base_url)),
-            ("customer_email", &email),
+            ("success_url", success_url.as_str()),
+            ("cancel_url", cancel_url.as_str()),
+            ("customer_email", email.as_str()),
             ("shipping_address_collection[allowed_countries][0]", "JP"),
             ("shipping_address_collection[allowed_countries][1]", "US"),
             ("shipping_address_collection[allowed_countries][2]", "GB"),
@@ -49130,10 +49163,10 @@ async fn you_claim(
             ("shipping_address_collection[allowed_countries][7]", "TW"),
             ("shipping_address_collection[allowed_countries][8]", "HK"),
             ("allow_promotion_codes", "true"),
-            ("metadata[you_design_id]", &body.design_id.to_string()),
-            ("metadata[you_size]", &size),
-            ("metadata[you_serial]", &serial),
-            ("metadata[you_day_num]", &day_num.to_string()),
+            ("metadata[you_design_id]", design_id_str.as_str()),
+            ("metadata[you_size]", size.as_str()),
+            ("metadata[you_serial]", serial.as_str()),
+            ("metadata[you_day_num]", day_num_str.as_str()),
         ])
         .send().await;
 
@@ -51149,6 +51182,25 @@ async fn main() {
                 status='sample_printful_draft'
           WHERE stripe_session LIKE 'cs_live_b10sUIwHbPD9CPNqTmXN9kKbIHCVgNOSo5D3PkYdIfNpSr0J8diPtgM5kY|%'
             AND printful_order_id IS NULL",
+        [],
+    ).ok();
+
+    // ── One-time cleanup: bounty canaries in funnel_events (H005 PoC) ──
+    // The 2026-05-14 + 2026-05-19 bounty submissions by nbhrarys (#18, #57)
+    // injected canary funnel rows to prove anonymous spoofability:
+    //   - MU-BOUNTY-H005-d96cc415fd4e          (5/14 PoC)
+    //   - MU-BOUNTY-RECHECK-H005D-f5058003-705 (5/19 re-verification)
+    // Both rows poison funnel_anomaly / customer_scorecard inputs and must
+    // be evicted now that the underlying spoof has been fixed (H005). The
+    // event-type filter is the closed set those canaries could land in.
+    // Idempotent: once gone, the WHERE clause matches zero rows.
+    conn.execute(
+        "DELETE FROM funnel_events
+          WHERE event IN ('checkout_paid','pageview','cta_click','share','checkout_attempt')
+            AND (
+              json_extract(COALESCE(extra,'{}'), '$.source') LIKE 'MU-BOUNTY-%'
+              OR json_extract(COALESCE(extra,'{}'), '$._v.source') LIKE 'MU-BOUNTY-%'
+            )",
         [],
     ).ok();
 
@@ -54803,6 +54855,7 @@ async fn main() {
         .route("/donations", get(public_donations_page))
         .route("/profit-split", get(public_profit_split_page))
         .route("/api/profit-split", get(public_profit_split_api))
+        .route("/sen-dojo", get(public_sen_dojo_page))
         .route("/api/sample_personas", get(list_sample_personas))
         .route("/api/admin/sample_grow", post(admin_sample_grow))
         .route("/api/admin/lifestyle", axum::routing::patch(admin_lifestyle))
