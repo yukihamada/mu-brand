@@ -11005,6 +11005,169 @@ async fn api_niche_outreach_list(
     Json(serde_json::json!({ "niche": slug, "outreach": rows, "count": rows.len() }))
 }
 
+/// POST /api/collab/apply — one-click B2B / dojo / partner / influencer
+/// inbound application form. Replaces the mailto-only flow on /bjj/about
+/// so applicants can submit without opening their email client.
+///
+/// Body: { niche_slug, kind, name, contact_email, contact_url?, message? }
+/// On success: row → mu_outreach, notify Yuki + ack the applicant via Resend.
+async fn collab_apply(
+    State(db): State<Db>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let niche_slug = body.get("niche_slug").and_then(|v| v.as_str())
+        .map(str::trim).filter(|s| !s.is_empty())
+        .unwrap_or("collab");
+    let kind = body.get("kind").and_then(|v| v.as_str())
+        .map(str::trim).filter(|s| matches!(*s, "dojo"|"partner"|"influencer"|"press"))
+        .unwrap_or("partner");
+    let name = body.get("name").and_then(|v| v.as_str())
+        .unwrap_or("").trim().to_string();
+    let contact_email_raw = body.get("contact_email").and_then(|v| v.as_str())
+        .unwrap_or("").trim().to_string();
+    let contact_url = body.get("contact_url").and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let message = body.get("message").and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+
+    if name.is_empty() || name.len() > 200 {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":"name required (1-200 chars)"})))
+            .into_response();
+    }
+    let contact_email = match validate_email(&contact_email_raw) {
+        Ok(e) => e,
+        Err(m) => return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":format!("email: {}", m)})))
+            .into_response(),
+    };
+
+    let niche_known: bool = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT 1 FROM mu_niches WHERE slug=? LIMIT 1",
+            params![niche_slug], |_| Ok(true),
+        ).unwrap_or(false)
+    };
+    if !niche_known {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":format!("unknown niche: {}", niche_slug)})))
+            .into_response();
+    }
+
+    // 10-min per-email dedupe per niche (avoids double-submit + bot spam).
+    let now = chrono_now();
+    let recent: bool = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT 1 FROM mu_outreach
+             WHERE niche_slug=? AND contact_email=?
+               AND CAST(strftime('%s','now') AS INTEGER) -
+                   CAST(strftime('%s', created_at) AS INTEGER) < 600
+             LIMIT 1",
+            params![niche_slug, contact_email], |_| Ok(true),
+        ).unwrap_or(false)
+    };
+    if recent {
+        return Json(serde_json::json!({
+            "ok": true,
+            "duplicate": true,
+            "message": "受け取り 済み — 24 時間 以内 に 返信 します"
+        })).into_response();
+    }
+
+    let inserted_id: i64 = {
+        let conn = db.lock().unwrap();
+        conn.execute(
+            "INSERT INTO mu_outreach
+              (niche_slug, kind, alias, contact_url, contact_email,
+               status, last_action_at, notes, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, 'replied', ?, ?, ?, ?)",
+            params![
+                niche_slug, kind, name,
+                contact_url.as_deref(),
+                contact_email,
+                now,
+                message.as_deref(),
+                now, now,
+            ],
+        ).ok();
+        conn.last_insert_rowid()
+    };
+
+    // Notify Yuki + ack the applicant via Resend (silently no-op if no key).
+    let yuki_to = env::var("BJJ_INBOX_TO").unwrap_or_else(|_| "bjj@enablerdao.com".into());
+    if let Ok(resend_key) = env::var("RESEND_API_KEY") {
+        if !resend_key.is_empty() {
+            let body_html = format!(
+                "<p><b>新規 collab apply</b></p>\
+                 <ul>\
+                   <li>niche: <b>{niche}</b></li>\
+                   <li>kind: <b>{kind}</b></li>\
+                   <li>name: <b>{name}</b></li>\
+                   <li>email: <a href=\"mailto:{email}\">{email}</a></li>\
+                   <li>url: {url}</li>\
+                 </ul>\
+                 <p><b>message:</b><br>{msg}</p>\
+                 <p style=\"color:#888;font-size:12px\">id #{id} · {ts} · admin: <code>UPDATE mu_outreach SET status='agreed' WHERE id={id};</code></p>",
+                niche = html_escape(niche_slug),
+                kind  = html_escape(kind),
+                name  = html_escape(&name),
+                email = html_escape(&contact_email),
+                url   = contact_url.as_deref().map(html_escape).unwrap_or_else(|| "—".into()),
+                msg   = message.as_deref().map(html_escape).unwrap_or_else(|| "(none)".into()),
+                id    = inserted_id,
+                ts    = html_escape(&now),
+            );
+            let _ = reqwest::Client::new()
+                .post("https://api.resend.com/emails")
+                .bearer_auth(&resend_key)
+                .json(&serde_json::json!({
+                    "from": "━◯━ MU collab <noreply@wearmu.com>",
+                    "to": [yuki_to.clone()],
+                    "subject": format!("[MU collab] {} / {} — {}", niche_slug, kind, name),
+                    "html": body_html,
+                    "reply_to": contact_email.clone(),
+                }))
+                .send().await;
+
+            let ack_html = format!(
+                "<p>{name} 様、</p>\
+                 <p>MU の collab フォーム から の ご応募 を 受け取りました。</p>\
+                 <p><b>24 時間 以内 に</b> 創業者 (濱田 優貴) 自身 から 返信 します。</p>\
+                 <p style=\"color:#555;font-size:13px;border-left:3px solid #e6c449;padding-left:10px;margin:24px 0\">\
+                 niche: {niche} / kind: {kind}<br>\
+                 受付 番号: #{id}\
+                 </p>\
+                 <p style=\"color:#888;font-size:12px\">— MU / 株式会社 イネブラ</p>",
+                name  = html_escape(&name),
+                niche = html_escape(niche_slug),
+                kind  = html_escape(kind),
+                id    = inserted_id,
+            );
+            let _ = reqwest::Client::new()
+                .post("https://api.resend.com/emails")
+                .bearer_auth(&resend_key)
+                .json(&serde_json::json!({
+                    "from": "━◯━ MU <noreply@wearmu.com>",
+                    "to": [contact_email.clone()],
+                    "subject": "MU collab — ご応募 ありがとうございます (24h 以内 に 返信)",
+                    "html": ack_html,
+                    "reply_to": yuki_to,
+                }))
+                .send().await;
+        }
+    }
+
+    Json(serde_json::json!({
+        "ok": true,
+        "id": inserted_id,
+        "niche_slug": niche_slug,
+        "kind": kind,
+        "message": "24 時間 以内 に 返信 します",
+    })).into_response()
+}
+
 async fn challenge_100_progress_json(State(db): State<Db>) -> Json<serde_json::Value> {
     let (sold, latest_drop) = {
         let conn = db.lock().unwrap();
@@ -56022,6 +56185,7 @@ async fn main() {
         .route("/api/100/progress", get(challenge_100_progress_json))
         .route("/api/niches", get(api_niches_list))
         .route("/api/niches/:slug/outreach", get(api_niche_outreach_list))
+        .route("/api/collab/apply", post(collab_apply))
         // /nouns: DAO approval pending → section hidden from nav (2026-05-13).
         // Proposal text remains at /nouns-proposal.html for transparency.
         .route("/nouns", get(|| async { axum::response::Redirect::permanent("/nouns-proposal.html") }))
