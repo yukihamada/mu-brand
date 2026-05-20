@@ -110,6 +110,13 @@ fn eth_enabled()  -> bool { !is_placeholder("MU_ETH_RECIPIENT") && !is_placehold
 /// GET /api/payment_methods — UI calls this on init to know which payment
 /// methods to render. JPY is always on; crypto methods only on when both
 /// the receiver wallet AND its webhook auth secret are real.
+///
+/// Security note (H039 fix, 2026-05-20): the previous version surfaced the
+/// literal Fly secret variable names ("MU_ETH_RECIPIENT or
+/// ALCHEMY_WEBHOOK_SIGNING_KEY is placeholder") in `_reason_unavailable`.
+/// That gave anonymous callers `fly secrets list` -tier reconnaissance.
+/// We now return a generic disabled reason — the per-secret detail still
+/// surfaces on /health, which is operator-facing.
 pub async fn payment_methods_handler(State(_db): State<Db>) -> impl IntoResponse {
     Json(serde_json::json!({
         "jpy":  true,
@@ -117,8 +124,8 @@ pub async fn payment_methods_handler(State(_db): State<Db>) -> impl IntoResponse
         "sol":  sol_enabled(),
         "eth":  eth_enabled(),
         "_reason_unavailable": {
-            "usdc_sol": if !usdc_enabled() { Some("MU_SOL_RECIPIENT or HELIUS_WEBHOOK_AUTH is placeholder") } else { None },
-            "eth":      if !eth_enabled()  { Some("MU_ETH_RECIPIENT or ALCHEMY_WEBHOOK_SIGNING_KEY is placeholder") } else { None },
+            "usdc_sol": if !usdc_enabled() { Some("crypto temporarily unavailable") } else { None },
+            "eth":      if !eth_enabled()  { Some("crypto temporarily unavailable") } else { None },
         }
     })).into_response()
 }
