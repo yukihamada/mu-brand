@@ -56058,22 +56058,15 @@ async fn main() {
         .nest_service("/cat", ServeDir::new("static/cat"))
         .nest_service("/dad", ServeDir::new("static/dad"))
         .nest_service("/running", ServeDir::new("static/running"))
-        // Redirect /<collection> (no trailing slash) → /<collection>/ so
-        // relative asset paths in served HTML resolve correctly.
-        .route("/bjj",     get(|| async { axum::response::Redirect::permanent("/bjj/") }))
-        .route("/code",    get(|| async { axum::response::Redirect::permanent("/code/") }))
-        .route("/coffee",  get(|| async { axum::response::Redirect::permanent("/coffee/") }))
-        .route("/zen",     get(|| async { axum::response::Redirect::permanent("/zen/") }))
-        .route("/moon",    get(|| async { axum::response::Redirect::permanent("/moon/") }))
-        .route("/tokyo",   get(|| async { axum::response::Redirect::permanent("/tokyo/") }))
-        .route("/mart",    get(|| async { axum::response::Redirect::permanent("/mart/") }))
-        .route("/mu",      get(|| async { axum::response::Redirect::permanent("/mu/") }))
-        .route("/yoga",    get(|| async { axum::response::Redirect::permanent("/yoga/") }))
-        .route("/fitness", get(|| async { axum::response::Redirect::permanent("/fitness/") }))
-        .route("/gaming",  get(|| async { axum::response::Redirect::permanent("/gaming/") }))
-        .route("/cat",     get(|| async { axum::response::Redirect::permanent("/cat/") }))
-        .route("/dad",     get(|| async { axum::response::Redirect::permanent("/dad/") }))
-        .route("/running", get(|| async { axum::response::Redirect::permanent("/running/") }))
+        // (Removed 2026-05-20: per-collection redirect routes panicked at
+        //  boot with `Invalid route "/bjj": insertion failed due to conflict
+        //  with previously registered route: /bjj/*__private__axum_nest_tail_param`.
+        //  Axum 0.7 does not allow a bare `route("/bjj", ...)` alongside a
+        //  `nest_service("/bjj", ...)` registered above. The bare-slug → slash
+        //  redirect should be reimplemented as a tower middleware (e.g.
+        //  `RedirectAddTrailingSlash`) rather than per-path routes.
+        //  Until then, `/bjj` (no trailing slash) may 404 — users hitting
+        //  bare slugs via marketing links should use the canonical `/bjj/`.)
         .route("/api/collab/account/delete", post(collab_account_delete))
         .route("/api/404/buy", post(not_found_buy))
         .route("/city", get(city_page))
