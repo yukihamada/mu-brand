@@ -20873,6 +20873,83 @@ async fn buy_founder_page() -> Html<&'static str> {
     Html(include_str!("../static/buy-founder.html"))
 }
 
+/// /buy/event — JIU FIGHT × MU 150-piece collab cold-traffic landing.
+/// Visual-first, scarcity-driven (5/24 TOKYO LIVE countdown), single CTA
+/// to SUZURI direct purchase. Target audience: BJJ practitioners +
+/// JIU FIGHT followers via Meta/X paid ads.
+async fn buy_event_page() -> Html<&'static str> {
+    Html(include_str!("../static/buy-event.html"))
+}
+
+/// /buy/today — MUGEN ¥4,900 cold-traffic landing. Hero = latest mockup
+/// + SUZURI direct link, recent 6 grid below. Replaces the concept-heavy
+/// /buy with a visual-first sales page tuned for cold Meta/Google ads.
+/// Diagnosed 2026-05-09: the previous concept-heavy LP returned 0 conv
+/// on ¥42K Ads. This LP leads with the product photo, not the philosophy.
+async fn buy_today_page(State(db): State<Db>) -> Html<String> {
+    const TEMPLATE: &str = include_str!("../static/buy-today.html");
+
+    // Pull the most-recent 6 active MUGEN products with usable mockups +
+    // SUZURI links. Apply the standard Printful-temp-URL fallback (mirrors
+    // get_product) so expired CDN URLs don't render broken images.
+    let latest: Vec<(i64, i64, String, String)> = {
+        let conn = db.lock().unwrap();
+        conn.prepare(
+            "SELECT id, drop_num,
+                    CASE
+                      WHEN mockup_url LIKE 'https://printful-upload.s3%'
+                        OR mockup_url LIKE 'https://files.cdn.printful.com/upload%'
+                      THEN COALESCE(NULLIF(design_url, ''), mockup_url)
+                      ELSE mockup_url
+                    END AS img,
+                    COALESCE(suzuri_url, '') AS suz
+             FROM products
+             WHERE brand='mugen' AND active=1
+               AND mockup_url IS NOT NULL AND mockup_url != ''
+               AND suzuri_url   IS NOT NULL AND suzuri_url   != ''
+             ORDER BY drop_num DESC LIMIT 6"
+        ).ok().and_then(|mut stmt| {
+            stmt.query_map([], |r| Ok((
+                r.get::<_, i64>(0)?, r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?, r.get::<_, String>(3)?,
+            ))).ok().map(|it| it.filter_map(|r| r.ok()).collect())
+        }).unwrap_or_default()
+    };
+
+    // Hero = the latest of those. Fallback to a sane default if the DB is empty.
+    let (hero_img, hero_suzuri, hero_drop) = latest.first()
+        .map(|(_, d, img, suz)| (img.clone(), suz.clone(), format!("#{:03}", d)))
+        .unwrap_or_else(|| (
+            "https://mockups.wearmu.com/hero.png".to_string(),
+            "https://suzuri.jp/yukihama".to_string(),
+            "#---".to_string(),
+        ));
+
+    let recent_grid = latest.iter().map(|(_, d, img, suz)| format!(
+        r##"<a href="{suz}?utm_source=ad&utm_medium=lp&utm_campaign=mugen_today&utm_content=grid{d}" target="_blank" rel="noopener" aria-label="MUGEN #{d:03} を ¥4,900 で 買う"><img src="{img}" alt="MUGEN #{d:03}" loading="lazy"><span class="label">#{d:03}</span></a>"##,
+        suz = html_attr_escape(suz),
+        img = html_attr_escape(img),
+        d = d,
+    )).collect::<String>();
+
+    let body = TEMPLATE
+        .replace("{HERO_IMG_OG}", &html_attr_escape(&hero_img))
+        .replace("{HERO_IMG}",    &html_attr_escape(&hero_img))
+        .replace("{HERO_SUZURI}", &html_attr_escape(&hero_suzuri))
+        .replace("{HERO_DROP}",   &html_attr_escape(&hero_drop))
+        .replace("{RECENT_GRID}", &recent_grid);
+    Html(body)
+}
+
+/// /buy/yours — MU × YOU short-funnel cold-traffic landing. 3-input form
+/// (name / love / mood), no email gate up front. On submit, persists the
+/// seed in sessionStorage + URL params and bounces to /you (full funnel)
+/// which hydrates from the seed. Target audience: TikTok/Reels viewers
+/// for "make your own T-shirt" novelty.
+async fn buy_yours_page() -> Html<&'static str> {
+    Html(include_str!("../static/buy-yours.html"))
+}
+
 /// Return (ISO-ish JST string, human JP label) for the next Founder Edition
 /// drop (春分・夏至・秋分・冬至 21:00 JST after now). Skips past dates.
 /// Dates are the JMA astronomical approximations for 2026–2030; refresh
@@ -51100,7 +51177,7 @@ const RESERVED_SLUGS: &[&str] = &[
     "robots.txt", "sitemap.xml", "manifest.json",
     "favicon.ico", "favicon.svg", "favicon-16x16.png", "favicon-32x32.png",
     "apple-touch-icon.png", "icon-192.png", "icon-512.png", "og.jpg",
-    "you.html", "tokushoho.html", "city.html", "about.html", "press.html",
+    "you.html", "tokushoho.html", "faq.html", "city.html", "about.html", "press.html",
     "nouns-proposal.html", "nouns-proposal", "index.html",
     // common reservations
     "admin", "auth", "login", "logout", "signup", "settings", "help",
@@ -56382,6 +56459,12 @@ async fn main() {
         .route("/buy", get(buy_page))
         .route("/buy/founder", get(buy_founder_page))
         .route("/api/checkout/founder", post(founder_checkout))
+        // Cold-traffic ad landings (visual-first, single CTA). Each targets
+        // a different paid channel + audience — see handler doc comments
+        // for details. Must come before `/buy/:id` since the id is i64.
+        .route("/buy/event", get(buy_event_page))
+        .route("/buy/today", get(buy_today_page))
+        .route("/buy/yours", get(buy_yours_page))
         .route("/buy/:id", get(buy_page_with_id))
         .route("/collections/:brand", get(collection_page))
         .route("/api/brand_copy/:brand", get(api_brand_copy))
