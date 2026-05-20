@@ -10940,6 +10940,71 @@ a:hover{{text-decoration:underline}}
 const CHALLENGE_100_START_UTC:    &str = "2026-05-17T15:00:00Z";
 const CHALLENGE_100_DEADLINE_UTC: &str = "2026-05-31T14:59:59Z";
 
+/// GET /api/niches — list active niches with budget + KPI + entry URL.
+/// Public read-only (no auth). Yuki + future admin UI use this to render
+/// the multi-niche dashboard.
+async fn api_niches_list(State(db): State<Db>) -> Json<serde_json::Value> {
+    let rows: Vec<serde_json::Value> = {
+        let conn = db.lock().unwrap();
+        conn.prepare(
+            "SELECT slug, name, audience, entry_url, hero_img,
+                    ad_budget_jpy, target_mrr_jpy, status, priority, notes,
+                    created_at, updated_at
+             FROM mu_niches
+             WHERE status = 'active'
+             ORDER BY priority DESC, slug ASC"
+        ).ok().and_then(|mut stmt| {
+            stmt.query_map([], |r| Ok(serde_json::json!({
+                "slug":           r.get::<_, String>(0)?,
+                "name":           r.get::<_, String>(1)?,
+                "audience":       r.get::<_, String>(2)?,
+                "entry_url":      r.get::<_, String>(3)?,
+                "hero_img":       r.get::<_, Option<String>>(4)?,
+                "ad_budget_jpy":  r.get::<_, i64>(5)?,
+                "target_mrr_jpy": r.get::<_, i64>(6)?,
+                "status":         r.get::<_, String>(7)?,
+                "priority":       r.get::<_, i64>(8)?,
+                "notes":          r.get::<_, Option<String>>(9)?,
+                "created_at":     r.get::<_, String>(10)?,
+                "updated_at":     r.get::<_, String>(11)?,
+            }))).ok().map(|it| it.filter_map(|r| r.ok()).collect())
+        }).unwrap_or_default()
+    };
+    Json(serde_json::json!({ "niches": rows, "count": rows.len() }))
+}
+
+/// GET /api/niches/:slug/outreach — list outreach pipeline for a niche.
+/// Email + name are aliased (privacy); status + last_action_at + notes are
+/// the load-bearing fields for the management view.
+async fn api_niche_outreach_list(
+    State(db): State<Db>,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+) -> Json<serde_json::Value> {
+    let rows: Vec<serde_json::Value> = {
+        let conn = db.lock().unwrap();
+        conn.prepare(
+            "SELECT id, kind, alias, contact_url, status,
+                    last_action_at, notes, created_at, updated_at
+             FROM mu_outreach
+             WHERE niche_slug = ?
+             ORDER BY updated_at DESC"
+        ).ok().and_then(|mut stmt| {
+            stmt.query_map(params![slug], |r| Ok(serde_json::json!({
+                "id":             r.get::<_, i64>(0)?,
+                "kind":           r.get::<_, String>(1)?,
+                "alias":          r.get::<_, String>(2)?,
+                "contact_url":    r.get::<_, Option<String>>(3)?,
+                "status":         r.get::<_, String>(4)?,
+                "last_action_at": r.get::<_, Option<String>>(5)?,
+                "notes":          r.get::<_, Option<String>>(6)?,
+                "created_at":     r.get::<_, String>(7)?,
+                "updated_at":     r.get::<_, String>(8)?,
+            }))).ok().map(|it| it.filter_map(|r| r.ok()).collect())
+        }).unwrap_or_default()
+    };
+    Json(serde_json::json!({ "niche": slug, "outreach": rows, "count": rows.len() }))
+}
+
 async fn challenge_100_progress_json(State(db): State<Db>) -> Json<serde_json::Value> {
     let (sold, latest_drop) = {
         let conn = db.lock().unwrap();
@@ -18044,6 +18109,58 @@ fn record_donation_accrual(
 /// Seed partner default donation destinations on startup. Idempotent —
 /// uses `INSERT OR IGNORE` so yuki's later admin overrides (cv_set) are
 /// never clobbered.
+/// Seed the multi-niche playbook into mu_niches. Idempotent (INSERT OR IGNORE).
+/// Yuki edits status / budget / priority over time via SQL or admin endpoint;
+/// this only writes rows that don't exist yet.
+fn seed_niches(conn: &Connection) {
+    let now = chrono_now();
+    // (slug, name, audience, entry_url, hero_img, ad_budget_jpy,
+    //  target_mrr_jpy, priority, notes)
+    let seeds: &[(&str, &str, &str, &str, &str, i64, i64, i64, &str)] = &[
+        ("bjj",
+         "BJJ tribe",
+         "ブラジリアン柔術 競技者・観戦者・道場 (Yuki 青帯 + JiuFlow 170+)",
+         "/bjj/about",
+         "/static/ad/jf-hero.png",
+         80_000, 500_000, 100,
+         "5/24 JIU FIGHT イベント が 直近 動かす ハンドル。 影響者 3 名 + 道場 大会 協賛 + ads ¥30K"),
+
+        ("founder",
+         "Founder Edition (luxury)",
+         "BJJ 黒帯 / 富裕 collector / craft 愛好家、 ¥30k-100k tier",
+         "/buy/founder",
+         "/static/founder/hero-on-model.png",
+         20_000, 200_000, 80,
+         "press-driven、 cold ads には 向かない。 retargeting + PR + 著名人 gift"),
+
+        ("collab",
+         "B2B Collab (rev share)",
+         "道場 / 飲食店 / SaaS / イベント 主催 — 在庫 リスク ゼロ で 始められる",
+         "/bjj/about",
+         "/static/ad/jf-hero.png",
+         0, 100_000, 70,
+         "cold ads ゼロ、 outbound のみ。 道場 100 軒 + 飲食 collab (kokon 等)"),
+
+        ("mugen",
+         "MUGEN daily ¥4,900",
+         "AI / streetwear / curious 系、 commodity tier",
+         "/buy/today",
+         "/static/ad/mugen-hero.png",
+         0, 50_000, 30,
+         "過去 ¥42K で 0 conv の 学習 あり。 ads は最小、 organic + retargeting で 動かす"),
+    ];
+
+    for (slug, name, audience, entry, hero, ad_b, mrr, pri, notes) in seeds {
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO mu_niches
+              (slug, name, audience, entry_url, hero_img, ad_budget_jpy,
+               target_mrr_jpy, status, priority, notes, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)",
+            params![slug, name, audience, entry, hero, ad_b, mrr, pri, notes, now, now],
+        );
+    }
+}
+
 fn seed_donation_destinations(conn: &Connection) {
     let seeds: &[(&str, &str)] = &[
         ("donation_dest__kokon",   "港区社会福祉協議会 こども宅食"),
@@ -54693,6 +54810,47 @@ async fn main() {
         CREATE INDEX IF NOT EXISTS idx_mu_purchases_session ON mu_purchases(session_id);
         CREATE INDEX IF NOT EXISTS idx_you_users_email ON you_users(email);
 
+        -- Niche strategy (multi-niche ad / outreach playbook in DB rather
+        -- than scattered docs). Each row = one niche we actively sell to.
+        -- Yuki updates status/budget/kpi over time as we learn what works.
+        -- See docs/NICHE_STRATEGY.md for the underlying rationale.
+        CREATE TABLE IF NOT EXISTS mu_niches (
+            slug             TEXT PRIMARY KEY,        -- 'bjj' | 'founder' | 'collab' | 'mugen' | …
+            name             TEXT NOT NULL,
+            audience         TEXT NOT NULL,           -- one-line description
+            entry_url        TEXT NOT NULL,           -- e.g. '/buy/event' | '/buy/founder' | '/bjj/about'
+            hero_img         TEXT,                    -- '/static/ad/jf-hero.png' etc.
+            ad_budget_jpy    INTEGER NOT NULL DEFAULT 0,
+            target_mrr_jpy   INTEGER NOT NULL DEFAULT 0,
+            status           TEXT NOT NULL DEFAULT 'active',  -- 'active' | 'paused' | 'archived'
+            priority         INTEGER NOT NULL DEFAULT 0,      -- display order (higher first)
+            notes            TEXT,
+            created_at       TEXT NOT NULL,
+            updated_at       TEXT NOT NULL
+        );
+
+        -- Per-niche outreach pipeline (influencer / dojo / press / B2B
+        -- partner). Yuki sends emails by hand; this table tracks status
+        -- so we can see what's pending, who replied, what's converted.
+        CREATE TABLE IF NOT EXISTS mu_outreach (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            niche_slug       TEXT NOT NULL REFERENCES mu_niches(slug),
+            kind             TEXT NOT NULL,    -- 'influencer'|'dojo'|'press'|'partner'
+            alias            TEXT NOT NULL,    -- non-PII handle/initials
+            contact_url      TEXT,             -- public profile URL
+            contact_email    TEXT,             -- email if known (handled with care)
+            status           TEXT NOT NULL DEFAULT 'identified',
+                                               -- 'identified' | 'contacted' | 'replied' |
+                                               -- 'agreed' | 'shipped' | 'photo_received' |
+                                               -- 'declined' | 'archived'
+            last_action_at   TEXT,
+            notes            TEXT,
+            created_at       TEXT NOT NULL,
+            updated_at       TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_mu_outreach_niche  ON mu_outreach(niche_slug);
+        CREATE INDEX IF NOT EXISTS idx_mu_outreach_status ON mu_outreach(status);
+
         -- Constitution §27: per-sale accrual ledger for the 50% post-tax pledge
         -- to 弟子屈町. One row per profitable sale, written by webhooks via
         -- record_donation_accrual(). status='accrued' until a real bank
@@ -54745,6 +54903,7 @@ async fn main() {
     let _ = conn.execute("ALTER TABLE donation_ledger ADD COLUMN destination TEXT", []);
     // (2026-05-16) Seed default partner destinations — overridable via cv_set.
     seed_donation_destinations(&conn);
+    seed_niches(&conn);
     conn.execute_batch("
 
         -- MA Lottery (4/7 Founder Relay): 100日に1回 ランダム1人に MA を贈与。
@@ -55851,6 +56010,8 @@ async fn main() {
         // May 2026 "Sell 100 MUGEN tees in 14 days" challenge LP.
         .route("/100", get(challenge_100_page))
         .route("/api/100/progress", get(challenge_100_progress_json))
+        .route("/api/niches", get(api_niches_list))
+        .route("/api/niches/:slug/outreach", get(api_niche_outreach_list))
         // /nouns: DAO approval pending → section hidden from nav (2026-05-13).
         // Proposal text remains at /nouns-proposal.html for transparency.
         .route("/nouns", get(|| async { axum::response::Redirect::permanent("/nouns-proposal.html") }))
