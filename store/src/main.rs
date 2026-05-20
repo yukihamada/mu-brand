@@ -11172,6 +11172,365 @@ async fn collab_apply(
     })).into_response()
 }
 
+/// GET /admin/outreach — admin dashboard for the multi-niche outreach
+/// pipeline. Lists all niches + outreach rows + inline manual-add form +
+/// per-row status update. Admin-token gated.
+async fn admin_outreach_page(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/outreach").await { return r; }
+
+    // niches with outreach counts grouped by status
+    let niches: Vec<serde_json::Value> = {
+        let conn = db.lock().unwrap();
+        conn.prepare(
+            "SELECT n.slug, n.name, n.audience, n.ad_budget_jpy, n.target_mrr_jpy, n.priority,
+                    COALESCE(SUM(CASE WHEN o.status='replied' THEN 1 ELSE 0 END), 0) AS replied,
+                    COALESCE(SUM(CASE WHEN o.status='agreed'  THEN 1 ELSE 0 END), 0) AS agreed,
+                    COALESCE(SUM(CASE WHEN o.status='shipped' THEN 1 ELSE 0 END), 0) AS shipped,
+                    COALESCE(SUM(CASE WHEN o.status='photo_received' THEN 1 ELSE 0 END), 0) AS photo,
+                    COUNT(o.id) AS total
+             FROM mu_niches n
+             LEFT JOIN mu_outreach o ON o.niche_slug = n.slug
+             WHERE n.status='active'
+             GROUP BY n.slug
+             ORDER BY n.priority DESC, n.slug"
+        ).ok().and_then(|mut stmt| {
+            stmt.query_map([], |r| Ok(serde_json::json!({
+                "slug":          r.get::<_, String>(0)?,
+                "name":          r.get::<_, String>(1)?,
+                "audience":      r.get::<_, String>(2)?,
+                "ad_budget_jpy": r.get::<_, i64>(3)?,
+                "target_mrr_jpy":r.get::<_, i64>(4)?,
+                "priority":      r.get::<_, i64>(5)?,
+                "replied":       r.get::<_, i64>(6)?,
+                "agreed":        r.get::<_, i64>(7)?,
+                "shipped":       r.get::<_, i64>(8)?,
+                "photo":         r.get::<_, i64>(9)?,
+                "total":         r.get::<_, i64>(10)?,
+            }))).ok().map(|it| it.filter_map(|r| r.ok()).collect())
+        }).unwrap_or_default()
+    };
+
+    // recent 50 outreach rows
+    let rows: Vec<serde_json::Value> = {
+        let conn = db.lock().unwrap();
+        conn.prepare(
+            "SELECT id, niche_slug, kind, alias, contact_email, contact_url,
+                    status, last_action_at, notes, created_at
+             FROM mu_outreach
+             ORDER BY id DESC LIMIT 50"
+        ).ok().and_then(|mut stmt| {
+            stmt.query_map([], |r| Ok(serde_json::json!({
+                "id":             r.get::<_, i64>(0)?,
+                "niche_slug":     r.get::<_, String>(1)?,
+                "kind":           r.get::<_, String>(2)?,
+                "alias":          r.get::<_, String>(3)?,
+                "contact_email":  r.get::<_, Option<String>>(4)?,
+                "contact_url":    r.get::<_, Option<String>>(5)?,
+                "status":         r.get::<_, String>(6)?,
+                "last_action_at": r.get::<_, Option<String>>(7)?,
+                "notes":          r.get::<_, Option<String>>(8)?,
+                "created_at":     r.get::<_, String>(9)?,
+            }))).ok().map(|it| it.filter_map(|r| r.ok()).collect())
+        }).unwrap_or_default()
+    };
+
+    // Inline the data + the dashboard HTML.
+    let admin_token = q.get("token").cloned().unwrap_or_default();
+    let html = format!(
+        r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Outreach Pipeline — admin</title>
+<meta name="robots" content="noindex,nofollow">
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;font-size:13.5px;line-height:1.7;padding:24px 28px 60px;font-feature-settings:"palt"}}
+h1{{font-size:20px;font-weight:300;letter-spacing:0.08em;margin-bottom:24px;color:#fff}}
+h1 b{{color:#e6c449;font-weight:700}}
+h2{{font-size:11px;letter-spacing:0.32em;text-transform:uppercase;margin:36px 0 14px;color:rgba(245,245,240,0.55);font-weight:600;border-bottom:1px solid rgba(255,255,255,0.08);padding-bottom:8px}}
+.niche-card{{display:grid;grid-template-columns:140px 1fr auto;gap:16px;padding:16px 18px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:6px;margin-bottom:8px;align-items:center}}
+.niche-card .slug{{font-size:14px;font-weight:700;color:#e6c449;letter-spacing:0.06em;font-family:'SF Mono','Menlo',monospace}}
+.niche-card .meta{{font-size:12px;color:rgba(245,245,240,0.7);line-height:1.65}}
+.niche-card .meta .audience{{color:rgba(245,245,240,0.55);margin-top:2px}}
+.niche-card .stats{{font-size:11px;color:rgba(245,245,240,0.8);text-align:right;font-variant-numeric:tabular-nums;line-height:1.7}}
+.niche-card .stats b{{color:#fff;font-weight:700}}
+.niche-card .stats .replied{{color:#7ddca0}}
+.niche-card .stats .shipped{{color:#e6c449}}
+table{{width:100%;border-collapse:collapse;margin-top:8px;font-size:12px}}
+th{{text-align:left;padding:9px 10px;font-size:10px;letter-spacing:0.2em;text-transform:uppercase;color:#e6c449;font-weight:700;border-bottom:1px solid rgba(230,196,73,0.3)}}
+td{{padding:10px 10px;border-bottom:1px solid rgba(255,255,255,0.06);vertical-align:top}}
+td.alias{{color:#fff;font-weight:600;max-width:240px;word-break:break-all}}
+td.email{{color:rgba(245,245,240,0.75);font-family:'SF Mono','Menlo',monospace;font-size:11.5px}}
+td.notes{{color:rgba(245,245,240,0.6);max-width:300px;font-size:11.5px}}
+.status-sel{{padding:6px 9px;background:rgba(255,255,255,0.06);color:#F5F5F0;border:1px solid rgba(255,255,255,0.14);border-radius:3px;font-size:11.5px;font-family:inherit;cursor:pointer}}
+.status-sel:focus{{border-color:#e6c449;outline:none}}
+.add-form{{display:grid;grid-template-columns:160px 160px 1fr 1fr 1fr auto;gap:8px;padding:14px;background:rgba(230,196,73,0.04);border:1px solid rgba(230,196,73,0.3);border-radius:6px;margin-bottom:14px;align-items:center}}
+.add-form input,.add-form select{{padding:9px 11px;background:rgba(255,255,255,0.06);color:#F5F5F0;border:1px solid rgba(255,255,255,0.14);border-radius:3px;font-size:12.5px;font-family:inherit;-webkit-appearance:none}}
+.add-form button{{padding:10px 16px;background:#e6c449;color:#0A0A0A;border:none;border-radius:3px;font-weight:700;font-size:11.5px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;font-family:inherit}}
+.add-form button:hover{{background:#f5d56f}}
+.add-form .full{{grid-column:1 / -1}}
+@media (max-width: 760px){{ .add-form{{grid-template-columns:1fr 1fr}}; .niche-card{{grid-template-columns:1fr; text-align:left}} }}
+.tag{{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;font-weight:700;margin-right:4px}}
+.tag.replied{{background:rgba(125,220,160,0.15);color:#7ddca0}}
+.tag.agreed{{background:rgba(230,196,73,0.18);color:#e6c449}}
+.tag.shipped{{background:rgba(230,196,73,0.35);color:#fff}}
+.tag.photo_received{{background:rgba(116,217,154,0.30);color:#fff}}
+.tag.declined,.tag.archived{{background:rgba(255,255,255,0.08);color:rgba(245,245,240,0.5)}}
+.tag.identified,.tag.contacted{{background:rgba(255,255,255,0.10);color:rgba(245,245,240,0.78)}}
+a{{color:#e6c449}}
+.muted{{color:rgba(245,245,240,0.45);font-size:11px}}
+</style>
+</head><body>
+
+<h1>Outreach Pipeline · <b>{total_niches}</b> niche · <b>{total_rows}</b> rows</h1>
+<p class="muted">/admin/outreach · admin-token gated · ←  <a href="/api/niches">/api/niches</a></p>
+
+<h2>Niches</h2>
+<div id="niches">
+{niche_cards}
+</div>
+
+<h2>Add row (admin manual)</h2>
+<form id="add-form" class="add-form">
+  <select name="niche_slug" required>{niche_options}</select>
+  <select name="kind" required>
+    <option value="dojo">dojo</option>
+    <option value="partner">partner</option>
+    <option value="influencer">influencer</option>
+    <option value="press">press</option>
+  </select>
+  <input name="name" required placeholder="alias / 道場名 / 名前" maxlength="200">
+  <input name="contact_email" type="email" required placeholder="メール">
+  <input name="contact_url" placeholder="URL (任意)">
+  <button type="submit">+ ADD</button>
+  <input class="full" name="notes" placeholder="notes (任意)">
+</form>
+
+<h2>Recent 50 rows</h2>
+<table>
+  <thead><tr>
+    <th>id</th><th>niche</th><th>kind</th><th>alias</th><th>email</th>
+    <th>status</th><th>notes</th><th>created</th>
+  </tr></thead>
+  <tbody id="rows-body">
+{rows_html}
+  </tbody>
+</table>
+
+<script>
+var ADMIN_TOKEN = {token_js};
+
+document.getElementById('add-form').addEventListener('submit', function(e){{
+  e.preventDefault();
+  var f = e.currentTarget;
+  var data = {{
+    niche_slug:    f.niche_slug.value,
+    kind:          f.kind.value,
+    name:          f.name.value.trim(),
+    contact_email: f.contact_email.value.trim(),
+    contact_url:   f.contact_url.value.trim(),
+    notes:         f.notes.value.trim(),
+  }};
+  fetch('/api/admin/outreach?token=' + encodeURIComponent(ADMIN_TOKEN), {{
+    method: 'POST',
+    headers: {{ 'Content-Type': 'application/json' }},
+    body: JSON.stringify(data),
+  }}).then(function(r){{ return r.json(); }})
+    .then(function(j){{
+      if (j && j.ok) window.location.reload();
+      else alert('error: ' + ((j && j.error) || 'unknown'));
+    }});
+}});
+
+document.querySelectorAll('.status-sel').forEach(function(sel){{
+  sel.addEventListener('change', function(e){{
+    var id = e.currentTarget.getAttribute('data-id');
+    var status = e.currentTarget.value;
+    fetch('/api/admin/outreach/' + id + '/status?token=' + encodeURIComponent(ADMIN_TOKEN), {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ status: status }}),
+    }}).then(function(r){{ return r.json(); }})
+      .then(function(j){{
+        if (!(j && j.ok)) {{ alert('error: ' + ((j && j.error) || 'unknown')); window.location.reload(); }}
+      }});
+  }});
+}});
+</script>
+</body></html>"##,
+        total_niches = niches.len(),
+        total_rows = rows.len(),
+        niche_cards = niches.iter().map(|n| format!(
+            r#"<div class="niche-card">
+  <div class="slug">{slug}</div>
+  <div class="meta"><b>{name}</b><div class="audience">{audience}</div>
+    <span style="font-size:10.5px;opacity:0.5">ad ¥{ad:>}/月 · MRR目標 ¥{mrr:>} · priority {pri}</span></div>
+  <div class="stats">
+    total <b>{total}</b><br>
+    <span class="replied">replied {replied}</span> · agreed {agreed}<br>
+    <span class="shipped">shipped {shipped}</span> · photo {photo}
+  </div>
+</div>"#,
+            slug = html_escape(n["slug"].as_str().unwrap_or("")),
+            name = html_escape(n["name"].as_str().unwrap_or("")),
+            audience = html_escape(n["audience"].as_str().unwrap_or("")),
+            ad = n["ad_budget_jpy"].as_i64().unwrap_or(0),
+            mrr = n["target_mrr_jpy"].as_i64().unwrap_or(0),
+            pri = n["priority"].as_i64().unwrap_or(0),
+            total = n["total"].as_i64().unwrap_or(0),
+            replied = n["replied"].as_i64().unwrap_or(0),
+            agreed  = n["agreed"].as_i64().unwrap_or(0),
+            shipped = n["shipped"].as_i64().unwrap_or(0),
+            photo   = n["photo"].as_i64().unwrap_or(0),
+        )).collect::<String>(),
+        niche_options = niches.iter().map(|n| format!(
+            r#"<option value="{}">{}</option>"#,
+            html_attr_escape(n["slug"].as_str().unwrap_or("")),
+            html_escape(n["slug"].as_str().unwrap_or("")),
+        )).collect::<String>(),
+        rows_html = rows.iter().map(|r| {
+            let status_now = r["status"].as_str().unwrap_or("identified");
+            let statuses = ["identified","contacted","replied","agreed","shipped","photo_received","declined","archived"];
+            let select_html = statuses.iter().map(|s| format!(
+                r#"<option value="{s}"{sel}>{s}</option>"#,
+                s = s,
+                sel = if *s == status_now { " selected" } else { "" },
+            )).collect::<String>();
+            format!(
+                r#"<tr>
+  <td class="muted">#{id}</td>
+  <td><span class="tag {status}">{niche}</span></td>
+  <td>{kind}</td>
+  <td class="alias">{alias}</td>
+  <td class="email">{email}{url}</td>
+  <td><select class="status-sel" data-id="{id}">{select_html}</select></td>
+  <td class="notes">{notes}</td>
+  <td class="muted">{created}</td>
+</tr>"#,
+                id = r["id"].as_i64().unwrap_or(0),
+                niche = html_escape(r["niche_slug"].as_str().unwrap_or("")),
+                kind = html_escape(r["kind"].as_str().unwrap_or("")),
+                alias = html_escape(r["alias"].as_str().unwrap_or("")),
+                email = html_escape(r["contact_email"].as_str().unwrap_or("—")),
+                url = r["contact_url"].as_str()
+                    .filter(|s| !s.is_empty())
+                    .map(|u| format!(r#"<br><a href="{}" target="_blank" rel="noopener" style="font-size:10.5px">{}</a>"#,
+                        html_attr_escape(u), html_escape(u)))
+                    .unwrap_or_default(),
+                status = status_now,
+                select_html = select_html,
+                notes = r["notes"].as_str().filter(|s| !s.is_empty()).map(html_escape).unwrap_or_default(),
+                created = html_escape(r["created_at"].as_str().unwrap_or("")),
+            )
+        }).collect::<String>(),
+        token_js = serde_json::to_string(&admin_token).unwrap_or_else(|_| "\"\"".into()),
+    );
+    Html(html).into_response()
+}
+
+/// POST /api/admin/outreach — manually add an outreach row (admin gate).
+/// Same fields as /api/outreach/apply but with explicit `status='identified'`
+/// since this is Yuki adding someone he found in the wild (not an inbound
+/// reply). No Resend acknowledgement (admin already knows).
+async fn admin_outreach_create(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/outreach").await { return r; }
+
+    let niche_slug = body.get("niche_slug").and_then(|v| v.as_str())
+        .unwrap_or("").trim().to_string();
+    let kind = body.get("kind").and_then(|v| v.as_str())
+        .filter(|s| matches!(*s, "dojo"|"partner"|"influencer"|"press"))
+        .unwrap_or("partner").to_string();
+    let name = body.get("name").and_then(|v| v.as_str())
+        .unwrap_or("").trim().to_string();
+    let contact_email = body.get("contact_email").and_then(|v| v.as_str())
+        .unwrap_or("").trim().to_string();
+    let contact_url = body.get("contact_url").and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let notes = body.get("notes").and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let status = body.get("status").and_then(|v| v.as_str())
+        .filter(|s| matches!(*s, "identified"|"contacted"|"replied"|"agreed"|"shipped"|"photo_received"|"declined"|"archived"))
+        .unwrap_or("identified").to_string();
+
+    if name.is_empty() || contact_email.is_empty() {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":"name + contact_email required"})))
+            .into_response();
+    }
+    let niche_known: bool = {
+        let conn = db.lock().unwrap();
+        conn.query_row("SELECT 1 FROM mu_niches WHERE slug=? LIMIT 1",
+            params![niche_slug], |_| Ok(true)).unwrap_or(false)
+    };
+    if !niche_known {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":"unknown niche"}))).into_response();
+    }
+
+    let now = chrono_now();
+    let id: i64 = {
+        let conn = db.lock().unwrap();
+        conn.execute(
+            "INSERT INTO mu_outreach
+              (niche_slug, kind, alias, contact_url, contact_email,
+               status, last_action_at, notes, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            params![niche_slug, kind, name, contact_url.as_deref(),
+                    contact_email, status, now, notes.as_deref(), now, now],
+        ).ok();
+        conn.last_insert_rowid()
+    };
+    Json(serde_json::json!({"ok":true,"id":id})).into_response()
+}
+
+/// POST /api/admin/outreach/:id/status — update a row's status (admin).
+/// Body: { status: 'identified'|'contacted'|'replied'|'agreed'|'shipped'|
+///                 'photo_received'|'declined'|'archived', notes? }
+async fn admin_outreach_status(
+    State(db): State<Db>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/outreach/status").await { return r; }
+    let status = body.get("status").and_then(|v| v.as_str())
+        .filter(|s| matches!(*s, "identified"|"contacted"|"replied"|"agreed"|"shipped"|"photo_received"|"declined"|"archived"));
+    let status = match status {
+        Some(s) => s.to_string(),
+        None => return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":"invalid status"}))).into_response(),
+    };
+    let notes_patch = body.get("notes").and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+
+    let now = chrono_now();
+    let affected: usize = {
+        let conn = db.lock().unwrap();
+        match notes_patch {
+            Some(n) => conn.execute(
+                "UPDATE mu_outreach SET status=?, last_action_at=?, notes=?, updated_at=? WHERE id=?",
+                params![status, now, n, now, id]).unwrap_or(0),
+            None => conn.execute(
+                "UPDATE mu_outreach SET status=?, last_action_at=?, updated_at=? WHERE id=?",
+                params![status, now, now, id]).unwrap_or(0),
+        }
+    };
+    if affected == 0 {
+        return (StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"ok":false,"error":"id not found"}))).into_response();
+    }
+    Json(serde_json::json!({"ok":true,"id":id,"status":status})).into_response()
+}
+
 async fn challenge_100_progress_json(State(db): State<Db>) -> Json<serde_json::Value> {
     let (sold, latest_drop) = {
         let conn = db.lock().unwrap();
@@ -56194,6 +56553,11 @@ async fn main() {
         // The new mu_outreach-backed inbound form lives at a distinct path
         // to avoid the route conflict that panicked PR #42's deploy.
         .route("/api/outreach/apply", post(collab_apply))
+        // Admin dashboard + manual add + status update for the outreach
+        // pipeline. Token-gated via admin_auth.
+        .route("/admin/outreach", get(admin_outreach_page))
+        .route("/api/admin/outreach", post(admin_outreach_create))
+        .route("/api/admin/outreach/:id/status", post(admin_outreach_status))
         // /nouns: DAO approval pending → section hidden from nav (2026-05-13).
         // Proposal text remains at /nouns-proposal.html for transparency.
         .route("/nouns", get(|| async { axum::response::Redirect::permanent("/nouns-proposal.html") }))
