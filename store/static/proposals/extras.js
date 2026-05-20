@@ -48,8 +48,20 @@
 
   section.innerHTML = ''
     + '<h2 style="font-size:22px;font-weight:300;letter-spacing:0.03em;color:#e6c449;margin:54px 0 16px;border-top:1px solid rgba(255,255,255,0.08);padding-top:36px">5. もっと SKU を追加</h2>'
+    + '<div id="mu-ex-quickone" style="margin:0 0 22px;padding:18px 22px;background:linear-gradient(135deg,rgba(230,196,73,0.08),rgba(230,196,73,0.02));border:1.5px solid rgba(230,196,73,0.45);border-radius:8px">'
+    +   '<div style="display:flex;flex-wrap:wrap;gap:14px;align-items:center">'
+    +     '<div style="flex:1;min-width:240px">'
+    +       '<div style="font-size:10.5px;letter-spacing:0.28em;text-transform:uppercase;color:#e6c449;font-weight:700;margin-bottom:4px">⚡ 1 クリック</div>'
+    +       '<div style="font-size:15px;color:#fff;line-height:1.55"><strong>+1 SKU</strong> を <strong style="color:#e6c449">30 pt (= ¥30)</strong> で 今すぐ生成</div>'
+    +       '<div style="font-size:11.5px;color:rgba(245,245,240,0.55);margin-top:4px">email saved 済なら 即 生成。 結果 は 下に 表示、 ✓ / ✗ で 選別。</div>'
+    +     '</div>'
+    +     '<button id="mu-ex-quickone-btn" type="button" style="background:#e6c449;color:#0a0a0a;border:0;padding:14px 22px;font-size:11px;letter-spacing:0.22em;text-transform:uppercase;font-weight:800;border-radius:4px;cursor:pointer;font-family:inherit;white-space:nowrap">+1 SKU を 30pt で 作る</button>'
+    +   '</div>'
+    +   '<div id="mu-ex-quickone-msg" style="font-size:12px;color:rgba(245,245,240,0.7);margin-top:10px;min-height:18px;line-height:1.6"></div>'
+    +   '<div id="mu-ex-quickone-result" style="margin-top:14px;display:none"></div>'
+    + '</div>'
     + '<p style="font-size:14px;color:rgba(245,245,240,0.62);line-height:1.95;margin-bottom:10px">'
-    +   '物足りなければ AI で <strong style="color:#fff">30 / 50 / 100</strong> 種類の新 SKU を自動生成。 '
+    +   'またはバッチで AI で <strong style="color:#fff">30 / 50 / 100</strong> 種類の新 SKU を自動生成。 '
     +   '生成されたものは <strong style="color:#7be57b">承認ゲート</strong> を通り、 あなたが ✓ を押した SKU だけが LP に並びます。'
     + '</p>'
     + '<p style="font-size:13px;color:rgba(245,245,240,0.55);line-height:1.85;margin-bottom:18px">'
@@ -246,6 +258,73 @@
 
   loadBtn.addEventListener("click", function () { refreshBalance(); });
   emailInput.addEventListener("change", function () { refreshBalance(); });
+
+  // ── 1-click: +1 SKU for 30 pt ─────────────────────────────────────────
+  // Uses /api/v1/sku/quick (existing endpoint). Reuses email from saved input.
+  // Shows image preview + ✓ / ✗ inline, debits PT, refreshes balance.
+  var quickoneBtn   = section.querySelector("#mu-ex-quickone-btn");
+  var quickoneMsg   = section.querySelector("#mu-ex-quickone-msg");
+  var quickoneResult= section.querySelector("#mu-ex-quickone-result");
+  if (quickoneBtn) {
+    quickoneBtn.addEventListener("click", function () {
+      var em = emailInput.value.trim() || getEmail();
+      if (!em || !/@/.test(em)) {
+        quickoneMsg.style.color = "#ff8a8a";
+        quickoneMsg.textContent = "先に email を入力して 残高確認 してください。";
+        emailInput.focus();
+        return;
+      }
+      setEmail(em);
+      quickoneBtn.disabled = true;
+      quickoneBtn.style.opacity = "0.6";
+      quickoneBtn.textContent = "生成中…";
+      quickoneMsg.style.color = "rgba(245,245,240,0.7)";
+      quickoneMsg.textContent = "AI で 1 SKU 生成中 (30-60 秒)…";
+      // POST /api/proposal/{slug}/extras/order { email, qty: 1 }
+      // qty=1 = single SKU, 30 pt charge (no free-30 since that's qty=30 batch).
+      // Returns job_id; existing batch job UI takes over rendering progress.
+      api("/api/proposal/" + encodeURIComponent(SLUG) + "/extras/order", { email: em, qty: 1 })
+        .then(function (j) {
+          quickoneBtn.disabled = false;
+          quickoneBtn.style.opacity = "1";
+          quickoneBtn.textContent = "+1 SKU を 30pt で 作る";
+          if (!j || !j.ok) {
+            quickoneMsg.style.color = "#ff8a8a";
+            var err = (j && j.error) || "生成 開始 失敗";
+            if (j && /point|残高|残量|insufficient/i.test(err)) {
+              quickoneMsg.innerHTML = "残高 不足: " + err + " — <a href=\"/extras/my\" style=\"color:#e6c449;text-decoration:underline\">+ pt を 買う</a>";
+            } else if (j && /in.flight|already running/i.test(err)) {
+              quickoneMsg.textContent = "別 job が 走行中 · 完了 まで お待ち ください (下の 進捗 を 参照)";
+            } else {
+              quickoneMsg.textContent = "エラー: " + err;
+            }
+            return;
+          }
+          quickoneMsg.style.color = "#7be57b";
+          quickoneMsg.textContent = "✓ 生成 開始 · job " + (j.job_id || "?") + " · 結果 は 下の 進捗欄 に 30-60 秒で 表示";
+          quickoneResult.style.display = "block";
+          quickoneResult.innerHTML = '<div style="font-size:12px;color:rgba(245,245,240,0.65);padding:10px 14px;background:rgba(123,229,123,0.06);border:1px dashed rgba(123,229,123,0.3);border-radius:4px">残量 -30 pt · job_id=' + (j.job_id || "?") + ' · 完成 通知 が 必要 なら 下の checkbox を ON に</div>';
+          // Refresh balance + scroll to job UI
+          refreshBalance();
+          var jobUi = section.querySelector("#mu-ex-job");
+          if (jobUi) {
+            jobUi.style.display = "block";
+            jobUi.scrollIntoView({ behavior: "smooth", block: "center" });
+          }
+          // Kick the existing poll path (function defined later in this file)
+          // by setting localStorage poll key so the batch poll loop picks up.
+          try { localStorage.setItem(POLL_KEY, String(j.job_id)); } catch (_) {}
+          if (typeof pollJob === "function") pollJob(j.job_id);
+        })
+        .catch(function (e) {
+          quickoneBtn.disabled = false;
+          quickoneBtn.style.opacity = "1";
+          quickoneBtn.textContent = "+1 SKU を 30pt で 作る";
+          quickoneMsg.style.color = "#ff8a8a";
+          quickoneMsg.textContent = "ネットワーク エラー: " + (e && e.message || e);
+        });
+    });
+  }
 
   section.querySelectorAll(".mu-ex-qty").forEach(function (btn) {
     btn.addEventListener("click", function () {
