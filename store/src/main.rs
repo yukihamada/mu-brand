@@ -20689,6 +20689,181 @@ async fn buy_page_with_id(
     Html(include_str!("../static/buy.html"))
 }
 
+/// /buy/founder — Founder Edition LP. ¥48,000, 1着, 年4回 drop.
+/// Substitutes price + next drop date into the static template.
+async fn buy_founder_page() -> Html<String> {
+    const TEMPLATE: &str = include_str!("../static/buy-founder.html");
+    let price_jpy: i64 = 48_000;
+    let price_usd: i64 = (price_jpy as f64 / 150.0).round() as i64; // rough JPY/USD
+    let (drop_iso, drop_label) = founder_next_drop_label();
+    let body = TEMPLATE
+        .replace("{PRICE_JPY}", &format!("{}", FormatThousands(price_jpy)))
+        .replace("{PRICE_USD}", &price_usd.to_string())
+        .replace("{NEXT_DROP_LABEL}", &drop_label)
+        .replace("{BUY_BTN_LABEL}", "予約購入 → 次の制作で出荷")
+        .replace("{BUY_BTN_CLASS}", "")
+        // Suppress the placeholder so the iso slot also reads the human label.
+        .replace("{NEXT_DROP_ISO}", &drop_iso);
+    Html(body)
+}
+
+/// Format an i64 with thousand-separators (e.g. 48000 → "48,000"). Small
+/// helper kept inline since main.rs avoids the `num-format` dependency.
+struct FormatThousands(i64);
+impl std::fmt::Display for FormatThousands {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = self.0.abs().to_string();
+        let bytes: Vec<char> = s.chars().collect();
+        let mut out = String::with_capacity(bytes.len() + bytes.len() / 3);
+        if self.0 < 0 { out.push('-'); }
+        for (i, c) in bytes.iter().enumerate() {
+            if i > 0 && (bytes.len() - i) % 3 == 0 { out.push(','); }
+            out.push(*c);
+        }
+        f.write_str(&out)
+    }
+}
+
+/// Return (ISO-ish JST string, human JP label) for the next Founder Edition
+/// drop (春分・夏至・秋分・冬至 21:00 JST after now). Skips past dates.
+/// Dates are the JMA astronomical approximations for 2026–2030; refresh
+/// the table once it's lived through a year.
+fn founder_next_drop_label() -> (String, String) {
+    // (month, day, jp_kanji)
+    let candidates: [(u32, u32, &str); 4] = [
+        (3, 20, "春分"),
+        (6, 21, "夏至"),
+        (9, 23, "秋分"),
+        (12, 22, "冬至"),
+    ];
+    let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+    // JST = UTC + 9h
+    let jst_secs = secs + 9 * 3600;
+    let (year, month, day) = unix_to_ymd(jst_secs);
+    let now_md = (month, day);
+    let pick = |yr: i32| -> Option<(i32, u32, u32, &'static str)> {
+        for (m, d, jp) in candidates {
+            // pick the first solstice/equinox strictly after today (compare yyyy-mm-dd)
+            if yr > year || (yr == year && (m, d) > now_md) {
+                return Some((yr, m, d, jp));
+            }
+        }
+        None
+    };
+    let (yr, m, d, jp) = pick(year)
+        .or_else(|| pick(year + 1))
+        .unwrap_or((year + 1, 3, 20, "春分"));
+    let iso = format!("{:04}-{:02}-{:02}T21:00:00+09:00", yr, m, d);
+    let label = format!("{yr}年{m}月{d}日 ({jp}) 21:00", yr = yr, m = m, d = d, jp = jp);
+    (iso, label)
+}
+
+/// Civil-calendar conversion (proleptic Gregorian) for a unix timestamp
+/// already shifted to the target timezone. Returns (year, month, day).
+/// Avoids pulling chrono (main.rs intentionally doesn't depend on it).
+fn unix_to_ymd(secs: i64) -> (i32, u32, u32) {
+    let days_since_epoch = secs.div_euclid(86_400);
+    // Convert days-since-1970-01-01 to (y, m, d) using Howard Hinnant's algorithm.
+    let z = days_since_epoch + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
+    let y = if m <= 2 { y + 1 } else { y } as i32;
+    (y, m, d)
+}
+
+/// POST /api/checkout/founder — open a Stripe Checkout session for the
+/// Founder Edition. ¥48,000 fixed price, 1着, ships at next solstice/equinox.
+async fn founder_checkout(
+    State(_db): State<Db>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error":"checkout disabled (STRIPE_SECRET_KEY not set)"})))
+            .into_response();
+    }
+    let size = body.get("size").and_then(|v| v.as_str())
+        .map(|s| s.to_uppercase())
+        .filter(|s| ["XS","S","M","L","XL","XXL"].contains(&s.as_str()))
+        .unwrap_or_else(|| "M".to_string());
+
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    let price_jpy: i64 = 48_000;
+    let display = format!("MUGEN #∞ Founder Edition (size {size})");
+    let price_str = price_jpy.to_string();
+    let success_url = format!("{}/success?sid={{CHECKOUT_SESSION_ID}}&edition=founder", base_url);
+    let cancel_url  = format!("{}/buy/founder", base_url);
+    let (drop_iso, _label) = founder_next_drop_label();
+
+    let resp = reqwest::Client::new()
+        .post("https://api.stripe.com/v1/checkout/sessions")
+        .basic_auth(&stripe_key, None::<&str>)
+        .form(&[
+            ("mode", "payment"),
+            ("currency", "jpy"),
+            ("locale", "ja"),
+            ("line_items[0][price_data][currency]", "jpy"),
+            ("line_items[0][price_data][product_data][name]", display.as_str()),
+            ("line_items[0][price_data][product_data][description]",
+             "Loopwheel 14oz · 鉱物染色 · NFC tag · 100年修繕保証。次回 制作完了 で 出荷。"),
+            ("line_items[0][price_data][unit_amount]", price_str.as_str()),
+            ("line_items[0][quantity]", "1"),
+            ("success_url", success_url.as_str()),
+            ("cancel_url", cancel_url.as_str()),
+            ("billing_address_collection", "required"),
+            ("shipping_address_collection[allowed_countries][0]", "JP"),
+            ("shipping_address_collection[allowed_countries][1]", "US"),
+            ("shipping_address_collection[allowed_countries][2]", "GB"),
+            ("shipping_address_collection[allowed_countries][3]", "FR"),
+            ("shipping_address_collection[allowed_countries][4]", "DE"),
+            ("shipping_address_collection[allowed_countries][5]", "AU"),
+            ("shipping_address_collection[allowed_countries][6]", "KR"),
+            ("shipping_address_collection[allowed_countries][7]", "TW"),
+            ("shipping_address_collection[allowed_countries][8]", "HK"),
+            ("phone_number_collection[enabled]", "true"),
+            ("allow_promotion_codes", "true"),
+            ("metadata[edition]", "founder"),
+            ("metadata[size]", size.as_str()),
+            ("metadata[next_drop_iso]", drop_iso.as_str()),
+            ("metadata[product]", "MUGEN_FOUNDER_INFINITY"),
+        ])
+        .send().await;
+
+    match resp {
+        Ok(r) if r.status().is_success() => {
+            let json: serde_json::Value = r.json().await.unwrap_or_default();
+            let url = json["url"].as_str().unwrap_or("/buy/founder").to_string();
+            Json(serde_json::json!({
+                "url": url,
+                "edition": "founder",
+                "size": size,
+                "next_drop": drop_iso,
+            })).into_response()
+        }
+        Ok(r) => {
+            let status = r.status();
+            let txt = r.text().await.unwrap_or_default();
+            eprintln!("[founder] stripe error {}: {}", status, txt);
+            (StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": format!("stripe: {}", &txt[..txt.len().min(240)])
+                }))).into_response()
+        }
+        Err(e) => {
+            eprintln!("[founder] stripe request error: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error":"stripe connection error"}))).into_response()
+        }
+    }
+}
+
 /// /collections/:brand — gallery page listing every active product of a brand.
 /// Each card links to /buy/:id. Useful for kawanabe_personal (10 candidates)
 /// and the ads_* niche bundles. Falls back to "no products" message.
@@ -56018,6 +56193,8 @@ async fn main() {
         .route("/api/product/collab/:slug", get(api_product_collab))
         .route("/collab/:slug", get(collab_public_page))
         .route("/buy", get(buy_page))
+        .route("/buy/founder", get(buy_founder_page))
+        .route("/api/checkout/founder", post(founder_checkout))
         .route("/buy/:id", get(buy_page_with_id))
         .route("/collections/:brand", get(collection_page))
         .route("/api/brand_copy/:brand", get(api_brand_copy))
