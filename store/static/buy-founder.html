@@ -11,10 +11,79 @@
 <meta property="og:url" content="https://wearmu.com/buy/founder">
 <link rel="canonical" href="https://wearmu.com/buy/founder">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="MUGEN #∞ Founder Edition">
+<meta name="twitter:description" content="¥48,000 · 1着 · 年4回 · 100年修繕保証 · NFC 革ラベル · 先行予約 受付中">
+<meta name="twitter:image" content="https://wearmu.com/static/founder/hero-on-model.png">
+<meta name="theme-color" content="#0A0A0A">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Product",
+  "name": "MUGEN #∞ Founder Edition",
+  "description": "Loopwheel 14oz garment-dyed organic cotton t-shirt with 弟子屈 mineral pigment dye, NFC-embedded leather label, on-chain anchor, and 100-year repair guarantee. 1 piece per drop, 4 drops/year (春分・夏至・秋分・冬至). Pre-order.",
+  "image": [
+    "https://wearmu.com/static/founder/hero-on-model.png",
+    "https://wearmu.com/static/founder/loopwheel-fabric.png",
+    "https://wearmu.com/static/founder/nfc-leather-label.png",
+    "https://wearmu.com/static/founder/mineral-dye-vial.png",
+    "https://wearmu.com/static/founder/handwritten-note.png"
+  ],
+  "brand": { "@type": "Brand", "name": "MU" },
+  "manufacturer": {
+    "@type": "Organization",
+    "name": "株式会社イネブラ (Enabler Inc.)",
+    "url": "https://wearmu.com",
+    "address": {
+      "@type": "PostalAddress",
+      "addressCountry": "JP",
+      "addressLocality": "千代田区",
+      "addressRegion": "東京都",
+      "postalCode": "102-0074",
+      "streetAddress": "九段南1-5-6 りそな九段ビル 5階 KSフロア"
+    }
+  },
+  "offers": {
+    "@type": "Offer",
+    "url": "https://wearmu.com/buy/founder",
+    "priceCurrency": "JPY",
+    "price": "48000",
+    "availability": "https://schema.org/PreOrder",
+    "availabilityStarts": "2026-05-18T00:00:00+09:00",
+    "priceValidUntil": "2027-12-31",
+    "seller": { "@type": "Organization", "name": "株式会社イネブラ (Enabler Inc.)" },
+    "shippingDetails": {
+      "@type": "OfferShippingDetails",
+      "shippingDestination": [
+        { "@type": "DefinedRegion", "addressCountry": "JP" },
+        { "@type": "DefinedRegion", "addressCountry": "US" },
+        { "@type": "DefinedRegion", "addressCountry": "GB" },
+        { "@type": "DefinedRegion", "addressCountry": "FR" },
+        { "@type": "DefinedRegion", "addressCountry": "DE" },
+        { "@type": "DefinedRegion", "addressCountry": "AU" },
+        { "@type": "DefinedRegion", "addressCountry": "KR" },
+        { "@type": "DefinedRegion", "addressCountry": "TW" },
+        { "@type": "DefinedRegion", "addressCountry": "HK" }
+      ]
+    },
+    "hasMerchantReturnPolicy": {
+      "@type": "MerchantReturnPolicy",
+      "applicableCountry": "JP",
+      "returnPolicyCategory": "https://schema.org/MerchantReturnFiniteReturnWindow",
+      "merchantReturnDays": 14,
+      "returnMethod": "https://schema.org/ReturnByMail",
+      "returnFees": "https://schema.org/FreeReturn"
+    }
+  }
+}
+</script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.75;font-feature-settings:"palt"}
+html{-webkit-text-size-adjust:100%}
+body{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.75;font-feature-settings:"palt";text-rendering:optimizeLegibility}
 a{color:#e6c449;text-decoration:none}a:hover{text-decoration:underline}
+:focus-visible{outline:2px solid #e6c449;outline-offset:3px;border-radius:3px}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
 nav{position:sticky;top:0;background:rgba(10,10,10,0.92);backdrop-filter:blur(14px);border-bottom:1px solid rgba(255,255,255,0.08);padding:14px 28px;display:flex;justify-content:space-between;align-items:center;z-index:50;font-size:11px;letter-spacing:0.3em;text-transform:uppercase}
 nav .logo{font-weight:700;letter-spacing:0.45em}
 
@@ -65,12 +134,16 @@ h2:after{content:"";display:block;width:24px;height:1px;background:rgba(230,196,
 .buy-meta{margin:20px 0 22px;font-size:11.5px;color:rgba(245,245,240,0.6);letter-spacing:0.06em;line-height:1.9}
 .buy-meta b{color:#fff;font-weight:600}
 .size-picker{display:flex;gap:8px;justify-content:center;margin:18px 0 24px;flex-wrap:wrap}
-.size-picker label{display:inline-block;padding:9px 14px;border:1px solid rgba(255,255,255,0.18);border-radius:4px;cursor:pointer;font-size:12px;letter-spacing:0.16em;background:transparent;color:#F5F5F0;min-width:48px;text-align:center;font-weight:500}
-.size-picker input{display:none}
+/* Size picker — min 44x44 tap target per WCAG/Apple HIG */
+.size-picker label{display:inline-block;padding:12px 16px;border:1px solid rgba(255,255,255,0.22);border-radius:4px;cursor:pointer;font-size:13px;letter-spacing:0.16em;background:transparent;color:#F5F5F0;min-width:52px;min-height:44px;line-height:1.4;text-align:center;font-weight:500;transition:border-color .12s,background .12s}
+.size-picker input{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .size-picker input:checked + label{background:#e6c449;color:#0A0A0A;border-color:#e6c449}
-.cta-big{display:inline-block;background:#e6c449;color:#0A0A0A;font-weight:700;padding:18px 36px;border-radius:6px;text-decoration:none;font-size:12.5px;text-transform:uppercase;letter-spacing:0.22em;transition:transform .15s,box-shadow .15s;box-shadow:0 4px 24px rgba(230,196,73,0.18);border:none;cursor:pointer}
+.size-picker input:focus-visible + label{outline:2px solid #e6c449;outline-offset:3px}
+.size-picker label:hover{border-color:rgba(230,196,73,0.5)}
+/* CTA: minimum 44px tap, larger on mobile */
+.cta-big{display:inline-block;background:#e6c449;color:#0A0A0A;font-weight:700;padding:20px 36px;min-height:54px;border-radius:6px;text-decoration:none;font-size:13px;text-transform:uppercase;letter-spacing:0.22em;transition:transform .15s,box-shadow .15s;box-shadow:0 4px 24px rgba(230,196,73,0.18);border:none;cursor:pointer;width:100%;max-width:380px}
 .cta-big:hover{transform:translateY(-2px);box-shadow:0 6px 30px rgba(230,196,73,0.3);text-decoration:none}
-.cta-big[disabled],.cta-big.disabled{background:#333;color:#666;cursor:not-allowed;box-shadow:none}
+.cta-big[disabled],.cta-big.disabled{background:#333;color:#888;cursor:not-allowed;box-shadow:none}
 .buy-note{margin-top:18px;font-size:10.5px;color:rgba(245,245,240,0.45);letter-spacing:0.05em;line-height:1.7}
 
 /* Legal block */
@@ -91,6 +164,32 @@ h2:after{content:"";display:block;width:24px;height:1px;background:rgba(230,196,
 
 .muted{opacity:0.5;font-size:11px}
 .back{display:inline-block;margin:48px auto 0;font-size:10px;letter-spacing:0.32em;text-transform:uppercase;opacity:0.5;color:inherit;text-align:center;width:100%}
+
+/* Material section — Sawada FB top 4: 素材 の 証拠 (factory/dye/test data placeholders) */
+.material{max-width:700px;margin:0 auto}
+.material .row{display:grid;grid-template-columns:140px 1fr;gap:14px 24px;padding:14px 0;border-bottom:1px solid rgba(255,255,255,0.06);font-size:13px;line-height:1.85}
+.material .row:last-child{border-bottom:none}
+.material .k{font-size:10.5px;letter-spacing:0.22em;text-transform:uppercase;color:rgba(230,196,73,0.78);font-weight:600}
+.material .v{color:rgba(245,245,240,0.85)}
+.material .v .pending{display:inline-block;background:rgba(230,196,73,0.10);color:#e6c449;font-size:10.5px;letter-spacing:0.14em;padding:2px 7px;border-radius:3px;margin-left:6px;text-transform:uppercase;font-weight:600}
+.material .v .done{display:inline-block;background:rgba(116,217,154,0.10);color:#7ddca0;font-size:10.5px;letter-spacing:0.14em;padding:2px 7px;border-radius:3px;margin-left:6px;text-transform:uppercase;font-weight:600}
+
+/* Mobile-specific tightening */
+@media (max-width:640px){
+  nav{padding:12px 16px;font-size:10px}
+  .hero{padding:28px 16px 0}
+  .wrap{padding:0 16px 80px}
+  .beta-banner{flex-direction:column;gap:6px;font-size:12px}
+  h2{margin:64px 0 18px}
+  .copy{font-size:14px}
+  .photo{margin:36px auto}
+  .buy-block{padding:28px 18px;margin:60px auto 32px}
+  .buy-price{font-size:38px}
+  .alloc-row{grid-template-columns:1fr auto;gap:6px 14px}
+  .alloc-row .yen{display:none}
+  .material .row{grid-template-columns:1fr;gap:4px;padding:12px 0}
+  .material .k{font-size:10px}
+}
 </style>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </head>
@@ -146,6 +245,29 @@ h2:after{content:"";display:block;width:24px;height:1px;background:rgba(230,196,
     <dt>印刷</dt><dd>DTG ベース。 1 着 ずつ 印刷者 サイン入り。 装飾 印刷 なし。</dd>
     <dt>サイズ</dt><dd>XS / S / M / L / XL / XXL。 Loopwheel 特性 で ±2 cm 個体差。</dd>
   </dl>
+
+  <!-- 素材 の 証拠 — Sawada FB top 4: 工場名・職人名・試験データ。
+       公開可能 が 確定 した もの は ✓、 未確定 は ⏳ (= "嘘ではない" 透明性) -->
+  <h2>素材 の 証拠</h2>
+  <p class="copy center" style="font-size:13px;opacity:0.7;margin-bottom:24px">
+    第1回 出荷 (2026-06-21) まで に 全 ⏳ を 名前 + 試験PDF + 写真 に 差し替える。<br>
+    嘘 を 隠さない: 確定 した もの だけ ✓、 これから は ⏳ で 出す。
+  </p>
+  <div class="material">
+    <div class="row"><div class="k">吊り編み 工房</div><div class="v">和歌山 県 ・ 高田馬鞍機 製 <span class="pending">⏳ 工房名 確定 〜 6/15</span></div></div>
+    <div class="row"><div class="k">縫製 職人</div><div class="v">和歌山 県内 の 縫製所 <span class="pending">⏳ 職人名 公開 〜 6/15</span></div></div>
+    <div class="row"><div class="k">鉱物染料</div><div class="v">弟子屈町 川湯温泉 周辺 採取 鉱物 <span class="pending">⏳ 配合 + ph 試験PDF 〜 6/10</span></div></div>
+    <div class="row"><div class="k">重金属 試験</div><div class="v">EU REACH 規制 + 日本 化審法 適合 <span class="pending">⏳ 第三者 ラボ 報告 〜 6/10</span></div></div>
+    <div class="row"><div class="k">DTG 印刷者</div><div class="v">国内 印刷所 (Yuki が 直接 立会) <span class="pending">⏳ 業者名 公開 〜 6/15</span></div></div>
+    <div class="row"><div class="k">NFC tag 仕様</div><div class="v">NTAG216 (888 byte EEPROM、 ROM 永続) <span class="done">✓ 仕様 確定</span></div></div>
+    <div class="row"><div class="k">革ラベル</div><div class="v">国産 タンニン鞣し 牛革、 箔押し <span class="pending">⏳ 工房名 + 試作品 写真 〜 6/15</span></div></div>
+    <div class="row"><div class="k">on-chain anchor</div><div class="v">Solana mainnet SHA-256 mint <span class="pending">⏳ tx hash 公開 = 出荷時</span></div></div>
+    <div class="row"><div class="k">100年 reserve</div><div class="v">信託 口座 (銀行名 + 監査人 確定後 公開) <span class="pending">⏳ 顧問税理士 + 顧問弁護士 相談 中</span></div></div>
+    <div class="row"><div class="k">適格請求書</div><div class="v">国税庁 登録 申請 中 <span class="pending">⏳ T番号 確定後 領収書 に 自動 記載</span></div></div>
+  </div>
+  <p class="copy center" style="font-size:11.5px;opacity:0.5;margin-top:18px">
+    最新 状況 は <a href="/transparency" style="color:#e6c449">/transparency</a> ・ <a href="https://github.com/yukihamada/mu-brand/blob/main/docs/FOUNDER_EDITION.md" style="color:#e6c449">FOUNDER_EDITION.md</a> で 随時 更新。
+  </p>
 
   <!-- NFC label -->
   <div class="photo">
@@ -209,7 +331,7 @@ h2:after{content:"";display:block;width:24px;height:1px;background:rgba(230,196,
       <input type="radio" id="sz-xl"  name="size" value="XL"><label for="sz-xl">XL</label>
       <input type="radio" id="sz-xxl" name="size" value="XXL"><label for="sz-xxl">XXL</label>
     </div>
-    <button type="button" class="cta-big" id="founder-buy-btn">予約 する · #001 を 確保</button>
+    <button type="button" class="cta-big" id="founder-buy-btn" aria-label="MUGEN #∞ Founder Edition を ¥48,000 で 先行予約 (オーソリ のみ、 課金確定 は 製造完了後)">予約 する · #001 を 確保</button>
     <div class="buy-note">
       Stripe Checkout (オーソリ のみ、 課金確定 は 製造完了後) &nbsp;·&nbsp; ヤマト宅急便 / DHL &nbsp;·&nbsp; 領収書 OK
     </div>
@@ -285,7 +407,7 @@ h2:after{content:"";display:block;width:24px;height:1px;background:rgba(230,196,
       <input type="radio" id="sz-xl2"  name="size2" value="XL"><label for="sz-xl2">XL</label>
       <input type="radio" id="sz-xxl2" name="size2" value="XXL"><label for="sz-xxl2">XXL</label>
     </div>
-    <button type="button" class="cta-big" id="founder-buy-btn-2">予約 する · #001 を 確保</button>
+    <button type="button" class="cta-big" id="founder-buy-btn-2" aria-label="MUGEN #∞ Founder Edition を ¥48,000 で 先行予約 (オーソリ のみ、 課金確定 は 製造完了後)">予約 する · #001 を 確保</button>
     <div class="buy-note">オーソリ のみ、 課金確定 = 製造完了後 &nbsp;·&nbsp; 全額返金 (遅延・中止時)</div>
   </div>
 
