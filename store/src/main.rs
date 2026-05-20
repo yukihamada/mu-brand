@@ -18321,6 +18321,10 @@ async fn index(State(db): State<Db>) -> Html<String> {
         .replace("{T100_SOLD}", &t100_sold_str)
         .replace("{T100_DAYS_LEFT}", &t100_days_left_str);
 
+    // Hero T-shirt card SSR-fill: latest mugen drop label (#N or fallback).
+    let hero_drop_label = mugen_drop.map(|d| format!("#{:04}", d)).unwrap_or_else(|| "今日 の 一着".into());
+    let html = html.replace("{HERO_DROP_LABEL}", &hero_drop_label);
+
     Html(html)
 }
 
