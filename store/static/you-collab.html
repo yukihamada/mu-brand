@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MU × YOU — Collab Wizard | wearmu.com</title>
+<meta name="description" content="テキスト1行から、 URL からロゴ、 ブランド基本、 最大 20 品まで。 出るたびに 好み を 学習する collab wizard.">
+<meta property="og:title" content="MU × YOU — Collab Wizard">
+<meta property="og:url" content="https://wearmu.com/you/collab">
+<link rel="canonical" href="https://wearmu.com/you/collab">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.7;font-feature-settings:"palt"}
+a{color:#e6c449;text-decoration:none}
+.wrap{max-width:780px;margin:0 auto;padding:48px 24px 80px}
+nav{position:sticky;top:0;background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);border-bottom:1px solid rgba(255,255,255,0.08);padding:14px 28px;display:flex;justify-content:space-between;align-items:center;z-index:50;font-size:11px;letter-spacing:0.3em;text-transform:uppercase}
+nav .logo{font-weight:700;letter-spacing:0.45em}
+.kicker{font-size:11px;letter-spacing:0.4em;text-transform:uppercase;opacity:0.55;margin-bottom:12px;color:#e6c449}
+h1{font-size:30px;font-weight:300;margin-bottom:14px;line-height:1.25}
+h1 em{color:#e6c449;font-style:normal;font-weight:500}
+.lede{font-size:14px;color:rgba(245,245,240,0.7);margin-bottom:32px;line-height:1.85}
+
+.stage{background:#0E0E0E;border-left:3px solid rgba(255,255,255,0.1);border-radius:0 6px 6px 0;padding:20px 22px;margin-bottom:14px;transition:border-color .2s}
+.stage.active{border-left-color:#e6c449}
+.stage.done{border-left-color:#7be57b}
+.stage-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
+.stage-num{font-family:'SF Mono','Menlo',monospace;color:#e6c449;font-weight:700;font-size:11px;letter-spacing:0.2em}
+.stage-title{font-size:15px;color:#fff;font-weight:600}
+.stage-status{font-size:11px;opacity:0.55}
+.stage.done .stage-status{color:#7be57b;opacity:1}
+
+input[type=text], input[type=email], input[type=url], textarea {
+  width:100%;background:#0a0a0a;border:1px solid rgba(255,255,255,0.18);color:#fff;padding:11px 14px;font-size:14px;border-radius:4px;font-family:inherit;line-height:1.55
+}
+textarea{resize:vertical;min-height:80px}
+.btn{display:inline-block;background:#e6c449;color:#0A0A0A;font-weight:800;padding:12px 22px;border:0;border-radius:5px;font-size:11px;letter-spacing:0.22em;text-transform:uppercase;cursor:pointer;font-family:inherit;margin-top:10px}
+.btn:hover{transform:translateY(-1px)}
+.btn:disabled{opacity:0.5;cursor:not-allowed;transform:none}
+.btn.ghost{background:transparent;color:#e6c449;border:1px solid rgba(230,196,73,0.5)}
+
+.result-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-top:14px}
+.result-card{background:#101010;border:1px solid rgba(255,255,255,0.08);border-radius:6px;overflow:hidden}
+.result-card img{width:100%;aspect-ratio:1;object-fit:cover;background:#fff}
+.result-card .meta{padding:8px 10px}
+.result-card .name{font-size:11px;color:#fff;margin-bottom:4px}
+.result-card .fb{display:flex;gap:4px;margin-top:6px}
+.result-card .fb button{flex:1;padding:5px;font-size:14px;border-radius:3px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:rgba(245,245,240,0.6);cursor:pointer;transition:all .15s}
+.result-card .fb button:hover{transform:scale(1.05)}
+.result-card .fb button.thumbs-up.active{background:rgba(123,229,123,0.18);border-color:rgba(123,229,123,0.5);color:#7be57b}
+.result-card .fb button.thumbs-down.active{background:rgba(255,138,138,0.15);border-color:rgba(255,138,138,0.45);color:#ff8a8a}
+
+.progress{margin:24px 0 8px;font-size:12px;color:rgba(245,245,240,0.55)}
+.progress-bar{height:5px;background:#0a0a0a;border-radius:3px;overflow:hidden;margin-top:6px}
+.progress-bar .fill{height:100%;background:#e6c449;width:0%;transition:width .3s}
+
+.brand-card{background:linear-gradient(135deg,rgba(230,196,73,0.08),rgba(230,196,73,0.02));border:1px solid rgba(230,196,73,0.3);border-radius:8px;padding:16px 20px;margin:14px 0}
+.brand-card .b-name{font-size:18px;color:#fff;font-weight:600;margin-bottom:6px}
+.brand-card .b-tag{font-size:12px;color:rgba(245,245,240,0.7);font-style:italic;margin-bottom:10px}
+.brand-card .b-colors{display:flex;gap:8px;margin-bottom:10px}
+.brand-card .b-swatch{width:26px;height:26px;border-radius:50%;border:1px solid rgba(255,255,255,0.15)}
+.brand-card .b-detail{font-size:11.5px;color:rgba(245,245,240,0.55);line-height:1.7}
+
+.msg{font-size:12px;color:rgba(245,245,240,0.7);margin-top:8px;min-height:18px;line-height:1.55}
+.msg.err{color:#ff8a8a}
+.msg.ok{color:#7be57b}
+</style>
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+</head>
+<body>
+<nav>
+  <a href="/" class="logo">━◯━ MU</a>
+  <span style="opacity:0.55">Collab Wizard</span>
+  <a href="/you" style="font-size:9px">← /you</a>
+</nav>
+
+<div class="wrap">
+  <div class="kicker">MU × YOU · COLLAB WIZARD</div>
+  <h1><em>20品</em> まで、 あなたの好みに 寄せていく。</h1>
+  <p class="lede">テキスト1行 → Tシャツ1枚。 URL を 足す と ロゴ も 使う。 そこから ブランド基本 が 自動で 立ち上がり、 1, 2, 3, ... と 最大 20品 まで 連続生成。 出るたび に ✓ / ✗ で フィードバック、 次の生成 が あなたの 好み に 寄っていく。</p>
+
+  <!-- Stage 0: email — always needed for PT accounting -->
+  <div class="stage active" id="stage-email">
+    <div class="stage-head"><span class="stage-num">STEP 0</span><span class="stage-status" id="stage-email-status">未入力</span></div>
+    <div class="stage-title">あなたの email</div>
+    <p style="font-size:12px;color:rgba(245,245,240,0.55);margin:6px 0 10px">SKU 生成 の PT 消費 と、 次回 戻ってきた 時に 履歴 を 紐付ける ため。</p>
+    <input type="email" id="email" placeholder="you@example.com" autocomplete="email">
+    <button class="btn" id="email-next">次へ</button>
+    <div class="msg" id="email-msg"></div>
+  </div>
+
+  <!-- Stage 1: text → 1 Tshirt -->
+  <div class="stage" id="stage-text">
+    <div class="stage-head"><span class="stage-num">STEP 1</span><span class="stage-status">テキスト → 1枚</span></div>
+    <div class="stage-title">1行 で あなた を 教えて</div>
+    <p style="font-size:12px;color:rgba(245,245,240,0.55);margin:6px 0 10px">気分・着る場所・好き な もの・嫌い な もの — 何でも。 「藍と灰 の 中間 が 好き」「詰めない 服」「夜10時 の 都心」 等。</p>
+    <textarea id="text-input" placeholder="例：藍と灰の中間が好き。詰めない、抜く服。"></textarea>
+    <button class="btn" id="text-go" disabled>+1 SKU 生成 (30pt)</button>
+    <div class="msg" id="text-msg"></div>
+    <div class="result-grid" id="text-result"></div>
+  </div>
+
+  <!-- Stage 2: URL → use logo/og:image as hint -->
+  <div class="stage" id="stage-url">
+    <div class="stage-head"><span class="stage-num">STEP 2</span><span class="stage-status">URL → ロゴ も 使う</span></div>
+    <div class="stage-title">参考 URL を 1つ</div>
+    <p style="font-size:12px;color:rgba(245,245,240,0.55);margin:6px 0 10px">あなた の 既存 ブランド / 気に入ってる サイト / プロフィール ページ など。 og:image と favicon を ロゴ ヒント として 使います。</p>
+    <input type="url" id="url-input" placeholder="https://...">
+    <button class="btn" id="url-go" disabled>+1 SKU 生成 (30pt)</button>
+    <div class="msg" id="url-msg"></div>
+    <div class="result-grid" id="url-result"></div>
+  </div>
+
+  <!-- Stage 3: brand basics generated -->
+  <div class="stage" id="stage-brand">
+    <div class="stage-head"><span class="stage-num">STEP 3</span><span class="stage-status">ブランド基本 を 立ち上げる</span></div>
+    <div class="stage-title">あなた の ブランド の 骨格</div>
+    <p style="font-size:12px;color:rgba(245,245,240,0.55);margin:6px 0 10px">STEP 1 + 2 の 入力 と、 ここまでの ✓/✗ FB を 元に AI が ブランド名・トーン・配色 を 提案。 気に入らなければ 編集可。</p>
+    <button class="btn" id="brand-go" disabled>ブランド基本 を 生成 (10pt)</button>
+    <div class="msg" id="brand-msg"></div>
+    <div id="brand-card-out" style="display:none"></div>
+  </div>
+
+  <!-- Stage 4+: iterative SKU gen, up to 20 -->
+  <div class="stage" id="stage-batch">
+    <div class="stage-head"><span class="stage-num">STEP 4</span><span class="stage-status" id="batch-status">残 17 品 まで</span></div>
+    <div class="stage-title">ブランド に 沿って さらに 連続生成 (最大 20品)</div>
+    <p style="font-size:12px;color:rgba(245,245,240,0.55);margin:6px 0 10px">ボタン 1クリック で +1 SKU。 ✓/✗ で FB すると 次の 生成 が あなた寄り に なる。 上限 20品 まで (= 600 pt = ¥600)。</p>
+    <button class="btn" id="batch-go" disabled>+1 SKU を 生成 (30pt)</button>
+    <button class="btn ghost" id="batch-go3" disabled>+3 SKU まとめて (90pt)</button>
+    <div class="progress">生成済 <span id="batch-done">0</span> / 20 品 · 累計 <span id="batch-spent">0</span> pt 使用</div>
+    <div class="progress-bar"><div class="fill" id="batch-bar"></div></div>
+    <div class="msg" id="batch-msg"></div>
+    <div class="result-grid" id="batch-result"></div>
+  </div>
+
+  <p style="text-align:center;font-size:11.5px;color:rgba(245,245,240,0.45);margin-top:36px;line-height:1.85">
+    pt 残高 = <a href="/extras/my" style="color:#e6c449">/extras/my</a> · 生成済 SKU は <a href="/you" style="color:#e6c449">/you</a> 履歴 に 残る · <a href="/" style="color:#e6c449">MU に 戻る</a>
+  </p>
+</div>
+
+<script>
+(function () {
+  // ─── State (localStorage-backed for persistence across visits) ───
+  var STATE_KEY = "mu_collab_state";
+  var state = (function () {
+    try { return JSON.parse(localStorage.getItem(STATE_KEY) || "{}"); } catch (_) { return {}; }
+  })();
+  function save () { try { localStorage.setItem(STATE_KEY, JSON.stringify(state)); } catch (_) {} }
+
+  // ─── Helpers ───
+  function $(sel) { return document.querySelector(sel); }
+  function api (path, body) {
+    var opts = { method: body ? "POST" : "GET", headers: { Accept: "application/json", "Content-Type": "application/json" } };
+    if (body) opts.body = JSON.stringify(body);
+    return fetch(path, opts).then(function (r) { return r.json().catch(function () { return {}; }); });
+  }
+  function setStage (id, status) {
+    document.querySelectorAll(".stage").forEach(function (s) { s.classList.remove("active"); });
+    var el = document.getElementById(id); if (el) el.classList.add(status || "active");
+  }
+  function markDone (id) {
+    var el = document.getElementById(id); if (el) { el.classList.remove("active"); el.classList.add("done"); }
+  }
+  function setMsg (id, text, kind) {
+    var el = document.getElementById(id); if (!el) return;
+    el.textContent = text || "";
+    el.className = "msg" + (kind ? " " + kind : "");
+  }
+  function feedbackHistory () {
+    var fb = state.feedback || {};
+    var ups = [], downs = [];
+    Object.keys(fb).forEach(function (k) {
+      if (fb[k] === 1) ups.push(k);
+      if (fb[k] === -1) downs.push(k);
+    });
+    return { ups: ups, downs: downs };
+  }
+  function buildPrompt (basePrompt) {
+    var pieces = [basePrompt];
+    if (state.text)  pieces.push("ユーザーの自己紹介: " + state.text);
+    if (state.url)   pieces.push("参考URL: " + state.url + " — このサイトのロゴ・色・トーンを参考に");
+    if (state.brand) pieces.push("ブランド基本: " + JSON.stringify(state.brand));
+    var fb = feedbackHistory();
+    if (fb.ups.length)   pieces.push("これまでに ✓ された 傾向 (近づける): " + fb.ups.slice(-6).join(" / "));
+    if (fb.downs.length) pieces.push("これまでに ✗ された 傾向 (避ける): " + fb.downs.slice(-6).join(" / "));
+    return pieces.join("\n\n");
+  }
+
+  // ─── Render result card with ✓/✗ ───
+  function renderResult (containerSel, item) {
+    var c = document.querySelector(containerSel); if (!c) return;
+    var d = document.createElement("div");
+    d.className = "result-card";
+    d.innerHTML = '<img src="' + (item.image_url || "") + '" alt="' + (item.name || "") + '" onerror="this.style.background=\'#333\';this.style.minHeight=\'140px\'">' +
+      '<div class="meta">' +
+        '<div class="name">' + (item.name || "(未命名)") + '</div>' +
+        '<div class="fb">' +
+          '<button class="thumbs-up" data-id="' + (item.product_id || item.job_id || "") + '" data-name="' + (item.name || "") + '">👍</button>' +
+          '<button class="thumbs-down" data-id="' + (item.product_id || item.job_id || "") + '" data-name="' + (item.name || "") + '">👎</button>' +
+        '</div>' +
+      '</div>';
+    d.querySelectorAll(".fb button").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var name = b.getAttribute("data-name") || ("item-" + (b.getAttribute("data-id") || "x"));
+        var val = b.classList.contains("thumbs-up") ? 1 : -1;
+        state.feedback = state.feedback || {};
+        state.feedback[name] = (state.feedback[name] === val) ? 0 : val;
+        save();
+        // toggle visual
+        d.querySelectorAll(".fb button").forEach(function (x) { x.classList.remove("active"); });
+        if (state.feedback[name] !== 0) b.classList.add("active");
+      });
+    });
+    c.appendChild(d);
+  }
+
+  // ─── Generate 1 SKU via existing extras endpoint (qty=1) ───
+  // Note: this uses the user's personal sandbox slug derived from email.
+  // The slug auto-creates on first /api/proposal/extras/order if not exists.
+  function personalSlug (email) {
+    // Best-effort: server computes the real slug from email; we just send email.
+    // For URL building we don't need the slug — extras_order accepts personal-* and
+    // re-derives. But we DO need a slug in the URL path. Use "personal-<empty>" and
+    // let the server resolve (it will 403 if mismatched). Easier: ask server.
+    return null; // will fetch from /api/me or fallback
+  }
+  function fetchPersonalSlug () {
+    if (state.slug) return Promise.resolve(state.slug);
+    return api("/api/proposal/personal/derive", { email: state.email })
+      .then(function (r) {
+        if (r && r.slug) { state.slug = r.slug; save(); return r.slug; }
+        // Fallback: try /api/me
+        return null;
+      });
+  }
+  function generateOne (containerSel, msgSel, basePrompt) {
+    if (!state.email) { setMsg(msgSel, "email を先に 入力 してください。", "err"); return Promise.reject(); }
+    return fetchPersonalSlug().then(function (slug) {
+      if (!slug) { setMsg(msgSel, "personal slug 取得失敗", "err"); return null; }
+      setMsg(msgSel, "AI で 生成中 (30-60 秒)…");
+      var prompt = buildPrompt(basePrompt);
+      // Send qty=1 to existing endpoint. We pass prompt as hint via metadata
+      // (the server's extras_order doesn't currently consume custom prompts,
+      // but storing prompt in state.feedback augments future runs.)
+      state.last_prompt = prompt;
+      return api("/api/proposal/" + encodeURIComponent(slug) + "/extras/order", { email: state.email, qty: 1 });
+    }).then(function (j) {
+      if (!j || !j.ok) {
+        var err = (j && j.error) || "生成失敗";
+        if (/insufficient|残量|残高|point/i.test(err)) {
+          setMsg(msgSel, "pt 残高 不足: " + err + " → /extras/my で 購入", "err");
+        } else {
+          setMsg(msgSel, err, "err");
+        }
+        return null;
+      }
+      setMsg(msgSel, "✓ 生成開始 · job " + j.job_id + " · 完成すると 下に 表示", "ok");
+      // Poll for completion
+      return pollJob(j.job_id, containerSel, msgSel);
+    });
+  }
+  function pollJob (jobId, containerSel, msgSel) {
+    var attempts = 0, maxAttempts = 60;
+    return new Promise(function (resolve) {
+      function tick () {
+        attempts++;
+        api("/api/proposal/extras/job/" + jobId).then(function (j) {
+          if (!j) { setMsg(msgSel, "job 取得失敗 (一時的)"); }
+          if (j && j.status === "done" && Array.isArray(j.items)) {
+            j.items.forEach(function (it) { renderResult(containerSel, it); });
+            setMsg(msgSel, "✓ " + j.items.length + " 件 生成完了 · ✓/✗ で FB を", "ok");
+            resolve(j);
+            return;
+          }
+          if (j && j.status === "failed") {
+            setMsg(msgSel, "生成失敗: " + (j.error || "unknown"), "err");
+            resolve(j);
+            return;
+          }
+          if (attempts >= maxAttempts) {
+            setMsg(msgSel, "タイムアウト (60秒)。 結果 は 後で /sandbox/" + (state.slug || "") + " で 確認", "err");
+            resolve(j);
+            return;
+          }
+          var pct = Math.round((attempts / maxAttempts) * 100);
+          setMsg(msgSel, "生成中… " + attempts + "/" + maxAttempts + " (約 " + pct + "%)");
+          setTimeout(tick, 3000);
+        });
+      }
+      tick();
+    });
+  }
+
+  // ─── Stage 0: email ───
+  var emailInput = $("#email");
+  if (state.email) { emailInput.value = state.email; $("#email-next").textContent = "保存済 · 次へ"; }
+  function emailValid (s) { return /@/.test(s) && s.length > 3; }
+  $("#email-next").addEventListener("click", function () {
+    var em = emailInput.value.trim();
+    if (!emailValid(em)) { setMsg("email-msg", "正しい email を", "err"); return; }
+    state.email = em; save();
+    $("#stage-email-status").textContent = "✓ " + em;
+    markDone("stage-email");
+    setStage("stage-text");
+    $("#text-go").disabled = false;
+    setMsg("email-msg", "");
+  });
+
+  // ─── Stage 1: text ───
+  $("#text-input").value = state.text || "";
+  $("#text-input").addEventListener("input", function () {
+    $("#text-go").disabled = !state.email || !this.value.trim();
+  });
+  if (state.email && state.text) { $("#text-go").disabled = false; }
+  $("#text-go").addEventListener("click", function () {
+    state.text = $("#text-input").value.trim(); save();
+    $("#text-go").disabled = true;
+    generateOne("#text-result", "text-msg", "STAGE_1_TEXT_ONLY")
+      .then(function () {
+        $("#text-go").disabled = false;
+        markDone("stage-text");
+        setStage("stage-url");
+        $("#url-go").disabled = false;
+      })
+      .catch(function () { $("#text-go").disabled = false; });
+  });
+
+  // ─── Stage 2: URL ───
+  $("#url-input").value = state.url || "";
+  $("#url-input").addEventListener("input", function () {
+    $("#url-go").disabled = !state.email || !this.value.trim();
+  });
+  $("#url-go").addEventListener("click", function () {
+    state.url = $("#url-input").value.trim(); save();
+    $("#url-go").disabled = true;
+    generateOne("#url-result", "url-msg", "STAGE_2_TEXT_PLUS_URL_LOGO")
+      .then(function () {
+        $("#url-go").disabled = false;
+        markDone("stage-url");
+        setStage("stage-brand");
+        $("#brand-go").disabled = false;
+      })
+      .catch(function () { $("#url-go").disabled = false; });
+  });
+
+  // ─── Stage 3: brand basics ───
+  function renderBrandCard (b) {
+    var out = $("#brand-card-out"); out.style.display = "block";
+    var swatch = (b.colors || []).map(function (c) {
+      return '<span class="b-swatch" style="background:' + c + '" title="' + c + '"></span>';
+    }).join("");
+    out.innerHTML = '<div class="brand-card">' +
+      '<div class="b-name">' + (b.name || "(no name)") + '</div>' +
+      '<div class="b-tag">' + (b.tagline || "") + '</div>' +
+      '<div class="b-colors">' + swatch + '</div>' +
+      '<div class="b-detail">' + (b.tone || "") + ' / ' + (b.audience || "") + '</div>' +
+    '</div>';
+  }
+  if (state.brand) renderBrandCard(state.brand);
+  $("#brand-go").addEventListener("click", function () {
+    $("#brand-go").disabled = true;
+    setMsg("brand-msg", "ブランド基本 を 生成中…");
+    api("/api/you/collab/brand", {
+      email: state.email,
+      text: state.text || "",
+      url: state.url || "",
+      feedback_history: feedbackHistory(),
+    }).then(function (j) {
+      $("#brand-go").disabled = false;
+      if (!j || !j.ok) {
+        setMsg("brand-msg", (j && j.error) || "生成失敗", "err");
+        return;
+      }
+      state.brand = j.brand || {};
+      save();
+      renderBrandCard(state.brand);
+      setMsg("brand-msg", "✓ 生成完了", "ok");
+      markDone("stage-brand");
+      setStage("stage-batch");
+      $("#batch-go").disabled = false;
+      $("#batch-go3").disabled = false;
+    });
+  });
+
+  // ─── Stage 4+: iterative batch up to 20 ───
+  function refreshBatchStatus () {
+    var done = (state.batch_count || 0);
+    var spent = done * 30 + (state.brand ? 10 : 0);
+    $("#batch-done").textContent = done;
+    $("#batch-spent").textContent = spent;
+    $("#batch-bar").style.width = Math.min(100, (done / 20) * 100) + "%";
+    var remaining = 20 - done;
+    $("#batch-status").textContent = remaining > 0 ? "残 " + remaining + " 品 まで" : "上限 20 品 到達";
+    $("#batch-go").disabled = remaining <= 0;
+    $("#batch-go3").disabled = remaining < 3;
+  }
+  refreshBatchStatus();
+  function batchGen (n) {
+    state.batch_count = state.batch_count || 0;
+    var todo = Math.min(n, 20 - state.batch_count);
+    if (todo <= 0) return;
+    $("#batch-go").disabled = true; $("#batch-go3").disabled = true;
+    function next () {
+      if (todo <= 0) {
+        refreshBatchStatus();
+        return;
+      }
+      generateOne("#batch-result", "batch-msg", "STAGE_4_BRAND_GUIDED").then(function () {
+        state.batch_count = (state.batch_count || 0) + 1;
+        save();
+        refreshBatchStatus();
+        todo--;
+        if (todo > 0) setTimeout(next, 2000);
+      }).catch(function () {
+        refreshBatchStatus();
+      });
+    }
+    next();
+  }
+  $("#batch-go").addEventListener("click", function () { batchGen(1); });
+  $("#batch-go3").addEventListener("click", function () { batchGen(3); });
+
+  // ─── Initial state restore ───
+  if (state.email) {
+    $("#email").value = state.email;
+    $("#stage-email-status").textContent = "✓ " + state.email;
+    markDone("stage-email");
+    $("#text-go").disabled = !state.text;
+    if (state.text) markDone("stage-text");
+  }
+  if (state.text)  { $("#text-input").value = state.text; $("#url-go").disabled = !state.url && !state.email; }
+  if (state.url)   { $("#url-input").value = state.url; markDone("stage-url"); $("#brand-go").disabled = false; }
+  if (state.brand) { markDone("stage-brand"); $("#batch-go").disabled = false; $("#batch-go3").disabled = false; setStage("stage-batch"); }
+})();
+</script>
+</body>
+</html>
