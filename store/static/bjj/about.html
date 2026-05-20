@@ -240,7 +240,7 @@ h2:after{content:"";display:block;width:24px;height:1px;background:rgba(230,196,
     }
     btn.textContent = '送信 中…';
     btn.disabled = true;
-    fetch('/api/collab/apply', {
+    fetch('/api/outreach/apply', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
       body: JSON.stringify(data),
