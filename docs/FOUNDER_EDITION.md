@@ -115,16 +115,36 @@ Checkout API: `POST /api/checkout/founder` → Stripe Checkout Session URL
 
 | 項目 | 状況 |
 |---|---|
-| LP `/buy/founder` | ✅ ship (このPR) |
-| `POST /api/checkout/founder` | ✅ ship (このPR) — Stripe Checkout 起動 |
-| Drop 日 自動 計算 | ✅ ship — 春分/夏至/秋分/冬至 21:00 JST |
-| Loopwheel 工房 契約 | ⏳ 第1回 drop 前 までに 和歌山 訪問 |
-| 鉱物染料 配合 確定 | ⏳ 弟子屈町 川湯温泉 サンプル 採取 + ph 試験 |
-| NFC tag + 革ラベル サンプル | ⏳ 試作 1 着 (Yuki 自身用) |
+| LP `/buy/founder` (写真 5枚 + 沈黙 リライト) | ✅ ship (v2) |
+| `POST /api/checkout/founder` (manual capture mode) | ✅ ship (v2) — オーソリ のみ、 課金確定 = 製造完了後 |
+| Size picker (XS〜XXL) UI | ✅ ship (v2) |
+| 先行予約 / 全額返金 ポリシー LP 明示 | ✅ ship (v2) |
+| 特商法・事業者情報 LP 明示 | ✅ ship (v2) |
+| NFC 25年 無料交換 narrative | ✅ ship (v2) — 100年 narrative の chip-vs-anchor 整合 |
+| 海外 配送 = 鉱物染料 別送 注記 | ✅ ship (v2) — 国際郵便 危険物 規制 (UN3077) 配慮 |
+| Drop 日 自動 計算 (春分/夏至/秋分/冬至 21:00 JST) | ✅ ship |
+| Loopwheel 工房 契約 | ⏳ 6/21 前 までに 和歌山 訪問 |
+| 鉱物染料 配合 確定 + 重金属 試験 | ⏳ 弟子屈町 川湯温泉 サンプル 採取 + ph + EU REACH 適合 試験 |
+| NFC tag + 革ラベル 試作 | ⏳ 1 着 (Yuki 用) |
 | Solana mint + DAO seat 実装 | ⏳ MU Pass v2 と 統合 |
 | `/c/founder/{serial}` Chronicle | ⏳ NFC ラベル 完成 後 |
-| 100年 修繕 reserve fund 口座 | ⏳ Stripe Connect 子アカウント 作成 |
-| tsugi succession token 紐付け | ⏳ tsugi v1 が 動いて から |
+| 100年 修繕 reserve fund (信託 口座 or Stripe Connect Custom Account) | ⏳ 顧問税理士 + 顧問弁護士 相談 後 |
+| 適格請求書発行事業者番号 | ⏳ 登録完了 後 LP の placeholder を 確定値 に 差し替え |
+| tsugi succession token 紐付け | ⏳ tsugi v1 動作 後 |
+| Phantom wallet セットアップ ガイド + メール vote 代行 mode | ⏳ Chronicle 完成 後 |
+
+### v2 ship 内訳 (2026-05-20)
+
+このPR で 解決 した リスク:
+- 写真 ゼロ で ¥48k 表示 → 5 枚 (hero/loopwheel macro/NFC label/染料 vial/手書きノート) 統合
+- live mode で 即課金 → manual capture mode (オーソリ のみ)
+- 適格請求書 placeholder `T9011001129xxx` → 登録完了後 メール記載 と 明文化
+- NFC 100年 narrative 矛盾 → 25年 無料 chip 交換 + serial/on-chain anchor 永久
+- 海外 鉱物染料 同梱 = 国際郵便 規制 違反 リスク → 別送 / 修繕時 持参 を 明文化
+- Yuki 1人 bottleneck → #001-#100 = 創業者 直接、 #101 以降 = 後継 founder 連名 と 明文化
+- size 強制 M → XS/S/M/L/XL/XXL picker 追加
+- 特商法 表記 不在 → 事業者情報 + リンク を LP に 設置
+- refund ポリシー 弱体 → 製造開始前 = 全額返金、 開始後 = NFT 二次流通 を 明文化
 
 ---
 
