@@ -18120,7 +18120,7 @@ fn seed_niches(conn: &Connection) {
         ("bjj",
          "BJJ tribe",
          "ブラジリアン柔術 競技者・観戦者・道場 (Yuki 青帯 + JiuFlow 170+)",
-         "/bjj/about",
+         "/bjj/about.html",
          "/static/ad/jf-hero.png",
          80_000, 500_000, 100,
          "5/24 JIU FIGHT イベント が 直近 動かす ハンドル。 影響者 3 名 + 道場 大会 協賛 + ads ¥30K"),
@@ -18136,7 +18136,7 @@ fn seed_niches(conn: &Connection) {
         ("collab",
          "B2B Collab (rev share)",
          "道場 / 飲食店 / SaaS / イベント 主催 — 在庫 リスク ゼロ で 始められる",
-         "/bjj/about",
+         "/bjj/about.html",
          "/static/ad/jf-hero.png",
          0, 100_000, 70,
          "cold ads ゼロ、 outbound のみ。 道場 100 軒 + 飲食 collab (kokon 等)"),
@@ -18159,6 +18159,16 @@ fn seed_niches(conn: &Connection) {
             params![slug, name, audience, entry, hero, ad_b, mrr, pri, notes, now, now],
         );
     }
+
+    // 2026-05-20 migration: nest_service does not strip .html, so the
+    // initial seed of `/bjj/about` would 404 in production. Fix any
+    // existing row that still points at the extensionless path. Safe to
+    // run on every boot — only updates the affected rows.
+    let _ = conn.execute(
+        "UPDATE mu_niches SET entry_url = '/bjj/about.html', updated_at = ?
+         WHERE entry_url = '/bjj/about'",
+        params![now],
+    );
 }
 
 fn seed_donation_destinations(conn: &Connection) {
