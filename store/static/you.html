@@ -520,11 +520,10 @@ footer a:hover{opacity:1}
           <button class="rx-btn" data-rx="skip" type="button">👋 Skip</button>
           <span id="rx-msg" style="font-size:10px;opacity:0.65;margin-left:6px"></span>
         </div>
-        <!-- Size picker at PURCHASE time (Yuki 2026-05-21).
-             Removed from signup; selected here right before 仕立てる.
-             Default M, saved to localStorage so returning users pre-select. -->
+        <!-- Size picker at PURCHASE time. Default M, sticky to localStorage,
+             shows '前回 X' for returning buyers. -->
         <div class="field" style="margin:18px 0 12px">
-          <div class="label" style="font-size:11px;letter-spacing:0.2em;opacity:0.75;margin-bottom:8px">サイズ <span style="font-size:9px;opacity:0.55">(仕立てる時に選ぶ)</span></div>
+          <div class="label" style="font-size:11px;letter-spacing:0.2em;opacity:0.75;margin-bottom:8px">サイズ <span style="font-size:9px;opacity:0.55">(仕立てる時に選ぶ)</span> <span id="claim-size-prev" style="font-size:9px;color:#7be57b;margin-left:6px;display:none">前回 <strong id="claim-size-prev-v">—</strong></span></div>
           <div class="size-row" id="claim-size-row" data-name="claim_size" data-multi="0">
             <div class="size" data-s="XS">XS</div>
             <div class="size" data-s="S">S</div>
@@ -533,6 +532,10 @@ footer a:hover{opacity:1}
             <div class="size" data-s="XL">XL</div>
             <div class="size" data-s="XXL">XXL</div>
           </div>
+        </div>
+        <!-- Empty-state reminder: 'this month you have claimed 0 — try one for free' -->
+        <div id="claim-month-reminder" style="display:none;background:rgba(230,196,73,0.06);border:1px solid rgba(230,196,73,0.3);border-radius:5px;padding:10px 14px;margin:8px 0 12px;font-size:12px;color:#e6c449;line-height:1.6">
+          今月 まだ <strong id="claim-month-cnt">0</strong> 着。 sub 価値 を 感じるには 1着 仕立てて みる の が 一番 効率的 です。
         </div>
         <div class="preview-actions">
           <button class="btn btn-primary" id="claim-btn">この一着を仕立てる</button>
@@ -1346,7 +1349,14 @@ $('#skip-btn').addEventListener('click', async ()=>{
   if (!token || !id) return;
   try {
     await api('/api/you/feedback', {token, design_id: Number(id), action: 'skip'});
-    toast('Skip 受付。明日の案に反映します');
+    // Friendlier feedback message (was 'Skip 受付。明日の案に反映します').
+    var msgs = [
+      '✗ ありがとう。 明日は 別系統 試します',
+      '✗ 受付。 違うトーン で 明朝 出します',
+      '✗ OK。 prompt を 調整して 明日 再挑戦',
+      '✗ 反映。 1着 ごと に 好み が 確実 に 寄って いきます'
+    ];
+    toast(msgs[Math.floor(Math.random() * msgs.length)]);
   } catch(e){ toast(e.message, true); }
 });
 
@@ -1427,6 +1437,13 @@ $('#slug-save').addEventListener('click', async ()=>{
       row.querySelectorAll('.size').forEach(function (s) {
         s.classList.toggle('on', s.getAttribute('data-s') === savedSize);
       });
+      // Show 'previously: X' hint for returning buyers
+      var prevEl = document.getElementById('claim-size-prev');
+      var prevV = document.getElementById('claim-size-prev-v');
+      if (prevEl && prevV) {
+        prevEl.style.display = 'inline';
+        prevV.textContent = savedSize;
+      }
     }
     row.querySelectorAll('.size').forEach(function (s) {
       s.addEventListener('click', function () {
@@ -1442,6 +1459,31 @@ $('#slug-save').addEventListener('click', async ()=>{
     return sel ? sel.getAttribute('data-s') : null;
   }
   window.__youPickedSize = pickedSize;
+
+  // Show 'this month you've claimed N' reminder if N == 0.
+  // Uses localStorage as best-effort tracking (server-side count not exposed).
+  try {
+    var monthKey = 'mu_you_claim_' + new Date().toISOString().slice(0, 7);
+    var monthCnt = parseInt(localStorage.getItem(monthKey) || '0', 10);
+    var rem = document.getElementById('claim-month-reminder');
+    var cntEl = document.getElementById('claim-month-cnt');
+    if (rem && cntEl && monthCnt === 0) {
+      rem.style.display = 'block';
+      cntEl.textContent = '0';
+    }
+    // Increment on successful claim — hook into existing claim-btn flow.
+    var origBtn = document.getElementById('claim-btn');
+    if (origBtn) {
+      var orig = origBtn.onclick;
+      // Use addEventListener wrap so existing handler still fires.
+      origBtn.addEventListener('click', function () {
+        try {
+          var n = parseInt(localStorage.getItem(monthKey) || '0', 10) + 1;
+          localStorage.setItem(monthKey, String(n));
+        } catch (_) {}
+      });
+    }
+  } catch (_) {}
 })();
 
 $('#claim-btn').addEventListener('click', async ()=>{
