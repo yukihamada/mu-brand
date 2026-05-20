@@ -10966,7 +10966,8 @@ async fn challenge_100_progress_json(State(db): State<Db>) -> Json<serde_json::V
 }
 
 async fn challenge_100_page(State(db): State<Db>) -> Html<String> {
-    let (sold, latest_drop, latest_suzuri, latest_six): (i64, Option<i64>, Option<String>, Vec<(i64, i64, String)>) = {
+    let (sold, latest_drop, latest_suzuri, mugen_total, latest_six):
+        (i64, Option<i64>, Option<String>, i64, Vec<(i64, i64, String)>) = {
         let conn = db.lock().unwrap();
         let sold: i64 = conn.query_row(
             "SELECT COUNT(*) FROM mu_purchases
@@ -10984,6 +10985,11 @@ async fn challenge_100_page(State(db): State<Db>) -> Html<String> {
             Some((d, s)) => (Some(d), s),
             None => (None, None),
         };
+        // Dynamic mugen design count — replaces the hardcoded "205".
+        let mugen_total: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM products WHERE brand='mugen' AND active=1",
+            [], |r| r.get(0),
+        ).unwrap_or(0);
         let six: Vec<(i64, i64, String)> = conn.prepare(
             "SELECT id, drop_num, COALESCE(mockup_url, '') FROM products
              WHERE brand='mugen' AND active=1
@@ -10994,13 +11000,21 @@ async fn challenge_100_page(State(db): State<Db>) -> Html<String> {
                 r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?,
             ))).ok().map(|it| it.filter_map(|r| r.ok()).collect())
         }).unwrap_or_default();
-        (sold, drop, suz, six)
+        (sold, drop, suz, mugen_total, six)
     };
 
     let pct = ((sold as f64 / 100.0) * 100.0).clamp(0.0, 100.0);
     let remaining = (100 - sold).max(0);
-    let drop_str = latest_drop.map(|d| format!("#{:03}", d)).unwrap_or_else(|| "#---".to_string());
+    let drop_str = latest_drop.map(|d| format!("#{:03}", d)).unwrap_or_else(|| "—".to_string());
     let suzuri_link = latest_suzuri.unwrap_or_else(|| "https://suzuri.jp/yukihama".to_string());
+    // SSR fallback for "days left" (was rendered as "—" until JS ran).
+    let days_left_ssr: i64 = {
+        let end_unix: i64 = 1780239599; // 2026-05-31T14:59:59Z
+        let now_s: i64 = chrono_now().parse().unwrap_or(end_unix);
+        let secs_left = (end_unix - now_s).max(0);
+        ((secs_left + 86399) / 86400).max(0)
+    };
+    let mugen_total_display = if mugen_total > 0 { mugen_total.to_string() } else { "200+".into() };
 
     let designs_grid = if latest_six.is_empty() {
         String::new()
@@ -11023,12 +11037,13 @@ async fn challenge_100_page(State(db): State<Db>) -> Html<String> {
         r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>14日で100枚 — MUGEN 無限 · MU</title>
-<meta name="description" content="2026年5月、AI が運営するアパレル「MU」が 14 日で MUGEN Tシャツを 100 枚売れるか試している。進捗は毎日この場所で公開される。">
-<meta property="og:title" content="14日で100枚 — MUGEN 無限 · MU">
-<meta property="og:description" content="AI が運営するアパレル「MU」が 14 日で MUGEN Tシャツを 100 枚売る挑戦。進捗を毎日公開。">
-<meta property="og:image" content="https://mockups.wearmu.com/hero.png">
+<title>MU の 14 日 · 5/18 → 5/31 · 透明 公開</title>
+<meta name="description" content="2026年5月18日 — 5月31日、 AI が運営するアパレル「MU」の 14 日間 の 販売数 を 毎日 公開 する 場所。 数字 は 隠さない。 良くも 悪くも /transparency で 見れる。">
+<meta property="og:title" content="MU の 14 日 · 透明 公開">
+<meta property="og:description" content="2026/5/18 — 5/31 の 14 日間 を 毎日 公開。 数字 は 隠さない。">
+<meta property="og:image" content="https://wearmu.com/static/founder/hero-on-model.png">
 <meta name="twitter:card" content="summary_large_image">
+<link rel="canonical" href="https://wearmu.com/100">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 <style>
@@ -11060,69 +11075,68 @@ a:hover{{text-decoration:underline}}
 .share a{{font-size:12px;letter-spacing:0.08em;text-transform:uppercase;opacity:0.7}}
 </style></head><body>
 <div class="wrap">
-  <div class="eyebrow">May 2026 · MUGEN 無限 · 14日 100枚 Challenge</div>
-  <h1>14日で <em>100枚</em>。<br>AI が運営するアパレルの、最初の挑戦。</h1>
+  <div class="eyebrow">2026.05.18 — 05.31 · MU の 14 日</div>
+  <h1>14 日 を、<br>毎日 <em>公開</em> する。</h1>
   <p class="sub">
-    2026年5月18日 — 5月31日。<br>
-    AI が毎時 1 つの絵を生成し、北海道弟子屈町の気温が刷る枚数を決める「MU」。<br>
-    最初の本格的な販売挑戦として、<strong style="color:var(--fg)">14 日間で MUGEN Tシャツを 100 枚</strong> 売る。<br>
-    進捗はこのページで毎日更新。創業者 Yuki Hamada が X (@yukihamada) で日次レポートを公開する。
+    MU は AI と 気候 が 運営 する アパレル ブランド。<br>
+    AI が 毎時 1 枚 の 絵 を 生成 し、 北海道 弟子屈町 の 気温 が 刷る 枚数 を 決める。<br>
+    この 2 週間、 売れた 枚数 を 隠さない。 良くも 悪くも、 ここ で 見れる。
   </p>
 
   <div class="counter">
     <strong id="sold-counter">{sold}</strong>
-    <span>/ 100 sold · 残り <span id="remaining-counter">{remaining}</span> 枚 · 締切まで <span id="days-left">—</span> 日</span>
+    <span>/ 100 &nbsp;·&nbsp; 残り <span id="remaining-counter">{remaining}</span> 枚 &nbsp;·&nbsp; あと <span id="days-left">{days_left_ssr}</span> 日</span>
   </div>
   <div class="bar"><i id="progress-bar"></i></div>
 
   <div class="cta">
     <a class="btn" href="{suzuri}" target="_blank" rel="noopener" data-tier="suzuri">
-      日本国内 ¥4,900<small>SUZURI から即出荷 · 送料込</small>
+      日本国内 ¥4,900<small>SUZURI 即出荷 · 送料込</small>
     </a>
-    <a class="btn secondary" href="/mugen?utm_source=challenge100&utm_medium=lp&utm_campaign=mugen100">
-      Browse 205 designs<small>Hourly drops · Printful EU ¥7,800 (intl)</small>
+    <a class="btn secondary" href="/mugen?utm_source=t100&utm_medium=lp&utm_campaign=mu14">
+      {mugen_total_display} デザイン を 見る<small>毎時 1 枚 · 海外 Printful EU ¥7,800</small>
     </a>
   </div>
-  <p class="note">最新ドロップ {drop} を含む 200+ デザインから選べる。MU の値段は売れるごとに上がる(bonding curve) — 早い人ほど安い。</p>
+  <p class="note">最新ドロップ {drop}。 値段 は 売れる ごと に 上がる (bonding curve) — 早い 人 ほど 安い。</p>
 
   {designs_grid}
 
   <div class="section">
-    <h2>なぜ 100 枚なのか</h2>
+    <h2>1 着 だけ の 形 も ある</h2>
     <p class="sub">
-      MU は AI と気候だけで運営されるアパレルブランド。設計、価格、製造、出荷、サポートまで人間がいない。<br>
-      しかし「最初の 100 人」だけは、人間が呼ばないと始まらない。<br>
-      この 100 人がいれば、AI は次の 1,000 人にも届くプロダクトになる。
+      もし 「100年 着られる 1 着」 を 探して いる なら、 別の 入口 が ある。<br>
+      <strong style="color:var(--fg)">MUGEN #∞ Founder Edition</strong> — Loopwheel 14oz・ 弟子屈 鉱物染料・ NFC ラベル・ 100 年 修繕保証。 ¥48,000 / 1 着 / 年 4 回 だけ。<br>
+      <a href="/buy/founder" style="color:var(--y)">→ /buy/founder</a>
     </p>
   </div>
 
   <div class="section">
-    <h2>毎日の進捗</h2>
+    <h2>毎日 21:00 JST</h2>
     <p class="sub">
-      X (<a href="https://twitter.com/yukihamada" target="_blank" rel="noopener">@yukihamada</a>) で毎日 21:00 JST に販売数を投稿。<br>
-      売れた枚数 / 達成率 / 残り日数を build-in-public 形式で公開する。
+      X (<a href="https://twitter.com/yukihamada" target="_blank" rel="noopener">@yukihamada</a>) で 毎日 販売数 を 投稿。<br>
+      売れた 枚数 / 達成率 / 残り日数 を build-in-public で 出します。
     </p>
     <div class="share">
-      <a href="https://twitter.com/intent/tweet?text=MU%20%E3%81%8C%2014%E6%97%A5%E3%81%A7%20100%E6%9E%9A%E3%81%AE%20MUGEN%20T%E3%82%B7%E3%83%A3%E3%83%84%E3%82%92%E5%A3%B2%E3%82%8B%E6%8C%91%E6%88%A6%E3%82%92%E3%81%97%E3%81%A6%E3%81%84%E3%82%8B%E3%80%82&url=https%3A%2F%2Fwearmu.com%2F100" target="_blank" rel="noopener">▲ X でシェア</a>
+      <a href="https://twitter.com/intent/tweet?text=MU%20%E3%81%AE%2014%E6%97%A5%E9%96%93%20%E3%81%AE%E9%80%B2%E6%8D%97%E3%82%92%E6%AF%8E%E6%97%A5%E5%85%AC%E9%96%8B%E4%B8%AD%E3%80%82&url=https%3A%2F%2Fwearmu.com%2F100" target="_blank" rel="noopener">▲ X でシェア</a>
       <a href="https://social-plugins.line.me/lineit/share?url=https%3A%2F%2Fwearmu.com%2F100" target="_blank" rel="noopener">▲ LINE でシェア</a>
       <a href="#" id="t100-copy" onclick="navigator.clipboard.writeText('https://wearmu.com/100'); this.textContent='✓ コピーしました'; setTimeout(()=>{{this.textContent='▲ リンクを コピー';}}, 2000); return false;">▲ リンクを コピー</a>
-      <a href="/mugen">▲ 全ドロップを見る</a>
-      <a href="/about.html">▲ MU とは</a>
+      <a href="/mugen">▲ 全ドロップ</a>
+      <a href="/about">▲ MU とは</a>
     </div>
   </div>
 
   <div class="section">
-    <h2>達成 ・ 未達 で どうなる</h2>
+    <h2>結果 は どう なっても</h2>
     <p class="sub" style="font-size:0.85rem;line-height:1.85">
-      <strong>100枚 完売</strong>: AI 運営 が 市場 で 通用 する 証明。 5/31 23:59 に X で 結果発表 + 翌週 から Phase 2 (¥150K/月 ads 継続 + 海外 展開 検討)。<br>
-      <strong>50-99枚</strong>: 仮説 部分成立。 MU を maintenance 化 し ない、 が pace を 1着/日 等 に slow down。<br>
-      <strong>0-49枚</strong>: 仮説 不成立。 MU を maintenance に 落とし、 JiuFlow / SOLUNA に 集中。 既購入者 へ の 配送 ・ サポート は 継続。<br>
-      <span style="opacity:0.6">どの 結果 でも 数字 は 隠さず <a href="/transparency" style="color:var(--y)">/transparency</a> に 出します。</span>
+      売れて も、 売れなくて も、 5/31 23:59 に X で 数字 を 出します。<br>
+      <strong>100 枚 売れた 場合</strong>: AI と 気候 だけ で 服 が 市場 で 通用 する 証明。 同じ pace で 続けます。<br>
+      <strong>そうでない 場合</strong>: pace を 落とす。 ただし AI と 気候 は 止めない (= MU は 続く)。 既購入者 への 配送・サポート は 100% 継続。<br>
+      <span style="opacity:0.6">全数字 は <a href="/transparency" style="color:var(--y)">/transparency</a> に 出します。</span>
     </p>
   </div>
 
   <div class="foot">
-    wearmu.com · 株式会社イネブラ · <a href="/tokushoho.html">特商法表記</a> · <a href="/transparency">/transparency</a>
+    wearmu.com · 株式会社イネブラ · <a href="/tokushoho">特商法表記</a> · <a href="/transparency">/transparency</a>
   </div>
 </div>
 <script>
@@ -11156,7 +11170,9 @@ a:hover{{text-decoration:underline}}
         pct = pct,
         sold = sold,
         remaining = remaining,
+        days_left_ssr = days_left_ssr,
         drop = drop_str,
+        mugen_total_display = html_escape(&mugen_total_display),
         suzuri = html_escape(&suzuri_link),
         deadline = CHALLENGE_100_DEADLINE_UTC,
         designs_grid = designs_grid,

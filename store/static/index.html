@@ -623,19 +623,12 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
 </nav>
 
 <!-- ========================================
-     PROMO STRIP: 100枚 banner + 今日のTシャツ hero card.
-     Relocated 2026-05-21: was at the very top of <body> where the fixed
-     ticker (z:200) + fixed nav (z:100) covered them — clicks on the
-     hero "買う" button landed on the nav and did nothing. Now placed
-     right after </nav> with margin-top:100px (= 28px ticker + ~72px
-     nav height) so they render in normal flow BELOW the fixed bars.
+     PROMO STRIP: 今日のTシャツ hero card.
+     t100-banner removed 2026-05-20 per Yuki: surfacing 0/100 publicly
+     hurt optics, and the /100 page itself was reframed to a quieter
+     transparency narrative. CVR-facing 今日のTシャツ card kept (→ /buy).
      ======================================== -->
 <div id="promo-strip" style="margin-top:100px;position:relative;z-index:5">
-  <!-- 100枚 challenge live counter — SSR-filled. -->
-  <a id="t100-banner" href="/100" style="display:block;background:linear-gradient(90deg,rgba(230,196,73,0.18),rgba(230,196,73,0.04));border-top:1px solid rgba(230,196,73,0.3);border-bottom:1px solid rgba(230,196,73,0.4);padding:11px 16px;text-align:center;font-size:12.5px;color:#fff;letter-spacing:0.02em;text-decoration:none">
-    <span style="margin-right:8px">🎯</span><strong style="color:#e6c449;font-family:'SF Mono','Menlo',monospace">{T100_SOLD}/100</strong> 着 · <strong>14日 100枚 challenge</strong> · 5/18→5/31 · 残り{T100_DAYS_LEFT}日 · live → /100
-  </a>
-
   <!-- 今日 の Tシャツ hero card — above-the-fold MUGEN + 1-click buy. -->
   <a id="hero-tshirt" href="/buy?from=home_hero" style="display:flex;align-items:center;gap:18px;max-width:780px;margin:18px auto;padding:16px 20px;background:#0E0E0E;border:1px solid rgba(230,196,73,0.35);border-radius:8px;text-decoration:none;color:#F5F5F0">
     <img src="https://mockups.wearmu.com/hero.png" alt="今日 の MUGEN" loading="eager" fetchpriority="high" style="width:96px;height:96px;object-fit:cover;border-radius:4px;background:#fff;flex-shrink:0" onerror="this.style.display='none'">
