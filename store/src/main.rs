@@ -7569,6 +7569,8 @@ async fn admin_bounty_issue_reward(
     let cash_amount_jpy: i64 = form.get("cash_amount_jpy")
         .and_then(|s| s.parse().ok()).unwrap_or(0).max(0);
     let notes = form.get("notes").cloned().unwrap_or_default().chars().take(2000).collect::<String>();
+    let force_new: bool = form.get("force_new").map(|s| s == "1").unwrap_or(false)
+        || q.get("force_new").map(|s| s == "1").unwrap_or(false);
 
     let exists: bool = {
         let conn = db.lock().unwrap();
@@ -7580,7 +7582,21 @@ async fn admin_bounty_issue_reward(
     }
 
     let now_int: i64 = chrono_now().parse().unwrap_or(0);
-    let existing: Option<(String, i64)> = {
+    let existing: Option<(String, i64)> = if force_new {
+        // Caller wants a fresh claim path (e.g. switching from legacy form
+        // flow → Stripe-collected address). Mark any active rewards for
+        // this bounty as superseded so claim attempts on the old URL fail
+        // with a clear "this link has been replaced" message.
+        {
+            let conn = db.lock().unwrap();
+            let _ = conn.execute(
+                "UPDATE bounty_rewards SET status='superseded'
+                 WHERE bounty_id=? AND status='issued'",
+                params![id],
+            );
+        }
+        None
+    } else {
         let conn = db.lock().unwrap();
         conn.query_row(
             "SELECT token, CAST(expires_at AS INTEGER) FROM bounty_rewards
@@ -7594,6 +7610,9 @@ async fn admin_bounty_issue_reward(
 
     let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
     if let Some((token, expires_at)) = existing {
+        // For legacy/idempotent reissues we still return the old
+        // /bounty/claim/<token> URL; new issuances always return the
+        // Stripe-hosted URL below.
         return Json(serde_json::json!({
             "ok": true,
             "already_issued": true,
@@ -7618,11 +7637,93 @@ async fn admin_bounty_issue_reward(
             params![id, token, cash_amount_jpy, notes, now_int.to_string(), expires_at.to_string()],
         );
     }
+
+    // ── Stripe Checkout Session for claim ──
+    // Bounty hunters used to fill a wearmu.com form with their shipping
+    // address — which puts PII through our app and our form validators.
+    // We now route the claim through Stripe Checkout with
+    // `shipping_address_collection` so Stripe handles address validation
+    // and we only see the verified address on the webhook. A symbolic
+    // ¥66 charge keeps the receipt + intent-to-accept signal explicit
+    // (we'd use ¥0 via SetupIntent, but ¥66 = "MU symbol-charge").
+    //
+    // On checkout.session.completed the webhook updates bounty_rewards
+    // (status='claimed', ship_*, claimed_at) and triggers fulfilment.
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    let stripe_url = if !stripe_key.is_empty() {
+        let success_url = format!("{}/bounty/claim/{}?paid=ok", base_url, token);
+        let cancel_url  = format!("{}/bounty/claim/{}?paid=cancel", base_url, token);
+        // 30+ countries our reporters might come from. Stripe requires
+        // an explicit allow-list when shipping_address_collection is on.
+        let countries = [
+            "JP","US","CA","GB","DE","FR","NL","IT","ES","SE","NO","DK","FI",
+            "CH","AT","BE","IE","PL","CZ","PT","AU","NZ","SG","HK","TW","KR",
+            "TH","MY","ID","PH","VN","IN","BR","MX","AR","ZA","IL","AE",
+        ];
+        let mut cs_form: Vec<(String, String)> = vec![
+            ("mode".into(), "payment".into()),
+            ("success_url".into(), success_url),
+            ("cancel_url".into(), cancel_url),
+            ("payment_intent_data[description]".into(),
+                format!("MU Bounty 受領 #{} — 配送先確認のシンボル決済", id)),
+            ("payment_intent_data[metadata][kind]".into(), "bounty_claim".into()),
+            ("payment_intent_data[metadata][bounty_token]".into(), token.clone()),
+            ("payment_intent_data[metadata][bounty_id]".into(), id.to_string()),
+            ("metadata[kind]".into(), "bounty_claim".into()),
+            ("metadata[bounty_token]".into(), token.clone()),
+            ("metadata[bounty_id]".into(), id.to_string()),
+            ("line_items[0][price_data][currency]".into(), "jpy".into()),
+            ("line_items[0][price_data][unit_amount]".into(), "66".into()),
+            ("line_items[0][price_data][product_data][name]".into(),
+                format!("MU Bounty 受領 — #{} 配送先確認", id)),
+            ("line_items[0][quantity]".into(), "1".into()),
+        ];
+        for (i, c) in countries.iter().enumerate() {
+            cs_form.push((
+                format!("shipping_address_collection[allowed_countries][{}]", i),
+                c.to_string(),
+            ));
+        }
+        let client = reqwest::Client::new();
+        let r = client.post("https://api.stripe.com/v1/checkout/sessions")
+            .basic_auth(&stripe_key, Some(""))
+            .form(&cs_form).send().await;
+        match r {
+            Ok(resp) => {
+                let raw = resp.text().await.unwrap_or_default();
+                let v: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
+                let url = v.get("url").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                let sid = v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                if !url.is_empty() {
+                    // Record the Stripe session id in notes for audit/debug.
+                    let conn = db.lock().unwrap();
+                    let _ = conn.execute(
+                        "UPDATE bounty_rewards SET notes = COALESCE(notes,'') || ?
+                         WHERE token=?",
+                        params![format!("\n[stripe_session: {}]", sid), token],
+                    );
+                    Some(url)
+                } else {
+                    eprintln!("[bounty issue-reward] stripe returned no url: {}",
+                        raw.chars().take(400).collect::<String>());
+                    None
+                }
+            }
+            Err(e) => {
+                eprintln!("[bounty issue-reward] stripe http: {}", e);
+                None
+            }
+        }
+    } else {
+        eprintln!("[bounty issue-reward] STRIPE_SECRET_KEY missing — returning legacy /bounty/claim URL");
+        None
+    };
+    let claim_url = stripe_url.unwrap_or_else(|| format!("{}/bounty/claim/{}", base_url, token));
     Json(serde_json::json!({
         "ok": true,
         "already_issued": false,
         "token": token,
-        "claim_url": format!("{}/bounty/claim/{}", base_url, token),
+        "claim_url": claim_url,
         "cash_amount_jpy": cash_amount_jpy,
         "expires_at": expires_at,
     })).into_response()
@@ -14464,6 +14565,64 @@ async fn stripe_webhook(
                 } else {
                     eprintln!("[extras_points] session {} already credited — idempotent skip", session_id);
                 }
+            }
+            return StatusCode::OK.into_response();
+        }
+
+        // ── Bounty reward claim — Stripe-collected shipping address ──
+        // Triggered by the ¥66 symbol-charge Checkout Session that
+        // admin_bounty_issue_reward creates. Stripe vetted the shipping
+        // address, so we just copy session.shipping_details → bounty_rewards
+        // and flip status to 'claimed'. Idempotency: WHERE status='issued'
+        // means a webhook replay leaves the row alone after first success.
+        if meta["kind"].as_str() == Some("bounty_claim") {
+            let bounty_token = meta["bounty_token"].as_str().unwrap_or("").to_string();
+            let bounty_id: i64 = meta["bounty_id"].as_str()
+                .and_then(|s| s.parse().ok()).unwrap_or(0);
+            if bounty_token.is_empty() {
+                eprintln!("[bounty_claim] missing bounty_token, session={}", session_id);
+                return StatusCode::OK.into_response();
+            }
+            let ship = &session["shipping_details"];
+            let ship_addr = &ship["address"];
+            let ship_name = ship["name"].as_str().unwrap_or("").to_string();
+            let ship_phone = ship["phone"].as_str().unwrap_or("").to_string();
+            let ship_line1 = ship_addr["line1"].as_str().unwrap_or("").to_string();
+            let ship_line2 = ship_addr["line2"].as_str().unwrap_or("").to_string();
+            let ship_city = ship_addr["city"].as_str().unwrap_or("").to_string();
+            let ship_state = ship_addr["state"].as_str().unwrap_or("").to_string();
+            let ship_zip = ship_addr["postal_code"].as_str().unwrap_or("").to_string();
+            let ship_country = ship_addr["country"].as_str().unwrap_or("").to_string();
+            let ship_email = session["customer_details"]["email"].as_str().unwrap_or("").to_string();
+            let now = chrono_now();
+            let updated = {
+                let conn = db.lock().unwrap();
+                conn.execute(
+                    "UPDATE bounty_rewards SET
+                         status='claimed',
+                         ship_name=?, ship_phone=?, ship_email=?,
+                         ship_line1=?, ship_line2=?, ship_city=?,
+                         ship_state=?, ship_zip=?, ship_country=?,
+                         claimed_at=?
+                     WHERE token=? AND status='issued'",
+                    params![ship_name, ship_phone, ship_email,
+                            ship_line1, ship_line2, ship_city,
+                            ship_state, ship_zip, ship_country,
+                            now, bounty_token],
+                ).unwrap_or(0)
+            };
+            if updated > 0 {
+                let _ = send_telegram_message(&format!(
+                    "🛡️ *Bounty claim received* — #{}\n\nrecipient: {} ({})\nship to: {} {}, {} {}, {}\nbounty_id: #{}\nsession: {}",
+                    bounty_id, ship_name, ship_email,
+                    ship_line1, ship_line2, ship_city, ship_zip, ship_country,
+                    bounty_id, session_id,
+                )).await;
+                eprintln!("[bounty_claim] CLAIMED bounty_id={} token={}…{} ship_to={}",
+                    bounty_id, &bounty_token[..8], &bounty_token[bounty_token.len()-4..], ship_name);
+            } else {
+                eprintln!("[bounty_claim] no row updated (already claimed or superseded) token={}…",
+                    &bounty_token[..8]);
             }
             return StatusCode::OK.into_response();
         }
