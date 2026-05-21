@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AMAMI × MU — 奄美の波と森を、1着に翻訳する</title>
+<meta name="description" content="世界遺産の島で1枚を撮る写真家と、月相で1着を出す MU の新コラボ。利益の50%は奄美の自然保全に。">
+<meta property="og:type" content="website">
+<meta property="og:title" content="AMAMI × MU — 奄美の波と森を、1着に翻訳する">
+<meta property="og:description" content="世界遺産の島で1枚を撮る写真家と、月相で1着を出す MU の新コラボ。利益の50%は奄美の自然保全に。">
+<meta property="og:image" content="/static/amami/og.png">
+<meta property="og:url" content="https://wearmu.com/amami">
+<meta property="og:site_name" content="MU">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="AMAMI × MU — 奄美の波と森を、1着に翻訳する">
+<meta name="twitter:description" content="世界遺産の島で1枚を撮る写真家と、月相で1着を出す MU の新コラボ。利益の50%は奄美の自然保全に。">
+<meta name="twitter:image" content="/static/amami/og.png">
+<link rel="canonical" href="https://wearmu.com/amami">
+<style>
+:root{
+  --bg:#070707; --bg-2:#0d0d0d; --bg-3:#161616;
+  --fg:#F5F5F0; --mute:rgba(245,245,240,0.62); --line:rgba(255,255,255,0.10);
+  --y:#e6c449; --y-soft:rgba(230,196,73,0.10);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg);color:var(--fg);
+  font-family:'Helvetica Neue','Hiragino Mincho ProN','Yu Mincho',Arial,sans-serif;
+  line-height:1.85;-webkit-font-smoothing:antialiased;font-feature-settings:"palt";
+}
+a{color:inherit;text-decoration:none}
+img{display:block;max-width:100%;height:auto}
+
+.cover{padding:96px 28px 60px;text-align:center;border-bottom:1px solid var(--line)}
+.cover .mark{font-size:64px;color:var(--y);margin-bottom:14px;line-height:1;font-family:'Hiragino Mincho ProN',serif}
+.cover .to{font-size:11px;letter-spacing:0.32em;text-transform:uppercase;color:var(--mute);margin-bottom:16px}
+.cover h1{font-size:clamp(34px,6vw,58px);font-weight:200;letter-spacing:0.02em;line-height:1.15;font-family:'Hiragino Mincho ProN','Yu Mincho',serif;margin-bottom:14px}
+.cover h1 em{color:var(--y);font-style:normal}
+.cover .tag{font-size:13px;color:var(--mute);letter-spacing:0.18em;text-transform:uppercase;margin-bottom:28px}
+.cover .conf{display:inline-block;border:1px solid var(--y);color:var(--y);padding:5px 14px;font-size:10px;letter-spacing:0.32em;text-transform:uppercase}
+
+section{padding:60px 28px;border-bottom:1px solid var(--line);max-width:920px;margin:0 auto}
+section h2{font-size:clamp(20px,2.6vw,26px);font-weight:300;text-align:center;margin-bottom:8px;letter-spacing:0.04em}
+section h2 em{color:var(--y);font-style:normal}
+section .lede{font-size:13px;color:var(--mute);text-align:center;max-width:600px;margin:0 auto 28px;letter-spacing:0.06em}
+
+.hero-shot{margin:0 auto 18px;border:1px solid var(--line);background:#111;max-width:780px;min-height:300px;display:flex;align-items:center;justify-content:center}
+.hero-shot img{width:100%;height:auto;display:block}
+.hero-shot.empty{color:var(--mute);font-size:11px;letter-spacing:0.16em}
+.cap{font-size:11px;color:var(--mute);text-align:center;letter-spacing:0.08em;margin-bottom:32px}
+.cap b{color:var(--y);font-weight:500}
+
+.mu-intro{max-width:880px;margin:0 auto;border:1px solid var(--y);background:linear-gradient(180deg,rgba(230,196,73,0.06),transparent);padding:36px 28px 30px}
+.mu-intro h3{font-size:11px;color:var(--y);letter-spacing:0.32em;text-transform:uppercase;text-align:center;margin-bottom:6px}
+.mu-intro .truth{font-size:clamp(20px,2.4vw,26px);font-weight:300;text-align:center;line-height:1.55;letter-spacing:0.02em;color:var(--fg);margin-bottom:8px;font-family:'Hiragino Mincho ProN',serif}
+.mu-intro .phil{font-size:13px;color:var(--mute);text-align:center;letter-spacing:0.16em;margin-bottom:30px}
+.mu-intro-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:28px}
+@media (max-width:680px){.mu-intro-grid{grid-template-columns:1fr}}
+.mu-intro-grid .kpi{background:var(--bg-2);border:1px solid var(--line);padding:18px 16px;text-align:center}
+.mu-intro-grid .kpi b{display:block;color:var(--y);font-size:22px;font-weight:500;line-height:1.1;margin-bottom:6px}
+.mu-intro-grid .kpi .lb{font-size:10.5px;color:var(--mute);letter-spacing:0.16em;text-transform:uppercase;line-height:1.4}
+.mu-intro h4{font-size:11px;color:var(--y);letter-spacing:0.26em;text-transform:uppercase;margin:24px 0 12px;text-align:left}
+.mu-intro ul{list-style:none;padding:0}
+.mu-intro ul li{position:relative;padding:8px 0 8px 22px;color:var(--fg);font-size:13.5px;line-height:1.85;border-bottom:1px solid var(--line)}
+.mu-intro ul li:last-child{border-bottom:none}
+.mu-intro ul li::before{content:'●';color:var(--y);position:absolute;left:0;top:8px;font-size:10px}
+.mu-intro ul li strong{color:var(--y);font-weight:500}
+
+.who{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);margin-top:24px;border:1px solid var(--line)}
+@media (max-width:680px){.who{grid-template-columns:1fr}}
+.who .col{background:var(--bg-3);padding:20px 22px}
+.who .col .role{font-size:10px;color:var(--y);letter-spacing:0.24em;text-transform:uppercase;margin-bottom:8px}
+.who .col .name{font-size:15px;color:var(--fg);font-weight:500;margin-bottom:6px}
+.who .col .desc{font-size:12.5px;color:var(--mute);line-height:1.85}
+
+.gizmo{max-width:780px;margin:0 auto 24px;background:var(--bg-2);border:1px solid var(--line);padding:28px 28px 24px}
+.gizmo h4{font-size:11px;color:var(--y);letter-spacing:0.26em;text-transform:uppercase;margin-bottom:14px}
+.gizmo p{font-size:13.5px;color:var(--mute);line-height:2;margin-bottom:8px}
+.gizmo p strong{color:var(--fg)}
+
+.option{display:grid;grid-template-columns:1fr 1.1fr;gap:24px;align-items:center;margin:0 0 56px;max-width:880px}
+.option:nth-child(even){grid-template-columns:1.1fr 1fr}
+.option:nth-child(even) .copy{order:2}
+.option:nth-child(even) .shot{order:1}
+@media (max-width:680px){.option,.option:nth-child(even){grid-template-columns:1fr}.option:nth-child(even) .copy,.option:nth-child(even) .shot{order:initial}}
+.option .shot{border:1px solid var(--line);background:#111}
+.option .shot img{display:block;width:100%}
+.option .copy .badge{font-size:10px;color:var(--y);letter-spacing:0.28em;text-transform:uppercase;margin-bottom:8px}
+.option .copy h3{font-size:22px;font-weight:300;line-height:1.3;margin-bottom:12px}
+.option .copy p{font-size:13.5px;color:var(--mute);line-height:2;margin-bottom:10px}
+.option .copy p strong{color:var(--fg);font-weight:400}
+.option .copy .price{font-size:11px;color:var(--y);letter-spacing:0.16em;margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
+
+.sku-table{max-width:880px;margin:24px auto 0;border:1px solid var(--line);width:100%;border-collapse:collapse;font-size:13px}
+.sku-table th{background:var(--bg-3);color:var(--y);font-size:10px;letter-spacing:0.18em;text-transform:uppercase;text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);font-weight:500}
+.sku-table td{padding:11px 14px;border-bottom:1px solid var(--line);color:var(--mute);vertical-align:top}
+.sku-table td.l{color:var(--y);font-size:11px;letter-spacing:0.16em;text-transform:uppercase}
+.sku-table td.p{color:var(--fg);text-align:right;font-variant-numeric:tabular-nums}
+.sku-table tr:last-child td{border-bottom:none}
+.sku-table .pill{display:inline-block;font-size:9.5px;letter-spacing:0.16em;padding:2px 8px;border:1px solid currentColor;border-radius:2px;margin-left:6px}
+.sku-table .pill.pub{color:#4FA868}
+.sku-table .pill.prv{color:var(--mute)}
+
+.terms{max-width:780px;margin:0 auto;border:1px solid var(--line);font-size:13px;border-collapse:collapse;width:100%}
+.terms td{padding:10px 14px;border-bottom:1px solid var(--line);color:var(--mute);line-height:1.7}
+.terms td:first-child{color:var(--y);letter-spacing:0.12em;font-size:11px;text-transform:uppercase;width:38%}
+.terms td b{color:var(--fg);font-weight:500}
+.terms tr:last-child td{border-bottom:none}
+
+.timeline{max-width:780px;margin:24px auto 0}
+.timeline .tr{display:grid;grid-template-columns:80px 1fr;gap:18px;padding:10px 0;border-bottom:1px solid var(--line);align-items:baseline}
+.timeline .tr:last-child{border-bottom:none}
+.timeline .tr .d{color:var(--y);font-size:13px;font-weight:500;letter-spacing:0.06em;font-variant-numeric:tabular-nums}
+.timeline .tr .b{color:var(--fg);font-size:13.5px;line-height:1.7}
+
+.contact{max-width:680px;margin:0 auto;text-align:center;font-size:13px;color:var(--mute);line-height:2.1}
+.contact strong{color:var(--fg);font-weight:500}
+.contact a{color:var(--y)}
+
+.print-cta{padding:36px 28px;text-align:center;border-bottom:1px solid var(--line)}
+.print-cta button{background:var(--y);color:#000;border:none;padding:13px 26px;font-size:11px;letter-spacing:0.26em;text-transform:uppercase;font-weight:700;cursor:pointer;font-family:inherit;margin:0 4px}
+.print-cta .ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+
+footer{padding:30px 28px;color:var(--mute);font-size:10.5px;text-align:center;line-height:2;letter-spacing:0.08em}
+
+@media print{
+  body{background:#fff;color:#000}
+  .cover{padding:48px 0}
+  .cover .mark,.cover .conf,.mu-intro h3,.mu-intro h4,.mu-intro-grid .kpi b,.gizmo h4,.option .copy .badge,.terms td:first-child,.timeline .tr .d,.sku-table th,.sku-table td.l{color:#b88e00 !important}
+  .cover .conf{border-color:#b88e00}
+  section{padding:30px 0;border-color:#ccc;break-inside:avoid;page-break-inside:avoid}
+  h1,h2,h3,h4{color:#000}
+  p,td{color:#333}
+  .mu-intro,.mu-intro-grid .kpi,.gizmo,.option .shot,.hero-shot,.terms,.who .col,.sku-table{background:#fff;border-color:#bbb}
+  .mu-intro{border-color:#b88e00}
+  .print-cta{display:none}
+}
+</style>
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+</head>
+<body>
+
+<header class="cover">
+  <div class="mark">無</div>
+  <div class="to" id="cover-to">For · Loading…</div>
+  <h1 id="cover-h1">— <em>×</em> MU</h1>
+  <div class="tag" id="cover-tag">Loading…</div>
+  <div class="conf">Confidential — Not for redistribution</div>
+</header>
+
+<!-- HERO -->
+<section style="padding-top:48px">
+  <div class="hero-shot" id="hero-shot"><span class="empty">画像読込中…</span></div>
+  <div class="cap" id="hero-cap"></div>
+</section>
+
+<section><div class="mu-intro" id="mu-intro-block"></div></section>
+<section id="mechanism-block"></section>
+<section id="options-block"></section>
+<section id="sku-block">
+  <h2>SKU 一覧 <em>—</em> DB ライブ表示</h2>
+  <p class="lede"><code>/api/proposal/<span id="slug-disp"></span>/skus</code> から fetch。admin が公開・非公開を切り替えできる。</p>
+  <table class="sku-table" id="sku-table">
+    <thead><tr><th>Letter</th><th>SKU</th><th>Kind</th><th>状態</th><th style="text-align:right">価格</th></tr></thead>
+    <tbody id="sku-rows"><tr><td colspan="5" style="text-align:center;color:var(--mute);padding:24px">loading…</td></tr></tbody>
+  </table>
+</section>
+<section id="terms-block"></section>
+<section id="timeline-block"></section>
+<section id="contact-block" style="padding-bottom:48px"></section>
+
+<div class="print-cta">
+  <button onclick="window.print()">この提案をプリント / PDF 保存</button>
+  <button class="ghost" onclick="navigator.clipboard.writeText(location.href);this.textContent='URL コピー済み'">URL をコピー</button>
+</div>
+
+<footer>
+  株式会社イネブラ · Enabler Inc. · 千代田区九段南 1-5-6 りそな九段ビル 5F<br>
+  本提案は <span id="lp-url"></span> で随時更新 · 機密 · 2026
+</footer>
+
+<script>
+// ── Generic proposal renderer — works for any partner with a spec.json ──
+// 1. slug は URL path (/proposals/<slug>) から推定、なければ file:// fallback で "reversal"
+// 2. image base url: production = "/static/<slug>/", local file:// = "static/<slug>/" など
+// 3. /api/proposal/<slug>/meta + /api/proposal/<slug>/skus から全データ取得
+// 4. fetch 失敗時 (file://) は埋め込み spec を fallback として表示
+(async () => {
+  // Slug 抽出
+  const pathParts = location.pathname.split('/').filter(Boolean);
+  const slugFromPath = pathParts[pathParts.length - 1];
+  const SLUG = (slugFromPath && slugFromPath !== '' && slugFromPath !== 'amami.html' && slugFromPath !== 'reversal.html')
+    ? slugFromPath
+    : 'amami';
+
+  document.getElementById('slug-disp').textContent = SLUG;
+  document.getElementById('lp-url').textContent = `wearmu.com/${SLUG}`;
+
+  // Image base — `<base>` tag would mess up anchors, so resolve per-img.
+  function resolveImg(url){
+    if (!url) return '';
+    if (url.startsWith('http')) return url;
+    if (location.protocol === 'file:'){
+      // strip leading slash; static is sibling to this HTML
+      return url.replace(/^\/static\//, '');
+    }
+    return url;
+  }
+
+  // Fetch meta + skus, with graceful fallback for file://
+  let meta = null, skus = [];
+  try {
+    const [r1, r2] = await Promise.all([
+      fetch(`/api/proposal/${SLUG}/meta`),
+      fetch(`/api/proposal/${SLUG}/skus`),
+    ]);
+    if (r1.ok) meta = (await r1.json()).meta;
+    if (r2.ok) skus = (await r2.json()).skus || [];
+  } catch (e) {
+    console.warn('API fetch failed (likely file://):', e);
+  }
+
+  // file:// fallback — load partner_specs/<slug>.json relative path
+  if (!meta) {
+    try {
+      const r = await fetch(`../partner_specs/${SLUG}.json`);
+      if (r.ok) {
+        const spec = await r.json();
+        meta = spec.meta;
+        skus = (spec.skus || []).map(s => ({...s, published: s.published !== false}));
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  if (!meta) {
+    document.getElementById('hero-shot').innerHTML = '<span class="empty">spec が見つかりません</span>';
+    return;
+  }
+
+  // ── Cover ──
+  document.getElementById('cover-to').textContent = `For · ${meta.partner_url || SLUG}`;
+  document.getElementById('cover-h1').innerHTML = (meta.h1 || `${SLUG} <em>×</em> MU`)
+    .replace(/×/g, '<em>×</em>');
+  document.getElementById('cover-tag').textContent = meta.tagline || '';
+
+  // ── Hero shot (first option image or hero_kv) ──
+  const heroImg = (meta.options && meta.options[0] && meta.options[0].image)
+    || (meta.hero_image)
+    || '/static/reversal/just-begun-tee.png';
+  const heroEl = document.getElementById('hero-shot');
+  heroEl.innerHTML = `<img src="${resolveImg(heroImg)}" alt="hero" onerror="this.parentElement.innerHTML='<span class=empty>画像なし</span>'">`;
+  if (meta.hero_caption) {
+    document.getElementById('hero-cap').innerHTML = meta.hero_caption;
+  } else if (meta.options && meta.options[0]) {
+    const o = meta.options[0];
+    document.getElementById('hero-cap').innerHTML = `<b>${o.title || ''}</b> — ${o.drop_label || ''} · ${o.price_label || ''}`;
+  }
+
+  // ── MU intro block ──
+  const mu = meta.mu_intro || {};
+  const kpis = meta.hero_kv || [];
+  document.getElementById('mu-intro-block').innerHTML = `
+    <h3>MU とは何か</h3>
+    <div class="truth">${mu.core_truth || ''}</div>
+    <div class="phil">${mu.philosophy || ''}</div>
+    <div class="mu-intro-grid">
+      ${kpis.map(([b, lb]) => `<div class="kpi"><b>${b}</b><div class="lb">${lb}</div></div>`).join('')}
+    </div>
+    ${mu.proof_points && mu.proof_points.length ? `
+      <h4>これまでの実績 — Proof Points</h4>
+      <ul>${mu.proof_points.map(p => `<li>${p}</li>`).join('')}</ul>
+    ` : ''}
+    ${mu.operator ? `
+      <div class="who">
+        <div class="col">
+          <div class="role">提案主体</div>
+          <div class="name">${mu.operator.split(' · ')[0]}</div>
+          <div class="desc">${mu.operator.split(' · ').slice(1).join(' · ')}</div>
+        </div>
+        <div class="col">
+          <div class="role">創業者 / 代表取締役</div>
+          <div class="name">${(mu.founder || '').split(' / ')[0]}</div>
+          <div class="desc">${(mu.founder || '').split(' / ').slice(1).join(' / ')}</div>
+        </div>
+      </div>
+    ` : ''}
+  `;
+
+  // ── Mechanism ──
+  if (meta.mechanism && meta.mechanism.length){
+    document.getElementById('mechanism-block').innerHTML = `
+      <h2>仕組み <em>—</em> ${meta.mechanism.length} 点</h2>
+      <p class="lede">${meta.lede || ''}</p>
+      <div class="gizmo">
+        <h4>面白い仕組み</h4>
+        ${meta.mechanism.map(m => `<p><strong>${m.no}. ${m.title}</strong> — ${m.body}</p>`).join('')}
+      </div>
+    `;
+  }
+
+  // ── Options ──
+  if (meta.options && meta.options.length){
+    document.getElementById('options-block').innerHTML = `
+      <h2>提案</h2>
+      <p class="lede">${(meta.options || []).map(o => o.letter).join(' / ')} の ${meta.options.length} 案</p>
+      ${meta.options.map(o => `
+        <div class="option">
+          <div class="shot"><img src="${resolveImg(o.image||'')}" alt="${o.title||''}" onerror="this.style.display='none'"></div>
+          <div class="copy">
+            <div class="badge">${o.letter} · ${o.drop_label || ''}</div>
+            <h3>${(o.title || '').replace(/\n/g, '<br>')}</h3>
+            <p>${o.body || ''}</p>
+            <div class="price">価格 <strong style="color:#fff">${o.price_label || ''}</strong></div>
+          </div>
+        </div>
+      `).join('')}
+    `;
+  }
+
+  // ── SKU table (DB driven) ──
+  const tbody = document.getElementById('sku-rows');
+  if (skus.length){
+    tbody.innerHTML = skus.map(s => {
+      const isPub = s.published !== false;
+      return `<tr>
+        <td class="l">${(s.letter||'').toUpperCase()}</td>
+        <td>${s.label||''}</td>
+        <td style="color:var(--mute);font-size:11px">${s.kind||''}</td>
+        <td><span class="pill ${isPub?'pub':'prv'}">${isPub?'公開':'非公開'}</span></td>
+        <td class="p">¥${(s.price_jpy||0).toLocaleString()}</td>
+      </tr>`;
+    }).join('');
+  } else {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--mute);padding:24px">SKU 未登録</td></tr>';
+  }
+
+  // ── Terms ──
+  if (meta.terms && meta.terms.length){
+    document.getElementById('terms-block').innerHTML = `
+      <h2>商業条件</h2>
+      <table class="terms">
+        ${meta.terms.map(([k, v]) => `<tr><td>${k}</td><td>${v.replace(/<b>/g, '<b>').replace(/<\/b>/g, '</b>')}</td></tr>`).join('')}
+      </table>
+    `;
+  }
+
+  // ── Timeline ──
+  if (meta.timeline && meta.timeline.length){
+    document.getElementById('timeline-block').innerHTML = `
+      <h2>${meta.timeline.length * 10} 日タイムライン</h2>
+      <div class="timeline">
+        ${meta.timeline.map(([d, b]) => `<div class="tr"><div class="d">${d}</div><div class="b">${b}</div></div>`).join('')}
+      </div>
+    `;
+  }
+
+  // ── Contact ──
+  document.getElementById('contact-block').innerHTML = `
+    <h2>次の一手</h2>
+    <p class="contact">
+      本提案 PDF · <a href="/docs/proposals/${SLUG}.pdf">/docs/proposals/${SLUG}.pdf</a><br>
+      Contact · <a href="mailto:info@enablerdao.com">info@enablerdao.com</a> · <strong>濱田 優貴</strong> (株式会社イネブラ 代表取締役)<br>
+      最短 60 日で Drop 01 可能 · まずは 30 分のリモート打合せから
+    </p>
+  `;
+})();
+</script>
+
+</body>
+</html>
