@@ -82,7 +82,14 @@ jobs:
 
       - name: Deploy
         working-directory: store
-        run: flyctl deploy --remote-only --app mu-store --wait-timeout=240
+        run: |
+          set -x
+          pwd
+          ls -la fly.toml Dockerfile 2>&1 | head -5
+          ls -la .dockerignore 2>&1 || echo "no .dockerignore"
+          flyctl version
+          flyctl auth whoami
+          flyctl deploy --remote-only --app mu-store --wait-timeout=240 --verbose
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
