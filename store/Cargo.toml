@@ -50,3 +50,8 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 # New partners go through spec.json (unified ③ path) instead of being
 # hard-coded as const arrays in main.rs.
 include_dir = "0.7"
+
+[dev-dependencies]
+# Integration tests spawn the compiled `mu-store` binary against a
+# throw-away DB on a free port, then hit it with blocking HTTP.
+tempfile = "3"
