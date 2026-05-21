@@ -11172,6 +11172,119 @@ async fn collab_apply(
     })).into_response()
 }
 
+/// GET /admin — hub linking the main admin tools (curated, not all 50
+/// routes). Token gets propagated to each link so the second click works
+/// without re-typing. Categorized for fast scanning.
+async fn admin_hub_page(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin").await { return r; }
+    let token = q.get("token").cloned().unwrap_or_default();
+    let t = html_attr_escape(&token);
+
+    // Quick counts for at-a-glance summary at top.
+    let (products_active, mu_purchases_total, outreach_total, niches_count): (i64, i64, i64, i64) = {
+        let conn = db.lock().unwrap();
+        (
+            conn.query_row("SELECT COUNT(*) FROM products WHERE active=1", [], |r| r.get(0)).unwrap_or(0),
+            conn.query_row("SELECT COUNT(*) FROM mu_purchases", [], |r| r.get(0)).unwrap_or(0),
+            conn.query_row("SELECT COUNT(*) FROM mu_outreach", [], |r| r.get(0)).unwrap_or(0),
+            conn.query_row("SELECT COUNT(*) FROM mu_niches WHERE status='active'", [], |r| r.get(0)).unwrap_or(0),
+        )
+    };
+
+    let html = format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU admin · hub</title>
+<meta name="robots" content="noindex,nofollow">
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.65;padding:28px 32px 60px;max-width:1100px;margin:0 auto;font-feature-settings:"palt"}}
+h1{{font-size:24px;font-weight:300;letter-spacing:0.06em;color:#fff;margin-bottom:6px}}
+h1 b{{color:#e6c449;font-weight:700}}
+.muted{{color:rgba(245,245,240,0.55);font-size:12px;letter-spacing:0.04em}}
+.stats{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:24px 0 36px}}
+.stat{{padding:18px 18px;background:rgba(230,196,73,0.06);border:1px solid rgba(230,196,73,0.25);border-radius:6px;text-align:center}}
+.stat .num{{font-size:34px;font-weight:200;color:#e6c449;font-variant-numeric:tabular-nums;line-height:1;margin-bottom:6px}}
+.stat .lbl{{font-size:10px;letter-spacing:0.28em;text-transform:uppercase;color:rgba(245,245,240,0.6);font-weight:700}}
+h2{{font-size:11px;letter-spacing:0.4em;text-transform:uppercase;color:rgba(245,245,240,0.6);font-weight:700;margin:32px 0 12px;padding-bottom:6px;border-bottom:1px solid rgba(255,255,255,0.08)}}
+.cat{{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px}}
+.tile{{display:block;padding:18px 20px;background:#0E0E0E;border:1px solid rgba(255,255,255,0.08);border-radius:6px;color:inherit;text-decoration:none;transition:border-color .15s,transform .12s}}
+.tile:hover{{border-color:rgba(230,196,73,0.5);transform:translateY(-1px)}}
+.tile .path{{font-family:'SF Mono','Menlo',monospace;font-size:12px;color:#e6c449;letter-spacing:0.04em;margin-bottom:5px}}
+.tile .desc{{font-size:12.5px;color:rgba(245,245,240,0.78);line-height:1.6}}
+.foot{{margin-top:40px;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:rgba(245,245,240,0.45);text-align:center}}
+.foot a{{color:rgba(245,245,240,0.6)}}
+@media (max-width: 640px){{ body{{padding:20px 16px 40px}}; .stats{{grid-template-columns:1fr 1fr}}; .cat{{grid-template-columns:1fr}} }}
+</style>
+</head><body>
+
+<h1>MU <b>admin</b> · hub</h1>
+<p class="muted">/admin · token-gated · {now}</p>
+
+<div class="stats">
+  <div class="stat"><div class="num">{products}</div><div class="lbl">products active</div></div>
+  <div class="stat"><div class="num">{purchases}</div><div class="lbl">mu_purchases total</div></div>
+  <div class="stat"><div class="num">{outreach}</div><div class="lbl">outreach pipeline</div></div>
+  <div class="stat"><div class="num">{niches}</div><div class="lbl">niches active</div></div>
+</div>
+
+<h2>Niche / Outreach</h2>
+<div class="cat">
+  <a class="tile" href="/admin/outreach?token={t}"><div class="path">/admin/outreach</div><div class="desc">Niche dashboard + outreach pipeline (filter by status / kind, inline status update, manual add)</div></a>
+  <a class="tile" href="/api/niches"><div class="path">/api/niches</div><div class="desc">JSON: 4 active niches with budget + MRR target + priority</div></a>
+  <a class="tile" href="/api/niches/bjj/outreach"><div class="path">/api/niches/:slug/outreach</div><div class="desc">JSON: per-niche pipeline</div></a>
+</div>
+
+<h2>Products / SKU</h2>
+<div class="cat">
+  <a class="tile" href="/admin/product/new?token={t}"><div class="path">/admin/product/new</div><div class="desc">+ 1-form 即追加 (brand + name + mockup_url、 30 秒)</div></a>
+  <a class="tile" href="/admin/products?token={t}"><div class="path">/admin/products</div><div class="desc">既存 products 一覧 (filter, edit, mockup regen)</div></a>
+  <a class="tile" href="/admin/pod?token={t}"><div class="path">/admin/pod</div><div class="desc">POD catalog (Printful / SUZURI / Gelato 統合)</div></a>
+  <a class="tile" href="/admin/bids?token={t}"><div class="path">/admin/bids</div><div class="desc">MA オークション bid 履歴</div></a>
+  <a class="tile" href="/admin/db?token={t}"><div class="path">/admin/db</div><div class="desc">SQLite テーブル inspector</div></a>
+</div>
+
+<h2>Proposals / Collab</h2>
+<div class="cat">
+  <a class="tile" href="/admin/proposals?token={t}"><div class="path">/admin/proposals</div><div class="desc">全 collab proposal list</div></a>
+  <a class="tile" href="/admin/sponsor-apps?token={t}"><div class="path">/admin/sponsor-apps</div><div class="desc">スポンサー応募 (status 更新)</div></a>
+  <a class="tile" href="/admin/users?token={t}"><div class="path">/admin/users</div><div class="desc">/you ユーザー 一覧</div></a>
+</div>
+
+<h2>Analytics / Money</h2>
+<div class="cat">
+  <a class="tile" href="/admin/costs?token={t}"><div class="path">/admin/costs</div><div class="desc">原価 / 利益 / Stripe fee 計算</div></a>
+  <a class="tile" href="/admin/retention?token={t}"><div class="path">/admin/retention</div><div class="desc">cohort retention curve</div></a>
+  <a class="tile" href="/admin/funnel?token={t}"><div class="path">/admin/funnel</div><div class="desc">visit → buy funnel 数値</div></a>
+  <a class="tile" href="/admin/ma/gifts?token={t}"><div class="path">/admin/ma/gifts</div><div class="desc">MA Lottery gift 履歴</div></a>
+</div>
+
+<h2>Public pages (= 顧客 から 見える)</h2>
+<div class="cat">
+  <a class="tile" href="/why"><div class="path">/why</div><div class="desc">MU thesis · 数字 で 見る 成長 (投資家 / press 向け)</div></a>
+  <a class="tile" href="/bjj/about.html"><div class="path">/bjj/about.html</div><div class="desc">BJJ × MU strategic LP (apply form 付き)</div></a>
+  <a class="tile" href="/buy/founder"><div class="path">/buy/founder</div><div class="desc">Founder Edition ¥48k · preorder</div></a>
+  <a class="tile" href="/buy/event"><div class="path">/buy/event</div><div class="desc">JIU FIGHT 5/24 cold LP</div></a>
+  <a class="tile" href="/jiufight/"><div class="path">/jiufight/</div><div class="desc">JF 28 designs grid</div></a>
+  <a class="tile" href="/transparency"><div class="path">/transparency</div><div class="desc">公開 数字 (sales, donations, agents)</div></a>
+  <a class="tile" href="/100"><div class="path">/100</div><div class="desc">14 日 challenge · 5/18-5/31</div></a>
+</div>
+
+<div class="foot">— Enabler Inc. · admin only · <a href="/">/ TOP</a></div>
+</body></html>"##,
+        now = html_escape(&chrono_now_human()),
+        t = t,
+        products = products_active,
+        purchases = mu_purchases_total,
+        outreach = outreach_total,
+        niches = niches_count,
+    );
+    Html(html).into_response()
+}
+
 /// GET /admin/outreach — admin dashboard for the multi-niche outreach
 /// pipeline. Lists all niches + outreach rows + inline manual-add form +
 /// per-row status update. Admin-token gated.
@@ -56838,6 +56951,7 @@ async fn main() {
         .route("/api/outreach/apply", post(collab_apply))
         // Admin dashboard + manual add + status update for the outreach
         // pipeline. Token-gated via admin_auth.
+        .route("/admin", get(admin_hub_page))
         .route("/admin/outreach", get(admin_outreach_page))
         .route("/api/admin/outreach", post(admin_outreach_create))
         .route("/api/admin/outreach/:id/status", post(admin_outreach_status))
