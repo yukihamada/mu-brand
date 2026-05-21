@@ -2,6 +2,7 @@ mod gemini;
 mod nft;
 mod payments;
 mod jiufight_tokens;
+mod catalog;
 
 use axum::{
     extract::{Path, State},
@@ -17173,6 +17174,19 @@ async fn stripe_webhook(
         // /api/proposal/extras/buy-points settles. We credit the email's
         // wallet with the pt amount in metadata[pts]. Idempotency: keyed
         // on the Stripe session id via proposal_point_events.ref.
+        // ── /shop catalog SKU fulfillment ──
+        // Triggered by sessions /api/shop/checkout opened with metadata.kind="catalog".
+        // Handler in src/catalog.rs posts the order to Printful and records
+        // it in catalog_orders. Idempotent on stripe_session_id.
+        if meta["kind"].as_str() == Some("catalog") {
+            let session_owned = session.clone();
+            let db_clone = db.clone();
+            tokio::spawn(async move {
+                catalog::fulfill_catalog_order(db_clone, session_owned).await;
+            });
+            return StatusCode::OK.into_response();
+        }
+
         if meta["kind"].as_str() == Some("extras_points") {
             let email = meta["email"].as_str().unwrap_or("").to_string();
             let pts: i64 = meta["pts"].as_str().and_then(|s| s.parse().ok()).unwrap_or(0);
@@ -60587,6 +60601,16 @@ async fn main() {
     // ── Phase 3.4 + 3.7: Pyth rate refresh + pending payment sweep ──
     payments::start_crons(db.clone());
 
+    // ── catalog (absorbed from merch-bridge / merch.wearmu.com) ──
+    // Idempotent: schema CREATE IF NOT EXISTS + INSERT OR IGNORE on seed.
+    // Skipped on warm boots (gated on row count) so we don't re-parse the
+    // 1MB seed SQL every restart.
+    {
+        let conn = db.lock().unwrap();
+        catalog::ensure_schema(&conn);
+        catalog::seed_if_empty(&conn);
+    }
+
     // ── Daily cron: JST 07:00, ensure today's design + send paced emails ──
     // Started before the router consumes `db` via with_state.
     let db_cron = db.clone();
@@ -61350,6 +61374,14 @@ async fn main() {
         .route("/api/product/collab/:slug", get(api_product_collab))
         .route("/collab/:slug", get(collab_public_page))
         .route("/buy", get(buy_page))
+        // ── /shop — unified POD catalog (absorbed from merch.wearmu.com).
+        // See src/catalog.rs. /merch (without /:brand) already exists for
+        // wearmu's own drop grid — the merch-bridge cutover happens at the
+        // subdomain DNS layer (merch.wearmu.com → wearmu.com/shop), not via
+        // a /merch alias here.
+        .route("/shop", get(catalog::shop_index))
+        .route("/shop/:sku", get(catalog::shop_pdp))
+        .route("/api/shop/checkout", get(catalog::shop_checkout))
         .route("/buy/founder", get(buy_founder_page))
         .route("/why", get(why_page))
         .route("/founding", get(founding_page))
