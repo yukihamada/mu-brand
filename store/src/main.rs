@@ -50,6 +50,11 @@ fn autopilot_skip(task: &str) -> bool {
 // Docker build context (see store/Dockerfile `COPY static static`).
 // ─────────────────────────────────────────────────────────────────────────────
 const CONSTITUTION_RAW: &str = include_str!("../static/constitution.md");
+/// 12-article append-only foundation document (legal/philosophical anchor for
+/// the next 100 years). Drafted 2026-05-21. Notarization filed at 浜松町公証役場
+/// — see docs/constitution-notary-draft.md. The 12 articles are IMMUTABLE: any
+/// future addition must be Art. 13+ appended at the end, per Art. 9.
+const CONSTITUTION_HTML_RAW: &str = include_str!("../static/constitution.html");
 const DAO_WHITEPAPER_RAW: &str = include_str!("../static/whitepaper_dao.md");
 const DONATIONS_RAW: &str = include_str!("../static/donations.md");
 const PROFIT_SPLIT_RAW: &str = include_str!("../static/profit_split.md");
@@ -4520,6 +4525,15 @@ small{display:block;margin-top:16px;color:rgba(245,245,240,0.5);font-size:11px}
     }
     let body = include_str!("../static/reversal.html");
     axum::response::Html(body).into_response()
+}
+
+/// GET /heritage — MU Heritage Edition pre-order LP (30 着 made-to-order,
+/// ¥35,000, Loopwheel 14oz tubular + 弟子屈 mineral dye + 国内 flatlock 縫製).
+/// Public page; live stock + Stripe checkout via /api/v1/products/heritage
+/// + /api/checkout, no password gate. Style matches reversal/amami LP
+/// (black bg + #e6c449 accent) with extra whitespace for the premium feel.
+async fn heritage_page() -> Html<&'static str> {
+    Html(include_str!("../static/heritage.html"))
 }
 
 const ITTO_CURRENT_SERIAL: &str = "0001";
@@ -23662,8 +23676,8 @@ const MERCH_CATEGORIES: &[MerchCategory] = &[
     MerchCategory {
         slug: "art",
         label: "ART",
-        tagline: "アート / コンセプチュアル系コラボ。",
-        exact_brands: &[],
+        tagline: "アート / コンセプチュアル系コラボ + Heritage Edition。",
+        exact_brands: &["heritage"],
         like_prefixes: &["mugen", "muon", "nouns", "kawanabe"],
     },
     MerchCategory {
@@ -36286,11 +36300,19 @@ async fn public_transparency(State(db): State<Db>) -> impl IntoResponse {
     Json(snap)
 }
 
-/// GET /constitution — rendered, styled MU Constitution. Same file as the
-/// raw /constitution.md (kept for machine clients + grepping), but wrapped in
-/// the dark MU theme so humans landing from /transparency or X can read it
-/// without horizontal scroll on phones.
+/// GET /constitution — the 12-article append-only foundation document.
+/// Serves store/static/constitution.html (the v1 immutable 12 articles, each
+/// with a SHA-256 marker for tamper detection). The legacy Vision + 20
+/// operational principles (constitution.md) is still reachable at
+/// /constitution.md (raw) and /constitution/legacy (rendered).
 async fn public_constitution_page() -> Html<String> {
+    Html(CONSTITUTION_HTML_RAW.to_string())
+}
+
+/// GET /constitution/legacy — pre-12-article rendered Vision + 20 operational
+/// principles. Kept for grepping + machine clients that hard-coded the path
+/// before 2026-05-21.
+async fn public_constitution_legacy_page() -> Html<String> {
     let body_html = md_to_html_simple(CONSTITUTION_RAW);
     let html = format!(r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -60377,6 +60399,7 @@ async fn main() {
         .route("/transparency", get(public_transparency_page))
         .route("/en/transparency", get(public_transparency_page_en))
         .route("/constitution", get(public_constitution_page))
+        .route("/constitution/legacy", get(public_constitution_legacy_page))
         .route("/donations", get(public_donations_page))
         .route("/profit-split", get(public_profit_split_page))
         .route("/api/profit-split", get(public_profit_split_api))
@@ -60477,6 +60500,7 @@ async fn main() {
         .route("/itto/:serial", get(itto_serial_page))
         .route("/baba", get(show_baba_owner_proposal))
         .route("/proposals/reversal", get(show_reversal_owner_proposal))
+        .route("/heritage", get(heritage_page))
         // ── Proposal admin: bulk SKU + publish/unpublish + admin user roster
         .route("/api/proposal/:slug/meta",                   get(proposal_generic_meta))
         .route("/api/admin/proposal/:slug/meta",             axum::routing::patch(api_admin_proposal_meta_patch))
