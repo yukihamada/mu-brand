@@ -15,6 +15,7 @@
 # を毎日叩く設計を将来追加検討。
 #
 # Schedules:
+#   SELFIMPROVE: every 10 minutes
 #   MUGEN: every hour at :00
 #   MUON:  daily at 09:00 JST
 #   MA:    1st of month at 00:00 JST
@@ -72,6 +73,8 @@ install_crons() {
 */30 * * * * /usr/bin/curl -s -X POST -H 'Content-Type: application/json' -d '{"admin_token":"$ADMIN_TOKEN"}' https://wearmu.com/api/admin/cv_pulse >> $LOG_DIR/cv_pulse.log 2>&1
 # mu-brand Google Ads CPC nudge — JST 10:00 daily (UTC 1:00)
 0 1 * * * set -a && source $ENV_FILE && set +a && $PYTHON $SCRIPT_DIR/ads/cv_tune_ads.py >> $LOG_DIR/ads_tune.log 2>&1
+# mu-brand SELFIMPROVE (every 10 minutes — score recompute + log)
+*/10 * * * * set -a && source $ENV_FILE && set +a && $PYTHON $SCRIPT_DIR/scripts/selfimprove_10min.py >> $LOG_DIR/selfimprove.log 2>&1
 EOF
 
     crontab /tmp/mu_crontab_tmp
