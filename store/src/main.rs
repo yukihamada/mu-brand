@@ -13321,6 +13321,91 @@ async fn product_sku_page(
         Some(v) => v,
         None => return (StatusCode::NOT_FOUND, "product not found").into_response(),
     };
+
+    // ── Reviews (Phase 1) ────────────────────────────────────────────────
+    // Lazy CREATE TABLE on first hit (de241d1 cart_abandons pattern) so this
+    // works on existing prod DBs without a separate migration step. Counts
+    // only approved=1 rows so admin can pre-moderate. When cnt=0 we omit the
+    // ★ section entirely and skip aggregateRating in the JSON-LD — Google
+    // penalises pages that fake an empty/zero rating.
+    let (review_avg, review_cnt): (f64, i64) = {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "CREATE TABLE IF NOT EXISTS reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_id INTEGER NOT NULL,
+                rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
+                body TEXT NOT NULL DEFAULT '',
+                reviewer_name TEXT,
+                verified_purchase INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                approved INTEGER NOT NULL DEFAULT 1
+            )",
+            [],
+        );
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_reviews_product ON reviews(product_id, approved)",
+            [],
+        );
+        conn.query_row(
+            "SELECT COALESCE(AVG(rating), 0.0), COUNT(*) FROM reviews
+             WHERE product_id=? AND approved=1",
+            params![id],
+            |r| Ok((r.get::<_, f64>(0)?, r.get::<_, i64>(1)?)),
+        ).unwrap_or((0.0, 0))
+    };
+    let rating_block_html: String = if review_cnt > 0 {
+        // CSS gradient masks the gold portion to the exact average — 4.8/5 → 96%.
+        let pct = ((review_avg / 5.0) * 100.0).clamp(0.0, 100.0);
+        format!(
+            r#"<div class="rating" itemprop="aggregateRating" itemscope itemtype="https://schema.org/AggregateRating">
+  <span class="stars" style="--pct: {pct:.1}%" aria-label="★{avg:.1}/5">★★★★★</span>
+  <span class="rating-num" itemprop="ratingValue">{avg:.1}</span>
+  <span class="rating-count">(<span itemprop="reviewCount">{cnt}</span> レビュー)</span>
+</div>"#,
+            pct = pct, avg = review_avg, cnt = review_cnt,
+        )
+    } else {
+        String::new()
+    };
+    // JSON-LD Product + AggregateRating (omitted when cnt=0 per Google policy).
+    // Build via serde_json so string escaping is bulletproof — </script> in a
+    // product name would otherwise break the page, and JSON-LD validators
+    // are unforgiving of unescaped quotes.
+    let json_ld: String = {
+        let img_for_jsonld = mockup_url.clone().unwrap_or_else(|| design_url.clone().unwrap_or_default());
+        let availability = if inventory > 0 && (inventory - sold) <= 0 {
+            "https://schema.org/OutOfStock"
+        } else {
+            "https://schema.org/InStock"
+        };
+        let mut obj = serde_json::json!({
+            "@context": "https://schema.org",
+            "@type": "Product",
+            "name": name,
+            "image": img_for_jsonld,
+            "offers": {
+                "@type": "Offer",
+                "priceCurrency": "JPY",
+                "price": price_jpy.to_string(),
+                "availability": availability,
+            }
+        });
+        if review_cnt > 0 {
+            // Two-decimal precision matches Google's recommended format.
+            let val = format!("{:.1}", review_avg);
+            obj["aggregateRating"] = serde_json::json!({
+                "@type": "AggregateRating",
+                "ratingValue": val,
+                "reviewCount": review_cnt.to_string(),
+            });
+        }
+        // Escape </script> defensively per HTML5 spec for inline JSON-LD.
+        let raw = serde_json::to_string(&obj).unwrap_or_else(|_| "{}".into());
+        let safe = raw.replace("</", "<\\/");
+        format!(r#"<script type="application/ld+json">{}</script>"#, safe)
+    };
+
     // Scarcity: "残 N 枚" when 0 < remaining <= 10. Above that, omit (looks spammy).
     let remaining = (inventory - sold).max(0);
     let scarcity_html: String = if inventory > 0 && remaining == 0 {
@@ -13501,11 +13586,16 @@ async fn product_sku_page(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{name} — MU #{drop_num}</title>
+{json_ld}
 <style>
 body{{font-family:-apple-system,system-ui,sans-serif;background:#0a0a0a;color:#f5f5f0;margin:0;padding:24px;max-width:720px;margin:0 auto}}
 img{{width:100%;height:auto;background:#111;border-radius:2px}}
 h1{{font-size:20px;font-weight:500;margin:24px 0 8px}}
 .meta{{font-size:13px;opacity:0.7;margin-bottom:16px}}
+.rating{{display:flex;align-items:center;gap:6px;font-size:13px;margin:0 0 12px;opacity:0.9}}
+.stars{{font-size:16px;letter-spacing:1px;background:linear-gradient(90deg,#ffc857 var(--pct,100%),#444 var(--pct,100%));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent}}
+.rating-num{{font-weight:600;font-variant-numeric:tabular-nums}}
+.rating-count{{opacity:0.6}}
 .price{{font-size:22px;font-variant-numeric:tabular-nums;margin:8px 0 24px}}
 .price-grid{{margin:8px 0 24px;display:flex;flex-direction:column;gap:6px}}
 .price-row{{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-radius:2px;background:rgba(245,245,240,0.05)}}
@@ -13550,6 +13640,7 @@ h1{{font-size:20px;font-weight:500;margin:24px 0 8px}}
 <img src="{img}" alt="{name}" loading="eager">
 <h1>{name}</h1>
 <div class="meta">{brand_upper} · #{drop_num}</div>
+{rating}
 {scarcity}
 {price_grid}
 <div class="swatches">
@@ -13580,8 +13671,87 @@ h1{{font-size:20px;font-weight:500;margin:24px 0 8px}}
         brand_lower = brand_lower,
         scarcity = scarcity_html,
         upsell = upsell_html,
+        json_ld = json_ld,
+        rating = rating_block_html,
     );
     Html(html).into_response()
+}
+
+/// POST /api/admin/reviews — seed a customer review for /p/<sku>.
+///
+/// Body: `{"product_id":123,"rating":5,"body":"great quality",
+///         "reviewer_name":"M.K","verified_purchase":true}`.
+/// `body` / `reviewer_name` / `verified_purchase` are optional. Rating MUST
+/// be 1–5. Returns `{"ok":true,"id":<new_id>}` on success. Admin-auth
+/// gated; 403 on failure.
+///
+/// Reviews default to `approved=1` (admin is the curator). Keeping the
+/// column lets us flip to user-submitted reviews later without a schema
+/// change; existing seeds stay published.
+async fn admin_review_create(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/reviews").await { return r; }
+
+    let product_id = match body.get("product_id").and_then(|v| v.as_i64()) {
+        Some(n) if n > 0 => n,
+        _ => return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":"product_id (positive int) required"}))).into_response(),
+    };
+    let rating = match body.get("rating").and_then(|v| v.as_i64()) {
+        Some(n) if (1..=5).contains(&n) => n,
+        _ => return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":"rating must be 1..=5"}))).into_response(),
+    };
+    let review_body = body.get("body").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    let reviewer_name = body.get("reviewer_name").and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let verified: i64 = match body.get("verified_purchase") {
+        Some(v) if v.as_bool() == Some(true) => 1,
+        Some(v) if v.as_i64() == Some(1) => 1,
+        _ => 0,
+    };
+    let approved: i64 = match body.get("approved") {
+        Some(v) if v.as_bool() == Some(false) => 0,
+        Some(v) if v.as_i64() == Some(0) => 0,
+        _ => 1,
+    };
+
+    let conn = db.lock().unwrap();
+    // Lazy-create matches /p/<sku> reader so this endpoint works on a fresh DB.
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS reviews (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_id INTEGER NOT NULL,
+            rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
+            body TEXT NOT NULL DEFAULT '',
+            reviewer_name TEXT,
+            verified_purchase INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            approved INTEGER NOT NULL DEFAULT 1
+        )",
+        [],
+    );
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_reviews_product ON reviews(product_id, approved)",
+        [],
+    );
+    let inserted = conn.execute(
+        "INSERT INTO reviews (product_id, rating, body, reviewer_name, verified_purchase, created_at, approved)
+         VALUES (?, ?, ?, ?, ?, datetime('now'), ?)",
+        params![product_id, rating, review_body, reviewer_name, verified, approved],
+    );
+    match inserted {
+        Ok(_) => {
+            let id = conn.last_insert_rowid();
+            Json(serde_json::json!({"ok": true, "id": id})).into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"ok":false,"error":format!("db: {}", e)}))).into_response(),
+    }
 }
 
 /// POST /api/admin/products/:id/update — admin-only PATCH for the product
@@ -16371,6 +16541,41 @@ async fn stripe_webhook(
             "/api/webhook/stripe",
             product_id,
             serde_json::json!({"amount_total": amount_total, "session": session_id})).await;
+
+        // ── Abandoned-cart suppression + post-purchase mail queue ──
+        // Mark the abandoned-cart row as paid so the recovery mailer doesn't
+        // chase a customer who already converted. customer_email is the
+        // canonical Stripe field name (works for both Checkout and embedded
+        // modes); fall back to customer_details.email which is populated when
+        // the email is collected during the session rather than pre-filled.
+        if let Some(email) = session.get("customer_email").and_then(|v| v.as_str())
+            .or_else(|| session.get("customer_details").and_then(|d| d.get("email")).and_then(|v| v.as_str()))
+        {
+            let conn = db.lock().unwrap();
+            let _ = conn.execute(
+                "UPDATE cart_abandons SET paid_at = datetime('now')
+                 WHERE email = ? AND paid_at IS NULL AND created_at > datetime('now', '-7 days')",
+                params![email],
+            );
+            let _ = conn.execute(
+                "CREATE TABLE IF NOT EXISTS post_purchase_queue (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email TEXT NOT NULL,
+                    session_id TEXT NOT NULL UNIQUE,
+                    amount_jpy INTEGER,
+                    product_ids TEXT,
+                    paid_at TEXT NOT NULL,
+                    shipping_mailed_at TEXT,
+                    review_mailed_at TEXT
+                )",
+                [],
+            );
+            let _ = conn.execute(
+                "INSERT OR IGNORE INTO post_purchase_queue (email, session_id, amount_jpy, paid_at)
+                 VALUES (?, ?, ?, datetime('now'))",
+                params![email, session_id, amount_total],
+            );
+        }
 
         // ── Proposal extras: direct pt purchase ──
         // Webhook fires after the Stripe Payment Link from

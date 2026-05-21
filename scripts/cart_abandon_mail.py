@@ -186,6 +186,7 @@ def main() -> int:
             SELECT id, email, product_ids, created_at
             FROM cart_abandons
             WHERE notified_at IS NULL
+              AND paid_at IS NULL
               AND email IS NOT NULL
               AND email != ''
               AND created_at < datetime('now', '-1 hour')
