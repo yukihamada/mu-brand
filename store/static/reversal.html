@@ -124,11 +124,43 @@ footer{padding:30px 28px;color:var(--mute);font-size:10.5px;text-align:center;li
   .mu-intro,.mu-intro-grid .kpi,.gizmo,.option .shot,.hero-shot,.terms,.who .col,.sku-table{background:#fff;border-color:#bbb}
   .mu-intro{border-color:#b88e00}
   .print-cta{display:none}
+  .admin-bar,.admin-only{display:none !important}
 }
+
+/* ── Admin mode (visible only when body.is-admin) ── */
+.admin-only{display:none}
+.is-admin .admin-only{display:block}
+.is-admin body,body.is-admin{padding-top:32px}
+.admin-bar{display:none;position:fixed;top:0;left:0;right:0;background:#dc5050;color:#fff;padding:6px 14px;font-size:11px;letter-spacing:0.12em;text-align:center;z-index:100;font-weight:500;font-family:inherit}
+.is-admin .admin-bar{display:block}
+.admin-bar button{background:transparent;border:1px solid rgba(255,255,255,0.6);color:#fff;padding:2px 10px;font-size:10px;letter-spacing:0.12em;cursor:pointer;margin-left:14px;font-family:inherit}
+.admin-bar button:hover{background:rgba(255,255,255,0.15)}
+.admin-panel{max-width:880px;margin:18px auto;border:1px solid var(--y);background:rgba(230,196,73,0.04);padding:20px 22px}
+.admin-panel h3{font-size:12px;color:var(--y);letter-spacing:0.24em;text-transform:uppercase;margin-bottom:12px;text-align:left}
+.admin-panel textarea,.admin-panel input,.admin-panel select{width:100%;background:#0a0a0a;border:1px solid var(--line);color:var(--fg);padding:8px 10px;font-size:13px;margin-bottom:8px;font-family:inherit;border-radius:0}
+.admin-panel textarea{min-height:280px;font-family:'SF Mono',Menlo,Consolas,monospace;font-size:12px;line-height:1.6}
+.admin-panel button.act{background:var(--y);color:#0a0a0a;border:0;padding:10px 22px;font-size:11px;font-weight:600;letter-spacing:0.18em;text-transform:uppercase;cursor:pointer;margin-top:8px;font-family:inherit}
+.admin-panel button.act:hover{opacity:0.85}
+.admin-panel button.act[disabled]{opacity:0.4;cursor:not-allowed}
+.admin-panel .row{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:8px}
+@media (max-width:680px){.admin-panel .row{grid-template-columns:1fr 1fr}}
+.admin-panel .status{font-size:11px;color:var(--mute);letter-spacing:0.08em;margin-top:8px;min-height:14px}
+.admin-panel .status.err{color:#dc5050}
+.admin-panel .status.ok{color:#4FA868}
+.admin-panel .note{font-size:11px;color:var(--mute);letter-spacing:0.06em;margin-bottom:10px;line-height:1.6}
+.sku-publish-toggle{display:inline-block;padding:3px 10px;background:#0a0a0a;border:1px solid var(--line);color:var(--fg);font-size:10px;letter-spacing:0.12em;cursor:pointer;margin-left:8px;font-family:inherit}
+.sku-publish-toggle:hover{border-color:var(--y);color:var(--y)}
+.sku-publish-toggle[disabled]{opacity:0.4;cursor:not-allowed}
 </style>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </head>
 <body>
+
+<!-- Admin status bar (hidden unless body.is-admin) -->
+<div class="admin-bar" id="admin-bar" role="status" aria-live="polite">
+  ADMIN MODE · token: <span id="admin-tok-mask">****</span>
+  <button type="button" id="admin-logout">LOGOUT</button>
+</div>
 
 <header class="cover">
   <div class="mark">無</div>
@@ -158,6 +190,35 @@ footer{padding:30px 28px;color:var(--mute);font-size:10.5px;text-align:center;li
 <section id="terms-block"></section>
 <section id="timeline-block"></section>
 <section id="contact-block" style="padding-bottom:48px"></section>
+
+<!-- Admin: Meta JSON editor (hidden unless body.is-admin) -->
+<section class="admin-only" id="admin-meta-section">
+  <div class="admin-panel">
+    <h3>Meta JSON エディタ <em style="color:var(--mute);text-transform:none;letter-spacing:0;font-style:normal">— PATCH /api/admin/proposal/&lt;slug&gt;/meta</em></h3>
+    <p class="note">トップレベルキーを浅く merge。例: <code>{"tagline":"…"}</code> だけ送れば tagline のみ差し替わる。完全置換したい場合は現在の全 JSON を編集。</p>
+    <textarea id="admin-meta-text" spellcheck="false" placeholder="loading…"></textarea>
+    <button type="button" class="act" id="admin-meta-save">保存 (PATCH)</button>
+    <button type="button" class="act" id="admin-meta-reload" style="background:transparent;color:var(--fg);border:1px solid var(--line);margin-left:8px">再読込</button>
+    <div class="status" id="admin-meta-status"></div>
+  </div>
+</section>
+
+<!-- Admin: SKU add (hidden unless body.is-admin) -->
+<section class="admin-only" id="admin-sku-section">
+  <div class="admin-panel">
+    <h3>SKU 追加 <em style="color:var(--mute);text-transform:none;letter-spacing:0;font-style:normal">— POST /api/admin/proposal/&lt;slug&gt;/sku/add</em></h3>
+    <p class="note">letter は空欄なら m001, m002, … と自動採番。published は単発 add 後に下の SKU 一覧から切替。</p>
+    <div class="row">
+      <input id="adm-sku-letter" placeholder="letter (任意, 例 m042)">
+      <input id="adm-sku-label" placeholder="label *">
+      <input id="adm-sku-kind" placeholder="kind * (tee/hoodie/cap/tote/mug/sticker…)">
+      <input id="adm-sku-price" type="number" placeholder="price_jpy (任意)" min="0">
+      <input id="adm-sku-url" placeholder="design_url * (https://…)">
+    </div>
+    <button type="button" class="act" id="admin-sku-add">追加</button>
+    <div class="status" id="admin-sku-status"></div>
+  </div>
+</section>
 
 <div class="print-cta">
   <button onclick="window.print()">この提案をプリント / PDF 保存</button>
@@ -309,20 +370,27 @@ footer{padding:30px 28px;color:var(--mute);font-size:10.5px;text-align:center;li
 
   // ── SKU table (DB driven) ──
   const tbody = document.getElementById('sku-rows');
-  if (skus.length){
-    tbody.innerHTML = skus.map(s => {
+  const renderSkuRows = (rows) => {
+    if (!rows.length){
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--mute);padding:24px">SKU 未登録</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(s => {
       const isPub = s.published !== false;
+      const letter = (s.letter||'').toString();
+      const toggleHtml = window.__MU_ADMIN
+        ? `<button type="button" class="admin-only sku-publish-toggle" data-letter="${letter}" data-pub="${isPub?'1':'0'}">${isPub?'非公開へ':'公開へ'}</button>`
+        : '';
       return `<tr>
-        <td class="l">${(s.letter||'').toUpperCase()}</td>
+        <td class="l">${letter.toUpperCase()}</td>
         <td>${s.label||''}</td>
         <td style="color:var(--mute);font-size:11px">${s.kind||''}</td>
-        <td><span class="pill ${isPub?'pub':'prv'}">${isPub?'公開':'非公開'}</span></td>
+        <td><span class="pill ${isPub?'pub':'prv'}">${isPub?'公開':'非公開'}</span>${toggleHtml}</td>
         <td class="p">¥${(s.price_jpy||0).toLocaleString()}</td>
       </tr>`;
     }).join('');
-  } else {
-    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--mute);padding:24px">SKU 未登録</td></tr>';
-  }
+  };
+  renderSkuRows(skus);
 
   // ── Terms ──
   if (meta.terms && meta.terms.length){
@@ -353,6 +421,192 @@ footer{padding:30px 28px;color:var(--mute);font-size:10.5px;text-align:center;li
       最短 60 日で Drop 01 可能 · まずは 30 分のリモート打合せから
     </p>
   `;
+
+  // ── Admin mode (purely additive; never logs/sends token anywhere except API auth) ──
+  // Token sources, in order: URL ?admin_token=X → localStorage['mu_admin_token']
+  // Once detected, body.is-admin reveals the admin-only panels and wires handlers.
+  try {
+    const urlParams = new URLSearchParams(location.search);
+    const fromUrl = urlParams.get('admin_token');
+    let adminToken = fromUrl || localStorage.getItem('mu_admin_token') || '';
+    adminToken = (adminToken || '').trim();
+    if (!adminToken) return; // public visitor — bail silently
+
+    // Persist if it came from the URL, then strip ?admin_token from the bar.
+    if (fromUrl) {
+      try { localStorage.setItem('mu_admin_token', adminToken); } catch(e){}
+      try {
+        const u = new URL(location.href);
+        u.searchParams.delete('admin_token');
+        history.replaceState(null, '', u.toString());
+      } catch(e){}
+    }
+
+    window.__MU_ADMIN = true;
+    document.body.classList.add('is-admin');
+    // Show only last 4 chars of the token in the bar (avoid leaking to screenshots).
+    const last4 = adminToken.length >= 4 ? adminToken.slice(-4) : '****';
+    const maskEl = document.getElementById('admin-tok-mask');
+    if (maskEl) maskEl.textContent = '****' + last4;
+
+    document.getElementById('admin-logout').addEventListener('click', () => {
+      try { localStorage.removeItem('mu_admin_token'); } catch(e){}
+      document.body.classList.remove('is-admin');
+      window.__MU_ADMIN = false;
+      location.reload();
+    });
+
+    // Helper: admin fetch — sends Authorization: Bearer. Never logs token.
+    const adminFetch = async (url, opts={}) => {
+      const h = Object.assign({}, opts.headers || {}, {
+        'Authorization': 'Bearer ' + adminToken,
+        'X-Admin-Token': adminToken,
+      });
+      if (opts.body && !h['Content-Type']) h['Content-Type'] = 'application/json';
+      const r = await fetch(url, Object.assign({}, opts, { headers: h }));
+      return r;
+    };
+
+    const setStatus = (el, msg, kind) => {
+      const node = document.getElementById(el);
+      if (!node) return;
+      node.textContent = msg || '';
+      node.className = 'status' + (kind ? ' ' + kind : '');
+    };
+
+    // ─ Meta editor ─
+    const metaText = document.getElementById('admin-meta-text');
+    metaText.value = JSON.stringify(meta, null, 2);
+    document.getElementById('admin-meta-reload').addEventListener('click', async () => {
+      setStatus('admin-meta-status', 'reloading…');
+      try {
+        const r = await fetch(`/api/proposal/${SLUG}/meta`);
+        if (!r.ok) { setStatus('admin-meta-status', `reload failed (${r.status})`, 'err'); return; }
+        const j = await r.json();
+        metaText.value = JSON.stringify(j.meta || {}, null, 2);
+        setStatus('admin-meta-status', 'reloaded from server', 'ok');
+      } catch (e) {
+        setStatus('admin-meta-status', 'network error', 'err');
+      }
+    });
+    document.getElementById('admin-meta-save').addEventListener('click', async () => {
+      const btn = document.getElementById('admin-meta-save');
+      let parsed;
+      try { parsed = JSON.parse(metaText.value); }
+      catch (e) { setStatus('admin-meta-status', 'JSON parse error: ' + e.message, 'err'); return; }
+      if (typeof parsed !== 'object' || Array.isArray(parsed) || parsed === null) {
+        setStatus('admin-meta-status', 'top-level must be an object', 'err'); return;
+      }
+      btn.disabled = true;
+      setStatus('admin-meta-status', 'saving…');
+      try {
+        const r = await adminFetch(`/api/admin/proposal/${SLUG}/meta`, {
+          method: 'PATCH',
+          body: JSON.stringify(parsed),
+        });
+        if (!r.ok) {
+          if (r.status === 401 || r.status === 403) {
+            alert('Admin auth failed — token may be invalid. Logging out.');
+            try { localStorage.removeItem('mu_admin_token'); } catch(e){}
+            location.reload();
+            return;
+          }
+          setStatus('admin-meta-status', `save failed (${r.status})`, 'err');
+          return;
+        }
+        const j = await r.json();
+        setStatus('admin-meta-status', 'saved · reloading page in 1s…', 'ok');
+        setTimeout(() => location.reload(), 1000);
+      } catch (e) {
+        setStatus('admin-meta-status', 'network error', 'err');
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    // ─ SKU add ─
+    document.getElementById('admin-sku-add').addEventListener('click', async () => {
+      const btn = document.getElementById('admin-sku-add');
+      const letter = document.getElementById('adm-sku-letter').value.trim();
+      const label  = document.getElementById('adm-sku-label').value.trim();
+      const kind   = document.getElementById('adm-sku-kind').value.trim();
+      const priceS = document.getElementById('adm-sku-price').value.trim();
+      const url    = document.getElementById('adm-sku-url').value.trim();
+      if (!label || !kind || !url) {
+        setStatus('admin-sku-status', 'label / kind / design_url は必須', 'err'); return;
+      }
+      const body = { admin_token: adminToken, label, kind, design_url: url };
+      if (letter) body.letter = letter;
+      if (priceS) {
+        const p = parseInt(priceS, 10);
+        if (!isNaN(p)) body.price_jpy = p;
+      }
+      btn.disabled = true;
+      setStatus('admin-sku-status', 'adding…');
+      try {
+        // This endpoint takes admin_token in the body, but we also send the
+        // header for consistency in case a future variant requires it.
+        const r = await adminFetch(`/api/admin/proposal/${SLUG}/sku/add`, {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || j.ok === false) {
+          if (r.status === 401 || r.status === 403) {
+            alert('Admin auth failed — token may be invalid.');
+            return;
+          }
+          setStatus('admin-sku-status', `add failed: ${(j && j.error) || r.status}`, 'err');
+          return;
+        }
+        setStatus('admin-sku-status',
+          `added letter=${j.letter} · reloading…`, 'ok');
+        setTimeout(() => location.reload(), 900);
+      } catch (e) {
+        setStatus('admin-sku-status', 'network error', 'err');
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    // ─ SKU publish toggle (event delegation) ─
+    document.getElementById('sku-rows').addEventListener('click', async (ev) => {
+      const t = ev.target;
+      if (!(t instanceof HTMLElement) || !t.classList.contains('sku-publish-toggle')) return;
+      const letter = t.dataset.letter;
+      const isPub = t.dataset.pub === '1';
+      const action = isPub ? 'unpublish' : 'publish';
+      t.disabled = true;
+      t.textContent = '…';
+      try {
+        const r = await adminFetch(
+          `/api/admin/proposal/${SLUG}/sku/${encodeURIComponent(letter)}/${action}`,
+          { method: 'POST' });
+        if (!r.ok) {
+          if (r.status === 401 || r.status === 403) {
+            alert('Admin auth failed — token may be invalid.');
+          }
+          t.disabled = false;
+          t.textContent = isPub ? '非公開へ' : '公開へ';
+          return;
+        }
+        // Refresh SKU list in place.
+        const skuResp = await fetch(`/api/proposal/${SLUG}/skus`);
+        if (skuResp.ok) {
+          const skus2 = (await skuResp.json()).skus || [];
+          renderSkuRows(skus2);
+        } else {
+          location.reload();
+        }
+      } catch(e){
+        t.disabled = false;
+        t.textContent = isPub ? '非公開へ' : '公開へ';
+      }
+    });
+  } catch (e) {
+    // never crash the public LP because of admin bootstrap.
+    console.warn('admin bootstrap skipped:', e);
+  }
 })();
 </script>
 
