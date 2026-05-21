@@ -58117,6 +58117,7 @@ async fn main() {
         .with_state(db)
         .layer(middleware::from_fn(security_headers))
         .layer(cors)
+        .layer(tower_http::compression::CompressionLayer::new().gzip(true).br(true))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
