@@ -634,9 +634,22 @@ pub async fn generate_onbody_mockup(
         .ok_or_else(|| "no task_key".to_string())?
         .to_string();
 
-    // 2. Poll up to 30 × 4s = 2 min.
+    // Log attempt start in spend ledger (¥0) so we can see backfill activity
+    // in /admin/catalog/status — tracing!/warn! logs go to Fly stdout which
+    // isn't easily readable from outside.
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO catalog_spend (category, amount_jpy, reason, ref_id)
+             VALUES ('mockup_attempt', 0, ?, ?)",
+            rusqlite::params![format!("printful task_key={}", task_key), &sku],
+        );
+    }
+
+    // 2. Poll up to 60 × 4s = 4 min. Printful's queue can be slow during
+    //    peak hours; cycles 2-3 of the first deploy timed out at 2 min.
     let mut mockup_url: Option<String> = None;
-    for attempt in 0..30 {
+    for attempt in 0..60 {
         tokio::time::sleep(std::time::Duration::from_secs(if attempt == 0 { 5 } else { 4 })).await;
         let poll = format!("https://api.printful.com/mockup-generator/task?task_key={}", task_key);
         let r = match client.get(&poll).bearer_auth(&key).send().await {
@@ -685,6 +698,14 @@ pub async fn generate_onbody_mockup(
         );
     }
     tracing::info!("[catalog/mockup] OK sku={} → {}", sku, r2_url);
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO catalog_spend (category, amount_jpy, reason, ref_id)
+             VALUES ('mockup_ok', 0, ?, ?)",
+            rusqlite::params![&r2_url, &sku],
+        );
+    }
     Ok(())
 }
 
@@ -2019,8 +2040,14 @@ async fn mockup_backfill_step(db: Db) -> Result<(), String> {
         }
         let db_c = db.clone();
         tokio::spawn(async move {
-            if let Err(e) = generate_onbody_mockup(db_c, sku.clone(), pp, pv, design).await {
+            if let Err(e) = generate_onbody_mockup(db_c.clone(), sku.clone(), pp, pv, design).await {
                 tracing::warn!("[catalog/mockup] {} failed: {}", sku, e);
+                let conn = db_c.lock().unwrap();
+                let _ = conn.execute(
+                    "INSERT INTO catalog_spend (category, amount_jpy, reason, ref_id)
+                     VALUES ('mockup_fail', 0, ?, ?)",
+                    rusqlite::params![e.chars().take(200).collect::<String>(), &sku],
+                );
             }
         });
     }
