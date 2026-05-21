@@ -9,6 +9,7 @@ on:
       - "fly.mu-craft.toml"
       - ".dockerignore"
       - ".github/workflows/deploy-mu-craft.yml"
+      - "docs/founding/**"
   workflow_dispatch:
 
 concurrency:
