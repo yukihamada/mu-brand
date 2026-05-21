@@ -282,7 +282,11 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
     },
     ProductSpec {
         kind: "rashguard_ls",
-        printful_product_id: 162,
+        // 301 = "All-Over Print Men's Rash Guard" (Printful catalog id);
+        // 162 was a copy/paste error from a longsleeve product, which is
+        // why every rashguard mockup task 4xx'd with "No variants to
+        // generate" (variant 9328 isn't in product 162's catalog).
+        printful_product_id: 301,
         printful_variant_id: 9328,
         placement: "front",
         retail_jpy: 9800,
