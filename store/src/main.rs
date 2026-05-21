@@ -22977,6 +22977,225 @@ async fn collection_page(
     (StatusCode::OK, [("content-type", "text/html; charset=utf-8")], html).into_response()
 }
 
+/// Top-level merch categories. Each category aggregates several
+/// sub-brands (drops, partner collabs, product-type sample lines)
+/// into a single SEO landing under /merch/<category>. The mapping is
+/// static because brands are added rarely; if a brand is missing add
+/// it here. `like_prefixes` is matched via `brand LIKE 'prefix%'` so
+/// the auto-generated `<brand>_<product>_sample` lines are picked up
+/// without enumerating every one.
+struct MerchCategory {
+    slug: &'static str,
+    label: &'static str,
+    tagline: &'static str,
+    exact_brands: &'static [&'static str],
+    like_prefixes: &'static [&'static str],
+}
+
+const MERCH_CATEGORIES: &[MerchCategory] = &[
+    MerchCategory {
+        slug: "bjj",
+        label: "BJJ",
+        tagline: "柔術 / 格闘技ライン。試合・道場・遠征用のフルレンジ。",
+        exact_brands: &["jiufight", "ads_jujitsu", "blank"],
+        like_prefixes: &["jiufight_", "ryozo", "nojimahal"],
+    },
+    MerchCategory {
+        slug: "kokon",
+        label: "KOKON",
+        tagline: "焼肉古今 (kokon.tokyo) コラボシリーズ。",
+        exact_brands: &["ads_kokon"],
+        like_prefixes: &["kokon_", "ads_kokon_"],
+    },
+    MerchCategory {
+        slug: "regional",
+        label: "REGIONAL",
+        tagline: "地域コラボ / 観光・体験プラットフォーム。",
+        exact_brands: &["ads_regional"],
+        like_prefixes: &["asoview", "ele_", "elsoul"],
+    },
+    MerchCategory {
+        slug: "event",
+        label: "EVENT",
+        tagline: "イベント限定エディションと記念ドロップ。",
+        exact_brands: &["ads_event"],
+        like_prefixes: &["jiufight_event", "ads_event_"],
+    },
+    MerchCategory {
+        slug: "art",
+        label: "ART",
+        tagline: "アート / コンセプチュアル系コラボ。",
+        exact_brands: &[],
+        like_prefixes: &["mugen", "muon", "nouns", "kawanabe"],
+    },
+    MerchCategory {
+        slug: "profession",
+        label: "PROFESSION",
+        tagline: "職業 / プロフェッショナル向けライン。",
+        exact_brands: &["ads_profession"],
+        like_prefixes: &["ads_profession_"],
+    },
+];
+
+/// Render the shared merch grid HTML used by both /merch and /merch/<category>.
+/// `rows` is the SELECT result; `title`, `tagline`, `count_label` configure the hero.
+fn render_merch_grid_html(
+    rows: &[(i64, i64, String, Option<String>, i64, i64, i64, String)],
+    title: &str,
+    tagline: &str,
+) -> String {
+    let mut cards = String::new();
+    if rows.is_empty() {
+        cards.push_str(r#"<div class="empty">商品が見つかりません</div>"#);
+    } else {
+        for (id, drop, name, mockup, price, inventory, sold, _brand) in rows {
+            let img = mockup.as_deref().unwrap_or("https://mockups.wearmu.com/hero.png");
+            let remaining: i64 = inventory - sold;
+            let stock = if remaining <= 0 { "<span class=\"sold\">SOLD</span>".to_string() }
+                       else { format!("のこり {}/{}", remaining, inventory) };
+            cards.push_str(&format!(
+                r#"<a class="card" href="/buy/{id}">
+                  <div class="thumb"><img src="{img}" alt="{name_esc}" loading="lazy"></div>
+                  <div class="meta">
+                    <div class="num">#{drop:03}</div>
+                    <div class="name">{name_esc}</div>
+                    <div class="row"><span class="price">¥{price}</span><span class="stock">{stock}</span></div>
+                  </div>
+                </a>"#,
+                id=id, img=html_attr_escape(img), name_esc=html_escape(name),
+                drop=drop, price=format_jpy(*price), stock=stock));
+        }
+    }
+
+    format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>{title_esc} — MU</title>
+<meta name="description" content="{tagline_esc}"/>
+<style>{css}
+  .wrap{{max-width:1100px;margin:0 auto;padding:32px 22px 0}}
+  .kicker{{font-size:10.5px;letter-spacing:0.22em;color:#666;text-transform:uppercase}}
+  h1{{font-size:32px;font-weight:300;margin:8px 0 6px;letter-spacing:0.01em}}
+  h1 em{{color:#e6c449;font-style:normal}}
+  .sub{{color:#888;font-size:13.5px;margin-bottom:30px}}
+  .cats{{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 26px}}
+  .cats a{{font-size:11px;letter-spacing:0.18em;text-transform:uppercase;border:1px solid #1f1f1f;border-radius:999px;padding:6px 12px;color:#bbb;text-decoration:none;transition:border-color 0.15s,color 0.15s}}
+  .cats a:hover{{border-color:#e6c449;color:#e6c449}}
+  .grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}}
+  .card{{background:#0a0a0a;border:1px solid #1f1f1f;border-radius:6px;overflow:hidden;text-decoration:none;color:inherit;display:block;transition:border-color 0.15s,transform 0.15s}}
+  .card:hover{{border-color:#e6c449;transform:translateY(-2px)}}
+  .card .thumb{{aspect-ratio:1/1;background:#000;display:flex;align-items:center;justify-content:center}}
+  .card .thumb img{{width:100%;height:100%;object-fit:cover;display:block}}
+  .card .meta{{padding:14px 16px}}
+  .card .num{{font-size:10.5px;letter-spacing:0.2em;color:#e6c449;font-family:ui-monospace,Menlo,monospace}}
+  .card .name{{font-size:14px;font-weight:500;margin:4px 0 10px;line-height:1.4;color:#f5f5f0}}
+  .card .row{{display:flex;justify-content:space-between;align-items:baseline;font-size:12.5px}}
+  .card .price{{color:#e6c449;font-weight:500}}
+  .card .stock{{color:#888}}
+  .card .sold{{color:#e07b7b;font-weight:600;letter-spacing:0.08em}}
+  .empty{{color:#888;text-align:center;padding:80px 0;grid-column:1/-1}}
+</style></head><body>
+  {header}
+  <div class="wrap">
+    <div class="kicker">MERCH</div>
+    <h1><em>{title_esc}</em></h1>
+    <div class="sub">{count} 着 · {tagline_esc}</div>
+    <div class="cats">
+      <a href="/merch">ALL</a>
+      <a href="/merch/bjj">BJJ</a>
+      <a href="/merch/kokon">KOKON</a>
+      <a href="/merch/regional">REGIONAL</a>
+      <a href="/merch/event">EVENT</a>
+      <a href="/merch/art">ART</a>
+      <a href="/merch/profession">PROFESSION</a>
+    </div>
+    <div class="grid">{cards}</div>
+  </div>
+  {footer}
+</body></html>"#,
+        css=vault_chrome_css(),
+        header=vault_header_html("home", None),
+        footer=vault_footer_html(),
+        title_esc=html_escape(title),
+        tagline_esc=html_escape(tagline),
+        count=rows.len(),
+        cards=cards)
+}
+
+/// GET /merch/<category> — SEO category landing. Aggregates all
+/// sub-brands tagged under the static MERCH_CATEGORIES map into a
+/// single product grid. Unknown category → 404.
+async fn merch_category(
+    State(db): State<Db>,
+    axum::extract::Path(category): axum::extract::Path<String>,
+) -> Response {
+    let cat = match MERCH_CATEGORIES.iter().find(|c| c.slug == category.to_lowercase()) {
+        Some(c) => c,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                [("content-type", "text/html; charset=utf-8")],
+                format!("<!doctype html><meta charset=\"utf-8\"><title>404</title><body style=\"font:14px/1.6 ui-sans-serif;padding:40px;color:#222;background:#fafaf7\"><h1 style=\"font-weight:300\">CATEGORY NOT FOUND</h1><p><code>/merch/{}</code> は存在しません。</p><p><a href=\"/merch\">→ /merch</a></p></body>", html_escape(&category))
+            ).into_response();
+        }
+    };
+
+    let rows: Vec<(i64, i64, String, Option<String>, i64, i64, i64, String)> = {
+        let conn = db.lock().unwrap();
+        // Build a SQL WHERE: brand IN (?, ?, ...) OR brand LIKE ? OR brand LIKE ? ...
+        let mut clauses: Vec<String> = Vec::new();
+        let mut bound: Vec<String> = Vec::new();
+        if !cat.exact_brands.is_empty() {
+            let placeholders: Vec<&str> = cat.exact_brands.iter().map(|_| "?").collect();
+            clauses.push(format!("brand IN ({})", placeholders.join(",")));
+            for b in cat.exact_brands { bound.push((*b).to_string()); }
+        }
+        for prefix in cat.like_prefixes {
+            clauses.push("brand LIKE ?".to_string());
+            bound.push(format!("{}%", prefix));
+        }
+        if clauses.is_empty() {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "empty category config").into_response();
+        }
+        let sql = format!(
+            "SELECT id, drop_num, name, mockup_url, price_jpy, inventory, sold, brand
+             FROM products WHERE active = 1 AND ({}) ORDER BY drop_num ASC, id ASC",
+            clauses.join(" OR ")
+        );
+        let mut stmt = match conn.prepare(&sql) {
+            Ok(s) => s,
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("db: {}", e)).into_response(),
+        };
+        let param_refs: Vec<&dyn rusqlite::ToSql> = bound.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+        stmt.query_map(param_refs.as_slice(), |r| Ok((
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get::<_, Option<String>>(3)?,
+            r.get(4)?, r.get(5)?, r.get(6)?, r.get::<_, String>(7)?
+        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+
+    let html = render_merch_grid_html(&rows, cat.label, cat.tagline);
+    (StatusCode::OK, [("content-type", "text/html; charset=utf-8")], html).into_response()
+}
+
+/// GET /merch — all active products in a single grid with category nav.
+async fn merch_index(State(db): State<Db>) -> Response {
+    let rows: Vec<(i64, i64, String, Option<String>, i64, i64, i64, String)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, drop_num, name, mockup_url, price_jpy, inventory, sold, brand
+             FROM products WHERE active = 1 ORDER BY drop_num ASC, id ASC"
+        ) {
+            Ok(s) => s,
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("db: {}", e)).into_response(),
+        };
+        stmt.query_map([], |r| Ok((
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get::<_, Option<String>>(3)?,
+            r.get(4)?, r.get(5)?, r.get(6)?, r.get::<_, String>(7)?
+        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+    let html = render_merch_grid_html(&rows, "ALL MERCH", "全アクティブドロップ。カテゴリから絞り込み可。");
+    (StatusCode::OK, [("content-type", "text/html; charset=utf-8")], html).into_response()
+}
+
 /// Branded 404 — served when no route/static file matches. Returns 404
 /// status with the static/404.html body so links + navigation are intact.
 /// Now the page also OFFERS the unique 404 tee: each 404 hit captures
@@ -58418,6 +58637,8 @@ async fn main() {
         .route("/buy/yours", get(buy_yours_page))
         .route("/buy/:id", get(buy_page_with_id))
         .route("/collections/:brand", get(collection_page))
+        .route("/merch", get(merch_index))
+        .route("/merch/:category", get(merch_category))
         .route("/api/brand_copy/:brand", get(api_brand_copy))
         // /proposals/nihon-kotsu — removed; use /<slug> if reinstated.
         .route("/api/admin/taxigen/activate", post(admin_taxigen_activate))
