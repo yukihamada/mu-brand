@@ -69,7 +69,7 @@ Claude が 構造化 抽出 → Gemini が 画像 生成 → Printful mockup →
 
 <div class="preview" id="preview">
   <div class="preview-card">
-    <img id="mockup-img" alt="mockup preview">
+    <img id="mockup-img" alt="mockup preview" onerror="this.src='https://mockups.wearmu.com/hero.png';this.onerror=null">
     <div class="preview-meta" id="preview-meta"></div>
     <div class="spec-table" id="spec-table"></div>
     <div class="actions">
@@ -98,7 +98,7 @@ function setStatus(text, cls) {
 
 function showPreview(result) {
   var preview = document.getElementById('preview');
-  document.getElementById('mockup-img').src = result.mockup_url || result.design_url || '';
+  document.getElementById('mockup-img').src = result.mockup_url || result.design_url || 'https://mockups.wearmu.com/hero.png';
   var spec = result.spec || {};
   document.getElementById('preview-meta').innerHTML =
     '<b>' + (spec.product_kind || '?') + '</b> · <b>' + (spec.brand || 'mu') + '</b> · ' +

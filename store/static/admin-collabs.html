@@ -191,11 +191,19 @@ function cardHtml(c) {
   if (!samples.length) {
     productsHtml = `<div class="empty-state" style="padding:14px">商品 0 件 — まだ生成されていません</div>`;
   } else {
+    const FALLBACK_IMG = 'https://mockups.wearmu.com/hero.png';
     const cells = samples.slice(0, 8).map(p => {
-      const img = p.mockup_url || p.design_url || p.lifestyle_url;
-      const inner = img
-        ? `<img src="${safe(img)}" alt="${safe(p.name)}" loading="lazy">`
-        : `<div class="empty">${safe(p.name).slice(0, 18)}</div>`;
+      // Try mockup → design → lifestyle in order; final fallback is the brand
+      // hero so /admin/collabs is never empty. onerror cycles through each
+      // candidate URL once before settling on the brand mark.
+      const candidates = [p.mockup_url, p.design_url, p.lifestyle_url, FALLBACK_IMG]
+        .filter(Boolean);
+      const primary = candidates[0];
+      const fallbacks = candidates.slice(1).concat(FALLBACK_IMG);
+      const onerr = `this.dataset.i=(parseInt(this.dataset.i||'0',10)+1);` +
+        `var f=${JSON.stringify(fallbacks)};` +
+        `if(this.dataset.i<f.length){this.src=f[this.dataset.i-1];}else{this.onerror=null;}`;
+      const inner = `<img src="${safe(primary)}" alt="${safe(p.name)}" loading="lazy" onerror="${onerr.replace(/"/g,'&quot;')}">`;
       const sold = p.sold > 0 ? `<span class="sold">${p.sold} sold</span>` : '';
       return `<a class="product" href="/buy/${p.id}" target="_blank" title="${safe(p.name)} (#${p.id})">
         ${inner}
