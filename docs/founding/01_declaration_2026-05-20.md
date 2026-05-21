@@ -114,7 +114,7 @@ MU は二重の継承構造を持つ。
 [[wearmu_founder_relay]] にて既に定義された **Founder Relay** は、本宣言によって変更されない。
 
 - 100 日サイクル、7 人連鎖
-- 第 1 代 winner: kenny@atsume.io (2026 年確定)
+- 第 1 代 winner: 確定済み (本人公表前のため本書では氏名・連絡先を秘匿)
 - 以降の Relay は既存規約通り運用
 
 Founder Relay は MU の **Steward (運営継承)** 機能を担う。Founding Author (濱田優貴) と並立し、競合しない。
