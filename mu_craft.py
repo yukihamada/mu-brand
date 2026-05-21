@@ -894,6 +894,80 @@ def api_publish(request: FastRequest, response: Response, sku_id: int = Form(...
     }
 
 
+@app.post("/api/craft_publish")
+def api_craft_publish(request: FastRequest, response: Response, topic: str = Form(...)):
+    """Fastest path: craft + SUZURI publish in one call. Returns SUZURI buy URL.
+
+    Cost: CRAFT_COST_MP + PUBLISH_COST_MP = 4 MP.
+    Atomicity: both succeed or both refund."""
+    user = get_or_create_user(request, response)
+    topic = topic.strip()
+    if not topic:
+        return JSONResponse({"error": "empty_topic"}, status_code=400)
+    if len(topic) > 300:
+        return JSONResponse({"error": "topic_too_long", "max": 300}, status_code=400)
+
+    total_cost = CRAFT_COST_MP + PUBLISH_COST_MP
+    ok, new_bal = mp_change(user["id"], -total_cost, "craft_publish",
+                            note=topic[:100])
+    if not ok:
+        return JSONResponse({
+            "error": "insufficient_mp",
+            "balance": new_bal,
+            "cost": total_cost,
+            "topup_options": {
+                "signup_bonus": SIGNUP_BONUS_MP if user.get("email") is None else 0,
+                "cash_rate": f"¥{CASH_RATE_YEN_PER_MP}/MP",
+                "tee_purchase": f"Tシャツ1枚購入で {TEE_BUYER_MP} MP",
+            },
+        }, status_code=402)
+
+    # 1. craft
+    try:
+        craft = run_craft_pipeline(user["id"], topic)
+    except Exception as e:
+        mp_change(user["id"], total_cost, "refund_craft_publish_craft_err", note=str(e)[:100])
+        return JSONResponse({"error": "craft_failed", "detail": str(e)[:300]}, status_code=500)
+
+    sku_id = craft["sku_id"]
+    sku = db().execute("SELECT * FROM skus WHERE id=?", (sku_id,)).fetchone()
+
+    # 2. SUZURI publish
+    png_path = Path(sku["design_png_path"] or "")
+    if not png_path.exists():
+        derived = DESIGNS_DIR / f"{sku['slug']}_black.png"
+        if derived.exists():
+            png_path = derived
+    if not png_path.exists():
+        mp_change(user["id"], PUBLISH_COST_MP, "refund_publish_no_design", ref_sku_id=sku_id)
+        # craft itself succeeded — return that without published URL
+        craft["mp_balance"] = new_bal + PUBLISH_COST_MP
+        craft["publish_error"] = "design_file_missing"
+        return craft
+
+    title = f"MU CRAFT — {sku['catchphrase'] or sku['topic'][:40]}"
+    suzuri_result = suzuri_publish(png_path, title)
+    if not suzuri_result:
+        mp_change(user["id"], PUBLISH_COST_MP, "refund_publish_suzuri_fail", ref_sku_id=sku_id)
+        craft["mp_balance"] = new_bal + PUBLISH_COST_MP
+        craft["publish_error"] = "suzuri_api_failed"
+        return craft
+
+    with db() as conn:
+        conn.execute(
+            "UPDATE skus SET status='published', suzuri_url=?, published_at=CURRENT_TIMESTAMP WHERE id=?",
+            (suzuri_result["url"], sku_id),
+        )
+
+    # success — return combined result with SUZURI buy URL
+    craft["mp_balance"] = new_bal
+    craft["mp_spent"] = total_cost
+    craft["status"] = "published"
+    craft["suzuri_url"] = suzuri_result["url"]
+    craft["suzuri_material_id"] = suzuri_result["material_id"]
+    return craft
+
+
 @app.post("/api/signup")
 def api_signup(request: FastRequest, response: Response, email: str = Form(...)):
     """Frictionless email-only signup — instant register + bonus, no magic link.
@@ -1412,10 +1486,11 @@ HTML_INDEX = """<!DOCTYPE html>
   <textarea id="topic" placeholder="例: 柔術の三角絞めの理論 / 朝のコーヒーの哲学 / 静寂の重要性"></textarea>
 
   <div class="actions">
-    <button id="craft-btn" onclick="craft()">作る (1 MP)</button>
+    <button id="craftbuy-btn" onclick="craftBuy()" style="background: linear-gradient(180deg, #ffd84a, #e6c449);">⚡ 作って即販売 (4 MP)</button>
+    <button class="ghost" id="craft-btn" onclick="craft()">作るだけ (1 MP)</button>
     <button class="ghost" id="random-btn" onclick="craftRandom()">🎲 ランダム (1 MP)</button>
-    <button class="ghost" onclick="showSignup()" id="signup-btn">登録して +5 MP</button>
-    <button class="ghost" onclick="topup()">チャージ (¥30/MP)</button>
+    <button class="ghost" onclick="showSignup()" id="signup-btn">登録 +5 MP</button>
+    <button class="ghost" onclick="topup()">チャージ</button>
   </div>
 
   <div class="pills" id="pills">
@@ -1474,21 +1549,29 @@ async function craftWith(topic) {
   await craft();
 }
 
+async function craftBuy() {
+  const topic = document.getElementById('topic').value.trim();
+  if (!topic) { alert('トピックを入力するか、ワンクリックピルを押してください'); return; }
+  await craft(true);
+}
+
 async function craftRandom() {
   const t = RANDOM_TOPICS[Math.floor(Math.random() * RANDOM_TOPICS.length)];
   await craftWith(t);
 }
 
-async function craft() {
+async function craft(combined = false) {
   const topic = document.getElementById('topic').value.trim();
   if (!topic) { alert('トピックを入力するか、ワンクリックピルを押してください'); return; }
   setBtnsDisabled(true);
+  const label = combined ? '作って販売開始中 (Gemini + Printful + SUZURI)... 約20秒' : '生成中 (Gemini → Printful mockup × 2)... 約10秒';
   document.getElementById('result').innerHTML =
-    '<div class="spinner">生成中 (Gemini brief → SVG → Printful mockup × 2)... 約10秒<br><br><span style="opacity:0.5">topic: ' + escapeHtml(topic) + '</span></div>';
+    '<div class="spinner">' + label + '<br><br><span style="opacity:0.5">topic: ' + escapeHtml(topic) + '</span></div>';
 
   const fd = new FormData();
   fd.append('topic', topic);
-  const r = await fetch('/api/craft', { method: 'POST', body: fd });
+  const endpoint = combined ? '/api/craft_publish' : '/api/craft';
+  const r = await fetch(endpoint, { method: 'POST', body: fd });
   const data = await r.json();
 
   if (r.status === 402) {
@@ -1511,16 +1594,19 @@ async function craft() {
     return;
   }
 
+  const buyBtn = data.suzuri_url
+    ? `<button onclick="window.open('${data.suzuri_url}','_blank')" style="background: linear-gradient(180deg, #6bff96, #4cd373); color: #0a0a0a;">⚡ 今すぐ買う ↗</button>`
+    : `<button onclick="publish(${data.sku_id})">公開する (3 MP)</button>`;
   document.getElementById('result').innerHTML = `
     <div class="result-card">
       <h2>${escapeHtml(data.brief.catchphrase)} ${data.brief.kanji ? '· ' + escapeHtml(data.brief.kanji) : ''}</h2>
-      <div class="meta">topic: ${escapeHtml(data.topic)} · slug: <code>${data.slug}</code> · ${data.elapsed_sec}s · 残量 ${data.mp_balance} MP</div>
+      <div class="meta">topic: ${escapeHtml(data.topic)} · slug: <code>${data.slug}</code> · ${data.elapsed_sec}s · 残量 ${data.mp_balance} MP${data.suzuri_url ? ' · ✓ SUZURI 公開済み' : ''}</div>
       <div class="mockups">
         ${data.mockup_white ? `<img src="${data.mockup_white}" alt="white tee" />` : '<div>白T mockup 生成失敗</div>'}
         ${data.mockup_black ? `<img src="${data.mockup_black}" alt="black tee" />` : '<div>黒T mockup 生成失敗</div>'}
       </div>
       <div class="actions" style="margin-top: 16px;">
-        <button onclick="publish(${data.sku_id})">公開する (3 MP)</button>
+        ${buyBtn}
         <button class="ghost" onclick="window.open('/c/${data.slug}','_blank')">永久 URL ↗</button>
         <button class="ghost" data-slug="${data.slug}" data-catch="${escapeHtml(data.brief.catchphrase)}" onclick="shareX(this.dataset.slug, this.dataset.catch)">𝕏 シェア</button>
         <button class="ghost" data-topic="${escapeHtml(data.topic)}" onclick="craftWith(this.dataset.topic)">↻ もう一回 (1 MP)</button>
