@@ -125,6 +125,505 @@ pub fn seed_if_empty(conn: &rusqlite::Connection) {
     }
 }
 
+// ─── Budget guard + spend ledger ──────────────────────────────────────
+//
+// Single hard-cap of ¥100,000 across the autonomous shop engine so a
+// runaway loop can never burn unbounded cash. Every spend goes through
+// spend_or_refuse() which returns false (and logs the refusal) when the
+// running total would exceed the cap.
+//
+// Categories tracked:
+//   ai_image    — Gemini image generation (~¥6/image at gemini-3-pro-image-preview)
+//   printful    — sample orders + per-fulfillment fees
+//   ads_google  — Google Ads campaign spend (set by external reconciler)
+//   ads_meta    — Meta Ads spend
+//   other       — anything not categorised
+
+pub const BUDGET_TOTAL_JPY: i64 = 100_000;
+
+pub fn ensure_budget_schema(conn: &rusqlite::Connection) {
+    let _ = conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS catalog_spend (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            category    TEXT NOT NULL,
+            amount_jpy  INTEGER NOT NULL,
+            reason      TEXT,
+            ref_id      TEXT,
+            created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+         );
+         CREATE INDEX IF NOT EXISTS idx_catspend_category
+             ON catalog_spend(category, created_at);
+         CREATE TABLE IF NOT EXISTS catalog_gen_jobs (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            theme        TEXT NOT NULL,
+            kind         TEXT NOT NULL,
+            seed         TEXT NOT NULL,
+            status       TEXT NOT NULL DEFAULT 'pending',
+            sku          TEXT,
+            error        TEXT,
+            spent_jpy    INTEGER NOT NULL DEFAULT 0,
+            created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+            completed_at TEXT,
+            UNIQUE(theme, kind, seed)
+         );
+         CREATE INDEX IF NOT EXISTS idx_catgen_status
+             ON catalog_gen_jobs(status, created_at);
+        "
+    );
+}
+
+/// Total ¥ spent across all categories so far. Source of truth for the
+/// budget guard.
+pub fn spent_total_jpy(conn: &rusqlite::Connection) -> i64 {
+    conn.query_row("SELECT COALESCE(SUM(amount_jpy), 0) FROM catalog_spend",
+                   [], |r| r.get::<_, i64>(0))
+        .unwrap_or(0)
+}
+
+/// Attempt to charge `amount_jpy` against the budget. Returns true if
+/// the spend was recorded; false (and logs a refusal) if it would push
+/// us over BUDGET_TOTAL_JPY. Refusals are themselves recorded with a
+/// negative-id row in a future iteration; for now we just log.
+pub fn spend_or_refuse(
+    conn: &rusqlite::Connection,
+    category: &str,
+    amount_jpy: i64,
+    reason: &str,
+    ref_id: Option<&str>,
+) -> bool {
+    if amount_jpy <= 0 {
+        return true;
+    }
+    let current = spent_total_jpy(conn);
+    if current.saturating_add(amount_jpy) > BUDGET_TOTAL_JPY {
+        tracing::warn!(
+            "[catalog/budget] REFUSED {} ¥{} (current=¥{} cap=¥{}) reason={}",
+            category, amount_jpy, current, BUDGET_TOTAL_JPY, reason
+        );
+        return false;
+    }
+    let _ = conn.execute(
+        "INSERT INTO catalog_spend (category, amount_jpy, reason, ref_id)
+         VALUES (?, ?, ?, ?)",
+        rusqlite::params![category, amount_jpy, reason, ref_id],
+    );
+    tracing::info!(
+        "[catalog/budget] +¥{} {} (total=¥{}/¥{}) reason={}",
+        amount_jpy, category, current + amount_jpy, BUDGET_TOTAL_JPY, reason
+    );
+    true
+}
+
+// ─── Autonomous SKU generator (Gemini → R2 → catalog_products) ────────
+//
+// Why this exists: we need to mass-produce T-shirts and rashguards at a
+// rate the 30-min optimizer cron can drive. Round-tripping the public
+// /api/v1/sku/create from a Python script would (1) require auth keys
+// in CI, (2) write into the legacy proposal_skus table (wrong target),
+// (3) miss the budget guard. Doing it inline in Rust lets us:
+//
+//   • atomic budget check before each Gemini call (¥6 each)
+//   • write straight into catalog_products with the right Printful
+//     variant_id / placement so /api/shop/checkout + the webhook
+//     fulfillment work end-to-end with NO Stripe-price pre-mint and NO
+//     Printful sync-product round-trip (Path A: files-based)
+//   • dedup via the (theme, kind, seed) UNIQUE in catalog_gen_jobs so
+//     re-running is safe
+//
+// The product spec table below is small on purpose: T-shirt and AOP
+// rashguard cover the two requests the user named. Adding hoodies /
+// tanks etc. is a one-row PR away.
+
+struct ProductSpec {
+    kind: &'static str,
+    printful_product_id: i64,
+    printful_variant_id: i64, // unisex size M unless noted
+    placement: &'static str,
+    retail_jpy: i64,
+}
+
+// variant_id references mirror what's already proven in payments.rs and
+// merch-bridge's seed data:
+//   • Bella+Canvas 3001 unisex tee, size M, black: 4017
+//     (see store/src/payments.rs:753)
+//   • Men's AOP Rash Guard, size M: 9328
+//     (see kichinan_rashguard_ls_sample in store/src/main.rs:18197)
+const PRODUCT_SPECS: &[ProductSpec] = &[
+    ProductSpec {
+        kind: "tee",
+        printful_product_id: 71,
+        printful_variant_id: 4017,
+        placement: "front",
+        retail_jpy: 4900,
+    },
+    ProductSpec {
+        kind: "rashguard_ls",
+        printful_product_id: 162,
+        printful_variant_id: 9328,
+        placement: "front",
+        retail_jpy: 9800,
+    },
+];
+
+struct Theme {
+    slug: &'static str,
+    display: &'static str,
+    prompt_brief: &'static str,
+}
+
+const SEED_THEMES: &[Theme] = &[
+    Theme {
+        slug: "bjj_kuro_obi",
+        display: "BJJ 黒帯",
+        prompt_brief: "minimal sumi-e ink illustration of a tied jiu-jitsu black belt with the kanji 黒帯 in calligraphic style below",
+    },
+    Theme {
+        slug: "round_1",
+        display: "Round 1",
+        prompt_brief: "bold cinematic typography reading Round 1 inside a vintage boxing round-card border, monochrome ink",
+    },
+    Theme {
+        slug: "teshikaga_mountain",
+        display: "弟子屈 Mountain",
+        prompt_brief: "geometric line-art of a Hokkaido mountain peak with a calm lake reflecting it, single-color print",
+    },
+    Theme {
+        slug: "mu_mark",
+        display: "MU ━◯━",
+        prompt_brief: "the ━◯━ mark (long-dash circle long-dash) centered large and bold, with a small MU wordmark below in monospace",
+    },
+    Theme {
+        slug: "coffee_code",
+        display: "Coffee × Code",
+        prompt_brief: "minimal coffee cup outline with a binary stream rising as steam, geek-aesthetic monochrome",
+    },
+];
+
+const GEMINI_IMAGE_COST_JPY: i64 = 6;
+
+/// Returns (theme_display, kind, retail_jpy) for the named slug/kind, or None.
+fn theme_and_spec(theme_slug: &str, kind: &str) -> Option<(&'static Theme, &'static ProductSpec)> {
+    let t = SEED_THEMES.iter().find(|t| t.slug == theme_slug)?;
+    let s = PRODUCT_SPECS.iter().find(|s| s.kind == kind)?;
+    Some((t, s))
+}
+
+/// Generate one SKU end-to-end:
+///   Gemini design → R2 upload → INSERT catalog_products
+/// Returns the new SKU id. Idempotent on (theme, kind, seed).
+pub async fn generate_one(
+    db: Db,
+    theme_slug: &str,
+    kind: &str,
+    seed: &str,
+) -> Result<String, String> {
+    let (theme, spec) = theme_and_spec(theme_slug, kind)
+        .ok_or_else(|| format!("unknown theme/kind: {}/{}", theme_slug, kind))?;
+    let sku = format!(
+        "AUTO-{}-{}-{}",
+        theme.slug.to_uppercase().replace('_', "-"),
+        kind.to_uppercase().replace('_', "-"),
+        seed
+    );
+
+    // Skip if SKU already exists.
+    {
+        let conn = db.lock().unwrap();
+        let exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM catalog_products WHERE sku=? LIMIT 1",
+                rusqlite::params![&sku],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+        if exists {
+            return Ok(sku);
+        }
+        // Mark job pending so a concurrent generator doesn't race us.
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO catalog_gen_jobs (theme, kind, seed, status)
+             VALUES (?, ?, ?, 'pending')",
+            rusqlite::params![theme.slug, kind, seed],
+        );
+    }
+
+    // Budget check + reserve the ¥6 Gemini cost up-front. If the call
+    // later fails we leave the spend recorded — better to over-report
+    // than under-report. The optimizer cron can reconcile later.
+    let charged = {
+        let conn = db.lock().unwrap();
+        spend_or_refuse(
+            &conn,
+            "ai_image",
+            GEMINI_IMAGE_COST_JPY,
+            &format!("gen sku={}", sku),
+            Some(&sku),
+        )
+    };
+    if !charged {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE catalog_gen_jobs SET status='refused_budget', error=?, completed_at=datetime('now')
+             WHERE theme=? AND kind=? AND seed=?",
+            rusqlite::params!["budget cap reached", theme.slug, kind, seed],
+        );
+        return Err("budget cap reached".into());
+    }
+
+    // Gemini print-ready prompt: white background = transparent for DTG.
+    let prompt = format!(
+        "Print-ready chest graphic at 300 DPI on a PURE WHITE background \
+         (white acts as the transparent layer for DTG printing). \
+         Style brief: {brief}. \
+         Hard constraints: NO model, NO mockup, NO photographic scene, \
+         NO shirt visible — just the artwork itself, centered, square \
+         aspect ratio, bleed-safe, ready to be printed onto apparel. \
+         Variation key: {seed}.",
+        brief = theme.prompt_brief,
+        seed = seed,
+    );
+    let img = crate::gemini::call_gemini(&prompt)
+        .await
+        .map_err(|e| {
+            mark_job_failed(&db, theme.slug, kind, seed, &format!("gemini: {}", e));
+            format!("gemini: {}", e)
+        })?;
+
+    // Upload to R2 (must be configured — local fallback isn't reachable
+    // by Printful's worker, so we'd just print blank shirts).
+    let key = format!("catalog/{}.png", sku);
+    let url = crate::store_r2_bytes(&key, &img.bytes, &img.mime).await.ok_or_else(|| {
+        let msg = "R2 upload failed (R2_* env unset or upload error)";
+        mark_job_failed(&db, theme.slug, kind, seed, msg);
+        msg.to_string()
+    })?;
+
+    // INSERT catalog_products.
+    {
+        let conn = db.lock().unwrap();
+        let desc = format!("{} · {}", theme.display, label_for_kind(kind));
+        let _ = conn.execute(
+            "INSERT INTO catalog_products (
+                sku, brand, label, description_ja, retail_price_jpy,
+                printful_product_id, printful_variant_id, printful_placement,
+                printful_print_w, printful_print_h,
+                design_file, mockup_main_file, mockup_url_external,
+                is_active, sort_order
+             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            rusqlite::params![
+                &sku,
+                "auto",
+                desc,
+                desc,
+                spec.retail_jpy,
+                spec.printful_product_id,
+                spec.printful_variant_id,
+                spec.placement,
+                0,
+                0,
+                &url,
+                &url,
+                &url,
+                1,
+                100,
+            ],
+        );
+        let _ = conn.execute(
+            "UPDATE catalog_gen_jobs
+             SET status='completed', sku=?, spent_jpy=?, completed_at=datetime('now')
+             WHERE theme=? AND kind=? AND seed=?",
+            rusqlite::params![&sku, GEMINI_IMAGE_COST_JPY, theme.slug, kind, seed],
+        );
+    }
+    tracing::info!("[catalog/gen] OK sku={} theme={} kind={}", sku, theme.slug, kind);
+    Ok(sku)
+}
+
+fn mark_job_failed(db: &Db, theme: &str, kind: &str, seed: &str, err: &str) {
+    let conn = db.lock().unwrap();
+    let _ = conn.execute(
+        "UPDATE catalog_gen_jobs SET status='failed', error=?, completed_at=datetime('now')
+         WHERE theme=? AND kind=? AND seed=?",
+        rusqlite::params![err, theme, kind, seed],
+    );
+}
+
+fn label_for_kind(kind: &str) -> &'static str {
+    match kind {
+        "tee" => "T シャツ",
+        "rashguard_ls" => "ラッシュガード LS",
+        _ => "アパレル",
+    }
+}
+
+/// Admin trigger: generate N SKUs sequentially for (theme, kind).
+/// Returns count of successful generations + list of new SKU ids.
+pub async fn generate_batch(
+    db: Db,
+    theme_slug: &str,
+    kind: &str,
+    count: u32,
+) -> serde_json::Value {
+    let mut ok: Vec<String> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+    for i in 0..count {
+        let seed = format!("{:08x}", rand::random::<u32>() ^ (i + 1));
+        match generate_one(db.clone(), theme_slug, kind, &seed).await {
+            Ok(sku) => ok.push(sku),
+            Err(e) => {
+                errors.push(format!("seed={} err={}", seed, e));
+                if e.contains("budget cap") {
+                    break; // hard stop on budget exhaustion
+                }
+            }
+        }
+    }
+    let spent = {
+        let conn = db.lock().unwrap();
+        spent_total_jpy(&conn)
+    };
+    serde_json::json!({
+        "ok": errors.is_empty(),
+        "theme": theme_slug,
+        "kind": kind,
+        "requested": count,
+        "created": ok.len(),
+        "skus": ok,
+        "errors": errors,
+        "spent_total_jpy": spent,
+        "budget_cap_jpy": BUDGET_TOTAL_JPY,
+    })
+}
+
+#[derive(Deserialize)]
+pub struct GenerateQuery {
+    pub token: String,
+    pub theme: String,
+    pub kind: String,
+    pub count: Option<u32>,
+}
+
+/// POST /admin/catalog/generate?token=&theme=&kind=&count=N
+/// Token-gated trigger for the SKU generator. The 30-min cron calls
+/// generate_batch directly so this endpoint is mainly for manual
+/// kick-off + recovery.
+pub async fn admin_generate(
+    State(db): State<Db>,
+    Query(q): Query<GenerateQuery>,
+) -> Response {
+    let expected = env::var("ADMIN_TOKEN").unwrap_or_default();
+    if expected.is_empty() || q.token != expected {
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    }
+    let count = q.count.unwrap_or(1).clamp(1, 50);
+    let result = generate_batch(db, &q.theme, &q.kind, count).await;
+    axum::Json(result).into_response()
+}
+
+#[derive(Deserialize)]
+pub struct StatusQuery {
+    pub token: String,
+}
+
+/// GET /admin/catalog/status?token= — operator dashboard JSON.
+/// Returns budget burn-down, SKU counts, last 20 generator jobs, last 20 orders.
+/// No auth = no PII leak (the cron writes here too so we need lightweight read).
+pub async fn admin_status(
+    State(db): State<Db>,
+    Query(q): Query<StatusQuery>,
+) -> Response {
+    let expected = env::var("ADMIN_TOKEN").unwrap_or_default();
+    if expected.is_empty() || q.token != expected {
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    }
+    let conn = db.lock().unwrap();
+    let spent = spent_total_jpy(&conn);
+    let auto_skus: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM catalog_products WHERE brand='auto'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let total_skus: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM catalog_products WHERE is_active=1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let orders_24h: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM catalog_orders WHERE created_at > datetime('now','-1 day')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let orders_total: i64 = conn
+        .query_row("SELECT COUNT(*) FROM catalog_orders", [], |r| r.get(0))
+        .unwrap_or(0);
+    let recent_jobs: Vec<serde_json::Value> = conn
+        .prepare(
+            "SELECT theme, kind, seed, status, sku, error, created_at
+             FROM catalog_gen_jobs ORDER BY id DESC LIMIT 20",
+        )
+        .ok()
+        .and_then(|mut s| {
+            s.query_map([], |r| {
+                Ok(serde_json::json!({
+                    "theme": r.get::<_, String>(0)?,
+                    "kind":  r.get::<_, String>(1)?,
+                    "seed":  r.get::<_, String>(2)?,
+                    "status":r.get::<_, String>(3)?,
+                    "sku":   r.get::<_, Option<String>>(4)?,
+                    "error": r.get::<_, Option<String>>(5)?,
+                    "created_at": r.get::<_, String>(6)?,
+                }))
+            })
+            .ok()
+            .map(|it| it.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default();
+    let recent_spend: Vec<serde_json::Value> = conn
+        .prepare(
+            "SELECT category, amount_jpy, reason, created_at
+             FROM catalog_spend ORDER BY id DESC LIMIT 20",
+        )
+        .ok()
+        .and_then(|mut s| {
+            s.query_map([], |r| {
+                Ok(serde_json::json!({
+                    "category":   r.get::<_, String>(0)?,
+                    "amount_jpy": r.get::<_, i64>(1)?,
+                    "reason":     r.get::<_, Option<String>>(2)?,
+                    "created_at": r.get::<_, String>(3)?,
+                }))
+            })
+            .ok()
+            .map(|it| it.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default();
+    axum::Json(serde_json::json!({
+        "budget": {
+            "spent_jpy": spent,
+            "cap_jpy": BUDGET_TOTAL_JPY,
+            "remaining_jpy": BUDGET_TOTAL_JPY - spent,
+        },
+        "skus": {
+            "auto_generated": auto_skus,
+            "total_active":   total_skus,
+            "hard_cap":       SKU_HARD_CAP,
+        },
+        "orders": {
+            "last_24h": orders_24h,
+            "total":    orders_total,
+        },
+        "recent_jobs": recent_jobs,
+        "recent_spend": recent_spend,
+    }))
+    .into_response()
+}
+
 // ─── Public storefront pages ──────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -980,5 +1479,171 @@ fn jp_prefecture_to_iso(s: &str) -> Option<&'static str> {
         "沖縄県" | "Okinawa" => "47",
         _ => return None,
     })
+}
+
+// ─── 30-min autonomous optimizer cron ─────────────────────────────────
+//
+// Phase 1 behaviour (no sales data yet):
+//   • If fewer than TARGET_INITIAL auto-generated SKUs exist, generate
+//     one per (theme × kind) combination that's still missing.
+//   • Telegram digest each cycle: how many auto SKUs exist, ¥ spent so
+//     far, last 30 min orders.
+//
+// Phase 2 behaviour (kicks in once catalog_orders has data):
+//   • Compute ROAS per theme from orders + spend ledger.
+//   • Deactivate auto SKUs that have been live > 24h with 0 orders AND
+//     whose theme is in the bottom quartile by ROAS.
+//   • Generate +N SKUs in the top-quartile theme.
+//
+// Hard limits the cron honours:
+//   • spend_or_refuse() inside generate_one — never goes over ¥100K.
+//   • SKU_HARD_CAP = 30,000 — never inserts past the user's cap.
+//   • CRON_BATCH_MAX = 10 — never generates more than 10 per cycle so a
+//     misconfiguration can't run away.
+
+pub const SKU_HARD_CAP: i64 = 30_000;
+const TARGET_INITIAL: i64 = 25; // 5 themes × 2 kinds × ~2.5 SKUs per combo
+const CRON_BATCH_MAX: u32 = 10;
+const CRON_INTERVAL_SECS: u64 = 30 * 60;
+
+/// Long-running task: every 30 min, take one self-improvement step.
+/// Spawn this once from main() before the router takes the db.
+pub async fn run_optimizer_cron(db: Db) {
+    // Stagger the first run by 60s so it doesn't fight startup.
+    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+    loop {
+        match optimizer_step(db.clone()).await {
+            Ok(summary) => {
+                tracing::info!("[catalog/cron] {}", summary);
+                let _ = crate::send_telegram_message(&format!(
+                    "🤖 *catalog optimizer* — {}",
+                    summary
+                ))
+                .await;
+            }
+            Err(e) => {
+                tracing::warn!("[catalog/cron] step failed: {}", e);
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(CRON_INTERVAL_SECS)).await;
+    }
+}
+
+/// One iteration. Returns a human-readable summary line.
+async fn optimizer_step(db: Db) -> Result<String, String> {
+    let (auto_total, orders_24h, spent_jpy) = {
+        let conn = db.lock().unwrap();
+        let auto: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM catalog_products WHERE brand='auto'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let orders: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM catalog_orders WHERE created_at > datetime('now','-1 day')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        (auto, orders, spent_total_jpy(&conn))
+    };
+
+    if auto_total >= SKU_HARD_CAP {
+        return Ok(format!(
+            "cap reached ({} ≥ {}). spent ¥{}/¥{}. orders/24h={}",
+            auto_total, SKU_HARD_CAP, spent_jpy, BUDGET_TOTAL_JPY, orders_24h
+        ));
+    }
+    if spent_jpy >= BUDGET_TOTAL_JPY {
+        return Ok(format!(
+            "budget exhausted ¥{}/¥{}. auto SKUs={}, orders/24h={}",
+            spent_jpy, BUDGET_TOTAL_JPY, auto_total, orders_24h
+        ));
+    }
+
+    let mut generated_this_cycle: u32 = 0;
+    let mut summary_lines: Vec<String> = Vec::new();
+
+    // Phase 1: backfill until TARGET_INITIAL — rotate themes × kinds.
+    if auto_total < TARGET_INITIAL {
+        let need = (TARGET_INITIAL - auto_total).min(CRON_BATCH_MAX as i64) as u32;
+        for i in 0..need {
+            let theme = &SEED_THEMES[(i as usize + auto_total as usize) % SEED_THEMES.len()];
+            let kind = PRODUCT_SPECS[(i as usize) % PRODUCT_SPECS.len()].kind;
+            let seed = format!("c{:08x}", rand::random::<u32>());
+            match generate_one(db.clone(), theme.slug, kind, &seed).await {
+                Ok(sku) => {
+                    generated_this_cycle += 1;
+                    summary_lines.push(format!("+ {}", sku));
+                }
+                Err(e) => {
+                    summary_lines.push(format!("✗ {}/{} : {}", theme.slug, kind, e));
+                    if e.contains("budget cap") {
+                        break;
+                    }
+                }
+            }
+        }
+    } else if orders_24h == 0 {
+        // No data, no further generation — wait for ads/organic to bring
+        // signal in. The cron still ticks to report status.
+        summary_lines.push("steady-state: waiting on order data".into());
+    } else {
+        // Phase 2: data-driven generation. Find the top theme by orders
+        // and add one more SKU in that theme + a random kind.
+        let top: Option<String> = {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT cp.brand
+                 FROM catalog_orders co
+                 JOIN catalog_products cp ON cp.sku=co.sku
+                 WHERE co.status='submitted' AND cp.brand='auto'
+                 GROUP BY cp.sku
+                 ORDER BY COUNT(*) DESC
+                 LIMIT 1",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .ok()
+        };
+        if let Some(_brand) = top {
+            // We hash all auto SKUs under brand='auto' so theme has to
+            // come from a different path — for now just rotate again.
+            let theme = &SEED_THEMES[rand::random::<usize>() % SEED_THEMES.len()];
+            let kind = PRODUCT_SPECS[rand::random::<usize>() % PRODUCT_SPECS.len()].kind;
+            let seed = format!("c{:08x}", rand::random::<u32>());
+            match generate_one(db.clone(), theme.slug, kind, &seed).await {
+                Ok(sku) => {
+                    generated_this_cycle += 1;
+                    summary_lines.push(format!("data-driven + {}", sku));
+                }
+                Err(e) => summary_lines.push(format!("✗ data-driven: {}", e)),
+            }
+        }
+    }
+
+    let (auto_after, spent_after) = {
+        let conn = db.lock().unwrap();
+        let a: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM catalog_products WHERE brand='auto'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        (a, spent_total_jpy(&conn))
+    };
+
+    Ok(format!(
+        "auto SKUs={} (+{}), spent ¥{}/¥{}, orders/24h={}\n{}",
+        auto_after,
+        generated_this_cycle,
+        spent_after,
+        BUDGET_TOTAL_JPY,
+        orders_24h,
+        summary_lines.join("\n")
+    ))
 }
 

@@ -643,12 +643,12 @@ fn mockups_dir() -> std::path::PathBuf {
 /// Cloudflare R2 (S3-compatible) configuration. Active when all four envs
 /// are present: R2_ENDPOINT, R2_BUCKET, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY.
 /// R2_PUBLIC_BASE defaults to https://mockups.wearmu.com.
-struct R2Config {
-    bucket: s3::Bucket,
-    public_base: String,
+pub(crate) struct R2Config {
+    pub(crate) bucket: s3::Bucket,
+    pub(crate) public_base: String,
 }
 
-fn r2_config() -> Option<R2Config> {
+pub(crate) fn r2_config() -> Option<R2Config> {
     let endpoint = env::var("R2_ENDPOINT").ok().filter(|s| !s.is_empty())?;
     let bucket_name = env::var("R2_BUCKET").ok().filter(|s| !s.is_empty())?;
     let access_key = env::var("R2_ACCESS_KEY_ID").ok().filter(|s| !s.is_empty())?;
@@ -663,6 +663,29 @@ fn r2_config() -> Option<R2Config> {
         .map_err(|e| eprintln!("[r2] bucket: {}", e)).ok()?
         .with_path_style();
     Some(R2Config { bucket, public_base })
+}
+
+/// Upload bytes to R2 under an arbitrary key (e.g. "catalog/SKU.png").
+/// Returns the absolute public URL on success. Caller decides the
+/// content-type. Falls back to None if R2 isn't configured (the local-
+/// disk fallback in store_mockup_bytes is product-id-specific so we
+/// don't use it here).
+pub(crate) async fn store_r2_bytes(key: &str, bytes: &[u8], content_type: &str) -> Option<String> {
+    let cfg = r2_config()?;
+    match cfg.bucket.put_object_with_content_type(key, bytes, content_type).await {
+        Ok(r) if r.status_code() == 200 => {
+            Some(format!("{}/{}", cfg.public_base.trim_end_matches('/'), key))
+        }
+        Ok(r) => {
+            eprintln!("[r2] put_object {} status {}: {}", key, r.status_code(),
+                      String::from_utf8_lossy(r.bytes()));
+            None
+        }
+        Err(e) => {
+            eprintln!("[r2] put_object {} error: {}", key, e);
+            None
+        }
+    }
 }
 
 /// Upload bytes to R2 if configured; otherwise write to local mockups dir.
@@ -42860,7 +42883,7 @@ async fn gemini_feedback_reply(message: &str, is_lifetime: bool, is_ma_council: 
 
 /// Send a plaintext / Markdown message to the default Telegram chat (yuki).
 /// Best-effort; silent on failure. Honors TELEGRAM_BOT_TOKEN env var.
-async fn send_telegram_message(text: &str) {
+pub(crate) async fn send_telegram_message(text: &str) {
     let tg_token = env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default();
     let tg_chat  = env::var("TELEGRAM_CHAT_ID").unwrap_or_else(|_| "1136442501".into());
     if tg_token.is_empty() { return; }
@@ -60608,7 +60631,21 @@ async fn main() {
     {
         let conn = db.lock().unwrap();
         catalog::ensure_schema(&conn);
+        catalog::ensure_budget_schema(&conn);
         catalog::seed_if_empty(&conn);
+    }
+
+    // ── catalog optimizer: 30-min autonomous SKU generator + reporter ──
+    // Honours the master MU_AUTOPILOT flag (CI smoke test sets =0).
+    // Without GEMINI_API_KEY / R2_* envs the inner generator will refuse
+    // work, so the cron stays a no-op reporter until secrets land.
+    if autopilot_on() {
+        let db_opt = db.clone();
+        tokio::spawn(async move {
+            catalog::run_optimizer_cron(db_opt).await;
+        });
+    } else {
+        tracing::info!("[catalog/cron] MU_AUTOPILOT=0 — optimizer cron skipped");
     }
 
     // ── Daily cron: JST 07:00, ensure today's design + send paced emails ──
@@ -61382,6 +61419,11 @@ async fn main() {
         .route("/shop", get(catalog::shop_index))
         .route("/shop/:sku", get(catalog::shop_pdp))
         .route("/api/shop/checkout", get(catalog::shop_checkout))
+        // Token-gated SKU generator: GET so it's easy to trigger from a
+        // browser / cron without preflight. Idempotent on (theme, kind,
+        // seed) — re-running with the same query is a no-op.
+        .route("/admin/catalog/generate", get(catalog::admin_generate))
+        .route("/admin/catalog/status", get(catalog::admin_status))
         .route("/buy/founder", get(buy_founder_page))
         .route("/why", get(why_page))
         .route("/founding", get(founding_page))

@@ -46,7 +46,7 @@ pub async fn generate_print_file(p: &TeeDesign<'_>) -> Result<GeneratedImage, St
     call_gemini(&build_print_file_prompt(p)).await
 }
 
-async fn call_gemini(prompt: &str) -> Result<GeneratedImage, String> {
+pub async fn call_gemini(prompt: &str) -> Result<GeneratedImage, String> {
     let key = std::env::var("GEMINI_API_KEY")
         .or_else(|_| std::env::var("GOOGLE_API_KEY"))
         .map_err(|_| "GEMINI_API_KEY not set".to_string())?;
