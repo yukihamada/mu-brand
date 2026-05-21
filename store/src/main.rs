@@ -60670,6 +60670,7 @@ async fn main() {
         catalog::ensure_schema(&conn);
         catalog::ensure_budget_schema(&conn);
         catalog::seed_if_empty(&conn);
+        catalog::migrate_auto_labels(&conn);
     }
 
     // ── catalog optimizer: 30-min autonomous SKU generator + reporter ──

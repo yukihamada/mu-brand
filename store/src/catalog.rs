@@ -104,6 +104,24 @@ pub fn ensure_schema(conn: &rusqlite::Connection) {
     );
 }
 
+/// One-shot migration: rewrite the mechanical "BJJ 黒帯 · T シャツ"
+/// descriptions on existing AUTO SKUs to use the theme hook copy
+/// ("BJJ 黒帯 — 黒帯への 10 年を …"). Safe to re-run; each row matches
+/// at most one theme.
+pub fn migrate_auto_labels(conn: &rusqlite::Connection) {
+    for t in SEED_THEMES {
+        let prefix = format!("AUTO-{}-", t.slug.to_uppercase().replace('_', "-"));
+        let new_desc = format!("{} — {}", t.display, t.hook);
+        let _ = conn.execute(
+            "UPDATE catalog_products
+             SET label=?, description_ja=?
+             WHERE brand='auto' AND sku LIKE ?
+               AND description_ja LIKE '% · %'",
+            rusqlite::params![&new_desc, &new_desc, format!("{}%", prefix)],
+        );
+    }
+}
+
 /// Seed the catalog from the bundled SQL dump. Runs once if the catalog
 /// is empty (and on every boot — the INSERT OR IGNORE makes it cheap to
 /// re-run; we still gate on row count to avoid the file parse cost).
