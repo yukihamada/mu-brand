@@ -30593,51 +30593,87 @@ Rules:
     Json(serde_json::json!({"ok": true, "brand": brand, "cost_pt": cost})).into_response()
 }
 
-async fn success_page() -> Html<&'static str> {
-    Html(r#"<!DOCTYPE html><html><head><meta charset=UTF-8><meta name="viewport" content="width=device-width,initial-scale=1"><style>
-    body{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue','Hiragino Sans',sans-serif;
-    display:flex;align-items:center;justify-content:center;min-height:100vh;flex-direction:column;gap:20px;padding:40px 20px;line-height:1.7}
-    h1{font-size:14px;letter-spacing:0.4em;text-transform:uppercase;font-weight:300;opacity:0.6;margin:0}
-    p{font-size:12px;opacity:0.7;letter-spacing:0.05em;margin:0;text-align:center;max-width:480px}
-    .dao-cta{background:#141414;border:1px solid #222;border-radius:6px;padding:24px;margin-top:32px;max-width:480px;width:100%}
-    .dao-cta h2{font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#A67843;margin:0 0 12px;font-weight:500}
-    .dao-cta p{font-size:12.5px;opacity:0.75;margin:0 0 14px;text-align:left;line-height:1.85}
-    .dao-cta .nums{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#888;margin:8px 0 14px}
-    .dao-cta a.btn{display:inline-block;background:#A67843;color:#fff;text-decoration:none;padding:10px 22px;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;border-radius:2px}
-    a.back{color:inherit;font-size:9px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.55;margin-top:24px;text-decoration:none}
-    a.back:hover{opacity:1}
+async fn success_page(
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Html<String> {
+    // Founder Edition (¥48k preorder) deserves a distinct acknowledgement —
+    // generic "Order Confirmed" leaves a high-tier buyer wondering whether
+    // they actually committed (since it's authorize-only, not captured yet).
+    let edition = q.get("edition").map(|s| s.to_lowercase()).unwrap_or_default();
+    let is_founder = edition == "founder";
+
+    let header_html = if is_founder {
+        r#"<h1 style="color:#e6c449">Founder Edition · 予約 確認</h1>
+        <p style="color:#fff;font-size:14px;font-weight:500">MUGEN #∞ Founder Edition の <b>先行予約</b> を 受け取りました。</p>
+        <p style="margin-top:8px">課金 確定 は <b>製造 完了 時 (= 2026-06-21 夏至 出荷予定)</b>。 現在 は Stripe 上 で オーソリ のみ、 まだ ¥48,000 は 引かれて いません。<br>万一 遅延・中止 の 際 は <b>全額 即時 返金</b>。</p>
+        <p style="margin-top:12px;font-size:12px;opacity:0.75">次 の メール で 受付 番号 + 24 時間 以内 の Yuki 自身 から の 確認 連絡 が 届きます。</p>"#
+    } else {
+        r#"<h1>Order Confirmed</h1>
+        <p>確認メールをお送りしました。Printful より発送します。</p>"#
+    };
+
+    let next_block = if is_founder {
+        r#"<div class="dao-cta" style="border-color:rgba(230,196,73,0.4)">
+          <h2 style="color:#e6c449">Founder Edition の 次 の 一歩</h2>
+          <p>これ で 制作 待機 列 に 入りました。 6/21 まで に:</p>
+          <p style="font-size:12px">・Yuki から 24h 以内 に メール 1通 (受付 番号 + 製造 進捗 schedule)<br>
+             ・5/末: Loopwheel 工房 試作 報告<br>
+             ・6/15: 鉱物染料 配合 + ph 試験 報告<br>
+             ・6/21 21:00 JST: 制作 開始 (= 課金 確定 タイミング)</p>
+          <a class="btn" href="/buy/founder" style="background:#e6c449;color:#0A0A0A">/buy/founder に 戻る →</a>
+          <a class="btn" href="/why" style="background:transparent;border:1px solid rgba(255,255,255,0.18);color:#F5F5F0;margin-left:6px">MU thesis を 読む</a>
+        </div>"#
+    } else {
+        r#"<div class="dao-cta">
+          <h2>DAO §23 — 1 weight 自動付与</h2>
+          <p>このシャツ購入で <b>Chronicle slot 1 個 = weight +1</b> が発生しています。<br>email と wallet を bind すれば、あなたの保有 weight が DAO で投票権になります。</p>
+          <div class="nums">slot ×1 = weight +1.0 · MA piece ×1 = +100 · Constitution 1 行 = +0.5〜+8 (年齢で増加)</div>
+          <a class="btn" href="/dao/bind">/dao/bind に進む →</a>
+        </div>"#
+    };
+
+    // default purchase value: founder=¥48,000, otherwise ¥6,800
+    let default_value = if is_founder { 48_000 } else { 6_800 };
+
+    Html(format!(r#"<!DOCTYPE html><html><head><meta charset=UTF-8><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title><meta name="robots" content="noindex,nofollow"><style>
+    body{{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue','Hiragino Sans',sans-serif;
+    display:flex;align-items:center;justify-content:center;min-height:100vh;flex-direction:column;gap:20px;padding:40px 20px;line-height:1.7}}
+    h1{{font-size:14px;letter-spacing:0.4em;text-transform:uppercase;font-weight:300;opacity:0.6;margin:0}}
+    p{{font-size:12px;opacity:0.7;letter-spacing:0.05em;margin:0;text-align:center;max-width:520px}}
+    .dao-cta{{background:#141414;border:1px solid #222;border-radius:6px;padding:24px;margin-top:32px;max-width:520px;width:100%}}
+    .dao-cta h2{{font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#A67843;margin:0 0 12px;font-weight:500}}
+    .dao-cta p{{font-size:12.5px;opacity:0.85;margin:0 0 14px;text-align:left;line-height:1.85}}
+    .dao-cta .nums{{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#888;margin:8px 0 14px}}
+    .dao-cta a.btn{{display:inline-block;background:#A67843;color:#fff;text-decoration:none;padding:10px 22px;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;border-radius:2px}}
+    a.back{{color:inherit;font-size:9px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.55;margin-top:24px;text-decoration:none}}
+    a.back:hover{{opacity:1}}
     </style>
     <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
     <script src="/tracking.js" defer></script>
     </head><body>
-    <h1>Order Confirmed</h1>
-    <p>確認メールをお送りしました。Printful より発送します。</p>
-    <div class="dao-cta">
-      <h2>DAO §23 — 1 weight 自動付与</h2>
-      <p>このシャツ購入で <b>Chronicle slot 1 個 = weight +1</b> が発生しています。<br>email と wallet を bind すれば、あなたの保有 weight が DAO で投票権になります。</p>
-      <div class="nums">slot ×1 = weight +1.0 · MA piece ×1 = +100 · Constitution 1 行 = +0.5〜+8 (年齢で増加)</div>
-      <a class="btn" href="/dao/bind">/dao/bind に進む →</a>
-    </div>
+    {header_html}
+    {next_block}
     <a class="back" href="/">← Back to MU</a>
     <script>
-    // Fire purchase conversion on the success page. Value defaults to the
-    // sticker price when not in URL (most Stripe success_url variants don't
-    // pass amount, so we fall back to the MUGEN/MA average; better to send
-    // an under-stated value than to skip the event entirely).
-    (function () {
+    (function () {{
       var p = new URLSearchParams(location.search);
       var sid = p.get('sid') || p.get('session_id') || p.get('cs') || '';
-      var value = Number(p.get('value') || p.get('amount') || 6800);
+      var value = Number(p.get('value') || p.get('amount') || {default_value});
       var currency = (p.get('currency') || 'JPY').toUpperCase();
-      function send() {
-        if (window.MU_TRACK && window.MU_TRACK.purchase) {
-          window.MU_TRACK.purchase({ value: value, currency: currency, transaction_id: sid || ('mu_' + Date.now()) });
-        } else { setTimeout(send, 250); }
-      }
+      function send() {{
+        if (window.MU_TRACK && window.MU_TRACK.purchase) {{
+          window.MU_TRACK.purchase({{ value: value, currency: currency, transaction_id: sid || ('mu_' + Date.now()) }});
+        }} else {{ setTimeout(send, 250); }}
+      }}
       send();
-    })();
+    }})();
     </script>
-    </body></html>"#)
+    </body></html>"#,
+        title = if is_founder { "MUGEN #∞ Founder Edition — 予約 確認" } else { "Order Confirmed" },
+        header_html = header_html,
+        next_block = next_block,
+        default_value = default_value,
+    ))
 }
 
 /// GET /api/tracking/config — returns GA4 + Google Ads IDs read from env.
