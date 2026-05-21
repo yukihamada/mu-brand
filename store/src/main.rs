@@ -20355,6 +20355,56 @@ fn you_user_state_full(
     })
 }
 
+/// GET /api/you/featured_buy — latest active SKU surfaced as the /you hero
+/// Buy CTA. /you receives ~70% of pageviews but historically had no direct
+/// Buy action, contributing to the pageview→cta_click -91.8% drop in the
+/// admin funnel. Returns a single SKU the hero links to as
+/// `/p/<serial_code>?buy=1&utm_source=you_hero`. Cached 60 s.
+async fn you_featured_buy(State(db): State<Db>) -> impl IntoResponse {
+    let row: Option<(i64, String, i64, String, String, i64, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        // Prefer products with non-zero sold (proven sellers); fall back to
+        // the latest active SKU. retired_at IS NULL excludes pulled drops.
+        conn.query_row(
+            "SELECT id, brand, drop_num, name, serial_code, price_jpy, mockup_url
+             FROM products
+             WHERE active=1
+               AND serial_code IS NOT NULL AND serial_code <> ''
+               AND mockup_url IS NOT NULL AND mockup_url <> ''
+               AND retired_at IS NULL
+             ORDER BY (sold > 0) DESC, sold DESC, id DESC
+             LIMIT 1",
+            [], |r| Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, i64>(5)?,
+                r.get::<_, Option<String>>(6).ok().flatten(),
+            )),
+        ).ok()
+    };
+    let mut headers = HeaderMap::new();
+    headers.insert("Cache-Control", HeaderValue::from_static("public, max-age=60"));
+    let body = match row {
+        Some((id, brand, drop_num, name, serial_code, price_jpy, mockup_url)) => {
+            serde_json::json!({
+                "id": id,
+                "brand": brand,
+                "drop_num": drop_num,
+                "name": name,
+                "serial_code": serial_code,
+                "price_jpy": price_jpy,
+                "mockup_url": mockup_url,
+                "buy_href": format!("/p/{}?buy=1&utm_source=you_hero", serial_code),
+            })
+        }
+        None => serde_json::json!({ "id": null }),
+    };
+    (headers, Json(body)).into_response()
+}
+
 /// Total active /you subscribers — used for social-proof badge on the LP.
 /// Cached for 60 seconds to avoid hammering the DB on every page load.
 async fn you_active_count(State(db): State<Db>) -> impl IntoResponse {
@@ -58339,6 +58389,7 @@ async fn main() {
         .route("/api/you/admin/list", get(you_admin_list))
         .route("/api/you/style", post(you_style_set))
         .route("/api/you/stats", get(you_active_count))
+        .route("/api/you/featured_buy", get(you_featured_buy))
         .route("/api/you/buy/:design_id", post(you_public_buy))
         // Exit-intent funnel
         .route("/api/exit/survey", post(exit_survey))
