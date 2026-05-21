@@ -910,6 +910,32 @@ pub async fn shop_pdp(
 <meta name="description" content="{desc}">
 <meta property="og:image" content="{og}">
 <meta property="og:title" content="{title}">
+<meta property="og:type" content="product">
+<meta property="og:url" content="https://wearmu.com/shop/{sku_url}">
+<meta property="og:site_name" content="wearmu.com">
+<meta property="product:price:amount" content="{price_raw}">
+<meta property="product:price:currency" content="JPY">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{title}">
+<meta name="twitter:image" content="{og}">
+<link rel="canonical" href="https://wearmu.com/shop/{sku_url}">
+<script type="application/ld+json">{{
+  "@context": "https://schema.org/",
+  "@type": "Product",
+  "name": "{ld_title}",
+  "image": ["{ld_img}"],
+  "description": "{ld_desc}",
+  "sku": "{ld_sku}",
+  "brand": {{"@type": "Brand", "name": "{ld_brand}"}},
+  "offers": {{
+    "@type": "Offer",
+    "url": "https://wearmu.com/shop/{sku_url}",
+    "priceCurrency": "JPY",
+    "price": "{price_raw}",
+    "availability": "https://schema.org/InStock",
+    "itemCondition": "https://schema.org/NewCondition"
+  }}
+}}</script>
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
 body{{background:#0a0a0a;color:#f5f5f0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.6;font-size:14px}}
@@ -967,6 +993,13 @@ nav .brand{{font-weight:900;letter-spacing:0.4em}}
         buy = buy_button,
         suzuri = suzuri_link,
         extras = extras_html,
+        sku_url   = urlencoding::encode(&sku),
+        price_raw = price_jpy,
+        ld_title  = html_attr(&desc),
+        ld_img    = html_attr(&img),
+        ld_desc   = html_attr(&desc),
+        ld_sku    = html_attr(&sku),
+        ld_brand  = html_attr(&brand),
     );
     Html(body).into_response()
 }
