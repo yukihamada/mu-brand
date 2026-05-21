@@ -877,14 +877,21 @@ pub async fn shop_pdp(
         })
         .unwrap_or_default();
 
-    let buy_button = if price_id.as_deref().unwrap_or("").starts_with("price_") {
+    // Show the buy button whenever shop_checkout can build a Stripe
+    // Session — that's either a pre-created stripe_price_id OR a positive
+    // retail_price_jpy (price_data inline). Without this, auto-generated
+    // SKUs (which deliberately skip price-id pre-mint) render as
+    // "準備中" and customers never click — a critical conversion gap.
+    let buy_button = if price_id.as_deref().unwrap_or("").starts_with("price_")
+        || price_jpy > 0
+    {
         format!(
             r#"<a class="buy" href="/api/shop/checkout?sku={}">買う ¥{} · 即購入 (Stripe + Printful 7-14 日 国際発送)</a>"#,
             urlencoding::encode(&sku),
             format_jpy(price_jpy),
         )
     } else {
-        r#"<div class="buy disabled">準備中 — Stripe price が未登録です</div>"#.to_string()
+        r#"<div class="buy disabled">準備中</div>"#.to_string()
     };
 
     let body = format!(
