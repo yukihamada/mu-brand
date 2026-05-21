@@ -346,7 +346,7 @@ def mp_change(user_id: int, delta: int, reason: str, *,
 
 
 # ───────────────────────────────────────────────────────────── Gemini brief
-GEMINI_MODEL = "gemini-3-pro-preview"
+GEMINI_MODEL = "gemini-2.5-flash"  # Flash + thinkingBudget=0 → ~1s vs 30s for Pro.
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
 BRIEF_PROMPT = """You are designing a MU-brand T-shirt for the given topic.
@@ -374,8 +374,10 @@ def gemini_brief(topic: str) -> dict:
         "contents": [{"parts": [{"text": BRIEF_PROMPT.format(topic=topic[:300])}]}],
         "generationConfig": {
             "temperature": 0.7,
-            # Gemini 3 Pro spends ~200 tokens on internal thinking; budget room.
-            "maxOutputTokens": 2000,
+            "maxOutputTokens": 500,
+            # thinkingBudget=0 disables internal CoT → 1s instead of 30s. Quality
+            # for this 4-field JSON task is unaffected.
+            "thinkingConfig": {"thinkingBudget": 0},
         },
     }
     try:
@@ -719,6 +721,40 @@ app.mount("/_static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 @app.get("/healthz")
 def healthz():
     return {"ok": True, "storage": STORAGE, "public_base": PUBLIC_BASE}
+
+
+@app.get("/robots.txt", response_class=HTMLResponse)
+def robots_txt():
+    return HTMLResponse(content=(
+        f"User-agent: *\n"
+        f"Allow: /\n"
+        f"Disallow: /api/\n"
+        f"Sitemap: {PUBLIC_BASE}/sitemap.xml\n"
+    ), media_type="text/plain")
+
+
+@app.get("/sitemap.xml", response_class=HTMLResponse)
+def sitemap_xml():
+    rows = db().execute(
+        "SELECT slug, COALESCE(published_at, created_at) AS lastmod "
+        "FROM skus ORDER BY id DESC LIMIT 500"
+    ).fetchall()
+    static = ["/", "/gallery"]
+    urls = []
+    for u in static:
+        urls.append(f"<url><loc>{PUBLIC_BASE}{u}</loc><changefreq>hourly</changefreq><priority>1.0</priority></url>")
+    for r in rows:
+        urls.append(
+            f"<url><loc>{PUBLIC_BASE}/c/{r['slug']}</loc>"
+            f"<lastmod>{r['lastmod']}</lastmod><priority>0.6</priority></url>"
+        )
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        + "\n".join(urls)
+        + "\n</urlset>\n"
+    )
+    return HTMLResponse(content=xml, media_type="application/xml")
 
 
 @app.get("/", response_class=HTMLResponse)
