@@ -5987,6 +5987,7 @@ fn vault_header_html(current: &str, masked_email: Option<&str>) -> String {
       <a class="logo" href="/"><span class="ring">━◯━</span>MU</a>
       <nav>
         <a href="/" class="{home}">HOME</a>
+        <a href="/shop" class="{shop}">SHOP</a>
         <a href="/buy" class="{buy}">BUY</a>
         <a href="/vault" class="{vault}">VAULT</a>
         <a href="/api-keys" class="{api}">API</a>
@@ -5996,6 +5997,7 @@ fn vault_header_html(current: &str, masked_email: Option<&str>) -> String {
       {right}
     </div></header>"#,
         home  = cls("home"),
+        shop  = cls("shop"),
         buy   = cls("buy"),
         vault = cls("vault"),
         api   = cls("api"),
