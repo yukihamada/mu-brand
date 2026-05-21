@@ -1,0 +1,39 @@
+# Rust build artifacts (4.8GB cache)
+target/
+**/target/
+
+# Local databases / data dirs (don't ship to prod)
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Git + CI
+.git/
+.github/
+
+# Logs / temp
+*.log
+tmp/
+.tmp/
+
+# Already-built / generated assets that the Docker build re-creates
+recipe.json
+
+# Python venvs / scripts artifacts (we use scripts/ but they shouldn't enter the image)
+__pycache__/
+**/__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Test outputs
+coverage/
+.pytest_cache/
