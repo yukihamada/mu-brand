@@ -52,3 +52,10 @@ node_modules
 store/static/jiufight/print/orderA_*.zip
 store/static/jiufight/print/orderB_*.zip
 store/static/jiufight/print/jiufight_print_package_*.zip
+
+# MU CRAFT generated/runtime
+designs/craft/
+static_craft/
+data/mu_craft.db
+data/mu_craft.db-shm
+data/mu_craft.db-wal

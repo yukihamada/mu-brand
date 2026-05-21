@@ -1,0 +1,43 @@
+# Fly.io configuration for MU CRAFT
+# Deploy:  git push → .github/workflows/deploy-mu-craft.yml runs `flyctl deploy`
+# Direct `fly deploy` is forbidden per CLAUDE.md.
+app = "mu-craft"
+primary_region = "nrt"
+
+[build]
+  dockerfile = "Dockerfile.mu-craft"
+
+[env]
+  PORT = "8080"
+  MU_CRAFT_DATA_DIR = "/data"
+  MU_CRAFT_STATIC_DIR = "/static"
+  MU_CRAFT_STORAGE = "local"
+  MU_CRAFT_PUBLIC_BASE = "https://craft.wearmu.com"
+
+[[mounts]]
+  source = "mu_craft_data"
+  destination = "/data"
+
+[[mounts]]
+  source = "mu_craft_static"
+  destination = "/static"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+[[http_service.checks]]
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "10s"
+  method = "GET"
+  path = "/healthz"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512

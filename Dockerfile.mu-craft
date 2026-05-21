@@ -1,0 +1,27 @@
+FROM python:3.11-slim
+
+# librsvg2-bin for SVG → PNG, ca-certificates for HTTPS (Printful/Gemini)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      librsvg2-bin \
+      ca-certificates \
+      fonts-noto-cjk \
+      fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir \
+      "fastapi==0.135.1" \
+      "uvicorn[standard]==0.41.0"
+
+WORKDIR /app
+COPY mu_craft.py /app/mu_craft.py
+
+# /data and /static are mounted as Fly volumes in production
+RUN mkdir -p /data /static && chown -R 1000:1000 /data /static
+
+ENV MU_CRAFT_DATA_DIR=/data \
+    MU_CRAFT_STATIC_DIR=/static \
+    MU_CRAFT_STORAGE=local \
+    PORT=8080
+
+EXPOSE 8080
+CMD ["python3", "mu_craft.py", "--host", "0.0.0.0", "--port", "8080"]

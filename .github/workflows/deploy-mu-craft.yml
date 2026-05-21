@@ -1,0 +1,45 @@
+name: deploy-mu-craft
+
+on:
+  push:
+    branches: [main, "feat/**"]
+    paths:
+      - "mu_craft.py"
+      - "Dockerfile.mu-craft"
+      - "fly.mu-craft.toml"
+      - ".dockerignore"
+      - ".github/workflows/deploy-mu-craft.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-mu-craft
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: fly deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy
+        run: flyctl deploy --remote-only --config fly.mu-craft.toml --app mu-craft
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Smoke test
+        run: |
+          for i in 1 2 3 4 5; do
+            sleep 10
+            if curl -fsS https://mu-craft.fly.dev/healthz; then
+              echo
+              echo "✓ healthz OK"
+              exit 0
+            fi
+            echo "attempt $i failed, retrying..."
+          done
+          echo "✗ healthz never came up"
+          exit 1
