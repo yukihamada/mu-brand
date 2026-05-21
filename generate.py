@@ -1247,13 +1247,18 @@ def run(brand: str):
     })
     print(f"  nft: {nft_mint or 'pending (no HELIUS_API_KEY)'}")
 
+    # print_url = the high-resolution print-ready asset that ships to the
+    # printer. For Gemini-generated drops the design_url (transparent /
+    # white-bg PNG uploaded to R2) IS the print file, so we mirror it into
+    # print_url. ADMIN-ONLY column — never surfaced by public APIs.
+    print_url = file_url
     con.execute("""
         INSERT INTO products
-        (brand, drop_num, name, design_url, mockup_url, price_jpy, inventory,
+        (brand, drop_num, name, design_url, mockup_url, print_url, price_jpy, inventory,
          created_at, weather_data, prompt_text, prompt_hash, seed_data, auction_end, nft_mint,
          parent_design, color, size)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    """, (brand, drop_num, name, file_url, mockup_url, price,
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    """, (brand, drop_num, name, file_url, mockup_url, print_url, price,
           quantity, now_iso, json.dumps(weather), prompt, prompt_hash,
           seed_data, auction_end, nft_mint, parent_id, "BLK", "M"))
     con.commit()
