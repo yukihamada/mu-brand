@@ -105,8 +105,11 @@ TRADEMARK_HINTS = (
     # Public figure names that show up in user prompts
 )
 
-ANTHROPIC_MODEL = "claude-sonnet-4-6"  # claude-api skill recommendation
-ANTHROPIC_FALLBACK = "claude-haiku-4-5"
+# Instant-preview mode uses haiku-4-5 — small, fast (~1-2s), ~70% the
+# cost of sonnet. Prompt cache hits keep the cached system prompt cheap
+# even on repeated calls. Sonnet kept as a fallback for hard prompts.
+ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
+ANTHROPIC_FALLBACK = "claude-sonnet-4-6"
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -499,6 +502,207 @@ def insert_product(
 
 
 # ────────────────────────────────────────────────────────────────────────
+# Placeholder preview (instant — pillow silhouette so UI has something
+# to render the moment Claude returns, before Gemini even starts).
+# ────────────────────────────────────────────────────────────────────────
+
+# Color name → (background_rgb, ink_rgb). Background matches the chosen
+# garment so the silhouette already looks "wearable".
+_COLOR_RGB = {
+    "BLK": ((10, 10, 10),     (245, 245, 240)),
+    "WHT": ((245, 245, 240),  (10, 10, 10)),
+    "NVY": ((22, 30, 56),     (235, 230, 200)),
+    "HTR": ((130, 130, 130),  (245, 245, 240)),
+    "RED": ((150, 30, 30),    (245, 240, 220)),
+    "DHR": ((50, 50, 50),     (240, 240, 230)),
+    "BGE": ((230, 218, 190),  (40, 40, 40)),
+}
+
+
+def _kind_silhouette(draw, kind: str, cx: int, cy: int, w: int, h: int, ink):
+    """Draw a simple geometric silhouette per kind. No external assets."""
+    if kind in ("tee", "hoodie"):
+        # Box body + sleeves + collar
+        body_w, body_h = int(w * 0.46), int(h * 0.54)
+        x0 = cx - body_w // 2
+        y0 = cy - body_h // 2 + int(h * 0.04)
+        # Sleeves
+        sleeve_w = int(w * 0.13)
+        draw.polygon([
+            (x0, y0),
+            (x0 - sleeve_w, y0 + int(body_h * 0.08)),
+            (x0 - sleeve_w + int(sleeve_w * 0.6), y0 + int(body_h * 0.38)),
+            (x0, y0 + int(body_h * 0.22)),
+        ], fill=ink)
+        draw.polygon([
+            (x0 + body_w, y0),
+            (x0 + body_w + sleeve_w, y0 + int(body_h * 0.08)),
+            (x0 + body_w + sleeve_w - int(sleeve_w * 0.6), y0 + int(body_h * 0.38)),
+            (x0 + body_w, y0 + int(body_h * 0.22)),
+        ], fill=ink)
+        # Body
+        draw.rounded_rectangle([x0, y0, x0 + body_w, y0 + body_h],
+                               radius=int(body_h * 0.06), fill=ink)
+        # Collar notch
+        collar_w = int(body_w * 0.28)
+        draw.ellipse([
+            cx - collar_w // 2, y0 - int(body_h * 0.05),
+            cx + collar_w // 2, y0 + int(body_h * 0.06),
+        ], fill=(0, 0, 0, 0) if False else None, outline=None)
+        # Cut a collar bite out with the bg color is too complex — instead
+        # overlay a darker stripe along the neckline.
+        if kind == "hoodie":
+            # Hood arc above
+            draw.ellipse([
+                cx - int(body_w * 0.40), y0 - int(body_h * 0.32),
+                cx + int(body_w * 0.40), y0 + int(body_h * 0.12),
+            ], fill=ink)
+            # Pocket band
+            draw.rectangle([
+                cx - int(body_w * 0.32), y0 + int(body_h * 0.55),
+                cx + int(body_w * 0.32), y0 + int(body_h * 0.72),
+            ], outline=None, fill=None)
+    elif kind == "mug":
+        # Cylinder + handle
+        mw, mh = int(w * 0.36), int(h * 0.42)
+        x0 = cx - mw // 2
+        y0 = cy - mh // 2
+        draw.rounded_rectangle([x0, y0, x0 + mw, y0 + mh],
+                               radius=int(mw * 0.08), fill=ink)
+        # Handle (ellipse outline)
+        hw = int(mw * 0.55)
+        draw.ellipse([x0 + mw - int(hw * 0.25), y0 + int(mh * 0.18),
+                      x0 + mw + hw, y0 + int(mh * 0.72)],
+                     outline=ink, width=max(4, int(mw * 0.10)))
+    elif kind == "tote":
+        # Bag rectangle + two handles arcing above
+        bw, bh = int(w * 0.42), int(h * 0.46)
+        x0 = cx - bw // 2
+        y0 = cy - bh // 2 + int(h * 0.05)
+        draw.rounded_rectangle([x0, y0, x0 + bw, y0 + bh],
+                               radius=int(bw * 0.04), fill=ink)
+        hw = int(bw * 0.18)
+        for off in (int(bw * 0.18), int(bw * 0.62)):
+            draw.arc([x0 + off, y0 - hw, x0 + off + hw * 2, y0 + hw],
+                     start=200, end=340, fill=ink, width=max(3, int(bw * 0.04)))
+    else:  # sticker — concentric rounded square
+        sw = int(min(w, h) * 0.42)
+        x0, y0 = cx - sw // 2, cy - sw // 2
+        draw.rounded_rectangle([x0, y0, x0 + sw, y0 + sw],
+                               radius=int(sw * 0.14), fill=ink)
+
+
+def render_placeholder(spec: dict[str, Any], size: int = 800) -> bytes:
+    """800×800 PNG: silhouette + 'draft' + design_concept. ~10-30ms.
+
+    Pure-pillow, no external assets. Returns PNG bytes ready to R2-upload.
+    """
+    from PIL import Image, ImageDraw, ImageFont  # type: ignore
+
+    bg, ink = _COLOR_RGB.get(spec.get("color", "BLK"), _COLOR_RGB["BLK"])
+    img = Image.new("RGB", (size, size), bg)
+    draw = ImageDraw.Draw(img)
+
+    _kind_silhouette(draw, spec.get("product_kind", "tee"),
+                     size // 2, size // 2 - 30, size, size, ink)
+
+    # "DRAFT" stamp + concept line
+    try:
+        font_big = ImageFont.truetype(
+            "/System/Library/Fonts/Helvetica.ttc", size=int(size * 0.046))
+        font_small = ImageFont.truetype(
+            "/System/Library/Fonts/Helvetica.ttc", size=int(size * 0.024))
+    except (OSError, IOError):
+        font_big = ImageFont.load_default()
+        font_small = ImageFont.load_default()
+
+    draft_text = "DRAFT  ·  preview"
+    bbox = draw.textbbox((0, 0), draft_text, font=font_big)
+    tw = bbox[2] - bbox[0]
+    draw.text(((size - tw) // 2, int(size * 0.83)), draft_text,
+              fill=ink, font=font_big)
+
+    concept = (spec.get("design_concept") or "")[:80]
+    if concept:
+        bbox = draw.textbbox((0, 0), concept, font=font_small)
+        cw = bbox[2] - bbox[0]
+        draw.text(((size - cw) // 2, int(size * 0.89)), concept,
+                  fill=ink, font=font_small)
+
+    # Brand stamp (top-right)
+    brand = (spec.get("brand") or "mu").upper()
+    bbox = draw.textbbox((0, 0), brand, font=font_small)
+    bw = bbox[2] - bbox[0]
+    draw.text((size - bw - 24, 24), brand, fill=ink, font=font_small)
+
+    import io
+    out = io.BytesIO()
+    img.save(out, format="PNG", optimize=True)
+    return out.getvalue()
+
+
+def upload_placeholder(image_bytes: bytes, job_id: str) -> str | None:
+    """Upload placeholder PNG to R2 (reuses generate.py creds). None on failure."""
+    try:
+        import generate as gen
+        filename = f"nl_preview_{job_id}.png"
+        return gen.upload_design_anywhere(image_bytes, filename)
+    except Exception as e:
+        print(f"  placeholder upload failed ({e})", file=sys.stderr)
+        return None
+
+
+# ────────────────────────────────────────────────────────────────────────
+# nl_jobs DB helpers (read/write directly into products.db so the Rust
+# /api/admin/create/status endpoint can poll the same row).
+# ────────────────────────────────────────────────────────────────────────
+
+def _job_update(job_id: str, fields: dict[str, Any]) -> None:
+    """Update an nl_jobs row by id. Silently no-ops on DB error."""
+    if not job_id:
+        return
+    cols = []
+    vals = []
+    for k, v in fields.items():
+        cols.append(f"{k} = ?")
+        if isinstance(v, (dict, list)):
+            vals.append(json.dumps(v, ensure_ascii=False))
+        else:
+            vals.append(v)
+    cols.append("updated_at = ?")
+    vals.append(datetime.now().isoformat())
+    vals.append(job_id)
+    try:
+        con = sqlite3.connect(DB_PATH, timeout=10)
+        try:
+            con.execute(f"UPDATE nl_jobs SET {', '.join(cols)} WHERE id = ?", vals)
+            con.commit()
+        finally:
+            con.close()
+    except Exception as e:
+        print(f"  nl_jobs update failed ({e})", file=sys.stderr)
+
+
+def _job_ensure_table() -> None:
+    """Create nl_jobs if missing — defensive, normally main.rs already did."""
+    try:
+        con = sqlite3.connect(DB_PATH, timeout=10)
+        try:
+            con.execute(
+                "CREATE TABLE IF NOT EXISTS nl_jobs ("
+                "id TEXT PRIMARY KEY, status TEXT, text TEXT, "
+                "spec_json TEXT, preview_url TEXT, mockup_url TEXT, "
+                "design_url TEXT, product_id INTEGER, error TEXT, "
+                "created_at TEXT, updated_at TEXT)"
+            )
+            con.commit()
+        finally:
+            con.close()
+    except Exception:
+        pass
+
+
+# ────────────────────────────────────────────────────────────────────────
 # CLI
 # ────────────────────────────────────────────────────────────────────────
 
@@ -567,6 +771,129 @@ def run_once(text: str, *, dry_run: bool, brand_override: str | None) -> dict[st
     return out
 
 
+def run_stage_parse(text: str, job_id: str, brand_override: str | None) -> dict[str, Any]:
+    """Fast (~1-2s) stage: Claude haiku → spec → placeholder → R2.
+
+    Updates nl_jobs at every checkpoint so the Rust polling endpoint sees
+    progress incrementally. Returns the final dict written.
+    """
+    _job_ensure_table()
+    started = time.time()
+    _job_update(job_id, {"status": "parsing"})
+
+    try:
+        spec = parse_nl(text)
+    except Exception as e:
+        _job_update(job_id, {"status": "error",
+                             "error": f"parse: {type(e).__name__}: {e}"})
+        return {"ok": False, "stage": "parse", "error": str(e)}
+
+    if brand_override:
+        spec["brand"] = re.sub(r"[^a-z0-9_]+", "_",
+                               brand_override.lower().strip()).strip("_") or "mu"
+
+    spec_public = {k: v for k, v in spec.items() if k != "raw_text"}
+    _job_update(job_id, {"spec_json": spec_public})
+
+    # Placeholder render is best-effort. If pillow / generate.py fails, we
+    # still mark preview_ready with no preview_url and the UI will skip
+    # the silhouette but keep polling for the real mockup.
+    pre_t = time.time()
+    preview_url = None
+    try:
+        png = render_placeholder(spec)
+        preview_url = upload_placeholder(png, job_id)
+    except Exception as e:
+        print(f"  placeholder render failed ({e})", file=sys.stderr)
+    placeholder_ms = int((time.time() - pre_t) * 1000)
+
+    _job_update(job_id, {
+        "status": "preview_ready",
+        "preview_url": preview_url or "",
+    })
+    return {
+        "ok": True,
+        "stage": "parse",
+        "job_id": job_id,
+        "spec": spec_public,
+        "preview_url": preview_url,
+        "placeholder_ms": placeholder_ms,
+        "duration_s": round(time.time() - started, 2),
+    }
+
+
+def run_stage_generate(job_id: str) -> dict[str, Any]:
+    """Slow (~20-40s) stage: re-read nl_jobs spec → Gemini → Printful → DB."""
+    _job_ensure_table()
+    started = time.time()
+    try:
+        con = sqlite3.connect(DB_PATH, timeout=10)
+        row = con.execute(
+            "SELECT text, spec_json FROM nl_jobs WHERE id = ?",
+            (job_id,)).fetchone()
+        con.close()
+    except Exception as e:
+        return {"ok": False, "stage": "generate", "error": f"load: {e}"}
+    if not row:
+        return {"ok": False, "stage": "generate", "error": "job not found"}
+    text, spec_json = row
+    try:
+        spec_partial = json.loads(spec_json) if spec_json else {}
+    except Exception:
+        spec_partial = {}
+
+    # Rebuild raw_text by recombining; preserves the trademark_warn pass.
+    spec = {**spec_partial, "raw_text": text or spec_partial.get("design_concept", "")}
+    # Defaults defensively (in case parse stage was skipped)
+    spec.setdefault("product_kind", "tee")
+    spec.setdefault("color", "BLK")
+    spec.setdefault("brand", "mu")
+    spec.setdefault("size_default", SIZE_BY_KIND_DEFAULT.get(spec["product_kind"], "M"))
+    spec.setdefault("price_jpy", KIND_TABLE[spec["product_kind"]]["price"])
+    spec.setdefault("design_concept", text or "MU draft")
+    spec.setdefault("tags", [])
+    spec.setdefault("_parser", spec_partial.get("_parser", "unknown"))
+
+    _job_update(job_id, {"status": "generating"})
+
+    try:
+        design = generate_and_upload(spec)
+    except Exception as e:
+        _job_update(job_id, {"status": "error",
+                             "error": f"gemini: {type(e).__name__}: {e}"})
+        return {"ok": False, "stage": "gemini", "error": str(e)}
+
+    _job_update(job_id, {"design_url": design["design_url"]})
+
+    mockup_url = fetch_mockup(spec, design["design_url"])
+    if mockup_url:
+        _job_update(job_id, {"mockup_url": mockup_url})
+
+    try:
+        ins = insert_product(spec, design, mockup_url)
+    except Exception as e:
+        _job_update(job_id, {"status": "error",
+                             "error": f"db: {type(e).__name__}: {e}"})
+        return {"ok": False, "stage": "db", "error": str(e)}
+
+    _job_update(job_id, {
+        "status": "done",
+        "product_id": ins["id"],
+    })
+
+    return {
+        "ok": True,
+        "stage": "generate",
+        "job_id": job_id,
+        "id": ins["id"],
+        "serial_code": ins["serial_code"],
+        "design_url": design["design_url"],
+        "mockup_url": mockup_url,
+        "duplicate": ins["duplicate"],
+        "duration_s": round(time.time() - started, 1),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Natural-language → MU product (Phase 1).")
@@ -578,6 +905,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="Override the extracted brand (e.g. mu_dragon).")
     parser.add_argument("--json-input", action="store_true",
                         help="Treat stdin as a single JSON object: {\"text\": ...}.")
+    parser.add_argument("--stage", choices=("parse", "generate"), default=None,
+                        help="Two-stage instant-preview mode (used by /api/admin/create/start).")
+    parser.add_argument("--job-id", default=None,
+                        help="nl_jobs.id to update during --stage runs.")
     args = parser.parse_args(argv)
 
     if args.json_input:
@@ -593,11 +924,34 @@ def main(argv: list[str] | None = None) -> int:
     else:
         text = sys.stdin.read().strip()
 
+    # Two-stage instant-preview mode (called by Rust /api/admin/create/start).
+    # --stage generate doesn't need text — it pulls spec from nl_jobs.
+    if args.stage == "generate":
+        if not args.job_id:
+            print(json.dumps({"ok": False, "stage": "input",
+                              "error": "--job-id required for --stage generate"},
+                             ensure_ascii=False))
+            return 1
+        result = run_stage_generate(args.job_id)
+        print(json.dumps(result, ensure_ascii=False))
+        return 0 if result.get("ok") else 1
+
     if not text or len(text) < 3:
         print(json.dumps({"ok": False, "stage": "input",
                           "error": "empty text"}, ensure_ascii=False))
         return 1
 
+    if args.stage == "parse":
+        if not args.job_id:
+            print(json.dumps({"ok": False, "stage": "input",
+                              "error": "--job-id required for --stage parse"},
+                             ensure_ascii=False))
+            return 1
+        result = run_stage_parse(text, args.job_id, args.brand)
+        print(json.dumps(result, ensure_ascii=False))
+        return 0 if result.get("ok") else 1
+
+    # Legacy single-shot synchronous mode — preserved for CLI back-compat.
     result = run_once(text, dry_run=args.dry_run, brand_override=args.brand)
     print(json.dumps(result, ensure_ascii=False))
     return 0 if result.get("ok") else 1

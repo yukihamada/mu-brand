@@ -54,7 +54,7 @@ button.danger:hover{background:rgba(220,80,80,0.12)}
   <label>どんな 商品 を 作りますか? <span class="opt">自由 記述 · 日本語 / English</span></label>
   <textarea id="nl-text" placeholder="例: 黒 hoodie に 鯉が登る design / brand=mu_dragon / ¥7800
 
-Claude が 構造化 抽出 → Gemini が 画像 生成 → Printful mockup → DB insert。 完了 まで 60秒〜2分 ほど かかります。"></textarea>
+Claude haiku が 1-2秒 で spec 抽出 → 即 placeholder preview → 背景で Gemini + Printful (30秒〜)。 polling は 1秒 ごと。"></textarea>
   <p class="examples">
     <b>例 (クリックで 入力):</b><br>
     <code class="example">黒 tee に 麻の葉 pattern, minimal black on white</code><br>
@@ -84,8 +84,11 @@ Claude が 構造化 抽出 → Gemini が 画像 生成 → Printful mockup →
 
 <script>
 var ADMIN_TOKEN = __TOKEN_JS__;
-var POLL_INTERVAL_MS = 5000;
-var POLL_TIMEOUT_MS = 20 * 60 * 1000; // 20 min — generation can take 5-15 min
+// Instant-preview UX: poll every 1s so placeholder→mockup swap feels live.
+// 5min cap is far more than the 30-40s pipeline normally needs.
+var POLL_INTERVAL_MS = 1000;
+var POLL_TIMEOUT_MS = 5 * 60 * 1000;
+var PREVIEW_HINT_MS = 3000;  // > 3s with no preview → show "parsing 遅延" hint
 
 function tokenQuery() { return 'token=' + encodeURIComponent(ADMIN_TOKEN); }
 
@@ -128,7 +131,7 @@ function startJob(text) {
   btn.disabled = true;
   hidePreview();
 
-  fetch('/api/admin/create?' + tokenQuery(), {
+  fetch('/api/admin/create/start?' + tokenQuery(), {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({text: text})
@@ -149,39 +152,83 @@ function startJob(text) {
 }
 
 function pollJob(jobId, startedAt) {
-  setStatus('<span class="spinner"></span>生成 中… job=' + jobId +
-            ' · 経過 ' + Math.round((Date.now() - startedAt) / 1000) + 's', '');
+  var elapsedMs = Date.now() - startedAt;
+  var elapsed = Math.round(elapsedMs / 1000);
   fetch('/api/admin/create/status/' + encodeURIComponent(jobId) + '?' + tokenQuery())
     .then(function(r) { return r.json(); })
     .then(function(j) {
       var btn = document.getElementById('submit-btn');
       if (!j) { setStatus('status fetch 失敗', 'error'); btn.disabled = false; return; }
+      // Backend status values: parsing | preview_ready | generating | done | error
       if (j.status === 'done') {
         btn.disabled = false;
-        var output = j.output || {};
+        var output = {
+          ok: !j.error,
+          id: j.product_id,
+          spec: j.spec || {},
+          mockup_url: j.mockup_url || j.preview_url,
+          design_url: j.design_url,
+          duration_s: elapsed,
+          error: j.error,
+        };
         if (output.ok) {
-          setStatus('✓ 完了 · id=' + output.id + ' · ' + output.duration_s + 's', 'success');
+          setStatus('✓ 完了 · id=' + output.id + ' · ' + elapsed + 's', 'success');
           showPreview(output);
         } else {
-          setStatus('生成 失敗 (' + (output.stage || '?') + '): ' +
-                    (output.error || 'unknown'), 'error');
+          setStatus('生成 失敗: ' + (output.error || 'unknown'), 'error');
         }
         return;
       }
-      if (j.status === 'failed') {
+      if (j.status === 'error' || j.status === 'failed') {
         setStatus('Job 失敗: ' + (j.error || 'unknown'), 'error');
         btn.disabled = false;
+        // Still show whatever we have so the operator can debug.
+        if (j.preview_url || j.mockup_url || j.spec) {
+          showPreview({
+            ok: false, id: j.product_id || '(preview)', spec: j.spec || {},
+            mockup_url: j.mockup_url || j.preview_url, design_url: j.design_url,
+            duration_s: elapsed,
+          });
+        }
         return;
       }
-      if (Date.now() - startedAt > POLL_TIMEOUT_MS) {
-        setStatus('タイムアウト (20分)。 logs を 確認 してください。', 'error');
+      // generating: placeholder is already up, just update the status line.
+      if (j.status === 'generating') {
+        setStatus('<span class="spinner"></span>Gemini + Printful 生成 中… ' + elapsed + 's', '');
+        if (j.preview_url) {
+          showPreview({
+            ok: true, id: j.product_id || '(preview)', spec: j.spec || {},
+            mockup_url: j.preview_url, design_url: j.design_url, duration_s: elapsed,
+          });
+        }
+      }
+      // preview_ready: show the placeholder mockup while generation continues
+      else if (j.status === 'preview_ready' && j.preview_url) {
+        setStatus('<span class="spinner"></span>preview OK · Gemini 生成 中… ' + elapsed + 's', '');
+        showPreview({
+          ok: true,
+          id: j.product_id || '(preview)',
+          spec: j.spec || {},
+          mockup_url: j.preview_url,
+          design_url: j.design_url,
+          duration_s: elapsed,
+        });
+      }
+      // parsing: < 3s, show normal spinner; > 3s, show 遅延 hint.
+      else if (elapsedMs > PREVIEW_HINT_MS) {
+        setStatus('<span class="spinner"></span>parsing 遅延、 続行中… ' + elapsed + 's', '');
+      } else {
+        setStatus('<span class="spinner"></span>parsing… (Claude haiku) ' + elapsed + 's', '');
+      }
+      if (elapsedMs > POLL_TIMEOUT_MS) {
+        setStatus('タイムアウト (5分)。 logs を 確認 してください。', 'error');
         btn.disabled = false;
         return;
       }
       setTimeout(function() { pollJob(jobId, startedAt); }, POLL_INTERVAL_MS);
     })
-    .catch(function(e) {
-      // Transient — try again
+    .catch(function() {
+      // Transient — retry
       setTimeout(function() { pollJob(jobId, startedAt); }, POLL_INTERVAL_MS);
     });
 }
