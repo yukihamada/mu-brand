@@ -1,0 +1,107 @@
+{
+  "slug": "reversal",
+  "name": "Reversal × MU",
+  "ip_owner": "Reversal (rvddw)",
+  "design": {
+    "monogram": "RV",
+    "accent": "#d72631"
+  },
+  "meta": {
+    "partner_url": "reversal-online.com",
+    "display_name": "Reversal",
+    "tagline": "リング × 月 — 闘いの 1 着、 月相 で動く drop",
+    "h1": "Reversal × MU",
+    "subtitle": "Reversal × MU — fight apparel collab pitch",
+    "accent_hex": "#d72631",
+    "hero_image": "/static/reversal/hero.png",
+    "hero_caption": "Drop 01 — 満月 release, no restock.",
+    "lede": "リングは円、 月も円。 闘いの 1 着を月相で出す — Reversal の硬派と MU の静けさが交わる、 在庫ゼロの月次 drop。",
+    "hero_kv": [
+      ["寄付", "50%"],
+      ["初年度基本料", "¥0"],
+      ["Drop 01", "30 日"],
+      ["在庫", "ゼロ (POD)"]
+    ],
+    "why_md": "Reversal は格闘技の現場から立ち上がった日本のブランド。<br>MU は月相に同期して drop し、 利益の半分を寄付に回す静かなレーベル。<br>共通項は「<b>そぎ落とした 1 着</b>」 — 試合に着ていける、 道場に置いておける、 退役後も裏切らない強度。<br>このコラボは リング × 月、 硬派 × 静けさ、 そして「<b>速く、 ノイズなく</b>」 という MU の哲学を Reversal のリアルファイト DNA に重ねる試み。",
+    "use_cases": [
+      "Reversal 所属選手の試合入場・セコンド着用",
+      "道場 / ジム の uniform — 練習着 / rashguard / fight shorts",
+      "大会会場での limited drop (月相 と試合カードに連動)",
+      "リテール限定 SKU を Reversal 直営店 / SNS で先行販売",
+      "Reversal × MU 共同 capsule の海外展開 (Printful EU 経由)"
+    ],
+    "mu_intro": {
+      "core_truth": "MU は月相に同期する apparel レーベル。 在庫を持たず、 完売を完売のままにする。",
+      "philosophy": "速く、 ノイズなく。 月が満ちて欠けるように drop して retire する。",
+      "proof_points": [
+        "wearmu.com 100 枚チャレンジ (2026-05-18〜31): 14 日 で 100 枚 を 4 チャネル で sell-through",
+        "利益の 50% を寄付 (mu_profit_split_28): donation 50 / Yuki 10 / 株主 10 / MA 10 / Community 10 / Reserve 10",
+        "Printful POD 海外 + SUZURI 国内のデュアルチャネル (§24-v2): 国内 ¥4,900 / 海外 ¥7,800",
+        "既存 collab 9 件 稼働 (atsume / asoview / blank / ele / elsoul / jiufight / kichinan / nojimahal / ryozo)",
+        "MU Protocol v2 公開済 — 全産業対応のドロップ規格 (wearmu.com/protocol)"
+      ],
+      "operator": "株式会社イネブラ (Enabler Inc.) — 東京都千代田区九段南1-5-6 りそな九段ビル5F",
+      "founder": "濱田優貴 (代表取締役) — ex-Mercari CPO / NAH 共同創業 / 柔術 青帯"
+    },
+    "mechanism": [
+      { "no": 1, "title": "月相 drop", "body": "満月 / 新月 / 朔望 を起点に新作 1 SKU をリリース。 リリース日は事前公開、 完売したら restock せず retire。" },
+      { "no": 2, "title": "在庫ゼロ", "body": "Printful POD (海外) + SUZURI (国内) で受注生産。 Reversal 側の在庫リスク・倉庫負担ゼロ。" },
+      { "no": 3, "title": "売上分配", "body": "粗利の Reversal 30% · 寄付 50% · MU 20%。 月次レポートを Reversal 側に開示、 寄付先は Reversal 指名可。" },
+      { "no": 4, "title": "試合カード連動", "body": "Reversal 関係の大会日に limited drop。 試合の結果や対戦カードを design slug に焼き込む (例: bracket / kanji / podium)。" }
+    ],
+    "options": [
+      {
+        "letter": "A",
+        "title": "Test Drive",
+        "body": "1 design / 30 着相当 / Drop 01 のみ。 pilot 期間 30 日。 リスク最小で市場反応を見る。",
+        "image": "/static/reversal/option-a.png",
+        "drop_label": "Drop 01",
+        "price_label": "国内 ¥4,900 / 海外 ¥7,800"
+      },
+      {
+        "letter": "B",
+        "title": "Series",
+        "body": "6 design / 月 1 drop / 6 ヶ月 連続。 月相に同期して定期的に Reversal world view を展開。",
+        "image": "/static/reversal/option-b.png",
+        "drop_label": "Drop 01-06",
+        "price_label": "国内 ¥4,900–¥7,800 / 海外 ¥7,800–¥10,800"
+      },
+      {
+        "letter": "C",
+        "title": "Anchor Year",
+        "body": "12 design / 全月 drop / 完全レベニューシェア。 試合カード連動 + rashguard / fight shorts まで含めた full capsule。",
+        "image": "/static/reversal/option-c.png",
+        "drop_label": "Drop 01-12",
+        "price_label": "国内 ¥4,900–¥9,800 / 海外 ¥7,800–¥13,800"
+      }
+    ],
+    "terms": [
+      ["契約期間", "Drop 01 + 30 日 review、 継続はオプション選択制"],
+      ["最低発注ロット", "<b>無在庫</b> — Printful POD、 在庫リスクゼロ"],
+      ["売上分配", "Reversal 30% · 寄付 50% · MU 20%"],
+      ["IP", "デザイン IP は MU と Reversal の共同所有、 終了後は両者使用可"],
+      ["撤退条項", "30 日前通知でいつでも"],
+      ["独占性", "Drop 期間中 BJJ / MMA 系で他新規コラボは受付しない (既存 sweep / jiufight 除く)"]
+    ],
+    "timeline": [
+      ["Day 0", "本提案合意 + NDA 締結"],
+      ["Day 7", "Drop 01 デザイン finalize (Reversal 側 review)"],
+      ["Day 14", "Printful / SUZURI mockup 確定 + 写真撮影"],
+      ["Day 21", "プリオーダー開始 (wearmu.com + Reversal SNS)"],
+      ["Day 30", "Drop 01 ローンチ (満月起点)"],
+      ["Day 60", "売上 review、 オプション B / C 継続判断"]
+    ]
+  },
+  "skus": [
+    { "letter": "a", "drop_num": 1,  "price_jpy": 4900, "label": "Reversal × MU Tee · Black",          "kind": "tee",          "design_slug": "wordmark", "published": false },
+    { "letter": "b", "drop_num": 2,  "price_jpy": 4900, "label": "Reversal × MU Tee · White",          "kind": "tee",          "design_slug": "monogram", "published": false },
+    { "letter": "c", "drop_num": 3,  "price_jpy": 5400, "label": "Reversal × MU Long Sleeve · Black",  "kind": "longsleeve",   "design_slug": "stacked",  "published": false },
+    { "letter": "d", "drop_num": 4,  "price_jpy": 7800, "label": "Reversal × MU Rashguard SS",         "kind": "athletic_tee", "design_slug": "stripe",   "published": false },
+    { "letter": "e", "drop_num": 5,  "price_jpy": 8800, "label": "Reversal × MU Rashguard LS",         "kind": "rashguard_ls", "design_slug": "stripe",   "published": false },
+    { "letter": "f", "drop_num": 6,  "price_jpy": 7400, "label": "Reversal × MU Fight Shorts",         "kind": "fight_shorts", "design_slug": "stripe",   "published": false },
+    { "letter": "g", "drop_num": 7,  "price_jpy": 9800, "label": "Reversal × MU Hoodie · Heavy",       "kind": "hoodie",       "design_slug": "wordmark", "published": false },
+    { "letter": "h", "drop_num": 8,  "price_jpy": 3800, "label": "Reversal × MU Snapback Cap",         "kind": "cap",          "design_slug": "monogram", "published": false },
+    { "letter": "i", "drop_num": 9,  "price_jpy": 2900, "label": "Reversal × MU Canvas Tote",          "kind": "tote",         "design_slug": "wordmark", "published": false },
+    { "letter": "j", "drop_num": 10, "price_jpy": 980,  "label": "Reversal × MU Vinyl Sticker",        "kind": "sticker",      "design_slug": "monogram", "published": false }
+  ]
+}
