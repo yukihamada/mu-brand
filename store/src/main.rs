@@ -12191,6 +12191,27 @@ async fn challenge_100_page(State(db): State<Db>) -> Html<String> {
     };
     let mugen_total_display = if mugen_total > 0 { mugen_total.to_string() } else { "200+".into() };
 
+    // When sold=0 the bare "0 / 100" reads as a failure ("これ0は恥ずかしい").
+    // Lead with the supply side (designs generated so far) instead, and only
+    // switch to the demand counter once at least one shirt has actually moved.
+    let (headline_num, counter_caption) = if sold == 0 {
+        (
+            mugen_total_display.clone(),
+            format!(
+                "デザイン 生成 &nbsp;·&nbsp; あと <span id=\"days-left\">{}</span> 日 &nbsp;·&nbsp; 100 枚 が 目標",
+                days_left_ssr
+            ),
+        )
+    } else {
+        (
+            sold.to_string(),
+            format!(
+                "/ 100 &nbsp;·&nbsp; 残り <span id=\"remaining-counter\">{}</span> 枚 &nbsp;·&nbsp; あと <span id=\"days-left\">{}</span> 日",
+                remaining, days_left_ssr
+            ),
+        )
+    };
+
     let designs_grid = if latest_six.is_empty() {
         String::new()
     } else {
@@ -12258,9 +12279,9 @@ a:hover{{text-decoration:underline}}
     この 2 週間、 売れた 枚数 を 隠さない。 良くも 悪くも、 ここ で 見れる。
   </p>
 
-  <div class="counter">
-    <strong id="sold-counter">{sold}</strong>
-    <span>/ 100 &nbsp;·&nbsp; 残り <span id="remaining-counter">{remaining}</span> 枚 &nbsp;·&nbsp; あと <span id="days-left">{days_left_ssr}</span> 日</span>
+  <div class="counter" data-sold="{sold}">
+    <strong id="sold-counter">{headline_num}</strong>
+    <span>{counter_caption}</span>
   </div>
   <div class="bar"><i id="progress-bar"></i></div>
 
@@ -12333,10 +12354,12 @@ a:hover{{text-decoration:underline}}
     const r = await fetch('/api/100/progress', {{cache:'no-store'}});
     if (r.ok) {{
       const j = await r.json();
-      $sold.textContent = j.sold;
-      $remaining.textContent = j.remaining;
-      const pct = Math.min(100, (j.sold / j.target) * 100);
-      $bar.style.width = pct + '%';
+      if (j.sold && j.sold > 0) {{
+        $sold.textContent = j.sold;
+        if ($remaining) $remaining.textContent = j.remaining;
+        const pct = Math.min(100, (j.sold / j.target) * 100);
+        $bar.style.width = pct + '%';
+      }}
     }}
   }} catch(e) {{}}
 }})();
@@ -12344,8 +12367,8 @@ a:hover{{text-decoration:underline}}
 </body></html>"##,
         pct = pct,
         sold = sold,
-        remaining = remaining,
-        days_left_ssr = days_left_ssr,
+        headline_num = headline_num,
+        counter_caption = counter_caption,
         drop = drop_str,
         mugen_total_display = html_escape(&mugen_total_display),
         suzuri = html_escape(&suzuri_link),
