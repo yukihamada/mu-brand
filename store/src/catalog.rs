@@ -550,7 +550,132 @@ pub async fn generate_one(
         );
     }
     tracing::info!("[catalog/gen] OK sku={} theme={} kind={}", sku, theme.slug, kind);
+
+    // Fire-and-forget: ask Printful to render an on-body mockup of this
+    // design, swap mockup_url_external when ready. Cold-traffic CVR is
+    // dominated by "is there a person wearing it" — current PDPs show
+    // the print art on white which doesn't sell.
+    let db_mockup = db.clone();
+    let sku_mockup = sku.clone();
+    let spec_mockup = (spec.printful_product_id, spec.printful_variant_id, &url);
+    let printful_product = spec_mockup.0;
+    let printful_variant = spec_mockup.1;
+    let design_url = url.clone();
+    tokio::spawn(async move {
+        if let Err(e) = generate_onbody_mockup(
+            db_mockup, sku_mockup, printful_product, printful_variant, design_url
+        ).await {
+            tracing::warn!("[catalog/mockup] async failed: {}", e);
+        }
+    });
+
     Ok(sku)
+}
+
+/// Async background task: call Printful's mockup-generator with the
+/// design URL, poll until done (~30-60s), upload the resulting on-body
+/// mockup to R2, swap catalog_products.mockup_url_external. Printful's
+/// mockup-generator is free for the basic single-front variant we use,
+/// so no budget guard needed.
+pub async fn generate_onbody_mockup(
+    db: Db,
+    sku: String,
+    printful_product: i64,
+    printful_variant: i64,
+    design_url: String,
+) -> Result<(), String> {
+    let key = std::env::var("PRINTFUL_API_KEY").unwrap_or_default();
+    if key.is_empty() {
+        return Err("PRINTFUL_API_KEY not set".into());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| format!("client: {}", e))?;
+
+    // 1. Create task.
+    let create_body = serde_json::json!({
+        "variant_ids": [printful_variant],
+        "format": "png",
+        "files": [{
+            "placement": "front",
+            "image_url": design_url,
+        }],
+    });
+    let create_url = format!(
+        "https://api.printful.com/mockup-generator/create-task/{}",
+        printful_product
+    );
+    let resp = client
+        .post(&create_url)
+        .bearer_auth(&key)
+        .json(&create_body)
+        .send()
+        .await
+        .map_err(|e| format!("create-task send: {}", e))?;
+    if !resp.status().is_success() {
+        let s = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("create-task {}: {}", s, &body[..body.len().min(300)]));
+    }
+    let j: serde_json::Value = resp.json().await.map_err(|e| format!("create-task parse: {}", e))?;
+    let task_key = j["result"]["task_key"]
+        .as_str()
+        .ok_or_else(|| "no task_key".to_string())?
+        .to_string();
+
+    // 2. Poll up to 30 × 4s = 2 min.
+    let mut mockup_url: Option<String> = None;
+    for attempt in 0..30 {
+        tokio::time::sleep(std::time::Duration::from_secs(if attempt == 0 { 5 } else { 4 })).await;
+        let poll = format!("https://api.printful.com/mockup-generator/task?task_key={}", task_key);
+        let r = match client.get(&poll).bearer_auth(&key).send().await {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        if !r.status().is_success() {
+            continue;
+        }
+        let pj: serde_json::Value = match r.json().await {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        match pj["result"]["status"].as_str() {
+            Some("completed") => {
+                mockup_url = pj["result"]["mockups"][0]["mockup_url"].as_str().map(String::from);
+                break;
+            }
+            Some("failed") => {
+                return Err("printful task failed".into());
+            }
+            _ => continue,
+        }
+    }
+    let mockup_url = mockup_url.ok_or_else(|| "poll timeout (2min)".to_string())?;
+
+    // 3. Mirror to R2 so the URL survives Printful's ~24h presign and
+    //    becomes part of the catalog forever.
+    let mockup_bytes = client.get(&mockup_url).send().await
+        .map_err(|e| format!("download mockup: {}", e))?
+        .bytes().await
+        .map_err(|e| format!("read mockup bytes: {}", e))?
+        .to_vec();
+    let r2_key = format!("catalog/mockups/{}.png", sku);
+    let r2_url = crate::store_r2_bytes(&r2_key, &mockup_bytes, "image/png")
+        .await
+        .unwrap_or(mockup_url.clone());
+
+    // 4. Swap mockup_url_external. mockup_main_file (the design URL) stays
+    //    as the fallback for Printful fulfillment files.
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE catalog_products SET mockup_url_external=? WHERE sku=?",
+            rusqlite::params![&r2_url, &sku],
+        );
+    }
+    tracing::info!("[catalog/mockup] OK sku={} → {}", sku, r2_url);
+    Ok(())
 }
 
 fn mark_job_failed(db: &Db, theme: &str, kind: &str, seed: &str, err: &str) {
@@ -1833,8 +1958,63 @@ pub async fn run_optimizer_cron(db: Db) {
                 tracing::warn!("[catalog/cron] persona review failed: {}", e);
             }
         }
+        // Every cycle, kick off mockup backfill for up to 3 AUTO SKUs
+        // that still display only the print art (mockup_url_external
+        // points back to the design). Per-cycle cap is small because
+        // Printful's mockup-generator is queue-based (~30-60s each)
+        // and we don't want to fight the gen workload.
+        if let Err(e) = mockup_backfill_step(db.clone()).await {
+            tracing::warn!("[catalog/cron] mockup backfill failed: {}", e);
+        }
         tokio::time::sleep(std::time::Duration::from_secs(CRON_INTERVAL_SECS)).await;
     }
+}
+
+/// Find up to N AUTO SKUs whose mockup_url_external equals the design
+/// URL (= no on-body mockup generated yet) and spawn the Printful
+/// mockup-generator for each. Background; cron continues immediately.
+async fn mockup_backfill_step(db: Db) -> Result<(), String> {
+    // Identify SKUs needing on-body mockup. Heuristic: mockup_url_external
+    // ends with the same path as design_file (we wrote both to the same
+    // value when first generating), so the row is "design-only" if those
+    // two columns match.
+    let rows: Vec<(String, i64, i64, String)> = {
+        let conn = db.lock().unwrap();
+        conn.prepare(
+            "SELECT sku, printful_product_id, printful_variant_id,
+                    COALESCE(design_file, '')
+             FROM catalog_products
+             WHERE brand='auto' AND is_active=1
+               AND (mockup_url_external = design_file OR mockup_url_external IS NULL)
+             LIMIT 3",
+        )
+        .ok()
+        .and_then(|mut s| {
+            s.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, String>(3)?,
+                ))
+            })
+            .ok()
+            .map(|it| it.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default()
+    };
+    for (sku, pp, pv, design) in rows {
+        if design.is_empty() {
+            continue;
+        }
+        let db_c = db.clone();
+        tokio::spawn(async move {
+            if let Err(e) = generate_onbody_mockup(db_c, sku.clone(), pp, pv, design).await {
+                tracing::warn!("[catalog/mockup] {} failed: {}", sku, e);
+            }
+        });
+    }
+    Ok(())
 }
 
 /// Fetch /shop, ask Gemini to act as 3 personas (cold ad visitor / BJJ
