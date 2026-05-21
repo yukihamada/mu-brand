@@ -694,6 +694,51 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
       🌀 買った 1 着が、永久メンバー証 (NFT) になる → /pass
     </a>
   </div>
+
+  <!-- ============================================================
+       FEATURE PRODUCT — 今月のピック (static, above the fold).
+       Primary CTA = direct Buy link to a known-active SKU. This
+       closes the LP→checkout gap (jiuflow lesson: 195 clicks /
+       0 conv when CTA is ambiguous). Kept BELOW the hero copy so
+       the brand story is preserved.
+       ============================================================ -->
+  <section id="hero-feature" aria-label="今月のピック"
+    data-feature-product="MU-BJJ-13-TEE-WHITE-L"
+    style="margin:32px auto 0;width:100%;max-width:560px;padding:20px 22px;
+           background:rgba(245,245,240,0.04);border:1px solid rgba(245,245,240,0.10);
+           border-radius:4px;display:flex;flex-direction:column;align-items:stretch;gap:14px">
+    <div style="font-size:9px;letter-spacing:0.42em;text-transform:uppercase;color:#e6c449;opacity:0.85;text-align:center">
+      今 売れている — 今月のピック
+    </div>
+    <div style="display:flex;gap:16px;align-items:center">
+      <img src="https://mockups.wearmu.com/MU-BJJ-13-TEE-WHITE-L.jpg"
+           onerror="this.onerror=null;this.src='https://mockups.wearmu.com/hero.png'"
+           alt="MU × BJJ 13 Tee (White / L)"
+           width="120" height="120" loading="eager"
+           style="width:120px;height:120px;object-fit:cover;border-radius:3px;background:#0d0d0d;flex-shrink:0">
+      <div style="flex:1;min-width:0;text-align:left">
+        <div style="font-size:14px;font-weight:500;color:#F5F5F0;line-height:1.4;margin-bottom:6px">
+          MU × BJJ 13 Tee <span style="opacity:0.6;font-weight:300">— White / L</span>
+        </div>
+        <div style="font-size:11px;opacity:0.62;line-height:1.7">
+          Stanley/Stella organic · 国内 5–8 日 · 1 着ずつ刷り
+        </div>
+        <div style="font-size:20px;font-weight:600;color:#fff;margin-top:8px;font-variant-numeric:tabular-nums">
+          ¥7,800 <span style="font-size:11px;opacity:0.5;font-weight:400;letter-spacing:0.1em">税込・送料込</span>
+        </div>
+      </div>
+    </div>
+    <a id="hero-buy" href="/p/MU-BJJ-13-TEE-WHITE-L?buy=1"
+       data-funnel="cta_click" data-funnel-cta="hero_feature_buy"
+       style="display:block;text-align:center;background:#f5f5f0;color:#0a0a0a;
+              padding:18px 32px;font-size:17px;font-weight:600;border-radius:2px;
+              letter-spacing:0.08em;text-decoration:none">
+      今すぐ買う ¥7,800 →
+    </a>
+    <div style="font-size:10px;letter-spacing:0.14em;opacity:0.55;text-align:center;line-height:1.7">
+      30 日返品保証 · 国内発送 · Apple Pay / Google Pay 対応
+    </div>
+  </section>
   <script>
   // Fill today's date in the On Kawara-style stamp. JST.
   (function(){
