@@ -29763,7 +29763,7 @@ footer .brand{{font-size:13px;color:var(--cobalt);font-weight:700;margin-bottom:
       このページから購入すると、 <strong>#{nnn} の着用者にコミッションが還元</strong>されます。<br>
       150 着のうち、 まだ残っている番号を選んでください。
     </div>
-    <a class="btn-primary" href="/buy?ref=jiufight-{nnn}-{tok}">JIU FIGHT × MU を買う &nbsp;→</a>
+    <a class="btn-primary" href="/buy/event?ref=jiufight-{nnn}-{tok}" data-funnel="cta_click" data-funnel-cta="jf_buy_event">JIU FIGHT × MU を買う &nbsp;→</a>
     <a class="btn-secondary" href="/static/jiufight/orders/list.html">全 150 デザイン一覧を見る</a>
   </div>
 </section>

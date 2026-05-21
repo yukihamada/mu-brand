@@ -231,6 +231,31 @@ a{color:#e6c449;text-decoration:none}
   update();
   setInterval(update, 60000);
 })();
+
+// JIU FIGHT affiliate attribution — capture ?ref= or cookie and persist
+// so we can correlate SUZURI clicks with /jf/:token visitors.
+(function(){
+  var params = new URLSearchParams(window.location.search);
+  var refParam = params.get('ref');
+  if (refParam && refParam.indexOf('jiufight-') === 0) {
+    try { localStorage.setItem('jf_aff_ref', refParam); } catch(e) {}
+    document.cookie = 'jiufight_ref_landing=' + encodeURIComponent(refParam) + '; Path=/; Max-Age=7776000; SameSite=Lax';
+  }
+  var ref = refParam || (function(){
+    try { return localStorage.getItem('jf_aff_ref'); } catch(e) { return null; }
+  })();
+  // Stamp ref on outbound SUZURI links so we can match clicks server-side
+  // via referrer log (SUZURI strips most query strings but utm_content survives).
+  if (ref) {
+    document.querySelectorAll('a[href*="suzuri.jp"]').forEach(function(a){
+      try {
+        var u = new URL(a.href);
+        u.searchParams.set('utm_content', ref);
+        a.href = u.toString();
+      } catch(e) {}
+    });
+  }
+})();
 </script>
 </body>
 </html>
