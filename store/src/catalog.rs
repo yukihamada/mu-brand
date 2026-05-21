@@ -603,6 +603,39 @@ pub async fn admin_status(
             .map(|it| it.filter_map(|r| r.ok()).collect())
         })
         .unwrap_or_default();
+
+    // ── Profit math (very rough) ────────────────────────────────────
+    // Revenue = sum of catalog_orders.amount_jpy where status='submitted'
+    //          (status='submitted' = Stripe paid + Printful accepted the
+    //          order; failures don't generate revenue).
+    // Cost estimate per garment: 50% of retail (Printful COGS + shipping
+    //          + Stripe fee combined). This is a conservative placeholder
+    //          until we wire the real Printful price API per SKU.
+    let revenue_jpy: i64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(amount_jpy),0) FROM catalog_orders WHERE status='submitted'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let est_cogs_jpy: i64 = revenue_jpy / 2;
+    let spend_by_cat: std::collections::HashMap<String, i64> = conn
+        .prepare("SELECT category, SUM(amount_jpy) FROM catalog_spend GROUP BY category")
+        .ok()
+        .and_then(|mut s| {
+            s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+                .ok()
+                .map(|it| it.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default();
+    let ad_spend_jpy = spend_by_cat
+        .get("ads_google")
+        .copied()
+        .unwrap_or(0)
+        + spend_by_cat.get("ads_meta").copied().unwrap_or(0);
+    let gen_spend_jpy = spend_by_cat.get("ai_image").copied().unwrap_or(0);
+    let estimated_net_jpy = revenue_jpy - est_cogs_jpy - ad_spend_jpy - gen_spend_jpy;
+
     axum::Json(serde_json::json!({
         "budget": {
             "spent_jpy": spent,
@@ -617,6 +650,14 @@ pub async fn admin_status(
         "orders": {
             "last_24h": orders_24h,
             "total":    orders_total,
+        },
+        "profit_estimate": {
+            "revenue_jpy":   revenue_jpy,
+            "cogs_est_jpy":  est_cogs_jpy,
+            "ad_spend_jpy":  ad_spend_jpy,
+            "gen_spend_jpy": gen_spend_jpy,
+            "net_jpy":       estimated_net_jpy,
+            "note":          "cogs_est_jpy = revenue × 50% (placeholder until per-SKU Printful pricing wired)",
         },
         "recent_jobs": recent_jobs,
         "recent_spend": recent_spend,
