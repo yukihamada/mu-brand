@@ -20152,6 +20152,97 @@ fn chrono_now() -> String {
     format!("{}", secs)
 }
 
+// ── MA succession_chain helpers ────────────────────────────────────────────
+//
+// succession_chain is the 100-year append-only ledger of who currently holds
+// the MA steward role. Each row hash-links to the previous so the lineage is
+// tamper-detectable in O(n). Yuki (gen 0) is the founder; the current holder
+// (is_active=1) drives the next handoff every ~100 days. Genesis seed only
+// records two rows that MEMORY explicitly attests: gen 0 = Yuki, gen 1 =
+// kenny@atsume.io (historical first relay winner). No other seed.
+
+/// Compute the chain hash for a succession_chain row. The hash binds the
+/// previous row's hash to all stable identifying fields of this row, so any
+/// retro-edit to row N invalidates rows N, N+1, … in cascade.
+fn succession_compute_hash(
+    prev_hash: &str,
+    generation: i64,
+    holder_email: &str,
+    awarded_at: &str,
+    awarded_by_email: &str,
+    rationale: &str,
+) -> String {
+    use sha2::{Sha256, Digest};
+    let mut h = Sha256::new();
+    h.update(prev_hash.as_bytes());
+    h.update(b"|");
+    h.update(generation.to_string().as_bytes());
+    h.update(b"|");
+    h.update(holder_email.as_bytes());
+    h.update(b"|");
+    h.update(awarded_at.as_bytes());
+    h.update(b"|");
+    h.update(awarded_by_email.as_bytes());
+    h.update(b"|");
+    h.update(rationale.as_bytes());
+    hex::encode(h.finalize())
+}
+
+/// Idempotent genesis seed: gen 0 = Yuki (founder), gen 1 = kenny@atsume.io
+/// (first relay winner, per wearmu_founder_relay memory). Safe to call on
+/// every boot — INSERT OR IGNORE on the UNIQUE generation column keeps it
+/// a no-op once present. is_active=1 lands on the highest existing gen.
+fn succession_chain_seed_genesis(conn: &Connection) {
+    let gen0_awarded_at = "1715817600"; // 2026-05-16 00:00:00 UTC (constitution v1 lock-in)
+    let gen0_holder_email = "mail@yukihamada.jp";
+    let gen0_holder_name = "濱田優貴 (Yuki Hamada)";
+    let gen0_holder_handle = "yukihamada";
+    let gen0_rationale = "Founder of MU / Enabler Inc. — gen 0 of the MA succession chain. Holds the steward role until the first relay handoff in gen 1.";
+    let gen0_hash = succession_compute_hash(
+        "", 0, gen0_holder_email, gen0_awarded_at, gen0_holder_email, gen0_rationale,
+    );
+
+    let gen1_awarded_at = "1715472000"; // 2026-05-12 00:00:00 UTC
+    let gen1_holder_email = "kenny@atsume.io";
+    let gen1_holder_name: Option<&str> = None;
+    let gen1_holder_handle = "kenny";
+    let gen1_rationale = "First MA relay winner of the 4/7 Founder Relay (2026-05-12). Honored into the new succession chain as gen 1 per wearmu_founder_relay memory.";
+    let gen1_hash = succession_compute_hash(
+        &gen0_hash, 1, gen1_holder_email, gen1_awarded_at, gen0_holder_email, gen1_rationale,
+    );
+
+    let now = chrono_now();
+
+    let _ = conn.execute(
+        "INSERT OR IGNORE INTO succession_chain
+            (generation, holder_email, holder_name, holder_handle, awarded_at,
+             awarded_by_email, rationale, chain_hash, prev_hash, is_active, created_at)
+         VALUES (0, ?, ?, ?, ?, ?, ?, ?, '', 0, ?)",
+        params![
+            gen0_holder_email, gen0_holder_name, gen0_holder_handle, gen0_awarded_at,
+            gen0_holder_email, gen0_rationale, gen0_hash, now
+        ],
+    );
+    let _ = conn.execute(
+        "INSERT OR IGNORE INTO succession_chain
+            (generation, holder_email, holder_name, holder_handle, awarded_at,
+             awarded_by_email, rationale, chain_hash, prev_hash, is_active, created_at)
+         VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+        params![
+            gen1_holder_email, gen1_holder_name, gen1_holder_handle, gen1_awarded_at,
+            gen0_holder_email, gen1_rationale, gen1_hash, gen0_hash, now
+        ],
+    );
+
+    let _ = conn.execute(
+        "UPDATE succession_chain SET is_active = CASE
+            WHEN generation = (SELECT MAX(generation) FROM succession_chain) THEN 1
+            ELSE 0
+         END",
+        [],
+    );
+}
+
 /// Resolve the donation destination for a given sale source. MUGEN / MUON /
 /// MA / you and any other MU-brand product default to 弟子屈町 (Constitution
 /// §27 — the original commitment). Collab partners (kokon / sweep / jiuflow /
@@ -36805,6 +36896,261 @@ footer a{{color:var(--mute);text-decoration:underline;text-decoration-color:rgba
         body = body_html,
     );
     Html(html)
+}
+
+// ── MA succession_chain handlers ───────────────────────────────────────────
+//
+// GET /succession — public, append-only roll of every MA steward in
+// chronological order. Emails / full names are admin-only PII per
+// feedback_pii_protection; only holder_handle + rationale + hash are public.
+//
+// POST /api/admin/succession/award — admin_auth-gated. Body:
+//   { "new_holder_handle": "...", "new_holder_email": "...",
+//     "new_holder_name": "...", "rationale": "..." }
+// Behaviour: flip the existing is_active=1 row to 0, insert a new row at
+// generation+1 with chain_hash linking to the previous, set is_active=1.
+
+async fn succession_page(State(db): State<Db>) -> Html<String> {
+    // Pull all rows, oldest first. Hash chain verified row-by-row so a
+    // mutated row surfaces as "BROKEN" in the public table — making the
+    // tamper-evidence visible to anyone, not just admins.
+    let rows: Vec<(i64, String, String, String, String, String, String, i64, String)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT generation, holder_handle, awarded_at,
+                    awarded_by_email, rationale, chain_hash, prev_hash, is_active,
+                    holder_email
+             FROM succession_chain ORDER BY generation ASC"
+        ) {
+            Ok(s) => s,
+            Err(_) => return Html("<h1>succession_chain not initialized</h1>".to_string()),
+        };
+        let it = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                r.get::<_, String>(5)?,
+                r.get::<_, String>(6)?,
+                r.get::<_, i64>(7)?,
+                r.get::<_, String>(8)?,
+            ))
+        });
+        match it {
+            Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
+            Err(_) => Vec::new(),
+        }
+    };
+
+    let mut body_rows = String::new();
+    for (gen, handle, awarded_at, awarded_by_email, rationale, chain_hash, prev_hash, is_active, holder_email) in &rows {
+        let expected = succession_compute_hash(
+            prev_hash, *gen, holder_email, awarded_at, awarded_by_email, rationale,
+        );
+        let chain_ok = expected == *chain_hash;
+        let by_pub = awarded_by_email.split('@').next().unwrap_or("").to_string();
+        let date_human: String = awarded_at.parse::<i64>().ok()
+            .map(|s| format!("{} (unix)", s))
+            .unwrap_or_else(|| awarded_at.clone());
+        let active_pill = if *is_active == 1 {
+            r##"<span style="background:#e6c449;color:#0a0a0a;padding:2px 8px;border-radius:2px;font-size:10px;letter-spacing:0.18em;text-transform:uppercase;font-weight:600">current</span>"##.to_string()
+        } else {
+            r##"<span style="color:#666;font-size:10px;letter-spacing:0.18em;text-transform:uppercase">passed</span>"##.to_string()
+        };
+        let chain_pill = if chain_ok {
+            r##"<span style="color:#9ae3a8;font-size:10px;letter-spacing:0.18em;text-transform:uppercase">verified</span>"##.to_string()
+        } else {
+            r##"<span style="color:#ff6b6b;font-size:10px;letter-spacing:0.18em;text-transform:uppercase;font-weight:600">BROKEN</span>"##.to_string()
+        };
+        let handle_pub = if handle.is_empty() { format!("gen{}", gen) } else { handle.clone() };
+        let hash_short: String = chain_hash.chars().take(12).collect();
+        body_rows.push_str(&format!(
+            r##"<tr style="border-top:1px solid rgba(255,255,255,0.06)">
+  <td style="padding:14px 12px;color:#e6c449;font-variant-numeric:tabular-nums;font-size:13px">gen {gen}</td>
+  <td style="padding:14px 12px;color:#F5F5F0;font-size:14px;font-weight:500">@{handle_html}</td>
+  <td style="padding:14px 12px;color:#888;font-size:12px;font-variant-numeric:tabular-nums">{date}</td>
+  <td style="padding:14px 12px;color:#888;font-size:12px">{by}…</td>
+  <td style="padding:14px 12px;color:rgba(245,245,240,0.72);font-size:12.5px;line-height:1.7;max-width:420px">{rationale}</td>
+  <td style="padding:14px 12px;text-align:right;white-space:nowrap">{active}<br><span style="font-family:monospace;color:#555;font-size:10px">{hash_short}…</span><br>{chain}</td>
+</tr>"##,
+            gen = gen,
+            handle_html = ammonia::clean(&handle_pub),
+            date = ammonia::clean(&date_human),
+            by = ammonia::clean(&by_pub),
+            rationale = ammonia::clean(rationale),
+            active = active_pill,
+            hash_short = hash_short,
+            chain = chain_pill,
+        ));
+    }
+
+    let current_gen: i64 = rows.iter().filter(|r| r.7 == 1).map(|r| r.0).next().unwrap_or(0);
+    let next_relay_est = {
+        let current_awarded: Option<i64> = rows.iter()
+            .find(|r| r.7 == 1)
+            .and_then(|r| r.2.parse::<i64>().ok());
+        match current_awarded {
+            Some(t) => format!("~{} (unix, current awarded_at + 100 days)", t + 100 * 86_400),
+            None => "TBD".to_string(),
+        }
+    };
+
+    let html = format!(
+        r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8">
+<title>MA Succession Chain · 100-Year Append-Only Lineage · MU</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="MU の MA steward succession chain — 100 年 append-only。 各世代の holder と handoff 理由を hash-chained で永続記録、 founder の不在でも 連鎖は続く。">
+<meta name="robots" content="index,follow">
+<style>
+  body {{ background:#0a0a0a; color:#F5F5F0; font-family:-apple-system,BlinkMacSystemFont,'Hiragino Kaku Gothic ProN',sans-serif; margin:0; padding:0; line-height:1.6; }}
+  .wrap {{ max-width:980px; margin:0 auto; padding:64px 32px 96px; }}
+  h1 {{ font-size:32px; font-weight:300; letter-spacing:-0.01em; margin:0 0 6px; }}
+  .eyebrow {{ font-size:10px; letter-spacing:0.42em; text-transform:uppercase; color:#e6c449; margin-bottom:18px; }}
+  .lede {{ font-size:14.5px; color:rgba(245,245,240,0.7); line-height:1.9; max-width:680px; margin:18px 0 38px; }}
+  .stats {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:20px; background:rgba(230,196,73,0.04); border:1px solid rgba(230,196,73,0.22); border-left:3px solid #e6c449; padding:22px 24px; margin:0 0 42px; border-radius:3px; }}
+  .stat-num {{ font-size:36px; font-weight:200; color:#e6c449; line-height:1; font-variant-numeric:tabular-nums; }}
+  .stat-lab {{ font-size:10px; letter-spacing:0.22em; text-transform:uppercase; color:#888; margin-top:8px; }}
+  table {{ width:100%; border-collapse:collapse; margin:24px 0 32px; }}
+  thead th {{ text-align:left; padding:12px; color:#888; font-size:10px; letter-spacing:0.22em; text-transform:uppercase; font-weight:500; border-bottom:1px solid rgba(255,255,255,0.10); }}
+  footer {{ margin-top:48px; padding-top:28px; border-top:1px solid rgba(255,255,255,0.08); font-size:11.5px; color:#666; line-height:1.85; }}
+  a {{ color:#e6c449; }}
+  code {{ background:rgba(255,255,255,0.06); color:#e6c449; padding:1px 6px; border-radius:2px; font-size:12px; }}
+</style></head><body>
+<div class="wrap">
+  <div class="eyebrow">MA · succession chain</div>
+  <h1>100-year lineage of the MA steward role</h1>
+  <p class="lede">
+    MA とは「間 / 場 / 関係性」を表すシンボリックな steward role。 創業者 Yuki から始まり、 約 100 日に 1 回、 現 holder が次の holder を指名する。 全 handoff は append-only で記録され、 各 row は前 row の hash を含む sha256 で繋がるので、 過去の改竄は cascade で破綻し可視化される。 Yuki が引退 / 不在でも、 現 holder が次の relay を起動するため、 連鎖は 100 年 走り続けるよう設計されている。
+  </p>
+
+  <div class="stats">
+    <div>
+      <div class="stat-num">{count}</div>
+      <div class="stat-lab">total handoffs (incl. genesis)</div>
+    </div>
+    <div>
+      <div class="stat-num">gen&nbsp;{current_gen}</div>
+      <div class="stat-lab">current generation</div>
+    </div>
+    <div>
+      <div class="stat-num" style="font-size:18px;line-height:1.4;letter-spacing:0">{next_est}</div>
+      <div class="stat-lab">next relay due (estimate)</div>
+    </div>
+  </div>
+
+  <table>
+    <thead><tr>
+      <th style="width:60px">gen</th>
+      <th>holder</th>
+      <th>awarded</th>
+      <th>by</th>
+      <th>rationale</th>
+      <th style="text-align:right">status / hash</th>
+    </tr></thead>
+    <tbody>
+      {body_rows}
+    </tbody>
+  </table>
+
+  <footer>
+    <div><strong style="color:#F5F5F0">PII 取り扱い</strong>: holder の email / 本名は admin only。 公開ページは handle と handoff 理由、 hash の prefix のみ表示する (<a href="/constitution">§ feedback_pii_protection</a>)。</div>
+    <div style="margin-top:8px">hash アルゴリズム: <code>sha256(prev_hash &#124;&#124; generation &#124;&#124; holder_email &#124;&#124; awarded_at &#124;&#124; awarded_by_email &#124;&#124; rationale)</code> · 各 row の <code>chain_hash</code> 列に hex 保存</div>
+    <div style="margin-top:8px">data: <code>store/products.db :: succession_chain</code> · 株式会社イネブラ (Enabler Inc.) — append-only, no DELETE / no UPDATE except is_active flip</div>
+  </footer>
+</div>
+</body></html>"##,
+        count = rows.len(),
+        current_gen = current_gen,
+        next_est = ammonia::clean(&next_relay_est),
+        body_rows = body_rows,
+    );
+    Html(html)
+}
+
+async fn admin_succession_award(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/succession/award").await { return r; }
+
+    let new_holder_email = match body.get("new_holder_email").and_then(|v| v.as_str()) {
+        Some(s) if s.contains('@') => s.trim().to_string(),
+        _ => return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok": false, "error": "new_holder_email required (must contain @)"}))).into_response(),
+    };
+    let new_holder_handle = body.get("new_holder_handle").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    let new_holder_name = body.get("new_holder_name").and_then(|v| v.as_str()).map(|s| s.trim().to_string());
+    let rationale = body.get("rationale").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    if rationale.is_empty() {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok": false, "error": "rationale required (public, why this person)"}))).into_response();
+    }
+
+    // Lock + write the new generation. We do this in one critical section so
+    // two concurrent admin posts can't both observe the same "current" row
+    // and produce duplicate gen+1 inserts.
+    let conn = db.lock().unwrap();
+
+    let (prev_gen, prev_email, prev_hash): (i64, String, String) = match conn.query_row(
+        "SELECT generation, holder_email, chain_hash FROM succession_chain
+         WHERE is_active=1 ORDER BY generation DESC LIMIT 1",
+        [], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+    ) {
+        Ok(t) => t,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"ok": false, "error": "no active succession holder — schema not seeded"}))).into_response(),
+    };
+    if new_holder_email.eq_ignore_ascii_case(&prev_email) {
+        return (StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({"ok": false, "error": "new_holder_email is identical to current — no-op"}))).into_response();
+    }
+
+    let new_gen = prev_gen + 1;
+    let awarded_at = chrono_now();
+    let new_hash = succession_compute_hash(
+        &prev_hash, new_gen, &new_holder_email, &awarded_at, &prev_email, &rationale,
+    );
+
+    if let Err(e) = conn.execute(
+        "UPDATE succession_chain SET is_active=0 WHERE generation=?",
+        params![prev_gen],
+    ) {
+        return (StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"ok": false, "error": format!("update prev failed: {}", e)}))).into_response();
+    }
+    if let Err(e) = conn.execute(
+        "INSERT INTO succession_chain
+            (generation, holder_email, holder_name, holder_handle, awarded_at,
+             awarded_by_email, rationale, chain_hash, prev_hash, is_active, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+        params![
+            new_gen, new_holder_email, new_holder_name, new_holder_handle,
+            awarded_at, prev_email, rationale, new_hash, prev_hash, awarded_at,
+        ],
+    ) {
+        // Best-effort rollback so the chain never lacks a current holder.
+        let _ = conn.execute(
+            "UPDATE succession_chain SET is_active=1 WHERE generation=?",
+            params![prev_gen],
+        );
+        return (StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"ok": false, "error": format!("insert new failed: {}", e)}))).into_response();
+    }
+
+    Json(serde_json::json!({
+        "ok": true,
+        "generation": new_gen,
+        "holder_handle": new_holder_handle,
+        "chain_hash": new_hash,
+        "prev_hash": prev_hash,
+        "awarded_at": awarded_at,
+        "awarded_by_email_prefix": prev_email.split('@').next().unwrap_or(""),
+    })).into_response()
 }
 
 // ── Sibling Chronicle DAO vote ────────────────────────────────────────────
@@ -58552,7 +58898,36 @@ async fn main() {
             created_at    TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_ma_relays_draw ON ma_lottery_relays(draw_id, position);
+
+        -- ── MA succession_chain (2026-05-21) ────────────────────────────────
+        -- 100-year append-only succession ledger for the MA steward role.
+        -- Distinct from ma_lottery_* (the now-discontinued random 4/7 relay —
+        -- see wearmu_founder_relay memory). succession_chain is deliberate,
+        -- not random: gen 0 = Yuki (founder), gen 1 = the first chosen relay
+        -- holder, then every ~100 days the current holder names the next.
+        -- Each row links to the previous via chain_hash (sha256 of prev_hash
+        -- + generation + holder_email + awarded_at + awarded_by_email +
+        -- rationale) so tampering with any historic row breaks every
+        -- downstream hash. Yuki's incapacity does NOT halt the chain — the
+        -- current holder (is_active=1) drives the next handoff.
+        CREATE TABLE IF NOT EXISTS succession_chain (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            generation          INTEGER NOT NULL UNIQUE,
+            holder_email        TEXT NOT NULL,
+            holder_name         TEXT,
+            holder_handle       TEXT,
+            awarded_at          TEXT NOT NULL,
+            awarded_by_email    TEXT NOT NULL,
+            rationale           TEXT,
+            chain_hash          TEXT NOT NULL,
+            prev_hash           TEXT NOT NULL DEFAULT '',
+            is_active           INTEGER NOT NULL DEFAULT 1,
+            created_at          TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_succession_active ON succession_chain(is_active);
+        CREATE INDEX IF NOT EXISTS idx_succession_gen    ON succession_chain(generation);
     ").ok();
+    succession_chain_seed_genesis(&conn);
 
     // ── Autonomous-org tables (2026-05-12 introduced by Constitution v1) ──────
     // Decision log (T1/T2 tagged), kill-switch audit, governance queue,
@@ -60005,6 +60380,11 @@ async fn main() {
         .route("/donations", get(public_donations_page))
         .route("/profit-split", get(public_profit_split_page))
         .route("/api/profit-split", get(public_profit_split_api))
+        // MA succession_chain: 100-year append-only steward lineage.
+        // /succession is public (handles + rationale + hash); award endpoint
+        // is admin_auth gated and bumps generation by 1 per call.
+        .route("/succession", get(succession_page))
+        .route("/api/admin/succession/award", post(admin_succession_award))
         .route("/sen-dojo", get(public_sen_dojo_page))
         .route("/api/sample_personas", get(list_sample_personas))
         .route("/api/admin/sample_grow", post(admin_sample_grow))
