@@ -104,6 +104,26 @@ pub fn ensure_schema(conn: &rusqlite::Connection) {
     );
 }
 
+/// One-shot migration: fix the wrong printful_product_id (162 →
+/// Bella+Canvas longsleeve) stamped on existing rashguard rows. The
+/// real product for variant 9328 is 301 (Men's AOP Rash Guard). Stale
+/// 162 rows were causing both the mockup-generator backfill AND any
+/// future fulfill_catalog_order POST to 4xx with "No variants to
+/// generate". Idempotent (UPDATE only matches the broken rows).
+pub fn migrate_rashguard_product_id(conn: &rusqlite::Connection) {
+    let n = conn.execute(
+        "UPDATE catalog_products
+         SET printful_product_id = 301
+         WHERE brand='auto'
+           AND sku LIKE '%RASHGUARD%'
+           AND printful_product_id = 162",
+        [],
+    ).unwrap_or(0);
+    if n > 0 {
+        tracing::info!("[catalog] migrate_rashguard_product_id: fixed {} rows", n);
+    }
+}
+
 /// One-shot migration: rewrite the mechanical "BJJ 黒帯 · T シャツ"
 /// descriptions on existing AUTO SKUs to use the theme hook copy
 /// ("BJJ 黒帯 — 黒帯への 10 年を …"). Safe to re-run; each row matches
