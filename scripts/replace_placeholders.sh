@@ -10,6 +10,11 @@ GEN="/Users/yuki/workspace/mu-brand/generate.py"
 BRANDS=(muon ma nouns)
 MAX_CONSECUTIVE_FAILS=5
 
+# Skip generate.py's random_delay (0–8h for muon, 0–4h for staple, etc.).
+# Without this the script effectively hangs for hours before producing
+# the first design. Honored by generate.py:random_delay (line ~972).
+export NO_DELAY=1
+
 # Load API keys from ~/.env without echoing them
 if [ -f "$HOME/.env" ]; then
   set -a
