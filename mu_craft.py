@@ -838,21 +838,46 @@ def api_publish(request: FastRequest, response: Response, sku_id: int = Form(...
 
 @app.post("/api/signup")
 def api_signup(request: FastRequest, response: Response, email: str = Form(...)):
+    """Frictionless email-only signup — instant register + bonus, no magic link.
+
+    Magic-link verification was a CVR killer for paid traffic (users see
+    "console output" placeholder and bounce). For our MVP scale, abuse risk
+    is acceptable; rate limits on craft itself (1 MP/SKU) cap damage."""
     email = email.strip().lower()
     if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
         return JSONResponse({"error": "invalid_email"}, status_code=400)
-    code = f"{secrets.randbelow(1_000_000):06d}"
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
     with db() as conn:
-        conn.execute(
-            "INSERT INTO magic_links (email, code, expires_at) VALUES (?,?,?)",
-            (email, code, expires_at.isoformat())
-        )
-    # MVP: print the code to console instead of emailing.
-    print(f"\n  ━━ magic code for {email}: {code} (expires in 10 min) ━━\n")
-    return {"ok": True, "message": "メールに 6 桁コードが届きます (MVP: コンソール出力)"}
+        existing = conn.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone()
+        if existing:
+            user_id = existing["id"]
+        else:
+            # Upgrade anon cookie user if present
+            anon = request.cookies.get("mu_anon")
+            anon_id = _verify_signed(anon) if anon else None
+            anon_user = conn.execute(
+                "SELECT id FROM users WHERE anon_id=?", (anon_id,)
+            ).fetchone() if anon_id else None
+            if anon_user:
+                user_id = anon_user["id"]
+                conn.execute("UPDATE users SET email=? WHERE id=?", (email, user_id))
+            else:
+                cur = conn.execute("INSERT INTO users (email, mp_balance) VALUES (?,?)", (email, 0))
+                user_id = cur.lastrowid
+
+    # signup bonus (once per user_id)
+    already = db().execute(
+        "SELECT id FROM mp_ledger WHERE user_id=? AND reason='signup_bonus'", (user_id,)
+    ).fetchone()
+    if not already:
+        mp_change(user_id, SIGNUP_BONUS_MP, "signup_bonus", note=email)
+
+    response.set_cookie("mu_session", _sign(str(user_id)), max_age=60*60*24*365, samesite="lax")
+    new_bal = db().execute("SELECT mp_balance FROM users WHERE id=?", (user_id,)).fetchone()["mp_balance"]
+    return {"ok": True, "user_id": user_id, "mp_balance": new_bal,
+            "message": f"登録完了。+{SIGNUP_BONUS_MP} MP 付与。"}
 
 
+# Legacy magic-link endpoint kept as fallback (not surfaced in UI anymore)
 @app.post("/api/verify")
 def api_verify(request: FastRequest, response: Response,
                email: str = Form(...), code: str = Form(...)):
@@ -867,30 +892,17 @@ def api_verify(request: FastRequest, response: Response,
         return JSONResponse({"error": "invalid_or_expired"}, status_code=401)
     with db() as conn:
         conn.execute("UPDATE magic_links SET used=1 WHERE id=?", (row["id"],))
-        # find or create user
-        existing = conn.execute("SELECT id, mp_balance, email FROM users WHERE email=?", (email,)).fetchone()
+        existing = conn.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone()
         if existing:
             user_id = existing["id"]
-            # if anon already, upgrade by merging email
         else:
-            # Try to upgrade anon user from cookie
-            anon = request.cookies.get("mu_anon")
-            anon_id = _verify_signed(anon) if anon else None
-            anon_user = conn.execute("SELECT id FROM users WHERE anon_id=?", (anon_id,)).fetchone() if anon_id else None
-            if anon_user:
-                user_id = anon_user["id"]
-                conn.execute("UPDATE users SET email=? WHERE id=?", (email, user_id))
-            else:
-                cur = conn.execute("INSERT INTO users (email, mp_balance) VALUES (?,?)", (email, 0))
-                user_id = cur.lastrowid
-
-    # signup bonus (once per user)
+            cur = conn.execute("INSERT INTO users (email, mp_balance) VALUES (?,?)", (email, 0))
+            user_id = cur.lastrowid
     already_bonused = db().execute(
         "SELECT id FROM mp_ledger WHERE user_id=? AND reason='signup_bonus'", (user_id,)
     ).fetchone()
     if not already_bonused:
         mp_change(user_id, SIGNUP_BONUS_MP, "signup_bonus", note=email)
-
     response.set_cookie("mu_session", _sign(str(user_id)), max_age=60*60*24*365, samesite="lax")
     new_bal = db().execute("SELECT mp_balance FROM users WHERE id=?", (user_id,)).fetchone()["mp_balance"]
     return {"ok": True, "user_id": user_id, "mp_balance": new_bal}
@@ -1237,11 +1249,12 @@ async function publish(sku_id) {
 function showSignup() {
   document.getElementById('signup-area').innerHTML = `
     <div class="signup-box">
-      <label>メールアドレス</label>
-      <input id="email-input" type="email" placeholder="you@example.com" />
-      <button onclick="signupSubmit()">コードを送信</button>
-      <div id="verify-area" style="margin-top: 12px;"></div>
+      <label>メールアドレス (確認なし・即時 +5 MP)</label>
+      <input id="email-input" type="email" placeholder="you@example.com" autocomplete="email" />
+      <button onclick="signupSubmit()">登録 (+5 MP)</button>
+      <div style="font-size:11px;opacity:0.4;margin-top:8px;">※ 確認メール無し。後から購入連携で本人認証されます。</div>
     </div>`;
+  setTimeout(() => document.getElementById('email-input').focus(), 50);
 }
 
 async function signupSubmit() {
@@ -1250,20 +1263,9 @@ async function signupSubmit() {
   const fd = new FormData(); fd.append('email', email);
   const r = await fetch('/api/signup', { method: 'POST', body: fd });
   const d = await r.json();
-  if (r.status >= 400) { alert(d.error); return; }
-  document.getElementById('verify-area').innerHTML = `
-    <p style="font-size:13px;opacity:0.8;">${d.message}<br>(MVP: サーバーコンソールに 6 桁コード表示)</p>
-    <input id="code-input" placeholder="6 桁コード" />
-    <button onclick="verifySubmit('${email}')">認証</button>`;
-}
-
-async function verifySubmit(email) {
-  const code = document.getElementById('code-input').value.trim();
-  const fd = new FormData(); fd.append('email', email); fd.append('code', code);
-  const r = await fetch('/api/verify', { method: 'POST', body: fd });
-  const d = await r.json();
-  if (r.status >= 400) { alert(d.error); return; }
-  document.getElementById('signup-area').innerHTML = `<div class="signup-box">登録完了。残量 ${d.mp_balance} MP</div>`;
+  if (r.status >= 400) { alert(d.error || 'failed'); return; }
+  document.getElementById('signup-area').innerHTML =
+    `<div class="signup-box">✓ ${d.message || '登録完了'} 残量 ${d.mp_balance} MP</div>`;
   loadMe();
 }
 
