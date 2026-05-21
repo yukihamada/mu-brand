@@ -15,11 +15,11 @@ RUN pip install --no-cache-dir \
 WORKDIR /app
 COPY mu_craft.py /app/mu_craft.py
 
-# /data and /static are mounted as Fly volumes in production
-RUN mkdir -p /data /static && chown -R 1000:1000 /data /static
+# /data is the single Fly volume mount; db + static are subdirs.
+RUN mkdir -p /data/db /data/static && chown -R 1000:1000 /data
 
-ENV MU_CRAFT_DATA_DIR=/data \
-    MU_CRAFT_STATIC_DIR=/static \
+ENV MU_CRAFT_DATA_DIR=/data/db \
+    MU_CRAFT_STATIC_DIR=/data/static \
     MU_CRAFT_STORAGE=local \
     PORT=8080
 

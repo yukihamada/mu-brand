@@ -9,18 +9,15 @@ primary_region = "nrt"
 
 [env]
   PORT = "8080"
-  MU_CRAFT_DATA_DIR = "/data"
-  MU_CRAFT_STATIC_DIR = "/static"
+  MU_CRAFT_DATA_DIR = "/data/db"
+  MU_CRAFT_STATIC_DIR = "/data/static"
   MU_CRAFT_STORAGE = "local"
   MU_CRAFT_PUBLIC_BASE = "https://craft.wearmu.com"
 
+# Single volume per machine — Fly limitation. db + static share /data.
 [[mounts]]
   source = "mu_craft_data"
   destination = "/data"
-
-[[mounts]]
-  source = "mu_craft_static"
-  destination = "/static"
 
 [http_service]
   internal_port = 8080
