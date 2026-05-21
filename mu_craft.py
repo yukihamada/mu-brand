@@ -898,6 +898,13 @@ HTML_INDEX = """<!DOCTYPE html>
     footer { margin-top: 80px; text-align: center; opacity: 0.4; font-size: 12px; }
     footer a { color: #e6c449; text-decoration: none; }
     code { background: #2a2a2a; padding: 2px 6px; border-radius: 3px; font-size: 13px; }
+    .pills { margin-top: 20px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .pill-label { opacity: 0.5; font-size: 12px; margin-right: 4px; letter-spacing: 1px; }
+    .pill { background: #1a1a1a; color: #f5f5f0; border: 1px solid #2a2a2a; border-radius: 999px;
+            padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer;
+            font-family: inherit; transition: all 0.1s; }
+    .pill:hover { background: #e6c449; color: #0a0a0a; border-color: #e6c449; }
+    .pill:disabled { opacity: 0.4; cursor: not-allowed; }
   </style>
 </head>
 <body>
@@ -916,8 +923,25 @@ HTML_INDEX = """<!DOCTYPE html>
 
   <div class="actions">
     <button id="craft-btn" onclick="craft()">作る (1 MP)</button>
+    <button class="ghost" id="random-btn" onclick="craftRandom()">🎲 ランダム (1 MP)</button>
     <button class="ghost" onclick="showSignup()" id="signup-btn">登録して +5 MP</button>
     <button class="ghost" onclick="topup()">チャージ (¥30/MP)</button>
+  </div>
+
+  <div class="pills" id="pills">
+    <span class="pill-label">ワンクリック:</span>
+    <button class="pill" onclick="craftWith('柔術の三角絞めの理論')">三角絞め</button>
+    <button class="pill" onclick="craftWith('朝のコーヒーの哲学')">朝のコーヒー</button>
+    <button class="pill" onclick="craftWith('東京の夜')">東京の夜</button>
+    <button class="pill" onclick="craftWith('静寂の重要性')">静寂</button>
+    <button class="pill" onclick="craftWith('Rustの所有権')">Rust 所有権</button>
+    <button class="pill" onclick="craftWith('柔術 黒帯への道')">黒帯への道</button>
+    <button class="pill" onclick="craftWith('Mercariの設計思想')">Mercari 思想</button>
+    <button class="pill" onclick="craftWith('禅の本質')">禅</button>
+    <button class="pill" onclick="craftWith('海の波の構造')">波の構造</button>
+    <button class="pill" onclick="craftWith('深夜のデプロイ')">深夜デプロイ</button>
+    <button class="pill" onclick="craftWith('無')">無</button>
+    <button class="pill" onclick="craftWith('物として世に出す')">物として世に出す</button>
   </div>
 
   <div id="signup-area"></div>
@@ -942,13 +966,35 @@ async function loadMe() {
   }
 }
 
+const RANDOM_TOPICS = [
+  '柔術の三角絞めの理論', '朝のコーヒーの哲学', '東京の夜', '静寂の重要性',
+  'Rustの所有権', '柔術 黒帯への道', 'Mercariの設計思想', '禅の本質',
+  '海の波の構造', '深夜のデプロイ', '無', '物として世に出す',
+  '猫の歩き方', '味噌汁の温度', 'Vim の指の記憶', '弟子屈の冬',
+  '日本酒の余韻', '原稿用紙の手触り', 'AI の倫理', '京都の路地',
+  '柔術紫帯の壁', 'コードレビューの礼儀', '一期一会', '満員電車の哲学'
+];
+
+function setBtnsDisabled(d) {
+  document.querySelectorAll('button').forEach(b => { if (b.id !== 'signup-btn') b.disabled = d; });
+}
+
+async function craftWith(topic) {
+  document.getElementById('topic').value = topic;
+  await craft();
+}
+
+async function craftRandom() {
+  const t = RANDOM_TOPICS[Math.floor(Math.random() * RANDOM_TOPICS.length)];
+  await craftWith(t);
+}
+
 async function craft() {
   const topic = document.getElementById('topic').value.trim();
-  if (!topic) { alert('トピックを入力してください'); return; }
-  const btn = document.getElementById('craft-btn');
-  btn.disabled = true;
+  if (!topic) { alert('トピックを入力するか、ワンクリックピルを押してください'); return; }
+  setBtnsDisabled(true);
   document.getElementById('result').innerHTML =
-    '<div class="spinner">生成中 (Gemini brief → SVG → Printful mockup × 2)... 約30秒</div>';
+    '<div class="spinner">生成中 (Gemini brief → SVG → Printful mockup × 2)... 約30秒<br><br><span style="opacity:0.5">topic: ' + escapeHtml(topic) + '</span></div>';
 
   const fd = new FormData();
   fd.append('topic', topic);
@@ -966,19 +1012,19 @@ async function craft() {
           <li>${data.topup_options.tee_purchase}</li>
         </ul>
       </div>`;
-    btn.disabled = false;
+    setBtnsDisabled(false);
     return;
   }
   if (r.status >= 400) {
     document.getElementById('result').innerHTML = `<div class="err">エラー: ${data.error || 'unknown'} — ${data.detail || ''}</div>`;
-    btn.disabled = false;
+    setBtnsDisabled(false);
     return;
   }
 
   document.getElementById('result').innerHTML = `
     <div class="result-card">
       <h2>${escapeHtml(data.brief.catchphrase)} ${data.brief.kanji ? '· ' + escapeHtml(data.brief.kanji) : ''}</h2>
-      <div class="meta">slug: <code>${data.slug}</code> · ${data.elapsed_sec}s · 残量 ${data.mp_balance} MP</div>
+      <div class="meta">topic: ${escapeHtml(data.topic)} · slug: <code>${data.slug}</code> · ${data.elapsed_sec}s · 残量 ${data.mp_balance} MP</div>
       <div class="mockups">
         ${data.mockup_white ? `<img src="${data.mockup_white}" alt="white tee" />` : '<div>白T mockup 生成失敗</div>'}
         ${data.mockup_black ? `<img src="${data.mockup_black}" alt="black tee" />` : '<div>黒T mockup 生成失敗</div>'}
@@ -986,10 +1032,11 @@ async function craft() {
       <div class="actions" style="margin-top: 16px;">
         <button onclick="publish(${data.sku_id})">公開する (3 MP)</button>
         <button class="ghost" onclick="window.open('/c/${data.slug}','_blank')">永久 URL ↗</button>
-        <button class="ghost" onclick="document.getElementById('topic').value=''; document.getElementById('topic').focus(); document.getElementById('result').innerHTML='';">もう一度作る</button>
+        <button class="ghost" data-topic="${escapeHtml(data.topic)}" onclick="craftWith(this.dataset.topic)">↻ もう一回作る (1 MP)</button>
+        <button class="ghost" onclick="craftRandom()">🎲 別のランダム (1 MP)</button>
       </div>
     </div>`;
-  btn.disabled = false;
+  setBtnsDisabled(false);
   loadMe();
 }
 
