@@ -429,6 +429,16 @@ nav.scrolled{background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);
 .spec-key{font-size:8px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.55;padding-top:2px}
 .spec-val{opacity:0.78}
 @media(max-width:600px){.spec-row{grid-template-columns:1fr;gap:2px}}
+/* ── "You might also like" upsell (modal footer) ── */
+.upsell{margin-top:8px;padding-top:18px;border-top:1px solid rgba(255,255,255,0.06)}
+.upsell h2{font-size:9px;letter-spacing:0.32em;text-transform:uppercase;opacity:0.55;margin:0 0 14px;font-weight:500}
+.upsell-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.upsell-card{display:flex;flex-direction:column;gap:6px;text-decoration:none;color:inherit;transition:opacity 0.18s}
+.upsell-card:hover{opacity:0.78}
+.upsell-card img{width:100%;aspect-ratio:1/1;object-fit:cover;background:#0c0c0c;display:block;border:1px solid rgba(255,255,255,0.04)}
+.upsell-name{font-size:11px;line-height:1.4;opacity:0.85;margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.upsell-price{font-size:10px;letter-spacing:0.05em;opacity:0.55}
+@media(max-width:600px){.upsell-grid{grid-template-columns:repeat(2,1fr);gap:12px}}
 .nft-cert{padding:16px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06)}
 .nft-title{font-size:8px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5;margin-bottom:6px}
 .nft-val{font-size:10px;opacity:0.5;word-break:break-all;font-family:monospace}
@@ -1269,6 +1279,13 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
         </button>
         <div id="stripe-embedded" style="display:none;margin-top:14px"></div>
       </form>
+
+      <!-- "You might also like" upsell — populated by openModal via
+           /api/products/item/:id/upsell. Hidden until at least 1 card lands. -->
+      <section class="upsell" id="m-upsell" style="display:none">
+        <h2>You might also like</h2>
+        <div class="upsell-grid" id="m-upsell-grid"></div>
+      </section>
     </div>
   </div>
 </div>
@@ -2242,6 +2259,38 @@ function openModal(p, pushHistory=true){
         (s.shipped_at_jst ? ` · shipped ${s.shipped_at_jst}` : '') +
         ` · <span style="color:#e6c449">${s.buyer}</span></div>`
       ).join('');
+      box.style.display = 'block';
+    } catch(_) {}
+  })();
+
+  // "You might also like" upsell — fetch 4 same-brand (or global) cards.
+  // Mirrors the chronicle pattern: stay hidden if the endpoint returns nothing.
+  (async () => {
+    const box = document.getElementById('m-upsell');
+    const grid = document.getElementById('m-upsell-grid');
+    if (!box || !grid || !p.id) return;
+    box.style.display = 'none';
+    grid.innerHTML = '';
+    try {
+      const r = await fetch(`/api/products/item/${p.id}/upsell`, { cache: 'no-store' });
+      if (!r.ok) return;
+      const d = await r.json();
+      const items = (d.items || []).slice(0, 4);
+      if (!items.length) return;
+      const esc = (s) => String(s).replace(/[&<>"']/g, c => (
+        {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]
+      ));
+      grid.innerHTML = items.map(it => {
+        const href = esc(it.href || ('/products/' + it.brand + '/' + it.drop_num));
+        const img  = esc(it.image || '');
+        const name = esc(it.name || '');
+        const price = Number(it.price_jpy || 0);
+        return `<a class="upsell-card" href="${href}" data-funnel="cta_click" data-funnel-cta="modal_upsell_${esc(it.brand)}_${it.drop_num}">
+          <img src="${img}" alt="${name}" loading="lazy">
+          <div class="upsell-name">${name}</div>
+          <div class="upsell-price">¥${price.toLocaleString()}</div>
+        </a>`;
+      }).join('');
       box.style.display = 'block';
     } catch(_) {}
   })();

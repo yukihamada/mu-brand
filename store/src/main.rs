@@ -13341,6 +13341,90 @@ async fn product_sku_page(
         )
     }).collect();
 
+    // ── "You might also like" upsell ───────────────────────────────────────
+    // Pass 1: same brand, exclude self, sold DESC; pass 2: global fill if <4.
+    // serial_code is the canonical /p/ slug; fall back to /products/<brand>/<drop_num>
+    // when a row pre-dates the serial_code backfill.
+    let upsell_rows: Vec<(i64, String, i64, String, Option<String>, Option<String>, i64, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        let mut cards: Vec<(i64, String, i64, String, Option<String>, Option<String>, i64, Option<String>)> = Vec::with_capacity(4);
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT id, brand, drop_num, name, design_url, mockup_url, price_jpy, serial_code
+             FROM products
+             WHERE brand=? AND id!=? AND active=1
+             ORDER BY sold DESC, RANDOM()
+             LIMIT 4"
+        ) {
+            if let Ok(rs) = stmt.query_map(params![brand, id], |r| Ok((
+                r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?,
+            ))) {
+                cards.extend(rs.filter_map(|r| r.ok()));
+            }
+        }
+        if cards.len() < 4 {
+            let need = 4 - cards.len();
+            let mut excl: Vec<i64> = cards.iter().map(|c| c.0).collect();
+            excl.push(id);
+            let ph = std::iter::repeat("?").take(excl.len()).collect::<Vec<_>>().join(",");
+            let sql = format!(
+                "SELECT id, brand, drop_num, name, design_url, mockup_url, price_jpy, serial_code
+                 FROM products
+                 WHERE active=1 AND id NOT IN ({})
+                 ORDER BY sold DESC, RANDOM()
+                 LIMIT {}",
+                ph, need
+            );
+            if let Ok(mut stmt) = conn.prepare(&sql) {
+                let pv: Vec<&dyn rusqlite::ToSql> = excl.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
+                if let Ok(rs) = stmt.query_map(pv.as_slice(), |r| Ok((
+                    r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?,
+                ))) {
+                    cards.extend(rs.filter_map(|r| r.ok()));
+                }
+            }
+        }
+        cards
+    };
+    let upsell_html = if upsell_rows.is_empty() {
+        String::new()
+    } else {
+        let cards: String = upsell_rows.iter().map(|(_pid, brand, drop_num, name, design_url, mockup_url, price_jpy, serial_code)| {
+            // Same Printful-temp-URL fallback as get_product / list_products.
+            let card_img = match mockup_url.as_deref() {
+                Some(m) if m.starts_with("https://printful-upload.s3")
+                        || m.starts_with("https://files.cdn.printful.com/upload") => {
+                    design_url.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| m.to_string())
+                }
+                Some(m) => m.to_string(),
+                None => design_url.clone().unwrap_or_default(),
+            };
+            let href = match serial_code.as_deref() {
+                Some(sc) if !sc.is_empty() => format!("/p/{}", sc),
+                _ => format!("/products/{}/{}", brand, drop_num),
+            };
+            format!(
+                r#"<a class="upsell-card" href="{href}">
+  <img src="{img}" alt="{name}" loading="lazy">
+  <div class="upsell-name">{name}</div>
+  <div class="upsell-price">¥{price}</div>
+</a>"#,
+                href = html_attr_escape(&href),
+                img = html_attr_escape(&card_img),
+                name = html_escape(name),
+                price = price_jpy,
+            )
+        }).collect();
+        // Note: keep the section pid- prefixed so debugging which detail page
+        // emitted which upsell is easy from view-source.
+        format!(
+            r#"<section class="upsell">
+  <h2>You might also like</h2>
+  <div class="upsell-grid">{cards}</div>
+</section>"#,
+            cards = cards,
+        )
+    };
+
     let html = format!(
         r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8">
@@ -13360,7 +13444,17 @@ h1{{font-size:20px;font-weight:500;margin:24px 0 8px}}
 .color-badge{{display:inline-block;font-size:12px;padding:4px 10px;background:rgba(245,245,240,0.08);border-radius:12px;letter-spacing:0.05em;font-variant-numeric:tabular-nums}}
 .back{{display:inline-block;margin-top:32px;color:#999;font-size:13px;text-decoration:none}}
 .back:hover{{color:#fff}}
+.upsell{{margin-top:48px;padding-top:24px;border-top:1px solid rgba(255,255,255,0.08)}}
+.upsell h2{{font-size:11px;letter-spacing:0.32em;text-transform:uppercase;opacity:0.55;margin:0 0 18px;font-weight:500}}
+.upsell-grid{{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}}
+.upsell-card{{display:flex;flex-direction:column;gap:6px;text-decoration:none;color:inherit;transition:opacity .18s}}
+.upsell-card:hover{{opacity:0.78}}
+.upsell-card img{{width:100%;aspect-ratio:1/1;object-fit:cover;background:#0c0c0c;border:1px solid rgba(255,255,255,0.04);border-radius:0}}
+.upsell-name{{font-size:11px;line-height:1.4;opacity:0.85;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}}
+.upsell-price{{font-size:10px;letter-spacing:0.05em;opacity:0.55}}
+@media(max-width:600px){{.upsell-grid{{grid-template-columns:repeat(2,1fr);gap:12px}}}}
 </style></head><body>
+<main>
 <img src="{img}" alt="{name}" loading="eager">
 <h1>{name}</h1>
 <div class="meta">{brand_upper} · #{drop_num}</div>
@@ -13370,6 +13464,8 @@ h1{{font-size:20px;font-weight:500;margin:24px 0 8px}}
   <span class="color-badge">{current_code} — {current_name}</span>
 </div>
 <a class="back" href="/products/{brand}/{drop_num}">→ 詳細・購入</a>
+{upsell}
+</main>
 </body></html>"##,
         name = html_escape(&name),
         drop_num = drop_num,
@@ -13380,6 +13476,7 @@ h1{{font-size:20px;font-weight:500;margin:24px 0 8px}}
         swatches = swatches_html,
         current_code = html_escape(&current_color),
         current_name = html_escape(current_color_name),
+        upsell = upsell_html,
     );
     Html(html).into_response()
 }
