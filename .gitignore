@@ -52,3 +52,6 @@ node_modules
 store/static/jiufight/print/orderA_*.zip
 store/static/jiufight/print/orderB_*.zip
 store/static/jiufight/print/jiufight_print_package_*.zip
+
+# Mockup regen backup copies — rollback only, not source-of-truth.
+store/static/proposals/*_old.jpg
