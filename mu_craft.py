@@ -635,12 +635,11 @@ def run_craft_pipeline(user_id: int, topic: str) -> dict:
 
 
 # ───────────────────────────────────────────────────────────── FastAPI app
-app = FastAPI(title="MU CRAFT", version="0.1.0")
-app.mount("/_static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+from contextlib import asynccontextmanager
 
 
-@app.on_event("startup")
-def _startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     init_db()
     print(f"== MU CRAFT booted ==")
     print(f"   DB:        {DB_PATH}")
@@ -650,6 +649,11 @@ def _startup():
     print(f"   Gemini:    {'YES' if GEMINI_API_KEY else 'NO (fallback)'}")
     print(f"   Printful:  {'YES' if PRINTFUL_API_KEY else 'NO (mockups will fail)'}")
     print(f"   open:      {PUBLIC_BASE}")
+    yield
+
+
+app = FastAPI(title="MU CRAFT", version="0.1.0", lifespan=lifespan)
+app.mount("/_static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 @app.get("/healthz")
@@ -837,6 +841,97 @@ def api_skus(limit: int = 20):
     return [dict(r) for r in rows]
 
 
+@app.get("/api/stats")
+def api_stats():
+    """Public aggregate stats — no PII. Lets users see scale + me monitor without ssh."""
+    with db() as conn:
+        sku_total = conn.execute("SELECT COUNT(*) AS c FROM skus").fetchone()["c"]
+        sku_published = conn.execute("SELECT COUNT(*) AS c FROM skus WHERE status='published'").fetchone()["c"]
+        user_total = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
+        user_registered = conn.execute("SELECT COUNT(*) AS c FROM users WHERE email IS NOT NULL").fetchone()["c"]
+        mp_burned_total = conn.execute("SELECT COALESCE(SUM(-delta), 0) AS c FROM mp_ledger WHERE delta < 0").fetchone()["c"]
+        mp_earned_total = conn.execute("SELECT COALESCE(SUM(delta), 0) AS c FROM mp_ledger WHERE delta > 0").fetchone()["c"]
+        last_24h_skus = conn.execute("SELECT COUNT(*) AS c FROM skus WHERE created_at > datetime('now','-1 day')").fetchone()["c"]
+    return {
+        "skus_total": sku_total,
+        "skus_published": sku_published,
+        "skus_last_24h": last_24h_skus,
+        "users_total": user_total,
+        "users_registered": user_registered,
+        "mp_burned_total": mp_burned_total,
+        "mp_earned_total": mp_earned_total,
+    }
+
+
+@app.get("/gallery", response_class=HTMLResponse)
+def gallery():
+    """Public gallery — social proof for visitors, viral growth for creators."""
+    rows = db().execute(
+        "SELECT slug, topic, catchphrase, kanji, mockup_white_url, mockup_black_url, view_count "
+        "FROM skus WHERE mockup_white_url IS NOT NULL OR mockup_black_url IS NOT NULL "
+        "ORDER BY id DESC LIMIT 60"
+    ).fetchall()
+    cards = []
+    for r in rows:
+        mock = r["mockup_black_url"] or r["mockup_white_url"]
+        if not mock:
+            continue
+        cards.append(f"""
+        <a class="card" href="/c/{r['slug']}">
+          <img src="{mock}" loading="lazy" alt="{_xml_escape(r['catchphrase'] or '')}">
+          <div class="cap">{_xml_escape(r['catchphrase'] or '')} {('· ' + _xml_escape(r['kanji'])) if r['kanji'] else ''}</div>
+          <div class="cap-sub">{_xml_escape(r['topic'][:50])}</div>
+        </a>""")
+    cards_html = "\n".join(cards) if cards else '<p style="opacity:0.5">まだ SKU がありません。<a href="/">最初の 1 個を作る ↗</a></p>'
+    return HTMLResponse(GALLERY_HTML.replace("{{cards}}", cards_html).replace("{{count}}", str(len(rows))))
+
+
+GALLERY_HTML = """<!DOCTYPE html>
+<html lang="ja"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gallery · MU CRAFT</title>
+<meta name="description" content="MU CRAFT で生成された最新のTシャツデザイン">
+<meta property="og:title" content="MU CRAFT Gallery">
+<meta property="og:description" content="作るを空気にする — 生成済み SKU 一覧">
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, "Helvetica Neue", "Hiragino Kaku Gothic ProN", sans-serif;
+       background: #0a0a0a; color: #f5f5f0; margin: 0; padding: 24px 16px; }
+.wrap { max-width: 1200px; margin: 0 auto; }
+.topbar { display: flex; justify-content: space-between; align-items: center;
+          padding: 14px 18px; background: #1a1a1a; border-radius: 8px;
+          margin-bottom: 24px; border: 1px solid #2a2a2a; }
+.brand { font-weight: 900; letter-spacing: 2px; font-size: 18px; }
+.brand a { color: #e6c449; text-decoration: none; }
+h1 { font-size: 36px; font-weight: 900; margin: 24px 0 8px; letter-spacing: -1px; }
+.sub { opacity: 0.5; margin-bottom: 32px; font-size: 14px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; }
+.card { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px;
+        text-decoration: none; color: #f5f5f0; transition: transform 0.1s;
+        display: block; overflow: hidden; }
+.card:hover { transform: translateY(-2px); border-color: #e6c449; }
+.card img { width: 100%; aspect-ratio: 1; object-fit: cover; background: #fff; display: block; }
+.cap { padding: 10px 12px 4px; font-weight: 900; font-size: 14px; letter-spacing: 0.5px; }
+.cap-sub { padding: 0 12px 12px; font-size: 11px; opacity: 0.5; }
+.cta-bottom { text-align: center; margin: 40px 0 80px; }
+.cta-bottom a { display: inline-block; background: #e6c449; color: #0a0a0a;
+                padding: 16px 32px; font-weight: 900; border-radius: 8px;
+                text-decoration: none; letter-spacing: 1px; }
+</style></head>
+<body><div class="wrap">
+<div class="topbar">
+  <span class="brand"><a href="/">← MU CRAFT</a></span>
+  <a href="/" style="color: #e6c449; text-decoration: none;">自分も作る →</a>
+</div>
+<h1>Gallery</h1>
+<p class="sub">最新 {{count}} 件 · 作るを空気にする</p>
+<div class="grid">{{cards}}</div>
+<div class="cta-bottom"><a href="/">何かを Tシャツにする →</a></div>
+</div></body></html>"""
+
+
 # ───────────────────────────────────────────────────────────── HTML
 HTML_INDEX = """<!DOCTYPE html>
 <html lang="ja">
@@ -949,7 +1044,7 @@ HTML_INDEX = """<!DOCTYPE html>
 
   <footer>
     MU CRAFT v0.1 — 作るを空気にする<br>
-    <a href="/api/skus" target="_blank">SKU 一覧 (JSON)</a>
+    <a href="/gallery">Gallery</a> · <a href="/api/stats" target="_blank">Stats</a> · <a href="/api/skus" target="_blank">SKU 一覧 (JSON)</a>
   </footer>
 </div>
 
