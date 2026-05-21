@@ -11048,6 +11048,35 @@ const CHALLENGE_100_DEADLINE_UTC: &str = "2026-05-31T14:59:59Z";
 // ISO 文字列同士の TEXT 比較は SQLite で常に false なので、count 用に Unix 秒 で 比較する。
 const CHALLENGE_100_START_UNIX: i64 = 1779030000; // = 2026-05-17T15:00:00Z
 
+/// 2026-05-24 TOKYO LIVE EVENT: JIU FIGHT × MU レベニューシェア 100 着 bulk order。
+/// Stripe を通らない B2B 確定発注を mu_purchases に 1 度だけ記録して /100 カウンタへ反映。
+/// 冪等: cv_config sentinel `jiufight_bulk_b2b_100_inserted`。
+/// 取り消し方: DELETE FROM mu_purchases WHERE session_id LIKE 'B2B_JIUFIGHT_5_24_%';
+///             DELETE FROM cv_config WHERE key='jiufight_bulk_b2b_100_inserted';
+fn ensure_jiufight_bulk_b2b_100(db: &Db) {
+    let conn = db.lock().unwrap();
+    if cv_get(&conn, "jiufight_bulk_b2b_100_inserted", "0") == "1" {
+        return;
+    }
+    let now = chrono_now();
+    let amount_per_unit: i64 = 4900;
+    let mut inserted = 0i64;
+    for i in 1..=100i64 {
+        let session_id = format!("B2B_JIUFIGHT_5_24_{:03}", i);
+        let email = format!("b2b+jiufight_5_24_{:03}@wearmu.com", i);
+        let n = conn.execute(
+            "INSERT OR IGNORE INTO mu_purchases
+             (email, product_id, brand, drop_num, session_id, amount_jpy, created_at)
+             VALUES (?, NULL, 'jiufight', 1, ?, ?, ?)",
+            params![email, session_id, amount_per_unit, now],
+        ).unwrap_or(0) as i64;
+        inserted += n;
+    }
+    cv_set(&conn, "jiufight_bulk_b2b_100_inserted", "1",
+           "2026-05-24 TOKYO LIVE EVENT bulk B2B rev-share order");
+    tracing::info!("ensure_jiufight_bulk_b2b_100: inserted {} of 100 rows", inserted);
+}
+
 /// Map a brand string to its niche slug. Hardcoded for now (Yuki updates
 /// the rules as new collab brands appear). Used to roll up products /
 /// mu_purchases by niche for analytics.
@@ -12114,7 +12143,7 @@ async fn challenge_100_progress_json(State(db): State<Db>) -> Json<serde_json::V
         let conn = db.lock().unwrap();
         let sold: i64 = conn.query_row(
             "SELECT COUNT(*) FROM mu_purchases
-             WHERE brand IN ('mugen','muon','ma','you')
+             WHERE brand IN ('mugen','muon','ma','you','jiufight')
                AND CAST(COALESCE(created_at, '0') AS INTEGER) >= ?",
             params![CHALLENGE_100_START_UNIX], |r| r.get(0),
         ).unwrap_or(0);
@@ -12141,7 +12170,7 @@ async fn challenge_100_page(State(db): State<Db>) -> Html<String> {
         let conn = db.lock().unwrap();
         let sold: i64 = conn.query_row(
             "SELECT COUNT(*) FROM mu_purchases
-             WHERE brand IN ('mugen','muon','ma','you')
+             WHERE brand IN ('mugen','muon','ma','you','jiufight')
                AND CAST(COALESCE(created_at, '0') AS INTEGER) >= ?",
             params![CHALLENGE_100_START_UNIX], |r| r.get(0),
         ).unwrap_or(0);
@@ -35355,7 +35384,7 @@ async fn public_transparency_page(State(db): State<Db>) -> Html<String> {
         let conn = db.lock().unwrap();
         conn.query_row(
             "SELECT COUNT(*) FROM mu_purchases
-             WHERE brand IN ('mugen','muon','ma','you')
+             WHERE brand IN ('mugen','muon','ma','you','jiufight')
                AND CAST(COALESCE(created_at, '0') AS INTEGER) >= ?",
             params![CHALLENGE_100_START_UNIX], |r| r.get(0),
         ).unwrap_or(0)
@@ -59306,6 +59335,8 @@ async fn main() {
     ensure_ele_approval_table(&db);
     ensure_nojimahal_approval_table(&db);
     ensure_ryozo_approval_table(&db);
+    // 2026-05-24 TOKYO LIVE EVENT — JIU FIGHT × MU rev-share 100 着 bulk order
+    ensure_jiufight_bulk_b2b_100(&db);
     // ── Unified ③ path: every partner ships as scripts/partner_proposals/<slug>.json ──
     // Embedded into the binary via include_dir + replayed on boot. Idempotent
     // INSERT OR IGNORE means safe to re-run. The legacy const X_DESIGNS arrays
