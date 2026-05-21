@@ -1,4 +1,14 @@
 User-agent: *
 Allow: /
+Disallow: /admin
+Disallow: /admin/
+Disallow: /api/admin/
+Disallow: /proposals/
+Disallow: /sandbox/
+Disallow: /buyer/
+Disallow: /wallet/
+Disallow: /claim/
+Disallow: /mypage
+Disallow: /mypage/
 
 Sitemap: https://wearmu.com/sitemap.xml

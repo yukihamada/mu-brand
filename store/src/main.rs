@@ -13656,11 +13656,49 @@ async fn product_sku_page(
         )
     };
 
+    // ── canonical + OGP ──
+    // /p/<serial_code> is the canonical product detail URL. When the visitor
+    // arrived via a numeric id (e.g. /p/123 instead of /p/MU-…) we still
+    // canonicalise to the serial form so Search Console consolidates
+    // signal. Falls back to /p/<requested-slug> when serial is unknown.
+    let canonical_slug: String = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT serial_code FROM products WHERE id=? AND serial_code IS NOT NULL AND serial_code != ''",
+            params![id],
+            |r| r.get::<_, String>(0),
+        ).ok().unwrap_or_else(|| sku.clone())
+    };
+    let canonical_url = format!("https://wearmu.com/p/{}", canonical_slug);
+    let og_image = if img.is_empty() {
+        "https://wearmu.com/static/og.png".to_string()
+    } else if img.starts_with("http") {
+        img.clone()
+    } else {
+        format!("https://wearmu.com{}", img)
+    };
+    let og_desc = format!(
+        "{} — MU #{} · ¥{} · 注文後に刷る Print-on-Demand T シャツ。",
+        name, drop_num, intl_price_num,
+    );
+
     let html = format!(
         r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{name} — MU #{drop_num}</title>
+<meta name="description" content="{og_desc_esc}">
+<link rel="canonical" href="{canonical_url}">
+<meta property="og:type" content="product">
+<meta property="og:title" content="{name_attr} — MU #{drop_num}">
+<meta property="og:description" content="{og_desc_esc}">
+<meta property="og:url" content="{canonical_url}">
+<meta property="og:image" content="{og_image_attr}">
+<meta property="og:site_name" content="MU">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{name_attr} — MU #{drop_num}">
+<meta name="twitter:description" content="{og_desc_esc}">
+<meta name="twitter:image" content="{og_image_attr}">
 {json_ld}
 <style>
 body{{font-family:-apple-system,system-ui,sans-serif;background:#0a0a0a;color:#f5f5f0;margin:0;padding:24px;max-width:720px;margin:0 auto}}
@@ -13732,6 +13770,7 @@ h1{{font-size:20px;font-weight:500;margin:24px 0 8px}}
 </main>
 </body></html>"##,
         name = html_escape(&name),
+        name_attr = html_attr_escape(&name),
         drop_num = drop_num,
         brand = html_attr_escape(&brand),
         brand_upper = html_escape(&brand.to_uppercase()),
@@ -13748,6 +13787,9 @@ h1{{font-size:20px;font-weight:500;margin:24px 0 8px}}
         upsell = upsell_html,
         json_ld = json_ld,
         rating = rating_block_html,
+        canonical_url = html_attr_escape(&canonical_url),
+        og_image_attr = html_attr_escape(&og_image),
+        og_desc_esc = html_attr_escape(&og_desc),
     );
     Html(html).into_response()
 }
@@ -23286,13 +23328,61 @@ async fn buy_page() -> Html<&'static str> {
     Html(include_str!("../static/buy.html"))
 }
 
-/// /buy/:id — pretty URL for paid/SNS landing pages. Serves the same
-/// buy.html as /buy; the JS reads the id from `location.pathname` first,
-/// falling back to ?product_id=…
+/// /buy/:id — pretty URL for paid/SNS landing pages.
+///
+/// 2026-05-21 URL polish: the canonical product detail URL is now
+/// `/p/<serial_code>` (the SEO-friendly alphanumeric SKU slug). When this
+/// legacy numeric `/buy/<id>` URL resolves to a product that has a
+/// serial_code, return a **301 permanent redirect** to `/p/<serial>` so
+/// crawlers consolidate link equity on the canonical form. When the row
+/// has no serial yet (older rows pre-dating the serial backfill) fall
+/// back to the original static buy.html so legacy ad links don't break.
 async fn buy_page_with_id(
-    axum::extract::Path(_id): axum::extract::Path<i64>,
-) -> Html<&'static str> {
-    Html(include_str!("../static/buy.html"))
+    State(db): State<Db>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+) -> Response {
+    let serial: Option<String> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT serial_code FROM products WHERE id=? AND serial_code IS NOT NULL AND serial_code != ''",
+            params![id],
+            |r| r.get::<_, String>(0),
+        ).ok()
+    };
+    if let Some(sc) = serial {
+        // `?buy=1` preserves the buy-intent signal for downstream analytics
+        // (the canonical /p/ page reads it to pre-open the checkout modal).
+        return axum::response::Redirect::permanent(&format!("/p/{}?buy=1", sc)).into_response();
+    }
+    // Fallback: legacy static buy page (JS still reads the id from the path).
+    Html(include_str!("../static/buy.html")).into_response()
+}
+
+/// /products/:brand/:drop_num — legacy product detail URL. The canonical
+/// public form is now `/p/<serial_code>`; when that's resolvable, 301
+/// redirect there so search engines consolidate link equity on a single
+/// URL. When the row has no serial (older rows) fall back to the
+/// original SPA `index` handler so legacy bookmarks keep working.
+async fn products_legacy_redirect(
+    State(db): State<Db>,
+    axum::extract::Path((brand, drop_num)): axum::extract::Path<(String, i64)>,
+) -> Response {
+    let serial: Option<String> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT serial_code FROM products
+             WHERE brand=? AND drop_num=? AND serial_code IS NOT NULL AND serial_code != ''",
+            params![brand, drop_num],
+            |r| r.get::<_, String>(0),
+        ).ok()
+    };
+    if let Some(sc) = serial {
+        return axum::response::Redirect::permanent(&format!("/p/{}", sc)).into_response();
+    }
+    // Fallback: serve the SPA index (existing behaviour) so legacy URLs
+    // without a serial_code keep functioning.
+    let html = index(State(db)).await;
+    html.into_response()
 }
 
 /// /buy/founder — Founder Edition LP. ¥48,000, 1着, 年4回 drop.
@@ -23588,9 +23678,19 @@ async fn collection_page(
         }
     }
 
+    let canonical_url = format!("https://wearmu.com/collections/{}", brand);
     let html = format!(r#"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>{label} — MU</title>
+<link rel="canonical" href="{canonical_url}"/>
+<meta property="og:type" content="website">
+<meta property="og:title" content="{label} — MU">
+<meta property="og:description" content="{label} コレクション · MU">
+<meta property="og:url" content="{canonical_url}">
+<meta property="og:image" content="https://wearmu.com/static/og.png">
+<meta property="og:site_name" content="MU">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://wearmu.com/static/og.png">
 <style>{css}
   .wrap{{max-width:1100px;margin:0 auto;padding:32px 22px 0}}
   .kicker{{font-size:10.5px;letter-spacing:0.22em;color:#666;text-transform:uppercase}}
@@ -23624,6 +23724,7 @@ async fn collection_page(
         header=vault_header_html("home", None),
         footer=vault_footer_html(),
         label=html_escape(&brand_label),
+        canonical_url=html_attr_escape(&canonical_url),
         count=rows.len(),
         cards=cards);
     (StatusCode::OK, [("content-type", "text/html; charset=utf-8")], html).into_response()
@@ -23691,11 +23792,17 @@ const MERCH_CATEGORIES: &[MerchCategory] = &[
 
 /// Render the shared merch grid HTML used by both /merch and /merch/<category>.
 /// `rows` is the SELECT result; `title`, `tagline`, `count_label` configure the hero.
+/// 2026-05-21: also emits `<link rel="canonical">` + og:* + twitter:card.
+/// `canonical_path` is the path portion of the canonical URL
+/// (e.g. "/merch" or "/merch/bjj").
+#[allow(clippy::type_complexity)]
 fn render_merch_grid_html(
     rows: &[(i64, i64, String, Option<String>, i64, i64, i64, String)],
     title: &str,
     tagline: &str,
+    canonical_path: &str,
 ) -> String {
+    let canonical_url = format!("https://wearmu.com{}", canonical_path);
     let mut cards = String::new();
     if rows.is_empty() {
         cards.push_str(r#"<div class="empty">商品が見つかりません</div>"#);
@@ -23723,6 +23830,17 @@ fn render_merch_grid_html(
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>{title_esc} — MU</title>
 <meta name="description" content="{tagline_esc}"/>
+<link rel="canonical" href="{canonical_url}"/>
+<meta property="og:type" content="website">
+<meta property="og:title" content="{title_esc} — MU">
+<meta property="og:description" content="{tagline_esc}">
+<meta property="og:url" content="{canonical_url}">
+<meta property="og:image" content="https://wearmu.com/static/og.png">
+<meta property="og:site_name" content="MU">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{title_esc} — MU">
+<meta name="twitter:description" content="{tagline_esc}">
+<meta name="twitter:image" content="https://wearmu.com/static/og.png">
 <style>{css}
   .wrap{{max-width:1100px;margin:0 auto;padding:32px 22px 0}}
   .kicker{{font-size:10.5px;letter-spacing:0.22em;color:#666;text-transform:uppercase}}
@@ -23769,6 +23887,7 @@ fn render_merch_grid_html(
         footer=vault_footer_html(),
         title_esc=html_escape(title),
         tagline_esc=html_escape(tagline),
+        canonical_url=html_attr_escape(&canonical_url),
         count=rows.len(),
         cards=cards)
 }
@@ -23824,7 +23943,8 @@ async fn merch_category(
         ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
     };
 
-    let html = render_merch_grid_html(&rows, cat.label, cat.tagline);
+    let canonical_path = format!("/merch/{}", cat.slug);
+    let html = render_merch_grid_html(&rows, cat.label, cat.tagline, &canonical_path);
     (StatusCode::OK, [("content-type", "text/html; charset=utf-8")], html).into_response()
 }
 
@@ -23844,7 +23964,7 @@ async fn merch_index(State(db): State<Db>) -> Response {
             r.get(4)?, r.get(5)?, r.get(6)?, r.get::<_, String>(7)?
         ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
     };
-    let html = render_merch_grid_html(&rows, "ALL MERCH", "全アクティブドロップ。カテゴリから絞り込み可。");
+    let html = render_merch_grid_html(&rows, "ALL MERCH", "全アクティブドロップ。カテゴリから絞り込み可。", "/merch");
     (StatusCode::OK, [("content-type", "text/html; charset=utf-8")], html).into_response()
 }
 
@@ -25952,6 +26072,29 @@ fn ensure_proposal_tables(db: &Db) {
          )", [],
     );
     let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_mugen_claims_email ON proposal_mugen_claims(email)", []);
+
+    // ── NL → product instant-preview jobs ─────────────────────────────────
+    // POST /api/admin/create/start INSERTs a row, scripts/nl_product_creator.py
+    // updates status from `parsing` → `preview_ready` → `generating` → `done`.
+    // GET /api/admin/create/status/<id> returns the row. UI polls at 1s.
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS nl_jobs (
+            id          TEXT PRIMARY KEY,
+            status      TEXT NOT NULL,
+            text        TEXT NOT NULL,
+            spec_json   TEXT,
+            preview_url TEXT,
+            mockup_url  TEXT,
+            design_url  TEXT,
+            product_id  INTEGER,
+            error       TEXT,
+            created_at  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+         )", [],
+    );
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_nl_jobs_status ON nl_jobs(status, created_at DESC)", [],
+    );
 }
 
 // ── Points wallet helpers ────────────────────────────────────────────────
@@ -26581,13 +26724,54 @@ fn render_proposal_lp(
         }).collect::<Vec<_>>().join("")
     }).unwrap_or_default();
 
+    // ── canonical / og / robots ──
+    // 2026-05-21: approved collab LPs are public landing pages and need full
+    // SEO/social meta. Unapproved drafts stay noindex (admin preview only).
+    // canonical = /<slug> per spec (the public, shareable URL form).
+    let canonical_url_lp = format!("https://wearmu.com/{}", slug);
+    let robots_meta = if approved {
+        r#"<meta name="robots" content="index,follow">"#
+    } else {
+        r#"<meta name="robots" content="noindex,nofollow">"#
+    };
+    let og_image_lp = {
+        // Use the first SKU's image when available; otherwise fall back to
+        // the brand default. Never emit a 404 path — placeholder served by
+        // /static/og.png keeps Twitter/FB cards rendering.
+        let first_img = skus.iter().find_map(|s| s.6.clone().filter(|u| !u.is_empty()));
+        match first_img {
+            Some(u) if u.starts_with("http") => u,
+            Some(u) => format!("https://wearmu.com{}", u),
+            None    => "https://wearmu.com/static/og.png".to_string(),
+        }
+    };
+    let og_desc_lp = if !tagline.is_empty() {
+        tagline.clone()
+    } else if !lede.is_empty() {
+        let truncated: String = lede.chars().take(160).collect();
+        truncated
+    } else {
+        format!("{} × MU — autonomous collab line.", display_name)
+    };
+
     format!(r#"<!doctype html>
 <html lang="ja"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{display_name} × MU — collab pitch</title>
-<meta name="robots" content="noindex,nofollow">
+{robots_meta}
+<link rel="canonical" href="{canonical_url_lp}">
 <meta name="description" content="社外秘 — {display_name} 様への collab pitch deck (株式会社イネブラ / MU)。{n_sku} SKU、 拡張・リブランド相談用。">
+<meta property="og:type" content="website">
+<meta property="og:title" content="{display_name} × MU">
+<meta property="og:description" content="{og_desc_lp_esc}">
+<meta property="og:url" content="{canonical_url_lp}">
+<meta property="og:image" content="{og_image_lp_esc}">
+<meta property="og:site_name" content="MU">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{display_name} × MU">
+<meta name="twitter:description" content="{og_desc_lp_esc}">
+<meta name="twitter:image" content="{og_image_lp_esc}">
 <style>
 :root{{--bg:#0a0a0a;--fg:#f5f5f5;--mute:#888;--line:#222;--accent:{accent};--accent-rgba:{accent_rgba}}}
 *{{box-sizing:border-box}}
@@ -27143,6 +27327,10 @@ footer a{{color:var(--accent);text-decoration:none}}
         cards_html = cards_html,
         ip_owner = html_escape(ip_owner),
         slug = slug,
+        robots_meta = robots_meta,
+        canonical_url_lp = html_attr_escape(&canonical_url_lp),
+        og_desc_lp_esc = html_attr_escape(&og_desc_lp),
+        og_image_lp_esc = html_attr_escape(&og_image_lp),
     )
 }
 
@@ -27784,6 +27972,271 @@ async fn admin_collabs_page(
 ) -> Response {
     if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/collabs").await { return r; }
     Html(include_str!("../static/admin-collabs.html")).into_response()
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// NL → product instant-preview pipeline.
+//
+// Two-stage async flow that makes /admin/create feel sub-2s:
+//   POST /api/admin/create/start  {text}
+//     → 1. INSERT nl_jobs row (status=parsing), return job_id immediately
+//     → 2. spawn python --stage parse (~1-2s: Claude haiku spec → R2 placeholder)
+//          updates status=preview_ready + preview_url
+//     → 3. spawn python --stage generate (~20-40s: Gemini → R2 → Printful)
+//          updates status=done + mockup_url + product_id
+//
+//   GET /api/admin/create/status/<job_id>
+//     → returns the row so the UI can poll at 1s tick and swap placeholder
+//        for the real mockup the moment it lands.
+//
+// Python is invoked via `python3 scripts/nl_product_creator.py` — when the
+// runtime container lacks python3 the spawn errors and the job is marked
+// failed without breaking the rest of the app.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// GET /admin/create — admin-gated HTML for the NL creator UI.
+/// Replaces `__TOKEN__` / `__TOKEN_JS__` placeholders with the resolved admin
+/// token so the front-end can call /api/admin/create/* without prompting.
+async fn admin_create_page(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/create").await { return r; }
+    let token = q.get("token").cloned()
+        .or_else(|| q.get("admin_token").cloned())
+        .or_else(|| env::var("MU_ADMIN_TOKEN").ok())
+        .unwrap_or_else(|| "mu-admin".to_string());
+    let token_safe = token.replace('"', "");
+    let html = include_str!("../static/admin-create.html")
+        .replace("__TOKEN__", &token_safe)
+        .replace("__TOKEN_JS__", &format!("\"{}\"", token_safe));
+    Html(html).into_response()
+}
+
+/// POST /api/admin/create/start  {text}
+/// Inserts an `nl_jobs` row, returns `{job_id, status:"parsing"}` in ~50ms,
+/// then fires the python parse + generate stages in the background.
+async fn admin_create_start(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/create/start").await {
+        return r;
+    }
+
+    let text = body.get("text").and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string()).unwrap_or_default();
+    if text.len() < 3 || text.len() > 4000 {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok": false, "error": "text must be 3-4000 chars"})))
+            .into_response();
+    }
+
+    let brand_override = body.get("brand").and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+
+    let job_id = uuid::Uuid::new_v4().to_string();
+    let now = chrono_now();
+    {
+        let conn = db.lock().unwrap();
+        if let Err(e) = conn.execute(
+            "INSERT INTO nl_jobs (id, status, text, created_at, updated_at)
+             VALUES (?, 'parsing', ?, ?, ?)",
+            params![job_id, text, now, now],
+        ) {
+            return (StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"ok": false, "error": format!("db insert: {}", e)})))
+                .into_response();
+        }
+    }
+
+    // Background pipeline: parse → generate, both as separate python invocations.
+    // Keeping them separate means a failure in `generate` still leaves the
+    // placeholder visible in the UI (job stays preview_ready instead of vanishing).
+    let job_id_bg = job_id.clone();
+    let brand_bg = brand_override.clone();
+    let db_bg = db.clone();
+    let text_bg = text.clone();
+    tokio::spawn(async move {
+        let mut parse_cmd = tokio::process::Command::new("python3");
+        parse_cmd
+            .arg("scripts/nl_product_creator.py")
+            .arg("--stage").arg("parse")
+            .arg("--job-id").arg(&job_id_bg)
+            .arg("--json-input");
+        if let Some(b) = brand_bg.as_deref() {
+            parse_cmd.arg("--brand").arg(b);
+        }
+        let parse_input = serde_json::json!({"text": text_bg}).to_string();
+        let parse_res = run_python_stage(parse_cmd, &parse_input, 30).await;
+        if let Err(e) = parse_res {
+            mark_job_error(&db_bg, &job_id_bg, &format!("parse stage: {}", e));
+            return;
+        }
+
+        let mut gen_cmd = tokio::process::Command::new("python3");
+        gen_cmd
+            .arg("scripts/nl_product_creator.py")
+            .arg("--stage").arg("generate")
+            .arg("--job-id").arg(&job_id_bg);
+        let gen_res = run_python_stage(gen_cmd, "", 180).await;
+        if let Err(e) = gen_res {
+            mark_job_error(&db_bg, &job_id_bg, &format!("generate stage: {}", e));
+        }
+    });
+
+    (StatusCode::OK, Json(serde_json::json!({
+        "ok": true,
+        "job_id": job_id,
+        "status": "parsing",
+    }))).into_response()
+}
+
+/// Spawn `python3 scripts/nl_product_creator.py …` with `input` on stdin and
+/// a wallclock timeout. Stderr is logged to tracing but NEVER surfaced to
+/// the user-facing job.error (might contain API key residue).
+async fn run_python_stage(
+    mut cmd: tokio::process::Command,
+    input: &str,
+    timeout_secs: u64,
+) -> Result<String, String> {
+    use std::process::Stdio;
+    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd.spawn()
+        .map_err(|e| format!("spawn python3: {} (is python3 in PATH?)", e))?;
+
+    if !input.is_empty() {
+        if let Some(stdin) = child.stdin.as_mut() {
+            use tokio::io::AsyncWriteExt;
+            let _ = stdin.write_all(input.as_bytes()).await;
+            let _ = stdin.shutdown().await;
+        }
+    }
+
+    let out = match tokio::time::timeout(
+        std::time::Duration::from_secs(timeout_secs),
+        child.wait_with_output()
+    ).await {
+        Ok(Ok(o)) => o,
+        Ok(Err(e)) => return Err(format!("wait: {}", e)),
+        Err(_) => return Err(format!("python timeout after {}s", timeout_secs)),
+    };
+    if !out.status.success() {
+        let err_summary = String::from_utf8_lossy(&out.stderr);
+        let snippet: String = err_summary.chars().take(200).collect();
+        tracing::warn!("[nl_jobs] python exit={:?} stderr={}", out.status.code(), snippet);
+        return Err(format!("python exit code {:?}", out.status.code()));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+/// Best-effort write of `status=error, error=<msg>` into nl_jobs.
+fn mark_job_error(db: &Db, job_id: &str, error_msg: &str) {
+    let now = chrono_now();
+    let conn = db.lock().unwrap();
+    let _ = conn.execute(
+        "UPDATE nl_jobs SET status='error', error=?, updated_at=?
+         WHERE id=? AND status NOT IN ('done')",
+        params![error_msg, now, job_id],
+    );
+    tracing::warn!("[nl_jobs] {} marked error: {}", job_id, error_msg);
+}
+
+/// GET /api/admin/create/status/<job_id> — poll endpoint for the UI.
+async fn admin_create_status(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Path(job_id): Path<String>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/create/status").await {
+        return r;
+    }
+    if job_id.len() != 36 || !job_id.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok": false, "error": "bad job_id"})))
+            .into_response();
+    }
+    let conn = db.lock().unwrap();
+    let row = conn.query_row(
+        "SELECT status, text, spec_json, preview_url, mockup_url,
+                design_url, product_id, error, created_at, updated_at
+         FROM nl_jobs WHERE id = ?",
+        params![job_id],
+        |r| Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, Option<String>>(2)?,
+            r.get::<_, Option<String>>(3)?,
+            r.get::<_, Option<String>>(4)?,
+            r.get::<_, Option<String>>(5)?,
+            r.get::<_, Option<i64>>(6)?,
+            r.get::<_, Option<String>>(7)?,
+            r.get::<_, String>(8)?,
+            r.get::<_, String>(9)?,
+        )),
+    );
+    match row {
+        Ok((status, text, spec_json, preview_url, mockup_url,
+            design_url, product_id, error, created_at, updated_at)) => {
+            let spec: serde_json::Value = spec_json
+                .as_deref()
+                .and_then(|s| serde_json::from_str(s).ok())
+                .unwrap_or(serde_json::Value::Null);
+            (StatusCode::OK, Json(serde_json::json!({
+                "ok": true,
+                "id": job_id,
+                "status": status,
+                "text": text,
+                "spec": spec,
+                "preview_url": preview_url,
+                "mockup_url": mockup_url,
+                "design_url": design_url,
+                "product_id": product_id,
+                "error": error,
+                "created_at": created_at,
+                "updated_at": updated_at,
+            }))).into_response()
+        }
+        Err(_) => (StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"ok": false, "error": "job not found"})))
+            .into_response(),
+    }
+}
+
+/// POST /api/admin/create/<product_id>/publish — confirm a NL-created product
+/// (active=1). Idempotent — products are already active=1 from insert.
+async fn admin_create_publish(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Path(product_id): Path<i64>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(),
+        &format!("/api/admin/create/{}/publish", product_id)).await { return r; }
+    let conn = db.lock().unwrap();
+    let _ = conn.execute("UPDATE products SET active=1 WHERE id=?", params![product_id]);
+    (StatusCode::OK, Json(serde_json::json!({"ok": true, "id": product_id}))).into_response()
+}
+
+/// POST /api/admin/create/<product_id>/discard — soft-delete: active=0,
+/// inventory=0 so it disappears from public listings.
+async fn admin_create_discard(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Path(product_id): Path<i64>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(),
+        &format!("/api/admin/create/{}/discard", product_id)).await { return r; }
+    let conn = db.lock().unwrap();
+    let _ = conn.execute(
+        "UPDATE products SET active=0, inventory=0 WHERE id=?",
+        params![product_id]);
+    (StatusCode::OK, Json(serde_json::json!({"ok": true, "id": product_id}))).into_response()
 }
 
 /// GET /api/proposals — public list of approved (live) collab proposals.
@@ -36872,10 +37325,17 @@ async fn public_profit_split_page(State(db): State<Db>) -> Html<String> {
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>━◯━ MU · 利益分配 (ハイブリッド + 段階) | wearmu.com</title>
 <meta name="description" content="MU の利益分配スキーム — 自社 brand は弟子屈 35 + 気候 reserve 10 + 運営 5、 collab brand は partner 指定先 50、 personal brand は弟子屈 50 default。 寄付率は sales 0-99 着 = 1% → 100+ = 5% → 500+ = 10% → 1k+ = 20% → 5k+ = 35% → 10k+ = 50% (target) の段階で credible に積み上げ。">
+<link rel="canonical" href="https://wearmu.com/profit-split">
+<meta property="og:type" content="article">
 <meta property="og:title" content="MU · 利益分配 (ハイブリッド + 段階 1→50%)">
 <meta property="og:description" content="brand 別 destination matrix + 累計 sold 着数で段階的に上がる寄付率。 sales 0 の日に 50% 約束する unrealistic な PR ではなく、 1%→50% の credible runway。">
 <meta property="og:url" content="https://wearmu.com/profit-split">
+<meta property="og:image" content="https://wearmu.com/static/og.png">
+<meta property="og:site_name" content="MU">
 <meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="MU · 利益分配 (ハイブリッド + 段階 1→50%)">
+<meta name="twitter:description" content="brand 別 destination matrix + 累計 sold 着数で段階的に上がる寄付率。 1%→50% の credible runway。">
+<meta name="twitter:image" content="https://wearmu.com/static/og.png">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="alternate" type="application/json" href="/api/profit-split">
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
@@ -37026,6 +37486,17 @@ async fn succession_page(State(db): State<Db>) -> Html<String> {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="description" content="MU の MA steward succession chain — 100 年 append-only。 各世代の holder と handoff 理由を hash-chained で永続記録、 founder の不在でも 連鎖は続く。">
 <meta name="robots" content="index,follow">
+<link rel="canonical" href="https://wearmu.com/succession">
+<meta property="og:type" content="article">
+<meta property="og:title" content="MA Succession Chain · 100-Year Append-Only Lineage · MU">
+<meta property="og:description" content="MU の MA steward succession chain — 100 年 append-only。 hash-chained で永続記録。">
+<meta property="og:url" content="https://wearmu.com/succession">
+<meta property="og:image" content="https://wearmu.com/static/og.png">
+<meta property="og:site_name" content="MU">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="MA Succession Chain · 100-Year Append-Only Lineage · MU">
+<meta name="twitter:description" content="100 年 append-only。 hash-chained で永続記録。">
+<meta name="twitter:image" content="https://wearmu.com/static/og.png">
 <style>
   body {{ background:#0a0a0a; color:#F5F5F0; font-family:-apple-system,BlinkMacSystemFont,'Hiragino Kaku Gothic ProN',sans-serif; margin:0; padding:0; line-height:1.6; }}
   .wrap {{ max-width:980px; margin:0 auto; padding:64px 32px 96px; }}
@@ -46131,7 +46602,67 @@ async fn dynamic_sitemap(State(db): State<Db>) -> Response {
             .map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>())
             .unwrap_or_default()
     };
+    // ── (c) approved proposal slugs (public collab LPs) ────────────────
+    let approved_slugs: Vec<String> = {
+        let conn = db.lock().unwrap();
+        conn.prepare(
+            "SELECT slug FROM proposals
+             WHERE approved_at IS NOT NULL AND revoked_at IS NULL
+             ORDER BY slug ASC"
+        ).ok().and_then(|mut stmt| {
+            stmt.query_map([], |r| r.get::<_, String>(0))
+                .ok()
+                .map(|it| it.filter_map(|r| r.ok()).collect())
+        }).unwrap_or_default()
+    };
+
     let mut entries = String::new();
+    // ── static URL polish entries ──
+    // 2026-05-21: every public page that has its own canonical URL must be
+    // discoverable via sitemap.xml. static/sitemap.xml is the bootstrap;
+    // this handler appends DB-driven URLs + any newer top-level pages.
+    let now = chrono_now_jst_date_str();
+    let static_entries: &[(&str, &str, &str)] = &[
+        // (path, changefreq, priority)
+        ("/heritage",     "weekly",  "0.9"),
+        ("/constitution", "monthly", "0.7"),
+        ("/succession",   "weekly",  "0.7"),
+        ("/profit-split", "weekly",  "0.8"),
+        ("/donations",    "weekly",  "0.7"),
+        ("/transparency", "daily",   "0.7"),
+        ("/amami",        "weekly",  "0.8"),
+        ("/proposals",    "daily",   "0.8"),
+        ("/merch",        "daily",   "0.9"),
+        ("/merch/bjj",       "weekly", "0.7"),
+        ("/merch/kokon",     "weekly", "0.7"),
+        ("/merch/regional",  "weekly", "0.7"),
+        ("/merch/event",     "weekly", "0.7"),
+        ("/merch/art",       "weekly", "0.7"),
+        ("/merch/profession","weekly", "0.7"),
+        ("/founder",         "monthly", "0.7"),
+        ("/founding",        "monthly", "0.7"),
+        ("/protocol",        "weekly", "0.7"),
+        ("/collab",          "weekly", "0.8"),
+        ("/about",           "monthly", "0.7"),
+        ("/press",           "monthly", "0.7"),
+    ];
+    for (path, freq, prio) in static_entries {
+        entries.push_str(&format!(
+            "  <url>\n    <loc>https://wearmu.com{path}</loc>\n    \
+             <lastmod>{now}</lastmod>\n    \
+             <changefreq>{freq}</changefreq>\n    <priority>{prio}</priority>\n  </url>\n",
+            path = path, now = now, freq = freq, prio = prio,
+        ));
+    }
+    // Approved collab LPs (public /<slug> canonical)
+    for slug in &approved_slugs {
+        entries.push_str(&format!(
+            "  <url>\n    <loc>https://wearmu.com/{slug}</loc>\n    \
+             <lastmod>{now}</lastmod>\n    \
+             <changefreq>weekly</changefreq>\n    <priority>0.8</priority>\n  </url>\n",
+            slug = slug, now = now,
+        ));
+    }
     for (slug, lastmod) in posts {
         entries.push_str(&format!(
             "  <url>\n    <loc>https://wearmu.com/blog/{slug}</loc>\n    \
@@ -46139,7 +46670,11 @@ async fn dynamic_sitemap(State(db): State<Db>) -> Response {
              <changefreq>never</changefreq>\n    <priority>0.6</priority>\n  </url>\n",
             slug = slug, lastmod = lastmod));
     }
-    for (serial_opt, brand_opt, drop_opt, lastmod) in products {
+    // Products: emit ONLY the canonical /p/<serial> form. The legacy
+    // /products/<brand>/<drop> URL 301-redirects to /p/<serial>, so it
+    // must NOT appear in the sitemap (Google penalises sitemaps that list
+    // URLs that 301 elsewhere).
+    for (serial_opt, _brand_opt, _drop_opt, lastmod) in products {
         let lm_attr = if lastmod.is_empty() {
             String::new()
         } else {
@@ -46150,14 +46685,6 @@ async fn dynamic_sitemap(State(db): State<Db>) -> Response {
                 "  <url>\n    <loc>https://wearmu.com/p/{serial}</loc>\n{lm}    \
                  <changefreq>weekly</changefreq>\n    <priority>0.8</priority>\n  </url>\n",
                 serial = serial, lm = lm_attr));
-        }
-        if let (Some(brand), Some(drop_num)) =
-            (brand_opt.as_ref().filter(|s| !s.is_empty()), drop_opt)
-        {
-            entries.push_str(&format!(
-                "  <url>\n    <loc>https://wearmu.com/products/{brand}/{drop}</loc>\n{lm}    \
-                 <changefreq>weekly</changefreq>\n    <priority>0.7</priority>\n  </url>\n",
-                brand = brand, drop = drop_num, lm = lm_attr));
         }
     }
     let out = if base.contains("</urlset>") {
@@ -60040,9 +60567,12 @@ async fn main() {
         // /nouns: DAO approval pending → section hidden from nav (2026-05-13).
         // Proposal text remains at /nouns-proposal.html for transparency.
         .route("/nouns", get(|| async { axum::response::Redirect::permanent("/nouns-proposal.html") }))
-        // Product detail SPA routes
-        .route("/products/:brand/:id", get(index))
-        // Minimal SSR product page with 6-color swatch picker (?color=NVY)
+        // Product detail SPA routes.
+        // 2026-05-21: this legacy URL form 301-redirects to /p/<serial_code>
+        // when the row has a serial; falls back to the SPA index when not.
+        .route("/products/:brand/:id", get(products_legacy_redirect))
+        // Minimal SSR product page with 6-color swatch picker (?color=NVY).
+        // This is the **canonical** product detail URL since 2026-05-21.
         .route("/p/:sku", get(product_sku_page))
         // Buyer-only origin/DNA/prompt page. Gated by per-session UUID
         // (?key=…) minted in the Stripe webhook into post_purchase_queue.
@@ -60184,12 +60714,16 @@ async fn main() {
         .route("/api/fragment", post(fragment_request))
         .route("/v/:brand/:drop_num", get(verify_page))
         .route("/tokushoho", get(tokushoho_page))
-        .route("/tokushoho.html", get(tokushoho_page))
+        // 2026-05-21 URL polish: /<page>.html → 301 /<page>. Previously these
+        // responded 200 on both forms (creating duplicate-content URLs in
+        // Search Console); canonicalise to the suffix-less form.
+        .route("/tokushoho.html", get(|| async { axum::response::Redirect::permanent("/tokushoho") }))
+        .route("/about.html",     get(|| async { axum::response::Redirect::permanent("/about") }))
         .route("/about/honest", get(about_honest_page))
         .route("/source", get(msa_source_page))
         .route("/en/source", get(msa_source_page_en))
         .route("/privacy", get(privacy_page))
-        .route("/privacy.html", get(privacy_page))
+        .route("/privacy.html", get(|| async { axum::response::Redirect::permanent("/privacy") }))
         .route("/tos", get(tos_page))
         .route("/terms", get(tos_page))
         .route("/press", get(press_page_ja))
@@ -60284,6 +60818,14 @@ async fn main() {
         // grid for every collab. API at /api/admin/collabs/dashboard.
         .route("/admin/collabs",               get(admin_collabs_page))
         .route("/api/admin/collabs/dashboard", get(admin_collabs_dashboard))
+        // NL → product instant-preview UI + async backend.
+        // /admin/create POSTs to /start, polls /status/:job_id at 1s tick,
+        // confirms via /publish or /discard.
+        .route("/admin/create",                              get(admin_create_page))
+        .route("/api/admin/create/start",                    post(admin_create_start))
+        .route("/api/admin/create/status/:job_id",           get(admin_create_status))
+        .route("/api/admin/create/:product_id/publish",      post(admin_create_publish))
+        .route("/api/admin/create/:product_id/discard",      post(admin_create_discard))
         // Public read-only list of approved collabs. Powers /proposals (static).
         .route("/api/proposals",               get(public_proposals_list))
         // Static directory page that grids the collabs. Must be registered
@@ -60358,10 +60900,10 @@ async fn main() {
         .route("/api/collab/account/delete", post(collab_account_delete))
         .route("/api/404/buy", post(not_found_buy))
         .route("/city", get(city_page))
-        .route("/city.html", get(city_page))
+        .route("/city.html", get(|| async { axum::response::Redirect::permanent("/city") }))
         // MU × YOU collab
         .route("/you", get(you_page))
-        .route("/you.html", get(you_page))
+        .route("/you.html", get(|| async { axum::response::Redirect::permanent("/you") }))
         .route("/you/collab", get(you_collab_page))
         .route("/api/proposal/personal/derive", post(personal_derive))
         .route("/api/you/collab/brand", post(you_collab_brand))
@@ -60634,7 +61176,7 @@ async fn main() {
         .route("/api/council/vote", post(council_vote))
         // MA Council v2 (HMAC-token flow — 2026.07 roadmap)
         .route("/council", get(council_page))
-        .route("/council.html", get(council_page))
+        .route("/council.html", get(|| async { axum::response::Redirect::permanent("/council") }))
         .route("/api/council/me", get(council_me))
         .route("/api/council/agenda", get(council_agenda))
         .route("/api/council/vote_token", post(council_vote_token))
