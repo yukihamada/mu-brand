@@ -732,7 +732,22 @@ function tickCountdown() {
 }
 setInterval(tickCountdown, 1000);
 tickCountdown();
-loadProduct();
+
+// Task #17: 1-click direct buy. ?from=home_hero or ?direct=1 triggers
+// the buy flow automatically once the product is loaded — skips the
+// modal/size-picker step. Default size 'M' is already set on
+// SELECTED_SIZE. User can still cancel by hitting back / closing the
+// Stripe tab. Keeps existing flow intact when params absent.
+loadProduct().then(() => {
+  const sp = new URLSearchParams(location.search);
+  if (sp.get('direct') === '1' || sp.get('from') === 'home_hero') {
+    const btn = document.getElementById('btn-buy');
+    if (btn && !btn.disabled && CURRENT_PRODUCT) {
+      // Defer one tick so any DOM mutation from loadProduct() settles.
+      setTimeout(() => btn.click(), 50);
+    }
+  }
+});
 initVariants();
 
 // 2026-05-16: 紹介クーポン (REF500) は廃止。 ?ref=CODE のクリックだけ
