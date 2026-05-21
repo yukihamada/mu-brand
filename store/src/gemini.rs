@@ -182,8 +182,13 @@ pub async fn generate_partner_sku(b: &PartnerSkuBrief<'_>) -> Result<GeneratedIm
 /// Text-only Gemini call. Returns the concatenated text parts from the
 /// first candidate. Used by the catalog optimizer cron's persona-critique
 /// step (no image needed — we just want a short text response).
+///
+/// Uses gemini-2.5-flash (non-thinking variant) so the model budget isn't
+/// eaten by hidden chain-of-thought tokens — flash returns the answer
+/// directly. The 2.5-pro variant burned all of our 800-token cap on
+/// "thoughtsTokenCount" and returned 0 visible chars in testing.
 pub async fn call_gemini_text(prompt: &str) -> Result<String, String> {
-    const TEXT_MODEL: &str = "gemini-2.5-pro";
+    const TEXT_MODEL: &str = "gemini-2.5-flash";
     let key = std::env::var("GEMINI_API_KEY")
         .or_else(|_| std::env::var("GOOGLE_API_KEY"))
         .map_err(|_| "GEMINI_API_KEY not set".to_string())?;
@@ -195,8 +200,9 @@ pub async fn call_gemini_text(prompt: &str) -> Result<String, String> {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "responseModalities": ["TEXT"],
-            "maxOutputTokens": 800,
-            "temperature": 0.4
+            "maxOutputTokens": 2000,
+            "temperature": 0.4,
+            "thinkingConfig": {"thinkingBudget": 0}
         }
     });
     let client = reqwest::Client::builder()
