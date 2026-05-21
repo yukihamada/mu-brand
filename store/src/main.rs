@@ -13294,18 +13294,19 @@ async fn product_sku_page(
 ) -> Response {
     // Accept both numeric id ("123") and alphanumeric serial_code ("MU-BJJ-13-TEE-WHITE-L").
     // The latter is the canonical public URL form per existing /p/{serial_code} links.
-    let row: Option<(i64, String, i64, String, Option<String>, Option<String>, i64, String, String)> = {
+    let row: Option<(i64, String, i64, String, Option<String>, Option<String>, i64, String, String, Option<String>)> = {
         let conn = db.lock().unwrap();
         let sql_by_id = "SELECT id, brand, drop_num, name, design_url, mockup_url, price_jpy,
-                                COALESCE(color, 'BLK'), COALESCE(size, 'M')
+                                COALESCE(color, 'BLK'), COALESCE(size, 'M'), suzuri_url
                          FROM products WHERE id=?";
         let sql_by_sc = "SELECT id, brand, drop_num, name, design_url, mockup_url, price_jpy,
-                                COALESCE(color, 'BLK'), COALESCE(size, 'M')
+                                COALESCE(color, 'BLK'), COALESCE(size, 'M'), suzuri_url
                          FROM products WHERE serial_code=?";
         let map = |r: &rusqlite::Row| Ok((
             r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?,
             r.get::<_, Option<String>>(4)?, r.get::<_, Option<String>>(5)?,
             r.get::<_, i64>(6)?, r.get::<_, String>(7)?, r.get::<_, String>(8)?,
+            r.get::<_, Option<String>>(9)?,
         ));
         if let Ok(n) = sku.parse::<i64>() {
             conn.query_row(sql_by_id, params![n], map).ok()
@@ -13313,7 +13314,7 @@ async fn product_sku_page(
             conn.query_row(sql_by_sc, params![sku.as_str()], map).ok()
         }
     };
-    let (id, brand, drop_num, name, design_url, mockup_url, price_jpy, default_color, _size) = match row {
+    let (id, brand, drop_num, name, design_url, mockup_url, price_jpy, default_color, _size, suzuri_url) = match row {
         Some(v) => v,
         None => return (StatusCode::NOT_FOUND, "product not found").into_response(),
     };
@@ -13335,6 +13336,34 @@ async fn product_sku_page(
     let current_color_name = COLOR_SWATCHES.iter()
         .find(|(k, _, _)| *k == current_color.as_str())
         .map(|(_, n, _)| *n).unwrap_or("Black");
+
+    // §24-v2 dual-channel pricing: JP→SUZURI ¥4,900 (国内発送), 海外→Printful EU ¥7,800.
+    // `suzuri_url` being Some means the SKU is mirrored on SUZURI and can ship JP for ¥4,900.
+    // `price_jpy` (from products) is the international Printful EU price.
+    let has_jp = suzuri_url.is_some();
+    let jp_price_display: String = if has_jp { "¥4,900".to_string() } else { "—".to_string() };
+    let jp_price_num: i64 = 4900;
+    let intl_price_num: i64 = price_jpy;
+    let price_grid_html = format!(
+        r#"<div class="price-grid">
+  <div class="price-row primary">
+    <span class="ship-tag">🇯🇵 国内発送</span>
+    <span class="price-amt">{jp}</span>
+  </div>
+  <div class="price-row secondary">
+    <span class="ship-tag">✈️ 海外発送</span>
+    <span class="price-amt">¥{intl}</span>
+  </div>
+</div>"#,
+        jp = jp_price_display,
+        intl = intl_price_num,
+    );
+    // Buy CTA label: default to cheaper JP fulfillment when available, otherwise INTL.
+    let (buy_price, buy_ship_label) = if has_jp {
+        (jp_price_num, "国内発送")
+    } else {
+        (intl_price_num, "海外発送")
+    };
 
     let img = mockup_url.clone().unwrap_or_else(|| design_url.clone().unwrap_or_default());
     // Preserve the slug the visitor used (serial_code or numeric id) so swatch
@@ -13443,6 +13472,12 @@ img{{width:100%;height:auto;background:#111;border-radius:2px}}
 h1{{font-size:20px;font-weight:500;margin:24px 0 8px}}
 .meta{{font-size:13px;opacity:0.7;margin-bottom:16px}}
 .price{{font-size:22px;font-variant-numeric:tabular-nums;margin:8px 0 24px}}
+.price-grid{{margin:8px 0 24px;display:flex;flex-direction:column;gap:6px}}
+.price-row{{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-radius:2px;background:rgba(245,245,240,0.05)}}
+.price-row.primary{{background:rgba(245,245,240,0.10);border:1px solid rgba(245,245,240,0.18)}}
+.ship-tag{{font-size:13px;opacity:0.75;letter-spacing:0.02em}}
+.price-amt{{font-size:20px;font-weight:600;font-variant-numeric:tabular-nums}}
+.price-row.secondary .price-amt{{opacity:0.6;font-size:16px}}
 .swatches{{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:16px 0}}
 .swatch{{display:inline-block;width:34px;height:34px;border-radius:50%;border:2px solid rgba(255,255,255,0.15);cursor:pointer;transition:transform .1s}}
 .swatch:hover{{transform:scale(1.1)}}
@@ -13471,12 +13506,12 @@ h1{{font-size:20px;font-weight:500;margin:24px 0 8px}}
 <img src="{img}" alt="{name}" loading="eager">
 <h1>{name}</h1>
 <div class="meta">{brand_upper} · #{drop_num}</div>
-<div class="price">¥{price}</div>
+{price_grid}
 <div class="swatches">
   {swatches}
   <span class="color-badge">{current_code} — {current_name}</span>
 </div>
-<a class="buy-btn" href="/products/{brand}/{drop_num}?color={current_code}&amp;buy=1">今すぐ買う · ¥{price}</a>
+<a class="buy-btn" href="/products/{brand}/{drop_num}?color={current_code}&amp;buy=1">今すぐ買う · ¥{buy_price} ({buy_ship})</a>
 <p class="ship-line">送料込み · 注文から 5〜7 営業日でお届け · 30 日返品保証</p>
 <div class="trust"><span>Printful 製造</span><span>カード / Apple Pay / Google Pay</span><span>日本国内発送</span></div>
 <a class="back" href="/products/{brand}/{drop_num}">仕様詳細・サイズ表 →</a>
@@ -13487,7 +13522,9 @@ h1{{font-size:20px;font-weight:500;margin:24px 0 8px}}
         drop_num = drop_num,
         brand = html_attr_escape(&brand),
         brand_upper = html_escape(&brand.to_uppercase()),
-        price = price_jpy,
+        price_grid = price_grid_html,
+        buy_price = buy_price,
+        buy_ship = buy_ship_label,
         img = html_attr_escape(&img),
         swatches = swatches_html,
         current_code = html_escape(&current_color),
@@ -57524,6 +57561,7 @@ async fn main() {
         .route("/api/products/:id/mockup.png", get(product_mockup_image))
         .route("/api/collab/:id/image.png", get(collab_product_image))
         .route("/api/checkout", post(checkout))
+        .route("/api/checkout/v2", post(checkout))
         .route("/api/checkout/crypto", post(payments::checkout_crypto))
         .route("/api/checkout/crypto/status/:reference", get(payments::checkout_crypto_status))
         .route("/api/rates", get(payments::rates_handler))
