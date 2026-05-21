@@ -844,6 +844,14 @@ HTML_INDEX = """<!DOCTYPE html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MU CRAFT — 作るを空気にする</title>
+  <meta name="description" content="思考をTシャツに、発話1行で。MU CRAFTはトピックを1行入れるだけで、MUブランドスタイルのTシャツデザインとモックアップを30秒で生成します。">
+  <meta property="og:title" content="MU CRAFT — 作るを空気にする">
+  <meta property="og:description" content="トピック1行 → Tシャツデザイン + モックアップ。30秒。">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="https://mockups.wearmu.com/bjj-triangle/kakudo-kanji-black-tee.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="data:image/svg+xml;utf8,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'&gt;&lt;rect width='100' height='100' fill='%230a0a0a'/&gt;&lt;text x='50' y='72' text-anchor='middle' font-family='serif' font-size='80' font-weight='900' fill='%23e6c449'&gt;無&lt;/text&gt;&lt;/svg&gt;">
+  <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
   <style>
     * { box-sizing: border-box; }
     body { font-family: -apple-system, "Helvetica Neue", "Hiragino Kaku Gothic ProN", sans-serif;
@@ -1055,9 +1063,13 @@ def render_sku_page(sku: dict, creator_name: str) -> str:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{_xml_escape(sku['catchphrase'] or sku['topic'])} · MU CRAFT</title>
+<meta name="description" content="{_xml_escape(sku['subtitle'] or sku['topic'])} — MU CRAFT で生成">
 <meta property="og:title" content="{_xml_escape(sku['catchphrase'] or '')} · MU">
 <meta property="og:description" content="{_xml_escape(sku['subtitle'] or sku['topic'])}">
 <meta property="og:image" content="{sku.get('mockup_black_url') or sku.get('mockup_white_url') or ''}">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="canonical" href="{PUBLIC_BASE}/c/{sku['slug']}">
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 <style>
 body {{ font-family: -apple-system, "Helvetica Neue", "Hiragino Kaku Gothic ProN", sans-serif;
        background: #0a0a0a; color: #f5f5f0; margin: 0; padding: 24px;
