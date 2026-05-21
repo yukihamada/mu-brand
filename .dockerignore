@@ -13,8 +13,10 @@ logs
 .env
 .env.*
 docs/
+!docs/founding/
 store/
 scripts/
 tasks/
 *.md
 !README.md
+!docs/founding/*.md

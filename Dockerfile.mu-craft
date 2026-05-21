@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir \
 
 WORKDIR /app
 COPY mu_craft.py /app/mu_craft.py
+COPY docs/founding/ /app/docs/founding/
 
 # /data is the single Fly volume mount; db + static are subdirs.
 RUN mkdir -p /data/db /data/static && chown -R 1000:1000 /data

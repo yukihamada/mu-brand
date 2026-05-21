@@ -84,6 +84,7 @@ for d in (DATA_DIR, STATIC_DIR, DESIGNS_DIR, MOCKUPS_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 SECRET_KEY = os.environ.get("MU_CRAFT_SECRET", "dev-secret-change-in-prod-please")
+ADMIN_TOKEN = os.environ.get("MU_ADMIN_TOKEN", "mu-admin-2026")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or ""
 PRINTFUL_API_KEY = os.environ.get("PRINTFUL_API_KEY") or ""
 SUZURI_ACCESS_TOKEN = os.environ.get("SUZURI_ACCESS_TOKEN") or ""
@@ -999,6 +1000,225 @@ def api_skus(limit: int = 20):
     return [dict(r) for r in rows]
 
 
+FOUNDING_DOC_PATH = ROOT / "docs" / "founding" / "01_declaration_2026-05-20.md"
+
+
+@app.get("/founding", response_class=HTMLResponse)
+def founding_page():
+    """Public render of the MU Founding Declaration (markdown → minimal HTML)."""
+    if not FOUNDING_DOC_PATH.exists():
+        return HTMLResponse("<h1>404 — founding declaration not bundled in this build</h1>", status_code=404)
+    md = FOUNDING_DOC_PATH.read_text(encoding="utf-8")
+    # Minimal markdown → HTML (heads, bold, blockquote, hr, list, code, paragraphs)
+    html_body = _md_to_html(md)
+    return HTMLResponse(content=f"""<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MU 創立宣言 / The MU Founding Declaration</title>
+<meta name="description" content="2026年5月20日、東京。MUは「物として世に出す」を空気にする。">
+<meta property="og:title" content="MU 創立宣言 — The MU Founding Declaration">
+<meta property="og:description" content="2026年5月20日、東京。MU は「物として世に出す」を空気にする。">
+<meta property="og:type" content="article">
+<meta property="og:image" content="https://mockups.wearmu.com/bjj-triangle/kakudo-kanji-black-tee.jpg">
+<link rel="canonical" href="{PUBLIC_BASE}/founding">
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<style>
+body {{ font-family: -apple-system, "Helvetica Neue", "Hiragino Mincho ProN", serif;
+       background: #0a0a0a; color: #f5f5f0; padding: 60px 24px; max-width: 760px;
+       margin: 0 auto; line-height: 1.8; font-size: 16px; }}
+h1 {{ font-size: 36px; font-weight: 900; letter-spacing: -1px; margin: 40px 0 16px;
+      font-family: -apple-system, "Helvetica Neue", sans-serif; }}
+h2 {{ font-size: 24px; font-weight: 900; margin: 48px 0 12px; letter-spacing: -0.5px;
+      font-family: -apple-system, "Helvetica Neue", sans-serif; color: #e6c449; }}
+h3 {{ font-size: 18px; font-weight: 700; margin: 32px 0 8px; opacity: 0.9; }}
+strong {{ color: #e6c449; }}
+hr {{ border: 0; border-top: 1px solid #2a2a2a; margin: 32px 0; }}
+blockquote {{ border-left: 3px solid #e6c449; padding: 12px 0 12px 20px;
+              margin: 24px 0; opacity: 0.85; font-style: italic; }}
+ul, ol {{ padding-left: 24px; }}
+li {{ margin: 6px 0; }}
+code {{ background: #1a1a1a; padding: 2px 6px; border-radius: 3px; font-size: 14px;
+        font-family: ui-monospace, monospace; }}
+table {{ border-collapse: collapse; margin: 16px 0; font-size: 14px; }}
+th, td {{ padding: 8px 12px; border: 1px solid #2a2a2a; }}
+th {{ background: #1a1a1a; }}
+.back {{ display: inline-block; margin-bottom: 24px; color: #e6c449; text-decoration: none;
+         font-family: -apple-system, sans-serif; font-size: 14px; }}
+em {{ opacity: 0.7; }}
+footer {{ margin-top: 80px; opacity: 0.4; font-size: 12px; text-align: center; }}
+</style></head><body>
+<a class="back" href="/">← MU CRAFT</a>
+{html_body}
+<footer>Letter #00 — MU Annual Letters · 2026-05-20 · Tokyo</footer>
+</body></html>""")
+
+
+def _md_to_html(md: str) -> str:
+    """Minimal markdown renderer — enough for the founding doc, no external dep."""
+    lines = md.split("\n")
+    out = []
+    in_code = False
+    in_table = False
+    in_list = False
+    for ln in lines:
+        if ln.startswith("```"):
+            in_code = not in_code
+            out.append("<pre><code>" if in_code else "</code></pre>")
+            continue
+        if in_code:
+            out.append(_xml_escape(ln))
+            continue
+        if ln.strip().startswith("|") and ln.strip().endswith("|"):
+            cells = [c.strip() for c in ln.strip().strip("|").split("|")]
+            if all(set(c) <= set("-:") for c in cells if c):
+                continue  # separator row
+            tag = "th" if not in_table else "td"
+            row = "".join(f"<{tag}>{_md_inline(c)}</{tag}>" for c in cells)
+            if not in_table:
+                out.append("<table>")
+                in_table = True
+            out.append(f"<tr>{row}</tr>")
+            continue
+        if in_table and not (ln.strip().startswith("|")):
+            out.append("</table>")
+            in_table = False
+        if ln.startswith("# "):
+            out.append(f"<h1>{_md_inline(ln[2:])}</h1>")
+        elif ln.startswith("## "):
+            out.append(f"<h2>{_md_inline(ln[3:])}</h2>")
+        elif ln.startswith("### "):
+            out.append(f"<h3>{_md_inline(ln[4:])}</h3>")
+        elif ln.startswith("> "):
+            out.append(f"<blockquote>{_md_inline(ln[2:])}</blockquote>")
+        elif ln.strip() in ("---", "***"):
+            out.append("<hr>")
+        elif ln.startswith("- ") or ln.startswith("* "):
+            if not in_list:
+                out.append("<ul>")
+                in_list = True
+            out.append(f"<li>{_md_inline(ln[2:])}</li>")
+        elif ln.strip() == "":
+            if in_list:
+                out.append("</ul>")
+                in_list = False
+            out.append("")
+        else:
+            if in_list:
+                out.append("</ul>")
+                in_list = False
+            out.append(f"<p>{_md_inline(ln)}</p>")
+    if in_list:
+        out.append("</ul>")
+    if in_table:
+        out.append("</table>")
+    return "\n".join(out)
+
+
+def _md_inline(s: str) -> str:
+    s = _xml_escape(s)
+    s = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", s)
+    s = re.sub(r"\*(.+?)\*", r"<em>\1</em>", s)
+    s = re.sub(r"`(.+?)`", r"<code>\1</code>", s)
+    s = re.sub(r"\[\[([^\]]+)\]\]", r"\1", s)  # strip wiki-links
+    s = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', s)
+    return s
+
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin_dashboard(token: str = ""):
+    """Live funnel + ledger dashboard. Token in URL query: /admin?token=XXX"""
+    if not token or token != ADMIN_TOKEN:
+        return HTMLResponse("<h1>403 — ?token= required</h1>", status_code=403)
+    with db() as conn:
+        stats = {
+            "skus_total": conn.execute("SELECT COUNT(*) AS c FROM skus").fetchone()["c"],
+            "skus_published": conn.execute("SELECT COUNT(*) AS c FROM skus WHERE status='published'").fetchone()["c"],
+            "skus_last_24h": conn.execute("SELECT COUNT(*) AS c FROM skus WHERE created_at > datetime('now','-1 day')").fetchone()["c"],
+            "skus_last_1h": conn.execute("SELECT COUNT(*) AS c FROM skus WHERE created_at > datetime('now','-1 hour')").fetchone()["c"],
+            "users_total": conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"],
+            "users_registered": conn.execute("SELECT COUNT(*) AS c FROM users WHERE email IS NOT NULL").fetchone()["c"],
+            "users_last_1h": conn.execute("SELECT COUNT(*) AS c FROM users WHERE created_at > datetime('now','-1 hour')").fetchone()["c"],
+        }
+        ledger = conn.execute(
+            "SELECT reason, COUNT(*) AS n, SUM(delta) AS net "
+            "FROM mp_ledger GROUP BY reason ORDER BY n DESC"
+        ).fetchall()
+        latest = conn.execute(
+            "SELECT id, slug, topic, catchphrase, status, suzuri_url, view_count, created_at "
+            "FROM skus ORDER BY id DESC LIMIT 30"
+        ).fetchall()
+        publishes = conn.execute(
+            "SELECT COUNT(*) AS c FROM skus WHERE status='published'"
+        ).fetchone()["c"]
+    cvr_signup = (stats["users_registered"] / stats["users_total"] * 100) if stats["users_total"] else 0
+    cvr_publish = (publishes / stats["skus_total"] * 100) if stats["skus_total"] else 0
+
+    ledger_rows = "".join(
+        f"<tr><td>{_xml_escape(r['reason'])}</td><td>{r['n']}</td><td>{r['net']:+d}</td></tr>"
+        for r in ledger
+    )
+    def _sku_row(r):
+        suzuri = f'<a href="{r["suzuri_url"]}" target="_blank">SUZURI ↗</a>' if r["suzuri_url"] else "-"
+        return (
+            f"<tr><td><a href='/c/{r['slug']}' target='_blank'>{r['id']}</a></td>"
+            f"<td>{_xml_escape(r['catchphrase'] or '')}</td>"
+            f"<td>{_xml_escape(r['topic'][:40])}</td>"
+            f"<td>{r['status']}</td><td>{r['view_count']}</td>"
+            f"<td>{r['created_at']}</td>"
+            f"<td>{suzuri}</td></tr>"
+        )
+    sku_rows = "".join(_sku_row(r) for r in latest)
+
+    return HTMLResponse(content=f"""<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8"><title>MU CRAFT — Admin</title>
+<style>
+body {{ font-family: -apple-system, "Helvetica Neue", sans-serif; background: #0a0a0a;
+       color: #f5f5f0; padding: 24px; max-width: 1100px; margin: 0 auto; }}
+h1 {{ font-size: 24px; font-weight: 900; }}
+.grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+         gap: 12px; margin: 20px 0 40px; }}
+.kpi {{ background: #1a1a1a; padding: 16px; border-radius: 8px;
+        border: 1px solid #2a2a2a; }}
+.kpi .v {{ font-size: 28px; font-weight: 900; color: #e6c449; }}
+.kpi .l {{ font-size: 11px; opacity: 0.6; letter-spacing: 0.5px; }}
+h2 {{ margin-top: 32px; font-size: 16px; opacity: 0.8; }}
+table {{ width: 100%; border-collapse: collapse; font-size: 13px;
+         background: #1a1a1a; border-radius: 8px; overflow: hidden; }}
+th, td {{ padding: 8px 12px; border-bottom: 1px solid #2a2a2a; text-align: left; }}
+th {{ background: #2a2a2a; font-weight: 700; font-size: 11px; letter-spacing: 1px; }}
+a {{ color: #e6c449; text-decoration: none; }}
+</style></head><body>
+<h1>MU CRAFT — Admin Dashboard</h1>
+<p style="opacity:0.5; font-size:12px;">Generated: {datetime.now(timezone.utc).isoformat()}</p>
+
+<div class="grid">
+  <div class="kpi"><div class="v">{stats['skus_total']}</div><div class="l">SKUS TOTAL</div></div>
+  <div class="kpi"><div class="v">{stats['skus_published']}</div><div class="l">SKUS PUBLISHED</div></div>
+  <div class="kpi"><div class="v">{stats['skus_last_24h']}</div><div class="l">SKUS / 24H</div></div>
+  <div class="kpi"><div class="v">{stats['skus_last_1h']}</div><div class="l">SKUS / 1H</div></div>
+  <div class="kpi"><div class="v">{stats['users_total']}</div><div class="l">USERS</div></div>
+  <div class="kpi"><div class="v">{stats['users_registered']}</div><div class="l">REGISTERED</div></div>
+  <div class="kpi"><div class="v">{stats['users_last_1h']}</div><div class="l">USERS / 1H</div></div>
+  <div class="kpi"><div class="v">{cvr_signup:.1f}%</div><div class="l">CVR SIGNUP</div></div>
+  <div class="kpi"><div class="v">{cvr_publish:.1f}%</div><div class="l">CVR PUBLISH</div></div>
+</div>
+
+<h2>MP Ledger</h2>
+<table><thead><tr><th>reason</th><th>n events</th><th>net MP</th></tr></thead>
+<tbody>{ledger_rows}</tbody></table>
+
+<h2>Latest SKUs (30)</h2>
+<table><thead><tr><th>id</th><th>catch</th><th>topic</th><th>status</th><th>views</th><th>created</th><th>suzuri</th></tr></thead>
+<tbody>{sku_rows}</tbody></table>
+
+<p style="margin-top:40px; opacity:0.4; font-size:11px;">
+  <a href="/api/stats" target="_blank">/api/stats JSON</a> ·
+  <a href="/api/skus" target="_blank">/api/skus JSON</a> ·
+  <a href="/gallery" target="_blank">/gallery</a>
+</p>
+</body></html>""")
+
+
 @app.get("/api/stats")
 def api_stats():
     """Public aggregate stats — no PII. Lets users see scale + me monitor without ssh."""
@@ -1097,9 +1317,9 @@ HTML_INDEX = """<!DOCTYPE html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MU CRAFT — 作るを空気にする</title>
-  <meta name="description" content="思考をTシャツに、発話1行で。MU CRAFTはトピックを1行入れるだけで、MUブランドスタイルのTシャツデザインとモックアップを30秒で生成します。">
+  <meta name="description" content="思考をTシャツに、発話1行で。MU CRAFTはトピックを1行入れるだけで、MUブランドスタイルのTシャツデザインとモックアップを10秒で生成します。">
   <meta property="og:title" content="MU CRAFT — 作るを空気にする">
-  <meta property="og:description" content="トピック1行 → Tシャツデザイン + モックアップ。30秒。">
+  <meta property="og:description" content="トピック1行 → Tシャツデザイン + モックアップ。10秒。">
   <meta property="og:type" content="website">
   <meta property="og:image" content="https://mockups.wearmu.com/bjj-triangle/kakudo-kanji-black-tee.jpg">
   <meta name="twitter:card" content="summary_large_image">
@@ -1187,7 +1407,7 @@ HTML_INDEX = """<!DOCTYPE html>
 
   <h1>何を<br>Tシャツに<br>する？</h1>
 
-  <div class="sub">トピックを1行で。30秒でデザイン + モックアップが生成されます。</div>
+  <div class="sub">トピックを1行で。10秒でデザイン + モックアップが生成されます。</div>
 
   <textarea id="topic" placeholder="例: 柔術の三角絞めの理論 / 朝のコーヒーの哲学 / 静寂の重要性"></textarea>
 
@@ -1264,7 +1484,7 @@ async function craft() {
   if (!topic) { alert('トピックを入力するか、ワンクリックピルを押してください'); return; }
   setBtnsDisabled(true);
   document.getElementById('result').innerHTML =
-    '<div class="spinner">生成中 (Gemini brief → SVG → Printful mockup × 2)... 約30秒<br><br><span style="opacity:0.5">topic: ' + escapeHtml(topic) + '</span></div>';
+    '<div class="spinner">生成中 (Gemini brief → SVG → Printful mockup × 2)... 約10秒<br><br><span style="opacity:0.5">topic: ' + escapeHtml(topic) + '</span></div>';
 
   const fd = new FormData();
   fd.append('topic', topic);
@@ -1302,7 +1522,8 @@ async function craft() {
       <div class="actions" style="margin-top: 16px;">
         <button onclick="publish(${data.sku_id})">公開する (3 MP)</button>
         <button class="ghost" onclick="window.open('/c/${data.slug}','_blank')">永久 URL ↗</button>
-        <button class="ghost" data-topic="${escapeHtml(data.topic)}" onclick="craftWith(this.dataset.topic)">↻ もう一回作る (1 MP)</button>
+        <button class="ghost" data-slug="${data.slug}" data-catch="${escapeHtml(data.brief.catchphrase)}" onclick="shareX(this.dataset.slug, this.dataset.catch)">𝕏 シェア</button>
+        <button class="ghost" data-topic="${escapeHtml(data.topic)}" onclick="craftWith(this.dataset.topic)">↻ もう一回 (1 MP)</button>
         <button class="ghost" onclick="craftRandom()">🎲 別のランダム (1 MP)</button>
       </div>
     </div>`;
@@ -1355,6 +1576,13 @@ async function topup() {
 
 function escapeHtml(s) {
   return String(s || '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
+function shareX(slug, catchphrase) {
+  const url = `${location.origin}/c/${slug}`;
+  const text = `${catchphrase} · MU CRAFT で作りました\\n\\n「作る」を空気にする`;
+  const intent = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(url)}&hashtags=MUCRAFT`;
+  window.open(intent, '_blank', 'noopener,width=550,height=420');
 }
 
 loadMe();
