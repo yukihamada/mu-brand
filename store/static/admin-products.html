@@ -385,6 +385,15 @@ function renderDetail(d) {
       </div>
     </div>
 
+    <!-- ADMIN-ONLY: print-ready file. Public APIs intentionally do NOT
+         surface print_url. This section is the only place to view / edit it. -->
+    <div class="photo-section" style="margin-bottom: 22px;border:1px dashed rgba(220,80,80,0.55);padding:12px;border-radius:6px">
+      <h4 style="color:#ffb0b0">━ 印刷用データ (admin-only, 非公開)</h4>
+      <div style="font-size:11px;opacity:0.55;margin-bottom:10px">高解像 print-ready PNG。 Printful / DTG に直送される実データ。 顧客には 一切 表示 されない。</div>
+      <div class="photo-frame" style="max-width:160px"><img src="${escapeHtml(d.print_url || BRAND_FALLBACK_IMG)}" onerror="this.src='${BRAND_FALLBACK_IMG}';this.onerror=null" alt="print file"></div>
+      <div class="photo-url">${escapeHtml(d.print_url || '— 未設定 —')}</div>
+    </div>
+
     <div class="edit-grid">
       <div class="edit-field">
         <label>name</label>
@@ -414,12 +423,20 @@ function renderDetail(d) {
         <textarea id="e-prompt">${escapeHtml(d.prompt_text || '')}</textarea>
       </div>
       <div class="edit-field full">
-        <label>design_url</label>
+        <label>design_url <span style="opacity:0.5">— 公開可、 chest graphic (透過 PNG)</span></label>
         <input id="e-design" value="${escapeHtml(d.design_url || '')}">
       </div>
       <div class="edit-field full">
-        <label>mockup_url</label>
+        <label>mockup_url <span style="opacity:0.5">— 公開可、 POD 製モック</span></label>
         <input id="e-mockup" value="${escapeHtml(d.mockup_url || '')}">
+      </div>
+      <div class="edit-field full">
+        <label>lifestyle_url <span style="opacity:0.5">— 公開可、 着画 (single — 複数は /regen_lifestyle で)</span></label>
+        <input id="e-lifestyle" value="${escapeHtml(d.lifestyle_url || '')}">
+      </div>
+      <div class="edit-field full">
+        <label style="color:#ffb0b0">print_url <span style="opacity:0.6;color:inherit">— admin-only · 印刷用 高解像 · 公開 API に 出 な い</span></label>
+        <input id="e-print" value="${escapeHtml(d.print_url || '')}" placeholder="https://r2.../print-ready.png">
       </div>
     </div>
 
@@ -452,6 +469,8 @@ async function saveEdits(id) {
     active: parseInt(document.getElementById('e-active').value || '1', 10),
     design_url: document.getElementById('e-design').value,
     mockup_url: document.getElementById('e-mockup').value,
+    lifestyle_url: document.getElementById('e-lifestyle').value,
+    print_url: document.getElementById('e-print').value,
   };
   setStatus('detail-status', 'info', '━ saving…');
   try {
