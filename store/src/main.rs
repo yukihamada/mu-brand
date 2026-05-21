@@ -13449,8 +13449,14 @@ h1{{font-size:20px;font-weight:500;margin:24px 0 8px}}
 .swatch.selected{{border-color:#f5f5f0;box-shadow:0 0 0 2px #0a0a0a,0 0 0 4px #f5f5f0}}
 .sr{{position:absolute;left:-9999px}}
 .color-badge{{display:inline-block;font-size:12px;padding:4px 10px;background:rgba(245,245,240,0.08);border-radius:12px;letter-spacing:0.05em;font-variant-numeric:tabular-nums}}
-.back{{display:inline-block;margin-top:32px;color:#999;font-size:13px;text-decoration:none}}
-.back:hover{{color:#fff}}
+.buy-btn{{display:block;width:100%;margin:24px 0 12px;padding:18px 24px;background:#f5f5f0;color:#0a0a0a;border:0;border-radius:2px;font-size:16px;font-weight:600;letter-spacing:0.04em;cursor:pointer;text-decoration:none;text-align:center;transition:opacity .15s;font-variant-numeric:tabular-nums}}
+.buy-btn:hover{{opacity:0.86}}
+.buy-btn:active{{transform:translateY(1px)}}
+.ship-line{{font-size:12px;opacity:0.6;text-align:center;margin:0 0 24px;line-height:1.5}}
+.trust{{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 0;font-size:11px;opacity:0.55;letter-spacing:0.04em}}
+.trust span{{padding:3px 8px;background:rgba(245,245,240,0.05);border-radius:10px}}
+.back{{display:inline-block;margin-top:32px;color:#777;font-size:12px;text-decoration:none}}
+.back:hover{{color:#aaa}}
 .upsell{{margin-top:48px;padding-top:24px;border-top:1px solid rgba(255,255,255,0.08)}}
 .upsell h2{{font-size:11px;letter-spacing:0.32em;text-transform:uppercase;opacity:0.55;margin:0 0 18px;font-weight:500}}
 .upsell-grid{{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}}
@@ -13470,7 +13476,10 @@ h1{{font-size:20px;font-weight:500;margin:24px 0 8px}}
   {swatches}
   <span class="color-badge">{current_code} — {current_name}</span>
 </div>
-<a class="back" href="/products/{brand}/{drop_num}">→ 詳細・購入</a>
+<a class="buy-btn" href="/products/{brand}/{drop_num}?color={current_code}&amp;buy=1">今すぐ買う · ¥{price}</a>
+<p class="ship-line">送料込み · 注文から 5〜7 営業日でお届け · 30 日返品保証</p>
+<div class="trust"><span>Printful 製造</span><span>カード / Apple Pay / Google Pay</span><span>日本国内発送</span></div>
+<a class="back" href="/products/{brand}/{drop_num}">仕様詳細・サイズ表 →</a>
 {upsell}
 </main>
 </body></html>"##,
