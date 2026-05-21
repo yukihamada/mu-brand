@@ -58,6 +58,12 @@ PF_PRODUCT     = 71   # Bella+Canvas 3001 Unisex Tee
 PF_VARIANT_BLK = 4017   # Black / M
 PF_VARIANT_WHT = 4011   # White / M
 PF_VARIANT_BGE = 4014   # Natural / M (closest to beige)
+PF_VARIANT_NVY = 4015   # Navy / M (Printful Bella+Canvas 3001 navy variant — verify before use)
+PF_VARIANT_HTR = 4019   # Heather Grey / M
+PF_VARIANT_RED = 4013   # Red / M
+PF_VARIANT_DHR = 4020   # Dark Heather / M
+COLOR_MAP = {"BLK": PF_VARIANT_BLK, "WHT": PF_VARIANT_WHT, "BGE": PF_VARIANT_BGE,
+             "NVY": PF_VARIANT_NVY, "HTR": PF_VARIANT_HTR, "RED": PF_VARIANT_RED, "DHR": PF_VARIANT_DHR}
 
 # ── Database ─────────────────────────────────────────────
 def init_db():
@@ -1120,11 +1126,11 @@ def run(brand: str):
         INSERT INTO products
         (brand, drop_num, name, design_url, mockup_url, price_jpy, inventory,
          created_at, weather_data, prompt_text, prompt_hash, seed_data, auction_end, nft_mint,
-         parent_design)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         parent_design, color, size)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (brand, drop_num, name, file_url, mockup_url, price,
           quantity, now_iso, json.dumps(weather), prompt, prompt_hash,
-          seed_data, auction_end, nft_mint, parent_id))
+          seed_data, auction_end, nft_mint, parent_id, "BLK", "M"))
     con.commit()
     print(f"  saved locally.")
 

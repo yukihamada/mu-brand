@@ -9400,6 +9400,111 @@ async fn get_product_chronicle(
     })).into_response()
 }
 
+/// GET /api/products/item/:id/upsell — "You might also like" cards.
+/// Returns up to 4 active products from the same brand (highest sold first,
+/// then random for tie-breaks), and if fewer than 4 are available, fills the
+/// remaining slots from the global active catalogue (also sold DESC). The
+/// product itself is always excluded. Response shape is JSON-friendly so the
+/// SPA modal can render thumbnails + name + price without a second template.
+async fn get_product_upsell(
+    Path(id): Path<i64>,
+    State(db): State<Db>,
+) -> impl IntoResponse {
+    let conn = db.lock().unwrap();
+    // Look up the source product's brand. If the id is unknown we still try a
+    // brand="" lookup (which yields no rows) and fall through to the global
+    // fallback so the modal always renders something useful.
+    let brand: String = conn.query_row(
+        "SELECT brand FROM products WHERE id=? AND active=1",
+        params![id], |r| r.get::<_, String>(0)
+    ).unwrap_or_default();
+
+    fn read_card(row: &rusqlite::Row) -> rusqlite::Result<serde_json::Value> {
+        let pid: i64 = row.get(0)?;
+        let brand: String = row.get(1)?;
+        let drop_num: i64 = row.get(2)?;
+        let name: String = row.get(3)?;
+        let design_url: Option<String> = row.get(4)?;
+        let mockup_url: Option<String> = row.get(5)?;
+        let price_jpy: i64 = row.get(6)?;
+        let serial_code: Option<String> = row.get(7)?;
+        let sold: i64 = row.get(8)?;
+        // Same Printful-temp-URL fallback used by get_product / list_products.
+        let img = match mockup_url.as_deref() {
+            Some(m) if m.starts_with("https://printful-upload.s3")
+                    || m.starts_with("https://files.cdn.printful.com/upload") => {
+                design_url.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| m.to_string())
+            }
+            Some(m) => m.to_string(),
+            None => design_url.clone().unwrap_or_default(),
+        };
+        // Detail URL: prefer serial_code (stable, shareable), fall back to
+        // the canonical /products/<brand>/<drop_num> page.
+        let href = match serial_code.as_deref() {
+            Some(sc) if !sc.is_empty() => format!("/p/{}", sc),
+            _ => format!("/products/{}/{}", brand, drop_num),
+        };
+        Ok(serde_json::json!({
+            "id":          pid,
+            "brand":       brand,
+            "drop_num":    drop_num,
+            "name":        name,
+            "image":       img,
+            "price_jpy":   price_jpy,
+            "serial_code": serial_code,
+            "sold":        sold,
+            "href":        href,
+        }))
+    }
+
+    let mut cards: Vec<serde_json::Value> = Vec::with_capacity(4);
+    // Pass 1: same brand, exclude self.
+    if !brand.is_empty() {
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT id, brand, drop_num, name, design_url, mockup_url, price_jpy,
+                    serial_code, sold
+             FROM products
+             WHERE brand=? AND id!=? AND active=1
+             ORDER BY sold DESC, RANDOM()
+             LIMIT 4"
+        ) {
+            if let Ok(rows) = stmt.query_map(params![brand, id], read_card) {
+                cards.extend(rows.filter_map(|r| r.ok()));
+            }
+        }
+    }
+    // Pass 2: if we still have room, fill from global active catalogue,
+    // excluding self and anything we already picked.
+    if cards.len() < 4 {
+        let need = 4 - cards.len();
+        let mut already: Vec<i64> = cards.iter().filter_map(|c| c.get("id").and_then(|v| v.as_i64())).collect();
+        already.push(id);
+        // SQLite param binding for IN() — build placeholders.
+        let placeholders = std::iter::repeat("?").take(already.len()).collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT id, brand, drop_num, name, design_url, mockup_url, price_jpy,
+                    serial_code, sold
+             FROM products
+             WHERE active=1 AND id NOT IN ({})
+             ORDER BY sold DESC, RANDOM()
+             LIMIT {}",
+            placeholders, need
+        );
+        if let Ok(mut stmt) = conn.prepare(&sql) {
+            let params_vec: Vec<&dyn rusqlite::ToSql> = already.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
+            if let Ok(rows) = stmt.query_map(params_vec.as_slice(), read_card) {
+                cards.extend(rows.filter_map(|r| r.ok()));
+            }
+        }
+    }
+
+    Json(serde_json::json!({
+        "product_id": id,
+        "brand":      brand,
+        "items":      cards,
+    })).into_response()
+}
+
 /// GET /api/qr/c/:product_id/:position.png — Per-shirt QR as PNG.
 /// Printful's order API needs PNG/JPG, not SVG, so this endpoint serves the
 /// same QR as the .svg variant but as a 1024×1024 PNG with transparent
@@ -13175,6 +13280,108 @@ async fn admin_product_detail(
         }
         None => (StatusCode::NOT_FOUND, "product not found").into_response(),
     }
+}
+
+/// GET /p/:sku — minimal SSR product detail page with a 6-color swatch picker.
+/// Looks up the product by `id` (numeric sku) and renders a tiny HTML page
+/// with the design image, name, price, and 6 color circles. Clicking a
+/// swatch reloads the page with `?color=NVY` etc. Selected color is shown as
+/// a badge. No JS, no fetch — pure SSR to keep this dead-simple.
+async fn product_sku_page(
+    State(db): State<Db>,
+    axum::extract::Path(sku): axum::extract::Path<String>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let id: i64 = match sku.parse() {
+        Ok(n) => n,
+        Err(_) => return (StatusCode::BAD_REQUEST, "sku must be numeric").into_response(),
+    };
+    let row: Option<(String, i64, String, Option<String>, Option<String>, i64, String, String)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT brand, drop_num, name, design_url, mockup_url, price_jpy,
+                    COALESCE(color, 'BLK'), COALESCE(size, 'M')
+             FROM products WHERE id=?",
+            params![id], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?, r.get::<_, Option<String>>(4)?,
+                r.get::<_, i64>(5)?, r.get::<_, String>(6)?, r.get::<_, String>(7)?,
+            )),
+        ).ok()
+    };
+    let (brand, drop_num, name, design_url, mockup_url, price_jpy, default_color, _size) = match row {
+        Some(v) => v,
+        None => return (StatusCode::NOT_FOUND, "product not found").into_response(),
+    };
+    // Color selection: ?color=NVY overrides the DB default. Validate against the
+    // 6-color whitelist; unknown values fall back to the row's stored color.
+    const COLOR_SWATCHES: &[(&str, &str, &str)] = &[
+        ("BLK", "Black",        "#0a0a0a"),
+        ("WHT", "White",        "#f5f5f0"),
+        ("BGE", "Beige",        "#d9c9a3"),
+        ("NVY", "Navy",         "#1a2540"),
+        ("HTR", "Heather Grey", "#a8a8a8"),
+        ("RED", "Red",          "#c8362c"),
+        ("DHR", "Dark Heather", "#3a3a3a"),
+    ];
+    let current_color = q.get("color")
+        .map(|s| s.to_uppercase())
+        .filter(|c| COLOR_SWATCHES.iter().any(|(k, _, _)| k == c))
+        .unwrap_or(default_color);
+    let current_color_name = COLOR_SWATCHES.iter()
+        .find(|(k, _, _)| *k == current_color.as_str())
+        .map(|(_, n, _)| *n).unwrap_or("Black");
+
+    let img = mockup_url.unwrap_or_else(|| design_url.unwrap_or_default());
+    let swatches_html: String = COLOR_SWATCHES.iter().map(|(code, label, rgb)| {
+        let selected = if *code == current_color.as_str() { " selected" } else { "" };
+        format!(
+            r#"<a class="swatch{sel}" href="/p/{id}?color={code}" title="{label}" style="background:{rgb}"><span class="sr">{label}</span></a>"#,
+            sel = selected, id = id, code = code, label = html_attr_escape(label), rgb = rgb,
+        )
+    }).collect();
+
+    let html = format!(
+        r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{name} — MU #{drop_num}</title>
+<style>
+body{{font-family:-apple-system,system-ui,sans-serif;background:#0a0a0a;color:#f5f5f0;margin:0;padding:24px;max-width:720px;margin:0 auto}}
+img{{width:100%;height:auto;background:#111;border-radius:2px}}
+h1{{font-size:20px;font-weight:500;margin:24px 0 8px}}
+.meta{{font-size:13px;opacity:0.7;margin-bottom:16px}}
+.price{{font-size:22px;font-variant-numeric:tabular-nums;margin:8px 0 24px}}
+.swatches{{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:16px 0}}
+.swatch{{display:inline-block;width:34px;height:34px;border-radius:50%;border:2px solid rgba(255,255,255,0.15);cursor:pointer;transition:transform .1s}}
+.swatch:hover{{transform:scale(1.1)}}
+.swatch.selected{{border-color:#f5f5f0;box-shadow:0 0 0 2px #0a0a0a,0 0 0 4px #f5f5f0}}
+.sr{{position:absolute;left:-9999px}}
+.color-badge{{display:inline-block;font-size:12px;padding:4px 10px;background:rgba(245,245,240,0.08);border-radius:12px;letter-spacing:0.05em;font-variant-numeric:tabular-nums}}
+.back{{display:inline-block;margin-top:32px;color:#999;font-size:13px;text-decoration:none}}
+.back:hover{{color:#fff}}
+</style></head><body>
+<img src="{img}" alt="{name}" loading="eager">
+<h1>{name}</h1>
+<div class="meta">{brand_upper} · #{drop_num}</div>
+<div class="price">¥{price}</div>
+<div class="swatches">
+  {swatches}
+  <span class="color-badge">{current_code} — {current_name}</span>
+</div>
+<a class="back" href="/products/{brand}/{drop_num}">→ 詳細・購入</a>
+</body></html>"##,
+        name = html_escape(&name),
+        drop_num = drop_num,
+        brand = html_attr_escape(&brand),
+        brand_upper = html_escape(&brand.to_uppercase()),
+        price = price_jpy,
+        img = html_attr_escape(&img),
+        swatches = swatches_html,
+        current_code = html_escape(&current_color),
+        current_name = html_escape(current_color_name),
+    );
+    Html(html).into_response()
 }
 
 /// POST /api/admin/products/:id/update — admin-only PATCH for the product
@@ -57104,11 +57311,14 @@ async fn main() {
         .route("/nouns", get(|| async { axum::response::Redirect::permanent("/nouns-proposal.html") }))
         // Product detail SPA routes
         .route("/products/:brand/:id", get(index))
+        // Minimal SSR product page with 6-color swatch picker (?color=NVY)
+        .route("/p/:sku", get(product_sku_page))
         // API routes
         .route("/api/products", get(list_brands))
         .route("/api/products/:brand", get(list_products))
         .route("/api/products/item/:id", get(get_product))
         .route("/api/products/item/:id/chronicle", get(get_product_chronicle))
+        .route("/api/products/item/:id/upsell", get(get_product_upsell))
         .route("/c/:id/:pos", get(chronicle_short_page))
         .route("/chronicle-vote", get(chronicle_vote_page))
         .route("/api/chronicle/vote/request", post(chronicle_vote_request))
