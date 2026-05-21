@@ -25,6 +25,10 @@
 #   PRODUCT-CREATOR: every 2h (signal-driven, 3 designs/run)
 #   X-POST-AGENT:  every 10 min — polls products.db for fresh drops,
 #                  posts one tweet each (DRY_RUN unless MU_X_LIVE=1)
+#   BURST-ADS-30K: hourly — monitors GA spend toward ¥30K/10d plan,
+#                  Telegram alert on over-pace / cap-hit. Read-only.
+#   SALES-100K:    hourly — SUMs sold×price_jpy toward ¥100K goal,
+#                  alerts on every new order, one-shot 'GOAL HIT'.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PYTHON="$(which python3)"
@@ -91,6 +95,10 @@ install_crons() {
 33 */2 * * * set -a && source $ENV_FILE && set +a && NO_DELAY=1 $PYTHON $SCRIPT_DIR/scripts/product_creator_agent.py >> $LOG_DIR/product_creator_agent.log 2>&1
 # mu-brand X-POST-AGENT (every 10 min — polls products.db for new designs; DRY_RUN unless MU_X_LIVE=1)
 */10 * * * * set -a && source $ENV_FILE && set +a && MU_X_LIVE=\${MU_X_LIVE:-} $PYTHON $SCRIPT_DIR/scripts/x_post_agent.py >> $LOG_DIR/x_post.log 2>&1
+# mu-brand BURST-ADS-30K (hourly — monitor spend toward ¥30K/10d, NO budget mutation)
+0 * * * * set -a && source $ENV_FILE && set +a && $PYTHON $SCRIPT_DIR/scripts/burst_ads_30k.py >> $LOG_DIR/burst_ads.log 2>&1
+# mu-brand SALES-100K (hourly — SUM sold×price toward ¥100K, alert on every new order)
+0 * * * * set -a && source $ENV_FILE && set +a && $PYTHON $SCRIPT_DIR/scripts/sales_tracker_100k.py >> $LOG_DIR/sales_100k.log 2>&1
 EOF
 
     crontab /tmp/mu_crontab_tmp
