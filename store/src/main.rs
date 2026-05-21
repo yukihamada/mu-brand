@@ -13262,7 +13262,8 @@ async fn admin_product_detail(
         conn.query_row(
             "SELECT id, brand, drop_num, name, design_url, mockup_url, lifestyle_url,
                     lifestyle_urls_json, price_jpy, inventory, sold, active, created_at,
-                    prompt_text, seed_data, weather_data, parent_design, city_slug, cost_jpy
+                    prompt_text, seed_data, weather_data, parent_design, city_slug, cost_jpy,
+                    print_url
              FROM products WHERE id=?",
             params![id], |r| Ok(serde_json::json!({
                 "id":            r.get::<_, i64>(0)?,
@@ -13284,6 +13285,8 @@ async fn admin_product_detail(
                 "parent_design": r.get::<_, Option<String>>(16).unwrap_or(None),
                 "city_slug":     r.get::<_, Option<String>>(17).unwrap_or(None),
                 "cost_jpy":      r.get::<_, Option<i64>>(18).unwrap_or(None),
+                // ADMIN-ONLY: print-ready asset. Never exposed by public APIs.
+                "print_url":     r.get::<_, Option<String>>(19).unwrap_or(None),
             }))
         ).ok()
     };
@@ -13780,7 +13783,8 @@ async fn admin_review_create(
 /// POST /api/admin/products/:id/update — admin-only PATCH for the product
 /// row. Accepts JSON body with any subset of: name, prompt_text, price_jpy,
 /// inventory, active, design_url, mockup_url, lifestyle_url, lifestyle_urls
-/// (array of strings, persisted as JSON in lifestyle_urls_json).
+/// (array of strings, persisted as JSON in lifestyle_urls_json), print_url
+/// (admin-only print-ready asset — never surfaced by public APIs).
 async fn admin_product_update(
     State(db): State<Db>,
     headers: HeaderMap,
@@ -13816,6 +13820,14 @@ async fn admin_product_update(
     }
     if let Some(v) = body.get("lifestyle_url").and_then(|x| x.as_str()) {
         sets.push("lifestyle_url=?"); binds.push(Box::new(v.to_string()));
+    }
+    // ADMIN-ONLY: print-ready asset (high-res print file). Public endpoints
+    // never SELECT this column — only this admin PATCH may write it and only
+    // /api/admin/products/* may read it back.
+    if let Some(v) = body.get("print_url").and_then(|x| x.as_str()) {
+        sets.push("print_url=?"); binds.push(Box::new(v.to_string()));
+    } else if body.get("print_url").map(|x| x.is_null()).unwrap_or(false) {
+        sets.push("print_url=NULL");
     }
     if let Some(v) = body.get("cost_jpy").and_then(|x| x.as_i64()) {
         sets.push("cost_jpy=?"); binds.push(Box::new(v));
@@ -14785,7 +14797,7 @@ async fn admin_products_list(
     let products_sql = format!(
         "SELECT id, brand, drop_num, name, design_url, mockup_url, price_jpy, inventory, sold,
                 created_at, active, parent_design, nft_mint, auction_end, current_bid, bid_count,
-                design_bytes IS NOT NULL, mockup_bytes IS NOT NULL, bytes_fetched_at
+                design_bytes IS NOT NULL, mockup_bytes IS NOT NULL, bytes_fetched_at, print_url
          FROM products{} ORDER BY id DESC LIMIT ? OFFSET ?",
         where_sql,
     );
@@ -14820,6 +14832,8 @@ async fn admin_products_list(
                 "has_design_bytes": r.get::<_, i64>(16).unwrap_or(0) != 0,
                 "has_mockup_bytes": r.get::<_, i64>(17).unwrap_or(0) != 0,
                 "bytes_fetched_at": r.get::<_, Option<String>>(18).unwrap_or(None),
+                // ADMIN-ONLY: print-ready asset URL (never returned by public APIs).
+                "print_url":     r.get::<_, Option<String>>(19).unwrap_or(None),
             }))
         }).map(|it| it.flatten().collect()).unwrap_or_default();
         rows
@@ -14859,7 +14873,7 @@ async fn admin_products_list(
         let mut st = match conn.prepare(
             "SELECT id, brand, drop_num, name, design_url, mockup_url, price_jpy, inventory, sold,
                     created_at, active, parent_design, nft_mint, auction_end, current_bid, bid_count,
-                    design_bytes IS NOT NULL, mockup_bytes IS NOT NULL, bytes_fetched_at
+                    design_bytes IS NOT NULL, mockup_bytes IS NOT NULL, bytes_fetched_at, print_url
              FROM products ORDER BY id DESC"
         ) {
             Ok(s) => s,
@@ -14886,6 +14900,8 @@ async fn admin_products_list(
                 "has_design_bytes": r.get::<_, i64>(16).unwrap_or(0) != 0,
                 "has_mockup_bytes": r.get::<_, i64>(17).unwrap_or(0) != 0,
                 "bytes_fetched_at": r.get::<_, Option<String>>(18).unwrap_or(None),
+                // ADMIN-ONLY: print-ready asset URL (never returned by public APIs).
+                "print_url":     r.get::<_, Option<String>>(19).unwrap_or(None),
             }))
         }).map(|it| it.flatten().collect()).unwrap_or_default();
         rows
@@ -25688,14 +25704,24 @@ fn try_render_proposal_lp_inner(slug: &str, db: &Db, as_admin_preview: bool) -> 
         // Inline query so we can pull design_url too AND join in products.mockup_url
         // (the Printful-generated mockup, when available — that's the per-SKU,
         // design-overlaid product photo we actually want to show).
-        let mut skus: Vec<(String, i64, i64, String, String, String, Option<String>)> = Vec::new();
+        // We also pull `products.id` so the Buy button can POST a real product_id
+        // to /api/checkout, and a separate design_url column so we can fall back
+        // independently when the mockup is missing but a design preview exists.
+        let mut skus: Vec<(
+            String, i64, i64, String, String, String, // letter, drop, price, label, kind, design_slug
+            Option<String>,  // img_url (mockup or design)
+            Option<i64>,     // product_id (for Buy CTA)
+            i64,             // active (for "sold-out" gating)
+        )> = Vec::new();
         if let Ok(mut stmt) = conn.prepare(
             "SELECT ps.letter, ps.drop_num, ps.price_jpy, ps.label, ps.kind, ps.design_slug,
                     COALESCE(
                         NULLIF(p.mockup_url, ''),
                         NULLIF(ps.design_url, ''),
                         NULLIF(p.design_url,  '')
-                    ) AS img_url
+                    ) AS img_url,
+                    p.id   AS product_id,
+                    COALESCE(p.active, 0) AS active
              FROM proposal_skus ps
              LEFT JOIN products p
                     ON p.brand = ps.slug || '_' || ps.kind || '_sample'
@@ -25708,6 +25734,8 @@ fn try_render_proposal_lp_inner(slug: &str, db: &Db, as_admin_preview: bool) -> 
                     r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?,
                     r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, String>(5)?,
                     r.get::<_, Option<String>>(6)?,
+                    r.get::<_, Option<i64>>(7)?,
+                    r.get::<_, i64>(8)?,
                 ))
             }) {
                 for row in rows.flatten() { skus.push(row); }
@@ -25720,13 +25748,17 @@ fn try_render_proposal_lp_inner(slug: &str, db: &Db, as_admin_preview: bool) -> 
     Some(render_proposal_lp(slug, &name, &ip_owner, approved, &plan_tier, &skus, &meta_json))
 }
 
+#[allow(clippy::type_complexity)]
 fn render_proposal_lp(
     slug: &str,
     name: &str,
     ip_owner: &str,
     approved: bool,
     plan_tier: &str,
-    skus: &[(String, i64, i64, String, String, String, Option<String>)],
+    skus: &[(
+        String, i64, i64, String, String, String,
+        Option<String>, Option<i64>, i64,
+    )],
     meta: &serde_json::Value,
 ) -> String {
     let m = |k: &str| meta.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -25768,26 +25800,70 @@ fn render_proposal_lp(
 
     let n_sku = skus.len();
     let total_jpy: i64 = skus.iter().map(|s| s.2).sum();
-    let cards_html: String = skus.iter().map(|(letter, _drop, price, label, kind, design_slug, design_url)| {
-        // Image: prefer the design_url stored in DB; fall back to the
-        // generated PNG that gen_brand_designs.py wrote for this brand.
-        let img = design_url.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| {
-            format!("/static/proposals/{}-design-{}.png", slug, design_slug)
+    // ── SKU cards: image (5-level fallback) + Buy button ──
+    // Image priority: img_url from DB (mockup_url / design_url) →
+    //   /static/proposals/<slug>-mockup-<letter>.png →
+    //   /static/proposals/<slug>-pf-<letter>.jpg →
+    //   /static/proposals/<slug>-design-<design_slug>.png →
+    //   placeholder SVG circle.
+    // <img> with onerror chain walks the fallbacks until one loads. JS hidden
+    // here — we use srcset-style `data-fallback` so the chain is declarative
+    // and works without JS for SEO crawlers.
+    let cards_html: String = skus.iter().map(|sku| {
+        let (letter, _drop, price, label, kind, design_slug, img_url, product_id, active) = sku;
+        let letter_lo = letter.to_ascii_lowercase();
+        // Build fallback chain (declarative — onerror walks the list)
+        let primary = img_url.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| {
+            format!("/static/proposals/{}-mockup-{}.png", slug, letter_lo)
         });
+        let fb1 = format!("/static/proposals/{}-mockup-{}.png", slug, letter_lo);
+        let fb2 = format!("/static/proposals/{}-pf-{}.jpg", slug, letter_lo);
+        let fb3 = format!("/static/proposals/{}-design-{}.png", slug, design_slug);
+        // Final placeholder: inline SVG with the MU mark ━◯━
+        let placeholder = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'><rect width='200' height='200' fill='%230a0a0a'/><circle cx='100' cy='100' r='34' fill='none' stroke='%237be57b' stroke-width='2'/><rect x='30' y='99' width='40' height='2' fill='%237be57b'/><rect x='130' y='99' width='40' height='2' fill='%237be57b'/></svg>";
+        // The onerror chain: each step swaps to the next fallback and clears
+        // its own handler so it only fires once per level.
+        let onerror = format!(
+            "if(this.dataset.s==='0'){{this.dataset.s='1';this.src='{}';}}\
+             else if(this.dataset.s==='1'){{this.dataset.s='2';this.src='{}';}}\
+             else if(this.dataset.s==='2'){{this.dataset.s='3';this.src='{}';}}\
+             else if(this.dataset.s==='3'){{this.dataset.s='4';this.src=\"{}\";}}\
+             else{{this.onerror=null;}}",
+            html_attr_escape(&fb1), html_attr_escape(&fb2),
+            html_attr_escape(&fb3), placeholder,
+        );
+        // Buy button: real product_id present + active=1 → enabled. Otherwise
+        // show a disabled "準備中" pill. The button POSTs to /api/checkout and
+        // follows the returned Stripe URL.
+        let buy_html = match (product_id, *active) {
+            (Some(pid), 1) => format!(
+                "<button type=\"button\" class=\"buy\" data-pid=\"{pid}\" data-price=\"{price}\">\
+                   今すぐ買う · ¥{price_fmt}\
+                 </button>",
+                pid = pid, price = price, price_fmt = format_jpy(*price),
+            ),
+            _ => "<button type=\"button\" class=\"buy disabled\" disabled>準備中 · coming soon</button>".to_string(),
+        };
         format!(
             "<div class=\"card\">\
-               <div class=\"thumb\" style=\"background-image:url('{img}')\"></div>\
+               <div class=\"thumb\">\
+                 <img src=\"{img}\" alt=\"{alt}\" loading=\"lazy\" data-s=\"0\" onerror=\"{onerror}\">\
+               </div>\
                <div class=\"id\">{letter}</div>\
                <h4>{label}</h4>\
                <div class=\"kind\">{kind} · design {design_slug}</div>\
-               <div class=\"price\">¥{price}</div>\
+               <div class=\"price\">¥{price_fmt}</div>\
+               {buy}\
              </div>",
-            img = html_attr_escape(&img),
+            img = html_attr_escape(&primary),
+            alt = html_attr_escape(label),
+            onerror = onerror,
             letter = html_escape(&letter.to_uppercase()),
             label = html_escape(label),
             kind = html_escape(kind),
             design_slug = html_escape(design_slug),
-            price = format_jpy(*price),
+            price_fmt = format_jpy(*price),
+            buy = buy_html,
         )
     }).collect::<Vec<_>>().join("\n");
 
@@ -25954,14 +26030,18 @@ ul.use-cases{{margin:0 0 32px;padding:0;list-style:none}}
 ul.use-cases li{{padding:10px 0;border-bottom:1px solid var(--line);color:#ccc;font-size:14px}}
 ul.use-cases li:before{{content:'━◯━ ';color:var(--accent);font-weight:700;margin-right:8px}}
 .grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin-top:24px}}
-.card{{background:#111;border:1px solid var(--line);padding:0;border-radius:6px;transition:border-color 0.2s;overflow:hidden}}
+.card{{background:#111;border:1px solid var(--line);padding:0;border-radius:6px;transition:border-color 0.2s;overflow:hidden;display:flex;flex-direction:column}}
 .card:hover{{border-color:var(--accent)}}
-.card .thumb{{aspect-ratio:1/1;background:#0a0a0a center/cover no-repeat;border-bottom:1px solid var(--line)}}
-.card > .id,.card > h4,.card > .kind,.card > .price{{padding-left:14px;padding-right:14px}}
-.card .id{{font-size:10px;letter-spacing:0.3em;color:var(--accent);font-weight:700;margin:12px 0 4px}}
-.card h4{{margin:0 0 6px;font-size:13px;line-height:1.45;font-weight:600}}
+.card .thumb{{aspect-ratio:1/1;background:#0a0a0a;border-bottom:1px solid var(--line);overflow:hidden;display:flex;align-items:center;justify-content:center}}
+.card .thumb img{{display:block;width:100%;height:100%;object-fit:cover}}
+.card > .id,.card > h4,.card > .kind,.card > .price,.card > .buy{{margin-left:14px;margin-right:14px}}
+.card .id{{font-size:10px;letter-spacing:0.3em;color:var(--accent);font-weight:700;margin-top:12px;margin-bottom:4px}}
+.card h4{{margin:0 14px 6px;font-size:13px;line-height:1.45;font-weight:600}}
 .card .kind{{font-size:10px;color:var(--mute);letter-spacing:0.16em;text-transform:uppercase;margin-bottom:8px}}
-.card .price{{font-size:15px;font-weight:700;color:var(--fg);padding-bottom:14px}}
+.card .price{{font-size:15px;font-weight:700;color:var(--fg);margin-bottom:10px}}
+.card .buy{{background:var(--accent);color:#000;border:0;font-weight:700;padding:10px 12px;font-size:12px;letter-spacing:0.05em;cursor:pointer;border-radius:4px;font-family:inherit;margin-bottom:14px;text-align:center;transition:opacity 0.15s}}
+.card .buy:hover:not(:disabled){{opacity:0.85}}
+.card .buy.disabled,.card .buy:disabled{{background:#222;color:var(--mute);cursor:not-allowed}}
 .extras-cta{{margin-top:48px;padding:24px;border:1px solid var(--line);background:#111;border-radius:6px}}
 .extras-cta h3{{margin:0 0 8px;font-size:18px;font-weight:700;color:var(--accent)}}
 .extras-cta p{{margin:0 0 16px;color:#ccc;font-size:13px;line-height:1.8}}
@@ -26066,6 +26146,38 @@ footer a{{color:var(--accent);text-decoration:none}}
     <div class="result" id="extras-result-{slug}">qty=30 固定 · 50 / 100 は <code>POST /api/proposal/{slug}/extras/order</code> 直叩きで指定可。job 状況は <code>GET /api/proposal/extras/job/&lt;job_id&gt;</code>。</div>
   </div>
   <script>
+  // ── Buy buttons on SKU cards ──
+  // Each .card .buy[data-pid] POSTs {{product_id, quantity:1}} to /api/checkout
+  // and redirects to the returned Stripe URL. Failure shows an alert.
+  (function(){{
+    document.querySelectorAll('.card .buy[data-pid]').forEach(function(btn){{
+      btn.addEventListener('click', async function(){{
+        var pid = parseInt(btn.dataset.pid, 10);
+        if (!pid) return;
+        var orig = btn.textContent;
+        btn.disabled = true; btn.textContent = '読み込み中 …';
+        try {{
+          var r = await fetch('/api/checkout', {{
+            method:'POST',
+            headers:{{'Content-Type':'application/json'}},
+            body: JSON.stringify({{product_id: pid, quantity: 1}}),
+          }});
+          var j = await r.json().catch(function(){{ return {{}}; }});
+          if (r.ok && j.url) {{
+            window.location.href = j.url;
+            return;
+          }}
+          console.error('[buy] checkout failed', r.status, j);
+          alert('購入ページを開けませんでした (HTTP ' + r.status + ')。 mail@yukihamada.jp までご連絡ください。');
+        }} catch (err) {{
+          console.error('[buy]', err);
+          alert('購入ページを開けませんでした。 ' + err.message);
+        }} finally {{
+          btn.disabled = false; btn.textContent = orig;
+        }}
+      }});
+    }});
+  }})();
   (function(){{
     var form  = document.getElementById('extras-form-{slug}');
     var btn   = document.getElementById('extras-submit-{slug}');
@@ -54586,6 +54698,15 @@ async fn main() {
         // 原価 (Printful 実費 + JP 送料 + DTG 手数料 を JPY 換算)。
         // NULL の SKU は brand_default を /admin/costs で適用。手動上書き可。
         "ALTER TABLE products ADD COLUMN cost_jpy INTEGER",
+        // print_url — the high-resolution print-ready asset that ships to the
+        // printer (Printful task file / DTG print PNG). Distinct from:
+        //   design_url    = public-facing artwork (transparent or white-bg PNG)
+        //   mockup_url    = product photo with design overlaid (Printful mockup)
+        //   lifestyle_url = on-body / lifestyle photo of a wearer
+        // ADMIN-ONLY column: every public API endpoint and SSR page MUST
+        // omit this from its SELECT list. Only /api/admin/products/* may
+        // surface or accept this value. Treated with PII-grade strictness.
+        "ALTER TABLE products ADD COLUMN print_url TEXT",
         // Cash-payout fields for bounty rewards. Solana is the primary
         // method (treasury sends USDC). Stripe Connect Express is for
         // recipients who prefer fiat / JP-domestic bank. PayPay is a
