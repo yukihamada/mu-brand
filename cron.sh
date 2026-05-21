@@ -22,6 +22,7 @@
 #   CART-ABANDON:  every 30 min (DRY_RUN unless MU_ABANDON_LIVE=1)
 #   POSTPURCHASE:  every 60 min (DRY_RUN unless MU_POSTPURCHASE_LIVE=1)
 #   SITEMAP-PING:  daily 03:30 JST (notify Google/Bing of new SKUs)
+#   PRODUCT-CREATOR: every 2h (signal-driven, 3 designs/run)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PYTHON="$(which python3)"
@@ -84,6 +85,8 @@ install_crons() {
 17 * * * * set -a && source $ENV_FILE && set +a && $PYTHON $SCRIPT_DIR/scripts/post_purchase_mail.py >> $LOG_DIR/post_purchase.log 2>&1
 # mu-brand SITEMAP-PING (daily 03:30 JST — notify Google/Bing of new SKUs)
 30 3 * * * set -a && source $ENV_FILE && set +a && $PYTHON $SCRIPT_DIR/scripts/sitemap_ping.py >> $LOG_DIR/sitemap_ping.log 2>&1
+# mu-brand PRODUCT-CREATOR (every 2h — signal-driven brand pick + 3 designs)
+33 */2 * * * set -a && source $ENV_FILE && set +a && NO_DELAY=1 $PYTHON $SCRIPT_DIR/scripts/product_creator_agent.py >> $LOG_DIR/product_creator_agent.log 2>&1
 EOF
 
     crontab /tmp/mu_crontab_tmp
