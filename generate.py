@@ -221,15 +221,138 @@ def generate_design(prompt: str) -> bytes:
 
 # ── Printful ─────────────────────────────────────────────
 def upload_to_imgur(image_bytes: bytes, filename: str = "design.png") -> str:
+    """POST image to imgur with 3x exponential backoff on 429/503/connection.
+
+    imgur api.imgur.com has been flapping on 503/429 in 2026-05; that used to
+    block 100% of design generation. Caller (upload_design_anywhere) catches
+    the final raise and falls through to other upload providers.
+    """
     b64 = base64.b64encode(image_bytes).decode()
+    last_exc: Exception | None = None
+    backoffs = [5, 15, 45]
+    for attempt, sleep_s in enumerate(backoffs, start=1):
+        try:
+            r = requests.post(
+                "https://api.imgur.com/3/image",
+                headers={"Authorization": "Client-ID 546c25a59c58ad7"},
+                json={"image": b64, "type": "base64", "name": filename},
+                timeout=30,
+            )
+            # Retry on 429 / 5xx; fail fast on other 4xx
+            if r.status_code in (429,) or 500 <= r.status_code < 600:
+                last_exc = requests.HTTPError(
+                    f"imgur HTTP {r.status_code}", response=r
+                )
+                if attempt < len(backoffs):
+                    print(f"  imgur {r.status_code}; retry {attempt}/{len(backoffs)} in {sleep_s}s")
+                    time.sleep(sleep_s)
+                    continue
+                r.raise_for_status()  # raises last_exc-equivalent
+            r.raise_for_status()
+            return r.json()["data"]["link"]
+        except (requests.ConnectionError, requests.Timeout) as e:
+            last_exc = e
+            if attempt < len(backoffs):
+                print(f"  imgur conn-err ({type(e).__name__}); retry {attempt}/{len(backoffs)} in {sleep_s}s")
+                time.sleep(sleep_s)
+                continue
+            raise
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("imgur upload: unreachable")
+
+
+def upload_to_r2_design(image_bytes: bytes, filename: str) -> str:
+    """Upload raw design bytes to Cloudflare R2 (wearmu-mockups/designs/<filename>).
+    Returns public URL https://mockups.wearmu.com/designs/<filename>.
+
+    Uses wrangler CLI via subprocess with an explicit node PATH so cron's
+    minimal PATH still finds node (previous failure: `env: node: No such
+    file or directory`). Raises on any failure so the caller can fall
+    through to imgur / printful-direct.
+    """
+    import subprocess, tempfile
+    wrangler_bin = os.environ.get("WRANGLER_BIN", "/opt/homebrew/bin/wrangler")
+    # Ensure `node` is reachable for wrangler (cron PATH is minimal).
+    node_dir = os.environ.get(
+        "NODE_BIN_DIR", "/Users/yuki/.nvm/versions/node/v22.22.0/bin"
+    )
+    env = {**os.environ, "PATH": f"{node_dir}:{os.environ.get('PATH', '')}"}
+
+    suffix = ".png" if filename.lower().endswith(".png") else ".jpg"
+    content_type = "image/png" if suffix == ".png" else "image/jpeg"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+        f.write(image_bytes)
+        tmp_path = f.name
+    try:
+        key = f"designs/{filename}"
+        result = subprocess.run(
+            [
+                wrangler_bin, "r2", "object", "put",
+                f"wearmu-mockups/{key}",
+                f"--file={tmp_path}",
+                "--remote",
+                f"--content-type={content_type}",
+            ],
+            capture_output=True, text=True, timeout=90, env=env,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"wrangler exit {result.returncode}: {result.stderr[-300:]}"
+            )
+        return f"https://mockups.wearmu.com/{key}"
+    finally:
+        try: os.unlink(tmp_path)
+        except OSError: pass
+
+
+def upload_to_printful_direct(image_bytes: bytes, filename: str) -> str:
+    """Final-fallback: POST design bytes directly to Printful v1 files API
+    via multipart. Printful hosts the file itself and returns a usable URL.
+    Used when both R2 and imgur are down.
+    """
+    files = {"file": (filename, image_bytes, "image/png")}
+    # Printful v1 multipart needs Authorization but not Content-Type
+    hdr = {"Authorization": f"Bearer {PRINTFUL_KEY}"}
     r = requests.post(
-        "https://api.imgur.com/3/image",
-        headers={"Authorization": "Client-ID 546c25a59c58ad7"},
-        json={"image": b64, "type": "base64", "name": filename},
-        timeout=30,
+        f"{PF_BASE}/files", headers=hdr, files=files, timeout=60,
     )
     r.raise_for_status()
-    return r.json()["data"]["link"]
+    data = r.json()
+    # v1 response shape: {"code":200,"result":{"url":"..."}}
+    return (
+        data.get("result", {}).get("url")
+        or data.get("data", {}).get("url")
+        or ""
+    )
+
+
+def upload_design_anywhere(image_bytes: bytes, filename: str) -> str:
+    """Return a public URL for `image_bytes`, trying in order:
+      1. Cloudflare R2 (primary, permanent, free)
+      2. imgur (with retry+backoff)
+      3. Printful v1 /files direct multipart (final safety net)
+
+    The first provider that returns a usable URL wins. SPOF eliminated.
+    """
+    # 1. R2 primary
+    try:
+        url = upload_to_r2_design(image_bytes, filename)
+        print(f"  uploaded via R2: {url}")
+        return url
+    except Exception as e:
+        print(f"  R2 upload failed ({e}); trying imgur")
+    # 2. imgur fallback
+    try:
+        url = upload_to_imgur(image_bytes, filename)
+        print(f"  uploaded via imgur: {url}")
+        return url
+    except Exception as e:
+        print(f"  imgur upload failed ({e}); trying printful direct")
+    # 3. Printful direct multipart (last resort)
+    url = upload_to_printful_direct(image_bytes, filename)
+    print(f"  uploaded via printful direct: {url}")
+    return url
 
 def make_transparent_bg(image_bytes: bytes, threshold: int = 35) -> bytes:
     """Auto-detect bg color (sample 4 corners) and key it out.
@@ -477,10 +600,12 @@ def decode_watermark(image_bytes: bytes) -> dict | None:
 
 
 def upload_to_printful(image_bytes: bytes, filename: str, transparent: bool = False) -> str:
-    """Upload design to Imgur (public preview) and register with Printful v2 files API."""
+    """Upload design via multi-provider chain (R2 → imgur → Printful direct)
+    and register with Printful v2 files API. SPOF on imgur eliminated 2026-05.
+    """
     if transparent:
         image_bytes = make_transparent_bg(image_bytes)
-    public_url = upload_to_imgur(image_bytes, filename)
+    public_url = upload_design_anywhere(image_bytes, filename)
     # Register with Printful v2 (non-fatal if it fails)
     try:
         r = requests.post(f"{PF_BASE}/v2/files", headers=PF_HDR,
