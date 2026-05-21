@@ -491,47 +491,24 @@ for (const inp of document.querySelectorAll('input[name="color"]')){
   });
 }
 
-// Buy → POST /api/checkout
-async function buy(){
+// Buy → Stripe Payment Link (fixed ¥35,000). Bypasses /api/checkout which
+// runs through mu-store dynamic_price() — that fn doesn't have a heritage
+// case and would silently downprice to ¥5,000 (PRICE_BASE_JPY default).
+// Until that's patched in Rust, the Payment Link is the source of truth.
+// price_1TZYlTDqLakc8NxkbI4SL1Ok / plink_1TZYlfDqLakc8Nxk9n32rBvu.
+const HERITAGE_PAYMENT_LINK = 'https://buy.stripe.com/6oUcN56s35nY1Ju756efD1e';
+function buy(){
   const cur = STATE.skus[STATE.selected];
-  if (!cur.id){
-    alert('商品情報の読込中です。 数秒後に もう一度 試してください。');
-    return;
-  }
   if (rem(cur) <= 0){
     alert('この色は完売しました。');
     return;
   }
-  for (const btn of [document.getElementById('buy-btn'), document.getElementById('buy-btn-2')]){
-    if (btn){ btn.disabled = true; btn.textContent = '決済画面へ…'; }
-  }
-  try {
-    const r = await fetch('/api/checkout', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({
-        product_id: cur.id,
-        quantity: 1,
-        payment_method: 'jpy',
-      }),
-    });
-    if (!r.ok){
-      const t = await r.text();
-      alert(`決済画面 を 開けません: ${t}`);
-      refreshStock();
-      return;
-    }
-    const j = await r.json();
-    if (j.url){
-      location.href = j.url;
-    } else {
-      alert('Stripe URL が 返って きません でした。 info@enablerdao.com に ご連絡ください。');
-      refreshStock();
-    }
-  } catch (e) {
-    alert('通信エラー: ' + (e && e.message || e));
-    refreshStock();
-  }
+  // Pass selected color through so the post-purchase fulfillment knows
+  // which colorway the buyer chose. Stripe Payment Link supports a
+  // `prefilled_promo_code` and `client_reference_id` for round-tripping
+  // metadata back via the webhook.
+  const ref = `heritage_${STATE.selected}_${Date.now().toString(36)}`;
+  window.location.href = HERITAGE_PAYMENT_LINK + '?client_reference_id=' + encodeURIComponent(ref);
 }
 document.getElementById('buy-btn').addEventListener('click', buy);
 const b2 = document.getElementById('buy-btn-2');
