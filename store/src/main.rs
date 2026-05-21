@@ -15918,6 +15918,22 @@ async fn stripe_webhook(
         let amount_total = session["amount_total"].as_i64().unwrap_or(0);
         let session_id   = session["id"].as_str().unwrap_or("").to_string();
         let product_id   = meta["product_id"].as_str().and_then(|s| s.parse::<i64>().ok());
+        let payment_link = session["payment_link"].as_str().unwrap_or("");
+        // Funnel anomaly fix (CHECKOUT_PAID > CHECKOUT_START): Payment-Link
+        // sessions skip /api/checkout, so the only checkout_start emit point
+        // (line 3066 in /api/checkout success path) never fires. Synthesize
+        // one here before paid to preserve the invariant paid <= start.
+        if !payment_link.is_empty() {
+            funnel_track_server(&db, "checkout_start",
+                "/api/webhook/stripe",
+                product_id,
+                serde_json::json!({
+                    "amount_jpy": amount_total,
+                    "session": session_id,
+                    "source": "payment_link",
+                    "payment_link": payment_link,
+                })).await;
+        }
         funnel_track_server(&db, "checkout_paid",
             "/api/webhook/stripe",
             product_id,
