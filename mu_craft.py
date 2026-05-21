@@ -724,8 +724,29 @@ def healthz():
 @app.get("/", response_class=HTMLResponse)
 def home(request: FastRequest, response: Response):
     user = get_or_create_user(request, response)
-    return HTMLResponse(content=HTML_INDEX.replace("{{mp_balance}}", str(user["mp_balance"])),
-                        headers={"Set-Cookie": response.headers.get("set-cookie", "")} if "set-cookie" in response.headers else None)
+    # Fetch latest 3 SKUs that have a mockup — render as hero for cold visitors
+    rows = db().execute(
+        "SELECT slug, catchphrase, kanji, mockup_white_url, mockup_black_url "
+        "FROM skus WHERE mockup_white_url IS NOT NULL OR mockup_black_url IS NOT NULL "
+        "ORDER BY id DESC LIMIT 3"
+    ).fetchall()
+    hero_cards = []
+    for r in rows:
+        mock = r["mockup_black_url"] or r["mockup_white_url"]
+        if not mock:
+            continue
+        hero_cards.append(
+            f'<a class="hero-card" href="/c/{r["slug"]}" title="{_xml_escape(r["catchphrase"] or "")}">'
+            f'<img src="{mock}" loading="eager" alt="{_xml_escape(r["catchphrase"] or "")}">'
+            f'<div class="hero-cap">{_xml_escape(r["catchphrase"] or "")}'
+            f'{(" · " + _xml_escape(r["kanji"])) if r["kanji"] else ""}</div>'
+            f'</a>'
+        )
+    hero_html = ('<div class="hero-row">' + "".join(hero_cards) + "</div>") if hero_cards else ""
+    html = (HTML_INDEX
+            .replace("{{mp_balance}}", str(user["mp_balance"]))
+            .replace("{{hero}}", hero_html))
+    return HTMLResponse(content=html)
 
 
 @app.get("/api/me")
@@ -1101,6 +1122,21 @@ HTML_INDEX = """<!DOCTYPE html>
             font-family: inherit; transition: all 0.1s; }
     .pill:hover { background: #e6c449; color: #0a0a0a; border-color: #e6c449; }
     .pill:disabled { opacity: 0.4; cursor: not-allowed; }
+    .hero-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+                margin: 0 0 32px; }
+    .hero-card { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px;
+                 text-decoration: none; color: #f5f5f0; overflow: hidden;
+                 transition: transform 0.1s, border-color 0.1s; display: block; }
+    .hero-card:hover { transform: translateY(-2px); border-color: #e6c449; }
+    .hero-card img { width: 100%; aspect-ratio: 1; object-fit: cover; background: #fff;
+                     display: block; }
+    .hero-cap { padding: 6px 10px; font-weight: 900; font-size: 11px;
+                letter-spacing: 0.3px; white-space: nowrap; overflow: hidden;
+                text-overflow: ellipsis; }
+    @media (max-width: 540px) {
+      .hero-row { gap: 4px; }
+      .hero-cap { padding: 4px 6px; font-size: 9px; }
+    }
   </style>
 </head>
 <body>
@@ -1110,6 +1146,8 @@ HTML_INDEX = """<!DOCTYPE html>
     <span class="brand">MU CRAFT</span>
     <span class="mp" id="mp-display">残量: -- MP</span>
   </div>
+
+  {{hero}}
 
   <h1>何を<br>Tシャツに<br>する？</h1>
 
