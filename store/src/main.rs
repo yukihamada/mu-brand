@@ -57800,6 +57800,9 @@ async fn main() {
         .route("/products/:brand/:id", get(index))
         // Minimal SSR product page with 6-color swatch picker (?color=NVY)
         .route("/p/:sku", get(product_sku_page))
+        // Reviews seeding (admin-only). Reader path is /p/<sku> which
+        // renders ★ average + count when reviews exist.
+        .route("/api/admin/reviews", post(admin_review_create))
         // API routes
         .route("/api/products", get(list_brands))
         .route("/api/products/:brand", get(list_products))
