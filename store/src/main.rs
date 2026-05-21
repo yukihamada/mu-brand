@@ -46846,6 +46846,41 @@ async fn dynamic_sitemap(State(db): State<Db>) -> Response {
                 serial = serial, lm = lm_attr));
         }
     }
+
+    // /shop catalog SKUs. Helps Google index the 1,500+ POD catalog +
+    // anything the autonomous generator adds, so organic traffic doesn't
+    // depend solely on paid campaigns. Cap at 5,000 to stay under the
+    // sitemap-protocol limit; if we ever exceed that, split into a
+    // sitemap index file.
+    let catalog_skus: Vec<String> = {
+        let conn = db.lock().unwrap();
+        conn.prepare(
+            "SELECT sku FROM catalog_products WHERE is_active=1 \
+             ORDER BY rowid DESC LIMIT 5000",
+        )
+        .ok()
+        .and_then(|mut s| {
+            s.query_map([], |r| r.get::<_, String>(0))
+                .ok()
+                .map(|it| it.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default()
+    };
+    // Storefront index page itself.
+    entries.push_str(
+        "  <url>\n    <loc>https://wearmu.com/shop</loc>\n    \
+         <changefreq>daily</changefreq>\n    <priority>0.9</priority>\n  </url>\n",
+    );
+    for sku in catalog_skus {
+        // URL-encode the SKU so '/' or odd chars don't break the sitemap
+        // (real SKUs are alphanumeric+dash but be defensive).
+        let enc = urlencoding::encode(&sku);
+        entries.push_str(&format!(
+            "  <url>\n    <loc>https://wearmu.com/shop/{enc}</loc>\n    \
+             <changefreq>weekly</changefreq>\n    <priority>0.7</priority>\n  </url>\n",
+            enc = enc,
+        ));
+    }
     let out = if base.contains("</urlset>") {
         base.replace("</urlset>", &format!("{entries}</urlset>"))
     } else {
