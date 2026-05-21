@@ -967,7 +967,7 @@ nav .brand{{font-weight:900;letter-spacing:0.4em}}
 </nav>
 <div class="wrap">
   <div class="hero">
-    <img src="{og}" alt="{title}" loading="lazy">
+    <img src="{og}" alt="{title}" loading="lazy" onerror="this.onerror=null;this.src='/static/designs/marker_zero.png';this.style.objectFit='contain';this.style.background='#0a0a0a';this.style.padding='60px'">
     {extras}
   </div>
   <div class="body">
@@ -1385,19 +1385,27 @@ fn list_products(
     brand: Option<&str>,
     limit: i64,
 ) -> Vec<ProductRow> {
-    // Auto-generated SKUs surface first in the default grid (`brand=auto`
-    // ordered before merch-bridge's curated catalog) so the autonomous
-    // engine's fresh designs get organic visibility — otherwise they sit
-    // buried behind 1,500+ legacy SKUs sorted on sort_order 1-14. When a
-    // brand filter is set the ordering stays sort_order, sku (so e.g.
-    // ?brand=bjj retains merch-bridge's intended order).
+    // Sort order rationale:
+    //   1. brand='auto' first — autonomous-engine fresh designs surface
+    //      ahead of legacy merch-bridge SKUs (otherwise they're buried
+    //      behind 1,500+ catalog SKUs with sort_order 1-14).
+    //   2. SKUs with a WORKING external mockup URL next — merch-bridge
+    //      shipped DB rows pointing at /static/collections/bjj/*.jpg
+    //      paths where the file doesn't exist (989 of 1,073 BJJ SKUs).
+    //      Those render as broken images on /shop. Filtering them out
+    //      entirely would drop ¾ of the catalog, so we just sort them
+    //      to the end where the img onerror handler in render_card()
+    //      swaps to the ━◯━ brand mark fallback.
+    //   3. sort_order, sku for stability.
     let (sql, has_brand) = if brand.is_some() {
         (
             "SELECT sku, brand, description_ja, retail_price_jpy,
                     COALESCE(mockup_url_external, mockup_main_file)
              FROM catalog_products
              WHERE is_active=1 AND brand=?
-             ORDER BY sort_order, sku
+             ORDER BY (brand='auto') DESC,
+                      (mockup_url_external IS NOT NULL AND mockup_url_external != '') DESC,
+                      sort_order, sku
              LIMIT ?",
             true,
         )
@@ -1407,7 +1415,9 @@ fn list_products(
                     COALESCE(mockup_url_external, mockup_main_file)
              FROM catalog_products
              WHERE is_active=1
-             ORDER BY (brand='auto') DESC, sort_order, sku
+             ORDER BY (brand='auto') DESC,
+                      (mockup_url_external IS NOT NULL AND mockup_url_external != '') DESC,
+                      sort_order, sku
              LIMIT ?",
             false,
         )
@@ -1451,9 +1461,13 @@ fn render_card(p: &ProductRow) -> String {
                 format!("https://merch.wearmu.com{}", s)
             }
         })
-        .unwrap_or_else(|| "/static/og-default.png".to_string());
+        .unwrap_or_else(|| "/static/designs/marker_zero.png".to_string());
+    // onerror fallback: if the merch-bridge mockup_main_file 404s (989 of
+    // 1,073 BJJ SKUs have stale references), swap to the ━◯━ brand mark
+    // so the grid never shows a broken-image icon. The fallback strips the
+    // onerror after one swap so a broken fallback doesn't loop forever.
     format!(
-        r##"<a class="card" href="/shop/{sku_enc}"><span class="img"><img src="{img}" alt="" loading="lazy"></span><span class="body"><span class="brand">{brand}</span><span class="name">{name}</span><span class="price">¥{price}</span></span></a>"##,
+        r##"<a class="card" href="/shop/{sku_enc}"><span class="img"><img src="{img}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/static/designs/marker_zero.png';this.style.objectFit='contain';this.style.background='#0a0a0a';this.style.padding='28px'"></span><span class="body"><span class="brand">{brand}</span><span class="name">{name}</span><span class="price">¥{price}</span></span></a>"##,
         sku_enc = urlencoding::encode(&p.sku),
         img = html_attr(&img),
         brand = html_text(&p.brand),
