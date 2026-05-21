@@ -86,8 +86,14 @@ for d in (DATA_DIR, STATIC_DIR, DESIGNS_DIR, MOCKUPS_DIR):
 SECRET_KEY = os.environ.get("MU_CRAFT_SECRET", "dev-secret-change-in-prod-please")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or ""
 PRINTFUL_API_KEY = os.environ.get("PRINTFUL_API_KEY") or ""
+SUZURI_ACCESS_TOKEN = os.environ.get("SUZURI_ACCESS_TOKEN") or ""
 WRANGLER_BIN = os.environ.get("WRANGLER_BIN", "/opt/homebrew/bin/wrangler")
 PORT = int(os.environ.get("PORT", "8788"))
+
+# SUZURI: item 148 = ヘビーウェイトTシャツ, margin ¥1,400 → retail ¥4,900 JP
+SUZURI_API = "https://suzuri.jp/api/v1/materials"
+SUZURI_ITEM_ID_TEE = 148
+SUZURI_MARGIN_YEN = 1400
 
 # Storage backend: "local" serves files from STATIC_DIR via FastAPI; "r2" uses wrangler.
 # Local mode requires MU_CRAFT_PUBLIC_BASE so Printful can fetch design via public URL.
@@ -520,6 +526,60 @@ def printful_get(path: str) -> Optional[dict]:
         return None
 
 
+def suzuri_publish(png_path: Path, title: str) -> Optional[dict]:
+    """Upload a design PNG to SUZURI as a material, create a product on item 148
+    (ヘビーウェイトTシャツ) with the configured margin. Returns the public product
+    URL + material_id on success, None on failure."""
+    if not SUZURI_ACCESS_TOKEN:
+        print("  suzuri_publish: SUZURI_ACCESS_TOKEN missing — skipping live publish",
+              file=sys.stderr)
+        return None
+    if not png_path.exists():
+        print(f"  suzuri_publish: png not found {png_path}", file=sys.stderr)
+        return None
+    raw = png_path.read_bytes()
+    b64 = base64.b64encode(raw).decode()
+    body = {
+        "texture": f"data:image/png;base64,{b64}",
+        "title": title[:120],
+        "price": SUZURI_MARGIN_YEN,
+        "products": [
+            {"itemId": SUZURI_ITEM_ID_TEE, "published": True, "resaleEnabled": False}
+        ],
+    }
+    req = Request(
+        SUZURI_API,
+        data=json.dumps(body).encode(),
+        headers={
+            "Authorization": f"Bearer {SUZURI_ACCESS_TOKEN}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(req, timeout=60) as r:
+            j = json.load(r)
+    except HTTPError as e:
+        body_text = ""
+        try:
+            body_text = e.read().decode("utf-8", "replace")[:300]
+        except Exception:
+            pass
+        print(f"  suzuri_publish HTTP {e.code}: {body_text}", file=sys.stderr)
+        return None
+    except Exception as e:
+        print(f"  suzuri_publish failed: {type(e).__name__}: {e}", file=sys.stderr)
+        return None
+
+    material_id = j.get("material", {}).get("id")
+    products = j.get("products") or []
+    pretty_url = ""
+    if products:
+        url_template = products[0].get("url", "")
+        pretty_url = url_template.replace("{size}", "m").replace("{color}", "black")
+    return {"material_id": material_id, "url": pretty_url}
+
+
 def printful_mockup(design_url: str, variant_id: int) -> Optional[str]:
     body = {
         "variant_ids": [variant_id],
@@ -739,12 +799,41 @@ def api_publish(request: FastRequest, response: Response, sku_id: int = Form(...
     if not ok:
         return JSONResponse({"error": "insufficient_mp", "balance": new_bal, "cost": PUBLISH_COST_MP}, status_code=402)
 
-    # MVP: stub for actual SUZURI/Printful publish — mark as published
-    # TODO: integrate scripts/suzuri_direct_publish.py + Printful sync product create
+    # Locate the design PNG (black-ink variant is the canonical one)
+    png_path = Path(sku["design_png_path"] or "")
+    if not png_path.exists():
+        # Fallback: maybe path is stale (different volume) — derive from STATIC_DIR
+        derived = DESIGNS_DIR / f"{sku['slug']}_black.png"
+        if derived.exists():
+            png_path = derived
+    if not png_path.exists():
+        mp_change(user["id"], PUBLISH_COST_MP, "refund_publish_no_design",
+                  ref_sku_id=sku_id, note="design png missing")
+        return JSONResponse({"error": "design_file_missing", "expected": str(png_path)}, status_code=500)
+
+    # SUZURI live publish
+    title = f"MU CRAFT — {sku['catchphrase'] or sku['topic'][:40]}"
+    suzuri_result = suzuri_publish(png_path, title)
+    if not suzuri_result:
+        mp_change(user["id"], PUBLISH_COST_MP, "refund_publish_suzuri_fail",
+                  ref_sku_id=sku_id, note="suzuri api failed")
+        return JSONResponse({"error": "suzuri_publish_failed",
+                             "hint": "SUZURI_ACCESS_TOKEN set? token valid?"}, status_code=502)
+
     with db() as conn:
-        conn.execute("UPDATE skus SET status='published', published_at=CURRENT_TIMESTAMP WHERE id=?", (sku_id,))
-    return {"ok": True, "sku_id": sku_id, "status": "published", "mp_balance": new_bal,
-            "note": "MVP: publish marked locally. SUZURI/Printful sync to be integrated."}
+        conn.execute(
+            "UPDATE skus SET status='published', suzuri_url=?, published_at=CURRENT_TIMESTAMP WHERE id=?",
+            (suzuri_result["url"], sku_id),
+        )
+
+    return {
+        "ok": True,
+        "sku_id": sku_id,
+        "status": "published",
+        "mp_balance": new_bal,
+        "suzuri_url": suzuri_result["url"],
+        "suzuri_material_id": suzuri_result["material_id"],
+    }
 
 
 @app.post("/api/signup")
