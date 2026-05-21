@@ -13703,6 +13703,421 @@ h1{{font-size:20px;font-weight:500;margin:24px 0 8px}}
     Html(html).into_response()
 }
 
+/// GET /story/<serial_code>?key=<purchase_token>
+///
+/// Buyer-only page that surfaces the **origin story** of a single MU
+/// design using metadata that already lives on the products row:
+///   - prompt_text  (the AI prompt that generated the design)
+///   - seed_data    (random seed — proof the design can never be re-rolled)
+///   - weather_data (weather + moon phase at the moment of creation)
+///   - parent_design + child rows (DNA / lineage)
+///   - created_at, sold_out_at, sold (stats)
+///
+/// Access control (fail-closed, no information leak — all 4 fail-paths
+/// return the same opaque 404):
+///   1. `Authorization: Bearer <ADMIN_TOKEN>` OR session-admin → admin preview
+///   2. `?key=<token>` query string matches a row in post_purchase_queue
+///      AND that row's paid_at exists. The token is a per-session UUID
+///      minted by the Stripe webhook (see line ~16614 above).
+///   3. Anything else → 404 (NOT 401/403 — we never confirm "token wrong"
+///      vs "serial doesn't exist", which would let an attacker enumerate
+///      either dimension).
+///
+/// PII hygiene: the buyer email is read only to verify the token row
+/// exists; it's never rendered. print_url / printful internals are never
+/// emitted. The token itself appears only in the page's "share this with
+/// the buyer" sense — i.e. the URL bar of the buyer — and never in the
+/// HTML body.
+async fn story_page(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Path(serial): axum::extract::Path<String>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    // ── 1. Auth: admin OR valid purchase_token ──
+    // We resolve admin first (cheap, no DB read past the session check) so
+    // a misconfigured/locked admin still has a recovery path.
+    let is_admin = {
+        // a) Email-session admin (preferred path — already audit-logged
+        //    elsewhere; we don't double-log here).
+        if is_admin_email_session(&db, &headers).is_some() { true }
+        else {
+            // b) Bearer token. We hand-roll instead of calling admin_auth
+            //    because we don't want to penalize wrong-token guesses
+            //    with admin-lockout when most callers will be buyers
+            //    whose only "auth" is the per-session ?key= UUID.
+            let bearer = headers.get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.strip_prefix("Bearer ").or_else(|| s.strip_prefix("bearer ")))
+                .map(String::from);
+            match bearer {
+                Some(t) => require_admin_token(Some(&t)).is_ok(),
+                None => false,
+            }
+        }
+    };
+
+    let token = q.get("key").map(|s| s.trim().to_string()).unwrap_or_default();
+
+    // Opaque "not authorized" / "not found" response — same body for all
+    // failure modes so an attacker can't distinguish "wrong token" from
+    // "wrong serial".
+    let not_found = || (StatusCode::NOT_FOUND, "Not found").into_response();
+
+    // ── 2. Token validation (buyers only — admin skips this block) ──
+    // We require BOTH that a row exists in post_purchase_queue with this
+    // token AND that paid_at is set. session_id is read but not rendered
+    // (it's PII-ish — Stripe-internal identifier).
+    if !is_admin {
+        if token.is_empty() || token.len() != 32 || !token.chars().all(|c| c.is_ascii_hexdigit()) {
+            return not_found();
+        }
+        let row_ok: bool = {
+            let conn = db.lock().unwrap();
+            // Verify the table exists (lazy-created by webhook); if not,
+            // no purchase has ever been recorded, so no token can ever
+            // validate. Bail with 404.
+            let has_table: bool = conn.query_row(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='post_purchase_queue'",
+                [], |_| Ok(true),
+            ).unwrap_or(false);
+            if !has_table {
+                false
+            } else {
+                conn.query_row(
+                    "SELECT 1 FROM post_purchase_queue
+                     WHERE purchase_token = ? AND paid_at IS NOT NULL
+                     LIMIT 1",
+                    params![token], |_| Ok(true),
+                ).unwrap_or(false)
+            }
+        };
+        if !row_ok {
+            return not_found();
+        }
+        // NB: we intentionally do NOT verify that this *specific* token
+        // bought this *specific* serial. The spec says "1 session = 1
+        // token, 1 token sees the story of every SKU" — line-item
+        // attribution will land later. A valid buyer token therefore
+        // unlocks any /story page; this is acceptable because the
+        // token itself is single-buyer-only (the only way to learn it
+        // is to be the buyer + open the post-purchase mail).
+    }
+
+    // ── 3. Product lookup by serial_code (canonical public slug). ──
+    // We also accept numeric id as a fallback to match /p/<sku> behavior.
+    type ProductRow = (
+        i64, String, i64, String,                                // id, brand, drop_num, name
+        Option<String>, Option<String>, Option<String>,          // design_url, mockup_url, lifestyle_url
+        Option<String>, Option<String>, Option<String>,          // prompt_text, seed_data, weather_data
+        Option<String>, String,                                  // parent_design, created_at
+        Option<String>, i64, i64, Option<String>,                // serial_code, inventory, sold, sold_out_at
+    );
+    let row: Option<ProductRow> = {
+        let conn = db.lock().unwrap();
+        let cols = "SELECT id, brand, drop_num, name,
+                           design_url, mockup_url, lifestyle_url,
+                           prompt_text, seed_data, weather_data,
+                           parent_design, created_at,
+                           serial_code, COALESCE(inventory,0), COALESCE(sold,0), sold_out_at
+                    FROM products WHERE ";
+        let sql_sc = format!("{}serial_code=?", cols);
+        let sql_id = format!("{}id=?", cols);
+        let map = |r: &rusqlite::Row| Ok((
+            r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?,
+            r.get::<_, Option<String>>(4)?, r.get::<_, Option<String>>(5)?, r.get::<_, Option<String>>(6)?,
+            r.get::<_, Option<String>>(7)?, r.get::<_, Option<String>>(8)?, r.get::<_, Option<String>>(9)?,
+            r.get::<_, Option<String>>(10)?, r.get::<_, String>(11)?,
+            r.get::<_, Option<String>>(12)?, r.get::<_, i64>(13)?, r.get::<_, i64>(14)?, r.get::<_, Option<String>>(15)?,
+        ));
+        if let Ok(n) = serial.parse::<i64>() {
+            conn.query_row(&sql_id, params![n], map).ok()
+        } else {
+            conn.query_row(&sql_sc, params![serial.as_str()], map).ok()
+        }
+    };
+    let (id, brand, drop_num, name, design_url, mockup_url, lifestyle_url,
+         prompt_text, seed_data, weather_data, parent_design, created_at,
+         serial_code, _inventory, sold, sold_out_at) = match row {
+        Some(v) => v,
+        None => return not_found(),
+    };
+
+    // ── 4. Parent (lineage up). parent_design stores the parent's id as
+    // a string (per existing code paths around line 13265). We look up
+    // its serial_code so the rendered link works through the same
+    // /story/<serial>?key=<token> route — i.e. the same buyer can walk
+    // the family tree without re-authenticating.
+    let parent: Option<(String, String)> = parent_design.as_deref()
+        .and_then(|s| s.parse::<i64>().ok())
+        .and_then(|pid| {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT COALESCE(serial_code, CAST(id AS TEXT)), name
+                 FROM products WHERE id=?",
+                params![pid], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+            ).ok()
+        });
+
+    // ── 5. Children (lineage down). parent_design is stored as the
+    // parent id's stringified form, so we match on CAST(?, TEXT).
+    let children: Vec<(String, String)> = {
+        let conn = db.lock().unwrap();
+        let mut out = Vec::new();
+        let id_s = id.to_string();
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT COALESCE(serial_code, CAST(id AS TEXT)), name
+             FROM products
+             WHERE parent_design = ?
+             ORDER BY created_at ASC
+             LIMIT 50"
+        ) {
+            if let Ok(rows) = stmt.query_map(params![id_s], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            }) {
+                for r in rows.flatten() { out.push(r); }
+            }
+        }
+        out
+    };
+
+    // ── 6. Stats: rank within brand (by created_at) and overall count. ──
+    let (rank_in_brand, brand_total, global_total): (i64, i64, i64) = {
+        let conn = db.lock().unwrap();
+        let rank: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM products
+             WHERE brand = ? AND created_at <= ?",
+            params![brand, created_at], |r| r.get(0),
+        ).unwrap_or(0);
+        let bt: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM products WHERE brand = ?",
+            params![brand], |r| r.get(0),
+        ).unwrap_or(0);
+        let gt: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM products", [], |r| r.get(0),
+        ).unwrap_or(0);
+        (rank, bt, gt)
+    };
+
+    // ── 7. Render HTML. Black bg + gold accent to match reversal.html /
+    // amami.html. Token is preserved in same-origin links so the buyer
+    // can navigate to parent/child stories without re-pasting it.
+    let key_qs = if is_admin && token.is_empty() {
+        // admin preview keeps existing query (admin token, etc.) — we
+        // don't fabricate a buyer key
+        String::new()
+    } else if token.is_empty() {
+        String::new()
+    } else {
+        format!("?key={}", html_attr_escape(&token))
+    };
+
+    let hero_img = lifestyle_url.as_deref()
+        .or(mockup_url.as_deref())
+        .or(design_url.as_deref())
+        .unwrap_or("");
+
+    // Origin block
+    let mut origin_rows = String::new();
+    origin_rows.push_str(&format!(
+        "<tr><th>Created</th><td>{}</td></tr>",
+        html_escape(&created_at),
+    ));
+    if let Some(w) = weather_data.as_deref().filter(|s| !s.is_empty()) {
+        origin_rows.push_str(&format!(
+            "<tr><th>Weather</th><td><pre>{}</pre></td></tr>",
+            html_escape(w),
+        ));
+    }
+    if let Some(s) = seed_data.as_deref().filter(|s| !s.is_empty()) {
+        origin_rows.push_str(&format!(
+            "<tr><th>Seed</th><td><code>{}</code></td></tr>",
+            html_escape(s),
+        ));
+    }
+    let prompt_block = match prompt_text.as_deref().filter(|s| !s.is_empty()) {
+        Some(p) => format!(
+            "<section class=\"block prompt\"><h2>AI Prompt — full disclosure</h2>\
+             <p class=\"caption\">A photograph of the words that summoned this design. \
+             Identical re-runs are impossible: the seed above belongs to this row alone.</p>\
+             <pre class=\"prompt-text\">{}</pre></section>",
+            html_escape(p),
+        ),
+        None => String::new(),
+    };
+
+    // DNA block
+    let parent_html = match &parent {
+        Some((p_serial, p_name)) => format!(
+            "<div class=\"dna-row\"><span class=\"dna-label\">Parent</span>\
+             <a class=\"dna-link\" href=\"/story/{serial}{key_qs}\">{name}</a></div>",
+            serial = html_attr_escape(p_serial),
+            key_qs = key_qs,
+            name = html_escape(p_name),
+        ),
+        None => "<div class=\"dna-row dim\"><span class=\"dna-label\">Parent</span><span>— (origin point)</span></div>".to_string(),
+    };
+    let children_html = if children.is_empty() {
+        "<div class=\"dna-row dim\"><span class=\"dna-label\">Children</span><span>— (no descendants yet)</span></div>".to_string()
+    } else {
+        let items: Vec<String> = children.iter().map(|(c_serial, c_name)| format!(
+            "<li><a class=\"dna-link\" href=\"/story/{serial}{key_qs}\">{name}</a></li>",
+            serial = html_attr_escape(c_serial),
+            key_qs = key_qs,
+            name = html_escape(c_name),
+        )).collect();
+        format!(
+            "<div class=\"dna-row\"><span class=\"dna-label\">Children ({n})</span>\
+             <ul class=\"dna-list\">{items}</ul></div>",
+            n = children.len(),
+            items = items.join(""),
+        )
+    };
+
+    // Stats block
+    let sold_line = match sold_out_at.as_deref().filter(|s| !s.is_empty()) {
+        Some(t) => format!("<tr><th>Sold out</th><td>{} ({} sold)</td></tr>",
+            html_escape(t), sold),
+        None => format!("<tr><th>Sold</th><td>{} pcs</td></tr>", sold),
+    };
+
+    let admin_banner = if is_admin {
+        "<div class=\"admin-banner\">⚙ ADMIN PREVIEW — buyer view of /story</div>"
+    } else { "" };
+
+    let serial_label = serial_code.as_deref().unwrap_or(&serial);
+
+    let html = format!(r##"<!doctype html>
+<html lang="ja"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>{name} — Story</title>
+<style>
+  :root{{ --bg:#070707; --bg-2:#0d0d0d; --bg-3:#161616;
+         --fg:#eaeaea; --dim:#8a8a8a; --line:#1f1f1f; --y:#e6c449; }}
+  *{{box-sizing:border-box}}
+  body{{ background:var(--bg); color:var(--fg);
+         font-family:'Helvetica Neue','Hiragino Mincho ProN','Yu Mincho',Arial,sans-serif;
+         margin:0; padding:0; line-height:1.55; }}
+  a{{color:var(--y); text-decoration:none}}
+  a:hover{{text-decoration:underline}}
+  .wrap{{max-width:880px; margin:0 auto; padding:40px 24px 80px}}
+  .admin-banner{{background:var(--y); color:#000; padding:8px 16px; text-align:center;
+                font-size:11px; letter-spacing:0.18em; text-transform:uppercase; font-weight:700}}
+  header.hero{{text-align:center; margin-bottom:40px}}
+  header.hero .mark{{font-size:48px; color:var(--y); font-family:'Hiragino Mincho ProN',serif;
+                    line-height:1; margin-bottom:18px}}
+  header.hero h1{{font-size:clamp(28px,5vw,44px); font-weight:200; letter-spacing:0.02em;
+                 font-family:'Hiragino Mincho ProN','Yu Mincho',serif; margin:0 0 10px}}
+  header.hero .meta{{color:var(--dim); font-size:12px; letter-spacing:0.18em;
+                    text-transform:uppercase}}
+  .hero-shot{{margin:24px auto; border:1px solid var(--line); background:#111;
+              max-width:780px; min-height:200px; display:flex; align-items:center;
+              justify-content:center; overflow:hidden}}
+  .hero-shot img{{max-width:100%; height:auto; display:block}}
+  .hero-shot .placeholder{{color:var(--dim); font-size:12px; padding:60px 20px}}
+  section.block{{background:var(--bg-2); border:1px solid var(--line); padding:24px 24px;
+                margin:18px 0}}
+  section.block h2{{font-size:11px; letter-spacing:0.26em; text-transform:uppercase;
+                   color:var(--y); margin:0 0 14px; font-weight:500}}
+  .caption{{color:var(--dim); font-size:13px; margin:0 0 14px}}
+  table.kv{{width:100%; border-collapse:collapse}}
+  table.kv th{{text-align:left; color:var(--dim); font-weight:400; font-size:12px;
+              letter-spacing:0.1em; text-transform:uppercase; width:130px;
+              padding:8px 12px; border-bottom:1px solid var(--line); vertical-align:top}}
+  table.kv td{{padding:8px 12px; border-bottom:1px solid var(--line);
+              font-size:14px; word-break:break-all}}
+  table.kv tr:last-child th, table.kv tr:last-child td{{border-bottom:none}}
+  pre{{margin:0; padding:14px 16px; background:var(--bg-3); border:1px solid var(--line);
+       color:var(--fg); font-size:13px; white-space:pre-wrap; word-break:break-word;
+       font-family:ui-monospace,Menlo,Consolas,monospace}}
+  .prompt-text{{background:var(--bg-3); padding:18px 20px; border:1px solid var(--y);
+               color:#f5e9b8; font-size:14px; line-height:1.7}}
+  code{{font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px;
+        color:var(--y); background:var(--bg-3); padding:2px 6px; border:1px solid var(--line)}}
+  .dna-row{{display:flex; gap:18px; align-items:flex-start; padding:10px 0;
+            border-bottom:1px solid var(--line)}}
+  .dna-row:last-child{{border-bottom:none}}
+  .dna-row.dim{{color:var(--dim)}}
+  .dna-label{{flex-shrink:0; width:130px; color:var(--dim); font-size:11px;
+              letter-spacing:0.18em; text-transform:uppercase; padding-top:2px}}
+  .dna-list{{list-style:none; margin:0; padding:0; flex:1}}
+  .dna-list li{{padding:4px 0}}
+  footer.foot{{margin-top:48px; text-align:center; color:var(--dim); font-size:11px;
+              letter-spacing:0.16em; text-transform:uppercase}}
+  footer.foot a{{color:var(--dim)}}
+</style>
+</head><body>
+{admin_banner}
+<div class="wrap">
+  <header class="hero">
+    <div class="mark">無</div>
+    <h1>{name}</h1>
+    <div class="meta">{brand} · drop {drop_num} · {serial_label}</div>
+    <div class="hero-shot">
+      {hero}
+    </div>
+  </header>
+
+  <section class="block">
+    <h2>Origin — where this came from</h2>
+    <p class="caption">A snapshot of the conditions under which this design was born.
+    The seed + prompt below cannot be re-rolled: this is a one-of-one.</p>
+    <table class="kv">
+      {origin_rows}
+    </table>
+  </section>
+
+  {prompt_block}
+
+  <section class="block">
+    <h2>DNA — the family tree</h2>
+    <p class="caption">Every MU design inherits from a parent or marks an origin point.
+    Walk up to see what inspired it, walk down to see what came next.</p>
+    {parent_html}
+    {children_html}
+  </section>
+
+  <section class="block">
+    <h2>Stats</h2>
+    <table class="kv">
+      <tr><th>Brand rank</th><td>#{rank_in_brand} in {brand} ({brand_total} total)</td></tr>
+      <tr><th>MU catalog</th><td>#{global_pos} of {global_total}</td></tr>
+      {sold_line}
+    </table>
+  </section>
+
+  <footer class="foot">
+    <p>You are reading this because you bought this shirt. — MU / 株式会社イネブラ</p>
+    <p><a href="/">wearmu.com</a></p>
+  </footer>
+</div>
+</body></html>"##,
+        name = html_escape(&name),
+        brand = html_escape(&brand),
+        drop_num = drop_num,
+        serial_label = html_escape(serial_label),
+        hero = if hero_img.is_empty() {
+            "<div class=\"placeholder\">no image on file</div>".to_string()
+        } else {
+            format!("<img src=\"{}\" alt=\"{}\">",
+                html_attr_escape(hero_img), html_attr_escape(&name))
+        },
+        origin_rows = origin_rows,
+        prompt_block = prompt_block,
+        parent_html = parent_html,
+        children_html = children_html,
+        rank_in_brand = rank_in_brand,
+        brand_total = brand_total,
+        global_pos = id, // monotonic id ≈ global creation order
+        global_total = global_total,
+        sold_line = sold_line,
+        admin_banner = admin_banner,
+    );
+    Html(html).into_response()
+}
+
 /// POST /api/admin/reviews — seed a customer review for /p/<sku>.
 ///
 /// Body: `{"product_id":123,"rating":5,"body":"great quality",
@@ -16605,14 +17020,22 @@ async fn stripe_webhook(
                     product_ids TEXT,
                     paid_at TEXT NOT NULL,
                     shipping_mailed_at TEXT,
-                    review_mailed_at TEXT
+                    review_mailed_at TEXT,
+                    purchase_token TEXT
                 )",
                 [],
             );
+            // Mint a per-session UUID. This is the only column gating access
+            // to /story/<serial> — must NEVER appear in public logs or be
+            // returned by any non-buyer endpoint. The mailer is the sole
+            // legitimate reader; .simple() drops dashes for a 32-char token
+            // that's URL-clean.
+            let purchase_token = uuid::Uuid::new_v4().simple().to_string();
             let _ = conn.execute(
-                "INSERT OR IGNORE INTO post_purchase_queue (email, session_id, amount_jpy, paid_at)
-                 VALUES (?, ?, ?, datetime('now'))",
-                params![email, session_id, amount_total],
+                "INSERT OR IGNORE INTO post_purchase_queue
+                    (email, session_id, amount_jpy, paid_at, purchase_token)
+                 VALUES (?, ?, ?, datetime('now'), ?)",
+                params![email, session_id, amount_total, purchase_token],
             );
         }
 
@@ -54792,6 +55215,26 @@ async fn main() {
         "ALTER TABLE email_sends ADD COLUMN delivered_at TEXT",
         "ALTER TABLE email_sends ADD COLUMN bounced_at TEXT",
         "ALTER TABLE email_sends ADD COLUMN complained_at TEXT",
+        // Buyer-only /story page gate. post_purchase_queue is otherwise
+        // created lazily in the Stripe webhook (cf8cdc1); we eagerly CREATE
+        // it here so the migrations below (ALTER + INDEX) succeed even on
+        // fresh DBs that have never seen a webhook event. Idempotent.
+        "CREATE TABLE IF NOT EXISTS post_purchase_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT NOT NULL,
+            session_id TEXT NOT NULL UNIQUE,
+            amount_jpy INTEGER,
+            product_ids TEXT,
+            paid_at TEXT NOT NULL,
+            shipping_mailed_at TEXT,
+            review_mailed_at TEXT,
+            purchase_token TEXT
+        )",
+        // For existing prod DBs created by the webhook before purchase_token
+        // existed. ALTER errors on duplicate → .ok() swallow makes it
+        // idempotent.
+        "ALTER TABLE post_purchase_queue ADD COLUMN purchase_token TEXT",
+        "CREATE INDEX IF NOT EXISTS idx_ppq_token ON post_purchase_queue(purchase_token)",
     ] {
         conn.execute(col, []).ok();
     }
@@ -58448,6 +58891,9 @@ async fn main() {
         .route("/products/:brand/:id", get(index))
         // Minimal SSR product page with 6-color swatch picker (?color=NVY)
         .route("/p/:sku", get(product_sku_page))
+        // Buyer-only origin/DNA/prompt page. Gated by per-session UUID
+        // (?key=…) minted in the Stripe webhook into post_purchase_queue.
+        .route("/story/:serial", get(story_page))
         // Reviews seeding (admin-only). Reader path is /p/<sku> which
         // renders ★ average + count when reviews exist.
         .route("/api/admin/reviews", post(admin_review_create))

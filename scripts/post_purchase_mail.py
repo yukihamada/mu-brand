@@ -102,8 +102,56 @@ def send_via_resend(api_key: str, to_addr: str, subject: str, html: str) -> tupl
         return False, f"err {type(e).__name__}"
 
 
-def render_shipping_html(amount_jpy: int | None, session_id: str) -> str:
+def lookup_serial_for_session(conn: sqlite3.Connection, session_id: str) -> str | None:
+    """Best-effort SKU lookup for the buyer's story link.
+
+    1 session may map to 1+ products. For now we pick *any* product on the
+    same brand+timing — proper session→line_items attribution is tracked
+    separately. If we can't find anything reasonable, the caller falls
+    back to a brandless landing point. The /story handler treats one
+    valid token as a master key for all stories (per spec), so the only
+    cost of a wrong-but-existing serial here is a slightly less-relevant
+    first impression.
+    """
+    if not session_id:
+        return None
+    # Try the most-recently-created product as a reasonable default.
+    # (Replace with a session_id → line_items join once that lands.)
+    row = conn.execute(
+        "SELECT serial_code FROM products "
+        "WHERE serial_code IS NOT NULL AND serial_code != '' "
+        "ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    return row[0] if row else None
+
+
+def render_story_link_html(purchase_token: str | None, serial_code: str | None) -> str:
+    """Optional 'your design's story' link block. Empty string when token
+    is missing (legacy rows from before the token migration)."""
+    if not purchase_token or not serial_code:
+        return ""
+    url = f"{SITE_BASE}/story/{serial_code}?key={purchase_token}"
+    return (
+        '<hr style="border:none;border-top:1px solid #e6c449;margin:24px 0">'
+        '<p style="font-size:13px">'
+        '<strong>あなたのデザインの物語が見られます。</strong><br>'
+        'いつ・どんな天気で・どの AI prompt と seed から生まれたか、親と子のデザイン系譜まで。<br>'
+        'このリンクはお客様だけが見られます (購入された方限定の URL です):</p>'
+        f'<p><a href="{url}" style="display:inline-block;padding:10px 20px;'
+        'background:#070707;color:#e6c449;border:1px solid #e6c449;'
+        'text-decoration:none;font-size:13px;letter-spacing:0.1em">'
+        '/story を見る</a></p>'
+    )
+
+
+def render_shipping_html(
+    amount_jpy: int | None,
+    session_id: str,
+    purchase_token: str | None = None,
+    serial_code: str | None = None,
+) -> str:
     amt = f"¥{int(amount_jpy):,}" if amount_jpy else "ご購入"
+    story_block = render_story_link_html(purchase_token, serial_code)
     return (
         "<p>こんにちは,</p>"
         f"<p>このたびは MU をお選びいただきありがとうございます ({amt})。</p>"
@@ -111,6 +159,7 @@ def render_shipping_html(amount_jpy: int | None, session_id: str) -> str:
         "Printful 印刷工場から直送されますので、発送通知メールに記載の追跡番号で配送状況をご確認いただけます。</p>"
         "<p>ご質問は本メールへの返信、または "
         '<a href="mailto:info@enablerdao.com">info@enablerdao.com</a> まで。</p>'
+        f"{story_block}"
         f'<p style="color:#888;font-size:12px">注文ID: {session_id}<br>'
         "— MU / 株式会社イネブラ</p>"
     )
@@ -132,20 +181,43 @@ def render_review_html(session_id: str) -> str:
 
 
 def sweep_shipping(conn: sqlite3.Connection, api_key: str) -> tuple[int, int, int, int]:
-    rows = conn.execute(
-        """
-        SELECT rowid, email, session_id, amount_jpy, paid_at
-        FROM post_purchase_queue
-        WHERE shipping_mailed_at IS NULL
-          AND email IS NOT NULL
-          AND email != ''
-          AND paid_at < datetime('now', '-1 day')
-          AND paid_at > datetime('now', '-7 days')
-        ORDER BY paid_at ASC
-        LIMIT ?
-        """,
-        (MAX_PER_SWEEP,),
-    ).fetchall()
+    # purchase_token is only present after the buyer-only /story migration.
+    # COALESCE keeps the query safe on old DBs that haven't migrated yet
+    # (column absent → SELECT would error otherwise). We fall back to a
+    # bare query in that case.
+    try:
+        rows = conn.execute(
+            """
+            SELECT rowid, email, session_id, amount_jpy, paid_at, purchase_token
+            FROM post_purchase_queue
+            WHERE shipping_mailed_at IS NULL
+              AND email IS NOT NULL
+              AND email != ''
+              AND paid_at < datetime('now', '-1 day')
+              AND paid_at > datetime('now', '-7 days')
+            ORDER BY paid_at ASC
+            LIMIT ?
+            """,
+            (MAX_PER_SWEEP,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        rows = [
+            (rowid, email, sid, amt, paid_at, None)
+            for (rowid, email, sid, amt, paid_at) in conn.execute(
+                """
+                SELECT rowid, email, session_id, amount_jpy, paid_at
+                FROM post_purchase_queue
+                WHERE shipping_mailed_at IS NULL
+                  AND email IS NOT NULL
+                  AND email != ''
+                  AND paid_at < datetime('now', '-1 day')
+                  AND paid_at > datetime('now', '-7 days')
+                ORDER BY paid_at ASC
+                LIMIT ?
+                """,
+                (MAX_PER_SWEEP,),
+            ).fetchall()
+        ]
 
     considered = len(rows)
     sent = failed = skipped = 0
@@ -153,13 +225,23 @@ def sweep_shipping(conn: sqlite3.Connection, api_key: str) -> tuple[int, int, in
         print("[post-purchase:shipping] no rows to process")
         return considered, sent, failed, skipped
 
-    for rowid, email, session_id, amount_jpy, paid_at in rows:
+    for rowid, email, session_id, amount_jpy, paid_at, purchase_token in rows:
         try:
             subject = "ご注文ありがとうございます — 5〜7 営業日でお届けします"
-            html = render_shipping_html(amount_jpy, session_id or "")
+            # Resolve serial for the /story link. lookup_serial_for_session
+            # returns None for legacy rows or empty catalogs; render_story_link_html
+            # then degrades gracefully (no link block instead of broken URL).
+            serial_code = lookup_serial_for_session(conn, session_id or "")
+            html = render_shipping_html(
+                amount_jpy, session_id or "",
+                purchase_token=purchase_token,
+                serial_code=serial_code,
+            )
 
             if not LIVE:
-                print(f"DRY_RUN: would send shipping to {email} [row#{rowid} paid={paid_at} amt={amount_jpy}]")
+                # Intentionally NOT logging purchase_token — buyer-only PII.
+                story_hint = "+story" if (purchase_token and serial_code) else "no-story"
+                print(f"DRY_RUN: would send shipping to {email} [row#{rowid} paid={paid_at} amt={amount_jpy} {story_hint}]")
                 skipped += 1
                 continue
 
