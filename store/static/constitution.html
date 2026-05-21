@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU Constitution — 12 か条 (append-only)</title>
+<meta name="description" content="MU の 12 か条。 ━◯━・ 弟子屈・ 月相・ 寄付 1→50%・ 永久再印刷・ succession_token・ Heritage Line・ AI 非専一・ append-only・ 50% collab・ 緊急 reserve・ 反対立。 内容は永久に変更しない。 SHA-256 で改竄検知可能。">
+<meta name="robots" content="index,follow">
+<meta property="og:title" content="MU の 12 か条 — append-only">
+<meta property="og:description" content="MU を 100 年残すための法的・思想的アンカー。 12 か条 + SHA-256 marker。 内容は永久に変更しない。">
+<meta property="og:image" content="https://mockups.wearmu.com/hero.png">
+<meta property="og:url" content="https://wearmu.com/constitution">
+<meta property="og:type" content="article">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="MU の 12 か条 — append-only">
+<meta name="twitter:description" content="形 (━◯━)・ 地 (弟子屈)・ 時 (月相)・ 寄付 (1→50%)・ 修繕 (永久)・ 継承 (MA)・ craft・ AI 非専一・ 記録 (append-only)・ collab 50%・ reserve 10%・ 反対立。">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="alternate" type="text/markdown" href="/constitution.md" title="Constitution (raw markdown, 4-line Vision + 20 operational principles)">
+<link rel="canonical" href="https://wearmu.com/constitution">
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<style>
+:root{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--line:rgba(255,255,255,0.08);--green:#9ae3a8}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{background:var(--bg);color:var(--fg)}
+body{font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.85;font-size:15px;-webkit-font-smoothing:antialiased;font-feature-settings:"palt"}
+a{color:var(--y);text-decoration:none}
+a:hover{text-decoration:underline;text-underline-offset:3px}
+
+nav{position:sticky;top:0;background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);border-bottom:1px solid var(--line);padding:16px 28px;display:flex;justify-content:space-between;align-items:center;z-index:50;font-size:11px;letter-spacing:0.3em;text-transform:uppercase}
+nav .logo{font-weight:700;letter-spacing:0.45em;color:var(--fg)}
+nav .crumb{opacity:0.55}
+nav .links a{opacity:0.55;margin-left:14px}
+nav .links a:hover{opacity:1}
+
+.wrap{max-width:780px;margin:0 auto;padding:60px 28px 100px}
+
+.kana{font-size:11px;letter-spacing:0.32em;text-transform:uppercase;color:var(--y);margin-bottom:14px}
+h1{font-size:clamp(34px,5.5vw,52px);font-weight:200;letter-spacing:0.01em;line-height:1.18;margin:0 0 22px;color:var(--fg)}
+.lead{font-size:15.5px;color:var(--mute);margin:0 0 32px;line-height:1.95;max-width:640px}
+.lead strong{color:var(--fg);font-weight:500}
+
+.meta{display:flex;flex-wrap:wrap;gap:14px 22px;font-size:11px;letter-spacing:0.04em;color:var(--mute);padding:18px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin-bottom:48px}
+.meta b{color:var(--fg);font-weight:500}
+.meta code{background:rgba(230,196,73,0.10);color:var(--y);padding:1px 5px;font-size:10.5px;font-family:'SF Mono','Menlo',monospace}
+
+article.art{margin:0 0 40px;padding:24px 0 0;border-top:1px solid var(--line)}
+article.art:first-of-type{border-top:none;padding-top:0}
+article.art .no{font-size:10.5px;letter-spacing:0.34em;text-transform:uppercase;color:var(--y);margin-bottom:8px}
+article.art h2{font-size:21px;font-weight:300;letter-spacing:0.01em;color:var(--fg);margin:0 0 6px;line-height:1.35}
+article.art .tagline{font-size:13.5px;color:var(--mute);font-style:normal;margin:0 0 14px;letter-spacing:0.02em}
+article.art p.body{font-size:15px;color:var(--fg);line-height:1.95;margin:10px 0 14px}
+article.art .marker{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:10px;letter-spacing:0.04em;color:var(--mute);font-family:'SF Mono','Menlo',monospace;border-left:2px solid var(--y);padding:6px 0 6px 12px;background:rgba(230,196,73,0.04);margin-top:14px}
+article.art .marker span{white-space:nowrap}
+article.art .marker b{color:var(--fg);font-weight:500}
+
+.appendix{margin-top:64px;padding-top:32px;border-top:1px solid var(--line)}
+.appendix h3{font-size:13px;letter-spacing:0.28em;text-transform:uppercase;color:var(--y);font-weight:500;margin:0 0 14px}
+.appendix p{color:var(--mute);font-size:13.5px;line-height:1.95;margin:0 0 12px;max-width:640px}
+.appendix code{background:rgba(230,196,73,0.10);color:var(--y);padding:1px 5px;font-size:11.5px;font-family:'SF Mono','Menlo',monospace}
+
+.notary{margin-top:36px;padding:20px 22px;border:1px solid var(--line);background:rgba(255,255,255,0.02);border-radius:2px}
+.notary .label{font-size:10.5px;letter-spacing:0.32em;text-transform:uppercase;color:var(--y);margin-bottom:10px}
+.notary p{font-size:13px;color:var(--mute);margin:0 0 8px}
+.notary p b{color:var(--fg);font-weight:500}
+.notary .placeholder{color:#C8362C;font-family:'SF Mono','Menlo',monospace;font-size:11px}
+
+.en{margin-top:56px;padding:32px 0 0;border-top:1px solid var(--line)}
+.en h3{font-size:12px;letter-spacing:0.28em;text-transform:uppercase;color:var(--y);font-weight:500;margin:0 0 16px}
+.en .item{margin:0 0 14px;font-size:13.5px;line-height:1.85;color:var(--mute)}
+.en .item b{color:var(--fg);font-weight:500;letter-spacing:0.02em}
+
+footer{max-width:780px;margin:0 auto;padding:32px 28px 80px;border-top:1px solid var(--line);color:var(--mute);font-size:11.5px;letter-spacing:0.1em;line-height:2}
+footer a{color:var(--mute);text-decoration:underline;text-decoration-color:rgba(255,255,255,0.18)}
+footer a:hover{color:var(--y)}
+
+@media (max-width:480px){
+  .wrap{padding:40px 18px 80px}
+  article.art h2{font-size:18px}
+  article.art .marker{font-size:9.5px;letter-spacing:0}
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <a class="logo" href="/">MU</a>
+  <span class="crumb">Constitution / 12 か条</span>
+  <span class="links">
+    <a href="/constitution.md">raw.md</a>
+    <a href="/transparency">数字</a>
+  </span>
+</nav>
+
+<div class="wrap">
+
+  <div class="kana">Constitution &middot; v1 &middot; append-only</div>
+  <h1>MU の 12 か条</h1>
+  <p class="lead">
+    本文書は MU を <strong>100 年残す</strong> ための法的・思想的アンカーである。
+    記された 12 か条は <strong>今後 一切 変更されない</strong>。 改訂は許されない。
+    増補のみが許される (Art. 9 append-only 記録に従う)。
+    各条には <strong>SHA-256 marker</strong> を付し、 改竄を機械的に検知可能とする。
+  </p>
+
+  <div class="meta">
+    <span><b>公開日</b> 2026-05-21</span>
+    <span><b>版</b> v1 (initial)</span>
+    <span><b>主体</b> 株式会社イネブラ (Enabler Inc.)</span>
+    <span><b>担当</b> 濱田優貴 (1 名)</span>
+    <span><b>正典 hash</b> <code>93b355be…eb069</code></span>
+  </div>
+
+  <article class="art" id="art-1">
+    <div class="no">Article 1</div>
+    <h2>不変シンボル ━◯━</h2>
+    <p class="tagline">形は不変。 媒体は自由。</p>
+    <p class="body">
+      横線 (━)・ 円 (◯)・ 横線 (━) の三層は 「無 / 月 / 円」 を意味し、 今後 100 年 一切 変更しない。
+      色 / 質感 / 素材 / 媒体 (布・金属・画素・音) は自由に選んでよい。
+      <em>例外条件:</em> 物理破損による再印刷時の色味のドリフトは ±5% まで許容する。
+    </p>
+    <div class="marker">
+      <span><b>公開</b> 2026-05-21</span>
+      <span><b>SHA-256</b> db19ff18c9c4f1a568c4a2c87fdbbe6b55f1df8da936a11bcb614329b65fea3d</span>
+    </div>
+  </article>
+
+  <article class="art" id="art-2">
+    <div class="no">Article 2</div>
+    <h2>地理的アンカー = 北海道 弟子屈町</h2>
+    <p class="tagline">物理拠点は移転しない。</p>
+    <p class="body">
+      MU の物理拠点 (工房 / アーカイブ倉庫 / お客様対応の最終応答地) は 北海道川上郡 弟子屈町 に置く。
+      国外法人化 / 都市集中 / 移転を行わない。
+      <em>例外条件:</em> 弟子屈町が消滅自治体に指定された場合のみ、 周辺町村 (標茶町 / 川湯) への移管を許す。
+    </p>
+    <div class="marker">
+      <span><b>公開</b> 2026-05-21</span>
+      <span><b>SHA-256</b> ced9f30515efbb0018d5eb2009be269f647742603ce318c941bbca89e8ea3555</span>
+    </div>
+  </article>
+
+  <article class="art" id="art-3">
+    <div class="no">Article 3</div>
+    <h2>月相 cadence</h2>
+    <p class="tagline">朔・上弦・望・下弦 で動く。</p>
+    <p class="body">
+      主要 release (drop / 寄付 / 試合パッケージ) は 新月・上弦・満月・下弦 の 4 月相に同期する。
+      季節 / 四半期 / カレンダー月に従わない。
+      <em>例外条件:</em> 緊急時 (災害支援) は月相を待たず即時 release してよい。
+    </p>
+    <div class="marker">
+      <span><b>公開</b> 2026-05-21</span>
+      <span><b>SHA-256</b> 21ee7479627701b8eeb1d07d485c6844c9ac3a2117ea16cd53209e5eaee534d3</span>
+    </div>
+  </article>
+
+  <article class="art" id="art-4">
+    <div class="no">Article 4</div>
+    <h2>利益の段階寄付 (1% &rarr; 50%)</h2>
+    <p class="tagline">寄付は誓いであり、 義務ではない。</p>
+    <p class="body">
+      初年度 1%, 2 年目 5%, 3 年目 10%, 4 年目 20%, 5 年目 30%, 6 年目以降 50% を
+      弟子屈町 (または同等の地方自治体) に寄付する。 詳細は <a href="/profit-split">/profit-split</a>。
+      <em>例外条件:</em> 単年赤字 (営業損失) の年は寄付率を 0% に下げてよい。 ただし翌年 倍率で回復する。
+    </p>
+    <div class="marker">
+      <span><b>公開</b> 2026-05-21</span>
+      <span><b>SHA-256</b> 87e8c9191cbc917e92c73760760faa94bfac65198538589b6b30170ff4282ca2</span>
+    </div>
+  </article>
+
+  <article class="art" id="art-5">
+    <div class="no">Article 5</div>
+    <h2>永久再印刷保証</h2>
+    <p class="tagline">お客様は世代を超えて修繕を請求できる。</p>
+    <p class="body">
+      購入した MU 製品は、 購入者 / 相続人が破損写真と購入 ID を提示すれば
+      同等品の再印刷を <strong>原価 + 送料 のみ</strong> で永久に受けられる。
+      <em>例外条件:</em> 倒産・廃業時は LICENSE で公開する 印刷データ + 仕様 をもって本誓いに代える。
+    </p>
+    <div class="marker">
+      <span><b>公開</b> 2026-05-21</span>
+      <span><b>SHA-256</b> 1e92827d1aa2fb152815af7b72d31a717eea242db11d6bcf1f7a3ad051733dfb</span>
+    </div>
+  </article>
+
+  <article class="art" id="art-6">
+    <div class="no">Article 6</div>
+    <h2>succession_token (MA)</h2>
+    <p class="tagline">個人依存ゼロ。 権限は chain で渡す。</p>
+    <p class="body">
+      MU の運営権限 (寄付決定 / brand voice / 公式 statement) は 個人 (濱田優貴) に固定せず、
+      <code>succession_token</code> (MA) で渡す。 token holder が次世代を指名する 連鎖構造。
+      <em>例外条件:</em> chain が 一時的に空になった場合は 株式会社イネブラ取締役会が代行する (最長 90 日)。
+    </p>
+    <div class="marker">
+      <span><b>公開</b> 2026-05-21</span>
+      <span><b>SHA-256</b> c6ed55d7b9a8acd26436e719a4e12a86af6b7c9ecba6b29b19820f986a40fec3</span>
+    </div>
+  </article>
+
+  <article class="art" id="art-7">
+    <div class="no">Article 7</div>
+    <h2>物理 craft preserve (Heritage Line)</h2>
+    <p class="tagline">手作業の系譜を絶やさない。</p>
+    <p class="body">
+      Loopwheel 編機 + 弟子屈鉱物染料 を用いた Heritage Line を <strong>最低 年 1 回 release</strong> する。
+      自社工房 (または提携工房) で生産し、 完全 AI 生成 のみに依存しない。
+      <em>例外条件:</em> 工房側の都合で 1 年休止する場合は /constitution に明示記載する。
+    </p>
+    <div class="marker">
+      <span><b>公開</b> 2026-05-21</span>
+      <span><b>SHA-256</b> 8accedcec419f345b4851e766a7781af7b5acdeeef707dea88dec17a0cd1c17d</span>
+    </div>
+  </article>
+
+  <article class="art" id="art-8">
+    <div class="no">Article 8</div>
+    <h2>AI 依存 非専一</h2>
+    <p class="tagline">純 craft と AI の二建てを維持する。</p>
+    <p class="body">
+      MU は AI line (POD / 自動生成) と craft line (手作業) を <strong>併設</strong> する。
+      AI line だけで brand を構成しない。 craft line だけにも閉じない。
+      <em>例外条件:</em> 一方が一時休止する場合も、 もう一方の継続が条件。
+    </p>
+    <div class="marker">
+      <span><b>公開</b> 2026-05-21</span>
+      <span><b>SHA-256</b> d411b2de2af3e26c44ce1aa25f0c276f5dc5bb3c6abd639cb173764ad47ce806</span>
+    </div>
+  </article>
+
+  <article class="art" id="art-9">
+    <div class="no">Article 9</div>
+    <h2>append-only 記録</h2>
+    <p class="tagline">消さない。 上書きしない。 累積する。</p>
+    <p class="body">
+      全 design / 寄付 / drop / 試合 / collab は <strong>append-only ledger</strong> に記録される。
+      削除 / 改竄 / 再上書きを行わない。 <code>git log</code> と 公開 API (<a href="/api/transparency">/api/transparency</a> 等) が一次ソース。
+      <em>例外条件:</em> 個人情報 (PII) 保護のため お客様の氏名 / email / 住所詳細はマスクする。
+    </p>
+    <div class="marker">
+      <span><b>公開</b> 2026-05-21</span>
+      <span><b>SHA-256</b> 2b65b5c8b231e99c2012d1181c5d663fdd51a80d70445e9a8b954a66ec89de33</span>
+    </div>
+  </article>
+
+  <article class="art" id="art-10">
+    <div class="no">Article 10</div>
+    <h2>50% 共闘 collab</h2>
+    <p class="tagline">partner と zero-sum を組まない。</p>
+    <p class="body">
+      collab partner との利益配分は <strong>原則 50/50 を起点</strong> とする。
+      一方が他方を 搾取 / 利用 する構造は採用しない。 詳細は <a href="/collab">/collab</a> spec。
+      <em>例外条件:</em> partner 側が他配分 を希望する場合は 書面 (PDF) で双方同意する。
+    </p>
+    <div class="marker">
+      <span><b>公開</b> 2026-05-21</span>
+      <span><b>SHA-256</b> e3f5a10c4c29a321654d0c58f2f46ff07b1ebfbaf0c0e58a522c67acd723a1ec</span>
+    </div>
+  </article>
+
+  <article class="art" id="art-11">
+    <div class="no">Article 11</div>
+    <h2>緊急 reserve 10%</h2>
+    <p class="tagline">気候 / 災害 / 緊急時に柔軟性を残す。</p>
+    <p class="body">
+      利益分配のうち <strong>10% を緊急 reserve</strong> として保持する。
+      気候災害 / 在庫消失 / 訴訟リスク 等の不測事態の保険。 用途 / 残高は <a href="/transparency">/transparency</a> で公開する。
+      <em>例外条件:</em> 5 年 reserve が使われない場合 半額を寄付に振り替える。
+    </p>
+    <div class="marker">
+      <span><b>公開</b> 2026-05-21</span>
+      <span><b>SHA-256</b> 6c4198da85ccaabff2952c7c471d84001194c3271aa5f884571d2131e8e82d57</span>
+    </div>
+  </article>
+
+  <article class="art" id="art-12">
+    <div class="no">Article 12</div>
+    <h2>反対立 = brand の core</h2>
+    <p class="tagline">内紛 / 訴訟 / 政治対立に与しない。</p>
+    <p class="body">
+      MU は 他 brand / 個人 / 政治集団 / 宗教団体 への明示的な敵対 (訴訟 / 名指し批判 / 政治対立) に与しない。
+      自衛のための応答 (商標侵害への警告等) は例外。
+      <em>例外条件:</em> お客様の安全 / 健康 が直接脅かされる場合は 公式に反論してよい。
+    </p>
+    <div class="marker">
+      <span><b>公開</b> 2026-05-21</span>
+      <span><b>SHA-256</b> 0f974e00ac7d17caa9e14ca4f57e1a395e6ba42d4f0bc2d18528844c3e63531b</span>
+    </div>
+  </article>
+
+  <section class="appendix">
+    <h3>附則 (append-only の意味)</h3>
+    <p>
+      本文書は <strong>追加のみ可能</strong> である。 既存 12 か条の文言は変更されない。
+      新条 (Art. 13 以降) を追加する場合は、 既存 12 か条のいずれにも矛盾せず、 同形式 (SHA-256 marker 付き) で末尾に追記する。
+      改竄検知は 各条の SHA-256 + 全体の正典 hash <code>93b355be…eb069</code> で行う。
+    </p>
+    <p>
+      改竄が検知された場合、 <a href="https://github.com/yukihamada/mu-brand/blob/main/store/static/constitution.html"><code>git log</code></a> が一次ソースである。
+      ブラウザに表示された HTML と <code>git log</code> が一致しない場合、 <code>git log</code> 側を正と見做す。
+    </p>
+
+    <div class="notary">
+      <div class="label">公証 (Notarization)</div>
+      <p>本文書は <b>浜松町公証役場</b> (東京都港区芝大門1-4-14, TEL 03-3433-1901, <a href="mailto:kosho@hama-notary.jp">kosho@hama-notary.jp</a>) にて公証手続中である。</p>
+      <p><b>公証日</b>: <span class="placeholder">YYYY-MM-DD (公証完了後 手動更新)</span></p>
+      <p><b>公証番号</b>: <span class="placeholder">to be filled (公証完了後 手動更新)</span></p>
+      <p style="margin-top:10px;font-size:11.5px;opacity:0.7">公証 draft 全文: <a href="https://github.com/yukihamada/mu-brand/blob/main/docs/constitution-notary-draft.md">docs/constitution-notary-draft.md</a></p>
+    </div>
+  </section>
+
+  <section class="en">
+    <h3>English (concise)</h3>
+    <p class="item"><b>Art. 1 &mdash; Immutable symbol ━◯━.</b> Three-layer mark (line / circle / line, meaning emptiness / moon / circle) is fixed for 100 years. Medium is free; print drift &le; 5%.</p>
+    <p class="item"><b>Art. 2 &mdash; Geographic anchor: Teshikaga, Hokkaido.</b> Physical workshop, archive, and final point of customer response stay in Teshikaga. No relocation. Exception: if Teshikaga ceases to exist as a municipality, move to adjacent towns only.</p>
+    <p class="item"><b>Art. 3 &mdash; Lunar cadence.</b> Major releases sync to new / first-quarter / full / last-quarter moons. Not seasons, not quarters. Disaster relief exempt.</p>
+    <p class="item"><b>Art. 4 &mdash; Stepped donation 1% &rarr; 50%.</b> Year 1: 1%, &hellip;, Year 6+: 50% of profit donated to Teshikaga or equivalent municipality. Loss years may drop to 0% and recover with multiplier the following year.</p>
+    <p class="item"><b>Art. 5 &mdash; Perpetual reprint guarantee.</b> Buyers and their heirs may request equivalent reprint at cost + shipping, forever. On dissolution, published print data + spec stand in.</p>
+    <p class="item"><b>Art. 6 &mdash; succession_token (MA).</b> Operating rights are passed by token chain, never tied to one person. Board fills empty chain for up to 90 days.</p>
+    <p class="item"><b>Art. 7 &mdash; Heritage Line (physical craft).</b> Loopwheel + Teshikaga mineral dye produced at least once per year. Pure AI generation alone is forbidden.</p>
+    <p class="item"><b>Art. 8 &mdash; AI non-exclusivity.</b> AI line and craft line run in parallel. One pauses only if the other continues.</p>
+    <p class="item"><b>Art. 9 &mdash; Append-only ledger.</b> All designs, donations, drops, fights, collabs are append-only. No deletion, no overwrite. <code>git log</code> + <code>/api/transparency</code> are canonical. PII masked.</p>
+    <p class="item"><b>Art. 10 &mdash; 50/50 collab default.</b> Partner profit split starts at 50/50. No zero-sum structures. Other splits require signed PDF.</p>
+    <p class="item"><b>Art. 11 &mdash; 10% climate reserve.</b> 10% held against climate / inventory loss / litigation. Unused for 5 years &rarr; half donated.</p>
+    <p class="item"><b>Art. 12 &mdash; Anti-adversarial core.</b> MU does not engage in lawsuits, named criticism, or political opposition. Trademark self-defense excepted. Customer safety may warrant public response.</p>
+  </section>
+
+</div>
+
+<footer>
+  <div>raw markdown (Vision + 20 operational principles): <a href="/constitution.md">wearmu.com/constitution.md</a> &middot; source: <a href="https://github.com/yukihamada/mu-brand/blob/main/store/static/constitution.html">github.com/yukihamada/mu-brand</a></div>
+  <div style="margin-top:6px">株式会社イネブラ (Enabler Inc.) &middot; <a href="/transparency">/transparency</a> &middot; <a href="/profit-split">/profit-split</a> &middot; <a href="/collab">/collab</a></div>
+  <div style="margin-top:6px;opacity:0.6">本文書は 追加のみ可。 改訂は不可。 改竄検知は 各条 SHA-256 + 正典 hash <code style="background:rgba(230,196,73,0.10);color:var(--y);padding:1px 5px;font-size:10px;font-family:'SF Mono','Menlo',monospace">93b355be…eb069</code> による。</div>
+</footer>
+
+</body>
+</html>
