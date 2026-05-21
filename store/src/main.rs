@@ -13294,19 +13294,22 @@ async fn product_sku_page(
 ) -> Response {
     // Accept both numeric id ("123") and alphanumeric serial_code ("MU-BJJ-13-TEE-WHITE-L").
     // The latter is the canonical public URL form per existing /p/{serial_code} links.
-    let row: Option<(i64, String, i64, String, Option<String>, Option<String>, i64, String, String, Option<String>)> = {
+    let row: Option<(i64, String, i64, String, Option<String>, Option<String>, i64, String, String, Option<String>, i64, i64)> = {
         let conn = db.lock().unwrap();
         let sql_by_id = "SELECT id, brand, drop_num, name, design_url, mockup_url, price_jpy,
-                                COALESCE(color, 'BLK'), COALESCE(size, 'M'), suzuri_url
+                                COALESCE(color, 'BLK'), COALESCE(size, 'M'), suzuri_url,
+                                inventory, sold
                          FROM products WHERE id=?";
         let sql_by_sc = "SELECT id, brand, drop_num, name, design_url, mockup_url, price_jpy,
-                                COALESCE(color, 'BLK'), COALESCE(size, 'M'), suzuri_url
+                                COALESCE(color, 'BLK'), COALESCE(size, 'M'), suzuri_url,
+                                inventory, sold
                          FROM products WHERE serial_code=?";
         let map = |r: &rusqlite::Row| Ok((
             r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?,
             r.get::<_, Option<String>>(4)?, r.get::<_, Option<String>>(5)?,
             r.get::<_, i64>(6)?, r.get::<_, String>(7)?, r.get::<_, String>(8)?,
             r.get::<_, Option<String>>(9)?,
+            r.get::<_, i64>(10)?, r.get::<_, i64>(11)?,
         ));
         if let Ok(n) = sku.parse::<i64>() {
             conn.query_row(sql_by_id, params![n], map).ok()
@@ -13314,9 +13317,18 @@ async fn product_sku_page(
             conn.query_row(sql_by_sc, params![sku.as_str()], map).ok()
         }
     };
-    let (id, brand, drop_num, name, design_url, mockup_url, price_jpy, default_color, _size, suzuri_url) = match row {
+    let (id, brand, drop_num, name, design_url, mockup_url, price_jpy, default_color, _size, suzuri_url, inventory, sold) = match row {
         Some(v) => v,
         None => return (StatusCode::NOT_FOUND, "product not found").into_response(),
+    };
+    // Scarcity: "残 N 枚" when 0 < remaining <= 10. Above that, omit (looks spammy).
+    let remaining = (inventory - sold).max(0);
+    let scarcity_html: String = if inventory > 0 && remaining == 0 {
+        r#"<div class="scarcity sold-out">SOLD OUT</div>"#.to_string()
+    } else if remaining > 0 && remaining <= 10 {
+        format!(r#"<div class="scarcity"><span class="dot"></span>残り {} 枚</div>"#, remaining)
+    } else {
+        String::new()
     };
     // Color selection: ?color=NVY overrides the DB default. Validate against the
     // 6-color whitelist; unknown values fall back to the row's stored color.
@@ -13513,6 +13525,10 @@ h1{{font-size:20px;font-weight:500;margin:24px 0 8px}}
 .ship-line{{font-size:12px;opacity:0.6;text-align:center;margin:0 0 24px;line-height:1.5}}
 .trust{{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 0;font-size:11px;opacity:0.55;letter-spacing:0.04em}}
 .trust span{{padding:3px 8px;background:rgba(245,245,240,0.05);border-radius:10px}}
+.scarcity{{display:inline-flex;align-items:center;gap:8px;margin:0 0 12px;padding:8px 14px;background:rgba(220,80,80,0.10);border:1px solid rgba(220,80,80,0.30);border-radius:2px;font-size:13px;color:#f5c8c8;font-weight:500;letter-spacing:0.04em}}
+.scarcity .dot{{width:8px;height:8px;border-radius:50%;background:#dc5050;animation:pulse 1.6s ease-in-out infinite}}
+.scarcity.sold-out{{background:rgba(120,120,120,0.10);border-color:rgba(180,180,180,0.30);color:#aaa;letter-spacing:0.18em}}
+@keyframes pulse{{0%,100%{{opacity:0.4}}50%{{opacity:1}}}}
 .ship-nudge{{margin:0 0 8px;padding:10px 14px;background:rgba(78,180,118,0.10);border:1px solid rgba(78,180,118,0.25);border-radius:2px;font-size:13px;display:flex;align-items:center;justify-content:space-between;gap:12px;color:#e5f5ec}}
 .ship-nudge .bar{{font-family:monospace;letter-spacing:-1px;opacity:0.7}}
 .bundle-nudge{{margin:0 0 16px;padding:10px 14px;background:rgba(245,200,80,0.08);border:1px solid rgba(245,200,80,0.20);border-radius:2px;font-size:13px;color:#f5e6b0}}
@@ -13534,6 +13550,7 @@ h1{{font-size:20px;font-weight:500;margin:24px 0 8px}}
 <img src="{img}" alt="{name}" loading="eager">
 <h1>{name}</h1>
 <div class="meta">{brand_upper} · #{drop_num}</div>
+{scarcity}
 {price_grid}
 <div class="swatches">
   {swatches}
@@ -13561,6 +13578,7 @@ h1{{font-size:20px;font-weight:500;margin:24px 0 8px}}
         current_name = html_escape(current_color_name),
         ship_progress = ship_progress_html,
         brand_lower = brand_lower,
+        scarcity = scarcity_html,
         upsell = upsell_html,
     );
     Html(html).into_response()
@@ -15453,6 +15471,32 @@ async fn checkout(
                 pm, total_jpy, chrono_now(),
                 kyc_token,
             ]
+        );
+    }
+
+    // Cart abandon source: snapshot every initiated checkout that has an email
+    // so scripts/cart_abandon_mail.py can fire a 1h-delayed recovery mail when
+    // the Stripe session is never paid. notified_at is set by the mail script
+    // once a recovery has gone out; paid_at is set by the Stripe webhook on
+    // checkout.session.completed (wiring TBD).
+    if let Some(email) = body.email.as_ref().filter(|e| !e.trim().is_empty() && e.contains('@')) {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "CREATE TABLE IF NOT EXISTS cart_abandons (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT NOT NULL,
+                product_ids TEXT NOT NULL,
+                amount_jpy INTEGER,
+                created_at TEXT NOT NULL,
+                notified_at TEXT,
+                paid_at TEXT
+            )",
+            [],
+        );
+        let _ = conn.execute(
+            "INSERT INTO cart_abandons (email, product_ids, amount_jpy, created_at)
+             VALUES (?, ?, ?, datetime('now'))",
+            params![email.trim(), body.product_id.to_string(), total_jpy],
         );
     }
 
@@ -43642,11 +43686,14 @@ async fn list_auto_blog(State(db): State<Db>) -> impl IntoResponse {
 }
 
 /// Dynamic /sitemap.xml — serves the static base sitemap from disk and
-/// appends one <url> per auto_blog_posts row before </urlset>. SEO bots
-/// pick up the daily Field log without manual sitemap maintenance.
+/// appends one <url> per auto_blog_posts row + one per active product
+/// (both /p/<serial> and /products/<brand>/<drop>) before </urlset>.
+/// SEO bots pick up new MU designs within ~24h instead of waiting for
+/// organic recrawl. URL cap = 5000 products (sitemap protocol limit 50k).
 async fn dynamic_sitemap(State(db): State<Db>) -> Response {
     let base = std::fs::read_to_string("static/sitemap.xml")
         .unwrap_or_else(|_| "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"></urlset>".to_string());
+    // --- (a) blog posts -----------------------------------------------------
     let posts: Vec<(String, String)> = {
         let conn = db.lock().unwrap();
         let mut stmt = match conn.prepare(
@@ -43663,6 +43710,38 @@ async fn dynamic_sitemap(State(db): State<Db>) -> Response {
             .map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>())
             .unwrap_or_default()
     };
+    // --- (b) active products ------------------------------------------------
+    // (serial_code, brand, drop_num, lastmod) — serial_code or brand+drop may
+    // be NULL; row is included only if at least one URL form is producible.
+    type ProdRow = (Option<String>, Option<String>, Option<i64>, String);
+    let products: Vec<ProdRow> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT serial_code, brand, drop_num, \
+                    COALESCE( \
+                      CASE WHEN sold_out_at IS NOT NULL AND LENGTH(sold_out_at) >= 10 \
+                           THEN SUBSTR(sold_out_at,1,10) END, \
+                      CASE WHEN created_at GLOB '[0-9]*' AND LENGTH(created_at) <= 11 \
+                           THEN date(CAST(created_at AS INTEGER), 'unixepoch', '+9 hours') \
+                           ELSE SUBSTR(created_at,1,10) END, \
+                      '') AS lastmod \
+             FROM products \
+             WHERE active=1 \
+               AND (serial_code IS NOT NULL OR (brand IS NOT NULL AND drop_num IS NOT NULL)) \
+             ORDER BY id DESC LIMIT 5000"
+        ) { Ok(s) => s, Err(_) => return (
+            [("content-type","application/xml")],
+            base.clone(),
+        ).into_response() };
+        stmt.query_map([], |r| Ok((
+            r.get::<_, Option<String>>(0)?,
+            r.get::<_, Option<String>>(1)?,
+            r.get::<_, Option<i64>>(2)?,
+            r.get::<_, String>(3)?,
+        )))
+            .map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>())
+            .unwrap_or_default()
+    };
     let mut entries = String::new();
     for (slug, lastmod) in posts {
         entries.push_str(&format!(
@@ -43670,6 +43749,27 @@ async fn dynamic_sitemap(State(db): State<Db>) -> Response {
              <lastmod>{lastmod}</lastmod>\n    \
              <changefreq>never</changefreq>\n    <priority>0.6</priority>\n  </url>\n",
             slug = slug, lastmod = lastmod));
+    }
+    for (serial_opt, brand_opt, drop_opt, lastmod) in products {
+        let lm_attr = if lastmod.is_empty() {
+            String::new()
+        } else {
+            format!("    <lastmod>{lastmod}</lastmod>\n")
+        };
+        if let Some(serial) = serial_opt.as_ref().filter(|s| !s.is_empty()) {
+            entries.push_str(&format!(
+                "  <url>\n    <loc>https://wearmu.com/p/{serial}</loc>\n{lm}    \
+                 <changefreq>weekly</changefreq>\n    <priority>0.8</priority>\n  </url>\n",
+                serial = serial, lm = lm_attr));
+        }
+        if let (Some(brand), Some(drop_num)) =
+            (brand_opt.as_ref().filter(|s| !s.is_empty()), drop_opt)
+        {
+            entries.push_str(&format!(
+                "  <url>\n    <loc>https://wearmu.com/products/{brand}/{drop}</loc>\n{lm}    \
+                 <changefreq>weekly</changefreq>\n    <priority>0.7</priority>\n  </url>\n",
+                brand = brand, drop = drop_num, lm = lm_attr));
+        }
     }
     let out = if base.contains("</urlset>") {
         base.replace("</urlset>", &format!("{entries}</urlset>"))
