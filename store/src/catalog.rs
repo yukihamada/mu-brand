@@ -398,9 +398,18 @@ pub async fn generate_one(
         msg.to_string()
     })?;
 
-    // INSERT catalog_products.
+    // INSERT catalog_products + ensure the 'auto' brand row exists so
+    // /shop renders a brand chip for it.
     {
         let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO catalog_brands
+             (slug, name, emoji, color_primary, tagline, custom_domain,
+              is_active, revenue_share_pct)
+             VALUES ('auto', 'AUTO (AI-generated)', '🤖', '#ffd700',
+                     'Gemini × Printful POD · 30 分自動生成', NULL, 1, 0)",
+            [],
+        );
         let desc = format!("{} · {}", theme.display, label_for_kind(kind));
         let _ = conn.execute(
             "INSERT INTO catalog_products (
@@ -1343,6 +1352,12 @@ fn list_products(
     brand: Option<&str>,
     limit: i64,
 ) -> Vec<ProductRow> {
+    // Auto-generated SKUs surface first in the default grid (`brand=auto`
+    // ordered before merch-bridge's curated catalog) so the autonomous
+    // engine's fresh designs get organic visibility — otherwise they sit
+    // buried behind 1,500+ legacy SKUs sorted on sort_order 1-14. When a
+    // brand filter is set the ordering stays sort_order, sku (so e.g.
+    // ?brand=bjj retains merch-bridge's intended order).
     let (sql, has_brand) = if brand.is_some() {
         (
             "SELECT sku, brand, description_ja, retail_price_jpy,
@@ -1359,7 +1374,7 @@ fn list_products(
                     COALESCE(mockup_url_external, mockup_main_file)
              FROM catalog_products
              WHERE is_active=1
-             ORDER BY sort_order, sku
+             ORDER BY (brand='auto') DESC, sort_order, sku
              LIMIT ?",
             false,
         )
