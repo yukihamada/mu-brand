@@ -11417,6 +11417,7 @@ h2{{font-size:11px;letter-spacing:0.4em;text-transform:uppercase;color:rgba(245,
 <h2>Proposals / Collab</h2>
 <div class="cat">
   <a class="tile" href="/admin/proposals?token={t}"><div class="path">/admin/proposals</div><div class="desc">全 collab proposal list</div></a>
+  <a class="tile" href="/admin/collabs?admin_token={t}"><div class="path">/admin/collabs</div><div class="desc">collab dashboard — prompt + cadence + 商品 grid (24h/枚 default)</div></a>
   <a class="tile" href="/admin/sponsor-apps?token={t}"><div class="path">/admin/sponsor-apps</div><div class="desc">スポンサー応募 (status 更新)</div></a>
   <a class="tile" href="/admin/users?token={t}"><div class="path">/admin/users</div><div class="desc">/you ユーザー 一覧</div></a>
 </div>
@@ -25574,6 +25575,11 @@ async fn proposal_ryozo_revoke(
     };
     Json(serde_json::json!({ "ok": true, "revoked_at": now, "products_deactivated": deactivated })).into_response()
 }
+// Deprecated 2026-05-21: /ryozo route was retired in favor of the unified
+// SSR LP renderer (try_render_approved_proposal_lp). Kept here as a backup
+// renderer in case we need to fall back; the route registration is now
+// commented out below. The included static asset is preserved.
+#[allow(dead_code)]
 async fn ryozo_public_page(State(db): State<Db>) -> Response {
     let approved = { let c = db.lock().unwrap(); ryozo_is_approved(&c) };
     if !approved { return render_404_tee_page(&db, "/ryozo"); }
@@ -26261,14 +26267,29 @@ fn render_proposal_lp(
             html_attr_escape(&fb3), placeholder,
         );
         // Buy button: real product_id present + active=1 → enabled. Otherwise
-        // show a disabled "準備中" pill. The button POSTs to /api/checkout and
-        // follows the returned Stripe URL.
+        // show a disabled "準備中" pill. Clicking the enabled button opens the
+        // shared <dialog id="buy-modal"> at the bottom of the page where the
+        // buyer picks provider × fabric × size × qty + email. The modal then
+        // POSTs {product_id, variant_type, pod_provider, size, quantity, email}
+        // to /api/checkout — see VARIANT_PRICES table in the trailing <script>
+        // for the price matrix that drives the dynamic total.
         let buy_html = match (product_id, *active) {
             (Some(pid), 1) => format!(
-                "<button type=\"button\" class=\"buy\" data-pid=\"{pid}\" data-price=\"{price}\">\
+                "<button type=\"button\" class=\"buy\" \
+                   data-action=\"open-modal\" \
+                   data-product-id=\"{pid}\" \
+                   data-kind=\"{kind_attr}\" \
+                   data-default-price=\"{price}\" \
+                   data-name=\"{name_attr}\" \
+                   data-img=\"{img_attr}\">\
                    今すぐ買う · ¥{price_fmt}\
                  </button>",
-                pid = pid, price = price, price_fmt = format_jpy(*price),
+                pid = pid,
+                kind_attr = html_attr_escape(kind),
+                price = price,
+                name_attr = html_attr_escape(label),
+                img_attr = html_attr_escape(&primary),
+                price_fmt = format_jpy(*price),
             ),
             _ => "<button type=\"button\" class=\"buy disabled\" disabled>準備中 · coming soon</button>".to_string(),
         };
@@ -26534,6 +26555,41 @@ footer a{{color:var(--accent);text-decoration:none}}
 .timeline .tr:last-child{{border-bottom:none}}
 .timeline .tr .d{{color:var(--accent);font-size:12px;font-weight:700;letter-spacing:0.08em;font-variant-numeric:tabular-nums}}
 .timeline .tr .b{{color:#ddd;font-size:13.5px;line-height:1.7}}
+/* ── buy modal (shared, single instance per page) ── */
+#buy-modal{{border:1px solid var(--line);background:#0a0a0a;color:var(--fg);padding:0;border-radius:8px;max-width:520px;width:92vw;box-shadow:0 24px 64px rgba(0,0,0,0.55)}}
+#buy-modal::backdrop{{background:rgba(0,0,0,0.72)}}
+#buy-modal .bm-hd{{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line)}}
+#buy-modal .bm-img{{width:64px;height:64px;background:#111;border:1px solid var(--line);border-radius:4px;object-fit:cover;flex:0 0 auto}}
+#buy-modal .bm-title{{font-size:14px;font-weight:700;line-height:1.4;color:var(--fg);margin:0 0 4px}}
+#buy-modal .bm-sub{{font-size:10px;color:var(--mute);letter-spacing:0.18em;text-transform:uppercase}}
+#buy-modal .bm-close{{margin-left:auto;background:none;border:1px solid var(--line);color:var(--mute);width:28px;height:28px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:14px;line-height:1}}
+#buy-modal .bm-close:hover{{color:var(--fg);border-color:var(--accent)}}
+#buy-modal .bm-body{{padding:18px 20px;display:flex;flex-direction:column;gap:14px;max-height:70vh;overflow-y:auto}}
+#buy-modal .bm-sec{{display:flex;flex-direction:column;gap:6px}}
+#buy-modal .bm-lbl{{font-size:10px;color:var(--accent);letter-spacing:0.22em;text-transform:uppercase;font-weight:700}}
+#buy-modal .bm-provs{{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}}
+#buy-modal .bm-prov{{position:relative;border:1px solid var(--line);background:#111;padding:10px 8px;border-radius:4px;cursor:pointer;text-align:center;transition:border-color 0.15s,background 0.15s}}
+#buy-modal .bm-prov:hover{{border-color:var(--accent)}}
+#buy-modal .bm-prov input{{position:absolute;opacity:0;pointer-events:none}}
+#buy-modal .bm-prov.selected{{border-color:var(--accent);background:var(--accent-rgba)}}
+#buy-modal .bm-prov .p-name{{font-size:11px;font-weight:700;color:var(--fg);margin-bottom:3px}}
+#buy-modal .bm-prov .p-meta{{font-size:9.5px;color:var(--mute);letter-spacing:0.06em;line-height:1.4}}
+#buy-modal .bm-prov.disabled{{opacity:0.32;cursor:not-allowed}}
+#buy-modal select,#buy-modal input[type=email],#buy-modal input[type=number]{{background:#0a0a0a;border:1px solid var(--line);color:var(--fg);padding:9px 11px;font-family:inherit;font-size:13px;border-radius:4px;width:100%;box-sizing:border-box}}
+#buy-modal select:focus,#buy-modal input:focus{{outline:none;border-color:var(--accent)}}
+#buy-modal .bm-row{{display:grid;grid-template-columns:1fr 1fr;gap:10px}}
+#buy-modal .bm-sizes{{display:flex;flex-wrap:wrap;gap:6px}}
+#buy-modal .bm-size{{flex:1;min-width:48px;border:1px solid var(--line);background:#111;color:var(--fg);padding:8px 4px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:600;text-align:center}}
+#buy-modal .bm-size.selected{{border-color:var(--accent);background:var(--accent-rgba);color:var(--accent)}}
+#buy-modal .bm-total{{display:flex;align-items:baseline;justify-content:space-between;border-top:1px solid var(--line);padding-top:12px;margin-top:4px}}
+#buy-modal .bm-total .tl{{font-size:10px;color:var(--mute);letter-spacing:0.2em;text-transform:uppercase}}
+#buy-modal .bm-total .tv{{font-size:22px;font-weight:700;color:var(--fg);font-variant-numeric:tabular-nums}}
+#buy-modal .bm-cta{{background:var(--accent);color:#000;border:0;font-weight:700;padding:14px;font-size:13px;letter-spacing:0.08em;cursor:pointer;border-radius:4px;font-family:inherit;text-align:center;transition:opacity 0.15s}}
+#buy-modal .bm-cta:hover:not(:disabled){{opacity:0.85}}
+#buy-modal .bm-cta:disabled{{opacity:0.5;cursor:not-allowed}}
+#buy-modal .bm-err{{font-size:11px;color:#ff6464;line-height:1.6;display:none}}
+#buy-modal .bm-err.show{{display:block}}
+#buy-modal .bm-note{{font-size:10px;color:var(--mute);line-height:1.6}}
 </style>
 </head><body>
 <div class="wrap">
@@ -26573,37 +26629,323 @@ footer a{{color:var(--accent);text-decoration:none}}
     </form>
     <div class="result" id="extras-result-{slug}">qty=30 固定 · 50 / 100 は <code>POST /api/proposal/{slug}/extras/order</code> 直叩きで指定可。job 状況は <code>GET /api/proposal/extras/job/&lt;job_id&gt;</code>。</div>
   </div>
+
+  <!-- ── shared buy modal (1 instance per page) ──
+       Opens when any .card .buy[data-action="open-modal"] is clicked. The
+       handler reads data-product-id / data-kind / data-default-price / data-name
+       / data-img off the trigger, hydrates the modal, and on submit POSTs
+       {{product_id, quantity, email, size, variant_type, pod_provider}} to
+       /api/checkout. The server's lookup_variant_price() then overrides the
+       bonding-curve price with the matrix value for that (type, pod) combo. -->
+  <dialog id="buy-modal" aria-labelledby="bm-title">
+    <div class="bm-hd">
+      <img class="bm-img" id="bm-img" src="" alt="">
+      <div>
+        <div class="bm-title" id="bm-title">—</div>
+        <div class="bm-sub" id="bm-sub">SKU</div>
+      </div>
+      <button type="button" class="bm-close" id="bm-close" aria-label="close">×</button>
+    </div>
+    <form class="bm-body" id="bm-form" method="dialog">
+      <div class="bm-sec">
+        <div class="bm-lbl">配送元 / Provider</div>
+        <div class="bm-provs" id="bm-provs"></div>
+      </div>
+      <div class="bm-sec" id="bm-fabric-sec">
+        <div class="bm-lbl">生地 / Fabric</div>
+        <select id="bm-fabric"></select>
+      </div>
+      <div class="bm-sec" id="bm-size-sec">
+        <div class="bm-lbl">サイズ / Size</div>
+        <div class="bm-sizes" id="bm-sizes"></div>
+      </div>
+      <div class="bm-row">
+        <div class="bm-sec">
+          <div class="bm-lbl">数量 / Qty</div>
+          <input type="number" id="bm-qty" min="1" max="5" value="1">
+        </div>
+        <div class="bm-sec">
+          <div class="bm-lbl">メアド (任意)</div>
+          <input type="email" id="bm-email" placeholder="you@example.com" autocomplete="email">
+        </div>
+      </div>
+      <div class="bm-total"><div class="tl">合計 / Total</div><div class="tv" id="bm-total">¥—</div></div>
+      <div class="bm-err" id="bm-err"></div>
+      <button type="submit" class="bm-cta" id="bm-cta">Stripe で買う →</button>
+      <div class="bm-note">配送元と生地は <code>/api/checkout</code> が <code>variant_type × pod_provider</code> 行列で照合 → 価格を確定します。 メアドは Stripe にも入力できますが、 ここに入れておくと購入後のサポート連絡が早くなります。</div>
+    </form>
+  </dialog>
+
   <script>
-  // ── Buy buttons on SKU cards ──
-  // Each .card .buy[data-pid] POSTs {{product_id, quantity:1}} to /api/checkout
-  // and redirects to the returned Stripe URL. Failure shows an alert.
+  // ── VARIANT_PRICES: client-side mirror of product_variants_matrix() ──
+  // Kept in sync with store/src/main.rs::product_variants_matrix() so the
+  // total updates without a round-trip. The server still re-checks via
+  // lookup_variant_price() so a stale client cannot order an unavailable
+  // combo. fabrics list is curated per (kind, pod) — names follow the
+  // memory notes (gelato_api.md, wearmu_suzuri_mirror.md).
+  var VARIANT_PRICES = {{
+    tee: {{
+      printful_eu: [
+        {{ id:'bella_canvas',     label:'Bella+Canvas 4.2oz (Premium)',  price: 5000 }},
+        {{ id:'gildan_5000',      label:'Gildan 5000 6oz (Heavyweight)', price: 5000 }},
+        {{ id:'triblend',         label:'Triblend 4.2oz (Lightweight)',  price: 5000 }}
+      ],
+      gelato_jp: [
+        {{ id:'gildan_h000',      label:'Gildan H000 6oz (Heavyweight 🇯🇵)', price: 4500 }},
+        {{ id:'american_apparel', label:'American Apparel 5oz (Premium 🇯🇵)', price: 4500 }}
+      ],
+      suzuri_jp: [
+        {{ id:'printstar_5_6oz',  label:'Printstar 5.6oz (Standard 🇯🇵)',     price: 4900 }},
+        {{ id:'heavyweight_7oz',  label:'Heavyweight 7oz (Premium 🇯🇵)',      price: 4900 }}
+      ]
+    }},
+    hoodie: {{
+      printful_eu: [
+        {{ id:'premium_9oz',      label:'Premium 9oz (Heavyweight)',     price: 9800 }},
+        {{ id:'gildan_18500',     label:'Gildan 18500 8oz (Standard)',   price: 9800 }}
+      ],
+      gelato_jp: [
+        {{ id:'standard_8oz',     label:'Standard 8oz 🇯🇵',                price: 8500 }}
+      ],
+      suzuri_jp: [
+        {{ id:'standard',         label:'Standard pullover 🇯🇵',           price: 7800 }}
+      ]
+    }},
+    longsleeve: {{
+      printful_eu: [
+        {{ id:'standard_5oz',     label:'Standard 5oz long sleeve',      price: 6800 }}
+      ],
+      suzuri_jp: [
+        {{ id:'standard_6oz',     label:'Standard 6oz long sleeve 🇯🇵',    price: 6500 }}
+      ]
+    }},
+    tank: {{
+      printful_eu: [
+        {{ id:'standard_4oz',     label:'Standard 4oz tank',             price: 5500 }}
+      ]
+    }},
+    polo: {{
+      printful_eu: [
+        {{ id:'standard_polo',    label:'Standard pique polo',           price: 9800 }}
+      ]
+    }},
+    tote: {{
+      printful_eu: [
+        {{ id:'organic_canvas',   label:'Organic canvas tote',           price: 3800 }}
+      ],
+      gelato_jp: [
+        {{ id:'standard_tote',    label:'Standard 12oz tote 🇯🇵',          price: 3200 }}
+      ],
+      suzuri_jp: [
+        {{ id:'natural_tote',     label:'Natural canvas tote 🇯🇵',         price: 3500 }}
+      ]
+    }},
+    mug: {{
+      gelato_jp: [
+        {{ id:'ceramic_11oz',     label:'Ceramic 11oz mug 🇯🇵',            price: 2800 }}
+      ],
+      suzuri_jp: [
+        {{ id:'standard_mug',     label:'Standard 11oz mug 🇯🇵',           price: 2500 }}
+      ]
+    }},
+    sticker: {{
+      suzuri_jp: [
+        {{ id:'die_cut',          label:'Die-cut vinyl sticker 🇯🇵',       price:  800 }}
+      ]
+    }}
+  }};
+  var PROVIDERS = [
+    {{ id:'printful_eu', name:'Printful',  region:'EU → JP', ship:'14-21d' }},
+    {{ id:'gelato_jp',   name:'Gelato',    region:'国内印刷',  ship:'5-10d'  }},
+    {{ id:'suzuri_jp',   name:'SUZURI',    region:'国内印刷',  ship:'5-8d'   }}
+  ];
+  // wearable kinds get size pickers; non-wear (tote/mug/sticker) skip.
+  var WEAR_KINDS  = ['tee','hoodie','longsleeve','tank','polo'];
+  var SIZE_LIST   = ['S','M','L','XL'];
+
+  function fmtJPY(n){{ return '¥' + Number(n||0).toLocaleString('ja-JP'); }}
+
+  // ── Buy buttons → open modal ──
+  // Each .card .buy[data-action=open-modal] hydrates and opens the shared
+  // <dialog id=buy-modal>. The trailing submit handler POSTs to /api/checkout.
   (function(){{
-    document.querySelectorAll('.card .buy[data-pid]').forEach(function(btn){{
-      btn.addEventListener('click', async function(){{
-        var pid = parseInt(btn.dataset.pid, 10);
-        if (!pid) return;
-        var orig = btn.textContent;
-        btn.disabled = true; btn.textContent = '読み込み中 …';
-        try {{
-          var r = await fetch('/api/checkout', {{
-            method:'POST',
-            headers:{{'Content-Type':'application/json'}},
-            body: JSON.stringify({{product_id: pid, quantity: 1}}),
+    var dlg   = document.getElementById('buy-modal');
+    if (!dlg) return;
+    var img   = document.getElementById('bm-img');
+    var title = document.getElementById('bm-title');
+    var sub   = document.getElementById('bm-sub');
+    var provs = document.getElementById('bm-provs');
+    var fabricSec = document.getElementById('bm-fabric-sec');
+    var fabricSel = document.getElementById('bm-fabric');
+    var sizeSec   = document.getElementById('bm-size-sec');
+    var sizes     = document.getElementById('bm-sizes');
+    var qty       = document.getElementById('bm-qty');
+    var email     = document.getElementById('bm-email');
+    var totalEl   = document.getElementById('bm-total');
+    var err       = document.getElementById('bm-err');
+    var cta       = document.getElementById('bm-cta');
+    var form      = document.getElementById('bm-form');
+    var closeBtn  = document.getElementById('bm-close');
+
+    var state = {{ product_id:null, kind:'tee', provider:null, fabric:null, size:'M', name:'', img:'' }};
+
+    function pickInitialProvider(kind){{
+      var map = VARIANT_PRICES[kind] || {{}};
+      // Preference: gelato_jp → printful_eu → suzuri_jp → first available.
+      if (map.gelato_jp)  return 'gelato_jp';
+      if (map.printful_eu) return 'printful_eu';
+      if (map.suzuri_jp)  return 'suzuri_jp';
+      var keys = Object.keys(map);
+      return keys[0] || null;
+    }}
+
+    function renderProviders(){{
+      provs.innerHTML = '';
+      var map = VARIANT_PRICES[state.kind] || {{}};
+      PROVIDERS.forEach(function(p){{
+        var available = !!map[p.id];
+        var sel = state.provider === p.id;
+        var el = document.createElement('label');
+        el.className = 'bm-prov' + (sel?' selected':'') + (available?'':' disabled');
+        el.innerHTML =
+          '<input type="radio" name="bm-provider" value="'+p.id+'"'+(sel?' checked':'')+(available?'':' disabled')+'>' +
+          '<div class="p-name">'+p.name+'</div>' +
+          '<div class="p-meta">'+p.region+'<br>'+p.ship+'</div>';
+        if (available){{
+          el.addEventListener('click', function(){{
+            state.provider = p.id;
+            // Default fabric to first available for the new provider.
+            var fabrics = (VARIANT_PRICES[state.kind]||{{}})[state.provider] || [];
+            state.fabric = fabrics[0] ? fabrics[0].id : null;
+            renderProviders();
+            renderFabrics();
+            updateTotal();
           }});
-          var j = await r.json().catch(function(){{ return {{}}; }});
-          if (r.ok && j.url) {{
-            window.location.href = j.url;
-            return;
-          }}
-          console.error('[buy] checkout failed', r.status, j);
-          alert('購入ページを開けませんでした (HTTP ' + r.status + ')。 mail@yukihamada.jp までご連絡ください。');
-        }} catch (err) {{
-          console.error('[buy]', err);
-          alert('購入ページを開けませんでした。 ' + err.message);
-        }} finally {{
-          btn.disabled = false; btn.textContent = orig;
         }}
+        provs.appendChild(el);
       }});
+    }}
+
+    function renderFabrics(){{
+      var fabrics = ((VARIANT_PRICES[state.kind]||{{}})[state.provider]) || [];
+      if (!fabrics.length){{
+        fabricSec.style.display = 'none';
+        fabricSel.innerHTML = '';
+        return;
+      }}
+      fabricSec.style.display = '';
+      fabricSel.innerHTML = '';
+      fabrics.forEach(function(f){{
+        var o = document.createElement('option');
+        o.value = f.id;
+        o.textContent = f.label + ' · ' + fmtJPY(f.price);
+        if (state.fabric === f.id) o.selected = true;
+        fabricSel.appendChild(o);
+      }});
+      if (!state.fabric && fabrics[0]) state.fabric = fabrics[0].id;
+    }}
+
+    function renderSizes(){{
+      if (WEAR_KINDS.indexOf(state.kind) < 0){{
+        sizeSec.style.display = 'none';
+        state.size = null;
+        return;
+      }}
+      sizeSec.style.display = '';
+      sizes.innerHTML = '';
+      SIZE_LIST.forEach(function(s){{
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'bm-size' + (state.size === s ? ' selected' : '');
+        b.textContent = s;
+        b.addEventListener('click', function(){{
+          state.size = s;
+          renderSizes();
+        }});
+        sizes.appendChild(b);
+      }});
+    }}
+
+    function currentUnitPrice(){{
+      var fabrics = ((VARIANT_PRICES[state.kind]||{{}})[state.provider]) || [];
+      var f = fabrics.find(function(x){{ return x.id === state.fabric; }});
+      return f ? f.price : 0;
+    }}
+
+    function updateTotal(){{
+      var q = Math.max(1, Math.min(5, parseInt(qty.value || '1', 10) || 1));
+      totalEl.textContent = fmtJPY(currentUnitPrice() * q);
+    }}
+
+    fabricSel.addEventListener('change', function(){{
+      state.fabric = fabricSel.value;
+      updateTotal();
+    }});
+    qty.addEventListener('input', updateTotal);
+
+    function openFor(btn){{
+      state.product_id = parseInt(btn.dataset.productId || '0', 10) || null;
+      state.kind       = (btn.dataset.kind || 'tee').toLowerCase();
+      state.name       = btn.dataset.name || 'MU SKU';
+      state.img        = btn.dataset.img || '';
+      state.provider   = pickInitialProvider(state.kind);
+      var fabrics = ((VARIANT_PRICES[state.kind]||{{}})[state.provider]) || [];
+      state.fabric = fabrics[0] ? fabrics[0].id : null;
+      state.size   = WEAR_KINDS.indexOf(state.kind) >= 0 ? 'M' : null;
+      qty.value = 1;
+      err.classList.remove('show'); err.textContent = '';
+      cta.disabled = false; cta.textContent = 'Stripe で買う →';
+      title.textContent = state.name;
+      sub.textContent   = state.kind.toUpperCase();
+      if (state.img){{ img.src = state.img; img.style.display=''; }} else {{ img.style.display='none'; }}
+      renderProviders();
+      renderFabrics();
+      renderSizes();
+      updateTotal();
+      if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open','');
+    }}
+
+    document.querySelectorAll('.card .buy[data-action="open-modal"]').forEach(function(btn){{
+      btn.addEventListener('click', function(){{ openFor(btn); }});
+    }});
+
+    closeBtn.addEventListener('click', function(){{ dlg.close(); }});
+    dlg.addEventListener('click', function(e){{ if (e.target === dlg) dlg.close(); }});
+
+    form.addEventListener('submit', async function(e){{
+      e.preventDefault();
+      if (!state.product_id){{ return; }}
+      if (!state.provider || !state.fabric){{
+        err.classList.add('show');
+        err.textContent = '配送元と生地を選んでください。';
+        return;
+      }}
+      var q = Math.max(1, Math.min(5, parseInt(qty.value || '1', 10) || 1));
+      var body = {{
+        product_id: state.product_id,
+        quantity:   q,
+        variant_type: state.kind,
+        pod_provider: state.provider
+      }};
+      if (state.size)         body.size  = state.size;
+      var em = (email.value || '').trim();
+      if (em && em.indexOf('@') > 0) body.email = em;
+      cta.disabled = true; cta.textContent = '読み込み中 …'; err.classList.remove('show');
+      try {{
+        var r = await fetch('/api/checkout', {{
+          method:'POST', headers:{{'Content-Type':'application/json'}},
+          body: JSON.stringify(body)
+        }});
+        var j = await r.json().catch(function(){{ return {{}}; }});
+        if (r.ok && j.url) {{ window.location.href = j.url; return; }}
+        err.classList.add('show');
+        err.textContent = '購入ページを開けませんでした (HTTP ' + r.status + ')。 ' + (j.error || '');
+      }} catch (e2) {{
+        err.classList.add('show');
+        err.textContent = '通信エラー: ' + e2.message;
+      }} finally {{
+        cta.disabled = false; cta.textContent = 'Stripe で買う →';
+      }}
     }});
   }})();
   (function(){{
@@ -27108,6 +27450,206 @@ async fn proposal_generic_list(
         }))
     }).map(|i| i.flatten().collect()).unwrap_or_default();
     Json(serde_json::json!({ "proposals": rows })).into_response()
+}
+
+/// GET /api/admin/collabs/dashboard — admin-gated single-pane summary of
+/// every collab brand: name/ip_owner, current AI prompt template (from
+/// proposals.meta_json.ai_prompt), generation cadence
+/// (meta_json.cadence_hours, default 24), and up to 8 latest product
+/// thumbnails (joined from products on brand LIKE slug||'_%').
+///
+/// `?include_personal=1` keeps the per-email `personal-*` slugs in the
+/// response (default behaviour: include them, so the admin sees every
+/// brand). `?approved=1` filters to approved+non-revoked rows only.
+///
+/// Cron-actual cadence (hours between scheduled runs) is reported per-slug
+/// when the brand has a known cron entry — used by the UI to warn when the
+/// admin-set cadence drifts from what's actually scheduled. Mapping is a
+/// hardcoded snapshot of cron.sh (cron.sh lives outside the Docker build
+/// context, so we can't include_str it).
+async fn admin_collabs_dashboard(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/collabs/dashboard").await { return r; }
+    let approved_only = q.get("approved").map(|s| s == "1").unwrap_or(false);
+    let include_personal = q.get("include_personal").map(|s| s != "0").unwrap_or(true);
+    let conn = db.lock().unwrap();
+    let mut sql = String::from(
+        "SELECT p.slug, p.name, p.ip_owner, p.approved_at, p.revoked_at,
+                p.meta_json,
+                (SELECT COUNT(*) FROM proposal_skus s WHERE s.slug=p.slug) AS sku_count,
+                (SELECT COUNT(*) FROM products pr WHERE pr.brand LIKE p.slug||'_%' AND pr.active=1) AS active
+         FROM proposals p WHERE 1=1"
+    );
+    if approved_only {
+        sql.push_str(" AND p.approved_at IS NOT NULL AND p.revoked_at IS NULL");
+    }
+    if !include_personal {
+        sql.push_str(" AND p.slug NOT LIKE 'personal-%'");
+    }
+    sql.push_str(" ORDER BY COALESCE(p.approved_at, p.created_at) DESC");
+    let mut stmt = match conn.prepare(&sql) {
+        Ok(s) => s,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db prep").into_response(),
+    };
+    let base_rows: Vec<(String, String, String, Option<String>, Option<String>, Option<String>, i64, i64)> =
+        stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?,
+                r.get::<_, Option<String>>(4)?,
+                r.get::<_, Option<String>>(5)?,
+                r.get::<_, i64>(6)?,
+                r.get::<_, i64>(7)?,
+            ))
+        }).map(|i| i.flatten().collect()).unwrap_or_default();
+    drop(stmt);
+
+    let mut out: Vec<serde_json::Value> = Vec::with_capacity(base_rows.len());
+    for (slug, name, ip_owner, approved_at, revoked_at, meta_str, sku_count, active) in base_rows {
+        // Parse meta_json.
+        let meta: serde_json::Map<String, serde_json::Value> = meta_str.as_deref()
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or_default();
+        let ai_prompt = meta.get("ai_prompt").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let cadence_hours = meta.get("cadence_hours").and_then(|v| v.as_i64()).unwrap_or(24);
+        let cadence_label = meta.get("cadence_label").and_then(|v| v.as_str()).unwrap_or("every 24h").to_string();
+        // Sample products (up to 8): active first, then by sold + id DESC.
+        let brand_like = format!("{}_%", slug);
+        let mut samples: Vec<serde_json::Value> = Vec::new();
+        if let Ok(mut sstmt) = conn.prepare(
+            "SELECT id, name, mockup_url, design_url, lifestyle_url,
+                    COALESCE(sold,0) AS sold, COALESCE(active,0) AS active
+             FROM products
+             WHERE brand LIKE ?
+             ORDER BY active DESC, sold DESC, id DESC
+             LIMIT 8"
+        ) {
+            let it = sstmt.query_map(params![brand_like], |r| {
+                Ok(serde_json::json!({
+                    "id": r.get::<_, i64>(0)?,
+                    "name": r.get::<_, String>(1)?,
+                    "mockup_url": r.get::<_, Option<String>>(2)?,
+                    "design_url": r.get::<_, Option<String>>(3)?,
+                    "lifestyle_url": r.get::<_, Option<String>>(4)?,
+                    "sold": r.get::<_, i64>(5)?,
+                    "active": r.get::<_, i64>(6)? == 1,
+                }))
+            });
+            if let Ok(rows) = it {
+                samples = rows.flatten().collect();
+            }
+        }
+        let products_total: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM products WHERE brand LIKE ?",
+            params![brand_like], |r| r.get(0),
+        ).unwrap_or(0);
+
+        let (cron_actual_hours, cron_actual_label) = cron_actual_for_slug(&slug);
+        out.push(serde_json::json!({
+            "slug": slug,
+            "name": name,
+            "ip_owner": ip_owner,
+            "approved_at": approved_at,
+            "revoked_at": revoked_at,
+            "approved": approved_at.is_some() && revoked_at.is_none(),
+            "sku_count": sku_count,
+            "products_active": active,
+            "products_total": products_total,
+            "ai_prompt": ai_prompt,
+            "ai_prompt_suggested": suggest_ai_prompt(&slug),
+            "cadence_hours": cadence_hours,
+            "cadence_label": cadence_label,
+            "cron_actual_hours": cron_actual_hours,
+            "cron_actual_label": cron_actual_label,
+            "product_samples": samples,
+        }));
+    }
+    let total = out.len();
+    Json(serde_json::json!({
+        "collabs": out,
+        "total": total,
+    })).into_response()
+}
+
+/// Hardcoded snapshot of cron.sh: maps a collab slug (or brand prefix) to
+/// the actual cadence the m5 cron is configured for. Returns
+/// (hours, label). hours=0 means "no scheduled run — manual only".
+///
+/// Keep in sync with cron.sh when schedules change. cron.sh isn't in the
+/// Docker build context, so we can't include_str! it.
+fn cron_actual_for_slug(slug: &str) -> (i64, String) {
+    let s = slug.to_lowercase();
+    if s == "mugen" { return (1, "every hour".to_string()); }
+    if s == "muon" { return (24, "daily".to_string()); }
+    if s == "ma" { return (720, "monthly".to_string()); }
+    if s == "nouns_mugen" || s == "nouns-mugen" { return (168, "weekly Mon".to_string()); }
+    if s == "nouns_muon" || s == "nouns-muon" { return (24, "daily".to_string()); }
+    if s == "nouns_ma" || s == "nouns-ma" { return (720, "monthly 15th".to_string()); }
+    if s == "nouns" { return (24, "daily (mugen/muon/ma fan-out)".to_string()); }
+    // No dedicated cron — PRODUCT-CREATOR runs every 2h and picks brands by
+    // signal, so brand-agnostic collabs get touched on that cadence.
+    (0, "manual / signal-driven (PRODUCT-CREATOR @2h)".to_string())
+}
+
+/// Per-collab AI prompt template suggestion. Used as a placeholder on the
+/// /admin/collabs editor textarea so partners get something editable on
+/// day 1. The admin can keep or edit it; saving persists into
+/// proposals.meta_json.ai_prompt via PATCH /api/admin/proposal/:slug/meta.
+fn suggest_ai_prompt(slug: &str) -> String {
+    let s = slug.to_lowercase();
+    let t: &str = match s.as_str() {
+        "reversal" =>
+            "rvddw R-in-circle + 月相 (lunar phase glyph), minimal monoline on white tee, no logotype, centered front print, black ink only",
+        "amami" =>
+            "奄美大島 motif (波/森/海/イルカ silhouette), monoline ink wash, soft blue + jungle green palette, centered print, no text",
+        "atsume" =>
+            "atsume.io 集合 motif: scattered dots condensing into a single mark, minimal monoline, black on natural tee",
+        "ryozo" =>
+            "ryozo 焼肉古今系 motif: charcoal grill mark + smoke curl monoline, deep red + black, centered front print",
+        "jiufight" | "jf" =>
+            "JIU FIGHT × MU: 柔術 gi lapel grip silhouette + 月 (moon) mark, monoline ink, black on white",
+        "asoview" =>
+            "asoview 体験 motif: 山/波/星 silhouette stacked monoline, soft outdoor palette, centered front print",
+        "elsoul" =>
+            "elsoul: ambient sound wave + 魂 (soul) glyph monoline, deep indigo, centered front print",
+        "ele" =>
+            "ELE: 雷 (lightning) bolt + 月 minimal monoline, gold on black tee",
+        "nojimahal" =>
+            "nojima hall: 円形 stage outline + spotlight ray monoline, warm amber palette, centered print",
+        "kichinan" =>
+            "kichinan 吉南: 吉 character deconstructed into monoline strokes, black on natural tee",
+        "blank" =>
+            "BLANK MU: pure 無 (mu) glyph centered, single line ink, no other element",
+        "nihon-kotsu" | "nihon_kotsu" =>
+            "日本交通: taxi 行灯 silhouette + 月 mark monoline, black on white, centered front print",
+        "nouns" =>
+            "Nouns DAO × MU: noggle glasses + 月 (moon) mark, simple monoline, primary noun palette",
+        "kokon" =>
+            "焼肉古今 (kokon.tokyo): charcoal grill + 古今 glyph monoline, deep red + black, centered print",
+        "sweep" =>
+            "MU × SIIIEEP BJJ (internal): gi belt sweep motion line + 月 mark, monoline ink, black on white",
+        _ => ""
+    };
+    if !t.is_empty() { return t.to_string(); }
+    format!("{slug}: minimal monoline 月 (moon) + brand glyph on white tee, single ink color, centered front print, no logotype",
+        slug = slug)
+}
+
+/// GET /admin/collabs — admin-gated HTML dashboard. Lists every collab
+/// with its AI prompt (editable), cadence (editable), and a thumbnail grid
+/// of the latest 8 products. Backed by /api/admin/collabs/dashboard.
+async fn admin_collabs_page(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/collabs").await { return r; }
+    Html(include_str!("../static/admin-collabs.html")).into_response()
 }
 
 /// GET /api/proposals — public list of approved (live) collab proposals.
@@ -59088,7 +59630,13 @@ async fn main() {
         .route("/api/proposals/ryozo/revoke",          post(proposal_ryozo_revoke))
         .route("/api/proposals/ryozo/sample",          post(proposal_ryozo_sample))
         .route("/api/proposals/ryozo/bundle",          post(proposal_ryozo_bundle))
-        .route("/ryozo",                                get(ryozo_public_page))
+        // /ryozo now falls through to slug_or_static → try_render_approved_proposal_lp
+        // (2026-05-21 unified Buy-modal migration). Bespoke template kept at
+        // store/static/proposals/ryozo.html as backup, served via /static/...
+        // if a direct link is needed. The legacy ryozo_approval row is migrated
+        // into proposals.approved_at by migrate_legacy_approval_into_proposals
+        // at boot, so the page stays live with no DB change required.
+        // .route("/ryozo",                                get(ryozo_public_page))
         // ── Unified proposal system (DB-driven, works for any new brand) ──
         // No /proposals/:slug route — approved brands surface at /:slug via
         // slug_or_static (try_render_approved_proposal_lp). Unapproved =
@@ -59128,6 +59676,10 @@ async fn main() {
         .route("/api/collab/:slug/sku/add",                     post(collab_partner_sku_add))
         .route("/admin/proposal",              post(proposal_generic_create))
         .route("/admin/proposals",             get(proposal_generic_list))
+        // /admin/collabs — single-pane dashboard: prompt + cadence + product
+        // grid for every collab. API at /api/admin/collabs/dashboard.
+        .route("/admin/collabs",               get(admin_collabs_page))
+        .route("/api/admin/collabs/dashboard", get(admin_collabs_dashboard))
         // Public read-only list of approved collabs. Powers /proposals (static).
         .route("/api/proposals",               get(public_proposals_list))
         // Static directory page that grids the collabs. Must be registered
