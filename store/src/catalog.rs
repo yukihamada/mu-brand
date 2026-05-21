@@ -593,13 +593,23 @@ pub async fn generate_onbody_mockup(
         .build()
         .map_err(|e| format!("client: {}", e))?;
 
-    // 1. Create task.
+    // 1. Create task. The `position` field is mandatory per Printful
+    //    error MG-4 "Position field is missing"; values mirror
+    //    printful_mockup_config_for() in main.rs for chest_tee.
+    //    AOP rashguard (162) ignores chest position and prints all-over,
+    //    but Printful still requires the field — pass the same chest box.
+    let position = serde_json::json!({
+        "area_width": 1800, "area_height": 2400,
+        "width": 1260,      "height": 1260,
+        "top": 380,         "left": 270
+    });
     let create_body = serde_json::json!({
         "variant_ids": [printful_variant],
         "format": "png",
         "files": [{
             "placement": "front",
             "image_url": design_url,
+            "position": position,
         }],
     });
     let create_url = format!(
