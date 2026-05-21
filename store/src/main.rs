@@ -36437,118 +36437,301 @@ async fn public_profit_split_api(State(db): State<Db>) -> Json<serde_json::Value
     }))
 }
 
-/// GET /profit-split — §28 spec HTML (markdown レンダリング) + live P hero
-async fn public_profit_split_page(State(db): State<Db>) -> Html<String> {
-    let body_md_html = md_to_html_simple(PROFIT_SPLIT_RAW);
+/// Sales-volume → 段階的寄付率 (post-tax net profit に対する寄付率)
+///   0-99      : 1%   (sales 0 で 50% 約束は不誠実)
+///   100-499   : 5%
+///   500-999   : 10%
+///   1k-4,999  : 20%
+///   5k-9,999  : 35%
+///   10,000+   : 50%  (target)
+/// 戻り値: (current_rate, current_tier_label, next_threshold_units, next_rate)
+/// 最終 tier では next_threshold = None.
+fn donation_tier_for_sold(sold: i64) -> (f64, &'static str, Option<i64>, Option<f64>) {
+    if sold < 100         { (0.01, "tier_0_seed",       Some(100),    Some(0.05)) }
+    else if sold < 500    { (0.05, "tier_1_starter",    Some(500),    Some(0.10)) }
+    else if sold < 1_000  { (0.10, "tier_2_serious",    Some(1_000),  Some(0.20)) }
+    else if sold < 5_000  { (0.20, "tier_3_credible",   Some(5_000),  Some(0.35)) }
+    else if sold < 10_000 { (0.35, "tier_4_near_target",Some(10_000), Some(0.50)) }
+    else                  { (0.50, "tier_5_target",     None,         None) }
+}
 
-    // ── live P 計算 (公開 API と同じ前提) ─────────────────────────────────
-    let revenue_jpy: i64 = {
+/// GET /profit-split — ハイブリッド destination matrix + 段階的寄付率 stair。
+/// 累計 sold 数を DB から live で取り、 現在の寄付率 tier を算出して大きく表示。
+/// MU 自社 brand / Collab brand / Personal brand の 3 segment に分けて、
+/// それぞれの 50% 寄付先を明示する。 sales 0 で 50% 約束は不誠実なので、
+/// 「現在地は X%、 目標 50% は残 N 着で到達」 と段階で読ませる。
+async fn public_profit_split_page(State(db): State<Db>) -> Html<String> {
+    // ── live DB snapshot ─────────────────────────────────────────────────
+    let (total_sold, revenue_jpy, donations_accrued, donations_sent, by_dest): (i64, i64, i64, i64, Vec<(String,i64,i64)>) = {
         let conn = db.lock().unwrap();
-        conn.query_row(
+        let sold: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(sold),0) FROM products WHERE active=1",
+            [], |r| r.get(0),
+        ).unwrap_or(0);
+        let rev: i64 = conn.query_row(
             "SELECT COALESCE(SUM(amount_jpy),0) FROM mu_purchases WHERE session_id LIKE 'cs_live_%'",
-            [], |r| r.get::<_, i64>(0),
-        ).unwrap_or(0)
+            [], |r| r.get(0),
+        ).unwrap_or(0);
+        let acc = donations_sum(&conn, "accrued");
+        let snt = donations_sum(&conn, "sent");
+        let by = donations_by_destination(&conn);
+        (sold, rev, acc, snt, by)
     };
     let est_net_after_tax = (revenue_jpy as f64 * 0.175) as i64;
-    let breakdown = profit_split_breakdown(est_net_after_tax);
-    let segments = breakdown["segments"].as_array().cloned().unwrap_or_default();
 
-    // segment 別 色トークン
-    let seg_color = |key: &str| -> &'static str {
-        match key {
-            "donation"    => "#e6c449", // gold
-            "yuki"        => "#9ae3a8", // green
-            "shareholder" => "#7fb8ff", // blue
-            "ma_holder"   => "#c89eff", // purple
-            "community"   => "#ffae6b", // orange
-            "reserve"     => "#6b7280", // gray
-            _ => "#888",
+    // ── 段階的寄付率 ────────────────────────────────────────────────────
+    let (cur_rate, tier_label, next_th, next_rate) = donation_tier_for_sold(total_sold);
+    let (remaining_str, next_rate_str, progress_pct) = match (next_th, next_rate) {
+        (Some(th), Some(nr)) => {
+            // tier 内の進捗 % (前 tier 閾値 → 次 tier 閾値)
+            let prev_th: i64 = match cur_rate {
+                r if (r - 0.01).abs() < 1e-6 => 0,
+                r if (r - 0.05).abs() < 1e-6 => 100,
+                r if (r - 0.10).abs() < 1e-6 => 500,
+                r if (r - 0.20).abs() < 1e-6 => 1_000,
+                r if (r - 0.35).abs() < 1e-6 => 5_000,
+                _ => 0,
+            };
+            let span = (th - prev_th).max(1) as f64;
+            let done = ((total_sold - prev_th).max(0) as f64).min(span);
+            let pct = (done / span * 100.0).clamp(0.0, 100.0);
+            (
+                format!("残 {} 着で次 tier", th - total_sold),
+                format!("{:.0}%", nr * 100.0),
+                pct,
+            )
         }
+        _ => ("最終 tier (target 達成)".to_string(), "—".to_string(), 100.0),
     };
-    let seg_label = |key: &str| -> &'static str {
-        match key {
-            "donation"    => "寄付",
-            "yuki"        => "Yuki 報酬",
-            "shareholder" => "株主配当",
-            "ma_holder"   => "MA 還元",
-            "community"   => "Community",
-            "reserve"     => "運転備金",
-            _ => "segment",
-        }
-    };
+    // 目標 50% までの残 (target tier 入口 = 10,000)
+    let remaining_to_target = (10_000i64 - total_sold).max(0);
 
-    // horizontal bar (segment 幅 = ratio %)
-    let bar_segments: String = segments.iter().map(|s| {
-        let key = s["key"].as_str().unwrap_or("");
-        let ratio = s["ratio"].as_f64().unwrap_or(0.0);
-        format!(
-            r##"<div title="{label} {pct:.0}%" style="flex:{ratio};background:{color};height:100%"></div>"##,
-            label = seg_label(key),
-            pct = ratio * 100.0,
-            ratio = ratio,
-            color = seg_color(key),
-        )
-    }).collect();
-
-    // segment 別 ¥ amount grid
-    let seg_cards: String = segments.iter().map(|s| {
-        let key = s["key"].as_str().unwrap_or("");
-        let jpy = s["jpy"].as_i64().unwrap_or(0);
-        let ratio = s["ratio"].as_f64().unwrap_or(0.0);
-        let color = seg_color(key);
-        let label = seg_label(key);
-        format!(
-            r##"<div style="border-left:2px solid {color};padding:8px 12px;background:rgba(255,255,255,0.02)">
-  <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
-    <span style="font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:#bbb">{label}</span>
-    <span style="font-size:10px;color:#666;font-variant-numeric:tabular-nums">{pct:.0}%</span>
-  </div>
-  <div style="font-size:17px;font-weight:300;color:{color};font-variant-numeric:tabular-nums;letter-spacing:-0.01em;margin-top:4px">¥{jpy_fmt}</div>
-</div>"##,
-            color = color,
-            label = label,
-            pct = ratio * 100.0,
-            jpy_fmt = format_jpy(jpy),
-        )
-    }).collect();
-
-    let live_hero = format!(
-        r##"<div style="background:rgba(230,196,73,0.05);border:1px solid rgba(230,196,73,0.25);border-left:3px solid #e6c449;border-radius:3px;padding:24px 28px;margin:0 0 36px">
-  <div style="font-size:10px;letter-spacing:0.42em;text-transform:uppercase;color:#e6c449;margin-bottom:14px">Live P (推定)</div>
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:18px;margin-bottom:18px">
+    // ── Section 1: 現在地 hero ──────────────────────────────────────────
+    let section_current = format!(
+        r##"<section style="background:rgba(230,196,73,0.05);border:1px solid rgba(230,196,73,0.25);border-left:3px solid #e6c449;border-radius:3px;padding:28px 30px;margin:0 0 44px">
+  <div style="font-size:10px;letter-spacing:0.42em;text-transform:uppercase;color:#e6c449;margin-bottom:18px">現在地 · live</div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:24px;margin-bottom:22px">
     <div>
-      <div style="font-size:32px;font-weight:200;color:#e6c449;letter-spacing:-0.01em;line-height:1">¥{p_fmt}</div>
-      <div style="font-size:10px;letter-spacing:0.22em;text-transform:uppercase;color:#888;margin-top:6px">税引後 純利益 (推定)</div>
+      <div style="font-size:44px;font-weight:200;color:#e6c449;letter-spacing:-0.02em;line-height:1">{rate_pct}%</div>
+      <div style="font-size:10px;letter-spacing:0.22em;text-transform:uppercase;color:#888;margin-top:8px">いまの寄付率</div>
     </div>
     <div>
-      <div style="font-size:24px;font-weight:200;color:#F5F5F0;letter-spacing:-0.01em;line-height:1">¥{rev_fmt}</div>
-      <div style="font-size:10px;letter-spacing:0.22em;text-transform:uppercase;color:#888;margin-top:6px">当期 売上 (live)</div>
+      <div style="font-size:44px;font-weight:200;color:#F5F5F0;letter-spacing:-0.02em;line-height:1;font-variant-numeric:tabular-nums">{sold}</div>
+      <div style="font-size:10px;letter-spacing:0.22em;text-transform:uppercase;color:#888;margin-top:8px">累計 sold 着 (active SKU)</div>
+    </div>
+    <div>
+      <div style="font-size:44px;font-weight:200;color:#F5F5F0;letter-spacing:-0.02em;line-height:1;font-variant-numeric:tabular-nums">{rem_target}</div>
+      <div style="font-size:10px;letter-spacing:0.22em;text-transform:uppercase;color:#888;margin-top:8px">目標 50% まで 残 着</div>
     </div>
   </div>
-  <div style="display:flex;width:100%;height:18px;border-radius:2px;overflow:hidden;border:1px solid rgba(255,255,255,0.08);margin-bottom:16px">
-    {bar}
+  <div style="display:flex;justify-content:space-between;align-items:baseline;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:#888;margin-bottom:6px">
+    <span>{tier_label}</span>
+    <span>次 tier {next_rate_str} · {remaining_str}</span>
   </div>
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px">
-    {cards}
+  <div style="width:100%;height:10px;border-radius:6px;background:rgba(255,255,255,0.06);overflow:hidden;border:1px solid rgba(255,255,255,0.08)">
+    <div style="width:{progress_pct:.1}%;height:100%;background:linear-gradient(90deg,#e6c449 0%,#fde18b 100%);transition:width 0.6s ease"></div>
   </div>
-  <p style="font-size:11.5px;color:#888;line-height:1.85;margin-top:18px">
-    P は <code style="background:rgba(230,196,73,0.10);color:#e6c449;padding:1px 5px;border-radius:2px;font-size:11px">revenue × 0.175</code> (粗利率 25% × 税後 70%) で常時 推定。 実支払は期末監査確定 → 株主総会 決議に基づく。 JSON: <a href="/api/profit-split">/api/profit-split</a>
+  <p style="font-size:12.5px;color:#888;line-height:1.85;margin-top:18px">
+    寄付率は「累計 sold 着数」で 段階的に上がる。 sales 0 の日に 50% 約束する企業は信用ならない、 だから <strong style="color:#F5F5F0">1% → 5% → 10% → 20% → 35% → 50%</strong> の階段で credible な runway を見せる。 寄付率は post-tax net profit に対する比率で、 各 brand の 50% destination matrix とは別軸 (matrix は §2、 stair は §3 に分けて記述)。
   </p>
-</div>"##,
-        p_fmt = format_jpy(est_net_after_tax),
-        rev_fmt = format_jpy(revenue_jpy),
-        bar = bar_segments,
-        cards = seg_cards,
+</section>"##,
+        rate_pct = (cur_rate * 100.0) as i64,
+        sold = total_sold,
+        rem_target = remaining_to_target,
+        tier_label = tier_label,
+        next_rate_str = next_rate_str,
+        remaining_str = remaining_str,
+        progress_pct = progress_pct,
     );
 
-    let body_html = format!("{}\n{}", live_hero, body_md_html);
+    // ── Section 2: ハイブリッド destination matrix ──────────────────────
+    // 3 segment の 50% 分配先 (max-out tier で達成時)。 各 brand の collab spec
+    // / proposal で個別指定があれば そちらが優先。
+    let section_matrix = r##"<section style="margin-bottom:48px">
+  <h2 style="font-size:13px;letter-spacing:0.28em;text-transform:uppercase;color:#e6c449;font-weight:500;margin:0 0 22px;padding-top:0;border-top:none">§ 2 ハイブリッド分配 — 「誰が買うか」で 50% の行き先が変わる</h2>
+  <p style="font-size:13.5px;color:rgba(245,245,240,0.62);line-height:1.9;margin-bottom:24px">
+    MU は brand によって 50% の destination を変える。 自社 brand (mugen / muon / ma / nouns / rashguard / staple) は <strong style="color:#F5F5F0">弟子屈町</strong>、 collab brand は <strong style="color:#F5F5F0">各 collab spec で partner が指定した先</strong>、 personal brand (/you) は <strong style="color:#F5F5F0">default 弟子屈、 buyer が申請で変更可</strong>。 残り 50% は §28 の運営 + stake (Yuki / 株主 / MA Founder Relay / Community / Reserve) で従来通り。
+  </p>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px">
+    <div style="background:#0e0e0e;border:1px solid rgba(255,255,255,0.08);border-left:3px solid #e6c449;padding:22px 22px 20px;border-radius:2px">
+      <div style="font-size:10px;letter-spacing:0.32em;text-transform:uppercase;color:#e6c449;margin-bottom:10px">MU 自社 brand</div>
+      <div style="font-size:11.5px;color:#888;margin-bottom:14px;letter-spacing:0.02em">mugen · muon · ma · nouns · rashguard · staple</div>
+      <table style="width:100%;font-size:13px;color:rgba(245,245,240,0.85);border-collapse:collapse">
+        <tr><td style="padding:6px 0;color:#bbb">弟子屈町 (企業版 ふるさと納税)</td><td style="text-align:right;color:#e6c449;font-variant-numeric:tabular-nums">35%</td></tr>
+        <tr><td style="padding:6px 0;color:#bbb">気候 緊急 reserve</td><td style="text-align:right;color:#e6c449;font-variant-numeric:tabular-nums">10%</td></tr>
+        <tr><td style="padding:6px 0;color:#bbb">運営 buffer</td><td style="text-align:right;color:#e6c449;font-variant-numeric:tabular-nums">5%</td></tr>
+        <tr style="border-top:1px solid rgba(255,255,255,0.08)"><td style="padding:8px 0 0;color:#F5F5F0;font-weight:500">寄付計 (target)</td><td style="text-align:right;color:#e6c449;font-variant-numeric:tabular-nums;font-weight:500">50%</td></tr>
+      </table>
+      <p style="font-size:11.5px;color:#888;line-height:1.85;margin-top:14px">弟子屈町は内閣府認定の企業版ふるさと納税対象自治体 — 寄付額の最大 ~9 割が法人税控除、 実質負担は 1 割で町には満額が届く。</p>
+    </div>
+    <div style="background:#0e0e0e;border:1px solid rgba(255,255,255,0.08);border-left:3px solid #9ae3a8;padding:22px 22px 20px;border-radius:2px">
+      <div style="font-size:10px;letter-spacing:0.32em;text-transform:uppercase;color:#9ae3a8;margin-bottom:10px">Collab brand</div>
+      <div style="font-size:11.5px;color:#888;margin-bottom:14px;letter-spacing:0.02em">reversal · amami · atsume · ryozo · asoview · elsoul · ele · nojimahal · kichinan · blank · nihon-kotsu · jiufight</div>
+      <table style="width:100%;font-size:13px;color:rgba(245,245,240,0.85);border-collapse:collapse">
+        <tr><td style="padding:6px 0;color:#bbb">各 collab spec の指定先</td><td style="text-align:right;color:#9ae3a8;font-variant-numeric:tabular-nums">50%</td></tr>
+      </table>
+      <p style="font-size:11.5px;color:#888;line-height:1.85;margin-top:14px">例: amami → 奄美保全 NPO、 reversal → fighter 指定先、 atsume → 道場運営費、 jiufight → BJJ コミュニティ団体。 partner が選んでいない collab は <code style="background:rgba(255,255,255,0.06);color:#9ae3a8;padding:1px 5px;border-radius:2px;font-size:11px">pending-partner-choice</code> として ledger に accrue、 partner が決めるまで送金しない。</p>
+    </div>
+    <div style="background:#0e0e0e;border:1px solid rgba(255,255,255,0.08);border-left:3px solid #c89eff;padding:22px 22px 20px;border-radius:2px">
+      <div style="font-size:10px;letter-spacing:0.32em;text-transform:uppercase;color:#c89eff;margin-bottom:10px">Personal brand</div>
+      <div style="font-size:11.5px;color:#888;margin-bottom:14px;letter-spacing:0.02em">/you (buyer-designed 1-off shirts)</div>
+      <table style="width:100%;font-size:13px;color:rgba(245,245,240,0.85);border-collapse:collapse">
+        <tr><td style="padding:6px 0;color:#bbb">弟子屈町 (default)</td><td style="text-align:right;color:#c89eff;font-variant-numeric:tabular-nums">50%</td></tr>
+      </table>
+      <p style="font-size:11.5px;color:#888;line-height:1.85;margin-top:14px">buyer が申請すれば、 ホワイトリスト (認可 NPO・公益財団・認定自治体) の中から自分で寄付先を選べる。 default は 弟子屈町 — 創業者 yuki が MU 設立前から累計 ¥500万超 を寄付し続けている関係を引き継ぐ。</p>
+    </div>
+  </div>
+</section>"##;
+
+    // ── Section 3: 段階 stairs ─────────────────────────────────────────
+    // 現在 tier の row を highlight。
+    let rate_row = |sold_lo: i64, sold_hi: Option<i64>, rate: f64, reason: &str| -> String {
+        let is_current = (rate - cur_rate).abs() < 1e-6;
+        let highlight = if is_current {
+            "background:rgba(230,196,73,0.10);border-left:3px solid #e6c449"
+        } else {
+            "border-left:3px solid transparent"
+        };
+        let range = match sold_hi {
+            Some(hi) => format!("{} – {}", sold_lo, hi - 1),
+            None => format!("{}+", sold_lo),
+        };
+        let badge = if is_current {
+            r##"<span style="display:inline-block;font-size:9px;letter-spacing:0.28em;text-transform:uppercase;color:#e6c449;border:1px solid #e6c449;padding:2px 7px;margin-left:10px;border-radius:2px">現在地</span>"##
+        } else { "" };
+        format!(
+            r##"<tr style="{hl}">
+  <td style="padding:14px 18px;color:#F5F5F0;font-variant-numeric:tabular-nums;font-weight:{fw}">{range}{badge}</td>
+  <td style="padding:14px 18px;text-align:right;color:#e6c449;font-variant-numeric:tabular-nums;font-size:18px;font-weight:300">{rate_pct}%</td>
+  <td style="padding:14px 18px;color:#888;font-size:12.5px;line-height:1.7">{reason}</td>
+</tr>"##,
+            hl = highlight,
+            fw = if is_current { 500 } else { 400 },
+            range = range,
+            badge = badge,
+            rate_pct = (rate * 100.0) as i64,
+            reason = reason,
+        )
+    };
+    let section_stairs = format!(
+        r##"<section style="margin-bottom:48px">
+  <h2 style="font-size:13px;letter-spacing:0.28em;text-transform:uppercase;color:#e6c449;font-weight:500;margin:0 0 22px;padding-top:0;border-top:none">§ 3 段階的寄付率 — 50% target までの credible runway</h2>
+  <p style="font-size:13.5px;color:rgba(245,245,240,0.62);line-height:1.9;margin-bottom:24px">
+    sales 0 で「税後利益の 50% を寄付します」と言う企業はゼロを 50% 掛けてもゼロなので 信用に値しない。 MU は <strong style="color:#F5F5F0">累計 sold 着数</strong> で寄付率が階段状に上がる。 段階率の <em style="color:#F5F5F0">後退</em> は取締役会 + 株主同意が必要 (§27 の精神)、 進む方向にしか動かない。
+  </p>
+  <div style="background:#0e0e0e;border:1px solid rgba(255,255,255,0.08);border-radius:2px;overflow:hidden">
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead>
+        <tr style="background:rgba(255,255,255,0.03);color:#888;font-size:10px;letter-spacing:0.22em;text-transform:uppercase">
+          <th style="padding:12px 18px;text-align:left;font-weight:500">累計 sold (着)</th>
+          <th style="padding:12px 18px;text-align:right;font-weight:500">寄付率</th>
+          <th style="padding:12px 18px;text-align:left;font-weight:500">理由</th>
+        </tr>
+      </thead>
+      <tbody>
+        {r0}
+        {r1}
+        {r2}
+        {r3}
+        {r4}
+        {r5}
+      </tbody>
+    </table>
+  </div>
+  <p style="font-size:11.5px;color:#888;line-height:1.85;margin-top:18px">
+    寄付率は post-tax net profit に対する比率 (§2 の destination matrix で按分)。 残り 50% (max-out tier 到達後) は <a href="/constitution#28">§28</a> の 6 セグメントで運営 + stake (Yuki ¥10M キャップ / 株主 / MA Founder Relay / Community / Reserve)。
+  </p>
+</section>"##,
+        r0 = rate_row(0,      Some(100),    0.01, "Seed — まず brand が存在することを sales で証明する段階。 1% でも account に donation accrued は積む。"),
+        r1 = rate_row(100,    Some(500),    0.05, "Starter — 100 着は 「一回だけのバイラル」ではなく 「継続購入」 の閾値。 5% は寄付公開を始められる最低ライン。"),
+        r2 = rate_row(500,    Some(1_000),  0.10, "Serious — 500 着で MU は趣味プロジェクトを卒業。 10% は通常の社会的責任ラインと同等。"),
+        r3 = rate_row(1_000,  Some(5_000),  0.20, "Credible — 1,000 着で 「ブランドとして存在する」。 20% は POD ベース apparel の利益率と整合する寄付率。"),
+        r4 = rate_row(5_000,  Some(10_000), 0.35, "Near target — 5,000 着で年商 ¥30M 級。 35% は ¥10M キャップの Yuki 報酬を超えた利益の大半を還元する設計。"),
+        r5 = rate_row(10_000, None,         0.50, "Target — §27 の original commitment。 ここから先は §29 progressive donation (50→90%) に接続する。"),
+    );
+
+    // ── Section 4: 透明性 commitment ────────────────────────────────────
+    let dest_rows: String = by_dest.iter().map(|(d, a, s)| {
+        let label = if d == "pending-partner-choice" {
+            r##"<span style="color:#C8362C">未設定 (partner choice 待ち)</span>"##.to_string()
+        } else {
+            format!(r##"<strong style="color:#F5F5F0">{}</strong>"##, d)
+        };
+        format!(
+            r##"<tr><td style="padding:8px 12px">{}</td><td style="padding:8px 12px;text-align:right;color:#e6c449;font-variant-numeric:tabular-nums">¥{}</td><td style="padding:8px 12px;text-align:right;color:#9ae3a8;font-variant-numeric:tabular-nums">¥{}</td></tr>"##,
+            label, format_jpy(*a), format_jpy(*s),
+        )
+    }).collect();
+    let dest_table = if by_dest.is_empty() {
+        r##"<p style="font-size:12.5px;color:#888;font-style:italic;margin:14px 0 0">まだ ledger エントリなし — sold が動き始めたら destination 別の accrue が ここに表示されます。</p>"##.to_string()
+    } else {
+        format!(
+            r##"<table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-top:14px;border:1px solid rgba(255,255,255,0.08);border-radius:2px;overflow:hidden">
+    <thead><tr style="background:rgba(255,255,255,0.03);color:#888;font-size:10px;letter-spacing:0.22em;text-transform:uppercase">
+      <th style="padding:10px 12px;text-align:left;font-weight:500">寄付先</th>
+      <th style="padding:10px 12px;text-align:right;font-weight:500">Accrued</th>
+      <th style="padding:10px 12px;text-align:right;font-weight:500">Sent</th>
+    </tr></thead>
+    <tbody>{}</tbody>
+  </table>"##, dest_rows)
+    };
+    let section_transparency = format!(
+        r##"<section style="margin-bottom:48px">
+  <h2 style="font-size:13px;letter-spacing:0.28em;text-transform:uppercase;color:#e6c449;font-weight:500;margin:0 0 22px;padding-top:0;border-top:none">§ 4 透明性 — いま 誰に いくら 向かっているか</h2>
+  <p style="font-size:13.5px;color:rgba(245,245,240,0.62);line-height:1.9;margin-bottom:22px">
+    寄付額は売上が立った瞬間に <code style="background:rgba(230,196,73,0.10);color:#e6c449;padding:1px 5px;border-radius:2px;font-size:12px">donation_ledger</code> へ accrue され、 四半期に 1 回 一括送金で <code style="background:rgba(255,255,255,0.06);color:#9ae3a8;padding:1px 5px;border-radius:2px;font-size:12px">status='sent'</code> に flip。 削除不可 (append-only)。 修正は反転エントリで履歴を残す。
+  </p>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:18px;margin-bottom:14px">
+    <div style="background:#0e0e0e;border:1px solid rgba(255,255,255,0.08);border-left:3px solid #e6c449;padding:18px 20px;border-radius:2px">
+      <div style="font-size:24px;font-weight:200;color:#e6c449;letter-spacing:-0.01em;line-height:1">¥{accrued_fmt}</div>
+      <div style="font-size:10px;letter-spacing:0.22em;text-transform:uppercase;color:#888;margin-top:6px">Accrued (送金待ち)</div>
+    </div>
+    <div style="background:#0e0e0e;border:1px solid rgba(255,255,255,0.08);border-left:3px solid #9ae3a8;padding:18px 20px;border-radius:2px">
+      <div style="font-size:24px;font-weight:200;color:#9ae3a8;letter-spacing:-0.01em;line-height:1">¥{sent_fmt}</div>
+      <div style="font-size:10px;letter-spacing:0.22em;text-transform:uppercase;color:#888;margin-top:6px">Sent (送金済)</div>
+    </div>
+    <div style="background:#0e0e0e;border:1px solid rgba(255,255,255,0.08);border-left:3px solid #888;padding:18px 20px;border-radius:2px">
+      <div style="font-size:24px;font-weight:200;color:#F5F5F0;letter-spacing:-0.01em;line-height:1">¥{est_fmt}</div>
+      <div style="font-size:10px;letter-spacing:0.22em;text-transform:uppercase;color:#888;margin-top:6px">推定 税引後利益 (live)</div>
+    </div>
+  </div>
+  {dest_table}
+  <p style="font-size:11.5px;color:#888;line-height:1.85;margin-top:18px">
+    JSON: <a href="/api/profit-split">/api/profit-split</a> · 寄付実績 ledger: <a href="/donations">/donations</a> · 計算ロジック: <code style="background:rgba(230,196,73,0.10);color:#e6c449;padding:1px 5px;border-radius:2px;font-size:11px">store/src/main.rs::donation_tier_for_sold</code>
+  </p>
+</section>"##,
+        accrued_fmt = format_jpy(donations_accrued),
+        sent_fmt    = format_jpy(donations_sent),
+        est_fmt     = format_jpy(est_net_after_tax),
+        dest_table  = dest_table,
+    );
+
+    // ── Section 5: 改定履歴 ────────────────────────────────────────────
+    let section_history = r##"<section style="margin-bottom:32px">
+  <h2 style="font-size:13px;letter-spacing:0.28em;text-transform:uppercase;color:#e6c449;font-weight:500;margin:0 0 22px;padding-top:0;border-top:none">§ 5 改定履歴</h2>
+  <ul style="list-style:none;padding:0;margin:0;font-size:13px;color:rgba(245,245,240,0.72);line-height:1.95">
+    <li style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06)"><strong style="color:#F5F5F0">2026-05-22</strong> — ハイブリッド destination matrix (MU 自社 / Collab / Personal) + 段階 stair (1→5→10→20→35→50%) を /profit-split に shipped。 §27/§28 を上書きではなく re-frame。</li>
+    <li style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06)"><strong style="color:#F5F5F0">2026-05-18</strong> — §28 初版公開: 寄付 50 / Yuki 10 / 株主 10 / MA 10 / Community 10 / Reserve 10 (flat)。 §29 沈黙の規律 + 累進寄付 50→90% を silent commit。</li>
+    <li style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06)"><strong style="color:#F5F5F0">2026-05-14</strong> — vision/about/founder を 「1% スタート / 目標 50%」 段階化 framing に揃える (commit <code style="background:rgba(230,196,73,0.10);color:#e6c449;padding:1px 5px;border-radius:2px;font-size:11px">8bead00</code> / <code style="background:rgba(230,196,73,0.10);color:#e6c449;padding:1px 5px;border-radius:2px;font-size:11px">25ac93d</code>)。</li>
+    <li style="padding:8px 0"><strong style="color:#F5F5F0">2026-05 以前</strong> — 創業者 yuki が MU 設立前から累計 ¥1億超 (うち弟子屈町に ¥500万超) を、 すべて返礼品辞退で寄付。 §27 はこの個人の関係を法人に引き継ぐ条文。</li>
+  </ul>
+</section>"##;
+
+    let body_html = format!(
+        "{}\n{}\n{}\n{}\n{}",
+        section_current,
+        section_matrix,
+        section_stairs,
+        section_transparency,
+        section_history,
+    );
 
     let html = format!(r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>━◯━ MU · §28 利益分配スキーム | wearmu.com</title>
-<meta name="description" content="MU の §28 利益分配スキーム — 税引後純利益を 寄付 50% / Yuki 10% / 株主 10% / MA ホルダー 10% / Community 10% / 運転備金 10% の 6 セグメントに分配。日本法令準拠 (会社法・法人税法・金商法・資金決済法・暗号資産税制)。">
-<meta property="og:title" content="MU · §28 利益分配スキーム">
-<meta property="og:description" content="税引後純利益を 6 セグメントに分配。50% 寄付 (弟子屈町 企業版ふるさと納税)・10% Yuki・10% 株主・10% MA・10% Community・10% 運転備金。">
+<title>━◯━ MU · 利益分配 (ハイブリッド + 段階) | wearmu.com</title>
+<meta name="description" content="MU の利益分配スキーム — 自社 brand は弟子屈 35 + 気候 reserve 10 + 運営 5、 collab brand は partner 指定先 50、 personal brand は弟子屈 50 default。 寄付率は sales 0-99 着 = 1% → 100+ = 5% → 500+ = 10% → 1k+ = 20% → 5k+ = 35% → 10k+ = 50% (target) の段階で credible に積み上げ。">
+<meta property="og:title" content="MU · 利益分配 (ハイブリッド + 段階 1→50%)">
+<meta property="og:description" content="brand 別 destination matrix + 累計 sold 着数で段階的に上がる寄付率。 sales 0 の日に 50% 約束する unrealistic な PR ではなく、 1%→50% の credible runway。">
 <meta property="og:url" content="https://wearmu.com/profit-split">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -36561,40 +36744,33 @@ body{{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue','Hiragin
 a{{color:var(--y);text-decoration:none}} a:hover{{text-decoration:underline;text-underline-offset:3px}}
 nav{{position:sticky;top:0;background:rgba(10,10,10,0.9);backdrop-filter:blur(12px);border-bottom:1px solid var(--line);padding:16px 28px;display:flex;justify-content:space-between;align-items:center;z-index:50;font-size:11px;letter-spacing:0.3em;text-transform:uppercase}}
 nav .logo{{font-weight:700;letter-spacing:0.45em}}
-.wrap{{max-width:760px;margin:0 auto;padding:60px 28px 100px}}
-.wrap h1{{font-size:clamp(28px,4.6vw,44px);font-weight:200;letter-spacing:0.01em;line-height:1.22;margin:0 0 28px;color:var(--fg)}}
-.wrap h2{{font-size:13px;letter-spacing:0.28em;text-transform:uppercase;color:var(--y);font-weight:500;margin:48px 0 18px;padding-top:32px;border-top:1px solid var(--line)}}
-.wrap h3{{font-size:17px;font-weight:300;letter-spacing:0.02em;margin:28px 0 12px;color:var(--fg)}}
-.wrap p{{margin:0 0 14px;color:var(--mute)}}
-.wrap p strong{{color:var(--fg);font-weight:500}}
-.wrap ol,.wrap ul{{margin:6px 0 18px;padding-left:24px;color:var(--mute)}}
-.wrap li{{margin:6px 0}} .wrap li strong{{color:var(--fg);font-weight:500}}
-.wrap code{{background:rgba(230,196,73,0.10);color:var(--y);padding:1px 6px;font-size:12.5px;font-family:'SF Mono','Menlo',monospace;border-radius:2px}}
-.wrap pre{{background:#0e0e0e;border:1px solid var(--line);padding:14px 18px;overflow-x:auto;font-size:12px;margin:14px 0;border-radius:2px}}
-.wrap pre code{{background:transparent;color:var(--fg);padding:0}}
-.wrap hr{{border:none;border-top:1px solid var(--line);margin:48px 0}}
-.wrap table{{border-collapse:collapse;width:100%;margin:14px 0;font-size:13px}}
-.wrap th,.wrap td{{border:1px solid var(--line);padding:8px 12px;text-align:left}}
-.wrap th{{background:#0e0e0e;color:var(--fg);font-weight:500;letter-spacing:0.04em}}
-.wrap blockquote{{margin:18px 0;padding:12px 18px;border-left:2px solid var(--y);background:rgba(230,196,73,0.06);font-size:13.5px;color:var(--mute)}}
-@media (max-width: 640px) {{
-  .wrap table {{ display:block; overflow-x:auto; white-space:nowrap; font-size:11px; -webkit-overflow-scrolling:touch }}
-  .wrap th, .wrap td {{ padding:6px 8px }}
-}}
-footer{{max-width:760px;margin:0 auto;padding:32px 28px 80px;border-top:1px solid var(--line);color:var(--mute);font-size:11.5px;letter-spacing:0.1em;line-height:2}}
+.wrap{{max-width:840px;margin:0 auto;padding:48px 24px 80px}}
+h1.page{{font-size:clamp(28px,4.6vw,42px);font-weight:200;letter-spacing:0.01em;line-height:1.22;margin:0 0 14px;color:var(--fg)}}
+.intro{{font-size:14.5px;color:var(--mute);line-height:1.95;margin:0 0 40px}}
+.intro strong{{color:var(--fg);font-weight:500}}
+footer{{max-width:840px;margin:0 auto;padding:32px 24px 80px;border-top:1px solid var(--line);color:var(--mute);font-size:11.5px;letter-spacing:0.1em;line-height:2}}
 footer a{{color:var(--mute);text-decoration:underline;text-decoration-color:rgba(255,255,255,0.18)}} footer a:hover{{color:var(--y)}}
+@media (max-width: 640px) {{
+  table {{ display:block; overflow-x:auto; -webkit-overflow-scrolling:touch }}
+  .wrap {{ padding: 32px 18px 60px }}
+}}
 </style></head><body>
 <nav>
   <a class="logo" href="/">MU</a>
-  <span style="opacity:0.55">§28 利益分配</span>
-  <span><a href="/api/profit-split" style="opacity:0.55;margin-right:14px">JSON ↗</a><a href="/transparency" style="opacity:0.55">数字</a></span>
+  <span style="opacity:0.55">利益分配</span>
+  <span><a href="/api/profit-split" style="opacity:0.55;margin-right:14px">JSON ↗</a><a href="/donations" style="opacity:0.55;margin-right:14px">ledger</a><a href="/constitution#28" style="opacity:0.55">§28 / §29</a></span>
 </nav>
 <div class="wrap">
-{body}
+  <h1 class="page">利益分配 — ハイブリッド destination × 段階的寄付率</h1>
+  <p class="intro">
+    MU の 50% 寄付約束は <strong>brand によって行き先が違う</strong> (自社 = 弟子屈町 + 気候 reserve + 運営、 collab = partner 指定先、 personal = 弟子屈 default) し、 寄付率は <strong>累計 sold 着数で段階的に上がる</strong> (1% → 5% → 10% → 20% → 35% → 50%)。 sales 0 で 50% 約束する企業は信用に値しないが、 1% から始めて 50% target まで credible な runway を可視化する企業は信用できる、 という設計。
+  </p>
+  {body}
 </div>
 <footer>
-  <div>raw markdown: <a href="https://github.com/yukihamada/mu-brand/blob/main/store/static/profit_split.md">github.com/yukihamada/mu-brand/store/static/profit_split.md</a> · 計算ロジック: <code>store/src/main.rs::profit_split_breakdown</code></div>
-  <div style="margin-top:6px">株式会社イネブラ (Enabler Inc.) · Constitution §28 · 監査 → 株主総会 → 分配</div>
+  <div>raw §28/§29 markdown spec (full version, 法的 framework 込み): <a href="https://github.com/yukihamada/mu-brand/blob/main/store/static/profit_split.md">github.com/yukihamada/mu-brand/store/static/profit_split.md</a></div>
+  <div style="margin-top:6px">計算ロジック: <code style="background:rgba(230,196,73,0.10);color:#e6c449;padding:1px 5px;border-radius:2px;font-size:11px">store/src/main.rs::donation_tier_for_sold</code> + <code style="background:rgba(230,196,73,0.10);color:#e6c449;padding:1px 5px;border-radius:2px;font-size:11px">::profit_split_breakdown</code></div>
+  <div style="margin-top:6px">株式会社イネブラ (Enabler Inc.) · Constitution §27 / §28 / §29 · 監査 → 株主総会 → 分配</div>
 </footer>
 </body></html>"##,
         body = body_html,
