@@ -48,22 +48,43 @@ AI が 毎時 1 枚 デザインを 生成し、 北海道 の 天気 で 在庫
 ▸ X @yukihamada  · 毎日 21:00 進捗 thread
 ```
 
-## 配信ロジック
+## 配信ロジック (既存 jiuflow-ssr `/api/v1/admin/send-survey-blast` を再利用)
+
+参考: `bjj/jiuflow-ssr/src/handlers/api.rs:3334` `admin_send_survey_blast`
+- 受信者: `SELECT DISTINCT u.email FROM users u JOIN subscriptions s ON s.user_id = u.id WHERE s.status = 'active'`
+- 既送 skip: `email_send_log` テーブルで campaign_key dedupe（再実行安全）
+- 600ms 間隔の バックグラウンド送信 (Resend rate limit 10/sec 安全圏)
+
+### ステップ 1 — dry_run（送信せず 受信者件数 + masked sample 確認）
 
 ```bash
-# 1. dry_run（送信せず 件数 / preview だけ）
-curl -X POST https://wearmu.com/admin/email/jiuflow_100_d1 \
-  -H "x-admin-token: $ADMIN_TOKEN" \
-  -d 'dry_run=true' | jq '.'
+# x-cron-secret は fly secrets list -a jiuflow-ssr で確認 (CRON_SECRET)
+CRON_SECRET="$(flyctl ssh console -a jiuflow-ssr -C 'printenv CRON_SECRET')"
 
-# 2. 人間 OK 後の本送信（segment は active のみ、 過去 30 日 unsub を除く）
-curl -X POST https://wearmu.com/admin/email/jiuflow_100_d1 \
-  -H "x-admin-token: $ADMIN_TOKEN" \
-  -d 'dry_run=false&segment=active_no_unsub'
+curl -X POST https://jiuflow.com/api/v1/admin/send-survey-blast \
+  -H "Content-Type: application/json" \
+  -H "x-cron-secret: $CRON_SECRET" \
+  -d @docs/100/email_jiuflow_payload.json
 ```
+
+### ステップ 2 — 人間 OK 後の本送信
+
+```bash
+# payload の "dry_run" を false に変更してから 同じ curl を再実行
+jq '.dry_run = false' docs/100/email_jiuflow_payload.json > /tmp/payload.json
+curl -X POST https://jiuflow.com/api/v1/admin/send-survey-blast \
+  -H "Content-Type: application/json" \
+  -H "x-cron-secret: $CRON_SECRET" \
+  -d @/tmp/payload.json
+```
+
+### Payload JSON
+
+`docs/100/email_jiuflow_payload.json` を別途生成済み。`campaign_key = mu100_d1` で
+冪等。本送信失敗時は同じ payload で再実行すれば 未送信分のみ送る。
 
 ## 計測
 
-- `mu_purchases.utm_campaign = 'mu100_d1'` で attribution
-- click-thru → Stripe Checkout metadata に utm 5要素を確実に渡す（[[jiuflow-ads-cvr-findings]] 教訓）
-- 24h 後 open rate / click rate / conv を Slack #mu-100 に自動 post
+- リンクに `?utm_source=jiuflow_email&utm_medium=email&utm_campaign=mu100_d1` を必ず付与
+- Stripe Checkout metadata に utm 5 要素を確実に渡す（[[jiuflow-ads-cvr-findings]] 教訓）
+- 24h 後: `email_send_log WHERE campaign_key='mu100_d1'` の件数 / Stripe `metadata.utm_campaign='mu100_d1'` の conv 数 を /admin/email に表示
