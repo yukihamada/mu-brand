@@ -22019,6 +22019,15 @@ async fn why_page() -> Html<&'static str> {
     Html(include_str!("../static/why.html"))
 }
 
+/// /founding — MU 創立宣言 (Founding Day Edition, 2026-05-20).
+/// Source markdown: docs/founding/01_declaration_2026-05-20.md
+/// Pre-rendered to static/founding.html by craft.wearmu.com md→html, then
+/// snapshotted into static/ for include_str!. Re-snapshot via:
+///   curl -s https://craft.wearmu.com/founding > store/static/founding.html
+async fn founding_page() -> Html<&'static str> {
+    Html(include_str!("../static/founding.html"))
+}
+
 /// /buy/event — JIU FIGHT × MU 150-piece collab cold-traffic landing.
 /// Visual-first, scarcity-driven (5/24 TOKYO LIVE countdown), single CTA
 /// to SUZURI direct purchase. Target audience: BJJ practitioners +
@@ -57698,6 +57707,7 @@ async fn main() {
         .route("/buy", get(buy_page))
         .route("/buy/founder", get(buy_founder_page))
         .route("/why", get(why_page))
+        .route("/founding", get(founding_page))
         .route("/api/checkout/founder", post(founder_checkout))
         // Cold-traffic ad landings (visual-first, single CTA). Each targets
         // a different paid channel + audience — see handler doc comments
