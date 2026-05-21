@@ -35,6 +35,13 @@ except Exception:
 from google import genai
 from google.genai import types
 
+# Optional: sold/bid-driven design steerer. Lives in scripts/winner_picker.py.
+# Guarded so generate.py keeps running on a fresh checkout without the file.
+try:
+    from scripts.winner_picker import pick_winners as _pick_winners  # type: ignore
+except Exception:
+    _pick_winners = None  # type: ignore
+
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 PRINTFUL_KEY   = os.environ["PRINTFUL_API_KEY"]
 DB_PATH        = Path(__file__).parent / "products.db"
@@ -1033,6 +1040,27 @@ def run(brand: str):
         sys.exit(1)
 
     print(f"  name: {name}, qty: {quantity}, price: ¥{price:,}")
+
+    # Steer toward proven sellers in this brand: top 3 by (sold*10 + bids*3 +
+    # current_bid/1000). On cold start the list is empty and we keep the
+    # original prompt as-is. parent_design records the lineage of the #1.
+    parent_id: str | None = None
+    if _pick_winners is not None:
+        try:
+            winners = _pick_winners(brand, 3) or []
+        except Exception as e:
+            print(f"  winner_picker failed ({e}); skipping")
+            winners = []
+        if winners:
+            names = ", ".join(w["name"] for w in winners if w.get("name"))
+            hint = (
+                f"Style direction (proven sellers from this brand): {names}. "
+                f"Stay in the same visual family.\n\n"
+            )
+            prompt = hint + prompt
+            parent_id = str(winners[0]["id"])
+            print(f"  winners: parent={parent_id} ({names})")
+
     print(f"  generating design...")
 
     prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()[:16]
@@ -1091,11 +1119,12 @@ def run(brand: str):
     con.execute("""
         INSERT INTO products
         (brand, drop_num, name, design_url, mockup_url, price_jpy, inventory,
-         created_at, weather_data, prompt_text, prompt_hash, seed_data, auction_end, nft_mint)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         created_at, weather_data, prompt_text, prompt_hash, seed_data, auction_end, nft_mint,
+         parent_design)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (brand, drop_num, name, file_url, mockup_url, price,
           quantity, now_iso, json.dumps(weather), prompt, prompt_hash,
-          seed_data, auction_end, nft_mint))
+          seed_data, auction_end, nft_mint, parent_id))
     con.commit()
     print(f"  saved locally.")
 
