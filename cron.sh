@@ -23,6 +23,8 @@
 #   POSTPURCHASE:  every 60 min (DRY_RUN unless MU_POSTPURCHASE_LIVE=1)
 #   SITEMAP-PING:  daily 03:30 JST (notify Google/Bing of new SKUs)
 #   PRODUCT-CREATOR: every 2h (signal-driven, 3 designs/run)
+#   X-POST-AGENT:  every 10 min — polls products.db for fresh drops,
+#                  posts one tweet each (DRY_RUN unless MU_X_LIVE=1)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PYTHON="$(which python3)"
@@ -87,6 +89,8 @@ install_crons() {
 30 3 * * * set -a && source $ENV_FILE && set +a && $PYTHON $SCRIPT_DIR/scripts/sitemap_ping.py >> $LOG_DIR/sitemap_ping.log 2>&1
 # mu-brand PRODUCT-CREATOR (every 2h — signal-driven brand pick + 3 designs)
 33 */2 * * * set -a && source $ENV_FILE && set +a && NO_DELAY=1 $PYTHON $SCRIPT_DIR/scripts/product_creator_agent.py >> $LOG_DIR/product_creator_agent.log 2>&1
+# mu-brand X-POST-AGENT (every 10 min — polls products.db for new designs; DRY_RUN unless MU_X_LIVE=1)
+*/10 * * * * set -a && source $ENV_FILE && set +a && MU_X_LIVE=\${MU_X_LIVE:-} $PYTHON $SCRIPT_DIR/scripts/x_post_agent.py >> $LOG_DIR/x_post.log 2>&1
 EOF
 
     crontab /tmp/mu_crontab_tmp
