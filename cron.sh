@@ -20,6 +20,7 @@
 #   MUON:          daily at 09:00 JST
 #   MA:            1st of month at 00:00 JST
 #   CART-ABANDON:  every 30 min (DRY_RUN unless MU_ABANDON_LIVE=1)
+#   POSTPURCHASE:  every 60 min (DRY_RUN unless MU_POSTPURCHASE_LIVE=1)
 #   SITEMAP-PING:  daily 03:30 JST (notify Google/Bing of new SKUs)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -79,6 +80,8 @@ install_crons() {
 */10 * * * * set -a && source $ENV_FILE && set +a && $PYTHON $SCRIPT_DIR/scripts/selfimprove_10min.py >> $LOG_DIR/selfimprove.log 2>&1
 # mu-brand CART-ABANDON (every 30 min — DRY_RUN unless MU_ABANDON_LIVE=1)
 */30 * * * * set -a && source $ENV_FILE && set +a && $PYTHON $SCRIPT_DIR/scripts/cart_abandon_mail.py >> $LOG_DIR/cart_abandon.log 2>&1
+# mu-brand POSTPURCHASE (every 60 min — DRY_RUN unless MU_POSTPURCHASE_LIVE=1)
+17 * * * * set -a && source $ENV_FILE && set +a && $PYTHON $SCRIPT_DIR/scripts/post_purchase_mail.py >> $LOG_DIR/post_purchase.log 2>&1
 # mu-brand SITEMAP-PING (daily 03:30 JST — notify Google/Bing of new SKUs)
 30 3 * * * set -a && source $ENV_FILE && set +a && $PYTHON $SCRIPT_DIR/scripts/sitemap_ping.py >> $LOG_DIR/sitemap_ping.log 2>&1
 EOF
