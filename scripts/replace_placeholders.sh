@@ -39,7 +39,9 @@ for brand in "${BRANDS[@]}"; do
   consecutive_fail=0
   for i in $(seq 1 "$placeholder_count"); do
     echo "[$brand] generate $i/$placeholder_count $(date -Iseconds)"
-    if python "$GEN" "$brand"; then
+    # Hard cap per-call at 90s so a stalled Gemini/Printful request can't
+    # eat the whole batch window. generate.py is typically ~40s when healthy.
+    if timeout 90 python "$GEN" "$brand"; then
       total_ok=$((total_ok + 1))
       consecutive_fail=0
     else
