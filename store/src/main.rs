@@ -10940,13 +10940,56 @@ a:hover{{text-decoration:underline}}
 const CHALLENGE_100_START_UTC:    &str = "2026-05-17T15:00:00Z";
 const CHALLENGE_100_DEADLINE_UTC: &str = "2026-05-31T14:59:59Z";
 
-/// GET /api/niches — list active niches with budget + KPI + entry URL.
-/// Public read-only (no auth). Yuki + future admin UI use this to render
-/// the multi-niche dashboard.
+/// Map a brand string to its niche slug. Hardcoded for now (Yuki updates
+/// the rules as new collab brands appear). Used to roll up products /
+/// mu_purchases by niche for analytics.
+fn niche_for_brand(brand: &str) -> &'static str {
+    let b = brand.to_ascii_lowercase();
+    if b == "jiufight" || b == "sweep" || b == "ads_jujitsu" || b.starts_with("bjj") {
+        "bjj"
+    } else if b == "founder" || b == "mugen_founder" || b.starts_with("founder") {
+        "founder"
+    } else if b == "mugen" || b == "muon" || b == "ma" || b == "you" {
+        "mugen"
+    } else {
+        "collab"
+    }
+}
+
+/// Roll up mu_purchases by niche into (sold_count, revenue_jpy) maps.
+/// Single SQL pass + Rust-side bucketing (vs CASE in SQL) so the
+/// niche_for_brand() rule stays in one place.
+fn niche_revenue_map(conn: &Connection) -> std::collections::HashMap<String, (i64, i64)> {
+    let mut out: std::collections::HashMap<String, (i64, i64)> =
+        std::collections::HashMap::new();
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT p.brand, COUNT(*) AS sold, COALESCE(SUM(p.price_jpy), 0) AS revenue
+         FROM mu_purchases mp
+         JOIN products p ON p.id = mp.product_id
+         GROUP BY p.brand"
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?,
+        ))) {
+            for row in rows.flatten() {
+                let (brand, sold, rev) = row;
+                let niche = niche_for_brand(&brand).to_string();
+                let e = out.entry(niche).or_insert((0, 0));
+                e.0 += sold;
+                e.1 += rev;
+            }
+        }
+    }
+    out
+}
+
+/// GET /api/niches — list active niches with budget + KPI + entry URL
+/// + LIVE sold / revenue rolled up from mu_purchases. Public read-only.
 async fn api_niches_list(State(db): State<Db>) -> Json<serde_json::Value> {
-    let rows: Vec<serde_json::Value> = {
+    let (rows, totals): (Vec<serde_json::Value>, (i64, i64)) = {
         let conn = db.lock().unwrap();
-        conn.prepare(
+        let rev_map = niche_revenue_map(&conn);
+        let rows: Vec<serde_json::Value> = conn.prepare(
             "SELECT slug, name, audience, entry_url, hero_img,
                     ad_budget_jpy, target_mrr_jpy, status, priority, notes,
                     created_at, updated_at
@@ -10954,23 +10997,39 @@ async fn api_niches_list(State(db): State<Db>) -> Json<serde_json::Value> {
              WHERE status = 'active'
              ORDER BY priority DESC, slug ASC"
         ).ok().and_then(|mut stmt| {
-            stmt.query_map([], |r| Ok(serde_json::json!({
-                "slug":           r.get::<_, String>(0)?,
-                "name":           r.get::<_, String>(1)?,
-                "audience":       r.get::<_, String>(2)?,
-                "entry_url":      r.get::<_, String>(3)?,
-                "hero_img":       r.get::<_, Option<String>>(4)?,
-                "ad_budget_jpy":  r.get::<_, i64>(5)?,
-                "target_mrr_jpy": r.get::<_, i64>(6)?,
-                "status":         r.get::<_, String>(7)?,
-                "priority":       r.get::<_, i64>(8)?,
-                "notes":          r.get::<_, Option<String>>(9)?,
-                "created_at":     r.get::<_, String>(10)?,
-                "updated_at":     r.get::<_, String>(11)?,
-            }))).ok().map(|it| it.filter_map(|r| r.ok()).collect())
-        }).unwrap_or_default()
+            stmt.query_map([], |r| {
+                let slug: String = r.get(0)?;
+                let (sold, revenue) = rev_map.get(&slug).copied().unwrap_or((0, 0));
+                Ok(serde_json::json!({
+                    "slug":           slug,
+                    "name":           r.get::<_, String>(1)?,
+                    "audience":       r.get::<_, String>(2)?,
+                    "entry_url":      r.get::<_, String>(3)?,
+                    "hero_img":       r.get::<_, Option<String>>(4)?,
+                    "ad_budget_jpy":  r.get::<_, i64>(5)?,
+                    "target_mrr_jpy": r.get::<_, i64>(6)?,
+                    "status":         r.get::<_, String>(7)?,
+                    "priority":       r.get::<_, i64>(8)?,
+                    "notes":          r.get::<_, Option<String>>(9)?,
+                    "created_at":     r.get::<_, String>(10)?,
+                    "updated_at":     r.get::<_, String>(11)?,
+                    "sold":           sold,
+                    "revenue_jpy":    revenue,
+                }))
+            }).ok().map(|it| it.filter_map(|r| r.ok()).collect())
+        }).unwrap_or_default();
+        let total_sold:    i64 = rev_map.values().map(|(s, _)| s).sum();
+        let total_revenue: i64 = rev_map.values().map(|(_, r)| r).sum();
+        (rows, (total_sold, total_revenue))
     };
-    Json(serde_json::json!({ "niches": rows, "count": rows.len() }))
+    Json(serde_json::json!({
+        "niches": rows,
+        "count": rows.len(),
+        "totals": {
+            "sold": totals.0,
+            "revenue_jpy": totals.1,
+        },
+    }))
 }
 
 /// GET /api/niches/:slug/outreach — list outreach pipeline for a niche.
@@ -11295,9 +11354,10 @@ async fn admin_outreach_page(
 ) -> Response {
     if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/outreach").await { return r; }
 
-    // niches with outreach counts grouped by status
+    // niches with outreach counts + LIVE revenue rolled up from mu_purchases.
     let niches: Vec<serde_json::Value> = {
         let conn = db.lock().unwrap();
+        let rev_map = niche_revenue_map(&conn);
         conn.prepare(
             "SELECT n.slug, n.name, n.audience, n.ad_budget_jpy, n.target_mrr_jpy, n.priority,
                     COALESCE(SUM(CASE WHEN o.status='replied' THEN 1 ELSE 0 END), 0) AS replied,
@@ -11311,19 +11371,25 @@ async fn admin_outreach_page(
              GROUP BY n.slug
              ORDER BY n.priority DESC, n.slug"
         ).ok().and_then(|mut stmt| {
-            stmt.query_map([], |r| Ok(serde_json::json!({
-                "slug":          r.get::<_, String>(0)?,
-                "name":          r.get::<_, String>(1)?,
-                "audience":      r.get::<_, String>(2)?,
-                "ad_budget_jpy": r.get::<_, i64>(3)?,
-                "target_mrr_jpy":r.get::<_, i64>(4)?,
-                "priority":      r.get::<_, i64>(5)?,
-                "replied":       r.get::<_, i64>(6)?,
-                "agreed":        r.get::<_, i64>(7)?,
-                "shipped":       r.get::<_, i64>(8)?,
-                "photo":         r.get::<_, i64>(9)?,
-                "total":         r.get::<_, i64>(10)?,
-            }))).ok().map(|it| it.filter_map(|r| r.ok()).collect())
+            stmt.query_map([], |r| {
+                let slug: String = r.get(0)?;
+                let (sold, revenue) = rev_map.get(&slug).copied().unwrap_or((0, 0));
+                Ok(serde_json::json!({
+                    "slug":          slug,
+                    "name":          r.get::<_, String>(1)?,
+                    "audience":      r.get::<_, String>(2)?,
+                    "ad_budget_jpy": r.get::<_, i64>(3)?,
+                    "target_mrr_jpy":r.get::<_, i64>(4)?,
+                    "priority":      r.get::<_, i64>(5)?,
+                    "replied":       r.get::<_, i64>(6)?,
+                    "agreed":        r.get::<_, i64>(7)?,
+                    "shipped":       r.get::<_, i64>(8)?,
+                    "photo":         r.get::<_, i64>(9)?,
+                    "total":         r.get::<_, i64>(10)?,
+                    "sold":          sold,
+                    "revenue_jpy":   revenue,
+                }))
+            }).ok().map(|it| it.filter_map(|r| r.ok()).collect())
         }).unwrap_or_default()
     };
 
@@ -11476,13 +11542,25 @@ document.querySelectorAll('.status-sel').forEach(function(sel){{
 </body></html>"##,
         total_niches = niches.len(),
         total_rows = rows.len(),
-        niche_cards = niches.iter().map(|n| format!(
+        niche_cards = niches.iter().map(|n| {
+            let sold    = n["sold"].as_i64().unwrap_or(0);
+            let revenue = n["revenue_jpy"].as_i64().unwrap_or(0);
+            let target_mrr = n["target_mrr_jpy"].as_i64().unwrap_or(0);
+            let pct = if target_mrr > 0 {
+                ((revenue as f64 / target_mrr as f64) * 100.0).min(100.0) as i64
+            } else { 0 };
+            format!(
             r#"<div class="niche-card">
   <div class="slug">{slug}</div>
   <div class="meta"><b>{name}</b><div class="audience">{audience}</div>
-    <span style="font-size:10.5px;opacity:0.5">ad ¥{ad:>}/月 · MRR目標 ¥{mrr:>} · priority {pri}</span></div>
+    <span style="font-size:10.5px;opacity:0.5">ad ¥{ad}/月 · MRR目標 ¥{mrr} · priority {pri}</span>
+    <div style="margin-top:6px;height:4px;background:rgba(255,255,255,0.06);border-radius:2px;overflow:hidden">
+      <div style="height:100%;width:{pct}%;background:linear-gradient(90deg,#e6c449,#7ddca0);border-radius:2px"></div>
+    </div>
+  </div>
   <div class="stats">
-    total <b>{total}</b><br>
+    <b style="font-size:18px;color:#7ddca0">¥{revenue}</b> <span style="font-size:10px;opacity:0.55">({pct}%)</span><br>
+    <span style="color:#e6c449">sold {sold}</span> · outreach {total}<br>
     <span class="replied">replied {replied}</span> · agreed {agreed}<br>
     <span class="shipped">shipped {shipped}</span> · photo {photo}
   </div>
@@ -11491,14 +11569,17 @@ document.querySelectorAll('.status-sel').forEach(function(sel){{
             name = html_escape(n["name"].as_str().unwrap_or("")),
             audience = html_escape(n["audience"].as_str().unwrap_or("")),
             ad = n["ad_budget_jpy"].as_i64().unwrap_or(0),
-            mrr = n["target_mrr_jpy"].as_i64().unwrap_or(0),
+            mrr = target_mrr,
             pri = n["priority"].as_i64().unwrap_or(0),
             total = n["total"].as_i64().unwrap_or(0),
             replied = n["replied"].as_i64().unwrap_or(0),
             agreed  = n["agreed"].as_i64().unwrap_or(0),
             shipped = n["shipped"].as_i64().unwrap_or(0),
             photo   = n["photo"].as_i64().unwrap_or(0),
-        )).collect::<String>(),
+            sold = sold,
+            revenue = revenue,
+            pct = pct,
+        )}).collect::<String>(),
         niche_options = niches.iter().map(|n| format!(
             r#"<option value="{}">{}</option>"#,
             html_attr_escape(n["slug"].as_str().unwrap_or("")),
