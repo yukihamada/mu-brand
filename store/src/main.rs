@@ -13365,6 +13365,29 @@ async fn product_sku_page(
         (intl_price_num, "海外発送")
     };
 
+    // AOV nudge: free-ship progress.
+    // JP (¥4,900): show "あと ¥X で送料無料" against a ¥7,000 threshold + ASCII bar.
+    // INTL (¥7,800+): already ships free internationally, so frame as a win, not a gap.
+    const FREE_SHIP_THRESHOLD_JPY: i64 = 7000;
+    let ship_progress_html: String = if has_jp {
+        let remaining = (FREE_SHIP_THRESHOLD_JPY - jp_price_num).max(0);
+        // 7-cell bar; jp_price_num/threshold filled, rest empty.
+        let filled = ((jp_price_num as f64 / FREE_SHIP_THRESHOLD_JPY as f64) * 7.0)
+            .round().clamp(0.0, 7.0) as usize;
+        let bar: String = "▰".repeat(filled) + &"▱".repeat(7 - filled);
+        if remaining > 0 {
+            format!(
+                r#"<span>あと ¥{rem} で送料無料</span><span class="bar">{bar}</span>"#,
+                rem = remaining, bar = bar,
+            )
+        } else {
+            r#"<span>🎉 送料無料ライン達成</span><span class="bar">▰▰▰▰▰▰▰</span>"#.to_string()
+        }
+    } else {
+        r#"<span>🎉 送料込み価格 · 国際送料無料</span><span class="bar">▰▰▰▰▰▰▰</span>"#.to_string()
+    };
+    let brand_lower = html_attr_escape(&brand.to_lowercase());
+
     let img = mockup_url.clone().unwrap_or_else(|| design_url.clone().unwrap_or_default());
     // Preserve the slug the visitor used (serial_code or numeric id) so swatch
     // clicks keep the same bookmarkable URL shape.
@@ -13490,6 +13513,11 @@ h1{{font-size:20px;font-weight:500;margin:24px 0 8px}}
 .ship-line{{font-size:12px;opacity:0.6;text-align:center;margin:0 0 24px;line-height:1.5}}
 .trust{{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 0;font-size:11px;opacity:0.55;letter-spacing:0.04em}}
 .trust span{{padding:3px 8px;background:rgba(245,245,240,0.05);border-radius:10px}}
+.ship-nudge{{margin:0 0 8px;padding:10px 14px;background:rgba(78,180,118,0.10);border:1px solid rgba(78,180,118,0.25);border-radius:2px;font-size:13px;display:flex;align-items:center;justify-content:space-between;gap:12px;color:#e5f5ec}}
+.ship-nudge .bar{{font-family:monospace;letter-spacing:-1px;opacity:0.7}}
+.bundle-nudge{{margin:0 0 16px;padding:10px 14px;background:rgba(245,200,80,0.08);border:1px solid rgba(245,200,80,0.20);border-radius:2px;font-size:13px;color:#f5e6b0}}
+.bundle-nudge a{{color:#fff;text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px}}
+.bundle-nudge a:hover{{opacity:0.8}}
 .back{{display:inline-block;margin-top:32px;color:#777;font-size:12px;text-decoration:none}}
 .back:hover{{color:#aaa}}
 .upsell{{margin-top:48px;padding-top:24px;border-top:1px solid rgba(255,255,255,0.08)}}
@@ -13512,6 +13540,8 @@ h1{{font-size:20px;font-weight:500;margin:24px 0 8px}}
   <span class="color-badge">{current_code} — {current_name}</span>
 </div>
 <a class="buy-btn" href="/products/{brand}/{drop_num}?color={current_code}&amp;buy=1">今すぐ買う · ¥{buy_price} ({buy_ship})</a>
+<div class="ship-nudge">{ship_progress}</div>
+<div class="bundle-nudge">🎁 2 枚購入で ¥1,000 OFF · <a href="/merch/{brand_lower}">同 brand をもう 1 枚見る →</a></div>
 <p class="ship-line">送料込み · 注文から 5〜7 営業日でお届け · 30 日返品保証</p>
 <div class="trust"><span>Printful 製造</span><span>カード / Apple Pay / Google Pay</span><span>日本国内発送</span></div>
 <a class="back" href="/products/{brand}/{drop_num}">仕様詳細・サイズ表 →</a>
@@ -13529,6 +13559,8 @@ h1{{font-size:20px;font-weight:500;margin:24px 0 8px}}
         swatches = swatches_html,
         current_code = html_escape(&current_color),
         current_name = html_escape(current_color_name),
+        ship_progress = ship_progress_html,
+        brand_lower = brand_lower,
         upsell = upsell_html,
     );
     Html(html).into_response()
