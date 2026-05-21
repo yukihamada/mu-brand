@@ -4532,7 +4532,45 @@ small{display:block;margin-top:16px;color:rgba(245,245,240,0.5);font-size:11px}
 /// Public page; live stock + Stripe checkout via /api/v1/products/heritage
 /// + /api/checkout, no password gate. Style matches reversal/amami LP
 /// (black bg + #e6c449 accent) with extra whitespace for the premium feel.
-async fn heritage_page() -> Html<&'static str> {
+/// GET /amami — partner LP for the Amami photographer collab. ?lang=en
+/// swaps to the English variant (international buyer-facing, Printful EU
+/// pricing). JP is the default and ships the existing static/amami.html
+/// (kept untouched so the JS proposal-renderer + admin-preview flow stays
+/// working for partner reviews).
+async fn amami_page(
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Html<&'static str> {
+    let lang = q.get("lang").map(|s| s.as_str()).unwrap_or("");
+    if lang.eq_ignore_ascii_case("en") {
+        return Html(include_str!("../static/amami-en.html"));
+    }
+    Html(include_str!("../static/amami.html"))
+}
+
+/// GET /reversal — partner LP for the Reversal (rvddw) collab. Same
+/// behaviour as /amami: ?lang=en returns the English buyer LP, default
+/// JP keeps the existing static/reversal.html.
+async fn reversal_collab_page(
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Html<&'static str> {
+    let lang = q.get("lang").map(|s| s.as_str()).unwrap_or("");
+    if lang.eq_ignore_ascii_case("en") {
+        return Html(include_str!("../static/reversal-en.html"));
+    }
+    Html(include_str!("../static/reversal.html"))
+}
+
+async fn heritage_page(
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Html<&'static str> {
+    // ?lang=en swaps to the English LP. JP stays default. We ship both as
+    // static HTML files (full bilingual rewrite, not a runtime translation
+    // layer) so copy quality stays high and og:* / <html lang> / hreflang
+    // are baked in at the source. See store/static/heritage-en.html.
+    let lang = q.get("lang").map(|s| s.as_str()).unwrap_or("");
+    if lang.eq_ignore_ascii_case("en") {
+        return Html(include_str!("../static/heritage-en.html"));
+    }
     Html(include_str!("../static/heritage.html"))
 }
 
@@ -26397,10 +26435,19 @@ async fn proposal_generic_state(
 /// All inputs (name, ip_owner, meta, SKUs) come from the DB. No file or
 /// embedded asset is read at request time.
 fn try_render_approved_proposal_lp(slug: &str, db: &Db) -> Option<String> {
-    try_render_proposal_lp_inner(slug, db, false)
+    try_render_proposal_lp_inner(slug, db, false, "ja")
 }
 
-fn try_render_proposal_lp_inner(slug: &str, db: &Db, as_admin_preview: bool) -> Option<String> {
+/// Public approved LP with explicit language. ?lang=en → swaps the page lang
+/// attribute + a small bilingual layer (status banner, "buy" pill text, og:
+/// locale). Per-proposal meta can also carry `<key>_en` overrides — those
+/// win over the default JP `<key>` when lang=en. Falls back to JP when an
+/// `_en` override is missing.
+fn try_render_approved_proposal_lp_with_lang(slug: &str, db: &Db, lang: &str) -> Option<String> {
+    try_render_proposal_lp_inner(slug, db, false, lang)
+}
+
+fn try_render_proposal_lp_inner(slug: &str, db: &Db, as_admin_preview: bool, lang: &str) -> Option<String> {
     let (name, ip_owner, plan_tier, meta_json_str, skus, approved) = {
         let conn = db.lock().unwrap();
         let row = proposal_row(&conn, slug)?;
@@ -26456,7 +26503,7 @@ fn try_render_proposal_lp_inner(slug: &str, db: &Db, as_admin_preview: bool) -> 
     };
     let meta_json: serde_json::Value = serde_json::from_str(&meta_json_str)
         .unwrap_or(serde_json::json!({}));
-    Some(render_proposal_lp(slug, &name, &ip_owner, approved, &plan_tier, &skus, &meta_json))
+    Some(render_proposal_lp(slug, &name, &ip_owner, approved, &plan_tier, &skus, &meta_json, lang))
 }
 
 #[allow(clippy::type_complexity)]
@@ -26471,8 +26518,21 @@ fn render_proposal_lp(
         Option<String>, Option<i64>, i64,
     )],
     meta: &serde_json::Value,
+    lang: &str,
 ) -> String {
-    let m = |k: &str| meta.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    // ?lang=en path: any `<key>_en` in the proposal meta wins over `<key>`.
+    // Falls back to the JP value when an `_en` override is missing, so we
+    // never blank-out unlocalised fields. JP path ignores `_en` keys.
+    let is_en = lang.eq_ignore_ascii_case("en");
+    let m = |k: &str| -> String {
+        if is_en {
+            let en_key = format!("{}_en", k);
+            if let Some(s) = meta.get(&en_key).and_then(|v| v.as_str()) {
+                return s.to_string();
+            }
+        }
+        meta.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string()
+    };
     let display_name = if !m("display_name").is_empty() { m("display_name") } else { name.to_string() };
     let tagline      = m("tagline");
     let h1           = if !m("h1").is_empty() { m("h1") } else { html_escape(&display_name) };
@@ -26550,6 +26610,16 @@ fn render_proposal_lp(
         // POSTs {product_id, variant_type, pod_provider, size, quantity, email}
         // to /api/checkout — see VARIANT_PRICES table in the trailing <script>
         // for the price matrix that drives the dynamic total.
+        let buy_label_active = if is_en {
+            format!("Buy now · ¥{}", format_jpy(*price))
+        } else {
+            format!("今すぐ買う · ¥{}", format_jpy(*price))
+        };
+        let buy_label_inactive = if is_en {
+            "Coming soon".to_string()
+        } else {
+            "準備中 · coming soon".to_string()
+        };
         let buy_html = match (product_id, *active) {
             (Some(pid), 1) => format!(
                 "<button type=\"button\" class=\"buy\" \
@@ -26559,16 +26629,19 @@ fn render_proposal_lp(
                    data-default-price=\"{price}\" \
                    data-name=\"{name_attr}\" \
                    data-img=\"{img_attr}\">\
-                   今すぐ買う · ¥{price_fmt}\
+                   {buy_label}\
                  </button>",
                 pid = pid,
                 kind_attr = html_attr_escape(kind),
                 price = price,
                 name_attr = html_attr_escape(label),
                 img_attr = html_attr_escape(&primary),
-                price_fmt = format_jpy(*price),
+                buy_label = html_escape(&buy_label_active),
             ),
-            _ => "<button type=\"button\" class=\"buy disabled\" disabled>準備中 · coming soon</button>".to_string(),
+            _ => format!(
+                "<button type=\"button\" class=\"buy disabled\" disabled>{}</button>",
+                html_escape(&buy_label_inactive)
+            ),
         };
         format!(
             "<div class=\"card\">\
@@ -26594,7 +26667,13 @@ fn render_proposal_lp(
     }).collect::<Vec<_>>().join("\n");
 
     let status_label = if approved {
-        format!("LIVE / 公開販売中 ({})", html_escape(plan_tier))
+        if is_en {
+            format!("LIVE / on sale ({})", html_escape(plan_tier))
+        } else {
+            format!("LIVE / 公開販売中 ({})", html_escape(plan_tier))
+        }
+    } else if is_en {
+        "Confidential · pitch deck (gated)".to_string()
     } else {
         "社外秘 · pitch deck (gated)".to_string()
     };
@@ -26754,20 +26833,45 @@ fn render_proposal_lp(
         format!("{} × MU — autonomous collab line.", display_name)
     };
 
+    // ── lang-aware HTML head bits (?lang=en swaps these) ──
+    let html_lang_attr = if is_en { "en" } else { "ja" };
+    let og_locale_primary = if is_en { "en_US" } else { "ja_JP" };
+    let og_locale_alt     = if is_en { "ja_JP" } else { "en_US" };
+    let meta_desc_text = if is_en {
+        format!("{} × MU — collab landing. {} SKUs, made-to-order via Printful EU, ships worldwide.", display_name, n_sku)
+    } else {
+        format!("社外秘 — {} 様への collab pitch deck (株式会社イネブラ / MU)。{} SKU、 拡張・リブランド相談用。", display_name, n_sku)
+    };
+    let title_suffix = if is_en { "collab landing" } else { "collab pitch" };
+    let canonical_url_localized = if is_en {
+        format!("{}?lang=en", canonical_url_lp)
+    } else {
+        canonical_url_lp.clone()
+    };
+    let hreflang_links = format!(
+        r#"<link rel="alternate" hreflang="ja" href="{base}">
+<link rel="alternate" hreflang="en" href="{base}?lang=en">
+<link rel="alternate" hreflang="x-default" href="{base}">"#,
+        base = canonical_url_lp,
+    );
+
     format!(r#"<!doctype html>
-<html lang="ja"><head>
+<html lang="{html_lang_attr}"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{display_name} × MU — collab pitch</title>
+<title>{display_name} × MU — {title_suffix}</title>
 {robots_meta}
-<link rel="canonical" href="{canonical_url_lp}">
-<meta name="description" content="社外秘 — {display_name} 様への collab pitch deck (株式会社イネブラ / MU)。{n_sku} SKU、 拡張・リブランド相談用。">
+<link rel="canonical" href="{canonical_url_localized}">
+{hreflang_links}
+<meta name="description" content="{meta_desc_text_esc}">
 <meta property="og:type" content="website">
 <meta property="og:title" content="{display_name} × MU">
 <meta property="og:description" content="{og_desc_lp_esc}">
-<meta property="og:url" content="{canonical_url_lp}">
+<meta property="og:url" content="{canonical_url_localized}">
 <meta property="og:image" content="{og_image_lp_esc}">
 <meta property="og:site_name" content="MU">
+<meta property="og:locale" content="{og_locale_primary}">
+<meta property="og:locale:alternate" content="{og_locale_alt}">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="{display_name} × MU">
 <meta name="twitter:description" content="{og_desc_lp_esc}">
@@ -27328,7 +27432,13 @@ footer a{{color:var(--accent);text-decoration:none}}
         ip_owner = html_escape(ip_owner),
         slug = slug,
         robots_meta = robots_meta,
-        canonical_url_lp = html_attr_escape(&canonical_url_lp),
+        canonical_url_localized = html_attr_escape(&canonical_url_localized),
+        hreflang_links = hreflang_links,
+        html_lang_attr = html_lang_attr,
+        og_locale_primary = og_locale_primary,
+        og_locale_alt = og_locale_alt,
+        title_suffix = title_suffix,
+        meta_desc_text_esc = html_attr_escape(&meta_desc_text),
         og_desc_lp_esc = html_attr_escape(&og_desc_lp),
         og_image_lp_esc = html_attr_escape(&og_image_lp),
     )
@@ -33327,7 +33437,17 @@ async fn city_page() -> Html<&'static str> {
     Html(include_str!("../static/city.html"))
 }
 
-async fn you_page() -> Html<&'static str> {
+async fn you_page(
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Html<&'static str> {
+    // ?lang=en → English LP for international BJJ / fashion mkt. JP stays
+    // the default (70%+ of traffic). The English variant is a tighter
+    // marketing LP (subscribe form is wired to the same /api/you/subscribe);
+    // the daily-design preview / history UI stays JP-only for now.
+    let lang = q.get("lang").map(|s| s.as_str()).unwrap_or("");
+    if lang.eq_ignore_ascii_case("en") {
+        return Html(include_str!("../static/you-en.html"));
+    }
     Html(include_str!("../static/you.html"))
 }
 
@@ -55913,8 +56033,13 @@ async fn slug_or_static(
     let is_admin = is_admin_via_session
         || (has_admin_token
             && admin_auth(&headers, &q, db.clone(), &format!("/{} (preview)", slug_lo)).await.is_ok());
+    // ?lang=en swaps the SSR LP to its English layer (status banner / Buy
+    // pill / og:locale + any `<key>_en` overrides in the proposal meta).
+    // Default stays JP for every other slug.
+    let lang_param = q.get("lang").map(|s| s.as_str()).unwrap_or("ja");
+    let lang_param = if lang_param.eq_ignore_ascii_case("en") { "en" } else { "ja" };
     if is_admin {
-        if let Some(html) = try_render_proposal_lp_inner(&slug_lo, &db, true) {
+        if let Some(html) = try_render_proposal_lp_inner(&slug_lo, &db, true, lang_param) {
             let mut resp = Html(html).into_response();
             resp.headers_mut().insert(
                 header::CACHE_CONTROL,
@@ -55939,7 +56064,7 @@ async fn slug_or_static(
             // Try as an approved proposal slug (atsume, future DB-driven brands).
             // Unapproved / revoked / non-existent → fall through to 404 so the
             // brand stays invisible until POST /api/proposal/<slug>/approve.
-            if let Some(html) = try_render_approved_proposal_lp(&slug_lo, &db) {
+            if let Some(html) = try_render_approved_proposal_lp_with_lang(&slug_lo, &db, lang_param) {
                 let mut resp = Html(html).into_response();
                 resp.headers_mut().insert(
                     header::CACHE_CONTROL,
@@ -61043,6 +61168,13 @@ async fn main() {
         .route("/baba", get(show_baba_owner_proposal))
         .route("/proposals/reversal", get(show_reversal_owner_proposal))
         .route("/heritage", get(heritage_page))
+        // ?lang=en aliases for the two collab LPs that today ship as static
+        // HTML (amami.html / reversal.html). The English variants are tighter
+        // marketing pages with the same content + Printful EU pricing so we
+        // can hit BJJ / fashion buyers outside Japan. JP default stays at the
+        // existing /amami and /reversal which slug_or_static still serves.
+        .route("/amami", get(amami_page))
+        .route("/reversal", get(reversal_collab_page))
         // ── Proposal admin: bulk SKU + publish/unpublish + admin user roster
         .route("/api/proposal/:slug/meta",                   get(proposal_generic_meta))
         .route("/api/admin/proposal/:slug/meta",             axum::routing::patch(api_admin_proposal_meta_patch))
