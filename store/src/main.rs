@@ -11044,6 +11044,9 @@ a:hover{{text-decoration:underline}}
 // ─────────────────────────────────────────────────────────────────────────────
 const CHALLENGE_100_START_UTC:    &str = "2026-05-17T15:00:00Z";
 const CHALLENGE_100_DEADLINE_UTC: &str = "2026-05-31T14:59:59Z";
+// mu_purchases.created_at は Unix 秒 (TEXT) で格納されている (chrono_now())。
+// ISO 文字列同士の TEXT 比較は SQLite で常に false なので、count 用に Unix 秒 で 比較する。
+const CHALLENGE_100_START_UNIX: i64 = 1779030000; // = 2026-05-17T15:00:00Z
 
 /// Map a brand string to its niche slug. Hardcoded for now (Yuki updates
 /// the rules as new collab brands appear). Used to roll up products /
@@ -12110,8 +12113,9 @@ async fn challenge_100_progress_json(State(db): State<Db>) -> Json<serde_json::V
         let conn = db.lock().unwrap();
         let sold: i64 = conn.query_row(
             "SELECT COUNT(*) FROM mu_purchases
-             WHERE brand='mugen' AND created_at >= ?",
-            params![CHALLENGE_100_START_UTC], |r| r.get(0),
+             WHERE brand IN ('mugen','muon','ma','you')
+               AND CAST(COALESCE(created_at, '0') AS INTEGER) >= ?",
+            params![CHALLENGE_100_START_UNIX], |r| r.get(0),
         ).unwrap_or(0);
         let latest: Option<i64> = conn.query_row(
             "SELECT id FROM products WHERE brand='mugen' AND active=1
@@ -12136,8 +12140,9 @@ async fn challenge_100_page(State(db): State<Db>) -> Html<String> {
         let conn = db.lock().unwrap();
         let sold: i64 = conn.query_row(
             "SELECT COUNT(*) FROM mu_purchases
-             WHERE brand='mugen' AND created_at >= ?",
-            params![CHALLENGE_100_START_UTC], |r| r.get(0),
+             WHERE brand IN ('mugen','muon','ma','you')
+               AND CAST(COALESCE(created_at, '0') AS INTEGER) >= ?",
+            params![CHALLENGE_100_START_UNIX], |r| r.get(0),
         ).unwrap_or(0);
         let row = conn.query_row(
             "SELECT drop_num, suzuri_url FROM products
@@ -23509,7 +23514,7 @@ const MERCH_CATEGORIES: &[MerchCategory] = &[
         slug: "bjj",
         label: "BJJ",
         tagline: "柔術 / 格闘技ライン。試合・道場・遠征用のフルレンジ。",
-        exact_brands: &["jiufight", "ads_jujitsu", "blank"],
+        exact_brands: &["jiufight", "ads_jujitsu", "blank", "rashguard"],
         like_prefixes: &["jiufight_", "ryozo", "nojimahal"],
     },
     MerchCategory {
@@ -34802,13 +34807,15 @@ async fn public_transparency_page(State(db): State<Db>) -> Html<String> {
         let days_s = if days < 0 { "—".to_string() } else { format!("{} days", fmt_commas(days)) };
         (exp[..10.min(exp.len())].to_string(), days_s, class)
     };
-    // 100枚 challenge live count (Kato FB #8): sold since CHALLENGE_100_START_UTC.
+    // 100枚 challenge live count (Kato FB #8): sold since CHALLENGE_100_START_UNIX.
+    // MU 内部ブランド (mugen/muon/ma/you = niche_for_brand → "mugen") のみ。collab 除外。
     let t100_sold: i64 = {
         let conn = db.lock().unwrap();
         conn.query_row(
             "SELECT COUNT(*) FROM mu_purchases
-             WHERE brand='mugen' AND created_at >= ?",
-            params![CHALLENGE_100_START_UTC], |r| r.get(0),
+             WHERE brand IN ('mugen','muon','ma','you')
+               AND CAST(COALESCE(created_at, '0') AS INTEGER) >= ?",
+            params![CHALLENGE_100_START_UNIX], |r| r.get(0),
         ).unwrap_or(0)
     };
     let t100_sold_s = fmt_commas(t100_sold);
