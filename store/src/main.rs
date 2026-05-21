@@ -13292,24 +13292,28 @@ async fn product_sku_page(
     axum::extract::Path(sku): axum::extract::Path<String>,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Response {
-    let id: i64 = match sku.parse() {
-        Ok(n) => n,
-        Err(_) => return (StatusCode::BAD_REQUEST, "sku must be numeric").into_response(),
-    };
-    let row: Option<(String, i64, String, Option<String>, Option<String>, i64, String, String)> = {
+    // Accept both numeric id ("123") and alphanumeric serial_code ("MU-BJJ-13-TEE-WHITE-L").
+    // The latter is the canonical public URL form per existing /p/{serial_code} links.
+    let row: Option<(i64, String, i64, String, Option<String>, Option<String>, i64, String, String)> = {
         let conn = db.lock().unwrap();
-        conn.query_row(
-            "SELECT brand, drop_num, name, design_url, mockup_url, price_jpy,
-                    COALESCE(color, 'BLK'), COALESCE(size, 'M')
-             FROM products WHERE id=?",
-            params![id], |r| Ok((
-                r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?,
-                r.get::<_, Option<String>>(3)?, r.get::<_, Option<String>>(4)?,
-                r.get::<_, i64>(5)?, r.get::<_, String>(6)?, r.get::<_, String>(7)?,
-            )),
-        ).ok()
+        let sql_by_id = "SELECT id, brand, drop_num, name, design_url, mockup_url, price_jpy,
+                                COALESCE(color, 'BLK'), COALESCE(size, 'M')
+                         FROM products WHERE id=?";
+        let sql_by_sc = "SELECT id, brand, drop_num, name, design_url, mockup_url, price_jpy,
+                                COALESCE(color, 'BLK'), COALESCE(size, 'M')
+                         FROM products WHERE serial_code=?";
+        let map = |r: &rusqlite::Row| Ok((
+            r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?,
+            r.get::<_, Option<String>>(4)?, r.get::<_, Option<String>>(5)?,
+            r.get::<_, i64>(6)?, r.get::<_, String>(7)?, r.get::<_, String>(8)?,
+        ));
+        if let Ok(n) = sku.parse::<i64>() {
+            conn.query_row(sql_by_id, params![n], map).ok()
+        } else {
+            conn.query_row(sql_by_sc, params![sku.as_str()], map).ok()
+        }
     };
-    let (brand, drop_num, name, design_url, mockup_url, price_jpy, default_color, _size) = match row {
+    let (id, brand, drop_num, name, design_url, mockup_url, price_jpy, default_color, _size) = match row {
         Some(v) => v,
         None => return (StatusCode::NOT_FOUND, "product not found").into_response(),
     };
@@ -13332,12 +13336,15 @@ async fn product_sku_page(
         .find(|(k, _, _)| *k == current_color.as_str())
         .map(|(_, n, _)| *n).unwrap_or("Black");
 
-    let img = mockup_url.unwrap_or_else(|| design_url.unwrap_or_default());
+    let img = mockup_url.clone().unwrap_or_else(|| design_url.clone().unwrap_or_default());
+    // Preserve the slug the visitor used (serial_code or numeric id) so swatch
+    // clicks keep the same bookmarkable URL shape.
+    let slug = html_attr_escape(sku.as_str());
     let swatches_html: String = COLOR_SWATCHES.iter().map(|(code, label, rgb)| {
         let selected = if *code == current_color.as_str() { " selected" } else { "" };
         format!(
-            r#"<a class="swatch{sel}" href="/p/{id}?color={code}" title="{label}" style="background:{rgb}"><span class="sr">{label}</span></a>"#,
-            sel = selected, id = id, code = code, label = html_attr_escape(label), rgb = rgb,
+            r#"<a class="swatch{sel}" href="/p/{slug}?color={code}" title="{label}" style="background:{rgb}"><span class="sr">{label}</span></a>"#,
+            sel = selected, slug = slug, code = code, label = html_attr_escape(label), rgb = rgb,
         )
     }).collect();
 
