@@ -23745,6 +23745,13 @@ async fn tokushoho_page() -> Html<&'static str> {
     Html(include_str!("../static/tokushoho.html"))
 }
 
+/// GET /proposals — public directory of all approved MU collabs.
+/// Backed at runtime by GET /api/proposals (public, approved-only) and,
+/// when ?admin_token=... is present, by GET /admin/proposals (full list).
+async fn proposals_index_page() -> Html<&'static str> {
+    Html(include_str!("../static/proposals.html"))
+}
+
 /// GET /about/honest — public trust-repair log per Plan-agent W1 #5.
 /// Permanent live document of what went wrong in the first weeks and
 /// how it got fixed. New entries append as field-log style; this is
@@ -25790,6 +25797,131 @@ fn render_proposal_lp(
         "社外秘 · pitch deck (gated)".to_string()
     };
 
+    // ── mu_intro (core_truth / philosophy / proof_points / operator / founder) ──
+    let mu_intro_html: String = meta.get("mu_intro").and_then(|v| v.as_object()).map(|obj| {
+        let truth = obj.get("core_truth").and_then(|v| v.as_str()).unwrap_or("");
+        let phil  = obj.get("philosophy").and_then(|v| v.as_str()).unwrap_or("");
+        let proof: String = obj.get("proof_points").and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|u| u.as_str())
+                 .map(|u| format!("<li>{}</li>", html_escape(u)))
+                 .collect::<Vec<_>>().join(""))
+            .unwrap_or_default();
+        let operator = obj.get("operator").and_then(|v| v.as_str()).unwrap_or("");
+        let founder  = obj.get("founder").and_then(|v| v.as_str()).unwrap_or("");
+        let mut out = String::new();
+        out.push_str("<div class=\"mu-intro\">");
+        out.push_str("<h3>About MU ━◯━ 静かなレーベル</h3>");
+        if !truth.is_empty() {
+            out.push_str(&format!("<div class=\"truth\">{}</div>", html_escape(truth)));
+        }
+        if !phil.is_empty() {
+            out.push_str(&format!("<div class=\"phil\">{}</div>", html_escape(phil)));
+        }
+        if !proof.is_empty() {
+            out.push_str("<h4>Proof points</h4>");
+            out.push_str(&format!("<ul>{}</ul>", proof));
+        }
+        if !operator.is_empty() || !founder.is_empty() {
+            out.push_str("<div class=\"who\">");
+            if !operator.is_empty() {
+                out.push_str(&format!(
+                    "<div class=\"col\"><div class=\"role\">運営</div><div class=\"desc\">{}</div></div>",
+                    html_escape(operator)
+                ));
+            }
+            if !founder.is_empty() {
+                out.push_str(&format!(
+                    "<div class=\"col\"><div class=\"role\">代表</div><div class=\"desc\">{}</div></div>",
+                    html_escape(founder)
+                ));
+            }
+            out.push_str("</div>");
+        }
+        out.push_str("</div>");
+        out
+    }).unwrap_or_default();
+
+    // ── mechanism (numbered cards: no/title/body) ──
+    // body may contain inline HTML (e.g. <b>, <code>, <strong>) so we don't escape it.
+    let mechanism_html: String = meta.get("mechanism").and_then(|v| v.as_array()).map(|arr| {
+        arr.iter().filter_map(|m| {
+            let no   = m.get("no").and_then(|v| v.as_i64()).unwrap_or(0);
+            let title = m.get("title").and_then(|v| v.as_str())?;
+            let body  = m.get("body").and_then(|v| v.as_str())?;
+            Some(format!(
+                "<div class=\"mech-item\">\
+                   <div class=\"mech-no\">{:02}</div>\
+                   <div class=\"mech-body\">\
+                     <h4>{}</h4>\
+                     <p>{}</p>\
+                   </div>\
+                 </div>",
+                no, html_escape(title), body
+            ))
+        }).collect::<Vec<_>>().join("")
+    }).unwrap_or_default();
+
+    // ── options (3 plans: letter / title / body / image / drop_label / price_label) ──
+    let options_html: String = meta.get("options").and_then(|v| v.as_array()).map(|arr| {
+        arr.iter().filter_map(|o| {
+            let letter      = o.get("letter").and_then(|v| v.as_str()).unwrap_or("");
+            let title       = o.get("title").and_then(|v| v.as_str())?;
+            let body        = o.get("body").and_then(|v| v.as_str())?;
+            let image       = o.get("image").and_then(|v| v.as_str()).unwrap_or("");
+            let drop_label  = o.get("drop_label").and_then(|v| v.as_str()).unwrap_or("");
+            let price_label = o.get("price_label").and_then(|v| v.as_str()).unwrap_or("");
+            let shot = if image.is_empty() {
+                "<div class=\"shot empty\">image —</div>".to_string()
+            } else {
+                format!("<div class=\"shot\"><img src=\"{}\" alt=\"\" loading=\"lazy\"></div>",
+                    html_attr_escape(image))
+            };
+            Some(format!(
+                "<div class=\"option\">\
+                   {shot}\
+                   <div class=\"copy\">\
+                     <div class=\"badge\">{badge}</div>\
+                     <h3>{title}</h3>\
+                     <p>{body}</p>\
+                     <div class=\"price\">{price}</div>\
+                   </div>\
+                 </div>",
+                shot = shot,
+                badge = html_escape(&format!("{}{}{}",
+                    letter,
+                    if !letter.is_empty() && !drop_label.is_empty() { " · " } else { "" },
+                    drop_label)),
+                title = html_escape(title),
+                body = body,
+                price = html_escape(price_label),
+            ))
+        }).collect::<Vec<_>>().join("")
+    }).unwrap_or_default();
+
+    // ── terms (key / value table) ──
+    let terms_html: String = meta.get("terms").and_then(|v| v.as_array()).map(|arr| {
+        arr.iter().filter_map(|t| {
+            let pair = t.as_array()?;
+            let k = pair.first()?.as_str()?;
+            let v = pair.get(1)?.as_str()?;
+            // value may contain inline HTML (e.g. <b>無在庫</b>) — don't escape.
+            Some(format!("<tr><td>{}</td><td>{}</td></tr>", html_escape(k), v))
+        }).collect::<Vec<_>>().join("")
+    }).unwrap_or_default();
+
+    // ── timeline (Day X / description) ──
+    let timeline_html: String = meta.get("timeline").and_then(|v| v.as_array()).map(|arr| {
+        arr.iter().filter_map(|t| {
+            let pair = t.as_array()?;
+            let d = pair.first()?.as_str()?;
+            let b = pair.get(1)?.as_str()?;
+            Some(format!(
+                "<div class=\"tr\"><div class=\"d\">{}</div><div class=\"b\">{}</div></div>",
+                html_escape(d), html_escape(b)
+            ))
+        }).collect::<Vec<_>>().join("")
+    }).unwrap_or_default();
+
     format!(r#"<!doctype html>
 <html lang="ja"><head>
 <meta charset="utf-8">
@@ -25844,6 +25976,56 @@ ul.use-cases li:before{{content:'━◯━ ';color:var(--accent);font-weight:700
 footer{{margin-top:96px;padding-top:24px;border-top:1px solid var(--line);color:var(--mute);font-size:12px;line-height:1.8}}
 footer code{{background:#111;border:1px solid var(--line);padding:1px 6px;border-radius:3px;font-size:11px}}
 footer a{{color:var(--accent);text-decoration:none}}
+/* ── mu-intro ── */
+.mu-intro{{margin:24px 0 32px;border:1px solid var(--accent);background:var(--accent-rgba);padding:28px 24px;border-radius:6px}}
+.mu-intro h3{{color:var(--accent);font-size:10px;letter-spacing:0.28em;text-transform:uppercase;margin:0 0 12px;font-weight:700}}
+.mu-intro .truth{{font-size:18px;line-height:1.7;color:var(--fg);margin-bottom:10px;font-weight:500}}
+.mu-intro .phil{{font-size:13px;color:var(--mute);letter-spacing:0.14em;margin-bottom:20px}}
+.mu-intro h4{{font-size:10px;color:var(--accent);letter-spacing:0.22em;text-transform:uppercase;margin:22px 0 10px;font-weight:700}}
+.mu-intro ul{{list-style:none;padding:0;margin:0}}
+.mu-intro ul li{{position:relative;padding:8px 0 8px 18px;color:#ddd;font-size:13px;line-height:1.85;border-bottom:1px solid var(--line)}}
+.mu-intro ul li:last-child{{border-bottom:none}}
+.mu-intro ul li::before{{content:'●';color:var(--accent);position:absolute;left:0;top:8px;font-size:10px}}
+.mu-intro .who{{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:18px}}
+@media(max-width:680px){{.mu-intro .who{{grid-template-columns:1fr}}}}
+.mu-intro .who .col{{background:#0a0a0a;border:1px solid var(--line);padding:14px 16px;border-radius:4px}}
+.mu-intro .who .role{{font-size:10px;color:var(--accent);letter-spacing:0.22em;text-transform:uppercase;margin-bottom:6px;font-weight:700}}
+.mu-intro .who .desc{{font-size:12.5px;color:#ccc;line-height:1.7}}
+/* ── mechanism ── */
+.mech{{margin:24px 0 32px}}
+.mech-item{{display:grid;grid-template-columns:48px 1fr;gap:18px;padding:18px 0;border-bottom:1px solid var(--line)}}
+.mech-item:last-child{{border-bottom:none}}
+.mech-no{{color:var(--accent);font-size:14px;font-weight:700;letter-spacing:0.08em;font-variant-numeric:tabular-nums;padding-top:2px}}
+.mech-body h4{{font-size:14px;font-weight:700;margin:0 0 6px;color:var(--fg)}}
+.mech-body p{{font-size:13px;color:#ccc;line-height:1.85;margin:0}}
+.mech-body p code{{background:#111;border:1px solid var(--line);padding:1px 6px;border-radius:3px;font-size:11.5px;color:var(--accent)}}
+/* ── options ── */
+.options{{margin:24px 0 32px}}
+.option{{display:grid;grid-template-columns:1fr 1.1fr;gap:20px;align-items:start;margin:0 0 32px;background:#111;border:1px solid var(--line);padding:20px;border-radius:6px}}
+.option:nth-child(even){{grid-template-columns:1.1fr 1fr}}
+.option:nth-child(even) .copy{{order:2}}
+.option:nth-child(even) .shot{{order:1}}
+@media(max-width:680px){{.option,.option:nth-child(even){{grid-template-columns:1fr}}.option:nth-child(even) .copy,.option:nth-child(even) .shot{{order:initial}}}}
+.option .shot{{border:1px solid var(--line);background:#0a0a0a;aspect-ratio:1/1;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:4px}}
+.option .shot img{{display:block;width:100%;height:100%;object-fit:cover}}
+.option .shot.empty{{color:var(--mute);font-size:11px;letter-spacing:0.16em}}
+.option .copy .badge{{font-size:10px;color:var(--accent);letter-spacing:0.28em;text-transform:uppercase;margin-bottom:8px;font-weight:700}}
+.option .copy h3{{font-size:18px;font-weight:700;line-height:1.3;margin:0 0 10px;color:var(--fg)}}
+.option .copy p{{font-size:13px;color:#ccc;line-height:1.85;margin:0 0 10px}}
+.option .copy p strong{{color:var(--fg);font-weight:600}}
+.option .copy .price{{font-size:11px;color:var(--accent);letter-spacing:0.14em;margin-top:14px;border-top:1px solid var(--line);padding-top:12px;font-weight:600}}
+/* ── terms ── */
+.terms{{width:100%;border:1px solid var(--line);font-size:13px;border-collapse:collapse;margin:24px 0 16px;background:#111;border-radius:6px;overflow:hidden}}
+.terms td{{padding:11px 16px;border-bottom:1px solid var(--line);color:#ccc;line-height:1.7;vertical-align:top}}
+.terms td:first-child{{color:var(--accent);letter-spacing:0.12em;font-size:11px;text-transform:uppercase;width:32%;font-weight:700}}
+.terms td b{{color:var(--fg);font-weight:600}}
+.terms tr:last-child td{{border-bottom:none}}
+/* ── timeline ── */
+.timeline{{margin:24px 0 16px;background:#111;border:1px solid var(--line);border-radius:6px;padding:8px 18px}}
+.timeline .tr{{display:grid;grid-template-columns:90px 1fr;gap:16px;padding:12px 0;border-bottom:1px solid var(--line);align-items:baseline}}
+.timeline .tr:last-child{{border-bottom:none}}
+.timeline .tr .d{{color:var(--accent);font-size:12px;font-weight:700;letter-spacing:0.08em;font-variant-numeric:tabular-nums}}
+.timeline .tr .b{{color:#ddd;font-size:13.5px;line-height:1.7}}
 </style>
 </head><body>
 <div class="wrap">
@@ -25861,8 +26043,17 @@ footer a{{color:var(--accent);text-decoration:none}}
   </div>
   <h2>Why ━◯━ {display_name}</h2>
   <div class="why">{why_md}</div>
+  {mu_intro_html}
   <h2>想定ユースケース</h2>
   <ul class="use-cases">{use_cases_html}</ul>
+  <h2>仕組み (mechanism)</h2>
+  <div class="mech">{mechanism_html}</div>
+  <h2>3 つの始め方 (options)</h2>
+  <div class="options">{options_html}</div>
+  <h2>条件 (terms)</h2>
+  <table class="terms"><tbody>{terms_html}</tbody></table>
+  <h2>立ち上げスケジュール (timeline)</h2>
+  <div class="timeline">{timeline_html}</div>
   <h2>カタログ {n_sku} SKU</h2>
   <div class="grid">{cards_html}</div>
   <div class="extras-cta">
@@ -25928,6 +26119,11 @@ footer a{{color:var(--accent);text-decoration:none}}
         total_jpy = format_jpy(total_jpy),
         hero_kv_html = hero_kv_html,
         use_cases_html = use_cases_html,
+        mu_intro_html = mu_intro_html,
+        mechanism_html = mechanism_html,
+        options_html = options_html,
+        terms_html = terms_html,
+        timeline_html = timeline_html,
         cards_html = cards_html,
         ip_owner = html_escape(ip_owner),
         slug = slug,
@@ -26372,6 +26568,45 @@ async fn proposal_generic_list(
         }))
     }).map(|i| i.flatten().collect()).unwrap_or_default();
     Json(serde_json::json!({ "proposals": rows })).into_response()
+}
+
+/// GET /api/proposals — public list of approved (live) collab proposals.
+/// Mirrors /admin/proposals but only returns rows where
+///   approved_at IS NOT NULL AND revoked_at IS NULL
+///   AND ip_owner NOT LIKE 'Personal%'  (filters out /me self-issued slugs)
+///   AND slug NOT LIKE 'personal-%'     (defense in depth)
+/// Used by /proposals (static HTML) to render the public collab grid.
+async fn public_proposals_list(
+    State(db): State<Db>,
+) -> Response {
+    let conn = db.lock().unwrap();
+    let mut stmt = match conn.prepare(
+        "SELECT p.slug, p.name, p.ip_owner, p.approved_at,
+                (SELECT COUNT(*) FROM proposal_skus s WHERE s.slug=p.slug) AS sku_count,
+                (SELECT COUNT(*) FROM products pr WHERE pr.brand LIKE p.slug||'_%' AND pr.active=1) AS active
+         FROM proposals p
+         WHERE p.approved_at IS NOT NULL
+           AND p.revoked_at IS NULL
+           AND COALESCE(p.ip_owner,'') NOT LIKE 'Personal%'
+           AND p.slug NOT LIKE 'personal-%'
+         ORDER BY p.approved_at DESC",
+    ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+    let rows: Vec<serde_json::Value> = stmt.query_map([], |r| {
+        Ok(serde_json::json!({
+            "slug": r.get::<_, String>(0)?,
+            "name": r.get::<_, String>(1)?,
+            "ip_owner": r.get::<_, String>(2)?,
+            "approved_at": r.get::<_, Option<String>>(3)?,
+            "sku_count": r.get::<_, i64>(4)?,
+            "products_active": r.get::<_, i64>(5)?,
+        }))
+    }).map(|i| i.flatten().collect()).unwrap_or_default();
+    let mut resp = Json(serde_json::json!({ "proposals": rows })).into_response();
+    resp.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=60, s-maxage=60"),
+    );
+    resp
 }
 
 /// GET /api/proposal/:slug/skus — public catalog read.
@@ -58319,6 +58554,11 @@ async fn main() {
         .route("/api/collab/:slug/sku/add",                     post(collab_partner_sku_add))
         .route("/admin/proposal",              post(proposal_generic_create))
         .route("/admin/proposals",             get(proposal_generic_list))
+        // Public read-only list of approved collabs. Powers /proposals (static).
+        .route("/api/proposals",               get(public_proposals_list))
+        // Static directory page that grids the collabs. Must be registered
+        // explicitly (the bare /proposals is distinct from /proposals/*rest).
+        .route("/proposals",                   get(proposals_index_page))
         // Admin dashboard at /ls — list + approve/revoke + preview links.
         .route("/ls",                           get(admin_ls_page))
         // ── Self-serve developer API (MU API key flow) ────────────────
