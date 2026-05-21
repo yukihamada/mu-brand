@@ -240,6 +240,9 @@ struct ProductSpec {
     printful_variant_id: i64, // unisex size M unless noted
     placement: &'static str,
     retail_jpy: i64,
+    /// Marketing-grade spec line shown on the PDP (material / weight / fit
+    /// / print method). Real BJJ buyers won't checkout without this.
+    spec_html: &'static str,
 }
 
 // variant_id references mirror what's already proven in payments.rs and
@@ -255,6 +258,9 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
         printful_variant_id: 4017,
         placement: "front",
         retail_jpy: 4900,
+        spec_html: "Bella+Canvas 3001 unisex tee · 4.2 oz (142 gsm) · \
+                    100% airlume combed ringspun cotton · DTG print 30×30cm front · \
+                    machine washable · sourced + printed in EU",
     },
     ProductSpec {
         kind: "rashguard_ls",
@@ -262,6 +268,9 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
         printful_variant_id: 9328,
         placement: "front",
         retail_jpy: 9800,
+        spec_html: "Men's all-over-print long-sleeve rashguard · 82% polyester / 18% spandex · \
+                    UPF 50+ UV protection · 4-way stretch · flatlock seams (no chafe) · \
+                    sublimation print (won't fade or peel) · IBJJF gi/no-gi compliant fit",
     },
 ];
 
@@ -269,6 +278,12 @@ struct Theme {
     slug: &'static str,
     display: &'static str,
     prompt_brief: &'static str,
+    /// 1-line hook shown on PDP under the product name. Replaces the
+    /// mechanical "BJJ 黒帯 · T シャツ" description with something a
+    /// real visitor would buy.
+    hook: &'static str,
+    /// Long-form story for SEO + trust. Markdown-light (paragraphs only).
+    story: &'static str,
 }
 
 const SEED_THEMES: &[Theme] = &[
@@ -276,26 +291,96 @@ const SEED_THEMES: &[Theme] = &[
         slug: "bjj_kuro_obi",
         display: "BJJ 黒帯",
         prompt_brief: "minimal sumi-e ink illustration of a tied jiu-jitsu black belt with the kanji 黒帯 in calligraphic style below",
+        hook: "黒帯への 10 年を、 1 枚の墨絵に。 練習生のための minimal wearable.",
+        story: "黒帯は最短でも 10 年。 道場で叩かれ、 試合で潰され、 また立つ。 \
+                その積み重ねを、 1 本の墨線と「黒帯」 の二文字に凝縮しました。 \
+                派手なロゴも、 ブランド主張もない。 知ってる人にだけ伝わる、 内側からの服。",
     },
     Theme {
         slug: "round_1",
         display: "Round 1",
         prompt_brief: "bold cinematic typography reading Round 1 inside a vintage boxing round-card border, monochrome ink",
+        hook: "試合は Round 1 で決まらない。 でも、 全部 Round 1 から始まる。",
+        story: "ボクシングのラウンドカードを、 wearable に。 \
+                試合場でも、 ジムへの行き帰りでも、 朝のコーヒーでも、 \
+                自分の「Round 1」 を今日も始める人のためのデイリーアイテム。",
     },
     Theme {
         slug: "teshikaga_mountain",
         display: "弟子屈 Mountain",
         prompt_brief: "geometric line-art of a Hokkaido mountain peak with a calm lake reflecting it, single-color print",
+        hook: "北海道弟子屈町、 摩周湖。 山と湖の幾何学を、 1 枚に。",
+        story: "MU の本拠地、 北海道弟子屈町。 摩周湖と斜里岳のシルエットを、 \
+                線だけで切り出した抽象パターン。 国内 / 海外の MU 着用者を、 \
+                一つの土地名で繋ぐ origin マーク。",
     },
     Theme {
         slug: "mu_mark",
         display: "MU ━◯━",
         prompt_brief: "the ━◯━ mark (long-dash circle long-dash) centered large and bold, with a small MU wordmark below in monospace",
+        hook: "MU のブランドマーク ━◯━ を、 そのまま着る。",
+        story: "━◯━ は MU のシグネチャー。 「あいだ」 「沈黙」 「無」 を一筆で表したマーク。 \
+                ロゴだけの T シャツは、 ブランドへの最大のリスペクト ── \
+                着る人がブランドを完成させる、 という意思表示。",
     },
     Theme {
         slug: "coffee_code",
         display: "Coffee × Code",
         prompt_brief: "minimal coffee cup outline with a binary stream rising as steam, geek-aesthetic monochrome",
+        hook: "コーヒー → コード → コンパイル。 全エンジニアの朝の儀式を 1 枚に。",
+        story: "コーヒーから立ち上る湯気を、 そのまま binary stream に。 \
+                派手すぎず、 ギーク文化を知ってる人にだけ刺さる minimal な geek wearable。 \
+                スタンディングデスク前の制服として。",
+    },
+    Theme {
+        slug: "drill_loop",
+        display: "Drill Loop",
+        prompt_brief: "minimal sketch of an infinite loop arrow with the word DRILL stenciled inside, BJJ training aesthetic",
+        hook: "ドリル × 100 = 黒帯。 反復だけが裏切らない。",
+        story: "技は天才のものじゃない。 1 つの動きを 100 回、 1000 回、 10000 回繰り返す \
+                ── その地味さに耐えた人だけが上手くなる。 ループのアロー 1 本で \
+                練習生の日々を象徴。",
+    },
+    Theme {
+        slug: "passing_guard",
+        display: "Passing Guard",
+        prompt_brief: "minimal line-art of two stylized jiu-jitsu silhouettes locked in a guard-pass position, single-color ink",
+        hook: "ガードパスは芸術だ。 押すんじゃなくて、 流す。",
+        story: "BJJ で最も奥深い局面、 ガードパス。 押す技じゃない、 流す技。 \
+                墨絵タッチのシルエットで、 試合中の集中を 1 枚に。",
+    },
+    Theme {
+        slug: "tatami_grain",
+        display: "Tatami Grain",
+        prompt_brief: "abstract texture of jiu-jitsu mat tatami pattern, monochrome line work like a topo map",
+        hook: "畳の目を見つめた回数だけ、 強くなる。",
+        story: "練習中、 一番見つめてるのは相手じゃなくて畳。 \
+                打ち込み、 寝技、 押さえ込み ── 畳の柄が思考の背景。 \
+                抽象トポマップとして wearable に。",
+    },
+    Theme {
+        slug: "ipponseo",
+        display: "一本背負",
+        prompt_brief: "minimal sumi-e silhouette of a judo ippon seoi nage throw, with the kanji 一本背負 in caligraphy",
+        hook: "一本背負 — 投げ切る覚悟だけが、 試合を終わらせる。",
+        story: "柔道の代表技、 一本背負。 BJJ 練習生にも刺さる「投げ切る」 美学を、 \
+                墨絵 1 筆に。 道場でも、 オフでも着られる minimalist tribute。",
+    },
+    Theme {
+        slug: "founder_grit",
+        display: "Founder Grit",
+        prompt_brief: "minimal hand-drawn calligraphy of the kanji 創業 (founding), Japanese ink style",
+        hook: "「創業」── 0 から作る人だけが分かる、 静かな狂気。",
+        story: "起業家・職人・ アスリート ── 0 から立ち上げた人だけが分かる時間。 \
+                派手な肩書きじゃなく「創業」 の 2 文字を、 黙って着る。",
+    },
+    Theme {
+        slug: "north_circle",
+        display: "North Circle",
+        prompt_brief: "abstract geometric composition: a single circle with a north arrow piercing it, Bauhaus minimalism",
+        hook: "北を 1 つだけ決める。 残りは捨てる。",
+        story: "選択肢が多すぎる時代に、 北 (=方向) を 1 つだけ持つ。 \
+                Bauhaus 影響の geometric minimal。 集中したい人のための daily uniform。",
     },
 ];
 
@@ -410,7 +495,9 @@ pub async fn generate_one(
                      'Gemini × Printful POD · 30 分自動生成', NULL, 1, 0)",
             [],
         );
-        let desc = format!("{} · {}", theme.display, label_for_kind(kind));
+        // Human-readable description, not "BJJ 黒帯 · T シャツ" — the
+        // theme hook is the marketing line a real visitor reads.
+        let desc = format!("{} — {}", theme.display, theme.hook);
         let _ = conn.execute(
             "INSERT INTO catalog_products (
                 sku, brand, label, description_ja, retail_price_jpy,
@@ -455,6 +542,17 @@ fn mark_job_failed(db: &Db, theme: &str, kind: &str, seed: &str, err: &str) {
          WHERE theme=? AND kind=? AND seed=?",
         rusqlite::params![err, theme, kind, seed],
     );
+}
+
+/// Best-effort kind inference from SKU pattern. Used to pick a PRODUCT_SPECS
+/// row to render on the PDP. AUTO SKUs embed the kind verbatim; merch-bridge
+/// SKUs encode it as a fragment of the SKU name (TEE / RASH / HOOD / etc.).
+fn kind_from_sku(sku: &str) -> &'static str {
+    let s = sku.to_uppercase();
+    if s.contains("-RASH") || s.contains("RASHGUARD") { return "rashguard_ls"; }
+    if s.contains("-TEE")  || s.starts_with("MU-")    { return "tee"; }
+    if s.contains("AUTO-")  && s.contains("-TEE-")    { return "tee"; }
+    "tee"  // safe default for the spec block
 }
 
 fn label_for_kind(kind: &str) -> &'static str {
@@ -757,7 +855,11 @@ nav a:hover{{opacity:1}}
 nav .brand{{font-weight:900;letter-spacing:0.4em}}
 .hero{{padding:40px 24px 18px;max-width:1180px;margin:0 auto}}
 .hero h1{{font-size:28px;font-weight:900;letter-spacing:-0.01em;margin-bottom:8px}}
-.hero p{{color:rgba(245,245,240,0.62);font-size:13px;line-height:1.85;max-width:640px}}
+.hero p{{color:rgba(245,245,240,0.62);font-size:13px;line-height:1.85;max-width:640px;margin-bottom:14px}}
+.trust{{display:flex;flex-wrap:wrap;gap:8px 16px;font-size:11px;color:rgba(245,245,240,0.72);padding-top:8px;border-top:1px solid rgba(255,255,255,0.06)}}
+.trust span{{display:inline-flex;align-items:center;gap:5px}}
+.trust span:before{{content:"✓";color:#ffd700;font-weight:700;font-size:13px}}
+.trust strong{{color:#fff;font-weight:600}}
 .chips{{padding:8px 24px 18px;max-width:1180px;margin:0 auto;display:flex;flex-wrap:wrap;gap:6px}}
 .chip{{display:inline-block;padding:6px 12px;border:1px solid rgba(255,255,255,0.18);border-radius:999px;color:#f5f5f0;text-decoration:none;font-size:11px;letter-spacing:0.05em;background:rgba(255,255,255,0.02)}}
 .chip:hover{{border-color:#ffd700;color:#ffd700}}
@@ -784,8 +886,14 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
   </div>
 </nav>
 <div class="hero">
-  <h1>SHOP — {count} 件</h1>
-  <p>MU × コラボブランドのカタログ。 Stripe 決済 / Printful 国際発送 7-14 日。 ブランドで絞り込み:</p>
+  <h1>━◯━ 知ってる人にだけ届く wearable.</h1>
+  <p>柔術・コーヒー・地域 ── 10+ コラボの "内側からの服"。 在庫を持たず、 注文ごとに 1 枚刷ります (POD)。 {count} 件公開中。</p>
+  <div class="trust">
+    <span><strong>国際発送</strong> 7-14 日 (DHL / FedEx)</span>
+    <span><strong>1 着から</strong> オーダー可</span>
+    <span><strong>Bella+Canvas / AOP rashguard</strong> 等プレミアム生地</span>
+    <span><strong>Stripe</strong> 安全決済 + クーポン対応</span>
+  </div>
 </div>
 <div class="chips">{brand_chips}</div>
 {body_or_empty}
@@ -903,6 +1011,56 @@ pub async fn shop_pdp(
         r#"<div class="buy disabled">準備中</div>"#.to_string()
     };
 
+    // Spec block: real BJJ buyers won't checkout without GSM / material /
+    // print method. AUTO SKUs look up by their embedded kind; merch-bridge
+    // SKUs use a SKU-pattern heuristic.
+    let kind_guess = kind_from_sku(&sku);
+    let spec_block = PRODUCT_SPECS
+        .iter()
+        .find(|s| s.kind == kind_guess)
+        .map(|s| format!(
+            r#"<div class="spec"><h3>SPEC</h3><p>{}</p></div>"#,
+            html_text(s.spec_html)
+        ))
+        .unwrap_or_default();
+
+    // Story block: only for AUTO SKUs — extracted from the theme slug.
+    let story_block = sku.strip_prefix("AUTO-")
+        .and_then(|rest| {
+            // "BJJ-KURO-OBI-TEE-c…" → SEED_THEMES with slug "bjj_kuro_obi"
+            SEED_THEMES.iter().find(|t| {
+                let pat = t.slug.to_uppercase().replace('_', "-") + "-";
+                rest.starts_with(&pat)
+            })
+        })
+        .map(|t| format!(
+            r#"<div class="story"><h3>STORY</h3><p>{}</p></div>"#,
+            html_text(t.story)
+        ))
+        .unwrap_or_default();
+
+    // Trust strip: 0-review cold-traffic insurance. The early-bird founder
+    // card line addresses the "no social proof" gap: the first 100 buyers
+    // get a hand-signed thank-you postcard from Yuki.
+    let trust_block = r##"<div class="trust-strip">
+  <div class="ts-row">
+    <strong>国際発送 7-14 日</strong>
+    <small>DHL/FedEx tracked · JP・US・EU・CA・AU 即対応</small>
+  </div>
+  <div class="ts-row">
+    <strong>30 日 返品保証</strong>
+    <small>サイズ違い・破損は無料交換 · returns@wearmu.com</small>
+  </div>
+  <div class="ts-row">
+    <strong>1 着から OK</strong>
+    <small>在庫を持たず注文ごとに 1 枚刷ります (POD)</small>
+  </div>
+  <div class="ts-row" style="background:rgba(255,215,0,0.07);border:1px solid rgba(255,215,0,0.35);padding:10px 12px;border-radius:4px;margin-top:8px">
+    <strong style="color:#ffd700">🎴 最初の 100 注文限定</strong>
+    <small>濱田優貴 サイン入りサンクスカード同梱 (number/100)</small>
+  </div>
+</div>"##.to_string();
+
     let body = format!(
         r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -955,6 +1113,13 @@ nav .brand{{font-weight:900;letter-spacing:0.4em}}
 .body .sku{{color:rgba(245,245,240,0.45);font-family:monospace;font-size:10px;margin-bottom:18px}}
 .buy{{display:block;background:#ffd700;color:#000;padding:14px;text-align:center;font-weight:700;border-radius:6px;text-decoration:none;margin-bottom:8px;letter-spacing:0.05em;font-size:13px}}
 .buy.alt{{background:transparent;color:#ffd700;border:1px solid #ffd700}}
+.trust-strip{{display:grid;gap:6px;font-size:11px;color:rgba(245,245,240,0.72);margin:18px 0;padding-top:14px;border-top:1px solid rgba(255,255,255,0.06)}}
+.trust-strip .ts-row{{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;line-height:1.5}}
+.trust-strip strong{{color:#fff;font-weight:600;font-size:12px;flex:0 0 auto}}
+.trust-strip small{{color:rgba(245,245,240,0.55);font-size:10.5px}}
+.spec, .story{{margin:20px 0;padding:14px 0;border-top:1px solid rgba(255,255,255,0.06)}}
+.spec h3, .story h3{{font-size:10px;letter-spacing:0.3em;color:#ffd700;margin-bottom:8px;font-weight:700;text-transform:uppercase}}
+.spec p, .story p{{font-size:12.5px;line-height:1.85;color:rgba(245,245,240,0.78)}}
 .buy.disabled{{background:#222;color:#666;cursor:not-allowed}}
 .back{{display:inline-block;margin-top:24px;color:rgba(245,245,240,0.6);text-decoration:none;font-size:11px}}
 .back:hover{{color:#ffd700}}
@@ -974,10 +1139,12 @@ nav .brand{{font-weight:900;letter-spacing:0.4em}}
     <div class="brand">{brand}</div>
     <h1>{title}</h1>
     <div class="price">¥{price}</div>
-    <div class="desc">{desc}</div>
-    <div class="sku">SKU: {sku}</div>
     {buy}
     {suzuri}
+    {trust}
+    {spec}
+    {story}
+    <div class="sku">SKU: {sku}</div>
     <a class="back" href="/shop?brand={brand_q}">← {brand} のほかの商品</a>
   </div>
 </div>
@@ -993,6 +1160,9 @@ nav .brand{{font-weight:900;letter-spacing:0.4em}}
         buy = buy_button,
         suzuri = suzuri_link,
         extras = extras_html,
+        trust     = trust_block,
+        spec      = spec_block,
+        story     = story_block,
         sku_url   = urlencoding::encode(&sku),
         price_raw = price_jpy,
         ld_title  = html_attr(&desc),
@@ -1612,7 +1782,7 @@ fn jp_prefecture_to_iso(s: &str) -> Option<&'static str> {
 //     misconfiguration can't run away.
 
 pub const SKU_HARD_CAP: i64 = 30_000;
-const TARGET_INITIAL: i64 = 25; // 5 themes × 2 kinds × ~2.5 SKUs per combo
+const TARGET_INITIAL: i64 = 60; // 12 themes × 2 kinds × ~2.5 SKUs per combo
 const CRON_BATCH_MAX: u32 = 10;
 const CRON_INTERVAL_SECS: u64 = 30 * 60;
 
@@ -1621,7 +1791,9 @@ const CRON_INTERVAL_SECS: u64 = 30 * 60;
 pub async fn run_optimizer_cron(db: Db) {
     // Stagger the first run by 60s so it doesn't fight startup.
     tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+    let mut cycle: u32 = 0;
     loop {
+        cycle = cycle.wrapping_add(1);
         match optimizer_step(db.clone()).await {
             Ok(summary) => {
                 tracing::info!("[catalog/cron] {}", summary);
@@ -1635,8 +1807,67 @@ pub async fn run_optimizer_cron(db: Db) {
                 tracing::warn!("[catalog/cron] step failed: {}", e);
             }
         }
+        // Every 4th cycle (~ once / 2 hours), have a persona critique
+        // /shop and post it to Telegram. Gives the operator continuous
+        // outside-eye feedback without manually checking the page.
+        if cycle % 4 == 1 {
+            if let Err(e) = persona_review_and_alert().await {
+                tracing::warn!("[catalog/cron] persona review failed: {}", e);
+            }
+        }
         tokio::time::sleep(std::time::Duration::from_secs(CRON_INTERVAL_SECS)).await;
     }
+}
+
+/// Fetch /shop, ask Gemini to act as 3 personas (cold ad visitor / BJJ
+/// gear shopper / overseas e-commerce auditor) and surface the harshest
+/// 1-line takeaway each. Sent to Telegram so the operator gets a steady
+/// stream of "where does this still suck" data without manually QA'ing.
+async fn persona_review_and_alert() -> Result<(), String> {
+    let base = std::env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    let html = reqwest::Client::new()
+        .get(format!("{}/shop", base))
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| format!("fetch /shop: {}", e))?
+        .text()
+        .await
+        .map_err(|e| format!("read /shop body: {}", e))?;
+    // Trim to a budget Gemini can chew on (and stay under our cost cap).
+    let body_trimmed: String = html.chars().take(8000).collect();
+    let prompt = format!(
+        "You are reviewing the landing page at {base}/shop for an e-commerce shop selling AI-designed BJJ / lifestyle wearables. \
+         Respond as 3 personas in this exact JSON format (no prose around it): \
+         {{\"cold_visitor_3s\":\"…\",\"bjj_practitioner\":\"…\",\"overseas_auditor\":\"…\"}} \
+         Each value: 1 short Japanese sentence with the HARSHEST single issue blocking purchase. \
+         Be specific (name the element). Don't say 'overall good'. \
+         \nPage HTML (first 8k chars):\n{body}",
+        base = base, body = body_trimmed
+    );
+    let critique = crate::gemini::call_gemini_text(&prompt)
+        .await
+        .map_err(|e| format!("gemini text: {}", e))?;
+    // Try to extract the JSON we asked for; if Gemini wrapped it, fall back
+    // to the raw text. Telegram will render either readably.
+    let parsed: Option<serde_json::Value> = serde_json::from_str(critique.trim()).ok()
+        .or_else(|| {
+            critique.find('{').and_then(|i| critique[i..].find('}').map(|j| i + j + 1))
+                .and_then(|end| critique[critique.find('{').unwrap()..end].parse::<String>().ok())
+                .and_then(|s| serde_json::from_str(&s).ok())
+        });
+    let msg = if let Some(j) = parsed {
+        let pull = |k: &str| j.get(k).and_then(|v| v.as_str()).unwrap_or("(empty)").to_string();
+        format!(
+            "🪞 */shop persona critique*\n\n📱 *3秒判定*: {}\n🥋 *柔術勢*: {}\n🌎 *海外監査*: {}",
+            pull("cold_visitor_3s"), pull("bjj_practitioner"), pull("overseas_auditor")
+        )
+    } else {
+        format!("🪞 */shop persona critique*\n\n{}", critique.chars().take(800).collect::<String>())
+    };
+    let _ = crate::send_telegram_message(&msg).await;
+    // Text-mode Gemini ~¥1/call; not worth a separate ledger row right now.
+    Ok(())
 }
 
 /// One iteration. Returns a human-readable summary line.

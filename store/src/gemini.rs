@@ -179,6 +179,55 @@ pub async fn generate_partner_sku(b: &PartnerSkuBrief<'_>) -> Result<GeneratedIm
     Err("no image data in gemini response".into())
 }
 
+/// Text-only Gemini call. Returns the concatenated text parts from the
+/// first candidate. Used by the catalog optimizer cron's persona-critique
+/// step (no image needed — we just want a short text response).
+pub async fn call_gemini_text(prompt: &str) -> Result<String, String> {
+    const TEXT_MODEL: &str = "gemini-2.5-pro";
+    let key = std::env::var("GEMINI_API_KEY")
+        .or_else(|_| std::env::var("GOOGLE_API_KEY"))
+        .map_err(|_| "GEMINI_API_KEY not set".to_string())?;
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+        TEXT_MODEL, key
+    );
+    let body = json!({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "responseModalities": ["TEXT"],
+            "maxOutputTokens": 800,
+            "temperature": 0.4
+        }
+    });
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| format!("client: {}", e))?;
+    let resp = client.post(&url).json(&body).send().await
+        .map_err(|e| format!("send: {}", e))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let txt = resp.text().await.unwrap_or_default();
+        return Err(format!("gemini {}: {}", status, &txt[..txt.len().min(400)]));
+    }
+    let json: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {}", e))?;
+    let parts = json["candidates"][0]["content"]["parts"]
+        .as_array()
+        .ok_or_else(|| format!("no parts (feedback={})", json["promptFeedback"]))?
+        .clone();
+    let mut out = String::new();
+    for part in parts {
+        if let Some(t) = part.get("text").and_then(|v| v.as_str()) {
+            out.push_str(t);
+            out.push('\n');
+        }
+    }
+    if out.is_empty() {
+        return Err("no text in gemini response".into());
+    }
+    Ok(out.trim().to_string())
+}
+
 pub fn build_partner_sku_prompt(b: &PartnerSkuBrief) -> String {
     let partner = sanitize_prompt_input(b.partner_display, 60);
     let tagline = sanitize_prompt_input(b.partner_tagline, 80);
