@@ -37,17 +37,9 @@ use crate::Db;
 // ─── Schema + seed ────────────────────────────────────────────────────
 
 const SEED_SQL: &str = include_str!("../migrations/catalog_seed.sql");
+const ROLL_SEED_SQL: &str = include_str!("../migrations/roll_seed.sql");
 
 pub fn ensure_schema(conn: &rusqlite::Connection) {
-    // Idempotent ALTER for the V1 catalog contract additions (see
-    // docs/CATALOG_CONTRACT.md). SQLite has no IF NOT EXISTS on ALTER,
-    // so each one is wrapped in a one-shot try; the duplicate-column
-    // error is silently swallowed on re-run.
-    let _ = conn.execute("ALTER TABLE catalog_brands   ADD COLUMN config_json TEXT", []);
-    let _ = conn.execute("ALTER TABLE catalog_products ADD COLUMN status TEXT NOT NULL DEFAULT 'live'", []);
-    let _ = conn.execute("ALTER TABLE catalog_products ADD COLUMN fulfillment_route TEXT NOT NULL DEFAULT 'printful_dtg'", []);
-    let _ = conn.execute("ALTER TABLE catalog_products ADD COLUMN legacy_source TEXT", []);
-
     let _ = conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS catalog_brands (
             slug              TEXT PRIMARY KEY,
@@ -124,6 +116,16 @@ pub fn ensure_schema(conn: &rusqlite::Connection) {
              ON catalog_founder_cards(customer_email);
          "
     );
+
+    // Idempotent ALTER for the V1 catalog contract additions (see
+    // docs/CATALOG_CONTRACT.md). Runs AFTER the CREATE TABLEs so a fresh
+    // DB picks up the new columns (the ALTER is a no-op on a missing
+    // table, so order matters). SQLite has no IF NOT EXISTS on ALTER —
+    // each call's duplicate-column error is silently swallowed on re-run.
+    let _ = conn.execute("ALTER TABLE catalog_brands   ADD COLUMN config_json TEXT", []);
+    let _ = conn.execute("ALTER TABLE catalog_products ADD COLUMN status TEXT NOT NULL DEFAULT 'live'", []);
+    let _ = conn.execute("ALTER TABLE catalog_products ADD COLUMN fulfillment_route TEXT NOT NULL DEFAULT 'printful_dtg'", []);
+    let _ = conn.execute("ALTER TABLE catalog_products ADD COLUMN legacy_source TEXT", []);
 }
 
 /// How many founder cards are still available (0..100).
@@ -132,6 +134,30 @@ pub fn founder_cards_remaining(conn: &rusqlite::Connection) -> i64 {
         .query_row("SELECT COUNT(*) FROM catalog_founder_cards", [], |r| r.get(0))
         .unwrap_or(0);
     (100 - used).max(0)
+}
+
+/// Idempotent seeder for the ROLL ◐ MU brand (1 brand + 20 products).
+/// Run on every boot — INSERT OR IGNORE makes it cheap to re-run, and
+/// gating on the brand existing avoids parsing the SQL when not needed.
+///
+/// Para-BJJ first edition. See /static/roll/index.html and
+/// /static/roll/designs.json for the curated design briefs.
+pub fn seed_roll_brand(conn: &rusqlite::Connection) {
+    let already: i64 = conn
+        .query_row("SELECT COUNT(*) FROM catalog_brands WHERE slug='roll'", [], |r| r.get(0))
+        .unwrap_or(0);
+    if already > 0 {
+        return;
+    }
+    match conn.execute_batch(ROLL_SEED_SQL) {
+        Ok(()) => {
+            let n: i64 = conn
+                .query_row("SELECT COUNT(*) FROM catalog_products WHERE brand='roll'", [], |r| r.get(0))
+                .unwrap_or(0);
+            tracing::info!("[catalog] seeded ROLL brand + {} products", n);
+        }
+        Err(e) => tracing::error!("[catalog] roll seed failed: {}", e),
+    }
 }
 
 /// One-shot migration: fix the wrong printful_product_id (162 →

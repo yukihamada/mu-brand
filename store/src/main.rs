@@ -20730,6 +20730,72 @@ async fn api_brand_copy(
     }
 }
 
+/// GET /api/brand/:slug — brand metadata + all live catalog_products for the brand,
+/// ordered by sort_order. Used by LP pages (e.g. /roll/) so product data stays
+/// in the catalog and is never hardcoded in HTML.
+async fn api_brand(
+    State(db): State<Db>,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+) -> Response {
+    let conn = db.lock().unwrap();
+    let brand: Option<(String, String, String, String, String, i64, Option<String>)> = conn.query_row(
+        "SELECT slug, name, COALESCE(emoji,''), color_primary, COALESCE(tagline,''),
+                revenue_share_pct, config_json
+         FROM catalog_brands WHERE slug = ? AND is_active = 1",
+        params![slug],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
+    ).ok();
+
+    let Some((b_slug, b_name, b_emoji, b_color, b_tag, b_rev, b_cfg)) = brand else {
+        return (StatusCode::NOT_FOUND, "no such brand").into_response();
+    };
+
+    let mut stmt = match conn.prepare(
+        "SELECT sku, label, description_ja, retail_price_jpy,
+                COALESCE(mockup_url_external,''), COALESCE(mockup_main_file,''),
+                fulfillment_route, sort_order, printful_placement
+         FROM catalog_products
+         WHERE brand = ? AND status = 'live'
+         ORDER BY sort_order, sku"
+    ) { Ok(s) => s, Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response() };
+
+    let products: Vec<serde_json::Value> = stmt.query_map(params![b_slug], |r| {
+        let sku: String = r.get(0)?;
+        let label: String = r.get(1)?;
+        let desc: String = r.get(2)?;
+        let price: i64 = r.get(3)?;
+        let mockup_ext: String = r.get(4)?;
+        let mockup_local: String = r.get(5)?;
+        let route: String = r.get(6)?;
+        let sort: i64 = r.get(7)?;
+        let placement: String = r.get(8)?;
+        let kind = if route == "printful_aop" { "rashguard" } else { "tee" };
+        // Prefer the external Printful CDN URL (always live) over the local
+        // path (which may not yet have been rendered by the mockup cron).
+        let mockup = if !mockup_ext.is_empty() { mockup_ext } else { mockup_local };
+        Ok(serde_json::json!({
+            "sku": sku, "label": label, "description": desc,
+            "price_jpy": price, "mockup_url": mockup,
+            "fulfillment_route": route, "kind": kind,
+            "sort_order": sort, "placement": placement,
+        }))
+    }).and_then(|it| it.collect::<Result<Vec<_>, _>>()).unwrap_or_default();
+
+    let cfg: serde_json::Value = b_cfg
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or(serde_json::json!({}));
+
+    Json(serde_json::json!({
+        "slug": b_slug, "name": b_name, "emoji": b_emoji,
+        "color_primary": b_color, "tagline": b_tag,
+        "revenue_share_pct": b_rev, "config": cfg,
+        "products": products,
+        "tees": products.iter().filter(|p| p["kind"] == "tee").cloned().collect::<Vec<_>>(),
+        "rashguards": products.iter().filter(|p| p["kind"] == "rashguard").cloned().collect::<Vec<_>>(),
+    })).into_response()
+}
+
 /// POST /api/admin/taxigen/activate?token=…&pattern=metro|weather|haneda&state=1|0
 /// Flips cv_config flag that scripts/taxigen/cron_runner.py reads each hour.
 /// Idempotent. Returns current state of all 3 patterns.
@@ -61172,6 +61238,7 @@ async fn main() {
         catalog::ensure_schema(&conn);
         catalog::ensure_budget_schema(&conn);
         catalog::seed_if_empty(&conn);
+        catalog::seed_roll_brand(&conn);
         catalog::migrate_auto_labels(&conn);
         catalog::migrate_rashguard_product_id(&conn);
         // Phase A of CATALOG_CONTRACT — shadow-write proposal_skus +
@@ -61609,6 +61676,7 @@ async fn main() {
         .nest_service("/will", ServeDir::new("static/will"))
         .nest_service("/foundation", ServeDir::new("static/foundation"))
         .nest_service("/bjj", ServeDir::new("static/bjj"))
+        .nest_service("/roll", ServeDir::new("static/roll"))
         .nest_service("/code", ServeDir::new("static/code"))
         .nest_service("/coffee", ServeDir::new("static/coffee"))
         .nest_service("/zen", ServeDir::new("static/zen"))
@@ -61997,6 +62065,7 @@ async fn main() {
         .route("/merch", get(merch_index))
         .route("/merch/:category", get(merch_category))
         .route("/api/brand_copy/:brand", get(api_brand_copy))
+        .route("/api/brand/:slug", get(api_brand))
         // /proposals/nihon-kotsu — removed; use /<slug> if reinstated.
         .route("/api/admin/taxigen/activate", post(admin_taxigen_activate))
         .route("/survey/quality", get(survey_quality_page))
