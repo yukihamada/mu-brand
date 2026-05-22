@@ -1548,6 +1548,76 @@ pub struct OrdersQuery {
     pub token: String,
 }
 
+#[derive(Deserialize)]
+pub struct ReplayQuery {
+    pub token: String,
+}
+
+/// GET /admin/catalog/orders/:id/replay?token= — retry fulfillment for
+/// a catalog_orders row that failed. Looks up the stripe session_id,
+/// re-pulls the Stripe Session, deletes the catalog_orders row (so the
+/// idempotency check inside fulfill_catalog_order doesn't skip), then
+/// re-runs fulfillment. Token-gated.
+pub async fn admin_orders_replay(
+    State(db): State<Db>,
+    Path(order_id): Path<i64>,
+    Query(q): Query<ReplayQuery>,
+) -> Response {
+    let expected = env::var("ADMIN_TOKEN").unwrap_or_default();
+    if expected.is_empty() || q.token != expected {
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    }
+    let session_id: Option<String> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT stripe_session_id FROM catalog_orders WHERE id=?",
+            rusqlite::params![order_id],
+            |r| r.get::<_, String>(0),
+        ).ok()
+    };
+    let Some(sid) = session_id else {
+        return (StatusCode::NOT_FOUND, format!("order #{} not found", order_id)).into_response();
+    };
+    // Pull the full Stripe Session so we have the latest shipping_details.
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "STRIPE_SECRET_KEY unset").into_response();
+    }
+    let url = format!(
+        "https://api.stripe.com/v1/checkout/sessions/{}?expand[]=shipping_details&expand[]=customer_details",
+        sid
+    );
+    let session = match reqwest::Client::new().get(&url).basic_auth(&stripe_key, None::<&str>).send().await {
+        Ok(r) if r.status().is_success() => r.json::<serde_json::Value>().await.ok(),
+        Ok(r) => {
+            let s = r.status();
+            return (StatusCode::BAD_GATEWAY,
+                format!("stripe {}: {}", s, r.text().await.unwrap_or_default()))
+                .into_response();
+        }
+        Err(e) => return (StatusCode::BAD_GATEWAY, format!("stripe: {}", e)).into_response(),
+    };
+    let Some(session) = session else {
+        return (StatusCode::BAD_GATEWAY, "no session JSON").into_response();
+    };
+    // Clear the old failed row so the idempotency guard inside
+    // fulfill_catalog_order doesn't short-circuit.
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "DELETE FROM catalog_orders WHERE id=?",
+            rusqlite::params![order_id],
+        );
+    }
+    // Re-run fulfillment (in the foreground so the operator sees the result).
+    fulfill_catalog_order(db, session).await;
+    axum::Json(serde_json::json!({
+        "ok": true,
+        "replayed_session": sid,
+        "note": "Check /admin/catalog/orders for the new row's status",
+    })).into_response()
+}
+
 /// GET /admin/catalog/orders?token= — last 20 catalog_orders rows so
 /// we can see why revenue is ¥0 despite an order being recorded.
 pub async fn admin_orders(
@@ -2489,9 +2559,51 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
     // Phase 2 enhancement; the existing wearmu admin can ship per-size
     // SKUs explicitly).
 
-    let shipping = &session["shipping_details"];
+    // Stripe Checkout webhooks sometimes omit shipping_details from
+    // data.object even when shipping_address_collection was enabled —
+    // we have to retrieve the session with expand=['shipping_details'].
+    // Without this, fulfill_catalog_order() POSTs to Printful with
+    // empty address1/city/state and 4xx's (verified live with order #1).
+    let mut shipping_owned = session["shipping_details"].clone();
+    let mut cust_owned = session["customer_details"].clone();
+    if shipping_owned["address"]["line1"].as_str().unwrap_or("").is_empty() {
+        if let (true, Ok(stripe_key)) = (
+            !session_id.is_empty(),
+            std::env::var("STRIPE_SECRET_KEY"),
+        ) {
+            let url = format!(
+                "https://api.stripe.com/v1/checkout/sessions/{}?expand[]=shipping_details&expand[]=customer_details",
+                session_id
+            );
+            if let Ok(r) = reqwest::Client::new()
+                .get(&url).basic_auth(&stripe_key, None::<&str>).send().await
+            {
+                if let Ok(v) = r.json::<serde_json::Value>().await {
+                    if !v["shipping_details"].is_null() {
+                        shipping_owned = v["shipping_details"].clone();
+                    }
+                    if !v["customer_details"].is_null() {
+                        cust_owned = v["customer_details"].clone();
+                    }
+                    // Stripe Checkout also nests address under
+                    // customer_details when billing == shipping; fall
+                    // back to that if shipping_details is still empty.
+                    if shipping_owned["address"]["line1"].as_str().unwrap_or("").is_empty() {
+                        if let Some(billing) = v["customer_details"]["address"].as_object() {
+                            shipping_owned = serde_json::json!({
+                                "name":    v["customer_details"]["name"].clone(),
+                                "phone":   v["customer_details"]["phone"].clone(),
+                                "address": billing,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let shipping = &shipping_owned;
     let addr = &shipping["address"];
-    let cust = &session["customer_details"];
+    let cust = &cust_owned;
     let country = addr["country"].as_str().unwrap_or("JP").to_uppercase();
     let raw_state = addr["state"].as_str().unwrap_or("");
     let state_code = normalize_state_code(&country, raw_state);
@@ -2510,6 +2622,18 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
         session_id.clone()
     };
 
+    // AOP rashguards (Printful product 301) require a `stitch_color`
+    // option ('white' or 'black'). Default to black so the seams match
+    // the dominant body of the print on dark rashguards. Verified live:
+    // order #1 4xx'd with "Item 'stitch_color' option missing or has
+    // an invalid value!" before this guard.
+    let needs_stitch_color = matches!(_pp_id, 301 | 302 | 368 | 369 | 836);
+    let options_block: Vec<serde_json::Value> = if needs_stitch_color {
+        vec![serde_json::json!({"id":"stitch_color","value":"black"})]
+    } else {
+        Vec::new()
+    };
+
     // Three fulfillment shapes Printful accepts:
     //   (a) pre-synced product (sync_variant_id) — merch-bridge import path
     //   (b) base variant + inline files (design_file URL + placement) —
@@ -2520,6 +2644,7 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
             "sync_variant_id": svid,
             "quantity": 1,
             "retail_price": retail_price,
+            "options": options_block,
         }),
         (_, Some(df)) if !df.is_empty() => {
             let file_url = if df.starts_with("http") {
@@ -2534,12 +2659,14 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
                 "quantity": 1,
                 "retail_price": retail_price,
                 "files": [{"url": file_url, "placement": placement}],
+                "options": options_block,
             })
         }
         _ => serde_json::json!({
             "variant_id": pf_variant_id,
             "quantity": 1,
             "retail_price": retail_price,
+            "options": options_block,
         }),
     };
 

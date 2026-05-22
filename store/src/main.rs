@@ -61685,6 +61685,7 @@ async fn main() {
         .route("/admin/catalog/generate", get(catalog::admin_generate))
         .route("/admin/catalog/status", get(catalog::admin_status))
         .route("/admin/catalog/orders", get(catalog::admin_orders))
+        .route("/admin/catalog/orders/:id/replay", get(catalog::admin_orders_replay))
         .route("/admin/catalog/founder/:n/mark_mailed", get(catalog::admin_mark_mailed))
         .route("/admin/catalog/nl", get(catalog::admin_nl_add))
         .route("/admin/catalog/legacy_rename", get(catalog::admin_legacy_rename))
