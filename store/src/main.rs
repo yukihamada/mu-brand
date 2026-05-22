@@ -61674,6 +61674,11 @@ async fn main() {
         .route("/shop", get(catalog::shop_index))
         .route("/shop/:sku", get(catalog::shop_pdp))
         .route("/api/shop/checkout", get(catalog::shop_checkout))
+        // Legal / policy pages — linked from PDP footer + /shop footer
+        // so cold-traffic visitors see trust signals one click away.
+        .route("/returns",  get(catalog::returns_page))
+        .route("/faq",      get(catalog::faq_page))
+        .route("/shipping", get(catalog::shipping_page))
         // Token-gated SKU generator: GET so it's easy to trigger from a
         // browser / cron without preflight. Idempotent on (theme, kind,
         // seed) — re-running with the same query is a no-op.

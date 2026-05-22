@@ -1418,6 +1418,131 @@ pub async fn admin_nl_add(
     })).into_response()
 }
 
+/// Tiny shared header/footer for /returns /faq /shipping pages so
+/// they match the MU dark aesthetic without pulling site_header_html.
+fn legal_page(title: &str, body_html: &str) -> Html<String> {
+    Html(format!(
+        r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title} — wearmu.com</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:#0a0a0a;color:#f5f5f0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.7;font-size:14px}}
+nav{{padding:16px 24px;border-bottom:1px solid rgba(255,255,255,0.08);display:flex;justify-content:space-between;align-items:center}}
+nav a{{color:#f5f5f0;text-decoration:none;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.85}}
+nav .brand{{font-weight:900;letter-spacing:0.4em}}
+.wrap{{max-width:760px;margin:0 auto;padding:50px 24px 80px}}
+h1{{font-size:26px;font-weight:800;margin-bottom:24px;letter-spacing:-0.01em}}
+h2{{font-size:14px;font-weight:700;color:#ffd700;margin:32px 0 10px;letter-spacing:0.1em;text-transform:uppercase}}
+p{{margin-bottom:14px;color:rgba(245,245,240,0.82);font-size:13.5px}}
+ul{{margin:0 0 16px 22px;color:rgba(245,245,240,0.82);font-size:13.5px}}
+li{{margin-bottom:6px}}
+a.btn{{display:inline-block;margin-top:8px;padding:10px 18px;border:1px solid rgba(255,215,0,0.4);color:#ffd700;text-decoration:none;border-radius:4px;font-size:12px;letter-spacing:0.1em}}
+a.btn:hover{{background:rgba(255,215,0,0.08)}}
+.legal-fine{{font-size:11px;color:rgba(245,245,240,0.45);margin-top:36px;border-top:1px solid rgba(255,255,255,0.06);padding-top:14px}}
+</style></head><body>
+<nav>
+  <a class="brand" href="/">MU</a>
+  <div>
+    <a href="/shop">SHOP</a>
+    <a href="/buy" style="margin-left:14px">DROPS</a>
+  </div>
+</nav>
+<div class="wrap"><h1>{title}</h1>{body}
+<div class="legal-fine">最終更新: 2026-05-22 · © 2026 MU / Enabler Inc. · お問い合わせ <a href="mailto:info@enablerdao.com" style="color:#ffd700">info@enablerdao.com</a></div>
+</div></body></html>"##,
+        title = title, body = body_html
+    ))
+}
+
+pub async fn returns_page() -> Html<String> {
+    legal_page("返品ポリシー / Returns", r##"
+<p>MU の /shop / /buy 商品は <strong>すべて受注生産 (made-to-order)</strong> です。
+注文後に Printful EU / JP 等のパートナー工場で 1 枚ずつ印刷・縫製しています。
+そのため通常のアパレル EC と比べ返品条件が異なります。</p>
+
+<h2>返品・交換できる場合</h2>
+<ul>
+<li>商品の <strong>印刷不良 / プリントずれ / 破れ</strong> など製造側に起因する不良</li>
+<li>注文と <strong>異なるサイズ・色・SKU</strong> が届いた場合</li>
+<li>配送中の <strong>破損</strong> (写真をご提供いただきます)</li>
+<li>到着後 <strong>30 日以内</strong> に <a href="mailto:returns@wearmu.com" style="color:#ffd700">returns@wearmu.com</a> にご連絡いただいた場合</li>
+</ul>
+<p>上記に該当する場合、 無償交換または全額返金いたします。 送料も MU 負担です。</p>
+
+<h2>返品・交換できない場合</h2>
+<ul>
+<li>「サイズ感が思ったのと違う」 等の <strong>主観的な理由</strong> (サイズチャート PDP に掲載済)</li>
+<li>到着後 <strong>30 日</strong> を超えた連絡</li>
+<li>使用済・洗濯済の商品</li>
+<li>注文時に入力した <strong>住所の誤り</strong> による誤配 (配送業者の再配達料を実費請求)</li>
+</ul>
+
+<h2>手順</h2>
+<ol style="margin:0 0 16px 22px;color:rgba(245,245,240,0.82);font-size:13.5px">
+<li><a href="mailto:returns@wearmu.com" style="color:#ffd700">returns@wearmu.com</a> に注文番号 + 写真 + 内容をご連絡</li>
+<li>24 時間以内に MU から返信 + 返品先住所をお知らせ</li>
+<li>商品到着確認 → 5 営業日以内に交換品発送 or 返金処理 (Stripe 経由・元の決済手段に戻ります)</li>
+</ol>
+
+<p><a class="btn" href="mailto:returns@wearmu.com">返品申請する</a></p>
+"##)
+}
+
+pub async fn faq_page() -> Html<String> {
+    legal_page("FAQ", r##"
+<h2>発送はいつ?</h2>
+<p>注文確定後、 製造に <strong>2-5 営業日</strong> + 配送に国別 5-14 日。 合計 7-19 日が目安です。 (詳細は <a href="/shipping" style="color:#ffd700">/shipping</a>)</p>
+
+<h2>追跡番号は?</h2>
+<p>Printful から MU を経由してメールで自動送信されます。 DHL / FedEx / 日本ポスト等のトラッキング URL付き。</p>
+
+<h2>サイズが分からない</h2>
+<p>各商品 PDP にサイズチャート (cm) があります。 不安な場合は普段の洋服サイズより 1 つ大きめを推奨。</p>
+
+<h2>支払い方法</h2>
+<p>Stripe 経由でクレジットカード (Visa / Master / Amex / JCB) + Apple Pay + Google Pay。 一部商品は SUZURI 経由で国内コンビニ決済も可能。</p>
+
+<h2>領収書は?</h2>
+<p>Stripe 決済完了後、 自動で領収書 PDF がメール送信されます。 法人購入の場合は <a href="mailto:info@enablerdao.com" style="color:#ffd700">info@enablerdao.com</a> までご連絡で「株式会社イネブラ」 宛の請求書発行も対応。</p>
+
+<h2>返品できる?</h2>
+<p>製造不良 / 誤配 / 破損は 30 日以内ご連絡で無償交換。 詳細は <a href="/returns" style="color:#ffd700">/returns</a>。</p>
+
+<h2>大量注文 (10 着〜) は?</h2>
+<p><a href="mailto:info@enablerdao.com" style="color:#ffd700">info@enablerdao.com</a> までご相談ください。 道場ユニフォーム・大会記念 Tee 等の bulk 価格表があります。</p>
+
+<h2>デザインを自分で持ち込みたい</h2>
+<p>個人ブランド対応 (/api-keys) もあります。 30 SKU まで無料、 以降 30 pt / SKU。</p>
+"##)
+}
+
+pub async fn shipping_page() -> Html<String> {
+    legal_page("配送 / Shipping", r##"
+<p>MU 全商品は <strong>受注生産 + Printful EU / JP 倉庫から直送</strong>。 注文確定 → 製造 2-5 営業日 → 配送。 国別の目安は下記。</p>
+
+<h2>送料 (目安)</h2>
+<ul>
+<li>🇯🇵 Japan — ¥800 / 5-10 日</li>
+<li>🇺🇸 United States — ¥1,400 / 7-14 日</li>
+<li>🇪🇺 EU (DE / FR / NL / IT) — ¥600 / 5-10 日</li>
+<li>🇬🇧 United Kingdom — ¥900 / 5-10 日</li>
+<li>🇨🇦 Canada — ¥1,500 / 7-14 日</li>
+<li>🇦🇺 Australia — ¥1,700 / 7-14 日</li>
+</ul>
+<p>実費は Stripe Checkout の住所入力後に表示されます。 上記は単品 (T シャツ / ラッシュガード) 想定。 hoodie / 複数同梱で増減。</p>
+
+<h2>追跡</h2>
+<p>DHL / FedEx / 日本ポストの <strong>追跡番号付き</strong>。 発送完了時に自動メール送信。</p>
+
+<h2>関税</h2>
+<p>輸入国の関税は受取人負担となります。 EU 内・JP 国内発送は関税なし。 US/CA/AU 輸入は通常 5-15% 程度 (商品価値ベース)。</p>
+
+<h2>遅延・配送事故</h2>
+<p>追跡番号で「投函済」 から 14 日経過しても未着の場合は <a href="mailto:returns@wearmu.com" style="color:#ffd700">returns@wearmu.com</a> までご連絡。 再送 or 全額返金で対応します。</p>
+"##)
+}
+
 #[derive(Deserialize)]
 pub struct StatusQuery {
     pub token: String,
@@ -1744,9 +1869,13 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
 {pagination}
 <footer>
   <span>© 2026 MU / Enabler Inc.</span>
+  <a href="/shipping">配送</a>
+  <a href="/returns">返品</a>
+  <a href="/faq">FAQ</a>
   <a href="/privacy">プライバシー</a>
   <a href="/heritage">heritage</a>
   <a href="/buy">drops</a>
+  <a href="mailto:info@enablerdao.com">CONTACT</a>
 </footer>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </body></html>"##,
@@ -1964,6 +2093,16 @@ nav .brand{{font-weight:900;letter-spacing:0.4em}}
 .spec, .story{{margin:20px 0;padding:14px 0;border-top:1px solid rgba(255,255,255,0.06)}}
 .spec h3, .story h3{{font-size:10px;letter-spacing:0.3em;color:#ffd700;margin-bottom:8px;font-weight:700;text-transform:uppercase}}
 .spec p, .story p{{font-size:12.5px;line-height:1.85;color:rgba(245,245,240,0.78)}}
+.fx{{font-size:11px;color:rgba(245,245,240,0.45);font-family:monospace;font-weight:400}}
+table.sz{{width:100%;border-collapse:collapse;font-size:11.5px;margin-top:4px}}
+table.sz th, table.sz td{{padding:5px 8px;border-bottom:1px solid rgba(255,255,255,0.06);text-align:left;color:rgba(245,245,240,0.82);font-family:monospace}}
+table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-spacing:0.1em;text-transform:uppercase}}
+.sz-cap{{font-size:10.5px;color:rgba(245,245,240,0.45);margin-top:8px;font-style:italic}}
+.pdp-footer{{max-width:920px;margin:0 auto;padding:30px 22px 50px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;color:rgba(245,245,240,0.5);font-size:10px;letter-spacing:0.1em}}
+.legal-links{{display:flex;flex-wrap:wrap;justify-content:center;gap:18px;margin-bottom:12px;font-size:11px;letter-spacing:0.15em}}
+.legal-links a{{color:rgba(245,245,240,0.7);text-decoration:none;text-transform:uppercase}}
+.legal-links a:hover{{color:#ffd700}}
+.legal-fine{{color:rgba(245,245,240,0.35);font-size:9.5px;line-height:1.6}}
 .buy.disabled{{background:#222;color:#666;cursor:not-allowed}}
 .back{{display:inline-block;margin-top:24px;color:rgba(245,245,240,0.6);text-decoration:none;font-size:11px}}
 .back:hover{{color:#ffd700}}
@@ -1982,16 +2121,29 @@ nav .brand{{font-weight:900;letter-spacing:0.4em}}
   <div class="body">
     <div class="brand">{brand}</div>
     <h1>{title}</h1>
-    <div class="price">¥{price}</div>
+    <div class="price">¥{price} <small class="fx">≈ ${usd} / €{eur}</small></div>
     {buy}
     {suzuri}
     {trust}
     {spec}
+    {size_chart}
+    {shipping_table}
     {story}
     <div class="sku">SKU: {sku}</div>
     <a class="back" href="/shop?brand={brand_q}">← {brand} のほかの商品</a>
   </div>
 </div>
+<footer class="pdp-footer">
+  <div class="legal-links">
+    <a href="/shop">SHOP</a>
+    <a href="/shipping">配送 / Shipping</a>
+    <a href="/returns">返品 / Returns</a>
+    <a href="/faq">FAQ</a>
+    <a href="/privacy">プライバシー / Privacy</a>
+    <a href="mailto:info@enablerdao.com">CONTACT</a>
+  </div>
+  <div class="legal-fine">© 2026 MU / Enabler Inc. · 東京千代田区九段南 1-5-6 · 受注生産・国際発送 7-14 日</div>
+</footer>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </body></html>"##,
         title = html_text(&desc),
@@ -2000,12 +2152,16 @@ nav .brand{{font-weight:900;letter-spacing:0.4em}}
         brand = html_text(&brand),
         brand_q = html_attr(&brand),
         price = format_jpy(price_jpy),
+        usd = ((price_jpy as f64) / 159.0).round() as i64,
+        eur = ((price_jpy as f64) / 172.0).round() as i64,
         sku = html_text(&sku),
         buy = buy_button,
         suzuri = suzuri_link,
         extras = extras_html,
         trust     = trust_block,
         spec      = spec_block,
+        size_chart = size_chart_html(&kind_guess),
+        shipping_table = shipping_table_html(),
         story     = story_block,
         sku_url   = urlencoding::encode(&sku),
         price_raw = price_jpy,
@@ -2016,6 +2172,74 @@ nav .brand{{font-weight:900;letter-spacing:0.4em}}
         ld_brand  = html_attr(&brand),
     );
     Html(body).into_response()
+}
+
+/// Per-kind size chart (cm). Numbers are vendor-published (Bella+Canvas /
+/// Gildan / Printful AOP).
+fn size_chart_html(kind: &str) -> String {
+    let (rows, title) = match kind {
+        "rashguard_ls" | "rashguard_black" => (
+            vec![
+                ("S",  "65",  "47", "63"),
+                ("M",  "70",  "50", "65"),
+                ("L",  "73",  "53", "67"),
+                ("XL", "76",  "56", "69"),
+                ("2XL","79",  "59", "71"),
+            ],
+            "Rashguard サイズ (cm) · 着丈 / 身幅 / 袖丈",
+        ),
+        "hoodie" | "crewneck" => (
+            vec![
+                ("S",  "68", "52", "61"),
+                ("M",  "71", "55", "63"),
+                ("L",  "74", "58", "65"),
+                ("XL", "77", "61", "67"),
+                ("2XL","80", "64", "68"),
+            ],
+            "Hoodie / Crewneck サイズ (cm) · 着丈 / 身幅 / 袖丈",
+        ),
+        _ => (
+            vec![
+                ("S",  "69", "46", "20"),
+                ("M",  "71", "51", "21"),
+                ("L",  "74", "56", "22"),
+                ("XL", "76", "61", "23"),
+                ("2XL","79", "66", "24"),
+            ],
+            "Bella+Canvas 3001 Tee サイズ (cm) · 着丈 / 身幅 / 肩幅",
+        ),
+    };
+    let mut tr = String::new();
+    for (sz, a, b, c) in rows {
+        tr.push_str(&format!(
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+            sz, a, b, c
+        ));
+    }
+    format!(
+        r##"<div class="spec"><h3>SIZE</h3>
+<table class="sz"><thead><tr><th>サイズ</th><th>A</th><th>B</th><th>C</th></tr></thead>
+<tbody>{tr}</tbody></table>
+<p class="sz-cap">{title}</p></div>"##,
+        tr = tr, title = title
+    )
+}
+
+/// Country shipping cost table. JPY estimates based on Printful's
+/// 2026 rate card for tee/hoodie-sized parcels from EU origin to
+/// JP/US/EU/CA/AU. Static — not a quote, customer sees real cost at
+/// Stripe Checkout.
+fn shipping_table_html() -> String {
+    r##"<div class="spec"><h3>SHIPPING</h3>
+<table class="sz"><thead><tr><th>送り先 / Country</th><th>到着 (日)</th><th>送料目安 (¥)</th></tr></thead><tbody>
+<tr><td>🇯🇵 Japan</td><td>5-10</td><td>¥800</td></tr>
+<tr><td>🇺🇸 United States</td><td>7-14</td><td>¥1,400</td></tr>
+<tr><td>🇪🇺 EU (DE / FR / NL)</td><td>5-10</td><td>¥600</td></tr>
+<tr><td>🇬🇧 United Kingdom</td><td>5-10</td><td>¥900</td></tr>
+<tr><td>🇨🇦 Canada</td><td>7-14</td><td>¥1,500</td></tr>
+<tr><td>🇦🇺 Australia</td><td>7-14</td><td>¥1,700</td></tr>
+</tbody></table>
+<p class="sz-cap">DHL / FedEx tracked. 実費は Stripe Checkout で表示。</p></div>"##.into()
 }
 
 // ─── Checkout (Stripe Session using pre-created price_id) ─────────────
