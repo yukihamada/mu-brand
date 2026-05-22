@@ -2553,11 +2553,21 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
         return;
     };
 
-    // Pull selected size from Stripe custom_fields (if any). When set and
-    // != "M" we'd need to resolve a different variant_id — for now the
-    // merch-bridge default variant is shipped as-is (size selection is a
-    // Phase 2 enhancement; the existing wearmu admin can ship per-size
-    // SKUs explicitly).
+    // Pull selected size from Stripe custom_fields (if any). When the
+    // SKU's print_id supports per-size variants we swap pf_variant_id
+    // to the matching one. Without this, every order ships size M
+    // regardless of what the customer picked.
+    let mut variant_override: Option<i64> = None;
+    if let Some(custom_fields) = session["custom_fields"].as_array() {
+        for cf in custom_fields {
+            if cf["key"].as_str() == Some("size") {
+                let chosen = cf["dropdown"]["value"].as_str().unwrap_or("M");
+                variant_override = resolve_size_variant(_pp_id, chosen);
+                break;
+            }
+        }
+    }
+    let pf_variant_id = variant_override.unwrap_or(pf_variant_id);
 
     // Stripe Checkout webhooks sometimes omit shipping_details from
     // data.object even when shipping_address_collection was enabled —
@@ -2735,6 +2745,24 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
                 if ok { "submitted" } else { "failed" },
                 Some(&text),
             );
+            if !ok {
+                // Operator alert — fulfillment failure on a paid order
+                // is the highest-priority signal we emit. Stripe already
+                // charged the customer; the next 30-min cron will
+                // auto-retry but human eyes should see the cause now.
+                let _ = crate::send_telegram_message(&format!(
+                    "🚨 *catalog fulfillment FAILED*\n\
+                     sku=`{}`\nsession=`{}…`\n\
+                     amount=¥{}\nprintful body (first 600):\n```\n{}\n```\n\
+                     auto-retry will fire on next cron cycle (~30min). \
+                     Manual retry: GET /admin/catalog/orders/<id>/replay?token=…",
+                    sku,
+                    session_id.chars().take(24).collect::<String>(),
+                    amount_total,
+                    text.chars().take(600).collect::<String>()
+                ))
+                .await;
+            }
             // 2026-05-22: Founder hand-signed thank-you card removed from
             // PDP. The claim_and_notify_founder_card path is no longer
             // invoked for new orders. Historical claims stay in
@@ -3163,6 +3191,44 @@ fn html_attr(s: &str) -> String {
 // Mirrors merch-bridge/app.py normalize_state_code (the Python file we're
 // retiring). Fallback to passing raw_state through — Printful's error is
 // friendlier than silently dropping the field.
+/// Map a Stripe-selected size string to the matching Printful variant
+/// for known products. Returns None when we don't have a mapping (caller
+/// falls back to the row's default variant_id).
+///
+/// Variants come from Printful's catalog API (verified live for the
+/// products we sell). New product? Add a match arm.
+fn resolve_size_variant(printful_product_id: i64, size: &str) -> Option<i64> {
+    let sz = size.to_uppercase();
+    match printful_product_id {
+        // Bella+Canvas 3001 (Black)
+        71 => match sz.as_str() {
+            "S" => Some(4016), "M" => Some(4017), "L" => Some(4018),
+            "XL" => Some(4019), "2XL" | "XXL" => Some(4020),
+            _ => None,
+        },
+        // Gildan 18500 pullover hoodie (Black)
+        146 => match sz.as_str() {
+            "S" => Some(5529), "M" => Some(5530), "L" => Some(5531),
+            "XL" => Some(5532), "2XL" | "XXL" => Some(5533),
+            _ => None,
+        },
+        // Gildan 18000 crewneck sweatshirt (Black)
+        145 => match sz.as_str() {
+            "S" => Some(5402), "M" => Some(5403), "L" => Some(5404),
+            "XL" => Some(5405), "2XL" | "XXL" => Some(5406),
+            _ => None,
+        },
+        // AOP Men's Rash Guard (White) — 7 sizes
+        301 => match sz.as_str() {
+            "XS" => Some(9325), "S" => Some(9326), "M" => Some(9328),
+            "L" => Some(9329), "XL" => Some(9330),
+            "2XL" | "XXL" => Some(9331), "3XL" | "XXXL" => Some(9332),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 fn normalize_state_code(country: &str, raw: &str) -> String {
     let s = raw.trim();
     match country {
@@ -3308,6 +3374,9 @@ pub async fn run_optimizer_cron(db: Db) {
         if let Err(e) = stale_sku_killer_step(db.clone()).await {
             tracing::warn!("[catalog/cron] stale sku killer failed: {}", e);
         }
+        if let Err(e) = retry_failed_fulfillments_step(db.clone()).await {
+            tracing::warn!("[catalog/cron] retry failed orders: {}", e);
+        }
         tokio::time::sleep(std::time::Duration::from_secs(CRON_INTERVAL_SECS)).await;
     }
 }
@@ -3414,6 +3483,93 @@ async fn transparent_backfill_step(db: Db) -> Result<(), String> {
                 }
                 _ => tracing::warn!("[catalog/transparent] fetch fail for {}", design_url),
             }
+        });
+    }
+    Ok(())
+}
+
+/// Self-improvement: retry catalog_orders rows that previously failed
+/// (status='failed' or 'failed_network'). Re-pulls the Stripe Session
+/// via expand to get the full address, deletes the failed row, then
+/// re-runs fulfill_catalog_order. Caps retries via a retry_count column
+/// (added idempotently here) so we don't spin forever on a permanently
+/// broken row.
+///
+/// Triggered every 30-min cron tick; with the fulfillment fixes from
+/// 2f4eb9c (shipping expand + stitch_color), the order #1 self-buy
+/// should recover automatically on the next deploy + tick.
+async fn retry_failed_fulfillments_step(db: Db) -> Result<(), String> {
+    // Add retry_count column lazily (SQLite has no IF NOT EXISTS for ALTER).
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "ALTER TABLE catalog_orders ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+    }
+    let candidates: Vec<(i64, String)> = {
+        let conn = db.lock().unwrap();
+        conn.prepare(
+            "SELECT id, stripe_session_id FROM catalog_orders
+             WHERE status IN ('failed','failed_network','failed_no_key')
+               AND COALESCE(retry_count, 0) < 3
+               AND created_at > datetime('now','-7 days')
+             ORDER BY id ASC
+             LIMIT 2",
+        )
+        .ok()
+        .and_then(|mut s| {
+            s.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+                .ok()
+                .map(|it| it.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default()
+    };
+    if candidates.is_empty() {
+        return Ok(());
+    }
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() {
+        return Err("STRIPE_SECRET_KEY unset".into());
+    }
+    for (id, sid) in candidates {
+        // Increment retry counter up-front so concurrent ticks don't
+        // both pick the same row + we cap at 3.
+        {
+            let conn = db.lock().unwrap();
+            let _ = conn.execute(
+                "UPDATE catalog_orders SET retry_count = COALESCE(retry_count,0) + 1 WHERE id=?",
+                rusqlite::params![id],
+            );
+        }
+        let url = format!(
+            "https://api.stripe.com/v1/checkout/sessions/{}?expand[]=shipping_details&expand[]=customer_details",
+            sid
+        );
+        let session = match reqwest::Client::new()
+            .get(&url).basic_auth(&stripe_key, None::<&str>).send().await
+        {
+            Ok(r) if r.status().is_success() => r.json::<serde_json::Value>().await.ok(),
+            _ => None,
+        };
+        let Some(session) = session else {
+            tracing::warn!("[catalog/retry] stripe lookup failed for id={} session={}", id, sid);
+            continue;
+        };
+        // Remove the failed row so fulfill_catalog_order's idempotency
+        // check doesn't short-circuit it.
+        {
+            let conn = db.lock().unwrap();
+            let _ = conn.execute(
+                "DELETE FROM catalog_orders WHERE id=?",
+                rusqlite::params![id],
+            );
+        }
+        let db_c = db.clone();
+        let sid_log = sid.clone();
+        tokio::spawn(async move {
+            tracing::info!("[catalog/retry] re-running fulfill for session={}", sid_log);
+            fulfill_catalog_order(db_c, session).await;
         });
     }
     Ok(())
