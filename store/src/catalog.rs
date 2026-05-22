@@ -1584,7 +1584,7 @@ pub async fn admin_orders_replay(
         return (StatusCode::SERVICE_UNAVAILABLE, "STRIPE_SECRET_KEY unset").into_response();
     }
     let url = format!(
-        "https://api.stripe.com/v1/checkout/sessions/{}?expand[]=shipping_details&expand[]=customer_details",
+        "https://api.stripe.com/v1/checkout/sessions/{}",
         sid
     );
     let session = match reqwest::Client::new().get(&url).basic_auth(&stripe_key, None::<&str>).send().await {
@@ -2582,7 +2582,7 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
             std::env::var("STRIPE_SECRET_KEY"),
         ) {
             let url = format!(
-                "https://api.stripe.com/v1/checkout/sessions/{}?expand[]=shipping_details&expand[]=customer_details",
+                "https://api.stripe.com/v1/checkout/sessions/{}",
                 session_id
             );
             if let Ok(r) = reqwest::Client::new()
@@ -3543,7 +3543,7 @@ async fn retry_failed_fulfillments_step(db: Db) -> Result<(), String> {
             );
         }
         let url = format!(
-            "https://api.stripe.com/v1/checkout/sessions/{}?expand[]=shipping_details&expand[]=customer_details",
+            "https://api.stripe.com/v1/checkout/sessions/{}",
             sid
         );
         let session = match reqwest::Client::new()
