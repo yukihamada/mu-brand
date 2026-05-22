@@ -83,6 +83,28 @@ section .lede{font-size:13.5px;color:var(--mute);text-align:center;max-width:640
 .buy-card .small{font-size:11px;color:var(--mute);margin-top:14px;letter-spacing:0.06em;text-align:center;line-height:1.85}
 .buy-card .small b{color:var(--y);font-weight:500}
 
+/* Sticky bottom Buy CTA — surfaces only after the user has scrolled past
+   the hero, so it doesn't fight with the in-page buy-card. The whole-
+   page funnel was stuck at 4 pv / 0 buy click — visitors were reaching
+   50%+ scroll without re-engaging with the buy button. A persistent
+   bottom bar gives them a one-tap fallback regardless of position. */
+.sticky-buy{
+  position:fixed;left:0;right:0;bottom:0;z-index:90;
+  background:rgba(10,10,10,0.96);border-top:1px solid var(--y);
+  padding:10px 14px;display:none;align-items:center;gap:12px;
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  box-shadow:0 -8px 24px rgba(0,0,0,0.45);
+}
+.sticky-buy.on{display:flex}
+.sticky-buy .meta{flex:1;min-width:0;font-size:11.5px;line-height:1.45;color:var(--mute)}
+.sticky-buy .meta b{color:var(--y);font-weight:600;font-size:13px;display:block}
+.sticky-buy .btn{
+  background:var(--y);color:#070707;border:0;padding:13px 22px;
+  font-size:11.5px;font-weight:800;letter-spacing:0.22em;text-transform:uppercase;
+  border-radius:3px;cursor:pointer;font-family:inherit;white-space:nowrap;
+}
+.sticky-buy .btn[disabled]{opacity:0.4;cursor:not-allowed}
+
 /* Spec table */
 .spec-grid{display:grid;grid-template-columns:160px 1fr;gap:0;max-width:780px;margin:0 auto;border-top:1px solid var(--line)}
 @media (max-width:580px){.spec-grid{grid-template-columns:110px 1fr}}
@@ -401,6 +423,14 @@ footer .row{margin-bottom:8px}
   <div class="row" style="opacity:0.55;margin-top:14px">MU Heritage Edition · No.001 · 2026</div>
 </footer>
 
+<!-- Sticky bottom Buy CTA — appears after the user scrolls past hero -->
+<div class="sticky-buy" id="sticky-buy" role="region" aria-label="Pre-order Heritage Edition">
+  <div class="meta">
+    <b>MU Heritage Edition</b>¥35,000 · 30 着 限定 · 60-90 日 後 発送
+  </div>
+  <button class="btn" id="sticky-buy-btn" type="button">Pre-order →</button>
+</div>
+
 <script>
 // ── Live stock + color picker + Stripe checkout ──
 const STATE = {
@@ -513,6 +543,34 @@ function buy(){
 document.getElementById('buy-btn').addEventListener('click', buy);
 const b2 = document.getElementById('buy-btn-2');
 if (b2) b2.addEventListener('click', buy);
+
+// ── Sticky bottom Buy CTA — visibility logic ──
+// Iter17 fix: 4 pv / 0 buy click on the original in-page CTA. Surface a
+// persistent one after the user has cleared the hero so it's always within
+// reach. Hide when the in-page buy-card is visible (avoid duplicates).
+const sticky = document.getElementById('sticky-buy');
+const stickyBtn = document.getElementById('sticky-buy-btn');
+if (sticky && stickyBtn) {
+  stickyBtn.addEventListener('click', () => {
+    // Reuse the same logic as buy() so funnel events stay consistent.
+    buy();
+  });
+  const updateSticky = () => {
+    // Show after scrolling past 1 viewport. Hide when the bottom buy-card
+    // (heading "Pre-order を 確定 する") enters viewport.
+    const past = window.scrollY > window.innerHeight * 0.6;
+    const lower = document.getElementById('buy-btn-2');
+    let lowerInView = false;
+    if (lower) {
+      const rect = lower.getBoundingClientRect();
+      lowerInView = rect.top < window.innerHeight && rect.bottom > 0;
+    }
+    sticky.classList.toggle('on', past && !lowerInView);
+  };
+  updateSticky();
+  window.addEventListener('scroll', updateSticky, {passive: true});
+  window.addEventListener('resize', updateSticky);
+}
 </script>
 
 </body>
