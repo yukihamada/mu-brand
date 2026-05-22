@@ -10,8 +10,9 @@ on:
   schedule:
     # Every 30 min — cv_pulse (modal/coupon/email subject auto-tuning)
     - cron: '*/30 * * * *'
-    # Hourly :15 — thank_buyers (auto-mail new cs_live_* buyers + MUON coupon)
-    - cron: '15 * * * *'
+    # (removed 2026-05-22) thank_buyers schedule — endpoint returns 410 (MUON
+    # coupon discontinued 2026-05-16). Re-enable here when a no-coupon
+    # thank-you flow ships.
     # Every 4h :20 — treasury snapshot (Solana + Stripe balance log)
     - cron: '20 */4 * * *'
     # Daily 00:00 UTC = JST 9:00 — /you backfill (today's design + email)
@@ -50,7 +51,6 @@ on:
         type: choice
         options:
           - cv_pulse
-          - thank_buyers
           - treasury
           - you_backfill
           - sample_grow
@@ -83,15 +83,11 @@ jobs:
             -d "{\"admin_token\":\"${MU_ADMIN_TOKEN}\"}" \
             "${BASE_URL}/api/admin/cv_pulse" | head -c 1024
 
-  thank_buyers:
-    if: github.event.schedule == '15 * * * *' || github.event.inputs.target == 'thank_buyers'
-    runs-on: ubuntu-latest
-    steps:
-      - name: POST /api/admin/thank_buyers
-        run: |
-          curl -fsS -X POST -H 'Content-Type: application/json' \
-            -d "{\"admin_token\":\"${MU_ADMIN_TOKEN}\"}" \
-            "${BASE_URL}/api/admin/thank_buyers"
+  # thank_buyers: removed 2026-05-22 — /api/admin/thank_buyers returns 410
+  # (MUON coupon discontinued 2026-05-16). The handler is kept gated behind
+  # admin_token for a future no-coupon flow; until then there is nothing for
+  # the cron to do.
+
 
   treasury:
     if: github.event.schedule == '20 */4 * * *' || github.event.inputs.target == 'treasury'
@@ -466,7 +462,9 @@ jobs:
           ADMIN_TOKEN: ${{ secrets.MU_ADMIN_TOKEN }}
         run: |
           ts=$(date -u +%Y%m%dT%H%M%SZ)
-          curl -fsS --max-time 60 \
+          # 2026-05-22: bump from 60s → 240s — DB > 200MB now and VACUUM INTO + HTTP
+          # transfer was timing out at 60s. timeout-minutes:5 caps total job time.
+          curl -fsS --max-time 240 \
             "${BASE_URL}/api/admin/db_backup?token=${ADMIN_TOKEN}" \
             -o "products_${ts}.db"
           ls -lh "products_${ts}.db"
