@@ -35,6 +35,7 @@ The cookie is set automatically when you first hit any admin page with
 
 | Path | Purpose |
 |---|---|
+| `/admin/brands` | Brand grid (catalog_brands + legacy) — per-brand active/sold/revenue + sample mockup + filter (active/legacy/w-domain) |
 | `/admin/products` | Product list with thumbnails, inline edit, regen mockup, regen design |
 | `/admin/product/new` | One-form manual SKU create |
 | `/admin/collabs` | Collab dashboard — AI prompt + cadence + per-collab 8-product grid |
@@ -65,6 +66,7 @@ All return JSON, all token-gated unless noted.
 | Method · Path | Purpose |
 |---|---|
 | `GET /api/admin/dashboard` | Single-call KPI snapshot (revenue, orders, products, alerts, recent purchases). Used by the `/admin` hub for live hydration |
+| `GET /api/admin/brands` | Merged brand registry (`catalog_brands` ∪ legacy `products.brand`) — slug / name / emoji / color / tagline / domain / active flag / live counts / lifetime revenue / sample mockup. Used by `/admin/brands` |
 | `GET /api/admin/products` | Paginated product list with admin-only fields |
 | `POST /api/admin/products` | Create a new product row |
 | `POST /api/admin/products/:id/update` | PATCH single product (whitelisted fields incl. `print_url`) |

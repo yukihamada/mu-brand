@@ -11544,8 +11544,9 @@ h2{{font-size:11px;letter-spacing:0.4em;text-transform:uppercase;color:rgba(245,
   <a class="tile" href="/api/niches/bjj/outreach"><div class="path">/api/niches/:slug/outreach</div><div class="desc">JSON: per-niche pipeline</div></a>
 </div>
 
-<h2>Products / SKU</h2>
+<h2>Brands / Products</h2>
 <div class="cat">
+  <a class="tile" href="/admin/brands?token={t}"><div class="path">/admin/brands</div><div class="desc">全 brand grid view (catalog_brands + legacy)、 active/legacy/domain filter、 per-brand 売上 + sample mockup</div></a>
   <a class="tile" href="/admin/product/new?token={t}"><div class="path">/admin/product/new</div><div class="desc">+ 1-form 即追加 (brand + name + mockup_url、 30 秒)</div></a>
   <a class="tile" href="/admin/products?token={t}"><div class="path">/admin/products</div><div class="desc">既存 products 一覧 (filter, edit, mockup regen)</div></a>
   <a class="tile" href="/admin/pod?token={t}"><div class="path">/admin/pod</div><div class="desc">POD catalog (Printful / SUZURI / Gelato 統合)</div></a>
@@ -37053,6 +37054,292 @@ async fn admin_dashboard_api(
 }
 
 
+/// GET /api/admin/brands — every brand on the catalog, with live counts +
+/// lifetime revenue + a sample mockup so the /admin/brands page can render
+/// a grid view without a second round-trip.
+///
+/// Sources two tables: catalog_brands (the canonical brand registry — slug,
+/// name, emoji, color, tagline, config_json) and the older products.brand
+/// column for legacy MUGEN/MUON/MA drops that pre-date the catalog refactor.
+/// Both surfaces are merged into one list keyed by slug; `legacy=true` flags
+/// rows that exist only in the products table without a catalog_brands entry.
+async fn admin_brands_api(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/brands").await { return r; }
+    let conn = db.lock().unwrap();
+    use std::collections::BTreeMap;
+    #[derive(Default)]
+    struct BrandRow {
+        slug: String,
+        name: String,
+        emoji: Option<String>,
+        color: Option<String>,
+        tagline: Option<String>,
+        custom_domain: Option<String>,
+        is_active: bool,
+        revenue_share_pct: i64,
+        config_json: Option<String>,
+        legacy: bool,
+        // counts from products / catalog_products
+        active_products: i64,
+        total_products: i64,
+        sold: i64,
+        revenue_jpy: i64,
+        sample_mockup: Option<String>,
+    }
+    let mut rows: BTreeMap<String, BrandRow> = BTreeMap::new();
+    // 1. Pull canonical catalog_brands rows.
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT slug, name, emoji, color_primary, tagline, custom_domain,
+                is_active, revenue_share_pct, config_json
+         FROM catalog_brands ORDER BY slug"
+    ) {
+        let it = stmt.query_map([], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?,
+            r.get::<_, Option<String>>(2)?, r.get::<_, Option<String>>(3)?,
+            r.get::<_, Option<String>>(4)?, r.get::<_, Option<String>>(5)?,
+            r.get::<_, i64>(6)?, r.get::<_, i64>(7)?,
+            r.get::<_, Option<String>>(8)?,
+        ))).map(|i| i.filter_map(|x| x.ok()).collect::<Vec<_>>()).unwrap_or_default();
+        for (slug, name, emoji, color, tagline, dom, active, rev_pct, cfg) in it {
+            rows.insert(slug.clone(), BrandRow {
+                slug: slug.clone(), name, emoji, color, tagline, custom_domain: dom,
+                is_active: active != 0, revenue_share_pct: rev_pct, config_json: cfg,
+                legacy: false, ..Default::default()
+            });
+        }
+    }
+    // 2. Aggregate counts from products (covers BOTH catalog and legacy).
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT brand,
+                SUM(CASE WHEN active=1 THEN 1 ELSE 0 END) AS active_n,
+                COUNT(*) AS total_n,
+                COALESCE(SUM(sold),0) AS sold_n,
+                COALESCE(SUM(sold * price_jpy),0) AS rev_jpy
+         FROM products GROUP BY brand"
+    ) {
+        let it = stmt.query_map([], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, i64>(1).unwrap_or(0),
+            r.get::<_, i64>(2)?, r.get::<_, i64>(3)?, r.get::<_, i64>(4)?,
+        ))).map(|i| i.filter_map(|x| x.ok()).collect::<Vec<_>>()).unwrap_or_default();
+        for (brand, active_n, total_n, sold_n, rev) in it {
+            let entry = rows.entry(brand.clone()).or_insert_with(|| BrandRow {
+                slug: brand.clone(), name: brand.clone(), legacy: true,
+                is_active: true, ..Default::default()
+            });
+            entry.active_products = active_n;
+            entry.total_products = total_n;
+            entry.sold = sold_n;
+            entry.revenue_jpy = rev;
+        }
+    }
+    // 3. Sample mockup per brand (newest active product with a valid mockup).
+    for (slug, row) in rows.iter_mut() {
+        let m = conn.query_row(
+            "SELECT CASE
+                WHEN mockup_url LIKE 'https://printful-upload.s3%'
+                  OR mockup_url LIKE 'https://files.cdn.printful.com/upload%'
+                THEN COALESCE(NULLIF(design_url,''), mockup_url)
+                ELSE mockup_url
+             END
+             FROM products WHERE brand = ?1 AND active = 1
+                           AND mockup_url IS NOT NULL AND mockup_url != ''
+             ORDER BY id DESC LIMIT 1",
+            params![slug], |r| r.get::<_, Option<String>>(0)
+        ).ok().flatten();
+        row.sample_mockup = m;
+    }
+    drop(conn);
+    let list: Vec<serde_json::Value> = rows.into_values().map(|b| serde_json::json!({
+        "slug": b.slug, "name": b.name, "emoji": b.emoji, "color": b.color,
+        "tagline": b.tagline, "custom_domain": b.custom_domain,
+        "is_active": b.is_active, "revenue_share_pct": b.revenue_share_pct,
+        "legacy": b.legacy,
+        "active_products": b.active_products, "total_products": b.total_products,
+        "sold": b.sold, "revenue_jpy": b.revenue_jpy,
+        "sample_mockup": b.sample_mockup,
+        "config_json": b.config_json,
+    })).collect();
+    Json(serde_json::json!({
+        "mark": "━◯━",
+        "count": list.len(),
+        "brands": list,
+    })).into_response()
+}
+
+/// GET /admin/brands — grid view of every catalog_brands row + legacy
+/// products.brand values. Click-through to /merch/<brand> for the public
+/// LP, edit pencil drops to /admin/proposals/<slug>/manage if applicable.
+async fn admin_brands_page(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/brands").await { return r; }
+    let token = q.get("token").cloned().unwrap_or_default();
+    let t = html_attr_escape(&token);
+    let html = format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU admin · brands</title>
+<meta name="robots" content="noindex,nofollow">
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.65;padding:28px 32px 60px;max-width:1280px;margin:0 auto}}
+h1{{font-size:22px;font-weight:300;letter-spacing:0.06em;margin-bottom:6px}}
+h1 b{{color:#e6c449;font-weight:700}}
+.muted{{color:rgba(245,245,240,0.55);font-size:12px;letter-spacing:0.04em}}
+.crumbs{{font-size:11px;letter-spacing:0.18em;color:rgba(245,245,240,0.4);margin-bottom:18px}}
+.crumbs a{{color:rgba(245,245,240,0.7);text-decoration:none}}
+.crumbs a:hover{{color:#e6c449}}
+.summary{{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:22px 0 28px}}
+.sum-card{{background:rgba(230,196,73,0.05);border:1px solid rgba(230,196,73,0.18);padding:14px 16px;border-radius:6px;text-align:center}}
+.sum-card .n{{font-size:24px;font-weight:200;color:#e6c449;font-variant-numeric:tabular-nums;line-height:1.1}}
+.sum-card .l{{font-size:9.5px;letter-spacing:0.26em;text-transform:uppercase;color:rgba(245,245,240,0.55);margin-top:4px}}
+.tools{{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;font-size:12px}}
+.tools input,.tools select{{background:#111;color:#f5f5f0;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:7px 11px;font:inherit;font-size:12px}}
+.tools input{{flex:1;min-width:200px}}
+.tools .pill{{padding:6px 11px;background:#111;border:1px solid rgba(255,255,255,0.15);border-radius:999px;cursor:pointer;color:rgba(245,245,240,0.7)}}
+.tools .pill.on{{border-color:#e6c449;color:#e6c449}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}}
+.card{{background:#0E0E0E;border:1px solid rgba(255,255,255,0.08);border-radius:8px;overflow:hidden;transition:border-color .15s,transform .12s;display:flex;flex-direction:column}}
+.card:hover{{border-color:rgba(230,196,73,0.45);transform:translateY(-1px)}}
+.card.legacy{{border-style:dashed;opacity:0.85}}
+.card.inactive{{opacity:0.45}}
+.card .thumb{{aspect-ratio:4/3;background:#000 center/cover no-repeat;border-bottom:1px solid rgba(255,255,255,0.05);position:relative}}
+.card .thumb .flags{{position:absolute;top:8px;left:8px;display:flex;gap:5px;flex-wrap:wrap}}
+.flag{{font-size:9px;letter-spacing:0.16em;text-transform:uppercase;background:rgba(0,0,0,0.7);color:#e6c449;padding:3px 8px;border-radius:3px;border:1px solid rgba(230,196,73,0.35)}}
+.flag.legacy{{color:#aaa;border-color:rgba(255,255,255,0.2)}}
+.flag.inactive{{color:#e07b7b;border-color:rgba(224,123,123,0.4)}}
+.flag.domain{{color:#7ec9e6;border-color:rgba(126,201,230,0.4)}}
+.card .body{{padding:14px 16px;flex:1;display:flex;flex-direction:column}}
+.card .ttl{{font-size:15px;font-weight:600;color:#f5f5f0;display:flex;align-items:center;gap:8px;line-height:1.25}}
+.card .ttl .em{{font-size:18px}}
+.card .slug{{font-size:10.5px;color:#e6c449;letter-spacing:0.08em;font-family:'SF Mono','Menlo',monospace;margin-top:3px}}
+.card .tagline{{font-size:11.5px;color:rgba(245,245,240,0.7);margin:8px 0;line-height:1.5;min-height:32px}}
+.card .stats{{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;font-size:11px;margin:6px 0 10px;border-top:1px solid rgba(255,255,255,0.07);padding-top:9px}}
+.card .stats .b{{font-weight:600;color:#f5f5f0;display:block;font-variant-numeric:tabular-nums}}
+.card .stats .l{{color:rgba(245,245,240,0.5);letter-spacing:0.06em;font-size:9.5px;text-transform:uppercase}}
+.card .actions{{display:flex;gap:6px;flex-wrap:wrap;margin-top:auto;border-top:1px solid rgba(255,255,255,0.07);padding-top:10px}}
+.card .actions a{{flex:1;text-align:center;padding:7px 8px;font-size:10.5px;background:rgba(230,196,73,0.07);color:#e6c449;border:1px solid rgba(230,196,73,0.22);border-radius:4px;text-decoration:none;letter-spacing:0.06em;font-weight:600}}
+.card .actions a:hover{{background:rgba(230,196,73,0.15)}}
+.card .actions a.secondary{{color:rgba(245,245,240,0.65);background:transparent;border-color:rgba(255,255,255,0.1)}}
+.card .actions a.secondary:hover{{border-color:rgba(255,255,255,0.3);color:#fff}}
+.loading,.empty{{padding:60px 0;text-align:center;color:rgba(245,245,240,0.5);grid-column:1/-1}}
+@media (max-width:640px){{body{{padding:18px 14px 36px}};.tools input{{min-width:0}}}}
+</style></head><body>
+<h1>MU <b>admin</b> · brands</h1>
+<p class="muted">/admin/brands · catalog_brands + legacy products.brand merge</p>
+<div class="crumbs"><a href="/admin?token={t}">/admin</a> · brands</div>
+
+<div class="summary" id="summary">
+  <div class="sum-card"><div class="n" id="s-total">…</div><div class="l">brands total</div></div>
+  <div class="sum-card"><div class="n" id="s-active">…</div><div class="l">active</div></div>
+  <div class="sum-card"><div class="n" id="s-legacy">…</div><div class="l">legacy only</div></div>
+  <div class="sum-card"><div class="n" id="s-products">…</div><div class="l">products live</div></div>
+  <div class="sum-card"><div class="n" id="s-revenue">¥…</div><div class="l">lifetime revenue</div></div>
+</div>
+
+<div class="tools">
+  <input id="q" placeholder="filter by slug, name, tagline…">
+  <span class="pill on" data-f="all">ALL</span>
+  <span class="pill" data-f="active">active</span>
+  <span class="pill" data-f="legacy">legacy</span>
+  <span class="pill" data-f="custom_domain">w/ domain</span>
+</div>
+
+<div class="grid" id="grid"><div class="loading">loading brands…</div></div>
+
+<script>
+const TOK = "{t}";
+const G = document.getElementById('grid');
+let DATA = [];
+let FILTER = 'all';
+
+function fmtJpy(n){{ return '¥' + (Number(n)||0).toLocaleString('en-US'); }}
+function el(html){{ const t=document.createElement('template'); t.innerHTML=html.trim(); return t.content.firstChild; }}
+function render(){{
+  const q = document.getElementById('q').value.toLowerCase().trim();
+  const filtered = DATA.filter(b => {{
+    if (FILTER === 'active'  && !b.is_active) return false;
+    if (FILTER === 'legacy'  && !b.legacy) return false;
+    if (FILTER === 'custom_domain' && !b.custom_domain) return false;
+    if (q) {{
+      const hay = [b.slug, b.name, b.tagline, b.custom_domain].filter(Boolean).join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }}
+    return true;
+  }});
+  if (filtered.length === 0) {{
+    G.innerHTML = '<div class="empty">該当ブランドなし</div>';
+    return;
+  }}
+  G.innerHTML = '';
+  for (const b of filtered) {{
+    const flags = [];
+    if (b.legacy)    flags.push('<span class="flag legacy">legacy</span>');
+    if (!b.is_active) flags.push('<span class="flag inactive">paused</span>');
+    if (b.custom_domain) flags.push('<span class="flag domain">' + b.custom_domain + '</span>');
+    const emoji = b.emoji ? '<span class="em">'+ b.emoji +'</span>' : '';
+    const thumb = b.sample_mockup
+      ? 'background-image:url(\\'' + b.sample_mockup.replace(/'/g, '%27') + '\\');'
+      : 'background:linear-gradient(135deg,#161616,#0a0a0a)';
+    const merchUrl = '/merch/' + encodeURIComponent(b.slug);
+    const productsUrl = '/admin/products?token=' + encodeURIComponent(TOK) + '&brand=' + encodeURIComponent(b.slug);
+    const collabUrl = '/admin/proposals/' + encodeURIComponent(b.slug) + '/manage?token=' + encodeURIComponent(TOK);
+    const card = el(`
+      <div class="card${{b.legacy ? ' legacy':''}}${{b.is_active ? '':' inactive'}}">
+        <div class="thumb" style="${{thumb}}">
+          <div class="flags">${{flags.join('')}}</div>
+        </div>
+        <div class="body">
+          <div class="ttl">${{emoji}}<span>${{(b.name||b.slug).replace(/</g,'&lt;')}}</span></div>
+          <div class="slug">${{b.slug}}</div>
+          <div class="tagline">${{(b.tagline||'—').replace(/</g,'&lt;')}}</div>
+          <div class="stats">
+            <div><span class="b">${{b.active_products}}</span><span class="l">live</span></div>
+            <div><span class="b">${{b.sold}}</span><span class="l">sold</span></div>
+            <div><span class="b">${{fmtJpy(b.revenue_jpy)}}</span><span class="l">revenue</span></div>
+          </div>
+          <div class="actions">
+            <a href="${{merchUrl}}">/merch</a>
+            <a href="${{productsUrl}}" class="secondary">products</a>
+            ${{b.legacy ? '' : '<a href="' + collabUrl + '" class="secondary">edit</a>'}}
+          </div>
+        </div>
+      </div>`);
+    G.appendChild(card);
+  }}
+}}
+
+fetch('/api/admin/brands?token=' + encodeURIComponent(TOK), {{credentials:'include'}})
+  .then(r => r.ok ? r.json() : Promise.reject(r.status))
+  .then(d => {{
+    DATA = d.brands || [];
+    document.getElementById('s-total').textContent = DATA.length;
+    document.getElementById('s-active').textContent = DATA.filter(b => b.is_active).length;
+    document.getElementById('s-legacy').textContent = DATA.filter(b => b.legacy).length;
+    document.getElementById('s-products').textContent = DATA.reduce((s,b) => s + (b.active_products||0), 0).toLocaleString();
+    document.getElementById('s-revenue').textContent = fmtJpy(DATA.reduce((s,b) => s + (b.revenue_jpy||0), 0));
+    render();
+  }})
+  .catch(e => {{ G.innerHTML = '<div class="empty">load failed: ' + e + '</div>'; }});
+
+document.getElementById('q').addEventListener('input', render);
+document.querySelectorAll('.tools .pill').forEach(p => p.addEventListener('click', () => {{
+  document.querySelectorAll('.tools .pill').forEach(x => x.classList.remove('on'));
+  p.classList.add('on');
+  FILTER = p.dataset.f;
+  render();
+}}));
+</script>
+</body></html>"##, t = t);
+    Html(html).into_response()
+}
+
+
 async fn public_transparency(State(db): State<Db>) -> impl IntoResponse {
     let mut snap = gather_transparency_snapshot(&db);
     // Brand mark — every API consumer sees ━◯━ as a top-level field so it
@@ -61001,6 +61288,8 @@ async fn main() {
         .route("/admin", get(admin_hub_page))
         .route("/admin/outreach", get(admin_outreach_page))
         .route("/api/admin/dashboard", get(admin_dashboard_api))
+        .route("/api/admin/brands", get(admin_brands_api))
+        .route("/admin/brands", get(admin_brands_page))
         .route("/api/admin/outreach", post(admin_outreach_create))
         .route("/api/admin/outreach/:id/status", post(admin_outreach_status))
         .route("/admin/product/new", get(admin_product_new_page))
