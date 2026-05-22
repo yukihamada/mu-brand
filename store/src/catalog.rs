@@ -313,26 +313,56 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
     ProductSpec {
         kind: "tee",
         printful_product_id: 71,
-        printful_variant_id: 4017,
+        printful_variant_id: 4017, // Black M
         placement: "front",
         retail_jpy: 4900,
-        spec_html: "Bella+Canvas 3001 unisex tee · 4.2 oz (142 gsm) · \
+        spec_html: "Bella+Canvas 3001 unisex tee · Black · 4.2 oz (142 gsm) · \
                     100% airlume combed ringspun cotton · DTG print 30×30cm front · \
                     machine washable · sourced + printed in EU",
     },
     ProductSpec {
         kind: "rashguard_ls",
-        // 301 = "All-Over Print Men's Rash Guard" (Printful catalog id);
-        // 162 was a copy/paste error from a longsleeve product, which is
-        // why every rashguard mockup task 4xx'd with "No variants to
-        // generate" (variant 9328 isn't in product 162's catalog).
-        printful_product_id: 301,
-        printful_variant_id: 9328,
+        printful_product_id: 301, // All-Over Print Men's Rash Guard (white base; sublimation requires poly white)
+        printful_variant_id: 9328, // White M
         placement: "front",
         retail_jpy: 9800,
         spec_html: "Men's all-over-print long-sleeve rashguard · 82% polyester / 18% spandex · \
                     UPF 50+ UV protection · 4-way stretch · flatlock seams (no chafe) · \
                     sublimation print (won't fade or peel) · IBJJF gi/no-gi compliant fit",
+    },
+    ProductSpec {
+        kind: "rashguard_black",
+        // Same Printful product as rashguard_ls — the "black" look comes
+        // from a Gemini prompt that fills the design canvas with deep
+        // black (AOP sublimates every pixel, so a fully black artwork
+        // yields a near-solid black rashguard with the logo in white).
+        printful_product_id: 301,
+        printful_variant_id: 9328,
+        placement: "front",
+        retail_jpy: 9800,
+        spec_html: "Men's all-over-print long-sleeve rashguard · 黒ベース · 82% polyester / 18% spandex · \
+                    UPF 50+ · 4-way stretch · flatlock seams · sublimation print (full black canvas) · \
+                    IBJJF gi/no-gi compliant",
+    },
+    ProductSpec {
+        kind: "hoodie",
+        printful_product_id: 146, // Gildan 18500 pullover hoodie (heavy black option)
+        printful_variant_id: 5530, // Black M
+        placement: "front",
+        retail_jpy: 8800,
+        spec_html: "Gildan 18500 unisex pullover hoodie · Black · 8.0 oz (270 gsm) · \
+                    50/50 cotton-polyester blend · double-needle stitching · \
+                    DTG print front chest · pouch pocket · drawstring hood",
+    },
+    ProductSpec {
+        kind: "crewneck",
+        printful_product_id: 145, // Gildan 18000 crewneck sweatshirt
+        printful_variant_id: 5403, // Black M
+        placement: "front",
+        retail_jpy: 7800,
+        spec_html: "Gildan 18000 unisex crewneck sweatshirt · Black · 8.0 oz · \
+                    50/50 cotton-polyester blend · 1×1 athletic ribbed collar · \
+                    DTG print front chest",
     },
 ];
 
@@ -517,18 +547,32 @@ pub async fn generate_one(
         return Err("budget cap reached".into());
     }
 
-    // Gemini print-ready prompt: white background = transparent for DTG.
-    let prompt = format!(
-        "Print-ready chest graphic at 300 DPI on a PURE WHITE background \
-         (white acts as the transparent layer for DTG printing). \
-         Style brief: {brief}. \
-         Hard constraints: NO model, NO mockup, NO photographic scene, \
-         NO shirt visible — just the artwork itself, centered, square \
-         aspect ratio, bleed-safe, ready to be printed onto apparel. \
-         Variation key: {seed}.",
-        brief = theme.prompt_brief,
-        seed = seed,
-    );
+    // Gemini print-ready prompt. For the black-rashguard kind we ask for
+    // a fully-black canvas with the design as a white inversion — AOP
+    // sublimation prints every pixel so this yields a near-solid black
+    // rashguard with the logo in light contrast.
+    let prompt = if kind == "rashguard_black" {
+        format!(
+            "Square 300 DPI artwork for all-over print on a long-sleeve rashguard. \
+             Fill the entire canvas with PURE BLACK (#0a0a0a). \
+             Centered on the chest: the design '{brief}' rendered in WHITE or \
+             very light ivory so it pops against the black. \
+             Hard constraints: NO model, NO mockup, NO photographic scene. \
+             Just the print-ready square artwork. Variation key: {seed}.",
+            brief = theme.prompt_brief, seed = seed,
+        )
+    } else {
+        format!(
+            "Print-ready chest graphic at 300 DPI on a PURE WHITE background \
+             (white acts as the transparent layer for DTG printing). \
+             Style brief: {brief}. \
+             Hard constraints: NO model, NO mockup, NO photographic scene, \
+             NO shirt visible — just the artwork itself, centered, square \
+             aspect ratio, bleed-safe, ready to be printed onto apparel. \
+             Variation key: {seed}.",
+            brief = theme.prompt_brief, seed = seed,
+        )
+    };
     let img = crate::gemini::call_gemini(&prompt)
         .await
         .map_err(|e| {
@@ -595,25 +639,164 @@ pub async fn generate_one(
     }
     tracing::info!("[catalog/gen] OK sku={} theme={} kind={}", sku, theme.slug, kind);
 
-    // Fire-and-forget: ask Printful to render an on-body mockup of this
-    // design, swap mockup_url_external when ready. Cold-traffic CVR is
-    // dominated by "is there a person wearing it" — current PDPs show
-    // the print art on white which doesn't sell.
-    let db_mockup = db.clone();
-    let sku_mockup = sku.clone();
-    let spec_mockup = (spec.printful_product_id, spec.printful_variant_id, &url);
-    let printful_product = spec_mockup.0;
-    let printful_variant = spec_mockup.1;
-    let design_url = url.clone();
+    // 4 images per SKU, fired in parallel after the print-art (a) lands:
+    //   (a) AI design   — already saved at `url` above (catalog/<sku>.png)
+    //   (b) transparent — process (a) white→alpha, save as catalog/print/<sku>.png
+    //   (c) Printful mockup — POD garment render via mockup-generator
+    //   (d) lifestyle  — Gemini on-body photo (face-cropped, scene varies)
+    // Tokio::spawn fires all three (b/c/d) concurrently; main returns the
+    // SKU id immediately so the cron doesn't block.
+    let pp = spec.printful_product_id;
+    let pv = spec.printful_variant_id;
+
+    // (b) transparent print file — fast, free.
+    let db_b = db.clone();
+    let sku_b = sku.clone();
+    let img_bytes_b = img.bytes.clone();
     tokio::spawn(async move {
-        if let Err(e) = generate_onbody_mockup(
-            db_mockup, sku_mockup, printful_product, printful_variant, design_url
-        ).await {
-            tracing::warn!("[catalog/mockup] async failed: {}", e);
+        if let Err(e) = generate_transparent_print(db_b, sku_b, img_bytes_b).await {
+            tracing::warn!("[catalog/transparent] failed: {}", e);
+        }
+    });
+
+    // (c) Printful on-body mockup.
+    let db_c = db.clone();
+    let sku_c = sku.clone();
+    let url_c = url.clone();
+    tokio::spawn(async move {
+        if let Err(e) = generate_onbody_mockup(db_c, sku_c, pp, pv, url_c).await {
+            tracing::warn!("[catalog/mockup] failed: {}", e);
+        }
+    });
+
+    // (d) lifestyle Gemini photo (1 per SKU; cron's mockup_backfill_step
+    // can add more in subsequent cycles if budget permits).
+    let db_d = db.clone();
+    let sku_d = sku.clone();
+    let theme_slug = theme.slug.to_string();
+    let theme_brief = theme.prompt_brief.to_string();
+    let kind_d = kind.to_string();
+    tokio::spawn(async move {
+        if let Err(e) = generate_lifestyle_photo(db_d, sku_d, theme_slug, theme_brief, kind_d, 1).await {
+            tracing::warn!("[catalog/lifestyle] failed: {}", e);
         }
     });
 
     Ok(sku)
+}
+
+/// Decode the print PNG, replace near-white pixels with transparent
+/// alpha, re-encode, upload to R2 under catalog/print/<sku>.png, store
+/// in catalog_products.print_file (column-less for now; reuse
+/// design_file vs UPDATE existing). The transparent file is what
+/// Printful AOP / DTG actually wants — white-background art prints a
+/// white rectangle on AOP rashguards.
+pub async fn generate_transparent_print(
+    db: Db,
+    sku: String,
+    bytes: Vec<u8>,
+) -> Result<(), String> {
+    // Decode as RGBA so we always have an alpha channel to work with.
+    let img = image::load_from_memory(&bytes)
+        .map_err(|e| format!("decode: {}", e))?
+        .to_rgba8();
+    let mut out = img.clone();
+    // Threshold: any pixel where R, G, B are all >= 248 → fully transparent.
+    for px in out.pixels_mut() {
+        let [r, g, b, _a] = px.0;
+        if r >= 248 && g >= 248 && b >= 248 {
+            px.0[3] = 0;
+        }
+    }
+    let mut buf = std::io::Cursor::new(Vec::<u8>::new());
+    out.write_to(&mut buf, image::ImageFormat::Png)
+        .map_err(|e| format!("encode: {}", e))?;
+    let png_bytes = buf.into_inner();
+    let key = format!("catalog/print/{}.png", sku);
+    let url = crate::store_r2_bytes(&key, &png_bytes, "image/png").await
+        .ok_or_else(|| "R2 upload failed".to_string())?;
+    // Stash via product_extras with a known label so the PDP can pick it
+    // up as the "print用" sample image (no schema change needed).
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO catalog_product_extras (sku, label, image_url, sort_order)
+             VALUES (?, '透過版 (print)', ?, 10)",
+            rusqlite::params![&sku, &url],
+        );
+    }
+    tracing::info!("[catalog/transparent] OK sku={} → {}", sku, url);
+    Ok(())
+}
+
+/// Generate one lifestyle (on-body) photo via Gemini. Prompted to avoid
+/// the model's face (back-shot / torso / hands holding garment) so the
+/// PDP doesn't show the same Printful default model on every SKU.
+/// Stores in catalog_product_extras for the PDP gallery to pick up.
+pub async fn generate_lifestyle_photo(
+    db: Db,
+    sku: String,
+    theme_slug: String,
+    theme_brief: String,
+    kind: String,
+    variant: u32,
+) -> Result<(), String> {
+    let scene = match (kind.as_str(), variant) {
+        ("rashguard_ls" | "rashguard_black", 1) =>
+            "Japanese BJJ practitioner from behind, sitting on tatami mat in a clean modern dojo, hands resting on knees. Camera at chest height looking at upper back of rashguard.",
+        ("rashguard_ls" | "rashguard_black", _) =>
+            "Close-up torso shot of a Japanese MMA athlete adjusting a rashguard cuff at the wrist, no face visible, gym light from window left.",
+        ("hoodie" | "crewneck", 1) =>
+            "Japanese person walking away from camera at sunset on a Tokyo street, wearing the black hoodie, hood up. No face visible.",
+        ("hoodie" | "crewneck", _) =>
+            "Folded hoodie on a wooden bench at a cafe, with a coffee cup beside it. Editorial flat-lay angle.",
+        ("tee", 1) =>
+            "Japanese person from neck-down sitting at a wood desk, hands typing on a laptop, wearing the black tee. Soft window light.",
+        _ =>
+            "Folded black tee on a concrete surface beside a notebook and pen, top-down editorial flat-lay.",
+    };
+    // Budget check (¥6 per Gemini image).
+    let charged = {
+        let conn = db.lock().unwrap();
+        spend_or_refuse(
+            &conn,
+            "ai_image",
+            GEMINI_IMAGE_COST_JPY,
+            &format!("lifestyle sku={} v={}", sku, variant),
+            Some(&sku),
+        )
+    };
+    if !charged {
+        return Err("budget cap reached".into());
+    }
+    let prompt = format!(
+        "Editorial 4:5 lifestyle photo. {scene} \
+         The garment design (printed on chest / back, depending on shot): {brief}. \
+         Photorealistic, magazine quality, soft natural light, slight film grain. \
+         NO face visible (crop, back-of-head, or hidden by composition). \
+         NO text overlay. Variation key: {sku}-v{variant}.",
+        scene = scene, brief = theme_brief, sku = sku, variant = variant,
+    );
+    let img = crate::gemini::call_gemini(&prompt).await
+        .map_err(|e| format!("gemini: {}", e))?;
+    let key = format!("catalog/lifestyle/{}-v{}.png", sku, variant);
+    let url = crate::store_r2_bytes(&key, &img.bytes, &img.mime).await
+        .ok_or_else(|| "R2 upload failed".to_string())?;
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO catalog_product_extras (sku, label, image_url, sort_order)
+             VALUES (?, ?, ?, ?)",
+            rusqlite::params![
+                &sku,
+                format!("lifestyle {} ({})", variant, theme_slug),
+                &url,
+                100 + variant as i64,
+            ],
+        );
+    }
+    tracing::info!("[catalog/lifestyle] OK sku={} v={} → {}", sku, variant, url);
+    Ok(())
 }
 
 /// Async background task: call Printful's mockup-generator with the
