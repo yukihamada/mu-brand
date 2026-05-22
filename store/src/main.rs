@@ -23884,21 +23884,26 @@ fn render_merch_grid_html(
     if rows.is_empty() {
         cards.push_str(r#"<div class="empty">商品が見つかりません</div>"#);
     } else {
+        const BRAND_FALLBACK: &str = "https://mockups.wearmu.com/hero.png";
         for (id, drop, name, mockup, price, inventory, sold, _brand) in rows {
-            let img = mockup.as_deref().unwrap_or("https://mockups.wearmu.com/hero.png");
+            let img = mockup.as_deref().unwrap_or(BRAND_FALLBACK);
             let remaining: i64 = inventory - sold;
             let stock = if remaining <= 0 { "<span class=\"sold\">SOLD</span>".to_string() }
                        else { format!("のこり {}/{}", remaining, inventory) };
+            // onerror cascade: if mockup_url 404s (already expired AND CASE
+            // fallback also 404), final fallback is the brand hero. Prevents
+            // broken-image icons in the grid no matter the upstream state.
             cards.push_str(&format!(
                 r#"<a class="card" href="/buy/{id}">
-                  <div class="thumb"><img src="{img}" alt="{name_esc}" loading="lazy"></div>
+                  <div class="thumb"><img src="{img}" alt="{name_esc}" loading="lazy" onerror="this.onerror=null;this.src='{fb}'"></div>
                   <div class="meta">
                     <div class="num">#{drop:03}</div>
                     <div class="name">{name_esc}</div>
                     <div class="row"><span class="price">¥{price}</span><span class="stock">{stock}</span></div>
                   </div>
                 </a>"#,
-                id=id, img=html_attr_escape(img), name_esc=html_escape(name),
+                id=id, img=html_attr_escape(img), fb=BRAND_FALLBACK,
+                name_esc=html_escape(name),
                 drop=drop, price=format_jpy(*price), stock=stock));
         }
     }
@@ -24004,8 +24009,19 @@ async fn merch_category(
         if clauses.is_empty() {
             return (StatusCode::INTERNAL_SERVER_ERROR, "empty category config").into_response();
         }
+        // Mockup fallback: Printful upload URLs (printful-upload.s3-*) expire
+        // ~24h after upload — when that happens fall back to the stable design_url.
+        // Same CASE used in list_products / get_product so /merch grids and /api
+        // responses agree on which image is canonical for each SKU.
         let sql = format!(
-            "SELECT id, drop_num, name, mockup_url, price_jpy, inventory, sold, brand
+            "SELECT id, drop_num, name,
+                    CASE
+                      WHEN mockup_url LIKE 'https://printful-upload.s3%'
+                           OR mockup_url LIKE 'https://files.cdn.printful.com/upload%'
+                      THEN COALESCE(NULLIF(design_url,''), mockup_url)
+                      ELSE mockup_url
+                    END AS mockup_url,
+                    price_jpy, inventory, sold, brand
              FROM products WHERE active = 1 AND ({}) ORDER BY drop_num ASC, id ASC",
             clauses.join(" OR ")
         );
@@ -24030,7 +24046,14 @@ async fn merch_index(State(db): State<Db>) -> Response {
     let rows: Vec<(i64, i64, String, Option<String>, i64, i64, i64, String)> = {
         let conn = db.lock().unwrap();
         let mut stmt = match conn.prepare(
-            "SELECT id, drop_num, name, mockup_url, price_jpy, inventory, sold, brand
+            "SELECT id, drop_num, name,
+                    CASE
+                      WHEN mockup_url LIKE 'https://printful-upload.s3%'
+                           OR mockup_url LIKE 'https://files.cdn.printful.com/upload%'
+                      THEN COALESCE(NULLIF(design_url,''), mockup_url)
+                      ELSE mockup_url
+                    END AS mockup_url,
+                    price_jpy, inventory, sold, brand
              FROM products WHERE active = 1 ORDER BY drop_num ASC, id ASC"
         ) {
             Ok(s) => s,
