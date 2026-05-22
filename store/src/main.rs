@@ -11128,12 +11128,16 @@ const CHALLENGE_100_START_UNIX: i64 = 1779030000; // = 2026-05-17T15:00:00Z
 
 /// 2026-05-24 TOKYO LIVE EVENT: JIU FIGHT × MU レベニューシェア 100 着 bulk order。
 /// Stripe を通らない B2B 確定発注を mu_purchases に 1 度だけ記録して /100 カウンタへ反映。
-/// 冪等: cv_config sentinel `jiufight_bulk_b2b_100_inserted`。
+/// 冪等: cv_config sentinel `jiufight_bulk_b2b_100_inserted_v2`。
 /// 取り消し方: DELETE FROM mu_purchases WHERE session_id LIKE 'B2B_JIUFIGHT_5_24_%';
-///             DELETE FROM cv_config WHERE key='jiufight_bulk_b2b_100_inserted';
+///             DELETE FROM cv_config WHERE key='jiufight_bulk_b2b_100_inserted_v2';
+///
+/// v2 (2026-05-22): v1 inserted NULL into product_id (NOT NULL constraint) →
+/// 全 INSERT が silently fail。sentinel name を変えて再試行。 product_id は
+/// 0 (sentinel — 実商品と join しない B2B bulk マーカー)。
 fn ensure_jiufight_bulk_b2b_100(db: &Db) {
     let conn = db.lock().unwrap();
-    if cv_get(&conn, "jiufight_bulk_b2b_100_inserted", "0") == "1" {
+    if cv_get(&conn, "jiufight_bulk_b2b_100_inserted_v2", "0") == "1" {
         return;
     }
     let now = chrono_now();
@@ -11145,12 +11149,12 @@ fn ensure_jiufight_bulk_b2b_100(db: &Db) {
         let n = conn.execute(
             "INSERT OR IGNORE INTO mu_purchases
              (email, product_id, brand, drop_num, session_id, amount_jpy, created_at)
-             VALUES (?, NULL, 'jiufight', 1, ?, ?, ?)",
+             VALUES (?, 0, 'jiufight', 1, ?, ?, ?)",
             params![email, session_id, amount_per_unit, now],
         ).unwrap_or(0) as i64;
         inserted += n;
     }
-    cv_set(&conn, "jiufight_bulk_b2b_100_inserted", "1",
+    cv_set(&conn, "jiufight_bulk_b2b_100_inserted_v2", "1",
            "2026-05-24 TOKYO LIVE EVENT bulk B2B rev-share order");
     tracing::info!("ensure_jiufight_bulk_b2b_100: inserted {} of 100 rows", inserted);
 }
