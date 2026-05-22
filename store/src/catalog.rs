@@ -137,24 +137,19 @@ pub fn founder_cards_remaining(conn: &rusqlite::Connection) -> i64 {
 }
 
 /// Idempotent seeder for the ROLL ◐ MU brand (1 brand + 20 products).
-/// Run on every boot — INSERT OR IGNORE makes it cheap to re-run, and
-/// gating on the brand existing avoids parsing the SQL when not needed.
+/// Runs the full SQL on every boot — the brand row uses ON CONFLICT
+/// DO UPDATE so config_json edits land each release, and product inserts
+/// use INSERT OR IGNORE so existing rows stay intact.
 ///
 /// Para-BJJ first edition. See /static/roll/index.html and
 /// /static/roll/designs.json for the curated design briefs.
 pub fn seed_roll_brand(conn: &rusqlite::Connection) {
-    let already: i64 = conn
-        .query_row("SELECT COUNT(*) FROM catalog_brands WHERE slug='roll'", [], |r| r.get(0))
-        .unwrap_or(0);
-    if already > 0 {
-        return;
-    }
     match conn.execute_batch(ROLL_SEED_SQL) {
         Ok(()) => {
             let n: i64 = conn
                 .query_row("SELECT COUNT(*) FROM catalog_products WHERE brand='roll'", [], |r| r.get(0))
                 .unwrap_or(0);
-            tracing::info!("[catalog] seeded ROLL brand + {} products", n);
+            tracing::info!("[catalog] ROLL brand upserted · {} products live", n);
         }
         Err(e) => tracing::error!("[catalog] roll seed failed: {}", e),
     }
