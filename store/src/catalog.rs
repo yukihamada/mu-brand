@@ -1568,14 +1568,19 @@ pub async fn admin_status(
 #[derive(Deserialize)]
 pub struct ShopQuery {
     pub brand: Option<String>,
+    pub page: Option<u32>,
 }
+
+const SHOP_PAGE_SIZE: i64 = 60;
 
 pub async fn shop_index(
     State(db): State<Db>,
     Query(q): Query<ShopQuery>,
 ) -> Html<String> {
     let brand_filter = q.brand.unwrap_or_default();
-    let (brands, items) = {
+    let page = q.page.unwrap_or(1).max(1);
+    let offset = (page as i64 - 1) * SHOP_PAGE_SIZE;
+    let (brands, items, total_active) = {
         let conn = db.lock().unwrap();
         let brands: Vec<(String, String, String)> = conn
             .prepare(
@@ -1594,12 +1599,24 @@ pub async fn shop_index(
             })
             .unwrap_or_default();
 
-        let items: Vec<ProductRow> = if brand_filter.is_empty() {
-            list_products(&conn, None, 60)
+        let total: i64 = if brand_filter.is_empty() {
+            conn.query_row(
+                "SELECT COUNT(*) FROM catalog_products WHERE is_active=1",
+                [], |r| r.get(0)
+            ).unwrap_or(0)
         } else {
-            list_products(&conn, Some(&brand_filter), 240)
+            conn.query_row(
+                "SELECT COUNT(*) FROM catalog_products WHERE is_active=1 AND brand=?",
+                rusqlite::params![&brand_filter], |r| r.get(0)
+            ).unwrap_or(0)
         };
-        (brands, items)
+
+        let items: Vec<ProductRow> = if brand_filter.is_empty() {
+            list_products_paged(&conn, None, SHOP_PAGE_SIZE, offset)
+        } else {
+            list_products_paged(&conn, Some(&brand_filter), SHOP_PAGE_SIZE, offset)
+        };
+        (brands, items, total)
     };
 
     let brand_chips = {
@@ -1626,17 +1643,48 @@ pub async fn shop_index(
         .map(|p| render_card(p))
         .collect::<String>();
 
-    let count = items.len();
+    let page_count = items.len();
+    let total_pages = ((total_active as f64) / (SHOP_PAGE_SIZE as f64)).ceil() as u32;
     let title = if brand_filter.is_empty() {
-        "/shop — MU カタログ".to_string()
+        format!("/shop — {} 件のコラボ商品 | MU", total_active)
     } else {
-        format!("/shop — {} | MU カタログ", brand_filter)
+        format!("/shop — {} ({}件) | MU カタログ", brand_filter, total_active)
+    };
+
+    // Pagination: prev / page-of-pages / next. Brand filter persists.
+    let bq = if brand_filter.is_empty() {
+        String::new()
+    } else {
+        format!("&brand={}", urlencoding::encode(&brand_filter))
+    };
+    let prev_link = if page > 1 {
+        format!(r#"<a class="pg-link" href="/shop?page={}{}">← 前 {} 件</a>"#,
+            page - 1, bq, SHOP_PAGE_SIZE)
+    } else {
+        r#"<span class="pg-link off">← 前</span>"#.to_string()
+    };
+    let next_link = if (page as i64) < total_pages as i64 {
+        format!(r#"<a class="pg-link" href="/shop?page={}{}">次 {} 件 →</a>"#,
+            page + 1, bq, SHOP_PAGE_SIZE)
+    } else {
+        r#"<span class="pg-link off">次 →</span>"#.to_string()
+    };
+    let pagination_html = if total_pages > 1 {
+        format!(
+            r#"<div class="pagination">{prev} <span class="pg-count">page {page} / {total} (全 {tot} 件中 {start}-{end})</span> {next}</div>"#,
+            prev = prev_link, next = next_link,
+            page = page, total = total_pages, tot = total_active,
+            start = offset + 1,
+            end = (offset + page_count as i64).min(total_active),
+        )
+    } else {
+        String::new()
     };
     let body = format!(
         r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{title}</title>
-<meta name="description" content="MU × ブランド コラボ カタログ。 {count} 件。 Stripe + Printful 直配送 7-14日。">
+<meta name="description" content="MU × ブランド コラボ カタログ。 {total} 件。 Stripe + Printful 直配送 7-14日。">
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
 body{{background:#0a0a0a;color:#f5f5f0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.55;font-size:14px}}
@@ -1665,6 +1713,11 @@ nav .brand{{font-weight:900;letter-spacing:0.4em}}
 .card .body .name{{font-size:12.5px;line-height:1.45;flex:1}}
 .card .body .price{{font-size:13px;font-weight:700;color:#fff;font-family:monospace}}
 .empty{{padding:60px 24px;text-align:center;color:rgba(245,245,240,0.5);max-width:1180px;margin:0 auto}}
+.pagination{{max-width:1180px;margin:0 auto;padding:14px 24px 40px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;font-size:12px}}
+.pg-link{{color:#ffd700;text-decoration:none;padding:8px 14px;border:1px solid rgba(255,215,0,0.4);border-radius:999px;font-size:11px;letter-spacing:0.05em}}
+.pg-link:hover{{background:rgba(255,215,0,0.08)}}
+.pg-link.off{{color:#444;border-color:rgba(255,255,255,0.06);cursor:not-allowed}}
+.pg-count{{color:rgba(245,245,240,0.5);font-size:11px;font-family:monospace}}
 footer{{padding:30px 24px 50px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;color:rgba(245,245,240,0.5);font-size:10px;letter-spacing:0.15em}}
 footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
 </style></head><body>
@@ -1678,7 +1731,7 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
 </nav>
 <div class="hero">
   <h1>━◯━ 知ってる人にだけ届く wearable.</h1>
-  <p>柔術・コーヒー・地域 ── 10+ コラボの "内側からの服"。 在庫を持たず、 注文ごとに 1 枚刷ります (POD)。 {count} 件公開中。</p>
+  <p>柔術・コーヒー・地域 ── 10+ コラボの "内側からの服"。 在庫を持たず、 注文ごとに 1 枚刷ります (POD)。 <strong style="color:#ffd700">{total} 件</strong> 公開中。</p>
   <div class="trust">
     <span><strong>国際発送</strong> 7-14 日 (DHL / FedEx)</span>
     <span><strong>1 着から</strong> オーダー可</span>
@@ -1688,6 +1741,7 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
 </div>
 <div class="chips">{brand_chips}</div>
 {body_or_empty}
+{pagination}
 <footer>
   <span>© 2026 MU / Enabler Inc.</span>
   <a href="/privacy">プライバシー</a>
@@ -1697,13 +1751,14 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </body></html>"##,
         title = html_text(&title),
-        count = count,
+        total = total_active,
         brand_chips = brand_chips,
         body_or_empty = if items.is_empty() {
             r#"<div class="empty">該当する商品がありません。</div>"#.to_string()
         } else {
             format!(r#"<div class="grid">{}</div>"#, grid)
         },
+        pagination = pagination_html,
     );
     Html(body)
 }
@@ -2518,6 +2573,58 @@ struct ProductRow {
     img: Option<String>,
 }
 
+fn list_products_paged(
+    conn: &rusqlite::Connection,
+    brand: Option<&str>,
+    limit: i64,
+    offset: i64,
+) -> Vec<ProductRow> {
+    let (sql, has_brand) = if brand.is_some() {
+        (
+            "SELECT sku, brand, description_ja, retail_price_jpy,
+                    COALESCE(mockup_url_external, mockup_main_file)
+             FROM catalog_products
+             WHERE is_active=1 AND brand=?
+             ORDER BY (brand='auto') DESC,
+                      (mockup_url_external IS NOT NULL AND mockup_url_external != '') DESC,
+                      sort_order, sku
+             LIMIT ? OFFSET ?",
+            true,
+        )
+    } else {
+        (
+            "SELECT sku, brand, description_ja, retail_price_jpy,
+                    COALESCE(mockup_url_external, mockup_main_file)
+             FROM catalog_products
+             WHERE is_active=1
+             ORDER BY (brand='auto') DESC,
+                      (mockup_url_external IS NOT NULL AND mockup_url_external != '') DESC,
+                      sort_order, sku
+             LIMIT ? OFFSET ?",
+            false,
+        )
+    };
+    let mut stmt = match conn.prepare(sql) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let mapper = |r: &rusqlite::Row| {
+        Ok(ProductRow {
+            sku: r.get(0)?, brand: r.get(1)?, desc: r.get(2)?,
+            price: r.get(3)?, img: r.get(4)?,
+        })
+    };
+    if has_brand {
+        stmt.query_map(rusqlite::params![brand.unwrap(), limit, offset], mapper)
+    } else {
+        stmt.query_map(rusqlite::params![limit, offset], mapper)
+    }
+        .ok()
+        .map(|it| it.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default()
+}
+
+#[allow(dead_code)]
 fn list_products(
     conn: &rusqlite::Connection,
     brand: Option<&str>,
