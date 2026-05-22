@@ -100,8 +100,28 @@ pub fn ensure_schema(conn: &rusqlite::Connection) {
          );
          CREATE INDEX IF NOT EXISTS idx_catorders_session
              ON catalog_orders(stripe_session_id);
+         CREATE TABLE IF NOT EXISTS catalog_founder_cards (
+            number              INTEGER PRIMARY KEY,  -- 1..100
+            stripe_session_id   TEXT UNIQUE NOT NULL,
+            sku                 TEXT,
+            customer_email      TEXT NOT NULL,
+            customer_name       TEXT,
+            ship_address_json   TEXT,
+            assigned_at         TEXT NOT NULL DEFAULT (datetime('now')),
+            mailed_at           TEXT  -- set by Yuki when he posts the signed card
+         );
+         CREATE INDEX IF NOT EXISTS idx_founder_cards_email
+             ON catalog_founder_cards(customer_email);
          "
     );
+}
+
+/// How many founder cards are still available (0..100).
+pub fn founder_cards_remaining(conn: &rusqlite::Connection) -> i64 {
+    let used: i64 = conn
+        .query_row("SELECT COUNT(*) FROM catalog_founder_cards", [], |r| r.get(0))
+        .unwrap_or(0);
+    (100 - used).max(0)
 }
 
 /// One-shot migration: fix the wrong printful_product_id (162 →
@@ -826,6 +846,56 @@ pub async fn admin_generate(
 }
 
 #[derive(Deserialize)]
+pub struct MarkMailedQuery {
+    pub token: Option<String>,
+}
+
+/// GET /admin/catalog/founder/:number/mark_mailed?token=
+/// Yuki clicks this from the action-item email after he signs + posts
+/// the physical card. Sets mailed_at on the row.
+pub async fn admin_mark_mailed(
+    State(db): State<Db>,
+    Path(number): Path<i64>,
+    Query(q): Query<MarkMailedQuery>,
+) -> Response {
+    let expected = env::var("ADMIN_TOKEN").unwrap_or_default();
+    let provided = q.token.unwrap_or_default();
+    if expected.is_empty() || provided != expected {
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    }
+    let n = {
+        let conn = db.lock().unwrap();
+        conn.execute(
+            "UPDATE catalog_founder_cards
+             SET mailed_at = datetime('now')
+             WHERE number = ? AND mailed_at IS NULL",
+            rusqlite::params![number],
+        )
+        .unwrap_or(0)
+    };
+    if n == 0 {
+        return (StatusCode::NOT_FOUND, format!("card #{} not found or already mailed", number))
+            .into_response();
+    }
+    Html(format!(
+        r#"<html><body style="font-family:monospace;padding:40px;background:#0a0a0a;color:#ffd700;font-size:14px">
+        ✓ Card #{}/100 marked as mailed at {}<br>
+        <a href="/admin/catalog/status?token={}" style="color:#ffd700">← back to status</a>
+        </body></html>"#,
+        number,
+        chrono_now_iso(),
+        expected,
+    ))
+    .into_response()
+}
+
+fn chrono_now_iso() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let t = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    format!("{}", t)
+}
+
+#[derive(Deserialize)]
 pub struct StatusQuery {
     pub token: String,
 }
@@ -1238,9 +1308,28 @@ pub async fn shop_pdp(
         .unwrap_or_default();
 
     // Trust strip: 0-review cold-traffic insurance. The early-bird founder
-    // card line addresses the "no social proof" gap: the first 100 buyers
-    // get a hand-signed thank-you postcard from Yuki.
-    let trust_block = r##"<div class="trust-strip">
+    // card line addresses the "no social proof" gap — the first 100 buyers
+    // get a Yuki-signed thank-you card by a separate mail. Counter is
+    // live so the line either creates FOMO ("only 87 left!") or honestly
+    // shows the offer is closed.
+    let founder_left = {
+        let conn = db.lock().unwrap();
+        founder_cards_remaining(&conn)
+    };
+    let founder_line = if founder_left == 0 {
+        r##"<div class="ts-row" style="background:rgba(128,128,128,0.08);border:1px solid rgba(255,255,255,0.1);padding:10px 12px;border-radius:4px;margin-top:8px">
+    <strong style="color:#888">🎴 サイン入りカード 完売</strong>
+    <small>最初の 100 名の方には濱田優貴サイン入りカードが届きます (発送済)</small>
+  </div>"##.to_string()
+    } else {
+        format!(
+r##"<div class="ts-row" style="background:rgba(255,215,0,0.07);border:1px solid rgba(255,215,0,0.35);padding:10px 12px;border-radius:4px;margin-top:8px">
+    <strong style="color:#ffd700">🎴 残り {} 枚 / 100 限定</strong>
+    <small>濱田優貴サイン入りサンクスカード (手書き · 別便で日本ポストより)</small>
+  </div>"##, founder_left)
+    };
+    let trust_block = format!(
+r##"<div class="trust-strip">
   <div class="ts-row">
     <strong>国際発送 7-14 日</strong>
     <small>DHL/FedEx tracked · JP・US・EU・CA・AU 即対応</small>
@@ -1253,11 +1342,8 @@ pub async fn shop_pdp(
     <strong>1 着から OK</strong>
     <small>在庫を持たず注文ごとに 1 枚刷ります (POD)</small>
   </div>
-  <div class="ts-row" style="background:rgba(255,215,0,0.07);border:1px solid rgba(255,215,0,0.35);padding:10px 12px;border-radius:4px;margin-top:8px">
-    <strong style="color:#ffd700">🎴 最初の 100 注文限定</strong>
-    <small>濱田優貴 サイン入りサンクスカード同梱 (number/100)</small>
-  </div>
-</div>"##.to_string();
+  {founder}
+</div>"##, founder = founder_line);
 
     let body = format!(
         r##"<!doctype html><html lang="ja"><head>
@@ -1391,7 +1477,8 @@ pub async fn shop_checkout(
     let row = {
         let conn = db.lock().unwrap();
         conn.query_row(
-            "SELECT stripe_price_id, retail_price_jpy, description_ja, brand
+            "SELECT stripe_price_id, retail_price_jpy, description_ja, brand,
+                    COALESCE(mockup_url_external, mockup_main_file, '')
              FROM catalog_products WHERE sku=? AND is_active=1",
             rusqlite::params![&sku],
             |r| {
@@ -1400,13 +1487,24 @@ pub async fn shop_checkout(
                     r.get::<_, i64>(1)?,
                     r.get::<_, String>(2)?,
                     r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
                 ))
             },
         )
         .ok()
     };
-    let Some((price_id, price_jpy, desc, _brand)) = row else {
+    let Some((price_id, price_jpy, desc, _brand, mockup_path)) = row else {
         return (StatusCode::NOT_FOUND, "sku not found").into_response();
+    };
+    // Resolve to an absolute, publicly-fetchable URL Stripe can render in
+    // the Checkout page. Relative /static/ paths get the merch-bridge
+    // origin (Stripe must fetch HTTPS).
+    let stripe_image: Option<String> = if mockup_path.is_empty() {
+        None
+    } else if mockup_path.starts_with("http") {
+        Some(mockup_path)
+    } else {
+        Some(format!("https://merch.wearmu.com{}", mockup_path))
     };
 
     let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
@@ -1438,6 +1536,9 @@ pub async fn shop_checkout(
     match price_id.filter(|s| s.starts_with("price_")) {
         Some(pid) => {
             form.push(("line_items[0][price]", pid));
+            // Pre-created prices carry images on the Stripe Product side;
+            // we can't override them at session time, so nothing else
+            // to push here.
         }
         None => {
             if price_jpy <= 0 {
@@ -1447,6 +1548,12 @@ pub async fn shop_checkout(
             form.push(("line_items[0][price_data][currency]", "jpy".into()));
             form.push(("line_items[0][price_data][unit_amount]", price_jpy.to_string()));
             form.push(("line_items[0][price_data][product_data][name]", desc.clone()));
+            // Stripe Checkout renders product_data.images[0] as the
+            // left-side thumbnail. Without this customers see a blank
+            // square and bounce — particularly bad for cold ad traffic.
+            if let Some(img) = stripe_image {
+                form.push(("line_items[0][price_data][product_data][images][0]", img));
+            }
         }
     }
 
@@ -1666,6 +1773,14 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
                 if ok { "submitted" } else { "failed" },
                 Some(&text),
             );
+            // Founder card promise (PDP "最初の 100 注文限定 サイン入りサンクスカード"):
+            // Claim the next number 1..100, record it, send the customer
+            // a "you're #X/100" email and Yuki a queue-up action item
+            // with the shipping address. The PHYSICAL card is signed +
+            // posted by Yuki separately — wearmu just runs the ledger.
+            if ok {
+                claim_and_notify_founder_card(&db, &session_id, &sku, cust, shipping).await;
+            }
         }
         Err(e) => {
             tracing::error!("[catalog/fulfill] printful net err sku={} session={}: {}",
@@ -1695,6 +1810,160 @@ fn record_order(
     status: &str,
 ) {
     record_order_full(db, session_id, sku, amount, cust, shipping, pf_id, status, None);
+}
+
+/// First-100 founder-card flow. Idempotent on stripe_session_id (INSERT
+/// OR IGNORE skips if the session already has a card). Picks the next
+/// unused 1..100 number, writes the row, then fires both the customer
+/// confirmation and the operator action-item via Resend.
+async fn claim_and_notify_founder_card(
+    db: &Db,
+    session_id: &str,
+    sku: &str,
+    cust: &serde_json::Value,
+    shipping: &serde_json::Value,
+) {
+    let email = cust["email"].as_str().unwrap_or("").to_string();
+    if email.is_empty() {
+        return;
+    }
+    let name = shipping["name"]
+        .as_str()
+        .or_else(|| cust["name"].as_str())
+        .unwrap_or("")
+        .to_string();
+    let addr_json = serde_json::to_string(&shipping["address"]).unwrap_or_else(|_| "{}".into());
+
+    // Atomically pick the next number. If 100 are already claimed, exit
+    // quietly — the customer just gets the normal Printful confirmation
+    // mail without a founder card.
+    let number: Option<i64> = {
+        let conn = db.lock().unwrap();
+        // Idempotency: if this session already has a card, return it.
+        if let Ok(existing) = conn.query_row(
+            "SELECT number FROM catalog_founder_cards WHERE stripe_session_id=?",
+            rusqlite::params![session_id],
+            |r| r.get::<_, i64>(0),
+        ) {
+            Some(existing)
+        } else {
+            let used: i64 = conn
+                .query_row("SELECT COUNT(*) FROM catalog_founder_cards", [], |r| r.get(0))
+                .unwrap_or(0);
+            if used >= 100 {
+                None
+            } else {
+                let n = used + 1;
+                let inserted = conn
+                    .execute(
+                        "INSERT OR IGNORE INTO catalog_founder_cards
+                         (number, stripe_session_id, sku, customer_email,
+                          customer_name, ship_address_json)
+                         VALUES (?,?,?,?,?,?)",
+                        rusqlite::params![n, session_id, sku, &email, &name, &addr_json],
+                    )
+                    .unwrap_or(0);
+                if inserted > 0 {
+                    Some(n)
+                } else {
+                    None
+                }
+            }
+        }
+    };
+    let Some(num) = number else {
+        return;
+    };
+
+    let resend_key = std::env::var("RESEND_API_KEY").unwrap_or_default();
+    if resend_key.is_empty() {
+        tracing::warn!("[catalog/founder] RESEND_API_KEY unset — card #{} claimed for {} but no mail sent", num, email);
+        return;
+    }
+    let client = reqwest::Client::new();
+
+    // 1. Customer email — "you are #X / 100".
+    let cust_html = format!(
+        r#"<div style="background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;padding:32px 0;margin:0">
+<div style="max-width:560px;margin:0 auto;padding:0 32px">
+<div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:24px">━◯━ MU</div>
+<div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#ffd700;opacity:0.85;margin-bottom:8px">FOUNDER CARD CLAIMED</div>
+<h2 style="font-size:20px;font-weight:500;line-height:1.4;margin:0 0 16px">あなたは <strong style="color:#ffd700">{num} / 100</strong> 番目の方です。</h2>
+<p style="font-size:13px;line-height:1.9;opacity:0.78;margin:0 0 18px">
+最初の 100 注文限定のお礼として、 濱田優貴 (MU 創業者) が手書きでサインしたサンクスカードを、
+T シャツとは<strong>別便</strong>で日本ポストよりお送りします。 通常 1-2 週間でお手元に届きます。
+</p>
+<table style="width:100%;font-size:12px;line-height:1.8;border-collapse:collapse;margin:18px 0">
+<tr><td style="opacity:0.5;width:35%;padding:4px 0">Card #</td><td style="padding:4px 0;color:#ffd700;font-weight:600">{num} / 100</td></tr>
+<tr><td style="opacity:0.5;padding:4px 0">SKU</td><td style="padding:4px 0;font-family:monospace">{sku}</td></tr>
+<tr><td style="opacity:0.5;padding:4px 0">送り先</td><td style="padding:4px 0">{name}</td></tr>
+</table>
+<p style="font-size:11px;line-height:1.85;opacity:0.55;margin:24px 0 0;border-top:1px solid #222;padding-top:18px">
+T シャツ / ラッシュガード本体は Printful より別途海外発送 (7-14 日)。 サンクスカードは濱田より日本ポストで個別便発送。
+お問い合わせ: <a href="mailto:info@enablerdao.com" style="color:#ffd700">info@enablerdao.com</a>
+</p>
+</div></div>"#,
+        num = num, sku = html_text(sku), name = html_text(&name)
+    );
+    let cust_payload = serde_json::json!({
+        "from": "MU Founder <noreply@wearmu.com>",
+        "to": [email.clone()],
+        "subject": format!("━◯━ Founder Card #{} / 100 — 濱田優貴 サイン入りカード", num),
+        "html": cust_html,
+    });
+    let _ = client
+        .post("https://api.resend.com/emails")
+        .bearer_auth(&resend_key)
+        .json(&cust_payload)
+        .send()
+        .await;
+
+    // 2. Operator action-item — Yuki gets the address + number so he can
+    // sign and post the card from his own mailbox.
+    let op_html = format!(
+        r#"<div style="font-family:monospace;font-size:13px;line-height:1.7;background:#fff;color:#000;padding:24px;max-width:560px;margin:0 auto">
+<div style="font-size:14px;font-weight:700;color:#c00">ACTION: 手書きサンクスカード #{num}/100 をサイン → 投函</div>
+<hr style="border:none;border-top:1px solid #ddd;margin:14px 0">
+<table style="font-size:12px;line-height:1.8;border-collapse:collapse"><tbody>
+<tr><td style="padding:2px 12px 2px 0;color:#666">Card #</td><td><strong>{num} / 100</strong></td></tr>
+<tr><td style="padding:2px 12px 2px 0;color:#666">注文 (SKU)</td><td>{sku}</td></tr>
+<tr><td style="padding:2px 12px 2px 0;color:#666">Stripe session</td><td>{sid}</td></tr>
+<tr><td style="padding:2px 12px 2px 0;color:#666">顧客名</td><td>{name}</td></tr>
+<tr><td style="padding:2px 12px 2px 0;color:#666">Email</td><td>{email}</td></tr>
+<tr><td style="padding:2px 12px 2px 0;color:#666;vertical-align:top">配送先</td>
+<td><pre style="margin:0;font-family:inherit;font-size:12px">{addr}</pre></td></tr>
+</tbody></table>
+<hr style="border:none;border-top:1px solid #ddd;margin:14px 0">
+<p style="font-size:11.5px;color:#555;margin:0">
+1) カードに 「ありがとう · MU · {num}/100 · 濱田優貴」 + 署名<br>
+2) 配送先住所を封筒に書いて日本ポストへ<br>
+3) ↓ をクリックして mailed_at を記録 (後日実装予定)<br>
+<a href="https://wearmu.com/admin/catalog/founder/{num}/mark_mailed">→ mark mailed #{num}</a>
+</p>
+</div>"#,
+        num = num,
+        sku = html_text(sku),
+        sid = html_text(session_id),
+        name = html_text(&name),
+        email = html_text(&email),
+        addr = html_text(&addr_json),
+    );
+    let op_to = std::env::var("FOUNDER_CARD_OPERATOR_TO")
+        .unwrap_or_else(|_| "mail@yukihamada.jp".into());
+    let op_payload = serde_json::json!({
+        "from": "MU Founder Queue <noreply@wearmu.com>",
+        "to": [op_to],
+        "subject": format!("[ACTION] Founder Card #{}/100 — sign + post", num),
+        "html": op_html,
+    });
+    let _ = client
+        .post("https://api.resend.com/emails")
+        .bearer_auth(&resend_key)
+        .json(&op_payload)
+        .send()
+        .await;
+
+    tracing::info!("[catalog/founder] claimed #{}/100 for {} session={}", num, email, session_id);
 }
 
 fn record_order_full(
