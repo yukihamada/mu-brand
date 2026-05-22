@@ -1544,6 +1544,57 @@ pub async fn shipping_page() -> Html<String> {
 }
 
 #[derive(Deserialize)]
+pub struct OrdersQuery {
+    pub token: String,
+}
+
+/// GET /admin/catalog/orders?token= — last 20 catalog_orders rows so
+/// we can see why revenue is ¥0 despite an order being recorded.
+pub async fn admin_orders(
+    State(db): State<Db>,
+    Query(q): Query<OrdersQuery>,
+) -> Response {
+    let expected = env::var("ADMIN_TOKEN").unwrap_or_default();
+    if expected.is_empty() || q.token != expected {
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    }
+    let rows: Vec<serde_json::Value> = {
+        let conn = db.lock().unwrap();
+        conn.prepare(
+            "SELECT id, stripe_session_id, sku, amount_jpy, customer_email,
+                    customer_name, printful_order_id, status,
+                    SUBSTR(COALESCE(printful_response_json,''), 1, 400) AS pf_excerpt,
+                    SUBSTR(COALESCE(shipping_address_json,''), 1, 200) AS addr,
+                    created_at
+             FROM catalog_orders
+             ORDER BY id DESC LIMIT 20",
+        )
+        .ok()
+        .and_then(|mut s| {
+            s.query_map([], |r| {
+                Ok(serde_json::json!({
+                    "id": r.get::<_, i64>(0)?,
+                    "stripe_session_id": r.get::<_, String>(1)?,
+                    "sku": r.get::<_, Option<String>>(2)?,
+                    "amount_jpy": r.get::<_, Option<i64>>(3)?,
+                    "customer_email": r.get::<_, Option<String>>(4)?,
+                    "customer_name": r.get::<_, Option<String>>(5)?,
+                    "printful_order_id": r.get::<_, Option<String>>(6)?,
+                    "status": r.get::<_, Option<String>>(7)?,
+                    "printful_response_excerpt": r.get::<_, Option<String>>(8)?,
+                    "shipping_address_excerpt": r.get::<_, Option<String>>(9)?,
+                    "created_at": r.get::<_, String>(10)?,
+                }))
+            })
+            .ok()
+            .map(|it| it.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default()
+    };
+    axum::Json(serde_json::json!({"count": rows.len(), "orders": rows})).into_response()
+}
+
+#[derive(Deserialize)]
 pub struct StatusQuery {
     pub token: String,
 }
