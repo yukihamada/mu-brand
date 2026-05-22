@@ -1731,7 +1731,7 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
 </nav>
 <div class="hero">
   <h1>━◯━ 知ってる人にだけ届く wearable.</h1>
-  <p>柔術・コーヒー・地域 ── 10+ コラボの "内側からの服"。 在庫を持たず、 注文ごとに 1 枚刷ります (POD)。 <strong style="color:#ffd700">{total} 件</strong> 公開中。</p>
+  <p>柔術・コーヒー・地域 ── 10+ コラボの "内側からの服"。 受注生産 — 1 着から、 完売・廃棄ゼロ。 <strong style="color:#ffd700">{total} 件</strong> 公開中。</p>
   <div class="trust">
     <span><strong>国際発送</strong> 7-14 日 (DHL / FedEx)</span>
     <span><strong>1 着から</strong> オーダー可</span>
@@ -1900,8 +1900,8 @@ pub async fn shop_pdp(
     <small>サイズ違い・破損は無料交換 · returns@wearmu.com</small>
   </div>
   <div class="ts-row">
-    <strong>1 着から OK</strong>
-    <small>在庫を持たず注文ごとに 1 枚刷ります (POD)</small>
+    <strong>受注生産 1 着から</strong>
+    <small>注文を受けてから 1 枚ずつ縫製。 完売・在庫廃棄 ゼロ。</small>
   </div>
 </div>"##.to_string();
 
