@@ -73,7 +73,12 @@ a{color:inherit;text-decoration:none}
 .card .preview{background:radial-gradient(circle at 50% 30%, #1a1a1a, #050505 75%);}
 .card.color-white .preview{background:radial-gradient(circle at 50% 30%, #fafafa, #e8e8e0 75%);}
 .card.kind-rashguard .preview{background:radial-gradient(135deg, #050505 0%, #1a1500 100%);background:linear-gradient(135deg, #0a0a0a 0%, #1a1500 100%);}
-.card .preview img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0.65;mix-blend-mode:luminosity;}
+.card .preview img.mockup-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:1;z-index:1;}
+.card .preview img.mockup-img.failed{display:none;}
+/* When a real mockup loads, hide the typography overlay (image already
+   contains the design). On load-failure, design-overlay stays visible
+   as a graceful fallback. */
+.card .preview:has(img.mockup-img:not(.failed)) .design-overlay{display:none;}
 /* subtle "garment hint" — center vignette + soft top highlight */
 .card .preview::before{content:"";position:absolute;inset:0;background:radial-gradient(ellipse at 50% 0%, rgba(255,255,255,0.06), transparent 40%),radial-gradient(ellipse at 50% 100%, rgba(0,0,0,0.4), transparent 50%);pointer-events:none;z-index:1;}
 .card.color-white .preview::before{background:radial-gradient(ellipse at 50% 0%, rgba(255,255,255,0.4), transparent 40%),radial-gradient(ellipse at 50% 100%, rgba(0,0,0,0.06), transparent 50%);}
@@ -196,8 +201,8 @@ footer a{color:var(--gold);}
 <!-- ─── PROFIT / TRUST (DB-driven %) ──────────────────── -->
 <section class="profit">
   <div class="profit-wrap">
-    <h3>売上の <strong><span id="donation-pct">—</span>%</strong> はパラ柔術競技者へ寄付されます。</h3>
-    <p style="opacity:0.7;line-height:1.7;font-size:14px;">ROLL は MU §28 利益分配ルールに従い、すべての売上を透明に分配します。<br>あなたが買えば、最前線の選手が、もう一度マットに立てる。</p>
+    <h3><strong>利益の <span id="donation-pct">—</span>%</strong> はパラ柔術競技者へ寄付されます。</h3>
+    <p style="opacity:0.7;line-height:1.7;font-size:14px;">ROLL は MU §28 利益分配ルール (Printful 原価・決済手数料・送料を引いた純利益が対象) に従い、四半期ごとに透明に分配します。<br>あなたが買えば、最前線の選手が、もう一度マットに立てる。</p>
     <div class="splits" id="splits"></div>
     <div class="fine">分配は四半期ごとに <a href="/profit-split">/profit-split</a> で公開。Printful 在庫レス DTG / 昇華プリント・7–14日配送・不良品全額返金。</div>
   </div>
@@ -207,7 +212,7 @@ footer a{color:var(--gold);}
 <section class="bigcta">
   <h3>世界を、<span class="gold">回せ。</span></h3>
   <p>SPIN THE WORLD · MOVE THE WORLD</p>
-  <a href="https://merch.wearmu.com/merch/roll" class="btn btn-primary">SHOP ALL · <span id="total-count">—</span> SKUs</a>
+  <a href="/shop?brand=roll" class="btn btn-primary">SHOP ALL · <span id="total-count">—</span> SKUs</a>
 </section>
 
 <!-- ─── OTHER MU BRANDS (entirely DB-driven via /api/brands) ── -->
@@ -264,12 +269,16 @@ function cardHtml(p, idx){
                 : num === '05' ? '<div class="ribbon">LIMITED</div>'
                 : num === '09' && p.kind === 'rashguard' ? '<div class="ribbon">UNIQUE</div>'
                 : '';
-  const buyUrl = 'https://merch.wearmu.com/merch/roll?sku=' + encodeURIComponent(p.sku);
+  // Internal DB-driven Stripe checkout — falls back to dynamic pricing
+  // (retail_price_jpy + description_ja) when stripe_price_id is null.
+  const buyUrl = '/api/shop/checkout?sku=' + encodeURIComponent(p.sku);
   return `
   <a class="card color-${isWhite?'white':'black'} kind-${p.kind}" href="${esc(buyUrl)}" data-sku="${esc(p.sku)}">
     <div class="preview">
       <div class="kind-tag">${p.kind === 'rashguard' ? 'RASHGUARD · AOP' : (color === 'WHITE' ? 'TEE · WHITE' : 'TEE · BLACK')}</div>
-      ${p.mockup_url ? `<img src="${esc(p.mockup_url)}" alt="${esc(p.label)}" loading="lazy">` : ''}
+      ${p.mockup_url
+        ? `<img src="${esc(p.mockup_url)}" alt="${esc(p.label)}" loading="lazy" class="mockup-img" onerror="this.classList.add('failed');this.parentElement.classList.add('fallback')">`
+        : ''}
       <div class="design-overlay">
         <div class="label-jp">${esc(p.label)}</div>
         ${category ? `<div class="label-sub">${esc(category)}</div>` : ''}
@@ -358,7 +367,7 @@ function brandCardHtml(b, currentSlug){
     <div class="b-tagline">${esc(b.tagline || '')}</div>
     <div class="b-meta">
       <span class="pill">${b.product_count} SKU${b.product_count === 1 ? '' : 's'}</span>
-      ${b.revenue_share_pct > 0 ? `<span class="pill">寄付 ${b.revenue_share_pct}%</span>` : ''}
+      ${b.revenue_share_pct > 0 ? `<span class="pill">利益 ${b.revenue_share_pct}% 寄付</span>` : ''}
       ${isCurrent ? '<span class="pill current">NOW VIEWING</span>' : ''}
     </div>
   </a>`;
