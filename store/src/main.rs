@@ -11458,14 +11458,31 @@ async fn admin_hub_page(
     let token = q.get("token").cloned().unwrap_or_default();
     let t = html_attr_escape(&token);
 
-    // Quick counts for at-a-glance summary at top.
-    let (products_active, mu_purchases_total, outreach_total, niches_count): (i64, i64, i64, i64) = {
+    // Quick counts for at-a-glance summary at top. Server-rendered as a
+    // no-JS fallback; the JS block below hydrates with fresh numbers from
+    // /api/admin/dashboard every few seconds.
+    let (products_active, mu_purchases_total, _outreach_total, _niches_count,
+         rev_today, rev_week, rev_month, orders_today, orders_month, broken):
+        (i64, i64, i64, i64, i64, i64, i64, i64, i64, i64) = {
         let conn = db.lock().unwrap();
+        let now_secs: i64 = chrono_now().parse().unwrap_or(0);
+        let jst_offset = 9 * 3600;
+        let day_start = ((now_secs + jst_offset) / 86_400) * 86_400 - jst_offset;
+        let week_start = day_start - 6 * 86_400;
+        let month_start = day_start - 29 * 86_400;
+        let sum = |sql: &str, t: i64| conn.query_row(sql, params![t], |r| r.get::<_, i64>(0)).unwrap_or(0);
         (
             conn.query_row("SELECT COUNT(*) FROM products WHERE active=1", [], |r| r.get(0)).unwrap_or(0),
             conn.query_row("SELECT COUNT(*) FROM mu_purchases", [], |r| r.get(0)).unwrap_or(0),
             conn.query_row("SELECT COUNT(*) FROM mu_outreach", [], |r| r.get(0)).unwrap_or(0),
             conn.query_row("SELECT COUNT(*) FROM mu_niches WHERE status='active'", [], |r| r.get(0)).unwrap_or(0),
+            sum("SELECT COALESCE(SUM(amount_jpy),0) FROM mu_purchases WHERE CAST(COALESCE(created_at,'0') AS INTEGER) >= ?", day_start),
+            sum("SELECT COALESCE(SUM(amount_jpy),0) FROM mu_purchases WHERE CAST(COALESCE(created_at,'0') AS INTEGER) >= ?", week_start),
+            sum("SELECT COALESCE(SUM(amount_jpy),0) FROM mu_purchases WHERE CAST(COALESCE(created_at,'0') AS INTEGER) >= ?", month_start),
+            sum("SELECT COUNT(*) FROM mu_purchases WHERE CAST(COALESCE(created_at,'0') AS INTEGER) >= ?", day_start),
+            sum("SELECT COUNT(*) FROM mu_purchases WHERE CAST(COALESCE(created_at,'0') AS INTEGER) >= ?", month_start),
+            conn.query_row("SELECT COUNT(*) FROM products WHERE active=1 AND (mockup_url LIKE 'https://printful-upload.s3%' OR mockup_url LIKE 'https://files.cdn.printful.com/upload%')",
+                [], |r| r.get(0)).unwrap_or(0),
         )
     };
 
@@ -11498,11 +11515,26 @@ h2{{font-size:11px;letter-spacing:0.4em;text-transform:uppercase;color:rgba(245,
 <h1>MU <b>admin</b> · hub</h1>
 <p class="muted">/admin · token-gated · {now}</p>
 
-<div class="stats">
-  <div class="stat"><div class="num">{products}</div><div class="lbl">products active</div></div>
-  <div class="stat"><div class="num">{purchases}</div><div class="lbl">mu_purchases total</div></div>
-  <div class="stat"><div class="num">{outreach}</div><div class="lbl">outreach pipeline</div></div>
-  <div class="stat"><div class="num">{niches}</div><div class="lbl">niches active</div></div>
+<!-- Live KPIs — hydrated client-side from /api/admin/dashboard so the
+     numbers stay fresh without rerendering the whole hub. Initial render
+     uses server-side counts as a fallback for no-JS / slow networks. -->
+<div class="stats" id="kpi-stats">
+  <div class="stat"><div class="num" id="kpi-rev-today">¥{rev_today}</div><div class="lbl">revenue TODAY</div></div>
+  <div class="stat"><div class="num" id="kpi-orders-today">{orders_today}</div><div class="lbl">orders TODAY</div></div>
+  <div class="stat"><div class="num" id="kpi-rev-month">¥{rev_month}</div><div class="lbl">revenue MTD</div></div>
+  <div class="stat"><div class="num" id="kpi-products-active">{products}</div><div class="lbl">products active</div></div>
+</div>
+<div class="stats" id="kpi-stats-2" style="margin-top:-20px">
+  <div class="stat"><div class="num" id="kpi-rev-week">¥{rev_week}</div><div class="lbl">revenue WTD</div></div>
+  <div class="stat"><div class="num" id="kpi-orders-month">{orders_month}</div><div class="lbl">orders MTD</div></div>
+  <div class="stat"><div class="num" id="kpi-broken">{broken}</div><div class="lbl">⚠ broken mockup</div></div>
+  <div class="stat"><div class="num" id="kpi-purchases">{purchases}</div><div class="lbl">lifetime orders</div></div>
+</div>
+
+<!-- Recent activity feed — last 5 purchases (buyer email anonymized). -->
+<h2>Recent purchases</h2>
+<div id="recent-feed" style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:14px 18px;font-size:12.5px;line-height:1.95">
+  <div style="opacity:0.55">loading…</div>
 </div>
 
 <h2>Niche / Outreach</h2>
@@ -11549,13 +11581,67 @@ h2{{font-size:11px;letter-spacing:0.4em;text-transform:uppercase;color:rgba(245,
 </div>
 
 <div class="foot">— Enabler Inc. · admin only · <a href="/">/ TOP</a></div>
+
+<script>
+(function(){{
+  // Live KPI hydration. Polls /api/admin/dashboard every 60s (10s when the
+  // tab is focused) so the hub doubles as a live ops view. Uses the token
+  // from the URL — server already validated for the initial HTML render
+  // so it's safe to pass back.
+  var TOK = "{t}";
+  function fmtJpy(n){{ return '¥' + (Number(n)||0).toLocaleString('en-US'); }}
+  function setText(id, v){{ var el=document.getElementById(id); if(el) el.textContent = v; }}
+  function renderFeed(rows){{
+    var el = document.getElementById('recent-feed');
+    if(!el) return;
+    if(!rows || !rows.length){{ el.innerHTML = '<div style="opacity:0.55">— 直近の注文 なし —</div>'; return; }}
+    el.innerHTML = rows.map(function(r){{
+      var when = r.created_at ? new Date(parseInt(r.created_at,10)*1000).toLocaleString('ja-JP',{{hour:'2-digit',minute:'2-digit',month:'2-digit',day:'2-digit'}}) : '?';
+      var stat = r.pf_status ? '<span style="color:#74d99a;font-size:10.5px;margin-left:8px">' + r.pf_status + '</span>' : '';
+      return '<div>· <span style="color:rgba(245,245,240,0.5)">'+ when +'</span>'
+           + '  <b style="color:#e6c449">'+ r.brand + (r.drop_num?(' #'+r.drop_num):'') +'</b>'
+           + '  ¥'+ Number(r.amount_jpy||0).toLocaleString()
+           + '  <span style="color:rgba(245,245,240,0.45);font-size:11px">'+ (r.buyer||'?') +'</span>'
+           + stat +'</div>';
+    }}).join('');
+  }}
+  function hydrate(){{
+    fetch('/api/admin/dashboard?token=' + encodeURIComponent(TOK), {{credentials:'include'}})
+      .then(function(r){{ return r.ok ? r.json() : null; }})
+      .then(function(d){{
+        if(!d) return;
+        setText('kpi-rev-today',  fmtJpy(d.revenue.today));
+        setText('kpi-rev-week',   fmtJpy(d.revenue.week));
+        setText('kpi-rev-month',  fmtJpy(d.revenue.month));
+        setText('kpi-orders-today',  d.orders.today);
+        setText('kpi-orders-month',  d.orders.month);
+        setText('kpi-products-active', d.products.active);
+        setText('kpi-purchases',  d.orders.lifetime);
+        setText('kpi-broken',     d.alerts.broken_mockup_count);
+        renderFeed(d.recent_purchases);
+      }})
+      .catch(function(){{}});
+  }}
+  hydrate();
+  var poll = function(){{
+    var i = document.visibilityState === 'visible' ? 10000 : 60000;
+    setTimeout(function(){{ hydrate(); poll(); }}, i);
+  }};
+  poll();
+}})();
+</script>
+
 </body></html>"##,
         now = html_escape(&chrono_now_human()),
         t = t,
         products = products_active,
         purchases = mu_purchases_total,
-        outreach = outreach_total,
-        niches = niches_count,
+        rev_today = format_jpy(rev_today),
+        rev_week = format_jpy(rev_week),
+        rev_month = format_jpy(rev_month),
+        orders_today = orders_today,
+        orders_month = orders_month,
+        broken = broken,
     );
     Html(html).into_response()
 }
@@ -36865,6 +36951,108 @@ footer a:hover{{color:var(--y)}}
 
 /// `/api/transparency` — public stats for the blog. Honest, computed live,
 /// no caching. If a number is wrong on the blog it's wrong here too.
+/// GET /api/admin/dashboard — single-call admin KPI snapshot for the /admin hub.
+///
+/// Replaces 5+ separate fetches the hub used to do (counts, recent orders,
+/// alerts, ad spend). Designed for the live dashboard widget — fast counts
+/// only, no expensive joins. All numbers are JST-rounded for "today".
+async fn admin_dashboard_api(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/dashboard").await { return r; }
+    let conn = db.lock().unwrap();
+    // Time windows in JST (UTC + 9h). chrono_now() returns a unix timestamp
+    // string; we convert to seconds and compute floor(today_00:00) JST.
+    let now_secs: i64 = chrono_now().parse().unwrap_or(0);
+    let jst_offset = 9 * 3600;
+    let day_start_jst = ((now_secs + jst_offset) / 86_400) * 86_400 - jst_offset;
+    let week_start = day_start_jst - 6 * 86_400;
+    let month_start = day_start_jst - 29 * 86_400;
+    let q1 = |sql: &str, t: i64| -> i64 {
+        conn.query_row(sql, params![t], |r| r.get(0)).unwrap_or(0)
+    };
+    let revenue_today = q1(
+        "SELECT COALESCE(SUM(amount_jpy),0) FROM mu_purchases
+         WHERE CAST(COALESCE(created_at,'0') AS INTEGER) >= ?", day_start_jst);
+    let revenue_week = q1(
+        "SELECT COALESCE(SUM(amount_jpy),0) FROM mu_purchases
+         WHERE CAST(COALESCE(created_at,'0') AS INTEGER) >= ?", week_start);
+    let revenue_month = q1(
+        "SELECT COALESCE(SUM(amount_jpy),0) FROM mu_purchases
+         WHERE CAST(COALESCE(created_at,'0') AS INTEGER) >= ?", month_start);
+    let revenue_total = conn.query_row(
+        "SELECT COALESCE(SUM(amount_jpy),0) FROM mu_purchases", [], |r| r.get::<_, i64>(0)).unwrap_or(0);
+    let orders_today = q1(
+        "SELECT COUNT(*) FROM mu_purchases
+         WHERE CAST(COALESCE(created_at,'0') AS INTEGER) >= ?", day_start_jst);
+    let orders_week = q1(
+        "SELECT COUNT(*) FROM mu_purchases
+         WHERE CAST(COALESCE(created_at,'0') AS INTEGER) >= ?", week_start);
+    let orders_month = q1(
+        "SELECT COUNT(*) FROM mu_purchases
+         WHERE CAST(COALESCE(created_at,'0') AS INTEGER) >= ?", month_start);
+    let products_active = conn.query_row(
+        "SELECT COUNT(*) FROM products WHERE active=1", [], |r| r.get::<_, i64>(0)).unwrap_or(0);
+    let products_total = conn.query_row(
+        "SELECT COUNT(*) FROM products", [], |r| r.get::<_, i64>(0)).unwrap_or(0);
+    let products_with_design = conn.query_row(
+        "SELECT COUNT(*) FROM products WHERE active=1 AND design_url IS NOT NULL AND design_url != ''",
+        [], |r| r.get::<_, i64>(0)).unwrap_or(0);
+    let products_with_mockup = conn.query_row(
+        "SELECT COUNT(*) FROM products WHERE active=1 AND mockup_url IS NOT NULL AND mockup_url != ''",
+        [], |r| r.get::<_, i64>(0)).unwrap_or(0);
+    // Likely-broken: Printful S3 temp URLs that expire ~24h after upload.
+    let products_likely_broken = conn.query_row(
+        "SELECT COUNT(*) FROM products WHERE active=1 AND (
+            mockup_url LIKE 'https://printful-upload.s3%'
+            OR mockup_url LIKE 'https://files.cdn.printful.com/upload%'
+         )", [], |r| r.get::<_, i64>(0)).unwrap_or(0);
+    let outreach_total = conn.query_row(
+        "SELECT COUNT(*) FROM mu_outreach", [], |r| r.get::<_, i64>(0)).unwrap_or(0);
+    let outreach_replied = conn.query_row(
+        "SELECT COUNT(*) FROM mu_outreach WHERE status='replied'", [], |r| r.get::<_, i64>(0)).unwrap_or(0);
+    let purchases_total = conn.query_row(
+        "SELECT COUNT(*) FROM mu_purchases", [], |r| r.get::<_, i64>(0)).unwrap_or(0);
+    // 5 most recent paid purchases (anonymized for the admin view too —
+    // first char of email + domain, not full address)
+    let recent: Vec<serde_json::Value> = conn.prepare(
+        "SELECT created_at, brand, drop_num, amount_jpy, email, printful_order_id, last_printful_status
+         FROM mu_purchases ORDER BY id DESC LIMIT 5"
+    ).ok().and_then(|mut stmt| stmt.query_map([], |r| {
+        let email: String = r.get::<_, Option<String>>(4).unwrap_or(None).unwrap_or_default();
+        let email_short = if let Some(at) = email.find('@') {
+            format!("{}…@{}", &email[..at.min(2)], &email[at+1..])
+        } else { String::new() };
+        Ok(serde_json::json!({
+            "created_at": r.get::<_, String>(0).unwrap_or_default(),
+            "brand":      r.get::<_, String>(1).unwrap_or_default(),
+            "drop_num":   r.get::<_, i64>(2).unwrap_or(0),
+            "amount_jpy": r.get::<_, i64>(3).unwrap_or(0),
+            "buyer":      email_short,
+            "pf_status":  r.get::<_, Option<String>>(6).unwrap_or(None),
+        }))
+    }).map(|i| i.flatten().collect()).ok()).unwrap_or_default();
+    drop(conn);
+    Json(serde_json::json!({
+        "mark": "━◯━",
+        "as_of_unix": now_secs,
+        "revenue":    { "today": revenue_today, "week": revenue_week, "month": revenue_month, "lifetime": revenue_total },
+        "orders":     { "today": orders_today,  "week": orders_week,  "month": orders_month,  "lifetime": purchases_total },
+        "products":   { "active": products_active, "total": products_total,
+                        "with_design": products_with_design, "with_mockup": products_with_mockup,
+                        "likely_broken_mockup": products_likely_broken },
+        "outreach":   { "total": outreach_total, "replied": outreach_replied },
+        "alerts":     {
+            "broken_mockup_count": products_likely_broken,
+            "missing_design_count": products_active - products_with_design,
+        },
+        "recent_purchases": recent,
+    })).into_response()
+}
+
+
 async fn public_transparency(State(db): State<Db>) -> impl IntoResponse {
     let mut snap = gather_transparency_snapshot(&db);
     // Brand mark — every API consumer sees ━◯━ as a top-level field so it
@@ -60812,6 +61000,7 @@ async fn main() {
         // pipeline. Token-gated via admin_auth.
         .route("/admin", get(admin_hub_page))
         .route("/admin/outreach", get(admin_outreach_page))
+        .route("/api/admin/dashboard", get(admin_dashboard_api))
         .route("/api/admin/outreach", post(admin_outreach_create))
         .route("/api/admin/outreach/:id/status", post(admin_outreach_status))
         .route("/admin/product/new", get(admin_product_new_page))

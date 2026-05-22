@@ -41,8 +41,26 @@ jobs:
             if curl -fsS --max-time 3 "http://localhost:13000/healthz" > /tmp/smoke.json 2>/dev/null; then
               echo "✓ /healthz responded after ${i}x2s"
               cat /tmp/smoke.json
+              # Additional admin-surface smoke: /api/admin/dashboard must
+              # return JSON containing the brand mark. Catches schema drift
+              # / migration failures that don't fail /healthz.
+              if curl -fsS --max-time 5 \
+                "http://localhost:13000/api/admin/dashboard?token=${ADMIN_TOKEN}" \
+                > /tmp/smoke_admin.json 2>/dev/null; then
+                if grep -q '"mark":"━◯━"' /tmp/smoke_admin.json; then
+                  echo "✓ /api/admin/dashboard returned canonical brand mark"
+                else
+                  echo "❌ /api/admin/dashboard body unexpected:"
+                  head -c 600 /tmp/smoke_admin.json
+                  kill -9 $BIN_PID 2>/dev/null || true
+                  exit 1
+                fi
+              else
+                echo "❌ /api/admin/dashboard unreachable / non-2xx"
+                kill -9 $BIN_PID 2>/dev/null || true
+                exit 1
+              fi
               kill $BIN_PID 2>/dev/null || true
-              # Wait briefly for the process to exit cleanly.
               wait $BIN_PID 2>/dev/null || true
               exit 0
             fi
