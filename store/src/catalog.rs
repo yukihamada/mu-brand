@@ -155,6 +155,68 @@ pub fn seed_roll_brand(conn: &rusqlite::Connection) {
     }
 }
 
+/// One-shot async backfill: for every ROLL SKU whose mockup is still the
+/// typography preview PNG (not a real on-body Printful render), call the
+/// Printful Mockup Generator with the design PNG and update
+/// `mockup_url_external` to the resulting model-wearing-shirt photo.
+///
+/// Spawned in the background by main() after seed_roll_brand so boot is
+/// non-blocking. Generator basic single-front is free; sleep 3s between
+/// SKUs to be polite to the queue.
+///
+/// Detection: a "real" Printful mockup URL contains either
+/// `files.cdn.printful.com` (direct Printful CDN) or our R2 mirror.
+/// Typography previews live under `/roll/mockups/preview_…` or our
+/// `wearmu.com/roll/mockups/preview_…` mirror — those trigger backfill.
+pub fn spawn_roll_mockup_backfill(db: Db) {
+    tokio::spawn(async move {
+        // Wait a bit so the boot logs are clean and the LP is already serving.
+        tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+
+        if std::env::var("PRINTFUL_API_KEY").unwrap_or_default().is_empty() {
+            tracing::warn!("[catalog/roll-mockups] PRINTFUL_API_KEY unset — skipping");
+            return;
+        }
+
+        let pending: Vec<(String, i64, i64)> = {
+            let conn = db.lock().unwrap();
+            let mut stmt = match conn.prepare(
+                "SELECT sku, printful_product_id, printful_variant_id
+                 FROM catalog_products
+                 WHERE brand='roll'
+                   AND (mockup_url_external IS NULL
+                        OR (mockup_url_external NOT LIKE '%files.cdn.printful.com%'
+                            AND mockup_url_external NOT LIKE '%r2.dev%'
+                            AND mockup_url_external NOT LIKE '%r2.cloudflarestorage%'))
+                 ORDER BY sort_order, sku"
+            ) { Ok(s) => s, Err(e) => { tracing::error!("[catalog/roll-mockups] prepare: {}", e); return; } };
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .and_then(|it| it.collect::<Result<Vec<_>, _>>())
+                .unwrap_or_default()
+        };
+
+        if pending.is_empty() {
+            tracing::info!("[catalog/roll-mockups] all 20 SKUs already have real mockups");
+            return;
+        }
+        tracing::info!("[catalog/roll-mockups] backfilling {} SKUs…", pending.len());
+
+        let base = std::env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+        let mut ok = 0;
+        let mut err = 0;
+        for (sku, prod, var) in &pending {
+            let design_url = format!("{}/static/roll/d/design_{}.png", base, sku);
+            match generate_onbody_mockup(db.clone(), sku.clone(), *prod, *var, design_url).await {
+                Ok(()) => { ok += 1; tracing::info!("[catalog/roll-mockups] {} OK", sku); }
+                Err(e) => { err += 1; tracing::warn!("[catalog/roll-mockups] {} FAIL: {}", sku, e); }
+            }
+            // Be polite to Printful's mockup queue.
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        }
+        tracing::info!("[catalog/roll-mockups] done · ok={} err={}", ok, err);
+    });
+}
+
 /// One-shot migration: fix the wrong printful_product_id (162 →
 /// Bella+Canvas longsleeve) stamped on existing rashguard rows. The
 /// real product for variant 9328 is 301 (Men's AOP Rash Guard). Stale

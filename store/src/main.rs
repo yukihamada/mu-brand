@@ -61284,6 +61284,11 @@ async fn main() {
         catalog::seed_roll_brand(&conn);
         catalog::migrate_auto_labels(&conn);
         catalog::migrate_rashguard_product_id(&conn);
+    }
+    // Spawn AFTER releasing the DB lock — task takes its own connections.
+    catalog::spawn_roll_mockup_backfill(db.clone());
+    {
+        let conn = db.lock().unwrap();
         // Phase A of CATALOG_CONTRACT — shadow-write proposal_skus +
         // collab_products into catalog_products. Reads stay on the
         // legacy tables until Phase B; see docs/CATALOG_CONTRACT.md.
