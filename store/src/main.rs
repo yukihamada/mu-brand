@@ -60695,6 +60695,10 @@ async fn main() {
         catalog::seed_if_empty(&conn);
         catalog::migrate_auto_labels(&conn);
         catalog::migrate_rashguard_product_id(&conn);
+        // Phase A of CATALOG_CONTRACT — shadow-write proposal_skus +
+        // collab_products into catalog_products. Reads stay on the
+        // legacy tables until Phase B; see docs/CATALOG_CONTRACT.md.
+        catalog::migrate_legacy_to_catalog(&conn);
     }
 
     // ── catalog optimizer: 30-min autonomous SKU generator + reporter ──
@@ -61487,6 +61491,8 @@ async fn main() {
         .route("/admin/catalog/generate", get(catalog::admin_generate))
         .route("/admin/catalog/status", get(catalog::admin_status))
         .route("/admin/catalog/founder/:n/mark_mailed", get(catalog::admin_mark_mailed))
+        .route("/admin/catalog/nl", get(catalog::admin_nl_add))
+        .route("/admin/catalog/legacy_rename", get(catalog::admin_legacy_rename))
         .route("/buy/founder", get(buy_founder_page))
         .route("/why", get(why_page))
         .route("/founding", get(founding_page))

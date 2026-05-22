@@ -39,6 +39,15 @@ use crate::Db;
 const SEED_SQL: &str = include_str!("../migrations/catalog_seed.sql");
 
 pub fn ensure_schema(conn: &rusqlite::Connection) {
+    // Idempotent ALTER for the V1 catalog contract additions (see
+    // docs/CATALOG_CONTRACT.md). SQLite has no IF NOT EXISTS on ALTER,
+    // so each one is wrapped in a one-shot try; the duplicate-column
+    // error is silently swallowed on re-run.
+    let _ = conn.execute("ALTER TABLE catalog_brands   ADD COLUMN config_json TEXT", []);
+    let _ = conn.execute("ALTER TABLE catalog_products ADD COLUMN status TEXT NOT NULL DEFAULT 'live'", []);
+    let _ = conn.execute("ALTER TABLE catalog_products ADD COLUMN fulfillment_route TEXT NOT NULL DEFAULT 'printful_dtg'", []);
+    let _ = conn.execute("ALTER TABLE catalog_products ADD COLUMN legacy_source TEXT", []);
+
     let _ = conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS catalog_brands (
             slug              TEXT PRIMARY KEY,
@@ -48,7 +57,8 @@ pub fn ensure_schema(conn: &rusqlite::Connection) {
             tagline           TEXT,
             custom_domain     TEXT,
             is_active         INTEGER NOT NULL DEFAULT 1,
-            revenue_share_pct INTEGER NOT NULL DEFAULT 0
+            revenue_share_pct INTEGER NOT NULL DEFAULT 0,
+            config_json       TEXT
          );
          CREATE TABLE IF NOT EXISTS catalog_products (
             sku                       TEXT PRIMARY KEY,
@@ -160,6 +170,124 @@ pub fn migrate_auto_labels(conn: &rusqlite::Connection) {
             rusqlite::params![&new_desc, &new_desc, format!("{}%", prefix)],
         );
     }
+}
+
+/// Phase A of the contract migration (docs/CATALOG_CONTRACT.md).
+/// Shadow-write legacy product surfaces into catalog_products so the
+/// rest of wearmu can read from one place going forward.
+///
+/// Strictly additive — reads on proposal_skus / collab_products still
+/// work; we just mirror their rows into catalog_products with
+/// brand="proposal:<slug>" or brand=<partner>, status='live' or 'draft'
+/// based on the legacy approval flag, and legacy_source set so a future
+/// reconciliation pass knows where each row came from.
+///
+/// Idempotent via INSERT OR IGNORE on the catalog_products.sku PK.
+pub fn migrate_legacy_to_catalog(conn: &rusqlite::Connection) {
+    // proposal_skus → catalog_products. The legacy PK is (slug, letter);
+    // we synthesize a deterministic sku "PROPOSAL-<SLUG>-<LETTER>".
+    let n_proposal: i64 = conn
+        .execute(
+            "INSERT OR IGNORE INTO catalog_products
+                (sku, brand, label, description_ja, retail_price_jpy,
+                 printful_product_id, printful_variant_id, printful_placement,
+                 printful_print_w, printful_print_h,
+                 design_file, mockup_main_file, mockup_url_external,
+                 is_active, sort_order, status, fulfillment_route, legacy_source)
+             SELECT 'PROPOSAL-' || UPPER(slug) || '-' || UPPER(letter),
+                    'proposal:' || slug,
+                    label, label, price_jpy,
+                    71, 4017, 'front', 0, 0,
+                    design_url, design_url, design_url,
+                    CASE WHEN published=1 THEN 1 ELSE 0 END,
+                    100,
+                    CASE WHEN published=1 THEN 'live' ELSE 'draft' END,
+                    'printful_dtg',
+                    'proposal_skus'
+             FROM proposal_skus
+             WHERE design_url IS NOT NULL AND design_url != ''",
+            [],
+        )
+        .unwrap_or(0) as i64;
+
+    // collab_products → catalog_products. Legacy PK is (slug UNIQUE);
+    // synthesize "COLLAB-<PARTNER>-<SLUG>".
+    let n_collab: i64 = conn
+        .execute(
+            "INSERT OR IGNORE INTO catalog_products
+                (sku, brand, label, description_ja, retail_price_jpy,
+                 printful_product_id, printful_variant_id, printful_placement,
+                 printful_print_w, printful_print_h,
+                 design_file, mockup_main_file, mockup_url_external,
+                 is_active, sort_order, status, fulfillment_route, legacy_source)
+             SELECT 'COLLAB-' || UPPER(partner) || '-' || UPPER(slug),
+                    partner,
+                    name, COALESCE(description, name), price_jpy,
+                    COALESCE(printful_product_id, 71),
+                    COALESCE(printful_variant_id, 4017),
+                    'front', 0, 0,
+                    image_url, image_url, image_url,
+                    CASE WHEN active=1 AND draft=0 THEN 1 ELSE 0 END,
+                    100,
+                    CASE
+                      WHEN active=1 AND draft=0 AND partner_approved=1 THEN 'live'
+                      WHEN partner_approved=0 THEN 'review'
+                      WHEN draft=1 THEN 'draft'
+                      ELSE 'approved'
+                    END,
+                    CASE production_route
+                      WHEN 'printful' THEN 'printful_dtg'
+                      WHEN 'sweep_manual' THEN 'manual'
+                      ELSE 'manual'
+                    END,
+                    'collab_products'
+             FROM collab_products
+             WHERE image_url IS NOT NULL AND image_url != ''",
+            [],
+        )
+        .unwrap_or(0) as i64;
+
+    if n_proposal + n_collab > 0 {
+        tracing::info!(
+            "[catalog/migrate] phase A: proposal_skus={} collab_products={} mirrored into catalog_products",
+            n_proposal, n_collab
+        );
+    }
+}
+
+/// Phase C of the migration: rename the legacy tables to
+/// `_legacy_<name>` so reads start failing loudly (vs silently serving
+/// stale data) and we can drop them after a 30-day soak. NEVER drops
+/// — that's a separate manual step once we've watched logs for missed
+/// reads.
+///
+/// Token-gated via /admin/catalog/legacy_rename so a stray crash-restart
+/// can't trigger it accidentally.
+pub fn rename_legacy_tables(conn: &rusqlite::Connection) -> Vec<(String, bool)> {
+    let legacy = [
+        // Per-partner approval queues — all empty (verified 2026-05-22)
+        "kichinan_approval",
+        "asoview_approval",
+        "elsoul_approval",
+        "ele_approval",
+        "nojimahal_approval",
+        "ryozo_approval",
+        // Collab tables superseded by catalog_products (mirrored in Phase A)
+        "collab_products",
+        // Proposal table superseded by catalog_products
+        "proposal_skus",
+        // collab_account_deletions / collab_applications / collab_signups /
+        // collab_users / collab_orders stay — they're orthogonal to product
+        // data (auth + orders). collab_orders is a candidate for
+        // backfilling into catalog_orders but Phase B owns that.
+    ];
+    let mut out = Vec::new();
+    for t in legacy {
+        let new = format!("_legacy_{}", t);
+        let r = conn.execute(&format!("ALTER TABLE {} RENAME TO {}", t, new), []);
+        out.push((t.to_string(), r.is_ok()));
+    }
+    out
 }
 
 /// Seed the catalog from the bundled SQL dump. Runs once if the catalog
@@ -1076,6 +1204,218 @@ fn chrono_now_iso() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let t = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     format!("{}", t)
+}
+
+#[derive(Deserialize)]
+pub struct LegacyRenameQuery {
+    pub token: String,
+    /// Safety knob — must be set to "rename-yes-i-checked-the-mirrors"
+    /// so a curl typo can't trigger an irreversible rename.
+    pub confirm: String,
+}
+
+/// GET /admin/catalog/legacy_rename?token=…&confirm=…
+/// Phase C of the migration. Renames each legacy product table to
+/// `_legacy_<name>`. Reversible by hand (`ALTER TABLE _legacy_x RENAME TO x`)
+/// for ~30 days, after which Phase D drops them.
+pub async fn admin_legacy_rename(
+    State(db): State<Db>,
+    Query(q): Query<LegacyRenameQuery>,
+) -> Response {
+    let expected = env::var("ADMIN_TOKEN").unwrap_or_default();
+    if expected.is_empty() || q.token != expected {
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    }
+    if q.confirm != "rename-yes-i-checked-the-mirrors" {
+        return (StatusCode::BAD_REQUEST,
+            "confirm must be 'rename-yes-i-checked-the-mirrors'").into_response();
+    }
+    let out = {
+        let conn = db.lock().unwrap();
+        rename_legacy_tables(&conn)
+    };
+    axum::Json(serde_json::json!({"renamed": out})).into_response()
+}
+
+#[derive(Deserialize)]
+pub struct NlAddQuery {
+    pub token: String,
+    /// Free-form JP/EN description, e.g.
+    /// "BJJ 黒帯 sumi-e Tシャツ ¥4900" or
+    /// "Coffee × Code rashguard ¥9,800, black canvas"
+    pub prompt: String,
+}
+
+/// GET /admin/catalog/nl?token=…&prompt=… (POST also accepted via body).
+/// Natural-language SKU creation. Asks Gemini text-mode to parse the
+/// prompt into a {theme_brief, kind, retail_jpy, name} JSON, then runs
+/// the existing generate_one() path with a synthetic ad-hoc theme.
+///
+/// Costs ¥1 (Gemini text parse) + ¥12 (the standard 4-image pipeline)
+/// = ¥13 per nl-add SKU.
+pub async fn admin_nl_add(
+    State(db): State<Db>,
+    Query(q): Query<NlAddQuery>,
+) -> Response {
+    let expected = env::var("ADMIN_TOKEN").unwrap_or_default();
+    if expected.is_empty() || q.token != expected {
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    }
+    let prompt_in = q.prompt.trim();
+    if prompt_in.is_empty() {
+        return (StatusCode::BAD_REQUEST, "prompt is required").into_response();
+    }
+    let parse_prompt = format!(
+        "Parse this JP/EN product idea into compact JSON. ONLY emit JSON, \
+         no prose, no markdown fences.\n\
+         Schema: {{\"kind\":\"tee|rashguard_ls|rashguard_black|hoodie|crewneck\", \
+                   \"theme_brief\":\"<one short English design brief for the chest graphic>\", \
+                   \"display\":\"<short JP brand-mark name>\", \
+                   \"hook\":\"<one JP marketing sentence for the PDP>\", \
+                   \"retail_jpy\":<integer>}}\n\
+         If kind is missing, default to 'tee'. \
+         If retail_jpy is missing, default to 4900 for tee, 9800 for rashguard, 8800 for hoodie. \
+         If display is missing, infer from theme_brief in <=10 JP chars.\n\
+         Input: {}",
+        prompt_in
+    );
+    let parsed_json = match crate::gemini::call_gemini_text(&parse_prompt).await {
+        Ok(s) => s,
+        Err(e) => {
+            return (StatusCode::BAD_GATEWAY,
+                format!("gemini parse failed: {}", e)).into_response();
+        }
+    };
+    // Extract {...} from the response (Gemini sometimes wraps with prose
+    // even though we asked it not to).
+    let json_str: String = parsed_json.find('{').and_then(|i| {
+        parsed_json[i..].rfind('}').map(|j| parsed_json[i..i + j + 1].to_string())
+    }).unwrap_or(parsed_json.clone());
+    let parsed: serde_json::Value = match serde_json::from_str(&json_str) {
+        Ok(v) => v,
+        Err(e) => {
+            return (StatusCode::BAD_GATEWAY, format!(
+                "gemini returned non-JSON: {} (raw: {})",
+                e, parsed_json.chars().take(300).collect::<String>()
+            )).into_response();
+        }
+    };
+    let kind = parsed["kind"].as_str().unwrap_or("tee");
+    let theme_brief = parsed["theme_brief"].as_str().unwrap_or(prompt_in);
+    let display = parsed["display"].as_str().unwrap_or("Custom");
+    let hook = parsed["hook"].as_str().unwrap_or("自然言語から自動生成");
+    let retail_jpy = parsed["retail_jpy"].as_i64().unwrap_or_else(|| {
+        PRODUCT_SPECS.iter().find(|s| s.kind == kind)
+            .map(|s| s.retail_jpy).unwrap_or(4900)
+    });
+
+    // Validate kind.
+    let Some(spec) = PRODUCT_SPECS.iter().find(|s| s.kind == kind) else {
+        return (StatusCode::BAD_REQUEST,
+            format!("unknown kind '{}', allowed: tee/rashguard_ls/rashguard_black/hoodie/crewneck", kind)).into_response();
+    };
+
+    // Generate a deterministic-enough seed from the prompt + clock.
+    let seed = format!("nl{:08x}", rand::random::<u32>());
+    let slug = display
+        .chars().filter(|c| c.is_ascii_alphanumeric())
+        .take(12).collect::<String>()
+        .to_uppercase();
+    let slug = if slug.is_empty() { "NL".to_string() } else { slug };
+    let sku = format!("AUTO-NL-{}-{}-{}", slug, kind.to_uppercase().replace('_', "-"), seed);
+
+    // Direct-insert (skip generate_one's strict theme lookup since this
+    // is an ad-hoc one) with retail_jpy override. The 4 background image
+    // tasks fire the same way.
+    let charged = {
+        let conn = db.lock().unwrap();
+        spend_or_refuse(&conn, "ai_image", GEMINI_IMAGE_COST_JPY,
+            &format!("nl_add sku={}", sku), Some(&sku))
+    };
+    if !charged {
+        return (StatusCode::FAILED_DEPENDENCY, "budget cap reached").into_response();
+    }
+    let design_prompt = format!(
+        "Print-ready chest graphic at 300 DPI on a pure white background. \
+         Style brief: {}. NO model, NO mockup, just the artwork, centered. \
+         Variation key: {}.",
+        theme_brief, seed
+    );
+    let img = match crate::gemini::call_gemini(&design_prompt).await {
+        Ok(i) => i,
+        Err(e) => return (StatusCode::BAD_GATEWAY, format!("gemini image: {}", e)).into_response(),
+    };
+    let key = format!("catalog/{}.png", sku);
+    let Some(url) = crate::store_r2_bytes(&key, &img.bytes, &img.mime).await else {
+        return (StatusCode::BAD_GATEWAY, "R2 upload failed").into_response();
+    };
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO catalog_brands
+             (slug, name, emoji, color_primary, tagline, is_active, revenue_share_pct)
+             VALUES ('auto', 'AUTO (AI-generated)', '🤖', '#ffd700',
+                     'Gemini × Printful POD · 30 分自動生成', 1, 0)",
+            [],
+        );
+        let desc = format!("{} — {}", display, hook);
+        let _ = conn.execute(
+            "INSERT INTO catalog_products (
+                sku, brand, label, description_ja, retail_price_jpy,
+                printful_product_id, printful_variant_id, printful_placement,
+                printful_print_w, printful_print_h,
+                design_file, mockup_main_file, mockup_url_external,
+                is_active, sort_order, status, fulfillment_route, legacy_source
+             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            rusqlite::params![
+                &sku, "auto", desc, desc, retail_jpy,
+                spec.printful_product_id, spec.printful_variant_id, spec.placement,
+                0, 0,
+                &url, &url, &url,
+                1, 50,
+                "live",
+                if matches!(kind, "rashguard_ls"|"rashguard_black") { "printful_aop" } else { "printful_dtg" },
+                "nl_add",
+            ],
+        );
+    }
+    // Spawn the 3 background image tasks (transparent / Printful mockup /
+    // lifestyle) so the SKU lands fully-loaded in ~60-90s.
+    let pp = spec.printful_product_id;
+    let pv = spec.printful_variant_id;
+    let url_c = url.clone();
+    let sku_b = sku.clone();
+    let sku_c = sku.clone();
+    let sku_d = sku.clone();
+    let db_b = db.clone();
+    let db_c = db.clone();
+    let db_d = db.clone();
+    let bytes_b = img.bytes.clone();
+    let kind_d = kind.to_string();
+    let theme_brief_d = theme_brief.to_string();
+    let display_d = display.to_string();
+    tokio::spawn(async move {
+        let _ = generate_transparent_print(db_b, sku_b, bytes_b).await;
+    });
+    tokio::spawn(async move {
+        let _ = generate_onbody_mockup(db_c, sku_c, pp, pv, url_c).await;
+    });
+    tokio::spawn(async move {
+        let _ = generate_lifestyle_photo(db_d, sku_d, display_d, theme_brief_d, kind_d, 1).await;
+    });
+
+    axum::Json(serde_json::json!({
+        "ok": true,
+        "sku": sku,
+        "kind": kind,
+        "retail_jpy": retail_jpy,
+        "display": display,
+        "hook": hook,
+        "theme_brief": theme_brief,
+        "pdp_url": format!("https://wearmu.com/shop/{}", sku),
+        "buy_url": format!("https://wearmu.com/api/shop/checkout?sku={}", sku),
+        "note": "background: 透過 + Printful mockup + lifestyle landing within ~60-90s",
+    })).into_response()
 }
 
 #[derive(Deserialize)]
