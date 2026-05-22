@@ -37288,8 +37288,8 @@ function render(){{
     if (b.custom_domain) flags.push('<span class="flag domain">' + b.custom_domain + '</span>');
     const emoji = b.emoji ? '<span class="em">'+ b.emoji +'</span>' : '';
     const thumb = b.sample_mockup
-      ? 'background-image:url(\\'' + b.sample_mockup.replace(/'/g, '%27') + '\\');'
-      : 'background:linear-gradient(135deg,#161616,#0a0a0a)';
+      ? "background-image:url('" + b.sample_mockup.replace(/'/g, '%27') + "')"
+      : "background:linear-gradient(135deg,#161616,#0a0a0a)";
     const merchUrl = '/merch/' + encodeURIComponent(b.slug);
     const productsUrl = '/admin/products?token=' + encodeURIComponent(TOK) + '&brand=' + encodeURIComponent(b.slug);
     const collabUrl = '/admin/proposals/' + encodeURIComponent(b.slug) + '/manage?token=' + encodeURIComponent(TOK);
