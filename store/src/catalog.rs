@@ -1830,29 +1830,12 @@ pub async fn shop_pdp(
         ))
         .unwrap_or_default();
 
-    // Trust strip: 0-review cold-traffic insurance. The early-bird founder
-    // card line addresses the "no social proof" gap — the first 100 buyers
-    // get a Yuki-signed thank-you card by a separate mail. Counter is
-    // live so the line either creates FOMO ("only 87 left!") or honestly
-    // shows the offer is closed.
-    let founder_left = {
-        let conn = db.lock().unwrap();
-        founder_cards_remaining(&conn)
-    };
-    let founder_line = if founder_left == 0 {
-        r##"<div class="ts-row" style="background:rgba(128,128,128,0.08);border:1px solid rgba(255,255,255,0.1);padding:10px 12px;border-radius:4px;margin-top:8px">
-    <strong style="color:#888">🎴 サイン入りカード 完売</strong>
-    <small>最初の 100 名の方には濱田優貴サイン入りカードが届きます (発送済)</small>
-  </div>"##.to_string()
-    } else {
-        format!(
-r##"<div class="ts-row" style="background:rgba(255,215,0,0.07);border:1px solid rgba(255,215,0,0.35);padding:10px 12px;border-radius:4px;margin-top:8px">
-    <strong style="color:#ffd700">🎴 残り {} 枚 / 100 限定</strong>
-    <small>濱田優貴サイン入りサンクスカード (手書き · 別便で日本ポストより)</small>
-  </div>"##, founder_left)
-    };
-    let trust_block = format!(
-r##"<div class="trust-strip">
+    // Founder hand-signed thank-you card row removed 2026-05-22: clashes
+    // with the "0% human autonomy" brand thesis + Yuki time-opp-cost is
+    // too high to scale. catalog_founder_cards table + claim helper kept
+    // for historical orders that already received cards; new PDPs skip
+    // the row entirely.
+    let trust_block = r##"<div class="trust-strip">
   <div class="ts-row">
     <strong>国際発送 7-14 日</strong>
     <small>DHL/FedEx tracked · JP・US・EU・CA・AU 即対応</small>
@@ -1865,8 +1848,7 @@ r##"<div class="trust-strip">
     <strong>1 着から OK</strong>
     <small>在庫を持たず注文ごとに 1 枚刷ります (POD)</small>
   </div>
-  {founder}
-</div>"##, founder = founder_line);
+</div>"##.to_string();
 
     let body = format!(
         r##"<!doctype html><html lang="ja"><head>
@@ -2296,14 +2278,10 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
                 if ok { "submitted" } else { "failed" },
                 Some(&text),
             );
-            // Founder card promise (PDP "最初の 100 注文限定 サイン入りサンクスカード"):
-            // Claim the next number 1..100, record it, send the customer
-            // a "you're #X/100" email and Yuki a queue-up action item
-            // with the shipping address. The PHYSICAL card is signed +
-            // posted by Yuki separately — wearmu just runs the ledger.
-            if ok {
-                claim_and_notify_founder_card(&db, &session_id, &sku, cust, shipping).await;
-            }
+            // 2026-05-22: Founder hand-signed thank-you card removed from
+            // PDP. The claim_and_notify_founder_card path is no longer
+            // invoked for new orders. Historical claims stay in
+            // catalog_founder_cards for fulfillment of past orders.
         }
         Err(e) => {
             tracing::error!("[catalog/fulfill] printful net err sku={} session={}: {}",
