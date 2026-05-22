@@ -12446,6 +12446,7 @@ async fn challenge_100_page(State(db): State<Db>) -> Html<String> {
 <link rel="canonical" href="https://wearmu.com/100">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<script src="/tracking.js" defer></script>
 <style>
 :root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--line:rgba(255,255,255,0.10)}}
 *{{box-sizing:border-box}}
@@ -20730,6 +20731,187 @@ async fn api_brand_copy(
     }
 }
 
+// ─── SKU metrics: impressions / clicks / checkouts ───────────────────
+// Lightweight per-SKU counters powering the admin product board score.
+// Schema is created lazily on first track. All endpoints idempotent;
+// counter increments are coalesced via SQLite UPSERT.
+
+fn ensure_metrics_schema(conn: &rusqlite::Connection) {
+    let _ = conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS catalog_sku_metrics (
+            sku           TEXT PRIMARY KEY,
+            impressions   INTEGER NOT NULL DEFAULT 0,
+            clicks        INTEGER NOT NULL DEFAULT 0,
+            checkouts     INTEGER NOT NULL DEFAULT 0,
+            last_event_at TEXT
+         );
+         CREATE INDEX IF NOT EXISTS idx_sku_metrics_clicks
+            ON catalog_sku_metrics(clicks DESC);
+         CREATE INDEX IF NOT EXISTS idx_sku_metrics_impressions
+            ON catalog_sku_metrics(impressions DESC);"
+    );
+}
+
+fn bump_metric(conn: &rusqlite::Connection, sku: &str, col: &str, n: i64) {
+    // col is hardcoded by callers (not user input) — safe to interpolate
+    let q = format!(
+        "INSERT INTO catalog_sku_metrics (sku, {col}, last_event_at)
+         VALUES (?, ?, datetime('now'))
+         ON CONFLICT(sku) DO UPDATE SET
+            {col} = {col} + excluded.{col},
+            last_event_at = excluded.last_event_at",
+        col = col
+    );
+    let _ = conn.execute(&q, params![sku, n]);
+}
+
+#[derive(serde::Deserialize)]
+struct TrackBatch { skus: Vec<String> }
+
+/// POST /api/track/impressions  body={skus:[...]}
+async fn api_track_impressions(
+    State(db): State<Db>,
+    axum::Json(body): axum::Json<TrackBatch>,
+) -> Response {
+    let conn = db.lock().unwrap();
+    ensure_metrics_schema(&conn);
+    for sku in body.skus.iter().take(200) {
+        if !sku.is_empty() { bump_metric(&conn, sku, "impressions", 1); }
+    }
+    Json(serde_json::json!({"ok": true, "n": body.skus.len()})).into_response()
+}
+
+/// GET /api/track/click?sku=X  → 204 (fire-and-forget; browser sendBeacon)
+async fn api_track_click(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(sku) = q.get("sku").filter(|s| !s.is_empty()) {
+        let conn = db.lock().unwrap();
+        ensure_metrics_schema(&conn);
+        bump_metric(&conn, sku, "clicks", 1);
+    }
+    (StatusCode::NO_CONTENT, "").into_response()
+}
+
+/// GET /admin/brands-v2?token= — brand on/off toggle UI + REST.
+async fn admin_brands_v2(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/brands-v2").await { return r; }
+    const TPL: &str = include_str!("../static/admin/brands.html");
+    axum::response::Html(TPL).into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct BrandToggleBody { slug: String, is_active: i64 }
+
+async fn admin_brand_toggle_v2(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    axum::Json(body): axum::Json<BrandToggleBody>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/brands-v2/toggle").await { return r; }
+    let conn = db.lock().unwrap();
+    let n = conn.execute(
+        "UPDATE catalog_brands SET is_active = ? WHERE slug = ?",
+        params![body.is_active.clamp(0, 1), &body.slug],
+    ).unwrap_or(0);
+    Json(serde_json::json!({"ok": n > 0, "slug": body.slug, "is_active": body.is_active})).into_response()
+}
+
+/// GET /admin/score?token=&brand=&limit=&sort= — product board with
+/// impressions / clicks / checkouts / CTR / CVR. Defaults to all brands,
+/// 200 rows, sorted by clicks desc.
+async fn admin_score_board(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/score").await { return r; }
+    const TPL: &str = include_str!("../static/admin/products.html");
+    axum::response::Html(TPL).into_response()
+}
+
+/// GET /api/admin/score?token=&brand=&sort=&limit= — JSON for the
+/// /admin/score board. impressions/clicks/checkouts joined from
+/// catalog_sku_metrics (LEFT JOIN, NULL → 0).
+async fn api_admin_score(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/score").await { return r; }
+    let brand_filter = q.get("brand").cloned();
+    let sort = q.get("sort").cloned().unwrap_or_else(|| "clicks".into());
+    let limit: i64 = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(200).clamp(1, 5000);
+    let order_col = match sort.as_str() {
+        "impressions" => "impressions",
+        "checkouts" => "checkouts",
+        "ctr" => "(CASE WHEN impressions > 0 THEN 1.0 * clicks / impressions ELSE 0 END)",
+        "cvr" => "(CASE WHEN clicks > 0 THEN 1.0 * checkouts / clicks ELSE 0 END)",
+        "price" => "p.retail_price_jpy",
+        "sku" => "p.sku",
+        _ => "clicks",
+    };
+    let conn = db.lock().unwrap();
+    ensure_metrics_schema(&conn);
+    let q_sql = format!(
+        "SELECT p.sku, p.brand, p.label, p.retail_price_jpy, p.status,
+                COALESCE(m.impressions, 0), COALESCE(m.clicks, 0), COALESCE(m.checkouts, 0),
+                COALESCE(p.mockup_url_external, p.mockup_main_file, '')
+         FROM catalog_products p
+         LEFT JOIN catalog_sku_metrics m ON m.sku = p.sku
+         WHERE p.is_active = 1
+           {brand_clause}
+         ORDER BY {order_col} DESC, p.sku
+         LIMIT ?",
+        brand_clause = if brand_filter.is_some() { "AND p.brand = ?" } else { "" },
+        order_col = order_col,
+    );
+    let mut stmt = match conn.prepare(&q_sql) {
+        Ok(s) => s, Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+    let row_map = |r: &rusqlite::Row| -> rusqlite::Result<serde_json::Value> {
+        let imps: i64 = r.get(5)?;
+        let clk: i64 = r.get(6)?;
+        let chk: i64 = r.get(7)?;
+        let ctr = if imps > 0 { 100.0 * clk as f64 / imps as f64 } else { 0.0 };
+        let cvr = if clk > 0 { 100.0 * chk as f64 / clk as f64 } else { 0.0 };
+        Ok(serde_json::json!({
+            "sku": r.get::<_, String>(0)?,
+            "brand": r.get::<_, String>(1)?,
+            "label": r.get::<_, String>(2)?,
+            "price_jpy": r.get::<_, i64>(3)?,
+            "status": r.get::<_, String>(4)?,
+            "impressions": imps,
+            "clicks": clk,
+            "checkouts": chk,
+            "ctr_pct": (ctr * 100.0).round() / 100.0,
+            "cvr_pct": (cvr * 100.0).round() / 100.0,
+            "mockup_url": r.get::<_, String>(8)?,
+        }))
+    };
+    let rows: Vec<serde_json::Value> = match brand_filter {
+        Some(b) => stmt.query_map(params![b, limit], row_map),
+        None => stmt.query_map(params![limit], row_map),
+    }.and_then(|it| it.collect::<Result<Vec<_>, _>>()).unwrap_or_default();
+    Json(serde_json::json!({"products": rows, "count": rows.len()})).into_response()
+}
+
+/// GET /c/:slug — serve the universal brand template HTML. Slug is read
+/// client-side from window.location.pathname; the page works for any
+/// catalog_brands row without per-brand boilerplate.
+async fn serve_generic_brand_lp(
+    axum::extract::Path(_slug): axum::extract::Path<String>,
+) -> Response {
+    const BRAND_TEMPLATE: &str = include_str!("../static/c/brand.html");
+    axum::response::Html(BRAND_TEMPLATE).into_response()
+}
+
 /// GET /api/brands — all active brands from catalog_brands, ordered by name.
 /// Used by /roll/ and any other LP that needs to render a brand directory.
 async fn api_brands(State(db): State<Db>) -> Response {
@@ -20751,12 +20933,14 @@ async fn api_brands(State(db): State<Db>) -> Response {
             .as_deref()
             .and_then(|s| serde_json::from_str(s).ok())
             .unwrap_or(serde_json::json!({}));
-        // Prefer config.lp_template (e.g. "/roll/") over the default "/:slug"
-        // when the brand has a custom LP.
+        // Prefer config.lp_template (e.g. "/roll/") when the brand has a
+        // custom LP. Otherwise fall back to the generic DB-driven LP at
+        // /c/<slug> — works for any catalog_brands row without per-brand
+        // boilerplate.
         let lp = cfg_v.get("lp_template")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .unwrap_or_else(|| format!("/{}", slug));
+            .unwrap_or_else(|| format!("/c/{}", slug));
         Ok(serde_json::json!({
             "slug": slug,
             "name": r.get::<_, String>(1)?,
@@ -20802,27 +20986,71 @@ async fn api_brand(
          ORDER BY sort_order, sku"
     ) { Ok(s) => s, Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response() };
 
-    let products: Vec<serde_json::Value> = stmt.query_map(params![b_slug], |r| {
-        let sku: String = r.get(0)?;
-        let label: String = r.get(1)?;
-        let desc: String = r.get(2)?;
-        let price: i64 = r.get(3)?;
-        let mockup_ext: String = r.get(4)?;
-        let mockup_local: String = r.get(5)?;
-        let route: String = r.get(6)?;
-        let sort: i64 = r.get(7)?;
-        let placement: String = r.get(8)?;
+    let products_raw: Vec<(String, String, String, i64, String, String, String, i64, String)> =
+        stmt.query_map(params![b_slug], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+            r.get::<_, i64>(3)?, r.get::<_, String>(4)?, r.get::<_, String>(5)?,
+            r.get::<_, String>(6)?, r.get::<_, i64>(7)?, r.get::<_, String>(8)?,
+        )))
+        .and_then(|it| it.collect::<Result<Vec<_>, _>>())
+        .unwrap_or_default();
+
+    // Batch-fetch all extras for these SKUs in one query (saves N round-trips
+    // when a brand has many products). Group client-side by SKU.
+    let mut extras_by_sku: std::collections::HashMap<String, Vec<serde_json::Value>> =
+        std::collections::HashMap::new();
+    if !products_raw.is_empty() {
+        let placeholders = vec!["?"; products_raw.len()].join(",");
+        let q = format!(
+            "SELECT sku, COALESCE(label,''), image_url
+             FROM catalog_product_extras
+             WHERE sku IN ({}) AND image_url != ''
+             ORDER BY sku, sort_order, id",
+            placeholders
+        );
+        if let Ok(mut s2) = conn.prepare(&q) {
+            let skus: Vec<&dyn rusqlite::ToSql> =
+                products_raw.iter().map(|p| &p.0 as &dyn rusqlite::ToSql).collect();
+            if let Ok(rows) = s2.query_map(rusqlite::params_from_iter(skus), |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+            }) {
+                for row in rows.flatten() {
+                    let (sku, label, url) = row;
+                    extras_by_sku.entry(sku).or_default().push(
+                        serde_json::json!({"label": label, "url": url})
+                    );
+                }
+            }
+        }
+    }
+
+    let products: Vec<serde_json::Value> = products_raw.into_iter().map(|p| {
+        let (sku, label, desc, price, mockup_ext, mockup_local, route, sort, placement) = p;
         let kind = if route == "printful_aop" { "rashguard" } else { "tee" };
-        // Prefer the external Printful CDN URL (always live) over the local
-        // path (which may not yet have been rendered by the mockup cron).
         let mockup = if !mockup_ext.is_empty() { mockup_ext } else { mockup_local };
-        Ok(serde_json::json!({
+        let extras = extras_by_sku.remove(&sku).unwrap_or_default();
+        // Split extras into lifestyle photos (on-body) and additional mockup angles
+        let lifestyle: Vec<&serde_json::Value> = extras.iter()
+            .filter(|e| {
+                let l = e["label"].as_str().unwrap_or("").to_lowercase();
+                l.starts_with("lifestyle") || l.contains("on-body") || l.contains("on body")
+            }).collect();
+        let mockup_angles: Vec<&serde_json::Value> = extras.iter()
+            .filter(|e| {
+                let l = e["label"].as_str().unwrap_or("").to_lowercase();
+                l.starts_with("mockup") || l == "back" || l == "left" || l == "right"
+                    || l.contains("detail") || l.contains("flatlay")
+            }).collect();
+        serde_json::json!({
             "sku": sku, "label": label, "description": desc,
             "price_jpy": price, "mockup_url": mockup,
             "fulfillment_route": route, "kind": kind,
             "sort_order": sort, "placement": placement,
-        }))
-    }).and_then(|it| it.collect::<Result<Vec<_>, _>>()).unwrap_or_default();
+            "extras": extras,
+            "lifestyle": lifestyle,
+            "mockup_angles": mockup_angles,
+        })
+    }).collect();
 
     let cfg: serde_json::Value = b_cfg
         .as_deref()
@@ -61725,6 +61953,10 @@ async fn main() {
         .nest_service("/foundation", ServeDir::new("static/foundation"))
         .nest_service("/bjj", ServeDir::new("static/bjj"))
         .nest_service("/roll", ServeDir::new("static/roll"))
+        // Generic DB-driven brand LP — works for any catalog_brands slug.
+        // Reads /api/brand/:slug client-side; serves the same template HTML
+        // regardless of slug, parameterized by window.location.pathname.
+        .route("/c/:slug", get(serve_generic_brand_lp))
         .nest_service("/code", ServeDir::new("static/code"))
         .nest_service("/coffee", ServeDir::new("static/coffee"))
         .nest_service("/zen", ServeDir::new("static/zen"))
@@ -62115,6 +62347,12 @@ async fn main() {
         .route("/api/brand_copy/:brand", get(api_brand_copy))
         .route("/api/brand/:slug", get(api_brand))
         .route("/api/brands", get(api_brands))
+        .route("/api/track/impressions", post(api_track_impressions))
+        .route("/api/track/click", get(api_track_click))
+        .route("/admin/brands-v2", get(admin_brands_v2))
+        .route("/admin/brands-v2/toggle", post(admin_brand_toggle_v2))
+        .route("/admin/score", get(admin_score_board))
+        .route("/api/admin/score", get(api_admin_score))
         // /proposals/nihon-kotsu — removed; use /<slug> if reinstated.
         .route("/api/admin/taxigen/activate", post(admin_taxigen_activate))
         .route("/survey/quality", get(survey_quality_page))

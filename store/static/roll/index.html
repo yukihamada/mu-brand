@@ -411,6 +411,46 @@ async function loadBrand(){
     } else {
       brandGrid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:40px;opacity:0.5;font-family:var(--mono);font-size:11px;">ブランド一覧の読み込みに失敗しました</div>';
     }
+
+    // ── Telemetry: impression + click ─────────────────────────────────
+    const seen = new Set();
+    const pending = new Set();
+    let flushTimer = null;
+    const flush = () => {
+      flushTimer = null;
+      if (!pending.size) return;
+      const batch = Array.from(pending);
+      pending.clear();
+      try {
+        navigator.sendBeacon
+          ? navigator.sendBeacon('/api/track/impressions',
+              new Blob([JSON.stringify({skus: batch})], {type: 'application/json'}))
+          : fetch('/api/track/impressions', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({skus: batch}), keepalive: true});
+      } catch(e){}
+    };
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        const sku = e.target.dataset.sku;
+        if (!sku || seen.has(sku)) continue;
+        seen.add(sku);
+        pending.add(sku);
+        if (!flushTimer) flushTimer = setTimeout(flush, 800);
+        io.unobserve(e.target);
+      }
+    }, { rootMargin: '50px', threshold: 0.3 });
+    document.querySelectorAll('.card[data-sku]').forEach(c => io.observe(c));
+    document.querySelectorAll('.card[data-sku]').forEach(c => {
+      c.addEventListener('click', () => {
+        const sku = c.dataset.sku;
+        if (!sku) return;
+        try {
+          navigator.sendBeacon
+            ? navigator.sendBeacon('/api/track/click?sku=' + encodeURIComponent(sku))
+            : fetch('/api/track/click?sku=' + encodeURIComponent(sku), { keepalive: true });
+        } catch(e){}
+      }, { passive: true });
+    });
   } catch (e) {
     console.error('[roll] load failed', e);
     document.querySelectorAll('.grid.loading, .brand-grid.loading').forEach(g => {
