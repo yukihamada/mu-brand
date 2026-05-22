@@ -2783,16 +2783,157 @@ pub async fn run_optimizer_cron(db: Db) {
                 tracing::warn!("[catalog/cron] persona review failed: {}", e);
             }
         }
-        // Every cycle, kick off mockup backfill for up to 3 AUTO SKUs
-        // that still display only the print art (mockup_url_external
-        // points back to the design). Per-cycle cap is small because
-        // Printful's mockup-generator is queue-based (~30-60s each)
-        // and we don't want to fight the gen workload.
+        // Each cycle: backfill (b) transparent print, (c) Printful
+        // mockup, (d) Gemini lifestyle photo for SKUs that don't have
+        // them yet. Phase 1 SKUs only got (a) + (c); the 4-image
+        // pipeline went in mid-stream so backfill catches them up.
         if let Err(e) = mockup_backfill_step(db.clone()).await {
             tracing::warn!("[catalog/cron] mockup backfill failed: {}", e);
         }
+        if let Err(e) = transparent_backfill_step(db.clone()).await {
+            tracing::warn!("[catalog/cron] transparent backfill failed: {}", e);
+        }
+        if let Err(e) = lifestyle_backfill_step(db.clone()).await {
+            tracing::warn!("[catalog/cron] lifestyle backfill failed: {}", e);
+        }
+        if let Err(e) = stale_sku_killer_step(db.clone()).await {
+            tracing::warn!("[catalog/cron] stale sku killer failed: {}", e);
+        }
         tokio::time::sleep(std::time::Duration::from_secs(CRON_INTERVAL_SECS)).await;
     }
+}
+
+/// Self-improvement: generate (d) lifestyle photo for AUTO SKUs that
+/// don't have one yet. We mark "has lifestyle" by the existence of a
+/// catalog_product_extras row with label starting 'lifestyle'. Cron
+/// runs ¥6 × 2 SKUs / cycle = ¥12 / 30 min, well within budget.
+async fn lifestyle_backfill_step(db: Db) -> Result<(), String> {
+    let rows: Vec<String> = {
+        let conn = db.lock().unwrap();
+        conn.prepare(
+            "SELECT cp.sku
+             FROM catalog_products cp
+             WHERE cp.brand='auto' AND cp.is_active=1
+               AND NOT EXISTS (
+                 SELECT 1 FROM catalog_product_extras ex
+                 WHERE ex.sku = cp.sku AND ex.label LIKE 'lifestyle%'
+               )
+             LIMIT 2",
+        )
+        .ok()
+        .and_then(|mut s| {
+            s.query_map([], |r| r.get::<_, String>(0))
+                .ok()
+                .map(|it| it.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default()
+    };
+    for sku in rows {
+        // Infer theme + kind from SKU pattern. AUTO-{THEME}-{KIND}-{seed}.
+        let kind = kind_from_sku(&sku);
+        let theme_slug = sku
+            .strip_prefix("AUTO-")
+            .and_then(|rest| {
+                SEED_THEMES.iter().find(|t| {
+                    let pat = t.slug.to_uppercase().replace('_', "-") + "-";
+                    rest.starts_with(&pat)
+                }).map(|t| t.slug)
+            })
+            .unwrap_or("mu_mark");
+        let theme = SEED_THEMES
+            .iter()
+            .find(|t| t.slug == theme_slug)
+            .unwrap_or(&SEED_THEMES[3]);
+        let db_c = db.clone();
+        let sku_c = sku.clone();
+        let slug_c = theme.slug.to_string();
+        let brief_c = theme.prompt_brief.to_string();
+        let kind_c = kind.to_string();
+        tokio::spawn(async move {
+            let _ = generate_lifestyle_photo(db_c, sku_c, slug_c, brief_c, kind_c, 1).await;
+        });
+    }
+    Ok(())
+}
+
+/// Self-improvement: process (b) transparent print for AUTO SKUs that
+/// don't have one yet. Fast + free (image crate, no API). Cron does
+/// 3 per cycle.
+async fn transparent_backfill_step(db: Db) -> Result<(), String> {
+    let rows: Vec<(String, String)> = {
+        let conn = db.lock().unwrap();
+        conn.prepare(
+            "SELECT cp.sku, COALESCE(cp.design_file, '')
+             FROM catalog_products cp
+             WHERE cp.brand='auto' AND cp.is_active=1
+               AND cp.design_file IS NOT NULL
+               AND NOT EXISTS (
+                 SELECT 1 FROM catalog_product_extras ex
+                 WHERE ex.sku = cp.sku AND ex.label LIKE '%print%'
+               )
+             LIMIT 3",
+        )
+        .ok()
+        .and_then(|mut s| {
+            s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+                .ok()
+                .map(|it| it.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default()
+    };
+    for (sku, design_url) in rows {
+        if design_url.is_empty() {
+            continue;
+        }
+        let db_c = db.clone();
+        tokio::spawn(async move {
+            // Fetch the design bytes from R2 (= the URL we stored) and
+            // run the same white→alpha pipeline.
+            match reqwest::Client::new()
+                .get(&design_url)
+                .timeout(std::time::Duration::from_secs(30))
+                .send()
+                .await
+            {
+                Ok(r) if r.status().is_success() => {
+                    match r.bytes().await {
+                        Ok(b) => {
+                            let _ = generate_transparent_print(db_c, sku, b.to_vec()).await;
+                        }
+                        Err(e) => tracing::warn!("[catalog/transparent] bytes fail: {}", e),
+                    }
+                }
+                _ => tracing::warn!("[catalog/transparent] fetch fail for {}", design_url),
+            }
+        });
+    }
+    Ok(())
+}
+
+/// Self-improvement: deactivate AUTO SKUs that have failed mockup
+/// generation 5+ times. Stops the backfill cron from burning attempts
+/// on rows that will never succeed (bad variant_id / bad design URL /
+/// etc.). Reads from catalog_spend ledger.
+async fn stale_sku_killer_step(db: Db) -> Result<(), String> {
+    let killed: i64 = {
+        let conn = db.lock().unwrap();
+        conn.execute(
+            "UPDATE catalog_products
+             SET is_active=0, status='retired'
+             WHERE brand='auto' AND is_active=1
+               AND sku IN (
+                 SELECT ref_id FROM catalog_spend
+                 WHERE category='mockup_fail'
+                 GROUP BY ref_id HAVING COUNT(*) >= 5
+               )",
+            [],
+        )
+        .unwrap_or(0) as i64
+    };
+    if killed > 0 {
+        tracing::info!("[catalog/cron] killed {} stale SKUs (5+ mockup fails)", killed);
+    }
+    Ok(())
 }
 
 /// Find up to N AUTO SKUs whose mockup_url_external equals the design
@@ -2811,7 +2952,7 @@ async fn mockup_backfill_step(db: Db) -> Result<(), String> {
              FROM catalog_products
              WHERE brand='auto' AND is_active=1
                AND (mockup_url_external = design_file OR mockup_url_external IS NULL)
-             LIMIT 3",
+             LIMIT 5",
         )
         .ok()
         .and_then(|mut s| {
