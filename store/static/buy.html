@@ -697,10 +697,18 @@ async function loadProduct() {
     document.getElementById('product-price').textContent = '¥' + (pick.price_jpy||0).toLocaleString();
     const rem = (pick.inventory||0) - (pick.sold||0);
     const stockEl = document.getElementById('product-stock');
-    if (rem <= 5) {
-      stockEl.innerHTML = '<span class="red">のこり ' + rem + ' / ' + pick.inventory + ' · 完売間近</span>';
+    if (rem <= 5 && rem > 0) {
+      // Real scarcity — show urgency.
+      stockEl.innerHTML = '<span class="red">のこり ' + rem + ' 着 · 完売間近</span>';
+    } else if (rem <= 0) {
+      stockEl.innerHTML = '<span class="red">完売</span>';
+    } else if ((pick.sold || 0) === 0) {
+      // Fresh drop — no sales yet. NEVER show "0 着 売れ済" — it kills
+      // purchase intent ("nobody wants this"). Frame as new.
+      stockEl.textContent = '🆕 New drop · 在庫 ' + rem + ' 着';
     } else {
-      stockEl.textContent = 'のこり ' + rem + ' / ' + pick.inventory + ' · ' + pick.sold + ' 着 売れ済';
+      // Show positive social proof. "発送済" is neutral.
+      stockEl.textContent = 'のこり ' + rem + ' 着 · ' + pick.sold + ' 着 発送済';
     }
     document.getElementById('product-link').href = '/products/' + (pick.brand || 'mugen') + '/' + pick.id + '?from=buy_page';
     const anchorLink = document.getElementById('product-anchor-link');
