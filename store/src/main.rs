@@ -20730,6 +20730,49 @@ async fn api_brand_copy(
     }
 }
 
+/// GET /api/brands — all active brands from catalog_brands, ordered by name.
+/// Used by /roll/ and any other LP that needs to render a brand directory.
+async fn api_brands(State(db): State<Db>) -> Response {
+    let conn = db.lock().unwrap();
+    let mut stmt = match conn.prepare(
+        "SELECT b.slug, b.name, COALESCE(b.emoji,''), b.color_primary,
+                COALESCE(b.tagline,''), b.revenue_share_pct, b.config_json,
+                (SELECT COUNT(*) FROM catalog_products p
+                 WHERE p.brand = b.slug AND p.status = 'live') AS product_count
+         FROM catalog_brands b
+         WHERE b.is_active = 1
+         ORDER BY product_count DESC, b.name"
+    ) { Ok(s) => s, Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response() };
+
+    let brands: Vec<serde_json::Value> = stmt.query_map([], |r| {
+        let slug: String = r.get(0)?;
+        let cfg: Option<String> = r.get(6)?;
+        let cfg_v: serde_json::Value = cfg
+            .as_deref()
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or(serde_json::json!({}));
+        // Prefer config.lp_template (e.g. "/roll/") over the default "/:slug"
+        // when the brand has a custom LP.
+        let lp = cfg_v.get("lp_template")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("/{}", slug));
+        Ok(serde_json::json!({
+            "slug": slug,
+            "name": r.get::<_, String>(1)?,
+            "emoji": r.get::<_, String>(2)?,
+            "color_primary": r.get::<_, String>(3)?,
+            "tagline": r.get::<_, String>(4)?,
+            "revenue_share_pct": r.get::<_, i64>(5)?,
+            "product_count": r.get::<_, i64>(7)?,
+            "lp_url": lp,
+            "config": cfg_v,
+        }))
+    }).and_then(|it| it.collect::<Result<Vec<_>, _>>()).unwrap_or_default();
+
+    Json(serde_json::json!({ "brands": brands, "count": brands.len() })).into_response()
+}
+
 /// GET /api/brand/:slug — brand metadata + all live catalog_products for the brand,
 /// ordered by sort_order. Used by LP pages (e.g. /roll/) so product data stays
 /// in the catalog and is never hardcoded in HTML.
@@ -62066,6 +62109,7 @@ async fn main() {
         .route("/merch/:category", get(merch_category))
         .route("/api/brand_copy/:brand", get(api_brand_copy))
         .route("/api/brand/:slug", get(api_brand))
+        .route("/api/brands", get(api_brands))
         // /proposals/nihon-kotsu — removed; use /<slug> if reinstated.
         .route("/api/admin/taxigen/activate", post(admin_taxigen_activate))
         .route("/survey/quality", get(survey_quality_page))

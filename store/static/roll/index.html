@@ -119,26 +119,41 @@ footer{padding:48px 24px 60px;text-align:center;border-top:1px solid var(--borde
 footer .legal{margin-top:24px;padding-top:18px;border-top:1px solid #222;font-size:11px;line-height:1.8;opacity:0.7;}
 footer a{color:var(--gold);}
 
+/* ─── BRAND LIST ───────────────────────────────────── */
+.brand-grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));min-height:120px;}
+.brand-grid.loading::before{content:"loading brands…";display:block;text-align:center;width:100%;grid-column:1/-1;font-family:var(--mono);font-size:11px;letter-spacing:0.3em;color:var(--gold);opacity:0.4;padding:60px 0;}
+.brand-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:22px 18px 18px;display:flex;flex-direction:column;align-items:flex-start;gap:8px;text-decoration:none;color:inherit;transition:all .25s;position:relative;overflow:hidden;}
+.brand-card::before{content:"";position:absolute;inset:0;background:linear-gradient(135deg, var(--c, var(--gold)) 0%, transparent 60%);opacity:0.06;pointer-events:none;}
+.brand-card:hover{transform:translateY(-4px);border-color:var(--c, var(--gold));}
+.brand-card .b-emoji{font-size:30px;line-height:1;color:var(--c, var(--gold));}
+.brand-card .b-name{font-size:16px;font-weight:800;letter-spacing:-0.01em;}
+.brand-card .b-tagline{font-size:11px;opacity:0.6;line-height:1.5;}
+.brand-card .b-meta{margin-top:auto;padding-top:10px;display:flex;gap:10px;font-family:var(--mono);font-size:9px;letter-spacing:0.2em;opacity:0.5;text-transform:uppercase;}
+.brand-card .b-meta .pill{padding:3px 8px;border:1px solid var(--border);border-radius:24px;}
+.brand-card.is-current{border-color:var(--c, var(--gold));}
+.brand-card.is-current .b-meta .pill.current{color:var(--c, var(--gold));border-color:var(--c, var(--gold));}
+
 @media(max-width:600px){
   .grid{grid-template-columns:repeat(2,1fr);gap:10px}
   .card .meta{padding:10px 12px 12px}
   .card .meta .name{font-size:12px}
   .hero{min-height:80vh;padding:40px 16px 30px}
   .profit .splits{grid-template-columns:repeat(2,1fr)}
+  .brand-grid{grid-template-columns:repeat(2,1fr)}
 }
 </style>
 </head><body>
 
-<!-- ─── HERO ──────────────────────────────────────────── -->
+<!-- ─── HERO (entirely DB-driven via brand.config_json.hero) ──── -->
 <section class="hero">
-  <div class="hero-tag">— <span class="dot">◐</span> ROLL · FIRST EDITION · 2026 —</div>
+  <div class="hero-tag">— <span class="dot" id="hero-emoji">◐</span> <span id="hero-badge">…</span> —</div>
   <div class="hero-lockup">
-    <div class="hero-mark"><span class="moon">◐</span></div>
-    <h1 class="hero-title"><span class="roll-r">R</span><span class="roll-o">O</span><span class="roll-rest">LL</span></h1>
-    <div class="hero-by">BY MU · 無 / 月</div>
+    <div class="hero-mark"><span class="moon" id="hero-mark">◐</span></div>
+    <h1 class="hero-title" id="hero-title">…</h1>
+    <div class="hero-by" id="hero-subtitle">…</div>
   </div>
-  <div class="hero-tag-line"><strong>SPIN</strong> THE WORLD</div>
-  <div class="hero-jp" id="hero-jp">回せ、世界を。</div>
+  <div class="hero-tag-line" id="hero-tagline-en">…</div>
+  <div class="hero-jp" id="hero-tagline-jp">…</div>
   <div class="hero-cta">
     <a href="#tees" class="btn btn-primary">TEES を見る</a>
     <a href="#rash" class="btn btn-ghost">RASHGUARDS を見る</a>
@@ -163,7 +178,7 @@ footer a{color:var(--gold);}
   <div class="section-head">
     <div class="sub">— PART 1 / 2 —</div>
     <h2><span id="tee-count">—</span> TEES</h2>
-    <p class="blurb">Bella+Canvas 3001 · 4.2oz リングスパンコットン · 在庫レス DTG プリント · 7–14日配送</p>
+    <p class="blurb" id="tee-blurb">…</p>
   </div>
   <div class="grid loading" id="tee-grid"></div>
 </section>
@@ -173,7 +188,7 @@ footer a{color:var(--gold);}
   <div class="section-head">
     <div class="sub">— PART 2 / 2 —</div>
     <h2><span id="rash-count">—</span> RASHGUARDS</h2>
-    <p class="blurb">All-Over Print Men's Rashguard · 昇華プリント全面 · IBJJF対応 · 在庫レス · 7–14日配送</p>
+    <p class="blurb" id="rash-blurb">…</p>
   </div>
   <div class="grid loading" id="rash-grid"></div>
 </section>
@@ -193,6 +208,16 @@ footer a{color:var(--gold);}
   <h3>世界を、<span class="gold">回せ。</span></h3>
   <p>SPIN THE WORLD · MOVE THE WORLD</p>
   <a href="https://merch.wearmu.com/merch/roll" class="btn btn-primary">SHOP ALL · <span id="total-count">—</span> SKUs</a>
+</section>
+
+<!-- ─── OTHER MU BRANDS (entirely DB-driven via /api/brands) ── -->
+<section class="section brands-section" id="brands">
+  <div class="section-head">
+    <div class="sub">— OTHER MU BRANDS —</div>
+    <h2>ブランド一覧</h2>
+    <p class="blurb">MU の傘下ブランド一覧。すべて在庫レス・透明な利益分配 (§28) で運営。</p>
+  </div>
+  <div class="brand-grid loading" id="brand-grid"></div>
 </section>
 
 <footer>
@@ -277,17 +302,79 @@ function renderSplits(donationPct){
   ).join('');
 }
 
-async function loadBrand(){
-  try {
-    const r = await fetch('/api/brand/roll', { headers: { accept: 'application/json' }});
-    if (!r.ok) throw new Error('brand fetch failed: ' + r.status);
-    const data = await r.json();
+// Render the hero from brand.config.hero + brand.name/emoji.
+// All copy lives in catalog_brands.config_json — no brand-identity strings
+// are hardcoded in this HTML.
+function renderHero(brand){
+  const cfg = brand.config || {};
+  const hero = cfg.hero || {};
+  const emoji = brand.emoji || '◐';
+  document.getElementById('hero-emoji').textContent = emoji;
+  document.getElementById('hero-mark').textContent = emoji;
+  document.getElementById('hero-badge').textContent = hero.badge || brand.name || '';
+  document.getElementById('hero-subtitle').textContent = hero.subtitle || '';
 
-    // Hero (tagline could be DB-driven later if needed)
-    if (data.tagline) {
-      const heroJp = document.getElementById('hero-jp');
-      if (heroJp && data.tagline.includes('回せ')) heroJp.textContent = data.tagline;
-    }
+  // Title: hero.title (e.g. "ROLL") with optional accent letter colored gold
+  const title = hero.title || brand.name || '';
+  const accent = hero.title_accent_letter || '';
+  const titleEl = document.getElementById('hero-title');
+  if (accent && title.includes(accent)) {
+    const i = title.indexOf(accent);
+    titleEl.innerHTML =
+      `<span style="color:#fff">${esc(title.slice(0, i))}</span>` +
+      `<span style="color:var(--gold)">${esc(accent)}</span>` +
+      `<span style="color:#fff">${esc(title.slice(i + accent.length))}</span>`;
+  } else {
+    titleEl.textContent = title;
+  }
+
+  // Tagline EN with optional accent word
+  const tagEn = hero.tagline_en || (brand.tagline || '').split('·')[0].trim();
+  const tagAccent = hero.tagline_en_accent || '';
+  const tagEnEl = document.getElementById('hero-tagline-en');
+  if (tagAccent && tagEn.includes(tagAccent)) {
+    tagEnEl.innerHTML = tagEn.replace(tagAccent, `<strong>${esc(tagAccent)}</strong>`);
+  } else {
+    tagEnEl.textContent = tagEn;
+  }
+  document.getElementById('hero-tagline-jp').textContent =
+    hero.tagline_jp || (brand.tagline || '').split('·').slice(1).join('·').trim();
+
+  // Section blurbs (per-kind copy lives in config.product_blurbs)
+  const blurbs = cfg.product_blurbs || {};
+  if (blurbs.tee) document.getElementById('tee-blurb').textContent = blurbs.tee;
+  if (blurbs.rashguard) document.getElementById('rash-blurb').textContent = blurbs.rashguard;
+
+  // Page title + meta
+  document.title = (brand.name || 'BRAND') + ' — ' + (hero.tagline_en || '');
+}
+
+function brandCardHtml(b, currentSlug){
+  const isCurrent = b.slug === currentSlug;
+  return `
+  <a class="brand-card ${isCurrent ? 'is-current' : ''}" href="${esc(b.lp_url || ('/' + b.slug))}" style="--c:${esc(b.color_primary || '#e6c449')}">
+    <div class="b-emoji">${esc(b.emoji || '◯')}</div>
+    <div class="b-name">${esc(b.name)}</div>
+    <div class="b-tagline">${esc(b.tagline || '')}</div>
+    <div class="b-meta">
+      <span class="pill">${b.product_count} SKU${b.product_count === 1 ? '' : 's'}</span>
+      ${b.revenue_share_pct > 0 ? `<span class="pill">寄付 ${b.revenue_share_pct}%</span>` : ''}
+      ${isCurrent ? '<span class="pill current">NOW VIEWING</span>' : ''}
+    </div>
+  </a>`;
+}
+
+async function loadBrand(){
+  const slug = 'roll';
+  try {
+    const [brandRes, brandsRes] = await Promise.all([
+      fetch('/api/brand/' + slug, { headers: { accept: 'application/json' }}),
+      fetch('/api/brands', { headers: { accept: 'application/json' }}),
+    ]);
+    if (!brandRes.ok) throw new Error('brand fetch failed: ' + brandRes.status);
+    const data = await brandRes.json();
+
+    renderHero(data);
 
     // Tees
     const teeGrid = document.getElementById('tee-grid');
@@ -305,11 +392,21 @@ async function loadBrand(){
     document.getElementById('total-count').textContent = (data.products || []).length;
     document.getElementById('donation-pct').textContent = data.revenue_share_pct ?? 50;
     renderSplits(data.revenue_share_pct ?? 50);
+
+    // Brand list
+    const brandGrid = document.getElementById('brand-grid');
+    brandGrid.classList.remove('loading');
+    if (brandsRes.ok) {
+      const bd = await brandsRes.json();
+      brandGrid.innerHTML = (bd.brands || []).map(b => brandCardHtml(b, slug)).join('');
+    } else {
+      brandGrid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:40px;opacity:0.5;font-family:var(--mono);font-size:11px;">ブランド一覧の読み込みに失敗しました</div>';
+    }
   } catch (e) {
-    console.error('[roll] brand load failed', e);
-    document.querySelectorAll('.grid.loading').forEach(g => {
+    console.error('[roll] load failed', e);
+    document.querySelectorAll('.grid.loading, .brand-grid.loading').forEach(g => {
       g.classList.remove('loading');
-      g.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:60px 20px;opacity:0.5;font-family:var(--mono);font-size:12px;">商品の読み込みに失敗しました。<br>少し経ってからリロードしてください。</div>';
+      g.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:60px 20px;opacity:0.5;font-family:var(--mono);font-size:12px;">読み込みに失敗しました。少し経ってからリロードしてください。</div>';
     });
   }
 }

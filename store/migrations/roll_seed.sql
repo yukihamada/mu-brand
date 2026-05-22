@@ -25,7 +25,7 @@ VALUES
   ('roll', 'ROLL ◐ MU', '◐', '#e6c449',
    'SPIN THE WORLD · 日本のパラ柔術 最前線へ',
    NULL, 1, 50,
-   '{"donation_pct":50,"lp_template":"/roll/","lead_time_days":14,"first_edition":true,"approval_required":false}');
+   '{"donation_pct":50,"lp_template":"/roll/","lead_time_days":14,"first_edition":true,"approval_required":false,"hero":{"title":"ROLL","title_accent_letter":"O","subtitle":"BY MU · 無 / 月","tagline_en":"SPIN THE WORLD","tagline_en_accent":"SPIN","tagline_jp":"回せ、世界を。","badge":"FIRST EDITION · 2026"},"product_blurbs":{"tee":"Bella+Canvas 3001 · 4.2oz リングスパンコットン · 在庫レス DTG プリント · 7–14日配送","rashguard":"All-Over Print Men''s Rashguard · 昇華プリント全面 · IBJJF対応 · 在庫レス · 7–14日配送"}}');
 
 -- ─── 10 TEES (Bella+Canvas 3001) ─────────────────────────────────────
 
