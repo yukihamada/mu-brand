@@ -33654,6 +33654,15 @@ async fn proposal_generic_sample(
     axum::extract::Path(slug): axum::extract::Path<String>,
     Json(body): Json<ProposalSampleBody>,
 ) -> Response {
+    // Hard gate: no public Stripe checkout until proposals.approved_at is set
+    // and revoked_at is NULL. Without this, a DRAFT brand whose LP is noindexed
+    // can still be charged by anyone who knows the API path.
+    {
+        let conn = db.lock().unwrap();
+        if !proposal_is_approved(&conn, &slug) {
+            return (StatusCode::GONE, "this proposal is not currently approved for public sales").into_response();
+        }
+    }
     let design_lower = body.design.to_lowercase();
     let (drop_num, default_price, label, kind) = {
         let conn = db.lock().unwrap();
@@ -33762,6 +33771,12 @@ async fn proposal_generic_bulk(
     axum::extract::Path(slug): axum::extract::Path<String>,
     Json(body): Json<ProposalBulkBody>,
 ) -> Response {
+    {
+        let conn = db.lock().unwrap();
+        if !proposal_is_approved(&conn, &slug) {
+            return (StatusCode::GONE, "this proposal is not currently approved for public sales").into_response();
+        }
+    }
     let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
     if stripe_key.is_empty() { return (StatusCode::SERVICE_UNAVAILABLE, "stripe key missing").into_response(); }
     if body.items.is_empty() { return (StatusCode::BAD_REQUEST, "no items").into_response(); }
@@ -33868,6 +33883,12 @@ async fn proposal_generic_bundle(
     axum::extract::Path(slug): axum::extract::Path<String>,
     Json(body): Json<ProposalBundleBody>,
 ) -> Response {
+    {
+        let conn = db.lock().unwrap();
+        if !proposal_is_approved(&conn, &slug) {
+            return (StatusCode::GONE, "this proposal is not currently approved for public sales").into_response();
+        }
+    }
     let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
     if stripe_key.is_empty() { return (StatusCode::SERVICE_UNAVAILABLE, "stripe key missing").into_response(); }
     let raw_size = body.size.trim().to_uppercase();
