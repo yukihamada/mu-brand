@@ -387,6 +387,9 @@ def device_modifier_tune(cid: str, label: str):
             effective_cur = cur_mod if cur_mod > 0 else 1.0
             # Skip if already within 10% of target
             if abs(effective_cur - target) / target < 0.1: continue
+            # Don't reverse human fine-tuning (more aggressive existing wins)
+            if target < 1.0 and effective_cur < target: continue
+            if target > 1.0 and effective_cur > target: continue
 
             if dev_name in existing:
                 rn = existing[dev_name][0]
@@ -408,6 +411,113 @@ def device_modifier_tune(cid: str, label: str):
                 print(f"[DEVICE/{label}] {camp_name[:25]} {dev_name}: {effective_cur:.2f}x→{target:.2f}x ({reason})")
             except GoogleAdsException as e:
                 print(f"[DEVICE ERR/{label}] {dev_name}: {str(e)[:120]}")
+
+
+def state_region_tune(cid: str, label: str):
+    """Auto-tune SUB-COUNTRY (state/province/region) bid modifiers based on 14d perf.
+
+    Higher thresholds than country-level (state data is sparser → less statistical power).
+
+    Thresholds:
+      - State cost > ¥5K AND 0 conv → modifier 0.5x (-50%)
+      - State ROAS >= 4.0x AND conv >= 3 → modifier 1.4x (+40%)
+      - State ROAS >= 2.5x AND conv >= 4 → modifier 1.2x (+20%)
+
+    Only operates on campaigns whose 14d cost > ¥30K (significant scale).
+    Adds new state criteria as needed (states don't need pre-existing targeting).
+    """
+    base = _y.safe_load(open(str(Path.home()/".config/google-ads/google-ads.yaml")))
+    base["login_customer_id"] = cid
+    c = GoogleAdsClient.load_from_dict(base, version="v22")
+    svc = c.get_service("GoogleAdsService")
+    ccs = c.get_service("CampaignCriterionService")
+
+    # Find significant campaigns first
+    big = []
+    for r in svc.search(customer_id=cid, query=(
+        "SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, "
+        "metrics.cost_micros FROM campaign WHERE campaign.status='ENABLED' "
+        "AND campaign.advertising_channel_type='SEARCH' AND segments.date DURING LAST_14_DAYS "
+        "AND metrics.cost_micros > 30000000000"  # ¥30K
+    )):
+        big.append((r.campaign.id, r.campaign.name))
+    if not big: return
+
+    for camp_id, camp_name in big:
+        # Aggregate state perf
+        perf = {}  # region_id_str -> {cost, conv, val, clk}
+        for r in svc.search(customer_id=cid, query=(
+            f"SELECT campaign.id, segments.geo_target_region, geographic_view.location_type, "
+            f"metrics.cost_micros, metrics.conversions, metrics.conversions_value, metrics.clicks "
+            f"FROM geographic_view WHERE campaign.id={camp_id} "
+            f"AND segments.date DURING LAST_14_DAYS "
+            f"AND geographic_view.location_type='LOCATION_OF_PRESENCE'"
+        )):
+            if not r.segments.geo_target_region: continue
+            rid = r.segments.geo_target_region.split('/')[-1]
+            p = perf.get(rid, {"cost": 0, "conv": 0, "val": 0, "clk": 0})
+            p["cost"] += r.metrics.cost_micros / 1e6
+            p["conv"] += r.metrics.conversions
+            p["val"] += r.metrics.conversions_value
+            p["clk"] += r.metrics.clicks
+            perf[rid] = p
+
+        # Existing state criteria for this campaign
+        existing = {}
+        for r in svc.search(customer_id=cid, query=(
+            f"SELECT campaign_criterion.resource_name, campaign_criterion.location.geo_target_constant, "
+            f"campaign_criterion.bid_modifier "
+            f"FROM campaign_criterion WHERE campaign.id={camp_id} "
+            f"AND campaign_criterion.type='LOCATION' AND campaign_criterion.negative=FALSE"
+        )):
+            gid = r.campaign_criterion.location.geo_target_constant.split('/')[-1]
+            existing[gid] = (r.campaign_criterion.resource_name, r.campaign_criterion.bid_modifier)
+
+        for rid, p in perf.items():
+            cost = p["cost"]; conv = p["conv"]; val = p["val"]
+            roas = (val / cost) if cost > 0 else 0
+            target_mod = None; reason = ""
+            if cost > 5000 and conv == 0:
+                target_mod = 0.5
+                reason = f"14d ¥{cost:.0f}/0c"
+            elif roas >= 4.0 and conv >= 3:
+                target_mod = 1.4
+                reason = f"14d ROAS {roas:.1f}x ({conv:.0f}c)"
+            elif roas >= 2.5 and conv >= 4:
+                target_mod = 1.2
+                reason = f"14d ROAS {roas:.1f}x ({conv:.0f}c)"
+            if target_mod is None: continue
+
+            cur = existing.get(rid, (None, 0.0))[1]
+            effective_cur = cur if cur > 0 else 1.0
+            if abs(effective_cur - target_mod) / target_mod < 0.1: continue
+            # Don't reverse human fine-tuning:
+            #  - For throttle (target < 1): skip if existing is already more strict (lower)
+            #  - For boost (target > 1): skip if existing is already more aggressive (higher)
+            if target_mod < 1.0 and effective_cur < target_mod: continue
+            if target_mod > 1.0 and effective_cur > target_mod: continue
+
+            if rid in existing:
+                op = c.get_type("CampaignCriterionOperation")
+                op.update.resource_name = existing[rid][0]
+                op.update.bid_modifier = target_mod
+                op.update_mask.paths.append("bid_modifier")
+            else:
+                op = c.get_type("CampaignCriterionOperation")
+                cr = op.create
+                cr.campaign = svc.campaign_path(cid, camp_id)
+                cr.location.geo_target_constant = f"geoTargetConstants/{rid}"
+                cr.bid_modifier = target_mod
+            try:
+                ccs.mutate_campaign_criteria(customer_id=cid, operations=[op])
+                actions.append({
+                    "acct": label, "campaign": camp_name, "region_id": rid,
+                    "action": f"STATE_MOD {effective_cur:.2f}x→{target_mod:.2f}x",
+                    "reason": reason,
+                })
+                print(f"[STATE/{label}] {camp_name[:25]} region#{rid}: {effective_cur:.2f}x→{target_mod:.2f}x ({reason})")
+            except GoogleAdsException as e:
+                print(f"[STATE ERR/{label}] {rid}: {str(e)[:120]}")
 
 
 def geo_modifier_tune(cid: str, label: str):
@@ -490,6 +600,9 @@ def geo_modifier_tune(cid: str, label: str):
         rn, cur_mod = targets[camp_id][country_str]
         effective_cur = cur_mod if cur_mod > 0 else 1.0
         if abs(effective_cur - target_mod) / target_mod < 0.1: continue
+        # Don't reverse human fine-tuning (more aggressive existing wins)
+        if target_mod < 1.0 and effective_cur < target_mod: continue
+        if target_mod > 1.0 and effective_cur > target_mod: continue
 
         op = c.get_type("CampaignCriterionOperation")
         op.update.resource_name = rn
@@ -609,6 +722,11 @@ def main():
             geo_modifier_tune(cid, label)
         except Exception as e:
             print(f"[ERR GEO {label}] {str(e)[:160]}")
+    for cid, label in ACCTS:
+        try:
+            state_region_tune(cid, label)
+        except Exception as e:
+            print(f"[ERR STATE {label}] {str(e)[:160]}")
     try:
         jiuflow_kw_tune()
     except Exception as e:
