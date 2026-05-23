@@ -410,6 +410,103 @@ def device_modifier_tune(cid: str, label: str):
                 print(f"[DEVICE ERR/{label}] {dev_name}: {str(e)[:120]}")
 
 
+def geo_modifier_tune(cid: str, label: str):
+    """Auto-tune geographic bid modifiers per SEARCH campaign based on 14d perf.
+
+    Country-level only (sub-region tuning requires explicit setup).
+
+    Thresholds:
+      - Country cost > ¥3K AND conv == 0 → modifier 0.5x (-50%)
+      - Country ROAS >= 3.0x AND conv >= 2 → modifier 1.3x (+30%)
+      - Country ROAS >= 2.0x AND conv >= 3 → modifier 1.2x (+20%)
+      - Skip if already within ±10% of target (idempotent)
+      - Only operates on countries already in positive targeting
+    """
+    base = _y.safe_load(open(str(Path.home()/".config/google-ads/google-ads.yaml")))
+    base["login_customer_id"] = cid
+    c = GoogleAdsClient.load_from_dict(base, version="v22")
+    svc = c.get_service("GoogleAdsService")
+    ccs = c.get_service("CampaignCriterionService")
+
+    # Get 14d perf per (campaign, country)
+    perf = {}  # (camp_id, country_id) -> {cost, conv, val}
+    camp_names = {}
+    for r in svc.search(customer_id=cid, query=(
+        "SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, "
+        "geographic_view.country_criterion_id, geographic_view.location_type, "
+        "metrics.cost_micros, metrics.conversions, metrics.conversions_value "
+        "FROM geographic_view WHERE campaign.status='ENABLED' "
+        "AND campaign.advertising_channel_type='SEARCH' "
+        "AND segments.date DURING LAST_14_DAYS "
+        "AND geographic_view.location_type='LOCATION_OF_PRESENCE'"
+    )):
+        key = (r.campaign.id, r.geographic_view.country_criterion_id)
+        cur = perf.get(key, {"cost": 0, "conv": 0, "val": 0})
+        cur["cost"] += r.metrics.cost_micros / 1e6
+        cur["conv"] += r.metrics.conversions
+        cur["val"] += r.metrics.conversions_value
+        perf[key] = cur
+        camp_names[r.campaign.id] = r.campaign.name
+
+    # Existing positive location criteria per campaign
+    targets = {}  # camp_id -> {country_id_str: (resource_name, bid_modifier)}
+    for r in svc.search(customer_id=cid, query=(
+        "SELECT campaign.id, campaign.status, campaign_criterion.resource_name, "
+        "campaign_criterion.location.geo_target_constant, campaign_criterion.bid_modifier, "
+        "campaign_criterion.negative, campaign_criterion.type "
+        "FROM campaign_criterion WHERE campaign.status='ENABLED' "
+        "AND campaign_criterion.type='LOCATION' AND campaign_criterion.negative=FALSE"
+    )):
+        gid = r.campaign_criterion.location.geo_target_constant.split('/')[-1]
+        if gid.isdigit():
+            targets.setdefault(r.campaign.id, {})[gid] = (
+                r.campaign_criterion.resource_name,
+                r.campaign_criterion.bid_modifier,
+            )
+
+    for (camp_id, country_id), p in perf.items():
+        if camp_id not in targets: continue
+        country_str = str(country_id)
+        # Country might be a state — we only act on country-level entries in targets
+        if country_str not in targets[camp_id]: continue
+        # Single-country campaigns: skip auto-modify (budget tighten already handles them;
+        # throttling a single-country campaign's only country is redundant)
+        if len(targets[camp_id]) < 2: continue
+        cost = p["cost"]; conv = p["conv"]; val = p["val"]
+        roas = (val / cost) if cost > 0 else 0
+
+        target_mod = None; reason = ""
+        if cost > 3000 and conv == 0:
+            target_mod = 0.5
+            reason = f"14d ¥{cost:.0f}/0conv"
+        elif roas >= 3.0 and conv >= 2:
+            target_mod = 1.3
+            reason = f"14d ROAS {roas:.1f}x ({conv:.0f}c)"
+        elif roas >= 2.0 and conv >= 3:
+            target_mod = 1.2
+            reason = f"14d ROAS {roas:.1f}x ({conv:.0f}c)"
+        if target_mod is None: continue
+
+        rn, cur_mod = targets[camp_id][country_str]
+        effective_cur = cur_mod if cur_mod > 0 else 1.0
+        if abs(effective_cur - target_mod) / target_mod < 0.1: continue
+
+        op = c.get_type("CampaignCriterionOperation")
+        op.update.resource_name = rn
+        op.update.bid_modifier = target_mod
+        op.update_mask.paths.append("bid_modifier")
+        try:
+            ccs.mutate_campaign_criteria(customer_id=cid, operations=[op])
+            actions.append({
+                "acct": label, "campaign": camp_names[camp_id],
+                "country_id": country_id, "action": f"GEO_MOD {effective_cur:.2f}x→{target_mod:.2f}x",
+                "reason": reason,
+            })
+            print(f"[GEO/{label}] {camp_names[camp_id][:25]} country#{country_id}: {effective_cur:.2f}x→{target_mod:.2f}x ({reason})")
+        except GoogleAdsException as e:
+            print(f"[GEO ERR/{label}] {country_id}: {str(e)[:120]}")
+
+
 def jiuflow_kw_tune():
     """Per-keyword tune inside JiuFlow Search (only campaign that converts)."""
     base = _y.safe_load(open(str(Path.home()/".config/google-ads/google-ads.yaml")))
@@ -507,6 +604,11 @@ def main():
             device_modifier_tune(cid, label)
         except Exception as e:
             print(f"[ERR DEVICE {label}] {str(e)[:160]}")
+    for cid, label in ACCTS:
+        try:
+            geo_modifier_tune(cid, label)
+        except Exception as e:
+            print(f"[ERR GEO {label}] {str(e)[:160]}")
     try:
         jiuflow_kw_tune()
     except Exception as e:
