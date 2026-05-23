@@ -61668,6 +61668,7 @@ async fn main() {
         catalog::seed_roll_brand(&conn);
         catalog::migrate_auto_labels(&conn);
         catalog::migrate_rashguard_product_id(&conn);
+        catalog::retire_dead_static_bjj_mockups(&conn);
     }
     // Spawn AFTER releasing the DB lock — task takes its own connections.
     catalog::spawn_roll_mockup_backfill(db.clone());
