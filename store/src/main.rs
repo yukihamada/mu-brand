@@ -17101,6 +17101,29 @@ async fn contrado_webhook(
     Json(serde_json::json!({"ok": true, "received": event})).into_response()
 }
 
+/// GET /api/labs/kokon-aori/claude — MU holder gated content fragment.
+/// Returns an HTML fragment (inserted by the labs page JS) with the full
+/// Claude Code prompt log used to produce the 60-second 煽りV. Returns
+/// 401 if no session, 403 if logged-in but not a MU tee holder.
+async fn labs_kokon_aori_claude(State(db): State<Db>, headers: HeaderMap) -> Response {
+    let email = match vault_session_email(&db, &headers) {
+        Some(e) => e,
+        None => return (StatusCode::UNAUTHORIZED, "login required").into_response(),
+    };
+    let is_holder = {
+        let conn = db.lock().unwrap();
+        vault_is_tee_holder(&conn, &email)
+    };
+    if !is_holder {
+        return (StatusCode::FORBIDDEN, "tee holder only").into_response();
+    }
+
+    let body = include_str!("../static/labs/kokon-aori/claude_holder.html");
+    (StatusCode::OK,
+     [("content-type", "text/html; charset=utf-8")],
+     body).into_response()
+}
+
 async fn resend_inbound_webhook(
     State(db): State<Db>,
     headers: HeaderMap,
@@ -61841,6 +61864,7 @@ async fn main() {
         .route("/api/webhook/resend-inbound", post(resend_inbound_webhook))
         .route("/api/webhook/resend-events", post(resend_events_webhook))
         .route("/api/webhooks/contrado", post(contrado_webhook))
+        .route("/api/labs/kokon-aori/claude", get(labs_kokon_aori_claude))
         .route("/stats", get(public_stats_page))
         .route("/agents", get(public_agents_page))
         .route("/api/kyc/identity-session", post(payments::create_stripe_identity_session))

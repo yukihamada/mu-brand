@@ -1,0 +1,176 @@
+<div class="note" style="margin-top:8px">
+<p style="margin:0"><strong>🔓 UNLOCKED</strong> — MU Tシャツ ホルダー 確認 OK。 以下、 17 イテレーション 全部、 ユーザー が 投げた メッセージ そのまま と、 Claude Code が 内部で 組んだ 動きを 並列で 出します。</p>
+</div>
+
+<h3>13.1 · 最初の ひと言</h3>
+<pre><code>焼肉古今 (5名) vs FLEX GROUP の 5v5 BJJ 煽りV を 60秒で 作って。
+日付/会場 不要。 終盤に向けて 盛り上がる形で。
+音声 も ElevenLabs v3 使って</code></pre>
+
+<p>これだけ。 30秒で Claude Code は以下を 自動で 決めた:</p>
+<ul>
+<li><strong>素材取得</strong> — <code>WebFetch https://kokon.tokyo/about</code> で 古今 メンバー 5 名抽出 (馬場祐次/竹田/竹下/南/江村)。 FLEX GROUP は <code>WebFetch https://flex-group.co.jp</code></li>
+<li><strong>narration 構造</strong> — 60s = intro 10s + 5 fighters × 7s + climax 15s</li>
+<li><strong>音声</strong> — ElevenLabs v3 「大谷」 voice (Japanese male, low / deliberate)</li>
+<li><strong>BGM</strong> — ElevenLabs Music、 build-to-climax</li>
+<li><strong>映像</strong> — 写真 + Pillow stats card + Veo i2v で 炎 mascot</li>
+<li><strong>実行環境</strong> — m5 Mac (yukihamada@192.168.0.5)、 SSH で ffmpeg 走らせる (ローカル M1 だと重い)</li>
+</ul>
+
+<h3>13.2 · 17 イテレーションの 全 ユーザー メッセージ</h3>
+<table>
+<thead><tr><th>v</th><th>ユーザー の 一言</th><th>Claude 側 で 起きたこと</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>「焼肉古今 vs FLEX 5v5 60秒 煽りV」</td><td>初稿生成、narration → TTS → BGM → ffmpeg overlay → mp4</td></tr>
+<tr><td>2</td><td>「音声 も elevenlab v3 使って」</td><td>narration.txt 全行を ElevenLabs v3 voice_id <code>21m00...大谷</code> で 再生成</td></tr>
+<tr><td>3</td><td>「終盤にかけて 盛り上がる形で。 日付とか会場は不要」</td><td>narration から 「5/24 16:30 東京タワー」 削除、 BGM の build を 後半 15s 集中</td></tr>
+<tr><td>4</td><td>「他 何あったら 面白い？」</td><td>提案: ① Veo i2v で 炎 mascot 動かす ② 選手 stats lower-third ③ 白フラッシュ + bigboom SFX 同タイミング</td></tr>
+<tr><td>5</td><td>「ゆうじ の 感じ違うかも？ → 調べて」</td><td>kokon.tokyo /about 再 scrape → 馬場 の 名は 「祐次」 (優司 / 優二 ではない) 確定、 narration 修正</td></tr>
+<tr><td>6</td><td>「あと アルバイトの 江村孔稀」</td><td>5人目 として 江村 を 追加。 stats card 再生成、 narration の 5番目 差し替え、 全体 timing 7s 分 伸ばし</td></tr>
+<tr><td>7</td><td>「極め ＝ きめ ね 読み方」</td><td>narration.txt 中 「極める」 「極め」 を ElevenLabs に kana で 「きめる」 「きめ」 と 渡すよう 修正 → 再 TTS</td></tr>
+<tr><td>8</td><td>「殺すって 書かないで」</td><td>narration 全行 検閲、 該当 1 箇所を 「極める」 (きめる) に 置換</td></tr>
+<tr><td>9</td><td>「炎くん veo3 で 動かして欲しい / 古今くんは いらない」</td><td>Veo 3.1 fast (<code>veo-3.1-fast-generate-preview</code>) で 炎 mascot を i2v 化。 元 boy mascot は 全 cut</td></tr>
+<tr><td>10</td><td>「ばば の 顔が キレてる」</td><td>Pillow 側 <code>photo_backdrop(... y_bias=0.05)</code> を 追加、 center crop → 上寄せ crop</td></tr>
+<tr><td>11</td><td>「5/24 17:00 詳細これ <code>jiufight.jp</code>」</td><td>jiufight.jp WebFetch → 試合カード 確認 (大会名 SUPER YAWARA SWEEP CUP、 時間 16:30 OPEN / 17:00 START)</td></tr>
+<tr><td>12</td><td>「ほのうくん 背景 終わり 白くなっちゃう 動かすと」</td><td>Veo 再生成: prompt に 「DARK SOLID BLACK background, pure RGB (0,0,0) for entire 8 seconds」 + negativePrompt で white reject。 + ffmpeg 側 dual key で 救済</td></tr>
+<tr><td>13</td><td>(無言で v13 試聴)</td><td>letterbox 灰色残り発覚 → <code>colorkey + lumakey</code> 2段 chain</td></tr>
+<tr><td>14-16</td><td>(微調整 連発)</td><td>BGM -10dB、 Veo foley 残し volume=0.10、 字幕 fighter intro 飛ばし、 ハードカット + 白フラッシュ + bigboom を 同 frame</td></tr>
+<tr><td>17</td><td>「OK これで」</td><td>v17 → <code>kokon_aori.mp4</code> として 確定 → labs/kokon-aori/ に 配置</td></tr>
+</tbody>
+</table>
+
+<h3>13.3 · そのまま 動く コマンド 一式</h3>
+
+<h4>(a) ElevenLabs v3 narration</h4>
+<pre><code>curl -X POST "https://api.elevenlabs.io/v1/text-to-speech/$VOICE_ID" \
+  -H "xi-api-key: $ELEVENLABS_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "(narration.txt 全文)",
+    "model_id": "eleven_v3",
+    "voice_settings": {"stability": 0.55, "similarity_boost": 0.75, "style": 0.30}
+  }' --output narration_v3.mp3</code></pre>
+
+<h4>(b) ElevenLabs Music BGM (climax build)</h4>
+<pre><code>curl -X POST "https://api.elevenlabs.io/v1/music/compose" \
+  -H "xi-api-key: $ELEVENLABS_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "dark tribal taiko intro, slow build, climax with synth riser and 808 sub drop at 45s mark, total 60 seconds",
+    "music_length_ms": 60000
+  }' --output bgm_climax.mp3</code></pre>
+
+<h4>(c) Veo 3.1 fast — 炎 mascot i2v</h4>
+<pre><code>curl -X POST "https://generativelanguage.googleapis.com/v1beta/models/veo-3.1-fast-generate-preview:predictLongRunning" \
+  -H "x-goog-api-key: $GEMINI_API_KEY" -H "Content-Type: application/json" \
+  -d '{
+    "instances": [{
+      "prompt": "the flame character meditates, then erupts upward. DARK SOLID BLACK background, pure RGB (0,0,0) for entire 8 seconds, no background change, no flash, no white",
+      "image": { "bytesBase64Encoded": "(炎くん PNG base64)" },
+      "negativePrompt": "white background, light flash, color shift to white"
+    }],
+    "parameters": { "aspectRatio": "16:9", "durationSeconds": 8 }
+  }'</code></pre>
+
+<h4>(d) ffmpeg core composite — dual key で 黒 抜き</h4>
+<pre><code>ffmpeg -i bg.mp4 -i honoo_meditation.mp4 -filter_complex "
+  [1:v]colorkey=color=black:similarity=0.30:blend=0.12,
+       lumakey=threshold=0.08:tolerance=0.05,
+       scale=1280:720[honoo];
+  [0:v][honoo]overlay=(W-w)/2:(H-h)/2:enable='between(t,12,20)'[v]
+" -map "[v]" -map 0:a -c:v libx264 -preset slow -crf 18 out.mp4</code></pre>
+
+<h4>(e) ken-burns の eval=frame 罠 回避</h4>
+<pre><code>scale=w='if(eq(on,1),iw,ow)':h='if(eq(on,1),ih,oh)':eval=frame,
+zoompan=z='1+0.15*max(0,min(dur,t-slide_start))/dur':
+        d=125:s=1920x1080</code></pre>
+<p style="font-size:12px;color:var(--mute)">↑ <code>t</code> を そのまま 渡すと global timeline で 暴走する。 <code>max(0,min(dur,t-slide_start))</code> で local clip 必須。</p>
+
+<h4>(f) m5 Mac SSH ループ (build → 再生 → 修正)</h4>
+<pre><code>rsync -avz --exclude assets/ ./ yukihamada@192.168.0.5:/tmp/kokon_aori/
+ssh yukihamada@192.168.0.5 'cd /tmp/kokon_aori && python3 build_video_v17.py'
+scp yukihamada@192.168.0.5:/tmp/kokon_aori/out_v17.mp4 ./
+open out_v17.mp4   # QuickTime で 確認 → 一言 投げる → 次の v</code></pre>
+
+<h3>13.4 · 失敗 → 修正 ループ (全 8 件)</h3>
+<table>
+<thead><tr><th>症状</th><th>原因</th><th>修正</th></tr></thead>
+<tbody>
+<tr><td>背景 白くなる (Veo 後半)</td><td>Veo が 自動で flash 入れる</td><td>prompt に DARK SOLID BLACK 明記 + negativePrompt</td></tr>
+<tr><td>letterbox 灰色 残る</td><td>colorkey 黒 だけ で は 16-24 階調 残る</td><td>colorkey → lumakey の 2段 chain</td></tr>
+<tr><td>馬場 顔切れ</td><td>center crop が 縦長 photo を 真中 切り</td><td>y_bias=0.05 で 上寄せ</td></tr>
+<tr><td>「極め」 が 「きわめ」 と 発音</td><td>ElevenLabs Japanese TTS の 漢字読み 揺れ</td><td>narration.txt 内 で kana 「きめ」 に 置換</td></tr>
+<tr><td>「殺す」 単語混入</td><td>BJJ コピー で 雛形が 「相手 を 殺す」 と 出した</td><td>narration 全 行 検閲 → 「極める」 へ</td></tr>
+<tr><td>BGM が narration かき消す</td><td>BGM default 0 dB</td><td>filter chain で <code>volume=0.32</code> (約 -10dB)</td></tr>
+<tr><td>checker 模様 透ける</td><td>honoo_meditation の source PNG に 透過 checker bg が baked</td><td><code>remove_honoo_bg.py</code> で flood-fill → *_clean.png</td></tr>
+<tr><td>scale 暴走</td><td>kenburns の <code>t</code> が global</td><td>local clip 化 で 修正</td></tr>
+</tbody>
+</table>
+
+<h3>13.5 · 構成ファイル</h3>
+<pre><code>/Users/yuki/workspace/_tmp/kokon_aori/
+├── build_video_v17.py       # 全合成 (ffmpeg complex filter graph)
+├── narration.txt            # ElevenLabs v3 入力 (kana 修正済)
+├── make_slides.py           # 選手 stats card (Pillow)
+├── make_slides_v2.py        # climax slides + photo_backdrop(y_bias)
+├── remove_honoo_bg.py       # Veo 出力 の checker bg 除去
+└── assets/
+    ├── narration_v3.mp3     # 60s, mono, 128kbps
+    ├── bgm_climax.mp3       # build → climax
+    ├── sfx_kick.wav         # ElevenLabs sound-generation
+    ├── sfx_riser.wav
+    ├── sfx_bigboom.wav      # 最後 1発
+    ├── honoo_meditation.mp4 # Veo i2v, 8s, alpha key済
+    ├── honoo_erupt.mp4
+    └── stats/               # Pillow 生成 lower-third 5 枚
+        ├── 01_baba.png
+        ├── 02_takeda.png
+        ├── 03_takeshita.png
+        ├── 04_minami.png
+        └── 05_emura.png</code></pre>
+
+<h3>13.6 · 実コスト 内訳</h3>
+<table>
+<thead><tr><th>API</th><th>使用量</th><th>cost (¥)</th></tr></thead>
+<tbody>
+<tr><td>ElevenLabs v3 TTS</td><td>narration ~600 chars × 5 回 再生成</td><td>¥80</td></tr>
+<tr><td>ElevenLabs Music</td><td>60s × 3 回</td><td>¥240</td></tr>
+<tr><td>ElevenLabs Sound Gen</td><td>SFX 6 個</td><td>¥60</td></tr>
+<tr><td>Veo 3.1 fast i2v</td><td>8s × 4 回 (背景失敗で 再生成)</td><td>¥1,400</td></tr>
+<tr><td>Gemini Imagen (stats photo)</td><td>5 枚</td><td>¥30</td></tr>
+<tr><td>m5 Mac 電気代</td><td>SSH ffmpeg 累積 90 分</td><td>¥18</td></tr>
+<tr><td><strong>合計</strong></td><td>17 iter (約 6h ウォール時間)</td><td><strong>¥1,828</strong></td></tr>
+</tbody>
+</table>
+
+<h3>13.7 · そのまま 写経 用 — 自分の 試合煽りVを 作る 場合</h3>
+<p>↓ これを Claude Code に そのまま 投げれば 同じ pipeline が 走る。 適宜 選手名/対戦相手/SNS handle を 差し替え。</p>
+<pre><code>BJJ の 60秒煽りV を 作ってほしい。
+試合: [自分のチーム名] vs [相手チーム名] 、 5v5
+日付/会場 は 不要。 終盤 (45s〜) に 向けて build。
+
+選手 5 名:
+1. [name1] / 帯 [色] / 得意技 [...]
+2. ...
+
+スタック:
+- 音声: ElevenLabs v3 (voice: 大谷 風 = stability 0.55 / similarity 0.75 / style 0.30)
+- BGM: ElevenLabs Music、 build-to-climax (60s)
+- SFX: kick / riser / bigboom (ElevenLabs sound-generation)
+- 映像: 選手写真 + Pillow stats card + Veo 3.1 fast (i2v) で mascot
+- 合成: ffmpeg complex filter (overlay + colorkey + subtitles burn-in)
+
+注意点:
+- narration に 「殺す」 など 入れない (BJJ は 極める/抑える)
+- 漢字読み 揺れる単語 (極め=きめ) は narration.txt 段階で kana で 渡す
+- Veo の i2v は 「DARK SOLID BLACK background」 prompt + negativePrompt 必須
+- ffmpeg 抜きは colorkey + lumakey の 2段 chain
+- portrait 写真は y_bias=0.05 で 顔切れ 防止
+- m5 Mac (yukihamada@192.168.0.5) で SSH 実行 (ローカル は 重い)
+- 1 iteration ごとに QuickTime プレビュー → 一言 投げる → 次
+
+予算: ¥2,000 以下 で 17 イテレーション まで OK</code></pre>
+
+<div class="note" style="margin-top:32px">
+<p style="margin:0"><strong>↑ これ そのまま で 90 分</strong>。 試合の 2 週間前 から ぼちぼち 投げれば、 当日に YouTube/X 投稿 で バズる 1 本が 出来る。 質問あれば <a href="mailto:info@enablerdao.com">info@enablerdao.com</a> まで。 — Y.</p>
+</div>

@@ -502,6 +502,48 @@ ffmpeg -ss 52 -i input.mp4 -t 15 \
   <li><strong>17 回作り直してもコスト ¥2,000 以下</strong> — 完璧主義で OK</li>
 </ol>
 
+<hr>
+
+<!-- ============================================================
+     MU HOLDER ONLY — Claude Code への 実 指示プロンプト 全集
+     ============================================================ -->
+<section id="claude-section">
+<h2><span class="num">13 · MU HOLDER ONLY</span>Claude Code に投げた 全 指示</h2>
+<p>このセクションは <strong>MU Tシャツ ホルダー だけ</strong> 読めます。 17 回 イテレーションで Claude Code に 実際 投げた メッセージ 全文 + Claude 側で 組まれた pipeline 命令 + 実行コマンド。 そのまま 写経すれば 自分の 試合煽りVが 90分 で 作れる。</p>
+
+<div id="claude-locked" class="warn" style="display:none">
+  <p style="margin-bottom:10px"><strong>🔒 ロック中</strong> — Tシャツ ご購入時の メール で ログインしてください。</p>
+  <p style="margin-bottom:0">
+    <a href="/mypage" style="display:inline-block;background:var(--gold);color:#1a1408;padding:9px 20px;border-radius:3px;font-weight:600;letter-spacing:1px;border:none;margin-right:8px">ログイン</a>
+    <a href="/buy" style="display:inline-block;background:transparent;color:var(--gold);padding:9px 20px;border-radius:3px;border:1px solid var(--gold);letter-spacing:1px">Tシャツを買う →</a>
+  </p>
+</div>
+
+<div id="claude-loading" style="padding:40px 0;text-align:center;color:var(--mute);font-size:13px;letter-spacing:3px">CHECKING HOLDER STATUS…</div>
+
+<div id="claude-content" style="display:none"></div>
+</section>
+
+<script>
+(async function(){
+  try{
+    const r = await fetch('/api/labs/kokon-aori/claude', {credentials:'same-origin'});
+    document.getElementById('claude-loading').style.display = 'none';
+    if (r.status === 200){
+      const html = await r.text();
+      const c = document.getElementById('claude-content');
+      c.innerHTML = html;
+      c.style.display = 'block';
+    } else {
+      document.getElementById('claude-locked').style.display = 'block';
+    }
+  } catch(e){
+    document.getElementById('claude-loading').style.display = 'none';
+    document.getElementById('claude-locked').style.display = 'block';
+  }
+})();
+</script>
+
 <footer>
   <p>© 2026 MU Labs · 焼肉古今 × FLEX GROUP / SUPER YAWARA SWEEP CUP 試合煽りV<br>
      公開: 2026-05-23 · 配信ツール: Claude Code (Opus 4.7 / 1M context)</p>
