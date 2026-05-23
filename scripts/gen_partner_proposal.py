@@ -305,6 +305,41 @@ def main():
             f'<tbody>{rows}</tbody></table>'
         )
 
+    honesty_html = ""
+    if meta.get("honesty_box"):
+        honesty_html = (
+            '<div style="margin:24px 0 0;padding:18px 22px;background:rgba(230,196,73,0.06);'
+            'border:1px solid rgba(230,196,73,0.35);border-radius:4px;color:var(--mute);font-size:13px;line-height:1.85">'
+            f'{meta["honesty_box"]}'
+            '</div>'
+        )
+
+    preconditions_html = ""
+    if meta.get("live_preconditions"):
+        rows = "".join(
+            f'<tr><td class="name" style="white-space:nowrap;width:22%;color:#7be57b">□ {escape(k)}</td><td>{v}</td></tr>'
+            for k, v in meta["live_preconditions"]
+        )
+        preconditions_html = (
+            '<h2>合意後 live 化までのチェックリスト</h2>'
+            '<p>本 LP が DRAFT (購入不可) から live に切り替わるまでに揃える必要がある全項目。 嘘の在庫表示を構造的に防ぐため、 1 つ欠けても /api/proposal/charfilm/approve は通せない設計。</p>'
+            '<table class="tier-table"><thead><tr><th>項目</th><th>内容</th></tr></thead>'
+            f'<tbody>{rows}</tbody></table>'
+        )
+
+    phase2_html = ""
+    if meta.get("phase_2_candidates"):
+        rows = "".join(
+            f'<tr><td class="name" style="width:38%">{escape(k)}</td><td style="font-size:13px;color:var(--mute);line-height:1.85">{escape(v)}</td></tr>'
+            for k, v in meta["phase_2_candidates"]
+        )
+        phase2_html = (
+            '<h2>Phase 2 候補 (今回の 12 SKU には含めない)</h2>'
+            '<p>本 LP の 12 SKU からは<b>意図的に除外</b>した項目。 master file 解像度・サイン物流・印刷 partner 等が未確立で「今出荷したら品質詐欺になる」 ものを正直に分離。 Phase 1 ローンチ後、 各々の前提条件が揃った時点で個別合意で順次追加。</p>'
+            '<table class="tier-table"><thead><tr><th>候補</th><th>追加に必要な前提条件</th></tr></thead>'
+            f'<tbody>{rows}</tbody></table>'
+        )
+
     intro_html = ""
     if meta.get("mu_intro"):
         mi = meta["mu_intro"]
@@ -354,10 +389,13 @@ def main():
         use_cases=use_cases,
         cards="\n".join(cards_html),
         sku_section_heading=sku_section_heading,
+        honesty=honesty_html,
         mechanism=mechanism_html,
         terms=terms_html,
         timeline=timeline_html,
         revenue=revenue_html,
+        preconditions=preconditions_html,
+        phase_2=phase2_html,
         intro=intro_html,
     )
 
@@ -457,6 +495,7 @@ ul li strong{{color:var(--fg);font-weight:500}}
 <div class="eyebrow">PITCH DECK · 2026-05-15 · 株式会社イネブラ → {display_name} 御中</div>
 <h1>{h1}<br><span style="font-size:0.7em;color:var(--mute);font-weight:200">{subtitle}</span></h1>
 <p class="lede">{lede}</p>
+{honesty}
 <div class="hero-card">
   <div style="width:180px;aspect-ratio:1/1;background:linear-gradient(135deg,{accent} 0%,{accent}aa 70%,#0a0a0a 100%);border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:24px;letter-spacing:0.06em;line-height:1.05;text-align:center;font-family:'Helvetica Neue',sans-serif;box-shadow:0 4px 32px {accent}66">{tagline}</div>
   <div class="meta">
@@ -474,6 +513,8 @@ ul li strong{{color:var(--fg);font-weight:500}}
 {mechanism}
 {terms}
 {timeline}
+{preconditions}
+{phase_2}
 {revenue}
 {intro}
 <h2>進め方</h2>
