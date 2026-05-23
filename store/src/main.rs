@@ -62045,6 +62045,12 @@ async fn main() {
         .nest_service("/cat", ServeDir::new("static/cat"))
         .nest_service("/dad", ServeDir::new("static/dad"))
         .nest_service("/running", ServeDir::new("static/running"))
+        // 2026-05-23: MU brand expansion (config_json-driven; static dirs)
+        .nest_service("/voice", ServeDir::new("static/voice"))
+        .nest_service("/ocean", ServeDir::new("static/ocean"))
+        .nest_service("/lodge", ServeDir::new("static/lodge"))
+        .nest_service("/octagon", ServeDir::new("static/octagon"))
+        .nest_service("/founder-brand", ServeDir::new("static/founder")) // /founder reserved by existing Founder Story
         // (Removed 2026-05-20: per-collection redirect routes panicked at
         //  boot with `Invalid route "/bjj": insertion failed due to conflict
         //  with previously registered route: /bjj/*__private__axum_nest_tail_param`.
