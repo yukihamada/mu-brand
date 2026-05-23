@@ -62051,6 +62051,10 @@ async fn main() {
         .nest_service("/lodge", ServeDir::new("static/lodge"))
         .nest_service("/octagon", ServeDir::new("static/octagon"))
         .nest_service("/founder-brand", ServeDir::new("static/founder")) // /founder reserved by existing Founder Story
+        // v2 (NEWS / KAGI / CHIP)
+        .nest_service("/news", ServeDir::new("static/news"))
+        .nest_service("/kagi", ServeDir::new("static/kagi"))
+        .nest_service("/chip", ServeDir::new("static/chip"))
         // (Removed 2026-05-20: per-collection redirect routes panicked at
         //  boot with `Invalid route "/bjj": insertion failed due to conflict
         //  with previously registered route: /bjj/*__private__axum_nest_tail_param`.

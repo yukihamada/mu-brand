@@ -318,5 +318,365 @@
     "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/ocean/m/perfect_OCEAN-TANK-01.jpg",
     "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/ocean/lifestyle/perfect_OCEAN-TANK-01.jpg",
     "elapsed_s": 61.2
+  },
+  "MU-BJJ-08-TEE-BLACK": {
+    "sku": "MU-BJJ-08-TEE-BLACK",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-08.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-08-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-08-TEE-BLACK.jpg",
+    "elapsed_s": 40.6
+  },
+  "MU-BJJ-04-TEE-WHITE": {
+    "sku": "MU-BJJ-04-TEE-WHITE",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-04.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-04-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-04-TEE-WHITE.jpg",
+    "elapsed_s": 40.7
+  },
+  "MU-BJJ-01-TEE-WHITE": {
+    "sku": "MU-BJJ-01-TEE-WHITE",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-TEE-WHITE.jpg",
+    "elapsed_s": 40.7
+  },
+  "MU-BJJ-03-TEE-WHITE": {
+    "sku": "MU-BJJ-03-TEE-WHITE",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-03.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-03-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-03-TEE-WHITE.jpg",
+    "elapsed_s": 40.8
+  },
+  "MU-BJJ-07-TEE-BLACK": {
+    "sku": "MU-BJJ-07-TEE-BLACK",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-07.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-07-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-07-TEE-BLACK.jpg",
+    "elapsed_s": 40.9
+  },
+  "MU-BJJ-06-TEE-WHITE": {
+    "sku": "MU-BJJ-06-TEE-WHITE",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-06.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-06-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-06-TEE-WHITE.jpg",
+    "elapsed_s": 40.9
+  },
+  "MU-BJJ-06-TEE-BLACK": {
+    "sku": "MU-BJJ-06-TEE-BLACK",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-06.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-06-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-06-TEE-BLACK.jpg",
+    "elapsed_s": 41.2
+  },
+  "MU-BJJ-08-TEE-WHITE": {
+    "sku": "MU-BJJ-08-TEE-WHITE",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-08.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-08-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-08-TEE-WHITE.jpg",
+    "elapsed_s": 41.4
+  },
+  "MU-BJJ-07-TEE-WHITE": {
+    "sku": "MU-BJJ-07-TEE-WHITE",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-07.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-07-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-07-TEE-WHITE.jpg",
+    "elapsed_s": 41.8
+  },
+  "MU-BJJ-05-TEE-WHITE": {
+    "sku": "MU-BJJ-05-TEE-WHITE",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-05.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-05-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-05-TEE-WHITE.jpg",
+    "elapsed_s": 43.9
+  },
+  "MU-BJJ-05-TEE-BLACK": {
+    "sku": "MU-BJJ-05-TEE-BLACK",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-05.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-05-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-05-TEE-BLACK.jpg",
+    "elapsed_s": 47.1
+  },
+  "MU-BJJ-02-TEE-WHITE": {
+    "sku": "MU-BJJ-02-TEE-WHITE",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-02.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-02-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-02-TEE-WHITE.jpg",
+    "elapsed_s": 47.5
+  },
+  "MU-BJJ-09-TEE-WHITE": {
+    "sku": "MU-BJJ-09-TEE-WHITE",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-09.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-09-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-09-TEE-WHITE.jpg",
+    "elapsed_s": 39.4
+  },
+  "MU-BJJ-10-TEE-WHITE": {
+    "sku": "MU-BJJ-10-TEE-WHITE",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-10.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-10-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-10-TEE-WHITE.jpg",
+    "elapsed_s": 40.5
+  },
+  "MU-BJJ-10-TEE-BLACK": {
+    "sku": "MU-BJJ-10-TEE-BLACK",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-10.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-10-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-10-TEE-BLACK.jpg",
+    "elapsed_s": 41.4
+  },
+  "MU-BJJ-11-TEE-BLACK": {
+    "sku": "MU-BJJ-11-TEE-BLACK",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-11.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-11-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-11-TEE-BLACK.jpg",
+    "elapsed_s": 41.4
+  },
+  "MU-BJJ-12-TEE-BLACK": {
+    "sku": "MU-BJJ-12-TEE-BLACK",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-12.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-12-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-12-TEE-BLACK.jpg",
+    "elapsed_s": 41.1
+  },
+  "MU-BJJ-11-TEE-WHITE": {
+    "sku": "MU-BJJ-11-TEE-WHITE",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-11.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-11-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-11-TEE-WHITE.jpg",
+    "elapsed_s": 41.6
+  },
+  "MU-CODE-01-TEE-WHITE": {
+    "sku": "MU-CODE-01-TEE-WHITE",
+    "brand": "code",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/code/d/design_MU-CODE-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/code/m/perfect_MU-CODE-01-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/code/lifestyle/perfect_MU-CODE-01-TEE-WHITE.jpg",
+    "elapsed_s": 41.0
+  },
+  "MU-BJJ-12-TEE-WHITE": {
+    "sku": "MU-BJJ-12-TEE-WHITE",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-12.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-12-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-12-TEE-WHITE.jpg",
+    "elapsed_s": 41.5
+  },
+  "MU-BJJ-09-TEE-BLACK": {
+    "sku": "MU-BJJ-09-TEE-BLACK",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-09.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-09-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-09-TEE-BLACK.jpg",
+    "elapsed_s": 43.7
+  },
+  "MU-CODE-03-TEE-WHITE": {
+    "sku": "MU-CODE-03-TEE-WHITE",
+    "brand": "code",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/code/d/design_MU-CODE-03.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/code/m/perfect_MU-CODE-03-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/code/lifestyle/perfect_MU-CODE-03-TEE-WHITE.jpg",
+    "elapsed_s": 39.9
+  },
+  "MU-CODE-03-TEE-BLACK": {
+    "sku": "MU-CODE-03-TEE-BLACK",
+    "brand": "code",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/code/d/design_MU-CODE-03.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/code/m/perfect_MU-CODE-03-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/code/lifestyle/perfect_MU-CODE-03-TEE-BLACK.jpg",
+    "elapsed_s": 41.2
+  },
+  "MU-CODE-02-TEE-WHITE": {
+    "sku": "MU-CODE-02-TEE-WHITE",
+    "brand": "code",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/code/d/design_MU-CODE-02.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/code/m/perfect_MU-CODE-02-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/code/lifestyle/perfect_MU-CODE-02-TEE-WHITE.jpg",
+    "elapsed_s": 78.3
+  },
+  "MU-CODE-04-TEE-BLACK": {
+    "sku": "MU-CODE-04-TEE-BLACK",
+    "brand": "code",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/code/d/design_MU-CODE-04.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/code/m/perfect_MU-CODE-04-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/code/lifestyle/perfect_MU-CODE-04-TEE-BLACK.jpg",
+    "elapsed_s": 42.6
+  },
+  "MU-CODE-05-TEE-BLACK": {
+    "sku": "MU-CODE-05-TEE-BLACK",
+    "brand": "code",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/code/d/design_MU-CODE-05.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/code/m/perfect_MU-CODE-05-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/code/lifestyle/perfect_MU-CODE-05-TEE-BLACK.jpg",
+    "elapsed_s": 41.4
+  },
+  "MU-CODE-08-TEE-BLACK": {
+    "sku": "MU-CODE-08-TEE-BLACK",
+    "brand": "code",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/code/d/design_MU-CODE-08.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/code/m/perfect_MU-CODE-08-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/code/lifestyle/perfect_MU-CODE-08-TEE-BLACK.jpg",
+    "elapsed_s": 39.5
+  },
+  "MU-CODE-05-TEE-WHITE": {
+    "sku": "MU-CODE-05-TEE-WHITE",
+    "brand": "code",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/code/d/design_MU-CODE-05.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/code/m/perfect_MU-CODE-05-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/code/lifestyle/perfect_MU-CODE-05-TEE-WHITE.jpg",
+    "elapsed_s": 42.9
+  },
+  "MU-CODE-06-TEE-WHITE": {
+    "sku": "MU-CODE-06-TEE-WHITE",
+    "brand": "code",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/code/d/design_MU-CODE-06.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/code/m/perfect_MU-CODE-06-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/code/lifestyle/perfect_MU-CODE-06-TEE-WHITE.jpg",
+    "elapsed_s": 42.7
+  },
+  "MU-CODE-07-TEE-BLACK": {
+    "sku": "MU-CODE-07-TEE-BLACK",
+    "brand": "code",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/code/d/design_MU-CODE-07.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/code/m/perfect_MU-CODE-07-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/code/lifestyle/perfect_MU-CODE-07-TEE-BLACK.jpg",
+    "elapsed_s": 45.2
+  },
+  "MU-CODE-08-TEE-WHITE": {
+    "sku": "MU-CODE-08-TEE-WHITE",
+    "brand": "code",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/code/d/design_MU-CODE-08.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/code/m/perfect_MU-CODE-08-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/code/lifestyle/perfect_MU-CODE-08-TEE-WHITE.jpg",
+    "elapsed_s": 40.6
+  },
+  "MU-COFFEE-01-TEE-WHITE": {
+    "sku": "MU-COFFEE-01-TEE-WHITE",
+    "brand": "coffee",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/d/design_MU-COFFEE-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/m/perfect_MU-COFFEE-01-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/lifestyle/perfect_MU-COFFEE-01-TEE-WHITE.jpg",
+    "elapsed_s": 40.4
+  },
+  "MU-CODE-07-TEE-WHITE": {
+    "sku": "MU-CODE-07-TEE-WHITE",
+    "brand": "code",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/code/d/design_MU-CODE-07.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/code/m/perfect_MU-CODE-07-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/code/lifestyle/perfect_MU-CODE-07-TEE-WHITE.jpg",
+    "elapsed_s": 47.9
+  },
+  "MU-CODE-04-TEE-WHITE": {
+    "sku": "MU-CODE-04-TEE-WHITE",
+    "brand": "code",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/code/d/design_MU-CODE-04.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/code/m/perfect_MU-CODE-04-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/code/lifestyle/perfect_MU-CODE-04-TEE-WHITE.jpg",
+    "elapsed_s": 57.7
+  },
+  "MU-COFFEE-03-TEE-BLACK": {
+    "sku": "MU-COFFEE-03-TEE-BLACK",
+    "brand": "coffee",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/d/design_MU-COFFEE-03.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/m/perfect_MU-COFFEE-03-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/lifestyle/perfect_MU-COFFEE-03-TEE-BLACK.jpg",
+    "elapsed_s": 39.7
+  },
+  "MU-COFFEE-02-TEE-WHITE": {
+    "sku": "MU-COFFEE-02-TEE-WHITE",
+    "brand": "coffee",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/d/design_MU-COFFEE-02.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/m/perfect_MU-COFFEE-02-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/lifestyle/perfect_MU-COFFEE-02-TEE-WHITE.jpg",
+    "elapsed_s": 40.8
+  },
+  "MU-COFFEE-04-TEE-WHITE": {
+    "sku": "MU-COFFEE-04-TEE-WHITE",
+    "brand": "coffee",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/d/design_MU-COFFEE-04.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/m/perfect_MU-COFFEE-04-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/lifestyle/perfect_MU-COFFEE-04-TEE-WHITE.jpg",
+    "elapsed_s": 39.4
+  },
+  "MU-COFFEE-05-TEE-BLACK": {
+    "sku": "MU-COFFEE-05-TEE-BLACK",
+    "brand": "coffee",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/d/design_MU-COFFEE-05.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/m/perfect_MU-COFFEE-05-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/lifestyle/perfect_MU-COFFEE-05-TEE-BLACK.jpg",
+    "elapsed_s": 40.1
+  },
+  "MU-COFFEE-04-TEE-BLACK": {
+    "sku": "MU-COFFEE-04-TEE-BLACK",
+    "brand": "coffee",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/d/design_MU-COFFEE-04.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/m/perfect_MU-COFFEE-04-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/lifestyle/perfect_MU-COFFEE-04-TEE-BLACK.jpg",
+    "elapsed_s": 41.7
+  },
+  "MU-COFFEE-03-TEE-WHITE": {
+    "sku": "MU-COFFEE-03-TEE-WHITE",
+    "brand": "coffee",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/d/design_MU-COFFEE-03.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/m/perfect_MU-COFFEE-03-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/lifestyle/perfect_MU-COFFEE-03-TEE-WHITE.jpg",
+    "elapsed_s": 45.3
+  },
+  "MU-COFFEE-06-TEE-BLACK": {
+    "sku": "MU-COFFEE-06-TEE-BLACK",
+    "brand": "coffee",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/d/design_MU-COFFEE-06.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/m/perfect_MU-COFFEE-06-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/lifestyle/perfect_MU-COFFEE-06-TEE-BLACK.jpg",
+    "elapsed_s": 42.1
+  },
+  "MU-COFFEE-06-TEE-WHITE": {
+    "sku": "MU-COFFEE-06-TEE-WHITE",
+    "brand": "coffee",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/d/design_MU-COFFEE-06.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/m/perfect_MU-COFFEE-06-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/lifestyle/perfect_MU-COFFEE-06-TEE-WHITE.jpg",
+    "elapsed_s": 42.7
+  },
+  "MU-COFFEE-07-TEE-BLACK": {
+    "sku": "MU-COFFEE-07-TEE-BLACK",
+    "brand": "coffee",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/d/design_MU-COFFEE-07.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/m/perfect_MU-COFFEE-07-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/lifestyle/perfect_MU-COFFEE-07-TEE-BLACK.jpg",
+    "elapsed_s": 41.1
+  },
+  "MU-COFFEE-05-TEE-WHITE": {
+    "sku": "MU-COFFEE-05-TEE-WHITE",
+    "brand": "coffee",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/d/design_MU-COFFEE-05.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/m/perfect_MU-COFFEE-05-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/lifestyle/perfect_MU-COFFEE-05-TEE-WHITE.jpg",
+    "elapsed_s": 44.2
+  },
+  "MU-COFFEE-07-TEE-WHITE": {
+    "sku": "MU-COFFEE-07-TEE-WHITE",
+    "brand": "coffee",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/d/design_MU-COFFEE-07.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/m/perfect_MU-COFFEE-07-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/lifestyle/perfect_MU-COFFEE-07-TEE-WHITE.jpg",
+    "elapsed_s": 41.4
   }
 }
