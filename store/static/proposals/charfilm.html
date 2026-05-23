@@ -269,6 +269,61 @@ ul li strong{color:var(--fg);font-weight:500}
 <div class="watermark">CONFIDENTIAL · DRAFT · pitch deck</div>
 <script src="/proposals/extras.js" defer></script>
 <script>
+// Preview-key CTA activation. If the URL has ?key=XXX, swap the DRAFT
+// disabled placeholders for active buy buttons that POST to the sample API
+// with the key forwarded; on 200 redirect the browser to the Stripe URL.
+(function previewKeyActivation() {
+  const key = new URLSearchParams(window.location.search).get('key');
+  if (!key) return;
+  const slug = location.pathname.split('/').filter(Boolean).pop() || '';
+  document.querySelectorAll('.design').forEach(card => {
+    const placeholder = card.querySelector('div.sample-btn[aria-disabled]');
+    if (!placeholder) return;
+    const skuRow = card.querySelector('.size-row');
+    const dataSku = skuRow ? skuRow.dataset.design : '';
+    const letter = dataSku.split('-').pop();
+    const footer = card.querySelector('.footer');
+    const priceMatch = footer ? footer.textContent.match(/¥([0-9,]+)/) : null;
+    const priceJpy = priceMatch ? parseInt(priceMatch[1].replace(/,/g, ''), 10) : 0;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'sample-btn';
+    btn.style.cursor = 'pointer';
+    btn.style.background = 'rgba(123,229,123,0.18)';
+    btn.style.color = '#7be57b';
+    btn.style.border = '1px solid rgba(123,229,123,0.6)';
+    btn.textContent = `今すぐ購入 (preview) — ¥${priceJpy.toLocaleString()}`;
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      btn.textContent = '決済リンク生成中…';
+      const size = card.querySelector('.size-row .sz.on')?.dataset?.size || 'M';
+      try {
+        const r = await fetch(`/api/proposal/${slug}/sample?key=${encodeURIComponent(key)}`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({design: letter, price_jpy: priceJpy, size}),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (r.ok && data.url) { window.location.href = data.url; }
+        else { btn.textContent = `エラー (${r.status}): ${(data.error||'').slice(0,40)}`; }
+      } catch (e) {
+        btn.textContent = 'ネットワークエラー';
+        btn.disabled = false;
+      }
+    });
+    placeholder.replaceWith(btn);
+  });
+  // Banner override
+  const banner = document.querySelector('.status-banner');
+  if (banner) {
+    banner.style.background = 'rgba(123,229,123,0.10)';
+    banner.style.border = '1px solid rgba(123,229,123,0.5)';
+    banner.style.color = '#7be57b';
+    banner.innerHTML = '<span class="dot" style="background:#7be57b;width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:8px;box-shadow:0 0 14px currentColor"></span>'
+      + '<b>PREVIEW KEY 有効</b> · 全 SKU の購入ボタンが live になっています。 Stripe 決済が実際に走り <strong style="color:#fff">本物の請求</strong> が発生するため、 テスト時は Stripe テストカード <code>4242 4242 4242 4242</code> ではなく <strong>絶対に決済を完了しないでください</strong>。';
+  }
+})();
+
 document.querySelectorAll('.size-row').forEach(row => {
   const tokens = (row.textContent || '').trim().split(/\s+/).filter(Boolean);
   const sizes = tokens.length >= 2 ? tokens : ['S','M','L','XL'];

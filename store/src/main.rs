@@ -26873,6 +26873,35 @@ fn proposal_is_approved(conn: &rusqlite::Connection, slug: &str) -> bool {
     ).unwrap_or(false)
 }
 
+/// Per-slug preview key check. Allows an unapproved proposal to accept Stripe
+/// checkout if the request carries `?key=<expected>` AND the env var
+/// PROPOSAL_PREVIEW_KEY_<SLUG_UPPERCASE> is set to that same value. Used to
+/// share a previewable buyable URL with the partner before final approve,
+/// without flipping the brand public-buyable for the whole internet.
+fn proposal_preview_key_ok(
+    slug: &str,
+    q: &std::collections::HashMap<String, String>,
+) -> bool {
+    let provided = q.get("key").map(|s| s.trim()).unwrap_or("");
+    if provided.is_empty() { return false; }
+    let env_name = format!("PROPOSAL_PREVIEW_KEY_{}", slug.to_uppercase());
+    // Default keys for DRAFT brands that need a preview URL before sending
+    // their pitch deck. Rotate by setting the matching Fly secret to override.
+    let fallback: &'static str = match slug {
+        "charfilm" => "7fc131d3eac02496704af91af506827f",
+        _ => "",
+    };
+    let expected = std::env::var(&env_name).unwrap_or_else(|_| fallback.to_string());
+    if expected.is_empty() { return false; }
+    // Constant-time compare to avoid timing-based key probing.
+    let a = provided.as_bytes();
+    let b = expected.as_bytes();
+    if a.len() != b.len() { return false; }
+    let mut diff: u8 = 0;
+    for i in 0..a.len() { diff |= a[i] ^ b[i]; }
+    diff == 0
+}
+
 fn proposal_skus_for(conn: &rusqlite::Connection, slug: &str)
     -> Vec<(String, i64, i64, String, String, String)> {
     let mut out = Vec::new();
@@ -33652,14 +33681,14 @@ fn is_proposal_brand(conn: &rusqlite::Connection, brand: &str) -> bool {
 async fn proposal_generic_sample(
     State(db): State<Db>,
     axum::extract::Path(slug): axum::extract::Path<String>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
     Json(body): Json<ProposalSampleBody>,
 ) -> Response {
     // Hard gate: no public Stripe checkout until proposals.approved_at is set
-    // and revoked_at is NULL. Without this, a DRAFT brand whose LP is noindexed
-    // can still be charged by anyone who knows the API path.
+    // and revoked_at is NULL — or the request carries the per-slug preview key.
     {
         let conn = db.lock().unwrap();
-        if !proposal_is_approved(&conn, &slug) {
+        if !proposal_is_approved(&conn, &slug) && !proposal_preview_key_ok(&slug, &q) {
             return (StatusCode::GONE, "this proposal is not currently approved for public sales").into_response();
         }
     }
@@ -33769,11 +33798,12 @@ struct ProposalBulkItem {
 async fn proposal_generic_bulk(
     State(db): State<Db>,
     axum::extract::Path(slug): axum::extract::Path<String>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
     Json(body): Json<ProposalBulkBody>,
 ) -> Response {
     {
         let conn = db.lock().unwrap();
-        if !proposal_is_approved(&conn, &slug) {
+        if !proposal_is_approved(&conn, &slug) && !proposal_preview_key_ok(&slug, &q) {
             return (StatusCode::GONE, "this proposal is not currently approved for public sales").into_response();
         }
     }
@@ -33881,11 +33911,12 @@ async fn proposal_generic_bulk(
 async fn proposal_generic_bundle(
     State(db): State<Db>,
     axum::extract::Path(slug): axum::extract::Path<String>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
     Json(body): Json<ProposalBundleBody>,
 ) -> Response {
     {
         let conn = db.lock().unwrap();
-        if !proposal_is_approved(&conn, &slug) {
+        if !proposal_is_approved(&conn, &slug) && !proposal_preview_key_ok(&slug, &q) {
             return (StatusCode::GONE, "this proposal is not currently approved for public sales").into_response();
         }
     }
