@@ -55,3 +55,6 @@ store/static/jiufight/print/jiufight_print_package_*.zip
 
 # Mockup regen backup copies — rollback only, not source-of-truth.
 store/static/proposals/*_old.jpg
+
+# wearmu data — DB backups are local-only (too big, churning)
+data/backups/
