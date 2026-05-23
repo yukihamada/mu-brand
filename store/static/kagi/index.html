@@ -51,20 +51,22 @@ footer a{color:var(--gold);text-decoration:none;}
 </footer>
 <script>
 (async () => {
+  const grid = document.getElementById('grid');
+  const slug = window.location.pathname.replace(/^\//, '').replace(/\/$/, '');
   try {
-    const r = await fetch('/api/brand/voice');
+    const r = await fetch(`/api/brand/${slug}?_=${Date.now()}`, { cache: 'no-store' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
-    const grid = document.getElementById('grid');
-    grid.innerHTML = '';
     const prods = (d.products || []).sort((a,b) => a.sort_order - b.sort_order || a.sku.localeCompare(b.sku));
+    grid.innerHTML = '';
+    if (!prods.length) { grid.innerHTML = '<div class="loading">商品準備中</div>'; return; }
     for (const p of prods) {
       const a = document.createElement('a');
       a.className = 'card';
       a.href = `/api/shop/checkout?sku=${encodeURIComponent(p.sku)}`;
-      const ptype = (p.sku.match(/-([A-Z]+)-\d+/) || [])[1] || p.kind || 'item';
-      const mockup = `/kagi/m/perfect_${p.sku}.jpg`;
+      const mockup = `/${slug}/m/perfect_${p.sku}.jpg`;
       a.innerHTML = `
-        <div class="img"><img src="${mockup}" alt="${p.label}" loading="lazy" onerror="this.src='/kagi/lifestyle/perfect_KAGI-TEE-01.jpg'"></div>
+        <div class="img"><img src="${mockup}" alt="${p.label}" loading="lazy" onerror="this.style.opacity=0.2"></div>
         <div class="meta">
           <div class="sku">${p.sku}</div>
           <div class="name">${p.label}</div>
@@ -72,9 +74,9 @@ footer a{color:var(--gold);text-decoration:none;}
         </div>`;
       grid.appendChild(a);
     }
-    if (!prods.length) grid.innerHTML = '<div class="loading">商品準備中</div>';
   } catch(e) {
-    document.getElementById('grid').innerHTML = '<div class="loading">読み込みエラー — リロードしてみて</div>';
+    grid.innerHTML = `<div class="loading" style="color:#f87171">読み込みエラー: ${e.message} — リロードしてみて</div>`;
+    console.error('brand LP fetch error:', e);
   }
 })();
 </script>
