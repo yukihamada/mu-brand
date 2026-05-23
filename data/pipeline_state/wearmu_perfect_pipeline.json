@@ -149,7 +149,7 @@
     "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-02.png",
     "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-02-TEE-BLACK.jpg",
     "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-02-TEE-BLACK.jpg",
-    "elapsed_s": 63.3
+    "elapsed_s": 0.0
   },
   "MU-TOKYO-01-TEE-BLACK": {
     "sku": "MU-TOKYO-01-TEE-BLACK",
@@ -261,7 +261,7 @@
     "design": "file:///Users/yuki/workspace/mu-brand/store/static/voice/d/design_VOICE-STICK-01.png",
     "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/voice/m/perfect_VOICE-STICK-01.jpg",
     "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/voice/lifestyle/perfect_VOICE-STICK-01.jpg",
-    "elapsed_s": 60.1
+    "elapsed_s": 0.0
   },
   "VOICE-MUG-01": {
     "sku": "VOICE-MUG-01",
@@ -269,7 +269,7 @@
     "design": "file:///Users/yuki/workspace/mu-brand/store/static/voice/d/design_VOICE-MUG-01.png",
     "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/voice/m/perfect_VOICE-MUG-01.jpg",
     "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/voice/lifestyle/perfect_VOICE-MUG-01.jpg",
-    "elapsed_s": 18.9
+    "elapsed_s": 0.0
   },
   "OCT-TEE-RED-01": {
     "sku": "OCT-TEE-RED-01",
@@ -285,7 +285,7 @@
     "design": "file:///Users/yuki/workspace/mu-brand/store/static/voice/d/design_VOICE-HOOD-01.png",
     "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/voice/m/perfect_VOICE-HOOD-01.jpg",
     "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/voice/lifestyle/perfect_VOICE-HOOD-01.jpg",
-    "elapsed_s": 64.5
+    "elapsed_s": 0.0
   },
   "VOICE-TEE-01": {
     "sku": "VOICE-TEE-01",
@@ -293,7 +293,7 @@
     "design": "file:///Users/yuki/workspace/mu-brand/store/static/voice/d/design_VOICE-TEE-01.png",
     "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/voice/m/perfect_VOICE-TEE-01.jpg",
     "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/voice/lifestyle/perfect_VOICE-TEE-01.jpg",
-    "elapsed_s": 66.0
+    "elapsed_s": 0.0
   },
   "LODGE-BEAN-01": {
     "sku": "LODGE-BEAN-01",
@@ -11598,5 +11598,973 @@
     "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/roll/m/perfect_ROLL-TEE-07.jpg",
     "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/roll/lifestyle/perfect_ROLL-TEE-07.jpg",
     "elapsed_s": 22.2
+  },
+  "ROLL-TEE-08": {
+    "sku": "ROLL-TEE-08",
+    "brand": "roll",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/roll/d/design_ROLL-TEE-08.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/roll/m/perfect_ROLL-TEE-08.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/roll/lifestyle/perfect_ROLL-TEE-08.jpg",
+    "elapsed_s": 23.5
+  },
+  "ROLL-TEE-10": {
+    "sku": "ROLL-TEE-10",
+    "brand": "roll",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/roll/d/design_ROLL-TEE-10.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/roll/m/perfect_ROLL-TEE-10.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/roll/lifestyle/perfect_ROLL-TEE-10.jpg",
+    "elapsed_s": 22.2
+  },
+  "MU-TOKYO-01-TEE-WHITE": {
+    "sku": "MU-TOKYO-01-TEE-WHITE",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-01-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-01-TEE-WHITE.jpg",
+    "elapsed_s": 21.8
+  },
+  "MU-TOKYO-01-RASH": {
+    "sku": "MU-TOKYO-01-RASH",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-01-RASH.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-01-RASH.jpg",
+    "elapsed_s": 25.1
+  },
+  "MU-TOKYO-03-RASH": {
+    "sku": "MU-TOKYO-03-RASH",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-03.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-03-RASH.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-03-RASH.jpg",
+    "elapsed_s": 39.1
+  },
+  "MU-TOKYO-03-TEE-WHITE": {
+    "sku": "MU-TOKYO-03-TEE-WHITE",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-03.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-03-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-03-TEE-WHITE.jpg",
+    "elapsed_s": 37.8
+  },
+  "MU-TOKYO-03-TEE-BLACK": {
+    "sku": "MU-TOKYO-03-TEE-BLACK",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-03.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-03-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-03-TEE-BLACK.jpg",
+    "elapsed_s": 39.8
+  },
+  "MU-TOKYO-02-TEE-WHITE": {
+    "sku": "MU-TOKYO-02-TEE-WHITE",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-02.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-02-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-02-TEE-WHITE.jpg",
+    "elapsed_s": 42.4
+  },
+  "MU-TOKYO-04-TEE-BLACK": {
+    "sku": "MU-TOKYO-04-TEE-BLACK",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-04.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-04-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-04-TEE-BLACK.jpg",
+    "elapsed_s": 37.9
+  },
+  "MU-TOKYO-02-RASH": {
+    "sku": "MU-TOKYO-02-RASH",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-02.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-02-RASH.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-02-RASH.jpg",
+    "elapsed_s": 47.1
+  },
+  "MU-TOKYO-04-RASH": {
+    "sku": "MU-TOKYO-04-RASH",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-04.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-04-RASH.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-04-RASH.jpg",
+    "elapsed_s": 44.0
+  },
+  "MU-TOKYO-05-RASH": {
+    "sku": "MU-TOKYO-05-RASH",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-05.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-05-RASH.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-05-RASH.jpg",
+    "elapsed_s": 39.8
+  },
+  "MU-TOKYO-05-TEE-WHITE": {
+    "sku": "MU-TOKYO-05-TEE-WHITE",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-05.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-05-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-05-TEE-WHITE.jpg",
+    "elapsed_s": 37.7
+  },
+  "MU-TOKYO-05-TEE-BLACK": {
+    "sku": "MU-TOKYO-05-TEE-BLACK",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-05.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-05-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-05-TEE-BLACK.jpg",
+    "elapsed_s": 38.2
+  },
+  "MU-TOKYO-04-TEE-WHITE": {
+    "sku": "MU-TOKYO-04-TEE-WHITE",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-04.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-04-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-04-TEE-WHITE.jpg",
+    "elapsed_s": 42.3
+  },
+  "MU-TOKYO-02-TEE-BLACK": {
+    "sku": "MU-TOKYO-02-TEE-BLACK",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-02.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-02-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-02-TEE-BLACK.jpg",
+    "elapsed_s": 50.8
+  },
+  "MU-TOKYO-06-TEE-WHITE": {
+    "sku": "MU-TOKYO-06-TEE-WHITE",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-06.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-06-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-06-TEE-WHITE.jpg",
+    "elapsed_s": 39.8
+  },
+  "MU-TOKYO-06-TEE-BLACK": {
+    "sku": "MU-TOKYO-06-TEE-BLACK",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-06.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-06-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-06-TEE-BLACK.jpg",
+    "elapsed_s": 40.4
+  },
+  "MU-TOKYO-06-RASH": {
+    "sku": "MU-TOKYO-06-RASH",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-06.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-06-RASH.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-06-RASH.jpg",
+    "elapsed_s": 43.1
+  },
+  "MU-TOKYO-07-TEE-BLACK": {
+    "sku": "MU-TOKYO-07-TEE-BLACK",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-07.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-07-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-07-TEE-BLACK.jpg",
+    "elapsed_s": 40.0
+  },
+  "MU-TOKYO-07-TEE-WHITE": {
+    "sku": "MU-TOKYO-07-TEE-WHITE",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-07.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-07-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-07-TEE-WHITE.jpg",
+    "elapsed_s": 40.1
+  },
+  "MU-TOKYO-07-RASH": {
+    "sku": "MU-TOKYO-07-RASH",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-07.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-07-RASH.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-07-RASH.jpg",
+    "elapsed_s": 42.6
+  },
+  "MU-TOKYO-08-RASH": {
+    "sku": "MU-TOKYO-08-RASH",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-08.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-08-RASH.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-08-RASH.jpg",
+    "elapsed_s": 41.8
+  },
+  "MU-TOKYO-08-TEE-WHITE": {
+    "sku": "MU-TOKYO-08-TEE-WHITE",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-08.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-08-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-08-TEE-WHITE.jpg",
+    "elapsed_s": 21.8
+  },
+  "MU-TOKYO-08-TEE-BLACK": {
+    "sku": "MU-TOKYO-08-TEE-BLACK",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-08.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-08-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-08-TEE-BLACK.jpg",
+    "elapsed_s": 40.3
+  },
+  "MU-ZEN-01-TEE-BLACK": {
+    "sku": "MU-ZEN-01-TEE-BLACK",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-01-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-01-TEE-BLACK.jpg",
+    "elapsed_s": 0.0
+  },
+  "MU-ZEN-01-MUG-BLACK-one": {
+    "sku": "MU-ZEN-01-MUG-BLACK-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-01-MUG-BLACK-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-01-MUG-BLACK-one.jpg",
+    "elapsed_s": 19.9
+  },
+  "MU-ZEN-01-CANVAS-one": {
+    "sku": "MU-ZEN-01-CANVAS-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-01-CANVAS-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-01-CANVAS-one.jpg",
+    "elapsed_s": 21.3
+  },
+  "MU-ZEN-01-MUG-WHITE-one": {
+    "sku": "MU-ZEN-01-MUG-WHITE-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-01-MUG-WHITE-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-01-MUG-WHITE-one.jpg",
+    "elapsed_s": 20.3
+  },
+  "MU-ZEN-01-RASH": {
+    "sku": "MU-ZEN-01-RASH",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-01-RASH.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-01-RASH.jpg",
+    "elapsed_s": 19.7
+  },
+  "MU-TOKYO-09-RASH": {
+    "sku": "MU-TOKYO-09-RASH",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-09.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-09-RASH.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-09-RASH.jpg",
+    "elapsed_s": 40.2
+  },
+  "MU-TOKYO-09-TEE-WHITE": {
+    "sku": "MU-TOKYO-09-TEE-WHITE",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-09.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-09-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-09-TEE-WHITE.jpg",
+    "elapsed_s": 37.9
+  },
+  "MU-TOKYO-09-TEE-BLACK": {
+    "sku": "MU-TOKYO-09-TEE-BLACK",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-09.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-09-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-09-TEE-BLACK.jpg",
+    "elapsed_s": 38.8
+  },
+  "MU-ZEN-01-STICKER-one": {
+    "sku": "MU-ZEN-01-STICKER-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-01-STICKER-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-01-STICKER-one.jpg",
+    "elapsed_s": 20.2
+  },
+  "MU-ZEN-01-POSTER-one": {
+    "sku": "MU-ZEN-01-POSTER-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-01-POSTER-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-01-POSTER-one.jpg",
+    "elapsed_s": 22.8
+  },
+  "MU-ZEN-01-TEE-WHITE": {
+    "sku": "MU-ZEN-01-TEE-WHITE",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-01-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-01-TEE-WHITE.jpg",
+    "elapsed_s": 20.1
+  },
+  "MU-ZEN-01-PHONE-CASE-one": {
+    "sku": "MU-ZEN-01-PHONE-CASE-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-01-PHONE-CASE-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-01-PHONE-CASE-one.jpg",
+    "elapsed_s": 24.4
+  },
+  "MU-TOKYO-10-TEE-BLACK": {
+    "sku": "MU-TOKYO-10-TEE-BLACK",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-10.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-10-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-10-TEE-BLACK.jpg",
+    "elapsed_s": 38.9
+  },
+  "MU-TOKYO-10-TEE-WHITE": {
+    "sku": "MU-TOKYO-10-TEE-WHITE",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-10.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-10-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-10-TEE-WHITE.jpg",
+    "elapsed_s": 38.0
+  },
+  "MU-TOKYO-10-RASH": {
+    "sku": "MU-TOKYO-10-RASH",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-10.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-10-RASH.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-10-RASH.jpg",
+    "elapsed_s": 41.4
+  },
+  "MU-TOKYO-11-TEE-BLACK": {
+    "sku": "MU-TOKYO-11-TEE-BLACK",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-11.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-11-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-11-TEE-BLACK.jpg",
+    "elapsed_s": 41.4
+  },
+  "MU-TOKYO-11-TEE-WHITE": {
+    "sku": "MU-TOKYO-11-TEE-WHITE",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-11.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-11-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-11-TEE-WHITE.jpg",
+    "elapsed_s": 41.4
+  },
+  "MU-TOKYO-11-RASH": {
+    "sku": "MU-TOKYO-11-RASH",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-11.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-11-RASH.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-11-RASH.jpg",
+    "elapsed_s": 44.4
+  },
+  "MU-TOKYO-12-TEE-BLACK": {
+    "sku": "MU-TOKYO-12-TEE-BLACK",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-12.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-12-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-12-TEE-BLACK.jpg",
+    "elapsed_s": 44.0
+  },
+  "MU-TOKYO-12-TEE-WHITE": {
+    "sku": "MU-TOKYO-12-TEE-WHITE",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-12.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-12-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-12-TEE-WHITE.jpg",
+    "elapsed_s": 37.9
+  },
+  "MU-TOKYO-12-RASH": {
+    "sku": "MU-TOKYO-12-RASH",
+    "brand": "tokyo",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/d/design_MU-TOKYO-12.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/m/perfect_MU-TOKYO-12-RASH.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/tokyo/lifestyle/perfect_MU-TOKYO-12-RASH.jpg",
+    "elapsed_s": 46.9
+  },
+  "MU-ZEN-02-MUG-BLACK-one": {
+    "sku": "MU-ZEN-02-MUG-BLACK-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-02.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-02-MUG-BLACK-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-02-MUG-BLACK-one.jpg",
+    "elapsed_s": 19.7
+  },
+  "MU-ZEN-02-CANVAS-one": {
+    "sku": "MU-ZEN-02-CANVAS-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-02.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-02-CANVAS-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-02-CANVAS-one.jpg",
+    "elapsed_s": 21.1
+  },
+  "MU-ZEN-02-MUG-WHITE-one": {
+    "sku": "MU-ZEN-02-MUG-WHITE-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-02.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-02-MUG-WHITE-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-02-MUG-WHITE-one.jpg",
+    "elapsed_s": 20.2
+  },
+  "MU-ZEN-02-STICKER-one": {
+    "sku": "MU-ZEN-02-STICKER-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-02.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-02-STICKER-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-02-STICKER-one.jpg",
+    "elapsed_s": 20.7
+  },
+  "MU-ZEN-02-RASH": {
+    "sku": "MU-ZEN-02-RASH",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-02.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-02-RASH.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-02-RASH.jpg",
+    "elapsed_s": 21.3
+  },
+  "MU-ZEN-02-POSTER-one": {
+    "sku": "MU-ZEN-02-POSTER-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-02.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-02-POSTER-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-02-POSTER-one.jpg",
+    "elapsed_s": 22.6
+  },
+  "MU-ZEN-02-TEE-WHITE": {
+    "sku": "MU-ZEN-02-TEE-WHITE",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-02.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-02-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-02-TEE-WHITE.jpg",
+    "elapsed_s": 21.6
+  },
+  "MU-ZEN-03-PHONE-CASE-one": {
+    "sku": "MU-ZEN-03-PHONE-CASE-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-03.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-03-PHONE-CASE-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-03-PHONE-CASE-one.jpg",
+    "elapsed_s": 36.1
+  },
+  "MU-ZEN-03-TEE-BLACK": {
+    "sku": "MU-ZEN-03-TEE-BLACK",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-03.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-03-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-03-TEE-BLACK.jpg",
+    "elapsed_s": 31.2
+  },
+  "MU-ZEN-03-CANVAS-one": {
+    "sku": "MU-ZEN-03-CANVAS-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-03.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-03-CANVAS-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-03-CANVAS-one.jpg",
+    "elapsed_s": 39.3
+  },
+  "MU-ZEN-03-MUG-WHITE-one": {
+    "sku": "MU-ZEN-03-MUG-WHITE-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-03.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-03-MUG-WHITE-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-03-MUG-WHITE-one.jpg",
+    "elapsed_s": 38.9
+  },
+  "MU-ZEN-03-MUG-BLACK-one": {
+    "sku": "MU-ZEN-03-MUG-BLACK-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-03.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-03-MUG-BLACK-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-03-MUG-BLACK-one.jpg",
+    "elapsed_s": 39.9
+  },
+  "MU-ZEN-03-STICKER-one": {
+    "sku": "MU-ZEN-03-STICKER-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-03.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-03-STICKER-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-03-STICKER-one.jpg",
+    "elapsed_s": 33.6
+  },
+  "MU-ZEN-03-RASH": {
+    "sku": "MU-ZEN-03-RASH",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-03.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-03-RASH.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-03-RASH.jpg",
+    "elapsed_s": 38.2
+  },
+  "MU-ZEN-03-POSTER-one": {
+    "sku": "MU-ZEN-03-POSTER-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-03.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-03-POSTER-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-03-POSTER-one.jpg",
+    "elapsed_s": 38.3
+  },
+  "MU-ZEN-03-TEE-WHITE": {
+    "sku": "MU-ZEN-03-TEE-WHITE",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-03.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-03-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-03-TEE-WHITE.jpg",
+    "elapsed_s": 32.4
+  },
+  "MU-ZEN-02-PHONE-CASE-one": {
+    "sku": "MU-ZEN-02-PHONE-CASE-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-02.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-02-PHONE-CASE-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-02-PHONE-CASE-one.jpg",
+    "elapsed_s": 47.2
+  },
+  "MU-ZEN-04-PHONE-CASE-one": {
+    "sku": "MU-ZEN-04-PHONE-CASE-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-04.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-04-PHONE-CASE-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-04-PHONE-CASE-one.jpg",
+    "elapsed_s": 37.8
+  },
+  "MU-ZEN-04-MUG-WHITE-one": {
+    "sku": "MU-ZEN-04-MUG-WHITE-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-04.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-04-MUG-WHITE-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-04-MUG-WHITE-one.jpg",
+    "elapsed_s": 40.7
+  },
+  "MU-ZEN-04-MUG-BLACK-one": {
+    "sku": "MU-ZEN-04-MUG-BLACK-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-04.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-04-MUG-BLACK-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-04-MUG-BLACK-one.jpg",
+    "elapsed_s": 42.6
+  },
+  "MU-ZEN-04-RASH": {
+    "sku": "MU-ZEN-04-RASH",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-04.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-04-RASH.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-04-RASH.jpg",
+    "elapsed_s": 38.4
+  },
+  "MU-ZEN-04-TEE-WHITE": {
+    "sku": "MU-ZEN-04-TEE-WHITE",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-04.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-04-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-04-TEE-WHITE.jpg",
+    "elapsed_s": 33.7
+  },
+  "MU-ZEN-04-CANVAS-one": {
+    "sku": "MU-ZEN-04-CANVAS-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-04.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-04-CANVAS-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-04-CANVAS-one.jpg",
+    "elapsed_s": 43.4
+  },
+  "MU-ZEN-04-STICKER-one": {
+    "sku": "MU-ZEN-04-STICKER-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-04.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-04-STICKER-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-04-STICKER-one.jpg",
+    "elapsed_s": 35.5
+  },
+  "MU-ZEN-04-TEE-BLACK": {
+    "sku": "MU-ZEN-04-TEE-BLACK",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-04.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-04-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-04-TEE-BLACK.jpg",
+    "elapsed_s": 35.9
+  },
+  "MU-ZEN-04-POSTER-one": {
+    "sku": "MU-ZEN-04-POSTER-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-04.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-04-POSTER-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-04-POSTER-one.jpg",
+    "elapsed_s": 41.2
+  },
+  "MU-ZEN-05-POSTER-one": {
+    "sku": "MU-ZEN-05-POSTER-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-05.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-05-POSTER-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-05-POSTER-one.jpg",
+    "elapsed_s": 20.0
+  },
+  "MU-ZEN-05-MUG-BLACK-one": {
+    "sku": "MU-ZEN-05-MUG-BLACK-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-05.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-05-MUG-BLACK-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-05-MUG-BLACK-one.jpg",
+    "elapsed_s": 23.0
+  },
+  "MU-ZEN-05-TEE-WHITE": {
+    "sku": "MU-ZEN-05-TEE-WHITE",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-05.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-05-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-05-TEE-WHITE.jpg",
+    "elapsed_s": 20.4
+  },
+  "MU-ZEN-05-RASH": {
+    "sku": "MU-ZEN-05-RASH",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-05.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-05-RASH.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-05-RASH.jpg",
+    "elapsed_s": 22.2
+  },
+  "MU-ZEN-05-CANVAS-one": {
+    "sku": "MU-ZEN-05-CANVAS-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-05.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-05-CANVAS-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-05-CANVAS-one.jpg",
+    "elapsed_s": 41.5
+  },
+  "MU-ZEN-05-PHONE-CASE-one": {
+    "sku": "MU-ZEN-05-PHONE-CASE-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-05.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-05-PHONE-CASE-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-05-PHONE-CASE-one.jpg",
+    "elapsed_s": 23.7
+  },
+  "MU-ZEN-05-STICKER-one": {
+    "sku": "MU-ZEN-05-STICKER-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-05.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-05-STICKER-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-05-STICKER-one.jpg",
+    "elapsed_s": 22.8
+  },
+  "MU-ZEN-05-TEE-BLACK": {
+    "sku": "MU-ZEN-05-TEE-BLACK",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-05.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-05-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-05-TEE-BLACK.jpg",
+    "elapsed_s": 23.9
+  },
+  "MU-ZEN-05-MUG-WHITE-one": {
+    "sku": "MU-ZEN-05-MUG-WHITE-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-05.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-05-MUG-WHITE-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-05-MUG-WHITE-one.jpg",
+    "elapsed_s": 26.5
+  },
+  "MU-ZEN-06-STICKER-one": {
+    "sku": "MU-ZEN-06-STICKER-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-06.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-06-STICKER-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-06-STICKER-one.jpg",
+    "elapsed_s": 27.5
+  },
+  "MU-ZEN-06-POSTER-one": {
+    "sku": "MU-ZEN-06-POSTER-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-06.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-06-POSTER-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-06-POSTER-one.jpg",
+    "elapsed_s": 28.4
+  },
+  "MU-ZEN-06-PHONE-CASE-one": {
+    "sku": "MU-ZEN-06-PHONE-CASE-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-06.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-06-PHONE-CASE-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-06-PHONE-CASE-one.jpg",
+    "elapsed_s": 28.6
+  },
+  "MU-ZEN-06-RASH": {
+    "sku": "MU-ZEN-06-RASH",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-06.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-06-RASH.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-06-RASH.jpg",
+    "elapsed_s": 28.3
+  },
+  "MU-ZEN-06-TEE-WHITE": {
+    "sku": "MU-ZEN-06-TEE-WHITE",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-06.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-06-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-06-TEE-WHITE.jpg",
+    "elapsed_s": 28.6
+  },
+  "MU-ZEN-06-CANVAS-one": {
+    "sku": "MU-ZEN-06-CANVAS-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-06.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-06-CANVAS-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-06-CANVAS-one.jpg",
+    "elapsed_s": 42.1
+  },
+  "MU-ZEN-06-MUG-WHITE-one": {
+    "sku": "MU-ZEN-06-MUG-WHITE-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-06.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-06-MUG-WHITE-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-06-MUG-WHITE-one.jpg",
+    "elapsed_s": 31.5
+  },
+  "MU-ZEN-06-MUG-BLACK-one": {
+    "sku": "MU-ZEN-06-MUG-BLACK-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-06.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-06-MUG-BLACK-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-06-MUG-BLACK-one.jpg",
+    "elapsed_s": 39.4
+  },
+  "MU-ZEN-07-TEE-WHITE": {
+    "sku": "MU-ZEN-07-TEE-WHITE",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-07.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-07-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-07-TEE-WHITE.jpg",
+    "elapsed_s": 33.2
+  },
+  "MU-ZEN-07-POSTER-one": {
+    "sku": "MU-ZEN-07-POSTER-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-07.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-07-POSTER-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-07-POSTER-one.jpg",
+    "elapsed_s": 35.4
+  },
+  "MU-ZEN-07-TEE-BLACK": {
+    "sku": "MU-ZEN-07-TEE-BLACK",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-07.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-07-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-07-TEE-BLACK.jpg",
+    "elapsed_s": 34.3
+  },
+  "MU-ZEN-07-MUG-WHITE-one": {
+    "sku": "MU-ZEN-07-MUG-WHITE-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-07.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-07-MUG-WHITE-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-07-MUG-WHITE-one.jpg",
+    "elapsed_s": 38.1
+  },
+  "MU-ZEN-06-TEE-BLACK": {
+    "sku": "MU-ZEN-06-TEE-BLACK",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-06.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-06-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-06-TEE-BLACK.jpg",
+    "elapsed_s": 43.1
+  },
+  "MU-ZEN-07-CANVAS-one": {
+    "sku": "MU-ZEN-07-CANVAS-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-07.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-07-CANVAS-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-07-CANVAS-one.jpg",
+    "elapsed_s": 43.0
+  },
+  "MU-ZEN-07-STICKER-one": {
+    "sku": "MU-ZEN-07-STICKER-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-07.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-07-STICKER-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-07-STICKER-one.jpg",
+    "elapsed_s": 36.5
+  },
+  "MU-ZEN-07-MUG-BLACK-one": {
+    "sku": "MU-ZEN-07-MUG-BLACK-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-07.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-07-MUG-BLACK-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-07-MUG-BLACK-one.jpg",
+    "elapsed_s": 42.7
+  },
+  "MU-ZEN-07-PHONE-CASE-one": {
+    "sku": "MU-ZEN-07-PHONE-CASE-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-07.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-07-PHONE-CASE-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-07-PHONE-CASE-one.jpg",
+    "elapsed_s": 38.4
+  },
+  "MU-ZEN-07-RASH": {
+    "sku": "MU-ZEN-07-RASH",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-07.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-07-RASH.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-07-RASH.jpg",
+    "elapsed_s": 37.4
+  },
+  "MU-ZEN-08-MUG-BLACK-one": {
+    "sku": "MU-ZEN-08-MUG-BLACK-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-08.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-08-MUG-BLACK-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-08-MUG-BLACK-one.jpg",
+    "elapsed_s": 40.0
+  },
+  "MU-ZEN-08-PHONE-CASE-one": {
+    "sku": "MU-ZEN-08-PHONE-CASE-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-08.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-08-PHONE-CASE-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-08-PHONE-CASE-one.jpg",
+    "elapsed_s": 22.4
+  },
+  "MU-ZEN-08-CANVAS-one": {
+    "sku": "MU-ZEN-08-CANVAS-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-08.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-08-CANVAS-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-08-CANVAS-one.jpg",
+    "elapsed_s": 40.5
+  },
+  "MU-ZEN-08-TEE-BLACK": {
+    "sku": "MU-ZEN-08-TEE-BLACK",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-08.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-08-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-08-TEE-BLACK.jpg",
+    "elapsed_s": 21.5
+  },
+  "MU-ZEN-08-TEE-WHITE": {
+    "sku": "MU-ZEN-08-TEE-WHITE",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-08.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-08-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-08-TEE-WHITE.jpg",
+    "elapsed_s": 21.4
+  },
+  "MU-ZEN-08-MUG-WHITE-one": {
+    "sku": "MU-ZEN-08-MUG-WHITE-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-08.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-08-MUG-WHITE-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-08-MUG-WHITE-one.jpg",
+    "elapsed_s": 24.3
+  },
+  "MU-ZEN-08-STICKER-one": {
+    "sku": "MU-ZEN-08-STICKER-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-08.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-08-STICKER-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-08-STICKER-one.jpg",
+    "elapsed_s": 22.8
+  },
+  "MU-ZEN-08-POSTER-one": {
+    "sku": "MU-ZEN-08-POSTER-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-08.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-08-POSTER-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-08-POSTER-one.jpg",
+    "elapsed_s": 24.3
+  },
+  "MU-ZEN-08-RASH": {
+    "sku": "MU-ZEN-08-RASH",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-08.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-08-RASH.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-08-RASH.jpg",
+    "elapsed_s": 24.7
+  },
+  "MU-ZEN-09-TEE-WHITE": {
+    "sku": "MU-ZEN-09-TEE-WHITE",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-09.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-09-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-09-TEE-WHITE.jpg",
+    "elapsed_s": 29.0
+  },
+  "MU-ZEN-09-TEE-BLACK": {
+    "sku": "MU-ZEN-09-TEE-BLACK",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-09.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-09-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-09-TEE-BLACK.jpg",
+    "elapsed_s": 30.2
+  },
+  "MU-ZEN-09-STICKER-one": {
+    "sku": "MU-ZEN-09-STICKER-one",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-09.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-09-STICKER-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-09-STICKER-one.jpg",
+    "elapsed_s": 31.4
+  },
+  "MU-ZEN-09-RASH": {
+    "sku": "MU-ZEN-09-RASH",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-09.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-09-RASH.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-09-RASH.jpg",
+    "elapsed_s": 44.0
+  },
+  "MU-ZEN-10-RASH": {
+    "sku": "MU-ZEN-10-RASH",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-10.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-10-RASH.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-10-RASH.jpg",
+    "elapsed_s": 40.4
+  },
+  "MU-ZEN-12-RASH": {
+    "sku": "MU-ZEN-12-RASH",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-12.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-12-RASH.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-12-RASH.jpg",
+    "elapsed_s": 38.5
+  },
+  "MU-ZEN-11-TEE-BLACK": {
+    "sku": "MU-ZEN-11-TEE-BLACK",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-11.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-11-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-11-TEE-BLACK.jpg",
+    "elapsed_s": 39.2
+  },
+  "MU-ZEN-10-TEE-WHITE": {
+    "sku": "MU-ZEN-10-TEE-WHITE",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-10.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-10-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-10-TEE-WHITE.jpg",
+    "elapsed_s": 40.0
+  },
+  "MU-ZEN-11-TEE-WHITE": {
+    "sku": "MU-ZEN-11-TEE-WHITE",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-11.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-11-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-11-TEE-WHITE.jpg",
+    "elapsed_s": 40.7
+  },
+  "MU-ZEN-12-TEE-BLACK": {
+    "sku": "MU-ZEN-12-TEE-BLACK",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-12.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-12-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-12-TEE-BLACK.jpg",
+    "elapsed_s": 35.6
+  },
+  "MU-ZEN-12-TEE-WHITE": {
+    "sku": "MU-ZEN-12-TEE-WHITE",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-12.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-12-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-12-TEE-WHITE.jpg",
+    "elapsed_s": 36.0
+  },
+  "MU-ZEN-11-RASH": {
+    "sku": "MU-ZEN-11-RASH",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-11.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-11-RASH.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-11-RASH.jpg",
+    "elapsed_s": 42.0
+  },
+  "MU-ZEN-10-TEE-BLACK": {
+    "sku": "MU-ZEN-10-TEE-BLACK",
+    "brand": "zen",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/zen/d/design_MU-ZEN-10.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/zen/m/perfect_MU-ZEN-10-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/zen/lifestyle/perfect_MU-ZEN-10-TEE-BLACK.jpg",
+    "elapsed_s": 43.5
   }
 }
