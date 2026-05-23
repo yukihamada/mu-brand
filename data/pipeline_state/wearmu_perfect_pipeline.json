@@ -678,5 +678,61 @@
     "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/m/perfect_MU-COFFEE-07-TEE-WHITE.jpg",
     "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/lifestyle/perfect_MU-COFFEE-07-TEE-WHITE.jpg",
     "elapsed_s": 41.4
+  },
+  "MU-COFFEE-08-TEE-WHITE": {
+    "sku": "MU-COFFEE-08-TEE-WHITE",
+    "brand": "coffee",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/d/design_MU-COFFEE-08.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/m/perfect_MU-COFFEE-08-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/lifestyle/perfect_MU-COFFEE-08-TEE-WHITE.jpg",
+    "elapsed_s": 41.0
+  },
+  "MU-COFFEE-09-TEE-BLACK": {
+    "sku": "MU-COFFEE-09-TEE-BLACK",
+    "brand": "coffee",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/d/design_MU-COFFEE-09.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/m/perfect_MU-COFFEE-09-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/lifestyle/perfect_MU-COFFEE-09-TEE-BLACK.jpg",
+    "elapsed_s": 40.0
+  },
+  "MU-COFFEE-08-TEE-BLACK": {
+    "sku": "MU-COFFEE-08-TEE-BLACK",
+    "brand": "coffee",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/d/design_MU-COFFEE-08.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/m/perfect_MU-COFFEE-08-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/lifestyle/perfect_MU-COFFEE-08-TEE-BLACK.jpg",
+    "elapsed_s": 42.5
+  },
+  "MU-COFFEE-10-TEE-BLACK": {
+    "sku": "MU-COFFEE-10-TEE-BLACK",
+    "brand": "coffee",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/d/design_MU-COFFEE-10.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/m/perfect_MU-COFFEE-10-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/lifestyle/perfect_MU-COFFEE-10-TEE-BLACK.jpg",
+    "elapsed_s": 41.5
+  },
+  "MU-COFFEE-10-TEE-WHITE": {
+    "sku": "MU-COFFEE-10-TEE-WHITE",
+    "brand": "coffee",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/d/design_MU-COFFEE-10.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/m/perfect_MU-COFFEE-10-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/lifestyle/perfect_MU-COFFEE-10-TEE-WHITE.jpg",
+    "elapsed_s": 42.9
+  },
+  "MU-COFFEE-09-TEE-WHITE": {
+    "sku": "MU-COFFEE-09-TEE-WHITE",
+    "brand": "coffee",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/d/design_MU-COFFEE-09.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/m/perfect_MU-COFFEE-09-TEE-WHITE.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/coffee/lifestyle/perfect_MU-COFFEE-09-TEE-WHITE.jpg",
+    "elapsed_s": 48.1
+  },
+  "MU-CODE-06-TEE-BLACK": {
+    "sku": "MU-CODE-06-TEE-BLACK",
+    "brand": "code",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/code/d/design_MU-CODE-06.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/code/m/perfect_MU-CODE-06-TEE-BLACK.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/code/lifestyle/perfect_MU-CODE-06-TEE-BLACK.jpg",
+    "elapsed_s": 222.4
   }
 }

@@ -1,0 +1,140 @@
+<!DOCTYPE html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin · Brands</title>
+<style>
+:root{--bg:#0a0a0a;--fg:#e8dcc8;--gold:#e6c449;--accent:#dc2626;--card:#0d0d0d;--border:#222;--mono:'SF Mono',ui-monospace,monospace;}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font-family:-apple-system,system-ui,sans-serif;padding:30px 24px;min-height:100vh;}
+h1{font-size:28px;font-weight:900;letter-spacing:-0.01em;margin-bottom:6px;}
+.sub{font-family:var(--mono);font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:var(--gold);opacity:0.7;margin-bottom:30px;}
+.bar{display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;font-family:var(--mono);font-size:12px;}
+.bar a{padding:6px 12px;border:1px solid var(--border);border-radius:18px;color:var(--fg);text-decoration:none;}
+.bar a:hover{border-color:var(--gold);}
+.bar .stat{padding:6px 12px;opacity:0.6;}
+table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--border);border-radius:8px;overflow:hidden;font-size:13px;}
+th,td{padding:12px 14px;text-align:left;border-bottom:1px solid var(--border);}
+th{background:#111;font-family:var(--mono);font-size:10px;letter-spacing:0.2em;text-transform:uppercase;color:var(--gold);font-weight:600;}
+tr:hover{background:#111;}
+tr.inactive td{opacity:0.4;}
+.emoji{font-size:20px;width:36px;}
+.name{font-weight:700;}
+.slug{font-family:var(--mono);font-size:11px;opacity:0.55;}
+.tagline{font-size:11px;opacity:0.55;}
+.color-dot{display:inline-block;width:12px;height:12px;border-radius:50%;vertical-align:middle;margin-right:6px;}
+.num{font-family:var(--mono);text-align:right;}
+.gold{color:var(--gold);}
+.toggle{position:relative;display:inline-block;width:40px;height:22px;cursor:pointer;}
+.toggle input{opacity:0;width:0;height:0;}
+.toggle .slider{position:absolute;inset:0;background:#222;border-radius:22px;transition:.2s;border:1px solid var(--border);}
+.toggle .slider::before{content:"";position:absolute;width:16px;height:16px;left:2px;top:2px;background:#666;border-radius:50%;transition:.2s;}
+.toggle input:checked + .slider{background:var(--gold);border-color:var(--gold);}
+.toggle input:checked + .slider::before{transform:translateX(18px);background:#0a0a0a;}
+.lp-link{color:var(--gold);font-family:var(--mono);font-size:11px;text-decoration:none;}
+.lp-link:hover{text-decoration:underline;}
+.empty{padding:60px 20px;text-align:center;opacity:0.5;font-family:var(--mono);}
+.flash{position:fixed;top:20px;right:20px;padding:10px 16px;background:var(--gold);color:#0a0a0a;border-radius:6px;font-family:var(--mono);font-size:12px;opacity:0;transition:opacity .2s;}
+.flash.show{opacity:1;}
+</style>
+</head><body>
+
+<h1>Brands</h1>
+<div class="sub">— ADMIN · CATALOG_BRANDS —</div>
+
+<div class="bar">
+  <a href="/admin/score?token={{token}}">→ Score board</a>
+  <a href="/admin/catalog/status?token={{token}}">→ Catalog status</a>
+  <span class="stat" id="total-stat">…</span>
+  <span class="stat" id="active-stat">…</span>
+  <span class="stat" id="sku-stat">…</span>
+</div>
+
+<table id="brand-tbl">
+  <thead>
+    <tr>
+      <th></th>
+      <th>Brand</th>
+      <th>Slug</th>
+      <th class="num">SKUs</th>
+      <th class="num">寄付%</th>
+      <th>LP</th>
+      <th>Active</th>
+    </tr>
+  </thead>
+  <tbody id="tbody">
+    <tr><td colspan="7" class="empty">loading…</td></tr>
+  </tbody>
+</table>
+
+<div class="flash" id="flash"></div>
+
+<script>
+const TOKEN = new URLSearchParams(location.search).get('token') || '';
+document.querySelectorAll('a').forEach(a => {
+  a.href = a.href.replace('{{token}}', encodeURIComponent(TOKEN));
+});
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function flash(msg){
+  const el = document.getElementById('flash');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 1600);
+}
+
+async function loadBrands(){
+  // /api/brands returns only ACTIVE brands; for admin we want everything.
+  // Use direct admin DB query via /api/admin/products with brand grouping —
+  // or fetch /api/brands twice. Simpler: hit a small admin endpoint... but
+  // we have /api/brands which filters is_active=1, plus catalog_brands has
+  // inactive too. Trade-off: just show active here, add an "include
+  // inactive" toggle later if needed.
+  const r = await fetch('/api/brands');
+  if (!r.ok) { document.getElementById('tbody').innerHTML = '<tr><td colspan="7" class="empty">load failed</td></tr>'; return; }
+  const d = await r.json();
+  const brands = d.brands || [];
+  const totalSku = brands.reduce((s, b) => s + (b.product_count || 0), 0);
+  document.getElementById('total-stat').textContent = `total ${brands.length}`;
+  document.getElementById('active-stat').textContent = `active ${brands.filter(b=>b.product_count>0).length}`;
+  document.getElementById('sku-stat').textContent = `${totalSku.toLocaleString()} SKUs`;
+
+  document.getElementById('tbody').innerHTML = brands.map(b => `
+    <tr data-slug="${esc(b.slug)}">
+      <td class="emoji">${esc(b.emoji || '◯')}</td>
+      <td>
+        <div class="name"><span class="color-dot" style="background:${esc(b.color_primary || '#888')}"></span>${esc(b.name)}</div>
+        <div class="tagline">${esc(b.tagline || '')}</div>
+      </td>
+      <td class="slug">${esc(b.slug)}</td>
+      <td class="num">${(b.product_count || 0).toLocaleString()}</td>
+      <td class="num gold">${b.revenue_share_pct || 0}%</td>
+      <td><a class="lp-link" href="${esc(b.lp_url || ('/c/'+b.slug))}" target="_blank">${esc(b.lp_url || '/c/'+b.slug)}</a></td>
+      <td>
+        <label class="toggle">
+          <input type="checkbox" checked onchange="toggleBrand('${esc(b.slug)}', this.checked, this)">
+          <span class="slider"></span>
+        </label>
+      </td>
+    </tr>
+  `).join('') || '<tr><td colspan="7" class="empty">no brands</td></tr>';
+}
+
+async function toggleBrand(slug, on, el){
+  try {
+    const r = await fetch('/admin/brands-v2/toggle?token=' + encodeURIComponent(TOKEN), {
+      method: 'POST',
+      headers: {'content-type': 'application/json'},
+      body: JSON.stringify({slug, is_active: on ? 1 : 0}),
+    });
+    if (!r.ok) throw new Error(r.status);
+    flash(`${slug} → ${on ? 'ON' : 'OFF'}`);
+    const tr = el.closest('tr');
+    tr.classList.toggle('inactive', !on);
+  } catch(e) {
+    flash('FAIL: ' + e.message);
+    el.checked = !on;
+  }
+}
+
+loadBrands();
+</script>
+</body></html>
