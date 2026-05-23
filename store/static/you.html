@@ -272,6 +272,21 @@ footer a:hover{opacity:1}
 <script defer src="/mu-funnel.js"></script>
 <script defer src="/tracking.js"></script>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<!-- BANTO Google Ads conv tag (CID 5408218744) — wearmu.com/you is the LP
+     for "MU_YOU_Search_Registration_2026-05" campaign. Fires 会員登録
+     conversion (AW-17814724474/TfPQCOKOv9MbEPq-3K5C) on successful POST
+     to /api/you/subscribe. Independent from MU's AW-18007146784 wired
+     by tracking.js so both accounts get attribution. -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=AW-17814724474"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'AW-17814724474');
+  window.banto_report_signup = function(value){
+    try { gtag('event','conversion',{send_to:'AW-17814724474/TfPQCOKOv9MbEPq-3K5C',value:(value||1.0),currency:'JPY'}); } catch(_){}
+  };
+</script>
 </head>
 <body>
 
@@ -1375,6 +1390,7 @@ $('#taste-form').addEventListener('submit', async e=>{
     const r = await api('/api/you/subscribe', payload);
     token = r.token;
     localStorage.setItem('mu_you_token', token);
+    if (window.banto_report_signup) window.banto_report_signup(1.0);
     if (r.today) showDesign(r.today);
     if (r.share_url) updateShareBar(r.share_url, r.slug);
     if (r.subscription) {
