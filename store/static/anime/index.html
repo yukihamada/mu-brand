@@ -60,7 +60,7 @@ footer a{color:var(--gold);text-decoration:none;}
     for (const p of prods) {
       const a = document.createElement('a');
       a.className = 'card';
-      a.href = `/buy/${encodeURIComponent(p.sku)}`;
+      a.href = `/api/shop/checkout?sku=${encodeURIComponent(p.sku)}`;
       const ptype = (p.sku.match(/-([A-Z]+)-\d+/) || [])[1] || p.kind || 'item';
       const mockup = `/anime/m/perfect_${p.sku}.jpg`;
       a.innerHTML = `
