@@ -1,0 +1,231 @@
+{
+  "slug": "charfilm",
+  "name": "CHAR (土屋 尚幸) × MU — Amami Ōshima Ocean",
+  "ip_owner": "土屋 尚幸 / CHAR (charfilm.com · 奄美大島 photographer, agency: OND°)",
+  "design": {
+    "monogram": "CH",
+    "accent": "#3aa6c4"
+  },
+  "meta": {
+    "display_name": "CHAR (土屋 尚幸)",
+    "live": false,
+    "partner_url": "charfilm.com",
+    "tagline": "Amami · 15 yrs in the ocean.",
+    "h1": "波と光を、 <em>着る</em>。",
+    "subtitle": "MU × CHAR — 奄美在住 15 年 · OND° 所属の海の写真家 × 月相 drop の無在庫アパレル",
+    "accent_hex": "#3aa6c4",
+    "hero_image": "/static/charfilm/wave-golden.jpg",
+    "lede": "本資料は MU (株式会社イネブラ) から <strong>CHAR (土屋 尚幸)</strong> 様 (および所属 <strong>OND°</strong> 様) へ、 <strong>奄美大島の海・波・鯨・イルカ・水中光</strong> の 7 枚 を 無在庫 POD で 26 SKU に展開する collab 提案です。 既存 <strong>charfilm.thebase.in の額装プリント (¥38,000-¥88,000) / 写真集 COLORS (¥8,800)</strong> とは<strong>競合しない価格帯・媒体</strong> (アパレル + 昇華転写 lifestyle goods + 低単価 gift) に絞り、 全 SKU から <strong>charfilm.com へ送客 (inner tag QR + 商品ページ link)</strong> する設計。",
+    "hero_kv": [
+      ["50%", "奄美の自然保全 NPO 寄付 (合意時 確定)"],
+      ["写真家取分", "売上の 25% (POD 原価控除後)"],
+      ["在庫リスク", "¥0 (Printful / SUZURI / Gelato POD)"],
+      ["SKU 数", "26 SKU · 全 7 写真 × 主要 POD 全媒体"],
+      ["撤退条件", "30 日前通知でいつでも (在庫なし = 損失なし)"]
+    ],
+    "why_md": "CHAR 様の <strong>15 年分の奄美の海</strong> は、 一見アパレルや雑貨と相性が悪そうに見えます。 写真の解像度と階調が、 安易な T シャツ印刷で潰れるからです。<br><br>このコラボは 2 層構造で組みます。<br><br><b>① 写真をそのまま印刷する層 (昇華転写)</b> — ビーチタオル / ブランケット / キャンバス / フォン ケース / マグ / 枕 / バンダナ / フラッグ / マウスパッド。 ポリエステル昇華転写は写真本来の発色をほぼ無損失で再現でき、 海・水中・夜空 のような繊細なグラデーションが活きる。 これらは CHAR 様自身の額装プリント市場とは<b>異なる客層・価格帯 (¥980-¥18,000)</b>。<br><br><b>② MU が monoline / silhouette に翻訳する層 (chest print アパレル)</b> — T シャツ / キャップ / トート。 写真の構図だけを 1 本の線に落とし込み、 inner tag に photographer credit + QR で <code>charfilm.com</code> へ送客。 着る人が必ず写真家本人に辿り着く。<br><br><b>無在庫 POD</b> なので CHAR 様側に在庫・出荷義務は一切なし。 売上 50% は奄美の自然保全 NPO に寄付、 25% が CHAR 様、 25% が MU 運営。 月 1 回 締めで Wise 振込。",
+    "use_cases": [
+      "奄美の自然保全 寄付の入口 (1 着 / 1 タオル = 50% donate)",
+      "charfilm.com / thebase 既存ファンへの 着られる credit (アパレル + 雑貨)",
+      "Pipeline / J-Bay / Jawa 等 既存掲載地ファン向け 海外 Printful EU 発送",
+      "額装プリントは買わない 「もっとライトな入り口」 層への ¥980-¥8,800 商品",
+      "OND° クライアントワーク (NHK大河 / NALU / Surfin'Life) のアフターセール物販",
+      "サーフショップ・宿・カフェ向け B2B 一括 (10 着+で Stripe Link 発行)"
+    ],
+    "mu_intro": {
+      "brand": "MU (━◯━)",
+      "operator": "株式会社イネブラ (Enabler Inc.)",
+      "founder": "濱田 優貴 (代表取締役 · ex-Mercari US CEO · 柔術 青帯)",
+      "philosophy": "速く、 ノイズなく。 月相 で drop し、 在庫を持たない。 売上 50% を寄付に回し、 残りを 作る人 ・ 翻訳する人 ・ 配る人 で薄く分ける。",
+      "proof_points": [
+        "wearmu.com 稼働中 · 月相連動 drop · §28 利益分配 (寄付 50 / Yuki 10 / 株主 10 / MA 10 / Community 10 / Reserve 10) 公開",
+        "Printful (EU/US) + SUZURI (JP) + Gelato (JP/SG/AU) の triple channel POD で 在庫リスクなし",
+        "JiuFight / ATSUME / kokon / ELSOUL / NOJIMAHAL / SIIIEEP 等 既存 collab 8 件 (partner_specs/ に spec)",
+        "winner_picker AI が 売れた design 系統を学習し 翌月 drop に反映",
+        "GitHub Actions hourly heal + Fly watchdog + Telegram alert の 4 層 自己修復"
+      ]
+    },
+    "mechanism": [
+      {
+        "no": 1,
+        "title": "既存ショップと競合しない",
+        "body": "<b>charfilm.thebase.in は触らない</b>。 額装プリント (¥38,000-¥88,000) / 写真集 COLORS (¥8,800) は CHAR 様の核心事業として保護。 MU は <b>同じ写真の異なる媒体・異なる価格帯</b> (アパレル + 昇華 lifestyle + ¥980 magnet 等) のみを扱う。 値下げ競争には絶対にならない。"
+      },
+      {
+        "no": 2,
+        "title": "写真は無損失で印刷する",
+        "body": "<b>昇華転写ポリエステル</b> (ビーチタオル / 枕 / バンダナ / フラッグ / マウスパッド) と <b>キャンバス / 紙ポスター / フォンケース / マグ</b> は写真本来の色域・階調をほぼ無損失で再現。 7 枚それぞれの最適媒体 を MU 側で選定済み (波 → タオル、 バレル → ケース、 鯨 → マグ、 星イルカ → ブランケット …)"
+      },
+      {
+        "no": 3,
+        "title": "アパレルは monoline に翻訳",
+        "body": "T シャツ / キャップ / トート は写真をそのまま印刷せず、 MU が <b>1 本の線</b> (monoline) と <b>シルエット</b> に翻訳。 inner tag に「Inspired by CHAR / charfilm.com」 + QR を印字。 着る人が必ず CHAR 様 本人サイトに辿り着く。 写真 IP は CHAR 様、 monoline IP は両者使用可。"
+      },
+      {
+        "no": 4,
+        "title": "売上の 50% を奄美の自然保全 NPO へ",
+        "body": "場所 = 奄美 という限定で MU §28 寄付 50% 枠を <b>奄美の自然保全 NPO (奄美野鳥の会 / 奄美水産研究所 / WWF 奄美 等から CHAR 様が選定)</b> に redirect。 残り 25% CHAR 様 / 25% MU 運営。 寄付実績は wearmu.com/charfilm/donations に毎月公開。"
+      },
+      {
+        "no": 5,
+        "title": "全 SKU から charfilm.com へ送客",
+        "body": "全 26 SKU の商品ページ /p/charfilm-* に <b>「写真家 CHAR (土屋 尚幸) の作品集を見る」 → charfilm.com</b> リンク + 額装プリントへの誘導バナーを設置。 inner tag + 同梱カード にも QR 印字。 MU で買った人が <b>写真集 COLORS / 額装プリント</b> の本流顧客に転換する導線を設計。"
+      },
+      {
+        "no": 6,
+        "title": "月相 drop · 在庫なし",
+        "body": "Drop は月相連動 (朔 / 弦 / 望)。 在庫を持たないため drop 終了後は注文不可になり、 次月相 で再開。 限定感は自然に発生。 OND° クライアント案件 (NHK大河 / NALU 等) のリリース時期に合わせた特別 drop も柔軟に対応。"
+      }
+    ],
+    "options": [
+      {
+        "letter": "A",
+        "label": "波と光 ビーチタオル (3 色)",
+        "subtitle": "Beach Towel · 昇華転写 75×150cm",
+        "body": "黄金時間の波 (CHAR9) / 透明バレル (CHAR28) / 緑山の波 (CHAR31) の 3 色展開。 ポリエステル昇華転写でほぼ写真と同じ階調。 サーフ・ビーチ・宿のアメニティに最適。",
+        "image": "/static/charfilm/wave-golden.jpg",
+        "drop_label": "Drop 01 · 朔",
+        "price_label": "¥8,800",
+        "price_jpy": 8800,
+        "kind": "beach_towel"
+      },
+      {
+        "letter": "B",
+        "label": "夜のイルカ ブランケット",
+        "subtitle": "Blanket · 昇華転写 130×150cm",
+        "body": "星空のような水面下を泳ぐイルカ (char-24)。 ベッドルーム / ソファ / 車中泊で使える。 写真の繊細な点描が大判で初めて活きる。",
+        "image": "/static/charfilm/dolphins-stars.jpg",
+        "drop_label": "Drop 01 · 朔",
+        "price_label": "¥11,800",
+        "price_jpy": 11800,
+        "kind": "blanket"
+      },
+      {
+        "letter": "C",
+        "label": "波と光 キャンバス A2 (額装可)",
+        "subtitle": "Canvas Print · 木枠張り A2 (420×594)",
+        "body": "黄金時間の波 (CHAR9) のキャンバス印刷。 既存 ジクレー額装 ¥38,000 とは別の <b>普段使いの壁掛け価格帯</b>。 木枠張りで額装不要、 そのまま設置可。",
+        "image": "/static/charfilm/wave-golden.jpg",
+        "drop_label": "Drop 02 · 弦",
+        "price_label": "¥18,000",
+        "price_jpy": 18000,
+        "kind": "canvas"
+      },
+      {
+        "letter": "D",
+        "label": "鯨マグ + イルカマグ",
+        "subtitle": "Mug · 昇華転写 11oz",
+        "body": "ザトウクジラ (S__22618138) / イルカ星空 (char-24) の 2 種マグ。 朝のコーヒーで 1 日 1 回 海に潜れる。 ギフト最適。",
+        "image": "/static/charfilm/whale.jpg",
+        "drop_label": "Drop 01 · 朔",
+        "price_label": "¥2,800",
+        "price_jpy": 2800,
+        "kind": "mug"
+      },
+      {
+        "letter": "E",
+        "label": "バレル AOP ラッシュガード (LS)",
+        "subtitle": "Rashguard LS · 全面昇華転写",
+        "body": "透明バレル (CHAR28) を全身に纏う。 サーフ / ヨガ / SUP / トレーニング用。 UPF50+、 速乾。 波の中にいる写真家が作る波の中で着る服。",
+        "image": "/static/charfilm/barrel-teal.jpg",
+        "drop_label": "Drop 02 · 弦",
+        "price_label": "¥9,800",
+        "price_jpy": 9800,
+        "kind": "rashguard_ls"
+      },
+      {
+        "letter": "F",
+        "label": "光の柱 フーディー (背面 AOP)",
+        "subtitle": "Hoodie · 背中全面 AOP + 胸 monoline",
+        "body": "水中光柱 (char-6) を背中全面に。 胸に小さく monoline + ━◯━ + CHAR credit。 海上がりに被るパーカー。",
+        "image": "/static/charfilm/underwater-rays.jpg",
+        "drop_label": "Drop 03 · 望",
+        "price_label": "¥12,800",
+        "price_jpy": 12800,
+        "kind": "hoodie"
+      },
+      {
+        "letter": "G",
+        "label": "MU × CHAR monoline tee",
+        "subtitle": "Tee · 胸 1 色 monoline",
+        "body": "波 (CHAR9) の構造を 1 本の線に翻訳。 胸に 1 色 print、 inner tag に 「Inspired by CHAR · charfilm.com」 + QR。 日常着の入口。",
+        "image": "/static/charfilm/wave-green.jpg",
+        "drop_label": "Drop 01 · 朔",
+        "price_label": "¥4,900 国内 / ¥7,800 海外",
+        "price_jpy": 4900,
+        "kind": "tee"
+      },
+      {
+        "letter": "H",
+        "label": "写真集 ZINE (A5 · 28p)",
+        "subtitle": "Notebook / ZINE · 7 photo edition",
+        "body": "MU 編集の薄い A5 ZINE (28p) で 7 枚 を 1 物語に編集。 既存 写真集 COLORS (¥8,800 / 1000 部) とは<b>異なるサイズ・編集</b>で 「もっと持ち歩ける CHAR」 を作る。 シリアル No 入り、 500 部限定。",
+        "image": "/static/charfilm/water-mirror.jpg",
+        "drop_label": "Drop 03 · 望 (limited 500)",
+        "price_label": "¥4,500",
+        "price_jpy": 4500,
+        "kind": "notebook"
+      }
+    ],
+    "terms": [
+      ["契約期間", "Drop 01 + 30 日 review、 継続オプション"],
+      ["最低発注ロット", "<b>無在庫</b> — Printful / SUZURI / Gelato POD"],
+      ["売上分配", "<b>奄美の自然保全 NPO 50% (CHAR 様選定)</b> · CHAR 様 25% · MU 25% (POD 原価控除後の純売上で計算)"],
+      ["支払サイト", "月 1 回 締め · 翌月末 Wise 振込 (JPY 直接 or USD 換算)"],
+      ["IP", "写真 IP は CHAR 様 / MU の monoline (linework) は両者使用可 / 写真は contract 期間中 MU 内部参照のみ"],
+      ["credit", "全 SKU の inner tag + 同梱カード + 商品ページ /p/&lt;sku&gt; に 「Inspired by CHAR · charfilm.com」 + QR 必須"],
+      ["既存ショップ", "<b>charfilm.thebase.in は不可侵</b>。 MU は同じ写真の異なる媒体 (アパレル + 昇華 lifestyle + 低単価) のみ販売、 額装プリント / 写真集 COLORS は MU では一切扱わない"],
+      ["撤退条項", "30 日前通知でいつでも。 既存在庫なし (無在庫) なので円滑"],
+      ["独占性", "コラボ期間中、 MU は他写真家との <b>同テーマ (奄美 + 海 + 鯨 + イルカ + 水中光)</b> collab は新規受付しない"],
+      ["写真の取扱い", "7 枚 のみ contract 期間中 MU 内部使用。 翻訳結果 (monoline) は CHAR 様承認後印刷。 他の CHAR 様写真の利用は別途協議"],
+      ["寄付実績", "wearmu.com/charfilm/donations に毎月公開、 寄付先 NPO の領収書も同 URL に掲載"]
+    ],
+    "timeline": [
+      ["Day 0", "本提案合意 + 寄付先 NPO の暫定候補リストを 両者 (CHAR 様 + OND° + MU) で作成"],
+      ["Day 5", "MU が 26 SKU の Printful / SUZURI / Gelato mockup 一式を提出 (写真は印刷データ無し、 monoline 3 案 のみ承認待ち)"],
+      ["Day 10", "CHAR 様が monoline 3 案 + inner tag デザイン を承認 (修正 1 ラウンドまで含む)"],
+      ["Day 14", "全 SKU mockup 確定 + inner tag / 同梱カード 入稿 + 寄付先 NPO 確定"],
+      ["Day 18", "プリオーダー LP 公開 (wearmu.com/charfilm) + charfilm.com からの相互リンク張り"],
+      ["Day 21", "X / Instagram で告知 (CHAR + MU + OND° 同時投稿) · NALU / Surfin'Life に press release"],
+      ["Day 30", "Drop 01 (波と光 / 鯨マグ / イルカブランケット / monoline tee) ローンチ — 月相: 朔"],
+      ["Day 60", "Drop 02 (キャンバス / バレル ラッシュガード) + 売上 review + 寄付振込 (第 1 回)"],
+      ["Day 90", "Drop 03 (光の柱 フーディー / 写真集 ZINE limited 500) — 月相: 望"]
+    ],
+    "revenue_table": [
+      ["Tier 1 · 低単価 gift (¥980-¥4,500)", "magnet · postcard · mug · phonecase · tote · bandana · cap · tee · notebook ZINE", "想定 250 個/月 · ¥600,000 売上 · CHAR 様 ¥75,000/月"],
+      ["Tier 2 · 中単価 lifestyle (¥4,500-¥9,800)", "beach_towel · pillow · flag · rashguard · athletic_tee · water_bottle", "想定 80 個/月 · ¥640,000 売上 · CHAR 様 ¥80,000/月"],
+      ["Tier 3 · 高単価 (¥9,800-¥18,000)", "hoodie · blanket · canvas · puzzle", "想定 20 個/月 · ¥260,000 売上 · CHAR 様 ¥32,500/月"],
+      ["合計 (保守 estimate)", "26 SKU 全媒体", "<b>月商 ¥1,500,000 · CHAR 様取分 ¥187,500/月 · 奄美寄付 ¥375,000/月</b>"]
+    ]
+  },
+  "skus": [
+    { "letter": "a", "drop_num": 1, "price_jpy": 8800,  "label": "Beach Towel · 黄金の波 (CHAR9)",                  "kind": "beach_towel",   "design_slug": "wave-golden",      "image_url": "/static/charfilm/wave-golden.jpg",     "description": "昇華転写ポリエステル 75×150cm。 黄金時間の波 (CHAR9) を写真本来の階調で。" },
+    { "letter": "b", "drop_num": 1, "price_jpy": 8800,  "label": "Beach Towel · 透明バレル (CHAR28)",              "kind": "beach_towel",   "design_slug": "barrel-teal",      "image_url": "/static/charfilm/barrel-teal.jpg",     "description": "昇華転写ポリエステル 75×150cm。 透明バレルの内側を写したクロップ。" },
+    { "letter": "c", "drop_num": 1, "price_jpy": 8800,  "label": "Beach Towel · 緑山の波 (CHAR31)",                "kind": "beach_towel",   "design_slug": "wave-green",       "image_url": "/static/charfilm/wave-green.jpg",      "description": "昇華転写ポリエステル 75×150cm。 奄美の緑山を背景に砕ける波。" },
+    { "letter": "d", "drop_num": 1, "price_jpy": 11800, "label": "Blanket · 夜のイルカ (130×150cm)",               "kind": "blanket",       "design_slug": "dolphins-stars",   "image_url": "/static/charfilm/dolphins-stars.jpg",  "description": "昇華転写フリース 130×150cm。 星空のような水面下のイルカ。" },
+    { "letter": "e", "drop_num": 1, "price_jpy": 11800, "label": "Blanket · 水中光柱 (130×150cm)",                 "kind": "blanket",       "design_slug": "underwater-rays",  "image_url": "/static/charfilm/underwater-rays.jpg", "description": "昇華転写フリース 130×150cm。 海面から差し込む光のシャワー。" },
+    { "letter": "f", "drop_num": 2, "price_jpy": 18000, "label": "Canvas A2 · 黄金の波 (木枠張り)",                "kind": "canvas",        "design_slug": "wave-golden",      "image_url": "/static/charfilm/wave-golden.jpg",     "description": "キャンバス印刷 A2 (420×594mm) 木枠張り。 額装不要、 そのまま壁掛け可。 既存 ジクレー額装 (¥38K-) とは別価格帯。" },
+    { "letter": "g", "drop_num": 2, "price_jpy": 18000, "label": "Canvas A2 · 透明バレル (木枠張り)",              "kind": "canvas",        "design_slug": "barrel-teal",      "image_url": "/static/charfilm/barrel-teal.jpg",     "description": "キャンバス印刷 A2 (420×594mm) 木枠張り。 透明バレル close-up。" },
+    { "letter": "h", "drop_num": 1, "price_jpy": 4800,  "label": "Poster A2 · 緑山の波",                          "kind": "poster",        "design_slug": "wave-green",       "image_url": "/static/charfilm/wave-green.jpg",      "description": "マット紙 A2 (420×594mm)。 普段使いの壁掛け価格帯。" },
+    { "letter": "i", "drop_num": 1, "price_jpy": 4800,  "label": "Poster A2 · 鯨",                                "kind": "poster",        "design_slug": "whale",            "image_url": "/static/charfilm/whale.jpg",           "description": "マット紙 A2 (420×594mm)。 ザトウクジラの上昇。" },
+    { "letter": "j", "drop_num": 1, "price_jpy": 3800,  "label": "Phone Case · 透明バレル",                       "kind": "phonecase",     "design_slug": "barrel-teal",      "image_url": "/static/charfilm/barrel-teal.jpg",     "description": "iPhone 13-16 / Pro / Max 対応。 全面写真ラップ。 落下衝撃緩衝。" },
+    { "letter": "k", "drop_num": 1, "price_jpy": 3800,  "label": "Phone Case · 夜のイルカ",                       "kind": "phonecase",     "design_slug": "dolphins-stars",   "image_url": "/static/charfilm/dolphins-stars.jpg",  "description": "iPhone 13-16 / Pro / Max 対応。 星空のような水面下。" },
+    { "letter": "l", "drop_num": 1, "price_jpy": 2800,  "label": "Mug · 水鏡 11oz",                              "kind": "mug",           "design_slug": "water-mirror",     "image_url": "/static/charfilm/water-mirror.jpg",    "description": "昇華転写マグ 11oz。 海面下の鏡面反射。 朝のコーヒーで 1 日 1 回 海に潜れる。" },
+    { "letter": "m", "drop_num": 1, "price_jpy": 2800,  "label": "Mug · 鯨 11oz",                                "kind": "mug",           "design_slug": "whale",            "image_url": "/static/charfilm/whale.jpg",           "description": "昇華転写マグ 11oz。 ザトウクジラ。 ギフト最適。" },
+    { "letter": "n", "drop_num": 2, "price_jpy": 6800,  "label": "Pillow · 水鏡 50×50cm",                        "kind": "pillow",        "design_slug": "water-mirror",     "image_url": "/static/charfilm/water-mirror.jpg",    "description": "昇華転写枕 50×50cm。 リビング・ソファ・ベッドルームに。 水鏡の波紋。" },
+    { "letter": "o", "drop_num": 2, "price_jpy": 3200,  "label": "Bandana · 黄金の波 55×55cm",                   "kind": "bandana",       "design_slug": "wave-golden",      "image_url": "/static/charfilm/wave-golden.jpg",     "description": "昇華転写バンダナ 55×55cm。 ネック / ヘア / 装飾。 サーフ後の髪まとめ。" },
+    { "letter": "p", "drop_num": 3, "price_jpy": 9800,  "label": "Flag · 透明バレル 90×150cm",                   "kind": "flag",          "design_slug": "barrel-teal",      "image_url": "/static/charfilm/barrel-teal.jpg",     "description": "昇華転写フラッグ 90×150cm。 店舗 / ガレージ / カフェ装飾。 海の壁。" },
+    { "letter": "q", "drop_num": 1, "price_jpy": 2800,  "label": "Mousepad · 夜のイルカ",                         "kind": "mousepad",      "design_slug": "dolphins-stars",   "image_url": "/static/charfilm/dolphins-stars.jpg",  "description": "昇華転写マウスパッド 24×20cm。 デスクに 1 枚海。" },
+    { "letter": "r", "drop_num": 1, "price_jpy": 1200,  "label": "Magnet · 鯨 (3 枚 set)",                       "kind": "magnet",        "design_slug": "whale",            "image_url": "/static/charfilm/whale.jpg",           "description": "冷蔵庫マグネット 3 枚 set (鯨 + 波 + イルカ)。 旅 / 帰路 / 友達へ。" },
+    { "letter": "s", "drop_num": 1, "price_jpy": 1800,  "label": "Postcard · 全 7 写真 set",                     "kind": "postcard",      "design_slug": "all-7",            "image_url": "/static/charfilm/water-mirror.jpg",    "description": "マットポストカード 100×148mm × 7 枚 set。 全 7 写真。 ¥257/枚 換算。 来訪者ノベルティに最適。" },
+    { "letter": "t", "drop_num": 3, "price_jpy": 5800,  "label": "Puzzle · 透明バレル 500pc",                    "kind": "puzzle",        "design_slug": "barrel-teal",      "image_url": "/static/charfilm/barrel-teal.jpg",     "description": "ジグソーパズル 500 ピース。 透明バレル close-up。 雨の日 / 帰省 / ギフトに。" },
+    { "letter": "u", "drop_num": 3, "price_jpy": 4500,  "label": "ZINE · 7 photos A5 28p (limited 500)",        "kind": "notebook",      "design_slug": "wave-green",       "image_url": "/static/charfilm/wave-green.jpg",      "description": "MU 編集 A5 ZINE 28p · 全 7 枚 を 1 物語に。 シリアル No 入り、 500 部 限定。 既存 写真集 COLORS とは異なる薄い携帯版。" },
+    { "letter": "v", "drop_num": 2, "price_jpy": 7800,  "label": "Athletic Tee · 黄金の波 AOP",                  "kind": "athletic_tee",  "design_slug": "wave-golden",      "image_url": "/static/charfilm/wave-golden.jpg",     "description": "昇華転写アスレチック T 全面。 速乾ポリ。 ラン / ジム / SUP / トレーニング。" },
+    { "letter": "w", "drop_num": 2, "price_jpy": 9800,  "label": "Rashguard LS · 透明バレル AOP",                "kind": "rashguard_ls",  "design_slug": "barrel-teal",      "image_url": "/static/charfilm/barrel-teal.jpg",     "description": "ラッシュガード LS 全面 AOP。 UPF50+ 速乾。 サーフ / ヨガ / ダイビング。 写真家の波の中で着る服。" },
+    { "letter": "x", "drop_num": 3, "price_jpy": 12800, "label": "Hoodie · 光の柱 背面 AOP",                     "kind": "hoodie",        "design_slug": "underwater-rays",  "image_url": "/static/charfilm/underwater-rays.jpg", "description": "プルオーバーフーディー · 背中全面 AOP · 胸 monoline + ━◯━ + CHAR credit。 海上がりに被るパーカー。" },
+    { "letter": "y", "drop_num": 1, "price_jpy": 4900,  "label": "Tee · MU × CHAR monoline (chest)",            "kind": "tee",           "design_slug": "monoline-wave",    "image_url": "/static/charfilm/wave-green.jpg",      "description": "写真ではなく波の構造を 1 本の線に翻訳。 胸 1 色 print。 inner tag に Inspired by CHAR + QR。 日常着の入口。 ¥4,900 国内 / ¥7,800 海外。" },
+    { "letter": "z", "drop_num": 1, "price_jpy": 4200,  "label": "Cap · 刺繍 ━◯━ + CHAR",                         "kind": "cap",           "design_slug": "embroidered-mu",   "image_url": "/static/charfilm/wave-golden.jpg",     "description": "5 パネル スナップバック · 前面に ━◯━ + 後面に CHAR 刺繍。 サイドに小さな波 monoline。" },
+    { "letter": "aa","drop_num": 1, "price_jpy": 3800,  "label": "Tote · 緑山の波 monoline",                     "kind": "tote",          "design_slug": "monoline-wave",    "image_url": "/static/charfilm/wave-green.jpg",      "description": "コットンキャンバストート 38×38cm。 monoline 波 + ━◯━ + CHAR credit。 日常買い物 / ビーチ。" },
+    { "letter": "bb","drop_num": 2, "price_jpy": 4200,  "label": "Water Bottle · 透明バレル",                     "kind": "water_bottle",  "design_slug": "barrel-teal",      "image_url": "/static/charfilm/barrel-teal.jpg",     "description": "ステンレスボトル 600ml。 透明バレル 360° ラップ。 サーフ / ジム / オフィス。" }
+  ]
+}

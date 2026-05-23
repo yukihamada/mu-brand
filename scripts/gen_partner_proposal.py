@@ -140,15 +140,38 @@ def main():
                 "name":        s.get("label", s['letter'].upper()),
                 "price_jpy":   s.get("price_jpy", 4900),
                 "category":    s.get("kind", "SKU"),
-                "description": s.get("label", ""),
-                "image_url":   None,
+                "description": s.get("description") or s.get("label", ""),
+                "image_url":   s.get("image_url"),
                 "printful_variant_id": None,
                 "lead_time_days": 10,
             } for s in skus]
         except (urllib.error.HTTPError, urllib.error.URLError):
             items = []
     if not items:
-        sys.exit(f"no items for partner={slug} (neither /api/v1/collab nor /api/proposal/.../skus had data)")
+        # Final fallback: read SKUs directly from the local spec file so a brand
+        # that isn't yet registered live can still preview its proposal page.
+        spec_path = os.path.join(ROOT, "store", "partner_specs", f"{slug}.json")
+        if os.path.exists(spec_path):
+            try:
+                with open(spec_path) as f:
+                    local = json.load(f)
+                for s in local.get("skus") or []:
+                    items.append({
+                        "slug":        f"{slug}-{s['letter']}",
+                        "name":        s.get("label", s['letter'].upper()),
+                        "price_jpy":   s.get("price_jpy", 4900),
+                        "category":    s.get("kind", "SKU"),
+                        "description": s.get("description") or s.get("label", ""),
+                        "image_url":   s.get("image_url"),
+                        "printful_variant_id": None,
+                        "lead_time_days": 10,
+                    })
+                if items:
+                    print(f"  (local-fallback: rendered {len(items)} SKUs from {spec_path})")
+            except (OSError, json.JSONDecodeError):
+                pass
+    if not items:
+        sys.exit(f"no items for partner={slug} (neither /api/v1/collab nor /api/proposal/.../skus nor local spec had data)")
 
     pf_key = os.environ.get("PRINTFUL_API_KEY", "")
     img_map = {}
@@ -178,8 +201,21 @@ def main():
     total_jpy = sum(it["price_jpy"] for it in items)
     n_sku = len(items)
 
+    is_live = meta.get("live", True)
     cards_html = []
     for i, it in enumerate(items):
+        if is_live:
+            cta = (
+                f'<a class="sample-btn" href="https://wearmu.com/api/{slug}/checkout?slug={escape(it["slug"])}" '
+                f'target="_blank" style="display:block;text-align:center;text-decoration:none">'
+                f'今すぐ購入 — ¥{it["price_jpy"]:,}</a>'
+            )
+        else:
+            cta = (
+                '<div class="sample-btn" style="background:rgba(230,196,73,0.08);color:#e6c449;'
+                'border-color:rgba(230,196,73,0.35);cursor:default" aria-disabled="true">'
+                '本提案合意後に live</div>'
+            )
         cards_html.append(f"""
   <div class="design{' recommended' if i == 0 else ''}">
     <div class="id">{escape(it['slug'].split('-',1)[-1].upper())}</div>
@@ -190,8 +226,23 @@ def main():
     <div class="front" style="font-size:11.5px;line-height:1.85;color:var(--mute);margin-bottom:8px">{escape((it.get('description') or '')[:160])}</div>
     <div class="footer">¥{it['price_jpy']:,} · lead {it.get('lead_time_days', 10)}d</div>
     <div class="size-row" data-design="{escape(it['slug'])}">S M L XL</div>
-    <a class="sample-btn" href="https://wearmu.com/api/{slug}/checkout?slug={escape(it['slug'])}" target="_blank" style="display:block;text-align:center;text-decoration:none">今すぐ購入 — ¥{it['price_jpy']:,}</a>
+    {cta}
   </div>""")
+
+    if is_live:
+        sku_section_heading = (
+            f'<h2>2. 既存 {n_sku} SKU — Live 販売中 (実物写真)</h2>'
+            f'<p>下記は <strong style="color:#7be57b">既に Live 販売中の {n_sku} SKU</strong>。 各カードの 「今すぐ購入」 → '
+            f'既存 <code>/api/{slug}/checkout</code> 経由で Stripe Checkout (Printful / 国内手配 直送、 lead 7-14 日)。 '
+            '拡張・色違い・新 SKU 追加もご相談ください。</p>'
+        )
+    else:
+        sku_section_heading = (
+            f'<h2>2. 提案 {n_sku} SKU (DRAFT)</h2>'
+            f'<p>下記は <strong style="color:#e6c449">本提案合意後に Live 化する {n_sku} SKU</strong> の DRAFT。 '
+            '商品画像は写真本体 (CHAR 様提供) を仮置きしたもので、 アパレル mockup / 印刷ポジションは合意後に Printful / SUZURI / Gelato で生成・ご承認いただきます。 '
+            '価格・SKU 構成・色数・素材は協議により変更可能。</p>'
+        )
 
     hero_kv_rows = "".join(
         f'    <hr><div class="k">{escape(k)}</div><div class="v">{escape(v)}</div>\n'
@@ -199,8 +250,87 @@ def main():
     )
     use_cases = "".join(f"<li>{escape(u)}</li>" for u in meta["use_cases"])
 
+    # Optional rich sections — only render headings if data is present.
+    mechanism_html = ""
+    if meta.get("mechanism"):
+        rows = "".join(
+            f'<div style="display:grid;grid-template-columns:48px 1fr;gap:18px;padding:18px 0;border-bottom:1px solid var(--line)">'
+            f'  <div style="font-size:22px;font-weight:200;color:var(--y);line-height:1">{m["no"]:02d}</div>'
+            f'  <div><h3 style="margin:0 0 6px;font-size:14px;letter-spacing:0.06em">{escape(m["title"])}</h3>'
+            f'  <p style="margin:0;font-size:13px;color:var(--mute);line-height:1.9">{m["body"]}</p></div>'
+            f'</div>' for m in meta["mechanism"]
+        )
+        mechanism_html = f'<h2>3. 仕組み — {len(meta["mechanism"])} 原則</h2><div>{rows}</div>'
+
+    terms_html = ""
+    if meta.get("terms"):
+        rows = "".join(
+            f'<tr><td class="name" style="white-space:nowrap;width:30%">{escape(k)}</td><td>{v}</td></tr>'
+            for k, v in meta["terms"]
+        )
+        terms_html = (
+            '<h2>4. 契約条件 (草案)</h2>'
+            '<table class="tier-table"><thead><tr><th>項目</th><th>内容</th></tr></thead>'
+            f'<tbody>{rows}</tbody></table>'
+        )
+
+    timeline_html = ""
+    if meta.get("timeline"):
+        rows = "".join(
+            f'<tr><td class="name" style="white-space:nowrap;width:18%;color:var(--y)">{escape(d)}</td><td>{escape(v)}</td></tr>'
+            for d, v in meta["timeline"]
+        )
+        timeline_html = (
+            '<h2>5. 進め方 · 9 ステップ</h2>'
+            '<table class="tier-table"><thead><tr><th>日</th><th>マイルストーン</th></tr></thead>'
+            f'<tbody>{rows}</tbody></table>'
+        )
+
+    revenue_html = ""
+    if meta.get("revenue_table"):
+        rows = "".join(
+            f'<tr><td class="name">{escape(t)}</td><td style="font-size:12px;color:var(--mute)">{escape(items)}</td><td>{v}</td></tr>'
+            for t, items, v in meta["revenue_table"]
+        )
+        revenue_html = (
+            '<h2>6. 売上シナリオ (保守 estimate)</h2>'
+            '<p>POD 原価 (Printful / SUZURI / Gelato) を控除後の純売上で計算。 月相 drop ローンチ後 安定期の月次想定。</p>'
+            '<table class="tier-table"><thead><tr><th>ティア</th><th>SKU</th><th>月次想定</th></tr></thead>'
+            f'<tbody>{rows}</tbody></table>'
+        )
+
+    intro_html = ""
+    if meta.get("mu_intro"):
+        mi = meta["mu_intro"]
+        proofs = "".join(f"<li>{escape(p)}</li>" for p in mi.get("proof_points", []))
+        intro_html = (
+            '<h2>7. MU について</h2>'
+            f'<p><strong>{escape(mi.get("brand",""))}</strong> — {escape(mi.get("operator",""))} · {escape(mi.get("founder",""))}<br>'
+            f'<span style="color:var(--mute)">{escape(mi.get("philosophy",""))}</span></p>'
+            f'<ul>{proofs}</ul>'
+        )
+
+    # Status banner: live brands keep the green one; drafts get a yellow banner.
+    if meta.get("live", True):
+        status_banner = (
+            '<div class="status-banner live" role="status">'
+            '<span class="dot" aria-hidden="true"></span>'
+            f'<span><b>Live 販売中</b>全 {n_sku} SKU が <a href="/{slug}" style="color:#7be57b;text-decoration:underline">/{slug}</a> で稼働中。 本資料は<strong>パートナー向け pitch deck</strong> です。</span>'
+            f'<span class="meta">{n_sku} SKUs · ¥{total_jpy:,}+ catalog</span>'
+            '</div>'
+        )
+    else:
+        status_banner = (
+            '<div class="status-banner" style="background:rgba(230,196,73,0.10);border:1px solid rgba(230,196,73,0.5);color:#e6c449" role="status">'
+            '<span class="dot" aria-hidden="true" style="background:#e6c449"></span>'
+            f'<span><b>DRAFT · 未公開</b>全 {n_sku} SKU は本提案合意後に <a href="/{slug}" style="color:#e6c449;text-decoration:underline">/{slug}</a> で公開予定。 本資料は <strong>{escape(meta["display_name"])} 様 (および所属窓口) への 提案 pitch deck</strong> です。 ご合意までは社外秘。</span>'
+            f'<span class="meta">{n_sku} SKUs · ¥{total_jpy:,}+ catalog</span>'
+            '</div>'
+        )
+
     accent = meta["accent_hex"]
     page = TEMPLATE.format(
+        status_banner=status_banner,
         slug=slug,
         display_name=escape(meta["display_name"]),
         tagline=escape(meta["tagline"]),
@@ -215,6 +345,12 @@ def main():
         why=meta["why_md"],
         use_cases=use_cases,
         cards="\n".join(cards_html),
+        sku_section_heading=sku_section_heading,
+        mechanism=mechanism_html,
+        terms=terms_html,
+        timeline=timeline_html,
+        revenue=revenue_html,
+        intro=intro_html,
     )
 
     out = os.path.join(PROPOSALS_DIR, f"{slug}.html")
@@ -300,11 +436,7 @@ ul li strong{{color:var(--fg);font-weight:500}}
 </nav>
 <div class="wrap">
 <div class="ascii-mark">━◯━</div>
-<div class="status-banner live" role="status">
-  <span class="dot" aria-hidden="true"></span>
-  <span><b>Live 販売中</b>全 {n_sku} SKU が <a href="/{slug}" style="color:#7be57b;text-decoration:underline">/{slug}</a> で稼働中。 本資料は<strong>パートナー向け pitch deck</strong> です。</span>
-  <span class="meta">{n_sku} SKUs · ¥{total_jpy:,}+ catalog</span>
-</div>
+{status_banner}
 <div class="eyebrow">PITCH DECK · 2026-05-15 · 株式会社イネブラ → {display_name} 御中</div>
 <h1>{h1}<br><span style="font-size:0.7em;color:var(--mute);font-weight:200">{subtitle}</span></h1>
 <p class="lede">{lede}</p>
@@ -318,23 +450,17 @@ ul li strong{{color:var(--fg);font-weight:500}}
 <p>{why}</p>
 <h3 style="color:var(--y);margin-top:24px">想定使途</h3>
 <ul>{use_cases}</ul>
-<h2>2. 既存 {n_sku} SKU — Live 販売中 (実物写真)</h2>
-<p>下記は <strong style="color:#7be57b">既に Live 販売中の {n_sku} SKU</strong>。 各カードの 「今すぐ購入」 → 既存 <code>/api/{slug}/checkout</code> 経由で Stripe Checkout (Printful / 国内手配 直送、 lead 7-14 日)。 拡張・色違い・新 SKU 追加もご相談ください。</p>
+{sku_section_heading}
 <div class="designs">
 {cards}
 </div>
-<h2>3. 拡張プラン</h2>
-<table class="tier-table">
-  <thead><tr><th>方向</th><th>具体例</th><th>MU 側工数</th></tr></thead>
-  <tbody>
-    <tr class="rec"><td class="name">既存 SKU 拡張</td><td>色違い・サイズ追加・刺繍カラー変更</td><td>1 営業日 (Printful 反映)</td></tr>
-    <tr><td class="name">SKU 新規追加</td><td>カテゴリ追加 (例: シェフコート、 ノベルティ uniform、 イベント限定 Tee)</td><td>3-5 営業日 (mockup → 承認 → live)</td></tr>
-    <tr><td class="name">限定 drop</td><td>記念日 / 周年 / 大会用 1-of-N 限定</td><td>2-3 営業日 (drop_num 採番 + 在庫設定)</td></tr>
-    <tr><td class="name">B2B 一括</td><td>10 着以上のスタッフ uniform / 取引先 gift</td><td>3-7 営業日 (bundle Stripe Link 発行)</td></tr>
-  </tbody>
-</table>
-<h2>4. 進め方</h2>
-<p>本 pitch deck は<strong>既存 collab の現状サマリー + 拡張提案</strong>です。 内容にご賛同いただければ、 個別 SKU 追加・改訂はメッセージ 1 通で着手します (即時運用)。</p>
+{mechanism}
+{terms}
+{timeline}
+{revenue}
+{intro}
+<h2>進め方</h2>
+<p>本 pitch deck の内容にご賛同いただければ、 監修 / 写真の最終選定 / 翻訳 monoline 確認 を順次ご相談しながら進めます。 個別 SKU 追加・改訂はメッセージ 1 通で着手 (即時運用)。</p>
 <div class="fineprint">
   <strong>免責・前提</strong><br>
   本資料は株式会社イネブラから {display_name} 様への、 既存 MU collab の継続・拡張に関する pitch deck です。 商品仕様・価格は協議により変更可能。 第三者商標 (Printful / Stripe / Bella+Canvas / Yupoong 等) は各社に帰属します。<br><br>
