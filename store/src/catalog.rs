@@ -503,6 +503,20 @@ pub fn spend_or_refuse(
 // rashguard cover the two requests the user named. Adding hoodies /
 // tanks etc. is a one-row PR away.
 
+/// Printful product 301 (AOP Men's Rash Guard) has four sublimation panels.
+/// A single placement = chest-only print on an otherwise-white rashguard.
+/// To deliver a true belt-colored rashguard the same design URL must be
+/// fanned out to every panel (cover-fill scales it per panel automatically).
+/// Other apparel (tee/hoodie/crewneck) is single-front DTG.
+fn placements_for_product(printful_product_id: i64) -> &'static [&'static str] {
+    match printful_product_id {
+        // 301 = Men's AOP Rash Guard, 302/368/369/836 = sister AOP products
+        // (per fulfill_catalog_order's stitch_color guard at line 2736).
+        301 | 302 | 368 | 369 | 836 => &["front", "back", "sleeve_left", "sleeve_right"],
+        _ => &["front"],
+    }
+}
+
 struct ProductSpec {
     kind: &'static str,
     printful_product_id: i64,
@@ -1034,21 +1048,26 @@ pub async fn generate_onbody_mockup(
     // 1. Create task. The `position` field is mandatory per Printful
     //    error MG-4 "Position field is missing"; values mirror
     //    printful_mockup_config_for() in main.rs for chest_tee.
-    //    AOP rashguard (162) ignores chest position and prints all-over,
-    //    but Printful still requires the field — pass the same chest box.
+    //    AOP rashguard (301) supports four sublimation panels — fan the
+    //    same design URL out to all of them so the mockup shows a true
+    //    belt-colored garment instead of a chest-only print.
     let position = serde_json::json!({
         "area_width": 1800, "area_height": 2400,
         "width": 1260,      "height": 1260,
         "top": 380,         "left": 270
     });
+    let placements = placements_for_product(printful_product);
+    let files: Vec<serde_json::Value> = placements.iter().map(|p| {
+        serde_json::json!({
+            "placement": p,
+            "image_url": design_url,
+            "position": position,
+        })
+    }).collect();
     let create_body = serde_json::json!({
         "variant_ids": [printful_variant],
         "format": "png",
-        "files": [{
-            "placement": "front",
-            "image_url": design_url,
-            "position": position,
-        }],
+        "files": files,
     });
     let create_url = format!(
         "https://api.printful.com/mockup-generator/create-task/{}",
@@ -1418,12 +1437,32 @@ pub async fn admin_nl_add(
     if !charged {
         return (StatusCode::FAILED_DEPENDENCY, "budget cap reached").into_response();
     }
-    let design_prompt = format!(
-        "Print-ready chest graphic at 300 DPI on a pure white background. \
-         Style brief: {}. NO model, NO mockup, just the artwork, centered. \
-         Variation key: {}.",
-        theme_brief, seed
-    );
+    // For AOP rashguards the same image is cover-filled across all four
+    // sublimation panels (front/back/sleeves), so the canvas needs to be
+    // fully colored edge-to-edge — a white-background chest graphic would
+    // ship as a white rashguard with a tiny print, defeating the belt-color
+    // proposition. DTG products keep the white-background spec.
+    let is_aop = matches!(kind, "rashguard_ls" | "rashguard_black");
+    let design_prompt = if is_aop {
+        format!(
+            "Print-ready FULL-CANVAS sublimation artwork at 300 DPI for an \
+             all-over-print rashguard. CRITICAL: fill the ENTIRE canvas \
+             edge-to-edge with the dominant color — NO white margins, NO \
+             padding, NO background gaps. Style brief: {}. The artwork \
+             will be cover-cropped onto every panel (front, back, both \
+             sleeves), so corners and edges matter as much as the center. \
+             NO model, NO garment mockup, just the printable artwork. \
+             Variation key: {}.",
+            theme_brief, seed
+        )
+    } else {
+        format!(
+            "Print-ready chest graphic at 300 DPI on a pure white background. \
+             Style brief: {}. NO model, NO mockup, just the artwork, centered. \
+             Variation key: {}.",
+            theme_brief, seed
+        )
+    };
     let img = match crate::gemini::call_gemini(&design_prompt).await {
         Ok(i) => i,
         Err(e) => return (StatusCode::BAD_GATEWAY, format!("gemini image: {}", e)).into_response(),
@@ -2747,11 +2786,26 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
                 format!("{}{}", env::var("BASE_URL")
                     .unwrap_or_else(|_| "https://wearmu.com".into()), df)
             };
+            // Fan the same design out to every panel the product supports.
+            // For AOP rashguards this is front/back/both sleeves so the
+            // garment ships in its true belt color, not chest-printed white.
+            // The stored placement is honored for single-panel products
+            // (tees/hoodies) where the helper returns just ["front"].
+            let resolved_placements = placements_for_product(_pp_id);
+            let resolved_placements: Vec<&str> =
+                if resolved_placements == ["front"] && placement != "front" {
+                    vec![placement.as_str()]
+                } else {
+                    resolved_placements.iter().copied().collect()
+                };
+            let files: Vec<serde_json::Value> = resolved_placements.iter().map(|p| {
+                serde_json::json!({"url": file_url, "placement": p})
+            }).collect();
             serde_json::json!({
                 "variant_id": pf_variant_id,
                 "quantity": 1,
                 "retail_price": retail_price,
-                "files": [{"url": file_url, "placement": placement}],
+                "files": files,
                 "options": options_block,
             })
         }
