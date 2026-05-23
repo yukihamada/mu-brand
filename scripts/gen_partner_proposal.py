@@ -124,13 +124,19 @@ def main():
     # Try legacy /api/v1/collab/<slug> first (sweep / kokon style — items live
     # in collab_products). Fall back to /api/proposal/<slug>/skus (new brands
     # registered via POST /admin/proposal — items live in proposal_skus).
+    # Exception: DRAFT brands (meta.live=false) skip the API entirely so a
+    # stale live DB seed never overrides the latest local spec.
     items = []
-    try:
+    skip_api = meta.get("live") is False
+    if skip_api:
+        print(f"  (meta.live=false → skipping API, using local spec only)")
+    if not skip_api:
+      try:
         data = fetch_json(f"{args.source}/api/v1/collab/{slug}")
         items = data if isinstance(data, list) else (data.get("products") or [])
-    except (urllib.error.HTTPError, urllib.error.URLError):
+      except (urllib.error.HTTPError, urllib.error.URLError):
         items = []
-    if not items:
+    if not items and not skip_api:
         try:
             data = fetch_json(f"{args.source}/api/proposal/{slug}/skus")
             skus = data.get("skus") or []
