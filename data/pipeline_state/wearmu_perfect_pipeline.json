@@ -734,5 +734,405 @@
     "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/code/m/perfect_MU-CODE-06-TEE-BLACK.jpg",
     "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/code/lifestyle/perfect_MU-CODE-06-TEE-BLACK.jpg",
     "elapsed_s": 222.4
+  },
+  "MU-BJJ-01-LONG-SLEEVE-WHITE-M": {
+    "sku": "MU-BJJ-01-LONG-SLEEVE-WHITE-M",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-LONG-SLEEVE-WHITE-M.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-LONG-SLEEVE-WHITE-M.jpg",
+    "elapsed_s": 23.1
+  },
+  "MU-BJJ-01-MUG-WHITE-one": {
+    "sku": "MU-BJJ-01-MUG-WHITE-one",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-MUG-WHITE-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-MUG-WHITE-one.jpg",
+    "elapsed_s": 23.3
+  },
+  "MU-BJJ-01-LONG-SLEEVE-WHITE-S": {
+    "sku": "MU-BJJ-01-LONG-SLEEVE-WHITE-S",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-LONG-SLEEVE-WHITE-S.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-LONG-SLEEVE-WHITE-S.jpg",
+    "elapsed_s": 23.4
+  },
+  "MU-BJJ-01-HOODIE-BLACK-S": {
+    "sku": "MU-BJJ-01-HOODIE-BLACK-S",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-HOODIE-BLACK-S.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-HOODIE-BLACK-S.jpg",
+    "elapsed_s": 23.4
+  },
+  "MU-BJJ-01-LONG-SLEEVE-WHITE-L": {
+    "sku": "MU-BJJ-01-LONG-SLEEVE-WHITE-L",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-LONG-SLEEVE-WHITE-L.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-LONG-SLEEVE-WHITE-L.jpg",
+    "elapsed_s": 23.4
+  },
+  "MU-BJJ-01-HOODIE-BLACK-XL": {
+    "sku": "MU-BJJ-01-HOODIE-BLACK-XL",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-HOODIE-BLACK-XL.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-HOODIE-BLACK-XL.jpg",
+    "elapsed_s": 23.5
+  },
+  "MU-BJJ-01-LONG-SLEEVE-BLACK-M": {
+    "sku": "MU-BJJ-01-LONG-SLEEVE-BLACK-M",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-LONG-SLEEVE-BLACK-M.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-LONG-SLEEVE-BLACK-M.jpg",
+    "elapsed_s": 23.6
+  },
+  "MU-BJJ-01-LONG-SLEEVE-BLACK-XL": {
+    "sku": "MU-BJJ-01-LONG-SLEEVE-BLACK-XL",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-LONG-SLEEVE-BLACK-XL.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-LONG-SLEEVE-BLACK-XL.jpg",
+    "elapsed_s": 23.6
+  },
+  "MU-BJJ-01-LONG-SLEEVE-BLACK-2XL": {
+    "sku": "MU-BJJ-01-LONG-SLEEVE-BLACK-2XL",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-LONG-SLEEVE-BLACK-2XL.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-LONG-SLEEVE-BLACK-2XL.jpg",
+    "elapsed_s": 23.7
+  },
+  "MU-BJJ-01-HOODIE-BLACK-2XL": {
+    "sku": "MU-BJJ-01-HOODIE-BLACK-2XL",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-HOODIE-BLACK-2XL.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-HOODIE-BLACK-2XL.jpg",
+    "elapsed_s": 23.7
+  },
+  "MU-BJJ-01-CANVAS-one": {
+    "sku": "MU-BJJ-01-CANVAS-one",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-CANVAS-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-CANVAS-one.jpg",
+    "elapsed_s": 23.9
+  },
+  "MU-BJJ-01-MUSCLE-TANK-BLACK-S": {
+    "sku": "MU-BJJ-01-MUSCLE-TANK-BLACK-S",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-MUSCLE-TANK-BLACK-S.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-MUSCLE-TANK-BLACK-S.jpg",
+    "elapsed_s": 23.9
+  },
+  "MU-BJJ-01-LONG-SLEEVE-WHITE-XL": {
+    "sku": "MU-BJJ-01-LONG-SLEEVE-WHITE-XL",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-LONG-SLEEVE-WHITE-XL.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-LONG-SLEEVE-WHITE-XL.jpg",
+    "elapsed_s": 24.0
+  },
+  "MU-BJJ-01-MUSCLE-TANK-BLACK-L": {
+    "sku": "MU-BJJ-01-MUSCLE-TANK-BLACK-L",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-MUSCLE-TANK-BLACK-L.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-MUSCLE-TANK-BLACK-L.jpg",
+    "elapsed_s": 24.2
+  },
+  "MU-BJJ-01-HOODIE-BLACK-L": {
+    "sku": "MU-BJJ-01-HOODIE-BLACK-L",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-HOODIE-BLACK-L.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-HOODIE-BLACK-L.jpg",
+    "elapsed_s": 24.4
+  },
+  "MU-BJJ-01-MUSCLE-TANK-BLACK-M": {
+    "sku": "MU-BJJ-01-MUSCLE-TANK-BLACK-M",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-MUSCLE-TANK-BLACK-M.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-MUSCLE-TANK-BLACK-M.jpg",
+    "elapsed_s": 24.6
+  },
+  "MU-BJJ-01-LONG-SLEEVE-BLACK-S": {
+    "sku": "MU-BJJ-01-LONG-SLEEVE-BLACK-S",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-LONG-SLEEVE-BLACK-S.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-LONG-SLEEVE-BLACK-S.jpg",
+    "elapsed_s": 25.2
+  },
+  "MU-BJJ-01-LONG-SLEEVE-WHITE-2XL": {
+    "sku": "MU-BJJ-01-LONG-SLEEVE-WHITE-2XL",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-LONG-SLEEVE-WHITE-2XL.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-LONG-SLEEVE-WHITE-2XL.jpg",
+    "elapsed_s": 25.4
+  },
+  "MU-BJJ-01-MUSCLE-TANK-BLACK-2XL": {
+    "sku": "MU-BJJ-01-MUSCLE-TANK-BLACK-2XL",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-MUSCLE-TANK-BLACK-2XL.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-MUSCLE-TANK-BLACK-2XL.jpg",
+    "elapsed_s": 25.8
+  },
+  "MU-BJJ-01-MUG-BLACK-one": {
+    "sku": "MU-BJJ-01-MUG-BLACK-one",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-MUG-BLACK-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-MUG-BLACK-one.jpg",
+    "elapsed_s": 26.5
+  },
+  "MU-BJJ-01-PHONE-CASE-one": {
+    "sku": "MU-BJJ-01-PHONE-CASE-one",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-PHONE-CASE-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-PHONE-CASE-one.jpg",
+    "elapsed_s": 22.7
+  },
+  "MU-BJJ-01-SWEATSHIRT-GREY-2XL": {
+    "sku": "MU-BJJ-01-SWEATSHIRT-GREY-2XL",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-SWEATSHIRT-GREY-2XL.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-SWEATSHIRT-GREY-2XL.jpg",
+    "elapsed_s": 23.3
+  },
+  "MU-BJJ-01-SWEATSHIRT-GREY-S": {
+    "sku": "MU-BJJ-01-SWEATSHIRT-GREY-S",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-SWEATSHIRT-GREY-S.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-SWEATSHIRT-GREY-S.jpg",
+    "elapsed_s": 23.3
+  },
+  "MU-BJJ-01-RASH-M": {
+    "sku": "MU-BJJ-01-RASH-M",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-RASH-M.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-RASH-M.jpg",
+    "elapsed_s": 23.6
+  },
+  "MU-BJJ-01-RASH-L": {
+    "sku": "MU-BJJ-01-RASH-L",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-RASH-L.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-RASH-L.jpg",
+    "elapsed_s": 23.8
+  },
+  "MU-BJJ-01-MUSCLE-TANK-BLACK-XL": {
+    "sku": "MU-BJJ-01-MUSCLE-TANK-BLACK-XL",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-MUSCLE-TANK-BLACK-XL.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-MUSCLE-TANK-BLACK-XL.jpg",
+    "elapsed_s": 23.8
+  },
+  "MU-BJJ-01-STICKER-one": {
+    "sku": "MU-BJJ-01-STICKER-one",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-STICKER-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-STICKER-one.jpg",
+    "elapsed_s": 24.0
+  },
+  "MU-BJJ-01-SWEATSHIRT-GREY-L": {
+    "sku": "MU-BJJ-01-SWEATSHIRT-GREY-L",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-SWEATSHIRT-GREY-L.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-SWEATSHIRT-GREY-L.jpg",
+    "elapsed_s": 24.1
+  },
+  "MU-BJJ-01-TANK-BLACK-XL": {
+    "sku": "MU-BJJ-01-TANK-BLACK-XL",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-TANK-BLACK-XL.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-TANK-BLACK-XL.jpg",
+    "elapsed_s": 24.2
+  },
+  "MU-BJJ-01-POSTER-one": {
+    "sku": "MU-BJJ-01-POSTER-one",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-POSTER-one.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-POSTER-one.jpg",
+    "elapsed_s": 24.3
+  },
+  "MU-BJJ-01-SWEATSHIRT-GREY-XL": {
+    "sku": "MU-BJJ-01-SWEATSHIRT-GREY-XL",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-SWEATSHIRT-GREY-XL.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-SWEATSHIRT-GREY-XL.jpg",
+    "elapsed_s": 24.3
+  },
+  "MU-BJJ-01-TANK-WHITE-XL": {
+    "sku": "MU-BJJ-01-TANK-WHITE-XL",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-TANK-WHITE-XL.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-TANK-WHITE-XL.jpg",
+    "elapsed_s": 24.7
+  },
+  "MU-BJJ-01-SWEATSHIRT-BLACK-2XL": {
+    "sku": "MU-BJJ-01-SWEATSHIRT-BLACK-2XL",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-SWEATSHIRT-BLACK-2XL.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-SWEATSHIRT-BLACK-2XL.jpg",
+    "elapsed_s": 24.8
+  },
+  "MU-BJJ-01-RASH-XL": {
+    "sku": "MU-BJJ-01-RASH-XL",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-RASH-XL.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-RASH-XL.jpg",
+    "elapsed_s": 24.8
+  },
+  "MU-BJJ-01-SWEATSHIRT-BLACK-M": {
+    "sku": "MU-BJJ-01-SWEATSHIRT-BLACK-M",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-SWEATSHIRT-BLACK-M.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-SWEATSHIRT-BLACK-M.jpg",
+    "elapsed_s": 24.9
+  },
+  "MU-BJJ-01-TANK-BLACK-2XL": {
+    "sku": "MU-BJJ-01-TANK-BLACK-2XL",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-TANK-BLACK-2XL.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-TANK-BLACK-2XL.jpg",
+    "elapsed_s": 24.9
+  },
+  "MU-BJJ-01-RASH-S": {
+    "sku": "MU-BJJ-01-RASH-S",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-RASH-S.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-RASH-S.jpg",
+    "elapsed_s": 25.1
+  },
+  "MU-BJJ-01-TANK-WHITE-2XL": {
+    "sku": "MU-BJJ-01-TANK-WHITE-2XL",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-TANK-WHITE-2XL.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-TANK-WHITE-2XL.jpg",
+    "elapsed_s": 25.1
+  },
+  "MU-BJJ-01-SWEATSHIRT-BLACK-S": {
+    "sku": "MU-BJJ-01-SWEATSHIRT-BLACK-S",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-SWEATSHIRT-BLACK-S.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-SWEATSHIRT-BLACK-S.jpg",
+    "elapsed_s": 25.2
+  },
+  "MU-BJJ-01-SWEATSHIRT-BLACK-L": {
+    "sku": "MU-BJJ-01-SWEATSHIRT-BLACK-L",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-SWEATSHIRT-BLACK-L.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-SWEATSHIRT-BLACK-L.jpg",
+    "elapsed_s": 25.3
+  },
+  "MU-BJJ-01-SWEATSHIRT-GREY-M": {
+    "sku": "MU-BJJ-01-SWEATSHIRT-GREY-M",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-SWEATSHIRT-GREY-M.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-SWEATSHIRT-GREY-M.jpg",
+    "elapsed_s": 25.3
+  },
+  "MU-BJJ-01-TANK-WHITE-M": {
+    "sku": "MU-BJJ-01-TANK-WHITE-M",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-TANK-WHITE-M.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-TANK-WHITE-M.jpg",
+    "elapsed_s": 25.4
+  },
+  "MU-BJJ-01-RASH-2XL": {
+    "sku": "MU-BJJ-01-RASH-2XL",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-RASH-2XL.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-RASH-2XL.jpg",
+    "elapsed_s": 25.4
+  },
+  "MU-BJJ-01-TANK-WHITE-S": {
+    "sku": "MU-BJJ-01-TANK-WHITE-S",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-TANK-WHITE-S.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-TANK-WHITE-S.jpg",
+    "elapsed_s": 25.4
+  },
+  "MU-BJJ-01-TANK-BLACK-M": {
+    "sku": "MU-BJJ-01-TANK-BLACK-M",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-TANK-BLACK-M.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-TANK-BLACK-M.jpg",
+    "elapsed_s": 25.6
+  },
+  "MU-BJJ-01-SWEATSHIRT-BLACK-XL": {
+    "sku": "MU-BJJ-01-SWEATSHIRT-BLACK-XL",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-SWEATSHIRT-BLACK-XL.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-SWEATSHIRT-BLACK-XL.jpg",
+    "elapsed_s": 25.7
+  },
+  "MU-BJJ-01-TANK-BLACK-S": {
+    "sku": "MU-BJJ-01-TANK-BLACK-S",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-TANK-BLACK-S.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-TANK-BLACK-S.jpg",
+    "elapsed_s": 26.2
+  },
+  "MU-BJJ-01-TEE-BLACK-2XL": {
+    "sku": "MU-BJJ-01-TEE-BLACK-2XL",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-TEE-BLACK-2XL.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-TEE-BLACK-2XL.jpg",
+    "elapsed_s": 26.7
+  },
+  "MU-BJJ-01-TANK-BLACK-L": {
+    "sku": "MU-BJJ-01-TANK-BLACK-L",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-TANK-BLACK-L.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-TANK-BLACK-L.jpg",
+    "elapsed_s": 26.8
+  },
+  "MU-BJJ-01-TANK-WHITE-L": {
+    "sku": "MU-BJJ-01-TANK-WHITE-L",
+    "brand": "bjj",
+    "design": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/d/design_MU-BJJ-01.png",
+    "mockup": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/m/perfect_MU-BJJ-01-TANK-WHITE-L.jpg",
+    "lifestyle": "file:///Users/yuki/workspace/mu-brand/store/static/bjj/lifestyle/perfect_MU-BJJ-01-TANK-WHITE-L.jpg",
+    "elapsed_s": 38.9
   }
 }

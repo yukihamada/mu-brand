@@ -439,16 +439,21 @@ def process_sku(sku: str) -> dict:
         return {"sku": sku, "err": "no printful url"}
 
     t0 = time.time()
-    # 1. design (shared per concept)
+    # 1. design (shared per concept) — must complete first since lifestyle uses it
     design_b = load_design(brand, concept) or gen_design_concept(brand, concept, rep_label, rep_desc)
     if not design_b:
         conn.close()
         return {"sku": sku, "err": "no design"}
 
-    # 2. mockup (per SKU)
-    mockup_b = gen_mockup(sku, brand, label, purl, design_b)
-    # 3. lifestyle (per SKU)
-    life_b = gen_lifestyle(sku, brand, label, design_b, mockup_b)
+    # 2 & 3. mockup and lifestyle run IN PARALLEL — both depend only on design.
+    # Each is a Gemini call (~20s). Sequential was wasted time; concurrent
+    # halves per-SKU latency. Lifestyle previously took the mockup as an
+    # optional reference; drop that to enable true parallelism.
+    with cf.ThreadPoolExecutor(max_workers=2) as inner:
+        fut_mockup = inner.submit(gen_mockup, sku, brand, label, purl, design_b)
+        fut_life   = inner.submit(gen_lifestyle, sku, brand, label, design_b, None)
+        mockup_b = fut_mockup.result()
+        life_b   = fut_life.result()
 
     res = {
         "sku": sku, "brand": brand,
@@ -495,7 +500,10 @@ def main():
     ap.add_argument("--concept")
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--limit", type=int)
-    ap.add_argument("--workers", type=int, default=12)
+    ap.add_argument("--workers", type=int, default=20,
+                    help="outer SKU-level workers. Each spawns 2 inner threads "
+                         "(mockup + lifestyle in parallel), so effective Gemini "
+                         "concurrency = workers * 2.")
     args = ap.parse_args()
 
     skus = select_skus(args)

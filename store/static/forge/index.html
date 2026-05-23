@@ -3,315 +3,385 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>FORGE — MU</title>
-<meta name="description" content="プロンプト一行で 1点物 のアパレルを作って即販売。デザイン → モック → 着画 → 公開、全自動。MU の Lazy SKU。">
+<title>forge — MU</title>
 <meta name="robots" content="noindex,nofollow">
 <style>
 :root{
-  --bg:#0a0807; --surface:#15110e; --card:#1c1814;
-  --ink:#f0e9df; --mute:#8a7f72; --line:rgba(212,175,85,.18);
-  --gold:#d4af55; --gold-hi:#e6c449; --red:#c8102e; --green:#7ed492;
+  --bg:#0b0a08; --ink:#efe8dc; --mute:#7e7468; --line:rgba(212,175,85,.13);
+  --gold:#d4af55; --gold-hi:#ecc763; --warm:#1a1612;
 }
-*{box-sizing:border-box;margin:0;padding:0}
-html,body{background:var(--bg);color:var(--ink);font-family:'Noto Sans JP','Hiragino Sans',sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased}
-a{color:var(--gold);text-decoration:none}
-header{padding:28px 24px 14px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:18px}
-.brand{font-family:'Noto Serif JP',serif;font-size:22px;font-weight:600;letter-spacing:.15em}
-.brand .mark{color:var(--gold);margin-right:8px}
-.tag{font-size:11px;letter-spacing:4px;color:var(--mute);text-transform:uppercase}
-main{max-width:860px;margin:0 auto;padding:36px 22px 120px}
-.hero{margin-bottom:36px}
-.hero h1{font-family:'Noto Serif JP',serif;font-size:32px;line-height:1.3;margin-bottom:10px;font-weight:600}
-.hero p{color:var(--mute);font-size:14px;max-width:600px}
-
-.step{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:24px 26px;margin-bottom:18px;opacity:.45;transition:opacity .25s,border-color .25s}
-.step.active{opacity:1;border-color:rgba(212,175,85,.4)}
-.step.done{opacity:1;border-color:rgba(126,212,146,.3)}
-.step-num{display:inline-block;font-family:'Noto Serif JP',serif;font-size:12px;letter-spacing:5px;color:var(--gold);margin-bottom:8px}
-.step-num::before{content:'';display:inline-block;width:8px;height:8px;background:var(--gold);border-radius:50%;margin-right:10px;vertical-align:1px}
-.step.done .step-num::before{background:var(--green)}
-.step h2{font-family:'Noto Serif JP',serif;font-size:18px;margin-bottom:14px;font-weight:600}
-.step p.help{color:var(--mute);font-size:13px;margin-bottom:14px}
-
-label{display:block;font-size:12px;color:var(--mute);margin-bottom:6px;letter-spacing:1px;text-transform:uppercase}
-textarea,input[type=text],input[type=number]{
-  width:100%;background:#100c08;border:1px solid var(--line);color:var(--ink);
-  padding:11px 13px;font-family:inherit;font-size:14px;border-radius:4px;outline:none;
-  transition:border-color .15s
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:'Noto Sans JP','Hiragino Sans',-apple-system,sans-serif;
+  line-height:1.65; -webkit-font-smoothing:antialiased;
+  background-image:
+    radial-gradient(1200px 600px at 50% -10%, rgba(212,175,85,.04), transparent 60%),
+    radial-gradient(800px 400px at 10% 110%, rgba(212,175,85,.025), transparent 60%);
 }
-textarea:focus,input:focus{border-color:var(--gold)}
-textarea{min-height:80px;resize:vertical}
-.row{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px}
-.row > *{flex:1;min-width:120px}
-.products{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:8px}
-@media(min-width:600px){.products{grid-template-columns:repeat(4,1fr)}}
-.product-btn{background:#100c08;border:1px solid var(--line);color:var(--ink);padding:14px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:12px;text-align:center;transition:all .15s}
-.product-btn:hover{border-color:var(--gold)}
-.product-btn.selected{border-color:var(--gold);background:#241e18;color:var(--gold-hi)}
-.product-btn .price{display:block;font-size:10px;color:var(--mute);margin-top:4px}
+a{color:var(--gold-hi);text-decoration:none;border-bottom:1px solid rgba(236,199,99,.3)}
 
-button.primary{
-  display:inline-flex;align-items:center;justify-content:center;gap:10px;
-  background:var(--gold);color:#1a1408;border:none;padding:13px 26px;border-radius:4px;
-  cursor:pointer;font-family:inherit;font-size:14px;font-weight:700;letter-spacing:2px;
-  text-transform:uppercase;transition:transform .12s,background .15s;margin-top:12px
+.top{
+  position:fixed; top:0; left:0; right:0; z-index:20;
+  padding:18px 24px; display:flex; align-items:center; gap:14px;
+  background:linear-gradient(180deg, rgba(11,10,8,.95) 0%, rgba(11,10,8,0) 100%);
+  backdrop-filter:blur(8px);
+  pointer-events:none;
 }
-button.primary:hover{background:var(--gold-hi);transform:translateY(-1px)}
-button.primary:disabled{background:#3a2d1a;color:#605240;cursor:wait;transform:none}
+.top .mark{
+  font-family:'Noto Serif JP',serif; font-size:13px; letter-spacing:.4em;
+  color:var(--gold); pointer-events:auto;
+}
+.top .small{font-size:10px;letter-spacing:.3em;color:var(--mute);margin-left:auto;pointer-events:auto}
 
-.preview{margin-top:18px;background:#0d0a07;border:1px solid var(--line);border-radius:4px;min-height:180px;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
-.preview img{display:block;max-width:100%;max-height:540px}
-.preview .ph{color:var(--mute);font-size:12px;padding:40px}
-.loader{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(10,8,7,.85);font-size:12px;color:var(--gold);letter-spacing:3px}
-.loader.on{display:flex}
-.loader::after{content:'';width:18px;height:18px;border:2px solid var(--gold);border-top-color:transparent;border-radius:50%;margin-left:14px;animation:spin .8s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
+main{
+  max-width:680px; margin:0 auto;
+  padding:120px 24px 200px;
+}
 
-.price-control{display:flex;align-items:center;gap:14px;margin:14px 0 8px}
-.price-control input[type=range]{flex:1;accent-color:var(--gold)}
-.price-display{font-size:24px;font-weight:700;color:var(--gold-hi);min-width:130px;text-align:right;font-variant-numeric:tabular-nums}
-.margin-box{background:#100c08;border:1px dashed var(--line);border-radius:4px;padding:12px 14px;font-size:12px;color:var(--mute);display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
-.margin-box .v{display:block;color:var(--ink);font-size:15px;font-weight:600;margin-top:2px}
-.margin-box .v.warn{color:var(--red)}
-.margin-box .v.good{color:var(--green)}
+.exhale{margin-bottom:80px}
+.exhale .ask{
+  font-family:'Noto Serif JP',serif;
+  font-size:13px; letter-spacing:.35em; color:var(--mute);
+  margin-bottom:14px;
+  animation:driftIn 1.2s ease both;
+}
+.exhale textarea{
+  width:100%; background:transparent; border:none; outline:none;
+  color:var(--ink); font-family:'Noto Serif JP',serif;
+  font-size:26px; line-height:1.5; resize:none;
+  padding:6px 0; min-height:60px;
+  border-bottom:1px solid var(--line);
+  transition:border-color .8s ease;
+}
+.exhale textarea:focus{border-color:rgba(212,175,85,.55)}
+.exhale textarea::placeholder{color:#4a443c;font-style:normal}
+.exhale .hint{
+  margin-top:10px; font-size:11px; color:var(--mute); letter-spacing:.15em;
+  display:flex; gap:14px; flex-wrap:wrap;
+  opacity:0; transition:opacity .6s ease;
+}
+.exhale.focused .hint{opacity:1}
+.exhale .hint kbd{
+  font-family:inherit; padding:1px 7px; border:1px solid var(--line); border-radius:3px;
+  font-size:10px; color:var(--ink); background:rgba(255,255,255,.02);
+}
+.exhale .hint .ex{cursor:pointer;color:var(--mute);transition:color .15s}
+.exhale .hint .ex:hover{color:var(--gold)}
 
-.share{background:#0d0a07;border:1px solid var(--gold);border-radius:4px;padding:18px;margin-top:12px;display:none}
-.share.on{display:block}
-.share .url{font-family:'JetBrains Mono','SF Mono',monospace;font-size:13px;color:var(--gold-hi);word-break:break-all;background:#100c08;padding:10px 12px;border-radius:3px;border:1px solid var(--line);margin-top:8px}
-.share .copy{margin-top:10px;background:transparent;border:1px solid var(--gold);color:var(--gold);padding:7px 14px;border-radius:3px;cursor:pointer;font-family:inherit;font-size:12px;letter-spacing:1px}
-.share .copy.copied{background:var(--green);color:#0a0807;border-color:var(--green)}
+.beat{
+  margin:64px 0;
+  opacity:0; transform:translateY(8px);
+  transition:opacity 1.1s ease, transform 1.1s ease;
+  pointer-events:none;
+}
+.beat.on{opacity:1; transform:translateY(0); pointer-events:auto}
+.beat .frame{
+  background:transparent;
+  display:flex; align-items:center; justify-content:center;
+  min-height:200px; position:relative;
+}
+.beat img{
+  display:block; max-width:100%; max-height:560px;
+  border-radius:2px; opacity:0; transition:opacity 1.4s ease;
+}
+.beat img.in{opacity:1}
+.beat .breath{
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  font-family:'Noto Serif JP',serif; font-size:11px; letter-spacing:.6em;
+  color:var(--mute);
+  animation:breathe 2.4s ease-in-out infinite;
+}
+.beat.thinking .breath{display:flex}
+.beat:not(.thinking) .breath{display:none}
 
-footer{margin-top:60px;padding-top:22px;border-top:1px solid var(--line);font-size:11px;color:var(--mute);text-align:center;letter-spacing:1.5px}
-.err{background:rgba(200,16,46,.12);border:1px solid var(--red);color:#ff9aaa;padding:9px 13px;border-radius:3px;font-size:12px;margin-top:10px;display:none}
-.err.on{display:block}
+.whisper{
+  margin:34px 0 14px; text-align:center;
+  font-size:12px; letter-spacing:.25em; color:var(--mute);
+  opacity:0; transition:opacity .8s ease .2s;
+}
+.whisper.on{opacity:1}
+.chips{
+  display:none; gap:6px; justify-content:center; flex-wrap:wrap;
+  margin-top:14px;
+}
+.chips.on{display:flex}
+.chip{
+  background:transparent; border:1px solid var(--line); color:var(--ink);
+  padding:9px 18px; border-radius:999px; font-family:inherit; font-size:12px;
+  cursor:pointer; letter-spacing:.1em;
+  transition:all .25s ease;
+}
+.chip:hover{border-color:var(--gold);color:var(--gold-hi)}
+.chip.on{border-color:var(--gold);background:rgba(212,175,85,.08);color:var(--gold-hi)}
+.chip small{display:block;font-size:9px;color:var(--mute);margin-top:2px;letter-spacing:.15em}
+
+.ship{
+  margin-top:80px; padding-top:38px; border-top:1px solid var(--line);
+  opacity:0; transform:translateY(6px);
+  transition:opacity 1s ease, transform 1s ease;
+  pointer-events:none;
+}
+.ship.on{opacity:1;transform:translateY(0);pointer-events:auto}
+.ship .meta{
+  display:grid; grid-template-columns:1fr 1fr; gap:18px 22px;
+  margin-bottom:22px;
+}
+.ship label{
+  display:block; font-size:10px; letter-spacing:.3em; color:var(--mute);
+  margin-bottom:6px; text-transform:uppercase;
+}
+.ship input[type=text]{
+  width:100%; background:transparent; border:none; border-bottom:1px solid var(--line);
+  color:var(--ink); font-family:inherit; font-size:15px; padding:6px 0; outline:none;
+  transition:border-color .25s;
+}
+.ship input[type=text]:focus{border-color:var(--gold)}
+.ship .price{
+  display:flex; align-items:baseline; gap:14px;
+  font-family:'Noto Serif JP',serif;
+}
+.ship .price .yen{font-size:32px; color:var(--gold-hi); font-weight:600; min-width:130px; font-variant-numeric:tabular-nums}
+.ship .price input[type=range]{flex:1; accent-color:var(--gold)}
+.ship .split{
+  display:flex; gap:22px; font-size:11px; color:var(--mute); margin-top:8px;
+  letter-spacing:.1em;
+}
+.ship .split span b{color:var(--ink);font-weight:500;margin-left:6px}
+.ship .go{
+  margin-top:32px; display:flex; align-items:center; gap:18px;
+}
+.ship .go button{
+  background:transparent; border:1px solid var(--gold); color:var(--gold-hi);
+  padding:12px 32px; font-family:'Noto Serif JP',serif; font-size:14px;
+  letter-spacing:.4em; cursor:pointer; border-radius:2px;
+  transition:all .25s ease;
+}
+.ship .go button:hover{background:var(--gold);color:#1a1408}
+.ship .go button:disabled{opacity:.4;cursor:wait}
+.ship .go .note{font-size:11px; color:var(--mute); letter-spacing:.15em}
+
+.url-bloom{
+  margin-top:48px; padding:22px 0; text-align:center;
+  opacity:0; transform:scale(.98);
+  transition:opacity 1.6s ease, transform 1.6s ease;
+}
+.url-bloom.on{opacity:1; transform:scale(1)}
+.url-bloom .label{
+  font-family:'Noto Serif JP',serif; font-size:11px; letter-spacing:.6em;
+  color:var(--mute); margin-bottom:14px;
+}
+.url-bloom .u{
+  font-family:'JetBrains Mono','SF Mono',monospace; font-size:14px;
+  color:var(--gold-hi); cursor:pointer; padding:10px 16px;
+  border:1px dashed var(--line); border-radius:3px; display:inline-block;
+  transition:all .2s ease;
+}
+.url-bloom .u:hover{border-color:var(--gold); background:rgba(212,175,85,.04)}
+.url-bloom .u.copied{border-style:solid; color:#7ed492; border-color:#7ed492}
+
+.err{
+  margin-top:14px; font-size:11px; color:#ff9aaa; letter-spacing:.1em;
+  opacity:0; transition:opacity .3s;
+}
+.err.on{opacity:1}
+
+@keyframes driftIn{
+  from{opacity:0; transform:translateY(6px)}
+  to{opacity:1; transform:translateY(0)}
+}
+@keyframes breathe{
+  0%,100%{opacity:.4; letter-spacing:.6em}
+  50%{opacity:1; letter-spacing:.9em}
+}
 </style>
 </head>
 <body>
 
-<header>
-  <div class="brand"><span class="mark">━◯━</span>MU</div>
-  <div class="tag">FORGE · Lazy SKU</div>
-</header>
+<div class="top">
+  <span class="mark">━◯━ MU</span>
+  <span class="small">forge</span>
+</div>
 
 <main>
-  <div class="hero">
-    <h1>プロンプト 一行 → 即販売 ページ。</h1>
-    <p>デザイン生成、プロダクト合成、着画レンダリング、公開URL発行 まで 90秒。在庫はゼロ — 売れた瞬間にだけ Printful に流れる。</p>
+  <section class="exhale" id="exhale">
+    <div class="ask">— 思いつきを、ひと息で。</div>
+    <textarea id="prompt" rows="2" placeholder="黒地、金の月、波紋。 極ミニマル。"></textarea>
+    <div class="hint">
+      <span><kbd>⌘</kbd> + <kbd>Enter</kbd> で 生まれる</span>
+      <span class="ex" data-ex="黒地、金の月、波紋。 極ミニマル。">月と波紋</span>
+      <span class="ex" data-ex="柔術帯のグラデーション。白から黒へ、襟の縫い目みたいな細い線。">帯グラデ</span>
+      <span class="ex" data-ex="古今、焼肉の焔、漆塗りの黒に金箔。">焔と漆</span>
+    </div>
+  </section>
+
+  <section class="beat" id="beat-design">
+    <div class="frame">
+      <div class="breath">DRAWING</div>
+      <img id="img-design" alt="">
+    </div>
+  </section>
+
+  <div class="whisper" id="whisper">— どの服に？</div>
+  <div class="chips" id="chips">
+    <button class="chip" data-prod="tee" data-cost="2200">Tシャツ<small>¥2,200</small></button>
+    <button class="chip" data-prod="rashguard_ls" data-cost="4800">ラッシュ長袖<small>¥4,800</small></button>
+    <button class="chip" data-prod="leggings" data-cost="4400">スパッツ<small>¥4,400</small></button>
+    <button class="chip" data-prod="hoodie" data-cost="5200">パーカー<small>¥5,200</small></button>
   </div>
 
-  <!-- STEP 1 -->
-  <section class="step active" id="s1" data-step="1">
-    <div class="step-num">STEP 01</div>
-    <h2>デザインを思いつく</h2>
-    <p class="help">日本語 OK。具体的なほど良い。例: 「黒地に金箔の月、その下に細い波紋。極ミニマル。」</p>
-    <label for="prompt">プロンプト</label>
-    <textarea id="prompt" placeholder="黒地、金の月、波紋、極ミニマル"></textarea>
-    <button class="primary" id="btn-design">デザインを生成</button>
-    <div class="err" id="err-design"></div>
-    <div class="preview" id="prev-design"><div class="ph">プロンプトを入れて生成</div><div class="loader">GENERATING</div></div>
-  </section>
-
-  <!-- STEP 2 -->
-  <section class="step" id="s2" data-step="2">
-    <div class="step-num">STEP 02</div>
-    <h2>プロダクトに当てる</h2>
-    <p class="help">どの服に乗せる？ 価格は POD 卸価格 (size M)。</p>
-    <div class="products">
-      <button class="product-btn" data-prod="tee" data-cost="2200">Tシャツ<span class="price">¥2,200〜</span></button>
-      <button class="product-btn" data-prod="rashguard_ls" data-cost="4800">ラッシュガード長袖<span class="price">¥4,800〜</span></button>
-      <button class="product-btn" data-prod="leggings" data-cost="4400">スパッツ<span class="price">¥4,400〜</span></button>
-      <button class="product-btn" data-prod="hoodie" data-cost="5200">パーカー<span class="price">¥5,200〜</span></button>
+  <section class="beat" id="beat-mockup">
+    <div class="frame">
+      <div class="breath">DRESSING</div>
+      <img id="img-mockup" alt="">
     </div>
-    <div class="err" id="err-mockup"></div>
-    <div class="preview" id="prev-mockup"><div class="ph">プロダクト 選択</div><div class="loader">RENDERING MOCKUP</div></div>
   </section>
 
-  <!-- STEP 3 -->
-  <section class="step" id="s3" data-step="3">
-    <div class="step-num">STEP 03</div>
-    <h2>着画 を 生成</h2>
-    <p class="help">モデル写真風。SNS に貼ったとき "本物っぽい" 1枚を 自動生成。</p>
-    <button class="primary" id="btn-lifestyle">着画を生成</button>
-    <div class="err" id="err-lifestyle"></div>
-    <div class="preview" id="prev-lifestyle"><div class="ph">モック ができたら ここで生成</div><div class="loader">RENDERING LIFESTYLE</div></div>
+  <section class="beat" id="beat-lifestyle">
+    <div class="frame">
+      <div class="breath">WEARING</div>
+      <img id="img-lifestyle" alt="">
+    </div>
   </section>
 
-  <!-- STEP 4 -->
-  <section class="step" id="s4" data-step="4">
-    <div class="step-num">STEP 04</div>
-    <h2>公開 する</h2>
-    <p class="help">価格 を決めて Mint。 共有URL が即発行されて 誰でも 買える。在庫リスク ゼロ。</p>
-    <div class="row">
-      <div style="flex:2">
-        <label for="title">タイトル (商品名)</label>
-        <input type="text" id="title" placeholder="例: 月と波紋 ラッシュガード">
+  <section class="ship" id="ship">
+    <div class="meta">
+      <div>
+        <label>NAME</label>
+        <input type="text" id="title" placeholder="月と波紋">
       </div>
       <div>
-        <label for="designer">あなたの名前 (任意)</label>
+        <label>YOU</label>
         <input type="text" id="designer" placeholder="@you">
       </div>
     </div>
 
-    <label style="margin-top:18px">販売価格</label>
-    <div class="price-control">
+    <div class="price">
+      <span class="yen" id="yen">¥6,800</span>
       <input type="range" id="price" min="2500" max="22000" step="100" value="6800">
-      <span class="price-display" id="price-display">¥6,800</span>
     </div>
-    <div class="margin-box">
-      <div>POD 原価<span class="v" id="m-cost">¥—</span></div>
-      <div>あなたの取り分<span class="v" id="m-yours">¥—</span></div>
-      <div>MU 運営<span class="v" id="m-mu">¥—</span></div>
+    <div class="split">
+      <span>原価<b id="m-cost">¥—</b></span>
+      <span>あなた<b id="m-you">¥—</b></span>
+      <span>MU<b id="m-mu">¥—</b></span>
     </div>
 
-    <button class="primary" id="btn-mint" style="margin-top:18px">公開 — MINT</button>
+    <div class="go">
+      <button id="btn-mint">公 開</button>
+      <span class="note">在庫 ゼロ — 売れた瞬間にだけ作られる</span>
+    </div>
     <div class="err" id="err-mint"></div>
-    <div class="share" id="share">
-      <div style="font-size:11px;color:var(--mute);letter-spacing:2px">PUBLISHED · 共有 URL</div>
-      <div class="url" id="share-url"></div>
-      <button class="copy" id="copy-btn">URL をコピー</button>
-    </div>
   </section>
-</main>
 
-<footer>
-  MU FORGE · Lazy SKU = no inventory, no waste, no risk · <a href="/">wearmu.com</a>
-</footer>
+  <div class="url-bloom" id="bloom">
+    <div class="label">— あなたの 共有 URL</div>
+    <div class="u" id="u"></div>
+  </div>
+</main>
 
 <script>
 'use strict';
+const S = { design:null, mockup:null, lifestyle:null, product:null, prompt:'' };
+const $ = id => document.getElementById(id);
 
-const S = {
-  design_url: null,
-  mockup_url: null,
-  lifestyle_url: null,
-  product: null,     // {type, cost}
-  prompt: '',
-};
-
-function $(id){ return document.getElementById(id); }
-
-function setActive(n){
-  document.querySelectorAll('.step').forEach(el=>{
-    const k = +el.dataset.step;
-    el.classList.toggle('active', k === n);
-    el.classList.toggle('done',   k <  n);
-  });
+function show(beat){ $('beat-'+beat).classList.add('on') }
+function think(beat, on){ $('beat-'+beat).classList.toggle('thinking', on); if(on) show(beat) }
+function loadImg(beat, url){
+  const im = $('img-'+beat);
+  im.classList.remove('in');
+  im.src = url;
+  im.onload = () => { think(beat,false); requestAnimationFrame(()=>im.classList.add('in')) };
 }
-function loader(id, on){ $('prev-'+id).querySelector('.loader').classList.toggle('on', on); }
-function err(id, msg){
-  const e = $('err-'+id);
-  if (!msg) { e.classList.remove('on'); return; }
-  e.textContent = msg; e.classList.add('on');
-}
-
-async function postJSON(url, body){
-  const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
-  if (!r.ok) throw new Error((await r.text()).slice(0,200) || ('HTTP ' + r.status));
+async function post(url, body){
+  const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+  if (!r.ok) throw new Error((await r.text()).slice(0,200) || ('HTTP '+r.status));
   return r.json();
 }
 
-// STEP 1 — design
-$('btn-design').addEventListener('click', async () => {
-  const p = $('prompt').value.trim();
-  if (!p) { err('design','プロンプト入力'); return; }
-  err('design',''); loader('design', true);
-  $('btn-design').disabled = true;
-  try{
-    const r = await postJSON('/api/forge/design', {prompt: p});
-    if (!r.url) throw new Error('no url');
-    S.design_url = r.url; S.prompt = p;
-    const img = document.createElement('img'); img.src = r.url;
-    const pv = $('prev-design'); pv.innerHTML = ''; pv.appendChild(img); pv.appendChild(buildLoader());
-    setActive(2);
-  }catch(e){ err('design','生成失敗: ' + e.message); }
-  finally{ loader('design', false); $('btn-design').disabled = false; }
+const promptEl = $('prompt');
+const exhale = $('exhale');
+promptEl.addEventListener('focus', ()=>exhale.classList.add('focused'));
+promptEl.addEventListener('blur', ()=>{ if(!promptEl.value.trim()) exhale.classList.remove('focused') });
+document.querySelectorAll('.ex').forEach(el=>el.addEventListener('click', ()=>{
+  promptEl.value = el.dataset.ex; promptEl.focus(); generate();
+}));
+promptEl.addEventListener('keydown', e=>{
+  if ((e.metaKey||e.ctrlKey) && e.key === 'Enter'){ e.preventDefault(); generate() }
 });
 
-// STEP 2 — pick product → auto mockup
-document.querySelectorAll('.product-btn').forEach(b => b.addEventListener('click', async () => {
-  if (!S.design_url) { err('mockup','まずデザインを生成'); return; }
-  document.querySelectorAll('.product-btn').forEach(x => x.classList.remove('selected'));
-  b.classList.add('selected');
-  S.product = { type: b.dataset.prod, cost: +b.dataset.cost };
-  err('mockup',''); loader('mockup', true);
-  updateMargin();
+async function generate(){
+  const p = promptEl.value.trim();
+  if (!p) return;
+  S.prompt = p;
+  think('design', true);
   try{
-    const r = await postJSON('/api/forge/mockup', {design_url: S.design_url, product_type: S.product.type});
+    const r = await post('/api/forge/design', {prompt:p});
     if (!r.url) throw new Error('no url');
-    S.mockup_url = r.url;
-    const img = document.createElement('img'); img.src = r.url;
-    const pv = $('prev-mockup'); pv.innerHTML = ''; pv.appendChild(img); pv.appendChild(buildLoader());
-    setActive(3);
-  }catch(e){ err('mockup','モック失敗: ' + e.message); }
-  finally{ loader('mockup', false); }
+    S.design = r.url; loadImg('design', r.url);
+    setTimeout(()=>{ $('whisper').classList.add('on'); $('chips').classList.add('on') }, 600);
+  }catch(e){ think('design', false); console.error(e); alert('生成 失敗: '+e.message) }
+}
+
+document.querySelectorAll('.chip').forEach(c=>c.addEventListener('click', async ()=>{
+  if (!S.design){ return }
+  document.querySelectorAll('.chip').forEach(x=>x.classList.remove('on'));
+  c.classList.add('on');
+  S.product = { type:c.dataset.prod, cost:+c.dataset.cost };
+  updateSplit();
+  think('mockup', true);
+  try{
+    const r = await post('/api/forge/mockup', {design_url:S.design, product_type:S.product.type});
+    if (!r.url) throw new Error('no url');
+    S.mockup = r.url; loadImg('mockup', r.url);
+    setTimeout(async ()=>{
+      think('lifestyle', true);
+      try{
+        const r2 = await post('/api/forge/lifestyle', {mockup_url:S.mockup, product_type:S.product.type});
+        if (!r2.url) throw new Error('no url');
+        S.lifestyle = r2.url; loadImg('lifestyle', r2.url);
+        setTimeout(()=>$('ship').classList.add('on'), 800);
+      }catch(e){ think('lifestyle', false); console.error(e) }
+    }, 1400);
+  }catch(e){ think('mockup', false); console.error(e) }
 }));
 
-// STEP 3 — lifestyle
-$('btn-lifestyle').addEventListener('click', async () => {
-  if (!S.mockup_url) { err('lifestyle','まずプロダクトを選択'); return; }
-  err('lifestyle',''); loader('lifestyle', true);
-  $('btn-lifestyle').disabled = true;
-  try{
-    const r = await postJSON('/api/forge/lifestyle', {mockup_url: S.mockup_url, product_type: S.product.type});
-    if (!r.url) throw new Error('no url');
-    S.lifestyle_url = r.url;
-    const img = document.createElement('img'); img.src = r.url;
-    const pv = $('prev-lifestyle'); pv.innerHTML = ''; pv.appendChild(img); pv.appendChild(buildLoader());
-    setActive(4);
-  }catch(e){ err('lifestyle','着画失敗: ' + e.message); }
-  finally{ loader('lifestyle', false); $('btn-lifestyle').disabled = false; }
-});
-
-// Price slider
-$('price').addEventListener('input', updateMargin);
-function updateMargin(){
+function updateSplit(){
   const p = +$('price').value;
-  $('price-display').textContent = '¥' + p.toLocaleString();
+  $('yen').textContent = '¥' + p.toLocaleString();
   const cost = S.product ? S.product.cost : 0;
-  const total_margin = p - cost;
-  const designer = Math.max(0, Math.round(total_margin * 0.65));
-  const mu = Math.max(0, total_margin - designer);
+  const margin = Math.max(0, p - cost);
+  const you = Math.round(margin * .65);
+  const mu  = margin - you;
   $('m-cost').textContent = '¥' + cost.toLocaleString();
-  const my = $('m-yours'); my.textContent = '¥' + designer.toLocaleString();
-  my.className = 'v ' + (designer >= 1500 ? 'good' : designer > 0 ? '' : 'warn');
-  $('m-mu').textContent = '¥' + mu.toLocaleString();
+  $('m-you').textContent  = '¥' + you.toLocaleString();
+  $('m-mu').textContent   = '¥' + mu.toLocaleString();
 }
-updateMargin();
+$('price').addEventListener('input', updateSplit);
+updateSplit();
 
-// STEP 4 — mint
-$('btn-mint').addEventListener('click', async () => {
-  if (!S.lifestyle_url) { err('mint','着画 まで 完成 させて'); return; }
-  const title = $('title').value.trim() || 'untitled';
-  const designer = $('designer').value.trim();
-  const price = +$('price').value;
-  err('mint',''); $('btn-mint').disabled = true; $('btn-mint').textContent = 'MINTING…';
+$('btn-mint').addEventListener('click', async ()=>{
+  if (!S.lifestyle){ $('err-mint').textContent='まだ着画ができてない'; $('err-mint').classList.add('on'); return }
+  $('err-mint').classList.remove('on');
+  $('btn-mint').disabled = true;
   try{
-    const r = await postJSON('/api/forge/mint', {
-      title, designer,
-      product_type: S.product.type,
-      cost_jpy: S.product.cost,
-      price_jpy: price,
-      design_url: S.design_url,
-      mockup_url: S.mockup_url,
-      lifestyle_url: S.lifestyle_url,
-      prompt: S.prompt,
+    const r = await post('/api/forge/mint', {
+      title:$('title').value.trim() || 'untitled',
+      designer:$('designer').value.trim(),
+      product_type:S.product.type,
+      cost_jpy:S.product.cost,
+      price_jpy:+$('price').value,
+      design_url:S.design, mockup_url:S.mockup, lifestyle_url:S.lifestyle,
+      prompt:S.prompt,
     });
     if (!r.slug) throw new Error('no slug');
     const url = location.origin + '/p/forge/' + r.slug;
-    $('share-url').textContent = url;
-    $('share').classList.add('on');
-    document.querySelectorAll('.step').forEach(el=>el.classList.add('done'));
-  }catch(e){ err('mint','MINT 失敗: ' + e.message); }
-  finally{ $('btn-mint').disabled = false; $('btn-mint').textContent = '公開 — MINT'; }
+    $('u').textContent = url;
+    $('u').onclick = async ()=>{ try{ await navigator.clipboard.writeText(url); $('u').classList.add('copied'); $('u').textContent='✓ '+url }catch{} };
+    $('bloom').classList.add('on');
+  }catch(e){ $('err-mint').textContent='公開 失敗: '+e.message; $('err-mint').classList.add('on') }
+  finally{ $('btn-mint').disabled = false }
 });
-
-$('copy-btn').addEventListener('click', async () => {
-  const t = $('share-url').textContent;
-  try{ await navigator.clipboard.writeText(t); $('copy-btn').classList.add('copied'); $('copy-btn').textContent = '✓ コピー済'; }
-  catch{ alert(t); }
-});
-
-function buildLoader(){ const d = document.createElement('div'); d.className = 'loader'; d.textContent = 'WORKING'; return d; }
 </script>
 </body>
 </html>
