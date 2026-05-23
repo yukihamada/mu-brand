@@ -37,6 +37,34 @@ actions = []
 TG_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TG_CHAT = "1136442501"
 
+# Campaigns currently in Smart Bidding re-learning. Filled in by check_learning_state().
+# Functions that modify bid strategy / modifiers / budgets MUST skip these campaign IDs
+# (mutations during learning extend learning and add noise).
+LEARNING_CAMPAIGNS = set()
+
+
+def check_learning_state():
+    """Detect Smart Bidding learning state for all ENABLED campaigns across accounts.
+    Returns dict {(acct, campaign_id): status_name}. Also populates LEARNING_CAMPAIGNS."""
+    out = {}
+    for cid, label in ACCTS:
+        base = _y.safe_load(open(str(Path.home()/".config/google-ads/google-ads.yaml")))
+        base["login_customer_id"] = cid
+        c = GoogleAdsClient.load_from_dict(base, version="v22")
+        try:
+            for r in c.get_service("GoogleAdsService").search(customer_id=cid, query=(
+                "SELECT campaign.id, campaign.name, campaign.bidding_strategy_system_status "
+                "FROM campaign WHERE campaign.status='ENABLED'"
+            )):
+                st = r.campaign.bidding_strategy_system_status.name
+                if "LEARNING" in st:
+                    out[(label, r.campaign.id)] = st
+                    LEARNING_CAMPAIGNS.add(r.campaign.id)
+                    print(f"  [LEARNING/{label}] {r.campaign.name[:35]} state={st}")
+        except Exception as e:
+            print(f"  [LEARNING ERR/{label}] {str(e)[:120]}")
+    return out
+
 
 def tg(msg: str):
     if not TG_TOKEN: return
@@ -141,7 +169,7 @@ def ad_group_bid_tune(cid: str, label: str):
     agsvc = c.get_service("AdGroupService")
     rows = list(svc.search(customer_id=cid, query=(
         "SELECT ad_group.id, ad_group.name, ad_group.cpc_bid_micros, "
-        "campaign.name, metrics.cost_micros, metrics.clicks, "
+        "campaign.id, campaign.name, metrics.cost_micros, metrics.clicks, "
         "metrics.conversions, metrics.conversions_value "
         "FROM ad_group WHERE ad_group.status='ENABLED' "
         "AND campaign.status='ENABLED' AND segments.date DURING LAST_7_DAYS "
@@ -149,7 +177,11 @@ def ad_group_bid_tune(cid: str, label: str):
     )))
     BID_FLOOR = 80; BID_CAP_AG = 500
     ops = []
+    skipped_learning = 0
     for r in rows:
+        if is_learning(r.campaign.id):
+            skipped_learning += 1
+            continue
         cur = r.ad_group.cpc_bid_micros / 1e6
         cost = r.metrics.cost_micros / 1e6
         conv = r.metrics.conversions
@@ -318,6 +350,11 @@ def auto_negative_keywords(cid: str, label: str):
             print(f"[AUTO-NEG/{label}] {cmp_name}: +{ok} new ({skipped} dedup-skip)")
 
 
+def is_learning(camp_id: int) -> bool:
+    """Skip mutations on campaigns in Smart Bidding learning to avoid extending learning period."""
+    return camp_id in LEARNING_CAMPAIGNS
+
+
 def device_modifier_tune(cid: str, label: str):
     """Auto-tune device bid modifiers per SEARCH campaign based on 14d perf.
 
@@ -350,6 +387,9 @@ def device_modifier_tune(cid: str, label: str):
         }
 
     for (camp_id, camp_name), devices in by_camp.items():
+        if is_learning(camp_id):
+            print(f"[DEVICE/{label}] skip {camp_name[:25]} — Smart Bidding learning")
+            continue
         total_conv = sum(d["conv"] for d in devices.values())
         if total_conv < 2: continue  # need at least some signal
 
@@ -445,6 +485,9 @@ def age_modifier_tune(cid: str, label: str):
     if not big_campaigns: return
 
     for camp_id, camp_name in big_campaigns:
+        if is_learning(camp_id):
+            print(f"[AGE/{label}] skip {camp_name[:25]} — Smart Bidding learning")
+            continue
         # Aggregated age perf
         age_agg = {}
         for r in svc.search(customer_id=cid, query=(
@@ -555,6 +598,9 @@ def state_region_tune(cid: str, label: str):
     if not big: return
 
     for camp_id, camp_name in big:
+        if is_learning(camp_id):
+            print(f"[STATE/{label}] skip {camp_name[:25]} — Smart Bidding learning")
+            continue
         # Aggregate state perf
         perf = {}  # region_id_str -> {cost, conv, val, clk}
         for r in svc.search(customer_id=cid, query=(
@@ -687,6 +733,7 @@ def geo_modifier_tune(cid: str, label: str):
 
     for (camp_id, country_id), p in perf.items():
         if camp_id not in targets: continue
+        if is_learning(camp_id): continue
         country_str = str(country_id)
         # Country might be a state — we only act on country-level entries in targets
         if country_str not in targets[camp_id]: continue
@@ -798,6 +845,13 @@ def jiuflow_kw_tune():
 
 def main():
     print(f"━━━━━━━━━━━━━━━━━━━━ TIGHTEN @ {TS} ━━━━━━━━━━━━━━━━━━━━")
+    print("== Pre-flight: Smart Bidding learning state ==")
+    learning = check_learning_state()
+    if learning:
+        print(f"⚠️ {len(learning)} campaign(s) in LEARNING state. Bid/modifier mutations will SKIP these.")
+        actions.append({"type": "LEARNING_DETECTED", "campaigns": list(learning.keys())})
+    else:
+        print("  no campaigns in learning state — proceeding fully")
     for cid, label in ACCTS:
         try:
             process_account(cid, label)
