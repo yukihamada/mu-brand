@@ -237,26 +237,28 @@ pub fn migrate_rashguard_product_id(conn: &rusqlite::Connection) {
     }
 }
 
-/// One-shot migration: retire 312 legacy `MU-BJJ-01-*` seed SKUs whose
-/// `mockup_main_file` points at `/static/collections/bjj/mockup_01_*.jpg`
+/// One-shot migration: retire legacy `MU-<BRAND>-NN-*` seed SKUs whose
+/// `mockup_main_file` points at `/static/collections/<brand>/mockup_*.jpg`
 /// — files that no longer exist on disk (verified 404 on both wearmu.com
 /// and merch.wearmu.com on 2026-05-23). Their PDPs already 404, so they
 /// are unreachable and unbuyable, but they were never flipped to
 /// `status='retired'`, which left them polluting `/admin/products` with
-/// broken-image rows (63% of the score board). Idempotent: only matches
-/// rows still flagged `is_active=1` with the broken static path.
-pub fn retire_dead_static_bjj_mockups(conn: &rusqlite::Connection) {
+/// broken-image rows. First pass on 2026-05-23 retired 989 `brand=bjj`
+/// rows; this pass extends the same logic to code/coffee/zen (203 more,
+/// all 404-verified) and any future cousins via the brand-agnostic LIKE.
+/// Idempotent: only matches rows still flagged `is_active=1` with the
+/// broken static path AND no working external mockup URL.
+pub fn retire_dead_static_collection_mockups(conn: &rusqlite::Connection) {
     let n = conn.execute(
         "UPDATE catalog_products
          SET status='retired', is_active=0
          WHERE is_active = 1
-           AND brand = 'bjj'
            AND (mockup_url_external IS NULL OR mockup_url_external = '')
-           AND mockup_main_file LIKE '/static/collections/bjj/%'",
+           AND mockup_main_file LIKE '/static/collections/%'",
         [],
     ).unwrap_or(0);
     if n > 0 {
-        tracing::info!("[catalog] retire_dead_static_bjj_mockups: retired {} rows", n);
+        tracing::info!("[catalog] retire_dead_static_collection_mockups: retired {} rows", n);
     }
 }
 
