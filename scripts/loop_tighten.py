@@ -779,13 +779,23 @@ def geo_modifier_tune(cid: str, label: str):
 
 
 def jiuflow_kw_tune():
-    """Per-keyword tune inside JiuFlow Search (only campaign that converts)."""
+    """Per-keyword tune inside JiuFlow Search (only campaign that converts).
+
+    Skipped entirely when JF main is in Smart Bidding learning — KW pause/bid
+    changes during learning extend the learning period and add noise.
+    """
     base = _y.safe_load(open(str(Path.home()/".config/google-ads/google-ads.yaml")))
     base["login_customer_id"] = "4070111170"
     c = GoogleAdsClient.load_from_dict(base, version="v22")
     svc = c.get_service("GoogleAdsService")
     agc = c.get_service("AdGroupCriterionService")
     cid = "4070111170"
+
+    # JF main campaign id is 23829928732 (deterministic)
+    JF_MAIN_ID = 23829928732
+    if is_learning(JF_MAIN_ID):
+        print(f"[JiuFlow KW] skip — Smart Bidding learning")
+        return
 
     rows = list(svc.search(customer_id=cid, query=(
         "SELECT ad_group_criterion.criterion_id, ad_group.id, ad_group.name, "
