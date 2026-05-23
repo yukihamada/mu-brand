@@ -335,8 +335,10 @@ def main():
         )
 
     accent = meta["accent_hex"]
+    og_image = meta.get("og_image") or meta.get("hero_image") or "/og.jpg"
     page = TEMPLATE.format(
         status_banner=status_banner,
+        og_image=og_image,
         slug=slug,
         display_name=escape(meta["display_name"]),
         tagline=escape(meta["tagline"]),
@@ -372,6 +374,15 @@ TEMPLATE = """<!doctype html>
 <title>提案資料 — {display_name} × MU collab | wearmu.com</title>
 <meta name="robots" content="noindex,nofollow">
 <meta name="description" content="社外秘 — {display_name} 様への collab pitch deck (株式会社イネブラ / MU)。 既存 {n_sku} SKU、 拡張・リブランド相談用。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="MU × {display_name} — collab pitch deck">
+<meta property="og:description" content="{subtitle}">
+<meta property="og:image" content="https://wearmu.com{og_image}">
+<meta property="og:url" content="https://wearmu.com/proposals/{slug}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="MU × {display_name}">
+<meta name="twitter:description" content="{subtitle}">
+<meta name="twitter:image" content="https://wearmu.com{og_image}">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
 :root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--ao:{accent};--line:rgba(255,255,255,0.08);--green:#7be57b}}
