@@ -61965,6 +61965,7 @@ async fn main() {
         .nest_service("/mart", ServeDir::new("static/mart"))
         .nest_service("/mu", ServeDir::new("static/mu"))
         .nest_service("/yoga", ServeDir::new("static/yoga"))
+        .nest_service("/labs", ServeDir::new("static/labs"))
         .nest_service("/fitness", ServeDir::new("static/fitness"))
         .nest_service("/gaming", ServeDir::new("static/gaming"))
         .nest_service("/cat", ServeDir::new("static/cat"))
