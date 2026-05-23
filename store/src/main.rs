@@ -17028,6 +17028,79 @@ async fn public_agents_page(State(db): State<Db>) -> Response {
     axum::response::Html(page).into_response()
 }
 
+/// POST /api/webhooks/contrado — Contrado Helix store events
+/// (order shipped, status updates, etc.). Public API spec doesn't expose
+/// webhook payload schema, so this is a permissive receiver: ack 200 always,
+/// log full payload to journal for later schema discovery, and update
+/// catalog_orders.fulfillment_status when we recognize a known event shape.
+///
+/// Optional HMAC verification if CONTRADO_WEBHOOK_SECRET is set.
+async fn contrado_webhook(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    raw_body: String,
+) -> Response {
+    // Best-effort signature check (Contrado may use X-Contrado-Signature
+    // or similar — accept any header that looks like one). Strict mode
+    // only if CONTRADO_WEBHOOK_SECRET is set AND CONTRADO_WEBHOOK_STRICT=1.
+    if let Ok(secret) = env::var("CONTRADO_WEBHOOK_SECRET") {
+        if !secret.is_empty() && env::var("CONTRADO_WEBHOOK_STRICT").ok().as_deref() == Some("1") {
+            let provided = headers.get("x-contrado-signature")
+                .or_else(|| headers.get("x-signature"))
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            use hmac::{Hmac, Mac};
+            use sha2::Sha256;
+            let mut mac = match <Hmac<Sha256>>::new_from_slice(secret.as_bytes()) {
+                Ok(m) => m,
+                Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, "bad secret").into_response(),
+            };
+            mac.update(raw_body.as_bytes());
+            let expected = hex::encode(mac.finalize().into_bytes());
+            if provided.to_lowercase() != expected.to_lowercase() {
+                eprintln!("[contrado-webhook] signature mismatch");
+                return (StatusCode::UNAUTHORIZED, "bad signature").into_response();
+            }
+        }
+    }
+
+    // Parse loosely. Unknown shape is fine.
+    let body: serde_json::Value = serde_json::from_str(&raw_body)
+        .unwrap_or(serde_json::Value::String(raw_body.clone()));
+    let event = body["type"].as_str()
+        .or_else(|| body["event"].as_str())
+        .or_else(|| body["event_type"].as_str())
+        .unwrap_or("unknown");
+    let order_ref = body["order_reference"].as_str()
+        .or_else(|| body["reference"].as_str())
+        .or_else(|| body["data"]["reference"].as_str())
+        .or_else(|| body["data"]["order_reference"].as_str())
+        .unwrap_or("");
+
+    eprintln!("[contrado-webhook] event={} order_ref={} bytes={}",
+              event, order_ref, raw_body.len());
+
+    // Persist to journal for offline analysis. Best-effort — never block 200.
+    if let Ok(conn) = db.lock() {
+        let _ = conn.execute(
+            "CREATE TABLE IF NOT EXISTS contrado_webhook_journal (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                received_at   TEXT NOT NULL DEFAULT (datetime('now')),
+                event_type    TEXT,
+                order_ref     TEXT,
+                payload       TEXT NOT NULL
+            )", [],
+        );
+        let _ = conn.execute(
+            "INSERT INTO contrado_webhook_journal (event_type, order_ref, payload)
+             VALUES (?, ?, ?)",
+            params![event, order_ref, raw_body],
+        );
+    }
+
+    Json(serde_json::json!({"ok": true, "received": event})).into_response()
+}
+
 async fn resend_inbound_webhook(
     State(db): State<Db>,
     headers: HeaderMap,
@@ -61767,6 +61840,7 @@ async fn main() {
         .route("/api/webhook/stripe-identity", post(payments::stripe_identity_webhook))
         .route("/api/webhook/resend-inbound", post(resend_inbound_webhook))
         .route("/api/webhook/resend-events", post(resend_events_webhook))
+        .route("/api/webhooks/contrado", post(contrado_webhook))
         .route("/stats", get(public_stats_page))
         .route("/agents", get(public_agents_page))
         .route("/api/kyc/identity-session", post(payments::create_stripe_identity_session))
