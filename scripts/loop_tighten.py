@@ -413,6 +413,117 @@ def device_modifier_tune(cid: str, label: str):
                 print(f"[DEVICE ERR/{label}] {dev_name}: {str(e)[:120]}")
 
 
+def age_modifier_tune(cid: str, label: str):
+    """Auto-tune age range bid modifiers per ad group based on 14d aggregated perf.
+
+    Creates age criterion if missing; updates if existing (with no-regression guard).
+
+    Aggregation: data is summed across ad groups for each age group in the campaign,
+    so all ad groups in the same campaign get the same age modifiers.
+
+    Thresholds (after ≥¥5K aggregated spend per age):
+      - ROAS >= 1.5x AND conv >= 5 → 1.3x
+      - ROAS < 0.35 AND conv > 0 AND cost > ¥10K → 0.5x
+      - ROAS < 0.5 AND cost > ¥20K → 0.6x
+    """
+    base = _y.safe_load(open(str(Path.home()/".config/google-ads/google-ads.yaml")))
+    base["login_customer_id"] = cid
+    c = GoogleAdsClient.load_from_dict(base, version="v22")
+    svc = c.get_service("GoogleAdsService")
+    agc_svc = c.get_service("AdGroupCriterionService")
+    AGE_ENUM = c.enums.AgeRangeTypeEnum
+
+    # Big campaigns only
+    big_campaigns = []
+    for r in svc.search(customer_id=cid, query=(
+        "SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, "
+        "metrics.cost_micros FROM campaign WHERE campaign.status='ENABLED' "
+        "AND campaign.advertising_channel_type='SEARCH' AND segments.date DURING LAST_14_DAYS "
+        "AND metrics.cost_micros > 30000000000"
+    )):
+        big_campaigns.append((r.campaign.id, r.campaign.name))
+    if not big_campaigns: return
+
+    for camp_id, camp_name in big_campaigns:
+        # Aggregated age perf
+        age_agg = {}
+        for r in svc.search(customer_id=cid, query=(
+            f"SELECT ad_group_criterion.age_range.type, metrics.cost_micros, "
+            f"metrics.conversions, metrics.conversions_value "
+            f"FROM age_range_view WHERE campaign.id={camp_id} AND segments.date DURING LAST_14_DAYS"
+        )):
+            age = r.ad_group_criterion.age_range.type_.name
+            a = age_agg.get(age, {"cost": 0, "conv": 0, "val": 0})
+            a["cost"] += r.metrics.cost_micros / 1e6
+            a["conv"] += r.metrics.conversions
+            a["val"] += r.metrics.conversions_value
+            age_agg[age] = a
+
+        # Compute targets
+        targets = {}
+        for age, m in age_agg.items():
+            if age == "AGE_RANGE_UNDETERMINED": continue
+            if m["cost"] < 5000: continue
+            roas = m["val"] / m["cost"]
+            if roas >= 1.5 and m["conv"] >= 5:
+                targets[age] = 1.3
+            elif roas < 0.35 and m["conv"] > 0 and m["cost"] > 10000:
+                targets[age] = 0.5
+            elif roas < 0.5 and m["cost"] > 20000:
+                targets[age] = 0.6
+        if not targets: continue
+
+        # Get ad groups in this campaign
+        ag_ids = []
+        for r in svc.search(customer_id=cid, query=(
+            f"SELECT ad_group.id FROM ad_group WHERE campaign.id={camp_id} AND ad_group.status='ENABLED'"
+        )):
+            ag_ids.append(r.ad_group.id)
+
+        # Existing age criteria per (ag, age)
+        existing = {}
+        for r in svc.search(customer_id=cid, query=(
+            f"SELECT ad_group.id, ad_group_criterion.resource_name, ad_group_criterion.age_range.type, "
+            f"ad_group_criterion.bid_modifier FROM ad_group_criterion "
+            f"WHERE campaign.id={camp_id} AND ad_group_criterion.type='AGE_RANGE'"
+        )):
+            existing[(r.ad_group.id, r.ad_group_criterion.age_range.type_.name)] = (
+                r.ad_group_criterion.resource_name,
+                r.ad_group_criterion.bid_modifier,
+            )
+
+        for ag_id in ag_ids:
+            for age, target in targets.items():
+                key = (ag_id, age)
+                if key in existing:
+                    rn, cur = existing[key]
+                    effective = cur if cur > 0 else 1.0
+                    if abs(effective - target) / target < 0.1: continue
+                    if target < 1.0 and effective < target: continue
+                    if target > 1.0 and effective > target: continue
+                    op = c.get_type("AdGroupCriterionOperation")
+                    op.update.resource_name = rn
+                    op.update.bid_modifier = target
+                    op.update_mask.paths.append("bid_modifier")
+                else:
+                    op = c.get_type("AdGroupCriterionOperation")
+                    cr = op.create
+                    cr.ad_group = f"customers/{cid}/adGroups/{ag_id}"
+                    cr.status = c.enums.AdGroupCriterionStatusEnum.ENABLED
+                    cr.age_range.type_ = getattr(AGE_ENUM, age)
+                    cr.bid_modifier = target
+                try:
+                    agc_svc.mutate_ad_group_criteria(customer_id=cid, operations=[op])
+                    actions.append({
+                        "acct": label, "campaign": camp_name, "ag_id": ag_id, "age": age,
+                        "action": f"AGE_MOD →{target:.2f}x"
+                    })
+                    sym = "🚀" if target > 1 else "🛑"
+                    print(f"[AGE/{label}] {camp_name[:25]} ag#{ag_id} {age[10:]}: →{target:.2f}x {sym}")
+                except GoogleAdsException as e:
+                    print(f"[AGE ERR/{label}] {age}: {str(e)[:120]}")
+
+
 def state_region_tune(cid: str, label: str):
     """Auto-tune SUB-COUNTRY (state/province/region) bid modifiers based on 14d perf.
 
@@ -727,6 +838,11 @@ def main():
             state_region_tune(cid, label)
         except Exception as e:
             print(f"[ERR STATE {label}] {str(e)[:160]}")
+    for cid, label in ACCTS:
+        try:
+            age_modifier_tune(cid, label)
+        except Exception as e:
+            print(f"[ERR AGE {label}] {str(e)[:160]}")
     try:
         jiuflow_kw_tune()
     except Exception as e:
