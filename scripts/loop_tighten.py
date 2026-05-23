@@ -852,6 +852,15 @@ def main():
         actions.append({"type": "LEARNING_DETECTED", "campaigns": list(learning.keys())})
     else:
         print("  no campaigns in learning state — proceeding fully")
+
+    # Cross-iteration transition alert (sends Telegram on EXIT/ENTER/STUCK)
+    try:
+        from check_learning import check_and_alert
+        _, alerts, _, _ = check_and_alert(send_tg=True, print_summary=False)
+        if alerts:
+            actions.append({"type": "LEARNING_TRANSITIONS", "alerts": alerts})
+    except Exception as e:
+        print(f"[learning-tracker ERR] {str(e)[:120]}")
     for cid, label in ACCTS:
         try:
             process_account(cid, label)
