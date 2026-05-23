@@ -62087,6 +62087,12 @@ async fn main() {
         .nest_service("/news", ServeDir::new("static/news"))
         .nest_service("/kagi", ServeDir::new("static/kagi"))
         .nest_service("/chip", ServeDir::new("static/chip"))
+        // v3 research-driven (ANIME / WAGYU / ANALOG / QUIET / ROAM)
+        .nest_service("/anime", ServeDir::new("static/anime"))
+        .nest_service("/wagyu", ServeDir::new("static/wagyu"))
+        .nest_service("/analog", ServeDir::new("static/analog"))
+        .nest_service("/quiet", ServeDir::new("static/quiet"))
+        .nest_service("/roam", ServeDir::new("static/roam"))
         // (Removed 2026-05-20: per-collection redirect routes panicked at
         //  boot with `Invalid route "/bjj": insertion failed due to conflict
         //  with previously registered route: /bjj/*__private__axum_nest_tail_param`.
