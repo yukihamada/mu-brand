@@ -17118,7 +17118,7 @@ async fn labs_kokon_aori_claude(State(db): State<Db>, headers: HeaderMap) -> Res
         return (StatusCode::FORBIDDEN, "tee holder only").into_response();
     }
 
-    let body = include_str!("../static/labs/kokon-aori/claude_holder.html");
+    let body = include_str!("labs_kokon_aori_claude_holder.html");
     (StatusCode::OK,
      [("content-type", "text/html; charset=utf-8")],
      body).into_response()
