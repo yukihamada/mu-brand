@@ -244,7 +244,7 @@ pub fn migrate_rashguard_product_id(conn: &rusqlite::Connection) {
 /// are unreachable and unbuyable, but they were never flipped to
 /// `status='retired'`, which left them polluting `/admin/products` with
 /// broken-image rows. First pass on 2026-05-23 retired 989 `brand=bjj`
-/// rows; this pass extends the same logic to code/coffee/zen (203 more,
+/// rows; second pass extends the same logic to code/coffee/zen (203 more,
 /// all 404-verified) and any future cousins via the brand-agnostic LIKE.
 /// Idempotent: only matches rows still flagged `is_active=1` with the
 /// broken static path AND no working external mockup URL.
@@ -259,6 +259,37 @@ pub fn retire_dead_static_collection_mockups(conn: &rusqlite::Connection) {
     ).unwrap_or(0);
     if n > 0 {
         tracing::info!("[catalog] retire_dead_static_collection_mockups: retired {} rows", n);
+    }
+}
+
+/// One-shot migration: retire 7 belt-rashguard SKUs that were superseded
+/// by the Phase B full-canvas regeneration. Five V1 chest-graphic SKUs and
+/// two V2 SKUs where Gemini drifted off the target color (brown→near-black,
+/// black→navy) — all replaced by cleaner V3 renders that ship as the
+/// canonical 5-belt line. Idempotent: only flips rows still active.
+pub fn retire_superseded_belt_rashguards(conn: &rusqlite::Connection) {
+    const DEAD_SKUS: &[&str] = &[
+        // V1 — chest-graphic on white (placement=front-only before Phase B)
+        "AUTO-NL-NL-RASHGUARD-LS-nladd35715",
+        "AUTO-NL-BLUEBELT-RASHGUARD-LS-nl6b349690",
+        "AUTO-NL-PURPLEBELT-RASHGUARD-LS-nl1e0647f1",
+        "AUTO-NL-BROWNBELT-RASHGUARD-LS-nlc9f0eaac",
+        "AUTO-NL-BLACKBELT-RASHGUARD-BLACK-nl777c35ec",
+        // V2 — full-canvas, but brown/black drifted off color in Gemini
+        "AUTO-NL-BROWNBELT-RASHGUARD-LS-nldbb4f30a",
+        "AUTO-NL-BLACKBELT-RASHGUARD-BLACK-nlc695e54b",
+    ];
+    let placeholders = vec!["?"; DEAD_SKUS.len()].join(",");
+    let sql = format!(
+        "UPDATE catalog_products SET status='retired', is_active=0 \
+         WHERE is_active = 1 AND sku IN ({})",
+        placeholders
+    );
+    let params: Vec<&dyn rusqlite::ToSql> =
+        DEAD_SKUS.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+    let n = conn.execute(&sql, params.as_slice()).unwrap_or(0);
+    if n > 0 {
+        tracing::info!("[catalog] retire_superseded_belt_rashguards: retired {} rows", n);
     }
 }
 
@@ -2673,12 +2704,15 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
         }
     }
 
+    // Read fulfillment_route along with Printful identifiers. Existing rows
+    // default to 'printful_dtg' so the legacy path is unaffected.
     let product = {
         let conn = db.lock().unwrap();
         conn.query_row(
             "SELECT printful_product_id, printful_variant_id,
                     printful_sync_product_id, printful_sync_variant_id,
-                    design_file, printful_placement
+                    design_file, printful_placement,
+                    COALESCE(fulfillment_route, 'printful_dtg')
              FROM catalog_products WHERE sku=?",
             rusqlite::params![&sku],
             |r| {
@@ -2689,16 +2723,26 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
                     r.get::<_, Option<i64>>(3)?,
                     r.get::<_, Option<String>>(4)?,
                     r.get::<_, String>(5)?,
+                    r.get::<_, String>(6)?,
                 ))
             },
         )
         .ok()
     };
-    let Some((_pp_id, pf_variant_id, _sync_pid, sync_variant_id, design_file, placement)) = product
+    let Some((_pp_id, pf_variant_id, _sync_pid, sync_variant_id, design_file, placement, route))
+        = product
     else {
         tracing::warn!("[catalog/fulfill] sku {} not in catalog_products", sku);
         return;
     };
+
+    // Route dispatch. printful_* / gelato_jp / suzuri_jp / manual / digital
+    // continue through the existing Printful logic below as a fallback. A new
+    // contrado_uk route diverts to the Helix API.
+    if route == "contrado_uk" {
+        fulfill_via_contrado(db, &session_id, &sku, amount_total, &currency).await;
+        return;
+    }
 
     // Pull selected size from Stripe custom_fields (if any). When the
     // SKU's print_id supports per-size variants we swap pf_variant_id
@@ -2943,6 +2987,78 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
                 None,
                 "failed_network",
             );
+        }
+    }
+}
+
+/// Place a store order via Contrado Helix API (`POST /helix/v1/orders/create`).
+///
+/// First-cut stub: probes the endpoint with a minimal payload, logs the
+/// response, and records the attempt to catalog_orders for audit. Real
+/// product / variant / shipping data wiring lands once we have known-good
+/// product_id/variant_id pairs from the Contrado dashboard.
+///
+/// CONTRADO_API_KEY must be set; missing key → mark as not_attempted.
+async fn fulfill_via_contrado(
+    db: Db,
+    session_id: &str,
+    sku: &str,
+    amount_total: i64,
+    currency: &str,
+) {
+    let null = serde_json::Value::Null;
+    let key = match std::env::var("CONTRADO_API_KEY") {
+        Ok(v) if !v.is_empty() => v,
+        _ => {
+            tracing::warn!(
+                "[catalog/fulfill] CONTRADO_API_KEY unset — sku={} session={} not attempted",
+                sku, session_id
+            );
+            record_order(&db, session_id, sku, amount_total,
+                         &null, &null, None, "contrado_no_key");
+            return;
+        }
+    };
+
+    // Minimal payload — Contrado's StoreOrderRequestModel schema is not
+    // fully wired yet, so this probe lets us learn the validation errors
+    // and refine on the next pass. Reference field is our Stripe session id.
+    let body = serde_json::json!({
+        "reference":  session_id,
+        "items":      [{"sku": sku, "quantity": 1}],
+        "currency":   currency.to_uppercase(),
+        "amountTotal": amount_total,
+    });
+
+    let resp = reqwest::Client::new()
+        .post("https://api.contrado.app/helix/v1/orders/create")
+        .header("X-API-KEY", &key)
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await;
+
+    match resp {
+        Ok(r) => {
+            let code = r.status();
+            let text = r.text().await.unwrap_or_default();
+            let snippet = &text[..text.len().min(600)];
+            tracing::info!(
+                "[catalog/fulfill] contrado {} sku={} session={} body={}",
+                code, sku, session_id, snippet
+            );
+            let outcome = if code.is_success() { "contrado_ok" } else { "contrado_fail" };
+            let status = format!("{}_{}", outcome, code.as_u16());
+            record_order(&db, session_id, sku, amount_total,
+                         &null, &null, None, &status);
+        }
+        Err(e) => {
+            tracing::error!(
+                "[catalog/fulfill] contrado net err sku={} session={}: {}",
+                sku, session_id, e
+            );
+            record_order(&db, session_id, sku, amount_total,
+                         &null, &null, None, "contrado_net_err");
         }
     }
 }
