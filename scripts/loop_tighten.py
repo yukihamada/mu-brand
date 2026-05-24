@@ -360,6 +360,46 @@ def is_learning(camp_id: int) -> bool:
     return camp_id in LEARNING_CAMPAIGNS
 
 
+def starvation_alert(cid: str, label: str):
+    """Detect campaigns whose today-so-far spend is <20% of 7d avg hourly run-rate.
+    Critical signal of bid modifier / learning starvation.
+    Telegram alert (advisory only — does not auto-revert)."""
+    base = _y.safe_load(open(str(Path.home()/".config/google-ads/google-ads.yaml")))
+    base["login_customer_id"] = cid
+    c = GoogleAdsClient.load_from_dict(base, version="v22")
+    svc = c.get_service("GoogleAdsService")
+
+    # 7d average daily cost per campaign (excluding today)
+    now_hour = datetime.now().hour or 1
+    baselines = {}
+    for r in svc.search(customer_id=cid, query=(
+        "SELECT campaign.id, campaign.name, metrics.cost_micros "
+        "FROM campaign WHERE campaign.status='ENABLED' AND segments.date DURING LAST_7_DAYS"
+    )):
+        bcost = r.metrics.cost_micros / 1e6
+        if bcost < 5000: continue  # only campaigns with significant prior spend
+        # expected by this hour today = (7d total / 7) × (now_hour / 24)
+        expected = (bcost / 7) * (now_hour / 24)
+        baselines[r.campaign.id] = (r.campaign.name, expected)
+
+    # Today actual
+    for r in svc.search(customer_id=cid, query=(
+        "SELECT campaign.id, metrics.cost_micros FROM campaign "
+        "WHERE campaign.status='ENABLED' AND segments.date DURING TODAY"
+    )):
+        if r.campaign.id not in baselines: continue
+        name, expected = baselines[r.campaign.id]
+        actual = r.metrics.cost_micros / 1e6
+        if expected == 0: continue
+        ratio = actual / expected
+        if ratio < 0.2 and expected > 1000:
+            actions.append({
+                "acct": label, "campaign": name, "type": "STARVATION_ALERT",
+                "today_actual": actual, "expected_by_now": expected, "ratio": ratio,
+            })
+            print(f"[STARVE/{label}] {name[:30]} ¥{actual:.0f} vs expected ¥{expected:.0f} ({ratio:.0%})")
+
+
 def device_modifier_tune(cid: str, label: str):
     """Auto-tune device bid modifiers per SEARCH campaign based on 14d perf.
 
@@ -896,6 +936,11 @@ def main():
             anomaly_detect(cid, label)
         except Exception as e:
             print(f"[ERR anomaly {label}] {str(e)[:160]}")
+    for cid, label in ACCTS:
+        try:
+            starvation_alert(cid, label)
+        except Exception as e:
+            print(f"[ERR STARVE {label}] {str(e)[:160]}")
     for cid, label in ACCTS:
         try:
             auto_negative_keywords(cid, label)
