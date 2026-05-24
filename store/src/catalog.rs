@@ -1106,21 +1106,25 @@ pub async fn generate_lifestyle_photo(
     if !charged {
         return Err("budget cap reached".into());
     }
-    // Look up the design PNG (or external mockup if design is missing) so
-    // we can pass it to Gemini as a reference image. This is the single
-    // largest quality win — without it the model hallucinates a graphic
-    // that looks "close" to the brief but doesn't match the real print.
+    // Look up the design PNG so we can pass it to Gemini as a reference.
+    // ONLY use design_file — falling back to mockup_url_external is unsafe
+    // because Printful's mockup-generator returns S3 URLs on the
+    // `printful-upload.s3-accelerate.amazonaws.com/tmp/…` host that are
+    // signed and expire (verified 403 Forbidden 2026-05-25). Even when
+    // still live, the mockup file shows the garment AND the print, not
+    // the print alone, which makes it a worse conditioning signal than
+    // the raw design PNG anyway. If design_file is missing, fall through
+    // to text-only generation.
     let design_url: Option<String> = {
         let conn = db.lock().unwrap();
         conn.query_row(
-            "SELECT COALESCE(NULLIF(design_file, ''), NULLIF(mockup_url_external, ''))
-             FROM catalog_products WHERE sku=?",
+            "SELECT design_file FROM catalog_products WHERE sku=?",
             rusqlite::params![&sku],
             |r| r.get::<_, Option<String>>(0),
         )
         .ok()
         .flatten()
-        .filter(|s| s.starts_with("http"))
+        .filter(|s| s.starts_with("http") && !s.contains("printful-upload.s3"))
     };
     let ref_clause = if design_url.is_some() {
         "The garment in the photo MUST be printed with the EXACT graphic design shown in the supplied reference image — match the artwork, colours, and proportions precisely. The brief below is context, but the reference image is the source of truth for the print."
