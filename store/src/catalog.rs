@@ -262,6 +262,35 @@ pub fn retire_dead_static_collection_mockups(conn: &rusqlite::Connection) {
     }
 }
 
+/// One-shot migration: retire SKUs that have ZERO usable images — empty
+/// `mockup_url_external`, empty `mockup_main_file`, and no
+/// `catalog_product_extras` row with an http-URL image. PDP-404 verified
+/// on 2026-05-24 for 52 such rows across 13 brands (analog/anime/chip/
+/// founder/kagi/lodge/news/ocean/octagon/quiet/roam/voice/wagyu). These
+/// were seed rows for brands whose creative work was never completed,
+/// so the products are functionally unsellable and just inflate the
+/// admin score board. Idempotent (is_active=1 filter); brand-agnostic
+/// so it also catches any future imageless seeds that slip through.
+pub fn retire_imageless_products(conn: &rusqlite::Connection) {
+    let n = conn.execute(
+        "UPDATE catalog_products
+         SET status='retired', is_active=0
+         WHERE is_active = 1
+           AND (mockup_url_external IS NULL OR mockup_url_external = '')
+           AND (mockup_main_file IS NULL OR mockup_main_file = '')
+           AND NOT EXISTS (
+             SELECT 1 FROM catalog_product_extras ex
+             WHERE ex.sku = catalog_products.sku
+               AND ex.image_url IS NOT NULL
+               AND ex.image_url LIKE 'http%'
+           )",
+        [],
+    ).unwrap_or(0);
+    if n > 0 {
+        tracing::info!("[catalog] retire_imageless_products: retired {} rows", n);
+    }
+}
+
 /// One-shot migration: fix hoodie + crewneck variant IDs that were wrong
 /// in the original PRODUCT_SPECS seed:
 ///   - Hoodie product 146 used variant 5530, which is actually Black/S

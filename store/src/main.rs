@@ -61671,6 +61671,7 @@ async fn main() {
         catalog::migrate_hoodie_crewneck_variants(&conn);
         catalog::retire_dead_static_collection_mockups(&conn);
         catalog::retire_superseded_belt_rashguards(&conn);
+        catalog::retire_imageless_products(&conn);
     }
     // Spawn AFTER releasing the DB lock — task takes its own connections.
     catalog::spawn_roll_mockup_backfill(db.clone());
