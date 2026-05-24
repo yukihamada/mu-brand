@@ -262,6 +262,45 @@ pub fn retire_dead_static_collection_mockups(conn: &rusqlite::Connection) {
     }
 }
 
+/// One-shot migration: fix hoodie + crewneck variant IDs that were wrong
+/// in the original PRODUCT_SPECS seed:
+///   - Hoodie product 146 used variant 5530, which is actually Black/S
+///     (correct Black/M is 5531). Symptom: customers received the wrong
+///     size; mockups still rendered though, masking the bug.
+///   - Crewneck product 145 used variant 5403, which does not exist in
+///     product 145 at all. Symptom: 100% mockup-generation failure
+///     ("No variants to generate" from Printful), so all 11 crewneck
+///     SKUs landed without on-body photos.
+/// Both verified against the Printful API on 2026-05-24. Idempotent.
+pub fn migrate_hoodie_crewneck_variants(conn: &rusqlite::Connection) {
+    let h = conn.execute(
+        "UPDATE catalog_products SET printful_variant_id = 5531
+         WHERE printful_product_id = 146 AND printful_variant_id = 5530",
+        [],
+    ).unwrap_or(0);
+    // For crewnecks the wrong variant_id (5403) caused every mockup gen
+    // attempt to fail, which the stale_sku_killer then auto-retired after
+    // 5 failures. So in addition to fixing the variant, un-retire the rows
+    // and reset mockup_url_external to design_file so mockup_backfill_step
+    // picks them up next cron tick. (The backfill cron uses
+    // mockup_url_external == design_file as its "needs work" heuristic.)
+    let c = conn.execute(
+        "UPDATE catalog_products
+         SET printful_variant_id = 5435,
+             status = 'live',
+             is_active = 1,
+             mockup_url_external = design_file
+         WHERE printful_product_id = 145 AND printful_variant_id = 5403",
+        [],
+    ).unwrap_or(0);
+    if h > 0 || c > 0 {
+        tracing::info!(
+            "[catalog] migrate_hoodie_crewneck_variants: fixed {} hoodie + {} crewneck rows",
+            h, c
+        );
+    }
+}
+
 /// One-shot migration: retire 7 belt-rashguard SKUs that were superseded
 /// by the Phase B full-canvas regeneration. Five V1 chest-graphic SKUs and
 /// two V2 SKUs where Gemini drifted off the target color (brown→near-black,
@@ -628,7 +667,7 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
     ProductSpec {
         kind: "hoodie",
         printful_product_id: 146, // Gildan 18500 pullover hoodie (heavy black option)
-        printful_variant_id: 5530, // Black M
+        printful_variant_id: 5531, // Black M (5530 is Black S — verified against Printful API 2026-05-24)
         placement: "front",
         retail_jpy: 8800,
         spec_html: "Gildan 18500 unisex pullover hoodie · Black · 8.0 oz (270 gsm) · \
@@ -638,7 +677,7 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
     ProductSpec {
         kind: "crewneck",
         printful_product_id: 145, // Gildan 18000 crewneck sweatshirt
-        printful_variant_id: 5403, // Black M
+        printful_variant_id: 5435, // Black M (5403 didn't exist — verified against Printful API 2026-05-24)
         placement: "front",
         retail_jpy: 7800,
         spec_html: "Gildan 18000 unisex crewneck sweatshirt · Black · 8.0 oz · \

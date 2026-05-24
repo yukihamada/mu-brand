@@ -71,3 +71,36 @@ new arm, not a new column or table.
 - Stripe / Printful: `store/src/main.rs` (huge file; grep for the route)
 - Migrations / seed: `store/migrations/catalog_seed.sql` (1MB, bundled)
 - Contract: `docs/CATALOG_CONTRACT.md`
+- Contrado outreach draft: `docs/CONTRADO_SALES_OUTREACH.md`
+- Contrado dashboard automation: `scripts/contrado_create_product.py`
+
+## AOP rashguard caveat (Printful 301)
+
+A single `placement: "front"` upload prints the chest only and leaves
+the rest of the rashguard white — the "fill the canvas with the belt
+color" trick from `rashguard_black` doesn't actually work that way.
+
+`placements_for_product(301)` returns `["front", "back", "sleeve_left",
+"sleeve_right"]` and `generate_onbody_mockup` + `fulfill_catalog_order`
+fan the same design URL across all four placements (cover-fill scales
+per panel). The 5 IBJJF belt-color rashguards (V3 `AUTO-NL-{W,B,Pur,
+Br,Bk}BELT-…`) prove the path end-to-end.
+
+What still isn't printed by Printful 301: **waistband, cuffs, collar**
+(these are bound trim sewn on after sublimation). True edge-to-edge
+coverage requires a different vendor — Contrado UK is the current
+candidate, but the genka is 2-3× Printful, so it only works as a
+premium ¥19,800+ line, not a drop-in replacement for the ¥9,800 tier.
+See [docs/CONTRADO_SALES_OUTREACH.md](docs/CONTRADO_SALES_OUTREACH.md).
+
+## Verify Printful variant IDs against the live API before seeding
+
+When adding a new ProductSpec, **call `GET /products/<id>` first** and
+confirm the `printful_variant_id` exists and is the expected size/color.
+Two seed bugs slipped past code review:
+- Hoodie 146/5530 was Black/S, not Black/M (5531).
+- Crewneck 145/5403 didn't exist at all (5435 is Black/M), so 11
+  crewneck SKUs landed without on-body mockups before the migration
+  fired. See `migrate_hoodie_crewneck_variants`.
+
+A 10-second curl beats a silent fulfillment bug.
