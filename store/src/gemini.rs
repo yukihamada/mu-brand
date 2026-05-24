@@ -103,6 +103,86 @@ pub async fn call_gemini(prompt: &str) -> Result<GeneratedImage, String> {
     Err("no image data in gemini response".into())
 }
 
+/// Variant of `call_gemini` that conditions image generation on one or more
+/// reference images supplied as URLs. The URLs are fetched server-side, their
+/// bytes inlined as base64 into the request, then sent alongside the text
+/// prompt. Used for lifestyle photo generation where the actual garment
+/// design PNG (`catalog_products.design_file`) is passed in so Gemini
+/// renders the exact artwork on the photographed garment instead of
+/// hallucinating something close-but-different.
+///
+/// Cost note: image input is billed as input tokens. A 1080×1080 PNG runs
+/// roughly the same per-image price as the text+text-out path (~¥6 per
+/// generated image), well within the catalog_spend ¥100K cap.
+pub async fn call_gemini_with_image(
+    prompt: &str,
+    image_urls: &[&str],
+) -> Result<GeneratedImage, String> {
+    let key = std::env::var("GEMINI_API_KEY")
+        .or_else(|_| std::env::var("GOOGLE_API_KEY"))
+        .map_err(|_| "GEMINI_API_KEY not set".to_string())?;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(180))
+        .build()
+        .map_err(|e| format!("client: {}", e))?;
+    let mut parts: Vec<serde_json::Value> = vec![json!({"text": prompt})];
+    for img_url in image_urls {
+        let resp = client.get(*img_url)
+            .timeout(std::time::Duration::from_secs(30))
+            .send().await
+            .map_err(|e| format!("fetch ref image {}: {}", img_url, e))?;
+        if !resp.status().is_success() {
+            return Err(format!("fetch ref image {}: status {}", img_url, resp.status()));
+        }
+        let mime = resp.headers().get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.split(';').next().unwrap_or("image/png").trim().to_string())
+            .unwrap_or_else(|| "image/png".to_string());
+        let bytes = resp.bytes().await
+            .map_err(|e| format!("read ref image: {}", e))?;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        parts.push(json!({"inline_data": {"mime_type": mime, "data": b64}}));
+    }
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+        MODEL, key
+    );
+    let body = json!({
+        "contents": [{"parts": parts}],
+        "generationConfig": {"responseModalities": ["IMAGE", "TEXT"]}
+    });
+    let resp = client.post(&url).json(&body).send().await
+        .map_err(|e| format!("send: {}", e))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let txt = resp.text().await.unwrap_or_default();
+        return Err(format!("gemini {}: {}", status, &txt[..txt.len().min(400)]));
+    }
+    let json: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {}", e))?;
+    let parts = json["candidates"][0]["content"]["parts"]
+        .as_array()
+        .ok_or_else(|| {
+            let pf = json["promptFeedback"].clone();
+            format!("no parts (promptFeedback={})", pf)
+        })?
+        .clone();
+    for part in parts {
+        for k in &["inline_data", "inlineData"] {
+            if let Some(d_obj) = part.get(*k) {
+                if let Some(b64) = d_obj.get("data").and_then(|v| v.as_str()) {
+                    let mime = d_obj.get("mimeType").or_else(|| d_obj.get("mime_type"))
+                        .and_then(|v| v.as_str()).unwrap_or("image/png").to_string();
+                    let bytes = base64::engine::general_purpose::STANDARD
+                        .decode(b64)
+                        .map_err(|e| format!("b64 decode: {}", e))?;
+                    return Ok(GeneratedImage { bytes, mime });
+                }
+            }
+        }
+    }
+    Err("no image data in gemini response".into())
+}
+
 /// Brand spec for `/api/proposal/:slug/extras/order` — partner-flavoured
 /// product mockup generation. Used by the background worker that turns
 /// 1 job → N SKU mockups via Gemini 3 Pro Image. The output style mirrors

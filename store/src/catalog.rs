@@ -1090,20 +1090,8 @@ pub async fn generate_lifestyle_photo(
     kind: String,
     variant: u32,
 ) -> Result<(), String> {
-    let scene = match (kind.as_str(), variant) {
-        ("rashguard_ls" | "rashguard_black", 1) =>
-            "Japanese BJJ practitioner from behind, sitting on tatami mat in a clean modern dojo, hands resting on knees. Camera at chest height looking at upper back of rashguard.",
-        ("rashguard_ls" | "rashguard_black", _) =>
-            "Close-up torso shot of a Japanese MMA athlete adjusting a rashguard cuff at the wrist, no face visible, gym light from window left.",
-        ("hoodie" | "crewneck", 1) =>
-            "Japanese person walking away from camera at sunset on a Tokyo street, wearing the black hoodie, hood up. No face visible.",
-        ("hoodie" | "crewneck", _) =>
-            "Folded hoodie on a wooden bench at a cafe, with a coffee cup beside it. Editorial flat-lay angle.",
-        ("tee", 1) =>
-            "Japanese person from neck-down sitting at a wood desk, hands typing on a laptop, wearing the black tee. Soft window light.",
-        _ =>
-            "Folded black tee on a concrete surface beside a notebook and pen, top-down editorial flat-lay.",
-    };
+    let scene = scene_for_kind(&kind, variant);
+    let brand_ctx = brand_context(&theme_slug);
     // Budget check (¥6 per Gemini image).
     let charged = {
         let conn = db.lock().unwrap();
@@ -1118,16 +1106,52 @@ pub async fn generate_lifestyle_photo(
     if !charged {
         return Err("budget cap reached".into());
     }
+    // Look up the design PNG (or external mockup if design is missing) so
+    // we can pass it to Gemini as a reference image. This is the single
+    // largest quality win — without it the model hallucinates a graphic
+    // that looks "close" to the brief but doesn't match the real print.
+    let design_url: Option<String> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(NULLIF(design_file, ''), NULLIF(mockup_url_external, ''))
+             FROM catalog_products WHERE sku=?",
+            rusqlite::params![&sku],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .ok()
+        .flatten()
+        .filter(|s| s.starts_with("http"))
+    };
+    let ref_clause = if design_url.is_some() {
+        "The garment in the photo MUST be printed with the EXACT graphic design shown in the supplied reference image — match the artwork, colours, and proportions precisely. The brief below is context, but the reference image is the source of truth for the print."
+    } else {
+        "The garment design (printed on chest / back, depending on shot) interprets the brief below — no reference image was supplied."
+    };
     let prompt = format!(
-        "Editorial 4:5 lifestyle photo. {scene} \
-         The garment design (printed on chest / back, depending on shot): {brief}. \
-         Photorealistic, magazine quality, soft natural light, slight film grain. \
-         NO face visible (crop, back-of-head, or hidden by composition). \
-         NO text overlay. Variation key: {sku}-v{variant}.",
-        scene = scene, brief = theme_brief, sku = sku, variant = variant,
+        "Editorial 4:5 portrait lifestyle photo, 1080×1350. \
+         Brand context: {brand_ctx} \
+         Scene: {scene} \
+         {ref_clause} \
+         Garment brief / concept: {brief}. \
+         Style: photorealistic Sony A7IV 35mm f/2.0, soft natural light, slight film grain, \
+         magazine cover quality. \
+         Strict rules: NO face visible (use back-of-head, deliberate crop, or composition to hide it); \
+         NO text overlay added to the photo; NO watermark; NO mannequin look; NO uncanny limbs; \
+         NO blurred or melted logos. The printed graphic must be sharp and recognisable. \
+         Variation key: {sku}-v{variant}.",
+        brand_ctx = brand_ctx,
+        scene = scene,
+        ref_clause = ref_clause,
+        brief = theme_brief,
+        sku = sku,
+        variant = variant,
     );
-    let img = crate::gemini::call_gemini(&prompt).await
-        .map_err(|e| format!("gemini: {}", e))?;
+    let img = if let Some(url) = design_url.as_deref() {
+        crate::gemini::call_gemini_with_image(&prompt, &[url]).await
+    } else {
+        crate::gemini::call_gemini(&prompt).await
+    }
+    .map_err(|e| format!("gemini: {}", e))?;
     let key = format!("catalog/lifestyle/{}-v{}.png", sku, variant);
     let url = crate::store_r2_bytes(&key, &img.bytes, &img.mime).await
         .ok_or_else(|| "R2 upload failed".to_string())?;
@@ -1304,10 +1328,110 @@ fn mark_job_failed(db: &Db, theme: &str, kind: &str, seed: &str, err: &str) {
 /// SKUs encode it as a fragment of the SKU name (TEE / RASH / HOOD / etc.).
 fn kind_from_sku(sku: &str) -> &'static str {
     let s = sku.to_uppercase();
-    if s.contains("-RASH") || s.contains("RASHGUARD") { return "rashguard_ls"; }
+    // Order matters: more specific tokens come first so "RASHGUARD" wins
+    // over the generic MU- starts-with fallback at the bottom.
+    if s.contains("RASHGUARD") || s.contains("-RASH") { return "rashguard_ls"; }
+    if s.contains("HOODIE") || s.contains("-HOOD-") || s.ends_with("-HOOD") { return "hoodie"; }
+    if s.contains("CREWNECK") || s.contains("-CREW-") || s.ends_with("-CREW") { return "crewneck"; }
+    if s.contains("MUSCLE-TANK") || s.contains("-TANK-") || s.ends_with("-TANK") { return "tank"; }
+    if s.contains("APRON") { return "apron"; }
+    if s.contains("TOTE") { return "tote"; }
+    if s.contains("MUG") { return "mug"; }
+    if s.contains("CANVAS") { return "canvas"; }
+    if s.contains("STICKER") { return "sticker"; }
+    if s.contains("POSTER") { return "poster"; }
+    if s.contains("CAP-") || s.ends_with("-CAP") || s.contains("-HAT") { return "cap"; }
+    if s.contains("LONG-SLEEVE") || s.contains("-LS-") || s.ends_with("-LS") { return "long_sleeve_tee"; }
     if s.contains("-TEE")  || s.starts_with("MU-")    { return "tee"; }
     if s.contains("AUTO-")  && s.contains("-TEE-")    { return "tee"; }
     "tee"  // safe default for the spec block
+}
+
+/// Brand-specific setting / mood string spliced into lifestyle prompts so
+/// each brand renders with its own world rather than a generic "Japanese
+/// person in Tokyo." Accepts either a catalog_brands.slug ("bjj", "kokon")
+/// or a SEED_THEMES.slug ("mu_mark", "bjj_kuro_obi") — both routed by
+/// substring match. Falls back to a neutral editorial backdrop.
+fn brand_context(slug: &str) -> &'static str {
+    let s = slug.to_lowercase();
+    if s.contains("bjj") || s.contains("kuro_obi") || s.contains("roll") || s.contains("jiu") {
+        "Inside a clean Tokyo BJJ dojo with bright tatami mats, traditional roll-up gear bags on a wooden bench, soft afternoon light through frosted shoji windows. The wearer is between rounds — composed, slightly damp from training."
+    } else if s.contains("coffee") {
+        "An independent specialty coffee bar in Daikanyama, espresso machine in background, freshly brewed cup on a wooden counter, steam still rising from a glass cortado."
+    } else if s.contains("zen") {
+        "A minimalist Aoyama studio apartment with a single ikebana arrangement, tatami flooring, washi-paper sliding door half-open, single sunbeam across the wood floor."
+    } else if s.contains("kokon") {
+        "Counter seat of a quiet Tokyo yakiniku restaurant in the evening — wooden charcoal grill, dim warm light from a paper lantern, half-finished glass of highball, faint smoke from the grill plate."
+    } else if s.contains("code") {
+        "Late-evening home office: dark walnut desk, mechanical keyboard with PBT keycaps, second monitor showing terminal output, single warm desk lamp, one plant in the corner."
+    } else if s.contains("moon") {
+        "Outdoor terrace at twilight under a near-full moon, low tatami chair, single paper lantern lit, soft cool blue tones with a hint of warm lantern glow."
+    } else if s.contains("tokyo") {
+        "Daikanyama side street at golden hour, low brick walls, neon sign reflection on rain-wet pavement, single passerby in soft focus background."
+    } else if s.contains("kagi") {
+        "Genkan (entryway) of a modern Tokyo apartment, walnut floor, smart lock on the door, leather sneakers paired neatly, soft hallway light spilling in."
+    } else if s.contains("kokon") || s.contains("wagyu") {
+        "Wooden counter of a Tokyo grilled-meat restaurant, charcoal embers visible, neatly plated wagyu in foreground."
+    } else if s.contains("yoga") || s.contains("zen") {
+        "Sunrise rooftop yoga studio in Tokyo, blonde wood floor, single mat unrolled, soft golden light."
+    } else if s.contains("running") || s.contains("fitness") {
+        "Tokyo riverside running path at dawn, soft mist, a runner mid-stride caught from behind, no face visible."
+    } else if s.contains("mu_mark") || s == "mu" {
+        "Quiet apartment morning, neutral concrete walls and pale oak floor, a single ceramic cup on a low table, Aesop / Kinfolk editorial mood — calm, deliberate, unhurried."
+    } else {
+        // Generic but still on-brand for wearmu: minimal, Japanese, editorial.
+        "Soft natural light, minimal Tokyo backdrop with deliberate styling, magazine-cover composition, calm and uncluttered."
+    }
+}
+
+/// Per-kind scene description. Variant index lets us produce v1/v2/v3 with
+/// distinct framing so the gallery has variety. Falls through to a generic
+/// editorial flat-lay if we don't recognise the kind.
+fn scene_for_kind(kind: &str, variant: u32) -> &'static str {
+    match (kind, variant) {
+        ("rashguard_ls" | "rashguard_black", 1) =>
+            "Practitioner from behind, sitting on a tatami mat in seiza, hands resting on knees. Camera at chest height looking at the upper back of the rashguard.",
+        ("rashguard_ls" | "rashguard_black", 2) =>
+            "Close-up torso shot of an MMA athlete adjusting a rashguard cuff at the wrist, no face visible.",
+        ("rashguard_ls" | "rashguard_black", _) =>
+            "Front-on training stance, hands wrapped, mid-warmup. Cropped at the chin so no face is visible.",
+        ("hoodie", 1) =>
+            "Person walking away from camera at twilight on a Tokyo side street, wearing the hoodie with hood up. No face visible.",
+        ("hoodie", 2) =>
+            "Folded hoodie on a wooden bench at a cafe, with a coffee cup and a paperback book beside it. Editorial flat-lay top-down.",
+        ("hoodie", _) =>
+            "Person seated on a step with hood up, shot from above-front, hands holding a takeaway coffee. Face obscured by the hood.",
+        ("crewneck", 1) =>
+            "Person at a wood desk reading a paperback, shot from neck-down at 3/4 angle, wearing the crewneck.",
+        ("crewneck", _) =>
+            "Folded crewneck on a linen bedsheet beside a notebook, soft morning window light.",
+        ("tee", 1) =>
+            "Person from neck-down sitting at a wood desk, hands typing on a laptop, wearing the black tee. Soft window light.",
+        ("tee", 2) =>
+            "Folded black tee on a concrete surface beside a notebook and fountain pen, top-down editorial flat-lay.",
+        ("tee", _) =>
+            "Person leaning on a balcony railing at golden hour, shot from waist-up, back-of-head only.",
+        ("long_sleeve_tee", _) =>
+            "Person at a cafe counter typing on a laptop, sleeves slightly pushed up at the wrist, no face.",
+        ("tank", _) =>
+            "Tank top draped over a metal gym bench beside a kettlebell, dim natural light from a side window.",
+        ("apron", _) =>
+            "Apron worn by a chef working at a wooden kitchen counter, chopping board with seasonal herbs, soft morning window light. Back/side view only — no face.",
+        ("tote", _) =>
+            "Cotton tote bag on a wooden cafe table with a paperback book and reusable coffee cup inside, top-down view.",
+        ("mug", _) =>
+            "Ceramic mug on a wooden cafe table beside a notebook and fountain pen, steam rising. Editorial product photography.",
+        ("canvas", _) =>
+            "Framed canvas on a neutral concrete wall in a minimal apartment, small succulent on a console below, soft side light.",
+        ("sticker", _) =>
+            "Sticker stuck on the back of a vintage MacBook in a cafe, alongside 2-3 other quality stickers, slight wear giving authenticity.",
+        ("poster", _) =>
+            "Poster taped at corners to a brick studio wall, low afternoon sun raking across.",
+        ("cap", _) =>
+            "Cap worn from behind, person walking in a Tokyo alley, no face visible.",
+        _ =>
+            "Editorial 4:5 product photo on a neutral concrete backdrop, photorealistic, magazine quality.",
+    }
 }
 
 fn label_for_kind(kind: &str) -> &'static str {
