@@ -96,6 +96,11 @@ def process_account(cid: str, label: str):
     )))
     pause_ops = []; budget_ops = []
     for r in rows:
+        # Skip budget/pause changes during Smart Bidding learning
+        # (budget changes can extend learning by signaling significantly different
+        # spend pattern to the bidder)
+        if is_learning(r.campaign.id):
+            continue
         cost = r.metrics.cost_micros / 1e6
         conv = r.metrics.conversions
         val = r.metrics.conversions_value
