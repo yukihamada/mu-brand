@@ -1383,6 +1383,56 @@ pub async fn admin_generate(
 }
 
 #[derive(Deserialize)]
+pub struct LifestyleGenQuery {
+    pub token: String,
+    pub sku: String,
+    pub variant: Option<u32>,
+}
+
+/// GET /admin/catalog/lifestyle_gen?token=&sku=<sku>&variant=<n>
+///
+/// Manually trigger one lifestyle photo for an existing SKU. Used to
+/// validate Gemini output quality on a small sample before flipping the
+/// cron lifestyle_backfill_step to non-auto brands. Charges ¥6 to
+/// catalog_spend per call (same path as the cron).
+pub async fn admin_lifestyle_gen(
+    State(db): State<Db>,
+    Query(q): Query<LifestyleGenQuery>,
+) -> Response {
+    let expected = env::var("ADMIN_TOKEN").unwrap_or_default();
+    if expected.is_empty() || q.token != expected {
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    }
+    let variant = q.variant.unwrap_or(1);
+
+    let row: Option<(String, String, String)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT brand, COALESCE(label, ''), COALESCE(description_ja, '')
+             FROM catalog_products WHERE sku=?",
+            rusqlite::params![&q.sku],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).ok()
+    };
+    let Some((brand, label, desc)) = row else {
+        return (StatusCode::NOT_FOUND, format!("sku {} not found", q.sku)).into_response();
+    };
+    let kind = kind_from_sku(&q.sku).to_string();
+    let brief = if !desc.is_empty() { desc } else { label.clone() };
+
+    match generate_lifestyle_photo(db.clone(), q.sku.clone(), brand.clone(),
+                                   brief.clone(), kind.clone(), variant).await {
+        Ok(()) => axum::Json(serde_json::json!({
+            "ok": true, "sku": q.sku, "variant": variant,
+            "brand": brand, "kind": kind,
+        })).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(serde_json::json!({
+            "ok": false, "sku": q.sku, "error": e,
+        }))).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
 pub struct MarkMailedQuery {
     pub token: Option<String>,
 }
