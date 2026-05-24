@@ -1,0 +1,84 @@
+{
+  "incident_id": "2026-05-24-baba-kokon-reprint",
+  "discovered_at": "2026-05-24T22:50:00+09:00",
+  "resolved_at": "2026-05-24T23:38:32+09:00",
+  "kind": "design_mismatch_fulfillment_bug",
+  "severity": "medium",
+  "customer": {
+    "name": "馬場 祐次",
+    "email": "harley1801cc@yahoo.co.jp",
+    "address": "〒106-0031 港区西麻布 1-10-7 FT2 2F 焼肉古今 様方"
+  },
+  "original_purchase": {
+    "stripe_session_id": "cs_live_b10sUIwHbPD9CPNqTmXN9kKbIHCVgNOSo5D3PkYdIfNpSr0J8diPtgM5kY",
+    "purchased_at": "2026-05-15T22:38:00+09:00",
+    "amount_jpy": 14934,
+    "endpoint": "/api/kokon/sample-checkout",
+    "items": [
+      {"sku": "MU × KOKON Heavy Cotton Tee (Honoo)", "qty": 3, "expected_design": "_logo_v3b.png"},
+      {"sku": "MU × KOKON Black Strap Apron (Honoo)", "qty": 1, "expected_design": "_logo_v3b_blackbg.png"},
+      {"sku": "MU × KOKON Gold-Thread Snapback (Honoo)", "qty": 1, "expected_design": "_logo_v3b.png"}
+    ]
+  },
+  "root_cause": {
+    "summary": "scripts/recover_kokon_sample_order.py hardcoded '_logo_v2.png' (KOKON wordmark only, no Honoo mascot) instead of the correct '_logo_v3b.png' / '_logo_v3b_blackbg.png' Honoo versions when manually recovering the order after Stripe `shipping_details` empty bug caused webhook → Printful submission failure.",
+    "script": "scripts/recover_kokon_sample_order.py",
+    "lines": "30-34",
+    "preceding_bug": "Stripe Checkout shipping_details was empty due to ?expand[]=shipping_details quirk → collab_orders stuck at status='sample_received' without Printful submission"
+  },
+  "wrong_fulfillment": {
+    "printful_order_id": 158583483,
+    "external_id": "recover-b10sUIwHbPD9CPNqTmXN9kKb",
+    "submitted_at": "2026-05-18T00:51:00+09:00",
+    "design_used": "_logo_v2.png (KOKON wordmark only — INCORRECT)",
+    "shipments": [
+      {"shipment_id": 78886577, "status": "shipped", "ship_date": "2026-05-20", "tracking": "265006540260", "items": ["Tee Black/M ×3"]},
+      {"shipment_id": 78886578, "status": "shipped", "ship_date": "2026-05-19", "tracking": "LT358370728GB", "items": ["Apron Black ×1"]},
+      {"shipment_id": 78886579, "status": "onhold", "ship_date": null, "tracking": null, "items": ["Snapback Black ×1"], "note": "could not cancel — printful API returned `Order is no longer editable`. Wrong-design Snapback may still ship later."}
+    ]
+  },
+  "customer_complaint": {
+    "received_at": "2026-05-24T22:50:00+09:00",
+    "via": "verbal_to_yuki",
+    "summary": "Baba pointed out the design printed differs from what was advertised when he purchased."
+  },
+  "remediation": {
+    "actions": [
+      "Visually verified design mismatch by comparing _logo_v2.png (wrong) vs _logo_v3b.png (correct, used in Yuki's own same-day order #158863837)",
+      "Generated Printful Mockup Generator previews of correct design on Tee / Apron / Snapback for visual confirmation",
+      "Submitted new Printful order with v3b design across all 5 SKUs, paid by Yuki (no charge to Baba)",
+      "Attempted to cancel onhold Snapback in original order — failed (`OR-1 Order is no longer editable`); customer notified in apology email",
+      "Sent apology email from yuki@hamada.tokyo to harley1801cc@yahoo.co.jp"
+    ],
+    "reprint_printful_order_id": 159687235,
+    "reprint_external_id": "reprint-baba-158583483-v3b",
+    "reprint_confirmed_at": "2026-05-24T23:38:00+09:00",
+    "reprint_cost_jpy": 13576,
+    "reprint_designs": {
+      "tee_4017_x3": "https://lifestyle.wearmu.com/kokon/_logo_v3b.png",
+      "apron_23723_x1": "https://lifestyle.wearmu.com/kokon/_logo_v3b_blackbg.png",
+      "snapback_4792_x1": "https://lifestyle.wearmu.com/kokon/_logo_v3b.png"
+    },
+    "snapback_thread_colors": ["#A67843", "#E25C27", "#FFCC00", "#660000"],
+    "apology_email": {
+      "gmail_message_id": "19e5a6c5f2e744e2",
+      "from": "yuki@hamada.tokyo",
+      "to": "harley1801cc@yahoo.co.jp",
+      "sent_at": "2026-05-24T23:38:32+09:00",
+      "subject": "馬場様 — MU × KOKON サンプル品 再発送のお詫びとご案内"
+    },
+    "wrong_items_disposition": "customer instructed they may keep, regift, or discard — no return required"
+  },
+  "preventive_action_required": {
+    "task": "Eliminate hardcoded design URLs in scripts/recover_*.py and fulfillment helpers",
+    "fix": "Read print URL from catalog_products.print_url or proposal_skus.design_url at runtime; never hardcode `_logo_v*.png` in recovery scripts.",
+    "secondary": "Fix Stripe Checkout `shipping_details` empty bug (root cause of needing the recover script in the first place) — webhook handler should not request `?expand[]=shipping_details` when Stripe's default already includes it.",
+    "tertiary": "Order audit cron: when fulfill_catalog_order writes a Printful order, also write the design URL into catalog_orders.design_url and surface it on /admin/catalog/orders so design mismatches are catchable before shipment."
+  },
+  "links": {
+    "dashboard": "http://127.0.0.1:9876/",
+    "printful_original": "https://www.printful.com/dashboard/default/orders/158583483",
+    "printful_reprint": "https://www.printful.com/dashboard/default/orders/159687235",
+    "recover_script": "/Users/yuki/workspace/mu-brand/scripts/recover_kokon_sample_order.py"
+  }
+}
