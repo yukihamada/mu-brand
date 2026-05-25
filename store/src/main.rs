@@ -48792,8 +48792,20 @@ fn boosttech_v1_triple(slug: &str) -> Option<(&'static str, &'static str, &'stat
 /// Brand: BOOSTTECH株式会社 (ブーストテック) — テクノロジーの力で、人と
 /// ビジネスの可能性をブーストする (AI 搭載型 SaaS: SHORTBOOSTER /
 /// HPBOOSTER / PeopleBooster / 切り抜きBOOSTER)。
-async fn show_boosttech_page(State(db): State<Db>) -> Response {
+async fn show_boosttech_page(State(db): State<Db>, headers: HeaderMap) -> Response {
     type Row = (i64, String, String, String, String, i64, i64);
+    // Detect logged-in user + their MU points balance.
+    let (user_email, user_balance) = {
+        let session = collab_session_email(&db, &headers);
+        match session {
+            Some((em, _, _, _)) => {
+                let conn = db.lock().unwrap();
+                let (bal, _) = points_balance(&conn, &em);
+                (Some(em), bal)
+            }
+            None => (None, 0),
+        }
+    };
     let items: Vec<Row> = {
         let conn = db.lock().unwrap();
         let mut stmt = match conn.prepare(
@@ -48923,7 +48935,7 @@ footer{{padding:48px 32px 80px;border-top:1px solid var(--line);text-align:cente
 footer a{{color:var(--y);text-decoration:underline}}
 #msg{{max-width:680px;margin:16px auto;text-align:center;font-size:11px;letter-spacing:0.05em;color:var(--mute);min-height:14px}}
 </style></head><body>
-<nav><a href="/" class="logo">MU</a><a href="https://boosttech.jp">boosttech.jp →</a></nav>
+<nav><a href="/" class="logo">MU</a>{nav_balance}<a href="https://boosttech.jp">boosttech.jp →</a></nav>
 <header>
   <div class="eyebrow">MU Collab — AI SaaS BOOSTER</div>
   <div class="brandline">
@@ -48934,14 +48946,62 @@ footer a{{color:var(--y);text-decoration:underline}}
   <h1>テクノロジーの力で、<br>可能性を <em>BOOST</em> する。</h1>
   <p class="lede">
     <a href="https://boosttech.jp" style="color:var(--y)">BOOSTTECH株式会社</a> は AI 搭載型 SaaS (SHORTBOOSTER / HPBOOSTER / PeopleBooster / 切り抜きBOOSTER) を開発・提供するテックカンパニー。<br>
-    社員 / ファンに向けた公式ノベルティ <strong>10 SKU</strong> を Printful 経由で在庫ゼロ・10〜14 日で直送。
+    社員 / ファンに向けた公式ノベルティ <strong id="sku-count">10 SKU</strong> を Printful 経由で在庫ゼロ・10〜14 日で直送。
   </p>
+  <div style="margin-top:18px">
+    <button id="open-quickadd" style="background:linear-gradient(90deg,#FF6B00,#E63812);color:#fff;border:0;font-family:inherit;font-size:12px;letter-spacing:0.2em;text-transform:uppercase;font-weight:700;padding:12px 22px;cursor:pointer;border-radius:6px">＋ SKU を追加（50pt）</button>
+  </div>
 </header>
 <div class="note">
-  <strong style="color:var(--y)">在庫ゼロ、注文即生産。</strong> 1 枚から作って世界中に直接配送します。デザインは BOOSTTECH の「B + ブースト矢印」ロゴをオレンジ→赤グラデーションで配置。
+  <strong style="color:var(--y)">在庫ゼロ、注文即生産。</strong> 1 枚から作って世界中に直接配送します。デザインは BOOSTTECH の「B + ブースト矢印」ロゴをオレンジ→赤グラデーションで配置。あなたの好きな商品を 50pt or ¥500 で追加できます。
 </div>
 <div class="grid">
 {cards}
+</div>
+
+<!-- Quick-add SKU modal -->
+<div id="qa-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:300;align-items:center;justify-content:center;padding:24px">
+  <div style="background:#0f1525;border:1px solid rgba(255,107,0,0.4);border-radius:10px;padding:32px;max-width:480px;width:100%;color:var(--fg)">
+    <h2 style="font-size:18px;letter-spacing:0.06em;margin-bottom:6px">＋ 新しい SKU を追加</h2>
+    <p style="font-size:12px;color:var(--mute);margin-bottom:18px">3つ選んで「作成」→ 即 /boosttech に出ます。MU 50pt 消費、未保有/不足の場合 ¥500 Stripe チャージで作成。</p>
+    <div style="margin-bottom:12px">
+      <label style="display:block;font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:var(--mute);margin-bottom:4px">① 商品タイプ</label>
+      <select id="qa-kind" style="width:100%;background:#000;color:var(--fg);border:1px solid rgba(255,107,0,0.3);padding:10px;border-radius:4px;font-family:inherit;font-size:13px">
+        <option value="tee">Tee (Bella+Canvas 3001) — ¥4,800</option>
+        <option value="hoodie">Hoodie (Gildan 18500) — ¥9,800</option>
+        <option value="crewneck">Crewneck (Champion S149) — ¥8,800</option>
+        <option value="mug">Mug 11oz Black Glossy — ¥3,800</option>
+        <option value="tote">All-Over Print Tote — ¥5,400</option>
+        <option value="snapback">Snapback (Yupoong 6089M) — ¥4,200</option>
+        <option value="laptop-sleeve">Laptop Sleeve 13″ — ¥4,800</option>
+        <option value="airpods-case">AirPods Pro Case — ¥3,200</option>
+        <option value="mouse-pad">Mouse Pad — ¥3,800</option>
+        <option value="stickers">Sticker Sheet — ¥1,800</option>
+      </select>
+    </div>
+    <div style="margin-bottom:12px">
+      <label style="display:block;font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:var(--mute);margin-bottom:4px">② カラー</label>
+      <select id="qa-color" style="width:100%;background:#000;color:var(--fg);border:1px solid rgba(255,107,0,0.3);padding:10px;border-radius:4px;font-family:inherit;font-size:13px">
+        <option value="black">Black (デフォルト)</option>
+        <option value="white">White</option>
+      </select>
+    </div>
+    <div style="margin-bottom:18px">
+      <label style="display:block;font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:var(--mute);margin-bottom:4px">③ デザインバリエーション</label>
+      <select id="qa-design" style="width:100%;background:#000;color:var(--fg);border:1px solid rgba(255,107,0,0.3);padding:10px;border-radius:4px;font-family:inherit;font-size:13px">
+        <option value="trans">B ロゴ + BOOSTTECH wordmark (透明背景)</option>
+        <option value="dark">B ロゴ + BOOSTTECH wordmark (ダーク回路基板)</option>
+      </select>
+    </div>
+    <div id="qa-msg" style="font-size:11px;color:var(--y);margin-bottom:14px;min-height:14px;text-align:center"></div>
+    <div style="display:flex;gap:8px">
+      <button id="qa-pay-pt" style="flex:1;background:linear-gradient(90deg,#FF6B00,#E63812);color:#fff;border:0;font-family:inherit;font-size:12px;letter-spacing:0.2em;text-transform:uppercase;font-weight:700;padding:12px 14px;cursor:pointer;border-radius:4px">MU 50pt で作成</button>
+      <button id="qa-pay-stripe" style="flex:1;background:#0a0a0a;color:var(--y);border:1px solid var(--y);font-family:inherit;font-size:12px;letter-spacing:0.2em;text-transform:uppercase;font-weight:700;padding:12px 14px;cursor:pointer;border-radius:4px">¥500 チャージ</button>
+    </div>
+    <div style="text-align:center;margin-top:14px">
+      <button id="qa-cancel" style="background:transparent;color:var(--mute);border:0;font-size:11px;cursor:pointer">閉じる</button>
+    </div>
+  </div>
 </div>
 <div id="msg"></div>
 <div id="lightbox" role="dialog" aria-modal="true" aria-label="商品画像 拡大表示">
@@ -49043,8 +49103,56 @@ document.querySelectorAll('.card .buy').forEach(btn => {{
     }}
   }});
 }});
+
+// ── Quick-add SKU modal ──
+const QA_PARTNER = 'boosttech';
+const qaModal = document.getElementById('qa-modal');
+const qaMsg = document.getElementById('qa-msg');
+document.getElementById('open-quickadd').addEventListener('click', () => {{
+  qaModal.style.display = 'flex';
+  qaMsg.textContent = '';
+}});
+document.getElementById('qa-cancel').addEventListener('click', () => {{ qaModal.style.display='none'; }});
+qaModal.addEventListener('click', e => {{ if (e.target === qaModal) qaModal.style.display='none'; }});
+
+async function qaSubmit(payMethod) {{
+  const kind = document.getElementById('qa-kind').value;
+  const color = document.getElementById('qa-color').value;
+  const design = document.getElementById('qa-design').value;
+  qaMsg.textContent = '作成中…';
+  try {{
+    const r = await fetch('/api/sku/quick-add', {{
+      method: 'POST', headers: {{'Content-Type':'application/json'}},
+      body: JSON.stringify({{partner: QA_PARTNER, kind, color, design, pay: payMethod}})
+    }});
+    const d = await r.json();
+    if (r.ok && d.ok) {{
+      qaMsg.textContent = '✅ 作成完了 — slug=' + d.slug + ' (残ポイント: ' + d.balance + 'pt)';
+      setTimeout(() => location.reload(), 1200);
+    }} else if (r.status === 402 && d.checkout_url) {{
+      // Insufficient points → redirect to Stripe
+      qaMsg.textContent = 'ポイント不足 — Stripe へ移動';
+      setTimeout(() => location.href = d.checkout_url, 500);
+    }} else {{
+      qaMsg.textContent = 'エラー: ' + (d.error || ('HTTP ' + r.status));
+    }}
+  }} catch (e) {{
+    qaMsg.textContent = 'エラー: ' + e.message;
+  }}
+}}
+document.getElementById('qa-pay-pt').addEventListener('click', () => qaSubmit('points'));
+document.getElementById('qa-pay-stripe').addEventListener('click', () => qaSubmit('stripe'));
 </script>
-</body></html>"#);
+</body></html>"#,
+        cards = cards,
+        nav_balance = match &user_email {
+            Some(em) => format!(
+                r##"<span style="font-size:11px;letter-spacing:0.18em;color:var(--y);margin-left:auto;padding:6px 14px;border:1px solid rgba(255,107,0,0.4);border-radius:99px">⚡ {} pt · {}</span>"##,
+                user_balance,
+                html_attr_escape(em.split('@').next().unwrap_or(em))
+            ),
+            None => r##"<a href="/you/login?return=/boosttech" style="font-size:10px;letter-spacing:0.2em;color:var(--mute);margin-left:auto">ログイン →</a>"##.to_string(),
+        });
 
     axum::response::Html(body).into_response()
 }
@@ -54117,6 +54225,158 @@ async fn boosttech_checkout(
     Json(body): Json<SweepCheckoutBody>,
 ) -> impl IntoResponse {
     collab_checkout(db, "boosttech", "/boosttech", "MU × BOOSTTECH", body).await
+}
+
+/// POST /api/sku/quick-add — let a logged-in user add a new SKU to a brand
+/// (partner) page in one click for either 50 proposal_points or ¥500 Stripe.
+/// Body: {partner, kind, color, design, pay: "points"|"stripe"}.
+///
+/// kind ∈ tee|hoodie|crewneck|mug|tote|snapback|laptop-sleeve|airpods-case|mouse-pad|stickers
+/// color ∈ black|white  · design ∈ trans|dark
+///
+/// Returns: { ok: true, slug, balance } on points success,
+///          402 with { checkout_url } on insufficient points,
+///          200 with { checkout_url } on pay=stripe.
+#[derive(Deserialize)]
+struct QuickAddBody {
+    partner: String,
+    kind: String,
+    color: Option<String>,
+    design: Option<String>,
+    pay: Option<String>,
+}
+const SKU_QUICK_ADD_POINT_COST: i64 = 50;
+const SKU_QUICK_ADD_STRIPE_JPY: i64 = 500;
+
+/// Map (kind, color) → (pid, vid, retail_price, placement, default_design)
+fn quick_add_preset(kind: &str, color: &str) -> Option<(i64, i64, i64, &'static str, &'static str)> {
+    // Returns (pid, vid_black_or_default, default_retail_yen, placement, design_default: "trans"|"dark")
+    Some(match (kind, color) {
+        ("tee",            "black") => (71,    4017, 4800, "front", "trans"),
+        ("tee",            "white") => (71,    4015, 4800, "front", "dark"),
+        ("hoodie",         "black") => (146,   5531, 9800, "front", "trans"),
+        ("hoodie",         "white") => (146,   5538, 9800, "front", "dark"),
+        ("crewneck",       "black") => (318,   9660, 8800, "front", "trans"),
+        ("crewneck",       "white") => (318,   9666, 8800, "front", "dark"),
+        ("mug",            _)       => (300,   9323, 3800, "default", "dark"),
+        ("tote",           _)       => (84,    4533, 5400, "default", "dark"),
+        ("snapback",       _)       => (99,    4792, 4200, "embroidery_front_large", "trans"),
+        ("laptop-sleeve",  _)       => (394,   10984, 4800, "default", "dark"),
+        ("airpods-case",   _)       => (605,   15533, 3200, "front", "dark"),
+        ("mouse-pad",      _)       => (518,   13097, 3800, "default", "dark"),
+        ("stickers",       _)       => (505,   12917, 1800, "default", "trans"),
+        _ => return None,
+    })
+}
+
+/// Resolve partner-specific design URL given the "trans" or "dark" variant.
+fn quick_add_design_url(partner: &str, variant: &str) -> Option<&'static str> {
+    match (partner, variant) {
+        ("boosttech", "trans") => Some("https://wearmu.com/static/boosttech/v1/design_v1.png"),
+        ("boosttech", "dark")  => Some("https://wearmu.com/static/boosttech/v1/design_v1_dark.png"),
+        ("kokon",     "trans") => Some("https://lifestyle.wearmu.com/kokon/_logo_v3b.png"),
+        ("kokon",     "dark")  => Some("https://lifestyle.wearmu.com/kokon/_logo_v3b_blackbg.png"),
+        _ => None,
+    }
+}
+
+async fn api_sku_quick_add(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Json(body): Json<QuickAddBody>,
+) -> Response {
+    // Validate partner + kind
+    if !matches!(body.partner.as_str(), "boosttech" | "kokon") {
+        return (StatusCode::BAD_REQUEST, "unsupported partner").into_response();
+    }
+    let color = body.color.as_deref().unwrap_or("black");
+    let design_variant = body.design.as_deref().unwrap_or("trans");
+    let Some((pid, vid, retail, placement, default_design)) = quick_add_preset(&body.kind, color) else {
+        return (StatusCode::BAD_REQUEST, "unknown kind").into_response();
+    };
+    let design_variant = if design_variant == "trans" || design_variant == "dark" { design_variant } else { default_design };
+    let Some(design_url) = quick_add_design_url(&body.partner, design_variant) else {
+        return (StatusCode::BAD_REQUEST, "no design for partner").into_response();
+    };
+    // Identify user
+    let user_email = collab_session_email(&db, &headers).map(|t| t.0);
+    let Some(email) = user_email else {
+        return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({
+            "error": "login required",
+            "login_url": "/you/login"
+        }))).into_response();
+    };
+
+    // Generate a unique slug: {partner}-quick-{kind}-{color}-{n}
+    let base = format!("{}-q-{}-{}", body.partner, body.kind, color);
+    let slug = {
+        let conn = db.lock().unwrap();
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM collab_products WHERE slug LIKE ?",
+            params![format!("{}%", base)], |r| r.get(0),
+        ).unwrap_or(0);
+        format!("{}-{}", base, n + 1)
+    };
+    let name = format!("MU × {} · {} {}", body.partner.to_uppercase(), body.kind, color);
+    let category = format!("{} ({})", body.kind, color);
+    let files_json = format!(r#"[{{"type":"{}","url":"{}"}}]"#, placement, design_url);
+    let var_map_json = format!(r#"{{"OS":{vid},"ONE SIZE":{vid},"S":{vid},"M":{vid},"L":{vid},"XL":{vid},"2XL":{vid},"XS":{vid}}}"#);
+
+    let pay = body.pay.as_deref().unwrap_or("points");
+    if pay == "points" {
+        // Charge 50 proposal_points
+        let conn = db.lock().unwrap();
+        match points_mutate(&conn, &email, -SKU_QUICK_ADD_POINT_COST, "quick_add_sku", Some(&slug), Some(&body.partner)) {
+            Ok(new_balance) => {
+                // Insert SKU
+                let now = chrono_now();
+                let r = conn.execute(
+                    "INSERT INTO collab_products
+                         (slug, partner, category, name, description, image_url, price_jpy,
+                          sizes_json, active, draft, created_at,
+                          printful_product_id, printful_variant_id, production_route,
+                          lead_time_days, printful_variant_map,
+                          printful_files, printful_options)
+                     VALUES (?, ?, ?, ?, '自分で追加した SKU。デザイン: ' || ?, NULL, ?,
+                             '[\"OS\"]', 1, 1, ?,
+                             ?, ?, 'printful', 14, ?, ?, NULL)",
+                    params![slug, body.partner, category, name, design_variant, retail, now,
+                            pid, vid, var_map_json, files_json],
+                );
+                if r.is_err() {
+                    // Refund points
+                    let _ = points_mutate(&conn, &email, SKU_QUICK_ADD_POINT_COST, "quick_add_sku_refund_db_err", Some(&slug), Some(&body.partner));
+                    return (StatusCode::INTERNAL_SERVER_ERROR, "db insert failed").into_response();
+                }
+                drop(conn);
+                Json(serde_json::json!({
+                    "ok": true, "slug": slug, "balance": new_balance
+                })).into_response()
+            }
+            Err(e) => {
+                // Insufficient points → return 402 with optional Stripe URL hint
+                let (cur, _) = points_balance(&conn, &email);
+                drop(conn);
+                (StatusCode::PAYMENT_REQUIRED, Json(serde_json::json!({
+                    "error": e,
+                    "balance": cur,
+                    "needed": SKU_QUICK_ADD_POINT_COST,
+                    "checkout_url": format!("/api/sku/quick-add/checkout?partner={}&kind={}&color={}&design={}",
+                        body.partner, body.kind, color, design_variant),
+                }))).into_response()
+            }
+        }
+    } else {
+        // Stripe Checkout for ¥500 — webhook will create the SKU.
+        // For now, deferred; return checkout URL.
+        Json(serde_json::json!({
+            "ok": false,
+            "error": "stripe path not yet implemented (use points first)",
+            "checkout_url": format!("/api/sku/quick-add/checkout?partner={}&kind={}&color={}&design={}",
+                body.partner, body.kind, color, design_variant),
+            "stripe_jpy": SKU_QUICK_ADD_STRIPE_JPY,
+        })).into_response()
+    }
 }
 
 async fn nakamura_checkout(
@@ -63032,6 +63292,7 @@ async fn main() {
         .route("/api/sweep/checkout", post(sweep_checkout))
         .route("/api/kokon/checkout", post(kokon_checkout))
         .route("/api/boosttech/checkout", post(boosttech_checkout))
+        .route("/api/sku/quick-add", post(api_sku_quick_add))
         .route("/api/nakamura/checkout", post(nakamura_checkout))
         .route("/admin/nakamura", get(admin_nakamura_page))
         .route("/api/admin/nakamura/add_sku", post(admin_nakamura_add_sku))
