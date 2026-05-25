@@ -6122,6 +6122,56 @@ async fn vault_index(State(db): State<Db>, headers: HeaderMap) -> Response {
     (StatusCode::OK, [("content-type", "text/html; charset=utf-8")], html).into_response()
 }
 
+/// Build a compact TOC from top-level (`<h2>`) headings and inject matching
+/// anchor ids into the already-sanitized HTML body. Runs AFTER ammonia so the
+/// ids survive. Returns (body_with_ids, toc_html); empty TOC if < 3 sections.
+fn vault_inject_toc(html: &str) -> (String, String) {
+    fn strip_tags(s: &str) -> String {
+        let mut out = String::new();
+        let mut depth: i32 = 0;
+        for c in s.chars() {
+            match c {
+                '<' => depth += 1,
+                '>' => { if depth > 0 { depth -= 1; } }
+                _ if depth == 0 => out.push(c),
+                _ => {}
+            }
+        }
+        out.trim().to_string()
+    }
+    let mut body = String::with_capacity(html.len() + 256);
+    let mut items: Vec<(String, String)> = Vec::new();
+    let mut rest = html;
+    let mut n = 0usize;
+    while let Some(start) = rest.find("<h2") {
+        body.push_str(&rest[..start]);
+        let after = &rest[start..];
+        if let (Some(gt), Some(close)) = (after.find('>'), after.find("</h2>")) {
+            if gt < close {
+                let inner = &after[gt + 1..close];
+                let id = format!("s{}", n);
+                body.push_str(&format!("<h2 id=\"{}\">{}</h2>", id, inner));
+                items.push((id, strip_tags(inner)));
+                rest = &after[close + 5..];
+                n += 1;
+                continue;
+            }
+        }
+        body.push_str("<h2");
+        rest = &after[3..];
+    }
+    body.push_str(rest);
+    if items.len() < 3 {
+        return (html.to_string(), String::new());
+    }
+    let mut toc = String::from(r#"<nav class="toc"><div class="toc-h">目次</div><ol>"#);
+    for (id, label) in &items {
+        toc.push_str(&format!(r##"<li><a href="#{}">{}</a></li>"##, id, html_escape(label)));
+    }
+    toc.push_str("</ol></nav>");
+    (body, toc)
+}
+
 async fn vault_article(
     State(db): State<Db>,
     headers: HeaderMap,
@@ -6166,35 +6216,49 @@ async fn vault_article(
         }
     };
     let html_body = md_to_html_simple(&body_dedup);
+    let (html_body, toc_html) = vault_inject_toc(&html_body);
     let masked = mask_email_public(&email);
     let html = format!(r#"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>{title} · VAULT · MU</title>
 <style>{css}
-  .wrap{{max-width:680px;margin:0 auto;padding:40px 22px 0;line-height:1.75;color:#e8e8e0}}
-  .back{{color:#888;font-size:12px;text-decoration:none;letter-spacing:0.06em;text-transform:uppercase}}
+  .wrap{{max-width:720px;margin:0 auto;padding:40px 22px 60px;line-height:1.9;color:#e9e7df;font-size:16px}}
+  .back{{color:#9a9a90;font-size:12px;text-decoration:none;letter-spacing:.08em;text-transform:uppercase}}
   .back:hover{{color:#e6c449}}
-  h1{{font-size:32px;font-weight:300;letter-spacing:0.01em;line-height:1.35;margin:18px 0 28px}}
-  h2{{font-size:20px;font-weight:500;margin:42px 0 16px;color:#f5f5f0;border-bottom:1px solid #1a1a1a;padding-bottom:8px}}
-  h3{{font-size:16px;font-weight:500;margin:28px 0 12px;color:#e6c449}}
-  p{{margin:0 0 18px;color:#cfcfc8;font-size:15px}}
-  code{{background:#111;color:#e6c449;padding:2px 6px;border-radius:3px;font-size:13.5px;font-family:ui-monospace,Menlo,monospace}}
-  pre{{background:#0a0a0a;border:1px solid #1f1f1f;padding:16px;overflow-x:auto;border-radius:4px;font-size:13px;line-height:1.6}}
-  pre code{{background:transparent;padding:0;color:#cfcfc8}}
-  ul,ol{{padding-left:24px;color:#cfcfc8;margin:0 0 20px}}
-  li{{margin:6px 0}}
-  table{{border-collapse:collapse;margin:18px 0;font-size:13.5px}}
-  th,td{{border:1px solid #1f1f1f;padding:8px 12px;text-align:left}}
-  th{{background:#0a0a0a;color:#e6c449}}
-  blockquote{{border-left:3px solid #e6c449;padding:6px 16px;margin:18px 0;color:#aaa;font-style:italic}}
-  a{{color:#e6c449}}
-  hr{{border:0;border-top:1px solid #1a1a1a;margin:32px 0}}
-  .article-meta{{margin-top:60px;padding-top:18px;border-top:1px solid #1a1a1a;font-size:11.5px;color:#666;text-align:center}}
+  h1{{font-size:30px;font-weight:500;letter-spacing:.01em;line-height:1.4;margin:16px 0 10px;color:#fff}}
+  h2{{font-size:21px;font-weight:600;margin:48px 0 14px;color:#fff;border-bottom:1px solid #242424;padding-bottom:10px;scroll-margin-top:80px}}
+  h3{{font-size:16.5px;font-weight:600;margin:30px 0 10px;color:#e6c449;scroll-margin-top:80px}}
+  p{{margin:0 0 18px;color:#e3e1d8;font-size:16px}}
+  strong{{color:#fff;font-weight:600}}
+  code{{background:#1b1a16;color:#e8d6a0;padding:2px 6px;border-radius:4px;font-size:14px;font-family:ui-monospace,Menlo,monospace}}
+  pre{{background:#0c0c0c;border:1px solid #232323;border-left:3px solid #e6c449;padding:16px 18px;overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:6px;font-size:13.5px;line-height:1.65;margin:0 0 22px}}
+  pre code{{background:transparent;padding:0;color:#d7d7cf;font-size:13.5px}}
+  ul,ol{{padding-left:24px;color:#e3e1d8;margin:0 0 20px}}
+  li{{margin:7px 0}}
+  li::marker{{color:#e6c449}}
+  table{{border-collapse:collapse;margin:0 0 22px;font-size:14px;display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}}
+  th,td{{border:1px solid #242424;padding:10px 14px;text-align:left;vertical-align:top;min-width:88px}}
+  th{{background:#15140f;color:#e6c449;font-weight:600;white-space:nowrap}}
+  tbody tr:nth-child(even) td{{background:#0a0a0a}}
+  blockquote{{background:#0e0e0c;border:1px solid #232323;border-left:4px solid #e6c449;padding:14px 18px;margin:0 0 22px;color:#e9e7df;border-radius:6px;font-style:normal}}
+  blockquote p{{margin:6px 0;color:#e9e7df}}
+  blockquote strong{{color:#f4e7b8}}
+  a{{color:#e6c449;text-underline-offset:3px}}
+  hr{{border:0;border-top:1px solid #1f1f1f;margin:34px 0}}
+  .toc{{background:#0b0b0b;border:1px solid #1f1f1f;border-radius:8px;padding:16px 20px;margin:8px 0 34px}}
+  .toc .toc-h{{font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:#777;margin-bottom:10px}}
+  .toc ol{{margin:0;padding-left:20px}}
+  .toc li{{margin:5px 0;font-size:14px}}
+  .toc a{{color:#cfcfc8;text-decoration:none}}
+  .toc a:hover{{color:#e6c449}}
+  .article-meta{{margin-top:64px;padding-top:18px;border-top:1px solid #1a1a1a;font-size:11.5px;color:#666;text-align:center}}
+  @media (max-width:640px){{.wrap{{padding:28px 16px 60px;font-size:16px}} h1{{font-size:25px}} h2{{font-size:19px}}}}
 </style></head><body>
   {header}
   <div class="wrap">
     <a class="back" href="/vault">← VAULT</a>
     <h1>{title}</h1>
+    {toc}
     {html_body}
     <div class="article-meta">Tシャツ所有者限定 · 転載は引用元 https://wearmu.com/vault を明記すれば歓迎</div>
   </div>
@@ -6204,6 +6268,7 @@ async fn vault_article(
     header = vault_header_html("vault", Some(&masked)),
     footer = vault_footer_html(),
     title = html_escape(title),
+    toc = toc_html,
     html_body = html_body);
     (StatusCode::OK, [("content-type", "text/html; charset=utf-8")], html).into_response()
 }
