@@ -53992,6 +53992,34 @@ async fn admin_ai_decisions(
 /// Shared collab checkout. `partner` is "sweep" / "kokon" / etc. — must match
 /// `collab_products.partner` value. Sets `metadata[collab]=<partner>` so the
 /// webhook can route to the correct fulfillment handler.
+/// Resolve a product image URL for Stripe Checkout `line_items.product_data.images`.
+/// Stripe requires absolute HTTPS URLs (max 8 per line item). Priority:
+///   1. Partner's v3-style triple lifestyle URL (boosttech_v1_triple / kokon_v3_triple)
+///   2. collab_products.image_url (already absolute https URL for sweep / jiuflow / nakamura)
+///   3. None (Stripe will show no image)
+fn stripe_image_for(partner: &str, slug: &str, db_image_url: Option<&str>) -> Option<String> {
+    // v3/v1 triple paths are /static/... — must absolutize
+    let triple_lifestyle: Option<&'static str> = match partner {
+        "boosttech" => boosttech_v1_triple(slug).map(|(ls, _, _)| ls),
+        "kokon"     => kokon_v3_triple(slug).map(|(ls, _, _)| ls),
+        _ => None,
+    };
+    if let Some(rel) = triple_lifestyle {
+        return Some(format!("https://wearmu.com{}", rel));
+    }
+    // Fallback: DB image_url (might be absolute already)
+    if let Some(u) = db_image_url {
+        let u = u.trim();
+        if u.starts_with("https://") {
+            return Some(u.to_string());
+        }
+        if u.starts_with("/") {
+            return Some(format!("https://wearmu.com{}", u));
+        }
+    }
+    None
+}
+
 async fn collab_checkout(
     db: Db,
     partner: &'static str,
@@ -54003,16 +54031,16 @@ async fn collab_checkout(
     if stripe_key.is_empty() {
         return (StatusCode::SERVICE_UNAVAILABLE, "checkout disabled").into_response();
     }
-    let row: Option<(i64, String, String, i64)> = {
+    let row: Option<(i64, String, String, i64, Option<String>)> = {
         let conn = db.lock().unwrap();
         conn.query_row(
-            "SELECT id, name, COALESCE(category,''), price_jpy
+            "SELECT id, name, COALESCE(category,''), price_jpy, image_url
              FROM collab_products WHERE slug=? AND partner=? AND active=1",
             params![body.slug, partner],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
         ).ok()
     };
-    let Some((product_id, name, category, price_jpy)) = row else {
+    let Some((product_id, name, category, price_jpy, db_image_url)) = row else {
         return (StatusCode::NOT_FOUND, "product not found").into_response();
     };
     let price = price_jpy.clamp(500, 99_800);
@@ -54024,7 +54052,7 @@ async fn collab_checkout(
     } else {
         env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into())
     };
-    let form: Vec<(&str, String)> = vec![
+    let mut form: Vec<(&str, String)> = vec![
         ("mode", "payment".into()),
         ("currency", "jpy".into()),
         ("allow_promotion_codes", "true".into()),
@@ -54041,6 +54069,11 @@ async fn collab_checkout(
         ("metadata[size]", size),
         ("shipping_address_collection[allowed_countries][0]", "JP".into()),
     ];
+    // Add product image to Stripe Checkout (renders thumbnail in line item).
+    // Tries partner v3/v1 lifestyle first, then DB image_url as fallback.
+    if let Some(img_url) = stripe_image_for(partner, &body.slug, db_image_url.as_deref()) {
+        form.push(("line_items[0][price_data][product_data][images][0]", img_url));
+    }
     let resp = reqwest::Client::new()
         .post("https://api.stripe.com/v1/checkout/sessions")
         .basic_auth(&stripe_key, None::<&str>)
