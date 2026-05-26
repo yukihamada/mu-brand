@@ -6180,17 +6180,29 @@ async fn vault_article(
     headers: HeaderMap,
     axum::extract::Path(slug): axum::extract::Path<String>,
 ) -> Response {
-    let email = match vault_session_email(&db, &headers) {
-        Some(e) => e,
-        None => return vault_locked_page("ログインしてください。"),
+    // Public vault articles: marketing content meant to be shared (e.g. linked
+    // from Facebook/X) — readable without a tee-holder login. Everything else
+    // stays gated behind purchase history.
+    const PUBLIC_VAULT_SLUGS: [&str; 1] = ["jiuflow-lipsync"];
+    let is_public = PUBLIC_VAULT_SLUGS.contains(&slug.as_str());
+
+    let email = if is_public {
+        String::new()
+    } else {
+        match vault_session_email(&db, &headers) {
+            Some(e) => {
+                let is_holder = {
+                    let conn = db.lock().unwrap();
+                    vault_is_tee_holder(&conn, &e)
+                };
+                if !is_holder {
+                    return vault_locked_page("Tシャツ購入履歴が見つかりません。");
+                }
+                e
+            }
+            None => return vault_locked_page("ログインしてください。"),
+        }
     };
-    let is_holder = {
-        let conn = db.lock().unwrap();
-        vault_is_tee_holder(&conn, &email)
-    };
-    if !is_holder {
-        return vault_locked_page("Tシャツ購入履歴が見つかりません。");
-    }
     let article = VAULT_ARTICLES.iter().find(|(s, _, _)| *s == slug);
     let (title, body) = match article {
         Some((_, t, b)) => (*t, *b),
