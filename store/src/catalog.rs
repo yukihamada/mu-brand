@@ -1648,6 +1648,15 @@ pub struct NlAddQuery {
     /// "BJJ 黒帯 sumi-e Tシャツ ¥4900" or
     /// "Coffee × Code rashguard ¥9,800, black canvas"
     pub prompt: String,
+    /// Optional brand slug (default 'auto'). Use this to drop a SKU into
+    /// a specific catalog_brands row — e.g. brand='jiuflow' for the
+    /// MU × jiuflow rashguard collab. The brand row must already exist
+    /// in catalog_brands; new ones aren't auto-created here.
+    pub brand: Option<String>,
+    /// Optional collab partner name, prepended to the SKU label as
+    /// "{collab} × {display}". Use for cross-brand drops where the
+    /// PDP should call out both the host brand and MU.
+    pub collab: Option<String>,
 }
 
 /// GET /admin/catalog/nl?token=…&prompt=… (POST also accepted via body).
@@ -1726,7 +1735,17 @@ pub async fn admin_nl_add(
         .take(12).collect::<String>()
         .to_uppercase();
     let slug = if slug.is_empty() { "NL".to_string() } else { slug };
-    let sku = format!("AUTO-NL-{}-{}-{}", slug, kind.to_uppercase().replace('_', "-"), seed);
+    // SKU prefix: AUTO-NL-… for the default brand, BRAND-MU-NL-… for collab
+    // drops (so e.g. "JIUFLOW-MU-NL-KIMURA-RASHGUARD-LS-…" is self-describing).
+    let brand_slug_raw = q.brand.as_deref().unwrap_or("auto").to_lowercase();
+    let brand_for_sku: String = brand_slug_raw.chars()
+        .filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_uppercase();
+    let sku = if brand_slug_raw == "auto" {
+        format!("AUTO-NL-{}-{}-{}", slug, kind.to_uppercase().replace('_', "-"), seed)
+    } else {
+        format!("{}-MU-NL-{}-{}-{}", brand_for_sku, slug,
+                kind.to_uppercase().replace('_', "-"), seed)
+    };
 
     // Direct-insert (skip generate_one's strict theme lookup since this
     // is an ad-hoc one) with retail_jpy override. The 4 background image
@@ -1775,14 +1794,26 @@ pub async fn admin_nl_add(
     };
     {
         let conn = db.lock().unwrap();
-        let _ = conn.execute(
-            "INSERT OR IGNORE INTO catalog_brands
-             (slug, name, emoji, color_primary, tagline, is_active, revenue_share_pct)
-             VALUES ('auto', 'AUTO (AI-generated)', '🤖', '#ffd700',
-                     'Gemini × Printful POD · 30 分自動生成', 1, 0)",
-            [],
-        );
-        let desc = format!("{} — {}", display, hook);
+        // Only auto-create the 'auto' brand row — for explicit brands the
+        // operator is expected to have seeded the catalog_brands row already
+        // (so we don't accidentally spawn typo'd brand slugs).
+        if brand_slug_raw == "auto" {
+            let _ = conn.execute(
+                "INSERT OR IGNORE INTO catalog_brands
+                 (slug, name, emoji, color_primary, tagline, is_active, revenue_share_pct)
+                 VALUES ('auto', 'AUTO (AI-generated)', '🤖', '#ffd700',
+                         'Gemini × Printful POD · 30 分自動生成', 1, 0)",
+                [],
+            );
+        }
+        let desc = match q.collab.as_deref() {
+            Some(c) if !c.is_empty() => format!("{} × {} — {}", c, display, hook),
+            _ => format!("{} — {}", display, hook),
+        };
+        let legacy = match q.collab.as_deref() {
+            Some(c) if !c.is_empty() => format!("nl_add_collab_{}", c.to_lowercase()),
+            _ => "nl_add".to_string(),
+        };
         let _ = conn.execute(
             "INSERT INTO catalog_products (
                 sku, brand, label, description_ja, retail_price_jpy,
@@ -1792,14 +1823,14 @@ pub async fn admin_nl_add(
                 is_active, sort_order, status, fulfillment_route, legacy_source
              ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             rusqlite::params![
-                &sku, "auto", desc, desc, retail_jpy,
+                &sku, &brand_slug_raw, desc, desc, retail_jpy,
                 spec.printful_product_id, spec.printful_variant_id, spec.placement,
                 0, 0,
                 &url, &url, &url,
                 1, 50,
                 "live",
                 if matches!(kind, "rashguard_ls"|"rashguard_black") { "printful_aop" } else { "printful_dtg" },
-                "nl_add",
+                &legacy,
             ],
         );
     }
