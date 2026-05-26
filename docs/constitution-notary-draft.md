@@ -213,6 +213,6 @@ SHA-256: `0f974e00ac7d17caa9e14ca4f57e1a395e6ba42d4f0bc2d18528844c3e63531b`
 株式会社イネブラ (Enabler Inc.)
 代表取締役 濱田優貴
 本店: 〒102-0074 東京都千代田区九段南 1-5-6 りそな九段ビル 5 階 KS フロア
-連絡先: mail@yukihamada.jp / 090-7409-0407
+連絡先: mail@yukihamada.jp 
 
 起草日: 2026-05-21

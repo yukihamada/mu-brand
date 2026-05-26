@@ -76,7 +76,7 @@
 株式会社イネブラ (Enabler Inc.) — 代表取締役
 〒102-0074 東京都千代田区九段南 1-5-6 りそな九段ビル 5F KS フロア
 mail : mail@yukihamada.jp
-tel  : 090-7409-0407
+
 web  : https://enablerdao.com / https://wearmu.com
 ────────────────────────────────────────
 ```

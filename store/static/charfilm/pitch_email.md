@@ -46,7 +46,7 @@ CHAR 様の <b>15 年分の奄美の海</b> (charfilm.com / charfilm.thebase.in)
 ──
 濱田 優貴
 株式会社イネブラ 代表取締役
-mail@yukihamada.jp · 090-7409-0407
+mail@yukihamada.jp · 
 https://wearmu.com
 ```
 

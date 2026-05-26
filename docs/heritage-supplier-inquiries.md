@@ -73,7 +73,7 @@
 株式会社イネブラ (Enabler Inc.)
 代表取締役 濱田 優貴
 〒102-0074 東京都千代田区九段南 1-5-6 りそな九段ビル 5F
-mail@yukihamada.jp / 090-7409-0407
+mail@yukihamada.jp 
 wearmu.com / enablerdao.com
 ```
 
@@ -139,7 +139,7 @@ wearmu.com / enablerdao.com
 株式会社イネブラ (Enabler Inc.)
 代表取締役 濱田 優貴
 〒102-0074 東京都千代田区九段南 1-5-6 りそな九段ビル 5F
-mail@yukihamada.jp / 090-7409-0407
+mail@yukihamada.jp 
 ```
 
 ### 添付 / リンク 案
@@ -206,7 +206,7 @@ mail@yukihamada.jp / 090-7409-0407
 株式会社イネブラ (Enabler Inc.)
 代表取締役 濱田 優貴
 〒102-0074 東京都千代田区九段南 1-5-6 りそな九段ビル 5F
-mail@yukihamada.jp / 090-7409-0407
+mail@yukihamada.jp 
 wearmu.com / enablerdao.com
 ```
 

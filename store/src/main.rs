@@ -47275,7 +47275,7 @@ code{{background:#050505;padding:2px 6px;border-radius:3px;color:#aaa;font-size:
     <div class="row split">
       <div>
         <label>郵便番号 *</label>
-        <input type="text" name="postal_code" required maxlength="8" placeholder="108-0073" inputmode="numeric">
+        <input type="text" name="postal_code" required maxlength="8" placeholder="例: 102-0074" inputmode="numeric">
         <div class="hint">ハイフン任意</div>
       </div>
       <div>
@@ -47285,15 +47285,15 @@ code{{background:#050505;padding:2px 6px;border-radius:3px;color:#aaa;font-size:
     </div>
     <div class="row">
       <label>市区町村 *</label>
-      <input type="text" name="city" required maxlength="80" placeholder="港区三田">
+      <input type="text" name="city" required maxlength="80" placeholder="例: 千代田区九段南">
     </div>
     <div class="row">
       <label>番地・建物名 (1行目) *</label>
-      <input type="text" name="line1" required maxlength="120" placeholder="2-7-1 THE RESIDENCE三田">
+      <input type="text" name="line1" required maxlength="120" placeholder="例: 1-2-3 ◯◯ビル">
     </div>
     <div class="row">
       <label>部屋番号など (2行目)</label>
-      <input type="text" name="line2" maxlength="120" placeholder="1913号室">
+      <input type="text" name="line2" maxlength="120" placeholder="例: 501号室">
     </div>
     <div class="row split">
       <div>

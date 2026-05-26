@@ -54,5 +54,5 @@ favicon は刺繍 digitizing には不十分 (32px 低解像度のため)。
 ────────────────────
 濱田 優貴
 株式会社イネブラ (Enabler Inc.)
-mail@yukihamada.jp / 090-7409-0407
+mail@yukihamada.jp 
 ```
