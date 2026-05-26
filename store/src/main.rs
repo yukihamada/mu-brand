@@ -46994,6 +46994,707 @@ async fn ma_retire(
     })).into_response()
 }
 
+// ════════════════════════════════════════════════════════════════════════
+// MA winner shipping form (2026-05-26)
+// ════════════════════════════════════════════════════════════════════════
+//
+// MA bid Stripe Checkout was set up WITHOUT shipping_address_collection.
+// Captured bids therefore have no usable address. /ma/ship/:token is a
+// post-payment form: winner inputs name + JP address + size; on submit
+// we create a Printful order against the product's design_url and store
+// the printful_order_id on the bids row.
+//
+// Token = `<bid_id>-<8hex_hmac>` signed with ADMIN_TOKEN (existing secret).
+// Single-use in the soft sense: once printful_order_id is set the form
+// switches to a read-only "submitted" view so the buyer can confirm.
+
+fn ma_ship_token_secret() -> String {
+    // Prefer a dedicated secret if set; otherwise fall back to ADMIN_TOKEN.
+    // Either is fine — the URL is private and time-bounded by the lifecycle.
+    env::var("MA_SHIP_TOKEN_SECRET")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| env::var("ADMIN_TOKEN").ok())
+        .unwrap_or_default()
+}
+
+fn ma_ship_token_for(bid_id: i64) -> String {
+    type HmacSha256 = Hmac<Sha256>;
+    let key = ma_ship_token_secret();
+    let mut mac = HmacSha256::new_from_slice(key.as_bytes())
+        .expect("HMAC accepts any key length");
+    mac.update(format!("ma_ship_v1_{}", bid_id).as_bytes());
+    let sig = mac.finalize().into_bytes();
+    let hex: String = sig.iter().take(8).map(|b| format!("{:02x}", b)).collect();
+    format!("{}-{}", bid_id, hex)
+}
+
+fn ma_ship_verify_token(token: &str) -> Option<i64> {
+    let (bid_str, _sig) = token.split_once('-')?;
+    let bid_id: i64 = bid_str.parse().ok()?;
+    let expected = ma_ship_token_for(bid_id);
+    // constant-time compare on the whole token
+    if svix_constant_time_eq(token.as_bytes(), expected.as_bytes()) {
+        Some(bid_id)
+    } else { None }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct MaShipBody {
+    recipient_name: String,
+    postal_code: String,
+    state: String,
+    city: String,
+    line1: String,
+    #[serde(default)] line2: String,
+    #[serde(default)] phone: String,
+    size: String,
+}
+
+/// Look up the design URL + bid metadata used to render the form & build
+/// the Printful order. Returns None if the bid isn't captured.
+fn ma_ship_lookup(db: &Db, bid_id: i64) -> Option<MaShipBidInfo> {
+    let conn = db.lock().unwrap();
+    let row: rusqlite::Result<MaShipBidInfo> = conn.query_row(
+        "SELECT b.id, b.product_id, b.amount, b.email, b.auth_status,
+                COALESCE(p.name,''),
+                COALESCE(p.design_url,''),
+                COALESCE(p.mockup_url,''),
+                b.ship_recipient_name, b.ship_postal_code, b.ship_state, b.ship_city,
+                b.ship_line1, b.ship_line2, b.ship_phone, b.ship_size,
+                b.ship_submitted_at, b.printful_order_id, b.printful_status,
+                b.printful_error
+         FROM bids b LEFT JOIN products p ON p.id = b.product_id
+         WHERE b.id = ?",
+        params![bid_id],
+        |r| Ok(MaShipBidInfo {
+            bid_id:        r.get(0)?,
+            product_id:    r.get(1)?,
+            amount:        r.get(2)?,
+            email:         r.get(3)?,
+            auth_status:   r.get(4)?,
+            product_name:  r.get(5)?,
+            design_url:    r.get(6)?,
+            mockup_url:    r.get(7)?,
+            ship_name:     r.get::<_, Option<String>>(8)?.unwrap_or_default(),
+            ship_postal:   r.get::<_, Option<String>>(9)?.unwrap_or_default(),
+            ship_state:    r.get::<_, Option<String>>(10)?.unwrap_or_default(),
+            ship_city:     r.get::<_, Option<String>>(11)?.unwrap_or_default(),
+            ship_line1:    r.get::<_, Option<String>>(12)?.unwrap_or_default(),
+            ship_line2:    r.get::<_, Option<String>>(13)?.unwrap_or_default(),
+            ship_phone:    r.get::<_, Option<String>>(14)?.unwrap_or_default(),
+            ship_size:     r.get::<_, Option<String>>(15)?.unwrap_or_default(),
+            ship_submitted_at: r.get::<_, Option<String>>(16)?.unwrap_or_default(),
+            printful_order_id: r.get::<_, Option<String>>(17)?.unwrap_or_default(),
+            printful_status:   r.get::<_, Option<String>>(18)?.unwrap_or_default(),
+            printful_error:    r.get::<_, Option<String>>(19)?.unwrap_or_default(),
+        }),
+    );
+    row.ok()
+}
+
+struct MaShipBidInfo {
+    bid_id: i64,
+    product_id: i64,
+    amount: i64,
+    email: String,
+    auth_status: String,
+    product_name: String,
+    design_url: String,
+    mockup_url: String,
+    ship_name: String,
+    ship_postal: String,
+    ship_state: String,
+    ship_city: String,
+    ship_line1: String,
+    ship_line2: String,
+    ship_phone: String,
+    ship_size: String,
+    ship_submitted_at: String,
+    printful_order_id: String,
+    printful_status: String,
+    printful_error: String,
+}
+
+fn ma_ship_size_to_variant(size: &str) -> u64 {
+    // Bella+Canvas 3001 Black (Printful product 71) — same family as MUGEN/MUON
+    match size {
+        "S"  => 4016,
+        "M"  => 4017,
+        "L"  => 4018,
+        "XL" => 4019,
+        "XXL" | "2XL" => 4020,
+        _    => 4017,
+    }
+}
+
+/// GET /ma/ship/:token — form page (or submitted view).
+async fn ma_ship_page(
+    State(db): State<Db>,
+    Path(token): Path<String>,
+) -> Response {
+    let bid_id = match ma_ship_verify_token(&token) {
+        Some(id) => id,
+        None => return (StatusCode::NOT_FOUND, "リンクが無効です").into_response(),
+    };
+    let info = match ma_ship_lookup(&db, bid_id) {
+        Some(i) => i,
+        None => return (StatusCode::NOT_FOUND, "落札情報が見つかりません").into_response(),
+    };
+    if info.auth_status != "captured" {
+        return (StatusCode::FORBIDDEN, "このオークションはまだ決済確定していません").into_response();
+    }
+
+    let mockup_html = if !info.mockup_url.is_empty() {
+        format!(r#"<img src="{}" alt="MA design" style="width:100%;max-width:320px;border-radius:8px;border:1px solid #1c1c1c;margin:0 auto;display:block">"#,
+                html_escape(&info.mockup_url))
+    } else { String::new() };
+
+    // Already submitted? Show status.
+    if !info.ship_submitted_at.is_empty() {
+        let pf_line = if !info.printful_order_id.is_empty() {
+            format!(r#"<tr><td class="k">Printful order</td><td><code>{}</code> ({})</td></tr>"#,
+                    html_escape(&info.printful_order_id),
+                    html_escape(if info.printful_status.is_empty() { "draft" } else { &info.printful_status }))
+        } else if !info.printful_error.is_empty() {
+            format!(r#"<tr><td class="k">Printful</td><td style="color:#ff4a3d">エラー: {} (運営が手動で対応します)</td></tr>"#,
+                    html_escape(&info.printful_error))
+        } else {
+            r#"<tr><td class="k">Printful</td><td style="color:#888">手動確認中</td></tr>"#.to_string()
+        };
+        let html = format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><title>間 ({}) · 発送情報受領 · MU</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
+<style>
+body{{background:#0A0A0A;color:#F5F5F0;font-family:ui-monospace,"Hiragino Sans",Menlo,sans-serif;margin:0;padding:32px 20px;font-size:14px;line-height:1.7}}
+.wrap{{max-width:560px;margin:0 auto}}
+h1{{font-size:13px;letter-spacing:0.4em;margin:0 0 6px;color:#e6c449}}
+.sub{{color:#888;font-size:11px;letter-spacing:0.18em;margin-bottom:28px}}
+table{{width:100%;border-collapse:collapse;background:#0c0c0c;border:1px solid #1c1c1c;border-radius:8px;overflow:hidden;margin:24px 0}}
+td{{padding:11px 14px;border-bottom:1px solid #161616;vertical-align:top}}
+td:last-child{{text-align:right}}
+tr:last-child td{{border-bottom:none}}
+td.k{{color:#888;font-size:11px;letter-spacing:0.18em;text-transform:uppercase}}
+code{{background:#050505;padding:2px 6px;border-radius:3px;color:#aaa;font-size:11px}}
+.note{{color:#666;font-size:12px;border-top:1px solid #1c1c1c;padding-top:16px;margin-top:32px;line-height:1.9}}
+</style></head><body><div class="wrap">
+  <h1>━◯━ MA · 発送情報 受領済み</h1>
+  <div class="sub">{name} (¥{amount})</div>
+  {mockup}
+  <table>
+    <tr><td class="k">提出日時 (JST)</td><td>{sub}</td></tr>
+    <tr><td class="k">お名前</td><td>{rn}</td></tr>
+    <tr><td class="k">〒</td><td>{zip}</td></tr>
+    <tr><td class="k">住所</td><td>{st} {ci}<br>{l1}{l2}</td></tr>
+    <tr><td class="k">電話</td><td>{ph}</td></tr>
+    <tr><td class="k">サイズ</td><td>{sz}</td></tr>
+    {pf}
+  </table>
+  <div class="note">
+    発送状況に変更がある場合は <a style="color:#e6c449" href="mailto:info@wearmu.com?subject=MA%20%E7%99%BA%E9%80%81%20%23{bid}">info@wearmu.com</a> までご連絡ください。<br>
+    Printful 工場で印刷 (3-5日) → 国際発送 (5-10日)、合計 8-15日で到着予定。
+  </div>
+</div></body></html>"##,
+            html_escape(&info.product_name),
+            name = html_escape(&info.product_name),
+            amount = info.amount,
+            mockup = mockup_html,
+            sub = html_escape(&info.ship_submitted_at),
+            rn = html_escape(&info.ship_name),
+            zip = html_escape(&info.ship_postal),
+            st = html_escape(&info.ship_state),
+            ci = html_escape(&info.ship_city),
+            l1 = html_escape(&info.ship_line1),
+            l2 = if info.ship_line2.is_empty() { String::new() } else { format!("<br>{}", html_escape(&info.ship_line2)) },
+            ph = if info.ship_phone.is_empty() { "—".to_string() } else { html_escape(&info.ship_phone) },
+            sz = html_escape(&info.ship_size),
+            pf = pf_line,
+            bid = info.bid_id,
+        );
+        return Html(html).into_response();
+    }
+
+    // Form mode
+    let email_masked = if let Some((u, d)) = info.email.split_once('@') {
+        let u_short = if u.len() <= 2 { u.to_string() } else { format!("{}***", &u[..2]) };
+        format!("{}@{}", u_short, d)
+    } else { info.email.clone() };
+
+    let html = format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><title>間 ({pname}) · 発送先入力 · MU</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
+<style>
+body{{background:#0A0A0A;color:#F5F5F0;font-family:ui-monospace,"Hiragino Sans",Menlo,sans-serif;margin:0;padding:32px 20px;font-size:14px;line-height:1.7}}
+.wrap{{max-width:560px;margin:0 auto}}
+h1{{font-size:13px;letter-spacing:0.4em;margin:0 0 6px;color:#e6c449}}
+.sub{{color:#888;font-size:11px;letter-spacing:0.18em;margin-bottom:24px}}
+.intro{{color:#bbb;font-size:13px;margin-bottom:28px;line-height:1.85;border-left:2px solid #e6c449;padding-left:14px}}
+form{{background:#0c0c0c;border:1px solid #1c1c1c;border-radius:8px;padding:22px 20px}}
+.row{{margin-bottom:14px}}
+.row.split{{display:grid;grid-template-columns:1fr 1fr;gap:12px}}
+label{{display:block;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;color:#888;margin-bottom:6px}}
+input,select{{width:100%;background:#050505;border:1px solid #1c1c1c;color:#F5F5F0;padding:11px 13px;font-family:inherit;font-size:14px;border-radius:4px;box-sizing:border-box}}
+input:focus,select:focus{{outline:none;border-color:#e6c449}}
+.hint{{color:#666;font-size:11px;margin-top:4px}}
+button{{width:100%;background:#e6c449;border:none;color:#0a0a0a;padding:14px;font-size:13px;letter-spacing:0.22em;text-transform:uppercase;font-weight:700;border-radius:4px;cursor:pointer;margin-top:8px;font-family:inherit}}
+button:hover{{background:#f0d068}}
+button:disabled{{background:#333;color:#888;cursor:not-allowed}}
+.err{{color:#ff4a3d;font-size:12px;margin-top:12px;display:none}}
+.ok{{color:#7be57b;font-size:13px;margin-top:18px;display:none;text-align:center;padding:14px;border:1px solid #2a3a2a;background:#0a1410;border-radius:4px}}
+.note{{color:#666;font-size:11px;border-top:1px solid #1c1c1c;padding-top:16px;margin-top:28px;line-height:1.9}}
+code{{background:#050505;padding:2px 6px;border-radius:3px;color:#aaa;font-size:11px}}
+</style></head><body><div class="wrap">
+  <h1>━◯━ MA · 発送先入力</h1>
+  <div class="sub">{pname} (¥{amt} 落札済 · {email})</div>
+  {mockup}
+  <div class="intro">
+    この度は <strong>{pname}</strong> ご落札ありがとうございます。<br>
+    Stripe 決済時に配送先住所をお伺いできなかったため、こちらのフォームから配送先をお知らせください。<br>
+    送信後、自動的に Printful 工場へ発注いたします。
+  </div>
+  <form id="f">
+    <div class="row">
+      <label>お名前 (受取人) *</label>
+      <input type="text" name="recipient_name" required maxlength="100" placeholder="山田 太郎">
+    </div>
+    <div class="row split">
+      <div>
+        <label>郵便番号 *</label>
+        <input type="text" name="postal_code" required maxlength="8" placeholder="108-0073" inputmode="numeric">
+        <div class="hint">ハイフン任意</div>
+      </div>
+      <div>
+        <label>都道府県 *</label>
+        <input type="text" name="state" required maxlength="20" placeholder="東京都">
+      </div>
+    </div>
+    <div class="row">
+      <label>市区町村 *</label>
+      <input type="text" name="city" required maxlength="80" placeholder="港区三田">
+    </div>
+    <div class="row">
+      <label>番地・建物名 (1行目) *</label>
+      <input type="text" name="line1" required maxlength="120" placeholder="2-7-1 THE RESIDENCE三田">
+    </div>
+    <div class="row">
+      <label>部屋番号など (2行目)</label>
+      <input type="text" name="line2" maxlength="120" placeholder="1913号室">
+    </div>
+    <div class="row split">
+      <div>
+        <label>電話番号</label>
+        <input type="tel" name="phone" maxlength="20" placeholder="090-0000-0000">
+        <div class="hint">配送業者からの連絡用 (任意)</div>
+      </div>
+      <div>
+        <label>T シャツサイズ *</label>
+        <select name="size" required>
+          <option value="">選択</option>
+          <option value="S">S</option>
+          <option value="M" selected>M</option>
+          <option value="L">L</option>
+          <option value="XL">XL</option>
+          <option value="XXL">XXL</option>
+        </select>
+      </div>
+    </div>
+    <button type="submit" id="btn">━◯━ 発送先を確定する</button>
+    <div class="err" id="err"></div>
+    <div class="ok" id="ok"></div>
+  </form>
+  <div class="note">
+    • 印刷は Printful 工場 (米国/EU) → 国際発送、合計 8-15 日で到着予定。<br>
+    • 入力された情報は配送のためだけに使用されます ([プライバシーポリシー](/privacy))。<br>
+    • ご質問は <a style="color:#e6c449" href="mailto:info@wearmu.com?subject=MA%20%23{bid}%20%E3%81%A4%E3%81%84%E3%81%A6">info@wearmu.com</a> まで。
+  </div>
+</div>
+<script>
+const f = document.getElementById('f');
+const btn = document.getElementById('btn');
+const err = document.getElementById('err');
+const ok  = document.getElementById('ok');
+f.addEventListener('submit', async (e) => {{
+  e.preventDefault();
+  err.style.display = 'none'; ok.style.display = 'none';
+  btn.disabled = true; btn.textContent = '送信中…';
+  const fd = new FormData(f);
+  const body = {{}};
+  for (const [k,v] of fd.entries()) body[k] = String(v).trim();
+  body.postal_code = body.postal_code.replace(/[-－―]/g,'');
+  try {{
+    const r = await fetch('/api/ma/ship/{token}', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify(body),
+    }});
+    const j = await r.json().catch(()=>({{}}));
+    if (!r.ok) {{
+      err.textContent = j.error || ('送信失敗 (HTTP '+r.status+')');
+      err.style.display = 'block';
+      btn.disabled = false; btn.textContent = '━◯━ 発送先を確定する';
+      return;
+    }}
+    ok.innerHTML = '受け付けました。<br>このページを再読込すると確認画面が表示されます。';
+    ok.style.display = 'block';
+    setTimeout(()=>{{ location.reload(); }}, 1800);
+  }} catch (e) {{
+    err.textContent = '通信エラー: ' + e.message;
+    err.style.display = 'block';
+    btn.disabled = false; btn.textContent = '━◯━ 発送先を確定する';
+  }}
+}});
+</script>
+</body></html>"##,
+        pname = html_escape(&info.product_name),
+        amt = info.amount,
+        email = html_escape(&email_masked),
+        mockup = mockup_html,
+        token = html_escape(&token),
+        bid = info.bid_id,
+    );
+    Html(html).into_response()
+}
+
+/// POST /api/ma/ship/:token — accept submission, create Printful order.
+async fn ma_ship_submit(
+    State(db): State<Db>,
+    Path(token): Path<String>,
+    Json(body): Json<MaShipBody>,
+) -> Response {
+    let bid_id = match ma_ship_verify_token(&token) {
+        Some(id) => id,
+        None => return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error":"invalid token"}))).into_response(),
+    };
+    let info = match ma_ship_lookup(&db, bid_id) {
+        Some(i) => i,
+        None => return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error":"bid not found"}))).into_response(),
+    };
+    if info.auth_status != "captured" {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error":"this auction is not settled yet"}))).into_response();
+    }
+    if !info.printful_order_id.is_empty() {
+        return (StatusCode::CONFLICT, Json(serde_json::json!({
+            "error": "already submitted",
+            "printful_order_id": info.printful_order_id,
+        }))).into_response();
+    }
+    // Basic validation
+    let trim = |s: &str| s.trim().to_string();
+    let recipient = trim(&body.recipient_name);
+    let postal = trim(&body.postal_code).replace('-', "");
+    let state = trim(&body.state);
+    let city = trim(&body.city);
+    let line1 = trim(&body.line1);
+    let line2 = trim(&body.line2);
+    let phone = trim(&body.phone);
+    let size = trim(&body.size).to_uppercase();
+    if recipient.is_empty() || postal.len() < 7 || state.is_empty() || city.is_empty() || line1.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"必須項目が未入力です"}))).into_response();
+    }
+    if !matches!(size.as_str(), "S"|"M"|"L"|"XL"|"XXL"|"2XL") {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"サイズが不正です"}))).into_response();
+    }
+
+    // Persist shipping form data (idempotent: write before Printful so we
+    // never lose customer input if Printful errors out).
+    let now = chrono_now();
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE bids SET
+                ship_recipient_name=?, ship_postal_code=?, ship_state=?, ship_city=?,
+                ship_line1=?, ship_line2=?, ship_phone=?, ship_size=?, ship_submitted_at=?
+             WHERE id=?",
+            params![recipient, postal, state, city, line1, line2, phone, size, now, bid_id],
+        );
+    }
+
+    // Build & submit Printful order.
+    let design_url = if !info.design_url.is_empty() { info.design_url.clone() }
+                     else { info.mockup_url.clone() };
+    if design_url.is_empty() {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE bids SET printful_error=? WHERE id=?",
+            params!["product design_url missing", bid_id],
+        );
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+            "error":"商品デザインが見つかりません。運営にメールでご連絡ください (info@wearmu.com)",
+        }))).into_response();
+    }
+    let variant_id = ma_ship_size_to_variant(&size);
+    let printful_key = env::var("PRINTFUL_API_KEY").unwrap_or_default();
+    if printful_key.is_empty() {
+        // Save the form but flag that Printful was not configured.
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE bids SET printful_error=? WHERE id=?",
+            params!["PRINTFUL_API_KEY not set", bid_id],
+        );
+        // Telegram alert for manual handling.
+        let alert = format!(
+            "⚠ MA ship form submitted but Printful not configured\n\nbid #{} (¥{})\nproduct: {} (#{})\nemail: {}\n→ /admin/bids?token=...",
+            bid_id, info.amount, info.product_name, info.product_id, info.email,
+        );
+        tokio::spawn(async move { send_telegram_message(&alert).await; });
+        return Json(serde_json::json!({
+            "ok": true,
+            "printful_order_id": null,
+            "note": "受領しました。Printful 接続未設定のため、運営が手動で発注いたします。",
+        })).into_response();
+    }
+
+    let order_json = serde_json::json!({
+        "recipient": {
+            "name":         recipient,
+            "address1":     line1,
+            "address2":     line2,
+            "city":         city,
+            "state_code":   state,
+            "country_code": "JP",
+            "zip":          postal,
+            "phone":        phone,
+            "email":        info.email,
+        },
+        "items": [{
+            "variant_id": variant_id,
+            "quantity": 1,
+            "files": [
+                {"url": design_url, "placement": "front"}
+            ],
+        }],
+        "confirm": true,
+        "external_id": format!("ma-bid-{}", bid_id),
+    });
+    let client = reqwest::Client::new();
+    let resp = client.post("https://api.printful.com/orders")
+        .bearer_auth(&printful_key).json(&order_json).send().await;
+
+    match resp {
+        Ok(r) if r.status().is_success() => {
+            let body_json: serde_json::Value = r.json().await.unwrap_or_default();
+            let pf_id = body_json["result"]["id"].as_i64().map(|n| n.to_string())
+                .or_else(|| body_json["result"]["id"].as_str().map(String::from))
+                .unwrap_or_default();
+            let pf_status = body_json["result"]["status"].as_str()
+                .unwrap_or("draft").to_string();
+            {
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "UPDATE bids SET printful_order_id=?, printful_status=?, printful_submitted_at=?, printful_error=NULL
+                     WHERE id=?",
+                    params![pf_id, pf_status, chrono_now(), bid_id],
+                );
+            }
+            let pname = info.product_name.clone();
+            let email = info.email.clone();
+            let amt = info.amount;
+            let pf_id_clone = pf_id.clone();
+            tokio::spawn(async move {
+                send_telegram_message(&format!(
+                    "📦 MA shipping form submitted\n\nbid #{} (¥{})\nproduct: {}\nemail: {}\nPrintful: {}",
+                    bid_id, amt, pname, email, pf_id_clone,
+                )).await;
+            });
+            Json(serde_json::json!({
+                "ok": true,
+                "printful_order_id": pf_id,
+                "printful_status": pf_status,
+            })).into_response()
+        }
+        Ok(r) => {
+            let status = r.status();
+            let txt = r.text().await.unwrap_or_default();
+            let err_short: String = txt.chars().take(500).collect();
+            eprintln!("[ma_ship] Printful error {}: {}", status, err_short);
+            {
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "UPDATE bids SET printful_error=? WHERE id=?",
+                    params![format!("HTTP {}: {}", status, err_short), bid_id],
+                );
+            }
+            let alert = format!(
+                "⚠ MA ship Printful HTTP {}\n\nbid #{} (¥{})\n{}",
+                status, bid_id, info.amount, err_short.chars().take(200).collect::<String>(),
+            );
+            tokio::spawn(async move { send_telegram_message(&alert).await; });
+            // Still return ok to buyer — their address is saved.
+            Json(serde_json::json!({
+                "ok": true,
+                "printful_order_id": null,
+                "note": "受領しました。発注処理は運営側で確認いたします。",
+            })).into_response()
+        }
+        Err(e) => {
+            eprintln!("[ma_ship] Printful http err: {}", e);
+            {
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "UPDATE bids SET printful_error=? WHERE id=?",
+                    params![format!("transport: {}", e), bid_id],
+                );
+            }
+            Json(serde_json::json!({
+                "ok": true,
+                "printful_order_id": null,
+                "note": "受領しました。発注処理は運営側で確認いたします。",
+            })).into_response()
+        }
+    }
+}
+
+/// GET /admin/ma/ship_urls?token=… — list ship form URLs for every
+/// captured-but-unshipped MA bid. Admin uses this to email each winner.
+async fn admin_ma_ship_urls(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/ma/ship_urls").await { return r; }
+    let host = env::var("PUBLIC_BASE_URL")
+        .unwrap_or_else(|_| "https://wearmu.com".into());
+    let rows: Vec<(i64, i64, i64, String, String, Option<String>, Option<String>, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT b.id, b.product_id, b.amount, b.email,
+                    COALESCE(p.name,''),
+                    b.ship_submitted_at, b.printful_order_id, b.printful_error
+             FROM bids b LEFT JOIN products p ON p.id = b.product_id
+             WHERE b.auth_status='captured'
+             ORDER BY b.id DESC",
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db err").into_response() };
+        let it = stmt.query_map([], |r| Ok((
+            r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?,
+            r.get::<_, String>(3)?, r.get::<_, String>(4)?,
+            r.get::<_, Option<String>>(5)?, r.get::<_, Option<String>>(6)?, r.get::<_, Option<String>>(7)?,
+        ))).map(|m| m.filter_map(|r| r.ok()).collect());
+        it.unwrap_or_default()
+    };
+    let mut items = Vec::new();
+    for (bid_id, pid, amount, email, pname, submitted, pf_oid, pf_err) in rows {
+        let token = ma_ship_token_for(bid_id);
+        items.push(serde_json::json!({
+            "bid_id": bid_id,
+            "product_id": pid,
+            "product_name": pname,
+            "amount_jpy": amount,
+            "email": email,
+            "ship_url": format!("{}/ma/ship/{}", host, token),
+            "ship_submitted_at": submitted,
+            "printful_order_id": pf_oid,
+            "printful_error": pf_err,
+        }));
+    }
+    Json(serde_json::json!({ "bids": items })).into_response()
+}
+
+/// POST /api/admin/ma/send_ship_email?token=…&bid_id=… — sends the form
+/// URL to the winner via Resend. dry_run=1 to preview without sending.
+async fn admin_ma_send_ship_email(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/ma/send_ship_email").await { return r; }
+    let bid_id: i64 = match q.get("bid_id").and_then(|s| s.parse().ok()) {
+        Some(v) => v, None => return (StatusCode::BAD_REQUEST, "bid_id required").into_response(),
+    };
+    let dry_run = q.get("dry_run").map(|s| s == "1" || s == "true").unwrap_or(false);
+    let info = match ma_ship_lookup(&db, bid_id) {
+        Some(i) => i,
+        None => return (StatusCode::NOT_FOUND, "bid not found").into_response(),
+    };
+    if info.auth_status != "captured" {
+        return (StatusCode::BAD_REQUEST, "bid is not captured").into_response();
+    }
+    if info.email.is_empty() {
+        return (StatusCode::BAD_REQUEST, "no email on bid").into_response();
+    }
+    let token = ma_ship_token_for(bid_id);
+    let host = env::var("PUBLIC_BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    let url = format!("{}/ma/ship/{}", host, token);
+    let subject = format!("[MU] 間 ({}) 落札ありがとうございます — 発送先のご入力をお願いします", info.product_name);
+    let body_html = format!(r##"<div style="font-family:'Hiragino Sans',Helvetica,Arial,sans-serif;color:#222;line-height:1.85;font-size:15px;max-width:560px">
+<p>{name} 様</p>
+
+<p>この度は MU の <strong>{pname}</strong> をご落札いただきありがとうございます (¥{amt} 確定済)。</p>
+
+<p>本来 Stripe 決済時にお伺いする発送先住所が、システムの不備により取得できておりませんでした。<br>
+誠に申し訳ございません。下記フォームよりご入力をお願いいたします。</p>
+
+<p style="margin:28px 0">
+  <a href="{url}" style="background:#e6c449;color:#0a0a0a;padding:14px 28px;text-decoration:none;border-radius:4px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;font-size:13px">━◯━ 発送先を入力する</a>
+</p>
+
+<p style="color:#666;font-size:13px">URL: <a href="{url}" style="color:#666">{url}</a></p>
+
+<p>フォーム送信後、Printful 工場へ自動発注し、印刷 3-5日 + 国際発送 5-10日、計 <strong>8-15日</strong> でお届け予定です。</p>
+
+<p>ご質問は本メールへの返信、または <a href="mailto:info@wearmu.com">info@wearmu.com</a> まで。</p>
+
+<p style="margin-top:32px;color:#666;font-size:13px">— Yuki / MU<br>株式会社イネブラ</p>
+</div>"##,
+        name = html_escape(info.email.split('@').next().unwrap_or("")),
+        pname = html_escape(&info.product_name),
+        amt = info.amount,
+        url = html_escape(&url),
+    );
+
+    if dry_run {
+        return Json(serde_json::json!({
+            "ok": true,
+            "dry_run": true,
+            "to": info.email,
+            "subject": subject,
+            "url": url,
+            "body_html_preview": body_html.chars().take(400).collect::<String>(),
+        })).into_response();
+    }
+
+    let resend_key = match env::var("RESEND_API_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => return (StatusCode::INTERNAL_SERVER_ERROR, "RESEND_API_KEY not set").into_response(),
+    };
+    let client = reqwest::Client::new();
+    let r = client.post("https://api.resend.com/emails")
+        .bearer_auth(&resend_key)
+        .json(&serde_json::json!({
+            "from": "━◯━ MU <info@wearmu.com>",
+            "to":   [info.email.clone()],
+            "subject": subject,
+            "html": body_html,
+            "reply_to": "info@wearmu.com",
+        })).send().await;
+    match r {
+        Ok(r) if r.status().is_success() => {
+            let body: serde_json::Value = r.json().await.unwrap_or_default();
+            let now = chrono_now();
+            {
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "INSERT INTO email_sends (to_email, kind, variant, subject, resend_id, sent_at, dry_run)
+                     VALUES (?,?,?,?,?,?,0)",
+                    params![info.email, "ma_ship_form", "A", subject,
+                            body["id"].as_str().unwrap_or(""), now],
+                );
+            }
+            Json(serde_json::json!({
+                "ok": true,
+                "to": info.email,
+                "resend_id": body["id"],
+                "url": url,
+            })).into_response()
+        }
+        Ok(r) => {
+            let s = r.status();
+            let t = r.text().await.unwrap_or_default();
+            (StatusCode::BAD_GATEWAY, format!("Resend HTTP {}: {}", s, t)).into_response()
+        }
+        Err(e) => (StatusCode::BAD_GATEWAY, format!("Resend transport err: {}", e)).into_response(),
+    }
+}
+
 /// GET /ma/retired — public retirement ledger.
 async fn ma_retired_ledger(State(db): State<Db>) -> Html<String> {
     let rows: Vec<(i64, String, String, String, i64)> = {
@@ -58662,6 +59363,24 @@ async fn main() {
             // 'authorized'  = card authorized, funds on hold
             // 'captured'    = settled (winner)
             // 'cancelled'   = released (loser, expired, or replaced by higher bid)
+        // MA winner shipping form (2026-05-26): MA bid Stripe Checkout was
+        // never set up to collect shipping addresses, so captured bids sat
+        // with payment_status=paid but no fulfillment. /ma/ship/:token lets
+        // the winner submit their address; on submit we create a Printful
+        // order and store the id here.
+        "ALTER TABLE bids ADD COLUMN ship_recipient_name TEXT",
+        "ALTER TABLE bids ADD COLUMN ship_postal_code TEXT",
+        "ALTER TABLE bids ADD COLUMN ship_state TEXT",
+        "ALTER TABLE bids ADD COLUMN ship_city TEXT",
+        "ALTER TABLE bids ADD COLUMN ship_line1 TEXT",
+        "ALTER TABLE bids ADD COLUMN ship_line2 TEXT",
+        "ALTER TABLE bids ADD COLUMN ship_phone TEXT",
+        "ALTER TABLE bids ADD COLUMN ship_size TEXT",
+        "ALTER TABLE bids ADD COLUMN ship_submitted_at TEXT",
+        "ALTER TABLE bids ADD COLUMN printful_order_id TEXT",
+        "ALTER TABLE bids ADD COLUMN printful_status TEXT",
+        "ALTER TABLE bids ADD COLUMN printful_submitted_at TEXT",
+        "ALTER TABLE bids ADD COLUMN printful_error TEXT",
         // Idempotent fix-up: any MA row missing mockup_url falls back to
         // design_url so the embed/catalog has something to render. Catches
         // /api/admin/ma/launch invocations from before the auto-default.
@@ -63352,6 +64071,11 @@ async fn main() {
         .route("/retired", get(|| async { axum::response::Redirect::permanent("/ma/retired") }))
         .route("/api/ma/retire",             post(ma_retire))
         .route("/api/admin/ma_retire/notify", post(admin_ma_retire_notify))
+        // MA winner shipping form (post-payment address collection).
+        .route("/ma/ship/:token",            get(ma_ship_page))
+        .route("/api/ma/ship/:token",        post(ma_ship_submit))
+        .route("/admin/ma/ship_urls",        get(admin_ma_ship_urls))
+        .route("/api/admin/ma/send_ship_email", post(admin_ma_send_ship_email))
         // B: Multi-city
         .route("/cities",                    get(cities_page))
         // Regional cool URLs — explicit per-city routes so they don't shadow
