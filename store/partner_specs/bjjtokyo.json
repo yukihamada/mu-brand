@@ -14,11 +14,26 @@
     "accent_hex": "#0a4d9c",
     "lede": "柔術は、足し算ではなく引き算だ。余計な力を抜き、ノイズを削り、最短で極める。MU の哲学「静かに、速く」を、東京の競技柔術にそのまま落とし込んだのが BJJ TOKYO。無・月・円相・柔・帯 — MU のミニマルな記号と柔術の語彙だけで組んだ、道場から大会まで揃う競技ラインです。",
     "hero_kv": [
-      ["カテゴリ", "競技柔術アパレル"],
-      ["初回ドロップ", "16 SKU（100 SKU まで拡張予定）"],
-      ["拠点 / ドメイン", "東京 / bjj.tokyo"],
-      ["デザイン", "MU（無 / 月 / 円相 / 柔 / 帯）"],
-      ["アクセント", "柔術ブルー #0a4d9c（青帯へのオマージュ）"]
+      [
+        "カテゴリ",
+        "競技柔術アパレル"
+      ],
+      [
+        "初回ドロップ",
+        "16 SKU（100 SKU まで拡張予定）"
+      ],
+      [
+        "拠点 / ドメイン",
+        "東京 / bjj.tokyo"
+      ],
+      [
+        "デザイン",
+        "MU（無 / 月 / 円相 / 柔 / 帯）"
+      ],
+      [
+        "アクセント",
+        "柔術ブルー #0a4d9c（青帯へのオマージュ）"
+      ]
     ],
     "why_md": "柔術は流派の数だけウェアがあるが、その多くは情報量が多すぎる。BJJ TOKYO は逆を行く。<br>無（むだを削る）、月（MU の系譜）、円相（一手で完結する禅の円）、柔（柔よく剛を制す）、帯（昇格の証）— 必要な記号だけを、モノクロ＋柔術ブルーの最小構成で組む。<br>練習着としても、大会の遠征着としても、道場の物販としても成立する。インクレス（在庫ゼロ）の POD なので、道場やアカデミーが自分の名前で展開することもできる。",
     "use_cases": [
@@ -31,21 +46,805 @@
     ]
   },
   "skus": [
-    { "letter": "a", "drop_num": 1,  "price_jpy": 8800, "label": "Rashguard LS · 円相 / 柔",        "kind": "rashguard_ls",  "design_slug": "monogram" },
-    { "letter": "b", "drop_num": 2,  "price_jpy": 7800, "label": "Rashguard SS (AOP) · 帯",          "kind": "athletic_tee",  "design_slug": "stripe"   },
-    { "letter": "c", "drop_num": 3,  "price_jpy": 7800, "label": "Grappling Spats · 帯",             "kind": "spats",         "design_slug": "stripe"   },
-    { "letter": "d", "drop_num": 4,  "price_jpy": 7800, "label": "Fight Shorts · 無 / 月",           "kind": "fight_shorts",  "design_slug": "stacked"  },
-    { "letter": "e", "drop_num": 5,  "price_jpy": 4900, "label": "Heavy Tee · 柔 円相 (Black)",      "kind": "tee",           "design_slug": "monogram" },
-    { "letter": "f", "drop_num": 6,  "price_jpy": 4900, "label": "Heavy Tee · BJJ TOKYO (White)",    "kind": "tee",           "design_slug": "wordmark" },
-    { "letter": "g", "drop_num": 7,  "price_jpy": 5400, "label": "Long Sleeve Tee · 無 / 月",        "kind": "longsleeve",    "design_slug": "stacked"  },
-    { "letter": "h", "drop_num": 8,  "price_jpy": 8800, "label": "Heavy Hoodie · 柔 円相",           "kind": "hoodie",        "design_slug": "monogram" },
-    { "letter": "i", "drop_num": 9,  "price_jpy": 7800, "label": "Crewneck · BJJ TOKYO",             "kind": "crewneck",      "design_slug": "wordmark" },
-    { "letter": "j", "drop_num": 10, "price_jpy": 8800, "label": "Track Pants (AOP) · 帯",           "kind": "track_pants",   "design_slug": "stripe"   },
-    { "letter": "k", "drop_num": 11, "price_jpy": 4400, "label": "Dad Hat · 無 / 月",                "kind": "dad_hat",       "design_slug": "stacked"  },
-    { "letter": "l", "drop_num": 12, "price_jpy": 3900, "label": "Knit Beanie · 柔",                 "kind": "beanie",        "design_slug": "monogram" },
-    { "letter": "m", "drop_num": 13, "price_jpy": 2900, "label": "Bandana · 帯",                     "kind": "bandana",       "design_slug": "stripe"   },
-    { "letter": "n", "drop_num": 14, "price_jpy": 3900, "label": "All-Over Print Tote · 無 / 月",     "kind": "tote",          "design_slug": "stacked"  },
-    { "letter": "o", "drop_num": 15, "price_jpy": 1400, "label": "Velcro Patch · 円相 柔",           "kind": "patch",         "design_slug": "monogram" },
-    { "letter": "p", "drop_num": 16, "price_jpy": 800,  "label": "Sticker Pack · 全マーク",          "kind": "sticker",       "design_slug": "wordmark" }
+    {
+      "letter": "a",
+      "drop_num": 1,
+      "price_jpy": 8800,
+      "label": "Rashguard LS · 柔 円相",
+      "kind": "rashguard_ls",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "b",
+      "drop_num": 2,
+      "price_jpy": 8800,
+      "label": "Rashguard LS · 帯",
+      "kind": "rashguard_ls",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "c",
+      "drop_num": 3,
+      "price_jpy": 8800,
+      "label": "Rashguard LS · 無 / 月",
+      "kind": "rashguard_ls",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "d",
+      "drop_num": 4,
+      "price_jpy": 8800,
+      "label": "Rashguard LS · BJJ TOKYO",
+      "kind": "rashguard_ls",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "e",
+      "drop_num": 5,
+      "price_jpy": 7800,
+      "label": "Rashguard SS (AOP) · 柔 円相",
+      "kind": "athletic_tee",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "f",
+      "drop_num": 6,
+      "price_jpy": 7800,
+      "label": "Rashguard SS (AOP) · 帯",
+      "kind": "athletic_tee",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "g",
+      "drop_num": 7,
+      "price_jpy": 7800,
+      "label": "Rashguard SS (AOP) · 無 / 月",
+      "kind": "athletic_tee",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "h",
+      "drop_num": 8,
+      "price_jpy": 7800,
+      "label": "Rashguard SS (AOP) · BJJ TOKYO",
+      "kind": "athletic_tee",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "i",
+      "drop_num": 9,
+      "price_jpy": 7800,
+      "label": "Grappling Spats · 柔 円相",
+      "kind": "spats",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "j",
+      "drop_num": 10,
+      "price_jpy": 7800,
+      "label": "Grappling Spats · 帯",
+      "kind": "spats",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "k",
+      "drop_num": 11,
+      "price_jpy": 7800,
+      "label": "Grappling Spats · 無 / 月",
+      "kind": "spats",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "l",
+      "drop_num": 12,
+      "price_jpy": 7800,
+      "label": "Grappling Spats · BJJ TOKYO",
+      "kind": "spats",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "m",
+      "drop_num": 13,
+      "price_jpy": 7800,
+      "label": "Fight Shorts · 柔 円相",
+      "kind": "fight_shorts",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "n",
+      "drop_num": 14,
+      "price_jpy": 7800,
+      "label": "Fight Shorts · 帯",
+      "kind": "fight_shorts",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "o",
+      "drop_num": 15,
+      "price_jpy": 7800,
+      "label": "Fight Shorts · 無 / 月",
+      "kind": "fight_shorts",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "p",
+      "drop_num": 16,
+      "price_jpy": 7800,
+      "label": "Fight Shorts · BJJ TOKYO",
+      "kind": "fight_shorts",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "q",
+      "drop_num": 17,
+      "price_jpy": 4900,
+      "label": "Heavy Tee · 柔 円相",
+      "kind": "tee",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "r",
+      "drop_num": 18,
+      "price_jpy": 4900,
+      "label": "Heavy Tee · 帯",
+      "kind": "tee",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "s",
+      "drop_num": 19,
+      "price_jpy": 4900,
+      "label": "Heavy Tee · 無 / 月",
+      "kind": "tee",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "t",
+      "drop_num": 20,
+      "price_jpy": 4900,
+      "label": "Heavy Tee · BJJ TOKYO",
+      "kind": "tee",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "u",
+      "drop_num": 21,
+      "price_jpy": 5400,
+      "label": "Long Sleeve Tee · 柔 円相",
+      "kind": "longsleeve",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "v",
+      "drop_num": 22,
+      "price_jpy": 5400,
+      "label": "Long Sleeve Tee · 帯",
+      "kind": "longsleeve",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "w",
+      "drop_num": 23,
+      "price_jpy": 5400,
+      "label": "Long Sleeve Tee · 無 / 月",
+      "kind": "longsleeve",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "x",
+      "drop_num": 24,
+      "price_jpy": 5400,
+      "label": "Long Sleeve Tee · BJJ TOKYO",
+      "kind": "longsleeve",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "y",
+      "drop_num": 25,
+      "price_jpy": 8800,
+      "label": "Heavy Hoodie · 柔 円相",
+      "kind": "hoodie",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "z",
+      "drop_num": 26,
+      "price_jpy": 8800,
+      "label": "Heavy Hoodie · 帯",
+      "kind": "hoodie",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "aa",
+      "drop_num": 27,
+      "price_jpy": 8800,
+      "label": "Heavy Hoodie · 無 / 月",
+      "kind": "hoodie",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "ab",
+      "drop_num": 28,
+      "price_jpy": 8800,
+      "label": "Heavy Hoodie · BJJ TOKYO",
+      "kind": "hoodie",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "ac",
+      "drop_num": 29,
+      "price_jpy": 7800,
+      "label": "Crewneck · 柔 円相",
+      "kind": "crewneck",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "ad",
+      "drop_num": 30,
+      "price_jpy": 7800,
+      "label": "Crewneck · 帯",
+      "kind": "crewneck",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "ae",
+      "drop_num": 31,
+      "price_jpy": 7800,
+      "label": "Crewneck · 無 / 月",
+      "kind": "crewneck",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "af",
+      "drop_num": 32,
+      "price_jpy": 7800,
+      "label": "Crewneck · BJJ TOKYO",
+      "kind": "crewneck",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "ag",
+      "drop_num": 33,
+      "price_jpy": 9800,
+      "label": "Zip Hoodie · 柔 円相",
+      "kind": "zip_hoodie",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "ah",
+      "drop_num": 34,
+      "price_jpy": 9800,
+      "label": "Zip Hoodie · 帯",
+      "kind": "zip_hoodie",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "ai",
+      "drop_num": 35,
+      "price_jpy": 9800,
+      "label": "Zip Hoodie · 無 / 月",
+      "kind": "zip_hoodie",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "aj",
+      "drop_num": 36,
+      "price_jpy": 9800,
+      "label": "Zip Hoodie · BJJ TOKYO",
+      "kind": "zip_hoodie",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "ak",
+      "drop_num": 37,
+      "price_jpy": 8800,
+      "label": "Track Pants (AOP) · 柔 円相",
+      "kind": "track_pants",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "al",
+      "drop_num": 38,
+      "price_jpy": 8800,
+      "label": "Track Pants (AOP) · 帯",
+      "kind": "track_pants",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "am",
+      "drop_num": 39,
+      "price_jpy": 8800,
+      "label": "Track Pants (AOP) · 無 / 月",
+      "kind": "track_pants",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "an",
+      "drop_num": 40,
+      "price_jpy": 8800,
+      "label": "Track Pants (AOP) · BJJ TOKYO",
+      "kind": "track_pants",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "ao",
+      "drop_num": 41,
+      "price_jpy": 7800,
+      "label": "Fleece Sweatpants · 柔 円相",
+      "kind": "sweatpants",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "ap",
+      "drop_num": 42,
+      "price_jpy": 7800,
+      "label": "Fleece Sweatpants · 帯",
+      "kind": "sweatpants",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "aq",
+      "drop_num": 43,
+      "price_jpy": 7800,
+      "label": "Fleece Sweatpants · 無 / 月",
+      "kind": "sweatpants",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "ar",
+      "drop_num": 44,
+      "price_jpy": 7800,
+      "label": "Fleece Sweatpants · BJJ TOKYO",
+      "kind": "sweatpants",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "as",
+      "drop_num": 45,
+      "price_jpy": 4400,
+      "label": "Athletic Tank · 柔 円相",
+      "kind": "tank_top",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "at",
+      "drop_num": 46,
+      "price_jpy": 4400,
+      "label": "Athletic Tank · 帯",
+      "kind": "tank_top",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "au",
+      "drop_num": 47,
+      "price_jpy": 4400,
+      "label": "Athletic Tank · 無 / 月",
+      "kind": "tank_top",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "av",
+      "drop_num": 48,
+      "price_jpy": 4400,
+      "label": "Athletic Tank · BJJ TOKYO",
+      "kind": "tank_top",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "aw",
+      "drop_num": 49,
+      "price_jpy": 6800,
+      "label": "Open Collar Polo · 柔 円相",
+      "kind": "polo",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "ax",
+      "drop_num": 50,
+      "price_jpy": 6800,
+      "label": "Open Collar Polo · 帯",
+      "kind": "polo",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "ay",
+      "drop_num": 51,
+      "price_jpy": 6800,
+      "label": "Open Collar Polo · 無 / 月",
+      "kind": "polo",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "az",
+      "drop_num": 52,
+      "price_jpy": 6800,
+      "label": "Open Collar Polo · BJJ TOKYO",
+      "kind": "polo",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "ba",
+      "drop_num": 53,
+      "price_jpy": 9800,
+      "label": "Windbreaker · 柔 円相",
+      "kind": "windbreaker",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "bb",
+      "drop_num": 54,
+      "price_jpy": 9800,
+      "label": "Windbreaker · 帯",
+      "kind": "windbreaker",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "bc",
+      "drop_num": 55,
+      "price_jpy": 9800,
+      "label": "Windbreaker · 無 / 月",
+      "kind": "windbreaker",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "bd",
+      "drop_num": 56,
+      "price_jpy": 9800,
+      "label": "Windbreaker · BJJ TOKYO",
+      "kind": "windbreaker",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "be",
+      "drop_num": 57,
+      "price_jpy": 4400,
+      "label": "Dad Hat · 柔 円相",
+      "kind": "dad_hat",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "bf",
+      "drop_num": 58,
+      "price_jpy": 4400,
+      "label": "Dad Hat · 帯",
+      "kind": "dad_hat",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "bg",
+      "drop_num": 59,
+      "price_jpy": 4400,
+      "label": "Dad Hat · 無 / 月",
+      "kind": "dad_hat",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "bh",
+      "drop_num": 60,
+      "price_jpy": 4400,
+      "label": "Dad Hat · BJJ TOKYO",
+      "kind": "dad_hat",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "bi",
+      "drop_num": 61,
+      "price_jpy": 4400,
+      "label": "Snapback Cap · 柔 円相",
+      "kind": "cap",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "bj",
+      "drop_num": 62,
+      "price_jpy": 4400,
+      "label": "Snapback Cap · 帯",
+      "kind": "cap",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "bk",
+      "drop_num": 63,
+      "price_jpy": 4400,
+      "label": "Snapback Cap · 無 / 月",
+      "kind": "cap",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "bl",
+      "drop_num": 64,
+      "price_jpy": 4400,
+      "label": "Snapback Cap · BJJ TOKYO",
+      "kind": "cap",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "bm",
+      "drop_num": 65,
+      "price_jpy": 3900,
+      "label": "Knit Beanie · 柔 円相",
+      "kind": "beanie",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "bn",
+      "drop_num": 66,
+      "price_jpy": 3900,
+      "label": "Knit Beanie · 帯",
+      "kind": "beanie",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "bo",
+      "drop_num": 67,
+      "price_jpy": 3900,
+      "label": "Knit Beanie · 無 / 月",
+      "kind": "beanie",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "bp",
+      "drop_num": 68,
+      "price_jpy": 3900,
+      "label": "Knit Beanie · BJJ TOKYO",
+      "kind": "beanie",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "bq",
+      "drop_num": 69,
+      "price_jpy": 4400,
+      "label": "Bucket Hat · 柔 円相",
+      "kind": "bucket_hat",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "br",
+      "drop_num": 70,
+      "price_jpy": 4400,
+      "label": "Bucket Hat · 帯",
+      "kind": "bucket_hat",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "bs",
+      "drop_num": 71,
+      "price_jpy": 4400,
+      "label": "Bucket Hat · 無 / 月",
+      "kind": "bucket_hat",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "bt",
+      "drop_num": 72,
+      "price_jpy": 4400,
+      "label": "Bucket Hat · BJJ TOKYO",
+      "kind": "bucket_hat",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "bu",
+      "drop_num": 73,
+      "price_jpy": 2900,
+      "label": "Bandana · 柔 円相",
+      "kind": "bandana",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "bv",
+      "drop_num": 74,
+      "price_jpy": 2900,
+      "label": "Bandana · 帯",
+      "kind": "bandana",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "bw",
+      "drop_num": 75,
+      "price_jpy": 2900,
+      "label": "Bandana · 無 / 月",
+      "kind": "bandana",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "bx",
+      "drop_num": 76,
+      "price_jpy": 2900,
+      "label": "Bandana · BJJ TOKYO",
+      "kind": "bandana",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "by",
+      "drop_num": 77,
+      "price_jpy": 3900,
+      "label": "AOP Tote · 柔 円相",
+      "kind": "tote",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "bz",
+      "drop_num": 78,
+      "price_jpy": 3900,
+      "label": "AOP Tote · 帯",
+      "kind": "tote",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "ca",
+      "drop_num": 79,
+      "price_jpy": 3900,
+      "label": "AOP Tote · 無 / 月",
+      "kind": "tote",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "cb",
+      "drop_num": 80,
+      "price_jpy": 3900,
+      "label": "AOP Tote · BJJ TOKYO",
+      "kind": "tote",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "cc",
+      "drop_num": 81,
+      "price_jpy": 4400,
+      "label": "Drawstring Bag · 柔 円相",
+      "kind": "drawstring",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "cd",
+      "drop_num": 82,
+      "price_jpy": 4400,
+      "label": "Drawstring Bag · 帯",
+      "kind": "drawstring",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "ce",
+      "drop_num": 83,
+      "price_jpy": 4400,
+      "label": "Drawstring Bag · 無 / 月",
+      "kind": "drawstring",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "cf",
+      "drop_num": 84,
+      "price_jpy": 4400,
+      "label": "Drawstring Bag · BJJ TOKYO",
+      "kind": "drawstring",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "cg",
+      "drop_num": 85,
+      "price_jpy": 2400,
+      "label": "Crew Socks · 柔 円相",
+      "kind": "socks",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "ch",
+      "drop_num": 86,
+      "price_jpy": 2400,
+      "label": "Crew Socks · 帯",
+      "kind": "socks",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "ci",
+      "drop_num": 87,
+      "price_jpy": 2400,
+      "label": "Crew Socks · 無 / 月",
+      "kind": "socks",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "cj",
+      "drop_num": 88,
+      "price_jpy": 2400,
+      "label": "Crew Socks · BJJ TOKYO",
+      "kind": "socks",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "ck",
+      "drop_num": 89,
+      "price_jpy": 1400,
+      "label": "Velcro Patch · 柔 円相",
+      "kind": "patch",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "cl",
+      "drop_num": 90,
+      "price_jpy": 1400,
+      "label": "Velcro Patch · 帯",
+      "kind": "patch",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "cm",
+      "drop_num": 91,
+      "price_jpy": 1400,
+      "label": "Velcro Patch · 無 / 月",
+      "kind": "patch",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "cn",
+      "drop_num": 92,
+      "price_jpy": 1400,
+      "label": "Velcro Patch · BJJ TOKYO",
+      "kind": "patch",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "co",
+      "drop_num": 93,
+      "price_jpy": 2900,
+      "label": "Mug · 柔 円相",
+      "kind": "mug",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "cp",
+      "drop_num": 94,
+      "price_jpy": 2900,
+      "label": "Mug · 帯",
+      "kind": "mug",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "cq",
+      "drop_num": 95,
+      "price_jpy": 2900,
+      "label": "Mug · 無 / 月",
+      "kind": "mug",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "cr",
+      "drop_num": 96,
+      "price_jpy": 2900,
+      "label": "Mug · BJJ TOKYO",
+      "kind": "mug",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "cs",
+      "drop_num": 97,
+      "price_jpy": 800,
+      "label": "Sticker Pack · 柔 円相",
+      "kind": "sticker",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "ct",
+      "drop_num": 98,
+      "price_jpy": 800,
+      "label": "Sticker Pack · 帯",
+      "kind": "sticker",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "cu",
+      "drop_num": 99,
+      "price_jpy": 800,
+      "label": "Sticker Pack · 無 / 月",
+      "kind": "sticker",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "cv",
+      "drop_num": 100,
+      "price_jpy": 800,
+      "label": "Sticker Pack · BJJ TOKYO",
+      "kind": "sticker",
+      "design_slug": "wordmark"
+    }
   ]
 }
