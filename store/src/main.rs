@@ -5945,6 +5945,9 @@ const VAULT_ARTICLES: &[(&str, &str, &str)] = &[
     ("genesis-pass-letter",
      "genesis #001-N へ、最初の手紙",
      include_str!("../static/vault/genesis-pass-letter.md")),
+    ("jiuflow-lipsync",
+     "1本の動画を8言語に — AIリップシンク翻訳の作り方",
+     include_str!("../static/vault/jiuflow-lipsync.md")),
 ];
 
 /// Shared CSS + header injected into every vault page. `logged_in_email`
