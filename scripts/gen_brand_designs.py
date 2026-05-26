@@ -28,7 +28,7 @@ OUT_DIR = os.path.join(ROOT, "store", "static", "proposals")
 
 VARIANTS = ["wordmark", "monogram", "stacked", "stripe"]
 
-GEMINI_MODEL = "gemini-3-pro-preview"  # text-only; SVG is plain XML
+GEMINI_MODEL = "gemini-2.5-flash"  # text-only; SVG is plain XML (matches store/src/gemini.rs TEXT_MODEL)
 GEMINI_URL_TMPL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 PROMPT_TMPL = """You are an apparel-brand designer.

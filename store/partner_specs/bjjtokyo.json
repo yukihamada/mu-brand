@@ -1,0 +1,51 @@
+{
+  "slug": "bjjtokyo",
+  "name": "BJJ TOKYO",
+  "ip_owner": "BJJ TOKYO (MU original line)",
+  "design": {
+    "monogram": "BJJ",
+    "accent": "#0a4d9c"
+  },
+  "meta": {
+    "display_name": "BJJ TOKYO",
+    "tagline": "静かに、速く。",
+    "subtitle": "MU × BJJ TOKYO — 東京の柔術を、着る。",
+    "h1": "畳の上の、無。",
+    "accent_hex": "#0a4d9c",
+    "lede": "柔術は、足し算ではなく引き算だ。余計な力を抜き、ノイズを削り、最短で極める。MU の哲学「静かに、速く」を、東京の競技柔術にそのまま落とし込んだのが BJJ TOKYO。無・月・円相・柔・帯 — MU のミニマルな記号と柔術の語彙だけで組んだ、道場から大会まで揃う競技ラインです。",
+    "hero_kv": [
+      ["カテゴリ", "競技柔術アパレル"],
+      ["初回ドロップ", "16 SKU（100 SKU まで拡張予定）"],
+      ["拠点 / ドメイン", "東京 / bjj.tokyo"],
+      ["デザイン", "MU（無 / 月 / 円相 / 柔 / 帯）"],
+      ["アクセント", "柔術ブルー #0a4d9c（青帯へのオマージュ）"]
+    ],
+    "why_md": "柔術は流派の数だけウェアがあるが、その多くは情報量が多すぎる。BJJ TOKYO は逆を行く。<br>無（むだを削る）、月（MU の系譜）、円相（一手で完結する禅の円）、柔（柔よく剛を制す）、帯（昇格の証）— 必要な記号だけを、モノクロ＋柔術ブルーの最小構成で組む。<br>練習着としても、大会の遠征着としても、道場の物販としても成立する。インクレス（在庫ゼロ）の POD なので、道場やアカデミーが自分の名前で展開することもできる。",
+    "use_cases": [
+      "日々の練習会・オープンマット",
+      "大会遠征のチームウェア",
+      "道場・アカデミーの物販（在庫リスクゼロ）",
+      "アカデミー間の交流ギフト",
+      "帯昇格・優勝の記念アイテム",
+      "観戦・応援グッズ（ステッカー / バンダナ / トート）"
+    ]
+  },
+  "skus": [
+    { "letter": "a", "drop_num": 1,  "price_jpy": 8800, "label": "Rashguard LS · 円相 / 柔",        "kind": "rashguard_ls",  "design_slug": "monogram" },
+    { "letter": "b", "drop_num": 2,  "price_jpy": 7800, "label": "Rashguard SS (AOP) · 帯",          "kind": "athletic_tee",  "design_slug": "stripe"   },
+    { "letter": "c", "drop_num": 3,  "price_jpy": 7800, "label": "Grappling Spats · 帯",             "kind": "spats",         "design_slug": "stripe"   },
+    { "letter": "d", "drop_num": 4,  "price_jpy": 7800, "label": "Fight Shorts · 無 / 月",           "kind": "fight_shorts",  "design_slug": "stacked"  },
+    { "letter": "e", "drop_num": 5,  "price_jpy": 4900, "label": "Heavy Tee · 柔 円相 (Black)",      "kind": "tee",           "design_slug": "monogram" },
+    { "letter": "f", "drop_num": 6,  "price_jpy": 4900, "label": "Heavy Tee · BJJ TOKYO (White)",    "kind": "tee",           "design_slug": "wordmark" },
+    { "letter": "g", "drop_num": 7,  "price_jpy": 5400, "label": "Long Sleeve Tee · 無 / 月",        "kind": "longsleeve",    "design_slug": "stacked"  },
+    { "letter": "h", "drop_num": 8,  "price_jpy": 8800, "label": "Heavy Hoodie · 柔 円相",           "kind": "hoodie",        "design_slug": "monogram" },
+    { "letter": "i", "drop_num": 9,  "price_jpy": 7800, "label": "Crewneck · BJJ TOKYO",             "kind": "crewneck",      "design_slug": "wordmark" },
+    { "letter": "j", "drop_num": 10, "price_jpy": 8800, "label": "Track Pants (AOP) · 帯",           "kind": "track_pants",   "design_slug": "stripe"   },
+    { "letter": "k", "drop_num": 11, "price_jpy": 4400, "label": "Dad Hat · 無 / 月",                "kind": "dad_hat",       "design_slug": "stacked"  },
+    { "letter": "l", "drop_num": 12, "price_jpy": 3900, "label": "Knit Beanie · 柔",                 "kind": "beanie",        "design_slug": "monogram" },
+    { "letter": "m", "drop_num": 13, "price_jpy": 2900, "label": "Bandana · 帯",                     "kind": "bandana",       "design_slug": "stripe"   },
+    { "letter": "n", "drop_num": 14, "price_jpy": 3900, "label": "All-Over Print Tote · 無 / 月",     "kind": "tote",          "design_slug": "stacked"  },
+    { "letter": "o", "drop_num": 15, "price_jpy": 1400, "label": "Velcro Patch · 円相 柔",           "kind": "patch",         "design_slug": "monogram" },
+    { "letter": "p", "drop_num": 16, "price_jpy": 800,  "label": "Sticker Pack · 全マーク",          "kind": "sticker",       "design_slug": "wordmark" }
+  ]
+}
