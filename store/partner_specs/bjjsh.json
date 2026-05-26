@@ -1,0 +1,51 @@
+{
+  "slug": "bjjsh",
+  "name": "BJJ TOKYO",
+  "ip_owner": "BJJ TOKYO (MU original line)",
+  "design": {
+    "monogram": "BJJ",
+    "accent": "#0a4d9c"
+  },
+  "meta": {
+    "display_name": "BJJ TOKYO",
+    "tagline": "QUIET. FAST.",
+    "subtitle": "MU × BJJ TOKYO — competition jiu-jitsu, stripped to the essentials.",
+    "h1": "Nothing wasted.",
+    "accent_hex": "#0a4d9c",
+    "lede": "Jiu-jitsu is subtraction, not addition. Drop the wasted motion, cut the noise, finish on the shortest path. BJJ TOKYO carries MU's philosophy — quiet, fast — into competition jiu-jitsu. Built from MU's minimal vocabulary (無 nothing · 月 moon · 円相 the zen circle · 柔 the gentle art · 帯 the belt) in monochrome plus a single jiu-jitsu blue. The global face of the line — same drop, English-first.",
+    "hero_kv": [
+      ["Category", "Competition BJJ apparel"],
+      ["First drop", "16 SKU (scaling to 100)"],
+      ["Base / Domain", "Tokyo / bjj.sh"],
+      ["Design", "MU — 無 / 月 / 円相 / 柔 / 帯"],
+      ["Accent", "Jiu-jitsu blue #0a4d9c — a nod to the blue belt"]
+    ],
+    "why_md": "Most jiu-jitsu apparel is loud. BJJ TOKYO goes the other way.<br>無 (cut the waste), 月 (the MU lineage), 円相 (the one-stroke zen circle that completes in a single move), 柔 (softness overcomes hardness), 帯 (the proof of rank) — only the signs that matter, in monochrome plus one jiu-jitsu blue.<br>Wears as a daily training kit, a competition travel uniform, or an academy's own merch. Zero-inventory print-on-demand, so a gym or academy can run it under its own name.",
+    "use_cases": [
+      "Daily training & open mat",
+      "Competition travel team kit",
+      "Academy & gym merch (zero inventory risk)",
+      "Cross-academy exchange gifts",
+      "Belt promotion & podium keepsakes",
+      "Spectator & support goods (sticker / bandana / tote)"
+    ]
+  },
+  "skus": [
+    { "letter": "a", "drop_num": 1,  "price_jpy": 8800, "label": "Rashguard LS · Enso / Ju",      "kind": "rashguard_ls",  "design_slug": "monogram" },
+    { "letter": "b", "drop_num": 2,  "price_jpy": 7800, "label": "Rashguard SS (AOP) · Belt",      "kind": "athletic_tee",  "design_slug": "stripe"   },
+    { "letter": "c", "drop_num": 3,  "price_jpy": 7800, "label": "Grappling Spats · Belt",         "kind": "spats",         "design_slug": "stripe"   },
+    { "letter": "d", "drop_num": 4,  "price_jpy": 7800, "label": "Fight Shorts · Mu / Moon",       "kind": "fight_shorts",  "design_slug": "stacked"  },
+    { "letter": "e", "drop_num": 5,  "price_jpy": 4900, "label": "Heavy Tee · Ju Enso (Black)",    "kind": "tee",           "design_slug": "monogram" },
+    { "letter": "f", "drop_num": 6,  "price_jpy": 4900, "label": "Heavy Tee · BJJ TOKYO (White)",  "kind": "tee",           "design_slug": "wordmark" },
+    { "letter": "g", "drop_num": 7,  "price_jpy": 5400, "label": "Long Sleeve Tee · Mu / Moon",    "kind": "longsleeve",    "design_slug": "stacked"  },
+    { "letter": "h", "drop_num": 8,  "price_jpy": 8800, "label": "Heavy Hoodie · Ju Enso",         "kind": "hoodie",        "design_slug": "monogram" },
+    { "letter": "i", "drop_num": 9,  "price_jpy": 7800, "label": "Crewneck · BJJ TOKYO",           "kind": "crewneck",      "design_slug": "wordmark" },
+    { "letter": "j", "drop_num": 10, "price_jpy": 8800, "label": "Track Pants (AOP) · Belt",       "kind": "track_pants",   "design_slug": "stripe"   },
+    { "letter": "k", "drop_num": 11, "price_jpy": 4400, "label": "Dad Hat · Mu / Moon",            "kind": "dad_hat",       "design_slug": "stacked"  },
+    { "letter": "l", "drop_num": 12, "price_jpy": 3900, "label": "Knit Beanie · Ju",               "kind": "beanie",        "design_slug": "monogram" },
+    { "letter": "m", "drop_num": 13, "price_jpy": 2900, "label": "Bandana · Belt",                 "kind": "bandana",       "design_slug": "stripe"   },
+    { "letter": "n", "drop_num": 14, "price_jpy": 3900, "label": "All-Over Print Tote · Mu / Moon", "kind": "tote",         "design_slug": "stacked"  },
+    { "letter": "o", "drop_num": 15, "price_jpy": 1400, "label": "Velcro Patch · Ju Enso",         "kind": "patch",         "design_slug": "monogram" },
+    { "letter": "p", "drop_num": 16, "price_jpy": 800,  "label": "Sticker Pack · all marks",       "kind": "sticker",       "design_slug": "wordmark" }
+  ]
+}
