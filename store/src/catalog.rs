@@ -39,6 +39,7 @@ use crate::Db;
 const SEED_SQL: &str = include_str!("../migrations/catalog_seed.sql");
 const ROLL_SEED_SQL: &str = include_str!("../migrations/roll_seed.sql");
 const ATSUME_SEED_SQL: &str = include_str!("../migrations/atsume_seed.sql");
+const YUMA_SEED_SQL: &str = include_str!("../migrations/yuma_seed.sql");
 
 pub fn ensure_schema(conn: &rusqlite::Connection) {
     let _ = conn.execute_batch(
@@ -169,6 +170,21 @@ pub fn seed_atsume_brand(conn: &rusqlite::Connection) {
             tracing::info!("[catalog] ATSUME brand upserted · {} products live", n);
         }
         Err(e) => tracing::error!("[catalog] atsume seed failed: {}", e),
+    }
+}
+
+/// MU × YUMA — 碧 (AO) tax-accountant line. UPSERTs the `yuma` brand + INSERT
+/// OR IGNORE its 4 products on boot (mirrors seed_roll_brand). All 4 are
+/// MU-original designs (碧 + 税理士 phrases) so they ship `live` & buyable.
+pub fn seed_yuma_brand(conn: &rusqlite::Connection) {
+    match conn.execute_batch(YUMA_SEED_SQL) {
+        Ok(()) => {
+            let n: i64 = conn
+                .query_row("SELECT COUNT(*) FROM catalog_products WHERE brand='yuma' AND status='live'", [], |r| r.get(0))
+                .unwrap_or(0);
+            tracing::info!("[catalog] YUMA brand upserted · {} products live", n);
+        }
+        Err(e) => tracing::error!("[catalog] yuma seed failed: {}", e),
     }
 }
 

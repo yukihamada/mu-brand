@@ -21106,6 +21106,18 @@ async fn serve_atsume_collab_lp() -> Response {
     resp
 }
 
+/// GET /yuma — custom LP for the MU × YUMA 碧 (AO) tax-accountant collab.
+/// Light, fresh (爽やか) 水色 theme; 4 buyable tees with 税理士 phrases.
+async fn serve_yuma_collab_lp() -> Response {
+    const YUMA_LP: &str = include_str!("../static/yuma/index.html");
+    let mut resp = axum::response::Html(YUMA_LP).into_response();
+    resp.headers_mut().insert(
+        "cache-control",
+        HeaderValue::from_static("public, max-age=60, s-maxage=120"),
+    );
+    resp
+}
+
 /// GET /api/brands — all active brands from catalog_brands, ordered by name.
 /// Used by /roll/ and any other LP that needs to render a brand directory.
 async fn api_brands(State(db): State<Db>) -> Response {
@@ -63343,6 +63355,7 @@ async fn main() {
         catalog::seed_if_empty(&conn);
         catalog::seed_roll_brand(&conn);
         catalog::seed_atsume_brand(&conn);
+        catalog::seed_yuma_brand(&conn);
         catalog::migrate_auto_labels(&conn);
         catalog::migrate_rashguard_product_id(&conn);
         catalog::migrate_hoodie_crewneck_variants(&conn);
@@ -63799,6 +63812,8 @@ async fn main() {
         // MU × ATSUME collab — custom LP (mascot hero + story + buyable DEV
         // tee + 4 app teasers). Richer than the generic /c/:slug grid.
         .route("/atsume", get(serve_atsume_collab_lp))
+        // MU × YUMA 碧 — custom LP (税理士 collab, 水色/爽やか, 4 buyable tees).
+        .route("/yuma", get(serve_yuma_collab_lp))
         .nest_service("/code", ServeDir::new("static/code"))
         .nest_service("/coffee", ServeDir::new("static/coffee"))
         .nest_service("/zen", ServeDir::new("static/zen"))
