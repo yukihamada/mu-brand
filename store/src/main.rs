@@ -21092,6 +21092,20 @@ async fn serve_generic_brand_lp(
     axum::response::Html(BRAND_TEMPLATE).into_response()
 }
 
+/// GET /atsume — custom LP for the MU × ATSUME dev-team collab. Hand-built
+/// page (mascot hero + ATSUME story + buyable DEV tee + 4 app teaser cards),
+/// served instead of the generic /c/atsume grid so the partner launch looks
+/// like a launch and not a one-product ghost town.
+async fn serve_atsume_collab_lp() -> Response {
+    const ATSUME_LP: &str = include_str!("../static/atsume/index.html");
+    let mut resp = axum::response::Html(ATSUME_LP).into_response();
+    resp.headers_mut().insert(
+        "cache-control",
+        HeaderValue::from_static("public, max-age=60, s-maxage=120"),
+    );
+    resp
+}
+
 /// GET /api/brands — all active brands from catalog_brands, ordered by name.
 /// Used by /roll/ and any other LP that needs to render a brand directory.
 async fn api_brands(State(db): State<Db>) -> Response {
@@ -63782,8 +63796,9 @@ async fn main() {
         // Reads /api/brand/:slug client-side; serves the same template HTML
         // regardless of slug, parameterized by window.location.pathname.
         .route("/c/:slug", get(serve_generic_brand_lp))
-        // Clean vanity URL for the MU × ATSUME collab → canonical DB-driven LP.
-        .route("/atsume", get(|| async { axum::response::Redirect::permanent("/c/atsume") }))
+        // MU × ATSUME collab — custom LP (mascot hero + story + buyable DEV
+        // tee + 4 app teasers). Richer than the generic /c/:slug grid.
+        .route("/atsume", get(serve_atsume_collab_lp))
         .nest_service("/code", ServeDir::new("static/code"))
         .nest_service("/coffee", ServeDir::new("static/coffee"))
         .nest_service("/zen", ServeDir::new("static/zen"))

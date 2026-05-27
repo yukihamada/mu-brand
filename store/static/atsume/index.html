@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU × ATSUME — DEV TEAM EDITION / 挑戦者の仲間を、集める。</title>
+<meta name="description" content="株式会社アツメ (atsume.io) のエンジニアチームと作る MU collab。スポーツ系プロダクトを作る開発者のための1着。ATSUME Dev マスコット Tee ¥4,800 販売中、TORASPO / ELEVEN / WeGoFast / BLANK_ ロゴ Tee 近日。">
+<meta property="og:title" content="MU × ATSUME — DEV TEAM EDITION">
+<meta property="og:description" content="挑戦者の仲間を、集める。ATSUME のエンジニアチームと作る在庫レス collab。">
+<meta property="og:image" content="https://wearmu.com/static/atsume/d/atsume_dev_white.png">
+<meta property="og:url" content="https://wearmu.com/atsume">
+<meta property="og:type" content="product">
+<meta property="og:site_name" content="MU / wearmu.com">
+<meta property="og:locale" content="ja_JP">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://wearmu.com/static/atsume/d/atsume_dev_white.png">
+<link rel="canonical" href="https://wearmu.com/atsume">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+:root{--bg:#0a0a0a;--bg2:#111;--fg:#f5f5f0;--mute:#8a8a82;--accent:#F2792B;--accent-soft:#ffb877;--line:rgba(255,255,255,0.08);--card:#121214;--card-b:rgba(255,255,255,0.06)}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:70px}
+body{background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.75;font-size:15px;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+a{color:var(--accent);text-decoration:none}
+b{font-weight:600}
+nav.top{position:fixed;top:0;left:0;right:0;z-index:50;background:rgba(10,10,10,0.8);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+nav.top .row{display:flex;justify-content:space-between;align-items:center;padding:13px 24px;max-width:1080px;margin:0 auto}
+nav.top .logo{font-weight:700;letter-spacing:0.28em;font-size:13px}
+nav.top .logo .x{color:var(--accent)}
+nav.top .links{display:flex;gap:22px;font-size:12px;letter-spacing:0.08em;align-items:center}
+nav.top .links a{color:var(--mute)}
+nav.top .links a:hover{color:var(--fg)}
+.cta-mini{background:var(--accent);color:#0a0a0a;padding:8px 16px;border-radius:3px;font-size:11px;letter-spacing:0.14em;font-weight:700;text-transform:uppercase}
+.hero{position:relative;padding:150px 0 70px;overflow:hidden}
+.hero-bg{position:absolute;inset:0;z-index:0;background:radial-gradient(circle at 78% 30%,rgba(242,121,43,0.16),transparent 52%),radial-gradient(circle at 15% 80%,rgba(242,121,43,0.06),transparent 50%)}
+.hero-grid{position:relative;z-index:1;display:grid;grid-template-columns:1.05fr 0.95fr;gap:48px;align-items:center}
+.eyebrow{display:inline-block;font-size:11px;letter-spacing:0.32em;text-transform:uppercase;color:var(--accent);margin-bottom:18px;font-weight:700}
+h1.hero-title{font-size:52px;font-weight:200;letter-spacing:0.01em;line-height:1.18;margin-bottom:22px}
+h1.hero-title em{color:var(--accent);font-style:normal;font-weight:500}
+.hero-lead{font-size:16.5px;line-height:1.9;color:#d4d4cc;margin-bottom:30px;font-weight:300}
+.hero-cta{display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+.btn{background:var(--accent);color:#0a0a0a;padding:16px 28px;border-radius:3px;font-size:13px;letter-spacing:0.16em;text-transform:uppercase;font-weight:700;display:inline-flex;align-items:center;gap:10px;border:none;cursor:pointer}
+.btn:hover{opacity:0.9}
+.btn .p{font-size:15px;letter-spacing:0.02em}
+.btn-ghost{color:var(--fg);padding:16px 22px;border:1px solid rgba(255,255,255,0.2);border-radius:3px;font-size:11px;letter-spacing:0.16em;text-transform:uppercase}
+.btn-ghost:hover{border-color:var(--accent);color:var(--accent)}
+.mascot-panel{background:linear-gradient(160deg,#fdfdfb,#efeee9);border-radius:18px;padding:22px;box-shadow:0 30px 70px rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.1)}
+.mascot-panel img{width:100%;display:block;border-radius:8px}
+.mascot-cap{margin-top:12px;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:#9a8a6a;text-align:center;font-weight:600}
+section{padding:80px 0;border-top:1px solid var(--line)}
+.kicker{font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:var(--accent);margin-bottom:14px;font-weight:700}
+h2{font-size:32px;font-weight:200;line-height:1.3;margin-bottom:16px;letter-spacing:0.01em}
+h2 em{color:var(--accent);font-style:normal;font-weight:500}
+.lead{font-size:15.5px;line-height:1.95;color:#c4c4bc;max-width:720px;margin-bottom:34px}
+.lead b{color:var(--fg)}
+.story-cols{display:grid;grid-template-columns:1fr 1fr;gap:40px}
+.story-cols p{font-size:14.5px;line-height:1.95;color:#bdbdb4;margin-bottom:14px}
+.story-cols p b{color:var(--fg)}
+/* DROP */
+.drop{display:grid;grid-template-columns:0.9fr 1.1fr;gap:44px;align-items:center}
+.drop-img{background:linear-gradient(160deg,#fdfdfb,#efeee9);border-radius:16px;padding:20px;border:1px solid rgba(255,255,255,0.08)}
+.drop-img img{width:100%;display:block;border-radius:8px}
+.drop h3{font-size:26px;font-weight:300;margin-bottom:6px}
+.badge-live{display:inline-block;font-size:10px;letter-spacing:0.2em;text-transform:uppercase;font-weight:700;color:#0a0a0a;background:var(--accent);padding:4px 10px;border-radius:3px;margin-bottom:14px}
+.price{font-size:40px;font-weight:200;color:var(--accent);margin:8px 0 4px}
+.price small{font-size:12px;color:var(--mute);letter-spacing:0.1em;margin-left:8px}
+.spec-list{list-style:none;margin:18px 0 26px;font-size:13.5px;color:#bdbdb4}
+.spec-list li{padding:7px 0;border-bottom:1px solid var(--line);display:flex;gap:10px}
+.spec-list li::before{content:"—";color:var(--accent)}
+/* APPS */
+.apps{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
+.app{position:relative;background:var(--card);border:1px solid var(--card-b);border-radius:8px;padding:24px 22px;display:flex;flex-direction:column;gap:8px}
+.app .soon{position:absolute;top:14px;right:14px;font-size:9px;letter-spacing:0.18em;text-transform:uppercase;color:var(--accent);border:1px solid rgba(242,121,43,0.4);padding:3px 7px;border-radius:3px;font-weight:600}
+.app .logo-slot{width:46px;height:46px;border-radius:10px;background:rgba(242,121,43,0.1);color:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;letter-spacing:-0.02em}
+.app h4{font-size:18px;font-weight:500;margin-top:4px}
+.app .role{font-size:9px;letter-spacing:0.22em;text-transform:uppercase;color:var(--accent);font-weight:700}
+.app p{font-size:12.5px;color:var(--mute);line-height:1.7}
+footer{padding:54px 0 40px;border-top:1px solid var(--line);color:var(--mute);font-size:12px;line-height:1.9;text-align:center}
+footer a{color:var(--mute);text-decoration:underline}
+@media(max-width:860px){.hero-grid,.story-cols,.drop{grid-template-columns:1fr;gap:30px}h1.hero-title{font-size:36px}.mascot-panel{order:-1}section{padding:56px 0}nav.top .links a:not(.cta-mini){display:none}}
+</style>
+</head>
+<body>
+<nav class="top"><div class="row">
+  <div class="logo">MU <span class="x">×</span> ATSUME</div>
+  <div class="links">
+    <a href="#story">物語</a>
+    <a href="#drop">DROP</a>
+    <a href="#apps">アプリ</a>
+    <a href="/api/shop/checkout?sku=ATSUME-TEE-DEV" class="cta-mini">Tee を買う</a>
+  </div>
+</div></nav>
+
+<section class="hero">
+  <div class="hero-bg"></div>
+  <div class="wrap hero-grid">
+    <div>
+      <div class="eyebrow">MU × ATSUME · DEV TEAM EDITION</div>
+      <h1 class="hero-title">挑戦者の仲間を、<br><em>集める。</em></h1>
+      <p class="hero-lead"><b>株式会社アツメ (atsume.io)</b> のエンジニアチームと作る、在庫レス collab。スポーツ系プロダクトを作る開発者のための1着を、まず <b>ATSUME Dev マスコット</b> から。</p>
+      <div class="hero-cta">
+        <a href="/api/shop/checkout?sku=ATSUME-TEE-DEV" class="btn">DEV Tee を買う <span class="p">¥4,800</span></a>
+        <a href="#apps" class="btn-ghost">4 アプリを見る →</a>
+      </div>
+    </div>
+    <div class="mascot-panel">
+      <img src="/static/atsume/d/atsume_dev_white.png" alt="ATSUME Dev マスコット — エンジニア × アスリート">
+      <div class="mascot-cap">ATSUME DEV · エンジニア × アスリート</div>
+    </div>
+  </div>
+</section>
+
+<section id="story"><div class="wrap">
+  <div class="kicker">The collab</div>
+  <h2><em>「集合」</em>を、1着に。</h2>
+  <p class="lead">ATSUME のブランドモチーフは <b>「散らばった点が、一つのマークへ集まる」</b>。挑戦者の仲間を集めるという思想を、エンジニア × アスリートのマスコットに落とし込みました。</p>
+  <div class="story-cols">
+    <div>
+      <p><b>ATSUME (株式会社アツメ)</b> は「挑戦者の仲間を集める」を掲げる会社。その裏側で、スポーツに特化したプロダクトを作り続けているのが <b>ATSUME Dev</b> — 今回の主役です。</p>
+      <p>マスコットはパーカーにヘッドホン、片手にラップトップ、片手にボール。<b>コードとスポーツ</b>の両方を背負う開発者そのもの。周囲のオレンジの点が、彼の元へ集まっていきます。</p>
+    </div>
+    <div>
+      <p>第一弾の <b>DEV マスコット Tee</b> は今すぐ購入可能。続いて、ATSUME の各プロダクト — <b>TORASPO / ELEVEN / WeGoFast / BLANK_</b> — のロゴ Tee を順次リリースします。</p>
+      <p>すべて <b>在庫レス (POD)</b> 生産。注文を受けてから1枚ずつプリントするので、在庫を抱えず廃棄も最小限。サイズ・配送の質問は <a href="mailto:mail@yukihamada.jp">お気軽に</a>。</p>
+    </div>
+  </div>
+</div></section>
+
+<section id="drop"><div class="wrap">
+  <div class="kicker">Drop 01 · Live</div>
+  <h2>ATSUME Dev <em>マスコット Tee</em></h2>
+  <div class="drop">
+    <div class="drop-img">
+      <img src="/static/atsume/d/atsume_dev_white.png" alt="ATSUME Dev マスコット Tee">
+    </div>
+    <div>
+      <span class="badge-live">● 販売中</span>
+      <h3>MU × ATSUME DEV</h3>
+      <div class="price">¥4,800 <small>税込 / 送料別</small></div>
+      <ul class="spec-list">
+        <li>Bella+Canvas 3001 · 4.2oz リングスパンコットン · ホワイト</li>
+        <li>胸プリント · DTG (ダイレクト・ガーメント)</li>
+        <li>在庫レス生産 · 注文後 7〜14 日で配送</li>
+        <li>不良品は全額返金</li>
+      </ul>
+      <a href="/api/shop/checkout?sku=ATSUME-TEE-DEV" class="btn">Stripe で購入 <span class="p">¥4,800</span></a>
+    </div>
+  </div>
+</div></section>
+
+<section id="apps"><div class="wrap">
+  <div class="kicker">Coming soon · 4 apps</div>
+  <h2>ATSUME プロダクトの <em>ロゴ Tee</em>。</h2>
+  <p class="lead">各プロダクトのロゴを乗せた Tee を準備中。ロゴ確定後、順次このページで販売開始します。</p>
+  <div class="apps">
+    <div class="app"><span class="soon">近日</span><div class="logo-slot">T</div><div class="role">ATSUME product</div><h4>TORASPO</h4><p>ロゴ Tee 準備中。</p></div>
+    <div class="app"><span class="soon">近日</span><div class="logo-slot">11</div><div class="role">Sports school</div><h4>ELEVEN</h4><p>スポーツスクール管理アプリ。ロゴ Tee 準備中。</p></div>
+    <div class="app"><span class="soon">近日</span><div class="logo-slot">W</div><div class="role">Sports English</div><h4>WeGoFast</h4><p>スポーツ特化の英会話。ロゴ Tee 準備中。</p></div>
+    <div class="app"><span class="soon">近日</span><div class="logo-slot">_</div><div class="role">ATSUME product</div><h4>BLANK_</h4><p>ロゴ Tee 準備中。</p></div>
+  </div>
+</div></section>
+
+<footer><div class="wrap">
+  <p>MU × <a href="https://atsume.io" target="_blank" rel="noopener">ATSUME (株式会社アツメ)</a> · DEV TEAM EDITION<br>
+  Produced by <b style="color:var(--fg)">株式会社イネブラ (Enabler Inc.)</b> · 在庫レス POD · <a href="/tokushoho.html">特定商取引法表記</a><br>
+  <a href="https://wearmu.com">wearmu.com</a> · <a href="mailto:mail@yukihamada.jp">mail@yukihamada.jp</a></p>
+</div></footer>
+
+<script>
+if(location.search.indexOf('paid=ok')>-1){alert('ご購入ありがとうございます！7〜14日で発送します。');history.replaceState({},'','/atsume');}
+</script>
+</body>
+</html>
