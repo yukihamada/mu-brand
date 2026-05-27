@@ -26614,6 +26614,575 @@ async fn proposal_jiufight_bundle(State(db): State<Db>, Json(body): Json<Proposa
 // /api/proposal/:slug/* (singular) so they don't collide with the legacy
 // /api/proposals/<brand>/* (plural) routes.
 
+// ── Holder gates — third-party MU-holder-only content gateways ────────────
+// A collab partner creates a "gate" at /gate/<slug>: a public teaser plus a
+// Markdown body revealed ONLY to verified MU holders (any row in mu_purchases
+// for the logged-in email — same rule as /vault). Partners self-serve via the
+// existing collab_users login (mu_collab_session cookie); the gate stays
+// private until an admin approves it (approved_at), mirroring the proposals
+// approval flow. No product/SKU columns here (catalog contract): `criterion`
+// is the only forward hook ('mu_holder' today; 'sku:<id>' later).
+
+fn ensure_holder_gate_tables(db: &Db) {
+    let conn = db.lock().unwrap();
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS holder_gates (
+            slug         TEXT PRIMARY KEY,
+            owner_email  TEXT NOT NULL,
+            title        TEXT NOT NULL,
+            teaser       TEXT NOT NULL DEFAULT '',
+            body_md      TEXT NOT NULL DEFAULT '',
+            criterion    TEXT NOT NULL DEFAULT 'mu_holder',
+            approved_at  TEXT,
+            revoked_at   TEXT,
+            created_at   TEXT NOT NULL,
+            updated_at   TEXT NOT NULL,
+            view_count   INTEGER NOT NULL DEFAULT 0,
+            unlock_count INTEGER NOT NULL DEFAULT 0
+         )", [],
+    );
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_holder_gates_owner ON holder_gates(owner_email)", []);
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS holder_gate_views (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug        TEXT NOT NULL,
+            event       TEXT NOT NULL,            -- 'view' | 'unlock'
+            viewer_hash TEXT,                     -- sha256(email)[..16], no raw PII
+            at          TEXT NOT NULL
+         )", [],
+    );
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_holder_gate_views_slug ON holder_gate_views(slug, at DESC)", []);
+}
+
+struct GateRow {
+    slug: String,
+    owner_email: String,
+    title: String,
+    teaser: String,
+    body_md: String,
+    approved_at: Option<String>,
+    revoked_at: Option<String>,
+    view_count: i64,
+    unlock_count: i64,
+}
+
+fn gate_row(conn: &Connection, slug: &str) -> Option<GateRow> {
+    conn.query_row(
+        "SELECT slug, owner_email, title, teaser, body_md, approved_at, revoked_at, view_count, unlock_count
+         FROM holder_gates WHERE slug=?",
+        params![slug],
+        |r| Ok(GateRow {
+            slug: r.get(0)?,
+            owner_email: r.get(1)?,
+            title: r.get(2)?,
+            teaser: r.get(3)?,
+            body_md: r.get(4)?,
+            approved_at: r.get(5)?,
+            revoked_at: r.get(6)?,
+            view_count: r.get(7)?,
+            unlock_count: r.get(8)?,
+        }),
+    ).ok()
+}
+
+/// Best-effort analytics. Never panics / never blocks the page render.
+fn gate_log_view(conn: &Connection, slug: &str, event: &str, email: Option<&str>) {
+    let viewer_hash = email.map(|e| {
+        use sha2::{Sha256, Digest};
+        let mut h = Sha256::new();
+        h.update(e.to_lowercase().as_bytes());
+        let hex = format!("{:x}", h.finalize());
+        hex[..16].to_string()
+    });
+    let _ = conn.execute(
+        "INSERT INTO holder_gate_views (slug, event, viewer_hash, at) VALUES (?,?,?,?)",
+        params![slug, event, viewer_hash, chrono_now()],
+    );
+}
+
+/// Normalize a partner-supplied slug to `^[a-z0-9][a-z0-9-]{1,63}$`. Returns
+/// None when nothing valid remains.
+fn gate_slugify(raw: &str) -> Option<String> {
+    let s: String = raw.trim().to_lowercase().chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect();
+    let bytes = s.as_bytes();
+    if s.len() < 2 || s.len() > 64 { return None; }
+    if !bytes[0].is_ascii_alphanumeric() { return None; }
+    Some(s)
+}
+
+const GATE_BODY_CSS: &str = r#"
+  .wrap{max-width:720px;margin:0 auto;padding:40px 22px 60px;line-height:1.9;color:#e9e7df;font-size:16px}
+  .kicker{font-size:10.5px;letter-spacing:0.22em;color:#666;text-transform:uppercase;margin-bottom:6px}
+  .draft-banner{background:#3a3413;border:1px solid #6b5e1c;color:#e6c449;padding:11px 14px;border-radius:6px;font-size:13px;margin:8px 0 20px;line-height:1.6}
+  .teaser{color:#cfcfc8;font-size:15px;line-height:1.85}
+  h1{font-size:30px;font-weight:500;letter-spacing:.01em;line-height:1.4;margin:6px 0 14px;color:#fff}
+  h2{font-size:21px;font-weight:600;margin:48px 0 14px;color:#fff;border-bottom:1px solid #242424;padding-bottom:10px;scroll-margin-top:80px}
+  h3{font-size:16.5px;font-weight:600;margin:30px 0 10px;color:#e6c449;scroll-margin-top:80px}
+  p{margin:0 0 18px;color:#e3e1d8;font-size:16px}
+  strong{color:#fff;font-weight:600}
+  code{background:#1b1a16;color:#e8d6a0;padding:2px 6px;border-radius:4px;font-size:14px;font-family:ui-monospace,Menlo,monospace}
+  pre{background:#0c0c0c;border:1px solid #232323;border-left:3px solid #e6c449;padding:16px 18px;overflow-x:auto;border-radius:6px;font-size:13.5px;line-height:1.65;margin:0 0 22px}
+  pre code{background:transparent;padding:0;color:#d7d7cf}
+  ul,ol{padding-left:24px;color:#e3e1d8;margin:0 0 20px}
+  li{margin:7px 0}
+  li::marker{color:#e6c449}
+  table{border-collapse:collapse;margin:0 0 22px;font-size:14px;display:block;overflow-x:auto;max-width:100%}
+  th,td{border:1px solid #242424;padding:10px 14px;text-align:left;vertical-align:top;min-width:88px}
+  th{background:#15140f;color:#e6c449;font-weight:600;white-space:nowrap}
+  blockquote{background:#0e0e0c;border:1px solid #232323;border-left:4px solid #e6c449;padding:14px 18px;margin:0 0 22px;color:#e9e7df;border-radius:6px}
+  a{color:#e6c449;text-underline-offset:3px}
+  hr{border:0;border-top:1px solid #1f1f1f;margin:34px 0}
+  .toc{background:#0b0b0b;border:1px solid #1f1f1f;border-radius:8px;padding:16px 20px;margin:8px 0 34px}
+  .toc .toc-h{font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:#777;margin-bottom:10px}
+  .toc ol{margin:0;padding-left:20px}
+  .toc a{color:#cfcfc8;text-decoration:none}
+  .article-meta{margin-top:64px;padding-top:18px;border-top:1px solid #1a1a1a;font-size:11.5px;color:#666;text-align:center}
+  @media (max-width:640px){.wrap{padding:28px 16px 60px} h1{font-size:25px} h2{font-size:19px}}
+"#;
+
+const GATE_LOCK_CSS: &str = r#"
+  .wrap{max-width:560px;margin:0 auto;padding:54px 22px 60px}
+  .kicker{font-size:10.5px;letter-spacing:0.22em;color:#666;text-transform:uppercase;margin-bottom:14px;text-align:center}
+  h1{font-size:30px;font-weight:300;margin:0 0 16px;text-align:center;color:#fff}
+  .teaser{color:#cfcfc8;font-size:15px;line-height:1.85;margin:0 0 26px}
+  .teaser p{margin:0 0 12px}
+  .lockcard{background:#0a0a0a;border:1px solid #1f1f1f;border-radius:8px;padding:26px 24px;text-align:center}
+  .lockcard .lk{font-size:30px}
+  .lockcard p{color:#9a9a90;font-size:13.5px;line-height:1.75;margin:12px 0 20px}
+  a.btn{display:inline-block;background:#e6c449;color:#000;text-decoration:none;padding:13px 26px;font-size:14px;font-weight:600;letter-spacing:0.06em;border-radius:3px;margin:5px}
+  a.btn.ghost{background:transparent;border:1px solid #2a2a2a;color:#aaa}
+  .soon{color:#e6c449;font-size:13px;letter-spacing:0.12em;text-align:center;margin-top:8px}
+"#;
+
+const GATE_MGMT_CSS: &str = r#"
+  .wrap{max-width:760px;margin:0 auto;padding:40px 22px 70px}
+  .kicker{font-size:10.5px;letter-spacing:0.22em;color:#666;text-transform:uppercase;margin-bottom:8px}
+  h1{font-size:30px;font-weight:300;margin:0 0 10px;color:#fff}
+  .intro{color:#999;font-size:14px;line-height:1.8;margin:0 0 26px}
+  .panel{background:#0a0a0a;border:1px solid #1f1f1f;border-radius:8px;padding:20px;margin:0 0 18px}
+  .panel h2{font-size:16px;margin:0 0 14px;color:#fff;border:0;padding:0}
+  label{display:block;font-size:12px;color:#9a9a90;margin:0 0 12px}
+  input,textarea{display:block;width:100%;background:#000;border:1px solid #242424;color:#f5f5f0;padding:10px;border-radius:4px;font-size:14px;font-family:inherit;margin-top:5px;box-sizing:border-box}
+  textarea{font-family:ui-monospace,Menlo,monospace;line-height:1.55}
+  button{background:#e6c449;color:#000;border:0;padding:11px 20px;font-size:13px;font-weight:600;border-radius:4px;cursor:pointer;letter-spacing:.05em}
+  .msg{font-size:12.5px;color:#9bd97a;margin-top:10px;min-height:16px}
+  .ghead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 14px;font-size:13px}
+  .ghead a{color:#e6c449;text-decoration:none}
+  .badge{font-size:10px;letter-spacing:.12em;padding:3px 8px;border-radius:3px;font-weight:600}
+  .badge.live{background:#16351a;color:#9bd97a}
+  .badge.pend{background:#3a3413;color:#e6c449}
+  .badge.rev{background:#3a1616;color:#e07b7b}
+  .stat{color:#666;font-size:11.5px;margin-left:auto}
+  h2{font-size:16px;color:#fff;margin:30px 0 14px}
+"#;
+
+const GATE_MGMT_JS: &str = r#"<script>
+function v(id){return document.getElementById(id).value.trim();}
+async function createGate(){
+  const m=document.getElementById('c_msg'); m.style.color='#9a9a90'; m.textContent='送信中…';
+  const payload={slug:v('c_slug'),title:v('c_title'),teaser:v('c_teaser'),body_md:document.getElementById('c_body').value};
+  const r=await fetch('/api/collab/gates',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
+  let j={}; try{j=await r.json()}catch(e){}
+  if(r.ok){m.style.color='#9bd97a';m.textContent='作成しました: '+j.gate_url+' （承認待ち）';setTimeout(function(){location.reload()},900);}
+  else{m.style.color='#e07b7b';m.textContent='エラー: '+(j.error||r.status);}
+}
+async function saveGate(btn){
+  const card=btn.closest('.gate'); const slug=card.getAttribute('data-slug');
+  const m=card.querySelector('.emsg'); m.style.color='#9a9a90'; m.textContent='保存中…';
+  const payload={title:card.querySelector('.e_title').value,teaser:card.querySelector('.e_teaser').value,body_md:card.querySelector('.e_body').value};
+  const r=await fetch('/api/collab/gates/'+encodeURIComponent(slug),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
+  let j={}; try{j=await r.json()}catch(e){}
+  if(r.ok){m.style.color='#9bd97a';m.textContent='保存しました（再承認待ち）';}
+  else{m.style.color='#e07b7b';m.textContent='エラー: '+(j.error||r.status);}
+}
+</script>"#;
+
+/// Shared HTML wrapper for all /gate and /collab/gates pages. Reuses the MU
+/// vault chrome (header/css). `indexable=false` adds noindex,nofollow.
+fn gate_page_shell(title_tag: &str, indexable: bool, masked: Option<&str>, extra_css: &str, inner: &str) -> Response {
+    let robots = if indexable { "" } else { r#"<meta name="robots" content="noindex,nofollow"/>"# };
+    let html = format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+{robots}
+<title>{title}</title>
+<style>{css}{extra}</style></head><body>
+  {header}
+  {inner}
+  <footer class="site-footer"><div>MU ホルダー限定ゲート · wearmu.com</div><div><a href="/">HOME</a><a href="/buy">BUY</a><a href="/vault">VAULT</a></div></footer>
+</body></html>"#,
+        robots = robots,
+        title = html_escape(title_tag),
+        css = vault_chrome_css(),
+        extra = extra_css,
+        header = vault_header_html("", masked),
+        inner = inner);
+    (StatusCode::OK, [("content-type", "text/html; charset=utf-8")], html).into_response()
+}
+
+/// Full reveal — holder (or the owner previewing a draft) sees the body.
+fn render_gate_full(gate: &GateRow, masked: Option<&str>, draft: bool) -> Response {
+    let teaser_html = md_to_html_simple(&gate.teaser);
+    let body_html = md_to_html_simple(&gate.body_md);
+    let (body_html, toc_html) = vault_inject_toc(&body_html);
+    let banner = if draft {
+        r#"<div class="draft-banner">下書きプレビュー — まだ公開されていません（運営の承認待ち）。承認後にホルダーへ公開されます。</div>"#
+    } else { "" };
+    let inner = format!(r#"<div class="wrap">
+    <div class="kicker">MU HOLDER ONLY</div>
+    <h1>{title}</h1>
+    {banner}
+    <div class="teaser">{teaser}</div>
+    <hr/>
+    {toc}
+    {body}
+    <div class="article-meta">MU ホルダー限定 · {owner}</div>
+  </div>"#,
+        title = html_escape(&gate.title),
+        banner = banner,
+        teaser = teaser_html,
+        toc = toc_html,
+        body = body_html,
+        owner = html_escape(&mask_email_public(&gate.owner_email)));
+    gate_page_shell(&format!("{} · GATE · MU", gate.title), false, masked, GATE_BODY_CSS, &inner)
+}
+
+/// Locked — teaser + login/buy CTA (logged-out, or logged-in non-holder).
+fn render_gate_locked(gate: &GateRow, reason: &str, masked: Option<&str>) -> Response {
+    let teaser_html = md_to_html_simple(&gate.teaser);
+    let inner = format!(r#"<div class="wrap">
+    <div class="kicker">MU HOLDER ONLY</div>
+    <h1>{title}</h1>
+    <div class="teaser">{teaser}</div>
+    <div class="lockcard">
+      <div class="lk">🔒</div>
+      <p>{reason}</p>
+      <a class="btn" href="/mypage">ログイン（購入時のメール）</a>
+      <a class="btn ghost" href="/buy">MU を買う →</a>
+    </div>
+  </div>"#,
+        title = html_escape(&gate.title),
+        teaser = teaser_html,
+        reason = html_escape(reason));
+    gate_page_shell(&format!("{} · GATE · MU", gate.title), false, masked, GATE_LOCK_CSS, &inner)
+}
+
+/// Not yet approved (or revoked) — shown to non-owners so the share link works.
+fn render_gate_coming_soon(gate: &GateRow) -> Response {
+    let teaser_html = md_to_html_simple(&gate.teaser);
+    let inner = format!(r#"<div class="wrap">
+    <div class="kicker">MU HOLDER ONLY</div>
+    <h1>{title}</h1>
+    <div class="teaser">{teaser}</div>
+    <div class="soon">COMING SOON — 準備中</div>
+  </div>"#,
+        title = html_escape(&gate.title),
+        teaser = teaser_html);
+    gate_page_shell(&format!("{} · GATE · MU", gate.title), false, None, GATE_LOCK_CSS, &inner)
+}
+
+/// GET /gate/:slug — public teaser always; body gated to MU holders.
+async fn gate_public(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+) -> Response {
+    let slug = slug.to_lowercase();
+    let gate = {
+        let conn = db.lock().unwrap();
+        match gate_row(&conn, &slug) {
+            Some(g) => g,
+            None => return (StatusCode::NOT_FOUND, "gate not found").into_response(),
+        }
+    };
+    let is_public = gate.approved_at.is_some() && gate.revoked_at.is_none();
+
+    // Owner preview: a logged-in partner viewing their own gate sees the body
+    // even before approval (mu_collab_session cookie).
+    let is_owner = collab_session_email(&db, &headers)
+        .map(|s| s.0.eq_ignore_ascii_case(&gate.owner_email))
+        .unwrap_or(false);
+
+    // Viewer holder status comes from the buyer login (mu_session cookie).
+    let viewer_email = vault_session_email(&db, &headers);
+    let is_holder = match &viewer_email {
+        Some(e) => { let conn = db.lock().unwrap(); vault_is_tee_holder(&conn, e) }
+        None => false,
+    };
+
+    // Best-effort view counter + log (never blocks render).
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute("UPDATE holder_gates SET view_count = view_count + 1 WHERE slug=?", params![slug]);
+        gate_log_view(&conn, &slug, "view", viewer_email.as_deref());
+    }
+
+    let masked_viewer = viewer_email.as_deref().map(mask_email_public);
+
+    if !is_public && !is_owner {
+        return render_gate_coming_soon(&gate);
+    }
+
+    if is_owner || (is_public && is_holder) {
+        if is_public && is_holder {
+            let conn = db.lock().unwrap();
+            let _ = conn.execute("UPDATE holder_gates SET unlock_count = unlock_count + 1 WHERE slug=?", params![slug]);
+            gate_log_view(&conn, &slug, "unlock", viewer_email.as_deref());
+        }
+        return render_gate_full(&gate, masked_viewer.as_deref(), is_owner && !is_public);
+    }
+
+    let reason = if viewer_email.is_some() {
+        "このメールアドレスでの購入履歴が見つかりません。MU を購入すると本文が開きます。"
+    } else {
+        "ログインしてください — ご購入時のメールアドレスで magic link をお送りします。"
+    };
+    render_gate_locked(&gate, reason, masked_viewer.as_deref())
+}
+
+/// Login prompt shown on /collab/gates when no verified partner session exists.
+fn gate_collab_login_prompt() -> Response {
+    let extra = r#"
+      .wrap{max-width:460px;margin:0 auto;padding:60px 22px;text-align:center}
+      .kicker{font-size:10.5px;letter-spacing:.22em;color:#666;text-transform:uppercase;margin-bottom:14px}
+      h1{font-size:28px;font-weight:300;margin:0 0 12px;color:#fff}
+      p{color:#999;font-size:14px;line-height:1.8;margin:0 0 22px}
+      input{width:100%;background:#000;border:1px solid #242424;color:#fff;padding:13px;border-radius:4px;font-size:15px;box-sizing:border-box;margin-bottom:12px}
+      button{width:100%;background:#e6c449;color:#000;border:0;padding:13px;font-weight:600;border-radius:4px;cursor:pointer}
+      .msg{font-size:13px;color:#9bd97a;margin-top:14px;min-height:18px}
+    "#;
+    let inner = r#"<div class="wrap">
+    <div class="kicker">PARTNER LOGIN</div>
+    <h1>パートナーログイン</h1>
+    <p>ホルダー限定ゲートを作るにはログインが必要です。メールアドレスにログインリンクをお送りします。</p>
+    <input type="email" id="le" placeholder="you@example.com" autocomplete="email">
+    <button onclick="startLogin()">ログインリンクを送る</button>
+    <div id="lmsg" class="msg"></div>
+    <script>
+    async function startLogin(){
+      const e=document.getElementById('le').value.trim(); const m=document.getElementById('lmsg');
+      if(!e){m.style.color='#e07b7b';m.textContent='メールを入力してください';return;}
+      m.style.color='#9a9a90'; m.textContent='送信中…';
+      const r=await fetch('/api/collab/auth/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email:e})});
+      if(r.ok){m.style.color='#9bd97a';m.textContent='メールのリンクを開いてから、このページを再読み込みしてください。';}
+      else{m.style.color='#e07b7b';m.textContent='エラーが発生しました。';}
+    }
+    </script>
+  </div>"#;
+    gate_page_shell("パートナーログイン · GATE · MU", false, None, extra, inner)
+}
+
+/// GET /collab/gates — partner self-serve management (create + edit own gates).
+async fn collab_gates_page(State(db): State<Db>, headers: HeaderMap) -> Response {
+    let email = match collab_session_email(&db, &headers) {
+        Some(s) => s.0,
+        None => return gate_collab_login_prompt(),
+    };
+    let masked = mask_email_public(&email);
+
+    let gates: Vec<GateRow> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT slug, owner_email, title, teaser, body_md, approved_at, revoked_at, view_count, unlock_count
+             FROM holder_gates WHERE owner_email=? ORDER BY created_at DESC"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response() };
+        let it = stmt.query_map(params![email], |r| Ok(GateRow {
+            slug: r.get(0)?, owner_email: r.get(1)?, title: r.get(2)?, teaser: r.get(3)?,
+            body_md: r.get(4)?, approved_at: r.get(5)?, revoked_at: r.get(6)?,
+            view_count: r.get(7)?, unlock_count: r.get(8)?,
+        }));
+        match it { Ok(rows) => rows.filter_map(|x| x.ok()).collect(), Err(_) => Vec::new() }
+    };
+
+    let mut rows_html = String::new();
+    if gates.is_empty() {
+        rows_html.push_str(r#"<div class="panel" style="color:#777;font-size:13px">まだゲートがありません。上のフォームから作成してください。</div>"#);
+    }
+    for g in &gates {
+        let badge = if g.revoked_at.is_some() { r#"<span class="badge rev">停止中</span>"# }
+            else if g.approved_at.is_some() { r#"<span class="badge live">公開中</span>"# }
+            else { r#"<span class="badge pend">承認待ち</span>"# };
+        rows_html.push_str(&format!(r#"<div class="panel gate" data-slug="{slug_attr}">
+<div class="ghead"><a href="/gate/{slug}" target="_blank">/gate/{slug}</a> {badge}<span class="stat">{views} 表示 · {unlocks} 開封</span></div>
+<label>タイトル<input class="e_title" value="{title}"></label>
+<label>ティザー（公開）<textarea class="e_teaser" rows="2">{teaser}</textarea></label>
+<label>本文（ホルダー限定）<textarea class="e_body" rows="6">{body}</textarea></label>
+<button onclick="saveGate(this)">保存（再承認が必要）</button><div class="msg emsg"></div></div>"#,
+            slug_attr = html_attr_escape(&g.slug),
+            slug = html_escape(&g.slug),
+            badge = badge,
+            views = g.view_count,
+            unlocks = g.unlock_count,
+            title = html_attr_escape(&g.title),
+            teaser = html_escape(&g.teaser),
+            body = html_escape(&g.body_md)));
+    }
+
+    let mut inner = String::new();
+    inner.push_str(r#"<div class="wrap"><div class="kicker">PARTNER · MU HOLDER GATE</div><h1>ホルダー限定ゲート</h1>"#);
+    inner.push_str(&format!(r#"<p class="intro">本文は <strong>MU を買ったホルダー</strong>だけに表示されます。作成後、運営の承認で公開されます。ログイン中: {}</p>"#, html_escape(&masked)));
+    inner.push_str(r#"<div class="panel"><h2>新規ゲートを作る</h2>
+<label>URL slug（半角英数・ハイフン, 2〜64文字）<input id="c_slug" placeholder="atsume-secret"></label>
+<label>タイトル<input id="c_title" placeholder="ATSUME × MU 特典"></label>
+<label>ティザー（公開・Markdown可）<textarea id="c_teaser" rows="3" placeholder="誰でも見える紹介文"></textarea></label>
+<label>本文（ホルダー限定・Markdown）<textarea id="c_body" rows="8" placeholder="限定Discord招待や特典など"></textarea></label>
+<button onclick="createGate()">作成する</button><div id="c_msg" class="msg"></div></div>
+<h2>あなたのゲート</h2>"#);
+    inner.push_str(&rows_html);
+    inner.push_str(GATE_MGMT_JS);
+    inner.push_str("</div>");
+
+    gate_page_shell("ホルダー限定ゲート · MU", false, Some(&masked), GATE_MGMT_CSS, &inner)
+}
+
+#[derive(Deserialize)]
+struct GateCreateBody { slug: String, title: String, #[serde(default)] teaser: String, #[serde(default)] body_md: String }
+
+/// POST /api/collab/gates — create a gate owned by the verified partner.
+async fn collab_gate_create(State(db): State<Db>, headers: HeaderMap, Json(body): Json<GateCreateBody>) -> Response {
+    let email = match collab_session_email(&db, &headers) {
+        Some(s) => s.0,
+        None => return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({
+            "error": "verify email first", "verify_endpoint": "/api/collab/auth/start"
+        }))).into_response(),
+    };
+    let slug = match gate_slugify(&body.slug) {
+        Some(s) => s,
+        None => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "error": "invalid slug — 2〜64 chars of a-z 0-9 -, starting alnum"
+        }))).into_response(),
+    };
+    let title = body.title.trim().to_string();
+    if title.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "title required"}))).into_response();
+    }
+    let now = chrono_now();
+    let outcome: Result<(), (StatusCode, &'static str)> = {
+        let conn = db.lock().unwrap();
+        if gate_row(&conn, &slug).is_some() {
+            Err((StatusCode::CONFLICT, "slug already taken"))
+        } else {
+            conn.execute(
+                "INSERT INTO holder_gates (slug, owner_email, title, teaser, body_md, criterion, approved_at, revoked_at, created_at, updated_at)
+                 VALUES (?,?,?,?,?, 'mu_holder', NULL, NULL, ?, ?)",
+                params![slug, email, title, body.teaser.trim(), body.body_md, now, now],
+            ).map(|_| ()).map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "db error"))
+        }
+    };
+    match outcome {
+        Ok(()) => {
+            let gate_url = format!("/gate/{}", slug);
+            Json(serde_json::json!({"ok": true, "slug": slug, "gate_url": gate_url, "manage_url": "/collab/gates"})).into_response()
+        }
+        Err((code, msg)) => (code, Json(serde_json::json!({"error": msg}))).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct GateUpdateBody { title: String, #[serde(default)] teaser: String, #[serde(default)] body_md: String }
+
+/// POST /api/collab/gates/:slug — edit own gate. Editing content resets the
+/// approval (approved_at=NULL) so the owner can't swap content post-approval.
+async fn collab_gate_update(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+    Json(body): Json<GateUpdateBody>,
+) -> Response {
+    let email = match collab_session_email(&db, &headers) {
+        Some(s) => s.0,
+        None => return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({
+            "error": "verify email first", "verify_endpoint": "/api/collab/auth/start"
+        }))).into_response(),
+    };
+    let slug = slug.to_lowercase();
+    let title = body.title.trim().to_string();
+    if title.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "title required"}))).into_response();
+    }
+    let now = chrono_now();
+    let n = {
+        let conn = db.lock().unwrap();
+        conn.execute(
+            "UPDATE holder_gates SET title=?, teaser=?, body_md=?, approved_at=NULL, updated_at=?
+             WHERE slug=? AND owner_email=?",
+            params![title, body.teaser.trim(), body.body_md, now, slug, email],
+        ).unwrap_or(0)
+    };
+    if n == 0 {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "gate not found or not yours"}))).into_response();
+    }
+    Json(serde_json::json!({"ok": true, "slug": slug, "note": "編集したので再承認が必要です", "gate_url": format!("/gate/{}", slug)})).into_response()
+}
+
+#[derive(Deserialize)]
+struct GateApproveBody { #[serde(default)] #[allow(dead_code)] note: String }
+
+/// POST /api/gate/:slug/approve — admin-gated. Mirrors proposal approve.
+async fn gate_approve(
+    State(db): State<Db>,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(_body): Json<GateApproveBody>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), &format!("/api/gate/{}/approve", slug)).await { return r; }
+    let slug = slug.to_lowercase();
+    let now = chrono_now();
+    let info = {
+        let conn = db.lock().unwrap();
+        match gate_row(&conn, &slug) {
+            None => None,
+            Some(g) => {
+                let _ = conn.execute(
+                    "UPDATE holder_gates SET approved_at=?, revoked_at=NULL, updated_at=? WHERE slug=?",
+                    params![now, now, slug],
+                );
+                Some((g.owner_email, g.title))
+            }
+        }
+    };
+    let (owner, title) = match info {
+        Some(x) => x,
+        None => return (StatusCode::NOT_FOUND, "unknown gate slug").into_response(),
+    };
+    let alert = format!(
+        "━◯━ gate {} APPROVED\ntitle: {}\nowner: {}\nat: {}\n→ https://wearmu.com/gate/{}",
+        slug, title, owner, now, slug,
+    );
+    tokio::spawn(async move { send_telegram_message(&alert).await; });
+    Json(serde_json::json!({"ok": true, "slug": slug, "approved_at": now})).into_response()
+}
+
+/// POST /api/gate/:slug/revoke — admin-gated. Mirrors proposal revoke.
+async fn gate_revoke(
+    State(db): State<Db>,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), &format!("/api/gate/{}/revoke", slug)).await { return r; }
+    let slug = slug.to_lowercase();
+    let now = chrono_now();
+    let found = {
+        let conn = db.lock().unwrap();
+        if gate_row(&conn, &slug).is_none() {
+            false
+        } else {
+            let _ = conn.execute(
+                "UPDATE holder_gates SET revoked_at=?, updated_at=? WHERE slug=?",
+                params![now, now, slug],
+            );
+            true
+        }
+    };
+    if !found {
+        return (StatusCode::NOT_FOUND, "unknown gate slug").into_response();
+    }
+    Json(serde_json::json!({"ok": true, "slug": slug, "revoked_at": now})).into_response()
+}
+
 fn ensure_proposal_tables(db: &Db) {
     let conn = db.lock().unwrap();
     let _ = conn.execute(
@@ -63148,6 +63717,7 @@ async fn main() {
     // INSERT OR IGNORE means safe to re-run. The legacy const X_DESIGNS arrays
     // + per-brand seed_* functions have been removed (2026-05-16).
     ensure_proposal_tables(&db);
+    ensure_holder_gate_tables(&db);
     seed_partners_from_spec_dir(&db);
     migrate_legacy_approval_into_proposals(&db);
     // Proposal SKUs are real, buyable MU products. Flip them to active=1
@@ -64037,6 +64607,13 @@ async fn main() {
         .route("/api/mypage/claim-nft", post(mypage_claim_nft))
         .route("/vault", get(vault_index))
         .route("/vault/:slug", get(vault_article))
+        // ── Holder gates — third-party MU-holder-only content gateways ──
+        .route("/gate/:slug", get(gate_public))
+        .route("/collab/gates", get(collab_gates_page))
+        .route("/api/collab/gates", post(collab_gate_create))
+        .route("/api/collab/gates/:slug", post(collab_gate_update))
+        .route("/api/gate/:slug/approve", post(gate_approve))
+        .route("/api/gate/:slug/revoke", post(gate_revoke))
         .route("/community-numbers", get(community_numbers_public))
         .route("/anchor/:id", get(anchor_page))
         .route("/api/anchor/:id", get(anchor_api))
