@@ -63328,6 +63328,7 @@ async fn main() {
         catalog::ensure_budget_schema(&conn);
         catalog::seed_if_empty(&conn);
         catalog::seed_roll_brand(&conn);
+        catalog::seed_atsume_brand(&conn);
         catalog::migrate_auto_labels(&conn);
         catalog::migrate_rashguard_product_id(&conn);
         catalog::migrate_hoodie_crewneck_variants(&conn);
@@ -63781,6 +63782,8 @@ async fn main() {
         // Reads /api/brand/:slug client-side; serves the same template HTML
         // regardless of slug, parameterized by window.location.pathname.
         .route("/c/:slug", get(serve_generic_brand_lp))
+        // Clean vanity URL for the MU × ATSUME collab → canonical DB-driven LP.
+        .route("/atsume", get(|| async { axum::response::Redirect::permanent("/c/atsume") }))
         .nest_service("/code", ServeDir::new("static/code"))
         .nest_service("/coffee", ServeDir::new("static/coffee"))
         .nest_service("/zen", ServeDir::new("static/zen"))

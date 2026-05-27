@@ -38,6 +38,7 @@ use crate::Db;
 
 const SEED_SQL: &str = include_str!("../migrations/catalog_seed.sql");
 const ROLL_SEED_SQL: &str = include_str!("../migrations/roll_seed.sql");
+const ATSUME_SEED_SQL: &str = include_str!("../migrations/atsume_seed.sql");
 
 pub fn ensure_schema(conn: &rusqlite::Connection) {
     let _ = conn.execute_batch(
@@ -152,6 +153,22 @@ pub fn seed_roll_brand(conn: &rusqlite::Connection) {
             tracing::info!("[catalog] ROLL brand upserted · {} products live", n);
         }
         Err(e) => tracing::error!("[catalog] roll seed failed: {}", e),
+    }
+}
+
+/// MU × ATSUME dev-team collab. UPSERTs the `atsume` brand row + INSERT OR
+/// IGNORE its products on every boot (mirrors seed_roll_brand). The DEV
+/// mascot tee ships `live`; the four ATSUME-app tees stay `review` until the
+/// partner's real logo files land and they're flipped to `live`.
+pub fn seed_atsume_brand(conn: &rusqlite::Connection) {
+    match conn.execute_batch(ATSUME_SEED_SQL) {
+        Ok(()) => {
+            let n: i64 = conn
+                .query_row("SELECT COUNT(*) FROM catalog_products WHERE brand='atsume' AND status='live'", [], |r| r.get(0))
+                .unwrap_or(0);
+            tracing::info!("[catalog] ATSUME brand upserted · {} products live", n);
+        }
+        Err(e) => tracing::error!("[catalog] atsume seed failed: {}", e),
     }
 }
 
