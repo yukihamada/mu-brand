@@ -105,3 +105,60 @@ VALUES
    '/static/elepote/preview/pote_char.png',
    'https://wearmu.com/static/elepote/preview/pote_char.png',
    NULL, 1, 9, 'live', 'printful_dtg');
+
+-- ─── 2026-05-28 round 2: long-sleeve + crewneck + sleep design + solo mugs
+-- 57/3449  front_large  Gildan 2400 White M       (long-sleeve)
+-- 145/5427 front_large  Gildan 18000 White M      (crewneck)
+-- New design "2匹が寝てる" applied to tee + mug.
+-- Solo mugs: Ele only / Pote only.
+INSERT OR IGNORE INTO catalog_products
+  (sku, brand, label, description_ja, retail_price_jpy,
+   printful_product_id, printful_variant_id, printful_placement,
+   printful_print_w, printful_print_h,
+   printful_sync_product_id, printful_sync_variant_id,
+   stripe_product_id, stripe_price_id,
+   design_file, mockup_main_file, mockup_url_external,
+   suzuri_url, is_active, sort_order, status, fulfillment_route)
+VALUES
+  ('ELEPOTE-LONGSLEEVE-DUO', 'elepote', 'MU × ELE × POTE Long Sleeve',
+   '#10 · DUO LONG SLEEVE — Gildan 2400 White',
+   6800, 57, 3449, 'front_large', 2250, 2700, NULL, NULL, NULL, NULL,
+   '/static/elepote/d/design_ELEPOTE-DUO.png',
+   '/static/elepote/preview/duo_tee.png',
+   'https://wearmu.com/static/elepote/preview/duo_tee.png',
+   NULL, 1, 10, 'live', 'printful_dtg'),
+  ('ELEPOTE-CREWNECK-DUO', 'elepote', 'MU × ELE × POTE Crewneck',
+   '#11 · DUO CREWNECK — Gildan 18000 White',
+   7800, 145, 5427, 'front_large', 2250, 2700, NULL, NULL, NULL, NULL,
+   '/static/elepote/d/design_ELEPOTE-DUO.png',
+   '/static/elepote/preview/duo_tee.png',
+   'https://wearmu.com/static/elepote/preview/duo_tee.png',
+   NULL, 1, 11, 'live', 'printful_dtg'),
+  ('ELEPOTE-TEE-SLEEP', 'elepote', 'MU × ELE × POTE 寝てる Tee',
+   '#12 · SLEEPING DUO TEE — 2匹で寝てる · White',
+   4800, 71, 4012, 'front_large', 2250, 2700, NULL, NULL, NULL, NULL,
+   '/static/elepote/d/design_ELEPOTE-SLEEP.png',
+   '/static/elepote/preview/sleep_tee.png',
+   'https://wearmu.com/static/elepote/preview/sleep_tee.png',
+   NULL, 1, 12, 'live', 'printful_dtg'),
+  ('ELEPOTE-MUG-SLEEP', 'elepote', 'MU × ELE × POTE 寝てる Mug',
+   '#13 · SLEEPING DUO MUG — 朝のコーヒーに寝顔',
+   3800, 19, 1320, 'default', 2250, 2700, NULL, NULL, NULL, NULL,
+   '/static/elepote/d/design_ELEPOTE-SLEEP.png',
+   '/static/elepote/preview/sleep_char.png',
+   'https://wearmu.com/static/elepote/preview/sleep_char.png',
+   NULL, 1, 13, 'live', 'printful_dtg'),
+  ('ELEPOTE-MUG-ELE', 'elepote', 'ELE Mug',
+   '#14 · ELE SOLO MUG — 白マグ 11oz',
+   3800, 19, 1320, 'default', 2250, 2700, NULL, NULL, NULL, NULL,
+   '/static/elepote/d/design_ELEPOTE-ELE.png',
+   '/static/elepote/preview/ele_char.png',
+   'https://wearmu.com/static/elepote/preview/ele_char.png',
+   NULL, 1, 14, 'live', 'printful_dtg'),
+  ('ELEPOTE-MUG-POTE', 'elepote', 'POTE Mug',
+   '#15 · POTE SOLO MUG — 白マグ 11oz',
+   3800, 19, 1320, 'default', 2250, 2700, NULL, NULL, NULL, NULL,
+   '/static/elepote/d/design_ELEPOTE-POTE.png',
+   '/static/elepote/preview/pote_char.png',
+   'https://wearmu.com/static/elepote/preview/pote_char.png',
+   NULL, 1, 15, 'live', 'printful_dtg');
