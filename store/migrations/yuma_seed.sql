@@ -122,3 +122,49 @@ VALUES
    '/static/yuma/preview/kigen.png',
    'https://wearmu.com/static/yuma/preview/kigen.png',
    NULL, 1, 10, 'live', 'printful_dtg');
+
+-- ─── 2026-05-28: extend 碧 line beyond tees (hoodie / crewneck / mug /
+-- tote). All reuse the hero design_YUMA-TEE-AO.png as the print. Printful
+-- product/variant/placement IDs verified against the live API:
+--   146/10842 Light Blue M (Gildan 18500 hoodie), placement 'front'
+--   145/7861  Light Blue M (Gildan 18000 crewneck), placement 'front_large'
+--   403/11050 White ext / Blue interior 11oz (color-inside mug), 'default'
+--   641/16289 White One-size (AS Colour 1001 cotton tote), 'front'
+-- ─────────────────────────────────────────────────────────────────────
+INSERT OR IGNORE INTO catalog_products
+  (sku, brand, label, description_ja, retail_price_jpy,
+   printful_product_id, printful_variant_id, printful_placement,
+   printful_print_w, printful_print_h,
+   printful_sync_product_id, printful_sync_variant_id,
+   stripe_product_id, stripe_price_id,
+   design_file, mockup_main_file, mockup_url_external,
+   suzuri_url, is_active, sort_order, status, fulfillment_route)
+VALUES
+  ('YUMA-HOODIE-AO', 'yuma', 'MU × YUMA 碧 パーカー',
+   '#11 · HOODIE — 碧 + 青色申告は、正義。 · 水色 (Light Blue)',
+   9800, 146, 10842, 'front', 2250, 2700, NULL, NULL, NULL, NULL,
+   '/static/yuma/d/design_YUMA-TEE-AO.png',
+   '/static/yuma/preview/hoodie_ao.png',
+   'https://wearmu.com/static/yuma/preview/hoodie_ao.png',
+   NULL, 1, 11, 'live', 'printful_dtg'),
+  ('YUMA-CREWNECK-AO', 'yuma', 'MU × YUMA 碧 クルーネック',
+   '#12 · CREWNECK — 碧 + 青色申告は、正義。 · 水色 (Light Blue)',
+   7800, 145, 7861, 'front_large', 2250, 2700, NULL, NULL, NULL, NULL,
+   '/static/yuma/d/design_YUMA-TEE-AO.png',
+   '/static/yuma/preview/crewneck_ao.png',
+   'https://wearmu.com/static/yuma/preview/crewneck_ao.png',
+   NULL, 1, 12, 'live', 'printful_dtg'),
+  ('YUMA-MUG-AO', 'yuma', 'MU × YUMA 碧 マグ',
+   '#13 · MUG — 碧 + 青色申告は、正義。 · 内側ブルー (11oz)',
+   3800, 403, 11050, 'default', 2250, 2700, NULL, NULL, NULL, NULL,
+   '/static/yuma/d/design_YUMA-TEE-AO.png',
+   '/static/yuma/preview/mug_ao.png',
+   'https://wearmu.com/static/yuma/preview/mug_ao.png',
+   NULL, 1, 13, 'live', 'printful_dtg'),
+  ('YUMA-TOTE-AO', 'yuma', 'MU × YUMA 碧 トート',
+   '#14 · TOTE — 碧 + 青色申告は、正義。 · ホワイト',
+   3800, 641, 16289, 'front', 2250, 2700, NULL, NULL, NULL, NULL,
+   '/static/yuma/d/design_YUMA-TEE-AO.png',
+   '/static/yuma/preview/tote_ao.png',
+   'https://wearmu.com/static/yuma/preview/tote_ao.png',
+   NULL, 1, 14, 'live', 'printful_dtg');
