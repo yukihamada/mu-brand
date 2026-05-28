@@ -168,3 +168,31 @@ VALUES
    '/static/yuma/preview/tote_ao.png',
    'https://wearmu.com/static/yuma/preview/tote_ao.png',
    NULL, 1, 14, 'live', 'printful_dtg');
+
+-- ─── 2026-05-28 round 2: long-sleeve + sticker ──────────────────────
+-- 57/3505  Gildan 2400 Light Blue M (long-sleeve), placement 'front_large'
+-- 358/10164 Kiss-Cut Sticker 4×4 White, placement 'default'
+-- Sticker has its own 碧-only print file (no phrase → cleaner at 4 inches).
+INSERT OR IGNORE INTO catalog_products
+  (sku, brand, label, description_ja, retail_price_jpy,
+   printful_product_id, printful_variant_id, printful_placement,
+   printful_print_w, printful_print_h,
+   printful_sync_product_id, printful_sync_variant_id,
+   stripe_product_id, stripe_price_id,
+   design_file, mockup_main_file, mockup_url_external,
+   suzuri_url, is_active, sort_order, status, fulfillment_route)
+VALUES
+  ('YUMA-LONGSLEEVE-AO', 'yuma', 'MU × YUMA 碧 ロングスリーブ',
+   '#15 · LONG SLEEVE — 碧 + 青色申告は、正義。 · 水色 (Light Blue)',
+   6800, 57, 3505, 'front_large', 2250, 2700, NULL, NULL, NULL, NULL,
+   '/static/yuma/d/design_YUMA-TEE-AO.png',
+   '/static/yuma/preview/longsleeve_ao.png',
+   'https://wearmu.com/static/yuma/preview/longsleeve_ao.png',
+   NULL, 1, 15, 'live', 'printful_dtg'),
+  ('YUMA-STICKER-AO', 'yuma', 'MU × YUMA 碧 ステッカー',
+   '#16 · STICKER — 碧 ステッカー (4×4) · ホワイト・キスカット',
+   800, 358, 10164, 'default', 0, 0, NULL, NULL, NULL, NULL,
+   '/static/yuma/d/design_YUMA-STICKER-AO.png',
+   '/static/yuma/preview/sticker_ao.png',
+   'https://wearmu.com/static/yuma/preview/sticker_ao.png',
+   NULL, 1, 16, 'live', 'printful_dtg');
