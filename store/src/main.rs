@@ -47738,6 +47738,67 @@ fn ma_ship_size_to_variant(size: &str) -> u64 {
     }
 }
 
+/// Convert a Japanese prefecture name to ISO 3166-2:JP code.
+/// Printful's recipient.state_code expects "JP-13" (Tokyo), not "東京都".
+/// First MA shipping submission (bid #9, 2026-05-26) failed HTTP 400 because
+/// we passed "東京都" as-is — this map exists so kenny's future submission
+/// and every subsequent winner doesn't repeat the same fault.
+fn jp_state_code(input: &str) -> String {
+    let s = input.trim();
+    if s.starts_with("JP-") { return s.to_string(); }
+    let normalized = s.trim_end_matches('都').trim_end_matches('府').trim_end_matches('県');
+    match normalized {
+        "北海道" | "北海" => "JP-01",
+        "青森" => "JP-02",
+        "岩手" => "JP-03",
+        "宮城" => "JP-04",
+        "秋田" => "JP-05",
+        "山形" => "JP-06",
+        "福島" => "JP-07",
+        "茨城" => "JP-08",
+        "栃木" => "JP-09",
+        "群馬" => "JP-10",
+        "埼玉" => "JP-11",
+        "千葉" => "JP-12",
+        "東京" => "JP-13",
+        "神奈川" => "JP-14",
+        "新潟" => "JP-15",
+        "富山" => "JP-16",
+        "石川" => "JP-17",
+        "福井" => "JP-18",
+        "山梨" => "JP-19",
+        "長野" => "JP-20",
+        "岐阜" => "JP-21",
+        "静岡" => "JP-22",
+        "愛知" => "JP-23",
+        "三重" => "JP-24",
+        "滋賀" => "JP-25",
+        "京都" => "JP-26",
+        "大阪" => "JP-27",
+        "兵庫" => "JP-28",
+        "奈良" => "JP-29",
+        "和歌山" => "JP-30",
+        "鳥取" => "JP-31",
+        "島根" => "JP-32",
+        "岡山" => "JP-33",
+        "広島" => "JP-34",
+        "山口" => "JP-35",
+        "徳島" => "JP-36",
+        "香川" => "JP-37",
+        "愛媛" => "JP-38",
+        "高知" => "JP-39",
+        "福岡" => "JP-40",
+        "佐賀" => "JP-41",
+        "長崎" => "JP-42",
+        "熊本" => "JP-43",
+        "大分" => "JP-44",
+        "宮崎" => "JP-45",
+        "鹿児島" => "JP-46",
+        "沖縄" => "JP-47",
+        _ => "",
+    }.to_string()
+}
+
 /// GET /ma/ship/:token — form page (or submitted view).
 async fn ma_ship_page(
     State(db): State<Db>,
@@ -48033,6 +48094,17 @@ async fn ma_ship_submit(
         }))).into_response();
     }
     let variant_id = ma_ship_size_to_variant(&size);
+    let state_iso = jp_state_code(&state);
+    if state_iso.is_empty() {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE bids SET printful_error=? WHERE id=?",
+            params![format!("unknown prefecture: {}", state), bid_id],
+        );
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "error": format!("都道府県の表記が認識できませんでした: {}。例「東京都」「神奈川県」「北海道」のいずれかでご入力ください。", state),
+        }))).into_response();
+    }
     let printful_key = env::var("PRINTFUL_API_KEY").unwrap_or_default();
     if printful_key.is_empty() {
         // Save the form but flag that Printful was not configured.
@@ -48060,7 +48132,7 @@ async fn ma_ship_submit(
             "address1":     line1,
             "address2":     line2,
             "city":         city,
-            "state_code":   state,
+            "state_code":   state_iso,
             "country_code": "JP",
             "zip":          postal,
             "phone":        phone,
@@ -59991,6 +60063,20 @@ async fn main() {
         "ALTER TABLE bids ADD COLUMN printful_status TEXT",
         "ALTER TABLE bids ADD COLUMN printful_submitted_at TEXT",
         "ALTER TABLE bids ADD COLUMN printful_error TEXT",
+        // Idempotent backfill for bid #9 (t-odera, MA 2026.05.16): the original
+        // 2026-05-26 form submission hit Printful HTTP 400 (Invalid state code)
+        // because we passed '東京都' as state_code instead of 'JP-13'. The order
+        // was later created manually as Printful #160024887 and confirmed to
+        // pending. This UPDATE syncs the row so the public form view stops
+        // showing the misleading error to the customer when they revisit.
+        "UPDATE bids
+            SET printful_order_id = '160024887',
+                printful_status   = 'pending',
+                printful_submitted_at = COALESCE(printful_submitted_at, '1779801600'),
+                printful_error    = NULL
+          WHERE id = 9
+            AND printful_order_id IS NULL
+            AND printful_error LIKE '%Invalid state code%'",
         // Idempotent fix-up: any MA row missing mockup_url falls back to
         // design_url so the embed/catalog has something to render. Catches
         // /api/admin/ma/launch invocations from before the auto-default.
