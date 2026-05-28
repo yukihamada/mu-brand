@@ -20181,6 +20181,43 @@ async fn import_product(
     Json(serde_json::json!({"ok": true, "id": new_id})).into_response()
 }
 
+/// GET /api/admin/recent_buyers?token=…&limit=N — last N mu_purchases rows.
+/// Operator view ("MU で最近買った人を見たい"). Defaults to 30, capped at 200.
+/// Returns full email; do not surface to anything public — admin-gated only.
+async fn admin_recent_buyers(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let limit: i64 = q.get("limit")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(30)
+        .clamp(1, 200);
+    let rows: Vec<serde_json::Value> = {
+        let conn = db.lock().unwrap();
+        conn.prepare(
+            "SELECT id, email, product_id, brand, COALESCE(drop_num,0),
+                    COALESCE(session_id,''), COALESCE(amount_jpy,0),
+                    CAST(created_at AS INTEGER)
+             FROM mu_purchases ORDER BY id DESC LIMIT ?"
+        ).ok().and_then(|mut s| {
+            s.query_map(params![limit], |r| Ok(serde_json::json!({
+                "id":         r.get::<_, i64>(0)?,
+                "email":      r.get::<_, String>(1)?,
+                "product_id": r.get::<_, i64>(2)?,
+                "brand":      r.get::<_, String>(3)?,
+                "drop_num":   r.get::<_, i64>(4)?,
+                "session_id": r.get::<_, String>(5)?,
+                "amount_jpy": r.get::<_, i64>(6)?,
+                "created_at": r.get::<_, i64>(7)?,
+            })))
+            .ok()
+            .map(|it| it.filter_map(|r| r.ok()).collect())
+        }).unwrap_or_default()
+    };
+    Json(serde_json::json!({ "count": rows.len(), "buyers": rows })).into_response()
+}
+
 /// GET /api/admin/db_backup?token=… — stream a consistent SQLite snapshot.
 /// Uses `VACUUM INTO` so the copy is transactionally consistent even with
 /// concurrent writes. Pulled hourly by GH Actions and stored as a workflow
@@ -64295,6 +64332,7 @@ async fn main() {
         .route("/api/admin/import", post(import_product))
         .route("/api/admin/next_drop", get(admin_next_drop))
         .route("/api/admin/db_backup", get(admin_db_backup))
+        .route("/api/admin/recent_buyers", get(admin_recent_buyers))
         .route("/api/admin/update-price", post(update_price))
         .route("/api/admin/update-nft", post(update_nft))
         .route("/api/admin/update-design", post(update_design))
