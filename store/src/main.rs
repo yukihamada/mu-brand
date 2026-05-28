@@ -21118,6 +21118,17 @@ async fn serve_yuma_collab_lp() -> Response {
     resp
 }
 
+/// GET /elepote — MU × ELE × POTE pet collab LP (warm cream/peach theme).
+async fn serve_elepote_collab_lp() -> Response {
+    const ELEPOTE_LP: &str = include_str!("../static/elepote/index.html");
+    let mut resp = axum::response::Html(ELEPOTE_LP).into_response();
+    resp.headers_mut().insert(
+        "cache-control",
+        HeaderValue::from_static("public, max-age=60, s-maxage=120"),
+    );
+    resp
+}
+
 /// GET /api/brands — all active brands from catalog_brands, ordered by name.
 /// Used by /roll/ and any other LP that needs to render a brand directory.
 async fn api_brands(State(db): State<Db>) -> Response {
@@ -64012,6 +64023,7 @@ async fn main() {
         catalog::seed_roll_brand(&conn);
         catalog::seed_atsume_brand(&conn);
         catalog::seed_yuma_brand(&conn);
+        catalog::seed_elepote_brand(&conn);
         catalog::migrate_auto_labels(&conn);
         catalog::migrate_rashguard_product_id(&conn);
         catalog::migrate_hoodie_crewneck_variants(&conn);
@@ -64470,6 +64482,8 @@ async fn main() {
         .route("/atsume", get(serve_atsume_collab_lp))
         // MU × YUMA 碧 — custom LP (税理士 collab, 水色/爽やか, 4 buyable tees).
         .route("/yuma", get(serve_yuma_collab_lp))
+        // MU × ELE × POTE — Yuki's two pets (Bichon-Poo + Frenchie).
+        .route("/elepote", get(serve_elepote_collab_lp))
         .nest_service("/code", ServeDir::new("static/code"))
         .nest_service("/coffee", ServeDir::new("static/coffee"))
         .nest_service("/zen", ServeDir::new("static/zen"))

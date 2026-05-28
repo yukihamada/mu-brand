@@ -40,6 +40,7 @@ const SEED_SQL: &str = include_str!("../migrations/catalog_seed.sql");
 const ROLL_SEED_SQL: &str = include_str!("../migrations/roll_seed.sql");
 const ATSUME_SEED_SQL: &str = include_str!("../migrations/atsume_seed.sql");
 const YUMA_SEED_SQL: &str = include_str!("../migrations/yuma_seed.sql");
+const ELEPOTE_SEED_SQL: &str = include_str!("../migrations/elepote_seed.sql");
 
 pub fn ensure_schema(conn: &rusqlite::Connection) {
     let _ = conn.execute_batch(
@@ -185,6 +186,21 @@ pub fn seed_yuma_brand(conn: &rusqlite::Connection) {
             tracing::info!("[catalog] YUMA brand upserted · {} products live", n);
         }
         Err(e) => tracing::error!("[catalog] yuma seed failed: {}", e),
+    }
+}
+
+/// MU × ELE × POTE — personal pets (Ele = Bichon-Poo, Pote = Frenchie).
+/// 9 buyable SKUs across tee/hoodie/mug/tote/sticker, all MU-original art
+/// generated from the actual dog photos.
+pub fn seed_elepote_brand(conn: &rusqlite::Connection) {
+    match conn.execute_batch(ELEPOTE_SEED_SQL) {
+        Ok(()) => {
+            let n: i64 = conn
+                .query_row("SELECT COUNT(*) FROM catalog_products WHERE brand='elepote' AND status='live'", [], |r| r.get(0))
+                .unwrap_or(0);
+            tracing::info!("[catalog] ELEPOTE brand upserted · {} products live", n);
+        }
+        Err(e) => tracing::error!("[catalog] elepote seed failed: {}", e),
     }
 }
 
