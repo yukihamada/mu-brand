@@ -20300,6 +20300,9 @@ async fn admin_mu_purchase_manual_ship(
         return (StatusCode::INTERNAL_SERVER_ERROR, "PRINTFUL_API_KEY missing").into_response();
     }
     let external_id = format!("manual-mu{}-{}", mu_pid, chrono_now());
+    // NB: `"confirm": true` in the BODY leaves Printful orders in `draft`
+    // until you POST /orders/{id}/confirm separately. Use the query param
+    // `?confirm=true` to auto-confirm at creation. Verified 2026-05-29.
     let order_body = serde_json::json!({
         "external_id": &external_id,
         "recipient": {
@@ -20316,12 +20319,11 @@ async fn admin_mu_purchase_manual_ship(
             "quantity": 1,
             "files": [{ "url": print_url, "placement": "front" }],
         }],
-        "confirm": true,
     });
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(45))
         .build().unwrap_or_default();
-    let resp = client.post("https://api.printful.com/orders")
+    let resp = client.post("https://api.printful.com/orders?confirm=true")
         .bearer_auth(&pf_key)
         .json(&order_body)
         .send().await;
