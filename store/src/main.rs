@@ -20198,18 +20198,24 @@ async fn admin_recent_buyers(
         conn.prepare(
             "SELECT id, email, product_id, brand, COALESCE(drop_num,0),
                     COALESCE(session_id,''), COALESCE(amount_jpy,0),
-                    CAST(created_at AS INTEGER)
+                    CAST(created_at AS INTEGER),
+                    COALESCE(printful_order_id,''),
+                    COALESCE(last_printful_status,''),
+                    COALESCE(last_status_at,'')
              FROM mu_purchases ORDER BY id DESC LIMIT ?"
         ).ok().and_then(|mut s| {
             s.query_map(params![limit], |r| Ok(serde_json::json!({
-                "id":         r.get::<_, i64>(0)?,
-                "email":      r.get::<_, String>(1)?,
-                "product_id": r.get::<_, i64>(2)?,
-                "brand":      r.get::<_, String>(3)?,
-                "drop_num":   r.get::<_, i64>(4)?,
-                "session_id": r.get::<_, String>(5)?,
-                "amount_jpy": r.get::<_, i64>(6)?,
-                "created_at": r.get::<_, i64>(7)?,
+                "id":                   r.get::<_, i64>(0)?,
+                "email":                r.get::<_, String>(1)?,
+                "product_id":           r.get::<_, i64>(2)?,
+                "brand":                r.get::<_, String>(3)?,
+                "drop_num":             r.get::<_, i64>(4)?,
+                "session_id":           r.get::<_, String>(5)?,
+                "amount_jpy":           r.get::<_, i64>(6)?,
+                "created_at":           r.get::<_, i64>(7)?,
+                "printful_order_id":    r.get::<_, String>(8)?,
+                "last_printful_status": r.get::<_, String>(9)?,
+                "last_status_at":       r.get::<_, String>(10)?,
             })))
             .ok()
             .map(|it| it.filter_map(|r| r.ok()).collect())
