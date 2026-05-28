@@ -20224,6 +20224,149 @@ async fn admin_recent_buyers(
     Json(serde_json::json!({ "count": rows.len(), "buyers": rows })).into_response()
 }
 
+/// POST /api/admin/reconcile_printful_status?token=&limit=N — for each
+/// recent mu_purchases row with a printful_order_id whose last_printful_status
+/// is not 'fulfilled', re-poll Printful and write the live status back.
+/// Default N=50, max 200. Fixes the "kenny mugen#418 stuck at draft" drift.
+async fn admin_reconcile_printful_status(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let limit: i64 = q.get("limit")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(50)
+        .clamp(1, 200);
+    let pf_key = env::var("PRINTFUL_API_KEY").unwrap_or_default();
+    if pf_key.is_empty() {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "PRINTFUL_API_KEY missing").into_response();
+    }
+    let pending: Vec<(i64, String, String)> = {
+        let conn = db.lock().unwrap();
+        conn.prepare(
+            "SELECT id, COALESCE(printful_order_id,''), COALESCE(last_printful_status,'')
+             FROM mu_purchases
+             WHERE printful_order_id IS NOT NULL AND printful_order_id != ''
+               AND COALESCE(last_printful_status,'') != 'fulfilled'
+               AND COALESCE(last_printful_status,'') != 'canceled'
+             ORDER BY id DESC LIMIT ?"
+        ).ok().and_then(|mut s| {
+            s.query_map(params![limit], |r| Ok((
+                r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+            )))
+            .ok()
+            .map(|it| it.filter_map(|r| r.ok()).collect())
+        }).unwrap_or_default()
+    };
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build().unwrap_or_default();
+    let mut updates: Vec<serde_json::Value> = Vec::new();
+    let mut updated = 0i64;
+    let mut errors = 0i64;
+    for (pid, pf_id, before) in &pending {
+        let url = format!("https://api.printful.com/orders/{}", pf_id);
+        let resp = client.get(&url).bearer_auth(&pf_key).send().await;
+        let status = match resp {
+            Ok(r) if r.status().is_success() => {
+                let body: serde_json::Value = r.json().await.unwrap_or_default();
+                body["result"]["status"].as_str().unwrap_or("").to_string()
+            }
+            Ok(r) => { errors += 1; format!("err_http_{}", r.status().as_u16()) }
+            Err(_) => { errors += 1; "err_net".to_string() }
+        };
+        if !status.is_empty() && !status.starts_with("err_") && &status != before {
+            let conn = db.lock().unwrap();
+            let n = conn.execute(
+                "UPDATE mu_purchases SET last_printful_status=?, last_status_at=? WHERE id=?",
+                params![status, chrono_now(), pid],
+            ).unwrap_or(0);
+            if n > 0 { updated += 1; }
+        }
+        updates.push(serde_json::json!({
+            "id": pid, "pf_id": pf_id, "before": before, "after": status,
+        }));
+    }
+    Json(serde_json::json!({
+        "ok": true, "scanned": pending.len(), "updated": updated,
+        "errors": errors, "rows": updates,
+    })).into_response()
+}
+
+/// POST /api/admin/backfill_mu_purchases_from_catalog?token=&dry=1 — one-shot
+/// retrofit: for every catalog_orders row with status='submitted' that has no
+/// matching mu_purchases entry (joined by stripe_session_id), INSERT one. Fixes
+/// the ELEPOTE-buyer-can't-access-vault bug retroactively. Idempotent — safe
+/// to call repeatedly.
+async fn admin_backfill_mu_purchases_from_catalog(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let dry = q.get("dry").map(|v| v != "0").unwrap_or(false);
+    // Pull candidates: catalog_orders rows w/o a mu_purchases peer. Convert
+    // catalog_orders.created_at (TEXT 'YYYY-MM-DD HH:MM:SS', UTC) into unix
+    // seconds inside SQLite to match mu_purchases.created_at's format.
+    let candidates: Vec<(String, String, String, i64, String, String, i64)> = {
+        let conn = db.lock().unwrap();
+        conn.prepare(
+            "SELECT co.stripe_session_id, COALESCE(co.customer_email,''),
+                    COALESCE(co.sku,''), COALESCE(co.amount_jpy,0),
+                    COALESCE(co.printful_order_id,''), COALESCE(co.status,''),
+                    CAST(COALESCE(strftime('%s', co.created_at), '0') AS INTEGER)
+             FROM catalog_orders co
+             WHERE co.status = 'submitted'
+               AND COALESCE(co.customer_email,'') != ''
+               AND NOT EXISTS (
+                 SELECT 1 FROM mu_purchases mp WHERE mp.session_id = co.stripe_session_id
+               )
+             ORDER BY co.id DESC"
+        ).ok().and_then(|mut s| {
+            s.query_map([], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,    r.get::<_, String>(4)?, r.get::<_, String>(5)?,
+                r.get::<_, i64>(6)?,
+            )))
+            .ok()
+            .map(|it| it.filter_map(|r| r.ok()).collect())
+        }).unwrap_or_default()
+    };
+    let mut inserted = 0i64;
+    let mut rows: Vec<serde_json::Value> = Vec::new();
+    for (sid, email, sku, amt, pf_id, _status, ca_unix) in &candidates {
+        // Look up product_id + brand from catalog_products by sku.
+        let (cp_id, brand): (i64, String) = {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT id, brand FROM catalog_products WHERE sku=?",
+                params![sku], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+            ).unwrap_or((0, String::new()))
+        };
+        let created_at = if *ca_unix > 0 { ca_unix.to_string() } else { chrono_now() };
+        if !dry {
+            let conn = db.lock().unwrap();
+            let n = conn.execute(
+                "INSERT OR IGNORE INTO mu_purchases
+                   (email, product_id, brand, drop_num, session_id, amount_jpy,
+                    created_at, printful_order_id, last_printful_status, last_status_at)
+                 VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?)",
+                params![
+                    email.to_lowercase(), cp_id, brand, sid, amt,
+                    created_at, pf_id, "inprocess", chrono_now(),
+                ],
+            ).unwrap_or(0);
+            if n > 0 { inserted += 1; }
+        }
+        rows.push(serde_json::json!({
+            "session": sid, "email": email, "sku": sku, "amount_jpy": amt,
+            "printful_order_id": pf_id, "product_id_resolved": cp_id, "brand": brand,
+        }));
+    }
+    Json(serde_json::json!({
+        "ok": true, "dry": dry, "candidates": candidates.len(), "inserted": inserted, "rows": rows,
+    })).into_response()
+}
+
 /// GET /api/admin/db_backup?token=… — stream a consistent SQLite snapshot.
 /// Uses `VACUUM INTO` so the copy is transactionally consistent even with
 /// concurrent writes. Pulled hourly by GH Actions and stored as a workflow
@@ -64339,6 +64482,8 @@ async fn main() {
         .route("/api/admin/next_drop", get(admin_next_drop))
         .route("/api/admin/db_backup", get(admin_db_backup))
         .route("/api/admin/recent_buyers", get(admin_recent_buyers))
+        .route("/api/admin/reconcile_printful_status", post(admin_reconcile_printful_status))
+        .route("/api/admin/backfill_mu_purchases_from_catalog", post(admin_backfill_mu_purchases_from_catalog))
         .route("/api/admin/update-price", post(update_price))
         .route("/api/admin/update-nft", post(update_nft))
         .route("/api/admin/update-design", post(update_design))

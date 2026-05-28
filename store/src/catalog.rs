@@ -3277,6 +3277,42 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
                 if ok { "submitted" } else { "failed" },
                 Some(&text),
             );
+            // Mirror into mu_purchases so vault holder gating + /100 counter
+                // + community.numbers see catalog-route buyers too. Idempotent
+                // on session_id. Skipped on failure so we don't claim a holder
+                // who didn't actually pay-and-ship. 2026-05-29 incident: 4
+                // ELEPOTE orders existed in catalog_orders but not mu_purchases.
+            if ok {
+                let email = cust["email"].as_str().unwrap_or("").to_lowercase();
+                if !email.is_empty() {
+                    let (cp_id, brand_name) = {
+                        let conn = db.lock().unwrap();
+                        conn.query_row(
+                            "SELECT id, brand FROM catalog_products WHERE sku=?",
+                            rusqlite::params![&sku],
+                            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+                        ).unwrap_or((0, String::new()))
+                    };
+                    let conn = db.lock().unwrap();
+                    let _ = conn.execute(
+                        "INSERT OR IGNORE INTO mu_purchases
+                           (email, product_id, brand, drop_num, session_id, amount_jpy,
+                            created_at, printful_order_id, last_printful_status, last_status_at)
+                         VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?)",
+                        rusqlite::params![
+                            email,
+                            cp_id,
+                            brand_name,
+                            &session_id,
+                            amount_total,
+                            chrono_now_iso(),
+                            pf_id.as_deref().unwrap_or(""),
+                            "draft",
+                            chrono_now_iso(),
+                        ],
+                    );
+                }
+            }
             if !ok {
                 // Operator alert — fulfillment failure on a paid order
                 // is the highest-priority signal we emit. Stripe already
