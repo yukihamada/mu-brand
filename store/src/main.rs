@@ -20224,6 +20224,164 @@ async fn admin_recent_buyers(
     Json(serde_json::json!({ "count": rows.len(), "buyers": rows })).into_response()
 }
 
+/// POST /api/admin/mu_purchase/:id/manual_ship?token=
+/// Body: { name, address1, address2, city, state, postal_code, country, email?, size? }
+/// Use case: a mu_purchases row was recorded (¥0 claim / free founder grant)
+/// but Printful was never called because the original Stripe session had no
+/// shipping address. Build a synthetic session with the provided address and
+/// dispatch through the normal create_printful_order pipeline so variant
+/// lookup + design fetching + mu_purchases UPDATE all reuse existing logic.
+#[derive(Deserialize)]
+struct ManualShipBody {
+    name: String,
+    address1: String,
+    #[serde(default)] address2: String,
+    city: String,
+    #[serde(default)] state: String,
+    postal_code: String,
+    #[serde(default = "default_jp")] country: String,
+    #[serde(default)] email: String,
+    #[serde(default = "default_m")] size: String,
+}
+fn default_jp() -> String { "JP".to_string() }
+fn default_m() -> String { "M".to_string() }
+
+async fn admin_mu_purchase_manual_ship(
+    State(db): State<Db>,
+    Path(mu_pid): Path<i64>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<ManualShipBody>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    // Look up purchase row + ensure we have a product_id to ship.
+    let (_db_email, product_id, existing_pf): (String, i64, String) = {
+        let conn = db.lock().unwrap();
+        match conn.query_row(
+            "SELECT email, product_id, COALESCE(printful_order_id,'')
+             FROM mu_purchases WHERE id=?",
+            params![mu_pid],
+            |r| Ok((r.get::<_,String>(0)?, r.get::<_,i64>(1)?, r.get::<_,String>(2)?)),
+        ) {
+            Ok(t) => t,
+            Err(_) => return (StatusCode::NOT_FOUND, "mu_purchases row not found").into_response(),
+        }
+    };
+    if !existing_pf.is_empty() {
+        return (StatusCode::CONFLICT, format!("already has printful_order_id={}", existing_pf)).into_response();
+    }
+    // Look up product design + brand for variant resolution.
+    let (design_url, mockup_url, brand): (Option<String>, Option<String>, String) = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT design_url, mockup_url, brand FROM products WHERE id=?",
+            params![product_id],
+            |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, String>(2)?))
+        ).unwrap_or((None, None, String::new()))
+    };
+    let print_url = match design_url.filter(|u| !u.is_empty())
+        .or_else(|| mockup_url.filter(|u| !u.is_empty())) {
+        Some(u) => u,
+        None => return (StatusCode::PRECONDITION_FAILED,
+            format!("no design_url or mockup_url for product {}", product_id)).into_response(),
+    };
+    // Variant lookup — minimal coverage for the brands that currently need
+    // manual-ship (mugen/muon = Bella+Canvas 3001; kichinan_bandana = AOP).
+    // Extend as more manual-ship cases appear.
+    let variant_id: u64 = match (brand.as_str(), body.size.as_str()) {
+        ("kichinan_bandana_sample", _) => 16032,
+        (_, "S")  => 4016,
+        (_, "M")  => 4017,
+        (_, "L")  => 4018,
+        (_, "XL") => 4019,
+        _         => 4017,
+    };
+    let pf_key = env::var("PRINTFUL_API_KEY").unwrap_or_default();
+    if pf_key.is_empty() {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "PRINTFUL_API_KEY missing").into_response();
+    }
+    let external_id = format!("manual-mu{}-{}", mu_pid, chrono_now());
+    let order_body = serde_json::json!({
+        "external_id": &external_id,
+        "recipient": {
+            "name":         body.name,
+            "address1":     body.address1,
+            "address2":     body.address2,
+            "city":         body.city,
+            "state_code":   body.state,
+            "country_code": body.country,
+            "zip":          body.postal_code,
+        },
+        "items": [{
+            "variant_id": variant_id,
+            "quantity": 1,
+            "files": [{ "url": print_url, "placement": "front" }],
+        }],
+        "confirm": true,
+    });
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(45))
+        .build().unwrap_or_default();
+    let resp = client.post("https://api.printful.com/orders")
+        .bearer_auth(&pf_key)
+        .json(&order_body)
+        .send().await;
+    match resp {
+        Ok(r) if r.status().is_success() => {
+            let body_json: serde_json::Value = r.json().await.unwrap_or_default();
+            let pf_id = body_json["result"]["id"].as_i64()
+                .map(|n| n.to_string())
+                .or_else(|| body_json["result"]["id"].as_str().map(String::from))
+                .unwrap_or_default();
+            if !pf_id.is_empty() {
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "UPDATE mu_purchases
+                     SET printful_order_id=?, last_printful_status='draft', last_status_at=?
+                     WHERE id=?",
+                    params![pf_id, chrono_now(), mu_pid],
+                );
+            }
+            Json(serde_json::json!({
+                "ok": true, "mu_purchase_id": mu_pid, "product_id": product_id,
+                "brand": brand, "variant_id": variant_id,
+                "printful_order_id": pf_id, "external_id": external_id,
+            })).into_response()
+        }
+        Ok(r) => {
+            let status = r.status();
+            let text = r.text().await.unwrap_or_default();
+            (StatusCode::BAD_GATEWAY, format!("Printful {}: {}", status, text)).into_response()
+        }
+        Err(e) => {
+            (StatusCode::BAD_GATEWAY, format!("Printful net err: {}", e)).into_response()
+        }
+    }
+}
+
+/// POST /api/admin/mu_purchase/:id/set_pf_id?token=&pf_id=…
+/// Manual paste-in for a Printful order id, used as the second step of
+/// manual_ship when the broad UPDATE didn't write back deterministically.
+async fn admin_mu_purchase_set_pf_id(
+    State(db): State<Db>,
+    Path(mu_pid): Path<i64>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let pf_id = q.get("pf_id").cloned().unwrap_or_default();
+    if pf_id.is_empty() {
+        return (StatusCode::BAD_REQUEST, "pf_id required").into_response();
+    }
+    let n = {
+        let conn = db.lock().unwrap();
+        conn.execute(
+            "UPDATE mu_purchases SET printful_order_id=?, last_printful_status='draft', last_status_at=?
+             WHERE id=?",
+            params![pf_id, chrono_now(), mu_pid],
+        ).unwrap_or(0)
+    };
+    Json(serde_json::json!({ "ok": n>0, "updated_rows": n, "mu_purchase_id": mu_pid, "pf_id": pf_id })).into_response()
+}
+
 /// POST /api/admin/reconcile_printful_status?token=&limit=N — for each
 /// recent mu_purchases row with a printful_order_id whose last_printful_status
 /// is not 'fulfilled', re-poll Printful and write the live status back.
@@ -64484,6 +64642,8 @@ async fn main() {
         .route("/api/admin/recent_buyers", get(admin_recent_buyers))
         .route("/api/admin/reconcile_printful_status", post(admin_reconcile_printful_status))
         .route("/api/admin/backfill_mu_purchases_from_catalog", post(admin_backfill_mu_purchases_from_catalog))
+        .route("/api/admin/mu_purchase/:id/manual_ship", post(admin_mu_purchase_manual_ship))
+        .route("/api/admin/mu_purchase/:id/set_pf_id", post(admin_mu_purchase_set_pf_id))
         .route("/api/admin/update-price", post(update_price))
         .route("/api/admin/update-nft", post(update_nft))
         .route("/api/admin/update-design", post(update_design))
