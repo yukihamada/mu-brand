@@ -25688,6 +25688,12 @@ async fn tokushoho_page() -> Html<&'static str> {
     Html(include_str!("../static/tokushoho.html"))
 }
 
+/// GET /brand — public brand guidelines (logo, color, type, voice, do/don't).
+/// One-page visual language reference. Static include, no DB.
+async fn brand_guidelines_page() -> Html<&'static str> {
+    Html(include_str!("../static/brand.html"))
+}
+
 /// GET /proposals — public directory of all approved MU collabs.
 /// Backed at runtime by GET /api/proposals (public, approved-only) and,
 /// when ?admin_token=... is present, by GET /admin/proposals (full list).
@@ -64816,6 +64822,8 @@ async fn main() {
         .route("/api/fragment", post(fragment_request))
         .route("/v/:brand/:drop_num", get(verify_page))
         .route("/tokushoho", get(tokushoho_page))
+        .route("/brand", get(brand_guidelines_page))
+        .route("/brand.html", get(|| async { axum::response::Redirect::permanent("/brand") }))
         // 2026-05-21 URL polish: /<page>.html → 301 /<page>. Previously these
         // responded 200 on both forms (creating duplicate-content URLs in
         // Search Console); canonicalise to the suffix-less form.
