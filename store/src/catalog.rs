@@ -2917,7 +2917,14 @@ pub async fn shop_checkout(
     };
 
     let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
-    let success_url = format!("{}/success?from=shop&sku={}", base_url, urlencoding::encode(&sku));
+    // Pass the real order value + Stripe session id so the /success page
+    // fires the Google Ads purchase conversion with the ACTUAL amount (not
+    // the ¥6,800 fallback) — accurate value is what Smart Bidding optimises
+    // ROAS against. Stripe substitutes {CHECKOUT_SESSION_ID} server-side.
+    let success_url = format!(
+        "{}/success?from=shop&sku={}&value={}&sid={{CHECKOUT_SESSION_ID}}",
+        base_url, urlencoding::encode(&sku), price_jpy,
+    );
     let cancel_url = format!("{}/shop/{}", base_url, urlencoding::encode(&sku));
 
     // Two pricing paths:

@@ -16490,12 +16490,18 @@ async fn checkout(
         find_stripe_customer_by_email(&stripe_key, em).await
     } else { None };
 
+    // Pass the real order total to /success so the Google Ads purchase
+    // conversion fires with the ACTUAL amount (not the ¥6,800 fallback) —
+    // Smart Bidding optimises ROAS against conversion value. Stripe
+    // substitutes {CHECKOUT_SESSION_ID} server-side.
+    let success_path_str = format!("/success?sid={{CHECKOUT_SESSION_ID}}&value={}", total_jpy);
+
     // Build form (helper reads `konbini_currently_enabled()` for konbini gate).
     let build_form = || stripe_checkout_form_jp(
         StripeCheckoutFields {
             mode: "payment",
             base_url: &base_url,
-            success_path: "/success?sid={CHECKOUT_SESSION_ID}",
+            success_path: &success_path_str,
             cancel_path: "/",
             display_name: &display_name,
             unit_amount: price_jpy,
