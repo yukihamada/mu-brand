@@ -35590,6 +35590,7 @@ Rules:
 }
 
 async fn success_page(
+    State(db): State<Db>,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Html<String> {
     // Founder Edition (¥48k preorder) deserves a distinct acknowledgement —
@@ -35631,6 +35632,58 @@ async fn success_page(
     // default purchase value: founder=¥48,000, otherwise ¥6,800
     let default_value = if is_founder { 48_000 } else { 6_800 };
 
+    // Post-purchase cross-sell (2026-05-30): the buyer is the warmest,
+    // highest-intent audience MU has — show 4 live apparel SKUs to seed a
+    // SECOND (separate) order. A new order, NOT a multi-item add to this
+    // one, so it needs no fulfillment changes. Reuses /shop/:sku. Skipped
+    // for the founder flow (that page has its own next-steps narrative).
+    let recs: Vec<(String, String, String, i64)> = if is_founder {
+        Vec::new()
+    } else {
+        let conn = db.lock().unwrap();
+        conn.prepare(
+            "SELECT sku, description_ja, mockup_url_external, retail_price_jpy
+             FROM catalog_products
+             WHERE is_active=1 AND status='live'
+               AND mockup_url_external IS NOT NULL AND mockup_url_external != ''
+               AND ( mockup_url_external LIKE '%printful%'
+                     OR mockup_url_external LIKE '%r2.dev%'
+                     OR mockup_url_external LIKE '%r2.cloudflarestorage%'
+                     OR mockup_url_external LIKE '%mockups.wearmu.com%' )
+               AND retail_price_jpy >= 3000
+             ORDER BY RANDOM()
+             LIMIT 4",
+        )
+        .ok()
+        .and_then(|mut s| {
+            s.query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?, r.get::<_, i64>(3)?))
+            })
+            .ok()
+            .map(|it| it.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default()
+    };
+    let recs_block = if recs.is_empty() {
+        String::new()
+    } else {
+        let cards: String = recs.iter().map(|(sku, name, img, price)| {
+            format!(
+                r#"<a href="/shop/{sku}" data-funnel="cta_click" data-funnel-cta="success_rec" style="display:block;text-decoration:none;color:inherit;background:#0d0d0d;border:1px solid rgba(255,255,255,0.07);border-radius:4px;overflow:hidden"><div style="width:100%;aspect-ratio:1/1;background:#fff;overflow:hidden"><img src="{img}" alt="{name}" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block"></div><div style="padding:8px 9px"><div style="font-size:10.5px;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{name}</div><div style="font-size:11px;font-weight:600;color:#e6c449;margin-top:2px;font-variant-numeric:tabular-nums">¥{price_fmt}</div></div></a>"#,
+                sku = html_attr_escape(sku), name = html_attr_escape(name),
+                img = html_attr_escape(img), price_fmt = format_jpy(*price),
+            )
+        }).collect();
+        format!(
+            r#"<div style="max-width:520px;width:100%;margin-top:28px">
+  <div style="font-size:10px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5;margin-bottom:12px;text-align:center">あなたへのおすすめ</div>
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">{cards}</div>
+</div>"#,
+            cards = cards,
+        )
+    };
+
     Html(format!(r#"<!DOCTYPE html><html><head><meta charset=UTF-8><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title><meta name="robots" content="noindex,nofollow"><style>
     body{{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue','Hiragino Sans',sans-serif;
     display:flex;align-items:center;justify-content:center;min-height:100vh;flex-direction:column;gap:20px;padding:40px 20px;line-height:1.7}}
@@ -35649,6 +35702,7 @@ async fn success_page(
     </head><body>
     {header_html}
     {next_block}
+    {recs_block}
     <a class="back" href="/">← Back to MU</a>
     <script>
     (function () {{
@@ -35668,6 +35722,7 @@ async fn success_page(
         title = if is_founder { "MUGEN #∞ Founder Edition — 予約 確認" } else { "Order Confirmed" },
         header_html = header_html,
         next_block = next_block,
+        recs_block = recs_block,
         default_value = default_value,
     ))
 }
