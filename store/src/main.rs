@@ -21546,6 +21546,7 @@ async fn brands_index(State(db): State<Db>) -> Html<String> {
                      WHERE p.brand = b.slug AND p.status = 'live') AS product_count
              FROM catalog_brands b
              WHERE b.is_active = 1
+               AND b.slug != 'auto'   -- autopilot bucket: hidden from public directory
              ORDER BY product_count DESC, b.name",
         ) {
             Ok(s) => s,
