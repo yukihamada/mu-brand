@@ -3111,6 +3111,7 @@ fn build_printful_item(
     sku: &str,
     retail_price: &str,
     variant_override: Option<i64>,
+    require_printful: bool,
 ) -> Option<serde_json::Value> {
     let (pp_id, mut pf_variant_id, sync_variant_id, design_file, placement, route): (
         i64,
@@ -3139,10 +3140,15 @@ fn build_printful_item(
         )
         .ok()?;
 
-    // Only Printful routes produce an item via this helper. contrado_uk
-    // is handled by its own early-return path; manual / digital / gelato /
-    // suzuri are not Printful-item-shaped here.
-    if !route.starts_with("printful_") {
+    // For the MAIN item we replicate the pre-refactor behaviour exactly:
+    // contrado_uk already early-returned in the caller, and every other
+    // route (printful_* AND the gelato_jp / suzuri_jp / manual / digital
+    // fallbacks) built a Printful item from its printful_variant_id. So
+    // `require_printful=false` (main path) never gates on route here.
+    // The ADDON path passes `require_printful=true` because mixing a
+    // non-Printful add-on into this single Printful order makes no sense —
+    // such an add-on is skipped by the caller instead.
+    if require_printful && !route.starts_with("printful_") {
         return None;
     }
 
@@ -3365,7 +3371,7 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
     // same stitch_color / placement logic.
     let main_item = {
         let conn = db.lock().unwrap();
-        build_printful_item(&conn, &sku, &retail_price, variant_override)
+        build_printful_item(&conn, &sku, &retail_price, variant_override, false)
     };
     let Some(main_item) = main_item else {
         // Should not happen — we already confirmed the SKU exists and the
@@ -3415,7 +3421,7 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
                     // to the same JPY-style format to stay defined.
                     format!("{:.2}", addon_price_jpy as f64)
                 };
-                build_printful_item(&conn, &addon_sku, &addon_retail, None)
+                build_printful_item(&conn, &addon_sku, &addon_retail, None, true)
             } else {
                 None
             }
