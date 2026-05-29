@@ -22476,6 +22476,7 @@ async fn index(State(db): State<Db>) -> Html<String> {
                      OR mockup_url_external LIKE '%r2.cloudflarestorage%'
                      OR mockup_url_external LIKE '%mockups.wearmu.com%' )
                AND retail_price_jpy >= 3000
+               AND sku NOT LIKE 'PROPOSAL-%'
              ORDER BY RANDOM()
              LIMIT 8",
         )
@@ -35651,6 +35652,7 @@ async fn success_page(
                      OR mockup_url_external LIKE '%r2.cloudflarestorage%'
                      OR mockup_url_external LIKE '%mockups.wearmu.com%' )
                AND retail_price_jpy >= 3000
+               AND sku NOT LIKE 'PROPOSAL-%'
              ORDER BY RANDOM()
              LIMIT 4",
         )
