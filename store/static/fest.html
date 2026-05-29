@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MU FESTIVAL — HAWAII 10.29</title>
+<meta name="description" content="MU FESTIVAL · 2026.10.29 · HAWAII。入場はMUGENのTシャツを着てきた人だけ。開催まで毎日、号外TシャツがMUGENに並ぶ。">
+<link rel="canonical" href="https://wearmu.com/fest">
+<meta property="og:title" content="MU FESTIVAL — HAWAII · 2026.10.29">
+<meta property="og:description" content="入場券は、MUGENのTシャツ。開催まで毎日、号外Tシャツが並ぶ音楽フェス。">
+<meta property="og:url" content="https://wearmu.com/fest">
+<style>
+  :root { --black:#0A0A0A; --white:#FAFAFA; --red:#C8362C; --gold:#e6c449;
+    --grey:#222; --line:rgba(250,250,250,0.10); --muted:rgba(250,250,250,0.45); }
+  *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+  html { scroll-behavior:smooth; }
+  body { background:var(--black); color:var(--white);
+    font-family:'Helvetica Neue',Arial,'Hiragino Kaku Gothic ProN',sans-serif;
+    font-weight:200; -webkit-font-smoothing:antialiased; line-height:1.7; overflow-x:hidden; }
+  a { color:inherit; text-decoration:none; }
+
+  nav { position:fixed; top:0; left:0; right:0; z-index:100; background:rgba(10,10,10,0.6);
+    backdrop-filter:blur(12px); display:flex; align-items:center; justify-content:space-between;
+    padding:22px 48px; border-bottom:1px solid var(--line); }
+  .nav-logo { font-size:13px; font-weight:600; letter-spacing:0.45em; }
+  .nav-cta { font-size:9px; letter-spacing:0.28em; text-transform:uppercase; opacity:0.55; }
+  .nav-cta:hover { opacity:1; }
+
+  /* HERO */
+  .hero { min-height:100vh; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; gap:22px; text-align:center; padding:120px 24px 70px; position:relative; }
+  .hero-kicker { font-size:10px; letter-spacing:0.5em; text-transform:uppercase; opacity:0.45; }
+  .hero-mark { font-size:clamp(96px,20vw,260px); font-weight:600; letter-spacing:0.04em;
+    line-height:0.9; }
+  .hero-mark .acc { color:var(--red); }
+  .hero-meta { font-size:clamp(13px,2.4vw,18px); letter-spacing:0.32em; text-transform:uppercase;
+    opacity:0.7; }
+  .hero-where { font-size:11px; letter-spacing:0.3em; text-transform:uppercase; opacity:0.35; }
+
+  /* COUNTDOWN */
+  .count { display:flex; gap:clamp(16px,4vw,40px); margin-top:18px; }
+  .count .u { display:flex; flex-direction:column; align-items:center; }
+  .count .n { font-size:clamp(34px,7vw,72px); font-weight:600; letter-spacing:0.04em;
+    font-variant-numeric:tabular-nums; }
+  .count .l { font-size:9px; letter-spacing:0.3em; text-transform:uppercase; opacity:0.4; margin-top:6px; }
+
+  section { padding:90px 48px; border-top:1px solid var(--line); max-width:1000px; margin:0 auto; }
+  .sec-head { font-size:11px; letter-spacing:0.35em; text-transform:uppercase; opacity:0.5; margin-bottom:28px; }
+  .lead { font-size:clamp(22px,3vw,34px); font-weight:200; letter-spacing:0.04em; line-height:1.5; max-width:760px; }
+  .lead .em { color:var(--gold); }
+  p.body { font-size:14px; max-width:660px; opacity:0.7; margin-top:20px; }
+
+  /* TICKET = TEE */
+  .ticket { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:2px; margin-top:8px; }
+  .step { background:var(--grey); padding:40px 28px; min-height:200px; display:flex;
+    flex-direction:column; justify-content:space-between; }
+  .step .no { font-size:10px; letter-spacing:0.3em; opacity:0.35; }
+  .step .t { font-size:17px; font-weight:200; margin-top:auto; }
+  .step .d { font-size:12px; opacity:0.5; margin-top:10px; line-height:1.6; }
+
+  .cta-row { display:flex; gap:14px; flex-wrap:wrap; margin-top:40px; }
+  .btn { display:inline-block; font-size:11px; letter-spacing:0.25em; text-transform:uppercase;
+    padding:16px 32px; border:1px solid var(--white); transition:all 0.2s; }
+  .btn:hover { background:var(--white); color:var(--black); }
+  .btn.red { border-color:var(--red); color:var(--red); }
+  .btn.red:hover { background:var(--red); color:var(--white); }
+
+  .note { font-size:12px; opacity:0.4; margin-top:20px; max-width:640px; line-height:1.7; }
+
+  footer { border-top:1px solid var(--line); padding:60px 48px; text-align:center;
+    font-size:9px; letter-spacing:0.3em; text-transform:uppercase; opacity:0.3; }
+  footer a:hover { opacity:1; }
+
+  @media (max-width:680px){ nav, section, footer { padding-left:24px; padding-right:24px; } }
+</style>
+</head>
+<body>
+
+<nav>
+  <a href="/" class="nav-logo">MU</a>
+  <a href="/mugen" class="nav-cta">MUGEN で T を買う →</a>
+</nav>
+
+<header class="hero">
+  <div class="hero-kicker">MU Festival · Hawaii</div>
+  <div class="hero-mark">無<span class="acc">音</span>祭</div>
+  <div class="hero-meta">2026 · 10 · 29 — HAWAII</div>
+  <div class="hero-where">Location TBA / 場所は追って</div>
+  <div class="count" id="count">
+    <div class="u"><span class="n" id="d">—</span><span class="l">days</span></div>
+    <div class="u"><span class="n" id="h">—</span><span class="l">hrs</span></div>
+    <div class="u"><span class="n" id="m">—</span><span class="l">min</span></div>
+    <div class="u"><span class="n" id="s">—</span><span class="l">sec</span></div>
+  </div>
+</header>
+
+<!-- TICKET -->
+<section>
+  <div class="sec-head">Entry — 入場</div>
+  <p class="lead">入場券は、<span class="em">MUGEN の T シャツ</span>。<br>
+  着てきた人だけが、音の中に入れる。</p>
+  <p class="body">チケットは売らない。MU の MUGEN ライン（無限）の T シャツを着て会場に来ること、それが唯一の鍵だ。
+  どのドロップでもいい。一着あれば、あなたはもう中にいる。</p>
+
+  <div class="ticket">
+    <div class="step">
+      <div class="no">01</div>
+      <div><div class="t">MUGEN の T を手に入れる</div>
+      <div class="d">どの号でも可。開催まで毎日、新しい号外 T が並ぶ。</div></div>
+    </div>
+    <div class="step">
+      <div class="no">02</div>
+      <div><div class="t">10.29、着て会場へ</div>
+      <div class="d">ハワイ某所。場所は開催が近づいたらここで告知する。</div></div>
+    </div>
+    <div class="step">
+      <div class="no">03</div>
+      <div><div class="t">音の中へ</div>
+      <div class="d">MUGEN を着ていること = 入場。それだけ。</div></div>
+    </div>
+  </div>
+
+  <div class="cta-row">
+    <a class="btn red" href="/mugen">MUGEN を見る</a>
+    <a class="btn" href="/brand">ブランドを知る</a>
+  </div>
+</section>
+
+<!-- DAILY NEWS TEE -->
+<section>
+  <div class="sec-head">Daily — 号外</div>
+  <p class="lead">開催まで毎日、<span class="em">号外 T シャツ</span>が一枚。</p>
+  <p class="body">10.29 までの毎日、その日のテーマを一語に込めた号外 T を MUGEN に出す。
+  毎朝ちがう一枚。集めるほど、当日のあなたは強くなる。今日の一枚を逃すと、明日はもう別の号だ。</p>
+  <div class="cta-row">
+    <a class="btn" href="/mugen">今日の号外を見る</a>
+  </div>
+  <p class="note">※ 号外 T のデザインは「その日のテーマ」を抽象化したもので、実在の報道見出しは使用しません。
+  会場・タイムテーブル・出演は確定し次第このページで告知します（現時点で未確定）。</p>
+</section>
+
+<footer>
+  MU FESTIVAL · HAWAII · 2026.10.29 ·
+  <a href="/">wearmu.com</a> ·
+  <a href="/mugen">mugen</a>
+</footer>
+
+<script>
+  // Countdown to 2026-10-29 00:00 Hawaii (HST, UTC-10).
+  const TARGET = Date.parse('2026-10-29T00:00:00-10:00');
+  function tick(){
+    const now = Date.now();
+    let diff = Math.max(0, TARGET - now);
+    const d = Math.floor(diff/86400000); diff -= d*86400000;
+    const h = Math.floor(diff/3600000);  diff -= h*3600000;
+    const m = Math.floor(diff/60000);    diff -= m*60000;
+    const s = Math.floor(diff/1000);
+    document.getElementById('d').textContent = d;
+    document.getElementById('h').textContent = String(h).padStart(2,'0');
+    document.getElementById('m').textContent = String(m).padStart(2,'0');
+    document.getElementById('s').textContent = String(s).padStart(2,'0');
+  }
+  tick(); setInterval(tick, 1000);
+</script>
+
+</body>
+</html>

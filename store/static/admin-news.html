@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex,nofollow">
+<title>MU · 号外ドラフト承認</title>
+<style>
+  :root { --black:#0A0A0A; --white:#FAFAFA; --red:#C8362C; --gold:#e6c449; --grey:#1a1a1a; --line:rgba(250,250,250,0.12); }
+  *,*::before,*::after { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--black); color:var(--white); font-family:'Helvetica Neue',Arial,'Hiragino Kaku Gothic ProN',sans-serif;
+    font-weight:200; -webkit-font-smoothing:antialiased; padding:40px 24px 80px; }
+  h1 { font-size:13px; letter-spacing:0.4em; text-transform:uppercase; font-weight:600; }
+  .sub { font-size:11px; opacity:0.4; margin-top:8px; letter-spacing:0.1em; }
+  .bar { display:flex; gap:10px; align-items:center; margin:24px 0 8px; flex-wrap:wrap; }
+  input { background:var(--grey); border:1px solid var(--line); color:var(--white); padding:10px 14px;
+    font-family:inherit; font-size:13px; min-width:240px; }
+  button { font-family:inherit; cursor:pointer; border:1px solid var(--white); background:transparent;
+    color:var(--white); padding:10px 18px; font-size:11px; letter-spacing:0.2em; text-transform:uppercase; transition:all .2s; }
+  button:hover { background:var(--white); color:var(--black); }
+  button.go { border-color:var(--gold); color:var(--gold); }
+  button.go:hover { background:var(--gold); color:var(--black); }
+  button:disabled { opacity:0.3; cursor:default; }
+  #msg { font-size:12px; opacity:0.6; margin:8px 0; min-height:18px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:18px; margin-top:20px; }
+  .card { border:1px solid var(--line); background:var(--grey); display:flex; flex-direction:column; }
+  .card img { width:100%; aspect-ratio:1/1; object-fit:cover; background:#000; }
+  .card .body { padding:16px; display:flex; flex-direction:column; gap:6px; flex:1; }
+  .card .nm { font-size:14px; line-height:1.4; }
+  .card .meta { font-size:11px; opacity:0.5; letter-spacing:0.05em; }
+  .card .row { margin-top:auto; display:flex; gap:8px; padding-top:10px; }
+  .card a.view { font-size:10px; letter-spacing:0.15em; text-transform:uppercase; opacity:0.5; align-self:center; }
+  .empty { opacity:0.4; font-size:13px; margin-top:40px; }
+</style>
+</head>
+<body>
+  <h1>号外ドラフト 承認</h1>
+  <div class="sub">毎日の MUGEN 号外 T（active=0）。承認するとライブ販売 + SNS告知 + SUZURI連携が走る。</div>
+  <div class="bar">
+    <input id="token" type="password" placeholder="ADMIN_TOKEN" />
+    <button onclick="load()">読み込む</button>
+  </div>
+  <div id="msg"></div>
+  <div class="grid" id="grid"></div>
+
+<script>
+  const qp = new URLSearchParams(location.search);
+  if (qp.get('token')) document.getElementById('token').value = qp.get('token');
+
+  function tok(){ return document.getElementById('token').value.trim(); }
+  function msg(t){ document.getElementById('msg').textContent = t; }
+
+  async function load(){
+    if(!tok()){ msg('ADMIN_TOKEN を入力してください'); return; }
+    msg('読み込み中…');
+    try {
+      const r = await fetch('/api/admin/drafts?token=' + encodeURIComponent(tok()));
+      if(!r.ok){ msg('エラー: HTTP ' + r.status); return; }
+      const j = await r.json();
+      render(j.drafts || []);
+      msg((j.drafts||[]).length + ' 件のドラフト');
+    } catch(e){ msg('通信エラー: ' + e); }
+  }
+
+  function render(list){
+    const g = document.getElementById('grid');
+    g.innerHTML = '';
+    if(!list.length){ g.innerHTML = '<div class="empty">ドラフトはありません。</div>'; return; }
+    for(const d of list){
+      const img = d.mockup_url || d.design_url || '';
+      const el = document.createElement('div');
+      el.className = 'card';
+      el.innerHTML =
+        (img ? `<img src="${img}" alt="">` : `<div style="aspect-ratio:1/1;display:flex;align-items:center;justify-content:center;opacity:.3">no image</div>`) +
+        `<div class="body">
+           <div class="nm">${escapeHtml(d.name)}</div>
+           <div class="meta">${d.brand.toUpperCase()} #${String(d.drop_num).padStart(4,'0')} · ¥${d.price_jpy.toLocaleString()} · ${d.inventory}枚</div>
+           <div class="row">
+             <button class="go" data-id="${d.id}">承認してライブ</button>
+             <a class="view" href="/products/${d.brand}/${d.drop_num}" target="_blank">確認</a>
+           </div>
+         </div>`;
+      el.querySelector('button.go').addEventListener('click', (ev)=>activate(d.id, ev.target));
+      g.appendChild(el);
+    }
+  }
+
+  async function activate(id, btn){
+    if(!confirm('この号外をライブ販売しますか？（取り消し不可・SNS告知が走ります）')) return;
+    btn.disabled = true; btn.textContent = '公開中…';
+    try {
+      const r = await fetch('/api/admin/activate?token=' + encodeURIComponent(tok()), {
+        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id})
+      });
+      const j = await r.json();
+      if(j.ok){ btn.textContent = '✓ ライブ'; btn.classList.remove('go'); msg('公開: ' + (j.url||id)); }
+      else { btn.disabled = false; btn.textContent = '承認してライブ'; msg('失敗: ' + (j.error||'unknown')); }
+    } catch(e){ btn.disabled = false; btn.textContent = '承認してライブ'; msg('通信エラー: ' + e); }
+  }
+
+  function escapeHtml(s){ return (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+  if(tok()) load();
+</script>
+</body>
+</html>

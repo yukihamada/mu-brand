@@ -1,0 +1,59 @@
+name: MU cron — daily NEWS 号外 tee (draft, JST 09:00)
+
+# generate.py news — daily "号外" tee counting down to MU FESTIVAL HAWAII
+# (2026-10-29). Abstract theme of the day (NO real headlines). Inserted as a
+# DRAFT (active=0) on the MUGEN line; Yuki approves each one at /admin/news
+# before it goes live. Runs daily until the festival.
+#
+# Required secrets (same as cron-staple):
+#   GEMINI_API_KEY
+#   PRINTFUL_API_KEY
+#   MU_ADMIN_TOKEN
+#   CLOUDFLARE_R2_ACCESS_KEY_ID / CLOUDFLARE_R2_SECRET_ACCESS_KEY / CLOUDFLARE_R2_ACCOUNT_ID
+
+on:
+  schedule:
+    # JST 09:00 = UTC 00:00 daily
+    - cron: '0 0 * * *'
+  workflow_dispatch:  # allow manual trigger
+
+permissions:
+  contents: read
+
+jobs:
+  news:
+    runs-on: ubuntu-latest
+    env:
+      MU_STORE_URL: https://wearmu.com
+      MU_ADMIN_TOKEN: ${{ secrets.MU_ADMIN_TOKEN }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      PRINTFUL_API_KEY: ${{ secrets.PRINTFUL_API_KEY }}
+      HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+      CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+      CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+      CLOUDFLARE_R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}
+      NO_DELAY: "1"   # cron fires at JST 09:00 sharp; skip random_delay
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stop after festival (2026-10-29)
+        id: gate
+        run: |
+          today=$(date -u +%Y-%m-%d)
+          if [[ "$today" > "2026-10-29" ]]; then
+            echo "Festival passed ($today) — skipping daily news drop."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-python@v5
+        if: steps.gate.outputs.run == 'true'
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install deps
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          pip install --quiet requests Pillow numpy qrcode google-genai
+      - name: Generate NEWS draft drop
+        if: steps.gate.outputs.run == 'true'
+        run: python generate.py news

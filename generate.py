@@ -1049,6 +1049,87 @@ master, captured by a machine" — quiet, confident, museum-grade.
     return name, prompt, quantity, price
 
 
+# ── NEWS: daily "号外" tee — abstract theme of the day, sold on MUGEN ────────
+# Counts down to MU FESTIVAL HAWAII (2026-10-29). The shirt is styled like a
+# broadsheet "号外" (extra edition) but carries NO real news headline — only an
+# abstract single word capturing the day's mood. This keeps the line free of
+# news-org rights / misinformation / sensitive-reporting risk while still
+# reading as a "today's news" tee. Theme is picked by day-of-year so it shifts
+# daily and re-runs of the same day are deterministic.
+NEWS_THEMES: list[dict] = [
+    {"w": "兆",   "r": "kizashi",  "en": "a sign of what comes"},
+    {"w": "騒",   "r": "sawagi",   "en": "the noise of the world"},
+    {"w": "静",   "r": "sei",      "en": "stillness underneath"},
+    {"w": "流",   "r": "nagare",   "en": "the current"},
+    {"w": "報",   "r": "hou",      "en": "word that arrives"},
+    {"w": "速",   "r": "soku",     "en": "breaking, fast"},
+    {"w": "渦",   "r": "uzu",      "en": "the vortex"},
+    {"w": "境",   "r": "sakai",    "en": "the borderline"},
+    {"w": "灯",   "r": "tomoshibi","en": "a light kept on"},
+    {"w": "潮",   "r": "shio",     "en": "the turning tide"},
+    {"w": "響",   "r": "hibiki",   "en": "what echoes"},
+    {"w": "刻",   "r": "koku",     "en": "the hour, marked"},
+    {"w": "波",   "r": "nami",     "en": "the wave"},
+    {"w": "報せ", "r": "shirase",  "en": "the message"},
+    {"w": "今",   "r": "ima",      "en": "now, only now"},
+    {"w": "声",   "r": "koe",      "en": "a voice rising"},
+    {"w": "変",   "r": "hen",      "en": "the change"},
+    {"w": "縁",   "r": "en",       "en": "the connection"},
+    {"w": "際",   "r": "kiwa",     "en": "the edge"},
+    {"w": "灯火", "r": "touka",    "en": "lamplight"},
+    {"w": "風",   "r": "kaze",     "en": "the wind shifts"},
+    {"w": "兆し", "r": "kizashi",  "en": "omen of the day"},
+    {"w": "鼓動", "r": "kodou",    "en": "a heartbeat"},
+    {"w": "余白", "r": "yohaku",   "en": "the white space"},
+    {"w": "閃",   "r": "sen",      "en": "the flash"},
+    {"w": "潜",   "r": "sen",      "en": "what's beneath"},
+    {"w": "巡",   "r": "meguri",   "en": "the cycle returns"},
+    {"w": "音",   "r": "oto",      "en": "the sound of today"},
+    {"w": "明",   "r": "akari",    "en": "first light"},
+    {"w": "無",   "r": "mu",       "en": "and then, nothing"},
+]
+
+
+def prompt_news(weather: dict, drop_num: int) -> tuple[str, str, int, int]:
+    """Daily 号外 tee. Abstract theme by day-of-year (deterministic per day).
+    Sold on MUGEN as a draft; Yuki approves at /admin/news before it goes
+    live. quantity=29 / price ¥4,800 are editorial defaults (set by us, not a
+    quoted external fact) — tune in /admin/news before approving if needed."""
+    today = date.today()
+    idx = today.timetuple().tm_yday % len(NEWS_THEMES)
+    t = NEWS_THEMES[idx]
+    quantity = 29          # nod to the 10/29 festival date
+    price = 4800           # standard MU tee tier
+    # Days remaining until MU FESTIVAL HAWAII (2026-10-29), floored at 0.
+    fest = date(2026, 10, 29)
+    days_left = max(0, (fest - today).days)
+    name = f"MUGEN 号外 — 「{t['w']}」{t['r']} · {today.isoformat()} #{drop_num:04d}"
+
+    prompt = f"""
+FLAT PRINT ARTWORK — high-fidelity minimalist broadsheet ("号外" / newspaper EXTRA) typography.
+THIS IS A 2D GRAPHIC, not a photo of a t-shirt. No clothing shape, no model, no fabric. Solid background fills the entire canvas.
+
+Brand: MU — daily "号外" (extra edition) tee. This is an ABSTRACT mood piece; it must contain NO real news, NO headlines, NO real people, NO brand names, NO flags, NO logos. Only the abstract word below.
+
+Background: off-white / newsprint cream (#F2EFE6), solid, very faint paper grain only.
+Ink: deep black (#0A0A0A), with one single accent in MU red (#C8362C) allowed for the masthead rule line only.
+
+Composition (strict, like a stripped-down newspaper front page):
+  1. TOP: the masthead word "号外" in a heavy condensed serif/gothic, small-to-medium, with a thin red horizontal rule directly beneath it spanning the width.
+  2. CENTER (occupies 50-60% of canvas height): a SINGLE character "{t['w']}" rendered in heavy contemplative 書道 brushwork — alive, slight asymmetry, dry-brush at the stroke ends. NOT a digital font.
+  3. Just below the big character, very small sans-serif: {t['r'].upper()} — {t['en']}.
+  4. BOTTOM, very small monospace, like a dateline: "{today.isoformat()} · HAWAII 10.29 · あと{days_left}日 · MUGEN #{drop_num:04d}".
+
+Anti-requirements (do NOT include):
+- No real or fake news headlines, no paragraphs of body text, no photos.
+- No additional symbols, no borders/frames beyond the single red masthead rule.
+- No gradients, no shadows, no 3D. Strictly the 2 colors above (black + one red rule).
+
+Output: 2400×2400 flat artwork. Must read as "a quiet daily broadsheet reduced to one word" — museum-grade, confident, calm.
+"""
+    return name, prompt, quantity, price
+
+
 def prompt_mugen(weather: dict, drop_num: int) -> tuple[str, str, int, int]:
     now = datetime.now()
     cycle_num = ((drop_num - 1) % 108) + 1  # 1-108 cycle
@@ -1123,6 +1204,10 @@ def run(brand: str):
     print(f"[{brand.upper()}] drop #{drop_num}")
     print(f"  weather: {weather['temp_c']}°C {weather['condition']} {weather['wind_dir']}")
 
+    # Draft drops land hidden (active=0) and skip SNS/SUZURI until approved at
+    # /admin/news. Only the daily news-tee uses this; everything else is live.
+    is_draft = False
+
     if brand == "ma":
         last = get_last_design(con, "ma")
         name, prompt = prompt_ma(weather, last)
@@ -1165,6 +1250,17 @@ def run(brand: str):
         cycle_num = None
         is_ice = False
         auction_end = None
+
+    elif brand == "news":
+        # Daily 号外 tee — abstract theme of the day, numbered + sold as MUGEN,
+        # but inserted as a DRAFT (active=0). Yuki approves at /admin/news.
+        drop_num = next_drop_num(con, "mugen")  # real MUGEN numbering
+        name, prompt, quantity, price = prompt_news(weather, drop_num)
+        cycle_num = None
+        is_ice = False
+        auction_end = None
+        is_draft = True
+        brand = "mugen"  # normalize → sells on the MUGEN line as requested
 
     else:
         print(f"Unknown brand: {brand}")
@@ -1275,7 +1371,7 @@ def run(brand: str):
             "price_jpy": price, "inventory": quantity,
             "weather_data": json.dumps(weather), "prompt_hash": prompt_hash,
             "seed_data": seed_data, "auction_end": auction_end, "nft_mint": nft_mint,
-            "is_ice": is_ice,
+            "is_ice": is_ice, "is_draft": is_draft,
         }
         r = requests.post(f"{STORE_URL}/api/admin/import?token={ADMIN_TOKEN}", json=payload, timeout=10)
         print(f"  pushed to store: {r.status_code}")
@@ -1360,7 +1456,7 @@ def push_mockup_to_r2(product_id: int, source_url: str) -> None:
 
 if __name__ == "__main__":
     brand = sys.argv[1] if len(sys.argv) > 1 else "mugen"
-    valid = ("ma", "muon", "mugen", "nouns", "nouns_mugen", "nouns_muon", "nouns_ma", "staple")
+    valid = ("ma", "muon", "mugen", "nouns", "nouns_mugen", "nouns_muon", "nouns_ma", "staple", "news")
     if brand not in valid:
         print(f"usage: python generate.py [{' | '.join(valid)}]")
         sys.exit(1)

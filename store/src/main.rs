@@ -601,6 +601,12 @@ struct ImportProductBody {
     seed_data: Option<String>,
     auction_end: Option<String>,
     nft_mint: Option<String>,
+    /// When true the drop is inserted as active=0 (hidden draft) and the
+    /// SNS / SUZURI publicity is skipped. Used by the daily news-tee pipeline
+    /// (`generate.py news`) — Yuki approves each draft at /admin/news before
+    /// it goes live on MUGEN. Defaults to false (legacy behaviour = live).
+    #[serde(default)]
+    is_draft: bool,
 }
 
 #[derive(Deserialize)]
@@ -20104,16 +20110,19 @@ async fn import_product(
             now.parse::<i64>().ok()
                 .map(|s| (s + 100 * 86400).to_string())
         } else { None };
+        // Draft drops land hidden (active=0) so the public catalog never shows
+        // them until Yuki approves at /admin/news. Everything else is live (1).
+        let active: i64 = if body.is_draft { 0 } else { 1 };
         conn.execute(
             "INSERT INTO products
              (brand, drop_num, name, design_url, mockup_url, price_jpy, inventory,
               created_at, weather_data, prompt_hash, seed_data, auction_end, nft_mint,
-              expires_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+              expires_at, active)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             params![body.brand, body.drop_num, body.name, body.design_url, body.mockup_url,
                     body.price_jpy, body.inventory, now, body.weather_data,
                     body.prompt_hash, body.seed_data, body.auction_end, body.nft_mint,
-                    expires_at]
+                    expires_at, active]
         ).unwrap();
         conn.last_insert_rowid()
     };
@@ -20129,7 +20138,9 @@ async fn import_product(
     // Enqueue SNS post for new drops (MUGEN/MUON/MA/NOUNS).
     // Text is composed by Gemini using the MU brand voice — falls back to a
     // plain template if Gemini is unavailable. Drained by sns worker.
-    if autopilot_on() {
+    // Drafts stay silent — they get announced (and SUZURI-mirrored) only
+    // when approved at /admin/news (see activate_draft_product).
+    if autopilot_on() && !body.is_draft {
         let url = format!("https://wearmu.com/products/{}/{}", body.brand, body.drop_num);
         // Build context for Gemini. Include weather + brand-specific framing.
         let weather_summary = body.weather_data.as_deref().unwrap_or("(weather unknown)");
@@ -20168,7 +20179,7 @@ async fn import_product(
     // (Constitution §24-v2 dual-channel). Fire-and-forget — failure
     // does not block the import (SUZURI may be rate-limited or down,
     // and yuki can re-fire manually via /api/admin/suzuri/publish/:id).
-    if matches!(body.brand.as_str(), "mugen" | "muon") && autopilot_on() {
+    if matches!(body.brand.as_str(), "mugen" | "muon") && autopilot_on() && !body.is_draft {
         let db_for_mirror = db.clone();
         tokio::spawn(async move {
             // Small grace period so mockup_url is settled in R2.
@@ -20185,6 +20196,94 @@ async fn import_product(
         });
     }
     Json(serde_json::json!({"ok": true, "id": new_id})).into_response()
+}
+
+/// GET /api/admin/drafts?token=… — list hidden (active=0) drops awaiting
+/// approval. Backs the /admin/news review page for the daily news-tee
+/// pipeline. Newest first.
+async fn admin_drafts_json(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let rows: Vec<serde_json::Value> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, brand, drop_num, name, price_jpy, inventory,
+                    COALESCE(mockup_url,''), COALESCE(design_url,''), created_at
+             FROM products WHERE active=0 ORDER BY created_at DESC LIMIT 200"
+        ).unwrap();
+        let it = stmt.query_map([], |row| {
+            Ok(serde_json::json!({
+                "id": row.get::<_, i64>(0)?,
+                "brand": row.get::<_, String>(1)?,
+                "drop_num": row.get::<_, i64>(2)?,
+                "name": row.get::<_, String>(3)?,
+                "price_jpy": row.get::<_, i64>(4)?,
+                "inventory": row.get::<_, i64>(5)?,
+                "mockup_url": row.get::<_, String>(6)?,
+                "design_url": row.get::<_, String>(7)?,
+                "created_at": row.get::<_, String>(8)?,
+            }))
+        }).unwrap();
+        it.filter_map(|r| r.ok()).collect()
+    };
+    Json(serde_json::json!({"ok": true, "drafts": rows})).into_response()
+}
+
+#[derive(Deserialize)]
+struct ActivateBody { id: i64 }
+
+/// POST /api/admin/activate?token=… {id} — approve a draft drop: flip
+/// active=0→1, then run the publicity that import_product skipped for drafts
+/// (SNS announce + SUZURI mirror). Idempotent: re-activating a live drop is a
+/// no-op for the flag.
+async fn activate_draft_product(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<ActivateBody>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let info: Option<(String, i64, String, i64, i64, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        conn.execute("UPDATE products SET active=1 WHERE id=?", params![body.id]).ok();
+        conn.query_row(
+            "SELECT brand, drop_num, name, price_jpy, inventory, mockup_url
+             FROM products WHERE id=?",
+            params![body.id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?, r.get::<_, i64>(4)?, r.get::<_, Option<String>>(5)?)),
+        ).ok()
+    };
+    let Some((brand, drop_num, name, price_jpy, inventory, mockup_url)) = info else {
+        return Json(serde_json::json!({"ok": false, "error": "not found"})).into_response();
+    };
+    // Announce on SNS now that it is live (plain template — robust offline).
+    if autopilot_on() {
+        let url = format!("https://wearmu.com/products/{}/{}", brand, drop_num);
+        let text = format!("{} — ¥{} · {}枚 · 本日号外。\n{}", name, price_jpy, inventory, url);
+        let conn = db.lock().unwrap();
+        enqueue_sns_post(&conn, "x", "drop", Some(body.id), None, &text, mockup_url.as_deref());
+    }
+    // Mirror to SUZURI for JP shipping (same as live import path).
+    if matches!(brand.as_str(), "mugen" | "muon") && autopilot_on() {
+        let db_for_mirror = db.clone();
+        let pid = body.id;
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            if let Err(e) = suzuri_publish_drop(db_for_mirror, pid, false).await {
+                eprintln!("[suzuri] activate mirror failed for product {}: {}", pid, e);
+            }
+        });
+    }
+    Json(serde_json::json!({"ok": true, "id": body.id, "url":
+        format!("https://wearmu.com/products/{}/{}", brand, drop_num)})).into_response()
+}
+
+/// GET /admin/news — review page for the daily news-tee drafts. Token passed
+/// as ?token=… ; the page's JS calls /api/admin/drafts and /api/admin/activate.
+async fn admin_news_page() -> Html<&'static str> {
+    Html(include_str!("../static/admin-news.html"))
 }
 
 /// GET /api/admin/recent_buyers?token=…&limit=N — last N mu_purchases rows.
@@ -25763,6 +25862,12 @@ async fn tokushoho_page() -> Html<&'static str> {
 /// One-page visual language reference. Static include, no DB.
 async fn brand_guidelines_page() -> Html<&'static str> {
     Html(include_str!("../static/brand.html"))
+}
+
+/// GET /fest — MU FESTIVAL HAWAII teaser (2026-10-29). Entry = bring a MUGEN
+/// tee. Countdown + daily news-tee funnel. Static include, no DB.
+async fn fest_page() -> Html<&'static str> {
+    Html(include_str!("../static/fest.html"))
 }
 
 /// GET /proposals — public directory of all approved MU collabs.
@@ -64870,6 +64975,8 @@ async fn main() {
         .route("/api/admin/exports/kyc.csv", get(payments::admin_export_kyc))
         .route("/api/admin/exports/crypto.csv", get(payments::admin_export_crypto))
         .route("/api/admin/import", post(import_product))
+        .route("/api/admin/drafts", get(admin_drafts_json))
+        .route("/api/admin/activate", post(activate_draft_product))
         .route("/api/admin/next_drop", get(admin_next_drop))
         .route("/api/admin/db_backup", get(admin_db_backup))
         .route("/api/admin/recent_buyers", get(admin_recent_buyers))
@@ -64895,6 +65002,9 @@ async fn main() {
         .route("/tokushoho", get(tokushoho_page))
         .route("/brand", get(brand_guidelines_page))
         .route("/brand.html", get(|| async { axum::response::Redirect::permanent("/brand") }))
+        .route("/fest", get(fest_page))
+        .route("/festival", get(|| async { axum::response::Redirect::permanent("/fest") }))
+        .route("/admin/news", get(admin_news_page))
         // 2026-05-21 URL polish: /<page>.html → 301 /<page>. Previously these
         // responded 200 on both forms (creating duplicate-content URLs in
         // Search Console); canonicalise to the suffix-less form.
