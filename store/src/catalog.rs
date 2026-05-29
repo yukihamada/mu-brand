@@ -129,6 +129,11 @@ pub fn ensure_schema(conn: &rusqlite::Connection) {
     let _ = conn.execute("ALTER TABLE catalog_products ADD COLUMN status TEXT NOT NULL DEFAULT 'live'", []);
     let _ = conn.execute("ALTER TABLE catalog_products ADD COLUMN fulfillment_route TEXT NOT NULL DEFAULT 'printful_dtg'", []);
     let _ = conn.execute("ALTER TABLE catalog_products ADD COLUMN legacy_source TEXT", []);
+    // Cross-sell add-on: the optional 2nd SKU fulfilled alongside the main
+    // SKU in a single Printful order. NULL for every existing single-SKU
+    // order (full backward compat). Single column per the catalog contract
+    // (no new per-type table).
+    let _ = conn.execute("ALTER TABLE catalog_orders ADD COLUMN addon_sku TEXT", []);
 }
 
 /// How many founder cards are still available (0..100).
@@ -2872,6 +2877,13 @@ fn shipping_table_html() -> String {
 #[derive(Deserialize)]
 pub struct CheckoutQuery {
     pub sku: String,
+    /// Optional cross-sell add-on SKU. Inert unless a (future) UI passes
+    /// `?addon=<sku>`. When present, valid, active, and on a Printful
+    /// route, it is added as line_items[1] and fulfilled alongside the
+    /// main SKU. Absent / invalid → behaves exactly like a single-SKU
+    /// checkout (full backward compat).
+    #[serde(default)]
+    pub addon: Option<String>,
 }
 
 pub async fn shop_checkout(
@@ -2905,6 +2917,53 @@ pub async fn shop_checkout(
     let Some((price_id, price_jpy, desc, _brand, mockup_path)) = row else {
         return (StatusCode::NOT_FOUND, "sku not found").into_response();
     };
+
+    // Optional cross-sell add-on. Only honored when the SKU exists, is
+    // active, has a positive price, and rides a Printful route (so
+    // fulfill_catalog_order can actually build a 2nd Printful item for
+    // it — see build_printful_item). Anything else → silently ignored,
+    // i.e. plain single-SKU checkout (no customer harm: we never charge
+    // for something we can't fulfill).
+    struct Addon {
+        sku: String,
+        price_jpy: i64,
+        desc: String,
+        image: Option<String>,
+    }
+    let addon: Option<Addon> = q.addon
+        .as_deref()
+        .filter(|s| !s.is_empty() && *s != sku) // ignore self-pairing
+        .and_then(|asku| {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT retail_price_jpy, description_ja,
+                        COALESCE(mockup_url_external, mockup_main_file, ''),
+                        COALESCE(fulfillment_route, 'printful_dtg')
+                 FROM catalog_products WHERE sku=? AND is_active=1",
+                rusqlite::params![asku],
+                |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .ok()
+            .and_then(|(p, d, img, route): (i64, String, String, String)| {
+                if p > 0 && route.starts_with("printful_") {
+                    Some(Addon {
+                        sku: asku.to_string(),
+                        price_jpy: p,
+                        desc: d,
+                        image: if img.is_empty() { None } else { Some(img) },
+                    })
+                } else {
+                    None
+                }
+            })
+        });
     // Resolve to an absolute, publicly-fetchable URL Stripe can render in
     // the Checkout page. Relative /static/ paths get the merch-bridge
     // origin (Stripe must fetch HTTPS).
@@ -2921,9 +2980,12 @@ pub async fn shop_checkout(
     // fires the Google Ads purchase conversion with the ACTUAL amount (not
     // the ¥6,800 fallback) — accurate value is what Smart Bidding optimises
     // ROAS against. Stripe substitutes {CHECKOUT_SESSION_ID} server-side.
+    // Conversion value = main + addon (when present) so the /success
+    // page fires the Google Ads purchase conversion with the real total.
+    let conv_value = price_jpy + addon.as_ref().map(|a| a.price_jpy).unwrap_or(0);
     let success_url = format!(
         "{}/success?from=shop&sku={}&value={}&sid={{CHECKOUT_SESSION_ID}}",
-        base_url, urlencoding::encode(&sku), price_jpy,
+        base_url, urlencoding::encode(&sku), conv_value,
     );
     let cancel_url = format!("{}/shop/{}", base_url, urlencoding::encode(&sku));
 
@@ -2973,6 +3035,27 @@ pub async fn shop_checkout(
         }
     }
 
+    // Cross-sell add-on as line_items[1]. Always priced via dynamic
+    // price_data from its own retail_price_jpy + description_ja (works
+    // whether or not the addon has a pre-created Stripe price). The
+    // metadata key catalog_addon_sku is what fulfill_catalog_order reads
+    // to build the 2nd Printful item.
+    if let Some(a) = &addon {
+        form.push(("metadata[catalog_addon_sku]", a.sku.clone()));
+        form.push(("line_items[1][quantity]", "1".into()));
+        form.push(("line_items[1][price_data][currency]", "jpy".into()));
+        form.push(("line_items[1][price_data][unit_amount]", a.price_jpy.to_string()));
+        form.push(("line_items[1][price_data][product_data][name]", a.desc.clone()));
+        if let Some(img) = &a.image {
+            let abs = if img.starts_with("http") {
+                img.clone()
+            } else {
+                format!("https://merch.wearmu.com{}", img)
+            };
+            form.push(("line_items[1][price_data][product_data][images][0]", abs));
+        }
+    }
+
     let resp = reqwest::Client::new()
         .post("https://api.stripe.com/v1/checkout/sessions")
         .basic_auth(&stripe_key, None::<&str>)
@@ -3003,6 +3086,132 @@ pub async fn shop_checkout(
 }
 
 // ─── Webhook fulfillment (called from main.rs stripe_webhook) ─────────
+
+/// Build the per-SKU Printful order `item` JSON for a single catalog SKU.
+///
+/// This is the reusable core of the fulfillment item construction (the
+/// three Printful shapes — sync_variant_id / variant_id+files /
+/// variant_id-only — plus the stitch_color option block and the
+/// per-panel placement fan-out). It is called once per item: the MAIN
+/// SKU (with the session-derived `retail_price` and any customer size
+/// override) and, when present, an `addon` SKU (with its own
+/// retail_price and no size override).
+///
+/// `retail_price` is passed in (NOT recomputed) so the main item stays
+/// byte-identical to the pre-refactor code, which used the Stripe
+/// session total. `variant_override` is the size-resolved variant for
+/// the main SKU (`None` for the addon, which is single-size).
+///
+/// Returns `None` when the SKU is missing or its fulfillment route is
+/// not a Printful route (e.g. contrado_uk / manual / digital). The
+/// caller decides whether a `None` for the main SKU aborts the order or
+/// whether a `None` addon is simply skipped.
+fn build_printful_item(
+    conn: &rusqlite::Connection,
+    sku: &str,
+    retail_price: &str,
+    variant_override: Option<i64>,
+) -> Option<serde_json::Value> {
+    let (pp_id, mut pf_variant_id, sync_variant_id, design_file, placement, route): (
+        i64,
+        i64,
+        Option<i64>,
+        Option<String>,
+        String,
+        String,
+    ) = conn
+        .query_row(
+            "SELECT printful_product_id, printful_variant_id,
+                    printful_sync_variant_id, design_file, printful_placement,
+                    COALESCE(fulfillment_route, 'printful_dtg')
+             FROM catalog_products WHERE sku=?",
+            rusqlite::params![sku],
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, Option<i64>>(2)?,
+                    r.get::<_, Option<String>>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, String>(5)?,
+                ))
+            },
+        )
+        .ok()?;
+
+    // Only Printful routes produce an item via this helper. contrado_uk
+    // is handled by its own early-return path; manual / digital / gelato /
+    // suzuri are not Printful-item-shaped here.
+    if !route.starts_with("printful_") {
+        return None;
+    }
+
+    if let Some(v) = variant_override {
+        pf_variant_id = v;
+    }
+
+    // AOP rashguards (Printful product 301) require a `stitch_color`
+    // option ('white' or 'black'). Default to black so the seams match
+    // the dominant body of the print on dark rashguards.
+    let needs_stitch_color = matches!(pp_id, 301 | 302 | 368 | 369 | 836);
+    let options_block: Vec<serde_json::Value> = if needs_stitch_color {
+        vec![serde_json::json!({"id":"stitch_color","value":"black"})]
+    } else {
+        Vec::new()
+    };
+
+    // Three fulfillment shapes Printful accepts:
+    //   (a) pre-synced product (sync_variant_id) — merch-bridge import path
+    //   (b) base variant + inline files (design_file URL + placement) —
+    //       the autonomous generator path; no sync_product round-trip needed
+    //   (c) base variant only (no design) — fallback, mainly for testing
+    let item: serde_json::Value = match (sync_variant_id, design_file.as_deref()) {
+        (Some(svid), _) if svid > 0 => serde_json::json!({
+            "sync_variant_id": svid,
+            "quantity": 1,
+            "retail_price": retail_price,
+            "options": options_block,
+        }),
+        (_, Some(df)) if !df.is_empty() => {
+            let file_url = if df.starts_with("http") {
+                df.to_string()
+            } else {
+                // design_file = "/static/designs/foo.png" → absolute URL Printful can fetch
+                format!("{}{}", env::var("BASE_URL")
+                    .unwrap_or_else(|_| "https://wearmu.com".into()), df)
+            };
+            // Fan the same design out to every panel the product supports.
+            // For AOP rashguards this is front/back/both sleeves so the
+            // garment ships in its true belt color, not chest-printed white.
+            // The stored placement is honored for single-panel products
+            // (tees/hoodies) where the helper returns just ["front"].
+            let resolved_placements = placements_for_product(pp_id);
+            let resolved_placements: Vec<&str> =
+                if resolved_placements == ["front"] && placement != "front" {
+                    vec![placement.as_str()]
+                } else {
+                    resolved_placements.iter().copied().collect()
+                };
+            let files: Vec<serde_json::Value> = resolved_placements.iter().map(|p| {
+                serde_json::json!({"url": file_url, "placement": p})
+            }).collect();
+            serde_json::json!({
+                "variant_id": pf_variant_id,
+                "quantity": 1,
+                "retail_price": retail_price,
+                "files": files,
+                "options": options_block,
+            })
+        }
+        _ => serde_json::json!({
+            "variant_id": pf_variant_id,
+            "quantity": 1,
+            "retail_price": retail_price,
+            "options": options_block,
+        }),
+    };
+    Some(item)
+}
 
 /// Fire on checkout.session.completed when metadata.kind == "catalog".
 /// Posts the order to Printful with the JP→ISO state normalization +
@@ -3037,33 +3246,28 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
         }
     }
 
-    // Read fulfillment_route along with Printful identifiers. Existing rows
+    // Read fulfillment_route + printful_product_id for the main SKU. The
+    // remaining Printful identifiers are looked up inside
+    // build_printful_item(); here we only need pp_id (for the size-variant
+    // override) and route (for the contrado early-return). Existing rows
     // default to 'printful_dtg' so the legacy path is unaffected.
     let product = {
         let conn = db.lock().unwrap();
         conn.query_row(
-            "SELECT printful_product_id, printful_variant_id,
-                    printful_sync_product_id, printful_sync_variant_id,
-                    design_file, printful_placement,
+            "SELECT printful_product_id,
                     COALESCE(fulfillment_route, 'printful_dtg')
              FROM catalog_products WHERE sku=?",
             rusqlite::params![&sku],
             |r| {
                 Ok((
                     r.get::<_, i64>(0)?,
-                    r.get::<_, i64>(1)?,
-                    r.get::<_, Option<i64>>(2)?,
-                    r.get::<_, Option<i64>>(3)?,
-                    r.get::<_, Option<String>>(4)?,
-                    r.get::<_, String>(5)?,
-                    r.get::<_, String>(6)?,
+                    r.get::<_, String>(1)?,
                 ))
             },
         )
         .ok()
     };
-    let Some((_pp_id, pf_variant_id, _sync_pid, sync_variant_id, design_file, placement, route))
-        = product
+    let Some((_pp_id, route)) = product
     else {
         tracing::warn!("[catalog/fulfill] sku {} not in catalog_products", sku);
         return;
@@ -3091,7 +3295,6 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
             }
         }
     }
-    let pf_variant_id = variant_override.unwrap_or(pf_variant_id);
 
     // Stripe Checkout webhooks sometimes omit shipping_details from
     // data.object even when shipping_address_collection was enabled —
@@ -3156,68 +3359,75 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
         session_id.clone()
     };
 
-    // AOP rashguards (Printful product 301) require a `stitch_color`
-    // option ('white' or 'black'). Default to black so the seams match
-    // the dominant body of the print on dark rashguards. Verified live:
-    // order #1 4xx'd with "Item 'stitch_color' option missing or has
-    // an invalid value!" before this guard.
-    let needs_stitch_color = matches!(_pp_id, 301 | 302 | 368 | 369 | 836);
-    let options_block: Vec<serde_json::Value> = if needs_stitch_color {
-        vec![serde_json::json!({"id":"stitch_color","value":"black"})]
-    } else {
-        Vec::new()
+    // Build the MAIN item via the shared helper. For an existing
+    // single-SKU order this produces byte-identical JSON to the previous
+    // inline code: same session-derived retail_price, same size override,
+    // same stitch_color / placement logic.
+    let main_item = {
+        let conn = db.lock().unwrap();
+        build_printful_item(&conn, &sku, &retail_price, variant_override)
     };
+    let Some(main_item) = main_item else {
+        // Should not happen — we already confirmed the SKU exists and the
+        // route is not contrado_uk. A None here means the route is not a
+        // printful_* route (e.g. manual/digital/gelato/suzuri), which this
+        // Printful POST path cannot fulfill. Record and bail rather than
+        // silently dropping.
+        tracing::warn!(
+            "[catalog/fulfill] sku {} produced no Printful item (non-printful route?), session={}",
+            sku, session_id
+        );
+        record_order(&db, &session_id, &sku, amount_total, cust, shipping,
+                     None, "failed_no_item");
+        return;
+    };
+    let mut items: Vec<serde_json::Value> = vec![main_item];
 
-    // Three fulfillment shapes Printful accepts:
-    //   (a) pre-synced product (sync_variant_id) — merch-bridge import path
-    //   (b) base variant + inline files (design_file URL + placement) —
-    //       the autonomous generator path; no sync_product round-trip needed
-    //   (c) base variant only (no design) — fallback, mainly for testing
-    let item: serde_json::Value = match (sync_variant_id, design_file.as_deref()) {
-        (Some(svid), _) if svid > 0 => serde_json::json!({
-            "sync_variant_id": svid,
-            "quantity": 1,
-            "retail_price": retail_price,
-            "options": options_block,
-        }),
-        (_, Some(df)) if !df.is_empty() => {
-            let file_url = if df.starts_with("http") {
-                df.to_string()
-            } else {
-                // design_file = "/static/designs/foo.png" → absolute URL Printful can fetch
-                format!("{}{}", env::var("BASE_URL")
-                    .unwrap_or_else(|_| "https://wearmu.com".into()), df)
-            };
-            // Fan the same design out to every panel the product supports.
-            // For AOP rashguards this is front/back/both sleeves so the
-            // garment ships in its true belt color, not chest-printed white.
-            // The stored placement is honored for single-panel products
-            // (tees/hoodies) where the helper returns just ["front"].
-            let resolved_placements = placements_for_product(_pp_id);
-            let resolved_placements: Vec<&str> =
-                if resolved_placements == ["front"] && placement != "front" {
-                    vec![placement.as_str()]
+    // Optional cross-sell add-on. Inert until a future UI passes
+    // `?addon=<sku>` at checkout (which sets metadata.catalog_addon_sku).
+    // The add-on is charged its OWN retail_price_jpy (Printful wants a
+    // per-item retail_price, not the session total), single size, no size
+    // override. If it is missing / inactive / non-printful route we skip
+    // the item rather than fail the whole order (the main item is the
+    // committed purchase). 2nd-item failures still surface in Printful's
+    // response which is logged + recorded below.
+    let addon_sku = session["metadata"]["catalog_addon_sku"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+    if !addon_sku.is_empty() {
+        let addon_item = {
+            let conn = db.lock().unwrap();
+            // Format the add-on price the same way the main retail_price is
+            // formatted for JPY (yen amount with two decimals).
+            let addon_price_jpy: i64 = conn
+                .query_row(
+                    "SELECT retail_price_jpy FROM catalog_products WHERE sku=? AND is_active=1",
+                    rusqlite::params![&addon_sku],
+                    |r| r.get::<_, i64>(0),
+                )
+                .unwrap_or(0);
+            if addon_price_jpy > 0 {
+                let addon_retail = if currency == "jpy" {
+                    format!("{:.2}", addon_price_jpy as f64)
                 } else {
-                    resolved_placements.iter().copied().collect()
+                    // Non-JPY add-on pricing is not currently used; fall back
+                    // to the same JPY-style format to stay defined.
+                    format!("{:.2}", addon_price_jpy as f64)
                 };
-            let files: Vec<serde_json::Value> = resolved_placements.iter().map(|p| {
-                serde_json::json!({"url": file_url, "placement": p})
-            }).collect();
-            serde_json::json!({
-                "variant_id": pf_variant_id,
-                "quantity": 1,
-                "retail_price": retail_price,
-                "files": files,
-                "options": options_block,
-            })
+                build_printful_item(&conn, &addon_sku, &addon_retail, None)
+            } else {
+                None
+            }
+        };
+        match addon_item {
+            Some(it) => items.push(it),
+            None => tracing::warn!(
+                "[catalog/fulfill] addon sku {} skipped (missing/inactive/non-printful), session={}",
+                addon_sku, session_id
+            ),
         }
-        _ => serde_json::json!({
-            "variant_id": pf_variant_id,
-            "quantity": 1,
-            "retail_price": retail_price,
-            "options": options_block,
-        }),
-    };
+    }
 
     let body = serde_json::json!({
         "recipient": {
@@ -3231,7 +3441,7 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
             "email":        cust["email"].as_str().unwrap_or(""),
             "phone":        cust["phone"].as_str().unwrap_or(""),
         },
-        "items": [item],
+        "items": items,
         "external_id": ext_id,
     });
 
@@ -3283,6 +3493,7 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
                 pf_id.as_deref(),
                 if ok { "submitted" } else { "failed" },
                 Some(&text),
+                if addon_sku.is_empty() { None } else { Some(addon_sku.as_str()) },
             );
             // Mirror into mu_purchases so vault holder gating + /100 counter
                 // + community.numbers see catalog-route buyers too. Idempotent
@@ -3442,7 +3653,7 @@ fn record_order(
     pf_id: Option<&str>,
     status: &str,
 ) {
-    record_order_full(db, session_id, sku, amount, cust, shipping, pf_id, status, None);
+    record_order_full(db, session_id, sku, amount, cust, shipping, pf_id, status, None, None);
 }
 
 /// First-100 founder-card flow. Idempotent on stripe_session_id (INSERT
@@ -3609,6 +3820,7 @@ fn record_order_full(
     pf_id: Option<&str>,
     status: &str,
     pf_response: Option<&str>,
+    addon_sku: Option<&str>,
 ) {
     let email = cust["email"].as_str().unwrap_or("");
     let name = shipping["name"]
@@ -3624,8 +3836,9 @@ fn record_order_full(
     let _ = conn.execute(
         "INSERT OR REPLACE INTO catalog_orders
          (stripe_session_id, sku, amount_jpy, customer_email, customer_name,
-          shipping_address_json, printful_order_id, printful_response_json, status)
-         VALUES (?,?,?,?,?,?,?,?,?)",
+          shipping_address_json, printful_order_id, printful_response_json, status,
+          addon_sku)
+         VALUES (?,?,?,?,?,?,?,?,?,?)",
         rusqlite::params![
             session_id,
             sku,
@@ -3636,6 +3849,7 @@ fn record_order_full(
             pf_id,
             pf_resp_trimmed,
             status,
+            addon_sku,
         ],
     );
 }
