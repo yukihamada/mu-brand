@@ -22353,6 +22353,43 @@ async fn index(State(db): State<Db>) -> Html<String> {
         (mugen, cycle, muon, temp, tiles)
     };
 
+    // Homepage discovery strip (2026-05-30): the hero sells only "今日の一着"
+    // (MUGEN/MUON); the 745-SKU catalog across collab brands was invisible
+    // below the nav. Surface up to 8 live apparel SKUs with real POD mockups
+    // to lift the visit→buy-click rate. Reuses /shop/:sku (proven buy flow);
+    // does NOT touch pricing or checkout. Falls back to empty (placeholder
+    // replaced with "") when no qualifying rows exist.
+    let shop_picks: Vec<(String, String, String, i64)> = {
+        let conn = db.lock().unwrap();
+        conn.prepare(
+            "SELECT sku, description_ja, mockup_url_external, retail_price_jpy
+             FROM catalog_products
+             WHERE is_active=1 AND status='live'
+               AND mockup_url_external IS NOT NULL AND mockup_url_external != ''
+               AND ( mockup_url_external LIKE '%printful%'
+                     OR mockup_url_external LIKE '%r2.dev%'
+                     OR mockup_url_external LIKE '%r2.cloudflarestorage%'
+                     OR mockup_url_external LIKE '%mockups.wearmu.com%' )
+               AND retail_price_jpy >= 3000
+             ORDER BY RANDOM()
+             LIMIT 8",
+        )
+        .ok()
+        .and_then(|mut s| {
+            s.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            })
+            .ok()
+            .map(|it| it.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default()
+    };
+
     // Timer: seconds to next whole hour (UTC, mirrors JS implementation).
     let timer_str: String = {
         let now_s: i64 = chrono_now().parse().unwrap_or(0);
@@ -22478,6 +22515,34 @@ async fn index(State(db): State<Db>) -> Html<String> {
     // Hero T-shirt card SSR-fill: latest mugen drop label (#N or fallback).
     let hero_drop_label = mugen_drop.map(|d| format!("#{:04}", d)).unwrap_or_else(|| "今日 の 一着".into());
     let html = html.replace("{HERO_DROP_LABEL}", &hero_drop_label);
+
+    // Fill the homepage discovery strip ({BEST_SELLERS_STRIP}). Tasteful dark
+    // section matching the hero; links each card to its /shop/:sku PDP and a
+    // "全商品を見る" CTA to /shop. Empty when no qualifying SKUs (token → "").
+    let shop_strip = if shop_picks.is_empty() {
+        String::new()
+    } else {
+        let cards: String = shop_picks.iter().map(|(sku, name, img, price)| {
+            let sku_e   = html_attr_escape(sku);
+            let name_e  = html_attr_escape(name);
+            let img_e   = html_attr_escape(img);
+            format!(
+                r#"<a href="/shop/{sku_e}" data-funnel="cta_click" data-funnel-cta="home_shop_pick" style="display:block;text-decoration:none;color:inherit;background:#0d0d0d;border:1px solid rgba(255,255,255,0.07);border-radius:4px;overflow:hidden;transition:border-color 0.2s ease" onmouseover="this.style.borderColor='rgba(230,196,73,0.5)'" onmouseout="this.style.borderColor='rgba(255,255,255,0.07)'"><div style="width:100%;aspect-ratio:1/1;background:#fff;overflow:hidden"><img src="{img_e}" alt="{name_e}" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block"></div><div style="padding:9px 10px"><div style="font-size:11px;color:#F5F5F0;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{name_e}</div><div style="font-size:12px;font-weight:600;color:#e6c449;margin-top:3px;font-variant-numeric:tabular-nums">¥{price_fmt}</div></div></a>"#,
+                sku_e = sku_e, name_e = name_e, img_e = img_e, price_fmt = format_jpy(*price),
+            )
+        }).collect();
+        format!(
+            r#"<section style="width:100%;max-width:880px;margin:44px auto 0;padding:0 12px">
+  <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px">
+    <div style="font-size:10px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.55">MU &amp; コラボ — コレクション</div>
+    <a href="/shop" data-funnel="cta_click" data-funnel-cta="home_shop_all" style="font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:#e6c449;text-decoration:none">全商品を見る →</a>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px">{cards}</div>
+</section>"#,
+            cards = cards,
+        )
+    };
+    let html = html.replace("{BEST_SELLERS_STRIP}", &shop_strip);
 
     Html(html)
 }
