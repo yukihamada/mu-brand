@@ -641,8 +641,9 @@ def get_mockup(product_id: int, variant_id: int, file_url: str) -> str | None:
 # ── Solana NFT (certificate) ─────────────────────────────
 def mint_nft_certificate(product_id: int, metadata: dict) -> str | None:
     """Mint standard Metaplex NFT on Solana mainnet (no Helius needed). Returns mint address."""
-    import struct, base58 as _b58
+    import struct
     try:
+        import base58 as _b58
         from solders.keypair import Keypair as SolKP
         from solders.pubkey import Pubkey as SolPK
         from solders.instruction import Instruction as SolIx, AccountMeta as SolAM
