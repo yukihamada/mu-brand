@@ -32,7 +32,7 @@ VALUES
   ('atsume', 'MU × ATSUME', '⊙', '#F2792B',
    '挑戦者の仲間を集める · DEV TEAM EDITION',
    NULL, 1, 0,
-   '{"design_style":"ATSUME dev-studio collab. Scattered dots condensing into one mark (gathering motif), bold monoline + single warm amber #F2792B accent on black. Engineer-athlete energy.","lifestyle_scene":"startup studio meets sports court, developer at a standing desk with a ball nearby","ink_default":"black","approval_required":true,"partner":"株式会社アツメ (ATSUME inc.) — atsume.io","hero":{"title":"ATSUME ⊙ DEV","title_accent_letter":"⊙","subtitle":"BY MU × 株式会社アツメ","tagline_en":"GATHER THE CHALLENGERS","tagline_en_accent":"GATHER","tagline_jp":"挑戦者の仲間を、集める。","badge":"DEV TEAM COLLAB · 2026"},"product_blurbs":{"tee":"Bella+Canvas 3001 · 4.2oz リングスパンコットン · 在庫レス DTG プリント · 7–14日配送"}}')
+   '{"lp_template":"/atsume","design_style":"ATSUME dev-studio collab. Scattered dots condensing into one mark (gathering motif), bold monoline + single warm amber #F2792B accent on black. Engineer-athlete energy.","lifestyle_scene":"startup studio meets sports court, developer at a standing desk with a ball nearby","ink_default":"black","approval_required":true,"partner":"株式会社アツメ (ATSUME inc.) — atsume.io","hero":{"title":"ATSUME ⊙ DEV","title_accent_letter":"⊙","subtitle":"BY MU × 株式会社アツメ","tagline_en":"GATHER THE CHALLENGERS","tagline_en_accent":"GATHER","tagline_jp":"挑戦者の仲間を、集める。","badge":"DEV TEAM COLLAB · 2026"},"product_blurbs":{"tee":"Bella+Canvas 3001 · 4.2oz リングスパンコットン · 在庫レス DTG プリント · 7–14日配送"}}')
 ON CONFLICT(slug) DO UPDATE SET
   name              = excluded.name,
   emoji             = excluded.emoji,

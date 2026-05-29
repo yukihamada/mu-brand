@@ -22,7 +22,7 @@ VALUES
   ('yuma', 'MU × YUMA', '碧', '#0E7C9B',
    '数字に、誠実を。 · 税理士 YUMA 碧 (AO) line',
    NULL, 1, 0,
-   '{"design_style":"Tax-accountant collab. Fresh aqua (水色) tee + deep teal/navy single-color print. 碧 kanji signature + witty 税理士 phrases. Clean, minimal, 爽やか.","lifestyle_scene":"bright minimal accounting office, clear blue light, plants, tidy desk","ink_default":"teal","partner":"税理士 YUMA","hero":{"title":"碧","subtitle":"MU × YUMA · 税理士 collab","tagline_en":"HONESTY IN NUMBERS","tagline_en_accent":"HONESTY","tagline_jp":"数字に、誠実を。","badge":"碧 (AO) LINE · 2026"},"product_blurbs":{"tee":"Bella+Canvas 3001 · 水色 (Baby Blue) · DTG プリント · 在庫レス · 7–14日配送"}}')
+   '{"lp_template":"/yuma","design_style":"Tax-accountant collab. Fresh aqua (水色) tee + deep teal/navy single-color print. 碧 kanji signature + witty 税理士 phrases. Clean, minimal, 爽やか.","lifestyle_scene":"bright minimal accounting office, clear blue light, plants, tidy desk","ink_default":"teal","partner":"税理士 YUMA","hero":{"title":"碧","subtitle":"MU × YUMA · 税理士 collab","tagline_en":"HONESTY IN NUMBERS","tagline_en_accent":"HONESTY","tagline_jp":"数字に、誠実を。","badge":"碧 (AO) LINE · 2026"},"product_blurbs":{"tee":"Bella+Canvas 3001 · 水色 (Baby Blue) · DTG プリント · 在庫レス · 7–14日配送"}}')
 ON CONFLICT(slug) DO UPDATE SET
   name              = excluded.name,
   emoji             = excluded.emoji,

@@ -23,7 +23,7 @@ VALUES
   ('elepote', 'MU × ELE × POTE', '🤍', '#C97D6B',
    'ふわふわ × ふがふが · 2匹の毎日',
    NULL, 1, 0,
-   '{"design_style":"Friendly modern editorial illustration of two best-friend puppy mascots. Confident monoline + soft flat fills + one warm accent. Cozy, premium.","lifestyle_scene":"warm sunlit living room, cream sofa, two dogs napping","ink_default":"navy","partner":"personal · Yuki''s dogs","hero":{"title":"ELE × POTE","subtitle":"BY MU · 2匹の毎日","tagline_en":"FLUFF MEETS SQUISH","tagline_en_accent":"FLUFF","tagline_jp":"ふわふわ × ふがふが。","badge":"ELE × POTE · 2026"},"product_blurbs":{"tee":"Bella+Canvas 3001 · 4.2oz リングスパンコットン・ホワイト · 在庫レス DTG · 7–14日配送"}}')
+   '{"lp_template":"/elepote","design_style":"Friendly modern editorial illustration of two best-friend puppy mascots. Confident monoline + soft flat fills + one warm accent. Cozy, premium.","lifestyle_scene":"warm sunlit living room, cream sofa, two dogs napping","ink_default":"navy","partner":"personal · Yuki''s dogs","hero":{"title":"ELE × POTE","subtitle":"BY MU · 2匹の毎日","tagline_en":"FLUFF MEETS SQUISH","tagline_en_accent":"FLUFF","tagline_jp":"ふわふわ × ふがふが。","badge":"ELE × POTE · 2026"},"product_blurbs":{"tee":"Bella+Canvas 3001 · 4.2oz リングスパンコットン・ホワイト · 在庫レス DTG · 7–14日配送"}}')
 ON CONFLICT(slug) DO UPDATE SET
   name              = excluded.name,
   emoji             = excluded.emoji,

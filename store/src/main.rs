@@ -21520,6 +21520,158 @@ async fn api_brands(State(db): State<Db>) -> Response {
     Json(serde_json::json!({ "brands": brands, "count": brands.len() })).into_response()
 }
 
+/// GET /brands — public, SSR brand directory. Renders every active
+/// `catalog_brands` row that has at least one live product, ordered by
+/// live-product count (most substantial collab first). Each card links to
+/// the brand's LP (`config_json.lp_template` when present, else the generic
+/// `/c/<slug>` page) plus a `/shop?brand=<slug>` catalog link. No JS — the
+/// grid is rendered server-side so the directory is crawlable and instant.
+async fn brands_index(State(db): State<Db>) -> Html<String> {
+    struct BrandRow {
+        slug: String,
+        name: String,
+        emoji: String,
+        color: String,
+        tagline: String,
+        count: i64,
+        lp: String,
+    }
+
+    let rows: Vec<BrandRow> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT b.slug, b.name, COALESCE(b.emoji,''), b.color_primary,
+                    COALESCE(b.tagline,''), b.config_json,
+                    (SELECT COUNT(*) FROM catalog_products p
+                     WHERE p.brand = b.slug AND p.status = 'live') AS product_count
+             FROM catalog_brands b
+             WHERE b.is_active = 1
+             ORDER BY product_count DESC, b.name",
+        ) {
+            Ok(s) => s,
+            Err(_) => return Html(String::new()),
+        };
+        stmt.query_map([], |r| {
+            let slug: String = r.get(0)?;
+            let cfg: Option<String> = r.get(5)?;
+            let lp = cfg
+                .as_deref()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                .and_then(|v| v.get("lp_template").and_then(|t| t.as_str()).map(String::from))
+                .unwrap_or_else(|| format!("/c/{}", slug));
+            Ok(BrandRow {
+                slug,
+                name: r.get(1)?,
+                emoji: r.get(2)?,
+                color: r.get(3)?,
+                tagline: r.get(4)?,
+                count: r.get(6)?,
+                lp,
+            })
+        })
+        .and_then(|it| it.collect::<Result<Vec<_>, _>>())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|b| b.count > 0)
+        .collect()
+    };
+
+    let total_brands = rows.len();
+    let total_skus: i64 = rows.iter().map(|b| b.count).sum();
+
+    let cards = rows
+        .iter()
+        .map(|b| {
+            let accent = if b.color.trim().is_empty() { "#e6c449" } else { b.color.trim() };
+            let tagline = if b.tagline.trim().is_empty() {
+                String::new()
+            } else {
+                format!(r#"<div class="btag">{}</div>"#, html_escape(&b.tagline))
+            };
+            format!(
+                r##"<a class="bcard" href="{lp}" style="--accent:{accent}">
+  <div class="bemoji">{emoji}</div>
+  <div class="bname">{name}</div>
+  {tagline}
+  <div class="bmeta"><span class="bcount">{count} 商品</span><span class="bgo">ブランドを見る →</span></div>
+  <span class="bshop" onclick="event.preventDefault();event.stopPropagation();location.href='/shop?brand={slug}'">カタログ</span>
+</a>"##,
+                lp = html_attr_escape(&b.lp),
+                accent = html_attr_escape(accent),
+                emoji = html_escape(&b.emoji),
+                name = html_escape(&b.name),
+                tagline = tagline,
+                count = b.count,
+                slug = html_attr_escape(&b.slug),
+            )
+        })
+        .collect::<String>();
+
+    let body = format!(
+        r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ブランド一覧 — {total_brands} ブランド | MU</title>
+<meta name="description" content="MU と各パートナーの コラボブランド 一覧。 {total_brands} ブランド・{total_skus} SKU。 各ブランドのページとカタログへ。">
+<link rel="canonical" href="https://wearmu.com/brands">
+<meta property="og:title" content="ブランド一覧 | MU">
+<meta property="og:description" content="MU と各パートナーの コラボブランド 一覧。 {total_brands} ブランド・{total_skus} SKU。">
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:#0a0a0a;color:#f5f5f0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.55;font-size:14px}}
+a{{color:inherit}}
+nav{{padding:16px 24px;border-bottom:1px solid rgba(255,255,255,0.08);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px}}
+nav .links{{display:flex;gap:18px;flex-wrap:wrap}}
+nav a{{color:#f5f5f0;text-decoration:none;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.7}}
+nav a:hover,nav a.on{{opacity:1;color:#e6c449}}
+nav .brand{{font-weight:900;letter-spacing:0.35em;opacity:1}}
+.hero{{padding:48px 24px 18px;max-width:1180px;margin:0 auto}}
+.hero h1{{font-size:30px;font-weight:900;letter-spacing:-0.01em;margin-bottom:10px}}
+.hero p{{color:rgba(245,245,240,0.62);font-size:13px;line-height:1.85;max-width:680px}}
+.grid{{max-width:1180px;margin:0 auto;padding:18px 24px 80px;display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}}
+.bcard{{position:relative;display:flex;flex-direction:column;text-decoration:none;
+  padding:22px 20px 20px;background:#101010;border:1px solid rgba(255,255,255,0.10);
+  border-radius:12px;transition:border-color .18s,transform .18s;min-height:170px}}
+.bcard:hover{{border-color:var(--accent);transform:translateY(-2px)}}
+.bemoji{{font-size:30px;line-height:1;margin-bottom:14px}}
+.bname{{font-size:16px;font-weight:800;letter-spacing:0.02em;color:#fff}}
+.btag{{margin-top:6px;font-size:12px;color:rgba(245,245,240,0.6);line-height:1.7;flex:1}}
+.bmeta{{margin-top:14px;display:flex;justify-content:space-between;align-items:center;gap:8px}}
+.bcount{{font-size:11px;color:rgba(245,245,240,0.5);letter-spacing:0.04em}}
+.bgo{{font-size:11px;color:var(--accent);letter-spacing:0.04em;font-weight:600}}
+.bshop{{position:absolute;top:16px;right:16px;font-size:9px;letter-spacing:0.18em;
+  text-transform:uppercase;color:rgba(245,245,240,0.5);border:1px solid rgba(255,255,255,0.16);
+  border-radius:999px;padding:3px 9px;cursor:pointer;transition:color .15s,border-color .15s}}
+.bshop:hover{{color:#000;background:var(--accent);border-color:var(--accent)}}
+.empty{{max-width:1180px;margin:0 auto;padding:0 24px 80px;color:rgba(245,245,240,0.5)}}
+</style></head><body>
+<nav>
+  <a class="brand" href="/">━◯━ MU</a>
+  <div class="links">
+    <a href="/">HOME</a>
+    <a href="/shop">SHOP</a>
+    <a href="/brands" class="on">BRANDS</a>
+    <a href="/about.html">ABOUT</a>
+  </div>
+</nav>
+<div class="hero">
+  <h1>ブランド一覧</h1>
+  <p>MU と各パートナーが立ち上げた コラボブランド。 現在 <strong style="color:#e6c449">{total_brands}</strong> ブランド・<strong style="color:#e6c449">{total_skus}</strong> SKU が稼働中。 各カードでブランドページへ、 右上「カタログ」で商品一覧へ。</p>
+</div>
+{grid_or_empty}
+</body></html>"##,
+        total_brands = total_brands,
+        total_skus = total_skus,
+        grid_or_empty = if cards.is_empty() {
+            r#"<div class="empty">稼働中のブランドがまだありません。</div>"#.to_string()
+        } else {
+            format!(r#"<div class="grid">{}</div>"#, cards)
+        },
+    );
+
+    Html(body)
+}
+
 /// GET /api/brand/:slug — brand metadata + all live catalog_products for the brand,
 /// ordered by sort_order. Used by LP pages (e.g. /roll/) so product data stays
 /// in the catalog and is never hardcoded in HTML.
@@ -65224,6 +65376,8 @@ async fn main() {
         // subdomain DNS layer (merch.wearmu.com → wearmu.com/shop), not via
         // a /merch alias here.
         .route("/shop", get(catalog::shop_index))
+        .route("/brands", get(brands_index))
+        .route("/collabs", get(brands_index))
         .route("/shop/:sku", get(catalog::shop_pdp))
         .route("/api/shop/checkout", get(catalog::shop_checkout))
         // Legal / policy pages — linked from PDP footer + /shop footer
