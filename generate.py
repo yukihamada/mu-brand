@@ -92,6 +92,15 @@ def init_db():
             parent_design TEXT
         )
     """)
+    # Additive migrations so the local mirror matches the store schema. Older
+    # products.db files predate these columns; ALTER ADD COLUMN errors if the
+    # column already exists, so each is best-effort. The local DB is only a
+    # convenience mirror — the authoritative insert is POST /api/admin/import.
+    for col, decl in (("print_url", "TEXT"), ("color", "TEXT"), ("size", "TEXT")):
+        try:
+            con.execute(f"ALTER TABLE products ADD COLUMN {col} {decl}")
+        except sqlite3.OperationalError:
+            pass  # column already present
     con.execute("""
         CREATE TABLE IF NOT EXISTS bids (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
