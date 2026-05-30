@@ -3544,8 +3544,35 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
     let raw_state = addr["state"].as_str().unwrap_or("");
     let state_code = normalize_state_code(&country, raw_state);
 
+    // When a cross-sell add-on is present, `amount_total` is the WHOLE
+    // session (main SKU + add-on). The add-on ships as its own Printful
+    // item declaring its own retail_price (see the addon block below), so
+    // the MAIN item must declare only the main SKU's price. Charging
+    // `amount_total` here would make Printful's declared/customs value
+    // double-count the add-on (main+addon on the main line, addon again on
+    // its own line) — inflating the customer's import duty + packing slip.
+    // JPY only: non-JPY add-on pricing is not used (see addon block), and
+    // amount_total is in minor units for non-JPY, so we leave it untouched
+    // there. Single-SKU orders deduct 0 → byte-identical to the old code.
+    let addon_price_jpy_for_main: i64 = if currency == "jpy" {
+        let addon_sku = session["metadata"]["catalog_addon_sku"].as_str().unwrap_or("");
+        if addon_sku.is_empty() {
+            0
+        } else {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT retail_price_jpy FROM catalog_products WHERE sku=? AND is_active=1",
+                rusqlite::params![addon_sku],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap_or(0)
+        }
+    } else {
+        0
+    };
+
     let retail_price = if currency == "jpy" {
-        format!("{:.2}", amount_total as f64)
+        format!("{:.2}", (amount_total - addon_price_jpy_for_main).max(0) as f64)
     } else {
         format!("{:.2}", (amount_total as f64) / 100.0)
     };
