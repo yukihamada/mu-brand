@@ -1137,6 +1137,7 @@ Anti-requirements (do NOT include):
 - No real or fake news headlines, no paragraphs of body text, no photos.
 - No additional symbols, no borders/frames beyond the single red masthead rule.
 - No gradients, no shadows, no 3D. Strictly the 2 colors above (black + one red rule).
+- The bottom dateline appears EXACTLY ONCE. Render it as a single line and never repeat, duplicate, or echo it on a second line. Do not invent any alternate drop number — the only number anywhere is "#{drop_num:04d}".
 
 Output: 2400×2400 flat artwork. Must read as "a quiet daily broadsheet reduced to one word" — museum-grade, confident, calm.
 """
