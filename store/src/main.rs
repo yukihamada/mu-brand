@@ -7694,6 +7694,15 @@ async fn admin_bounty(
 </select>
 <button type="submit" style="background:#1a1a1a;border:1px solid #333;color:#eaeaea;padding:3px 8px;font-size:11px;border-radius:2px">apply</button>
 </form>
+<form method="post" action="/admin/bounty/{id}/grant-mupay?token={t}" style="display:block;margin-top:6px">
+<input name="amount_jpy" placeholder="MU PAY ¥ (空=報酬額)" style="background:#0e0e0e;color:#fff;border:1px solid #333;font-size:11px;padding:3px;width:150px">
+<button type="submit" title="現金をMU PAY残高に変換して報告者にリンクをメール" style="background:#1a1605;border:1px solid #6b5a2c;color:#e6c449;padding:3px 8px;font-size:11px;border-radius:2px">grant MU PAY</button>
+</form>
+<form method="post" action="/admin/bounty/{id}/mark-paid?token={t}" style="display:block;margin-top:6px">
+<input name="payout_method" placeholder="bank_jp / wise / paypay" style="background:#0e0e0e;color:#fff;border:1px solid #333;font-size:11px;padding:3px;width:120px">
+<input name="payout_tx_or_id" placeholder="振込ref (口座番号は書かない)" style="background:#0e0e0e;color:#fff;border:1px solid #333;font-size:11px;padding:3px;width:150px">
+<button type="submit" title="現金支払い済みを記録 (手動振込後に押す)" style="background:#10240f;border:1px solid #2f6b2c;color:#9ae3a8;padding:3px 8px;font-size:11px;border-radius:2px">mark paid</button>
+</form>
 </td>
 </tr>"#,
             id = r.id,
@@ -7781,6 +7790,55 @@ async fn admin_bounty_triage(
         }
     }
     let tok_attr = html_attr_escape(&tok);
+    Response::builder()
+        .status(StatusCode::SEE_OTHER)
+        .header("Location", format!("/admin/bounty?token={}", tok_attr))
+        .body(axum::body::Body::empty()).unwrap()
+}
+
+/// POST /admin/bounty/:id/mark-paid — close out the cash portion of a reward.
+///
+/// The shirt side is handled by Printful auto-fulfillment, but the cash payout
+/// (bank transfer / Wise / Stripe payout) is a manual human action. This is the
+/// only write path for `bounty_rewards.payout_*`, which previously had no update
+/// endpoint at all. Call AFTER the money has actually left the account.
+///
+/// Form fields: `payout_method` (e.g. bank_jp / wise / stripe_payout / paypay),
+/// `payout_tx_or_id` (bank ref / Wise id / payout id — free text, audit only).
+/// We never store the recipient's account number here; the reference id is
+/// enough to reconcile and keeps raw bank PII out of the DB.
+async fn admin_bounty_mark_paid(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    axum::extract::Form(form): axum::extract::Form<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/bounty/mark-paid").await { return r; }
+    let method = form.get("payout_method").cloned().unwrap_or_default();
+    let tx     = form.get("payout_tx_or_id").cloned().unwrap_or_default();
+    let now = chrono_now();
+    let updated: usize = {
+        let conn = db.lock().unwrap();
+        // Only the live (non-superseded) reward row for this bounty, and only if
+        // not already paid — idempotent so a double-submit can't blank the ref.
+        let n = conn.execute(
+            "UPDATE bounty_rewards
+                SET payout_method = ?, payout_status = 'paid',
+                    payout_tx_or_id = ?, paid_out_at = ?
+              WHERE bounty_id = ? AND status != 'superseded'
+                AND COALESCE(payout_status,'pending') != 'paid'",
+            params![method, tx, now, id],
+        ).unwrap_or(0);
+        // Reflect the closed loop on the submission row too.
+        let _ = conn.execute(
+            "UPDATE bounty_submissions SET status = 'paid' WHERE id = ?",
+            params![id],
+        );
+        n
+    };
+    eprintln!("[bounty mark-paid #{}] method={} ref={} rows={}", id, method, tx, updated);
+    let tok_attr = html_attr_escape(&q.get("token").cloned().unwrap_or_default());
     Response::builder()
         .status(StatusCode::SEE_OTHER)
         .header("Location", format!("/admin/bounty?token={}", tok_attr))
@@ -7987,12 +8045,19 @@ async fn admin_bounty_issue_reward(
         eprintln!("[bounty issue-reward] STRIPE_SECRET_KEY missing — returning legacy /bounty/claim URL");
         None
     };
-    let claim_url = stripe_url.unwrap_or_else(|| format!("{}/bounty/claim/{}", base_url, token));
+    // ALWAYS hand the admin the robust wrapper URL. The raw cs_live_… link is
+    // ~300 chars and gets line-wrapped / mangled when pasted into email or LINE
+    // (this nearly cost nbhrarys' first payout — "リンクおかしいねw"). The
+    // /bounty/claim/<token> page lazily (re)creates the Stripe session on visit,
+    // so it is self-sufficient; the already_issued path already returns it, so
+    // this makes the fresh-issue path consistent. Raw URL kept only for debug.
+    let claim_url = format!("{}/bounty/claim/{}", base_url, token);
     Json(serde_json::json!({
         "ok": true,
         "already_issued": false,
         "token": token,
         "claim_url": claim_url,
+        "stripe_checkout_url": stripe_url,
         "cash_amount_jpy": cash_amount_jpy,
         "expires_at": expires_at,
     })).into_response()
@@ -8384,6 +8449,10 @@ form button.submit:disabled{{opacity:0.5;cursor:not-allowed}}
 
   <div class="bounty-info">
     Bounty #{bounty_id} · severity: <b>{sev}</b> · title: {bt}
+  </div>
+
+  <div style="margin:0 0 24px;padding:16px 20px;border:1px solid rgba(230,196,73,0.3);background:rgba(230,196,73,0.06);border-radius:6px;font-size:13px;line-height:1.9;color:#d8d4c8">
+    <b style="color:var(--gold)">お詫び</b> — 受領確認メールの遅延と引き換えリンクの不具合で、ご不便をおかけしました。仕組みを改善し、引き換えは壊れにくいリンクに統一、報酬は <b>MU PAY</b>（T シャツに使えるクレジット）でもお渡しできるようにしました。現金化は準備中です（Coming soon）。
   </div>
 
   {cash_line}
@@ -9266,6 +9335,504 @@ async fn bounty_printful_fulfill(
         }
         Err(e) => tracing::error!("[bounty/printful] reward_id={} network: {}", reward_id, e),
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MU PAY — customer-facing store credit.
+//
+// MU PAY is a thin, branded surface over the existing `mu_credits` balance
+// (email-keyed, audited by mu_credit_ledger). A customer reaches their balance
+// through a deterministic magic link /pay/<token> and redeems it for MUGEN
+// tees: balance is decremented, shipping is collected on the page, and Printful
+// auto-fulfils. Cash-out is intentionally "coming soon" — for now MU PAY only
+// buys shirts. Bounty rewards are the first credit source
+// (POST /admin/bounty/:id/grant-mupay). No new wallet/order tables: a
+// redemption is just a negative mu_credit_ledger row.
+
+/// Apology block shown on /bounty-adjacent surfaces (no reporter name).
+const MUPAY_APOLOGY_HTML: &str = r#"<div style="max-width:780px;margin:24px auto;padding:18px 22px;border:1px solid rgba(230,196,73,0.3);background:rgba(230,196,73,0.06);border-radius:6px;color:#d8d4c8;font-size:13.5px;line-height:1.9">
+<b style="color:#e6c449">お詫びと改善のご報告</b><br>
+先日のバグ報酬対応で、受領確認メールの遅延と、引き換えリンクが正しく開けない不具合がありました。ご報告くださった方に大変ご不便をおかけしました。心よりお詫び申し上げます。<br>
+現在は (1) 受領・判定メールの送信監視を強化し、(2) 引き換えは壊れにくい <code>/pay</code> リンクに統一、(3) 報酬は <b>MU PAY</b>（T シャツに使えるストアクレジット）でお渡しできるようにしました。現金へのお引き換えは準備中です（Coming soon）。引き続きよろしくお願いいたします。
+</div>"#;
+
+/// Deterministic per-email MU PAY access token (stable across re-grants).
+fn mupay_token_for_email(email: &str) -> String {
+    use sha2::{Sha256, Digest};
+    let secret = env::var("ADMIN_TOKEN").unwrap_or_else(|_| "mupay-fallback-secret".into());
+    let mut h = Sha256::new();
+    h.update(b"mupay:");
+    h.update(email.to_lowercase().as_bytes());
+    h.update(b"|");
+    h.update(secret.as_bytes());
+    format!("{:x}", h.finalize())[..40].to_string()
+}
+
+/// Resolve a /pay/<token> back to the account email.
+fn mupay_email_for_token(conn: &rusqlite::Connection, token: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT email FROM mu_credits WHERE pay_token=?",
+        params![token], |r| r.get::<_, String>(0),
+    ).ok()
+}
+
+/// Credit MU PAY for an email, persist the access token, return the token.
+/// Idempotent on `ref_id` (won't double-credit the same bounty).
+fn mupay_grant(conn: &rusqlite::Connection, email: &str, amount_jpy: i64, reason: &str, ref_id: &str) -> Option<String> {
+    if email.trim().is_empty() || amount_jpy <= 0 { return None; }
+    let email_lc = email.trim().to_lowercase();
+    let already: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM mu_credit_ledger WHERE email=? AND ref_id=?",
+        params![email_lc, ref_id], |r| r.get(0),
+    ).unwrap_or(0);
+    if already == 0 {
+        let _ = mu_credit_apply(conn, &email_lc, amount_jpy, reason, Some(ref_id));
+    }
+    let token = mupay_token_for_email(&email_lc);
+    let _ = conn.execute(
+        "UPDATE mu_credits SET pay_token=? WHERE email=? AND COALESCE(pay_token,'')=''",
+        params![token, email_lc],
+    );
+    Some(token)
+}
+
+/// Best-effort Resend send with the verified info@ sender + failure logging.
+async fn mupay_send_email(resend_key: &str, to: &str, subject: &str, html: &str) {
+    match reqwest::Client::new()
+        .post("https://api.resend.com/emails")
+        .bearer_auth(resend_key)
+        .json(&serde_json::json!({
+            "from": "MU PAY <info@wearmu.com>",
+            "to": [to],
+            "subject": subject,
+            "html": html,
+            "reply_to": "info@wearmu.com",
+        }))
+        .send().await
+    {
+        Ok(resp) => {
+            let code = resp.status().as_u16();
+            if code >= 400 {
+                let b = resp.text().await.unwrap_or_default();
+                eprintln!("[mupay email] resend FAIL {} → {} : {}", code, to, b.chars().take(300).collect::<String>());
+            }
+        }
+        Err(e) => eprintln!("[mupay email] resend HTTP ERROR → {} : {}", to, e),
+    }
+}
+
+/// Place a Printful order for one MU tee. Returns the order id on success.
+async fn mupay_place_printful_order(
+    key: &str, variant_id: u64, design_url: &str,
+    email: &str, name: &str, line1: &str, line2: &str,
+    city: &str, state: &str, zip: &str, country: &str, phone: &str,
+) -> Result<String, String> {
+    let order = serde_json::json!({
+        "recipient": {
+            "name": name, "address1": line1, "address2": line2,
+            "city": city, "state_code": state, "country_code": country,
+            "zip": zip, "phone": phone, "email": email,
+        },
+        "items": [{
+            "variant_id": variant_id,
+            "quantity": 1,
+            "files": [{"url": design_url, "placement": "front"}],
+        }],
+        "confirm": true,
+    });
+    match reqwest::Client::new()
+        .post("https://api.printful.com/orders")
+        .bearer_auth(key).json(&order).send().await
+    {
+        Ok(r) if r.status().is_success() => {
+            let j: serde_json::Value = r.json().await.unwrap_or_default();
+            Ok(j["result"]["id"].as_i64().map(|n| n.to_string())
+                .or_else(|| j["result"]["id"].as_str().map(String::from))
+                .unwrap_or_default())
+        }
+        Ok(r) => {
+            let s = r.status();
+            let t = r.text().await.unwrap_or_default();
+            Err(format!("printful {} {}", s, t.chars().take(300).collect::<String>()))
+        }
+        Err(e) => Err(format!("printful network: {}", e)),
+    }
+}
+
+/// GET /pay — public MU PAY landing page.
+async fn mupay_landing_page() -> impl IntoResponse {
+    Html(format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU PAY — T シャツに使えるストアクレジット | MU</title>
+<meta name="description" content="MU PAY は MUGEN の T シャツに引き換えられるストアクレジット。バグ報酬などで受け取った残高で、追加費用なしでシャツを受け取れます。現金化は準備中。">
+<meta name="robots" content="noindex">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue','Hiragino Sans','Yu Gothic',Arial,sans-serif;line-height:1.85}}
+.wrap{{max-width:780px;margin:0 auto;padding:64px 28px 96px}}
+.eyebrow{{font-size:10px;letter-spacing:0.42em;text-transform:uppercase;color:#e6c449;margin-bottom:18px}}
+h1{{font-size:40px;font-weight:300;letter-spacing:0.02em;margin-bottom:18px}}
+p{{color:rgba(245,245,240,0.72);margin-bottom:16px}}
+.card{{background:#141414;border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:24px;margin:18px 0}}
+.card h3{{font-size:14px;letter-spacing:0.12em;text-transform:uppercase;color:#e6c449;margin-bottom:10px}}
+.soon{{opacity:0.5}}
+code{{background:rgba(230,196,73,0.1);color:#e6c449;padding:1px 6px;border-radius:3px;font-size:0.92em}}
+a{{color:#e6c449}}
+footer{{border-top:1px solid rgba(255,255,255,0.08);margin-top:48px;padding-top:24px;color:rgba(245,245,240,0.5);font-size:12px}}
+</style></head><body><div class="wrap">
+<div class="eyebrow">MU PAY</div>
+<h1>T シャツに使える<br>ストアクレジット</h1>
+<p>MU PAY は、MUGEN の T シャツに引き換えられる残高です。バグ報酬やコラボなどで受け取った MU PAY で、<b>追加費用なし（送料・税込）</b>でシャツを受け取れます。</p>
+<div class="card">
+<h3>使い方</h3>
+<p>受け取りメールに記載の <code>/pay/&lt;あなたのリンク&gt;</code> を開くと、残高と引き換えできる T シャツが表示されます。デザインとサイズを選び、配送先を入力すると発送されます。</p>
+</div>
+<div class="card soon">
+<h3>現金へのお引き換え — Coming soon</h3>
+<p>MU PAY を現金へお引き換えする機能は現在準備中です。準備が整い次第、こちらでご案内します。</p>
+</div>
+{apology}
+<footer>株式会社イネブラ (Enabler Inc.) · <a href="/bounty">/bounty</a> · <a href="/">MU</a></footer>
+</div></body></html>"#, apology = MUPAY_APOLOGY_HTML))
+}
+
+/// GET /pay/:token — personal MU PAY account: balance, ledger, redeemable tees.
+async fn mupay_account_page(
+    State(db): State<Db>,
+    axum::extract::Path(token): axum::extract::Path<String>,
+) -> Response {
+    struct Shirt { id: i64, name: String, price: i64, img: String }
+    struct Led { delta: i64, reason: String, when: i64 }
+    let resolved = {
+        let conn = db.lock().unwrap();
+        let email = match mupay_email_for_token(&conn, &token) {
+            Some(e) => e,
+            None => return (StatusCode::NOT_FOUND,
+                Html("<body style='background:#0A0A0A;color:#F5F5F0;font-family:sans-serif;padding:60px;text-align:center'><h1>リンクが見つかりません</h1><p>MU PAY のリンクが無効か、期限切れの可能性があります。</p></body>".to_string())).into_response(),
+        };
+        let balance = mu_credit_balance(&conn, &email);
+        let mut ledger = Vec::new();
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT delta_jpy, reason, created_at FROM mu_credit_ledger WHERE email=? ORDER BY created_at DESC LIMIT 12") {
+            if let Ok(rows) = stmt.query_map(params![email], |r| Ok(Led{delta:r.get(0)?, reason:r.get(1)?, when:r.get(2)?})) {
+                for x in rows.flatten() { ledger.push(x); }
+            }
+        }
+        let mut shirts = Vec::new();
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT id, name, price_jpy, COALESCE(NULLIF(mockup_url,''), design_url)
+             FROM products
+             WHERE active=1 AND COALESCE(NULLIF(mockup_url,''), NULLIF(design_url,'')) IS NOT NULL
+             ORDER BY id DESC LIMIT 48") {
+            if let Ok(rows) = stmt.query_map([], |r| Ok(Shirt{id:r.get(0)?, name:r.get(1)?, price:r.get(2)?, img:r.get::<_,Option<String>>(3)?.unwrap_or_default()})) {
+                for x in rows.flatten() { if !x.img.is_empty() { shirts.push(x); } }
+            }
+        }
+        (email, balance, ledger, shirts)
+    };
+    let (email, balance, ledger, shirts) = resolved;
+
+    let mut cards = String::new();
+    for s in &shirts {
+        let affordable = balance >= s.price;
+        cards.push_str(&format!(
+            r#"<div class="shirt {dim}" data-pid="{id}" data-price="{price}" data-name="{nm}" onclick="pick(this)">
+<img src="{img}" loading="lazy" alt="">
+<div class="meta"><span class="nm">{nm}</span><span class="pr">¥{prc}</span></div>
+</div>"#,
+            dim = if affordable { "" } else { "noaff" },
+            id = s.id, price = s.price, img = html_attr_escape(&s.img),
+            nm = html_escape(&s.name), prc = fmt_jpy(s.price)));
+    }
+    if cards.is_empty() { cards = "<p style='color:#888'>現在引き換えできる商品がありません。</p>".into(); }
+
+    let mut led_html = String::new();
+    for l in &ledger {
+        let sign = if l.delta >= 0 { "+" } else { "" };
+        let col = if l.delta >= 0 { "#9ae3a8" } else { "#e0a06a" };
+        led_html.push_str(&format!(
+            "<tr><td style='color:{col}'>{sign}¥{amt}</td><td>{rsn}</td></tr>",
+            col = col, sign = sign, amt = fmt_jpy(l.delta.abs()), rsn = html_escape(&l.reason)));
+    }
+    if led_html.is_empty() { led_html = "<tr><td colspan=2 style='color:#666'>まだ取引がありません</td></tr>".into(); }
+
+    Html(format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU PAY — あなたの残高</title><meta name="robots" content="noindex">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue','Hiragino Sans','Yu Gothic',Arial,sans-serif;line-height:1.7}}
+.wrap{{max-width:980px;margin:0 auto;padding:40px 22px 96px}}
+.bal{{background:linear-gradient(135deg,#1a1605,#0e0e0e);border:1px solid rgba(230,196,73,0.3);border-radius:10px;padding:28px;margin-bottom:14px}}
+.bal .lab{{font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449}}
+.bal .amt{{font-size:46px;font-weight:300;margin-top:6px}}
+.bal .amt small{{font-size:18px;color:#888}}
+h2{{font-size:14px;letter-spacing:0.14em;text-transform:uppercase;color:#e6c449;margin:34px 0 14px}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}}
+.shirt{{background:#141414;border:1px solid rgba(255,255,255,0.08);border-radius:8px;overflow:hidden;cursor:pointer;transition:border-color .15s}}
+.shirt:hover{{border-color:rgba(230,196,73,0.5)}}
+.shirt.sel{{border-color:#e6c449;box-shadow:0 0 0 1px #e6c449}}
+.shirt.noaff{{opacity:0.4}}
+.shirt img{{width:100%;aspect-ratio:1;object-fit:cover;display:block;background:#222}}
+.shirt .meta{{padding:8px 10px;display:flex;justify-content:space-between;font-size:11.5px;gap:6px}}
+.shirt .nm{{color:#ccc;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+.shirt .pr{{color:#e6c449;white-space:nowrap}}
+form.ship{{background:#141414;border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:22px;margin-top:14px}}
+form.ship .row{{margin-bottom:12px}}
+form.ship label{{display:block;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:#999;margin-bottom:5px}}
+form.ship input,form.ship select{{width:100%;background:#0e0e0e;color:#fff;border:1px solid #333;border-radius:4px;padding:9px 11px;font-size:14px}}
+.two{{display:grid;grid-template-columns:1fr 1fr;gap:12px}}
+.btn{{background:#e6c449;color:#000;border:none;font-weight:700;padding:13px 20px;border-radius:4px;font-size:15px;cursor:pointer;width:100%}}
+.btn:disabled{{opacity:0.4;cursor:not-allowed}}
+.soon{{opacity:0.5;border:1px dashed #333;border-radius:8px;padding:16px;margin-top:14px;font-size:13px;color:#999}}
+#sel{{margin:12px 0;font-size:14px;color:#e6c449;min-height:20px}}
+#result{{margin-top:14px;padding:12px 14px;border-radius:4px;display:none;font-size:13.5px}}
+table.led{{width:100%;border-collapse:collapse;font-size:13px}}
+table.led td{{padding:7px 4px;border-bottom:1px solid #1c1c1c;color:#bbb}}
+code{{background:rgba(230,196,73,0.1);color:#e6c449;padding:1px 5px;border-radius:3px}}
+</style></head><body><div class="wrap">
+<div class="bal"><div class="lab">MU PAY 残高</div><div class="amt">¥{bal}</div></div>
+<div class="soon">💴 現金へのお引き換えは準備中です（Coming soon）。現在は T シャツへの引き換えのみご利用いただけます。</div>
+
+<h2>T シャツを選ぶ</h2>
+<div id="sel">引き換える商品を選んでください</div>
+<div class="grid">{cards}</div>
+
+<form class="ship" id="redeem">
+<input type="hidden" id="product_id" name="product_id" value="">
+<div class="two">
+<div class="row"><label>サイズ</label>
+<select id="size" name="size"><option value="S">S</option><option value="M" selected>M</option><option value="L">L</option><option value="XL">XL</option><option value="XXL">XXL</option></select></div>
+<div class="row"><label>お名前</label><input id="ship_name" name="ship_name" autocomplete="name"></div>
+</div>
+<div class="row"><label>メール（発送通知）</label><input id="ship_email" name="ship_email" type="email" value="{email}"></div>
+<div class="row"><label>住所 1（番地・建物）</label><input id="ship_line1" name="ship_line1" autocomplete="address-line1"></div>
+<div class="row"><label>住所 2（任意）</label><input id="ship_line2" name="ship_line2" autocomplete="address-line2"></div>
+<div class="two">
+<div class="row"><label>市区町村</label><input id="ship_city" name="ship_city" autocomplete="address-level2"></div>
+<div class="row"><label>都道府県/State</label><input id="ship_state" name="ship_state" autocomplete="address-level1"></div>
+</div>
+<div class="two">
+<div class="row"><label>郵便番号</label><input id="ship_zip" name="ship_zip" autocomplete="postal-code"></div>
+<div class="row"><label>国コード（JP 等）</label><input id="ship_country" name="ship_country" value="JP" maxlength="2"></div>
+</div>
+<div class="row"><label>電話（任意）</label><input id="ship_phone" name="ship_phone" autocomplete="tel"></div>
+<button class="btn" id="go" type="submit" disabled>商品を選んでください</button>
+<div id="result"></div>
+</form>
+
+<h2>取引履歴</h2>
+<table class="led">{led}</table>
+
+{apology}
+<p style="color:#666;font-size:12px;margin-top:24px">株式会社イネブラ (Enabler Inc.) · <a href="/bounty" style="color:#888">/bounty</a></p>
+</div>
+<script>
+var BAL = {bal_raw};
+var sel = null;
+function pick(el){{
+  if(el.classList.contains('noaff')) return;
+  document.querySelectorAll('.shirt').forEach(function(s){{s.classList.remove('sel')}});
+  el.classList.add('sel');
+  sel = {{pid: el.dataset.pid, price: parseInt(el.dataset.price,10), name: el.dataset.name}};
+  document.getElementById('product_id').value = sel.pid;
+  document.getElementById('sel').textContent = sel.name + ' — ¥' + sel.price.toLocaleString() + '（引き換え後残高 ¥' + (BAL - sel.price).toLocaleString() + '）';
+  var go = document.getElementById('go'); go.disabled = false; go.textContent = '¥' + sel.price.toLocaleString() + ' 分を引き換える';
+}}
+document.getElementById('redeem').addEventListener('submit', async function(e){{
+  e.preventDefault();
+  var out = document.getElementById('result');
+  var go = document.getElementById('go');
+  if(!sel){{ return; }}
+  go.disabled = true; var old = go.textContent; go.textContent = '処理中...';
+  var f = e.target;
+  var data = {{ product_id: parseInt(sel.pid,10), size: f.size.value,
+    ship_name: f.ship_name.value.trim(), ship_email: f.ship_email.value.trim(),
+    ship_line1: f.ship_line1.value.trim(), ship_line2: f.ship_line2.value.trim(),
+    ship_city: f.ship_city.value.trim(), ship_state: f.ship_state.value.trim(),
+    ship_zip: f.ship_zip.value.trim(), ship_country: f.ship_country.value.trim(),
+    ship_phone: f.ship_phone.value.trim() }};
+  try {{
+    var r = await fetch('/api/pay/{token}/redeem', {{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(data)}});
+    var j = await r.json().catch(function(){{return {{ok:false,error:'server error'}}}});
+    if(r.ok && j.ok){{
+      out.style.display='block'; out.style.background='rgba(79,168,104,0.12)'; out.style.color='#9ae3a8';
+      out.textContent = '引き換えました！発送手配が完了しました（注文 ' + (j.order_id||'-') + '）。残高 ¥' + (j.balance||0).toLocaleString() + '。';
+      setTimeout(function(){{location.reload()}}, 2500);
+    }} else {{
+      out.style.display='block'; out.style.background='rgba(200,54,44,0.12)'; out.style.color='#f0a4a0';
+      out.textContent = 'エラー: ' + (j.error || ('HTTP '+r.status));
+      go.disabled=false; go.textContent=old;
+    }}
+  }} catch(err){{
+    out.style.display='block'; out.style.background='rgba(200,54,44,0.12)'; out.style.color='#f0a4a0';
+    out.textContent = '送信失敗: ' + err; go.disabled=false; go.textContent=old;
+  }}
+}});
+</script>
+</body></html>"#,
+        bal = fmt_jpy(balance), bal_raw = balance, cards = cards, led = led_html,
+        email = html_attr_escape(&email), token = html_attr_escape(&token),
+        apology = MUPAY_APOLOGY_HTML)).into_response()
+}
+
+/// POST /api/pay/:token/redeem — spend MU PAY on one MU tee.
+#[derive(Deserialize)]
+struct MuPayRedeemBody {
+    product_id: i64,
+    #[serde(default)] size: String,
+    #[serde(default)] ship_name: String,
+    #[serde(default)] ship_email: String,
+    #[serde(default)] ship_phone: String,
+    #[serde(default)] ship_line1: String,
+    #[serde(default)] ship_line2: String,
+    #[serde(default)] ship_city: String,
+    #[serde(default)] ship_state: String,
+    #[serde(default)] ship_zip: String,
+    #[serde(default)] ship_country: String,
+}
+
+async fn mupay_redeem(
+    State(db): State<Db>,
+    axum::extract::Path(token): axum::extract::Path<String>,
+    Json(body): Json<MuPayRedeemBody>,
+) -> Response {
+    let bad = |m: &str| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok":false,"error":m}))).into_response();
+    let name = body.ship_name.trim().chars().take(120).collect::<String>();
+    let line1 = body.ship_line1.trim().chars().take(200).collect::<String>();
+    let line2 = body.ship_line2.trim().chars().take(200).collect::<String>();
+    let city = body.ship_city.trim().chars().take(80).collect::<String>();
+    let state = body.ship_state.trim().chars().take(80).collect::<String>();
+    let zip = body.ship_zip.trim().chars().take(20).collect::<String>();
+    let country = body.ship_country.trim().to_uppercase().chars().take(2).collect::<String>();
+    let phone = body.ship_phone.trim().chars().take(40).collect::<String>();
+    let email_ship = body.ship_email.trim().chars().take(120).collect::<String>();
+    let size = {
+        let s = body.size.trim().to_uppercase();
+        if ["S","M","L","XL","XXL","2XL"].contains(&s.as_str()) { s } else { "M".into() }
+    };
+    if name.is_empty() || line1.is_empty() || city.is_empty() || zip.is_empty() || country.len() != 2 {
+        return bad("配送先（お名前・住所・市区町村・郵便番号・国コード）が必要です");
+    }
+
+    // Resolve account, look up product price + artwork, then RESERVE the credit
+    // (decrement first so a failed Printful call can't ship for free; we refund
+    // on failure). All under the lock.
+    struct Reserved { account_email: String, price: i64, design_url: String, ref_id: String, balance_after: i64 }
+    let reserved: Result<Reserved, Response> = (|| {
+        let conn = db.lock().unwrap();
+        let account_email = match mupay_email_for_token(&conn, &token) {
+            Some(e) => e,
+            None => return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"ok":false,"error":"リンクが無効です"}))).into_response()),
+        };
+        let (price, design): (i64, String) = match conn.query_row(
+            "SELECT price_jpy, COALESCE(NULLIF(design_url,''), mockup_url, '')
+             FROM products WHERE id=? AND active=1",
+            params![body.product_id], |r| Ok((r.get(0)?, r.get::<_,String>(1)?))) {
+            Ok(t) => t,
+            Err(_) => return Err(bad("選択した商品が見つかりません")),
+        };
+        if design.is_empty() { return Err(bad("この商品にはアートワークがありません")); }
+        if price <= 0 { return Err(bad("この商品は MU PAY 引き換え対象外です")); }
+        let bal = mu_credit_balance(&conn, &account_email);
+        if bal < price {
+            return Err((StatusCode::PAYMENT_REQUIRED, Json(serde_json::json!({"ok":false,"error":format!("残高不足です（残高 ¥{} / 必要 ¥{}）", fmt_jpy(bal), fmt_jpy(price))}))).into_response());
+        }
+        let ref_id = format!("mupay-redeem-{}-{}-{}", body.product_id, &token[..8.min(token.len())], chrono_now());
+        if !mu_credit_apply(&conn, &account_email, -price, &format!("redeem:mugen:{}", body.product_id), Some(&ref_id)) {
+            return Err((StatusCode::PAYMENT_REQUIRED, Json(serde_json::json!({"ok":false,"error":"残高不足です"}))).into_response());
+        }
+        let balance_after = mu_credit_balance(&conn, &account_email);
+        Ok(Reserved { account_email, price, design_url: design, ref_id, balance_after })
+    })();
+    let r = match reserved { Ok(x) => x, Err(resp) => return resp };
+
+    // Fulfil via Printful (outside the lock). Refund on failure.
+    let key = env::var("PRINTFUL_API_KEY").unwrap_or_default();
+    let ship_email = if email_ship.is_empty() { r.account_email.clone() } else { email_ship };
+    if key.is_empty() {
+        // No fulfilment key — keep the debit but flag for manual handling so the
+        // shirt still ships (better than refunding and dropping the request).
+        send_telegram_message(&format!(
+            "🧾 MU PAY redeem (MANUAL — no PRINTFUL key)\nproduct_id: {}\nsize: {}\nship: {} / {} {} {} {} {} {}\nemail: {}\ncharged: ¥{}",
+            body.product_id, size, name, line1, line2, city, state, zip, country, ship_email, fmt_jpy(r.price))).await;
+        return Json(serde_json::json!({"ok":true,"order_id":"manual","balance":r.balance_after})).into_response();
+    }
+    let variant_id = bounty_variant_id_for_size(&size);
+    match mupay_place_printful_order(&key, variant_id, &r.design_url,
+            &ship_email, &name, &line1, &line2, &city, &state, &zip, &country, &phone).await {
+        Ok(order_id) => {
+            send_telegram_message(&format!(
+                "🎁 MU PAY redeem #{} → Printful {}\nproduct_id: {} size: {}\ncharged: ¥{}  balance: ¥{}\nship: {} ({})",
+                body.product_id, order_id, body.product_id, size,
+                fmt_jpy(r.price), fmt_jpy(r.balance_after), name, ship_email)).await;
+            // Annotate the ledger row with the Printful order id for audit.
+            {
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "UPDATE mu_credit_ledger SET ref_id = ref_id || ? WHERE email=? AND ref_id=?",
+                    params![format!("|pf:{}", order_id), r.account_email, r.ref_id]);
+            }
+            Json(serde_json::json!({"ok":true,"order_id":order_id,"balance":r.balance_after})).into_response()
+        }
+        Err(e) => {
+            // Refund the reserved credit — fulfilment failed.
+            {
+                let conn = db.lock().unwrap();
+                let _ = mu_credit_apply(&conn, &r.account_email, r.price, &format!("redeem-refund:mugen:{}", body.product_id), Some(&format!("{}-refund", r.ref_id)));
+            }
+            eprintln!("[mupay redeem] printful FAIL, refunded ¥{} → {}: {}", r.price, r.account_email, e);
+            (StatusCode::BAD_GATEWAY, Json(serde_json::json!({"ok":false,"error":"発送手配に失敗しました。残高は返却されました。時間をおいて再度お試しください。"}))).into_response()
+        }
+    }
+}
+
+/// POST /admin/bounty/:id/grant-mupay — convert a reward's cash into MU PAY and
+/// email the reporter their /pay link. Form: `amount_jpy` (defaults to the
+/// reward's cash_amount_jpy).
+async fn admin_bounty_grant_mupay(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    axum::extract::Form(form): axum::extract::Form<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/bounty/grant-mupay").await { return r; }
+    let (email, default_amt) = {
+        let conn = db.lock().unwrap();
+        let email = conn.query_row("SELECT reporter_email FROM bounty_submissions WHERE id=?",
+            params![id], |r| r.get::<_, String>(0)).unwrap_or_default();
+        let amt = conn.query_row(
+            "SELECT cash_amount_jpy FROM bounty_rewards WHERE bounty_id=? AND status!='superseded' ORDER BY id DESC LIMIT 1",
+            params![id], |r| r.get::<_, i64>(0)).unwrap_or(0);
+        (email, amt)
+    };
+    if email.is_empty() { return (StatusCode::NOT_FOUND, "no reporter email for this bounty").into_response(); }
+    let amount: i64 = form.get("amount_jpy").and_then(|s| s.trim().parse().ok()).filter(|n: &i64| *n > 0).unwrap_or(default_amt);
+    if amount <= 0 { return (StatusCode::BAD_REQUEST, "amount_jpy required (reward has no cash)").into_response(); }
+    let token = {
+        let conn = db.lock().unwrap();
+        mupay_grant(&conn, &email, amount, &format!("bounty:#{}", id), &format!("bounty-mupay-{}", id))
+    };
+    let token = match token { Some(t) => t, None => return (StatusCode::INTERNAL_SERVER_ERROR, "grant failed").into_response() };
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    let pay_url = format!("{}/pay/{}", base_url, token);
+    if let Ok(rk) = env::var("RESEND_API_KEY") {
+        if !rk.is_empty() {
+            let html = format!(
+                "<p>MU バグバウンティの報酬として <b>MU PAY ¥{}</b> をお送りしました。</p><p>下記リンクから MUGEN の T シャツに引き換えられます（送料・税込、追加費用なし）。現金へのお引き換えは準備中です（Coming soon）。</p><p><a href=\"{}\">{}</a></p><hr><p>このたびは受領確認の遅延と引き換えリンクの不具合で大変ご不便をおかけしました。仕組みを改善しました。改めてお詫びと御礼を申し上げます。<br>— MU / 株式会社イネブラ</p>",
+                fmt_jpy(amount), pay_url, pay_url);
+            mupay_send_email(&rk, &email, &format!("MU PAY ¥{} をお送りしました — MU バグバウンティ", fmt_jpy(amount)), &html).await;
+        }
+    }
+    eprintln!("[mupay grant] bounty #{} → {} ¥{} token={}…", id, email, amount, &token[..8.min(token.len())]);
+    let tok_attr = html_attr_escape(&q.get("token").cloned().unwrap_or_default());
+    Response::builder().status(StatusCode::SEE_OTHER)
+        .header("Location", format!("/admin/bounty?token={}", tok_attr))
+        .body(axum::body::Body::empty()).unwrap()
 }
 
 /// POST /api/collab/signup — public endpoint, self-serve collab onboarding.
@@ -20291,6 +20858,88 @@ async fn activate_draft_product(
 /// as ?token=… ; the page's JS calls /api/admin/drafts and /api/admin/activate.
 async fn admin_news_page() -> Html<&'static str> {
     Html(include_str!("../static/admin-news.html"))
+}
+
+// ── 無音祭 SYNC (silent-disco sync prototype) ──────────────────────────────
+// Process-global state (single Fly machine). FIRE_MS = epoch-ms when all
+// devices fire the synchronized hit (0 = none). CHANNEL = 0/1/2 (無/間/無限).
+// KILLED = emergency all-stop. No DB: ephemeral by design, reset on restart.
+static FEST_FIRE_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+static FEST_CHANNEL: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+static FEST_KILLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+
+/// GET /fest/sync — participant player page (silent disco). noindex.
+async fn fest_sync_page() -> Html<&'static str> {
+    Html(include_str!("../static/fest-sync.html"))
+}
+
+/// GET /fest/console — operator console (3 buttons). noindex; token entered in-page.
+async fn fest_console_page() -> Html<&'static str> {
+    Html(include_str!("../static/fest-console.html"))
+}
+
+/// GET /api/fest/sync — public read of the live sync state. Devices poll this,
+/// derive a clock offset from server_ms, and schedule their local fire.
+async fn fest_sync_state() -> Response {
+    use std::sync::atomic::Ordering;
+    Json(serde_json::json!({
+        "server_ms": now_ms(),
+        "fire_ms": FEST_FIRE_MS.load(Ordering::Relaxed),
+        "channel": FEST_CHANNEL.load(Ordering::Relaxed),
+        "killed": FEST_KILLED.load(Ordering::Relaxed),
+    })).into_response()
+}
+
+/// POST /api/fest/sync/set?token=&in=N — operator arms a synchronized fire N
+/// seconds from now (clamped 1..600). Clears the killed flag.
+async fn fest_sync_set(
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    use std::sync::atomic::Ordering;
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let secs: i64 = q.get("in").and_then(|s| s.parse().ok()).unwrap_or(10).clamp(1, 600);
+    FEST_KILLED.store(false, Ordering::Relaxed);
+    let fire = now_ms() + secs * 1000;
+    FEST_FIRE_MS.store(fire, Ordering::Relaxed);
+    Json(serde_json::json!({"ok": true, "fire_ms": fire})).into_response()
+}
+
+/// POST /api/fest/sync/clear?token= — cancel a pending fire.
+async fn fest_sync_clear(
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    use std::sync::atomic::Ordering;
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    FEST_FIRE_MS.store(0, Ordering::Relaxed);
+    Json(serde_json::json!({"ok": true})).into_response()
+}
+
+/// POST /api/fest/sync/channel?token=&ch=0|1|2 — broadcast a channel change.
+async fn fest_sync_channel(
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    use std::sync::atomic::Ordering;
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let ch: i64 = q.get("ch").and_then(|s| s.parse().ok()).unwrap_or(0).clamp(0, 2);
+    FEST_CHANNEL.store(ch, Ordering::Relaxed);
+    Json(serde_json::json!({"ok": true, "channel": ch})).into_response()
+}
+
+/// POST /api/fest/sync/kill?token= — emergency all-stop: every device goes
+/// silent on its next poll. The human gate's last-resort button.
+async fn fest_sync_kill(
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    use std::sync::atomic::Ordering;
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    FEST_KILLED.store(true, Ordering::Relaxed);
+    FEST_FIRE_MS.store(0, Ordering::Relaxed);
+    Json(serde_json::json!({"ok": true, "killed": true})).into_response()
 }
 
 /// GET /api/admin/recent_buyers?token=…&limit=N — last N mu_purchases rows.
@@ -61089,6 +61738,12 @@ async fn main() {
         "ALTER TABLE kyc_records ADD COLUMN stripe_identity_session_id TEXT",
         "ALTER TABLE kyc_records ADD COLUMN stripe_identity_status TEXT",
         "CREATE INDEX IF NOT EXISTS idx_kyc_records_token ON kyc_records(verification_token)",
+        // MU PAY: customer-facing layer over the existing mu_credits balance.
+        // `pay_token` is a deterministic per-email magic-link key so /pay/<token>
+        // resolves the account without scanning. No new wallet/order tables —
+        // redemptions are recorded as negative mu_credit_ledger rows.
+        "ALTER TABLE mu_credits ADD COLUMN pay_token TEXT",
+        "CREATE INDEX IF NOT EXISTS idx_mu_credits_pay_token ON mu_credits(pay_token)",
         // Bug-bounty reward redemption. Admin issues a one-time URL after
         // triaging a submission; reporter visits the link and chooses either
         // an existing MU tee or the bounty-original \"Security Researcher\" tee,
@@ -65667,6 +66322,11 @@ async fn main() {
         .route("/admin/bounty", get(admin_bounty))
         .route("/admin/bounty/:id/triage", post(admin_bounty_triage))
         .route("/admin/bounty/:id/issue-reward", post(admin_bounty_issue_reward))
+        .route("/admin/bounty/:id/mark-paid", post(admin_bounty_mark_paid))
+        .route("/admin/bounty/:id/grant-mupay", post(admin_bounty_grant_mupay))
+        .route("/pay", get(mupay_landing_page))
+        .route("/pay/:token", get(mupay_account_page))
+        .route("/api/pay/:token/redeem", post(mupay_redeem))
         .route("/bounty/claim/:token", get(show_bounty_claim_page))
         .route("/api/bounty/claim/:token", post(bounty_claim))
         .route("/api/bounty/claim/:token/stripe-connect", post(bounty_claim_stripe_connect))
@@ -71662,17 +72322,46 @@ async fn agent_bounty_triage(db: Db) -> Result<AgentReport, String> {
                         "<p>{} さん、</p><p>ご報告ありがとうございます。<br>1 次トリアージの結果、本件は対象外と判定しました。</p><hr><p>{}</p><hr><p>判断に異議がある場合は <a href=\"mailto:info@wearmu.com\">info@wearmu.com</a> までご返信ください。人間の判定者が再確認します。</p><p>— MU Autopilot / 株式会社イネブラ</p>",
                         html_escape(row.reporter_email.split('@').next().unwrap_or("報告者")),
                         html_escape(&reply).replace('\n', "<br>"));
-                    let _ = reqwest::Client::new()
+                    // Mirror the api_bounty_submit ack path: inspect Resend's
+                    // response and log / Telegram-alert on failure. The old
+                    // fire-and-forget `let _ = …send()` from the unmonitored
+                    // `mu-bounty@` sender is the exact pattern that swallowed
+                    // nbhrarys #18's ack (144h silence) — don't repeat it on the
+                    // reject-notice path. Ship from verified `info@wearmu.com`.
+                    match reqwest::Client::new()
                         .post("https://api.resend.com/emails")
                         .bearer_auth(&resend_key)
                         .json(&serde_json::json!({
-                            "from": "━◯━ MU Bounty <mu-bounty@wearmu.com>",
+                            "from": "━◯━ MU Bounty <info@wearmu.com>",
                             "to": [row.reporter_email.clone()],
                             "subject": subj,
                             "html": html,
                             "reply_to": "info@wearmu.com",
                         }))
-                        .send().await;
+                        .send().await
+                    {
+                        Ok(resp) => {
+                            let code = resp.status().as_u16();
+                            let rbody = resp.text().await.unwrap_or_default();
+                            if code >= 400 {
+                                eprintln!("[bounty triage-reject #{}] resend FAIL {} → {}",
+                                    row.id, code, rbody.chars().take(400).collect::<String>());
+                                send_telegram_message(&format!(
+                                    "⚠️ Bounty reject-notice auto-email FAILED — manual reply needed\n\nID: #{}\nto: {}\ncode: {}",
+                                    row.id, row.reporter_email, code,
+                                )).await;
+                            } else {
+                                eprintln!("[bounty triage-reject #{}] resend OK ({})", row.id, code);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("[bounty triage-reject #{}] resend HTTP ERROR → {}", row.id, e);
+                            send_telegram_message(&format!(
+                                "⚠️ Bounty reject-notice auto-email HTTP ERROR — manual reply needed\n\nID: #{}\nto: {}\nerr: {}",
+                                row.id, row.reporter_email, e,
+                            )).await;
+                        }
+                    }
                 }
             }
             auto_rejected += 1;
