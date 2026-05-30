@@ -21299,41 +21299,89 @@ async fn admin_db_backup(
 ) -> Response {
     if let Err(r) = require_admin_token(q.get("token")) { return r; }
 
-    // Unique temp path so concurrent backups don't collide.
     let ts = chrono_now();
-    let tmp = format!("/tmp/products_snap_{}.db", ts);
+    // Write the snapshot onto the SAME volume as the live DB (/data), which is
+    // sized to hold a 200MB+ database. The old code wrote to /tmp — on Fly
+    // that is the small root filesystem (not the mounted volume), so a
+    // 200MB+ VACUUM INTO there failed with disk-full → 500 "vacuum failed",
+    // taking the hourly off-site backup (our DR net) down silently. Keep the
+    // snapshot OUTSIDE /data/products.db's glob by using a dotfile prefix.
+    let db_path = env::var("DB_PATH").unwrap_or_else(|_| "products.db".into());
+    let dir = std::path::Path::new(&db_path).parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("/data"));
+    let snap = dir.join(format!(".db_backup_{}.db", ts));
+    let snap_str = snap.to_string_lossy().to_string();
 
-    // VACUUM INTO is a consistent copy. It takes a brief lock on the source
-    // DB. For a ~50-100MB SQLite this completes in under a second.
-    let backup_res = {
-        let conn = db.lock().unwrap();
-        conn.execute(&format!("VACUUM INTO '{}'", tmp.replace('\'', "''")), [])
-    };
-    if let Err(e) = backup_res {
-        return (StatusCode::INTERNAL_SERVER_ERROR,
-                format!("vacuum failed: {}", e)).into_response();
+    // GC any leftover snapshots from a prior aborted transfer so they can't
+    // accumulate and themselves fill the volume.
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for ent in rd.flatten() {
+            let n = ent.file_name();
+            if n.to_string_lossy().starts_with(".db_backup_") {
+                let _ = std::fs::remove_file(ent.path());
+            }
+        }
     }
 
-    let bytes = match std::fs::read(&tmp) {
-        Ok(b) => b,
-        Err(e) => {
-            let _ = std::fs::remove_file(&tmp);
+    // VACUUM INTO is a consistent copy but synchronous and holds the global
+    // DB mutex. Run it on a blocking thread so it doesn't stall the async
+    // runtime — the old inline call blocked a tokio worker for the whole
+    // vacuum, so other endpoints (incl. /healthz) 503'd during each backup.
+    let vacuum = {
+        let db = db.clone();
+        let snap_str = snap_str.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = db.lock().unwrap();
+            conn.execute(&format!("VACUUM INTO '{}'", snap_str.replace('\'', "''")), [])
+        }).await
+    };
+    match vacuum {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => {
+            let _ = std::fs::remove_file(&snap);
             return (StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("read snapshot failed: {}", e)).into_response();
+                    format!("vacuum failed: {}", e)).into_response();
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&snap);
+            return (StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("vacuum task panicked: {}", e)).into_response();
+        }
+    }
+
+    // Stream the snapshot straight off disk instead of reading the whole
+    // 200MB+ file into a Vec<u8> (the old std::fs::read spiked RAM by the
+    // full DB size on every backup → OOM risk on a small machine). The DB
+    // lock was already released by the blocking task above.
+    let file = match tokio::fs::File::open(&snap).await {
+        Ok(f) => f,
+        Err(e) => {
+            let _ = std::fs::remove_file(&snap);
+            return (StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("open snapshot failed: {}", e)).into_response();
         }
     };
-    let _ = std::fs::remove_file(&tmp);
+    let body = axum::body::Body::from_stream(tokio_util::io::ReaderStream::new(file));
+
+    // The snapshot can't be deleted until the stream finishes; the transfer
+    // takes well under the hourly cadence, and the next run GCs stragglers.
+    // A delayed cleanup removes this one once the client has had time to pull.
+    let snap_gc = snap.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+        let _ = tokio::fs::remove_file(&snap_gc).await;
+    });
 
     let filename = format!("products_{}.db", ts);
-    (
-        StatusCode::OK,
-        [
-            (axum::http::header::CONTENT_TYPE, "application/x-sqlite3".to_string()),
-            (axum::http::header::CONTENT_DISPOSITION,
-             format!("attachment; filename=\"{}\"", filename)),
-        ],
-        bytes,
-    ).into_response()
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(axum::http::header::CONTENT_TYPE, "application/x-sqlite3")
+        .header(axum::http::header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{}\"", filename))
+        .body(body)
+        .unwrap()
 }
 
 /// GET /api/admin/next_drop?brand=mugen&token=… — return next safe drop_num.
@@ -65905,6 +65953,13 @@ async fn main() {
         .route("/api/fest/rsvp", post(fest_rsvp))
         .route("/api/fest/invites/:token", get(fest_invites))
         .route("/api/admin/fest/rsvp_reset", post(fest_rsvp_reset))
+        .route("/fest/sync", get(fest_sync_page))
+        .route("/fest/console", get(fest_console_page))
+        .route("/api/fest/sync", get(fest_sync_state))
+        .route("/api/fest/sync/set", post(fest_sync_set))
+        .route("/api/fest/sync/clear", post(fest_sync_clear))
+        .route("/api/fest/sync/channel", post(fest_sync_channel))
+        .route("/api/fest/sync/kill", post(fest_sync_kill))
         .route("/admin/news", get(admin_news_page))
         // 2026-05-21 URL polish: /<page>.html → 301 /<page>. Previously these
         // responded 200 on both forms (creating duplicate-content URLs in
