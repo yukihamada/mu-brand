@@ -60687,9 +60687,9 @@ async fn main() {
             status     TEXT NOT NULL DEFAULT 'pending',
             created_at TEXT NOT NULL
         );
-        -- 無音祭 (MU FESTIVAL HAWAII 2026-10-29) silent RSVP. One row = one
-        -- "私は行く". email optional (anonymous allowed); when present we
-        -- dedupe so a person counts once. ordinal = row position = 参加番号.
+        -- MU FESTIVAL HAWAII (2026-10-29) silent RSVP. One row = one going.
+        -- email optional (anonymous allowed); when present we dedupe so a
+        -- person counts once. ordinal = row position = sanka number.
         CREATE TABLE IF NOT EXISTS fest_rsvp (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             email      TEXT,
