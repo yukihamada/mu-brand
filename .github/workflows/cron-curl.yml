@@ -79,7 +79,12 @@ jobs:
     steps:
       - name: POST /api/admin/cv_pulse
         run: |
-          curl -fsS -X POST -H 'Content-Type: application/json' \
+          # --retry-all-errors (2026-05-30): cv_pulse fires every 30 min so it
+          # routinely overlaps a deploy and 500s; retry rides out the blip
+          # instead of failing the run + alerting. The endpoint is idempotent
+          # auto-tuning, so a retried POST is harmless.
+          curl -fsS --retry 3 --retry-delay 5 --retry-all-errors \
+            -X POST -H 'Content-Type: application/json' \
             -d "{\"admin_token\":\"${MU_ADMIN_TOKEN}\"}" \
             "${BASE_URL}/api/admin/cv_pulse" | head -c 1024
 
@@ -455,7 +460,7 @@ jobs:
     # artifact, fly volume create + scp the file in.
     if: github.event.schedule == '45 * * * *' || github.event.inputs.target == 'db_backup'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 9
     steps:
       - name: Download DB snapshot
         env:
@@ -463,8 +468,14 @@ jobs:
         run: |
           ts=$(date -u +%Y%m%dT%H%M%SZ)
           # 2026-05-22: bump from 60s → 240s — DB > 200MB now and VACUUM INTO + HTTP
-          # transfer was timing out at 60s. timeout-minutes:5 caps total job time.
-          curl -fsS --max-time 240 \
+          # transfer was timing out at 60s.
+          # 2026-05-30: add --retry-all-errors. The endpoint 500s transiently
+          # during deploys / VACUUM contention; a single bare curl -fsS turned
+          # that into a failed hourly backup + false-alarm Telegram (observed
+          # 07:30/07:41 UTC). 3 retries (15s apart) ride out the blip. A 500
+          # fails fast so retries are cheap; timeout-minutes:9 covers the worst
+          # case of one slow real transfer plus retries.
+          curl -fsS --max-time 180 --retry 3 --retry-delay 15 --retry-all-errors \
             "${BASE_URL}/api/admin/db_backup?token=${ADMIN_TOKEN}" \
             -o "products_${ts}.db"
           ls -lh "products_${ts}.db"
