@@ -157,6 +157,17 @@
   .rsvp-label { font-size:12px; letter-spacing:0.25em; text-transform:uppercase; opacity:0.5; margin-top:12px; }
   .rsvp-tally { font-size:13px; opacity:0.45; margin-top:18px; letter-spacing:0.08em; }
   .rsvp-tally b { color:var(--gold); font-weight:400; }
+  .rsvp-invite { margin-top:30px; padding-top:26px; border-top:1px solid var(--line); }
+  .inv-line { font-size:15px; opacity:0.85; margin-bottom:16px; letter-spacing:0.03em; }
+  .inv-line .em { color:var(--gold); }
+  .inv-row { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; }
+  .inv-row input { background:#0e0e0e; border:1px solid var(--line); color:var(--gold);
+    padding:13px 16px; font-family:'SF Mono',ui-monospace,monospace; font-size:12px;
+    min-width:300px; letter-spacing:0.02em; text-align:center; }
+  .inv-tree { margin-top:22px; font-size:13px; opacity:0.7; line-height:1.8; }
+  .inv-tree .me { color:var(--gold); font-weight:400; }
+  .inv-tree .branch { color:var(--muted); font-family:'SF Mono',ui-monospace,monospace; font-size:12px; }
+  .inv-tree .count b { color:var(--gold); font-weight:400; }
 
   /* COLLECTION reward ladder */
   .ladder { display:flex; flex-direction:column; gap:2px; margin-top:8px; }
@@ -644,14 +655,21 @@
   })();
 
   // ── RSVP submit ──
+  // +1 invite: who invited me (from ?inv=), and my own token once I RSVP.
+  const INV_FROM = new URLSearchParams(location.search).get('inv') || '';
+  let MY_TOKEN = localStorage.getItem('mu_fest_token') || '';
+
   async function doRsvp(){
     const result = document.getElementById('rsvpResult');
     const email = (document.getElementById('rsvpEmail').value || '').trim();
     result.innerHTML = '<span style="opacity:.5">刻んでいます…</span>';
+    const payload = {};
+    if(email) payload.email = email;
+    if(INV_FROM) payload.inv = INV_FROM;
     try {
       const r = await fetch('/api/fest/rsvp', {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify(email ? {email} : {})
+        body: JSON.stringify(payload)
       });
       const j = await r.json();
       if(j.ok){
@@ -659,6 +677,8 @@
           '<div class="rsvp-label">'+(j.returning?'おかえり · あなたの番号':'無音の参加者')+'</div>';
         const tally = document.getElementById('rsvpTally');
         if(j.total!=null) tally.innerHTML = 'いま <b>'+j.total+'</b> 人が、無音で行くと決めている。';
+        if(j.token){ MY_TOKEN = j.token; localStorage.setItem('mu_fest_token', j.token); }
+        showInvite();
       } else {
         result.innerHTML = '<span style="opacity:.6">もう一度お試しください。</span>';
       }
@@ -666,6 +686,49 @@
       result.innerHTML = '<span style="opacity:.6">通信に失敗しました。</span>';
     }
   }
+
+  function inviteUrl(){ return 'https://wearmu.com/fest?inv=' + MY_TOKEN; }
+
+  function showInvite(){
+    if(!MY_TOKEN) return;
+    const box = document.getElementById('rsvpInvite');
+    box.style.display = 'block';
+    document.getElementById('invLink').value = inviteUrl();
+    renderInviteTree();
+  }
+
+  function copyInvite(){
+    const inp = document.getElementById('invLink');
+    inp.select();
+    navigator.clipboard.writeText(inp.value).then(()=>{
+      const b = inp.nextElementSibling;
+      const t = b.textContent; b.textContent = '✓ コピー済';
+      setTimeout(()=>{ b.textContent = t; }, 1800);
+    }).catch(()=>{});
+  }
+
+  async function renderInviteTree(){
+    if(!MY_TOKEN) return;
+    const el = document.getElementById('invTree');
+    try {
+      const r = await fetch('/api/fest/invites/' + MY_TOKEN, {cache:'no-store'});
+      const j = await r.json();
+      if(!j.ok){ el.innerHTML = ''; return; }
+      let html = '<div class="count">あなたの招待で <b>'+ j.direct +'</b> 人が連なった。</div>';
+      html += '<div class="me">●  第 '+ j.number +' 番（あなた）</div>';
+      (j.children||[]).forEach((c, i, arr)=>{
+        const last = i === arr.length - 1;
+        html += '<div class="branch">'+ (last?'└─':'├─') +' 無音の者 #'+(i+1)+'</div>';
+      });
+      if(!(j.children||[]).length){
+        html += '<div class="branch">└─ まだ誰も。リンクを渡せば、ここに連なる。</div>';
+      }
+      el.innerHTML = html;
+    } catch(e){ el.innerHTML = ''; }
+  }
+
+  // Returning visitor who already RSVP'd on this device: show their invite box.
+  if(MY_TOKEN){ window.addEventListener('DOMContentLoaded', showInvite); }
 
   // ── share ──
   function shareFest(){

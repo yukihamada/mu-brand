@@ -25901,6 +25901,17 @@ async fn fest_state(State(db): State<Db>) -> Response {
 struct FestRsvpBody {
     #[serde(default)]
     email: Option<String>,
+    /// Invite token of the person who invited this RSVP (from /fest?inv=…).
+    #[serde(default)]
+    inv: Option<String>,
+}
+
+/// 8-char lowercase-alphanumeric invite token for the 無音祭 invite tree.
+fn gen_fest_token() -> String {
+    use rand::Rng;
+    const CS: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+    let mut rng = rand::thread_rng();
+    (0..8).map(|_| CS[rng.gen_range(0..CS.len())] as char).collect()
 }
 
 /// POST /api/fest/rsvp {email?} — record a silent RSVP and return the assigned
@@ -25911,28 +25922,77 @@ async fn fest_rsvp(State(db): State<Db>, Json(body): Json<FestRsvpBody>) -> Resp
     let email = body.email
         .map(|e| e.trim().to_lowercase())
         .filter(|e| e.contains('@') && e.len() <= 200);
+    // Only honor an inviter token that actually exists.
+    let inviter: Option<String> = body.inv
+        .map(|t| t.trim().to_lowercase())
+        .filter(|t| t.len() == 8 && t.chars().all(|c| c.is_ascii_alphanumeric()));
     let conn = db.lock().unwrap();
-    // Dedupe by email when provided: return the existing ordinal.
+    // Dedupe by email when provided: return the existing ordinal + token.
     if let Some(ref em) = email {
-        let existing: Option<i64> = conn.query_row(
-            "SELECT COUNT(*) FROM fest_rsvp WHERE id <= (
-                 SELECT MIN(id) FROM fest_rsvp WHERE email = ?1)",
+        let existing: Option<(i64, String)> = conn.query_row(
+            "SELECT (SELECT COUNT(*) FROM fest_rsvp WHERE id <= f.id), COALESCE(f.token,'')
+             FROM fest_rsvp f WHERE f.email = ?1 ORDER BY f.id ASC LIMIT 1",
             params![em],
-            |r| r.get(0),
-        ).ok().filter(|n: &i64| *n > 0);
-        if let Some(n) = existing {
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+        ).ok();
+        if let Some((n, tok)) = existing {
             let total: i64 = conn.query_row("SELECT COUNT(*) FROM fest_rsvp", [], |r| r.get(0)).unwrap_or(n);
-            return Json(serde_json::json!({"ok": true, "number": n, "total": total, "returning": true}))
-                .into_response();
+            return Json(serde_json::json!({
+                "ok": true, "number": n, "total": total, "returning": true, "token": tok
+            })).into_response();
         }
     }
+    let valid_inviter: Option<String> = inviter.and_then(|t| {
+        let ok: bool = conn.query_row(
+            "SELECT 1 FROM fest_rsvp WHERE token = ?1 LIMIT 1", params![t], |_| Ok(()),
+        ).is_ok();
+        if ok { Some(t) } else { None }
+    });
+    let token = gen_fest_token();
     conn.execute(
-        "INSERT INTO fest_rsvp (email, created_at) VALUES (?1, ?2)",
-        params![email, chrono_now()],
+        "INSERT INTO fest_rsvp (email, created_at, token, invited_by) VALUES (?1, ?2, ?3, ?4)",
+        params![email, chrono_now(), token, valid_inviter],
     ).ok();
     let total: i64 = conn.query_row("SELECT COUNT(*) FROM fest_rsvp", [], |r| r.get(0)).unwrap_or(1);
-    Json(serde_json::json!({"ok": true, "number": total, "total": total, "returning": false}))
-        .into_response()
+    Json(serde_json::json!({
+        "ok": true, "number": total, "total": total, "returning": false, "token": token
+    })).into_response()
+}
+
+/// GET /api/fest/invites/:token — invite-tree stats for one RSVP's token.
+/// Returns how many people that token directly invited, and one level of
+/// their tokens (so the page can recurse for a small tree). No PII.
+async fn fest_invites(
+    State(db): State<Db>,
+    axum::extract::Path(token): axum::extract::Path<String>,
+) -> Response {
+    let token = token.trim().to_lowercase();
+    if token.len() != 8 || !token.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Json(serde_json::json!({"ok": false, "error": "bad token"})).into_response();
+    }
+    let conn = db.lock().unwrap();
+    // My ordinal (participant number), if the token exists.
+    let my_number: Option<i64> = conn.query_row(
+        "SELECT (SELECT COUNT(*) FROM fest_rsvp WHERE id <= f.id) FROM fest_rsvp f WHERE f.token = ?1",
+        params![token], |r| r.get(0),
+    ).ok();
+    if my_number.is_none() {
+        return Json(serde_json::json!({"ok": false, "error": "not found"})).into_response();
+    }
+    // Direct invitees' tokens (cap at 50 for the visualization).
+    let children: Vec<String> = {
+        let mut stmt = conn.prepare(
+            "SELECT COALESCE(token,'') FROM fest_rsvp WHERE invited_by = ?1 ORDER BY id ASC LIMIT 50"
+        ).unwrap();
+        stmt.query_map(params![token], |r| r.get::<_, String>(0))
+            .map(|it| it.filter_map(|r| r.ok()).filter(|s| !s.is_empty()).collect())
+            .unwrap_or_default()
+    };
+    // Total reach = everyone whose invited_by == token (direct only here).
+    let direct: i64 = children.len() as i64;
+    Json(serde_json::json!({
+        "ok": true, "number": my_number, "direct": direct, "children": children,
+    })).into_response()
 }
 
 /// POST /api/admin/fest/rsvp_reset?token=… — clear all RSVP rows (or just the
@@ -60693,7 +60753,9 @@ async fn main() {
         CREATE TABLE IF NOT EXISTS fest_rsvp (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             email      TEXT,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            token      TEXT,
+            invited_by TEXT
         );
         CREATE TABLE IF NOT EXISTS kyc_records (
             id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65155,6 +65217,7 @@ async fn main() {
         .route("/festival", get(|| async { axum::response::Redirect::permanent("/fest") }))
         .route("/api/fest/state", get(fest_state))
         .route("/api/fest/rsvp", post(fest_rsvp))
+        .route("/api/fest/invites/:token", get(fest_invites))
         .route("/api/admin/fest/rsvp_reset", post(fest_rsvp_reset))
         .route("/admin/news", get(admin_news_page))
         // 2026-05-21 URL polish: /<page>.html → 301 /<page>. Previously these
