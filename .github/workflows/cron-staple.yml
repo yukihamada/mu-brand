@@ -37,7 +37,7 @@ jobs:
       NO_DELAY: "1"   # skip random_delay; cron itself fires at JST 10:00 sharp
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: pip
