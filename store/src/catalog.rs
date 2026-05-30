@@ -621,7 +621,12 @@ pub fn seed_if_empty(conn: &rusqlite::Connection) {
 //   ads_meta    — Meta Ads spend
 //   other       — anything not categorised
 
-pub const BUDGET_TOTAL_JPY: i64 = 100_000;
+// Monthly budget cap. The guard (spend_or_refuse) sums only the CURRENT
+// calendar month's catalog_spend rows, so this resets on the 1st of each
+// month automatically — no ledger truncation needed. Operator-managed
+// allocation + burn-down lives in BUDGET.md (source of truth for humans);
+// this constant is the hard ceiling the engine enforces in code.
+pub const BUDGET_TOTAL_JPY: i64 = 1_000_000;
 
 pub fn ensure_budget_schema(conn: &rusqlite::Connection) {
     let _ = conn.execute_batch(
@@ -654,11 +659,22 @@ pub fn ensure_budget_schema(conn: &rusqlite::Connection) {
     );
 }
 
-/// Total ¥ spent across all categories so far. Source of truth for the
-/// budget guard.
+/// Total ¥ spent across all categories, all-time. Used for lifetime
+/// reporting only — NOT the budget guard (that is monthly).
 pub fn spent_total_jpy(conn: &rusqlite::Connection) -> i64 {
     conn.query_row("SELECT COALESCE(SUM(amount_jpy), 0) FROM catalog_spend",
                    [], |r| r.get::<_, i64>(0))
+        .unwrap_or(0)
+}
+
+/// ¥ spent in the CURRENT calendar month. Source of truth for the budget
+/// guard — resets automatically on the 1st (the ledger keeps all rows;
+/// we just scope the SUM to this month, matching the ¥1M/month budget).
+pub fn spent_month_jpy(conn: &rusqlite::Connection) -> i64 {
+    conn.query_row(
+        "SELECT COALESCE(SUM(amount_jpy), 0) FROM catalog_spend \
+         WHERE strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')",
+        [], |r| r.get::<_, i64>(0))
         .unwrap_or(0)
 }
 
@@ -676,10 +692,10 @@ pub fn spend_or_refuse(
     if amount_jpy <= 0 {
         return true;
     }
-    let current = spent_total_jpy(conn);
+    let current = spent_month_jpy(conn);
     if current.saturating_add(amount_jpy) > BUDGET_TOTAL_JPY {
         tracing::warn!(
-            "[catalog/budget] REFUSED {} ¥{} (current=¥{} cap=¥{}) reason={}",
+            "[catalog/budget] REFUSED {} ¥{} (month=¥{} cap=¥{}/mo) reason={}",
             category, amount_jpy, current, BUDGET_TOTAL_JPY, reason
         );
         return false;
@@ -690,7 +706,7 @@ pub fn spend_or_refuse(
         rusqlite::params![category, amount_jpy, reason, ref_id],
     );
     tracing::info!(
-        "[catalog/budget] +¥{} {} (total=¥{}/¥{}) reason={}",
+        "[catalog/budget] +¥{} {} (month=¥{}/¥{}) reason={}",
         amount_jpy, category, current + amount_jpy, BUDGET_TOTAL_JPY, reason
     );
     true
@@ -2314,7 +2330,8 @@ pub async fn admin_status(
         return (StatusCode::UNAUTHORIZED, "bad token").into_response();
     }
     let conn = db.lock().unwrap();
-    let spent = spent_total_jpy(&conn);
+    let spent = spent_month_jpy(&conn);
+    let spent_lifetime = spent_total_jpy(&conn);
     let auto_skus: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM catalog_products WHERE brand='auto'",
@@ -2416,8 +2433,10 @@ pub async fn admin_status(
     axum::Json(serde_json::json!({
         "budget": {
             "spent_jpy": spent,
+            "spent_lifetime_jpy": spent_lifetime,
             "cap_jpy": BUDGET_TOTAL_JPY,
             "remaining_jpy": BUDGET_TOTAL_JPY - spent,
+            "period": "calendar_month",
         },
         "skus": {
             "auto_generated": auto_skus,
@@ -4360,7 +4379,8 @@ fn jp_prefecture_to_iso(s: &str) -> Option<&'static str> {
 //   • Generate +N SKUs in the top-quartile theme.
 //
 // Hard limits the cron honours:
-//   • spend_or_refuse() inside generate_one — never goes over ¥100K.
+//   • spend_or_refuse() inside generate_one — never goes over the
+//     monthly cap (BUDGET_TOTAL_JPY, ¥1M/mo, resets on the 1st).
 //   • SKU_HARD_CAP = 30,000 — never inserts past the user's cap.
 //   • CRON_BATCH_MAX = 10 — never generates more than 10 per cycle so a
 //     misconfiguration can't run away.
@@ -4764,7 +4784,7 @@ async fn optimizer_step(db: Db) -> Result<String, String> {
                 |r| r.get(0),
             )
             .unwrap_or(0);
-        (auto, orders, spent_total_jpy(&conn))
+        (auto, orders, spent_month_jpy(&conn))
     };
 
     if auto_total >= SKU_HARD_CAP {

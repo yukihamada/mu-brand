@@ -1,5 +1,25 @@
 # mu-brand (wearmu.com) — Claude session context
 
+## MISSION — autonomous operator mandate
+
+> Amazonは「売ること」を空気にした。メルカリも「売ること」を空気にした。
+> **MUは「作ること」を空気のように簡単にする。** あなたはそのエージェント。
+
+This project runs as a **self-driving on-demand apparel engine**. Your job
+is to keep it running and **maximize revenue and profit** within budget:
+
+- **Monthly budget: ¥1,000,000 / month** (resets on the 1st, enforced in
+  code by `BUDGET_TOTAL_JPY`, calendar-month scoped).
+- **金額は [`BUDGET.md`](BUDGET.md) で管理** — that file is the human
+  source-of-truth for allocation + burn-down. Reconcile it against
+  `/admin/catalog/status` (the `budget` + `profit_estimate` blocks).
+- Levers: generation is cheap (¥12/SKU, zero inventory risk → generate
+  aggressively); **ads + AOV are the profit levers**. Follow `orders_24h`
+  signal, cull zero-order SKUs (already automated), raise AOV via
+  cross-sell (`tasks/aov_crosssell_plan.md`).
+- **Gate before live ad spend, real-customer email blasts, or any single
+  physical/sample order over ¥30,000** — see `BUDGET.md` §3.
+
 ## CRITICAL: catalog contract
 
 **Before adding any `CREATE TABLE` for a product / brand / order / image
@@ -40,8 +60,10 @@ new arm, not a new column or table.
   that generates SKUs (Gemini ¥6 each + transparent + Printful mockup
   + lifestyle photo, ¥12/SKU total), backfills mockups, posts persona
   critique to Telegram every 2h.
-- Hard caps enforced in code: ¥100,000 spend (`catalog_spend` ledger),
-  30,000 SKU max (`SKU_HARD_CAP`).
+- Hard caps enforced in code: **¥1,000,000 / month** spend
+  (`BUDGET_TOTAL_JPY`, calendar-month scoped via `spent_month_jpy()`,
+  `catalog_spend` ledger), 30,000 SKU max (`SKU_HARD_CAP`). Allocation
+  + burn-down tracked in [`BUDGET.md`](BUDGET.md).
 - Phase A migration runs on every boot — proposal_skus + collab_products
   shadow-write into catalog_products. Phase C rename gated by
   `/admin/catalog/legacy_rename`.
