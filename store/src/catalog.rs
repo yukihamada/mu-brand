@@ -3429,18 +3429,27 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
     let amount_total = session["amount_total"].as_i64().unwrap_or(0);
     let currency = session["currency"].as_str().unwrap_or("jpy").to_lowercase();
 
-    // Idempotency: if catalog_orders already has this session id, skip.
+    // Idempotency: ATOMICALLY reserve this session before doing anything that
+    // costs money. The old code did a read-then-act (SELECT, later INSERT),
+    // which has a TOCTOU race: Stripe delivers webhooks at-least-once, and the
+    // /replay + retry-cron paths can re-enter, so two invocations for the same
+    // session could both pass the SELECT (no row yet) and both POST to Printful
+    // → 2 garments shipped for 1 payment. INSERT OR IGNORE against the
+    // UNIQUE(stripe_session_id) constraint is race-free: exactly one caller
+    // inserts the 'submitting' row (changes()==1), everyone else gets 0 and
+    // bails. record_order_full later REPLACEs this row with the final status.
     {
         let conn = db.lock().unwrap();
-        let already: bool = conn
-            .query_row(
-                "SELECT 1 FROM catalog_orders WHERE stripe_session_id=? LIMIT 1",
-                rusqlite::params![&session_id],
-                |_| Ok(true),
+        let reserved = conn
+            .execute(
+                "INSERT OR IGNORE INTO catalog_orders
+                   (stripe_session_id, sku, amount_jpy, status)
+                 VALUES (?, ?, ?, 'submitting')",
+                rusqlite::params![&session_id, &sku, amount_total],
             )
-            .unwrap_or(false);
-        if already {
-            tracing::info!("[catalog/fulfill] session {} already fulfilled, skip", session_id);
+            .unwrap_or(0);
+        if reserved == 0 {
+            tracing::info!("[catalog/fulfill] session {} already reserved/fulfilled, skip", session_id);
             return;
         }
     }
@@ -3605,6 +3614,21 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
         );
         record_order(&db, &session_id, &sku, amount_total, cust, shipping,
                      None, "failed_no_item");
+        // This is a PAID order the Printful path can't fulfill (manual/digital/
+        // gelato/suzuri route reached this arm), and the retry cron does not
+        // pick up 'failed_no_item' — retrying wouldn't help since the route
+        // won't change. So it would sit silently. Alert the operator to refund
+        // or hand-fulfill, mirroring the failed-fulfillment alert below.
+        let _ = crate::send_telegram_message(&format!(
+            "🚨 *paid order can't auto-fulfill* (failed_no_item)\n\
+             sku=`{}`\nsession=`{}…`\namount=¥{}\n\
+             The SKU's route is not Printful but it reached the Printful path. \
+             Action: refund OR hand-fulfill. Not auto-retried.",
+            sku,
+            session_id.chars().take(24).collect::<String>(),
+            amount_total
+        ))
+        .await;
         return;
     };
     let mut items: Vec<serde_json::Value> = vec![main_item];
