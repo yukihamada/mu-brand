@@ -26765,6 +26765,78 @@ async fn msa_source_page() -> Html<&'static str> {
     Html(include_str!("../static/source.html"))
 }
 
+/// GET /source/gorogoro-bjj — MU Source Access viewer for the gorogoro-bjj
+/// (受け身採点) app. T-shirt holders only. Fetches the always-current source
+/// bundle from the running app (shared-key gated) and renders it read-only.
+/// Camera video never leaves the device; this only shows source code.
+async fn source_gorogoro(State(db): State<Db>, headers: HeaderMap) -> Response {
+    let email = vault_session_email(&db, &headers);
+    let is_holder = match &email {
+        Some(e) => { let c = db.lock().unwrap(); vault_is_tee_holder(&c, e) }
+        None => false,
+    };
+    if !is_holder {
+        let reason = if email.is_some() {
+            "ログイン済みです。MU(Tシャツ)を買うとソースが見られます。"
+        } else {
+            "MU(Tシャツ)を買った人だけが見られます。購入時のメールでログインしてください。"
+        };
+        let inner = format!(r#"<!doctype html><html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
+<title>gorogoro-bjj · MU Source Access</title>
+<style>body{{margin:0;background:#0a0a0a;color:#e8e8e8;font-family:-apple-system,'Hiragino Sans',sans-serif;line-height:1.7}}.wrap{{max-width:680px;margin:0 auto;padding:48px 20px}}.kicker{{color:#e6c449;font-size:11px;letter-spacing:.18em;margin-bottom:10px}}h1{{font-size:24px;margin:0 0 8px}}.lockcard{{background:#111;border:1px solid #222;border-radius:12px;padding:28px;text-align:center;margin-top:24px}}.lk{{font-size:40px}}.btn{{display:inline-block;background:#e6c449;color:#111;font-weight:700;text-decoration:none;padding:10px 18px;border-radius:8px;margin:8px 6px}}.btn.ghost{{background:transparent;border:1px solid #444;color:#ddd}}a{{color:#7fd3ff}}</style></head>
+<body><div class="wrap"><div class="kicker">MU SOURCE ACCESS · HOLDER ONLY</div>
+<h1>gorogoro-bjj <span style="color:#888;font-size:15px;font-weight:400">頭をしまってコロン / 受け身採点</span></h1>
+<p style="color:#9a9a9a">「Tシャツ買うと中身全部見える」。受け身採点アプリのソースを、ホルダーだけに公開しています。</p>
+<div class="lockcard"><div class="lk">🔒</div><p>{reason}</p>
+<a class="btn" href="/mypage">ログイン（購入時のメール）</a>
+<a class="btn ghost" href="/shop">MU を買う →</a></div>
+<p style="margin-top:20px"><a href="/source">← MSA 一覧</a> ・ アプリ本番: <a href="https://ukemi.jiuflow.com">ukemi.jiuflow.com</a></p>
+</div></body></html>"#, reason = reason);
+        return Html(inner).into_response();
+    }
+    // Holder: fetch the always-current bundle from the running app.
+    let key = std::env::var("GOROGORO_SOURCE_KEY").unwrap_or_default();
+    let url = format!("https://gorogoro-bjj.fly.dev/source-bundle?key={}", key);
+    let text = match reqwest::Client::new().get(&url).timeout(std::time::Duration::from_secs(20)).send().await {
+        Ok(r) => r.text().await.unwrap_or_default(),
+        Err(_) => String::new(),
+    };
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+    let (mut toc, mut body) = (String::new(), String::new());
+    if let Some(files) = v.get("files").and_then(|x| x.as_array()) {
+        for (i, f) in files.iter().enumerate() {
+            let p = f.get("path").and_then(|x| x.as_str()).unwrap_or("");
+            let c = f.get("content").and_then(|x| x.as_str()).unwrap_or("");
+            toc.push_str(&format!(r##"<a href="#f{i}">{}</a> "##, html_escape(p)));
+            body.push_str(&format!(r#"<div class="file" id="f{i}"><h2>{} <span class="b">{} chars</span></h2><pre>{}</pre></div>"#, html_escape(p), c.chars().count(), html_escape(c)));
+        }
+    }
+    let mut assets = String::new();
+    if let Some(a) = v.get("assets").and_then(|x| x.as_array()) {
+        for it in a {
+            let p = it.get("path").and_then(|x| x.as_str()).unwrap_or("");
+            let sz = it.get("size").and_then(|x| x.as_i64()).unwrap_or(0);
+            assets.push_str(&format!("<div><code>{}</code> — {} bytes (binary/データ・表示省略)</div>", html_escape(p), sz));
+        }
+    }
+    if body.is_empty() {
+        body = "<p style=\"color:#ff7a7a\">ソースの取得に失敗しました。少し後でもう一度お試しください。</p>".to_string();
+    }
+    let page = format!(r#"<!doctype html><html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
+<title>gorogoro-bjj source · MU Source Access</title>
+<style>body{{margin:0;background:#0a0a0a;color:#e8e8e8;font-family:-apple-system,'Hiragino Sans',sans-serif;line-height:1.6}}.wrap{{max-width:980px;margin:0 auto;padding:28px 18px 80px}}h1{{font-size:22px;margin:0 0 4px}}.sub{{color:#9a9a9a;font-size:13px;margin-bottom:18px}}.msa{{display:inline-block;font-size:11px;letter-spacing:.12em;border:1px solid #e6c449;color:#e6c449;border-radius:4px;padding:3px 8px;margin-bottom:14px}}.toc{{background:#111;border:1px solid #222;border-radius:8px;padding:12px 16px;margin-bottom:22px}}.toc a{{color:#7fd3ff;text-decoration:none;font-family:'SF Mono',Menlo,monospace;font-size:13px;display:inline-block;margin:3px 10px 3px 0}}.file{{margin:20px 0;border:1px solid #1e1e1e;border-radius:8px;overflow:hidden}}.file h2{{font-size:14px;font-family:'SF Mono',Menlo,monospace;background:#141414;margin:0;padding:10px 14px;border-bottom:1px solid #1e1e1e}}.file h2 .b{{color:#666;font-weight:400;font-size:12px}}pre{{margin:0;padding:14px 16px;overflow-x:auto;font-family:'SF Mono',Menlo,monospace;font-size:12px;line-height:1.5;color:#cfe;white-space:pre;tab-size:2}}.assets{{background:#111;border:1px solid #222;border-radius:8px;padding:12px 16px;font-size:12px;color:#9a9a9a}}.assets code{{color:#ccc}}a.back{{color:#e6c449;text-decoration:none}}</style></head>
+<body><div class="wrap"><div class="msa">MU SOURCE ACCESS · ホルダー認証OK</div>
+<h1>gorogoro-bjj</h1>
+<div class="sub">受け身フォーム採点アプリの“今動いている”ソース（常に最新）。本番: <a class="back" href="https://ukemi.jiuflow.com">ukemi.jiuflow.com</a> ・ <a class="back" href="/source">← MSA一覧</a></div>
+<div class="toc"><b style="color:#fff;font-size:12px">ファイル</b><br>{toc}</div>
+{body}
+<div class="assets"><b style="color:#fff">同梱アセット（バイナリ/データ・表示省略）</b><br>{assets}</div>
+</div></body></html>"#, toc = toc, body = body, assets = assets);
+    Html(page).into_response()
+}
+
 /// GET /en/source — English port for Alex FB (#9). Same gate logic.
 async fn msa_source_page_en() -> Html<&'static str> {
     Html(include_str!("../static/source-en.html"))
@@ -65968,6 +66040,7 @@ async fn main() {
         .route("/about.html",     get(|| async { axum::response::Redirect::permanent("/about") }))
         .route("/about/honest", get(about_honest_page))
         .route("/source", get(msa_source_page))
+        .route("/source/gorogoro-bjj", get(source_gorogoro))
         .route("/en/source", get(msa_source_page_en))
         .route("/privacy", get(privacy_page))
         .route("/privacy.html", get(|| async { axum::response::Redirect::permanent("/privacy") }))
