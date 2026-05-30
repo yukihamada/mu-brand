@@ -3710,24 +3710,65 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
                             |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
                         ).unwrap_or((0, String::new()))
                     };
-                    let conn = db.lock().unwrap();
-                    let _ = conn.execute(
-                        "INSERT OR IGNORE INTO mu_purchases
-                           (email, product_id, brand, drop_num, session_id, amount_jpy,
-                            created_at, printful_order_id, last_printful_status, last_status_at)
-                         VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?)",
-                        rusqlite::params![
-                            email,
-                            cp_id,
-                            brand_name,
-                            &session_id,
-                            amount_total,
-                            chrono_now_iso(),
-                            pf_id.as_deref().unwrap_or(""),
-                            "draft",
-                            chrono_now_iso(),
-                        ],
-                    );
+                    {
+                        let conn = db.lock().unwrap();
+                        let _ = conn.execute(
+                            "INSERT OR IGNORE INTO mu_purchases
+                               (email, product_id, brand, drop_num, session_id, amount_jpy,
+                                created_at, printful_order_id, last_printful_status, last_status_at)
+                             VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?)",
+                            rusqlite::params![
+                                email,
+                                cp_id,
+                                brand_name,
+                                &session_id,
+                                amount_total,
+                                chrono_now_iso(),
+                                pf_id.as_deref().unwrap_or(""),
+                                "draft",
+                                chrono_now_iso(),
+                            ],
+                        );
+                    } // drop the SQLite lock before any await below
+
+                    // 古今ペイ連携: KOKONコラボ商品の購入で「焼肉古今」ポイントを付与。
+                    // order_id=session_id で冪等(再送しても二重付与されない)。
+                    if brand_name == "kokon" {
+                        match (std::env::var("KOKON_PAY_GRANT_URL"),
+                               std::env::var("KOKON_PAY_GRANT_SECRET")) {
+                            (Ok(url), Ok(secret)) if !url.is_empty() && !secret.is_empty() => {
+                                let body = serde_json::json!({
+                                    "email": email.clone(),
+                                    "order_id": session_id.clone(),
+                                    "amount_yen": amount_total,
+                                    "source": "mu",
+                                });
+                                match reqwest::Client::new()
+                                    .post(&url)
+                                    .header("X-Grant-Secret", secret)
+                                    .json(&body)
+                                    .send()
+                                    .await
+                                {
+                                    Ok(r) => {
+                                        let st = r.status();
+                                        let t = r.text().await.unwrap_or_default();
+                                        if st.is_success() {
+                                            tracing::info!(
+                                                "[kokon-pay] granted email={} order={} resp={}",
+                                                email, session_id, t);
+                                        } else {
+                                            tracing::warn!(
+                                                "[kokon-pay] grant failed status={} body={}", st, t);
+                                        }
+                                    }
+                                    Err(e) => tracing::error!("[kokon-pay] grant net err: {}", e),
+                                }
+                            }
+                            _ => tracing::warn!(
+                                "[kokon-pay] KOKON_PAY_GRANT_URL/SECRET unset; skipped grant"),
+                        }
+                    }
                 }
             }
             if !ok {
