@@ -3,6 +3,7 @@ mod nft;
 mod payments;
 mod jiufight_tokens;
 mod catalog;
+mod agent_api;
 
 use axum::{
     extract::{Path, State},
@@ -23595,7 +23596,16 @@ async fn collab_auth_start(
     State(db): State<Db>,
     Json(body): Json<CollabAuthStartBody>,
 ) -> Response {
-    let email = body.email.trim().to_lowercase();
+    collab_auth_start_core(&db, &body.email).await
+}
+
+/// Core of the magic-link onboarding: persist a fresh 6-digit code for
+/// `email_in` and email it (verification code + magic link) via Resend.
+/// Returns the JSON Response. Shared by the human `/api/collab/auth/start`
+/// handler and the agent `/api/agent/register` handler so there is exactly
+/// one key system.
+pub(crate) async fn collab_auth_start_core(db: &Db, email_in: &str) -> Response {
+    let email = email_in.trim().to_lowercase();
     if !email.contains('@') || email.len() > 254 {
         return (StatusCode::BAD_REQUEST, "invalid email").into_response();
     }
@@ -23689,8 +23699,29 @@ async fn collab_auth_verify(
     State(db): State<Db>,
     Json(body): Json<CollabAuthVerifyBody>,
 ) -> Response {
-    let email = body.email.trim().to_lowercase();
-    let code = body.code.trim().to_string();
+    let token = match collab_auth_verify_core(&db, &body.email, &body.code) {
+        Ok(t) => t,
+        Err((status, msg)) => return (status, msg).into_response(),
+    };
+    let mut resp = Json(serde_json::json!({"ok": true, "session": token})).into_response();
+    resp.headers_mut().insert(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&format!("mu_collab_session={}; Path=/; Max-Age=2592000; SameSite=Lax", token)).unwrap()
+    );
+    resp
+}
+
+/// Core of code verification: checks the 6-digit code for `email_in`, mints +
+/// persists a session token, and returns it (this token IS the API key).
+/// Shared by the human `/api/collab/auth/verify` handler and the agent
+/// `/api/agent/register/verify` handler. Err carries (status, message).
+pub(crate) fn collab_auth_verify_core(
+    db: &Db,
+    email_in: &str,
+    code_in: &str,
+) -> Result<String, (StatusCode, &'static str)> {
+    let email = email_in.trim().to_lowercase();
+    let code = code_in.trim().to_string();
     let now_s: i64 = chrono_now().parse().unwrap_or(0);
     let row: Option<(String, i64)> = {
         let conn = db.lock().unwrap();
@@ -23701,15 +23732,14 @@ async fn collab_auth_verify(
     };
     let (db_code, expires) = match row {
         Some(r) => r,
-        None => return (StatusCode::NOT_FOUND, "email not registered").into_response(),
+        None => return Err((StatusCode::NOT_FOUND, "email not registered")),
     };
     if db_code != code || db_code.is_empty() {
-        return (StatusCode::UNAUTHORIZED, "invalid code").into_response();
+        return Err((StatusCode::UNAUTHORIZED, "invalid code"));
     }
     if expires < now_s {
-        return (StatusCode::UNAUTHORIZED, "code expired").into_response();
+        return Err((StatusCode::UNAUTHORIZED, "code expired"));
     }
-    // Mint a session token, persist.
     use sha2::{Sha256, Digest};
     let mut h = Sha256::new();
     h.update(email.as_bytes());
@@ -23723,12 +23753,7 @@ async fn collab_auth_verify(
             params![now_s, token, email],
         );
     }
-    let mut resp = Json(serde_json::json!({"ok": true, "session": token})).into_response();
-    resp.headers_mut().insert(
-        header::SET_COOKIE,
-        HeaderValue::from_str(&format!("mu_collab_session={}; Path=/; Max-Age=2592000; SameSite=Lax", token)).unwrap()
-    );
-    resp
+    Ok(token)
 }
 
 /// GET /api/collab/auth/magic?email=&code= — email magic link: verifies the
@@ -65771,6 +65796,18 @@ async fn main() {
         .route("/api/collab/auth/magic", get(collab_auth_magic))
         .route("/api/collab/auth/verify", post(collab_auth_verify))
         .route("/api/collab/auth/logout", post(collab_auth_logout))
+        // ── Agent API — catalog-native, email-keyed (src/agent_api.rs).
+        // Discovery: /llms.txt. Onboarding reuses the collab magic-link path.
+        // Products land status='review' until an MA-council member approves.
+        .route("/llms.txt", get(agent_api::llms_txt))
+        .route("/api/agent/register", post(agent_api::agent_register))
+        .route("/api/agent/register/verify", post(agent_api::agent_register_verify))
+        .route("/api/agent/me", get(agent_api::agent_me))
+        .route("/api/agent/stores", post(agent_api::agent_create_store))
+        .route("/api/agent/products", post(agent_api::agent_create_product))
+        .route("/api/ma/review/queue", get(agent_api::ma_review_queue))
+        .route("/api/ma/review/:sku/approve", post(agent_api::ma_review_approve))
+        .route("/api/ma/review/:sku/reject", post(agent_api::ma_review_reject))
         .route("/api/collab/session", get(collab_session_info))
         .route("/api/collab/sub/checkout", post(collab_sub_checkout))
         .route("/api/product/collab/:slug", get(api_product_collab))

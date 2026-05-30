@@ -804,6 +804,95 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
     },
 ];
 
+/// Public, agent-facing view of a `ProductSpec` so callers outside this
+/// module (the agent API) can surface the kind whitelist + price floor
+/// without reaching into the private struct.
+pub struct AgentProductKind {
+    pub kind: &'static str,
+    /// Per-kind price floor (= the verified retail in PRODUCT_SPECS). Agents
+    /// may pass a HIGHER price_jpy but never below this — protects genka.
+    pub price_floor_jpy: i64,
+    pub spec_html: &'static str,
+}
+
+/// The kinds an agent is allowed to create, derived from the same verified
+/// `PRODUCT_SPECS` table the autonomous engine uses (so agents can NEVER
+/// pass raw Printful ids or sub-genka prices). Pure data — cheap to call.
+pub fn agent_product_kinds() -> Vec<AgentProductKind> {
+    PRODUCT_SPECS.iter().map(|s| AgentProductKind {
+        kind: s.kind,
+        price_floor_jpy: s.retail_jpy,
+        spec_html: s.spec_html,
+    }).collect()
+}
+
+/// Insert one agent-created product into `catalog_products`, catalog-native.
+///
+/// Validates `kind` against the verified `PRODUCT_SPECS` whitelist (Err on an
+/// unknown kind), applies the per-kind price floor (any `price_jpy_opt` below
+/// the floor is clamped UP to the floor; None → the spec default), and writes
+/// a row with `status='review'`, `is_active=0`, `legacy_source='agent_api'`
+/// so nothing goes live until an MA-council member approves it.
+///
+/// The same `design_url` is stored as `design_file` / `mockup_main_file` /
+/// `mockup_url_external` (the design-URL arm — no AI spend). For AOP
+/// rashguards the route is `printful_aop` (4-panel cover-fill), else
+/// `printful_dtg`, mirroring the autonomous engine's choice at line ~1921.
+///
+/// Returns the generated SKU. Does NOT spawn mockup tasks — the design URL is
+/// the agent's own artwork; an MA reviewer eyeballs it before go-live.
+pub fn agent_insert_product(
+    conn: &rusqlite::Connection,
+    brand: &str,
+    label: &str,
+    description_ja: &str,
+    kind: &str,
+    design_url: &str,
+    price_jpy_opt: Option<i64>,
+) -> Result<String, String> {
+    let Some(spec) = PRODUCT_SPECS.iter().find(|s| s.kind == kind) else {
+        let allowed: Vec<&str> = PRODUCT_SPECS.iter().map(|s| s.kind).collect();
+        return Err(format!("unknown kind '{}'; allowed: {}", kind, allowed.join("/")));
+    };
+    // Price floor: clamp up to the verified retail, never below genka.
+    let retail_jpy = price_jpy_opt.map(|p| p.max(spec.retail_jpy)).unwrap_or(spec.retail_jpy);
+
+    // SKU: BRAND-AGENT-<kind>-<rand>, self-describing + collision-safe.
+    let brand_for_sku: String = brand.chars()
+        .filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_uppercase();
+    let brand_for_sku = if brand_for_sku.is_empty() { "AGENT".to_string() } else { brand_for_sku };
+    let seed = format!("{:08x}", rand::random::<u32>());
+    let sku = format!("{}-AGENT-{}-{}",
+        brand_for_sku, kind.to_uppercase().replace('_', "-"), seed);
+
+    let route = if matches!(kind, "rashguard_ls" | "rashguard_black") {
+        "printful_aop"
+    } else {
+        "printful_dtg"
+    };
+
+    conn.execute(
+        "INSERT INTO catalog_products (
+            sku, brand, label, description_ja, retail_price_jpy,
+            printful_product_id, printful_variant_id, printful_placement,
+            printful_print_w, printful_print_h,
+            design_file, mockup_main_file, mockup_url_external,
+            is_active, sort_order, status, fulfillment_route, legacy_source
+         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        rusqlite::params![
+            &sku, brand, label, description_ja, retail_jpy,
+            spec.printful_product_id, spec.printful_variant_id, spec.placement,
+            0, 0,
+            design_url, design_url, design_url,
+            0, 100,
+            "review",
+            route,
+            "agent_api",
+        ],
+    ).map_err(|e| format!("insert failed: {}", e))?;
+    Ok(sku)
+}
+
 struct Theme {
     slug: &'static str,
     display: &'static str,
