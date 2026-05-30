@@ -3621,10 +3621,30 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
         };
         match addon_item {
             Some(it) => items.push(it),
-            None => tracing::warn!(
-                "[catalog/fulfill] addon sku {} skipped (missing/inactive/non-printful), session={}",
-                addon_sku, session_id
-            ),
+            None => {
+                // Customer-harm path: the add-on was a paid Stripe line_item
+                // at checkout, so the customer was ALREADY charged for it. If
+                // we skip it here (sticker went inactive / non-printful route
+                // between checkout and webhook) they paid for something that
+                // will never ship. A tracing::warn nobody watches is not
+                // enough — fire the same operator alert we use for failed
+                // fulfillment so a human can refund or hand-fulfill.
+                tracing::warn!(
+                    "[catalog/fulfill] addon sku {} skipped (missing/inactive/non-printful), session={}",
+                    addon_sku, session_id
+                );
+                let _ = crate::send_telegram_message(&format!(
+                    "⚠️ *add-on charged but NOT fulfilled*\n\
+                     main sku=`{}`\nadd-on sku=`{}`\nsession=`{}…`\n\
+                     The customer paid for this add-on at checkout but it was \
+                     skipped at fulfillment (missing / inactive / non-Printful \
+                     route). Action: refund the add-on amount OR hand-fulfill it.",
+                    sku,
+                    addon_sku,
+                    session_id.chars().take(24).collect::<String>()
+                ))
+                .await;
+            }
         }
     }
 
