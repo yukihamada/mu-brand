@@ -2599,6 +2599,30 @@ pub async fn shop_pdp(
         })
         .unwrap_or_default();
 
+    // Same-brand cross-sell add-on (案B, AOV lever): if this product is not
+    // itself a sticker, offer a ¥800-ish sticker from the SAME brand as a
+    // one-tap add-on. Checking the box appends &addon=<sku> to the checkout
+    // link; shop_checkout adds it as a 2nd Stripe line_item and the webhook
+    // fulfils it as a 2nd Printful item (multi-SKU fulfillment, this branch).
+    // Skipped when the brand has no live sticker, or this product is one.
+    let is_sticker = sku.to_uppercase().contains("STICK") || price_jpy <= 1000;
+    let addon: Option<(String, i64)> = if is_sticker {
+        None
+    } else {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT sku, retail_price_jpy FROM catalog_products
+             WHERE brand=? AND is_active=1 AND status='live' AND sku!=?
+               AND (UPPER(sku) LIKE '%STICK%' OR label LIKE '%sticker%'
+                    OR label LIKE '%ステッカー%')
+               AND retail_price_jpy BETWEEN 1 AND 1500
+             ORDER BY retail_price_jpy LIMIT 1",
+            rusqlite::params![&brand, &sku],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+        )
+        .ok()
+    };
+
     // Show the buy button whenever shop_checkout can build a Stripe
     // Session — that's either a pre-created stripe_price_id OR a positive
     // retail_price_jpy (price_data inline). Without this, auto-generated
@@ -2607,10 +2631,26 @@ pub async fn shop_pdp(
     let buy_button = if price_id.as_deref().unwrap_or("").starts_with("price_")
         || price_jpy > 0
     {
+        let base = format!("/api/shop/checkout?sku={}", urlencoding::encode(&sku));
+        let (cross_html, cross_script) = match &addon {
+            Some((ssku, sprice)) => (
+                format!(
+                    r#"<label style="display:flex;align-items:center;gap:9px;justify-content:center;margin:12px 0 4px;cursor:pointer;font-size:13px;opacity:0.92"><input type="checkbox" id="addon-cb" data-sku="{ssku}" style="width:17px;height:17px;accent-color:#e6c449">＋ おそろいのステッカーも <b style="color:#e6c449;margin-left:2px">+¥{sprice_fmt}</b></label>"#,
+                    ssku = html_attr(ssku), sprice_fmt = format_jpy(*sprice),
+                ),
+                format!(
+                    r#"<script>(function(){{var c=document.getElementById('addon-cb'),b=document.getElementById('buybtn'),base="{base}",P={sprice},BASE={base_price};if(!c||!b)return;c.addEventListener('change',function(){{b.href=c.checked?base+"&addon="+encodeURIComponent(c.dataset.sku):base;var a=b.querySelector('.amt');if(a)a.textContent='¥'+(c.checked?BASE+P:BASE).toLocaleString();}});}})();</script>"#,
+                    base = base, sprice = sprice, base_price = price_jpy,
+                ),
+            ),
+            None => (String::new(), String::new()),
+        };
         format!(
-            r#"<a class="buy" href="/api/shop/checkout?sku={}">買う ¥{} · 即購入 (Stripe + Printful 7-14 日 国際発送)</a>"#,
-            urlencoding::encode(&sku),
-            format_jpy(price_jpy),
+            r#"{cross_html}<a class="buy" id="buybtn" href="{base}">買う <span class="amt">¥{price}</span> · 即購入 (Stripe + Printful 7-14 日 国際発送)</a>{cross_script}"#,
+            cross_html = cross_html,
+            base = base,
+            price = format_jpy(price_jpy),
+            cross_script = cross_script,
         )
     } else {
         r#"<div class="buy disabled">準備中</div>"#.to_string()
