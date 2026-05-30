@@ -25935,6 +25935,25 @@ async fn fest_rsvp(State(db): State<Db>, Json(body): Json<FestRsvpBody>) -> Resp
         .into_response()
 }
 
+/// POST /api/admin/fest/rsvp_reset?token=… — clear all RSVP rows (or just the
+/// test rows with ?test=1, which removes the festtest@ + NULL-email seeds).
+/// Used once to wipe launch-time smoke-test rows so the public tally starts
+/// honest. Token-gated.
+async fn fest_rsvp_reset(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let conn = db.lock().unwrap();
+    let n = if q.get("test").map(|v| v == "1").unwrap_or(false) {
+        conn.execute("DELETE FROM fest_rsvp WHERE email='festtest@example.com' OR email IS NULL", [])
+    } else {
+        conn.execute("DELETE FROM fest_rsvp", [])
+    }.unwrap_or(0);
+    let total: i64 = conn.query_row("SELECT COUNT(*) FROM fest_rsvp", [], |r| r.get(0)).unwrap_or(0);
+    Json(serde_json::json!({"ok": true, "deleted": n, "remaining": total})).into_response()
+}
+
 /// GET /proposals — public directory of all approved MU collabs.
 /// Backed at runtime by GET /api/proposals (public, approved-only) and,
 /// when ?admin_token=... is present, by GET /admin/proposals (full list).
@@ -65135,6 +65154,7 @@ async fn main() {
         .route("/festival", get(|| async { axum::response::Redirect::permanent("/fest") }))
         .route("/api/fest/state", get(fest_state))
         .route("/api/fest/rsvp", post(fest_rsvp))
+        .route("/api/admin/fest/rsvp_reset", post(fest_rsvp_reset))
         .route("/admin/news", get(admin_news_page))
         // 2026-05-21 URL polish: /<page>.html → 301 /<page>. Previously these
         // responded 200 on both forms (creating duplicate-content URLs in
