@@ -64854,6 +64854,7 @@ async fn main() {
         catalog::seed_atsume_brand(&conn);
         catalog::seed_yuma_brand(&conn);
         catalog::seed_elepote_brand(&conn);
+        catalog::seed_mu_sticker(&conn);
         catalog::migrate_auto_labels(&conn);
         catalog::migrate_rashguard_product_id(&conn);
         catalog::migrate_hoodie_crewneck_variants(&conn);

@@ -209,6 +209,41 @@ pub fn seed_elepote_brand(conn: &rusqlite::Connection) {
     }
 }
 
+/// Seed the universal MU mark (━◯━) kiss-cut sticker. This is the
+/// fallback cross-sell add-on (shop_pdp) for every brand that lacks its
+/// own ¥800 sticker — i.e. almost all of them (bjj/coffee/moon/code/…),
+/// so the in-order AOV cross-sell fires across the whole catalog instead
+/// of only the 3 collab brands that happen to ship a sticker.
+/// Printful 358/10164 (Kiss-Cut 4×4) is the same SKU the elepote stickers
+/// use and is fulfillment-validated. Design is a flat gold MU mark on
+/// transparent at /static/mu/d/mu-mark-sticker.png (git-deployed, so
+/// Printful can fetch it). INSERT OR IGNORE → idempotent on every boot.
+pub fn seed_mu_sticker(conn: &rusqlite::Connection) {
+    let r = conn.execute(
+        "INSERT OR IGNORE INTO catalog_products
+           (sku, brand, label, description_ja, retail_price_jpy,
+            printful_product_id, printful_variant_id, printful_placement,
+            printful_print_w, printful_print_h,
+            printful_sync_product_id, printful_sync_variant_id,
+            stripe_product_id, stripe_price_id,
+            design_file, mockup_main_file, mockup_url_external,
+            suzuri_url, is_active, sort_order, status, fulfillment_route)
+         VALUES
+           ('MU-STICKER-MARK', 'mu', 'MU Sticker',
+            'MU ━◯━ キスカットステッカー 4×4',
+            800, 358, 10164, 'default', 0, 0, NULL, NULL, NULL, NULL,
+            '/static/mu/d/mu-mark-sticker.png',
+            '/static/mu/d/mu-mark-sticker.png',
+            'https://wearmu.com/static/mu/d/mu-mark-sticker.png',
+            NULL, 1, 50, 'live', 'printful_dtg')",
+        [],
+    );
+    match r {
+        Ok(_) => tracing::info!("[catalog] MU mark sticker seeded (cross-sell fallback)"),
+        Err(e) => tracing::error!("[catalog] mu sticker seed failed: {}", e),
+    }
+}
+
 /// One-shot async backfill: for every ROLL SKU whose mockup is still the
 /// typography preview PNG (not a real on-body Printful render), call the
 /// Printful Mockup Generator with the design PNG and update
@@ -2610,6 +2645,10 @@ pub async fn shop_pdp(
         None
     } else {
         let conn = db.lock().unwrap();
+        // Prefer a sticker from the SAME brand; otherwise fall back to the
+        // universal MU mark sticker (seed_mu_sticker) so the cross-sell
+        // fires on every apparel SKU, not just the 3 brands that ship their
+        // own sticker.
         conn.query_row(
             "SELECT sku, retail_price_jpy FROM catalog_products
              WHERE brand=? AND is_active=1 AND status='live' AND sku!=?
@@ -2620,6 +2659,12 @@ pub async fn shop_pdp(
             rusqlite::params![&brand, &sku],
             |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
         )
+        .or_else(|_| conn.query_row(
+            "SELECT sku, retail_price_jpy FROM catalog_products
+             WHERE sku='MU-STICKER-MARK' AND is_active=1 AND status='live'",
+            [],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+        ))
         .ok()
     };
 
