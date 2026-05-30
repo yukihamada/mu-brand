@@ -2712,6 +2712,12 @@ fn dynamic_price(brand: &str, drop_num: i64, sold: i64, name: &str) -> i64 {
     if brand == "mugen" && drop_num == 108 {
         return MUGEN_108_PRICE_JPY;
     }
+    // 号外 (daily festival extra-edition): doubles as a 無音祭 ticket, so it is
+    // a premium limited drop fixed at ¥22,500 (~$150). Checked before the
+    // generic mugen bonding curve so it overrides the per-drop price.
+    if brand == "mugen" && name.contains("号外") {
+        return 22_500;
+    }
     if brand == "mugen" && drop_num >= MU_FABRIC_SATU001_FIRST_DROP {
         return (PRICE_BASE_SATU001_JPY + sold.max(0) * PRICE_STEP_JPY).min(PRICE_CAP_SATU001_JPY);
     }

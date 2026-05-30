@@ -287,6 +287,8 @@ fn dynamic_price(brand: &str, drop_num: i64, sold: i64, name: &str) -> i64 {
         }
     }
     if brand == "mugen" && drop_num == 108 { return 30_000; }
+    // 号外 festival extra-edition: premium ¥22,500 (~$150). Mirrors main.rs.
+    if brand == "mugen" && name.contains("号外") { return 22_500; }
     (5_000 + sold.max(0) * 250).min(PRICE_CAP_JPY)
 }
 

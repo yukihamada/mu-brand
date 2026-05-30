@@ -1103,15 +1103,16 @@ NEWS_THEMES: list[dict] = [
 def prompt_news(weather: dict, drop_num: int) -> tuple[str, str, int, int]:
     """Daily 号外 tee. Abstract theme by day-of-year (deterministic per day).
     Sold on MUGEN as a draft; Yuki approves at /admin/news before it goes
-    live. quantity=29 / price ¥9,800 are editorial defaults (set by us, not a
+    live. quantity=29 / price ¥22,500 are editorial defaults (set by us, not a
     quoted external fact) — tune in /admin/news before approving if needed."""
     today = date.today()
     idx = today.timetuple().tm_yday % len(NEWS_THEMES)
     t = NEWS_THEMES[idx]
     quantity = 29          # nod to the 10/29 festival date
-    # ¥9,800 限定価格: the 号外 doubles as a festival ticket, priced as a
-    # premium limited drop. MUGEN dynamic pricing can still adjust at display.
-    price = 9800
+    # 約 $150 (¥22,500) 限定価格: the 号外 doubles as a festival ticket, priced as
+    # a premium limited drop. The server's dynamic_price 号外 case is the
+    # authoritative price at checkout (this is just the stored default).
+    price = 22500
     # Days remaining until MU FESTIVAL HAWAII (2026-10-29), floored at 0.
     fest = date(2026, 10, 29)
     days_left = max(0, (fest - today).days)
