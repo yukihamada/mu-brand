@@ -460,7 +460,7 @@ jobs:
     # artifact, fly volume create + scp the file in.
     if: github.event.schedule == '45 * * * *' || github.event.inputs.target == 'db_backup'
     runs-on: ubuntu-latest
-    timeout-minutes: 9
+    timeout-minutes: 24
     steps:
       - name: Download DB snapshot
         env:
@@ -469,13 +469,19 @@ jobs:
           ts=$(date -u +%Y%m%dT%H%M%SZ)
           # 2026-05-22: bump from 60s → 240s — DB > 200MB now and VACUUM INTO + HTTP
           # transfer was timing out at 60s.
-          # 2026-05-30: add --retry-all-errors. The endpoint 500s transiently
-          # during deploys / VACUUM contention; a single bare curl -fsS turned
-          # that into a failed hourly backup + false-alarm Telegram (observed
-          # 07:30/07:41 UTC). 3 retries (15s apart) ride out the blip. A 500
-          # fails fast so retries are cheap; timeout-minutes:9 covers the worst
-          # case of one slow real transfer plus retries.
-          curl -fsS --max-time 180 --retry 3 --retry-delay 15 --retry-all-errors \
+          # 2026-05-30 (1): add --retry-all-errors to ride out transient 500s
+          # during deploys/VACUUM contention.
+          # 2026-05-30 (2): --max-time was 180s but the actual VACUUM INTO +
+          # ~200MB stream off a small shared-CPU Fly machine runs at <1 MB/s,
+          # so every attempt died at "(28) timed out after 180000 ms with
+          # ~160MB received" → 3 retries each re-ran the expensive VACUUM from
+          # scratch → 9-min timeout-minutes cap → job killed (conclusion
+          # "cancelled", which failure() below did NOT alert on → silent DR
+          # outage). Fix: one attempt with a 600s budget (enough for VACUUM +
+          # full transfer even at 0.4 MB/s); --retry 1 only (a real 500 blip is
+          # cheap to re-try, but a slow transfer must NOT re-VACUUM 3×);
+          # timeout-minutes 24 covers worst case (600 + 30 + 600).
+          curl -fsS --max-time 600 --retry 1 --retry-delay 30 --retry-all-errors \
             "${BASE_URL}/api/admin/db_backup?token=${ADMIN_TOKEN}" \
             -o "products_${ts}.db"
           ls -lh "products_${ts}.db"
@@ -489,7 +495,9 @@ jobs:
           path: ${{ env.DB_FILE }}
           retention-days: 14
       - name: Telegram on failure
-        if: failure()
+        # cancelled() too: a timeout-minutes kill reports as "cancelled", not
+        # "failure" — without this the hourly DR backup could fail silently.
+        if: failure() || cancelled()
         env:
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TG_CHAT:  ${{ secrets.TELEGRAM_CHAT_ID }}
