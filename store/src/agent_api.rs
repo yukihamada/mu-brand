@@ -375,6 +375,11 @@ pub async fn agent_create_product(
 /// Resolve caller email + assert MA-council membership, or return the error
 /// Response (401 unauth / 403 not-council).
 fn require_ma_council(db: &Db, headers: &HeaderMap, q: Option<&HashMap<String, String>>) -> Result<String, Response> {
+    // Owner override: a valid ADMIN_TOKEN is the highest authority and may
+    // approve/reject (bootstraps the council + lets the operator ship).
+    if admin_token_present(headers, q) {
+        return Ok("admin".to_string());
+    }
     let email = require_email(db, headers, q)?;
     let is_council = {
         let conn = db.lock().unwrap();
@@ -384,6 +389,39 @@ fn require_ma_council(db: &Db, headers: &HeaderMap, q: Option<&HashMap<String, S
         return Err(json_err(StatusCode::FORBIDDEN, "MA council members only"));
     }
     Ok(email)
+}
+
+/// True when the request carries the ADMIN_TOKEN (Authorization: Bearer,
+/// X-Admin-Token header, or ?token=/?admin_token= query). Constant-time-ish
+/// compare so the operator can approve agent products as the highest authority.
+fn admin_token_present(headers: &HeaderMap, q: Option<&HashMap<String, String>>) -> bool {
+    let expected = std::env::var("ADMIN_TOKEN").unwrap_or_default();
+    if expected.is_empty() {
+        return false;
+    }
+    let mut cand: Option<String> = None;
+    if let Some(a) = headers.get("authorization").and_then(|v| v.to_str().ok()) {
+        if let Some(t) = a.strip_prefix("Bearer ").or_else(|| a.strip_prefix("bearer ")) {
+            cand = Some(t.trim().to_string());
+        }
+    }
+    if cand.is_none() {
+        if let Some(t) = headers.get("x-admin-token").and_then(|v| v.to_str().ok()) {
+            cand = Some(t.trim().to_string());
+        }
+    }
+    if cand.is_none() {
+        if let Some(qq) = q {
+            cand = qq.get("token").or_else(|| qq.get("admin_token")).cloned();
+        }
+    }
+    match cand {
+        Some(t) => {
+            t.len() == expected.len()
+                && t.bytes().zip(expected.bytes()).fold(0u8, |a, (x, y)| a | (x ^ y)) == 0
+        }
+        None => false,
+    }
 }
 
 pub async fn ma_review_queue(
