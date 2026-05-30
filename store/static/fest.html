@@ -112,6 +112,12 @@
     background:linear-gradient(to top, rgba(0,0,0,.85), transparent); font-size:9px;
     letter-spacing:0.1em; opacity:0; transition:opacity .3s; }
   .tile:hover .tag { opacity:1; }
+  .tile .own-chk { position:absolute; top:8px; right:8px; width:24px; height:24px; border-radius:50%;
+    background:var(--gold); color:#0a0a0a; font-size:13px; display:flex; align-items:center;
+    justify-content:center; opacity:0; transform:scale(0.6); transition:opacity .25s, transform .25s; }
+  .tile.owned .own-chk { opacity:1; transform:scale(1); }
+  .tile.owned img { filter:none; }
+  .tile.owned { outline:2px solid var(--gold); outline-offset:-2px; }
 
   /* ENTRY RITUAL */
   .ticket { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:2px; margin-top:8px; }
@@ -121,6 +127,56 @@
   .step .no { font-size:30px; font-weight:600; opacity:0.18; }
   .step .t { font-size:17px; font-weight:300; margin-top:auto; }
   .step .d { font-size:12px; opacity:0.5; margin-top:10px; line-height:1.6; }
+
+  /* RESONANCE counter */
+  .res { margin-top:32px; }
+  .res-top { display:flex; align-items:baseline; justify-content:space-between; gap:16px; }
+  .res-now { font-size:clamp(28px,5vw,52px); font-weight:600; font-variant-numeric:tabular-nums; letter-spacing:0.02em; }
+  .res-pct { font-size:13px; opacity:0.5; letter-spacing:0.1em; }
+  .res-bar { height:6px; background:var(--grey); margin-top:18px; overflow:hidden; }
+  .res-fill { height:100%; width:0%; background:linear-gradient(90deg,var(--gold),var(--red));
+    transition:width 1.2s cubic-bezier(.2,.8,.2,1); }
+  .res-hints { display:flex; flex-wrap:wrap; gap:10px; margin-top:24px; }
+  .res-hint { font-size:11px; letter-spacing:0.06em; padding:8px 14px; border:1px solid var(--line);
+    border-radius:999px; opacity:0.3; transition:opacity .4s, color .4s, border-color .4s; }
+  .res-hint.open { opacity:1; color:var(--gold); border-color:rgba(230,196,73,0.4); }
+  .res-hint.locked::before { content:'🔒 '; opacity:0.6; }
+  .res-msg { font-size:13px; opacity:0.6; margin-top:22px; letter-spacing:0.04em; line-height:1.6; }
+  .res-msg .gold { color:var(--gold); }
+
+  /* RSVP */
+  .rsvp { margin-top:8px; background:var(--grey); border:1px solid var(--line); padding:48px 28px; text-align:center; }
+  .rsvp h3 { font-size:clamp(20px,3.4vw,30px); font-weight:200; letter-spacing:0.04em; }
+  .rsvp-sub { font-size:13px; opacity:0.5; margin-top:12px; }
+  .rsvp-form { display:flex; gap:10px; justify-content:center; margin-top:26px; flex-wrap:wrap; }
+  .rsvp-form input { background:#0e0e0e; border:1px solid var(--line); color:var(--white);
+    padding:14px 18px; font-family:inherit; font-size:14px; min-width:240px; letter-spacing:0.02em; }
+  .rsvp-form input::placeholder { color:rgba(250,250,250,0.3); }
+  .rsvp-result { margin-top:26px; min-height:60px; }
+  .rsvp-num { font-size:clamp(34px,7vw,64px); font-weight:600; color:var(--gold); font-variant-numeric:tabular-nums; line-height:1; }
+  .rsvp-label { font-size:12px; letter-spacing:0.25em; text-transform:uppercase; opacity:0.5; margin-top:12px; }
+  .rsvp-tally { font-size:13px; opacity:0.45; margin-top:18px; letter-spacing:0.08em; }
+  .rsvp-tally b { color:var(--gold); font-weight:400; }
+
+  /* COLLECTION reward ladder */
+  .ladder { display:flex; flex-direction:column; gap:2px; margin-top:8px; }
+  .rung { display:flex; align-items:center; gap:20px; background:var(--grey); padding:24px 26px;
+    border-left:2px solid transparent; transition:border-color .4s, background .3s; }
+  .rung.reached { border-left-color:var(--gold); background:#1f1c14; }
+  .rung .n { font-size:30px; font-weight:600; min-width:64px; font-variant-numeric:tabular-nums;
+    opacity:0.3; transition:opacity .4s, color .4s; }
+  .rung.reached .n { opacity:1; color:var(--gold); }
+  .rung .txt .r-t { font-size:16px; font-weight:300; }
+  .rung .txt .r-d { font-size:12px; opacity:0.5; margin-top:5px; line-height:1.5; }
+  .rung .chk { margin-left:auto; font-size:18px; opacity:0.2; transition:opacity .4s; }
+  .rung.reached .chk { opacity:1; }
+  .my-collect { display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-top:24px;
+    font-size:13px; opacity:0.7; }
+  .my-collect .mc-n { font-size:28px; font-weight:600; color:var(--gold); }
+  .my-collect button { font-size:10px; letter-spacing:0.15em; text-transform:uppercase;
+    padding:8px 14px; border:1px solid var(--line); background:transparent; color:var(--white);
+    cursor:pointer; font-family:inherit; }
+  .my-collect button:hover { border-color:var(--gold); color:var(--gold); }
 
   /* the genius interaction */
   .gate { margin-top:44px; text-align:center; background:var(--grey); border:1px solid var(--line);
@@ -230,6 +286,28 @@
   <div class="small">The ticket is not for sale.</div>
 </div>
 
+<!-- ───────── 共鳴カウンター (resonance / collective unlock) ───────── -->
+<section id="resonance">
+  <div class="sec-head reveal">Resonance — 共鳴</div>
+  <p class="lead reveal">号外が袖を通されるたび、会場の<span class="em">ヒントが一つ</span>開く。</p>
+  <p class="body reveal">これは、みんなで会場を暴く遊びだ。号外 T が売れた累計が
+  <b style="color:var(--gold)">108</b> に届いたとき、座標が解禁される。今、世界はどこまで進んだ？</p>
+
+  <div class="res reveal">
+    <div class="res-top">
+      <span class="res-now" id="resNow">— / 108</span>
+      <span class="res-pct" id="resPct"></span>
+    </div>
+    <div class="res-bar"><div class="res-fill" id="resFill"></div></div>
+    <div class="res-hints" id="resHints"></div>
+    <div class="res-msg" id="resMsg"></div>
+  </div>
+
+  <div class="cta-row reveal">
+    <a class="btn gold" href="/mugen">号外を一枚、袖に通す →</a>
+  </div>
+</section>
+
 <!-- ───────── ENTRY RITUAL ───────── -->
 <section id="entry">
   <div class="sec-head reveal">Entry — 入場の儀</div>
@@ -267,6 +345,23 @@
   </div>
 </section>
 
+<!-- ───────── RSVP (silent, numbered) ───────── -->
+<section id="rsvp-sec">
+  <div class="sec-head reveal">RSVP — 無音の表明</div>
+  <p class="lead reveal">声は出さない。ただ、<span class="em">行く</span>と決める。</p>
+  <div class="rsvp reveal">
+    <h3>私は、10.29 ハワイへ行く。</h3>
+    <div class="rsvp-sub">押した瞬間、あなたは「無音の参加者」の一人になる。番号が刻まれる。</div>
+    <div class="rsvp-form">
+      <input id="rsvpEmail" type="email" placeholder="email（任意 — 番号を覚えておくため）" />
+      <button class="btn gold" onclick="doRsvp()">私は行く →</button>
+    </div>
+    <div class="rsvp-result" id="rsvpResult"></div>
+    <div class="rsvp-tally" id="rsvpTally"></div>
+  </div>
+  <p class="note reveal">※ email は任意です。入れた場合は番号の重複防止にのみ使い、公開・第三者提供はしません。</p>
+</section>
+
 <!-- ───────── TODAY'S 号外 (live) ───────── -->
 <section id="today">
   <div class="sec-head reveal">Today — 今日の号外</div>
@@ -288,6 +383,18 @@
   <p class="body reveal">逃した号は、二度と戻らない。並んだ号外は、その日その日の証だ。
   10.29、何枚の証を連れてくる？</p>
   <div class="wall reveal" id="wall"></div>
+
+  <!-- reward ladder + self-tracked collection -->
+  <div class="my-collect reveal" id="myCollect" style="display:none">
+    <span>あなたのコレクション：<span class="mc-n" id="mcN">0</span> 号</span>
+    <button onclick="resetCollect()">リセット</button>
+    <span style="opacity:0.4">↑ 下のwallのタイルをタップで「持ってる」登録</span>
+  </div>
+
+  <div class="ladder reveal" id="ladder"></div>
+  <p class="note reveal">※ 特典の具体的な内容は開催が近づき次第このページで確定・発表します（現時点では予定）。
+  「持ってる」登録はこの端末内だけに保存され、サーバーには送られません。</p>
+
   <div class="cta-row reveal">
     <a class="btn red" href="/mugen">今日の号外を見る →</a>
   </div>
@@ -432,23 +539,133 @@
         wrap.innerHTML = '<div class="today-loading">号外はまもなく。</div>';
       }
 
-      // collectible wall — recent 号外 first, fall back to recent mugen
+      // collectible wall — recent 号外 first, fall back to recent mugen.
+      // Tapping a tile toggles "I own this" (localStorage only, no server).
       const pool = (gogai.length ? gogai : list).slice(0, 12);
       const wall = document.getElementById('wall');
       wall.innerHTML = pool.map(p => {
         const im = p.mockup_url || p.design_url || '';
         const lbl = (p.name||'').replace(/^MUGEN\s*/,'').slice(0,22);
-        return '<a class="tile" href="/mugen">' + (im ? '<img src="'+im+'" alt="">':'') +
-               '<span class="tag">'+ esc(lbl) +'</span></a>';
+        const owned = MINE.has(String(p.id));
+        return '<div class="tile'+(owned?' owned':'')+'" data-id="'+p.id+'">' +
+               (im ? '<img src="'+im+'" alt="">':'') +
+               '<span class="tag">'+ esc(lbl) +'</span>' +
+               '<span class="own-chk">✓</span></div>';
       }).join('');
+      wall.querySelectorAll('.tile').forEach(t=>{
+        t.addEventListener('click', ()=>toggleOwn(t.dataset.id, t));
+      });
       const cc = document.getElementById('collectCount');
       cc.innerHTML = '号外 <b>' + gogai.length + '</b> 号 出ました · ∞ 集めよう';
+      refreshCollect();
     } catch(e){
       wrap.innerHTML = '<div class="today-loading">読み込めませんでした。<a href="/mugen" style="color:var(--gold)">MUGEN を直接見る →</a></div>';
     }
   })();
 
+  // ── self-tracked collection (localStorage; never sent to server) ──
+  const MINE = new Set(JSON.parse(localStorage.getItem('mu_fest_mine') || '[]'));
+  const TIERS = [
+    {n:1,  t:'入場の資格',       d:'一着で、あなたは中にいる。'},
+    {n:3,  t:'三号の証',         d:'三つの朝を集めた者の印。'},
+    {n:7,  t:'最前列の沈黙',     d:'七号集めた者に、最前列を。（特典は確定し次第）'},
+    {n:14, t:'二週間の連なり',   d:'半月ぶんの号外を連ねた者へ。'},
+    {n:29, t:'10.29 の完走',     d:'フェス日と同じ数。完走者だけの何か。'},
+  ];
+  function toggleOwn(id, el){
+    id = String(id);
+    if(MINE.has(id)){ MINE.delete(id); el && el.classList.remove('owned'); }
+    else { MINE.add(id); el && el.classList.add('owned'); }
+    localStorage.setItem('mu_fest_mine', JSON.stringify([...MINE]));
+    refreshCollect();
+  }
+  function resetCollect(){
+    MINE.clear(); localStorage.removeItem('mu_fest_mine');
+    document.querySelectorAll('.tile.owned').forEach(t=>t.classList.remove('owned'));
+    refreshCollect();
+  }
+  function refreshCollect(){
+    const n = MINE.size;
+    const mc = document.getElementById('myCollect');
+    mc.style.display = 'flex';
+    document.getElementById('mcN').textContent = n;
+    const ladder = document.getElementById('ladder');
+    ladder.innerHTML = TIERS.map(tier => {
+      const reached = n >= tier.n;
+      return '<div class="rung'+(reached?' reached':'')+'">' +
+        '<span class="n">'+tier.n+'</span>' +
+        '<span class="txt"><span class="r-t">'+esc(tier.t)+'</span>' +
+        '<span class="r-d">'+esc(tier.d)+'</span></span>' +
+        '<span class="chk">'+(reached?'★':'☆')+'</span></div>';
+    }).join('');
+  }
+  refreshCollect();
+
   function esc(s){ return (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+  // ── 共鳴カウンター: live 号外-sold toward 108, staged venue hints ──
+  const HINTS = [
+    {at:1,   txt:'陽が沈む側'},
+    {at:14,  txt:'海の音が聞こえる'},
+    {at:36,  txt:'地図に載らない場所'},
+    {at:72,  txt:'夜が始まる時刻'},
+    {at:108, txt:'座標、解禁'},
+  ];
+  (async function(){
+    try {
+      const r = await fetch('/api/fest/state', {cache:'no-store'});
+      const s = await r.json();
+      const sold = s.gogai_sold || 0, target = s.target || 108;
+      const pct = Math.min(100, Math.round(sold/target*100));
+      document.getElementById('resNow').textContent = sold + ' / ' + target;
+      document.getElementById('resPct').textContent = pct + '%';
+      requestAnimationFrame(()=>{ document.getElementById('resFill').style.width = pct + '%'; });
+      const hd = document.getElementById('resHints');
+      hd.innerHTML = HINTS.map(h => {
+        const open = sold >= h.at;
+        return '<span class="res-hint '+(open?'open':'locked')+'">'+
+               (open ? esc(h.txt) : 'あと'+(h.at-sold)+'枚で開く')+'</span>';
+      }).join('');
+      const msg = document.getElementById('resMsg');
+      if(sold === 0){
+        msg.innerHTML = 'まだ誰も袖を通していない。<span class="gold">最初の一枚</span>が、最初のヒントを開く。';
+      } else if(sold >= target){
+        msg.innerHTML = '<span class="gold">108 到達。</span>座標は近日このページで解禁。';
+      } else {
+        const nextH = HINTS.find(h => sold < h.at);
+        msg.innerHTML = '世界はあと <span class="gold">'+(nextH ? (nextH.at - sold) : 0)+'</span> 枚で、次のヒントを開く。';
+      }
+      // RSVP running tally (shown even before user RSVPs)
+      if(typeof s.rsvp_count === 'number'){
+        document.getElementById('rsvpTally').innerHTML =
+          'いま <b>'+s.rsvp_count+'</b> 人が、無音で行くと決めている。';
+      }
+    } catch(e){ /* counter stays dashed; non-fatal */ }
+  })();
+
+  // ── RSVP submit ──
+  async function doRsvp(){
+    const result = document.getElementById('rsvpResult');
+    const email = (document.getElementById('rsvpEmail').value || '').trim();
+    result.innerHTML = '<span style="opacity:.5">刻んでいます…</span>';
+    try {
+      const r = await fetch('/api/fest/rsvp', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(email ? {email} : {})
+      });
+      const j = await r.json();
+      if(j.ok){
+        result.innerHTML = '<div class="rsvp-num">第 '+j.number+' 番</div>' +
+          '<div class="rsvp-label">'+(j.returning?'おかえり · あなたの番号':'無音の参加者')+'</div>';
+        const tally = document.getElementById('rsvpTally');
+        if(j.total!=null) tally.innerHTML = 'いま <b>'+j.total+'</b> 人が、無音で行くと決めている。';
+      } else {
+        result.innerHTML = '<span style="opacity:.6">もう一度お試しください。</span>';
+      }
+    } catch(e){
+      result.innerHTML = '<span style="opacity:.6">通信に失敗しました。</span>';
+    }
+  }
 
   // ── share ──
   function shareFest(){

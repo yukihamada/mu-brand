@@ -25871,6 +25871,70 @@ async fn fest_page() -> Html<&'static str> {
     Html(include_str!("../static/fest.html"))
 }
 
+/// GET /api/fest/state — public live state for the 無音祭 page:
+///   - gogai_sold:  total tees sold across 号外 (extra-edition) MUGEN drops
+///   - gogai_count: number of 号外 drops released so far
+///   - rsvp_count:  number of silent RSVPs ("私は行く")
+///   - target:      共鳴カウンター goal (108, the MUGEN constant)
+/// Drives the resonance counter + RSVP tally. No auth (public read).
+async fn fest_state(State(db): State<Db>) -> Response {
+    let (gogai_sold, gogai_count, rsvp_count): (i64, i64, i64) = {
+        let conn = db.lock().unwrap();
+        let (s, c) = conn.query_row(
+            "SELECT COALESCE(SUM(sold),0), COUNT(*) FROM products
+             WHERE active=1 AND brand='mugen' AND name LIKE '%号外%'",
+            [], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+        ).unwrap_or((0, 0));
+        let rsvp = conn.query_row("SELECT COUNT(*) FROM fest_rsvp", [], |r| r.get::<_, i64>(0))
+            .unwrap_or(0);
+        (s, c, rsvp)
+    };
+    Json(serde_json::json!({
+        "gogai_sold": gogai_sold,
+        "gogai_count": gogai_count,
+        "rsvp_count": rsvp_count,
+        "target": 108,
+    })).into_response()
+}
+
+#[derive(Deserialize)]
+struct FestRsvpBody {
+    #[serde(default)]
+    email: Option<String>,
+}
+
+/// POST /api/fest/rsvp {email?} — record a silent RSVP and return the assigned
+/// 参加番号 (ordinal). If an email is given and already present, returns the
+/// existing number (idempotent — one person counts once). Anonymous RSVPs are
+/// always appended. No PII surfaced anywhere public.
+async fn fest_rsvp(State(db): State<Db>, Json(body): Json<FestRsvpBody>) -> Response {
+    let email = body.email
+        .map(|e| e.trim().to_lowercase())
+        .filter(|e| e.contains('@') && e.len() <= 200);
+    let conn = db.lock().unwrap();
+    // Dedupe by email when provided: return the existing ordinal.
+    if let Some(ref em) = email {
+        let existing: Option<i64> = conn.query_row(
+            "SELECT COUNT(*) FROM fest_rsvp WHERE id <= (
+                 SELECT MIN(id) FROM fest_rsvp WHERE email = ?1)",
+            params![em],
+            |r| r.get(0),
+        ).ok().filter(|n: &i64| *n > 0);
+        if let Some(n) = existing {
+            let total: i64 = conn.query_row("SELECT COUNT(*) FROM fest_rsvp", [], |r| r.get(0)).unwrap_or(n);
+            return Json(serde_json::json!({"ok": true, "number": n, "total": total, "returning": true}))
+                .into_response();
+        }
+    }
+    conn.execute(
+        "INSERT INTO fest_rsvp (email, created_at) VALUES (?1, ?2)",
+        params![email, chrono_now()],
+    ).ok();
+    let total: i64 = conn.query_row("SELECT COUNT(*) FROM fest_rsvp", [], |r| r.get(0)).unwrap_or(1);
+    Json(serde_json::json!({"ok": true, "number": total, "total": total, "returning": false}))
+        .into_response()
+}
+
 /// GET /proposals — public directory of all approved MU collabs.
 /// Backed at runtime by GET /api/proposals (public, approved-only) and,
 /// when ?admin_token=... is present, by GET /admin/proposals (full list).
@@ -60604,6 +60668,14 @@ async fn main() {
             status     TEXT NOT NULL DEFAULT 'pending',
             created_at TEXT NOT NULL
         );
+        -- 無音祭 (MU FESTIVAL HAWAII 2026-10-29) silent RSVP. One row = one
+        -- "私は行く". email optional (anonymous allowed); when present we
+        -- dedupe so a person counts once. ordinal = row position = 参加番号.
+        CREATE TABLE IF NOT EXISTS fest_rsvp (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            email      TEXT,
+            created_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS kyc_records (
             id               INTEGER PRIMARY KEY AUTOINCREMENT,
             product_id       INTEGER NOT NULL,
@@ -65061,6 +65133,8 @@ async fn main() {
         .route("/brand.html", get(|| async { axum::response::Redirect::permanent("/brand") }))
         .route("/fest", get(fest_page))
         .route("/festival", get(|| async { axum::response::Redirect::permanent("/fest") }))
+        .route("/api/fest/state", get(fest_state))
+        .route("/api/fest/rsvp", post(fest_rsvp))
         .route("/admin/news", get(admin_news_page))
         // 2026-05-21 URL polish: /<page>.html → 301 /<page>. Previously these
         // responded 200 on both forms (creating duplicate-content URLs in
