@@ -411,10 +411,39 @@ pub fn migrate_hoodie_crewneck_variants(conn: &rusqlite::Connection) {
          WHERE printful_product_id = 145 AND printful_variant_id = 5403",
         [],
     ).unwrap_or(0);
-    if h > 0 || c > 0 {
+    // The fix above only touched printful_variant_id (the base/default
+    // variant). But fulfillment resolves size→variant from
+    // printful_variant_map FIRST (main.rs ~19422), and only falls back to
+    // the base column when the size key is ABSENT. Since the map carries
+    // every size, the base-column fix was bypassed for any sized order:
+    //   - Crewneck (145) maps held 5384–5388, none of which exist in
+    //     Printful (404) → the order is rejected at fulfillment.
+    //   - Hoodie (146) map "3XL":5534 is actually 2XL (real 3XL = 5535) →
+    //     a 3XL order ships a 2XL.
+    // Rewrite the maps to the API-verified IDs (GET /products/145,/146 on
+    // 2026-05-30). Targeted + idempotent: only rows still carrying the bad
+    // IDs are touched.
+    let cm = conn.execute(
+        r#"UPDATE catalog_products
+           SET printful_variant_map =
+               '{"S":5434,"M":5435,"L":5436,"XL":5437,"2XL":5438,"OS":5435,"ONE SIZE":5435,"XS":5434,"3XL":5439}'
+           WHERE printful_product_id = 145
+             AND printful_variant_map LIKE '%5384%'"#,
+        [],
+    ).unwrap_or(0);
+    // Surgical substring swap so "2XL":5534 (correct) is left untouched.
+    let hm = conn.execute(
+        r#"UPDATE catalog_products
+           SET printful_variant_map =
+               replace(printful_variant_map, '"3XL":5534', '"3XL":5535')
+           WHERE printful_product_id = 146
+             AND printful_variant_map LIKE '%"3XL":5534%'"#,
+        [],
+    ).unwrap_or(0);
+    if h > 0 || c > 0 || cm > 0 || hm > 0 {
         tracing::info!(
-            "[catalog] migrate_hoodie_crewneck_variants: fixed {} hoodie + {} crewneck rows",
-            h, c
+            "[catalog] migrate_hoodie_crewneck_variants: fixed {} hoodie + {} crewneck base, {} crewneck + {} hoodie maps",
+            h, c, cm, hm
         );
     }
 }
@@ -4378,21 +4407,27 @@ fn resolve_size_variant(printful_product_id: i64, size: &str) -> Option<i64> {
             "XL" => Some(4019), "2XL" | "XXL" => Some(4020),
             _ => None,
         },
-        // Gildan 18500 pullover hoodie (Black)
+        // Gildan 18500 pullover hoodie (Black) — verified GET /products/146
+        // 2026-05-30. Was off by one (S=5529…), shipping one size too small:
+        // an "M" order resolved to 5530 = Black/S.
         146 => match sz.as_str() {
-            "S" => Some(5529), "M" => Some(5530), "L" => Some(5531),
-            "XL" => Some(5532), "2XL" | "XXL" => Some(5533),
+            "S" => Some(5530), "M" => Some(5531), "L" => Some(5532),
+            "XL" => Some(5533), "2XL" | "XXL" => Some(5534), "3XL" | "XXXL" => Some(5535),
             _ => None,
         },
-        // Gildan 18000 crewneck sweatshirt (Black)
+        // Gildan 18000 crewneck sweatshirt (Black) — verified GET /products/145
+        // 2026-05-30. Was 5402–5406, none of which exist in Printful (404),
+        // so every sized crewneck order was rejected at fulfillment.
         145 => match sz.as_str() {
-            "S" => Some(5402), "M" => Some(5403), "L" => Some(5404),
-            "XL" => Some(5405), "2XL" | "XXL" => Some(5406),
+            "S" => Some(5434), "M" => Some(5435), "L" => Some(5436),
+            "XL" => Some(5437), "2XL" | "XXL" => Some(5438), "3XL" | "XXXL" => Some(5439),
             _ => None,
         },
-        // AOP Men's Rash Guard (White) — 7 sizes
+        // AOP Men's Rash Guard (White) — 7 sizes. Verified GET /products/301
+        // 2026-05-30. XS/S were off by one (XS=9325 doesn't exist; S=9326 is
+        // actually XS), so an "S" order shipped XS. M and up were correct.
         301 => match sz.as_str() {
-            "XS" => Some(9325), "S" => Some(9326), "M" => Some(9328),
+            "XS" => Some(9326), "S" => Some(9327), "M" => Some(9328),
             "L" => Some(9329), "XL" => Some(9330),
             "2XL" | "XXL" => Some(9331), "3XL" | "XXXL" => Some(9332),
             _ => None,

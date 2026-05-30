@@ -13915,12 +13915,15 @@ fn printful_mockup_config_for(brand: &str) -> (i64, i64, serde_json::Value) {
         return (380, 14213, chest_hoodie);
     }
     if b.contains("hoodie") {
-        // Gildan 18500 pullover hoodie · black · M.
-        return (146, 5530, chest_hoodie);
+        // Gildan 18500 pullover hoodie · black · M. (5530 is Black/S; Black/M
+        // is 5531 — verified GET /products/146.)
+        return (146, 5531, chest_hoodie);
     }
     if b.contains("crewneck") {
-        // Gildan 18000 crewneck sweatshirt · black · M.
-        return (145, 5403, chest_hoodie);
+        // Gildan 18000 crewneck sweatshirt · black · M. (5403 does not exist
+        // in Printful's catalog → 404; Black/M is 5435 — verified
+        // GET /products/145.)
+        return (145, 5435, chest_hoodie);
     }
     if b.contains("longsleeve") || b.contains("long_sleeve") || b.contains("long-sleeve") {
         // Bella+Canvas 3501 longsleeve · black · M.
@@ -63546,7 +63549,7 @@ async fn main() {
          None, 10, 1),
         ("jiuflow-hoodie-fleece", "ヘビーフーディ (黒)", "MU × JiuFlow Heavy Hoodie",
          "Printful Gildan 18500 (pid 146)、Black ヘビーフリース。胸 MU × JiuFlow ダブルロゴ、袖に「Roll. Flow. Reset.」スローガン。アカデミー入り口での着替え時にすぐ脱ぎ着できる重量感。",
-         9_800,  "printful", Some(146), Some(5530),
+         9_800,  "printful", Some(146), Some(5531),
          Some(r#"{"S":5530,"M":5531,"L":5532,"XL":5533,"2XL":5534}"#),
          Some(r#"[{"type":"default","url":"https://lifestyle.wearmu.com/jiuflow/_collab_v1.png"}]"#),
          None, 14, 1),
@@ -63861,8 +63864,8 @@ async fn main() {
         ("nakamura-dojo-hoodie", "道場フーディ / Dojo Hoodie",
          "MU × NAKAMURA Dojo Hoodie",
          "回復期・移動時の定番。バックパネルに金色「道」筆書き、左胸に小さく中村兄弟のサイン入り。Premium heavyweight 12oz cotton/poly blend。",
-         16_800, "printful", Some(146), Some(5530),
-         Some(r#"{"S":5530,"M":5531,"L":5532,"XL":5533,"2XL":5534,"OS":5531,"ONE SIZE":5531,"XS":5530,"3XL":5534}"#),
+         16_800, "printful", Some(146), Some(5531),
+         Some(r#"{"S":5530,"M":5531,"L":5532,"XL":5533,"2XL":5534,"OS":5531,"ONE SIZE":5531,"XS":5530,"3XL":5535}"#),
          Some(r#"[{"type":"front","url":"https://lifestyle.wearmu.com/kokon/_logo_v3b.png"},{"type":"back","url":"https://lifestyle.wearmu.com/kokon/_logo_v3b.png"}]"#),
          None, 14, 1),
         ("nakamura-brothers-tenugui", "兄 弟 手 拭 い / Brothers Tenugui",
@@ -63882,8 +63885,8 @@ async fn main() {
         ("nakamura-recovery-crewneck", "回 復 クルーネック / Recovery Crewneck",
          "MU × NAKAMURA Recovery Crewneck",
          "試合後の身体に優しいゆとり設計。フェイスタオル代わりにもなる吸湿性。左袖に小さく「回復 / RECOVERY」金糸刺繍。",
-         13_800, "printful", Some(145), Some(5384),
-         Some(r#"{"S":5384,"M":5385,"L":5386,"XL":5387,"2XL":5388,"OS":5385,"ONE SIZE":5385,"XS":5384,"3XL":5388}"#),
+         13_800, "printful", Some(145), Some(5435),
+         Some(r#"{"S":5434,"M":5435,"L":5436,"XL":5437,"2XL":5438,"OS":5435,"ONE SIZE":5435,"XS":5434,"3XL":5439}"#),
          Some(r#"[{"type":"embroidery_chest_left","url":"https://lifestyle.wearmu.com/kokon/_logo_v3b.png"}]"#),
          Some(r##"[{"id":"thread_colors","value":["#FFD700"]}]"##), 14, 1),
         ("nakamura-dojo-tote", "道 場 トート / Dojo Tote",
