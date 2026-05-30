@@ -65806,6 +65806,8 @@ async fn main() {
         // Discovery: /llms.txt. Onboarding reuses the collab magic-link path.
         // Products land status='review' until an MA-council member approves.
         .route("/llms.txt", get(agent_api::llms_txt))
+        .route("/openapi.json", get(agent_api::openapi_json))
+        .route("/.well-known/mcp.json", get(agent_api::well_known_mcp))
         .route("/api/agent/register", post(agent_api::agent_register))
         .route("/api/agent/register/verify", post(agent_api::agent_register_verify))
         .route("/api/agent/me", get(agent_api::agent_me))

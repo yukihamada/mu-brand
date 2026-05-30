@@ -560,3 +560,62 @@ POST /api/ma/review/{sku}/reject     → review → dead
 "##;
     ([(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")], body).into_response()
 }
+
+/// GET /.well-known/mcp.json — machine-readable manifest pointing agents at the
+/// MU MCP server. Mirrors the discovery pattern of /.well-known/mu/releases.
+pub async fn well_known_mcp() -> Response {
+    let v = serde_json::json!({
+        "schema": "mcp.discovery.v1",
+        "name": "mu",
+        "description": "Register, open a store, and create MU products as an AI agent.",
+        "mcp": {
+            "url": "https://mcp.wearmu.com/mcp",
+            "transport": "streamable-http",
+            "auth": "bearer",
+            "tools": ["mu_register","mu_verify","mu_status","mu_create_store","mu_create_product","mu_list_mine"]
+        },
+        "rest_base": "https://wearmu.com/api/agent",
+        "openapi": "https://wearmu.com/openapi.json",
+        "docs": "https://wearmu.com/llms.txt"
+    });
+    Json(v).into_response()
+}
+
+/// GET /openapi.json — OpenAPI 3.1 of the agent API. Kept concise but valid so
+/// agents/tools can introspect the create-store / create-product surface. The
+/// /llms.txt file links here.
+pub async fn openapi_json() -> Response {
+    let v = serde_json::json!({
+        "openapi": "3.1.0",
+        "info": {
+            "title": "MU Agent API",
+            "version": "1.0.0",
+            "description": "Email-keyed API so AI agents can open a store and create MU products. Products land status='review' and go live only after an MA-council member approves them. MCP server: https://mcp.wearmu.com",
+            "x-mcp-server": "https://mcp.wearmu.com/mcp"
+        },
+        "servers": [{"url": "https://wearmu.com"}],
+        "components": {
+            "securitySchemes": {"bearer": {"type":"http","scheme":"bearer","description":"api_key from /api/agent/register/verify"}}
+        },
+        "paths": {
+            "/api/agent/register": {"post": {"summary":"Email a 6-digit verification code","security":[],
+                "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","required":["email"],"properties":{"email":{"type":"string","format":"email"}}}}}},
+                "responses":{"200":{"description":"code sent"}}}},
+            "/api/agent/register/verify": {"post": {"summary":"Exchange code for api_key","security":[],
+                "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","required":["email","code"],"properties":{"email":{"type":"string"},"code":{"type":"string"}}}}}},
+                "responses":{"200":{"description":"{ok, api_key}"}}}},
+            "/api/agent/me": {"get": {"summary":"Your email, credits, stores, allowed kinds + price floors","security":[{"bearer":[]}],
+                "responses":{"200":{"description":"agent profile"},"401":{"description":"missing/invalid key"}}}},
+            "/api/agent/stores": {"post": {"summary":"Create a store (a catalog_brands row you own)","security":[{"bearer":[]}],
+                "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","required":["slug","name"],"properties":{"slug":{"type":"string","pattern":"^[a-z0-9_-]{3,40}$"},"name":{"type":"string"},"emoji":{"type":"string"},"color_primary":{"type":"string"},"tagline":{"type":"string"}}}}}},
+                "responses":{"200":{"description":"{ok, slug, store_url}"},"403":{"description":"slug owned by another"},"409":{"description":"reserved slug"}}}},
+            "/api/agent/products": {"post": {"summary":"Create a product (status='review' pending MA approval)","security":[{"bearer":[]}],
+                "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","required":["store","label","description","kind","design_url"],"properties":{"store":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"kind":{"type":"string","enum":["tee","rashguard_ls","rashguard_black","hoodie","crewneck"]},"design_url":{"type":"string","format":"uri","description":"absolute https URL"},"price_jpy":{"type":"integer","description":"optional; clamped up to the per-kind floor"}}}}}},
+                "responses":{"200":{"description":"{sku, status:'review', pdp_url}"},"400":{"description":"unknown kind / missing design_url"},"403":{"description":"not your store"},"429":{"description":"rate limit"}}}},
+            "/api/ma/review/queue": {"get": {"summary":"Agent products awaiting approval (MA council only)","security":[{"bearer":[]}],"responses":{"200":{"description":"queue"},"403":{"description":"MA council only"}}}},
+            "/api/ma/review/{sku}/approve": {"post": {"summary":"Approve → live (MA council only)","security":[{"bearer":[]}],"parameters":[{"name":"sku","in":"path","required":true,"schema":{"type":"string"}}],"responses":{"200":{"description":"live"},"403":{"description":"MA council only"},"409":{"description":"not in review"}}}},
+            "/api/ma/review/{sku}/reject": {"post": {"summary":"Reject → dead (MA council only)","security":[{"bearer":[]}],"parameters":[{"name":"sku","in":"path","required":true,"schema":{"type":"string"}}],"responses":{"200":{"description":"rejected"}}}}
+        }
+    });
+    Json(v).into_response()
+}
