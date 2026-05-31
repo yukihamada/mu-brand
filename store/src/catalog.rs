@@ -2769,6 +2769,12 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
     Html(body)
 }
 
+/// Minimum real sold count before a "X 着 販売" social-proof badge is shown.
+/// Gated so a low-volume SKU never surfaces an embarrassing 0/1; the badge
+/// self-activates once a SKU genuinely crosses the threshold. Honest data only
+/// (derived from catalog_orders.status='submitted'), never fabricated.
+const SOLD_BADGE_MIN: i64 = 5;
+
 pub async fn shop_pdp(
     State(db): State<Db>,
     Path(sku): Path<String>,
@@ -2946,8 +2952,29 @@ pub async fn shop_pdp(
     // too high to scale. catalog_founder_cards table + claim helper kept
     // for historical orders that already received cards; new PDPs skip
     // the row entirely.
-    let trust_block = r##"<div class="trust-strip">
-  <div class="ts-row">
+    // Social proof: real per-SKU sold count from catalog_orders
+    // (status='submitted' = Stripe-paid + Printful-accepted). Gated at
+    // SOLD_BADGE_MIN — never surfaces 0/1 on a low-volume SKU.
+    let sold_count: i64 = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM catalog_orders WHERE sku=? AND status='submitted'",
+            rusqlite::params![&sku],
+            |r| r.get(0),
+        )
+        .unwrap_or(0)
+    };
+    let sold_row = if sold_count >= SOLD_BADGE_MIN {
+        format!(
+            "<div class=\"ts-row\">\n    <strong>これまで {n} 着 販売</strong>\n    <small>実際にお届けした数（受注生産・実績）</small>\n  </div>\n  ",
+            n = sold_count
+        )
+    } else {
+        String::new()
+    };
+
+    let trust_block = format!(r##"<div class="trust-strip">
+  {sold_row}<div class="ts-row">
     <strong>国際発送 7-14 日</strong>
     <small>DHL/FedEx tracked · JP・US・EU・CA・AU 即対応</small>
   </div>
@@ -2959,7 +2986,7 @@ pub async fn shop_pdp(
     <strong>受注生産 1 着から</strong>
     <small>注文を受けてから 1 枚ずつ縫製。 完売・在庫廃棄 ゼロ。</small>
   </div>
-</div>"##.to_string();
+</div>"##, sold_row = sold_row);
 
     let body = format!(
         r##"<!doctype html><html lang="ja"><head>
@@ -4277,6 +4304,7 @@ struct ProductRow {
     desc: String,
     price: i64,
     img: Option<String>,
+    sold: i64,
 }
 
 fn list_products_paged(
@@ -4285,10 +4313,13 @@ fn list_products_paged(
     limit: i64,
     offset: i64,
 ) -> Vec<ProductRow> {
+    // 6th column = real sold count (status='submitted') for the social-proof
+    // badge, derived per-row via correlated subquery (gated in render_card).
     let (sql, has_brand) = if brand.is_some() {
         (
             "SELECT sku, brand, description_ja, retail_price_jpy,
-                    COALESCE(mockup_url_external, mockup_main_file)
+                    COALESCE(mockup_url_external, mockup_main_file),
+                    (SELECT COUNT(*) FROM catalog_orders o WHERE o.sku=catalog_products.sku AND o.status='submitted')
              FROM catalog_products
              WHERE is_active=1 AND brand=?
              ORDER BY (brand='auto') DESC,
@@ -4300,7 +4331,8 @@ fn list_products_paged(
     } else {
         (
             "SELECT sku, brand, description_ja, retail_price_jpy,
-                    COALESCE(mockup_url_external, mockup_main_file)
+                    COALESCE(mockup_url_external, mockup_main_file),
+                    (SELECT COUNT(*) FROM catalog_orders o WHERE o.sku=catalog_products.sku AND o.status='submitted')
              FROM catalog_products
              WHERE is_active=1
              ORDER BY (brand='auto') DESC,
@@ -4317,7 +4349,7 @@ fn list_products_paged(
     let mapper = |r: &rusqlite::Row| {
         Ok(ProductRow {
             sku: r.get(0)?, brand: r.get(1)?, desc: r.get(2)?,
-            price: r.get(3)?, img: r.get(4)?,
+            price: r.get(3)?, img: r.get(4)?, sold: r.get(5)?,
         })
     };
     if has_brand {
@@ -4384,6 +4416,7 @@ fn list_products(
             desc: r.get(2)?,
             price: r.get(3)?,
             img: r.get(4)?,
+            sold: 0, // unused path (dead_code); badge only flows via list_products_paged
         })
     };
     let rows: Vec<ProductRow> = if has_brand {
@@ -4417,9 +4450,21 @@ fn render_card(p: &ProductRow) -> String {
     // 1,073 BJJ SKUs have stale references), swap to the ━◯━ brand mark
     // so the grid never shows a broken-image icon. The fallback strips the
     // onerror after one swap so a broken fallback doesn't loop forever.
+    // Social-proof badge: real sold count, gated at SOLD_BADGE_MIN so a
+    // low-volume SKU never shows 0/1. Self-contained inline style (no edit to
+    // the shop_index <style> block needed).
+    let sold_badge = if p.sold >= SOLD_BADGE_MIN {
+        format!(
+            r##"<span class="sold" style="position:absolute;top:8px;left:8px;background:rgba(0,0,0,0.72);color:#f5f5f0;font-size:10px;letter-spacing:.04em;padding:3px 7px;border-radius:999px;backdrop-filter:blur(4px)">{n}着 販売</span>"##,
+            n = p.sold
+        )
+    } else {
+        String::new()
+    };
     format!(
-        r##"<a class="card" href="/shop/{sku_enc}"><span class="img"><img src="{img}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/static/designs/marker_zero.png';this.style.objectFit='contain';this.style.background='#0a0a0a';this.style.padding='28px'"></span><span class="body"><span class="brand">{brand}</span><span class="name">{name}</span><span class="price">¥{price}</span></span></a>"##,
+        r##"<a class="card" href="/shop/{sku_enc}"><span class="img" style="position:relative;display:block">{sold_badge}<img src="{img}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/static/designs/marker_zero.png';this.style.objectFit='contain';this.style.background='#0a0a0a';this.style.padding='28px'"></span><span class="body"><span class="brand">{brand}</span><span class="name">{name}</span><span class="price">¥{price}</span></span></a>"##,
         sku_enc = urlencoding::encode(&p.sku),
+        sold_badge = sold_badge,
         img = html_attr(&img),
         brand = html_text(&p.brand),
         name = html_text(&p.desc),
