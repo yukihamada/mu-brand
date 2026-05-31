@@ -39,7 +39,7 @@ ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "store" / "static" / "festseed"
 OUT.mkdir(parents=True, exist_ok=True)
 MODEL = "gemini-3-pro-image-preview"
-URL = "https://wearmu.com/fest"
+URL = "https://wearmu.com/aloha"
 
 OFFWHITE = (242, 242, 238, 255)
 INK = (10, 10, 10, 255)

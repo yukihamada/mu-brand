@@ -18265,7 +18265,7 @@ async fn stripe_webhook(
         //   - sweep_manual / pre_order → Telegram alert; partner が個別対応
         // metadata[sample]=1 のときは partner 専用 proposal page 経由の
         // サンプルまとめ買いとして multi-item ハンドラに分岐。
-        if matches!(meta["collab"].as_str(), Some("sweep") | Some("kokon") | Some("jiuflow") | Some("nakamura") | Some("boosttech")) {
+        if matches!(meta["collab"].as_str(), Some("sweep") | Some("kokon") | Some("jiuflow") | Some("nakamura") | Some("boosttech") | Some("housedrip")) {
             if meta["sample"].as_str() == Some("1") {
                 handle_collab_sample_order(db.clone(), &session).await;
             } else {
@@ -19408,7 +19408,7 @@ async fn handle_collab_sweep_order(db: Db, session: &serde_json::Value) {
             "SELECT id, name, COALESCE(production_route,'sweep_manual'), price_jpy,
                     printful_variant_id, image_url, printful_variant_map,
                     printful_files, printful_options
-             FROM collab_products WHERE slug=? AND partner IN ('sweep','kokon','jiuflow','boosttech')",
+             FROM collab_products WHERE slug=? AND partner IN ('sweep','kokon','jiuflow','boosttech','housedrip')",
             params![slug],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?)),
         ).ok()
@@ -19487,6 +19487,7 @@ async fn handle_collab_sweep_order(db: Db, session: &serde_json::Value) {
                      else if slug.starts_with("sweep-")   { "sweep" }
                      else if slug.starts_with("jiuflow-") { "jiuflow" }
                      else if slug.starts_with("boosttech-") { "boosttech" }
+                     else if slug.starts_with("housedrip-") { "housedrip" }
                      else { "collab" };
         record_donation_accrual(&conn, source, &session_id, amount, cost, None);
     }
@@ -22283,6 +22284,169 @@ async fn serve_elepote_collab_lp() -> Response {
     resp.headers_mut().insert(
         "cache-control",
         HeaderValue::from_static("public, max-age=60, s-maxage=120"),
+    );
+    resp
+}
+
+/// GET /aloha — guest welcome landing the House Drip Day3/Day4 QR points to.
+/// Zero-guilt ownership message (JP+EN), MU FESTIVAL · HAWAII invite (no date),
+/// a passphrase to hand to a friend (secondary spread), and a link into the
+/// House Drip shop. Quiet MU voice (無 = nothing).
+async fn serve_aloha_lp() -> Response {
+    const ALOHA_LP: &str = include_str!("../static/aloha/index.html");
+    let mut resp = axum::response::Html(ALOHA_LP).into_response();
+    resp.headers_mut().insert(
+        "cache-control",
+        HeaderValue::from_static("public, max-age=60, s-maxage=120"),
+    );
+    resp
+}
+
+/// GET /housedrip — public, buyable House Drip collection grid. Renders the
+/// 4 drip tees from `collab_products WHERE partner='housedrip' AND active=1`.
+/// Buy buttons POST /api/housedrip/checkout (pre_order route, real Stripe).
+async fn show_housedrip_page(State(db): State<Db>) -> Response {
+    type Row = (i64, String, String, String, String, i64, Option<String>, i64);
+    let items: Vec<Row> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, slug, category, name, COALESCE(description,''), price_jpy, image_url,
+                    COALESCE(lead_time_days, 14)
+             FROM collab_products WHERE partner='housedrip' AND active=1
+             ORDER BY id"
+        ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
+        stmt.query_map([], |r| Ok((
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?
+        ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    };
+
+    let cards = items.iter().map(|(id, slug, cat, name, desc, price, image, lead)| {
+        let image_block = match image.as_deref().filter(|u| !u.is_empty() && u.starts_with("http")) {
+            Some(u) => format!(
+                r##"<div class="img-wrap"><img src="{src}" alt="{name_attr}" loading="lazy"></div>"##,
+                src = html_attr_escape(u), name_attr = html_attr_escape(name)),
+            None => format!(
+                r#"<div class="img-wrap placeholder"><span>{glyph}</span></div>"#,
+                glyph = html_attr_escape(cat.chars().next().map(|c| c.to_string()).unwrap_or("•".into()).as_str())),
+        };
+        format!(r#"<article class="card" data-slug="{slug}">
+  {image}
+  <div class="body">
+    <div class="cat">{cat}</div>
+    <h3 id="buy-{id}">{name}</h3>
+    <p class="desc">{desc}</p>
+    <div class="lead">📦 {lead}日でお届け · 受注生産 (pre-order)</div>
+    <div class="row">
+      <span class="price">¥{price_fmt}</span>
+      <select id="size-{id}" class="size" aria-label="size">
+        <option>XS</option><option>S</option><option selected>M</option><option>L</option><option>XL</option><option>2XL</option><option>3XL</option>
+      </select>
+      <button class="buy" data-slug="{slug}" data-id="{id}">持ち帰る →</button>
+    </div>
+  </div>
+</article>"#,
+        image = image_block,
+        cat = html_attr_escape(cat), name = html_attr_escape(name),
+        desc = html_attr_escape(desc), price_fmt = format_jpy(*price),
+        id = id, slug = html_attr_escape(slug),
+    )}).collect::<Vec<_>>().join("\n");
+
+    let body = format!(r#"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>House Drip — MU</title>
+<meta name="description" content="MU House Drip — Hawaii ビーチサイドの家に4日かけて置かれた4枚のドリップ tee。無言から「持って帰ってね」まで。各 ¥4,800。">
+<meta name="robots" content="index,follow">
+<meta property="og:title" content="House Drip — MU">
+<meta property="og:image" content="https://wearmu.com/static/festseed/drip-day4.png">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<style>
+:root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.60);--gold:#f5b142;--line:rgba(245,245,240,0.10);--card:#111}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.85;-webkit-font-smoothing:antialiased}}
+nav{{position:sticky;top:0;background:rgba(10,10,10,0.86);backdrop-filter:blur(12px);border-bottom:1px solid var(--line);padding:16px 28px;display:flex;justify-content:space-between;align-items:center;z-index:50}}
+nav a{{color:var(--fg);text-decoration:none;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.85}}
+nav .logo{{font-weight:700;letter-spacing:0.5em;font-size:16px}}
+header{{padding:84px 28px 24px;max-width:720px;margin:0 auto;text-align:center}}
+header .ring{{font-size:26px;letter-spacing:0.1em;color:var(--gold);opacity:0.9;margin-bottom:22px}}
+header .eyebrow{{font-size:10px;letter-spacing:0.5em;text-transform:uppercase;color:var(--gold);opacity:0.85;margin-bottom:16px}}
+header h1{{font-size:clamp(28px,6vw,48px);font-weight:200;letter-spacing:0.01em;line-height:1.25;margin-bottom:18px}}
+header .lede{{color:var(--mute);font-size:14px;max-width:540px;margin:0 auto;line-height:2}}
+header .invite{{display:inline-block;margin-top:22px;font-size:11px;letter-spacing:0.2em;color:var(--gold)}}
+.grid{{max-width:1040px;margin:34px auto 100px;padding:0 28px;display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:18px}}
+.card{{background:var(--card);border:1px solid var(--line);border-radius:2px;display:flex;flex-direction:column;overflow:hidden;transition:border-color 0.2s ease}}
+.card:hover{{border-color:rgba(245,177,66,0.45)}}
+.card .img-wrap{{display:block;aspect-ratio:4/5;background:#0a0a0a;overflow:hidden;width:100%}}
+.card .img-wrap img{{width:100%;height:100%;object-fit:cover;display:block}}
+.card .img-wrap.placeholder{{display:flex;align-items:center;justify-content:center}}
+.card .img-wrap.placeholder span{{font-size:46px;font-weight:200;color:rgba(245,177,66,0.4)}}
+.card .body{{padding:20px 20px 22px;display:flex;flex-direction:column;gap:8px;flex:1}}
+.card .cat{{font-size:9px;letter-spacing:0.3em;text-transform:uppercase;color:var(--gold);opacity:0.85}}
+.card h3{{font-size:15px;font-weight:400;letter-spacing:0.01em;margin:2px 0 4px}}
+.card .desc{{color:var(--mute);font-size:12px;line-height:1.85;flex:1}}
+.card .lead{{font-size:9.5px;letter-spacing:0.14em;color:rgba(245,245,240,0.55);margin-top:8px}}
+.card .row{{display:flex;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap}}
+.card .price{{font-size:16px;color:var(--gold);font-variant-numeric:tabular-nums;margin-right:auto}}
+.card select{{background:#000;color:var(--fg);border:1px solid var(--line);font-size:12px;padding:7px 10px;border-radius:2px}}
+.card .buy{{background:var(--gold);color:#000;border:0;font-family:inherit;font-size:11px;letter-spacing:0.22em;text-transform:uppercase;font-weight:700;padding:10px 16px;cursor:pointer;border-radius:2px}}
+.card .buy:hover{{opacity:0.85}}
+.card .buy:disabled{{opacity:0.4;cursor:wait}}
+.note{{max-width:640px;margin:0 auto 60px;padding:16px 20px;background:rgba(245,177,66,0.06);border-left:2px solid var(--gold);font-size:12px;line-height:1.95;color:rgba(245,245,240,0.78)}}
+footer{{padding:54px 28px 90px;border-top:1px solid var(--line);text-align:center;font-size:11px;letter-spacing:0.18em;opacity:0.5}}
+footer a{{color:inherit;text-decoration:underline}}
+#msg{{max-width:640px;margin:14px auto;text-align:center;font-size:11px;letter-spacing:0.05em;color:var(--mute);min-height:14px}}
+</style></head><body>
+<nav><a href="/" class="logo">MU</a><a href="/aloha">aloha</a></nav>
+<header>
+  <div class="ring">━◯━ &nbsp;無</div>
+  <div class="eyebrow">House Drip</div>
+  <h1>無言から、<br>「持って帰ってね」まで。</h1>
+  <p class="lede">
+    Hawaii のビーチサイドの家に、4日かけて1枚ずつ置かれた4枚。<br>
+    気づき → 笑い → スキャン → 持ち帰り。各 ¥4,800。<br>
+    <span style="opacity:0.7">From silence to “take me home.” Four tees, one a day.</span>
+  </p>
+  <div class="invite">入場 = MU の T を着ていること · <a href="/aloha" style="color:var(--gold)">MU FESTIVAL · HAWAII →</a></div>
+</header>
+<div class="grid">
+{cards}
+</div>
+<div id="msg"></div>
+<div class="note">
+  受注生産 (pre-order)。ご注文後にお作りしてお届けします (約14日)。サイズは XS〜3XL。<br>
+  ご質問は <a href="mailto:info@wearmu.com">info@wearmu.com</a> まで。
+</div>
+<footer>
+  ━◯━ MU House Drip · 株式会社イネブラ (Enabler Inc.) · <a href="mailto:info@wearmu.com">info@wearmu.com</a> · <a href="/aloha">aloha</a>
+</footer>
+<script>
+document.querySelectorAll('.card .buy').forEach(function(btn){{
+  btn.addEventListener('click', async function(){{
+    var slug = btn.dataset.slug, id = btn.dataset.id;
+    var size = document.getElementById('size-' + id).value;
+    var msg = document.getElementById('msg');
+    btn.disabled = true; var orig = btn.textContent; btn.textContent = '読み込み中…'; msg.textContent = '';
+    try {{
+      var r = await fetch('/api/housedrip/checkout', {{
+        method:'POST', headers:{{'Content-Type':'application/json'}},
+        body: JSON.stringify({{slug:slug, size:size}})
+      }});
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      var d = await r.json();
+      if (d.url) window.location.href = d.url; else throw new Error(d.error || 'no url');
+    }} catch (e) {{
+      btn.disabled = false; btn.textContent = orig;
+      msg.textContent = 'エラー: ' + e.message;
+    }}
+  }});
+}});
+</script>
+</body></html>"#, cards = cards);
+
+    let mut resp = axum::response::Html(body).into_response();
+    resp.headers_mut().insert(
+        "cache-control",
+        HeaderValue::from_static("public, max-age=30, s-maxage=60"),
     );
     resp
 }
@@ -57599,6 +57763,13 @@ async fn boosttech_checkout(
     collab_checkout(db, "boosttech", "/boosttech", "MU × BOOSTTECH", body).await
 }
 
+async fn housedrip_checkout(
+    State(db): State<Db>,
+    Json(body): Json<SweepCheckoutBody>,
+) -> impl IntoResponse {
+    collab_checkout(db, "housedrip", "/housedrip", "MU House Drip", body).await
+}
+
 /// POST /api/sku/quick-add — let a logged-in user add a new SKU to a brand
 /// (partner) page in one click for either 50 proposal_points or ¥500 Stripe.
 /// Body: {partner, kind, color, design, pay: "points"|"stripe"}.
@@ -64256,6 +64427,69 @@ async fn main() {
         ).ok();
     }
 
+    // ── MU "House Drip" — Hawaii ビーチサイド貸家 seed campaign ──
+    //
+    // 4 枚のドリップ tee。ゲストが滞在の日を追うごとに静かに気づく漏斗:
+    //   Day1 無言 → Day2 "THIS SHIRT SAYS NOTHING." → Day3 "DAY THREE.
+    //   CURIOUS YET?" (QR 解禁) → Day4 "TAKE ME HOME." (持ち帰り + フェス招待)。
+    // QR の行き先 = /aloha (ゲスト welcome landing)。
+    //
+    // production_route='pre_order' — Stripe checkout は LIVE で動く。Printful の
+    // product/variant ID は確定後に flip する (誤 variant 発送インシデント回避の
+    // ため捏造しない)。画像 = store/static/festseed/drip-dayN.png。
+    let housedrip_items: &[SweepRow] = &[
+        ("housedrip-day1", "House Drip — Day 1 (無言)", "MU House Drip · Day 1 — 無",
+         "無言の記号だけ。━◯━ と 無 の金リング。何も言わないことが一番強い刷り込みになる、という MU のジョークそのものを着る 1 枚。Hawaii ビーチサイド貸家のベッドに、リボンを掛けて置かれた最初の T。",
+         4_800, "pre_order", None, None, None, None, None, 14, 1),
+        ("housedrip-day2", "House Drip — Day 2", "MU House Drip · Day 2 — THIS SHIRT SAYS NOTHING.",
+         "\"THIS SHIRT SAYS NOTHING.\" — 無 = nothing のダブルミーニング。クスッと笑わせて、MU というブランド名を初めて認知させる 1 枚。裾に小さく 無 = nothing。",
+         4_800, "pre_order", None, None, None, None, None, 14, 1),
+        ("housedrip-day3", "House Drip — Day 3 (QR)", "MU House Drip · Day 3 — DAY THREE. CURIOUS YET?",
+         "\"DAY THREE. CURIOUS YET?\" + 本物のスキャン可能な QR。ここで初めて QR に気づく — スキャンすると /aloha (ゲスト welcome) が開く。導線解禁の 1 枚。",
+         4_800, "pre_order", None, None, None, None, None, 14, 1),
+        ("housedrip-day4", "House Drip — Day 4 (持ち帰り)", "MU House Drip · Day 4 — TAKE ME HOME.",
+         "\"TAKE ME HOME.\" / MU FESTIVAL · HAWAII + 本物の QR + ━◯━。持ち帰り (=歩く広告) とフェス招待という、一番大きなお願いを最後に静かに。入場 = MU の T 着用。",
+         4_800, "pre_order", None, None, None, None, None, 14, 1),
+    ];
+    for (slug, cat, name, desc, price, route, pf_prod, pf_var, var_map, files, opts, lead, active) in housedrip_items {
+        conn.execute(
+            "INSERT OR IGNORE INTO collab_products
+                 (slug, partner, category, name, description, image_url, price_jpy,
+                  sizes_json, active, draft, created_at,
+                  printful_product_id, printful_variant_id, production_route,
+                  lead_time_days, printful_variant_map,
+                  printful_files, printful_options)
+             VALUES (?, 'housedrip', ?, ?, ?, NULL, ?,
+                     '[\"XS\",\"S\",\"M\",\"L\",\"XL\",\"2XL\",\"3XL\"]', ?, 0, ?,
+                     ?, ?, ?, ?, ?, ?, ?)",
+            params![slug, cat, name, desc, price, active, now,
+                    pf_prod, pf_var, route, lead, var_map, files, opts],
+        ).ok();
+        // Idempotent re-run: keep every changeable field in sync, and set the
+        // image_url to the committed festseed PNG (only if not already custom).
+        conn.execute(
+            "UPDATE collab_products
+             SET production_route = ?, lead_time_days = ?,
+                 active = ?, draft = 0, partner = 'housedrip',
+                 category = ?, name = ?, description = ?, price_jpy = ?
+             WHERE slug = ?",
+            params![route, lead, active, cat, name, desc, price, slug],
+        ).ok();
+    }
+    let housedrip_image_map: &[(&str, &str)] = &[
+        ("housedrip-day1", "/static/festseed/drip-day1.png"),
+        ("housedrip-day2", "/static/festseed/drip-day2.png"),
+        ("housedrip-day3", "/static/festseed/drip-day3.png"),
+        ("housedrip-day4", "/static/festseed/drip-day4.png"),
+    ];
+    for (slug, img_path) in housedrip_image_map {
+        let absolute = format!("https://wearmu.com{}", img_path);
+        conn.execute(
+            "UPDATE collab_products SET image_url = ? WHERE slug = ? AND partner = 'housedrip'",
+            params![absolute, slug],
+        ).ok();
+    }
+
     // E2E 実測の Printful 仕入総コスト (subtotal + ship to JP + tax)、¥単位。
     // 管理画面 (/admin/sweep) で利益率計算に使う。価格 / variant が変わったら
     // sweep_costs.py の E2E スクリプトで更新できる (admin manual)。
@@ -66508,6 +66742,8 @@ async fn main() {
         .route("/yuma", get(serve_yuma_collab_lp))
         // MU × ELE × POTE — Yuki's two pets (Bichon-Poo + Frenchie).
         .route("/elepote", get(serve_elepote_collab_lp))
+        .route("/aloha", get(serve_aloha_lp))
+        .route("/housedrip", get(show_housedrip_page))
         .nest_service("/code", ServeDir::new("static/code"))
         .nest_service("/coffee", ServeDir::new("static/coffee"))
         .nest_service("/zen", ServeDir::new("static/zen"))
@@ -66765,6 +67001,7 @@ async fn main() {
         .route("/api/sweep/checkout", post(sweep_checkout))
         .route("/api/kokon/checkout", post(kokon_checkout))
         .route("/api/boosttech/checkout", post(boosttech_checkout))
+        .route("/api/housedrip/checkout", post(housedrip_checkout))
         .route("/api/sku/quick-add", post(api_sku_quick_add))
         .route("/api/nakamura/checkout", post(nakamura_checkout))
         .route("/admin/nakamura", get(admin_nakamura_page))
