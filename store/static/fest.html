@@ -3,11 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>無音祭 — MU FESTIVAL · HAWAII 10.29</title>
-<meta name="description" content="無音祭 (MU FESTIVAL) · 2026.10.29 · HAWAII。世界一静かな、音楽フェス。入場券は売らない — MUGENのTシャツを着てきた人だけが、音の中に入れる。開催まで毎日、号外Tシャツが一枚。">
+<title>無音祭 — MU FESTIVAL · HAWAII 10.29–31</title>
+<meta name="description" content="無音祭 (MU FESTIVAL) · 2026.10.29–31 · HAWAII。世界一静かな、音楽フェス、三夜。無 → 月 → 円。日が沈み、月が昇る側で。入場券は売らない — MUGENのTシャツを着てきた人だけが、音の中に入れる。最終夜10.31はハロウィン。">
 <link rel="canonical" href="https://wearmu.com/fest">
-<meta property="og:title" content="無音祭 — MU FESTIVAL · HAWAII 2026.10.29">
-<meta property="og:description" content="世界一静かな、音楽フェス。入場券は、MUGENのTシャツ。着てきた人だけが、音の中に入れる。">
+<meta property="og:title" content="無音祭 — MU FESTIVAL · HAWAII 2026.10.29–31">
+<meta property="og:description" content="世界一静かな、音楽フェス、三夜。無→月→円。入場券は、MUGENのTシャツ。着てきた人だけが、音の中に入れる。">
 <meta property="og:url" content="https://wearmu.com/fest">
 <meta property="og:image" content="https://mockups.wearmu.com/1855.jpg">
 <meta name="twitter:card" content="summary_large_image">
@@ -62,6 +62,19 @@
     animation:fadeUp 1.3s .18s ease both; flex-wrap:wrap; justify-content:center; }
   .hero-meta .dot { opacity:0.3; }
   .hero-where { font-size:10px; letter-spacing:0.3em; text-transform:uppercase; opacity:0.35; }
+  .hero-arc { font-size:clamp(11px,2vw,14px); letter-spacing:0.22em; opacity:0.6; margin-top:2px;
+    animation:fadeUp 1.35s .2s ease both; }
+  .hero-arc b { color:var(--gold); font-weight:600; }
+  .hero-en { font-size:clamp(11px,1.8vw,13px); letter-spacing:0.04em; opacity:0.55; max-width:620px;
+    line-height:1.7; animation:fadeUp 1.25s .15s ease both; }
+  /* honest / trust block */
+  .honest { position:relative; z-index:1; max-width:760px; margin:0 auto; padding:40px 24px; }
+  .honest .row { display:flex; gap:14px; padding:16px 0; border-bottom:1px solid var(--line); }
+  .honest .k { flex:0 0 92px; font-size:10px; letter-spacing:0.2em; text-transform:uppercase;
+    color:var(--gold); opacity:0.8; padding-top:3px; }
+  .honest .v { font-size:14px; font-weight:200; opacity:0.85; }
+  .honest .v .en { display:block; font-size:11px; opacity:0.5; margin-top:4px; letter-spacing:0.02em; }
+  .honest a { color:var(--gold); border-bottom:1px solid rgba(230,196,73,0.4); }
   @keyframes fadeUp { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:none} }
 
   /* COUNTDOWN */
@@ -266,6 +279,7 @@
 <nav>
   <a href="/" class="nav-logo">MU</a>
   <div class="nav-right">
+    <a href="#arc" class="nav-link">三夜</a>
     <a href="#entry" class="nav-link">入場</a>
     <a href="#collect" class="nav-link">号外</a>
     <a href="#lineup" class="nav-link">出演</a>
@@ -278,10 +292,12 @@
   <div class="hero-kicker">MU Festival · Hawaii</div>
   <div class="hero-mark">無<span class="acc">音</span>祭</div>
   <p class="hero-para">世界一<span class="q">静か</span>な、音楽フェス。<br>音は、あなたが連れてくる。</p>
+  <p class="hero-en">No tickets. Wear the shirt, walk into the sound.<br>Three nights — <b style="color:var(--gold)">nothing → moon → circle</b> — Oʻahu, Hawaiʻi · Oct 29–31, 2026.</p>
   <div class="hero-meta">
-    <span>2026 · 10 · 29</span><span class="dot">—</span><span>HAWAII</span>
+    <span>2026 · 10.29 – 31</span><span class="dot">—</span><span>OʻAHU · HAWAIʻI</span>
   </div>
-  <div class="hero-where">📍 Location TBA / 場所は追って明かす</div>
+  <div class="hero-arc">三夜 &nbsp;<b>無</b> → <b>月</b> → <b>円</b>&nbsp; · &nbsp;日が沈み、月が昇る側で</div>
+  <div class="hero-where">📍 オアフ島 / 座標は追って明かす · coordinates TBA</div>
   <div class="count" id="count">
     <div class="u"><span class="n" id="cd">—</span><span class="l">days</span></div>
     <div class="u"><span class="n" id="ch">—</span><span class="l">hrs</span></div>
@@ -297,12 +313,29 @@
   <div class="small">The ticket is not for sale.</div>
 </div>
 
+<!-- ───────── THE ARC — 三夜 無→月→円 ───────── -->
+<section id="arc">
+  <div class="sec-head reveal">Arc — 三夜</div>
+  <p class="lead reveal">三日は、別々の夜じゃない。<span class="em">一本の弧</span>。記号が一夜ずつ、灯っていく。</p>
+  <p class="body reveal">日が沈む側から始め、二夜目に月を見上げ、最終夜で円（縁）が閉じる。
+  最後の夜はハロウィン —— 着て参加するのが、世界で一番自然な日。</p>
+  <div class="lineup reveal">
+    <div class="act"><div class="silh">無</div><div class="label">10.29 · MU</div><div class="sub">手放す夜 / 日没<br><span style="opacity:.6">Night of letting go · sunset</span></div></div>
+    <div class="act"><div class="silh">月</div><div class="label">10.30 · TSUKI</div><div class="sub">見上げる夜 / 月の出<br><span style="opacity:.6">Night of looking up · moonrise</span></div></div>
+    <div class="act"><div class="silh">円</div><div class="label">10.31 · EN</div><div class="sub">円環する夜 / Silent Halloween<br><span style="opacity:.6">Night the circle closes</span></div></div>
+  </div>
+  <p class="lead reveal" style="text-align:center;margin-top:8px">一夜だけでも、完結する。三夜を通すと、<span class="em">円</span>が閉じる。迷うなら、最終夜 <b style="color:var(--gold)">10.31</b> へ。</p>
+  <p class="note reveal" style="text-align:center">One night is whole · three nights close the circle · if unsure, come on the 31st.<br>※ 三夜の構成・各夜の時間は構想です。確定し次第このページで発表します。</p>
+</section>
+
 <!-- ───────── 共鳴カウンター (resonance / collective unlock) ───────── -->
 <section id="resonance">
   <div class="sec-head reveal">Resonance — 共鳴</div>
   <p class="lead reveal">号外が袖を通されるたび、会場の<span class="em">ヒントが一つ</span>開く。</p>
   <p class="body reveal">これは、みんなで会場を暴く遊びだ。号外 T が売れた累計が
   <b style="color:var(--gold)">108</b> に届いたとき、座標が解禁される。今、世界はどこまで進んだ？</p>
+  <p class="note reveal" style="max-width:680px">※ 108 に届かなくても、開催が近づけば座標はこのページで<b style="color:var(--gold)">必ず公開</b>します（集金トリガーではなく、ただの演出です）。号外 T はフェスとは別に、それ自体が一枚の正規アパレル —— 何が起きても、あなたの手元に残ります。<br>
+  <span style="opacity:.7">Even if 108 isn't reached, the coordinates will be revealed here as the date nears. The tee is real apparel you keep — festival or not.</span></p>
 
   <div class="res reveal">
     <div class="res-top">
@@ -331,19 +364,21 @@
     <div class="step">
       <div class="no">01</div>
       <div><div class="t">MUGEN の T を手に入れる</div>
-      <div class="d">どの号でも可。開催まで毎日、新しい号外 T が一枚並ぶ。</div></div>
+      <div class="d">どの号でも可。開催まで毎日、新しい号外 T が一枚並ぶ。<br><span style="opacity:.6">Get a MUGEN tee — any edition works.</span></div></div>
     </div>
     <div class="step">
       <div class="no">02</div>
-      <div><div class="t">10.29、それを着て会場へ</div>
-      <div class="d">ハワイ某所。場所は近づいたらこのページで明かす。</div></div>
+      <div><div class="t">三夜のどれかに、それを着て会場へ</div>
+      <div class="d">オアフ島某所。場所は近づいたらこのページで明かす。<br><span style="opacity:.6">Wear it to any of the three nights, on Oʻahu.</span></div></div>
     </div>
     <div class="step">
       <div class="no">03</div>
       <div><div class="t">音の中へ歩いていく</div>
-      <div class="d">MUGEN を着ていること = 入場。提示も、行列もない。</div></div>
+      <div class="d">MUGEN を着ていること = 入場。提示も、行列もない。<br><span style="opacity:.6">Wearing MUGEN is your entry. No line, no scan.</span></div></div>
     </div>
   </div>
+  <p class="note reveal" style="text-align:center">入場にかかるのは <b style="color:var(--gold)">T シャツ代だけ</b>。航空券・滞在はご自身で。<br>
+  <span style="opacity:.7">The shirt is the only entry cost — flights & stay are your own.</span></p>
 
   <!-- the genius interaction -->
   <div class="gate reveal">
@@ -361,11 +396,11 @@
   <div class="sec-head reveal">RSVP — 無音の表明</div>
   <p class="lead reveal">声は出さない。ただ、<span class="em">行く</span>と決める。</p>
   <div class="rsvp reveal">
-    <h3>私は、10.29 ハワイへ行く。</h3>
-    <div class="rsvp-sub">押した瞬間、あなたは「無音の参加者」の一人になる。番号が刻まれる。</div>
+    <h3>私は、10.29–31 ハワイへ行く。</h3>
+    <div class="rsvp-sub">押した瞬間、あなたは「無音の参加者」の一人になる。番号が刻まれる。<br><span style="opacity:.6">Press to become one of the silent. You get a number. · free</span></div>
     <div class="rsvp-form">
-      <input id="rsvpEmail" type="email" placeholder="email（任意 — 番号を覚えておくため）" />
-      <button class="btn gold" onclick="doRsvp()">私は行く →</button>
+      <input id="rsvpEmail" type="email" placeholder="email（任意 — 番号を覚えておくため / optional）" />
+      <button class="btn gold" onclick="doRsvp()">私は行く / I'm going →</button>
     </div>
     <div class="rsvp-result" id="rsvpResult"></div>
     <div class="rsvp-tally" id="rsvpTally"></div>
@@ -436,10 +471,29 @@
 <!-- ───────── HAWAII ───────── -->
 <section class="hawaii reveal">
   <div class="sec-head">Where — 場所</div>
-  <p class="lead">太平洋のどこか、<span class="em">陽が沈む側</span>。</p>
-  <p class="body">ハワイ某所。海と空のあいだ、地図には載らない一日だけの会場。
-  座標は、開催が近づいたらここで明かす。</p>
+  <p class="lead">オアフ島、<span class="em">日が沈み、月が昇る側</span>。</p>
+  <p class="body">オアフ島某所。海と空のあいだ、地図には載らない三夜だけの会場。
+  座標は、開催が近づいたらここで明かす。<br>
+  <span style="opacity:.6">Somewhere on Oʻahu, on the side where the sun sets and the moon rises. Coordinates revealed as the date nears.</span></p>
   <div class="coord">21.<span class="hide">██</span>°N, 157.<span class="hide">██</span>°W &nbsp;·&nbsp; HST (UTC−10)</div>
+</section>
+
+<!-- ───────── HONEST / TRUST ───────── -->
+<section id="honest">
+  <div class="sec-head reveal" style="text-align:center">正直に — Honest</div>
+  <p class="lead reveal" style="text-align:center">隠すのは場所と出演だけ。<span class="em">それ以外は、全部ここに書く。</span></p>
+  <div class="honest reveal">
+    <div class="row"><div class="k">主催 / Who</div><div class="v">MU（<b>株式会社イネブラ</b>・代表 濱田優貴）。無在庫アパレルを世界へ出荷してきたブランドが主催。
+      <span class="en">Run by MU / Enabler Inc. — a brand that already ships apparel worldwide. <a href="/brand">about MU →</a></span></div></div>
+    <div class="row"><div class="k">T の価値</div><div class="v">号外 T はフェスのチケットではなく、<b>それ単体で価値のある正規アパレル</b>。万一フェスが変更・中止でも、T はあなたの手元に残る。
+      <span class="en">The tee is real apparel, not a ticket. Whatever happens to the festival, you keep the shirt.</span></div></div>
+    <div class="row"><div class="k">会場公開</div><div class="v">座標は売上枚数に関係なく、<b>開催が近づけばこのページで必ず公開</b>する。「売れなければ消える」設計ではない。
+      <span class="en">Coordinates are revealed here as the date nears — regardless of how many tees sell.</span></div></div>
+    <div class="row"><div class="k">寄付 / Give</div><div class="v">MU は利益の <b>50% を寄付</b>に回す（ブランドの約束）。フェスも同じ思想で、ハワイ／音楽の文化に還す。
+      <span class="en">MU gives 50% of profit. <a href="/profit-split">how the money splits →</a></span></div></div>
+    <div class="row"><div class="k">問い合わせ</div><div class="v">特商法表記・連絡先はこちら。気になることは直接どうぞ。
+      <span class="en">Legal & contact: <a href="/legal">/legal</a></span></div></div>
+  </div>
 </section>
 
 <!-- ───────── FAQ ───────── -->
@@ -461,8 +515,21 @@
       毎朝ちがうデザイン。集めるほど、当日が特別になります。</p>
     </details>
     <details>
+      <summary>三夜（10.29–31）って、毎晩あるの？</summary>
+      <p>構想は三夜です。無（10.29・手放す夜）→ 月（10.30・見上げる夜）→ 円（10.31・円環する夜）。
+      最終夜10.31はハロウィン、着て参加するのが一番似合う日です。各夜の時間や内容は確定し次第このページで発表します（現時点では予定）。</p>
+    </details>
+    <details>
       <summary>場所と出演者はいつわかる？</summary>
       <p>どちらも開催が近づいたらこのページで発表します。無音祭は、当日まで沈黙を守るのが流儀です。</p>
+    </details>
+    <details>
+      <summary>結局いくらかかるの？</summary>
+      <p>入場にかかるのは MUGEN の T シャツ代だけです（号外は動的価格、過去の通常ドロップでも可）。航空券・滞在・現地の飲食はご自身でご手配ください。会場での入場料・チケット代は一切ありません。</p>
+    </details>
+    <details>
+      <summary>もし中止・変更になったら？ T 代は無駄になる？</summary>
+      <p>いいえ。号外 T は「フェスのチケット」ではなく、それ単体で価値のある正規アパレル（実物・受注生産）です。フェスが変更・中止になっても、T はあなたの手元に残ります。座標は売上枚数に関係なく、開催が近づけばこのページで必ず公開します。</p>
     </details>
     <details>
       <summary>ハワイまで行けない。オンラインは？</summary>
@@ -479,7 +546,7 @@
 
 <footer>
   <div class="big-mu">無音祭</div>
-  MU FESTIVAL · HAWAII · 2026.10.29 · HST<br><br>
+  MU FESTIVAL · HAWAII · 2026.10.29 – 31 · HST<br><br>
   <a href="/">wearmu.com</a> &nbsp;·&nbsp;
   <a href="/mugen">mugen</a> &nbsp;·&nbsp;
   <a href="/brand">brand</a>
@@ -489,7 +556,7 @@
   // ── ambient drifting 無 ──
   (function(){
     const wrap = document.getElementById('ambient');
-    const chars = ['無','音','祭','間','∞'];
+    const chars = ['無','音','祭','月','円','間','∞'];
     const N = window.innerWidth < 680 ? 5 : 9;
     for(let i=0;i<N;i++){
       const s = document.createElement('span');
