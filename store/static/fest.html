@@ -9,8 +9,11 @@
 <meta property="og:title" content="無音祭 — MU FESTIVAL · HAWAII 2026.10.29–31">
 <meta property="og:description" content="世界一静かな、音楽フェス、三夜。無→月→円。入場券は、MUGENのTシャツ。着てきた人だけが、音の中に入れる。">
 <meta property="og:url" content="https://wearmu.com/fest">
-<meta property="og:image" content="https://mockups.wearmu.com/1855.jpg">
+<meta property="og:image" content="https://wearmu.com/static/fest-og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://wearmu.com/static/fest-og.png">
 <style>
   :root {
     --black:#0A0A0A; --white:#FAFAFA; --red:#C8362C; --gold:#e6c449;
@@ -319,6 +322,8 @@
   <p class="lead reveal">三日は、別々の夜じゃない。<span class="em">一本の弧</span>。記号が一夜ずつ、灯っていく。</p>
   <p class="body reveal">日が沈む側から始め、二夜目に月を見上げ、最終夜で円（縁）が閉じる。
   最後の夜はハロウィン —— 着て参加するのが、世界で一番自然な日。</p>
+  <p class="lead reveal" style="text-align:center;margin-top:6px">ヘッドホンは配らない。日没の合図で、MUGEN を着た者たちが一斉に動き出す。<br>音は、その<span class="em">沈黙と、歓声と、足音</span>。<br>
+  <span class="note" style="display:block;margin-top:8px">No headphones. At the sunset signal, everyone in MUGEN moves as one — the sound is the silence, the cheer, the footsteps.</span></p>
   <div class="lineup reveal">
     <div class="act"><div class="silh">無</div><div class="label">10.29 · MU</div><div class="sub">手放す夜 / 日没<br><span style="opacity:.6">Night of letting go · sunset</span></div></div>
     <div class="act"><div class="silh">月</div><div class="label">10.30 · TSUKI</div><div class="sub">見上げる夜 / 月の出<br><span style="opacity:.6">Night of looking up · moonrise</span></div></div>
@@ -404,6 +409,10 @@
     </div>
     <div class="rsvp-result" id="rsvpResult"></div>
     <div class="rsvp-tally" id="rsvpTally"></div>
+    <div style="margin-top:18px;font-size:12px;letter-spacing:0.06em;opacity:0.7">
+      <a href="https://calendar.google.com/calendar/render?action=TEMPLATE&text=MU%20FESTIVAL%20%E7%84%A1%E9%9F%B3%E7%A5%AD%20%C2%B7%20Hawai%CA%BBi&dates=20261029/20261101&location=O%CA%BBahu%2C%20Hawai%CA%BBi&details=No%20tickets%20%E2%80%94%20wear%20a%20MUGEN%20tee.%20wearmu.com%2Ffest"
+         target="_blank" rel="noopener" style="color:var(--gold);border-bottom:1px solid rgba(230,196,73,0.4)">📅 10.29–31 を予定に入れる / Save the dates →</a>
+    </div>
     <div class="rsvp-invite" id="rsvpInvite" style="display:none">
       <div class="inv-line">無音の者を、<span class="em">1人だけ</span>連れて入れる。</div>
       <div class="inv-row">
@@ -489,8 +498,8 @@
       <span class="en">The tee is real apparel, not a ticket. Whatever happens to the festival, you keep the shirt.</span></div></div>
     <div class="row"><div class="k">会場公開</div><div class="v">座標は売上枚数に関係なく、<b>開催が近づけばこのページで必ず公開</b>する。「売れなければ消える」設計ではない。
       <span class="en">Coordinates are revealed here as the date nears — regardless of how many tees sell.</span></div></div>
-    <div class="row"><div class="k">寄付 / Give</div><div class="v">MU は利益の <b>50% を寄付</b>に回す（ブランドの約束）。フェスも同じ思想で、ハワイ／音楽の文化に還す。
-      <span class="en">MU gives 50% of profit. <a href="/profit-split">how the money splits →</a></span></div></div>
+    <div class="row"><div class="k">寄付 / Give</div><div class="v">MU は利益の <b>50% を寄付</b>に回す（ブランドの約束）。フェスも同じ思想で、<b>ハワイの海と、音楽を続ける人たち</b>へ還すことを目指す（寄付先は決まり次第ここで公表）。
+      <span class="en">MU gives 50% of profit — back to Hawaiʻi's ocean and its musicians. <a href="/profit-split">how the money splits →</a></span></div></div>
     <div class="row"><div class="k">問い合わせ</div><div class="v">特商法表記・連絡先はこちら。気になることは直接どうぞ。
       <span class="en">Legal & contact: <a href="/legal">/legal</a></span></div></div>
   </div>
@@ -724,7 +733,8 @@
       // RSVP running tally (shown even before user RSVPs)
       if(typeof s.rsvp_count === 'number'){
         document.getElementById('rsvpTally').innerHTML =
-          'いま <b>'+s.rsvp_count+'</b> 人が、無音で行くと決めている。';
+          'いま <b>'+s.rsvp_count+'</b> 人が、無音で行くと決めている。'
+          + '<br><span style="opacity:.55;font-size:.85em">'+s.rsvp_count+' people have already decided to go, in silence.</span>';
       }
     } catch(e){ /* counter stays dashed; non-fatal */ }
   })();
