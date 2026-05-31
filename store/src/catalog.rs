@@ -1734,6 +1734,81 @@ pub async fn admin_generate(
 }
 
 #[derive(Deserialize)]
+pub struct MockupBackfillQuery {
+    pub token: String,
+    pub brand: Option<String>,
+    pub limit: Option<u32>,
+}
+
+/// GET /admin/catalog/mockup_backfill?token=&brand=&limit= — generate on-body
+/// Printful mockups for "design-only" catalog SKUs (where mockup_url_external
+/// still equals design_file, i.e. the shop shows the flat artwork). The 30-min
+/// cron only sweeps `brand='auto'`; this lets the operator backfill any brand
+/// (e.g. agent-created stores). Spawns one task per SKU and returns the queue.
+pub async fn admin_mockup_backfill(
+    State(db): State<Db>,
+    Query(q): Query<MockupBackfillQuery>,
+) -> Response {
+    let expected = env::var("ADMIN_TOKEN").unwrap_or_default();
+    if expected.is_empty() || q.token != expected {
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    }
+    let limit = q.limit.unwrap_or(20).clamp(1, 50) as i64;
+    let rows: Vec<(String, i64, i64, String)> = {
+        let conn = db.lock().unwrap();
+        let select = "SELECT sku, printful_product_id, printful_variant_id, COALESCE(design_file, '') \
+                      FROM catalog_products \
+                      WHERE is_active=1 AND printful_product_id IS NOT NULL \
+                        AND (mockup_url_external = design_file OR mockup_url_external IS NULL)";
+        let map_row = |r: &rusqlite::Row| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        };
+        let collected = if let Some(brand) = q.brand.as_deref() {
+            let sql = format!("{select} AND brand=?1 LIMIT ?2");
+            conn.prepare(&sql).ok().and_then(|mut s| {
+                s.query_map(rusqlite::params![brand, limit], map_row)
+                    .ok()
+                    .map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>())
+            })
+        } else {
+            let sql = format!("{select} LIMIT ?1");
+            conn.prepare(&sql).ok().and_then(|mut s| {
+                s.query_map(rusqlite::params![limit], map_row)
+                    .ok()
+                    .map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>())
+            })
+        };
+        collected.unwrap_or_default()
+    };
+
+    let queued: Vec<String> = rows.iter().map(|(s, ..)| s.clone()).collect();
+    for (sku, pp, pv, design) in rows {
+        if design.is_empty() {
+            continue;
+        }
+        let db_c = db.clone();
+        tokio::spawn(async move {
+            if let Err(e) = generate_onbody_mockup(db_c.clone(), sku.clone(), pp, pv, design).await {
+                tracing::warn!("[catalog/mockup_backfill] {} failed: {}", sku, e);
+            }
+        });
+    }
+    axum::Json(serde_json::json!({
+        "ok": true,
+        "brand": q.brand,
+        "queued": queued.len(),
+        "skus": queued,
+        "note": "mockups generate async (Printful); re-check the shop in ~1-2 min",
+    }))
+    .into_response()
+}
+
+#[derive(Deserialize)]
 pub struct LifestyleGenQuery {
     pub token: String,
     pub sku: String,
