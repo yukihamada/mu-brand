@@ -64437,19 +64437,37 @@ async fn main() {
     // production_route='pre_order' — Stripe checkout は LIVE で動く。Printful の
     // product/variant ID は確定後に flip する (誤 variant 発送インシデント回避の
     // ため捏造しない)。画像 = store/static/festseed/drip-dayN.png。
+    // Printful is PRE-STAGED for safety/prep but production_route stays
+    // 'pre_order' — fulfillment remains MANUAL by design (owner's call).
+    // Because route != 'printful', the order-creation guard in
+    // handle_collab_sweep_order (route=="printful" && variant_id ... ) stays
+    // FALSE, so NO auto Printful order fires. The printful_* fields are
+    // populated only so a later flip to 'printful' (or a manual Printful
+    // order) is a one-field change with verified IDs + hosted print files.
+    //
+    // API-VERIFIED: Bella+Canvas 3001 (product 71), BLACK — same body as the
+    // live sweep/kokon/jiuflow MU tees. Variant map below; default = M (4017).
+    // Print masters: store/static/festseed/drip-dayN-print.png (transparent,
+    // 3600px, ~150 DPI), served at https://wearmu.com/static/festseed/...
+    const HD_VARIANT_MAP: &str =
+        "{\"XS\":9527,\"S\":4016,\"M\":4017,\"L\":4018,\"XL\":4019,\"2XL\":4020,\"3XL\":5295}";
     let housedrip_items: &[SweepRow] = &[
         ("housedrip-day1", "House Drip — Day 1 (無言)", "MU House Drip · Day 1 — 無",
          "無言の記号だけ。━◯━ と 無 の金リング。何も言わないことが一番強い刷り込みになる、という MU のジョークそのものを着る 1 枚。Hawaii ビーチサイド貸家のベッドに、リボンを掛けて置かれた最初の T。",
-         4_800, "pre_order", None, None, None, None, None, 14, 1),
+         4_800, "pre_order", Some(71), Some(4017), Some(HD_VARIANT_MAP),
+         Some("[{\"type\":\"default\",\"url\":\"https://wearmu.com/static/festseed/drip-day1-print.png\"}]"), None, 14, 1),
         ("housedrip-day2", "House Drip — Day 2", "MU House Drip · Day 2 — THIS SHIRT SAYS NOTHING.",
          "\"THIS SHIRT SAYS NOTHING.\" — 無 = nothing のダブルミーニング。クスッと笑わせて、MU というブランド名を初めて認知させる 1 枚。裾に小さく 無 = nothing。",
-         4_800, "pre_order", None, None, None, None, None, 14, 1),
+         4_800, "pre_order", Some(71), Some(4017), Some(HD_VARIANT_MAP),
+         Some("[{\"type\":\"default\",\"url\":\"https://wearmu.com/static/festseed/drip-day2-print.png\"}]"), None, 14, 1),
         ("housedrip-day3", "House Drip — Day 3 (QR)", "MU House Drip · Day 3 — DAY THREE. CURIOUS YET?",
          "\"DAY THREE. CURIOUS YET?\" + 本物のスキャン可能な QR。ここで初めて QR に気づく — スキャンすると /aloha (ゲスト welcome) が開く。導線解禁の 1 枚。",
-         4_800, "pre_order", None, None, None, None, None, 14, 1),
+         4_800, "pre_order", Some(71), Some(4017), Some(HD_VARIANT_MAP),
+         Some("[{\"type\":\"default\",\"url\":\"https://wearmu.com/static/festseed/drip-day3-print.png\"}]"), None, 14, 1),
         ("housedrip-day4", "House Drip — Day 4 (持ち帰り)", "MU House Drip · Day 4 — TAKE ME HOME.",
          "\"TAKE ME HOME.\" / MU FESTIVAL · HAWAII + 本物の QR + ━◯━。持ち帰り (=歩く広告) とフェス招待という、一番大きなお願いを最後に静かに。入場 = MU の T 着用。",
-         4_800, "pre_order", None, None, None, None, None, 14, 1),
+         4_800, "pre_order", Some(71), Some(4017), Some(HD_VARIANT_MAP),
+         Some("[{\"type\":\"default\",\"url\":\"https://wearmu.com/static/festseed/drip-day4-print.png\"}]"), None, 14, 1),
     ];
     for (slug, cat, name, desc, price, route, pf_prod, pf_var, var_map, files, opts, lead, active) in housedrip_items {
         conn.execute(
@@ -64465,15 +64483,23 @@ async fn main() {
             params![slug, cat, name, desc, price, active, now,
                     pf_prod, pf_var, route, lead, var_map, files, opts],
         ).ok();
-        // Idempotent re-run: keep every changeable field in sync, and set the
-        // image_url to the committed festseed PNG (only if not already custom).
+        // Idempotent re-run: keep every changeable field in sync. INSERT OR
+        // IGNORE above does NOT touch already-seeded prod rows, so this UPDATE
+        // is what actually MIGRATES production — including the 5 printful_*
+        // columns (product/variant/map/files), which prior boots left NULL.
+        // production_route stays whatever the seed says ('pre_order') so this
+        // is prep only; it does NOT enable auto Printful fulfillment.
         conn.execute(
             "UPDATE collab_products
              SET production_route = ?, lead_time_days = ?,
                  active = ?, draft = 0, partner = 'housedrip',
-                 category = ?, name = ?, description = ?, price_jpy = ?
+                 category = ?, name = ?, description = ?, price_jpy = ?,
+                 printful_product_id = ?, printful_variant_id = ?,
+                 printful_variant_map = ?, printful_files = ?,
+                 printful_options = ?
              WHERE slug = ?",
-            params![route, lead, active, cat, name, desc, price, slug],
+            params![route, lead, active, cat, name, desc, price,
+                    pf_prod, pf_var, var_map, files, opts, slug],
         ).ok();
     }
     let housedrip_image_map: &[(&str, &str)] = &[
