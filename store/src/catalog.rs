@@ -1809,6 +1809,62 @@ pub async fn admin_mockup_backfill(
 }
 
 #[derive(Deserialize)]
+pub struct SetDesignQuery {
+    pub token: String,
+    pub sku: String,
+    pub design_url: String,
+}
+
+/// GET /admin/catalog/set_design?token=&sku=&design_url= — replace a catalog
+/// SKU's design artwork and regenerate its on-body Printful mockup. Used to
+/// swap a badly-proportioned design (e.g. a small figure on a wide canvas that
+/// prints as a tiny sliver) for a properly-framed one. Updates design_file +
+/// resets mockup_url_external, then regenerates the mockup synchronously.
+pub async fn admin_set_design(
+    State(db): State<Db>,
+    Query(q): Query<SetDesignQuery>,
+) -> Response {
+    let expected = env::var("ADMIN_TOKEN").unwrap_or_default();
+    if expected.is_empty() || q.token != expected {
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    }
+    let design = q.design_url.trim();
+    if !design.starts_with("https://") {
+        return (StatusCode::BAD_REQUEST, "design_url must be https").into_response();
+    }
+    let ids: Option<(i64, i64)> = {
+        let conn = db.lock().unwrap();
+        let updated = conn
+            .execute(
+                "UPDATE catalog_products SET design_file=?1, mockup_url_external=?1 WHERE sku=?2",
+                rusqlite::params![design, q.sku],
+            )
+            .unwrap_or(0);
+        if updated == 0 {
+            None
+        } else {
+            conn.query_row(
+                "SELECT printful_product_id, printful_variant_id FROM catalog_products WHERE sku=?1",
+                rusqlite::params![q.sku],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+            )
+            .ok()
+        }
+    };
+    let Some((pp, pv)) = ids else {
+        return (StatusCode::NOT_FOUND, "sku not found").into_response();
+    };
+    let regen = generate_onbody_mockup(db.clone(), q.sku.clone(), pp, pv, design.to_string()).await;
+    axum::Json(serde_json::json!({
+        "ok": regen.is_ok(),
+        "sku": q.sku,
+        "design_url": design,
+        "mockup_regen": regen.err(),
+    }))
+    .into_response()
+}
+
+#[derive(Deserialize)]
 pub struct LifestyleGenQuery {
     pub token: String,
     pub sku: String,
@@ -2813,26 +2869,66 @@ pub async fn shop_pdp(
         .or_else(|| mockup_main.map(|p| format!("https://merch.wearmu.com{}", p)))
         .unwrap_or_else(|| "/static/og-default.png".to_string());
 
-    // extras
-    let extras_imgs: Vec<String> = {
+    // extras — fetch with labels so we can surface 着用イメージ (on-body
+    // styling renders) prominently, separate from technical mockup angles.
+    // NOTE: these lifestyle images are AI-rendered styling visuals, NOT real
+    // customer photos — surfaced honestly as 着用イメージ, never claimed as UGC
+    // / customer testimonials.
+    let extras_rows: Vec<(String, String)> = {
         let conn = db.lock().unwrap();
         conn.prepare(
-            "SELECT image_url FROM catalog_product_extras WHERE sku=? ORDER BY sort_order, id",
+            "SELECT label, image_url FROM catalog_product_extras WHERE sku=? ORDER BY sort_order, id",
         )
         .ok()
         .and_then(|mut s| {
-            s.query_map(rusqlite::params![&sku], |r| r.get::<_, String>(0))
-                .ok()
-                .map(|it| it.filter_map(|r| r.ok()).collect())
+            s.query_map(rusqlite::params![&sku], |r| {
+                Ok((r.get::<_, String>(0).unwrap_or_default(), r.get::<_, String>(1)?))
+            })
+            .ok()
+            .map(|it| it.filter_map(|r| r.ok()).collect())
         })
         .unwrap_or_default()
     };
 
-    let extras_html = if extras_imgs.is_empty() {
+    let is_lifestyle = |l: &str| l.to_lowercase().contains("lifestyle");
+    // bare print artwork (the design file) is not a product shot → drop it.
+    let is_artwork = |l: &str| {
+        let l = l.to_lowercase();
+        l == "design" || l == "concept_design" || l == "print"
+    };
+    let lifestyle_imgs: Vec<&String> = extras_rows
+        .iter()
+        .filter(|(l, u)| is_lifestyle(l) && !u.is_empty())
+        .map(|(_, u)| u)
+        .take(3)
+        .collect();
+    let other_imgs: Vec<&String> = extras_rows
+        .iter()
+        .filter(|(l, u)| !is_lifestyle(l) && !is_artwork(l) && !u.is_empty())
+        .map(|(_, u)| u)
+        .collect();
+
+    let lifestyle_html = if lifestyle_imgs.is_empty() {
+        String::new()
+    } else {
+        let mut s = String::from(
+            r#"<div class="wear"><h3 class="wear-h">着用イメージ</h3><div class="wear-grid">"#,
+        );
+        for u in &lifestyle_imgs {
+            s.push_str(&format!(
+                r#"<img src="{}" alt="着用イメージ" loading="lazy">"#,
+                html_attr(u)
+            ));
+        }
+        s.push_str("</div></div>");
+        s
+    };
+
+    let extras_html = if other_imgs.is_empty() {
         String::new()
     } else {
         let mut s = String::from(r#"<div class="extras">"#);
-        for u in &extras_imgs {
+        for u in &other_imgs {
             s.push_str(&format!(
                 r#"<img src="{}" alt="" loading="lazy">"#,
                 html_attr(u)
@@ -3033,6 +3129,10 @@ nav .brand{{font-weight:900;letter-spacing:0.4em}}
 .hero img{{width:100%;height:auto;border-radius:6px;background:#000;display:block}}
 .extras{{display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:6px;margin-top:8px}}
 .extras img{{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:3px;background:#000}}
+.wear{{margin-top:14px}}
+.wear-h{{font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:rgba(245,245,240,0.55);margin:0 0 6px}}
+.wear-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:6px}}
+.wear-grid img{{width:100%;aspect-ratio:4/5;object-fit:cover;border-radius:5px;background:#000}}
 .body h1{{font-size:24px;line-height:1.35;margin-bottom:14px;font-weight:900}}
 .body .brand{{font-size:10px;letter-spacing:0.3em;color:#ffd700;text-transform:uppercase;margin-bottom:8px}}
 .body .price{{font-size:22px;font-family:monospace;font-weight:700;color:#fff;margin-bottom:18px}}
@@ -3070,6 +3170,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
 <div class="wrap">
   <div class="hero">
     <img src="{og}" alt="{title}" loading="lazy" onerror="this.onerror=null;this.src='/static/designs/marker_zero.png';this.style.objectFit='contain';this.style.background='#0a0a0a';this.style.padding='60px'">
+    {lifestyle}
     {extras}
   </div>
   <div class="body">
@@ -3111,6 +3212,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
         sku = html_text(&sku),
         buy = buy_button,
         suzuri = suzuri_link,
+        lifestyle = lifestyle_html,
         extras = extras_html,
         trust     = trust_block,
         spec      = spec_block,
