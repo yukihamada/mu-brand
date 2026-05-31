@@ -19,6 +19,10 @@ venv/
 .env
 .env.*
 !.env.example
+
+# Private / non-public outreach assets (likeness, personal invites — never commit)
+private/
+scripts/gen_oneok_invite_shirts.py
 *.key
 *.pem
 secrets/
