@@ -30474,6 +30474,300 @@ async fn proposal_generic_revoke(
     })).into_response()
 }
 
+// ───────────────────────────────────────────────────────────────────────
+// Partner self-serve consent: OK → 即販売開始 / NG → 見送り記録。
+// admin master token は partner に渡さない。proposal ごとの capability token
+// (meta_json.consent_token) を発行し、decide ページ URL に載せて partner に
+// 送る。「権利侵害しない限り」= 公開されるのは MU オリジナル意匠のみ。商標・
+// ロゴ・肖像の利用を含む提案 (meta.uses_partner_ip=true) はワンクリック公開を
+// 禁止し、書面合意のうえ管理者承認に倒す。
+// ───────────────────────────────────────────────────────────────────────
+
+/// Constant-time string compare for capability tokens (no timing oracle).
+fn ct_eq_str(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() { return false; }
+    let mut diff = 0u8;
+    for i in 0..a.len() { diff |= a[i] ^ b[i]; }
+    diff == 0
+}
+
+fn proposal_meta_value(conn: &rusqlite::Connection, slug: &str) -> serde_json::Value {
+    let s: Option<String> = conn.query_row(
+        "SELECT meta_json FROM proposals WHERE slug=?",
+        params![slug], |r| r.get(0),
+    ).ok().flatten();
+    s.as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
+fn proposal_set_meta(conn: &rusqlite::Connection, slug: &str, meta: &serde_json::Value) {
+    let _ = conn.execute(
+        "UPDATE proposals SET meta_json=? WHERE slug=?",
+        params![meta.to_string(), slug],
+    );
+}
+
+/// Ensure (and return) a per-proposal consent capability token. None if the
+/// proposal slug doesn't exist.
+fn proposal_ensure_consent_token(conn: &rusqlite::Connection, slug: &str) -> Option<String> {
+    if proposal_row(conn, slug).is_none() { return None; }
+    let mut meta = proposal_meta_value(conn, slug);
+    if let Some(t) = meta.get("consent_token").and_then(|v| v.as_str()) {
+        if !t.is_empty() { return Some(t.to_string()); }
+    }
+    let token = mypage_random_token();
+    if let Some(obj) = meta.as_object_mut() {
+        obj.insert("consent_token".into(), serde_json::json!(token));
+    }
+    proposal_set_meta(conn, slug, &meta);
+    Some(token)
+}
+
+/// GET /api/admin/proposal/:slug/consent_link — admin-gated. Mints (or returns
+/// the existing) consent token + the partner-facing decide URL to send out.
+async fn admin_proposal_consent_link(
+    State(db): State<Db>,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(),
+        &format!("/api/admin/proposal/{}/consent_link", slug)).await { return r; }
+    let token = {
+        let conn = db.lock().unwrap();
+        match proposal_ensure_consent_token(&conn, &slug) {
+            Some(t) => t,
+            None => return (StatusCode::NOT_FOUND, "unknown proposal slug").into_response(),
+        }
+    };
+    let url = format!("https://wearmu.com/proposal/{}/decide?t={}", slug, token);
+    Json(serde_json::json!({
+        "ok": true, "slug": slug, "decide_url": url, "consent_token": token,
+    })).into_response()
+}
+
+/// GET /proposal/:slug/decide?t=<consent_token> — partner-facing decision page.
+/// Capability-gated: invalid/missing token → 404 (no existence leak).
+async fn proposal_decide_page(
+    State(db): State<Db>,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let t = q.get("t").map(|s| s.trim()).unwrap_or("");
+    let not_found = || (StatusCode::NOT_FOUND, axum::response::Html(
+        "<!doctype html><meta charset=utf-8><title>404</title><body style='background:#0a0a0a;color:#888;font-family:system-ui;text-align:center;padding:20vh'>404</body>".to_string()
+    )).into_response();
+
+    let (name, approved, declined, uses_partner_ip, n_sku, total_jpy, accent) = {
+        let conn = db.lock().unwrap();
+        let row = match proposal_row(&conn, &slug) { Some(r) => r, None => return not_found() };
+        let meta = proposal_meta_value(&conn, &slug);
+        let stored = meta.get("consent_token").and_then(|v| v.as_str()).unwrap_or("");
+        if stored.is_empty() || t.is_empty() || !ct_eq_str(t, stored) { return not_found(); }
+        let approved = row.2.is_some() && row.6.is_none();
+        let declined = meta.get("declined_at").and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false);
+        let uses_partner_ip = meta.get("uses_partner_ip").and_then(|v| v.as_bool()).unwrap_or(false);
+        let n_sku: i64 = conn.query_row("SELECT COUNT(*) FROM proposal_skus WHERE slug=?", params![slug], |r| r.get(0)).unwrap_or(0);
+        let total_jpy: i64 = conn.query_row("SELECT COALESCE(SUM(price_jpy),0) FROM proposal_skus WHERE slug=?", params![slug], |r| r.get(0)).unwrap_or(0);
+        let accent = meta.get("accent_hex").and_then(|v| v.as_str()).filter(|s| s.starts_with('#') && s.len() <= 7).unwrap_or("#7be57b").to_string();
+        (row.0, approved, declined, uses_partner_ip, n_sku, total_jpy, accent)
+    };
+
+    let title = html_escape(&name);
+    let safe_line = "公開されるのは <b>MU オリジナル意匠のみ</b>。貴社の商標・ロゴ・肖像・楽曲等は使用しません。";
+    let terms_line = "「OK」を押すと、上記 SKU が即座に wearmu.com で販売開始されます（在庫リスクゼロのオンデマンド製造）。いつでも管理者連絡で停止できます。";
+
+    let body_main = if approved {
+        format!("<div class='card'><div class='badge'>● 販売中</div><h1>{title}</h1><p>この提案は承認済みで、現在 wearmu.com で販売中です。</p><a class='btn ok' href='/{slug}'>商品ページを開く →</a></div>",
+            title=title, slug=html_attr_escape(&slug))
+    } else if declined {
+        format!("<div class='card'><div class='badge gray'>見送り</div><h1>{title}</h1><p>この提案は「見送り」として記録済みです。再検討の際は mail@yukihamada.jp までご連絡ください。</p></div>", title=title)
+    } else {
+        let ok_block = if uses_partner_ip {
+            "<button class='btn ok' disabled>OK（書面合意が必要）</button><p class='note'>この提案は商標・ロゴ等の利用を含むため、ワンクリック公開はできません。書面合意のうえ管理者が公開します。</p>".to_string()
+        } else {
+            "<button class='btn ok' onclick=\"decide('ok')\">OK・販売を開始する</button>".to_string()
+        };
+        format!(
+            "<div class='card'>\
+             <div class='badge'>提案の確認</div>\
+             <h1>{title}</h1>\
+             <p class='lede'>{n} 型 / 合計 ¥{total}（バンドル）</p>\
+             <div class='consent'>{safe}</div>\
+             <p class='terms'>{terms}</p>\
+             <div class='fields'>\
+               <input id='nm' placeholder='お名前・ご担当者名' value='{namev}'>\
+               <input id='em' placeholder='メール（任意）' type='email'>\
+             </div>\
+             <div id='actions'>{ok}\
+               <button class='btn ng' onclick=\"decide('ng')\">今回は見送る</button>\
+             </div>\
+            </div>",
+            title=title, n=n_sku, total=fmt_jpy(total_jpy), safe=safe_line, terms=terms_line,
+            namev=html_attr_escape(&name), ok=ok_block,
+        )
+    };
+
+    let css = r#"<style>
+*{box-sizing:border-box}
+body{margin:0;background:#0a0a0a;color:#f2f2ee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;line-height:1.7;display:flex;flex-direction:column;min-height:100vh;align-items:center;justify-content:center;padding:24px}
+.card{max-width:460px;width:100%;background:#121212;border:1px solid #262626;border-radius:18px;padding:32px}
+.badge{display:inline-block;font-size:12px;letter-spacing:.08em;color:var(--a);border:1px solid var(--a);border-radius:999px;padding:3px 12px;margin-bottom:18px}
+.badge.gray{color:#888;border-color:#444}
+h1{font-size:24px;margin:0 0 8px;font-weight:700}
+.lede{color:#bdbdb6;margin:0 0 18px}
+.consent{background:rgba(255,255,255,.04);border:1px solid #2a2a2a;border-radius:12px;padding:14px 16px;font-size:14px;color:#dcdcd6;margin-bottom:14px}
+.terms{font-size:12.5px;color:#9a9a92;margin:0 0 20px}
+.fields{display:flex;flex-direction:column;gap:10px;margin-bottom:18px}
+input{background:#0e0e0e;border:1px solid #303030;border-radius:10px;padding:12px 14px;color:#f2f2ee;font-size:15px}
+#actions{display:flex;flex-direction:column;gap:10px}
+.btn{display:block;text-align:center;text-decoration:none;border:none;border-radius:12px;padding:15px;font-size:16px;font-weight:700;cursor:pointer}
+.btn.ok{background:var(--a);color:#0a0a0a}
+.btn.ng{background:transparent;color:#bbb;border:1px solid #3a3a3a}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.note{font-size:12.5px;color:#c9a24a;margin:8px 0 0}
+#result{max-width:460px;margin:16px auto 0;text-align:center;color:#cfcfc8}
+</style>"#;
+
+    let script = r#"<script>
+const SLUG=document.body.dataset.slug, T=document.body.dataset.t;
+async function decide(d){
+  const btns=document.querySelectorAll('#actions button'); btns.forEach(b=>b.disabled=true);
+  const name=(document.getElementById('nm')||{}).value||'';
+  const email=(document.getElementById('em')||{}).value||'';
+  const reason= d==='ng' ? (prompt('差し支えなければ理由を一言（任意）')||'') : '';
+  let r,j;
+  try{ r=await fetch(`/api/proposal/${SLUG}/consent`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({t:T,decision:d,name,email,reason})}); j=await r.json(); }
+  catch(e){ document.getElementById('result').innerHTML='<p style="color:#ff8a8a">通信エラー</p>'; btns.forEach(b=>b.disabled=false); return; }
+  const box=document.getElementById('result');
+  if(r.ok && j.ok){
+    document.getElementById('actions').style.display='none';
+    if(d==='ok'){ box.innerHTML='<h2>✓ 販売を開始しました</h2><p>ありがとうございます。商品ページを開きます…</p>'; setTimeout(()=>location.href=(j.redirect||('/'+SLUG)),1500); }
+    else { box.innerHTML='<h2>承りました</h2><p>今回は見送りとして記録しました。ご検討ありがとうございました。</p>'; }
+  } else {
+    box.innerHTML='<p style="color:#ff8a8a">'+((j&&j.error)||('エラー ('+r.status+')'))+'</p>'; btns.forEach(b=>b.disabled=false);
+  }
+}
+</script>"#;
+
+    let html = format!(
+        "<!doctype html><html lang=ja><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><meta name=robots content='noindex,nofollow'><title>{title} — 確認</title><style>:root{{--a:{accent}}}</style>{css}</head><body data-slug=\"{slug}\" data-t=\"{tok}\">{body_main}<div id=result></div>{script}</body></html>",
+        title=title, accent=html_attr_escape(&accent), css=css, slug=html_attr_escape(&slug),
+        tok=html_attr_escape(t), body_main=body_main, script=script,
+    );
+    axum::response::Html(html).into_response()
+}
+
+#[derive(Deserialize)]
+struct ProposalConsentBody {
+    #[serde(default)] t: String,
+    #[serde(default)] decision: String,
+    #[serde(default)] name: String,
+    #[serde(default)] email: String,
+    #[serde(default)] reason: String,
+}
+
+/// POST /api/proposal/:slug/consent — partner self-serve OK/NG. Capability-
+/// gated by the per-proposal consent token; light IP rate limit. OK flips the
+/// proposal to approved + activates all SKUs (即販売開始). NG records a decline
+/// and keeps everything non-public. Products that would touch a third party's
+/// rights never auto-publish (uses_partner_ip guard → 409).
+async fn proposal_consent(
+    State(db): State<Db>,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<ProposalConsentBody>,
+) -> Response {
+    let ip = { let s = client_ip(&headers); if s.is_empty() { "unknown".to_string() } else { s } };
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let hour_bucket = now_s / 3600;
+    let rl_key = format!("consent:{}", ip);
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO blog_rate_limit (ip, hour_bucket, hits) VALUES (?,?,1)
+             ON CONFLICT(ip, hour_bucket) DO UPDATE SET hits = hits + 1",
+            params![rl_key, hour_bucket]);
+        let hits: i64 = conn.query_row(
+            "SELECT hits FROM blog_rate_limit WHERE ip=? AND hour_bucket=?",
+            params![rl_key, hour_bucket], |r| r.get(0)).unwrap_or(0);
+        if hits > 30 {
+            return (StatusCode::TOO_MANY_REQUESTS,
+                Json(serde_json::json!({"error":"しばらく経ってから再度お試しください"}))).into_response();
+        }
+    }
+
+    let decision = body.decision.trim().to_lowercase();
+    if decision != "ok" && decision != "ng" {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error":"decision must be ok|ng"}))).into_response();
+    }
+    let name = { let n = body.name.trim(); if n.is_empty() { "partner (self-serve)".to_string() } else { n.to_string() } };
+    let email = body.email.trim().to_lowercase();
+    let reason = body.reason.trim().to_string();
+    let now = chrono_now();
+
+    enum Outcome { Ok(i64), Ng, RightsHold, Reject }
+    let outcome = {
+        let conn = db.lock().unwrap();
+        if proposal_row(&conn, &slug).is_none() {
+            Outcome::Reject
+        } else {
+            let mut meta = proposal_meta_value(&conn, &slug);
+            let stored = meta.get("consent_token").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            if stored.is_empty() || body.t.trim().is_empty() || !ct_eq_str(body.t.trim(), &stored) {
+                Outcome::Reject
+            } else if decision == "ok" {
+                if meta.get("uses_partner_ip").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    Outcome::RightsHold
+                } else {
+                    let _ = conn.execute(
+                        "UPDATE proposals SET approved_at=?, approver_name=?, approver_email=?, approver_ip=?, plan_tier=COALESCE(NULLIF(plan_tier,''),'starter'), revoked_at=NULL WHERE slug=?",
+                        params![now, name, email, ip, slug]);
+                    let activated = conn.execute(
+                        "UPDATE products SET active=1 WHERE brand LIKE ?||'%' AND active=0",
+                        params![format!("{}_", slug)]).unwrap_or(0) as i64;
+                    if let Some(o) = meta.as_object_mut() {
+                        o.insert("consented_via".into(), serde_json::json!("partner_link"));
+                        o.insert("consented_at".into(), serde_json::json!(now));
+                        o.remove("declined_at");
+                    }
+                    proposal_set_meta(&conn, &slug, &meta);
+                    Outcome::Ok(activated)
+                }
+            } else {
+                if let Some(o) = meta.as_object_mut() {
+                    o.insert("declined_at".into(), serde_json::json!(now));
+                    o.insert("declined_by".into(), serde_json::json!(name));
+                    if !reason.is_empty() { o.insert("declined_reason".into(), serde_json::json!(reason)); }
+                }
+                proposal_set_meta(&conn, &slug, &meta);
+                let _ = conn.execute("UPDATE products SET active=0 WHERE brand LIKE ?||'%' AND active=1", params![format!("{}_", slug)]);
+                let _ = conn.execute("UPDATE proposals SET revoked_at=? WHERE slug=? AND approved_at IS NOT NULL", params![now, slug]);
+                Outcome::Ng
+            }
+        }
+    };
+
+    match outcome {
+        Outcome::Reject => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error":"not found"}))).into_response(),
+        Outcome::RightsHold => (StatusCode::CONFLICT, Json(serde_json::json!({
+            "error":"この提案は商標・ロゴ等の利用を含むため、ワンクリック公開できません。書面合意のうえ管理者が公開します。"}))).into_response(),
+        Outcome::Ok(activated) => {
+            let alert = format!("━◯━ {} 提案を partner が自己承認 (OK)\nby: {} <{}>\nIP: {}\nactivated: {} SKU\n→ 即販売開始 https://wearmu.com/{}", slug, name, email, ip, activated, slug);
+            tokio::spawn(async move { send_telegram_message(&alert).await; });
+            Json(serde_json::json!({"ok":true,"decision":"ok","slug":slug,"products_activated":activated,"redirect":format!("/{}", slug)})).into_response()
+        }
+        Outcome::Ng => {
+            let alert = format!("✕ {} 提案を partner が見送り (NG)\nby: {}\nreason: {}", slug, name, if reason.is_empty(){"—".to_string()}else{reason.clone()});
+            tokio::spawn(async move { send_telegram_message(&alert).await; });
+            Json(serde_json::json!({"ok":true,"decision":"ng","slug":slug})).into_response()
+        }
+    }
+}
+
 #[derive(Deserialize)]
 struct ProposalCreateBody {
     slug: String,
@@ -66110,6 +66404,10 @@ async fn main() {
         .route("/api/proposal/:slug/feedback", post(proposal_generic_feedback).get(proposal_generic_feedback_list))
         .route("/api/proposal/:slug/approve",  post(proposal_generic_approve))
         .route("/api/proposal/:slug/revoke",   post(proposal_generic_revoke))
+        // Partner self-serve consent: mint link (admin) / decide page / OK·NG
+        .route("/api/admin/proposal/:slug/consent_link", get(admin_proposal_consent_link))
+        .route("/proposal/:slug/decide",       get(proposal_decide_page))
+        .route("/api/proposal/:slug/consent",  post(proposal_consent))
         // ── Proposal extras (shared 30/50/100 SKU generator widget) ──
         // Personal sandbox + feedback
         .route("/extras/my",                                    get(extras_my_page))
