@@ -70,6 +70,10 @@
   .hero-arc b { color:var(--gold); font-weight:600; }
   .hero-en { font-size:clamp(11px,1.8vw,13px); letter-spacing:0.04em; opacity:0.55; max-width:620px;
     line-height:1.7; animation:fadeUp 1.25s .15s ease both; }
+  .count-cap { font-size:11px; letter-spacing:0.06em; opacity:0.5; max-width:520px; line-height:1.7;
+    margin-top:18px; animation:fadeUp 1.5s .3s ease both; }
+  .count-cap b { color:var(--gold); opacity:0.95; }
+  .count-cap span { opacity:0.7; }
   /* honest / trust block */
   .honest { position:relative; z-index:1; max-width:760px; margin:0 auto; padding:40px 24px; }
   .honest .row { display:flex; gap:14px; padding:16px 0; border-bottom:1px solid var(--line); }
@@ -78,6 +82,15 @@
   .honest .v { font-size:14px; font-weight:200; opacity:0.85; }
   .honest .v .en { display:block; font-size:11px; opacity:0.5; margin-top:4px; letter-spacing:0.02em; }
   .honest a { color:var(--gold); border-bottom:1px solid rgba(230,196,73,0.4); }
+  /* status / transparency board */
+  .status { max-width:720px; margin:0 auto; }
+  .srow { display:flex; gap:16px; align-items:flex-start; padding:14px 2px; border-bottom:1px solid var(--line); }
+  .sp { flex:0 0 80px; font-size:10px; letter-spacing:0.1em; text-align:center; font-weight:600;
+    padding-top:3px; white-space:nowrap; }
+  .sp.ok { color:#7fd1a8; } .sp.prog { color:#e6c449; } .sp.none { color:var(--muted); } .sp.live { color:#e89a7c; }
+  .sv { font-size:14px; font-weight:200; opacity:0.9; }
+  .sv b { font-weight:600; }
+  .sv .en { display:block; font-size:11px; opacity:0.45; margin-top:3px; letter-spacing:0.02em; }
   @keyframes fadeUp { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:none} }
 
   /* COUNTDOWN */
@@ -283,6 +296,7 @@
   <a href="/" class="nav-logo">MU</a>
   <div class="nav-right">
     <a href="#arc" class="nav-link">三夜</a>
+    <a href="#status" class="nav-link">現状</a>
     <a href="#entry" class="nav-link">入場</a>
     <a href="#collect" class="nav-link">号外</a>
     <a href="#lineup" class="nav-link">出演</a>
@@ -294,8 +308,8 @@
 <header class="hero">
   <div class="hero-kicker">MU Festival · Hawaii</div>
   <div class="hero-mark">無<span class="acc">音</span>祭</div>
-  <p class="hero-para">世界一<span class="q">静か</span>な、音楽フェス。<br>音は、あなたが連れてくる。</p>
-  <p class="hero-en">No tickets. Wear the shirt, walk into the sound.<br>Three nights — <b style="color:var(--gold)">nothing → moon → circle</b> — Oʻahu, Hawaiʻi · Oct 29–31, 2026.</p>
+  <p class="hero-para">この祭は、まだ<span class="q">無い</span>。あなたが着て、現実にする。<br>世界一静かな音楽フェス —— 音は、あなたが連れてくる。</p>
+  <p class="hero-en"><b style="color:var(--gold)">This festival doesn't exist yet.</b> You wear it into being.<br>No tickets — the shirt is the vote. · Oʻahu, Hawaiʻi · Oct 29–31, 2026.</p>
   <div class="hero-meta">
     <span>2026 · 10.29 – 31</span><span class="dot">—</span><span>OʻAHU · HAWAIʻI</span>
   </div>
@@ -307,6 +321,8 @@
     <div class="u"><span class="n" id="cm">—</span><span class="l">min</span></div>
     <div class="u"><span class="n" id="cs">—</span><span class="l">sec</span></div>
   </div>
+  <div class="count-cap">確定したイベントへの時計じゃない。<b>皆で「無」を現実にするまでの時間。</b><br>
+    <span>Not a countdown to a sure thing — time to will it real, together.</span></div>
   <div class="scroll-hint">↓ scroll</div>
 </header>
 
@@ -321,7 +337,7 @@
   <div class="sec-head reveal">Arc — 三夜</div>
   <p class="lead reveal">三日は、別々の夜じゃない。<span class="em">一本の弧</span>。記号が一夜ずつ、灯っていく。</p>
   <p class="body reveal">日が沈む側から始め、二夜目に月を見上げ、最終夜で円（縁）が閉じる。
-  最後の夜はハロウィン —— 着て参加するのが、世界で一番自然な日。</p>
+  最後の夜はハロウィン。<span class="em">世界が一番うるさい夜に、世界一静かに集まる</span> —— 着て参加するのが、世界で一番似合う日。</p>
   <p class="lead reveal" style="text-align:center;margin-top:6px">ヘッドホンは配らない。日没の合図で、MUGEN を着た者たちが一斉に動き出す。<br>音は、その<span class="em">沈黙と、歓声と、足音</span>。<br>
   <span class="note" style="display:block;margin-top:8px">No headphones. At the sunset signal, everyone in MUGEN moves as one — the sound is the silence, the cheer, the footsteps.</span></p>
   <div class="lineup reveal">
@@ -333,12 +349,31 @@
   <p class="note reveal" style="text-align:center">One night is whole · three nights close the circle · if unsure, come on the 31st.<br>※ 三夜の構成・各夜の時間は構想です。確定し次第このページで発表します。</p>
 </section>
 
+<!-- ───────── STATUS — radical transparency ───────── -->
+<section id="status">
+  <div class="sec-head reveal" style="text-align:center">Status — どこまで本物か</div>
+  <p class="lead reveal" style="text-align:center">この祭は<span class="em">まだ完成していない</span>。だから、いま何が本当で何がまだかを、全部ここに出す。<br>
+  <span class="note" style="display:block;margin-top:6px">This festival isn't finished. So here's exactly what's real and what isn't — right now.</span></p>
+  <div class="status reveal">
+    <div class="srow"><span class="sp ok">確定 ✓</span><div class="sv">日程：<b>2026.10.29 – 31</b><span class="en">Dates — locked intent</span></div></div>
+    <div class="srow"><span class="sp ok">確定 ✓</span><div class="sv">島：<b>オアフ島 / Oʻahu</b><span class="en">Island — Oʻahu, Hawaiʻi</span></div></div>
+    <div class="srow"><span class="sp prog">交渉中 ⟳</span><div class="sv">会場：候補と<b>調整中</b>。座標は決まり次第このページで公開<span class="en">Venue — in talks; coordinates drop here</span></div></div>
+    <div class="srow"><span class="sp none">わざと ∅</span><div class="sv">出演：<b>当日まで沈黙</b>（隠してるのではなく、それが流儀）<span class="en">Lineup — silent by design, until the day</span></div></div>
+    <div class="srow"><span class="sp ok">確定 ✓</span><div class="sv">主催：<b>MU / 株式会社イネブラ</b>（濱田優貴）<span class="en">Organizer — MU / Enabler Inc.</span></div></div>
+    <div class="srow"><span class="sp ok">確定 ✓</span><div class="sv">入場：<b>MUGEN の T を着ること</b>。チケットは無い<span class="en">Entry — wear MUGEN. No ticket.</span></div></div>
+    <div class="srow"><span class="sp live">いま ◷</span><div class="sv">あなた：<b id="statusYou">— 人</b>が、もう「行く」と決めている<span class="en">You — people already willing it into being</span></div></div>
+  </div>
+  <p class="note reveal" style="text-align:center;max-width:680px">確定が増えるたび、この表が緑になっていく。<b style="color:var(--gold)">嘘の「確定」は1つも置かない。</b><br>
+  <span style="opacity:.7">As things lock, this board turns green. We will never fake a “confirmed.”</span></p>
+</section>
+
 <!-- ───────── 共鳴カウンター (resonance / collective unlock) ───────── -->
 <section id="resonance">
   <div class="sec-head reveal">Resonance — 共鳴</div>
   <p class="lead reveal">号外が袖を通されるたび、会場の<span class="em">ヒントが一つ</span>開く。</p>
-  <p class="body reveal">これは、みんなで会場を暴く遊びだ。号外 T が売れた累計が
-  <b style="color:var(--gold)">108</b> に届いたとき、座標が解禁される。今、世界はどこまで進んだ？</p>
+  <p class="body reveal"><b style="color:var(--gold)">108</b> は、5,000 人の会場を埋める数字じゃない。<b>最初の合図</b>だ。
+  これだけの人が本気で「無」に賭けたという証 —— それが、会場を本気で取りにいく最初の根拠になる。
+  号外が一枚袖を通されるたび、世界はそこへ近づく。<span class="note" style="display:block;margin-top:6px">108 isn't the venue's capacity — it's the first signal. Proof a crowd is real, so we go sign the place for good.</span></p>
   <p class="note reveal" style="max-width:680px">※ 108 に届かなくても、開催が近づけば座標はこのページで<b style="color:var(--gold)">必ず公開</b>します（集金トリガーではなく、ただの演出です）。号外 T はフェスとは別に、それ自体が一枚の正規アパレル —— 何が起きても、あなたの手元に残ります。<br>
   <span style="opacity:.7">Even if 108 isn't reached, the coordinates will be revealed here as the date nears. The tee is real apparel you keep — festival or not.</span></p>
 
@@ -704,7 +739,7 @@
     {at:14,  txt:'海の音が聞こえる'},
     {at:36,  txt:'地図に載らない場所'},
     {at:72,  txt:'夜が始まる時刻'},
-    {at:108, txt:'座標、解禁'},
+    {at:108, txt:'最初の合図、点灯 — 会場交渉へ'},
   ];
   (async function(){
     try {
@@ -725,7 +760,7 @@
       if(sold === 0){
         msg.innerHTML = 'まだ誰も袖を通していない。<span class="gold">最初の一枚</span>が、最初のヒントを開く。';
       } else if(sold >= target){
-        msg.innerHTML = '<span class="gold">108 到達。</span>座標は近日このページで解禁。';
+        msg.innerHTML = '<span class="gold">最初の合図、点灯。</span>会場交渉を本気で進める段階に入った。';
       } else {
         const nextH = HINTS.find(h => sold < h.at);
         msg.innerHTML = '世界はあと <span class="gold">'+(nextH ? (nextH.at - sold) : 0)+'</span> 枚で、次のヒントを開く。';
@@ -735,6 +770,8 @@
         document.getElementById('rsvpTally').innerHTML =
           'いま <b>'+s.rsvp_count+'</b> 人が、無音で行くと決めている。'
           + '<br><span style="opacity:.55;font-size:.85em">'+s.rsvp_count+' people have already decided to go, in silence.</span>';
+        const sy = document.getElementById('statusYou');
+        if(sy) sy.textContent = s.rsvp_count + ' 人';
       }
     } catch(e){ /* counter stays dashed; non-fatal */ }
   })();
