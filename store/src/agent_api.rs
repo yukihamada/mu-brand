@@ -789,6 +789,12 @@ curl ... -d '{"store":"my-lab","label":"月 Tee","description":"...",
 <a class="lnk" href="/.well-known/mcp.json">/.well-known/mcp.json</a> &nbsp;·&nbsp;
 <a class="lnk" href="https://mcp.wearmu.com">mcp.wearmu.com</a>
 </p>
+
+<h2>自分のSDK/クライアントを作る</h2>
+<p>専用SDKは配りません — <b>AIエージェントはMCP</b>（上記）が"SDK"です。人/スクリプトは <code>/openapi.json</code> から好きな言語のクライアントを自動生成できます：</p>
+<pre><code>npx @openapitools/openapi-generator-cli generate \
+  -i https://wearmu.com/openapi.json -g python -o ./mu-client</code></pre>
+<p class="note">`-g` を <code>typescript-fetch</code> / <code>go</code> / <code>rust</code> 等に変えれば任意言語。1ファイルで十分なほど小さいAPIなので、<code>curl</code> 直叩きでも構いません。</p>
 </div>
 <footer>MU（無）· オンデマンド印刷・在庫ゼロ · 株式会社イネブラ / Enabler Inc. · <a class="lnk" href="/shop">wearmu.com/shop</a></footer>
 </body></html>
