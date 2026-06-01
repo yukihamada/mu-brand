@@ -37184,11 +37184,16 @@ async fn tracking_config() -> impl IntoResponse {
     let gads = env::var("GADS_CONVERSION_ID").unwrap_or_else(|_| "AW-18007146784".to_string());
     let plabel = env::var("GADS_PURCHASE_LABEL").unwrap_or_else(|_| "LRlrCLCDkq4cEKCCvYpD".to_string());
     let llabel = env::var("GADS_LEAD_LABEL").unwrap_or_default();
+    // Meta (Instagram/Facebook) + TikTok ad pixels. Empty unless set → no-op.
+    let meta = env::var("META_PIXEL_ID").unwrap_or_default();
+    let tiktok = env::var("TIKTOK_PIXEL_ID").unwrap_or_default();
     let mut out = serde_json::Map::new();
     if !ga4.is_empty()    { out.insert("ga4".into(),            serde_json::json!(ga4)); }
     if !gads.is_empty()   { out.insert("gads".into(),           serde_json::json!(gads)); }
     if !plabel.is_empty() { out.insert("purchase_label".into(), serde_json::json!(plabel)); }
     if !llabel.is_empty() { out.insert("lead_label".into(),     serde_json::json!(llabel)); }
+    if !meta.is_empty()   { out.insert("meta_pixel".into(),     serde_json::json!(meta)); }
+    if !tiktok.is_empty() { out.insert("tiktok_pixel".into(),   serde_json::json!(tiktok)); }
     let mut resp = Json(serde_json::Value::Object(out)).into_response();
     resp.headers_mut().insert(
         header::CACHE_CONTROL,
