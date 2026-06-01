@@ -23,12 +23,15 @@ VALUES
    'Everybody say BJJ · 黒T Bella+Canvas 3001 (M) · DTG · 🎵 着ると鳴る mu.koe.live/oto.html?s=everybody-say-bjj',
    4800, 71, 4017, 'front', 2250, 2700,
    '/static/shiopixel/everybody-say-bjj_print.png',
-   '/static/shiopixel/everybody-say-bjj.png',
-   'https://wearmu.com/static/shiopixel/everybody-say-bjj.png',
+   '/static/shiopixel/everybody-say-bjj_mockup.png',
+   'https://wearmu.com/static/shiopixel/everybody-say-bjj_mockup.png',
    1, 1, 'live', 'printful_dtg');
 
--- 説明/価格は既存行も更新(冪等)
+-- 既存行も更新(冪等): 高級Tモックアップ画像に差し替え
 UPDATE catalog_products SET
   description_ja='Everybody say BJJ · 黒T Bella+Canvas 3001 (M) · DTG · 🎵 着ると鳴る mu.koe.live/oto.html?s=everybody-say-bjj',
+  design_file='/static/shiopixel/everybody-say-bjj_print.png',
+  mockup_main_file='/static/shiopixel/everybody-say-bjj_mockup.png',
+  mockup_url_external='https://wearmu.com/static/shiopixel/everybody-say-bjj_mockup.png',
   is_active=1, status='live'
 WHERE sku='SHIO-BJJ';
