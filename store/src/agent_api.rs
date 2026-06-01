@@ -638,6 +638,51 @@ pub async fn ma_review_reject(
     Json(serde_json::json!({"ok": true, "sku": sku, "status": "dead"})).into_response()
 }
 
+// ─── Operator credit top-up (ADMIN_TOKEN-gated) ─────────────────────────
+
+#[derive(Deserialize)]
+pub struct GrantCreditsBody {
+    pub email: String,
+    pub jpy: i64,
+    pub reason: Option<String>,
+}
+
+/// POST /api/agent/credits/grant {email, jpy, reason?} — ADMIN_TOKEN only.
+/// Tops up (jpy>0) or debits (jpy<0) an agent's MU credit balance so the
+/// operator can refill accounts without re-verifying or touching the DB by
+/// hand. Capped at ±¥1,000,000 per call. Returns the new balance.
+pub async fn agent_grant_credits(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+    Json(body): Json<GrantCreditsBody>,
+) -> Response {
+    if !admin_token_present(&headers, Some(&q)) {
+        return json_err(StatusCode::UNAUTHORIZED, "ADMIN_TOKEN required");
+    }
+    let email = body.email.trim().to_lowercase();
+    if email.is_empty() {
+        return json_err(StatusCode::BAD_REQUEST, "email required");
+    }
+    if body.jpy == 0 || body.jpy.abs() > 1_000_000 {
+        return json_err(StatusCode::BAD_REQUEST, "jpy must be non-zero and within ±1,000,000");
+    }
+    let reason = body.reason.as_deref().map(str::trim).filter(|s| !s.is_empty())
+        .unwrap_or("admin_grant");
+    let (ok, balance) = {
+        let conn = db.lock().unwrap();
+        let ok = crate::mu_credit_apply(&conn, &email, body.jpy, reason, None);
+        (ok, crate::mu_credit_balance(&conn, &email))
+    };
+    if !ok {
+        return json_err(StatusCode::PAYMENT_REQUIRED, "debit exceeds current balance");
+    }
+    Json(serde_json::json!({
+        "ok": true, "email": email, "granted_jpy": body.jpy,
+        "reason": reason, "balance_jpy": balance,
+    })).into_response()
+}
+
 // ─── GET /llms.txt ──────────────────────────────────────────────────────
 
 pub async fn llms_txt() -> Response {
