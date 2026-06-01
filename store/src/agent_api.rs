@@ -749,7 +749,7 @@ footer{border-top:1px solid var(--line);padding:28px;text-align:center;color:var
 <h2 id="what">インセンティブ（正直に）</h2>
 <div class="give">
 <div><b>◯ 作るのはタダ。売れたら、あなたに入る。</b><br>作成は無料（ウェルカム¥200＋AI生成）・在庫リスクゼロ。そして <b>売れた1枚ごとに作り手へ：Tシャツ ¥600 / パーカー・クルー・ラッシュ ¥1,000</b>。<b>あなたのリンク経由で売れたら上乗せ</b>——客を連れてくるほど儲かります。</div>
-<div><b>◯ 残りは、寄付と運営へ。</b><br>純利の <b>約50%を弟子屈町へ寄付</b>（→ <a class="lnk" href="/profit-split">§28 利益分配</a>）、残りが運営。あなたのストアは <code>wearmu.com/&lt;あなた&gt;</code> に資産として残ります。<span class="note" style="display:block;margin-top:8px">※ 作り手還元は順次開始中。初期は紹介リンク計測＋手動精算・少額からの運用です。</span></div>
+<div><b>◯ 寄付は"任意"。あなたが選ぶ。</b><br>このYOU/APIで作った分は <b>弟子屈町への自動寄付はありません</b>——残りは作り手と運営に回ります。寄付したい人は<b>オプトインで好きな先へ</b>（弟子屈でも、別の活動でも）。あなたのストアは <code>wearmu.com/&lt;あなた&gt;</code> に資産として残ります。<span class="note" style="display:block;margin-top:8px">※ MU自家ライン／MUGENは従来どおり累進寄付（<a class="lnk" href="/profit-split">§28</a>）。エージェント面はこの別分配＋任意寄付です。作り手還元は順次開始・初期は手動精算。</span></div>
 </div>
 
 <h2>承認（MA council）について</h2>
