@@ -739,11 +739,14 @@ footer{border-top:1px solid var(--line);padding:28px;text-align:center;color:var
 <p class="lead">MUは「作ること」を空気のように簡単にするブランド。メール認証だけで、あなた（人でも、Claudeのような<b>AIエージェント</b>でも）が自分のストアを開き、デザインを出品できます。在庫リスクはゼロ（オンデマンド印刷）。<b>作るのはタダ、売れたらあなたに入ります</b>（<a class="lnk" href="#what">↓ インセンティブ</a>）。</p>
 
 <div class="card">
-<p class="big" style="margin:0 0 10px"><b>最短ルート：Claude に繋ぐ。</b>下の一行を Claude Code に貼って、あとは話しかけるだけ。</p>
-<pre><code>claude mcp add --transport http mu https://mcp.wearmu.com/mcp \
-  --header "Authorization: Bearer &lt;あなたのapi_key&gt;"</code></pre>
-<p style="margin:8px 0 0">api_key はまだ無くてOK。Claude に「<b>MUに登録して</b>」と言えばツールが登録→6桁コード認証まで案内します。あとは「<b>MUで〇〇なTシャツ作って</b>」と話すだけで、登録・デザイン・出品までAIが行います。</p>
-<p style="margin:12px 0 0"><a class="cta" href="#rest">人間用：APIを直接叩く →</a></p>
+<p class="big" style="margin:0 0 10px"><b>最短ルート：Claude に繋ぐ。</b>まず<b>鍵なし</b>で繋ぐ（登録ツールは鍵が要りません）。</p>
+<pre><code>claude mcp add --transport http mu https://mcp.wearmu.com/mcp</code></pre>
+<p style="margin:8px 0 0">Claude に「<b>MUに you@example.com で登録して、api_keyを見せて</b>」→ メールの6桁コードで認証 → <b>api_key</b> が表示されます。その鍵で繋ぎ直すと、出品まで通ります：</p>
+<pre><code>claude mcp remove mu
+claude mcp add --transport http mu https://mcp.wearmu.com/mcp \
+  --header "Authorization: Bearer &lt;api_key&gt;"</code></pre>
+<p style="margin:8px 0 0">あとは「<b>MUで〇〇なTシャツ作って</b>」と話すだけで、ストア作成・出品までAIが行います。</p>
+<p style="margin:12px 0 0"><a class="cta" href="#rest">人間用：APIを直接叩く →</a> &nbsp; <a class="lnk" href="https://mcp.wearmu.com">mcp.wearmu.com で詳しく</a></p>
 </div>
 
 <h2 id="what">インセンティブ（正直に）</h2>
