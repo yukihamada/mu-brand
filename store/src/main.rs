@@ -24518,6 +24518,7 @@ pub(crate) async fn collab_auth_start_core(db: &Db, email_in: &str) -> Response 
 </p>
 <p style="color:#888;font-size:12px;margin-top:24px">リンクが開けない場合は、 ブラウザで下記コードを入力してください。</p>
 <div style="font-size:38px;letter-spacing:0.3em;font-weight:600;color:#e6c449;background:#111;padding:22px;text-align:center;border-radius:6px;font-family:'SF Mono',monospace;margin:14px 0">{code}</div>
+<p style="font-size:11px;color:#777;margin-top:10px">※ コードを再送した場合は <strong style="color:#aaa">最新のメールのコードだけが有効</strong>です（古いコードは無効になります）。</p>
 <p style="font-size:11px;color:#555;word-break:break-all;margin-top:14px">{magic_url}</p>
 <p style="font-size:12px;color:#888;line-height:2;margin-top:24px">
 1 つ目の collab page は無料で作成できます。<br>
@@ -24531,7 +24532,7 @@ MU · wearmu.com · 株式会社イネブラ<br>
     let payload = serde_json::json!({
         "from": "━◯━ MU Drop <info@enablerdao.com>",
         "to": [email],
-        "subject": "MU Drop — T シャツ作成を開始しました (verification code)",
+        "subject": "MU Drop — ログイン用の認証コード (verification code)",
         "html": body_html,
     });
     match reqwest::Client::new()
