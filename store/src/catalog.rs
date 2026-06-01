@@ -3194,6 +3194,47 @@ pub async fn shop_pdp(
   </div>
 </div>"##, sold_row = sold_row);
 
+    // 試聴ブロック: description_ja に "mu.koe.live/oto.html?s=KEY" が含まれる曲Tは
+    // 買う前に試聴できるよう ▶ プレイヤーを出す（涼介FB#1: 買う前に聴かせて）
+    let listen_block: String = {
+        if let Some(pos) = desc.find("oto.html?s=") {
+            let rest = &desc[pos + "oto.html?s=".len()..];
+            let key: String = rest.chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+                .collect();
+            if !key.is_empty() {
+                let pkey = html_attr(&key);
+                format!(r##"<div class="listen">
+  <button id="listenBtn" class="listen-btn" aria-label="試聴">▶ この曲を試聴</button>
+  <span class="listen-note">着ると、この曲が鳴る</span>
+  <audio id="listenAudio" preload="none" src="https://mu.koe.live/oto.html?s={pkey}"></audio>
+  <script>(function(){{
+    var b=document.getElementById('listenBtn');
+    var url="https://gateway.irys.xyz/3uPYa7YCn9ExPK2WYuJcZd2WXRTF43WV3pagrcyB7xot";
+    // oto.html の SONGS と同じ Arweave 音源を直接叩く（曲ごとの実URLは oto に集約）
+    var SRC={{
+      "everybody-say-bjj":"https://gateway.irys.xyz/5jsmQoNNekanEGMBUEhSLoZyxGXSDZL5taMZfwwrEC1c/everybody-say-bjj.mp3",
+      "shio-to-pixel":"https://gateway.irys.xyz/5jsmQoNNekanEGMBUEhSLoZyxGXSDZL5taMZfwwrEC1c/shio-to-pixel.mp3",
+      "musubinaosu-asa":"https://gateway.irys.xyz/5jsmQoNNekanEGMBUEhSLoZyxGXSDZL5taMZfwwrEC1c/musubinaosu-asa.mp3",
+      "hello-2150":"https://gateway.irys.xyz/5jsmQoNNekanEGMBUEhSLoZyxGXSDZL5taMZfwwrEC1c/hello-2150.mp3",
+      "i-love-you":"https://gateway.irys.xyz/5jsmQoNNekanEGMBUEhSLoZyxGXSDZL5taMZfwwrEC1c/i-love-you.mp3",
+      "i-need-your-attention":"https://gateway.irys.xyz/5jsmQoNNekanEGMBUEhSLoZyxGXSDZL5taMZfwwrEC1c/i-need-your-attention.mp3",
+      "free-to-change":"https://gateway.irys.xyz/5jsmQoNNekanEGMBUEhSLoZyxGXSDZL5taMZfwwrEC1c/free-to-change.mp3",
+      "attention-kudasai":"https://gateway.irys.xyz/5jsmQoNNekanEGMBUEhSLoZyxGXSDZL5taMZfwwrEC1c/attention-kudasai.mp3"
+    }};
+    var a=new Audio(); a.src=SRC["{pkey}"]||""; var playing=false;
+    b.addEventListener('click',function(){{
+      if(!a.src){{window.open("https://mu.koe.live/oto.html?s={pkey}","_blank");return;}}
+      if(playing){{a.pause();b.textContent="▶ この曲を試聴";playing=false;}}
+      else{{a.play();b.textContent="❚❚ 停止";playing=true;}}
+    }});
+    a.addEventListener('ended',function(){{b.textContent="▶ この曲を試聴";playing=false;}});
+  }})();</script>
+</div>"##, pkey = pkey)
+            } else { String::new() }
+        } else { String::new() }
+    };
+
     let body = format!(
         r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -3248,6 +3289,10 @@ nav .brand{{font-weight:900;letter-spacing:0.4em}}
 .body .price{{font-size:22px;font-family:monospace;font-weight:700;color:#fff;margin-bottom:18px}}
 .body .desc{{color:rgba(245,245,240,0.78);font-size:13px;line-height:1.85;margin-bottom:22px}}
 .body .sku{{color:rgba(245,245,240,0.45);font-family:monospace;font-size:10px;margin-bottom:18px}}
+.listen{{margin-bottom:18px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}}
+.listen-btn{{background:#111;color:#fff;border:1px solid #ffd700;border-radius:30px;padding:11px 22px;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:.04em}}
+.listen-btn:hover{{background:#1a1a1a}}
+.listen-note{{color:rgba(255,215,0,.75);font-size:12px;letter-spacing:.08em}}
 .buy{{display:block;background:#ffd700;color:#000;padding:14px;text-align:center;font-weight:700;border-radius:6px;text-decoration:none;margin-bottom:8px;letter-spacing:0.05em;font-size:13px}}
 .buy.alt{{background:transparent;color:#ffd700;border:1px solid #ffd700}}
 .trust-strip{{display:grid;gap:6px;font-size:11px;color:rgba(245,245,240,0.72);margin:18px 0;padding-top:14px;border-top:1px solid rgba(255,255,255,0.06)}}
@@ -3287,6 +3332,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
     <div class="brand">{brand}</div>
     <h1>{title}</h1>
     <div class="price">¥{price} <small class="fx">≈ ${usd} / €{eur}</small></div>
+    {listen}
     {buy}
     {suzuri}
     {trust}
@@ -3321,6 +3367,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
         eur = ((price_jpy as f64) / 172.0).round() as i64,
         sku = html_text(&sku),
         buy = buy_button,
+        listen = listen_block,
         suzuri = suzuri_link,
         lifestyle = lifestyle_html,
         extras = extras_html,
