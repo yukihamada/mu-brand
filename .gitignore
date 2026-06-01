@@ -19,6 +19,7 @@ venv/
 .env
 .env.*
 !.env.example
+.secrets.local
 
 # Private / non-public outreach assets (likeness, personal invites — never commit)
 private/
