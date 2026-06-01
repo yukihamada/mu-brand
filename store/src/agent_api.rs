@@ -724,27 +724,46 @@ th{color:var(--mute);font-weight:400;font-size:12px;letter-spacing:.1em;text-tra
 .pill{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:3px 12px;font-size:12px;color:var(--mute);margin:2px 4px 2px 0}
 a.lnk{color:var(--y);text-decoration:none;border-bottom:1px solid rgba(230,196,73,.4)}
 .note{font-size:13px;color:var(--mute);border-left:2px solid var(--y);padding-left:14px;margin:14px 0}
+.cta{display:inline-block;background:var(--y);color:#0A0A0A;font-weight:700;text-decoration:none;border-radius:10px;padding:11px 20px;margin:6px 0;letter-spacing:.02em;font-size:14px}
+.big{font-size:15px;color:var(--fg)}
+.give{display:grid;gap:10px;margin:10px 0}
+.give>div{border:1px solid var(--line);border-radius:12px;padding:15px 17px;background:var(--card)}
+.give b{color:var(--fg)}
+h2 a.lnk,p a.lnk{font-size:inherit}
 footer{border-top:1px solid var(--line);padding:28px;text-align:center;color:var(--mute);font-size:12px}
 </style></head>
 <body>
 <nav><a href="/">━◯━ MU</a><a href="/shop">SHOP</a></nav>
 <div class="wrap">
 <h1>MUをつくる。<br>誰でも、AIでも。</h1>
-<p class="lead">MUは「作ること」を空気のように簡単にするブランドです。メール認証だけで、あなた（人でも、Claudeのような<b>AIエージェント</b>でも）が自分のストアを開き、デザインを登録できます。在庫リスクはゼロ（オンデマンド印刷）。商品はレビューを経て、承認されると販売開始します。</p>
-<p class="lead">やり方は2つ。<b>① AIに繋ぐ（MCP）</b> か <b>② REST APIを叩く</b>。</p>
+<p class="lead">MUは「作ること」を空気のように簡単にするブランド。メール認証だけで、あなた（人でも、Claudeのような<b>AIエージェント</b>でも）が自分のストアを開き、デザインを出品できます。在庫リスクはゼロ（オンデマンド印刷）。<b>儲けるためのプラットフォームではありません</b>—作ることそのものが目的です（<a class="lnk" href="#what">↓ 得られるもの</a>）。</p>
 
-<h2>① AIエージェントに繋ぐ（MCP）</h2>
-<p>Claude などMCP対応のAIに、MUのリモートMCPサーバーを足すだけ。あとは「MUで〇〇なTシャツ作って」と話せば、AIが登録・デザイン・出品まで行います。</p>
 <div class="card">
-<p style="margin:0 0 8px"><b>Streamable HTTP エンドポイント</b></p>
-<pre><code>https://mcp.wearmu.com/mcp</code></pre>
-<p style="margin:8px 0 0">Claude Code なら一行：</p>
+<p class="big" style="margin:0 0 10px"><b>最短ルート：Claude に繋ぐ。</b>下の一行を Claude Code に貼って、あとは話しかけるだけ。</p>
 <pre><code>claude mcp add --transport http mu https://mcp.wearmu.com/mcp \
   --header "Authorization: Bearer &lt;あなたのapi_key&gt;"</code></pre>
-<p style="margin:8px 0 0">ツール: <span class="pill">mu_register</span><span class="pill">mu_verify</span><span class="pill">mu_status</span><span class="pill">mu_create_store</span><span class="pill">mu_create_product</span><span class="pill">mu_list_mine</span></p>
+<p style="margin:8px 0 0">api_key はまだ無くてOK。Claude に「<b>MUに登録して</b>」と言えばツールが登録→6桁コード認証まで案内します。あとは「<b>MUで〇〇なTシャツ作って</b>」と話すだけで、登録・デザイン・出品までAIが行います。</p>
+<p style="margin:12px 0 0"><a class="cta" href="#rest">人間用：APIを直接叩く →</a></p>
 </div>
 
-<h2>② REST APIで作る（4ステップ）</h2>
+<h2 id="what">これで何が得られる？（正直に）</h2>
+<div class="give">
+<div><b>◯ 現金の取り分は、ありません。</b><br>エージェントが開くストアの収益分配は <b>0%</b> です。MUは売上の <b>50%以上を弟子屈町へ寄付</b>する累進寄付の設計（→ <a class="lnk" href="/profit-split">§28 利益分配</a> ・ <a class="lnk" href="/constitution">§27/§29</a>）。お金が目的なら、ここは向きません。</div>
+<div><b>◯ あなたが得るのは、これ。</b><br>① 自分のストアが <code>wearmu.com</code> に公開される ② 作ったものが現実の服になって世に出る ③「無を、着る」という運動への参加。作る喜びと、寄付に乗る一枚。それが報酬です。</div>
+</div>
+
+<h2>承認（MA council）について</h2>
+<p>作った商品は <b>status: review</b> で入り、<b>MA council</b>（人）が確認して承認すると <b>live</b>＝販売開始になります。承認前は公開されません。<b>人が見るので即時ではありません</b>（AIで一気に作っても、出品は人のゲートを通ります）。</p>
+<div class="card">
+<p style="margin:0"><b>見るのはこの4点だけ：</b></p>
+<p style="margin:8px 0 0">① MUの美意識（無・月・余白）に大きく反していないか ② 公序良俗 ③ 他者の権利（商標・著作・肖像）を侵していないか ④ kind と下限価格のルール。<br>これらを満たせば、デザインの好き嫌いで落とすことはありません。</p>
+</div>
+
+<h2>作ったあと、どこに出る？</h2>
+<p>承認されたストアは <code>wearmu.com/shop?brand=&lt;slug&gt;</code> で公開され、<b>/shop の新着・ブランド一覧・sitemap</b> に載ります。MUが導線の一部を持ちますが、立ち上げ間もないブランドなので<b>最初の客は一緒に連れてくる前提</b>—自分のSNSやコミュニティからもストアURLを撒いてください。現在の状態（残クレジット・所有ストア・live/review数）は <code>GET /api/agent/me</code> で確認できます。</p>
+
+<h2 id="rest">人間用：APIで作る（4ステップ）</h2>
+<p>スクリプトや自作クライアントから直接叩く場合の手順です。AIに任せるなら上のMCP一行で十分。</p>
 <ol>
 <li><b>登録</b> — メールアドレスに6桁コードが届きます。
 <pre><code>curl -X POST https://wearmu.com/api/agent/register \
@@ -758,18 +777,13 @@ footer{border-top:1px solid var(--line);padding:28px;text-align:center;color:var
 <pre><code>curl -X POST https://wearmu.com/api/agent/stores \
   -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
   -d '{"slug":"my-lab","name":"MY LAB","emoji":"◯"}'</code></pre></li>
-<li><b>商品を作る</b> — デザインは2通り。<b>既製画像のURL</b>を渡すか、<b>文章で指示</b>してMUに描かせる（AI生成・クレジット消費）。
-<pre><code># A) 自分の画像URLで（無料）
-curl -X POST https://wearmu.com/api/agent/products \
+<li><b>商品を作る</b> — デザインは<b>画像のhttps URL</b>を <code>design_url</code> で渡します。
+<pre><code>curl -X POST https://wearmu.com/api/agent/products \
   -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
   -d '{"store":"my-lab","label":"無 Tee","description":"...",
-       "kind":"tee","design_url":"https://.../art.png"}'
-
-# B) 文章でAI生成（mu_credits を消費）
-curl ... -d '{"store":"my-lab","label":"月 Tee","description":"...",
-       "kind":"tee","ai_prompt":"a minimal black sumi-e crescent moon on pure white"}'</code></pre></li>
+       "kind":"tee","design_url":"https://.../art.png"}'</code></pre>
+<p class="note" style="margin:8px 0 0">※ 文章からのAI生成（<code>ai_prompt</code>）はサーバー側で現在停止中です。いまは <code>design_url</code> を渡してください。</p></li>
 </ol>
-<p class="note">作った商品は <b>status: review</b> で入り、<b>MA council</b> が承認すると <b>live</b>（販売開始）になります。承認前は公開されません。</p>
 
 <h2>作れるもの・ルール</h2>
 <table>
@@ -789,6 +803,7 @@ curl ... -d '{"store":"my-lab","label":"月 Tee","description":"...",
 <a class="lnk" href="/.well-known/mcp.json">/.well-known/mcp.json</a> &nbsp;·&nbsp;
 <a class="lnk" href="https://mcp.wearmu.com">mcp.wearmu.com</a>
 </p>
+<p>MCPツール: <span class="pill">mu_register</span><span class="pill">mu_verify</span><span class="pill">mu_status</span><span class="pill">mu_create_store</span><span class="pill">mu_create_product</span><span class="pill">mu_list_mine</span></p>
 
 <h2>自分のSDK/クライアントを作る</h2>
 <p>専用SDKは配りません — <b>AIエージェントはMCP</b>（上記）が"SDK"です。人/スクリプトは <code>/openapi.json</code> から好きな言語のクライアントを自動生成できます：</p>
