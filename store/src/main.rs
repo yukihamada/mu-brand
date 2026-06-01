@@ -5961,6 +5961,9 @@ const VAULT_ARTICLES: &[(&str, &str, &str)] = &[
     ("jiuflow-lipsync",
      "1本の動画を8言語に — AIリップシンク翻訳の作り方",
      include_str!("../static/vault/jiuflow-lipsync.md")),
+    ("claude-code-my-day",
+     "実録 — 僕はClaude Codeで、毎日こう作っている",
+     include_str!("../static/vault/claude-code-my-day.md")),
 ];
 
 /// Shared CSS + header injected into every vault page. `logged_in_email`
