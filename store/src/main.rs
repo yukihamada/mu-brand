@@ -66325,6 +66325,7 @@ async fn main() {
         catalog::seed_elepote_brand(&conn);
         catalog::seed_halo_brand(&conn);
         catalog::seed_muon_brand(&conn);
+        catalog::seed_shiopixel_brand(&conn);
         catalog::seed_mu_sticker(&conn);
         catalog::migrate_auto_labels(&conn);
         catalog::migrate_rashguard_product_id(&conn);

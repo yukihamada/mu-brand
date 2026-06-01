@@ -43,6 +43,7 @@ const YUMA_SEED_SQL: &str = include_str!("../migrations/yuma_seed.sql");
 const ELEPOTE_SEED_SQL: &str = include_str!("../migrations/elepote_seed.sql");
 const HALO_SEED_SQL: &str = include_str!("../migrations/halo_seed.sql");
 const MUON_SEED_SQL: &str = include_str!("../migrations/muon_seed.sql");
+const SHIOPIXEL_SEED_SQL: &str = include_str!("../migrations/shiopixel_seed.sql");
 
 pub fn ensure_schema(conn: &rusqlite::Connection) {
     let _ = conn.execute_batch(
@@ -242,6 +243,18 @@ pub fn seed_muon_brand(conn: &rusqlite::Connection) {
             tracing::info!("[catalog] MUON tees upserted · {} SKUs (live)", n);
         }
         Err(e) => tracing::error!("[catalog] muon seed failed: {}", e),
+    }
+}
+
+pub fn seed_shiopixel_brand(conn: &rusqlite::Connection) {
+    match conn.execute_batch(SHIOPIXEL_SEED_SQL) {
+        Ok(()) => {
+            let n: i64 = conn
+                .query_row("SELECT COUNT(*) FROM catalog_products WHERE brand='shiopixel'", [], |r| r.get(0))
+                .unwrap_or(0);
+            tracing::info!("[catalog] Shiopixel song-tees upserted · {} SKUs (live)", n);
+        }
+        Err(e) => tracing::error!("[catalog] shiopixel seed failed: {}", e),
     }
 }
 
