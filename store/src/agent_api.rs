@@ -88,6 +88,31 @@ fn json_err(status: StatusCode, msg: &str) -> Response {
     (status, Json(serde_json::json!({"error": msg}))).into_response()
 }
 
+/// MU-credit cost (¥) charged per AI-generated design. Env-tunable; the
+/// 200pt welcome credit covers a handful of generations at the default.
+fn agent_ai_gen_cost_jpy() -> i64 {
+    std::env::var("AGENT_AI_GEN_COST_JPY")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .filter(|&c| c >= 0)
+        .unwrap_or(50)
+}
+
+/// Whether the AI-generation arm of POST /api/agent/products is enabled.
+fn agent_ai_gen_enabled() -> bool {
+    std::env::var("AGENT_AI_GEN_ENABLED")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+/// Short, deterministic hex digest used to name agent-uploaded artwork in R2.
+fn short_hash(s: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.hash(&mut h);
+    format!("{:016x}", h.finish())
+}
+
 /// Resolve the caller email from Bearer / api_key / cookie, or 401.
 fn require_email(db: &Db, headers: &HeaderMap, q: Option<&HashMap<String, String>>) -> Result<String, Response> {
     crate::bearer_or_session_email(db, headers, q).ok_or_else(|| json_err(
@@ -114,18 +139,44 @@ pub async fn agent_register(
 #[derive(Deserialize)]
 pub struct RegisterVerifyBody { pub email: String, pub code: String }
 
+/// One-time welcome credit (¥-denominated MU points) granted to an agent the
+/// first time they verify their email. Lets new agents try paid features
+/// (e.g. AI generation) without an upfront purchase.
+const AGENT_WELCOME_CREDIT_JPY: i64 = 200;
+
 /// POST /api/agent/register/verify {email, code} — verifies the code, mints
 /// the session token (= API key), returns it in an agent-friendly shape.
+/// On the *first* successful verification per email we also grant a one-time
+/// welcome credit (idempotent via the `agent_welcome` ledger reason, so
+/// repeat logins via the same magic-link flow never re-grant).
 pub async fn agent_register_verify(
     State(db): State<Db>,
     Json(body): Json<RegisterVerifyBody>,
 ) -> Response {
     match crate::collab_auth_verify_core(&db, &body.email, &body.code) {
-        Ok(token) => Json(serde_json::json!({
-            "ok": true,
-            "api_key": token,
-            "usage": "send as Authorization: Bearer <api_key>",
-        })).into_response(),
+        Ok(token) => {
+            let welcome = {
+                let conn = db.lock().unwrap();
+                let email_lc = body.email.trim().to_lowercase();
+                let already: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM mu_credit_ledger WHERE email=? AND reason='agent_welcome'",
+                    rusqlite::params![email_lc], |r| r.get(0),
+                ).unwrap_or(0);
+                if already == 0
+                    && crate::mu_credit_apply(&conn, &email_lc, AGENT_WELCOME_CREDIT_JPY, "agent_welcome", None)
+                {
+                    AGENT_WELCOME_CREDIT_JPY
+                } else {
+                    0
+                }
+            };
+            Json(serde_json::json!({
+                "ok": true,
+                "api_key": token,
+                "usage": "send as Authorization: Bearer <api_key>",
+                "welcome_credit_jpy": welcome,
+            })).into_response()
+        }
         Err((status, msg)) => json_err(status, &msg),
     }
 }
@@ -177,6 +228,11 @@ pub async fn agent_me(
         "limits": {
             "products_per_hour": AGENT_PRODUCTS_PER_HOUR,
             "kinds": catalog_kind_names(),
+            "ai_gen": {
+                "enabled": agent_ai_gen_enabled(),
+                "cost_jpy": agent_ai_gen_cost_jpy(),
+                "note": "pass ai_prompt instead of design_url to generate artwork; cost is deducted from mu_credits_balance and refunded if generation fails",
+            },
         },
     })).into_response()
 }
@@ -320,17 +376,68 @@ pub async fn agent_create_product(
             return json_err(StatusCode::BAD_REQUEST, "design_url must be an absolute https:// URL");
         }
         url.to_string()
-    } else if body.ai_prompt.as_deref().map(str::trim).is_some_and(|s| !s.is_empty()) {
-        let enabled = std::env::var("AGENT_AI_GEN_ENABLED")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
-        if !enabled {
+    } else if let Some(brief) = body.ai_prompt.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if !agent_ai_gen_enabled() {
             return json_err(StatusCode::SERVICE_UNAVAILABLE, "ai_gen disabled; pass design_url");
         }
-        // AI-gen arm intentionally not implemented while the flag is OFF.
-        // When enabled, this is where mu_credits + spend_or_refuse + Gemini
-        // would run. Returning 503 here keeps the flag the single gate.
-        return json_err(StatusCode::SERVICE_UNAVAILABLE, "ai_gen disabled; pass design_url");
+        if brief.len() > 600 {
+            return json_err(StatusCode::BAD_REQUEST, "ai_prompt too long (<=600 chars)");
+        }
+        let cost = agent_ai_gen_cost_jpy();
+        // Atomic ownership-check + credit-charge under ONE lock, BEFORE the
+        // slow async Gemini call — so we never generate for free or for a
+        // store we don't own. Refunded below if generation/upload fails.
+        {
+            let conn = db.lock().unwrap();
+            let owner: Option<String> = conn.query_row(
+                "SELECT json_extract(config_json,'$.owner_email') FROM catalog_brands WHERE slug=?",
+                rusqlite::params![store], |r| r.get(0),
+            ).ok().flatten();
+            match owner {
+                Some(o) if o.to_lowercase() == email => {}
+                _ => return json_err(StatusCode::FORBIDDEN, "you do not own this store"),
+            }
+            if !crate::mu_credit_apply(&conn, &email, -cost, "agent_ai_gen", None) {
+                let bal = crate::mu_credit_balance(&conn, &email);
+                return json_err(StatusCode::PAYMENT_REQUIRED, &format!(
+                    "insufficient MU credits for AI generation: need ¥{}, balance ¥{}", cost, bal));
+            }
+        }
+        // Print-ready prompt (mirrors catalog::generate_one). rashguard_black
+        // wants a full-black AOP canvas; everything else a white-bg DTG graphic.
+        let gen_prompt = if body.kind.trim() == "rashguard_black" {
+            format!(
+                "Square 300 DPI artwork for all-over print on a long-sleeve rashguard. \
+                 Fill the entire canvas with PURE BLACK (#0a0a0a). Centered on the chest: \
+                 {brief}, rendered in WHITE or light ivory so it pops against the black. \
+                 Hard constraints: NO model, NO mockup, NO photographic scene — just the \
+                 print-ready square artwork.", brief = brief)
+        } else {
+            format!(
+                "Print-ready chest graphic at 300 DPI on a PURE WHITE background (white acts \
+                 as the transparent layer for DTG printing). Design brief: {brief}. \
+                 Hard constraints: NO model, NO mockup, NO photographic scene, NO shirt \
+                 visible — just the artwork itself, centered, square aspect ratio, bleed-safe.",
+                brief = brief)
+        };
+        let img = match crate::gemini::call_gemini(&gen_prompt).await {
+            Ok(i) => i,
+            Err(e) => {
+                let conn = db.lock().unwrap();
+                let _ = crate::mu_credit_apply(&conn, &email, cost, "agent_ai_gen_refund", None);
+                return json_err(StatusCode::BAD_GATEWAY, &format!("AI generation failed: {}", e));
+            }
+        };
+        // Host on R2 (Printful's worker must be able to fetch it).
+        let key = format!("catalog/agent/{}-{}.png", store, short_hash(&format!("{}|{}", brief, label)));
+        match crate::store_r2_bytes(&key, &img.bytes, &img.mime).await {
+            Some(u) => u,
+            None => {
+                let conn = db.lock().unwrap();
+                let _ = crate::mu_credit_apply(&conn, &email, cost, "agent_ai_gen_refund", None);
+                return json_err(StatusCode::BAD_GATEWAY, "AI image hosting (R2) upload failed");
+            }
+        }
     } else {
         return json_err(StatusCode::BAD_REQUEST, "provide either design_url or ai_prompt");
     };
