@@ -41,6 +41,8 @@ const ROLL_SEED_SQL: &str = include_str!("../migrations/roll_seed.sql");
 const ATSUME_SEED_SQL: &str = include_str!("../migrations/atsume_seed.sql");
 const YUMA_SEED_SQL: &str = include_str!("../migrations/yuma_seed.sql");
 const ELEPOTE_SEED_SQL: &str = include_str!("../migrations/elepote_seed.sql");
+const HALO_SEED_SQL: &str = include_str!("../migrations/halo_seed.sql");
+const MUGON_SEED_SQL: &str = include_str!("../migrations/mugon_seed.sql");
 
 pub fn ensure_schema(conn: &rusqlite::Connection) {
     let _ = conn.execute_batch(
@@ -207,6 +209,49 @@ pub fn seed_elepote_brand(conn: &rusqlite::Connection) {
         }
         Err(e) => tracing::error!("[catalog] elepote seed failed: {}", e),
     }
+}
+
+/// HALO — private message tees (無 / 引き算 / 月 / 島). Pure MU-original
+/// typography, no partner logo/IP. All 13 designs × S/M/L seed as
+/// `is_active=0` / `status='draft'` so they NEVER surface on /shop,
+/// /sitemap, or new-arrivals. They are viewable + buyable ONLY through
+/// the gift gallery at `/gift/:key` (gated by env `MU_GIFT_KEY`), which
+/// passes the same key to `/api/shop/checkout?...&key=` to unlock the
+/// otherwise-hidden SKU. Fulfillment is the standard Printful DTG path.
+pub fn seed_halo_brand(conn: &rusqlite::Connection) {
+    match conn.execute_batch(HALO_SEED_SQL) {
+        Ok(()) => {
+            let n: i64 = conn
+                .query_row("SELECT COUNT(*) FROM catalog_products WHERE brand='halo'", [], |r| r.get(0))
+                .unwrap_or(0);
+            tracing::info!("[catalog] HALO private tees upserted · {} hidden SKUs", n);
+        }
+        Err(e) => tracing::error!("[catalog] halo seed failed: {}", e),
+    }
+}
+
+/// MUGON 無言 — public message-tee collection (墨黒×明朝, deadpan).
+/// Seeded as status='draft'/is_active=0 → hidden from /shop until go-live.
+/// Brand row + N catalog_products in one upsert (catalog contract).
+pub fn seed_mugon_brand(conn: &rusqlite::Connection) {
+    match conn.execute_batch(MUGON_SEED_SQL) {
+        Ok(()) => {
+            let n: i64 = conn
+                .query_row("SELECT COUNT(*) FROM catalog_products WHERE brand='mugon'", [], |r| r.get(0))
+                .unwrap_or(0);
+            tracing::info!("[catalog] MUGON tees upserted · {} SKUs (draft/hidden)", n);
+        }
+        Err(e) => tracing::error!("[catalog] mugon seed failed: {}", e),
+    }
+}
+
+/// Gift-link gate. True only when env `MU_GIFT_KEY` is set (non-empty)
+/// AND the supplied key matches it exactly. Closed-by-default: if the
+/// secret is unset, no key is ever valid. Used to expose the hidden
+/// 'halo' tees for view (/gift/:key) + purchase (checkout ?key=).
+fn gift_key_valid(key: Option<&str>) -> bool {
+    let secret = std::env::var("MU_GIFT_KEY").unwrap_or_default();
+    !secret.is_empty() && key.map(|k| k == secret).unwrap_or(false)
 }
 
 /// Seed the universal MU mark (━◯━) kiss-cut sticker. This is the
@@ -1864,6 +1909,58 @@ pub async fn admin_set_design(
     .into_response()
 }
 
+#[derive(serde::Deserialize)]
+pub struct BrandVisQuery {
+    pub token: String,
+    pub brand: String,
+    #[serde(default)]
+    pub live: i64,
+}
+
+/// GET /admin/catalog/brand_visibility?token=…&brand=mugon&live=1
+/// One-request publish / rollback for a whole catalog brand — no redeploy.
+/// live=1 → brand+all SKUs is_active=1/status='live' (公開).
+/// live=0 (default) → is_active=0/status='draft' (即・非公開に戻す).
+pub async fn admin_brand_visibility(
+    State(db): State<Db>,
+    Query(q): Query<BrandVisQuery>,
+) -> Response {
+    let expected = env::var("ADMIN_TOKEN").unwrap_or_default();
+    if expected.is_empty() || q.token != expected {
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    }
+    let live = q.live != 0;
+    let (active, status) = if live { (1, "live") } else { (0, "draft") };
+    let (nb, np) = {
+        let conn = db.lock().unwrap();
+        let nb = conn
+            .execute(
+                "UPDATE catalog_brands SET is_active=?1 WHERE slug=?2",
+                rusqlite::params![active, q.brand],
+            )
+            .unwrap_or(0);
+        let np = conn
+            .execute(
+                "UPDATE catalog_products SET is_active=?1, status=?2 WHERE brand=?3",
+                rusqlite::params![active, status, q.brand],
+            )
+            .unwrap_or(0);
+        (nb, np)
+    };
+    if nb == 0 {
+        return (StatusCode::NOT_FOUND, "brand not found").into_response();
+    }
+    tracing::info!("[catalog] brand '{}' visibility → live={} ({} SKUs)", q.brand, live, np);
+    axum::Json(serde_json::json!({
+        "ok": true,
+        "brand": q.brand,
+        "live": live,
+        "brand_rows": nb,
+        "product_rows": np,
+    }))
+    .into_response()
+}
+
 #[derive(Deserialize)]
 pub struct LifestyleGenQuery {
     pub token: String,
@@ -3310,6 +3407,11 @@ pub struct CheckoutQuery {
     /// checkout (full backward compat).
     #[serde(default)]
     pub addon: Option<String>,
+    /// Gift-link key. When it matches env `MU_GIFT_KEY`, checkout is
+    /// allowed for an otherwise-hidden (is_active=0) SKU — the only way
+    /// the private 'halo' tees can be purchased. Ignored otherwise.
+    #[serde(default)]
+    pub key: Option<String>,
 }
 
 pub async fn shop_checkout(
@@ -3321,12 +3423,23 @@ pub async fn shop_checkout(
         return (StatusCode::SERVICE_UNAVAILABLE, "checkout disabled").into_response();
     }
     let sku = q.sku;
+    // A valid gift key unlocks an otherwise-hidden (is_active=0) SKU —
+    // the private 'halo' tees. Public checkouts never pass a key, so they
+    // always hit the is_active=1 path (zero behaviour change).
+    let gift = gift_key_valid(q.key.as_deref());
     let row = {
         let conn = db.lock().unwrap();
-        conn.query_row(
+        let sql = if gift {
             "SELECT stripe_price_id, retail_price_jpy, description_ja, brand,
                     COALESCE(mockup_url_external, mockup_main_file, '')
-             FROM catalog_products WHERE sku=? AND is_active=1",
+             FROM catalog_products WHERE sku=?"
+        } else {
+            "SELECT stripe_price_id, retail_price_jpy, description_ja, brand,
+                    COALESCE(mockup_url_external, mockup_main_file, '')
+             FROM catalog_products WHERE sku=? AND is_active=1"
+        };
+        conn.query_row(
+            sql,
             rusqlite::params![&sku],
             |r| {
                 Ok((
@@ -3413,7 +3526,11 @@ pub async fn shop_checkout(
         "{}/success?from=shop&sku={}&value={}&sid={{CHECKOUT_SESSION_ID}}",
         base_url, urlencoding::encode(&sku), conv_value,
     );
-    let cancel_url = format!("{}/shop/{}", base_url, urlencoding::encode(&sku));
+    let cancel_url = if gift {
+        format!("{}/gift/{}", base_url, urlencoding::encode(q.key.as_deref().unwrap_or("")))
+    } else {
+        format!("{}/shop/{}", base_url, urlencoding::encode(&sku))
+    };
 
     // Two pricing paths:
     //   (1) pre-created stripe_price_id (the 1,519 SKUs imported from
@@ -3509,6 +3626,111 @@ pub async fn shop_checkout(
             (StatusCode::BAD_GATEWAY, "stripe network").into_response()
         }
     }
+}
+
+/// GET /gift/:key — private gallery of the hidden 'halo' message tees.
+/// 404s unless `key` matches env `MU_GIFT_KEY`. noindex/nofollow and
+/// never linked from anywhere public. Each design shows S/M/L buy
+/// buttons that carry the key into checkout so the hidden SKU unlocks.
+pub async fn gift_gallery(State(db): State<Db>, Path(key): Path<String>) -> Response {
+    if !gift_key_valid(Some(&key)) {
+        return (StatusCode::NOT_FOUND, "not found").into_response();
+    }
+    let rows: Vec<(String, String, String, i64)> = {
+        let conn = db.lock().unwrap();
+        conn.prepare(
+            "SELECT sku, description_ja, COALESCE(mockup_url_external,''), retail_price_jpy
+             FROM catalog_products WHERE brand='halo' ORDER BY sort_order",
+        )
+        .ok()
+        .and_then(|mut s| {
+            s.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            })
+            .ok()
+            .map(|it| it.filter_map(|x| x.ok()).collect())
+        })
+        .unwrap_or_default()
+    };
+
+    // Group the per-size SKUs back into one card per design (stem = SKU
+    // minus the trailing -S/-M/-L). Preserve sort_order via `order`.
+    let mut order: Vec<String> = Vec::new();
+    let mut groups: std::collections::HashMap<String, (String, String, i64, Vec<(String, String)>)> =
+        std::collections::HashMap::new();
+    for (sku, desc, preview, price) in &rows {
+        let (stem, size) = sku.rsplit_once('-').unwrap_or((sku.as_str(), ""));
+        let cap = desc.split(" · ").next().unwrap_or(desc).to_string();
+        let e = groups.entry(stem.to_string()).or_insert_with(|| {
+            order.push(stem.to_string());
+            (cap.clone(), preview.clone(), *price, Vec::new())
+        });
+        e.3.push((size.to_string(), sku.clone()));
+    }
+
+    let esc = |s: &str| {
+        s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    };
+    let key_e = urlencoding::encode(&key);
+    let mut cards = String::new();
+    for stem in &order {
+        let (cap, preview, price, sizes) = &groups[stem];
+        let mut btns = String::new();
+        for (size, sku) in sizes {
+            btns.push_str(&format!(
+                "<a class=\"sz\" href=\"/api/shop/checkout?sku={}&amp;key={}\">{}</a>",
+                urlencoding::encode(sku),
+                key_e,
+                esc(size)
+            ));
+        }
+        cards.push_str(&format!(
+            "<div class=\"card\"><div class=\"imgwrap\"><img src=\"{}\" alt=\"{}\" loading=\"lazy\"></div>\
+             <div class=\"cap\">{}</div><div class=\"price\">¥{}</div><div class=\"sizes\">{}</div></div>",
+            esc(preview), esc(cap), esc(cap), price, btns
+        ));
+    }
+
+    let page = format!(
+        "<!doctype html><html lang=\"ja\"><head><meta charset=\"utf-8\">\
+<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
+<meta name=\"robots\" content=\"noindex,nofollow\">\
+<title>無 — private</title>\
+<style>\
+*{{box-sizing:border-box}}body{{margin:0;background:#0b0b0b;color:#f4f1ea;\
+font-family:'Hiragino Mincho ProN','Hiragino Sans',serif;-webkit-font-smoothing:antialiased}}\
+.wrap{{max-width:1100px;margin:0 auto;padding:64px 20px 96px}}\
+.kick{{font-family:'Hiragino Sans',sans-serif;font-size:11px;letter-spacing:.4em;color:#7c8088;text-align:center}}\
+h1{{font-size:64px;font-weight:600;text-align:center;margin:18px 0 6px}}\
+.sub{{font-family:'Hiragino Sans',sans-serif;font-size:12px;letter-spacing:.2em;color:#7c8088;text-align:center;margin-bottom:8px}}\
+.note{{font-family:'Hiragino Sans',sans-serif;font-size:11px;color:#5c6066;text-align:center;margin-bottom:48px}}\
+.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:22px}}\
+.card{{background:#111;border:1px solid rgba(255,255,255,.07);border-radius:6px;overflow:hidden}}\
+.imgwrap{{aspect-ratio:6/7;background:#1a1c1e;overflow:hidden}}\
+.imgwrap img{{width:100%;height:100%;object-fit:cover;display:block}}\
+.cap{{padding:12px 12px 2px;font-size:17px}}\
+.price{{padding:0 12px;font-family:'Hiragino Sans',sans-serif;font-size:12px;color:#e6c449;font-variant-numeric:tabular-nums}}\
+.sizes{{display:flex;gap:8px;padding:12px}}\
+.sz{{flex:1;text-align:center;padding:9px 0;border:1px solid rgba(255,255,255,.16);border-radius:4px;\
+color:#f4f1ea;text-decoration:none;font-family:'Hiragino Sans',sans-serif;font-size:13px;letter-spacing:.1em;transition:all .15s}}\
+.sz:hover{{background:#f4f1ea;color:#0b0b0b;border-color:#f4f1ea}}\
+.foot{{text-align:center;margin-top:56px;font-family:'Hiragino Sans',sans-serif;font-size:11px;color:#5c6066;line-height:1.9}}\
+</style></head><body><div class=\"wrap\">\
+<div class=\"kick\">MU ／ 無 ・ PRIVATE</div>\
+<h1>無</h1>\
+<div class=\"sub\">message tees · 2026.06.01</div>\
+<div class=\"note\">黒T Bella+Canvas 3001 ・ DTG ・ 受注生産（在庫ゼロ）・ ¥4,000 ・ S/M/L</div>\
+<div class=\"grid\">{cards}</div>\
+<div class=\"foot\">この一着は、記録になる。<br>非公開リンク・あなただけのページ</div>\
+</div></body></html>",
+        cards = cards
+    );
+    axum::response::Html(page).into_response()
 }
 
 // ─── Webhook fulfillment (called from main.rs stripe_webhook) ─────────
