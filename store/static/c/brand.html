@@ -259,12 +259,40 @@ function brandCardHtml(b, currentSlug){
   </a>`;
 }
 
+// Brand theme songs. Plays cfg.audio_url when set; falls back to a per-slug
+// map for brands whose config_json can't yet carry an audio_url.
+const BRAND_SONGS = { tatami: 'https://files.catbox.moe/u61ek7.mp3' };
+function mountBrandPlayer(brand, cfg){
+  const url = (cfg && cfg.audio_url) || BRAND_SONGS[SLUG];
+  if (!url || document.getElementById('brand-player')) return;
+  const wrap = document.createElement('div');
+  wrap.id = 'brand-player';
+  wrap.style.cssText = 'position:fixed;left:16px;bottom:16px;z-index:60;display:flex;align-items:center;gap:10px;background:rgba(10,10,10,.82);backdrop-filter:blur(12px);border:1px solid var(--border,rgba(255,255,255,.12));border-radius:999px;padding:8px 14px 8px 10px;font-family:var(--mono),monospace;font-size:11px;letter-spacing:.08em;color:var(--fg,#f5f5f0);box-shadow:0 8px 30px rgba(0,0,0,.4)';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.style.cssText = 'all:unset;cursor:pointer;width:30px;height:30px;display:grid;place-items:center;border:1px solid var(--c,#e6c449);border-radius:50%;color:var(--c,#e6c449);font-size:13px';
+  btn.textContent = '▶';
+  const label = document.createElement('span');
+  label.textContent = (cfg && cfg.audio_label) || '畳のうた';
+  label.style.opacity = '.85';
+  const audio = new Audio(url);
+  audio.loop = true; audio.preload = 'none';
+  btn.addEventListener('click', () => {
+    if (audio.paused) { audio.play().then(()=>{btn.textContent='⏸';}).catch(()=>{}); }
+    else { audio.pause(); btn.textContent='▶'; }
+  });
+  audio.addEventListener('ended', ()=>{ btn.textContent='▶'; });
+  wrap.appendChild(btn); wrap.appendChild(label);
+  document.body.appendChild(wrap);
+}
+
 function renderHero(brand){
   const cfg = brand.config || {};
   const hero = cfg.hero || {};
   const emoji = brand.emoji || '◯';
   const color = brand.color_primary || '#e6c449';
   document.documentElement.style.setProperty('--c', color);
+  mountBrandPlayer(brand, cfg);
   document.getElementById('hero-emoji').textContent = emoji;
   document.getElementById('hero-mark').textContent = emoji;
   document.getElementById('hero-badge').textContent = hero.badge || brand.name || '';
