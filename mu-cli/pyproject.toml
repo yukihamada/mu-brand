@@ -1,0 +1,15 @@
+[project]
+name = "mu-cli"
+version = "0.1.0"
+description = "MU (wearmu.com) agent API client + CLI — make MU products from the terminal."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["pillow>=9", "numpy>=1.20"]
+
+[project.scripts]
+mu = "mu_cli.drop:main"
+mu-batch = "mu_cli.batch:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
