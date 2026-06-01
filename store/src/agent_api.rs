@@ -683,6 +683,119 @@ pub async fn agent_grant_credits(
     })).into_response()
 }
 
+// ─── GET /build — human-readable "anyone can make MU" guide ─────────────
+
+pub async fn build_page() -> Response {
+    let body = r##"<!doctype html>
+<html lang="ja"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MUをつくる — 誰でも、AIでも。 · MU</title>
+<meta name="description" content="メール認証だけで、誰でも（人もAIエージェントも）MUの商品を作れます。MCP接続かREST APIで、ストアを開いてデザインを登録。MA council承認で販売開始。">
+<meta property="og:title" content="MUをつくる — 誰でも、AIでも。">
+<meta property="og:description" content="メール認証だけで MU の商品を作れる。MCP か REST API で。">
+<meta property="og:image" content="https://mockups.wearmu.com/hero.png">
+<meta property="og:url" content="https://wearmu.com/build">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+:root{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,.55);--y:#e6c449;--line:rgba(255,255,255,.10);--card:rgba(255,255,255,.03)}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;-webkit-font-smoothing:antialiased;font-feature-settings:"palt";line-height:1.7}
+nav{position:sticky;top:0;background:rgba(10,10,10,.88);backdrop-filter:blur(14px);border-bottom:1px solid var(--line);padding:16px 28px;display:flex;justify-content:space-between;font-size:11px;letter-spacing:.3em;text-transform:uppercase;z-index:50}
+nav a{color:var(--fg);text-decoration:none}
+.wrap{max-width:820px;margin:0 auto;padding:56px 24px 96px}
+h1{font-size:clamp(34px,7vw,60px);letter-spacing:.04em;line-height:1.15;margin-bottom:18px}
+.lead{font-size:18px;color:var(--mute);margin-bottom:14px}
+h2{font-size:13px;letter-spacing:.28em;text-transform:uppercase;color:var(--y);margin:52px 0 16px}
+h3{font-size:18px;margin:26px 0 8px}
+p{color:var(--mute);margin-bottom:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 24px;margin:14px 0}
+ol{margin:0 0 0 4px;counter-reset:s;list-style:none}
+ol>li{position:relative;padding:14px 0 14px 48px;border-bottom:1px solid var(--line)}
+ol>li:last-child{border-bottom:0}
+ol>li::before{counter-increment:s;content:counter(s);position:absolute;left:0;top:12px;width:30px;height:30px;border:1px solid var(--y);color:var(--y);border-radius:50%;display:grid;place-items:center;font-size:13px}
+b{color:var(--fg)}
+pre{background:#000;border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow-x:auto;margin:10px 0;font-size:13px;line-height:1.6}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#cfe8ff}
+.k{color:var(--y)}
+table{width:100%;border-collapse:collapse;margin:10px 0;font-size:14px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+th{color:var(--mute);font-weight:400;font-size:12px;letter-spacing:.1em;text-transform:uppercase}
+.pill{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:3px 12px;font-size:12px;color:var(--mute);margin:2px 4px 2px 0}
+a.lnk{color:var(--y);text-decoration:none;border-bottom:1px solid rgba(230,196,73,.4)}
+.note{font-size:13px;color:var(--mute);border-left:2px solid var(--y);padding-left:14px;margin:14px 0}
+footer{border-top:1px solid var(--line);padding:28px;text-align:center;color:var(--mute);font-size:12px}
+</style></head>
+<body>
+<nav><a href="/">━◯━ MU</a><a href="/shop">SHOP</a></nav>
+<div class="wrap">
+<h1>MUをつくる。<br>誰でも、AIでも。</h1>
+<p class="lead">MUは「作ること」を空気のように簡単にするブランドです。メール認証だけで、あなた（人でも、Claudeのような<b>AIエージェント</b>でも）が自分のストアを開き、デザインを登録できます。在庫リスクはゼロ（オンデマンド印刷）。商品はレビューを経て、承認されると販売開始します。</p>
+<p class="lead">やり方は2つ。<b>① AIに繋ぐ（MCP）</b> か <b>② REST APIを叩く</b>。</p>
+
+<h2>① AIエージェントに繋ぐ（MCP）</h2>
+<p>Claude などMCP対応のAIに、MUのリモートMCPサーバーを足すだけ。あとは「MUで〇〇なTシャツ作って」と話せば、AIが登録・デザイン・出品まで行います。</p>
+<div class="card">
+<p style="margin:0 0 8px"><b>Streamable HTTP エンドポイント</b></p>
+<pre><code>https://mcp.wearmu.com/mcp</code></pre>
+<p style="margin:8px 0 0">Claude Code なら一行：</p>
+<pre><code>claude mcp add --transport http mu https://mcp.wearmu.com/mcp \
+  --header "Authorization: Bearer &lt;あなたのapi_key&gt;"</code></pre>
+<p style="margin:8px 0 0">ツール: <span class="pill">mu_register</span><span class="pill">mu_verify</span><span class="pill">mu_status</span><span class="pill">mu_create_store</span><span class="pill">mu_create_product</span><span class="pill">mu_list_mine</span></p>
+</div>
+
+<h2>② REST APIで作る（4ステップ）</h2>
+<ol>
+<li><b>登録</b> — メールアドレスに6桁コードが届きます。
+<pre><code>curl -X POST https://wearmu.com/api/agent/register \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.com"}'</code></pre></li>
+<li><b>認証</b> — コードを送ると <span class="k">api_key</span> が返ります（初回は<b>200ptウェルカム</b>付き）。以降は <code>Authorization: Bearer &lt;api_key&gt;</code> を付けます。
+<pre><code>curl -X POST https://wearmu.com/api/agent/register/verify \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.com","code":"123456"}'</code></pre></li>
+<li><b>ストアを開く</b> — あなたのブランドの店ができます（<code>wearmu.com/shop?brand=&lt;slug&gt;</code>）。
+<pre><code>curl -X POST https://wearmu.com/api/agent/stores \
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"slug":"my-lab","name":"MY LAB","emoji":"◯"}'</code></pre></li>
+<li><b>商品を作る</b> — デザインは2通り。<b>既製画像のURL</b>を渡すか、<b>文章で指示</b>してMUに描かせる（AI生成・クレジット消費）。
+<pre><code># A) 自分の画像URLで（無料）
+curl -X POST https://wearmu.com/api/agent/products \
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"store":"my-lab","label":"無 Tee","description":"...",
+       "kind":"tee","design_url":"https://.../art.png"}'
+
+# B) 文章でAI生成（mu_credits を消費）
+curl ... -d '{"store":"my-lab","label":"月 Tee","description":"...",
+       "kind":"tee","ai_prompt":"a minimal black sumi-e crescent moon on pure white"}'</code></pre></li>
+</ol>
+<p class="note">作った商品は <b>status: review</b> で入り、<b>MA council</b> が承認すると <b>live</b>（販売開始）になります。承認前は公開されません。</p>
+
+<h2>作れるもの・ルール</h2>
+<table>
+<tr><th>kind</th><th>下限価格</th></tr>
+<tr><td>tee — Tシャツ (Bella+Canvas 3001)</td><td>¥4,900</td></tr>
+<tr><td>hoodie — パーカー (Gildan 18500)</td><td>¥8,800</td></tr>
+<tr><td>crewneck — クルーネック (Gildan 18000)</td><td>¥7,800</td></tr>
+<tr><td>rashguard_ls / rashguard_black — ラッシュガード</td><td>¥9,800</td></tr>
+</table>
+<p><span class="pill">画像は https のみ</span><span class="pill">価格は下限以上に自動クランプ</span><span class="pill">作成20点/時まで</span><span class="pill">他人のストアには書けない</span></p>
+<p>自分の状態（残クレジット・所有ストア・上限）は <code>GET /api/agent/me</code> で確認できます。</p>
+
+<h2>機械可読リンク</h2>
+<p>
+<a class="lnk" href="/llms.txt">/llms.txt</a> &nbsp;·&nbsp;
+<a class="lnk" href="/openapi.json">/openapi.json</a> &nbsp;·&nbsp;
+<a class="lnk" href="/.well-known/mcp.json">/.well-known/mcp.json</a> &nbsp;·&nbsp;
+<a class="lnk" href="https://mcp.wearmu.com">mcp.wearmu.com</a>
+</p>
+</div>
+<footer>MU（無）· オンデマンド印刷・在庫ゼロ · 株式会社イネブラ / Enabler Inc. · <a class="lnk" href="/shop">wearmu.com/shop</a></footer>
+</body></html>
+"##;
+    ([(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")], body).into_response()
+}
+
 // ─── GET /llms.txt ──────────────────────────────────────────────────────
 
 pub async fn llms_txt() -> Response {

@@ -67159,6 +67159,7 @@ async fn main() {
         // ── Agent API — catalog-native, email-keyed (src/agent_api.rs).
         // Discovery: /llms.txt. Onboarding reuses the collab magic-link path.
         // Products land status='review' until an MA-council member approves.
+        .route("/build", get(agent_api::build_page))
         .route("/llms.txt", get(agent_api::llms_txt))
         .route("/openapi.json", get(agent_api::openapi_json))
         .route("/.well-known/mcp.json", get(agent_api::well_known_mcp))
