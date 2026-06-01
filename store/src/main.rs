@@ -15463,6 +15463,45 @@ async fn admin_regen_similar(
     })).into_response()
 }
 
+/// POST /api/admin/products/new_manual — create a SKU with a PROVIDED design_url
+/// (no Gemini generation). Body: { brand, name, design_url, price_jpy, inventory, active, prompt }
+/// Used for song-tee drops where the artwork is made externally (e.g. Arweave-hosted).
+async fn admin_product_new_manual(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/products/new_manual").await { return r; }
+    let brand = body.get("brand").and_then(|v| v.as_str()).unwrap_or("muon").to_string();
+    let name = match body.get("name").and_then(|v| v.as_str()) {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => return (StatusCode::BAD_REQUEST, "name required").into_response(),
+    };
+    let design_url = match body.get("design_url").and_then(|v| v.as_str()) {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => return (StatusCode::BAD_REQUEST, "design_url required").into_response(),
+    };
+    let price_jpy: i64 = body.get("price_jpy").and_then(|v| v.as_i64()).unwrap_or(7800);
+    let inventory: i64 = body.get("inventory").and_then(|v| v.as_i64()).unwrap_or(1);
+    let active: i64 = body.get("active").and_then(|v| v.as_i64()).unwrap_or(0);
+    let prompt = body.get("prompt").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let now: String = chrono_now();
+    let new_id: i64 = {
+        let conn = db.lock().unwrap();
+        let next_drop: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(drop_num),0)+1 FROM products WHERE brand=?",
+            params![brand], |r| r.get(0)).unwrap_or(1);
+        let _ = conn.execute(
+            "INSERT INTO products (brand, drop_num, name, design_url, price_jpy, inventory, sold, created_at, active, prompt_text)
+             VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
+            params![brand, next_drop, name, design_url, price_jpy, inventory, now, active, prompt],
+        );
+        conn.last_insert_rowid()
+    };
+    Json(serde_json::json!({"ok": true, "new_id": new_id, "active": active, "brand": brand})).into_response()
+}
+
 /// POST /api/admin/products/new — create a brand-new SKU from a prompt.
 /// Body: { brand, name, prompt, price_jpy, inventory }
 async fn admin_product_new(
@@ -66498,6 +66537,7 @@ async fn main() {
         .route("/admin/products", get(admin_products_page))
         .route("/api/admin/products", get(admin_products_list))
         .route("/api/admin/products/new", post(admin_product_new))
+        .route("/api/admin/products/new_manual", post(admin_product_new_manual))
         .route("/api/admin/products/candidates", post(admin_product_candidates))
         .route("/api/admin/products/from_candidate", post(admin_product_from_candidate))
         .route("/api/admin/products/cache_bytes", post(admin_cache_product_bytes))
