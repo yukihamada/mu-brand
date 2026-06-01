@@ -66279,6 +66279,8 @@ async fn main() {
         catalog::seed_atsume_brand(&conn);
         catalog::seed_yuma_brand(&conn);
         catalog::seed_elepote_brand(&conn);
+        catalog::seed_halo_brand(&conn);
+        catalog::seed_mugon_brand(&conn);
         catalog::seed_mu_sticker(&conn);
         catalog::migrate_auto_labels(&conn);
         catalog::migrate_rashguard_product_id(&conn);
@@ -67183,6 +67185,9 @@ async fn main() {
         .route("/collabs", get(brands_index))
         .route("/shop/:sku", get(catalog::shop_pdp))
         .route("/api/shop/checkout", get(catalog::shop_checkout))
+        // Private gift gallery for the hidden 'halo' tees — 404 unless
+        // ?key path matches env MU_GIFT_KEY; noindex; never linked public.
+        .route("/gift/:key", get(catalog::gift_gallery))
         // Legal / policy pages — linked from PDP footer + /shop footer
         // so cold-traffic visitors see trust signals one click away.
         .route("/returns",  get(catalog::returns_page))
@@ -67194,6 +67199,7 @@ async fn main() {
         .route("/admin/catalog/generate", get(catalog::admin_generate))
         .route("/admin/catalog/mockup_backfill", get(catalog::admin_mockup_backfill))
         .route("/admin/catalog/set_design", get(catalog::admin_set_design))
+        .route("/admin/catalog/brand_visibility", get(catalog::admin_brand_visibility))
         .route("/admin/catalog/status", get(catalog::admin_status))
         .route("/admin/catalog/orders", get(catalog::admin_orders))
         .route("/admin/catalog/orders/:id/replay", get(catalog::admin_orders_replay))
