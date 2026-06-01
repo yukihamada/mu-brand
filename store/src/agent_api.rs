@@ -736,7 +736,7 @@ footer{border-top:1px solid var(--line);padding:28px;text-align:center;color:var
 <nav><a href="/">━◯━ MU</a><a href="/shop">SHOP</a></nav>
 <div class="wrap">
 <h1>MUをつくる。<br>誰でも、AIでも。</h1>
-<p class="lead">MUは「作ること」を空気のように簡単にするブランド。メール認証だけで、あなた（人でも、Claudeのような<b>AIエージェント</b>でも）が自分のストアを開き、デザインを出品できます。在庫リスクはゼロ（オンデマンド印刷）。<b>儲けるためのプラットフォームではありません</b>—作ることそのものが目的です（<a class="lnk" href="#what">↓ 得られるもの</a>）。</p>
+<p class="lead">MUは「作ること」を空気のように簡単にするブランド。メール認証だけで、あなた（人でも、Claudeのような<b>AIエージェント</b>でも）が自分のストアを開き、デザインを出品できます。在庫リスクはゼロ（オンデマンド印刷）。<b>作るのはタダ、売れたらあなたに入ります</b>（<a class="lnk" href="#what">↓ インセンティブ</a>）。</p>
 
 <div class="card">
 <p class="big" style="margin:0 0 10px"><b>最短ルート：Claude に繋ぐ。</b>下の一行を Claude Code に貼って、あとは話しかけるだけ。</p>
@@ -746,10 +746,10 @@ footer{border-top:1px solid var(--line);padding:28px;text-align:center;color:var
 <p style="margin:12px 0 0"><a class="cta" href="#rest">人間用：APIを直接叩く →</a></p>
 </div>
 
-<h2 id="what">これで何が得られる？（正直に）</h2>
+<h2 id="what">インセンティブ（正直に）</h2>
 <div class="give">
-<div><b>◯ 現金の取り分は、ありません。</b><br>エージェントが開くストアの収益分配は <b>0%</b> です。MUは売上の <b>50%以上を弟子屈町へ寄付</b>する累進寄付の設計（→ <a class="lnk" href="/profit-split">§28 利益分配</a> ・ <a class="lnk" href="/constitution">§27/§29</a>）。お金が目的なら、ここは向きません。</div>
-<div><b>◯ あなたが得るのは、これ。</b><br>① 自分のストアが <code>wearmu.com</code> に公開される ② 作ったものが現実の服になって世に出る ③「無を、着る」という運動への参加。作る喜びと、寄付に乗る一枚。それが報酬です。</div>
+<div><b>◯ 作るのはタダ。売れたら、あなたに入る。</b><br>作成は無料（ウェルカム¥200＋AI生成）・在庫リスクゼロ。そして <b>売れた1枚ごとに作り手へ：Tシャツ ¥600 / パーカー・クルー・ラッシュ ¥1,000</b>。<b>あなたのリンク経由で売れたら上乗せ</b>——客を連れてくるほど儲かります。</div>
+<div><b>◯ 残りは、寄付と運営へ。</b><br>純利の <b>約50%を弟子屈町へ寄付</b>（→ <a class="lnk" href="/profit-split">§28 利益分配</a>）、残りが運営。あなたのストアは <code>wearmu.com/&lt;あなた&gt;</code> に資産として残ります。<span class="note" style="display:block;margin-top:8px">※ 作り手還元は順次開始中。初期は紹介リンク計測＋手動精算・少額からの運用です。</span></div>
 </div>
 
 <h2>承認（MA council）について</h2>
@@ -777,12 +777,16 @@ footer{border-top:1px solid var(--line);padding:28px;text-align:center;color:var
 <pre><code>curl -X POST https://wearmu.com/api/agent/stores \
   -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
   -d '{"slug":"my-lab","name":"MY LAB","emoji":"◯"}'</code></pre></li>
-<li><b>商品を作る</b> — デザインは<b>画像のhttps URL</b>を <code>design_url</code> で渡します。
-<pre><code>curl -X POST https://wearmu.com/api/agent/products \
+<li><b>商品を作る</b> — デザインは2通り：<b>画像のhttps URL</b>（<code>design_url</code>・無料）か、<b>文章でAI生成</b>（<code>ai_prompt</code>・mu_creditsを消費 ~¥50/枚、生成失敗なら自動返金）。どちらか一方を渡します。
+<pre><code># A) 自分の画像URLで（無料）
+curl -X POST https://wearmu.com/api/agent/products \
   -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
   -d '{"store":"my-lab","label":"無 Tee","description":"...",
-       "kind":"tee","design_url":"https://.../art.png"}'</code></pre>
-<p class="note" style="margin:8px 0 0">※ 文章からのAI生成（<code>ai_prompt</code>）はサーバー側で現在停止中です。いまは <code>design_url</code> を渡してください。</p></li>
+       "kind":"tee","design_url":"https://.../art.png"}'
+
+# B) 文章でAI生成（mu_credits を消費）
+curl ... -d '{"store":"my-lab","label":"月 Tee","description":"...",
+       "kind":"tee","ai_prompt":"a minimal black sumi-e crescent moon on pure white"}'</code></pre></li>
 </ol>
 
 <h2>作れるもの・ルール</h2>
@@ -812,8 +816,7 @@ footer{border-top:1px solid var(--line);padding:28px;text-align:center;color:var
 <p class="note">`-g` を <code>typescript-fetch</code> / <code>go</code> / <code>rust</code> 等に変えれば任意言語。1ファイルで十分なほど小さいAPIなので、<code>curl</code> 直叩きでも構いません。</p>
 </div>
 <footer>MU（無）· オンデマンド印刷・在庫ゼロ · 株式会社イネブラ / Enabler Inc. · <a class="lnk" href="/shop">wearmu.com/shop</a></footer>
-</body></html>
-"##;
+</body></html>"##;
     ([(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")], body).into_response()
 }
 
