@@ -42,7 +42,7 @@ const ATSUME_SEED_SQL: &str = include_str!("../migrations/atsume_seed.sql");
 const YUMA_SEED_SQL: &str = include_str!("../migrations/yuma_seed.sql");
 const ELEPOTE_SEED_SQL: &str = include_str!("../migrations/elepote_seed.sql");
 const HALO_SEED_SQL: &str = include_str!("../migrations/halo_seed.sql");
-const MUGON_SEED_SQL: &str = include_str!("../migrations/mugon_seed.sql");
+const MUON_SEED_SQL: &str = include_str!("../migrations/muon_seed.sql");
 
 pub fn ensure_schema(conn: &rusqlite::Connection) {
     let _ = conn.execute_batch(
@@ -230,18 +230,18 @@ pub fn seed_halo_brand(conn: &rusqlite::Connection) {
     }
 }
 
-/// MUGON 無言 — public message-tee collection (墨黒×明朝, deadpan).
+/// MUON 無音 — public message-tee collection (墨黒×明朝, deadpan).
 /// Seeded as status='draft'/is_active=0 → hidden from /shop until go-live.
 /// Brand row + N catalog_products in one upsert (catalog contract).
-pub fn seed_mugon_brand(conn: &rusqlite::Connection) {
-    match conn.execute_batch(MUGON_SEED_SQL) {
+pub fn seed_muon_brand(conn: &rusqlite::Connection) {
+    match conn.execute_batch(MUON_SEED_SQL) {
         Ok(()) => {
             let n: i64 = conn
-                .query_row("SELECT COUNT(*) FROM catalog_products WHERE brand='mugon'", [], |r| r.get(0))
+                .query_row("SELECT COUNT(*) FROM catalog_products WHERE brand='muon'", [], |r| r.get(0))
                 .unwrap_or(0);
-            tracing::info!("[catalog] MUGON tees upserted · {} SKUs (draft/hidden)", n);
+            tracing::info!("[catalog] MUON tees upserted · {} SKUs (live)", n);
         }
-        Err(e) => tracing::error!("[catalog] mugon seed failed: {}", e),
+        Err(e) => tracing::error!("[catalog] muon seed failed: {}", e),
     }
 }
 
@@ -1917,7 +1917,7 @@ pub struct BrandVisQuery {
     pub live: i64,
 }
 
-/// GET /admin/catalog/brand_visibility?token=…&brand=mugon&live=1
+/// GET /admin/catalog/brand_visibility?token=…&brand=muon&live=1
 /// One-request publish / rollback for a whole catalog brand — no redeploy.
 /// live=1 → brand+all SKUs is_active=1/status='live' (公開).
 /// live=0 (default) → is_active=0/status='draft' (即・非公開に戻す).
