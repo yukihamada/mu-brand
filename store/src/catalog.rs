@@ -2848,6 +2848,29 @@ pub async fn shop_index(
     } else {
         String::new()
     };
+    let hero_html = if brand_filter == "shiopixel" {
+        r##"<div class="hero">
+  <h1>🎵 Shiopixel — 着ると、鳴る。</h1>
+  <p>BJJと日常のうた。一着＝一曲。胸の ○ にスマホをかざすと、その曲が鳴る。<br>各カードの ▶ で今すぐ試聴 — 気に入った曲を、着られる。音は Arweave に永久保存。</p>
+  <div class="trust">
+    <span><strong>▶ 試聴</strong> 買う前に聴ける</span>
+    <span><strong>1 着から</strong> 受注生産・廃棄ゼロ</span>
+    <span><strong>○ のQR</strong> 着ると曲が鳴る</span>
+    <span><strong>Stripe</strong> 安全決済</span>
+  </div>
+</div>"##.to_string()
+    } else {
+        format!(r##"<div class="hero">
+  <h1>━◯━ 知ってる人にだけ届く wearable.</h1>
+  <p>柔術・コーヒー・地域 ── 10+ コラボの "内側からの服"。 受注生産 — 1 着から、 完売・廃棄ゼロ。 <strong style="color:#ffd700">{total} 件</strong> 公開中。</p>
+  <div class="trust">
+    <span><strong>国際発送</strong> 7-14 日 (DHL / FedEx)</span>
+    <span><strong>1 着から</strong> オーダー可</span>
+    <span><strong>Bella+Canvas / AOP rashguard</strong> 等プレミアム生地</span>
+    <span><strong>Stripe</strong> 安全決済 + クーポン対応</span>
+  </div>
+</div>"##, total = total_active)
+    };
     let body = format!(
         r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -2888,6 +2911,8 @@ nav .brand{{font-weight:900;letter-spacing:0.4em}}
 .pg-count{{color:rgba(245,245,240,0.5);font-size:11px;font-family:monospace}}
 footer{{padding:30px 24px 50px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;color:rgba(245,245,240,0.5);font-size:10px;letter-spacing:0.15em}}
 footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
+.cardplay{{position:absolute;top:8px;right:8px;z-index:2;width:38px;height:38px;border-radius:50%;border:1px solid rgba(255,215,0,.8);background:rgba(0,0,0,.66);color:#fff;font-size:13px;cursor:pointer;backdrop-filter:blur(4px)}}
+.cardplay:hover{{background:rgba(0,0,0,.85)}}
 </style></head><body>
 <nav>
   <a class="brand" href="/">MU</a>
@@ -2897,16 +2922,7 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
     <a href="/heritage" style="margin-left:14px">HERITAGE</a>
   </div>
 </nav>
-<div class="hero">
-  <h1>━◯━ 知ってる人にだけ届く wearable.</h1>
-  <p>柔術・コーヒー・地域 ── 10+ コラボの "内側からの服"。 受注生産 — 1 着から、 完売・廃棄ゼロ。 <strong style="color:#ffd700">{total} 件</strong> 公開中。</p>
-  <div class="trust">
-    <span><strong>国際発送</strong> 7-14 日 (DHL / FedEx)</span>
-    <span><strong>1 着から</strong> オーダー可</span>
-    <span><strong>Bella+Canvas / AOP rashguard</strong> 等プレミアム生地</span>
-    <span><strong>Stripe</strong> 安全決済 + クーポン対応</span>
-  </div>
-</div>
+{hero}
 <div class="chips">{brand_chips}</div>
 {body_or_empty}
 {pagination}
@@ -2920,10 +2936,35 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
   <a href="/buy">drops</a>
   <a href="mailto:info@enablerdao.com">CONTACT</a>
 </footer>
+<script>
+  // 一覧の▶試聴: カードのリンク遷移を止めてArweave音源を再生(涼介FB: 聴き比べ)
+  window.muSRC={{
+    "everybody-say-bjj":"https://gateway.irys.xyz/5jsmQoNNekanEGMBUEhSLoZyxGXSDZL5taMZfwwrEC1c/everybody-say-bjj.mp3",
+    "shio-to-pixel":"https://gateway.irys.xyz/5jsmQoNNekanEGMBUEhSLoZyxGXSDZL5taMZfwwrEC1c/shio-to-pixel.mp3",
+    "musubinaosu-asa":"https://gateway.irys.xyz/5jsmQoNNekanEGMBUEhSLoZyxGXSDZL5taMZfwwrEC1c/musubinaosu-asa.mp3",
+    "hello-2150":"https://gateway.irys.xyz/5jsmQoNNekanEGMBUEhSLoZyxGXSDZL5taMZfwwrEC1c/hello-2150.mp3",
+    "i-love-you":"https://gateway.irys.xyz/5jsmQoNNekanEGMBUEhSLoZyxGXSDZL5taMZfwwrEC1c/i-love-you.mp3",
+    "i-need-your-attention":"https://gateway.irys.xyz/5jsmQoNNekanEGMBUEhSLoZyxGXSDZL5taMZfwwrEC1c/i-need-your-attention.mp3",
+    "free-to-change":"https://gateway.irys.xyz/5jsmQoNNekanEGMBUEhSLoZyxGXSDZL5taMZfwwrEC1c/free-to-change.mp3",
+    "attention-kudasai":"https://gateway.irys.xyz/5jsmQoNNekanEGMBUEhSLoZyxGXSDZL5taMZfwwrEC1c/attention-kudasai.mp3"
+  }};
+  window.muAudio=null; window.muBtn=null;
+  window.muPlay=function(e,btn){{
+    e.preventDefault(); e.stopPropagation();
+    var key=btn.getAttribute('data-key'); var src=window.muSRC[key];
+    if(!src){{window.open('https://mu.koe.live/oto.html?s='+key,'_blank');return;}}
+    if(window.muBtn===btn && window.muAudio && !window.muAudio.paused){{window.muAudio.pause();btn.textContent='▶';return;}}
+    if(window.muBtn && window.muBtn!==btn) window.muBtn.textContent='▶';
+    if(!window.muAudio) window.muAudio=new Audio();
+    window.muAudio.src=src; window.muAudio.play(); btn.textContent='❚❚'; window.muBtn=btn;
+    window.muAudio.onended=function(){{btn.textContent='▶';}};
+  }};
+</script>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </body></html>"##,
         title = html_text(&title),
         total = total_active,
+        hero = hero_html,
         brand_chips = brand_chips,
         body_or_empty = if items.is_empty() {
             r#"<div class="empty">該当する商品がありません。</div>"#.to_string()
@@ -4845,10 +4886,19 @@ fn render_card(p: &ProductRow) -> String {
     } else {
         String::new()
     };
+    // 一覧でも試聴: desc に oto.html?s=KEY があればミニ▶(涼介FB: 聴き比べ→まとめ買い)
+    let listen_mini = if let Some(pos) = p.desc.find("oto.html?s=") {
+        let key: String = p.desc[pos + "oto.html?s=".len()..].chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect();
+        if key.is_empty() { String::new() } else {
+            format!(r##"<button class="cardplay" data-key="{k}" aria-label="試聴" onclick="muPlay(event,this)">▶</button>"##, k = html_attr(&key))
+        }
+    } else { String::new() };
     format!(
-        r##"<a class="card" href="/shop/{sku_enc}"><span class="img" style="position:relative;display:block">{sold_badge}<img src="{img}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/static/designs/marker_zero.png';this.style.objectFit='contain';this.style.background='#0a0a0a';this.style.padding='28px'"></span><span class="body"><span class="brand">{brand}</span><span class="name">{name}</span><span class="price">¥{price}</span></span></a>"##,
+        r##"<a class="card" href="/shop/{sku_enc}"><span class="img" style="position:relative;display:block">{sold_badge}{listen_mini}<img src="{img}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/static/designs/marker_zero.png';this.style.objectFit='contain';this.style.background='#0a0a0a';this.style.padding='28px'"></span><span class="body"><span class="brand">{brand}</span><span class="name">{name}</span><span class="price">¥{price}</span></span></a>"##,
         sku_enc = urlencoding::encode(&p.sku),
         sold_badge = sold_badge,
+        listen_mini = listen_mini,
         img = html_attr(&img),
         brand = html_text(&p.brand),
         name = html_text(&p.desc),
