@@ -67170,6 +67170,7 @@ async fn main() {
         .route("/api/ma/review/queue", get(agent_api::ma_review_queue))
         .route("/api/ma/review/:sku/approve", post(agent_api::ma_review_approve))
         .route("/api/ma/review/:sku/reject", post(agent_api::ma_review_reject))
+        .route("/api/agent/credits/grant", post(agent_api::agent_grant_credits))
         .route("/api/collab/session", get(collab_session_info))
         .route("/api/collab/sub/checkout", post(collab_sub_checkout))
         .route("/api/product/collab/:slug", get(api_product_collab))
