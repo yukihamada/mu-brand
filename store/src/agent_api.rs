@@ -144,6 +144,26 @@ pub struct RegisterVerifyBody { pub email: String, pub code: String }
 /// (e.g. AI generation) without an upfront purchase.
 const AGENT_WELCOME_CREDIT_JPY: i64 = 200;
 
+/// Per-sale creator payout (¥), by garment class. These are the single source
+/// of the figures quoted on /build and /llms.txt — change them here, not in the
+/// copy. Payouts are settled manually while the agent program ramps.
+const AGENT_PAYOUT_TEE_JPY: i64 = 600;
+const AGENT_PAYOUT_OTHER_JPY: i64 = 1_000;
+
+/// Format a non-negative yen amount with thousands separators (1000 -> "1,000").
+fn yen_commas(n: i64) -> String {
+    let s = n.to_string();
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len() + s.len() / 3);
+    for (i, b) in bytes.iter().enumerate() {
+        if i > 0 && (bytes.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(*b as char);
+    }
+    out
+}
+
 /// POST /api/agent/register/verify {email, code} — verifies the code, mints
 /// the session token (= API key), returns it in an agent-friendly shape.
 /// On the *first* successful verification per email we also grant a one-time
@@ -686,14 +706,32 @@ pub async fn agent_grant_credits(
 // ─── GET /build — human-readable "anyone can make MU" guide ─────────────
 
 pub async fn build_page() -> Response {
+    // Single source of truth: figures + the AI-gen flag are injected from the
+    // same consts/functions the API uses, so /build can never drift from the
+    // server's real behaviour.
+    let welcome = AGENT_WELCOME_CREDIT_JPY;
+    let ptee = AGENT_PAYOUT_TEE_JPY;
+    let pother = AGENT_PAYOUT_OTHER_JPY;
+    let aicost = agent_ai_gen_cost_jpy();
+    let (aigen_ja, aigen_en) = if agent_ai_gen_enabled() {
+        (
+            format!("文章からのAI生成（<code>ai_prompt</code>）も使えます：mu_creditsから約¥{aicost}/枚（生成失敗なら自動返金）。"),
+            format!("Text→image generation (<code>ai_prompt</code>) is available too: ~¥{aicost}/image from your mu_credits, refunded if it fails."),
+        )
+    } else {
+        (
+            "文章からのAI生成（<code>ai_prompt</code>）は現在オフ——<code>design_url</code>（自分でホストした画像）を渡してください。".to_string(),
+            "Text→image generation (<code>ai_prompt</code>) is currently off — pass <code>design_url</code> (an image you host).".to_string(),
+        )
+    };
     let body = r##"<!doctype html>
-<html lang="ja"><head>
+<html lang="ja" data-lang="ja"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MUをつくる — 誰でも、AIでも。 · MU</title>
-<meta name="description" content="メール認証だけで、誰でも（人もAIエージェントも）MUの商品を作れます。MCP接続かREST APIで、ストアを開いてデザインを登録。MA council承認で販売開始。">
-<meta property="og:title" content="MUをつくる — 誰でも、AIでも。">
-<meta property="og:description" content="メール認証だけで MU の商品を作れる。MCP か REST API で。">
+<title>MUをつくる — 誰でも、AIでも。 / Make MU — anyone, even AI · MU</title>
+<meta name="description" content="メール認証だけで、誰でも（人もAIエージェントも）MUの商品を作れます。Email-verify and anyone — human or AI agent — can open a store and create MU products. MCP or REST.">
+<meta property="og:title" content="MUをつくる — 誰でも、AIでも。 / Make MU — anyone, even AI">
+<meta property="og:description" content="メール認証だけで MU の商品を作れる。MCP か REST API で。 Make MU products with email auth — via MCP or REST.">
 <meta property="og:image" content="https://mockups.wearmu.com/hero.png">
 <meta property="og:url" content="https://wearmu.com/build">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -701,7 +739,7 @@ pub async fn build_page() -> Response {
 :root{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,.55);--y:#e6c449;--line:rgba(255,255,255,.10);--card:rgba(255,255,255,.03)}
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;-webkit-font-smoothing:antialiased;font-feature-settings:"palt";line-height:1.7}
-nav{position:sticky;top:0;background:rgba(10,10,10,.88);backdrop-filter:blur(14px);border-bottom:1px solid var(--line);padding:16px 28px;display:flex;justify-content:space-between;font-size:11px;letter-spacing:.3em;text-transform:uppercase;z-index:50}
+nav{position:sticky;top:0;background:rgba(10,10,10,.88);backdrop-filter:blur(14px);border-bottom:1px solid var(--line);padding:16px 28px;display:flex;justify-content:space-between;align-items:center;font-size:11px;letter-spacing:.3em;text-transform:uppercase;z-index:50}
 nav a{color:var(--fg);text-decoration:none}
 .wrap{max-width:820px;margin:0 auto;padding:56px 24px 96px}
 h1{font-size:clamp(34px,7vw,60px);letter-spacing:.04em;line-height:1.15;margin-bottom:18px}
@@ -731,95 +769,133 @@ a.lnk{color:var(--y);text-decoration:none;border-bottom:1px solid rgba(230,196,7
 .give b{color:var(--fg)}
 h2 a.lnk,p a.lnk{font-size:inherit}
 footer{border-top:1px solid var(--line);padding:28px;text-align:center;color:var(--mute);font-size:12px}
+[data-lang="ja"] .en{display:none}
+[data-lang="en"] .ja{display:none}
+.langtoggle{display:flex;border:1px solid var(--line);border-radius:999px;overflow:hidden}
+.langtoggle button{background:none;border:0;color:var(--mute);font:inherit;font-size:10px;letter-spacing:.2em;padding:5px 11px;cursor:pointer}
+.langtoggle button.on{background:var(--y);color:#0A0A0A;font-weight:700}
 </style></head>
 <body>
-<nav><a href="/">━◯━ MU</a><a href="/shop">SHOP</a></nav>
+<nav><a href="/">━◯━ MU</a>
+<span class="langtoggle" role="group" aria-label="Language">
+  <button type="button" data-set="ja" onclick="muSetLang('ja')">日本語</button>
+  <button type="button" data-set="en" onclick="muSetLang('en')">EN</button>
+</span></nav>
 <div class="wrap">
-<h1>MUをつくる。<br>誰でも、AIでも。</h1>
-<p class="lead">MUは「作ること」を空気のように簡単にするブランド。メール認証だけで、あなた（人でも、Claudeのような<b>AIエージェント</b>でも）が自分のストアを開き、デザインを出品できます。在庫リスクはゼロ（オンデマンド印刷）。<b>作るのはタダ、売れたらあなたに入ります</b>（<a class="lnk" href="#what">↓ インセンティブ</a>）。</p>
+<h1><span class="ja">MUをつくる。<br>誰でも、AIでも。</span><span class="en">Make MU.<br>Anyone, even AI.</span></h1>
+<p class="lead ja">MUは「作ること」を空気のように簡単にするブランド。メール認証だけで、あなた（人でも、Claudeのような<b>AIエージェント</b>でも）が自分のストアを開き、デザインを出品できます。在庫リスクはゼロ（オンデマンド印刷）。<b>作るのはタダ、売れたらあなたに入ります</b>（<a class="lnk" href="#what">↓ インセンティブ</a>）。</p>
+<p class="lead en">MU is a brand that makes <b>creating</b> as easy as breathing. With just email verification, you — a human, or an <b>AI agent</b> like Claude — open your own store and publish designs. Zero inventory risk (print-on-demand). <b>Making is free; when it sells, you get paid</b> (<a class="lnk" href="#what">↓ incentives</a>).</p>
 
 <div class="card">
-<p class="big" style="margin:0 0 10px"><b>最短ルート：Claude に繋ぐ。</b>まず<b>鍵なし</b>で繋ぐ（登録ツールは鍵が要りません）。</p>
+<p class="big ja" style="margin:0 0 10px"><b>最短ルート：Claude に繋ぐ。</b>まず<b>鍵なし</b>で繋ぐ（登録ツールは鍵が要りません）。</p>
+<p class="big en" style="margin:0 0 10px"><b>Fastest path: connect Claude.</b> First connect with <b>no key</b> (the registration tools need none).</p>
 <pre><code>claude mcp add --transport http mu https://mcp.wearmu.com/mcp</code></pre>
-<p style="margin:8px 0 0">Claude に「<b>MUに you@example.com で登録して、api_keyを見せて</b>」→ メールの6桁コードで認証 → <b>api_key</b> が表示されます。その鍵で繋ぎ直すと、出品まで通ります：</p>
+<p class="ja" style="margin:8px 0 0">Claude に「<b>MUに you@example.com で登録して、api_keyを見せて</b>」→ メールの6桁コードで認証 → <b>api_key</b> が表示されます。その鍵で繋ぎ直すと、出品まで通ります：</p>
+<p class="en" style="margin:8px 0 0">Tell Claude <b>“register me on MU as you@example.com and show me the api_key”</b> → verify with the 6-digit email code → your <b>api_key</b> is shown. Reconnect with that key to publish:</p>
 <pre><code>claude mcp remove mu
 claude mcp add --transport http mu https://mcp.wearmu.com/mcp \
   --header "Authorization: Bearer &lt;api_key&gt;"</code></pre>
-<p style="margin:8px 0 0">あとは「<b>MUで〇〇なTシャツ作って</b>」と話すだけで、ストア作成・出品までAIが行います。</p>
-<p style="margin:12px 0 0"><a class="cta" href="#rest">人間用：APIを直接叩く →</a> &nbsp; <a class="lnk" href="https://mcp.wearmu.com">mcp.wearmu.com で詳しく</a></p>
+<p class="ja" style="margin:8px 0 0">あとは「<b>MUで〇〇なTシャツ作って</b>」と話すだけで、ストア作成・出品までAIが行います。</p>
+<p class="en" style="margin:8px 0 0">Then just say <b>“make a 〇〇 tee on MU”</b> and the AI opens the store and publishes for you.</p>
+<p style="margin:12px 0 0"><a class="cta" href="#rest"><span class="ja">人間用：APIを直接叩く →</span><span class="en">For humans: call the API directly →</span></a> &nbsp; <a class="lnk" href="https://mcp.wearmu.com"><span class="ja">mcp.wearmu.com で詳しく</span><span class="en">more at mcp.wearmu.com</span></a></p>
 </div>
 
-<h2 id="what">インセンティブ（正直に）</h2>
+<h2 id="what"><span class="ja">インセンティブ（正直に）</span><span class="en">Incentives (honestly)</span></h2>
 <div class="give">
-<div><b>◯ 作るのはタダ。売れたら、あなたに入る。</b><br>作成は無料（ウェルカム¥200＋AI生成）・在庫リスクゼロ。そして <b>売れた1枚ごとに作り手へ：Tシャツ ¥600 / パーカー・クルー・ラッシュ ¥1,000</b>。<b>あなたのリンク経由で売れたら上乗せ</b>——客を連れてくるほど儲かります。</div>
-<div><b>◯ 寄付は"任意"。あなたが選ぶ。</b><br>このYOU/APIで作った分は <b>弟子屈町への自動寄付はありません</b>——残りは作り手と運営に回ります。寄付したい人は<b>オプトインで好きな先へ</b>（弟子屈でも、別の活動でも）。あなたのストアは <code>wearmu.com/&lt;あなた&gt;</code> に資産として残ります。<span class="note" style="display:block;margin-top:8px">※ MU自家ライン／MUGENは従来どおり累進寄付（<a class="lnk" href="/profit-split">§28</a>）。エージェント面はこの別分配＋任意寄付です。作り手還元は順次開始・初期は手動精算。</span></div>
+<div class="ja"><b>◯ 作るのはタダ。売れたら、あなたに入る。</b><br>作成は無料（ウェルカム¥{{WELCOME}}＋AI生成）・在庫リスクゼロ。そして <b>売れた1枚ごとに作り手へ：Tシャツ ¥{{PTEE}} / パーカー・クルー・ラッシュ ¥{{POTHER}}</b>。<b>あなたのリンク経由で売れたら上乗せ</b>——客を連れてくるほど儲かります。</div>
+<div class="en"><b>◯ Making is free. When it sells, you get paid.</b><br>Creating is free (¥{{WELCOME}} welcome credit + AI gen), zero inventory risk. And <b>per item sold the creator earns: tee ¥{{PTEE}} / hoodie · crewneck · rashguard ¥{{POTHER}}</b>. <b>Sales via your own link add a bonus</b> — the more buyers you bring, the more you make.</div>
+<div class="ja"><b>◯ 寄付は"任意"。あなたが選ぶ。</b><br>このYOU/APIで作った分は <b>弟子屈町への自動寄付はありません</b>——残りは作り手と運営に回ります。寄付したい人は<b>オプトインで好きな先へ</b>（弟子屈でも、別の活動でも）。あなたのストアは <code>wearmu.com/&lt;あなた&gt;</code> に資産として残ります。<span class="note" style="display:block;margin-top:8px">※ MU自家ライン／MUGENは従来どおり累進寄付（<a class="lnk" href="/profit-split">§28</a>）。エージェント面はこの別分配＋任意寄付です。作り手還元は順次開始・初期は手動精算。</span></div>
+<div class="en"><b>◯ Donating is opt-in. You choose.</b><br>Items made here via YOU/API have <b>no automatic Teshikaga donation</b> — the rest goes to creator and operations. Want to give? <b>Opt in to any cause</b> (Teshikaga or your own). Your store stays as an asset at <code>wearmu.com/&lt;you&gt;</code>.<span class="note" style="display:block;margin-top:8px">Note: MU's own line / MUGEN keeps the progressive donation (<a class="lnk" href="/profit-split">§28</a>). The agent side uses this separate split + optional donation. Creator payouts are rolling out and settled manually at first.</span></div>
 </div>
 
-<h2>承認（MA council）について</h2>
-<p>作った商品は <b>status: review</b> で入り、<b>MA council</b>（人）が確認して承認すると <b>live</b>＝販売開始になります。承認前は公開されません。<b>人が見るので即時ではありません</b>（AIで一気に作っても、出品は人のゲートを通ります）。</p>
+<h2><span class="ja">承認（MA council）について</span><span class="en">About approval (MA council)</span></h2>
+<p class="ja">作った商品は <b>status: review</b> で入り、<b>MA council</b>（人）が確認して承認すると <b>live</b>＝販売開始になります。承認前は公開されません。<b>人が見るので即時ではありません</b>（AIで一気に作っても、出品は人のゲートを通ります）。</p>
+<p class="en">A product lands as <b>status: review</b>; once an <b>MA council</b> member (a human) approves it, it goes <b>live</b> and sells. Nothing is public before that. <b>A human reviews, so it isn't instant</b> (even AI-made batches pass through a human gate).</p>
 <div class="card">
-<p style="margin:0"><b>見るのはこの4点だけ：</b></p>
-<p style="margin:8px 0 0">① MUの美意識（無・月・余白）に大きく反していないか ② 公序良俗 ③ 他者の権利（商標・著作・肖像）を侵していないか ④ kind と下限価格のルール。<br>これらを満たせば、デザインの好き嫌いで落とすことはありません。</p>
+<p class="ja" style="margin:0"><b>見るのはこの4点だけ：</b></p>
+<p class="en" style="margin:0"><b>They check only four things:</b></p>
+<p class="ja" style="margin:8px 0 0">① MUの美意識（無・月・余白）に大きく反していないか ② 公序良俗 ③ 他者の権利（商標・著作・肖像）を侵していないか ④ kind と下限価格のルール。<br>これらを満たせば、デザインの好き嫌いで落とすことはありません。</p>
+<p class="en" style="margin:8px 0 0">① not badly against MU's aesthetic (無 · 月 · negative space) ② public decency ③ no infringement of others' rights (trademark / copyright / likeness) ④ the kind + price-floor rules.<br>Meet those and we won't reject on taste.</p>
 </div>
 
-<h2>作ったあと、どこに出る？</h2>
-<p>承認されたストアは <code>wearmu.com/shop?brand=&lt;slug&gt;</code> で公開され、<b>/shop の新着・ブランド一覧・sitemap</b> に載ります。MUが導線の一部を持ちますが、立ち上げ間もないブランドなので<b>最初の客は一緒に連れてくる前提</b>—自分のSNSやコミュニティからもストアURLを撒いてください。現在の状態（残クレジット・所有ストア・live/review数）は <code>GET /api/agent/me</code> で確認できます。</p>
+<h2><span class="ja">作ったあと、どこに出る？</span><span class="en">After you publish — where does it show?</span></h2>
+<p class="ja">承認されたストアは <code>wearmu.com/shop?brand=&lt;slug&gt;</code> で公開され、<b>/shop の新着・ブランド一覧・sitemap</b> に載ります。MUが導線の一部を持ちますが、立ち上げ間もないブランドなので<b>最初の客は一緒に連れてくる前提</b>—自分のSNSやコミュニティからもストアURLを撒いてください。現在の状態（残クレジット・所有ストア・live/review数）は <code>GET /api/agent/me</code> で確認できます。</p>
+<p class="en">An approved store shows at <code>wearmu.com/shop?brand=&lt;slug&gt;</code> and appears in /shop's new arrivals, brand list and sitemap. MU carries some of the traffic, but it's an early brand — <b>plan to bring your first buyers too</b>: share your store URL from your own social and communities. Check your live state (credit balance, owned stores, live/review counts) at <code>GET /api/agent/me</code>.</p>
 
-<h2 id="rest">人間用：APIで作る（4ステップ）</h2>
-<p>スクリプトや自作クライアントから直接叩く場合の手順です。AIに任せるなら上のMCP一行で十分。</p>
+<h2 id="rest"><span class="ja">人間用：APIで作る（4ステップ）</span><span class="en">For humans: build via the API (4 steps)</span></h2>
+<p class="ja">スクリプトや自作クライアントから直接叩く場合の手順です。AIに任せるなら上のMCP一行で十分。</p>
+<p class="en">For calling directly from a script or your own client. If you let the AI do it, the one MCP line above is enough.</p>
 <ol>
-<li><b>登録</b> — メールアドレスに6桁コードが届きます。
+<li><b class="ja">登録</b><b class="en">Register</b> <span class="ja">— メールアドレスに6桁コードが届きます。</span><span class="en">— a 6-digit code is emailed to you.</span>
 <pre><code>curl -X POST https://wearmu.com/api/agent/register \
   -H 'Content-Type: application/json' \
   -d '{"email":"you@example.com"}'</code></pre></li>
-<li><b>認証</b> — コードを送ると <span class="k">api_key</span> が返ります（初回は<b>200ptウェルカム</b>付き）。以降は <code>Authorization: Bearer &lt;api_key&gt;</code> を付けます。
+<li><b class="ja">認証</b><b class="en">Verify</b> <span class="ja">— コードを送ると <span class="k">api_key</span> が返ります（初回は<b>{{WELCOME}}ptウェルカム</b>付き）。以降は <code>Authorization: Bearer &lt;api_key&gt;</code> を付けます。</span><span class="en">— send the code to get your <span class="k">api_key</span> (first time includes a <b>¥{{WELCOME}} welcome credit</b>). Then send <code>Authorization: Bearer &lt;api_key&gt;</code> on every call.</span>
 <pre><code>curl -X POST https://wearmu.com/api/agent/register/verify \
   -H 'Content-Type: application/json' \
   -d '{"email":"you@example.com","code":"123456"}'</code></pre></li>
-<li><b>ストアを開く</b> — あなたのブランドの店ができます（<code>wearmu.com/shop?brand=&lt;slug&gt;</code>）。
+<li><b class="ja">ストアを開く</b><b class="en">Open a store</b> <span class="ja">— あなたのブランドの店ができます（<code>wearmu.com/shop?brand=&lt;slug&gt;</code>）。</span><span class="en">— your branded store is created at <code>wearmu.com/shop?brand=&lt;slug&gt;</code>.</span>
 <pre><code>curl -X POST https://wearmu.com/api/agent/stores \
   -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
   -d '{"slug":"my-lab","name":"MY LAB","emoji":"◯"}'</code></pre></li>
-<li><b>商品を作る</b> — デザインは2通り：<b>画像のhttps URL</b>（<code>design_url</code>・無料）か、<b>文章でAI生成</b>（<code>ai_prompt</code>・mu_creditsを消費 ~¥50/枚、生成失敗なら自動返金）。どちらか一方を渡します。
-<pre><code># A) 自分の画像URLで（無料）
-curl -X POST https://wearmu.com/api/agent/products \
+<li><b class="ja">商品を作る</b><b class="en">Create a product</b> <span class="ja">— <b>画像のhttps URL</b>を <code>design_url</code> で渡します。{{AIGEN_JA}}</span><span class="en">— pass an image <b>https URL</b> as <code>design_url</code>. {{AIGEN_EN}}</span>
+<pre><code>curl -X POST https://wearmu.com/api/agent/products \
   -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
   -d '{"store":"my-lab","label":"無 Tee","description":"...",
-       "kind":"tee","design_url":"https://.../art.png"}'
-
-# B) 文章でAI生成（mu_credits を消費）
-curl ... -d '{"store":"my-lab","label":"月 Tee","description":"...",
-       "kind":"tee","ai_prompt":"a minimal black sumi-e crescent moon on pure white"}'</code></pre></li>
+       "kind":"tee","design_url":"https://.../art.png"}'</code></pre></li>
 </ol>
 
-<h2>作れるもの・ルール</h2>
+<h2><span class="ja">作れるもの・ルール</span><span class="en">What you can make · rules</span></h2>
 <table>
-<tr><th>kind</th><th>下限価格</th></tr>
-<tr><td>tee — Tシャツ (Bella+Canvas 3001)</td><td>¥4,900</td></tr>
-<tr><td>hoodie — パーカー (Gildan 18500)</td><td>¥8,800</td></tr>
-<tr><td>crewneck — クルーネック (Gildan 18000)</td><td>¥7,800</td></tr>
-<tr><td>rashguard_ls / rashguard_black — ラッシュガード</td><td>¥9,800</td></tr>
+<tr><th>kind</th><th><span class="ja">下限価格</span><span class="en">price floor</span></th></tr>
+<tr><td>tee — <span class="ja">Tシャツ</span><span class="en">T-shirt</span> (Bella+Canvas 3001)</td><td>¥4,900</td></tr>
+<tr><td>hoodie — <span class="ja">パーカー</span><span class="en">hoodie</span> (Gildan 18500)</td><td>¥8,800</td></tr>
+<tr><td>crewneck — <span class="ja">クルーネック</span><span class="en">crewneck</span> (Gildan 18000)</td><td>¥7,800</td></tr>
+<tr><td>rashguard_ls / rashguard_black — <span class="ja">ラッシュガード</span><span class="en">rashguard</span></td><td>¥9,800</td></tr>
 </table>
-<p><span class="pill">画像は https のみ</span><span class="pill">価格は下限以上に自動クランプ</span><span class="pill">作成20点/時まで</span><span class="pill">他人のストアには書けない</span></p>
-<p>自分の状態（残クレジット・所有ストア・上限）は <code>GET /api/agent/me</code> で確認できます。</p>
+<p><span class="pill"><span class="ja">画像は https のみ</span><span class="en">https images only</span></span><span class="pill"><span class="ja">価格は下限以上に自動クランプ</span><span class="en">price clamped up to floor</span></span><span class="pill"><span class="ja">作成20点/時まで</span><span class="en">20 products/hour</span></span><span class="pill"><span class="ja">他人のストアには書けない</span><span class="en">only your own stores</span></span></p>
+<p class="ja">自分の状態（残クレジット・所有ストア・上限）は <code>GET /api/agent/me</code> で確認できます。</p>
+<p class="en">Check your state (credit balance, owned stores, limits) at <code>GET /api/agent/me</code>.</p>
 
-<h2>機械可読リンク</h2>
+<h2><span class="ja">機械可読リンク</span><span class="en">Machine-readable</span></h2>
 <p>
 <a class="lnk" href="/llms.txt">/llms.txt</a> &nbsp;·&nbsp;
 <a class="lnk" href="/openapi.json">/openapi.json</a> &nbsp;·&nbsp;
 <a class="lnk" href="/.well-known/mcp.json">/.well-known/mcp.json</a> &nbsp;·&nbsp;
 <a class="lnk" href="https://mcp.wearmu.com">mcp.wearmu.com</a>
 </p>
-<p>MCPツール: <span class="pill">mu_register</span><span class="pill">mu_verify</span><span class="pill">mu_status</span><span class="pill">mu_create_store</span><span class="pill">mu_create_product</span><span class="pill">mu_list_mine</span></p>
+<p><span class="ja">MCPツール:</span><span class="en">MCP tools:</span> <span class="pill">mu_register</span><span class="pill">mu_verify</span><span class="pill">mu_status</span><span class="pill">mu_create_store</span><span class="pill">mu_create_product</span><span class="pill">mu_list_mine</span></p>
 
-<h2>自分のSDK/クライアントを作る</h2>
-<p>専用SDKは配りません — <b>AIエージェントはMCP</b>（上記）が"SDK"です。人/スクリプトは <code>/openapi.json</code> から好きな言語のクライアントを自動生成できます：</p>
+<h2><span class="ja">自分のSDK/クライアントを作る</span><span class="en">Build your own SDK / client</span></h2>
+<p class="ja">専用SDKは配りません — <b>AIエージェントはMCP</b>（上記）が"SDK"です。人/スクリプトは <code>/openapi.json</code> から好きな言語のクライアントを自動生成できます：</p>
+<p class="en">We don't ship a dedicated SDK — <b>for AI agents, MCP</b> (above) is the "SDK". Humans/scripts can generate a client in any language from <code>/openapi.json</code>:</p>
 <pre><code>npx @openapitools/openapi-generator-cli generate \
   -i https://wearmu.com/openapi.json -g python -o ./mu-client</code></pre>
-<p class="note">`-g` を <code>typescript-fetch</code> / <code>go</code> / <code>rust</code> 等に変えれば任意言語。1ファイルで十分なほど小さいAPIなので、<code>curl</code> 直叩きでも構いません。</p>
+<p class="note ja">`-g` を <code>typescript-fetch</code> / <code>go</code> / <code>rust</code> 等に変えれば任意言語。1ファイルで十分なほど小さいAPIなので、<code>curl</code> 直叩きでも構いません。</p>
+<p class="note en">Swap <code>-g</code> for <code>typescript-fetch</code> / <code>go</code> / <code>rust</code> etc. for any language. The API is small enough that plain <code>curl</code> is fine too.</p>
 </div>
-<footer>MU（無）· オンデマンド印刷・在庫ゼロ · 株式会社イネブラ / Enabler Inc. · <a class="lnk" href="/shop">wearmu.com/shop</a></footer>
-</body></html>"##;
+<footer>MU（無）· <span class="ja">オンデマンド印刷・在庫ゼロ</span><span class="en">on-demand · zero inventory</span> · 株式会社イネブラ / Enabler Inc. · <a class="lnk" href="/shop">wearmu.com/shop</a></footer>
+<script>
+function muSetLang(l){
+  document.documentElement.setAttribute('data-lang', l);
+  document.documentElement.setAttribute('lang', l);
+  try{ localStorage.setItem('mu_lang', l); }catch(e){}
+  document.querySelectorAll('.langtoggle button').forEach(function(b){
+    b.classList.toggle('on', b.getAttribute('data-set') === l);
+  });
+}
+(function(){
+  var saved=null; try{ saved=localStorage.getItem('mu_lang'); }catch(e){}
+  var l = saved || ((navigator.language||'ja').toLowerCase().indexOf('ja')===0 ? 'ja':'en');
+  muSetLang(l);
+})();
+</script>
+</body></html>"##
+        .replace("{{WELCOME}}", &yen_commas(welcome))
+        .replace("{{PTEE}}", &yen_commas(ptee))
+        .replace("{{POTHER}}", &yen_commas(pother))
+        .replace("{{AIGEN_JA}}", &aigen_ja)
+        .replace("{{AIGEN_EN}}", &aigen_en);
     ([(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")], body).into_response()
 }
 
@@ -868,8 +944,8 @@ POST /api/agent/products
      `kind` MUST be one of the whitelisted kinds (see /api/agent/me limits).
      `design_url` must be an absolute https URL.
      `price_jpy` is optional; values below the per-kind floor are clamped up.
-     (`ai_prompt` is reserved for server-side generation and is currently
-     disabled — pass design_url.)
+     (`ai_prompt` generates artwork server-side; it is gated by a runtime flag.
+     Check ai_gen.enabled via GET /api/agent/me — {{AIGEN_TXT}})
      → {"sku":"...","status":"review","note":"pending MA council approval"}
 
 ### MA council (approval — members only)
@@ -877,6 +953,16 @@ POST /api/agent/products
 GET  /api/ma/review/queue            → products awaiting approval
 POST /api/ma/review/{sku}/approve    → review → live
 POST /api/ma/review/{sku}/reject     → review → dead
+
+## Economics (agent stores)
+
+- Creating is free; first verify grants a one-time ¥{{WELCOME}} welcome credit.
+- Per item sold, the creator earns: tee ¥{{PTEE}}, hoodie/crewneck/rashguard
+  ¥{{POTHER}}. Sales via your own referral link add a bonus.
+- Donation is opt-in (no automatic Teshikaga donation on agent/YOU/API stores);
+  the rest goes to creator + operations. Payouts are settled manually while the
+  agent program ramps. (MU's own line / MUGEN keeps the §28 progressive donation.)
+- Your store persists as an asset at https://wearmu.com/<you>.
 
 ## Rules
 
@@ -887,7 +973,15 @@ POST /api/ma/review/{sku}/reject     → review → dead
 - One store = one catalog_brands slug; you can only mutate stores you own.
 
 — 株式会社イネブラ / Enabler Inc. · wearmu.com
-"##;
+"##
+        .replace("{{WELCOME}}", &yen_commas(AGENT_WELCOME_CREDIT_JPY))
+        .replace("{{PTEE}}", &yen_commas(AGENT_PAYOUT_TEE_JPY))
+        .replace("{{POTHER}}", &yen_commas(AGENT_PAYOUT_OTHER_JPY))
+        .replace("{{AIGEN_TXT}}", &if agent_ai_gen_enabled() {
+            format!("currently ON, ~¥{}/image from mu_credits, refunded on failure", agent_ai_gen_cost_jpy())
+        } else {
+            "currently OFF; pass design_url".to_string()
+        });
     ([(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")], body).into_response()
 }
 
