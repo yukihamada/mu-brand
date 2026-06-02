@@ -153,6 +153,18 @@ jobs:
           echo "❌ live /healthz never returned 200 ok:true in 5 min"
           exit 1
 
+      - name: Light the campfire (ともしび)
+        if: success()
+        continue-on-error: true
+        env:
+          TOMOSHIBI_SECRET: ${{ secrets.COMMUNITY_WEBHOOK_SECRET }}
+        run: |
+          [ -z "$TOMOSHIBI_SECRET" ] && exit 0
+          curl -s -m 15 -X POST https://yukihamada.jp/api/community/webhook \
+            -H "Content-Type: application/json" \
+            -H "X-Tomoshibi-Secret: $TOMOSHIBI_SECRET" \
+            -d "{\"text\":\"wearmu.com を本番デプロイ（${GITHUB_SHA:0:7}）\",\"kind\":\"deploy\",\"author\":\"MU / wearmu\",\"url\":\"https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}\"}" || true
+
       - name: Auto-rollback on post-deploy failure
         if: failure() && steps.prev.outputs.previous_version != ''
         env:
