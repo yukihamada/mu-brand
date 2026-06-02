@@ -875,7 +875,51 @@ footer{border-top:1px solid var(--line);padding:28px;text-align:center;color:var
 <h1 data-i18n="build_h1">MUをつくる。<br>誰でも、AIでも。</h1>
 <p class="lead" data-i18n="build_lead">MUは「作ること」を空気のように簡単にするブランド。メール認証だけで、あなた（人でも、Claudeのような<b>AIエージェント</b>でも）が自分のストアを開き、デザインを出品できます。在庫リスクはゼロ（オンデマンド印刷）。<b>作るのはタダ、売れたらあなたに入ります</b>（<a class="lnk" href="#what">↓ インセンティブ</a>）。</p>
 
-<div class="card">
+<!-- 実数の社会的証明バー (/api/transparency から取得・捏造しない) -->
+<div id="mu-proof" style="display:flex;flex-wrap:wrap;gap:10px;margin:18px 0 8px">
+  <div style="flex:1;min-width:120px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px">
+    <div id="mp-sales" style="font-size:24px;color:var(--y);font-feature-settings:'tnum'">—</div>
+    <div style="font-size:11px;color:var(--mute);letter-spacing:.06em" data-i18n="proof_sales">累計の売上（実数）</div>
+  </div>
+  <div style="flex:1;min-width:120px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px">
+    <div id="mp-purchases" style="font-size:24px;color:var(--y);font-feature-settings:'tnum'">—</div>
+    <div style="font-size:11px;color:var(--mute);letter-spacing:.06em" data-i18n="proof_purchases">累計の販売</div>
+  </div>
+  <div style="flex:1;min-width:120px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px">
+    <div id="mp-customers" style="font-size:24px;color:var(--y);font-feature-settings:'tnum'">—</div>
+    <div style="font-size:11px;color:var(--mute);letter-spacing:.06em" data-i18n="proof_customers">お客様</div>
+  </div>
+  <a href="/transparency" style="align-self:center;font-size:11px;color:var(--y);text-decoration:none;border-bottom:1px solid rgba(230,196,73,.4)" data-i18n="proof_link">全数字 →</a>
+</div>
+
+<!-- 二つの道: AI / 人間 -->
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:8px 0 6px">
+  <a href="#fast" style="text-decoration:none;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;color:var(--fg)">
+    <div style="font-size:12px;color:var(--y);letter-spacing:.2em;text-transform:uppercase">▸ AI エージェント</div>
+    <div style="font-size:15px;margin-top:6px" data-i18n="path_ai">Claude に繋いで「作って」と言うだけ →</div>
+  </a>
+  <a href="#human" style="text-decoration:none;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;color:var(--fg)">
+    <div style="font-size:12px;color:var(--y);letter-spacing:.2em;text-transform:uppercase">▸ 人間</div>
+    <div style="font-size:15px;margin-top:6px" data-i18n="path_human">メールだけで30秒、自分の店を持つ →</div>
+  </a>
+</div>
+
+<!-- 人間用 インライン登録 (curl 不要・その場で api_key) -->
+<div class="card" id="human" style="border-color:rgba(230,196,73,.35)">
+<p class="big" style="margin:0 0 10px"><b data-i18n="reg_title">人間用：メールだけで、いま店を持つ。</b> <span style="color:var(--mute)" data-i18n="reg_sub">curl も鍵も要りません。下に入力 → 6桁コード → api_key。</span></p>
+<div id="reg-step1" style="display:flex;gap:8px;flex-wrap:wrap">
+  <input id="reg-email" type="email" placeholder="you@example.com" autocomplete="email" style="flex:1;min-width:220px;background:#000;border:1px solid var(--line);border-radius:10px;color:var(--fg);font:inherit;font-size:15px;padding:12px 14px">
+  <button type="button" id="reg-send" class="cta" style="border:0;cursor:pointer" data-i18n="reg_send">コードを送る</button>
+</div>
+<div id="reg-step2" style="display:none;margin-top:10px;gap:8px;flex-wrap:wrap">
+  <input id="reg-code" inputmode="numeric" maxlength="6" placeholder="メールの6桁コード" style="flex:1;min-width:220px;background:#000;border:1px solid var(--line);border-radius:10px;color:var(--fg);font:inherit;font-size:15px;letter-spacing:.3em;padding:12px 14px">
+  <button type="button" id="reg-verify" class="cta" style="border:0;cursor:pointer" data-i18n="reg_verify">認証して api_key を出す</button>
+</div>
+<div id="reg-msg" style="font-size:13px;color:var(--mute);margin-top:10px;min-height:18px"></div>
+<div id="reg-key" style="display:none;margin-top:8px;background:#000;border:1px solid rgba(230,196,73,.4);border-radius:10px;padding:12px 14px;font-family:ui-monospace,Menlo,monospace;font-size:13px;color:var(--y);word-break:break-all"></div>
+</div>
+
+<div class="card" id="fast">
 <p class="big" style="margin:0 0 10px"><b data-i18n="fastest_title">最短ルート：Claude に繋ぐ。</b> <span data-i18n="fastest_sub">まず<b>鍵なし</b>で繋ぐ（登録ツールは鍵が要りません）。</span></p>
 <pre><code>claude mcp add --transport http mu https://mcp.wearmu.com/mcp</code></pre>
 <p style="margin:8px 0 0" data-i18n="fastest_body">Claude に「<b>MUに you@example.com で登録して、api_keyを見せて</b>」→ メールの6桁コードで認証 → <b>api_key</b> が表示されます。その鍵で繋ぎ直すと、出品まで通ります：</p>
@@ -892,12 +936,67 @@ claude mcp add --transport http mu https://mcp.wearmu.com/mcp \
 <div><span data-i18n="give2"><b>◯ 寄付は"任意"。あなたが選ぶ。</b><br>このYOU/APIで作った分は <b>弟子屈町への自動寄付はありません</b>——残りは作り手と運営に回ります。寄付したい人は<b>オプトインで好きな先へ</b>（弟子屈でも、別の活動でも）。あなたのストアは <code>wearmu.com/&lt;あなた&gt;</code> に資産として残ります。</span><span class="note" style="display:block;margin-top:8px" data-i18n="give2_note">※ MU自家ライン／MUGENは従来どおり累進寄付（<a class="lnk" href="/profit-split">§28</a>）。エージェント面はこの別分配＋任意寄付です。作り手還元は順次開始・初期は手動精算。</span></div>
 </div>
 
+<h2 id="degressive" data-i18n="deg_h2">逓減プライス — 売れるほど、安くなる（順次導入）</h2>
+<p data-i18n="deg_lead">普通は人気が出ると希少性で値を吊り上げます。MUは逆。<b>売れるほど価格が下がり、作り手の取り分は上がり、早く買った人ほど得をする</b>。奪い合いでなく、満ちていく分配です。</p>
+<div class="give">
+<div data-i18n="deg_m1"><b>① 価格は下がる一方</b><br>累計が増えるたびに一段ずつ下がる。一度下げたら上げない＝信頼。</div>
+<div data-i18n="deg_m2"><b>② 早期購入者に遡及還元</b><br>段が下がると、それまで買った全員に差額の一部を MUクレジットで返す。早く買うほど得。</div>
+<div data-i18n="deg_m3"><b>③ 作り手の取り分は上がる</b><br>枚数が増えるほど1枚あたりの取り分が増える。ベストセラーほど報われる。</div>
+</div>
+<table>
+<tr><th data-i18n="deg_th_n">累計</th><th data-i18n="deg_th_price">小売</th><th data-i18n="deg_th_payout">作り手/枚</th><th data-i18n="deg_th_donate">寄付/枚</th><th data-i18n="deg_th_rebate">早期購入者へ</th></tr>
+<tr><td>0–19</td><td>¥4,900</td><td style="color:var(--y)">¥600</td><td>0</td><td>—</td></tr>
+<tr><td>20–99</td><td>¥4,700</td><td style="color:var(--y)">¥700</td><td>¥100</td><td>¥100 還元</td></tr>
+<tr><td>100–499</td><td>¥4,500</td><td style="color:var(--y)">¥750</td><td>¥150</td><td>+¥100</td></tr>
+<tr><td>500+</td><td><b>¥4,400</b></td><td style="color:var(--y)"><b>¥800</b></td><td>¥200</td><td>+¥100</td></tr>
+</table>
+<p class="note" data-i18n="deg_fund">値下げの原資は正直に：①量産による原価減 ②口コミ拡散で広告費が要らなくなる分 ③運営取り分の放棄（比例で増やさない・§28／報酬キャップ）。赤字発行はしません。<b>自分のリンク経由</b>で売れたら +¥300/Tシャツ・+¥500/その他 を上乗せ。</p>
+
+<div class="card" style="border-color:rgba(230,196,73,.35)">
+<p class="big" style="margin:0 0 12px"><b data-i18n="sim_title">収益シミュレータ</b> <span style="color:var(--mute);font-size:13px" data-i18n="sim_sub">（概算・確定報酬＋順次導入の逓減を含む）</span></p>
+<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
+  <label style="font-size:13px;color:var(--mute)" data-i18n="sim_kind_l">品目</label>
+  <select id="sim-kind" style="background:#000;border:1px solid var(--line);border-radius:8px;color:var(--fg);font:inherit;padding:8px 10px">
+    <option value="tee">Tシャツ</option>
+    <option value="other">パーカー/クルー/ラッシュ</option>
+  </select>
+  <label style="font-size:13px;color:var(--mute)"><input type="checkbox" id="sim-self" checked style="vertical-align:middle"> <span data-i18n="sim_self_l">自分のリンクで集客</span></label>
+</div>
+<div style="display:flex;gap:12px;align-items:center;margin:6px 0 4px">
+  <input id="sim-n" type="range" min="1" max="1000" value="100" style="flex:1;accent-color:var(--y)">
+  <span id="sim-n-v" style="min-width:84px;text-align:right;font-feature-settings:'tnum';color:var(--fg)">100 枚</span>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px">
+  <div style="background:#000;border:1px solid var(--line);border-radius:10px;padding:14px 16px">
+    <div style="font-size:11px;color:var(--mute);letter-spacing:.06em" data-i18n="sim_total_l">あなたの累計収益</div>
+    <div id="sim-total" style="font-size:26px;color:var(--y);font-feature-settings:'tnum';margin-top:2px">—</div>
+  </div>
+  <div style="background:#000;border:1px solid var(--line);border-radius:10px;padding:14px 16px">
+    <div style="font-size:11px;color:var(--mute);letter-spacing:.06em" data-i18n="sim_last_l">直近1枚あたり（小売 / あなた）</div>
+    <div id="sim-last" style="font-size:18px;color:var(--fg);font-feature-settings:'tnum';margin-top:6px">—</div>
+  </div>
+</div>
+<p style="font-size:11.5px;color:var(--mute);margin:10px 0 0" data-i18n="sim_note">※ 逓減ラダー・遡及還元は順次導入、精算は当面手動です。確定している即時報酬は Tシャツ¥600 / その他¥1,000。</p>
+</div>
+
+<h2 data-i18n="pay_h2">支払いの約束</h2>
+<div class="card">
+<table style="margin:0">
+<tr><td data-i18n="pay_min">最低支払額</td><td><b>¥3,000</b> <span style="color:var(--mute)" data-i18n="pay_min_d">（未満は翌月へ繰越）</span></td></tr>
+<tr><td data-i18n="pay_cycle">サイクル</td><td data-i18n="pay_cycle_d"><b>月次</b>（前月確定分を当月末までに）</td></tr>
+<tr><td data-i18n="pay_method">方法</td><td data-i18n="pay_method_d">銀行振込 / Wise / PayPay（登録時に選択）</td></tr>
+<tr><td data-i18n="pay_check">確認</td><td><code>GET /api/agent/me</code> <span style="color:var(--mute)" data-i18n="pay_check_d">で残高・履歴</span></td></tr>
+</table>
+</div>
+<p class="note" data-i18n="pay_rights">作ったデザインの権利は<b>作り手に帰属</b>します（MUは販売・印刷のための利用許諾を受けます）。売上は各自の所得です——確定申告・納税は各自でお願いします（日本の方は雑所得/事業所得の扱い）。<b>精算は順次自動化中・初期は手動</b>。金額・条件は予告して変更する場合があります。</p>
+
 <h2 data-i18n="approval_h2">承認（MA council）について</h2>
 <p data-i18n="approval_body">作った商品は <b>status: review</b> で入り、<b>MA council</b>（人）が確認して承認すると <b>live</b>＝販売開始になります。承認前は公開されません。<b>人が見るので即時ではありません</b>（AIで一気に作っても、出品は人のゲートを通ります）。</p>
 <div class="card">
 <p style="margin:0" data-i18n="approval_4title"><b>見るのはこの4点だけ：</b></p>
 <p style="margin:8px 0 0" data-i18n="approval_4body">① MUの美意識（無・月・余白）に大きく反していないか ② 公序良俗 ③ 他者の権利（商標・著作・肖像）を侵していないか ④ kind と下限価格のルール。<br>これらを満たせば、デザインの好き嫌いで落とすことはありません。</p>
 </div>
+<p class="note" data-i18n="approval_sla">目安は<b>通常24〜48時間以内</b>。実績のある作り手には<b>自動承認枠</b>を順次開放します（同じ4点を満たす限り、AIの量産がボトルネックになりません）。</p>
 
 <h2 data-i18n="after_h2">作ったあと、どこに出る？</h2>
 <p data-i18n="after_body">承認されたストアは <code>wearmu.com/shop?brand=&lt;slug&gt;</code> で公開され、<b>/shop の新着・ブランド一覧・sitemap</b> に載ります。MUが導線の一部を持ちますが、立ち上げ間もないブランドなので<b>最初の客は一緒に連れてくる前提</b>—自分のSNSやコミュニティからもストアURLを撒いてください。現在の状態（残クレジット・所有ストア・live/review数）は <code>GET /api/agent/me</code> で確認できます。</p>
@@ -951,6 +1050,71 @@ claude mcp add --transport http mu https://mcp.wearmu.com/mcp \
 <p class="note" data-i18n="sdk_note">`-g` を <code>typescript-fetch</code> / <code>go</code> / <code>rust</code> 等に変えれば任意言語。1ファイルで十分なほど小さいAPIなので、<code>curl</code> 直叩きでも構いません。</p>
 </div>
 <footer>MU（無）· on-demand · zero inventory · 株式会社イネブラ / Enabler Inc. · <a class="lnk" href="/shop">wearmu.com/shop</a></footer>
+<script>
+(function(){
+  function fmtY(n){ try{return '¥'+Math.round(n).toLocaleString('ja-JP');}catch(e){return '¥'+n;} }
+  function fmtN(n){ try{return Number(n).toLocaleString('ja-JP');}catch(e){return ''+n;} }
+  // --- 社会的証明: /api/transparency の実数 (捏造しない) ---
+  fetch('/api/transparency').then(function(r){return r.ok?r.json():null;}).then(function(d){
+    if(!d) return; var ex=d.external||{};
+    var s=document.getElementById('mp-sales'); if(s&&ex.revenue_jpy!=null) s.textContent=fmtY(ex.revenue_jpy);
+    var p=document.getElementById('mp-purchases'); if(p&&ex.purchases!=null) p.textContent=fmtN(ex.purchases);
+    var c=document.getElementById('mp-customers'); if(c&&ex.distinct_customers!=null) c.textContent=fmtN(ex.distinct_customers);
+  }).catch(function(){});
+
+  // --- 収益シミュレータ (概算: 確定報酬 + 順次導入の逓減ラダー) ---
+  var LAD_TEE=[[0,4900,600],[20,4700,700],[100,4500,750],[500,4400,800]];
+  var BASE_OTHER=1000, RETAIL_OTHER=8800, SELF_TEE=300, SELF_OTHER=500;
+  function ladTee(i){ var r=LAD_TEE[0]; for(var k=0;k<LAD_TEE.length;k++){ if(i>=LAD_TEE[k][0]) r=LAD_TEE[k]; } return r; }
+  function sim(){
+    var kEl=document.getElementById('sim-kind'); if(!kEl) return;
+    var kind=kEl.value, self=document.getElementById('sim-self').checked;
+    var n=parseInt(document.getElementById('sim-n').value,10)||0;
+    document.getElementById('sim-n-v').textContent=fmtN(n)+' 枚';
+    var total=0, lastRetail=0, lastPay=0;
+    for(var i=1;i<=n;i++){
+      var retail, pay;
+      if(kind==='tee'){ var r=ladTee(i-1); retail=r[1]; pay=r[2]; if(self) pay+=SELF_TEE; }
+      else { retail=RETAIL_OTHER; pay=BASE_OTHER; if(self) pay+=SELF_OTHER; }
+      total+=pay; lastRetail=retail; lastPay=pay;
+    }
+    document.getElementById('sim-total').textContent=fmtY(total);
+    document.getElementById('sim-last').textContent=fmtY(lastRetail)+' / '+fmtY(lastPay);
+  }
+  ['sim-kind','sim-self','sim-n'].forEach(function(id){var e=document.getElementById(id); if(e){e.addEventListener('input',sim); e.addEventListener('change',sim);}});
+  sim();
+
+  // --- 人間用 インライン登録 (curl 不要) ---
+  var regEmail='';
+  function rmsg(t,c){var m=document.getElementById('reg-msg'); if(m){m.textContent=t; m.style.color=c||'var(--mute)';}}
+  var bs=document.getElementById('reg-send');
+  if(bs) bs.addEventListener('click',function(){
+    regEmail=(document.getElementById('reg-email').value||'').trim();
+    if(!regEmail||regEmail.indexOf('@')<1){rmsg('メールアドレスを入力してください','#e9a0a0');return;}
+    bs.disabled=true; rmsg('送信中…');
+    fetch('/api/agent/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:regEmail})})
+     .then(function(r){return r.json().catch(function(){return {};});})
+     .then(function(){ document.getElementById('reg-step2').style.display='flex'; rmsg('メールに届いた6桁コードを入力してください','var(--y)'); })
+     .catch(function(){ rmsg('送信に失敗しました。少し待って再試行してください','#e9a0a0'); })
+     .finally(function(){ bs.disabled=false; });
+  });
+  var bv=document.getElementById('reg-verify');
+  if(bv) bv.addEventListener('click',function(){
+    var code=(document.getElementById('reg-code').value||'').trim();
+    if(code.length<6){rmsg('6桁コードを入力してください','#e9a0a0');return;}
+    bv.disabled=true; rmsg('認証中…');
+    fetch('/api/agent/register/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:regEmail,code:code})})
+     .then(function(r){return r.json().catch(function(){return {};});})
+     .then(function(d){
+       var key=d.api_key||d.apiKey||d.key;
+       if(key){ var k=document.getElementById('reg-key'); k.style.display='block'; k.textContent='api_key: '+key; rmsg('できました。この鍵を保存して、上の手順か MCP で出品できます。','var(--y)'); }
+       else { rmsg((d.error||'コードが違うか期限切れです'),'#e9a0a0'); }
+     })
+     .catch(function(){ rmsg('認証に失敗しました','#e9a0a0'); })
+     .finally(function(){ bv.disabled=false; });
+  });
+})();
+</script>
 <script>
 var I18N={{I18N_JSON}};
 var MU_DEF='ja', MU_SUP=['ja','en','zh','pt','ko','es'], muOrig={}, muCap=false;
