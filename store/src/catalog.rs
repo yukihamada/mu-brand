@@ -3135,6 +3135,7 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
   <a href="/privacy">プライバシー</a>
   <a href="/heritage">heritage</a>
   <a href="/buy">drops</a>
+  <a href="https://yukihamada.jp/community">🔥 ともしび</a>
   <a href="mailto:info@enablerdao.com">CONTACT</a>
 </footer>
 <script>
