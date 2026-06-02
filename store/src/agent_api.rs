@@ -357,6 +357,102 @@ pub async fn agent_create_store(
     })).into_response()
 }
 
+// ─── POST /api/agent/feedback ───────────────────────────────────────────
+// Lets an agent file a bug report / feature request / improvement against MU
+// itself (the platform, a product, a store). Contract-compliant: NO new
+// tables — rows land in the existing `customer_feedback` table with an
+// `agent_*` kind so MA council / admin triage views surface them alongside
+// human feedback. Auth = same Bearer key as the rest of the agent API.
+#[derive(Deserialize)]
+pub struct AgentFeedbackBody {
+    /// "bug" | "feature" | "improvement"
+    pub category: String,
+    pub title: String,
+    pub description: String,
+    /// optional SKU the feedback is about
+    pub sku: Option<String>,
+    /// optional "critical" | "high" | "medium" | "low" (bug のみ意味を持つ)
+    pub severity: Option<String>,
+}
+
+pub async fn agent_submit_feedback(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+    Json(body): Json<AgentFeedbackBody>,
+) -> Response {
+    let email = match require_email(&db, &headers, Some(&q)) { Ok(e) => e, Err(r) => return r };
+
+    let kind = match body.category.trim().to_lowercase().as_str() {
+        "bug" | "bug_report" => "agent_bug",
+        "feature" | "feature_request" => "agent_feature",
+        "improvement" | "enhancement" => "agent_improvement",
+        _ => return json_err(StatusCode::BAD_REQUEST,
+            "category must be one of: bug | feature | improvement"),
+    };
+
+    let title = body.title.trim();
+    if title.is_empty() || title.chars().count() > 200 {
+        return json_err(StatusCode::BAD_REQUEST, "title required (1..=200 chars)");
+    }
+    let description = body.description.trim();
+    if description.is_empty() || description.chars().count() > 2000 {
+        return json_err(StatusCode::BAD_REQUEST, "description required (1..=2000 chars)");
+    }
+    let severity = body.severity.as_deref().map(|s| s.trim().to_lowercase());
+    if let Some(sv) = &severity {
+        if !["critical", "high", "medium", "low"].contains(&sv.as_str()) {
+            return json_err(StatusCode::BAD_REQUEST,
+                "severity must be one of: critical | high | medium | low");
+        }
+    }
+    let sku = body.sku.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty());
+
+    // Human-readable, single-field message (customer_feedback has no title/sku
+    // columns; pack them so triage views stay legible).
+    let label = match kind {
+        "agent_bug" => "BUG",
+        "agent_feature" => "FEATURE",
+        _ => "IMPROVEMENT",
+    };
+    let sv_tag = severity.as_deref().map(|s| format!(" · {}", s)).unwrap_or_default();
+    let sku_line = sku.map(|s| format!("\n\nSKU: {}", s)).unwrap_or_default();
+    let composed = format!(
+        "[{label}{sv_tag}] {title}\n\n{description}{sku_line}\n\nvia agent_api ({email})",
+        label = label, sv_tag = sv_tag, title = title,
+        description = description, sku_line = sku_line, email = email,
+    );
+
+    let now = crate::chrono_now();
+    let inserted_id: i64 = {
+        let conn = db.lock().unwrap();
+        match conn.execute(
+            "INSERT INTO customer_feedback (email, message, kind, created_at) VALUES (?,?,?,?)",
+            rusqlite::params![email, composed, kind, now],
+        ) {
+            Ok(_) => conn.last_insert_rowid(),
+            Err(e) => {
+                eprintln!("[agent-feedback] insert failed: {}", e);
+                return json_err(StatusCode::INTERNAL_SERVER_ERROR, "db error");
+            }
+        }
+    };
+
+    // Triage alert (best-effort, non-blocking).
+    let alert = format!(
+        "🐛 Agent feedback #{id} [{label}{sv_tag}]\n{title}\nby {email}",
+        id = inserted_id, label = label, sv_tag = sv_tag, title = title, email = email,
+    );
+    tokio::spawn(async move { crate::send_telegram_message(&alert).await; });
+
+    Json(serde_json::json!({
+        "ok": true,
+        "feedback_id": inserted_id,
+        "kind": kind,
+        "message": "Thanks — filed for MA council triage.",
+    })).into_response()
+}
+
 // ─── POST /api/agent/products ───────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -931,6 +1027,14 @@ POST /api/agent/products
      Check ai_gen.enabled via GET /api/agent/me — {{AIGEN_TXT}})
      → {"sku":"...","status":"review","note":"pending MA council approval"}
 
+POST /api/agent/feedback
+     body: {"category":"bug","title":"...","description":"...",
+             "sku":"OPTIONAL-SKU","severity":"high"}
+     category ∈ bug | feature | improvement. severity ∈ critical|high|medium|low.
+     Found a bug or have an idea to improve MU? File it here — it lands in the
+     MA council triage queue.
+     → {"ok":true,"feedback_id":123,"kind":"agent_bug"}
+
 ### MA council (approval — members only)
 
 GET  /api/ma/review/queue            → products awaiting approval
@@ -1032,6 +1136,9 @@ pub async fn openapi_json() -> Response {
             "/api/agent/products": {"post": {"summary":"Create a product (status='review' pending MA approval)","security":[{"bearer":[]}],
                 "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","required":["store","label","description","kind","design_url"],"properties":{"store":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"kind":{"type":"string","enum":["tee","rashguard_ls","rashguard_black","hoodie","crewneck"]},"design_url":{"type":"string","format":"uri","description":"absolute https URL"},"price_jpy":{"type":"integer","description":"optional; clamped up to the per-kind floor"}}}}}},
                 "responses":{"200":{"description":"{sku, status:'review', pdp_url}"},"400":{"description":"unknown kind / missing design_url"},"403":{"description":"not your store"},"429":{"description":"rate limit"}}}},
+            "/api/agent/feedback": {"post": {"summary":"File a bug report / feature request / improvement against MU","security":[{"bearer":[]}],
+                "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","required":["category","title","description"],"properties":{"category":{"type":"string","enum":["bug","feature","improvement"]},"title":{"type":"string","maxLength":200},"description":{"type":"string","maxLength":2000},"sku":{"type":"string","description":"optional SKU the feedback is about"},"severity":{"type":"string","enum":["critical","high","medium","low"]}}}}}},
+                "responses":{"200":{"description":"{ok, feedback_id, kind}"},"400":{"description":"bad category/title/description/severity"},"401":{"description":"auth required"}}}},
             "/api/ma/review/queue": {"get": {"summary":"Agent products awaiting approval (MA council only)","security":[{"bearer":[]}],"responses":{"200":{"description":"queue"},"403":{"description":"MA council only"}}}},
             "/api/ma/review/{sku}/approve": {"post": {"summary":"Approve → live (MA council only)","security":[{"bearer":[]}],"parameters":[{"name":"sku","in":"path","required":true,"schema":{"type":"string"}}],"responses":{"200":{"description":"live"},"403":{"description":"MA council only"},"409":{"description":"not in review"}}}},
             "/api/ma/review/{sku}/reject": {"post": {"summary":"Reject → dead (MA council only)","security":[{"bearer":[]}],"parameters":[{"name":"sku","in":"path","required":true,"schema":{"type":"string"}}],"responses":{"200":{"description":"rejected"}}}}

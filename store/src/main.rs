@@ -21061,7 +21061,7 @@ async fn admin_mu_purchase_manual_ship(
 ) -> Response {
     if let Err(r) = require_admin_token(q.get("token")) { return r; }
     // Look up purchase row + ensure we have a product_id to ship.
-    let (_db_email, product_id, existing_pf): (String, i64, String) = {
+    let (db_email, product_id, existing_pf): (String, i64, String) = {
         let conn = db.lock().unwrap();
         match conn.query_row(
             "SELECT email, product_id, COALESCE(printful_order_id,'')
@@ -21075,6 +21075,34 @@ async fn admin_mu_purchase_manual_ship(
     };
     if !existing_pf.is_empty() {
         return (StatusCode::CONFLICT, format!("already has printful_order_id={}", existing_pf)).into_response();
+    }
+    // Cross-row dedup guard: refuse if THIS recipient already received the
+    // SAME product via a different mu_purchases row. manual_ship only guards
+    // the single row above (existing_pf), so when a buyer has several rows
+    // for one product (catalog backfill + founder grant + one-off scripts)
+    // each row could ship independently → duplicate physical parcels. This
+    // bit 馬場様 (kokon): the MUGEN drop tee shipped twice (backfill 5/22 +
+    // manual-mu 5/29). Pass ?force=1 for an intentional re-send.
+    let force = q.get("force").map(|v| v != "0" && !v.is_empty()).unwrap_or(false);
+    if !force && !db_email.is_empty() {
+        let dup: Option<String> = {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT printful_order_id FROM mu_purchases
+                 WHERE id != ?1 AND product_id = ?2
+                   AND LOWER(email) = LOWER(?3)
+                   AND COALESCE(printful_order_id,'') != ''
+                 ORDER BY id DESC LIMIT 1",
+                params![mu_pid, product_id, db_email],
+                |r| r.get::<_, String>(0),
+            ).ok()
+        };
+        if let Some(prev) = dup {
+            return (StatusCode::CONFLICT, format!(
+                "duplicate guard: {} already has product {} shipped (printful_order_id={}); pass ?force=1 to override",
+                db_email, product_id, prev
+            )).into_response();
+        }
     }
     // Look up product design + brand for variant resolution.
     let (design_url, mockup_url, brand): (Option<String>, Option<String>, String) = {
@@ -67217,6 +67245,7 @@ async fn main() {
         .route("/api/agent/me", get(agent_api::agent_me))
         .route("/api/agent/stores", post(agent_api::agent_create_store))
         .route("/api/agent/products", post(agent_api::agent_create_product))
+        .route("/api/agent/feedback", post(agent_api::agent_submit_feedback))
         .route("/api/ma/review/queue", get(agent_api::ma_review_queue))
         .route("/api/ma/review/:sku/approve", post(agent_api::ma_review_approve))
         .route("/api/ma/review/:sku/reject", post(agent_api::ma_review_reject))
