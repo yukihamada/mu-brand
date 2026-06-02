@@ -2345,6 +2345,144 @@ pub struct MakeQuery {
     pub kind: Option<String>,
 }
 
+/// GET /store — 「ガチの無人店舗」。24時間 AI だけが運営する受注生産Tシャツ屋の入口。
+/// ライブ在庫(catalog_products is_active=1)を実数で見せ、/make(話して作る)と /shop(棚) に繋ぐ。
+pub async fn store_unmanned_page(State(db): State<Db>) -> Html<String> {
+    let (live, brands, sold, cards) = {
+        let conn = db.lock().unwrap();
+        let live: i64 = conn
+            .query_row("SELECT COUNT(*) FROM catalog_products WHERE is_active=1", [], |r| r.get(0))
+            .unwrap_or(0);
+        let brands: i64 = conn
+            .query_row("SELECT COUNT(DISTINCT brand) FROM catalog_products WHERE is_active=1", [], |r| r.get(0))
+            .unwrap_or(0);
+        let sold: i64 = conn
+            .query_row("SELECT COUNT(*) FROM catalog_orders WHERE status='submitted'", [], |r| r.get(0))
+            .unwrap_or(0);
+        let items = list_products_paged(&conn, None, 12, 0);
+        let cards = items
+            .iter()
+            .map(|p| {
+                let img = p.img.clone().unwrap_or_default();
+                let imgtag = if img.is_empty() {
+                    "<div class=ph>━◯━</div>".to_string()
+                } else {
+                    format!("<img loading=lazy src=\"{}\" alt=\"\">", html_text(&img))
+                };
+                format!(
+                    r#"<a class="c" href="/p/{sku}"><div class="ci">{imgtag}</div><div class="cb"><div class="cn">{name}</div><div class="cp">¥{price}</div></div></a>"#,
+                    sku = html_text(&p.sku), imgtag = imgtag, name = html_text(&p.desc), price = p.price
+                )
+            })
+            .collect::<String>();
+        (live, brands, sold, cards)
+    };
+    let cards = if cards.is_empty() {
+        "<div class=empty>いま棚を補充中…</div>".to_string()
+    } else {
+        cards
+    };
+    Html(format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>MU — 無人のTシャツ屋 / The unmanned T-shirt store · wearmu.com</title>
+<meta name="description" content="24時間、店に人はいない。AIが描いて、刷って、あなたに送る。在庫はゼロ。話しかけるとTシャツになる、ガチの無人店舗。">
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+:root{{--gold:#ffd700;--ink:#f5f5f0;--mut:#8c8c84}}
+html{{scroll-behavior:smooth}}
+body{{background:#0a0a0a;color:var(--ink);font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.7;min-height:100dvh;-webkit-font-smoothing:antialiased}}
+a{{color:inherit;text-decoration:none}}
+nav{{position:sticky;top:0;z-index:30;display:flex;justify-content:space-between;align-items:center;padding:14px 22px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(10,10,10,.82);backdrop-filter:blur(10px)}}
+nav .bm{{font-weight:900;letter-spacing:.4em;font-size:15px}}
+nav .nl a{{font-size:12px;letter-spacing:.12em;color:var(--mut);margin-left:18px}}
+nav .nl a:hover{{color:var(--ink)}}
+.hero{{position:relative;padding:84px 22px 64px;text-align:center;overflow:hidden}}
+.hero::before{{content:"";position:absolute;inset:0;background:radial-gradient(60% 50% at 50% 0%,rgba(255,215,0,.10),transparent 70%);pointer-events:none}}
+.kick{{font-size:11px;letter-spacing:.42em;color:var(--gold);text-transform:uppercase;margin-bottom:18px}}
+.hero h1{{font-size:clamp(34px,8vw,68px);font-weight:900;line-height:1.04;letter-spacing:.01em}}
+.hero h1 .o{{color:var(--gold)}}
+.hero .sub{{max-width:620px;margin:20px auto 8px;color:rgba(245,245,240,.82);font-size:clamp(14px,3.6vw,17px)}}
+.hero .en{{max-width:620px;margin:0 auto 30px;color:var(--mut);font-size:12.5px;letter-spacing:.02em}}
+.live{{display:inline-flex;gap:18px;flex-wrap:wrap;justify-content:center;margin:4px auto 30px;padding:12px 22px;border:1px solid rgba(255,215,0,.28);border-radius:999px;background:rgba(255,215,0,.05);font-size:12.5px}}
+.live b{{color:var(--gold);font-family:monospace;font-size:15px}}
+.live .dot{{display:inline-block;width:7px;height:7px;border-radius:50%;background:#37d67a;margin-right:7px;box-shadow:0 0 0 0 rgba(55,214,122,.7);animation:p 1.8s infinite}}
+@keyframes p{{0%{{box-shadow:0 0 0 0 rgba(55,214,122,.6)}}70%{{box-shadow:0 0 0 9px rgba(55,214,122,0)}}100%{{box-shadow:0 0 0 0 rgba(55,214,122,0)}}}}
+.cta{{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}}
+.btn{{display:inline-block;padding:15px 30px;border-radius:8px;font-weight:800;font-size:15px;letter-spacing:.02em}}
+.btn.p{{background:var(--gold);color:#0a0a0a;box-shadow:0 8px 34px rgba(255,215,0,.28)}}
+.btn.s{{border:1px solid rgba(255,255,255,.22);color:var(--ink)}}
+.sec{{max-width:1040px;margin:0 auto;padding:54px 20px}}
+.sec h2{{font-size:13px;letter-spacing:.28em;color:var(--mut);text-transform:uppercase;text-align:center;margin-bottom:34px}}
+.steps{{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}}
+@media(max-width:680px){{.steps{{grid-template-columns:1fr}}}}
+.step{{background:rgba(255,255,255,.025);border:1px solid rgba(255,255,255,.07);border-radius:14px;padding:26px 22px}}
+.step .n{{font-family:monospace;color:var(--gold);font-size:12px;letter-spacing:.2em}}
+.step h3{{font-size:18px;font-weight:800;margin:10px 0 8px}}
+.step p{{color:rgba(245,245,240,.66);font-size:13.5px}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}}
+.c{{background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.08);border-radius:12px;overflow:hidden;display:flex;flex-direction:column;transition:border-color .18s}}
+.c:hover{{border-color:rgba(255,215,0,.4)}}
+.ci{{aspect-ratio:1/1;background:#000;display:block;overflow:hidden}}
+.ci img{{width:100%;height:100%;object-fit:cover;display:block}}
+.ci .ph{{width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#333;letter-spacing:.3em}}
+.cb{{padding:10px 12px 13px;flex:1;display:flex;flex-direction:column;gap:6px}}
+.cn{{font-size:12.5px;line-height:1.45;flex:1;color:rgba(245,245,240,.9)}}
+.cp{{font-size:13px;font-weight:700;font-family:monospace}}
+.empty{{text-align:center;color:var(--mut);padding:40px}}
+.shelf-more{{text-align:center;margin-top:26px}}
+.why{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px}}
+.why div{{border:1px solid rgba(255,255,255,.07);border-radius:12px;padding:18px;font-size:13px;color:rgba(245,245,240,.78)}}
+.why div b{{display:block;color:var(--ink);font-size:14px;margin-bottom:4px}}
+footer{{border-top:1px solid rgba(255,255,255,.08);padding:30px 22px;text-align:center;color:var(--mut);font-size:11.5px;letter-spacing:.04em}}
+footer a{{color:rgba(245,245,240,.72);margin:0 9px}}
+footer a:hover{{color:var(--gold)}}
+</style></head>
+<body>
+<nav><a class="bm" href="/">━◯━ MU</a><div class="nl"><a href="#shelf">棚</a><a href="/make">作る</a><a href="/shop">SHOP</a></div></nav>
+
+<header class="hero">
+  <div class="kick">UNMANNED · 24/7 · ZERO INVENTORY</div>
+  <h1>無人の<span class="o">T</span>シャツ屋。</h1>
+  <p class="sub">店に人はいません。<b>AI が描いて、刷って、あなたに送る。</b>在庫はゼロ。話しかけると、それがTシャツになります。</p>
+  <p class="en">The unmanned T-shirt store. No staff, 24/7. AI draws it, prints it, ships it — zero inventory, made only when you order.</p>
+  <div class="live"><span><span class="dot"></span>稼働中</span><span>棚に <b>{live}</b> 種</span><span><b>{brands}</b> ブランド</span><span><b>{sold}</b> 枚 旅立った</span></div>
+  <div class="cta"><a class="btn p" href="/make">話しかけて作る →</a><a class="btn s" href="#shelf">棚を見る</a></div>
+</header>
+
+<section class="sec">
+  <h2>How it works — 人は触れない</h2>
+  <div class="steps">
+    <div class="step"><div class="n">01 / SAY</div><h3>話す</h3><p>「夜の海の静けさ」みたいに、ひとことで伝えるだけ。ログインも要りません。</p></div>
+    <div class="step"><div class="n">02 / DRAW</div><h3>AI が描く</h3><p>Gemini がデザインを生成し、Printful の実物モックまで自動で作ります（¥12/枚原価・在庫リスクゼロ）。</p></div>
+    <div class="step"><div class="n">03 / SHIP</div><h3>自動で届く</h3><p>注文が入ると自動で印刷・発送。7〜14日で手元へ。途中に人は一切いません。</p></div>
+  </div>
+</section>
+
+<section class="sec" id="shelf">
+  <h2>いま棚に並んでいるもの — Live shelf</h2>
+  <div class="grid">{cards}</div>
+  <div class="shelf-more"><a class="btn s" href="/shop">棚をぜんぶ見る（{live} 種）→</a></div>
+</section>
+
+<section class="sec">
+  <h2>なぜ無人なのか — Why unmanned</h2>
+  <div class="why">
+    <div><b>在庫ゼロ</b>受注生産。売れ残りも廃棄も出ません。</div>
+    <div><b>人を介さない</b>生成・承認・発送まで AI council が回す。24時間止まらない。</div>
+    <div><b>予算は上限つき</b>月 ¥1,000,000 をコードで強制。暴走しません。</div>
+    <div><b>コードは公開</b>仕組みは <a style="color:var(--gold)" href="/source">/source</a> で全部見られます。</div>
+  </div>
+</section>
+
+<footer>
+  ━◯━ MU · on-demand · zero inventory · 株式会社イネブラ / Enabler Inc.<br>
+  <a href="/make">作る</a> · <a href="/shop">SHOP</a> · <a href="/about/honest">正直なところ</a> · <a href="https://yukihamada.jp/community">🔥 ともしび</a> · <a href="/tokushoho">特商法</a>
+</footer>
+</body></html>"##,
+        live = live, brands = brands, sold = sold, cards = cards
+    ))
+}
+
 /// Cost guard for the unauthenticated /make endpoint: max public creations/hour.
 const MAKE_HOURLY_CAP: i64 = 40;
 
