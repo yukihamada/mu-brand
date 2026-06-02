@@ -2418,8 +2418,7 @@ $('#go').onclick=async()=>{
         +'<div class=nm>'+(j.display||'')+'</div>'
         +'<div class=pr>¥'+(j.retail_jpy||'')+'</div>'
         +'<div style="font-size:13px;color:rgba(245,245,240,.7)">'+(j.hook||'')+'</div>'
-        +'<a class=buy href="'+j.pdp_url+'" target=_blank rel=noopener>商品ページ →</a>'
-        +'<div class=note>'+ (j.note||'') +'</div></div></div>';
+        +'<div class=note>✓ つくりました。<b>承認されると商品ページが公開・購入できます。</b></div></div></div>';
     }
   }catch(e){ $('#out').innerHTML='<div class=err>通信エラー。もう一度お試しください。</div>'; }
   $('#go').disabled=false; $('#go').textContent='つくる';
