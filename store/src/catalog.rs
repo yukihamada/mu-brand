@@ -2348,7 +2348,7 @@ pub struct MakeQuery {
 /// GET /store — 「ガチの無人店舗」。24時間 AI だけが運営する受注生産Tシャツ屋の入口。
 /// ライブ在庫(catalog_products is_active=1)を実数で見せ、/make(話して作る)と /shop(棚) に繋ぐ。
 pub async fn store_unmanned_page(State(db): State<Db>) -> Html<String> {
-    let (live, brands, sold, cards) = {
+    let (live, brands, sold, cards, ticker) = {
         let conn = db.lock().unwrap();
         let live: i64 = conn
             .query_row("SELECT COUNT(*) FROM catalog_products WHERE is_active=1", [], |r| r.get(0))
@@ -2375,7 +2375,14 @@ pub async fn store_unmanned_page(State(db): State<Db>) -> Html<String> {
                 )
             })
             .collect::<String>();
-        (live, brands, sold, cards)
+        let one: String = items
+            .iter()
+            .filter_map(|p| p.img.clone())
+            .filter(|s| !s.is_empty())
+            .map(|u| format!("<img src=\"{}\" alt=\"\">", html_text(&u)))
+            .collect();
+        let ticker = format!("{one}{one}"); // 2連結でシームレスにループ
+        (live, brands, sold, cards, ticker)
     };
     let cards = if cards.is_empty() {
         "<div class=empty>いま棚を補充中…</div>".to_string()
@@ -2384,8 +2391,11 @@ pub async fn store_unmanned_page(State(db): State<Db>) -> Html<String> {
     };
     Html(format!(r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>MU — 無人のTシャツ屋 / The unmanned T-shirt store · wearmu.com</title>
-<meta name="description" content="24時間、店に人はいない。AIが描いて、刷って、あなたに送る。在庫はゼロ。話しかけるとTシャツになる、ガチの無人店舗。">
+<title>ヤバいTシャツ屋さん — 店員ゼロ、AIだけの無人店舗 · wearmu.com</title>
+<meta name="description" content="ヤバいTシャツ屋さん。店員はいない。AIが描いて、刷って、あなたに送る。24時間営業・在庫ゼロ・受注生産。なんでも言ってみ、Tシャツになるから。">
+<meta property="og:title" content="ヤバいTシャツ屋さん — 店員ゼロ、AIだけの無人店舗">
+<meta property="og:description" content="店員はいない。AIが描いて、刷って、送る。なんでも言ってみ、Tシャツになるから。">
+<meta name="theme-color" content="#0a0a0a">
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
 :root{{--gold:#ffd700;--ink:#f5f5f0;--mut:#8c8c84}}
@@ -2411,6 +2421,11 @@ nav .nl a:hover{{color:var(--ink)}}
 .btn{{display:inline-block;padding:15px 30px;border-radius:8px;font-weight:800;font-size:15px;letter-spacing:.02em}}
 .btn.p{{background:var(--gold);color:#0a0a0a;box-shadow:0 8px 34px rgba(255,215,0,.28)}}
 .btn.s{{border:1px solid rgba(255,255,255,.22);color:var(--ink)}}
+.ticker{{overflow:hidden;border-top:1px solid rgba(255,255,255,.06);border-bottom:1px solid rgba(255,255,255,.06);background:#050505;padding:10px 0;-webkit-mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent);mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent)}}
+.ticker .track{{display:flex;gap:10px;width:max-content;animation:scroll 48s linear infinite}}
+.ticker:hover .track{{animation-play-state:paused}}
+.ticker img{{height:96px;width:96px;object-fit:cover;border-radius:8px;border:1px solid rgba(255,255,255,.08);flex:none}}
+@keyframes scroll{{to{{transform:translateX(-50%)}}}}
 .sec{{max-width:1040px;margin:0 auto;padding:54px 20px}}
 .sec h2{{font-size:13px;letter-spacing:.28em;color:var(--mut);text-transform:uppercase;text-align:center;margin-bottom:34px}}
 .steps{{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}}
@@ -2438,16 +2453,18 @@ footer a{{color:rgba(245,245,240,.72);margin:0 9px}}
 footer a:hover{{color:var(--gold)}}
 </style></head>
 <body>
-<nav><a class="bm" href="/">━◯━ MU</a><div class="nl"><a href="#shelf">棚</a><a href="/make">作る</a><a href="/shop">SHOP</a></div></nav>
+<nav><a class="bm" href="/store">ヤバい<span class="o">T</span>シャツ屋さん</a><div class="nl"><a href="#shelf">棚</a><a href="/make">作る</a><a href="/shop">SHOP</a></div></nav>
 
 <header class="hero">
-  <div class="kick">UNMANNED · 24/7 · ZERO INVENTORY</div>
-  <h1>無人の<span class="o">T</span>シャツ屋。</h1>
-  <p class="sub">店に人はいません。<b>AI が描いて、刷って、あなたに送る。</b>在庫はゼロ。話しかけると、それがTシャツになります。</p>
-  <p class="en">The unmanned T-shirt store. No staff, 24/7. AI draws it, prints it, ships it — zero inventory, made only when you order.</p>
-  <div class="live"><span><span class="dot"></span>稼働中</span><span>棚に <b>{live}</b> 種</span><span><b>{brands}</b> ブランド</span><span><b>{sold}</b> 枚 旅立った</span></div>
-  <div class="cta"><a class="btn p" href="/make">話しかけて作る →</a><a class="btn s" href="#shelf">棚を見る</a></div>
+  <div class="kick">店員ゼロ · 24時間 · 在庫ゼロ · 受注生産</div>
+  <h1>ヤバい<span class="o">T</span>シャツ屋さん</h1>
+  <p class="sub">店員はいません。<b>AI が描いて、刷って、あなたに送る。</b>話しかけたら、それがTシャツになる。在庫はゼロ。だから<b>なんでも言ってみ。</b></p>
+  <p class="en">The T-shirt shop with no staff. AI draws it, prints it, ships it — 24/7, zero inventory, made only when you order.</p>
+  <div class="live"><span><span class="dot"></span>営業中</span><span>棚に <b>{live}</b> 種</span><span><b>{brands}</b> ブランド</span><span><b>{sold}</b> 枚 旅立った</span></div>
+  <div class="cta"><a class="btn p" href="/make">なんでも言ってみ →</a><a class="btn s" href="#shelf">棚を見る</a></div>
 </header>
+
+<div class="ticker"><div class="track">{ticker}</div></div>
 
 <section class="sec">
   <h2>How it works — 人は触れない</h2>
@@ -2479,7 +2496,7 @@ footer a:hover{{color:var(--gold)}}
   <a href="/make">作る</a> · <a href="/shop">SHOP</a> · <a href="/about/honest">正直なところ</a> · <a href="https://yukihamada.jp/community">🔥 ともしび</a> · <a href="/tokushoho">特商法</a>
 </footer>
 </body></html>"##,
-        live = live, brands = brands, sold = sold, cards = cards
+        live = live, brands = brands, sold = sold, cards = cards, ticker = ticker
     ))
 }
 
