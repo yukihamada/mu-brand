@@ -2507,8 +2507,8 @@ const MAKE_HOURLY_CAP: i64 = 40;
 pub async fn make_page() -> Html<String> {
     Html(r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>MUに作ってもらう — wearmu.com</title>
-<meta name="description" content="言うだけで作れる。作りたいTシャツやパーカーをひとことでMUに伝えると、AIがデザインして商品化します。">
+<title>言うだけで、自分の店。— ヤバいTシャツ屋さんで作る · wearmu.com</title>
+<meta name="description" content="ひとこと言えばAIが即デザイン→その場で棚に並んですぐ買える。在庫ゼロ・ログイン不要。売れたら作り手に報酬。みんなが出品できる無人Tシャツ屋。">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#0a0a0a;color:#f5f5f0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.7;min-height:100dvh}
@@ -2538,10 +2538,10 @@ button:disabled{opacity:.5;cursor:default}
 .spin{display:inline-block;width:16px;height:16px;border:2px solid rgba(0,0,0,.3);border-top-color:#0a0a0a;border-radius:50%;animation:s .7s linear infinite;vertical-align:-3px;margin-right:8px}
 @keyframes s{to{transform:rotate(360deg)}}
 </style></head><body>
-<nav><a class="brand" href="/">MU</a><div><a href="/shop">SHOP</a></div></nav>
+<nav><a class="brand" href="/store">ヤバいTシャツ屋さん</a><div><a href="/shop">SHOP</a></div></nav>
 <div class="wrap">
-  <h1>MU に作ってもらう</h1>
-  <div class="sub">言うだけで作れる。作りたいものをひとことで。AI がデザイン → 商品化します。</div>
+  <h1>言うだけで、自分の店。</h1>
+  <div class="sub">ひとこと言えば AI が即デザイン → <b>その場で棚に並んで、すぐ買える</b>。ログインも在庫もゼロ。<b style="color:#ffd700">売れたら作り手に報酬（¥600〜/枚）</b>。怪しいものだけ人が確認、あとは自動で公開。</div>
   <textarea id="p" maxlength="300" placeholder="例：富士山をミニマルな一本線で描いた黒Tシャツ"></textarea>
   <div class="row">
     <select id="k">
@@ -2569,11 +2569,14 @@ $('#go').onclick=async()=>{
     const j=await r.json();
     if(!j.ok){ $('#out').innerHTML='<div class=err>'+(j.error||'うまく作れませんでした。もう一度お試しください。')+'</div>'; }
     else{
+      var buy = j.buy_url ? '<a class=buy href="'+j.buy_url+'">今すぐ買う ¥'+(j.retail_jpy||'')+' →</a>' : '';
+      var nt = j.note || (j.buy_url ? 'できました！今すぐ買えます。' : 'つくりました。確認後に公開・購入できます。');
       $('#out').innerHTML='<div class=card><img src="'+j.design_url+'" alt=""><div class=meta>'
         +'<div class=nm>'+(j.display||'')+'</div>'
         +'<div class=pr>¥'+(j.retail_jpy||'')+'</div>'
         +'<div style="font-size:13px;color:rgba(245,245,240,.7)">'+(j.hook||'')+'</div>'
-        +'<div class=note>✓ つくりました。<b>承認されると商品ページが公開・購入できます。</b></div></div></div>';
+        + buy
+        +'<div class=note>'+ (j.auto_approved ? '✓ ' : '') + nt +'</div></div></div>';
     }
   }catch(e){ $('#out').innerHTML='<div class=err>通信エラー。もう一度お試しください。</div>'; }
   $('#go').disabled=false; $('#go').textContent='つくる';
@@ -2604,7 +2607,10 @@ pub async fn public_make(State(db): State<Db>, Query(q): Query<MakeQuery>) -> Re
                    \"theme_brief\":\"<one short English design brief for the chest graphic>\", \
                    \"display\":\"<short JP brand-mark name, <=10 chars>\", \
                    \"hook\":\"<one JP marketing sentence for the PDP>\", \
-                   \"retail_jpy\":<integer>}}\n\
+                   \"retail_jpy\":<integer>, \
+                   \"flagged\":<true ONLY if this needs a human to review before public sale: a real brand/trademark/logo, a real living person's name or likeness, a copyrighted character/IP, or hateful/sexual/violent/illegal content; otherwise false>, \
+                   \"flag_reason\":\"<short JP reason if flagged, else empty>\"}}\n\
+         Bias toward flagged=false (auto-approve). Only set true when clearly risky.\n\
          If kind is missing, default to 'tee'. retail default 4900 tee / 8800 hoodie / 7800 crewneck.\n\
          Input: {}", prompt_in);
     let parsed_json = match crate::gemini::call_gemini_text(&parse_prompt).await {
@@ -2627,6 +2633,10 @@ pub async fn public_make(State(db): State<Db>, Query(q): Query<MakeQuery>) -> Re
     let theme_brief = parsed["theme_brief"].as_str().unwrap_or(&prompt_in).to_string();
     let display = parsed["display"].as_str().unwrap_or("MU").to_string();
     let hook = parsed["hook"].as_str().unwrap_or("自然言語から自動生成").to_string();
+    // 基本は AI 自動承認 → 即 live(買える)。商標/実在人物/著名キャラ/不適切のみ human review。
+    let flagged = parsed["flagged"].as_bool().unwrap_or(false);
+    let flag_reason = parsed["flag_reason"].as_str().unwrap_or("").to_string();
+    let (is_active_i, status_s): (i64, &str) = if flagged { (0, "review") } else { (1, "live") };
     let Some(spec) = PRODUCT_SPECS.iter().find(|s| s.kind == kind) else {
         return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"未対応の種類です"}))).into_response();
     };
@@ -2671,7 +2681,7 @@ pub async fn public_make(State(db): State<Db>, Query(q): Query<MakeQuery>) -> Re
                 spec.printful_product_id, spec.printful_variant_id, spec.placement,
                 0, 0,
                 &url, &url, &url,
-                0, 50, "review", "printful_dtg", "public_make",
+                is_active_i, 50, status_s, "printful_dtg", "public_make",
             ],
         );
     }
@@ -2679,6 +2689,13 @@ pub async fn public_make(State(db): State<Db>, Query(q): Query<MakeQuery>) -> Re
     let (pp, pv, url_c, sku_c, db_c) = (spec.printful_product_id, spec.printful_variant_id, url.clone(), sku.clone(), db.clone());
     tokio::spawn(async move { let _ = generate_onbody_mockup(db_c, sku_c, pp, pv, url_c).await; });
 
+    let note = if flagged {
+        let r = if flag_reason.is_empty() { "内容".to_string() } else { flag_reason.clone() };
+        format!("つくりました。少し確認したい点（{}）があるので人の目を通します。OKならすぐ公開・購入できます。", r)
+    } else {
+        "できました！もう棚に並びました。今すぐ買えます。着用イメージは数十秒で反映されます。".to_string()
+    };
+    let buy_url = if flagged { serde_json::Value::Null } else { serde_json::json!(format!("https://wearmu.com/shop/{}", sku)) };
     axum::Json(serde_json::json!({
         "ok": true,
         "sku": sku,
@@ -2688,8 +2705,10 @@ pub async fn public_make(State(db): State<Db>, Query(q): Query<MakeQuery>) -> Re
         "retail_jpy": retail_jpy,
         "design_url": url,
         "pdp_url": format!("https://wearmu.com/shop/{}", sku),
-        "status": "review",
-        "note": "つくりました（承認待ち）。承認されると購入できます。着用イメージは数十秒で反映されます。",
+        "status": status_s,
+        "auto_approved": !flagged,
+        "buy_url": buy_url,
+        "note": note,
     })).into_response()
 }
 
@@ -5104,8 +5123,8 @@ fn list_products_paged(
                     (SELECT COUNT(*) FROM catalog_orders o WHERE o.sku=catalog_products.sku AND o.status='submitted')
              FROM catalog_products
              WHERE is_active=1 AND brand=?
-             ORDER BY (brand='auto') DESC,
-                      (mockup_url_external IS NOT NULL AND mockup_url_external != '') DESC,
+             ORDER BY (mockup_url_external IS NOT NULL AND mockup_url_external != '') DESC,
+                      (SELECT COUNT(*) FROM catalog_orders o2 WHERE o2.sku=catalog_products.sku AND o2.status='submitted') DESC,
                       sort_order, sku
              LIMIT ? OFFSET ?",
             true,
@@ -5117,8 +5136,8 @@ fn list_products_paged(
                     (SELECT COUNT(*) FROM catalog_orders o WHERE o.sku=catalog_products.sku AND o.status='submitted')
              FROM catalog_products
              WHERE is_active=1
-             ORDER BY (brand='auto') DESC,
-                      (mockup_url_external IS NOT NULL AND mockup_url_external != '') DESC,
+             ORDER BY (mockup_url_external IS NOT NULL AND mockup_url_external != '') DESC,
+                      (SELECT COUNT(*) FROM catalog_orders o2 WHERE o2.sku=catalog_products.sku AND o2.status='submitted') DESC,
                       sort_order, sku
              LIMIT ? OFFSET ?",
             false,
@@ -5168,8 +5187,8 @@ fn list_products(
                     COALESCE(mockup_url_external, mockup_main_file)
              FROM catalog_products
              WHERE is_active=1 AND brand=?
-             ORDER BY (brand='auto') DESC,
-                      (mockup_url_external IS NOT NULL AND mockup_url_external != '') DESC,
+             ORDER BY (mockup_url_external IS NOT NULL AND mockup_url_external != '') DESC,
+                      (SELECT COUNT(*) FROM catalog_orders o2 WHERE o2.sku=catalog_products.sku AND o2.status='submitted') DESC,
                       sort_order, sku
              LIMIT ?",
             true,
@@ -5180,8 +5199,8 @@ fn list_products(
                     COALESCE(mockup_url_external, mockup_main_file)
              FROM catalog_products
              WHERE is_active=1
-             ORDER BY (brand='auto') DESC,
-                      (mockup_url_external IS NOT NULL AND mockup_url_external != '') DESC,
+             ORDER BY (mockup_url_external IS NOT NULL AND mockup_url_external != '') DESC,
+                      (SELECT COUNT(*) FROM catalog_orders o2 WHERE o2.sku=catalog_products.sku AND o2.status='submitted') DESC,
                       sort_order, sku
              LIMIT ?",
             false,
