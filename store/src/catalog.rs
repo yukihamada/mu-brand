@@ -2337,6 +2337,208 @@ pub async fn admin_nl_add(
     })).into_response()
 }
 
+// ───────────────────────── public "say it and MU makes it" (/make) ─────────────────────────
+
+#[derive(serde::Deserialize)]
+pub struct MakeQuery {
+    pub prompt: String,
+    pub kind: Option<String>,
+}
+
+/// Cost guard for the unauthenticated /make endpoint: max public creations/hour.
+const MAKE_HOURLY_CAP: i64 = 40;
+
+/// GET /make — public page: type a sentence, MU makes the product.
+pub async fn make_page() -> Html<String> {
+    Html(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>MUに作ってもらう — wearmu.com</title>
+<meta name="description" content="言うだけで作れる。作りたいTシャツやパーカーをひとことでMUに伝えると、AIがデザインして商品化します。">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0a0a;color:#f5f5f0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.7;min-height:100dvh}
+nav{padding:16px 24px;border-bottom:1px solid rgba(255,255,255,.08);display:flex;justify-content:space-between;align-items:center}
+nav a{color:#f5f5f0;text-decoration:none;font-size:11px;letter-spacing:.3em;text-transform:uppercase;opacity:.85}
+nav .brand{font-weight:900;letter-spacing:.4em}
+.wrap{max-width:680px;margin:0 auto;padding:48px 22px 100px}
+h1{font-size:30px;font-weight:800;letter-spacing:-.01em;margin-bottom:8px}
+.sub{color:rgba(245,245,240,.6);font-size:14px;margin-bottom:28px}
+textarea{width:100%;background:#141414;border:1px solid rgba(255,255,255,.14);color:#f5f5f0;border-radius:10px;padding:14px 16px;font-size:16px;font-family:inherit;min-height:96px;resize:vertical}
+textarea:focus{outline:none;border-color:#ffd700}
+.row{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;align-items:center}
+select{background:#141414;border:1px solid rgba(255,255,255,.14);color:#f5f5f0;border-radius:10px;padding:12px 14px;font-size:15px}
+button{flex:1;min-width:160px;background:#ffd700;color:#0a0a0a;border:0;border-radius:10px;padding:14px 18px;font-size:16px;font-weight:800;cursor:pointer;letter-spacing:.04em}
+button:disabled{opacity:.5;cursor:default}
+.ex{margin-top:14px;font-size:12px;color:rgba(245,245,240,.45)}
+.ex b{color:rgba(255,215,0,.8);cursor:pointer;font-weight:600}
+#out{margin-top:28px}
+.card{background:#141414;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:18px;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+.card img{width:140px;height:140px;object-fit:contain;background:#fff;border-radius:10px;flex:0 0 auto}
+.card .meta{flex:1;min-width:180px}
+.card .nm{font-size:18px;font-weight:700}
+.card .pr{color:#ffd700;font-size:20px;font-weight:800;margin:4px 0}
+.card a.buy{display:inline-block;margin-top:8px;background:#ffd700;color:#0a0a0a;text-decoration:none;font-weight:700;padding:9px 16px;border-radius:8px;font-size:13px}
+.note{font-size:12px;color:rgba(245,245,240,.5);margin-top:8px}
+.err{color:#ff8a7a;font-size:14px}
+.spin{display:inline-block;width:16px;height:16px;border:2px solid rgba(0,0,0,.3);border-top-color:#0a0a0a;border-radius:50%;animation:s .7s linear infinite;vertical-align:-3px;margin-right:8px}
+@keyframes s{to{transform:rotate(360deg)}}
+</style></head><body>
+<nav><a class="brand" href="/">MU</a><div><a href="/shop">SHOP</a></div></nav>
+<div class="wrap">
+  <h1>MU に作ってもらう</h1>
+  <div class="sub">言うだけで作れる。作りたいものをひとことで。AI がデザイン → 商品化します。</div>
+  <textarea id="p" maxlength="300" placeholder="例：富士山をミニマルな一本線で描いた黒Tシャツ"></textarea>
+  <div class="row">
+    <select id="k">
+      <option value="">おまかせ</option>
+      <option value="tee">Tシャツ</option>
+      <option value="hoodie">パーカー</option>
+      <option value="crewneck">スウェット</option>
+    </select>
+    <button id="go">つくる</button>
+  </div>
+  <div class="ex">例: <b data-x="柴犬のシンプルな線画 生成りトート">柴犬の線画</b> ・ <b data-x="禅の円相 ひと筆 黒Tシャツ">円相T</b> ・ <b data-x="夜の富士山と月 ミニマル パーカー">富士と月</b></div>
+  <div id="out"></div>
+</div>
+<script>
+const $=s=>document.querySelector(s);
+$('#out');
+document.querySelectorAll('.ex b').forEach(b=>b.onclick=()=>{$('#p').value=b.dataset.x;});
+$('#go').onclick=async()=>{
+  const p=$('#p').value.trim(); if(!p){$('#p').focus();return;}
+  const k=$('#k').value;
+  $('#go').disabled=true; $('#go').innerHTML='<span class=spin></span>つくっています…';
+  $('#out').innerHTML='<div class=note>AI がデザイン中（10〜20秒）…</div>';
+  try{
+    const r=await fetch('/api/make?prompt='+encodeURIComponent(p)+(k?'&kind='+k:''),{method:'POST'});
+    const j=await r.json();
+    if(!j.ok){ $('#out').innerHTML='<div class=err>'+(j.error||'うまく作れませんでした。もう一度お試しください。')+'</div>'; }
+    else{
+      $('#out').innerHTML='<div class=card><img src="'+j.design_url+'" alt=""><div class=meta>'
+        +'<div class=nm>'+(j.display||'')+'</div>'
+        +'<div class=pr>¥'+(j.retail_jpy||'')+'</div>'
+        +'<div style="font-size:13px;color:rgba(245,245,240,.7)">'+(j.hook||'')+'</div>'
+        +'<a class=buy href="'+j.pdp_url+'" target=_blank rel=noopener>商品ページ →</a>'
+        +'<div class=note>'+ (j.note||'') +'</div></div></div>';
+    }
+  }catch(e){ $('#out').innerHTML='<div class=err>通信エラー。もう一度お試しください。</div>'; }
+  $('#go').disabled=false; $('#go').textContent='つくる';
+};
+</script></body></html>"##.to_string())
+}
+
+/// POST /api/make?prompt=…&kind=… — public NL → product. status='review',
+/// brand='minna', cost-guarded (hourly cap + global budget gate). Mirrors
+/// admin_nl_add but unauthenticated, review-only, and single-image (cost-min).
+pub async fn public_make(State(db): State<Db>, Query(q): Query<MakeQuery>) -> Response {
+    let prompt_in = q.prompt.trim().to_string();
+    if prompt_in.is_empty() || prompt_in.chars().count() > 300 {
+        return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"作りたいものを入力してください（300文字以内）"}))).into_response();
+    }
+    {
+        let conn = db.lock().unwrap();
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM catalog_products WHERE brand='minna' AND created_at > datetime('now','-1 hour')",
+            [], |r| r.get(0)).unwrap_or(0);
+        if n >= MAKE_HOURLY_CAP {
+            return (StatusCode::TOO_MANY_REQUESTS, axum::Json(serde_json::json!({"ok":false,"error":"いまアクセスが集中しています。少し時間をおいて試してください。"}))).into_response();
+        }
+    }
+    let parse_prompt = format!(
+        "Parse this JP/EN product idea into compact JSON. ONLY emit JSON, no prose, no markdown fences.\n\
+         Schema: {{\"kind\":\"tee|hoodie|crewneck\", \
+                   \"theme_brief\":\"<one short English design brief for the chest graphic>\", \
+                   \"display\":\"<short JP brand-mark name, <=10 chars>\", \
+                   \"hook\":\"<one JP marketing sentence for the PDP>\", \
+                   \"retail_jpy\":<integer>}}\n\
+         If kind is missing, default to 'tee'. retail default 4900 tee / 8800 hoodie / 7800 crewneck.\n\
+         Input: {}", prompt_in);
+    let parsed_json = match crate::gemini::call_gemini_text(&parse_prompt).await {
+        Ok(s) => s,
+        Err(e) => return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":format!("生成に失敗しました: {}", e)}))).into_response(),
+    };
+    let json_str: String = parsed_json.find('{').and_then(|i| parsed_json[i..].rfind('}').map(|j| parsed_json[i..i+j+1].to_string())).unwrap_or(parsed_json.clone());
+    let parsed: serde_json::Value = match serde_json::from_str(&json_str) {
+        Ok(v) => v,
+        Err(_) => return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":"うまく解釈できませんでした。言い換えてお試しください。"}))).into_response(),
+    };
+    let kind_parsed = parsed["kind"].as_str().unwrap_or("tee");
+    // only DTG kinds are offered publicly
+    let allowed = ["tee", "hoodie", "crewneck"];
+    let kind: &str = match q.kind.as_deref() {
+        Some(k) if allowed.contains(&k) => k,
+        _ if allowed.contains(&kind_parsed) => kind_parsed,
+        _ => "tee",
+    };
+    let theme_brief = parsed["theme_brief"].as_str().unwrap_or(&prompt_in).to_string();
+    let display = parsed["display"].as_str().unwrap_or("MU").to_string();
+    let hook = parsed["hook"].as_str().unwrap_or("自然言語から自動生成").to_string();
+    let Some(spec) = PRODUCT_SPECS.iter().find(|s| s.kind == kind) else {
+        return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"未対応の種類です"}))).into_response();
+    };
+    let retail_jpy = parsed["retail_jpy"].as_i64().unwrap_or(spec.retail_jpy);
+    let seed = format!("mk{:08x}", rand::random::<u32>());
+    let slug = { let s: String = display.chars().filter(|c| c.is_ascii_alphanumeric()).take(12).collect::<String>().to_uppercase(); if s.is_empty() { "MAKE".to_string() } else { s } };
+    let sku = format!("MAKE-{}-{}-{}", slug, kind.to_uppercase().replace('_', "-"), seed);
+    let charged = { let conn = db.lock().unwrap(); spend_or_refuse(&conn, "ai_image", GEMINI_IMAGE_COST_JPY, &format!("public_make sku={}", sku), Some(&sku)) };
+    if !charged {
+        return (StatusCode::FAILED_DEPENDENCY, axum::Json(serde_json::json!({"ok":false,"error":"本日の生成枠が上限に達しました。また明日お試しください。"}))).into_response();
+    }
+    let design_prompt = format!(
+        "Print-ready chest graphic at 300 DPI on a pure white background. \
+         Style brief: {}. NO model, NO mockup, just the artwork, centered. Variation key: {}.",
+        theme_brief, seed);
+    let img = match crate::gemini::call_gemini(&design_prompt).await {
+        Ok(i) => i,
+        Err(e) => return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":format!("デザイン生成に失敗: {}", e)}))).into_response(),
+    };
+    let key = format!("catalog/{}.png", sku);
+    let Some(url) = crate::store_r2_bytes(&key, &img.bytes, &img.mime).await else {
+        return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":"画像アップロードに失敗しました"}))).into_response();
+    };
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO catalog_brands (slug, name, emoji, color_primary, tagline, is_active, revenue_share_pct)
+             VALUES ('minna', 'みんなでつくる MU', '🌱', '#88c97a', '言うだけで作れる — あなたのアイデアを MU が形に', 1, 0)",
+            [],
+        );
+        let desc = format!("{} — {}", display, hook);
+        let _ = conn.execute(
+            "INSERT INTO catalog_products (
+                sku, brand, label, description_ja, retail_price_jpy,
+                printful_product_id, printful_variant_id, printful_placement,
+                printful_print_w, printful_print_h,
+                design_file, mockup_main_file, mockup_url_external,
+                is_active, sort_order, status, fulfillment_route, legacy_source
+             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            rusqlite::params![
+                &sku, "minna", desc, desc, retail_jpy,
+                spec.printful_product_id, spec.printful_variant_id, spec.placement,
+                0, 0,
+                &url, &url, &url,
+                0, 50, "review", "printful_dtg", "public_make",
+            ],
+        );
+    }
+    // Cost-minimal: only the Printful on-body mockup (no extra Gemini images).
+    let (pp, pv, url_c, sku_c, db_c) = (spec.printful_product_id, spec.printful_variant_id, url.clone(), sku.clone(), db.clone());
+    tokio::spawn(async move { let _ = generate_onbody_mockup(db_c, sku_c, pp, pv, url_c).await; });
+
+    axum::Json(serde_json::json!({
+        "ok": true,
+        "sku": sku,
+        "kind": kind,
+        "display": display,
+        "hook": hook,
+        "retail_jpy": retail_jpy,
+        "design_url": url,
+        "pdp_url": format!("https://wearmu.com/shop/{}", sku),
+        "status": "review",
+        "note": "つくりました（承認待ち）。承認されると購入できます。着用イメージは数十秒で反映されます。",
+    })).into_response()
+}
+
 /// Tiny shared header/footer for /returns /faq /shipping pages so
 /// they match the MU dark aesthetic without pulling site_header_html.
 fn legal_page(title: &str, body_html: &str) -> Html<String> {
