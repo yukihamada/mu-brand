@@ -21665,7 +21665,7 @@ async fn nft_metadata(
     let conn = db.lock().unwrap();
     let result = conn.query_row(
         "SELECT name, mockup_url, design_url, weather_data, drop_num, nft_mint
-         FROM products WHERE brand=? AND drop_num=? AND active=1 LIMIT 1",
+         FROM products WHERE brand=? AND drop_num=? LIMIT 1",
         params![brand, drop_num],
         |row| Ok((
             row.get::<_, String>(0)?,
@@ -21728,7 +21728,7 @@ async fn verify_page(
     let result = conn.query_row(
         "SELECT name, mockup_url, design_url, weather_data, price_jpy, inventory, sold,
                 created_at, prompt_hash, nft_mint
-         FROM products WHERE brand=? AND drop_num=? AND active=1 LIMIT 1",
+         FROM products WHERE brand=? AND drop_num=? LIMIT 1",
         params![brand, drop_num],
         |row| Ok((
             row.get::<_, String>(0)?,
@@ -21746,7 +21746,35 @@ async fn verify_page(
     drop(conn);
 
     match result {
-        Err(_) => (StatusCode::NOT_FOUND, Html("<html><body>Not found</body></html>".to_string())).into_response(),
+        Err(_) => {
+            // A person physically scanned a QR — never show a raw "Not found".
+            let brand_up = brand.to_uppercase();
+            let drop_fmt = format!("#{:04}", drop_num);
+            let body = format!(r#"<!DOCTYPE html>
+<html lang="ja"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU — 真正性証明が見つかりません</title>
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:32px}}
+.logo{{font-size:20px;font-weight:700;letter-spacing:0.5em;margin-bottom:28px}}
+.code{{font-size:11px;letter-spacing:0.3em;opacity:0.5;margin-bottom:20px}}
+h1{{font-size:18px;font-weight:300;letter-spacing:0.04em;line-height:1.6;margin-bottom:16px}}
+p{{font-size:12px;opacity:0.6;line-height:1.9;max-width:300px;margin-bottom:28px}}
+a{{display:inline-block;border:1px solid #333;color:#F5F5F0;font-size:9px;letter-spacing:0.35em;text-transform:uppercase;padding:14px 28px;text-decoration:none}}
+a:hover{{background:#1C1C1C}}
+</style>
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+</head>
+<body>
+<div class="logo">MU</div>
+<div class="code">{brand_up} {drop_fmt}</div>
+<h1>この真正性証明は<br>確認できませんでした</h1>
+<p>コードが読み取れないか、まだ準備中の可能性があります。お手元の商品と合わせてご確認ください。</p>
+<a href="https://wearmu.com/">wearmu.com へ →</a>
+</body></html>"#, brand_up = brand_up, drop_fmt = drop_fmt);
+            (StatusCode::NOT_FOUND, Html(body)).into_response()
+        }
         Ok((name, mockup_url, design_url, weather_data, price_jpy, inventory, sold, created_at, prompt_hash, nft_mint)) => {
             let image = mockup_url.or(design_url).unwrap_or_default();
             let brand_up = brand.to_uppercase();
