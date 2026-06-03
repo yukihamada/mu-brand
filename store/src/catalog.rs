@@ -2533,6 +2533,9 @@ button:disabled{opacity:.5;cursor:default}
 .card .nm{font-size:18px;font-weight:700}
 .card .pr{color:#ffd700;font-size:20px;font-weight:800;margin:4px 0}
 .card a.buy{display:inline-block;margin-top:8px;background:#ffd700;color:#0a0a0a;text-decoration:none;font-weight:700;padding:9px 16px;border-radius:8px;font-size:13px}
+.card button.share{margin-top:8px;margin-left:8px;background:transparent;border:1px solid rgba(255,215,0,.5);color:#ffd700;font-weight:700;padding:9px 14px;border-radius:8px;font-size:13px;cursor:pointer;font-family:inherit}
+.card button.share:hover{background:rgba(255,215,0,.12)}
+.card .spread{font-size:11.5px;color:rgba(245,245,240,.5);margin-top:8px}
 .note{font-size:12px;color:rgba(245,245,240,.5);margin-top:8px}
 .err{color:#ff8a7a;font-size:14px}
 .spin{display:inline-block;width:16px;height:16px;border:2px solid rgba(0,0,0,.3);border-top-color:#0a0a0a;border-radius:50%;animation:s .7s linear infinite;vertical-align:-3px;margin-right:8px}
@@ -2557,6 +2560,7 @@ button:disabled{opacity:.5;cursor:default}
 </div>
 <script>
 const $=s=>document.querySelector(s);
+function muShare(b){var u=b.dataset.u,t=b.dataset.t;if(navigator.share){navigator.share({title:t,url:u}).catch(function(){});}else if(navigator.clipboard){navigator.clipboard.writeText(u).then(function(){b.textContent='リンクをコピーしました ✓';}).catch(function(){});}else{prompt('このリンクを広めてください',u);}}
 $('#out');
 document.querySelectorAll('.ex b').forEach(b=>b.onclick=()=>{$('#p').value=b.dataset.x;});
 $('#go').onclick=async()=>{
@@ -2569,13 +2573,16 @@ $('#go').onclick=async()=>{
     const j=await r.json();
     if(!j.ok){ $('#out').innerHTML='<div class=err>'+(j.error||'うまく作れませんでした。もう一度お試しください。')+'</div>'; }
     else{
+      var url = j.buy_url || j.pdp_url || '';
       var buy = j.buy_url ? '<a class=buy href="'+j.buy_url+'">今すぐ買う ¥'+(j.retail_jpy||'')+' →</a>' : '';
+      var share = url ? '<button class=share onclick="muShare(this)" data-u="'+url+'" data-t="'+((j.display||'MU')+' / wearmu')+'">📣 シェアして広める</button>' : '';
+      var spread = url ? '<div class=spread>広めるほど、この子が売れる → 作り手に報酬（¥600〜/枚）。</div>' : '';
       var nt = j.note || (j.buy_url ? 'できました！今すぐ買えます。' : 'つくりました。確認後に公開・購入できます。');
       $('#out').innerHTML='<div class=card><img src="'+j.design_url+'" alt=""><div class=meta>'
         +'<div class=nm>'+(j.display||'')+'</div>'
         +'<div class=pr>¥'+(j.retail_jpy||'')+'</div>'
         +'<div style="font-size:13px;color:rgba(245,245,240,.7)">'+(j.hook||'')+'</div>'
-        + buy
+        + buy + share + spread
         +'<div class=note>'+ (j.auto_approved ? '✓ ' : '') + nt +'</div></div></div>';
     }
   }catch(e){ $('#out').innerHTML='<div class=err>通信エラー。もう一度お試しください。</div>'; }
