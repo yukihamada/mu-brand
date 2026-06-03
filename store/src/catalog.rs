@@ -905,6 +905,22 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
                     50/50 cotton-polyester blend · 1×1 athletic ribbed collar · \
                     DTG print front chest",
     },
+    ProductSpec {
+        kind: "nfc_coin",
+        // No POD vendor: NFC音コイン is self-fulfilled (fulfillment_route
+        // 'manual'). The NTAG213 tag is encoded with the song URL, locked,
+        // and mailed in an envelope — so there is no Printful product /
+        // variant / placement. The song URL is carried in description_ja via
+        // the existing "oto.html?s=KEY" sound-tee convention; the manual arm
+        // in fulfill_catalog_order() reads it to tell the operator what to write.
+        printful_product_id: 0,
+        printful_variant_id: 0,
+        placement: "none",
+        retail_jpy: 1800,
+        spec_html: "NFC音コイン (NXP NTAG213) · ふれると鳴る · \
+                    タップで mu.koe.live の一曲が再生 · URLは書込後ロック(改竄不可) · \
+                    自社エンコード&発送 · gi・鍵・バッグに付けて持ち歩く",
+    },
 ];
 
 /// Public, agent-facing view of a `ProductSpec` so callers outside this
@@ -968,10 +984,13 @@ pub fn agent_insert_product(
     let sku = format!("{}-AGENT-{}-{}",
         brand_for_sku, kind.to_uppercase().replace('_', "-"), seed);
 
-    let route = if matches!(kind, "rashguard_ls" | "rashguard_black") {
-        "printful_aop"
-    } else {
-        "printful_dtg"
+    let route = match kind {
+        "rashguard_ls" | "rashguard_black" => "printful_aop",
+        // Self-fulfilled, non-Printful (NFC音コイン): take payment, then a
+        // human encodes the tag + mails it (handled by the manual arm in
+        // fulfill_catalog_order).
+        "nfc_coin" => "manual",
+        _ => "printful_dtg",
     };
 
     conn.execute(
@@ -4550,6 +4569,60 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
     let country = addr["country"].as_str().unwrap_or("JP").to_uppercase();
     let raw_state = addr["state"].as_str().unwrap_or("");
     let state_code = normalize_state_code(&country, raw_state);
+
+    // ── Manual / self-fulfilled route (NFC音コイン etc.) ──────────────────
+    // No POD vendor: we take payment, then a human writes the NFC tag and
+    // mails it. This is a first-class route (contract: manual = "we just
+    // process payment"), NOT the failed_no_item *error* path below. We record
+    // the paid order as 'manual_pending' and alert the operator with the
+    // encode payload (the song URL, derived from the sound-tee "oto.html?s=KEY"
+    // convention in the description) plus the ship-to address.
+    if route == "manual" {
+        let desc = {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT description_ja FROM catalog_products WHERE sku=?",
+                rusqlite::params![&sku],
+                |r| r.get::<_, String>(0),
+            )
+            .unwrap_or_default()
+        };
+        let encode_url = desc
+            .find("oto.html?s=")
+            .map(|p| &desc[p + "oto.html?s=".len()..])
+            .map(|rest| {
+                rest.chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+                    .collect::<String>()
+            })
+            .filter(|k| !k.is_empty())
+            .map(|k| format!("https://mu.koe.live/oto.html?s={}", k))
+            .unwrap_or_else(|| "(description に oto.html?s= キー無し → 手動確認)".to_string());
+
+        record_order(&db, &session_id, &sku, amount_total, cust, shipping,
+                     None, "manual_pending");
+
+        let name = shipping["name"]
+            .as_str()
+            .or_else(|| cust["name"].as_str())
+            .unwrap_or("");
+        let ship_to = format!(
+            "{} / {} {} {} {} {} {}",
+            name,
+            addr["line1"].as_str().unwrap_or(""),
+            addr["line2"].as_str().unwrap_or(""),
+            addr["city"].as_str().unwrap_or(""),
+            state_code,
+            addr["postal_code"].as_str().unwrap_or(""),
+            country,
+        );
+        let _ = crate::send_telegram_message(&format!(
+            "📌 *manual order* (NFC音コイン)\nsku=`{}`\n🔗 encode→ {}\n👤🏠 {}\n💴 ¥{}\n書込→ロック→封筒で発送。",
+            sku, encode_url, ship_to, amount_total
+        ))
+        .await;
+        return;
+    }
 
     // When a cross-sell add-on is present, `amount_total` is the WHOLE
     // session (main SKU + add-on). The add-on ships as its own Printful
