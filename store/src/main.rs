@@ -19,7 +19,7 @@ use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::{sync::{Arc, Mutex}, env, time::{SystemTime, UNIX_EPOCH}};
 use tower_http::services::ServeDir;
-use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
+use tower_http::trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::Level;
 
 /// Master "autopilot" flag. When MU_AUTOPILOT=0, all autonomous background
@@ -369,6 +369,24 @@ async fn admin_unlock_self(
     Json(serde_json::json!({
         "ok": true, "ip": ip, "cleared_fails": cleared
     })).into_response()
+}
+
+/// Replace the values of secret-bearing query parameters (`token`,
+/// `admin_token`, `key`, `api_key`, `secret`) with `***` so request-trace
+/// log lines never contain a usable credential. Everything else is passed
+/// through untouched.
+fn redact_query_secrets(uri: &str) -> String {
+    let Some((path, query)) = uri.split_once('?') else { return uri.to_string() };
+    let redacted: Vec<String> = query.split('&').map(|pair| {
+        match pair.split_once('=') {
+            Some((name, _)) if matches!(
+                name.to_ascii_lowercase().as_str(),
+                "token" | "admin_token" | "key" | "api_key" | "secret"
+            ) => format!("{}=***", name),
+            _ => pair.to_string(),
+        }
+    }).collect();
+    format!("{}?{}", path, redacted.join("&"))
 }
 
 fn require_admin_token(provided: Option<&String>) -> Result<(), Response> {
@@ -21481,9 +21499,13 @@ async fn admin_backfill_mu_purchases_from_catalog(
 /// snapshots.
 async fn admin_db_backup(
     State(db): State<Db>,
+    headers: HeaderMap,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Response {
-    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    // admin_auth (not require_admin_token) so the hourly GH Actions puller can
+    // send the token via X-Admin-Token header instead of ?token=… — query
+    // tokens end up verbatim in the request-trace log lines.
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/db_backup").await { return r; }
 
     let ts = chrono_now();
     // Write the snapshot onto the SAME volume as the live DB (/data), which is
@@ -21511,15 +21533,19 @@ async fn admin_db_backup(
         }
     }
 
-    // VACUUM INTO is a consistent copy but synchronous and holds the global
-    // DB mutex. Run it on a blocking thread so it doesn't stall the async
-    // runtime — the old inline call blocked a tokio worker for the whole
-    // vacuum, so other endpoints (incl. /healthz) 503'd during each backup.
+    // VACUUM INTO is a consistent copy but synchronous. Run it on a blocking
+    // thread AND on its OWN SQLite connection: the previous version took the
+    // global `Db` mutex for the whole vacuum, so every other handler queued
+    // behind it for ~2 minutes (2026-06-04 incident: all requests stalled
+    // 128s, the agent scheduler died, /healthz went 503 and Fly blackholed
+    // the site). The DB is in WAL mode, so a separate read connection
+    // vacuums consistently without blocking either readers or writers.
     let vacuum = {
-        let db = db.clone();
+        let db_path_c = db_path.clone();
         let snap_str = snap_str.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = db.lock().unwrap();
+        tokio::task::spawn_blocking(move || -> rusqlite::Result<usize> {
+            let conn = Connection::open(&db_path_c)?;
+            conn.busy_timeout(std::time::Duration::from_secs(30))?;
             conn.execute(&format!("VACUUM INTO '{}'", snap_str.replace('\'', "''")), [])
         }).await
     };
@@ -67640,7 +67666,18 @@ async fn main() {
         .layer(tower_http::compression::CompressionLayer::new().gzip(true).br(true))
         .layer(
             TraceLayer::new_for_http()
-                .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+                // Custom span instead of DefaultMakeSpan: admin endpoints accept
+                // ?token=… and the default span logs the full URI, leaking the
+                // ADMIN_TOKEN verbatim into Fly logs (observed 2026-06-04 with
+                // /api/admin/db_backup). Redact secret-bearing query values.
+                .make_span_with(|req: &axum::http::Request<_>| {
+                    tracing::info_span!(
+                        "request",
+                        method = %req.method(),
+                        uri = %redact_query_secrets(&req.uri().to_string()),
+                        version = ?req.version(),
+                    )
+                })
                 .on_request(DefaultOnRequest::new().level(Level::INFO))
                 .on_response(DefaultOnResponse::new().level(Level::INFO)),
         );
@@ -77076,11 +77113,28 @@ async fn healthz(State(db): State<Db>) -> Response {
     };
     let disk_ok = disk_free_mb == -1 || disk_free_mb >= 100;
 
-    let overall_ok = scheduler_ok && db_writable && watchdog_ok && disk_ok;
+    // Scheduler/watchdog staleness is DEGRADED — reported in the body and as
+    // an ERROR log line — but must NOT fail the Fly service check. Fly does
+    // not restart a machine on failing HTTP checks; it only stops routing to
+    // it. So tying agent liveness to the check turns a dead background task
+    // into a full public outage while the app serves fine (2026-06-04
+    // incident: /healthz 503'd for 40+ min after a db_backup stall killed the
+    // scheduler — every page worked, but Fly blackholed the site). Hard-fail
+    // only on what actually breaks serving: DB writability and disk.
+    let agents_ok = scheduler_ok && watchdog_ok;
+    let overall_ok = db_writable && disk_ok;
+    if !agents_ok && !warming_up {
+        tracing::error!(
+            last_journal_age_secs = last_journal_age,
+            last_watchdog_age_secs = last_watchdog_age,
+            "healthz: agent scheduler/watchdog stale (degraded; still serving)"
+        );
+    }
     let status = if overall_ok { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE };
 
     let body = serde_json::json!({
         "ok": overall_ok,
+        "agents_ok": agents_ok,
         "scheduler_ok": scheduler_ok,
         "db_writable": db_writable,
         "watchdog_ok": watchdog_ok,

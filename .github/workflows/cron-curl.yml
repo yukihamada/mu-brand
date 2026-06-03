@@ -481,8 +481,11 @@ jobs:
           # full transfer even at 0.4 MB/s); --retry 1 only (a real 500 blip is
           # cheap to re-try, but a slow transfer must NOT re-VACUUM 3×);
           # timeout-minutes 24 covers worst case (600 + 30 + 600).
+          # 2026-06-04: token moved from ?token= query to X-Admin-Token header —
+          # query tokens were logged verbatim by the server's request tracing.
           curl -fsS --max-time 600 --retry 1 --retry-delay 30 --retry-all-errors \
-            "${BASE_URL}/api/admin/db_backup?token=${ADMIN_TOKEN}" \
+            -H "X-Admin-Token: ${ADMIN_TOKEN}" \
+            "${BASE_URL}/api/admin/db_backup" \
             -o "products_${ts}.db"
           ls -lh "products_${ts}.db"
           # Sanity: file should be a valid SQLite DB (header "SQLite format 3\000")
