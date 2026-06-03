@@ -3524,9 +3524,11 @@ pub async fn shop_pdp(
         return (StatusCode::NOT_FOUND, "product not found").into_response();
     };
 
-    // mockup: prefer external CDN; fall back to /static/... relative to root
+    // mockup: prefer external CDN; fall back to /static/... relative to root.
+    // Printful tmp upload URLs expire (~24h → 403) — treat them as absent.
     let img = mockup_ext
         .filter(|s| !s.is_empty())
+        .filter(|s| !s.starts_with("https://printful-upload.s3") && !s.contains("/tmp/"))
         .or_else(|| mockup_main.map(|p| format!("https://merch.wearmu.com{}", p)))
         .unwrap_or_else(|| "/static/og-default.png".to_string());
 
@@ -4093,19 +4095,23 @@ pub async fn shop_checkout(
     let gift = gift_key_valid(q.key.as_deref());
     let row = {
         let conn = db.lock().unwrap();
+        // MOCKUP_EXT_LIVE: skip expired Printful tmp URLs so the Stripe
+        // checkout line item never shows a broken product image.
         let sql = if gift {
+            format!(
             "SELECT stripe_price_id, retail_price_jpy, description_ja, brand,
-                    COALESCE(mockup_url_external, mockup_main_file, ''),
+                    COALESCE({ext}, mockup_main_file, ''),
                     COALESCE(fulfillment_route, 'printful_dtg'), meta_json
-             FROM catalog_products WHERE sku=?"
+             FROM catalog_products WHERE sku=?", ext = MOCKUP_EXT_LIVE)
         } else {
+            format!(
             "SELECT stripe_price_id, retail_price_jpy, description_ja, brand,
-                    COALESCE(mockup_url_external, mockup_main_file, ''),
+                    COALESCE({ext}, mockup_main_file, ''),
                     COALESCE(fulfillment_route, 'printful_dtg'), meta_json
-             FROM catalog_products WHERE sku=? AND is_active=1"
+             FROM catalog_products WHERE sku=? AND is_active=1", ext = MOCKUP_EXT_LIVE)
         };
         conn.query_row(
-            sql,
+            &sql,
             rusqlite::params![&sku],
             |r| {
                 Ok((
@@ -5890,6 +5896,14 @@ struct ProductRow {
     sold: i64,
 }
 
+/// SQL fragment: mockup_url_external, but with Printful's ephemeral presigned
+/// upload URLs (printful-upload.s3…/tmp/… — expire in ~24h, then 403 and the
+/// shop shows white tiles) treated as NULL so COALESCE falls through to
+/// mockup_main_file. Mirrors persist_mockup_if_temporary()'s is_temp check.
+const MOCKUP_EXT_LIVE: &str = "CASE WHEN mockup_url_external LIKE 'https://printful-upload.s3%' \
+       OR mockup_url_external LIKE '%/tmp/%' \
+     THEN NULL ELSE mockup_url_external END";
+
 fn list_products_paged(
     conn: &rusqlite::Connection,
     brand: Option<&str>,
@@ -5900,32 +5914,34 @@ fn list_products_paged(
     // badge, derived per-row via correlated subquery (gated in render_card).
     let (sql, has_brand) = if brand.is_some() {
         (
+            format!(
             "SELECT sku, brand, description_ja, retail_price_jpy,
-                    COALESCE(mockup_url_external, mockup_main_file),
+                    COALESCE({ext}, mockup_main_file),
                     (SELECT COUNT(*) FROM catalog_orders o WHERE o.sku=catalog_products.sku AND o.status='submitted')
              FROM catalog_products
              WHERE is_active=1 AND brand=?
-             ORDER BY (mockup_url_external IS NOT NULL AND mockup_url_external != '') DESC,
+             ORDER BY (COALESCE({ext}, '') != '') DESC,
                       (SELECT COUNT(*) FROM catalog_orders o2 WHERE o2.sku=catalog_products.sku AND o2.status='submitted') DESC,
                       sort_order, sku
-             LIMIT ? OFFSET ?",
+             LIMIT ? OFFSET ?", ext = MOCKUP_EXT_LIVE),
             true,
         )
     } else {
         (
+            format!(
             "SELECT sku, brand, description_ja, retail_price_jpy,
-                    COALESCE(mockup_url_external, mockup_main_file),
+                    COALESCE({ext}, mockup_main_file),
                     (SELECT COUNT(*) FROM catalog_orders o WHERE o.sku=catalog_products.sku AND o.status='submitted')
              FROM catalog_products
              WHERE is_active=1
-             ORDER BY (mockup_url_external IS NOT NULL AND mockup_url_external != '') DESC,
+             ORDER BY (COALESCE({ext}, '') != '') DESC,
                       (SELECT COUNT(*) FROM catalog_orders o2 WHERE o2.sku=catalog_products.sku AND o2.status='submitted') DESC,
                       sort_order, sku
-             LIMIT ? OFFSET ?",
+             LIMIT ? OFFSET ?", ext = MOCKUP_EXT_LIVE),
             false,
         )
     };
-    let mut stmt = match conn.prepare(sql) {
+    let mut stmt = match conn.prepare(&sql) {
         Ok(s) => s,
         Err(_) => return Vec::new(),
     };
