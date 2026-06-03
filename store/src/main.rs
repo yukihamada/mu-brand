@@ -67287,6 +67287,8 @@ async fn main() {
         .route("/admin/catalog/nl", get(catalog::admin_nl_add))
         .route("/make", get(catalog::make_page))
         .route("/store", get(catalog::store_unmanned_page))
+        .route("/connect", get(catalog::connect_page))
+        .route("/api/connect", get(catalog::api_connect).post(catalog::api_connect))
         .route("/mujin", get(catalog::store_unmanned_page))
         .route("/unmanned", get(catalog::store_unmanned_page))
         .route("/api/make", post(catalog::public_make).get(catalog::public_make))

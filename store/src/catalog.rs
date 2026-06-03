@@ -2345,6 +2345,65 @@ pub struct MakeQuery {
     pub kind: Option<String>,
 }
 
+// ── 声でつなぐ（Koe連携: 人もエージェントも声でつなげる入口） ──
+fn mu_connect_link(name: &str) -> (String, String, String) {
+    let h: String = name.to_lowercase().chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').take(48).collect();
+    let h = if h.is_empty() {
+        let n = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0) as u32;
+        format!("mu-{:x}", n)
+    } else { h };
+    let link = format!("https://yukihamada.jp/k/{}", h);
+    let prompt = format!("!open {}", link);
+    (h, link, prompt)
+}
+
+#[derive(serde::Deserialize)]
+pub struct MuConnectQ { #[serde(default)] pub name: String }
+
+/// GET/POST /api/connect?name= — エージェントが声でつなぐリンクを生成できる。CORS *。
+pub async fn api_connect(Query(q): Query<MuConnectQ>) -> Response {
+    let (room, link, prompt) = mu_connect_link(&q.name);
+    ([("access-control-allow-origin", "*")], axum::Json(serde_json::json!({
+        "ok": true, "name": q.name, "room": room, "link": link, "prompt": prompt,
+        "enter_url": format!("https://yukihamada.jp/room/{}", room),
+        "presence_url": format!("https://yukihamada.jp/api/room/{}/presence", room),
+        "note": "Open the link (or run the prompt in Claude Code) on both sides to connect by voice. Up to 6."
+    }))).into_response()
+}
+
+/// GET /connect — 声でつなぐ UI（MUブランド）。
+pub async fn connect_page() -> Html<String> {
+    Html(r##"<!doctype html><html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>━◯━ MU — 声でつなぐ</title><meta name="description" content="名前を入れるだけ。リンクを送って、ひらいたら声でつながる。">
+<style>*{margin:0;padding:0;box-sizing:border-box}body{background:#0a0a0a;color:#f5f5f0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;min-height:100dvh;line-height:1.7;background:radial-gradient(60% 45% at 50% 0%,rgba(255,215,0,.12),transparent 70%),#0a0a0a}
+a{color:inherit;text-decoration:none}nav{display:flex;justify-content:space-between;align-items:center;padding:14px 22px;border-bottom:1px solid rgba(255,255,255,.08)}nav .b{font-weight:900;letter-spacing:.3em}
+.wrap{max-width:520px;margin:0 auto;padding:52px 22px 80px}.kick{font-size:11px;letter-spacing:.4em;color:#ffd700;text-transform:uppercase;text-align:center}
+h1{font-size:34px;font-weight:800;text-align:center;margin:14px 0 6px}.sub{color:rgba(245,245,240,.6);font-size:14px;text-align:center;margin-bottom:30px}.sub b{color:#f5f5f0}
+label{display:block;font-size:12px;letter-spacing:.06em;color:rgba(245,245,240,.5);margin:18px 0 7px}
+input{width:100%;background:#141414;border:1px solid rgba(255,255,255,.14);border-radius:12px;padding:15px 16px;color:#f5f5f0;font-size:17px}input:focus{outline:none;border-color:#ffd700}
+.btn{display:block;width:100%;margin-top:16px;background:#ffd700;color:#0a0a0a;border:0;border-radius:12px;padding:16px;font-size:17px;font-weight:800;cursor:pointer;text-align:center}.btn.s{background:transparent;color:#ffd700;border:1px solid rgba(255,215,0,.4)}
+.panel{display:none;margin-top:24px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:20px}.panel.show{display:block}
+.lk{background:#111;border:1px solid #2a2a2a;border-radius:10px;padding:12px 14px;font-size:13px;color:#ffd700;word-break:break-all;margin:8px 0 4px}
+.share{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.share a,.share button{flex:1;min-width:84px;text-align:center;background:#161616;border:1px solid #2a2a2a;border-radius:9px;padding:11px 8px;color:#f5f5f0;font-size:13px;cursor:pointer;font-family:inherit}
+.status{margin-top:16px;text-align:center;font-size:15px;color:rgba(245,245,240,.6)}.status.on{color:#ffd700;font-weight:700}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#666;margin-right:7px}.status.on .dot{background:#ffd700;animation:p 1.6s infinite}@keyframes p{70%{box-shadow:0 0 0 9px rgba(255,215,0,0)}}
+.hint{font-size:12px;color:rgba(245,245,240,.4);text-align:center;margin-top:24px;line-height:1.9}.hint a{color:#ffd700}</style></head><body>
+<nav><a class="b" href="/">━◯━ MU</a><a href="/store" style="font-size:12px;color:#8a8a84">SHOP ↩</a></nav>
+<div class="wrap"><div class="kick">MU · 声でつなぐ</div><h1>声でつなぐ。</h1>
+<div class="sub">名前を入れるだけ。<b>リンクを送って、ひらいたら声でつながる。</b></div>
+<label>だれとつなぐ？</label><input id="name" placeholder="例：けんたろう" maxlength="40" autocomplete="off"><button class="btn" id="make">つなぐリンクを作る</button>
+<div class="panel" id="panel"><div style="font-size:13px;color:rgba(245,245,240,.55)"><b id="who"></b> とつなぐ部屋ができました。</div>
+<div class="lk" id="link"></div><div class="share"><button id="sh">📣 共有</button><a id="line" target="_blank" rel="noopener">LINE</a><a id="sms">SMS</a><a id="mail">メール</a><button id="cp">コピー</button></div>
+<label style="margin-top:18px">どこでも貼れる（Claude Code / Slack / メモ）</label><div class="lk" id="prompt"></div><button class="btn s" id="cpp" style="margin-top:8px">このプロンプトをコピー</button>
+<a class="btn" id="enter" target="_blank" style="margin-top:14px">▶ 自分が今すぐ入る</a><div class="status" id="status"><span class="dot"></span>あなたを待っています…</div></div>
+<div class="hint">声・顔・画面共有・チャット対応（最大6人）。同じリンクを開いた人が自動でつながります。<br><a href="/store">← ヤバいTシャツ屋さんへ</a></div></div>
+<script>var BASE='https://yukihamada.jp';var $=function(s){return document.getElementById(s)};function rid(){var c='abcdefghijkmnpqrstuvwxyz23456789',o='';for(var i=0;i<8;i++)o+=c[Math.floor(Math.random()*c.length)];return o;}
+var room='',shortUrl='',prompt='',poll=null;function mk(){var nm=$('name').value.trim()||'相手';var h=nm.toLowerCase().replace(/[^a-z0-9-]/g,'');if(!h)h='mu-'+rid();room=h;shortUrl=BASE+'/k/'+h;prompt='!open '+shortUrl;$('who').textContent=nm;$('link').textContent=shortUrl;$('prompt').textContent=prompt;$('enter').href=BASE+'/room/'+room;var msg='声でつなぎたい。これ開いて → '+shortUrl;$('line').href='https://line.me/R/share?text='+encodeURIComponent(msg);$('sms').href='sms:?&body='+encodeURIComponent(msg);$('mail').href='mailto:?subject='+encodeURIComponent('声でつなぎたい')+'&body='+encodeURIComponent(msg);$('sh').onclick=function(){if(navigator.share){navigator.share({title:'声でつなぐ',text:msg,url:shortUrl}).catch(function(){});}else{cp();}};$('cp').onclick=cp;$('cpp').onclick=cpp;$('panel').classList.add('show');if(poll)clearInterval(poll);poll=setInterval(checkp,4000);checkp();}
+function cp(){navigator.clipboard&&navigator.clipboard.writeText(shortUrl).then(function(){$('cp').textContent='コピー済 ✓';setTimeout(function(){$('cp').textContent='コピー';},1500);});}function cpp(){navigator.clipboard&&navigator.clipboard.writeText(prompt).then(function(){$('cpp').textContent='コピー済 ✓';setTimeout(function(){$('cpp').textContent='このプロンプトをコピー';},1500);});}
+function checkp(){fetch(BASE+'/api/room/'+room+'/presence',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){var n=d.count||0,s=$('status');if(n>=2){s.className='status on';s.innerHTML='<span class=dot></span>🎉 つながりました（'+n+'人）';}else if(n===1){s.className='status on';s.innerHTML='<span class=dot></span>あなたが入室中 — 相手を待っています';}else{s.className='status';s.innerHTML='<span class=dot></span>リンクを送って、ふたりで開いてください';}}).catch(function(){});}
+$('make').onclick=mk;$('name').addEventListener('keydown',function(e){if(e.key==='Enter')mk();});</script></body></html>"##.to_string())
+}
+
 /// GET /store — 「ガチの無人店舗」。24時間 AI だけが運営する受注生産Tシャツ屋の入口。
 /// ライブ在庫(catalog_products is_active=1)を実数で見せ、/make(話して作る)と /shop(棚) に繋ぐ。
 pub async fn store_unmanned_page(State(db): State<Db>) -> Html<String> {
