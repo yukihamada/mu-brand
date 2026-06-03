@@ -957,10 +957,10 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
 
 <!-- BIM 設計の無人ストア — the physical payoff of the 0-human brand story above.
      Honesty (workspace SOP): this is a BIM *design / 構想*, NOT an operating store,
-     so the copy says 設計/構想, never 実在/本物.
-     Perf/noise: the 3D is heavy (three.js, always-rotating). We do NOT auto-embed
-     it on the homepage — a click-to-load facade keeps the fold quiet & fast, and
-     the spinning model only loads on intent. bim.house serves frame-ancestors *. -->
+     so the copy says 設計/構想, never 実在/本物. Specs mirror the live bim.json
+     (u-mut-9bru6gvb): 中庭3F・SOLUNA籾殻SIPs・延床142㎡・5軸設計スコア100。
+     Perf/noise: instead of the heavy live three.js iframe we loop a tiny (~260KB)
+     pre-rendered orbit video; the interactive 3D is one tap away (overlay link). -->
 <section id="irl-store" style="background:#0A0A0A;padding:120px 24px;border-top:1px solid rgba(255,255,255,0.04);border-bottom:1px solid rgba(255,255,255,0.04)">
   <div style="max-width:980px;margin:0 auto">
     <div style="font-size:9px;letter-spacing:0.45em;text-transform:uppercase;opacity:0.45;margin-bottom:24px">— BIM 設計 · 北海道 弟子屈</div>
@@ -971,27 +971,25 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
       AI が毎日 T シャツを生む MU。その拠点を、北海道・弟子屈の <strong style="color:#F5F5F0;opacity:0.9">美留和（びるわ）</strong> に建てる構想を、BIM で設計しました。
     </p>
 
-    <!-- click-to-load 3D facade: lightweight panel; injects the bim.house viewer
-         (auto-rotate) only when tapped, so the homepage stays fast & quiet. -->
-    <div id="irl-3d" role="button" tabindex="0"
-      aria-label="BIM 3D モデルを開く — MU 自動Tシャツ工房 美留和"
-      style="position:relative;width:100%;aspect-ratio:16/10;border:1px solid rgba(255,255,255,0.08);border-radius:3px;overflow:hidden;cursor:pointer;background:radial-gradient(120% 120% at 50% 20%,#13202e 0%,#0b0e14 70%);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;transition:border-color 0.25s"
-      onmouseover="this.style.borderColor='rgba(230,196,73,0.35)'" onmouseout="this.style.borderColor='rgba(255,255,255,0.08)'"
-      onclick="if(!this.dataset.on){this.dataset.on=1;this.style.cursor='default';this.innerHTML='&lt;iframe src=\'https://bim.house/u-mut-9bru6gvb?embed=1&amp;spin=1\' title=\'MU 自動Tシャツ工房 美留和 — BIM 3D モデル\' referrerpolicy=\'no-referrer\' style=\'position:absolute;inset:0;width:100%;height:100%;border:0\'&gt;&lt;/iframe&gt;';}"
-      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
-      <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="#5cf" stroke-width="1" aria-hidden="true" style="opacity:0.85">
-        <polygon points="12,3 20,7.5 20,16.5 12,21 4,16.5 4,7.5" stroke-linejoin="round"/>
-        <path d="M12,3 L12,12 M12,12 L20,7.5 M12,12 L4,7.5 M12,12 L12,21" stroke-width="0.7" opacity="0.7"/>
-      </svg>
-      <div style="font-size:11px;letter-spacing:0.28em;text-transform:uppercase;color:rgba(245,245,240,0.75)">▶ BIM 3D モデルを開く</div>
-      <div style="font-size:9px;letter-spacing:0.2em;opacity:0.4">MU 自動Tシャツ工房 美留和 · 平屋 66㎡</div>
+    <!-- pre-rendered orbit loop (~260KB) of the live BIM model. Far lighter than
+         the three.js iframe; interactive 3D via the overlay link bottom-right. -->
+    <div style="position:relative;width:100%;aspect-ratio:16/9;border:1px solid rgba(255,255,255,0.08);border-radius:3px;overflow:hidden;background:#0b0e14">
+      <video autoplay muted loop playsinline preload="metadata" poster="/irl-store-poster.jpg"
+        aria-label="MU 自動Tシャツ工房 美留和 — BIM 3D モデルの自動回転"
+        style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block">
+        <source src="/irl-store.webm" type="video/webm">
+        <source src="/irl-store.mp4" type="video/mp4">
+      </video>
+      <a href="https://bim.house/u-mut-9bru6gvb?embed=1&amp;spin=1" target="_blank" rel="noopener"
+        style="position:absolute;bottom:14px;right:14px;font-size:10px;letter-spacing:0.2em;text-transform:uppercase;background:rgba(11,14,20,0.7);border:1px solid rgba(245,245,240,0.25);color:#F5F5F0;padding:9px 16px;text-decoration:none;border-radius:3px;backdrop-filter:blur(4px)">▶ 3D で操作する</a>
+      <div style="position:absolute;bottom:14px;left:14px;font-size:9px;letter-spacing:0.2em;color:rgba(245,245,240,0.5)">MU 自動Tシャツ工房 美留和 · 中庭3F 142㎡</div>
     </div>
 
     <!-- spec row — numbers over adjectives (Constitution §1) -->
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:24px;margin-top:32px;font-variant-numeric:tabular-nums">
-      <div><div style="font-size:24px;font-weight:200;color:#F5F5F0">66㎡</div><div style="font-size:9px;letter-spacing:0.28em;text-transform:uppercase;opacity:0.5;margin-top:6px;line-height:1.5">平屋 · SIPs</div></div>
-      <div><div style="font-size:24px;font-weight:200;color:#F5F5F0">4 室</div><div style="font-size:9px;letter-spacing:0.28em;text-transform:uppercase;opacity:0.5;margin-top:6px;line-height:1.5">工房・店・事務・土間</div></div>
-      <div><div style="font-size:24px;font-weight:200;color:#e6c449">0</div><div style="font-size:9px;letter-spacing:0.28em;text-transform:uppercase;opacity:0.5;margin-top:6px;line-height:1.5">店員 · 無人運営</div></div>
+      <div><div style="font-size:24px;font-weight:200;color:#F5F5F0">142㎡</div><div style="font-size:9px;letter-spacing:0.28em;text-transform:uppercase;opacity:0.5;margin-top:6px;line-height:1.5">中庭3F · 籾殻SIPs</div></div>
+      <div><div style="font-size:24px;font-weight:200;color:#e6c449">100</div><div style="font-size:9px;letter-spacing:0.28em;text-transform:uppercase;opacity:0.5;margin-top:6px;line-height:1.5">5軸設計スコア</div></div>
+      <div><div style="font-size:24px;font-weight:200;color:#F5F5F0">0</div><div style="font-size:9px;letter-spacing:0.28em;text-transform:uppercase;opacity:0.5;margin-top:6px;line-height:1.5">店員 · 無人運営</div></div>
     </div>
 
     <!-- CTAs: primary = sell shirts (full catalog, not the 1-SKU 美留和 store);
@@ -1004,7 +1002,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
     </div>
 
     <p style="font-size:11px;line-height:1.9;color:rgba(245,245,240,0.4);margin-top:28px;max-width:560px">
-      ※ BIM 設計モデル（敷地・工事費は推定値）。現地は当面、無人受取／QR 掲示から。フル物理店舗は秋以降の構想です。
+      ※ BIM 設計モデル（進化計算で 5 軸 100 点に最適化／敷地・工事費は推定値）。現地は当面 無人受取／QR 掲示から、フル物理店舗は秋以降の構想です。
     </p>
   </div>
 </section>
