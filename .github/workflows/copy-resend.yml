@@ -1,0 +1,22 @@
+# One-off: mu-store の RESEND_API_KEY を koe-mcp に複製（GHAランナー内・ログはマスク）。
+# ブランチ chore/copy-resend からのみ dispatch。用が済んだらブランチごと削除。
+name: Copy RESEND to koe-mcp
+on:
+  workflow_dispatch:
+
+jobs:
+  copy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Copy secret mu-store → koe-mcp (masked)
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set +x
+          VAL=$(flyctl ssh console -a mu-store -C "printenv RESEND_API_KEY" | tr -d '\r\n[:space:]')
+          if [ -z "$VAL" ]; then echo "FAILED: empty value from mu-store"; exit 1; fi
+          echo "::add-mask::$VAL"
+          echo "got value (len=${#VAL})"
+          flyctl secrets set -a koe-mcp RESEND_API_KEY="$VAL"
+          echo "secret set on koe-mcp"
