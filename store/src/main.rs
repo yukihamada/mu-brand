@@ -10025,6 +10025,118 @@ th{{color:#888;font-weight:500;font-size:11px;letter-spacing:0.08em;text-transfo
 </body></html>"#, tok=tok_attr, n=rows.len(), tbody=tbody)).into_response()
 }
 
+// ── 作業ログ / 公開された鼓動 (ともしび相当) ───────────────────────────────
+// MU が「何を作っているか」を一行流す投稿口。書込は ADMIN_TOKEN 保護、閲覧は公開。
+// 製品サーフェス(catalog_*)ではない運用ログなので独立テーブル `updates` に置く。
+fn updates_admin_ok(headers: &HeaderMap, body: &serde_json::Value) -> bool {
+    let provided: Option<String> = headers.get("authorization").and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer ").or_else(|| s.strip_prefix("bearer ")))
+        .map(String::from)
+        .or_else(|| headers.get("x-admin-token").and_then(|v| v.to_str().ok()).map(String::from))
+        .or_else(|| body.get("admin_token").and_then(|v| v.as_str()).map(String::from));
+    require_admin_token(provided.as_ref()).is_ok()
+}
+
+async fn updates_post(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    if !updates_admin_ok(&headers, &body) {
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+    let text = body.get("text").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    if text.is_empty() {
+        return (StatusCode::BAD_REQUEST, "text required").into_response();
+    }
+    let text: String = text.chars().take(2000).collect();
+    let author: String = body.get("author").and_then(|v| v.as_str()).map(|s| s.trim())
+        .filter(|s| !s.is_empty()).unwrap_or("濱田優貴").chars().take(40).collect();
+    let kind: String = body.get("kind").and_then(|v| v.as_str()).unwrap_or("log")
+        .chars().take(24).collect();
+    let url: Option<String> = body.get("url").and_then(|v| v.as_str()).map(|s| s.trim().to_string())
+        .filter(|s| s.starts_with("http") && s.len() <= 500 && !s.contains(['"', '<', '>', ' ']));
+    let now_unix: i64 = chrono_now().parse().unwrap_or(0);
+    let disp = chrono_now_jst_datetime_str();
+    let id = {
+        let conn = db.lock().unwrap();
+        conn.execute(
+            "INSERT INTO updates (author, text, url, kind, created_unix, created_disp) VALUES (?,?,?,?,?,?)",
+            params![author, text, url, kind, now_unix, disp],
+        ).ok();
+        conn.last_insert_rowid()
+    };
+    Json(serde_json::json!({"ok": true, "id": id})).into_response()
+}
+
+fn updates_recent(db: &Db, limit: i64) -> Vec<serde_json::Value> {
+    let conn = db.lock().unwrap();
+    let mut stmt = match conn.prepare(
+        "SELECT id, author, text, url, kind, created_disp FROM updates \
+         ORDER BY created_unix DESC, id DESC LIMIT ?"
+    ) { Ok(s) => s, Err(_) => return vec![] };
+    let rows = stmt.query_map(params![limit], |r| {
+        Ok(serde_json::json!({
+            "id": r.get::<_, i64>(0)?,
+            "author": r.get::<_, String>(1)?,
+            "text": r.get::<_, String>(2)?,
+            "url": r.get::<_, Option<String>>(3)?,
+            "kind": r.get::<_, String>(4)?,
+            "at": r.get::<_, String>(5)?,
+        }))
+    });
+    match rows { Ok(it) => it.filter_map(|x| x.ok()).collect(), Err(_) => vec![] }
+}
+
+async fn updates_list_json(State(db): State<Db>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "updates": updates_recent(&db, 50) }))
+}
+
+async fn updates_page(State(db): State<Db>) -> Response {
+    let items = updates_recent(&db, 50);
+    let mut rows = String::new();
+    for it in &items {
+        let text = html_escape(it.get("text").and_then(|v| v.as_str()).unwrap_or(""));
+        let author = html_escape(it.get("author").and_then(|v| v.as_str()).unwrap_or(""));
+        let at = html_escape(it.get("at").and_then(|v| v.as_str()).unwrap_or(""));
+        let kind = html_escape(it.get("kind").and_then(|v| v.as_str()).unwrap_or("log"));
+        let url = it.get("url").and_then(|v| v.as_str()).unwrap_or("");
+        let link = if url.starts_with("http") {
+            format!(" <a href=\"{}\" target=\"_blank\" rel=\"noopener\">↗</a>", html_escape(url))
+        } else { String::new() };
+        rows.push_str(&format!(
+            "<li><div class=\"meta\">{at} · {author} · <span class=\"k\">{kind}</span></div>\
+             <div class=\"t\">{text}{link}</div></li>"
+        ));
+    }
+    if items.is_empty() {
+        rows.push_str("<li><div class=\"t\" style=\"opacity:.5\">まだ薪がありません。</div></li>");
+    }
+    let html = format!(
+        "<!doctype html><html lang=\"ja\"><head><meta charset=\"utf-8\">\
+<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
+<title>MU — 鼓動 / updates</title>\
+<style>body{{margin:0;background:#0b0b0c;color:#eee;\
+font:15px/1.7 -apple-system,BlinkMacSystemFont,'Hiragino Kaku Gothic ProN',sans-serif}}\
+.wrap{{max-width:680px;margin:0 auto;padding:44px 20px 90px}}\
+h1{{font-size:20px;letter-spacing:.12em;font-weight:600;margin:0}}\
+.sub{{opacity:.55;font-size:13px;margin:8px 0 30px}}a{{color:#7ab8ff;text-decoration:none}}\
+ul{{list-style:none;padding:0;margin:0}}\
+li{{border-left:2px solid #2a2a2c;padding:0 0 18px 16px;margin:0;position:relative}}\
+li:before{{content:'';position:absolute;left:-5px;top:7px;width:8px;height:8px;\
+border-radius:50%;background:#ff7a45}}\
+.meta{{font-size:12px;opacity:.5;margin-bottom:4px}}.k{{color:#ff9d6e}}\
+.t{{white-space:pre-wrap;word-break:break-word}}\
+.foot{{margin-top:38px;opacity:.4;font-size:12px}}</style></head>\
+<body><div class=\"wrap\"><h1>MU の鼓動</h1>\
+<div class=\"sub\">何を作っているか、一行ずつ。 <a href=\"/\">← wearmu</a></div>\
+<ul>{rows}</ul>\
+<div class=\"foot\">公開ログ · 投稿は ADMIN_TOKEN 保護 / 閲覧は公開 · <a href=\"/api/updates\">JSON</a></div>\
+</div></body></html>"
+    );
+    Html(html).into_response()
+}
+
 async fn list_brands(State(db): State<Db>) -> impl IntoResponse {
     // created_at is stored mixed-format (some rows are unix-epoch strings,
     // others are ISO). Normalize inside SQL so MAX() picks the real latest.
@@ -66065,6 +66177,19 @@ async fn main() {
         );
         CREATE INDEX IF NOT EXISTS idx_tee_anchors_born ON tee_anchors(born_at_unix DESC);
         CREATE INDEX IF NOT EXISTS idx_tee_anchors_brand ON tee_anchors(brand, drop_num);
+
+        -- 作業ログ / 公開された鼓動 (ともしび相当・製品サーフェスではない運用テーブル)。
+        -- 「何を作っているか」を一行流す投稿口。書込は ADMIN_TOKEN 保護 / 閲覧は公開。
+        CREATE TABLE IF NOT EXISTS updates (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            author       TEXT NOT NULL DEFAULT '濱田優貴',
+            text         TEXT NOT NULL,
+            url          TEXT,
+            kind         TEXT NOT NULL DEFAULT 'log',
+            created_unix INTEGER NOT NULL,
+            created_disp TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_updates_created ON updates(created_unix DESC);
     ").ok();
 
     // /itto first calf (#0001) — admin can later update fields via /admin/itto/calf.
@@ -66510,6 +66635,8 @@ async fn main() {
         // renders ★ average + count when reviews exist.
         .route("/api/admin/reviews", post(admin_review_create))
         // API routes
+        .route("/updates", get(updates_page))
+        .route("/api/updates", get(updates_list_json).post(updates_post))
         .route("/api/products", get(list_brands))
         .route("/api/products/:brand", get(list_products))
         .route("/api/products/item/:id", get(get_product))
