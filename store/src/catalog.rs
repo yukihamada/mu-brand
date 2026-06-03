@@ -3530,6 +3530,13 @@ pub async fn shop_pdp(
         .or_else(|| mockup_main.map(|p| format!("https://merch.wearmu.com{}", p)))
         .unwrap_or_else(|| "/static/og-default.png".to_string());
 
+    // Digital goods (event ticket / song) reuse this PDP but must NOT show
+    // apparel-only blocks (size chart, shipping table, garment cross-sell,
+    // "Printful 国際発送" copy) — nothing physical ships.
+    let kind_guess = kind_from_sku(&sku);
+    let is_digital = matches!(kind_guess, "event_ticket" | "song");
+    let is_song = kind_guess == "song";
+
     // extras — fetch with labels so we can surface 着用イメージ (on-body
     // styling renders) prominently, separate from technical mockup angles.
     // NOTE: these lifestyle images are AI-rendered styling visuals, NOT real
@@ -3616,7 +3623,7 @@ pub async fn shop_pdp(
     // fulfils it as a 2nd Printful item (multi-SKU fulfillment, this branch).
     // Skipped when the brand has no live sticker, or this product is one.
     let is_sticker = sku.to_uppercase().contains("STICK") || price_jpy <= 1000;
-    let addon: Option<(String, i64)> = if is_sticker {
+    let addon: Option<(String, i64)> = if is_sticker || is_digital {
         None
     } else {
         let conn = db.lock().unwrap();
@@ -3665,11 +3672,19 @@ pub async fn shop_pdp(
             ),
             None => (String::new(), String::new()),
         };
+        let fulfil_note = if is_song {
+            "Stripe · 購入後すぐ視聴/DLリンクをメール"
+        } else if is_digital {
+            "Stripe · 購入後すぐ QR 入場券をメール"
+        } else {
+            "Stripe + Printful 7-14 日 国際発送"
+        };
         format!(
-            r#"{cross_html}<a class="buy" id="buybtn" href="{base}">買う <span class="amt">¥{price}</span> · 即購入 (Stripe + Printful 7-14 日 国際発送)</a>{cross_script}"#,
+            r#"{cross_html}<a class="buy" id="buybtn" href="{base}">買う <span class="amt">¥{price}</span> · 即購入 ({fulfil_note})</a>{cross_script}"#,
             cross_html = cross_html,
             base = base,
             price = format_jpy(price_jpy),
+            fulfil_note = fulfil_note,
             cross_script = cross_script,
         )
     } else {
@@ -3678,8 +3693,7 @@ pub async fn shop_pdp(
 
     // Spec block: real BJJ buyers won't checkout without GSM / material /
     // print method. AUTO SKUs look up by their embedded kind; merch-bridge
-    // SKUs use a SKU-pattern heuristic.
-    let kind_guess = kind_from_sku(&sku);
+    // SKUs use a SKU-pattern heuristic. (kind_guess computed near the top.)
     let spec_block = PRODUCT_SPECS
         .iter()
         .find(|s| s.kind == kind_guess)
@@ -3730,7 +3744,24 @@ pub async fn shop_pdp(
         String::new()
     };
 
-    let trust_block = format!(r##"<div class="trust-strip">
+    let trust_block = if is_digital {
+        let (l1, s1) = if is_song {
+            ("購入後すぐメール配信", "視聴 & ダウンロードリンクを自動送信 · 物理発送なし")
+        } else {
+            ("購入後すぐ QR をメール", "会場で QR を提示して入場 · 物理発送なし")
+        };
+        format!(r##"<div class="trust-strip">
+  {sold_row}<div class="ts-row">
+    <strong>{l1}</strong>
+    <small>{s1}</small>
+  </div>
+  <div class="ts-row">
+    <strong>デジタル商品</strong>
+    <small>送料 ¥0 · お問い合わせ info@enablerdao.com</small>
+  </div>
+</div>"##, sold_row = sold_row, l1 = l1, s1 = s1)
+    } else {
+        format!(r##"<div class="trust-strip">
   {sold_row}<div class="ts-row">
     <strong>国際発送 7-14 日</strong>
     <small>DHL/FedEx tracked · JP・US・EU・CA・AU 即対応</small>
@@ -3743,7 +3774,8 @@ pub async fn shop_pdp(
     <strong>受注生産 1 着から</strong>
     <small>注文を受けてから 1 枚ずつ縫製。 完売・在庫廃棄 ゼロ。</small>
   </div>
-</div>"##, sold_row = sold_row);
+</div>"##, sold_row = sold_row)
+    };
 
     // 試聴ブロック: description_ja に "mu.koe.live/oto.html?s=KEY" が含まれる曲Tは
     // 買う前に試聴できるよう ▶ プレイヤーを出す（涼介FB#1: 買う前に聴かせて）
@@ -3924,8 +3956,8 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
         extras = extras_html,
         trust     = trust_block,
         spec      = spec_block,
-        size_chart = size_chart_html(&kind_guess),
-        shipping_table = shipping_table_html(),
+        size_chart = if is_digital { String::new() } else { size_chart_html(&kind_guess) },
+        shipping_table = if is_digital { String::new() } else { shipping_table_html() },
         story     = story_block,
         sku_url   = urlencoding::encode(&sku),
         price_raw = price_jpy,
