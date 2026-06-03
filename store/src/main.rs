@@ -26876,9 +26876,116 @@ async fn referral_landing(
             params![code_clean, chrono_now().parse::<i64>().unwrap_or(0)],
         );
     }
-    let target = format!("/buy?ref={}&utm_source=referral&utm_medium=link&utm_campaign=ref_{}",
-        code_clean, code_clean);
-    axum::response::Redirect::temporary(&target).into_response()
+    // Drop a 30-day attribution cookie so a sale anywhere on the store
+    // (any /shop/:sku → checkout) credits this referrer. catalog::shop_checkout
+    // reads `mu_ref` when no explicit ?ref= is present. Then land on /shop.
+    let cookie = format!("mu_ref={}; Max-Age=2592000; Path=/; SameSite=Lax", code_clean);
+    let mut resp = axum::response::Redirect::temporary("/shop").into_response();
+    if let Ok(v) = axum::http::HeaderValue::from_str(&cookie) {
+        resp.headers_mut().insert(axum::http::header::SET_COOKIE, v);
+    }
+    resp
+}
+
+/// GET /affiliate?email=… — self-serve affiliate signup + link.
+/// Anyone with an email gets a stable referral code (SHA-256 derived) and
+/// their share links. Sales through `/r/<code>` (or `?ref=<code>`) credit
+/// MU store credit per [[mu_credit_ledger]]. No email → a tiny signup form.
+async fn affiliate_page(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let email = q.get("email").map(|s| s.trim().to_string()).unwrap_or_default();
+    let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;");
+    let page = |inner: String| -> Response {
+        Html(format!(
+            r#"<!doctype html><html lang=ja><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1"><meta name=robots content="noindex">
+<title>MU アフィリエイト</title></head>
+<body style="background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px">
+<div style="max-width:480px;width:100%">
+<div style="font-size:20px;font-weight:700;letter-spacing:0.45em;margin-bottom:8px">━◯━ MU</div>
+<div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;margin-bottom:18px">AFFILIATE</div>
+{inner}
+</div></body></html>"#,
+            inner = inner,
+        )).into_response()
+    };
+    if !email.contains('@') || email.len() > 200 {
+        return page(
+            r#"<h1 style="font-size:22px;font-weight:500;margin:0 0 8px">紹介リンクを発行</h1>
+<p style="font-size:13px;opacity:.75;line-height:1.8;margin:0 0 18px">メールを入れると、あなた専用の紹介リンクが出ます。<br>そのリンク経由で売れると、売上の一部が<b>MUクレジット</b>で還元されます。</p>
+<form method="get" action="/affiliate" style="display:flex;gap:8px">
+<input name="email" type="email" required placeholder="you@example.com" style="flex:1;padding:12px 14px;border-radius:8px;border:1px solid #333;background:#111;color:#f5f5f0;font-size:14px">
+<button style="background:#e6c449;color:#0a0a0a;border:0;border-radius:8px;font-weight:700;padding:0 20px;font-size:14px;cursor:pointer">発行</button>
+</form>"#.to_string());
+    }
+    let code = referral_code_for(&email.to_lowercase());
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO mu_referrals (code, owner_email, clicks, created_at)
+             VALUES (?, ?, 0, ?)
+             ON CONFLICT(code) DO UPDATE SET owner_email = excluded.owner_email",
+            params![code, email.to_lowercase(), chrono_now().parse::<i64>().unwrap_or(0)],
+        );
+    }
+    let base = std::env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    let link = format!("{}/r/{}", base.trim_end_matches('/'), code);
+    page(format!(
+        r#"<h1 style="font-size:22px;font-weight:500;margin:0 0 4px">あなたの紹介リンク</h1>
+<p style="font-size:13px;opacity:.7;margin:0 0 16px">{email}</p>
+<div style="background:#111;border:1px solid #333;border-radius:8px;padding:14px;font-family:monospace;font-size:15px;color:#e6c449;word-break:break-all">{link}</div>
+<p style="font-size:12px;opacity:.65;line-height:1.8;margin:14px 0 0">このリンクで来た人が30日以内に何か買うと、売上の一部があなたのMUクレジットに入ります。<br>
+商品ページに <code style="color:#e6c449">?ref={code}</code> を付けてもOK。</p>
+<p style="font-size:13px;margin:20px 0 0"><a href="/affiliate/{code}" style="color:#e6c449">→ 実績ダッシュボードを見る</a></p>"#,
+        email = esc(&email), link = esc(&link), code = esc(&code),
+    ))
+}
+
+/// GET /affiliate/:code — read-only affiliate dashboard (clicks / sales /
+/// earned MU credit). Public (the code is the share token).
+async fn affiliate_dashboard(
+    State(db): State<Db>,
+    Path(code): Path<String>,
+) -> Response {
+    let code_clean: String = code.chars().filter(|c| c.is_ascii_alphanumeric()).take(8).collect::<String>().to_uppercase();
+    let row: Option<(Option<String>, i64, i64, i64)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT owner_email, clicks, uses, credit_jpy FROM mu_referrals WHERE code=?",
+            params![code_clean], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        ).ok()
+    };
+    let (owner, clicks, uses, earned) = match row {
+        Some(v) => v,
+        None => return (StatusCode::NOT_FOUND, Html(include_str!("../static/404.html"))).into_response(),
+    };
+    let balance = {
+        let conn = db.lock().unwrap();
+        owner.as_deref().map(|e| mu_credit_balance(&conn, e)).unwrap_or(0)
+    };
+    let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    Html(format!(
+        r#"<!doctype html><html lang=ja><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1"><meta name=robots content="noindex">
+<title>MU アフィリエイト実績 — {code}</title></head>
+<body style="background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px">
+<div style="max-width:420px;width:100%;text-align:center">
+<div style="font-size:20px;font-weight:700;letter-spacing:0.45em;margin-bottom:6px">━◯━ MU</div>
+<div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;margin-bottom:18px">AFFILIATE · {code}</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;text-align:center">
+<div style="background:#111;border:1px solid #222;border-radius:10px;padding:18px"><div style="font-size:28px;font-weight:700">{clicks}</div><div style="font-size:11px;opacity:.55;letter-spacing:.1em">クリック</div></div>
+<div style="background:#111;border:1px solid #222;border-radius:10px;padding:18px"><div style="font-size:28px;font-weight:700">{uses}</div><div style="font-size:11px;opacity:.55;letter-spacing:.1em">成約</div></div>
+<div style="background:#111;border:1px solid #222;border-radius:10px;padding:18px"><div style="font-size:28px;font-weight:700;color:#e6c449">¥{earned}</div><div style="font-size:11px;opacity:.55;letter-spacing:.1em">累計報酬</div></div>
+<div style="background:#111;border:1px solid #222;border-radius:10px;padding:18px"><div style="font-size:28px;font-weight:700;color:#3ddc84">¥{balance}</div><div style="font-size:11px;opacity:.55;letter-spacing:.1em">MUクレジット残高</div></div>
+</div>
+<p style="font-size:12px;opacity:.5;margin-top:20px">{owner}</p>
+</div></body></html>"#,
+        code = esc(&code_clean),
+        clicks = clicks, uses = uses, earned = earned, balance = balance,
+        owner = esc(owner.as_deref().unwrap_or("(未登録の紹介コード)")),
+    )).into_response()
 }
 
 /// GET /api/referral/:code — JSON for /buy LP to display the banner.
@@ -67411,6 +67518,7 @@ async fn main() {
         .route("/api/agent/stores", post(agent_api::agent_create_store))
         .route("/api/agent/products", post(agent_api::agent_create_product))
         .route("/api/agent/feedback", post(agent_api::agent_submit_feedback))
+        .route("/api/agent/affiliate", get(agent_api::agent_affiliate))
         .route("/api/ma/review/queue", get(agent_api::ma_review_queue))
         .route("/api/ma/review/:sku/approve", post(agent_api::ma_review_approve))
         .route("/api/ma/review/:sku/reject", post(agent_api::ma_review_reject))
@@ -67433,6 +67541,12 @@ async fn main() {
         // Private gift gallery for the hidden 'halo' tees — 404 unless
         // ?key path matches env MU_GIFT_KEY; noindex; never linked public.
         .route("/gift/:key", get(catalog::gift_gallery))
+        // Digital event-ticket face — the QR a buyer scans at the door
+        // opens this; shows VALID + event + holder. noindex.
+        .route("/t/:code", get(catalog::ticket_view))
+        // Self-serve affiliate: signup/link page + per-code dashboard.
+        .route("/affiliate", get(affiliate_page))
+        .route("/affiliate/:code", get(affiliate_dashboard))
         // Legal / policy pages — linked from PDP footer + /shop footer
         // so cold-traffic visitors see trust signals one click away.
         .route("/returns",  get(catalog::returns_page))
@@ -67449,6 +67563,9 @@ async fn main() {
         .route("/admin/catalog/orders", get(catalog::admin_orders))
         .route("/admin/catalog/orders/:id/replay", get(catalog::admin_orders_replay))
         .route("/admin/catalog/founder/:n/mark_mailed", get(catalog::admin_mark_mailed))
+        // Issue a COMP digital ticket (no payment) + E2E check for the
+        // QR→R2→email pipeline. Counts against capacity like a paid seat.
+        .route("/admin/catalog/ticket_issue", get(catalog::admin_ticket_issue))
         .route("/admin/catalog/nl", get(catalog::admin_nl_add))
         .route("/make", get(catalog::make_page))
         .route("/store", get(catalog::store_unmanned_page))

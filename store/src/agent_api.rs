@@ -464,6 +464,10 @@ pub struct CreateProductBody {
     pub design_url: Option<String>,
     pub ai_prompt: Option<String>,
     pub price_jpy: Option<i64>,
+    /// event_ticket only: seat limit (定員). Omit / null = unlimited.
+    pub capacity: Option<i64>,
+    /// song only: https URL of the audio delivered on purchase.
+    pub audio_url: Option<String>,
 }
 
 /// Hosts we control / trust for externally-referenced design images.
@@ -707,6 +711,26 @@ pub async fn agent_create_product(
         Err(e) => return json_err(StatusCode::BAD_REQUEST, &e),
     };
 
+    // Digital-kind extras → meta_json (one general column per the catalog
+    // contract, not per-attribute columns). Ticket capacity + song audio.
+    {
+        let mut meta = serde_json::Map::new();
+        if let Some(cap) = body.capacity.filter(|c| *c >= 0) {
+            meta.insert("capacity".into(), serde_json::json!(cap));
+        }
+        if let Some(au) = body.audio_url.as_deref().map(str::trim)
+            .filter(|s| s.starts_with("https://") && s.len() <= 2000)
+        {
+            meta.insert("audio_url".into(), serde_json::json!(au));
+        }
+        if !meta.is_empty() {
+            let _ = conn.execute(
+                "UPDATE catalog_products SET meta_json=? WHERE sku=?",
+                rusqlite::params![serde_json::Value::Object(meta).to_string(), &sku],
+            );
+        }
+    }
+
     // Publish policy: trusted owners (council / AUTO_PUBLISH_OWNERS) go LIVE
     // immediately unless the risk gate fires; everything else waits for review.
     let risk = assess_product_risk(label, description, body.ai_prompt.as_deref(), &design_file);
@@ -737,6 +761,55 @@ pub async fn agent_create_product(
         "note": note,
         "pdp_url": pdp_url,
     })).into_response()
+}
+
+/// GET /api/agent/affiliate — the caller's affiliate code, share link, and
+/// stats. Idempotently binds the code → the caller's email so sales via the
+/// link credit them (MU store credit). Auth: Bearer api_key.
+pub async fn agent_affiliate(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>,
+) -> Response {
+    let email = match require_email(&db, &headers, Some(&q)) {
+        Ok(e) => e,
+        Err(resp) => return resp,
+    };
+    let email_lc = email.to_lowercase();
+    let code = crate::referral_code_for(&email_lc);
+    let base = std::env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    let base = base.trim_end_matches('/');
+    let (clicks, uses, credit, balance) = {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO mu_referrals (code, owner_email, clicks, created_at)
+             VALUES (?, ?, 0, CAST(strftime('%s','now') AS INTEGER))
+             ON CONFLICT(code) DO UPDATE SET owner_email = excluded.owner_email",
+            rusqlite::params![code, email_lc],
+        );
+        let (cl, us, cr): (i64, i64, i64) = conn
+            .query_row(
+                "SELECT clicks, uses, credit_jpy FROM mu_referrals WHERE code=?",
+                rusqlite::params![code],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap_or((0, 0, 0));
+        let bal = crate::mu_credit_balance(&conn, &email_lc);
+        (cl, us, cr, bal)
+    };
+    Json(serde_json::json!({
+        "ok": true,
+        "code": code,
+        "link": format!("{}/r/{}", base, code),
+        "ref_param": format!("?ref={}", code),
+        "dashboard_url": format!("{}/affiliate/{}", base, code),
+        "clicks": clicks,
+        "uses": uses,
+        "earned_jpy": credit,
+        "mu_credit_balance": balance,
+        "note": "Share `link`. A sale within 30 days of a click credits you as MU store credit (default 10% of sale).",
+    }))
+    .into_response()
 }
 
 // ─── MA approval (is_ma_council_email-gated) ────────────────────────────

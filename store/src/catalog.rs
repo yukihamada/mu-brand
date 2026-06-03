@@ -137,6 +137,21 @@ pub fn ensure_schema(conn: &rusqlite::Connection) {
     // order (full backward compat). Single column per the catalog contract
     // (no new per-type table).
     let _ = conn.execute("ALTER TABLE catalog_orders ADD COLUMN addon_sku TEXT", []);
+    // Event tickets (fulfillment_route='digital'): per-product capacity +
+    // event metadata live in ONE general JSON column, not per-attribute
+    // columns (catalog contract: extend, don't add a column per concept).
+    // `{"capacity": 50}` etc. NULL for every non-ticket SKU.
+    let _ = conn.execute("ALTER TABLE catalog_products ADD COLUMN meta_json TEXT", []);
+    // The unique ticket code issued per paid seat — encoded in the QR and
+    // reverse-looked-up by the public /t/:code gate. NULL for physical orders.
+    let _ = conn.execute("ALTER TABLE catalog_orders ADD COLUMN ticket_code TEXT", []);
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_catorders_ticket ON catalog_orders(ticket_code)", []);
+    // Affiliate attribution: which referral code drove this sale + the
+    // commission credited to the referrer (also written to mu_credit_ledger,
+    // the payout source of truth). NULL/0 for unattributed orders.
+    let _ = conn.execute("ALTER TABLE catalog_orders ADD COLUMN referrer_code TEXT", []);
+    let _ = conn.execute("ALTER TABLE catalog_orders ADD COLUMN commission_jpy INTEGER NOT NULL DEFAULT 0", []);
 }
 
 /// How many founder cards are still available (0..100).
@@ -921,6 +936,34 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
                     タップで mu.koe.live の一曲が再生 · URLは書込後ロック(改竄不可) · \
                     自社エンコード&発送 · gi・鍵・バッグに付けて持ち歩く",
     },
+    ProductSpec {
+        kind: "event_ticket",
+        // No POD vendor: a ticket is digital. fulfillment_route 'digital' —
+        // on payment we issue a unique code, render a QR, and email it. No
+        // Printful product / variant / placement. retail_jpy is only the
+        // price FLOOR; the real seat price is passed per-product via price_jpy.
+        printful_product_id: 0,
+        printful_variant_id: 0,
+        placement: "none",
+        retail_jpy: 1000,
+        spec_html: "デジタル参加券 · 購入後すぐ QR コードをメールでお届け · \
+                    物理発送なし(送料0) · 会場で QR を提示して入場 · \
+                    定員制(先着・売り切れ次第終了)",
+    },
+    ProductSpec {
+        kind: "song",
+        // Digital download/stream (fulfillment_route 'digital'). On payment we
+        // email a private listen/download link to the hosted audio. No
+        // Printful product / variant / placement. The audio URL lives in
+        // catalog_products.meta_json `{"audio_url": "https://…"}`. retail_jpy
+        // is the price FLOOR; the real price is passed per-product.
+        printful_product_id: 0,
+        printful_variant_id: 0,
+        placement: "none",
+        retail_jpy: 500,
+        spec_html: "デジタル楽曲 · 購入後すぐ視聴/ダウンロードリンクをメールでお届け · \
+                    物理発送なし(送料0) · MP3 ストリーム & ダウンロード · 永久アクセス",
+    },
 ];
 
 /// Public, agent-facing view of a `ProductSpec` so callers outside this
@@ -990,6 +1033,10 @@ pub fn agent_insert_product(
         // human encodes the tag + mails it (handled by the manual arm in
         // fulfill_catalog_order).
         "nfc_coin" => "manual",
+        // Digital goods: take payment, then deliver by email (handled by the
+        // digital arm in fulfill_catalog_order). No shipping. Ticket → QR;
+        // song → private listen/download link.
+        "event_ticket" | "song" => "digital",
         _ => "printful_dtg",
     };
 
@@ -1634,6 +1681,8 @@ fn kind_from_sku(sku: &str) -> &'static str {
     let s = sku.to_uppercase();
     // Order matters: more specific tokens come first so "RASHGUARD" wins
     // over the generic MU- starts-with fallback at the bottom.
+    if s.contains("-EVENT-TICKET") || s.contains("-TICKET-") || s.ends_with("-TICKET") { return "event_ticket"; }
+    if s.contains("-SONG-") || s.ends_with("-SONG") { return "song"; }
     if s.contains("RASHGUARD") || s.contains("-RASH") { return "rashguard_ls"; }
     if s.contains("HOODIE") || s.contains("-HOOD-") || s.ends_with("-HOOD") { return "hoodie"; }
     if s.contains("CREWNECK") || s.contains("-CREW-") || s.ends_with("-CREW") { return "crewneck"; }
@@ -3974,10 +4023,31 @@ pub struct CheckoutQuery {
     /// the private 'halo' tees can be purchased. Ignored otherwise.
     #[serde(default)]
     pub key: Option<String>,
+    /// Affiliate code (from `/r/:code` or `?ref=CODE`). Carried into the
+    /// Stripe session metadata so fulfill_catalog_order can credit the
+    /// referrer. Falls back to the `mu_ref` cookie when absent.
+    #[serde(default, rename = "ref", alias = "referrer")]
+    pub referrer: Option<String>,
+}
+
+/// Pull a referral code from the `mu_ref` cookie (set by `/r/:code`).
+fn ref_from_cookie(headers: &axum::http::HeaderMap) -> Option<String> {
+    let raw = headers.get(axum::http::header::COOKIE)?.to_str().ok()?;
+    raw.split(';').find_map(|kv| {
+        let (k, v) = kv.split_once('=')?;
+        if k.trim() == "mu_ref" { Some(v.trim().to_string()) } else { None }
+    })
+}
+
+/// Sanitize a referral code to the same shape `/r/:code` records.
+fn sanitize_ref(code: &str) -> Option<String> {
+    let c: String = code.chars().filter(|c| c.is_ascii_alphanumeric()).take(8).collect::<String>().to_uppercase();
+    if c.len() >= 4 { Some(c) } else { None }
 }
 
 pub async fn shop_checkout(
     State(db): State<Db>,
+    headers: axum::http::HeaderMap,
     Query(q): Query<CheckoutQuery>,
 ) -> Response {
     let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
@@ -3993,11 +4063,13 @@ pub async fn shop_checkout(
         let conn = db.lock().unwrap();
         let sql = if gift {
             "SELECT stripe_price_id, retail_price_jpy, description_ja, brand,
-                    COALESCE(mockup_url_external, mockup_main_file, '')
+                    COALESCE(mockup_url_external, mockup_main_file, ''),
+                    COALESCE(fulfillment_route, 'printful_dtg'), meta_json
              FROM catalog_products WHERE sku=?"
         } else {
             "SELECT stripe_price_id, retail_price_jpy, description_ja, brand,
-                    COALESCE(mockup_url_external, mockup_main_file, '')
+                    COALESCE(mockup_url_external, mockup_main_file, ''),
+                    COALESCE(fulfillment_route, 'printful_dtg'), meta_json
              FROM catalog_products WHERE sku=? AND is_active=1"
         };
         conn.query_row(
@@ -4010,14 +4082,61 @@ pub async fn shop_checkout(
                     r.get::<_, String>(2)?,
                     r.get::<_, String>(3)?,
                     r.get::<_, String>(4)?,
+                    r.get::<_, String>(5)?,
+                    r.get::<_, Option<String>>(6)?,
                 ))
             },
         )
         .ok()
     };
-    let Some((price_id, price_jpy, desc, _brand, mockup_path)) = row else {
+    let Some((price_id, price_jpy, desc, _brand, mockup_path, route, meta_json)) = row else {
         return (StatusCode::NOT_FOUND, "sku not found").into_response();
     };
+
+    // Digital event ticket: enforce the capacity (定員) before opening a
+    // Stripe session, and never collect a shipping address (nothing ships).
+    // capacity lives in meta_json `{"capacity": N}`; NULL/absent = unlimited.
+    // "Sold" = paid seats already recorded (ticket_delivered / ticket_comp)
+    // plus seats mid-fulfillment (submitting), so a burst of concurrent
+    // checkouts can't oversell past the cap (small over-count is impossible
+    // because we count the reserved 'submitting' row too).
+    let is_ticket = route == "digital";
+    if is_ticket {
+        let capacity: Option<i64> = meta_json
+            .as_deref()
+            .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+            .and_then(|v| v.get("capacity").and_then(|c| c.as_i64()))
+            .filter(|c| *c >= 0);
+        if let Some(cap) = capacity {
+            let sold: i64 = {
+                let conn = db.lock().unwrap();
+                conn.query_row(
+                    "SELECT COUNT(*) FROM catalog_orders
+                     WHERE sku=? AND status IN ('ticket_delivered','ticket_comp','submitting')",
+                    rusqlite::params![&sku],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0)
+            };
+            if sold >= cap {
+                return (
+                    StatusCode::OK,
+                    Html(format!(
+                        "<!doctype html><meta charset=utf-8><meta name=robots content=noindex>\
+                         <title>SOLD OUT — MU</title>\
+                         <body style=\"background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,sans-serif;\
+                         display:flex;min-height:90vh;align-items:center;justify-content:center;text-align:center\">\
+                         <div><div style=\"font-size:13px;letter-spacing:.3em;color:#e6c449\">SOLD OUT</div>\
+                         <h1 style=\"font-weight:500;font-size:22px;margin:14px 0 8px\">完売しました</h1>\
+                         <p style=\"opacity:.6;font-size:13px\">定員 {cap} 名に達しました。<br>\
+                         <a href=\"/shop/{sku}\" style=\"color:#e6c449\">← 戻る</a></p></div></body>",
+                        cap = cap, sku = html_text(&sku),
+                    )),
+                )
+                    .into_response();
+            }
+        }
+    }
 
     // Optional cross-sell add-on. Only honored when the SKU exists, is
     // active, has a positive price, and rides a Printful route (so
@@ -4106,16 +4225,35 @@ pub async fn shop_checkout(
         ("cancel_url", cancel_url),
         ("allow_promotion_codes", "true".into()),
         ("line_items[0][quantity]", "1".into()),
-        ("shipping_address_collection[allowed_countries][0]", "JP".into()),
-        ("shipping_address_collection[allowed_countries][1]", "US".into()),
-        ("shipping_address_collection[allowed_countries][2]", "GB".into()),
-        ("shipping_address_collection[allowed_countries][3]", "CA".into()),
-        ("shipping_address_collection[allowed_countries][4]", "AU".into()),
-        ("shipping_address_collection[allowed_countries][5]", "DE".into()),
-        ("shipping_address_collection[allowed_countries][6]", "FR".into()),
         ("metadata[kind]", "catalog".into()),
         ("metadata[catalog_sku]", sku.clone()),
     ];
+    // Affiliate attribution: explicit ?ref= wins, else the mu_ref cookie set
+    // by /r/:code. Validated/resolved to a commission at the webhook.
+    if let Some(rc) = q.referrer.as_deref().and_then(sanitize_ref)
+        .or_else(|| ref_from_cookie(&headers).and_then(|c| sanitize_ref(&c)))
+    {
+        form.push(("metadata[referrer_code]", rc));
+    }
+    // Physical goods collect a shipping address; a digital ticket does not
+    // (nothing ships — we email a QR). Stripe still captures the buyer's
+    // email in payment mode either way, which is all the ticket needs.
+    if !is_ticket {
+        for (i, cc) in ["JP", "US", "GB", "CA", "AU", "DE", "FR"].iter().enumerate() {
+            form.push((
+                match i {
+                    0 => "shipping_address_collection[allowed_countries][0]",
+                    1 => "shipping_address_collection[allowed_countries][1]",
+                    2 => "shipping_address_collection[allowed_countries][2]",
+                    3 => "shipping_address_collection[allowed_countries][3]",
+                    4 => "shipping_address_collection[allowed_countries][4]",
+                    5 => "shipping_address_collection[allowed_countries][5]",
+                    _ => "shipping_address_collection[allowed_countries][6]",
+                },
+                cc.to_string(),
+            ));
+        }
+    }
     match price_id.filter(|s| s.starts_with("price_")) {
         Some(pid) => {
             form.push(("line_items[0][price]", pid));
@@ -4498,6 +4636,12 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
         return;
     };
 
+    // Affiliate commission — route-agnostic, runs before route dispatch so it
+    // applies to every product type (apparel / ticket / song). Idempotent and
+    // safe to call for orders with no referrer (no-ops). Stamps the order's
+    // audit columns BEFORE any record_order_full REPLACE (which preserves them).
+    apply_affiliate(&db, &session_id, &session, &sku, amount_total).await;
+
     // Route dispatch. printful_* / gelato_jp / suzuri_jp / manual / digital
     // continue through the existing Printful logic below as a fallback. A new
     // contrado_uk route diverts to the Helix API.
@@ -4621,6 +4765,32 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
             sku, encode_url, ship_to, amount_total
         ))
         .await;
+        return;
+    }
+
+    // ── Digital route (event ticket / song) ──────────────────────────────
+    // No physical fulfillment: take payment, mint a unique code, then email
+    // the buyer their item — a QR (ticket → /t/:code shows VALID) or a
+    // listen/download link (song). Affiliate commission was already applied
+    // at the top of this fn (it is route-agnostic).
+    if route == "digital" {
+        let email = cust["email"].as_str().unwrap_or("").to_string();
+        let name = cust["name"].as_str().unwrap_or("").to_string();
+        match issue_digital(&db, &session_id, &sku, amount_total, &email, &name, "ticket_delivered").await {
+            Ok(t) => {
+                let _ = crate::send_telegram_message(&format!(
+                    "✅ *digital sold*\nsku=`{}`\n👤 {} <{}>\n💴 ¥{}\n🔗 {}",
+                    sku, name, email, amount_total, t.ticket_url
+                )).await;
+            }
+            Err(e) => {
+                tracing::error!("[catalog/digital] issue failed sku={} session={}: {}", sku, session_id, e);
+                let _ = crate::send_telegram_message(&format!(
+                    "🚨 *paid but NOT delivered*\nsku=`{}`\nemail=`{}`\nsession=`{}…`\n¥{}\nerror: {}\nAction: /admin/catalog/ticket_issue で手動再発行 or 返金。",
+                    sku, email, session_id.chars().take(24).collect::<String>(), amount_total, e
+                )).await;
+            }
+        }
         return;
     }
 
@@ -5215,12 +5385,22 @@ fn record_order_full(
         .map(|s| s.chars().take(4900).collect::<String>())
         .unwrap_or_default();
     let conn = db.lock().unwrap();
+    // Preserve affiliate attribution across the REPLACE: apply_affiliate()
+    // and stamp_ticket_code run on the reserved row BEFORE this final write,
+    // and INSERT OR REPLACE would otherwise reset those columns to default.
+    let (existing_ref, existing_comm, existing_ticket): (Option<String>, i64, Option<String>) = conn
+        .query_row(
+            "SELECT referrer_code, commission_jpy, ticket_code FROM catalog_orders WHERE stripe_session_id=?",
+            rusqlite::params![session_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap_or((None, 0, None));
     let _ = conn.execute(
         "INSERT OR REPLACE INTO catalog_orders
          (stripe_session_id, sku, amount_jpy, customer_email, customer_name,
           shipping_address_json, printful_order_id, printful_response_json, status,
-          addon_sku)
-         VALUES (?,?,?,?,?,?,?,?,?,?)",
+          addon_sku, referrer_code, commission_jpy, ticket_code)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         rusqlite::params![
             session_id,
             sku,
@@ -5232,8 +5412,439 @@ fn record_order_full(
             pf_resp_trimmed,
             status,
             addon_sku,
+            existing_ref,
+            existing_comm,
+            existing_ticket,
         ],
     );
+}
+
+// ─── Digital event tickets ────────────────────────────────────────────
+
+/// Deterministic, unguessable, unique-per-order ticket code: 16 hex chars
+/// from SHA-256(session_id). Stable across retries (same session → same
+/// code, so an at-least-once webhook never mints a 2nd code).
+fn ticket_code(session_id: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(session_id.as_bytes());
+    h.finalize().iter().take(8).map(|b| format!("{:02x}", b)).collect()
+}
+
+/// Render a scannable QR PNG (dark modules on a white quiet-zone) for `url`.
+fn ticket_qr_png(url: &str) -> Option<Vec<u8>> {
+    use qrcodegen::{QrCode, QrCodeEcc};
+    let qr = QrCode::encode_text(url, QrCodeEcc::Medium).ok()?;
+    let n = qr.size() as usize;
+    let border: usize = 4; // quiet zone (spec minimum) so scanners lock on
+    let dim = n + border * 2;
+    let scale: usize = (1024 / dim.max(1)).max(6);
+    let img_dim = dim * scale;
+    // RGB charcoal-on-white = maximum scanner contrast in email + print.
+    let mut rgb = vec![0xffu8; img_dim * img_dim * 3];
+    for y in 0..n {
+        for x in 0..n {
+            if qr.get_module(x as i32, y as i32) {
+                let px = (x + border) * scale;
+                let py = (y + border) * scale;
+                for dy in 0..scale {
+                    for dx in 0..scale {
+                        let i = ((py + dy) * img_dim + (px + dx)) * 3;
+                        rgb[i] = 0x10; rgb[i + 1] = 0x10; rgb[i + 2] = 0x10;
+                    }
+                }
+            }
+        }
+    }
+    let mut buf: Vec<u8> = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut buf, img_dim as u32, img_dim as u32);
+        enc.set_color(png::ColorType::Rgb);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut w = enc.write_header().ok()?;
+        w.write_image_data(&rgb).ok()?;
+    }
+    Some(buf)
+}
+
+/// Inline data-URI QR for self-contained HTML (the /t/:code face).
+fn ticket_qr_data_uri(url: &str) -> Option<String> {
+    use base64::Engine;
+    let png = ticket_qr_png(url)?;
+    Some(format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(&png)))
+}
+
+struct TicketIssued {
+    code: String,
+    ticket_url: String,
+    qr_url: Option<String>,
+}
+
+/// Core digital-goods issuance (event ticket or song), shared by the
+/// paid-webhook path and the admin comp/resend path: mints (or re-uses) the
+/// code, records the order + stamps the code, and emails the buyer — a QR
+/// (ticket) or a listen/download link (song). Idempotent on `session_id`.
+async fn issue_digital(
+    db: &Db,
+    session_id: &str,
+    sku: &str,
+    amount: i64,
+    email: &str,
+    name: &str,
+    status: &str,
+) -> Result<TicketIssued, String> {
+    let email = email.trim();
+    if email.is_empty() {
+        return Err("no buyer email on the session".into());
+    }
+    let code = ticket_code(session_id);
+    let base = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    let base = base.trim_end_matches('/');
+    let ticket_url = format!("{}/t/{}", base, code);
+
+    // Record the paid order, THEN stamp the ticket_code: record_order_full()
+    // does INSERT OR REPLACE (which has no ticket_code column), so the
+    // stamp must follow the REPLACE or it would be wiped.
+    let cust = serde_json::json!({ "email": email, "name": name });
+    let empty = serde_json::json!({});
+    record_order(db, session_id, sku, amount, &cust, &empty, None, status);
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE catalog_orders SET ticket_code=? WHERE stripe_session_id=?",
+            rusqlite::params![&code, session_id],
+        );
+    }
+
+    // Product name / blurb / song audio for the delivery email. kind decides
+    // whether this is a ticket (QR) or a song (listen+download link).
+    let (label, desc, meta_json) = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT label, description_ja, meta_json FROM catalog_products WHERE sku=?",
+            rusqlite::params![sku],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?)),
+        )
+        .unwrap_or_else(|_| (sku.to_string(), String::new(), None))
+    };
+    let is_song = kind_from_sku(sku) == "song";
+    let audio_url: Option<String> = meta_json
+        .as_deref()
+        .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+        .and_then(|v| v.get("audio_url").and_then(|a| a.as_str()).map(|s| s.to_string()));
+
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    if resend_key.is_empty() {
+        return Err("RESEND_API_KEY unset — order recorded but email not sent".into());
+    }
+
+    // Tickets host a QR on R2 (email clients render an https <img> reliably);
+    // songs don't need one.
+    let qr_url = if is_song {
+        None
+    } else {
+        match ticket_qr_png(&ticket_url) {
+            Some(bytes) => crate::store_r2_bytes(&format!("tickets/{}.png", code), &bytes, "image/png").await,
+            None => None,
+        }
+    };
+
+    let (subject, body_block, from_name) = if is_song {
+        let listen = audio_url.as_deref().unwrap_or(&ticket_url);
+        (
+            format!("🎵 {} — ダウンロード / Song", label),
+            format!(
+                "<div style=\"text-align:center;margin:24px 0\">\
+                 <a href=\"{stream}\" style=\"display:inline-block;background:#e6c449;color:#0a0a0a;\
+                 text-decoration:none;font-weight:700;font-size:15px;padding:14px 28px;border-radius:99px\">▶ 視聴 / ダウンロード</a></div>\
+                 <p style=\"font-size:12px;text-align:center;margin:0 0 8px;opacity:.7\">\
+                 リンク: <a href=\"{listen}\" style=\"color:#e6c449\">{listen}</a></p>",
+                stream = html_text(&ticket_url),
+                listen = html_text(listen),
+            ),
+            "MU Music <noreply@wearmu.com>",
+        )
+    } else {
+        let qr_block = qr_url
+            .as_ref()
+            .map(|u| format!(
+                "<div style=\"text-align:center;margin:24px 0\">\
+                 <img src=\"{}\" alt=\"QR\" width=\"240\" height=\"240\" \
+                 style=\"background:#fff;border-radius:8px;padding:12px\"></div>",
+                html_text(u),
+            ))
+            .unwrap_or_default();
+        (
+            format!("🎟️ {} — 参加券 / Ticket", label),
+            format!(
+                "{qr_block}\
+                 <p style=\"font-size:13px;line-height:1.8;text-align:center;margin:0 0 8px\">会場でこの QR を提示してください。</p>\
+                 <p style=\"font-size:12px;text-align:center;margin:0 0 18px\"><a href=\"{ticket_url}\" style=\"color:#e6c449\">{ticket_url}</a></p>",
+                qr_block = qr_block,
+                ticket_url = html_text(&ticket_url),
+            ),
+            "MU Tickets <noreply@wearmu.com>",
+        )
+    };
+    let kicker = if is_song { "YOUR SONG" } else { "YOUR TICKET" };
+    let cust_html = format!(
+        r#"<div style="background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;padding:32px 0;margin:0">
+<div style="max-width:560px;margin:0 auto;padding:0 32px">
+<div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:24px">━◯━ MU</div>
+<div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;margin-bottom:8px">{kicker}</div>
+<h2 style="font-size:20px;font-weight:500;line-height:1.4;margin:0 0 8px">{label}</h2>
+<p style="font-size:13px;line-height:1.9;opacity:0.78;margin:0 0 4px">{desc}</p>
+{body_block}
+<table style="width:100%;font-size:12px;line-height:1.8;border-collapse:collapse;margin:18px 0">
+<tr><td style="opacity:0.5;width:35%;padding:4px 0">ID</td><td style="padding:4px 0;font-family:monospace;color:#e6c449">{code}</td></tr>
+<tr><td style="opacity:0.5;padding:4px 0">お名前</td><td style="padding:4px 0">{name}</td></tr>
+</table>
+<p style="font-size:11px;line-height:1.85;opacity:0.55;margin:24px 0 0;border-top:1px solid #222;padding-top:18px">
+デジタル商品 · 物理発送はありません。 お問い合わせ: <a href="mailto:info@enablerdao.com" style="color:#e6c449">info@enablerdao.com</a>
+</p>
+</div></div>"#,
+        kicker = kicker,
+        label = html_text(&label),
+        desc = html_text(&desc),
+        body_block = body_block,
+        code = html_text(&code),
+        name = html_text(name),
+    );
+    let payload = serde_json::json!({
+        "from": from_name,
+        "to": [email],
+        "subject": subject,
+        "html": cust_html,
+    });
+    let resp = reqwest::Client::new()
+        .post("https://api.resend.com/emails")
+        .bearer_auth(&resend_key)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("resend network: {}", e))?;
+    if !resp.status().is_success() {
+        let s = resp.status();
+        let t = resp.text().await.unwrap_or_default();
+        return Err(format!("resend {}: {}", s, t.chars().take(200).collect::<String>()));
+    }
+    Ok(TicketIssued { code, ticket_url, qr_url })
+}
+
+/// GET /t/:code — public face of a digital purchase. For a ticket it shows
+/// the event, holder, a VALID stamp and the QR (the QR opens this page); for
+/// a song it shows an audio player + download. noindex.
+pub async fn ticket_view(State(db): State<Db>, Path(code): Path<String>) -> Response {
+    let code: String = code.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_lowercase();
+    let row: Option<(String, String, String, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT o.sku, COALESCE(o.customer_name,''), COALESCE(p.label, o.sku), p.meta_json
+             FROM catalog_orders o LEFT JOIN catalog_products p ON p.sku=o.sku
+             WHERE o.ticket_code=?",
+            rusqlite::params![&code],
+            |r| Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?,
+            )),
+        )
+        .ok()
+    };
+    let Some((sku, name, label, meta_json)) = row else {
+        return (
+            StatusCode::NOT_FOUND,
+            Html("<!doctype html><meta charset=utf-8><meta name=robots content=noindex>\
+                  <title>無効なリンク — MU</title>\
+                  <body style=\"background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,sans-serif;text-align:center;padding:80px 20px\">\
+                  <h1 style=\"font-weight:500\">見つかりません</h1>\
+                  <p style=\"opacity:.6\">このリンクは無効です。</p></body>".to_string()),
+        )
+            .into_response();
+    };
+    let base = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    let ticket_url = format!("{}/t/{}", base.trim_end_matches('/'), code);
+    let is_song = kind_from_sku(&sku) == "song";
+
+    let (badge, hero, footer) = if is_song {
+        let audio_url = meta_json
+            .as_deref()
+            .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+            .and_then(|v| v.get("audio_url").and_then(|a| a.as_str()).map(|s| s.to_string()))
+            .unwrap_or_default();
+        let player = if audio_url.is_empty() {
+            "<p style=\"opacity:.6\">準備中です。少し時間をおいて再度お試しください。</p>".to_string()
+        } else {
+            format!(
+                "<audio controls preload=\"none\" src=\"{u}\" style=\"width:100%;margin:8px 0 14px\"></audio>\
+                 <div><a href=\"{u}\" download style=\"display:inline-block;background:#e6c449;color:#0a0a0a;\
+                 text-decoration:none;font-weight:700;font-size:14px;padding:12px 24px;border-radius:99px\">⬇ ダウンロード</a></div>",
+                u = html_text(&audio_url),
+            )
+        };
+        (
+            "<div style=\"display:inline-block;font-size:11px;letter-spacing:0.3em;color:#0a0a0a;background:#e6c449;padding:4px 12px;border-radius:99px;font-weight:700\">♫ SONG</div>".to_string(),
+            player,
+            "あなたの楽曲です。 視聴・ダウンロードはこのページから。 デジタル商品・物理発送はありません。",
+        )
+    } else {
+        let qr_img = ticket_qr_data_uri(&ticket_url).unwrap_or_default();
+        (
+            "<div style=\"display:inline-block;font-size:11px;letter-spacing:0.3em;color:#0a0a0a;background:#3ddc84;padding:4px 12px;border-radius:99px;font-weight:700\">✓ VALID</div>".to_string(),
+            format!("<div style=\"background:#fff;border-radius:12px;padding:16px;display:inline-block;margin:16px 0\"><img src=\"{}\" alt=\"QR\" width=\"240\" height=\"240\" style=\"display:block\"></div>", qr_img),
+            "受付でこの画面（QR）をご提示ください。 デジタル参加券・物理発送はありません。",
+        )
+    };
+    Html(format!(
+        r#"<!doctype html><html lang=ja><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<meta name=robots content="noindex,nofollow">
+<title>{label} — MU</title></head>
+<body style="background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px">
+<div style="max-width:420px;width:100%;text-align:center">
+<div style="font-size:20px;font-weight:700;letter-spacing:0.45em;margin-bottom:18px">━◯━ MU</div>
+{badge}
+<h1 style="font-size:22px;font-weight:500;line-height:1.4;margin:18px 0 6px">{label}</h1>
+{hero}
+<table style="width:100%;font-size:13px;line-height:1.9;border-collapse:collapse;text-align:left;margin-top:8px">
+<tr><td style="opacity:0.5;width:35%;padding:4px 0">お名前</td><td style="padding:4px 0">{name}</td></tr>
+<tr><td style="opacity:0.5;padding:4px 0">ID</td><td style="padding:4px 0;font-family:monospace;color:#e6c449">{code}</td></tr>
+</table>
+<p style="font-size:11px;opacity:0.45;margin-top:24px;border-top:1px solid #222;padding-top:16px">{footer}</p>
+</div></body></html>"#,
+        label = html_text(&label),
+        badge = badge,
+        hero = hero,
+        name = html_text(&name),
+        code = html_text(&code),
+        footer = footer,
+    ))
+    .into_response()
+}
+
+#[derive(Deserialize)]
+pub struct TicketIssueQuery {
+    pub token: String,
+    pub sku: String,
+    pub email: String,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+/// GET /admin/catalog/ticket_issue?token=&sku=&email=&name= — issue a
+/// COMP ticket (no payment) for a digital-ticket SKU. Counts against the
+/// capacity like a paid seat. Doubles as the end-to-end check for the
+/// QR + R2 + email pipeline. Admin-token gated.
+pub async fn admin_ticket_issue(State(db): State<Db>, Query(q): Query<TicketIssueQuery>) -> Response {
+    let expected = env::var("ADMIN_TOKEN").unwrap_or_default();
+    if expected.is_empty() || q.token != expected {
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    }
+    let route: Option<String> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(fulfillment_route,'') FROM catalog_products WHERE sku=?",
+            rusqlite::params![&q.sku],
+            |r| r.get(0),
+        )
+        .ok()
+    };
+    match route.as_deref() {
+        Some("digital") => {}
+        Some(_) => return (StatusCode::BAD_REQUEST, "sku is not a digital ticket").into_response(),
+        None => return (StatusCode::NOT_FOUND, "sku not found").into_response(),
+    }
+    let session_id = format!("comp_{}_{:08x}", q.sku, rand::random::<u32>());
+    let name = q.name.clone().unwrap_or_default();
+    match issue_digital(&db, &session_id, &q.sku, 0, &q.email, &name, "ticket_comp").await {
+        Ok(t) => axum::Json(serde_json::json!({
+            "ok": true, "code": t.code, "ticket_url": t.ticket_url,
+            "qr_url": t.qr_url, "emailed_to": q.email,
+        }))
+        .into_response(),
+        Err(e) => axum::Json(serde_json::json!({ "ok": false, "error": e })).into_response(),
+    }
+}
+
+// ─── Affiliate commission ─────────────────────────────────────────────
+
+/// Credit an affiliate referrer for a paid order. Reads `referrer_code`
+/// from the Stripe session metadata (set by shop_checkout from ?ref= or the
+/// mu_ref cookie), resolves the owner via `mu_referrals.owner_email`, and
+/// writes the commission to `mu_credit_ledger` (the payout source of truth)
+/// + the `mu_referrals` counters + the order's audit columns. Commission %
+/// is `catalog_brands.config_json.affiliate_pct` (default 10, capped 50).
+/// No-ops on: missing/unregistered code, self-referral, non-JPY, or a
+/// commission already booked for this session (idempotent on session_id).
+async fn apply_affiliate(db: &Db, session_id: &str, session: &serde_json::Value, sku: &str, amount: i64) {
+    let code = match session["metadata"]["referrer_code"].as_str().map(|c| c.trim().to_uppercase()) {
+        Some(c) if c.len() >= 4 => c,
+        _ => return,
+    };
+    if amount <= 0 || session["currency"].as_str().unwrap_or("jpy").to_lowercase() != "jpy" {
+        return;
+    }
+    let buyer_email = session["customer_details"]["email"].as_str().unwrap_or("").to_lowercase();
+    let conn = db.lock().unwrap();
+
+    // Stamp the code on the order regardless (analytics), even when it earns
+    // no commission below.
+    let _ = conn.execute(
+        "UPDATE catalog_orders SET referrer_code=? WHERE stripe_session_id=?",
+        rusqlite::params![&code, session_id],
+    );
+
+    let owner: Option<String> = conn
+        .query_row("SELECT owner_email FROM mu_referrals WHERE code=?", rusqlite::params![&code], |r| r.get(0))
+        .ok()
+        .flatten()
+        .filter(|o: &String| !o.is_empty());
+    let Some(owner) = owner else { return };          // unregistered code → no commission
+    if !buyer_email.is_empty() && buyer_email == owner.to_lowercase() {
+        return; // self-referral
+    }
+
+    // Idempotency: a commission already booked for this session?
+    let already: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM mu_credit_ledger WHERE ref_id=? AND reason LIKE 'affiliate:%'",
+            rusqlite::params![session_id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    if already > 0 {
+        return;
+    }
+
+    let brand: String = conn
+        .query_row("SELECT brand FROM catalog_products WHERE sku=?", rusqlite::params![sku], |r| r.get(0))
+        .unwrap_or_default();
+    let pct = conn
+        .query_row(
+            "SELECT json_extract(config_json,'$.affiliate_pct') FROM catalog_brands WHERE slug=?",
+            rusqlite::params![&brand],
+            |r| r.get::<_, Option<i64>>(0),
+        )
+        .ok()
+        .flatten()
+        .unwrap_or(10)
+        .clamp(0, 50);
+    let commission = (amount * pct / 100).max(0);
+    if commission <= 0 {
+        return;
+    }
+    let reason = format!("affiliate:{}:{}", code, sku);
+    crate::mu_credit_apply(&conn, &owner, commission, &reason, Some(session_id));
+    let _ = conn.execute(
+        "UPDATE mu_referrals SET uses = uses + 1, credit_jpy = credit_jpy + ? WHERE code=?",
+        rusqlite::params![commission, &code],
+    );
+    let _ = conn.execute(
+        "UPDATE catalog_orders SET commission_jpy=? WHERE stripe_session_id=?",
+        rusqlite::params![commission, session_id],
+    );
+    tracing::info!("[catalog/affiliate] {} earned ¥{} ({}%) on {} via {}", owner, commission, pct, sku, code);
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────
