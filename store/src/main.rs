@@ -23528,6 +23528,11 @@ async fn index(State(db): State<Db>) -> Html<String> {
                      OR mockup_url_external LIKE '%r2.dev%'
                      OR mockup_url_external LIKE '%r2.cloudflarestorage%'
                      OR mockup_url_external LIKE '%mockups.wearmu.com%' )
+               -- Exclude Printful *temporary* upload URLs (expire → 403 → blank
+               -- tiles). Mirrors persist_mockup_if_temporary()'s is_temp check:
+               -- printful-upload.s3… and any /tmp/ path are ephemeral.
+               AND mockup_url_external NOT LIKE 'https://printful-upload.s3%'
+               AND mockup_url_external NOT LIKE '%/tmp/%'
                AND retail_price_jpy >= 3000
                AND sku NOT LIKE 'PROPOSAL-%'
              ORDER BY RANDOM()
@@ -37237,6 +37242,11 @@ async fn success_page(
                      OR mockup_url_external LIKE '%r2.dev%'
                      OR mockup_url_external LIKE '%r2.cloudflarestorage%'
                      OR mockup_url_external LIKE '%mockups.wearmu.com%' )
+               -- Exclude Printful *temporary* upload URLs (expire → 403 → blank
+               -- tiles). Mirrors persist_mockup_if_temporary()'s is_temp check:
+               -- printful-upload.s3… and any /tmp/ path are ephemeral.
+               AND mockup_url_external NOT LIKE 'https://printful-upload.s3%'
+               AND mockup_url_external NOT LIKE '%/tmp/%'
                AND retail_price_jpy >= 3000
                AND sku NOT LIKE 'PROPOSAL-%'
              ORDER BY RANDOM()
