@@ -466,6 +466,129 @@ pub struct CreateProductBody {
     pub price_jpy: Option<i64>,
 }
 
+/// Hosts we control / trust for externally-referenced design images.
+/// An https design_url on any other host counts as a risk (unknown copyright).
+fn is_trusted_design_host(url: &str) -> bool {
+    let u = url.to_lowercase();
+    const HOSTS: &[&str] = &[
+        "mockups.wearmu.com", "merch.wearmu.com", "wearmu.com",
+        "devil-podcast.fly.dev", "yukihamada.jp",
+        "files.cdn.printful.com", ".r2.dev", "r2.cloudflarestorage.com",
+    ];
+    if HOSTS.iter().any(|h| u.contains(h)) {
+        return true;
+    }
+    u.contains("raw.githubusercontent.com/yukihamada/")
+}
+
+/// Risk gate for auto-publish. Returns Some(reason) when the product MUST stay
+/// in `review` (IP / brand / real-person / external-image / inappropriate), or
+/// None when it is clean enough to go live immediately.
+///
+/// Extend at runtime with `RISK_BLOCK_TERMS` (comma-separated, case-insensitive).
+fn assess_product_risk(
+    label: &str, description: &str, ai_prompt: Option<&str>, design_file: &str,
+) -> Option<String> {
+    // 1) trademark / copyright symbols in customer-facing copy
+    for s in ['™', '®', '©'] {
+        if label.contains(s) || description.contains(s) {
+            return Some(format!("trademark/copyright symbol ({}) in copy", s));
+        }
+    }
+    let text = format!("{} {} {}", label, description, ai_prompt.unwrap_or("")).to_lowercase();
+
+    // 2) brand / IP / celebrity — distinctive substrings (incl. JP)
+    const SUBSTR: &[&str] = &[
+        "one ok rock", "oneokrock", "ワンオク", "louis vuitton", "ルイヴィトン", "ヴィトン",
+        "gucci", "グッチ", "prada", "プラダ", "chanel", "シャネル", "hermes", "hermès", "エルメス",
+        "rolex", "ロレックス", "supreme", "シュプリーム", "adidas", "アディダス", "puma", "プーマ",
+        "disney", "ディズニー", "ghibli", "ジブリ", "pokemon", "pokémon", "ポケモン",
+        "nintendo", "任天堂", "ykk", "uniqlo", "ユニクロ", "mercari", "メルカリ",
+        "starbucks", "スターバックス", "スタバ", "mcdonald", "マクドナルド", "coca-cola", "コカコーラ",
+        "marvel", "マーベル", "harry potter", "ハリーポッター", "sanrio", "サンリオ",
+        "hello kitty", "ハローキティ", "doraemon", "ドラえもん", "anpanman", "アンパンマン",
+        "naruto", "ナルト", "one piece", "ワンピース", "dragon ball", "ドラゴンボール",
+        "gundam", "ガンダム", "ジャニーズ", "なにわ男子", "snow man", "ナイキ",
+    ];
+    for b in SUBSTR {
+        if text.contains(b) {
+            return Some(format!("brand/IP/real-person term: {}", b));
+        }
+    }
+    // 3) ambiguous short brands — match only as whole tokens (avoid e.g. pineapple)
+    const TOKENS: &[&str] = &["nike", "apple", "sony", "amazon", "bts"];
+    let toks: std::collections::HashSet<&str> =
+        text.split(|c: char| !c.is_alphanumeric()).filter(|s| !s.is_empty()).collect();
+    for t in TOKENS {
+        if toks.contains(t) {
+            return Some(format!("brand/IP/real-person term: {}", t));
+        }
+    }
+    // 4) inappropriate language
+    const NSFW: &[&str] = &[
+        "fuck", "shit", "porn", "nigger", "fag", "rape", "セックス", "ポルノ", "死ね", "殺す",
+    ];
+    for w in NSFW {
+        if text.contains(w) {
+            return Some("inappropriate language".into());
+        }
+    }
+    // 5) operator-extendable blocklist (real names etc.) via env
+    if let Ok(extra) = std::env::var("RISK_BLOCK_TERMS") {
+        for w in extra.split(',').map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()) {
+            if text.contains(&w) {
+                return Some(format!("blocked term: {}", w));
+            }
+        }
+    }
+    // 6) external image domain (design_url pointing at a host we don't control)
+    if design_file.starts_with("http") && !is_trusted_design_host(design_file) {
+        return Some("external image domain (untrusted host)".into());
+    }
+    None
+}
+
+/// True when this account may auto-publish without council review:
+/// MA-council members, or any email listed in `AUTO_PUBLISH_OWNERS`
+/// (comma-separated). Everyone else stays on the full review flow.
+fn auto_publish_trusted(conn: &rusqlite::Connection, email: &str) -> bool {
+    if is_ma_council_email(conn, email) {
+        return true;
+    }
+    if let Ok(list) = std::env::var("AUTO_PUBLISH_OWNERS") {
+        let e = email.to_lowercase();
+        return list.split(',').map(|s| s.trim().to_lowercase()).any(|o| !o.is_empty() && o == e);
+    }
+    false
+}
+
+/// Flip an agent product straight to live (mirrors ma_review_approve's
+/// side effects: status/is_active + JSON approval attribution).
+fn publish_live(conn: &rusqlite::Connection, sku: &str, brand: &str, by: &str) {
+    let now = crate::chrono_now();
+    let _ = conn.execute(
+        "UPDATE catalog_products SET status='live', is_active=1, updated_at=datetime('now') WHERE sku=?",
+        rusqlite::params![sku],
+    );
+    let cfg: Option<String> = conn.query_row(
+        "SELECT config_json FROM catalog_brands WHERE slug=?",
+        rusqlite::params![brand], |r| r.get(0),
+    ).ok().flatten();
+    let mut cfg_v: serde_json::Value = cfg.as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    if !cfg_v.is_object() { cfg_v = serde_json::json!({}); }
+    let arr = cfg_v.as_object_mut().unwrap()
+        .entry("approvals").or_insert_with(|| serde_json::json!([]));
+    if let Some(a) = arr.as_array_mut() {
+        a.push(serde_json::json!({ "sku": sku, "approver_email": by, "approved_at": now, "auto": true }));
+    }
+    let _ = conn.execute(
+        "UPDATE catalog_brands SET config_json=? WHERE slug=?",
+        rusqlite::params![cfg_v.to_string(), brand],
+    );
+}
+
 pub async fn agent_create_product(
     State(db): State<Db>,
     headers: HeaderMap,
@@ -584,12 +707,35 @@ pub async fn agent_create_product(
         Err(e) => return json_err(StatusCode::BAD_REQUEST, &e),
     };
 
+    // Publish policy: trusted owners (council / AUTO_PUBLISH_OWNERS) go LIVE
+    // immediately unless the risk gate fires; everything else waits for review.
+    let risk = assess_product_risk(label, description, body.ai_prompt.as_deref(), &design_file);
+    let trusted = auto_publish_trusted(&conn, &email);
+    let pdp_url = format!("https://wearmu.com/shop/{}", sku);
+
+    if trusted && risk.is_none() {
+        publish_live(&conn, &sku, &store, &email);
+        let alert = format!(
+            "🟢 MU agent product AUTO-PUBLISHED (live)\nsku: {}\nbrand: {}\nlabel: {}\nby: {}",
+            sku, store, label, email,
+        );
+        tokio::spawn(async move { crate::send_telegram_message(&alert).await; });
+        return Json(serde_json::json!({
+            "ok": true, "sku": sku, "status": "live", "pdp_url": pdp_url,
+        })).into_response();
+    }
+
+    let note = match &risk {
+        Some(r) => format!("pending MA council approval — risk gate: {}", r),
+        None => "pending MA council approval".to_string(),
+    };
     Json(serde_json::json!({
         "ok": true,
         "sku": sku,
         "status": "review",
-        "note": "pending MA council approval",
-        "pdp_url": format!("https://wearmu.com/shop/{}", sku),
+        "risk": risk,
+        "note": note,
+        "pdp_url": pdp_url,
     })).into_response()
 }
 
