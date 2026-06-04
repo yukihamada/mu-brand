@@ -88,6 +88,16 @@ ol li{{margin:6px 0}}
 .tag{{display:inline-block;font-size:11px;border:1px solid var(--line);border-radius:99px;padding:1px 10px;color:var(--sub)}}
 .tag.mine{{border-color:var(--accent);color:var(--accent);font-weight:700}}
 pre{{white-space:pre-wrap;font-family:inherit;margin:0}}
+.hero-img{{width:100%;border-radius:14px;display:block;margin:18px 0;aspect-ratio:16/9;object-fit:cover}}
+.steps{{list-style:none;padding:0;margin:0}}
+.steps li{{display:flex;gap:14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}}
+.steps li:last-child{{border-bottom:0}}
+.steps img{{width:120px;height:80px;object-fit:cover;border-radius:10px;flex:0 0 auto}}
+.steps .n{{font-weight:800;color:var(--accent);font-size:13px}}
+.brand{{background:#0a0a0a;color:#f5f5f5;border-radius:14px;padding:22px 22px 18px;margin:18px 0}}
+.brand h2{{color:#fff;margin-top:0}} .brand a{{color:#ffb37a}}
+.brand .muted{{color:#aaa}}
+@media(max-width:480px){{.steps img{{width:88px;height:64px}}}}
 </style></head><body>{body}</body></html>"#,
     );
     ([(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")], html).into_response()
@@ -117,21 +127,26 @@ pub async fn work_page() -> Response {
     let body = format!(
         r#"<div class="eyebrow">MU — おうちでできる仕事</div>
 <h1>音コインを、つくって届ける。</h1>
-<p>MUの「音コイン」(かざすと音が鳴るNFCコイン・¥1,800)を、<b>自宅でNFC書込→検品→梱包→発送</b>する出来高制のお仕事です。1件あたり10分ほど。</p>
+<img class="hero-img" src="{img}/step2_write.png" alt="スマホでNFCコインに書き込む様子" loading="lazy">
+<p>MUの「音コイン」(かざすと音が鳴るNFCコイン・¥1,800)を、<b>自宅でNFC書込→検品→梱包→発送</b>する出来高制のお仕事です。1件あたり10分ほど。特別なスキルはいりません。</p>
 
-<div class="card">
-<h2 style="margin-top:0">仕事の流れ</h2>
-<ol>
-<li><b>キット受取</b> — ブランクのNFCコイン・封筒・宛名シールをまとめてお送りします</li>
-<li><b>注文が入る</b> — あなた専用の仕事キューに表示されます</li>
-<li><b>NFC書込</b> — スマホの無料アプリ(NFC Tools)で指定URLを書き込み(約30秒)</li>
-<li><b>検品</b> — 自分のスマホでかざして音が鳴るか確認</li>
-<li><b>梱包・発送</b> — 封筒に入れて宛名を貼り、ポスト投函(クリックポスト等)</li>
-<li><b>完了報告</b> — 追跡番号を入力したら完了。お客様への発送メールは自動送信</li>
-</ol>
+<div class="brand">
+<div class="eyebrow" style="color:#888">作っているブランドのこと</div>
+<h2>MU ／ 音コイン(OTO)</h2>
+<p style="margin:6px 0">MU(ムー)は、<b>AIが毎時1着、服やプロダクトを生み出す</b>新しいものづくりブランドです。在庫を持たず、注文が入ってから作る。数字は<a href="https://wearmu.com/transparency">/transparency</a>で全部公開しています。</p>
+<p style="margin:6px 0">その中の<b>「音コイン」</b>は、手のひらサイズの黒いコイン。スマホをかざすと、その人のための一曲が鳴ります(声・音は<a href="https://koe.live">Koe</a>で作られたもの)。鍵やバッグ、道着に付けて持ち歩く、"音のおまもり"です。</p>
+<p class="muted" style="margin:6px 0 0;font-size:12.5px">あなたが書き込んで届けたコインから、誰かの毎日に音が灯ります。運営: 株式会社イネブラ。</p>
 </div>
 
-<table>
+<h2>仕事の流れ</h2>
+<ul class="steps">
+<li><img src="{img}/step1_kit.png" alt="" loading="lazy"><div><span class="n">STEP 1</span><br><b>キットを受け取る</b><br><span class="muted">ブランクのコイン・封筒・宛名シールをまとめてお送りします</span></div></li>
+<li><img src="{img}/step2_write.png" alt="" loading="lazy"><div><span class="n">STEP 2</span><br><b>NFCに書き込む</b><br><span class="muted">無料アプリ(NFC Tools)で指定URLを書込→ロック(約30秒)</span></div></li>
+<li><img src="{img}/step3_pack.png" alt="" loading="lazy"><div><span class="n">STEP 3</span><br><b>検品して封筒へ</b><br><span class="muted">自分のスマホでかざして音が鳴ればOK。封筒に入れ宛名を貼る</span></div></li>
+<li><img src="{img}/step4_mail.png" alt="" loading="lazy"><div><span class="n">STEP 4</span><br><b>ポストに投函・完了報告</b><br><span class="muted">クリックポスト等で投函→追跡番号を入力。お客様への発送メールは自動</span></div></li>
+</ul>
+
+<table style="margin-top:18px">
 <tr><td>報酬</td><td><b>¥{fee} / 件</b> + 送料実費(月末締め・翌月払い)</td></tr>
 <tr><td>必要なもの</td><td>NFC対応スマホ(iPhone 7以降 / 大半のAndroid)・ポストに行ける環境</td></tr>
 <tr><td>時間</td><td>完全に自分のペース。引き受けた分だけ。ノルマなし</td></tr>
@@ -146,7 +161,8 @@ pub async fn work_page() -> Response {
 <button class="btn" type="submit">応募する</button>
 <p class="muted">承認されると、仕事キューのリンクをメールでお送りします。</p>
 </form>
-<p class="muted">MU(株式会社イネブラ)・業務委託。質問は info@enablerdao.com へ。</p>"#,
+<p class="muted">MU(株式会社イネブラ)・業務委託。質問は info@enablerdao.com へ。<br>商品ページ: <a href="/shop?brand=oto">音コインを見る</a></p>"#,
+        img = "https://raw.githubusercontent.com/yukihamada/mu-mockups/main/work",
     );
     page("おうちでできる仕事 — 音コイン", &body)
 }
