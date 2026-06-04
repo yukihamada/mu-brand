@@ -1196,18 +1196,28 @@ pub async fn ma_review_approve(
     let now = crate::chrono_now();
     let brand: String;
     let label: String;
+    let price: i64;
+    let notify_email: Option<String>;
     {
         let conn = db.lock().unwrap();
-        // Must be an agent product currently in review.
-        let row: Option<(String, String)> = conn.query_row(
-            "SELECT brand, label FROM catalog_products
-             WHERE sku=? AND status='review' AND legacy_source='agent_api'",
-            rusqlite::params![sku], |r| Ok((r.get(0)?, r.get(1)?)),
+        // Agent products AND /make (public_make) products in review. /make 産は
+        // 以前 legacy_source='agent_api' フィルタで弾かれ承認経路が存在しなかった
+        // (flagged 商品が永久に review 滞留する潜在バグ)。
+        let row: Option<(String, String, i64, Option<String>)> = conn.query_row(
+            "SELECT brand, label, retail_price_jpy, meta_json FROM catalog_products
+             WHERE sku=? AND status='review' AND legacy_source IN ('agent_api','public_make')",
+            rusqlite::params![sku], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         ).ok();
-        let Some((b, l)) = row else {
+        let Some((b, l, p, mj)) = row else {
             return json_err(StatusCode::CONFLICT, "product not in review (already decided or not found)");
         };
-        brand = b; label = l;
+        brand = b; label = l; price = p;
+        // /make 作者が「公開されたら知らせて」を登録していれば公開通知を送る。
+        notify_email = mj
+            .as_deref()
+            .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+            .and_then(|v| v.get("notify_email").and_then(|e| e.as_str()).map(|s| s.to_string()))
+            .filter(|s| !s.is_empty());
         let _ = conn.execute(
             "UPDATE catalog_products SET status='live', is_active=1, updated_at=datetime('now') WHERE sku=?",
             rusqlite::params![sku],
@@ -1239,6 +1249,9 @@ pub async fn ma_review_approve(
         sku, brand, label, approver,
     );
     tokio::spawn(async move { crate::send_telegram_message(&alert).await; });
+    if let Some(email) = notify_email {
+        tokio::spawn(crate::catalog::send_make_link_email(email, sku.clone(), label.clone(), price, true));
+    }
 
     Json(serde_json::json!({
         "ok": true, "sku": sku, "status": "live", "approved_at": now,

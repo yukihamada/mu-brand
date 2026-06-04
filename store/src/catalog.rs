@@ -2807,9 +2807,138 @@ pub async fn make_peek(State(db): State<Db>, Query(q): Query<MakePeekQuery>) -> 
         return (StatusCode::NOT_FOUND, axum::Json(serde_json::json!({"ok": false}))).into_response();
     };
     let mockup = mock.filter(|m| !m.is_empty() && *m != design);
+    // max-age=5: 全作成者が6秒間隔でポーリングする → CDN/ブラウザに逃がして
+    // グローバルMutexのSQLiteをポーリング地獄から守る（鮮度は5秒で十分）。
     let mut headers = axum::http::HeaderMap::new();
-    headers.insert("Cache-Control", axum::http::HeaderValue::from_static("no-store"));
+    headers.insert("Cache-Control", axum::http::HeaderValue::from_static("public, max-age=5"));
     (headers, axum::Json(serde_json::json!({"ok": true, "status": status, "mockup": mockup}))).into_response()
+}
+
+#[derive(serde::Deserialize)]
+pub struct MakeNotifyQuery {
+    pub sku: String,
+    pub email: String,
+}
+
+/// POST /api/make/notify?sku=&email= — /make 直後の「メールでリンクを受け取る」。
+/// 作者は匿名なので、ここが唯一の連絡接点になる:
+///   ① live: その場でリンク保存メール（離脱後のリマーケ経路）
+///   ② review: 公開時に ma_review_approve から通知メール
+/// 乱用対策: /make産(minna+public_make)限定・1SKUにつき先勝ち1回（再送なし・
+/// メール爆撃防止）・全体30通/時の fail-closed キャップ。
+pub async fn make_notify(State(db): State<Db>, Query(q): Query<MakeNotifyQuery>) -> Response {
+    let email = q.email.trim().to_lowercase();
+    let ok_email = email.len() >= 6
+        && email.len() <= 120
+        && email.contains('@')
+        && email.rsplit('@').next().map(|d| d.contains('.')).unwrap_or(false)
+        && !email.chars().any(|c| c.is_whitespace());
+    if !ok_email {
+        return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"メールアドレスを確認してください"}))).into_response();
+    }
+    let row: Option<(String, i64, String, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        // 全体時間キャップ。クエリ失敗時は i64::MAX → 拒否側に倒す (fail-closed)。
+        let hour_ago = crate::chrono_now().parse::<i64>().unwrap_or(0) - 3600;
+        let sent_1h: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM funnel_events WHERE event='make_notify'
+                   AND CAST(COALESCE(created_at,'0') AS INTEGER) > ?",
+                rusqlite::params![hour_ago],
+                |r| r.get(0),
+            )
+            .unwrap_or(i64::MAX);
+        if sent_1h >= 30 {
+            return (StatusCode::TOO_MANY_REQUESTS, axum::Json(serde_json::json!({"ok":false,"error":"混み合っています。少し時間をおいてください"}))).into_response();
+        }
+        conn.query_row(
+            "SELECT label, retail_price_jpy, status, meta_json FROM catalog_products
+             WHERE sku=? AND brand='minna' AND legacy_source='public_make'",
+            rusqlite::params![&q.sku],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .ok()
+    };
+    let Some((label, price, status, meta_json)) = row else {
+        return (StatusCode::NOT_FOUND, axum::Json(serde_json::json!({"ok":false,"error":"not found"}))).into_response();
+    };
+    let mut meta: serde_json::Value = meta_json
+        .as_deref()
+        .and_then(|m| serde_json::from_str(m).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    if !meta.is_object() {
+        meta = serde_json::json!({});
+    }
+    if meta.get("notify_email").and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false) {
+        // 先勝ち・冪等。再送しない（連打/横取りでのメール爆撃防止）。
+        return axum::Json(serde_json::json!({"ok":true,"already":true,"status":status})).into_response();
+    }
+    meta.as_object_mut().unwrap().insert("notify_email".into(), serde_json::Value::from(email.clone()));
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE catalog_products SET meta_json=? WHERE sku=?",
+            rusqlite::params![meta.to_string(), &q.sku],
+        );
+    }
+    crate::funnel_track_server(&db, "make_notify", "/make", None, serde_json::json!({"sku": q.sku})).await;
+    if status == "live" {
+        tokio::spawn(send_make_link_email(email, q.sku.clone(), label, price, false));
+    }
+    axum::Json(serde_json::json!({"ok":true,"status":status})).into_response()
+}
+
+/// /make 作者向けメール（Resend）。approved=false: リンク保存（live直後）、
+/// approved=true: review→live 公開通知（ma_review_approve から呼ばれる）。
+pub async fn send_make_link_email(to: String, sku: String, label: String, price_jpy: i64, approved: bool) {
+    let resend_key = std::env::var("RESEND_API_KEY").unwrap_or_default();
+    if resend_key.is_empty() {
+        tracing::warn!("[make/notify] RESEND_API_KEY unset — link mail to {} not sent (sku {})", to, sku);
+        return;
+    }
+    let url = format!("https://wearmu.com/shop/{}", sku);
+    let (subject, lead) = if approved {
+        (
+            format!("🌱 公開されました — {}", label),
+            "確認が終わり、あなたの一着が棚に並びました。世界に1枚、今から購入できます。",
+        )
+    } else {
+        (
+            format!("🌱 あなたの一着のリンク — {}", label),
+            "あなたの言葉から生まれた、世界に1枚。このリンクからいつでも戻れます。",
+        )
+    };
+    let html = format!(
+        r#"<div style="background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;padding:32px 0;margin:0">
+<div style="max-width:560px;margin:0 auto;padding:0 32px">
+<div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:24px">━◯━ MU</div>
+<div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#ffd700;opacity:0.85;margin-bottom:8px">DESIGNED BY YOU</div>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:0 0 14px">{label}</h2>
+<p style="font-size:13px;line-height:1.9;opacity:0.78;margin:0 0 22px">{lead}</p>
+<div style="text-align:center;margin:24px 0">
+<a href="{url}" style="display:inline-block;background:#ffd700;color:#0a0a0a;text-decoration:none;font-weight:700;font-size:15px;padding:14px 28px;border-radius:99px">この一着を見る ¥{price} →</a></div>
+<p style="font-size:11px;line-height:1.85;opacity:0.55;margin:24px 0 0;border-top:1px solid #222;padding-top:18px">
+同じデザインは二度と生成されません。1枚から受注生産。<br>
+お問い合わせ: <a href="mailto:info@enablerdao.com" style="color:#ffd700">info@enablerdao.com</a>
+</p>
+</div></div>"#,
+        label = html_text(&label),
+        lead = lead,
+        url = url,
+        price = price_jpy,
+    );
+    let payload = serde_json::json!({
+        "from": "MU MAKE <noreply@wearmu.com>",
+        "to": [to],
+        "subject": subject,
+        "html": html,
+    });
+    let _ = reqwest::Client::new()
+        .post("https://api.resend.com/emails")
+        .bearer_auth(&resend_key)
+        .json(&payload)
+        .send()
+        .await;
 }
 
 /// GET /api/make/ab — A/B/C の現況（各案のユニーク訪問者作成数・作成総数・勝者）。
@@ -2931,6 +3060,14 @@ button:disabled{opacity:.5;cursor:default}
 .card .one{font-size:12px;color:rgba(245,245,240,.62);margin-top:8px;line-height:1.65}
 .card .one b{color:#f5f5f0}
 .card .fitnote{font-size:11.5px;color:rgba(255,215,0,.78);margin-top:6px;min-height:16px}
+.savebox{margin-top:12px;background:#101010;border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:12px}
+.savebox .savelead{font-size:12px;color:rgba(245,245,240,.65);margin-bottom:8px;line-height:1.6}
+.saverow{display:flex;gap:8px}
+.saverow input{flex:1;min-width:0;background:#141414;border:1px solid rgba(255,255,255,.14);color:#f5f5f0;border-radius:8px;padding:10px 12px;font-size:14px;font-family:inherit}
+.saverow input:focus{outline:none;border-color:#ffd700}
+.saverow button{flex:0 0 auto;min-width:0;background:transparent;border:1px solid rgba(255,215,0,.5);color:#ffd700;font-weight:700;padding:10px 14px;border-radius:8px;font-size:13px}
+.saverow button:disabled{opacity:.5}
+.savemsg{font-size:11.5px;color:#9fdf9f;margin-top:6px;min-height:14px}
 .err{color:#ff8a7a;font-size:14px}
 .spin{display:inline-block;width:16px;height:16px;border:2px solid rgba(0,0,0,.3);border-top-color:#0a0a0a;border-radius:50%;animation:s .7s linear infinite;vertical-align:-3px;margin-right:8px}
 @keyframes s{to{transform:rotate(360deg)}}
@@ -3004,21 +3141,35 @@ const $=s=>document.querySelector(s);
 function muShare(b){var u=b.dataset.u,t=b.dataset.t;if(navigator.share){navigator.share({title:t,url:u}).catch(function(){});}else if(navigator.clipboard){navigator.clipboard.writeText(u).then(function(){b.textContent='リンクをコピーしました ✓';}).catch(function(){});}else{prompt('このリンクを広めてください',u);}}
 // プロンプトのエコー表示はユーザー入力 → 必ずエスケープ
 function escHtml(s){return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function yen(n){return (n||0).toLocaleString('ja-JP');}
+// ファネル計測: 既存 /api/v1/event の許可イベント(cta_click/share)だけを使う。
+// 効果検証はこれが母数 — make_buy クリック数 vs catalog_orders の MAKE-% 注文数。
+function muEvent(ev,extra){try{
+  var b=JSON.stringify({visitor_id:VIS||'v-anon',session_id:VIS||'v-anon',event:ev,path:'/make',extra:extra||{}});
+  if(navigator.sendBeacon){navigator.sendBeacon('/api/v1/event',new Blob([b],{type:'application/json'}));}
+  else{fetch('/api/v1/event',{method:'POST',headers:{'Content-Type':'application/json'},body:b});}
+}catch(e){}}
 // 着用イメージ(on-body mockup)はバックグラウンド生成 → /api/make/peek を
 // ポーリングして完成したらカード画像を差し替え（着た姿=心理的所有感）。
+// 6秒×20回のあと15秒×10回（計約4.5分）。タブ非表示中はfetchしない。
 function pollFit(sku,design){
   var n=0;
-  var t=setInterval(function(){
-    n++; if(n>20){clearInterval(t);var f0=$('#mkFit');if(f0)f0.textContent='';return;}
+  function schedule(){setTimeout(tick,n<20?6000:15000);}
+  function tick(){
+    n++;
+    if(n>30){var f0=$('#mkFit');if(f0)f0.textContent='';return;}
+    if(document.hidden){schedule();return;}
     fetch('/api/make/peek?sku='+encodeURIComponent(sku)).then(function(r){return r.json();}).then(function(j){
       if(j&&j.mockup&&j.mockup!==design){
-        clearInterval(t);
         var im=$('#mkImg'),f=$('#mkFit');
         if(im){im.style.opacity=0;setTimeout(function(){im.src=j.mockup;im.style.opacity=1;},450);}
         if(f)f.textContent='👕 着ると、こうなる。鏡の前の自分を、想像してみて。';
+        return;
       }
-    }).catch(function(){});
-  },6000);
+      schedule();
+    }).catch(schedule);
+  }
+  schedule();
 }
 // ── A/B/C 割当 ──────────────────────────────────────────────
 // visitor_id を mu-funnel.js の localStorage から拾う（無ければ生成）。
@@ -3076,6 +3227,7 @@ function genTheater(p){
 async function runMake(){
   const p=$('#p').value.trim(); if(!p){$('#p').focus();return;}
   const k=$('#k').value;
+  muEvent('cta_click',{cta:'make_create',variant:MKV});
   $('#go').disabled=true; $('#go').innerHTML='<span class=spin></span>つくっています…';
   const genDone=genTheater(p);
   try{
@@ -3092,20 +3244,39 @@ async function runMake(){
       var url = j.buy_url || j.pdp_url || '';
       var pEcho = p.length>60 ? p.slice(0,60)+'…' : p;
       var own = '<div class=own><b>あなたの言葉</b>から、世界に1枚が生まれました。<span class=pq>「'+escHtml(pEcho)+'」</span></div>';
-      var buy = j.buy_url ? '<a class=buy href="'+j.buy_url+'">この一着を、自分のものにする ¥'+(j.retail_jpy||'')+' →<small>サイズを選ぶだけ · 1枚から受注生産 · 買わなくてもOK</small></a>' : '';
-      var share = url ? '<button class=share onclick="muShare(this)" data-u="'+url+'" data-t="'+((j.display||'MU')+' / wearmu')+'">📎 リンクを保存・シェア — 閉じると、戻る道はこのリンクだけ</button>' : '';
+      // CTA内に否定（「買わなくてもOK」）は置かない — 支配的CTAを自分で打ち消さない。
+      var buy = j.buy_url ? '<a class=buy href="'+j.buy_url+'" onclick="muEvent(\'cta_click\',{cta:\'make_buy\',sku:\''+j.sku+'\'})">この一着を、自分のものにする ¥'+yen(j.retail_jpy)+' →<small>サイズを選ぶだけ · 1枚から受注生産</small></a>' : '';
+      // 保存(自分用・損失回避)とシェア(拡散・報酬)は別の動機 → 分離。
+      var saveLead = j.auto_approved
+        ? 'このページを閉じると、戻り道はリンクだけ。メールで受け取っておけます:'
+        : '公開されたら、メールでお知らせします:';
+      var savebox = '<div class=savebox><div class=savelead>'+saveLead+'</div>'
+        +'<div class=saverow><input id=mkEm type=email placeholder="you@example.com" autocomplete=email><button id=mkSave>📩 受け取る</button></div>'
+        +'<div class=savemsg id=mkSaveMsg></div></div>';
+      var share = url ? '<button class=share onclick="muEvent(\'share\',{sku:\''+j.sku+'\'});muShare(this)" data-u="'+url+'" data-t="'+((j.display||'MU')+' / wearmu')+'">📣 シェアして広める</button>' : '';
       var spread = url ? '<div class=spread>棚にも並びました。広めるほどこの子が売れる → 作り手のあなたに報酬（¥600〜/枚）。</div>' : '';
       var one = j.auto_approved ? '<div class=one>🌱 <b>世界に1枚。</b>同じ絵は二度と生成されません。ファーストオーナーは、まだいません。</div>' : '';
       var nt = j.auto_approved ? '' : '<div class=note>'+(j.note||'つくりました。確認後に公開・購入できます。')+'</div>';
       $('#out').innerHTML=own+'<div class="card reveal"><img id=mkImg src="'+j.design_url+'" alt=""><div class=meta>'
         +'<div class=nm>'+(j.display||'')+'</div>'
         +'<div class=by>DESIGNED BY YOU × MU</div>'
-        +'<div class=pr>¥'+(j.retail_jpy||'')+'</div>'
+        +'<div class=pr>¥'+yen(j.retail_jpy)+'</div>'
         +'<div style="font-size:13px;color:rgba(245,245,240,.7)">'+(j.hook||'')+'</div>'
         + one
         +'<div class=fitnote id=mkFit>'+(j.auto_approved?'👕 着用イメージを準備中… 数十秒でここに届きます':'')+'</div>'
-        + buy + share + spread + nt
+        + buy + savebox + share + spread + nt
         +'</div></div>';
+      var sv=$('#mkSave');
+      if(sv)sv.onclick=function(){
+        var em=$('#mkEm').value.trim(), ms=$('#mkSaveMsg');
+        if(!em||em.indexOf('@')<1){$('#mkEm').focus();return;}
+        sv.disabled=true;
+        fetch('/api/make/notify?sku='+encodeURIComponent(j.sku)+'&email='+encodeURIComponent(em),{method:'POST'})
+          .then(function(r){return r.json();}).then(function(x){
+            if(x.ok){ms.textContent=j.auto_approved?'✓ 送りました。受信箱をご確認ください。':'✓ 公開され次第、お知らせします。';muEvent('cta_click',{cta:'make_notify',sku:j.sku});}
+            else{ms.style.color='#ff8a7a';ms.textContent=x.error||'送れませんでした';sv.disabled=false;}
+          }).catch(function(){ms.style.color='#ff8a7a';ms.textContent='通信エラー。もう一度どうぞ。';sv.disabled=false;});
+      };
       $('#out').scrollIntoView({behavior:'smooth',block:'nearest'});
       if(j.auto_approved && j.sku) pollFit(j.sku, j.design_url);
     }
