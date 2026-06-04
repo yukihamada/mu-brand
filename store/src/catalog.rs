@@ -2941,6 +2941,157 @@ pub async fn send_make_link_email(to: String, sku: String, label: String, price_
         .await;
 }
 
+// ─── /make メール認証ゲート ──────────────────────────────────────────────
+// 生成は誰でも走るが、結果(着用モックアップ+PDP)を「見る」前にメール認証を
+// 課す（生成後リビールゲート）。作った労力がかかった分メアド提供率が高い
+// (IKEA効果)。コードは collab_users.code を再利用＝新テーブルなし。verify は
+// collab セッション/API キーを発行しない軽量ゲート（make 用途に限定）。
+
+#[derive(serde::Deserialize)]
+pub struct MakeVerifySendBody { pub sku: String, pub email: String }
+
+fn make_email_ok(email: &str) -> bool {
+    email.len() >= 6
+        && email.len() <= 120
+        && email.contains('@')
+        && email.rsplit('@').next().map(|d| d.contains('.')).unwrap_or(false)
+        && !email.chars().any(|c| c.is_whitespace())
+}
+
+/// POST /api/make/verify/send {sku,email} — 結果を見るための6桁コードをメール送信。
+pub async fn make_verify_send(State(db): State<Db>, axum::Json(q): axum::Json<MakeVerifySendBody>) -> Response {
+    let email = q.email.trim().to_lowercase();
+    if !make_email_ok(&email) {
+        return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"メールアドレスを確認してください"}))).into_response();
+    }
+    use rand::Rng;
+    let code: String = format!("{:06}", rand::thread_rng().gen_range(0..1_000_000));
+    let now_s: i64 = crate::chrono_now().parse().unwrap_or(0);
+    let expires = now_s + 900; // 15分
+    {
+        let conn = db.lock().unwrap();
+        // この sku が実在する /make 作品か確認（任意 sku でのコード発行を防ぐ）
+        let exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM catalog_products WHERE sku=? AND brand='minna' AND legacy_source='public_make'",
+                rusqlite::params![&q.sku], |_| Ok(()),
+            )
+            .is_ok();
+        if !exists {
+            return (StatusCode::NOT_FOUND, axum::Json(serde_json::json!({"ok":false,"error":"not found"}))).into_response();
+        }
+        // 全体メール送信キャップ（fail-closed）: 直近1時間で 60 通まで。
+        let hour_ago = now_s - 3600;
+        let sent_1h: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM funnel_events WHERE event='make_verify_send'
+                   AND CAST(COALESCE(created_at,'0') AS INTEGER) > ?",
+                rusqlite::params![hour_ago], |r| r.get(0),
+            )
+            .unwrap_or(i64::MAX);
+        if sent_1h >= 60 {
+            return (StatusCode::TOO_MANY_REQUESTS, axum::Json(serde_json::json!({"ok":false,"error":"混み合っています。少し時間をおいてください"}))).into_response();
+        }
+        let _ = conn.execute(
+            "INSERT INTO collab_users (email, code, code_expires_at, created_at)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(email) DO UPDATE SET code=excluded.code, code_expires_at=excluded.code_expires_at",
+            rusqlite::params![email, code, expires, now_s],
+        );
+    }
+    crate::funnel_track_server(&db, "make_verify_send", "/make", None, serde_json::json!({"sku": q.sku})).await;
+    if std::env::var("RESEND_API_KEY").map(|k| k.is_empty()).unwrap_or(true) {
+        return (StatusCode::SERVICE_UNAVAILABLE, axum::Json(serde_json::json!({"ok":false,"error":"メール送信が未設定です"}))).into_response();
+    }
+    send_make_code_email(email, code).await;
+    axum::Json(serde_json::json!({"ok":true,"message":"確認コードを送りました（15分有効）"})).into_response()
+}
+
+#[derive(serde::Deserialize)]
+pub struct MakeVerifyCheckBody { pub sku: String, pub email: String, pub code: String }
+
+/// POST /api/make/verify/check {sku,email,code} — コード照合 → 結果を開放。
+/// 成功で mu_make_ok クッキーを付与（以後この端末は再認証不要）。
+pub async fn make_verify_check(State(db): State<Db>, axum::Json(q): axum::Json<MakeVerifyCheckBody>) -> Response {
+    let email = q.email.trim().to_lowercase();
+    let code = q.code.trim().to_string();
+    let now_s: i64 = crate::chrono_now().parse().unwrap_or(0);
+    let row: Option<(String, i64)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(code,''), COALESCE(code_expires_at,0) FROM collab_users WHERE email=?",
+            rusqlite::params![email], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).ok()
+    };
+    let (db_code, expires) = match row {
+        Some(r) => r,
+        None => return (StatusCode::NOT_FOUND, axum::Json(serde_json::json!({"ok":false,"error":"先にコードを送ってください"}))).into_response(),
+    };
+    if db_code.is_empty() || db_code != code {
+        return (StatusCode::UNAUTHORIZED, axum::Json(serde_json::json!({"ok":false,"error":"確認コードが一致しません"}))).into_response();
+    }
+    if expires < now_s {
+        return (StatusCode::UNAUTHORIZED, axum::Json(serde_json::json!({"ok":false,"error":"コードの有効期限が切れました。もう一度お試しください"}))).into_response();
+    }
+    {
+        let conn = db.lock().unwrap();
+        // コードを使い切る（再利用防止）
+        let _ = conn.execute("UPDATE collab_users SET code=NULL, code_expires_at=NULL WHERE email=?", rusqlite::params![email]);
+        // 作者メールを作品に刻む（先勝ち・冪等）。売れた時の連絡先にもなる。
+        if let Ok(meta_json) = conn.query_row(
+            "SELECT COALESCE(meta_json,'') FROM catalog_products WHERE sku=? AND legacy_source='public_make'",
+            rusqlite::params![&q.sku], |r| r.get::<_, String>(0),
+        ) {
+            let mut meta: serde_json::Value = serde_json::from_str(&meta_json).unwrap_or_else(|_| serde_json::json!({}));
+            if !meta.is_object() { meta = serde_json::json!({}); }
+            let has = meta.get("maker_email").and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false);
+            if !has {
+                meta.as_object_mut().unwrap().insert("maker_email".into(), serde_json::Value::from(email.clone()));
+                let _ = conn.execute("UPDATE catalog_products SET meta_json=? WHERE sku=?", rusqlite::params![meta.to_string(), &q.sku]);
+            }
+        }
+    }
+    crate::funnel_track_server(&db, "make_verified", "/make", None, serde_json::json!({"sku": q.sku})).await;
+    let mut resp = axum::Json(serde_json::json!({"ok":true})).into_response();
+    resp.headers_mut().insert(
+        axum::http::header::SET_COOKIE,
+        axum::http::HeaderValue::from_static("mu_make_ok=1; Path=/; Max-Age=2592000; SameSite=Lax"),
+    );
+    resp
+}
+
+/// /make 認証ゲートの6桁コードメール（Resend）。リンクではなくコードのみ。
+pub async fn send_make_code_email(to: String, code: String) {
+    let resend_key = std::env::var("RESEND_API_KEY").unwrap_or_default();
+    if resend_key.is_empty() { return; }
+    let html = format!(
+        r#"<div style="background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;padding:32px 0;margin:0">
+<div style="max-width:520px;margin:0 auto;padding:0 32px">
+<div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:22px">━◯━ MU</div>
+<div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#ffd700;opacity:0.85;margin-bottom:8px">DESIGNED BY YOU</div>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:0 0 12px">あなたの一着を見るための確認コード</h2>
+<p style="font-size:13px;line-height:1.9;opacity:0.78;margin:0 0 18px">/make の画面に下のコードを入力すると、生まれたばかりの世界に1枚が現れます。15分間有効です。</p>
+<div style="font-size:38px;letter-spacing:0.32em;font-weight:700;color:#ffd700;background:#111;padding:22px;text-align:center;border-radius:8px;font-family:'SF Mono',monospace;margin:8px 0 18px">{code}</div>
+<p style="font-size:11px;line-height:1.85;opacity:0.5;margin:22px 0 0;border-top:1px solid #222;padding-top:18px">
+心当たりがない場合はこのメールを無視してください。<br>
+MU · wearmu.com · 株式会社イネブラ</p>
+</div></div>"#,
+        code = code,
+    );
+    let payload = serde_json::json!({
+        "from": "━◯━ MU Make <noreply@wearmu.com>",
+        "to": [to],
+        "subject": "MU — あなたの一着を見る確認コード",
+        "html": html,
+    });
+    let _ = reqwest::Client::new()
+        .post("https://api.resend.com/emails")
+        .bearer_auth(&resend_key)
+        .json(&payload)
+        .send()
+        .await;
+}
+
 /// GET /api/make/ab — A/B/C の現況（各案のユニーク訪問者作成数・作成総数・勝者）。
 pub async fn make_ab_status(State(db): State<Db>) -> Response {
     let conn = db.lock().unwrap();
@@ -3068,6 +3219,15 @@ button:disabled{opacity:.5;cursor:default}
 .saverow button{flex:0 0 auto;min-width:0;background:transparent;border:1px solid rgba(255,215,0,.5);color:#ffd700;font-weight:700;padding:10px 14px;border-radius:8px;font-size:13px}
 .saverow button:disabled{opacity:.5}
 .savemsg{font-size:11.5px;color:#9fdf9f;margin-top:6px;min-height:14px}
+.card.gate{padding:0;overflow:hidden}
+.gatewrap{position:relative;background:#0d0d0d}
+.gateimg{display:block;width:100%;aspect-ratio:1;object-fit:cover;filter:blur(20px) brightness(.62);transform:scale(1.08)}
+.gatelock{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:40px;text-shadow:0 2px 18px rgba(0,0,0,.7)}
+.gatebody{padding:18px 16px 20px}
+.gateh{font-size:15px;line-height:1.6;color:#f5f5f0}
+.gateh b{color:#ffd700}
+.gatesub{font-size:12px;color:rgba(245,245,240,.6);line-height:1.7;margin:6px 0 14px}
+.gback{margin-top:10px;background:none;border:none;color:rgba(245,245,240,.5);font-size:12px;text-decoration:underline;cursor:pointer;padding:4px 0}
 .err{color:#ff8a7a;font-size:14px}
 .spin{display:inline-block;width:16px;height:16px;border:2px solid rgba(0,0,0,.3);border-top-color:#0a0a0a;border-radius:50%;animation:s .7s linear infinite;vertical-align:-3px;margin-right:8px}
 @keyframes s{to{transform:rotate(360deg)}}
@@ -3238,50 +3398,81 @@ async function runMake(){
     genDone();
     if(!j.ok){ $('#out').innerHTML='<div class=err>'+(j.error||'うまく作れませんでした。もう一度お試しください。')+'</div>'; }
     else{
-      // 行動科学の根拠: IKEA効果(自作品は+63%高く評価/Norton+2012)→「あなたが作った」と
-      // プロンプトのエコーで作者性を返す。心理的所有感(Peck&Shu 2009)→着用イメージ差替+
-      // 所有語CTA。希少性/損失回避は事実ベースのみ(同seed生成は二度と無い・初回オーナー不在)。
-      var url = j.buy_url || j.pdp_url || '';
-      var pEcho = p.length>60 ? p.slice(0,60)+'…' : p;
-      var own = '<div class=own><b>あなたの言葉</b>から、世界に1枚が生まれました。<span class=pq>「'+escHtml(pEcho)+'」</span></div>';
-      // CTA内に否定（「買わなくてもOK」）は置かない — 支配的CTAを自分で打ち消さない。
-      var buy = j.buy_url ? '<a class=buy href="'+j.buy_url+'" onclick="muEvent(\'cta_click\',{cta:\'make_buy\',sku:\''+j.sku+'\'})">この一着を、自分のものにする ¥'+yen(j.retail_jpy)+' →<small>サイズを選ぶだけ · 1枚から受注生産</small></a>' : '';
-      // 保存(自分用・損失回避)とシェア(拡散・報酬)は別の動機 → 分離。
-      var saveLead = j.auto_approved
-        ? 'このページを閉じると、戻り道はリンクだけ。メールで受け取っておけます:'
-        : '公開されたら、メールでお知らせします:';
-      var savebox = '<div class=savebox><div class=savelead>'+saveLead+'</div>'
-        +'<div class=saverow><input id=mkEm type=email placeholder="you@example.com" autocomplete=email><button id=mkSave>📩 受け取る</button></div>'
-        +'<div class=savemsg id=mkSaveMsg></div></div>';
-      var share = url ? '<button class=share onclick="muEvent(\'share\',{sku:\''+j.sku+'\'});muShare(this)" data-u="'+url+'" data-t="'+((j.display||'MU')+' / wearmu')+'">📣 シェアして広める</button>' : '';
-      var spread = url ? '<div class=spread>棚にも並びました。広めるほどこの子が売れる → 作り手のあなたに報酬（¥600〜/枚）。</div>' : '';
-      var one = j.auto_approved ? '<div class=one>🌱 <b>世界に1枚。</b>同じ絵は二度と生成されません。ファーストオーナーは、まだいません。</div>' : '';
-      var nt = j.auto_approved ? '' : '<div class=note>'+(j.note||'つくりました。確認後に公開・購入できます。')+'</div>';
-      $('#out').innerHTML=own+'<div class="card reveal"><img id=mkImg src="'+j.design_url+'" alt=""><div class=meta>'
-        +'<div class=nm>'+(j.display||'')+'</div>'
-        +'<div class=by>DESIGNED BY YOU × MU</div>'
-        +'<div class=pr>¥'+yen(j.retail_jpy)+'</div>'
-        +'<div style="font-size:13px;color:rgba(245,245,240,.7)">'+(j.hook||'')+'</div>'
-        + one
-        +'<div class=fitnote id=mkFit>'+(j.auto_approved?'👕 着用イメージを準備中… 数十秒でここに届きます':'')+'</div>'
-        + buy + savebox + share + spread + nt
-        +'</div></div>';
-      var sv=$('#mkSave');
-      if(sv)sv.onclick=function(){
-        var em=$('#mkEm').value.trim(), ms=$('#mkSaveMsg');
-        if(!em||em.indexOf('@')<1){$('#mkEm').focus();return;}
-        sv.disabled=true;
-        fetch('/api/make/notify?sku='+encodeURIComponent(j.sku)+'&email='+encodeURIComponent(em),{method:'POST'})
-          .then(function(r){return r.json();}).then(function(x){
-            if(x.ok){ms.textContent=j.auto_approved?'✓ 送りました。受信箱をご確認ください。':'✓ 公開され次第、お知らせします。';muEvent('cta_click',{cta:'make_notify',sku:j.sku});}
-            else{ms.style.color='#ff8a7a';ms.textContent=x.error||'送れませんでした';sv.disabled=false;}
-          }).catch(function(){ms.style.color='#ff8a7a';ms.textContent='通信エラー。もう一度どうぞ。';sv.disabled=false;});
-      };
-      $('#out').scrollIntoView({behavior:'smooth',block:'nearest'});
-      if(j.auto_approved && j.sku) pollFit(j.sku, j.design_url);
+      // 認証ゲート: 本端末で認証済み(mu_make_ok クッキー)なら即リビール。
+      // 初回は結果(着用イメージ+棚)を見る前にメール+6桁コード認証を挟む。
+      if(/(?:^|;\s*)mu_make_ok=1/.test(document.cookie)){ renderResult(j,p); }
+      else{ renderGate(j,p); }
     }
   }catch(e){ genDone(); $('#out').innerHTML='<div class=err>通信エラー。もう一度お試しください。</div>'; }
   $('#go').disabled=false; $('#go').textContent='つくる';
+}
+// 生成済みの結果カードを描画（認証通過後 or 認証済み端末）。
+function renderResult(j,p){
+  // 行動科学の根拠: IKEA効果(自作品は+63%高く評価/Norton+2012)→「あなたが作った」と
+  // プロンプトのエコーで作者性を返す。心理的所有感(Peck&Shu 2009)→着用イメージ差替+所有語CTA。
+  var url = j.buy_url || j.pdp_url || '';
+  var pEcho = p.length>60 ? p.slice(0,60)+'…' : p;
+  var own = '<div class=own><b>あなたの言葉</b>から、世界に1枚が生まれました。<span class=pq>「'+escHtml(pEcho)+'」</span></div>';
+  var buy = j.buy_url ? '<a class=buy href="'+j.buy_url+'" onclick="muEvent(\'cta_click\',{cta:\'make_buy\',sku:\''+j.sku+'\'})">この一着を、自分のものにする ¥'+yen(j.retail_jpy)+' →<small>サイズを選ぶだけ · 1枚から受注生産</small></a>' : '';
+  var share = url ? '<button class=share onclick="muEvent(\'share\',{sku:\''+j.sku+'\'});muShare(this)" data-u="'+url+'" data-t="'+((j.display||'MU')+' / wearmu')+'">📣 シェアして広める</button>' : '';
+  var spread = url ? '<div class=spread>棚にも並びました。広めるほどこの子が売れる → 作り手のあなたに報酬（¥600〜/枚）。</div>' : '';
+  var one = j.auto_approved ? '<div class=one>🌱 <b>世界に1枚。</b>同じ絵は二度と生成されません。ファーストオーナーは、まだいません。</div>' : '';
+  var nt = j.auto_approved ? '' : '<div class=note>'+(j.note||'つくりました。確認後に公開・購入できます。')+'</div>';
+  $('#out').innerHTML=own+'<div class="card reveal"><img id=mkImg src="'+j.design_url+'" alt=""><div class=meta>'
+    +'<div class=nm>'+(j.display||'')+'</div>'
+    +'<div class=by>DESIGNED BY YOU × MU</div>'
+    +'<div class=pr>¥'+yen(j.retail_jpy)+'</div>'
+    +'<div style="font-size:13px;color:rgba(245,245,240,.7)">'+(j.hook||'')+'</div>'
+    + one
+    +'<div class=fitnote id=mkFit>'+(j.auto_approved?'👕 着用イメージを準備中… 数十秒でここに届きます':'')+'</div>'
+    + buy + share + spread + nt
+    +'</div></div>';
+  $('#out').scrollIntoView({behavior:'smooth',block:'nearest'});
+  if(j.auto_approved && j.sku) pollFit(j.sku, j.design_url);
+}
+// 生成後リビールゲート: メール→6桁コード認証で結果を開放。
+function renderGate(j,p){
+  var pEcho = p.length>60 ? p.slice(0,60)+'…' : p;
+  $('#out').innerHTML=
+    '<div class=own><b>あなたの言葉</b>から、世界に1枚が生まれました。<span class=pq>「'+escHtml(pEcho)+'」</span></div>'
+    +'<div class="card gate">'
+    +'<div class=gatewrap><img class=gateimg src="'+j.design_url+'" alt=""><div class=gatelock>🔒</div></div>'
+    +'<div class=gatebody>'
+    +'<div class=gateh>あと一歩。<b>メールで認証</b>すると、この一着が現れます。</div>'
+    +'<div class=gatesub>確認のため6桁コードをお送りします。作品の保存先になり、売れたらお知らせします。</div>'
+    +'<div id=gStep1><div class=saverow><input id=gEmail type=email placeholder="you@example.com" autocomplete=email inputmode=email><button id=gSend>コードを送る</button></div></div>'
+    +'<div id=gStep2 style="display:none"><div class=saverow><input id=gCode type=text placeholder="6桁コード" inputmode=numeric autocomplete=one-time-code maxlength=6 style="letter-spacing:.3em;text-align:center;font-family:monospace"><button id=gVerify>認証して見る</button></div><button id=gBack class=gback>メールアドレスを入れ直す</button></div>'
+    +'<div class=savemsg id=gMsg></div>'
+    +'</div></div>';
+  var email='';
+  var msg=$('#gMsg');
+  function showMsg(t,err){msg.style.color=err?'#ff8a7a':'rgba(245,245,240,.7)';msg.textContent=t;}
+  var send=$('#gSend');
+  send.onclick=function(){
+    email=$('#gEmail').value.trim();
+    if(!email||email.indexOf('@')<1){$('#gEmail').focus();return;}
+    send.disabled=true;showMsg('送信中…',false);
+    fetch('/api/make/verify/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sku:j.sku,email:email})})
+      .then(function(r){return r.json();}).then(function(x){
+        send.disabled=false;
+        if(x.ok){$('#gStep1').style.display='none';$('#gStep2').style.display='';showMsg('「'+email+'」にコードを送りました（15分有効）。',false);$('#gCode').focus();muEvent('cta_click',{cta:'make_verify_send',sku:j.sku});}
+        else{showMsg(x.error||'送れませんでした',true);}
+      }).catch(function(){send.disabled=false;showMsg('通信エラー。もう一度どうぞ。',true);});
+  };
+  $('#gEmail').addEventListener('keydown',function(e){if(e.key==='Enter')send.click();});
+  $('#gBack').onclick=function(){$('#gStep2').style.display='none';$('#gStep1').style.display='';showMsg('',false);$('#gEmail').focus();};
+  $('#gVerify').onclick=function(){
+    var code=$('#gCode').value.trim(), vb=$('#gVerify');
+    if(!/^[0-9]{6}$/.test(code)){$('#gCode').focus();showMsg('6桁の数字を入力してください',true);return;}
+    vb.disabled=true;showMsg('確認中…',false);
+    fetch('/api/make/verify/check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sku:j.sku,email:email,code:code})})
+      .then(function(r){return r.json();}).then(function(x){
+        if(x.ok){muEvent('cta_click',{cta:'make_verified',sku:j.sku});renderResult(j,p);}
+        else{vb.disabled=false;showMsg(x.error||'確認できませんでした',true);}
+      }).catch(function(){vb.disabled=false;showMsg('通信エラー。もう一度どうぞ。',true);});
+  };
+  $('#gCode').addEventListener('keydown',function(e){if(e.key==='Enter')$('#gVerify').click();});
+  $('#out').scrollIntoView({behavior:'smooth',block:'nearest'});
 }
 $('#go').onclick=runMake;
 $('#p').addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter')runMake();});

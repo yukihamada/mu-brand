@@ -68243,6 +68243,8 @@ async fn main() {
         .route("/api/make/recent", get(catalog::make_recent))
         .route("/api/make/peek", get(catalog::make_peek))
         .route("/api/make/notify", post(catalog::make_notify))
+        .route("/api/make/verify/send", post(catalog::make_verify_send))
+        .route("/api/make/verify/check", post(catalog::make_verify_check))
         .route("/api/make/ab", get(catalog::make_ab_status))
         .route("/admin/catalog/lifestyle_gen", get(catalog::admin_lifestyle_gen))
         .route("/admin/catalog/legacy_rename", get(catalog::admin_legacy_rename))
