@@ -23632,7 +23632,11 @@ async fn you_active_count(State(db): State<Db>) -> impl IntoResponse {
 
 /// GET / — 人間には HTML、`Accept: text/markdown` を明示する AI エージェント
 /// には正準ドキュメント /llms.txt の本文をそのまま返す（既存挙動への影響ゼロ）。
-async fn home(State(db): State<Db>, headers: HeaderMap) -> Response {
+async fn home(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Response {
     let wants_md = headers
         .get("accept")
         .and_then(|v| v.to_str().ok())
@@ -23641,10 +23645,30 @@ async fn home(State(db): State<Db>, headers: HeaderMap) -> Response {
     if wants_md {
         return agent_api::llms_txt().await;
     }
-    index(State(db)).await.into_response()
+    // ── language selection (?lang=en wins; else Accept-Language) ──
+    // The page is JA by default; only an explicit `?lang=en` OR an
+    // Accept-Language that prefers en (with no ja) renders the English
+    // copy. This keeps <html lang> / hreflang / og:locale honest — they
+    // now match the body that ships, instead of declaring en while
+    // rendering ja. ?lang=ja always forces JA (lets en-locale users opt back).
+    let lang_q = q.get("lang").map(|s| s.as_str()).unwrap_or("");
+    let is_en = if lang_q.eq_ignore_ascii_case("en") {
+        true
+    } else if lang_q.eq_ignore_ascii_case("ja") {
+        false
+    } else {
+        let al = headers
+            .get("accept-language")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        // Prefer en only when the client clearly wants en and not ja.
+        al.contains("en") && !al.contains("ja")
+    };
+    index(State(db), is_en).await.into_response()
 }
 
-async fn index(State(db): State<Db>) -> Html<String> {
+async fn index(State(db): State<Db>, is_en: bool) -> Html<String> {
     let raw = include_str!("../static/index.html");
 
     // ── SSR fill: pre-fill the dynamic placeholders so the page never
@@ -23889,6 +23913,138 @@ async fn index(State(db): State<Db>) -> Html<String> {
         )
     };
     let html = html.replace("{BEST_SELLERS_STRIP}", &shop_strip);
+
+    // ── English rendering (?lang=en / Accept-Language: en) ──
+    // The static index.html ships JA and *declares* ja+en (hreflang,
+    // og:locale:alternate, JSON-LD inLanguage). Until now the body stayed
+    // JA even for ?lang=en — the declaration lied. This swaps <html lang>,
+    // the meta/og/twitter copy, and the visible hero + nav + CTAs to real
+    // English so the declared language matches the rendered language.
+    // Scope (per task): top page only — hero, nav, meta, buy CTA, and the
+    // BIM section heading. Deeper sections (tab-toggled MA/MUON/MUGEN) stay
+    // JA for now; they are not visible above the fold. Checkout links
+    // (/buy, /shop/:sku, /make) are NOT touched — only their button text.
+    let html = if is_en {
+        html
+            // ── <html lang> + locale (the core honesty fix) ──
+            .replace(r#"<html lang="ja">"#, r#"<html lang="en">"#)
+            .replace(
+                r#"<meta property="og:locale" content="ja_JP">"#,
+                r#"<meta property="og:locale" content="en_US">"#,
+            )
+            .replace(
+                r#"<meta property="og:locale:alternate" content="en_US">"#,
+                r#"<meta property="og:locale:alternate" content="ja_JP">"#,
+            )
+            // canonical points at the en variant so search engines index it as en
+            .replace(
+                r#"<link rel="canonical" href="https://wearmu.com/">"#,
+                r#"<link rel="canonical" href="https://wearmu.com/?lang=en">"#,
+            )
+            // ── <title> / meta description ──
+            .replace(
+                r#"<title>MU — 今日も、 一つの絵が生まれた。| AIが毎日描く受注生産オリジナルTシャツ · wearmu.com</title>"#,
+                r#"<title>MU — Today, one more drawing was born. | An AI that paints a new made-to-order tee every day · wearmu.com</title>"#,
+            )
+            .replace(
+                r#"<meta name="description" content="¥7,800 — 原価 ¥5,700 公開。北海道弟子屈町の気温と月相を、AI が読む。同じ絵は二度と生まれない。— 私が死んでも、明日も一つの絵が生まれる。(MUGEN は同じ絵を最大 108 枚、MA は世界に 1 枚)">"#,
+                r#"<meta name="description" content="¥7,800 — cost ¥5,700, made public. An AI reads the temperature and moon phase of Teshikaga, Hokkaido. No two drawings are ever the same. Even after I'm gone, one more drawing is born each day. (MUGEN prints one design up to 108 times; MA is 1-of-1 worldwide.)">"#,
+            )
+            // ── Open Graph / Twitter copy ──
+            .replace(
+                r#"<meta property="og:title" content="MU — 今日も、 一つの絵が生まれた。">"#,
+                r#"<meta property="og:title" content="MU — Today, one more drawing was born.">"#,
+            )
+            .replace(
+                r#"<meta property="og:description" content="¥7,800 — 原価 ¥5,700 公開。北海道弟子屈町の気温と月相を、AI が読む。同じ絵は二度と生まれない。私が死んでも、明日も一つの絵が生まれる。">"#,
+                r#"<meta property="og:description" content="¥7,800 — cost ¥5,700, made public. An AI reads the temperature and moon phase of Teshikaga, Hokkaido. No two drawings are ever the same. Even after I'm gone, one more drawing is born each day.">"#,
+            )
+            .replace(
+                r#"<meta name="twitter:title" content="MU — 今日も、 一つの絵が生まれた。">"#,
+                r#"<meta name="twitter:title" content="MU — Today, one more drawing was born.">"#,
+            )
+            .replace(
+                r#"<meta name="twitter:description" content="¥7,800 — 原価 ¥5,700 公開。毎日、 一つの絵が生まれる。私が死んでも、 明日も一つの絵が生まれる。">"#,
+                r#"<meta name="twitter:description" content="¥7,800 — cost ¥5,700, made public. One drawing is born every day. Even after I'm gone, one more drawing is born each day.">"#,
+            )
+            // ── nav ──
+            .replace(
+                r#"aria-label="ブランド一覧 — MU と各パートナーのコラボブランド">ブランド一覧</a>"#,
+                r#"aria-label="Brands — MU and partner collab brands">Brands</a>"#,
+            )
+            .replace(
+                r#"aria-label="運営公開ノート">運営ノート</a>"#,
+                r#"aria-label="Operator's public notes">Notes</a>"#,
+            )
+            // ── promo strip (today's tee card) ──
+            .replace(
+                r#"今日 の Tシャツ · MUGEN {HERO_DROP_LABEL} · ベーシック生地"#,
+                r#"TODAY'S TEE · MUGEN {HERO_DROP_LABEL} · basic fabric"#,
+            )
+            .replace(
+                r#"<div style="font-size:18px;font-weight:600;color:#fff;margin-bottom:3px">¥4,900 <span style="font-size:12px;opacity:0.55;font-weight:400">≈ $33</span> · 国内 5-8 日 <span style="font-size:11px;opacity:0.5;font-weight:400">(下のオーガニック版は ¥7,800)</span></div>"#,
+                r#"<div style="font-size:18px;font-weight:600;color:#fff;margin-bottom:3px">¥4,900 <span style="font-size:12px;opacity:0.55;font-weight:400">≈ $33</span> · ships worldwide <span style="font-size:11px;opacity:0.5;font-weight:400">(organic version below is ¥7,800)</span></div>"#,
+            )
+            .replace(
+                r#"気温seed · AI生成 · 1時間に1着 · 同じ柄は2度と作られない · <strong style="color:#e6c449">+ MSA</strong> (21リポDL付)"#,
+                r#"temperature seed · AI-generated · 1 tee per hour · the same design is never made twice · <strong style="color:#e6c449">+ MSA</strong> (21-repo download)"#,
+            )
+            // ── hero number line + tagline + sub-copy ──
+            .replace(
+                r#"オーガニック版 · 原価 ¥5,700 公開"#,
+                r#"organic version · cost ¥5,700, public"#,
+            )
+            .replace("今日も、 一つの絵が生まれた。", "Today, one more drawing was born.")
+            .replace(
+                r#"弟子屈町の気温と月相を、AI が読む。<br>
+    人間は介在しない。同じ絵は、二度と生まれない。"#,
+                r#"An AI reads the temperature and moon phase of Teshikaga.<br>
+    No human is involved. No two drawings are ever the same."#,
+            )
+            .replace("私が死んでも、明日も一つの絵が生まれる。", "Even after I'm gone, one more drawing is born each day.")
+            .replace(
+                r#"なぜ ¥7,800</a>"#,
+                r#"why ¥7,800</a>"#,
+            )
+            // ── /make CTA ──
+            .replace(
+                r#"✦ ひとこと言うだけで、自分のTシャツをAIが作る → /make"#,
+                r#"✦ Say one line, and AI makes your own tee → /make"#,
+            )
+            .replace(
+                r#"ログイン不要・在庫ゼロ。約 10〜20 秒でデザイン → その場で並んで買える (公開前に人が一度確認)。<br>下の「今日の一着」は、AI が毎時間ひとりで生む既製の柄です。"#,
+                r#"No login, zero inventory. ~10–20s to a design → buy it right there (a human reviews before it goes public).<br>"Today's one piece" below is a ready-made design the AI generates on its own every hour."#,
+            )
+            // ── MU Pass entry ──
+            .replace(
+                r#"🌀 買った 1 着が、永久メンバー証 (NFT) になる → /pass"#,
+                r#"🌀 The tee you buy becomes a permanent membership (NFT) → /pass"#,
+            )
+            // ── "today's one piece" buy card ──
+            .replace("▶ 今日の一着", "▶ TODAY'S ONE PIECE")
+            .replace("MUGEN — 今日 ━◯━", "MUGEN — today ━◯━")
+            // ── buy buttons (text only; href untouched) ──
+            .replace(
+                r#"font-weight:800;white-space:nowrap;flex-shrink:0">買う →</div>"#,
+                r#"font-weight:800;white-space:nowrap;flex-shrink:0">BUY →</div>"#,
+            )
+            .replace(
+                r#"font-weight:700;white-space:nowrap">買う →</span>"#,
+                r#"font-weight:700;white-space:nowrap">BUY →</span>"#,
+            )
+            // ── BIM section heading + lede (main visible section heading) ──
+            .replace("— BIM 設計 · 北海道 弟子屈", "— BIM design · Teshikaga, Hokkaido")
+            .replace(
+                r#"無人の店を、<br>BIM で設計した。"#,
+                r#"We designed an<br>unstaffed store in BIM."#,
+            )
+            .replace(
+                r#"MU の T シャツを見る →"#,
+                r#"See MU's tees →"#,
+            )
+    } else {
+        html
+    };
 
     Html(html)
 }
@@ -26037,7 +26193,7 @@ async fn products_legacy_redirect(
     }
     // Fallback: serve the SPA index (existing behaviour) so legacy URLs
     // without a serial_code keep functioning.
-    let html = index(State(db)).await;
+    let html = index(State(db), false).await;
     html.into_response()
 }
 
@@ -62167,6 +62323,22 @@ async fn slug_or_static(
                 );
                 return resp;
             }
+            // Clean brand URL: render the shop IN PLACE (no redirect) so the
+            // address bar stays /<brand-slug> instead of /shop?brand=<slug>.
+            let is_brand: bool = {
+                let conn = db.lock().unwrap();
+                conn.query_row(
+                    "SELECT 1 FROM catalog_brands WHERE slug=? AND is_active=1 LIMIT 1",
+                    params![slug_lo],
+                    |_| Ok(true),
+                ).unwrap_or(false)
+            };
+            if is_brand {
+                return catalog::shop_index(
+                    axum::extract::State(db.clone()),
+                    axum::extract::Query(catalog::ShopQuery { brand: Some(slug_lo.clone()), page: None }),
+                ).await.into_response();
+            }
             return serve_static_or_404(&slug, &db);
         }
     };
@@ -62223,29 +62395,9 @@ fn serve_static_or_404(name: &str, db: &Db) -> Response {
             let path2 = std::path::Path::new("static").join(format!("{}.html", name));
             match std::fs::read(&path2) {
                 Ok(b) => return html_response(b),
-                Err(_) => {
-                    // Clean brand URL: /<brand-slug> → /shop?brand=<slug> when it's
-                    // a real active brand (e.g. /jiujitsu-yamano). Only reached after
-                    // user-slug / proposal-LP / static-file lookups all miss.
-                    let slug_lo = name.to_ascii_lowercase();
-                    let is_brand: bool = {
-                        let conn = db.lock().unwrap();
-                        conn.query_row(
-                            "SELECT 1 FROM catalog_brands WHERE slug=? AND is_active=1 LIMIT 1",
-                            params![slug_lo],
-                            |_| Ok(true),
-                        ).unwrap_or(false)
-                    };
-                    if is_brand {
-                        let loc = format!("/shop?brand={}", urlencoding::encode(&slug_lo));
-                        let mut resp = StatusCode::FOUND.into_response();
-                        if let Ok(v) = HeaderValue::from_str(&loc) {
-                            resp.headers_mut().insert(header::LOCATION, v);
-                        }
-                        return resp;
-                    }
-                    return render_404_tee_page(db, &format!("/{}", name));
-                }
+                // Brand clean-URLs are handled in slug_or_static (rendered in
+                // place, no redirect) before reaching here.
+                Err(_) => return render_404_tee_page(db, &format!("/{}", name)),
             }
         }
     };
@@ -67085,10 +67237,11 @@ async fn main() {
         .route("/", get(home))
         .route("/success", get(success_page))
         .route("/api/tracking/config", get(tracking_config))
-        // Brand SPA routes
-        .route("/ma", get(index))
-        .route("/muon", get(index))
-        .route("/mugen", get(index))
+        // Brand SPA routes (served by `home` so ?lang=en / Accept-Language
+        // honesty applies here too; JS still toggles the brand section).
+        .route("/ma", get(home))
+        .route("/muon", get(home))
+        .route("/mugen", get(home))
         // May 2026 "Sell 100 MUGEN tees in 14 days" challenge LP.
         .route("/100", get(challenge_100_page))
         .route("/api/100/progress", get(challenge_100_progress_json))
