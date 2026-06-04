@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>MU — 今日も、 一つの絵が生まれた。 | wearmu.com</title>
+<title>MU — 今日も、 一つの絵が生まれた。| AIが毎日描く受注生産オリジナルTシャツ · wearmu.com</title>
 <meta name="description" content="¥7,800 — 原価 ¥5,700 公開。北海道弟子屈町の気温と月相を、AI が読む。同じ絵は二度と生まれない。— 私が死んでも、明日も一つの絵が生まれる。(MUGEN は同じ絵を最大 108 枚、MA は世界に 1 枚)">
 <meta name="keywords" content="MU, wearmu, AI fashion, autonomous brand, 間 MA, MUON, MUGEN, NOUNS, AIブランド, 限定Tシャツ, 自律型ファッション, NFTファッション, 北海道, 弟子屈">
 <meta name="author" content="MU">
@@ -649,8 +649,8 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
   <a id="hero-tshirt" href="/buy?from=home_hero" style="display:flex;align-items:center;gap:18px;max-width:780px;margin:18px auto;padding:16px 20px;background:#0E0E0E;border:1px solid rgba(230,196,73,0.35);border-radius:8px;text-decoration:none;color:#F5F5F0">
     <img src="https://mockups.wearmu.com/hero.png" alt="今日 の MUGEN" loading="eager" fetchpriority="high" style="width:96px;height:96px;object-fit:cover;border-radius:4px;background:#fff;flex-shrink:0" onerror="this.style.display='none'">
     <div style="flex:1;min-width:200px">
-      <div style="font-size:10.5px;letter-spacing:0.28em;text-transform:uppercase;color:#e6c449;font-weight:700;margin-bottom:5px">今日 の Tシャツ · MUGEN {HERO_DROP_LABEL}</div>
-      <div style="font-size:18px;font-weight:600;color:#fff;margin-bottom:3px">¥4,900 <span style="font-size:12px;opacity:0.55;font-weight:400">≈ $33</span> · 国内 5-8 日</div>
+      <div style="font-size:10.5px;letter-spacing:0.28em;text-transform:uppercase;color:#e6c449;font-weight:700;margin-bottom:5px">今日 の Tシャツ · MUGEN {HERO_DROP_LABEL} · ベーシック生地</div>
+      <div style="font-size:18px;font-weight:600;color:#fff;margin-bottom:3px">¥4,900 <span style="font-size:12px;opacity:0.55;font-weight:400">≈ $33</span> · 国内 5-8 日 <span style="font-size:11px;opacity:0.5;font-weight:400">(下のオーガニック版は ¥7,800)</span></div>
       <div style="font-size:12px;opacity:0.75;line-height:1.55">気温seed · AI生成 · 1時間に1着 · 同じ柄は2度と作られない · <strong style="color:#e6c449">+ MSA</strong> (21リポDL付)</div>
     </div>
     <div style="background:#e6c449;color:#0A0A0A;padding:13px 18px;border-radius:5px;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;font-weight:800;white-space:nowrap;flex-shrink:0">買う →</div>
@@ -666,7 +666,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
 
   <!-- Line 1: the number. Per Constitution §1: numbers over adjectives. -->
   <div style="font-size:clamp(34px,5.4vw,58px);font-weight:200;letter-spacing:0.02em;line-height:1.15;color:#F5F5F0;text-align:center;margin-top:22px;font-variant-numeric:tabular-nums">
-    ¥7,800<span style="font-size:0.48em;font-weight:300;opacity:0.5;margin-left:14px;letter-spacing:0.18em;text-transform:uppercase">原価 ¥5,700 公開</span>
+    ¥7,800<span style="font-size:0.48em;font-weight:300;opacity:0.5;margin-left:14px;letter-spacing:0.18em;text-transform:uppercase">オーガニック版 · 原価 ¥5,700 公開</span>
   </div>
 
   <!-- Line 2: what it is. ("1 着 = 1 柄" の前提で「一つの絵」表現に統一。
@@ -2206,7 +2206,7 @@ function showSection(name, pushHistory=true){
 
   if(pushHistory){
     const url = name==='hero' ? '/' : '/'+name;
-    const titles = {hero:'AIが服を作り続けるブランド', ma:'間 MA — 月に1着', muon:'MUON 無音 — 沈黙を記録する', mugen:'MUGEN 無限 — 毎時間、生まれ消える', nouns:'MU × NOUNS'};
+    const titles = {hero:'AIが服を作り続けるブランド', ma:'間 MA — 週1回・世界に1着のオークション', muon:'MUON 無音 — 気温が決める限定Tシャツ', mugen:'MUGEN 無限 — 毎時間生まれるAIデザインTシャツ', nouns:'MU × NOUNS'};
     history.pushState({section:name}, '', url);
     updateMeta(titles[name]||name, url);
     // SPA pageview tracking — t.js only fires on full load, so SPA tabs
@@ -2551,7 +2551,7 @@ function closeModal(){
   const brand = currentProduct?.brand || currentBrand;
   if(brand && brand !== 'hero'){
     const url = '/'+brand;
-    const titles = {ma:'間 MA — 月に1着', muon:'MUON 無音 — 沈黙を記録する', mugen:'MUGEN 無限 — 毎時間、生まれ消える'};
+    const titles = {ma:'間 MA — 週1回・世界に1着のオークション', muon:'MUON 無音 — 気温が決める限定Tシャツ', mugen:'MUGEN 無限 — 毎時間生まれるAIデザインTシャツ'};
     history.pushState({section:brand}, '', url);
     updateMeta(titles[brand]||brand, url);
   } else {
