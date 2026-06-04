@@ -3950,11 +3950,71 @@ pub async fn shop_index(
 
     let page_count = items.len();
     let total_pages = ((total_active as f64) / (SHOP_PAGE_SIZE as f64)).ceil() as u32;
-    let title = if brand_filter.is_empty() {
-        format!("/shop — {} 件のコラボ商品 | MU", total_active)
+    // SEO: keyword-bearing title/description. Brand pages use the display name
+    // (not the slug) when we have it. Page 2+ gets a suffix so paginated pages
+    // don't present as duplicate titles in Search Console.
+    let brand_name = brands
+        .iter()
+        .find(|(slug, _, _)| slug == &brand_filter)
+        .map(|(_, name, _)| name.clone())
+        .unwrap_or_else(|| brand_filter.clone());
+    let mut title = if brand_filter.is_empty() {
+        format!("MU SHOP — コラボTシャツ・柔術ウェア・限定グッズ通販 ({} 件)", total_active)
     } else {
-        format!("/shop — {} ({}件) | MU カタログ", brand_filter, total_active)
+        format!("{} × MU コラボ商品一覧 ({}件) | MU SHOP", brand_name, total_active)
     };
+    if page > 1 {
+        title.push_str(&format!(" — Page {}", page));
+    }
+    let meta_desc = if brand_filter.is_empty() {
+        format!("MUと10+ブランドのコラボアパレル公式通販 {total}件。AIデザインTシャツ・柔術/BJJラッシュガード・ステッカー・着ると鳴る音楽T。1着から受注生産・完売廃棄ゼロ・Stripe決済・国際発送7-14日。", total = total_active)
+    } else {
+        format!("{name} × MU のコラボ商品 {n}件。1着から受注生産・完売廃棄ゼロ・Stripe安全決済・国際発送7-14日。", name = brand_name, n = total_active)
+    };
+    // canonical drops ?sort= — sorted views are duplicates of the same list.
+    // brand + page survive (each is distinct content).
+    let canonical = {
+        let mut u = String::from("https://wearmu.com/shop");
+        let mut sep = '?';
+        if !brand_filter.is_empty() {
+            u.push(sep);
+            u.push_str(&format!("brand={}", urlencoding::encode(&brand_filter)));
+            sep = '&';
+        }
+        if page > 1 {
+            u.push(sep);
+            u.push_str(&format!("page={}", page));
+        }
+        u
+    };
+    let og_image = items
+        .first()
+        .and_then(|p| p.img.clone())
+        .filter(|s| !s.is_empty())
+        .map(|s| if s.starts_with("http") { s } else { format!("https://merch.wearmu.com{}", s) })
+        .unwrap_or_else(|| "https://wearmu.com/static/og-default.png".to_string());
+    // CollectionPage + ItemList (top 24 of this page) — category-level
+    // structured data; per-product Product JSON-LD lives on each PDP.
+    let ld_items = items
+        .iter()
+        .take(24)
+        .enumerate()
+        .map(|(i, p)| {
+            format!(
+                r#"{{"@type":"ListItem","position":{pos},"url":"https://wearmu.com/shop/{sku}"}}"#,
+                pos = i + 1,
+                sku = urlencoding::encode(&p.sku),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let ld_json = format!(
+        r#"{{"@context":"https://schema.org","@type":"CollectionPage","name":"{name}","url":"{url}","mainEntity":{{"@type":"ItemList","numberOfItems":{n},"itemListElement":[{items}]}}}}"#,
+        name = title.replace('"', ""),
+        url = canonical,
+        n = total_active,
+        items = ld_items,
+    );
 
     // Pagination: prev / page-of-pages / next. Brand filter + sort persist.
     let mut bq = if brand_filter.is_empty() {
@@ -4015,7 +4075,18 @@ pub async fn shop_index(
         r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{title}</title>
-<meta name="description" content="MU × ブランド コラボ カタログ。 {total} 件。 Stripe + Printful 直配送 7-14日。">
+<meta name="description" content="{meta_desc}">
+<link rel="canonical" href="{canonical}">
+<meta property="og:type" content="website">
+<meta property="og:title" content="{title}">
+<meta property="og:description" content="{meta_desc}">
+<meta property="og:url" content="{canonical}">
+<meta property="og:image" content="{og_image}">
+<meta property="og:site_name" content="wearmu.com">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{title}">
+<meta name="twitter:image" content="{og_image}">
+<script type="application/ld+json">{ld_json}</script>
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
 body{{background:#0a0a0a;color:#f5f5f0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.55;font-size:14px}}
@@ -4053,6 +4124,14 @@ footer{{padding:30px 24px 50px;border-top:1px solid rgba(255,255,255,0.06);text-
 footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
 .cardplay{{position:absolute;top:8px;right:8px;z-index:2;width:38px;height:38px;border-radius:50%;border:1px solid rgba(255,215,0,.8);background:rgba(0,0,0,.66);color:#fff;font-size:13px;cursor:pointer;backdrop-filter:blur(4px)}}
 .cardplay:hover{{background:rgba(0,0,0,.85)}}
+/* モバイル: 20+個のブランドチップが折り返してファーストビューを商品ゼロにする
+   「チップの壁」対策 — 1行横スクロール化して商品グリッドを1画面目に出す。 */
+@media (max-width:740px){{
+  .chips{{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding-bottom:10px}}
+  .chips::-webkit-scrollbar{{display:none}}
+  .chip{{flex:0 0 auto}}
+  .hero{{padding-top:24px}}
+}}
 </style></head><body>
 <nav>
   <a class="brand" href="/">MU</a>
@@ -4107,7 +4186,10 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </body></html>"##,
         title = html_text(&title),
-        total = total_active,
+        meta_desc = html_attr(&meta_desc),
+        canonical = html_attr(&canonical),
+        og_image = html_attr(&og_image),
+        ld_json = ld_json,
         hero = hero_html,
         make_cta = make_cta_banner("shop"),
         brand_chips = brand_chips,
@@ -4180,6 +4262,19 @@ pub async fn shop_pdp(
     } else {
         desc.clone()
     };
+    // SEO: <title>/og:title は60字、meta description は120字で切る。
+    // 自動生成 desc 全文をそのまま title に流すと検索結果で尻切れ+キーワード密度が
+    // 死ぬ。h1 とページ本文は全文のまま(中身は削らない)。char 境界で安全に切る。
+    let trim_chars = |s: &str, max: usize| -> String {
+        let chars: Vec<char> = s.chars().collect();
+        if chars.len() > max {
+            format!("{}…", chars[..max - 1].iter().collect::<String>().trim_end())
+        } else {
+            s.to_string()
+        }
+    };
+    let short_title = trim_chars(&display_name, 60);
+    let meta_desc_short = trim_chars(&meta_desc, 120);
     let sealed_block = if is_sealed {
         let u = html_text(unlock_iso.as_deref().unwrap_or(""));
         let ct = html_text(&desc); // 暗号文を隠し要素の textContent に(復号はJS側)
@@ -4573,17 +4668,18 @@ pub async fn shop_pdp(
     let body = format!(
         r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{title} — /shop / wearmu.com</title>
-<meta name="description" content="{desc}">
+<title>{short_title} | MU SHOP — wearmu.com</title>
+<meta name="description" content="{desc_short}">
 <meta property="og:image" content="{og}">
-<meta property="og:title" content="{title}">
+<meta property="og:title" content="{short_title}">
+<meta property="og:description" content="{desc_short}">
 <meta property="og:type" content="product">
 <meta property="og:url" content="https://wearmu.com/shop/{sku_url}">
 <meta property="og:site_name" content="wearmu.com">
 <meta property="product:price:amount" content="{price_raw}">
 <meta property="product:price:currency" content="JPY">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="{title}">
+<meta name="twitter:title" content="{short_title}">
 <meta name="twitter:image" content="{og}">
 <link rel="canonical" href="https://wearmu.com/shop/{sku_url}">
 <script type="application/ld+json">{{
@@ -4703,7 +4799,8 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
 </body></html>"##,
         make_cta = make_cta_banner("pdp"),
         title = html_text(&display_name),
-        desc = html_text(&meta_desc),
+        short_title = html_text(&short_title),
+        desc_short = html_attr(&meta_desc_short),
         sealed = sealed_block,
         og = html_attr(&img),
         brand = html_text(&brand),
