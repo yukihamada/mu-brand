@@ -937,6 +937,18 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
                     自社エンコード&発送 · gi・鍵・バッグに付けて持ち歩く",
     },
     ProductSpec {
+        kind: "device",
+        // No POD vendor: hardware (Koe デバイス等) is self-fulfilled
+        // (fulfillment_route 'manual'). Payment via MU checkout, then the
+        // operator ships the physical unit — same manual arm as nfc_coin.
+        printful_product_id: 0,
+        printful_variant_id: 0,
+        placement: "none",
+        retail_jpy: 9800,
+        spec_html: "自社開発ハードウェア · 決済後に自社発送 · \
+                    技適/PSE等の適合は商品説明に明記 · オープンソースファームウェア",
+    },
+    ProductSpec {
         kind: "event_ticket",
         // No POD vendor: a ticket is digital. fulfillment_route 'digital' —
         // on payment we issue a unique code, render a QR, and email it. No
@@ -1032,7 +1044,7 @@ pub fn agent_insert_product(
         // Self-fulfilled, non-Printful (NFC音コイン): take payment, then a
         // human encodes the tag + mails it (handled by the manual arm in
         // fulfill_catalog_order).
-        "nfc_coin" => "manual",
+        "nfc_coin" | "device" => "manual",
         // Digital goods: take payment, then deliver by email (handled by the
         // digital arm in fulfill_catalog_order). No shipping. Ticket → QR;
         // song → private listen/download link.
@@ -4877,6 +4889,9 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
             )
             .unwrap_or_default()
         };
+        // catalog_products に kind 列は無い — SKU は `{BRAND}-{KIND}-{seed}` 形式
+        // (insert_catalog_product) なので SKU で self-fulfilled hardware を判定。
+        let is_device = sku.contains("-DEVICE-");
         let encode_url = desc
             .find("oto.html?s=")
             .map(|p| &desc[p + "oto.html?s=".len()..])
@@ -4906,9 +4921,15 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
             addr["postal_code"].as_str().unwrap_or(""),
             country,
         );
+        let detail = if is_device {
+            "📦 ハードウェア発送 (3日以内目安)。".to_string()
+        } else {
+            format!("🔗 encode→ {}\n書込→ロック→封筒で発送。", encode_url)
+        };
         let _ = crate::send_telegram_message(&format!(
-            "📌 *manual order* (NFC音コイン)\nsku=`{}`\n🔗 encode→ {}\n👤🏠 {}\n💴 ¥{}\n書込→ロック→封筒で発送。",
-            sku, encode_url, ship_to, amount_total
+            "📌 *manual order* ({})\nsku=`{}`\n👤🏠 {}\n💴 ¥{}\n{}",
+            if is_device { "device/自社発送" } else { "NFC音コイン" },
+            sku, ship_to, amount_total, detail
         ))
         .await;
         return;
