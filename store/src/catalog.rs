@@ -2186,6 +2186,63 @@ pub async fn admin_legacy_rename(
     axum::Json(serde_json::json!({"renamed": out})).into_response()
 }
 
+/// 封印ドロップ作成: 暗号化はクライアント側(timelock-web)で済ませ、ここには
+/// age 暗号文(ciphertext)と解禁時刻(unlock_iso)だけが届く。サーバーは平文を見ない。
+/// status='draft' で作るので公開棚には出ない(直URLで確認→人が live に上げる)。
+#[derive(Deserialize)]
+pub struct SealCreateQuery {
+    pub token: String,
+    pub sku: String,
+    pub label: String,
+    pub ciphertext: String,
+    pub unlock_iso: String,
+    #[serde(default)]
+    pub price_jpy: Option<i64>,
+    #[serde(default)]
+    pub brand: Option<String>,
+}
+
+/// GET /admin/catalog/seal — 封印ドロップ(時限ドロップ)を1件作成。
+pub async fn admin_seal_create(
+    State(db): State<Db>,
+    Query(q): Query<SealCreateQuery>,
+) -> Response {
+    let expected = env::var("ADMIN_TOKEN").unwrap_or_default();
+    if expected.is_empty() || q.token != expected {
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    }
+    if !q.ciphertext.contains("BEGIN AGE ENCRYPTED FILE") {
+        return (StatusCode::BAD_REQUEST, "ciphertext must be an age timelock blob").into_response();
+    }
+    if q.unlock_iso.trim().is_empty() || !q.unlock_iso.contains('T') {
+        return (StatusCode::BAD_REQUEST, "unlock_iso must be RFC3339 (e.g. 2026-12-25T00:00:00Z)").into_response();
+    }
+    // sku は [A-Za-z0-9_-] のみ許可(PK安全)
+    let sku = q.sku.trim().to_string();
+    if sku.is_empty() || !sku.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return (StatusCode::BAD_REQUEST, "sku must be [A-Za-z0-9_-]").into_response();
+    }
+    let brand = q.brand.clone().unwrap_or_else(|| "minna".to_string());
+    let price = q.price_jpy.unwrap_or(0);
+    let meta = serde_json::json!({ "unlock_iso": q.unlock_iso }).to_string();
+    let conn = db.lock().unwrap();
+    let res = conn.execute(
+        "INSERT INTO catalog_products
+         (sku, brand, label, description_ja, retail_price_jpy,
+          printful_product_id, printful_variant_id, is_active, meta_json, status)
+         VALUES (?, ?, ?, ?, ?, 0, 0, 1, ?, 'draft')",
+        rusqlite::params![sku, brand, q.label, q.ciphertext, price, meta],
+    );
+    match res {
+        Ok(_) => axum::Json(serde_json::json!({
+            "ok": true, "sku": sku, "status": "draft",
+            "url": format!("/shop/{}", sku),
+            "note": "status=draft。確認後 live に上げてください(公開棚に出ません)"
+        })).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("insert failed: {}", e)).into_response(),
+    }
+}
+
 #[derive(Deserialize)]
 pub struct NlAddQuery {
     pub token: String,
