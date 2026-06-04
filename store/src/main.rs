@@ -469,7 +469,7 @@ async fn security_headers(req: Request<axum::body::Body>, next: Next) -> Respons
     // /admin はクエリに ?token= を含むため、同一オリジン遷移でも Referrer に
     // フルURL(トークン込み)が残り analytics 経由で漏れる → 全面 no-referrer。
     // (2026-06-04 enabler-analytics の referrer に admin_token 平文が記録された実害の修正)
-    if path.starts_with("/admin") {
+    if path.starts_with("/admin") || path.starts_with("/work") {
         h.insert("Referrer-Policy", HeaderValue::from_static("no-referrer"));
     } else {
         h.insert("Referrer-Policy", HeaderValue::from_static("strict-origin-when-cross-origin"));

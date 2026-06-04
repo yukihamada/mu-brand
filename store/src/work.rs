@@ -129,6 +129,7 @@ pub async fn work_page() -> Response {
 <h1>音コインを、つくって届ける。</h1>
 <img class="hero-img" src="{img}/step2_write.png" alt="スマホでNFCコインに書き込む様子" loading="lazy">
 <p>MUの「音コイン」(かざすと音が鳴るNFCコイン・¥1,800)を、<b>自宅でNFC書込→検品→梱包→発送</b>する出来高制のお仕事です。1件あたり10分ほど。特別なスキルはいりません。</p>
+<p><a class="btn green" href='#apply'>応募する（30秒）</a></p>
 
 <div class="brand">
 <div class="eyebrow" style="color:#888">作っているブランドのこと</div>
@@ -147,21 +148,34 @@ pub async fn work_page() -> Response {
 </ul>
 
 <table style="margin-top:18px">
-<tr><td>報酬</td><td><b>¥{fee} / 件</b> + 送料実費(月末締め・翌月払い)</td></tr>
+<tr><td>報酬</td><td><b>¥{fee} / 件</b>(月末締め・翌月銀行振込・<b>振込手数料は当社負担</b>)</td></tr>
+<tr><td>送料</td><td><b>当社負担</b>。クリックポスト用の予納分はキットに同梱します(立替不要)</td></tr>
 <tr><td>必要なもの</td><td>NFC対応スマホ(iPhone 7以降 / 大半のAndroid)・ポストに行ける環境</td></tr>
-<tr><td>時間</td><td>完全に自分のペース。引き受けた分だけ。ノルマなし</td></tr>
+<tr><td>時間</td><td>完全に自分のペース。引き受けた分だけ。<b>ノルマなし・いつでも辞められます</b></td></tr>
 <tr><td>場所</td><td>日本国内どこでも</td></tr>
 </table>
 
-<h2>応募する</h2>
+<h2>よくある質問</h2>
+<div class="card">
+<p><b>Q. 不良品・配送事故のときは？</b><br>再発送のコイン・送料は<b>当社が負担</b>します。あなたの自己負担はありません。</p>
+<p><b>Q. ノルマや納期は？</b><br>ありません。引き受けた分だけ・自分のペースで。引き受けなければ通知が来るだけです。</p>
+<p><b>Q. お客様の住所はどう扱う？</b><br>発送のためだけに使い、宛名を書いたら<b>すみやかに破棄</b>してください(応募時に同意いただきます)。第三者への提供は禁止です。</p>
+<p><b>Q. 税金は？</b><br>業務委託のため、報酬は雑所得/事業所得になります。年間の合計額によっては確定申告が必要です(目安: 給与所得者で年20万円超など)。</p>
+<p><b>Q. 辞めたいときは？</b><br>メール一本でOK。違約金などはありません。</p>
+</div>
+
+<h2 id="apply">応募する</h2>
 <form method="POST" action="/api/work/apply" class="card">
 <label>お名前<input name="name" required maxlength="60" placeholder="山田 はなこ"></label>
 <label>メールアドレス<input name="email" type="email" required maxlength="120" placeholder="you@example.com"></label>
 <label>お住まいの都道府県<input name="region" maxlength="20" placeholder="北海道"></label>
+<label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;font-weight:400">
+<input type="checkbox" name="agree" required style="width:auto;margin-top:3px;flex:0 0 auto">
+<span>お客様の氏名・住所などの配送情報を<b>発送目的のみ</b>に使い、第三者に渡さず、<b>発送後すみやかに破棄</b>することに同意します。</span></label>
 <button class="btn" type="submit">応募する</button>
 <p class="muted">承認されると、仕事キューのリンクをメールでお送りします。</p>
 </form>
-<p class="muted">MU(株式会社イネブラ)・業務委託。質問は info@enablerdao.com へ。<br>商品ページ: <a href="/shop?brand=oto">音コインを見る</a></p>"#,
+<p class="muted">運営: <b>株式会社イネブラ</b>(Enabler Inc.)／〒102-0074 東京都千代田区九段南1-5-6 りそな九段ビル5階KSフロア・業務委託。<br>質問は info@enablerdao.com へ。商品ページ: <a href="/shop?brand=oto">音コインを見る</a></p>"#,
         img = "https://raw.githubusercontent.com/yukihamada/mu-mockups/main/work",
     );
     page("おうちでできる仕事 — 音コイン", &body)
@@ -174,6 +188,8 @@ pub struct ApplyForm {
     pub email: String,
     #[serde(default)]
     pub region: String,
+    #[serde(default)]
+    pub agree: Option<String>,
 }
 
 pub async fn work_apply(State(db): State<Db>, Form(f): Form<ApplyForm>) -> Response {
@@ -182,6 +198,10 @@ pub async fn work_apply(State(db): State<Db>, Form(f): Form<ApplyForm>) -> Respo
     let region = f.region.trim().to_string();
     if name.is_empty() || !email.contains('@') {
         return page("入力エラー", "<h1>お名前とメールアドレスを入力してください</h1><p><a href=\"/work\">戻る</a></p>");
+    }
+    // 個人情報(客の住所)の取扱い同意は必須(HTMLのrequiredに加えサーバ側でも検証)
+    if f.agree.as_deref().unwrap_or("").is_empty() {
+        return page("同意が必要です", "<h1>配送情報の取扱いへの同意が必要です</h1><p>お客様の住所をお預かりするため、取扱いへの同意にチェックをお願いします。</p><p><a href=\"/work#apply\">戻る</a></p>");
     }
     let worker_id: i64 = {
         let conn = db.lock().unwrap();
@@ -397,6 +417,7 @@ pub async fn work_queue(State(db): State<Db>, Query(q): Query<QueueQuery>) -> Re
 <tr><td>③ 届け先</td><td><pre>{}</pre></td></tr>
 <tr><td>SKU</td><td class="muted">{}</td></tr>
 </table>
+<p class="muted" style="margin:8px 0 0">⚠ 宛名を書いたら、この住所メモは破棄してください(個人情報)。</p>
 <form method="POST" action="/api/work/ship" style="margin-top:10px">
 <input type="hidden" name="token" value="{}"><input type="hidden" name="order_id" value="{}">
 <label>追跡番号(クリックポスト等)<input name="tracking" required maxlength="40" placeholder="1234-5678-9012"></label>
