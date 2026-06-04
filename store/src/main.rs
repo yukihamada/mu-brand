@@ -22625,6 +22625,19 @@ async fn serve_elepote_collab_lp() -> Response {
     resp
 }
 
+/// GET /biruwa — 美留和 (Teshikaga) unmanned pickup-spot LP. Immersive
+/// photo hero (AI-generated 完成イメージ, captioned as such) + 円相 Tee buy
+/// CTA + bim.house property link. Same include_str pattern as /atsume.
+async fn serve_biruwa_lp() -> Response {
+    const BIRUWA_LP: &str = include_str!("../static/biruwa/index.html");
+    let mut resp = axum::response::Html(BIRUWA_LP).into_response();
+    resp.headers_mut().insert(
+        "cache-control",
+        HeaderValue::from_static("public, max-age=60, s-maxage=120"),
+    );
+    resp
+}
+
 /// GET /aloha — guest welcome landing the House Drip Day3/Day4 QR points to.
 /// Zero-guilt ownership message (JP+EN), MU FESTIVAL · HAWAII invite (no date),
 /// a passphrase to hand to a friend (secondary spread), and a link into the
@@ -67282,6 +67295,7 @@ async fn main() {
         .route("/yuma", get(serve_yuma_collab_lp))
         // MU × ELE × POTE — Yuki's two pets (Bichon-Poo + Frenchie).
         .route("/elepote", get(serve_elepote_collab_lp))
+        .route("/biruwa", get(serve_biruwa_lp))
         .route("/aloha", get(serve_aloha_lp))
         .route("/housedrip", get(show_housedrip_page))
         .nest_service("/code", ServeDir::new("static/code"))
