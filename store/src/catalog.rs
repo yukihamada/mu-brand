@@ -2424,6 +2424,43 @@ pub async fn admin_nl_add(
 pub struct MakeQuery {
     pub prompt: String,
     pub kind: Option<String>,
+    /// A/B/C バリアント（a|b|c）。/make の割当をそのまま投稿に刻む。
+    #[serde(default)]
+    pub v: Option<String>,
+    /// ユニーク訪問者ID（mu-funnel.js の visitor_id）。UU勝者判定の母数。
+    #[serde(default)]
+    pub visitor: Option<String>,
+}
+
+/// GET /make のクエリ。?v= でバリアント固定（勝者確定後はサーバが上書き）。
+#[derive(serde::Deserialize)]
+pub struct MakePageQuery {
+    #[serde(default)]
+    pub v: Option<String>,
+}
+
+/// /make A/B/C: 勝者UU到達のしきい値（ユニーク訪問者の作成数）。
+const MAKE_AB_WIN_THRESHOLD: i64 = 100;
+
+fn make_variant_norm(v: Option<&str>) -> Option<&'static str> {
+    match v.map(|s| s.trim().to_lowercase()).as_deref() {
+        Some("a") => Some("a"),
+        Some("b") => Some("b"),
+        Some("c") => Some("c"),
+        _ => None,
+    }
+}
+
+/// cv_config 読み取り（catalog から直接。main.rs の cv_set と対）。
+fn cv_get(conn: &rusqlite::Connection, key: &str) -> Option<String> {
+    conn.query_row("SELECT value FROM cv_config WHERE key=?", rusqlite::params![key], |r| r.get(0)).ok()
+}
+fn cv_put(conn: &rusqlite::Connection, key: &str, value: &str, reason: &str) {
+    let _ = conn.execute(
+        "INSERT INTO cv_config (key, value, updated_at, reason) VALUES (?,?,strftime('%s','now'),?)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at, reason=excluded.reason",
+        rusqlite::params![key, value, reason],
+    );
 }
 
 // ── 声でつなぐ（Koe連携: 人もエージェントも声でつなげる入口） ──
@@ -2643,6 +2680,17 @@ footer a:hover{{color:var(--gold)}}
 /// Cost guard for the unauthenticated /make endpoint: max public creations/hour.
 const MAKE_HOURLY_CAP: i64 = 40;
 
+/// 「作る動線」: 全ページに貼れる自己完結CTA（インラインstyle）。`src`はfunnel計測タグ。
+/// 作る数の最大化が目的 — どのページからでも1タップで /make へ。
+pub fn make_cta_banner(src: &str) -> String {
+    format!(
+        r##"<a href="/make?ref={src}" data-funnel="cta_click" data-funnel-cta="make_{src}" style="display:flex;align-items:center;gap:12px;justify-content:center;flex-wrap:wrap;margin:0 auto 20px;max-width:1200px;background:linear-gradient(90deg,rgba(255,215,0,.14),rgba(255,215,0,.05));border:1px solid rgba(255,215,0,.4);border-radius:14px;padding:14px 18px;text-decoration:none;color:#f5f5f0;font-size:15px;font-weight:700;letter-spacing:.01em">
+<span style="font-size:20px">✦</span><span>ひとこと言うだけで、自分のTシャツをAIが作る</span>
+<span style="background:#ffd700;color:#0a0a0a;border-radius:99px;padding:7px 16px;font-size:13px;font-weight:800;white-space:nowrap">作ってみる →</span></a>"##,
+        src = src,
+    )
+}
+
 /// GET /api/make/recent — last live 'minna' creations for the /make social
 /// proof strip. Read-only, tiny payload, 60s CDN cache.
 pub async fn make_recent(State(db): State<Db>) -> Response {
@@ -2675,9 +2723,55 @@ pub async fn make_recent(State(db): State<Db>) -> Response {
     (headers, axum::Json(serde_json::json!({"items": items}))).into_response()
 }
 
+/// GET /api/make/ab — A/B/C の現況（各案のユニーク訪問者作成数・作成総数・勝者）。
+pub async fn make_ab_status(State(db): State<Db>) -> Response {
+    let conn = db.lock().unwrap();
+    let winner = cv_get(&conn, "make_winner");
+    let rows: Vec<(String, i64, i64)> = conn
+        .prepare(
+            "SELECT json_extract(meta_json,'$.make_variant') v,
+                    COUNT(DISTINCT json_extract(meta_json,'$.make_visitor')) uu,
+                    COUNT(*) total
+             FROM catalog_products
+             WHERE legacy_source='public_make'
+               AND json_extract(meta_json,'$.make_variant') IS NOT NULL
+             GROUP BY v ORDER BY uu DESC",
+        )
+        .ok()
+        .and_then(|mut s| {
+            s.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .ok()
+                .map(|it| it.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default();
+    let variants: Vec<serde_json::Value> = rows.into_iter()
+        .map(|(v, uu, total)| serde_json::json!({"variant": v, "unique_visitors": uu, "creations": total}))
+        .collect();
+    axum::Json(serde_json::json!({
+        "ok": true,
+        "winner": winner,
+        "threshold": MAKE_AB_WIN_THRESHOLD,
+        "variants": variants,
+    })).into_response()
+}
+
 /// GET /make — public page: type a sentence, MU makes the product.
-pub async fn make_page() -> Html<String> {
-    Html(r##"<!doctype html><html lang="ja"><head>
+/// A/B/C: 勝者確定済みなら全員その案。未確定は ?v= 指定、無ければ
+/// クライアントJSが visitor_id から決定的に3分割（同じ人は常に同じ案）。
+pub async fn make_page(State(db): State<Db>, Query(q): Query<MakePageQuery>) -> Html<String> {
+    // 勝者が決まっていれば全員に勝者を固定表示（?v は無視）。
+    let winner = { let conn = db.lock().unwrap(); cv_get(&conn, "make_winner") };
+    let locked = make_variant_norm(winner.as_deref());
+    let forced = locked.or_else(|| make_variant_norm(q.v.as_deref()));
+    // forced=Some → サーバが variant を焼く（JS割当オフ）。None → JSが visitor で決める。
+    let server_variant = forced.unwrap_or("");
+    let lock_js = if locked.is_some() { "true" } else { "false" };
+    Html(MAKE_HTML
+        .replace("__SERVER_VARIANT__", server_variant)
+        .replace("__WINNER_LOCKED__", lock_js))
+}
+
+const MAKE_HTML: &str = r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>AIでオリジナルTシャツ作成 — 言うだけ10秒・1枚から・在庫ゼロ | MU MAKE · wearmu.com</title>
 <meta name="description" content="ひとこと言うだけでAIがオリジナルTシャツ・パーカーをデザイン。10〜20秒で完成、その場で1枚から購入OK（¥4,900〜）。ログイン不要・在庫ゼロ。作った一着は店に並び、売れたら作り手に報酬¥600〜/枚。">
@@ -2720,6 +2814,11 @@ button{flex:1;min-width:160px;background:#ffd700;color:#0a0a0a;border:0;border-r
 button:disabled{opacity:.5;cursor:default}
 .ex{margin-top:14px;font-size:12px;color:rgba(245,245,240,.45)}
 .ex b{color:rgba(255,215,0,.8);cursor:pointer;font-weight:600}
+.quick{margin:0 0 16px}
+.quick .qlead{font-size:13px;color:rgba(245,245,240,.6);margin-bottom:10px}
+.quick .qgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px}
+.quick .q{flex:none;min-width:0;background:#161616;border:1px solid rgba(255,215,0,.3);color:#f5f5f0;border-radius:12px;padding:16px 10px;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:.02em}
+.quick .q:hover{background:rgba(255,215,0,.12);border-color:#ffd700}
 #out{margin-top:28px}
 .card{background:#141414;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:18px;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
 .card img{width:140px;height:140px;object-fit:contain;background:#fff;border-radius:10px;flex:0 0 auto}
@@ -2763,12 +2862,23 @@ button:disabled{opacity:.5;cursor:default}
 </style></head><body>
 <nav><a class="brand" href="/make">MU MAKE</a><div><a href="/shop">SHOP</a></div></nav>
 <div class="wrap">
-  <h1>言うだけで、Tシャツができる。</h1>
-  <div class="sub">ひとこと言えば AI がデザイン → <b>その場で 1 枚から買える</b>。ログインも在庫もゼロ。あなたの一着はみんなの棚にも並び、<b style="color:#ffd700">売れたら作り手に報酬（¥600〜/枚）</b>。</div>
+  <h1 id="mkH1">言うだけで、Tシャツができる。</h1>
+  <div class="sub" id="mkSub">ひとこと言えば AI がデザイン → <b>その場で 1 枚から買える</b>。ログインも在庫もゼロ。あなたの一着はみんなの棚にも並び、<b style="color:#ffd700">売れたら作り手に報酬（¥600〜/枚）</b>。</div>
   <div class="steps">
     <div class="step"><div class="n">STEP 1</div><div class="t">言う</div><div class="d">作りたいものを一言。日本語でOK。</div></div>
     <div class="step"><div class="n">STEP 2</div><div class="t">AIが描く</div><div class="d">10〜20秒でデザインと商品ページが完成。</div></div>
     <div class="step"><div class="n">STEP 3</div><div class="t">買える・並ぶ</div><div class="d">1枚から購入OK。店にも並んで、売れたら報酬。</div></div>
+  </div>
+  <div class="quick" id="mkQuick" hidden>
+    <div class="qlead">タップするだけ。すぐ作れます。</div>
+    <div class="qgrid">
+      <button class="q" data-x="柴犬のシンプルな一本線の線画">柴犬の線画</button>
+      <button class="q" data-x="禅の円相 ひと筆書き">禅の円相</button>
+      <button class="q" data-x="夜の富士山と満月 ミニマル">富士と月</button>
+      <button class="q" data-x="猫のシルエット ミニマル">猫</button>
+      <button class="q" data-x="波 浮世絵風のミニマルライン">波</button>
+      <button class="q" data-x="満月と山並み ミニマル">満月</button>
+    </div>
   </div>
   <textarea id="p" maxlength="300" placeholder="例：富士山をミニマルな一本線で描いた黒Tシャツ"></textarea>
   <div class="row">
@@ -2781,7 +2891,7 @@ button:disabled{opacity:.5;cursor:default}
     <button id="go">つくる（無料でデザイン）</button>
   </div>
   <div class="price-hint">できた一着は <b>Tシャツ ¥4,900〜・スウェット ¥7,800〜・パーカー ¥8,800〜</b>。1枚から受注生産・買わなくてもOK。権利リスクがあるものだけ人が確認、あとは自動で公開。</div>
-  <div class="ex">例: <b data-x="柴犬のシンプルな線画 生成りトート">柴犬の線画</b> ・ <b data-x="禅の円相 ひと筆 黒Tシャツ">円相T</b> ・ <b data-x="夜の富士山と月 ミニマル パーカー">富士と月</b></div>
+  <div class="ex" id="mkEx">例: <b data-x="柴犬のシンプルな線画 生成りトート">柴犬の線画</b> ・ <b data-x="禅の円相 ひと筆 黒Tシャツ">円相T</b> ・ <b data-x="夜の富士山と月 ミニマル パーカー">富士と月</b></div>
   <div id="out"></div>
   <div class="recent" id="recent" hidden>
     <h2>みんなが、さっき作った一着</h2>
@@ -2791,8 +2901,42 @@ button:disabled{opacity:.5;cursor:default}
 <script>
 const $=s=>document.querySelector(s);
 function muShare(b){var u=b.dataset.u,t=b.dataset.t;if(navigator.share){navigator.share({title:t,url:u}).catch(function(){});}else if(navigator.clipboard){navigator.clipboard.writeText(u).then(function(){b.textContent='リンクをコピーしました ✓';}).catch(function(){});}else{prompt('このリンクを広めてください',u);}}
-$('#out');
+// ── A/B/C 割当 ──────────────────────────────────────────────
+// visitor_id を mu-funnel.js の localStorage から拾う（無ければ生成）。
+function muVisitor(){
+  try{var r=localStorage.getItem('mu_funnel_v1');if(r){var j=JSON.parse(r);if(j&&j.visitor_id)return j.visitor_id;}}catch(e){}
+  try{var id='v-'+Math.random().toString(36).slice(2)+Date.now().toString(36);
+      localStorage.setItem('mu_funnel_v1',JSON.stringify({visitor_id:id,session_id:id,last:Date.now()}));return id;}catch(e){return '';}
+}
+var VIS=muVisitor();
+// バリアント定義（コピー＋入力UX）。design/parseプロンプトはサーバ共通（品質担保）。
+var MKV_DEFS={
+  a:{h1:'言うだけで、Tシャツができる。',
+     sub:'ひとこと言えば AI がデザイン → <b>その場で 1 枚から買える</b>。ログインも在庫もゼロ。あなたの一着はみんなの棚にも並び、<b style="color:#ffd700">売れたら作り手に報酬（¥600〜/枚）</b>。',
+     ph:'例：富士山をミニマルな一本線で描いた黒Tシャツ', quick:false},
+  b:{h1:'タップして、Tシャツ。',
+     sub:'考えるより早い。<b>下から選ぶだけ</b>で AI が一着にします。自由入力もOK。<b style="color:#ffd700">売れたら報酬（¥600〜/枚）</b>。',
+     ph:'自分の言葉でもOK（例：猫のシルエット）', quick:true},
+  c:{h1:'何を着たい？',
+     sub:'ひとことどうぞ。話すように書けば、AI があなたの一着にします。<b style="color:#ffd700">売れたら作り手に報酬（¥600〜/枚）</b>。',
+     ph:'「〇〇な感じのTシャツがほしい」みたいに話して', quick:false}
+};
+// サーバが variant を焼いていればそれ、無ければ visitor のハッシュで決定的3分割。
+var SV='__SERVER_VARIANT__', LOCKED=__WINNER_LOCKED__;
+function hash3(s){var h=0;for(var i=0;i<s.length;i++){h=(h*31+s.charCodeAt(i))>>>0;}return ['a','b','c'][h%3];}
+var MKV=(SV==='a'||SV==='b'||SV==='c')?SV:hash3(VIS||'a');
+(function applyVariant(){
+  var d=MKV_DEFS[MKV]||MKV_DEFS.a;
+  var h=$('#mkH1'); if(h)h.textContent=d.h1;
+  var s=$('#mkSub'); if(s)s.innerHTML=d.sub;
+  var p=$('#p'); if(p)p.placeholder=d.ph;
+  var q=$('#mkQuick'); if(q)q.hidden=!d.quick;
+  var ex=$('#mkEx'); if(ex&&d.quick)ex.hidden=true;
+  document.body.setAttribute('data-variant',MKV);
+})();
 document.querySelectorAll('.ex b').forEach(b=>b.onclick=()=>{$('#p').value=b.dataset.x;});
+// 例文クイックボタン（B案）: タップで充填して即生成。
+document.querySelectorAll('#mkQuick .q').forEach(b=>b.onclick=()=>{$('#p').value=b.dataset.x;runMake();});
 // 直近の作例 — 品質の証明・出来上がりイメージ・「動いてる店」の気配
 fetch('/api/make/recent').then(r=>r.json()).then(j=>{
   if(!j.items||!j.items.length) return;
@@ -2810,13 +2954,15 @@ function genTheater(p){
   var pr=2; var t2=setInterval(function(){pr=Math.min(93,pr+(pr<55?5:1.4));gf.style.width=pr+'%';},600);
   return function(){clearInterval(t1);clearInterval(t2);if(gf)gf.style.width='100%';};
 }
-$('#go').onclick=async()=>{
+async function runMake(){
   const p=$('#p').value.trim(); if(!p){$('#p').focus();return;}
   const k=$('#k').value;
   $('#go').disabled=true; $('#go').innerHTML='<span class=spin></span>つくっています…';
   const genDone=genTheater(p);
   try{
-    const r=await fetch('/api/make?prompt='+encodeURIComponent(p)+(k?'&kind='+k:''),{method:'POST'});
+    // v(バリアント)と visitor(UU)を必ず添えて投稿 → サーバが勝者判定の母数に刻む。
+    const r=await fetch('/api/make?prompt='+encodeURIComponent(p)+(k?'&kind='+k:'')
+      +'&v='+encodeURIComponent(MKV)+(VIS?'&visitor='+encodeURIComponent(VIS):''),{method:'POST'});
     const j=await r.json();
     genDone();
     if(!j.ok){ $('#out').innerHTML='<div class=err>'+(j.error||'うまく作れませんでした。もう一度お試しください。')+'</div>'; }
@@ -2832,12 +2978,14 @@ $('#go').onclick=async()=>{
         +'<div style="font-size:13px;color:rgba(245,245,240,.7)">'+(j.hook||'')+'</div>'
         + buy + share + spread
         +'<div class=note>'+ (j.auto_approved ? '✓ ' : '') + nt +'</div></div></div>';
+      $('#out').scrollIntoView({behavior:'smooth',block:'nearest'});
     }
   }catch(e){ genDone(); $('#out').innerHTML='<div class=err>通信エラー。もう一度お試しください。</div>'; }
   $('#go').disabled=false; $('#go').textContent='つくる';
-};
-</script></body></html>"##.to_string())
 }
+$('#go').onclick=runMake;
+$('#p').addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter')runMake();});
+</script></body></html>"##;
 
 /// POST /api/make?prompt=…&kind=… — public NL → product. status='review',
 /// brand='minna', cost-guarded (hourly cap + global budget gate). Mirrors
@@ -2915,6 +3063,14 @@ pub async fn public_make(State(db): State<Db>, Query(q): Query<MakeQuery>) -> Re
     let Some(url) = crate::store_r2_bytes(&key, &img.bytes, &img.mime).await else {
         return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":"画像アップロードに失敗しました"}))).into_response();
     };
+    // A/B/C: 投稿に variant と visitor を刻む（勝者UU判定の母数）。
+    let ab_variant = make_variant_norm(q.v.as_deref());
+    let ab_visitor = q.visitor.as_deref().map(str::trim).filter(|s| !s.is_empty() && s.len() <= 80);
+    let meta_json = match (ab_variant, ab_visitor) {
+        (Some(v), Some(vis)) => Some(serde_json::json!({"make_variant": v, "make_visitor": vis}).to_string()),
+        (Some(v), None) => Some(serde_json::json!({"make_variant": v}).to_string()),
+        _ => None,
+    };
     {
         let conn = db.lock().unwrap();
         let _ = conn.execute(
@@ -2929,16 +3085,38 @@ pub async fn public_make(State(db): State<Db>, Query(q): Query<MakeQuery>) -> Re
                 printful_product_id, printful_variant_id, printful_placement,
                 printful_print_w, printful_print_h,
                 design_file, mockup_main_file, mockup_url_external,
-                is_active, sort_order, status, fulfillment_route, legacy_source
-             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                is_active, sort_order, status, fulfillment_route, legacy_source, meta_json
+             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             rusqlite::params![
                 &sku, "minna", desc, desc, retail_jpy,
                 spec.printful_product_id, spec.printful_variant_id, spec.placement,
                 0, 0,
                 &url, &url, &url,
-                is_active_i, 50, status_s, "printful_dtg", "public_make",
+                is_active_i, 50, status_s, "printful_dtg", "public_make", meta_json,
             ],
         );
+        // 勝者未確定なら、各バリアントの「作成したユニーク訪問者数」を集計し、
+        // 最初に閾値到達した案を cv_config['make_winner'] に焼く（以後全員その案）。
+        if ab_variant.is_some() && cv_get(&conn, "make_winner").is_none() {
+            if let Ok(mut stmt) = conn.prepare(
+                "SELECT json_extract(meta_json,'$.make_variant') v,
+                        COUNT(DISTINCT json_extract(meta_json,'$.make_visitor')) uu
+                 FROM catalog_products
+                 WHERE legacy_source='public_make'
+                   AND json_extract(meta_json,'$.make_variant') IS NOT NULL
+                   AND json_extract(meta_json,'$.make_visitor') IS NOT NULL
+                 GROUP BY v",
+            ) {
+                let rows: Vec<(String, i64)> = stmt
+                    .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+                    .map(|it| it.filter_map(|r| r.ok()).collect())
+                    .unwrap_or_default();
+                if let Some((win, uu)) = rows.iter().find(|(_, uu)| *uu >= MAKE_AB_WIN_THRESHOLD) {
+                    cv_put(&conn, "make_winner", win,
+                        &format!("/make A/B/C: variant {} reached {} unique-visitor creations", win, uu));
+                }
+            }
+        }
     }
     // Cost-minimal: only the Printful on-body mockup (no extra Gemini images).
     let (pp, pv, url_c, sku_c, db_c) = (spec.printful_product_id, spec.printful_variant_id, url.clone(), sku.clone(), db.clone());
@@ -3553,6 +3731,7 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
   </div>
 </nav>
 {hero}
+{make_cta}
 <div class="chips">{brand_chips}</div>
 {body_or_empty}
 {pagination}
@@ -3596,6 +3775,7 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
         title = html_text(&title),
         total = total_active,
         hero = hero_html,
+        make_cta = make_cta_banner("shop"),
         brand_chips = brand_chips,
         body_or_empty = if items.is_empty() {
             r#"<div class="empty">該当する商品がありません。</div>"#.to_string()
@@ -4165,9 +4345,11 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
     <a class="back" href="/shop?brand={brand_q}">← {brand} のほかの商品</a>
   </div>
 </div>
+<div style="max-width:920px;margin:0 auto;padding:0 22px 10px">{make_cta}</div>
 <footer class="pdp-footer">
   <div class="legal-links">
     <a href="/shop">SHOP</a>
+    <a href="/make">作る</a>
     <a href="/shipping">配送 / Shipping</a>
     <a href="/returns">返品 / Returns</a>
     <a href="/faq">FAQ</a>
@@ -4178,6 +4360,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
 </footer>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </body></html>"##,
+        make_cta = make_cta_banner("pdp"),
         title = html_text(&display_name),
         desc = html_text(&meta_desc),
         sealed = sealed_block,

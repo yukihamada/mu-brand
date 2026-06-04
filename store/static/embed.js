@@ -56,6 +56,8 @@
       '.mu-embed{font-family:-apple-system,"Helvetica Neue","Hiragino Sans",Arial,sans-serif;color:'+fg+';background:transparent;width:100%}',
       '.mu-embed *{box-sizing:border-box}',
       '.mu-embed .mu-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}',
+      '.mu-embed .mu-make-cta{display:block;text-align:center;margin:0 0 14px;padding:12px 16px;border-radius:12px;background:linear-gradient(90deg,rgba(255,215,0,.16),rgba(255,215,0,.06));border:1px solid rgba(255,215,0,.45);color:inherit;text-decoration:none;font-weight:700;font-size:14px}',
+      '.mu-embed .mu-make-cta:hover{background:rgba(255,215,0,.2)}',
       '.mu-embed .mu-card{background:'+card+';border:1px solid '+border+';border-radius:3px;overflow:hidden;display:flex;flex-direction:column;cursor:pointer;transition:transform .15s ease,border-color .15s ease;text-decoration:none;color:inherit}',
       '.mu-embed .mu-card:hover{border-color:#e6c449;transform:translateY(-2px)}',
       '.mu-embed .mu-card.sold-out{opacity:.45;cursor:default}',
@@ -125,13 +127,22 @@
     container.appendChild(root);
   }
 
+  function makeCta(opts){
+    var ja = (opts.lang || 'ja') === 'ja';
+    return el('a', {
+      href: 'https://wearmu.com/make?ref=embed',
+      target: '_blank', rel: 'noopener', class: 'mu-make-cta',
+    }, [ ja ? '✦ あなたも、言うだけでTシャツをAIで作れる →' : '✦ Make your own — just say it →' ]);
+  }
+
   function render(container, products, opts){
     var grid = el('div', { class: 'mu-grid' });
     products.forEach(function(p){ grid.appendChild(renderCard(p, opts)); });
     var foot = el('div', { class: 'mu-foot' }, [
       el('a', { href:'https://wearmu.com', target:'_blank', rel:'noopener' }, ['Powered by MU — wearmu.com']),
     ]);
-    var root = el('div', { class: 'mu-embed' }, [grid, foot]);
+    // 作る動線: 外部サイトからも1タップで /make へ（作る数の最大化）。
+    var root = el('div', { class: 'mu-embed' }, [makeCta(opts), grid, foot]);
     container.innerHTML = '';
     container.appendChild(root);
   }
