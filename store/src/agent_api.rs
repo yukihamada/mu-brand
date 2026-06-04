@@ -1942,3 +1942,7 @@ pub async fn openapi_json() -> Response {
     });
     Json(v).into_response()
 }
+
+#[cfg(test)]
+#[path = "tests_agent.rs"]
+mod tests_agent;

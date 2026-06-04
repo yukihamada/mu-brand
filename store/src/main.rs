@@ -78390,3 +78390,7 @@ mod learning_loop_tests {
 }
 
 /* deploy-force 1779078419 */
+
+#[cfg(test)]
+#[path = "tests_critical.rs"]
+mod tests_critical;

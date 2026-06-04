@@ -93,11 +93,27 @@ jobs:
           kill -9 $BIN_PID 2>/dev/null || true
           exit 1
 
+  # Real pre-deploy gate: fast, network-free, DB-free unit + integration tests.
+  # Unlike smoke_test (currently disabled), this is BLOCKING — a red test
+  # stops the deploy. Whole suite runs in ~10s once compiled; the heavy cost is
+  # the cold cargo build, which Swatinem/rust-cache amortizes across runs.
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: store
+      - name: Run tests
+        run: cargo test --manifest-path store/Cargo.toml
+
   deploy:
-    needs: smoke_test
-    # Run deploy even if smoke_test outcome is failure (continue-on-error
-    # marks the job as success at the workflow level, so needs: still works).
-    if: ${{ always() }}
+    needs: [smoke_test, test]
+    # smoke_test is continue-on-error/disabled, so it never blocks. test is a
+    # hard gate: if it fails, `needs` short-circuits and deploy is skipped.
+    if: ${{ always() && needs.test.result == 'success' }}
     runs-on: ubuntu-latest
     concurrency: deploy-mu-store
     timeout-minutes: 20
@@ -198,3 +214,46 @@ jobs:
               -d "chat_id=${TG_CHAT}" \
               --data-urlencode "text=🚨 mu-store deploy failed post-deploy smoke. Auto-rollback to v${PREV} attempted. commit=${GITHUB_SHA::8} run=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           fi
+
+  # Post-deploy public-surface verification against the customer domain
+  # (wearmu.com, not the *.fly.dev host). Gives the rolling deploy a moment to
+  # settle, then asserts the three pages a visitor actually hits are healthy.
+  verify:
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Wait for rollout to settle
+        run: sleep 20
+      - name: Home page — 200 + analytics tag present
+        run: |
+          code=$(curl -fsS -o /tmp/home.html -w '%{http_code}' --max-time 20 "https://wearmu.com/")
+          echo "home http_code=${code}"
+          if [ "$code" != "200" ]; then
+            echo "::error::home page returned ${code}, expected 200"
+            exit 1
+          fi
+          if ! grep -q 'enabler-analytics.fly.dev/t.js' /tmp/home.html; then
+            echo "::error::enabler-analytics tag missing from home page"
+            exit 1
+          fi
+          echo "OK: home 200 + analytics tag"
+      - name: Shop page — 200
+        run: |
+          code=$(curl -fsS -o /dev/null -w '%{http_code}' --max-time 20 "https://wearmu.com/shop")
+          echo "shop http_code=${code}"
+          if [ "$code" != "200" ]; then
+            echo "::error::/shop returned ${code}, expected 200"
+            exit 1
+          fi
+          echo "OK: /shop 200"
+      - name: Health endpoint — 200
+        run: |
+          code=$(curl -fsS -o /tmp/healthz.json -w '%{http_code}' --max-time 20 "https://wearmu.com/healthz")
+          echo "healthz http_code=${code}"
+          if [ "$code" != "200" ]; then
+            echo "::error::/healthz returned ${code}, expected 200"
+            head -c 400 /tmp/healthz.json || true
+            exit 1
+          fi
+          echo "OK: /healthz 200"
