@@ -6060,6 +6060,7 @@ fn vault_footer_html() -> &'static str {
       <div>
         <a href="/api-keys">API</a>
         <a href="/transparency">数字</a>
+        <a href="/governance">憲法</a>
         <a href="/constitution">§27 寄付</a>
         <a href="/about.html">About</a>
         <a href="https://github.com/yukihamada/mu-brand">GitHub</a>
@@ -13341,7 +13342,7 @@ a:hover{{text-decoration:underline}}
   </div>
 
   <div class="foot">
-    wearmu.com · 株式会社イネブラ · <a href="/tokushoho">特商法表記</a> · <a href="/transparency">/transparency</a>
+    wearmu.com · 株式会社イネブラ · <a href="/tokushoho">特商法表記</a> · <a href="/transparency">/transparency</a> · <a href="/governance">憲法</a>
   </div>
 </div>
 <script>
@@ -41555,6 +41556,140 @@ async fn public_constitution_page() -> Html<String> {
     Html(CONSTITUTION_HTML_RAW.to_string())
 }
 
+/// GET /governance — MU 憲法 v0.1「一人から、みんなへ」.
+/// MU is an unmanned AI brand currently run by one human (Yuki). This page is
+/// the public design doc for making it survive that one human: judgement
+/// criteria, key/permission policy, voice, revenue split, succession. Living
+/// document — meant to be amended by atsm.wtf feedback. Self-contained inline
+/// HTML in 墨黒×明朝 to match heritage/story tone. NOT noindex (the whole
+/// point is to be inheritable). JP body, EN gloss inline.
+async fn public_governance_page() -> Html<String> {
+    let body = r##"
+<div class="serial">MU 憲法 · CONSTITUTION OF SUCCESSION · v0.1</div>
+<h1>MU 憲法<br><span class="sub-title">一人から、みんなへ</span></h1>
+
+<p class="lede">MU は無人 AI ブランド。いまは実質一人——濱田優貴の判断・声・鍵で回っている。これを、創業者が消えても複数人で続く形にする。これはその設計図であり、みんなで育てる生きた文書 (v0.1)。</p>
+<p class="lede-en">MU is an unmanned AI brand. Today it runs on one human's judgement, one voice, one set of keys. This is the blueprint for making it outlive that one human — a living document, v0.1.</p>
+
+<section>
+  <h2>一. 判断 — 何を承認し、何を却下するか</h2>
+  <p class="gloss">属人の目を、明文の基準に。</p>
+  <h3>承認するもの</h3>
+  <ul>
+    <li>普遍的な MU のことば</li>
+    <li>墨黒 × 明朝の美意識</li>
+    <li>実用と正直さ</li>
+    <li>在庫ゼロ・物理印刷の身軽さ</li>
+  </ul>
+  <h3>却下するもの</h3>
+  <ul>
+    <li>商標・ブランド・著名人の無断使用</li>
+    <li>外部ドメイン直リンク画像</li>
+    <li>不適切語</li>
+    <li>内輪ネタの「販売」（非売品ギフトは OK）</li>
+    <li>¥0 表示（「応相談」で出す）</li>
+  </ul>
+  <p>信頼オーナーは即公開、リスク該当のみレビュー。リスク検出はコードで行う (<code>assess_product_risk</code>)。却下／承認はログに残し、基準を育てていく。</p>
+  <p class="gloss-en">Trusted owners publish instantly; only risk-flagged items go to review. Risk is detected in code, not by one person's eye. Every decision is logged so the criteria can grow.</p>
+</section>
+
+<section>
+  <h2>二. 権限 — 一人の鍵から、council の合議へ</h2>
+  <ul>
+    <li>MA council（承認評議会）は複数人。重要判断は合議。</li>
+    <li>公開権限 (<code>AUTO_PUBLISH_OWNERS</code>) は信頼メンバーに広げる。</li>
+    <li>管理鍵を一人で保有しない（将来マルチサイン）。一人が消えても止まらない。</li>
+  </ul>
+  <p class="gloss-en">No single key, no single keeper. Publishing rights widen to trusted members; admin keys move toward multi-sig. If one person disappears, MU does not stop.</p>
+</section>
+
+<section>
+  <h2>三. 声 — 一人のクローンから、私たちの声へ</h2>
+  <p>MU の声は創業者のクローン一つに依存しない。複数メンバーの声 (Koe で登録) で、MU は「私たち」として語る。</p>
+  <p class="gloss-en">MU's voice will not depend on one founder's clone. Registered through Koe, many members lend their voices so MU speaks as "we".</p>
+</section>
+
+<section>
+  <h2>四. 収益 — 複数人で運営し、自動で分配する</h2>
+  <p><code>mu_credit_ledger</code> とアフィリエイトで、運営に関わった複数人へ自動分配。</p>
+  <p class="gloss-en">Through the credit ledger and affiliate splits, revenue flows automatically to everyone who helped run MU.</p>
+</section>
+
+<section>
+  <h2>五. 継承 — 消えても続くために</h2>
+  <ul>
+    <li>この憲法を公開で残す（誰でも引き継げる）。</li>
+    <li>鍵は council へ。基準はログで育てる。</li>
+    <li>これは v0.1。焚き火 (<a href="https://atsm.wtf">atsm.wtf</a>) のみんなの FB で改訂していく。</li>
+  </ul>
+  <p class="gloss-en">Kept public so anyone can inherit it. Keys go to the council; criteria grow in the log. This is v0.1 — to be revised by the campfire at atsm.wtf.</p>
+</section>
+
+<blockquote class="sign">
+  これは生きた文書です。刺してください、直します。<br>
+  <span class="sign-by">— MU council（暫定: 濱田優貴 + Claude）</span>
+</blockquote>
+
+<p class="campfire"><a href="https://atsm.wtf">→ 焚き火で一緒に育てる · atsm.wtf</a></p>
+"##;
+
+    let html = format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU 憲法 — 一人から、みんなへ | wearmu.com</title>
+<meta name="description" content="MU は無人 AI ブランド。創業者が消えても複数人で続く形にする——判断基準・権限・声・収益・継承の設計図 (v0.1)。みんなで育てる生きた文書。">
+<meta property="og:title" content="MU 憲法 — 一人から、みんなへ">
+<meta property="og:description" content="判断・権限・声・収益・継承。MU を一人運営から、消えても回る形にする設計図 v0.1。">
+<meta property="og:image" content="https://mockups.wearmu.com/hero.png">
+<meta property="og:url" content="https://wearmu.com/governance">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<style>
+:root{{--bg:#0a0a0a;--fg:#f5f5f0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--line:rgba(255,255,255,0.08)}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:var(--bg);color:var(--fg);font-family:'Helvetica Neue','Hiragino Mincho ProN','Yu Mincho',Arial,sans-serif;line-height:1.9;font-size:15px;-webkit-font-smoothing:antialiased;font-feature-settings:"palt"}}
+a{{color:var(--y);text-decoration:none}}
+a:hover{{text-decoration:underline;text-underline-offset:3px}}
+nav{{position:sticky;top:0;background:rgba(10,10,10,0.9);backdrop-filter:blur(12px);border-bottom:1px solid var(--line);padding:16px 28px;display:flex;justify-content:space-between;align-items:center;z-index:50;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;font-family:'Helvetica Neue',Arial,sans-serif}}
+nav .logo{{font-weight:700;letter-spacing:0.45em}}
+.wrap{{max-width:760px;margin:0 auto;padding:64px 28px 110px}}
+.serial{{color:var(--y);font-size:11px;letter-spacing:0.34em;text-transform:uppercase;margin-bottom:22px;font-family:'Helvetica Neue',Arial,sans-serif}}
+h1{{font-size:clamp(38px,6.5vw,68px);font-weight:200;letter-spacing:0.03em;line-height:1.18;margin:0 0 30px;font-family:'Hiragino Mincho ProN','Yu Mincho',serif}}
+h1 .sub-title{{font-size:clamp(20px,3.4vw,32px);color:var(--mute);font-weight:300}}
+.lede{{font-size:16.5px;color:var(--fg);margin:0 0 14px;font-weight:300}}
+.lede-en{{font-size:13px;color:var(--mute);margin:0 0 8px;font-family:'Helvetica Neue',Arial,sans-serif;font-style:italic;line-height:1.8}}
+section{{margin-top:54px;padding-top:34px;border-top:1px solid var(--line)}}
+section h2{{font-size:19px;font-weight:400;color:var(--y);letter-spacing:0.06em;margin-bottom:6px;font-family:'Hiragino Mincho ProN','Yu Mincho',serif}}
+section h3{{font-size:14px;font-weight:500;letter-spacing:0.14em;color:var(--fg);margin:24px 0 10px;font-family:'Helvetica Neue',Arial,sans-serif}}
+.gloss{{font-size:13px;color:var(--mute);margin:0 0 18px}}
+.gloss-en{{font-size:12.5px;color:var(--mute);margin:16px 0 0;font-family:'Helvetica Neue',Arial,sans-serif;font-style:italic;line-height:1.8}}
+section p{{margin:14px 0 0;color:var(--mute)}}
+section p code,.lede code{{background:rgba(230,196,73,0.10);color:var(--y);padding:1px 6px;font-size:12.5px;font-family:'SF Mono','Menlo',monospace;border-radius:2px}}
+ul{{margin:6px 0 4px;padding-left:22px;color:var(--mute)}}
+li{{margin:7px 0}}
+blockquote.sign{{margin:64px 0 0;padding:24px 26px;border-left:2px solid var(--y);background:rgba(230,196,73,0.06);font-size:16px;color:var(--fg);font-family:'Hiragino Mincho ProN','Yu Mincho',serif;font-weight:300;line-height:1.9}}
+blockquote.sign .sign-by{{display:block;margin-top:14px;font-size:13px;color:var(--mute);letter-spacing:0.04em}}
+.campfire{{margin-top:36px;text-align:center;font-family:'Helvetica Neue',Arial,sans-serif;letter-spacing:0.06em}}
+footer{{max-width:760px;margin:0 auto;padding:32px 28px 80px;border-top:1px solid var(--line);color:var(--mute);font-size:11.5px;letter-spacing:0.1em;line-height:2;font-family:'Helvetica Neue',Arial,sans-serif}}
+footer a{{color:var(--mute);text-decoration:underline;text-decoration-color:rgba(255,255,255,0.18)}}
+footer a:hover{{color:var(--y)}}
+</style></head><body>
+<nav>
+  <a class="logo" href="/">MU</a>
+  <span style="opacity:0.55">憲法 / Governance</span>
+  <span><a href="/constitution" style="opacity:0.55;margin-right:14px">運用憲法</a><a href="/transparency" style="opacity:0.55">数字</a></span>
+</nav>
+<div class="wrap">
+{body}
+</div>
+<footer>
+  <div>MU council (暫定): 濱田優貴 + Claude · 生きた文書 v0.1 — <a href="https://atsm.wtf">atsm.wtf</a> で改訂</div>
+  <div style="margin-top:6px">株式会社イネブラ (Enabler Inc.) · <a href="/constitution">/constitution</a> · <a href="/transparency">/transparency</a> · <a href="https://github.com/yukihamada/mu-brand">GitHub</a></div>
+</footer>
+</body></html>"##, body = body);
+    Html(html)
+}
+
 /// GET /constitution/legacy — pre-12-article rendered Vision + 20 operational
 /// principles. Kept for grepping + machine clients that hard-coded the path
 /// before 2026-05-21.
@@ -67719,6 +67854,7 @@ async fn main() {
         .route("/transparency", get(public_transparency_page))
         .route("/en/transparency", get(public_transparency_page_en))
         .route("/constitution", get(public_constitution_page))
+        .route("/governance", get(public_governance_page))
         .route("/constitution/legacy", get(public_constitution_legacy_page))
         .route("/donations", get(public_donations_page))
         .route("/profit-split", get(public_profit_split_page))
