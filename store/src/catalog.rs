@@ -1437,6 +1437,43 @@ pub async fn generate_transparent_print(
     Ok(())
 }
 
+/// 生成画像の背景(白 or 黒)を透過にする。生成は白(or黒)背景で行い、出来上がりの
+/// 背景色だけを後処理で alpha=0 にする方針。四隅をサンプルして背景が白か黒かを
+/// 推定し、その色に近いピクセルだけを抜く(作品の黒/白の線画は残す。両方一律には
+/// 抜かない)。デコード失敗・極端に小さい画像では None(呼び出し側は元画像にフォールバック)。
+fn make_design_transparent(bytes: &[u8]) -> Option<Vec<u8>> {
+    let img = image::load_from_memory(bytes).ok()?.to_rgba8();
+    let (w, h) = img.dimensions();
+    if w < 16 || h < 16 { return None; }
+    // 四隅(6px inset の 4x4 ブロック)の平均輝度で背景を推定。
+    let corners = [(6u32, 6u32), (w - 10, 6u32), (6u32, h - 10), (w - 10, h - 10)];
+    let (mut sum, mut n) = (0u32, 0u32);
+    for (cx, cy) in corners {
+        for dy in 0..4u32 {
+            for dx in 0..4u32 {
+                let p = img.get_pixel((cx + dx).min(w - 1), (cy + dy).min(h - 1)).0;
+                sum += p[0] as u32 + p[1] as u32 + p[2] as u32;
+                n += 3;
+            }
+        }
+    }
+    let avg = if n > 0 { sum / n } else { 255 };
+    let knock_white = avg >= 128; // 明るい四隅→白背景 / 暗い四隅→黒背景
+    let mut out = img.clone();
+    for px in out.pixels_mut() {
+        let [r, g, b, _a] = px.0;
+        let hit = if knock_white {
+            r >= 248 && g >= 248 && b >= 248
+        } else {
+            r <= 8 && g <= 8 && b <= 8
+        };
+        if hit { px.0[3] = 0; }
+    }
+    let mut buf = std::io::Cursor::new(Vec::<u8>::new());
+    out.write_to(&mut buf, image::ImageFormat::Png).ok()?;
+    Some(buf.into_inner())
+}
+
 /// Generate one lifestyle (on-body) photo via Gemini. Prompted to avoid
 /// the model's face (back-shot / torso / hands holding garment) so the
 /// PDP doesn't show the same Printful default model on every SKU.
@@ -3550,8 +3587,14 @@ pub async fn public_make(State(db): State<Db>, Query(q): Query<MakeQuery>) -> Re
         Ok(i) => i,
         Err(e) => return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":format!("デザイン生成に失敗: {}", e)}))).into_response(),
     };
+    // デフォルト透過: 生成は白(or黒)背景 → 出来上がりを後処理で背景透過にしてから保存。
+    // 色付き生地でも白(黒)の四角が出ない。処理失敗時は元画像にフォールバック。
+    let (design_bytes, design_mime) = match make_design_transparent(&img.bytes) {
+        Some(b) => (b, "image/png".to_string()),
+        None => (img.bytes.clone(), img.mime.clone()),
+    };
     let key = format!("catalog/{}.png", sku);
-    let Some(url) = crate::store_r2_bytes(&key, &img.bytes, &img.mime).await else {
+    let Some(url) = crate::store_r2_bytes(&key, &design_bytes, &design_mime).await else {
         return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":"画像アップロードに失敗しました"}))).into_response();
     };
     // A/B/C: 投稿に variant と visitor を刻む（勝者UU判定の母数）。
