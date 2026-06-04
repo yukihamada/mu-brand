@@ -3620,7 +3620,7 @@ pub async fn shop_pdp(
         let conn = db.lock().unwrap();
         conn.query_row(
             "SELECT sku, brand, label, description_ja, retail_price_jpy,
-                    mockup_main_file, mockup_url_external, suzuri_url, stripe_price_id
+                    mockup_main_file, mockup_url_external, suzuri_url, stripe_price_id, meta_json
              FROM catalog_products WHERE sku=? AND is_active=1",
             rusqlite::params![&sku],
             |r| {
@@ -3634,12 +3634,13 @@ pub async fn shop_pdp(
                     r.get::<_, Option<String>>(6)?,
                     r.get::<_, Option<String>>(7)?,
                     r.get::<_, Option<String>>(8)?,
+                    r.get::<_, Option<String>>(9)?,
                 ))
             },
         )
         .ok()
     };
-    let Some((sku, brand, _label, desc, price_jpy, mockup_main, mockup_ext, suzuri, price_id)) = row
+    let Some((sku, brand, _label, desc, price_jpy, mockup_main, mockup_ext, suzuri, price_id, meta_json)) = row
     else {
         return (StatusCode::NOT_FOUND, "product not found").into_response();
     };
@@ -3939,6 +3940,30 @@ pub async fn shop_pdp(
             } else { String::new() }
         } else { String::new() }
     };
+
+    // kind=song: 買う前に全曲試聴できる自己完結プレイヤー（音源は公開ホスト）。
+    let listen_block = if is_song {
+        let audio_url = meta_json
+            .as_deref()
+            .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+            .and_then(|v| v.get("audio_url").and_then(|a| a.as_str()).map(|s| s.to_string()))
+            .unwrap_or_default();
+        if audio_url.starts_with("https://") {
+            format!(r##"<div class="listen">
+  <button id="songBtn" class="listen-btn" aria-label="試聴">▶ この曲を試聴</button>
+  <span class="listen-note">買う前に、全部聴けます</span>
+  <script>(function(){{
+    var b=document.getElementById('songBtn');
+    var a=new Audio(); a.src="{u}"; var playing=false;
+    b.addEventListener('click',function(){{
+      if(playing){{a.pause();b.textContent="▶ この曲を試聴";playing=false;}}
+      else{{a.play();b.textContent="❚❚ 停止";playing=true;}}
+    }});
+    a.addEventListener('ended',function(){{b.textContent="▶ この曲を試聴";playing=false;}});
+  }})();</script>
+</div>"##, u = html_attr(&audio_url))
+        } else { listen_block }
+    } else { listen_block };
 
     let body = format!(
         r##"<!doctype html><html lang="ja"><head>
@@ -6058,6 +6083,8 @@ struct ProductRow {
     price: i64,
     img: Option<String>,
     sold: i64,
+    /// song products: audio_url from meta_json, for the ▶ 試聴 card button.
+    audio: Option<String>,
 }
 
 /// SQL fragment: mockup_url_external, but with Printful's ephemeral presigned
@@ -6081,7 +6108,8 @@ fn list_products_paged(
             format!(
             "SELECT sku, brand, description_ja, retail_price_jpy,
                     COALESCE({ext}, mockup_main_file),
-                    (SELECT COUNT(*) FROM catalog_orders o WHERE o.sku=catalog_products.sku AND o.status='submitted')
+                    (SELECT COUNT(*) FROM catalog_orders o WHERE o.sku=catalog_products.sku AND o.status='submitted'),
+                    meta_json
              FROM catalog_products
              WHERE is_active=1 AND brand=?
              ORDER BY (COALESCE({ext}, '') != '') DESC,
@@ -6095,7 +6123,8 @@ fn list_products_paged(
             format!(
             "SELECT sku, brand, description_ja, retail_price_jpy,
                     COALESCE({ext}, mockup_main_file),
-                    (SELECT COUNT(*) FROM catalog_orders o WHERE o.sku=catalog_products.sku AND o.status='submitted')
+                    (SELECT COUNT(*) FROM catalog_orders o WHERE o.sku=catalog_products.sku AND o.status='submitted'),
+                    meta_json
              FROM catalog_products
              WHERE is_active=1
              ORDER BY (COALESCE({ext}, '') != '') DESC,
@@ -6110,9 +6139,15 @@ fn list_products_paged(
         Err(_) => return Vec::new(),
     };
     let mapper = |r: &rusqlite::Row| {
+        let meta: Option<String> = r.get(6)?;
+        let audio = meta
+            .as_deref()
+            .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+            .and_then(|v| v.get("audio_url").and_then(|a| a.as_str()).map(|s| s.to_string()));
         Ok(ProductRow {
             sku: r.get(0)?, brand: r.get(1)?, desc: r.get(2)?,
             price: r.get(3)?, img: r.get(4)?, sold: r.get(5)?,
+            audio,
         })
     };
     if has_brand {
@@ -6180,6 +6215,7 @@ fn list_products(
             price: r.get(3)?,
             img: r.get(4)?,
             sold: 0, // unused path (dead_code); badge only flows via list_products_paged
+            audio: None,
         })
     };
     let rows: Vec<ProductRow> = if has_brand {
@@ -6232,11 +6268,20 @@ fn render_card(p: &ProductRow) -> String {
             format!(r##"<button class="cardplay" data-key="{k}" aria-label="試聴" onclick="muPlay(event,this)">▶</button>"##, k = html_attr(&key))
         }
     } else { String::new() };
+    // kind=song: play the meta_json audio_url directly from the card (試聴).
+    let listen_song = match &p.audio {
+        Some(au) if !au.is_empty() => format!(
+            r##"<button class="cardplay" data-src="{s}" aria-label="試聴" onclick="muPlay(event,this)">▶</button>"##,
+            s = html_attr(au)
+        ),
+        _ => String::new(),
+    };
     format!(
-        r##"<a class="card" href="/shop/{sku_enc}"><span class="img" style="position:relative;display:block">{sold_badge}{listen_mini}<img src="{img}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/static/designs/marker_zero.png';this.style.objectFit='contain';this.style.background='#0a0a0a';this.style.padding='28px'"></span><span class="body"><span class="brand">{brand}</span><span class="name">{name}</span><span class="price">¥{price}</span></span></a>"##,
+        r##"<a class="card" href="/shop/{sku_enc}"><span class="img" style="position:relative;display:block">{sold_badge}{listen_mini}{listen_song}<img src="{img}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/static/designs/marker_zero.png';this.style.objectFit='contain';this.style.background='#0a0a0a';this.style.padding='28px'"></span><span class="body"><span class="brand">{brand}</span><span class="name">{name}</span><span class="price">¥{price}</span></span></a>"##,
         sku_enc = urlencoding::encode(&p.sku),
         sold_badge = sold_badge,
         listen_mini = listen_mini,
+        listen_song = listen_song,
         img = html_attr(&img),
         brand = html_text(&p.brand),
         name = html_text(&p.desc),
@@ -6477,6 +6522,15 @@ pub async fn run_optimizer_cron(db: Db) {
         if let Err(e) = retry_failed_fulfillments_step(db.clone()).await {
             tracing::warn!("[catalog/cron] retry failed orders: {}", e);
         }
+        // 再発防止 (2026-06-04): ~1日に1回、リトライ尽き or 長期滞留の
+        // 「入金済みなのに未発送/未返金」注文を点検して Telegram に上げる。
+        // 4xx は fulfill 側で自動返金されるが、ここは取りこぼし(retry上限超過の
+        // 永続 5xx・manual_pending の発送忘れ等)の最後の安全網。
+        if cycle % 48 == 0 {
+            if let Err(e) = stuck_orders_alert_step(db.clone()).await {
+                tracing::warn!("[catalog/cron] stuck orders check: {}", e);
+            }
+        }
         tokio::time::sleep(std::time::Duration::from_secs(CRON_INTERVAL_SECS)).await;
     }
 }
@@ -6672,6 +6726,51 @@ async fn retry_failed_fulfillments_step(db: Db) -> Result<(), String> {
             fulfill_catalog_order(db_c, session).await;
         });
     }
+    Ok(())
+}
+
+/// 滞留注文の安全網: 入金済みなのに発送も返金もされず取りこぼされた注文を
+/// 検知して Telegram に上げる (~1日1回)。対象:
+///  - status='failed'/'failed_*' で retry_count>=3 (再試行を使い切り放置)
+///  - status='manual_pending' で 2日以上 (NFCコイン等の発送忘れ)
+/// 4xx は fulfill 側で自動返金されるのでここには出ない。出たら人手で返金/発送。
+async fn stuck_orders_alert_step(db: Db) -> Result<(), String> {
+    let rows: Vec<(i64, String, String, i64, String)> = {
+        let conn = db.lock().unwrap();
+        conn.prepare(
+            "SELECT id, COALESCE(sku,'?'), status, COALESCE(amount_jpy,0), COALESCE(created_at,'')
+             FROM catalog_orders
+             WHERE (status LIKE 'failed%' AND COALESCE(retry_count,0) >= 3)
+                OR (status = 'manual_pending' AND created_at < datetime('now','-2 days'))
+             ORDER BY id ASC LIMIT 30",
+        )
+        .ok()
+        .and_then(|mut s| {
+            s.query_map([], |r| Ok((
+                r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?, r.get::<_, String>(4)?,
+            )))
+            .ok()
+            .map(|it| it.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default()
+    };
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let mut lines = String::new();
+    let mut total = 0i64;
+    for (id, sku, status, amount, created) in &rows {
+        total += amount;
+        lines.push_str(&format!("\n• id={} `{}` {} ¥{} ({})", id, sku, status, amount, created));
+    }
+    let _ = crate::send_telegram_message(&format!(
+        "🟠 *滞留注文 {}件* (入金済・未発送のまま取りこぼし)\n\
+         failed=retry尽き / manual_pending=発送忘れ。合計¥{}。{}\n\
+         → 発送するか、返金: GET /admin/catalog/orders/<id>/replay (4xxなら自動返金) か Stripe手動返金。",
+        rows.len(), total, lines
+    ))
+    .await;
     Ok(())
 }
 
