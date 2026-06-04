@@ -37688,6 +37688,68 @@ async fn success_page(
     ))
 }
 
+/// GET /play/:sku — 一着＝一曲。シャツのQRから飛ぶ全画面ワンタップ・プレイヤー。
+/// 自動再生を試み、ブラウザにブロックされたら画面のどこをタップしても再生する
+/// (= かざす → 1タップ → 鳴る)。sku は song 商品、音源は meta_json.audio_url。
+async fn play_song_page(
+    State(db): State<Db>,
+    Path(sku): Path<String>,
+) -> Response {
+    let row: Option<(String, String)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT label, meta_json FROM catalog_products WHERE sku=? AND is_active=1",
+            params![sku],
+            |r| Ok((r.get::<_, String>(0).unwrap_or_default(),
+                    r.get::<_, Option<String>>(1)?.unwrap_or_default())),
+        ).ok()
+    };
+    let (label, audio_url) = match row {
+        Some((lbl, meta)) => {
+            let url = serde_json::from_str::<serde_json::Value>(&meta).ok()
+                .and_then(|v| v.get("audio_url").and_then(|a| a.as_str()).map(|s| s.to_string()))
+                .unwrap_or_default();
+            (lbl, url)
+        }
+        None => (String::new(), String::new()),
+    };
+    if !audio_url.starts_with("https://") {
+        return axum::response::Redirect::to("/jiujitsu-yamano").into_response();
+    }
+    let html = format!(r#"<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
+<title>{label} — MU</title><style>
+html,body{{height:100%;margin:0}}
+body{{background:#0A0A0A;color:#F5F5F0;font-family:'Hiragino Mincho ProN','Yu Mincho',serif;
+display:flex;align-items:center;justify-content:center;flex-direction:column;gap:28px;
+text-align:center;-webkit-font-smoothing:antialiased;cursor:pointer;user-select:none}}
+.enso{{width:120px;height:120px;border:3px solid #F5F5F0;border-radius:50%;opacity:.9;
+border-top-color:transparent;transform:rotate(35deg);transition:transform 8s linear}}
+.enso.spin{{transform:rotate(395deg)}}
+.lbl{{font-size:22px;letter-spacing:.08em}}
+.state{{font-size:13px;letter-spacing:.3em;color:#A67843;font-family:sans-serif}}
+.hint{{position:fixed;bottom:28px;font-size:11px;letter-spacing:.2em;color:#666;font-family:sans-serif}}
+</style></head><body>
+<div class="enso" id="enso"></div>
+<div class="lbl">{label}</div>
+<div class="state" id="state">▶ TAP TO PLAY</div>
+<div class="hint">画面をタップで再生／停止 · MU 一着＝一曲</div>
+<audio id="a" src="{url}" preload="auto"></audio>
+<script>
+var a=document.getElementById('a'),s=document.getElementById('state'),e=document.getElementById('enso'),playing=false;
+function set(p){{playing=p;s.textContent=p?'❚❚ PLAYING':'▶ TAP TO PLAY';e.classList.toggle('spin',p);}}
+function toggle(){{if(playing){{a.pause();set(false);}}else{{a.play().then(function(){{set(true);}}).catch(function(){{set(false);}});}}}}
+document.body.addEventListener('click',toggle);
+a.addEventListener('ended',function(){{set(false);}});
+// scan landing: try to autoplay; browsers usually block → big TAP TO PLAY remains.
+a.play().then(function(){{set(true);}}).catch(function(){{}});
+</script></body></html>"#,
+        label = html_attr_escape(&label),
+        url = html_attr_escape(&audio_url),
+    );
+    Html(html).into_response()
+}
+
 /// GET /api/tracking/config — returns GA4 + Google Ads IDs read from env.
 /// Empty fields are omitted; tracking.js no-ops when nothing is set, so the
 /// shim can be embedded everywhere safely before Ads is configured.
@@ -67058,6 +67120,8 @@ async fn main() {
         // Minimal SSR product page with 6-color swatch picker (?color=NVY).
         // This is the **canonical** product detail URL since 2026-05-21.
         .route("/p/:sku", get(product_sku_page))
+        // 一着＝一曲: QR on the shirt → full-screen one-tap song player.
+        .route("/play/:sku", get(play_song_page))
         // Buyer-only origin/DNA/prompt page. Gated by per-session UUID
         // (?key=…) minted in the Stripe webhook into post_purchase_queue.
         .route("/story/:serial", get(story_page))
