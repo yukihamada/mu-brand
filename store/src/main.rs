@@ -40181,7 +40181,7 @@ footer a:hover{{color:var(--y)}}
     <h2>Fleet status · 14 product 並列</h2>
     <p>1人 founder が 並列 で 動かしている プロダクト の honest grade。 「active dev = 新機能 / 顧客対応 を 今月 やってる」、 「maintenance = security patch + 既存顧客 サポート のみ」、 「private MSA = 中身 は MSA 経由 で読める」。</p>
     <div class="row"><span class="k">JiuFlow (jiuflow.com)</span><span class="v good">active · MRR ¥180k · 161 active subs</span></div>
-    <div class="row"><span class="k">MU / wearmu</span><span class="v y">active · 100枚 challenge 進行中</span></div>
+    <div class="row"><span class="k">MU / wearmu</span><span class="v good">active · 100枚 challenge 達成 108/100 (5/31終了 → 70%+ で 倍投下)</span></div>
     <div class="row"><span class="k">chatweb.ai / teai.io (nanobot)</span><span class="v">active · 公開 · #42 #43 fix済</span></div>
     <div class="row"><span class="k">StayFlow (stayflowapp.com)</span><span class="v good">active · MRR — · Stripe Live · 民泊 SaaS</span></div>
     <div class="row"><span class="k">Koe Device (koe.live)</span><span class="v">active · ハードウェア試作中</span></div>
