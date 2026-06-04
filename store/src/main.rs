@@ -4,6 +4,7 @@ mod payments;
 mod jiufight_tokens;
 mod catalog;
 mod agent_api;
+mod work;
 
 use axum::{
     extract::{Path, State},
@@ -465,7 +466,14 @@ async fn security_headers(req: Request<axum::body::Body>, next: Next) -> Respons
         h.insert("Content-Security-Policy",
                  HeaderValue::from_static("frame-ancestors *"));
     }
-    h.insert("Referrer-Policy", HeaderValue::from_static("strict-origin-when-cross-origin"));
+    // /admin はクエリに ?token= を含むため、同一オリジン遷移でも Referrer に
+    // フルURL(トークン込み)が残り analytics 経由で漏れる → 全面 no-referrer。
+    // (2026-06-04 enabler-analytics の referrer に admin_token 平文が記録された実害の修正)
+    if path.starts_with("/admin") {
+        h.insert("Referrer-Policy", HeaderValue::from_static("no-referrer"));
+    } else {
+        h.insert("Referrer-Policy", HeaderValue::from_static("strict-origin-when-cross-origin"));
+    }
     h.insert("Strict-Transport-Security",
              HeaderValue::from_static("max-age=31536000; includeSubDomains"));
     h.insert("Permissions-Policy",
@@ -67549,6 +67557,13 @@ async fn main() {
         .route("/api/ma/review/:sku/approve", post(agent_api::ma_review_approve))
         .route("/api/ma/review/:sku/reject", post(agent_api::ma_review_reject))
         .route("/api/agent/credits/grant", post(agent_api::agent_grant_credits))
+        // ── /work — 音コイン在宅ワーカー・ジョブ基盤 (src/work.rs) ──
+        .route("/work", get(work::work_page))
+        .route("/work/queue", get(work::work_queue))
+        .route("/api/work/apply", post(work::work_apply))
+        .route("/api/work/claim", post(work::work_claim))
+        .route("/api/work/ship", post(work::work_ship))
+        .route("/admin/work/approve", get(work::admin_approve))
         .route("/api/collab/session", get(collab_session_info))
         .route("/api/collab/sub/checkout", post(collab_sub_checkout))
         .route("/api/product/collab/:slug", get(api_product_collab))

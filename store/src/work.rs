@@ -1,0 +1,534 @@
+// work.rs — 在宅ワーカー向け「音コイン」フルフィルメント・ジョブ基盤。
+//
+// manual ルート(NFC音コイン)の注文を、在宅ワーカーが自分のスマホで
+// NFC書込→検品→梱包→発送できるジョブキューにする。
+//   /work               … 求人LP(公開)。応募フォーム付き
+//   POST /api/work/apply … 応募(承認待ち) → Telegramで運営に通知
+//   GET  /admin/work/approve?token=&id= … 運営承認 → worker_token発行+メール
+//   GET  /work/queue?token= … ワーカー専用キュー(着手/発送完了)
+//   POST /api/work/claim … 仕事を引き受ける(原子的: manual_pending→manual_assigned)
+//   POST /api/work/ship  … 発送完了(追跡番号) → 顧客へ発送メール+台帳記帳
+//
+// 注文ステータスは catalog_orders.status を単一ソースにする(契約準拠):
+//   manual_pending → manual_assigned → manual_shipped
+// ワーカー帰属・報酬は work_assignments(注文1行=1ジョブ)に持つ。
+// 報酬単価は env WORK_FEE_JPY (既定 ¥300/件)。
+
+use axum::{
+    extract::{Form, Query, State},
+    http::StatusCode,
+    response::{IntoResponse, Redirect, Response},
+};
+use serde::Deserialize;
+use std::env;
+
+use crate::Db;
+
+fn fee_jpy() -> i64 {
+    env::var("WORK_FEE_JPY").ok().and_then(|v| v.parse().ok()).unwrap_or(300)
+}
+
+fn ensure_tables(conn: &rusqlite::Connection) {
+    let _ = conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS work_workers (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            email       TEXT UNIQUE NOT NULL,
+            name        TEXT NOT NULL,
+            region      TEXT,
+            token       TEXT UNIQUE,
+            status      TEXT NOT NULL DEFAULT 'pending',
+            created_at  TEXT DEFAULT (datetime('now')),
+            approved_at TEXT
+         );
+         CREATE TABLE IF NOT EXISTS work_assignments (
+            order_id   INTEGER PRIMARY KEY,
+            worker_id  INTEGER NOT NULL,
+            fee_jpy    INTEGER NOT NULL,
+            claimed_at TEXT DEFAULT (datetime('now')),
+            shipped_at TEXT,
+            tracking   TEXT
+         );",
+    );
+}
+
+/// description_ja の "oto.html?s=KEY" 規約から NFC 書込URLを得る
+/// (catalog.rs manual ルートと同じ規約)。
+fn encode_url_of(desc: &str) -> Option<String> {
+    desc.find("oto.html?s=").map(|p| &desc[p + "oto.html?s=".len()..]).and_then(|rest| {
+        let k: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+            .collect();
+        if k.is_empty() { None } else { Some(format!("https://mu.koe.live/oto.html?s={}", k)) }
+    })
+}
+
+fn esc(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
+fn page(title: &str, body: &str) -> Response {
+    let html = format!(
+        r#"<!doctype html><html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>{title}｜MU</title>
+<style>
+:root{{--ink:#111;--sub:#666;--line:#e5e5e5;--accent:#1f8a4c}}
+body{{font-family:-apple-system,"Hiragino Sans",sans-serif;color:var(--ink);max-width:640px;margin:0 auto;padding:32px 20px 80px;line-height:1.9}}
+h1{{font-size:24px;margin:0 0 4px}} h2{{font-size:17px;margin:36px 0 8px}}
+.eyebrow{{font-size:12px;letter-spacing:.18em;color:var(--sub)}}
+.card{{border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:14px 0}}
+.muted{{color:var(--sub);font-size:13px}}
+.btn{{display:inline-block;background:var(--ink);color:#fff;border:0;border-radius:8px;padding:11px 20px;font-size:14px;font-weight:700;cursor:pointer;text-decoration:none}}
+.btn.green{{background:var(--accent)}}
+input,select{{font-size:15px;padding:10px 12px;border:1px solid #ccc;border-radius:8px;width:100%;box-sizing:border-box;margin:4px 0 12px}}
+table{{border-collapse:collapse;font-size:13.5px}} td{{padding:2px 12px 2px 0;vertical-align:top}} td:first-child{{color:var(--sub);white-space:nowrap}}
+ol li{{margin:6px 0}}
+.tag{{display:inline-block;font-size:11px;border:1px solid var(--line);border-radius:99px;padding:1px 10px;color:var(--sub)}}
+.tag.mine{{border-color:var(--accent);color:var(--accent);font-weight:700}}
+pre{{white-space:pre-wrap;font-family:inherit;margin:0}}
+</style></head><body>{body}</body></html>"#,
+    );
+    ([(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")], html).into_response()
+}
+
+async fn send_resend(to: &str, subject: &str, html: String) -> bool {
+    let Ok(key) = env::var("RESEND_API_KEY") else { return false };
+    let payload = serde_json::json!({
+        "from": "MU おしごと <noreply@wearmu.com>",
+        "to": [to],
+        "subject": subject,
+        "html": html,
+    });
+    reqwest::Client::new()
+        .post("https://api.resend.com/emails")
+        .bearer_auth(&key)
+        .json(&payload)
+        .send()
+        .await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
+}
+
+// ── GET /work — 求人LP ──────────────────────────────────────────────────
+pub async fn work_page() -> Response {
+    let fee = fee_jpy();
+    let body = format!(
+        r#"<div class="eyebrow">MU — おうちでできる仕事</div>
+<h1>音コインを、つくって届ける。</h1>
+<p>MUの「音コイン」(かざすと音が鳴るNFCコイン・¥1,800)を、<b>自宅でNFC書込→検品→梱包→発送</b>する出来高制のお仕事です。1件あたり10分ほど。</p>
+
+<div class="card">
+<h2 style="margin-top:0">仕事の流れ</h2>
+<ol>
+<li><b>キット受取</b> — ブランクのNFCコイン・封筒・宛名シールをまとめてお送りします</li>
+<li><b>注文が入る</b> — あなた専用の仕事キューに表示されます</li>
+<li><b>NFC書込</b> — スマホの無料アプリ(NFC Tools)で指定URLを書き込み(約30秒)</li>
+<li><b>検品</b> — 自分のスマホでかざして音が鳴るか確認</li>
+<li><b>梱包・発送</b> — 封筒に入れて宛名を貼り、ポスト投函(クリックポスト等)</li>
+<li><b>完了報告</b> — 追跡番号を入力したら完了。お客様への発送メールは自動送信</li>
+</ol>
+</div>
+
+<table>
+<tr><td>報酬</td><td><b>¥{fee} / 件</b> + 送料実費(月末締め・翌月払い)</td></tr>
+<tr><td>必要なもの</td><td>NFC対応スマホ(iPhone 7以降 / 大半のAndroid)・ポストに行ける環境</td></tr>
+<tr><td>時間</td><td>完全に自分のペース。引き受けた分だけ。ノルマなし</td></tr>
+<tr><td>場所</td><td>日本国内どこでも</td></tr>
+</table>
+
+<h2>応募する</h2>
+<form method="POST" action="/api/work/apply" class="card">
+<label>お名前<input name="name" required maxlength="60" placeholder="山田 はなこ"></label>
+<label>メールアドレス<input name="email" type="email" required maxlength="120" placeholder="you@example.com"></label>
+<label>お住まいの都道府県<input name="region" maxlength="20" placeholder="北海道"></label>
+<button class="btn" type="submit">応募する</button>
+<p class="muted">承認されると、仕事キューのリンクをメールでお送りします。</p>
+</form>
+<p class="muted">MU(株式会社イネブラ)・業務委託。質問は info@enablerdao.com へ。</p>"#,
+    );
+    page("おうちでできる仕事 — 音コイン", &body)
+}
+
+// ── POST /api/work/apply ────────────────────────────────────────────────
+#[derive(Deserialize)]
+pub struct ApplyForm {
+    pub name: String,
+    pub email: String,
+    #[serde(default)]
+    pub region: String,
+}
+
+pub async fn work_apply(State(db): State<Db>, Form(f): Form<ApplyForm>) -> Response {
+    let name = f.name.trim().to_string();
+    let email = f.email.trim().to_lowercase();
+    let region = f.region.trim().to_string();
+    if name.is_empty() || !email.contains('@') {
+        return page("入力エラー", "<h1>お名前とメールアドレスを入力してください</h1><p><a href=\"/work\">戻る</a></p>");
+    }
+    let worker_id: i64 = {
+        let conn = db.lock().unwrap();
+        ensure_tables(&conn);
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO work_workers (email, name, region) VALUES (?,?,?)",
+            rusqlite::params![email, name, region],
+        );
+        conn.query_row(
+            "SELECT id FROM work_workers WHERE email=?",
+            rusqlite::params![email],
+            |r| r.get(0),
+        )
+        .unwrap_or(0)
+    };
+    let admin = env::var("ADMIN_TOKEN").unwrap_or_default();
+    let _ = crate::send_telegram_message(&format!(
+        "🧵 *work応募* (音コイン在宅ワーカー)\n{} <{}> {}\n承認→ https://wearmu.com/admin/work/approve?id={}&token={}",
+        name, email, region, worker_id, admin
+    ))
+    .await;
+    page(
+        "応募ありがとうございます",
+        "<h1>応募を受け付けました。</h1><p>内容を確認して、承認されると<b>仕事キューのリンクをメール</b>でお送りします。少しお待ちください。</p>",
+    )
+}
+
+// ── GET /admin/work/approve?token=&id= ──────────────────────────────────
+#[derive(Deserialize)]
+pub struct ApproveQuery {
+    pub token: String,
+    pub id: i64,
+}
+
+pub async fn admin_approve(State(db): State<Db>, Query(q): Query<ApproveQuery>) -> Response {
+    let expected = env::var("ADMIN_TOKEN").unwrap_or_default();
+    if expected.is_empty() || q.token != expected {
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    }
+    let (email, name, token): (String, String, String) = {
+        let conn = db.lock().unwrap();
+        ensure_tables(&conn);
+        let row: Option<(String, String, Option<String>)> = conn
+            .query_row(
+                "SELECT email, name, token FROM work_workers WHERE id=?",
+                rusqlite::params![q.id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .ok();
+        let Some((email, name, existing)) = row else {
+            return (StatusCode::NOT_FOUND, "worker not found").into_response();
+        };
+        // 冪等: 既に承認済みなら既存トークンを再利用(再メールのみ)
+        let token = existing.unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
+        let _ = conn.execute(
+            "UPDATE work_workers SET status='active', token=?, approved_at=datetime('now') WHERE id=?",
+            rusqlite::params![token, q.id],
+        );
+        (email, name, token)
+    };
+    let queue_url = format!("https://wearmu.com/work/queue?token={}", token);
+    let emailed = send_resend(
+        &email,
+        "【MU おしごと】承認されました — 仕事キューのご案内",
+        format!(
+            r#"<div style="font-family:sans-serif;line-height:1.8"><p>{}さん</p>
+<p>音コインのお仕事、承認されました。下のリンクがあなた専用の仕事キューです(ブックマーク推奨・他の人に共有しないでください)。</p>
+<p><a href="{}" style="background:#111;color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:700">仕事キューを開く</a></p>
+<p>最初のキット(ブランクコイン・封筒・宛名シール)は別途お送りします。<br>— MU</p></div>"#,
+            esc(&name),
+            queue_url
+        ),
+    )
+    .await;
+    page(
+        "承認しました",
+        &format!(
+            "<h1>承認しました。</h1><p>{} &lt;{}&gt; に仕事キューのリンクを{}。</p><p class=\"muted\">キット(ブランクコイン・封筒)の発送を忘れずに。</p>",
+            esc(&name),
+            esc(&email),
+            if emailed { "メール送信しました" } else { "送信できませんでした(RESEND未設定?)。手動で共有してください" }
+        ),
+    )
+}
+
+// ── GET /work/queue?token= ──────────────────────────────────────────────
+#[derive(Deserialize)]
+pub struct QueueQuery {
+    pub token: String,
+}
+
+struct JobRow {
+    order_id: i64,
+    sku: String,
+    label: String,
+    encode_url: Option<String>,
+    status: String,
+    ship_json: String,
+    assigned_to: Option<i64>,
+    tracking: Option<String>,
+}
+
+fn worker_of(conn: &rusqlite::Connection, token: &str) -> Option<(i64, String)> {
+    if token.is_empty() {
+        return None;
+    }
+    conn.query_row(
+        "SELECT id, name FROM work_workers WHERE token=? AND status='active'",
+        rusqlite::params![token],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+    .ok()
+}
+
+/// shipping_address_json から表示用住所を作る。full=false なら市区までに丸める
+/// (引き受ける前のワーカーに全住所を見せない)。
+fn render_addr(ship_json: &str, full: bool) -> String {
+    let v: serde_json::Value = serde_json::from_str(ship_json).unwrap_or_default();
+    let addr = &v["address"];
+    let name = v["name"].as_str().unwrap_or("");
+    let g = |k: &str| addr[k].as_str().unwrap_or("");
+    if full {
+        format!(
+            "{}\n〒{} {} {} {} {}",
+            name,
+            g("postal_code"),
+            g("state"),
+            g("city"),
+            g("line1"),
+            g("line2")
+        )
+    } else {
+        format!("{} {} 在住のお客様", g("state"), g("city"))
+    }
+}
+
+pub async fn work_queue(State(db): State<Db>, Query(q): Query<QueueQuery>) -> Response {
+    let fee = fee_jpy();
+    let (worker_id, worker_name, jobs, shipped_count, earned): (i64, String, Vec<JobRow>, i64, i64) = {
+        let conn = db.lock().unwrap();
+        ensure_tables(&conn);
+        let Some((wid, wname)) = worker_of(&conn, &q.token) else {
+            return page("リンクが無効です", "<h1>このリンクは無効です</h1><p>承認メールのリンクをご確認ください。応募は <a href=\"/work\">/work</a> から。</p>");
+        };
+        let mut stmt = conn
+            .prepare(
+                "SELECT o.id, o.sku, p.label, p.description_ja, o.status,
+                        COALESCE(o.shipping_address_json,'{}'), a.worker_id, a.tracking
+                 FROM catalog_orders o
+                 JOIN catalog_products p ON p.sku = o.sku
+                 LEFT JOIN work_assignments a ON a.order_id = o.id
+                 WHERE p.fulfillment_route='manual'
+                   AND o.status IN ('manual_pending','manual_assigned')
+                 ORDER BY o.created_at ASC",
+            )
+            .unwrap();
+        let jobs: Vec<JobRow> = stmt
+            .query_map([], |r| {
+                let desc: String = r.get(3)?;
+                Ok(JobRow {
+                    order_id: r.get(0)?,
+                    sku: r.get(1)?,
+                    label: r.get(2)?,
+                    encode_url: encode_url_of(&desc),
+                    status: r.get(4)?,
+                    ship_json: r.get(5)?,
+                    assigned_to: r.get(6)?,
+                    tracking: r.get(7)?,
+                })
+            })
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        let (cnt, sum): (i64, i64) = conn
+            .query_row(
+                "SELECT COUNT(*), COALESCE(SUM(fee_jpy),0) FROM work_assignments WHERE worker_id=? AND shipped_at IS NOT NULL",
+                rusqlite::params![wid],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap_or((0, 0));
+        (wid, wname, jobs, cnt, sum)
+    };
+
+    let mut cards = String::new();
+    for j in &jobs {
+        let mine = j.assigned_to == Some(worker_id);
+        let enc = j
+            .encode_url
+            .as_deref()
+            .map(|u| format!("<a href=\"{0}\">{0}</a>", esc(u)))
+            .unwrap_or_else(|| "<span class=\"muted\">(書込URL不明 → 運営に確認)</span>".into());
+        if j.status == "manual_pending" {
+            cards.push_str(&format!(
+                r#"<div class="card"><span class="tag">募集中</span>
+<h2 style="margin:8px 0 4px">{}</h2>
+<table><tr><td>届け先</td><td>{}</td></tr><tr><td>報酬</td><td>¥{}</td></tr></table>
+<form method="POST" action="/api/work/claim" style="margin-top:10px">
+<input type="hidden" name="token" value="{}"><input type="hidden" name="order_id" value="{}">
+<button class="btn green" type="submit">この仕事を引き受ける</button></form></div>"#,
+                esc(&j.label),
+                esc(&render_addr(&j.ship_json, false)),
+                fee_jpy(),
+                esc(&q.token),
+                j.order_id
+            ));
+        } else if mine {
+            cards.push_str(&format!(
+                r#"<div class="card"><span class="tag mine">あなたが担当中</span>
+<h2 style="margin:8px 0 4px">{}</h2>
+<table>
+<tr><td>① 書込URL</td><td>{}</td></tr>
+<tr><td>② 検品</td><td>かざして音が鳴ればOK</td></tr>
+<tr><td>③ 届け先</td><td><pre>{}</pre></td></tr>
+<tr><td>SKU</td><td class="muted">{}</td></tr>
+</table>
+<form method="POST" action="/api/work/ship" style="margin-top:10px">
+<input type="hidden" name="token" value="{}"><input type="hidden" name="order_id" value="{}">
+<label>追跡番号(クリックポスト等)<input name="tracking" required maxlength="40" placeholder="1234-5678-9012"></label>
+<button class="btn" type="submit">発送完了にする</button></form></div>"#,
+                esc(&j.label),
+                enc,
+                esc(&render_addr(&j.ship_json, true)),
+                esc(&j.sku),
+                esc(&q.token),
+                j.order_id
+            ));
+        } else {
+            cards.push_str(&format!(
+                r#"<div class="card"><span class="tag">他のワーカーが担当中</span>
+<h2 style="margin:8px 0 4px">{}</h2><p class="muted">{}</p></div>"#,
+                esc(&j.label),
+                j.tracking.as_deref().map(esc).unwrap_or_default()
+            ));
+        }
+    }
+    if jobs.is_empty() {
+        cards = "<div class=\"card\"><p>いまは仕事がありません。注文が入るとここに表示されます。</p></div>".into();
+    }
+
+    let body = format!(
+        r#"<div class="eyebrow">MU — 仕事キュー</div>
+<h1>{}さんのキュー</h1>
+<p class="muted">完了 {} 件 ／ 報酬累計 <b>¥{}</b>(月末締め・翌月払い)・単価 ¥{}/件</p>
+{}
+<h2>書込のやり方(初回だけ読む)</h2>
+<ol class="muted" style="font-size:13.5px">
+<li>App Store / Google Play で「<b>NFC Tools</b>」(無料)を入れる</li>
+<li>「書く」→「レコード追加」→「URL」→ 上の①のURLを貼り付け→「書く」→コインにかざす</li>
+<li>書込後「その他」→「読み取り専用にする」でロック(改ざん防止・必須)</li>
+<li>自分のスマホをかざして音のページが開けば検品OK</li>
+</ol>"#,
+        esc(&worker_name),
+        shipped_count,
+        earned,
+        fee,
+        cards
+    );
+    page("仕事キュー", &body)
+}
+
+// ── POST /api/work/claim ────────────────────────────────────────────────
+#[derive(Deserialize)]
+pub struct ClaimForm {
+    pub token: String,
+    pub order_id: i64,
+}
+
+pub async fn work_claim(State(db): State<Db>, Form(f): Form<ClaimForm>) -> Response {
+    let claimed: Result<String, &str> = {
+        let conn = db.lock().unwrap();
+        ensure_tables(&conn);
+        let Some((wid, wname)) = worker_of(&conn, &f.token) else {
+            return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+        };
+        // 原子的に確保: pending のときだけ assigned へ(早い者勝ち・二重取り防止)
+        let n = conn
+            .execute(
+                "UPDATE catalog_orders SET status='manual_assigned' WHERE id=? AND status='manual_pending'",
+                rusqlite::params![f.order_id],
+            )
+            .unwrap_or(0);
+        if n == 1 {
+            let _ = conn.execute(
+                "INSERT OR REPLACE INTO work_assignments (order_id, worker_id, fee_jpy) VALUES (?,?,?)",
+                rusqlite::params![f.order_id, wid, fee_jpy()],
+            );
+            Ok(wname)
+        } else {
+            Err("conflict")
+        }
+    };
+    if let Ok(wname) = claimed {
+        let _ = crate::send_telegram_message(&format!(
+            "🧵 work: order#{} を {} が引き受けました",
+            f.order_id, wname
+        ))
+        .await;
+    }
+    Redirect::to(&format!("/work/queue?token={}", f.token)).into_response()
+}
+
+// ── POST /api/work/ship ─────────────────────────────────────────────────
+#[derive(Deserialize)]
+pub struct ShipForm {
+    pub token: String,
+    pub order_id: i64,
+    pub tracking: String,
+}
+
+pub async fn work_ship(State(db): State<Db>, Form(f): Form<ShipForm>) -> Response {
+    let tracking = f.tracking.trim().to_string();
+    if tracking.is_empty() {
+        return (StatusCode::BAD_REQUEST, "tracking required").into_response();
+    }
+    let done: Option<(String, String, String)> = {
+        let conn = db.lock().unwrap();
+        ensure_tables(&conn);
+        let Some((wid, wname)) = worker_of(&conn, &f.token) else {
+            return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+        };
+        // 自分の担当 & 未発送のときだけ完了にできる
+        let n = conn
+            .execute(
+                "UPDATE work_assignments SET shipped_at=datetime('now'), tracking=?
+                 WHERE order_id=? AND worker_id=? AND shipped_at IS NULL",
+                rusqlite::params![tracking, f.order_id, wid],
+            )
+            .unwrap_or(0);
+        if n != 1 {
+            None
+        } else {
+            let _ = conn.execute(
+                "UPDATE catalog_orders SET status='manual_shipped' WHERE id=? AND status='manual_assigned'",
+                rusqlite::params![f.order_id],
+            );
+            conn.query_row(
+                "SELECT COALESCE(o.customer_email,''), p.label, ? FROM catalog_orders o JOIN catalog_products p ON p.sku=o.sku WHERE o.id=?",
+                rusqlite::params![wname, f.order_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .ok()
+        }
+    };
+    if let Some((email, label, wname)) = done {
+        if !email.is_empty() {
+            let _ = send_resend(
+                &email,
+                "【MU】音コインを発送しました",
+                format!(
+                    r#"<div style="font-family:sans-serif;line-height:1.8"><p>{} を発送しました。</p>
+<p>追跡番号: <b>{}</b>(クリックポスト等)</p>
+<p>届いたらスマホをかざしてみてください。音が鳴ります。<br>— MU</p></div>"#,
+                    esc(&label),
+                    esc(&tracking)
+                ),
+            )
+            .await;
+        }
+        let _ = crate::send_telegram_message(&format!(
+            "📮 work: order#{} 発送完了 by {} (追跡 {})",
+            f.order_id, wname, tracking
+        ))
+        .await;
+    }
+    Redirect::to(&format!("/work/queue?token={}", f.token)).into_response()
+}
