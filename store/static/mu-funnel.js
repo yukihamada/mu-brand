@@ -50,6 +50,12 @@
   function send(event, extra) {
     if (ALLOWED.indexOf(event) === -1) return;
     var id = getIdentity();
+    // A/Bテスト: ページが body[data-ab] を立てていれば、全イベントに variant を刻む。
+    // これで pageview/cta_click を variant 別に集計できる（勝者判定の母数）。
+    try {
+      var ab = document.body && document.body.getAttribute('data-ab');
+      if (ab) { extra = extra || {}; if (extra.ab === undefined) extra.ab = ab; }
+    } catch (_) {}
     var body = {
       visitor_id: id.visitor_id,
       session_id: id.session_id,

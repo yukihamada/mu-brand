@@ -664,7 +664,8 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
   <div class="hero-bg" id="hero-bg"></div>
   <!-- Datestamp + origin. Numbers come first per Constitution §1. -->
   <div class="hero-eyebrow" id="hero-today" style="font-variant-numeric:tabular-nums">— · — TESHIKAGA · HOKKAIDO</div>
-  <div class="hero-mu" aria-label="MU">MU</div>
+  <div class="hero-mu" aria-label="MU" id="hero-mu">MU</div>
+  <div id="ab-make-slot"></div>
 
   <!-- Line 1: the number. Per Constitution §1: numbers over adjectives. -->
   <div style="font-size:clamp(34px,5.4vw,58px);font-weight:200;letter-spacing:0.02em;line-height:1.15;color:#F5F5F0;text-align:center;margin-top:22px;font-variant-numeric:tabular-nums">
@@ -696,7 +697,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
        is the passive AI-drop path (買う); this is the active self-creation path for the
        「自分の言葉で作りたい」persona. Copy is grounded in what /make actually does
        (ひとこと→即デザイン→その場で買える, status=review). No fabricated numbers. -->
-  <div style="margin-top:26px;text-align:center;padding:0 24px">
+  <div id="hero-make-cta" style="margin-top:26px;text-align:center;padding:0 24px">
     <a href="/make" data-funnel="cta_click" data-funnel-cta="hero_make"
        style="display:inline-block;text-decoration:none;color:#0A0A0A;background:#e6c449;font-size:13px;font-weight:700;letter-spacing:0.06em;padding:13px 26px;border-radius:3px">
       ✦ ひとこと言うだけで、自分のTシャツをAIが作る → /make
@@ -2855,5 +2856,36 @@ if ('serviceWorker' in navigator) {
 }
 </script>
   <script src="/pt_gate.js" defer></script>
+  <!-- ── トップA/B/C: 「作る」導線の見せ方を最適化（最多アクセスページ） ──
+       a=現行(買う主役) / b=ヒーロー最上部に大きな作るCTA / c=ベネフィット型コピー。
+       割当は visitor_id の決定的3分割。勝者(make CTRのUU100到達)は cv_config['home_winner']
+       でサーバが固定。mu-funnel.js が body[data-ab] を全イベントに刻む。 -->
+  <script>
+  (function(){
+    try{
+      var SV='__SERVER_VARIANT__';
+      function vid(){try{var r=localStorage.getItem('mu_funnel_v1');if(r){var j=JSON.parse(r);if(j&&j.visitor_id)return j.visitor_id;}}catch(e){}return '';}
+      function h3(s){var h=0;for(var i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))>>>0;return ['a','b','c'][h%3];}
+      var MKV=(SV==='a'||SV==='b'||SV==='c')?SV:h3(vid()||'a');
+      document.body.setAttribute('data-ab',MKV);
+      var slot=document.getElementById('ab-make-slot');
+      var orig=document.getElementById('hero-make-cta');
+      if(MKV==='b'&&slot){
+        // 作るを主役に: ファーストビュー最上部へ大きく。
+        slot.innerHTML='<div style="text-align:center;padding:0 24px;margin-top:18px">'
+          +'<a href="/make" data-funnel="cta_click" data-funnel-cta="hero_make" '
+          +'style="display:inline-block;text-decoration:none;color:#0A0A0A;background:#e6c449;'
+          +'font-size:15px;font-weight:800;letter-spacing:0.04em;padding:16px 30px;border-radius:6px;box-shadow:0 4px 24px rgba(230,196,73,.3)">'
+          +'✦ 言うだけで、自分のTシャツをAIが10秒で作る →</a>'
+          +'<div style="font-size:11px;opacity:.55;margin-top:8px">ログイン不要・在庫ゼロ・1枚から</div></div>';
+        if(orig)orig.style.display='none';
+      }else if(MKV==='c'&&orig){
+        // ベネフィット型コピー（無料・速さを前面に）。
+        var a=orig.querySelector('a');
+        if(a)a.innerHTML='✦ 無料でデザイン → 気に入ったら1枚から買える';
+      }
+    }catch(e){}
+  })();
+  </script>
 </body>
 </html>

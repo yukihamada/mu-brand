@@ -24046,6 +24046,17 @@ async fn index(State(db): State<Db>, is_en: bool) -> Html<String> {
         html
     };
 
+    // トップA/B/C: 勝者確定済みなら全員その案をサーバが焼く（JS割当を上書き）。
+    // 未確定なら __SERVER_VARIANT__ を空にし、クライアントJSが visitor で3分割。
+    let home_winner = {
+        let conn = db.lock().unwrap();
+        conn.query_row("SELECT value FROM cv_config WHERE key='home_winner'", [], |r| r.get::<_, String>(0))
+            .ok()
+            .filter(|v| v == "a" || v == "b" || v == "c")
+            .unwrap_or_default()
+    };
+    let html = html.replace("__SERVER_VARIANT__", &home_winner);
+
     Html(html)
 }
 
@@ -67915,6 +67926,7 @@ async fn main() {
         .route("/admin/email-rewrites/:id/decide", post(admin_email_rewrites_decide))
         .route("/webhooks/resend", post(webhook_resend))
         .route("/api/v1/event", post(api_funnel_event))
+        .route("/api/home/ab", get(api_home_ab))
         .route("/admin/auth_log", get(admin_auth_log_view))
         .route("/healthz", get(healthz))
         .route("/api/admin/agent_run", post(admin_agent_run))
@@ -77155,6 +77167,10 @@ async fn api_funnel_event(
     if !ip.is_empty() {
         extra_obj.insert("_ip".into(), serde_json::Value::String(ip));
     }
+    // A/B勝者判定で使う2値を move 前に取り出す。
+    let ab_cta = extra_obj.get("cta").and_then(|v| v.as_str()).map(String::from);
+    let ab_variant = extra_obj.get("ab").and_then(|v| v.as_str())
+        .filter(|a| *a == "a" || *a == "b" || *a == "c").map(String::from);
     let extra_s = if extra_obj.is_empty() { None }
                   else { Some(serde_json::Value::Object(extra_obj).to_string()) };
     let conn = db.lock().unwrap();
@@ -77165,7 +77181,66 @@ async fn api_funnel_event(
         params![req.visitor_id, req.session_id, req.event, req.path,
                 req.referrer, req.product_id, extra_s, chrono_now()],
     );
+    // トップA/B/C 勝者自動採用: hero_make の cta_click が来たら、勝者未確定の間だけ
+    // バリアント別の「make CTA を押したユニーク訪問者数」を集計し、最初に閾値(100)へ
+    // 到達した案を cv_config['home_winner'] に焼く（以後 home() が全員へ固定）。
+    if req.event == "cta_click" && req.path == "/" {
+        let is_make = ab_cta.as_deref() == Some("hero_make");
+        let has_ab = ab_variant.is_some();
+        if is_make && has_ab {
+            let winner_set: bool = conn.query_row(
+                "SELECT 1 FROM cv_config WHERE key='home_winner'", [], |_| Ok(true)).unwrap_or(false);
+            if !winner_set {
+                if let Ok(mut stmt) = conn.prepare(
+                    "SELECT json_extract(extra,'$.ab') v,
+                            COUNT(DISTINCT visitor_id) uu
+                     FROM funnel_events
+                     WHERE event='cta_click' AND path='/'
+                       AND json_extract(extra,'$.cta')='hero_make'
+                       AND json_extract(extra,'$.ab') IN ('a','b','c')
+                     GROUP BY v",
+                ) {
+                    let rows: Vec<(String, i64)> = stmt
+                        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+                        .map(|it| it.filter_map(|r| r.ok()).collect())
+                        .unwrap_or_default();
+                    if let Some((win, uu)) = rows.iter().find(|(_, uu)| *uu >= 100) {
+                        cv_set(&conn, "home_winner", win,
+                            &format!("home A/B/C: variant {} reached {} unique make-CTA clickers", win, uu));
+                    }
+                }
+            }
+        }
+    }
     StatusCode::NO_CONTENT.into_response()
+}
+
+/// GET /api/home/ab — トップA/B/Cの現況（各案: makeCTRのUU・クリック総数・PV UU・勝者）。
+async fn api_home_ab(State(db): State<Db>) -> Response {
+    let conn = db.lock().unwrap();
+    let winner = conn.query_row("SELECT value FROM cv_config WHERE key='home_winner'", [], |r| r.get::<_, String>(0)).ok();
+    // バリアント別: make CTA を押したユニーク訪問者数 + クリック総数。
+    let make_uu: Vec<(String,i64,i64)> = conn.prepare(
+        "SELECT json_extract(extra,'$.ab') v, COUNT(DISTINCT visitor_id), COUNT(*)
+         FROM funnel_events WHERE event='cta_click' AND path='/'
+           AND json_extract(extra,'$.cta')='hero_make'
+           AND json_extract(extra,'$.ab') IN ('a','b','c') GROUP BY v").ok()
+        .and_then(|mut s| s.query_map([], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).ok().map(|it| it.filter_map(|r| r.ok()).collect()))
+        .unwrap_or_default();
+    let pv_uu: Vec<(String,i64)> = conn.prepare(
+        "SELECT json_extract(extra,'$.ab') v, COUNT(DISTINCT visitor_id)
+         FROM funnel_events WHERE event='pageview' AND path='/'
+           AND json_extract(extra,'$.ab') IN ('a','b','c') GROUP BY v").ok()
+        .and_then(|mut s| s.query_map([], |r| Ok((r.get(0)?,r.get(1)?))).ok().map(|it| it.filter_map(|r| r.ok()).collect()))
+        .unwrap_or_default();
+    let variants: Vec<serde_json::Value> = ["a","b","c"].iter().map(|v| {
+        let (cuu, clicks) = make_uu.iter().find(|(x,_,_)| x==v).map(|(_,u,c)| (*u,*c)).unwrap_or((0,0));
+        let puu = pv_uu.iter().find(|(x,_)| x==v).map(|(_,u)| *u).unwrap_or(0);
+        let ctr = if puu>0 { (cuu as f64)/(puu as f64) } else { 0.0 };
+        serde_json::json!({"variant": v, "make_click_visitors": cuu, "make_clicks": clicks,
+            "pageview_visitors": puu, "ctr": (ctr*1000.0).round()/1000.0})
+    }).collect();
+    axum::Json(serde_json::json!({"ok": true, "winner": winner, "threshold": 100, "variants": variants})).into_response()
 }
 
 /// GET /admin/insights?token=… — sensing dashboard (last 7 days)
