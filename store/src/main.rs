@@ -21500,6 +21500,99 @@ async fn admin_backfill_mu_purchases_from_catalog(
     })).into_response()
 }
 
+/// GET /api/admin/blob_migrate?kind=&limit= — move image BLOBs out of SQLite
+/// into R2, batch by batch. The 1.1GB DB (you_designs 652MB + products 307MB
+/// of BLOBs) made every VACUUM-INTO backup saturate the shared-cpu disk for
+/// 60-90s and blackhole the site. Per row: upload → GET back → byte-compare
+/// → only then swap the URL in and NULL the blob. Idempotent; re-run until
+/// remaining=0. kinds: you_image | you_print | product_design |
+/// product_mockup | collab_image.
+async fn admin_blob_migrate(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/blob_migrate").await { return r; }
+    let kind = q.get("kind").cloned().unwrap_or_default();
+    let limit: i64 = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(10).clamp(1, 40);
+
+    // (select-blob-sql, r2-key-template, update-sql, remaining-sql)
+    let (sel, keyt, upd, rem): (&str, &str, &str, &str) = match kind.as_str() {
+        "you_image" => (
+            "SELECT id, image_bytes, COALESCE(image_mime,'image/png') FROM you_designs
+             WHERE image_bytes IS NOT NULL ORDER BY id LIMIT ?",
+            "you/{id}.png",
+            "UPDATE you_designs SET image_url=?, image_bytes=NULL, image_mime=NULL, updated_at=datetime('now') WHERE id=?",
+            "SELECT COUNT(*) FROM you_designs WHERE image_bytes IS NOT NULL"),
+        "you_print" => (
+            "SELECT id, print_bytes, COALESCE(print_mime,'image/png') FROM you_designs
+             WHERE print_bytes IS NOT NULL ORDER BY id LIMIT ?",
+            "you/{id}_print.png",
+            "UPDATE you_designs SET print_url=?, print_bytes=NULL, print_mime=NULL, updated_at=datetime('now') WHERE id=?",
+            "SELECT COUNT(*) FROM you_designs WHERE print_bytes IS NOT NULL"),
+        "product_design" => (
+            "SELECT id, design_bytes, COALESCE(design_mime,'image/png') FROM products
+             WHERE design_bytes IS NOT NULL ORDER BY id LIMIT ?",
+            "products/{id}_design.png",
+            "UPDATE products SET design_url=?, design_bytes=NULL, design_mime=NULL WHERE id=?",
+            "SELECT COUNT(*) FROM products WHERE design_bytes IS NOT NULL"),
+        "product_mockup" => (
+            "SELECT id, mockup_bytes, COALESCE(mockup_mime,'image/png') FROM products
+             WHERE mockup_bytes IS NOT NULL ORDER BY id LIMIT ?",
+            "products/{id}_mockup.png",
+            "UPDATE products SET mockup_url=?, mockup_bytes=NULL, mockup_mime=NULL WHERE id=?",
+            "SELECT COUNT(*) FROM products WHERE mockup_bytes IS NOT NULL"),
+        "collab_image" => (
+            "SELECT id, image_bytes, COALESCE(image_mime,'image/png') FROM collab_products
+             WHERE image_bytes IS NOT NULL ORDER BY id LIMIT ?",
+            "collab/{id}.png",
+            "UPDATE collab_products SET image_url=?, image_bytes=NULL, image_mime=NULL WHERE id=?",
+            "SELECT COUNT(*) FROM collab_products WHERE image_bytes IS NOT NULL"),
+        _ => return (StatusCode::BAD_REQUEST,
+                     "kind must be you_image|you_print|product_design|product_mockup|collab_image").into_response(),
+    };
+
+    let rows: Vec<(i64, Vec<u8>, String)> = {
+        let conn = db.lock().unwrap();
+        conn.prepare(sel).ok()
+            .and_then(|mut s| s.query_map(params![limit], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?, r.get::<_, String>(2)?))
+            }).ok().map(|it| it.filter_map(|r| r.ok()).collect()))
+            .unwrap_or_default()
+    };
+
+    let mut migrated = 0usize;
+    let mut failed: Vec<serde_json::Value> = Vec::new();
+    for (id, bytes, mime) in rows {
+        let key = keyt.replace("{id}", &id.to_string());
+        let Some(url) = store_r2_bytes(&key, &bytes, &mime).await else {
+            failed.push(serde_json::json!({"id": id, "err": "r2 upload failed"}));
+            continue;
+        };
+        // 読み戻して完全一致を確認してから初めて BLOB を落とす ("ちゃんと")。
+        match fetch_image_bytes(&url).await {
+            Some((back, _)) if back == bytes => {
+                let conn = db.lock().unwrap();
+                match conn.execute(upd, params![url, id]) {
+                    Ok(_) => migrated += 1,
+                    Err(e) => failed.push(serde_json::json!({"id": id, "err": format!("db: {}", e)})),
+                }
+            }
+            Some(_) => failed.push(serde_json::json!({"id": id, "err": "verify mismatch"})),
+            None => failed.push(serde_json::json!({"id": id, "err": "verify fetch failed"})),
+        }
+        // shared-cpu の I/O を独占しない (1 行 ≈ 1MB read + 1MB up + 1MB down)
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    }
+    let remaining: i64 = {
+        let conn = db.lock().unwrap();
+        conn.query_row(rem, [], |r| r.get(0)).unwrap_or(-1)
+    };
+    axum::Json(serde_json::json!({
+        "kind": kind, "migrated": migrated, "failed": failed, "remaining": remaining,
+    })).into_response()
+}
+
 /// GET /api/admin/db_backup?token=… — stream a consistent SQLite snapshot.
 /// Uses `VACUUM INTO` so the copy is transactionally consistent even with
 /// concurrent writes. Pulled hourly by GH Actions and stored as a workflow
@@ -38071,22 +38164,32 @@ fn spawn_gemini_for_design(db: Db, design_id: i64) {
         match gemini::generate_tee(&tee).await {
             Ok(g) => {
                 let bytes_len = g.bytes.len();
+                // blob→R2 (2026-06-04): 画像は R2 が単一ソース。SQLite に
+                // BLOB を積むと DB が GB 級に肥大しバックアップ I/O で全停止
+                // する(実証済)。R2 不達時のみ旧来の BLOB にフォールバック。
+                let r2_key = format!("you/{}.png", design_id);
+                let r2_url = store_r2_bytes(&r2_key, &g.bytes, &g.mime).await;
+                let (url, blob, blob_mime): (String, Option<Vec<u8>>, Option<String>) = match r2_url {
+                    Some(u) => (u, None, None),
+                    None => (format!("/api/you/design/{}/image.png", design_id),
+                             Some(g.bytes.clone()), Some(g.mime.clone())),
+                };
                 {
                     let conn = db.lock().unwrap();
-                    let url = format!("/api/you/design/{}/image.png", design_id);
                     let r = conn.execute(
                         "UPDATE you_designs
                          SET image_bytes=?, image_mime=?, image_url=?,
                              gen_status='ready', gen_error=NULL, updated_at=?
                          WHERE id=?",
-                        params![g.bytes, g.mime, url, chrono_now(), design_id],
+                        params![blob, blob_mime, url, chrono_now(), design_id],
                     );
                     if let Err(e) = r {
                         eprintln!("[you/gemini] failed to persist design {}: {}", design_id, e);
                         return;
                     }
                 }
-                eprintln!("[you/gemini] design {} ready ({} bytes)", design_id, bytes_len);
+                eprintln!("[you/gemini] design {} ready ({} bytes → {})", design_id, bytes_len,
+                          if url.starts_with("https://") { "r2" } else { "blob-fallback" });
 
                 // Notify subscriber
                 let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
@@ -38152,16 +38255,24 @@ fn spawn_gemini_for_design(db: Db, design_id: i64) {
                 match gemini::generate_print_file(&tee).await {
                     Ok(pf) => {
                         let pf_len = pf.bytes.len();
+                        // blob→R2 (2026-06-04): print ファイルも R2 直行。
+                        let r2_key = format!("you/{}_print.png", design_id);
+                        let r2_url = store_r2_bytes(&r2_key, &pf.bytes, &pf.mime).await;
+                        let (purl, pblob, pmime): (Option<String>, Option<Vec<u8>>, Option<String>) = match r2_url {
+                            Some(u) => (Some(u), None, None),
+                            None => (None, Some(pf.bytes.clone()), Some(pf.mime.clone())),
+                        };
                         let c = db.lock().unwrap();
                         let r = c.execute(
                             "UPDATE you_designs
-                             SET print_bytes=?, print_mime=?,
+                             SET print_bytes=?, print_mime=?, print_url=?,
                                  print_gen_status='ready', print_gen_error=NULL, updated_at=?
                              WHERE id=?",
-                            params![pf.bytes, pf.mime, chrono_now(), design_id],
+                            params![pblob, pmime, purl, chrono_now(), design_id],
                         );
                         match r {
-                            Ok(_) => eprintln!("[you/print] design {} print file ready ({} bytes)", design_id, pf_len),
+                            Ok(_) => eprintln!("[you/print] design {} print file ready ({} bytes → {})", design_id, pf_len,
+                                               if pblob.is_none() { "r2" } else { "blob-fallback" }),
                             Err(e) => eprintln!("[you/print] failed to persist print {}: {}", design_id, e),
                         }
                     }
@@ -61032,19 +61143,20 @@ async fn you_image(
     State(db): State<Db>,
     Path(id): Path<i64>,
 ) -> Response {
-    let row: Option<(Option<Vec<u8>>, Option<String>, String)> = {
+    let row: Option<(Option<Vec<u8>>, Option<String>, String, Option<String>)> = {
         let conn = db.lock().unwrap();
         conn.query_row(
-            "SELECT image_bytes, image_mime, gen_status FROM you_designs WHERE id=?",
+            "SELECT image_bytes, image_mime, gen_status, image_url FROM you_designs WHERE id=?",
             params![id],
             |r| Ok((
                 r.get::<_,Option<Vec<u8>>>(0)?,
                 r.get::<_,Option<String>>(1)?,
                 r.get::<_,String>(2)?,
+                r.get::<_,Option<String>>(3)?,
             )),
         ).ok()
     };
-    let (bytes, mime, status) = match row {
+    let (bytes, mime, status, ext_url) = match row {
         Some(v) => v,
         None => return (StatusCode::NOT_FOUND, "design not found").into_response(),
     };
@@ -61059,6 +61171,12 @@ async fn you_image(
         h.insert(header::CACHE_CONTROL,
             HeaderValue::from_static("public, max-age=2592000, immutable"));
         return resp;
+    }
+
+    // blob→R2 移行後: bytes は NULL、image_url が恒久 R2 URL。自己参照
+    // (/api/you/design/…) はループするので絶対 https のみリダイレクト。
+    if let Some(u) = ext_url.as_deref().filter(|u| u.starts_with("https://")) {
+        return axum::response::Redirect::temporary(u).into_response();
     }
 
     // No bytes yet — return a 202 with a placeholder SVG so <img> still renders.
@@ -61091,21 +61209,22 @@ async fn you_print_image(
     State(db): State<Db>,
     Path(id): Path<i64>,
 ) -> Response {
-    let row: Option<(Option<Vec<u8>>, Option<String>, String)> = {
+    let row: Option<(Option<Vec<u8>>, Option<String>, String, Option<String>)> = {
         let conn = db.lock().unwrap();
         conn.query_row(
             "SELECT print_bytes, print_mime,
-                    COALESCE(print_gen_status,'pending')
+                    COALESCE(print_gen_status,'pending'), print_url
              FROM you_designs WHERE id=?",
             params![id],
             |r| Ok((
                 r.get::<_,Option<Vec<u8>>>(0)?,
                 r.get::<_,Option<String>>(1)?,
                 r.get::<_,String>(2)?,
+                r.get::<_,Option<String>>(3)?,
             )),
         ).ok()
     };
-    let (bytes, mime, status) = match row {
+    let (bytes, mime, status, ext_url) = match row {
         Some(v) => v,
         None => return (StatusCode::NOT_FOUND, "design not found").into_response(),
     };
@@ -61119,6 +61238,10 @@ async fn you_print_image(
         h.insert(header::CACHE_CONTROL,
             HeaderValue::from_static("public, max-age=2592000, immutable"));
         return resp;
+    }
+    // blob→R2 移行後のフォールバック (Printful はリダイレクトを追従する)。
+    if let Some(u) = ext_url.as_deref().filter(|u| u.starts_with("https://")) {
+        return axum::response::Redirect::temporary(u).into_response();
     }
     // No bytes yet — for Printful, return 202 so the auto-order retry path
     // can re-poll. For browsers, the body is a small SVG explaining state.
@@ -62656,6 +62779,11 @@ async fn main() {
         // Printful order tracking — set after a successful POST to /v2/orders.
         "ALTER TABLE you_designs ADD COLUMN printful_order_id TEXT",
         "ALTER TABLE you_designs ADD COLUMN printful_ordered_at TEXT",
+        // 2026-06-04 blob→R2 移行: print ファイルにも恒久 R2 URL を持たせる
+        // (mockup 側の image_url と対). 1.1GB SQLite の血肉だった BLOB が
+        // 毎時バックアップ I/O 全停止の根本原因 — 新規生成は R2 へ直行し、
+        // *_url が単一ソース。*_bytes は R2 不達時のフォールバックのみ。
+        "ALTER TABLE you_designs ADD COLUMN print_url TEXT",
         // ¥980/月 paid subscription tier (alternative to buying a MU shirt).
         "ALTER TABLE you_users ADD COLUMN stripe_customer_id TEXT",
         "ALTER TABLE you_users ADD COLUMN stripe_subscription_id TEXT",
@@ -66938,6 +67066,7 @@ async fn main() {
         .route("/api/admin/activate", post(activate_draft_product))
         .route("/api/admin/next_drop", get(admin_next_drop))
         .route("/api/admin/db_backup", get(admin_db_backup))
+        .route("/api/admin/blob_migrate", get(admin_blob_migrate))
         .route("/api/admin/recent_buyers", get(admin_recent_buyers))
         .route("/api/admin/reconcile_printful_status", post(admin_reconcile_printful_status))
         .route("/api/admin/backfill_mu_purchases_from_catalog", post(admin_backfill_mu_purchases_from_catalog))
