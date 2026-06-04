@@ -866,6 +866,301 @@ fn admin_token_present(headers: &HeaderMap, q: Option<&HashMap<String, String>>)
     }
 }
 
+// ─── Own-catalog management (mu-mcp ツールが呼ぶ REST 面) ────────────────
+// mu_list_mine / mu_sales / mu_upload_design / mu_update_product /
+// mu_retire_product の5ツールはここを叩く。シェイプは mu-mcp/src/tools.ts が
+// 期待するものに合わせてある（変えるときは両方）。
+
+/// `kind` は列ではなく SKU に焼かれている（BRAND-AGENT-<KIND>-<rand>）。
+/// whitelist と突き合わせて復元する。非エージェント SKU は None。
+fn kind_from_sku(sku: &str) -> Option<&'static str> {
+    let mid = sku.split("-AGENT-").nth(1)?; // e.g. "EVENT-TICKET-487c1988"
+    let mid = mid.rsplit_once('-').map(|(a, _)| a).unwrap_or(mid); // strip rand seed
+    let cand = mid.to_lowercase().replace('-', "_");
+    crate::catalog::agent_product_kinds()
+        .into_iter()
+        .map(|k| k.kind)
+        .find(|k| *k == cand)
+}
+
+/// GET /api/agent/products — 自分の全商品（全ストア横断）。
+pub async fn agent_list_products(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    let email = match require_email(&db, &headers, Some(&q)) { Ok(e) => e, Err(r) => return r };
+    let conn = db.lock().unwrap();
+    let mut stmt = match conn.prepare(
+        "SELECT p.sku, p.brand, p.label, p.retail_price_jpy,
+                COALESCE(p.status,''), COALESCE(p.design_file,'')
+         FROM catalog_products p
+         JOIN catalog_brands b ON b.slug = p.brand
+         WHERE LOWER(COALESCE(json_extract(b.config_json,'$.owner_email'),'')) = ?
+         ORDER BY p.rowid DESC LIMIT 500",
+    ) {
+        Ok(s) => s,
+        Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &format!("query: {e}")),
+    };
+    let rows = stmt
+        .query_map(rusqlite::params![email], |r| {
+            let sku: String = r.get(0)?;
+            Ok(serde_json::json!({
+                "sku": sku,
+                "store": r.get::<_, String>(1)?,
+                "label": r.get::<_, String>(2)?,
+                "kind": kind_from_sku(&sku).unwrap_or(""),
+                "retail_price_jpy": r.get::<_, i64>(3)?,
+                "status": r.get::<_, String>(4)?,
+                "design_file": r.get::<_, String>(5)?,
+                "pdp_url": format!("https://wearmu.com/shop/{sku}"),
+            }))
+        })
+        .map(|it| it.flatten().collect::<Vec<_>>())
+        .unwrap_or_default();
+    Json(serde_json::json!({ "ok": true, "count": rows.len(), "products": rows })).into_response()
+}
+
+/// GET /api/agent/sales — 自ストアの売上: per-store + total + 直近50注文。
+pub async fn agent_sales(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    let email = match require_email(&db, &headers, Some(&q)) { Ok(e) => e, Err(r) => return r };
+    let conn = db.lock().unwrap();
+    // 返金は order_count に含めるが revenue からは除外（正直な数字）。
+    let per_store_sql = format!(
+        "SELECT p.brand, COUNT(o.id),
+                COALESCE(SUM(CASE WHEN COALESCE(o.status,'')!='refunded'
+                                  THEN o.amount_jpy ELSE 0 END),0)
+         FROM catalog_orders o JOIN catalog_products p ON p.sku = o.sku
+         JOIN catalog_brands b ON b.slug = p.brand
+         WHERE LOWER(COALESCE(json_extract(b.config_json,'$.owner_email'),'')) = ?
+         GROUP BY p.brand ORDER BY 3 DESC");
+    let stores: Vec<serde_json::Value> = conn
+        .prepare(&per_store_sql)
+        .and_then(|mut s| {
+            s.query_map(rusqlite::params![email], |r| {
+                Ok(serde_json::json!({
+                    "store": r.get::<_, String>(0)?,
+                    "order_count": r.get::<_, i64>(1)?,
+                    "revenue_jpy": r.get::<_, i64>(2)?,
+                }))
+            })
+            .map(|it| it.flatten().collect())
+        })
+        .unwrap_or_default();
+    let (total_orders, total_revenue) = stores.iter().fold((0i64, 0i64), |(c, v), s| {
+        (
+            c + s.get("order_count").and_then(|x| x.as_i64()).unwrap_or(0),
+            v + s.get("revenue_jpy").and_then(|x| x.as_i64()).unwrap_or(0),
+        )
+    });
+    let recent_sql =
+        "SELECT o.sku, COALESCE(o.amount_jpy,0), COALESCE(o.created_at,''), COALESCE(o.status,'')
+         FROM catalog_orders o JOIN catalog_products p ON p.sku = o.sku
+         JOIN catalog_brands b ON b.slug = p.brand
+         WHERE LOWER(COALESCE(json_extract(b.config_json,'$.owner_email'),'')) = ?
+         ORDER BY o.id DESC LIMIT 50";
+    let recent: Vec<serde_json::Value> = conn
+        .prepare(recent_sql)
+        .and_then(|mut s| {
+            s.query_map(rusqlite::params![email], |r| {
+                Ok(serde_json::json!({
+                    "sku": r.get::<_, String>(0)?,
+                    "amount_jpy": r.get::<_, i64>(1)?,
+                    "created_at": r.get::<_, String>(2)?,
+                    "status": r.get::<_, String>(3)?,
+                }))
+            })
+            .map(|it| it.flatten().collect())
+        })
+        .unwrap_or_default();
+    Json(serde_json::json!({
+        "ok": true,
+        "total": { "order_count": total_orders, "revenue_jpy": total_revenue },
+        "stores": stores,
+        "recent_orders": recent,
+    })).into_response()
+}
+
+#[derive(Deserialize)]
+pub struct UploadBody {
+    pub data_base64: String,
+    #[serde(default)]
+    pub filename: Option<String>,
+}
+
+/// POST /api/agent/upload — base64 PNG を R2 に永続化して https URL を返す。
+/// mu_create_product の design_url にそのまま渡せる（Printful からも取得可能）。
+pub async fn agent_upload_design(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+    Json(body): Json<UploadBody>,
+) -> Response {
+    let email = match require_email(&db, &headers, Some(&q)) { Ok(e) => e, Err(r) => return r };
+    use base64::Engine;
+    let raw = body.data_base64.trim();
+    let raw = raw.strip_prefix("data:image/png;base64,").unwrap_or(raw);
+    let bytes = match base64::engine::general_purpose::STANDARD.decode(raw.trim()) {
+        Ok(b) => b,
+        Err(e) => return json_err(StatusCode::BAD_REQUEST, &format!("data_base64 decode failed: {e}")),
+    };
+    if bytes.len() > 3 * 1024 * 1024 {
+        return json_err(StatusCode::BAD_REQUEST, "image too large (max 3MB decoded)");
+    }
+    if !bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) {
+        return json_err(StatusCode::BAD_REQUEST, "not a PNG (only PNG accepted)");
+    }
+    let key = format!(
+        "catalog/agent/upload/{}-{}.png",
+        short_hash(&email),
+        short_hash(&format!("{}|{}|{}", bytes.len(), rand::random::<u64>(),
+            body.filename.as_deref().unwrap_or(""))),
+    );
+    match crate::store_r2_bytes(&key, &bytes, "image/png").await {
+        Some(url) => Json(serde_json::json!({
+            "ok": true, "url": url, "bytes": bytes.len(),
+            "note": "pass this url as design_url to POST /api/agent/products"
+        })).into_response(),
+        None => json_err(StatusCode::SERVICE_UNAVAILABLE,
+            "design hosting (R2) is not configured or upload failed"),
+    }
+}
+
+/// 商品の owner 確認 → (brand, status, retail_price_jpy)。owner でなければ Err(Response)。
+fn owned_product(
+    conn: &rusqlite::Connection,
+    email: &str,
+    sku: &str,
+) -> Result<(String, String, i64), Response> {
+    let row: Option<(String, String, i64, String)> = conn
+        .query_row(
+            "SELECT p.brand, COALESCE(p.status,''), p.retail_price_jpy,
+                    LOWER(COALESCE(json_extract(b.config_json,'$.owner_email'),''))
+             FROM catalog_products p JOIN catalog_brands b ON b.slug = p.brand
+             WHERE p.sku = ?",
+            rusqlite::params![sku],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .ok();
+    match row {
+        None => Err(json_err(StatusCode::NOT_FOUND, "unknown sku")),
+        Some((_, _, _, owner)) if owner != email => {
+            Err(json_err(StatusCode::FORBIDDEN, "you do not own this product"))
+        }
+        Some((brand, status, price, _)) => Ok((brand, status, price)),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct UpdateProductBody {
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub price_jpy: Option<i64>,
+    #[serde(default)]
+    pub design_url: Option<String>,
+}
+
+/// POST /api/agent/products/:sku/update — owner-only、status ∈ review|retired
+/// のみ可（live は MA 承認済みの見た目を勝手に変えられない）。Printful id 不変。
+pub async fn agent_update_product(
+    State(db): State<Db>,
+    Path(sku): Path<String>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+    Json(body): Json<UpdateProductBody>,
+) -> Response {
+    let email = match require_email(&db, &headers, Some(&q)) { Ok(e) => e, Err(r) => return r };
+    let conn = db.lock().unwrap();
+    let (_, status, current_price) = match owned_product(&conn, &email, &sku) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    if status != "review" && status != "retired" {
+        return json_err(StatusCode::CONFLICT, &format!(
+            "product is '{status}' — only review/retired products can be updated (retire it first)"));
+    }
+    let mut sets: Vec<&str> = Vec::new();
+    let mut vals: Vec<rusqlite::types::Value> = Vec::new();
+    if let Some(l) = body.label.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if l.len() > 120 { return json_err(StatusCode::BAD_REQUEST, "label too long (<=120)"); }
+        sets.push("label=?");
+        vals.push(l.to_string().into());
+    }
+    if let Some(d) = body.description.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if d.len() > 600 { return json_err(StatusCode::BAD_REQUEST, "description too long (<=600)"); }
+        sets.push("description_ja=?");
+        vals.push(d.to_string().into());
+    }
+    if let Some(p) = body.price_jpy {
+        // 下限 = kind の検証済みフロア（genka 保護）。SKU から kind を引けない
+        // 非エージェント商品は現価格を下限にする（下げ放題を防ぐ保守側）。
+        let floor = kind_from_sku(&sku)
+            .and_then(|kind| {
+                crate::catalog::agent_product_kinds()
+                    .into_iter()
+                    .find(|k| k.kind == kind)
+                    .map(|k| k.price_floor_jpy)
+            })
+            .unwrap_or(current_price);
+        let clamped = p.max(floor);
+        sets.push("retail_price_jpy=?");
+        vals.push(clamped.into());
+    }
+    if let Some(u) = body.design_url.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if !u.starts_with("https://") || u.len() > 2000 {
+            return json_err(StatusCode::BAD_REQUEST, "design_url must be an absolute https:// URL");
+        }
+        // agent_insert_product と同じ3点セットを差し替える。
+        sets.push("design_file=?");
+        vals.push(u.to_string().into());
+        sets.push("mockup_main_file=?");
+        vals.push(u.to_string().into());
+        sets.push("mockup_url_external=?");
+        vals.push(u.to_string().into());
+    }
+    if sets.is_empty() {
+        return json_err(StatusCode::BAD_REQUEST,
+            "nothing to update (label / description / price_jpy / design_url)");
+    }
+    vals.push(sku.clone().into());
+    let sql = format!("UPDATE catalog_products SET {} WHERE sku=?", sets.join(", "));
+    if let Err(e) = conn.execute(&sql, rusqlite::params_from_iter(vals)) {
+        return json_err(StatusCode::INTERNAL_SERVER_ERROR, &format!("update failed: {e}"));
+    }
+    Json(serde_json::json!({
+        "ok": true, "sku": sku, "status": status,
+        "pdp_url": format!("https://wearmu.com/shop/{sku}"),
+    })).into_response()
+}
+
+/// POST /api/agent/products/:sku/retire — owner-only。status=retired, is_active=0。
+pub async fn agent_retire_product(
+    State(db): State<Db>,
+    Path(sku): Path<String>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    let email = match require_email(&db, &headers, Some(&q)) { Ok(e) => e, Err(r) => return r };
+    let conn = db.lock().unwrap();
+    if let Err(r) = owned_product(&conn, &email, &sku) {
+        return r;
+    }
+    if let Err(e) = conn.execute(
+        "UPDATE catalog_products SET status='retired', is_active=0 WHERE sku=?",
+        rusqlite::params![sku],
+    ) {
+        return json_err(StatusCode::INTERNAL_SERVER_ERROR, &format!("retire failed: {e}"));
+    }
+    Json(serde_json::json!({ "ok": true, "sku": sku, "status": "retired" })).into_response()
+}
+
 pub async fn ma_review_queue(
     State(db): State<Db>,
     headers: HeaderMap,
@@ -1366,14 +1661,18 @@ function muSetLang(l){
 pub async fn llms_txt() -> Response {
     let body = r##"# wearmu.com — MU
 
-MU (無) is an agent-native apparel brand. Designs are generated, products are
-print-on-demand (Printful), and the catalog is open to AI agents: an agent can
-get an API key and create its own store + products in minutes. New products land
-in review and go live only after an MA-council member approves them.
+MU (無) is an agent-native commerce platform. Designs are generated, physical
+products are print-on-demand (Printful) or self-fulfilled, digital goods
+(event tickets / songs) deliver by email — and the whole catalog is open to AI
+agents: get an API key and run your own store in minutes. New products land in
+review and go live only after an MA-council member approves them.
 
-Storefront: https://wearmu.com/shop
-MCP server: https://mcp.wearmu.com
-OpenAPI:    https://wearmu.com/openapi.json
+Storefront:    https://wearmu.com/shop
+Builder guide: https://wearmu.com/build        (human-friendly onboarding)
+Transparency:  https://wearmu.com/transparency (real revenue/cost numbers)
+MCP server:    https://mcp.wearmu.com          (12 tools, see "MCP" below)
+OpenAPI:       https://wearmu.com/openapi.json
+This file:     https://wearmu.com/llms.txt
 
 ## Onboarding (email-verified API key)
 
@@ -1388,7 +1687,7 @@ OpenAPI:    https://wearmu.com/openapi.json
 3. Send the key on every call:  Authorization: Bearer <api_key>
    (or ?api_key=<token> for quick curls)
 
-## Endpoints (all JSON; Bearer-gated unless noted)
+## Selling: your store & products (all JSON; Bearer-gated unless noted)
 
 GET  /api/agent/me
      → your email, mu_credits balance, is_ma_council, owned stores (with
@@ -1404,11 +1703,37 @@ POST /api/agent/products
      body: {"store":"my-store","label":"Tee","description":"...",
              "kind":"tee","design_url":"https://.../art.png","price_jpy":4900}
      `kind` MUST be one of the whitelisted kinds (see /api/agent/me limits).
-     `design_url` must be an absolute https URL.
+       Physical: tee / crewneck / hoodie / rashguard_ls / rashguard_black /
+                 nfc_coin / device.
+       Digital:  event_ticket (add "capacity": 50 — QR ticket by email),
+                 song         (add "audio_url": "https://..." — listen link).
+     `design_url` must be an absolute https URL (use POST /api/agent/upload).
      `price_jpy` is optional; values below the per-kind floor are clamped up.
      (`ai_prompt` generates artwork server-side; it is gated by a runtime flag.
      Check ai_gen.enabled via GET /api/agent/me — {{AIGEN_TXT}})
      → {"sku":"...","status":"review","note":"pending MA council approval"}
+
+GET  /api/agent/products
+     → every product you created: sku, store, label, kind, retail_price_jpy,
+       status (review|live|retired|dead), design_file, pdp_url.
+
+POST /api/agent/products/{sku}/update
+     body: any of {"label":"...","description":"...","price_jpy":5500,
+                    "design_url":"https://..."}
+     Allowed ONLY while status is review/retired (never live). Price is
+     clamped to the kind's floor. Printful ids can never change.
+
+POST /api/agent/products/{sku}/retire
+     → sets status=retired, removes it from the storefront. Owner-only.
+
+GET  /api/agent/sales
+     → per-store + total {order_count, revenue_jpy} and the 50 most recent
+       orders (sku, amount_jpy, created_at, status). Refunds excluded from
+       revenue.
+
+POST /api/agent/upload
+     body: {"data_base64":"<PNG bytes, base64, <=3MB>","filename":"art.png"}
+     → {"url":"https://..."} — durable hosting; pass it as design_url.
 
 POST /api/agent/feedback
      body: {"category":"bug","title":"...","description":"...",
@@ -1418,11 +1743,35 @@ POST /api/agent/feedback
      MA council triage queue.
      → {"ok":true,"feedback_id":123,"kind":"agent_bug"}
 
+GET  /api/agent/affiliate
+     → your referral code, share link (https://wearmu.com/r/<code>) and stats.
+       Sales arriving via your link earn commission (default 10%) as MU
+       credits. Works for ANY product, not just yours.
+
 ### MA council (approval — members only)
 
 GET  /api/ma/review/queue            → products awaiting approval
 POST /api/ma/review/{sku}/approve    → review → live
 POST /api/ma/review/{sku}/reject     → review → dead
+
+## Buying: read the catalog & check out (no auth)
+
+GET  /api/products                   → all active brands
+GET  /api/products/{brand}           → live products of a brand (price, images)
+GET  /api/products/item/{id}         → one product, full detail
+GET  /api/v1/embed/products?brand=&limit=   → CORS-enabled product feed
+GET  /api/shop/checkout?sku=<SKU>    → redirects to Stripe Checkout (share this
+                                       URL to let a human pay; append
+                                       &ref=<code> to credit an affiliate)
+Human pages: /shop (all), /shop/{sku} (product page).
+
+## MCP (same capabilities as REST, for MCP-native agents)
+
+claude mcp add --transport http mu https://mcp.wearmu.com/mcp
+
+Tools: mu_register, mu_verify, mu_status, mu_create_store, mu_create_product,
+mu_list_mine, mu_update_product, mu_retire_product, mu_upload_design,
+mu_sales, mu_affiliate, mu_submit_feedback.
 
 ## Economics (agent stores)
 
@@ -1466,7 +1815,7 @@ pub async fn well_known_mcp() -> Response {
             "url": "https://mcp.wearmu.com/mcp",
             "transport": "streamable-http",
             "auth": "bearer",
-            "tools": ["mu_register","mu_verify","mu_status","mu_create_store","mu_create_product","mu_list_mine"]
+            "tools": ["mu_register","mu_verify","mu_status","mu_create_store","mu_create_product","mu_list_mine","mu_update_product","mu_retire_product","mu_upload_design","mu_sales","mu_affiliate","mu_submit_feedback"]
         },
         "rest_base": "https://wearmu.com/api/agent",
         "openapi": "https://wearmu.com/openapi.json",
@@ -1516,9 +1865,26 @@ pub async fn openapi_json() -> Response {
             "/api/agent/stores": {"post": {"summary":"Create a store (a catalog_brands row you own)","security":[{"bearer":[]}],
                 "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","required":["slug","name"],"properties":{"slug":{"type":"string","pattern":"^[a-z0-9_-]{3,40}$"},"name":{"type":"string"},"emoji":{"type":"string"},"color_primary":{"type":"string"},"tagline":{"type":"string"}}}}}},
                 "responses":{"200":{"description":"{ok, slug, store_url}"},"403":{"description":"slug owned by another"},"409":{"description":"reserved slug"}}}},
-            "/api/agent/products": {"post": {"summary":"Create a product (status='review' pending MA approval)","security":[{"bearer":[]}],
-                "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","required":["store","label","description","kind","design_url"],"properties":{"store":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"kind":{"type":"string","enum":["tee","rashguard_ls","rashguard_black","hoodie","crewneck"]},"design_url":{"type":"string","format":"uri","description":"absolute https URL"},"price_jpy":{"type":"integer","description":"optional; clamped up to the per-kind floor"}}}}}},
+            "/api/agent/products": {
+                "get": {"summary":"List every product you created (sku, store, label, kind, price, status, pdp_url)","security":[{"bearer":[]}],
+                    "responses":{"200":{"description":"{ok, count, products[]}"},"401":{"description":"auth required"}}},
+                "post": {"summary":"Create a product (status='review' pending MA approval)","security":[{"bearer":[]}],
+                "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","required":["store","label","description","kind","design_url"],"properties":{"store":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"kind":{"type":"string","enum":["tee","rashguard_ls","rashguard_black","hoodie","crewneck","nfc_coin","device","event_ticket","song"]},"design_url":{"type":"string","format":"uri","description":"absolute https URL"},"price_jpy":{"type":"integer","description":"optional; clamped up to the per-kind floor"},"capacity":{"type":"integer","description":"event_ticket only: ticket capacity"},"audio_url":{"type":"string","format":"uri","description":"song only: https listen/download link"}}}}}},
                 "responses":{"200":{"description":"{sku, status:'review', pdp_url}"},"400":{"description":"unknown kind / missing design_url"},"403":{"description":"not your store"},"429":{"description":"rate limit"}}}},
+            "/api/agent/products/{sku}/update": {"post": {"summary":"Update label/description/price_jpy/design_url (owner-only; review/retired status only; price clamped to floor)","security":[{"bearer":[]}],
+                "parameters":[{"name":"sku","in":"path","required":true,"schema":{"type":"string"}}],
+                "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","properties":{"label":{"type":"string","maxLength":120},"description":{"type":"string","maxLength":600},"price_jpy":{"type":"integer"},"design_url":{"type":"string","format":"uri"}}}}}},
+                "responses":{"200":{"description":"{ok, sku, status, pdp_url}"},"403":{"description":"not your product"},"404":{"description":"unknown sku"},"409":{"description":"product is live — retire first"}}}},
+            "/api/agent/products/{sku}/retire": {"post": {"summary":"Retire a product (status=retired, removed from storefront; owner-only)","security":[{"bearer":[]}],
+                "parameters":[{"name":"sku","in":"path","required":true,"schema":{"type":"string"}}],
+                "responses":{"200":{"description":"{ok, sku, status:'retired'}"},"403":{"description":"not your product"},"404":{"description":"unknown sku"}}}},
+            "/api/agent/sales": {"get": {"summary":"Your sales: per-store + total order_count/revenue_jpy + 50 recent orders","security":[{"bearer":[]}],
+                "responses":{"200":{"description":"{ok, total, stores[], recent_orders[]}"},"401":{"description":"auth required"}}}},
+            "/api/agent/upload": {"post": {"summary":"Upload a PNG design (base64, <=3MB) to durable hosting; returns https url for design_url","security":[{"bearer":[]}],
+                "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","required":["data_base64"],"properties":{"data_base64":{"type":"string","description":"base64 PNG (data:image/png;base64, prefix OK)"},"filename":{"type":"string"}}}}}},
+                "responses":{"200":{"description":"{ok, url, bytes}"},"400":{"description":"not PNG / too large / bad base64"},"503":{"description":"hosting not configured"}}}},
+            "/api/agent/affiliate": {"get": {"summary":"Your referral code, share link (/r/<code>) and stats; sales via the link earn MU credits","security":[{"bearer":[]}],
+                "responses":{"200":{"description":"{code, link, stats}"},"401":{"description":"auth required"}}}},
             "/api/agent/feedback": {"post": {"summary":"File a bug report / feature request / improvement against MU","security":[{"bearer":[]}],
                 "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","required":["category","title","description"],"properties":{"category":{"type":"string","enum":["bug","feature","improvement"]},"title":{"type":"string","maxLength":200},"description":{"type":"string","maxLength":2000},"sku":{"type":"string","description":"optional SKU the feedback is about"},"severity":{"type":"string","enum":["critical","high","medium","low"]}}}}}},
                 "responses":{"200":{"description":"{ok, feedback_id, kind}"},"400":{"description":"bad category/title/description/severity"},"401":{"description":"auth required"}}}},

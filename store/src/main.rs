@@ -23630,6 +23630,20 @@ async fn you_active_count(State(db): State<Db>) -> impl IntoResponse {
     }))).into_response()
 }
 
+/// GET / — 人間には HTML、`Accept: text/markdown` を明示する AI エージェント
+/// には正準ドキュメント /llms.txt の本文をそのまま返す（既存挙動への影響ゼロ）。
+async fn home(State(db): State<Db>, headers: HeaderMap) -> Response {
+    let wants_md = headers
+        .get("accept")
+        .and_then(|v| v.to_str().ok())
+        .map(|a| a.contains("text/markdown"))
+        .unwrap_or(false);
+    if wants_md {
+        return agent_api::llms_txt().await;
+    }
+    index(State(db)).await.into_response()
+}
+
 async fn index(State(db): State<Db>) -> Html<String> {
     let raw = include_str!("../static/index.html");
 
@@ -37466,14 +37480,78 @@ async fn success_page(
     let edition = q.get("edition").map(|s| s.to_lowercase()).unwrap_or_default();
     let is_founder = edition == "founder";
 
-    let header_html = if is_founder {
+    // Speak like a human: look up what was actually bought (label + brand) so
+    // the thank-you says "『結び直す朝』を、今からつくります" instead of a cold
+    // "Order Confirmed". Plus pick a gift song to play right here (一着＝一曲).
+    let sku_q = q.get("sku").cloned().unwrap_or_default();
+    let (bought_label, bought_brand): (String, String) = if sku_q.is_empty() {
+        (String::new(), String::new())
+    } else {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT label, brand FROM catalog_products WHERE sku=?",
+            params![sku_q],
+            |r| Ok((r.get::<_, String>(0).unwrap_or_default(), r.get::<_, String>(1).unwrap_or_default())),
+        ).unwrap_or((String::new(), String::new()))
+    };
+    let gift_song: Option<(String, String)> = if bought_brand.is_empty() {
+        None
+    } else {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT label, meta_json FROM catalog_products
+             WHERE brand=? AND is_active=1 AND sku LIKE '%-SONG-%'
+             ORDER BY RANDOM() LIMIT 1",
+            params![bought_brand],
+            |r| Ok((r.get::<_, String>(0).unwrap_or_default(), r.get::<_, Option<String>>(1)?.unwrap_or_default())),
+        ).ok().and_then(|(lbl, meta)| {
+            serde_json::from_str::<serde_json::Value>(&meta).ok()
+                .and_then(|v| v.get("audio_url").and_then(|a| a.as_str()).map(|s| (lbl, s.to_string())))
+        })
+    };
+    let label_esc = html_attr_escape(&bought_label);
+
+    let header_html: String = if is_founder {
         r#"<h1 style="color:#e6c449">Founder Edition · 予約 確認</h1>
         <p style="color:#fff;font-size:14px;font-weight:500">MUGEN #∞ Founder Edition の <b>先行予約</b> を 受け取りました。</p>
         <p style="margin-top:8px">課金 確定 は <b>製造 完了 時 (= 2026-06-21 夏至 出荷予定)</b>。 現在 は Stripe 上 で オーソリ のみ、 まだ ¥48,000 は 引かれて いません。<br>万一 遅延・中止 の 際 は <b>全額 即時 返金</b>。</p>
-        <p style="margin-top:12px;font-size:12px;opacity:0.75">次 の メール で 受付 番号 + 24 時間 以内 の Yuki 自身 から の 確認 連絡 が 届きます。</p>"#
+        <p style="margin-top:12px;font-size:12px;opacity:0.75">次 の メール で 受付 番号 + 24 時間 以内 の Yuki 自身 から の 確認 連絡 が 届きます。</p>"#.to_string()
+    } else if bought_label.is_empty() {
+        r#"<div style="font-size:34px;line-height:1">○</div>
+        <h1 style="opacity:1;font-size:20px;letter-spacing:0.15em">ありがとうございます。</h1>
+        <p style="font-size:13px;opacity:0.85">あなたの一着を、今から<b>つくります</b>。MUは在庫を持ちません — 注文を受けてから、あなたのために1枚だけ。確認メールをお送りしました。</p>"#.to_string()
     } else {
-        r#"<h1>Order Confirmed</h1>
-        <p>確認メールをお送りしました。Printful より発送します。</p>"#
+        format!(r#"<div style="font-size:34px;line-height:1">○</div>
+        <h1 style="opacity:1;font-size:20px;letter-spacing:0.12em">ありがとうございます。</h1>
+        <p style="font-size:14px;opacity:0.92">『{label}』を、今から<b>あなたのために</b>つくります。<br>MUは在庫を持ちません。だからこの一枚は、世界であなたの注文から生まれます。</p>
+        <p style="font-size:11.5px;opacity:0.6">確認メールをお送りしました。</p>"#, label = label_esc)
+    };
+
+    // 🎁 一着＝一曲: play the brand's song right here as a thank-you gift.
+    let gift_block: String = match &gift_song {
+        Some((slbl, url)) => format!(r#"<div style="background:#121212;border:1px solid #242424;border-radius:10px;padding:20px;margin-top:24px;max-width:520px;width:100%;text-align:center">
+  <div style="font-size:10px;letter-spacing:0.3em;text-transform:uppercase;color:#A67843;margin-bottom:10px">🎁 お礼に、一曲</div>
+  <div style="font-size:13px;opacity:0.9;margin-bottom:14px">あなたの一着には、音があります。<br><b>{slbl}</b></div>
+  <button id="giftBtn" style="background:#A67843;color:#fff;border:none;border-radius:30px;padding:12px 26px;font-size:13px;cursor:pointer;letter-spacing:.06em">▶ 再生する</button>
+  <script>(function(){{var b=document.getElementById('giftBtn');var a=new Audio({url});var p=false;
+    b.addEventListener('click',function(){{if(p){{a.pause();b.textContent='▶ 再生する';p=false;}}else{{a.play();b.textContent='❚❚ 停止';p=true;}}}});
+    a.addEventListener('ended',function(){{b.textContent='▶ もう一度';p=false;}});}})();</script>
+</div>"#, slbl = html_attr_escape(slbl), url = serde_json::to_string(url).unwrap_or_else(|_| "\"\"".into())),
+        None => String::new(),
+    };
+
+    // Warm community invite for the jiujitsu drop (and a generic share otherwise).
+    let invite_block: String = if bought_brand == "jiujitsu-yamano" {
+        r#"<div style="margin-top:18px;font-size:12.5px;opacity:0.8;max-width:520px;text-align:center;line-height:1.9">そして、もしよければ。<br>火曜10時、北参道 SWEEP で柔術やってます。<b>転がりに来てください。</b></div>"#.to_string()
+    } else { String::new() };
+
+    let share_block: String = if sku_q.is_empty() { String::new() } else {
+        let purl = format!("https://wearmu.com/shop/{}", urlencoding::encode(&sku_q));
+        let txt = if bought_label.is_empty() { "MUで一着つくった。".to_string() } else { format!("MUで『{}』を。", bought_label) };
+        format!(r#"<div style="margin-top:22px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+  <a href="https://twitter.com/intent/tweet?text={t}&url={u}" target="_blank" rel="noopener" style="font-size:11px;letter-spacing:.15em;text-transform:uppercase;color:#F5F5F0;text-decoration:none;border:1px solid #2a2a2a;border-radius:30px;padding:9px 18px">Xでシェア</a>
+  <button onclick="navigator.clipboard&&navigator.clipboard.writeText('{u}').then(()=>{{this.textContent='コピーしました'}})" style="font-size:11px;letter-spacing:.15em;text-transform:uppercase;color:#F5F5F0;background:none;border:1px solid #2a2a2a;border-radius:30px;padding:9px 18px;cursor:pointer">リンクをコピー</button>
+</div>"#, t = urlencoding::encode(&txt), u = urlencoding::encode(&purl))
     };
 
     let next_block = if is_founder {
@@ -37489,10 +37567,14 @@ async fn success_page(
         </div>"#
     } else {
         r#"<div class="dao-cta">
-          <h2>DAO §23 — 1 weight 自動付与</h2>
-          <p>このシャツ購入で <b>Chronicle slot 1 個 = weight +1</b> が発生しています。<br>email と wallet を bind すれば、あなたの保有 weight が DAO で投票権になります。</p>
-          <div class="nums">slot ×1 = weight +1.0 · MA piece ×1 = +100 · Constitution 1 行 = +0.5〜+8 (年齢で増加)</div>
-          <a class="btn" href="/dao/bind">/dao/bind に進む →</a>
+          <h2>次に起こること</h2>
+          <p style="opacity:0.9">① 確認メールが届きます（届かない時は迷惑メールもご確認を）<br>
+          ② あなたの一着を制作します（無在庫・受注生産。通常 数日〜1週間ほど）<br>
+          ③ 発送したら追跡番号をメールでお送りします</p>
+          <div class="nums">何かあれば info@enablerdao.com まで。</div>
+          <details style="margin-top:6px"><summary style="cursor:pointer;font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:#666">DAO weight について（任意）</summary>
+            <p style="font-size:11.5px;opacity:0.7;margin-top:8px">この購入で Chronicle slot 1 個 = weight +1 が付与されています。email と wallet を bind すると DAO の投票権になります。 <a href="/dao/bind" style="color:#A67843">/dao/bind →</a></p>
+          </details>
         </div>"#
     };
 
@@ -37574,7 +37656,10 @@ async fn success_page(
     <script src="/tracking.js" defer></script>
     </head><body>
     {header_html}
+    {gift_block}
+    {invite_block}
     {next_block}
+    {share_block}
     {recs_block}
     <a class="back" href="/">← Back to MU</a>
     <script>
@@ -37592,9 +37677,12 @@ async fn success_page(
     }})();
     </script>
     </body></html>"#,
-        title = if is_founder { "MUGEN #∞ Founder Edition — 予約 確認" } else { "Order Confirmed" },
+        title = if is_founder { "MUGEN #∞ Founder Edition — 予約 確認" } else { "ありがとうございます — MU" },
         header_html = header_html,
+        gift_block = gift_block,
+        invite_block = invite_block,
         next_block = next_block,
+        share_block = share_block,
         recs_block = recs_block,
         default_value = default_value,
     ))
@@ -62073,7 +62161,29 @@ fn serve_static_or_404(name: &str, db: &Db) -> Response {
             let path2 = std::path::Path::new("static").join(format!("{}.html", name));
             match std::fs::read(&path2) {
                 Ok(b) => return html_response(b),
-                Err(_) => return render_404_tee_page(db, &format!("/{}", name)),
+                Err(_) => {
+                    // Clean brand URL: /<brand-slug> → /shop?brand=<slug> when it's
+                    // a real active brand (e.g. /jiujitsu-yamano). Only reached after
+                    // user-slug / proposal-LP / static-file lookups all miss.
+                    let slug_lo = name.to_ascii_lowercase();
+                    let is_brand: bool = {
+                        let conn = db.lock().unwrap();
+                        conn.query_row(
+                            "SELECT 1 FROM catalog_brands WHERE slug=? AND is_active=1 LIMIT 1",
+                            params![slug_lo],
+                            |_| Ok(true),
+                        ).unwrap_or(false)
+                    };
+                    if is_brand {
+                        let loc = format!("/shop?brand={}", urlencoding::encode(&slug_lo));
+                        let mut resp = StatusCode::FOUND.into_response();
+                        if let Ok(v) = HeaderValue::from_str(&loc) {
+                            resp.headers_mut().insert(header::LOCATION, v);
+                        }
+                        return resp;
+                    }
+                    return render_404_tee_page(db, &format!("/{}", name));
+                }
             }
         }
     };
@@ -66910,7 +67020,7 @@ async fn main() {
     });
 
     let app = Router::new()
-        .route("/", get(index))
+        .route("/", get(home))
         .route("/success", get(success_page))
         .route("/api/tracking/config", get(tracking_config))
         // Brand SPA routes
@@ -67693,7 +67803,12 @@ async fn main() {
         .route("/api/agent/register/verify", post(agent_api::agent_register_verify))
         .route("/api/agent/me", get(agent_api::agent_me))
         .route("/api/agent/stores", post(agent_api::agent_create_store))
-        .route("/api/agent/products", post(agent_api::agent_create_product))
+        .route("/api/agent/products",
+            get(agent_api::agent_list_products).post(agent_api::agent_create_product))
+        .route("/api/agent/products/:sku/update", post(agent_api::agent_update_product))
+        .route("/api/agent/products/:sku/retire", post(agent_api::agent_retire_product))
+        .route("/api/agent/sales", get(agent_api::agent_sales))
+        .route("/api/agent/upload", post(agent_api::agent_upload_design))
         .route("/api/agent/feedback", post(agent_api::agent_submit_feedback))
         .route("/api/agent/affiliate", get(agent_api::agent_affiliate))
         .route("/api/ma/review/queue", get(agent_api::ma_review_queue))

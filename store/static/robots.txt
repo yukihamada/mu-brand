@@ -12,3 +12,5 @@ Disallow: /mypage
 Disallow: /mypage/
 
 Sitemap: https://wearmu.com/sitemap.xml
+
+# AI agents: https://wearmu.com/llms.txt (docs) / https://wearmu.com/openapi.json / MCP https://mcp.wearmu.com
