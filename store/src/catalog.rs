@@ -3581,7 +3581,7 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
   window.muAudio=null; window.muBtn=null;
   window.muPlay=function(e,btn){{
     e.preventDefault(); e.stopPropagation();
-    var key=btn.getAttribute('data-key'); var src=window.muSRC[key];
+    var key=btn.getAttribute('data-key'); var src=btn.getAttribute('data-src')||window.muSRC[key];
     if(!src){{window.open('https://mu.koe.live/oto.html?s='+key,'_blank');return;}}
     if(window.muBtn===btn && window.muAudio && !window.muAudio.paused){{window.muAudio.pause();btn.textContent='▶';return;}}
     if(window.muBtn && window.muBtn!==btn) window.muBtn.textContent='▶';
@@ -5251,20 +5251,55 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
                 }
             }
             if !ok {
-                // Operator alert — fulfillment failure on a paid order
-                // is the highest-priority signal we emit. Stripe already
-                // charged the customer; the next 30-min cron will
-                // auto-retry but human eyes should see the cause now.
+                // 再発防止 (2026-06-04): 入金済みなのに発送できない注文を「失敗のまま放置」
+                // しない。Printful の 4xx(住所空欄・バリアント不正など)は再試行しても直らない
+                // = 顧客の金だけ取った状態。これを検知したら **自動で Stripe 返金** し、
+                // status='refunded' に落とす。5xx/ネットワーク等の一過性のみ /replay 待ちにする。
+                let non_retryable = status.is_client_error(); // 4xx
+                let mut refunded = false;
+                if non_retryable {
+                    if let Ok(skey) = std::env::var("STRIPE_SECRET_KEY") {
+                        // checkout session → payment_intent
+                        let pi_id: Option<String> = match reqwest::Client::new()
+                            .get(format!("https://api.stripe.com/v1/checkout/sessions/{}", session_id))
+                            .basic_auth(&skey, None::<&str>).send().await {
+                            Ok(r) if r.status().is_success() => {
+                                let j: serde_json::Value = r.json().await.unwrap_or_default();
+                                j["payment_intent"].as_str().map(String::from)
+                            }
+                            _ => None,
+                        };
+                        if let Some(pi) = pi_id {
+                            let rf = reqwest::Client::new()
+                                .post("https://api.stripe.com/v1/refunds")
+                                .basic_auth(&skey, None::<&str>)
+                                .form(&[("payment_intent", pi.as_str()), ("reason", "requested_by_customer")])
+                                .send().await;
+                            refunded = matches!(rf, Ok(ref r) if r.status().is_success());
+                            if refunded {
+                                let conn = db.lock().unwrap();
+                                let _ = conn.execute(
+                                    "UPDATE catalog_orders SET status='refunded' WHERE stripe_session_id=?",
+                                    rusqlite::params![&session_id],
+                                );
+                            }
+                        }
+                    }
+                }
+                let head = if refunded {
+                    "✅ *fulfillment 4xx → AUTO-REFUNDED* (顧客に全額返金済・発送不可のため)"
+                } else if non_retryable {
+                    "🚨 *fulfillment FAILED (4xx) — 自動返金できず* 手動で返金してください"
+                } else {
+                    "🚨 *fulfillment FAILED (一過性)* — GET /admin/catalog/orders/<id>/replay?token= で再送"
+                };
                 let _ = crate::send_telegram_message(&format!(
-                    "🚨 *catalog fulfillment FAILED*\n\
-                     sku=`{}`\nsession=`{}…`\n\
-                     amount=¥{}\nprintful body (first 600):\n```\n{}\n```\n\
-                     auto-retry will fire on next cron cycle (~30min). \
-                     Manual retry: GET /admin/catalog/orders/<id>/replay?token=…",
+                    "{}\nsku=`{}`\nsession=`{}…`\namount=¥{}\nprintful body (first 500):\n```\n{}\n```",
+                    head,
                     sku,
                     session_id.chars().take(24).collect::<String>(),
                     amount_total,
-                    text.chars().take(600).collect::<String>()
+                    text.chars().take(500).collect::<String>()
                 ))
                 .await;
             }
