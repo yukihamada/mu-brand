@@ -1695,6 +1695,7 @@ fn kind_from_sku(sku: &str) -> &'static str {
     // over the generic MU- starts-with fallback at the bottom.
     if s.contains("-EVENT-TICKET") || s.contains("-TICKET-") || s.ends_with("-TICKET") { return "event_ticket"; }
     if s.contains("-SONG-") || s.ends_with("-SONG") { return "song"; }
+    if s.contains("-DEVICE-") || s.ends_with("-DEVICE") { return "device"; }
     if s.contains("RASHGUARD") || s.contains("-RASH") { return "rashguard_ls"; }
     if s.contains("HOODIE") || s.contains("-HOOD-") || s.ends_with("-HOOD") { return "hoodie"; }
     if s.contains("CREWNECK") || s.contains("-CREW-") || s.ends_with("-CREW") { return "crewneck"; }
@@ -3659,6 +3660,9 @@ pub async fn shop_pdp(
     let kind_guess = kind_from_sku(&sku);
     let is_digital = matches!(kind_guess, "event_ticket" | "song");
     let is_song = kind_guess == "song";
+    // Self-fulfilled hardware (Koe デバイス等): physical だが Printful ではない —
+    // アパレル前提のサイズ表・Printful送料表・「7-14日国際発送」コピーを出さない。
+    let is_device = kind_guess == "device";
 
     // extras — fetch with labels so we can surface 着用イメージ (on-body
     // styling renders) prominently, separate from technical mockup angles.
@@ -3799,6 +3803,8 @@ pub async fn shop_pdp(
             "Stripe · 購入後すぐ視聴/DLリンクをメール"
         } else if is_digital {
             "Stripe · 購入後すぐ QR 入場券をメール"
+        } else if is_device {
+            "Stripe · 自社発送 3 日以内"
         } else {
             "Stripe + Printful 7-14 日 国際発送"
         };
@@ -3867,7 +3873,22 @@ pub async fn shop_pdp(
         String::new()
     };
 
-    let trust_block = if is_digital {
+    let trust_block = if is_device {
+        format!(r##"<div class="trust-strip">
+  {sold_row}<div class="ts-row">
+    <strong>自社発送 3 日以内</strong>
+    <small>決済後、Koe チームが直接梱包・発送 (追跡番号つき)</small>
+  </div>
+  <div class="ts-row">
+    <strong>30 日 返品保証</strong>
+    <small>初期不良は無料交換 · お問い合わせ info@enablerdao.com</small>
+  </div>
+  <div class="ts-row">
+    <strong>オープンソース</strong>
+    <small>ファームウェアは公開リポジトリ · 自分で書き換え可</small>
+  </div>
+</div>"##, sold_row = sold_row)
+    } else if is_digital {
         let (l1, s1) = if is_song {
             ("購入後すぐメール配信", "視聴 & ダウンロードリンクを自動送信 · 物理発送なし")
         } else {
@@ -4103,8 +4124,8 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
         extras = extras_html,
         trust     = trust_block,
         spec      = spec_block,
-        size_chart = if is_digital { String::new() } else { size_chart_html(&kind_guess) },
-        shipping_table = if is_digital { String::new() } else { shipping_table_html() },
+        size_chart = if is_digital || is_device { String::new() } else { size_chart_html(&kind_guess) },
+        shipping_table = if is_digital || is_device { String::new() } else { shipping_table_html() },
         story     = story_block,
         sku_url   = urlencoding::encode(&sku),
         price_raw = price_jpy,
