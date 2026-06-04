@@ -247,8 +247,11 @@ nav.scrolled{background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);
 /* ── HERO ── */
 #hero{height:100vh;display:flex;flex-direction:column;align-items:center;
   justify-content:center;gap:0;position:relative;padding-top:80px}
+/* pointer-events:none は必須 — 装飾グリッドが absolute+inset:0 で
+   セクション内の static なリンクより上に描画され、/make・/pass・
+   コレクションカード等のクリックを全て横取りしていた (2026-06-04)。 */
 .hero-bg{position:absolute;inset:0;display:grid;grid-template-columns:repeat(8,1fr);
-  grid-template-rows:repeat(8,1fr);opacity:0.03}
+  grid-template-rows:repeat(8,1fr);opacity:0.03;pointer-events:none}
 .hero-bg-cell{border:1px solid var(--w)}
 .hero-eyebrow{font-size:9px;letter-spacing:0.5em;text-transform:uppercase;opacity:0.7;margin-bottom:32px}
 .hero-mu{font-size:clamp(120px,22vw,340px);font-weight:700;letter-spacing:0.3em;
