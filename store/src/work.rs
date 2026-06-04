@@ -25,7 +25,9 @@ use std::env;
 use crate::Db;
 
 fn fee_jpy() -> i64 {
-    env::var("WORK_FEE_JPY").ok().and_then(|v| v.parse().ok()).unwrap_or(300)
+    // 既定 ¥400/件: retail¥1,800・送料当社負担の収支(貢献利益≈¥1,410)で粗利56%を残しつつ、
+    // 現実5〜10分/件→時給¥2,400〜4,800で最賃を確実に超える均衡点。env で上書き可。
+    env::var("WORK_FEE_JPY").ok().and_then(|v| v.parse().ok()).unwrap_or(400)
 }
 
 fn ensure_tables(conn: &rusqlite::Connection) {
