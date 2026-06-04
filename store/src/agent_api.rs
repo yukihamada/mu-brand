@@ -1268,6 +1268,35 @@ pub async fn ma_review_reject(
     Json(serde_json::json!({"ok": true, "sku": sku, "status": "dead"})).into_response()
 }
 
+/// POST /api/ma/products/:sku/takedown — MA council / ADMIN_TOKEN only.
+/// Unpublishes ANY product regardless of status (status=retired, is_active=0,
+/// same effect as `agent_retire_product`) — for rights/IP takedowns of live
+/// agent products where the operator is not the store owner. Until now those
+/// required SSH + raw SQL (precedent: ATSM-AGENT-TEE-18cc0aec, 2026-06-04).
+/// Optional `?reason=` is logged for the audit trail.
+pub async fn ma_takedown_product(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Path(sku): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    let actor = match require_ma_council(&db, &headers, Some(&q)) { Ok(a) => a, Err(r) => return r };
+    let reason = q.get("reason").cloned().unwrap_or_default();
+    let conn = db.lock().unwrap();
+    let n = match conn.execute(
+        "UPDATE catalog_products SET status='retired', is_active=0, updated_at=datetime('now') WHERE sku=?",
+        rusqlite::params![sku],
+    ) {
+        Ok(n) => n,
+        Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &format!("takedown failed: {e}")),
+    };
+    if n == 0 {
+        return json_err(StatusCode::NOT_FOUND, "unknown sku");
+    }
+    tracing::warn!("[ma] takedown sku={} by={} reason={}", sku, actor, reason);
+    Json(serde_json::json!({"ok": true, "sku": sku, "status": "retired", "reason": reason})).into_response()
+}
+
 // ─── Operator credit top-up (ADMIN_TOKEN-gated) ─────────────────────────
 
 #[derive(Deserialize)]
@@ -1756,6 +1785,7 @@ GET  /api/agent/affiliate
 GET  /api/ma/review/queue            → products awaiting approval
 POST /api/ma/review/{sku}/approve    → review → live
 POST /api/ma/review/{sku}/reject     → review → dead
+POST /api/ma/products/{sku}/takedown → any status → retired (rights/IP takedown)
 
 ## Buying: read the catalog & check out (no auth)
 
@@ -1893,7 +1923,8 @@ pub async fn openapi_json() -> Response {
                 "responses":{"200":{"description":"{ok, feedback_id, kind}"},"400":{"description":"bad category/title/description/severity"},"401":{"description":"auth required"}}}},
             "/api/ma/review/queue": {"get": {"summary":"Agent products awaiting approval (MA council only)","security":[{"bearer":[]}],"responses":{"200":{"description":"queue"},"403":{"description":"MA council only"}}}},
             "/api/ma/review/{sku}/approve": {"post": {"summary":"Approve → live (MA council only)","security":[{"bearer":[]}],"parameters":[{"name":"sku","in":"path","required":true,"schema":{"type":"string"}}],"responses":{"200":{"description":"live"},"403":{"description":"MA council only"},"409":{"description":"not in review"}}}},
-            "/api/ma/review/{sku}/reject": {"post": {"summary":"Reject → dead (MA council only)","security":[{"bearer":[]}],"parameters":[{"name":"sku","in":"path","required":true,"schema":{"type":"string"}}],"responses":{"200":{"description":"rejected"}}}}
+            "/api/ma/review/{sku}/reject": {"post": {"summary":"Reject → dead (MA council only)","security":[{"bearer":[]}],"parameters":[{"name":"sku","in":"path","required":true,"schema":{"type":"string"}}],"responses":{"200":{"description":"rejected"}}}},
+            "/api/ma/products/{sku}/takedown": {"post": {"summary":"Takedown: any status → retired, removed from storefront (MA council / ADMIN_TOKEN; for rights/IP issues; optional ?reason= is audit-logged)","security":[{"bearer":[]}],"parameters":[{"name":"sku","in":"path","required":true,"schema":{"type":"string"}},{"name":"reason","in":"query","required":false,"schema":{"type":"string"}}],"responses":{"200":{"description":"{ok, sku, status:'retired'}"},"403":{"description":"MA council only"},"404":{"description":"unknown sku"}}}}
         }
     });
     Json(v).into_response()

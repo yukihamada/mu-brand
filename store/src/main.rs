@@ -67814,6 +67814,7 @@ async fn main() {
         .route("/api/ma/review/queue", get(agent_api::ma_review_queue))
         .route("/api/ma/review/:sku/approve", post(agent_api::ma_review_approve))
         .route("/api/ma/review/:sku/reject", post(agent_api::ma_review_reject))
+        .route("/api/ma/products/:sku/takedown", post(agent_api::ma_takedown_product))
         .route("/api/agent/credits/grant", post(agent_api::agent_grant_credits))
         // ── /work — 音コイン在宅ワーカー・ジョブ基盤 (src/work.rs) ──
         .route("/work", get(work::work_page))
