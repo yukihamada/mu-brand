@@ -2721,6 +2721,18 @@ button:disabled{opacity:.5;cursor:default}
 .err{color:#ff8a7a;font-size:14px}
 .spin{display:inline-block;width:16px;height:16px;border:2px solid rgba(0,0,0,.3);border-top-color:#0a0a0a;border-radius:50%;animation:s .7s linear infinite;vertical-align:-3px;margin-right:8px}
 @keyframes s{to{transform:rotate(360deg)}}
+/* 生成シアター — 待ち時間 10〜20 秒を「いま作られている」実感に変える */
+.gen{background:#121212;border:1px solid rgba(255,215,0,.28);border-radius:14px;padding:24px 20px;position:relative;overflow:hidden}
+.gen::after{content:'';position:absolute;inset:0;background:linear-gradient(110deg,transparent 30%,rgba(255,215,0,.05) 50%,transparent 70%);animation:sheen 2.8s linear infinite;pointer-events:none}
+@keyframes sheen{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+.gen .enso{width:36px;height:36px;border:3px solid rgba(255,215,0,.9);border-right-color:transparent;border-radius:50%;animation:enso 1.5s cubic-bezier(.55,.15,.45,.85) infinite;margin-bottom:14px}
+@keyframes enso{to{transform:rotate(360deg)}}
+.gen .gq{font-size:13px;color:rgba(245,245,240,.72);margin-bottom:8px}
+.gen .gq b{color:#ffd700;font-weight:700}
+.gen .gmsg{font-size:16px;font-weight:700;min-height:26px;transition:opacity .35s}
+.gen .gbar{height:4px;background:rgba(255,255,255,.08);border-radius:99px;margin-top:14px;overflow:hidden}
+.gen .gfill{height:100%;width:2%;background:linear-gradient(90deg,#ffd700,#ffb700);border-radius:99px;transition:width .6s ease}
+.gen .gnote{font-size:11px;color:rgba(245,245,240,.42);margin-top:10px}
 .steps{display:flex;gap:10px;margin:0 0 26px;flex-wrap:wrap}
 .step{flex:1;min-width:150px;background:#121212;border:1px solid rgba(255,255,255,.09);border-radius:12px;padding:14px 16px}
 .step .n{font-size:11px;color:#ffd700;font-weight:800;letter-spacing:.18em}
@@ -2774,14 +2786,26 @@ fetch('/api/make/recent').then(r=>r.json()).then(j=>{
   $('#rgrid').innerHTML=j.items.map(it=>'<a href="/shop/'+encodeURIComponent(it.sku)+'"><img loading=lazy src="'+it.img+'" alt=""><div class=rl>'+(it.label||'')+'</div><div class=rp>¥'+(it.price||'')+'</div></a>').join('');
   $('#recent').hidden=false;
 }).catch(()=>{});
+// 生成シアター: お題のエコー + 物語のステータス + 進捗バー。戻り値で停止。
+function genTheater(p){
+  var msgs=['お題を、読み解いています…','筆を、とりました','線を一本、引いています…','色を、えらんでいます…','余白と、相談しています…','布にのせて、確かめています…','タグに名前を入れています…','棚をあけて、待っています…'];
+  $('#out').innerHTML='<div class=gen><div class=enso></div><div class=gq>「<b></b>」を、一枚の絵に。</div><div class=gmsg></div><div class=gbar><div class=gfill></div></div><div class=gnote>世界のどこにもない一枚を生成中 — だいたい 10〜20 秒。同じ絵は二度と生まれません。</div></div>';
+  document.querySelector('.gen .gq b').textContent=p.length>42?p.slice(0,42)+'…':p;
+  var gm=document.querySelector('.gmsg'),gf=document.querySelector('.gfill');
+  var i=0; gm.textContent=msgs[0];
+  var t1=setInterval(function(){i=(i+1)%msgs.length;gm.style.opacity=0;setTimeout(function(){gm.textContent=msgs[i];gm.style.opacity=1;},320);},2400);
+  var pr=2; var t2=setInterval(function(){pr=Math.min(93,pr+(pr<55?5:1.4));gf.style.width=pr+'%';},600);
+  return function(){clearInterval(t1);clearInterval(t2);if(gf)gf.style.width='100%';};
+}
 $('#go').onclick=async()=>{
   const p=$('#p').value.trim(); if(!p){$('#p').focus();return;}
   const k=$('#k').value;
   $('#go').disabled=true; $('#go').innerHTML='<span class=spin></span>つくっています…';
-  $('#out').innerHTML='<div class=note>AI がデザイン中（10〜20秒）…</div>';
+  const genDone=genTheater(p);
   try{
     const r=await fetch('/api/make?prompt='+encodeURIComponent(p)+(k?'&kind='+k:''),{method:'POST'});
     const j=await r.json();
+    genDone();
     if(!j.ok){ $('#out').innerHTML='<div class=err>'+(j.error||'うまく作れませんでした。もう一度お試しください。')+'</div>'; }
     else{
       var url = j.buy_url || j.pdp_url || '';
@@ -2796,7 +2820,7 @@ $('#go').onclick=async()=>{
         + buy + share + spread
         +'<div class=note>'+ (j.auto_approved ? '✓ ' : '') + nt +'</div></div></div>';
     }
-  }catch(e){ $('#out').innerHTML='<div class=err>通信エラー。もう一度お試しください。</div>'; }
+  }catch(e){ genDone(); $('#out').innerHTML='<div class=err>通信エラー。もう一度お試しください。</div>'; }
   $('#go').disabled=false; $('#go').textContent='つくる';
 };
 </script></body></html>"##.to_string())
