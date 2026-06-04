@@ -3641,9 +3641,69 @@ pub async fn shop_pdp(
         )
         .ok()
     };
-    let Some((sku, brand, _label, desc, price_jpy, mockup_main, mockup_ext, suzuri, price_id, meta_json)) = row
+    let Some((sku, brand, label, desc, price_jpy, mockup_main, mockup_ext, suzuri, price_id, meta_json)) = row
     else {
         return (StatusCode::NOT_FOUND, "product not found").into_response();
+    };
+
+    // 時限ドロップ(封印): meta_json.unlock_iso が立ち、description_ja が age 暗号文なら、
+    // 解禁時刻まで中身を誰も(運営も)読めない。解禁後にブラウザ内(drand tlock)で復号表示。
+    // スキーマ非変更(meta_json活用・CATALOG_CONTRACT 準拠)。通常商品は一切影響なし。
+    let unlock_iso = meta_json
+        .as_deref()
+        .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+        .and_then(|v| v.get("unlock_iso").and_then(|x| x.as_str()).map(|s| s.to_string()));
+    let is_sealed = unlock_iso.is_some() && desc.contains("BEGIN AGE ENCRYPTED FILE");
+    // 公開タイトル: 封印中は label(公開名)を使う。desc は暗号文なので表に出さない。
+    let display_name = if is_sealed {
+        if !label.is_empty() { label.clone() } else { "MU 封印ドロップ".to_string() }
+    } else {
+        desc.clone()
+    };
+    let meta_desc = if is_sealed {
+        format!("🔒 このドロップは {} に解禁されます", unlock_iso.as_deref().unwrap_or(""))
+    } else {
+        desc.clone()
+    };
+    let sealed_block = if is_sealed {
+        let u = html_text(unlock_iso.as_deref().unwrap_or(""));
+        let ct = html_text(&desc); // 暗号文を隠し要素の textContent に(復号はJS側)
+        let u_js = serde_json::to_string(unlock_iso.as_deref().unwrap_or(""))
+            .unwrap_or_else(|_| "\"\"".to_string());
+        format!(
+            r##"<div class="spec" id="mu-sealed"><h3>🔒 SEALED DROP</h3>
+<p id="mu-seal-msg">このドロップの中身は <b>{u}</b> まで封印されています。解禁時刻になると、このページで自動的に表示されます。運営も時刻前には開けません（drand によるトラストレスな時間解放暗号）。</p>
+<p id="mu-seal-status" class="fx">復号中…</p></div>
+<div id="mu-sealed-ct" style="display:none">{ct}</div>
+<script src="https://timelock-web.fly.dev/bundle.js"></script>
+<script>
+(function(){{
+  var UNLOCK={u_js};
+  function esc(s){{return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}}
+  function reveal(){{
+    var ct=document.getElementById('mu-sealed-ct').textContent;
+    window.TL.decrypt(ct).then(function(pt){{
+      var box=document.getElementById('mu-sealed');
+      box.querySelector('#mu-seal-msg').innerHTML=esc(pt).replace(/\n/g,'<br>');
+      var st=document.getElementById('mu-seal-status'); if(st) st.textContent='✓ 解禁されました';
+    }}).catch(function(e){{
+      var st=document.getElementById('mu-seal-status');
+      if(/too early|decryptable at/i.test(e.message||'')){{
+        if(st) st.textContent='⏳ まだ開けません（解禁予定: '+UNLOCK+'）';
+        var ms=Math.max(0,new Date(UNLOCK).getTime()-Date.now())+4000;
+        setTimeout(reveal, Math.min(ms, 30*60*1000));
+      }} else if(st) st.textContent='復号に失敗しました。時間をおいて再読み込みしてください。';
+    }});
+  }}
+  if(window.TL) reveal(); else window.addEventListener('tl-ready', reveal);
+}})();
+</script>"##,
+            u = u,
+            ct = ct,
+            u_js = u_js,
+        )
+    } else {
+        String::new()
     };
 
     // mockup: prefer external CDN; fall back to /static/... relative to root.
@@ -4092,6 +4152,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
     <div class="brand">{brand}</div>
     <h1>{title}</h1>
     <div class="price">¥{price} <small class="fx">≈ ${usd} / €{eur}</small></div>
+    {sealed}
     {listen}
     {buy}
     {suzuri}
@@ -4117,8 +4178,9 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
 </footer>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </body></html>"##,
-        title = html_text(&desc),
-        desc = html_text(&desc),
+        title = html_text(&display_name),
+        desc = html_text(&meta_desc),
+        sealed = sealed_block,
         og = html_attr(&img),
         brand = html_text(&brand),
         brand_q = html_attr(&brand),
@@ -4138,9 +4200,9 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
         story     = story_block,
         sku_url   = urlencoding::encode(&sku),
         price_raw = price_jpy,
-        ld_title  = html_attr(&desc),
+        ld_title  = html_attr(&display_name),
         ld_img    = html_attr(&img),
-        ld_desc   = html_attr(&desc),
+        ld_desc   = html_attr(&meta_desc),
         ld_sku    = html_attr(&sku),
         ld_brand  = html_attr(&brand),
     );
