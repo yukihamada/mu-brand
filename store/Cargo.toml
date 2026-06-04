@@ -54,8 +54,9 @@ include_dir = "0.7"
 # White → alpha transparency processing for catalog print files.
 # DTG ignores transparency anyway, but AOP rashguards print every pixel
 # so a white background reads as a white rectangle on the garment.
-# Default features are wide; we only need png decode + encode.
-image = { version = "0.25", default-features = false, features = ["png"] }
+# Default features are wide; we need png decode+encode AND jpeg decode
+# (Gemini returns JPEG → must decode it to knock the white/black bg to alpha).
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
 [dev-dependencies]
 # Integration tests spawn the compiled `mu-store` binary against a
