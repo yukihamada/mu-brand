@@ -2464,7 +2464,7 @@ input{width:100%;background:#141414;border:1px solid rgba(255,255,255,.14);borde
 <div class="lk" id="link"></div><div class="share"><button id="sh">📣 共有</button><a id="line" target="_blank" rel="noopener">LINE</a><a id="sms">SMS</a><a id="mail">メール</a><button id="cp">コピー</button></div>
 <label style="margin-top:18px">どこでも貼れる（Claude Code / Slack / メモ）</label><div class="lk" id="prompt"></div><button class="btn s" id="cpp" style="margin-top:8px">このプロンプトをコピー</button>
 <a class="btn" id="enter" target="_blank" style="margin-top:14px">▶ 自分が今すぐ入る</a><div class="status" id="status"><span class="dot"></span>あなたを待っています…</div></div>
-<div class="hint">声・顔・画面共有・チャット対応（最大6人）。同じリンクを開いた人が自動でつながります。<br><a href="/store">← ヤバいTシャツ屋さんへ</a></div></div>
+<div class="hint">声・顔・画面共有・チャット対応（最大6人）。同じリンクを開いた人が自動でつながります。<br><a href="/store">← MU MAKE 無人店へ</a></div></div>
 <script>var BASE='https://yukihamada.jp';var $=function(s){return document.getElementById(s)};function rid(){var c='abcdefghijkmnpqrstuvwxyz23456789',o='';for(var i=0;i<8;i++)o+=c[Math.floor(Math.random()*c.length)];return o;}
 var room='',shortUrl='',prompt='',poll=null;function mk(){var nm=$('name').value.trim()||'相手';var h=nm.toLowerCase().replace(/[^a-z0-9-]/g,'');if(!h)h='mu-'+rid();room=h;shortUrl=BASE+'/k/'+h;prompt='!open '+shortUrl;$('who').textContent=nm;$('link').textContent=shortUrl;$('prompt').textContent=prompt;$('enter').href=BASE+'/room/'+room;var msg='声でつなぎたい。これ開いて → '+shortUrl;$('line').href='https://line.me/R/share?text='+encodeURIComponent(msg);$('sms').href='sms:?&body='+encodeURIComponent(msg);$('mail').href='mailto:?subject='+encodeURIComponent('声でつなぎたい')+'&body='+encodeURIComponent(msg);$('sh').onclick=function(){if(navigator.share){navigator.share({title:'声でつなぐ',text:msg,url:shortUrl}).catch(function(){});}else{cp();}};$('cp').onclick=cp;$('cpp').onclick=cpp;$('panel').classList.add('show');if(poll)clearInterval(poll);poll=setInterval(checkp,4000);checkp();}
 function cp(){navigator.clipboard&&navigator.clipboard.writeText(shortUrl).then(function(){$('cp').textContent='コピー済 ✓';setTimeout(function(){$('cp').textContent='コピー';},1500);});}function cpp(){navigator.clipboard&&navigator.clipboard.writeText(prompt).then(function(){$('cpp').textContent='コピー済 ✓';setTimeout(function(){$('cpp').textContent='このプロンプトをコピー';},1500);});}
@@ -2518,9 +2518,9 @@ pub async fn store_unmanned_page(State(db): State<Db>) -> Html<String> {
     };
     Html(format!(r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>ヤバいTシャツ屋さん — 店員ゼロ、AIだけの無人店舗 · wearmu.com</title>
-<meta name="description" content="ヤバいTシャツ屋さん。店員はいない。AIが描いて、刷って、あなたに送る。24時間営業・在庫ゼロ・受注生産。なんでも言ってみ、Tシャツになるから。">
-<meta property="og:title" content="ヤバいTシャツ屋さん — 店員ゼロ、AIだけの無人店舗">
+<title>MU MAKE 無人店 — 店員ゼロ、AIだけのTシャツ店 · wearmu.com</title>
+<meta name="description" content="MU MAKE 無人店。店員はいない。AIが描いて、刷って、あなたに送る。24時間営業・在庫ゼロ・受注生産。なんでも言ってみ、Tシャツになるから。">
+<meta property="og:title" content="MU MAKE 無人店 — 店員ゼロ、AIだけのTシャツ店">
 <meta property="og:description" content="店員はいない。AIが描いて、刷って、送る。なんでも言ってみ、Tシャツになるから。">
 <meta name="theme-color" content="#0a0a0a">
 <style>
@@ -2580,11 +2580,11 @@ footer a{{color:rgba(245,245,240,.72);margin:0 9px}}
 footer a:hover{{color:var(--gold)}}
 </style></head>
 <body>
-<nav><a class="bm" href="/store">ヤバい<span class="o">T</span>シャツ屋さん</a><div class="nl"><a href="#shelf">棚</a><a href="/make">作る</a><a href="/shop">SHOP</a></div></nav>
+<nav><a class="bm" href="/store">MU <span class="o">MAKE</span> 無人店</a><div class="nl"><a href="#shelf">棚</a><a href="/make">作る</a><a href="/shop">SHOP</a></div></nav>
 
 <header class="hero">
   <div class="kick">店員ゼロ · 24時間 · 在庫ゼロ · 受注生産</div>
-  <h1>ヤバい<span class="o">T</span>シャツ屋さん</h1>
+  <h1>MU <span class="o">MAKE</span> 無人店</h1>
   <p class="sub">店員はいません。<b>AI が描いて、刷って、あなたに送る。</b>話しかけたら、それがTシャツになる。在庫はゼロ。だから<b>なんでも言ってみ。</b></p>
   <p class="en">The T-shirt shop with no staff. AI draws it, prints it, ships it — 24/7, zero inventory, made only when you order.</p>
   <div class="live"><span><span class="dot"></span>営業中</span><span>棚に <b>{live}</b> 種</span><span><b>{brands}</b> ブランド</span><span><b>{sold}</b> 枚 旅立った</span></div>
@@ -2630,12 +2630,66 @@ footer a:hover{{color:var(--gold)}}
 /// Cost guard for the unauthenticated /make endpoint: max public creations/hour.
 const MAKE_HOURLY_CAP: i64 = 40;
 
+/// GET /api/make/recent — last live 'minna' creations for the /make social
+/// proof strip. Read-only, tiny payload, 60s CDN cache.
+pub async fn make_recent(State(db): State<Db>) -> Response {
+    let rows: Vec<(String, String, String, i64)> = {
+        let conn = db.lock().unwrap();
+        conn.prepare(
+            "SELECT sku, label, COALESCE(CASE WHEN mockup_url_external LIKE 'https://printful-upload.s3%'
+                       OR mockup_url_external LIKE '%/tmp/%' THEN NULL ELSE mockup_url_external END,
+                     design_file, ''), retail_price_jpy
+             FROM catalog_products
+             WHERE brand='minna' AND is_active=1 AND status='live'
+             ORDER BY created_at DESC LIMIT 8",
+        )
+        .ok()
+        .and_then(|mut s| {
+            s.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+                .ok()
+                .map(|it| it.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default()
+    };
+    let items: Vec<serde_json::Value> = rows.into_iter()
+        .filter(|(_, _, img, _)| !img.is_empty())
+        .map(|(sku, label, img, price)| serde_json::json!({
+            "sku": sku, "label": label, "img": img, "price": price,
+        }))
+        .collect();
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert("Cache-Control", axum::http::HeaderValue::from_static("public, max-age=60"));
+    (headers, axum::Json(serde_json::json!({"items": items}))).into_response()
+}
+
 /// GET /make — public page: type a sentence, MU makes the product.
 pub async fn make_page() -> Html<String> {
     Html(r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>言うだけで、自分の店。— ヤバいTシャツ屋さんで作る · wearmu.com</title>
-<meta name="description" content="ひとこと言えばAIが即デザイン→その場で棚に並んですぐ買える。在庫ゼロ・ログイン不要。売れたら作り手に報酬。みんなが出品できる無人Tシャツ屋。">
+<title>AIでオリジナルTシャツ作成 — 言うだけ10秒・1枚から・在庫ゼロ | MU MAKE · wearmu.com</title>
+<meta name="description" content="ひとこと言うだけでAIがオリジナルTシャツ・パーカーをデザイン。10〜20秒で完成、その場で1枚から購入OK（¥4,900〜）。ログイン不要・在庫ゼロ。作った一着は店に並び、売れたら作り手に報酬¥600〜/枚。">
+<link rel="canonical" href="https://wearmu.com/make">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://wearmu.com/make">
+<meta property="og:title" content="言うだけで、Tシャツができる。— MU MAKE">
+<meta property="og:description" content="AIが10秒でデザイン→1枚から買える（¥4,900〜）。あなたの一着が店に並び、売れたら報酬¥600〜/枚。ログイン不要。">
+<meta property="og:image" content="https://wearmu.com/static/og.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="言うだけで、Tシャツができる。— MU MAKE">
+<meta name="twitter:image" content="https://wearmu.com/static/og.jpg">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@graph":[
+ {"@type":"HowTo","name":"AIでオリジナルTシャツを作る方法（MU MAKE）",
+  "step":[
+   {"@type":"HowToStep","position":1,"name":"言う","text":"作りたいものを一言で入力（例：富士山をミニマルな一本線で描いた黒Tシャツ）。"},
+   {"@type":"HowToStep","position":2,"name":"AIが描く","text":"10〜20秒でAIがデザインを生成し、商品ページができる。"},
+   {"@type":"HowToStep","position":3,"name":"買える・並ぶ","text":"その場で1枚から購入できる（Tシャツ¥4,900〜）。作った一着はみんなの棚に並び、売れるたび作り手に¥600〜/枚の報酬。"}]},
+ {"@type":"FAQPage","mainEntity":[
+  {"@type":"Question","name":"本当にログイン不要ですか？","acceptedAnswer":{"@type":"Answer","text":"はい。アカウント登録なしで、その場で作成・購入できます。"}},
+  {"@type":"Question","name":"価格はいくらですか？","acceptedAnswer":{"@type":"Answer","text":"Tシャツ¥4,900〜、スウェット¥7,800〜、パーカー¥8,800〜。1枚から受注生産です。"}},
+  {"@type":"Question","name":"作ったデザインはすぐ公開されますか？","acceptedAnswer":{"@type":"Answer","text":"ほとんどは即公開・即購入できます。商標・実在人物など権利リスクがあるものだけ人が確認してから公開します。"}},
+  {"@type":"Question","name":"売れたらどうなりますか？","acceptedAnswer":{"@type":"Answer","text":"あなたの一着が売れるたび、作り手として¥600〜/枚の報酬を受け取れます。"}}]}]}
+</script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#0a0a0a;color:#f5f5f0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.7;min-height:100dvh}
@@ -2667,11 +2721,30 @@ button:disabled{opacity:.5;cursor:default}
 .err{color:#ff8a7a;font-size:14px}
 .spin{display:inline-block;width:16px;height:16px;border:2px solid rgba(0,0,0,.3);border-top-color:#0a0a0a;border-radius:50%;animation:s .7s linear infinite;vertical-align:-3px;margin-right:8px}
 @keyframes s{to{transform:rotate(360deg)}}
+.steps{display:flex;gap:10px;margin:0 0 26px;flex-wrap:wrap}
+.step{flex:1;min-width:150px;background:#121212;border:1px solid rgba(255,255,255,.09);border-radius:12px;padding:14px 16px}
+.step .n{font-size:11px;color:#ffd700;font-weight:800;letter-spacing:.18em}
+.step .t{font-size:14.5px;font-weight:700;margin-top:2px}
+.step .d{font-size:12px;color:rgba(245,245,240,.55);margin-top:3px;line-height:1.55}
+.price-hint{font-size:12.5px;color:rgba(245,245,240,.6);margin-top:10px}
+.price-hint b{color:#f5f5f0}
+.recent{margin-top:44px}
+.recent h2{font-size:13px;letter-spacing:.25em;text-transform:uppercase;color:rgba(245,245,240,.55);font-weight:600;margin-bottom:14px}
+.rgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px}
+.rgrid a{display:block;text-decoration:none;color:inherit;background:#121212;border:1px solid rgba(255,255,255,.08);border-radius:10px;overflow:hidden}
+.rgrid img{width:100%;aspect-ratio:1/1;object-fit:cover;background:#fff;display:block}
+.rgrid .rl{font-size:10.5px;padding:7px 9px 2px;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:rgba(245,245,240,.85)}
+.rgrid .rp{font-size:11px;color:#ffd700;font-weight:700;padding:0 9px 8px}
 </style></head><body>
-<nav><a class="brand" href="/store">ヤバいTシャツ屋さん</a><div><a href="/shop">SHOP</a></div></nav>
+<nav><a class="brand" href="/make">MU MAKE</a><div><a href="/shop">SHOP</a></div></nav>
 <div class="wrap">
-  <h1>言うだけで、自分の店。</h1>
-  <div class="sub">ひとこと言えば AI が即デザイン → <b>その場で棚に並んで、すぐ買える</b>。ログインも在庫もゼロ。<b style="color:#ffd700">売れたら作り手に報酬（¥600〜/枚）</b>。怪しいものだけ人が確認、あとは自動で公開。</div>
+  <h1>言うだけで、Tシャツができる。</h1>
+  <div class="sub">ひとこと言えば AI がデザイン → <b>その場で 1 枚から買える</b>。ログインも在庫もゼロ。あなたの一着はみんなの棚にも並び、<b style="color:#ffd700">売れたら作り手に報酬（¥600〜/枚）</b>。</div>
+  <div class="steps">
+    <div class="step"><div class="n">STEP 1</div><div class="t">言う</div><div class="d">作りたいものを一言。日本語でOK。</div></div>
+    <div class="step"><div class="n">STEP 2</div><div class="t">AIが描く</div><div class="d">10〜20秒でデザインと商品ページが完成。</div></div>
+    <div class="step"><div class="n">STEP 3</div><div class="t">買える・並ぶ</div><div class="d">1枚から購入OK。店にも並んで、売れたら報酬。</div></div>
+  </div>
   <textarea id="p" maxlength="300" placeholder="例：富士山をミニマルな一本線で描いた黒Tシャツ"></textarea>
   <div class="row">
     <select id="k">
@@ -2680,16 +2753,27 @@ button:disabled{opacity:.5;cursor:default}
       <option value="hoodie">パーカー</option>
       <option value="crewneck">スウェット</option>
     </select>
-    <button id="go">つくる</button>
+    <button id="go">つくる（無料でデザイン）</button>
   </div>
+  <div class="price-hint">できた一着は <b>Tシャツ ¥4,900〜・スウェット ¥7,800〜・パーカー ¥8,800〜</b>。1枚から受注生産・買わなくてもOK。権利リスクがあるものだけ人が確認、あとは自動で公開。</div>
   <div class="ex">例: <b data-x="柴犬のシンプルな線画 生成りトート">柴犬の線画</b> ・ <b data-x="禅の円相 ひと筆 黒Tシャツ">円相T</b> ・ <b data-x="夜の富士山と月 ミニマル パーカー">富士と月</b></div>
   <div id="out"></div>
+  <div class="recent" id="recent" hidden>
+    <h2>みんなが、さっき作った一着</h2>
+    <div class="rgrid" id="rgrid"></div>
+  </div>
 </div>
 <script>
 const $=s=>document.querySelector(s);
 function muShare(b){var u=b.dataset.u,t=b.dataset.t;if(navigator.share){navigator.share({title:t,url:u}).catch(function(){});}else if(navigator.clipboard){navigator.clipboard.writeText(u).then(function(){b.textContent='リンクをコピーしました ✓';}).catch(function(){});}else{prompt('このリンクを広めてください',u);}}
 $('#out');
 document.querySelectorAll('.ex b').forEach(b=>b.onclick=()=>{$('#p').value=b.dataset.x;});
+// 直近の作例 — 品質の証明・出来上がりイメージ・「動いてる店」の気配
+fetch('/api/make/recent').then(r=>r.json()).then(j=>{
+  if(!j.items||!j.items.length) return;
+  $('#rgrid').innerHTML=j.items.map(it=>'<a href="/shop/'+encodeURIComponent(it.sku)+'"><img loading=lazy src="'+it.img+'" alt=""><div class=rl>'+(it.label||'')+'</div><div class=rp>¥'+(it.price||'')+'</div></a>').join('');
+  $('#recent').hidden=false;
+}).catch(()=>{});
 $('#go').onclick=async()=>{
   const p=$('#p').value.trim(); if(!p){$('#p').focus();return;}
   const k=$('#k').value;

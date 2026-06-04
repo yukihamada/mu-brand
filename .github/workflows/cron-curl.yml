@@ -42,8 +42,14 @@ on:
     # so a Fly outage / DNS issue / panic-loop trips Telegram even when the
     # internal Fly watchdog is also down.
     - cron: '*/5 * * * *'
-    # Hourly :45 — off-Fly DB backup (VACUUM INTO → workflow artifact).
-    - cron: '45 * * * *'
+    # Every 6h :45 — off-Fly DB backup (VACUUM INTO → workflow artifact).
+    # 2026-06-04: hourly → */6. The DB is 1.1GB (you_designs blobs 652MB +
+    # products blobs 307MB); VACUUM INTO reads+writes ~2.2GB on a shared-cpu
+    # machine, saturating disk I/O for ~60-90s — every request (incl.
+    # /healthz) stalled and Fly briefly blackholed the site EVERY HOUR at
+    # :45+GH-delay. 4 backups/day keeps DR (plus Fly daily volume snapshots)
+    # at 1/6 the outage budget. Real fix = move blobs to R2 (approval needed).
+    - cron: '45 1,7,13,19 * * *'
   workflow_dispatch:
     inputs:
       target:
@@ -458,7 +464,7 @@ jobs:
     # upload as a 14-day-retained GitHub workflow artifact. Off-Fly backup
     # independent of Fly's daily volume snapshots. Restore: download
     # artifact, fly volume create + scp the file in.
-    if: github.event.schedule == '45 * * * *' || github.event.inputs.target == 'db_backup'
+    if: github.event.schedule == '45 1,7,13,19 * * *' || github.event.inputs.target == 'db_backup'
     runs-on: ubuntu-latest
     timeout-minutes: 24
     steps:

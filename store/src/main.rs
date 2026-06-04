@@ -67615,6 +67615,7 @@ async fn main() {
         .route("/mujin", get(catalog::store_unmanned_page))
         .route("/unmanned", get(catalog::store_unmanned_page))
         .route("/api/make", post(catalog::public_make).get(catalog::public_make))
+        .route("/api/make/recent", get(catalog::make_recent))
         .route("/admin/catalog/lifestyle_gen", get(catalog::admin_lifestyle_gen))
         .route("/admin/catalog/legacy_rename", get(catalog::admin_legacy_rename))
         .route("/buy/founder", get(buy_founder_page))

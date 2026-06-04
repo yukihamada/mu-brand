@@ -679,6 +679,9 @@ async function loadProduct() {
     // Falls back silently to the default MUGEN copy when brand_copy returns 404.
     try {
       const brand = (pick.brand || 'mugen').toLowerCase();
+      // mugen has no brand_copy row by design (page default IS the MUGEN
+      // copy) — skip the fetch so the console stays clean instead of 404ing.
+      if (brand === 'mugen') throw 0;
       const cr = await fetch('/api/brand_copy/' + encodeURIComponent(brand));
       if (cr.ok) {
         const c = await cr.json();
