@@ -2780,6 +2780,38 @@ pub async fn make_recent(State(db): State<Db>) -> Response {
     (headers, axum::Json(serde_json::json!({"items": items}))).into_response()
 }
 
+#[derive(serde::Deserialize)]
+pub struct MakePeekQuery {
+    pub sku: String,
+}
+
+/// GET /api/make/peek?sku= — /make 直後の結果カードが着用イメージ
+/// (on-body mockup, バックグラウンド生成) の完成をポーリングする軽量API。
+/// 公開情報のみ・minna(=/make産)限定。mockup が design と別URLになった時だけ
+/// 「着用イメージ完成」として返す（心理的所有感: 着た姿を見せると評価が上がる）。
+pub async fn make_peek(State(db): State<Db>, Query(q): Query<MakePeekQuery>) -> Response {
+    let row: Option<(String, Option<String>, String)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            &format!(
+                "SELECT COALESCE(design_file,''), {ext}, status
+                 FROM catalog_products WHERE sku=? AND brand='minna'",
+                ext = MOCKUP_EXT_LIVE
+            ),
+            rusqlite::params![&q.sku],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .ok()
+    };
+    let Some((design, mock, status)) = row else {
+        return (StatusCode::NOT_FOUND, axum::Json(serde_json::json!({"ok": false}))).into_response();
+    };
+    let mockup = mock.filter(|m| !m.is_empty() && *m != design);
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert("Cache-Control", axum::http::HeaderValue::from_static("no-store"));
+    (headers, axum::Json(serde_json::json!({"ok": true, "status": status, "mockup": mockup}))).into_response()
+}
+
 /// GET /api/make/ab — A/B/C の現況（各案のユニーク訪問者作成数・作成総数・勝者）。
 pub async fn make_ab_status(State(db): State<Db>) -> Response {
     let conn = db.lock().unwrap();
@@ -2882,11 +2914,23 @@ button:disabled{opacity:.5;cursor:default}
 .card .meta{flex:1;min-width:180px}
 .card .nm{font-size:18px;font-weight:700}
 .card .pr{color:#ffd700;font-size:20px;font-weight:800;margin:4px 0}
-.card a.buy{display:inline-block;margin-top:8px;background:#ffd700;color:#0a0a0a;text-decoration:none;font-weight:700;padding:9px 16px;border-radius:8px;font-size:13px}
-.card button.share{margin-top:8px;margin-left:8px;background:transparent;border:1px solid rgba(255,215,0,.5);color:#ffd700;font-weight:700;padding:9px 14px;border-radius:8px;font-size:13px;cursor:pointer;font-family:inherit}
+.card a.buy{display:block;text-align:center;margin-top:12px;background:#ffd700;color:#0a0a0a;text-decoration:none;font-weight:800;padding:13px 16px;border-radius:10px;font-size:15.5px;letter-spacing:.02em}
+.card a.buy small{display:block;font-weight:600;font-size:10.5px;opacity:.7;margin-top:2px;letter-spacing:0}
+.card button.share{margin-top:10px;width:100%;background:transparent;border:1px solid rgba(255,215,0,.4);color:rgba(255,215,0,.9);font-weight:600;padding:9px 14px;border-radius:8px;font-size:12.5px;cursor:pointer;font-family:inherit}
 .card button.share:hover{background:rgba(255,215,0,.12)}
 .card .spread{font-size:11.5px;color:rgba(245,245,240,.5);margin-top:8px}
 .note{font-size:12px;color:rgba(245,245,240,.5);margin-top:8px}
+/* リビール演出（ピークエンド: 出来上がりの瞬間をピークに）＋ 所有感UI */
+.own{font-size:14.5px;color:rgba(245,245,240,.88);margin:26px 0 10px;line-height:1.65}
+.own b{color:#ffd700}
+.own .pq{display:block;color:rgba(245,245,240,.5);font-size:12.5px;margin-top:2px}
+.card.reveal{animation:pop .65s cubic-bezier(.2,.8,.3,1.12) both;box-shadow:0 0 0 1px rgba(255,215,0,.32),0 0 44px rgba(255,215,0,.09)}
+@keyframes pop{from{opacity:0;transform:scale(.93) translateY(10px)}to{opacity:1;transform:scale(1) translateY(0)}}
+.card img{transition:opacity .45s}
+.card .by{font-size:10.5px;color:rgba(255,215,0,.7);letter-spacing:.14em;margin-top:2px;font-weight:700}
+.card .one{font-size:12px;color:rgba(245,245,240,.62);margin-top:8px;line-height:1.65}
+.card .one b{color:#f5f5f0}
+.card .fitnote{font-size:11.5px;color:rgba(255,215,0,.78);margin-top:6px;min-height:16px}
 .err{color:#ff8a7a;font-size:14px}
 .spin{display:inline-block;width:16px;height:16px;border:2px solid rgba(0,0,0,.3);border-top-color:#0a0a0a;border-radius:50%;animation:s .7s linear infinite;vertical-align:-3px;margin-right:8px}
 @keyframes s{to{transform:rotate(360deg)}}
@@ -2958,6 +3002,24 @@ button:disabled{opacity:.5;cursor:default}
 <script>
 const $=s=>document.querySelector(s);
 function muShare(b){var u=b.dataset.u,t=b.dataset.t;if(navigator.share){navigator.share({title:t,url:u}).catch(function(){});}else if(navigator.clipboard){navigator.clipboard.writeText(u).then(function(){b.textContent='リンクをコピーしました ✓';}).catch(function(){});}else{prompt('このリンクを広めてください',u);}}
+// プロンプトのエコー表示はユーザー入力 → 必ずエスケープ
+function escHtml(s){return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+// 着用イメージ(on-body mockup)はバックグラウンド生成 → /api/make/peek を
+// ポーリングして完成したらカード画像を差し替え（着た姿=心理的所有感）。
+function pollFit(sku,design){
+  var n=0;
+  var t=setInterval(function(){
+    n++; if(n>20){clearInterval(t);var f0=$('#mkFit');if(f0)f0.textContent='';return;}
+    fetch('/api/make/peek?sku='+encodeURIComponent(sku)).then(function(r){return r.json();}).then(function(j){
+      if(j&&j.mockup&&j.mockup!==design){
+        clearInterval(t);
+        var im=$('#mkImg'),f=$('#mkFit');
+        if(im){im.style.opacity=0;setTimeout(function(){im.src=j.mockup;im.style.opacity=1;},450);}
+        if(f)f.textContent='👕 着ると、こうなる。鏡の前の自分を、想像してみて。';
+      }
+    }).catch(function(){});
+  },6000);
+}
 // ── A/B/C 割当 ──────────────────────────────────────────────
 // visitor_id を mu-funnel.js の localStorage から拾う（無ければ生成）。
 function muVisitor(){
@@ -3024,18 +3086,28 @@ async function runMake(){
     genDone();
     if(!j.ok){ $('#out').innerHTML='<div class=err>'+(j.error||'うまく作れませんでした。もう一度お試しください。')+'</div>'; }
     else{
+      // 行動科学の根拠: IKEA効果(自作品は+63%高く評価/Norton+2012)→「あなたが作った」と
+      // プロンプトのエコーで作者性を返す。心理的所有感(Peck&Shu 2009)→着用イメージ差替+
+      // 所有語CTA。希少性/損失回避は事実ベースのみ(同seed生成は二度と無い・初回オーナー不在)。
       var url = j.buy_url || j.pdp_url || '';
-      var buy = j.buy_url ? '<a class=buy href="'+j.buy_url+'">今すぐ買う ¥'+(j.retail_jpy||'')+' →</a>' : '';
-      var share = url ? '<button class=share onclick="muShare(this)" data-u="'+url+'" data-t="'+((j.display||'MU')+' / wearmu')+'">📣 シェアして広める</button>' : '';
-      var spread = url ? '<div class=spread>広めるほど、この子が売れる → 作り手に報酬（¥600〜/枚）。</div>' : '';
-      var nt = j.note || (j.buy_url ? 'できました！今すぐ買えます。' : 'つくりました。確認後に公開・購入できます。');
-      $('#out').innerHTML='<div class=card><img src="'+j.design_url+'" alt=""><div class=meta>'
+      var pEcho = p.length>60 ? p.slice(0,60)+'…' : p;
+      var own = '<div class=own><b>あなたの言葉</b>から、世界に1枚が生まれました。<span class=pq>「'+escHtml(pEcho)+'」</span></div>';
+      var buy = j.buy_url ? '<a class=buy href="'+j.buy_url+'">この一着を、自分のものにする ¥'+(j.retail_jpy||'')+' →<small>サイズを選ぶだけ · 1枚から受注生産 · 買わなくてもOK</small></a>' : '';
+      var share = url ? '<button class=share onclick="muShare(this)" data-u="'+url+'" data-t="'+((j.display||'MU')+' / wearmu')+'">📎 リンクを保存・シェア — 閉じると、戻る道はこのリンクだけ</button>' : '';
+      var spread = url ? '<div class=spread>棚にも並びました。広めるほどこの子が売れる → 作り手のあなたに報酬（¥600〜/枚）。</div>' : '';
+      var one = j.auto_approved ? '<div class=one>🌱 <b>世界に1枚。</b>同じ絵は二度と生成されません。ファーストオーナーは、まだいません。</div>' : '';
+      var nt = j.auto_approved ? '' : '<div class=note>'+(j.note||'つくりました。確認後に公開・購入できます。')+'</div>';
+      $('#out').innerHTML=own+'<div class="card reveal"><img id=mkImg src="'+j.design_url+'" alt=""><div class=meta>'
         +'<div class=nm>'+(j.display||'')+'</div>'
+        +'<div class=by>DESIGNED BY YOU × MU</div>'
         +'<div class=pr>¥'+(j.retail_jpy||'')+'</div>'
         +'<div style="font-size:13px;color:rgba(245,245,240,.7)">'+(j.hook||'')+'</div>'
-        + buy + share + spread
-        +'<div class=note>'+ (j.auto_approved ? '✓ ' : '') + nt +'</div></div></div>';
+        + one
+        +'<div class=fitnote id=mkFit>'+(j.auto_approved?'👕 着用イメージを準備中… 数十秒でここに届きます':'')+'</div>'
+        + buy + share + spread + nt
+        +'</div></div>';
       $('#out').scrollIntoView({behavior:'smooth',block:'nearest'});
+      if(j.auto_approved && j.sku) pollFit(j.sku, j.design_url);
     }
   }catch(e){ genDone(); $('#out').innerHTML='<div class=err>通信エラー。もう一度お試しください。</div>'; }
   $('#go').disabled=false; $('#go').textContent='つくる';
