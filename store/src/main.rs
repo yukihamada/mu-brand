@@ -62482,7 +62482,7 @@ async fn slug_or_static(
             if is_brand {
                 return catalog::shop_index(
                     axum::extract::State(db.clone()),
-                    axum::extract::Query(catalog::ShopQuery { brand: Some(slug_lo.clone()), page: None }),
+                    axum::extract::Query(catalog::ShopQuery { brand: Some(slug_lo.clone()), page: None, sort: None }),
                 ).await.into_response();
             }
             return serve_static_or_404(&slug, &db);

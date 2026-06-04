@@ -2593,7 +2593,7 @@ pub async fn store_unmanned_page(State(db): State<Db>) -> Html<String> {
         let sold: i64 = conn
             .query_row("SELECT COUNT(*) FROM catalog_orders WHERE status='submitted'", [], |r| r.get(0))
             .unwrap_or(0);
-        let items = list_products_paged(&conn, None, 12, 0);
+        let items = list_products_paged(&conn, None, 12, 0, "");
         let cards = items
             .iter()
             .map(|p| {
@@ -3845,6 +3845,7 @@ pub async fn admin_status(
 pub struct ShopQuery {
     pub brand: Option<String>,
     pub page: Option<u32>,
+    pub sort: Option<String>,
 }
 
 const SHOP_PAGE_SIZE: i64 = 60;
@@ -3855,6 +3856,12 @@ pub async fn shop_index(
 ) -> Html<String> {
     let brand_filter = q.brand.unwrap_or_default();
     let page = q.page.unwrap_or(1).max(1);
+    // Sort: whitelist only — anything else falls back to the default
+    // (mockup-first → sold count) so the param can never reach SQL raw.
+    let sort = match q.sort.as_deref() {
+        Some(s @ ("new" | "price_asc" | "price_desc")) => s,
+        _ => "",
+    };
     let offset = (page as i64 - 1) * SHOP_PAGE_SIZE;
     let (brands, items, total_active) = {
         let conn = db.lock().unwrap();
@@ -3888,9 +3895,9 @@ pub async fn shop_index(
         };
 
         let items: Vec<ProductRow> = if brand_filter.is_empty() {
-            list_products_paged(&conn, None, SHOP_PAGE_SIZE, offset)
+            list_products_paged(&conn, None, SHOP_PAGE_SIZE, offset, sort)
         } else {
-            list_products_paged(&conn, Some(&brand_filter), SHOP_PAGE_SIZE, offset)
+            list_products_paged(&conn, Some(&brand_filter), SHOP_PAGE_SIZE, offset, sort)
         };
         (brands, items, total)
     };
@@ -3914,9 +3921,31 @@ pub async fn shop_index(
         s
     };
 
+    // Sort chips: 人気順(default) / 新着 / 価格↑ / 価格↓. Brand persists, page resets.
+    let sort_chips = {
+        let bquery = if brand_filter.is_empty() {
+            String::new()
+        } else {
+            format!("brand={}&", urlencoding::encode(&brand_filter))
+        };
+        [("", "人気順"), ("new", "新着"), ("price_asc", "価格が安い順"), ("price_desc", "価格が高い順")]
+            .iter()
+            .map(|(key, label)| {
+                let on = if sort == *key { " on" } else { "" };
+                let sq = if key.is_empty() { String::new() } else { format!("sort={}", key) };
+                format!(
+                    r#"<a class="chip{on}" href="/shop?{bquery}{sq}" data-funnel="cta_click" data-funnel-cta="shop_sort_{k}">{label}</a>"#,
+                    on = on, bquery = bquery, sq = sq,
+                    k = if key.is_empty() { "sold" } else { key }, label = label,
+                )
+            })
+            .collect::<String>()
+    };
+
     let grid = items
         .iter()
-        .map(|p| render_card(p))
+        .enumerate()
+        .map(|(i, p)| render_card(p, i))
         .collect::<String>();
 
     let page_count = items.len();
@@ -3927,12 +3956,15 @@ pub async fn shop_index(
         format!("/shop — {} ({}件) | MU カタログ", brand_filter, total_active)
     };
 
-    // Pagination: prev / page-of-pages / next. Brand filter persists.
-    let bq = if brand_filter.is_empty() {
+    // Pagination: prev / page-of-pages / next. Brand filter + sort persist.
+    let mut bq = if brand_filter.is_empty() {
         String::new()
     } else {
         format!("&brand={}", urlencoding::encode(&brand_filter))
     };
+    if !sort.is_empty() {
+        bq.push_str(&format!("&sort={}", sort));
+    }
     let prev_link = if page > 1 {
         format!(r#"<a class="pg-link" href="/shop?page={}{}">← 前 {} 件</a>"#,
             page - 1, bq, SHOP_PAGE_SIZE)
@@ -4009,7 +4041,7 @@ nav .brand{{font-weight:900;letter-spacing:0.4em}}
 .card .img img{{width:100%;height:100%;object-fit:cover;display:block}}
 .card .body{{padding:10px 12px 12px;flex:1;display:flex;flex-direction:column;gap:6px}}
 .card .body .brand{{font-size:9px;letter-spacing:0.25em;text-transform:uppercase;color:#ffd700;opacity:0.85}}
-.card .body .name{{font-size:12.5px;line-height:1.45;flex:1}}
+.card .body .name{{font-size:12.5px;line-height:1.45;flex:1;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}}
 .card .body .price{{font-size:13px;font-weight:700;color:#fff;font-family:monospace}}
 .empty{{padding:60px 24px;text-align:center;color:rgba(245,245,240,0.5);max-width:1180px;margin:0 auto}}
 .pagination{{max-width:1180px;margin:0 auto;padding:14px 24px 40px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;font-size:12px}}
@@ -4033,6 +4065,7 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
 {hero}
 {make_cta}
 <div class="chips">{brand_chips}</div>
+<div class="chips sorts" style="padding-top:0">{sort_chips}</div>
 {body_or_empty}
 {pagination}
 <footer>
@@ -4070,6 +4103,7 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
     window.muAudio.onended=function(){{btn.textContent='▶';}};
   }};
 </script>
+<script defer src="/mu-funnel.js"></script>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </body></html>"##,
         title = html_text(&title),
@@ -4077,6 +4111,7 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
         hero = hero_html,
         make_cta = make_cta_banner("shop"),
         brand_chips = brand_chips,
+        sort_chips = sort_chips,
         body_or_empty = if items.is_empty() {
             r#"<div class="empty">該当する商品がありません。</div>"#.to_string()
         } else {
@@ -4349,7 +4384,7 @@ pub async fn shop_pdp(
             "Stripe + Printful 7-14 日 国際発送"
         };
         format!(
-            r#"{cross_html}<a class="buy" id="buybtn" href="{base}">買う <span class="amt">¥{price}</span> · 即購入 ({fulfil_note})</a>{cross_script}"#,
+            r#"{cross_html}<a class="buy" id="buybtn" href="{base}" data-funnel="cta_click" data-funnel-cta="pdp_buy">買う <span class="amt">¥{price}</span> · 即購入 ({fulfil_note})</a>{cross_script}"#,
             cross_html = cross_html,
             base = base,
             price = format_jpy(price_jpy),
@@ -4613,6 +4648,11 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
 .legal-links a:hover{{color:#ffd700}}
 .legal-fine{{color:rgba(245,245,240,0.35);font-size:9.5px;line-height:1.6}}
 .buy.disabled{{background:#222;color:#666;cursor:not-allowed}}
+/* モバイル: 画像列の下に埋まる買うボタンを画面下に張り付かせる(7秒離脱対策)。
+   position:sticky なので自然位置までスクロールすれば元のレイアウトに収まる。 */
+@media (max-width:740px){{
+  a.buy{{position:sticky;bottom:10px;z-index:20;box-shadow:0 4px 24px rgba(0,0,0,0.55)}}
+}}
 .back{{display:inline-block;margin-top:24px;color:rgba(245,245,240,0.6);text-decoration:none;font-size:11px}}
 .back:hover{{color:#ffd700}}
 </style></head><body>
@@ -4658,6 +4698,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
   </div>
   <div class="legal-fine">© 2026 MU / Enabler Inc. · 東京千代田区九段南 1-5-6 · 受注生産・国際発送 7-14 日</div>
 </footer>
+<script defer src="/mu-funnel.js"></script>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </body></html>"##,
         make_cta = make_cta_banner("pdp"),
@@ -6675,7 +6716,18 @@ fn list_products_paged(
     brand: Option<&str>,
     limit: i64,
     offset: i64,
+    sort: &str,
 ) -> Vec<ProductRow> {
+    // Secondary ORDER BY per sort key. The mockup-first clause always leads so
+    // SKUs with broken/stale images stay at the back regardless of sort.
+    // `sort` is whitelisted in shop_index — never interpolate user input here.
+    let order_tail = match sort {
+        "new" => "created_at DESC, sku".to_string(),
+        "price_asc" => "retail_price_jpy ASC, sku".to_string(),
+        "price_desc" => "retail_price_jpy DESC, sku".to_string(),
+        _ => "(SELECT COUNT(*) FROM catalog_orders o2 WHERE o2.sku=catalog_products.sku AND o2.status='submitted') DESC,
+                      sort_order, sku".to_string(),
+    };
     // 6th column = real sold count (status='submitted') for the social-proof
     // badge, derived per-row via correlated subquery (gated in render_card).
     let (sql, has_brand) = if brand.is_some() {
@@ -6688,9 +6740,8 @@ fn list_products_paged(
              FROM catalog_products
              WHERE is_active=1 AND brand=?
              ORDER BY (COALESCE({ext}, '') != '') DESC,
-                      (SELECT COUNT(*) FROM catalog_orders o2 WHERE o2.sku=catalog_products.sku AND o2.status='submitted') DESC,
-                      sort_order, sku
-             LIMIT ? OFFSET ?", ext = MOCKUP_EXT_LIVE),
+                      {tail}
+             LIMIT ? OFFSET ?", ext = MOCKUP_EXT_LIVE, tail = order_tail),
             true,
         )
     } else {
@@ -6703,9 +6754,8 @@ fn list_products_paged(
              FROM catalog_products
              WHERE is_active=1
              ORDER BY (COALESCE({ext}, '') != '') DESC,
-                      (SELECT COUNT(*) FROM catalog_orders o2 WHERE o2.sku=catalog_products.sku AND o2.status='submitted') DESC,
-                      sort_order, sku
-             LIMIT ? OFFSET ?", ext = MOCKUP_EXT_LIVE),
+                      {tail}
+             LIMIT ? OFFSET ?", ext = MOCKUP_EXT_LIVE, tail = order_tail),
             false,
         )
     };
@@ -6807,7 +6857,7 @@ fn list_products(
     rows
 }
 
-fn render_card(p: &ProductRow) -> String {
+fn render_card(p: &ProductRow, pos: usize) -> String {
     let img = p
         .img
         .clone()
@@ -6851,8 +6901,11 @@ fn render_card(p: &ProductRow) -> String {
         ),
         _ => String::new(),
     };
+    // data-funnel: shop_card + grid position (0-based, page-local) so the
+    // analytics funnel can split /shop→PDP CTR by card rank (above/below fold).
     format!(
-        r##"<a class="card" href="/shop/{sku_enc}"><span class="img" style="position:relative;display:block">{sold_badge}{listen_mini}{listen_song}<img src="{img}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/static/designs/marker_zero.png';this.style.objectFit='contain';this.style.background='#0a0a0a';this.style.padding='28px'"></span><span class="body"><span class="brand">{brand}</span><span class="name">{name}</span><span class="price">¥{price}</span></span></a>"##,
+        r##"<a class="card" href="/shop/{sku_enc}" data-funnel="cta_click" data-funnel-cta="shop_card" data-funnel-pos="{pos}"><span class="img" style="position:relative;display:block">{sold_badge}{listen_mini}{listen_song}<img src="{img}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/static/designs/marker_zero.png';this.style.objectFit='contain';this.style.background='#0a0a0a';this.style.padding='28px'"></span><span class="body"><span class="brand">{brand}</span><span class="name">{name}</span><span class="price">¥{price}</span></span></a>"##,
+        pos = pos,
         sku_enc = urlencoding::encode(&p.sku),
         sold_badge = sold_badge,
         listen_mini = listen_mini,

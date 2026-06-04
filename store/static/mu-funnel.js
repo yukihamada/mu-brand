@@ -93,10 +93,12 @@
     var name = el.getAttribute('data-funnel');
     var pid  = el.getAttribute('data-funnel-product');
     var cta  = el.getAttribute('data-funnel-cta');
+    var pos  = el.getAttribute('data-funnel-pos'); // grid rank (shop_card CTR by fold)
     var path = el.getAttribute('data-funnel-href') || (el.tagName === 'A' ? el.getAttribute('href') : null);
     var extra = {};
     if (pid)  extra.product_id = parseInt(pid, 10);
     if (cta)  extra.cta = cta;
+    if (pos !== null && pos !== '') extra.pos = parseInt(pos, 10);
     if (path) extra.href = path;
     send(name, extra.product_id !== undefined ? extra : (Object.keys(extra).length ? { product_id: null, ...extra } : null));
   }, true);
