@@ -68278,6 +68278,7 @@ async fn main() {
         .route("/api/referral/:code", get(referral_info))
         .route("/api/admin/funnel/clicks", get(admin_funnel_clicks))
         .route("/sitemap.xml", get(dynamic_sitemap))
+        .route("/feed/google.tsv", get(catalog::google_merchant_feed))
         .route("/memory-vault", get(memory_vault_index))
         .route("/memory-vault/files/", get(memory_vault_file))
         // Per-user share page — REGISTER LAST so literal routes win

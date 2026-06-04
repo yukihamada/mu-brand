@@ -4208,7 +4208,7 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
 /// Gated so a low-volume SKU never surfaces an embarrassing 0/1; the badge
 /// self-activates once a SKU genuinely crosses the threshold. Honest data only
 /// (derived from catalog_orders.status='submitted'), never fabricated.
-const SOLD_BADGE_MIN: i64 = 5;
+const SOLD_BADGE_MIN: i64 = 3;
 
 pub async fn shop_pdp(
     State(db): State<Db>,
@@ -6808,6 +6808,60 @@ const MOCKUP_EXT_LIVE: &str = "CASE WHEN mockup_url_external LIKE 'https://print
        OR mockup_url_external LIKE '%/tmp/%' \
      THEN NULL ELSE mockup_url_external END";
 
+/// GET /feed/google.tsv — Google Merchant Center 商品フィード（無料リスティング用）。
+/// live + 実画像 (MOCKUP_EXT_LIVE) + 価格>0 の物理商品のみ。digital kind
+/// (song / event_ticket) は GMC の物販対象外なので除外。フォーマットは GMC の
+/// tab-delimited 仕様 (1行目=属性ヘッダ)。Merchant Center 側には
+/// 「スケジュール取得」でこの URL を登録する。
+pub async fn google_merchant_feed(State(db): State<Db>) -> Response {
+    let rows: Vec<(String, String, i64, String)> = {
+        let conn = db.lock().unwrap();
+        let sql = format!(
+            "SELECT sku, description_ja, retail_price_jpy, {ext}
+             FROM catalog_products
+             WHERE is_active=1 AND status='live' AND retail_price_jpy > 0
+               AND COALESCE({ext}, '') != ''
+             ORDER BY sku",
+            ext = MOCKUP_EXT_LIVE
+        );
+        conn.prepare(&sql)
+            .ok()
+            .and_then(|mut s| {
+                s.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+                    .ok()
+                    .map(|it| it.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default()
+    };
+    let clean = |s: &str| s.replace(['\t', '\n', '\r'], " ").trim().to_string();
+    let mut out =
+        String::from("id\ttitle\tdescription\tlink\timage_link\tavailability\tprice\tcondition\tbrand\n");
+    for (sku, desc, price, img) in rows {
+        if matches!(kind_from_sku(&sku), "song" | "event_ticket") {
+            continue;
+        }
+        let desc_clean = clean(&desc);
+        let title: String = {
+            let c: Vec<char> = desc_clean.chars().collect();
+            if c.len() > 140 { c[..140].iter().collect() } else { desc_clean.clone() }
+        };
+        out.push_str(&format!(
+            "{sku}\t{title}\t{desc}\thttps://wearmu.com/shop/{sku_enc}\t{img}\tin_stock\t{price} JPY\tnew\tMU\n",
+            sku = sku,
+            title = title,
+            desc = desc_clean,
+            sku_enc = urlencoding::encode(&sku),
+            img = img,
+            price = price,
+        ));
+    }
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/tab-separated-values; charset=utf-8")],
+        out,
+    )
+        .into_response()
+}
+
 fn list_products_paged(
     conn: &rusqlite::Connection,
     brand: Option<&str>,
@@ -6822,8 +6876,13 @@ fn list_products_paged(
         "new" => "created_at DESC, sku".to_string(),
         "price_asc" => "retail_price_jpy ASC, sku".to_string(),
         "price_desc" => "retail_price_jpy DESC, sku".to_string(),
-        _ => "(SELECT COUNT(*) FROM catalog_orders o2 WHERE o2.sku=catalog_products.sku AND o2.status='submitted') DESC,
-                      sort_order, sku".to_string(),
+        // Default (人気順): 看板 (meta_json.featured=true, 人力キュレーション) を
+        // 最前列に固定し、ステッカーをアパレルの後ろへ降格 — ¥480 ステッカーが
+        // 「店の顔」になる問題への直接対応。価格/新着ソートには適用しない。
+        _ => r#"(COALESCE(meta_json,'') LIKE '%"featured":true%') DESC,
+                      (sku NOT LIKE '%STICKER%') DESC,
+                      (SELECT COUNT(*) FROM catalog_orders o2 WHERE o2.sku=catalog_products.sku AND o2.status='submitted') DESC,
+                      sort_order, sku"#.to_string(),
     };
     // 6th column = real sold count (status='submitted') for the social-proof
     // badge, derived per-row via correlated subquery (gated in render_card).
