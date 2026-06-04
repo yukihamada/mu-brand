@@ -1707,6 +1707,9 @@ POST /api/agent/products
                  nfc_coin / device.
        Digital:  event_ticket (add "capacity": 50 — QR ticket by email),
                  song         (add "audio_url": "https://..." — listen link).
+       音源入りTシャツもOK: 物理kind(tee等)にも "audio_url" を付けられる。
+       "https://mu.koe.live/oto.html?s=<曲key>" を渡すと商品ページに試聴
+       プレイヤー(「着ると、この曲が鳴る」)が出る(例: s=i-love-you)。
      `design_url` must be an absolute https URL (use POST /api/agent/upload).
      `price_jpy` is optional; values below the per-kind floor are clamped up.
      (`ai_prompt` generates artwork server-side; it is gated by a runtime flag.
@@ -1869,7 +1872,7 @@ pub async fn openapi_json() -> Response {
                 "get": {"summary":"List every product you created (sku, store, label, kind, price, status, pdp_url)","security":[{"bearer":[]}],
                     "responses":{"200":{"description":"{ok, count, products[]}"},"401":{"description":"auth required"}}},
                 "post": {"summary":"Create a product (status='review' pending MA approval)","security":[{"bearer":[]}],
-                "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","required":["store","label","description","kind","design_url"],"properties":{"store":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"kind":{"type":"string","enum":["tee","rashguard_ls","rashguard_black","hoodie","crewneck","nfc_coin","device","event_ticket","song"]},"design_url":{"type":"string","format":"uri","description":"absolute https URL"},"price_jpy":{"type":"integer","description":"optional; clamped up to the per-kind floor"},"capacity":{"type":"integer","description":"event_ticket only: ticket capacity"},"audio_url":{"type":"string","format":"uri","description":"song only: https listen/download link"}}}}}},
+                "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","required":["store","label","description","kind","design_url"],"properties":{"store":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"kind":{"type":"string","enum":["tee","rashguard_ls","rashguard_black","hoodie","crewneck","nfc_coin","device","event_ticket","song"]},"design_url":{"type":"string","format":"uri","description":"absolute https URL"},"price_jpy":{"type":"integer","description":"optional; clamped up to the per-kind floor"},"capacity":{"type":"integer","description":"event_ticket only: ticket capacity"},"audio_url":{"type":"string","format":"uri","description":"https listen link. song はもちろん、物理Tシャツ等にも付けられる(mu.koe.live/oto.html?s=KEY を渡すとPDPに試聴プレイヤー)"}}}}}},
                 "responses":{"200":{"description":"{sku, status:'review', pdp_url}"},"400":{"description":"unknown kind / missing design_url"},"403":{"description":"not your store"},"429":{"description":"rate limit"}}}},
             "/api/agent/products/{sku}/update": {"post": {"summary":"Update label/description/price_jpy/design_url (owner-only; review/retired status only; price clamped to floor)","security":[{"bearer":[]}],
                 "parameters":[{"name":"sku","in":"path","required":true,"schema":{"type":"string"}}],

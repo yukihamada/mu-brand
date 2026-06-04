@@ -3921,11 +3921,20 @@ pub async fn shop_pdp(
 </div>"##, sold_row = sold_row)
     };
 
-    // 試聴ブロック: description_ja に "mu.koe.live/oto.html?s=KEY" が含まれる曲Tは
-    // 買う前に試聴できるよう ▶ プレイヤーを出す（涼介FB#1: 買う前に聴かせて）
+    // 試聴ブロック: description_ja か meta_json.audio_url に
+    // "mu.koe.live/oto.html?s=KEY" が含まれる商品(MUON Tシャツ等の音源入りも含む)は
+    // 買う前に試聴できるよう ▶ プレイヤーを出す（涼介FB#1: 買う前に聴かせて）。
+    // 2026-06-04: MCP create/update の audio_url(=meta_json)からも鳴らせるよう
+    // desc だけでなく meta_json.audio_url も探索対象にする(Tシャツに音源)。
+    let meta_audio: String = meta_json
+        .as_deref()
+        .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+        .and_then(|v| v.get("audio_url").and_then(|a| a.as_str()).map(|s| s.to_string()))
+        .unwrap_or_default();
     let listen_block: String = {
-        if let Some(pos) = desc.find("oto.html?s=") {
-            let rest = &desc[pos + "oto.html?s=".len()..];
+        let hay = format!("{}\n{}", desc, meta_audio);
+        if let Some(pos) = hay.find("oto.html?s=") {
+            let rest = &hay[pos + "oto.html?s=".len()..];
             let key: String = rest.chars()
                 .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
                 .collect();
