@@ -935,6 +935,30 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
                     DTG print front chest",
     },
     ProductSpec {
+        kind: "mug",
+        // 11oz White Glossy Mug — same Printful product/variant proven live by
+        // VOICE-MUG-01 / FOUND-MUG-01 / KAGI-MUG-01 / CHIP-MUG-01 (placement
+        // 'front', see store/migrations/20260523*.sql).
+        printful_product_id: 19,
+        printful_variant_id: 1320,
+        placement: "front",
+        retail_jpy: 2200,
+        spec_html: "11oz 白磁マグ · 光沢仕上げ · 電子レンジ・食洗機対応 · \
+                    ラップ印刷(取っ手まわり以外の全面) · 縁まで鮮やかな発色 · 1点ずつ印刷",
+    },
+    ProductSpec {
+        kind: "sticker",
+        // Kiss-Cut Sticker 4×4 — same Printful product/variant proven live by
+        // VOICE-STICK-01 / NEWS-STICK-01 / CHIP-STICK-01 + seed_mu_sticker
+        // (358/10164, placement 'front').
+        printful_product_id: 358,
+        printful_variant_id: 10164,
+        placement: "front",
+        retail_jpy: 800,
+        spec_html: "キスカット ステッカー · 4×4インチ(約10cm) · 耐水・耐光ビニール · \
+                    強粘着 · 屋外耐候 · ノートPC/水筒/ギアに貼れる",
+    },
+    ProductSpec {
         kind: "nfc_coin",
         // No POD vendor: NFC音コイン is self-fulfilled (fulfillment_route
         // 'manual'). The NTAG213 tag is encoded with the song URL, locked,
@@ -1584,6 +1608,305 @@ pub async fn generate_lifestyle_photo(
     }
     tracing::info!("[catalog/lifestyle] OK sku={} v={} → {}", sku, variant, url);
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Lifestyle 着画 by REAL-DESIGN COMPOSITE (no Gemini re-draw → zero drift)
+//
+// The old lifestyle photos were re-drawn by Gemini from the design image, so
+// the printed graphic drifted (e.g. a framed white box collapsed into bare
+// white text). Instead we composite the ACTUAL design_file — exactly what
+// Printful prints — onto a print-free worn-blank base photo, multiplied by a
+// blurred luminance map of the garment so it reads as printed, not pasted.
+// The print is pixel-identical to the design every time.
+//
+// Base photos live in store/static/lifestyle_base/{file}.png (front-facing,
+// solid-black, blank-chest models). Each base carries the chest print box as
+// fractions of image size: (cx, cy = box center, wfrac = box width).
+// ---------------------------------------------------------------------------
+
+struct LbBase {
+    file: &'static str,
+    cx: f32,
+    cy: f32,
+    wfrac: f32,
+}
+
+/// Worn-blank bases for a garment kind, or empty if this kind is not a
+/// chest-print apparel item (caller then falls back / skips).
+fn lifestyle_bases(kind: &str) -> &'static [LbBase] {
+    match kind {
+        "hoodie" => &[
+            LbBase { file: "hoodie_1", cx: 0.500, cy: 0.405, wfrac: 0.300 },
+            LbBase { file: "hoodie_2", cx: 0.500, cy: 0.410, wfrac: 0.300 },
+        ],
+        "crewneck" => &[
+            LbBase { file: "crewneck_1", cx: 0.500, cy: 0.400, wfrac: 0.320 },
+            LbBase { file: "crewneck_2", cx: 0.500, cy: 0.400, wfrac: 0.320 },
+        ],
+        "tee" | "tank" | "long_sleeve_tee" => &[
+            LbBase { file: "tee_1", cx: 0.500, cy: 0.385, wfrac: 0.345 },
+            LbBase { file: "tee_3", cx: 0.500, cy: 0.390, wfrac: 0.340 },
+        ],
+        _ => &[],
+    }
+}
+
+/// Stable per-SKU base pick so the same product always renders the same way
+/// (idempotent) while the catalog as a whole rotates through the variants.
+fn pick_base<'a>(bases: &'a [LbBase], sku: &str) -> &'a LbBase {
+    let h: u32 = sku.bytes().fold(0u32, |a, b| a.wrapping_mul(31).wrapping_add(b as u32));
+    &bases[(h as usize) % bases.len()]
+}
+
+fn read_base_png(file: &str) -> Option<Vec<u8>> {
+    // ServeDir serves "static" relative to the working dir, so the bundled
+    // bases sit at static/lifestyle_base/<file>.png. Try a couple of roots so
+    // this also works when launched from the repo root in dev.
+    for root in ["static", "store/static"] {
+        let p = format!("{}/lifestyle_base/{}.png", root, file);
+        if let Ok(b) = std::fs::read(&p) {
+            return Some(b);
+        }
+    }
+    None
+}
+
+/// Composite `design_png` (the exact Printful print artwork, normally an
+/// opaque square incl. its printed background) onto `base_png` at the base's
+/// chest box, shaded by the garment's folds. Returns encoded PNG bytes.
+fn compose_lifestyle_png(design_png: &[u8], base_png: &[u8], b: &LbBase) -> Result<Vec<u8>, String> {
+    use image::imageops;
+    let mut base = image::load_from_memory(base_png)
+        .map_err(|e| format!("base decode: {}", e))?
+        .to_rgba8();
+    let (iw, ih) = base.dimensions();
+
+    let design = image::load_from_memory(design_png)
+        .map_err(|e| format!("design decode: {}", e))?
+        .to_rgba8();
+    // The design_file IS the printed box (white/black bg included), so use the
+    // full square. Only crop when the file is genuinely transparent.
+    let has_alpha = design.pixels().any(|p| p.0[3] < 250);
+    let design = if has_alpha {
+        let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0u32, 0u32);
+        for (x, y, p) in design.enumerate_pixels() {
+            if p.0[3] > 12 {
+                x0 = x0.min(x); y0 = y0.min(y); x1 = x1.max(x); y1 = y1.max(y);
+            }
+        }
+        if x1 >= x0 && y1 >= y0 {
+            imageops::crop_imm(&design, x0, y0, x1 - x0 + 1, y1 - y0 + 1).to_image()
+        } else {
+            design
+        }
+    } else {
+        design
+    };
+    let (dw, dh) = design.dimensions();
+    if dw == 0 || dh == 0 {
+        return Err("empty design".into());
+    }
+
+    let box_w = ((iw as f32) * b.wfrac).round().max(1.0) as u32;
+    let box_h = ((dh as f32) * (box_w as f32 / dw as f32)).round().max(1.0) as u32;
+    let mut layer = imageops::resize(&design, box_w, box_h, imageops::FilterType::Lanczos3);
+
+    // Top-left of the box, clamped inside the frame.
+    let px = (((iw as f32) * b.cx).round() as i64 - box_w as i64 / 2)
+        .clamp(0, (iw.saturating_sub(box_w)) as i64);
+    let py = (((ih as f32) * b.cy).round() as i64 - box_h as i64 / 2)
+        .clamp(0, (ih.saturating_sub(box_h)) as i64);
+
+    // Blurred luminance of the garment region → only large folds survive,
+    // so a white print box stays clean instead of speckling on sensor noise.
+    let region = imageops::crop_imm(&base, px as u32, py as u32, box_w, box_h).to_image();
+    let luma = image::DynamicImage::ImageRgba8(region).to_luma8();
+    let sigma = ((box_w as f32) / 40.0).max(4.0);
+    let blurred = imageops::blur(&luma, sigma);
+    let mut vals: Vec<u8> = blurred.pixels().map(|p| p.0[0]).collect();
+    vals.sort_unstable();
+    let p90 = (*vals.get(vals.len().saturating_mul(90) / 100).unwrap_or(&255) as f32).max(8.0);
+
+    let (bw, bh) = blurred.dimensions();
+    let _ = bh;
+    for (x, y, px2) in layer.enumerate_pixels_mut() {
+        let lum = blurred.get_pixel(x.min(bw - 1), y.min(blurred.height() - 1)).0[0] as f32;
+        let shade = (0.66 + 0.34 * (lum / p90)).clamp(0.66, 1.0);
+        px2.0[0] = (px2.0[0] as f32 * shade).clamp(0.0, 255.0) as u8;
+        px2.0[1] = (px2.0[1] as f32 * shade).clamp(0.0, 255.0) as u8;
+        px2.0[2] = (px2.0[2] as f32 * shade).clamp(0.0, 255.0) as u8;
+        px2.0[3] = (px2.0[3] as f32 * 0.95) as u8;
+    }
+    imageops::overlay(&mut base, &layer, px, py);
+
+    let mut buf = std::io::Cursor::new(Vec::<u8>::new());
+    image::DynamicImage::ImageRgba8(base)
+        .into_rgb8()
+        .write_to(&mut buf, image::ImageFormat::Png)
+        .map_err(|e| format!("encode: {}", e))?;
+    Ok(buf.into_inner())
+}
+
+/// Fetch the design, composite onto a worn-blank base, upload to R2, and
+/// point all the SKU's lifestyle rows at it. Returns the new public URL.
+async fn composite_lifestyle_to_r2(
+    db: &Db,
+    sku: &str,
+    kind: &str,
+    design_file: &str,
+) -> Result<String, String> {
+    let bases = lifestyle_bases(kind);
+    if bases.is_empty() {
+        return Err(format!("kind {} not a chest-print item", kind));
+    }
+    if !design_file.starts_with("http") {
+        return Err("no design_file".into());
+    }
+    let b = pick_base(bases, sku);
+    let base_png = read_base_png(b.file).ok_or_else(|| format!("base {} missing", b.file))?;
+    let design_png = reqwest::Client::new()
+        .get(design_file)
+        .send().await.map_err(|e| format!("fetch design: {}", e))?
+        .bytes().await.map_err(|e| format!("read design: {}", e))?
+        .to_vec();
+    let out = compose_lifestyle_png(&design_png, &base_png, b)?;
+    let key = format!("catalog/lifestyle/{}-fit.png", sku);
+    let url = crate::store_r2_bytes(&key, &out, "image/png").await
+        .ok_or_else(|| "R2 upload failed".to_string())?;
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE catalog_product_extras SET image_url=? WHERE sku=? AND lower(label) LIKE 'lifestyle%'",
+            rusqlite::params![&url, sku],
+        );
+    }
+    Ok(url)
+}
+
+#[derive(serde::Deserialize)]
+pub struct FixLifestyleQuery {
+    pub token: String,
+    #[serde(default)]
+    pub dry_run: bool,
+    pub limit: Option<usize>,
+    pub sku: Option<String>,
+}
+
+/// Replace drifted Gemini 着画 with accurate real-design composites.
+/// tee/hoodie/crewneck/tank → composite the real design onto a worn-blank;
+/// rashguard (AOP full-front) → reuse the accurate Printful mockup_url_external.
+pub async fn admin_fix_lifestyle(
+    State(db): State<Db>,
+    Query(q): Query<FixLifestyleQuery>,
+) -> Response {
+    let expected = std::env::var("ADMIN_TOKEN").unwrap_or_default();
+    if expected.is_empty() || q.token != expected {
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    }
+
+    // Target: live SKUs that currently have at least one lifestyle row.
+    let rows: Vec<(String, String, String)> = {
+        let conn = db.lock().unwrap();
+        let mut sql = String::from(
+            "SELECT p.sku, COALESCE(p.design_file,''), COALESCE(p.mockup_url_external,'')
+             FROM catalog_products p
+             WHERE p.status='live'
+               AND EXISTS(SELECT 1 FROM catalog_product_extras e
+                          WHERE e.sku=p.sku AND lower(e.label) LIKE 'lifestyle%')",
+        );
+        if q.sku.is_some() {
+            sql.push_str(" AND p.sku=?");
+        }
+        sql.push_str(" ORDER BY p.sku");
+        conn.prepare(&sql).ok().and_then(|mut s| {
+            let map = |r: &rusqlite::Row| Ok((
+                r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+            ));
+            let it = if let Some(ref sku) = q.sku {
+                s.query_map(rusqlite::params![sku], map).ok()?
+                    .filter_map(|r| r.ok()).collect::<Vec<_>>()
+            } else {
+                s.query_map([], map).ok()?
+                    .filter_map(|r| r.ok()).collect::<Vec<_>>()
+            };
+            Some(it)
+        }).unwrap_or_default()
+    };
+
+    let (mut composited, mut rash_reused, mut skipped, mut failed) = (0u32, 0u32, 0u32, 0u32);
+    let mut samples: Vec<serde_json::Value> = Vec::new();
+    let mut processed = 0usize;
+
+    for (sku, design_file, mockup) in &rows {
+        if let Some(lim) = q.limit {
+            if processed >= lim { break; }
+        }
+        let kind = kind_from_sku(sku);
+        let is_rash = kind == "rashguard_ls" || kind == "rashguard_black";
+        let supported = is_rash || !lifestyle_bases(kind).is_empty();
+        if !supported {
+            skipped += 1;
+            continue;
+        }
+
+        if is_rash {
+            // Reuse the accurate AOP mockup as the lifestyle image.
+            let good = mockup.starts_with("http") && mockup != design_file;
+            if !good { skipped += 1; continue; }
+            processed += 1;
+            if q.dry_run {
+                rash_reused += 1;
+                if samples.len() < 8 {
+                    samples.push(serde_json::json!({"sku": sku, "mode": "rash_reuse", "url": mockup}));
+                }
+            } else {
+                let conn = db.lock().unwrap();
+                match conn.execute(
+                    "UPDATE catalog_product_extras SET image_url=? WHERE sku=? AND lower(label) LIKE 'lifestyle%'",
+                    rusqlite::params![mockup, sku],
+                ) {
+                    Ok(_) => rash_reused += 1,
+                    Err(_) => failed += 1,
+                }
+            }
+            continue;
+        }
+
+        // tee-family composite
+        processed += 1;
+        if q.dry_run {
+            composited += 1;
+            if samples.len() < 8 {
+                let b = pick_base(lifestyle_bases(kind), sku);
+                samples.push(serde_json::json!({"sku": sku, "mode": "composite", "kind": kind, "base": b.file}));
+            }
+            continue;
+        }
+        match composite_lifestyle_to_r2(&db, sku, kind, design_file).await {
+            Ok(url) => {
+                composited += 1;
+                if samples.len() < 8 {
+                    samples.push(serde_json::json!({"sku": sku, "mode": "composite", "url": url}));
+                }
+            }
+            Err(e) => {
+                failed += 1;
+                tracing::warn!("[fix_lifestyle] {} failed: {}", sku, e);
+            }
+        }
+    }
+
+    axum::Json(serde_json::json!({
+        "ok": true,
+        "dry_run": q.dry_run,
+        "candidates": rows.len(),
+        "composited": composited,
+        "rash_reused": rash_reused,
+        "skipped": skipped,
+        "failed": failed,
+        "samples": samples,
+    })).into_response()
 }
 
 /// Async background task: call Printful's mockup-generator with the
