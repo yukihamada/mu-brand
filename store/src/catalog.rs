@@ -5190,11 +5190,14 @@ pub async fn universal_collection(State(db): State<Db>) -> Response {
     let mut cards = String::new();
     for it in &items {
         let remaining = (it.cap - it.sold).max(0);
+        // Light tile so the black tee + cream print actually pops on the dark
+        // page (a dark mockup on a dark card was murky — reads as a studio shot).
         let img_html = if it.img.is_empty() {
-            "<div style=\"width:100%;aspect-ratio:1;background:#111;border-radius:12px\"></div>".to_string()
+            "<div style=\"width:100%;aspect-ratio:1;background:#f0efea;border-radius:12px\"></div>".to_string()
         } else {
             format!(
-                "<img src=\"{}\" alt=\"{}\" loading=lazy style=\"width:100%;aspect-ratio:1;object-fit:contain;background:#111;border-radius:12px\">",
+                "<div style=\"background:#f0efea;border-radius:12px;overflow:hidden\">\
+                 <img src=\"{}\" alt=\"{}\" loading=lazy style=\"width:100%;aspect-ratio:1;object-fit:contain;display:block\"></div>",
                 html_text(&it.img), html_text(&it.label)
             )
         };
@@ -5209,23 +5212,26 @@ pub async fn universal_collection(State(db): State<Db>) -> Response {
         let cta = if remaining > 0 {
             format!(
                 "<a href=\"/shop/{sku}\" style=\"display:block;text-align:center;background:#e6c449;color:#0a0a0a;\
-                 font-weight:700;padding:11px;border-radius:999px;text-decoration:none;margin-top:12px\">\
+                 font-weight:700;padding:11px;border-radius:999px;text-decoration:none\">\
                  #{next} / {cap} を確保 — ¥{price}</a>",
                 sku = html_text(&it.sku), next = (it.sold + 1).min(it.cap), cap = it.cap, price = it.price
             )
         } else {
-            "<div style=\"text-align:center;color:#888;padding:11px;margin-top:12px\">SOLD OUT</div>".to_string()
+            "<div style=\"text-align:center;color:#888;padding:11px\">SOLD OUT</div>".to_string()
         };
+        // flex column + button pinned to bottom (margin-top:auto) → every card in
+        // a row is the same height and the buy buttons line up. Verdict clamped to
+        // 2 lines so long blurbs can't make cards ragged.
         cards.push_str(&format!(
-            "<div style=\"background:#121212;border:1px solid #222;border-radius:16px;padding:16px\">\
+            "<div style=\"background:#121212;border:1px solid #222;border-radius:16px;padding:14px;display:flex;flex-direction:column\">\
              {img_html}\
-             <div style=\"display:flex;justify-content:space-between;align-items:baseline;margin:14px 0 4px\">\
-               <h3 style=\"font-weight:500;font-size:16px;margin:0\">{label}</h3>\
-               <span style=\"font-size:20px;font-weight:800;color:#e6c449\">{score}<span style=\"font-size:11px;opacity:.6\">/100</span></span></div>\
-             <p style=\"font-size:12px;line-height:1.7;opacity:.6;margin:0 0 10px;min-height:34px\">{verdict}</p>\
+             <div style=\"display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin:14px 0 4px\">\
+               <h3 style=\"font-weight:500;font-size:16px;margin:0;line-height:1.3\">{label}</h3>\
+               <span style=\"font-size:20px;font-weight:800;color:#e6c449;white-space:nowrap\">{score}<span style=\"font-size:11px;opacity:.6\">/100</span></span></div>\
+             <p style=\"font-size:12px;line-height:1.6;opacity:.6;margin:0 0 10px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:38px\">{verdict}</p>\
              <div style=\"margin:0 -2px\">{axes_html}</div>\
-             <div style=\"font-size:11px;opacity:.55;margin-top:10px\">限定 {cap} 枚 · シリアル付き · <a href=\"/edition/{sku}\" style=\"color:#e6c449;text-decoration:none\">残り {remaining} →</a></div>\
-             {cta}</div>",
+             <div style=\"font-size:11px;opacity:.55;margin:10px 0 12px\">限定 {cap} 枚 · シリアル付き · <a href=\"/edition/{sku}\" style=\"color:#e6c449;text-decoration:none\">残り {remaining} →</a></div>\
+             <div style=\"margin-top:auto\">{cta}</div></div>",
             img_html = img_html, label = html_text(&it.label), score = it.score,
             verdict = html_text(&it.verdict), axes_html = axes_html,
             cap = it.cap, sku = html_text(&it.sku), remaining = remaining, cta = cta,
@@ -5769,6 +5775,136 @@ pub async fn shop_pdp(
         } else { listen_block }
     } else { listen_block };
 
+    // ── 見解(普遍性アセスメント) + 書類(限定/シリアル証明) + 類似商品 ──
+    // PDP を「URLを開けば一目で分かる」に。meta_json と DB から組む(スキーマ非変更)。
+    let score_v: serde_json::Value = meta_json
+        .as_deref()
+        .and_then(|m| serde_json::from_str(m).ok())
+        .unwrap_or(serde_json::Value::Null);
+    let assessment_html = {
+        let s = &score_v["score"];
+        if let Some(total) = s["total"].as_i64() {
+            let verdict = s["verdict"].as_str().unwrap_or("");
+            let axes = [
+                ("時間普遍性", "time"), ("文化普遍性", "culture"),
+                ("視覚普遍性", "visual"), ("身体普遍性", "body"), ("製造普遍性", "make"),
+            ];
+            let mut bars = String::new();
+            for (ja, key) in axes {
+                if let Some(v) = s["axes"][key].as_i64() {
+                    let pct = (v * 100 / 20).clamp(0, 100);
+                    bars.push_str(&format!(
+                        "<div style=\"display:flex;align-items:center;gap:10px;margin:6px 0\">\
+                         <span style=\"width:90px;font-size:11px;opacity:.7\">{ja}</span>\
+                         <span style=\"flex:1;height:6px;background:#222;border-radius:999px;overflow:hidden\">\
+                         <span style=\"display:block;height:100%;width:{pct}%;background:#e6c449\"></span></span>\
+                         <span style=\"width:38px;text-align:right;font-size:11px;opacity:.8\">{v}/20</span></div>",
+                        ja = ja, pct = pct, v = v
+                    ));
+                }
+            }
+            let verdict_p = if verdict.is_empty() {
+                String::new()
+            } else {
+                format!("<p style=\"font-size:12.5px;line-height:1.8;opacity:.7;margin:12px 0 0\">{}</p>", html_text(verdict))
+            };
+            format!(
+                "<div class=\"spec\"><h3>普遍性アセスメント <span style=\"float:right;color:#e6c449;font-weight:800\">{total}<span style=\"font-size:11px;opacity:.6\">/100</span></span></h3>{bars}{verdict_p}</div>",
+                total = total, bars = bars, verdict_p = verdict_p
+            )
+        } else {
+            String::new()
+        }
+    };
+    let edition_doc_html = {
+        let cap = edition_size_of(&meta_json);
+        if cap > 0 {
+            let sold = { let conn = db.lock().unwrap(); edition_sold(&conn, &sku) };
+            let remaining = (cap - sold).max(0);
+            let next = (sold + 1).min(cap);
+            format!(
+                "<div class=\"spec\"><h3>限定エディション · 証明</h3>\
+                 <p style=\"font-size:13px;line-height:1.95;margin:0\">\
+                 <b>{cap} 枚限定</b>。1 枚ごとに通し番号 <b>#k / {cap}</b> を付けてお届けします。<br>\
+                 発行済み <b>{sold} / {cap}</b>（残り {remaining}）。次にお届けするシリアルは <b>#{next} / {cap}</b>。<br>\
+                 完売したら二度と刷りません。受注生産・在庫廃棄ゼロ。</p>\
+                 <p style=\"margin:10px 0 0\"><a href=\"/edition/{sku}\" style=\"color:#e6c449;text-decoration:none\">→ シリアル台帳（公開・改ざん不能）を見る</a></p></div>",
+                cap = cap, sold = sold, remaining = remaining, next = next, sku = html_text(&sku)
+            )
+        } else {
+            String::new()
+        }
+    };
+    let related_html = {
+        let mut sibs: Vec<(String, String, String, i64, i64)> = Vec::new();
+        {
+            let conn = db.lock().unwrap();
+            if let Ok(mut stmt) = conn.prepare(
+                "SELECT sku, label, COALESCE(mockup_url_external, mockup_main_file, ''), \
+                        retail_price_jpy, meta_json \
+                 FROM catalog_products WHERE brand=?1 AND status='live' AND sku!=?2",
+            ) {
+                if let Ok(rows) = stmt.query_map(rusqlite::params![&brand, &sku], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?, r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?, r.get::<_, i64>(3)?,
+                        r.get::<_, Option<String>>(4)?,
+                    ))
+                }) {
+                    for (s, l, m, p, mj) in rows.flatten() {
+                        let sc = mj
+                            .as_deref()
+                            .and_then(|x| serde_json::from_str::<serde_json::Value>(x).ok())
+                            .and_then(|v| v["score"]["total"].as_i64())
+                            .unwrap_or(0);
+                        let img = if m.starts_with("http") {
+                            m
+                        } else if !m.is_empty() {
+                            format!("https://merch.wearmu.com{}", m)
+                        } else {
+                            String::new()
+                        };
+                        sibs.push((s, l, img, p, sc));
+                    }
+                }
+            }
+        }
+        sibs.sort_by(|a, b| b.4.cmp(&a.4));
+        sibs.truncate(12);
+        if sibs.is_empty() {
+            String::new()
+        } else {
+            let mut rcards = String::new();
+            for (s, l, img, p, sc) in &sibs {
+                let im = if img.is_empty() {
+                    "<div style=\"aspect-ratio:1;background:#f0efea;border-radius:10px\"></div>".to_string()
+                } else {
+                    format!(
+                        "<div style=\"background:#f0efea;border-radius:10px;overflow:hidden\"><img src=\"{}\" alt=\"{}\" loading=lazy style=\"width:100%;aspect-ratio:1;object-fit:contain;display:block\"></div>",
+                        html_attr(img), html_text(l)
+                    )
+                };
+                let badge = if *sc > 0 {
+                    format!("<span style=\"position:absolute;top:8px;right:8px;background:rgba(10,10,10,.82);color:#e6c449;font-size:11px;font-weight:800;padding:2px 7px;border-radius:999px\">{}</span>", sc)
+                } else {
+                    String::new()
+                };
+                rcards.push_str(&format!(
+                    "<a href=\"/shop/{s}\" style=\"text-decoration:none;color:inherit;flex:0 0 152px;position:relative\">{badge}{im}\
+                     <div style=\"font-size:12px;margin:7px 2px 0;line-height:1.35\">{l}</div>\
+                     <div style=\"font-size:11px;opacity:.55;margin:2px 2px 0\">¥{p} · 100枚限定</div></a>",
+                    s = html_attr(s), badge = badge, im = im, l = html_text(l), p = p
+                ));
+            }
+            format!(
+                "<section style=\"max-width:920px;margin:34px auto 0;padding:0 22px\">\
+                 <h3 style=\"font-size:13px;letter-spacing:.15em;opacity:.85;margin:0 0 14px\">こんな一着も — UNIVERSAL の仲間（点数つき）</h3>\
+                 <div style=\"display:flex;gap:14px;overflow-x:auto;padding-bottom:10px;scroll-snap-type:x proximity\">{rcards}</div></section>",
+                rcards = rcards
+            )
+        }
+    };
+
     let body = format!(
         r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -5893,6 +6029,8 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
     {muon_banner}
     {suzuri}
     {trust}
+    {assessment}
+    {edition_doc}
     {spec}
     {size_chart}
     {shipping_table}
@@ -5902,6 +6040,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
   </div>
 </div>
 <div style="max-width:920px;margin:0 auto;padding:0 22px 10px">{make_cta}</div>
+{related}
 <footer class="pdp-footer">
   <div class="legal-links">
     <a href="/shop">SHOP</a>
@@ -5934,6 +6073,9 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </body></html>"##,
         make_cta = make_cta_banner("pdp"),
+        assessment = assessment_html,
+        edition_doc = edition_doc_html,
+        related = related_html,
         title = html_text(&display_name),
         headline = html_text(&headline),
         tagline_html = tagline_html,
