@@ -20,6 +20,18 @@ is to keep it running and **maximize revenue and profit** within budget:
 - **Gate before live ad spend, real-customer email blasts, or any single
   physical/sample order over ¥30,000** — see `BUDGET.md` §3.
 
+## STRATEGY — 勝ち馬(JiuFlow)に集中。MUは BJJ経済圏に従属させる
+
+実測(2026-06): MU広告 30日で**転換2件**/Pro 1名/実購入ほぼ0。対して**JiuFlow=月131転換・21,600PV＝唯一の実需**。
+結論: MU単独でアパレル/メルカリを狙わない。**実需のある JiuFlow(BJJ) に MU の作る技術を従属**させ、一次→二次を自然に生やす。
+
+- **最優先**: 「なぜ¥4,900で買うか(需要)」に答える。BJJ垂直の具体オファーで一次流通を作る(磨きでなく転換)。
+- **発動ゲート**: 中古/RE:MU は **一次の実購入者が月100人**を超えるまで作らない(在庫が無ければ中古は成立しない)。
+- ゲート通過後の中古は**自前倉庫を持たず**「AI撮るだけ出品→外部 cross-post」のナイフのみ。provenance NFTは**希少1点もの限定**(低単価アパレルは過剰)。
+- **ゴール**: G0/60日=一次実購入者 **月100人**(現状0・全ての前提)。G1/+90日=BJJ中古/出品ツールMVPで手数料収益。
+
+**やらない**: 自社中古倉庫 / 量産品の中古化 / 低単価NFT / 手数料値下げ戦争 / メルカリ出品データ転載(価格集計のみ)。
+
 ## CRITICAL: catalog contract
 
 **Before adding any `CREATE TABLE` for a product / brand / order / image
