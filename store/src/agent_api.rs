@@ -618,6 +618,12 @@ pub struct CreateProductBody {
     pub capacity: Option<i64>,
     /// song only: https URL of the audio delivered on purchase.
     pub audio_url: Option<String>,
+    /// physical kinds: limited-run size (e.g. 100). Enforced as a sold-out gate
+    /// at checkout; each sold unit gets serial #k/N (see /edition/:sku).
+    pub edition_size: Option<i64>,
+    /// optional universality scorecard (e.g. {"total":97,"axes":{...},"verdict":"…"})
+    /// surfaced verbatim on the /universal collection page.
+    pub score: Option<serde_json::Value>,
 }
 
 /// Hosts we control / trust for externally-referenced design images.
@@ -872,6 +878,12 @@ pub async fn agent_create_product(
             .filter(|s| s.starts_with("https://") && s.len() <= 2000)
         {
             meta.insert("audio_url".into(), serde_json::json!(au));
+        }
+        if let Some(es) = body.edition_size.filter(|c| *c > 0 && *c <= 100_000) {
+            meta.insert("edition_size".into(), serde_json::json!(es));
+        }
+        if let Some(sc) = body.score.as_ref().filter(|v| v.is_object()) {
+            meta.insert("score".into(), sc.clone());
         }
         if !meta.is_empty() {
             let _ = conn.execute(

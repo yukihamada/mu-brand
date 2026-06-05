@@ -68216,6 +68216,9 @@ async fn main() {
         .route("/collabs", get(brands_index))
         .route("/shop/:sku", get(catalog::shop_pdp))
         .route("/api/shop/checkout", get(catalog::shop_checkout))
+        // UNIVERSAL collection sales page + per-edition public serial registry.
+        .route("/universal", get(catalog::universal_collection))
+        .route("/edition/:sku", get(catalog::edition_page))
         // Private gift gallery for the hidden 'halo' tees — 404 unless
         // ?key path matches env MU_GIFT_KEY; noindex; never linked public.
         .route("/gift/:key", get(catalog::gift_gallery))

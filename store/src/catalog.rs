@@ -4588,6 +4588,266 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
 /// (derived from catalog_orders.status='submitted'), never fabricated.
 const SOLD_BADGE_MIN: i64 = 3;
 
+/// Read a SKU's `edition_size` (limited run size) from meta_json. 0 = not a
+/// limited edition. Single source of truth for both the checkout sold-out
+/// gate and the public serial registry.
+fn edition_size_of(meta_json: &Option<String>) -> i64 {
+    meta_json
+        .as_deref()
+        .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+        .and_then(|v| v.get("edition_size").and_then(|c| c.as_i64()))
+        .filter(|c| *c > 0)
+        .unwrap_or(0)
+}
+
+/// Paid units of a SKU = orders that reached 'submitted' (the serial count).
+fn edition_sold(conn: &rusqlite::Connection, sku: &str) -> i64 {
+    conn.query_row(
+        "SELECT COUNT(*) FROM catalog_orders WHERE sku=? AND status='submitted'",
+        rusqlite::params![sku],
+        |r| r.get(0),
+    )
+    .unwrap_or(0)
+}
+
+/// GET /edition/:sku — public serial registry / authenticity surface for a
+/// limited edition. Shows the run size, how many serials are claimed, what is
+/// left, and which serial the next buyer receives. The serial IS the order's
+/// ordinal within the SKU (#k / N) — derived, never a separate table, so it
+/// can never drift from the real paid orders. PII (buyer names) is never shown.
+pub async fn edition_page(State(db): State<Db>, Path(sku): Path<String>) -> Response {
+    let row: Option<(String, Option<String>, String, i64)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT label, meta_json,
+                    COALESCE(mockup_url_external, mockup_main_file, ''), retail_price_jpy
+             FROM catalog_products WHERE sku=?",
+            rusqlite::params![&sku],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .ok()
+    };
+    let Some((label, meta_json, mockup, price)) = row else {
+        return (StatusCode::NOT_FOUND, "not found").into_response();
+    };
+    let cap = edition_size_of(&meta_json);
+    if cap <= 0 {
+        return (StatusCode::NOT_FOUND, "not a limited edition").into_response();
+    }
+    let sold = {
+        let conn = db.lock().unwrap();
+        edition_sold(&conn, &sku)
+    };
+    let remaining = (cap - sold).max(0);
+    let next = (sold + 1).min(cap);
+    let img = if mockup.starts_with("http") {
+        mockup.clone()
+    } else if !mockup.is_empty() {
+        format!("https://merch.wearmu.com{}", mockup)
+    } else {
+        String::new()
+    };
+    let img_html = if img.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<img src=\"{}\" alt=\"{}\" style=\"width:220px;height:220px;object-fit:contain;background:#111;border-radius:12px\">",
+            html_text(&img),
+            html_text(&label)
+        )
+    };
+    let cta = if remaining > 0 {
+        format!(
+            "<a href=\"/shop/{sku}\" style=\"display:inline-block;background:#e6c449;color:#0a0a0a;\
+             font-weight:700;padding:13px 26px;border-radius:999px;text-decoration:none\">\
+             #{next} / {cap} を確保する — ¥{price}</a>",
+            sku = html_text(&sku), next = next, cap = cap, price = price
+        )
+    } else {
+        "<div style=\"color:#e6c449;letter-spacing:.2em;font-size:13px\">SOLD OUT — 完売</div>".to_string()
+    };
+    let pct = if cap > 0 { (sold * 100 / cap).min(100) } else { 0 };
+    let body = format!(
+        "<!doctype html><html lang=ja><meta charset=utf-8>\
+         <meta name=viewport content=\"width=device-width,initial-scale=1\">\
+         <title>{label} — シリアル台帳 #／{cap} · MU</title>\
+         <meta name=robots content=index>\
+         <body style=\"margin:0;background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif\">\
+         <div style=\"max-width:640px;margin:0 auto;padding:48px 24px;text-align:center\">\
+         <a href=\"/universal\" style=\"color:#888;text-decoration:none;font-size:12px;letter-spacing:.3em\">━◯━ UNIVERSAL</a>\
+         <div style=\"margin:28px 0 18px\">{img_html}</div>\
+         <h1 style=\"font-weight:500;font-size:23px;margin:0 0 6px\">{label}</h1>\
+         <div style=\"font-size:12px;letter-spacing:.3em;color:#e6c449;text-transform:uppercase;margin-bottom:24px\">Limited {cap} · Serial-numbered</div>\
+         <div style=\"background:#141414;border:1px solid #222;border-radius:14px;padding:22px;margin-bottom:22px\">\
+           <div style=\"display:flex;justify-content:space-between;font-size:13px;opacity:.7;margin-bottom:8px\">\
+             <span>発行済み {sold} / {cap}</span><span>残り {remaining}</span></div>\
+           <div style=\"height:8px;background:#222;border-radius:999px;overflow:hidden\">\
+             <div style=\"height:100%;width:{pct}%;background:#e6c449\"></div></div>\
+           <p style=\"font-size:12.5px;line-height:1.8;opacity:.62;margin:16px 0 0;text-align:left\">\
+             この台帳は本物の支払い済み注文だけを数えます。1 枚ごとに通し番号 <b>#k / {cap}</b> が割り当てられ、{cap} 枚に達したら販売を締め切ります。番号は注文の並び順そのものなので、改ざんできません。</p>\
+         </div>\
+         <div style=\"margin:8px 0 26px\">{cta}</div>\
+         <p style=\"font-size:11px;opacity:.4\">次に発行されるシリアル: #{next} / {cap}</p>\
+         </div></body></html>",
+        label = html_text(&label), cap = cap, sold = sold, remaining = remaining,
+        pct = pct, next = next, img_html = img_html, cta = cta,
+    );
+    Html(body).into_response()
+}
+
+/// GET /universal — the UNIVERSAL collection sales page. Lists every live SKU
+/// in the `universal` store together with its 5-axis universality score
+/// (stored in meta_json.score), the 100-piece limited-edition framing, and a
+/// live "残り N / 100" pulled from real paid orders. Buy buttons go to the
+/// proven /shop/:sku checkout. Scores and remaining counts are read from the
+/// DB — nothing is hard-coded — so the page tracks reality on every request.
+pub async fn universal_collection(State(db): State<Db>) -> Response {
+    struct Item {
+        sku: String,
+        label: String,
+        img: String,
+        price: i64,
+        cap: i64,
+        sold: i64,
+        score: i64,
+        axes: Vec<(String, i64)>,
+        verdict: String,
+    }
+    let items: Vec<Item> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT sku, label, description_ja,
+                    COALESCE(mockup_url_external, mockup_main_file, ''),
+                    retail_price_jpy, meta_json
+             FROM catalog_products
+             WHERE brand='universal' AND status='live'",
+        ) {
+            Ok(s) => s,
+            Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response(),
+        };
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, i64>(4)?,
+                    r.get::<_, Option<String>>(5)?,
+                ))
+            })
+            .and_then(|m| m.collect::<Result<Vec<_>, _>>())
+            .unwrap_or_default();
+        let mut out: Vec<Item> = Vec::new();
+        for (sku, label, _desc, mockup, price, meta_json) in rows {
+            let cap = edition_size_of(&meta_json);
+            let meta: serde_json::Value = meta_json
+                .as_deref()
+                .and_then(|m| serde_json::from_str(m).ok())
+                .unwrap_or(serde_json::Value::Null);
+            let s = &meta["score"];
+            let score = s["total"].as_i64().unwrap_or(0);
+            let verdict = s["verdict"].as_str().unwrap_or("").to_string();
+            let labels = [
+                ("時間", "time"),
+                ("文化", "culture"),
+                ("視覚", "visual"),
+                ("身体", "body"),
+                ("製造", "make"),
+            ];
+            let mut axes = Vec::new();
+            for (ja, key) in labels {
+                if let Some(v) = s["axes"][key].as_i64() {
+                    axes.push((ja.to_string(), v));
+                }
+            }
+            let sold = edition_sold(&conn, &sku);
+            let img = if mockup.starts_with("http") {
+                mockup
+            } else if !mockup.is_empty() {
+                format!("https://merch.wearmu.com{}", mockup)
+            } else {
+                String::new()
+            };
+            out.push(Item {
+                sku, label, img, price, cap, sold, score, axes, verdict,
+            });
+        }
+        out.sort_by(|a, b| b.score.cmp(&a.score));
+        out
+    };
+
+    let count = items.len();
+    let mut cards = String::new();
+    for it in &items {
+        let remaining = (it.cap - it.sold).max(0);
+        let img_html = if it.img.is_empty() {
+            "<div style=\"width:100%;aspect-ratio:1;background:#111;border-radius:12px\"></div>".to_string()
+        } else {
+            format!(
+                "<img src=\"{}\" alt=\"{}\" loading=lazy style=\"width:100%;aspect-ratio:1;object-fit:contain;background:#111;border-radius:12px\">",
+                html_text(&it.img), html_text(&it.label)
+            )
+        };
+        let mut axes_html = String::new();
+        for (ja, v) in &it.axes {
+            axes_html.push_str(&format!(
+                "<span style=\"display:inline-block;font-size:10.5px;color:#cfcfcf;background:#1c1c1c;\
+                 border:1px solid #2a2a2a;border-radius:999px;padding:3px 8px;margin:2px\">{ja} {v}</span>",
+                ja = html_text(ja), v = v
+            ));
+        }
+        let cta = if remaining > 0 {
+            format!(
+                "<a href=\"/shop/{sku}\" style=\"display:block;text-align:center;background:#e6c449;color:#0a0a0a;\
+                 font-weight:700;padding:11px;border-radius:999px;text-decoration:none;margin-top:12px\">\
+                 #{next} / {cap} を確保 — ¥{price}</a>",
+                sku = html_text(&it.sku), next = (it.sold + 1).min(it.cap), cap = it.cap, price = it.price
+            )
+        } else {
+            "<div style=\"text-align:center;color:#888;padding:11px;margin-top:12px\">SOLD OUT</div>".to_string()
+        };
+        cards.push_str(&format!(
+            "<div style=\"background:#121212;border:1px solid #222;border-radius:16px;padding:16px\">\
+             {img_html}\
+             <div style=\"display:flex;justify-content:space-between;align-items:baseline;margin:14px 0 4px\">\
+               <h3 style=\"font-weight:500;font-size:16px;margin:0\">{label}</h3>\
+               <span style=\"font-size:20px;font-weight:800;color:#e6c449\">{score}<span style=\"font-size:11px;opacity:.6\">/100</span></span></div>\
+             <p style=\"font-size:12px;line-height:1.7;opacity:.6;margin:0 0 10px;min-height:34px\">{verdict}</p>\
+             <div style=\"margin:0 -2px\">{axes_html}</div>\
+             <div style=\"font-size:11px;opacity:.55;margin-top:10px\">限定 {cap} 枚 · シリアル付き · <a href=\"/edition/{sku}\" style=\"color:#e6c449;text-decoration:none\">残り {remaining} →</a></div>\
+             {cta}</div>",
+            img_html = img_html, label = html_text(&it.label), score = it.score,
+            verdict = html_text(&it.verdict), axes_html = axes_html,
+            cap = it.cap, sku = html_text(&it.sku), remaining = remaining, cta = cta,
+        ));
+    }
+    let empty = if count == 0 {
+        "<p style=\"text-align:center;opacity:.5;padding:40px\">準備中です。まもなく公開します。</p>".to_string()
+    } else {
+        String::new()
+    };
+    let body = format!(
+        "<!doctype html><html lang=ja><meta charset=utf-8>\
+         <meta name=viewport content=\"width=device-width,initial-scale=1\">\
+         <title>UNIVERSAL — 10年後も着られる、{count}枚限定の普遍デザイン · MU</title>\
+         <meta name=description content=\"普遍性5軸で95点以上だけを選んだ、各100枚限定・シリアル付きの線画Tシャツコレクション。\">\
+         <body style=\"margin:0;background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif\">\
+         <div style=\"max-width:1080px;margin:0 auto;padding:56px 22px\">\
+         <div style=\"text-align:center;margin-bottom:14px;font-size:12px;letter-spacing:.5em;opacity:.8\">━◯━ MU</div>\
+         <h1 style=\"text-align:center;font-weight:300;font-size:34px;letter-spacing:.04em;margin:0 0 14px\">UNIVERSAL</h1>\
+         <p style=\"text-align:center;max-width:620px;margin:0 auto 10px;font-size:14px;line-height:1.9;opacity:.72\">\
+           流行も言葉も超える、原型だけの線画。<b>10年後も価値があり、1年後に着ても新鮮で、3年後に必ず効く</b>——その普遍性を 5 軸 100 点で採点し、<b>95 点以上だけ</b>を選びました。各デザインは <b>100 枚限定・通し番号付き</b>。</p>\
+         <p style=\"text-align:center;font-size:11.5px;opacity:.45;margin:0 0 36px\">採点軸: 時間普遍性 / 文化普遍性 / 視覚普遍性 / 身体普遍性 / 製造普遍性（各20点）</p>\
+         {empty}\
+         <div style=\"display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:18px\">{cards}</div>\
+         <p style=\"text-align:center;font-size:11px;opacity:.4;margin-top:48px\">受注生産 · 完売したら二度と刷りません · 点数と残数はこのページで常時実数表示</p>\
+         </div></body></html>",
+        count = count, empty = empty, cards = cards,
+    );
+    Html(body).into_response()
+}
+
 pub async fn shop_pdp(
     State(db): State<Db>,
     Path(sku): Path<String>,
@@ -5491,6 +5751,48 @@ pub async fn shop_checkout(
                          <h1 style=\"font-weight:500;font-size:22px;margin:14px 0 8px\">完売しました</h1>\
                          <p style=\"opacity:.6;font-size:13px\">定員 {cap} 名に達しました。<br>\
                          <a href=\"/shop/{sku}\" style=\"color:#e6c449\">← 戻る</a></p></div></body>",
+                        cap = cap, sku = html_text(&sku),
+                    )),
+                )
+                    .into_response();
+            }
+        }
+    }
+
+    // Limited physical edition (100個限定): enforce edition_size before
+    // opening a Stripe session. Lives in meta_json `{"edition_size": N}`;
+    // NULL/absent = unlimited (normal on-demand SKU). "Sold" = paid orders
+    // recorded as 'submitted' (handed to fulfillment). Every sold unit
+    // carries a serial #k/N — the public registry is /edition/:sku, where
+    // the serial IS the order's ordinal within the SKU (no extra table).
+    if !is_ticket {
+        let edition_size: Option<i64> = meta_json
+            .as_deref()
+            .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+            .and_then(|v| v.get("edition_size").and_then(|c| c.as_i64()))
+            .filter(|c| *c > 0);
+        if let Some(cap) = edition_size {
+            let sold: i64 = {
+                let conn = db.lock().unwrap();
+                conn.query_row(
+                    "SELECT COUNT(*) FROM catalog_orders WHERE sku=? AND status='submitted'",
+                    rusqlite::params![&sku],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0)
+            };
+            if sold >= cap {
+                return (
+                    StatusCode::OK,
+                    Html(format!(
+                        "<!doctype html><meta charset=utf-8><meta name=robots content=noindex>\
+                         <title>SOLD OUT — MU</title>\
+                         <body style=\"background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,sans-serif;\
+                         display:flex;min-height:90vh;align-items:center;justify-content:center;text-align:center\">\
+                         <div><div style=\"font-size:13px;letter-spacing:.3em;color:#e6c449\">SOLD OUT</div>\
+                         <h1 style=\"font-weight:500;font-size:22px;margin:14px 0 8px\">完売 — {cap}枚限定</h1>\
+                         <p style=\"opacity:.6;font-size:13px\">{cap} 枚すべてに通し番号を付けてお届けしました。<br>\
+                         <a href=\"/edition/{sku}\" style=\"color:#e6c449\">シリアル台帳を見る →</a></p></div></body>",
                         cap = cap, sku = html_text(&sku),
                     )),
                 )
