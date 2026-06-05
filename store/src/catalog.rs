@@ -3129,6 +3129,37 @@ MU · wearmu.com · 株式会社イネブラ</p>
         .await;
 }
 
+/// MUON コレクター達成メール。Tシャツを規定枚数集めるごとに ¥reward の MU クレジット獲得を通知。
+pub async fn send_muon_reward_email(to: String, tee_count: i64, reward_jpy: i64) {
+    let resend_key = std::env::var("RESEND_API_KEY").unwrap_or_default();
+    if resend_key.is_empty() || to.is_empty() { return; }
+    let html = format!(
+        r#"<div style="background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;padding:32px 0;margin:0">
+<div style="max-width:520px;margin:0 auto;padding:0 32px">
+<div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:22px">━◯━ MU</div>
+<div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#ffd700;opacity:0.85;margin-bottom:8px">MUON — COLLECTOR REWARD</div>
+<h2 style="font-size:20px;font-weight:700;line-height:1.5;margin:0 0 12px">🎉 Tシャツ {n} 枚コンプリート</h2>
+<p style="font-size:13px;line-height:1.9;opacity:0.82;margin:0 0 18px">集めていただきありがとうございます。<br><b>MUON ストアクレジット ¥{r}</b> を付与しました。次のお買い物の決済画面で自動的に使えます（期限なし）。</p>
+<div style="font-size:34px;letter-spacing:0.04em;font-weight:700;color:#ffd700;background:#111;padding:22px;text-align:center;border-radius:8px;font-family:'SF Mono',monospace;margin:8px 0 18px">MUON ¥{r}</div>
+<p style="font-size:12px;line-height:1.85;opacity:0.7;margin:0">あと3枚集めると、また MUON。<a href="https://wearmu.com/shop" style="color:#ffd700">次の一枚を見る →</a></p>
+<p style="font-size:11px;line-height:1.85;opacity:0.5;margin:22px 0 0;border-top:1px solid #222;padding-top:18px">MU · wearmu.com · 株式会社イネブラ</p>
+</div></div>"#,
+        n = tee_count, r = format_jpy(reward_jpy),
+    );
+    let payload = serde_json::json!({
+        "from": "━◯━ MU <noreply@wearmu.com>",
+        "to": [to],
+        "subject": format!("🎉 MUON ¥{} 獲得 — Tシャツ{}枚コンプリート", format_jpy(reward_jpy), tee_count),
+        "html": html,
+    });
+    let _ = reqwest::Client::new()
+        .post("https://api.resend.com/emails")
+        .bearer_auth(&resend_key)
+        .json(&payload)
+        .send()
+        .await;
+}
+
 /// GET /api/make/ab — A/B/C の現況（各案のユニーク訪問者作成数・作成総数・勝者）。
 pub async fn make_ab_status(State(db): State<Db>) -> Response {
     let conn = db.lock().unwrap();
@@ -4622,6 +4653,29 @@ pub async fn shop_pdp(
     };
     let short_title = trim_chars(&display_name, 60);
     let meta_desc_short = trim_chars(&meta_desc, 120);
+    // 見出し/タグライン分割: 自動生成商品は「商品名 — 宣伝文。」と一文になりがちで、
+    // H1 に長文が入りレイアウトが崩れる。em-dash(—/―/--) で割り、前を見出し・後をタグラインに。
+    // 区切りが無ければ従来どおり全文を見出しに(=挙動非変更)。封印中は分割しない。
+    let (headline, tagline) = {
+        let mut split = None;
+        for sep in ["—", "―", " - ", "ー ", "│"] {
+            if let Some((h, t)) = display_name.split_once(sep) {
+                if h.trim().chars().count() >= 1 && t.trim().chars().count() >= 4 {
+                    split = Some((h.trim().to_string(), t.trim().to_string()));
+                    break;
+                }
+            }
+        }
+        match (is_sealed, split) {
+            (false, Some((h, t))) => (h, t),
+            _ => (display_name.clone(), String::new()),
+        }
+    };
+    let tagline_html = if tagline.is_empty() {
+        String::new()
+    } else {
+        format!("<p class=\"tagline\">{}</p>", html_text(&tagline))
+    };
     let sealed_block = if is_sealed {
         let u = html_text(unlock_iso.as_deref().unwrap_or(""));
         let ct = html_text(&desc); // 暗号文を隠し要素の textContent に(復号はJS側)
@@ -4677,6 +4731,11 @@ pub async fn shop_pdp(
     let kind_guess = kind_from_sku(&sku);
     let is_digital = matches!(kind_guess, "event_ticket" | "song");
     let is_song = kind_guess == "song";
+    // MUON コレクター動機: Tシャツは3枚集めると ¥2,000 のMUクレジット(期限なし)。
+    // ログイン不要の常時表示バナーで「集めたくなる」ループを作る。
+    let muon_banner = if kind_guess == "tee" {
+        r#"<div class="muon-b">🎟 <b>MUON コレクター</b> — Tシャツを3枚集めると <b style="color:#ffd700">¥2,000 のMUクレジット</b>。次のお買い物の決済で自動で使えます（期限なし・6枚で2回目）。</div>"#
+    } else { "" };
     // Self-fulfilled hardware (Koe デバイス等): physical だが Printful ではない —
     // アパレル前提のサイズ表・Printful送料表・「7-14日国際発送」コピーを出さない。
     let is_device = kind_guess == "device";
@@ -5096,7 +5155,9 @@ nav .brand{{font-weight:900;letter-spacing:0.4em}}
 #lb .lb-x{{position:absolute;top:14px;right:22px;color:#fff;font-size:34px;line-height:1;cursor:pointer;opacity:.85;font-weight:300}}
 #lb .lb-x:hover{{opacity:1}}
 #lb .lb-hint{{position:absolute;bottom:18px;left:0;right:0;text-align:center;color:rgba(255,255,255,0.5);font-size:11px;letter-spacing:.1em}}
-.body h1{{font-size:24px;line-height:1.35;margin-bottom:14px;font-weight:900}}
+.body h1{{font-size:26px;line-height:1.3;margin-bottom:8px;font-weight:900;letter-spacing:.01em}}
+.body .tagline{{font-size:13.5px;line-height:1.75;color:rgba(245,245,240,0.7);margin:0 0 16px;font-weight:400}}
+.muon-b{{margin:10px 0 4px;padding:11px 14px;border:1px solid rgba(255,215,0,0.35);background:linear-gradient(180deg,rgba(255,215,0,0.06),rgba(255,215,0,0.02));border-radius:8px;font-size:12px;line-height:1.7;color:rgba(245,245,240,0.85)}}
 .body .brand{{font-size:10px;letter-spacing:0.3em;color:#ffd700;text-transform:uppercase;margin-bottom:8px}}
 .body .price{{font-size:22px;font-family:monospace;font-weight:700;color:#fff;margin-bottom:18px}}
 .body .desc{{color:rgba(245,245,240,0.78);font-size:13px;line-height:1.85;margin-bottom:22px}}
@@ -5148,11 +5209,13 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
   </div>
   <div class="body">
     <div class="brand">{brand}</div>
-    <h1>{title}</h1>
+    <h1>{headline}</h1>
+    {tagline_html}
     <div class="price">¥{price} <small class="fx">≈ ${usd} / €{eur}</small></div>
     {sealed}
     {listen}
     {buy}
+    {muon_banner}
     {suzuri}
     {trust}
     {spec}
@@ -5197,6 +5260,9 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
 </body></html>"##,
         make_cta = make_cta_banner("pdp"),
         title = html_text(&display_name),
+        headline = html_text(&headline),
+        tagline_html = tagline_html,
+        muon_banner = muon_banner,
         short_title = html_text(&short_title),
         desc_short = html_attr(&meta_desc_short),
         sealed = sealed_block,
@@ -6346,6 +6412,41 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
                             ],
                         );
                     } // drop the SQLite lock before any await below
+
+                    // MUON コレクター: Tシャツを累計3枚集めるごとに ¥2,000 の MU クレジット付与。
+                    //   現金でなくクレジット = 再購入を促し原価より実コストが小さい / 期限なし。
+                    //   冪等: マイルストン(muon_collect3,6,9…)ごとに mu_credit_ledger を1回だけ。
+                    if kind_from_sku(&sku) == "tee" {
+                        const MUON_REWARD_JPY: i64 = 2000;
+                        const MUON_EVERY: i64 = 3;
+                        let tee_count: i64 = {
+                            let conn = db.lock().unwrap();
+                            conn.query_row(
+                                "SELECT COUNT(*) FROM mu_purchases p \
+                                 JOIN catalog_products c ON c.id = p.product_id \
+                                 WHERE LOWER(p.email) = ? AND c.kind = 'tee'",
+                                rusqlite::params![email],
+                                |r| r.get(0),
+                            ).unwrap_or(0)
+                        };
+                        if tee_count > 0 && tee_count % MUON_EVERY == 0 {
+                            let reason = format!("muon_collect{}", tee_count);
+                            let granted = {
+                                let conn = db.lock().unwrap();
+                                let dup: bool = conn.query_row(
+                                    "SELECT 1 FROM mu_credit_ledger WHERE email = ? AND reason = ? LIMIT 1",
+                                    rusqlite::params![email, &reason],
+                                    |_| Ok(()),
+                                ).is_ok();
+                                if dup { false }
+                                else { crate::mu_credit_apply(&conn, &email, MUON_REWARD_JPY, &reason, Some(&session_id)) }
+                            };
+                            if granted {
+                                tracing::info!("[muon] {} reached {} tees -> +JPY{} credit", email, tee_count, MUON_REWARD_JPY);
+                                send_muon_reward_email(email.clone(), tee_count, MUON_REWARD_JPY).await;
+                            }
+                        }
+                    }
 
                     // 古今ペイ連携: KOKONコラボ商品の購入で「焼肉古今」ポイントを付与。
                     // order_id=session_id で冪等(再送しても二重付与されない)。
