@@ -24054,6 +24054,16 @@ async fn index(State(db): State<Db>, is_en: bool) -> Html<String> {
                 r#"MU の T シャツを見る →"#,
                 r#"See MU's tees →"#,
             )
+            // ── language toggle: on the EN render, flip it to offer JA so the
+            // ── switch is bidirectional (JA ⇄ EN) and matches hreflang/canonical ──
+            .replace(
+                r#"<a id="lang-toggle" href="/?lang=en" rel="alternate" hreflang="en""#,
+                r#"<a id="lang-toggle" href="/?lang=ja" rel="alternate" hreflang="ja""#,
+            )
+            .replace(
+                r#"aria-label="View this page in English / 英語で見る">EN</a>"#,
+                r#"aria-label="日本語で見る / View this page in Japanese">日本語</a>"#,
+            )
     } else {
         html
     };
