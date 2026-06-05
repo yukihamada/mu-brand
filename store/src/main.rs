@@ -478,6 +478,17 @@ async fn security_headers(req: Request<axum::body::Body>, next: Next) -> Respons
              HeaderValue::from_static("max-age=31536000; includeSubDomains"));
     h.insert("Permissions-Policy",
              HeaderValue::from_static("camera=(), microphone=(), geolocation=(), payment=(self \"https://js.stripe.com\")"));
+    // 静的アセット (/static, /mockups) はビルド成果物・商品モックアップで
+    // 内容が変わらない → 長期キャッシュ。従来 Cache-Control 無しで毎訪問
+    // 再ダウンロードしていた (favicon 等) のを修正。HTML 等動的応答には付けない。
+    if (path.starts_with("/static/") || path.starts_with("/mockups/"))
+        && !h.contains_key(axum::http::header::CACHE_CONTROL)
+    {
+        h.insert(
+            axum::http::header::CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=604800, stale-while-revalidate=86400"),
+        );
+    }
     resp
 }
 
