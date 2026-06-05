@@ -4086,6 +4086,39 @@ pub struct ShopQuery {
 
 const SHOP_PAGE_SIZE: i64 = 60;
 
+/// Storefront i18n runtime. The server renders JA (canonical for JP SEO);
+/// this client-side layer swaps the persistent chrome (hero, filters, search,
+/// footer, pagination) to EN for international shoppers — worldwide shipping is
+/// a headline selling point, so a JA-only shop left non-JP visitors stranded.
+/// Product names are UGC and stay as authored. EN strings live in a
+/// `window.I18N_EN` object built server-side (so dynamic counts interpolate);
+/// elements opt in via `data-i18n` (innerHTML), `data-i18n-ph` (placeholder)
+/// or `data-i18n-al` (aria-label). Mirrors the data-i18n / muSetLang pattern
+/// already shipped on /build. Default: stored pref → JA browser stays JA →
+/// every other locale gets EN.
+const SHOP_I18N_RUNTIME: &str = r#"(function(){
+  var cap=false, orig={}, oph={}, oal={};
+  function L(l){
+    if(!cap){
+      document.querySelectorAll('[data-i18n]').forEach(function(e){orig[e.getAttribute('data-i18n')]=e.innerHTML;});
+      document.querySelectorAll('[data-i18n-ph]').forEach(function(e){oph[e.getAttribute('data-i18n-ph')]=e.getAttribute('placeholder')||'';});
+      document.querySelectorAll('[data-i18n-al]').forEach(function(e){oal[e.getAttribute('data-i18n-al')]=e.getAttribute('aria-label')||'';});
+      cap=true;
+    }
+    var D=(l==='en')?(window.I18N_EN||{}):null;
+    document.querySelectorAll('[data-i18n]').forEach(function(e){var k=e.getAttribute('data-i18n'),v=D?D[k]:orig[k];if(v!=null)e.innerHTML=v;});
+    document.querySelectorAll('[data-i18n-ph]').forEach(function(e){var k=e.getAttribute('data-i18n-ph'),v=D?D[k]:oph[k];if(v!=null)e.setAttribute('placeholder',v);});
+    document.querySelectorAll('[data-i18n-al]').forEach(function(e){var k=e.getAttribute('data-i18n-al'),v=D?D[k]:oal[k];if(v!=null)e.setAttribute('aria-label',v);});
+    document.documentElement.setAttribute('lang',l);
+    try{localStorage.setItem('mu_lang',l);}catch(e){}
+    document.querySelectorAll('.langtoggle button').forEach(function(b){b.classList.toggle('on',b.getAttribute('data-set')===l);});
+  }
+  window.muSetLang=L;
+  var s=null;try{s=localStorage.getItem('mu_lang');}catch(e){}
+  var n=(navigator.language||'ja').toLowerCase().slice(0,2);
+  L((s==='en'||s==='ja')?s:(n==='ja'?'ja':'en'));
+})();"#;
+
 /// kind チップ → SQL 条件断片。**ホワイトリスト式・ユーザー入力は混ぜない**。
 /// kind_from_sku の優先順位を SQL で完全再現すると脆い (例: "TEE" が
 /// "RASHGUARD" に誤マッチ) ので、曖昧さのない category のみ提供する。
@@ -4205,7 +4238,7 @@ pub async fn shop_index(
     let brand_chips = {
         let mut s = String::new();
         s.push_str(&format!(
-            r#"<a class="chip{}" href="{}">すべて</a>"#,
+            r#"<a class="chip{}" href="{}" data-i18n="chip_all">すべて</a>"#,
             if brand_filter.is_empty() { " on" } else { "" },
             html_attr(&shop_url("", sort, kind, &q_trim)),
         ));
@@ -4226,7 +4259,7 @@ pub async fn shop_index(
     // トグル動作 (選択中をもう一度押すと解除)。曖昧さのある「Tシャツ」は既定で出るので置かない。
     let kind_chips = {
         let mut s = format!(
-            r#"<a class="chip{}" href="{}" data-funnel="cta_click" data-funnel-cta="shop_kind_all">すべての種類</a>"#,
+            r#"<a class="chip{}" href="{}" data-funnel="cta_click" data-funnel-cta="shop_kind_all" data-i18n="kind_all">すべての種類</a>"#,
             if kind.is_empty() { " on" } else { "" },
             html_attr(&shop_url(&brand_filter, sort, "", &q_trim)),
         );
@@ -4234,7 +4267,7 @@ pub async fn shop_index(
             let on = if kind == key { " on" } else { "" };
             let toggle = if kind == key { "" } else { key }; // 選択中なら解除
             s.push_str(&format!(
-                r#"<a class="chip{on}" href="{href}" data-funnel="cta_click" data-funnel-cta="shop_kind_{key}">{label}</a>"#,
+                r#"<a class="chip{on}" href="{href}" data-funnel="cta_click" data-funnel-cta="shop_kind_{key}" data-i18n="kind_{key}">{label}</a>"#,
                 on = on, href = html_attr(&shop_url(&brand_filter, sort, toggle, &q_trim)), key = key, label = label,
             ));
         }
@@ -4245,11 +4278,11 @@ pub async fn shop_index(
     let search_form = format!(
         r##"<form class="shopsearch" method="get" action="/shop" role="search">
 <input type="hidden" name="brand" value="{b}"><input type="hidden" name="sort" value="{s}"><input type="hidden" name="kind" value="{k}">
-<input type="search" name="q" value="{q}" placeholder="検索 — darce / coffee / 黒帯 …" aria-label="商品検索" data-funnel="cta_click" data-funnel-cta="shop_search">
-<button type="submit" aria-label="検索">検索</button>{clear}</form>"##,
+<input type="search" name="q" value="{q}" placeholder="検索 — darce / coffee / 黒帯 …" aria-label="商品検索" data-i18n-ph="search_ph" data-i18n-al="search_aria" data-funnel="cta_click" data-funnel-cta="shop_search">
+<button type="submit" aria-label="検索" data-i18n="search_btn" data-i18n-al="search_btn">検索</button>{clear}</form>"##,
         b = html_attr(&brand_filter), s = html_attr(sort), k = html_attr(kind), q = html_attr(&q_trim),
         clear = if q_trim.is_empty() { String::new() } else {
-            format!(r#"<a class="clearq" href="{}">クリア</a>"#, html_attr(&shop_url(&brand_filter, sort, kind, "")))
+            format!(r#"<a class="clearq" href="{}" data-i18n="clear">クリア</a>"#, html_attr(&shop_url(&brand_filter, sort, kind, "")))
         },
     );
 
@@ -4260,7 +4293,7 @@ pub async fn shop_index(
             .map(|(key, label)| {
                 let on = if sort == *key { " on" } else { "" };
                 format!(
-                    r#"<a class="chip{on}" href="{href}" data-funnel="cta_click" data-funnel-cta="shop_sort_{k}">{label}</a>"#,
+                    r#"<a class="chip{on}" href="{href}" data-funnel="cta_click" data-funnel-cta="shop_sort_{k}" data-i18n="sort_{k}">{label}</a>"#,
                     on = on, href = html_attr(&shop_url(&brand_filter, key, kind, &q_trim)),
                     k = if key.is_empty() { "sold" } else { key }, label = label,
                 )
@@ -4359,16 +4392,16 @@ pub async fn shop_index(
     if !kind.is_empty() { bq.push_str(&format!("&kind={}", kind)); }
     if !q_trim.is_empty() { bq.push_str(&format!("&q={}", urlencoding::encode(&q_trim))); }
     let prev_link = if page > 1 {
-        format!(r#"<a class="pg-link" href="/shop?page={}{}">← 前 {} 件</a>"#,
+        format!(r#"<a class="pg-link" href="/shop?page={}{}" data-i18n="pg_prev">← 前 {} 件</a>"#,
             page - 1, bq, SHOP_PAGE_SIZE)
     } else {
-        r#"<span class="pg-link off">← 前</span>"#.to_string()
+        r#"<span class="pg-link off" data-i18n="pg_prev_off">← 前</span>"#.to_string()
     };
     let next_link = if (page as i64) < total_pages as i64 {
-        format!(r#"<a class="pg-link" href="/shop?page={}{}">次 {} 件 →</a>"#,
+        format!(r#"<a class="pg-link" href="/shop?page={}{}" data-i18n="pg_next">次 {} 件 →</a>"#,
             page + 1, bq, SHOP_PAGE_SIZE)
     } else {
-        r#"<span class="pg-link off">次 →</span>"#.to_string()
+        r#"<span class="pg-link off" data-i18n="pg_next_off">次 →</span>"#.to_string()
     };
     let pagination_html = if total_pages > 1 {
         format!(
@@ -4394,16 +4427,53 @@ pub async fn shop_index(
 </div>"##.to_string()
     } else {
         format!(r##"<div class="hero">
-  <h1>━◯━ 知ってる人にだけ届く wearable.</h1>
-  <p>柔術・コーヒー・地域 ── 10+ コラボの "内側からの服"。 受注生産 — 1 着から、 完売・廃棄ゼロ。 <strong style="color:#ffd700">{total} 件</strong> 公開中。</p>
+  <h1 data-i18n="hero_h1">━◯━ 知ってる人にだけ届く wearable.</h1>
+  <p data-i18n="hero_p">柔術・コーヒー・地域 ── 10+ コラボの "内側からの服"。 受注生産 — 1 着から、 完売・廃棄ゼロ。 <strong style="color:#ffd700">{total} 件</strong> 公開中。</p>
   <div class="trust">
-    <span><strong>国際発送</strong> 7-14 日 (DHL / FedEx)</span>
-    <span><strong>1 着から</strong> オーダー可</span>
-    <span><strong>Bella+Canvas / AOP rashguard</strong> 等プレミアム生地</span>
-    <span><strong>Stripe</strong> 安全決済 + クーポン対応</span>
+    <span data-i18n="trust1"><strong>国際発送</strong> 7-14 日 (DHL / FedEx)</span>
+    <span data-i18n="trust2"><strong>1 着から</strong> オーダー可</span>
+    <span data-i18n="trust3"><strong>Bella+Canvas / AOP rashguard</strong> 等プレミアム生地</span>
+    <span data-i18n="trust4"><strong>Stripe</strong> 安全決済 + クーポン対応</span>
   </div>
 </div>"##, total = total_active)
     };
+    // EN chrome dictionary (see SHOP_I18N_RUNTIME). Dynamic counts are baked
+    // in server-side so the EN strings stay in sync with the rendered JA.
+    let i18n_en = serde_json::json!({
+        "hero_h1": "━◯━ wearable that reaches only those in the know.",
+        "hero_p": format!("Jiu-jitsu, coffee, local roots — \"clothes from the inside\" across 10+ collabs. Made to order — from a single piece, zero sellout waste. <strong style='color:#ffd700'>{} live</strong>.", total_active),
+        "trust1": "<strong>Worldwide shipping</strong> 7-14 days (DHL / FedEx)",
+        "trust2": "<strong>From 1 piece</strong> order anytime",
+        "trust3": "<strong>Bella+Canvas / AOP rashguard</strong> premium fabrics",
+        "trust4": "<strong>Stripe</strong> secure checkout + coupons",
+        "search_ph": "Search — darce / coffee / black belt …",
+        "search_aria": "Search products",
+        "search_btn": "Search",
+        "clear": "Clear",
+        "chip_all": "All",
+        "kind_all": "All types",
+        "kind_rashguard": "🥋 Rashguard",
+        "kind_hoodie": "🧥 Hoodie / Crew",
+        "kind_sticker": "✦ Stickers",
+        "kind_song": "🎵 Songs",
+        "sort_sold": "Popular",
+        "sort_new": "New",
+        "sort_price_asc": "Price ↑",
+        "sort_price_desc": "Price ↓",
+        "f_ship": "Shipping",
+        "f_return": "Returns",
+        "f_faq": "FAQ",
+        "f_priv": "Privacy",
+        "pg_prev": format!("← Prev {}", SHOP_PAGE_SIZE),
+        "pg_prev_off": "← Prev",
+        "pg_next": format!("Next {} →", SHOP_PAGE_SIZE),
+        "pg_next_off": "Next →",
+    }).to_string();
+    let i18n_script = format!(
+        "<script>window.I18N_EN={dict};{js}</script>",
+        dict = i18n_en, js = SHOP_I18N_RUNTIME,
+    );
+
     let body = format!(
         r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -4463,6 +4533,9 @@ footer{{padding:30px 24px 50px;border-top:1px solid rgba(255,255,255,0.06);text-
 footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
 .cardplay{{position:absolute;top:8px;right:8px;z-index:2;width:38px;height:38px;border-radius:50%;border:1px solid rgba(255,215,0,.8);background:rgba(0,0,0,.66);color:#fff;font-size:13px;cursor:pointer;backdrop-filter:blur(4px)}}
 .cardplay:hover{{background:rgba(0,0,0,.85)}}
+.langtoggle{{display:inline-flex;border:1px solid rgba(255,255,255,0.18);border-radius:999px;overflow:hidden}}
+.langtoggle button{{background:transparent;color:#f5f5f0;border:none;padding:4px 10px;font-size:10px;letter-spacing:0.15em;cursor:pointer;opacity:0.55;font-family:inherit}}
+.langtoggle button.on{{background:#ffd700;color:#000;opacity:1}}
 /* モバイル: 20+個のブランドチップが折り返してファーストビューを商品ゼロにする
    「チップの壁」対策 — 1行横スクロール化して商品グリッドを1画面目に出す。 */
 @media (max-width:740px){{
@@ -4474,10 +4547,11 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
 </style></head><body>
 <nav>
   <a class="brand" href="/">MU</a>
-  <div>
+  <div style="display:flex;align-items:center;gap:14px">
     <a href="/shop">SHOP</a>
-    <a href="/buy" style="margin-left:14px">DROPS</a>
-    <a href="/heritage" style="margin-left:14px">HERITAGE</a>
+    <a href="/buy">DROPS</a>
+    <a href="/heritage">HERITAGE</a>
+    <span class="langtoggle"><button type="button" data-set="ja" onclick="muSetLang('ja')">JA</button><button type="button" data-set="en" onclick="muSetLang('en')">EN</button></span>
   </div>
 </nav>
 {hero}
@@ -4490,10 +4564,10 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
 {pagination}
 <footer>
   <span>© 2026 MU / Enabler Inc.</span>
-  <a href="/shipping">配送</a>
-  <a href="/returns">返品</a>
-  <a href="/faq">FAQ</a>
-  <a href="/privacy">プライバシー</a>
+  <a href="/shipping" data-i18n="f_ship">配送</a>
+  <a href="/returns" data-i18n="f_return">返品</a>
+  <a href="/faq" data-i18n="f_faq">FAQ</a>
+  <a href="/privacy" data-i18n="f_priv">プライバシー</a>
   <a href="/heritage">heritage</a>
   <a href="/buy">drops</a>
   <a href="https://yukihamada.jp/community">🔥 ともしび</a>
@@ -4525,6 +4599,7 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
 </script>
 <script defer src="/mu-funnel.js"></script>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+{i18n_script}
 </body></html>"##,
         title = html_text(&title),
         title_attr = html_attr(&title),
@@ -4548,6 +4623,7 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
             format!(r#"<div class="grid">{}</div>"#, grid)
         },
         pagination = pagination_html,
+        i18n_script = i18n_script,
     );
     Html(body)
 }
