@@ -4411,13 +4411,13 @@ pub async fn shop_index(
 <meta name="description" content="{meta_desc}">
 <link rel="canonical" href="{canonical}">{robots_meta}
 <meta property="og:type" content="website">
-<meta property="og:title" content="{title}">
+<meta property="og:title" content="{title_attr}">
 <meta property="og:description" content="{meta_desc}">
 <meta property="og:url" content="{canonical}">
 <meta property="og:image" content="{og_image}">
 <meta property="og:site_name" content="wearmu.com">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="{title}">
+<meta name="twitter:title" content="{title_attr}">
 <meta name="twitter:image" content="{og_image}">
 <script type="application/ld+json">{ld_json}</script>
 <style>
@@ -4527,6 +4527,7 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </body></html>"##,
         title = html_text(&title),
+        title_attr = html_attr(&title),
         meta_desc = html_attr(&meta_desc),
         canonical = html_attr(&canonical),
         robots_meta = robots_meta,
@@ -5142,7 +5143,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
 </nav>
 <div class="wrap">
   <div class="hero">
-    <img src="{og}" alt="{title}" loading="lazy" onerror="this.onerror=null;this.src='/static/designs/marker_zero.png';this.style.objectFit='contain';this.style.background='#0a0a0a';this.style.padding='60px'">
+    <img src="{og}" alt="{title_attr}" loading="lazy" onerror="this.onerror=null;this.src='/static/designs/marker_zero.png';this.style.objectFit='contain';this.style.background='#0a0a0a';this.style.padding='60px'">
     {design}
     {lifestyle}
     {extras}
@@ -5198,6 +5199,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
 </body></html>"##,
         make_cta = make_cta_banner("pdp"),
         title = html_text(&display_name),
+        title_attr = html_attr(&display_name),
         short_title = html_text(&short_title),
         desc_short = html_attr(&meta_desc_short),
         sealed = sealed_block,
