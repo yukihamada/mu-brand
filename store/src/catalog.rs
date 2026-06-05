@@ -5012,17 +5012,16 @@ pub async fn shop_pdp(
         } else { String::new() }
     };
 
-    // kind=song: 買う前に全曲試聴できる自己完結プレイヤー（音源は公開ホスト）。
-    let listen_block = if is_song {
-        let audio_url = meta_json
-            .as_deref()
-            .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
-            .and_then(|v| v.get("audio_url").and_then(|a| a.as_str()).map(|s| s.to_string()))
-            .unwrap_or_default();
-        if audio_url.starts_with("https://") {
+    // kind=song、または meta_json.audio_url が直接の音声ファイル(.mp3/.wav/.m4a/.ogg)の商品は
+    // 買う前に試聴できるネイティブプレイヤーを出す（QRで鳴るTシャツの音源もここで聴ける）。
+    let listen_block = if listen_block.is_empty() {
+        let direct_audio = meta_audio.starts_with("https://")
+            && [".mp3", ".wav", ".m4a", ".ogg"].iter().any(|&e| meta_audio.ends_with(e));
+        if (is_song && meta_audio.starts_with("https://")) || direct_audio {
+            let note = if is_song { "買う前に、全部聴けます" } else { "QRで流れる曲。ここでも聴けます" };
             format!(r##"<div class="listen">
   <button id="songBtn" class="listen-btn" aria-label="試聴">▶ この曲を試聴</button>
-  <span class="listen-note">買う前に、全部聴けます</span>
+  <span class="listen-note">{note}</span>
   <script>(function(){{
     var b=document.getElementById('songBtn');
     var a=new Audio(); a.src="{u}"; var playing=false;
@@ -5032,7 +5031,7 @@ pub async fn shop_pdp(
     }});
     a.addEventListener('ended',function(){{b.textContent="▶ この曲を試聴";playing=false;}});
   }})();</script>
-</div>"##, u = html_attr(&audio_url))
+</div>"##, u = html_attr(&meta_audio), note = note)
         } else { listen_block }
     } else { listen_block };
 
