@@ -891,6 +891,21 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
                     machine washable · sourced + printed in EU",
     },
     ProductSpec {
+        kind: "tee_white",
+        // Same Bella+Canvas 3001, White/M (variant 4012 verified against the
+        // Printful API 2026-06-05; 87 live tees already use it). White garment
+        // is the right canvas for dark line-art / sumi-e / Mincho graphics —
+        // the white-bg DTG pipeline keys white→transparent, leaving the dark
+        // artwork, which then reads perfectly on a white tee.
+        printful_product_id: 71,
+        printful_variant_id: 4012, // White M
+        placement: "front",
+        retail_jpy: 4900,
+        spec_html: "Bella+Canvas 3001 unisex tee · White · 4.2 oz (142 gsm) · \
+                    100% airlume combed ringspun cotton · DTG print 30×30cm front · \
+                    machine washable · sourced + printed in EU",
+    },
+    ProductSpec {
         kind: "rashguard_ls",
         printful_product_id: 301, // All-Over Print Men's Rash Guard (white base; sublimation requires poly white)
         printful_variant_id: 9328, // White M
@@ -8993,5 +9008,33 @@ async fn optimizer_step(db: Db) -> Result<String, String> {
         orders_24h,
         summary_lines.join("\n")
     ))
+}
+
+#[cfg(test)]
+mod lifestyle_composite_tests {
+    use super::*;
+
+    // Smoke test for the real-design composite. Reads a bundled worn-blank base
+    // and a design PNG path from COMPOSE_TEST_DESIGN, writes the result to
+    // /tmp/rust_comp.png for visual inspection. Skips cleanly if assets absent.
+    //   COMPOSE_TEST_DESIGN=/tmp/flag_design.png cargo test --release \
+    //     compose_lifestyle_smoke -- --nocapture
+    #[test]
+    fn compose_lifestyle_smoke() {
+        let Some(base) = read_base_png("tee_1") else {
+            eprintln!("skip: base tee_1 not found from cwd");
+            return;
+        };
+        let Ok(design) = std::env::var("COMPOSE_TEST_DESIGN") else {
+            eprintln!("skip: set COMPOSE_TEST_DESIGN to a design png path");
+            return;
+        };
+        let design_bytes = std::fs::read(&design).expect("read design");
+        let b = &lifestyle_bases("tee")[0];
+        let out = compose_lifestyle_png(&design_bytes, &base, b).expect("composite ok");
+        assert!(out.len() > 10_000, "output png suspiciously small: {}", out.len());
+        std::fs::write("/tmp/rust_comp.png", &out).expect("write out");
+        eprintln!("wrote /tmp/rust_comp.png ({} bytes)", out.len());
+    }
 }
 
