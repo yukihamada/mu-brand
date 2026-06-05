@@ -357,6 +357,156 @@ pub async fn agent_create_store(
     })).into_response()
 }
 
+// ─── GET /api/agent — agent landing (quickstart, no 404) ────────────────
+// The natural path an agent pokes. Returns the one-call instant-start flow
+// up front so "look at wearmu → create a product" is a single hop.
+pub async fn agent_landing() -> Response {
+    Json(serde_json::json!({
+        "service": "wearmu.com — MU agent API",
+        "tagline": "Make a product in one call. No email required.",
+        "instant_start": {
+            "step_1": "GET https://wearmu.com/api/agent/guest → instant api_key + a starter store (no email, no code)",
+            "step_2": "POST https://wearmu.com/api/agent/products with that key → your first product",
+            "note": "Products land status='review' until an MA-council member approves them.",
+        },
+        "permanent_account": "POST /api/agent/register {email} then /register/verify {email,code} — email-recoverable key + ¥200 welcome credit",
+        "docs": "https://wearmu.com/llms.txt",
+        "openapi": "https://wearmu.com/openapi.json",
+        "mcp": "https://mcp.wearmu.com/mcp",
+        "endpoints": [
+            "GET  /api/agent/guest      — instant key + starter store (no email)",
+            "GET  /api/agent/me         — your account, stores, limits",
+            "POST /api/agent/stores     — open a store",
+            "POST /api/agent/upload     — upload a PNG design → design_url",
+            "POST /api/agent/products   — create a product",
+            "GET  /api/agent/products   — list your products",
+            "GET  /api/agent/sales      — your orders / revenue",
+        ],
+    })).into_response()
+}
+
+// ─── GET|POST /api/agent/guest — instant, email-less onboarding ─────────
+// An agent that just discovered wearmu.com calls this with ZERO setup: it
+// mints a ready-to-use api_key AND a starter store, so the very next call
+// can be POST /api/agent/products. No email, no 6-digit code.
+//
+// Abuse containment:
+//   • The guest email (guest-*@guest.wearmu.com) is NOT a trusted owner, so
+//     auto_publish_trusted() is false → every product is forced status=
+//     'review' and never reaches shoppers without MA-council approval.
+//   • Per-IP throttle (GUEST_KEYS_PER_IP_HOUR) on key minting.
+//   • The standard per-email 20 products/hour cap still applies per key.
+//   • A tiny welcome credit lets the first ai_prompt generation "just work";
+//     the global BUDGET_TOTAL_JPY hard cap bounds total generation spend.
+// The api_key IS the credential — persist it and the store lives forever at
+// the returned URL. (Bind an email later via the normal register flow.)
+const GUEST_KEYS_PER_IP_HOUR: u32 = 10;
+const GUEST_WELCOME_CREDIT_JPY: i64 = 150;
+
+fn guest_ip_gate() -> &'static std::sync::Mutex<HashMap<String, (u32, i64)>> {
+    static G: std::sync::OnceLock<std::sync::Mutex<HashMap<String, (u32, i64)>>> =
+        std::sync::OnceLock::new();
+    G.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+fn client_ip(headers: &HeaderMap) -> String {
+    for h in ["fly-client-ip", "x-real-ip", "x-forwarded-for"] {
+        if let Some(v) = headers.get(h).and_then(|v| v.to_str().ok()) {
+            if let Some(first) = v.split(',').next() {
+                let ip = first.trim();
+                if !ip.is_empty() { return ip.to_string(); }
+            }
+        }
+    }
+    "unknown".to_string()
+}
+
+/// True if this IP may mint another guest key now (records the attempt).
+fn guest_ip_allow(ip: &str, now_s: i64) -> bool {
+    const WINDOW: i64 = 3600;
+    let mut map = guest_ip_gate().lock().unwrap();
+    if map.len() > 5000 {
+        map.retain(|_, (_, t)| now_s - *t < WINDOW);
+    }
+    let entry = map.entry(ip.to_string()).or_insert((0, now_s));
+    if now_s - entry.1 >= WINDOW {
+        *entry = (0, now_s);
+    }
+    if entry.0 >= GUEST_KEYS_PER_IP_HOUR {
+        return false;
+    }
+    entry.0 += 1;
+    true
+}
+
+pub async fn agent_guest(
+    State(db): State<Db>,
+    headers: HeaderMap,
+) -> Response {
+    use rand::Rng;
+    let now_s: i64 = crate::chrono_now().parse().unwrap_or(0);
+    let ip = client_ip(&headers);
+    if !guest_ip_allow(&ip, now_s) {
+        return json_err(
+            StatusCode::TOO_MANY_REQUESTS,
+            "guest key rate limit reached for this IP; retry later or use POST /api/agent/register with an email",
+        );
+    }
+    let mut rng = rand::thread_rng();
+    let id = format!("{:08x}", rng.gen::<u32>());
+    let email = format!("guest-{}@guest.wearmu.com", id);
+    let token = format!("{:016x}{:016x}", rng.gen::<u64>(), rng.gen::<u64>());
+    let slug = format!("g-{}", id);
+    let now = crate::chrono_now();
+    let welcome = {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO collab_users (email, verified, verified_at, session_token, created_at)
+             VALUES (?,1,?,?,?)
+             ON CONFLICT(email) DO UPDATE SET session_token=excluded.session_token, verified=1",
+            rusqlite::params![email, now_s, token, now_s],
+        );
+        let config = serde_json::json!({
+            "owner_email": email,
+            "approval_required": true,
+            "created_via": "agent_guest",
+            "guest": true,
+            "created_at": now,
+        }).to_string();
+        let _ = conn.execute(
+            "INSERT INTO catalog_brands
+                (slug, name, emoji, color_primary, tagline, is_active, revenue_share_pct, config_json)
+             VALUES (?,?,?,?,?,1,0,?)
+             ON CONFLICT(slug) DO NOTHING",
+            rusqlite::params![slug, "Guest Studio", "✺", "#888", "an agent's first store", config],
+        );
+        if crate::mu_credit_apply(&conn, &email, GUEST_WELCOME_CREDIT_JPY, "agent_guest_welcome", None) {
+            GUEST_WELCOME_CREDIT_JPY
+        } else {
+            0
+        }
+    };
+    let base = "https://wearmu.com";
+    Json(serde_json::json!({
+        "ok": true,
+        "api_key": token,
+        "store": slug,
+        "store_url": format!("{}/shop?brand={}", base, slug),
+        "email": email,
+        "mu_credits_balance": welcome,
+        "note": "Instant guest key — no email needed. SAVE this api_key: it is your only credential, and your store lives at store_url forever. Products you create land status='review' until an MA-council member approves them. Bind an email anytime via POST /api/agent/register to make the key recoverable.",
+        "next": {
+            "create_now": format!("POST {}/api/agent/products  (use store=\"{}\" and the key above)", base, slug),
+            "upload_art_first": format!("optional: POST {}/api/agent/upload {{\"data_base64\":\"<PNG base64 <=3MB>\"}} → design_url", base),
+            "docs": format!("{}/llms.txt", base),
+        },
+        "quickstart_curl": format!(
+            "curl -s -X POST {b}/api/agent/products -H 'Authorization: Bearer {t}' -H 'Content-Type: application/json' -d '{{\"store\":\"{s}\",\"label\":\"My first tee\",\"description\":\"hello, world\",\"kind\":\"tee\",\"ai_prompt\":\"a single calm zen circle, one brush stroke, white on black, centered\",\"price_jpy\":4900}}'",
+            b = base, t = token, s = slug,
+        ),
+    })).into_response()
+}
+
 // ─── POST /api/agent/feedback ───────────────────────────────────────────
 // Lets an agent file a bug report / feature request / improvement against MU
 // itself (the platform, a product, a store). Contract-compliant: NO new
@@ -1716,7 +1866,18 @@ MCP server:    https://mcp.wearmu.com          (12 tools, see "MCP" below)
 OpenAPI:       https://wearmu.com/openapi.json
 This file:     https://wearmu.com/llms.txt
 
-## Onboarding (email-verified API key)
+## Instant start (no email) — make a product in one call
+
+0. GET https://wearmu.com/api/agent/guest
+   → {"api_key":"<token>","store":"g-xxxxxxxx","mu_credits_balance":150, ...}
+   No email, no code. You also get a ready-made store and a small credit, so
+   the VERY NEXT call can create a product (generate art with ai_prompt, or
+   upload your own PNG first). Products land status='review' until approved.
+   SAVE the api_key — it is your only credential; your store persists at the
+   returned store_url. Bind an email later (step 1 below) to make it
+   recoverable. (GET https://wearmu.com/api/agent returns this same quickstart.)
+
+## Onboarding (permanent, email-verified API key)
 
 1. POST https://wearmu.com/api/agent/register
    body: {"email":"you@example.com"}
