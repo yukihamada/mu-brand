@@ -34,5 +34,20 @@ drift リスク。内訳: rashguard(AOP) 125 / tee 64 / hoodie 27 / crewneck 13 
 - 変更前スナップショット: `before_snapshot.json` (258行: sku/label/image_url)。
 - 復旧: スナップショットの image_url を書き戻せば原状回復可。
 
-## 実行ログ
-- (実行後追記: dry_run結果 / 本実行 composited/rash_reused/skipped/failed / 検証PDP)
+## 実行ログ (2026-06-05 完了)
+- デプロイ: origin/main 90d8e44 → GHA 成功 / health 200。
+- dry_run: candidates=231, composited=105, rash_reused=125, failed=0。
+- 本実行(全件): composited=104, rash_reused=125, failed=1, skipped=1。
+- エッジケース2件を手動で mockup 流用に統一(AOP全面で胸合成不適):
+  - `JF-AOP-HOOD-01` (design_file が相対パスで合成不可) → `/static/jiuflow/m/perfect_JF-AOP-HOOD-01.jpg`
+  - `KK-AOP-APRON-01` (apron=baseなし) → `/static/kokon/m/perfect_KK-AOP-APRON-01.jpg`
+- 最終検証: **live の lifestyle 行で旧drift(-vN.png)残=0**。
+  composited(-fit.png)=104行 / mockup流用=127行。非liveの27行は顧客非表示で対象外。
+- PDP目視: 指摘 `JIUFLOW-MU-NL-MUJIUFLOW-TEE-nl0a480c3a` で着画=メインのプリント一致。
+  hoodie合成 / rashguard AOPモックも目視OK。
+- 監査: `before_snapshot.json`(258行・変更前) / `after_snapshot.json`(239行・変更後 live)。
+
+## 既知の限界 / 今後
+- AOP(apron/AOP-hoodie 等)は胸合成不可 → mockup 流用で対応。新規AOPは要同様対応。
+- `generate_lifestyle_photo`(autopilot生成経路)は現状 Gemini のまま(MU_AUTOPILOT=unset で停止中)。
+  autopilot 再開時に合成経路へ差し替え推奨(本コミットの compose_lifestyle_png を再利用可)。
