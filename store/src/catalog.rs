@@ -5500,7 +5500,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
   <div class="legal-fine">© 2026 MU / Enabler Inc. · 東京千代田区九段南 1-5-6 · 受注生産・国際発送 7-14 日</div>
 </footer>
 <script defer src="/mu-funnel.js"></script>
-<div id="lb"><span class="lb-x">×</span><img id="lb-img" src="" alt=""><div class="lb-hint">クリック / Esc で閉じる</div></div>
+<div id="lb"><span class="lb-x">×</span><img id="lb-img" alt=""><div class="lb-hint">クリック / Esc で閉じる</div></div>
 <script>
 (function(){{
   var lb=document.getElementById('lb'),li=document.getElementById('lb-img');
@@ -5511,7 +5511,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
       lb.classList.add('on');
     }});
   }});
-  function close(){{lb.classList.remove('on');li.src='';}}
+  function close(){{lb.classList.remove('on');li.removeAttribute('src');}}
   lb.addEventListener('click',close);
   document.addEventListener('keydown',function(e){{if(e.key==='Escape')close();}});
 }})();
