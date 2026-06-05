@@ -120,6 +120,20 @@ pub fn ensure_schema(conn: &rusqlite::Connection) {
          );
          CREATE INDEX IF NOT EXISTS idx_founder_cards_email
              ON catalog_founder_cards(customer_email);
+         CREATE TABLE IF NOT EXISTS catalog_return_requests (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_ref       TEXT NOT NULL,        -- order number / stripe session the customer typed
+            customer_email  TEXT NOT NULL,
+            reason          TEXT NOT NULL,
+            photo_url       TEXT,                 -- optional evidence link
+            client_ip       TEXT NOT NULL,        -- fly-validated client IP
+            -- 'received'    = first-time IP, auto-accepted (refund still manual)
+            -- 'needs_review'= a prior request exists from this IP → Yuki confirms
+            status          TEXT NOT NULL DEFAULT 'received',
+            created_at      TEXT DEFAULT (datetime('now'))
+         );
+         CREATE INDEX IF NOT EXISTS idx_return_requests_ip
+             ON catalog_return_requests(client_ip);
          "
     );
 
@@ -3777,7 +3791,64 @@ pub async fn returns_page() -> Html<String> {
 <li>商品到着確認 → 5 営業日以内に交換品発送 or 返金処理 (Stripe 経由・元の決済手段に戻ります)</li>
 </ol>
 
-<p><a class="btn" href="mailto:returns@wearmu.com">返品申請する</a></p>
+<h2>返品申請フォーム</h2>
+<p>下記フォームから直接申請できます。 初回 (このアクセス元からの申請が初めて) の場合はその場で受理します。
+過去に申請履歴がある場合は不正防止のため担当が内容を確認のうえご連絡します。
+返金は受理後に手動で処理 (Stripe 経由・元の決済手段) します。</p>
+<form id="ret-form" style="margin-top:14px;max-width:520px" onsubmit="return submitReturn(event)">
+  <label style="display:block;margin-bottom:10px;font-size:12px;letter-spacing:0.05em">
+    注文番号 (確認メール記載) <span style="color:#ffd700">*</span><br>
+    <input name="order_ref" required maxlength="120"
+      style="width:100%;margin-top:5px;padding:9px;background:#141414;border:1px solid rgba(255,255,255,0.15);color:#f5f5f0;border-radius:4px;font-size:13px">
+  </label>
+  <label style="display:block;margin-bottom:10px;font-size:12px;letter-spacing:0.05em">
+    メールアドレス <span style="color:#ffd700">*</span><br>
+    <input name="contact_email" type="email" required maxlength="200"
+      style="width:100%;margin-top:5px;padding:9px;background:#141414;border:1px solid rgba(255,255,255,0.15);color:#f5f5f0;border-radius:4px;font-size:13px">
+  </label>
+  <label style="display:block;margin-bottom:10px;font-size:12px;letter-spacing:0.05em">
+    返品理由 <span style="color:#ffd700">*</span><br>
+    <textarea name="reason" required maxlength="1000" rows="3"
+      style="width:100%;margin-top:5px;padding:9px;background:#141414;border:1px solid rgba(255,255,255,0.15);color:#f5f5f0;border-radius:4px;font-size:13px"></textarea>
+  </label>
+  <label style="display:block;margin-bottom:14px;font-size:12px;letter-spacing:0.05em">
+    写真 URL (任意・破損 / 不良の場合)<br>
+    <input name="photo_url" type="url" maxlength="500"
+      style="width:100%;margin-top:5px;padding:9px;background:#141414;border:1px solid rgba(255,255,255,0.15);color:#f5f5f0;border-radius:4px;font-size:13px">
+  </label>
+  <button type="submit" class="btn" style="cursor:pointer;background:none;font-family:inherit">返品申請する</button>
+  <span id="ret-msg" style="margin-left:12px;font-size:12px"></span>
+</form>
+<p style="margin-top:14px;font-size:12px;color:rgba(245,245,240,0.5)">フォームが使えない場合は <a href="mailto:returns@wearmu.com" style="color:#ffd700">returns@wearmu.com</a> まで。</p>
+<script>
+async function submitReturn(e){
+  e.preventDefault();
+  var f=e.target, btn=f.querySelector('button'), msg=document.getElementById('ret-msg');
+  var body={
+    order_ref:f.order_ref.value.trim(),
+    contact_email:f.contact_email.value.trim(),
+    reason:f.reason.value.trim(),
+    photo_url:f.photo_url.value.trim()||null
+  };
+  btn.disabled=true; msg.style.color='#aaa'; msg.textContent='送信中…';
+  try{
+    var r=await fetch('/api/returns',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var j=await r.json();
+    if(r.ok&&j.ok){
+      msg.style.color='#7CFC9B';
+      msg.textContent=j.message||'受け付けました';
+      f.reset();
+    }else{
+      msg.style.color='#ff6b6b';
+      msg.textContent=(j&&j.error)||'送信に失敗しました';
+      btn.disabled=false;
+    }
+  }catch(err){
+    msg.style.color='#ff6b6b'; msg.textContent='通信エラー'; btn.disabled=false;
+  }
+  return false;
+}
+</script>
 "##)
 }
 

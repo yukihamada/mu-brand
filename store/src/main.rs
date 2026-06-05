@@ -12266,6 +12266,166 @@ async fn collab_apply(
     })).into_response()
 }
 
+/// POST /api/returns — customer-facing return request from /returns.
+///
+/// Policy (confirmed 2026-06-05): a request from an IP with NO prior request
+/// is auto-accepted (`status='received'`); a repeat IP is flagged
+/// `needs_review` so Yuki confirms it before anything moves. **No money is
+/// ever moved here** — refunds stay a manual Stripe step. Always records the
+/// row and emails returns@ (+ acks the customer).
+async fn returns_apply(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let order_ref = body.get("order_ref").and_then(|v| v.as_str())
+        .unwrap_or("").trim().to_string();
+    let reason = body.get("reason").and_then(|v| v.as_str())
+        .unwrap_or("").trim().to_string();
+    let photo_url = body.get("photo_url").and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string()).filter(|s| !s.is_empty() && s.len() <= 500);
+    let contact_email_raw = body.get("contact_email").and_then(|v| v.as_str())
+        .unwrap_or("").trim().to_string();
+
+    if order_ref.is_empty() || order_ref.len() > 120 {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":"注文番号を入力してください"})))
+            .into_response();
+    }
+    if reason.is_empty() || reason.len() > 1000 {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":"返品理由を入力してください (1-1000文字)"})))
+            .into_response();
+    }
+    let contact_email = match validate_email(&contact_email_raw) {
+        Ok(e) => e,
+        Err(m) => return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":format!("メール: {}", m)})))
+            .into_response(),
+    };
+
+    let ip = client_ip(&headers);
+    let ip_key = if ip.is_empty() { "unknown".to_string() } else { ip };
+
+    // First-time-from-this-IP check + 10-min exact-duplicate guard, then insert.
+    let (status, first_time, inserted_id) = {
+        let conn = db.lock().unwrap();
+        // Double-submit guard: same IP + same order within 10 min → treat as dup.
+        let dup: bool = conn.query_row(
+            "SELECT 1 FROM catalog_return_requests
+             WHERE client_ip=? AND order_ref=?
+               AND CAST(strftime('%s','now') AS INTEGER) -
+                   CAST(strftime('%s', created_at) AS INTEGER) < 600
+             LIMIT 1",
+            params![ip_key, order_ref], |_| Ok(true),
+        ).unwrap_or(false);
+        if dup {
+            return Json(serde_json::json!({
+                "ok": true, "duplicate": true,
+                "message": "受け付け済みです。担当からご連絡します。"
+            })).into_response();
+        }
+        let prior: bool = conn.query_row(
+            "SELECT 1 FROM catalog_return_requests WHERE client_ip=? LIMIT 1",
+            params![ip_key], |_| Ok(true),
+        ).unwrap_or(false);
+        let status = if prior { "needs_review" } else { "received" };
+        conn.execute(
+            "INSERT INTO catalog_return_requests
+              (order_ref, customer_email, reason, photo_url, client_ip, status)
+             VALUES (?, ?, ?, ?, ?, ?)",
+            params![order_ref, contact_email, reason, photo_url.as_deref(), ip_key, status],
+        ).ok();
+        (status.to_string(), !prior, conn.last_insert_rowid())
+    };
+
+    // Notify returns@ (+ Yuki) and ack the customer. Silent no-op without key.
+    let returns_to = env::var("RETURNS_INBOX_TO")
+        .unwrap_or_else(|_| "returns@wearmu.com".into());
+    if let Ok(resend_key) = env::var("RESEND_API_KEY") {
+        if !resend_key.is_empty() {
+            let flag = if first_time {
+                "初回 (このIPからの申請なし) — 自動受理"
+            } else {
+                "⚠ 同一IPに過去の申請あり — 要確認 (needs_review)"
+            };
+            let admin_html = format!(
+                "<p><b>返品申請 #{id}</b> — {flag}</p>\
+                 <ul>\
+                   <li>注文番号: <b>{oref}</b></li>\
+                   <li>email: <a href=\"mailto:{email}\">{email}</a></li>\
+                   <li>IP: <code>{ip}</code></li>\
+                   <li>status: <b>{status}</b></li>\
+                 </ul>\
+                 <p><b>理由:</b><br>{reason}</p>\
+                 {photo}\
+                 <p style=\"color:#888;font-size:12px\">承認: <code>UPDATE catalog_return_requests SET status='approved' WHERE id={id};</code> · 返金は Stripe で手動</p>",
+                id = inserted_id,
+                flag = html_escape(flag),
+                oref = html_escape(&order_ref),
+                email = html_escape(&contact_email),
+                ip = html_escape(&ip_key),
+                status = html_escape(&status),
+                reason = html_escape(&reason),
+                photo = photo_url.as_deref()
+                    .map(|u| format!("<p>写真: <a href=\"{0}\">{0}</a></p>", html_escape(u)))
+                    .unwrap_or_default(),
+            );
+            let _ = reqwest::Client::new()
+                .post("https://api.resend.com/emails")
+                .bearer_auth(&resend_key)
+                .json(&serde_json::json!({
+                    "from": "━◯━ MU returns <noreply@wearmu.com>",
+                    "to": [returns_to.clone()],
+                    "subject": format!("[MU returns] #{} {} — {}", inserted_id,
+                        if first_time {"初回 自動受理"} else {"要確認"}, order_ref),
+                    "html": admin_html,
+                    "reply_to": contact_email.clone(),
+                }))
+                .send().await;
+
+            let ack_html = format!(
+                "<p>返品申請を受け付けました (受付番号 #{id})。</p>\
+                 <p>{msg}</p>\
+                 <p style=\"color:#555;font-size:13px;border-left:3px solid #e6c449;padding-left:10px;margin:20px 0\">\
+                 注文番号: {oref}</p>\
+                 <p style=\"color:#888;font-size:12px\">— MU / 株式会社 イネブラ</p>",
+                id = inserted_id,
+                oref = html_escape(&order_ref),
+                msg = if first_time {
+                    "内容を確認のうえ、返品先住所と返金手続きについて担当よりご連絡します。"
+                } else {
+                    "過去の申請履歴があるため、内容を担当が確認のうえご連絡します。"
+                },
+            );
+            let _ = reqwest::Client::new()
+                .post("https://api.resend.com/emails")
+                .bearer_auth(&resend_key)
+                .json(&serde_json::json!({
+                    "from": "━◯━ MU <noreply@wearmu.com>",
+                    "to": [contact_email.clone()],
+                    "subject": "MU — 返品申請を受け付けました",
+                    "html": ack_html,
+                    "reply_to": returns_to,
+                }))
+                .send().await;
+        }
+    }
+
+    let message = if first_time {
+        "受け付けました。返品先と返金手続きについてメールでご連絡します。"
+    } else {
+        "受け付けました。過去の申請履歴があるため担当が確認のうえご連絡します。"
+    };
+    Json(serde_json::json!({
+        "ok": true,
+        "id": inserted_id,
+        "status": status,
+        "first_time": first_time,
+        "message": message,
+    })).into_response()
+}
+
 /// GET /admin — hub linking the main admin tools (curated, not all 50
 /// routes). Token gets propagated to each link so the second click works
 /// without re-typing. Categorized for fast scanning.
@@ -68231,6 +68391,7 @@ async fn main() {
         // Legal / policy pages — linked from PDP footer + /shop footer
         // so cold-traffic visitors see trust signals one click away.
         .route("/returns",  get(catalog::returns_page))
+        .route("/api/returns", post(returns_apply))
         .route("/faq",      get(catalog::faq_page))
         .route("/shipping", get(catalog::shipping_page))
         // Token-gated SKU generator: GET so it's easy to trigger from a
