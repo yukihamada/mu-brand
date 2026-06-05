@@ -5839,11 +5839,15 @@ pub async fn shop_pdp(
         let mut sibs: Vec<(String, String, String, i64, i64)> = Vec::new();
         {
             let conn = db.lock().unwrap();
-            if let Ok(mut stmt) = conn.prepare(
+            // Bind the prepared statement to a named local declared AFTER `conn`
+            // so it (and its borrow of `conn`) drops first — an `if let`
+            // scrutinee temporary would otherwise outlive `conn` (E0597).
+            let prepared = conn.prepare(
                 "SELECT sku, label, COALESCE(mockup_url_external, mockup_main_file, ''), \
                         retail_price_jpy, meta_json \
                  FROM catalog_products WHERE brand=?1 AND status='live' AND sku!=?2",
-            ) {
+            );
+            if let Ok(mut stmt) = prepared {
                 if let Ok(rows) = stmt.query_map(rusqlite::params![&brand, &sku], |r| {
                     Ok((
                         r.get::<_, String>(0)?, r.get::<_, String>(1)?,
