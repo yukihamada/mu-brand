@@ -25047,7 +25047,8 @@ pub(crate) async fn collab_auth_start_core(db: &Db, email_in: &str) -> Response 
         let _ = conn.execute(
             "INSERT INTO collab_users (email, code, code_expires_at, created_at)
              VALUES (?, ?, ?, ?)
-             ON CONFLICT(email) DO UPDATE SET code=excluded.code, code_expires_at=excluded.code_expires_at",
+             ON CONFLICT(email) DO UPDATE SET code=excluded.code,
+                 code_expires_at=excluded.code_expires_at, code_attempts=0",
             params![email, code, expires, now_s],
         );
     }
@@ -25139,6 +25140,70 @@ async fn collab_auth_verify(
     resp
 }
 
+/// Max wrong guesses allowed against a single issued 6-digit code before it is
+/// burned (forcing a fresh `/start`). Without this, the 10^6 code space is
+/// brute-forceable within the 15-min validity window, and a correct guess mints
+/// the session token that *is* the API key → full account/store takeover.
+const COLLAB_CODE_MAX_ATTEMPTS: i64 = 5;
+
+/// Constant-time equality for the verification code — never short-circuits on
+/// the first differing byte, so response timing doesn't leak the correct code.
+fn collab_code_eq(a: &str, b: &str) -> bool {
+    a.len() == b.len()
+        && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// Validate a submitted code against the one on file for `email` (already
+/// trimmed + lowercased), enforcing expiry **and** a per-code attempt cap.
+/// On a wrong guess the attempt counter is incremented and the code burned once
+/// the cap is reached, so an attacker can make at most `COLLAB_CODE_MAX_ATTEMPTS`
+/// guesses per issued code. The caller nulls the code on success.
+fn collab_code_check(
+    db: &Db,
+    email: &str,
+    code: &str,
+) -> Result<(), (StatusCode, &'static str)> {
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let conn = db.lock().unwrap();
+    let row: Option<(String, i64, i64)> = conn.query_row(
+        "SELECT COALESCE(code,''), COALESCE(code_expires_at,0), COALESCE(code_attempts,0)
+         FROM collab_users WHERE email=?",
+        params![email], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ).ok();
+    let (db_code, expires, attempts) = match row {
+        Some(r) => r,
+        None => return Err((StatusCode::NOT_FOUND, "email not registered")),
+    };
+    if db_code.is_empty() || expires < now_s {
+        return Err((StatusCode::UNAUTHORIZED, "code expired"));
+    }
+    if attempts >= COLLAB_CODE_MAX_ATTEMPTS {
+        // Already over budget — burn the code so guessing can't continue.
+        let _ = conn.execute(
+            "UPDATE collab_users SET code=NULL, code_expires_at=NULL WHERE email=?",
+            params![email],
+        );
+        return Err((StatusCode::TOO_MANY_REQUESTS, "too many attempts — request a new code"));
+    }
+    if !collab_code_eq(&db_code, code) {
+        let next = attempts + 1;
+        // Increment, and burn the code on the final allowed miss.
+        if next >= COLLAB_CODE_MAX_ATTEMPTS {
+            let _ = conn.execute(
+                "UPDATE collab_users SET code_attempts=?, code=NULL, code_expires_at=NULL WHERE email=?",
+                params![next, email],
+            );
+        } else {
+            let _ = conn.execute(
+                "UPDATE collab_users SET code_attempts=? WHERE email=?",
+                params![next, email],
+            );
+        }
+        return Err((StatusCode::UNAUTHORIZED, "invalid code"));
+    }
+    Ok(())
+}
+
 /// Core of code verification: checks the 6-digit code for `email_in`, mints +
 /// persists a session token, and returns it (this token IS the API key).
 /// Shared by the human `/api/collab/auth/verify` handler and the agent
@@ -25151,23 +25216,7 @@ pub(crate) fn collab_auth_verify_core(
     let email = email_in.trim().to_lowercase();
     let code = code_in.trim().to_string();
     let now_s: i64 = chrono_now().parse().unwrap_or(0);
-    let row: Option<(String, i64)> = {
-        let conn = db.lock().unwrap();
-        conn.query_row(
-            "SELECT COALESCE(code,''), COALESCE(code_expires_at,0) FROM collab_users WHERE email=?",
-            params![email], |r| Ok((r.get(0)?, r.get(1)?))
-        ).ok()
-    };
-    let (db_code, expires) = match row {
-        Some(r) => r,
-        None => return Err((StatusCode::NOT_FOUND, "email not registered")),
-    };
-    if db_code != code || db_code.is_empty() {
-        return Err((StatusCode::UNAUTHORIZED, "invalid code"));
-    }
-    if expires < now_s {
-        return Err((StatusCode::UNAUTHORIZED, "code expired"));
-    }
+    collab_code_check(db, &email, &code)?;
     use sha2::{Sha256, Digest};
     let mut h = Sha256::new();
     h.update(email.as_bytes());
@@ -25197,13 +25246,6 @@ async fn collab_auth_magic(
     let email = q.email.trim().to_lowercase();
     let code  = q.code.trim().to_string();
     let now_s: i64 = chrono_now().parse().unwrap_or(0);
-    let row: Option<(String, i64)> = {
-        let conn = db.lock().unwrap();
-        conn.query_row(
-            "SELECT COALESCE(code,''), COALESCE(code_expires_at,0) FROM collab_users WHERE email=?",
-            params![email], |r| Ok((r.get(0)?, r.get(1)?))
-        ).ok()
-    };
     let err_html = |msg: &str| -> Response {
         let html = format!(r#"<!doctype html><html><head><meta charset="utf-8"><title>MU — link error</title>
 <style>body{{font-family:-apple-system,sans-serif;background:#0a0a0a;color:#f5f5f0;padding:60px 24px;text-align:center}}
@@ -25213,12 +25255,10 @@ a{{color:#e6c449}}</style></head><body><div class="b">
 </div></body></html>"#, msg = html_escape(msg));
         (StatusCode::UNAUTHORIZED, Html(html)).into_response()
     };
-    let (db_code, expires) = match row {
-        Some(r) => r,
-        None => return err_html("email not registered"),
-    };
-    if db_code.is_empty() || db_code != code { return err_html("invalid code"); }
-    if expires < now_s { return err_html("code expired (15 min)"); }
+    // Same brute-force guard + constant-time check as the POST verify path.
+    if let Err((_, msg)) = collab_code_check(&db, &email, &code) {
+        return err_html(msg);
+    }
 
     use sha2::{Sha256, Digest};
     let mut h = Sha256::new();
@@ -63314,6 +63354,11 @@ async fn main() {
         "ALTER TABLE mu_purchases ADD COLUMN last_status_at TEXT",
         // 2026-05-14: free ¥20,000 Opus budget per verified collab user.
         "ALTER TABLE collab_users ADD COLUMN budget_jpy_used INTEGER NOT NULL DEFAULT 0",
+        // Brute-force guard for the 6-digit email code: counts wrong guesses
+        // against the currently-issued code so an attacker can't exhaust the
+        // 10^6 space within the 15-min window. Reset to 0 on each /start
+        // re-send; the code is burned once COLLAB_CODE_MAX_ATTEMPTS is hit.
+        "ALTER TABLE collab_users ADD COLUMN code_attempts INTEGER NOT NULL DEFAULT 0",
         // X (Twitter) auto-post — set when twitter_post.py succeeds.
         "ALTER TABLE products ADD COLUMN x_posted_at TEXT",
         "ALTER TABLE products ADD COLUMN x_tweet_id TEXT",

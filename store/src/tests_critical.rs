@@ -9,6 +9,7 @@
 
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
+use std::sync::{Arc, Mutex};
 
 // ── (c) ADMIN_TOKEN auth is fail-closed ──────────────────────────────────────
 //
@@ -144,4 +145,87 @@ fn verify_query_resolves_sold_out_inactive_unit() {
         with_active_filter.is_err(),
         "sanity: an active=1 filter hides the shipped unit — verify_page must not use it"
     );
+}
+
+// ── (e) the 6-digit email code is brute-force–capped ─────────────────────────
+//
+// The verification code mints the session token that *is* the API key, so an
+// unbounded code endpoint = account/store takeover by exhausting the 10^6 space
+// within the 15-min window. `collab_code_check` must (1) compare in constant
+// time and (2) burn the code after COLLAB_CODE_MAX_ATTEMPTS wrong guesses.
+fn collab_users_test_db() -> Arc<Mutex<rusqlite::Connection>> {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE collab_users (
+            email           TEXT NOT NULL UNIQUE,
+            code            TEXT,
+            code_expires_at INTEGER,
+            code_attempts   INTEGER NOT NULL DEFAULT 0
+        );",
+    )
+    .unwrap();
+    Arc::new(Mutex::new(conn))
+}
+
+#[test]
+fn collab_code_eq_is_constant_time_correct() {
+    // Functional correctness of the constant-time comparator (it must still be
+    // a *correct* equality check, just without early-out on the first mismatch).
+    assert!(crate::collab_code_eq("123456", "123456"));
+    assert!(!crate::collab_code_eq("123456", "123457"));
+    assert!(!crate::collab_code_eq("123456", "023456"));
+    assert!(!crate::collab_code_eq("123456", "12345")); // length mismatch
+    assert!(!crate::collab_code_eq("", "123456"));
+}
+
+#[test]
+fn collab_code_check_caps_brute_force() {
+    let db = collab_users_test_db();
+    // Far-future expiry so only the attempt cap (not expiry) can end the loop.
+    let far = i64::MAX / 2;
+    db.lock().unwrap().execute(
+        "INSERT INTO collab_users (email, code, code_expires_at, code_attempts)
+         VALUES ('victim@example.com', '424242', ?, 0)",
+        rusqlite::params![far],
+    ).unwrap();
+
+    // 5 wrong guesses are allowed-but-rejected; the 5th burns the code.
+    for i in 1..=5 {
+        let err = crate::collab_code_check(&db, "victim@example.com", "000000")
+            .expect_err("wrong code must be rejected");
+        assert_eq!(err.0, StatusCode::UNAUTHORIZED, "wrong guess #{i} → 401");
+    }
+
+    // The code is now burned: even the CORRECT value no longer authenticates.
+    let after = crate::collab_code_check(&db, "victim@example.com", "424242")
+        .expect_err("burned code must not authenticate even when correct");
+    assert_eq!(
+        after.0,
+        StatusCode::UNAUTHORIZED,
+        "after the cap, the correct code is dead until a fresh one is sent"
+    );
+
+    // Sanity: the stored code really was nulled out (no further guessing).
+    let remaining: Option<String> = db.lock().unwrap().query_row(
+        "SELECT code FROM collab_users WHERE email='victim@example.com'",
+        [], |r| r.get(0),
+    ).unwrap();
+    assert!(remaining.is_none(), "code must be burned (NULL) after the cap");
+}
+
+#[test]
+fn collab_code_check_accepts_correct_code_within_cap() {
+    let db = collab_users_test_db();
+    let far = i64::MAX / 2;
+    db.lock().unwrap().execute(
+        "INSERT INTO collab_users (email, code, code_expires_at, code_attempts)
+         VALUES ('ok@example.com', '654321', ?, 0)",
+        rusqlite::params![far],
+    ).unwrap();
+
+    // A couple of wrong guesses, then the right one — still succeeds while
+    // under the cap (legitimate users fat-finger the code).
+    assert!(crate::collab_code_check(&db, "ok@example.com", "111111").is_err());
+    assert!(crate::collab_code_check(&db, "ok@example.com", "654321").is_ok(),
+        "correct code under the attempt cap must authenticate");
 }
