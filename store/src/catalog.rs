@@ -4750,6 +4750,30 @@ pub async fn shop_pdp(
         s
     };
 
+    // デザイン原画 (label=design/print) — プリント柄そのもの。従来は他角度と一緒に
+    // 破棄していたが、PDP で「柄のアップが見たい」要望に応え、独立セクションで見せる。
+    // クリックで原寸ライトボックス表示。
+    let design_imgs: Vec<&String> = extras_rows
+        .iter()
+        .filter(|(l, u)| is_artwork(l) && !u.is_empty())
+        .map(|(_, u)| u)
+        .collect();
+    let design_html = if design_imgs.is_empty() {
+        String::new()
+    } else {
+        let mut s = String::from(
+            r#"<div class="design"><h3 class="wear-h">デザイン (プリント柄)</h3><div class="design-grid">"#,
+        );
+        for u in &design_imgs {
+            s.push_str(&format!(
+                r#"<img src="{}" alt="デザイン" loading="lazy">"#,
+                html_attr(u)
+            ));
+        }
+        s.push_str("</div></div>");
+        s
+    };
+
     let suzuri_link = suzuri
         .filter(|s| s.starts_with("http"))
         .map(|u| {
@@ -5062,6 +5086,17 @@ nav .brand{{font-weight:900;letter-spacing:0.4em}}
 .wear-h{{font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:rgba(245,245,240,0.55);margin:0 0 6px}}
 .wear-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:6px}}
 .wear-grid img{{width:100%;aspect-ratio:4/5;object-fit:cover;border-radius:5px;background:#000}}
+.design{{margin-top:14px}}
+.design-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:6px}}
+.design-grid img{{width:100%;aspect-ratio:1/1;object-fit:contain;border-radius:5px;background:#fff;padding:6px}}
+.hero img,.wear-grid img,.extras img,.design-grid img{{cursor:zoom-in;transition:opacity .15s}}
+.hero img:hover,.wear-grid img:hover,.extras img:hover,.design-grid img:hover{{opacity:.86}}
+#lb{{position:fixed;inset:0;background:rgba(0,0,0,0.95);display:none;align-items:center;justify-content:center;z-index:9999;cursor:zoom-out;padding:24px}}
+#lb.on{{display:flex}}
+#lb img{{max-width:96vw;max-height:90vh;object-fit:contain;border-radius:4px;box-shadow:0 8px 60px rgba(0,0,0,0.6)}}
+#lb .lb-x{{position:absolute;top:14px;right:22px;color:#fff;font-size:34px;line-height:1;cursor:pointer;opacity:.85;font-weight:300}}
+#lb .lb-x:hover{{opacity:1}}
+#lb .lb-hint{{position:absolute;bottom:18px;left:0;right:0;text-align:center;color:rgba(255,255,255,0.5);font-size:11px;letter-spacing:.1em}}
 .body h1{{font-size:24px;line-height:1.35;margin-bottom:14px;font-weight:900}}
 .body .brand{{font-size:10px;letter-spacing:0.3em;color:#ffd700;text-transform:uppercase;margin-bottom:8px}}
 .body .price{{font-size:22px;font-family:monospace;font-weight:700;color:#fff;margin-bottom:18px}}
@@ -5108,6 +5143,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
 <div class="wrap">
   <div class="hero">
     <img src="{og}" alt="{title}" loading="lazy" onerror="this.onerror=null;this.src='/static/designs/marker_zero.png';this.style.objectFit='contain';this.style.background='#0a0a0a';this.style.padding='60px'">
+    {design}
     {lifestyle}
     {extras}
   </div>
@@ -5142,6 +5178,22 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
   <div class="legal-fine">© 2026 MU / Enabler Inc. · 東京千代田区九段南 1-5-6 · 受注生産・国際発送 7-14 日</div>
 </footer>
 <script defer src="/mu-funnel.js"></script>
+<div id="lb"><span class="lb-x">×</span><img id="lb-img" src="" alt=""><div class="lb-hint">クリック / Esc で閉じる</div></div>
+<script>
+(function(){{
+  var lb=document.getElementById('lb'),li=document.getElementById('lb-img');
+  if(!lb||!li)return;
+  document.querySelectorAll('.hero img,.wear-grid img,.extras img,.design-grid img').forEach(function(im){{
+    im.addEventListener('click',function(){{
+      li.src=im.getAttribute('data-full')||im.currentSrc||im.src;
+      lb.classList.add('on');
+    }});
+  }});
+  function close(){{lb.classList.remove('on');li.src='';}}
+  lb.addEventListener('click',close);
+  document.addEventListener('keydown',function(e){{if(e.key==='Escape')close();}});
+}})();
+</script>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </body></html>"##,
         make_cta = make_cta_banner("pdp"),
@@ -5161,6 +5213,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
         suzuri = suzuri_link,
         lifestyle = lifestyle_html,
         extras = extras_html,
+        design = design_html,
         trust     = trust_block,
         spec      = spec_block,
         size_chart = if is_digital || is_device { String::new() } else { size_chart_html(&kind_guess) },
