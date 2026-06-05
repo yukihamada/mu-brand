@@ -12266,6 +12266,42 @@ async fn collab_apply(
     })).into_response()
 }
 
+/// Best-effort Resend send with ONE retry — covers Resend's 2 req/sec rate
+/// limit (a burst of return requests would otherwise silently drop the later
+/// notifications, since each request fires admin + ack). Logs the outcome so a
+/// dropped email is visible in `fly logs` instead of vanishing. The DB row is
+/// always written regardless, and /api/admin/returns lists pending reviews —
+/// email is a convenience, not the source of truth.
+async fn send_resend_email(resend_key: &str, payload: serde_json::Value, label: &str) {
+    let client = reqwest::Client::new();
+    for attempt in 1..=2u8 {
+        match client.post("https://api.resend.com/emails")
+            .bearer_auth(resend_key)
+            .json(&payload)
+            .send().await
+        {
+            Ok(resp) if resp.status().is_success() => return,
+            Ok(resp) => {
+                let st = resp.status();
+                if attempt == 1 && (st.as_u16() == 429 || st.is_server_error()) {
+                    tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+                    continue;
+                }
+                tracing::error!("[returns] resend dropped ({label}): HTTP {st}");
+                return;
+            }
+            Err(e) => {
+                if attempt == 1 {
+                    tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+                    continue;
+                }
+                tracing::error!("[returns] resend error ({label}): {e}");
+                return;
+            }
+        }
+    }
+}
+
 /// POST /api/returns — customer-facing return request from /returns.
 ///
 /// Policy (confirmed 2026-06-05): a request from an IP with NO prior request
@@ -12371,18 +12407,14 @@ async fn returns_apply(
                     .map(|u| format!("<p>写真: <a href=\"{0}\">{0}</a></p>", html_escape(u)))
                     .unwrap_or_default(),
             );
-            let _ = reqwest::Client::new()
-                .post("https://api.resend.com/emails")
-                .bearer_auth(&resend_key)
-                .json(&serde_json::json!({
-                    "from": "━◯━ MU returns <noreply@wearmu.com>",
-                    "to": [returns_to.clone()],
-                    "subject": format!("[MU returns] #{} {} — {}", inserted_id,
-                        if first_time {"初回 自動受理"} else {"要確認"}, order_ref),
-                    "html": admin_html,
-                    "reply_to": contact_email.clone(),
-                }))
-                .send().await;
+            send_resend_email(&resend_key, serde_json::json!({
+                "from": "━◯━ MU returns <noreply@wearmu.com>",
+                "to": [returns_to.clone()],
+                "subject": format!("[MU returns] #{} {} — {}", inserted_id,
+                    if first_time {"初回 自動受理"} else {"要確認"}, order_ref),
+                "html": admin_html,
+                "reply_to": contact_email.clone(),
+            }), "admin").await;
 
             let ack_html = format!(
                 "<p>返品申請を受け付けました (受付番号 #{id})。</p>\
@@ -12398,17 +12430,13 @@ async fn returns_apply(
                     "過去の申請履歴があるため、内容を担当が確認のうえご連絡します。"
                 },
             );
-            let _ = reqwest::Client::new()
-                .post("https://api.resend.com/emails")
-                .bearer_auth(&resend_key)
-                .json(&serde_json::json!({
-                    "from": "━◯━ MU <noreply@wearmu.com>",
-                    "to": [contact_email.clone()],
-                    "subject": "MU — 返品申請を受け付けました",
-                    "html": ack_html,
-                    "reply_to": returns_to,
-                }))
-                .send().await;
+            send_resend_email(&resend_key, serde_json::json!({
+                "from": "━◯━ MU <noreply@wearmu.com>",
+                "to": [contact_email.clone()],
+                "subject": "MU — 返品申請を受け付けました",
+                "html": ack_html,
+                "reply_to": returns_to,
+            }), "ack").await;
         }
     }
 
@@ -12424,6 +12452,49 @@ async fn returns_apply(
         "first_time": first_time,
         "message": message,
     })).into_response()
+}
+
+/// GET /api/admin/returns?token=…[&status=needs_review] — list return requests
+/// straight from the DB so a dropped notification email never hides a pending
+/// review. Newest first, capped at 500. The DB is the source of truth.
+async fn admin_returns_list(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/api/admin/returns").await { return r; }
+    let filter = q.get("status").map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let rows: Vec<serde_json::Value> = {
+        let conn = db.lock().unwrap();
+        // `prepared` declared after `conn` so it drops first (E0597 guard).
+        let prepared = conn.prepare(
+            "SELECT id, order_ref, customer_email, reason, photo_url, client_ip, status, created_at \
+             FROM catalog_return_requests \
+             WHERE (?1 IS NULL OR status = ?1) \
+             ORDER BY id DESC LIMIT 500",
+        );
+        match prepared {
+            Ok(mut stmt) => {
+                match stmt.query_map(params![filter], |r| {
+                    Ok(serde_json::json!({
+                        "id": r.get::<_, i64>(0)?,
+                        "order_ref": r.get::<_, String>(1)?,
+                        "customer_email": r.get::<_, String>(2)?,
+                        "reason": r.get::<_, String>(3)?,
+                        "photo_url": r.get::<_, Option<String>>(4)?,
+                        "client_ip": r.get::<_, String>(5)?,
+                        "status": r.get::<_, String>(6)?,
+                        "created_at": r.get::<_, Option<String>>(7)?,
+                    }))
+                }) {
+                    Ok(it) => it.flatten().collect(),
+                    Err(_) => Vec::new(),
+                }
+            }
+            Err(_) => Vec::new(),
+        }
+    };
+    Json(serde_json::json!({"ok": true, "count": rows.len(), "returns": rows})).into_response()
 }
 
 /// GET /admin — hub linking the main admin tools (curated, not all 50
@@ -68392,6 +68463,7 @@ async fn main() {
         // so cold-traffic visitors see trust signals one click away.
         .route("/returns",  get(catalog::returns_page))
         .route("/api/returns", post(returns_apply))
+        .route("/api/admin/returns", get(admin_returns_list))
         .route("/faq",      get(catalog::faq_page))
         .route("/shipping", get(catalog::shipping_page))
         // Token-gated SKU generator: GET so it's easy to trigger from a
