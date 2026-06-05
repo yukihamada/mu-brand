@@ -4841,7 +4841,13 @@ pub async fn universal_collection(State(db): State<Db>) -> Response {
          <p style=\"text-align:center;font-size:11.5px;opacity:.45;margin:0 0 36px\">採点軸: 時間普遍性 / 文化普遍性 / 視覚普遍性 / 身体普遍性 / 製造普遍性（各20点）</p>\
          {empty}\
          <div style=\"display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:18px\">{cards}</div>\
-         <p style=\"text-align:center;font-size:11px;opacity:.4;margin-top:48px\">受注生産 · 完売したら二度と刷りません · 点数と残数はこのページで常時実数表示</p>\
+         <div style=\"text-align:center;margin:52px auto 0;max-width:560px;padding:34px 28px;border:1px solid #222;border-radius:18px;background:#0f0f0f\">\
+           <div style=\"font-size:12px;letter-spacing:.3em;color:#e6c449;text-transform:uppercase;margin-bottom:10px\">MU MAKE</div>\
+           <div style=\"font-size:20px;font-weight:500;margin-bottom:8px\">ぴったりが無ければ、自分で作る。</div>\
+           <p style=\"font-size:13px;line-height:1.8;opacity:.62;margin:0 0 20px\">言葉を打つだけ。MU が、あなただけの一着を作る。気に入ったら、それも100枚限定・シリアル付きに。</p>\
+           <a href=\"/make\" style=\"display:inline-block;background:#e6c449;color:#0a0a0a;font-weight:700;padding:14px 30px;border-radius:999px;text-decoration:none\">自分で作る → MU MAKE</a>\
+         </div>\
+         <p style=\"text-align:center;font-size:11px;opacity:.4;margin-top:40px\">受注生産 · 完売したら二度と刷りません · 点数と残数はこのページで常時実数表示</p>\
          </div></body></html>",
         count = count, empty = empty, cards = cards,
     );
