@@ -2630,7 +2630,7 @@ pub async fn store_unmanned_page(State(db): State<Db>) -> Html<String> {
         let sold: i64 = conn
             .query_row("SELECT COUNT(*) FROM catalog_orders WHERE status='submitted'", [], |r| r.get(0))
             .unwrap_or(0);
-        let items = list_products_paged(&conn, None, 12, 0, "");
+        let items = list_products_paged(&conn, None, 12, 0, "", "", None);
         let cards = items
             .iter()
             .map(|p| {
@@ -4080,9 +4080,57 @@ pub struct ShopQuery {
     pub brand: Option<String>,
     pub page: Option<u32>,
     pub sort: Option<String>,
+    pub kind: Option<String>,
+    pub q: Option<String>,
 }
 
 const SHOP_PAGE_SIZE: i64 = 60;
+
+/// kind チップ → SQL 条件断片。**ホワイトリスト式・ユーザー入力は混ぜない**。
+/// kind_from_sku の優先順位を SQL で完全再現すると脆い (例: "TEE" が
+/// "RASHGUARD" に誤マッチ) ので、曖昧さのない category のみ提供する。
+/// 返り値が空文字なら「絞り込みなし」。
+fn shop_kind_sql(kind: &str) -> &'static str {
+    match kind {
+        "rashguard" => "(UPPER(sku) LIKE '%RASHGUARD%' OR UPPER(sku) LIKE '%-RASH%')",
+        "hoodie" => "(UPPER(sku) LIKE '%HOODIE%' OR UPPER(sku) LIKE '%CREWNECK%' OR UPPER(sku) LIKE '%-HOOD%' OR UPPER(sku) LIKE '%-CREW%')",
+        "sticker" => "(UPPER(sku) LIKE '%STICKER%')",
+        "song" => "(COALESCE(meta_json,'') LIKE '%audio_url%' OR UPPER(sku) LIKE '%-SONG%')",
+        _ => "",
+    }
+}
+
+/// `q` 検索語を LIKE パターン化 (ESCAPE '\\' 前提)。`%` `_` `\` をエスケープし、
+/// 長さ上限でクランプ。bind パラメータとして渡すので SQL インジェクションは不可。
+fn shop_q_pattern(q: &str) -> Option<String> {
+    let t = q.trim();
+    if t.is_empty() {
+        return None;
+    }
+    let t: String = t.chars().take(60).collect();
+    let esc = t.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+    Some(format!("%{}%", esc))
+}
+
+/// 共通 WHERE 句 (先頭の "WHERE" は含まない) と bind 値を組み立てる。
+/// count クエリと list_products_paged で同じ絞り込みを使うための単一ソース。
+fn shop_filter_sql(brand: Option<&str>, kind_sql: &str, q_pat: Option<&str>) -> (String, Vec<String>) {
+    let mut parts = vec!["is_active=1".to_string()];
+    let mut binds: Vec<String> = Vec::new();
+    if let Some(b) = brand {
+        parts.push("brand=?".to_string());
+        binds.push(b.to_string());
+    }
+    if !kind_sql.is_empty() {
+        parts.push(kind_sql.to_string());
+    }
+    if let Some(p) = q_pat {
+        parts.push("(description_ja LIKE ? ESCAPE '\\' OR sku LIKE ? ESCAPE '\\')".to_string());
+        binds.push(p.to_string());
+        binds.push(p.to_string());
+    }
+    (parts.join(" AND "), binds)
+}
 
 pub async fn shop_index(
     State(db): State<Db>,
@@ -4096,7 +4144,16 @@ pub async fn shop_index(
         Some(s @ ("new" | "price_asc" | "price_desc")) => s,
         _ => "",
     };
+    // kind / q 絞り込み: kind はホワイトリスト、q は bind + LIKE エスケープ。
+    let kind = match q.kind.as_deref() {
+        Some(k @ ("rashguard" | "hoodie" | "sticker" | "song")) => k,
+        _ => "",
+    };
+    let kind_sql = shop_kind_sql(kind);
+    let q_text = q.q.clone().unwrap_or_default();
+    let q_pat = shop_q_pattern(&q_text);
     let offset = (page as i64 - 1) * SHOP_PAGE_SIZE;
+    let brand_opt = if brand_filter.is_empty() { None } else { Some(brand_filter.as_str()) };
     let (brands, items, total_active) = {
         let conn = db.lock().unwrap();
         let brands: Vec<(String, String, String)> = conn
@@ -4116,38 +4173,48 @@ pub async fn shop_index(
             })
             .unwrap_or_default();
 
-        let total: i64 = if brand_filter.is_empty() {
-            conn.query_row(
-                "SELECT COUNT(*) FROM catalog_products WHERE is_active=1",
-                [], |r| r.get(0)
-            ).unwrap_or(0)
-        } else {
-            conn.query_row(
-                "SELECT COUNT(*) FROM catalog_products WHERE is_active=1 AND brand=?",
-                rusqlite::params![&brand_filter], |r| r.get(0)
-            ).unwrap_or(0)
-        };
+        // count + list は同じ絞り込み (brand + kind + q) を共有する。
+        let (where_sql, binds) = shop_filter_sql(brand_opt, kind_sql, q_pat.as_deref());
+        let count_sql = format!("SELECT COUNT(*) FROM catalog_products WHERE {}", where_sql);
+        let total: i64 = conn
+            .query_row(
+                &count_sql,
+                rusqlite::params_from_iter(binds.iter()),
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
 
-        let items: Vec<ProductRow> = if brand_filter.is_empty() {
-            list_products_paged(&conn, None, SHOP_PAGE_SIZE, offset, sort)
-        } else {
-            list_products_paged(&conn, Some(&brand_filter), SHOP_PAGE_SIZE, offset, sort)
-        };
+        let items = list_products_paged(&conn, brand_opt, SHOP_PAGE_SIZE, offset, sort, kind_sql, q_pat.as_deref());
         (brands, items, total)
+    };
+
+    // 全チップ/フォームが共有する URL ビルダ。選択中の brand/sort/kind/q を
+    // 引数で上書きしつつ他は維持する。page は絞り込み変更で常に 1 に戻す。
+    let q_trim: String = q_text.trim().chars().take(60).collect();
+    let shop_url = |b: &str, srt: &str, knd: &str, query: &str| -> String {
+        let mut u = String::from("/shop");
+        let mut params: Vec<String> = Vec::new();
+        if !b.is_empty() { params.push(format!("brand={}", urlencoding::encode(b))); }
+        if !srt.is_empty() { params.push(format!("sort={}", srt)); }
+        if !knd.is_empty() { params.push(format!("kind={}", knd)); }
+        if !query.is_empty() { params.push(format!("q={}", urlencoding::encode(query))); }
+        if !params.is_empty() { u.push('?'); u.push_str(&params.join("&")); }
+        u
     };
 
     let brand_chips = {
         let mut s = String::new();
         s.push_str(&format!(
-            r#"<a class="chip{}" href="/shop">すべて</a>"#,
-            if brand_filter.is_empty() { " on" } else { "" }
+            r#"<a class="chip{}" href="{}">すべて</a>"#,
+            if brand_filter.is_empty() { " on" } else { "" },
+            html_attr(&shop_url("", sort, kind, &q_trim)),
         ));
         for (slug, name, emoji) in &brands {
             let on = if &brand_filter == slug { " on" } else { "" };
             s.push_str(&format!(
-                r#"<a class="chip{on}" href="/shop?brand={slug}">{emoji} {name}</a>"#,
+                r#"<a class="chip{on}" href="{href}">{emoji} {name}</a>"#,
                 on = on,
-                slug = html_attr(slug),
+                href = html_attr(&shop_url(slug, sort, kind, &q_trim)),
                 emoji = html_text(emoji),
                 name = html_text(name),
             ));
@@ -4155,21 +4222,46 @@ pub async fn shop_index(
         s
     };
 
-    // Sort chips: 人気順(default) / 新着 / 価格↑ / 価格↓. Brand persists, page resets.
+    // 種類チップ: ラッシュガード / パーカー・クルー / ステッカー / 曲。brand+sort+q を維持し
+    // トグル動作 (選択中をもう一度押すと解除)。曖昧さのある「Tシャツ」は既定で出るので置かない。
+    let kind_chips = {
+        let mut s = format!(
+            r#"<a class="chip{}" href="{}" data-funnel="cta_click" data-funnel-cta="shop_kind_all">すべての種類</a>"#,
+            if kind.is_empty() { " on" } else { "" },
+            html_attr(&shop_url(&brand_filter, sort, "", &q_trim)),
+        );
+        for (key, label) in [("rashguard", "🥋 ラッシュガード"), ("hoodie", "🧥 パーカー・クルー"), ("sticker", "✦ ステッカー"), ("song", "🎵 曲")] {
+            let on = if kind == key { " on" } else { "" };
+            let toggle = if kind == key { "" } else { key }; // 選択中なら解除
+            s.push_str(&format!(
+                r#"<a class="chip{on}" href="{href}" data-funnel="cta_click" data-funnel-cta="shop_kind_{key}">{label}</a>"#,
+                on = on, href = html_attr(&shop_url(&brand_filter, sort, toggle, &q_trim)), key = key, label = label,
+            ));
+        }
+        s
+    };
+
+    // 検索フォーム: GET /shop。brand/sort/kind を hidden で保持して検索後も絞り込み維持。
+    let search_form = format!(
+        r##"<form class="shopsearch" method="get" action="/shop" role="search">
+<input type="hidden" name="brand" value="{b}"><input type="hidden" name="sort" value="{s}"><input type="hidden" name="kind" value="{k}">
+<input type="search" name="q" value="{q}" placeholder="検索 — darce / coffee / 黒帯 …" aria-label="商品検索" data-funnel="cta_click" data-funnel-cta="shop_search">
+<button type="submit" aria-label="検索">検索</button>{clear}</form>"##,
+        b = html_attr(&brand_filter), s = html_attr(sort), k = html_attr(kind), q = html_attr(&q_trim),
+        clear = if q_trim.is_empty() { String::new() } else {
+            format!(r#"<a class="clearq" href="{}">クリア</a>"#, html_attr(&shop_url(&brand_filter, sort, kind, "")))
+        },
+    );
+
+    // Sort chips: 人気順(default) / 新着 / 価格↑ / 価格↓. brand/kind/q persist, page resets.
     let sort_chips = {
-        let bquery = if brand_filter.is_empty() {
-            String::new()
-        } else {
-            format!("brand={}&", urlencoding::encode(&brand_filter))
-        };
         [("", "人気順"), ("new", "新着"), ("price_asc", "価格が安い順"), ("price_desc", "価格が高い順")]
             .iter()
             .map(|(key, label)| {
                 let on = if sort == *key { " on" } else { "" };
-                let sq = if key.is_empty() { String::new() } else { format!("sort={}", key) };
                 format!(
-                    r#"<a class="chip{on}" href="/shop?{bquery}{sq}" data-funnel="cta_click" data-funnel-cta="shop_sort_{k}">{label}</a>"#,
-                    on = on, bquery = bquery, sq = sq,
+                    r#"<a class="chip{on}" href="{href}" data-funnel="cta_click" data-funnel-cta="shop_sort_{k}">{label}</a>"#,
+                    on = on, href = html_attr(&shop_url(&brand_filter, key, kind, &q_trim)),
                     k = if key.is_empty() { "sold" } else { key }, label = label,
                 )
             })
@@ -4197,9 +4289,19 @@ pub async fn shop_index(
     } else {
         format!("{} × MU コラボ商品一覧 ({}件) | MU SHOP", brand_name, total_active)
     };
+    if !q_trim.is_empty() {
+        title = format!("「{}」の検索結果 ({}件) | MU SHOP", q_trim, total_active);
+    }
     if page > 1 {
         title.push_str(&format!(" — Page {}", page));
     }
+    // 検索結果は薄い/重複ページなので noindex,follow (リンクは辿らせる)。
+    // kind フィルタはファセットなので canonical を親 (brand/全件) に向ける既存挙動で吸収。
+    let robots_meta = if q_pat.is_some() {
+        r#"<meta name="robots" content="noindex,follow">"#
+    } else {
+        ""
+    };
     let meta_desc = if brand_filter.is_empty() {
         format!("MUと10+ブランドのコラボアパレル公式通販 {total}件。AIデザインTシャツ・柔術/BJJラッシュガード・ステッカー・着ると鳴る音楽T。1着から受注生産・完売廃棄ゼロ・Stripe決済・国際発送7-14日。", total = total_active)
     } else {
@@ -4250,15 +4352,12 @@ pub async fn shop_index(
         items = ld_items,
     );
 
-    // Pagination: prev / page-of-pages / next. Brand filter + sort persist.
-    let mut bq = if brand_filter.is_empty() {
-        String::new()
-    } else {
-        format!("&brand={}", urlencoding::encode(&brand_filter))
-    };
-    if !sort.is_empty() {
-        bq.push_str(&format!("&sort={}", sort));
-    }
+    // Pagination: prev / page-of-pages / next. brand+sort+kind+q persist.
+    let mut bq = String::new();
+    if !brand_filter.is_empty() { bq.push_str(&format!("&brand={}", urlencoding::encode(&brand_filter))); }
+    if !sort.is_empty() { bq.push_str(&format!("&sort={}", sort)); }
+    if !kind.is_empty() { bq.push_str(&format!("&kind={}", kind)); }
+    if !q_trim.is_empty() { bq.push_str(&format!("&q={}", urlencoding::encode(&q_trim))); }
     let prev_link = if page > 1 {
         format!(r#"<a class="pg-link" href="/shop?page={}{}">← 前 {} 件</a>"#,
             page - 1, bq, SHOP_PAGE_SIZE)
@@ -4310,7 +4409,7 @@ pub async fn shop_index(
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{title}</title>
 <meta name="description" content="{meta_desc}">
-<link rel="canonical" href="{canonical}">
+<link rel="canonical" href="{canonical}">{robots_meta}
 <meta property="og:type" content="website">
 <meta property="og:title" content="{title}">
 <meta property="og:description" content="{meta_desc}">
@@ -4336,6 +4435,12 @@ nav .brand{{font-weight:900;letter-spacing:0.4em}}
 .trust span:before{{content:"✓";color:#ffd700;font-weight:700;font-size:13px}}
 .trust strong{{color:#fff;font-weight:600}}
 .chips{{padding:8px 24px 18px;max-width:1180px;margin:0 auto;display:flex;flex-wrap:wrap;gap:6px}}
+.shopsearch{{max-width:1180px;margin:0 auto;padding:4px 24px 10px;display:flex;gap:8px;align-items:center}}
+.shopsearch input[type=search]{{flex:1;min-width:0;background:#111;border:1px solid rgba(255,255,255,0.18);border-radius:999px;color:#f5f5f0;padding:10px 16px;font-size:13px}}
+.shopsearch input[type=search]:focus{{outline:none;border-color:#ffd700}}
+.shopsearch button{{background:#ffd700;color:#000;border:none;border-radius:999px;padding:10px 18px;font-size:12px;font-weight:700;cursor:pointer;letter-spacing:.05em}}
+.shopsearch .clearq{{color:rgba(245,245,240,0.6);font-size:11px;text-decoration:none;white-space:nowrap}}
+.shopsearch .clearq:hover{{color:#ffd700}}
 .chip{{display:inline-block;padding:6px 12px;border:1px solid rgba(255,255,255,0.18);border-radius:999px;color:#f5f5f0;text-decoration:none;font-size:11px;letter-spacing:0.05em;background:rgba(255,255,255,0.02)}}
 .chip:hover{{border-color:#ffd700;color:#ffd700}}
 .chip.on{{background:#ffd700;color:#000;border-color:#ffd700}}
@@ -4377,7 +4482,9 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
 </nav>
 {hero}
 {make_cta}
+{search_form}
 <div class="chips">{brand_chips}</div>
+<div class="chips kinds" style="padding-top:0">{kind_chips}</div>
 <div class="chips sorts" style="padding-top:0">{sort_chips}</div>
 {body_or_empty}
 {pagination}
@@ -4422,14 +4529,20 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
         title = html_text(&title),
         meta_desc = html_attr(&meta_desc),
         canonical = html_attr(&canonical),
+        robots_meta = robots_meta,
         og_image = html_attr(&og_image),
         ld_json = ld_json,
         hero = hero_html,
         make_cta = make_cta_banner("shop"),
+        search_form = search_form,
         brand_chips = brand_chips,
+        kind_chips = kind_chips,
         sort_chips = sort_chips,
         body_or_empty = if items.is_empty() {
-            r#"<div class="empty">該当する商品がありません。</div>"#.to_string()
+            format!(
+                r#"<div class="empty">「{}」に一致する商品が見つかりませんでした。<br><a href="/shop" style="color:#ffd700">すべての商品を見る →</a></div>"#,
+                html_text(if !q_trim.is_empty() { &q_trim } else { "この条件" })
+            )
         } else {
             format!(r#"<div class="grid">{}</div>"#, grid)
         },
@@ -7102,6 +7215,8 @@ fn list_products_paged(
     limit: i64,
     offset: i64,
     sort: &str,
+    kind_sql: &str,
+    q_pat: Option<&str>,
 ) -> Vec<ProductRow> {
     // Secondary ORDER BY per sort key. The mockup-first clause always leads so
     // SKUs with broken/stale images stay at the back regardless of sort.
@@ -7118,37 +7233,21 @@ fn list_products_paged(
                       (SELECT COUNT(*) FROM catalog_orders o2 WHERE o2.sku=catalog_products.sku AND o2.status='submitted') DESC,
                       sort_order, sku"#.to_string(),
     };
+    // brand + kind + q を shop_filter_sql で組み立て、bind 値の後ろに limit/offset を足す。
+    let (where_sql, binds) = shop_filter_sql(brand, kind_sql, q_pat);
     // 6th column = real sold count (status='submitted') for the social-proof
     // badge, derived per-row via correlated subquery (gated in render_card).
-    let (sql, has_brand) = if brand.is_some() {
-        (
-            format!(
-            "SELECT sku, brand, description_ja, retail_price_jpy,
-                    COALESCE({ext}, mockup_main_file),
-                    (SELECT COUNT(*) FROM catalog_orders o WHERE o.sku=catalog_products.sku AND o.status='submitted'),
-                    meta_json
-             FROM catalog_products
-             WHERE is_active=1 AND brand=?
-             ORDER BY (COALESCE({ext}, '') != '') DESC,
-                      {tail}
-             LIMIT ? OFFSET ?", ext = MOCKUP_EXT_LIVE, tail = order_tail),
-            true,
-        )
-    } else {
-        (
-            format!(
-            "SELECT sku, brand, description_ja, retail_price_jpy,
-                    COALESCE({ext}, mockup_main_file),
-                    (SELECT COUNT(*) FROM catalog_orders o WHERE o.sku=catalog_products.sku AND o.status='submitted'),
-                    meta_json
-             FROM catalog_products
-             WHERE is_active=1
-             ORDER BY (COALESCE({ext}, '') != '') DESC,
-                      {tail}
-             LIMIT ? OFFSET ?", ext = MOCKUP_EXT_LIVE, tail = order_tail),
-            false,
-        )
-    };
+    let sql = format!(
+        "SELECT sku, brand, description_ja, retail_price_jpy,
+                COALESCE({ext}, mockup_main_file),
+                (SELECT COUNT(*) FROM catalog_orders o WHERE o.sku=catalog_products.sku AND o.status='submitted'),
+                meta_json
+         FROM catalog_products
+         WHERE {where_sql}
+         ORDER BY (COALESCE({ext}, '') != '') DESC,
+                  {tail}
+         LIMIT ? OFFSET ?",
+        ext = MOCKUP_EXT_LIVE, where_sql = where_sql, tail = order_tail);
     let mut stmt = match conn.prepare(&sql) {
         Ok(s) => s,
         Err(_) => return Vec::new(),
@@ -7165,11 +7264,12 @@ fn list_products_paged(
             audio,
         })
     };
-    if has_brand {
-        stmt.query_map(rusqlite::params![brand.unwrap(), limit, offset], mapper)
-    } else {
-        stmt.query_map(rusqlite::params![limit, offset], mapper)
-    }
+    // params = [binds...] + limit + offset. limit/offset は i64 なので別 vec で連結。
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> =
+        binds.into_iter().map(|s| Box::new(s) as Box<dyn rusqlite::ToSql>).collect();
+    params.push(Box::new(limit));
+    params.push(Box::new(offset));
+    stmt.query_map(rusqlite::params_from_iter(params.iter().map(|b| b.as_ref())), mapper)
         .ok()
         .map(|it| it.filter_map(|r| r.ok()).collect())
         .unwrap_or_default()
