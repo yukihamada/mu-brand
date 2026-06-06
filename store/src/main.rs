@@ -27474,24 +27474,31 @@ async fn affiliate_page(
     let page = |inner: String| -> Response {
         Html(format!(
             r#"<!doctype html><html lang=ja><head><meta charset=utf-8>
-<meta name=viewport content="width=device-width,initial-scale=1"><meta name=robots content="noindex">
-<title>MU アフィリエイト</title></head>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>MU アフィリエイト — 広めたら、売上の10%</title>
+<meta name="description" content="あなた専用の紹介リンク経由で売れると、売上の10%がMUクレジットで還元。メール1本で発行。">
+<meta property="og:title" content="MU アフィリエイト — 広めたら、売上の10%">
+<meta property="og:description" content="紹介リンク経由の売上の10%がMUクレジットに。1クレジット=¥1・¥3,000以上で振込可。"></head>
 <body style="background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px">
 <div style="max-width:480px;width:100%">
 <div style="font-size:20px;font-weight:700;letter-spacing:0.45em;margin-bottom:8px">━◯━ MU</div>
-<div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;margin-bottom:18px">AFFILIATE</div>
+<div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;margin-bottom:18px">AFFILIATE — 広めたら、売上の10%</div>
 {inner}
-</div></body></html>"#,
+<p style="font-size:11px;opacity:.5;line-height:1.9;margin-top:22px">MUクレジット = 1cr=¥1・決済で利用可・¥3,000以上で振込申請可(<a href="/credit" style="color:#e6c449">仕組み</a>)。作る側に回るなら <a href="/start?ref=affiliate" style="color:#e6c449">クリエイター登録(売れたら10%)</a> · <a href="/kpi" style="color:#e6c449">公開KPI</a></p>
+</div>
+<script defer src="/mu-funnel.js"></script>
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+</body></html>"#,
             inner = inner,
         )).into_response()
     };
     if !email.contains('@') || email.len() > 200 {
         return page(
             r#"<h1 style="font-size:22px;font-weight:500;margin:0 0 8px">紹介リンクを発行</h1>
-<p style="font-size:13px;opacity:.75;line-height:1.8;margin:0 0 18px">メールを入れると、あなた専用の紹介リンクが出ます。<br>そのリンク経由で売れると、売上の一部が<b>MUクレジット</b>で還元されます。</p>
+<p style="font-size:13px;opacity:.75;line-height:1.8;margin:0 0 18px">メールを入れると、あなた専用の紹介リンクが出ます。<br>そのリンク経由で30日以内に売れると、<b>売上の10%</b>が<b>MUクレジット</b>で還元されます。</p>
 <form method="get" action="/affiliate" style="display:flex;gap:8px">
 <input name="email" type="email" required placeholder="you@example.com" style="flex:1;padding:12px 14px;border-radius:8px;border:1px solid #333;background:#111;color:#f5f5f0;font-size:14px">
-<button style="background:#e6c449;color:#0a0a0a;border:0;border-radius:8px;font-weight:700;padding:0 20px;font-size:14px;cursor:pointer">発行</button>
+<button data-funnel="cta_click" data-funnel-cta="affiliate_issue" style="background:#e6c449;color:#0a0a0a;border:0;border-radius:8px;font-weight:700;padding:0 20px;font-size:14px;cursor:pointer">発行</button>
 </form>"#.to_string());
     }
     let code = referral_code_for(&email.to_lowercase());
@@ -27510,7 +27517,7 @@ async fn affiliate_page(
         r#"<h1 style="font-size:22px;font-weight:500;margin:0 0 4px">あなたの紹介リンク</h1>
 <p style="font-size:13px;opacity:.7;margin:0 0 16px">{email}</p>
 <div style="background:#111;border:1px solid #333;border-radius:8px;padding:14px;font-family:monospace;font-size:15px;color:#e6c449;word-break:break-all">{link}</div>
-<p style="font-size:12px;opacity:.65;line-height:1.8;margin:14px 0 0">このリンクで来た人が30日以内に何か買うと、売上の一部があなたのMUクレジットに入ります。<br>
+<p style="font-size:12px;opacity:.65;line-height:1.8;margin:14px 0 0">このリンクで来た人が30日以内に何か買うと、<b>売上の10%</b>があなたのMUクレジットに入ります。<br>
 商品ページに <code style="color:#e6c449">?ref={code}</code> を付けてもOK。</p>
 <p style="font-size:13px;margin:20px 0 0"><a href="/affiliate/{code}" style="color:#e6c449">→ 実績ダッシュボードを見る</a></p>"#,
         email = esc(&email), link = esc(&link), code = esc(&code),
@@ -40914,6 +40921,7 @@ footer a:hover{{color:var(--y)}}
   <footer>
     数字に矛盾があったら <a href="mailto:info@enablerdao.com">info@enablerdao.com</a> または <a href="/bounty">/bounty</a> へ。<br>
     Raw JSON: <a href="/api/transparency">wearmu.com/api/transparency</a> · Constitution: <a href="/constitution">wearmu.com/constitution</a><br>
+    北極星KPI (初売上クリエイター/週): <a href="/kpi">wearmu.com/kpi</a> — クリエイターループ分の売上はそちらに別掲(本ページの部分集合) · <a href="/start">作って売る</a><br>
     株式会社イネブラ (Enabler Inc.) · yuki (1 人のオペレーター) · 28 agents
   </footer>
 </div>
@@ -68421,6 +68429,8 @@ async fn main() {
         .route("/api/studio/profile", post(creators::studio_profile))
         .route("/kpi", get(creators::kpi_page))
         .route("/api/kpi", get(creators::api_kpi))
+        .route("/credit", get(creators::credit_page))
+        .route("/u/:code", get(creators::maker_page))
         // ── Agent API — catalog-native, email-keyed (src/agent_api.rs).
         // Discovery: /llms.txt. Onboarding reuses the collab magic-link path.
         // Products land status='review' until an MA-council member approves.
