@@ -731,6 +731,13 @@ a{color:#ffd700}
 <tr><th>週 (月曜〜)</th><th>新規クリエイター</th><th>作品</th><th>★初売上作者</th><th>注文</th><th>売上</th></tr>
 __ROWS__
 </table>
+<details style="margin:18px 0 0;font-size:12px;opacity:.85"><summary style="cursor:pointer;color:#ffd700">ファネル(計測イベント・週次)</summary>
+<p style="font-size:11px;opacity:.6;line-height:1.8;margin:8px 0">訪問→登録→シェア→購入ボタン→決済開始の生イベント数。イベント計測は広告ブロッカー等で実数より少なく出ることがあります(登録の真実源は上表の「新規クリエイター」)。</p>
+<table>
+<tr><th>週 (月曜〜)</th><th>訪問(UU)</th><th>登録</th><th>シェア</th><th>購入ボタン</th><th>決済開始</th><th>注文</th></tr>
+__FROWS__
+</table>
+</details>
 <div class="fine">毎週この表が1行ずつ増えていきます。あなたの行になるかもしれません → <a href="/start?ref=kpi" data-funnel="cta_click" data-funnel-cta="kpi_start">クリエイター登録(無料)</a> · <a href="/make?ref=kpi" data-funnel="cta_click" data-funnel-cta="kpi_make">まず1行で作ってみる</a><br>━◯━ MU · <a href="/shop">SHOP</a> · <a href="/make">作る</a> · <a href="/credit">MUクレジット</a> · <a href="/transparency">透明性</a> · <a href="/returns">返品</a> · <a href="/tokushoho">特商法</a> · <a href="/privacy">プライバシー</a> · 株式会社イネブラ</div>
 </div>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
@@ -748,6 +755,17 @@ pub async fn kpi_page(State(db): State<Db>) -> Response {
         w["orders"].as_i64().unwrap_or(0),
         fmt_jpy(w["revenue_jpy"].as_i64().unwrap_or(0)),
     )).collect::<String>()).unwrap_or_default();
+    let frows: String = snap["weeks"].as_array().map(|ws| ws.iter().rev().map(|w| format!(
+        "<tr><td>{}{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+        w["week_start"].as_str().unwrap_or(""),
+        if w["current"].as_bool().unwrap_or(false) { " <span style=\"color:#ffd700;font-size:10px\">(進行中)</span>" } else { "" },
+        w["visitors"].as_i64().unwrap_or(0),
+        w["registrations"].as_i64().unwrap_or(0),
+        w["shares"].as_i64().unwrap_or(0),
+        w["checkout_attempt"].as_i64().unwrap_or(0),
+        w["checkout_start"].as_i64().unwrap_or(0),
+        w["orders"].as_i64().unwrap_or(0),
+    )).collect::<String>()).unwrap_or_default();
     let html = KPI_HTML
         .replace("__NS__", &snap["north_star"]["this_week"].as_i64().unwrap_or(0).to_string())
         .replace("__T_CREATORS__", &snap["totals"]["creators_verified"].as_i64().unwrap_or(0).to_string())
@@ -759,7 +777,8 @@ pub async fn kpi_page(State(db): State<Db>) -> Response {
         .replace("__NSLAST__", &snap["north_star"]["last_confirmed_week"].as_i64().unwrap_or(0).to_string())
         .replace("__NSLASTWEEK__", snap["north_star"]["last_confirmed_week_start"].as_str().unwrap_or("?"))
         .replace("__ASOF__", snap["north_star"]["as_of"].as_str().unwrap_or("?"))
-        .replace("__ROWS__", &rows);
+        .replace("__ROWS__", &rows)
+        .replace("__FROWS__", &frows);
     ([(axum::http::header::CACHE_CONTROL, "public, max-age=60, stale-while-revalidate=300")], Html(html)).into_response()
 }
 
