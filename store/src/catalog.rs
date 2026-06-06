@@ -6475,7 +6475,7 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
   "image": ["{ld_img}"],
   "description": "{ld_desc}",
   "sku": "{ld_sku}",
-  "brand": {{"@type": "Brand", "name": "{ld_brand}"}},
+  "brand": {{"@type": "Brand", "name": "{ld_brand}"}},{ld_creator}
   "offers": {{
     "@type": "Offer",
     "url": "https://wearmu.com/shop/{sku_url}",
@@ -6674,7 +6674,17 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
         ld_img    = html_attr(&img),
         ld_desc   = html_attr(&meta_desc),
         ld_sku    = html_attr(&sku),
-        ld_brand  = html_attr(&brand),
+        ld_brand  = html_attr(&match &maker_info {
+            // 作者帰属済みは brand も作者公開名に揃える(人間表記/og/構造化の三面一致)
+            Some((who, _)) => who.clone(),
+            None => brand.clone(),
+        }),
+        ld_creator = match &maker_info {
+            Some((who, code)) => format!(
+                "\n  \"creator\": {{\"@type\": \"Person\", \"name\": \"{}\", \"url\": \"https://wearmu.com/u/{}\"}},\n  \"disambiguatingDescription\": \"human prompt + AI image generation (ことばは人、絵はAI画像生成)\",",
+                html_attr(who), code),
+            None => String::new(),
+        },
     );
     Html(body).into_response()
 }
@@ -8823,6 +8833,9 @@ struct ProductRow {
     sold: i64,
     /// song products: audio_url from meta_json, for the ▶ 試聴 card button.
     audio: Option<String>,
+    /// 作者チップ用: maker_email 帰属があれば公開名(未設定は匿名表記)。
+    /// 「普通の人が作って売れている」社会的証明を一覧段階で見せる。
+    maker_name: Option<String>,
 }
 
 /// SQL fragment: mockup_url_external, but with Printful's ephemeral presigned
@@ -8919,7 +8932,9 @@ fn list_products_paged(
         "SELECT sku, brand, description_ja, retail_price_jpy,
                 COALESCE({ext}, mockup_main_file),
                 (SELECT COUNT(*) FROM catalog_orders o WHERE o.sku=catalog_products.sku AND o.status='submitted'),
-                meta_json
+                meta_json,
+                (SELECT COALESCE(NULLIF(cu.display_name,''),'MU クリエイター') FROM collab_users cu
+                  WHERE cu.email = LOWER(json_extract(catalog_products.meta_json,'$.maker_email')))
          FROM catalog_products
          WHERE {where_sql}
          ORDER BY (COALESCE({ext}, '') != '') DESC,
@@ -8940,6 +8955,7 @@ fn list_products_paged(
             sku: r.get(0)?, brand: r.get(1)?, desc: r.get(2)?,
             price: r.get(3)?, img: r.get(4)?, sold: r.get(5)?,
             audio,
+            maker_name: r.get(7)?,
         })
     };
     // params = [binds...] + limit + offset. limit/offset は i64 なので別 vec で連結。
@@ -9009,6 +9025,7 @@ fn list_products(
             img: r.get(4)?,
             sold: 0, // unused path (dead_code); badge only flows via list_products_paged
             audio: None,
+            maker_name: None,
         })
     };
     let rows: Vec<ProductRow> = if has_brand {
@@ -9072,11 +9089,20 @@ fn render_card(p: &ProductRow, pos: usize) -> String {
     // Descriptive alt for image SEO / a11y (empty alt = no Google Images
     // signal, no screen-reader text). Product name + brand, attr-escaped.
     let img_alt = html_attr(&format!("{} — {}", p.desc.trim(), p.brand.trim()));
+    // 作者チップ: 「普通の人が作って売れている」を一覧で見せる(社会的証明)。
+    // カード全体が <a> なので入れ子リンクは作らずspanに留める(詳細はPDP byline)。
+    let maker_chip = match &p.maker_name {
+        Some(n) if !n.trim().is_empty() => format!(
+            r##"<span class="maker" style="display:block;font-size:10.5px;color:#ffd700;opacity:.85;margin-top:3px">by {} × AI</span>"##,
+            html_text(n.trim())),
+        _ => String::new(),
+    };
     // data-funnel: shop_card + grid position (0-based, page-local) so the
     // analytics funnel can split /shop→PDP CTR by card rank (above/below fold).
     format!(
-        r##"<a class="card" href="/shop/{sku_enc}" data-funnel="cta_click" data-funnel-cta="shop_card" data-funnel-pos="{pos}"><span class="img" style="position:relative;display:block">{sold_badge}{listen_mini}{listen_song}<img src="{img}" alt="{img_alt}" loading="lazy" onerror="this.onerror=null;this.src='/static/designs/marker_zero.png';this.style.objectFit='contain';this.style.background='#0a0a0a';this.style.padding='28px'"></span><span class="body"><span class="brand">{brand}</span><span class="name">{name}</span><span class="price">¥{price}</span></span></a>"##,
+        r##"<a class="card" href="/shop/{sku_enc}" data-funnel="cta_click" data-funnel-cta="shop_card" data-funnel-pos="{pos}"><span class="img" style="position:relative;display:block">{sold_badge}{listen_mini}{listen_song}<img src="{img}" alt="{img_alt}" loading="lazy" onerror="this.onerror=null;this.src='/static/designs/marker_zero.png';this.style.objectFit='contain';this.style.background='#0a0a0a';this.style.padding='28px'"></span><span class="body"><span class="brand">{brand}</span><span class="name">{name}</span><span class="price">¥{price}</span>{maker_chip}</span></a>"##,
         pos = pos,
+        maker_chip = maker_chip,
         sku_enc = urlencoding::encode(&p.sku),
         sold_badge = sold_badge,
         listen_mini = listen_mini,
