@@ -73,8 +73,8 @@ code.big{font-family:'SF Mono',monospace;letter-spacing:.3em}
 <h1 id="h1main">1行で、自分のブランドが生まれる。</h1>
 <p class="lead" id="leadmain">ことば1行で商品が生まれて、世界中に届く。<br><b style="color:#ffd700">売れたら10%があなたに</b>(<a href="/credit">MUクレジットとは — 1cr=¥1・¥3,000以上で振込可</a>)。在庫ゼロ・費用ゼロ・受注生産。</p>
 <a href="/make?ref=start" id="tryMake" data-funnel="cta_click" data-funnel-cta="start_try_make" style="display:block;text-align:center;background:none;border:1px solid #ffd700;color:#ffd700;border-radius:8px;font-weight:800;padding:13px;font-size:14.5px;text-decoration:none;margin-bottom:10px">① まず作ってみる(登録不要・30秒) → /make</a>
-<input id="email" type="email" placeholder="you@example.com" autocomplete="email" autofocus>
-<button id="send" data-funnel="cta_click" data-funnel-cta="start_send_code">② メールで名義をつくる(無料・ログイン兼用)</button>
+<input id="email" type="email" placeholder="you@example.com" autocomplete="email" autofocus value="__PREFILL__">
+<button id="send" data-funnel="cta_click" data-funnel-cta="start_send_code">② メールで名義をつくる(無料・ログイン兼用・登録後すぐ1行で作れます)</button>
 <div class="msg" id="m1"></div>
 <div class="steps">
 <div><b>1</b>ことば1行で作る(登録不要)</div>
@@ -142,11 +142,20 @@ if(/[?&]login=1/.test(location.search)){
 </body></html>"##;
 
 /// GET /start — クリエイター登録ページ。ログイン済みなら /studio へ。
+/// /make のメール認証を済ませた端末(mu_make_email cookie)はメールを
+/// プレフィルし、make→start の「もう一度メール入力」を消す。
 pub async fn start_page(State(db): State<Db>, headers: HeaderMap) -> Response {
     if crate::collab_session_email(&db, &headers).is_some() {
         return Redirect::temporary("/studio").into_response();
     }
-    Html(START_HTML).into_response()
+    let prefill = headers.get(axum::http::header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|c| c.split(';').find_map(|p| p.trim().strip_prefix("mu_make_email=")))
+        .and_then(|v| urlencoding::decode(v).ok())
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| s.contains('@') && s.len() <= 254)
+        .unwrap_or_default();
+    Html(START_HTML.replace("__PREFILL__", &crate::html_escape(&prefill))).into_response()
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -565,14 +574,41 @@ fn kpi_snapshot(db: &Db) -> serde_json::Value {
             "revenue_jpy": count_between(
                 "SELECT COALESCE(SUM(amount_jpy),0) FROM catalog_orders WHERE amount_jpy>0 AND status<>'submitting'
                  AND created_at >= ?1 AND created_at < ?2", s, e),
+            // 北極星の手前のリーディング指標(mu-funnel.js 実イベント)。
+            // funnel_events.created_at は unix epoch の TEXT。
+            "visitors": count_between(
+                "SELECT COUNT(DISTINCT visitor_id) FROM funnel_events WHERE event='pageview'
+                 AND datetime(CAST(created_at AS INTEGER),'unixepoch') >= ?1
+                 AND datetime(CAST(created_at AS INTEGER),'unixepoch') < ?2", s, e),
+            "registrations": count_between(
+                "SELECT COUNT(*) FROM funnel_events WHERE event='you_register'
+                 AND datetime(CAST(created_at AS INTEGER),'unixepoch') >= ?1
+                 AND datetime(CAST(created_at AS INTEGER),'unixepoch') < ?2", s, e),
+            "shares": count_between(
+                "SELECT COUNT(*) FROM funnel_events WHERE event='share'
+                 AND datetime(CAST(created_at AS INTEGER),'unixepoch') >= ?1
+                 AND datetime(CAST(created_at AS INTEGER),'unixepoch') < ?2", s, e),
+            "checkout_attempt": count_between(
+                "SELECT COUNT(*) FROM funnel_events WHERE event='checkout_attempt'
+                 AND datetime(CAST(created_at AS INTEGER),'unixepoch') >= ?1
+                 AND datetime(CAST(created_at AS INTEGER),'unixepoch') < ?2", s, e),
+            "checkout_start": count_between(
+                "SELECT COUNT(*) FROM funnel_events WHERE event='checkout_start'
+                 AND datetime(CAST(created_at AS INTEGER),'unixepoch') >= ?1
+                 AND datetime(CAST(created_at AS INTEGER),'unixepoch') < ?2", s, e),
         }));
     }
 
+    // 確定済み直近週(進行中の1つ前)の北極星値 — 暫定値との誤読を防ぐ。
+    let ns_last_confirmed: i64 = series.iter().rev().nth(1)
+        .and_then(|w| w["first_sale_creators"].as_i64()).unwrap_or(0);
     serde_json::json!({
         "north_star": {
             "name": "first_sale_creators_per_week",
             "name_ja": "初売上を経験したクリエイター数/週",
             "this_week": ns_this_week,
+            "this_week_is_partial": true,
+            "last_confirmed_week": ns_last_confirmed,
             "week_start": monday,
             "as_of": as_of,
             "why": "クリエイターが最初の1枚を売れた週 = MUが約束を果たした週。この数が伸びない施策は捨てる。",
@@ -594,15 +630,41 @@ fn kpi_snapshot(db: &Db) -> serde_json::Value {
             "orders": "カタログ注文数 (amount>0・予約中除く)",
             "revenue_jpy": "クリエイターループ(カタログ注文)の累計売上。MU全体の売上(オークション/MUGEN等含む)は /transparency 参照 — 本数値はその部分集合",
             "weeks": "週は月曜開始のUTC日付範囲 [week_start, week_end_exclusive)。current=true は進行中の週(数字はまだ増える)",
+            "visitors": "その週のユニーク訪問者数 (funnel_events pageview の distinct visitor_id)",
+            "registrations": "その週の登録完了イベント数 (you_register — 6桁コード認証成功時にクライアント発火。広告ブロッカー等で実登録より少なく出ることがある: 真実源は new_creators)",
+            "shares": "その週のシェア操作数 (PDP/作者ページの share イベント)",
+            "checkout_attempt_vs_start": "attempt=クライアントの購入ボタン押下 / start=サーバーのStripeセッション作成。差分が大きい週はチェックアウト導線の故障シグナル",
         },
         "weeks": series,
         "honest_note": "ゼロもそのまま出します。数字は catalog_orders / collab_users / mu_credit_ledger の実数。",
     })
 }
 
-pub async fn api_kpi(State(db): State<Db>) -> Response {
+pub async fn api_kpi(State(db): State<Db>, headers: HeaderMap) -> Response {
     let snap = kpi_snapshot(&db);
-    ([(axum::http::header::CACHE_CONTROL, "public, max-age=60, stale-while-revalidate=300")], axum::Json(snap)).into_response()
+    // 内容ハッシュ ETag — 週次集計は変化が遅いので 304 で帯域を節約する。
+    // as_of(秒precision)はハッシュから除外しないと毎回変わるため、bodyの
+    // ハッシュは as_of を抜いた安定部分で取る。
+    let mut stable = snap.clone();
+    if let Some(ns) = stable.get_mut("north_star").and_then(|v| v.as_object_mut()) { ns.remove("as_of"); }
+    let etag = {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(stable.to_string().as_bytes());
+        format!("\"{}\"", hex::encode(&h.finalize()[..16]))
+    };
+    if headers.get(axum::http::header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v == etag)
+        .unwrap_or(false)
+    {
+        return (StatusCode::NOT_MODIFIED,
+                [(axum::http::header::ETAG, etag),
+                 (axum::http::header::CACHE_CONTROL, "public, max-age=60, stale-while-revalidate=300".to_string())]).into_response();
+    }
+    ([(axum::http::header::ETAG, etag),
+      (axum::http::header::CACHE_CONTROL, "public, max-age=60, stale-while-revalidate=300".to_string())],
+     axum::Json(snap)).into_response()
 }
 
 const KPI_HTML: &str = r##"<!doctype html><html lang="ja"><head><meta charset="utf-8">
@@ -637,7 +699,7 @@ a{color:#ffd700}
 <div class="kicker">みんなの数字 — public KPI</div>
 <h1>北極星: 初売上を経験したクリエイター数/週</h1>
 <p class="lead">MUは「誰でも作って、売れる」場。だから一番大事な数字は売上総額ではなく、<b>初めて自分の作品が売れたクリエイターが今週何人いたか</b>。ゼロもそのまま出します(<a href="/transparency">透明性レポート</a>と同じ流儀)。</p>
-<div class="north"><div class="v">__NS__</div><div class="k">今週 (__NSWEEK__ 月曜〜・進行中)、初売上を経験したクリエイター</div><div class="why">この数が伸びない施策は捨てる。データは実テーブル(注文・登録・台帳)の生集計 (__ASOF__ UTC 時点)。<a href="/api/kpi">JSON</a> に全定義あり。</div></div>
+<div class="north"><div class="v">__NS__<span style="font-size:14px;font-weight:600;opacity:.6;margin-left:8px;vertical-align:middle">(暫定・集計中)</span></div><div class="k">今週 (__NSWEEK__ 月曜〜・進行中)、初売上を経験したクリエイター <span style="opacity:.6">— 先週(確定): __NSLAST__</span></div><div class="why">この数が伸びない施策は捨てる。データは実テーブル(注文・登録・台帳)の生集計 (__ASOF__ UTC 時点)。<a href="/api/kpi">JSON</a> に全定義あり。</div></div>
 <div class="tot">
 <div><div class="v">__T_CREATORS__</div><div class="k">登録クリエイター</div></div>
 <div><div class="v">__T_PRODUCTS__</div><div class="k">生まれた作品</div></div>
@@ -675,6 +737,7 @@ pub async fn kpi_page(State(db): State<Db>) -> Response {
         .replace("__T_ORDERS__", &snap["totals"]["orders"].as_i64().unwrap_or(0).to_string())
         .replace("__T_REVENUE__", &fmt_jpy(snap["totals"]["revenue_jpy"].as_i64().unwrap_or(0)))
         .replace("__NSWEEK__", snap["north_star"]["week_start"].as_str().unwrap_or("?"))
+        .replace("__NSLAST__", &snap["north_star"]["last_confirmed_week"].as_i64().unwrap_or(0).to_string())
         .replace("__ASOF__", snap["north_star"]["as_of"].as_str().unwrap_or("?"))
         .replace("__ROWS__", &rows);
     ([(axum::http::header::CACHE_CONTROL, "public, max-age=60, stale-while-revalidate=300")], Html(html)).into_response()
@@ -710,7 +773,7 @@ a{color:#ffd700}
 <div class="logo">━◯━ MU</div>
 <div class="kicker">MU CREDIT — 売れたら10%、の中身</div>
 <h1>MUクレジットとは</h1>
-<p>あなたの作品が売れるたび<b>売上の10%</b>、紹介リンク(<a href="/affiliate">/affiliate</a>)経由で誰かの作品が売れても<b>売上の10%</b>が、自動であなたの「MUクレジット」になります。</p>
+<p>あなたの作品が売れるたび<b>売上の10%</b>、紹介リンク(<a href="/affiliate">/affiliate</a>)経由で誰かの作品が売れても<b>売上の10%</b>が、自動であなたの「MUクレジット」になります。<b>2つの10%は別枠</b>です: 他人があなたの紹介リンク経由で「あなたの作品」を買うと作者10%+紹介10%の両方が入ります(上限なし)。自分で自分の作品を買った場合はどちらも付きません(自己購入除外)。</p>
 <table>
 <tr><th>価値</th><td>1クレジット = ¥1 相当。</td></tr>
 <tr><th>使い道</th><td>① MU の決済でそのまま値引きに使える ② 残高 <b>¥3,000以上</b>で<b>銀行振込(現金)</b>への交換を申請できる。</td></tr>
@@ -719,12 +782,12 @@ a{color:#ffd700}
 <tr><th>確認方法</th><td><a href="/studio">/studio</a> に残高と入出金の台帳(いつ・どの作品で・いくら)が出ます。</td></tr>
 <tr><th>法的な位置づけ</th><td>MUクレジットは当社が役務の対価として無償付与する社内ポイントで、<b>販売はしていません</b>(購入できるポイントではないため、資金決済法上の前払式支払手段に該当しない運用)。報酬の付与率(10%)は実装コード・台帳とも公開で、誇大表示をしない方針です(<a href="/transparency">/transparency</a>)。</td></tr>
 <tr><th>対象外</th><td>自分の作品を自分で買った分には付きません(自己購入除外)。不正・規約違反時は取り消すことがあります。</td></tr>
-<tr><th>税金</th><td>クレジットの付与・現金化は、受け取った方の<b>課税所得になる場合があります</b>。確定申告の要否は各自でご確認ください(年間の受取累計は <a href="/studio">/studio</a> の台帳で確認できます)。</td></tr>
+<tr><th>税金</th><td>クレジットの付与・現金化は、受け取った方の<b>課税所得になる場合があります</b>。一般に給与所得者は副収入が年20万円を超えると確定申告が必要になる場合があります — 正確な判断は税務署・税理士にご確認ください(年間の受取累計は <a href="/studio">/studio</a> の台帳で確認できます)。</td></tr>
 </table>
 <h2>10%の計算基準と根拠</h2>
 <p><b>付与額 = 販売価格(税込)の10%</b>です。¥4,900のTシャツなら¥490 — PDPに表示される実額と同じ計算で、粗利の10%ではありません。受注生産(Printful)の原価・送料・決済手数料はMU側の取り分から負担し、作者10%・紹介者10%を<b>売上から先取り</b>で配る設計です。現在の料率は全クリエイター一律10%(あなたの実効率は <a href="/studio">/studio</a> にも表示)。ストア単位で引き上げる仕組み(maker_pct)があり、実績に応じて見直します。変更時はこのページと <a href="/kpi">/kpi</a> で告知します。</p>
 <a class="cta" href="/start?ref=credit">30秒でクリエイター登録 →</a>
-<div class="fine">━◯━ MU · <a href="/start">作って売る</a> · <a href="/kpi">公開KPI</a> · <a href="/tokushoho">特定商取引法</a> · <a href="/returns">返品</a> · 株式会社イネブラ</div>
+<div class="fine">━◯━ MU · <a href="/start">作って売る</a> · <a href="/kpi">公開KPI</a> · <a href="/tokushoho">特定商取引法</a> · <a href="/returns">返品</a> · <a href="/privacy">プライバシー</a> · 株式会社イネブラ</div>
 </div>
 <script defer src="/mu-funnel.js"></script>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
@@ -817,7 +880,7 @@ a{{color:#ffd700}} footer{{font-size:11px;opacity:.45;margin-top:40px;line-heigh
 </style></head><body><div class="wrap">
 <div class="logo">━◯━ MU</div>
 <h1>{who}</h1>
-<div class="sub">作品 {n} 点 · 売れた数 {sales} · ことば1行から、AIと一緒に。</div>
+<div class="sub">作品 {n} 点 · 売れた数 {sales} · <b>全作品 AI画像生成</b>(ことば1行 → AIが描く・人が選ぶ)。</div>
 <div style="display:flex;gap:8px;align-items:center;margin:0 0 18px;font-size:12.5px;flex-wrap:wrap">
 <span style="opacity:.55">このブランドを広める:</span>
 <a href="https://twitter.com/intent/tweet?text={share_text}&url={share_url}" target="_blank" rel="noopener" data-funnel="share" data-funnel-cta="portfolio_share_x" style="color:#f5f5f0;text-decoration:none;border:1px solid #3a3a3a;border-radius:99px;padding:6px 14px">𝕏 ポスト</a>
@@ -830,6 +893,7 @@ if(navigator.share){{navigator.share({{url:location.href}}).catch(function(){{}}
 else{{navigator.clipboard.writeText(location.href).then(function(){{b.textContent='✓ コピーしました';}});}}
 }});}})();</script>
 <a class="cta" href="/start?ref=maker_page" data-funnel="cta_click" data-funnel-cta="maker_page_start">あなたも30秒で作って、売れたら10%受け取る →</a>
+<div style="font-size:12px;opacity:.65;margin-top:10px">売上の10%があなたのMUクレジットに(1cr=¥1・¥3,000以上で振込可 — <a href="/credit">仕組み</a>)</div>
 <footer>━◯━ MU · <a href="/shop">SHOP</a> · <a href="/make">作る</a> · <a href="/credit">MUクレジットとは</a> · <a href="/kpi">公開KPI</a> · 株式会社イネブラ</footer>
 </div>
 <script defer src="/mu-funnel.js"></script>

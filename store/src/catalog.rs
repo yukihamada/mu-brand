@@ -3891,7 +3891,10 @@ function renderResult(j,p){
   var pEcho = p.length>60 ? p.slice(0,60)+'…' : p;
   var own = '<div class=own><b>あなたの言葉</b>から、世界に1枚が生まれました。<span class=pq>「'+escHtml(pEcho)+'」</span></div>';
   var buy = j.buy_url ? '<a class=buy href="'+j.buy_url+'" onclick="muEvent(\'cta_click\',{cta:\'make_buy\',sku:\''+j.sku+'\'})">この一着を、自分のものにする ¥'+yen(j.retail_jpy)+' →<small>サイズを選ぶだけ · 1枚から受注生産</small></a>' : '';
-  var share = url ? '<button class=share onclick="muEvent(\'share\',{sku:\''+j.sku+'\'});muShare(this)" data-u="'+url+'" data-t="'+((j.display||'MU')+' / wearmu')+'">📣 シェアして広める</button>' : '';
+  var shareTxt = encodeURIComponent('ことば1行から30秒で作った: '+(j.display||'MU')+' #MU #wearmu');
+  var share = url ? '<button class=share onclick="muEvent(\'share\',{sku:\''+j.sku+'\'});muShare(this)" data-u="'+url+'" data-t="'+((j.display||'MU')+' / wearmu')+'">📣 シェアして広める</button>'
+    +' <a class=share data-funnel="share" data-funnel-cta="make_share_x" href="https://twitter.com/intent/tweet?text='+shareTxt+'&url='+encodeURIComponent(url+'?ref=make_share_x')+'" target="_blank" rel="noopener" onclick="muEvent(\'share\',{sku:\''+j.sku+'\',ch:\'x\'})" style="text-decoration:none">𝕏 ポスト</a>'
+    +' <a class=share data-funnel="share" data-funnel-cta="make_share_line" href="https://social-plugins.line.me/lineit/share?url='+encodeURIComponent(url+'?ref=make_share_line')+'" target="_blank" rel="noopener" onclick="muEvent(\'share\',{sku:\''+j.sku+'\',ch:\'line\'})" style="text-decoration:none">LINE</a>' : '';
   var spread = url ? '<div class=spread>棚にも並びました。広めるほどこの子が売れる → 売上の10%が作り手のあなたに。<a href="/start?ref=make_result" style="color:#ffd700">クリエイター登録(無料)で売上と報酬を管理 →</a></div>' : '';
   var one = j.auto_approved ? '<div class=one>🌱 <b>世界に1枚。</b>同じ絵は二度と生成されません。ファーストオーナーは、まだいません。</div>' : '';
   var nt = j.auto_approved ? '' : '<div class=note>'+(j.note||'つくりました。確認後に公開・購入できます。')+'</div>';
@@ -3916,7 +3919,7 @@ function renderGate(j,p){
     +'<div class=gatewrap><img class=gateimg src="'+j.design_url+'" alt=""><div class=gatelock>🔒</div></div>'
     +'<div class=gatebody>'
     +'<div class=gateh>あと一歩。<b>メールで認証</b>すると、この一着が現れます。</div>'
-    +'<div class=gatesub>確認のため6桁コードをお送りします。認証するとこの一着が<b>あなたの名義</b>になり、売れるたび<b>売上の10%</b>があなたのMUクレジットに入ります（<a href="/credit" target="_blank" style="color:#ffd700">仕組み</a>）。</div>'
+    +'<div class=gatesub>確認のため6桁コードをお送りします。認証するとこの一着が<b>あなたの名義</b>になり、売れるたび<b>売上の10%</b>があなたのMUクレジットに入ります（<a href="/credit" target="_blank" style="color:#ffd700">仕組み</a>・メールの扱いは<a href="/privacy" target="_blank" style="color:#ffd700">プライバシー</a>）。</div>'
     +'<div id=gStep1><div class=saverow><input id=gEmail type=email placeholder="you@example.com" autocomplete=email inputmode=email><button id=gSend>コードを送る</button></div></div>'
     +'<div id=gStep2 style="display:none"><div class=saverow><input id=gCode type=text placeholder="6桁コード" inputmode=numeric autocomplete=one-time-code maxlength=6 style="letter-spacing:.3em;text-align:center;font-family:monospace"><button id=gVerify>認証して見る</button></div><button id=gBack class=gback>メールアドレスを入れ直す</button></div>'
     +'<div class=savemsg id=gMsg></div>'
@@ -6214,7 +6217,7 @@ pub async fn shop_pdp(
     };
     let maker_line = match &maker_info {
         Some((who, code)) => format!(
-            r#"<div class="maker-line" style="font-size:13px;opacity:.9;margin:2px 0 2px">つくった人: <a href="/u/{code}?ref=pdp_byline" data-funnel="cta_click" data-funnel-cta="pdp_byline_maker" style="color:#ffd700;text-decoration:none"><b>{who}</b></a> <span style="opacity:.55">(ことば1行 → AI画像生成・30秒)</span></div>
+            r#"<div class="maker-line" style="font-size:13px;opacity:.9;margin:2px 0 2px">つくった人: <a href="/u/{code}?ref=pdp_byline" data-funnel="cta_click" data-funnel-cta="pdp_byline_maker" style="color:#ffd700;text-decoration:none"><b>{who}</b></a> <span style="opacity:.55">× AI — ことばは {who}、絵はAI画像生成(30秒)</span></div>
 <div style="font-size:12px;opacity:.7;margin:0 0 10px">この購入の10% (¥{amt}) がつくった人のMUクレジット(<a href="/credit" style="color:#ffd700">仕組み</a>)になります · <a href="/start?ref=pdp_byline" data-funnel="cta_click" data-funnel-cta="pdp_byline_start" style="color:#ffd700">あなたも30秒で作って、売れたら10% →</a></div>"#,
             who = who, code = code, amt = format_jpy(price_jpy / 10)),
         None => String::new(),
