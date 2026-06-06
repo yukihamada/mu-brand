@@ -26754,6 +26754,19 @@ async fn collection_page(
         }
     }
 
+    // Cross-link to bim.house for the bimhouse-goods collection. MU と
+    // bim.house は既に相互に導線を張っている (bim.house 側に「🏠この家に
+    // 置くもの — MU」)。ここは押し売りせず、静かに一行で出自を示す。
+    // 日本語+英語併記 (このページに i18n フレームワークは無いため短文併記)。
+    let note = if brand == "bimhouse-goods" {
+        r#"<div class="note">
+      この意匠の家は <a href="https://bim.house" target="_blank" rel="noopener">bim.house</a> で建っている。言葉から、建築 BIM へ。
+      <span class="en">The houses behind this collection are built on <a href="https://bim.house" target="_blank" rel="noopener">bim.house</a> — from words to architecture.</span>
+    </div>"#
+    } else {
+        ""
+    };
+
     let canonical_url = format!("https://wearmu.com/collections/{}", brand);
     let html = format!(r#"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
@@ -26786,12 +26799,17 @@ async fn collection_page(
   .card .stock{{color:#888}}
   .card .sold{{color:#e07b7b;font-weight:600;letter-spacing:0.08em}}
   .empty{{color:#888;text-align:center;padding:80px 0;grid-column:1/-1}}
+  .note{{margin:-12px 0 30px;padding:14px 16px;border:1px solid #1f1f1f;border-radius:6px;background:#0a0a0a;color:#aaa;font-size:13px;line-height:1.7}}
+  .note a{{color:#e6c449;text-decoration:none;border-bottom:1px solid #3a3a2a}}
+  .note a:hover{{border-bottom-color:#e6c449}}
+  .note .en{{display:block;margin-top:5px;color:#666;font-size:12px}}
 </style></head><body>
   {header}
   <div class="wrap">
     <div class="kicker">COLLECTION</div>
     <h1><em>{label}</em></h1>
     <div class="sub">{count} 着のデザイン。クリックで個別購入ページへ。</div>
+    {note}
     <div class="grid">{cards}</div>
   </div>
   {footer}
@@ -26802,6 +26820,7 @@ async fn collection_page(
         label=html_escape(&brand_label),
         canonical_url=html_attr_escape(&canonical_url),
         count=rows.len(),
+        note=note,
         cards=cards);
     (StatusCode::OK, [("content-type", "text/html; charset=utf-8")], html).into_response()
 }
