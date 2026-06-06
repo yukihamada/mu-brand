@@ -6051,8 +6051,12 @@ pub async fn shop_pdp(
             ),
             None => (String::new(), String::new()),
         };
-        let fulfil_note = if is_song {
+        let fulfil_note = if is_song || kind_guess == "video" {
             "Stripe · 購入後すぐ視聴/DLリンクをメール"
+        } else if kind_guess == "zine" {
+            "Stripe · 購入後すぐPDFのDLリンクをメール"
+        } else if kind_guess == "karaoke_ticket" {
+            "Stripe · 購入後すぐ引換コードをメール"
         } else if is_digital {
             "Stripe · 購入後すぐ QR 入場券をメール"
         } else if is_device {
@@ -6141,8 +6145,12 @@ pub async fn shop_pdp(
   </div>
 </div>"##, sold_row = sold_row)
     } else if is_digital {
-        let (l1, s1) = if is_song {
+        let (l1, s1) = if is_song || kind_guess == "video" {
             ("購入後すぐメール配信", "視聴 & ダウンロードリンクを自動送信 · 物理発送なし")
+        } else if kind_guess == "zine" {
+            ("購入後すぐメール配信", "PDFダウンロードリンクを自動送信 · 物理発送なし")
+        } else if kind_guess == "karaoke_ticket" {
+            ("購入後すぐ引換コードをメール", "音源と歌詞を返信 → カラオケ化して uta.live に公開 · 物理発送なし")
         } else {
             ("購入後すぐ QR をメール", "会場で QR を提示して入場 · 物理発送なし")
         };
