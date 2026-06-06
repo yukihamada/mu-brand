@@ -858,6 +858,10 @@ fn placements_for_product(printful_product_id: i64) -> &'static [&'static str] {
         // 301 = Men's AOP Rash Guard, 302/368/369/836 = sister AOP products
         // (per fulfill_catalog_order's stitch_color guard at line 2736).
         301 | 302 | 368 | 369 | 836 => &["front", "back", "sleeve_left", "sleeve_right"],
+        // 19 = 11oz mug, 358 = kiss-cut sticker — Printful's mockup-generator
+        // rejects "front" for these ("File type front is not allowed", MG-4);
+        // their single printfile placement is "default".
+        19 | 358 => &["default"],
         _ => &["front"],
     }
 }
@@ -1951,11 +1955,30 @@ pub async fn generate_onbody_mockup(
     //    AOP rashguard (301) supports four sublimation panels — fan the
     //    same design URL out to all of them so the mockup shows a true
     //    belt-colored garment instead of a chest-only print.
-    let position = serde_json::json!({
-        "area_width": 1800, "area_height": 2400,
-        "width": 1260,      "height": 1260,
-        "top": 380,         "left": 270
-    });
+    //    Mug/sticker have their own printfile geometry (the tee 1800×2400
+    //    box overflows them → "position out of print area"), so size the
+    //    design to each product's actual printfile.
+    let position = match printful_product {
+        // 11oz mug: wrap printfile 2700×1050. Center the square artwork
+        // on the front face (full height, horizontally centered).
+        19 => serde_json::json!({
+            "area_width": 2700, "area_height": 1050,
+            "width": 1000,      "height": 1000,
+            "top": 25,          "left": 850
+        }),
+        // Kiss-cut sticker: 900×900 printfile — fill it edge to edge.
+        358 => serde_json::json!({
+            "area_width": 900, "area_height": 900,
+            "width": 900,      "height": 900,
+            "top": 0,          "left": 0
+        }),
+        // tee / hoodie / crewneck (DTG front) + AOP panels.
+        _ => serde_json::json!({
+            "area_width": 1800, "area_height": 2400,
+            "width": 1260,      "height": 1260,
+            "top": 380,         "left": 270
+        }),
+    };
     let placements = placements_for_product(printful_product);
     let files: Vec<serde_json::Value> = placements.iter().map(|p| {
         serde_json::json!({
