@@ -314,6 +314,214 @@ pub async fn call_gemini_text(prompt: &str) -> Result<String, String> {
     Ok(out.trim().to_string())
 }
 
+/// MUスコア — 5-axis AI design score for catalog products.
+///
+/// `axes` is keyed by `JUDGE_AXES` (each 0–20); `total` is the server-side
+/// sum (0–100) — the model's self-reported total is never trusted.
+/// Stored under `catalog_products.meta_json.score` in the SAME shape the
+/// /universal collection uses: `{"total":N,"axes":{...},"verdict":"..."}`.
+pub struct DesignScore {
+    pub total: i64,
+    pub axes: Vec<(String, i64)>,
+    pub verdict: String,
+}
+
+/// Axis keys for the MUスコア judge, in display order.
+/// visual=視覚的完成度 / universality=普遍性 / craft=プリント適性 /
+/// concept=コンセプト / desire=所有欲.
+pub const JUDGE_AXES: [&str; 5] = ["visual", "universality", "craft", "concept", "desire"];
+
+/// Multimodal judge call: ONE product image (the mockup the buyer actually
+/// sees) + title/description text in, strict-JSON score out. Combines the
+/// image-fetch+base64 path from `call_gemini_with_image` with the text
+/// parsing of `call_gemini_text` (no existing helper does image→text).
+pub async fn call_gemini_judge(
+    image_url: &str,
+    title: &str,
+    desc: &str,
+) -> Result<DesignScore, String> {
+    // Same non-thinking flash model as call_gemini_text — cheap, multimodal,
+    // and doesn't burn the token cap on hidden chain-of-thought.
+    const JUDGE_MODEL: &str = "gemini-2.5-flash";
+    let key = std::env::var("GEMINI_API_KEY")
+        .or_else(|_| std::env::var("GOOGLE_API_KEY"))
+        .map_err(|_| "GEMINI_API_KEY not set".to_string())?;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(90))
+        .build()
+        .map_err(|e| format!("client: {}", e))?;
+    // Fetch the product image server-side and inline it as base64.
+    let resp = client
+        .get(image_url)
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| format!("fetch product image {}: {}", image_url, e))?;
+    if !resp.status().is_success() {
+        return Err(format!("fetch product image {}: status {}", image_url, resp.status()));
+    }
+    let mime = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(';').next().unwrap_or("image/png").trim().to_string())
+        .unwrap_or_else(|| "image/png".to_string());
+    let bytes = resp.bytes().await.map_err(|e| format!("read product image: {}", e))?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+
+    let title_s = sanitize_prompt_input(title, 120);
+    let desc_s = sanitize_prompt_input(desc, 600);
+    let prompt = format!(
+        "あなたはアパレルブランドMUの辛口デザイン審査員。添付画像は実際に販売中の商品(モックアップ)。\
+         タイトルと説明文も踏まえ、次の5軸を各0-20点の整数で採点せよ。\n\
+         - visual: 視覚的完成度。サムネイルサイズでも目を引くか\n\
+         - universality: 普遍性。文化や言語をまたいで通用し、10年後も着られるか\n\
+         - craft: プリント適性。線や色がDTG印刷で破綻しないか(黒地に濃色は沈む等)\n\
+         - concept: コンセプトの強さ。タイトル/説明文と画像が一貫した物語を作っているか\n\
+         - desire: 所有欲。素直に欲しい・着たいと思えるか\n\
+         平均的な商品は各軸10点前後。20点は例外的傑作にのみ与えること。\n\
+         タイトル: {title}\n\
+         説明: {desc}\n\
+         出力はJSONのみ(前後に文章・コードフェンス禁止):\n\
+         {{\"axes\":{{\"visual\":n,\"universality\":n,\"craft\":n,\"concept\":n,\"desire\":n}},\"verdict\":\"30字以内の一言評\"}}",
+        title = title_s,
+        desc = desc_s,
+    );
+    let parts = vec![
+        json!({"text": prompt}),
+        json!({"inline_data": {"mime_type": mime, "data": b64}}),
+    ];
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+        JUDGE_MODEL, key
+    );
+    let body = json!({
+        "contents": [{"parts": parts}],
+        "generationConfig": {
+            "responseModalities": ["TEXT"],
+            "responseMimeType": "application/json",
+            "maxOutputTokens": 600,
+            "temperature": 0.3,
+            "thinkingConfig": {"thinkingBudget": 0}
+        }
+    });
+    let resp = client.post(&url).json(&body).send().await
+        .map_err(|e| format!("send: {}", e))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let txt = resp.text().await.unwrap_or_default();
+        let head: String = txt.chars().take(400).collect();
+        return Err(format!("gemini {}: {}", status, head));
+    }
+    let json: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {}", e))?;
+    let parts = json["candidates"][0]["content"]["parts"]
+        .as_array()
+        .ok_or_else(|| format!("no parts (feedback={})", json["promptFeedback"]))?
+        .clone();
+    let mut out = String::new();
+    for part in parts {
+        if let Some(t) = part.get("text").and_then(|v| v.as_str()) {
+            out.push_str(t);
+        }
+    }
+    parse_judge_json(&out)
+}
+
+/// Pure parser for the judge's JSON reply — factored out of
+/// `call_gemini_judge` so it's unit-testable without a network call.
+/// Tolerates ```json fences and leading/trailing chatter; clamps each axis
+/// to 0..=20 and recomputes `total` as the sum. Errors (instead of scoring
+/// 0) when the `axes` object is missing or empty so a parse mishap never
+/// tanks a product.
+pub fn parse_judge_json(raw: &str) -> Result<DesignScore, String> {
+    let mut t = raw.trim();
+    // Strip a markdown fence if the model ignored the no-fence rule.
+    if t.starts_with("```") {
+        t = t.trim_start_matches("```json").trim_start_matches("```");
+        if let Some(end) = t.rfind("```") {
+            t = &t[..end];
+        }
+        t = t.trim();
+    }
+    // Last resort: slice from the first '{' to the last '}'.
+    let v: serde_json::Value = serde_json::from_str(t).or_else(|e| {
+        match (t.find('{'), t.rfind('}')) {
+            (Some(a), Some(b)) if b > a => serde_json::from_str(&t[a..=b]),
+            _ => Err(e),
+        }
+    }).map_err(|e| {
+        // chars()ベースで切る — バイトsliceは日本語応答でUTF-8境界panicする。
+        let head: String = raw.chars().take(200).collect();
+        format!("judge json: {} in {:?}", e, head)
+    })?;
+    let axes_v = v.get("axes").ok_or("judge json: no axes")?;
+    let mut axes: Vec<(String, i64)> = Vec::with_capacity(JUDGE_AXES.len());
+    let mut total = 0i64;
+    let mut found = 0;
+    for k in JUDGE_AXES {
+        let n = axes_v.get(k).and_then(|x| x.as_i64());
+        if n.is_some() {
+            found += 1;
+        }
+        let n = n.unwrap_or(0).clamp(0, 20);
+        total += n;
+        axes.push((k.to_string(), n));
+    }
+    if found < 3 {
+        return Err(format!("judge json: only {} known axes in {:?}", found, axes_v));
+    }
+    let verdict: String = v
+        .get("verdict")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .chars()
+        .take(120)
+        .collect();
+    Ok(DesignScore { total, axes, verdict })
+}
+
+#[cfg(test)]
+mod judge_tests {
+    use super::*;
+
+    #[test]
+    fn parses_plain_json() {
+        let s = parse_judge_json(
+            r#"{"axes":{"visual":15,"universality":12,"craft":18,"concept":10,"desire":14},"verdict":"良い"}"#,
+        )
+        .unwrap();
+        assert_eq!(s.total, 69);
+        assert_eq!(s.axes.len(), 5);
+        assert_eq!(s.verdict, "良い");
+    }
+
+    #[test]
+    fn parses_fenced_json_and_clamps() {
+        let s = parse_judge_json(
+            "```json\n{\"axes\":{\"visual\":99,\"universality\":-5,\"craft\":20,\"concept\":10,\"desire\":10},\"verdict\":\"x\"}\n```",
+        )
+        .unwrap();
+        // 99→20, -5→0
+        assert_eq!(s.total, 20 + 0 + 20 + 10 + 10);
+    }
+
+    #[test]
+    fn parses_with_leading_chatter() {
+        let s = parse_judge_json(
+            "Here is the score: {\"axes\":{\"visual\":10,\"universality\":10,\"craft\":10,\"concept\":10,\"desire\":10},\"verdict\":\"普通\"} done",
+        )
+        .unwrap();
+        assert_eq!(s.total, 50);
+    }
+
+    #[test]
+    fn rejects_missing_axes() {
+        assert!(parse_judge_json(r#"{"total": 80, "verdict": "?"}"#).is_err());
+        assert!(parse_judge_json(r#"{"axes":{"foo":1}}"#).is_err());
+        assert!(parse_judge_json("not json at all").is_err());
+    }
+}
+
 pub fn build_partner_sku_prompt(b: &PartnerSkuBrief) -> String {
     let partner = sanitize_prompt_input(b.partner_display, 60);
     let tagline = sanitize_prompt_input(b.partner_tagline, 80);

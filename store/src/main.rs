@@ -68553,6 +68553,7 @@ async fn main() {
         // seed) — re-running with the same query is a no-op.
         .route("/admin/catalog/generate", get(catalog::admin_generate))
         .route("/admin/catalog/mockup_backfill", get(catalog::admin_mockup_backfill))
+        .route("/admin/catalog/score_backfill", get(catalog::admin_score_backfill))
         .route("/admin/catalog/set_design", get(catalog::admin_set_design))
         .route("/admin/catalog/brand_visibility", get(catalog::admin_brand_visibility))
         .route("/admin/catalog/status", get(catalog::admin_status))
