@@ -40814,7 +40814,7 @@ footer a:hover{{color:var(--y)}}
     <h2>計測方法</h2>
     <p>
       • <strong style="color:var(--fg)">real.revenue_jpy</strong>: Stripe live セッション (cs_live_*) の SUM。test セッションは除外。<br>
-      • <strong style="color:var(--fg)">external</strong>: real から yuki の dogfood (yuki@hamada.tokyo / mail@yukihamada.jp) を除外。<br>
+      • <strong style="color:var(--fg)">external</strong>: real から創業者の検証用アカウント2件 (dogfood) の購入を除外。<br>
       • <strong style="color:var(--fg)">approx_mrr</strong>: 有料サブスク数 × 月額単価。年払いは月割換算。<br>
       • <strong style="color:var(--fg)">designs_generated</strong>: products + you_designs の累計行数。
     </p>
@@ -40922,6 +40922,7 @@ footer a:hover{{color:var(--y)}}
     数字に矛盾があったら <a href="mailto:info@enablerdao.com">info@enablerdao.com</a> または <a href="/bounty">/bounty</a> へ。<br>
     Raw JSON: <a href="/api/transparency">wearmu.com/api/transparency</a> · Constitution: <a href="/constitution">wearmu.com/constitution</a><br>
     北極星KPI (初売上クリエイター/週): <a href="/kpi">wearmu.com/kpi</a> — クリエイターループ分の売上はそちらに別掲(本ページの部分集合) · <a href="/start">作って売る</a><br>
+    <a href="/returns">返品ポリシー</a> · <a href="/tokushoho">特定商取引法</a> · <a href="/privacy">プライバシー</a> · <a href="/credit">MUクレジット</a><br>
     株式会社イネブラ (Enabler Inc.) · yuki (1 人のオペレーター) · 28 agents
   </footer>
 </div>
@@ -68427,6 +68428,7 @@ async fn main() {
         .route("/start", get(creators::start_page))
         .route("/studio", get(creators::studio_page))
         .route("/api/studio/profile", post(creators::studio_profile))
+        .route("/api/studio/payout", post(creators::studio_payout))
         .route("/kpi", get(creators::kpi_page))
         .route("/api/kpi", get(creators::api_kpi))
         .route("/credit", get(creators::credit_page))

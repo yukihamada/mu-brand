@@ -3178,7 +3178,7 @@ pub fn make_cta_banner(src: &str) -> String {
         r##"<div style="margin:0 auto 20px;max-width:1200px"><a href="/make?ref={src}" data-funnel="cta_click" data-funnel-cta="make_{src}" style="display:flex;align-items:center;gap:12px;justify-content:center;flex-wrap:wrap;background:linear-gradient(90deg,rgba(255,215,0,.14),rgba(255,215,0,.05));border:1px solid rgba(255,215,0,.4);border-radius:14px;padding:14px 18px;text-decoration:none;color:#f5f5f0;font-size:15px;font-weight:700;letter-spacing:.01em">
 <span style="font-size:20px">✦</span><span>ひとこと言うだけで、自分のTシャツをAIが作る</span>
 <span style="background:#ffd700;color:#0a0a0a;border-radius:99px;padding:7px 16px;font-size:13px;font-weight:800;white-space:nowrap">作ってみる →</span></a>
-<div style="text-align:center;margin-top:8px;font-size:12px"><a href="/start?ref={src}" data-funnel="cta_click" data-funnel-cta="start_{src}" style="color:#ffd700;text-decoration:none;opacity:.9">クリエイター登録すると、売れるたび10%があなたに → /start</a></div></div>"##,
+<div style="text-align:center;margin-top:8px;font-size:13.5px;font-weight:700"><a href="/start?ref={src}" data-funnel="cta_click" data-funnel-cta="start_{src}" style="color:#ffd700;text-decoration:none">クリエイター登録すると、売れるたび10%があなたに → /start</a></div></div>"##,
         src = src,
     )
 }
@@ -3916,7 +3916,7 @@ function renderGate(j,p){
     +'<div class=gatewrap><img class=gateimg src="'+j.design_url+'" alt=""><div class=gatelock>🔒</div></div>'
     +'<div class=gatebody>'
     +'<div class=gateh>あと一歩。<b>メールで認証</b>すると、この一着が現れます。</div>'
-    +'<div class=gatesub>確認のため6桁コードをお送りします。作品の保存先になり、売れたらお知らせします。</div>'
+    +'<div class=gatesub>確認のため6桁コードをお送りします。認証するとこの一着が<b>あなたの名義</b>になり、売れるたび<b>売上の10%</b>があなたのMUクレジットに入ります（<a href="/credit" target="_blank" style="color:#ffd700">仕組み</a>）。</div>'
     +'<div id=gStep1><div class=saverow><input id=gEmail type=email placeholder="you@example.com" autocomplete=email inputmode=email><button id=gSend>コードを送る</button></div></div>'
     +'<div id=gStep2 style="display:none"><div class=saverow><input id=gCode type=text placeholder="6桁コード" inputmode=numeric autocomplete=one-time-code maxlength=6 style="letter-spacing:.3em;text-align:center;font-family:monospace"><button id=gVerify>認証して見る</button></div><button id=gBack class=gback>メールアドレスを入れ直す</button></div>'
     +'<div class=savemsg id=gMsg></div>'
@@ -3953,7 +3953,10 @@ function renderGate(j,p){
 }
 $('#go').onclick=runMake;
 $('#p').addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter')runMake();});
-</script></body></html>"##;
+</script>
+<script defer src="/mu-funnel.js"></script>
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+</body></html>"##;
 
 /// POST /api/make?prompt=…&kind=… — public NL → product. status='review',
 /// brand='minna', cost-guarded (hourly cap + global budget gate). Mirrors
@@ -4146,7 +4149,7 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     let (pp, pv, url_c, sku_c, db_c) = (spec.printful_product_id, spec.printful_variant_id, url.clone(), sku.clone(), db.clone());
     tokio::spawn(async move { let _ = generate_onbody_mockup(db_c, sku_c, pp, pv, url_c).await; });
 
-    let note = if flagged {
+    let mut note = if flagged {
         let r = if flag_reason.is_empty() { "内容".to_string() } else { flag_reason.clone() };
         format!("つくりました。少し確認したい点（{}）があるので人の目を通します。OKならすぐ公開・購入できます。", r)
     } else if is_contrado {
@@ -4154,6 +4157,11 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     } else {
         "できました！もう棚に並びました。今すぐ買えます。着用イメージは数十秒で反映されます。".to_string()
     };
+    // 「作ったのに報酬が宙に浮く」防止: 無帰属の生成には受け取り方を必ず添える
+    // (web の /make はメール認証ゲートで帰属されるが、API 直叩きはここが頼り)。
+    if maker_email.is_none() {
+        note.push_str(" ※この作品はまだ誰の名義でもありません。メール認証(画面の指示 または https://wearmu.com/start で登録後に作成)すると、売れるたび売上の10%があなたに入ります。");
+    }
     let buy_url = if flagged { serde_json::Value::Null } else { serde_json::json!(format!("https://wearmu.com/shop/{}", sku)) };
     axum::Json(serde_json::json!({
         "ok": true,
@@ -4509,7 +4517,7 @@ pub async fn returns_page() -> Html<String> {
 <li>商品の <strong>印刷不良 / プリントずれ / 破れ</strong> など製造側に起因する不良</li>
 <li>注文と <strong>異なるサイズ・色・SKU</strong> が届いた場合</li>
 <li>配送中の <strong>破損</strong> (写真をご提供いただきます)</li>
-<li>到着後 <strong>30 日以内</strong> に <a href="mailto:returns@wearmu.com" style="color:#ffd700">returns@wearmu.com</a> にご連絡いただいた場合</li>
+<li>到着後 <strong>30 日以内</strong> に <a href="mailto:info@enablerdao.com" style="color:#ffd700">info@enablerdao.com</a> にご連絡いただいた場合</li>
 </ul>
 <p>上記に該当する場合、 無償交換または全額返金いたします。 送料も MU 負担です。</p>
 
@@ -4523,7 +4531,7 @@ pub async fn returns_page() -> Html<String> {
 
 <h2>手順</h2>
 <ol style="margin:0 0 16px 22px;color:rgba(245,245,240,0.82);font-size:13.5px">
-<li><a href="mailto:returns@wearmu.com" style="color:#ffd700">returns@wearmu.com</a> に注文番号 + 写真 + 内容をご連絡</li>
+<li><a href="mailto:info@enablerdao.com" style="color:#ffd700">info@enablerdao.com</a> に注文番号 + 写真 + 内容をご連絡</li>
 <li>24 時間以内に MU から返信 + 返品先住所をお知らせ</li>
 <li>商品到着確認 → 5 営業日以内に交換品発送 or 返金処理 (Stripe 経由・元の決済手段に戻ります)</li>
 </ol>
@@ -4556,7 +4564,7 @@ pub async fn returns_page() -> Html<String> {
   <button type="submit" class="btn" style="cursor:pointer;background:none;font-family:inherit">返品申請する</button>
   <span id="ret-msg" style="margin-left:12px;font-size:12px"></span>
 </form>
-<p style="margin-top:14px;font-size:12px;color:rgba(245,245,240,0.5)">フォームが使えない場合は <a href="mailto:returns@wearmu.com" style="color:#ffd700">returns@wearmu.com</a> まで。</p>
+<p style="margin-top:14px;font-size:12px;color:rgba(245,245,240,0.5)">フォームが使えない場合は <a href="mailto:info@enablerdao.com" style="color:#ffd700">info@enablerdao.com</a> まで。</p>
 <script>
 async function submitReturn(e){
   e.preventDefault();
@@ -4639,7 +4647,7 @@ pub async fn shipping_page() -> Html<String> {
 <p>輸入国の関税は受取人負担となります。 EU 内・JP 国内発送は関税なし。 US/CA/AU 輸入は通常 5-15% 程度 (商品価値ベース)。</p>
 
 <h2>遅延・配送事故</h2>
-<p>追跡番号で「投函済」 から 14 日経過しても未着の場合は <a href="mailto:returns@wearmu.com" style="color:#ffd700">returns@wearmu.com</a> までご連絡。 再送 or 全額返金で対応します。</p>
+<p>追跡番号で「投函済」 から 14 日経過しても未着の場合は <a href="mailto:info@enablerdao.com" style="color:#ffd700">info@enablerdao.com</a> までご連絡。 再送 or 全額返金で対応します。</p>
 "##)
 }
 
@@ -5245,7 +5253,7 @@ pub async fn shop_index(
     };
     let body = format!(
         r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>{title}</title>
 <meta name="description" content="{meta_desc}">
 <link rel="canonical" href="{canonical}">{robots_meta}

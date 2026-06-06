@@ -43,6 +43,9 @@ const START_HTML: &str = r##"<!doctype html><html lang="ja"><head><meta charset=
 <meta name="description" content="ことば1行で商品が生まれ、売れたら10%があなたに。メール1本でクリエイター登録。">
 <meta property="og:title" content="MU STUDIO — 30秒で、自分のブランドを持つ">
 <meta property="og:description" content="ことば1行で商品が生まれ、売れたら10%があなたに。">
+<meta property="og:image" content="https://wearmu.com/static/og.jpg">
+<meta property="og:url" content="https://wearmu.com/start">
+<meta name="twitter:card" content="summary_large_image">
 <style>
 body{background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
 .box{max-width:460px;width:100%}
@@ -74,9 +77,10 @@ code.big{font-family:'SF Mono',monospace;letter-spacing:.3em}
 <div class="msg" id="m1"></div>
 <div class="steps">
 <div><b>1</b>メールにコードが届く</div>
-<div><b>2</b>ことば1行で商品が生まれる</div>
-<div><b>3</b>売れたら10%があなたに</div>
+<div><b>2</b><a href="/make?ref=start" style="color:inherit">/make</a> でことば1行 → 商品が生まれる</div>
+<div><b>3</b>売れたら10% · <a href="/studio" style="color:inherit">/studio</a> で管理</div>
 </div>
+<p style="font-size:12px;opacity:.65;line-height:1.8;margin:18px 0 0">先に試したい?— <a href="/make?ref=start" data-funnel="cta_click" data-funnel-cta="start_try_make">登録なしで1行つくってみる → /make</a>(生成後のメール認証で、その作品はあなたの名義になります)</p>
 </div>
 <div id="step2">
 <h1>メールのコードを入力</h1>
@@ -209,8 +213,10 @@ __PRODUCTS__
 <h2>収益</h2>
 <div class="row2">
 <div class="panel">
-<div style="font-size:13px;font-weight:700">作者報酬 — 売れたら10%</div>
-<p>あなたの作品が売れるたび、売上の10%がMUクレジットで自動的に入ります。クレジットは次の購入で使えます。<b>現金振込は申請制</b>: <a href="mailto:info@enablerdao.com?subject=MU%20%E6%8C%AF%E8%BE%BC%E7%94%B3%E8%AB%8B">info@enablerdao.com</a> へ(残高¥3,000以上・運営が手動対応・通常5営業日)。詳細は <a href="/credit">MUクレジットとは</a>。</p>
+<div style="font-size:13px;font-weight:700">作者報酬 — あなたの還元率: <span style="color:#ffd700">販売価格の10%</span></div>
+<p>あなたの作品が売れるたび、<b>販売価格の10%</b>(¥4,900のTシャツなら¥490)がMUクレジットで自動的に入ります。全クリエイター一律10%・実績に応じてストア単位で引き上げあり(<a href="/credit">仕組みと根拠</a>)。クレジットは次の購入で使えます。</p>
+<button id="po" data-funnel="cta_click" data-funnel-cta="studio_payout">¥3,000以上で銀行振込を申請する</button> <span id="pom" style="font-size:12px;margin-left:6px"></span>
+<p>申請後、運営が確認して通常<b>5営業日</b>以内に振込(手数料は当社負担)。台帳に「振込申請」の行が立ち、進捗はメールでお知らせします。</p>
 __LEDGER__
 </div>
 <div class="panel">
@@ -251,6 +257,15 @@ $('dnb').onclick=async function(){
     var j=await r.json().catch(function(){return{}});
     m.textContent=(r.ok&&j.ok)?'✓ 保存しました':(j.error||'保存できませんでした');
   }catch(_){m.textContent='通信エラー'}
+};
+$('po').onclick=async function(){
+  var m=$('pom');this.disabled=true;m.textContent='申請中…';
+  try{
+    var r=await fetch('/api/studio/payout',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});
+    var j=await r.json().catch(function(){return{}});
+    m.textContent=(r.ok&&j.ok)?'✓ 受け付けました。5営業日以内に振込します(確認メール送信済み)':(j.error||'申請できませんでした');
+  }catch(_){m.textContent='通信エラー'}
+  this.disabled=false;
 };
 </script>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
@@ -397,6 +412,68 @@ pub async fn studio_profile(
 }
 
 // ════════════════════════════════════════════════════════════════════
+// POST /api/studio/payout — 振込申請(アプリ内導線)
+// 残高¥3,000以上で受理 → 台帳に申請行(delta=0・監査用) + 運営/本人へメール。
+// 実際の振込・残高減算は運営の手動処理(現状の正直な運用のまま、入口だけUI化)。
+// ════════════════════════════════════════════════════════════════════
+
+pub async fn studio_payout(State(db): State<Db>, headers: HeaderMap) -> Response {
+    let Some((email, ..)) = crate::collab_session_email(&db, &headers) else {
+        return (StatusCode::UNAUTHORIZED, axum::Json(serde_json::json!({"ok":false,"error":"ログインしてください"}))).into_response();
+    };
+    let email_lc = email.to_lowercase();
+    let (balance, pending): (i64, i64) = {
+        let conn = db.lock().unwrap();
+        let bal = crate::mu_credit_balance(&conn, &email_lc);
+        // 直近7日の未処理申請があれば二重申請を断る(運営が処理したら台帳で分かる)。
+        let pend: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mu_credit_ledger WHERE email=? AND reason='payout_request'
+             AND created_at > CAST(strftime('%s','now','-7 days') AS INTEGER)",
+            rusqlite::params![email_lc], |r| r.get(0)).unwrap_or(0);
+        (bal, pend)
+    };
+    if balance < 3000 {
+        return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({
+            "ok": false,
+            "error": format!("残高¥{}。振込申請は¥3,000以上から(あと¥{})", fmt_jpy(balance), fmt_jpy(3000 - balance)),
+        }))).into_response();
+    }
+    if pending > 0 {
+        return (StatusCode::CONFLICT, axum::Json(serde_json::json!({
+            "ok": false, "error": "申請済みです(処理中・通常5営業日)。完了メールをお待ちください",
+        }))).into_response();
+    }
+    {
+        let conn = db.lock().unwrap();
+        crate::mu_credit_apply(&conn, &email_lc, 0, "payout_request", None);
+    }
+    // 運営+本人への通知(Resend)。鍵が無い環境でも申請自体は台帳に残る。
+    let key = std::env::var("RESEND_API_KEY").unwrap_or_default();
+    if !key.is_empty() {
+        let payload = serde_json::json!({
+            "from": "━◯━ MU <info@enablerdao.com>",
+            "to": ["info@enablerdao.com"],
+            "reply_to": [email_lc.clone()],
+            "subject": format!("【MU振込申請】{} 残高¥{}", email_lc, fmt_jpy(balance)),
+            "html": format!("<p>振込申請を受け付けました。</p><p>申請者: {}<br>残高: ¥{}</p><p>処理: 台帳確認 → 振込 → mu_credit_ledger に負の行で精算。</p>", email_lc, fmt_jpy(balance)),
+        });
+        let confirm = serde_json::json!({
+            "from": "━◯━ MU <info@enablerdao.com>",
+            "to": [email_lc.clone()],
+            "subject": "MU — 振込申請を受け付けました",
+            "html": format!("<div style=\"font-family:-apple-system,sans-serif;line-height:1.9\"><p>振込申請を受け付けました(残高 ¥{})。</p><p>運営が確認のうえ、通常<b>5営業日</b>以内にお振込みします。振込先口座は折り返しのメールでお伺いします。</p><p>━◯━ MU · wearmu.com/credit</p></div>", fmt_jpy(balance)),
+        });
+        let k2 = key.clone();
+        tokio::spawn(async move {
+            let c = reqwest::Client::new();
+            let _ = c.post("https://api.resend.com/emails").bearer_auth(&key).json(&payload).send().await;
+            let _ = c.post("https://api.resend.com/emails").bearer_auth(&k2).json(&confirm).send().await;
+        });
+    }
+    axum::Json(serde_json::json!({"ok": true, "balance_jpy": balance})).into_response()
+}
+
+// ════════════════════════════════════════════════════════════════════
 // 北極星 KPI — 「初売上を経験したクリエイター数 / 週」
 // GET /api/kpi (JSON) · GET /kpi (公開ページ)
 // ════════════════════════════════════════════════════════════════════
@@ -492,10 +569,11 @@ fn kpi_snapshot(db: &Db) -> serde_json::Value {
             "revenue_jpy": revenue_total,
         },
         "definitions": {
-            "creators_verified": "メール認証済みのクリエイター数 (collab_users.verified=1)",
+            "creators_verified": "現在メール認証済み(verified=1)のクリエイター総数。スナップショット値なので、認証解除があると weeks.new_creators の合計と乖離しうる",
+            "new_creators": "その週に初めてメール認証を完了した(verified_at がその週に入る)クリエイター数",
             "products_made": "クリエイター/エージェント発の作品数 (legacy_source: public_make + agent_api)",
             "makers_with_attributed_product": "作者刻印(meta_json.maker_email)付き作品を持つ作者数。agentストアのオーナー帰属はここに含まれない(売上集計には含む)ため makers_with_first_sale より小さくなりうる",
-            "makers_with_first_sale": "1件以上売れた作者数(刻印 or agentストアオーナー)。weeks.first_sale_creators の累計と一致する",
+            "makers_with_first_sale": "1件以上売れた作者数(刻印 or agentストアオーナー)。各作者は生涯最初の売上(MIN(created_at))が属する週に一度だけ first_sale_creators として数えられるため、Σ weeks.first_sale_creators = この値 が定義上常に成立する(週次は『その週が生涯初売上だった作者数』であり、週次アクティブ作者数ではない)",
             "orders": "カタログ注文数 (amount>0・予約中除く)",
             "revenue_jpy": "クリエイターループ(カタログ注文)の累計売上。MU全体の売上(オークション/MUGEN等含む)は /transparency 参照 — 本数値はその部分集合",
             "weeks": "週は月曜開始のUTC日付範囲 [week_start, week_end_exclusive)。current=true は進行中の週(数字はまだ増える)",
@@ -507,7 +585,7 @@ fn kpi_snapshot(db: &Db) -> serde_json::Value {
 
 pub async fn api_kpi(State(db): State<Db>) -> Response {
     let snap = kpi_snapshot(&db);
-    ([(axum::http::header::CACHE_CONTROL, "public, max-age=300")], axum::Json(snap)).into_response()
+    ([(axum::http::header::CACHE_CONTROL, "public, max-age=60, stale-while-revalidate=300")], axum::Json(snap)).into_response()
 }
 
 const KPI_HTML: &str = r##"<!doctype html><html lang="ja"><head><meta charset="utf-8">
@@ -555,7 +633,7 @@ a{color:#ffd700}
 <tr><th>週 (月曜〜)</th><th>新規クリエイター</th><th>作品</th><th>★初売上作者</th><th>注文</th><th>売上</th></tr>
 __ROWS__
 </table>
-<div class="fine">毎週この表が1行ずつ増えていきます。あなたの行になるかもしれません → <a href="/start">30秒でクリエイター登録</a><br>━◯━ MU · <a href="/shop">SHOP</a> · <a href="/make">作る</a> · <a href="/transparency">透明性</a> · 株式会社イネブラ</div>
+<div class="fine">毎週この表が1行ずつ増えていきます。あなたの行になるかもしれません → <a href="/start">30秒でクリエイター登録</a><br>━◯━ MU · <a href="/shop">SHOP</a> · <a href="/make">作る</a> · <a href="/credit">MUクレジット</a> · <a href="/transparency">透明性</a> · <a href="/returns">返品</a> · <a href="/tokushoho">特商法</a> · <a href="/privacy">プライバシー</a> · 株式会社イネブラ</div>
 </div>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </body></html>"##;
@@ -582,7 +660,7 @@ pub async fn kpi_page(State(db): State<Db>) -> Response {
         .replace("__NSWEEK__", snap["north_star"]["week_start"].as_str().unwrap_or("?"))
         .replace("__ASOF__", snap["north_star"]["as_of"].as_str().unwrap_or("?"))
         .replace("__ROWS__", &rows);
-    ([(axum::http::header::CACHE_CONTROL, "public, max-age=300")], Html(html)).into_response()
+    ([(axum::http::header::CACHE_CONTROL, "public, max-age=60, stale-while-revalidate=300")], Html(html)).into_response()
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -625,8 +703,8 @@ a{color:#ffd700}
 <tr><th>法的な位置づけ</th><td>MUクレジットは当社が役務の対価として無償付与する社内ポイントで、<b>販売はしていません</b>(購入できるポイントではないため、資金決済法上の前払式支払手段に該当しない運用)。報酬の付与率(10%)は実装コード・台帳とも公開で、誇大表示をしない方針です(<a href="/transparency">/transparency</a>)。</td></tr>
 <tr><th>対象外</th><td>自分の作品を自分で買った分には付きません(自己購入除外)。不正・規約違反時は取り消すことがあります。</td></tr>
 </table>
-<h2>10%の根拠</h2>
-<p>受注生産(Printful)の原価・送料・決済手数料を引いた粗利から、作者へ10%・紹介者へ10%を先取りで配る設計です。料率はストア単位で引き上げられる仕組み(maker_pct)があり、実績に応じて見直します。変更時はこのページと <a href="/kpi">/kpi</a> で告知します。</p>
+<h2>10%の計算基準と根拠</h2>
+<p><b>付与額 = 販売価格(税込)の10%</b>です。¥4,900のTシャツなら¥490 — PDPに表示される実額と同じ計算で、粗利の10%ではありません。受注生産(Printful)の原価・送料・決済手数料はMU側の取り分から負担し、作者10%・紹介者10%を<b>売上から先取り</b>で配る設計です。現在の料率は全クリエイター一律10%(あなたの実効率は <a href="/studio">/studio</a> にも表示)。ストア単位で引き上げる仕組み(maker_pct)があり、実績に応じて見直します。変更時はこのページと <a href="/kpi">/kpi</a> で告知します。</p>
 <a class="cta" href="/start?ref=credit">30秒でクリエイター登録 →</a>
 <div class="fine">━◯━ MU · <a href="/start">作って売る</a> · <a href="/kpi">公開KPI</a> · <a href="/tokushoho">特定商取引法</a> · <a href="/returns">返品</a> · 株式会社イネブラ</div>
 </div>
@@ -702,6 +780,9 @@ pub async fn maker_page(
 <meta name="description" content="{who} の作品 {n} 点。ことば1行から生まれた一点もの。">
 <meta property="og:title" content="{who} — MU クリエイター">
 <meta property="og:description" content="作品 {n} 点・売れた数 {sales}。ことば1行から30秒、あなたもブランドを持てる。">
+<meta property="og:image" content="{og_img}">
+<meta property="og:url" content="https://wearmu.com/u/{code}">
+<meta name="twitter:card" content="summary_large_image">
 <style>
 body{{background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;margin:0}}
 .wrap{{max-width:920px;margin:0 auto;padding:32px 22px 60px}}
@@ -726,6 +807,11 @@ a{{color:#ffd700}} footer{{font-size:11px;opacity:.45;margin-top:40px;line-heigh
 <script defer src="/mu-funnel.js"></script>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </body></html>"##,
-        who = who, n = products.len(), sales = sales, grid = grid);
+        who = who, n = products.len(), sales = sales, grid = grid,
+        code = crate::html_escape(&code_clean),
+        // OG画像 = 代表作のモックアップ。無ければブランド既定にフォールバック。
+        og_img = crate::html_escape(
+            products.iter().map(|p| p.img.as_str()).find(|u| u.starts_with("https://"))
+                .unwrap_or("https://wearmu.com/static/og-default.png")));
     Html(html).into_response()
 }
