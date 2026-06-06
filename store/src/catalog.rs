@@ -3954,7 +3954,7 @@ function renderResult(j,p){
   var buy = j.buy_url ? '<a class=buy href="'+j.buy_url+'" onclick="muEvent(\'cta_click\',{cta:\'make_buy\',sku:\''+j.sku+'\'})">この一着を、自分のものにする ¥'+yen(j.retail_jpy)+' →<small>サイズを選ぶだけ · 1枚から受注生産</small></a>' : '';
   var shareTxt = encodeURIComponent('ことば1行から30秒で作った: '+(j.display||'MU')+' #MU #wearmu');
   var share = url ? '<button class=share onclick="muEvent(\'share\',{sku:\''+j.sku+'\'});muShare(this)" data-u="'+url+'" data-t="'+((j.display||'MU')+' / wearmu')+'">📣 シェアして広める</button>'
-    +' <a class=share data-funnel="share" data-funnel-cta="make_share_x" href="https://twitter.com/intent/tweet?text='+shareTxt+'&url='+encodeURIComponent(url+'?ref=make_share_x')+'" target="_blank" rel="noopener" onclick="muEvent(\'share\',{sku:\''+j.sku+'\',ch:\'x\'})" style="text-decoration:none">𝕏 ポスト</a>'
+    +' <a class=share data-funnel="share" data-funnel-cta="make_share_x" href="https://x.com/intent/tweet?text='+shareTxt+'&url='+encodeURIComponent(url+'?ref=make_share_x')+'" target="_blank" rel="noopener" onclick="muEvent(\'share\',{sku:\''+j.sku+'\',ch:\'x\'})" style="text-decoration:none">𝕏 ポスト</a>'
     +' <a class=share data-funnel="share" data-funnel-cta="make_share_line" href="https://social-plugins.line.me/lineit/share?url='+encodeURIComponent(url+'?ref=make_share_line')+'" target="_blank" rel="noopener" onclick="muEvent(\'share\',{sku:\''+j.sku+'\',ch:\'line\'})" style="text-decoration:none">LINE</a>' : '';
   var spread = url ? '<div class=spread>棚にも並びました。広めるほどこの子が売れる → 売上の10%が作り手のあなたに。<a href="/start?ref=make_result" style="color:#ffd700">クリエイター登録(無料)で売上と報酬を管理 →</a></div>' : '';
   var one = j.auto_approved ? '<div class=one>🌱 <b>世界に1枚。</b>同じ絵は二度と生成されません。ファーストオーナーは、まだいません。</div>' : '';
@@ -3980,7 +3980,7 @@ function renderGate(j,p){
     +'<div class=gatewrap><img class=gateimg src="'+j.design_url+'" alt=""><div class=gatelock>🔒</div></div>'
     +'<div class=gatebody>'
     +'<div class=gateh>あと一歩。<b>メールで認証</b>すると、この一着が現れます。</div>'
-    +'<div class=gatesub>確認のため6桁コードをお送りします。認証するとこの一着が<b>あなたの名義</b>になり、売れるたび<b>売上の10%</b>があなたのMUクレジットに入ります（<a href="/credit" target="_blank" style="color:#ffd700">仕組み</a>・メールの扱いは<a href="/privacy" target="_blank" style="color:#ffd700">プライバシー</a>）。</div>'
+    +'<div class=gatesub>確認のため6桁コードをお送りします。入力は10秒・これで公開と名義化が完了。認証するとこの一着が<b>あなたの名義</b>になり、売れるたび<b>販売価格の10%</b>があなたのMUクレジットに入ります（<a href="/credit" target="_blank" style="color:#ffd700">仕組み</a>・メールの扱いは<a href="/privacy" target="_blank" style="color:#ffd700">プライバシー</a>）。</div>'
     +'<div id=gStep1><div class=saverow><input id=gEmail type=email placeholder="you@example.com" autocomplete=email inputmode=email><button id=gSend>コードを送る</button></div></div>'
     +'<div id=gStep2 style="display:none"><div class=saverow><input id=gCode type=text placeholder="6桁コード" inputmode=numeric autocomplete=one-time-code maxlength=6 style="letter-spacing:.3em;text-align:center;font-family:monospace"><button id=gVerify>認証して見る</button></div><button id=gBack class=gback>メールアドレスを入れ直す</button></div>'
     +'<div class=savemsg id=gMsg></div>'
@@ -6279,20 +6279,22 @@ pub async fn shop_pdp(
     let maker_line = match &maker_info {
         Some((who, code)) => format!(
             r#"<div class="maker-line" style="font-size:13px;opacity:.9;margin:2px 0 2px">つくった人: <a href="/u/{code}?ref=pdp_byline" data-funnel="cta_click" data-funnel-cta="pdp_byline_maker" style="color:#ffd700;text-decoration:none"><b>{who}</b></a> <span style="opacity:.55">× AI — ことばは {who}、絵はAI画像生成(30秒)</span></div>
-<div style="font-size:12px;opacity:.7;margin:0 0 10px">この購入の10% (¥{amt}) がつくった人のMUクレジット(<a href="/credit" style="color:#ffd700">仕組み</a>)になります · <a href="/start?ref=pdp_byline" data-funnel="cta_click" data-funnel-cta="pdp_byline_start" style="color:#ffd700">あなたも30秒で作って、売れたら10% →</a></div>"#,
+<div style="font-size:12px;opacity:.7;margin:0 0 10px">販売価格の10% (¥{amt}) がつくった人のMUクレジット(<a href="/credit" style="color:#ffd700">仕組み</a>)になります · <a href="/start?ref=pdp_byline" data-funnel="cta_click" data-funnel-cta="pdp_byline_start" style="color:#ffd700">あなたも30秒で作って、売れたら10% →</a></div>"#,
             who = who, code = code, amt = format_jpy(price_jpy / 10)),
         None => String::new(),
     };
     // シェアは「ブランド広告」でなく「作者の自己表現」: 一人称+作者名+ref計測。
     let share_url = format!("https://wearmu.com/shop/{}?ref=share_x", sku);
     let share_who = maker_info.as_ref().map(|(w, _)| w.as_str()).unwrap_or("MU");
+    // シェア文は短いフック+作品名のみ(説明文はOGカードに任せる)。
+    let name_only = trim_chars(display_name.split('—').next().unwrap_or(&display_name).trim(), 30);
     let share_text = if maker_info.is_some() {
-        format!("ことば1行から30秒で作りました: {} by {} #MU #wearmu", short_title, share_who)
+        format!("ことば1行で作ったTシャツ「{}」 by {} → あなたも30秒で #MU #wearmu", name_only, share_who)
     } else {
-        format!("{} — MU ━◯━ ことば1行から、AIと一緒に。", short_title)
+        format!("{} — MU ━◯━ ことば1行から、AIと一緒に。", name_only)
     };
     let share_x = format!(
-        "https://twitter.com/intent/tweet?text={}&url={}",
+        "https://x.com/intent/tweet?text={}&url={}",
         urlencoding::encode(&share_text),
         urlencoding::encode(&share_url));
     let share_line_url = format!(
@@ -6454,7 +6456,8 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
 <meta property="product:price:amount" content="{price_raw}">
 <meta property="product:price:currency" content="JPY">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="{short_title}">
+<meta name="twitter:title" content="{og_title}">
+<meta name="twitter:description" content="{og_desc}">
 <meta name="twitter:image" content="{og}">
 <link rel="canonical" href="https://wearmu.com/shop/{sku_url}">
 <script type="application/ld+json">{{
@@ -6593,6 +6596,14 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
 <script defer src="/mu-funnel.js"></script>
 <div id="lb"><span class="lb-x">×</span><img id="lb-img" alt=""><div class="lb-hint">クリック / Esc で閉じる</div></div>
 <script>
+// 購入意図(checkout_attempt)はここで発火 — サーバの checkout_start と同一母集団。
+// 差分が大きい週はチェックアウト導線の故障シグナル(/api/kpi definitions 参照)。
+(function(){{
+  function arm(id){{var b=document.getElementById(id);if(!b)return;b.addEventListener('click',function(){{
+    try{{window.MU_FUNNEL&&window.MU_FUNNEL.send('checkout_attempt',{{sku:'{sku}'}})}}catch(e){{}}
+  }});}}
+  if(document.readyState==='loading'){{document.addEventListener('DOMContentLoaded',function(){{arm('buybtn')}});}}else{{arm('buybtn');}}
+}})();
 (function(){{
   var lb=document.getElementById('lb'),li=document.getElementById('lb-img');
   if(!lb||!li)return;
@@ -6613,9 +6624,10 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
         maker_line = maker_line,
         share = share_block,
         // OG: title=作品名(+作者) / description=行動喚起 — TL上で同文反復を避ける。
+        // og:title は作品名+作者を先頭60字に収める(プラットフォーム再カット対策)。
         og_title = html_attr(&match &maker_info {
-            Some((who, _)) => format!("{} by {} — MU", trim_chars(&display_name, 40), who),
-            None => format!("{} — MU", short_title),
+            Some((who, _)) => format!("{} by {} — MU", name_only, who),
+            None => format!("{} — MU", name_only),
         }),
         og_desc = html_attr(&format!(
             "{} | ことば1行から30秒、あなたのデザインも棚に並ぶ → wearmu.com/start?ref=og",
