@@ -1518,6 +1518,22 @@ pub async fn generate_one(
         }
     });
 
+    // (e) MUスコア — 公開即採点 (デザイン画像 (a) で判定)。/shop デフォルト
+    // ソートとカードバッジが読む meta_json.score を書く。
+    let db_e = db.clone();
+    let sku_e = sku.clone();
+    let url_e = url.clone();
+    let desc_e = format!("{} — {}", theme.display, theme.hook);
+    tokio::spawn(async move {
+        match crate::gemini::call_gemini_judge(&url_e, &desc_e, &desc_e).await {
+            Ok(score) => {
+                tracing::info!("[catalog/score] gen {} = {}", sku_e, score.total);
+                store_score(&db_e, &sku_e, &score);
+            }
+            Err(e) => tracing::warn!("[catalog/score] gen {} judge failed: {}", sku_e, e),
+        }
+    });
+
     Ok(sku)
 }
 
@@ -2438,6 +2454,146 @@ pub async fn admin_mockup_backfill(
         "queued": queued.len(),
         "skus": queued,
         "note": "mockups generate async (Printful); re-check the shop in ~1-2 min",
+    }))
+    .into_response()
+}
+
+#[derive(Deserialize)]
+pub struct ScoreBackfillQuery {
+    pub token: String,
+    pub brand: Option<String>,
+    pub limit: Option<u32>,
+    /// 1 (default) = skip SKUs that already carry meta_json.score.total.
+    pub only_missing: Option<u8>,
+}
+
+/// Write a judge result into `meta_json.score` (read-modify-write so other
+/// meta keys — audio_url / capacity / featured — survive). Shared by the
+/// score backfill and the publish-time hooks. The DB lock is held only for
+/// this fast read+write, never across a Gemini await.
+pub(crate) fn store_score(db: &Db, sku: &str, score: &crate::gemini::DesignScore) {
+    let conn = db.lock().unwrap();
+    let cur: String = conn
+        .query_row(
+            "SELECT COALESCE(meta_json,'') FROM catalog_products WHERE sku=?1",
+            [sku],
+            |r| r.get(0),
+        )
+        .unwrap_or_default();
+    let mut meta: serde_json::Value =
+        serde_json::from_str(&cur).unwrap_or_else(|_| serde_json::json!({}));
+    if !meta.is_object() {
+        meta = serde_json::json!({});
+    }
+    let axes: serde_json::Map<String, serde_json::Value> = score
+        .axes
+        .iter()
+        .map(|(k, v)| (k.clone(), serde_json::json!(v)))
+        .collect();
+    meta["score"] = serde_json::json!({
+        "total": score.total,
+        "axes": axes,
+        "verdict": score.verdict,
+    });
+    let _ = conn.execute(
+        "UPDATE catalog_products SET meta_json=?1 WHERE sku=?2",
+        rusqlite::params![meta.to_string(), sku],
+    );
+}
+
+/// GET /admin/catalog/score_backfill?token=&brand=&limit=&only_missing=1 —
+/// MUスコア: judge live products with Gemini (5 axes, gemini.rs
+/// call_gemini_judge) and store the result in meta_json.score, which the
+/// /shop default sort and the card badge read. Unlike mockup_backfill this
+/// runs ONE serial background loop (4.5s between calls) so Gemini
+/// rate limits aren't tripped; per-SKU results land in the logs.
+/// brand='universal' is always skipped — those SKUs carry the hand-curated
+/// universality score (time/culture/visual/body/make) that /universal
+/// renders, and the MUスコア axes would clobber it.
+pub async fn admin_score_backfill(
+    State(db): State<Db>,
+    Query(q): Query<ScoreBackfillQuery>,
+) -> Response {
+    let expected = env::var("ADMIN_TOKEN").unwrap_or_default();
+    if expected.is_empty() || q.token != expected {
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    }
+    let limit = q.limit.unwrap_or(20).clamp(1, 500) as i64;
+    let only_missing = q.only_missing.unwrap_or(1) != 0;
+    let rows: Vec<(String, String, String, String)> = {
+        let conn = db.lock().unwrap();
+        let mut sql = format!(
+            "SELECT sku, COALESCE(NULLIF(label,''), description_ja, sku),
+                    COALESCE(description_ja,''),
+                    COALESCE({ext}, NULLIF(mockup_main_file,''), NULLIF(design_file,''), '')
+             FROM catalog_products
+             WHERE status='live' AND is_active=1 AND brand!='universal'
+               AND COALESCE({ext}, NULLIF(mockup_main_file,''), NULLIF(design_file,''), '') != ''",
+            ext = MOCKUP_EXT_LIVE
+        );
+        if only_missing {
+            sql.push_str(" AND json_extract(COALESCE(meta_json,'{}'),'$.score.total') IS NULL");
+        }
+        let mut binds: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if let Some(b) = q.brand.as_deref() {
+            sql.push_str(" AND brand=?");
+            binds.push(Box::new(b.to_string()));
+        }
+        sql.push_str(" ORDER BY sku LIMIT ?");
+        binds.push(Box::new(limit));
+        conn.prepare(&sql)
+            .ok()
+            .and_then(|mut s| {
+                s.query_map(
+                    rusqlite::params_from_iter(binds.iter().map(|b| b.as_ref())),
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                )
+                .ok()
+                .map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>())
+            })
+            .unwrap_or_default()
+    };
+    let queued: Vec<String> = rows.iter().map(|(s, ..)| s.clone()).collect();
+    let db_c = db.clone();
+    tokio::spawn(async move {
+        let mut done = 0usize;
+        let total = rows.len();
+        for (sku, title, desc, img) in rows {
+            // Relative /static paths → absolute prod URL so Gemini's
+            // server-side image fetch resolves (same prefix as render_card).
+            let img_url = if img.starts_with("http") {
+                img
+            } else {
+                format!("https://merch.wearmu.com{}", img)
+            };
+            let mut res = crate::gemini::call_gemini_judge(&img_url, &title, &desc).await;
+            if let Err(e) = &res {
+                if e.contains("429") || e.to_ascii_lowercase().contains("exhausted") {
+                    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                    res = crate::gemini::call_gemini_judge(&img_url, &title, &desc).await;
+                }
+            }
+            match res {
+                Ok(score) => {
+                    store_score(&db_c, &sku, &score);
+                    done += 1;
+                    tracing::info!(
+                        "[catalog/score] {}/{} {} = {} ({})",
+                        done, total, sku, score.total, score.verdict
+                    );
+                }
+                Err(e) => tracing::warn!("[catalog/score] {} failed: {}", sku, e),
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(4500)).await;
+        }
+        tracing::info!("[catalog/score] backfill finished: {}/{} scored", done, total);
+    });
+    axum::Json(serde_json::json!({
+        "ok": true,
+        "brand": q.brand,
+        "queued": queued.len(),
+        "skus": queued,
+        "note": "scores run serially in background (~4.5s/SKU); watch logs [catalog/score]",
     }))
     .into_response()
 }
@@ -4212,6 +4368,21 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     // Cost-minimal: only the Printful on-body mockup (no extra Gemini images).
     let (pp, pv, url_c, sku_c, db_c) = (spec.printful_product_id, spec.printful_variant_id, url.clone(), sku.clone(), db.clone());
     tokio::spawn(async move { let _ = generate_onbody_mockup(db_c, sku_c, pp, pv, url_c).await; });
+    // MUスコア: 公開即採点 (デザイン画像で判定 — mockupはまだ無い)。
+    // 失敗してもPDP/ソートはCOALESCE 40で動くのでログだけ残して続行。
+    if !flagged {
+        let (db_s, sku_s, url_s, title_s, hook_s) =
+            (db.clone(), sku.clone(), url.clone(), display.clone(), hook.clone());
+        tokio::spawn(async move {
+            match crate::gemini::call_gemini_judge(&url_s, &title_s, &hook_s).await {
+                Ok(score) => {
+                    tracing::info!("[catalog/score] make {} = {}", sku_s, score.total);
+                    store_score(&db_s, &sku_s, &score);
+                }
+                Err(e) => tracing::warn!("[catalog/score] make {} judge failed: {}", sku_s, e),
+            }
+        });
+    }
 
     let mut note = if flagged {
         let r = if flag_reason.is_empty() { "内容".to_string() } else { flag_reason.clone() };
@@ -5052,7 +5223,7 @@ pub async fn shop_index(
     // Sort: whitelist only — anything else falls back to the default
     // (mockup-first → sold count) so the param can never reach SQL raw.
     let sort = match q.sort.as_deref() {
-        Some(s @ ("new" | "price_asc" | "price_desc")) => s,
+        Some(s @ ("new" | "price_asc" | "price_desc" | "score" | "popular")) => s,
         _ => "",
     };
     // kind / q 絞り込み: kind はホワイトリスト、q は bind + LIKE エスケープ。
@@ -5164,9 +5335,10 @@ pub async fn shop_index(
         },
     );
 
-    // Sort chips: 人気順(default) / 新着 / 価格↑ / 価格↓. brand/kind/q persist, page resets.
+    // Sort chips: MUスコア順(default) / 売れてる順 / 新着 / 価格↑ / 価格↓.
+    // brand/kind/q persist, page resets.
     let sort_chips = {
-        [("", "人気順"), ("new", "新着"), ("price_asc", "価格が安い順"), ("price_desc", "価格が高い順")]
+        [("", "MUスコア順"), ("popular", "売れてる順"), ("new", "新着"), ("price_asc", "価格が安い順"), ("price_desc", "価格が高い順")]
             .iter()
             .map(|(key, label)| {
                 let on = if sort == *key { " on" } else { "" };
@@ -5282,12 +5454,28 @@ pub async fn shop_index(
         r#"<span class="pg-link off">次 →</span>"#.to_string()
     };
     let pagination_html = if total_pages > 1 {
+        // 自動「もっと見る」: 次ページが視界に近づいたら fetch して .grid に
+        // append — 全商品が 1 ページで辿れる。ページネーションリンクは
+        // no-JS / SEO フォールバックとして残す。data-funnel は document
+        // delegation (mu-funnel.js) なので追加カードもそのまま計測される。
+        let auto_more = if (page as i64) < total_pages as i64 {
+            format!(
+                r##"<div id="muMore" data-next="{next}" data-total="{total}" data-bq="{bq}" style="text-align:center;margin:18px 0"><button type="button" style="background:#121212;color:#f5f5f0;border:1px solid rgba(255,255,255,.18);border-radius:999px;padding:10px 26px;font-size:13px;letter-spacing:.06em;cursor:pointer">もっと見る</button></div>{js}"##,
+                next = page + 1,
+                total = total_pages,
+                bq = html_attr(&bq),
+                js = SHOP_AUTOLOAD_JS,
+            )
+        } else {
+            String::new()
+        };
         format!(
-            r#"<div class="pagination">{prev} <span class="pg-count">page {page} / {total} (全 {tot} 件中 {start}-{end})</span> {next}</div>"#,
+            r#"<div class="pagination">{prev} <span class="pg-count">page {page} / {total} (全 {tot} 件中 {start}-{end})</span> {next}</div>{auto_more}"#,
             prev = prev_link, next = next_link,
             page = page, total = total_pages, tot = total_active,
             start = offset + 1,
             end = (offset + page_count as i64).min(total_active),
+            auto_more = auto_more,
         )
     } else {
         String::new()
@@ -5461,6 +5649,34 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
     );
     Html(body)
 }
+
+/// /shop 自動「もっと見る」スクリプト (const なので format! のブレース
+/// エスケープ不要)。#muMore が視界 600px 手前に入るかボタン押下で次ページを
+/// fetch → .grid に append。data-funnel-pos は通し連番に振り直す。
+const SHOP_AUTOLOAD_JS: &str = r#"<script>(function(){
+var m=document.getElementById('muMore');if(!m)return;
+var grid=document.querySelector('.grid');if(!grid)return;
+var next=parseInt(m.dataset.next,10),total=parseInt(m.dataset.total,10),bq=m.dataset.bq||'',busy=false,io=null;
+var btn=m.querySelector('button');
+function done(){if(io){io.disconnect();}m.remove();}
+function load(){
+  if(busy)return;if(next>total){done();return;}
+  busy=true;btn.textContent='読み込み中…';
+  fetch('/shop?page='+next+bq).then(function(r){return r.text();}).then(function(t){
+    var doc=new DOMParser().parseFromString(t,'text/html');
+    var cards=doc.querySelectorAll('.grid > a.card');
+    var base=grid.children.length;
+    cards.forEach(function(c,i){c.setAttribute('data-funnel-pos',String(base+i));grid.appendChild(document.importNode(c,true));});
+    next++;busy=false;btn.textContent='もっと見る';
+    if(next>total||cards.length===0){done();}
+  }).catch(function(){busy=false;btn.textContent='もっと見る';});
+}
+btn.addEventListener('click',load);
+if('IntersectionObserver' in window){
+  io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting)load();});},{rootMargin:'600px'});
+  io.observe(m);
+}
+})();</script>"#;
 
 /// Minimum real sold count before a "X 着 販売" social-proof badge is shown.
 /// Gated so a low-volume SKU never surfaces an embarrassing 0/1; the badge
@@ -6326,10 +6542,21 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
         let s = &score_v["score"];
         if let Some(total) = s["total"].as_i64() {
             let verdict = s["verdict"].as_str().unwrap_or("");
-            let axes = [
-                ("時間普遍性", "time"), ("文化普遍性", "culture"),
-                ("視覚普遍性", "visual"), ("身体普遍性", "body"), ("製造普遍性", "make"),
-            ];
+            // 2系統のスコアを同じ棒グラフで出し分ける:
+            //   - MUスコア (score_backfill / 公開時フック): axes に desire がある
+            //   - 普遍性スコア (/universal の人力キュレーション): time/culture/…
+            let is_mu = s["axes"]["desire"].is_i64() || s["axes"]["desire"].is_u64();
+            let (heading, axes): (&str, [(&str, &str); 5]) = if is_mu {
+                ("MUスコア", [
+                    ("視覚", "visual"), ("普遍性", "universality"),
+                    ("プリント適性", "craft"), ("コンセプト", "concept"), ("所有欲", "desire"),
+                ])
+            } else {
+                ("普遍性アセスメント", [
+                    ("時間普遍性", "time"), ("文化普遍性", "culture"),
+                    ("視覚普遍性", "visual"), ("身体普遍性", "body"), ("製造普遍性", "make"),
+                ])
+            };
             let mut bars = String::new();
             for (ja, key) in axes {
                 if let Some(v) = s["axes"][key].as_i64() {
@@ -6350,8 +6577,8 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
                 format!("<p style=\"font-size:12.5px;line-height:1.8;opacity:.7;margin:12px 0 0\">{}</p>", html_text(verdict))
             };
             format!(
-                "<div class=\"spec\"><h3>普遍性アセスメント <span style=\"float:right;color:#e6c449;font-weight:800\">{total}<span style=\"font-size:11px;opacity:.6\">/100</span></span></h3>{bars}{verdict_p}</div>",
-                total = total, bars = bars, verdict_p = verdict_p
+                "<div class=\"spec\"><h3>{heading} <span style=\"float:right;color:#e6c449;font-weight:800\">{total}<span style=\"font-size:11px;opacity:.6\">/100</span></span></h3>{bars}{verdict_p}</div>",
+                heading = heading, total = total, bars = bars, verdict_p = verdict_p
             )
         } else {
             String::new()
@@ -8836,6 +9063,9 @@ struct ProductRow {
     /// 作者チップ用: maker_email 帰属があれば公開名(未設定は匿名表記)。
     /// 「普通の人が作って売れている」社会的証明を一覧段階で見せる。
     maker_name: Option<String>,
+    /// MUスコア基礎点 (meta_json.score.total, 0–100)。カードの「MU n」バッジ。
+    /// 未採点は None → バッジ非表示。
+    score: Option<i64>,
 }
 
 /// SQL fragment: mockup_url_external, but with Printful's ephemeral presigned
@@ -8845,6 +9075,22 @@ struct ProductRow {
 const MOCKUP_EXT_LIVE: &str = "CASE WHEN mockup_url_external LIKE 'https://printful-upload.s3%' \
        OR mockup_url_external LIKE '%/tmp/%' \
      THEN NULL ELSE mockup_url_external END";
+
+/// SQL fragment: MUスコア ranking expression for the /shop default sort.
+///   AIデザイン基礎点 (meta_json.score.total / 未採点は40) × 0.7
+/// + 売上ボーナス max20 — 8·ln(1+sold) のCASEラダー近似:
+///   1着=5.5 / 2着=8.8 / 3着=11.1 / 5着=14.3 / 7着=16.6 / 10着=19.2 / 12着+=20
+///   (rusqlite bundled の SQLite は SQLITE_ENABLE_MATH_FUNCTIONS 無しで
+///   LN が存在しない — tests_critical::mu_score_sql_* が実証・退行ガード。
+///   コア関数 [json_extract / julianday / 多引数MAX / CASE] のみ使う)
+/// + 鮮度ボーナス max10 — 公開14日以内は満点、60日で0へ線形減衰
+pub(crate) const MU_SCORE_SQL: &str = "COALESCE(json_extract(meta_json,'$.score.total'),40)*0.7 \
+     + (SELECT CASE WHEN c>=12 THEN 20.0 WHEN c>=10 THEN 19.2 WHEN c>=7 THEN 16.6 \
+          WHEN c>=5 THEN 14.3 WHEN c>=3 THEN 11.1 WHEN c>=2 THEN 8.8 \
+          WHEN c>=1 THEN 5.5 ELSE 0.0 END \
+        FROM (SELECT COUNT(*) AS c FROM catalog_orders o3 \
+              WHERE o3.sku=catalog_products.sku AND o3.status='submitted')) \
+     + MAX(0.0, 10.0*(1.0 - MAX(0.0,(julianday('now')-julianday(created_at))-14.0)/46.0))";
 
 /// GET /feed/google.tsv — Google Merchant Center 商品フィード（無料リスティング用）。
 /// live + 実画像 (MOCKUP_EXT_LIVE) + 価格>0 の物理商品のみ。digital kind
@@ -8916,13 +9162,25 @@ fn list_products_paged(
         "new" => "created_at DESC, sku".to_string(),
         "price_asc" => "retail_price_jpy ASC, sku".to_string(),
         "price_desc" => "retail_price_jpy DESC, sku".to_string(),
-        // Default (人気順): 看板 (meta_json.featured=true, 人力キュレーション) を
-        // 最前列に固定し、ステッカーをアパレルの後ろへ降格 — ¥480 ステッカーが
-        // 「店の顔」になる問題への直接対応。価格/新着ソートには適用しない。
-        _ => r#"(COALESCE(meta_json,'') LIKE '%"featured":true%') DESC,
+        // 旧デフォルト(人気順) — 生売上数。?sort=popular で温存。
+        "popular" => r#"(COALESCE(meta_json,'') LIKE '%"featured":true%') DESC,
                       (sku NOT LIKE '%STICKER%') DESC,
                       (SELECT COUNT(*) FROM catalog_orders o2 WHERE o2.sku=catalog_products.sku AND o2.status='submitted') DESC,
                       sort_order, sku"#.to_string(),
+        // Default (MUスコア順): 看板 (meta_json.featured=true, 人力キュレーション) を
+        // 最前列に固定し、ステッカーをアパレルの後ろへ降格したうえで、
+        // MUスコア = AIデザイン基礎点(meta_json.score.total, 未採点は40)×0.7
+        //          + 売上ボーナス max20 (対数ラダー — 1着≈5.5 / 10着≈19)
+        //          + 鮮度ボーナス max10 (14日以内満点→60日で0へ線形減衰)
+        // の降順。基礎点は score_backfill / 公開時フックが書く静的値、
+        // 売上・鮮度はクエリ時に計算するので常に最新。
+        _ => format!(
+            r#"(COALESCE(meta_json,'') LIKE '%"featured":true%') DESC,
+                      (sku NOT LIKE '%STICKER%') DESC,
+                      ({mu_score}) DESC,
+                      sort_order, sku"#,
+            mu_score = MU_SCORE_SQL,
+        ),
     };
     // brand + kind + q を shop_filter_sql で組み立て、bind 値の後ろに limit/offset を足す。
     let (where_sql, binds) = shop_filter_sql(brand, kind_sql, q_pat);
@@ -8947,15 +9205,22 @@ fn list_products_paged(
     };
     let mapper = |r: &rusqlite::Row| {
         let meta: Option<String> = r.get(6)?;
-        let audio = meta
+        let meta_v = meta
             .as_deref()
-            .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+            .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok());
+        let audio = meta_v
+            .as_ref()
             .and_then(|v| v.get("audio_url").and_then(|a| a.as_str()).map(|s| s.to_string()));
+        // MUスコア基礎点 — score_backfill / 公開時フックが書く。バッジ表示用。
+        let score = meta_v
+            .as_ref()
+            .and_then(|v| v.get("score").and_then(|s| s.get("total")).and_then(|t| t.as_i64()));
         Ok(ProductRow {
             sku: r.get(0)?, brand: r.get(1)?, desc: r.get(2)?,
             price: r.get(3)?, img: r.get(4)?, sold: r.get(5)?,
             audio,
             maker_name: r.get(7)?,
+            score,
         })
     };
     // params = [binds...] + limit + offset. limit/offset は i64 なので別 vec で連結。
@@ -9026,6 +9291,7 @@ fn list_products(
             sold: 0, // unused path (dead_code); badge only flows via list_products_paged
             audio: None,
             maker_name: None,
+            score: None,
         })
     };
     let rows: Vec<ProductRow> = if has_brand {
@@ -9070,6 +9336,15 @@ fn render_card(p: &ProductRow, pos: usize) -> String {
     } else {
         String::new()
     };
+    // MUスコアバッジ (右上・金): AI5軸の基礎点を正直に見せる — /universal や
+    // /transparency と同じ「数字は全部見せる」路線。未採点 (None) は非表示。
+    let score_badge = match p.score {
+        Some(n) => format!(
+            r##"<span class="muscore" style="position:absolute;top:8px;right:8px;background:rgba(0,0,0,0.72);color:#e6c449;font-size:10px;font-weight:600;letter-spacing:.06em;padding:3px 7px;border-radius:999px;backdrop-filter:blur(4px)" title="MUスコア — AI5軸採点 (視覚/普遍性/プリント適性/コンセプト/所有欲)">MU {n}</span>"##,
+            n = n
+        ),
+        None => String::new(),
+    };
     // 一覧でも試聴: desc に oto.html?s=KEY があればミニ▶(涼介FB: 聴き比べ→まとめ買い)
     let listen_mini = if let Some(pos) = p.desc.find("oto.html?s=") {
         let key: String = p.desc[pos + "oto.html?s=".len()..].chars()
@@ -9100,11 +9375,12 @@ fn render_card(p: &ProductRow, pos: usize) -> String {
     // data-funnel: shop_card + grid position (0-based, page-local) so the
     // analytics funnel can split /shop→PDP CTR by card rank (above/below fold).
     format!(
-        r##"<a class="card" href="/shop/{sku_enc}" data-funnel="cta_click" data-funnel-cta="shop_card" data-funnel-pos="{pos}"><span class="img" style="position:relative;display:block">{sold_badge}{listen_mini}{listen_song}<img src="{img}" alt="{img_alt}" loading="lazy" onerror="this.onerror=null;this.src='/static/designs/marker_zero.png';this.style.objectFit='contain';this.style.background='#0a0a0a';this.style.padding='28px'"></span><span class="body"><span class="brand">{brand}</span><span class="name">{name}</span><span class="price">¥{price}</span>{maker_chip}</span></a>"##,
+        r##"<a class="card" href="/shop/{sku_enc}" data-funnel="cta_click" data-funnel-cta="shop_card" data-funnel-pos="{pos}"><span class="img" style="position:relative;display:block">{sold_badge}{score_badge}{listen_mini}{listen_song}<img src="{img}" alt="{img_alt}" loading="lazy" onerror="this.onerror=null;this.src='/static/designs/marker_zero.png';this.style.objectFit='contain';this.style.background='#0a0a0a';this.style.padding='28px'"></span><span class="body"><span class="brand">{brand}</span><span class="name">{name}</span><span class="price">¥{price}</span>{maker_chip}</span></a>"##,
         pos = pos,
         maker_chip = maker_chip,
         sku_enc = urlencoding::encode(&p.sku),
         sold_badge = sold_badge,
+        score_badge = score_badge,
         listen_mini = listen_mini,
         listen_song = listen_song,
         img = html_attr(&img),

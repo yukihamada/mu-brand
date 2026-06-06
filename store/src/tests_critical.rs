@@ -145,3 +145,72 @@ fn verify_query_resolves_sold_out_inactive_unit() {
         "sanity: an active=1 filter hides the shipped unit — verify_page must not use it"
     );
 }
+
+// ── (e) MUスコア sort expression: math funcs available + ranking correct ─────
+//
+// The /shop default sort interpolates `catalog::MU_SCORE_SQL`. The first
+// version used LN() and this test caught that the bundled SQLite ships
+// WITHOUT SQLITE_ENABLE_MATH_FUNCTIONS ("no such function: LN") — the
+// expression now uses only core functions (json_extract / julianday /
+// multi-arg MAX / CASE). This test keeps failing loudly if the expression
+// ever stops preparing, instead of /shop silently returning an empty grid
+// (list_products_paged swallows prepare errors).
+#[test]
+fn mu_score_sql_ranks_design_sales_freshness() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE catalog_products (
+            sku        TEXT PRIMARY KEY,
+            meta_json  TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            sort_order INTEGER NOT NULL DEFAULT 0
+         );
+         CREATE TABLE catalog_orders (
+            id     INTEGER PRIMARY KEY AUTOINCREMENT,
+            sku    TEXT NOT NULL,
+            status TEXT NOT NULL
+         );",
+    )
+    .unwrap();
+
+    // A: judged 90, no sales, stale (>60d)        → 90*0.7             = 63.0
+    // B: unjudged (base 40), 10 sales, stale      → 28 + 19.2 (ladder) = 47.2
+    // C: unjudged, no sales, fresh (<14d)         → 28 + 10            = 38.0
+    conn.execute_batch(
+        "INSERT INTO catalog_products (sku, meta_json, created_at) VALUES
+            ('A', '{\"score\":{\"total\":90}}', datetime('now','-100 days')),
+            ('B', NULL,                          datetime('now','-100 days')),
+            ('C', NULL,                          datetime('now'));",
+    )
+    .unwrap();
+    for _ in 0..10 {
+        conn.execute(
+            "INSERT INTO catalog_orders (sku, status) VALUES ('B','submitted')",
+            [],
+        )
+        .unwrap();
+    }
+    // Unpaid orders must not count.
+    conn.execute(
+        "INSERT INTO catalog_orders (sku, status) VALUES ('C','pending')",
+        [],
+    )
+    .unwrap();
+
+    let sql = format!(
+        "SELECT sku FROM catalog_products ORDER BY ({}) DESC",
+        crate::catalog::MU_SCORE_SQL
+    );
+    let order: Vec<String> = conn
+        .prepare(&sql)
+        .expect("MU_SCORE_SQL must prepare — non-core SQL function crept in?")
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect();
+    assert_eq!(
+        order,
+        vec!["A", "B", "C"],
+        "design 90 > unjudged+10 sales > unjudged+fresh"
+    );
+}
