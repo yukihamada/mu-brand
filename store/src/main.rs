@@ -3575,6 +3575,14 @@ fn maybe_disable_konbini(stripe_error_body: &str) -> bool {
 mod stripe_cvr_tests {
     use super::*;
 
+    // Tests in this module mutate process-global env vars
+    // (STRIPE_KONBINI_ENABLED etc.). cargo runs tests in parallel threads, so
+    // without serialization two tests race on the same var and fail flakily
+    // (seen in CI 2026-06-07: default_includes_konbini_payment_method vs
+    // konbini_flag_can_be_disabled — different one each run). Every test that
+    // touches env MUST take this lock first.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn base() -> StripeCheckoutFields<'static> {
         StripeCheckoutFields {
             mode: "payment",
@@ -3613,6 +3621,7 @@ mod stripe_cvr_tests {
 
     #[test]
     fn default_includes_jp_locale() {
+        let _env_guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Default flags ON → locale=ja must be present.
         std::env::remove_var("STRIPE_LOCALE_JA");
         let form = stripe_checkout_form_jp(base());
@@ -3622,6 +3631,7 @@ mod stripe_cvr_tests {
 
     #[test]
     fn default_includes_konbini_payment_method() {
+        let _env_guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("STRIPE_KONBINI_ENABLED");
         let form = stripe_checkout_form_jp(base());
         assert!(has(&form, "payment_method_types[0]", "card"));
@@ -3632,6 +3642,7 @@ mod stripe_cvr_tests {
 
     #[test]
     fn default_includes_phone_collection_and_submit_pay() {
+        let _env_guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("STRIPE_PHONE_COLLECTION");
         std::env::remove_var("STRIPE_SUBMIT_TYPE_PAY");
         let form = stripe_checkout_form_jp(base());
@@ -3642,6 +3653,7 @@ mod stripe_cvr_tests {
 
     #[test]
     fn shipping_collection_optional() {
+        let _env_guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut f = base();
         f.collect_shipping = false;
         let form = stripe_checkout_form_jp(f);
@@ -3654,6 +3666,7 @@ mod stripe_cvr_tests {
 
     #[test]
     fn konbini_flag_can_be_disabled() {
+        let _env_guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("STRIPE_KONBINI_ENABLED", "0");
         let form = stripe_checkout_form_jp(base());
         assert!(!has(&form, "payment_method_types[1]", "konbini"),
@@ -3663,6 +3676,7 @@ mod stripe_cvr_tests {
 
     #[test]
     fn metadata_preserved() {
+        let _env_guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let form = stripe_checkout_form_jp(base());
         assert!(has(&form, "metadata[product_id]", "42"));
         assert!(has(&form, "metadata[size]", "M"));
