@@ -6554,7 +6554,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
             None => format!("{} — MU", short_title),
         }),
         og_desc = html_attr(&format!(
-            "{} | ことば1行から30秒、あなたのデザインも棚に並ぶ → wearmu.com/start",
+            "{} | ことば1行から30秒、あなたのデザインも棚に並ぶ → wearmu.com/start?ref=og",
             trim_chars(&meta_desc_short, 80))),
         assessment = assessment_html,
         edition_doc = edition_doc_html,
