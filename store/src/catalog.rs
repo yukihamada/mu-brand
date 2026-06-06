@@ -7088,6 +7088,12 @@ pub async fn shop_checkout(
         Ok(r) if r.status().is_success() => {
             let j: serde_json::Value = r.json().await.unwrap_or_default();
             let url = j["url"].as_str().unwrap_or("/").to_string();
+            // checkout_start はサーバ側の真実源(/api/v1/event のALLOWED外)。
+            // legacy /buy 経路(main.rs)では発火していたが、クリエイターループの
+            // 本経路(ここ)が未配線で attempt>>start≒0 の偽故障シグナルを
+            // 出していた(2026-06-07 R6採点で発覚・orders=9 vs start=0)。
+            crate::funnel_track_server(&db, "checkout_start", "/api/shop/checkout", None,
+                serde_json::json!({"sku": &sku})).await;
             Redirect::to(&url).into_response()
         }
         Ok(r) => {
