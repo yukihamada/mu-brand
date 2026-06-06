@@ -25362,6 +25362,10 @@ async fn collab_auth_verify(
         Ok(t) => t,
         Err((status, msg)) => return (status, msg).into_response(),
     };
+    // 登録ファネルの完了イベントはサーバ側で発火する。クライアント発火は
+    // /api/v1/event の ALLOWED 外(スプーフ防止)なので、ここが唯一の真実源。
+    funnel_track_server(&db, "you_register", "/start", None,
+        serde_json::json!({"method": "email_code"})).await;
     let mut resp = Json(serde_json::json!({"ok": true, "session": token})).into_response();
     resp.headers_mut().insert(
         header::SET_COOKIE,
@@ -25464,6 +25468,8 @@ a{{color:#e6c449}}</style></head><body><div class="b">
             params![now_s, token, email],
         );
     }
+    funnel_track_server(&db, "you_register", "/start", None,
+        serde_json::json!({"method": "magic_link"})).await;
     let next = q.next.as_deref().filter(|s| s.starts_with('/')).unwrap_or("/api-keys");
     let mut resp = axum::response::Redirect::to(next).into_response();
     resp.headers_mut().insert(
@@ -27514,7 +27520,7 @@ async fn affiliate_page(
     if !email.contains('@') || email.len() > 200 {
         return page(
             r#"<h1 style="font-size:22px;font-weight:500;margin:0 0 8px">紹介リンクを発行</h1>
-<p style="font-size:13px;opacity:.75;line-height:1.8;margin:0 0 18px">メールを入れると、あなた専用の紹介リンクが出ます。<br>そのリンク経由で30日以内に売れると、<b>売上の10%</b>が<b>MUクレジット</b>で還元されます。</p>
+<p style="font-size:13px;opacity:.75;line-height:1.8;margin:0 0 18px">メールを入れると、あなた専用の紹介リンクが出ます。<br>そのリンク経由で30日以内に売れると、<b>販売価格の10%</b>が<b>MUクレジット</b>で還元されます。</p>
 <form method="get" action="/affiliate" style="display:flex;gap:8px">
 <input name="email" type="email" required placeholder="you@example.com" style="flex:1;padding:12px 14px;border-radius:8px;border:1px solid #333;background:#111;color:#f5f5f0;font-size:14px">
 <button data-funnel="cta_click" data-funnel-cta="affiliate_issue" style="background:#e6c449;color:#0a0a0a;border:0;border-radius:8px;font-weight:700;padding:0 20px;font-size:14px;cursor:pointer">発行</button>
@@ -27536,7 +27542,7 @@ async fn affiliate_page(
         r#"<h1 style="font-size:22px;font-weight:500;margin:0 0 4px">あなたの紹介リンク</h1>
 <p style="font-size:13px;opacity:.7;margin:0 0 16px">{email}</p>
 <div style="background:#111;border:1px solid #333;border-radius:8px;padding:14px;font-family:monospace;font-size:15px;color:#e6c449;word-break:break-all">{link}</div>
-<p style="font-size:12px;opacity:.65;line-height:1.8;margin:14px 0 0">このリンクで来た人が30日以内に何か買うと、<b>売上の10%</b>があなたのMUクレジットに入ります。<br>
+<p style="font-size:12px;opacity:.65;line-height:1.8;margin:14px 0 0">このリンクで来た人が30日以内に何か買うと、<b>販売価格の10%</b>があなたのMUクレジットに入ります。<br>
 商品ページに <code style="color:#e6c449">?ref={code}</code> を付けてもOK。</p>
 <p style="font-size:13px;margin:20px 0 0"><a href="/affiliate/{code}" style="color:#e6c449">→ 実績ダッシュボードを見る</a></p>"#,
         email = esc(&email), link = esc(&link), code = esc(&code),
@@ -77562,6 +77568,7 @@ async fn api_funnel_event(
     //   - checkout_start   → after Stripe session created  (main.rs:3063)
     //   - checkout_paid    → on Stripe webhook fulfilment   (main.rs:14439)
     //   - email_opened/clicked → email tracking pixel       (main.rs:13863)
+    //   - you_register     → collab verify/magic 成功時      (登録完了の真実源)
     //
     // H005 fix (2026-05-20): `checkout_paid` and `checkout_start` were
     // previously in this allow-list, so any anonymous caller could inject

@@ -38,7 +38,7 @@ fn fmt_jpy(n: i64) -> String {
 // ════════════════════════════════════════════════════════════════════
 
 const START_HTML: &str = r##"<!doctype html><html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>MU STUDIO — 30秒で、自分のブランドを持つ</title>
 <meta name="description" content="ことば1行で商品が生まれ、売れたら10%があなたに。メール1本でクリエイター登録。">
 <meta property="og:title" content="MU STUDIO — 30秒で、自分のブランドを持つ">
@@ -71,10 +71,11 @@ code.big{font-family:'SF Mono',monospace;letter-spacing:.3em}
 <div class="kicker">STUDIO — designed by you</div>
 <div id="step1">
 <h1 id="h1main">1行で、自分のブランドが生まれる。</h1>
-<p class="lead" id="leadmain">ことば1行で商品が生まれて、世界中に届く。<br><b style="color:#ffd700">売れたら10%があなたに</b>(<a href="/credit">MUクレジットとは — 1cr=¥1・¥3,000以上で振込可</a>)。在庫ゼロ・費用ゼロ・受注生産。</p>
-<a href="/make?ref=start" id="tryMake" data-funnel="cta_click" data-funnel-cta="start_try_make" style="display:block;text-align:center;background:none;border:1px solid #ffd700;color:#ffd700;border-radius:8px;font-weight:800;padding:13px;font-size:14.5px;text-decoration:none;margin-bottom:10px">① まず作ってみる(登録不要・30秒) → /make</a>
+<p class="lead" id="leadmain">ことば1行で商品が生まれて、世界中に届く。<br><b style="color:#ffd700">売れたら販売価格の10%があなたに</b>(<a href="/credit">MUクレジットとは — 1cr=¥1・¥3,000以上で振込可</a>)。在庫ゼロ・費用ゼロ・受注生産。</p>
+<a href="/make?ref=start" id="tryMake" data-funnel="cta_click" data-funnel-cta="start_try_make" style="display:block;text-align:center;background:#ffd700;color:#0a0a0a;border-radius:8px;font-weight:800;padding:14px;font-size:15px;text-decoration:none;margin-bottom:10px">① まず作ってみる(登録不要・30秒) → /make</a>
+<div style="font-size:11.5px;opacity:.55;text-align:center;margin-bottom:14px">↓ もう作った人・ログインしたい人はこちら</div>
 <input id="email" type="email" placeholder="you@example.com" autocomplete="email" autofocus value="__PREFILL__">
-<button id="send" data-funnel="cta_click" data-funnel-cta="start_send_code">② メールで名義をつくる(無料・ログイン兼用・登録後すぐ1行で作れます)</button>
+<button id="send" data-funnel="cta_click" data-funnel-cta="start_send_code" style="background:none;border:1px solid #ffd700;color:#ffd700">② メールで名義をつくる(無料・ログイン兼用・登録後すぐ1行で作れます)</button>
 <div class="msg" id="m1"></div>
 <div class="steps">
 <div><b>1</b>ことば1行で作る(登録不要)</div>
@@ -104,7 +105,7 @@ $('send').onclick=async function(){
     var r=await fetch('/api/collab/auth/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email:e,next:'/studio'})});
     var j=await r.json().catch(function(){return{}});
     if(r.ok){$('sentTo').textContent=e;$('step1').style.display='none';$('step2').style.display='';$('code').focus();window._em=e}
-    else msg($('m1'),j.error||'送信に失敗しました。少し待って再試行してください',true);
+    else if(r.status===429){msg($('m1'),'送信が混み合っています。60秒ほど待ってから再試行してください',true)}else{msg($('m1'),j.error||'送信に失敗しました。少し待って再試行してください',true)}
   }catch(_){msg($('m1'),'通信エラー',true)}
   this.disabled=false;
 };
@@ -115,7 +116,7 @@ $('verify').onclick=async function(){
   try{
     var r=await fetch('/api/collab/auth/verify',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email:window._em,code:c})});
     var j=await r.json().catch(function(){return{}});
-    if(r.ok&&j.ok){try{window.MU_FUNNEL&&window.MU_FUNNEL.send('you_register',{method:'email_code'})}catch(_){};msg($('m2'),'ログインしました。スタジオへ…');location.href='/studio'}
+    if(r.ok&&j.ok){msg($('m2'),'ログインしました。スタジオへ…');location.href='/studio'}
     else{msg($('m2'),j.error==='code expired'?'コードの期限が切れました。入れ直してください':'コードが一致しません',true);this.disabled=false}
   }catch(_){msg($('m2'),'通信エラー',true);this.disabled=false}
 };
@@ -163,7 +164,7 @@ pub async fn start_page(State(db): State<Db>, headers: HeaderMap) -> Response {
 // ════════════════════════════════════════════════════════════════════
 
 const STUDIO_HTML: &str = r##"<!doctype html><html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex">
 <title>MU STUDIO — __EMAIL__</title>
 <style>
@@ -238,6 +239,7 @@ __PRODUCTS__
 <div class="row2">
 <div class="panel">
 <div style="font-size:13px;font-weight:700">作者報酬 — あなたの還元率: <span style="color:#ffd700">販売価格の10%</span></div>
+<p style="margin:6px 0 0">今年の受取累計(作者+紹介): <b style="color:#ffd700">¥__YTD__</b> / 確定申告の一般的な目安ライン ¥200,000(<a href="/credit">詳細</a>)</p>
 <p>あなたの作品が売れるたび、<b>販売価格の10%</b>(¥4,900のTシャツなら¥490)がMUクレジットで自動的に入ります。全クリエイター一律10%・実績に応じてストア単位で引き上げあり(<a href="/credit">仕組みと根拠</a>)。クレジットは次の購入で使えます。</p>
 <button id="po" data-funnel="cta_click" data-funnel-cta="studio_payout">¥3,000以上で銀行振込を申請する</button> <span id="pom" style="font-size:12px;margin-left:6px"></span>
 <p>申請後、運営が確認して通常<b>5営業日</b>以内に振込(手数料は当社負担)。台帳に「振込申請」の行が立ち、進捗はメールでお知らせします。現金化分は課税所得になる場合があります(<a href="/credit">詳細</a>)。</p>
@@ -306,7 +308,7 @@ pub async fn studio_page(State(db): State<Db>, headers: HeaderMap) -> Response {
     let ref_code = crate::referral_code_for(&email_lc);
 
     struct Prod { sku: String, label: String, price: i64, status: String, img: String }
-    let (balance, display_name, products, ledger, n_sales, earned): (i64, String, Vec<Prod>, Vec<(i64, String, String)>, i64, i64) = {
+    let (balance, display_name, products, ledger, n_sales, earned, ytd): (i64, String, Vec<Prod>, Vec<(i64, String, String)>, i64, i64, i64) = {
         let conn = db.lock().unwrap();
         // 紹介コードを常備(自己申請不要に) — /affiliate と同じ upsert。
         let _ = conn.execute(
@@ -346,7 +348,13 @@ pub async fn studio_page(State(db): State<Db>, headers: HeaderMap) -> Response {
         let earned: i64 = conn.query_row(
             "SELECT COALESCE(SUM(delta_jpy),0) FROM mu_credit_ledger WHERE email=? AND reason LIKE 'creator:%'",
             rusqlite::params![email_lc], |r| r.get(0)).unwrap_or(0);
-        (balance, display_name, products, ledger, n_sales, earned)
+        // 今年の受取累計(作者+紹介の正の付与) — 確定申告の自己評価用。
+        let ytd: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(delta_jpy),0) FROM mu_credit_ledger
+             WHERE email=? AND delta_jpy>0 AND (reason LIKE 'creator:%' OR reason LIKE 'affiliate:%')
+             AND created_at >= CAST(strftime('%s', date('now','start of year')) AS INTEGER)",
+            rusqlite::params![email_lc], |r| r.get(0)).unwrap_or(0);
+        (balance, display_name, products, ledger, n_sales, earned, ytd)
     };
 
     let products_html = if products.is_empty() {
@@ -404,6 +412,7 @@ pub async fn studio_page(State(db): State<Db>, headers: HeaderMap) -> Response {
         .replace("__LEDGER__", &ledger_html)
         .replace("__REFLINK__", &crate::html_escape(&ref_link))
         .replace("__REFCODE__", &crate::html_escape(&ref_code))
+        .replace("__YTD__", &fmt_jpy(ytd))
         .replace("__DISPLAY_NAME__", &crate::html_escape(&display_name));
     Html(html).into_response()
 }
@@ -602,6 +611,8 @@ fn kpi_snapshot(db: &Db) -> serde_json::Value {
     // 確定済み直近週(進行中の1つ前)の北極星値 — 暫定値との誤読を防ぐ。
     let ns_last_confirmed: i64 = series.iter().rev().nth(1)
         .and_then(|w| w["first_sale_creators"].as_i64()).unwrap_or(0);
+    let ns_last_week_start: String = series.iter().rev().nth(1)
+        .and_then(|w| w["week_start"].as_str()).unwrap_or("").to_string();
     serde_json::json!({
         "north_star": {
             "name": "first_sale_creators_per_week",
@@ -609,6 +620,7 @@ fn kpi_snapshot(db: &Db) -> serde_json::Value {
             "this_week": ns_this_week,
             "this_week_is_partial": true,
             "last_confirmed_week": ns_last_confirmed,
+            "last_confirmed_week_start": ns_last_week_start,
             "week_start": monday,
             "as_of": as_of,
             "why": "クリエイターが最初の1枚を売れた週 = MUが約束を果たした週。この数が伸びない施策は捨てる。",
@@ -668,7 +680,7 @@ pub async fn api_kpi(State(db): State<Db>, headers: HeaderMap) -> Response {
 }
 
 const KPI_HTML: &str = r##"<!doctype html><html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>MU — みんなの数字 (公開KPI)</title>
 <meta name="description" content="MUの北極星KPI「初売上を経験したクリエイター数/週」。ゼロもそのまま公開。">
 <style>
@@ -699,7 +711,7 @@ a{color:#ffd700}
 <div class="kicker">みんなの数字 — public KPI</div>
 <h1>北極星: 初売上を経験したクリエイター数/週</h1>
 <p class="lead">MUは「誰でも作って、売れる」場。だから一番大事な数字は売上総額ではなく、<b>初めて自分の作品が売れたクリエイターが今週何人いたか</b>。ゼロもそのまま出します(<a href="/transparency">透明性レポート</a>と同じ流儀)。</p>
-<div class="north"><div class="v">__NS__<span style="font-size:14px;font-weight:600;opacity:.6;margin-left:8px;vertical-align:middle">(暫定・集計中)</span></div><div class="k">今週 (__NSWEEK__ 月曜〜・進行中)、初売上を経験したクリエイター <span style="opacity:.6">— 先週(確定): __NSLAST__</span></div><div class="why">この数が伸びない施策は捨てる。データは実テーブル(注文・登録・台帳)の生集計 (__ASOF__ UTC 時点)。<a href="/api/kpi">JSON</a> に全定義あり。</div></div>
+<div class="north"><div class="v">__NS__<span style="font-size:14px;font-weight:600;opacity:.6;margin-left:8px;vertical-align:middle">(暫定・集計中)</span></div><div class="k">今週 (__NSWEEK__ 月曜〜・進行中)、初売上を経験したクリエイター <span style="opacity:.6">— 先週(__NSLASTWEEK__〜・確定): __NSLAST__人</span></div><div class="why">この数が伸びない施策は捨てる。データは実テーブル(注文・登録・台帳)の生集計 (__ASOF__ UTC 時点)。<a href="/api/kpi">JSON</a> に全定義あり。</div></div>
 <div class="tot">
 <div><div class="v">__T_CREATORS__</div><div class="k">登録クリエイター</div></div>
 <div><div class="v">__T_PRODUCTS__</div><div class="k">生まれた作品</div></div>
@@ -708,6 +720,13 @@ a{color:#ffd700}
 <div><div class="v">¥__T_REVENUE__</div><div class="k">累計売上 (ループ分)</div></div>
 </div>
 <p style="font-size:11.5px;opacity:.55;line-height:1.8;margin:-14px 0 24px">※ ここの売上は<b>クリエイターループ(カタログ注文)のみ</b>。オークション・MUGEN 等を含む MU 全体の売上は <a href="/transparency">/transparency</a> に別掲(本数値はその部分集合)。週は月曜はじまり・最下行は進行中の週。</p>
+<details style="margin:0 0 18px;font-size:12px;opacity:.75;line-height:1.9"><summary style="cursor:pointer;color:#ffd700">この数字の読み方(定義と注意)</summary>
+<ul style="margin:8px 0 0;padding-left:18px">
+<li><b>★初売上作者</b> = その週に「人生初」の売上を記録した作者数。各作者は一度だけ数えられるので、全週合計=「売上経験ありの作者」と常に一致します。</li>
+<li><b>進行中の週</b>(最下行・ヒーローの数字)はまだ増えます。確定値と区別してください。</li>
+<li><b>イベント計測</b>(訪問・登録・シェア等のファネル値)は広告ブロッカー等で実数より少なく出ることがあります。登録の真実源は認証テーブル(新規クリエイター列)です。</li>
+<li>売上はクリエイターループ(カタログ注文)のみ。MU全体は <a href="/transparency">/transparency</a>(本数値はその部分集合)。</li>
+</ul></details>
 <table>
 <tr><th>週 (月曜〜)</th><th>新規クリエイター</th><th>作品</th><th>★初売上作者</th><th>注文</th><th>売上</th></tr>
 __ROWS__
@@ -738,6 +757,7 @@ pub async fn kpi_page(State(db): State<Db>) -> Response {
         .replace("__T_REVENUE__", &fmt_jpy(snap["totals"]["revenue_jpy"].as_i64().unwrap_or(0)))
         .replace("__NSWEEK__", snap["north_star"]["week_start"].as_str().unwrap_or("?"))
         .replace("__NSLAST__", &snap["north_star"]["last_confirmed_week"].as_i64().unwrap_or(0).to_string())
+        .replace("__NSLASTWEEK__", snap["north_star"]["last_confirmed_week_start"].as_str().unwrap_or("?"))
         .replace("__ASOF__", snap["north_star"]["as_of"].as_str().unwrap_or("?"))
         .replace("__ROWS__", &rows);
     ([(axum::http::header::CACHE_CONTROL, "public, max-age=60, stale-while-revalidate=300")], Html(html)).into_response()
@@ -749,7 +769,7 @@ pub async fn kpi_page(State(db): State<Db>) -> Response {
 // ════════════════════════════════════════════════════════════════════
 
 const CREDIT_HTML: &str = r##"<!doctype html><html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>MUクレジットとは — 売れたら10%、の中身</title>
 <meta name="description" content="MUクレジット: 1クレジット=¥1としてMUの決済で使える残高。¥3,000以上で銀行振込に交換可・有効期限なし。仕組みを全部公開。">
 <meta property="og:title" content="MUクレジットとは — 売れたら10%、の中身">
@@ -782,7 +802,7 @@ a{color:#ffd700}
 <tr><th>確認方法</th><td><a href="/studio">/studio</a> に残高と入出金の台帳(いつ・どの作品で・いくら)が出ます。</td></tr>
 <tr><th>法的な位置づけ</th><td>MUクレジットは当社が役務の対価として無償付与する社内ポイントで、<b>販売はしていません</b>(購入できるポイントではないため、資金決済法上の前払式支払手段に該当しない運用)。報酬の付与率(10%)は実装コード・台帳とも公開で、誇大表示をしない方針です(<a href="/transparency">/transparency</a>)。</td></tr>
 <tr><th>対象外</th><td>自分の作品を自分で買った分には付きません(自己購入除外)。不正・規約違反時は取り消すことがあります。</td></tr>
-<tr><th>税金</th><td>クレジットの付与・現金化は、受け取った方の<b>課税所得になる場合があります</b>。一般に給与所得者は副収入が年20万円を超えると確定申告が必要になる場合があります — 正確な判断は税務署・税理士にご確認ください(年間の受取累計は <a href="/studio">/studio</a> の台帳で確認できます)。</td></tr>
+<tr><th>税金</th><td>クレジットの付与・現金化は、受け取った方の<b>課税所得になる場合があります</b>。一般に給与所得者は副収入が年20万円を超えると確定申告が必要になる場合があります — 正確な判断は税務署・税理士にご確認ください(ログインすると <a href="/studio">/studio</a> に今年の受取累計と申告目安ラインが常時表示されます)。</td></tr>
 </table>
 <h2>10%の計算基準と根拠</h2>
 <p><b>付与額 = 販売価格(税込)の10%</b>です。¥4,900のTシャツなら¥490 — PDPに表示される実額と同じ計算で、粗利の10%ではありません。受注生産(Printful)の原価・送料・決済手数料はMU側の取り分から負担し、作者10%・紹介者10%を<b>売上から先取り</b>で配る設計です。現在の料率は全クリエイター一律10%(あなたの実効率は <a href="/studio">/studio</a> にも表示)。ストア単位で引き上げる仕組み(maker_pct)があり、実績に応じて見直します。変更時はこのページと <a href="/kpi">/kpi</a> で告知します。</p>
@@ -856,7 +876,7 @@ pub async fn maker_page(
         r#"<p style="opacity:.6;font-size:13px">公開中の作品はまだありません。</p>"#.to_string()
     } else { format!(r#"<div class="grid">{}</div>"#, cards) };
     let html = format!(r##"<!doctype html><html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>{who} — MU クリエイター</title>
 <meta name="description" content="{who} の作品 {n} 点。ことば1行から生まれた一点もの。">
 <meta property="og:title" content="{who} — MU クリエイター">
@@ -883,7 +903,7 @@ a{{color:#ffd700}} footer{{font-size:11px;opacity:.45;margin-top:40px;line-heigh
 <div class="sub">作品 {n} 点 · 売れた数 {sales} · <b>全作品 AI画像生成</b>(ことば1行 → AIが描く・人が選ぶ)。</div>
 <div style="display:flex;gap:8px;align-items:center;margin:0 0 18px;font-size:12.5px;flex-wrap:wrap">
 <span style="opacity:.55">このブランドを広める:</span>
-<a href="https://twitter.com/intent/tweet?text={share_text}&url={share_url}" target="_blank" rel="noopener" data-funnel="share" data-funnel-cta="portfolio_share_x" style="color:#f5f5f0;text-decoration:none;border:1px solid #3a3a3a;border-radius:99px;padding:6px 14px">𝕏 ポスト</a>
+<a href="https://x.com/intent/tweet?text={share_text}&url={share_url}" target="_blank" rel="noopener" data-funnel="share" data-funnel-cta="portfolio_share_x" style="color:#f5f5f0;text-decoration:none;border:1px solid #3a3a3a;border-radius:99px;padding:6px 14px">𝕏 ポスト</a>
 <a href="https://social-plugins.line.me/lineit/share?url={share_url}" target="_blank" rel="noopener" data-funnel="share" data-funnel-cta="portfolio_share_line" style="color:#f5f5f0;text-decoration:none;border:1px solid #3a3a3a;border-radius:99px;padding:6px 14px">LINE</a>
 <button id="shareBtn" data-funnel="share" data-funnel-cta="portfolio_share_native" style="background:none;color:#f5f5f0;border:1px solid #3a3a3a;border-radius:99px;padding:6px 14px;cursor:pointer;font-size:12.5px;font-family:inherit">リンクをコピー</button>
 </div>
