@@ -858,10 +858,10 @@ fn placements_for_product(printful_product_id: i64) -> &'static [&'static str] {
         // 301 = Men's AOP Rash Guard, 302/368/369/836 = sister AOP products
         // (per fulfill_catalog_order's stitch_color guard at line 2736).
         301 | 302 | 368 | 369 | 836 => &["front", "back", "sleeve_left", "sleeve_right"],
-        // 19 = 11oz mug, 358 = kiss-cut sticker — Printful's mockup-generator
-        // rejects "front" for these ("File type front is not allowed", MG-4);
-        // their single printfile placement is "default".
-        19 | 358 => &["default"],
+        // 1 = matte poster, 19 = 11oz mug, 358 = kiss-cut sticker — Printful's
+        // mockup-generator rejects "front" for these ("File type front is not
+        // allowed", MG-4); their single printfile placement is "default".
+        1 | 19 | 358 => &["default"],
         _ => &["front"],
     }
 }
@@ -1051,6 +1051,57 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
         spec_html: "デジタル楽曲 · 購入後すぐ視聴/ダウンロードリンクをメールでお届け · \
                     物理発送なし(送料0) · MP3 ストリーム & ダウンロード · 永久アクセス",
     },
+    ProductSpec {
+        kind: "poster",
+        // Enhanced Matte Paper Poster 18″×24″. Printful product 1 / variant 1.
+        // Like mug(19)/sticker(358), the mockup generator only accepts
+        // placement "default" (printfile 7200×5400 @300dpi, fill cover).
+        printful_product_id: 1,
+        printful_variant_id: 1,
+        placement: "default",
+        retail_jpy: 4900,
+        spec_html: "Enhanced Matte Paper Poster · 18″×24″ (45.7×61cm) · \
+                    189g/m² マットポスター紙 · 300dpi ジクレー品質 · \
+                    Printful EU/US 印刷 · 筒状梱包で発送",
+    },
+    ProductSpec {
+        kind: "zine",
+        // Digital PDF (fulfillment_route 'digital'). On payment we email a
+        // private download link. The PDF URL lives in meta_json
+        // `{"file_url": "https://…"}`. retail_jpy is the price FLOOR.
+        printful_product_id: 0,
+        printful_variant_id: 0,
+        placement: "none",
+        retail_jpy: 800,
+        spec_html: "デジタルZINE (PDF) · 購入後すぐダウンロードリンクをメールでお届け · \
+                    物理発送なし(送料0) · 永久アクセス",
+    },
+    ProductSpec {
+        kind: "video",
+        // Digital video (fulfillment_route 'digital'). On payment we email a
+        // private watch/download link. The video URL lives in meta_json
+        // `{"video_url": "https://…"}`. retail_jpy is the price FLOOR.
+        printful_product_id: 0,
+        printful_variant_id: 0,
+        placement: "none",
+        retail_jpy: 500,
+        spec_html: "デジタル映像作品 · 購入後すぐ視聴/ダウンロードリンクをメールでお届け · \
+                    物理発送なし(送料0) · 永久アクセス",
+    },
+    ProductSpec {
+        kind: "karaoke_ticket",
+        // uta.live カラオケ化引換券 (fulfillment_route 'digital'). On payment
+        // the buyer gets a code by email; they reply with their track and we
+        // run uta.live add_song + set_lyrics to turn it into a karaoke. The
+        // redemption is human/agent-operated (alerted via the order record).
+        printful_product_id: 0,
+        printful_variant_id: 0,
+        placement: "none",
+        retail_jpy: 3000,
+        spec_html: "あなたの曲を uta.live のカラオケにする引換券 · \
+                    購入後すぐ引換コードをメールでお届け · 音源(mp3等)を返信で送ると \
+                    ボーカル除去+歌詞同期のカラオケになって公開 · 物理発送なし(送料0)",
+    },
 ];
 
 /// Public, agent-facing view of a `ProductSpec` so callers outside this
@@ -1124,8 +1175,8 @@ pub fn agent_insert_product(
         "nfc_coin" | "device" => "manual",
         // Digital goods: take payment, then deliver by email (handled by the
         // digital arm in fulfill_catalog_order). No shipping. Ticket → QR;
-        // song → private listen/download link.
-        "event_ticket" | "song" => "digital",
+        // song/zine/video → private link; karaoke_ticket → redemption code.
+        "event_ticket" | "song" | "zine" | "video" | "karaoke_ticket" => "digital",
         _ => "printful_dtg",
     };
 
@@ -1988,6 +2039,13 @@ pub async fn generate_onbody_mockup(
             "width": 950,       "height": 950,
             "top": 50,          "left": 1400
         }),
+        // Matte poster 18×24: printfile 7200×5400 (landscape, can_rotate).
+        // Centre the square artwork at full height.
+        1 => serde_json::json!({
+            "area_width": 7200, "area_height": 5400,
+            "width": 5400,      "height": 5400,
+            "top": 0,           "left": 900
+        }),
         // Kiss-cut sticker: 900×900 printfile — fill it edge to edge.
         358 => serde_json::json!({
             "area_width": 900, "area_height": 900,
@@ -2127,7 +2185,10 @@ fn kind_from_sku(sku: &str) -> &'static str {
     let s = sku.to_uppercase();
     // Order matters: more specific tokens come first so "RASHGUARD" wins
     // over the generic MU- starts-with fallback at the bottom.
+    if s.contains("KARAOKE-TICKET") { return "karaoke_ticket"; }
     if s.contains("-EVENT-TICKET") || s.contains("-TICKET-") || s.ends_with("-TICKET") { return "event_ticket"; }
+    if s.contains("-ZINE-") || s.ends_with("-ZINE") { return "zine"; }
+    if s.contains("-VIDEO-") || s.ends_with("-VIDEO") { return "video"; }
     if s.contains("-SONG-") || s.ends_with("-SONG") { return "song"; }
     if s.contains("-DEVICE-") || s.ends_with("-DEVICE") { return "device"; }
     if s.contains("RASHGUARD") || s.contains("-RASH") { return "rashguard_ls"; }
@@ -5820,7 +5881,7 @@ pub async fn shop_pdp(
     // apparel-only blocks (size chart, shipping table, garment cross-sell,
     // "Printful 国際発送" copy) — nothing physical ships.
     let kind_guess = kind_from_sku(&sku);
-    let is_digital = matches!(kind_guess, "event_ticket" | "song");
+    let is_digital = matches!(kind_guess, "event_ticket" | "song" | "zine" | "video" | "karaoke_ticket");
     let is_song = kind_guess == "song";
     // MUON コレクター動機: Tシャツは3枚集めると ¥2,000 のMUクレジット(期限なし)。
     // ログイン不要の常時表示バナーで「集めたくなる」ループを作る。
@@ -8316,11 +8377,22 @@ async fn issue_digital(
         )
         .unwrap_or_else(|_| (sku.to_string(), String::new(), None))
     };
-    let is_song = kind_from_sku(sku) == "song";
-    let audio_url: Option<String> = meta_json
+    let dkind = kind_from_sku(sku);
+    let is_song = dkind == "song";
+    let is_zine = dkind == "zine";
+    let is_video = dkind == "video";
+    let is_karaoke = dkind == "karaoke_ticket";
+    let is_link_kind = is_song || is_zine || is_video;
+    let meta_val: Option<serde_json::Value> = meta_json
         .as_deref()
-        .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
-        .and_then(|v| v.get("audio_url").and_then(|a| a.as_str()).map(|s| s.to_string()));
+        .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok());
+    let meta_url = |k: &str| -> Option<String> {
+        meta_val.as_ref().and_then(|v| v.get(k).and_then(|a| a.as_str()).map(|s| s.to_string()))
+    };
+    let audio_url: Option<String> = meta_url("audio_url");
+    let asset_url: Option<String> = if is_zine { meta_url("file_url") }
+        else if is_video { meta_url("video_url") }
+        else { audio_url.clone() };
 
     let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
     if resend_key.is_empty() {
@@ -8328,8 +8400,8 @@ async fn issue_digital(
     }
 
     // Tickets host a QR on R2 (email clients render an https <img> reliably);
-    // songs don't need one.
-    let qr_url = if is_song {
+    // link-delivered kinds (song/zine/video) don't need one.
+    let qr_url = if is_link_kind {
         None
     } else {
         match ticket_qr_png(&ticket_url) {
@@ -8338,18 +8410,23 @@ async fn issue_digital(
         }
     };
 
-    let (subject, body_block, from_name) = if is_song {
-        let listen = audio_url.as_deref().unwrap_or(&ticket_url);
+    let (subject, body_block, from_name) = if is_link_kind {
+        let listen = asset_url.as_deref().unwrap_or(&ticket_url);
+        let (emoji, noun, verb) = if is_zine { ("📖", "ZINE (PDF)", "読む / ダウンロード") }
+            else if is_video { ("🎬", "映像作品", "観る / ダウンロード") }
+            else { ("🎵", "Song", "視聴 / ダウンロード") };
+        let _ = (emoji, noun, verb);
         (
-            format!("🎵 {} — ダウンロード / Song", label),
+            format!("{} {} — ダウンロード / {}", emoji, label, noun),
             format!(
                 "<div style=\"text-align:center;margin:24px 0\">\
                  <a href=\"{stream}\" style=\"display:inline-block;background:#e6c449;color:#0a0a0a;\
-                 text-decoration:none;font-weight:700;font-size:15px;padding:14px 28px;border-radius:99px\">▶ 視聴 / ダウンロード</a></div>\
+                 text-decoration:none;font-weight:700;font-size:15px;padding:14px 28px;border-radius:99px\">▶ {verb}</a></div>\
                  <p style=\"font-size:12px;text-align:center;margin:0 0 8px;opacity:.7\">\
                  リンク: <a href=\"{listen}\" style=\"color:#e6c449\">{listen}</a></p>",
                 stream = html_text(&ticket_url),
                 listen = html_text(listen),
+                verb = verb,
             ),
             "MU Music <noreply@wearmu.com>",
         )
@@ -8363,19 +8440,29 @@ async fn issue_digital(
                 html_text(u),
             ))
             .unwrap_or_default();
+        let (tsubj, tinstr) = if is_karaoke {
+            (format!("🎤 {} — カラオケ化引換券 / uta.live", label),
+             "このメールに音源ファイル(mp3/m4a/wav)と曲名・正しい歌詞を返信してください。\
+              ボーカル除去+歌詞同期のカラオケになって uta.live に公開されます(通常1営業日以内)。")
+        } else {
+            (format!("🎟️ {} — 参加券 / Ticket", label),
+             "会場でこの QR を提示してください。")
+        };
         (
-            format!("🎟️ {} — 参加券 / Ticket", label),
+            tsubj,
             format!(
                 "{qr_block}\
-                 <p style=\"font-size:13px;line-height:1.8;text-align:center;margin:0 0 8px\">会場でこの QR を提示してください。</p>\
+                 <p style=\"font-size:13px;line-height:1.8;text-align:center;margin:0 0 8px\">{instr}</p>\
                  <p style=\"font-size:12px;text-align:center;margin:0 0 18px\"><a href=\"{ticket_url}\" style=\"color:#e6c449\">{ticket_url}</a></p>",
                 qr_block = qr_block,
+                instr = html_text(tinstr),
                 ticket_url = html_text(&ticket_url),
             ),
             "MU Tickets <noreply@wearmu.com>",
         )
     };
-    let kicker = if is_song { "YOUR SONG" } else { "YOUR TICKET" };
+    let kicker = if is_zine { "YOUR ZINE" } else if is_video { "YOUR FILM" }
+        else if is_song { "YOUR SONG" } else if is_karaoke { "YOUR KARAOKE" } else { "YOUR TICKET" };
     let cust_html = format!(
         r#"<div style="background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;padding:32px 0;margin:0">
 <div style="max-width:560px;margin:0 auto;padding:0 32px">

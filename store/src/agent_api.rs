@@ -618,6 +618,10 @@ pub struct CreateProductBody {
     pub capacity: Option<i64>,
     /// song only: https URL of the audio delivered on purchase.
     pub audio_url: Option<String>,
+    /// zine only: https URL of the PDF delivered to the buyer on purchase.
+    pub file_url: Option<String>,
+    /// video only: https URL of the video delivered to the buyer on purchase.
+    pub video_url: Option<String>,
     /// physical kinds: limited-run size (e.g. 100). Enforced as a sold-out gate
     /// at checkout; each sold unit gets serial #k/N (see /edition/:sku).
     pub edition_size: Option<i64>,
@@ -878,6 +882,16 @@ pub async fn agent_create_product(
             .filter(|s| s.starts_with("https://") && s.len() <= 2000)
         {
             meta.insert("audio_url".into(), serde_json::json!(au));
+        }
+        if let Some(fu) = body.file_url.as_deref().map(str::trim)
+            .filter(|s| s.starts_with("https://") && s.len() <= 2000)
+        {
+            meta.insert("file_url".into(), serde_json::json!(fu));
+        }
+        if let Some(vu) = body.video_url.as_deref().map(str::trim)
+            .filter(|s| s.starts_with("https://") && s.len() <= 2000)
+        {
+            meta.insert("video_url".into(), serde_json::json!(vu));
         }
         if let Some(es) = body.edition_size.filter(|c| *c > 0 && *c <= 100_000) {
             meta.insert("edition_size".into(), serde_json::json!(es));
@@ -1922,6 +1936,10 @@ POST /api/agent/products
                  nfc_coin / device.
        Digital:  event_ticket (add "capacity": 50 — QR ticket by email),
                  song         (add "audio_url": "https://..." — listen link).
+                 poster       (Printful 18″×24″ matte poster).
+                 zine         (add "file_url": "https://..." — PDF download).
+                 video        (add "video_url": "https://..." — watch link).
+                 karaoke_ticket (uta.live カラオケ化引換券 — buyer redeems by email).
        音源入りTシャツもOK: 物理kind(tee等)にも "audio_url" を付けられる。
        "https://mu.koe.live/oto.html?s=<曲key>" を渡すと商品ページに試聴
        プレイヤー(「着ると、この曲が鳴る」)が出る(例: s=i-love-you)。
@@ -2088,7 +2106,7 @@ pub async fn openapi_json() -> Response {
                 "get": {"summary":"List every product you created (sku, store, label, kind, price, status, pdp_url)","security":[{"bearer":[]}],
                     "responses":{"200":{"description":"{ok, count, products[]}"},"401":{"description":"auth required"}}},
                 "post": {"summary":"Create a product (status='review' pending MA approval)","security":[{"bearer":[]}],
-                "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","required":["store","label","description","kind","design_url"],"properties":{"store":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"kind":{"type":"string","enum":["tee","rashguard_ls","rashguard_black","hoodie","crewneck","nfc_coin","device","event_ticket","song"]},"design_url":{"type":"string","format":"uri","description":"absolute https URL"},"price_jpy":{"type":"integer","description":"optional; clamped up to the per-kind floor"},"capacity":{"type":"integer","description":"event_ticket only: ticket capacity"},"audio_url":{"type":"string","format":"uri","description":"https listen link. song はもちろん、物理Tシャツ等にも付けられる(mu.koe.live/oto.html?s=KEY を渡すとPDPに試聴プレイヤー)"}}}}}},
+                "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","required":["store","label","description","kind","design_url"],"properties":{"store":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"kind":{"type":"string","enum":["tee","rashguard_ls","rashguard_black","hoodie","crewneck","nfc_coin","device","event_ticket","song","poster","zine","video","karaoke_ticket"]},"design_url":{"type":"string","format":"uri","description":"absolute https URL"},"price_jpy":{"type":"integer","description":"optional; clamped up to the per-kind floor"},"capacity":{"type":"integer","description":"event_ticket only: ticket capacity"},"audio_url":{"type":"string","format":"uri","description":"https listen link. song はもちろん、物理Tシャツ等にも付けられる(mu.koe.live/oto.html?s=KEY を渡すとPDPに試聴プレイヤー)"}}}}}},
                 "responses":{"200":{"description":"{sku, status:'review', pdp_url}"},"400":{"description":"unknown kind / missing design_url"},"403":{"description":"not your store"},"429":{"description":"rate limit"}}}},
             "/api/agent/products/{sku}/update": {"post": {"summary":"Update label/description/price_jpy/design_url (owner-only; review/retired status only; price clamped to floor)","security":[{"bearer":[]}],
                 "parameters":[{"name":"sku","in":"path","required":true,"schema":{"type":"string"}}],
