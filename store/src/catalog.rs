@@ -1959,12 +1959,14 @@ pub async fn generate_onbody_mockup(
     //    box overflows them → "position out of print area"), so size the
     //    design to each product's actual printfile.
     let position = match printful_product {
-        // 11oz mug: wrap printfile 2700×1050. Center the square artwork
-        // on the front face (full height, horizontally centered).
+        // 11oz mug: wrap printfile 2700×1050. The default mockup's visible
+        // front face sits ~70% across the wrap, so left=1400 (not center
+        // 850) lands the square artwork dead-centre on the photographed
+        // face — verified against gt-929310805 (left=850 / 1850 both clip).
         19 => serde_json::json!({
             "area_width": 2700, "area_height": 1050,
-            "width": 1000,      "height": 1000,
-            "top": 25,          "left": 850
+            "width": 950,       "height": 950,
+            "top": 50,          "left": 1400
         }),
         // Kiss-cut sticker: 900×900 printfile — fill it edge to edge.
         358 => serde_json::json!({
