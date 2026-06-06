@@ -68,7 +68,7 @@ code.big{font-family:'SF Mono',monospace;letter-spacing:.3em}
 <div class="kicker">STUDIO — designed by you</div>
 <div id="step1">
 <h1>30秒で、自分のブランドを持つ。</h1>
-<p class="lead">ことば1行で商品が生まれて、世界中に届く。<br><b style="color:#ffd700">売れたら10%があなたに</b>(MUクレジット)。在庫ゼロ・費用ゼロ・受注生産。</p>
+<p class="lead">ことば1行で商品が生まれて、世界中に届く。<br><b style="color:#ffd700">売れたら10%があなたに</b>(<a href="/credit">MUクレジットとは — 1cr=¥1・¥3,000以上で振込可</a>)。在庫ゼロ・費用ゼロ・受注生産。</p>
 <input id="email" type="email" placeholder="you@example.com" autocomplete="email" autofocus>
 <button id="send" data-funnel="cta_click" data-funnel-cta="start_send_code">メールで始める(無料)</button>
 <div class="msg" id="m1"></div>
@@ -210,7 +210,7 @@ __PRODUCTS__
 <div class="row2">
 <div class="panel">
 <div style="font-size:13px;font-weight:700">作者報酬 — 売れたら10%</div>
-<p>あなたの作品が売れるたび、売上の10%がMUクレジットで自動的に入ります。クレジットは次の購入で使えます。<b>現金振込は申請制</b>: <a href="mailto:info@enablerdao.com?subject=MU%20%E6%8C%AF%E8%BE%BC%E7%94%B3%E8%AB%8B">info@enablerdao.com</a> へ(残高¥3,000以上・運営が手動対応・通常5営業日)。</p>
+<p>あなたの作品が売れるたび、売上の10%がMUクレジットで自動的に入ります。クレジットは次の購入で使えます。<b>現金振込は申請制</b>: <a href="mailto:info@enablerdao.com?subject=MU%20%E6%8C%AF%E8%BE%BC%E7%94%B3%E8%AB%8B">info@enablerdao.com</a> へ(残高¥3,000以上・運営が手動対応・通常5営業日)。詳細は <a href="/credit">MUクレジットとは</a>。</p>
 __LEDGER__
 </div>
 <div class="panel">
@@ -407,79 +407,98 @@ fn kpi_snapshot(db: &Db) -> serde_json::Value {
 
     let creators_verified = q1("SELECT COUNT(*) FROM collab_users WHERE verified=1");
     let products_made = q1("SELECT COUNT(*) FROM catalog_products WHERE legacy_source IN ('public_make','agent_api')");
-    let makers_attributed = q1(
+    let makers_with_attributed_product = q1(
         "SELECT COUNT(DISTINCT LOWER(json_extract(meta_json,'$.maker_email')))
          FROM catalog_products
          WHERE COALESCE(json_extract(meta_json,'$.maker_email'),'') LIKE '%@%'");
     let orders_total = q1("SELECT COUNT(*) FROM catalog_orders WHERE amount_jpy>0 AND status<>'submitting'");
     let revenue_total = q1("SELECT COALESCE(SUM(amount_jpy),0) FROM catalog_orders WHERE amount_jpy>0 AND status<>'submitting'");
-    let makers_with_sale = q1(&format!(
+    let makers_with_first_sale = q1(&format!(
         "SELECT COUNT(*) FROM (
             SELECT {maker} AS maker FROM catalog_orders co JOIN catalog_products p ON p.sku=co.sku
             WHERE co.amount_jpy>0 AND co.status<>'submitting'
             GROUP BY maker HAVING maker LIKE '%@%')", maker = MAKER_SQL));
 
-    // 直近12週のキー(古→新)。
-    let weeks: Vec<String> = conn.prepare(
-        "WITH RECURSIVE w(i) AS (SELECT 11 UNION ALL SELECT i-1 FROM w WHERE i>0)
-         SELECT strftime('%Y-%W', datetime('now', (-7*i)||' days')) FROM w")
+    // ── 週バケット: 「今週の月曜」を起点に12週ぶんの [start, end) 日付範囲。
+    // strftime('%Y-%W') の週番号ラベルは ISO週とズレて誤読を生むため使わない —
+    // 週は常に開始日(月曜・JSTでなくUTC日付)で名指しする。進行中の週も必ず含む。
+    let monday: String = conn.query_row(
+        "SELECT date('now','weekday 0','-6 days')", [], |r| r.get(0)).unwrap_or_default();
+    let as_of: String = conn.query_row(
+        "SELECT datetime('now')", [], |r| r.get(0)).unwrap_or_default();
+    let bounds: Vec<(String, String)> = (0..12).rev().map(|i| {
+        let s: String = conn.query_row(
+            "SELECT date(?1, (?2)||' days')", rusqlite::params![monday, -7 * i], |r| r.get(0)).unwrap_or_default();
+        let e: String = conn.query_row(
+            "SELECT date(?1, '+7 days')", rusqlite::params![s], |r| r.get(0)).unwrap_or_default();
+        (s, e)
+    }).collect();
+
+    let count_between = |sql: &str, s: &str, e: &str| -> i64 {
+        conn.query_row(sql, rusqlite::params![s, e], |r| r.get(0)).unwrap_or(0)
+    };
+    // 北極星の素材: 作者ごとの「人生初の売上」日時(1クエリ→Rustでバケット)。
+    let first_sales: Vec<String> = conn.prepare(&format!(
+        "SELECT MIN(co.created_at) FROM catalog_orders co JOIN catalog_products p ON p.sku=co.sku
+         WHERE co.amount_jpy>0 AND co.status<>'submitting'
+         GROUP BY {maker} HAVING {maker} LIKE '%@%'", maker = MAKER_SQL))
         .ok()
-        .and_then(|mut s| s.query_map([], |r| r.get::<_, String>(0))
+        .and_then(|mut st| st.query_map([], |r| r.get::<_, String>(0))
             .map(|it| it.filter_map(|x| x.ok()).collect()).ok())
         .unwrap_or_default();
 
-    let map_of = |sql: &str| -> std::collections::HashMap<String, i64> {
-        conn.prepare(sql).ok()
-            .and_then(|mut s| s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
-                .map(|it| it.filter_map(|x| x.ok()).collect()).ok())
-            .unwrap_or_default()
-    };
-    let wk_creators = map_of(
-        "SELECT strftime('%Y-%W', datetime(verified_at,'unixepoch')) wk, COUNT(*)
-         FROM collab_users WHERE verified=1 AND verified_at IS NOT NULL GROUP BY wk");
-    let wk_products = map_of(
-        "SELECT strftime('%Y-%W', created_at) wk, COUNT(*)
-         FROM catalog_products WHERE legacy_source IN ('public_make','agent_api') GROUP BY wk");
-    let wk_orders = map_of(
-        "SELECT strftime('%Y-%W', created_at) wk, COUNT(*)
-         FROM catalog_orders WHERE amount_jpy>0 AND status<>'submitting' GROUP BY wk");
-    let wk_revenue = map_of(
-        "SELECT strftime('%Y-%W', created_at) wk, COALESCE(SUM(amount_jpy),0)
-         FROM catalog_orders WHERE amount_jpy>0 AND status<>'submitting' GROUP BY wk");
-    // 北極星: その週に「人生初の売上」を迎えた作者の数。
-    let wk_first_sale = map_of(&format!(
-        "SELECT strftime('%Y-%W', first_at) wk, COUNT(*) FROM (
-            SELECT {maker} AS maker, MIN(co.created_at) AS first_at
-            FROM catalog_orders co JOIN catalog_products p ON p.sku=co.sku
-            WHERE co.amount_jpy>0 AND co.status<>'submitting'
-            GROUP BY maker HAVING maker LIKE '%@%') GROUP BY wk", maker = MAKER_SQL));
-
-    let this_week: String = conn.query_row(
-        "SELECT strftime('%Y-%W','now')", [], |r| r.get(0)).unwrap_or_default();
-
-    let series: Vec<serde_json::Value> = weeks.iter().map(|w| serde_json::json!({
-        "week": w,
-        "new_creators": wk_creators.get(w).copied().unwrap_or(0),
-        "products_created": wk_products.get(w).copied().unwrap_or(0),
-        "first_sale_creators": wk_first_sale.get(w).copied().unwrap_or(0),
-        "orders": wk_orders.get(w).copied().unwrap_or(0),
-        "revenue_jpy": wk_revenue.get(w).copied().unwrap_or(0),
-    })).collect();
+    let mut series: Vec<serde_json::Value> = Vec::with_capacity(12);
+    let mut ns_this_week: i64 = 0;
+    for (s, e) in &bounds {
+        let is_current = *s == monday;
+        let first_sale_creators = first_sales.iter()
+            .filter(|t| t.as_str() >= s.as_str() && t.as_str() < e.as_str()).count() as i64;
+        if is_current { ns_this_week = first_sale_creators; }
+        series.push(serde_json::json!({
+            "week_start": s,
+            "week_end_exclusive": e,
+            "current": is_current,
+            "new_creators": count_between(
+                "SELECT COUNT(*) FROM collab_users WHERE verified=1 AND verified_at IS NOT NULL
+                 AND datetime(verified_at,'unixepoch') >= ?1 AND datetime(verified_at,'unixepoch') < ?2", s, e),
+            "products_created": count_between(
+                "SELECT COUNT(*) FROM catalog_products WHERE legacy_source IN ('public_make','agent_api')
+                 AND created_at >= ?1 AND created_at < ?2", s, e),
+            "first_sale_creators": first_sale_creators,
+            "orders": count_between(
+                "SELECT COUNT(*) FROM catalog_orders WHERE amount_jpy>0 AND status<>'submitting'
+                 AND created_at >= ?1 AND created_at < ?2", s, e),
+            "revenue_jpy": count_between(
+                "SELECT COALESCE(SUM(amount_jpy),0) FROM catalog_orders WHERE amount_jpy>0 AND status<>'submitting'
+                 AND created_at >= ?1 AND created_at < ?2", s, e),
+        }));
+    }
 
     serde_json::json!({
         "north_star": {
             "name": "first_sale_creators_per_week",
             "name_ja": "初売上を経験したクリエイター数/週",
-            "this_week": wk_first_sale.get(&this_week).copied().unwrap_or(0),
+            "this_week": ns_this_week,
+            "week_start": monday,
+            "as_of": as_of,
             "why": "クリエイターが最初の1枚を売れた週 = MUが約束を果たした週。この数が伸びない施策は捨てる。",
         },
         "totals": {
             "creators_verified": creators_verified,
             "products_made": products_made,
-            "makers_attributed": makers_attributed,
-            "makers_with_sale": makers_with_sale,
+            "makers_with_attributed_product": makers_with_attributed_product,
+            "makers_with_first_sale": makers_with_first_sale,
             "orders": orders_total,
             "revenue_jpy": revenue_total,
+        },
+        "definitions": {
+            "creators_verified": "メール認証済みのクリエイター数 (collab_users.verified=1)",
+            "products_made": "クリエイター/エージェント発の作品数 (legacy_source: public_make + agent_api)",
+            "makers_with_attributed_product": "作者刻印(meta_json.maker_email)付き作品を持つ作者数。agentストアのオーナー帰属はここに含まれない(売上集計には含む)ため makers_with_first_sale より小さくなりうる",
+            "makers_with_first_sale": "1件以上売れた作者数(刻印 or agentストアオーナー)。weeks.first_sale_creators の累計と一致する",
+            "orders": "カタログ注文数 (amount>0・予約中除く)",
+            "revenue_jpy": "クリエイターループ(カタログ注文)の累計売上。MU全体の売上(オークション/MUGEN等含む)は /transparency 参照 — 本数値はその部分集合",
+            "weeks": "週は月曜開始のUTC日付範囲 [week_start, week_end_exclusive)。current=true は進行中の週(数字はまだ増える)",
         },
         "weeks": series,
         "honest_note": "ゼロもそのまま出します。数字は catalog_orders / collab_users / mu_credit_ledger の実数。",
@@ -523,16 +542,17 @@ a{color:#ffd700}
 <div class="kicker">みんなの数字 — public KPI</div>
 <h1>北極星: 初売上を経験したクリエイター数/週</h1>
 <p class="lead">MUは「誰でも作って、売れる」場。だから一番大事な数字は売上総額ではなく、<b>初めて自分の作品が売れたクリエイターが今週何人いたか</b>。ゼロもそのまま出します(<a href="/transparency">透明性レポート</a>と同じ流儀)。</p>
-<div class="north"><div class="v">__NS__</div><div class="k">今週、初売上を経験したクリエイター</div><div class="why">この数が伸びない施策は捨てる。データは実テーブル(注文・登録・台帳)の生集計。<a href="/api/kpi">JSON</a></div></div>
+<div class="north"><div class="v">__NS__</div><div class="k">今週 (__NSWEEK__ 月曜〜・進行中)、初売上を経験したクリエイター</div><div class="why">この数が伸びない施策は捨てる。データは実テーブル(注文・登録・台帳)の生集計 (__ASOF__ UTC 時点)。<a href="/api/kpi">JSON</a> に全定義あり。</div></div>
 <div class="tot">
 <div><div class="v">__T_CREATORS__</div><div class="k">登録クリエイター</div></div>
 <div><div class="v">__T_PRODUCTS__</div><div class="k">生まれた作品</div></div>
 <div><div class="v">__T_MAKERS_SALE__</div><div class="k">売上経験ありの作者</div></div>
 <div><div class="v">__T_ORDERS__</div><div class="k">累計注文</div></div>
-<div><div class="v">¥__T_REVENUE__</div><div class="k">累計売上</div></div>
+<div><div class="v">¥__T_REVENUE__</div><div class="k">累計売上 (ループ分)</div></div>
 </div>
+<p style="font-size:11.5px;opacity:.55;line-height:1.8;margin:-14px 0 24px">※ ここの売上は<b>クリエイターループ(カタログ注文)のみ</b>。オークション・MUGEN 等を含む MU 全体の売上は <a href="/transparency">/transparency</a> に別掲(本数値はその部分集合)。週は月曜はじまり・最下行は進行中の週。</p>
 <table>
-<tr><th>週</th><th>新規クリエイター</th><th>作品</th><th>★初売上作者</th><th>注文</th><th>売上</th></tr>
+<tr><th>週 (月曜〜)</th><th>新規クリエイター</th><th>作品</th><th>★初売上作者</th><th>注文</th><th>売上</th></tr>
 __ROWS__
 </table>
 <div class="fine">毎週この表が1行ずつ増えていきます。あなたの行になるかもしれません → <a href="/start">30秒でクリエイター登録</a><br>━◯━ MU · <a href="/shop">SHOP</a> · <a href="/make">作る</a> · <a href="/transparency">透明性</a> · 株式会社イネブラ</div>
@@ -543,8 +563,9 @@ __ROWS__
 pub async fn kpi_page(State(db): State<Db>) -> Response {
     let snap = kpi_snapshot(&db);
     let rows: String = snap["weeks"].as_array().map(|ws| ws.iter().rev().map(|w| format!(
-        "<tr><td>{}</td><td>{}</td><td>{}</td><td class=\"star\">{}</td><td>{}</td><td>¥{}</td></tr>",
-        w["week"].as_str().unwrap_or(""),
+        "<tr><td>{}{}</td><td>{}</td><td>{}</td><td class=\"star\">{}</td><td>{}</td><td>¥{}</td></tr>",
+        w["week_start"].as_str().unwrap_or(""),
+        if w["current"].as_bool().unwrap_or(false) { " <span style=\"color:#ffd700;font-size:10px\">(進行中)</span>" } else { "" },
         w["new_creators"].as_i64().unwrap_or(0),
         w["products_created"].as_i64().unwrap_or(0),
         w["first_sale_creators"].as_i64().unwrap_or(0),
@@ -555,9 +576,156 @@ pub async fn kpi_page(State(db): State<Db>) -> Response {
         .replace("__NS__", &snap["north_star"]["this_week"].as_i64().unwrap_or(0).to_string())
         .replace("__T_CREATORS__", &snap["totals"]["creators_verified"].as_i64().unwrap_or(0).to_string())
         .replace("__T_PRODUCTS__", &snap["totals"]["products_made"].as_i64().unwrap_or(0).to_string())
-        .replace("__T_MAKERS_SALE__", &snap["totals"]["makers_with_sale"].as_i64().unwrap_or(0).to_string())
+        .replace("__T_MAKERS_SALE__", &snap["totals"]["makers_with_first_sale"].as_i64().unwrap_or(0).to_string())
         .replace("__T_ORDERS__", &snap["totals"]["orders"].as_i64().unwrap_or(0).to_string())
         .replace("__T_REVENUE__", &fmt_jpy(snap["totals"]["revenue_jpy"].as_i64().unwrap_or(0)))
+        .replace("__NSWEEK__", snap["north_star"]["week_start"].as_str().unwrap_or("?"))
+        .replace("__ASOF__", snap["north_star"]["as_of"].as_str().unwrap_or("?"))
         .replace("__ROWS__", &rows);
     ([(axum::http::header::CACHE_CONTROL, "public, max-age=300")], Html(html)).into_response()
+}
+
+// ════════════════════════════════════════════════════════════════════
+// GET /credit — MUクレジットの定義(公開・ログイン不要)
+// 「10%って何でもらえるの?」に登録前に答える1枚。法的位置づけも正直に。
+// ════════════════════════════════════════════════════════════════════
+
+const CREDIT_HTML: &str = r##"<!doctype html><html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MUクレジットとは — 売れたら10%、の中身</title>
+<meta name="description" content="MUクレジット: 1クレジット=¥1としてMUの決済で使える残高。¥3,000以上で銀行振込に交換可・有効期限なし。仕組みを全部公開。">
+<meta property="og:title" content="MUクレジットとは — 売れたら10%、の中身">
+<meta property="og:description" content="1クレジット=¥1。決済で使える・¥3,000以上で振込申請可・期限なし。">
+<style>
+body{background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;margin:0}
+.wrap{max-width:680px;margin:0 auto;padding:32px 22px 60px}
+.logo{font-size:18px;font-weight:700;letter-spacing:.45em}
+.kicker{font-size:11px;letter-spacing:.3em;text-transform:uppercase;color:#ffd700;margin:4px 0 22px}
+h1{font-size:23px;font-weight:600;margin:0 0 8px}
+h2{font-size:15px;font-weight:700;color:#ffd700;margin:28px 0 8px}
+p,li{font-size:13.5px;line-height:1.95;opacity:.85}
+table{width:100%;border-collapse:collapse;font-size:13px;margin:10px 0}
+td,th{padding:10px;border-bottom:1px solid #1c1c1c;text-align:left;vertical-align:top}
+th{width:160px;color:#ffd700;font-weight:700;font-size:12px}
+.cta{display:inline-block;background:#ffd700;color:#0a0a0a;border-radius:8px;font-weight:800;padding:13px 28px;font-size:14px;text-decoration:none;margin-top:18px}
+a{color:#ffd700}
+.fine{font-size:11px;opacity:.45;margin-top:30px;line-height:1.9}
+</style></head><body>
+<div class="wrap">
+<div class="logo">━◯━ MU</div>
+<div class="kicker">MU CREDIT — 売れたら10%、の中身</div>
+<h1>MUクレジットとは</h1>
+<p>あなたの作品が売れるたび<b>売上の10%</b>、紹介リンク(<a href="/affiliate">/affiliate</a>)経由で誰かの作品が売れても<b>売上の10%</b>が、自動であなたの「MUクレジット」になります。</p>
+<table>
+<tr><th>価値</th><td>1クレジット = ¥1 相当。</td></tr>
+<tr><th>使い道</th><td>① MU の決済でそのまま値引きに使える ② 残高 <b>¥3,000以上</b>で<b>銀行振込(現金)</b>への交換を申請できる。</td></tr>
+<tr><th>振込の手順</th><td>申請制: <a href="mailto:info@enablerdao.com?subject=MU%20%E6%8C%AF%E8%BE%BC%E7%94%B3%E8%AB%8B">info@enablerdao.com</a> に登録メールから「振込申請」と送る → 運営が確認して通常<b>5営業日</b>以内に振込(手数料は当社負担)。</td></tr>
+<tr><th>有効期限</th><td>なし。</td></tr>
+<tr><th>確認方法</th><td><a href="/studio">/studio</a> に残高と入出金の台帳(いつ・どの作品で・いくら)が出ます。</td></tr>
+<tr><th>法的な位置づけ</th><td>MUクレジットは当社が役務の対価として無償付与する社内ポイントで、<b>販売はしていません</b>(購入できるポイントではないため、資金決済法上の前払式支払手段に該当しない運用)。報酬の付与率(10%)は実装コード・台帳とも公開で、誇大表示をしない方針です(<a href="/transparency">/transparency</a>)。</td></tr>
+<tr><th>対象外</th><td>自分の作品を自分で買った分には付きません(自己購入除外)。不正・規約違反時は取り消すことがあります。</td></tr>
+</table>
+<h2>10%の根拠</h2>
+<p>受注生産(Printful)の原価・送料・決済手数料を引いた粗利から、作者へ10%・紹介者へ10%を先取りで配る設計です。料率はストア単位で引き上げられる仕組み(maker_pct)があり、実績に応じて見直します。変更時はこのページと <a href="/kpi">/kpi</a> で告知します。</p>
+<a class="cta" href="/start?ref=credit">30秒でクリエイター登録 →</a>
+<div class="fine">━◯━ MU · <a href="/start">作って売る</a> · <a href="/kpi">公開KPI</a> · <a href="/tokushoho">特定商取引法</a> · <a href="/returns">返品</a> · 株式会社イネブラ</div>
+</div>
+<script defer src="/mu-funnel.js"></script>
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+</body></html>"##;
+
+pub async fn credit_page() -> Response {
+    ([(axum::http::header::CACHE_CONTROL, "public, max-age=600")], Html(CREDIT_HTML)).into_response()
+}
+
+// ════════════════════════════════════════════════════════════════════
+// GET /u/:code — 作者の公開ポートフォリオ。code は referral_code_for(email)
+// (安定・非PII)。PDP byline からここに飛び、作者の全作品が並ぶ =
+// 「1作者1ブランド」のハブ。メールアドレスは一切出さない。
+// ════════════════════════════════════════════════════════════════════
+
+pub async fn maker_page(
+    State(db): State<Db>,
+    axum::extract::Path(code): axum::extract::Path<String>,
+) -> Response {
+    let code_clean: String = code.chars().filter(|c| c.is_ascii_alphanumeric())
+        .take(8).collect::<String>().to_uppercase();
+    if code_clean.len() < 4 {
+        return (StatusCode::NOT_FOUND, "maker not found").into_response();
+    }
+    struct Prod { sku: String, label: String, price: i64, img: String }
+    let found: Option<(String, Vec<Prod>, i64)> = {
+        let conn = db.lock().unwrap();
+        let email: Option<String> = conn.query_row(
+            "SELECT owner_email FROM mu_referrals WHERE code=?",
+            rusqlite::params![code_clean], |r| r.get(0)).ok().flatten();
+        email.map(|em| {
+            let em = em.to_lowercase();
+            let dn: String = conn.query_row(
+                "SELECT COALESCE(display_name,'') FROM collab_users WHERE email=?",
+                rusqlite::params![em], |r| r.get(0)).unwrap_or_default();
+            let products: Vec<Prod> = conn.prepare(&format!(
+                "SELECT p.sku, p.label, p.retail_price_jpy,
+                        COALESCE(p.mockup_url_external, p.mockup_main_file, p.design_file, '')
+                 FROM catalog_products p
+                 WHERE {maker} = ?1 AND p.is_active=1 AND p.status='live'
+                 ORDER BY p.created_at DESC LIMIT 60", maker = MAKER_SQL))
+                .ok()
+                .and_then(|mut s| s.query_map(rusqlite::params![em], |r| Ok(Prod {
+                    sku: r.get(0)?, label: r.get(1)?, price: r.get(2)?, img: r.get(3)?,
+                })).map(|it| it.filter_map(|x| x.ok()).collect()).ok())
+                .unwrap_or_default();
+            let sales: i64 = conn.query_row(&format!(
+                "SELECT COUNT(*) FROM catalog_orders co JOIN catalog_products p ON p.sku=co.sku
+                 WHERE co.amount_jpy>0 AND co.status<>'submitting' AND {maker} = ?1", maker = MAKER_SQL),
+                rusqlite::params![em], |r| r.get(0)).unwrap_or(0);
+            (dn, products, sales)
+        })
+    };
+    let Some((dn, products, sales)) = found else {
+        return (StatusCode::NOT_FOUND, Html(
+            r#"<!doctype html><html lang="ja"><body style="background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,sans-serif;text-align:center;padding:80px 24px"><div style="letter-spacing:.45em;font-weight:700">━◯━ MU</div><p style="opacity:.7;margin-top:20px">この作者ページはまだありません。</p><p><a href="/start" style="color:#ffd700">あなたが最初の1ページを作りますか? →</a></p></body></html>"#,
+        )).into_response();
+    };
+    let who = if dn.trim().is_empty() { "MU クリエイター".to_string() } else { crate::html_escape(dn.trim()) };
+    let cards: String = products.iter().map(|p| format!(
+        r#"<a class="card" href="/shop/{sku}?ref={code}"><img src="{img}" alt="" loading="lazy"><div class="b"><div class="t">{label}</div><div class="p">¥{price}</div></div></a>"#,
+        sku = crate::html_escape(&p.sku), img = crate::html_escape(&p.img),
+        label = crate::html_escape(p.label.chars().take(40).collect::<String>().as_str()),
+        price = fmt_jpy(p.price), code = crate::html_escape(&code_clean))).collect();
+    let grid = if products.is_empty() {
+        r#"<p style="opacity:.6;font-size:13px">公開中の作品はまだありません。</p>"#.to_string()
+    } else { format!(r#"<div class="grid">{}</div>"#, cards) };
+    let html = format!(r##"<!doctype html><html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{who} — MU クリエイター</title>
+<meta name="description" content="{who} の作品 {n} 点。ことば1行から生まれた一点もの。">
+<meta property="og:title" content="{who} — MU クリエイター">
+<meta property="og:description" content="作品 {n} 点・売れた数 {sales}。ことば1行から30秒、あなたもブランドを持てる。">
+<style>
+body{{background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;margin:0}}
+.wrap{{max-width:920px;margin:0 auto;padding:32px 22px 60px}}
+.logo{{font-size:18px;font-weight:700;letter-spacing:.45em}}
+h1{{font-size:24px;font-weight:600;margin:18px 0 4px}}
+.sub{{font-size:12.5px;opacity:.6;margin-bottom:24px}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}}
+.card{{background:#111;border:1px solid #222;border-radius:12px;overflow:hidden;text-decoration:none;color:#f5f5f0;display:block}}
+.card img{{width:100%;aspect-ratio:1;object-fit:cover;background:#0d0d0d;display:block}}
+.card .b{{padding:10px 12px}} .card .t{{font-size:12.5px;line-height:1.5;max-height:3em;overflow:hidden}}
+.card .p{{font-size:13px;color:#ffd700;font-weight:700;margin-top:4px}}
+.cta{{display:inline-block;background:#ffd700;color:#0a0a0a;border-radius:8px;font-weight:800;padding:12px 26px;font-size:14px;text-decoration:none;margin-top:30px}}
+a{{color:#ffd700}} footer{{font-size:11px;opacity:.45;margin-top:40px;line-height:1.9}}
+</style></head><body><div class="wrap">
+<div class="logo">━◯━ MU</div>
+<h1>{who}</h1>
+<div class="sub">作品 {n} 点 · 売れた数 {sales} · ことば1行から、AIと一緒に。</div>
+{grid}
+<a class="cta" href="/start?ref=maker_page" data-funnel="cta_click" data-funnel-cta="maker_page_start">あなたも30秒で作って、売れたら10%受け取る →</a>
+<footer>━◯━ MU · <a href="/shop">SHOP</a> · <a href="/make">作る</a> · <a href="/credit">MUクレジットとは</a> · <a href="/kpi">公開KPI</a> · 株式会社イネブラ</footer>
+</div>
+<script defer src="/mu-funnel.js"></script>
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+</body></html>"##,
+        who = who, n = products.len(), sales = sales, grid = grid);
+    Html(html).into_response()
 }

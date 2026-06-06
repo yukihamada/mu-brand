@@ -3175,9 +3175,10 @@ const MAKE_HOURLY_CAP: i64 = 40;
 /// 作る数の最大化が目的 — どのページからでも1タップで /make へ。
 pub fn make_cta_banner(src: &str) -> String {
     format!(
-        r##"<a href="/make?ref={src}" data-funnel="cta_click" data-funnel-cta="make_{src}" style="display:flex;align-items:center;gap:12px;justify-content:center;flex-wrap:wrap;margin:0 auto 20px;max-width:1200px;background:linear-gradient(90deg,rgba(255,215,0,.14),rgba(255,215,0,.05));border:1px solid rgba(255,215,0,.4);border-radius:14px;padding:14px 18px;text-decoration:none;color:#f5f5f0;font-size:15px;font-weight:700;letter-spacing:.01em">
+        r##"<div style="margin:0 auto 20px;max-width:1200px"><a href="/make?ref={src}" data-funnel="cta_click" data-funnel-cta="make_{src}" style="display:flex;align-items:center;gap:12px;justify-content:center;flex-wrap:wrap;background:linear-gradient(90deg,rgba(255,215,0,.14),rgba(255,215,0,.05));border:1px solid rgba(255,215,0,.4);border-radius:14px;padding:14px 18px;text-decoration:none;color:#f5f5f0;font-size:15px;font-weight:700;letter-spacing:.01em">
 <span style="font-size:20px">✦</span><span>ひとこと言うだけで、自分のTシャツをAIが作る</span>
-<span style="background:#ffd700;color:#0a0a0a;border-radius:99px;padding:7px 16px;font-size:13px;font-weight:800;white-space:nowrap">作ってみる →</span></a>"##,
+<span style="background:#ffd700;color:#0a0a0a;border-radius:99px;padding:7px 16px;font-size:13px;font-weight:800;white-space:nowrap">作ってみる →</span></a>
+<div style="text-align:center;margin-top:8px;font-size:12px"><a href="/start?ref={src}" data-funnel="cta_click" data-funnel-cta="start_{src}" style="color:#ffd700;text-decoration:none;opacity:.9">クリエイター登録すると、売れるたび10%があなたに → /start</a></div></div>"##,
         src = src,
     )
 }
@@ -3491,6 +3492,15 @@ pub async fn make_verify_check(State(db): State<Db>, axum::Json(q): axum::Json<M
         axum::http::header::SET_COOKIE,
         axum::http::HeaderValue::from_static("mu_make_ok=1; Path=/; Max-Age=2592000; SameSite=Lax"),
     );
+    // 帰属の連続性: mu_make_ok 持ちは次回からゲートをスキップするため、ここで
+    // 認証済みメールも cookie に残し、以降の /api/make 生成へ maker_email を
+    // 自動で刻めるようにする(無いと2作目以降が無帰属=報酬が消える)。
+    if let Ok(v) = axum::http::HeaderValue::from_str(&format!(
+        "mu_make_email={}; Path=/; Max-Age=2592000; SameSite=Lax; HttpOnly",
+        urlencoding::encode(&email)
+    )) {
+        resp.headers_mut().append(axum::http::header::SET_COOKIE, v);
+    }
     resp
 }
 
@@ -3608,12 +3618,12 @@ pub async fn make_page(State(db): State<Db>, Query(q): Query<MakePageQuery>) -> 
 const MAKE_HTML: &str = r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>AIでオリジナルTシャツ作成 — 言うだけ10秒・1枚から・在庫ゼロ | MU MAKE · wearmu.com</title>
-<meta name="description" content="ひとこと言うだけでAIがオリジナルTシャツ・パーカーをデザイン。10〜20秒で完成、その場で1枚から購入OK（¥4,900〜）。ログイン不要・在庫ゼロ。作った一着は店に並び、売れたら作り手に報酬¥600〜/枚。">
+<meta name="description" content="ひとこと言うだけでAIがオリジナルTシャツ・パーカーをデザイン。10〜20秒で完成、その場で1枚から購入OK（¥4,900〜）。ログイン不要・在庫ゼロ。作った一着は店に並び、売れたら売上の10%が作り手に(Tシャツなら¥490〜/枚)。">
 <link rel="canonical" href="https://wearmu.com/make">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://wearmu.com/make">
 <meta property="og:title" content="言うだけで、Tシャツができる。— MU MAKE">
-<meta property="og:description" content="AIが10秒でデザイン→1枚から買える（¥4,900〜）。あなたの一着が店に並び、売れたら報酬¥600〜/枚。ログイン不要。">
+<meta property="og:description" content="AIが10秒でデザイン→1枚から買える（¥4,900〜）。あなたの一着が店に並び、売れたら売上の10%が作り手に。ログイン不要。">
 <meta property="og:image" content="https://wearmu.com/static/og.jpg">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="言うだけで、Tシャツができる。— MU MAKE">
@@ -3624,12 +3634,12 @@ const MAKE_HTML: &str = r##"<!doctype html><html lang="ja"><head>
   "step":[
    {"@type":"HowToStep","position":1,"name":"言う","text":"作りたいものを一言で入力（例：富士山をミニマルな一本線で描いた黒Tシャツ）。"},
    {"@type":"HowToStep","position":2,"name":"AIが描く","text":"10〜20秒でAIがデザインを生成し、商品ページができる。"},
-   {"@type":"HowToStep","position":3,"name":"買える・並ぶ","text":"その場で1枚から購入できる（Tシャツ¥4,900〜）。作った一着はみんなの棚に並び、売れるたび作り手に¥600〜/枚の報酬。"}]},
+   {"@type":"HowToStep","position":3,"name":"買える・並ぶ","text":"その場で1枚から購入できる（Tシャツ¥4,900〜）。作った一着はみんなの棚に並び、売れるたび売上の10%が作り手の報酬。"}]},
  {"@type":"FAQPage","mainEntity":[
   {"@type":"Question","name":"本当にログイン不要ですか？","acceptedAnswer":{"@type":"Answer","text":"はい。アカウント登録なしで、その場で作成・購入できます。"}},
   {"@type":"Question","name":"価格はいくらですか？","acceptedAnswer":{"@type":"Answer","text":"Tシャツ¥4,900〜、ラッシュガード¥9,800〜、スウェット¥7,800〜、パーカー¥8,800〜。1枚から受注生産です。"}},
   {"@type":"Question","name":"作ったデザインはすぐ公開されますか？","acceptedAnswer":{"@type":"Answer","text":"ほとんどは即公開・即購入できます。商標・実在人物など権利リスクがあるものだけ人が確認してから公開します。"}},
-  {"@type":"Question","name":"売れたらどうなりますか？","acceptedAnswer":{"@type":"Answer","text":"あなたの一着が売れるたび、作り手として¥600〜/枚の報酬を受け取れます。"}}]}]}
+  {"@type":"Question","name":"売れたらどうなりますか？","acceptedAnswer":{"@type":"Answer","text":"あなたの一着が売れるたび、売上の10%(Tシャツなら¥490〜/枚)をMUクレジットとして受け取れます。詳細は wearmu.com/credit。"}}]}]}
 </script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -3723,10 +3733,10 @@ button:disabled{opacity:.5;cursor:default}
 .rgrid .rl{font-size:10.5px;padding:7px 9px 2px;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:rgba(245,245,240,.85)}
 .rgrid .rp{font-size:11px;color:#ffd700;font-weight:700;padding:0 9px 8px}
 </style></head><body>
-<nav><a class="brand" href="/make">MU MAKE</a><div><a href="/shop">SHOP</a></div></nav>
+<nav><a class="brand" href="/make">MU MAKE</a><div><a href="/start" data-funnel="cta_click" data-funnel-cta="make_nav_start" style="color:#ffd700">作って売る</a> <a href="/shop">SHOP</a></div></nav>
 <div class="wrap">
   <h1 id="mkH1">言うだけで、Tシャツができる。</h1>
-  <div class="sub" id="mkSub">ひとこと言えば AI がデザイン → <b>その場で 1 枚から買える</b>。ログインも在庫もゼロ。あなたの一着はみんなの棚にも並び、<b style="color:#ffd700">売れたら作り手に報酬（¥600〜/枚）</b>。</div>
+  <div class="sub" id="mkSub">ひとこと言えば AI がデザイン → <b>その場で 1 枚から買える</b>。ログインも在庫もゼロ。あなたの一着はみんなの棚にも並び、<b style="color:#ffd700">売れたら売上の10%が作り手に</b>（<a href="/credit" style="color:#ffd700">仕組み</a>）。</div>
   <div class="steps">
     <div class="step"><div class="n">STEP 1</div><div class="t">言う</div><div class="d">作りたいものを一言。日本語でOK。</div></div>
     <div class="step"><div class="n">STEP 2</div><div class="t">AIが描く</div><div class="d">10〜20秒でデザインと商品ページが完成。</div></div>
@@ -3753,7 +3763,7 @@ button:disabled{opacity:.5;cursor:default}
       <option value="hoodie">パーカー</option>
       <option value="crewneck">スウェット</option>
     </select>
-    <button id="go">つくる（無料でデザイン）</button>
+    <button id="go" data-funnel="cta_click" data-funnel-cta="make_generate">つくる（無料でデザイン）</button>
   </div>
   <div class="price-hint">できた一着は <b>Tシャツ ¥4,900〜・ラッシュガード ¥9,800〜・プレミアム（全面プリント）¥19,800・スウェット ¥7,800〜・パーカー ¥8,800〜</b>。1枚から受注生産・買わなくてもOK。権利リスクがあるものだけ人が確認、あとは自動で公開。<br><span style="color:rgba(245,245,240,.45)">※プレミアム（Contrado UK / 裾・袖口・襟まで完全プリント）は英国で1枚ずつ縫製するため、お届けまで少しお時間をいただきます。</span></div>
   <div class="ex" id="mkEx">例: <b data-x="柴犬のシンプルな線画 生成りトート">柴犬の線画</b> ・ <b data-x="禅の円相 ひと筆 黒Tシャツ">円相T</b> ・ <b data-x="夜の富士山と月 ミニマル パーカー">富士と月</b></div>
@@ -3809,13 +3819,13 @@ var VIS=muVisitor();
 // バリアント定義（コピー＋入力UX）。design/parseプロンプトはサーバ共通（品質担保）。
 var MKV_DEFS={
   a:{h1:'言うだけで、Tシャツができる。',
-     sub:'ひとこと言えば AI がデザイン → <b>その場で 1 枚から買える</b>。ログインも在庫もゼロ。あなたの一着はみんなの棚にも並び、<b style="color:#ffd700">売れたら作り手に報酬（¥600〜/枚）</b>。',
+     sub:'ひとこと言えば AI がデザイン → <b>その場で 1 枚から買える</b>。ログインも在庫もゼロ。あなたの一着はみんなの棚にも並び、<b style="color:#ffd700">売れたら売上の10%が作り手に</b>。',
      ph:'例：富士山をミニマルな一本線で描いた黒Tシャツ', quick:false},
   b:{h1:'タップして、Tシャツ。',
-     sub:'考えるより早い。<b>下から選ぶだけ</b>で AI が一着にします。自由入力もOK。<b style="color:#ffd700">売れたら報酬（¥600〜/枚）</b>。',
+     sub:'考えるより早い。<b>下から選ぶだけ</b>で AI が一着にします。自由入力もOK。<b style="color:#ffd700">売れたら売上の10%</b>。',
      ph:'自分の言葉でもOK（例：猫のシルエット）', quick:true},
   c:{h1:'何を着たい？',
-     sub:'ひとことどうぞ。話すように書けば、AI があなたの一着にします。<b style="color:#ffd700">売れたら作り手に報酬（¥600〜/枚）</b>。',
+     sub:'ひとことどうぞ。話すように書けば、AI があなたの一着にします。<b style="color:#ffd700">売れたら売上の10%が作り手に</b>。',
      ph:'「〇〇な感じのTシャツがほしい」みたいに話して', quick:false}
 };
 // サーバが variant を焼いていればそれ、無ければ visitor のハッシュで決定的3分割。
@@ -3882,7 +3892,7 @@ function renderResult(j,p){
   var own = '<div class=own><b>あなたの言葉</b>から、世界に1枚が生まれました。<span class=pq>「'+escHtml(pEcho)+'」</span></div>';
   var buy = j.buy_url ? '<a class=buy href="'+j.buy_url+'" onclick="muEvent(\'cta_click\',{cta:\'make_buy\',sku:\''+j.sku+'\'})">この一着を、自分のものにする ¥'+yen(j.retail_jpy)+' →<small>サイズを選ぶだけ · 1枚から受注生産</small></a>' : '';
   var share = url ? '<button class=share onclick="muEvent(\'share\',{sku:\''+j.sku+'\'});muShare(this)" data-u="'+url+'" data-t="'+((j.display||'MU')+' / wearmu')+'">📣 シェアして広める</button>' : '';
-  var spread = url ? '<div class=spread>棚にも並びました。広めるほどこの子が売れる → 作り手のあなたに報酬（¥600〜/枚）。</div>' : '';
+  var spread = url ? '<div class=spread>棚にも並びました。広めるほどこの子が売れる → 売上の10%が作り手のあなたに。<a href="/start?ref=make_result" style="color:#ffd700">クリエイター登録(無料)で売上と報酬を管理 →</a></div>' : '';
   var one = j.auto_approved ? '<div class=one>🌱 <b>世界に1枚。</b>同じ絵は二度と生成されません。ファーストオーナーは、まだいません。</div>' : '';
   var nt = j.auto_approved ? '' : '<div class=note>'+(j.note||'つくりました。確認後に公開・購入できます。')+'</div>';
   $('#out').innerHTML=own+'<div class="card reveal"><img id=mkImg src="'+j.design_url+'" alt=""><div class=meta>'
@@ -4064,9 +4074,18 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     let ab_variant = make_variant_norm(q.v.as_deref());
     let ab_visitor = q.visitor.as_deref().map(str::trim).filter(|s| !s.is_empty() && s.len() <= 80);
     // 作者帰属: ログイン済み(/studio・/make どちらでも)なら maker_email を即刻印。
-    // 未ログインは従来どおり /api/make/verify/check の email 認証で後から刻まれる。
+    // 未ログインでも、過去に /make のメール認証を済ませた端末は mu_make_email
+    // cookie から刻む(ゲートスキップ時に2作目以降が無帰属になる穴を塞ぐ)。
     // maker_email が付いた作品は、売れるたびに作者へ 10% (apply_maker_commission)。
-    let maker_email = crate::bearer_or_session_email(&db, &headers, None);
+    let maker_email = crate::bearer_or_session_email(&db, &headers, None)
+        .or_else(|| {
+            headers.get(axum::http::header::COOKIE)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|c| c.split(';').find_map(|p| p.trim().strip_prefix("mu_make_email=")))
+                .and_then(|v| urlencoding::decode(v).ok())
+                .map(|s| s.trim().to_lowercase())
+                .filter(|s| s.contains('@') && s.len() <= 254)
+        });
     let meta_json = {
         let mut m = serde_json::Map::new();
         if let Some(v) = ab_variant { m.insert("make_variant".into(), serde_json::Value::from(v)); }
@@ -4471,7 +4490,10 @@ a.btn:hover{{background:rgba(255,215,0,0.08)}}
 </nav>
 <div class="wrap"><h1>{title}</h1>{body}
 <div class="legal-fine">最終更新: 2026-05-22 · © 2026 MU / Enabler Inc. · お問い合わせ <a href="mailto:info@enablerdao.com" style="color:#ffd700">info@enablerdao.com</a></div>
-</div></body></html>"##,
+</div>
+<script defer src="/mu-funnel.js"></script>
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+</body></html>"##,
         title = title, body = body_html
     ))
 }
@@ -6162,43 +6184,56 @@ pub async fn shop_pdp(
     // ── つくった人 byline + シェア(バイラルループの装置) ──
     // maker_email(作者帰属)があれば「つくった人」を出す。公開名は opt-in
     // (collab_users.display_name) — 未設定なら匿名「MU クリエイター」。
-    // メールアドレス自体は絶対に表に出さない。
-    let maker_line = {
+    // メールアドレス自体は絶対に表に出さない(/u/:code は非PIIの安定コード)。
+    // byline は ①誰が(リンク=作者ポートフォリオ) ②AI生成の開示 ③この購入の
+    // 10%実額が作者に入る事実 ④「あなたも」CTA の4点をワンセットで出す。
+    let maker_info: Option<(String, String)> = {
         let maker_email = meta_json
             .as_deref()
             .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
             .and_then(|v| v.get("maker_email").and_then(|x| x.as_str()).map(|s| s.to_lowercase()))
             .filter(|s| s.contains('@'));
-        match maker_email {
-            Some(me) => {
-                let dn: String = {
-                    let conn = db.lock().unwrap();
-                    conn.query_row(
-                        "SELECT COALESCE(display_name,'') FROM collab_users WHERE email=?",
-                        rusqlite::params![me], |r| r.get(0)).unwrap_or_default()
-                };
-                let who = if dn.trim().is_empty() { "MU クリエイター".to_string() } else { html_text(dn.trim()) };
-                format!(
-                    r#"<div class="maker-line" style="font-size:13px;opacity:.85;margin:2px 0 10px">つくった人: <b style="color:#ffd700">{who}</b> <span style="opacity:.6">— ことば1行から30秒。</span><a href="/start?ref=pdp_byline" data-funnel="cta_click" data-funnel-cta="pdp_byline_start" style="color:#ffd700">あなたも →</a></div>"#,
-                    who = who)
-            }
-            None => String::new(),
-        }
+        maker_email.map(|me| {
+            let dn: String = {
+                let conn = db.lock().unwrap();
+                conn.query_row(
+                    "SELECT COALESCE(display_name,'') FROM collab_users WHERE email=?",
+                    rusqlite::params![me], |r| r.get(0)).unwrap_or_default()
+            };
+            let who = if dn.trim().is_empty() { "MU クリエイター".to_string() } else { html_text(dn.trim()) };
+            (who, crate::referral_code_for(&me))
+        })
     };
-    let share_url = format!("https://wearmu.com/shop/{}", sku);
+    let maker_line = match &maker_info {
+        Some((who, code)) => format!(
+            r#"<div class="maker-line" style="font-size:13px;opacity:.9;margin:2px 0 2px">つくった人: <a href="/u/{code}?ref=pdp_byline" data-funnel="cta_click" data-funnel-cta="pdp_byline_maker" style="color:#ffd700;text-decoration:none"><b>{who}</b></a> <span style="opacity:.55">(ことば1行 → AI画像生成・30秒)</span></div>
+<div style="font-size:12px;opacity:.7;margin:0 0 10px">この購入の10% (¥{amt}) がつくった人のMUクレジット(<a href="/credit" style="color:#ffd700">仕組み</a>)になります · <a href="/start?ref=pdp_byline" data-funnel="cta_click" data-funnel-cta="pdp_byline_start" style="color:#ffd700">あなたも30秒で作って、売れたら10% →</a></div>"#,
+            who = who, code = code, amt = format_jpy(price_jpy / 10)),
+        None => String::new(),
+    };
+    // シェアは「ブランド広告」でなく「作者の自己表現」: 一人称+作者名+ref計測。
+    let share_url = format!("https://wearmu.com/shop/{}?ref=share_x", sku);
+    let share_who = maker_info.as_ref().map(|(w, _)| w.as_str()).unwrap_or("MU");
+    let share_text = if maker_info.is_some() {
+        format!("ことば1行から30秒で作りました: {} by {} #MU #wearmu", short_title, share_who)
+    } else {
+        format!("{} — MU ━◯━ ことば1行から、AIと一緒に。", short_title)
+    };
     let share_x = format!(
         "https://twitter.com/intent/tweet?text={}&url={}",
-        urlencoding::encode(&format!("{} — MU ━◯━", short_title)),
+        urlencoding::encode(&share_text),
         urlencoding::encode(&share_url));
     let share_line_url = format!(
         "https://social-plugins.line.me/lineit/share?url={}",
-        urlencoding::encode(&share_url));
+        urlencoding::encode(&format!("https://wearmu.com/shop/{}?ref=share_line", sku)));
+    // data-funnel="share" — mu-funnel.js の ALLOWED に専用 kind があるので
+    // cta_click と分離して「シェア段」を単独集計できるようにする。
     let share_block = format!(
         r##"<div class="share-row" style="display:flex;gap:8px;align-items:center;margin:14px 0 2px;font-size:12.5px;flex-wrap:wrap">
 <span style="opacity:.55">この一枚を広める:</span>
-<a href="{x}" target="_blank" rel="noopener" data-funnel="cta_click" data-funnel-cta="pdp_share_x" style="color:#f5f5f0;text-decoration:none;border:1px solid #3a3a3a;border-radius:99px;padding:6px 14px">𝕏 ポスト</a>
-<a href="{line}" target="_blank" rel="noopener" data-funnel="cta_click" data-funnel-cta="pdp_share_line" style="color:#f5f5f0;text-decoration:none;border:1px solid #3a3a3a;border-radius:99px;padding:6px 14px">LINE</a>
-<button id="shareBtn" data-funnel="cta_click" data-funnel-cta="pdp_share_native" style="background:none;color:#f5f5f0;border:1px solid #3a3a3a;border-radius:99px;padding:6px 14px;cursor:pointer;font-size:12.5px;font-family:inherit">リンクをコピー</button>
+<a href="{x}" target="_blank" rel="noopener" data-funnel="share" data-funnel-cta="pdp_share_x" style="color:#f5f5f0;text-decoration:none;border:1px solid #3a3a3a;border-radius:99px;padding:6px 14px">𝕏 ポスト</a>
+<a href="{line}" target="_blank" rel="noopener" data-funnel="share" data-funnel-cta="pdp_share_line" style="color:#f5f5f0;text-decoration:none;border:1px solid #3a3a3a;border-radius:99px;padding:6px 14px">LINE</a>
+<button id="shareBtn" data-funnel="share" data-funnel-cta="pdp_share_native" style="background:none;color:#f5f5f0;border:1px solid #3a3a3a;border-radius:99px;padding:6px 14px;cursor:pointer;font-size:12.5px;font-family:inherit">リンクをコピー</button>
 <script>(function(){{var b=document.getElementById('shareBtn');if(!b)return;b.addEventListener('click',function(){{
 if(navigator.share){{navigator.share({{url:location.href}}).catch(function(){{}});}}
 else{{navigator.clipboard.writeText(location.href).then(function(){{b.textContent='✓ コピーしました';}});}}
@@ -6339,8 +6374,8 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
 <title>{short_title} | MU SHOP — wearmu.com</title>
 <meta name="description" content="{desc_short}">
 <meta property="og:image" content="{og}">
-<meta property="og:title" content="{short_title}">
-<meta property="og:description" content="{desc_short}">
+<meta property="og:title" content="{og_title}">
+<meta property="og:description" content="{og_desc}">
 <meta property="og:type" content="product">
 <meta property="og:url" content="https://wearmu.com/shop/{sku_url}">
 <meta property="og:site_name" content="wearmu.com">
@@ -6505,6 +6540,14 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
         make_cta = make_cta_banner("pdp"),
         maker_line = maker_line,
         share = share_block,
+        // OG: title=作品名(+作者) / description=行動喚起 — TL上で同文反復を避ける。
+        og_title = html_attr(&match &maker_info {
+            Some((who, _)) => format!("{} by {} — MU", trim_chars(&display_name, 40), who),
+            None => format!("{} — MU", short_title),
+        }),
+        og_desc = html_attr(&format!(
+            "{} | ことば1行から30秒、あなたのデザインも棚に並ぶ → wearmu.com/start",
+            trim_chars(&meta_desc_short, 80))),
         assessment = assessment_html,
         edition_doc = edition_doc_html,
         related = related_html,
