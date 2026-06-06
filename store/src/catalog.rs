@@ -934,6 +934,24 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
                     IBJJF gi/no-gi compliant",
     },
     ProductSpec {
+        kind: "rashguard_contrado",
+        // PREMIUM tier — fulfilled by Contrado UK (full-coverage sublimation:
+        // front/back/sleeves AND waistband/cuffs/collar, which Printful 301
+        // leaves white). fulfillment_route='contrado_uk' diverts the order to
+        // the Helix API; the Printful 301/9328 ids here are used ONLY to
+        // render the on-body preview mockup (the garment looks the same), they
+        // never place a Printful order. retail ¥19,800 — Contrado genka is
+        // 2-3× Printful (est. ¥7.5-10.2K + shipping), so the ¥9,800 tier would
+        // run at a loss; see docs/CONTRADO_SALES_OUTREACH.md.
+        printful_product_id: 301,
+        printful_variant_id: 9328,
+        placement: "front",
+        retail_jpy: 19800,
+        spec_html: "プレミアム全面昇華ラッシュガード (Contrado UK) · 前身頃・後身頃・両袖に加え \
+                    裾・袖口・襟まで端まで完全プリント (白い余白なし) · UPF 50+ · 4-way ストレッチ · \
+                    フラットロック縫製 · 受注生産 (確認後に公開・発送) · IBJJF 適合フィット",
+    },
+    ProductSpec {
         kind: "hoodie",
         printful_product_id: 146, // Gildan 18500 pullover hoodie (heavy black option)
         printful_variant_id: 5531, // Black M (5530 is Black S — verified against Printful API 2026-05-24)
@@ -1097,6 +1115,8 @@ pub fn agent_insert_product(
         brand_for_sku, kind.to_uppercase().replace('_', "-"), seed);
 
     let route = match kind {
+        // Premium full-coverage rashguard → Contrado UK Helix API.
+        "rashguard_contrado" => "contrado_uk",
         "rashguard_ls" | "rashguard_black" => "printful_aop",
         // Self-fulfilled, non-Printful (NFC音コイン): take payment, then a
         // human encodes the tag + mails it (handled by the manual arm in
@@ -3607,7 +3627,7 @@ const MAKE_HTML: &str = r##"<!doctype html><html lang="ja"><head>
    {"@type":"HowToStep","position":3,"name":"買える・並ぶ","text":"その場で1枚から購入できる（Tシャツ¥4,900〜）。作った一着はみんなの棚に並び、売れるたび作り手に¥600〜/枚の報酬。"}]},
  {"@type":"FAQPage","mainEntity":[
   {"@type":"Question","name":"本当にログイン不要ですか？","acceptedAnswer":{"@type":"Answer","text":"はい。アカウント登録なしで、その場で作成・購入できます。"}},
-  {"@type":"Question","name":"価格はいくらですか？","acceptedAnswer":{"@type":"Answer","text":"Tシャツ¥4,900〜、スウェット¥7,800〜、パーカー¥8,800〜。1枚から受注生産です。"}},
+  {"@type":"Question","name":"価格はいくらですか？","acceptedAnswer":{"@type":"Answer","text":"Tシャツ¥4,900〜、ラッシュガード¥9,800〜、スウェット¥7,800〜、パーカー¥8,800〜。1枚から受注生産です。"}},
   {"@type":"Question","name":"作ったデザインはすぐ公開されますか？","acceptedAnswer":{"@type":"Answer","text":"ほとんどは即公開・即購入できます。商標・実在人物など権利リスクがあるものだけ人が確認してから公開します。"}},
   {"@type":"Question","name":"売れたらどうなりますか？","acceptedAnswer":{"@type":"Answer","text":"あなたの一着が売れるたび、作り手として¥600〜/枚の報酬を受け取れます。"}}]}]}
 </script>
@@ -3728,12 +3748,14 @@ button:disabled{opacity:.5;cursor:default}
     <select id="k">
       <option value="">おまかせ</option>
       <option value="tee">Tシャツ</option>
+      <option value="rashguard_ls">ラッシュガード</option>
+      <option value="rashguard_contrado">ラッシュガード プレミアム（全面プリント / Contrado UK ¥19,800）</option>
       <option value="hoodie">パーカー</option>
       <option value="crewneck">スウェット</option>
     </select>
     <button id="go">つくる（無料でデザイン）</button>
   </div>
-  <div class="price-hint">できた一着は <b>Tシャツ ¥4,900〜・スウェット ¥7,800〜・パーカー ¥8,800〜</b>。1枚から受注生産・買わなくてもOK。権利リスクがあるものだけ人が確認、あとは自動で公開。</div>
+  <div class="price-hint">できた一着は <b>Tシャツ ¥4,900〜・ラッシュガード ¥9,800〜・プレミアム（全面プリント）¥19,800・スウェット ¥7,800〜・パーカー ¥8,800〜</b>。1枚から受注生産・買わなくてもOK。権利リスクがあるものだけ人が確認、あとは自動で公開。<br><span style="color:rgba(245,245,240,.45)">※プレミアム（Contrado UK / 裾・袖口・襟まで完全プリント）は英国で1枚ずつ縫製するため、お届けまで少しお時間をいただきます。</span></div>
   <div class="ex" id="mkEx">例: <b data-x="柴犬のシンプルな線画 生成りトート">柴犬の線画</b> ・ <b data-x="禅の円相 ひと筆 黒Tシャツ">円相T</b> ・ <b data-x="夜の富士山と月 ミニマル パーカー">富士と月</b></div>
   <div id="out"></div>
   <div class="recent" id="recent" hidden>
@@ -3942,7 +3964,7 @@ pub async fn public_make(State(db): State<Db>, Query(q): Query<MakeQuery>) -> Re
     }
     let parse_prompt = format!(
         "Parse this JP/EN product idea into compact JSON. ONLY emit JSON, no prose, no markdown fences.\n\
-         Schema: {{\"kind\":\"tee|hoodie|crewneck\", \
+         Schema: {{\"kind\":\"tee|rashguard_ls|hoodie|crewneck\", \
                    \"theme_brief\":\"<one short English design brief for the chest graphic>\", \
                    \"display\":\"<short JP brand-mark name, <=10 chars>\", \
                    \"hook\":\"<one JP marketing sentence for the PDP>\", \
@@ -3950,7 +3972,8 @@ pub async fn public_make(State(db): State<Db>, Query(q): Query<MakeQuery>) -> Re
                    \"flagged\":<true ONLY if this needs a human to review before public sale: a real brand/trademark/logo, a real living person's name or likeness, a copyrighted character/IP, or hateful/sexual/violent/illegal content; otherwise false>, \
                    \"flag_reason\":\"<short JP reason if flagged, else empty>\"}}\n\
          Bias toward flagged=false (auto-approve). Only set true when clearly risky.\n\
-         If kind is missing, default to 'tee'. retail default 4900 tee / 8800 hoodie / 7800 crewneck.\n\
+         If the user mentions a rashguard / 'ラッシュガード' / 'ラッシュ' / no-gi / 柔術着の下 / グラップリング, set kind='rashguard_ls'.\n\
+         If kind is missing, default to 'tee'. retail default 4900 tee / 9800 rashguard_ls / 8800 hoodie / 7800 crewneck.\n\
          Input: {}", prompt_in);
     let parsed_json = match crate::gemini::call_gemini_text(&parse_prompt).await {
         Ok(s) => s,
@@ -3962,8 +3985,10 @@ pub async fn public_make(State(db): State<Db>, Query(q): Query<MakeQuery>) -> Re
         Err(_) => return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":"うまく解釈できませんでした。言い換えてお試しください。"}))).into_response(),
     };
     let kind_parsed = parsed["kind"].as_str().unwrap_or("tee");
-    // only DTG kinds are offered publicly
-    let allowed = ["tee", "hoodie", "crewneck"];
+    // DTG apparel + the AOP rashguard (Printful) + the premium full-coverage
+    // rashguard (Contrado UK) are offered publicly. rashguard_ls → printful_aop;
+    // rashguard_contrado → contrado_uk (review-gated, manual fulfillment).
+    let allowed = ["tee", "rashguard_ls", "rashguard_contrado", "hoodie", "crewneck"];
     let kind: &str = match q.kind.as_deref() {
         Some(k) if allowed.contains(&k) => k,
         _ if allowed.contains(&kind_parsed) => kind_parsed,
@@ -3972,6 +3997,12 @@ pub async fn public_make(State(db): State<Db>, Query(q): Query<MakeQuery>) -> Re
     let theme_brief = parsed["theme_brief"].as_str().unwrap_or(&prompt_in).to_string();
     let display = parsed["display"].as_str().unwrap_or("MU").to_string();
     let hook = parsed["hook"].as_str().unwrap_or("自然言語から自動生成").to_string();
+    // Premium Contrado tier: same auto-approve rule as everything else — live &
+    // buyable immediately UNLESS the rights filter flags it. Fulfillment is
+    // manual for now (Helix API still 403 / no product mapping): once sold, the
+    // operator places the order by hand via the Contrado dashboard, watching
+    // catalog_orders for `contrado_*` rows. See docs/CONTRADO_SALES_OUTREACH.md.
+    let is_contrado = kind == "rashguard_contrado";
     // 基本は AI 自動承認 → 即 live(買える)。商標/実在人物/著名キャラ/不適切のみ human review。
     let flagged = parsed["flagged"].as_bool().unwrap_or(false);
     let flag_reason = parsed["flag_reason"].as_str().unwrap_or("").to_string();
@@ -3979,7 +4010,9 @@ pub async fn public_make(State(db): State<Db>, Query(q): Query<MakeQuery>) -> Re
     let Some(spec) = PRODUCT_SPECS.iter().find(|s| s.kind == kind) else {
         return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"未対応の種類です"}))).into_response();
     };
-    let retail_jpy = parsed["retail_jpy"].as_i64().unwrap_or(spec.retail_jpy);
+    // Clamp UP to the per-kind price floor — Gemini sometimes echoes a low
+    // retail (e.g. 9800) for a premium pick, which would sell below genka.
+    let retail_jpy = parsed["retail_jpy"].as_i64().unwrap_or(spec.retail_jpy).max(spec.retail_jpy);
     let seed = format!("mk{:08x}", rand::random::<u32>());
     let slug = { let s: String = display.chars().filter(|c| c.is_ascii_alphanumeric()).take(12).collect::<String>().to_uppercase(); if s.is_empty() { "MAKE".to_string() } else { s } };
     let sku = format!("MAKE-{}-{}-{}", slug, kind.to_uppercase().replace('_', "-"), seed);
@@ -3987,19 +4020,41 @@ pub async fn public_make(State(db): State<Db>, Query(q): Query<MakeQuery>) -> Re
     if !charged {
         return (StatusCode::FAILED_DEPENDENCY, axum::Json(serde_json::json!({"ok":false,"error":"本日の生成枠が上限に達しました。また明日お試しください。"}))).into_response();
     }
-    let design_prompt = format!(
-        "Print-ready chest graphic at 300 DPI on a pure white background. \
-         Style brief: {}. NO model, NO mockup, just the artwork, centered. Variation key: {}.",
-        theme_brief, seed);
+    // AOP rashguard (Printful 301) sublimates every pixel across 4 panels →
+    // needs full-canvas, edge-to-edge artwork (mirrors the autonomous engine
+    // at ~line 2783). The Contrado premium tier is also full-coverage, so it
+    // takes the same full-canvas artwork. DTG apparel keeps the centered
+    // chest-graphic-on-white.
+    let is_aop = matches!(kind, "rashguard_ls" | "rashguard_black" | "rashguard_contrado");
+    let design_prompt = if is_aop {
+        format!(
+            "Print-ready FULL-CANVAS sublimation artwork at 300 DPI for an \
+             all-over-print rashguard. CRITICAL: fill the ENTIRE canvas \
+             edge-to-edge with the dominant color — NO white margins, NO \
+             padding, NO background gaps. Style brief: {}. The artwork will \
+             be cover-cropped onto every panel (front, back, both sleeves), \
+             so corners and edges matter as much as the center. NO model, \
+             NO garment mockup, just the printable artwork. Variation key: {}.",
+            theme_brief, seed)
+    } else {
+        format!(
+            "Print-ready chest graphic at 300 DPI on a pure white background. \
+             Style brief: {}. NO model, NO mockup, just the artwork, centered. Variation key: {}.",
+            theme_brief, seed)
+    };
     let img = match crate::gemini::call_gemini(&design_prompt).await {
         Ok(i) => i,
         Err(e) => return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":format!("デザイン生成に失敗: {}", e)}))).into_response(),
     };
-    // デフォルト透過: 生成は白(or黒)背景 → 出来上がりを後処理で背景透過にしてから保存。
-    // 色付き生地でも白(黒)の四角が出ない。処理失敗時は元画像にフォールバック。
-    let (design_bytes, design_mime) = match make_design_transparent(&img.bytes) {
-        Some(b) => (b, "image/png".to_string()),
-        None => (img.bytes.clone(), img.mime.clone()),
+    // DTG: 白(or黒)背景 → 後処理で背景透過にしてから保存（色生地でも四角が出ない）。
+    // AOP: 全面プリントなので透過キーは禁止（フチまで色を残す）→ 生成画像をそのまま使う。
+    let (design_bytes, design_mime) = if is_aop {
+        (img.bytes.clone(), img.mime.clone())
+    } else {
+        match make_design_transparent(&img.bytes) {
+            Some(b) => (b, "image/png".to_string()),
+            None => (img.bytes.clone(), img.mime.clone()),
+        }
     };
     let key = format!("catalog/{}.png", sku);
     let Some(url) = crate::store_r2_bytes(&key, &design_bytes, &design_mime).await else {
@@ -4034,7 +4089,9 @@ pub async fn public_make(State(db): State<Db>, Query(q): Query<MakeQuery>) -> Re
                 spec.printful_product_id, spec.printful_variant_id, spec.placement,
                 0, 0,
                 &url, &url, &url,
-                is_active_i, 50, status_s, "printful_dtg", "public_make", meta_json,
+                is_active_i, 50, status_s,
+                if is_contrado { "contrado_uk" } else if is_aop { "printful_aop" } else { "printful_dtg" },
+                "public_make", meta_json,
             ],
         );
         // 勝者未確定なら、各バリアントの「作成したユニーク訪問者数」を集計し、
@@ -4067,6 +4124,8 @@ pub async fn public_make(State(db): State<Db>, Query(q): Query<MakeQuery>) -> Re
     let note = if flagged {
         let r = if flag_reason.is_empty() { "内容".to_string() } else { flag_reason.clone() };
         format!("つくりました。少し確認したい点（{}）があるので人の目を通します。OKならすぐ公開・購入できます。", r)
+    } else if is_contrado {
+        "できました！もう棚に並びました。今すぐ買えます。プレミアム（Contrado UK / 裾・袖口・襟まで完全プリント）は英国で1枚ずつ縫製するため、お届けまで少しお時間をいただきます。".to_string()
     } else {
         "できました！もう棚に並びました。今すぐ買えます。着用イメージは数十秒で反映されます。".to_string()
     };
@@ -4085,6 +4144,293 @@ pub async fn public_make(State(db): State<Db>, Query(q): Query<MakeQuery>) -> Re
         "buy_url": buy_url,
         "note": note,
     })).into_response()
+}
+
+// ════════════════════════════════════════════════════════════════════
+// 昇帯記念ドロップ (Belt Promotion Drop) — BJJ需要ドリブンの一次流通
+//
+// 戦略(CLAUDE.md): MU単独で一般アパレルを狙わない。BJJ垂直の「買う理由」で
+// 転換を作る。昇帯はBJJ最大の感情ピーク → ¥4,900即決ゾーン。
+//
+// public_make の特化版。構造化入力(名前/道場/帯/段・線/昇帯日/得意技)から
+// 墨絵の記念グラフィックを生成し、edition_size=1 の一点物として白Tに焼く。
+// 既存の /edition/:sku シリアル台帳がそのまま provenance として効く。
+// 新テーブル無し = catalog 契約準拠 (brand='bjj-promote' に INSERT)。
+// ════════════════════════════════════════════════════════════════════
+
+#[derive(Deserialize)]
+pub struct PromoteQuery {
+    /// 昇帯した人の名前 (ローマ字 or 漢字)
+    pub name: String,
+    /// 道場・アカデミー名
+    pub dojo: String,
+    /// 帯 (white|blue|purple|brown|black|coral|red)
+    pub belt: String,
+    /// 昇帯日 (自由記述, 例: "2026.06.06")
+    pub date: String,
+    /// 段・線 (任意, 例: "2 stripes" / "黒帯1段")
+    #[serde(default)]
+    pub rank: Option<String>,
+    /// 得意技 (任意, グラフィックのモチーフに使う)
+    #[serde(default)]
+    pub tech: Option<String>,
+    /// 言語 (ja|en) — 既定 ja
+    #[serde(default)]
+    pub lang: Option<String>,
+}
+
+/// 帯コード → (日本語ラベル, 英語の帯色表現)。
+fn belt_label(belt: &str) -> (&'static str, &'static str) {
+    match belt {
+        "white"  => ("白帯",            "white"),
+        "blue"   => ("青帯",            "blue"),
+        "purple" => ("紫帯",            "purple"),
+        "brown"  => ("茶帯",            "brown"),
+        "black"  => ("黒帯",            "black"),
+        "coral"  => ("赤白帯(珊瑚帯)",  "red-and-white coral"),
+        "red"    => ("赤帯",            "red"),
+        _        => ("帯",              "jiu-jitsu"),
+    }
+}
+
+/// POST/GET /api/promote — 昇帯記念の一点物Tを生成して live にする。
+/// public_make と同じ生成パイプラインを使うが、入力が構造化されているため
+/// Gemini のテキストパース段を省き、リスクも低いので auto-live。
+pub async fn public_promote(State(db): State<Db>, Query(q): Query<PromoteQuery>) -> Response {
+    let name = q.name.trim();
+    let dojo = q.dojo.trim();
+    let date = q.date.trim();
+    if name.is_empty() || dojo.is_empty() || date.is_empty() {
+        return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"名前・道場・昇帯日を入力してください"}))).into_response();
+    }
+    if name.chars().count() > 40 || dojo.chars().count() > 60 || date.chars().count() > 40 {
+        return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"入力が長すぎます"}))).into_response();
+    }
+    let allowed_belts = ["white", "blue", "purple", "brown", "black", "coral", "red"];
+    if !allowed_belts.contains(&q.belt.as_str()) {
+        return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"帯を選択してください"}))).into_response();
+    }
+    // public_make と同じく時間あたりの生成上限を共有 (ブランド単位)。
+    {
+        let conn = db.lock().unwrap();
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM catalog_products WHERE brand='bjj-promote' AND created_at > datetime('now','-1 hour')",
+            [], |r| r.get(0)).unwrap_or(0);
+        if n >= MAKE_HOURLY_CAP {
+            return (StatusCode::TOO_MANY_REQUESTS, axum::Json(serde_json::json!({"ok":false,"error":"いまアクセスが集中しています。少し時間をおいて試してください。"}))).into_response();
+        }
+    }
+    let (belt_ja, belt_en) = belt_label(&q.belt);
+    let rank = q.rank.as_deref().map(str::trim).filter(|s| !s.is_empty() && s.chars().count() <= 24);
+    let tech = q.tech.as_deref().map(str::trim).filter(|s| !s.is_empty() && s.chars().count() <= 40);
+    let lang = match q.lang.as_deref() { Some("en") => "en", _ => "ja" };
+
+    let seed = format!("pr{:08x}", rand::random::<u32>());
+    let slug = {
+        let s: String = name.chars().filter(|c| c.is_ascii_alphanumeric()).take(10).collect::<String>().to_uppercase();
+        if s.is_empty() { "ROLL".to_string() } else { s }
+    };
+    let sku = format!("PROMOTE-{}-{}-{}", q.belt.to_uppercase(), slug, seed);
+
+    // 墨絵の記念グラフィック。帯色をインクの帯として、道場名と昇帯日を清書。
+    let rank_clause = rank.map(|r| format!(" The rank detail \"{}\" is rendered as small tasteful text under the belt.", r)).unwrap_or_default();
+    let tech_clause = tech.map(|t| format!(" Subtly incorporate a minimal line-art motif evoking the technique \"{}\".", t)).unwrap_or_default();
+    let design_prompt = format!(
+        "Print-ready commemorative chest graphic at 300 DPI on a pure white background, \
+         minimal Japanese sumi-e ink-brush style with generous negative space. \
+         Centerpiece: a single elegant brush-stroke jiu-jitsu belt in {belt} color, tied in a knot. \
+         Clean minimal typography below the belt: the practitioner's name \"{name}\", \
+         the academy \"{dojo}\", and the promotion date \"{date}\".{rank}{tech} \
+         Elegant, understated, gallery-grade — a keepsake of a once-in-a-lifetime promotion. \
+         NO model, NO garment mockup, just the centered artwork. Variation key: {seed}.",
+        belt = belt_en, name = name, dojo = dojo, date = date,
+        rank = rank_clause, tech = tech_clause, seed = seed);
+
+    let charged = { let conn = db.lock().unwrap(); spend_or_refuse(&conn, "ai_image", GEMINI_IMAGE_COST_JPY, &format!("public_promote sku={}", sku), Some(&sku)) };
+    if !charged {
+        return (StatusCode::FAILED_DEPENDENCY, axum::Json(serde_json::json!({"ok":false,"error":"本日の生成枠が上限に達しました。また明日お試しください。"}))).into_response();
+    }
+    let img = match crate::gemini::call_gemini(&design_prompt).await {
+        Ok(i) => i,
+        Err(e) => return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":format!("デザイン生成に失敗: {}", e)}))).into_response(),
+    };
+    // 白地DTG: 背景を透過にしてから保存 (色生地でも四角が出ない)。
+    let (design_bytes, design_mime) = match make_design_transparent(&img.bytes) {
+        Some(b) => (b, "image/png".to_string()),
+        None => (img.bytes.clone(), img.mime.clone()),
+    };
+    let key = format!("catalog/{}.png", sku);
+    let Some(url) = crate::store_r2_bytes(&key, &design_bytes, &design_mime).await else {
+        return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":"画像アップロードに失敗しました"}))).into_response();
+    };
+
+    // 白Tをキャンバスに (線画/墨絵は白地が正解)。
+    let Some(spec) = PRODUCT_SPECS.iter().find(|s| s.kind == "tee_white") else {
+        return (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(serde_json::json!({"ok":false,"error":"tee_white spec missing"}))).into_response();
+    };
+    let retail_jpy = spec.retail_jpy;
+    let (label, hook) = if lang == "en" {
+        (format!("{} — {} promotion", name, belt_en),
+         format!("A one-of-one keepsake for {}'s {} belt at {}.", name, belt_en, dojo))
+    } else {
+        (format!("{} — {}昇格記念", name, belt_ja),
+         format!("{} で {} に昇格した {} さんの、世界に一枚だけの記念T。", dojo, belt_ja, name))
+    };
+    let desc = format!("{} · {}", label, hook);
+    let meta_json = serde_json::json!({
+        "edition_size": 1,
+        "promote": {
+            "name": name, "dojo": dojo, "belt": q.belt, "belt_ja": belt_ja,
+            "rank": rank, "date": date, "tech": tech, "lang": lang,
+        }
+    }).to_string();
+
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO catalog_brands (slug, name, emoji, color_primary, tagline, is_active, revenue_share_pct)
+             VALUES ('bjj-promote', '昇帯記念 · MU×BJJ', '🥋', '#e6c449', '昇帯のその日を、世界に一枚だけの記念に', 1, 0)",
+            [],
+        );
+        let _ = conn.execute(
+            "INSERT INTO catalog_products (
+                sku, brand, label, description_ja, retail_price_jpy,
+                printful_product_id, printful_variant_id, printful_placement,
+                printful_print_w, printful_print_h,
+                design_file, mockup_main_file, mockup_url_external,
+                is_active, sort_order, status, fulfillment_route, legacy_source, meta_json
+             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            rusqlite::params![
+                &sku, "bjj-promote", &label, &desc, retail_jpy,
+                spec.printful_product_id, spec.printful_variant_id, spec.placement,
+                0, 0,
+                &url, &url, &url,
+                1, 10, "live", "printful_dtg", "public_promote", meta_json,
+            ],
+        );
+    }
+    // 着用イメージは Printful の on-body mockup のみ (追加Geminiコスト無し)。
+    let (pp, pv, url_c, sku_c, db_c) = (spec.printful_product_id, spec.printful_variant_id, url.clone(), sku.clone(), db.clone());
+    tokio::spawn(async move { let _ = generate_onbody_mockup(db_c, sku_c, pp, pv, url_c).await; });
+
+    axum::Json(serde_json::json!({
+        "ok": true,
+        "sku": sku,
+        "label": label,
+        "hook": hook,
+        "retail_jpy": retail_jpy,
+        "design_url": url,
+        "pdp_url": format!("https://wearmu.com/shop/{}", sku),
+        "edition_url": format!("https://wearmu.com/edition/{}", sku),
+        "buy_url": format!("https://wearmu.com/shop/{}", sku),
+        "status": "live",
+        "note": "できました。世界に一枚だけの記念Tです。今すぐ買えます。着用イメージは数十秒で反映されます。",
+    })).into_response()
+}
+
+/// GET /promote — 昇帯記念ドロップのフォームページ。
+pub async fn promote_page() -> Html<String> {
+    Html(format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>昇帯記念ドロップ — wearmu.com</title>
+<meta name="description" content="昇帯したその日を、世界に一枚だけの記念Tに。名前・道場・帯・昇帯日を入れるだけで、MUが墨絵の記念グラフィックを生成します。">
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:#0a0a0a;color:#f5f5f0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.7;font-size:14px}}
+nav{{padding:16px 24px;border-bottom:1px solid rgba(255,255,255,0.08);display:flex;justify-content:space-between;align-items:center}}
+nav a{{color:#f5f5f0;text-decoration:none;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.85}}
+nav .brand{{font-weight:900;letter-spacing:0.4em}}
+.wrap{{max-width:560px;margin:0 auto;padding:48px 24px 90px}}
+h1{{font-size:26px;font-weight:800;margin-bottom:8px;letter-spacing:-0.01em}}
+.lede{{color:rgba(245,245,240,0.7);font-size:13.5px;margin-bottom:30px}}
+label{{display:block;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:rgba(245,245,240,0.6);margin:18px 0 6px}}
+input,select{{width:100%;background:#141414;border:1px solid rgba(255,255,255,0.12);color:#f5f5f0;padding:11px 12px;border-radius:6px;font-size:14px;font-family:inherit}}
+input:focus,select:focus{{outline:none;border-color:#e6c449}}
+.belts{{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}}
+.belt{{flex:1;min-width:62px;text-align:center;padding:10px 4px;border:1px solid rgba(255,255,255,0.12);border-radius:6px;cursor:pointer;font-size:12px;user-select:none}}
+.belt.on{{border-color:#e6c449;background:rgba(230,196,73,0.1)}}
+.belt .sw{{display:block;height:8px;border-radius:3px;margin-bottom:6px}}
+.row{{display:flex;gap:12px}}.row>div{{flex:1}}
+button.go{{width:100%;margin-top:28px;padding:14px;background:#e6c449;color:#0a0a0a;border:none;border-radius:6px;font-size:15px;font-weight:800;cursor:pointer;letter-spacing:0.05em}}
+button.go:disabled{{opacity:0.5;cursor:default}}
+.note{{font-size:11px;color:rgba(245,245,240,0.45);margin-top:10px;text-align:center}}
+#result{{margin-top:28px}}
+#result img{{width:100%;border-radius:8px;border:1px solid rgba(255,255,255,0.1)}}
+#result .buy{{display:block;text-align:center;margin-top:14px;padding:13px;background:#e6c449;color:#0a0a0a;text-decoration:none;border-radius:6px;font-weight:800}}
+#result .ed{{display:block;text-align:center;margin-top:10px;color:#e6c449;text-decoration:none;font-size:12px}}
+.err{{color:#ff8080;font-size:13px;margin-top:14px}}
+.spin{{text-align:center;color:rgba(245,245,240,0.7);margin-top:24px}}
+</style></head><body>
+<nav><a href="/" class="brand">WEARMU</a><a href="/shop">SHOP</a></nav>
+<div class="wrap">
+  <h1>🥋 昇帯記念ドロップ</h1>
+  <p class="lede">昇帯したその日を、世界に一枚だけの記念Tに。<br>名前・道場・帯・昇帯日を入れるだけ。MUが墨絵の記念グラフィックを生成します。<br><b>限定1枚・シリアル付き</b>。</p>
+
+  <label>名前 / Name</label>
+  <input id="name" maxlength="40" placeholder="例: Yuki Hamada / 濱田優貴">
+
+  <label>道場・アカデミー / Academy</label>
+  <input id="dojo" maxlength="60" placeholder="例: JiuFlow Academy">
+
+  <label>帯 / Belt</label>
+  <div class="belts" id="belts">
+    <div class="belt" data-b="white"><span class="sw" style="background:#f5f5f0"></span>白</div>
+    <div class="belt" data-b="blue"><span class="sw" style="background:#2b6cff"></span>青</div>
+    <div class="belt" data-b="purple"><span class="sw" style="background:#8a4fff"></span>紫</div>
+    <div class="belt" data-b="brown"><span class="sw" style="background:#7a4a23"></span>茶</div>
+    <div class="belt" data-b="black"><span class="sw" style="background:#111;border:1px solid #444"></span>黒</div>
+    <div class="belt" data-b="coral"><span class="sw" style="background:linear-gradient(90deg,#d11 50%,#f5f5f0 50%)"></span>珊瑚</div>
+    <div class="belt" data-b="red"><span class="sw" style="background:#d11"></span>赤</div>
+  </div>
+
+  <div class="row">
+    <div><label>昇帯日 / Date</label><input id="date" maxlength="40" placeholder="2026.06.06"></div>
+    <div><label>段・線 (任意)</label><input id="rank" maxlength="24" placeholder="2 stripes / 1段"></div>
+  </div>
+
+  <label>得意技 (任意) / Signature technique</label>
+  <input id="tech" maxlength="40" placeholder="例: triangle choke, berimbolo">
+
+  <button class="go" id="go">記念Tをつくる</button>
+  <p class="note">生成は数十秒。できたらその場で買えます。</p>
+
+  <div id="result"></div>
+</div>
+<script>
+let belt = "";
+document.querySelectorAll('.belt').forEach(function(el){{
+  el.addEventListener('click', function(){{
+    document.querySelectorAll('.belt').forEach(function(x){{x.classList.remove('on');}});
+    el.classList.add('on'); belt = el.dataset.b;
+  }});
+}});
+document.getElementById('go').addEventListener('click', async function(){{
+  var name = document.getElementById('name').value.trim();
+  var dojo = document.getElementById('dojo').value.trim();
+  var date = document.getElementById('date').value.trim();
+  var rank = document.getElementById('rank').value.trim();
+  var tech = document.getElementById('tech').value.trim();
+  var r = document.getElementById('result');
+  if(!name || !dojo || !date || !belt){{ r.innerHTML = '<p class="err">名前・道場・帯・昇帯日を入れてください。</p>'; return; }}
+  var btn = this; btn.disabled = true; btn.textContent = 'つくっています…';
+  r.innerHTML = '<p class="spin">🖌 墨で一枚、生成中…（数十秒）</p>';
+  try {{
+    var qs = new URLSearchParams({{name:name,dojo:dojo,belt:belt,date:date,rank:rank,tech:tech,lang:'ja'}});
+    var res = await fetch('/api/promote?' + qs.toString(), {{method:'POST'}});
+    var j = await res.json();
+    if(!j.ok){{ r.innerHTML = '<p class="err">'+(j.error||'生成に失敗しました')+'</p>'; btn.disabled=false; btn.textContent='もう一度つくる'; return; }}
+    r.innerHTML = '<img src="'+j.design_url+'" alt="record">'
+      + '<a class="buy" href="'+j.buy_url+'">この一枚を買う — ¥'+j.retail_jpy.toLocaleString()+'</a>'
+      + '<a class="ed" href="'+j.edition_url+'">限定1枚 · シリアル台帳を見る →</a>'
+      + '<p class="note">'+(j.note||'')+'</p>';
+    btn.disabled = false; btn.textContent = 'もう一枚つくる';
+  }} catch(e) {{
+    r.innerHTML = '<p class="err">通信に失敗しました。もう一度お試しください。</p>';
+    btn.disabled = false; btn.textContent = 'もう一度つくる';
+  }}
+}});
+</script>
+</body></html>"##))
 }
 
 /// Tiny shared header/footer for /returns /faq /shipping pages so
@@ -8432,16 +8778,20 @@ fn render_card(p: &ProductRow, pos: usize) -> String {
         ),
         _ => String::new(),
     };
+    // Descriptive alt for image SEO / a11y (empty alt = no Google Images
+    // signal, no screen-reader text). Product name + brand, attr-escaped.
+    let img_alt = html_attr(&format!("{} — {}", p.desc.trim(), p.brand.trim()));
     // data-funnel: shop_card + grid position (0-based, page-local) so the
     // analytics funnel can split /shop→PDP CTR by card rank (above/below fold).
     format!(
-        r##"<a class="card" href="/shop/{sku_enc}" data-funnel="cta_click" data-funnel-cta="shop_card" data-funnel-pos="{pos}"><span class="img" style="position:relative;display:block">{sold_badge}{listen_mini}{listen_song}<img src="{img}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/static/designs/marker_zero.png';this.style.objectFit='contain';this.style.background='#0a0a0a';this.style.padding='28px'"></span><span class="body"><span class="brand">{brand}</span><span class="name">{name}</span><span class="price">¥{price}</span></span></a>"##,
+        r##"<a class="card" href="/shop/{sku_enc}" data-funnel="cta_click" data-funnel-cta="shop_card" data-funnel-pos="{pos}"><span class="img" style="position:relative;display:block">{sold_badge}{listen_mini}{listen_song}<img src="{img}" alt="{img_alt}" loading="lazy" onerror="this.onerror=null;this.src='/static/designs/marker_zero.png';this.style.objectFit='contain';this.style.background='#0a0a0a';this.style.padding='28px'"></span><span class="body"><span class="brand">{brand}</span><span class="name">{name}</span><span class="price">¥{price}</span></span></a>"##,
         pos = pos,
         sku_enc = urlencoding::encode(&p.sku),
         sold_badge = sold_badge,
         listen_mini = listen_mini,
         listen_song = listen_song,
         img = html_attr(&img),
+        img_alt = img_alt,
         brand = html_text(&p.brand),
         name = html_text(&p.desc),
         price = format_jpy(p.price),
