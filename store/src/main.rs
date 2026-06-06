@@ -40536,6 +40536,14 @@ fn fmt_commas(n: i64) -> String {
 /// Same data as the JSON endpoint, server-side rendered with the MU dark theme.
 async fn public_transparency_page(State(db): State<Db>) -> Html<String> {
     let snap = gather_transparency_snapshot(&db);
+    // クリエイターループ(カタログ注文)分の累計 — /kpi と同じ集計。全体売上との
+    // 包含関係(部分集合)を本文で言い切るための実数。
+    let loop_rev: i64 = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(SUM(amount_jpy),0) FROM catalog_orders WHERE amount_jpy>0 AND status<>'submitting'",
+            [], |r| r.get(0)).unwrap_or(0)
+    };
     // Traffic snapshot (last 7d) — for the "where did people come from" section.
     let (pv_7d, top_refs): (i64, Vec<(String, i64)>) = {
         let conn = db.lock().unwrap();
@@ -40921,7 +40929,7 @@ footer a:hover{{color:var(--y)}}
   <footer>
     数字に矛盾があったら <a href="mailto:info@enablerdao.com">info@enablerdao.com</a> または <a href="/bounty">/bounty</a> へ。<br>
     Raw JSON: <a href="/api/transparency">wearmu.com/api/transparency</a> · Constitution: <a href="/constitution">wearmu.com/constitution</a><br>
-    北極星KPI (初売上クリエイター/週): <a href="/kpi">wearmu.com/kpi</a> — クリエイターループ分の売上はそちらに別掲(本ページの部分集合) · <a href="/start">作って売る</a><br>
+    北極星KPI (初売上クリエイター/週): <a href="/kpi">wearmu.com/kpi</a> — 上の累計実売上のうち<strong>クリエイターループ(カタログ注文)分は ¥{loop_rev}</strong> (部分集合・週次内訳は /kpi) · <a href="/start">作って売る</a><br>
     <a href="/returns">返品ポリシー</a> · <a href="/tokushoho">特定商取引法</a> · <a href="/privacy">プライバシー</a> · <a href="/credit">MUクレジット</a><br>
     株式会社イネブラ (Enabler Inc.) · yuki (1 人のオペレーター) · 28 agents
   </footer>
@@ -40929,6 +40937,7 @@ footer a:hover{{color:var(--y)}}
 
 </body></html>"##,
         real_rev_s = real_rev_s,
+        loop_rev = format_jpy(loop_rev),
         ext_rev_s = ext_rev_s,
         ext_purch_s = ext_purch_s,
         ext_cust_s = ext_cust_s,

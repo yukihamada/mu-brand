@@ -70,17 +70,17 @@ code.big{font-family:'SF Mono',monospace;letter-spacing:.3em}
 <div class="logo">━◯━ MU</div>
 <div class="kicker">STUDIO — designed by you</div>
 <div id="step1">
-<h1>30秒で、自分のブランドを持つ。</h1>
-<p class="lead">ことば1行で商品が生まれて、世界中に届く。<br><b style="color:#ffd700">売れたら10%があなたに</b>(<a href="/credit">MUクレジットとは — 1cr=¥1・¥3,000以上で振込可</a>)。在庫ゼロ・費用ゼロ・受注生産。</p>
+<h1 id="h1main">1行で、自分のブランドが生まれる。</h1>
+<p class="lead" id="leadmain">ことば1行で商品が生まれて、世界中に届く。<br><b style="color:#ffd700">売れたら10%があなたに</b>(<a href="/credit">MUクレジットとは — 1cr=¥1・¥3,000以上で振込可</a>)。在庫ゼロ・費用ゼロ・受注生産。</p>
+<a href="/make?ref=start" id="tryMake" data-funnel="cta_click" data-funnel-cta="start_try_make" style="display:block;text-align:center;background:none;border:1px solid #ffd700;color:#ffd700;border-radius:8px;font-weight:800;padding:13px;font-size:14.5px;text-decoration:none;margin-bottom:10px">① まず作ってみる(登録不要・30秒) → /make</a>
 <input id="email" type="email" placeholder="you@example.com" autocomplete="email" autofocus>
-<button id="send" data-funnel="cta_click" data-funnel-cta="start_send_code">メールで始める(無料)</button>
+<button id="send" data-funnel="cta_click" data-funnel-cta="start_send_code">② メールで名義をつくる(無料・ログイン兼用)</button>
 <div class="msg" id="m1"></div>
 <div class="steps">
-<div><b>1</b>メールにコードが届く</div>
-<div><b>2</b><a href="/make?ref=start" style="color:inherit">/make</a> でことば1行 → 商品が生まれる</div>
+<div><b>1</b>ことば1行で作る(登録不要)</div>
+<div><b>2</b>メール1つで<b style="display:inline;font-size:12px">あなたの名義</b>に</div>
 <div><b>3</b>売れたら10% · <a href="/studio" style="color:inherit">/studio</a> で管理</div>
 </div>
-<p style="font-size:12px;opacity:.65;line-height:1.8;margin:18px 0 0">先に試したい?— <a href="/make?ref=start" data-funnel="cta_click" data-funnel-cta="start_try_make">登録なしで1行つくってみる → /make</a>(生成後のメール認証で、その作品はあなたの名義になります)</p>
 </div>
 <div id="step2">
 <h1>メールのコードを入力</h1>
@@ -88,9 +88,9 @@ code.big{font-family:'SF Mono',monospace;letter-spacing:.3em}
 <input id="code" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="123456" class="big">
 <button id="verify" data-funnel="cta_click" data-funnel-cta="start_verify_code">ログインしてスタジオへ →</button>
 <div class="msg" id="m2"></div>
-<p style="font-size:12px;opacity:.6"><a href="#" id="back">← メールアドレスを入れ直す</a></p>
+<p style="font-size:12px;opacity:.6"><a href="#" id="resend">コードを再送</a> · <a href="#" id="back">← メールアドレスを入れ直す</a></p>
 </div>
-<div class="fine">登録はメールアドレスのみ。<a href="/privacy">プライバシー</a> · <a href="/tokushoho">特商法</a> · すでに登録済みでも同じ手順でログインできます · <a href="/kpi">みんなの数字(公開KPI)</a></div>
+<div class="fine">登録はメールアドレスのみ。すでに登録済みでも同じ手順でログインできます。報酬の現金化分は課税所得になる場合があります(<a href="/credit">詳細</a>)。<a href="/privacy">プライバシー</a> · <a href="/tokushoho">特商法</a> · <a href="/kpi">みんなの数字(公開KPI)</a></div>
 </div>
 <script defer src="/mu-funnel.js"></script>
 <script>
@@ -115,13 +115,28 @@ $('verify').onclick=async function(){
   try{
     var r=await fetch('/api/collab/auth/verify',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email:window._em,code:c})});
     var j=await r.json().catch(function(){return{}});
-    if(r.ok&&j.ok){msg($('m2'),'ログインしました。スタジオへ…');location.href='/studio'}
+    if(r.ok&&j.ok){try{window.MU_FUNNEL&&window.MU_FUNNEL.send('you_register',{method:'email_code'})}catch(_){};msg($('m2'),'ログインしました。スタジオへ…');location.href='/studio'}
     else{msg($('m2'),j.error==='code expired'?'コードの期限が切れました。入れ直してください':'コードが一致しません',true);this.disabled=false}
   }catch(_){msg($('m2'),'通信エラー',true);this.disabled=false}
 };
 $('code').addEventListener('keydown',function(e){if(e.key==='Enter')$('verify').click()});
 $('email').addEventListener('keydown',function(e){if(e.key==='Enter')$('send').click()});
 $('back').onclick=function(e){e.preventDefault();$('step2').style.display='none';$('step1').style.display=''};
+var _rs=0;
+$('resend').onclick=async function(e){
+  e.preventDefault();
+  var now=Date.now();
+  if(now-_rs<60000){msg($('m2'),'再送は60秒に1回までです',true);return}
+  _rs=now;msg($('m2'),'再送中…');
+  try{await fetch('/api/collab/auth/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email:window._em,next:'/studio'})});msg($('m2'),'再送しました。迷惑メールもご確認ください')}catch(_){msg($('m2'),'通信エラー',true)}
+};
+// 再ログイン文脈(?login=1 / /studioからの307)はオンボーディングコピーを畳む
+if(/[?&]login=1/.test(location.search)){
+  $('h1main').textContent='おかえりなさい。メールでログイン';
+  $('leadmain').innerHTML='登録済みのメールアドレスに6桁コードを送ります。';
+  $('tryMake').style.display='none';
+  $('send').textContent='ログインコードを送る';
+}
 </script>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </body></html>"##;
@@ -216,12 +231,13 @@ __PRODUCTS__
 <div style="font-size:13px;font-weight:700">作者報酬 — あなたの還元率: <span style="color:#ffd700">販売価格の10%</span></div>
 <p>あなたの作品が売れるたび、<b>販売価格の10%</b>(¥4,900のTシャツなら¥490)がMUクレジットで自動的に入ります。全クリエイター一律10%・実績に応じてストア単位で引き上げあり(<a href="/credit">仕組みと根拠</a>)。クレジットは次の購入で使えます。</p>
 <button id="po" data-funnel="cta_click" data-funnel-cta="studio_payout">¥3,000以上で銀行振込を申請する</button> <span id="pom" style="font-size:12px;margin-left:6px"></span>
-<p>申請後、運営が確認して通常<b>5営業日</b>以内に振込(手数料は当社負担)。台帳に「振込申請」の行が立ち、進捗はメールでお知らせします。</p>
+<p>申請後、運営が確認して通常<b>5営業日</b>以内に振込(手数料は当社負担)。台帳に「振込申請」の行が立ち、進捗はメールでお知らせします。現金化分は課税所得になる場合があります(<a href="/credit">詳細</a>)。</p>
 __LEDGER__
 </div>
 <div class="panel">
 <div style="font-size:13px;font-weight:700">紹介リンク — 広めても10%</div>
-<div class="code">__REFLINK__</div>
+<div class="code" id="refl">__REFLINK__</div>
+<button id="refc" data-funnel="cta_click" data-funnel-cta="studio_referral_copy" style="margin-top:2px">リンクをコピー</button> <span id="refm" style="font-size:12px;margin-left:6px"></span>
 <p>このリンク経由で<b>誰の商品でも</b>30日以内に売れると、売上の10%があなたに。SNSのプロフィールにどうぞ。<a href="/affiliate/__REFCODE__">実績を見る →</a></p>
 </div>
 </div>
@@ -229,7 +245,7 @@ __LEDGER__
 <h2>公開名(作品ページに「つくった人」として表示)</h2>
 <div class="panel">
 <input id="dn" maxlength="24" placeholder="例: yuki / 道場の名前 / ニックネーム" value="__DISPLAY_NAME__">
-<button id="dnb">保存</button> <span id="dnm" style="font-size:12px;margin-left:8px"></span>
+<button id="dnb" data-funnel="cta_click" data-funnel-cta="studio_name_save">保存</button> <span id="dnm" style="font-size:12px;margin-left:8px"></span>
 <p>空のままなら「MU クリエイター」と匿名表示。メールアドレスが公開されることはありません。</p>
 </div>
 
@@ -258,6 +274,7 @@ $('dnb').onclick=async function(){
     m.textContent=(r.ok&&j.ok)?'✓ 保存しました':(j.error||'保存できませんでした');
   }catch(_){m.textContent='通信エラー'}
 };
+$('refc').onclick=function(){var t=$('refl').textContent.trim();navigator.clipboard.writeText(t).then(function(){$('refm').textContent='✓ コピーしました'});};
 $('po').onclick=async function(){
   var m=$('pom');this.disabled=true;m.textContent='申請中…';
   try{
@@ -274,7 +291,7 @@ $('po').onclick=async function(){
 /// GET /studio — 要ログイン。未ログインは /start へ。
 pub async fn studio_page(State(db): State<Db>, headers: HeaderMap) -> Response {
     let Some((email, _collabs, _sub, _verified)) = crate::collab_session_email(&db, &headers) else {
-        return Redirect::temporary("/start").into_response();
+        return Redirect::temporary("/start?login=1").into_response();
     };
     let email_lc = email.to_lowercase();
     let ref_code = crate::referral_code_for(&email_lc);
@@ -633,7 +650,7 @@ a{color:#ffd700}
 <tr><th>週 (月曜〜)</th><th>新規クリエイター</th><th>作品</th><th>★初売上作者</th><th>注文</th><th>売上</th></tr>
 __ROWS__
 </table>
-<div class="fine">毎週この表が1行ずつ増えていきます。あなたの行になるかもしれません → <a href="/start">30秒でクリエイター登録</a><br>━◯━ MU · <a href="/shop">SHOP</a> · <a href="/make">作る</a> · <a href="/credit">MUクレジット</a> · <a href="/transparency">透明性</a> · <a href="/returns">返品</a> · <a href="/tokushoho">特商法</a> · <a href="/privacy">プライバシー</a> · 株式会社イネブラ</div>
+<div class="fine">毎週この表が1行ずつ増えていきます。あなたの行になるかもしれません → <a href="/start?ref=kpi" data-funnel="cta_click" data-funnel-cta="kpi_start">クリエイター登録(無料)</a> · <a href="/make?ref=kpi" data-funnel="cta_click" data-funnel-cta="kpi_make">まず1行で作ってみる</a><br>━◯━ MU · <a href="/shop">SHOP</a> · <a href="/make">作る</a> · <a href="/credit">MUクレジット</a> · <a href="/transparency">透明性</a> · <a href="/returns">返品</a> · <a href="/tokushoho">特商法</a> · <a href="/privacy">プライバシー</a> · 株式会社イネブラ</div>
 </div>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </body></html>"##;
@@ -697,11 +714,12 @@ a{color:#ffd700}
 <table>
 <tr><th>価値</th><td>1クレジット = ¥1 相当。</td></tr>
 <tr><th>使い道</th><td>① MU の決済でそのまま値引きに使える ② 残高 <b>¥3,000以上</b>で<b>銀行振込(現金)</b>への交換を申請できる。</td></tr>
-<tr><th>振込の手順</th><td>申請制: <a href="mailto:info@enablerdao.com?subject=MU%20%E6%8C%AF%E8%BE%BC%E7%94%B3%E8%AB%8B">info@enablerdao.com</a> に登録メールから「振込申請」と送る → 運営が確認して通常<b>5営業日</b>以内に振込(手数料は当社負担)。</td></tr>
+<tr><th>振込の手順</th><td><a href="/studio">/studio</a> の<b>「振込申請」ボタン</b>を押すだけ(残高¥3,000以上で有効・不足時は「残高¥X。あと¥Y」と表示・7日以内の二重申請は不可)。受付すると運営とあなたの両方にメールが届き、通常<b>5営業日</b>以内に振込(手数料は当社負担)。/studio が使えない場合のみ <a href="mailto:info@enablerdao.com?subject=MU%20%E6%8C%AF%E8%BE%BC%E7%94%B3%E8%AB%8B">info@enablerdao.com</a> へ。</td></tr>
 <tr><th>有効期限</th><td>なし。</td></tr>
 <tr><th>確認方法</th><td><a href="/studio">/studio</a> に残高と入出金の台帳(いつ・どの作品で・いくら)が出ます。</td></tr>
 <tr><th>法的な位置づけ</th><td>MUクレジットは当社が役務の対価として無償付与する社内ポイントで、<b>販売はしていません</b>(購入できるポイントではないため、資金決済法上の前払式支払手段に該当しない運用)。報酬の付与率(10%)は実装コード・台帳とも公開で、誇大表示をしない方針です(<a href="/transparency">/transparency</a>)。</td></tr>
 <tr><th>対象外</th><td>自分の作品を自分で買った分には付きません(自己購入除外)。不正・規約違反時は取り消すことがあります。</td></tr>
+<tr><th>税金</th><td>クレジットの付与・現金化は、受け取った方の<b>課税所得になる場合があります</b>。確定申告の要否は各自でご確認ください(年間の受取累計は <a href="/studio">/studio</a> の台帳で確認できます)。</td></tr>
 </table>
 <h2>10%の計算基準と根拠</h2>
 <p><b>付与額 = 販売価格(税込)の10%</b>です。¥4,900のTシャツなら¥490 — PDPに表示される実額と同じ計算で、粗利の10%ではありません。受注生産(Printful)の原価・送料・決済手数料はMU側の取り分から負担し、作者10%・紹介者10%を<b>売上から先取り</b>で配る設計です。現在の料率は全クリエイター一律10%(あなたの実効率は <a href="/studio">/studio</a> にも表示)。ストア単位で引き上げる仕組み(maker_pct)があり、実績に応じて見直します。変更時はこのページと <a href="/kpi">/kpi</a> で告知します。</p>
@@ -767,7 +785,7 @@ pub async fn maker_page(
     };
     let who = if dn.trim().is_empty() { "MU クリエイター".to_string() } else { crate::html_escape(dn.trim()) };
     let cards: String = products.iter().map(|p| format!(
-        r#"<a class="card" href="/shop/{sku}?ref={code}"><img src="{img}" alt="" loading="lazy"><div class="b"><div class="t">{label}</div><div class="p">¥{price}</div></div></a>"#,
+        r#"<a class="card" href="/shop/{sku}?ref={code}" data-funnel="cta_click" data-funnel-cta="portfolio_pdp"><img src="{img}" alt="" loading="lazy"><div class="b"><div class="t">{label}</div><div class="p">¥{price}</div></div></a>"#,
         sku = crate::html_escape(&p.sku), img = crate::html_escape(&p.img),
         label = crate::html_escape(p.label.chars().take(40).collect::<String>().as_str()),
         price = fmt_jpy(p.price), code = crate::html_escape(&code_clean))).collect();
@@ -800,7 +818,17 @@ a{{color:#ffd700}} footer{{font-size:11px;opacity:.45;margin-top:40px;line-heigh
 <div class="logo">━◯━ MU</div>
 <h1>{who}</h1>
 <div class="sub">作品 {n} 点 · 売れた数 {sales} · ことば1行から、AIと一緒に。</div>
+<div style="display:flex;gap:8px;align-items:center;margin:0 0 18px;font-size:12.5px;flex-wrap:wrap">
+<span style="opacity:.55">このブランドを広める:</span>
+<a href="https://twitter.com/intent/tweet?text={share_text}&url={share_url}" target="_blank" rel="noopener" data-funnel="share" data-funnel-cta="portfolio_share_x" style="color:#f5f5f0;text-decoration:none;border:1px solid #3a3a3a;border-radius:99px;padding:6px 14px">𝕏 ポスト</a>
+<a href="https://social-plugins.line.me/lineit/share?url={share_url}" target="_blank" rel="noopener" data-funnel="share" data-funnel-cta="portfolio_share_line" style="color:#f5f5f0;text-decoration:none;border:1px solid #3a3a3a;border-radius:99px;padding:6px 14px">LINE</a>
+<button id="shareBtn" data-funnel="share" data-funnel-cta="portfolio_share_native" style="background:none;color:#f5f5f0;border:1px solid #3a3a3a;border-radius:99px;padding:6px 14px;cursor:pointer;font-size:12.5px;font-family:inherit">リンクをコピー</button>
+</div>
 {grid}
+<script>(function(){{var b=document.getElementById('shareBtn');if(!b)return;b.addEventListener('click',function(){{
+if(navigator.share){{navigator.share({{url:location.href}}).catch(function(){{}});}}
+else{{navigator.clipboard.writeText(location.href).then(function(){{b.textContent='✓ コピーしました';}});}}
+}});}})();</script>
 <a class="cta" href="/start?ref=maker_page" data-funnel="cta_click" data-funnel-cta="maker_page_start">あなたも30秒で作って、売れたら10%受け取る →</a>
 <footer>━◯━ MU · <a href="/shop">SHOP</a> · <a href="/make">作る</a> · <a href="/credit">MUクレジットとは</a> · <a href="/kpi">公開KPI</a> · 株式会社イネブラ</footer>
 </div>
@@ -809,6 +837,9 @@ a{{color:#ffd700}} footer{{font-size:11px;opacity:.45;margin-top:40px;line-heigh
 </body></html>"##,
         who = who, n = products.len(), sales = sales, grid = grid,
         code = crate::html_escape(&code_clean),
+        // シェアは作者の一人称: 「私のブランドできた」をそのまま貼れる形に。
+        share_text = urlencoding::encode(&format!("{} のMUブランド(作品{}点) — ことば1行から30秒 #MU #wearmu", who, products.len())),
+        share_url = urlencoding::encode(&format!("https://wearmu.com/u/{}?ref=share_portfolio", code_clean)),
         // OG画像 = 代表作のモックアップ。無ければブランド既定にフォールバック。
         og_img = crate::html_escape(
             products.iter().map(|p| p.img.as_str()).find(|u| u.starts_with("https://"))
