@@ -5,6 +5,7 @@ mod jiufight_tokens;
 mod catalog;
 mod agent_api;
 mod work;
+mod creators;
 
 use axum::{
     extract::{Path, State},
@@ -25239,13 +25240,18 @@ fn mu_credit_grant_for_purchase(
 fn collab_user_session_for(email: &str) -> Option<(i64, String, i64, bool)> { let _ = email; None }
 
 #[derive(Deserialize)]
-struct CollabAuthStartBody { email: String }
+struct CollabAuthStartBody {
+    email: String,
+    /// magic link の着地先(同一サイトのパスのみ)。/start → /studio 用。
+    #[serde(default)]
+    next: Option<String>,
+}
 
 async fn collab_auth_start(
     State(db): State<Db>,
     Json(body): Json<CollabAuthStartBody>,
 ) -> Response {
-    collab_auth_start_core(&db, &body.email).await
+    collab_auth_start_core(&db, &body.email, body.next.as_deref()).await
 }
 
 /// Core of the magic-link onboarding: persist a fresh 6-digit code for
@@ -25253,7 +25259,7 @@ async fn collab_auth_start(
 /// Returns the JSON Response. Shared by the human `/api/collab/auth/start`
 /// handler and the agent `/api/agent/register` handler so there is exactly
 /// one key system.
-pub(crate) async fn collab_auth_start_core(db: &Db, email_in: &str) -> Response {
+pub(crate) async fn collab_auth_start_core(db: &Db, email_in: &str, next: Option<&str>) -> Response {
     let email = email_in.trim().to_lowercase();
     if !email.contains('@') || email.len() > 254 {
         return (StatusCode::BAD_REQUEST, "invalid email").into_response();
@@ -25281,12 +25287,16 @@ pub(crate) async fn collab_auth_start_core(db: &Db, email_in: &str) -> Response 
         }))).into_response();
     }
     let magic_base = env::var("MU_BASE").unwrap_or_else(|_| "https://wearmu.com".into());
-    let magic_url = format!(
+    let mut magic_url = format!(
         "{}/api/collab/auth/magic?email={}&code={}",
         magic_base.trim_end_matches('/'),
         urlencoding::encode(&email),
         code,
     );
+    // open-redirect 防止: 同一サイトのパス(先頭 '/')のみ許可。
+    if let Some(n) = next.filter(|n| n.starts_with('/') && !n.starts_with("//")) {
+        magic_url.push_str(&format!("&next={}", urlencoding::encode(n)));
+    }
     let body_html = format!(r#"<!doctype html><html><body style="font-family:-apple-system,sans-serif;background:#0A0A0A;color:#F5F5F0;padding:32px;line-height:1.85">
 <div style="max-width:520px;margin:0 auto">
 <div style="font-size:14px;letter-spacing:0.4em;font-weight:700;margin-bottom:18px">━◯━ MU DROP</div>
@@ -63535,6 +63545,8 @@ async fn main() {
         "ALTER TABLE mu_purchases ADD COLUMN last_status_at TEXT",
         // 2026-05-14: free ¥20,000 Opus budget per verified collab user.
         "ALTER TABLE collab_users ADD COLUMN budget_jpy_used INTEGER NOT NULL DEFAULT 0",
+        // 2026-06-06: creator studio — opt-in 公開名(PDP「つくった人」byline)。
+        "ALTER TABLE collab_users ADD COLUMN display_name TEXT",
         // X (Twitter) auto-post — set when twitter_post.py succeeds.
         "ALTER TABLE products ADD COLUMN x_posted_at TEXT",
         "ALTER TABLE products ADD COLUMN x_tweet_id TEXT",
@@ -68398,7 +68410,17 @@ async fn main() {
         .route("/api/collab/auth/start", post(collab_auth_start))
         .route("/api/collab/auth/magic", get(collab_auth_magic))
         .route("/api/collab/auth/verify", post(collab_auth_verify))
-        .route("/api/collab/auth/logout", post(collab_auth_logout))
+        // GET も受ける: /studio・/api-keys のログアウトは <a href> / location.href
+        // で叩かれる(POST だけだと 405 で死んでいた)。
+        .route("/api/collab/auth/logout", get(collab_auth_logout).post(collab_auth_logout))
+        // ── Creator studio (src/creators.rs) — 人間向けの「作って売れる」入口。
+        // /start 登録 → /studio ダッシュボード → 売れたら 10% (apply_maker_commission)。
+        // /kpi は北極星「初売上クリエイター/週」の公開ページ。
+        .route("/start", get(creators::start_page))
+        .route("/studio", get(creators::studio_page))
+        .route("/api/studio/profile", post(creators::studio_profile))
+        .route("/kpi", get(creators::kpi_page))
+        .route("/api/kpi", get(creators::api_kpi))
         // ── Agent API — catalog-native, email-keyed (src/agent_api.rs).
         // Discovery: /llms.txt. Onboarding reuses the collab magic-link path.
         // Products land status='review' until an MA-council member approves.

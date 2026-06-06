@@ -3948,7 +3948,7 @@ $('#p').addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter
 /// POST /api/make?prompt=…&kind=… — public NL → product. status='review',
 /// brand='minna', cost-guarded (hourly cap + global budget gate). Mirrors
 /// admin_nl_add but unauthenticated, review-only, and single-image (cost-min).
-pub async fn public_make(State(db): State<Db>, Query(q): Query<MakeQuery>) -> Response {
+pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Query(q): Query<MakeQuery>) -> Response {
     let prompt_in = q.prompt.trim().to_string();
     if prompt_in.is_empty() || prompt_in.chars().count() > 300 {
         return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"作りたいものを入力してください（300文字以内）"}))).into_response();
@@ -4063,10 +4063,16 @@ pub async fn public_make(State(db): State<Db>, Query(q): Query<MakeQuery>) -> Re
     // A/B/C: 投稿に variant と visitor を刻む（勝者UU判定の母数）。
     let ab_variant = make_variant_norm(q.v.as_deref());
     let ab_visitor = q.visitor.as_deref().map(str::trim).filter(|s| !s.is_empty() && s.len() <= 80);
-    let meta_json = match (ab_variant, ab_visitor) {
-        (Some(v), Some(vis)) => Some(serde_json::json!({"make_variant": v, "make_visitor": vis}).to_string()),
-        (Some(v), None) => Some(serde_json::json!({"make_variant": v}).to_string()),
-        _ => None,
+    // 作者帰属: ログイン済み(/studio・/make どちらでも)なら maker_email を即刻印。
+    // 未ログインは従来どおり /api/make/verify/check の email 認証で後から刻まれる。
+    // maker_email が付いた作品は、売れるたびに作者へ 10% (apply_maker_commission)。
+    let maker_email = crate::bearer_or_session_email(&db, &headers, None);
+    let meta_json = {
+        let mut m = serde_json::Map::new();
+        if let Some(v) = ab_variant { m.insert("make_variant".into(), serde_json::Value::from(v)); }
+        if let Some(vis) = ab_visitor { m.insert("make_visitor".into(), serde_json::Value::from(vis)); }
+        if let Some(me) = &maker_email { m.insert("maker_email".into(), serde_json::Value::from(me.clone())); }
+        if m.is_empty() { None } else { Some(serde_json::Value::Object(m).to_string()) }
     };
     {
         let conn = db.lock().unwrap();
@@ -6152,6 +6158,53 @@ pub async fn shop_pdp(
         .as_deref()
         .and_then(|m| serde_json::from_str(m).ok())
         .unwrap_or(serde_json::Value::Null);
+
+    // ── つくった人 byline + シェア(バイラルループの装置) ──
+    // maker_email(作者帰属)があれば「つくった人」を出す。公開名は opt-in
+    // (collab_users.display_name) — 未設定なら匿名「MU クリエイター」。
+    // メールアドレス自体は絶対に表に出さない。
+    let maker_line = {
+        let maker_email = meta_json
+            .as_deref()
+            .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+            .and_then(|v| v.get("maker_email").and_then(|x| x.as_str()).map(|s| s.to_lowercase()))
+            .filter(|s| s.contains('@'));
+        match maker_email {
+            Some(me) => {
+                let dn: String = {
+                    let conn = db.lock().unwrap();
+                    conn.query_row(
+                        "SELECT COALESCE(display_name,'') FROM collab_users WHERE email=?",
+                        rusqlite::params![me], |r| r.get(0)).unwrap_or_default()
+                };
+                let who = if dn.trim().is_empty() { "MU クリエイター".to_string() } else { html_text(dn.trim()) };
+                format!(
+                    r#"<div class="maker-line" style="font-size:13px;opacity:.85;margin:2px 0 10px">つくった人: <b style="color:#ffd700">{who}</b> <span style="opacity:.6">— ことば1行から30秒。</span><a href="/start?ref=pdp_byline" data-funnel="cta_click" data-funnel-cta="pdp_byline_start" style="color:#ffd700">あなたも →</a></div>"#,
+                    who = who)
+            }
+            None => String::new(),
+        }
+    };
+    let share_url = format!("https://wearmu.com/shop/{}", sku);
+    let share_x = format!(
+        "https://twitter.com/intent/tweet?text={}&url={}",
+        urlencoding::encode(&format!("{} — MU ━◯━", short_title)),
+        urlencoding::encode(&share_url));
+    let share_line_url = format!(
+        "https://social-plugins.line.me/lineit/share?url={}",
+        urlencoding::encode(&share_url));
+    let share_block = format!(
+        r##"<div class="share-row" style="display:flex;gap:8px;align-items:center;margin:14px 0 2px;font-size:12.5px;flex-wrap:wrap">
+<span style="opacity:.55">この一枚を広める:</span>
+<a href="{x}" target="_blank" rel="noopener" data-funnel="cta_click" data-funnel-cta="pdp_share_x" style="color:#f5f5f0;text-decoration:none;border:1px solid #3a3a3a;border-radius:99px;padding:6px 14px">𝕏 ポスト</a>
+<a href="{line}" target="_blank" rel="noopener" data-funnel="cta_click" data-funnel-cta="pdp_share_line" style="color:#f5f5f0;text-decoration:none;border:1px solid #3a3a3a;border-radius:99px;padding:6px 14px">LINE</a>
+<button id="shareBtn" data-funnel="cta_click" data-funnel-cta="pdp_share_native" style="background:none;color:#f5f5f0;border:1px solid #3a3a3a;border-radius:99px;padding:6px 14px;cursor:pointer;font-size:12.5px;font-family:inherit">リンクをコピー</button>
+<script>(function(){{var b=document.getElementById('shareBtn');if(!b)return;b.addEventListener('click',function(){{
+if(navigator.share){{navigator.share({{url:location.href}}).catch(function(){{}});}}
+else{{navigator.clipboard.writeText(location.href).then(function(){{b.textContent='✓ コピーしました';}});}}
+}});}})();</script>
+</div>"##,
+        x = html_attr(&share_x), line = html_attr(&share_line_url));
     let assessment_html = {
         let s = &score_v["score"];
         if let Some(total) = s["total"].as_i64() {
@@ -6397,10 +6450,12 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
     <div class="brand">{brand}</div>
     <h1>{headline}</h1>
     {tagline_html}
+    {maker_line}
     <div class="price">¥{price} <small class="fx">≈ ${usd} / €{eur}</small></div>
     {sealed}
     {listen}
     {buy}
+    {share}
     {muon_banner}
     {suzuri}
     {trust}
@@ -6448,6 +6503,8 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </body></html>"##,
         make_cta = make_cta_banner("pdp"),
+        maker_line = maker_line,
+        share = share_block,
         assessment = assessment_html,
         edition_doc = edition_doc_html,
         related = related_html,
@@ -7236,6 +7293,10 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
     // safe to call for orders with no referrer (no-ops). Stamps the order's
     // audit columns BEFORE any record_order_full REPLACE (which preserves them).
     apply_affiliate(&db, &session_id, &session, &sku, amount_total).await;
+
+    // 作者コミッション — アフィリと独立・route 非依存・冪等。「売れたら作者に
+    // 10%」がクリエイターループの心臓部 (creators.rs / /studio で可視化)。
+    apply_maker_commission(&db, &session_id, &session, &sku, amount_total).await;
 
     // Route dispatch. printful_* / gelato_jp / suzuri_jp / manual / digital
     // continue through the existing Printful logic below as a fallback. A new
@@ -8519,6 +8580,69 @@ async fn apply_affiliate(db: &Db, session_id: &str, session: &serde_json::Value,
         rusqlite::params![commission, session_id],
     );
     tracing::info!("[catalog/affiliate] {} earned ¥{} ({}%) on {} via {}", owner, commission, pct, sku, code);
+}
+
+/// Credit the product's *maker* (作者) for a paid order. The maker is the
+/// person who created the product: `meta_json.$.maker_email` (stamped at
+/// creation when logged in, or by the /make email gate) with a fallback to
+/// the agent store owner `catalog_brands.config_json.$.owner_email`.
+/// Rate is `config_json.$.maker_pct` (default 10, capped 50). Pays in MU
+/// credit via [[mu_credit_ledger]] (reason `creator:<sku>`), independent of
+/// — and stackable with — the affiliate commission. Idempotent per session.
+/// 自分で自分の作品を買った場合は対象外。
+async fn apply_maker_commission(db: &Db, session_id: &str, session: &serde_json::Value, sku: &str, amount: i64) {
+    if amount <= 0 || session["currency"].as_str().unwrap_or("jpy").to_lowercase() != "jpy" {
+        return;
+    }
+    let buyer_email = session["customer_details"]["email"].as_str().unwrap_or("").to_lowercase();
+    let conn = db.lock().unwrap();
+
+    let maker: String = conn
+        .query_row(
+            &format!("SELECT {} FROM catalog_products p WHERE p.sku=?", crate::creators::MAKER_SQL),
+            rusqlite::params![sku],
+            |r| r.get(0),
+        )
+        .unwrap_or_default();
+    if !maker.contains('@') {
+        return; // 無帰属(自律生成 'auto' / 'minna' の未認証作品など) → 報酬なし
+    }
+    if !buyer_email.is_empty() && buyer_email == maker {
+        return; // self-purchase
+    }
+
+    // Idempotency: one maker commission per checkout session.
+    let already: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM mu_credit_ledger WHERE ref_id=? AND reason LIKE 'creator:%'",
+            rusqlite::params![session_id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    if already > 0 {
+        return;
+    }
+
+    let brand: String = conn
+        .query_row("SELECT brand FROM catalog_products WHERE sku=?", rusqlite::params![sku], |r| r.get(0))
+        .unwrap_or_default();
+    let pct = conn
+        .query_row(
+            "SELECT json_extract(config_json,'$.maker_pct') FROM catalog_brands WHERE slug=?",
+            rusqlite::params![&brand],
+            |r| r.get::<_, Option<i64>>(0),
+        )
+        .ok()
+        .flatten()
+        .unwrap_or(10)
+        .clamp(0, 50);
+    let commission = (amount * pct / 100).max(0);
+    if commission <= 0 {
+        return;
+    }
+    let reason = format!("creator:{}", sku);
+    crate::mu_credit_apply(&conn, &maker, commission, &reason, Some(session_id));
+    tracing::info!("[catalog/maker] {} earned ¥{} ({}%) as maker of {} (order {})", maker, commission, pct, sku, session_id);
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────

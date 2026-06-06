@@ -133,7 +133,7 @@ pub async fn agent_register(
     Json(body): Json<RegisterBody>,
 ) -> Response {
     // Delegate to the existing handler (same {email} contract, same email).
-    crate::collab_auth_start_core(&db, &body.email).await
+    crate::collab_auth_start_core(&db, &body.email, None).await
 }
 
 #[derive(Deserialize)]
