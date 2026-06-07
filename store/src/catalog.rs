@@ -858,7 +858,7 @@ pub fn spend_or_refuse(
 /// To deliver a true belt-colored rashguard the same design URL must be
 /// fanned out to every panel (cover-fill scales it per panel automatically).
 /// Other apparel (tee/hoodie/crewneck) is single-front DTG.
-fn placements_for_product(printful_product_id: i64) -> &'static [&'static str] {
+pub(crate) fn placements_for_product(printful_product_id: i64) -> &'static [&'static str] {
     match printful_product_id {
         // 301 = Men's AOP Rash Guard, 302/368/369/836 = sister AOP products
         // (per fulfill_catalog_order's stitch_color guard at line 2736).
@@ -7413,6 +7413,11 @@ pub struct CheckoutQuery {
     /// referrer. Falls back to the `mu_ref` cookie when absent.
     #[serde(default, rename = "ref", alias = "referrer")]
     pub referrer: Option<String>,
+    /// Initial quantity for bulk-buy brands (currently 'nouns' only).
+    /// Clamped to 1..=50; ignored for every other brand so the historic
+    /// single-unit checkout behaviour is untouched.
+    #[serde(default)]
+    pub qty: Option<u32>,
 }
 
 /// Pull a referral code from the `mu_ref` cookie (set by `/r/:code`).
@@ -7650,15 +7655,54 @@ pub async fn shop_checkout(
     //   (2) dynamic price_data using retail_price_jpy + description_ja.
     //       Used for SKUs the autonomous generator creates on the fly so
     //       we don't have to round-trip Stripe to mint a price first.
+    // Bulk buy (まとめ買い) — nouns brand only: honor ?qty= as the initial
+    // quantity and let the buyer adjust it inside Stripe Checkout. Every
+    // other brand keeps the historic fixed single-unit line item.
+    // fulfill_catalog_order mirrors this gate when it reads the purchased
+    // quantity back off the session (NOUNS- prefix).
+    let is_bulk_brand = _brand == "nouns";
+    let initial_qty: u32 = if is_bulk_brand {
+        q.qty.unwrap_or(1).clamp(1, 50)
+    } else {
+        1
+    };
     let mut form: Vec<(&str, String)> = vec![
         ("mode", "payment".into()),
         ("success_url", success_url),
         ("cancel_url", cancel_url),
         ("allow_promotion_codes", "true".into()),
-        ("line_items[0][quantity]", "1".into()),
+        ("line_items[0][quantity]", initial_qty.to_string()),
         ("metadata[kind]", "catalog".into()),
         ("metadata[catalog_sku]", sku.clone()),
     ];
+    if is_bulk_brand {
+        form.push(("line_items[0][adjustable_quantity][enabled]", "true".into()));
+        form.push(("line_items[0][adjustable_quantity][minimum]", "1".into()));
+        form.push(("line_items[0][adjustable_quantity][maximum]", "50".into()));
+        // Size picker inside Stripe Checkout. fulfill_catalog_order already
+        // reads custom_fields[key=size] and swaps the Printful variant via
+        // resolve_size_variant() — nouns SKUs are one-per-design (not the
+        // per-size SKU stems the /shop grid uses), so this is the size rail.
+        form.push(("custom_fields[0][key]", "size".into()));
+        form.push(("custom_fields[0][label][type]", "custom".into()));
+        form.push(("custom_fields[0][label][custom]", "Size".into()));
+        form.push(("custom_fields[0][type]", "dropdown".into()));
+        for (i, s) in ["S", "M", "L", "XL"].iter().enumerate() {
+            // Stripe form encoding needs distinct literal keys per index.
+            let (lk, vk) = match i {
+                0 => ("custom_fields[0][dropdown][options][0][label]",
+                      "custom_fields[0][dropdown][options][0][value]"),
+                1 => ("custom_fields[0][dropdown][options][1][label]",
+                      "custom_fields[0][dropdown][options][1][value]"),
+                2 => ("custom_fields[0][dropdown][options][2][label]",
+                      "custom_fields[0][dropdown][options][2][value]"),
+                _ => ("custom_fields[0][dropdown][options][3][label]",
+                      "custom_fields[0][dropdown][options][3][value]"),
+            };
+            form.push((lk, s.to_string()));
+            form.push((vk, s.to_string()));
+        }
+    }
     // Affiliate attribution: explicit ?ref= wins, else the mu_ref cookie set
     // by /r/:code. Validated/resolved to a commission at the webhook.
     if let Some(rc) = q.referrer.as_deref().and_then(sanitize_ref)
@@ -7897,7 +7941,9 @@ fn build_printful_item(
     retail_price: &str,
     variant_override: Option<i64>,
     require_printful: bool,
+    quantity: i64,
 ) -> Option<serde_json::Value> {
+    let quantity = quantity.clamp(1, 50);
     let (pp_id, mut pf_variant_id, sync_variant_id, design_file, placement, route): (
         i64,
         i64,
@@ -7959,7 +8005,7 @@ fn build_printful_item(
     let item: serde_json::Value = match (sync_variant_id, design_file.as_deref()) {
         (Some(svid), _) if svid > 0 => serde_json::json!({
             "sync_variant_id": svid,
-            "quantity": 1,
+            "quantity": quantity,
             "retail_price": retail_price,
             "options": options_block,
         }),
@@ -7988,7 +8034,7 @@ fn build_printful_item(
             }).collect();
             serde_json::json!({
                 "variant_id": pf_variant_id,
-                "quantity": 1,
+                "quantity": quantity,
                 "retail_price": retail_price,
                 "files": files,
                 "options": options_block,
@@ -7996,7 +8042,7 @@ fn build_printful_item(
         }
         _ => serde_json::json!({
             "variant_id": pf_variant_id,
-            "quantity": 1,
+            "quantity": quantity,
             "retail_price": retail_price,
             "options": options_block,
         }),
@@ -8102,6 +8148,31 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
                 let chosen = cf["dropdown"]["value"].as_str().unwrap_or("M");
                 variant_override = resolve_size_variant(_pp_id, chosen);
                 break;
+            }
+        }
+    }
+
+    // Bulk buy (まとめ買い): nouns checkouts enable adjustable_quantity, and
+    // the chosen quantity lives ONLY on the session's line_items — which the
+    // webhook payload never includes. Retrieve them for NOUNS- SKUs so a
+    // 10-unit payment ships 10 garments, not 1. Fail-open to 1 (the
+    // historic behaviour) on any retrieval hiccup; the order row keeps the
+    // full amount_total either way, so a mismatch is visible in audit.
+    let mut purchased_qty: i64 = 1;
+    if sku.starts_with("NOUNS-") {
+        if let Ok(stripe_key) = std::env::var("STRIPE_SECRET_KEY") {
+            let url = format!(
+                "https://api.stripe.com/v1/checkout/sessions/{}?expand[]=line_items",
+                session_id
+            );
+            if let Ok(r) = reqwest::Client::new()
+                .get(&url).basic_auth(&stripe_key, None::<&str>).send().await
+            {
+                if let Ok(v) = r.json::<serde_json::Value>().await {
+                    if let Some(q) = v["line_items"]["data"][0]["quantity"].as_i64() {
+                        purchased_qty = q.clamp(1, 50);
+                    }
+                }
             }
         }
     }
@@ -8305,7 +8376,7 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
     // same stitch_color / placement logic.
     let main_item = {
         let conn = db.lock().unwrap();
-        build_printful_item(&conn, &sku, &retail_price, variant_override, false)
+        build_printful_item(&conn, &sku, &retail_price, variant_override, false, purchased_qty)
     };
     let Some(main_item) = main_item else {
         // Should not happen — we already confirmed the SKU exists and the
@@ -8370,7 +8441,7 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
                     // to the same JPY-style format to stay defined.
                     format!("{:.2}", addon_price_jpy as f64)
                 };
-                build_printful_item(&conn, &addon_sku, &addon_retail, None, true)
+                build_printful_item(&conn, &addon_sku, &addon_retail, None, true, 1)
             } else {
                 None
             }
@@ -9858,7 +9929,7 @@ fn html_attr(s: &str) -> String {
 ///
 /// Variants come from Printful's catalog API (verified live for the
 /// products we sell). New product? Add a match arm.
-fn resolve_size_variant(printful_product_id: i64, size: &str) -> Option<i64> {
+pub(crate) fn resolve_size_variant(printful_product_id: i64, size: &str) -> Option<i64> {
     let sz = size.to_uppercase();
     match printful_product_id {
         // Bella+Canvas 3001 (Black)

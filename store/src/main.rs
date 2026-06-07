@@ -6,6 +6,7 @@ mod catalog;
 mod agent_api;
 mod work;
 mod creators;
+mod nouns;
 
 use axum::{
     extract::{Path, State},
@@ -63819,6 +63820,9 @@ async fn main() {
         "ALTER TABLE pending_crypto_payments ADD COLUMN ship_phone TEXT",
         "ALTER TABLE pending_crypto_payments ADD COLUMN printful_order_id TEXT",
         "ALTER TABLE pending_crypto_payments ADD COLUMN fulfilled_at TEXT",
+        // Catalog-family crypto checkout (nouns page): NULL for legacy
+        // MUGEN rows, the catalog_products.sku for catalog purchases.
+        "ALTER TABLE pending_crypto_payments ADD COLUMN catalog_sku TEXT",
         "ALTER TABLE products ADD COLUMN weather_data TEXT",
         "ALTER TABLE products ADD COLUMN prompt_text TEXT",
         "ALTER TABLE products ADD COLUMN prompt_hash TEXT",
@@ -68104,9 +68108,12 @@ async fn main() {
         .route("/api/admin/outreach/:id/status", post(admin_outreach_status))
         .route("/admin/product/new", get(admin_product_new_page))
         .route("/api/admin/products", post(admin_product_create))
-        // /nouns: DAO approval pending → section hidden from nav (2026-05-13).
-        // Proposal text remains at /nouns-proposal.html for transparency.
-        .route("/nouns", get(|| async { axum::response::Redirect::permanent("/nouns-proposal.html") }))
+        // /nouns: owner self-serve page — enter a Noun ID, wear it (CC0).
+        // Card via /api/shop/checkout (bulk qty), crypto via
+        // /api/checkout/crypto {catalog_sku}. The 2026-05 DAO proposal text
+        // remains at /nouns-proposal.html for transparency (linked in-page).
+        .route("/nouns", get(nouns::nouns_page))
+        .route("/api/nouns/create", post(nouns::nouns_create))
         // Product detail SPA routes.
         // 2026-05-21: this legacy URL form 301-redirects to /p/<serial_code>
         // when the row has a serial; falls back to the SPA index when not.
