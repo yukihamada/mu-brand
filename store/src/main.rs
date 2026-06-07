@@ -1,4 +1,5 @@
 mod gemini;
+mod ito;
 mod nft;
 mod payments;
 mod jiufight_tokens;
@@ -67972,6 +67973,7 @@ async fn main() {
         let conn = db.lock().unwrap();
         catalog::ensure_schema(&conn);
         catalog::ensure_budget_schema(&conn);
+        ito::ensure_tables(&conn);
         catalog::seed_if_empty(&conn);
         catalog::seed_roll_brand(&conn);
         catalog::seed_atsume_brand(&conn);
@@ -68938,6 +68940,16 @@ async fn main() {
         // Digital event-ticket face — the QR a buyer scans at the door
         // opens this; shows VALID + event + holder. noindex.
         .route("/t/:code", get(catalog::ticket_view))
+        // 糸 (ITO) — 服が財布。出会いスキャンで採掘、10糸=1着交換。ito.rs
+        .route("/ito", get(ito::ito_page))
+        .route("/ito/:serial", get(ito::serial_page))
+        .route("/ito/:serial/qr.png", get(ito::serial_qr))
+        .route("/api/ito/scan", post(ito::api_scan))
+        .route("/api/ito/balance", get(ito::api_balance))
+        .route("/api/ito/redeem", post(ito::api_redeem))
+        .route("/api/admin/ito/issue", post(ito::api_admin_issue))
+        .route("/api/admin/ito/redemptions", get(ito::api_admin_redemptions))
+        .route("/api/admin/ito/redeem-done", post(ito::api_admin_redeem_done))
         // Self-serve affiliate: signup/link page + per-code dashboard.
         .route("/affiliate", get(affiliate_page))
         .route("/affiliate/:code", get(affiliate_dashboard))
