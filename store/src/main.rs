@@ -46416,7 +46416,14 @@ fn public_transparency_inner(conn: &rusqlite::Connection) -> serde_json::Value {
     // Same basis as `real`: Stripe live sessions only.
     let (catalog_orders_n, catalog_revenue_jpy): (i64, i64) = conn.query_row(
         "SELECT COUNT(*), COALESCE(SUM(COALESCE(amount_jpy,0)),0)
-         FROM catalog_orders WHERE stripe_session_id LIKE 'cs_live_%'",
+         FROM catalog_orders WHERE stripe_session_id LIKE 'cs_live_%'
+           AND COALESCE(status,'') != 'refunded'",
+        [], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).unwrap_or((0, 0));
+    let (catalog_refunds_n, catalog_refunds_jpy): (i64, i64) = conn.query_row(
+        "SELECT COUNT(*), COALESCE(SUM(COALESCE(amount_jpy,0)),0)
+         FROM catalog_orders WHERE stripe_session_id LIKE 'cs_live_%'
+           AND COALESCE(status,'') = 'refunded'",
         [], |r| Ok((r.get(0)?, r.get(1)?)),
     ).unwrap_or((0, 0));
     let catalog_by_brand: Vec<serde_json::Value> = conn.prepare(
@@ -46424,6 +46431,7 @@ fn public_transparency_inner(conn: &rusqlite::Connection) -> serde_json::Value {
                 COALESCE(SUM(COALESCE(o.amount_jpy,0)),0)
          FROM catalog_orders o LEFT JOIN catalog_products cp ON cp.sku = o.sku
          WHERE o.stripe_session_id LIKE 'cs_live_%'
+           AND COALESCE(o.status,'') != 'refunded'
          GROUP BY b ORDER BY 3 DESC LIMIT 12",
     ).ok().and_then(|mut s| {
         s.query_map([], |r| Ok(serde_json::json!({
@@ -46515,7 +46523,8 @@ fn public_transparency_inner(conn: &rusqlite::Connection) -> serde_json::Value {
             "orders":      catalog_orders_n,
             "revenue_jpy": catalog_revenue_jpy,
             "by_brand":    catalog_by_brand,
-            "note": "catalog_orders (コラボ/POD/MAKE)。Stripe live のみ。従来 /transparency に未計上だった分。",
+            "refunded_excluded": { "orders": catalog_refunds_n, "amount_jpy": catalog_refunds_jpy },
+            "note": "catalog_orders (コラボ/POD/MAKE)。Stripe live のみ・返金済みは除外して別掲。従来 /transparency に未計上だった分。",
         },
         "ma": {
             "sold": ma_sold,
