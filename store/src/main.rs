@@ -68842,6 +68842,7 @@ async fn main() {
         // QR→R2→email pipeline. Counts against capacity like a paid seat.
         .route("/admin/catalog/ticket_issue", get(catalog::admin_ticket_issue))
         .route("/admin/catalog/nl", get(catalog::admin_nl_add))
+        .route("/admin/catalog/translate_en", get(catalog::admin_translate_en))
         .route("/admin/catalog/seal", get(catalog::admin_seal_create))
         .route("/make", get(catalog::make_page))
         .route("/mi/*path", get(mockup_image_redirect))
