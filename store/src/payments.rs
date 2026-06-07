@@ -260,7 +260,14 @@ impl ShippingInfo {
 
 #[derive(serde::Deserialize)]
 pub struct CryptoCheckoutBody {
+    /// Legacy `products` (MUGEN drop) id. Ignored when `catalog_sku` is set.
+    #[serde(default)]
     pub product_id: i64,
+    /// Catalog SKU (e.g. NOUNS-TEE-123). When present, price/name/design
+    /// resolve from catalog_products and settlement fulfills via the
+    /// catalog Printful identifiers instead of the legacy tee hardcode.
+    #[serde(default)]
+    pub catalog_sku: Option<String>,
     pub quantity: u32,
     pub email: String,
     pub size: Option<String>,
@@ -315,23 +322,51 @@ pub async fn checkout_crypto(
              Use payment_method=\"jpy\" or try again later.").into_response();
     }
 
-    let check = {
-        let conn = db.lock().unwrap();
-        conn.query_row(
-            "SELECT brand, drop_num, inventory, sold, name FROM products WHERE id=? AND active=1",
-            params![body.product_id],
-            |row| Ok((row.get::<_,String>(0)?, row.get::<_,i64>(1)?,
-                      row.get::<_,i64>(2)?, row.get::<_,i64>(3)?,
-                      row.get::<_,String>(4)?))
-        )
-    };
-    let (brand_str, drop_num, inventory, sold, product_name) = match check {
-        Ok(r) => r,
-        Err(_) => return (StatusCode::NOT_FOUND, "product not found").into_response(),
-    };
-    if inventory - sold < body.quantity as i64 {
-        return (StatusCode::CONFLICT, "sold out").into_response();
+    if body.quantity == 0 || body.quantity > 50 {
+        return (StatusCode::BAD_REQUEST, "quantity must be 1..=50").into_response();
     }
+
+    // Two product families share this checkout:
+    //   • catalog_sku set   → catalog_products (on-demand POD; no inventory
+    //     cap, fixed retail_price_jpy). The nouns page uses this.
+    //   • catalog_sku unset → legacy `products` (MUGEN drops; inventory +
+    //     bonding-curve dynamic price). Unchanged.
+    let catalog_sku: Option<String> = body.catalog_sku.as_deref()
+        .map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let (base_price_jpy, product_name): (i64, String) = if let Some(cs) = catalog_sku.as_ref() {
+        let row = {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT retail_price_jpy, label FROM catalog_products
+                 WHERE sku=? AND is_active=1",
+                params![cs],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+            )
+        };
+        match row {
+            Ok(r) => r,
+            Err(_) => return (StatusCode::NOT_FOUND, "catalog sku not found").into_response(),
+        }
+    } else {
+        let check = {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT brand, drop_num, inventory, sold, name FROM products WHERE id=? AND active=1",
+                params![body.product_id],
+                |row| Ok((row.get::<_,String>(0)?, row.get::<_,i64>(1)?,
+                          row.get::<_,i64>(2)?, row.get::<_,i64>(3)?,
+                          row.get::<_,String>(4)?))
+            )
+        };
+        let (brand_str, drop_num, inventory, sold, product_name) = match check {
+            Ok(r) => r,
+            Err(_) => return (StatusCode::NOT_FOUND, "product not found").into_response(),
+        };
+        if inventory - sold < body.quantity as i64 {
+            return (StatusCode::CONFLICT, "sold out").into_response();
+        }
+        (dynamic_price(&brand_str, drop_num, sold, &product_name), product_name)
+    };
 
     // Phase 3.1: shipping is required so that Helius confirmation can
     // trigger Printful auto-fulfillment without a second user round-trip.
@@ -341,7 +376,6 @@ pub async fn checkout_crypto(
             "shipping required: name, line1, city, zip, country (ISO-2)").into_response();
     }
 
-    let base_price_jpy = dynamic_price(&brand_str, drop_num, sold, &product_name);
     let unit_price_jpy = apply_payment_surcharge(base_price_jpy, &pm);
     let total_jpy = unit_price_jpy.saturating_mul(body.quantity as i64);
 
@@ -421,14 +455,14 @@ pub async fn checkout_crypto(
         let conn = db.lock().unwrap();
         let _ = conn.execute(
             "INSERT INTO pending_crypto_payments
-             (reference, product_id, email, size, quantity, wallet, payment_method,
+             (reference, product_id, catalog_sku, email, size, quantity, wallet, payment_method,
               amount_jpy, amount_crypto, asset, recipient, pay_url,
               status, expires_at, created_at,
               ship_name, ship_line1, ship_line2, ship_city, ship_state,
               ship_zip, ship_country, ship_phone)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?)",
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?)",
             params![
-                reference, body.product_id, body.email, size_label, body.quantity,
+                reference, body.product_id, catalog_sku, body.email, size_label, body.quantity,
                 body.wallet, pm,
                 total_jpy, amount_crypto, asset, recipient, pay_url,
                 now_iso(), now_iso(),
@@ -711,49 +745,97 @@ pub async fn helius_webhook(
 // can manually retry via the admin endpoint (TODO follow-up).
 
 async fn fulfill_crypto_order(db: Db, reference: String) {
-    // 1. Load all needed data in a single scoped lock.
-    let load: Option<(i64, String, String, String, i64, String, i64, String, String, String, String, String, String, String, String, String, String)> = {
+    // 1. Load the payment row in one scoped lock. No JOIN here — the row
+    //    points at either the legacy `products` table (catalog_sku NULL,
+    //    MUGEN drops) or `catalog_products` (catalog_sku set, e.g. the
+    //    nouns page), and the product lookup differs per family (step 1b).
+    let load: Option<(i64, String, String, String, String, i64, String, i64, String, String, String, String, String, String, String, String)> = {
         let conn = db.lock().unwrap();
         conn.query_row(
-            "SELECT pcp.product_id, pcp.email, pcp.size, pcp.tx_signature,
+            "SELECT pcp.product_id, COALESCE(pcp.catalog_sku,''), pcp.email, pcp.size,
+                    pcp.tx_signature,
                     pcp.amount_jpy, pcp.asset, pcp.quantity,
                     pcp.ship_name, pcp.ship_line1, COALESCE(pcp.ship_line2,''),
                     pcp.ship_city, COALESCE(pcp.ship_state,''),
-                    pcp.ship_zip, pcp.ship_country, COALESCE(pcp.ship_phone,''),
-                    p.name, COALESCE(p.design_url, p.mockup_url, '')
+                    pcp.ship_zip, pcp.ship_country, COALESCE(pcp.ship_phone,'')
              FROM pending_crypto_payments pcp
-             JOIN products p ON p.id = pcp.product_id
              WHERE pcp.reference=? AND pcp.status='confirmed'",
             params![reference],
             |r| Ok((
-                r.get(0)?, r.get(1)?, r.get(2)?, r.get::<_,Option<String>>(3)?.unwrap_or_default(),
-                r.get(4)?, r.get(5)?, r.get(6)?,
-                r.get(7)?, r.get(8)?, r.get(9)?,
-                r.get(10)?, r.get(11)?,
-                r.get(12)?, r.get(13)?, r.get(14)?,
-                r.get(15)?, r.get(16)?,
+                r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?,
+                r.get::<_,Option<String>>(4)?.unwrap_or_default(),
+                r.get(5)?, r.get(6)?, r.get(7)?,
+                r.get(8)?, r.get(9)?, r.get(10)?,
+                r.get(11)?, r.get(12)?,
+                r.get(13)?, r.get(14)?, r.get(15)?,
             ))
         ).ok()
     };
-    let Some((product_id, email, size, tx_sig, amount_jpy, asset, quantity,
+    let Some((product_id, catalog_sku, email, size, tx_sig, amount_jpy, asset, quantity,
              ship_name, ship_line1, ship_line2, ship_city, ship_state,
-             ship_zip, ship_country, ship_phone,
-             product_name, design_url)) = load else {
+             ship_zip, ship_country, ship_phone)) = load else {
         tracing::warn!("[fulfill] no confirmed row for reference {}", reference);
         return;
     };
 
+    // 1b. Resolve product family → (display name, design URL, Printful ids).
+    //     Legacy rows keep the historic black-tee variant table; catalog rows
+    //     carry their own printful_product_id/variant + size resolution.
+    struct PfTarget { variant_id: i64, placements: &'static [&'static str] }
+    let (product_name, design_url, pf): (String, String, PfTarget) = if catalog_sku.is_empty() {
+        let row: Option<(String, String)> = {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT name, COALESCE(design_url, mockup_url, '') FROM products WHERE id=?",
+                params![product_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            ).ok()
+        };
+        let Some((name, design)) = row else {
+            tracing::warn!("[fulfill] legacy product {} missing for ref {}", product_id, reference);
+            return;
+        };
+        let variant_id: i64 = match size.as_str() {
+            "S" => 4016, "M" => 4017, "L" => 4018, "XL" => 4019, _ => 4017,
+        };
+        (name, design, PfTarget { variant_id, placements: &["front"] })
+    } else {
+        let row: Option<(String, String, i64, i64)> = {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT label, COALESCE(design_file,''), printful_product_id, printful_variant_id
+                 FROM catalog_products WHERE sku=?",
+                params![&catalog_sku],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            ).ok()
+        };
+        let Some((label, mut design, pp_id, base_variant)) = row else {
+            tracing::warn!("[fulfill] catalog sku {} missing for ref {}", catalog_sku, reference);
+            return;
+        };
+        if !design.is_empty() && !design.starts_with("http") {
+            design = format!("{}{}", env::var("BASE_URL")
+                .unwrap_or_else(|_| "https://wearmu.com".into()), design);
+        }
+        let variant_id = crate::catalog::resolve_size_variant(pp_id, &size)
+            .unwrap_or(base_variant);
+        (label, design, PfTarget {
+            variant_id,
+            placements: crate::catalog::placements_for_product(pp_id),
+        })
+    };
+
     if design_url.is_empty() {
-        tracing::warn!("[fulfill] product {} has no design_url; skipping Printful", product_id);
+        tracing::warn!("[fulfill] product {}/{} has no design_url; skipping Printful", product_id, catalog_sku);
     }
 
     // 2. Printful order (only if key is configured and design_url present).
     let printful_key = env::var("PRINTFUL_API_KEY").unwrap_or_default();
     let mut printful_order_id: Option<String> = None;
     if !printful_key.is_empty() && !design_url.is_empty() {
-        let variant_id: u64 = match size.as_str() {
-            "S" => 4016, "M" => 4017, "L" => 4018, "XL" => 4019, _ => 4017,
-        };
+        let files: Vec<serde_json::Value> = pf.placements.iter().map(|p| {
+            serde_json::json!({"url": design_url, "placement": p})
+        }).collect();
         let order = serde_json::json!({
             "recipient": {
                 "name": ship_name,
@@ -767,9 +849,9 @@ async fn fulfill_crypto_order(db: Db, reference: String) {
                 "email": email,
             },
             "items": [{
-                "variant_id": variant_id,
+                "variant_id": pf.variant_id,
                 "quantity": quantity,
-                "files": [{"url": design_url, "placement": "front"}],
+                "files": files,
             }],
             "confirm": true,
         });

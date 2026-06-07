@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wear your Noun ⌐◨-◨ × MU — あなたのNounを、着る。</title>
+<meta name="description" content="Enter your Noun ID, get it printed on a tee or hoodie. CC0 on-chain art, on demand. Card / USDC / SOL / ETH. Bulk orders welcome. 10% pledged to the Nouns Treasury.">
+<meta property="og:title" content="Wear your Noun ⌐◨-◨ × MU">
+<meta property="og:description" content="Your Noun, pixel-perfect on a black tee or hoodie. Card or crypto. 10% → Nouns Treasury.">
+<meta property="og:image" content="https://noun.pics/0.png">
+<meta property="og:url" content="https://wearmu.com/nouns">
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<style>
+:root{--bg:#0a0a0a;--fg:#f4f1ea;--mut:#7c8088;--gold:#e6c449;--red:#d53c5e;--line:#26262a}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font-family:'Hiragino Mincho ProN','Noto Serif JP',serif;min-height:100vh}
+.sans{font-family:'Hiragino Sans','Noto Sans JP',-apple-system,sans-serif}
+.wrap{max-width:880px;margin:0 auto;padding:48px 20px 96px}
+.kick{font-family:'Hiragino Sans',sans-serif;font-size:11px;letter-spacing:.4em;color:var(--mut);text-align:center}
+h1{font-size:44px;font-weight:600;text-align:center;margin:16px 0 6px;letter-spacing:.04em}
+.sub{font-family:'Hiragino Sans',sans-serif;font-size:13px;letter-spacing:.18em;color:var(--mut);text-align:center;margin-bottom:40px}
+.noggles{color:var(--red)}
+.panel{border:1px solid var(--line);border-radius:14px;padding:24px;margin:0 auto 22px;max-width:560px}
+label{display:block;font-family:'Hiragino Sans',sans-serif;font-size:11px;letter-spacing:.25em;color:var(--mut);margin:0 0 8px}
+input,select{width:100%;background:#121214;border:1px solid var(--line);border-radius:8px;color:var(--fg);font-size:16px;padding:12px 14px;font-family:'Hiragino Sans',sans-serif}
+input:focus,select:focus{outline:none;border-color:var(--gold)}
+.row{display:flex;gap:12px}.row>div{flex:1}
+.preview{display:flex;justify-content:center;margin:18px 0 4px}
+.preview img{width:240px;height:240px;border-radius:10px;image-rendering:pixelated;border:1px solid var(--line);background:#121214}
+.kinds{display:flex;gap:12px;margin-top:6px}
+.kind{flex:1;border:1px solid var(--line);border-radius:10px;padding:14px;text-align:center;cursor:pointer;transition:border-color .15s}
+.kind.sel{border-color:var(--gold)}
+.kind .nm{font-size:16px}.kind .pr{font-family:'Hiragino Sans',sans-serif;font-size:12px;color:var(--gold);margin-top:4px;font-variant-numeric:tabular-nums}
+.btn{display:block;width:100%;border:none;border-radius:10px;padding:15px;font-family:'Hiragino Sans',sans-serif;font-size:14px;letter-spacing:.12em;cursor:pointer;margin-top:12px;transition:opacity .15s}
+.btn:disabled{opacity:.35;cursor:default}
+.btn-card{background:var(--fg);color:#0a0a0a}
+.btn-crypto{background:transparent;color:var(--fg);border:1px solid var(--line)}
+.btn-crypto:hover:not(:disabled){border-color:var(--gold)}
+.note{font-family:'Hiragino Sans',sans-serif;font-size:11px;line-height:1.9;color:var(--mut);text-align:center;margin-top:26px}
+.note a{color:var(--gold);text-decoration:none}
+.err{font-family:'Hiragino Sans',sans-serif;font-size:12px;color:var(--red);text-align:center;margin-top:10px;min-height:16px}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.75);display:none;align-items:flex-start;justify-content:center;overflow-y:auto;padding:32px 16px;z-index:50}
+.modal.open{display:flex}
+.mbox{background:#101012;border:1px solid var(--line);border-radius:14px;max-width:480px;width:100%;padding:26px}
+.mbox h2{font-size:19px;font-weight:500;margin-bottom:16px}
+.mbox .fld{margin-bottom:12px}
+.assets{display:flex;gap:10px;margin:4px 0 14px}
+.asset{flex:1;border:1px solid var(--line);border-radius:8px;padding:10px;text-align:center;font-family:'Hiragino Sans',sans-serif;font-size:13px;cursor:pointer}
+.asset.sel{border-color:var(--gold);color:var(--gold)}
+.asset.off{opacity:.3;cursor:default}
+.payinfo{display:none;background:#121214;border-radius:10px;padding:16px;margin-top:14px;font-family:'Hiragino Sans',sans-serif;font-size:12px;line-height:2;word-break:break-all}
+.payinfo a{color:var(--gold)}
+.close{float:right;background:none;border:none;color:var(--mut);font-size:20px;cursor:pointer}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid var(--mut);border-top-color:var(--gold);border-radius:50%;animation:sp 1s linear infinite;vertical-align:-2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media(max-width:560px){h1{font-size:32px}.kinds{flex-direction:column}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kick">⌐◨-◨ × MU — CC0, ONE OF ONE</div>
+  <h1>Wear your <span class="noggles">Noun</span>.</h1>
+  <div class="sub">あなたのNounを、着る。 On-chain art, printed on demand.</div>
+
+  <div class="panel">
+    <label for="nid">NOUN ID</label>
+    <input id="nid" type="number" min="0" max="999999" inputmode="numeric" placeholder="e.g. 372" autocomplete="off">
+    <div class="preview"><img id="pv" src="https://noun.pics/0.png" alt="Noun preview" loading="lazy"></div>
+
+    <div class="kinds" id="kinds">
+      <div class="kind sel" data-kind="tee"><div class="nm">Tee</div><div class="pr">¥4,900 · black · S–XL</div></div>
+      <div class="kind" data-kind="hoodie"><div class="nm">Hoodie</div><div class="pr">¥8,800 · black · S–XL</div></div>
+    </div>
+
+    <div class="row" style="margin-top:12px">
+      <div>
+        <label for="qty">QUANTITY — まとめ買いOK</label>
+        <select id="qty">
+          <option>1</option><option>2</option><option>3</option><option>5</option>
+          <option>10</option><option>20</option><option>30</option><option>50</option>
+        </select>
+      </div>
+    </div>
+
+    <button class="btn btn-card sans" id="buyCard">Buy with card — カードで購入</button>
+    <button class="btn btn-crypto sans" id="buyCrypto">Pay with crypto (USDC / SOL / ETH)</button>
+    <div class="err" id="err"></div>
+  </div>
+
+  <p class="note">
+    Nouns artwork is <a href="https://nouns.wtf" rel="noopener">CC0 — public domain</a>; anyone may print any Noun.
+    Pixel-perfect upscale, no smoothing. Size is chosen at checkout.<br>
+    <b>10% of every sale is pledged to the Nouns Treasury</b> (settled monthly, on-chain, published).
+    Printed &amp; shipped worldwide by MU — <a href="/nouns-proposal.html">read the original DAO proposal</a>.
+  </p>
+</div>
+
+<div class="modal" id="cm">
+  <div class="mbox">
+    <button class="close" id="cmClose">×</button>
+    <h2 class="sans">Crypto checkout</h2>
+    <div class="assets" id="assets">
+      <div class="asset sel" data-a="usdc">USDC</div>
+      <div class="asset" data-a="sol">SOL</div>
+      <div class="asset" data-a="eth">ETH</div>
+    </div>
+    <div class="fld"><label>EMAIL</label><input id="cEmail" type="email" placeholder="you@example.com"></div>
+    <div class="fld"><label>SIZE</label><select id="cSize"><option>S</option><option selected>M</option><option>L</option><option>XL</option></select></div>
+    <div class="fld"><label>FULL NAME</label><input id="cName"></div>
+    <div class="fld"><label>ADDRESS LINE 1</label><input id="cL1"></div>
+    <div class="fld"><label>ADDRESS LINE 2 (OPT)</label><input id="cL2"></div>
+    <div class="row">
+      <div class="fld"><label>CITY</label><input id="cCity"></div>
+      <div class="fld"><label>STATE / PREF.</label><input id="cState"></div>
+    </div>
+    <div class="row">
+      <div class="fld"><label>ZIP</label><input id="cZip"></div>
+      <div class="fld"><label>COUNTRY (ISO-2)</label><input id="cCountry" placeholder="JP" maxlength="2"></div>
+    </div>
+    <button class="btn btn-card sans" id="cGo">Generate payment — 支払いを生成</button>
+    <div class="err" id="cErr"></div>
+    <div class="payinfo" id="pay">
+      <div>Send <b id="payAmt"></b> to:</div>
+      <div id="payTo" style="font-family:monospace"></div>
+      <div style="margin-top:8px"><a id="payLink" href="#">Open in wallet →</a></div>
+      <div style="margin-top:8px;color:#7c8088">Status: <span id="payStatus">waiting for payment <span class="spin"></span></span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var kind='tee', asset='usdc', methods={usdc:false,sol:false,eth:false}, ref=null, poll=null;
+  var $=function(id){return document.getElementById(id)};
+
+  // Which crypto rails are live (server gates on webhook config).
+  fetch('/api/payment_methods').then(function(r){return r.json()}).then(function(m){
+    methods={usdc:!!m.usdc,sol:!!m.sol,eth:!!m.eth};
+    if(!methods.usdc&&!methods.sol&&!methods.eth){
+      $('buyCrypto').disabled=true;
+      $('buyCrypto').textContent='Crypto — coming online soon';
+    }
+    document.querySelectorAll('.asset').forEach(function(el){
+      if(!methods[el.dataset.a]) el.classList.add('off');
+    });
+    var first=['usdc','sol','eth'].find(function(a){return methods[a]});
+    if(first){asset=first;document.querySelectorAll('.asset').forEach(function(el){
+      el.classList.toggle('sel',el.dataset.a===asset)})}
+  }).catch(function(){});
+
+  var pvT=null;
+  $('nid').addEventListener('input',function(){
+    clearTimeout(pvT);var v=this.value;
+    pvT=setTimeout(function(){
+      if(v!==''&&+v>=0) $('pv').src='https://noun.pics/'+(+v)+'.png';
+    },350);
+  });
+
+  document.querySelectorAll('.kind').forEach(function(el){
+    el.addEventListener('click',function(){
+      kind=el.dataset.kind;
+      document.querySelectorAll('.kind').forEach(function(k){k.classList.toggle('sel',k===el)});
+    });
+  });
+  document.querySelectorAll('.asset').forEach(function(el){
+    el.addEventListener('click',function(){
+      if(el.classList.contains('off'))return;
+      asset=el.dataset.a;
+      document.querySelectorAll('.asset').forEach(function(a){a.classList.toggle('sel',a===el)});
+    });
+  });
+
+  function createSku(){
+    var id=$('nid').value;
+    if(id===''||+id<0){$('err').textContent='Enter your Noun ID';return Promise.reject()}
+    $('err').textContent='';
+    return fetch('/api/nouns/create',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({noun_id:+id,kind:kind})})
+      .then(function(r){if(!r.ok)return r.text().then(function(t){throw new Error(t)});return r.json()});
+  }
+
+  $('buyCard').addEventListener('click',function(){
+    var b=this;b.disabled=true;b.textContent='Preparing…';
+    createSku().then(function(j){
+      location.href='/api/shop/checkout?sku='+encodeURIComponent(j.sku)+'&qty='+$('qty').value;
+    }).catch(function(e){
+      if(e&&e.message)$('err').textContent=e.message;
+      b.disabled=false;b.textContent='Buy with card — カードで購入';
+    });
+  });
+
+  $('buyCrypto').addEventListener('click',function(){
+    var id=$('nid').value;
+    if(id===''||+id<0){$('err').textContent='Enter your Noun ID';return}
+    $('cm').classList.add('open');
+  });
+  $('cmClose').addEventListener('click',function(){
+    $('cm').classList.remove('open');
+    if(poll){clearInterval(poll);poll=null}
+  });
+
+  $('cGo').addEventListener('click',function(){
+    var b=this,e=$('cErr');e.textContent='';
+    var email=$('cEmail').value.trim();
+    if(!email||email.indexOf('@')<0){e.textContent='Email required';return}
+    if(!$('cName').value.trim()||!$('cL1').value.trim()||!$('cCity').value.trim()
+       ||!$('cZip').value.trim()||$('cCountry').value.trim().length!==2){
+      e.textContent='Shipping: name, line1, city, zip, country (2 letters)';return}
+    b.disabled=true;b.textContent='Creating…';
+    createSku().then(function(j){
+      return fetch('/api/checkout/crypto',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          catalog_sku:j.sku, quantity:+$('qty').value, email:email,
+          size:$('cSize').value, payment_method:asset,
+          shipping:{name:$('cName').value.trim(),line1:$('cL1').value.trim(),
+            line2:$('cL2').value.trim(),city:$('cCity').value.trim(),
+            state:$('cState').value.trim(),zip:$('cZip').value.trim(),
+            country:$('cCountry').value.trim().toUpperCase(),phone:''}
+        })});
+    }).then(function(r){
+      if(!r.ok)return r.text().then(function(t){throw new Error(t)});return r.json();
+    }).then(function(p){
+      ref=p.reference;
+      $('payAmt').textContent=p.amount_crypto+' '+p.asset+' (¥'+p.amount_jpy.toLocaleString()+')';
+      $('payTo').textContent=p.recipient;
+      $('payLink').href=p.pay_url;
+      $('pay').style.display='block';
+      b.textContent='Payment generated';
+      poll=setInterval(function(){
+        fetch(p.status_url).then(function(r){return r.json()}).then(function(s){
+          if(s.status==='confirmed'){
+            clearInterval(poll);poll=null;
+            $('payStatus').innerHTML='<b style="color:#7ddc8f">CONFIRMED — fulfillment started ✓</b>';
+          } else if(s.status==='expired'){
+            clearInterval(poll);poll=null;
+            $('payStatus').textContent='expired — re-generate to try again';
+            b.disabled=false;b.textContent='Generate payment — 支払いを生成';
+          }
+        }).catch(function(){});
+      },5000);
+    }).catch(function(ex){
+      e.textContent=(ex&&ex.message)||'failed';
+      b.disabled=false;b.textContent='Generate payment — 支払いを生成';
+    });
+  });
+})();
+</script>
+</body>
+</html>
