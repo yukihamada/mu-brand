@@ -5545,7 +5545,7 @@ pub async fn shop_index(
         r##"<form class="shopsearch" method="get" action="/shop" role="search">
 <input type="hidden" name="brand" value="{b}"><input type="hidden" name="sort" value="{s}"><input type="hidden" name="kind" value="{k}">{lang_hidden}
 <input type="search" name="q" value="{q}" placeholder="{ph}" aria-label="{aria}" data-funnel="cta_click" data-funnel-cta="shop_search">
-<button type="submit" aria-label="{aria}">{btn}</button>{clear}</form>"##,
+<button type="submit" aria-label="{aria}" data-funnel="cta_click" data-funnel-cta="shop_search_submit">{btn}</button>{clear}</form>"##,
         b = html_attr(&brand_filter), s = html_attr(sort), k = html_attr(kind), q = html_attr(&q_trim),
         lang_hidden = if lang == "en" { r#"<input type="hidden" name="lang" value="en">"# } else { "" },
         ph = if lang == "en" { "Search — darce / coffee / black belt …" } else { "検索 — darce / coffee / 黒帯 …" },
@@ -5968,10 +5968,29 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
     Html(body)
 }
 
-/// /shop スクロール誘導FAB スクリプト (const なので format! のブレース
-/// エスケープ不要)。グリッド上端-200px を超えてスクロールしたら表示。
-/// ×で閉じたら sessionStorage で同セッション中は再表示しない。
+/// /shop スクロール誘導FAB + ビュー系計測スクリプト (const なので format! の
+/// ブレースエスケープ不要)。
+/// - FAB: グリッド上端-200px で表示 / ×は sessionStorage で同セッション抑制
+/// - cta_view 計測: FAB表示 (make_fab_shop) / スクロール深度 (shop_scroll_25..100,
+///   各1回) / 0件結果 (shop_empty)。mu-funnel.js は defer なので mufSend は
+///   未ロード時 800ms ×5 までリトライ。
 const SHOP_MAKE_FAB_JS: &str = r#"<script>(function(){
+function mufSend(n,x,tries){
+  var t=window.MU_FUNNEL;
+  if(t&&t.send){t.send(n,x);return;}
+  if((tries||0)<5)setTimeout(function(){mufSend(n,x,(tries||0)+1)},800);
+}
+// 0件結果ビュー — 検索/絞り込みの行き止まり検知 (検索語はサーバログ側にある)
+if(document.querySelector('.empty'))mufSend('cta_view',{cta:'shop_empty'});
+// スクロール深度 25/50/75/100 — 各1回。グリッドをどこまで見たかの母数
+var marks=[25,50,75,100],fired={};
+function depth(){
+  var d=document.documentElement;
+  var p=Math.round((window.scrollY+window.innerHeight)/Math.max(1,d.scrollHeight)*100);
+  marks.forEach(function(m){if(p>=m&&!fired[m]){fired[m]=1;mufSend('cta_view',{cta:'shop_scroll_'+m});}});
+  if(fired[100])window.removeEventListener('scroll',depth);
+}
+window.addEventListener('scroll',depth,{passive:true});
 var f=document.getElementById('muMakeFab');if(!f)return;
 try{if(sessionStorage.getItem('muMakeFabOff')){f.remove();return;}}catch(e){}
 var g=document.querySelector('.grid');
@@ -5980,7 +5999,10 @@ var shown=false;
 function onScroll(){
   if(shown)return;
   var y=window.scrollY||document.documentElement.scrollTop;
-  if(y>th){shown=true;f.classList.add('show');window.removeEventListener('scroll',onScroll);}
+  if(y>th){
+    shown=true;f.classList.add('show');window.removeEventListener('scroll',onScroll);
+    mufSend('cta_view',{cta:'make_fab_shop'}); // 表示=CTR分母 (clickはmake_fab_shop)
+  }
 }
 window.addEventListener('scroll',onScroll,{passive:true});
 f.querySelector('.x').addEventListener('click',function(){
@@ -6002,6 +6024,8 @@ function done(){if(io){io.disconnect();}m.remove();}
 function load(){
   if(busy)return;if(next>total){done();return;}
   busy=true;btn.textContent='読み込み中…';
+  // 自動ページ送り発火 — pos=何ページ目まで掘ったか (ボタン押下/IO 両方通る)
+  try{if(window.MU_FUNNEL)window.MU_FUNNEL.send('cta_view',{cta:'shop_load_more',pos:next});}catch(e){}
   fetch('/shop?page='+next+bq).then(function(r){return r.text();}).then(function(t){
     var doc=new DOMParser().parseFromString(t,'text/html');
     var cards=doc.querySelectorAll('.grid > a.card');
