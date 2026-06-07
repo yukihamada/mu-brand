@@ -3,289 +3,165 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MU × NOUNS DAO Proposal — The First Autonomous AI Fashion Collab</title>
-<meta name="description" content="MU × NOUNS: The first autonomous AI fashion collaboration with Nouns DAO. Three tracks (weekly MUGEN, daily MUON, weekly 7-day MA auction). Zero funding requested. 10% of sales to Nouns Treasury.">
-<meta name="keywords" content="MU NOUNS, Nouns DAO proposal, AI fashion NFT, CC0 collaboration, autonomous fashion">
+<title>⌐◨-◨ Wear Your Noun, Worldwide — Nouns DAO Proposal (Draft) | MU</title>
+<meta name="description" content="Draft Nouns DAO proposal: open-source the Noun-ID→print engine as CC0 public goods + a 90-day Japan proliferation campaign. 5 ETH, milestone-gated, 10% of sales returned to the treasury on-chain.">
 <link rel="canonical" href="https://wearmu.com/nouns-proposal.html">
-<!-- Favicon -->
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
-<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
 <link rel="shortcut icon" href="/favicon.ico">
-<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
-<link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#0A0A0A">
-
-<!-- Open Graph -->
 <meta property="og:type" content="article">
 <meta property="og:url" content="https://wearmu.com/nouns-proposal.html">
-<meta property="og:title" content="MU × NOUNS — The First Autonomous AI Fashion Collab with Nouns DAO">
-<meta property="og:description" content="Three tracks. Zero funding requested. 10% of sales to Nouns Treasury. MU wants to weave ⌐◨-◨ into the autonomous fashion machine.">
-<meta property="og:image" content="https://mockups.wearmu.com/hero.png">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="630">
+<meta property="og:title" content="⌐◨-◨ Wear Your Noun, Worldwide — open-source print engine + Japan wedge (5 ETH, milestone-gated)">
+<meta property="og:description" content="Fund the proliferation engine, not the merch. CC0 tooling any Nouner can fork, 200 free tees, a Tokyo activation — and 10% of all sales back to the treasury, on-chain.">
+<meta property="og:image" content="https://mockups.wearmu.com/catalog/mockups/NOUNS-TEE-0-NB.png">
 <meta property="og:site_name" content="MU">
-<meta property="og:locale" content="en_US">
-
-<!-- Twitter Card -->
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="MU × NOUNS — The First Autonomous AI Fashion Collab">
-<meta name="twitter:description" content="Three tracks. Zero funding. 10% of sales → Nouns Treasury. Just a cosign from the DAO.">
-<meta name="twitter:image" content="https://mockups.wearmu.com/hero.png">
-
-<!-- JSON-LD -->
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "Article",
-  "headline": "MU × NOUNS DAO Proposal — The First Autonomous AI Fashion Collab",
-  "url": "https://wearmu.com/nouns-proposal.html",
-  "description": "MU proposes three collaboration tracks with Nouns DAO: weekly MUGEN drops, daily MUON drops with 10% to treasury, and weekly 7-day MA auction using the Nouns mechanism.",
-  "publisher": {"@type": "Organization", "name": "MU", "url": "https://wearmu.com"},
-  "inLanguage": "en"
-}
-</script>
-<style>
-:root{--k:#0A0A0A;--w:#F5F5F0;--g:#1C1C1C;--y:#e6c449}
-*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
-body{background:var(--k);color:var(--w);font-family:'Helvetica Neue',Arial,sans-serif;
-  font-weight:200;-webkit-font-smoothing:antialiased}
-a{color:inherit;text-decoration:none}
-
-nav{position:fixed;top:0;left:0;right:0;z-index:100;
-  display:flex;align-items:center;justify-content:space-between;
-  padding:24px 48px;background:rgba(10,10,10,0.95);backdrop-filter:blur(10px);
-  border-bottom:1px solid rgba(255,255,255,0.05)}
-.nav-logo{font-size:16px;font-weight:700;letter-spacing:0.5em}
-.nav-right{display:flex;align-items:center;gap:32px}
-.nav-back{font-size:9px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.6;transition:opacity 0.2s}
-.nav-back:hover{opacity:1}
-.nav-nouns{font-size:18px}
-
-.hero{padding:140px 48px 80px;max-width:900px}
-.eyebrow{font-size:9px;letter-spacing:0.45em;text-transform:uppercase;color:var(--y);margin-bottom:20px}
-h1{font-size:clamp(36px,7vw,88px);font-weight:200;letter-spacing:0.04em;line-height:1.1;margin-bottom:24px}
-.hero-sub{font-size:14px;opacity:0.65;line-height:1.9;max-width:560px;font-weight:300}
-
-.tldr{background:#111;border-left:3px solid var(--y);padding:32px 40px;margin:60px 48px;
-  max-width:820px;font-size:14px;line-height:1.85;opacity:0.65;font-weight:300}
-.tldr strong{color:var(--w);opacity:1;font-weight:400}
-
-.content{max-width:820px;margin:0 auto;padding:0 48px}
-
-h2{font-size:10px;letter-spacing:0.45em;text-transform:uppercase;color:var(--y);
-  opacity:0.7;margin:60px 0 20px}
-h3{font-size:15px;font-weight:400;letter-spacing:0.05em;margin:32px 0 12px;opacity:0.9}
-p{font-size:14px;line-height:1.9;opacity:0.5;margin-bottom:20px;font-weight:300}
-p strong{color:var(--w);opacity:1;font-weight:400}
-
-.track-grid{display:grid;gap:2px;margin:24px 0}
-.track{background:var(--g);padding:32px;border-top:2px solid transparent;transition:border-color 0.3s}
-.track:hover{border-top-color:var(--y)}
-.track-label{font-size:8px;letter-spacing:0.35em;text-transform:uppercase;color:var(--y);opacity:0.7;margin-bottom:12px}
-.track-name{font-size:18px;font-weight:300;letter-spacing:0.05em;margin-bottom:16px}
-.track-desc{font-size:13px;opacity:0.7;line-height:1.75;font-weight:300}
-
-.spec-table{width:100%;border-collapse:collapse;margin:24px 0}
-.spec-table th{font-size:8px;letter-spacing:0.3em;text-transform:uppercase;
-  opacity:0.55;text-align:left;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.06)}
-.spec-table td{font-size:13px;padding:14px 0;border-bottom:1px solid rgba(255,255,255,0.04);
-  opacity:0.5;vertical-align:top;line-height:1.6}
-.spec-table td:first-child{font-weight:400;opacity:0.85;width:200px}
-
-.timeline{display:flex;flex-direction:column;gap:0;margin:24px 0}
-.tl-item{display:flex;gap:24px;padding:20px 0;border-bottom:1px solid rgba(255,255,255,0.04)}
-.tl-when{font-size:9px;letter-spacing:0.2em;text-transform:uppercase;
-  opacity:0.55;width:160px;flex-shrink:0;padding-top:2px}
-.tl-what{font-size:13px;opacity:0.5;line-height:1.6}
-
-.treasury-box{background:#111;border:1px solid rgba(230,196,73,0.15);
-  padding:28px 32px;margin:32px 0;display:flex;align-items:flex-start;gap:24px;flex-wrap:wrap}
-.treasury-addr{font-family:monospace;font-size:11px;opacity:0.6;word-break:break-all;flex:1;line-height:1.7}
-.treasury-label{font-size:8px;letter-spacing:0.3em;text-transform:uppercase;color:var(--y);opacity:0.7;
-  white-space:nowrap}
-
-.nouns-sig{font-size:clamp(60px,15vw,160px);text-align:center;padding:80px 0;
-  opacity:0.15;letter-spacing:0.1em;filter:drop-shadow(0 0 40px rgba(230,196,73,0.15))}
-.nouns-sig:hover{opacity:0.35;transition:opacity 0.3s}
-
-.cta-bar{background:var(--g);padding:40px 48px;display:flex;
-  align-items:center;justify-content:space-between;gap:32px;flex-wrap:wrap;margin:60px 0}
-.cta-text{font-size:13px;opacity:0.65;line-height:1.7;max-width:440px}
-.cta-btn{display:inline-block;border:1px solid rgba(230,196,73,0.4);color:var(--y);
-  padding:14px 28px;font-size:9px;letter-spacing:0.3em;text-transform:uppercase;
-  transition:all 0.2s;white-space:nowrap}
-.cta-btn:hover{background:rgba(230,196,73,0.08);border-color:var(--y)}
-
-footer{border-top:1px solid rgba(255,255,255,0.05);padding:32px 48px;
-  display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:20px}
-.footer-brand{font-size:10px;letter-spacing:0.4em;text-transform:uppercase;opacity:0.7}
-.footer-link{font-size:9px;letter-spacing:0.25em;text-transform:uppercase;
-  opacity:0.7;transition:opacity 0.2s;margin-left:32px}
-.footer-link:hover{opacity:0.7}
-
-@media(max-width:640px){
-  nav{padding:20px 24px}
-  .hero{padding:100px 24px 60px}
-  .tldr{margin:40px 24px}
-  .content{padding:0 24px}
-  .cta-bar{padding:32px 24px}
-  footer{padding:24px}
-  .spec-table td:first-child{width:140px}
-}
-</style>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<style>
+:root{--bg:#0a0a0a;--fg:#f4f1ea;--mut:#7c8088;--gold:#e6c449;--red:#d53c5e;--line:#26262a;--ok:#7ddc8f}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font-family:-apple-system,'Helvetica Neue','Hiragino Sans',sans-serif;line-height:1.75}
+.wrap{max-width:760px;margin:0 auto;padding:clamp(32px,6vw,64px) 22px 110px}
+.draft{display:inline-block;border:1px solid var(--gold);color:var(--gold);font-size:11px;letter-spacing:.25em;padding:5px 12px;border-radius:999px;margin-bottom:22px}
+h1{font-size:clamp(28px,5.6vw,42px);line-height:1.25;font-weight:750;letter-spacing:-.01em;margin:0 0 14px}
+.noggles{color:var(--red)}
+.lead{color:var(--mut);font-size:15px;margin-bottom:36px}
+h2{font-size:20px;font-weight:700;margin:46px 0 14px;padding-top:18px;border-top:1px solid var(--line)}
+p,li{font-size:14.5px;color:#d8d5cc}
+ul,ol{padding-left:22px;margin:10px 0}
+li{margin:6px 0}
+b{color:var(--fg)}
+a{color:var(--gold)}
+.tldr{border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin:0 0 8px;background:#101012}
+.tldr li{margin:8px 0}
+table{width:100%;border-collapse:collapse;font-size:13.5px;margin:14px 0;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line)}
+th{color:var(--mut);font-size:11px;letter-spacing:.15em;text-transform:uppercase}
+td.r,th.r{text-align:right}
+.mile{border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:12px 0}
+.mile .t{font-weight:700;font-size:14px}
+.mile .eth{color:var(--gold);font-variant-numeric:tabular-nums}
+.verify{color:var(--mut);font-size:12.5px}
+.risk{border-left:3px solid var(--red);padding:4px 0 4px 16px;margin:14px 0}
+.addr{font-family:ui-monospace,Menlo,monospace;font-size:12px;word-break:break-all;color:var(--fg);background:#121214;border-radius:6px;padding:2px 6px}
+.cta{display:flex;gap:12px;flex-wrap:wrap;margin:34px 0 0}
+.cta a{flex:1;min-width:200px;text-align:center;text-decoration:none;border-radius:10px;padding:14px 18px;font-size:14px;font-weight:700}
+.cta .pri{background:var(--fg);color:#0a0a0a}
+.cta .sec{border:1px solid var(--line);color:var(--fg)}
+.foot{color:var(--mut);font-size:12px;margin-top:44px;border-top:1px solid var(--line);padding-top:18px;line-height:2}
+.jp{color:var(--mut);font-size:12.5px}
+</style>
 </head>
 <body>
+<div class="wrap">
+  <span class="draft">DRAFT — CANDIDATE PROP IN PREPARATION · NOT YET SUBMITTED</span>
+  <h1>⌐◨-◨ Wear Your <span class="noggles">Noun</span>, Worldwide<br>An Open-Source Print Engine + Japan Proliferation Wedge</h1>
+  <p class="lead">Proposed by MU (wearmu.com) · Enabler Inc., Tokyo — <span class="jp">日本からNounsを世界の身体へ。</span></p>
 
-<nav>
-  <a class="nav-logo" href="/">MU</a>
-  <div class="nav-right">
-    <a class="nav-back" href="/">← Store</a>
-    <span class="nav-nouns">⌐◨-◨</span>
-  </div>
-</nav>
-
-<div class="hero">
-  <div class="eyebrow">Nouns DAO Proposal</div>
-  <h1>MU × NOUNS</h1>
-  <div class="hero-sub">
-    The First Autonomous AI Fashion Collab.<br>
-    Three tracks. Zero funding requested.<br>
-    Just a cosign from the DAO.
-  </div>
-</div>
-
-<div class="tldr">
-  <strong>TL;DR</strong> — MU is an autonomous AI fashion brand: designs generated every hour, every day, every month, no human creative direction. We want to weave <strong>⌐◨-◨</strong> into that machine, donate <strong>10% of collab drops</strong> to the Nouns Treasury, and run a monthly auction using the exact Nouns mechanism. <strong>Zero funding requested.</strong> Just a handshake.
-</div>
-
-<div class="content">
-
-  <h2>Motivation</h2>
-  <p>
-    Nouns proved something important: if you make the process the product, the community builds the culture around it. MU is trying to do the same thing for fashion — an autonomous AI pipeline (Gemini → Printful → Solana NFT) that generates garments on a fixed cadence, no trend chasing, no creative director, no hype cycle.
-  </p>
-  <p>
-    The glasses are CC0. The mechanism is open. MU's pipeline is already running. This collab is a natural fit: two projects that trust <strong>process over people</strong>, permanence over virality.
-  </p>
-  <p>
-    We're not here to slap a logo on a hoodie. We're here to let the machine do something strange and interesting with one of the most recognizable pixel assets in crypto — and share the upside with the DAO.
-  </p>
-
-  <h2>Three Tracks</h2>
-
-  <div class="track-grid">
-    <div class="track">
-      <div class="track-label">Track 1</div>
-      <div class="track-name">MUGEN × NOUNS — Weekly</div>
-      <div class="track-desc">
-        Every week, MU's AI generates a new streetwear graphic that reinterprets ⌐◨-◨ as a source element — not a direct print, but a structural input to the generation prompt. The output is weird, generative, and on-chain certified. CC0 means we can do this without asking permission, but we'd rather have the DAO's blessing than operate in a gray zone.
-      </div>
-    </div>
-    <div class="track">
-      <div class="track-label">Track 2</div>
-      <div class="track-name">MUON × NOUNS — Daily, Climate-Gated</div>
-      <div class="track-desc">
-        MUON drops happen daily. The quantity printed per drop equals the current temperature in Hokkaido, Japan — a natural oracle creating real scarcity tied to weather. MUON × NOUNS editions run inside this system: <strong style="color:var(--w);opacity:1">10% of gross sales from each collab drop go directly to the Nouns Treasury.</strong> Climate determines supply. The DAO gets a cut. No human decides either.
-      </div>
-    </div>
-    <div class="track">
-      <div class="track-label">Track 3</div>
-      <div class="track-name">MA × NOUNS Auction — Weekly 7-Day</div>
-      <div class="track-desc">
-        MA is MU's weekly release — one piece, highest bid wins, 7-day window, no reserve, starting from ¥30,000 (~$200). <strong style="color:var(--w);opacity:1">The mechanism is lifted directly from Nouns.</strong> MA is fashion's Nouns. One piece per week, on-chain auction, 10% of the winning bid to the Nouns Treasury. We want the DAO to formally recognize this as a recurring contribution, not a one-time gesture.
-      </div>
-    </div>
+  <div class="tldr">
+    <ul>
+      <li><b>What:</b> open-source the "any Noun ID → pixel-perfect physical print" pipeline as <b>CC0 public-goods tooling</b> any Nouner can fork, plus a 90-day Japan/Asia proliferation campaign (free tees for Nouners, a Tokyo pop-up activation).</li>
+      <li><b>How much:</b> <b>5 ETH</b>, released in 3 milestone tranches. Net cost trends lower — <b>10% of ALL MU Noun-apparel sales is returned to the Nouns treasury, on-chain.</b></li>
+      <li><b>What Nouns gets:</b> noggles on bodies in Tokyo (a near-zero-presence market), reusable open-source merch infrastructure for the whole community, and a transparent on-chain dashboard. Every deliverable is independently verifiable.</li>
+    </ul>
   </div>
 
-  <h2>Specification</h2>
+  <h2>Why this proliferates the meme</h2>
+  <ol>
+    <li><b>A public good, not a private store.</b> Today, any builder who wants to put a Noun on a tee has to rebuild upscaling, print-file generation, mockup preview, and fulfillment plumbing from scratch. We will <b>open-source the entire Noun-ID → print pipeline under CC0</b> — the same license as Nouns art itself. After this prop, any Nouner can self-host "wear your Noun" with <b>no dependency on MU</b>. That is proliferation infrastructure the DAO owns forever.</li>
+    <li><b>Japan is a Nouns gap.</b> Nouns' Japan footprint is a handful of event touchpoints (Prop 559 — EDCON 2024 Tokyo; DAO Tokyo). There is no standing way for someone in Tokyo to walk away wearing a Noun. MU is a Tokyo-based, fully operational apparel engine with global Printful fulfillment already live. We are the cheapest possible wedge into Asia.</li>
+    <li><b>Bodies &gt; banners.</b> The deliverable is physical Nouns in the wild — free tees on Nouners and on Tokyo crowds, each a CC0 Noun with a QR back to nouns.wtf. Cheap, measurable, exactly the "spread the meme" mandate.</li>
+  </ol>
 
-  <table class="spec-table">
-    <tbody>
-      <tr>
-        <td>CC0 Usage</td>
-        <td>Nouns glasses used within the generative pipeline as prompt input, not direct pixel reproduction. Interpretive, AI-mediated, never a straight copy.</td>
-      </tr>
-      <tr>
-        <td>Treasury recipient</td>
-        <td>
-          <div class="treasury-box" style="margin:0;padding:16px 20px">
-            <div class="treasury-label">Nouns Treasury</div>
-            <div class="treasury-addr">0x0BC3807Ec262cB779b38D65b38158acC3bfedE10</div>
-          </div>
-        </td>
-      </tr>
-      <tr>
-        <td>Donation rate</td>
-        <td>10% of gross sales (MUON × NOUNS) and 10% of winning bid (MA × NOUNS). Sent automatically at settlement. Public dashboard quarterly.</td>
-      </tr>
-      <tr>
-        <td>Branding</td>
-        <td>"× NOUNS" branding used only on officially designated collab drops. No standalone Nouns branding outside of collab pieces.</td>
-      </tr>
-      <tr>
-        <td>Store URL</td>
-        <td>https://wearmu.com</td>
-      </tr>
-      <tr>
-        <td>Grant request</td>
-        <td><strong style="color:var(--w);opacity:1">Zero.</strong> MU funds its own infrastructure. This is a collaboration, not a funding request.</td>
-      </tr>
-    </tbody>
+  <h2>What already works — live &amp; verifiable today</h2>
+  <p>This is not a deck. The product ships now:</p>
+  <ul>
+    <li><b>Live store:</b> <a href="/nouns">wearmu.com/nouns</a> — enter any Noun ID, pixel-perfect upscale (no smoothing), tee ¥4,900 / hoodie ¥8,800, classic Square or background-knocked-out <b>Floating</b> style.</li>
+    <li><b>Crypto rails live:</b> pay in <b>USDC / SOL / ETH</b> or card. Bulk orders 1–50.</li>
+    <li><b>Real print preview:</b> the printer (Printful) generates the actual on-body mockup <i>before</i> you buy.</li>
+    <li><b>Global fulfillment:</b> printed &amp; shipped worldwide — already operating.</li>
+    <li><b>Treasury pledge is wired</b> to the canonical Nouns treasury <span class="addr">0x0BC3807Ec262cB779b38D65b38158acC3bfedE10</span>. Honest status: <b>wired but not yet operational — zero settlements so far</b> (see Risks). Tranche&nbsp;1 makes it real and audited.</li>
+  </ul>
+
+  <h2>Deliverables &amp; milestones — 90 days, tranche-gated</h2>
+  <p class="verify">Each milestone is a tranche. Each is independently verifiable by anyone, on-chain or by URL. Unmet milestone = unreleased tranche.</p>
+
+  <div class="mile">
+    <div class="t">Tranche 1 — Day 0 → 30 · <span class="eth">2.0 ETH</span> · "Open-source the engine"</div>
+    <ul>
+      <li>Public CC0 GitHub repo: Noun-ID → upscale → print-file → mockup pipeline, docs + one-command self-host <span class="verify">(verify: repo URL, CC0 LICENSE)</span></li>
+      <li>First <b>real 10%-of-sales settlement tx</b> to the Nouns treasury, executed and linked <span class="verify">(verify: Etherscan tx)</span></li>
+      <li>Public transparency dashboard: cumulative ETH returned, units printed, Noun IDs used <span class="verify">(verify: live URL matches on-chain)</span></li>
+    </ul>
+  </div>
+  <div class="mile">
+    <div class="t">Tranche 2 — Day 30 → 60 · <span class="eth">1.5 ETH</span> · "Free tees to Nouners + creators"</div>
+    <ul>
+      <li><b>200 free Noun tees</b> shipped — priority to Nouns holders + Asia-region Nounish creators; claim flow capped at one per address <span class="verify">(verify: public claim ledger + dashboard)</span></li>
+      <li>Embed widget so any Nounish site can drop a "wear this Noun" button <span class="verify">(verify: live on ≥3 third-party sites)</span></li>
+    </ul>
+  </div>
+  <div class="mile">
+    <div class="t">Tranche 3 — Day 60 → 90 · <span class="eth">1.5 ETH</span> · "Tokyo activation"</div>
+    <ul>
+      <li>Tokyo pop-up co-located with a Nounish / web3 meetup: on-the-spot Noun printing, free + paid units <span class="verify">(verify: recap post + photos + dashboard)</span></li>
+      <li>Final 90-day report: ETH returned, Nouns printed, geographic spread, repo forks — all on-chain links <span class="verify">(verify: report URL)</span></li>
+    </ul>
+  </div>
+
+  <h2>Budget — 5 ETH</h2>
+  <table>
+    <tr><th>Item</th><th class="r">ETH</th></tr>
+    <tr><td>200 free Noun tees (blanks + print + intl. shipping, ~$40 landed each)</td><td class="r">2.4</td></tr>
+    <tr><td>Tokyo activation (venue share, on-site printing, logistics)</td><td class="r">1.2</td></tr>
+    <tr><td>Open-source work (repo, self-host docs, embed widget, dashboard)</td><td class="r">1.0</td></tr>
+    <tr><td>Ops, on-chain settlement gas, reporting</td><td class="r">0.4</td></tr>
+    <tr><td><b>Gross ask</b></td><td class="r"><b>5.0</b></td></tr>
+    <tr><td>Less: 10% of all MU Noun-apparel sales returned to treasury</td><td class="r">(net reducer)</td></tr>
   </table>
+  <p class="verify">Intentionally an order of magnitude below prior Nouns fashion funding (the Danit Peleg 3D-printed collection was funded at ~$140k) — small-builder-grant territory. Small enough that sponsorship is easy; the DAO's downside is trivial.</p>
 
-  <h2>Timeline (post-approval)</h2>
+  <h2>Team — Enabler Inc. (Tokyo)</h2>
+  <ul>
+    <li><b>Yuki Hamada</b> — founder/CEO, Enabler Inc. (ex-Mercari).</li>
+    <li><b>Track record, live &amp; honest-graded:</b> <a href="/transparency">wearmu.com/transparency</a> — MU (autonomous AI apparel), JiuFlow (paid SaaS), bim.house, Koe, and more. All real numbers, published.</li>
+    <li>The stack runs autonomously: AI design → Printful manufacturing → on-chain certificate per piece. We are an engineering shop that ships, in public.</li>
+  </ul>
 
-  <div class="timeline">
-    <div class="tl-item">
-      <div class="tl-when">Week 1</div>
-      <div class="tl-what">First MUGEN × NOUNS drop published. AI generates weekly reinterpretation of ⌐◨-◨.</div>
-    </div>
-    <div class="tl-item">
-      <div class="tl-when">Month 1</div>
-      <div class="tl-what">First MA × NOUNS auction. 10% of winning bid donated to Nouns Treasury.</div>
-    </div>
-    <div class="tl-item">
-      <div class="tl-when">Ongoing</div>
-      <div class="tl-what">MUON × NOUNS daily drops with live Hokkaido temperature oracle. 10% of sales → Treasury.</div>
-    </div>
-    <div class="tl-item">
-      <div class="tl-when">Quarterly</div>
-      <div class="tl-what">Public dashboard showing total contributed to Nouns Treasury. On-chain verifiable.</div>
-    </div>
+  <h2>Honest risks — radical transparency</h2>
+  <p>We'd rather you reject us for the truth than fund us for a pitch.</p>
+  <div class="risk"><p><b>MU is a small brand. Sales to date are tiny.</b> Lifetime MU revenue is ~¥195,900 (~$1.3k): 36 orders, 19 units shipped, 688 AI designs generated, ~¥83,800 from real third-party customers. The 10% treasury return is small <i>today</i> — the value is the open-source engine and the proliferation, not near-term ETH back.</p></div>
+  <div class="risk"><p><b>The treasury pledge is not yet operational.</b> Zero settlements have happened. Tranche 1 explicitly fixes this with a first real on-chain settlement tx.</p></div>
+  <div class="risk"><p><b>Japan crypto/tax compliance</b> for accepting USDC/SOL/ETH and transferring ETH has jurisdictional nuance; we will document our compliance approach in the repo.</p></div>
+  <div class="risk"><p><b>Execution risk is bounded by milestones</b> — unmet milestone = unreleased tranche.</p></div>
+
+  <h2>KPIs &amp; reporting</h2>
+  <ul>
+    <li><b>North-star:</b> number of physical Nouns in the wild (units printed/shipped)</li>
+    <li><b>Secondary:</b> ETH returned to treasury (on-chain) · repo forks/self-hosts · third-party embeds live · Tokyo activation reach</li>
+    <li><b>Cadence:</b> always-on dashboard + written updates at Day 30 / 60 / 90 — every claim verifiable on-chain or by URL</li>
+    <li><b>Settlement address:</b> Nouns treasury <span class="addr">0x0BC3807Ec262cB779b38D65b38158acC3bfedE10</span></li>
+  </ul>
+
+  <h2>Ask structure</h2>
+  <ol>
+    <li><b>Prop candidate first.</b> We will post this as a candidate to gather Nouner feedback and signal before spending DAO attention on a full vote.</li>
+    <li><b>Sponsorship → on-chain prop.</b> With 3 Nouns sponsoring, we promote to a formal proposal for the milestone-gated 5 ETH.</li>
+    <li><b>Build in public regardless</b> — the open-source engine ships either way; the grant makes the proliferation campaign and the Japan wedge possible.</li>
+  </ol>
+
+  <p style="margin-top:30px"><b>⌐◨-◨ Let's put Nouns on bodies in Tokyo — and give every builder the engine to do it anywhere.</b></p>
+
+  <div class="cta">
+    <a class="pri" href="/nouns">Try it now — wear your Noun →</a>
+    <a class="sec" href="mailto:info@enablerdao.com">Talk to us / sponsor as a Nouner</a>
   </div>
 
-  <h2>Team</h2>
-
-  <p>
-    <strong>Yuki Hamada</strong> — CEO of Enabler, formerly CPO/CMO at Mercari (Japan's largest C2C marketplace, $7B peak market cap). Built production AI pipelines at scale. Runs MU as an autonomous system, not a brand with a team.
+  <p class="foot">
+    Operated by Enabler Inc.（株式会社イネブラ）, Tokyo · <a href="/tos">Terms</a> · <a href="/transparency">Transparency</a><br>
+    Status: draft for community feedback — not yet submitted to Nouns governance. Figures marked "~" are estimates; treasury size and ETH price vary.<br>
+    <span class="jp">これはNouns DAOガバナンスへの提出前ドラフトです。売上・出荷数などMU側の数字はすべて実数（/transparency参照）。</span>
   </p>
-  <p>
-    <strong>MU Technical Stack</strong> — Gemini AI (design generation) → Printful (on-demand manufacturing) → Solana (NFT certificate per piece). Fully autonomous. Hourly, daily, and monthly cadences already live.
-  </p>
-
 </div>
-
-<div class="nouns-sig">⌐◨-◨</div>
-
-<div class="cta-bar">
-  <div class="cta-text">
-    No grants requested. No runway needed.<br>
-    Just a cosign from the DAO that the machine can wear the glasses.
-  </div>
-  <a class="cta-btn" href="https://nouns.wtf/vote" target="_blank">Submit to Governance →</a>
-</div>
-
-<footer>
-  <div class="footer-brand">MU — AIが服を作り続けるブランド</div>
-  <div>
-    <a class="footer-link" href="/">Store</a>
-    <a class="footer-link" href="/press.html">Press</a>
-    <a class="footer-link" href="/about.html">About</a>
-  </div>
-</footer>
-
-  <script src="/pt_gate.js" defer></script>
 </body>
 </html>
