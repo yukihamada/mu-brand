@@ -490,6 +490,46 @@ async fn security_headers(req: Request<axum::body::Body>, next: Next) -> Respons
             HeaderValue::from_static("public, max-age=604800, stale-while-revalidate=86400"),
         );
     }
+    // ── Root-level static assets + SEO/PWA descriptors ────────────────────
+    // Files served from the project root (icon-512.png, og.jpg, favicon.*,
+    // robots.txt, sitemap.xml, manifest.json, …) go through serve_static_or_404
+    // / the ServeDir fallback, none of which start with /static/, so they had
+    // NO Cache-Control at all (every visit re-downloaded the favicon/og image).
+    // Skip /api, /admin, /work (dynamic / secret-bearing) and any HTML.
+    // Filenames are NOT content-hashed → conservative 1-day TTL for assets,
+    // 1-hour for descriptors that the engine can regenerate.
+    if !path.starts_with("/api")
+        && !path.starts_with("/admin")
+        && !path.starts_with("/work")
+        && !h.contains_key(axum::http::header::CACHE_CONTROL)
+    {
+        // strip query string, lowercase, take the extension after the last '.'
+        let lo = path.split('?').next().unwrap_or(&path).to_ascii_lowercase();
+        let ext = lo.rsplit('.').next().unwrap_or("");
+        let cache = match ext {
+            // immutable-ish binary/static assets (no hashing → 1 day, safe)
+            "png" | "jpg" | "jpeg" | "webp" | "gif" | "svg" | "ico"
+            | "css" | "js" | "woff" | "woff2" | "ttf" | "otf" | "eot" => {
+                Some("public, max-age=86400")
+            }
+            // SEO / PWA descriptors — short TTL so updates propagate fast
+            "txt" | "xml" => {
+                // robots.txt / sitemap.xml (and any other root .txt/.xml)
+                Some("public, max-age=3600")
+            }
+            "json" => {
+                // manifest.json etc. (but /api/* already excluded above)
+                Some("public, max-age=3600")
+            }
+            _ => None, // HTML and extensionless routes: leave uncached
+        };
+        if let Some(c) = cache {
+            h.insert(
+                axum::http::header::CACHE_CONTROL,
+                HeaderValue::from_static(c),
+            );
+        }
+    }
     resp
 }
 
@@ -52750,6 +52790,139 @@ async fn dynamic_sitemap(State(db): State<Db>) -> Response {
     ).into_response()
 }
 
+/// Convert a stored `created_at` (unix-epoch seconds string OR legacy ISO
+/// "YYYY-MM-DD…") into an RFC 822 date for RSS <pubDate>, in JST (+0900).
+/// Falls back to the current time when the value can't be parsed.
+fn rfc822_from_created_at(created_at: &str) -> String {
+    // Resolve to a unix timestamp (UTC seconds).
+    let unix: i64 = if created_at.chars().all(|c| c.is_ascii_digit()) && !created_at.is_empty() {
+        created_at.parse().unwrap_or(0)
+    } else if created_at.len() >= 10 {
+        // Legacy ISO date "YYYY-MM-DD" → midnight JST of that day.
+        let y: i64 = created_at[0..4].parse().unwrap_or(1970);
+        let m: i64 = created_at[5..7].parse().unwrap_or(1);
+        let d: i64 = created_at[8..10].parse().unwrap_or(1);
+        days_from_civil(y, m, d) * 86400 - 9 * 3600 // -9h so +9h below lands on local midnight
+    } else {
+        0
+    };
+    let unix = if unix == 0 { chrono_now().parse().unwrap_or(0) } else { unix };
+    // Shift into JST for display, then label +0900.
+    let jst = unix + 9 * 3600;
+    let days = jst.div_euclid(86400);
+    let secs_of_day = jst.rem_euclid(86400);
+    let (y, mo, d) = civil_from_days(days);
+    let h = secs_of_day / 3600;
+    let mi = (secs_of_day / 60) % 60;
+    let s = secs_of_day % 60;
+    // 1970-01-01 (day 0) was a Thursday.
+    let dow = ((days.rem_euclid(7)) + 4) % 7;
+    const DOW: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const MON: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                             "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let mon = MON.get((mo - 1).clamp(0, 11) as usize).copied().unwrap_or("Jan");
+    format!(
+        "{}, {:02} {} {:04} {:02}:{:02}:{:02} +0900",
+        DOW[dow as usize], d, mon, y, h, mi, s
+    )
+}
+
+/// RSS 2.0 feed of the latest published auto-blog posts (运营ノート).
+/// Registered at GET /feed.xml. Data source = auto_blog_posts (same as /blog).
+async fn feed_rss(State(db): State<Db>) -> Response {
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    let base_url = base_url.trim_end_matches('/').to_string();
+
+    // (slug, title, body_html, created_at) — newest 30 published posts.
+    let posts: Vec<(String, String, String, String)> = {
+        let conn = db.lock().unwrap();
+        let result = match conn.prepare(
+            "SELECT slug, title, COALESCE(body_html,''), COALESCE(created_at,'')
+             FROM auto_blog_posts WHERE published=1
+             ORDER BY created_at DESC LIMIT 30"
+        ) {
+            Ok(mut stmt) => stmt
+                .query_map([], |r| Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                )))
+                .map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>())
+                .unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
+        result
+    };
+
+    let last_build = posts
+        .first()
+        .map(|p| rfc822_from_created_at(&p.3))
+        .unwrap_or_else(|| rfc822_from_created_at(&chrono_now()));
+
+    let mut items = String::new();
+    for (slug, title, body_html, created_at) in &posts {
+        let link = format!("{}/blog/auto/{}", base_url, slug);
+        // Plain-text description from the post body: strip tags, collapse
+        // whitespace, cap length. Wrapped in CDATA so any stray chars are safe.
+        let desc = {
+            let stripped = strip_html_tags(body_html);
+            let collapsed = stripped.split_whitespace().collect::<Vec<_>>().join(" ");
+            let mut t: String = collapsed.chars().take(280).collect();
+            if collapsed.chars().count() > 280 { t.push('…'); }
+            t
+        };
+        items.push_str(&format!(
+            "  <item>\n    <title>{}</title>\n    <link>{}</link>\n    <guid isPermaLink=\"true\">{}</guid>\n    <pubDate>{}</pubDate>\n    <description><![CDATA[{}]]></description>\n  </item>\n",
+            xml_escape(title),
+            xml_escape(&link),
+            xml_escape(&link),
+            rfc822_from_created_at(created_at),
+            cdata_safe(&desc),
+        ));
+    }
+
+    let feed = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+<rss version=\"2.0\" xmlns:atom=\"http://www.w3.org/2005/Atom\">\n\
+<channel>\n\
+  <title>MU Notes — wearmu 運営ノート</title>\n\
+  <link>{base}/blog</link>\n\
+  <atom:link href=\"{base}/feed.xml\" rel=\"self\" type=\"application/rss+xml\" />\n\
+  <description>AI が毎朝書く、wearmu.com の運営日誌。天気・売上・在庫・お客様の声を読んだ一日の記録。</description>\n\
+  <language>ja</language>\n\
+  <lastBuildDate>{last_build}</lastBuildDate>\n\
+{items}</channel>\n\
+</rss>\n",
+        base = xml_escape(&base_url),
+        last_build = last_build,
+        items = items,
+    );
+
+    (
+        [(
+            "content-type",
+            "application/rss+xml; charset=utf-8",
+        )],
+        feed,
+    ).into_response()
+}
+
+/// Minimal XML attribute/text escaper for RSS fields.
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+/// Neutralize a CDATA terminator so arbitrary text can't break out of
+/// <![CDATA[ … ]]>. Splits the "]]>" sequence harmlessly.
+fn cdata_safe(s: &str) -> String {
+    s.replace("]]>", "]]]]><![CDATA[>")
+}
+
 // ── MU × SWEEP collab (draft, password-gated) ──────────────────────────────
 // SWEEP社 の承認前なので強めに gate。`?pass=...` で 30 日 cookie をセット。
 // 商品自体は collab_products に seed されており、buy ボタンは Stripe Checkout
@@ -62798,7 +62971,7 @@ async fn slug_or_static(
             if is_brand {
                 return catalog::shop_index(
                     axum::extract::State(db.clone()),
-                    axum::extract::Query(catalog::ShopQuery { brand: Some(slug_lo.clone()), page: None, sort: None, kind: None, q: None }),
+                    axum::extract::Query(catalog::ShopQuery { brand: Some(slug_lo.clone()), page: None, sort: None, kind: None, q: None, lang: None }),
                 ).await.into_response();
             }
             return serve_static_or_404(&slug, &db);
@@ -68620,6 +68793,7 @@ async fn main() {
         .route("/api/referral/:code", get(referral_info))
         .route("/api/admin/funnel/clicks", get(admin_funnel_clicks))
         .route("/sitemap.xml", get(dynamic_sitemap))
+        .route("/feed.xml", get(feed_rss))
         .route("/feed/google.tsv", get(catalog::google_merchant_feed))
         .route("/memory-vault", get(memory_vault_index))
         .route("/memory-vault/files/", get(memory_vault_file))

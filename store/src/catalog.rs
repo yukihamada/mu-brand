@@ -2806,6 +2806,30 @@ fn chrono_now_iso() -> String {
     format!("{}", t)
 }
 
+/// `YYYY-MM-DD` (UTC) for `today + days`. No chrono dependency — uses the
+/// civil-from-days algorithm (Howard Hinnant). Used for schema.org
+/// `priceValidUntil` so Merchant rich results don't flag a stale offer.
+fn date_plus_days_iso(days: i64) -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let z = now_secs / 86_400 + days; // days since 1970-01-01
+    // civil_from_days (days since epoch → y/m/d), valid for the Gregorian calendar.
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; // [0, 399]
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{:04}-{:02}-{:02}", y, m, d)
+}
+
 #[derive(Deserialize)]
 pub struct LegacyRenameQuery {
     pub token: String,
@@ -5164,6 +5188,7 @@ pub struct ShopQuery {
     pub sort: Option<String>,
     pub kind: Option<String>,
     pub q: Option<String>,
+    pub lang: Option<String>,
 }
 
 const SHOP_PAGE_SIZE: i64 = 60;
@@ -5218,6 +5243,8 @@ pub async fn shop_index(
     State(db): State<Db>,
     Query(q): Query<ShopQuery>,
 ) -> Html<String> {
+    // English meta layer (?lang=en): title / meta description / og + <html lang>.
+    let lang = match q.lang.as_deref() { Some("en") => "en", _ => "ja" };
     let brand_filter = q.brand.unwrap_or_default();
     let page = q.page.unwrap_or(1).max(1);
     // Sort: whitelist only — anything else falls back to the default
@@ -5367,13 +5394,23 @@ pub async fn shop_index(
         .find(|(slug, _, _)| slug == &brand_filter)
         .map(|(_, name, _)| name.clone())
         .unwrap_or_else(|| brand_filter.clone());
-    let mut title = if brand_filter.is_empty() {
+    let mut title = if lang == "en" {
+        if brand_filter.is_empty() {
+            format!("MU SHOP — Collab Tees, BJJ Wear & Limited Goods ({} items)", total_active)
+        } else {
+            format!("{} x MU Collab ({} items) | MU SHOP", brand_name, total_active)
+        }
+    } else if brand_filter.is_empty() {
         format!("MU SHOP — コラボTシャツ・柔術ウェア・限定グッズ通販 ({} 件)", total_active)
     } else {
         format!("{} × MU コラボ商品一覧 ({}件) | MU SHOP", brand_name, total_active)
     };
     if !q_trim.is_empty() {
-        title = format!("「{}」の検索結果 ({}件) | MU SHOP", q_trim, total_active);
+        title = if lang == "en" {
+            format!("Search: \"{}\" ({} items) | MU SHOP", q_trim, total_active)
+        } else {
+            format!("「{}」の検索結果 ({}件) | MU SHOP", q_trim, total_active)
+        };
     }
     if page > 1 {
         title.push_str(&format!(" — Page {}", page));
@@ -5385,7 +5422,13 @@ pub async fn shop_index(
     } else {
         ""
     };
-    let meta_desc = if brand_filter.is_empty() {
+    let meta_desc = if lang == "en" {
+        if brand_filter.is_empty() {
+            format!("Official store for MU x 10+ brand collab apparel ({total} items). AI-designed tees, BJJ rashguards, stickers, sound tees. Made-to-order from 1 piece, zero waste, Stripe checkout, ships worldwide in 7-14 days.", total = total_active)
+        } else {
+            format!("{name} x MU collab apparel ({n} items). Made-to-order from 1 piece, zero waste, secure Stripe checkout, ships worldwide in 7-14 days.", name = brand_name, n = total_active)
+        }
+    } else if brand_filter.is_empty() {
         format!("MUと10+ブランドのコラボアパレル公式通販 {total}件。AIデザインTシャツ・柔術/BJJラッシュガード・ステッカー・着ると鳴る音楽T。1着から受注生産・完売廃棄ゼロ・Stripe決済・国際発送7-14日。", total = total_active)
     } else {
         format!("{name} × MU のコラボ商品 {n}件。1着から受注生産・完売廃棄ゼロ・Stripe安全決済・国際発送7-14日。", name = brand_name, n = total_active)
@@ -5405,6 +5448,16 @@ pub async fn shop_index(
             u.push_str(&format!("page={}", page));
         }
         u
+    };
+    // hreflang trio. ja = canonical (brand/page preserved); en appends lang=en.
+    let hreflang_links = {
+        let en_sep = if canonical.contains('?') { '&' } else { '?' };
+        format!(
+            r#"<link rel="alternate" hreflang="ja" href="{base}">
+<link rel="alternate" hreflang="en" href="{base}{sep}lang=en">
+<link rel="alternate" hreflang="x-default" href="{base}">"#,
+            base = canonical, sep = en_sep,
+        )
     };
     let og_image = items
         .first()
@@ -5504,11 +5557,12 @@ pub async fn shop_index(
 </div>"##, total = total_active)
     };
     let body = format!(
-        r##"<!doctype html><html lang="ja"><head>
+        r##"<!doctype html><html lang="{html_lang_attr}"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>{title}</title>
 <meta name="description" content="{meta_desc}">
-<link rel="canonical" href="{canonical}">{robots_meta}
+<link rel="canonical" href="{canonical}">
+{hreflang_links}{robots_meta}
 <meta property="og:type" content="website">
 <meta property="og:title" content="{title}">
 <meta property="og:description" content="{meta_desc}">
@@ -5628,6 +5682,8 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
         title = html_text(&title),
         meta_desc = html_attr(&meta_desc),
         canonical = html_attr(&canonical),
+        html_lang_attr = lang,
+        hreflang_links = hreflang_links,
         robots_meta = robots_meta,
         og_image = html_attr(&og_image),
         ld_json = ld_json,
@@ -5956,10 +6012,20 @@ pub async fn universal_collection(State(db): State<Db>) -> Response {
     Html(body).into_response()
 }
 
+#[derive(Deserialize)]
+pub struct PdpQuery {
+    pub lang: Option<String>,
+}
+
 pub async fn shop_pdp(
     State(db): State<Db>,
     Path(sku): Path<String>,
+    Query(pq): Query<PdpQuery>,
 ) -> Response {
+    // English meta layer: product copy stays in the JP DB, but title suffix /
+    // meta description template / <html lang> switch for ?lang=en so the page
+    // reads correctly to non-JP crawlers and shoppers.
+    let lang = match pq.lang.as_deref() { Some("en") => "en", _ => "ja" };
     let row = {
         let conn = db.lock().unwrap();
         conn.query_row(
@@ -6020,7 +6086,17 @@ pub async fn shop_pdp(
         }
     };
     let short_title = trim_chars(&display_name, 60);
-    let meta_desc_short = trim_chars(&meta_desc, 120);
+    // meta description: JP full copy by default; for ?lang=en use an English
+    // template prefixed with the (JP) product name so EN crawlers/shoppers get
+    // a readable summary (product name stays as authored — DB is JP-only).
+    let meta_desc_short = if lang == "en" {
+        format!(
+            "{} — made-to-order MU x BJJ / collab apparel. 1 piece from, printed on demand, ships worldwide via Printful. Secure Stripe checkout.",
+            trim_chars(&display_name, 60)
+        )
+    } else {
+        trim_chars(&meta_desc, 120)
+    };
     // 見出し/タグライン分割: 自動生成商品は「商品名 — 宣伝文。」と一文になりがちで、
     // H1 に長文が入りレイアウトが崩れる。em-dash(—/―/--) で割り、前を見出し・後をタグラインに。
     // 区切りが無ければ従来どおり全文を見出しに(=挙動非変更)。封印中は分割しない。
@@ -6677,10 +6753,55 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
         }
     };
 
+    // ── SEO Round 1: lang attr / hreflang / structured-data hardening ──
+    let html_lang_attr = lang; // "ja" | "en"
+    // <title> suffix is already English and reads correctly in both locales.
+    let title_suffix = "MU SHOP — wearmu.com";
+    // hreflang trio. Path is /shop/<encoded sku>; ja = canonical, en = ?lang=en.
+    let hreflang_links = format!(
+        r#"<link rel="alternate" hreflang="ja" href="https://wearmu.com/shop/{path}">
+<link rel="alternate" hreflang="en" href="https://wearmu.com/shop/{path}?lang=en">
+<link rel="alternate" hreflang="x-default" href="https://wearmu.com/shop/{path}">"#,
+        path = urlencoding::encode(&sku),
+    );
+    // BreadcrumbList: Home > SHOP > product. Separate ld+json block.
+    let breadcrumb_ld = format!(
+        r#"<script type="application/ld+json">{{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{{"@type":"ListItem","position":1,"name":"Home","item":"https://wearmu.com/"}},{{"@type":"ListItem","position":2,"name":"SHOP","item":"https://wearmu.com/shop"}},{{"@type":"ListItem","position":3,"name":"{name}","item":"https://wearmu.com/shop/{path}"}}]}}</script>"#,
+        name = html_attr(&display_name),
+        path = urlencoding::encode(&sku),
+    );
+    // priceValidUntil: today + 90d (UTC) so Merchant rich results stay fresh.
+    let price_valid_until = date_plus_days_iso(90);
+    // OfferShippingDetails — DELIBERATELY OMITTED. The only shipping figures in
+    // code (shipping_table_html(): JP ¥800 …) are explicitly labelled 送料目安
+    // (estimate) with "実費は Stripe Checkout で表示", and the Stripe checkout
+    // sets NO fixed shipping_options (see shop_checkout: only allowed_countries
+    // is pushed, no shipping_rate) — so there is no verifiable flat rate to
+    // publish. Emitting a hardcoded shippingRate would be a guessed value that
+    // Google Merchant could flag as a price/shipping mismatch. Per project rule
+    // (送料の推測値禁止 / 実値が確認できなければ shippingDetails は入れない) we
+    // leave this empty until a fixed rate actually exists at checkout.
+    let shipping_details_ld = String::new();
+    // hasMerchantReturnPolicy — made-to-order. Per /returns, items can NOT be
+    // returned for subjective reasons (fit/remorse); only manufacturing
+    // defects / wrong-item / shipping damage are refunded. The honest schema
+    // floor for general consumer returns is therefore MerchantReturnNotPermitted
+    // (we do NOT claim a blanket 30-day return). Digital/device omit.
+    let return_policy_ld = if is_digital || is_device {
+        String::new()
+    } else {
+        r#",
+    "hasMerchantReturnPolicy": {
+      "@type": "MerchantReturnPolicy",
+      "applicableCountry": "JP",
+      "returnPolicyCategory": "https://schema.org/MerchantReturnNotPermitted"
+    }"#.to_string()
+    };
+
     let body = format!(
-        r##"<!doctype html><html lang="ja"><head>
+        r##"<!doctype html><html lang="{html_lang_attr}"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{short_title} | MU SHOP — wearmu.com</title>
+<title>{short_title} | {title_suffix}</title>
 <meta name="description" content="{desc_short}">
 <meta property="og:image" content="{og}">
 <meta property="og:title" content="{og_title}">
@@ -6695,6 +6816,7 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
 <meta name="twitter:description" content="{og_desc}">
 <meta name="twitter:image" content="{og}">
 <link rel="canonical" href="https://wearmu.com/shop/{sku_url}">
+{hreflang_links}
 <script type="application/ld+json">{{
   "@context": "https://schema.org/",
   "@type": "Product",
@@ -6708,10 +6830,12 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
     "url": "https://wearmu.com/shop/{sku_url}",
     "priceCurrency": "JPY",
     "price": "{price_raw}",
+    "priceValidUntil": "{price_valid_until}",
     "availability": "https://schema.org/InStock",
-    "itemCondition": "https://schema.org/NewCondition"
+    "itemCondition": "https://schema.org/NewCondition"{shipping_details_ld}{return_policy_ld}
   }}
 }}</script>
+{breadcrumb_ld}
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
 body{{background:#0a0a0a;color:#f5f5f0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.6;font-size:14px}}
@@ -6897,6 +7021,13 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
         story     = story_block,
         sku_url   = urlencoding::encode(&sku),
         price_raw = price_jpy,
+        html_lang_attr = html_lang_attr,
+        title_suffix = title_suffix,
+        hreflang_links = hreflang_links,
+        breadcrumb_ld = breadcrumb_ld,
+        price_valid_until = price_valid_until,
+        shipping_details_ld = shipping_details_ld,
+        return_policy_ld = return_policy_ld,
         ld_title  = html_attr(&display_name),
         ld_img    = html_attr(&img),
         ld_desc   = html_attr(&meta_desc),
