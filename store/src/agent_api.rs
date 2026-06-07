@@ -147,8 +147,10 @@ const AGENT_WELCOME_CREDIT_JPY: i64 = 200;
 /// Per-sale creator payout (¥), by garment class. These are the single source
 /// of the figures quoted on /build and /llms.txt — change them here, not in the
 /// copy. Payouts are settled manually while the agent program ramps.
-const AGENT_PAYOUT_TEE_JPY: i64 = 600;
-const AGENT_PAYOUT_OTHER_JPY: i64 = 1_000;
+// Creator payout is 10% of the tax-incl retail price, paid by
+// catalog.rs::apply_maker_commission (store-level maker_pct can raise it).
+// The old fixed ¥600/¥1,000 display constants were removed 2026-06-07 —
+// every surface (/build, /llms.txt, /.well-known/mcp.json) now states 10%.
 
 /// Format a non-negative yen amount with thousands separators (1000 -> "1,000").
 fn yen_commas(n: i64) -> String {
@@ -1539,8 +1541,6 @@ pub async fn build_page() -> Response {
     // ai_gen state is documented as "available when enabled — check mu_status"
     // (the live flag is exposed by /api/agent/me, /llms.txt and /.well-known/mcp.json).
     let welcome = AGENT_WELCOME_CREDIT_JPY;
-    let ptee = AGENT_PAYOUT_TEE_JPY;
-    let pother = AGENT_PAYOUT_OTHER_JPY;
     // 6-language i18n: Japanese is the inline default (best for no-JS / crawlers
     // / the brand's primary audience); en/zh/pt/ko/es live in build_i18n.json and
     // are swapped client-side by data-i18n key. Missing keys fall back to en.
@@ -1664,7 +1664,7 @@ claude mcp add --transport http mu https://mcp.wearmu.com/mcp \
 
 <h2 id="what" data-i18n="what_h2">インセンティブ（正直に）</h2>
 <div class="give">
-<div data-i18n="give1"><b>◯ 作るのはタダ。売れたら、あなたに入る。</b><br>作成は無料（ウェルカム¥{{WELCOME}}＋AI生成）・在庫リスクゼロ。そして <b>売れた1枚ごとに作り手へ：Tシャツ ¥{{PTEE}} / パーカー・クルー・ラッシュ ¥{{POTHER}}</b>。<b>あなたのリンク経由で売れたら上乗せ</b>——客を連れてくるほど儲かります。</div>
+<div data-i18n="give1"><b>◯ 作るのはタダ。売れたら、あなたに入る。</b><br>作成は無料（ウェルカム¥{{WELCOME}}＋AI生成）・在庫リスクゼロ。そして <b>売れた1枚ごとに作り手へ販売価格（税込）の10%</b>（¥4,900のTシャツなら¥490）。<b>あなたのリンク経由で売れたら別枠でさらに10%</b>——客を連れてくるほど儲かります。詳細は <a class="lnk" href="/credit">/credit</a>。</div>
 <div><span data-i18n="give2"><b>◯ 寄付は"任意"。あなたが選ぶ。</b><br>このYOU/APIで作った分は <b>弟子屈町への自動寄付はありません</b>——残りは作り手と運営に回ります。寄付したい人は<b>オプトインで好きな先へ</b>（弟子屈でも、別の活動でも）。あなたのストアは <code>wearmu.com/&lt;あなた&gt;</code> に資産として残ります。</span><span class="note" style="display:block;margin-top:8px" data-i18n="give2_note">※ MU自家ライン／MUGENは従来どおり累進寄付（<a class="lnk" href="/profit-split">§28</a>）。エージェント面はこの別分配＋任意寄付です。作り手還元は順次開始・初期は手動精算。</span></div>
 </div>
 
@@ -1677,12 +1677,12 @@ claude mcp add --transport http mu https://mcp.wearmu.com/mcp \
 </div>
 <table>
 <tr><th data-i18n="deg_th_n">累計</th><th data-i18n="deg_th_price">小売</th><th data-i18n="deg_th_payout">作り手/枚</th><th data-i18n="deg_th_donate">寄付/枚</th><th data-i18n="deg_th_rebate">早期購入者へ</th></tr>
-<tr><td>0–19</td><td>¥4,900</td><td style="color:var(--y)">¥600</td><td>0</td><td>—</td></tr>
+<tr><td>0–19</td><td>¥4,900</td><td style="color:var(--y)">¥490（現行10%）</td><td>0</td><td>—</td></tr>
 <tr><td>20–99</td><td>¥4,700</td><td style="color:var(--y)">¥700</td><td>¥100</td><td>¥100 還元</td></tr>
 <tr><td>100–499</td><td>¥4,500</td><td style="color:var(--y)">¥750</td><td>¥150</td><td>+¥100</td></tr>
 <tr><td>500+</td><td><b>¥4,400</b></td><td style="color:var(--y)"><b>¥800</b></td><td>¥200</td><td>+¥100</td></tr>
 </table>
-<p class="note" data-i18n="deg_fund">値下げの原資は正直に：①量産による原価減 ②口コミ拡散で広告費が要らなくなる分 ③運営取り分の放棄（比例で増やさない・§28／報酬キャップ）。赤字発行はしません。<b>自分のリンク経由</b>で売れたら +¥300/Tシャツ・+¥500/その他 を上乗せ。</p>
+<p class="note" data-i18n="deg_fund">値下げの原資は正直に：①量産による原価減 ②口コミ拡散で広告費が要らなくなる分 ③運営取り分の放棄（比例で増やさない・§28／報酬キャップ）。赤字発行はしません。<b>自分のリンク経由</b>で売れたら別枠で<b>販売価格の10%</b>を上乗せ。</p>
 
 <div class="card" style="border-color:rgba(230,196,73,.35)">
 <p class="big" style="margin:0 0 12px"><b data-i18n="sim_title">収益シミュレータ</b> <span style="color:var(--mute);font-size:13px" data-i18n="sim_sub">（概算・確定報酬＋順次導入の逓減を含む）</span></p>
@@ -1708,15 +1708,15 @@ claude mcp add --transport http mu https://mcp.wearmu.com/mcp \
     <div id="sim-last" style="font-size:18px;color:var(--fg);font-feature-settings:'tnum';margin-top:6px">—</div>
   </div>
 </div>
-<p style="font-size:11.5px;color:var(--mute);margin:10px 0 0" data-i18n="sim_note">※ 逓減ラダー・遡及還元は順次導入、精算は当面手動です。確定している即時報酬は Tシャツ¥600 / その他¥1,000。</p>
+<p style="font-size:11.5px;color:var(--mute);margin:10px 0 0" data-i18n="sim_note">※ 逓減ラダー・遡及還元は順次導入、精算は当面手動です。確定している即時報酬は<b>販売価格（税込）の10%</b>（リンク経由はさらに10%別枠・自己購入除外）。</p>
 </div>
 
 <h2 data-i18n="pay_h2">支払いの約束</h2>
 <div class="card">
 <table style="margin:0">
-<tr><td data-i18n="pay_min">最低支払額</td><td><b>¥3,000</b> <span style="color:var(--mute)" data-i18n="pay_min_d">（未満は翌月へ繰越）</span></td></tr>
-<tr><td data-i18n="pay_cycle">サイクル</td><td data-i18n="pay_cycle_d"><b>月次</b>（前月確定分を当月末までに）</td></tr>
-<tr><td data-i18n="pay_method">方法</td><td data-i18n="pay_method_d">銀行振込 / Wise / PayPay（登録時に選択）</td></tr>
+<tr><td data-i18n="pay_min">最低支払額</td><td><b>¥3,000</b> <span style="color:var(--mute)" data-i18n="pay_min_d">（未満は残高として保持・期限なし）</span></td></tr>
+<tr><td data-i18n="pay_cycle">サイクル</td><td data-i18n="pay_cycle_d"><b>申請ベース</b>（<a class="lnk" href="/studio">/studio</a> の「振込申請」→ 受付後 通常5営業日以内）</td></tr>
+<tr><td data-i18n="pay_method">方法</td><td data-i18n="pay_method_d">銀行振込（振込手数料は当社負担）</td></tr>
 <tr><td data-i18n="pay_check">確認</td><td><code>GET /api/agent/me</code> <span style="color:var(--mute)" data-i18n="pay_check_d">で残高・履歴</span></td></tr>
 </table>
 </div>
@@ -1794,9 +1794,11 @@ claude mcp add --transport http mu https://mcp.wearmu.com/mcp \
     var c=document.getElementById('mp-customers'); if(c&&ex.distinct_customers!=null) c.textContent=fmtN(ex.distinct_customers);
   }).catch(function(){});
 
-  // --- 収益シミュレータ (概算: 確定報酬 + 順次導入の逓減ラダー) ---
-  var LAD_TEE=[[0,4900,600],[20,4700,700],[100,4500,750],[500,4400,800]];
-  var BASE_OTHER=1000, RETAIL_OTHER=8800, SELF_TEE=300, SELF_OTHER=500;
+  // --- 収益シミュレータ (概算: 確定報酬=販売価格10% + 順次導入の逓減ラダー価格) ---
+  // 報酬は常に「その時点の小売価格の10%」(apply_maker_commission と同一基準)。
+  // リンク経由(self)はさらに小売の10%が別枠で乗る。ラダーの段階小売は順次導入の構想値。
+  var LAD_TEE=[[0,4900],[20,4700],[100,4500],[500,4400]];
+  var RETAIL_OTHER=8800, SHARE=0.10;
   function ladTee(i){ var r=LAD_TEE[0]; for(var k=0;k<LAD_TEE.length;k++){ if(i>=LAD_TEE[k][0]) r=LAD_TEE[k]; } return r; }
   function sim(){
     var kEl=document.getElementById('sim-kind'); if(!kEl) return;
@@ -1805,9 +1807,8 @@ claude mcp add --transport http mu https://mcp.wearmu.com/mcp \
     document.getElementById('sim-n-v').textContent=fmtN(n)+' 枚';
     var total=0, lastRetail=0, lastPay=0;
     for(var i=1;i<=n;i++){
-      var retail, pay;
-      if(kind==='tee'){ var r=ladTee(i-1); retail=r[1]; pay=r[2]; if(self) pay+=SELF_TEE; }
-      else { retail=RETAIL_OTHER; pay=BASE_OTHER; if(self) pay+=SELF_OTHER; }
+      var retail=(kind==='tee')?ladTee(i-1)[1]:RETAIL_OTHER;
+      var pay=Math.round(retail*SHARE); if(self) pay+=Math.round(retail*SHARE);
       total+=pay; lastRetail=retail; lastPay=pay;
     }
     document.getElementById('sim-total').textContent=fmtY(total);
@@ -1868,9 +1869,7 @@ function muSetLang(l){
 </script>
 </body></html>"##
         .replace("{{I18N_JSON}}", include_str!("build_i18n.json"))
-        .replace("{{WELCOME}}", &yen_commas(welcome))
-        .replace("{{PTEE}}", &yen_commas(ptee))
-        .replace("{{POTHER}}", &yen_commas(pother));
+        .replace("{{WELCOME}}", &yen_commas(welcome));
     ([(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")], body).into_response()
 }
 

@@ -14548,13 +14548,18 @@ fn brand_default_cost_jpy(brand: &str) -> i64 {
         if let Ok(n) = v.parse::<i64>() { return n; }
     }
     match brand {
-        // tee (Bella+Canvas 3001, DTG, JP-domestic ship via Printful EU is heavy
-        // so /you orders are routed via SUZURI mirror when possible — but treat
-        // baseline as Printful EU for /admin/costs honesty).
-        "mugen" | "regional" | "teshikaga" | "you" => 3_200,
+        // tee (Bella+Canvas 3001, DTG). Printful live quote 2026-06-07
+        // (JP/Tokyo, STANDARD): black M ¥1,700+¥560ship=¥2,260, white M
+        // ¥2,470. Old ¥3,200 was the Printful-EU-era conservative figure —
+        // fulfillment is near-JP now (2-3 day delivery). Keep a buffer for
+        // 2XL+ upcharges.
+        "mugen" | "regional" | "teshikaga" | "you" => 2_600,
         "jiufight" | "sweep" => 3_500,
-        // hoodie / MA limited
-        "ma" => 6_500,
+        // hoodie / MA limited. Live quote 2026-06-07: Gildan 18500 black M
+        // ¥3,100+¥845ship=¥3,945 (old ¥6,500 was EU-era). Crewneck 18000 is
+        // ¥3,545, AOP rashguard (301) ¥6,580 — per-product cost_jpy should
+        // be set for those kinds; this brand default assumes hoodie.
+        "ma" => 4_300,
         _ => 3_500,
     }
 }
