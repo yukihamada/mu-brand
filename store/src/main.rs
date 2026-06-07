@@ -77995,8 +77995,11 @@ async fn api_funnel_event(
     // synthetic conversions and corrupt funnel_anomaly / scorecard stats.
     // Server-side firing was already happening; removing them from this
     // list closes the spoof vector without losing any signal.
+    // cta_view = ブラウザだけが観測できる表示シグナル (FAB 表示・自動ページ送り
+    // 発火・スクロール深度・0件結果)。cta_click と同クラスの UX シグナルで、
+    // コンバージョン系ではないためスプーフ耐性要件も cta_click と同等。
     const ALLOWED: &[&str] = &[
-        "pageview", "cta_click", "checkout_attempt",
+        "pageview", "cta_click", "cta_view", "checkout_attempt",
         "you_skip", "you_like", "share",
     ];
     if !ALLOWED.contains(&req.event.as_str()) {

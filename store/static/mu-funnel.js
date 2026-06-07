@@ -4,8 +4,13 @@
 //   <script defer src="/mu-funnel.js"></script>
 //
 // To mark a click as funnel-relevant, add data-funnel="<event_name>" to
-// the element. Allowed event names: pageview, cta_click, checkout_attempt,
-// checkout_start, checkout_paid, you_register, you_skip, you_like, share.
+// the element. Allowed event names: pageview, cta_click, cta_view,
+// checkout_attempt, checkout_start, checkout_paid, you_register, you_skip,
+// you_like, share.
+//
+// cta_view = impression/visibility events (FAB が表示された・N ページ目まで
+// 自動ロードした・スクロール深度など)。cta_click と extra.cta を揃えれば
+// CTR = click/view がそのまま出る。
 //
 // checkout_attempt fires CLIENT-side just before the /api/checkout fetch.
 // checkout_start fires SERVER-side after Stripe session creation. The gap
@@ -14,7 +19,7 @@
   'use strict';
   var STORAGE = 'mu_funnel_v1';
   var ENDPOINT = '/api/v1/event';
-  var ALLOWED = ['pageview','cta_click','checkout_attempt','checkout_start','checkout_paid',
+  var ALLOWED = ['pageview','cta_click','cta_view','checkout_attempt','checkout_start','checkout_paid',
                  'you_register','you_skip','you_like','share'];
 
   function uuid() {
