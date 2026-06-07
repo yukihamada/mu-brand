@@ -2014,7 +2014,7 @@ async function loadMA(){
     cont.innerHTML = `
     <div class="ma-piece">
       <div class="ma-img">
-        ${p.mockup_url?`<img src="${p.mockup_url}" alt="${p.name}" style="width:100%;height:100%;object-fit:cover" onerror="this.onerror=null;this.src='/og.jpg';this.style.opacity='0.45'">`:'<div class="card-placeholder" style="background:#1a1a1a"><div class="card-placeholder-bar"></div><div class="card-placeholder-label">AI GENERATING...</div></div>'}
+        ${p.mockup_url?`<img src="${p.mockup_url}" alt="${p.name}" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover" onerror="this.onerror=null;this.src='/og.jpg';this.style.opacity='0.45'">`:'<div class="card-placeholder" style="background:#1a1a1a"><div class="card-placeholder-bar"></div><div class="card-placeholder-label">AI GENERATING...</div></div>'}
       </div>
       <div class="ma-auction">
         <div>
@@ -2052,7 +2052,7 @@ async function loadMA(){
     </div>
     ${nextP ? `
     <div class="ma-next" style="margin-top:18px;padding:14px 16px;background:#0d0d0d;border:1px solid #1c1c1c;border-radius:6px;display:flex;align-items:center;gap:12px;font-size:11px;letter-spacing:0.04em">
-      ${nextP.mockup_url ? `<img src="${nextP.mockup_url}" alt="${nextP.name}" style="width:48px;height:48px;object-fit:cover;border-radius:4px;background:#000" onerror="this.style.opacity='0.3'">` : ''}
+      ${nextP.mockup_url ? `<img src="${nextP.mockup_url}" alt="${nextP.name}" loading="lazy" decoding="async" style="width:48px;height:48px;object-fit:cover;border-radius:4px;background:#000" onerror="this.style.opacity='0.3'">` : ''}
       <div style="flex:1;line-height:1.7">
         <div style="opacity:0.5;letter-spacing:0.32em;text-transform:uppercase;font-size:9px;font-weight:700">▶ Next</div>
         <div><strong>${nextP.name}</strong>  ¥${(nextP.current_bid||nextP.price_jpy).toLocaleString()} 〜  <span style="opacity:0.55">${nextP.bid_count||0} bids</span></div>
@@ -2376,7 +2376,7 @@ function openModal(p, pushHistory=true){
         const name = esc(it.name || '');
         const price = Number(it.price_jpy || 0);
         return `<a class="upsell-card" href="${href}" data-funnel="cta_click" data-funnel-cta="modal_upsell_${esc(it.brand)}_${it.drop_num}">
-          <img src="${img}" alt="${name}" loading="lazy">
+          <img src="${img}" alt="${name}" loading="lazy" decoding="async">
           <div class="upsell-name">${name}</div>
           <div class="upsell-price">¥${price.toLocaleString()}</div>
         </a>`;

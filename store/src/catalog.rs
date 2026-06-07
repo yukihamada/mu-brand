@@ -4881,6 +4881,17 @@ pub async fn faq_page() -> Html<String> {
 
 <h2>デザインを自分で持ち込みたい</h2>
 <p>個人ブランド対応 (/api-keys) もあります。 30 SKU まで無料、 以降 30 pt / SKU。</p>
+
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[
+{"@type":"Question","name":"発送はいつ?","acceptedAnswer":{"@type":"Answer","text":"注文確定後、製造に2-5営業日 + 配送に国別5-14日。合計7-19日が目安です。"}},
+{"@type":"Question","name":"追跡番号は?","acceptedAnswer":{"@type":"Answer","text":"Printful から MU を経由してメールで自動送信されます。DHL / FedEx / 日本ポスト等のトラッキングURL付き。"}},
+{"@type":"Question","name":"サイズが分からない","acceptedAnswer":{"@type":"Answer","text":"各商品ページにサイズチャート (cm) があります。不安な場合は普段の洋服サイズより1つ大きめを推奨。"}},
+{"@type":"Question","name":"支払い方法","acceptedAnswer":{"@type":"Answer","text":"Stripe 経由でクレジットカード (Visa / Master / Amex / JCB) + Apple Pay + Google Pay。一部商品は SUZURI 経由で国内コンビニ決済も可能。"}},
+{"@type":"Question","name":"領収書は?","acceptedAnswer":{"@type":"Answer","text":"Stripe 決済完了後、自動で領収書PDFがメール送信されます。法人購入の場合は info@enablerdao.com までご連絡で株式会社イネブラ宛の請求書発行も対応。"}},
+{"@type":"Question","name":"返品できる?","acceptedAnswer":{"@type":"Answer","text":"製造不良 / 誤配 / 破損は30日以内ご連絡で無償交換。詳細は /returns をご覧ください。"}},
+{"@type":"Question","name":"大量注文 (10着〜) は?","acceptedAnswer":{"@type":"Answer","text":"info@enablerdao.com までご相談ください。道場ユニフォーム・大会記念Tee等のbulk価格表があります。"}},
+{"@type":"Question","name":"デザインを自分で持ち込みたい","acceptedAnswer":{"@type":"Answer","text":"個人ブランド対応 (/api-keys) もあります。30 SKUまで無料、以降 30 pt / SKU。"}}
+]}</script>
 "##)
 }
 
