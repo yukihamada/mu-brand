@@ -68845,6 +68845,8 @@ async fn main() {
         .route("/admin/catalog/seal", get(catalog::admin_seal_create))
         .route("/make", get(catalog::make_page))
         .route("/mi/*path", get(mockup_image_redirect))
+        .route("/promote", get(catalog::promote_page))
+        .route("/api/promote", post(catalog::public_promote).get(catalog::public_promote))
         .route("/store", get(catalog::store_unmanned_page))
         .route("/connect", get(catalog::connect_page))
         .route("/api/connect", get(catalog::api_connect).post(catalog::api_connect))

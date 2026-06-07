@@ -934,24 +934,6 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
                     IBJJF gi/no-gi compliant",
     },
     ProductSpec {
-        kind: "rashguard_contrado",
-        // PREMIUM tier — fulfilled by Contrado UK (full-coverage sublimation:
-        // front/back/sleeves AND waistband/cuffs/collar, which Printful 301
-        // leaves white). fulfillment_route='contrado_uk' diverts the order to
-        // the Helix API; the Printful 301/9328 ids here are used ONLY to
-        // render the on-body preview mockup (the garment looks the same), they
-        // never place a Printful order. retail ¥19,800 — Contrado genka is
-        // 2-3× Printful (est. ¥7.5-10.2K + shipping), so the ¥9,800 tier would
-        // run at a loss; see docs/CONTRADO_SALES_OUTREACH.md.
-        printful_product_id: 301,
-        printful_variant_id: 9328,
-        placement: "front",
-        retail_jpy: 19800,
-        spec_html: "プレミアム全面昇華ラッシュガード (Contrado UK) · 前身頃・後身頃・両袖に加え \
-                    裾・袖口・襟まで端まで完全プリント (白い余白なし) · UPF 50+ · 4-way ストレッチ · \
-                    フラットロック縫製 · 受注生産 (確認後に公開・発送) · IBJJF 適合フィット",
-    },
-    ProductSpec {
         kind: "hoodie",
         printful_product_id: 146, // Gildan 18500 pullover hoodie (heavy black option)
         printful_variant_id: 5531, // Black M (5530 is Black S — verified against Printful API 2026-05-24)
@@ -1102,6 +1084,33 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
                     購入後すぐ引換コードをメールでお届け · 音源(mp3等)を返信で送ると \
                     ボーカル除去+歌詞同期のカラオケになって公開 · 物理発送なし(送料0)",
     },
+    ProductSpec {
+        kind: "house",
+        // No POD vendor: a house is a made-to-order build. fulfillment_route
+        // 'manual' — checkout takes the design/consultation deposit, then a
+        // human follows up (敷地調査 → 設計確定 → 施工)。設計データは
+        // bim.house の物件ページ(slug)に紐づく: agent は design_url に
+        // https://bim.house/p/<slug> を渡し、それが design_file /
+        // mockup_main_file に入る(BIM/図面プレビュー)。No Printful product /
+        // variant / placement. retail_jpy は価格フロア(= 設計相談デポジット)。
+        // 実際の総額はプロジェクトごとに price_jpy で渡す(フロア以上に clamp)。
+        printful_product_id: 0,
+        printful_variant_id: 0,
+        placement: "none",
+        retail_jpy: 50000,
+        // 法規ガード: MU が売るのは設計相談という役務(デポジット)のみ。
+        // 建物・土地の売買/媒介はしない(宅建業法)・工事は請負わない(建設業法)・
+        // 設計図書は提携建築士事務所名義(建築士法)。紹介報酬(ref 10%)が掛かるのは
+        // この checkout を通るデポジット部分だけで、本体工事費には掛けない。
+        spec_html: "言葉から建つ家 (bim.house 設計) · 受注設計/施工 · \
+                    決済は設計相談デポジット · 敷地調査 → 設計確定 → お見積り → 施工 · \
+                    建築基準法 (houki) 適合をその場で判定 · 図面/BIM は物件ページで確認 · \
+                    総額はプロジェクトごとにお見積り (この価格は着手デポジット) · \
+                    返金: 敷地調査・設計着手前のキャンセルは全額返金 / 着手後は \
+                    実施済み工程の実費を差し引いて返金 (内訳明示) · \
+                    正式な設計図書・工事監理は提携建築士事務所名義 / 工事は \
+                    建設業許可業者とお客様の直接契約 (MU は売買・仲介をしません)",
+    },
 ];
 
 /// Public, agent-facing view of a `ProductSpec` so callers outside this
@@ -1166,13 +1175,13 @@ pub fn agent_insert_product(
         brand_for_sku, kind.to_uppercase().replace('_', "-"), seed);
 
     let route = match kind {
-        // Premium full-coverage rashguard → Contrado UK Helix API.
-        "rashguard_contrado" => "contrado_uk",
         "rashguard_ls" | "rashguard_black" => "printful_aop",
         // Self-fulfilled, non-Printful (NFC音コイン): take payment, then a
         // human encodes the tag + mails it (handled by the manual arm in
         // fulfill_catalog_order).
-        "nfc_coin" | "device" => "manual",
+        // Self-fulfilled, non-Printful: NFC音コイン / hardware / 受注設計の家。
+        // Take payment, then a human fulfils (encode+mail / ship / 設計相談).
+        "nfc_coin" | "device" | "house" => "manual",
         // Digital goods: take payment, then deliver by email (handled by the
         // digital arm in fulfill_catalog_order). No shipping. Ticket → QR;
         // song/zine/video → private link; karaoke_ticket → redemption code.
@@ -2207,6 +2216,7 @@ fn kind_from_sku(sku: &str) -> &'static str {
     if s.contains("-VIDEO-") || s.ends_with("-VIDEO") { return "video"; }
     if s.contains("-SONG-") || s.ends_with("-SONG") { return "song"; }
     if s.contains("-DEVICE-") || s.ends_with("-DEVICE") { return "device"; }
+    if s.contains("-HOUSE-") || s.ends_with("-HOUSE") { return "house"; }
     if s.contains("RASHGUARD") || s.contains("-RASH") { return "rashguard_ls"; }
     if s.contains("HOODIE") || s.contains("-HOOD-") || s.ends_with("-HOOD") { return "hoodie"; }
     if s.contains("CREWNECK") || s.contains("-CREW-") || s.ends_with("-CREW") { return "crewneck"; }
@@ -2315,6 +2325,7 @@ fn label_for_kind(kind: &str) -> &'static str {
     match kind {
         "tee" => "T シャツ",
         "rashguard_ls" => "ラッシュガード LS",
+        "house" => "家",
         _ => "アパレル",
     }
 }
@@ -4003,13 +4014,12 @@ button:disabled{opacity:.5;cursor:default}
       <option value="">おまかせ</option>
       <option value="tee">Tシャツ</option>
       <option value="rashguard_ls">ラッシュガード</option>
-      <option value="rashguard_contrado">ラッシュガード プレミアム（全面プリント / Contrado UK ¥19,800）</option>
       <option value="hoodie">パーカー</option>
       <option value="crewneck">スウェット</option>
     </select>
     <button id="go" data-funnel="cta_click" data-funnel-cta="make_generate">つくる（無料でデザイン）</button>
   </div>
-  <div class="price-hint">できた一着は <b>Tシャツ ¥4,900〜・ラッシュガード ¥9,800〜・プレミアム（全面プリント）¥19,800・スウェット ¥7,800〜・パーカー ¥8,800〜</b>。1枚から受注生産・買わなくてもOK。権利リスクがあるものだけ人が確認、あとは自動で公開。<br><span style="color:rgba(245,245,240,.45)">※プレミアム（Contrado UK / 裾・袖口・襟まで完全プリント）は英国で1枚ずつ縫製するため、お届けまで少しお時間をいただきます。</span></div>
+  <div class="price-hint">できた一着は <b>Tシャツ ¥4,900〜・ラッシュガード ¥9,800〜・スウェット ¥7,800〜・パーカー ¥8,800〜</b>。1枚から受注生産・買わなくてもOK。権利リスクがあるものだけ人が確認、あとは自動で公開。</div>
   <div class="ex" id="mkEx">例: <b data-x="柴犬のシンプルな線画 生成りトート">柴犬の線画</b> ・ <b data-x="禅の円相 ひと筆 黒Tシャツ">円相T</b> ・ <b data-x="夜の富士山と月 ミニマル パーカー">富士と月</b></div>
   <div class="ex" style="opacity:.6">🏠 服じゃなく<b>家</b>をつくりたい人は → <a href="https://bim.house/make" style="color:#ffd700;text-decoration:none" data-funnel="cta_click" data-funnel-cta="make_bimhouse">bim.house/make</a>（言葉から、家が建つ）</div>
   <div id="out"></div>
@@ -6199,6 +6209,12 @@ pub async fn shop_pdp(
     // Self-fulfilled hardware (Koe デバイス等): physical だが Printful ではない —
     // アパレル前提のサイズ表・Printful送料表・「7-14日国際発送」コピーを出さない。
     let is_device = kind_guess == "device";
+    // Premium Contrado rashguard: apparel, but UK-fulfilled with a longer lead
+    // time — show an honest shipping note instead of the Printful 7-14d copy.
+    let is_contrado = kind_guess == "rashguard_contrado";
+    // 受注設計の家 (bim.house): 物販でなく made-to-order build — 決済は設計相談
+    // デポジット。アパレル/Printful 前提のサイズ表・送料表は一切出さない。
+    let is_house = kind_guess == "house";
 
     // extras — fetch with labels so we can surface 着用イメージ (on-body
     // styling renders) prominently, separate from technical mockup angles.
@@ -6369,6 +6385,10 @@ pub async fn shop_pdp(
             "Stripe · 購入後すぐ QR 入場券をメール"
         } else if is_device {
             "Stripe · 自社発送 3 日以内"
+        } else if is_contrado {
+            "Stripe · 英国 (Contrado) で1枚ずつ縫製・国際発送 2-3 週間"
+        } else if is_house {
+            "Stripe · 設計相談デポジット — 決済後に敷地調査・設計のご連絡"
         } else {
             "Stripe + Printful 7-14 日 国際発送"
         };
@@ -6437,7 +6457,22 @@ pub async fn shop_pdp(
         String::new()
     };
 
-    let trust_block = if is_device {
+    let trust_block = if is_house {
+        format!(r##"<div class="trust-strip">
+  {sold_row}<div class="ts-row">
+    <strong>言葉から、建つ</strong>
+    <small>bim.house で設計 · 図面/BIM と建築基準法 (houki) 適合をその場で確認</small>
+  </div>
+  <div class="ts-row">
+    <strong>決済 = 設計相談デポジット</strong>
+    <small>敷地調査 → 設計確定 → お見積り → 施工。総額はプロジェクトごと。</small>
+  </div>
+  <div class="ts-row">
+    <strong>お問い合わせ</strong>
+    <small>info@enablerdao.com · 着手前にすべてご説明します</small>
+  </div>
+</div>"##, sold_row = sold_row)
+    } else if is_device {
         format!(r##"<div class="trust-strip">
   {sold_row}<div class="ts-row">
     <strong>自社発送 3 日以内</strong>
@@ -7043,8 +7078,8 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
         design = design_html,
         trust     = trust_block,
         spec      = spec_block,
-        size_chart = if is_digital || is_device { String::new() } else { size_chart_html(&kind_guess) },
-        shipping_table = if is_digital || is_device { String::new() } else { shipping_table_html() },
+        size_chart = if is_digital || is_device || is_house { String::new() } else { size_chart_html(&kind_guess) },
+        shipping_table = if is_digital || is_device || is_house { String::new() } else { shipping_table_html() },
         story     = story_block,
         sku_url   = urlencoding::encode(&sku),
         price_raw = price_jpy,
@@ -7937,6 +7972,7 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
         // catalog_products に kind 列は無い — SKU は `{BRAND}-{KIND}-{seed}` 形式
         // (insert_catalog_product) なので SKU で self-fulfilled hardware を判定。
         let is_device = sku.contains("-DEVICE-");
+        let is_house = sku.contains("-HOUSE-");
         let encode_url = desc
             .find("oto.html?s=")
             .map(|p| &desc[p + "oto.html?s=".len()..])
@@ -7966,14 +8002,16 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
             addr["postal_code"].as_str().unwrap_or(""),
             country,
         );
-        let detail = if is_device {
+        let detail = if is_house {
+            "🏠 設計相談デポジット入金。敷地調査→設計確定→お見積りの連絡を。bim.house 物件ページは商品の design_file 参照。".to_string()
+        } else if is_device {
             "📦 ハードウェア発送 (3日以内目安)。".to_string()
         } else {
             format!("🔗 encode→ {}\n書込→ロック→封筒で発送。", encode_url)
         };
         let _ = crate::send_telegram_message(&format!(
             "📌 *manual order* ({})\nsku=`{}`\n👤🏠 {}\n💴 ¥{}\n{}",
-            if is_device { "device/自社発送" } else { "NFC音コイン" },
+            if is_house { "house/設計相談" } else if is_device { "device/自社発送" } else { "NFC音コイン" },
             sku, ship_to, amount_total, detail
         ))
         .await;
