@@ -9098,6 +9098,9 @@ fn record_order_full(
             existing_ticket,
         ],
     );
+    // 糸 (ITO): 購入採掘 +2糸 (景表法20%キャップ併算・session冪等) と
+    // 服シリアル発行 (digital 以外)。ito.rs 参照。
+    crate::ito::grant_for_order(&conn, session_id, sku, amount, email, status);
 }
 
 // ─── Digital event tickets ────────────────────────────────────────────
@@ -9113,7 +9116,8 @@ fn ticket_code(session_id: &str) -> String {
 }
 
 /// Render a scannable QR PNG (dark modules on a white quiet-zone) for `url`.
-fn ticket_qr_png(url: &str) -> Option<Vec<u8>> {
+/// pub(crate): 糸 (ito.rs) の服ウォレット QR でも共用。
+pub(crate) fn ticket_qr_png(url: &str) -> Option<Vec<u8>> {
     use qrcodegen::{QrCode, QrCodeEcc};
     let qr = QrCode::encode_text(url, QrCodeEcc::Medium).ok()?;
     let n = qr.size() as usize;
