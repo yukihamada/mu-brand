@@ -4010,6 +4010,7 @@ button:disabled{opacity:.5;cursor:default}
   </div>
   <div class="price-hint">できた一着は <b>Tシャツ ¥4,900〜・ラッシュガード ¥9,800〜・プレミアム（全面プリント）¥19,800・スウェット ¥7,800〜・パーカー ¥8,800〜</b>。1枚から受注生産・買わなくてもOK。権利リスクがあるものだけ人が確認、あとは自動で公開。<br><span style="color:rgba(245,245,240,.45)">※プレミアム（Contrado UK / 裾・袖口・襟まで完全プリント）は英国で1枚ずつ縫製するため、お届けまで少しお時間をいただきます。</span></div>
   <div class="ex" id="mkEx">例: <b data-x="柴犬のシンプルな線画 生成りトート">柴犬の線画</b> ・ <b data-x="禅の円相 ひと筆 黒Tシャツ">円相T</b> ・ <b data-x="夜の富士山と月 ミニマル パーカー">富士と月</b></div>
+  <div class="ex" style="opacity:.6">🏠 服じゃなく<b>家</b>をつくりたい人は → <a href="https://bim.house/make" style="color:#ffd700;text-decoration:none" data-funnel="cta_click" data-funnel-cta="make_bimhouse">bim.house/make</a>（言葉から、家が建つ）</div>
   <div id="out"></div>
   <div class="recent" id="recent" hidden>
     <h2>みんなが、さっき作った一着</h2>
