@@ -6493,7 +6493,9 @@ pub async fn shop_pdp(
     let is_song = kind_guess == "song";
     // MUON コレクター動機: Tシャツは3枚集めると ¥2,000 のMUクレジット(期限なし)。
     // ログイン不要の常時表示バナーで「集めたくなる」ループを作る。
-    let muon_banner = if kind_guess == "tee" {
+    // brand=nouns では出さない — Nounsオーナー向けPDPにMU店内ロイヤルティを
+    // 混ぜると「Nounsは大量ブランドの1つ」シグナルになる (persona FB 2026-06-07)。
+    let muon_banner = if kind_guess == "tee" && brand != "nouns" {
         r#"<div class="muon-b">🎟 <b>MUON コレクター</b> — Tシャツを3枚集めると <b style="color:#ffd700">¥2,000 のMUクレジット</b>。次のお買い物の決済で自動で使えます（期限なし・6枚で2回目）。</div>"#
     } else { "" };
     // Self-fulfilled hardware (Koe デバイス等): physical だが Printful ではない —
@@ -7078,18 +7080,26 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
                 } else {
                     String::new()
                 };
+                // 「100枚限定」はUNIVERSALコレクション専用の事実 — brand=nouns は
+                // 受注生産なので On Demand 表記 (persona FB: 虚偽限定表記の矛盾)。
+                let qty_label = if brand == "nouns" { "On Demand" } else { "100枚限定" };
                 rcards.push_str(&format!(
                     "<a href=\"/shop/{s}\" style=\"text-decoration:none;color:inherit;flex:0 0 152px;position:relative\">{badge}{im}\
                      <div style=\"font-size:12px;margin:7px 2px 0;line-height:1.35\">{l}</div>\
-                     <div style=\"font-size:11px;opacity:.55;margin:2px 2px 0\">¥{p} · 100枚限定</div></a>",
-                    s = html_attr(s), badge = badge, im = im, l = html_text(l), p = p
+                     <div style=\"font-size:11px;opacity:.55;margin:2px 2px 0\">¥{p} · {q}</div></a>",
+                    s = html_attr(s), badge = badge, im = im, l = html_text(l), p = p, q = qty_label
                 ));
             }
+            let heading = if brand == "nouns" {
+                "ほかのNounたち — More Nouns ⌐◨-◨"
+            } else {
+                "こんな一着も — UNIVERSAL の仲間（点数つき）"
+            };
             format!(
                 "<section style=\"max-width:920px;margin:34px auto 0;padding:0 22px\">\
-                 <h3 style=\"font-size:13px;letter-spacing:.15em;opacity:.85;margin:0 0 14px\">こんな一着も — UNIVERSAL の仲間（点数つき）</h3>\
+                 <h3 style=\"font-size:13px;letter-spacing:.15em;opacity:.85;margin:0 0 14px\">{h}</h3>\
                  <div style=\"display:flex;gap:14px;overflow-x:auto;padding-bottom:10px;scroll-snap-type:x proximity\">{rcards}</div></section>",
-                rcards = rcards
+                h = heading, rcards = rcards
             )
         }
     };
