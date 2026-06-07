@@ -3861,6 +3861,8 @@ const MAKE_HTML: &str = r##"<!doctype html><html lang="ja"><head>
 <title>AIでオリジナルTシャツ作成 — 言うだけ10秒・1枚から・在庫ゼロ | MU MAKE · wearmu.com</title>
 <meta name="description" content="ひとこと言うだけでAIがオリジナルTシャツ・パーカーをデザイン。10〜20秒で完成、その場で1枚から購入OK（¥4,900〜）。ログイン不要・在庫ゼロ。作った一着は店に並び、売れたら売上の10%が作り手に(Tシャツなら¥490〜/枚)。">
 <link rel="canonical" href="https://wearmu.com/make">
+<link rel="alternate" hreflang="ja" href="https://wearmu.com/make">
+<link rel="alternate" hreflang="x-default" href="https://wearmu.com/make">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://wearmu.com/make">
 <meta property="og:title" content="言うだけで、Tシャツができる。— MU MAKE">
@@ -7012,7 +7014,18 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
         short_title = html_text(&short_title),
         desc_short = html_attr(&meta_desc_short),
         sealed = sealed_block,
-        og = html_attr(&img),
+        og = html_attr(&{
+            // og:image on our own domain: /mi/* 302s to the mu-mockups raw
+            // file (crawlers follow redirects; visible <img> stays direct).
+            // Also absolutise the /static fallback — og:image must be absolute.
+            if let Some(rest) = img.strip_prefix("https://raw.githubusercontent.com/yukihamada/mu-mockups/main/") {
+                format!("https://wearmu.com/mi/{}", rest)
+            } else if img.starts_with('/') {
+                format!("https://wearmu.com{}", img)
+            } else {
+                img.clone()
+            }
+        }),
         brand = html_text(&brand),
         brand_q = html_attr(&brand),
         price = format_jpy(price_jpy),

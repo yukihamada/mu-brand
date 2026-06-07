@@ -45,6 +45,9 @@ const START_HTML: &str = r##"<!doctype html><html lang="ja"><head><meta charset=
 <meta property="og:description" content="ことば1行で商品が生まれ、売れたら10%があなたに。">
 <meta property="og:image" content="https://wearmu.com/static/og.jpg">
 <meta property="og:url" content="https://wearmu.com/start">
+<link rel="canonical" href="https://wearmu.com/start">
+<link rel="alternate" hreflang="ja" href="https://wearmu.com/start">
+<link rel="alternate" hreflang="x-default" href="https://wearmu.com/start">
 <meta name="twitter:card" content="summary_large_image">
 <style>
 body{background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}

@@ -52863,6 +52863,17 @@ async fn dynamic_sitemap(State(db): State<Db>) -> Response {
     ).into_response()
 }
 
+/// GET /mi/*path — 302 to the mu-mockups GitHub raw file. Lets PDP og:image
+/// live on wearmu.com (brand domain) while the bytes stay in the repo CDN.
+async fn mockup_image_redirect(Path(path): Path<String>) -> Response {
+    let clean = path.replace("..", "");
+    axum::response::Redirect::temporary(&format!(
+        "https://raw.githubusercontent.com/yukihamada/mu-mockups/main/{}",
+        clean
+    ))
+    .into_response()
+}
+
 /// "YYYY-MM-DD" (JST) for JSON-LD datePublished, from auto_blog_posts.created_at
 /// which is either unix-epoch seconds or a legacy ISO "YYYY-MM-DD…" string.
 fn iso_date_from_created_at(created_at: &str) -> String {
@@ -62862,6 +62873,8 @@ const RESERVED_SLUGS: &[&str] = &[
     "about", "press", "vision", "muer", "council", "sweep", "collab", "love",
     "holders",
     "robots.txt", "sitemap.xml", "manifest.json",
+    // IndexNow key file (Bing/Yandex instant indexing) — content = filename stem.
+    "b4681ecedc08488e954f437ff78fbff0.txt",
     "favicon.ico", "favicon.svg", "favicon-16x16.png", "favicon-32x32.png",
     "apple-touch-icon.png", "icon-192.png", "icon-512.png", "og.jpg",
     "you.html", "tokushoho.html", "faq.html", "city.html", "about.html", "press.html",
@@ -68831,6 +68844,7 @@ async fn main() {
         .route("/admin/catalog/nl", get(catalog::admin_nl_add))
         .route("/admin/catalog/seal", get(catalog::admin_seal_create))
         .route("/make", get(catalog::make_page))
+        .route("/mi/*path", get(mockup_image_redirect))
         .route("/store", get(catalog::store_unmanned_page))
         .route("/connect", get(catalog::connect_page))
         .route("/api/connect", get(catalog::api_connect).post(catalog::api_connect))
