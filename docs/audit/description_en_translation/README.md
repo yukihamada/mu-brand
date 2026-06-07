@@ -26,3 +26,9 @@ ALTER TABLE catalog_products DROP COLUMN description_en;
 ## 実行ログ
 
 実行コマンドと各バッチの translated/errors/remaining はこの下に追記する。
+
+## 実行ログ (2026-06-07)
+
+- 07:04-07:26 UTC: `limit=30` × 35回 + 端数 — **計1,036 SKU 翻訳完了・errors 0・remaining 0** (07:26:17Z fg実測)
+- バッチ中も autopilot が新SKUを生成し続けるため、cron-curl.yml に `translate_en` ジョブを追加 (6時間毎 :40・limit=100×最大3回)
+- 品質サンプル: MAKE-MA-TEE-mk988d7c5c → "MA — Find inner peace with our meditating cat design." (自然な英語・ブランド名維持を確認)

@@ -38,6 +38,8 @@ on:
     # Hourly :25 — MUGEN auto-generate (Gemini 3 Pro Image → Printful → DB).
     # Watchdog on Fly alerts if no new MUGEN in 6h.
     - cron: '25 * * * *'
+    # 6-hourly :40 — EN copy backfill for new SKUs (SEO: PDP ?lang=en body).
+    - cron: '40 */6 * * *'
     # Every 5 min — external uptime watcher. Pings /healthz from outside Fly
     # so a Fly outage / DNS issue / panic-loop trips Telegram even when the
     # internal Fly watchdog is also down.
@@ -126,6 +128,18 @@ jobs:
           curl -fsS -X POST -H 'Content-Type: application/json' \
             -d "{\"admin_token\":\"${MU_ADMIN_TOKEN}\"}" \
             "${BASE_URL}/api/admin/sample_grow"
+
+  translate_en:
+    if: github.event.schedule == '40 */6 * * *' || github.event.inputs.target == 'translate_en'
+    runs-on: ubuntu-latest
+    steps:
+      - name: GET /admin/catalog/translate_en (EN copy for new SKUs)
+        run: |
+          for i in 1 2 3; do
+            out=$(curl -fsS "${BASE_URL}/admin/catalog/translate_en?token=${MU_ADMIN_TOKEN}&limit=100")
+            echo "$out"
+            echo "$out" | grep -q '"remaining":0' && break
+          done
 
   sample_grow_force:
     if: github.event.inputs.target == 'sample_grow_force'
