@@ -394,7 +394,10 @@ async function loadBrand(){
     brandGrid.classList.remove('loading');
     if (brandsRes.ok) {
       const bd = await brandsRes.json();
-      brandGrid.innerHTML = (bd.brands || []).map(b => brandCardHtml(b, SLUG)).join('');
+      // Hide tiny/test brands (≤3 SKUs) from the list — keep the brand being viewed.
+      brandGrid.innerHTML = (bd.brands || [])
+        .filter(b => (b.product_count || 0) > 3 || b.slug === SLUG)
+        .map(b => brandCardHtml(b, SLUG)).join('');
     }
 
     // ── Telemetry: impression ping + click beacon ─────────────────────
