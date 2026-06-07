@@ -49862,9 +49862,11 @@ async fn show_auto_blog(
             params![slug], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         ).ok()
     };
-    let Some((title, body_html, _ts)) = row else {
+    let Some((title, body_html, ts)) = row else {
         return (StatusCode::NOT_FOUND, "auto-blog not found").into_response();
     };
+    let date_iso = iso_date_from_created_at(&ts);
+    let title_json = json_escape(&title);
     let title_attr = html_attr_escape(&title);
     let slug_attr  = html_attr_escape(&slug);
     let html = format!(r#"<!doctype html><html lang="ja"><head>
@@ -49880,6 +49882,8 @@ async fn show_auto_blog(
 <meta name="twitter:title" content="{title_attr}">
 <meta name="twitter:description" content="MU の AI 自動執筆 Field log — 毎朝 JST 9:00 に Gemini が書きます。">
 <meta name="twitter:image" content="https://mockups.wearmu.com/hero.png">
+<link rel="canonical" href="https://wearmu.com/blog/auto/{slug_attr}">
+<script type="application/ld+json">{{"@context":"https://schema.org","@type":"Article","headline":"{title_json}","datePublished":"{date_iso}","dateModified":"{date_iso}","author":{{"@type":"Organization","name":"MU"}},"publisher":{{"@type":"Organization","name":"MU","logo":{{"@type":"ImageObject","url":"https://wearmu.com/icon-512.png"}}}},"image":"https://mockups.wearmu.com/hero.png","mainEntityOfPage":"https://wearmu.com/blog/auto/{slug_attr}"}}</script>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
 :root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.6);--y:#e6c449;--card:#111}}
@@ -49916,7 +49920,9 @@ footer{{padding:48px 32px;border-top:1px solid rgba(255,255,255,0.06);text-align
 "#,
         title = html_escape(&title),
         title_attr = title_attr,
+        title_json = title_json,
         slug_attr  = slug_attr,
+        date_iso = date_iso,
         day   = jst_today_str(),
         body_html = body_html,
     );
@@ -52610,6 +52616,15 @@ async fn list_auto_blog(State(db): State<Db>) -> impl IntoResponse {
 async fn dynamic_sitemap(State(db): State<Db>) -> Response {
     let base = std::fs::read_to_string("static/sitemap.xml")
         .unwrap_or_else(|_| "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"></urlset>".to_string());
+    // Google image-sitemap extension for product entries below. The static
+    // bootstrap file only declares xhtml; patch in image: once, idempotently.
+    let base = if base.contains("xmlns:image=") { base } else {
+        base.replacen(
+            "xmlns:xhtml=\"http://www.w3.org/1999/xhtml\"",
+            "xmlns:xhtml=\"http://www.w3.org/1999/xhtml\"\n        xmlns:image=\"http://www.google.com/schemas/sitemap-image/1.1\"",
+            1,
+        )
+    };
     // --- (a) blog posts -----------------------------------------------------
     let posts: Vec<(String, String)> = {
         let conn = db.lock().unwrap();
@@ -52750,33 +52765,48 @@ async fn dynamic_sitemap(State(db): State<Db>) -> Response {
     // depend solely on paid campaigns. Cap at 5,000 to stay under the
     // sitemap-protocol limit; if we ever exceed that, split into a
     // sitemap index file.
-    let catalog_skus: Vec<String> = {
+    let catalog_skus: Vec<(String, Option<String>)> = {
         let conn = db.lock().unwrap();
         conn.prepare(
-            "SELECT sku FROM catalog_products WHERE is_active=1 \
+            "SELECT sku, mockup_url_external FROM catalog_products WHERE is_active=1 \
              ORDER BY rowid DESC LIMIT 5000",
         )
         .ok()
         .and_then(|mut s| {
-            s.query_map([], |r| r.get::<_, String>(0))
+            s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)))
                 .ok()
                 .map(|it| it.filter_map(|r| r.ok()).collect())
         })
         .unwrap_or_default()
     };
-    // Storefront index page itself.
+    // Storefront index page itself. /shop and /shop/:sku render EN metadata
+    // under ?lang=en (Round 1), so annotate ja/en/x-default alternates.
     entries.push_str(
         "  <url>\n    <loc>https://wearmu.com/shop</loc>\n    \
+         <xhtml:link rel=\"alternate\" hreflang=\"ja\" href=\"https://wearmu.com/shop\"/>\n    \
+         <xhtml:link rel=\"alternate\" hreflang=\"en\" href=\"https://wearmu.com/shop?lang=en\"/>\n    \
+         <xhtml:link rel=\"alternate\" hreflang=\"x-default\" href=\"https://wearmu.com/shop\"/>\n    \
          <changefreq>daily</changefreq>\n    <priority>0.9</priority>\n  </url>\n",
     );
-    for sku in catalog_skus {
+    for (sku, img) in catalog_skus {
         // URL-encode the SKU so '/' or odd chars don't break the sitemap
         // (real SKUs are alphanumeric+dash but be defensive).
         let enc = urlencoding::encode(&sku);
+        // Google image-sitemap entry only when an absolute mockup URL exists.
+        let image_xml = match img.as_deref() {
+            Some(u) if u.starts_with("http") => format!(
+                "    <image:image><image:loc>{}</image:loc></image:image>\n",
+                u.replace('&', "&amp;").replace('<', "&lt;")
+            ),
+            _ => String::new(),
+        };
         entries.push_str(&format!(
             "  <url>\n    <loc>https://wearmu.com/shop/{enc}</loc>\n    \
+             <xhtml:link rel=\"alternate\" hreflang=\"ja\" href=\"https://wearmu.com/shop/{enc}\"/>\n    \
+             <xhtml:link rel=\"alternate\" hreflang=\"en\" href=\"https://wearmu.com/shop/{enc}?lang=en\"/>\n    \
+             <xhtml:link rel=\"alternate\" hreflang=\"x-default\" href=\"https://wearmu.com/shop/{enc}\"/>\n{image_xml}    \
              <changefreq>weekly</changefreq>\n    <priority>0.7</priority>\n  </url>\n",
-            enc = enc,
+            enc = enc, image_xml = image_xml,
         ));
     }
     let out = if base.contains("</urlset>") {
@@ -52788,6 +52818,18 @@ async fn dynamic_sitemap(State(db): State<Db>) -> Response {
         [("content-type", "application/xml; charset=utf-8")],
         out,
     ).into_response()
+}
+
+/// "YYYY-MM-DD" (JST) for JSON-LD datePublished, from auto_blog_posts.created_at
+/// which is either unix-epoch seconds or a legacy ISO "YYYY-MM-DD…" string.
+fn iso_date_from_created_at(created_at: &str) -> String {
+    if created_at.len() >= 10 && created_at.contains('-') {
+        return created_at[0..10].to_string();
+    }
+    let unix: i64 = created_at.parse().unwrap_or(0);
+    let days = (unix + 9 * 3600).div_euclid(86400);
+    let (y, m, d) = civil_from_days(days);
+    format!("{:04}-{:02}-{:02}", y, m, d)
 }
 
 /// Convert a stored `created_at` (unix-epoch seconds string OR legacy ISO

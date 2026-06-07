@@ -3,6 +3,9 @@
         xmlns:xhtml="http://www.w3.org/1999/xhtml">
   <url>
     <loc>https://wearmu.com/</loc>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://wearmu.com/"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://wearmu.com/?lang=en"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://wearmu.com/"/>
     <lastmod>2026-05-21</lastmod>
     <changefreq>hourly</changefreq>
     <priority>1.0</priority>
