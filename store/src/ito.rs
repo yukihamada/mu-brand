@@ -42,8 +42,11 @@ const DECAY_PER_30D: f64 = 0.9;
 const DECAY_WINDOW_SECS: f64 = 30.0 * 86400.0;
 /// 同一ペア (email × serial) の再採掘クールダウン。
 const PAIR_COOLDOWN_SECS: i64 = 7 * 86400;
-/// 1日にスキャンで編める上限 (スキャンする側・される側それぞれ)。
+/// 1日にスキャンで編める上限 (スキャンする側・される側それぞれ・メール単位)。
 const DAILY_SCAN_CAP: i64 = 3;
+/// 1日に同一 IP から編める上限 (捨てメール量産での farm を抑える物理的な蓋)。
+/// メール単位の上限は捨てメールでバイパスできるため、IP 単位の蓋を併用する。
+const DAILY_IP_SCAN_CAP: i64 = 6;
 
 pub(crate) fn ensure_tables(conn: &Connection) {
     let _ = conn.execute_batch(
@@ -64,10 +67,12 @@ pub(crate) fn ensure_tables(conn: &Connection) {
             delta_milli INTEGER NOT NULL,
             reason      TEXT NOT NULL,
             ref_id      TEXT,
+            ip          TEXT,
             created_at  INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_ito_events_email ON ito_events(email);
         CREATE INDEX IF NOT EXISTS idx_ito_events_ref ON ito_events(ref_id);
+        CREATE INDEX IF NOT EXISTS idx_ito_events_ip ON ito_events(ip, created_at);
         CREATE TABLE IF NOT EXISTS ito_redemptions (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             email       TEXT NOT NULL,
@@ -110,6 +115,7 @@ pub(crate) fn balance_milli(conn: &Connection, email: &str, now: i64) -> i64 {
     sum.floor() as i64
 }
 
+#[allow(clippy::too_many_arguments)]
 fn append_event(
     conn: &Connection,
     email: &str,
@@ -117,12 +123,13 @@ fn append_event(
     delta_milli: i64,
     reason: &str,
     ref_id: Option<&str>,
+    ip: Option<&str>,
     now: i64,
 ) {
     let _ = conn.execute(
-        "INSERT INTO ito_events (email, serial, delta_milli, reason, ref_id, created_at)
-         VALUES (?1,?2,?3,?4,?5,?6)",
-        params![email.trim().to_lowercase(), serial, delta_milli, reason, ref_id, now],
+        "INSERT INTO ito_events (email, serial, delta_milli, reason, ref_id, ip, created_at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7)",
+        params![email.trim().to_lowercase(), serial, delta_milli, reason, ref_id, ip, now],
     );
 }
 
@@ -172,7 +179,7 @@ pub(crate) fn grant_for_order(
         let cap_milli = amount_jpy * 200 / ITO_VALUE_JPY; // = amount×0.2×1000/490
         let grant = PURCHASE_MINT_MILLI.min(cap_milli);
         if grant > 0 {
-            append_event(conn, email, None, grant, "purchase", Some(&ref_id), now);
+            append_event(conn, email, None, grant, "purchase", Some(&ref_id), None, now);
         }
     }
     // 服シリアル (digital チケットには発行しない)
@@ -202,13 +209,17 @@ pub(crate) struct ScanBody {
 }
 
 /// POST /api/ito/scan — 他人の服をスキャンして両者に +1糸。
-/// 防御: 自己スキャン不可 / 同一ペア 7日 / 双方 日次上限 3 / 実在シリアルのみ。
-pub(crate) async fn api_scan(State(db): State<Db>, Json(body): Json<ScanBody>) -> Response {
+/// 防御: 自己スキャン不可 / 同一ペア 7日 / 双方 日次上限 3 (メール) /
+///       同一 IP 日次 6 (捨てメール対策) / 実在シリアルのみ。
+/// ⚠ v1 の限界: シリアルは URL に現れるため「物理的に会った」ことは証明できない
+///    (NFC 動的コードは将来)。本物の不正コストゲートは交換側 (人間承認 + 住所) に置く。
+pub(crate) async fn api_scan(State(db): State<Db>, headers: HeaderMap, Json(body): Json<ScanBody>) -> Response {
     let email = body.email.trim().to_lowercase();
     if !valid_email(&email) {
         return (StatusCode::BAD_REQUEST, Json(json!({"ok": false, "error": "メールアドレスを確認してください"}))).into_response();
     }
     let serial = body.serial.trim().to_lowercase();
+    let ip = crate::client_ip(&headers);
     let now = now_s();
     let conn = db.lock().unwrap();
     ensure_tables(&conn);
@@ -252,6 +263,18 @@ pub(crate) async fn api_scan(State(db): State<Db>, Json(body): Json<ScanBody>) -
             |r| r.get(0),
         ).unwrap_or(0)
     };
+    // 同一 IP の日次上限 (捨てメール量産対策の物理的な蓋)。
+    if !ip.is_empty() && ip != "unknown" {
+        let ip_scans: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM ito_events WHERE ip=?1 AND reason='scan:met' AND created_at>?2",
+            params![ip, day_ago], |r| r.get(0),
+        ).unwrap_or(0);
+        if ip_scans >= DAILY_IP_SCAN_CAP {
+            return (StatusCode::TOO_MANY_REQUESTS, Json(json!({
+                "ok": false, "error": "この端末からは本日の上限です。また明日"
+            }))).into_response();
+        }
+    }
     let scanner_capped = scans_today(&email, "scan:met") >= DAILY_SCAN_CAP;
     let owner_capped = scans_today(&owner, "scan:worn") >= DAILY_SCAN_CAP;
     if scanner_capped && owner_capped {
@@ -260,10 +283,10 @@ pub(crate) async fn api_scan(State(db): State<Db>, Json(body): Json<ScanBody>) -
         }))).into_response();
     }
     if !scanner_capped {
-        append_event(&conn, &email, Some(&serial), SCAN_MINT_MILLI, "scan:met", Some(&pair), now);
+        append_event(&conn, &email, Some(&serial), SCAN_MINT_MILLI, "scan:met", Some(&pair), Some(&ip), now);
     }
     if !owner_capped {
-        append_event(&conn, &owner, Some(&serial), SCAN_MINT_MILLI, "scan:worn", Some(&pair), now);
+        append_event(&conn, &owner, Some(&serial), SCAN_MINT_MILLI, "scan:worn", Some(&pair), Some(&ip), now);
     }
     let _ = conn.execute(
         "UPDATE ito_serials SET scan_count=scan_count+1, last_scan_at=?1 WHERE serial=?2",
@@ -351,6 +374,15 @@ pub(crate) struct RedeemBody {
 /// 履行は人間承認 → 既存 Printful 発注 (救済発注と同フロー)。¥0 注文なので
 /// Stripe を経由しない。
 pub(crate) async fn api_redeem(State(db): State<Db>, Json(body): Json<RedeemBody>) -> Response {
+    // 蛇口を閉じておく: 交換は ITO_REDEEM_LIVE=1 のときだけ受け付ける。
+    // 既定 off の理由 — earn 側 (スキャン/購入) の不正耐性が固まるまで、
+    // 原価のかかる現物交換を開けない。残高表示・体験は off でも動く。
+    if std::env::var("ITO_REDEEM_LIVE").map(|v| v != "1").unwrap_or(true) {
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({
+            "ok": false,
+            "error": "糸の交換は近日公開です (now in pilot — redemption opens soon)。今は会って・買って糸を編めます。",
+        }))).into_response();
+    }
     let email = body.email.trim().to_lowercase();
     if !valid_email(&email) {
         return (StatusCode::BAD_REQUEST, Json(json!({"ok": false, "error": "メールアドレスを確認してください"}))).into_response();
@@ -385,7 +417,7 @@ pub(crate) async fn api_redeem(State(db): State<Db>, Json(body): Json<RedeemBody
                 body.name.chars().take(80).collect::<String>(), addr, REDEEM_TEE_MILLI, now],
     );
     let rid = conn.last_insert_rowid();
-    append_event(&conn, &email, None, -REDEEM_TEE_MILLI, "redeem:tee", Some(&format!("redeem:{}", rid)), now);
+    append_event(&conn, &email, None, -REDEEM_TEE_MILLI, "redeem:tee", Some(&format!("redeem:{}", rid)), None, now);
     let bal2 = balance_milli(&conn, &email, now);
     Json(json!({
         "ok": true,
@@ -565,15 +597,17 @@ button:disabled{{opacity:.5}}
 .meta{{font-size:12px;color:#6a8;margin-top:14px}}
 #out{{margin-top:14px;font-size:14px;white-space:pre-wrap}}
 .ok{{color:#7fdba0}}.err{{color:#ff8a7a}}
+.en{{display:block;color:#6a8;font-size:11px;margin-top:8px;line-height:1.5}}
 a.shop{{display:block;text-align:center;margin-top:16px;color:#5cf;text-decoration:none;font-size:13px}}
 </style></head><body>
 <div class="card">
 <h1>🧵 この服と、糸を編む</h1>
 <div class="sub">これは {owner_masked} さんの一着 ({sku_link}これまで {scans} 回 編まれた)。<br>
 出会いの証として、あなたと持ち主の両方に <b>+1糸</b> が編まれます。10糸 = 1着と交換。<br>
-糸は買えない・送れない・換金できない。30日で×0.9 にほつれる — 会って編むだけ。</div>
-<input id="em" type="email" placeholder="あなたのメール (糸の置き場所)" autocomplete="email">
-<button id="go">糸を編む (+1)</button>
+糸は買えない・送れない・換金できない。30日で×0.9 にほつれる — 会って編むだけ。<br>
+<span class="en">EN — Meet the owner of this MU garment: both of you mint <b>+1 ito</b>. 10 ito = 1 tee. Ito can’t be bought, sent, or cashed out, and decays ×0.9 every 30 days.</span></div>
+<input id="em" type="email" placeholder="あなたのメール / your email" autocomplete="email">
+<button id="go">糸を編む / Mint (+1)</button>
 <div id="out"></div>
 <a class="shop" href="/shop">自分の一着を持つ → /shop (購入でも +2糸)</a>
 <div class="meta">serial: {serial} · 台帳は append-only 監査ログ · <a href="/ito" style="color:#6a8">糸とは?</a></div>
@@ -690,7 +724,7 @@ mod ito_tests {
     fn decay_30d_is_090() {
         let conn = test_conn();
         let t0 = 1_700_000_000_i64;
-        append_event(&conn, "a@example.com", None, 1000, "scan:met", None, t0);
+        append_event(&conn, "a@example.com", None, 1000, "scan:met", None, None, t0);
         // 直後は満額
         assert_eq!(balance_milli(&conn, "a@example.com", t0), 1000);
         // 30日後は ×0.9
@@ -705,11 +739,11 @@ mod ito_tests {
     fn spend_keeps_balance_nonnegative_forever() {
         let conn = test_conn();
         let t0 = 1_700_000_000_i64;
-        append_event(&conn, "a@example.com", None, 10_000, "scan:met", None, t0);
+        append_event(&conn, "a@example.com", None, 10_000, "scan:met", None, None, t0);
         // 10日後に全額 (減価後) を spend
         let t1 = t0 + 10 * 86400;
         let bal = balance_milli(&conn, "a@example.com", t1);
-        append_event(&conn, "a@example.com", None, -bal, "redeem:tee", None, t1);
+        append_event(&conn, "a@example.com", None, -bal, "redeem:tee", None, None, t1);
         assert_eq!(balance_milli(&conn, "a@example.com", t1), 0);
         // 指数減価の一様乗法性: その後いつ見ても非負 (丸めで ±1milli 許容)
         for d in [1_i64, 30, 90, 365] {
