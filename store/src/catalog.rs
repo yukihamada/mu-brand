@@ -3435,6 +3435,7 @@ pub async fn make_recent(State(db): State<Db>) -> Response {
                      design_file, ''), retail_price_jpy
              FROM catalog_products
              WHERE brand='minna' AND is_active=1 AND status='live'
+               AND label NOT LIKE '%テスト%' AND lower(label) NOT LIKE '%test%'
              ORDER BY created_at DESC LIMIT 8",
         )
         .ok()
@@ -3859,7 +3860,7 @@ pub async fn make_page(State(db): State<Db>, Query(q): Query<MakePageQuery>) -> 
 const MAKE_HTML: &str = r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>AIでオリジナルTシャツ作成 — 言うだけ10秒・1枚から・在庫ゼロ | MU MAKE · wearmu.com</title>
-<meta name="description" content="ひとこと言うだけでAIがオリジナルTシャツ・パーカーをデザイン。10〜20秒で完成、その場で1枚から購入OK（¥4,900〜）。ログイン不要・在庫ゼロ。作った一着は店に並び、売れたら売上の10%が作り手に(Tシャツなら¥490〜/枚)。">
+<meta name="description" content="ひとこと言うだけでAIがオリジナルTシャツ・パーカーをデザイン。30秒ほどで完成、その場で1枚から購入OK（¥4,900〜）。ログイン不要・在庫ゼロ。作った一着は店に並び、売れたら売上の10%が作り手に(Tシャツなら¥490〜/枚)。">
 <link rel="canonical" href="https://wearmu.com/make">
 <link rel="alternate" hreflang="ja" href="https://wearmu.com/make">
 <link rel="alternate" hreflang="x-default" href="https://wearmu.com/make">
@@ -3876,7 +3877,7 @@ const MAKE_HTML: &str = r##"<!doctype html><html lang="ja"><head>
  {"@type":"HowTo","name":"AIでオリジナルTシャツを作る方法（MU MAKE）",
   "step":[
    {"@type":"HowToStep","position":1,"name":"言う","text":"作りたいものを一言で入力（例：富士山をミニマルな一本線で描いた黒Tシャツ）。"},
-   {"@type":"HowToStep","position":2,"name":"AIが描く","text":"10〜20秒でAIがデザインを生成し、商品ページができる。"},
+   {"@type":"HowToStep","position":2,"name":"AIが描く","text":"30秒ほどでAIがデザインを生成し、商品ページができる。"},
    {"@type":"HowToStep","position":3,"name":"買える・並ぶ","text":"その場で1枚から購入できる（Tシャツ¥4,900〜）。作った一着はみんなの棚に並び、売れるたび売上の10%が作り手の報酬。"}]},
  {"@type":"FAQPage","mainEntity":[
   {"@type":"Question","name":"本当にログイン不要ですか？","acceptedAnswer":{"@type":"Answer","text":"はい。アカウント登録なしで、その場で作成・購入できます。"}},
@@ -3982,7 +3983,7 @@ button:disabled{opacity:.5;cursor:default}
   <div class="sub" id="mkSub">ひとこと言えば AI がデザイン → <b>その場で 1 枚から買える</b>。ログインも在庫もゼロ。あなたの一着はみんなの棚にも並び、<b style="color:#ffd700">売れたら売上の10%が作り手に</b>（<a href="/credit" style="color:#ffd700">仕組み</a>）。</div>
   <div class="steps">
     <div class="step"><div class="n">STEP 1</div><div class="t">言う</div><div class="d">作りたいものを一言。日本語でOK。</div></div>
-    <div class="step"><div class="n">STEP 2</div><div class="t">AIが描く</div><div class="d">10〜20秒でデザインと商品ページが完成。</div></div>
+    <div class="step"><div class="n">STEP 2</div><div class="t">AIが描く</div><div class="d">30秒ほどでデザインと商品ページが完成。</div></div>
     <div class="step"><div class="n">STEP 3</div><div class="t">買える・並ぶ</div><div class="d">1枚から購入OK。店にも並んで、売れたら報酬。</div></div>
   </div>
   <div class="quick" id="mkQuick" hidden>
@@ -4097,7 +4098,7 @@ fetch('/api/make/recent').then(r=>r.json()).then(j=>{
 // 生成シアター: お題のエコー + 物語のステータス + 進捗バー。戻り値で停止。
 function genTheater(p){
   var msgs=['お題を、読み解いています…','筆を、とりました','線を一本、引いています…','色を、えらんでいます…','余白と、相談しています…','布にのせて、確かめています…','タグに名前を入れています…','棚をあけて、待っています…'];
-  $('#out').innerHTML='<div class=gen><div class=enso></div><div class=gq>「<b></b>」を、一枚の絵に。</div><div class=gmsg></div><div class=gbar><div class=gfill></div></div><div class=gnote>世界のどこにもない一枚を生成中 — だいたい 10〜20 秒。同じ絵は二度と生まれません。</div></div>';
+  $('#out').innerHTML='<div class=gen><div class=enso></div><div class=gq>「<b></b>」を、一枚の絵に。</div><div class=gmsg></div><div class=gbar><div class=gfill></div></div><div class=gnote>世界のどこにもない一枚を生成中 — だいたい 30 秒。同じ絵は二度と生まれません。</div></div>';
   document.querySelector('.gen .gq b').textContent=p.length>42?p.slice(0,42)+'…':p;
   var gm=document.querySelector('.gmsg'),gf=document.querySelector('.gfill');
   var i=0; gm.textContent=msgs[0];
@@ -4105,9 +4106,11 @@ function genTheater(p){
   var pr=2; var t2=setInterval(function(){pr=Math.min(93,pr+(pr<55?5:1.4));gf.style.width=pr+'%';},600);
   return function(){clearInterval(t1);clearInterval(t2);if(gf)gf.style.width='100%';};
 }
+var RUNSEQ=0; // 連打/連続生成の古いレスポンスが新しい結果を上書きしないためのガード
 async function runMake(){
   const p=$('#p').value.trim(); if(!p){$('#p').focus();return;}
   const k=$('#k').value;
+  const myRun=++RUNSEQ;
   muEvent('cta_click',{cta:'make_create',variant:MKV});
   $('#go').disabled=true; $('#go').innerHTML='<span class=spin></span>つくっています…';
   const genDone=genTheater(p);
@@ -4116,19 +4119,19 @@ async function runMake(){
     const r=await fetch('/api/make?prompt='+encodeURIComponent(p)+(k?'&kind='+k:'')
       +'&v='+encodeURIComponent(MKV)+(VIS?'&visitor='+encodeURIComponent(VIS):''),{method:'POST'});
     const j=await r.json();
+    if(myRun!==RUNSEQ) return; // より新しい生成が走っている → この結果は捨てる
     genDone();
     if(!j.ok){ $('#out').innerHTML='<div class=err>'+(j.error||'うまく作れませんでした。もう一度お試しください。')+'</div>'; }
     else{
-      // 認証ゲート: 本端末で認証済み(mu_make_ok クッキー)なら即リビール。
-      // 初回は結果(着用イメージ+棚)を見る前にメール+6桁コード認証を挟む。
-      if(/(?:^|;\s*)mu_make_ok=1/.test(document.cookie)){ renderResult(j,p); }
-      else{ renderGate(j,p); }
+      // デザインは認証なしで必ず見せる(見るのは無料)。名義化+10%だけメール認証ゲート。
+      renderResult(j,p,/(?:^|;\s*)mu_make_ok=1/.test(document.cookie));
     }
-  }catch(e){ genDone(); $('#out').innerHTML='<div class=err>通信エラー。もう一度お試しください。</div>'; }
+  }catch(e){ if(myRun!==RUNSEQ) return; genDone(); $('#out').innerHTML='<div class=err>通信エラー。もう一度お試しください。</div>'; }
   $('#go').disabled=false; $('#go').textContent='つくる';
 }
-// 生成済みの結果カードを描画（認証通過後 or 認証済み端末）。
-function renderResult(j,p){
+// 生成済みの結果カードを描画。ok=メール認証済み端末か(未認証でもデザインは見せる)。
+function renderResult(j,p,ok){
+  if(ok===undefined)ok=true;
   // 行動科学の根拠: IKEA効果(自作品は+63%高く評価/Norton+2012)→「あなたが作った」と
   // プロンプトのエコーで作者性を返す。心理的所有感(Peck&Shu 2009)→着用イメージ差替+所有語CTA。
   var url = j.buy_url || j.pdp_url || '';
@@ -4139,7 +4142,7 @@ function renderResult(j,p){
   var share = url ? '<button class=share onclick="muEvent(\'share\',{sku:\''+j.sku+'\'});muShare(this)" data-u="'+url+'" data-t="'+((j.display||'MU')+' / wearmu')+'">📣 シェアして広める</button>'
     +' <a class=share data-funnel="share" data-funnel-cta="make_share_x" href="https://x.com/intent/tweet?text='+shareTxt+'&url='+encodeURIComponent(url+'?ref=make_share_x')+'" target="_blank" rel="noopener" onclick="muEvent(\'share\',{sku:\''+j.sku+'\',ch:\'x\'})" style="text-decoration:none">𝕏 ポスト</a>'
     +' <a class=share data-funnel="share" data-funnel-cta="make_share_line" href="https://social-plugins.line.me/lineit/share?url='+encodeURIComponent(url+'?ref=make_share_line')+'" target="_blank" rel="noopener" onclick="muEvent(\'share\',{sku:\''+j.sku+'\',ch:\'line\'})" style="text-decoration:none">LINE</a>' : '';
-  var spread = url ? '<div class=spread>棚にも並びました。広めるほどこの子が売れる → 売上の10%が作り手のあなたに。<a href="/start?ref=make_result" style="color:#ffd700">クリエイター登録(無料)で売上と報酬を管理 →</a></div>' : '';
+  var spread = (ok && url) ? '<div class=spread>棚にも並びました。広めるほどこの子が売れる → 売上の10%が作り手のあなたに。<a href="/start?ref=make_result" style="color:#ffd700">クリエイター登録(無料)で売上と報酬を管理 →</a></div>' : '';
   var one = j.auto_approved ? '<div class=one>🌱 <b>世界に1枚。</b>同じ絵は二度と生成されません。ファーストオーナーは、まだいません。</div>' : '';
   var nt = j.auto_approved ? '' : '<div class=note>'+(j.note||'つくりました。確認後に公開・購入できます。')+'</div>';
   $('#out').innerHTML=own+'<div class="card reveal"><img id=mkImg src="'+j.design_url+'" alt=""><div class=meta>'
@@ -4150,24 +4153,24 @@ function renderResult(j,p){
     + one
     +'<div class=fitnote id=mkFit>'+(j.auto_approved?'👕 着用イメージを準備中… 数十秒でここに届きます':'')+'</div>'
     + buy + share + spread + nt
-    +'</div></div>';
+    +'</div></div>'
+    +(ok?'':claimCardHtml());
   $('#out').scrollIntoView({behavior:'smooth',block:'nearest'});
+  if(!ok) wireClaim(j,p);
   if(j.auto_approved && j.sku) pollFit(j.sku, j.design_url);
 }
-// 生成後リビールゲート: メール→6桁コード認証で結果を開放。
-function renderGate(j,p){
-  var pEcho = p.length>60 ? p.slice(0,60)+'…' : p;
-  $('#out').innerHTML=
-    '<div class=own><b>あなたの言葉</b>から、世界に1枚が生まれました。<span class=pq>「'+escHtml(pEcho)+'」</span></div>'
-    +'<div class="card gate">'
-    +'<div class=gatewrap><img class=gateimg src="'+j.design_url+'" alt=""><div class=gatelock>🔒</div></div>'
+// 名義化カード: デザインは見せた上で「あなたの名義にする」だけをメール認証ゲートに。
+function claimCardHtml(){
+  return '<div class="card gate">'
     +'<div class=gatebody>'
-    +'<div class=gateh>あと一歩。<b>メールで認証</b>すると、この一着が現れます。</div>'
-    +'<div class=gatesub>確認のため6桁コードをお送りします。入力は10秒・これで公開と名義化が完了。認証するとこの一着が<b>あなたの名義</b>になり、売れるたび<b>販売価格の10%</b>があなたのMUクレジットに入ります（<a href="/credit" target="_blank" style="color:#ffd700">仕組み</a>・メールの扱いは<a href="/privacy" target="_blank" style="color:#ffd700">プライバシー</a>）。</div>'
+    +'<div class=gateh>この一着を、<b>あなたの名義</b>に。</div>'
+    +'<div class=gatesub>メール認証(6桁コード・10秒)で公開と名義化が完了。売れるたび<b>販売価格の10%</b>があなたのMUクレジットに入ります（<a href="/credit" target="_blank" style="color:#ffd700">仕組み</a>・メールの扱いは<a href="/privacy" target="_blank" style="color:#ffd700">プライバシー</a>）。</div>'
     +'<div id=gStep1><div class=saverow><input id=gEmail type=email placeholder="you@example.com" autocomplete=email inputmode=email><button id=gSend>コードを送る</button></div></div>'
-    +'<div id=gStep2 style="display:none"><div class=saverow><input id=gCode type=text placeholder="6桁コード" inputmode=numeric autocomplete=one-time-code maxlength=6 style="letter-spacing:.3em;text-align:center;font-family:monospace"><button id=gVerify>認証して見る</button></div><button id=gBack class=gback>メールアドレスを入れ直す</button></div>'
+    +'<div id=gStep2 style="display:none"><div class=saverow><input id=gCode type=text placeholder="6桁コード" inputmode=numeric autocomplete=one-time-code maxlength=6 style="letter-spacing:.3em;text-align:center;font-family:monospace"><button id=gVerify>名義化する</button></div><button id=gBack class=gback>メールアドレスを入れ直す</button></div>'
     +'<div class=savemsg id=gMsg></div>'
     +'</div></div>';
+}
+function wireClaim(j,p){
   var email='';
   var msg=$('#gMsg');
   function showMsg(t,err){msg.style.color=err?'#ff8a7a':'rgba(245,245,240,.7)';msg.textContent=t;}
@@ -4191,12 +4194,11 @@ function renderGate(j,p){
     vb.disabled=true;showMsg('確認中…',false);
     fetch('/api/make/verify/check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sku:j.sku,email:email,code:code})})
       .then(function(r){return r.json();}).then(function(x){
-        if(x.ok){muEvent('cta_click',{cta:'make_verified',sku:j.sku});renderResult(j,p);}
+        if(x.ok){muEvent('cta_click',{cta:'make_verified',sku:j.sku});renderResult(j,p,true);}
         else{vb.disabled=false;showMsg(x.error||'確認できませんでした',true);}
       }).catch(function(){vb.disabled=false;showMsg('通信エラー。もう一度どうぞ。',true);});
   };
   $('#gCode').addEventListener('keydown',function(e){if(e.key==='Enter')$('#gVerify').click();});
-  $('#out').scrollIntoView({behavior:'smooth',block:'nearest'});
 }
 $('#go').onclick=runMake;
 $('#p').addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter')runMake();});
