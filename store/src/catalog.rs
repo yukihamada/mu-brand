@@ -156,6 +156,11 @@ pub fn ensure_schema(conn: &rusqlite::Connection) {
     // columns (catalog contract: extend, don't add a column per concept).
     // `{"capacity": 50}` etc. NULL for every non-ticket SKU.
     let _ = conn.execute("ALTER TABLE catalog_products ADD COLUMN meta_json TEXT", []);
+    // English product copy (SEO item-5: full-EN PDP under ?lang=en). Filled
+    // lazily by /api/admin/catalog/translate_en (Gemini batch); NULL = not yet
+    // translated → PDP falls back to description_ja. Revert = SET NULL
+    // (see docs/audit/description_en_translation/).
+    let _ = conn.execute("ALTER TABLE catalog_products ADD COLUMN description_en TEXT", []);
     // The unique ticket code issued per paid seat — encoded in the QR and
     // reverse-looked-up by the public /t/:code gate. NULL for physical orders.
     let _ = conn.execute("ALTER TABLE catalog_orders ADD COLUMN ticket_code TEXT", []);
@@ -2927,6 +2932,90 @@ pub async fn admin_seal_create(
         })).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("insert failed: {}", e)).into_response(),
     }
+}
+
+#[derive(Deserialize)]
+pub struct TranslateEnQuery {
+    pub token: String,
+    /// SKUs translated per call (default 20, max 100). The cron/operator
+    /// curls repeatedly until `remaining` hits 0 — keeps each request well
+    /// under proxy timeouts.
+    pub limit: Option<i64>,
+}
+
+/// GET /admin/catalog/translate_en?token=…&limit=N
+/// SEO item-5 batch: fill `catalog_products.description_en` for live SKUs via
+/// Gemini text-mode. Skips sealed drops (meta_json.unlock_iso — description_ja
+/// is ciphertext there). Additive + idempotent; revert = SET description_en=NULL
+/// (audit: docs/audit/description_en_translation/).
+pub async fn admin_translate_en(
+    State(db): State<Db>,
+    Query(q): Query<TranslateEnQuery>,
+) -> Response {
+    let expected = env::var("ADMIN_TOKEN").unwrap_or_default();
+    if expected.is_empty() || q.token != expected {
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    }
+    let limit = q.limit.unwrap_or(20).clamp(1, 100);
+    let rows: Vec<(String, String, String)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT sku, label, description_ja FROM catalog_products
+             WHERE status='live'
+               AND (description_en IS NULL OR description_en='')
+               AND description_ja <> ''
+               AND (meta_json IS NULL OR meta_json NOT LIKE '%unlock_iso%')
+             ORDER BY sort_order ASC, rowid DESC LIMIT ?",
+        ) {
+            Ok(s) => s,
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("prepare: {e}")).into_response(),
+        };
+        stmt.query_map(rusqlite::params![limit], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+        })
+        .map(|it| it.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default()
+    };
+    let (mut done, mut errs) = (0i64, 0i64);
+    for (sku, label, ja) in rows {
+        let prompt = format!(
+            "Translate this Japanese e-commerce product description into natural, \
+             concise English for a global apparel store. Keep brand names (MU, MUGEN, \
+             MUON, MA, JiuFlow, …), product codes, prices and any URLs exactly as-is. \
+             Preserve line breaks. Return ONLY the translation — no preamble, no quotes.\n\n\
+             Product: {label}\n\n{ja}"
+        );
+        match crate::gemini::call_gemini_text(&prompt).await {
+            Ok(en) if !en.trim().is_empty() => {
+                let en = en.trim().to_string();
+                let conn = db.lock().unwrap();
+                match conn.execute(
+                    "UPDATE catalog_products SET description_en=?, updated_at=datetime('now') WHERE sku=?",
+                    rusqlite::params![en, sku],
+                ) {
+                    Ok(_) => done += 1,
+                    Err(_) => errs += 1,
+                }
+            }
+            _ => errs += 1,
+        }
+    }
+    let remaining: i64 = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM catalog_products
+             WHERE status='live' AND (description_en IS NULL OR description_en='')
+               AND description_ja <> ''
+               AND (meta_json IS NULL OR meta_json NOT LIKE '%unlock_iso%')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(-1)
+    };
+    axum::Json(serde_json::json!({
+        "translated": done, "errors": errs, "remaining": remaining
+    }))
+    .into_response()
 }
 
 #[derive(Deserialize)]
@@ -6056,7 +6145,8 @@ pub async fn shop_pdp(
         let conn = db.lock().unwrap();
         conn.query_row(
             "SELECT sku, brand, label, description_ja, retail_price_jpy,
-                    mockup_main_file, mockup_url_external, suzuri_url, stripe_price_id, meta_json
+                    mockup_main_file, mockup_url_external, suzuri_url, stripe_price_id, meta_json,
+                    description_en
              FROM catalog_products WHERE sku=? AND is_active=1",
             rusqlite::params![&sku],
             |r| {
@@ -6071,14 +6161,21 @@ pub async fn shop_pdp(
                     r.get::<_, Option<String>>(7)?,
                     r.get::<_, Option<String>>(8)?,
                     r.get::<_, Option<String>>(9)?,
+                    r.get::<_, Option<String>>(10)?,
                 ))
             },
         )
         .ok()
     };
-    let Some((sku, brand, label, desc, price_jpy, mockup_main, mockup_ext, suzuri, price_id, meta_json)) = row
+    let Some((sku, brand, label, desc, price_jpy, mockup_main, mockup_ext, suzuri, price_id, meta_json, desc_en)) = row
     else {
         return (StatusCode::NOT_FOUND, "product not found").into_response();
+    };
+    // Full-EN body: when ?lang=en and a Gemini translation exists, the entire
+    // PDP copy (rendered from `desc`) switches to English; otherwise JA.
+    let desc = match (lang, desc_en.as_deref()) {
+        ("en", Some(en)) if !en.trim().is_empty() => en.to_string(),
+        _ => desc,
     };
 
     // 時限ドロップ(封印): meta_json.unlock_iso が立ち、description_ja が age 暗号文なら、
