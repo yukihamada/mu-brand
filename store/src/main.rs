@@ -19441,6 +19441,11 @@ async fn create_printful_order(key: String, db: Db, product_id: i64, session: se
     // a kokon-tote-v2 buyer was charged but Printful order failed because
     // shipping_details was empty and we didn't fall back.
     let shipping = &full_session["shipping_details"];
+    // Newer Stripe API versions leave top-level shipping_details null and
+    // nest the ship-to under collected_information.shipping_details instead.
+    // 2026-06-07 incident: a buyer whose shipping ≠ billing would have had
+    // the order sent to the billing address without this fallback.
+    let collected = &full_session["collected_information"]["shipping_details"];
     let cust     = &full_session["customer_details"];
     fn pick_addr(obj: &serde_json::Value) -> Option<&serde_json::Value> {
         let a = obj.get("address")?;
@@ -19449,11 +19454,13 @@ async fn create_printful_order(key: String, db: Db, product_id: i64, session: se
         } else { None }
     }
     let addr_val = pick_addr(shipping)
+        .or_else(|| pick_addr(collected))
         .or_else(|| pick_addr(cust))
         .cloned()
         .unwrap_or(serde_json::Value::Null);
     let addr = &addr_val;
     let name = shipping["name"].as_str()
+        .or_else(|| collected["name"].as_str())
         .or_else(|| cust["name"].as_str())
         .unwrap_or("");
     let address1 = addr["line1"].as_str().unwrap_or("");
@@ -19461,7 +19468,13 @@ async fn create_printful_order(key: String, db: Db, product_id: i64, session: se
     let city = addr["city"].as_str().unwrap_or("");
     let country_code = addr["country"].as_str().unwrap_or("JP");
     let zip = addr["postal_code"].as_str().unwrap_or("");
-    let state = addr["state"].as_str().unwrap_or("");
+    // Printful rejects native-script prefecture names ("東京都" → 400
+    // "Recipient: Invalid state code") — normalize to ISO 3166-2 like the
+    // collab handlers already do. 2026-06-07 incident: two JP-address drop
+    // buyers (MUGEN #0519/#0533) were charged but silently never fulfilled
+    // because the raw Stripe state was passed straight through.
+    let raw_state = addr["state"].as_str().unwrap_or("");
+    let state = jp_prefecture_to_iso(raw_state).unwrap_or(raw_state);
 
     // Determine Printful variant by (brand, size). Some kichinan products
     // are one-size (cap/tote/mug/beanie) and override size selection.
@@ -19692,10 +19705,23 @@ async fn create_printful_order(key: String, db: Db, product_id: i64, session: se
             let status = r.status();
             let body = r.text().await.unwrap_or_default();
             eprintln!("Printful error {}: {}", status, body);
+            // The buyer has already been charged at this point — an eprintln
+            // alone means nobody notices until the customer complains.
+            // 2026-06-07 incident: two drop orders sat unfulfilled for days.
+            send_telegram_message(&format!(
+                "🚨 MU drop charged but NOT fulfilled — product_id={} session={} Printful {}: {}\n\
+                 → 手動発注するか返金。mu_purchases.printful_order_id が NULL のままの行。",
+                product_id, session_id, status,
+                body.chars().take(300).collect::<String>(),
+            )).await;
         }
         Err(e) => {
             printful_succeeded = false;
             eprintln!("Printful request error: {}", e);
+            send_telegram_message(&format!(
+                "🚨 MU drop charged but NOT fulfilled — product_id={} session={} Printful request error: {}",
+                product_id, session_id, e,
+            )).await;
         }
     }
 
@@ -19855,6 +19881,10 @@ async fn handle_collab_sweep_order(db: Db, session: &serde_json::Value) {
     // the billing address only (and shipping_address_collection is set but
     // the customer reused the same address). Fall back to customer_details.
     let shipping = &full_session["shipping_details"];
+    // Newer Stripe API versions nest the ship-to under
+    // collected_information.shipping_details (top-level is null) — prefer it
+    // over the billing-address fallback. See create_printful_order.
+    let collected = &full_session["collected_information"]["shipping_details"];
     let cust    = &full_session["customer_details"];
     fn pick_addr(obj: &serde_json::Value) -> Option<&serde_json::Value> {
         let a = obj.get("address")?;
@@ -19863,11 +19893,13 @@ async fn handle_collab_sweep_order(db: Db, session: &serde_json::Value) {
         } else { None }
     }
     let addr_val = pick_addr(shipping)
+        .or_else(|| pick_addr(collected))
         .or_else(|| pick_addr(cust))
         .cloned()
         .unwrap_or(serde_json::Value::Null);
     let addr = &addr_val;
     let ship_name = shipping["name"].as_str()
+        .or_else(|| collected["name"].as_str())
         .or_else(|| cust["name"].as_str())
         .unwrap_or("").to_string();
     let address1 = addr["line1"].as_str().unwrap_or("");
@@ -20193,6 +20225,10 @@ async fn handle_collab_sample_order(db: Db, session: &serde_json::Value) {
     // (happens when buyer used same billing address). Mirror the single-item
     // handler's pick_addr fallback.
     let shipping = &full_session["shipping_details"];
+    // Newer Stripe API versions nest the ship-to under
+    // collected_information.shipping_details (top-level is null) — prefer it
+    // over the billing-address fallback. See create_printful_order.
+    let collected = &full_session["collected_information"]["shipping_details"];
     let cust     = &full_session["customer_details"];
     fn pick_addr(obj: &serde_json::Value) -> Option<&serde_json::Value> {
         let a = obj.get("address")?;
@@ -20201,11 +20237,13 @@ async fn handle_collab_sample_order(db: Db, session: &serde_json::Value) {
         } else { None }
     }
     let addr_val = pick_addr(shipping)
+        .or_else(|| pick_addr(collected))
         .or_else(|| pick_addr(cust))
         .cloned()
         .unwrap_or(serde_json::Value::Null);
     let addr = &addr_val;
     let ship_name = shipping["name"].as_str()
+        .or_else(|| collected["name"].as_str())
         .or_else(|| cust["name"].as_str())
         .unwrap_or("").to_string();
     let address1 = addr["line1"].as_str().unwrap_or("");

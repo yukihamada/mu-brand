@@ -7867,6 +7867,17 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
                     if !v["customer_details"].is_null() {
                         cust_owned = v["customer_details"].clone();
                     }
+                    // Newer Stripe API versions leave top-level
+                    // shipping_details null and nest the ship-to under
+                    // collected_information.shipping_details — prefer it
+                    // over the billing fallback (shipping ≠ billing!).
+                    // 2026-06-07 incident on the drop path.
+                    if shipping_owned["address"]["line1"].as_str().unwrap_or("").is_empty()
+                        && !v["collected_information"]["shipping_details"]["address"]["line1"]
+                            .as_str().unwrap_or("").is_empty()
+                    {
+                        shipping_owned = v["collected_information"]["shipping_details"].clone();
+                    }
                     // Stripe Checkout also nests address under
                     // customer_details when billing == shipping; fall
                     // back to that if shipping_details is still empty.
@@ -9979,6 +9990,59 @@ async fn retry_failed_fulfillments_step(db: Db) -> Result<(), String> {
 ///  - status='manual_pending' で 2日以上 (NFCコイン等の発送忘れ)
 /// 4xx は fulfill 側で自動返金されるのでここには出ない。出たら人手で返金/発送。
 async fn stuck_orders_alert_step(db: Db) -> Result<(), String> {
+    // ── Legacy drop path (mu_purchases) ─────────────────────────────────
+    // create_printful_order() failures used to vanish into eprintln —
+    // 2026-06-07 incident: two paid MUGEN orders sat unfulfilled for days
+    // (Printful rejected the Japanese state name). A paid cs_live_ row that
+    // still has no printful_order_id after an hour means the buyer was
+    // charged and nothing shipped. brand='you' is excluded (digital,
+    // fulfilled manually); created_at here is unix-seconds TEXT.
+    let drop_rows: Vec<(i64, String, String, i64, i64)> = {
+        let conn = db.lock().unwrap();
+        conn.prepare(
+            "SELECT id, COALESCE(email,''), COALESCE(brand,'?'), COALESCE(drop_num,0), COALESCE(amount_jpy,0)
+             FROM mu_purchases
+             WHERE printful_order_id IS NULL
+               AND session_id LIKE 'cs_live_%'
+               AND COALESCE(amount_jpy,0) > 0
+               AND COALESCE(brand,'') != 'you'
+               AND CAST(created_at AS INTEGER) > strftime('%s','now') - 14*86400
+               AND CAST(created_at AS INTEGER) < strftime('%s','now') - 3600
+             ORDER BY id ASC LIMIT 20",
+        )
+        .ok()
+        .and_then(|mut s| {
+            s.query_map([], |r| Ok((
+                r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?, r.get::<_, i64>(4)?,
+            )))
+            .ok()
+            .map(|it| it.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default()
+    };
+    if !drop_rows.is_empty() {
+        let mut lines = String::new();
+        let mut total = 0i64;
+        for (id, email, brand, drop_num, amount) in &drop_rows {
+            total += amount;
+            // Mask the local part so a leaked Telegram export doesn't dump
+            // full customer emails.
+            let masked = match email.split_once('@') {
+                Some((l, d)) => format!("{}***@{}", l.chars().take(2).collect::<String>(), d),
+                None => "?".into(),
+            };
+            lines.push_str(&format!(
+                "\n• mu_purchases id={} {} #{} ¥{} {}", id, brand.to_uppercase(), drop_num, amount, masked));
+        }
+        let _ = crate::send_telegram_message(&format!(
+            "🚨 *drop注文 入金済・未発注 {}件* (printful_order_id NULL >1h)\n\
+             合計¥{}。{}\n→ 手動でPrintful発注するか返金。",
+            drop_rows.len(), total, lines
+        ))
+        .await;
+    }
+
     let rows: Vec<(i64, String, String, i64, String)> = {
         let conn = db.lock().unwrap();
         conn.prepare(
