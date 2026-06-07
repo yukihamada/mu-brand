@@ -5777,6 +5777,20 @@ pub async fn shop_index(
   </div>
 </div>"##, total = total_active)
     };
+    // スクロール誘導FAB: グリッドが視界に入る深さまでスクロールしたら
+    // 「自分でも作れる」導線を下からスライドイン。表示/クリック/閉じるは
+    // mu-funnel.js の delegation で計測される (make_fab_shop)。
+    let make_fab = format!(
+        r##"<div id="muMakeFab" role="complementary" aria-label="{aria}">
+<a href="/make?ref=shop_scroll" data-funnel="cta_click" data-funnel-cta="make_fab_shop"><span class="t">{text}</span><b>{btn}</b></a>
+<button type="button" class="x" aria-label="{close}" data-funnel="cta_click" data-funnel-cta="make_fab_close">×</button>
+</div>{js}"##,
+        aria = if lang == "en" { "Make your own" } else { "自分の一着を作る" },
+        text = if lang == "en" { "✦ Say it — AI makes your tee" } else { "✦ 言うだけで、一着が生まれる" },
+        btn = if lang == "en" { "Try it →" } else { "作ってみる →" },
+        close = if lang == "en" { "Close" } else { "閉じる" },
+        js = SHOP_MAKE_FAB_JS,
+    );
     let body = format!(
         r##"<!doctype html><html lang="{html_lang_attr}"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -5843,6 +5857,15 @@ footer{{padding:30px 24px 50px;border-top:1px solid rgba(255,255,255,0.06);text-
 footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
 .cardplay{{position:absolute;top:8px;right:8px;z-index:2;width:38px;height:38px;border-radius:50%;border:1px solid rgba(255,215,0,.8);background:rgba(0,0,0,.66);color:#fff;font-size:13px;cursor:pointer;backdrop-filter:blur(4px)}}
 .cardplay:hover{{background:rgba(0,0,0,.85)}}
+/* スクロール誘導FAB: 商品グリッドまで降りてきた人に「買う」だけでなく
+   「作る側」への導線を出す。×で閉じたら sessionStorage で同セッション再表示なし。 */
+#muMakeFab{{position:fixed;left:50%;transform:translateX(-50%) translateY(150%);bottom:max(14px,env(safe-area-inset-bottom,0px) + 14px);z-index:60;display:flex;align-items:center;gap:4px;background:rgba(10,10,10,.93);border:1px solid rgba(255,215,0,.55);border-radius:999px;padding:8px 8px 8px 18px;backdrop-filter:blur(8px);box-shadow:0 8px 30px rgba(0,0,0,.55);transition:transform .35s ease;max-width:calc(100vw - 20px)}}
+#muMakeFab.show{{transform:translateX(-50%) translateY(0)}}
+#muMakeFab a{{display:flex;align-items:center;gap:10px;text-decoration:none;color:#f5f5f0;font-size:12.5px;font-weight:700;white-space:nowrap;overflow:hidden}}
+#muMakeFab a .t{{overflow:hidden;text-overflow:ellipsis}}
+#muMakeFab a b{{background:#ffd700;color:#0a0a0a;border-radius:99px;padding:7px 14px;font-size:12px;font-weight:800;white-space:nowrap;flex:0 0 auto}}
+#muMakeFab .x{{background:none;border:none;color:rgba(245,245,240,.55);font-size:15px;cursor:pointer;padding:4px 8px;line-height:1;flex:0 0 auto}}
+#muMakeFab .x:hover{{color:#fff}}
 /* モバイル: 20+個のブランドチップが折り返してファーストビューを商品ゼロにする
    「チップの壁」対策 — 1行横スクロール化して商品グリッドを1画面目に出す。 */
 @media (max-width:740px){{
@@ -5850,6 +5873,9 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
   .chips::-webkit-scrollbar{{display:none}}
   .chip{{flex:0 0 auto}}
   .hero{{padding-top:24px}}
+  #muMakeFab{{padding-left:14px;gap:2px}}
+  #muMakeFab a{{font-size:11.5px;gap:8px}}
+  #muMakeFab a b{{padding:6px 12px;font-size:11.5px}}
 }}
 </style></head><body>
 <nav>
@@ -5868,6 +5894,7 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
 <div class="chips sorts" style="padding-top:0">{sort_chips}</div>
 {body_or_empty}
 {pagination}
+{make_fab}
 <footer>
   <span>© 2026 MU / Enabler Inc.</span>
   <a href="/shipping">配送</a>
@@ -5936,9 +5963,32 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
             format!(r#"<div class="grid">{}</div>"#, grid)
         },
         pagination = pagination_html,
+        make_fab = make_fab,
     );
     Html(body)
 }
+
+/// /shop スクロール誘導FAB スクリプト (const なので format! のブレース
+/// エスケープ不要)。グリッド上端-200px を超えてスクロールしたら表示。
+/// ×で閉じたら sessionStorage で同セッション中は再表示しない。
+const SHOP_MAKE_FAB_JS: &str = r#"<script>(function(){
+var f=document.getElementById('muMakeFab');if(!f)return;
+try{if(sessionStorage.getItem('muMakeFabOff')){f.remove();return;}}catch(e){}
+var g=document.querySelector('.grid');
+var th=g?Math.max(420,g.offsetTop-200):520;
+var shown=false;
+function onScroll(){
+  if(shown)return;
+  var y=window.scrollY||document.documentElement.scrollTop;
+  if(y>th){shown=true;f.classList.add('show');window.removeEventListener('scroll',onScroll);}
+}
+window.addEventListener('scroll',onScroll,{passive:true});
+f.querySelector('.x').addEventListener('click',function(){
+  f.classList.remove('show');
+  setTimeout(function(){f.remove();},400);
+  try{sessionStorage.setItem('muMakeFabOff','1')}catch(e){}
+});
+})();</script>"#;
 
 /// /shop 自動「もっと見る」スクリプト (const なので format! のブレース
 /// エスケープ不要)。#muMore が視界 600px 手前に入るかボタン押下で次ページを
