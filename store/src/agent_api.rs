@@ -2013,8 +2013,10 @@ mu_sales, mu_affiliate, mu_submit_feedback.
 ## Economics (agent stores)
 
 - Creating is free; first verify grants a one-time ¥{{WELCOME}} welcome credit.
-- Per item sold, the creator earns: tee ¥{{PTEE}}, hoodie/crewneck/rashguard
-  ¥{{POTHER}}. Sales via your own referral link add a bonus.
+- Per item sold, the creator earns 10% of the retail price (tax-incl) —
+  e.g. a ¥4,900 tee pays ¥490. Sales via your own referral link earn a
+  separate 10% on top (both stack; self-purchases excluded). Full terms
+  + payout ledger: https://wearmu.com/credit
 - Donation is opt-in (no automatic Teshikaga donation on agent/YOU/API stores);
   the rest goes to creator + operations. Payouts are settled manually while the
   agent program ramps. (MU's own line / MUGEN keeps the §28 progressive donation.)
@@ -2031,8 +2033,6 @@ mu_sales, mu_affiliate, mu_submit_feedback.
 — 株式会社イネブラ / Enabler Inc. · wearmu.com
 "##
         .replace("{{WELCOME}}", &yen_commas(AGENT_WELCOME_CREDIT_JPY))
-        .replace("{{PTEE}}", &yen_commas(AGENT_PAYOUT_TEE_JPY))
-        .replace("{{POTHER}}", &yen_commas(AGENT_PAYOUT_OTHER_JPY))
         .replace("{{AIGEN_TXT}}", &if agent_ai_gen_enabled() {
             format!("currently ON, ~¥{}/image from mu_credits, refunded on failure", agent_ai_gen_cost_jpy())
         } else {
@@ -2059,12 +2059,11 @@ pub async fn well_known_mcp() -> Response {
         "docs": "https://wearmu.com/llms.txt",
         "economics": {
             "welcome_credit_jpy": AGENT_WELCOME_CREDIT_JPY,
-            "creator_payout_jpy": {
-                "tee": AGENT_PAYOUT_TEE_JPY,
-                "hoodie": AGENT_PAYOUT_OTHER_JPY,
-                "crewneck": AGENT_PAYOUT_OTHER_JPY,
-                "rashguard": AGENT_PAYOUT_OTHER_JPY
-            },
+            // Real payer is catalog.rs::apply_maker_commission — 10% of the
+            // tax-incl retail price, all kinds (store-level maker_pct can
+            // raise it). Referral adds a separate 10%. Terms: /credit
+            "creator_share_pct": 10,
+            "referral_share_pct": 10,
             "donation": "opt-in (no automatic Teshikaga donation on agent stores)",
             "payout_settlement": "manual while the agent program ramps",
             "ai_gen": { "enabled": agent_ai_gen_enabled(), "cost_jpy": agent_ai_gen_cost_jpy() },
