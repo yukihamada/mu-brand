@@ -4105,10 +4105,11 @@ button:disabled{opacity:.5;cursor:default}
       <option value="rashguard_ls">ラッシュガード</option>
       <option value="hoodie">パーカー</option>
       <option value="crewneck">スウェット</option>
+      <option value="sticker">ステッカー</option>
     </select>
     <button id="go" data-funnel="cta_click" data-funnel-cta="make_generate">つくる（無料でデザイン）</button>
   </div>
-  <div class="price-hint">できた一着は <b>Tシャツ ¥4,900〜・ラッシュガード ¥9,800〜・スウェット ¥7,800〜・パーカー ¥8,800〜</b>。1枚から受注生産・買わなくてもOK。権利リスクがあるものだけ人が確認、あとは自動で公開。</div>
+  <div class="price-hint">できた一着は <b>Tシャツ ¥4,900〜・ラッシュガード ¥9,800〜・スウェット ¥7,800〜・パーカー ¥8,800〜・ステッカー ¥800〜</b>。1枚から受注生産・買わなくてもOK。権利リスクがあるものだけ人が確認、あとは自動で公開。</div>
   <div class="ex" id="mkEx">例: <b data-x="柴犬のシンプルな線画 生成りトート">柴犬の線画</b> ・ <b data-x="禅の円相 ひと筆 黒Tシャツ">円相T</b> ・ <b data-x="夜の富士山と月 ミニマル パーカー">富士と月</b></div>
   <div class="ex" style="opacity:.6">🏠 服じゃなく<b>家</b>をつくりたい人は → <a href="https://bim.house/make" style="color:#ffd700;text-decoration:none" data-funnel="cta_click" data-funnel-cta="make_bimhouse">bim.house/make</a>（言葉から、家が建つ）</div>
   <div id="out"></div>
@@ -4325,7 +4326,7 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     }
     let parse_prompt = format!(
         "Parse this JP/EN product idea into compact JSON. ONLY emit JSON, no prose, no markdown fences.\n\
-         Schema: {{\"kind\":\"tee|rashguard_ls|hoodie|crewneck\", \
+         Schema: {{\"kind\":\"tee|rashguard_ls|hoodie|crewneck|sticker\", \
                    \"theme_brief\":\"<one short English design brief for the chest graphic>\", \
                    \"display\":\"<short JP brand-mark name, <=10 chars>\", \
                    \"hook\":\"<one JP marketing sentence for the PDP>\", \
@@ -4334,7 +4335,8 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
                    \"flag_reason\":\"<short JP reason if flagged, else empty>\"}}\n\
          Bias toward flagged=false (auto-approve). Only set true when clearly risky.\n\
          If the user mentions a rashguard / 'ラッシュガード' / 'ラッシュ' / no-gi / 柔術着の下 / グラップリング, set kind='rashguard_ls'.\n\
-         If kind is missing, default to 'tee'. retail default 4900 tee / 9800 rashguard_ls / 8800 hoodie / 7800 crewneck.\n\
+         If the user mentions a sticker / 'ステッカー' / 'シール' / decal, set kind='sticker'.\n\
+         If kind is missing, default to 'tee'. retail default 4900 tee / 9800 rashguard_ls / 8800 hoodie / 7800 crewneck / 800 sticker.\n\
          Input: {}", prompt_in);
     let parsed_json = match crate::gemini::call_gemini_text(&parse_prompt).await {
         Ok(s) => s,
@@ -4349,7 +4351,7 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     // DTG apparel + the AOP rashguard (Printful) + the premium full-coverage
     // rashguard (Contrado UK) are offered publicly. rashguard_ls → printful_aop;
     // rashguard_contrado → contrado_uk (review-gated, manual fulfillment).
-    let allowed = ["tee", "rashguard_ls", "rashguard_contrado", "hoodie", "crewneck"];
+    let allowed = ["tee", "rashguard_ls", "rashguard_contrado", "hoodie", "crewneck", "sticker"];
     let kind: &str = match q.kind.as_deref() {
         Some(k) if allowed.contains(&k) => k,
         _ if allowed.contains(&kind_parsed) => kind_parsed,
