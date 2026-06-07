@@ -858,15 +858,51 @@ pub fn spend_or_refuse(
 /// To deliver a true belt-colored rashguard the same design URL must be
 /// fanned out to every panel (cover-fill scales it per panel automatically).
 /// Other apparel (tee/hoodie/crewneck) is single-front DTG.
+/// iPhone models offered for the `phone_case` kind (Printful Tough Case 601).
+/// `(value, label, printful_variant_id)` — `value` is the alphanumeric token
+/// stored in the Stripe custom-field dropdown (resolve_size_variant matches on
+/// the upper-cased value), `label` is shown to the customer, and the id is the
+/// Glossy variant. Verified live: `GET /products/601` (2026-06-08).
+pub(crate) const PHONE_CASE_MODELS: &[(&str, &str, i64)] = &[
+    ("IPHONE11", "iPhone 11", 15381),
+    ("IPHONE11PRO", "iPhone 11 Pro", 15382),
+    ("IPHONE11PROMAX", "iPhone 11 Pro Max", 15383),
+    ("IPHONE12", "iPhone 12", 15384),
+    ("IPHONE12MINI", "iPhone 12 mini", 15385),
+    ("IPHONE12PRO", "iPhone 12 Pro", 15386),
+    ("IPHONE12PROMAX", "iPhone 12 Pro Max", 15387),
+    ("IPHONE13", "iPhone 13", 15388),
+    ("IPHONE13MINI", "iPhone 13 mini", 15389),
+    ("IPHONE13PRO", "iPhone 13 Pro", 15390),
+    ("IPHONE13PROMAX", "iPhone 13 Pro Max", 15391),
+    ("IPHONE14", "iPhone 14", 16124),
+    ("IPHONE14PLUS", "iPhone 14 Plus", 16128),
+    ("IPHONE14PRO", "iPhone 14 Pro", 16126),
+    ("IPHONE14PROMAX", "iPhone 14 Pro Max", 16130),
+    ("IPHONE15", "iPhone 15", 17714),
+    ("IPHONE15PLUS", "iPhone 15 Plus", 17716),
+    ("IPHONE15PRO", "iPhone 15 Pro", 17718),
+    ("IPHONE15PROMAX", "iPhone 15 Pro Max", 17720),
+    ("IPHONE16", "iPhone 16", 20302),
+    ("IPHONE16PLUS", "iPhone 16 Plus", 20303),
+    ("IPHONE16PRO", "iPhone 16 Pro", 20304),
+    ("IPHONE16PROMAX", "iPhone 16 Pro Max", 20305),
+    ("IPHONE17", "iPhone 17", 33985),
+    ("IPHONE17AIR", "iPhone 17 Air", 33986),
+    ("IPHONE17PRO", "iPhone 17 Pro", 33987),
+    ("IPHONE17PROMAX", "iPhone 17 Pro Max", 33988),
+];
+
 pub(crate) fn placements_for_product(printful_product_id: i64) -> &'static [&'static str] {
     match printful_product_id {
         // 301 = Men's AOP Rash Guard, 302/368/369/836 = sister AOP products
         // (per fulfill_catalog_order's stitch_color guard at line 2736).
         301 | 302 | 368 | 369 | 836 => &["front", "back", "sleeve_left", "sleeve_right"],
-        // 1 = matte poster, 19 = 11oz mug, 358 = kiss-cut sticker — Printful's
-        // mockup-generator rejects "front" for these ("File type front is not
-        // allowed", MG-4); their single printfile placement is "default".
-        1 | 19 | 358 => &["default"],
+        // 1 = matte poster, 19 = 11oz mug, 358 = kiss-cut sticker,
+        // 601 = Tough iPhone Case — Printful's mockup-generator rejects
+        // "front" for these ("File type front is not allowed", MG-4); their
+        // single printfile placement is "default".
+        1 | 19 | 358 | 601 => &["default"],
         _ => &["front"],
     }
 }
@@ -981,6 +1017,23 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
         retail_jpy: 800,
         spec_html: "キスカット ステッカー · 4×4インチ(約10cm) · 耐水・耐光ビニール · \
                     強粘着 · 屋外耐候 · ノートPC/水筒/ギアに貼れる",
+    },
+    ProductSpec {
+        kind: "phone_case",
+        // Tough Case for iPhone® (Printful 601) — 全面プリント・2層構造の
+        // 耐衝撃ケース。default placement で全面1ファイル印刷(mug/sticker と
+        // 同じ printful_dtg 経路)。iPhone 機種は購入時に Stripe Checkout の
+        // ドロップダウンで選ぶ → fulfill_catalog_order が custom_fields[size]
+        // を resolve_size_variant(601, …) で実 variant に解決する。
+        // ここの variant_id は機種未選択時のフォールバック既定値。
+        // 全機種マップ = PHONE_CASE_MODELS (Printful GET /products/601 で検証済 2026-06-08)。
+        printful_product_id: 601,
+        printful_variant_id: 33987, // iPhone 17 Pro / Glossy (default)
+        placement: "default",
+        retail_jpy: 4900,
+        spec_html: "iPhone 耐衝撃ケース (Tough Case) · 2層構造 (ポリカーボネート外殻＋TPU内殻) · \
+                    全面ラップ印刷・縁まで鮮やかな発色 · 光沢仕上げ · ワイヤレス充電対応 · \
+                    iPhone 11〜17 全機種対応 (購入時に機種を選択) · 1点ずつ印刷・Printful EU/US 製造",
     },
     ProductSpec {
         kind: "nfc_coin",
@@ -7543,13 +7596,15 @@ pub async fn shop_checkout(
             format!(
             "SELECT stripe_price_id, retail_price_jpy, description_ja, brand,
                     COALESCE({ext}, mockup_main_file, ''),
-                    COALESCE(fulfillment_route, 'printful_dtg'), meta_json
+                    COALESCE(fulfillment_route, 'printful_dtg'), meta_json,
+                    COALESCE(printful_product_id, 0)
              FROM catalog_products WHERE sku=?", ext = MOCKUP_EXT_LIVE)
         } else {
             format!(
             "SELECT stripe_price_id, retail_price_jpy, description_ja, brand,
                     COALESCE({ext}, mockup_main_file, ''),
-                    COALESCE(fulfillment_route, 'printful_dtg'), meta_json
+                    COALESCE(fulfillment_route, 'printful_dtg'), meta_json,
+                    COALESCE(printful_product_id, 0)
              FROM catalog_products WHERE sku=? AND is_active=1", ext = MOCKUP_EXT_LIVE)
         };
         conn.query_row(
@@ -7564,12 +7619,13 @@ pub async fn shop_checkout(
                     r.get::<_, String>(4)?,
                     r.get::<_, String>(5)?,
                     r.get::<_, Option<String>>(6)?,
+                    r.get::<_, i64>(7)?,
                 ))
             },
         )
         .ok()
     };
-    let Some((price_id, price_jpy, desc, _brand, mockup_path, route, meta_json)) = row else {
+    let Some((price_id, price_jpy, desc, _brand, mockup_path, route, meta_json, pf_product_id)) = row else {
         return (StatusCode::NOT_FOUND, "sku not found").into_response();
     };
 
@@ -7789,6 +7845,28 @@ pub async fn shop_checkout(
             form.push((vk, s.to_string()));
         }
     }
+    // Phone case (Tough iPhone Case 601): the customer must pick their iPhone
+    // model inside Stripe Checkout. Reuse the same custom-field key="size" the
+    // size rail uses, so fulfill_catalog_order's existing reader resolves it
+    // via resolve_size_variant(601, value). Built as owned (String) pairs —
+    // 27 options need runtime-indexed keys, unlike the 4 literal-key sizes.
+    let mut phone_model_field: Vec<(String, String)> = Vec::new();
+    if pf_product_id == 601 {
+        phone_model_field.push(("custom_fields[0][key]".into(), "size".into()));
+        phone_model_field.push(("custom_fields[0][label][type]".into(), "custom".into()));
+        phone_model_field.push(("custom_fields[0][label][custom]".into(), "iPhone Model".into()));
+        phone_model_field.push(("custom_fields[0][type]".into(), "dropdown".into()));
+        for (i, (value, label, _vid)) in PHONE_CASE_MODELS.iter().enumerate() {
+            phone_model_field.push((
+                format!("custom_fields[0][dropdown][options][{i}][label]"),
+                (*label).to_string(),
+            ));
+            phone_model_field.push((
+                format!("custom_fields[0][dropdown][options][{i}][value]"),
+                (*value).to_string(),
+            ));
+        }
+    }
     // Affiliate attribution: explicit ?ref= wins, else the mu_ref cookie set
     // by /r/:code. Validated/resolved to a commission at the webhook.
     if let Some(rc) = q.referrer.as_deref().and_then(sanitize_ref)
@@ -7860,12 +7938,22 @@ pub async fn shop_checkout(
         }
     }
 
-    let resp = reqwest::Client::new()
+    let req = reqwest::Client::new()
         .post("https://api.stripe.com/v1/checkout/sessions")
-        .basic_auth(&stripe_key, None::<&str>)
-        .form(&form)
-        .send()
-        .await;
+        .basic_auth(&stripe_key, None::<&str>);
+    // Merge the phone-model custom field (owned Strings) with the base form
+    // only when present, so every other checkout keeps the &str fast path.
+    let req = if phone_model_field.is_empty() {
+        req.form(&form)
+    } else {
+        let mut all: Vec<(String, String)> = form
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), v.clone()))
+            .collect();
+        all.extend(phone_model_field);
+        req.form(&all)
+    };
+    let resp = req.send().await;
     match resp {
         Ok(r) if r.status().is_success() => {
             let j: serde_json::Value = r.json().await.unwrap_or_default();
@@ -10053,6 +10141,12 @@ pub(crate) fn resolve_size_variant(printful_product_id: i64, size: &str) -> Opti
             "2XL" | "XXL" => Some(9331), "3XL" | "XXXL" => Some(9332),
             _ => None,
         },
+        // Tough Case for iPhone® — the "size" the customer picks is their
+        // iPhone model. Match the upper-cased dropdown value against the
+        // verified model→variant table.
+        601 => PHONE_CASE_MODELS.iter()
+            .find(|(value, _, _)| *value == sz)
+            .map(|(_, _, vid)| *vid),
         _ => None,
     }
 }
