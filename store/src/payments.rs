@@ -101,11 +101,28 @@ fn is_placeholder(key: &str) -> bool {
         || v == "0x0000000000000000000000000000000000000000"
 }
 
-/// Crypto checkout is enabled per-asset only when both the receiver
-/// wallet AND the corresponding webhook auth are real (non-placeholder).
-fn usdc_enabled() -> bool { !is_placeholder("MU_SOL_RECIPIENT") && !is_placeholder("HELIUS_WEBHOOK_AUTH") }
+/// Phase 3.6: webhook-free settlement detection. When CRYPTO_POLL_ENABLED=1
+/// a 60s cron (see `start_crons`) confirms payments by querying public RPC
+/// directly — Solana via the Solana Pay reference key, ETH via block scan —
+/// so no Helius / Alchemy account is needed. Explicit opt-in so deploys
+/// never silently change which payment rails are live.
+pub(crate) fn poll_enabled() -> bool {
+    matches!(env::var("CRYPTO_POLL_ENABLED").unwrap_or_default().as_str(),
+             "1" | "true" | "TRUE")
+}
+
+/// Crypto checkout is enabled per-asset only when the receiver wallet is
+/// real AND at least one settlement detector is live for it — either the
+/// vendor webhook (auth secret set) or the public-RPC poller (Phase 3.6).
+fn usdc_enabled() -> bool {
+    !is_placeholder("MU_SOL_RECIPIENT")
+        && (!is_placeholder("HELIUS_WEBHOOK_AUTH") || poll_enabled())
+}
 fn sol_enabled()  -> bool { usdc_enabled() }
-fn eth_enabled()  -> bool { !is_placeholder("MU_ETH_RECIPIENT") && !is_placeholder("ALCHEMY_WEBHOOK_SIGNING_KEY") }
+fn eth_enabled()  -> bool {
+    !is_placeholder("MU_ETH_RECIPIENT")
+        && (!is_placeholder("ALCHEMY_WEBHOOK_SIGNING_KEY") || poll_enabled())
+}
 
 /// GET /api/payment_methods — UI calls this on init to know which payment
 /// methods to render. JPY is always on; crypto methods only on when both
@@ -1406,6 +1423,26 @@ pub fn start_crons(db: Db) {
             tokio::time::sleep(std::time::Duration::from_secs(300)).await;
         }
     });
+    // Phase 3.6: webhook-free settlement poller (CRYPTO_POLL_ENABLED=1).
+    // Confirms pending crypto payments straight off public RPC — no
+    // Helius/Alchemy account required. No-ops instantly when there are no
+    // pending rows, so the steady-state cost is one SELECT per minute.
+    if poll_enabled() {
+        let db3 = db.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(20))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new());
+            tracing::info!("[poll] crypto settlement poller started (60s)");
+            loop {
+                poll_solana_once(&db3, &client).await;
+                poll_eth_once(&db3, &client).await;
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            }
+        });
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -1663,4 +1700,293 @@ pub async fn stripe_identity_webhook(
         kyc_record_id, session_id, status
     );
     Json(serde_json::json!({"ok": true})).into_response()
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Phase 3.6 — Webhook-free settlement poller (public RPC, opt-in)
+// ──────────────────────────────────────────────────────────────────────
+//
+// CRYPTO_POLL_ENABLED=1 turns on a 60s cron (started in `start_crons`)
+// that confirms pending crypto payments without any vendor account:
+//
+//   • Solana (USDC/SOL): every checkout already embeds a unique Solana Pay
+//     `reference` pubkey in the tx. `getSignaturesForAddress(reference)`
+//     finds the payment tx directly (this is exactly how @solana/pay's
+//     findReference works), then `getTransaction` verifies the credited
+//     amount to MU_SOL_RECIPIENT with the same ≥95% rule as the Helius
+//     webhook. Per-reference lookup → no ambiguity, no scanning.
+//   • ETH: scan new blocks for txs to MU_ETH_RECIPIENT and apply the SAME
+//     hardened matching as the Alchemy webhook (wallet-bound first, then
+//     amount-match only when exactly one candidate, ≥99.5% tolerance).
+//     Scan position persists in crypto_settings('eth_poll_last_block').
+//
+// Both paths share `confirm_and_fulfill` (status flip + Printful/Resend
+// pipeline). Webhooks remain fully functional alongside — the UPDATE is
+// guarded by status='pending', so double detection is a no-op.
+
+const SOLANA_RPC_DEFAULT: &str = "https://api.mainnet-beta.solana.com";
+const ETH_RPC_DEFAULT: &str = "https://ethereum-rpc.publicnode.com";
+/// Max ETH blocks scanned per tick (bounds RPC burst after downtime).
+const ETH_SCAN_MAX_BLOCKS: u64 = 40;
+
+async fn json_rpc(
+    client: &reqwest::Client,
+    url: &str,
+    method: &str,
+    rpc_params: serde_json::Value,
+) -> Option<serde_json::Value> {
+    let body = serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": rpc_params});
+    let resp = client.post(url).json(&body).send().await.ok()?;
+    let v: serde_json::Value = resp.json().await.ok()?;
+    if !v["error"].is_null() {
+        tracing::debug!("[poll] rpc {} error: {}", method, v["error"]);
+        return None;
+    }
+    Some(v["result"].clone())
+}
+
+/// Flip pending→confirmed and fire the fulfillment pipeline. Identical
+/// post-detection behaviour to the Helius/Alchemy webhook arms; the
+/// status='pending' guard makes detector overlap (webhook + poller)
+/// settle exactly once.
+fn confirm_and_fulfill(db: &Db, reference: &str, product_id: i64, tx_hash: &str, source: &str) -> bool {
+    let confirmed = {
+        let conn = db.lock().unwrap();
+        let upd = conn.execute(
+            "UPDATE pending_crypto_payments
+             SET status='confirmed', tx_signature=?, confirmed_at=?
+             WHERE reference=? AND status='pending'",
+            params![tx_hash, now_iso(), reference],
+        ).unwrap_or(0);
+        if upd > 0 {
+            // Legacy MUGEN rows track sold; catalog rows have product_id=0
+            // (no matching row → harmless no-op).
+            let _ = conn.execute(
+                "UPDATE products SET sold = sold + 1 WHERE id=?",
+                params![product_id],
+            );
+            true
+        } else { false }
+    };
+    if confirmed {
+        tracing::info!("[{}] confirmed ref={} product_id={} tx={}", source, reference, product_id, tx_hash);
+        let db_clone = db.clone();
+        let r = reference.to_string();
+        tokio::spawn(async move { fulfill_crypto_order(db_clone, r).await; });
+    }
+    confirmed
+}
+
+/// One Solana poll tick: for each pending USDC/SOL row, look the payment
+/// up by its Solana Pay reference key and verify the credited amount.
+async fn poll_solana_once(db: &Db, client: &reqwest::Client) {
+    if is_placeholder("MU_SOL_RECIPIENT") { return; }
+    let mu_sol = env::var("MU_SOL_RECIPIENT").unwrap_or_default();
+    let rpc = env::var("SOLANA_RPC_URL").unwrap_or_else(|_| SOLANA_RPC_DEFAULT.into());
+
+    let pending: Vec<(String, i64, String, String)> = {
+        let conn = db.lock().unwrap();
+        let mut out = Vec::new();
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT reference, product_id, amount_crypto, asset
+             FROM pending_crypto_payments
+             WHERE status='pending' AND asset IN ('USDC','SOL')
+             ORDER BY created_at ASC LIMIT 25",
+        ) {
+            if let Ok(rows) = stmt.query_map([], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?, r.get::<_, String>(3)?,
+            ))) {
+                for row in rows.flatten() { out.push(row); }
+            }
+        }
+        out
+    };
+    if pending.is_empty() { return; }
+
+    for (reference, product_id, amount_str, asset) in pending {
+        let Some(sigs) = json_rpc(client, &rpc, "getSignaturesForAddress",
+            serde_json::json!([reference, {"limit": 10}])).await else { continue };
+        let Some(sigs) = sigs.as_array().cloned() else { continue };
+        for s in sigs {
+            if !s["err"].is_null() { continue; }
+            let Some(sig) = s["signature"].as_str().map(|x| x.to_string()) else { continue };
+            let Some(tx) = json_rpc(client, &rpc, "getTransaction",
+                serde_json::json!([sig, {"encoding": "json",
+                    "maxSupportedTransactionVersion": 0,
+                    "commitment": "confirmed"}])).await else { continue };
+
+            // Account key list for balance indexing: static keys + address-
+            // table-loaded keys (v0 txs), in the order pre/postBalances use.
+            let mut keys: Vec<String> = tx["transaction"]["message"]["accountKeys"]
+                .as_array().map(|a| a.iter()
+                    .filter_map(|k| k.as_str().map(|s| s.to_string())).collect())
+                .unwrap_or_default();
+            for side in ["writable", "readonly"] {
+                if let Some(arr) = tx["meta"]["loadedAddresses"][side].as_array() {
+                    keys.extend(arr.iter().filter_map(|k| k.as_str().map(|s| s.to_string())));
+                }
+            }
+
+            // Native lamports credited to our recipient.
+            let credited_lamports: u128 = keys.iter().position(|k| k == &mu_sol)
+                .and_then(|i| {
+                    let pre = tx["meta"]["preBalances"][i].as_u64()?;
+                    let post = tx["meta"]["postBalances"][i].as_u64()?;
+                    Some(post.saturating_sub(pre) as u128)
+                }).unwrap_or(0);
+
+            // USDC (SPL) credited to our recipient — owner+mint matched via
+            // token balance deltas (robust against ATA key positions).
+            let token_delta = |arr: &serde_json::Value| -> u128 {
+                arr.as_array().map(|a| a.iter()
+                    .filter(|t| t["owner"].as_str() == Some(mu_sol.as_str())
+                             && t["mint"].as_str() == Some(SOLANA_USDC_MINT))
+                    .filter_map(|t| t["uiTokenAmount"]["amount"].as_str()
+                        .and_then(|s| s.parse::<u128>().ok()))
+                    .sum()).unwrap_or(0)
+            };
+            let credited_token_units = token_delta(&tx["meta"]["postTokenBalances"])
+                .saturating_sub(token_delta(&tx["meta"]["preTokenBalances"]));
+
+            let expected_amt: f64 = amount_str.parse().unwrap_or(0.0);
+            let (expected_units, credited_units): (u128, u128) = match asset.as_str() {
+                "USDC" => ((expected_amt * 1_000_000.0) as u128, credited_token_units),
+                "SOL"  => ((expected_amt * 1_000_000_000.0) as u128, credited_lamports),
+                _ => (0, 0),
+            };
+            if expected_units == 0 || credited_units == 0
+                || credited_units * 100 < expected_units * 95 {
+                continue;
+            }
+            confirm_and_fulfill(db, &reference, product_id, &sig, "poll/sol");
+            break;
+        }
+    }
+}
+
+/// One ETH poll tick: scan new blocks for txs paying MU_ETH_RECIPIENT and
+/// run them through the same hardened candidate matching as the Alchemy
+/// webhook. Skips entirely while no ETH payment is pending.
+async fn poll_eth_once(db: &Db, client: &reqwest::Client) {
+    if is_placeholder("MU_ETH_RECIPIENT") { return; }
+    let mu_eth = env::var("MU_ETH_RECIPIENT").unwrap_or_default().to_ascii_lowercase();
+
+    let has_pending: bool = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM pending_crypto_payments
+             WHERE status='pending' AND asset='ETH'",
+            [], |r| r.get::<_, i64>(0),
+        ).unwrap_or(0) > 0
+    };
+    if !has_pending { return; }
+
+    let rpc = env::var("ETH_RPC_URL").unwrap_or_else(|_| ETH_RPC_DEFAULT.into());
+    let Some(head_hex) = json_rpc(client, &rpc, "eth_blockNumber", serde_json::json!([])).await
+        .and_then(|v| v.as_str().map(|s| s.to_string())) else { return };
+    let Ok(head) = u64::from_str_radix(head_hex.trim_start_matches("0x"), 16) else { return };
+
+    let last: u64 = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT value FROM crypto_settings WHERE key='eth_poll_last_block'",
+            [], |r| r.get::<_, String>(0),
+        ).ok().and_then(|s| s.parse().ok()).unwrap_or(0)
+    };
+    // Fresh start → only look a few blocks back; otherwise resume, capped
+    // so an outage never triggers an unbounded scan burst.
+    let start = if last == 0 {
+        head.saturating_sub(5)
+    } else {
+        (last + 1).max(head.saturating_sub(ETH_SCAN_MAX_BLOCKS))
+    };
+    if start > head { return; }
+
+    for n in start..=head {
+        let Some(block) = json_rpc(client, &rpc, "eth_getBlockByNumber",
+            serde_json::json!([format!("0x{:x}", n), true])).await else { break };
+        if let Some(txs) = block["transactions"].as_array() {
+            for tx in txs {
+                let to = tx["to"].as_str().unwrap_or("").to_ascii_lowercase();
+                if to != mu_eth { continue; }
+                let from = tx["from"].as_str().unwrap_or("").to_ascii_lowercase();
+                let hash = tx["hash"].as_str().unwrap_or("").to_string();
+                let wei = tx["value"].as_str()
+                    .and_then(|h| u128::from_str_radix(h.trim_start_matches("0x"), 16).ok())
+                    .unwrap_or(0);
+                if hash.is_empty() || wei == 0 { continue; }
+                let value: f64 = wei as f64 / 1e18;
+
+                // Hardened matching, mirroring alchemy_webhook (R4): wallet-
+                // bound first; amount-only ONLY when exactly one candidate.
+                let candidate: Option<(String, i64)> = {
+                    let conn = db.lock().unwrap();
+                    let by_wallet: Option<(String, i64)> = if !from.is_empty() {
+                        conn.query_row(
+                            "SELECT reference, product_id, amount_crypto
+                             FROM pending_crypto_payments
+                             WHERE status='pending' AND asset='ETH'
+                               AND lower(recipient)=lower(?)
+                               AND lower(COALESCE(wallet,''))=?
+                             ORDER BY created_at ASC LIMIT 1",
+                            params![mu_eth, from],
+                            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?,
+                                    r.get::<_, String>(2)?)),
+                        ).ok().and_then(|(reference, pid, exp)| {
+                            let expected: f64 = exp.parse().unwrap_or(0.0);
+                            if expected > 0.0 && value >= expected * 0.995 {
+                                Some((reference, pid))
+                            } else { None }
+                        })
+                    } else { None };
+                    if by_wallet.is_some() { by_wallet } else {
+                        let mut stmt = match conn.prepare(
+                            "SELECT reference, product_id, amount_crypto
+                             FROM pending_crypto_payments
+                             WHERE status='pending' AND asset='ETH'
+                               AND lower(recipient)=lower(?)
+                             ORDER BY created_at ASC",
+                        ) { Ok(s) => s, Err(_) => continue };
+                        let mut matches: Vec<(String, i64)> = Vec::new();
+                        if let Ok(it) = stmt.query_map(params![mu_eth], |r| Ok((
+                            r.get::<_, String>(0)?, r.get::<_, i64>(1)?,
+                            r.get::<_, String>(2)?,
+                        ))) {
+                            for row in it.flatten() {
+                                let expected: f64 = row.2.parse().unwrap_or(0.0);
+                                if expected > 0.0 && value >= expected * 0.995 {
+                                    matches.push((row.0, row.1));
+                                    if matches.len() > 1 { break; }
+                                }
+                            }
+                        }
+                        match matches.len() {
+                            1 => Some(matches.into_iter().next().unwrap()),
+                            x if x > 1 => {
+                                tracing::warn!(
+                                    "[poll/eth] ambiguous match: {} pending orders match value={} hash={} — abstaining",
+                                    x, value, hash);
+                                None
+                            }
+                            _ => None,
+                        }
+                    }
+                };
+                if let Some((reference, product_id)) = candidate {
+                    confirm_and_fulfill(db, &reference, product_id, &hash, "poll/eth");
+                }
+            }
+        }
+        // Persist scan position per block so a crash never re-bursts.
+        {
+            let conn = db.lock().unwrap();
+            let _ = conn.execute(
+                "INSERT INTO crypto_settings (key, value, updated_at)
+                 VALUES ('eth_poll_last_block', ?, ?)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                params![n.to_string(), now_iso()],
+            );
+        }
+    }
 }
