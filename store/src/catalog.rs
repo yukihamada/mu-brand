@@ -5314,11 +5314,49 @@ const SHOP_PAGE_SIZE: i64 = 60;
 /// 返り値が空文字なら「絞り込みなし」。
 fn shop_kind_sql(kind: &str) -> &'static str {
     match kind {
+        // "TEE" は SKU にほぼ普遍的に含まれるので、kind_from_sku で上位に来る
+        // トークンを除外して優先順位を近似する。完全一致が目的でなく
+        // 「Tシャツが欲しい人に Tシャツだけ見せる」ための実用フィルタ。
+        "tee" => "(UPPER(sku) LIKE '%TEE%' AND UPPER(sku) NOT LIKE '%RASHGUARD%' AND UPPER(sku) NOT LIKE '%-RASH%' AND UPPER(sku) NOT LIKE '%HOODIE%' AND UPPER(sku) NOT LIKE '%CREWNECK%' AND UPPER(sku) NOT LIKE '%STICKER%' AND UPPER(sku) NOT LIKE '%POSTER%')",
         "rashguard" => "(UPPER(sku) LIKE '%RASHGUARD%' OR UPPER(sku) LIKE '%-RASH%')",
         "hoodie" => "(UPPER(sku) LIKE '%HOODIE%' OR UPPER(sku) LIKE '%CREWNECK%' OR UPPER(sku) LIKE '%-HOOD%' OR UPPER(sku) LIKE '%-CREW%')",
         "sticker" => "(UPPER(sku) LIKE '%STICKER%')",
         "song" => "(COALESCE(meta_json,'') LIKE '%audio_url%' OR UPPER(sku) LIKE '%-SONG%')",
         _ => "",
+    }
+}
+
+/// ?lang=en 用のブランド表示名。優先順位:
+/// 1. catalog_brands.config_json の "name_en" (ブランド固有データの正規置き場)
+/// 2. 日本語名ブランドの静的フォールバック (emoji 同様コード側で持つ)
+/// 3. DB の name そのまま (もともと英語のブランドはこれで足りる)
+fn brand_display_name_en(slug: &str, name: &str, config_json: &str) -> String {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(config_json) {
+        if let Some(en) = v.get("name_en").and_then(|x| x.as_str()) {
+            if !en.trim().is_empty() {
+                return en.to_string();
+            }
+        }
+    }
+    match slug {
+        "jiujitsu-yamano" => "Jiu-Jitsu Yarouze — Yamano × MU".to_string(),
+        "kokon" => "Yakiniku KOKON".to_string(),
+        "kamishibai" => "MU Kamishibai".to_string(),
+        "biruwa" => "MU Biruwa".to_string(),
+        "blank-camp" => "BLANK_ Dev Camp".to_string(),
+        "shockwave" => "SHOCKWAVE".to_string(),
+        "minna" => "Community-made MU".to_string(),
+        "oto" => "MU Sound Coin".to_string(),
+        "fest-gogai" => "MU FESTIVAL Extra".to_string(),
+        "mu-genten" => "MU GENTEN — Origin".to_string(),
+        "mu-takibi" => "MU TAKIBI — Bonfire".to_string(),
+        "mu-akuma" => "MU AKUMA".to_string(),
+        "mu-ippon" => "MU IPPON".to_string(),
+        "muon" => "MUON — Silence".to_string(),
+        "tatami" => "TATAMI — MU × BJJ".to_string(),
+        "bimhouse-goods" => "bim.house — Home Goods".to_string(),
+        "yuma" => "MU × YUMA".to_string(),
+        _ => name.to_string(),
     }
 }
 
@@ -5370,7 +5408,7 @@ pub async fn shop_index(
     };
     // kind / q 絞り込み: kind はホワイトリスト、q は bind + LIKE エスケープ。
     let kind = match q.kind.as_deref() {
-        Some(k @ ("rashguard" | "hoodie" | "sticker" | "song")) => k,
+        Some(k @ ("tee" | "rashguard" | "hoodie" | "sticker" | "song")) => k,
         _ => "",
     };
     let kind_sql = shop_kind_sql(kind);
@@ -5380,18 +5418,21 @@ pub async fn shop_index(
     let brand_opt = if brand_filter.is_empty() { None } else { Some(brand_filter.as_str()) };
     let (brands, items, total_active) = {
         let conn = db.lock().unwrap();
-        let brands: Vec<(String, String, String)> = conn
+        // 件数降順 — 売れ筋/在庫の厚いコラボを先頭に。件数はチップのバッジ
+        // 表示にも使う (3件のカテゴリと95件のカテゴリを同格に見せない)。
+        let brands: Vec<(String, String, String, i64, String)> = conn
             .prepare(
-                "SELECT slug, name, COALESCE(emoji,'') FROM catalog_brands
-                 WHERE is_active=1 AND EXISTS (
-                   SELECT 1 FROM catalog_products p
-                   WHERE p.brand=catalog_brands.slug AND p.is_active=1
-                 )
-                 ORDER BY slug",
+                "SELECT b.slug, b.name, COALESCE(b.emoji,''), COUNT(p.sku) AS n,
+                        COALESCE(b.config_json,'')
+                 FROM catalog_brands b
+                 JOIN catalog_products p ON p.brand=b.slug AND p.is_active=1
+                 WHERE b.is_active=1
+                 GROUP BY b.slug
+                 ORDER BY n DESC, b.slug",
             )
             .ok()
             .and_then(|mut s| {
-                s.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                s.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
                     .ok()
                     .map(|it| it.filter_map(|r| r.ok()).collect())
             })
@@ -5422,39 +5463,71 @@ pub async fn shop_index(
         if !srt.is_empty() { params.push(format!("sort={}", srt)); }
         if !knd.is_empty() { params.push(format!("kind={}", knd)); }
         if !query.is_empty() { params.push(format!("q={}", urlencoding::encode(query))); }
+        // EN モードはチップ遷移でも維持する (落とすと 1 クリックで日本語に戻る)
+        if lang == "en" { params.push("lang=en".to_string()); }
         if !params.is_empty() { u.push('?'); u.push_str(&params.join("&")); }
         u
     };
 
+    // ブランドチップ: 件数降順で上位 8 + 選択中のみ常時表示。残りは
+    // 「+N ▾」トグルに格納 — 「44 チップの壁」(横スクロールでスクロール
+    // バー非表示 → 9 個目以降が存在に気づかれない) 対策。チップごとに
+    // data-funnel-cta を付けて死にチップを計測可能にする。
+    const BRAND_CHIPS_VISIBLE: usize = 8;
     let brand_chips = {
         let mut s = String::new();
         s.push_str(&format!(
-            r#"<a class="chip{}" href="{}">すべて</a>"#,
+            r#"<a class="chip{}" href="{}" data-funnel="cta_click" data-funnel-cta="shop_brand_all">{}</a>"#,
             if brand_filter.is_empty() { " on" } else { "" },
             html_attr(&shop_url("", sort, kind, &q_trim)),
+            if lang == "en" { "All" } else { "すべて" },
         ));
-        for (slug, name, emoji) in &brands {
-            let on = if &brand_filter == slug { " on" } else { "" };
-            s.push_str(&format!(
-                r#"<a class="chip{on}" href="{href}">{emoji} {name}</a>"#,
-                on = on,
+        let mut hidden = String::new();
+        let mut hidden_n = 0usize;
+        for (i, (slug, name, emoji, n, config_json)) in brands.iter().enumerate() {
+            let on = &brand_filter == slug;
+            let disp = if lang == "en" { brand_display_name_en(slug, name, config_json) } else { name.clone() };
+            let chip = format!(
+                r#"<a class="chip{on}" href="{href}" data-funnel="cta_click" data-funnel-cta="shop_brand_{slug}">{emoji} {name} <span class="n">{n}</span></a>"#,
+                on = if on { " on" } else { "" },
                 href = html_attr(&shop_url(slug, sort, kind, &q_trim)),
+                slug = html_attr(slug),
                 emoji = html_text(emoji),
-                name = html_text(name),
+                name = html_text(&disp),
+                n = n,
+            );
+            if i < BRAND_CHIPS_VISIBLE || on {
+                s.push_str(&chip);
+            } else {
+                hidden.push_str(&chip);
+                hidden_n += 1;
+            }
+        }
+        if hidden_n > 0 {
+            let label = if lang == "en" { format!("+{} more ▾", hidden_n) } else { format!("+{} コラボ ▾", hidden_n) };
+            s.push_str(&format!(
+                r#"<button type="button" class="chip more" data-funnel="cta_click" data-funnel-cta="shop_brand_more" onclick="document.getElementById('muAllBrands').classList.remove('off');this.remove()">{label}</button><span id="muAllBrands" class="off">{hidden}</span>"#,
             ));
         }
         s
     };
 
-    // 種類チップ: ラッシュガード / パーカー・クルー / ステッカー / 曲。brand+sort+q を維持し
-    // トグル動作 (選択中をもう一度押すと解除)。曖昧さのある「Tシャツ」は既定で出るので置かない。
+    // 種類チップ: Tシャツ / ラッシュガード / パーカー・クルー / ステッカー / 曲。
+    // brand+sort+q を維持しトグル動作 (選択中をもう一度押すと解除)。
+    // 「Tシャツ」はサイトの主力商品 — フィルタ無しは致命的なので tee を提供する。
+    let kind_defs: [(&str, &str); 5] = if lang == "en" {
+        [("tee", "👕 Tees"), ("rashguard", "🥋 Rashguards"), ("hoodie", "🧥 Hoodies / Crews"), ("sticker", "✦ Stickers"), ("song", "🎵 Songs")]
+    } else {
+        [("tee", "👕 Tシャツ"), ("rashguard", "🥋 ラッシュガード"), ("hoodie", "🧥 パーカー・クルー"), ("sticker", "✦ ステッカー"), ("song", "🎵 曲")]
+    };
     let kind_chips = {
         let mut s = format!(
-            r#"<a class="chip{}" href="{}" data-funnel="cta_click" data-funnel-cta="shop_kind_all">すべての種類</a>"#,
+            r#"<a class="chip{}" href="{}" data-funnel="cta_click" data-funnel-cta="shop_kind_all">{}</a>"#,
             if kind.is_empty() { " on" } else { "" },
             html_attr(&shop_url(&brand_filter, sort, "", &q_trim)),
+            if lang == "en" { "All types" } else { "すべての種類" },
         );
-        for (key, label) in [("rashguard", "🥋 ラッシュガード"), ("hoodie", "🧥 パーカー・クルー"), ("sticker", "✦ ステッカー"), ("song", "🎵 曲")] {
+        for (key, label) in kind_defs {
             let on = if kind == key { " on" } else { "" };
             let toggle = if kind == key { "" } else { key }; // 選択中なら解除
             s.push_str(&format!(
@@ -5465,22 +5538,31 @@ pub async fn shop_index(
         s
     };
 
-    // 検索フォーム: GET /shop。brand/sort/kind を hidden で保持して検索後も絞り込み維持。
+    // 検索フォーム: GET /shop。brand/sort/kind/lang を hidden で保持して検索後も絞り込み維持。
     let search_form = format!(
         r##"<form class="shopsearch" method="get" action="/shop" role="search">
-<input type="hidden" name="brand" value="{b}"><input type="hidden" name="sort" value="{s}"><input type="hidden" name="kind" value="{k}">
-<input type="search" name="q" value="{q}" placeholder="検索 — darce / coffee / 黒帯 …" aria-label="商品検索" data-funnel="cta_click" data-funnel-cta="shop_search">
-<button type="submit" aria-label="検索">検索</button>{clear}</form>"##,
+<input type="hidden" name="brand" value="{b}"><input type="hidden" name="sort" value="{s}"><input type="hidden" name="kind" value="{k}">{lang_hidden}
+<input type="search" name="q" value="{q}" placeholder="{ph}" aria-label="{aria}" data-funnel="cta_click" data-funnel-cta="shop_search">
+<button type="submit" aria-label="{aria}">{btn}</button>{clear}</form>"##,
         b = html_attr(&brand_filter), s = html_attr(sort), k = html_attr(kind), q = html_attr(&q_trim),
+        lang_hidden = if lang == "en" { r#"<input type="hidden" name="lang" value="en">"# } else { "" },
+        ph = if lang == "en" { "Search — darce / coffee / black belt …" } else { "検索 — darce / coffee / 黒帯 …" },
+        aria = if lang == "en" { "Search products" } else { "商品検索" },
+        btn = if lang == "en" { "Search" } else { "検索" },
         clear = if q_trim.is_empty() { String::new() } else {
-            format!(r#"<a class="clearq" href="{}">クリア</a>"#, html_attr(&shop_url(&brand_filter, sort, kind, "")))
+            format!(r#"<a class="clearq" href="{}">{}</a>"#, html_attr(&shop_url(&brand_filter, sort, kind, "")), if lang == "en" { "Clear" } else { "クリア" })
         },
     );
 
     // Sort chips: MUスコア順(default) / 売れてる順 / 新着 / 価格↑ / 価格↓.
     // brand/kind/q persist, page resets.
-    let sort_chips = {
+    let sort_defs: [(&str, &str); 5] = if lang == "en" {
+        [("", "MU Score"), ("popular", "Best selling"), ("new", "New"), ("price_asc", "Price: low to high"), ("price_desc", "Price: high to low")]
+    } else {
         [("", "MUスコア順"), ("popular", "売れてる順"), ("new", "新着"), ("price_asc", "価格が安い順"), ("price_desc", "価格が高い順")]
+    };
+    let sort_chips = {
+        sort_defs
             .iter()
             .map(|(key, label)| {
                 let on = if sort == *key { " on" } else { "" };
@@ -5506,17 +5588,34 @@ pub async fn shop_index(
     // don't present as duplicate titles in Search Console.
     let brand_name = brands
         .iter()
-        .find(|(slug, _, _)| slug == &brand_filter)
-        .map(|(_, name, _)| name.clone())
+        .find(|(slug, _, _, _, _)| slug == &brand_filter)
+        .map(|(slug, name, _, _, config_json)| {
+            if lang == "en" { brand_display_name_en(slug, name, config_json) } else { name.clone() }
+        })
         .unwrap_or_else(|| brand_filter.clone());
+    // 「MU × MU コラボ」「MU × ATSUME × MU コラボ」のような自己コラボ表記を
+    // 防ぐ: ブランド名に MU を語として含む場合は「× MU コラボ」を付けない。
+    let self_collab = brand_filter == "mu"
+        || brand_name
+            .to_uppercase()
+            .split(|c: char| !c.is_alphanumeric())
+            .any(|w| w == "MU");
     let mut title = if lang == "en" {
         if brand_filter.is_empty() {
             format!("MU SHOP — Collab Tees, BJJ Wear & Limited Goods ({} items)", total_active)
+        } else if brand_filter == "mu" {
+            format!("MU Originals ({} items) | MU SHOP", total_active)
+        } else if self_collab {
+            format!("{} ({} items) | MU SHOP", brand_name, total_active)
         } else {
             format!("{} x MU Collab ({} items) | MU SHOP", brand_name, total_active)
         }
     } else if brand_filter.is_empty() {
         format!("MU SHOP — コラボTシャツ・柔術ウェア・限定グッズ通販 ({} 件)", total_active)
+    } else if brand_filter == "mu" {
+        format!("MU オリジナル商品一覧 ({}件) | MU SHOP", total_active)
+    } else if self_collab {
+        format!("{} 商品一覧 ({}件) | MU SHOP", brand_name, total_active)
     } else {
         format!("{} × MU コラボ商品一覧 ({}件) | MU SHOP", brand_name, total_active)
     };
@@ -5540,11 +5639,15 @@ pub async fn shop_index(
     let meta_desc = if lang == "en" {
         if brand_filter.is_empty() {
             format!("Official store for MU x 10+ brand collab apparel ({total} items). AI-designed tees, BJJ rashguards, stickers, sound tees. Made-to-order from 1 piece, zero waste, Stripe checkout, ships worldwide in 7-14 days.", total = total_active)
+        } else if self_collab {
+            format!("{name} apparel & goods ({n} items). Made-to-order from 1 piece, zero waste, secure Stripe checkout, ships worldwide in 7-14 days.", name = brand_name, n = total_active)
         } else {
             format!("{name} x MU collab apparel ({n} items). Made-to-order from 1 piece, zero waste, secure Stripe checkout, ships worldwide in 7-14 days.", name = brand_name, n = total_active)
         }
     } else if brand_filter.is_empty() {
         format!("MUと10+ブランドのコラボアパレル公式通販 {total}件。AIデザインTシャツ・柔術/BJJラッシュガード・ステッカー・着ると鳴る音楽T。1着から受注生産・完売廃棄ゼロ・Stripe決済・国際発送7-14日。", total = total_active)
+    } else if self_collab {
+        format!("{name} の商品 {n}件。1着から受注生産・完売廃棄ゼロ・Stripe安全決済・国際発送7-14日。", name = brand_name, n = total_active)
     } else {
         format!("{name} × MU のコラボ商品 {n}件。1着から受注生産・完売廃棄ゼロ・Stripe安全決済・国際発送7-14日。", name = brand_name, n = total_active)
     };
@@ -5609,6 +5712,7 @@ pub async fn shop_index(
     if !sort.is_empty() { bq.push_str(&format!("&sort={}", sort)); }
     if !kind.is_empty() { bq.push_str(&format!("&kind={}", kind)); }
     if !q_trim.is_empty() { bq.push_str(&format!("&q={}", urlencoding::encode(&q_trim))); }
+    if lang == "en" { bq.push_str("&lang=en"); }
     let prev_link = if page > 1 {
         format!(r#"<a class="pg-link" href="/shop?page={}{}">← 前 {} 件</a>"#,
             page - 1, bq, SHOP_PAGE_SIZE)
@@ -5712,6 +5816,12 @@ nav .brand{{font-weight:900;letter-spacing:0.4em}}
 .chip{{display:inline-block;padding:6px 12px;border:1px solid rgba(255,255,255,0.18);border-radius:999px;color:#f5f5f0;text-decoration:none;font-size:11px;letter-spacing:0.05em;background:rgba(255,255,255,0.02)}}
 .chip:hover{{border-color:#ffd700;color:#ffd700}}
 .chip.on{{background:#ffd700;color:#000;border-color:#ffd700}}
+.chip .n{{opacity:.5;font-size:9px;margin-left:2px;font-family:monospace}}
+.chip.on .n{{opacity:.65}}
+button.chip{{cursor:pointer;font-family:inherit;line-height:inherit}}
+.chip.more{{border-style:dashed;color:#ffd700;background:transparent}}
+#muAllBrands{{display:contents}}
+#muAllBrands.off{{display:none}}
 .grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;padding:8px 24px 80px;max-width:1180px;margin:0 auto}}
 .card{{background:#111;border:1px solid rgba(255,255,255,0.06);border-radius:6px;overflow:hidden;text-decoration:none;color:inherit;display:flex;flex-direction:column;transition:border-color 0.15s}}
 .card:hover{{border-color:rgba(255,215,0,0.4)}}
@@ -5751,8 +5861,8 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
 {hero}
 {make_cta}
 {search_form}
-<div class="chips">{brand_chips}</div>
-<div class="chips kinds" style="padding-top:0">{kind_chips}</div>
+<div class="chips kinds">{kind_chips}</div>
+<div class="chips" style="padding-top:0">{brand_chips}</div>
 <div class="chips sorts" style="padding-top:0">{sort_chips}</div>
 {body_or_empty}
 {pagination}
@@ -5809,10 +5919,17 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
         kind_chips = kind_chips,
         sort_chips = sort_chips,
         body_or_empty = if items.is_empty() {
-            format!(
-                r#"<div class="empty">「{}」に一致する商品が見つかりませんでした。<br><a href="/shop" style="color:#ffd700">すべての商品を見る →</a></div>"#,
-                html_text(if !q_trim.is_empty() { &q_trim } else { "この条件" })
-            )
+            if lang == "en" {
+                format!(
+                    r#"<div class="empty">No items match "{}".<br><a href="/shop?lang=en" style="color:#ffd700">Browse all items →</a></div>"#,
+                    html_text(if !q_trim.is_empty() { &q_trim } else { "these filters" })
+                )
+            } else {
+                format!(
+                    r#"<div class="empty">「{}」に一致する商品が見つかりませんでした。<br><a href="/shop" style="color:#ffd700">すべての商品を見る →</a></div>"#,
+                    html_text(if !q_trim.is_empty() { &q_trim } else { "この条件" })
+                )
+            }
         } else {
             format!(r#"<div class="grid">{}</div>"#, grid)
         },
