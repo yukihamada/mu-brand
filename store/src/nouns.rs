@@ -18,7 +18,7 @@
 // (catalog_brands.revenue_share_pct=10; settled manually for now).
 
 use axum::{
-    extract::State,
+    extract::{Query, State},
     http::StatusCode,
     response::{Html, IntoResponse, Response},
     Json,
@@ -40,14 +40,47 @@ const NOUNS_KINDS: &[(&str, &str, i64, i64, i64)] = &[
 /// unauthenticated (CC0 art, no login), so bound the R2/mockup burn.
 const NOUNS_CREATES_PER_HOUR: i64 = 60;
 
-pub async fn nouns_page() -> Html<&'static str> {
-    Html(include_str!("../static/nouns.html"))
+#[derive(serde::Deserialize)]
+pub struct NounsPageQuery {
+    /// `?noun=372` — dynamic OG card + input prefill, so a shared link
+    /// previews the sharer's own Noun instead of a hardcoded Noun 0
+    /// (persona FB: OGP固定はシェア拡散の自殺).
+    #[serde(default)]
+    pub noun: Option<u32>,
+}
+
+pub async fn nouns_page(Query(q): Query<NounsPageQuery>) -> Html<String> {
+    let base = include_str!("../static/nouns.html");
+    let Some(id) = q.noun.filter(|n| *n <= 999_999) else {
+        return Html(base.to_string());
+    };
+    // Swap every Noun-0 reference (og:image + inline preview) for the shared
+    // Noun, point og:url at the parameterized URL, and hand the id to the
+    // page JS for input prefill. `id` is a validated u32 — no escaping needed.
+    let html = base
+        .replace(
+            "https://noun.pics/0.png",
+            &format!("https://noun.pics/{}.png", id),
+        )
+        .replace(
+            "content=\"https://wearmu.com/nouns\"",
+            &format!("content=\"https://wearmu.com/nouns?noun={}\"", id),
+        )
+        .replace(
+            "</head>",
+            &format!("<script>window.__noun={};</script></head>", id),
+        );
+    Html(html)
 }
 
 #[derive(serde::Deserialize)]
 pub struct NounsCreateBody {
     pub noun_id: u32,
     pub kind: String,
+    /// Knock out the Noun's flat background color → the character floats
+    /// on the black garment instead of sitting in a colored square.
+    #[serde(default)]
+    pub transparent: bool,
 }
 
 /// POST /api/nouns/create {noun_id, kind} → {sku, design_url, shop_url, …}
@@ -75,18 +108,45 @@ pub async fn nouns_create(
         return (StatusCode::BAD_REQUEST, "noun_id out of range").into_response();
     }
 
-    let sku = format!("NOUNS-{}-{}", sku_kind, body.noun_id);
+    let sku = format!(
+        "NOUNS-{}-{}{}",
+        sku_kind,
+        body.noun_id,
+        if body.transparent { "-NB" } else { "" },
+    );
+
+    let kind_cap = if kind == "tee" { "Tee" } else { "Hoodie" };
+    let style_tag = if body.transparent { " · Floating" } else { "" };
+    let label = format!("Noun {} ⌐◨-◨ {}{}", body.noun_id, kind_cap, style_tag);
+    // Short, human title — the PDP renders description_ja as its headline,
+    // so a spec dump here reads as machine output (persona FB). Specs live
+    // in the PDP's own SPEC section.
+    let desc = format!(
+        "Noun {} {}{} — あなたのNounを、着る。CC0 · printed on demand",
+        body.noun_id, kind_cap, style_tag,
+    );
 
     // Idempotency: existing SKU → return it as-is (no refetch, no R2 write).
+    // Self-heal: refresh label/description so already-minted rows pick up
+    // copy fixes on their next touch instead of needing a manual migration.
     let existing: Option<(String, String)> = {
         let conn = db.lock().unwrap();
-        conn.query_row(
-            "SELECT COALESCE(design_file,''), COALESCE(mockup_url_external, mockup_main_file, '')
-             FROM catalog_products WHERE sku=?",
-            params![&sku],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .ok()
+        let row = conn
+            .query_row(
+                "SELECT COALESCE(design_file,''), COALESCE(mockup_url_external, mockup_main_file, '')
+                 FROM catalog_products WHERE sku=?",
+                params![&sku],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .ok();
+        if row.is_some() {
+            let _ = conn.execute(
+                "UPDATE catalog_products SET label=?, description_ja=?
+                 WHERE sku=? AND legacy_source='nouns_page'",
+                params![&label, &desc, &sku],
+            );
+        }
+        row
     };
     if let Some((design_url, mockup_url)) = existing {
         return Json(serde_json::json!({
@@ -163,7 +223,26 @@ pub async fn nouns_create(
             return (StatusCode::BAD_GATEWAY, format!("decode: {}", e)).into_response()
         }
     };
-    let up = img.resize_exact(1280, 1280, image::imageops::FilterType::Nearest);
+    let mut rgba = img.to_rgba8();
+    if body.transparent {
+        // Knock out the flat background. Nouns renders use a single solid
+        // bg color (cool #d5d7e1 / warm #e1d7d5) — sample the corner pixel
+        // and clear everything within a small tolerance (pixel art is flat,
+        // so this is exact in practice; tolerance absorbs PNG quantization).
+        let bg = *rgba.get_pixel(0, 0);
+        const TOL: i16 = 8;
+        for p in rgba.pixels_mut() {
+            let d = (p.0[0] as i16 - bg.0[0] as i16)
+                .abs()
+                .max((p.0[1] as i16 - bg.0[1] as i16).abs())
+                .max((p.0[2] as i16 - bg.0[2] as i16).abs());
+            if d <= TOL {
+                p.0 = [0, 0, 0, 0];
+            }
+        }
+    }
+    let up = image::DynamicImage::ImageRgba8(rgba)
+        .resize_exact(1280, 1280, image::imageops::FilterType::Nearest);
     let mut png_buf: Vec<u8> = Vec::new();
     if let Err(e) = up.write_to(
         &mut std::io::Cursor::new(&mut png_buf),
@@ -172,19 +251,16 @@ pub async fn nouns_create(
         return (StatusCode::INTERNAL_SERVER_ERROR, format!("encode: {}", e)).into_response();
     }
 
-    // Persist to R2 — one design per Noun, shared across kinds.
-    let r2_key = format!("catalog/nouns/noun-{}-1280.png", body.noun_id);
+    // Persist to R2 — one design per (Noun, style), shared across kinds.
+    let r2_key = format!(
+        "catalog/nouns/noun-{}{}-1280.png",
+        body.noun_id,
+        if body.transparent { "-nb" } else { "" },
+    );
     let Some(design_url) = crate::store_r2_bytes(&r2_key, &png_buf, "image/png").await else {
         return (StatusCode::SERVICE_UNAVAILABLE, "image storage unavailable").into_response();
     };
 
-    let label = format!("Noun {} ⌐◨-◨ {}", body.noun_id, kind);
-    let desc = format!(
-        "Noun {} を、着る。CC0 on-chain art, printed on demand — \
-         pixel-perfect ⌐◨-◨ on a black {}. 10% pledged to the Nouns Treasury.",
-        body.noun_id,
-        if kind == "tee" { "Bella+Canvas 3001 tee" } else { "Gildan 18500 hoodie" },
-    );
     {
         let conn = db.lock().unwrap();
         // Brand row (single INSERT per the catalog contract; idempotent).
@@ -207,7 +283,7 @@ pub async fn nouns_create(
                 0, 0,
                 &design_url, &design_url, &design_url,
                 1, 60, "live", "printful_dtg", "nouns_page",
-                format!("{{\"noun_id\":{}}}", body.noun_id),
+                format!("{{\"noun_id\":{},\"transparent\":{}}}", body.noun_id, body.transparent),
             ],
         );
         if let Err(e) = inserted {
