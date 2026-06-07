@@ -26999,12 +26999,16 @@ fn render_merch_grid_html(
       <a href="/merch/profession">PROFESSION</a>
     </div>
     <div class="grid">{cards}</div>
+    <div style="margin-top:34px">{make_cta}</div>
   </div>
   {footer}
+<script defer src="/mu-funnel.js"></script>
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </body></html>"#,
         css=vault_chrome_css(),
         header=vault_header_html("home", None),
         footer=vault_footer_html(),
+        make_cta=catalog::make_cta_banner("merch"),
         title_esc=html_escape(title),
         tagline_esc=html_escape(tagline),
         canonical_url=html_attr_escape(&canonical_url),
@@ -38120,6 +38124,7 @@ async fn success_page(
     </style>
     <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
     <script src="/tracking.js" defer></script>
+    <script defer src="/mu-funnel.js"></script>
     </head><body>
     {header_html}
     {gift_block}
@@ -38127,6 +38132,7 @@ async fn success_page(
     {next_block}
     {share_block}
     {recs_block}
+    <div style="max-width:560px;width:100%;margin-top:26px">{make_cta}</div>
     <a class="back" href="/">← Back to MU</a>
     <script>
     (function () {{
@@ -38150,6 +38156,7 @@ async fn success_page(
         next_block = next_block,
         share_block = share_block,
         recs_block = recs_block,
+        make_cta = catalog::make_cta_banner("success"),
         default_value = default_value,
     ))
 }
