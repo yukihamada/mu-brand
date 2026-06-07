@@ -40763,6 +40763,18 @@ async fn public_transparency_page(State(db): State<Db>) -> Html<String> {
 
     // Pre-format display strings (comma separation for thousands).
     let real_rev_s     = fmt_commas(real_rev);
+    let total_rev      = snap["revenue_total_jpy"].as_i64().unwrap_or(real_rev);
+    let total_rev_s    = fmt_commas(total_rev);
+    let cat_rev_s      = fmt_commas(snap["catalog"]["revenue_jpy"].as_i64().unwrap_or(0));
+    let cat_orders_s   = fmt_commas(snap["catalog"]["orders"].as_i64().unwrap_or(0));
+    let ma_sold_s      = fmt_commas(snap["ma"]["sold"].as_i64().unwrap_or(0));
+    let ma_booked_s    = fmt_commas(snap["ma"]["auction_revenue_booked_jpy"].as_i64().unwrap_or(0));
+    let cat_brand_rows = snap["catalog"]["by_brand"].as_array().map(|a| a.iter().map(|b| format!(
+        r#"<div class="row"><span class="k">{}</span><span class="v">¥{} / {}</span></div>"#,
+        html_escape(b["brand"].as_str().unwrap_or("?")),
+        fmt_commas(b["revenue_jpy"].as_i64().unwrap_or(0)),
+        fmt_commas(b["orders"].as_i64().unwrap_or(0)),
+    )).collect::<String>()).unwrap_or_default();
     let ext_rev_s      = fmt_commas(ext_rev);
     let ext_purch_s    = fmt_commas(ext_purch);
     let ext_cust_s     = fmt_commas(ext_cust);
@@ -40781,12 +40793,12 @@ async fn public_transparency_page(State(db): State<Db>) -> Html<String> {
 <title>Transparency — MU の数字、全部 | wearmu.com</title>
 <meta name="description" content="MU の売上・購入・購読・欠番。一切隠さない数字を、毎リクエストで再計算して返します。">
 <meta property="og:title" content="MU Transparency — 数字を全部晒します">
-<meta property="og:description" content="累計売上 ¥{real_rev_s}・第三者購入 {ext_purch_s} 件・MRR ¥{you_mrr_s}。0 人組織のリアル。">
+<meta property="og:description" content="累計売上 ¥{total_rev_s}・第三者購入 {ext_purch_s} 件・MRR ¥{you_mrr_s}。0 人組織のリアル。">
 <meta property="og:image" content="https://mockups.wearmu.com/hero.png">
 <meta property="og:url" content="https://wearmu.com/transparency">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="MU Transparency">
-<meta name="twitter:description" content="累計売上 ¥{real_rev_s}・第三者購入 {ext_purch_s} 件・MRR ¥{you_mrr_s}">
+<meta name="twitter:description" content="累計売上 ¥{total_rev_s}・第三者購入 {ext_purch_s} 件・MRR ¥{you_mrr_s}">
 <meta name="twitter:image" content="https://mockups.wearmu.com/hero.png">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
@@ -40860,9 +40872,9 @@ footer a:hover{{color:var(--y)}}
 
   <!-- Hero: real revenue -->
   <div class="hero-num">
-    <div class="v">¥{real_rev_s}</div>
-    <div class="l">累計実売上 (Stripe live)</div>
-    <div class="s">うち第三者 (非 yuki) は <strong style="color:var(--y)">¥{ext_rev_s}</strong> / {ext_cust_s} 名 / {ext_purch_s} 件</div>
+    <div class="v">¥{total_rev_s}</div>
+    <div class="l">累計実売上 (Stripe live・全チャネル)</div>
+    <div class="s">MUGEN/MA/you ¥{real_rev_s} + カタログ (コラボ/POD) ¥{cat_rev_s}。うち第三者 (非 yuki) ¥{ext_rev_s} / {ext_cust_s} 名 / {ext_purch_s} 件</div>
   </div>
 
   <!-- KPI strip -->
@@ -40871,6 +40883,15 @@ footer a:hover{{color:var(--y)}}
     <div class="cell"><div class="v y">{ext_cust_s}</div><div class="l">第三者顧客 (人)</div><div class="s">yuki の dogfood 除外</div></div>
     <div class="cell"><div class="v">{shirts_sold_s}</div><div class="l">出荷済み枚数</div><div class="s">products.sold 合計</div></div>
     <div class="cell"><div class="v">{you_designs_s}</div><div class="l">AI 生成済デザイン</div><div class="s">/you tee 含む</div></div>
+  </div>
+
+  <!-- catalog / MA -->
+  <div class="section">
+    <h2>カタログ売上 (コラボ / POD / MAKE) と MA</h2>
+    <p>catalog_orders (Stripe live のみ)。<strong style="color:var(--y)">2026-06-07 まで /transparency に未計上だった売上</strong>をブランド別に追加:</p>
+    {cat_brand_rows}
+    <div class="row"><span class="k">カタログ合計</span><span class="v">¥{cat_rev_s} / {cat_orders_s} 件</span></div>
+    <div class="row"><span class="k">MA 落札成立</span><span class="v">{ma_sold_s} 着 / ¥{ma_booked_s} (booked)</span></div>
   </div>
 
   <!-- /you -->
@@ -41066,6 +41087,12 @@ footer a:hover{{color:var(--y)}}
 
 </body></html>"##,
         real_rev_s = real_rev_s,
+        total_rev_s = total_rev_s,
+        cat_rev_s = cat_rev_s,
+        cat_orders_s = cat_orders_s,
+        ma_sold_s = ma_sold_s,
+        ma_booked_s = ma_booked_s,
+        cat_brand_rows = cat_brand_rows,
         loop_rev = format_jpy(loop_rev),
         ext_rev_s = ext_rev_s,
         ext_purch_s = ext_purch_s,
@@ -41172,6 +41199,18 @@ async fn public_transparency_page_en(State(db): State<Db>) -> Html<String> {
     let as_of_str = format!("{:04}-{:02}-{:02} {:02}:{:02} JST", y, m, d, hh, mm);
 
     let real_rev_s     = fmt_commas(real_rev);
+    let total_rev      = snap["revenue_total_jpy"].as_i64().unwrap_or(real_rev);
+    let total_rev_s    = fmt_commas(total_rev);
+    let cat_rev_s      = fmt_commas(snap["catalog"]["revenue_jpy"].as_i64().unwrap_or(0));
+    let cat_orders_s   = fmt_commas(snap["catalog"]["orders"].as_i64().unwrap_or(0));
+    let ma_sold_s      = fmt_commas(snap["ma"]["sold"].as_i64().unwrap_or(0));
+    let ma_booked_s    = fmt_commas(snap["ma"]["auction_revenue_booked_jpy"].as_i64().unwrap_or(0));
+    let cat_brand_rows = snap["catalog"]["by_brand"].as_array().map(|a| a.iter().map(|b| format!(
+        r#"<div class="row"><span class="k">{}</span><span class="v">¥{} / {}</span></div>"#,
+        html_escape(b["brand"].as_str().unwrap_or("?")),
+        fmt_commas(b["revenue_jpy"].as_i64().unwrap_or(0)),
+        fmt_commas(b["orders"].as_i64().unwrap_or(0)),
+    )).collect::<String>()).unwrap_or_default();
     let ext_rev_s      = fmt_commas(ext_rev);
     let ext_purch_s    = fmt_commas(ext_purch);
     let ext_cust_s     = fmt_commas(ext_cust);
@@ -41190,7 +41229,7 @@ async fn public_transparency_page_en(State(db): State<Db>) -> Html<String> {
 <title>Transparency — every MU number, public | wearmu.com</title>
 <meta name="description" content="MU's revenue, purchases, subscriptions, missing drops. Every number recomputed on every request. Nothing hidden.">
 <meta property="og:title" content="MU Transparency — every number, public">
-<meta property="og:description" content="Lifetime revenue ¥{real_rev_s} · {ext_purch_s} external purchases · MRR ¥{you_mrr_s}. The reality of a 0-human brand.">
+<meta property="og:description" content="Lifetime revenue ¥{total_rev_s} · {ext_purch_s} external purchases · MRR ¥{you_mrr_s}. The reality of a 0-human brand.">
 <meta property="og:image" content="https://mockups.wearmu.com/hero.png">
 <meta property="og:url" content="https://wearmu.com/en/transparency">
 <meta property="og:locale" content="en_US">
@@ -41200,7 +41239,7 @@ async fn public_transparency_page_en(State(db): State<Db>) -> Html<String> {
 <link rel="alternate" hreflang="x-default" href="https://wearmu.com/transparency">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="MU Transparency">
-<meta name="twitter:description" content="Lifetime revenue ¥{real_rev_s} · {ext_purch_s} external purchases · MRR ¥{you_mrr_s}">
+<meta name="twitter:description" content="Lifetime revenue ¥{total_rev_s} · {ext_purch_s} external purchases · MRR ¥{you_mrr_s}">
 <meta name="twitter:image" content="https://mockups.wearmu.com/hero.png">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
@@ -41278,9 +41317,19 @@ footer a:hover{{color:var(--y)}}
   </div>
 
   <div class="hero-num">
-    <div class="v">¥{real_rev_s}</div>
-    <div class="l">Lifetime revenue (Stripe live)</div>
+    <div class="v">¥{total_rev_s}</div>
+    <div class="l">Lifetime revenue (Stripe live · all channels)</div>
+    <div class="s">MUGEN/MA/you ¥{real_rev_s} + catalog (collabs/POD) ¥{cat_rev_s}</div>
     <div class="s">of which third-party (non-yuki) is <strong style="color:var(--y)">¥{ext_rev_s}</strong> from {ext_cust_s} customer(s) / {ext_purch_s} purchase(s)</div>
+  </div>
+
+  <!-- catalog / MA -->
+  <div class="section">
+    <h2>Catalog revenue (collabs / POD / MAKE) &amp; MA</h2>
+    <p>catalog_orders, Stripe live only — <strong style="color:var(--y)">previously not counted on /transparency until 2026-06-07</strong>. By brand:</p>
+    {cat_brand_rows}
+    <div class="row"><span class="k">Catalog total</span><span class="v">¥{cat_rev_s} / {cat_orders_s}</span></div>
+    <div class="row"><span class="k">MA auctions won</span><span class="v">{ma_sold_s} pieces / ¥{ma_booked_s} (booked)</span></div>
   </div>
 
   <div class="kpi">
@@ -41461,6 +41510,12 @@ footer a:hover{{color:var(--y)}}
 
 </body></html>"##,
         real_rev_s = real_rev_s,
+        total_rev_s = total_rev_s,
+        cat_rev_s = cat_rev_s,
+        cat_orders_s = cat_orders_s,
+        ma_sold_s = ma_sold_s,
+        ma_booked_s = ma_booked_s,
+        cat_brand_rows = cat_brand_rows,
         ext_rev_s = ext_rev_s,
         ext_purch_s = ext_purch_s,
         ext_cust_s = ext_cust_s,
@@ -46354,6 +46409,41 @@ fn public_transparency_inner(conn: &rusqlite::Connection) -> serde_json::Value {
     // as `real.revenue_jpy` so `revenue_jpy` and `real.revenue_jpy` always agree.
     let total_revenue_jpy = real_revenue_jpy;
 
+    // ── Catalog engine orders (POD / コラボ / MAKE / JiuFlow…) ──────────────
+    // These flow through catalog_orders (a separate Stripe checkout path) and
+    // were previously INVISIBLE here — /transparency under-reported real sales.
+    // Same basis as `real`: Stripe live sessions only.
+    let (catalog_orders_n, catalog_revenue_jpy): (i64, i64) = conn.query_row(
+        "SELECT COUNT(*), COALESCE(SUM(COALESCE(amount_jpy,0)),0)
+         FROM catalog_orders WHERE stripe_session_id LIKE 'cs_live_%'",
+        [], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).unwrap_or((0, 0));
+    let catalog_by_brand: Vec<serde_json::Value> = conn.prepare(
+        "SELECT COALESCE(cp.brand,'(unknown)') b, COUNT(*),
+                COALESCE(SUM(COALESCE(o.amount_jpy,0)),0)
+         FROM catalog_orders o LEFT JOIN catalog_products cp ON cp.sku = o.sku
+         WHERE o.stripe_session_id LIKE 'cs_live_%'
+         GROUP BY b ORDER BY 3 DESC LIMIT 12",
+    ).ok().and_then(|mut s| {
+        s.query_map([], |r| Ok(serde_json::json!({
+            "brand":       r.get::<_, String>(0)?,
+            "orders":      r.get::<_, i64>(1)?,
+            "revenue_jpy": r.get::<_, i64>(2)?,
+        }))).ok().map(|it| it.filter_map(|x| x.ok()).collect())
+    }).unwrap_or_default();
+    // MA — 落札成立の実数 (products テーブル基準の booked 値)
+    let ma_sold: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM products WHERE brand='ma' AND sold>=1",
+        [], |r| r.get(0),
+    ).unwrap_or(0);
+    // /you tee の Stripe-live 実売 (旧 you_tee_jpy は total−booked の残差で
+    // 負の値を返すバグだった — 実数に置換)
+    let you_tee_live_jpy: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM mu_purchases
+         WHERE brand='you' AND session_id LIKE 'cs_live_%'",
+        [], |r| r.get::<_, i64>(0),
+    ).unwrap_or(0) * 6_800;
+
     // Recent external purchases — PII-safe feed (purchase_pseudonym + brand + drop_num + JST date).
     // We surface this so /transparency feels alive and the "8 lifetime purchases"
     // number becomes tangible. Excludes yuki's own dogfood. Limit 10.
@@ -46409,10 +46499,26 @@ fn public_transparency_inner(conn: &rusqlite::Connection) -> serde_json::Value {
     serde_json::json!({
         // ── 旧フィールド (互換のため残す) — Stripe live のみ集計 (test 除外) ──
         "revenue_jpy": total_revenue_jpy,
+        // 真の総売上 = mu_purchases (MUGEN/MA/you) + catalog_orders (コラボ/POD)。
+        // どちらも Stripe live セッションのみ。
+        "revenue_total_jpy": total_revenue_jpy + catalog_revenue_jpy,
         "revenue_breakdown": {
+            // shirts/auctions は products テーブル基準の booked 値 (出品×sold /
+            // 落札額)。Stripe 検証済みの revenue_jpy とは基準が異なる。
+            "basis_note":   "shirts/auctions = booked (products), you_tee = Stripe live",
             "shirts_jpy":   revenue_shirts_jpy,
             "auctions_jpy": auction_revenue_jpy,
-            "you_tee_jpy":  total_revenue_jpy - revenue_shirts_jpy - auction_revenue_jpy,
+            "you_tee_jpy":  you_tee_live_jpy,
+        },
+        "catalog": {
+            "orders":      catalog_orders_n,
+            "revenue_jpy": catalog_revenue_jpy,
+            "by_brand":    catalog_by_brand,
+            "note": "catalog_orders (コラボ/POD/MAKE)。Stripe live のみ。従来 /transparency に未計上だった分。",
+        },
+        "ma": {
+            "sold": ma_sold,
+            "auction_revenue_booked_jpy": auction_revenue_jpy,
         },
         "shirts_sold":   shirts_sold,
         "purchases_recorded": purchases_total,
