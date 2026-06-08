@@ -5149,14 +5149,21 @@ pub async fn public_gift_create(
         Some(c) => format!(" You may weave the initial '{}' in subtly and tastefully.", c),
         None => String::new(),
     };
+    // phone_case の印刷面は縦長(printfile 1392×2220)。横長で生成すると
+    // フチが切れる/余るので、ケースだけ縦長アスペクトを明示する。マグは横ラップ。
+    let orient_clause = if kind == "phone_case" {
+        " The canvas MUST be PORTRAIT orientation — clearly taller than wide (tall phone-case aspect, about 9:19), motif centered with generous vertical space."
+    } else {
+        ""
+    };
     let design_prompt = if full_bleed {
         format!(
-            "Print-ready FULL-BLEED artwork at 300 DPI. Fill the ENTIRE canvas edge to edge \
+            "Print-ready FULL-BLEED artwork at 300 DPI.{} Fill the ENTIRE canvas edge to edge \
              (no white margins) with a deep, elegant background and a single refined symbolic \
              motif centered. It is a heartfelt gift made FOR a specific person: {}. Capture their \
              spirit as a minimalist MU mark — fine linework, calm negative space, gallery-grade, \
              NOT a portrait, NO real faces.{} NO model, NO mockup, just the artwork. Variation: {}.",
-            theme_brief, initial_clause, seed)
+            orient_clause, theme_brief, initial_clause, seed)
     } else {
         format!(
             "Print-ready chest graphic at 300 DPI on a pure white background. A heartfelt gift \
