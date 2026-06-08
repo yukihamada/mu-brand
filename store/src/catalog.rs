@@ -5360,6 +5360,82 @@ document.getElementById('go').onclick=function(){
 </script>
 </body></html>"##;
 
+/// GET /g/:sku — 贈りものの「開封」ページ。納品書のURLから受け取った人が開く。
+/// デザインを見せ、声で聴き（③）、そして「あなたも作って贈る」へ（②: 連鎖）。
+pub async fn gift_unbox_page(State(db): State<Db>, axum::extract::Path(sku): axum::extract::Path<String>) -> Html<String> {
+    let row = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT label, COALESCE(mockup_url_external, mockup_main_file, design_file, ''), COALESCE(meta_json,'')
+             FROM catalog_products WHERE sku=?",
+            rusqlite::params![&sku],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+        ).ok()
+    };
+    let Some((_label, img, meta)) = row else {
+        return Html("<!doctype html><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\"><body style=\"background:#0a0a0a;color:#f5f5f0;font-family:sans-serif;text-align:center;padding:80px 20px\">この贈りものは見つかりませんでした。<br><br><a href=\"/gift\" style=\"color:#e6c449\">あなたも作って贈る →</a></body>".to_string());
+    };
+    let m: serde_json::Value = serde_json::from_str(&meta).unwrap_or(serde_json::json!({}));
+    let to = m["gift_to"].as_str().unwrap_or("").trim().to_string();
+    let from = m["gift_from"].as_str().unwrap_or("").trim().to_string();
+    let to_disp = if to.is_empty() { "あなた".to_string() } else { format!("{} さん", to) };
+    let from_line = if from.is_empty() { String::new() } else { format!("<p class=\"from\">{} より</p>", html_text(&from)) };
+    let voice = format!("{}へ。あなたのために、作りました。心をこめて。{}",
+        to_disp, if from.is_empty() { String::new() } else { format!(" {} より。", from) });
+    Html(format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>あなたへ、贈りもの — MU</title>
+<meta name="robots" content="noindex">
+<meta property="og:title" content="あなたへ、贈りもの — MU">
+<meta property="og:image" content="{img}">
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:#0a0a0a;color:#f5f5f0;font-family:'Hiragino Sans','Helvetica Neue',Arial,sans-serif;line-height:1.8;min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:40px 22px}}
+.box{{max-width:440px;width:100%;text-align:center;animation:fade 1.1s ease both}}
+@keyframes fade{{from{{opacity:0;transform:translateY(12px)}}to{{opacity:1;transform:none}}}}
+.lead{{font-size:12px;letter-spacing:.34em;color:#e6c449;text-transform:uppercase;margin-bottom:18px}}
+.to{{font-size:24px;font-weight:800;margin-bottom:20px}}
+.art{{width:100%;max-width:300px;margin:0 auto 22px;border-radius:16px;display:block;box-shadow:0 12px 60px rgba(0,0,0,.6)}}
+.from{{font-size:14px;color:rgba(245,245,240,.6);margin-top:-8px;margin-bottom:18px}}
+.voice{{background:transparent;border:1px solid rgba(230,196,73,.55);color:#e6c449;font:inherit;font-size:15px;font-weight:700;padding:13px 22px;border-radius:999px;cursor:pointer;letter-spacing:.04em}}
+.voice:active{{transform:scale(.97)}}
+.line{{height:1px;background:rgba(255,255,255,.1);margin:30px 0 22px}}
+.make{{font-size:14.5px;color:rgba(245,245,240,.82);margin-bottom:14px}}
+.cta{{display:inline-block;background:#e6c449;color:#0a0a0a;text-decoration:none;font-weight:800;padding:15px 26px;border-radius:11px;font-size:16px;letter-spacing:.03em}}
+.cta small{{display:block;font-weight:600;font-size:11px;opacity:.7;margin-top:3px;letter-spacing:0}}
+.foot{{font-size:11px;color:rgba(245,245,240,.4);margin-top:26px;letter-spacing:.2em}}
+</style></head><body>
+<div class="box">
+  <div class="lead">🎁 あなたへ、贈りもの</div>
+  <div class="to">{to} へ</div>
+  <img class="art" src="{img}" alt="贈りもの">
+  {from_line}
+  <button class="voice" id="v" data-t="{voice}">▶ 声で聴く</button>
+  <div class="line"></div>
+  <p class="make">うけとった、つぎは あなたが。<br>大切な人のために、あなたも作れます。</p>
+  <a class="cta" href="/gift">あなたも、誰かのために作る →<small>言葉から、その人だけの一点ものを</small></a>
+  <div class="foot">MU — 作ることを、空気に。</div>
+</div>
+<script>
+document.getElementById('v').onclick=function(){{
+  var t=this.getAttribute('data-t');
+  try{{
+    speechSynthesis.cancel();
+    var u=new SpeechSynthesisUtterance(t);u.lang='ja-JP';u.rate=.92;u.pitch=1.02;
+    var vs=speechSynthesis.getVoices().filter(function(x){{return x.lang&&x.lang.indexOf('ja')===0;}});
+    if(vs.length)u.voice=vs[0];
+    speechSynthesis.speak(u);
+  }}catch(e){{}}
+}};
+</script>
+</body></html>"##,
+        img = html_attr(&img),
+        to = html_text(&to_disp),
+        from_line = from_line,
+        voice = html_attr(&voice),
+    ))
+}
+
 // ════════════════════════════════════════════════════════════════════
 // 昇帯記念ドロップ (Belt Promotion Drop) — BJJ需要ドリブンの一次流通
 //
@@ -9541,11 +9617,14 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
         } else {
             format!("{} さんより", from.trim())
         };
-        let message = if msg.trim().is_empty() {
+        let base_msg = if msg.trim().is_empty() {
             "心をこめて。 — MU".to_string()
         } else {
             msg.trim().to_string()
         };
+        // 受け取った人を「作り手」へ: 納品書に開封ページ(声で聴く+作って贈る)を案内。
+        // これが「贈与が次の創作を生む」連鎖の物理的な入口。
+        let message = format!("{}\n\n🎁 ひらいて、聴いて — そして、あなたも大切な人へ。\nwearmu.com/g/{}", base_msg, sku);
         Some(serde_json::json!({ "subject": subject, "message": message }))
     } else {
         None
