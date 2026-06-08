@@ -1734,16 +1734,16 @@ pub async fn generate_lifestyle_photo(
         .filter(|s| s.starts_with("http") && !s.contains("printful-upload.s3"))
     };
     let ref_clause = if design_url.is_some() {
-        "The garment in the photo MUST be printed with the EXACT graphic design shown in the supplied reference image — match the artwork, colours, and proportions precisely. The brief below is context, but the reference image is the source of truth for the print."
+        "The item in the photo MUST be printed with the EXACT graphic design shown in the supplied reference image — match the artwork, colours, and proportions precisely. The brief below is context, but the reference image is the source of truth for the print."
     } else {
-        "The garment design (printed on chest / back, depending on shot) interprets the brief below — no reference image was supplied."
+        "The printed item interprets the brief below — no reference image was supplied."
     };
     let prompt = format!(
         "Editorial 4:5 portrait lifestyle photo, 1080×1350. \
          Brand context: {brand_ctx} \
          Scene: {scene} \
          {ref_clause} \
-         Garment brief / concept: {brief}. \
+         Design brief / concept: {brief}. \
          Style: photorealistic Sony A7IV 35mm f/2.0, soft natural light, slight film grain, \
          magazine cover quality. \
          Strict rules: NO face visible (use back-of-head, deliberate crop, or composition to hide it); \
@@ -2135,6 +2135,14 @@ pub async fn generate_onbody_mockup(
             "width": 900,      "height": 900,
             "top": 0,          "left": 0
         }),
+        // Tough Case for iPhone (601): single "default" printfile 1392×2220
+        // (verified GET /mockup-generator/printfiles/601). Fill the whole
+        // case back edge to edge — the tee 1800×2400 box overflows it.
+        601 => serde_json::json!({
+            "area_width": 1392, "area_height": 2220,
+            "width": 1392,      "height": 2220,
+            "top": 0,           "left": 0
+        }),
         // tee / hoodie / crewneck (DTG front) + AOP panels.
         _ => serde_json::json!({
             "area_width": 1800, "area_height": 2400,
@@ -2275,6 +2283,7 @@ fn kind_from_sku(sku: &str) -> &'static str {
     if s.contains("-SONG-") || s.ends_with("-SONG") { return "song"; }
     if s.contains("-DEVICE-") || s.ends_with("-DEVICE") { return "device"; }
     if s.contains("-HOUSE-") || s.ends_with("-HOUSE") { return "house"; }
+    if s.contains("PHONE-CASE") || s.contains("PHONE_CASE") || s.ends_with("-CASE") { return "phone_case"; }
     if s.contains("RASHGUARD") || s.contains("-RASH") { return "rashguard_ls"; }
     if s.contains("HOODIE") || s.contains("-HOOD-") || s.ends_with("-HOOD") { return "hoodie"; }
     if s.contains("CREWNECK") || s.contains("-CREW-") || s.ends_with("-CREW") { return "crewneck"; }
@@ -2366,6 +2375,12 @@ fn scene_for_kind(kind: &str, variant: u32) -> &'static str {
             "Cotton tote bag on a wooden cafe table with a paperback book and reusable coffee cup inside, top-down view.",
         ("mug", _) =>
             "Ceramic mug on a wooden cafe table beside a notebook and fountain pen, steam rising. Editorial product photography.",
+        ("phone_case", 1) =>
+            "A hand holding an iPhone (with the printed case on its back facing the camera) over a wooden cafe table, a flat white coffee and an open notebook softly out of focus behind. Daily life, candid, no face visible.",
+        ("phone_case", 2) =>
+            "The iPhone lying face-down on a linen surface next to keys, sunglasses and a paperback, the printed case back fully visible, soft morning window light. Top-down editorial flat-lay.",
+        ("phone_case", _) =>
+            "Someone slipping the cased iPhone into the back pocket of jeans on a city street at golden hour, the printed case back visible, shot from behind. No face visible.",
         ("canvas", _) =>
             "Framed canvas on a neutral concrete wall in a minimal apartment, small succulent on a console below, soft side light.",
         ("sticker", _) =>
@@ -6737,13 +6752,36 @@ pub async fn shop_pdp(
         } else {
             "Stripe + Printful 7-14 日 国際発送"
         };
+        // Phone case: render an iPhone-model <select> on the PDP itself,
+        // auto-select the visitor's likely model (screen size × DPR — exact
+        // detection is impossible, so it's a best-guess the buyer can change),
+        // and carry the choice into checkout via ?model=. Without JS, the
+        // buy link has no model → shop_checkout falls back to a Stripe-side
+        // dropdown of all 27 models. The "size" rail (tees) is untouched.
+        let phone_html = if kind_guess == "phone_case" {
+            let opts: String = PHONE_CASE_MODELS.iter()
+                .map(|(v, l, _)| format!("<option value=\"{}\">{}</option>", v, l))
+                .collect();
+            format!(
+                r#"<div class="pc-pick" style="margin:16px 0 4px"><label for="iphone-model" style="display:block;font-size:13px;opacity:.8;margin-bottom:6px">iPhone 機種を選択</label><select id="iphone-model" style="width:100%;padding:12px 13px;background:#0a0a0a;color:#f5f5f0;border:1px solid #333;border-radius:6px;font:inherit;font-size:15px">{opts}</select><p id="iphone-detected" style="font-size:12px;opacity:.65;margin:8px 2px 0;line-height:1.5"></p></div>"#,
+                opts = opts,
+            )
+        } else { String::new() };
+        let phone_script = if kind_guess == "phone_case" {
+            format!(
+                r#"<script>(function(){{var sel=document.getElementById('iphone-model'),b=document.getElementById('buybtn'),det=document.getElementById('iphone-detected'),base="{base}";if(!sel||!b)return;var w=Math.min(screen.width,screen.height),h=Math.max(screen.width,screen.height),d=Math.round(window.devicePixelRatio||1);var key=w+'x'+h+'@'+d;var M={{'375x812@3':'IPHONE13MINI','390x844@3':'IPHONE14','393x852@3':'IPHONE16','402x874@3':'IPHONE16PRO','430x932@3':'IPHONE16PLUS','428x926@3':'IPHONE14PLUS','440x956@3':'IPHONE16PROMAX','414x896@2':'IPHONE11','414x896@3':'IPHONE11PROMAX'}};var guess=M[key];function apply(){{b.href=base+'&model='+encodeURIComponent(sel.value);}}if(guess){{for(var i=0;i<sel.options.length;i++){{if(sel.options[i].value===guess){{sel.selectedIndex=i;break;}}}}det.textContent='お使いの端末は '+sel.options[sel.selectedIndex].text+' のようです（違ったら選び直してください）';}}else{{det.textContent='お使いの iPhone 機種を選んでください';}}sel.addEventListener('change',function(){{apply();det.textContent='選択中: '+sel.options[sel.selectedIndex].text;}});apply();}})();</script>"#,
+                base = base,
+            )
+        } else { String::new() };
         format!(
-            r#"{cross_html}<a class="buy" id="buybtn" href="{base}" data-funnel="cta_click" data-funnel-cta="pdp_buy">買う <span class="amt">¥{price}</span> · 即購入 ({fulfil_note})</a>{cross_script}"#,
+            r#"{cross_html}{phone_html}<a class="buy" id="buybtn" href="{base}" data-funnel="cta_click" data-funnel-cta="pdp_buy">買う <span class="amt">¥{price}</span> · 即購入 ({fulfil_note})</a>{cross_script}{phone_script}"#,
             cross_html = cross_html,
+            phone_html = phone_html,
             base = base,
             price = format_jpy(price_jpy),
             fulfil_note = fulfil_note,
             cross_script = cross_script,
+            phone_script = phone_script,
         )
     } else {
         r#"<div class="buy disabled">準備中</div>"#.to_string()
@@ -7557,6 +7595,12 @@ pub struct CheckoutQuery {
     /// single-unit checkout behaviour is untouched.
     #[serde(default)]
     pub qty: Option<u32>,
+    /// phone_case only: the iPhone model the buyer picked on the PDP
+    /// (a PHONE_CASE_MODELS value like "IPHONE16PRO"). When present + valid,
+    /// checkout skips the Stripe-side model dropdown and pins the variant via
+    /// metadata[phone_model]. Absent/invalid → Stripe shows the full dropdown.
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 /// Pull a referral code from the `mu_ref` cookie (set by `/r/:code`).
@@ -7845,26 +7889,39 @@ pub async fn shop_checkout(
             form.push((vk, s.to_string()));
         }
     }
-    // Phone case (Tough iPhone Case 601): the customer must pick their iPhone
-    // model inside Stripe Checkout. Reuse the same custom-field key="size" the
-    // size rail uses, so fulfill_catalog_order's existing reader resolves it
-    // via resolve_size_variant(601, value). Built as owned (String) pairs —
-    // 27 options need runtime-indexed keys, unlike the 4 literal-key sizes.
+    // Phone case (Tough iPhone Case 601): the buyer's iPhone model. This is a
+    // model selector, NOT the tee "size" rail — it uses its own key.
+    //   • PDP passed ?model=IPHONE16PRO (valid) → pin it via
+    //     metadata[phone_model]; no Stripe dropdown (one fewer click).
+    //   • No/invalid model (e.g. direct link, JS off) → render a Stripe-side
+    //     dropdown of all 27 models under custom-field key="iphone_model".
+    // fulfill_catalog_order reads metadata[phone_model] first, then the
+    // custom-field; resolve_size_variant(601, value) maps it to the variant.
     let mut phone_model_field: Vec<(String, String)> = Vec::new();
     if pf_product_id == 601 {
-        phone_model_field.push(("custom_fields[0][key]".into(), "size".into()));
-        phone_model_field.push(("custom_fields[0][label][type]".into(), "custom".into()));
-        phone_model_field.push(("custom_fields[0][label][custom]".into(), "iPhone Model".into()));
-        phone_model_field.push(("custom_fields[0][type]".into(), "dropdown".into()));
-        for (i, (value, label, _vid)) in PHONE_CASE_MODELS.iter().enumerate() {
-            phone_model_field.push((
-                format!("custom_fields[0][dropdown][options][{i}][label]"),
-                (*label).to_string(),
-            ));
-            phone_model_field.push((
-                format!("custom_fields[0][dropdown][options][{i}][value]"),
-                (*value).to_string(),
-            ));
+        let picked = q.model.as_deref().map(|m| m.to_uppercase()).filter(|m| {
+            PHONE_CASE_MODELS.iter().any(|(v, _, _)| *v == m)
+        });
+        if let Some(m) = picked {
+            // PDP already chose the model — pin it, skip the dropdown.
+            form.push(("metadata[phone_model]", m));
+        } else {
+            // Fallback: let Stripe collect the model. key="iphone_model"
+            // (decoupled from the tee size rail).
+            phone_model_field.push(("custom_fields[0][key]".into(), "iphone_model".into()));
+            phone_model_field.push(("custom_fields[0][label][type]".into(), "custom".into()));
+            phone_model_field.push(("custom_fields[0][label][custom]".into(), "iPhone Model".into()));
+            phone_model_field.push(("custom_fields[0][type]".into(), "dropdown".into()));
+            for (i, (value, label, _vid)) in PHONE_CASE_MODELS.iter().enumerate() {
+                phone_model_field.push((
+                    format!("custom_fields[0][dropdown][options][{i}][label]"),
+                    (*label).to_string(),
+                ));
+                phone_model_field.push((
+                    format!("custom_fields[0][dropdown][options][{i}][value]"),
+                    (*value).to_string(),
+                ));
+            }
         }
     }
     // Affiliate attribution: explicit ?ref= wins, else the mu_ref cookie set
@@ -8316,12 +8373,22 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
     // to the matching one. Without this, every order ships size M
     // regardless of what the customer picked.
     let mut variant_override: Option<i64> = None;
-    if let Some(custom_fields) = session["custom_fields"].as_array() {
-        for cf in custom_fields {
-            if cf["key"].as_str() == Some("size") {
-                let chosen = cf["dropdown"]["value"].as_str().unwrap_or("M");
-                variant_override = resolve_size_variant(_pp_id, chosen);
-                break;
+    // phone_case: the model can arrive pinned on metadata[phone_model] (PDP
+    // selected it) — honour that first.
+    if let Some(m) = session["metadata"]["phone_model"].as_str() {
+        variant_override = resolve_size_variant(_pp_id, m);
+    }
+    // Otherwise read the Stripe custom-field. "size" = tee/garment size rail;
+    // "iphone_model" = phone_case model dropdown (decoupled keys).
+    if variant_override.is_none() {
+        if let Some(custom_fields) = session["custom_fields"].as_array() {
+            for cf in custom_fields {
+                let k = cf["key"].as_str();
+                if k == Some("size") || k == Some("iphone_model") {
+                    let chosen = cf["dropdown"]["value"].as_str().unwrap_or("M");
+                    variant_override = resolve_size_variant(_pp_id, chosen);
+                    break;
+                }
             }
         }
     }
