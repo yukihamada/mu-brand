@@ -1089,6 +1089,146 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
                     サイズ調整ストラップ(ワンサイズ) · ※プリントでなく刺繍のため \
                     色数・細部に制限あり · 1点ずつ製造・Printful EU/US 製造",
     },
+    // ── POD 拡張 2026-06-08: 暮らし・家もの + 残アパレル ──────────────────
+    // 全て merch-bridge で Printful 同期済み(=実在検証済み)の product/variant/
+    // placement。mockup は generate_onbody_mockup が printful_fill_position で
+    // 印刷面を取得し「中央fit(アスペクト維持・余白あり)」で配置するので文字が
+    // はみ出さない。placements_for_product は既定 ["front"] を返し、stored
+    // placement(default/first/embroidery_*)が != "front" のとき build_printful_item
+    // がそれを採用する(個別 arm 追加は不要)。
+    ProductSpec {
+        kind: "long_sleeve_tee",
+        printful_product_id: 356, printful_variant_id: 10095, placement: "front",
+        retail_jpy: 5800,
+        spec_html: "Bella+Canvas 3501 ユニセックス ロングスリーブTee · 前面DTG · \
+                    コットン主体・長袖・通年 · 1点ずつ印刷・Printful EU/US 製造",
+    },
+    ProductSpec {
+        kind: "shorts",
+        printful_product_id: 693, printful_variant_id: 17391, placement: "front",
+        retail_jpy: 6800,
+        spec_html: "全面プリント リサイクルメッシュ ショーツ · 軽量速乾 · \
+                    トレーニング/ノーギ向け · 昇華プリント · Printful 製造",
+    },
+    ProductSpec {
+        kind: "beanie",
+        printful_product_id: 809, printful_variant_id: 20487, placement: "embroidery_front",
+        retail_jpy: 4800,
+        spec_html: "AS Colour 1120 フィッシャーマン ビーニー · 前面 立体刺繍 · \
+                    ※プリントでなく刺繍(色数・細部に制限) · ワンサイズ",
+    },
+    ProductSpec {
+        kind: "leggings",
+        printful_product_id: 189, printful_variant_id: 7678, placement: "default",
+        retail_jpy: 8800,
+        spec_html: "全面プリント レギンス(ノーギ スパッツ) · 4方向ストレッチ · \
+                    昇華プリント(色褪せ・剥がれなし) · Printful 製造",
+    },
+    ProductSpec {
+        kind: "joggers",
+        printful_product_id: 895, printful_variant_id: 23114, placement: "leg_front_right",
+        retail_jpy: 9800,
+        spec_html: "Bella+Canvas 4737 ヘビーウェイト スウェットパンツ · 右腿プリント · \
+                    裏起毛・厚手 · 1点ずつ印刷・Printful 製造",
+    },
+    ProductSpec {
+        kind: "apron",
+        printful_product_id: 894, printful_variant_id: 22903, placement: "front",
+        retail_jpy: 8800,
+        spec_html: "全面プリント プレミアム エプロン · 前面フルプリント · \
+                    調整可能なネックストラップ · 料理/制作/接客に · Printful 製造",
+    },
+    ProductSpec {
+        kind: "canvas",
+        printful_product_id: 3, printful_variant_id: 19296, placement: "default",
+        retail_jpy: 12800,
+        spec_html: "キャンバスプリント · 木枠張り・壁掛け対応 · ジクレー品質 · \
+                    部屋に飾るアート · Printful EU/US 製造",
+    },
+    ProductSpec {
+        kind: "metal_print",
+        printful_product_id: 588, printful_variant_id: 15136, placement: "default",
+        retail_jpy: 18800,
+        spec_html: "光沢メタルプリント · 高耐久・発色鮮やか · プレミアム壁アート · \
+                    Printful 製造",
+    },
+    ProductSpec {
+        kind: "pillow",
+        printful_product_id: 214, printful_variant_id: 9515, placement: "front",
+        retail_jpy: 6800,
+        spec_html: "全面プリント クッション(カバー+中綿) · 店内/自宅用 · \
+                    肌触りの良い生地 · Printful 製造",
+    },
+    ProductSpec {
+        kind: "blanket",
+        printful_product_id: 536, printful_variant_id: 13444, placement: "embroidery_corner_right",
+        retail_jpy: 14800,
+        spec_html: "シェルパ ブランケット · 隅に立体刺繍 · ふわふわ起毛・あたたかい · \
+                    ※隅の刺繍はマーク向き(色数制限) · Printful 製造",
+    },
+    ProductSpec {
+        kind: "coaster",
+        printful_product_id: 611, printful_variant_id: 15662, placement: "default",
+        retail_jpy: 2800,
+        spec_html: "コルクバック コースター · 全面プリント · 滑り止め・吸水 · \
+                    1枚 · Printful 製造",
+    },
+    ProductSpec {
+        kind: "placemat",
+        printful_product_id: 709, printful_variant_id: 17484, placement: "first",
+        retail_jpy: 6800,
+        spec_html: "プレースマット 4枚セット · 全面プリント · 食卓を彩る · \
+                    Printful 製造",
+    },
+    ProductSpec {
+        kind: "journal",
+        printful_product_id: 867, printful_variant_id: 22658, placement: "front",
+        retail_jpy: 5800,
+        spec_html: "ハードカバー ジャーナル(マット) · 表紙フルプリント · \
+                    日記/アイデア帳 · Printful 製造",
+    },
+    ProductSpec {
+        kind: "mug_black",
+        printful_product_id: 300, printful_variant_id: 9323, placement: "default",
+        retail_jpy: 3200,
+        spec_html: "黒マグ · 光沢仕上げ · 全面ラップ印刷 · 電子レンジ・食洗機対応 · \
+                    縁まで鮮やかな発色 · 1点ずつ印刷",
+    },
+    ProductSpec {
+        kind: "wine_glass",
+        printful_product_id: 691, printful_variant_id: 17353, placement: "default",
+        retail_jpy: 4200,
+        spec_html: "ステムレス ワイングラス 15oz · プリント · 食卓/晩酌に · \
+                    Printful 製造",
+    },
+    ProductSpec {
+        kind: "towel",
+        printful_product_id: 635, printful_variant_id: 16272, placement: "embroidery_corner_right",
+        retail_jpy: 5800,
+        spec_html: "今治コットン ハンドタオル · 隅に立体刺繍 · 吸水性に優れた今治品質 · \
+                    ※隅の刺繍はマーク向き(色数制限) · Printful 製造",
+    },
+    ProductSpec {
+        kind: "bottle",
+        printful_product_id: 848, printful_variant_id: 22016, placement: "default",
+        retail_jpy: 5800,
+        spec_html: "CamelBak Thrive ウォーターボトル · プリント · 保冷/携帯 · \
+                    稽古/通勤/アウトドアに · Printful 製造",
+    },
+    ProductSpec {
+        kind: "mouse_pad",
+        printful_product_id: 518, printful_variant_id: 13097, placement: "default",
+        retail_jpy: 3800,
+        spec_html: "マウスパッド · 全面プリント · 滑らかな表面・滑り止め裏面 · \
+                    デスクを好きな絵に · Printful 製造",
+    },
+    ProductSpec {
+        kind: "laptop_sleeve",
+        printful_product_id: 394, printful_variant_id: 10984, placement: "default",
+        retail_jpy: 4800,
+        spec_html: "ラップトップスリーブ 13″ · 全面プリント · クッション内張り · \
+                    持ち運びを好きな絵に · Printful 製造",
+    },
     ProductSpec {
         kind: "nfc_coin",
         // No POD vendor: NFC音コイン is self-fulfilled (fulfillment_route
@@ -1292,7 +1432,9 @@ pub fn agent_insert_product(
         // dispatch arm in fulfill_catalog_order — like every non-manual/
         // non-digital route it falls through to the Printful POST, where the
         // stored placement ("embroidery_front") drives the embroidery file.
-        "cap" => "printful_embroidery",
+        // Embroidered goods — stitched, not printed (same fall-through to the
+        // Printful POST as cap; the stored embroidery placement drives the file).
+        "cap" | "beanie" | "blanket" | "towel" => "printful_embroidery",
         // Self-fulfilled, non-Printful (NFC音コイン): take payment, then a
         // human encodes the tag + mails it (handled by the manual arm in
         // fulfill_catalog_order).
@@ -2202,12 +2344,20 @@ pub async fn generate_onbody_mockup(
             "width": 1392,      "height": 2220,
             "top": 0,           "left": 0
         }),
-        // tote (641, cotton tote front) / cap (99, embroidery front): their
-        // printfile geometry isn't the tee 1800×2400 box (it clips / errors),
-        // so fetch the real print-area dims from Printful and fill them.
-        // Mirrors merch-bridge's JF-TOTE-01 / JF-CAP-01 generation. Falls back
-        // to the tee box if the printfiles lookup hiccups.
-        641 | 99 => {
+        // 前面チェストDTGアパレル + AOPラッシュガード4パネル → tee 1800×2400 box。
+        // tee(71)/hoodie(146)/crewneck(145)/tank(539)/long_sleeve(356) +
+        // rashguard AOP(301/302/368/369/836)。
+        71 | 146 | 145 | 539 | 356 | 301 | 302 | 368 | 369 | 836 => serde_json::json!({
+            "area_width": 1800, "area_height": 2400,
+            "width": 1260,      "height": 1260,
+            "top": 380,         "left": 270
+        }),
+        // それ以外(tote/cap/canvas/mug/pillow/coaster/bottle/leggings/joggers/
+        // apron/shorts/... 等)は印刷面の寸法を Printful から取得し「中央fit」配置。
+        // 印刷面ごとに形が違うため tee box だとクリップ/歪み/文字はみ出しになる。
+        // printful_fill_position はアスペクト維持で中央に余白付き配置(=はみ出さない)。
+        // 失敗時のみ tee box にフォールバック。
+        _ => {
             let placement = placements_for_product(printful_product)
                 .first().copied().unwrap_or("front");
             printful_fill_position(&client, &key, printful_product, placement)
@@ -2218,12 +2368,6 @@ pub async fn generate_onbody_mockup(
                     "top": 380,         "left": 270
                 }))
         }
-        // tee / hoodie / crewneck / tank (DTG front) + AOP panels.
-        _ => serde_json::json!({
-            "area_width": 1800, "area_height": 2400,
-            "width": 1260,      "height": 1260,
-            "top": 380,         "left": 270
-        }),
     };
     let placements = placements_for_product(printful_product);
     let files: Vec<serde_json::Value> = placements.iter().map(|p| {
@@ -2336,10 +2480,12 @@ pub async fn generate_onbody_mockup(
 }
 
 /// Fetch a Printful product's printfile dimensions for a placement and return
-/// a "fill the whole print area" mockup position. Used for products whose print
-/// area isn't the tee 1800×2400 box (tote 641 / embroidery cap 99). Mirrors
-/// merch-bridge's printfile-driven generation. None on any API hiccup so the
-/// caller can fall back to the tee box.
+/// a CENTER-FIT mockup position (aspect-preserving, with margin). Used for
+/// products whose print area isn't the tee 1800×2400 box (tote / cap / 暮らし
+/// goods). Mirrors merch-bridge's printfile-driven generation but fits the
+/// square design INSIDE the print area instead of stretching to fill it — so
+/// text never overflows or distorts (the "文字がはみ出す" fix). None on any
+/// API hiccup so the caller can fall back to the tee box.
 async fn printful_fill_position(
     client: &reqwest::Client,
     key: &str,
@@ -2364,10 +2510,16 @@ async fn printful_fill_position(
         .find(|f| f["printfile_id"].as_i64() == Some(pf_id))?;
     let w = pf["width"].as_i64()?;
     let h = pf["height"].as_i64()?;
+    // Center-fit: a square box at 92% of the print area's SHORTER side, centered.
+    // Designs are square (1024²); fitting the shorter side preserves aspect with
+    // a safe margin → no stretch, no overflow regardless of print-area shape.
+    let side = ((w.min(h) as f64) * 0.92) as i64;
+    let left = (w - side) / 2;
+    let top = (h - side) / 2;
     Some(serde_json::json!({
         "area_width": w, "area_height": h,
-        "width": w,      "height": h,
-        "top": 0,        "left": 0
+        "width": side,   "height": side,
+        "top": top,      "left": left
     }))
 }
 
@@ -2395,6 +2547,17 @@ fn mark_job_failed(db: &Db, theme: &str, kind: &str, seed: &str, err: &str) {
 /// row to render on the PDP. AUTO SKUs embed the kind verbatim; merch-bridge
 /// SKUs encode it as a fragment of the SKU name (TEE / RASH / HOOD / etc.).
 fn kind_from_sku(sku: &str) -> &'static str {
+    // Agent SKUs embed the kind verbatim: BRAND-AGENT-<KIND>-<seed> (KIND may
+    // contain hyphens, e.g. LONG-SLEEVE-TEE). Resolve it against PRODUCT_SPECS
+    // first so every agent kind (incl. the 暮らし goods) renders its own spec
+    // instead of falling through the heuristics to the "tee" default.
+    if let Some(mid) = sku.split("-AGENT-").nth(1) {
+        let cand = mid.rsplit_once('-').map(|(a, _)| a).unwrap_or(mid)
+            .to_lowercase().replace('-', "_");
+        if let Some(spec) = PRODUCT_SPECS.iter().find(|s| s.kind == cand) {
+            return spec.kind;
+        }
+    }
     let s = sku.to_uppercase();
     // Order matters: more specific tokens come first so "RASHGUARD" wins
     // over the generic MU- starts-with fallback at the bottom.
@@ -4057,12 +4220,31 @@ pub async fn makeable_all_page() -> Html<String> {
         ("着る", "rashguard_ls",   "🥋", "ラッシュガード",  "全面昇華・UPF50+・IBJJF"),
         ("着る", "rashguard_black","🥋", "黒ラッシュガード","全面黒ベース昇華"),
         ("着る", "tank",           "🎽", "タンクトップ",    "ドロップアーム・ノーギ/筋トレ"),
+        ("着る", "long_sleeve_tee","👕", "ロングスリーブT", "Bella 3501・前面DTG・通年"),
+        ("着る", "shorts",         "🩳", "メッシュショーツ","全面昇華・トレ/ノーギ"),
+        ("着る", "leggings",       "🦵", "レギンス(スパッツ)","全面昇華・ノーギ"),
+        ("着る", "joggers",        "👖", "スウェットパンツ","Bella+Canvas 4737・厚手"),
+        ("着る", "beanie",         "🧢", "ビーニー",        "前面刺繍・ワンサイズ"),
         ("持つ・置く", "tote",      "🛍", "トートバッグ",    "コットン・道着も入る大容量"),
         ("持つ・置く", "cap",       "🧢", "刺繍キャップ",    "前面 立体刺繍・ワンサイズ"),
-        ("持つ・置く", "mug",       "☕", "マグカップ",      "11oz 白磁・全面ラップ印刷"),
+        ("持つ・置く", "mug",       "☕", "マグカップ(白)", "11oz 白磁・全面ラップ印刷"),
+        ("持つ・置く", "mug_black", "🖤", "マグカップ(黒)", "11oz 黒・全面ラップ印刷"),
         ("持つ・置く", "sticker",   "✦", "ステッカー",      "4×4in・耐水耐光"),
         ("持つ・置く", "poster",    "🖼", "ポスター",        "18×24in・マット紙ジクレー"),
         ("持つ・置く", "phone_case","📱", "iPhoneケース",   "耐衝撃・機種は購入時選択"),
+        ("持つ・置く", "bottle",    "🧴", "ボトル",          "CamelBak・保冷/携帯"),
+        ("持つ・置く", "mouse_pad", "🖱", "マウスパッド",    "全面プリント・デスクに"),
+        ("持つ・置く", "laptop_sleeve","💻","ラップトップスリーブ","13″・クッション内張り"),
+        ("家・暮らし", "canvas",    "🎨", "キャンバスアート","木枠張り・壁掛け"),
+        ("家・暮らし", "metal_print","🪟", "メタルプリント", "光沢・高耐久 壁アート"),
+        ("家・暮らし", "pillow",    "🛋", "クッション",      "全面プリント・カバー+中綿"),
+        ("家・暮らし", "blanket",   "🧣", "ブランケット",    "シェルパ・隅に刺繍"),
+        ("家・暮らし", "towel",     "🧻", "今治タオル",      "今治コットン・隅に刺繍"),
+        ("家・暮らし", "coaster",   "🥃", "コースター",      "コルクバック・吸水"),
+        ("家・暮らし", "placemat",  "🍽", "プレースマット",  "4枚セット・食卓に"),
+        ("家・暮らし", "wine_glass","🍷", "ワイングラス",    "ステムレス 15oz"),
+        ("家・暮らし", "journal",   "📓", "ジャーナル",      "ハードカバー・マット"),
+        ("家・暮らし", "apron",     "🍳", "エプロン",        "全面プリント・料理/制作"),
         ("届く（デジタル）", "song",          "🎵", "楽曲",        "視聴/DLリンクをメール"),
         ("届く（デジタル）", "zine",          "📖", "ZINE (PDF)",  "DLリンクをメール"),
         ("届く（デジタル）", "video",         "🎬", "映像作品",    "視聴/DLリンクをメール"),
@@ -4076,13 +4258,13 @@ pub async fn makeable_all_page() -> Html<String> {
 
     // 作れそう（構想・近日）。実装前なので価格は出さない。
     let soon: &[(&str, &str)] = &[
-        ("🧦", "靴下"), ("🧶", "ビーニー"), ("🍳", "エプロン"),
-        ("👕", "ロングスリーブT"), ("🎨", "キャンバスアート"), ("🩳", "ショーツ"),
-        ("🧴", "ボトル"), ("🖱", "マウスパッド"), ("💻", "ラップトップスリーブ"),
+        ("🧦", "靴下"), ("🧤", "アームスリーブ"), ("🎒", "バックパック"),
+        ("⌚", "ウォッチバンド"), ("🧷", "ピンバッジ"), ("🕯", "キャンドル"),
+        ("🪴", "プランター"), ("🍵", "湯のみ"), ("🛏", "掛け布団カバー"),
     ];
 
     // グループ順（rows の登場順を尊重）。
-    let group_order = ["着る", "持つ・置く", "届く（デジタル）", "じっくり（受注）"];
+    let group_order = ["着る", "持つ・置く", "家・暮らし", "届く（デジタル）", "じっくり（受注）"];
     let mut sections = String::new();
     for g in group_order {
         let mut cards = String::new();
