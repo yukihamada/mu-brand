@@ -909,6 +909,27 @@ pub async fn agent_create_product(
         }
     }
 
+    // 物理商品(Printful)は作成時に実物モックを生成（デザインを商品に乗せた
+    // 写真）。これが無いと PDP は素のデザイン画像のまま＝「モックがない」状態に
+    // なる。デジタル/受注生産(product_id 0)は対象外。design_file が画像URLの
+    // ときだけ。非同期 spawn なので作成レスポンスはブロックしない（生成は
+    // 数十秒）。PRINTFUL_API_KEY 未設定や失敗時は warn ログのみで素デザインに
+    // フォールバック（mockup_url_external 未更新）。
+    if design_file.starts_with("http") {
+        if let Some((pp, pv)) = crate::catalog::printful_ids_for_kind(body.kind.trim()) {
+            let dbc = db.clone();
+            let skuc = sku.clone();
+            let durl = design_file.clone();
+            tokio::spawn(async move {
+                if let Err(e) =
+                    crate::catalog::generate_onbody_mockup(dbc, skuc.clone(), pp, pv, durl).await
+                {
+                    tracing::warn!("[agent/mockup] sku={} {}", skuc, e);
+                }
+            });
+        }
+    }
+
     // Publish policy: trusted owners (council / AUTO_PUBLISH_OWNERS) go LIVE
     // immediately unless the risk gate fires; everything else waits for review.
     let risk = assess_product_risk(label, description, body.ai_prompt.as_deref(), &design_file);
