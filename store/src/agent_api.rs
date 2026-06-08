@@ -1762,6 +1762,7 @@ claude mcp add --transport http mu https://mcp.wearmu.com/mcp \
 <tr><td>hoodie (Gildan 18500)</td><td>¥8,800</td></tr>
 <tr><td>crewneck (Gildan 18000)</td><td>¥7,800</td></tr>
 <tr><td>rashguard_ls / rashguard_black</td><td>¥9,800</td></tr>
+<tr><td>phone_case — iPhone 耐衝撃ケース (購入時に機種選択)</td><td>¥4,900</td></tr>
 </table>
 <p><span class="pill" data-i18n="pill_https">画像は https のみ</span><span class="pill" data-i18n="pill_clamp">価格は下限以上に自動クランプ</span><span class="pill" data-i18n="pill_rate">作成20点/時まで</span><span class="pill" data-i18n="pill_own">他人のストアには書けない</span></p>
 <p data-i18n="check_state">自分の状態（残クレジット・所有ストア・上限）は <code>GET /api/agent/me</code> で確認できます。</p>
@@ -1932,6 +1933,7 @@ POST /api/agent/products
              "kind":"tee","design_url":"https://.../art.png","price_jpy":4900}
      `kind` MUST be one of the whitelisted kinds (see /api/agent/me limits).
        Physical: tee / crewneck / hoodie / rashguard_ls / rashguard_black /
+                 phone_case (iPhone 耐衝撃ケース・購入時に機種選択) /
                  nfc_coin / device.
        Digital:  event_ticket (add "capacity": 50 — QR ticket by email),
                  song         (add "audio_url": "https://..." — listen link).
@@ -2104,7 +2106,7 @@ pub async fn openapi_json() -> Response {
                 "get": {"summary":"List every product you created (sku, store, label, kind, price, status, pdp_url)","security":[{"bearer":[]}],
                     "responses":{"200":{"description":"{ok, count, products[]}"},"401":{"description":"auth required"}}},
                 "post": {"summary":"Create a product (status='review' pending MA approval)","security":[{"bearer":[]}],
-                "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","required":["store","label","description","kind","design_url"],"properties":{"store":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"kind":{"type":"string","enum":["tee","rashguard_ls","rashguard_black","hoodie","crewneck","nfc_coin","device","event_ticket","song","poster","zine","video","karaoke_ticket"]},"design_url":{"type":"string","format":"uri","description":"absolute https URL"},"price_jpy":{"type":"integer","description":"optional; clamped up to the per-kind floor"},"capacity":{"type":"integer","description":"event_ticket only: ticket capacity"},"audio_url":{"type":"string","format":"uri","description":"https listen link. song はもちろん、物理Tシャツ等にも付けられる(mu.koe.live/oto.html?s=KEY を渡すとPDPに試聴プレイヤー)"}}}}}},
+                "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","required":["store","label","description","kind","design_url"],"properties":{"store":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"kind":{"type":"string","enum":["tee","rashguard_ls","rashguard_black","hoodie","crewneck","phone_case","nfc_coin","device","event_ticket","song","poster","zine","video","karaoke_ticket"]},"design_url":{"type":"string","format":"uri","description":"absolute https URL"},"price_jpy":{"type":"integer","description":"optional; clamped up to the per-kind floor"},"capacity":{"type":"integer","description":"event_ticket only: ticket capacity"},"audio_url":{"type":"string","format":"uri","description":"https listen link. song はもちろん、物理Tシャツ等にも付けられる(mu.koe.live/oto.html?s=KEY を渡すとPDPに試聴プレイヤー)"}}}}}},
                 "responses":{"200":{"description":"{sku, status:'review', pdp_url}"},"400":{"description":"unknown kind / missing design_url"},"403":{"description":"not your store"},"429":{"description":"rate limit"}}}},
             "/api/agent/products/{sku}/update": {"post": {"summary":"Update label/description/price_jpy/design_url (owner-only; review/retired status only; price clamped to floor)","security":[{"bearer":[]}],
                 "parameters":[{"name":"sku","in":"path","required":true,"schema":{"type":"string"}}],
