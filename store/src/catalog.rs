@@ -5055,6 +5055,305 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
 }
 
 // ════════════════════════════════════════════════════════════════════
+// 贈りもの (Gift) — 「人のために作る」動線
+//
+// 「贈る相手はどんな人?」を一言入れると、AIがその人のための一点物を生成し、
+// そのまま gift checkout(相手に直送・金額の出ない納品書+メッセージ)へ。
+// public_make の特化版: 入力が "商品アイデア" でなく "贈る相手" になり、
+// 生成物は brand='gift'・status=live・sort_order=200(公開フィードの最後尾)。
+// ════════════════════════════════════════════════════════════════════
+
+#[derive(Deserialize)]
+pub struct GiftCreateQuery {
+    /// 贈る相手はどんな人か(必須・<=300字)。これが創作の種。
+    pub about: String,
+    /// 相手の名前/ニックネーム(任意)。頭文字をモチーフに織り込むことがある。
+    #[serde(default)]
+    pub to: Option<String>,
+    /// 贈り主の名前(任意)。今は付帯情報として保持(将来のカード演出用)。
+    #[serde(default)]
+    pub from: Option<String>,
+    /// 商品種別(任意・既定 tee)。tee/phone_case/mug/sticker/hoodie/tote。
+    #[serde(default)]
+    pub kind: Option<String>,
+}
+
+/// GET|POST /api/gift — 相手起点で一点物を作り、贈れる状態(SKU)にして返す。
+pub async fn public_gift_create(
+    State(db): State<Db>,
+    Query(q): Query<GiftCreateQuery>,
+) -> Response {
+    let about = q.about.trim().to_string();
+    if about.is_empty() || about.chars().count() > 300 {
+        return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"贈る相手のことを教えてください（300文字以内）"}))).into_response();
+    }
+    // 乱用/コスト対策: brand='gift' を1時間に MAKE_HOURLY_CAP 件まで。
+    {
+        let conn = db.lock().unwrap();
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM catalog_products WHERE brand='gift' AND created_at > datetime('now','-1 hour')",
+            [], |r| r.get(0)).unwrap_or(0);
+        if n >= MAKE_HOURLY_CAP {
+            return (StatusCode::TOO_MANY_REQUESTS, axum::Json(serde_json::json!({"ok":false,"error":"いまアクセスが集中しています。少し時間をおいて試してください。"}))).into_response();
+        }
+    }
+    // 商品種別はサーバ側で確定(贈り物向けの実用的な種類に限定)。
+    let allowed = ["tee", "phone_case", "mug", "sticker", "hoodie", "tote", "crewneck"];
+    let kind: &str = match q.kind.as_deref() {
+        Some(k) if allowed.contains(&k) => k,
+        _ => "tee",
+    };
+    let Some(spec) = PRODUCT_SPECS.iter().find(|s| s.kind == kind) else {
+        return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"未対応の種類です"}))).into_response();
+    };
+    let to_name = q.to.as_deref().map(str::trim).filter(|s| !s.is_empty() && s.chars().count() <= 40);
+    let from_name = q.from.as_deref().map(str::trim).filter(|s| !s.is_empty() && s.chars().count() <= 40);
+    // 贈り物として解釈: 相手の名前は許容(個人名で flag しない)。
+    // 不適切(差別/性的/暴力/違法)や明確な商標/著名キャラだけ human review。
+    let parse_prompt = format!(
+        "A person wants to create a heartfelt MU gift FOR someone. Turn the recipient \
+         description into compact JSON for a minimalist gift design. ONLY emit JSON.\n\
+         Schema: {{\"theme_brief\":\"<one short English design brief: an elegant, symbolic, \
+         minimalist motif that captures this person's spirit/hobby/vibe — NOT a portrait>\", \
+         \"display\":\"<short JP gift name, <=12 chars>\", \
+         \"hook\":\"<one warm JP sentence for the product page>\", \
+         \"flagged\":<true ONLY for hateful/sexual/violent/illegal content or a real \
+         brand/trademark/copyrighted character; a private person's NAME is FINE for a gift, \
+         do NOT flag on names>, \"flag_reason\":\"<short JP reason if flagged else empty>\"}}\n\
+         Bias to flagged=false. Recipient: {}", about);
+    let parsed_json = match crate::gemini::call_gemini_text(&parse_prompt).await {
+        Ok(s) => s,
+        Err(e) => return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":format!("生成に失敗しました: {}", e)}))).into_response(),
+    };
+    let json_str: String = parsed_json.find('{').and_then(|i| parsed_json[i..].rfind('}').map(|j| parsed_json[i..i+j+1].to_string())).unwrap_or(parsed_json.clone());
+    let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap_or(serde_json::json!({}));
+    let theme_brief = parsed["theme_brief"].as_str().filter(|s| !s.is_empty()).unwrap_or(&about).to_string();
+    let display = parsed["display"].as_str().filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| to_name.map(|n| format!("{} へ", n)).unwrap_or_else(|| "贈りもの".to_string()));
+    let hook = parsed["hook"].as_str().filter(|s| !s.is_empty()).unwrap_or("あなたのために作った、一点もの。").to_string();
+    let flagged = parsed["flagged"].as_bool().unwrap_or(false);
+    let flag_reason = parsed["flag_reason"].as_str().unwrap_or("").to_string();
+    let (is_active_i, status_s): (i64, &str) = if flagged { (0, "review") } else { (1, "live") };
+    let retail_jpy = spec.retail_jpy;
+    let seed = format!("gf{:08x}", rand::random::<u32>());
+    let sku = format!("GIFT-{}-{}", kind.to_uppercase().replace('_', "-"), seed);
+    let charged = { let conn = db.lock().unwrap(); spend_or_refuse(&conn, "ai_image", GEMINI_IMAGE_COST_JPY, &format!("public_gift sku={}", sku), Some(&sku)) };
+    if !charged {
+        return (StatusCode::FAILED_DEPENDENCY, axum::Json(serde_json::json!({"ok":false,"error":"本日の生成枠が上限に達しました。また明日お試しください。"}))).into_response();
+    }
+    // 全面プリント物(ケース/マグ)はフチまで色を残す full-bleed。
+    // それ以外(tee/hoodie/crewneck/tote/sticker)は白地のチェストグラフィック→透過。
+    let full_bleed = matches!(kind, "phone_case" | "mug");
+    let initial_clause = match to_name.and_then(|n| n.chars().next()) {
+        Some(c) => format!(" You may weave the initial '{}' in subtly and tastefully.", c),
+        None => String::new(),
+    };
+    let design_prompt = if full_bleed {
+        format!(
+            "Print-ready FULL-BLEED artwork at 300 DPI. Fill the ENTIRE canvas edge to edge \
+             (no white margins) with a deep, elegant background and a single refined symbolic \
+             motif centered. It is a heartfelt gift made FOR a specific person: {}. Capture their \
+             spirit as a minimalist MU mark — fine linework, calm negative space, gallery-grade, \
+             NOT a portrait, NO real faces.{} NO model, NO mockup, just the artwork. Variation: {}.",
+            theme_brief, initial_clause, seed)
+    } else {
+        format!(
+            "Print-ready chest graphic at 300 DPI on a pure white background. A heartfelt gift \
+             made FOR a specific person: {}. Render their spirit as a refined, minimalist MU motif \
+             — elegant linework, lots of negative space, centered, NOT a portrait, NO real faces.{} \
+             NO model, NO mockup, just the artwork. Variation: {}.",
+            theme_brief, initial_clause, seed)
+    };
+    let img = match crate::gemini::call_gemini(&design_prompt).await {
+        Ok(i) => i,
+        Err(e) => return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":format!("デザイン生成に失敗: {}", e)}))).into_response(),
+    };
+    let (design_bytes, design_mime) = if full_bleed {
+        (img.bytes.clone(), img.mime.clone())
+    } else {
+        match make_design_transparent(&img.bytes) {
+            Some(b) => (b, "image/png".to_string()),
+            None => (img.bytes.clone(), img.mime.clone()),
+        }
+    };
+    let key = format!("catalog/{}.png", sku);
+    let Some(url) = crate::store_r2_bytes(&key, &design_bytes, &design_mime).await else {
+        return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":"画像アップロードに失敗しました"}))).into_response();
+    };
+    let meta_json = {
+        let mut m = serde_json::Map::new();
+        if let Some(t) = to_name { m.insert("gift_to".into(), serde_json::Value::from(t)); }
+        if let Some(f) = from_name { m.insert("gift_from".into(), serde_json::Value::from(f)); }
+        m.insert("gift_about".into(), serde_json::Value::from(about.clone()));
+        Some(serde_json::Value::Object(m).to_string())
+    };
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO catalog_brands (slug, name, emoji, color_primary, tagline, is_active, revenue_share_pct)
+             VALUES ('gift', '贈りもの — MU', '🎁', '#e6c449', '人のために作る。あなたの言葉から、その人だけの一点もの', 1, 0)",
+            [],
+        );
+        let desc = format!("{} — {}", display, hook);
+        let _ = conn.execute(
+            "INSERT INTO catalog_products (
+                sku, brand, label, description_ja, retail_price_jpy,
+                printful_product_id, printful_variant_id, printful_placement,
+                printful_print_w, printful_print_h,
+                design_file, mockup_main_file, mockup_url_external,
+                is_active, sort_order, status, fulfillment_route, legacy_source, meta_json
+             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            rusqlite::params![
+                &sku, "gift", desc, desc, retail_jpy,
+                spec.printful_product_id, spec.printful_variant_id, spec.placement,
+                0, 0,
+                &url, &url, &url,
+                is_active_i, 200, status_s,
+                "printful_dtg", "public_gift", meta_json,
+            ],
+        );
+    }
+    // 実物プレビュー(Printfulモック)を非同期生成。失敗してもデザインURLで表示は出る。
+    let (pp, pv, url_c, sku_c, db_c) = (spec.printful_product_id, spec.printful_variant_id, url.clone(), sku.clone(), db.clone());
+    tokio::spawn(async move { let _ = generate_onbody_mockup(db_c, sku_c, pp, pv, url_c).await; });
+
+    let gift_checkout = if flagged { serde_json::Value::Null } else { serde_json::json!(format!("/api/shop/checkout?sku={}&gift=1", urlencoding::encode(&sku))) };
+    let note = if flagged {
+        let r = if flag_reason.is_empty() { "内容".to_string() } else { flag_reason };
+        format!("作りました。少し確認したい点（{}）があるので人の目を通します。OKならすぐ贈れます。", r)
+    } else {
+        "その人のための一点もの、できました。このまま贈れます（相手に直送・金額の出ない明細＋メッセージを同梱）。".to_string()
+    };
+    axum::Json(serde_json::json!({
+        "ok": true,
+        "sku": sku,
+        "kind": kind,
+        "display": display,
+        "hook": hook,
+        "retail_jpy": retail_jpy,
+        "design_url": url,
+        "pdp_url": format!("https://wearmu.com/shop/{}", sku),
+        "gift_checkout_url": gift_checkout,
+        "status": status_s,
+        "note": note,
+    })).into_response()
+}
+
+/// GET /gift — 「人のために作る」入口ページ。
+pub async fn gift_page() -> Html<String> {
+    Html(GIFT_HTML.to_string())
+}
+
+const GIFT_HTML: &str = r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>贈りもの — その人のために、AIが一点ものを作る | MU</title>
+<meta name="description" content="贈る相手はどんな人? と一言入れるだけで、AIがその人のためだけの一点ものをデザイン。そのまま相手に直送できます（金額の出ない明細＋メッセージ同梱）。">
+<link rel="canonical" href="https://wearmu.com/gift">
+<meta property="og:title" content="人のために作る。— MU 贈りもの">
+<meta property="og:description" content="贈る相手のことを一言。AIがその人だけの一点ものを作って、そのまま贈れます。">
+<meta property="og:image" content="https://wearmu.com/static/og.jpg">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0a0a;color:#f5f5f0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.7;min-height:100dvh}
+nav{padding:16px 24px;border-bottom:1px solid rgba(255,255,255,.08);display:flex;justify-content:space-between;align-items:center}
+nav a{color:#f5f5f0;text-decoration:none;font-size:11px;letter-spacing:.3em;text-transform:uppercase;opacity:.85}
+nav .brand{font-weight:900;letter-spacing:.32em}
+.wrap{max-width:640px;margin:0 auto;padding:44px 22px 100px}
+h1{font-size:29px;font-weight:800;letter-spacing:-.01em;margin-bottom:10px}
+h1 .e{font-weight:400}
+.sub{color:rgba(245,245,240,.62);font-size:14.5px;margin-bottom:26px}
+label.fl{display:block;font-size:13px;color:rgba(245,245,240,.75);margin:16px 0 6px}
+textarea,input,select{width:100%;background:#141414;border:1px solid rgba(255,255,255,.14);color:#f5f5f0;border-radius:10px;padding:13px 15px;font-size:16px;font-family:inherit}
+textarea{min-height:92px;resize:vertical}
+textarea:focus,input:focus,select:focus{outline:none;border-color:#e6c449}
+.two{display:flex;gap:10px}.two>div{flex:1}
+.kinds{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;margin-top:6px}
+.kinds button{background:#161616;border:1px solid rgba(255,255,255,.14);color:#f5f5f0;border-radius:12px;padding:13px 8px;font-size:13.5px;font-weight:700;cursor:pointer;font-family:inherit}
+.kinds button.on{background:rgba(230,196,73,.14);border-color:#e6c449;color:#fff}
+button.go{width:100%;margin-top:22px;background:#e6c449;color:#0a0a0a;border:0;border-radius:10px;padding:16px;font-size:16.5px;font-weight:800;cursor:pointer;letter-spacing:.04em}
+button.go:disabled{opacity:.5;cursor:default}
+.ex{margin-top:14px;font-size:12px;color:rgba(245,245,240,.45)}
+.ex b{color:rgba(230,196,73,.85);cursor:pointer;font-weight:600}
+#out{margin-top:26px}
+.gen{background:#121212;border:1px solid rgba(230,196,73,.28);border-radius:14px;padding:26px 20px;text-align:center}
+.enso{width:38px;height:38px;border:3px solid rgba(230,196,73,.9);border-right-color:transparent;border-radius:50%;animation:sp 1.3s linear infinite;margin:0 auto 14px}
+@keyframes sp{to{transform:rotate(360deg)}}
+.gmsg{font-size:15.5px;font-weight:700;min-height:24px;transition:opacity .3s}
+.card{background:#141414;border:1px solid rgba(230,196,73,.32);border-radius:16px;padding:18px;animation:pop .6s cubic-bezier(.2,.8,.3,1.1) both;box-shadow:0 0 40px rgba(230,196,73,.08)}
+@keyframes pop{from{opacity:0;transform:scale(.94) translateY(8px)}to{opacity:1;transform:none}}
+.card img{width:100%;max-width:300px;display:block;margin:0 auto 14px;border-radius:12px;background:#fff}
+.card .nm{font-size:19px;font-weight:800;text-align:center}
+.card .hk{font-size:13px;color:rgba(245,245,240,.65);text-align:center;margin:6px 2px 14px}
+.card a.gift{display:block;text-align:center;background:#e6c449;color:#0a0a0a;text-decoration:none;font-weight:800;padding:15px;border-radius:11px;font-size:16px}
+.card a.gift small{display:block;font-weight:600;font-size:11px;opacity:.7;margin-top:3px}
+.card a.view{display:block;text-align:center;margin-top:10px;color:rgba(245,245,240,.6);text-decoration:underline;font-size:13px}
+.err{color:#ff8a7a;font-size:14px}
+.steps{display:flex;gap:8px;margin:22px 0 0;flex-wrap:wrap}
+.step{flex:1;min-width:140px;background:#121212;border:1px solid rgba(255,255,255,.09);border-radius:12px;padding:13px 15px;font-size:12.5px;color:rgba(245,245,240,.62)}
+.step b{color:#e6c449;display:block;font-size:11px;letter-spacing:.1em;margin-bottom:3px}
+</style></head><body>
+<nav><a class="brand" href="/gift">MU <span style="color:#e6c449">GIFT</span></a><div><a href="/make">作る</a> &nbsp; <a href="/shop">SHOP</a></div></nav>
+<div class="wrap">
+  <h1><span class="e">🎁</span> 人のために、作る。</h1>
+  <p class="sub">贈る相手はどんな人? 一言で教えてください。<br>AIがその人だけの一点ものをデザインして、そのまま贈れます。</p>
+
+  <label class="fl">贈る相手はどんな人?（必須）</label>
+  <textarea id="about" placeholder="例: 柔術と珈琲が好きな弟。物静かだけど芯が強い。北海道で一緒に育った。"></textarea>
+
+  <div class="two">
+    <div><label class="fl">相手のお名前（任意）</label><input id="to" placeholder="例: たろう"></div>
+    <div><label class="fl">あなたのお名前（任意）</label><input id="from" placeholder="例: あね より"></div>
+  </div>
+
+  <label class="fl">なにに刷る?</label>
+  <div class="kinds" id="kinds">
+    <button data-k="tee" class="on">Tシャツ</button>
+    <button data-k="phone_case">スマホケース</button>
+    <button data-k="mug">マグ</button>
+    <button data-k="sticker">ステッカー</button>
+    <button data-k="hoodie">パーカー</button>
+    <button data-k="tote">トート</button>
+  </div>
+
+  <button class="go" id="go">この人のために作る →</button>
+  <p class="ex">困ったら例文 → <b id="ex1">柔術と珈琲が好きな弟</b> · <b id="ex2">星と詩が好きな母</b></p>
+
+  <div id="out"></div>
+
+  <div class="steps">
+    <div class="step"><b>1 言う</b>相手のことを一言。</div>
+    <div class="step"><b>2 AIが作る</b>その人だけの一点ものに。</div>
+    <div class="step"><b>3 贈る</b>相手に直送・金額は出しません。</div>
+  </div>
+</div>
+<script>
+var KIND='tee';
+document.querySelectorAll('#kinds button').forEach(function(b){b.onclick=function(){document.querySelectorAll('#kinds button').forEach(function(x){x.classList.remove('on')});b.classList.add('on');KIND=b.dataset.k;};});
+document.getElementById('ex1').onclick=function(){document.getElementById('about').value='柔術と珈琲が好きな弟。物静かだけど芯が強い。';};
+document.getElementById('ex2').onclick=function(){document.getElementById('about').value='星空と詩が好きな母。やさしくて、いつも見守ってくれる。';};
+var MSGS=['その人のことを、想っています…','心に合うかたちを探しています…','線を一本ずつ…','仕上げています…'];
+document.getElementById('go').onclick=function(){
+  var about=document.getElementById('about').value.trim();
+  if(!about){document.getElementById('out').innerHTML='<p class="err">贈る相手のことを教えてください。</p>';return;}
+  var to=document.getElementById('to').value.trim(),from=document.getElementById('from').value.trim();
+  var go=document.getElementById('go');go.disabled=true;go.textContent='作っています…';
+  var out=document.getElementById('out');
+  out.innerHTML='<div class="gen"><div class="enso"></div><div class="gmsg" id="gm">'+MSGS[0]+'</div></div>';
+  var i=0,iv=setInterval(function(){i=(i+1)%MSGS.length;var g=document.getElementById('gm');if(g)g.textContent=MSGS[i];},2600);
+  var u='/api/gift?about='+encodeURIComponent(about)+'&kind='+encodeURIComponent(KIND)+(to?'&to='+encodeURIComponent(to):'')+(from?'&from='+encodeURIComponent(from):'');
+  fetch(u).then(function(r){return r.json();}).then(function(d){
+    clearInterval(iv);go.disabled=false;go.textContent='もう一度つくる';
+    if(!d.ok){out.innerHTML='<p class="err">'+(d.error||'うまく作れませんでした。言い換えてお試しください。')+'</p>';return;}
+    var gift=d.gift_checkout_url?('<a class="gift" href="'+d.gift_checkout_url+'">🎁 この人に贈る — ¥'+(d.retail_jpy||'').toLocaleString()+'<small>相手に直送・金額の出ない明細＋メッセージ同梱</small></a>'):('<p class="note">'+(d.note||'')+'</p>');
+    out.innerHTML='<div class="card"><img src="'+d.design_url+'" alt="贈りものデザイン"><div class="nm">'+(d.display||'贈りもの')+'</div><div class="hk">'+(d.hook||'')+'</div>'+gift+'<a class="view" href="'+d.pdp_url+'">商品ページを見る</a></div>';
+    out.scrollIntoView({behavior:'smooth',block:'center'});
+  }).catch(function(){clearInterval(iv);go.disabled=false;go.textContent='この人のために作る →';out.innerHTML='<p class="err">通信に失敗しました。もう一度お試しください。</p>';});
+};
+</script>
+</body></html>"##;
+
+// ════════════════════════════════════════════════════════════════════
 // 昇帯記念ドロップ (Belt Promotion Drop) — BJJ需要ドリブンの一次流通
 //
 // 戦略(CLAUDE.md): MU単独で一般アパレルを狙わない。BJJ垂直の「買う理由」で
