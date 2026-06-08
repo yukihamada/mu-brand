@@ -1582,6 +1582,31 @@ const SEED_THEMES: &[Theme] = &[
 
 const GEMINI_IMAGE_COST_JPY: i64 = 6;
 
+// Koe(濱田優貴クローン声 "Yuki HQ" / ElevenLabs)で日本語メッセージを音声化。
+// 贈りものに「愛のある声」を添えるため。ELEVENLABS_API_KEY が必要。
+const KOE_VOICE_ID: &str = "JVXRnEgOTfiREknlhmhs";
+const KOE_TTS_MODEL: &str = "eleven_multilingual_v2";
+const KOE_TTS_COST_JPY: i64 = 4;
+async fn koe_tts(text: &str) -> Result<Vec<u8>, String> {
+    let key = std::env::var("ELEVENLABS_API_KEY").unwrap_or_default();
+    if key.is_empty() { return Err("ELEVENLABS_API_KEY unset".into()); }
+    let url = format!("https://api.elevenlabs.io/v1/text-to-speech/{}?output_format=mp3_44100_128", KOE_VOICE_ID);
+    let payload = serde_json::json!({
+        "text": text,
+        "model_id": KOE_TTS_MODEL,
+        "voice_settings": {"stability":0.85,"similarity_boost":0.8,"style":0.0,"use_speaker_boost":true}
+    });
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(45)).build().map_err(|e| e.to_string())?;
+    let resp = client.post(&url).header("xi-api-key", &key).json(&payload).send().await
+        .map_err(|e| format!("eleven connect: {e}"))?;
+    if !resp.status().is_success() {
+        let s = resp.status();
+        let b = resp.text().await.unwrap_or_default();
+        return Err(format!("eleven {s}: {}", &b[..b.len().min(200)]));
+    }
+    resp.bytes().await.map(|b| b.to_vec()).map_err(|e| format!("eleven bytes: {e}"))
+}
+
 /// Returns (theme_display, kind, retail_jpy) for the named slug/kind, or None.
 fn theme_and_spec(theme_slug: &str, kind: &str) -> Option<(&'static Theme, &'static ProductSpec)> {
     let t = SEED_THEMES.iter().find(|t| t.slug == theme_slug)?;
@@ -5076,6 +5101,10 @@ pub struct GiftCreateQuery {
     /// 商品種別(任意・既定 tee)。tee/phone_case/mug/sticker/hoodie/tote。
     #[serde(default)]
     pub kind: Option<String>,
+    /// 愛のメッセージ(任意・<=200字)。Koe(濱田優貴クローン声)で音声化し、
+    /// 開封ページ /g/:sku で相手が「声」で聴ける。
+    #[serde(default)]
+    pub message: Option<String>,
 }
 
 /// GET|POST /api/gift — 相手起点で一点物を作り、贈れる状態(SKU)にして返す。
@@ -5188,11 +5217,30 @@ pub async fn public_gift_create(
     let Some(url) = crate::store_r2_bytes(&key, &design_bytes, &design_mime).await else {
         return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":"画像アップロードに失敗しました"}))).into_response();
     };
+    // 愛のメッセージ → Koe(濱田優貴クローン声)で音声化。開封ページ /g/:sku で
+    // 相手が「声」で聴ける。失敗してもギフト自体は成立(テキストは残す)。
+    let love_msg = q.message.as_deref().map(str::trim)
+        .filter(|s| !s.is_empty() && s.chars().count() <= 200).map(|s| s.to_string());
+    let voice_url: Option<String> = if let Some(ref msg) = love_msg {
+        let spoken = format!("{}{}{}",
+            to_name.map(|t| format!("{}さんへ。", t)).unwrap_or_default(),
+            msg,
+            from_name.map(|f| format!(" {}より。", f)).unwrap_or_default());
+        let charged_v = { let conn = db.lock().unwrap(); spend_or_refuse(&conn, "koe_tts", KOE_TTS_COST_JPY, &format!("gift voice sku={}", sku), Some(&sku)) };
+        if charged_v {
+            match koe_tts(&spoken).await {
+                Ok(mp3) => crate::store_r2_bytes(&format!("catalog/voice/{}.mp3", sku), &mp3, "audio/mpeg").await,
+                Err(e) => { tracing::warn!("[gift] koe_tts failed sku={}: {}", sku, e); None }
+            }
+        } else { None }
+    } else { None };
     let meta_json = {
         let mut m = serde_json::Map::new();
         if let Some(t) = to_name { m.insert("gift_to".into(), serde_json::Value::from(t)); }
         if let Some(f) = from_name { m.insert("gift_from".into(), serde_json::Value::from(f)); }
         m.insert("gift_about".into(), serde_json::Value::from(about.clone()));
+        if let Some(ref msg) = love_msg { m.insert("gift_message".into(), serde_json::Value::from(msg.clone())); }
+        if let Some(ref v) = voice_url { m.insert("voice_url".into(), serde_json::Value::from(v.clone())); }
         Some(serde_json::Value::Object(m).to_string())
     };
     {
@@ -5243,6 +5291,8 @@ pub async fn public_gift_create(
         "pdp_url": format!("https://wearmu.com/shop/{}", sku),
         "gift_checkout_url": gift_checkout,
         "status": status_s,
+        "voice_url": voice_url,
+        "message": love_msg,
         "note": note,
     })).into_response()
 }
@@ -5313,6 +5363,9 @@ button.go:disabled{opacity:.5;cursor:default}
     <div><label class="fl">あなたのお名前（任意）</label><input id="from" placeholder="例: あね より"></div>
   </div>
 
+  <label class="fl">愛のメッセージ（任意）— あなたの言葉が <b style="color:#e6c449">Koe の声</b>になって相手に届きます 🔊</label>
+  <textarea id="message" placeholder="例: いつもありがとう。離れてても、ずっと応援してるよ。"></textarea>
+
   <label class="fl">なにに刷る?</label>
   <div class="kinds" id="kinds">
     <button data-k="tee" class="on">Tシャツ</button>
@@ -5343,17 +5396,18 @@ var MSGS=['その人のことを、想っています…','心に合うかたち
 document.getElementById('go').onclick=function(){
   var about=document.getElementById('about').value.trim();
   if(!about){document.getElementById('out').innerHTML='<p class="err">贈る相手のことを教えてください。</p>';return;}
-  var to=document.getElementById('to').value.trim(),from=document.getElementById('from').value.trim();
+  var to=document.getElementById('to').value.trim(),from=document.getElementById('from').value.trim(),message=document.getElementById('message').value.trim();
   var go=document.getElementById('go');go.disabled=true;go.textContent='作っています…';
   var out=document.getElementById('out');
-  out.innerHTML='<div class="gen"><div class="enso"></div><div class="gmsg" id="gm">'+MSGS[0]+'</div></div>';
+  out.innerHTML='<div class="gen"><div class="enso"></div><div class="gmsg" id="gm">'+(message?'声を吹き込んでいます…':MSGS[0])+'</div></div>';
   var i=0,iv=setInterval(function(){i=(i+1)%MSGS.length;var g=document.getElementById('gm');if(g)g.textContent=MSGS[i];},2600);
-  var u='/api/gift?about='+encodeURIComponent(about)+'&kind='+encodeURIComponent(KIND)+(to?'&to='+encodeURIComponent(to):'')+(from?'&from='+encodeURIComponent(from):'');
+  var u='/api/gift?about='+encodeURIComponent(about)+'&kind='+encodeURIComponent(KIND)+(to?'&to='+encodeURIComponent(to):'')+(from?'&from='+encodeURIComponent(from):'')+(message?'&message='+encodeURIComponent(message):'');
   fetch(u).then(function(r){return r.json();}).then(function(d){
     clearInterval(iv);go.disabled=false;go.textContent='もう一度つくる';
     if(!d.ok){out.innerHTML='<p class="err">'+(d.error||'うまく作れませんでした。言い換えてお試しください。')+'</p>';return;}
-    var gift=d.gift_checkout_url?('<a class="gift" href="'+d.gift_checkout_url+'">🎁 この人に贈る — ¥'+(d.retail_jpy||'').toLocaleString()+'<small>相手に直送・金額の出ない明細＋メッセージ同梱</small></a>'):('<p class="note">'+(d.note||'')+'</p>');
-    out.innerHTML='<div class="card"><img src="'+d.design_url+'" alt="贈りものデザイン"><div class="nm">'+(d.display||'贈りもの')+'</div><div class="hk">'+(d.hook||'')+'</div>'+gift+'<a class="view" href="'+d.pdp_url+'">商品ページを見る</a></div>';
+    var gift=d.gift_checkout_url?('<a class="gift" href="'+d.gift_checkout_url+'">🎁 この人に贈る — ¥'+(d.retail_jpy||'').toLocaleString()+'<small>相手に直送・声＋メッセージ同梱・金額は出しません</small></a>'):('<p class="note">'+(d.note||'')+'</p>');
+    var voice=d.voice_url?('<div style="margin:0 0 14px;text-align:center"><div style="font-size:12px;color:rgba(230,196,73,.85);margin-bottom:6px">🔊 Koe の声で届きます</div><audio controls src="'+d.voice_url+'" style="width:100%;max-width:300px"></audio></div>'):'';
+    out.innerHTML='<div class="card"><img src="'+d.design_url+'" alt="贈りものデザイン"><div class="nm">'+(d.display||'贈りもの')+'</div><div class="hk">'+(d.hook||'')+'</div>'+voice+gift+'<a class="view" href="'+d.pdp_url+'">商品ページを見る</a></div>';
     out.scrollIntoView({behavior:'smooth',block:'center'});
   }).catch(function(){clearInterval(iv);go.disabled=false;go.textContent='この人のために作る →';out.innerHTML='<p class="err">通信に失敗しました。もう一度お試しください。</p>';});
 };
@@ -5380,8 +5434,18 @@ pub async fn gift_unbox_page(State(db): State<Db>, axum::extract::Path(sku): axu
     let from = m["gift_from"].as_str().unwrap_or("").trim().to_string();
     let to_disp = if to.is_empty() { "あなた".to_string() } else { format!("{} さん", to) };
     let from_line = if from.is_empty() { String::new() } else { format!("<p class=\"from\">{} より</p>", html_text(&from)) };
-    let voice = format!("{}へ。あなたのために、作りました。心をこめて。{}",
-        to_disp, if from.is_empty() { String::new() } else { format!(" {} より。", from) });
+    let voice_url = m["voice_url"].as_str().unwrap_or("").trim().to_string();
+    let gift_message = m["gift_message"].as_str().unwrap_or("").trim().to_string();
+    let msg_html = if gift_message.is_empty() { String::new() } else { format!("<p class=\"msg\">「{}」</p>", html_text(&gift_message)) };
+    // 本物の Koe 音声があればプレイヤー、無ければブラウザ音声合成にフォールバック。
+    let voice_block = if !voice_url.is_empty() {
+        format!("<div class=\"vlead\">🔊 {} へ — Koe の声で</div><audio id=\"a\" controls preload=\"auto\" src=\"{}\"></audio><button class=\"voice\" id=\"vp\">▶ 声を聴く</button>",
+            html_text(&to_disp), html_attr(&voice_url))
+    } else {
+        let fallback = format!("{}へ。あなたのために、作りました。心をこめて。{}",
+            to_disp, if from.is_empty() { String::new() } else { format!(" {} より。", from) });
+        format!("<button class=\"voice\" id=\"v\" data-t=\"{}\">▶ 声で聴く</button>", html_attr(&fallback))
+    };
     Html(format!(r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>あなたへ、贈りもの — MU</title>
@@ -5399,6 +5463,9 @@ body{{background:#0a0a0a;color:#f5f5f0;font-family:'Hiragino Sans','Helvetica Ne
 .from{{font-size:14px;color:rgba(245,245,240,.6);margin-top:-8px;margin-bottom:18px}}
 .voice{{background:transparent;border:1px solid rgba(230,196,73,.55);color:#e6c449;font:inherit;font-size:15px;font-weight:700;padding:13px 22px;border-radius:999px;cursor:pointer;letter-spacing:.04em}}
 .voice:active{{transform:scale(.97)}}
+.vlead{{font-size:12px;color:rgba(230,196,73,.85);margin-bottom:8px;letter-spacing:.06em}}
+audio{{width:100%;max-width:320px;margin:0 auto 12px;display:block}}
+.msg{{font-size:15px;color:rgba(245,245,240,.9);margin:14px 0 18px;line-height:1.9}}
 .line{{height:1px;background:rgba(255,255,255,.1);margin:30px 0 22px}}
 .make{{font-size:14.5px;color:rgba(245,245,240,.82);margin-bottom:14px}}
 .cta{{display:inline-block;background:#e6c449;color:#0a0a0a;text-decoration:none;font-weight:800;padding:15px 26px;border-radius:11px;font-size:16px;letter-spacing:.03em}}
@@ -5410,14 +5477,20 @@ body{{background:#0a0a0a;color:#f5f5f0;font-family:'Hiragino Sans','Helvetica Ne
   <div class="to">{to} へ</div>
   <img class="art" src="{img}" alt="贈りもの">
   {from_line}
-  <button class="voice" id="v" data-t="{voice}">▶ 声で聴く</button>
+  {msg_html}
+  {voice_block}
   <div class="line"></div>
   <p class="make">うけとった、つぎは あなたが。<br>大切な人のために、あなたも作れます。</p>
   <a class="cta" href="/gift">あなたも、誰かのために作る →<small>言葉から、その人だけの一点ものを</small></a>
   <div class="foot">MU — 作ることを、空気に。</div>
 </div>
 <script>
-document.getElementById('v').onclick=function(){{
+// 本物の Koe 音声: ボタンで再生(モバイルの自動再生制限を回避)。
+var a=document.getElementById('a'),vp=document.getElementById('vp');
+if(a&&vp){{vp.onclick=function(){{a.play();vp.textContent='♪ 再生中…';}};}}
+// フォールバック: 音声が無い贈りものはブラウザ音声合成で読み上げ。
+var v=document.getElementById('v');
+if(v){{v.onclick=function(){{
   var t=this.getAttribute('data-t');
   try{{
     speechSynthesis.cancel();
@@ -5426,13 +5499,14 @@ document.getElementById('v').onclick=function(){{
     if(vs.length)u.voice=vs[0];
     speechSynthesis.speak(u);
   }}catch(e){{}}
-}};
+}};}}
 </script>
 </body></html>"##,
         img = html_attr(&img),
         to = html_text(&to_disp),
         from_line = from_line,
-        voice = html_attr(&voice),
+        msg_html = msg_html,
+        voice_block = voice_block,
     ))
 }
 
