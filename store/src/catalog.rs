@@ -8066,8 +8066,10 @@ pub struct CheckoutQuery {
     /// enters the RECIPIENT's shipping address at Stripe Checkout, plus an
     /// optional message + from-name (Stripe text custom fields). fulfillment
     /// then attaches a price-free gift packing slip with the message.
+    /// String (not bool): serde_urlencoded's bool only accepts "true"/"false",
+    /// so `?gift=1` would 400. Accept "1"/"true"/"yes".
     #[serde(default, rename = "gift")]
-    pub as_gift: Option<bool>,
+    pub as_gift: Option<String>,
 }
 
 /// Pull a referral code from the `mu_ref` cookie (set by `/r/:code`).
@@ -8401,7 +8403,7 @@ pub async fn shop_checkout(
     // Stripe text fields and flag metadata[gift]=1 so fulfillment adds a
     // price-free gift packing slip. Physical goods only (a digital ticket
     // emails a QR — nothing to gift-wrap).
-    let as_gift = q.as_gift.unwrap_or(false) && !is_ticket;
+    let as_gift = matches!(q.as_gift.as_deref(), Some("1") | Some("true") | Some("yes")) && !is_ticket;
     if as_gift {
         form.push(("metadata[gift]", "1".into()));
         phone_model_field.push((format!("custom_fields[{cf_n}][key]"), "gift_message".into()));
