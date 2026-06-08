@@ -37890,6 +37890,19 @@ async fn city_page() -> Html<&'static str> {
     Html(include_str!("../static/city.html"))
 }
 
+/// GET /ai — Google Ads landing page (AI が毎時1着デザインするアパレル).
+/// Carries the AW-18007146784 conversion tag + enabler-analytics; CTAs
+/// point at the live wearmu.com funnel (/make /shop /transparency).
+async fn ai_lp_page() -> Html<&'static str> {
+    Html(include_str!("../static/mu-ai.html"))
+}
+
+/// GET /wear — Google Ads landing page (糸 ITO / 出会いが採掘になる服).
+/// Same conversion + analytics tags; CTAs point at /start /shop /transparency.
+async fn wear_lp_page() -> Html<&'static str> {
+    Html(include_str!("../static/mu-wear.html"))
+}
+
 async fn you_page(
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Html<&'static str> {
@@ -68527,6 +68540,9 @@ async fn main() {
         .route("/api/404/buy", post(not_found_buy))
         .route("/city", get(city_page))
         .route("/city.html", get(|| async { axum::response::Redirect::permanent("/city") }))
+        // Google Ads landing pages (conversion tag AW-18007146784 baked in)
+        .route("/ai", get(ai_lp_page))
+        .route("/wear", get(wear_lp_page))
         // MU × YOU collab
         .route("/you", get(you_page))
         .route("/you.html", get(|| async { axum::response::Redirect::permanent("/you") }))
