@@ -101,6 +101,10 @@ fn kind_from_sku_parses_embedded_kind() {
     assert_eq!(kind_from_sku("MU-AGENT-EVENT-TICKET-deadbeef"), Some("event_ticket"));
     assert_eq!(kind_from_sku("MU-AGENT-SONG-00112233"), Some("song"));
     assert_eq!(kind_from_sku("KOE-AGENT-DEVICE-fa867d59"), Some("device"));
+    // Physical BJJ goods added 2026-06-08 (single-token kinds).
+    assert_eq!(kind_from_sku("MU-AGENT-TOTE-11223344"), Some("tote"));
+    assert_eq!(kind_from_sku("MU-AGENT-TANK-aabbccdd"), Some("tank"));
+    assert_eq!(kind_from_sku("MU-AGENT-CAP-0f0f0f0f"), Some("cap"));
 }
 
 #[test]

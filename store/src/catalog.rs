@@ -1036,6 +1036,55 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
                     iPhone 11〜17 全機種対応 (購入時に機種を選択) · 1点ずつ印刷・Printful EU/US 製造",
     },
     ProductSpec {
+        kind: "tote",
+        // AS Colour 1001 Cotton Tote — product 641 / variant 16287, placement
+        // "front". Verified live: JF-TOTE-01 / KK-TOTE-01 are synced to Printful
+        // (sync_product_id 434208580) with exactly this product/variant/placement.
+        // DTG print on natural cotton — the gym-bag for hauling a gi.
+        // placements_for_product(641) → ["front"], so the stored placement is honored.
+        printful_product_id: 641,
+        printful_variant_id: 16287,
+        placement: "front",
+        retail_jpy: 3800,
+        spec_html: "AS Colour 1001 コットントート · ナチュラル無染コットン100% · \
+                    約 W37×H42cm · DTG プリント前面 · 道着・ギア・本が入る大容量 · \
+                    肩掛け対応ロングハンドル · 1点ずつ印刷・Printful EU/US 製造",
+    },
+    ProductSpec {
+        kind: "tank",
+        // AS Colour 5025 Drop Arm Tank — product 539 / variant 13485, placement
+        // "front". Verified live: JF-TANK-01 is synced to Printful
+        // (sync_product_id 434208577) with this product/variant/placement.
+        // DTG print — the no-gi / strength-training top. placements_for_product
+        // (539) → ["front"].
+        printful_product_id: 539,
+        printful_variant_id: 13485,
+        placement: "front",
+        retail_jpy: 4200,
+        spec_html: "AS Colour 5025 ドロップアーム タンクトップ · Black · コットン100% · \
+                    ドロップアームホール(可動域広め) · DTG プリント前面 · \
+                    ノーギ/筋トレ/夏稽古向け · 1点ずつ印刷・Printful EU/US 製造",
+    },
+    ProductSpec {
+        kind: "cap",
+        // Embroidered cap — product 99 / variant 4792, placement
+        // "embroidery_front". Verified live: JF-CAP-01 is synced to Printful
+        // (sync_product_id 434208811) with this product/variant/placement.
+        // ⚠ route is `printful_embroidery`, NOT DTG — the design is STITCHED,
+        // not printed, so the design_url must be embroidery-suitable (few solid
+        // colors, no fine gradients/photos). The MA go-live review must confirm
+        // this before approval. placements_for_product(99) → ["front"]; because
+        // the stored placement ("embroidery_front") != "front", build_printful_item
+        // sends the embroidery placement verbatim.
+        printful_product_id: 99,
+        printful_variant_id: 4792,
+        placement: "embroidery_front",
+        retail_jpy: 4200,
+        spec_html: "刺繍キャップ · 6パネル構造 · 前面 立体刺繍 · 綿ツイル · \
+                    サイズ調整ストラップ(ワンサイズ) · ※プリントでなく刺繍のため \
+                    色数・細部に制限あり · 1点ずつ製造・Printful EU/US 製造",
+    },
+    ProductSpec {
         kind: "nfc_coin",
         // No POD vendor: NFC音コイン is self-fulfilled (fulfillment_route
         // 'manual'). The NTAG213 tag is encoded with the song URL, locked,
@@ -1234,6 +1283,11 @@ pub fn agent_insert_product(
 
     let route = match kind {
         "rashguard_ls" | "rashguard_black" => "printful_aop",
+        // Embroidered cap (Printful 99): stitched, not printed. No special
+        // dispatch arm in fulfill_catalog_order — like every non-manual/
+        // non-digital route it falls through to the Printful POST, where the
+        // stored placement ("embroidery_front") drives the embroidery file.
+        "cap" => "printful_embroidery",
         // Self-fulfilled, non-Printful (NFC音コイン): take payment, then a
         // human encodes the tag + mails it (handled by the manual arm in
         // fulfill_catalog_order).
