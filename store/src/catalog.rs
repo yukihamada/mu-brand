@@ -903,6 +903,11 @@ pub(crate) fn placements_for_product(printful_product_id: i64) -> &'static [&'st
         // "front" for these ("File type front is not allowed", MG-4); their
         // single printfile placement is "default".
         1 | 19 | 358 | 601 => &["default"],
+        // 99 = embroidered cap — its only valid placement is the embroidery
+        // front zone, not "front". build_printful_item (fulfillment) and
+        // generate_onbody_mockup both read this, so the cap stitches + mocks
+        // on the right placement. (99 is used only by the `cap` kind.)
+        99 => &["embroidery_front"],
         _ => &["front"],
     }
 }
@@ -2197,7 +2202,23 @@ pub async fn generate_onbody_mockup(
             "width": 1392,      "height": 2220,
             "top": 0,           "left": 0
         }),
-        // tee / hoodie / crewneck (DTG front) + AOP panels.
+        // tote (641, cotton tote front) / cap (99, embroidery front): their
+        // printfile geometry isn't the tee 1800×2400 box (it clips / errors),
+        // so fetch the real print-area dims from Printful and fill them.
+        // Mirrors merch-bridge's JF-TOTE-01 / JF-CAP-01 generation. Falls back
+        // to the tee box if the printfiles lookup hiccups.
+        641 | 99 => {
+            let placement = placements_for_product(printful_product)
+                .first().copied().unwrap_or("front");
+            printful_fill_position(&client, &key, printful_product, placement)
+                .await
+                .unwrap_or_else(|| serde_json::json!({
+                    "area_width": 1800, "area_height": 2400,
+                    "width": 1260,      "height": 1260,
+                    "top": 380,         "left": 270
+                }))
+        }
+        // tee / hoodie / crewneck / tank (DTG front) + AOP panels.
         _ => serde_json::json!({
             "area_width": 1800, "area_height": 2400,
             "width": 1260,      "height": 1260,
@@ -2312,6 +2333,53 @@ pub async fn generate_onbody_mockup(
         );
     }
     Ok(())
+}
+
+/// Fetch a Printful product's printfile dimensions for a placement and return
+/// a "fill the whole print area" mockup position. Used for products whose print
+/// area isn't the tee 1800×2400 box (tote 641 / embroidery cap 99). Mirrors
+/// merch-bridge's printfile-driven generation. None on any API hiccup so the
+/// caller can fall back to the tee box.
+async fn printful_fill_position(
+    client: &reqwest::Client,
+    key: &str,
+    product: i64,
+    placement: &str,
+) -> Option<serde_json::Value> {
+    let url = format!("https://api.printful.com/mockup-generator/printfiles/{}", product);
+    let r = client.get(&url).bearer_auth(key).send().await.ok()?;
+    if !r.status().is_success() {
+        return None;
+    }
+    let j: serde_json::Value = r.json().await.ok()?;
+    let res = &j["result"];
+    // variant_printfiles[0].placements[placement] → printfile_id
+    let pf_id = res["variant_printfiles"]
+        .get(0)
+        .and_then(|v| v["placements"].get(placement))
+        .and_then(|v| v.as_i64())?;
+    let pf = res["printfiles"]
+        .as_array()?
+        .iter()
+        .find(|f| f["printfile_id"].as_i64() == Some(pf_id))?;
+    let w = pf["width"].as_i64()?;
+    let h = pf["height"].as_i64()?;
+    Some(serde_json::json!({
+        "area_width": w, "area_height": h,
+        "width": w,      "height": h,
+        "top": 0,        "left": 0
+    }))
+}
+
+/// `(printful_product_id, printful_variant_id)` for a kind, or None for
+/// digital / made-to-order kinds (product_id 0). Lets the agent create path
+/// spawn an on-body mockup for physical products.
+pub fn printful_ids_for_kind(kind: &str) -> Option<(i64, i64)> {
+    PRODUCT_SPECS
+        .iter()
+        .find(|s| s.kind == kind)
+        .filter(|s| s.printful_product_id != 0)
+        .map(|s| (s.printful_product_id, s.printful_variant_id))
 }
 
 fn mark_job_failed(db: &Db, theme: &str, kind: &str, seed: &str, err: &str) {
@@ -6629,6 +6697,14 @@ pub async fn shop_pdp(
     // 受注設計の家 (bim.house): 物販でなく made-to-order build — 決済は設計相談
     // デポジット。アパレル/Printful 前提のサイズ表・送料表は一切出さない。
     let is_house = kind_guess == "house";
+    // アパレル(S/M/L/XL の実寸表がある kind)だけサイズ表を出す。tote/cap/mug/
+    // sticker/poster/phone_case 等の非アパレル(ワンサイズ or 機種選択)に
+    // Tシャツの実寸表を出していた誤表示を止める。tank は単一バリアント出荷
+    // (サイズ選択なし)なので実寸表は出さない。
+    let is_apparel_sized = matches!(
+        kind_guess,
+        "tee" | "tee_white" | "hoodie" | "crewneck" | "rashguard_ls" | "rashguard_black"
+    );
 
     // extras — fetch with labels so we can surface 着用イメージ (on-body
     // styling renders) prominently, separate from technical mockup angles.
@@ -7523,7 +7599,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
         design = design_html,
         trust     = trust_block,
         spec      = spec_block,
-        size_chart = if is_digital || is_device || is_house { String::new() } else { size_chart_html(&kind_guess) },
+        size_chart = if is_apparel_sized { size_chart_html(&kind_guess) } else { String::new() },
         shipping_table = if is_digital || is_device || is_house { String::new() } else { shipping_table_html() },
         story     = story_block,
         sku_url   = urlencoding::encode(&sku),
