@@ -2269,25 +2269,22 @@ function openModal(p, pushHistory=true){
     + ' <span style="font-size:0.55em;opacity:0.55;letter-spacing:0.05em">≈ $'+usd.toLocaleString()+' USD</span>';
   document.getElementById('m-img').src = p.mockup_url||'';
   document.getElementById('m-stock-fill').style.width = pct+'%';
-  document.getElementById('m-stock-label').textContent = `${rem} of ${p.inventory} — never restocked`;
+  // 紛らわしい "75 of 75"（=残り75/全75 = まだ0着）をやめ、正直な希少性で表示。
+  document.getElementById('m-stock-label').textContent =
+    rem <= 0 ? 'SOLD OUT · 二度と刷らない'
+             : `残り ${rem} / ${p.inventory} 着 · 完売したら再販なし`;
 
-  // Today's purchase count (real data from /api/blog/stats_for_today) — discreet
-  // social proof. Hidden when zero/unknown so we don't show "0 名" embarrassment.
-  (async () => {
+  // 購買動機: bonding curve は 1 着売れるごとに ¥250 値上がりする (main.rs dynamic_price)。
+  // 「いまが最安・次に売れたら上がる」は 100% 事実で、待つコストを具体的に示す。
+  // 旧表示「本日 N 名が購入」は mu_purchases の累計を "本日" と誤表示していたので撤去。
+  (() => {
     const sp = document.getElementById('m-social-proof');
     if (!sp) return;
-    try {
-      const r = await fetch('/api/blog/stats_for_today', {cache:'no-store'});
-      if (!r.ok) return;
-      const j = await r.json();
-      const n = j?.stats?.purchases ?? 0;
-      if (n >= 3) {
-        sp.textContent = `本日 ${n} 名が購入`;
-        sp.style.display = 'block';
-      } else {
-        sp.style.display = 'none';
-      }
-    } catch (e) { sp.style.display = 'none'; }
+    const STEP = 250, CAP = 300000;
+    if (rem <= 0 || p.price_jpy >= CAP) { sp.style.display = 'none'; return; }
+    const next = Math.min(p.price_jpy + STEP, CAP);
+    sp.textContent = `いまが最安 ¥${p.price_jpy.toLocaleString()} — 次に売れたら ¥${next.toLocaleString()}`;
+    sp.style.display = 'block';
   })();
 
   // Restore last-used size from localStorage so repeat visitors don't re-pick.
