@@ -4036,6 +4036,143 @@ pub async fn make_verify_check(State(db): State<Db>, axum::Json(q): axum::Json<M
     resp
 }
 
+/// GET /make/all — 「MU で作れるもの・作れそうなもの」一覧。価格フロアは
+/// agent_product_kinds()（= PRODUCT_SPECS）から引くので、kind を増やすと自動で
+/// 反映される（表示名/絵文字/分類だけ手で持つ）。/make から小さくリンク。
+pub async fn makeable_all_page() -> Html<String> {
+    use std::collections::HashMap;
+    // kind -> price_floor_jpy（真の情報源）。
+    let floor: HashMap<&str, i64> = agent_product_kinds()
+        .into_iter()
+        .map(|k| (k.kind, k.price_floor_jpy))
+        .collect();
+
+    // 表示メタ（絵文字 / 和名 / 一言）。順序＝表示順。
+    // (group, kind, emoji, 和名, 一言)
+    let rows: &[(&str, &str, &str, &str, &str)] = &[
+        ("着る", "tee",            "👕", "T シャツ",        "黒 / Bella+Canvas・前面DTG"),
+        ("着る", "tee_white",      "👕", "T シャツ（白）",  "白地・線画/墨絵が映える"),
+        ("着る", "hoodie",         "🧥", "パーカー",        "Gildan 18500・前面DTG"),
+        ("着る", "crewneck",       "🧥", "スウェット",      "Gildan 18000・前面DTG"),
+        ("着る", "rashguard_ls",   "🥋", "ラッシュガード",  "全面昇華・UPF50+・IBJJF"),
+        ("着る", "rashguard_black","🥋", "黒ラッシュガード","全面黒ベース昇華"),
+        ("着る", "tank",           "🎽", "タンクトップ",    "ドロップアーム・ノーギ/筋トレ"),
+        ("持つ・置く", "tote",      "🛍", "トートバッグ",    "コットン・道着も入る大容量"),
+        ("持つ・置く", "cap",       "🧢", "刺繍キャップ",    "前面 立体刺繍・ワンサイズ"),
+        ("持つ・置く", "mug",       "☕", "マグカップ",      "11oz 白磁・全面ラップ印刷"),
+        ("持つ・置く", "sticker",   "✦", "ステッカー",      "4×4in・耐水耐光"),
+        ("持つ・置く", "poster",    "🖼", "ポスター",        "18×24in・マット紙ジクレー"),
+        ("持つ・置く", "phone_case","📱", "iPhoneケース",   "耐衝撃・機種は購入時選択"),
+        ("届く（デジタル）", "song",          "🎵", "楽曲",        "視聴/DLリンクをメール"),
+        ("届く（デジタル）", "zine",          "📖", "ZINE (PDF)",  "DLリンクをメール"),
+        ("届く（デジタル）", "video",         "🎬", "映像作品",    "視聴/DLリンクをメール"),
+        ("届く（デジタル）", "event_ticket",  "🎟", "参加券",      "QRをメール・物理発送なし"),
+        ("届く（デジタル）", "karaoke_ticket","🎤", "カラオケ化券","曲を uta.live でカラオケに"),
+        ("じっくり（受注）", "nfc_coin",     "🔔", "NFC音コイン", "ふれると鳴る・自社発送"),
+        ("じっくり（受注）", "device",       "🔌", "ハードウェア","自社開発デバイス"),
+        ("じっくり（受注）", "seamless_knit","🧶", "無縫製ニット","ホールガーメント・受注生産"),
+        ("じっくり（受注）", "house",        "🏠", "家",          "言葉から建つ（bim.house設計）"),
+    ];
+
+    // 作れそう（構想・近日）。実装前なので価格は出さない。
+    let soon: &[(&str, &str)] = &[
+        ("🧦", "靴下"), ("🧶", "ビーニー"), ("🍳", "エプロン"),
+        ("👕", "ロングスリーブT"), ("🎨", "キャンバスアート"), ("🩳", "ショーツ"),
+        ("🧴", "ボトル"), ("🖱", "マウスパッド"), ("💻", "ラップトップスリーブ"),
+    ];
+
+    // グループ順（rows の登場順を尊重）。
+    let group_order = ["着る", "持つ・置く", "届く（デジタル）", "じっくり（受注）"];
+    let mut sections = String::new();
+    for g in group_order {
+        let mut cards = String::new();
+        for (grp, kind, emoji, name, tag) in rows.iter() {
+            if grp != &g { continue; }
+            let price = floor.get(kind).copied().unwrap_or(0);
+            let price_html = if price > 0 {
+                format!("<span class=\"pr\">¥{}〜</span>", format_jpy(price))
+            } else {
+                String::new()
+            };
+            cards.push_str(&format!(
+                "<a class=\"mk-card\" href=\"/make?k={k}\" data-funnel=\"cta_click\" data-funnel-cta=\"makeable_pick\">\
+                   <div class=\"emo\">{e}</div>\
+                   <div class=\"nm\">{n}</div>\
+                   <div class=\"tg\">{t}</div>{p}</a>",
+                k = kind, e = emoji, n = html_text(name), t = html_text(tag), p = price_html,
+            ));
+        }
+        sections.push_str(&format!(
+            "<h2 class=\"grp\">{g}</h2><div class=\"mk-grid\">{cards}</div>",
+            g = html_text(g), cards = cards,
+        ));
+    }
+    let mut soon_html = String::new();
+    for (emoji, name) in soon {
+        soon_html.push_str(&format!(
+            "<span class=\"soon-chip\">{} {}</span>", emoji, html_text(name)
+        ));
+    }
+
+    let body = format!(r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU で作れるもの — 言うだけで、できる。</title>
+<meta name="description" content="MU が今すぐ作れる商品の一覧（Tシャツ・トート・タンク・刺繍キャップ・マグ・ステッカー・ポスター・デジタル・受注の家まで）と、これから作れそうなもの。価格フロア付き。">
+<meta property="og:title" content="MU で作れるもの一覧">
+<meta property="og:description" content="言うだけで、できる。MU が作れる商品ぜんぶ。">
+<style>
+:root{{--y:#ffd700}}
+*{{box-sizing:border-box}}
+body{{background:#0a0a0a;color:#f5f5f0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.6;margin:0}}
+a{{color:inherit;text-decoration:none}}
+nav{{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid #1c1c1c;font-size:12px;letter-spacing:.2em}}
+nav .brand{{font-weight:800}}
+nav .y{{color:var(--y)}}
+.wrap{{max-width:980px;margin:0 auto;padding:30px 18px 70px}}
+h1{{font-size:26px;margin:18px 0 6px;letter-spacing:.02em}}
+.lead{{opacity:.78;font-size:14px;margin:0 0 8px;max-width:680px}}
+.grp{{font-size:13px;letter-spacing:.18em;opacity:.85;margin:34px 0 12px;border-left:3px solid var(--y);padding-left:10px}}
+.mk-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}}
+.mk-card{{background:#141414;border:1px solid #242424;border-radius:12px;padding:16px 14px;transition:.15s;display:block}}
+.mk-card:hover{{border-color:var(--y);transform:translateY(-2px)}}
+.emo{{font-size:30px;line-height:1}}
+.nm{{font-weight:700;margin:8px 0 2px;font-size:15px}}
+.tg{{opacity:.6;font-size:12px;line-height:1.45}}
+.pr{{display:inline-block;margin-top:8px;color:var(--y);font-weight:800;font-size:13px}}
+.soon{{margin:36px 0 0;padding:18px;border:1px dashed #2c2c2c;border-radius:12px}}
+.soon h2{{font-size:13px;letter-spacing:.18em;opacity:.8;margin:0 0 12px}}
+.soon-chip{{display:inline-block;background:#151515;border:1px solid #242424;border-radius:999px;padding:6px 12px;margin:0 6px 8px 0;font-size:13px;opacity:.85}}
+.cta{{margin:40px 0 0;text-align:center}}
+.cta a{{display:inline-block;background:var(--y);color:#0a0a0a;font-weight:800;border-radius:999px;padding:13px 28px;margin:6px;font-size:15px}}
+.cta a.s{{background:none;color:#f5f5f0;border:1px solid #333}}
+.note{{opacity:.5;font-size:12px;margin:18px auto 0;max-width:680px;text-align:center}}
+footer{{opacity:.45;font-size:11px;text-align:center;padding:30px 18px}}
+</style></head><body>
+<nav><a class="brand" href="/make">MU <span class="y">MAKE</span></a><div><a href="/make" style="color:var(--y)">作る</a> &nbsp; <a href="/shop">SHOP</a></div></nav>
+<div class="wrap">
+  <h1>MU で作れるもの</h1>
+  <p class="lead">ひとこと言えば AI がデザイン → その場で 1 枚から。在庫もログインもゼロ。価格は<b>下限の目安</b>（売れたら作り手に売上の10%）。</p>
+  {sections}
+  <div class="soon">
+    <h2>これから作れそうなもの（構想・近日）</h2>
+    {soon_html}
+    <p class="lead" style="margin:10px 0 0">「これも作れる？」のリクエストも <a href="/make" style="color:var(--y)">/make</a> から言ってみてください。</p>
+  </div>
+  <div class="cta">
+    <a href="/make" data-funnel="cta_click" data-funnel-cta="makeable_make">いま作ってみる →</a>
+    <a class="s" href="/start" data-funnel="cta_click" data-funnel-cta="makeable_start">作って売る（10%還元）</a>
+  </div>
+  <p class="note">🏠 服やグッズでなく<b>家</b>をつくりたい人は <a href="https://bim.house/make" style="color:var(--y)">bim.house/make</a> へ。</p>
+</div>
+<footer>© 2026 MU / Enabler Inc. · <a href="/shop">SHOP</a> · <a href="/about/honest">正直なところ</a></footer>
+<script defer src="/mu-funnel.js"></script>
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+</body></html>"##,
+        sections = sections, soon_html = soon_html,
+    );
+    Html(body)
+}
+
 /// /make 認証ゲートの6桁コードメール（Resend）。リンクではなくコードのみ。
 pub async fn send_make_code_email(to: String, code: String) {
     let resend_key = std::env::var("RESEND_API_KEY").unwrap_or_default();
@@ -4301,6 +4438,7 @@ button:disabled{opacity:.5;cursor:default}
   </div>
   <div class="price-hint">できた一着は <b>Tシャツ ¥4,900〜・ラッシュガード ¥9,800〜・スウェット ¥7,800〜・パーカー ¥8,800〜・ステッカー ¥800〜</b>。1枚から受注生産・買わなくてもOK。権利リスクがあるものだけ人が確認、あとは自動で公開。</div>
   <div class="ex" id="mkEx">例: <b data-x="柴犬のシンプルな線画 生成りトート">柴犬の線画</b> ・ <b data-x="禅の円相 ひと筆 黒Tシャツ">円相T</b> ・ <b data-x="夜の富士山と月 ミニマル パーカー">富士と月</b></div>
+  <div class="ex" style="opacity:.55;font-size:12px">🧰 <a href="/make/all" style="color:#ffd700;text-decoration:none" data-funnel="cta_click" data-funnel-cta="make_all_link">MUで作れるもの一覧</a>（作れそうなものも）</div>
   <div class="ex" style="opacity:.6">🏠 服じゃなく<b>家</b>をつくりたい人は → <a href="https://bim.house/make" style="color:#ffd700;text-decoration:none" data-funnel="cta_click" data-funnel-cta="make_bimhouse">bim.house/make</a>（言葉から、家が建つ）</div>
   <div id="out"></div>
   <div class="recent" id="recent" hidden>
