@@ -7217,16 +7217,27 @@ pub async fn shop_pdp(
                 opts = opts,
             )
         } else { String::new() };
+        // apply() keeps BOTH the buy and the gift links in sync with the
+        // chosen model (the gift link also carries &gift=1).
         let phone_script = if kind_guess == "phone_case" {
             format!(
-                r#"<script>(function(){{var sel=document.getElementById('iphone-model'),b=document.getElementById('buybtn'),det=document.getElementById('iphone-detected'),base="{base}";if(!sel||!b)return;var w=Math.min(screen.width,screen.height),h=Math.max(screen.width,screen.height),d=Math.round(window.devicePixelRatio||1);var key=w+'x'+h+'@'+d;var M={{'375x812@3':'IPHONE13MINI','390x844@3':'IPHONE14','393x852@3':'IPHONE16','402x874@3':'IPHONE16PRO','430x932@3':'IPHONE16PLUS','428x926@3':'IPHONE14PLUS','440x956@3':'IPHONE16PROMAX','414x896@2':'IPHONE11','414x896@3':'IPHONE11PROMAX'}};var guess=M[key];function apply(){{b.href=base+'&model='+encodeURIComponent(sel.value);}}if(guess){{for(var i=0;i<sel.options.length;i++){{if(sel.options[i].value===guess){{sel.selectedIndex=i;break;}}}}det.textContent='お使いの端末は '+sel.options[sel.selectedIndex].text+' のようです（違ったら選び直してください）';}}else{{det.textContent='お使いの iPhone 機種を選んでください';}}sel.addEventListener('change',function(){{apply();det.textContent='選択中: '+sel.options[sel.selectedIndex].text;}});apply();}})();</script>"#,
+                r#"<script>(function(){{var sel=document.getElementById('iphone-model'),b=document.getElementById('buybtn'),det=document.getElementById('iphone-detected'),base="{base}";if(!sel||!b)return;var w=Math.min(screen.width,screen.height),h=Math.max(screen.width,screen.height),d=Math.round(window.devicePixelRatio||1);var key=w+'x'+h+'@'+d;var M={{'375x812@3':'IPHONE13MINI','390x844@3':'IPHONE14','393x852@3':'IPHONE16','402x874@3':'IPHONE16PRO','430x932@3':'IPHONE16PLUS','428x926@3':'IPHONE14PLUS','440x956@3':'IPHONE16PROMAX','414x896@2':'IPHONE11','414x896@3':'IPHONE11PROMAX'}};var guess=M[key];function apply(){{var m='&model='+encodeURIComponent(sel.value);b.href=base+m;var g=document.getElementById('giftbtn');if(g)g.href=base+'&gift=1'+m;}}if(guess){{for(var i=0;i<sel.options.length;i++){{if(sel.options[i].value===guess){{sel.selectedIndex=i;break;}}}}det.textContent='お使いの端末は '+sel.options[sel.selectedIndex].text+' のようです（違ったら選び直してください）';}}else{{det.textContent='お使いの iPhone 機種を選んでください';}}sel.addEventListener('change',function(){{apply();det.textContent='選択中: '+sel.options[sel.selectedIndex].text;}});apply();}})();</script>"#,
+                base = base,
+            )
+        } else { String::new() };
+        // 「人のために作る」動線 — 物理商品はそのまま誰かに贈れる。配送先＝贈り先、
+        // 金額の出ない gift 納品書＋メッセージを同梱(checkoutで入力)。デジタル/家は対象外。
+        let gift_html = if !is_digital && !is_house {
+            format!(
+                r#"<a class="buy" id="giftbtn" href="{base}&gift=1" data-funnel="cta_click" data-funnel-cta="pdp_gift" style="margin-top:10px;background:transparent;border:1px solid var(--line,#333);color:var(--fg,#f5f5f0);font-weight:500">🎁 贈り物にする<span style="display:block;font-size:11.5px;opacity:.6;margin-top:3px;font-weight:400">相手に直送・金額のわかる明細は入れません</span></a>"#,
                 base = base,
             )
         } else { String::new() };
         format!(
-            r#"{cross_html}{phone_html}<a class="buy" id="buybtn" href="{base}" data-funnel="cta_click" data-funnel-cta="pdp_buy">買う <span class="amt">¥{price}</span> · 即購入 ({fulfil_note})</a>{cross_script}{phone_script}"#,
+            r#"{cross_html}{phone_html}<a class="buy" id="buybtn" href="{base}" data-funnel="cta_click" data-funnel-cta="pdp_buy">買う <span class="amt">¥{price}</span> · 即購入 ({fulfil_note})</a>{gift_html}{cross_script}{phone_script}"#,
             cross_html = cross_html,
             phone_html = phone_html,
+            gift_html = gift_html,
             base = base,
             price = format_jpy(price_jpy),
             fulfil_note = fulfil_note,
@@ -8051,6 +8062,12 @@ pub struct CheckoutQuery {
     /// metadata[phone_model]. Absent/invalid → Stripe shows the full dropdown.
     #[serde(default)]
     pub model: Option<String>,
+    /// Gift flow: `?gift=1` → this is a present for someone else. The buyer
+    /// enters the RECIPIENT's shipping address at Stripe Checkout, plus an
+    /// optional message + from-name (Stripe text custom fields). fulfillment
+    /// then attaches a price-free gift packing slip with the message.
+    #[serde(default, rename = "gift")]
+    pub as_gift: Option<bool>,
 }
 
 /// Pull a referral code from the `mu_ref` cookie (set by `/r/:code`).
@@ -8347,7 +8364,11 @@ pub async fn shop_checkout(
     //     dropdown of all 27 models under custom-field key="iphone_model".
     // fulfill_catalog_order reads metadata[phone_model] first, then the
     // custom-field; resolve_size_variant(601, value) maps it to the variant.
+    // All Stripe custom fields are built into one owned Vec with a running
+    // index, so the phone-model dropdown and the gift fields never collide.
+    // (is_bulk_brand already claimed custom_fields[0] for its size picker.)
     let mut phone_model_field: Vec<(String, String)> = Vec::new();
+    let mut cf_n: usize = if is_bulk_brand { 1 } else { 0 };
     if pf_product_id == 601 {
         let picked = q.model.as_deref().map(|m| m.to_uppercase()).filter(|m| {
             PHONE_CASE_MODELS.iter().any(|(v, _, _)| *v == m)
@@ -8358,22 +8379,47 @@ pub async fn shop_checkout(
         } else {
             // Fallback: let Stripe collect the model. key="iphone_model"
             // (decoupled from the tee size rail).
-            phone_model_field.push(("custom_fields[0][key]".into(), "iphone_model".into()));
-            phone_model_field.push(("custom_fields[0][label][type]".into(), "custom".into()));
-            phone_model_field.push(("custom_fields[0][label][custom]".into(), "iPhone Model".into()));
-            phone_model_field.push(("custom_fields[0][type]".into(), "dropdown".into()));
+            phone_model_field.push((format!("custom_fields[{cf_n}][key]"), "iphone_model".into()));
+            phone_model_field.push((format!("custom_fields[{cf_n}][label][type]"), "custom".into()));
+            phone_model_field.push((format!("custom_fields[{cf_n}][label][custom]"), "iPhone Model".into()));
+            phone_model_field.push((format!("custom_fields[{cf_n}][type]"), "dropdown".into()));
             for (i, (value, label, _vid)) in PHONE_CASE_MODELS.iter().enumerate() {
                 phone_model_field.push((
-                    format!("custom_fields[0][dropdown][options][{i}][label]"),
+                    format!("custom_fields[{cf_n}][dropdown][options][{i}][label]"),
                     (*label).to_string(),
                 ));
                 phone_model_field.push((
-                    format!("custom_fields[0][dropdown][options][{i}][value]"),
+                    format!("custom_fields[{cf_n}][dropdown][options][{i}][value]"),
                     (*value).to_string(),
                 ));
             }
+            cf_n += 1;
         }
     }
+    // Gift flow: a present for someone else. The shipping address the buyer
+    // enters IS the recipient. We collect an optional message + from-name as
+    // Stripe text fields and flag metadata[gift]=1 so fulfillment adds a
+    // price-free gift packing slip. Physical goods only (a digital ticket
+    // emails a QR — nothing to gift-wrap).
+    let as_gift = q.as_gift.unwrap_or(false) && !is_ticket;
+    if as_gift {
+        form.push(("metadata[gift]", "1".into()));
+        phone_model_field.push((format!("custom_fields[{cf_n}][key]"), "gift_message".into()));
+        phone_model_field.push((format!("custom_fields[{cf_n}][label][type]"), "custom".into()));
+        phone_model_field.push((format!("custom_fields[{cf_n}][label][custom]"), "ギフトメッセージ (任意)".into()));
+        phone_model_field.push((format!("custom_fields[{cf_n}][type]"), "text".into()));
+        phone_model_field.push((format!("custom_fields[{cf_n}][optional]"), "true".into()));
+        phone_model_field.push((format!("custom_fields[{cf_n}][text][maximum_length]"), "200".into()));
+        cf_n += 1;
+        phone_model_field.push((format!("custom_fields[{cf_n}][key]"), "gift_from".into()));
+        phone_model_field.push((format!("custom_fields[{cf_n}][label][type]"), "custom".into()));
+        phone_model_field.push((format!("custom_fields[{cf_n}][label][custom]"), "贈り主のお名前 (任意)".into()));
+        phone_model_field.push((format!("custom_fields[{cf_n}][type]"), "text".into()));
+        phone_model_field.push((format!("custom_fields[{cf_n}][optional]"), "true".into()));
+        phone_model_field.push((format!("custom_fields[{cf_n}][text][maximum_length]"), "60".into()));
+        cf_n += 1;
+    }
+    let _ = cf_n;
     // Affiliate attribution: explicit ?ref= wins, else the mu_ref cookie set
     // by /r/:code. Validated/resolved to a commission at the webhook.
     if let Some(rc) = q.referrer.as_deref().and_then(sanitize_ref)
@@ -9166,7 +9212,38 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
         }
     }
 
-    let body = serde_json::json!({
+    // Gift flow: metadata[gift]=1 → ship to the recipient (already the
+    // collected shipping address) with a price-free gift packing slip that
+    // carries the buyer's message. We deliberately send NO retail_costs so
+    // Printful's slip never shows a price — it's a present.
+    let is_gift = session["metadata"]["gift"].as_str() == Some("1");
+    let gift_obj = if is_gift {
+        let (mut msg, mut from) = (String::new(), String::new());
+        if let Some(cfs) = session["custom_fields"].as_array() {
+            for cf in cfs {
+                match cf["key"].as_str() {
+                    Some("gift_message") => msg = cf["text"]["value"].as_str().unwrap_or("").to_string(),
+                    Some("gift_from")    => from = cf["text"]["value"].as_str().unwrap_or("").to_string(),
+                    _ => {}
+                }
+            }
+        }
+        let subject = if from.trim().is_empty() {
+            "MU — 贈りもの".to_string()
+        } else {
+            format!("{} さんより", from.trim())
+        };
+        let message = if msg.trim().is_empty() {
+            "心をこめて。 — MU".to_string()
+        } else {
+            msg.trim().to_string()
+        };
+        Some(serde_json::json!({ "subject": subject, "message": message }))
+    } else {
+        None
+    };
+
+    let mut body = serde_json::json!({
         "recipient": {
             "name":         shipping["name"].as_str().or_else(|| cust["name"].as_str()).unwrap_or(""),
             "address1":     addr["line1"].as_str().unwrap_or(""),
@@ -9181,6 +9258,9 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
         "items": items,
         "external_id": ext_id,
     });
+    if let Some(g) = gift_obj {
+        body["gift"] = g;
+    }
 
     let pf_key = env::var("PRINTFUL_API_KEY").unwrap_or_default();
     if pf_key.is_empty() {
