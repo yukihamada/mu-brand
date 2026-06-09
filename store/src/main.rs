@@ -69200,7 +69200,8 @@ async fn main() {
         .route("/api/ma/products/:sku/takedown", post(agent_api::ma_takedown_product))
         .route("/api/agent/credits/grant", post(agent_api::agent_grant_credits))
         // ── /work — 音コイン在宅ワーカー・ジョブ基盤 (src/work.rs) ──
-        .route("/work", get(work::work_page))
+        .route("/work", get(work::work_recruit))
+        .route("/work/oto", get(work::work_page))
         .route("/work/queue", get(work::work_queue))
         .route("/api/work/apply", post(work::work_apply))
         .route("/api/work/claim", post(work::work_claim))

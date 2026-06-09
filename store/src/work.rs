@@ -100,7 +100,10 @@ pre{{white-space:pre-wrap;font-family:inherit;margin:0}}
 .brand h2{{color:#fff;margin-top:0}} .brand a{{color:#ffb37a}}
 .brand .muted{{color:#aaa}}
 @media(max-width:480px){{.steps img{{width:88px;height:64px}}}}
-</style></head><body>{body}</body></html>"#,
+</style></head><body>{body}
+<script defer src="/mu-funnel.js"></script>
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+</body></html>"#,
     );
     ([(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")], html).into_response()
 }
@@ -123,7 +126,106 @@ async fn send_resend(to: &str, subject: &str, html: String) -> bool {
         .unwrap_or(false)
 }
 
-// ── GET /work — 求人LP ──────────────────────────────────────────────────
+// ── GET /work — 募集LP（6パターンA/Bテスト） ───────────────────────────────
+// 「作って届ける人」の募集トップ。?v=1..6 で訴求パターンを切替（広告6本=各vに着地
+// →CVR比較）。指定なしはリクエストごとに分散。CVRは mu-funnel.js で計測
+// (work_view_v{n} / work_apply_v{n})。応募は既存 /api/work/apply を流用。
+#[derive(Deserialize)]
+pub struct RecruitQuery {
+    #[serde(default)]
+    pub v: Option<String>,
+}
+
+// (eyebrow, h1, lead, cta) の6訴求パターン。
+const RECRUIT_VARIANTS: &[(&str, &str, &str, &str)] = &[
+    ("MU — おうちでできる仕事",
+     "スマホで、おうちで。スキマ時間に。",
+     "MUの商品を<b>仕上げて・届ける</b>在宅のお仕事。1件10分ほど、特別なスキルは不要。やった分だけ報酬、ノルマなし・いつでも辞められます。",
+     "応募する（30秒）"),
+    ("MU — センスを活かす仕事",
+     "あなたのセンスで、<br>「開けた瞬間」をつくる。",
+     "届いた品をMUの箱・薄紙・手書きカードで<b>包み直す“開封体験パック”</b>。梱包や手書き、写真が好きな人にぴったり。一つひとつ、あなたの手で。",
+     "やってみる（30秒）"),
+    ("MU — 安心して稼げる",
+     "住所は見えない。前払いプール。<br>だから、安心。",
+     "お客様の住所は<b>あなたには表示しません</b>（ブラインド配送）。報酬は先にプールされ、写真で承認されたら支払い。<b>立替なし・送料は当社負担</b>。",
+     "安心して始める（30秒）"),
+    ("MU — 一緒に育てる",
+     "作る人の隣で、<br>「届ける人」になる。",
+     "MUはAIが毎時ものづくりするブランド。その温度を最後に乗せるのが、あなた。<b>みんなで使って、みんなで育てる</b>仲間を募集中。",
+     "仲間になる（30秒）"),
+    ("MU — やった分だけ、すぐ報酬",
+     "1件◯円〜。<br>やった分だけ、すぐ。",
+     "完全出来高・<b>ノルマなし</b>。引き受けた分だけ報酬、月末締め翌月振込（<b>振込手数料は当社負担</b>）。評価が上がると単価もUP。糸(ITO)ももらえます。",
+     "いくら稼げるか見る"),
+    ("MU — あなたの街のMU",
+     "近所に、手で届ける。",
+     "同じエリアの注文を、近所のあなたが<b>受け取り→仕上げ→お届け</b>。「MUの人が届けてくれた」を、あなたの街で。住所はハブ止まりで安全。",
+     "街で始める（30秒）"),
+];
+
+pub async fn work_recruit(Query(q): Query<RecruitQuery>) -> Response {
+    let n = q.v.as_deref().and_then(|s| s.trim().parse::<usize>().ok())
+        .filter(|n| *n >= 1 && *n <= RECRUIT_VARIANTS.len())
+        .map(|n| n - 1)
+        .unwrap_or_else(|| (rand::random::<u32>() as usize) % RECRUIT_VARIANTS.len());
+    let (eyebrow, h1, lead, cta) = RECRUIT_VARIANTS[n];
+    let v = n + 1;
+    let fee = fee_jpy();
+    let img = "https://raw.githubusercontent.com/yukihamada/mu-mockups/main/work";
+    let body = format!(
+        r##"<div class="eyebrow">{eyebrow}</div>
+<h1>{h1}</h1>
+<img class="hero-img" src="{img}/step3_pack.png" alt="MUの梱包・仕上げの仕事" loading="lazy">
+<p>{lead}</p>
+<p><a class="btn green" href="#apply" data-funnel="cta_click" data-funnel-cta="work_cta_v{v}">{cta}</a></p>
+
+<h2>できるお仕事</h2>
+<ul class="steps">
+<li><img src="{img}/step3_pack.png" alt="" loading="lazy"><div><span class="n">仕上げ</span><br><b>🎁 開封体験パック</b><br><span class="muted">届いた品をMUの箱・薄紙・封緘シール・手書きカードで包み直す。1件あたり定額＋評価ボーナス</span></div></li>
+<li><img src="{img}/step2_write.png" alt="" loading="lazy"><div><span class="n">届ける</span><br><b>🔔 音コイン(NFC)を作って発送</b><br><span class="muted">かざすと鳴るコインに書込→検品→投函。<a href="/work/oto">→ 詳しく</a></span></div></li>
+<li><img src="{img}/step1_kit.png" alt="" loading="lazy"><div><span class="n">磨く</span><br><b>🔍 検品 / 📸 実着フォト</b><br><span class="muted">発送前チェック・実際に使って撮影してPDPへ（順次開放）</span></div></li>
+</ul>
+
+<h2>安心して働ける仕組み</h2>
+<div class="card">
+<p>🔒 <b>お客様の住所はあなたに見せません</b>（ブラインド配送）。宛名は封緘済み or ハブ経由。</p>
+<p>💴 <b>報酬は先にプール（エスクロー）</b>。写真で承認されたら支払い。立替なし・送料は当社負担。</p>
+<p>🕊 <b>ノルマなし・いつでも辞められます</b>。引き受けた分だけ・自分のペースで。</p>
+<p>⭐ <b>段階的に単価UP</b>。完了数と評価で、できる仕事と報酬が増えます。糸(ITO)も貯まります。</p>
+</div>
+
+<table style="margin-top:18px">
+<tr><td>報酬</td><td><b>出来高制</b>(例: 音コイン ¥{fee}/件)・月末締め翌月振込・<b>振込手数料は当社負担</b></td></tr>
+<tr><td>必要なもの</td><td>スマホ・ポストに行ける環境(仕事による)</td></tr>
+<tr><td>場所/時間</td><td>日本国内どこでも・完全に自分のペース</td></tr>
+</table>
+
+<div class="brand">
+<div class="eyebrow" style="color:#888">一緒に育てるブランド</div>
+<h2>MU ／ wearmu</h2>
+<p style="margin:6px 0">MU(ムー)は、<b>AIが毎時ものづくりする</b>新しいブランド。在庫を持たず、注文が入ってから作る。数字は<a href="https://wearmu.com/transparency">/transparency</a>で全部公開。<b>退屈はAIに、温度は人に。</b>その“温度”を最後に乗せるのが、あなたの仕事です。</p>
+</div>
+
+<h2 id="apply">応募する</h2>
+<form method="POST" action="/api/work/apply" class="card">
+<input type="hidden" name="v" value="{v}">
+<label>お名前<input name="name" required maxlength="60" placeholder="山田 はなこ"></label>
+<label>メールアドレス<input name="email" type="email" required maxlength="120" placeholder="you@example.com"></label>
+<label>お住まいの都道府県<input name="region" maxlength="20" placeholder="北海道"></label>
+<label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;font-weight:400">
+<input type="checkbox" name="agree" required style="width:auto;margin-top:3px;flex:0 0 auto">
+<span>お客様の配送情報を<b>発送目的のみ</b>に使い、第三者に渡さず、<b>発送後すみやかに破棄</b>することに同意します。</span></label>
+<button class="btn" type="submit" data-funnel="cta_click" data-funnel-cta="work_apply_v{v}">応募する</button>
+<p class="muted">承認されると、仕事キューのリンクをメールでお送りします。</p>
+</form>
+<p class="muted">運営: <b>株式会社イネブラ</b>(Enabler Inc.)／業務委託。質問は info@enablerdao.com へ。</p>
+<script>try{{(window.MU_FUNNEL&&window.MU_FUNNEL.send||function(){{}})('work_view',{{variant:'{v}'}})}}catch(e){{}}</script>"##,
+    );
+    page("MUで、作って届ける仕事", &body)
+}
+
+// ── GET /work/oto — 音コイン専用LP ─────────────────────────────────────────
 pub async fn work_page() -> Response {
     let fee = fee_jpy();
     let body = format!(
@@ -192,6 +294,9 @@ pub struct ApplyForm {
     pub region: String,
     #[serde(default)]
     pub agree: Option<String>,
+    /// 着地した募集パターン(1..6)。CVR帰属用。
+    #[serde(default)]
+    pub v: Option<String>,
 }
 
 pub async fn work_apply(State(db): State<Db>, Form(f): Form<ApplyForm>) -> Response {
@@ -220,9 +325,10 @@ pub async fn work_apply(State(db): State<Db>, Form(f): Form<ApplyForm>) -> Respo
         .unwrap_or(0)
     };
     let admin = env::var("ADMIN_TOKEN").unwrap_or_default();
+    let via = f.v.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()).unwrap_or("-");
     let _ = crate::send_telegram_message(&format!(
-        "🧵 *work応募* (音コイン在宅ワーカー)\n{} <{}> {}\n承認→ https://wearmu.com/admin/work/approve?id={}&token={}",
-        name, email, region, worker_id, admin
+        "🧵 *work応募* (パターンv{})\n{} <{}> {}\n承認→ https://wearmu.com/admin/work/approve?id={}&token={}",
+        via, name, email, region, worker_id, admin
     ))
     .await;
     page(
