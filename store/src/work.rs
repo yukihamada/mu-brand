@@ -40,7 +40,8 @@ fn ensure_tables(conn: &rusqlite::Connection) {
             token       TEXT UNIQUE,
             status      TEXT NOT NULL DEFAULT 'pending',
             created_at  TEXT DEFAULT (datetime('now')),
-            approved_at TEXT
+            approved_at TEXT,
+            about       TEXT
          );
          CREATE TABLE IF NOT EXISTS work_assignments (
             order_id   INTEGER PRIMARY KEY,
@@ -51,6 +52,8 @@ fn ensure_tables(conn: &rusqlite::Connection) {
             tracking   TEXT
          );",
     );
+    // 既存の work_workers に about 列を追加（無ければ）。冪等・既にあればエラーは無視。
+    let _ = conn.execute("ALTER TABLE work_workers ADD COLUMN about TEXT", []);
 }
 
 /// description_ja の "oto.html?s=KEY" 規約から NFC 書込URLを得る
@@ -84,7 +87,9 @@ h1{{font-size:24px;margin:0 0 4px}} h2{{font-size:17px;margin:36px 0 8px}}
 .muted{{color:var(--sub);font-size:13px}}
 .btn{{display:inline-block;background:var(--ink);color:#fff;border:0;border-radius:8px;padding:11px 20px;font-size:14px;font-weight:700;cursor:pointer;text-decoration:none}}
 .btn.green{{background:var(--accent)}}
-input,select{{font-size:15px;padding:10px 12px;border:1px solid #ccc;border-radius:8px;width:100%;box-sizing:border-box;margin:4px 0 12px}}
+input,select,textarea{{font-size:16px;padding:10px 12px;border:1px solid #ccc;border-radius:8px;width:100%;box-sizing:border-box;margin:4px 0 12px;font-family:inherit}}
+.sticky-cta{{position:fixed;left:0;right:0;bottom:0;padding:9px 12px;background:rgba(255,255,255,.96);backdrop-filter:blur(8px);border-top:1px solid var(--line);text-align:center;z-index:20}}
+.sticky-cta .btn{{width:auto;padding:11px 26px}}
 table{{border-collapse:collapse;font-size:13.5px}} td{{padding:2px 12px 2px 0;vertical-align:top}} td:first-child{{color:var(--sub);white-space:nowrap}}
 ol li{{margin:6px 0}}
 .tag{{display:inline-block;font-size:11px;border:1px solid var(--line);border-radius:99px;padding:1px 10px;color:var(--sub)}}
@@ -139,8 +144,8 @@ pub struct RecruitQuery {
 // (eyebrow, h1, lead, cta) の6訴求パターン。
 const RECRUIT_VARIANTS: &[(&str, &str, &str, &str)] = &[
     ("MU — おうちでできる仕事",
-     "スマホで、おうちで。スキマ時間に。",
-     "MUの商品を<b>仕上げて・届ける</b>在宅のお仕事。1件10分ほど、特別なスキルは不要。やった分だけ報酬、ノルマなし・いつでも辞められます。",
+     "MUのTシャツを、家で<br>“きれいに包んで”送る仕事。",
+     "AIがデザインしたMUのTシャツを、受け取って・検品して・きれいに包んで送る在宅ワーク。1件あたり数分、特別なスキルは不要。やった分だけ報酬、ノルマなし・いつでも辞められます。",
      "応募する（30秒）"),
     ("MU — センスを活かす仕事",
      "あなたのセンスで、<br>「開けた瞬間」をつくる。",
@@ -155,12 +160,12 @@ const RECRUIT_VARIANTS: &[(&str, &str, &str, &str)] = &[
      "MUはAIが毎時ものづくりするブランド。その温度を最後に乗せるのが、あなた。<b>みんなで使って、みんなで育てる</b>仲間を募集中。",
      "仲間になる（30秒）"),
     ("MU — やった分だけ、すぐ報酬",
-     "1件◯円〜。<br>やった分だけ、すぐ。",
-     "完全出来高・<b>ノルマなし</b>。引き受けた分だけ報酬、月末締め翌月振込（<b>振込手数料は当社負担</b>）。評価が上がると単価もUP。糸(ITO)ももらえます。",
+     "単価は着手前に必ず表示。<br>やった分だけ、翌月振込。",
+     "完全出来高・<b>ノルマなし</b>。1件いくらかは引き受ける前に必ず表示。月末締め翌月振込（<b>振込手数料は当社負担</b>）。収入は件数次第で保証はありませんが、評価が上がると単価もUP。糸(ITO)ももらえます。",
      "いくら稼げるか見る"),
     ("MU — あなたの街のMU",
      "近所に、手で届ける。",
-     "同じエリアの注文を、近所のあなたが<b>受け取り→仕上げ→お届け</b>。「MUの人が届けてくれた」を、あなたの街で。住所はハブ止まりで安全。",
+     "同じエリアの注文を、近所のあなたが<b>受け取り→仕上げ→お届け</b>（基本はポスト投函）。「MUの人が届けてくれた」を、あなたの街で。住所はハブ止まりで安全。",
      "街で始める（30秒）"),
 ];
 
@@ -178,22 +183,26 @@ pub async fn work_recruit(Query(q): Query<RecruitQuery>) -> Response {
 <h1>{h1}</h1>
 <img class="hero-img" src="{img}/step3_pack.png" alt="MUの梱包・仕上げの仕事" loading="lazy">
 <p>{lead}</p>
+<p style="font-size:15px;font-weight:700;margin:8px 0">👕 Tシャツを包んで送る ＝ <b>目安¥200前後/件・1件数分</b>。やった分だけ・ノルマなし・初期費用0。</p>
+<div style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 10px;font-size:12px">
+<span class="tag">👕 仕事＝Tシャツを包んで送る</span><span class="tag">💴 目安¥200前後/件</span><span class="tag">📱 スマホだけ・初期費用0</span></div>
 <p><a class="btn green" href="#apply" data-funnel="cta_click" data-funnel-cta="work_cta_v{v}">{cta}</a></p>
 
 <div class="brand" style="background:#14110a;border:1px solid #2a2418">
 <p style="font-size:17px;font-weight:800;margin:0 0 6px;color:#fff">あなたが包んだ箱を、誰かが開けて笑う。</p>
 <p style="margin:0;opacity:.88;font-size:14px">ただの「梱包作業」ではありません。AIが生み出した一着に、<b>最後の“温度”を乗せる</b>のがあなたの手。薄紙の包み方、封緘シール、手書きの一言——その小さな丁寧さで、受け取った人の<b>「箱を開けた瞬間」</b>が決まります。<b>退屈はAIに、温度は人に。</b></p>
+<p class="muted" style="margin:8px 0 0">ちなみにAIは梱包がドヘタです。だから、あなたが要る。</p>
 </div>
 
-<h2>こんな人に、ぴったりです</h2>
+<h2>たぶん、こういう人。</h2>
 <ul style="list-style:none;padding:0;margin:8px 0">
-<li style="padding:7px 0;border-bottom:1px solid var(--line)">🏠 <b>家にいながら、自分のペースで</b>少し稼ぎたい（子育て中・主婦/主夫の方）</li>
-<li style="padding:7px 0;border-bottom:1px solid var(--line)">📱 <b>スキマ時間に、スマホだけ・初期費用ゼロ</b>で始めたい（学生・会社員の副業）</li>
-<li style="padding:7px 0;border-bottom:1px solid var(--line)">🤲 <b>手を動かす・丁寧な作業が好き</b>（リタイア後の方も歓迎。NFC不要のTシャツ仕事があります）</li>
-<li style="padding:7px 0;border-bottom:1px solid var(--line)">🎁 <b>包む・手書き・撮るのが好き</b>。自分のセンスを誰かの笑顔に変えたい</li>
-<li style="padding:7px 0">🌱 ものづくりブランドを<b>仲間と一緒に育てたい</b>（ひとりじゃない）</li>
+<li style="padding:7px 0;border-bottom:1px solid var(--line)">🤲 <b>きれいに包めたとき、ちょっと気持ちいい人</b> — その丁寧さが、そのまま誰かの「うれしい」になります。</li>
+<li style="padding:7px 0;border-bottom:1px solid var(--line)">✍️ <b>手書きで一言添えるの、嫌いじゃない人</b> — あなたの一言が、その箱で一番記憶に残る部分です。</li>
+<li style="padding:7px 0;border-bottom:1px solid var(--line)">⏳ <b>コーヒー淹れてから始めたい派の、時間に少し余裕がある人</b>（子育ての合間・学生・会社員の副業・リタイア後、どれでも）。</li>
+<li style="padding:7px 0;border-bottom:1px solid var(--line)">📱 <b>スマホだけ・初期費用ゼロ</b>で、家でできる仕事を探している人。</li>
+<li style="padding:7px 0">🌱 ものづくりブランドを<b>仲間と一緒に育てたい</b>人（ひとりじゃない）。</li>
 </ul>
-<p class="muted">ひとつでも「私かも」と思ったら、向いています。</p>
+<p class="muted">ひとつでも「私かも」と思ったら、たぶん向いています。</p>
 
 <h2>メインのお仕事：Tシャツの仕上げ・梱包・発送 👕</h2>
 <p>MUのTシャツ（在庫を持たず、注文が入るたびに刷られます）を、受け取って・検品して・きれいに包んで・送る。<b>「箱を開けた瞬間」の体験をつくる</b>お仕事です。音コインなど他の品もありますが、<b>メインはTシャツ</b>です。</p>
@@ -230,7 +239,7 @@ pub async fn work_recruit(Query(q): Query<RecruitQuery>) -> Response {
 <table style="margin-top:6px">
 <tr><td>単価</td><td><b>出来高制・着手する前に「1件いくら」を必ず表示</b>します。Tシャツの仕上げは目安 <b>¥200前後/件</b>（数分）、音コインは ¥{fee}/件。慣れれば時給換算で<b>最低賃金以上</b>になる単価設定です。</td></tr>
 <tr><td>支払い</td><td>月末締め・<b>翌月に銀行振込</b>。<b>振込手数料は当社負担</b>。報酬は写真の承認で確定（先にプールするエスクロー方式）。</td></tr>
-<tr><td>目安</td><td>例：1日10件×20日 ＝ <b>月¥4万ほど</b>（あくまで目安・<b>ノルマなし</b>、やった分だけ）。</td></tr>
+<tr><td>目安</td><td>1件いくらかは<b>着手前に必ず表示</b>。収入は引き受けた件数しだいで、<b>金額を保証するものではありません</b>。ノルマなし・やった分だけ。</td></tr>
 <tr><td>初期費用</td><td><b>ゼロ</b>。梱包資材（薄紙・封緘シール・カード）も<b>当社が支給</b>・送料も当社負担。<b>立替なし</b>。</td></tr>
 </table>
 
@@ -251,11 +260,13 @@ pub async fn work_recruit(Query(q): Query<RecruitQuery>) -> Response {
 
 <h2>よくある不安</h2>
 <div class="card">
-<p><b>Q. 怪しくないですか？</b><br>運営は <b>株式会社イネブラ（実在・東京）</b>。業務委託で、<b>初期費用・ノルマ・違約金はすべてゼロ</b>。辞めるのもメール一本でOKです。</p>
+<p><b>Q. 怪しくないですか？</b><br>運営は <b>株式会社イネブラ（実在・東京／<a href="https://enablerdao.com">会社概要</a>）</b>。業務委託で、<b>初期費用・ノルマ・違約金はすべてゼロ</b>。辞めるのもメール一本でOK。MUは売上などの数字を <a href="https://wearmu.com/transparency">/transparency</a> で全部公開しています（口だけにしない、が方針です）。</p>
 <p><b>Q. お客様の住所は見えますか？</b><br>見えません。宛名は封緘済み or ハブ経由（ブラインド配送）。あなたは中身を仕上げるだけです。</p>
 <p><b>Q. 口座番号やマイナンバーは？</b><br>お振込先は<b>承認後</b>に登録。報酬は業務委託の雑所得/事業所得です（年20万円超などで確定申告が必要な場合があります）。</p>
 <p><b>Q. 不良品・配送事故のときは？</b><br>再送の品・送料は<b>当社が負担</b>します。あなたの自己負担はありません。</p>
 </div>
+<p style="text-align:center"><a class="btn green" href="#apply" data-funnel="cta_click" data-funnel-cta="work_cta_mid_v{v}">この内容で応募する（30秒）</a></p>
+<p class="muted" style="text-align:center;margin-top:-4px">いまは立ち上げ期。最初の仲間として一緒に始めてくれる方を募集中です。</p>
 
 <div class="brand">
 <div class="eyebrow" style="color:#888">一緒に育てるブランド</div>
@@ -266,16 +277,19 @@ pub async fn work_recruit(Query(q): Query<RecruitQuery>) -> Response {
 <h2 id="apply">応募する</h2>
 <form method="POST" action="/api/work/apply" class="card">
 <input type="hidden" name="v" value="{v}">
-<label>お名前<input name="name" required maxlength="60" placeholder="山田 はなこ"></label>
-<label>メールアドレス<input name="email" type="email" required maxlength="120" placeholder="you@example.com"></label>
-<label>お住まいの都道府県<input name="region" maxlength="20" placeholder="北海道"></label>
+<p class="muted" style="margin:0 0 8px">ご入力の氏名・メール・都道府県・自己紹介は、選考とご連絡のためだけに使い、第三者には渡しません。</p>
+<label>お名前<input name="name" required maxlength="60" autocomplete="name" placeholder="山田 はなこ"></label>
+<label>メールアドレス<input name="email" type="email" required maxlength="120" autocomplete="email" inputmode="email" placeholder="you@example.com"></label>
+<label>お住まいの都道府県（任意）<input name="region" maxlength="20" autocomplete="address-level1" placeholder="北海道"></label>
+<label>あなたについて・やってみたい理由（任意・ひとことでOK）<textarea name="about" maxlength="400" rows="2" placeholder="例：子育ての合間に。手を動かすのが好きです。/ ◯◯さんの紹介で来ました。"></textarea></label>
 <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;font-weight:400">
 <input type="checkbox" name="agree" required style="width:auto;margin-top:3px;flex:0 0 auto">
 <span>お客様の配送情報を<b>発送目的のみ</b>に使い、第三者に渡さず、<b>発送後すみやかに破棄</b>することに同意します。</span></label>
-<button class="btn" type="submit" data-funnel="cta_click" data-funnel-cta="work_apply_v{v}">応募する</button>
-<p class="muted">まずは応募（30秒・無料）。合わなければ、辞めるのも一言でOK。承認されると、仕事ページのリンクをメールでお送りします。<br>あなたの“ひと手間”を、待っている人がいます。🌱</p>
+<button class="btn" type="submit" data-funnel="cta_click" data-funnel-cta="work_apply_v{v}">30秒で応募する</button>
+<p class="muted">無料。合わなければ、辞めるのも一言でOK。承認されると、仕事ページのリンクをメールでお送りします。<br>あなたの“ひと手間”を、待っている人がいます。🌱</p>
 </form>
-<p class="muted">運営: <b>株式会社イネブラ</b>(Enabler Inc.)／業務委託。質問は info@enablerdao.com へ。</p>
+<p class="muted">運営: <b><a href="https://enablerdao.com">株式会社イネブラ</a></b>(Enabler Inc.)／〒102-0074 東京都千代田区九段南1-5-6 りそな九段ビル5階KSフロア／代表取締役 濱田優貴／業務委託／お問い合わせ info@enablerdao.com</p>
+<div class="sticky-cta"><a class="btn green" href="#apply" data-funnel="cta_click" data-funnel-cta="work_cta_sticky_v{v}">30秒で応募する</a></div>
 <script>try{{(window.MU_FUNNEL&&window.MU_FUNNEL.send||function(){{}})('work_view',{{variant:'{v}'}})}}catch(e){{}}</script>"##,
     );
     page("MUで、作って届ける仕事", &body)
@@ -348,6 +362,9 @@ pub struct ApplyForm {
     pub email: String,
     #[serde(default)]
     pub region: String,
+    /// 自己紹介・やってみたい理由（どんな人か）。任意。
+    #[serde(default)]
+    pub about: String,
     #[serde(default)]
     pub agree: Option<String>,
     /// 着地した募集パターン(1..6)。CVR帰属用。
@@ -359,6 +376,7 @@ pub async fn work_apply(State(db): State<Db>, Form(f): Form<ApplyForm>) -> Respo
     let name = f.name.trim().to_string();
     let email = f.email.trim().to_lowercase();
     let region = f.region.trim().to_string();
+    let about: String = f.about.trim().chars().take(400).collect();
     if name.is_empty() || !email.contains('@') {
         return page("入力エラー", "<h1>お名前とメールアドレスを入力してください</h1><p><a href=\"/work\">戻る</a></p>");
     }
@@ -370,8 +388,8 @@ pub async fn work_apply(State(db): State<Db>, Form(f): Form<ApplyForm>) -> Respo
         let conn = db.lock().unwrap();
         ensure_tables(&conn);
         let _ = conn.execute(
-            "INSERT OR IGNORE INTO work_workers (email, name, region) VALUES (?,?,?)",
-            rusqlite::params![email, name, region],
+            "INSERT OR IGNORE INTO work_workers (email, name, region, about) VALUES (?,?,?,?)",
+            rusqlite::params![email, name, region, about],
         );
         conn.query_row(
             "SELECT id FROM work_workers WHERE email=?",
@@ -382,9 +400,10 @@ pub async fn work_apply(State(db): State<Db>, Form(f): Form<ApplyForm>) -> Respo
     };
     let admin = env::var("ADMIN_TOKEN").unwrap_or_default();
     let via = f.v.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()).unwrap_or("-");
+    let about_line = if about.is_empty() { String::new() } else { format!("\n「{}」", about) };
     let _ = crate::send_telegram_message(&format!(
-        "🧵 *work応募* (パターンv{})\n{} <{}> {}\n承認→ https://wearmu.com/admin/work/approve?id={}&token={}",
-        via, name, email, region, worker_id, admin
+        "🧵 *work応募* (パターンv{})\n{} <{}> {}{}\n承認→ https://wearmu.com/admin/work/approve?id={}&token={}",
+        via, name, email, region, about_line, worker_id, admin
     ))
     .await;
     page(
@@ -411,12 +430,13 @@ pub async fn admin_pending(State(db): State<Db>, Query(q): Query<QueueQuery>) ->
     ensure_tables(&conn);
     let rows: Vec<serde_json::Value> = {
         let mut stmt = conn
-            .prepare("SELECT id, name, COALESCE(region,''), COALESCE(created_at,'') FROM work_workers WHERE status='pending' ORDER BY id DESC LIMIT 50")
+            .prepare("SELECT id, name, COALESCE(region,''), COALESCE(created_at,''), email, COALESCE(about,'') FROM work_workers WHERE status='pending' ORDER BY id DESC LIMIT 50")
             .unwrap();
         stmt.query_map([], |r| {
             Ok(serde_json::json!({
                 "id": r.get::<_, i64>(0)?, "name": r.get::<_, String>(1)?,
-                "region": r.get::<_, String>(2)?, "created_at": r.get::<_, String>(3)?
+                "region": r.get::<_, String>(2)?, "created_at": r.get::<_, String>(3)?,
+                "email": r.get::<_, String>(4)?, "about": r.get::<_, String>(5)?
             }))
         }).unwrap().filter_map(|x| x.ok()).collect()
     };
