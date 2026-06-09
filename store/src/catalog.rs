@@ -4630,11 +4630,23 @@ pub async fn make_page(State(db): State<Db>, Query(q): Query<MakePageQuery>) -> 
     let lock_js = if locked.is_some() { "true" } else { "false" };
 
     // 深リンク ?k=<kind>（/make/all のカード等）が printable kind なら、全種類を
-    // 選べる形にして preselect。素の /make は定番5種に絞ってノイズを抑える。
+    // 選べる形にして preselect。素の /make は主要な定番に絞ってノイズを抑える
+    // （全 kind は /make/all・深リンクで）。
     let sel = q.k.as_deref().map(str::trim).unwrap_or("");
     let sel = if MAKE_KINDS_ALL.iter().any(|(v, _)| *v == sel && !v.is_empty()) { sel } else { "" };
     let use_all = !sel.is_empty();
-    const DEFAULT_KINDS: &[&str] = &["", "tee", "rashguard_ls", "hoodie", "crewneck", "sticker"];
+    // 着る / 持つ / 暮らし を横断する定番。すべて MAKE_KINDS_ALL(=public_make の
+    // allowed=PRODUCT_SPECS) 内なので、選べば必ず作れる(404/未対応にならない)。
+    const DEFAULT_KINDS: &[&str] = &[
+        "",
+        // 着る
+        "tee", "tee_white", "hoodie", "crewneck", "long_sleeve_tee", "tank",
+        "rashguard_ls", "rashguard_black",
+        // 持つ
+        "tote", "sticker", "mug", "phone_case",
+        // 暮らし
+        "poster",
+    ];
     let mut kind_options = String::new();
     for (v, label) in MAKE_KINDS_ALL {
         if !use_all && !DEFAULT_KINDS.contains(v) { continue; }
@@ -4644,7 +4656,7 @@ pub async fn make_page(State(db): State<Db>, Query(q): Query<MakePageQuery>) -> 
     let price_hint = if use_all {
         "作れる物理グッズ：<b>Tシャツ ¥4,900〜・パーカー ¥8,800〜・スウェット ¥7,800〜・ラッシュガード ¥9,800〜・ステッカー ¥800〜・マグ ¥2,200〜・スマホケース ¥4,900〜・ポスター ¥4,900〜</b>。1点から受注生産・買わなくてもOK。権利リスクがあるものだけ人が確認、あとは自動で公開。"
     } else {
-        "できた一着は <b>Tシャツ ¥4,900〜・ラッシュガード ¥9,800〜・スウェット ¥7,800〜・パーカー ¥8,800〜・ステッカー ¥800〜</b>。1枚から受注生産・買わなくてもOK。権利リスクがあるものだけ人が確認、あとは自動で公開。"
+        "作れるもの：<b>Tシャツ ¥4,900〜・パーカー ¥8,800〜・スウェット ¥7,800〜・ロングT ¥5,800〜・タンク ¥4,200〜・ラッシュガード ¥9,800〜・トート ¥3,800〜・ステッカー ¥800〜・マグ ¥2,200〜・スマホケース ¥4,900〜・ポスター ¥4,900〜</b>。さらに <a href=\"/make/all\" style=\"color:#ffd700;text-decoration:none\">他の種類</a> も。1点から受注生産・買わなくてもOK。権利リスクがあるものだけ人が確認、あとは自動で公開。"
     };
     // 非アパレルkindを深リンクで選んで来た場合(?k=towel 等)、見出し/プレース
     // ホルダの「Tシャツ」固定をそのkindに差し替えるためラベルをJSへ渡す。
