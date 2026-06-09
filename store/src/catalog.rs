@@ -912,12 +912,23 @@ pub(crate) fn placements_for_product(printful_product_id: i64) -> &'static [&'st
         // 601 = Tough iPhone Case — Printful's mockup-generator rejects
         // "front" for these ("File type front is not allowed", MG-4); their
         // single printfile placement is "default".
-        1 | 19 | 358 | 601 => &["default"],
+        // 300 mug(黒) / 518 mouse pad / 3 canvas / 588 metal print /
+        // 394 laptop sleeve / 611 coaster / 189 leggings(AOP) / 691 wine glass /
+        // 848 bottle も同じく "default" のみ (mockup-generator/printfiles で検証 2026-06-09)。
+        1 | 19 | 358 | 601 | 300 | 518 | 3 | 588 | 394 | 611 | 189 | 691 | 848 => &["default"],
         // 99 = embroidered cap — its only valid placement is the embroidery
         // front zone, not "front". build_printful_item (fulfillment) and
         // generate_onbody_mockup both read this, so the cap stitches + mocks
         // on the right placement. (99 is used only by the `cap` kind.)
         99 => &["embroidery_front"],
+        // 809 = fisherman beanie (front embroidery). 536 = sherpa blanket /
+        // 635 = towel (corner embroidery). 895 = joggers (right-leg print).
+        // 709 = placemat set (printfile "first"). Verified against Printful
+        // mockup-generator/printfiles 2026-06-09.
+        809 => &["embroidery_front"],
+        536 | 635 => &["embroidery_corner_right"],
+        895 => &["leg_front_right"],
+        709 => &["first"],
         _ => &["front"],
     }
 }
@@ -3657,6 +3668,9 @@ pub struct MakeQuery {
 pub struct MakePageQuery {
     #[serde(default)]
     pub v: Option<String>,
+    /// ?k=<kind> — 深リンクで作る種類を preselect（/make/all のカード等）。
+    #[serde(default)]
+    pub k: Option<String>,
 }
 
 /// /make A/B/C: 勝者UU到達のしきい値（ユニーク訪問者の作成数）。
@@ -4311,13 +4325,28 @@ pub async fn makeable_all_page() -> Html<String> {
             } else {
                 String::new()
             };
-            cards.push_str(&format!(
-                "<a class=\"mk-card\" href=\"/make?k={k}\" data-funnel=\"cta_click\" data-funnel-cta=\"makeable_pick\">\
-                   <div class=\"emo\">{e}</div>\
-                   <div class=\"nm\">{n}</div>\
-                   <div class=\"tg\">{t}</div>{p}</a>",
-                k = kind, e = emoji, n = html_text(name), t = html_text(tag), p = price_html,
-            ));
+            // /make の言葉→画像→印刷フローで実際に作れる kind だけ作成リンクにする
+            // (public_make の allowed と一致 = MAKE_KINDS_ALL)。それ以外は壊れた発注を
+            // 避けて「近日」表示にする(歌/家など別ルートのものもここでは近日扱い)。
+            let creatable = MAKE_KINDS_ALL.iter().any(|(v, _)| v == kind);
+            if creatable {
+                cards.push_str(&format!(
+                    "<a class=\"mk-card\" href=\"/make?k={k}\" data-funnel=\"cta_click\" data-funnel-cta=\"makeable_pick\">\
+                       <div class=\"emo\">{e}</div>\
+                       <div class=\"nm\">{n}</div>\
+                       <div class=\"tg\">{t}</div>{p}</a>",
+                    k = kind, e = emoji, n = html_text(name), t = html_text(tag), p = price_html,
+                ));
+            } else {
+                cards.push_str(&format!(
+                    "<div class=\"mk-card soon-card\">\
+                       <div class=\"emo\">{e}</div>\
+                       <div class=\"nm\">{n}</div>\
+                       <div class=\"tg\">{t}</div>\
+                       <span class=\"soon-badge\">近日</span></div>",
+                    e = emoji, n = html_text(name), t = html_text(tag),
+                ));
+            }
         }
         sections.push_str(&format!(
             "<h2 class=\"grp\">{g}</h2><div class=\"mk-grid\">{cards}</div>",
@@ -4350,8 +4379,11 @@ h1{{font-size:26px;margin:18px 0 6px;letter-spacing:.02em}}
 .lead{{opacity:.78;font-size:14px;margin:0 0 8px;max-width:680px}}
 .grp{{font-size:13px;letter-spacing:.18em;opacity:.85;margin:34px 0 12px;border-left:3px solid var(--y);padding-left:10px}}
 .mk-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}}
-.mk-card{{background:#141414;border:1px solid #242424;border-radius:12px;padding:16px 14px;transition:.15s;display:block}}
+.mk-card{{background:#141414;border:1px solid #242424;border-radius:12px;padding:16px 14px;transition:.15s;display:block;position:relative}}
 .mk-card:hover{{border-color:var(--y);transform:translateY(-2px)}}
+.soon-card{{opacity:.5}}
+.soon-card:hover{{border-color:#242424;transform:none}}
+.soon-badge{{position:absolute;top:10px;right:10px;font-size:10px;letter-spacing:.1em;background:#2c2c2c;color:#aaa;border-radius:999px;padding:2px 8px}}
 .emo{{font-size:30px;line-height:1}}
 .nm{{font-weight:700;margin:8px 0 2px;font-size:15px}}
 .tg{{opacity:.6;font-size:12px;line-height:1.45}}
@@ -4488,6 +4520,47 @@ pub async fn make_ab_status(State(db): State<Db>) -> Response {
 /// GET /make — public page: type a sentence, MU makes the product.
 /// A/B/C: 勝者確定済みなら全員その案。未確定は ?v= 指定、無ければ
 /// クライアントJSが visitor_id から決定的に3分割（同じ人は常に同じ案）。
+/// 作れる印刷物理グッズ（public_make の allowed と一致させること）。value, ラベル。
+/// 先頭の "" は「おまかせ」。デジタル/特殊kind は別パイプラインなので含めない。
+pub const MAKE_KINDS_ALL: &[(&str, &str)] = &[
+    ("", "おまかせ"),
+    // 着る
+    ("tee", "Tシャツ（黒）"),
+    ("tee_white", "Tシャツ（白）"),
+    ("hoodie", "パーカー"),
+    ("crewneck", "スウェット"),
+    ("long_sleeve_tee", "ロングスリーブT"),
+    ("tank", "タンクトップ"),
+    ("rashguard_ls", "ラッシュガード"),
+    ("rashguard_black", "ラッシュガード（黒）"),
+    ("rashguard_contrado", "ラッシュガード（完全プリント・プレミアム）"),
+    ("leggings", "レギンス（スパッツ）"),
+    ("shorts", "メッシュショーツ"),
+    ("joggers", "スウェットパンツ"),
+    ("apron", "エプロン"),
+    ("beanie", "ビーニー（刺繍）"),
+    // 持つ
+    ("tote", "トートバッグ"),
+    ("sticker", "ステッカー"),
+    ("mug", "マグカップ（白）"),
+    ("mug_black", "マグカップ（黒）"),
+    ("phone_case", "スマホケース（iPhone）"),
+    ("laptop_sleeve", "ラップトップスリーブ"),
+    ("mouse_pad", "マウスパッド"),
+    ("bottle", "ボトル"),
+    ("wine_glass", "ワイングラス"),
+    ("journal", "ジャーナル"),
+    // 家・暮らし
+    ("poster", "ポスター"),
+    ("canvas", "キャンバスアート"),
+    ("metal_print", "メタルプリント"),
+    ("pillow", "クッション"),
+    ("coaster", "コースター"),
+    ("placemat", "プレースマット"),
+    ("blanket", "ブランケット（刺繍）"),
+    ("towel", "今治タオル（刺繍）"),
+];
+
 pub async fn make_page(State(db): State<Db>, Query(q): Query<MakePageQuery>) -> Html<String> {
     // 勝者が決まっていれば全員に勝者を固定表示（?v は無視）。
     let winner = { let conn = db.lock().unwrap(); cv_get(&conn, "make_winner") };
@@ -4496,7 +4569,27 @@ pub async fn make_page(State(db): State<Db>, Query(q): Query<MakePageQuery>) -> 
     // forced=Some → サーバが variant を焼く（JS割当オフ）。None → JSが visitor で決める。
     let server_variant = forced.unwrap_or("");
     let lock_js = if locked.is_some() { "true" } else { "false" };
+
+    // 深リンク ?k=<kind>（/make/all のカード等）が printable kind なら、全種類を
+    // 選べる形にして preselect。素の /make は定番5種に絞ってノイズを抑える。
+    let sel = q.k.as_deref().map(str::trim).unwrap_or("");
+    let sel = if MAKE_KINDS_ALL.iter().any(|(v, _)| *v == sel && !v.is_empty()) { sel } else { "" };
+    let use_all = !sel.is_empty();
+    const DEFAULT_KINDS: &[&str] = &["", "tee", "rashguard_ls", "hoodie", "crewneck", "sticker"];
+    let mut kind_options = String::new();
+    for (v, label) in MAKE_KINDS_ALL {
+        if !use_all && !DEFAULT_KINDS.contains(v) { continue; }
+        let s = if *v == sel { " selected" } else { "" };
+        kind_options.push_str(&format!("      <option value=\"{}\"{}>{}</option>\n", v, s, label));
+    }
+    let price_hint = if use_all {
+        "作れる物理グッズ：<b>Tシャツ ¥4,900〜・パーカー ¥8,800〜・スウェット ¥7,800〜・ラッシュガード ¥9,800〜・ステッカー ¥800〜・マグ ¥2,200〜・スマホケース ¥4,900〜・ポスター ¥4,900〜</b>。1点から受注生産・買わなくてもOK。権利リスクがあるものだけ人が確認、あとは自動で公開。"
+    } else {
+        "できた一着は <b>Tシャツ ¥4,900〜・ラッシュガード ¥9,800〜・スウェット ¥7,800〜・パーカー ¥8,800〜・ステッカー ¥800〜</b>。1枚から受注生産・買わなくてもOK。権利リスクがあるものだけ人が確認、あとは自動で公開。"
+    };
     Html(MAKE_HTML
+        .replace("__KIND_OPTIONS__", &kind_options)
+        .replace("__PRICE_HINT__", price_hint)
         .replace("__SERVER_VARIANT__", server_variant)
         .replace("__WINNER_LOCKED__", lock_js))
 }
@@ -4651,16 +4744,11 @@ button:disabled{opacity:.5;cursor:default}
   <textarea id="p" maxlength="300" placeholder="例：富士山をミニマルな一本線で描いた黒Tシャツ"></textarea>
   <div class="row">
     <select id="k">
-      <option value="">おまかせ</option>
-      <option value="tee">Tシャツ</option>
-      <option value="rashguard_ls">ラッシュガード</option>
-      <option value="hoodie">パーカー</option>
-      <option value="crewneck">スウェット</option>
-      <option value="sticker">ステッカー</option>
+__KIND_OPTIONS__
     </select>
     <button id="go" data-funnel="cta_click" data-funnel-cta="make_generate">つくる（無料でデザイン）</button>
   </div>
-  <div class="price-hint">できた一着は <b>Tシャツ ¥4,900〜・ラッシュガード ¥9,800〜・スウェット ¥7,800〜・パーカー ¥8,800〜・ステッカー ¥800〜</b>。1枚から受注生産・買わなくてもOK。権利リスクがあるものだけ人が確認、あとは自動で公開。</div>
+  <div class="price-hint">__PRICE_HINT__</div>
   <div class="ex" id="mkEx">例: <b data-x="柴犬のシンプルな線画 生成りトート">柴犬の線画</b> ・ <b data-x="禅の円相 ひと筆 黒Tシャツ">円相T</b> ・ <b data-x="夜の富士山と月 ミニマル パーカー">富士と月</b></div>
   <div class="ex" style="opacity:.55;font-size:12px">🧰 <a href="/make/all" style="color:#ffd700;text-decoration:none" data-funnel="cta_click" data-funnel-cta="make_all_link">MUで作れるもの一覧</a>（作れそうなものも）</div>
   <div class="ex" style="opacity:.6">🏠 服じゃなく<b>家</b>をつくりたい人は → <a href="https://bim.house/make" style="color:#ffd700;text-decoration:none" data-funnel="cta_click" data-funnel-cta="make_bimhouse">bim.house/make</a>（言葉から、家が建つ）</div>
@@ -4913,17 +5001,26 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     }
     let parse_prompt = format!(
         "Parse this JP/EN product idea into compact JSON. ONLY emit JSON, no prose, no markdown fences.\n\
-         Schema: {{\"kind\":\"tee|rashguard_ls|hoodie|crewneck|sticker\", \
-                   \"theme_brief\":\"<one short English design brief for the chest graphic>\", \
+         Schema: {{\"kind\":\"tee|tee_white|hoodie|crewneck|long_sleeve_tee|tank|rashguard_ls|rashguard_black|leggings|apron|shorts|joggers|tote|sticker|mug|mug_black|phone_case|laptop_sleeve|mouse_pad|bottle|wine_glass|journal|poster|canvas|metal_print|pillow|coaster|placemat|beanie|blanket|towel\", \
+                   \"theme_brief\":\"<one short English design brief for the graphic>\", \
                    \"display\":\"<short JP brand-mark name, <=10 chars>\", \
                    \"hook\":\"<one JP marketing sentence for the PDP>\", \
                    \"retail_jpy\":<integer>, \
                    \"flagged\":<true ONLY if this needs a human to review before public sale: a real brand/trademark/logo, a real living person's name or likeness, a copyrighted character/IP, or hateful/sexual/violent/illegal content; otherwise false>, \
                    \"flag_reason\":\"<short JP reason if flagged, else empty>\"}}\n\
          Bias toward flagged=false (auto-approve). Only set true when clearly risky.\n\
-         If the user mentions a rashguard / 'ラッシュガード' / 'ラッシュ' / no-gi / 柔術着の下 / グラップリング, set kind='rashguard_ls'.\n\
-         If the user mentions a sticker / 'ステッカー' / 'シール' / decal, set kind='sticker'.\n\
-         If kind is missing, default to 'tee'. retail default 4900 tee / 9800 rashguard_ls / 8800 hoodie / 7800 crewneck / 800 sticker.\n\
+         Kind hints (pick closest; else 'tee'): rashguard/'ラッシュガード'/no-gi/柔術 → rashguard_ls; \
+         'タンク'/tank → tank; 'ロンT'/長袖/long sleeve → long_sleeve_tee; 'レギンス'/'スパッツ'/tights → leggings; \
+         'エプロン'/apron → apron; 'トート'/tote → tote; sticker/'ステッカー'/'シール' → sticker; \
+         '黒マグ'/black mug → mug_black; mug/'マグ'/'カップ' → mug; phone/'スマホ'/'iPhone'/'ケース' → phone_case; \
+         'スリーブ'/laptop → laptop_sleeve; 'マウスパッド'/mousepad → mouse_pad; 'ボトル'/水筒 → bottle; \
+         'グラス'/wine → wine_glass; 'ノート'/'手帳'/journal → journal; poster/'ポスター' → poster; \
+         'キャンバス'/canvas → canvas; '金属'/metal → metal_print; 'クッション'/枕/pillow → pillow; \
+         'コースター'/coaster → coaster; 'ショーツ'/短パン/shorts → shorts; 'スウェットパンツ'/joggers/ジョガー → joggers; \
+         'プレースマット'/placemat/ランチョン → placemat; 'ビーニー'/ニット帽/beanie → beanie; \
+         'ブランケット'/毛布/blanket → blanket; 'タオル'/towel → towel; \
+         hoodie/'パーカー' → hoodie; sweat/'スウェット' → crewneck; '白T'/white tee → tee_white.\n\
+         If kind is missing, default to 'tee'. retail default 4900 tee / 8800 hoodie / 7800 crewneck / 9800 rashguard / 800 sticker / 2200 mug / 4900 poster; その他は各商品の最低価格に自動調整.\n\
          Input: {}", prompt_in);
     let parsed_json = match crate::gemini::call_gemini_text(&parse_prompt).await {
         Ok(s) => s,
@@ -4938,7 +5035,22 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     // DTG apparel + the AOP rashguard (Printful) + the premium full-coverage
     // rashguard (Contrado UK) are offered publicly. rashguard_ls → printful_aop;
     // rashguard_contrado → contrado_uk (review-gated, manual fulfillment).
-    let allowed = ["tee", "rashguard_ls", "rashguard_contrado", "hoodie", "crewneck", "sticker"];
+    // 刷れる物理グッズ（PRODUCT_SPECS + Printful mockup placement を実APIで検証済み
+    // のみ）。刺繍系(cap/beanie/blanket/towel)・特殊placement(shorts/joggers/placemat)・
+    // digital/受注(song/zine/video/各ticket/nfc/device/house) は別経路なので含めない。
+    let allowed = [
+        // 着る
+        "tee", "tee_white", "hoodie", "crewneck", "long_sleeve_tee", "tank",
+        "rashguard_ls", "rashguard_black", "rashguard_contrado", "leggings", "apron",
+        "shorts", "joggers",
+        // 持つ
+        "tote", "sticker", "mug", "mug_black", "phone_case", "laptop_sleeve",
+        "mouse_pad", "bottle", "wine_glass", "journal",
+        // 家・暮らし
+        "poster", "canvas", "metal_print", "pillow", "coaster", "placemat",
+        // 刺繍
+        "beanie", "blanket", "towel",
+    ];
     let kind: &str = match q.kind.as_deref() {
         Some(k) if allowed.contains(&k) => k,
         _ if allowed.contains(&kind_parsed) => kind_parsed,
@@ -4976,6 +5088,16 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     // takes the same full-canvas artwork. DTG apparel keeps the centered
     // chest-graphic-on-white.
     let is_aop = matches!(kind, "rashguard_ls" | "rashguard_black" | "rashguard_contrado");
+    // 全面1ファイル印刷の商品 → フチまで埋める full-bleed アート
+    // (chest graphic だと小さく中央に乗ってしまう)。透過キーもしない。
+    // mug(白)は中央ロゴが定番なので chest 側に残す。mug_black は全面。
+    let is_full_bleed = matches!(kind,
+        "poster" | "phone_case" | "mug_black" | "mouse_pad" | "canvas" | "metal_print"
+        | "laptop_sleeve" | "coaster" | "leggings" | "pillow" | "wine_glass" | "bottle"
+        | "shorts" | "placemat");
+    // 刺繍商品(ビーニー/ブランケット/タオル)はシンプルで太い1〜2色のロゴが映える。
+    // 写真調/グラデは刺繍に向かないので、専用プロンプトでベクター調の紋章を作る。
+    let is_embroidery = matches!(kind, "beanie" | "blanket" | "towel");
     let design_prompt = if is_aop {
         format!(
             "Print-ready FULL-CANVAS sublimation artwork at 300 DPI for an \
@@ -4985,6 +5107,24 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
              be cover-cropped onto every panel (front, back, both sleeves), \
              so corners and edges matter as much as the center. NO model, \
              NO garment mockup, just the printable artwork. Variation key: {}.",
+            theme_brief, seed)
+    } else if is_full_bleed {
+        format!(
+            "Print-ready FULL-BLEED artwork at 300 DPI that fills the ENTIRE \
+             canvas edge-to-edge — NO white margins, NO padding. Style brief: \
+             {}. The art will be cover-cropped onto the whole surface (poster \
+             sheet / phone case back), so edges and corners matter as much as \
+             the center. NO model, NO product mockup, just the printable \
+             artwork. Variation key: {}.",
+            theme_brief, seed)
+    } else if is_embroidery {
+        format!(
+            "Embroidery-ready emblem at 300 DPI on a pure white background. \
+             CRITICAL: a SIMPLE, BOLD design using only 1–3 flat solid colors, \
+             clean vector-style shapes and thick lines — NO gradients, NO photo \
+             realism, NO fine detail or thin strokes (they cannot be stitched). \
+             Think a crest / monogram / minimal icon. Style brief: {}. \
+             NO model, NO mockup, just the emblem, centered. Variation key: {}.",
             theme_brief, seed)
     } else {
         format!(
@@ -4997,8 +5137,8 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
         Err(e) => return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":format!("デザイン生成に失敗: {}", e)}))).into_response(),
     };
     // DTG: 白(or黒)背景 → 後処理で背景透過にしてから保存（色生地でも四角が出ない）。
-    // AOP: 全面プリントなので透過キーは禁止（フチまで色を残す）→ 生成画像をそのまま使う。
-    let (design_bytes, design_mime) = if is_aop {
+    // AOP/full-bleed: 全面プリントなので透過キーは禁止（フチまで色を残す）→ そのまま使う。
+    let (design_bytes, design_mime) = if is_aop || is_full_bleed {
         (img.bytes.clone(), img.mime.clone())
     } else {
         match make_design_transparent(&img.bytes) {
