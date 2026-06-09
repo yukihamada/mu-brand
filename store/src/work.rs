@@ -180,11 +180,23 @@ pub async fn work_recruit(Query(q): Query<RecruitQuery>) -> Response {
 <p>{lead}</p>
 <p><a class="btn green" href="#apply" data-funnel="cta_click" data-funnel-cta="work_cta_v{v}">{cta}</a></p>
 
-<h2>できるお仕事</h2>
+<h2>メインのお仕事：Tシャツの仕上げ・梱包・発送 👕</h2>
+<p>MUのTシャツ（在庫を持たず、注文が入るたびに刷られます）を、受け取って・検品して・きれいに包んで・送る。<b>「箱を開けた瞬間」の体験をつくる</b>お仕事です。音コインなど他の品もありますが、<b>メインはTシャツ</b>です。</p>
+<p class="muted" style="margin:-4px 0 6px">＝申し込む前に、やることはこれで全部わかります 👇</p>
+<ol style="padding-left:1.1em;margin:8px 0 4px;line-height:1.85">
+<li><b>受け取る</b> — MUからTシャツがまとめて届く（お客様の住所は<b>あなたには見えません</b>。宛名は封緘済み or ハブ宛）</li>
+<li><b>検品する</b> — プリントのかすれ・汚れ・サイズ違いがないか確認。スマホで写真を1枚</li>
+<li><b>たたんで包む</b> — きれいにたたみ、薄紙で包んで <b>MUの封緘シール</b>を貼る</li>
+<li><b>手書きの一言カード</b>を添える（テンプレあり・一言でOK）</li>
+<li><b>封筒/箱に入れて投函</b> — クリックポスト等。<b>送料は当社負担</b>・立替なし</li>
+<li><b>完成写真をアップ</b>して報告 → 運営が確認したら<b>報酬が確定</b></li>
+</ol>
+<p class="muted">所要：1件あたり数分（慣れたら流れ作業）。梱包資材キット（薄紙・封緘シール・カード）は当社からお送りします。</p>
+
+<h2>そのほかのお仕事</h2>
 <ul class="steps">
-<li><img src="{img}/step3_pack.png" alt="" loading="lazy"><div><span class="n">仕上げ</span><br><b>🎁 開封体験パック</b><br><span class="muted">届いた品をMUの箱・薄紙・封緘シール・手書きカードで包み直す。1件あたり定額＋評価ボーナス</span></div></li>
 <li><img src="{img}/step2_write.png" alt="" loading="lazy"><div><span class="n">届ける</span><br><b>🔔 音コイン(NFC)を作って発送</b><br><span class="muted">かざすと鳴るコインに書込→検品→投函。<a href="/work/oto">→ 詳しく</a></span></div></li>
-<li><img src="{img}/step1_kit.png" alt="" loading="lazy"><div><span class="n">磨く</span><br><b>🔍 検品 / 📸 実着フォト</b><br><span class="muted">発送前チェック・実際に使って撮影してPDPへ（順次開放）</span></div></li>
+<li><img src="{img}/step1_kit.png" alt="" loading="lazy"><div><span class="n">磨く</span><br><b>🔍 検品 / 📸 実着フォト</b><br><span class="muted">発送前チェック・実際に着て撮影してPDPへ（順次開放）</span></div></li>
 </ul>
 
 <h2>安心して働ける仕組み</h2>
