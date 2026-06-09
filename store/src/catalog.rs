@@ -921,6 +921,14 @@ pub(crate) fn placements_for_product(printful_product_id: i64) -> &'static [&'st
         // generate_onbody_mockup both read this, so the cap stitches + mocks
         // on the right placement. (99 is used only by the `cap` kind.)
         99 => &["embroidery_front"],
+        // 809 = fisherman beanie (front embroidery). 536 = sherpa blanket /
+        // 635 = towel (corner embroidery). 895 = joggers (right-leg print).
+        // 709 = placemat set (printfile "first"). Verified against Printful
+        // mockup-generator/printfiles 2026-06-09.
+        809 => &["embroidery_front"],
+        536 | 635 => &["embroidery_corner_right"],
+        895 => &["leg_front_right"],
+        709 => &["first"],
         _ => &["front"],
     }
 }
@@ -4527,7 +4535,10 @@ pub const MAKE_KINDS_ALL: &[(&str, &str)] = &[
     ("rashguard_black", "ラッシュガード（黒）"),
     ("rashguard_contrado", "ラッシュガード（完全プリント・プレミアム）"),
     ("leggings", "レギンス（スパッツ）"),
+    ("shorts", "メッシュショーツ"),
+    ("joggers", "スウェットパンツ"),
     ("apron", "エプロン"),
+    ("beanie", "ビーニー（刺繍）"),
     // 持つ
     ("tote", "トートバッグ"),
     ("sticker", "ステッカー"),
@@ -4545,6 +4556,9 @@ pub const MAKE_KINDS_ALL: &[(&str, &str)] = &[
     ("metal_print", "メタルプリント"),
     ("pillow", "クッション"),
     ("coaster", "コースター"),
+    ("placemat", "プレースマット"),
+    ("blanket", "ブランケット（刺繍）"),
+    ("towel", "今治タオル（刺繍）"),
 ];
 
 pub async fn make_page(State(db): State<Db>, Query(q): Query<MakePageQuery>) -> Html<String> {
@@ -4987,7 +5001,7 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     }
     let parse_prompt = format!(
         "Parse this JP/EN product idea into compact JSON. ONLY emit JSON, no prose, no markdown fences.\n\
-         Schema: {{\"kind\":\"tee|tee_white|hoodie|crewneck|long_sleeve_tee|tank|rashguard_ls|rashguard_black|leggings|apron|tote|sticker|mug|mug_black|phone_case|laptop_sleeve|mouse_pad|bottle|wine_glass|journal|poster|canvas|metal_print|pillow|coaster\", \
+         Schema: {{\"kind\":\"tee|tee_white|hoodie|crewneck|long_sleeve_tee|tank|rashguard_ls|rashguard_black|leggings|apron|shorts|joggers|tote|sticker|mug|mug_black|phone_case|laptop_sleeve|mouse_pad|bottle|wine_glass|journal|poster|canvas|metal_print|pillow|coaster|placemat|beanie|blanket|towel\", \
                    \"theme_brief\":\"<one short English design brief for the graphic>\", \
                    \"display\":\"<short JP brand-mark name, <=10 chars>\", \
                    \"hook\":\"<one JP marketing sentence for the PDP>\", \
@@ -5002,7 +5016,10 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
          'スリーブ'/laptop → laptop_sleeve; 'マウスパッド'/mousepad → mouse_pad; 'ボトル'/水筒 → bottle; \
          'グラス'/wine → wine_glass; 'ノート'/'手帳'/journal → journal; poster/'ポスター' → poster; \
          'キャンバス'/canvas → canvas; '金属'/metal → metal_print; 'クッション'/枕/pillow → pillow; \
-         'コースター'/coaster → coaster; hoodie/'パーカー' → hoodie; sweat/'スウェット' → crewneck; '白T'/white tee → tee_white.\n\
+         'コースター'/coaster → coaster; 'ショーツ'/短パン/shorts → shorts; 'スウェットパンツ'/joggers/ジョガー → joggers; \
+         'プレースマット'/placemat/ランチョン → placemat; 'ビーニー'/ニット帽/beanie → beanie; \
+         'ブランケット'/毛布/blanket → blanket; 'タオル'/towel → towel; \
+         hoodie/'パーカー' → hoodie; sweat/'スウェット' → crewneck; '白T'/white tee → tee_white.\n\
          If kind is missing, default to 'tee'. retail default 4900 tee / 8800 hoodie / 7800 crewneck / 9800 rashguard / 800 sticker / 2200 mug / 4900 poster; その他は各商品の最低価格に自動調整.\n\
          Input: {}", prompt_in);
     let parsed_json = match crate::gemini::call_gemini_text(&parse_prompt).await {
@@ -5025,11 +5042,14 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
         // 着る
         "tee", "tee_white", "hoodie", "crewneck", "long_sleeve_tee", "tank",
         "rashguard_ls", "rashguard_black", "rashguard_contrado", "leggings", "apron",
+        "shorts", "joggers",
         // 持つ
         "tote", "sticker", "mug", "mug_black", "phone_case", "laptop_sleeve",
         "mouse_pad", "bottle", "wine_glass", "journal",
         // 家・暮らし
-        "poster", "canvas", "metal_print", "pillow", "coaster",
+        "poster", "canvas", "metal_print", "pillow", "coaster", "placemat",
+        // 刺繍
+        "beanie", "blanket", "towel",
     ];
     let kind: &str = match q.kind.as_deref() {
         Some(k) if allowed.contains(&k) => k,
@@ -5073,7 +5093,11 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     // mug(白)は中央ロゴが定番なので chest 側に残す。mug_black は全面。
     let is_full_bleed = matches!(kind,
         "poster" | "phone_case" | "mug_black" | "mouse_pad" | "canvas" | "metal_print"
-        | "laptop_sleeve" | "coaster" | "leggings" | "pillow" | "wine_glass" | "bottle");
+        | "laptop_sleeve" | "coaster" | "leggings" | "pillow" | "wine_glass" | "bottle"
+        | "shorts" | "placemat");
+    // 刺繍商品(ビーニー/ブランケット/タオル)はシンプルで太い1〜2色のロゴが映える。
+    // 写真調/グラデは刺繍に向かないので、専用プロンプトでベクター調の紋章を作る。
+    let is_embroidery = matches!(kind, "beanie" | "blanket" | "towel");
     let design_prompt = if is_aop {
         format!(
             "Print-ready FULL-CANVAS sublimation artwork at 300 DPI for an \
@@ -5092,6 +5116,15 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
              sheet / phone case back), so edges and corners matter as much as \
              the center. NO model, NO product mockup, just the printable \
              artwork. Variation key: {}.",
+            theme_brief, seed)
+    } else if is_embroidery {
+        format!(
+            "Embroidery-ready emblem at 300 DPI on a pure white background. \
+             CRITICAL: a SIMPLE, BOLD design using only 1–3 flat solid colors, \
+             clean vector-style shapes and thick lines — NO gradients, NO photo \
+             realism, NO fine detail or thin strokes (they cannot be stitched). \
+             Think a crest / monogram / minimal icon. Style brief: {}. \
+             NO model, NO mockup, just the emblem, centered. Variation key: {}.",
             theme_brief, seed)
     } else {
         format!(
