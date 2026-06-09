@@ -4498,6 +4498,13 @@ const MAKE_HTML: &str = r##"<!doctype html><html lang="ja"><head>
 <link rel="canonical" href="https://wearmu.com/make">
 <link rel="alternate" hreflang="ja" href="https://wearmu.com/make">
 <link rel="alternate" hreflang="x-default" href="https://wearmu.com/make">
+<link rel="manifest" href="/make.webmanifest">
+<meta name="theme-color" content="#0a0a0a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="MU つくる">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://wearmu.com/make">
 <meta property="og:title" content="言うだけで、Tシャツができる。— MU MAKE">
@@ -4837,6 +4844,41 @@ function wireClaim(j,p){
 }
 $('#go').onclick=runMake;
 $('#p').addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter')runMake();});
+</script>
+<!-- PWA: install as an app (maker entry). Drives re-visits (icon) + sharing. -->
+<div id="muInstall" style="display:none;position:fixed;left:50%;transform:translateX(-50%);bottom:14px;z-index:9000;background:#f5f5f0;color:#0a0a0a;font:600 14px/1 -apple-system,system-ui,sans-serif;padding:13px 18px;border-radius:999px;box-shadow:0 6px 24px rgba(0,0,0,.4);cursor:pointer;display:none;align-items:center;gap:8px">📲 アプリにする<span style="opacity:.55;font-weight:400;font-size:12px">ホーム画面に追加</span></div>
+<div id="muIosSheet" style="display:none;position:fixed;inset:0;z-index:9001;background:rgba(0,0,0,.6);backdrop-filter:blur(4px)" onclick="this.style.display='none'">
+  <div style="position:absolute;left:16px;right:16px;bottom:16px;background:#16161a;color:#f5f5f0;border:1px solid #2a2a30;border-radius:18px;padding:22px;font:400 14px/1.7 -apple-system,system-ui,sans-serif" onclick="event.stopPropagation()">
+    <div style="font-weight:700;font-size:16px;margin-bottom:8px">ホーム画面に追加</div>
+    <div style="opacity:.7">下の <b>共有</b> ボタン <span style="font-size:17px">􀈂</span> を押して、<br><b>「ホーム画面に追加」</b> を選ぶと、アプリとして開けます。</div>
+    <div style="text-align:right;margin-top:14px"><button onclick="document.getElementById('muIosSheet').style.display='none'" style="background:#e6c449;color:#0a0a0a;border:0;border-radius:10px;padding:9px 18px;font-weight:700">わかった</button></div>
+  </div>
+</div>
+<script>
+(function(){
+  // Register service worker (offline shell + installability).
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(function(){});
+  var standalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+  if (standalone) return; // already installed → no prompt
+  var track = function(ev){ try{ (window.MU_FUNNEL&&window.MU_FUNNEL.send||window.muEvent||function(){})('cta_click',{cta:ev}); }catch(e){} };
+  var btn = document.getElementById('muInstall');
+  var deferred = null;
+  window.addEventListener('beforeinstallprompt', function(e){
+    e.preventDefault(); deferred = e;
+    btn.style.display = 'inline-flex'; track('pwa_install_shown');
+  });
+  btn.addEventListener('click', function(){
+    if (deferred){ deferred.prompt(); track('pwa_install_click');
+      deferred.userChoice.then(function(c){ track(c&&c.outcome==='accepted'?'pwa_installed':'pwa_dismissed'); deferred=null; btn.style.display='none'; });
+    }
+  });
+  // iOS Safari has no beforeinstallprompt → show manual A2HS hint.
+  var isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
+  if (isIOS){ btn.style.display='inline-flex';
+    btn.addEventListener('click', function(){ document.getElementById('muIosSheet').style.display='block'; track('pwa_ios_hint'); }, {once:false});
+  }
+  window.addEventListener('appinstalled', function(){ track('pwa_appinstalled'); btn.style.display='none'; });
+})();
 </script>
 <script defer src="/mu-funnel.js"></script>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
