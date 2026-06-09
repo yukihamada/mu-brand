@@ -1,0 +1,26 @@
+{
+  "id": "/make",
+  "name": "MU つくる — 言葉から、服を。",
+  "short_name": "MU つくる",
+  "description": "ひとこと言うだけで、AIがあなたのオリジナルの一着をデザイン。ログイン不要・在庫ゼロ。作った服は店に並び、売れたら売上の10%が作り手に。",
+  "start_url": "/make?src=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0A0A0A",
+  "theme_color": "#0A0A0A",
+  "lang": "ja",
+  "icons": [
+    { "src": "/favicon-16x16.png",  "sizes": "16x16",   "type": "image/png" },
+    { "src": "/favicon-32x32.png",  "sizes": "32x32",   "type": "image/png" },
+    { "src": "/icon-192.png",       "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icon-512.png",       "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "screenshots": [
+    { "src": "/og.jpg", "sizes": "1200x630", "type": "image/jpeg", "label": "MU MAKE — 言うだけで服ができる" }
+  ],
+  "categories": ["lifestyle", "shopping"],
+  "shortcuts": [
+    { "name": "つくる", "url": "/make?src=pwa_shortcut" },
+    { "name": "店をみる", "url": "/shop" }
+  ]
+}

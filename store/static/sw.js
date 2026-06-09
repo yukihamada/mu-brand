@@ -4,11 +4,13 @@
 // 100-year Constitution stays readable even without network.
 // Constitution §22 + §23 alignment: brand documents must outlive the device.
 
-const VERSION = 'mu-v3-2026-05-13';
+const VERSION = 'mu-v4-2026-06-09';
 const CACHE = `mu-cache-${VERSION}`;
 
 const PRECACHE = [
   '/',
+  '/make',
+  '/shop',
   '/constitution',
   '/constitution.md',
   '/dao',
@@ -21,6 +23,7 @@ const PRECACHE = [
   '/icon-192.png',
   '/icon-512.png',
   '/manifest.json',
+  '/make.webmanifest',
 ];
 
 self.addEventListener('install', (event) => {
