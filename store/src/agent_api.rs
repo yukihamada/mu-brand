@@ -359,6 +359,112 @@ pub async fn agent_create_store(
     })).into_response()
 }
 
+// ─── POST /api/agent/stores/:slug/collaborators ─────────────────────────
+#[derive(Deserialize)]
+pub struct CollaboratorBody {
+    pub email: String,
+    /// "add" (default) or "remove".
+    pub action: Option<String>,
+}
+
+/// POST /api/agent/stores/:slug/collaborators {email, action?}
+/// The store owner (Bearer api_key) or ADMIN_TOKEN manages the store's
+/// collaborators allowlist. Listed emails may create products in the store
+/// (same review/approval flow as the owner); they cannot manage the store,
+/// edit its settings, or touch products they did not create. The owner is
+/// implicit and never stored in the list.
+pub async fn agent_store_collaborators(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Path(slug): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+    Json(body): Json<CollaboratorBody>,
+) -> Response {
+    let slug = slug.trim().to_lowercase();
+    let target = body.email.trim().to_lowercase();
+    if target.is_empty() || !target.contains('@') {
+        return json_err(StatusCode::BAD_REQUEST, "valid collaborator email required");
+    }
+    let action = body.action.as_deref().unwrap_or("add");
+    if action != "add" && action != "remove" {
+        return json_err(StatusCode::BAD_REQUEST, "action must be \"add\" or \"remove\"");
+    }
+    // Resolve auth BEFORE locking the DB (require_email locks internally).
+    let is_admin = admin_token_present(&headers, Some(&q));
+    let caller = if is_admin {
+        None
+    } else {
+        match require_email(&db, &headers, Some(&q)) {
+            Ok(e) => Some(e.to_lowercase()),
+            Err(r) => return r,
+        }
+    };
+
+    let conn = db.lock().unwrap();
+    let config: Option<String> = conn.query_row(
+        "SELECT config_json FROM catalog_brands WHERE slug=?",
+        rusqlite::params![slug], |r| r.get(0),
+    ).ok().flatten();
+    let Some(config) = config else {
+        return json_err(StatusCode::NOT_FOUND, "unknown store");
+    };
+    let mut cfg: serde_json::Value =
+        serde_json::from_str(&config).unwrap_or_else(|_| serde_json::json!({}));
+    let owner = cfg.get("owner_email").and_then(|v| v.as_str()).map(|s| s.to_lowercase());
+
+    // Authorize: ADMIN_TOKEN, or the store owner.
+    if owner.is_none() {
+        return json_err(StatusCode::FORBIDDEN,
+            "store has no owner_email (pre-seeded brand); not manageable via this API");
+    }
+    if !is_admin && caller.as_deref() != owner.as_deref() {
+        return json_err(StatusCode::FORBIDDEN,
+            "only the store owner (or admin) can manage collaborators");
+    }
+
+    // Current list, normalized + owner removed (the owner is implicit).
+    let mut list: Vec<String> = cfg.get("collaborators")
+        .and_then(|v| serde_json::from_value::<Vec<String>>(v.clone()).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|s| s.trim().to_lowercase())
+        .filter(|e| !e.is_empty() && Some(e.as_str()) != owner.as_deref())
+        .collect();
+    list.sort();
+    list.dedup();
+
+    if action == "add" {
+        if Some(target.as_str()) == owner.as_deref() {
+            return json_err(StatusCode::BAD_REQUEST, "that email is already the store owner");
+        }
+        if !list.contains(&target) {
+            list.push(target.clone());
+            list.sort();
+        }
+    } else {
+        list.retain(|e| e != &target);
+    }
+
+    cfg["collaborators"] = serde_json::json!(list);
+    let new_config = cfg.to_string();
+    let n = conn.execute(
+        "UPDATE catalog_brands SET config_json=? WHERE slug=?",
+        rusqlite::params![new_config, slug],
+    ).unwrap_or(0);
+    if n == 0 {
+        return json_err(StatusCode::INTERNAL_SERVER_ERROR, "failed to update store config");
+    }
+    tracing::info!("[agent] store={} collaborators {}={} by={}",
+        slug, action, target, caller.as_deref().unwrap_or("admin"));
+    Json(serde_json::json!({
+        "ok": true,
+        "store": slug,
+        "action": action,
+        "email": target,
+        "collaborators": list,
+    })).into_response()
+}
+
 // ─── GET /api/agent — agent landing (quickstart, no 404) ────────────────
 // The natural path an agent pokes. Returns the one-call instant-start flow
 // up front so "look at wearmu → create a product" is a single hop.
@@ -755,6 +861,38 @@ fn publish_live(conn: &rusqlite::Connection, sku: &str, brand: &str, by: &str) {
     );
 }
 
+/// True if `email` may create products in a store with the given
+/// `owner_email` and `collaborators` allowlist (case-insensitive). The owner
+/// always qualifies; allow-listed collaborators may create products too,
+/// subject to the normal review/approval flow.
+fn store_write_allowed(owner: Option<&str>, collaborators: &[String], email: &str) -> bool {
+    let e = email.trim().to_lowercase();
+    if owner.map(|o| o.trim().to_lowercase() == e).unwrap_or(false) {
+        return true;
+    }
+    collaborators.iter().any(|c| c.trim().to_lowercase() == e)
+}
+
+/// Load a store's (owner_email, collaborators[]) from catalog_brands.config_json.
+/// Returns (None, []) when the store does not exist or has no such fields.
+fn store_owner_and_collaborators(
+    conn: &rusqlite::Connection,
+    slug: &str,
+) -> (Option<String>, Vec<String>) {
+    let owner: Option<String> = conn.query_row(
+        "SELECT json_extract(config_json,'$.owner_email') FROM catalog_brands WHERE slug=?",
+        rusqlite::params![slug], |r| r.get(0),
+    ).ok().flatten();
+    let collab_json: Option<String> = conn.query_row(
+        "SELECT json_extract(config_json,'$.collaborators') FROM catalog_brands WHERE slug=?",
+        rusqlite::params![slug], |r| r.get(0),
+    ).ok().flatten();
+    let collaborators = collab_json
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .unwrap_or_default();
+    (owner, collaborators)
+}
+
 pub async fn agent_create_product(
     State(db): State<Db>,
     headers: HeaderMap,
@@ -794,13 +932,9 @@ pub async fn agent_create_product(
         // store we don't own. Refunded below if generation/upload fails.
         {
             let conn = db.lock().unwrap();
-            let owner: Option<String> = conn.query_row(
-                "SELECT json_extract(config_json,'$.owner_email') FROM catalog_brands WHERE slug=?",
-                rusqlite::params![store], |r| r.get(0),
-            ).ok().flatten();
-            match owner {
-                Some(o) if o.to_lowercase() == email => {}
-                _ => return json_err(StatusCode::FORBIDDEN, "you do not own this store"),
+            let (owner, collaborators) = store_owner_and_collaborators(&conn, &store);
+            if !store_write_allowed(owner.as_deref(), &collaborators, &email) {
+                return json_err(StatusCode::FORBIDDEN, "you do not own this store");
             }
             if !crate::mu_credit_apply(&conn, &email, -cost, "agent_ai_gen", None) {
                 let bal = crate::mu_credit_balance(&conn, &email);
@@ -849,14 +983,12 @@ pub async fn agent_create_product(
 
     let conn = db.lock().unwrap();
 
-    // Owner check: load the store's owner_email from config_json.
-    let owner: Option<String> = conn.query_row(
-        "SELECT json_extract(config_json,'$.owner_email') FROM catalog_brands WHERE slug=?",
-        rusqlite::params![store], |r| r.get(0),
-    ).ok().flatten();
-    match owner {
-        Some(o) if o.to_lowercase() == email => {}
-        _ => return json_err(StatusCode::FORBIDDEN, "you do not own this store"),
+    // Write check: the store owner, or any allow-listed collaborator
+    // (config_json.collaborators[]), may create products. Collaborators go
+    // through the same review/approval flow as the owner.
+    let (owner, collaborators) = store_owner_and_collaborators(&conn, &store);
+    if !store_write_allowed(owner.as_deref(), &collaborators, &email) {
+        return json_err(StatusCode::FORBIDDEN, "you do not own this store");
     }
 
     // Per-email rate limit.

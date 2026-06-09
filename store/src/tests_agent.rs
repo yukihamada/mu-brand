@@ -4,7 +4,25 @@
 //! `is_trusted_design_host`). New file + a single `mod` line in agent_api.rs
 //! keeps it out of the way of in-flight WIP.
 
-use super::{assess_product_risk, is_trusted_design_host, kind_from_sku};
+use super::{assess_product_risk, is_trusted_design_host, kind_from_sku, store_write_allowed};
+
+// ── store collaborator write-access gate ─────────────────────────────────────
+
+#[test]
+fn store_write_allowed_owner_and_collaborators() {
+    let collabs = vec!["kenny@atsume.io".to_string(), "Bob@Example.com".to_string()];
+    // owner qualifies (case-insensitive)
+    assert!(store_write_allowed(Some("Yuki@Hamada.Tokyo"), &collabs, "yuki@hamada.tokyo"));
+    // collaborators qualify (case-insensitive both sides)
+    assert!(store_write_allowed(Some("yuki@hamada.tokyo"), &collabs, "KENNY@atsume.io"));
+    assert!(store_write_allowed(Some("yuki@hamada.tokyo"), &collabs, "bob@example.com"));
+    // a stranger is rejected
+    assert!(!store_write_allowed(Some("yuki@hamada.tokyo"), &collabs, "eve@evil.com"));
+    // no owner + empty allowlist → rejected (pre-seeded brand stays locked)
+    assert!(!store_write_allowed(None, &[], "anyone@example.com"));
+    // collaborator present but owner None still works
+    assert!(store_write_allowed(None, &collabs, "kenny@atsume.io"));
+}
 
 // ── (a) assess_product_risk: the auto-publish risk gate ──────────────────────
 
