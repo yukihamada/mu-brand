@@ -180,6 +180,21 @@ pub async fn work_recruit(Query(q): Query<RecruitQuery>) -> Response {
 <p>{lead}</p>
 <p><a class="btn green" href="#apply" data-funnel="cta_click" data-funnel-cta="work_cta_v{v}">{cta}</a></p>
 
+<div class="brand" style="background:#14110a;border:1px solid #2a2418">
+<p style="font-size:17px;font-weight:800;margin:0 0 6px;color:#fff">あなたが包んだ箱を、誰かが開けて笑う。</p>
+<p style="margin:0;opacity:.88;font-size:14px">ただの「梱包作業」ではありません。AIが生み出した一着に、<b>最後の“温度”を乗せる</b>のがあなたの手。薄紙の包み方、封緘シール、手書きの一言——その小さな丁寧さで、受け取った人の<b>「箱を開けた瞬間」</b>が決まります。<b>退屈はAIに、温度は人に。</b></p>
+</div>
+
+<h2>こんな人に、ぴったりです</h2>
+<ul style="list-style:none;padding:0;margin:8px 0">
+<li style="padding:7px 0;border-bottom:1px solid var(--line)">🏠 <b>家にいながら、自分のペースで</b>少し稼ぎたい（子育て中・主婦/主夫の方）</li>
+<li style="padding:7px 0;border-bottom:1px solid var(--line)">📱 <b>スキマ時間に、スマホだけ・初期費用ゼロ</b>で始めたい（学生・会社員の副業）</li>
+<li style="padding:7px 0;border-bottom:1px solid var(--line)">🤲 <b>手を動かす・丁寧な作業が好き</b>（リタイア後の方も歓迎。NFC不要のTシャツ仕事があります）</li>
+<li style="padding:7px 0;border-bottom:1px solid var(--line)">🎁 <b>包む・手書き・撮るのが好き</b>。自分のセンスを誰かの笑顔に変えたい</li>
+<li style="padding:7px 0">🌱 ものづくりブランドを<b>仲間と一緒に育てたい</b>（ひとりじゃない）</li>
+</ul>
+<p class="muted">ひとつでも「私かも」と思ったら、向いています。</p>
+
 <h2>メインのお仕事：Tシャツの仕上げ・梱包・発送 👕</h2>
 <p>MUのTシャツ（在庫を持たず、注文が入るたびに刷られます）を、受け取って・検品して・きれいに包んで・送る。<b>「箱を開けた瞬間」の体験をつくる</b>お仕事です。音コインなど他の品もありますが、<b>メインはTシャツ</b>です。</p>
 <p class="muted" style="margin:-4px 0 6px">＝申し込む前に、やることはこれで全部わかります 👇</p>
@@ -192,6 +207,10 @@ pub async fn work_recruit(Query(q): Query<RecruitQuery>) -> Response {
 <li><b>完成写真をアップ</b>して報告 → 運営が確認したら<b>報酬が確定</b></li>
 </ol>
 <p class="muted">所要：1件あたり数分（慣れたら流れ作業）。梱包資材キット（薄紙・封緘シール・カード）は当社からお送りします。</p>
+<div class="card" style="border-color:var(--accent)">
+<p style="margin:0 0 4px"><b>✨ NFCタグも入れられます（オプション・「タップする箱」）</b></p>
+<p class="muted" style="margin:0">ご希望の注文に、スマホで<b>タップすると <a href="https://wearmu.com/make">wearmu.com/make</a></b>（やその一着のための音・真贋ページ）が開く<b>NFCタグ</b>を同梱します。書き込みは<b>NFC対応の方</b>が担当（音コインと同じ仕組み・無料アプリで約30秒）。受け取った人が箱をタップ→次の“作る”へ。応募フォームで「NFC対応」にチェックすると、この仕事も回ってきます。</p>
+</div>
 
 <h2>そのほかのお仕事</h2>
 <ul class="steps">
@@ -254,7 +273,7 @@ pub async fn work_recruit(Query(q): Query<RecruitQuery>) -> Response {
 <input type="checkbox" name="agree" required style="width:auto;margin-top:3px;flex:0 0 auto">
 <span>お客様の配送情報を<b>発送目的のみ</b>に使い、第三者に渡さず、<b>発送後すみやかに破棄</b>することに同意します。</span></label>
 <button class="btn" type="submit" data-funnel="cta_click" data-funnel-cta="work_apply_v{v}">応募する</button>
-<p class="muted">承認されると、仕事キューのリンクをメールでお送りします。</p>
+<p class="muted">まずは応募（30秒・無料）。合わなければ、辞めるのも一言でOK。承認されると、仕事ページのリンクをメールでお送りします。<br>あなたの“ひと手間”を、待っている人がいます。🌱</p>
 </form>
 <p class="muted">運営: <b>株式会社イネブラ</b>(Enabler Inc.)／業務委託。質問は info@enablerdao.com へ。</p>
 <script>try{{(window.MU_FUNNEL&&window.MU_FUNNEL.send||function(){{}})('work_view',{{variant:'{v}'}})}}catch(e){{}}</script>"##,
@@ -379,6 +398,30 @@ pub async fn work_apply(State(db): State<Db>, Form(f): Form<ApplyForm>) -> Respo
 pub struct ApproveQuery {
     pub token: String,
     pub id: i64,
+}
+
+/// GET /admin/work/pending?token= — 承認待ちワーカー一覧(JSON)。
+/// ローカルの通知/自動処理watcher(音を鳴らす→自動承認)がpollする検知口。
+pub async fn admin_pending(State(db): State<Db>, Query(q): Query<QueueQuery>) -> Response {
+    let expected = env::var("ADMIN_TOKEN").unwrap_or_default();
+    if expected.is_empty() || q.token != expected {
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    }
+    let conn = db.lock().unwrap();
+    ensure_tables(&conn);
+    let rows: Vec<serde_json::Value> = {
+        let mut stmt = conn
+            .prepare("SELECT id, name, COALESCE(region,''), COALESCE(created_at,'') FROM work_workers WHERE status='pending' ORDER BY id DESC LIMIT 50")
+            .unwrap();
+        stmt.query_map([], |r| {
+            Ok(serde_json::json!({
+                "id": r.get::<_, i64>(0)?, "name": r.get::<_, String>(1)?,
+                "region": r.get::<_, String>(2)?, "created_at": r.get::<_, String>(3)?
+            }))
+        }).unwrap().filter_map(|x| x.ok()).collect()
+    };
+    let body = serde_json::json!({"count": rows.len(), "pending": rows}).to_string();
+    ([(axum::http::header::CONTENT_TYPE, "application/json")], body).into_response()
 }
 
 pub async fn admin_approve(State(db): State<Db>, Query(q): Query<ApproveQuery>) -> Response {
