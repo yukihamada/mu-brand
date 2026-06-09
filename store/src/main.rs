@@ -5880,13 +5880,13 @@ async fn mypage_dashboard(db: Db, email: String, buyer_token: String) -> Respons
     // ── Gift address section ──────────────────────────────────────────────
     // Your saved shipping address + giftable handle. Others can send you a
     // product by @handle and it ships here — they never see this address.
-    let (acct_slug, acct_addr): (String, Option<String>) = {
+    let (acct_slug, acct_addr, slug_changes): (String, Option<String>, i64) = {
         let conn = db.lock().unwrap();
         conn.query_row(
-            "SELECT COALESCE(slug,''), shipping_address_json FROM you_users WHERE email=? LIMIT 1",
+            "SELECT COALESCE(slug,''), shipping_address_json, COALESCE(slug_changes,0) FROM you_users WHERE email=? LIMIT 1",
             params![email],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
-        ).unwrap_or((String::new(), None))
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, i64>(2)?)),
+        ).unwrap_or((String::new(), None, 0))
     };
     let av: serde_json::Value = acct_addr.as_deref()
         .and_then(|s| serde_json::from_str(s).ok())
@@ -5910,8 +5910,23 @@ async fn mypage_dashboard(db: Db, email: String, buyer_token: String) -> Respons
             .collect::<String>()
     };
     let sel_country = { let c = av["country"].as_str().unwrap_or("JP"); if c.is_empty() {"JP"} else {c} };
+    // Handle rename — allowed once (gift-by-email recipients get an auto-minted
+    // person-like handle and may change it a single time).
+    let handle_change_html = if acct_slug.is_empty() {
+        String::new()
+    } else if slug_changes < 1 {
+        r##"<form id="hf" onsubmit="return false" style="display:flex;gap:8px;align-items:center;margin:0 0 14px">
+    <input id="h_new" placeholder="ハンドルを変更 (英小文字・数字, 1回のみ)" maxlength="20" autocapitalize="off" spellcheck="false" style="flex:1;background:#0a0a0a;border:1px solid #1f1f1f;color:#fff;padding:9px 11px;font-size:13px;border-radius:3px"/>
+    <button id="h_btn" type="submit" style="background:transparent;border:1px solid #333;color:#e6c449;padding:9px 12px;font-size:12px;border-radius:3px;cursor:pointer;white-space:nowrap">変更</button>
+  </form><div id="h_msg" style="font-size:12px;margin:-6px 0 14px"></div>
+  <script>(function(){var f=document.getElementById('hf'),b=document.getElementById('h_btn'),m=document.getElementById('h_msg');if(!f)return;f.addEventListener('submit',async function(){var v=document.getElementById('h_new').value.trim().replace(/^@/,'');if(!v)return;b.disabled=true;m.innerHTML='';var r=await fetch('/api/mypage/handle',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({handle:v})});var j=await r.json().catch(function(){return{};});if(j.ok){m.innerHTML='<span style="color:#9bd97a">✓ @'+(j.handle||v)+' に変更しました（変更はこれで終了）</span>';setTimeout(function(){location.reload();},900);}else{m.innerHTML='<span style="color:#e07b7b">'+(j.error||'エラー')+'</span>';b.disabled=false;}});})();</script>
+"##.to_string()
+    } else {
+        r#"<div style="color:#777;font-size:11.5px;margin:0 0 14px">ハンドルは変更済みです（変更は1回まで）</div>"#.to_string()
+    };
     let address_html = format!(r#"<h2>お届け先 / ギフトを受け取る</h2>
   <div style="color:#999;font-size:12.5px;line-height:1.7;margin:0 0 12px">{handle_line}<br>{addr_status}</div>
+  {handle_change_html}
   <form id="addrf" onsubmit="return false" style="display:flex;flex-direction:column;gap:9px">
     <input id="a_name" placeholder="お名前" value="{name}" style="background:#0a0a0a;border:1px solid #1f1f1f;color:#fff;padding:11px;font-size:14px;border-radius:3px"/>
     <div style="display:flex;gap:9px">
@@ -5930,6 +5945,7 @@ async fn mypage_dashboard(db: Db, email: String, buyer_token: String) -> Respons
   <div id="a_msg" style="font-size:12.5px;margin-top:8px"></div>
 "#,
         handle_line = handle_line, addr_status = addr_status,
+        handle_change_html = handle_change_html,
         name = pv("name"), postal = pv("postal_code"), state = pv("state"),
         city = pv("city"), line1 = pv("line1"), line2 = pv("line2"), phone = pv("phone"),
         country_opts = country_opts(sel_country),
@@ -6085,6 +6101,71 @@ async fn mypage_save_address(
         }
     };
     Json(serde_json::json!({"ok": true, "handle": handle})).into_response()
+}
+
+/// POST /api/mypage/handle — rename the account handle. Allowed EXACTLY ONCE
+/// (slug_changes enforces it; the gift-invite email promises this). Logged-in
+/// (session cookie). Validates the new handle is slug-safe and unique.
+async fn mypage_set_handle(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let email = {
+        let sid = match mypage_session_from_cookie(&headers) {
+            Some(s) => s,
+            None => return (StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"ok":false,"error":"ログインが必要です"}))).into_response(),
+        };
+        let conn = db.lock().unwrap();
+        match mypage_lookup_session(&conn, &sid) {
+            Some((email, _)) => email,
+            None => return (StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"ok":false,"error":"ログインの有効期限が切れています"}))).into_response(),
+        }
+    };
+    let want = body.get("handle").and_then(|v| v.as_str()).unwrap_or("")
+        .trim().trim_start_matches('@').to_lowercase();
+    let valid = want.len() >= 3 && want.len() <= 20
+        && want.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_');
+    if !valid {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":"ハンドルは3〜20文字の英小文字・数字・- _ で入力してください"}))).into_response();
+    }
+    let conn = db.lock().unwrap();
+    let row: Option<(i64, Option<String>, i64)> = conn.query_row(
+        "SELECT id, slug, COALESCE(slug_changes,0) FROM you_users WHERE email=? LIMIT 1",
+        params![email], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ).ok();
+    let Some((id, cur_slug, changes)) = row else {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":"アカウントが見つかりません"}))).into_response();
+    };
+    // No-op rename: don't burn the one allowed change.
+    if cur_slug.as_deref() == Some(want.as_str()) {
+        return Json(serde_json::json!({"ok":true,"handle":want})).into_response();
+    }
+    if changes >= 1 {
+        return (StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"ok":false,"error":"ハンドルの変更は1回までです"}))).into_response();
+    }
+    let taken: bool = conn.query_row(
+        "SELECT 1 FROM you_users WHERE LOWER(slug)=? AND id<>? LIMIT 1",
+        params![want, id], |_| Ok(true),
+    ).unwrap_or(false);
+    if taken {
+        return (StatusCode::CONFLICT,
+            Json(serde_json::json!({"ok":false,"error":"そのハンドルは既に使われています"}))).into_response();
+    }
+    let n = conn.execute(
+        "UPDATE you_users SET slug=?, slug_changes=slug_changes+1, updated_at=? WHERE id=?",
+        params![want, chrono_now(), id],
+    ).unwrap_or(0);
+    if n == 0 {
+        return (StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"ok":false,"error":"更新に失敗しました"}))).into_response();
+    }
+    Json(serde_json::json!({"ok":true,"handle":want})).into_response()
 }
 
 async fn mypage_claim_nft(
@@ -63199,6 +63280,30 @@ fn random_slug() -> String {
     out
 }
 
+/// A friendly, person-like handle (adjective+animal+2 digits, e.g. "calmotter47")
+/// for recipients who get an account auto-created (gift-by-email). Reads like a
+/// nickname rather than the opaque `random_slug()`, and stays lowercase /
+/// URL-safe / collision-resistant. Derives entropy from a fresh UUID (no
+/// Math.random / Date — those are banned here), so no global RNG needed.
+pub(crate) fn random_person_slug() -> String {
+    const ADJ: &[&str] = &[
+        "calm","brave","kind","swift","bright","quiet","bold","gentle","lucky","keen",
+        "warm","clever","sunny","cozy","noble","merry","brisk","vivid","mellow","spry",
+        "wise","jolly","plucky","snug","zesty","fleet","amber","cosmic","pure","fond",
+    ];
+    const ANIMAL: &[&str] = &[
+        "otter","koi","fox","crane","tiger","heron","panda","lynx","robin","whale",
+        "gecko","moth","seal","wren","ibis","tapir","quail","bison","finch","newt",
+        "orca","puma","stag","dove","mole","hare","swan","mink","carp","owl",
+    ];
+    let raw = uuid::Uuid::new_v4().simple().to_string();
+    let b = |i: usize| u8::from_str_radix(&raw[i*2..i*2+2], 16).unwrap_or(0) as usize;
+    let adj = ADJ[b(0) % ADJ.len()];
+    let animal = ANIMAL[b(1) % ANIMAL.len()];
+    let num = (b(2) % 90) + 10; // 10..99 — keeps handles unique-ish, still readable
+    format!("{}{}{}", adj, animal, num)
+}
+
 #[derive(Deserialize)]
 struct YouSlugBody {
     token: String,
@@ -67888,6 +67993,11 @@ async fn main() {
     // falls back to the private claim-link flow. Set via /api/mypage/address.
     let _ = conn.execute(
         "ALTER TABLE you_users ADD COLUMN shipping_address_json TEXT", []);
+    // Gift-by-email: a recipient who wasn't registered gets an auto-minted
+    // person-like handle. They may rename it EXACTLY ONCE (the invite email
+    // says so). This counter enforces that — 0 = can still change, >=1 = locked.
+    let _ = conn.execute(
+        "ALTER TABLE you_users ADD COLUMN slug_changes INTEGER NOT NULL DEFAULT 0", []);
 
     // Backfill: every existing you_user gets a random slug if missing
     {
@@ -68883,6 +68993,9 @@ async fn main() {
         // Save the account shipping address (so others can gift to you by
         // handle without ever seeing it). Logged-in (session cookie) only.
         .route("/api/mypage/address", post(mypage_save_address))
+        // Rename the account handle — allowed once (gift-by-email recipients
+        // get an auto-assigned handle and may change it a single time).
+        .route("/api/mypage/handle", post(mypage_set_handle))
         .route("/vault", get(vault_index))
         .route("/vault/:slug", get(vault_article))
         // ── Holder gates — third-party MU-holder-only content gateways ──

@@ -296,3 +296,34 @@ fn gift_json_schema_claim_lookup_and_preserve() {
         "gift_json must survive the INSERT OR REPLACE final write (recipient not lost)"
     );
 }
+
+// ── (g) Gift-by-email: auto-minted handles are person-like + slug-safe ───────
+//
+// Unregistered gift recipients get an account with a `random_person_slug()`
+// handle (adjective+animal+digits). It must be URL/slug-safe (lowercase
+// a-z0-9 only — no uppercase, no separators that break a /buyer/@handle URL or
+// the LOWER(slug) lookup), reasonably sized, and varied across calls. A regen
+// to gibberish or uppercase would break the @handle UX + the invite email.
+#[test]
+fn person_slug_is_slug_safe_and_varied() {
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..200 {
+        let s = crate::random_person_slug();
+        assert!(s.len() >= 5 && s.len() <= 24, "handle '{}' length out of range", s);
+        assert!(
+            s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()),
+            "handle '{}' must be lowercase a-z0-9 only (URL/slug-safe)",
+            s
+        );
+        // Ends in the 2-digit suffix the generator appends.
+        assert!(
+            s.chars().rev().take(2).all(|c| c.is_ascii_digit()),
+            "handle '{}' should end in 2 digits",
+            s
+        );
+        seen.insert(s);
+    }
+    // 200 draws over 30×30×90 ≈ 81k space → effectively all distinct; assert it
+    // isn't generating a constant (which would collide every gift-by-email).
+    assert!(seen.len() > 150, "person slugs not varied enough: {} unique/200", seen.len());
+}

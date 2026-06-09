@@ -7750,9 +7750,9 @@ pub async fn shop_pdp(
             && kind_guess != "zine" && kind_guess != "video" && kind_guess != "karaoke_ticket";
         let (acctgift_html, acctgift_script) = if acctgift_eligible {
             (
-                r#"<label style="display:flex;align-items:center;gap:9px;justify-content:center;margin:14px 0 0;cursor:pointer;font-size:13px;opacity:0.92"><input type="checkbox" id="giftToggle" style="width:17px;height:17px;accent-color:#e6c449">🎁 MU アカウントに贈る <span style="opacity:.6">(住所を知らせず送れます)</span></label><div id="giftWrap" style="display:none;margin-top:8px"><input id="giftHandle" placeholder="贈る相手の @ハンドル" autocapitalize="off" autocomplete="off" spellcheck="false" style="width:100%;box-sizing:border-box;background:#0a0a0a;border:1px solid #1f1f1f;color:#fff;padding:11px;font-size:14px;border-radius:3px"><div id="giftStatus" style="font-size:12px;margin-top:6px;text-align:center;min-height:16px"></div></div>"#.to_string(),
+                r#"<label style="display:flex;align-items:center;gap:9px;justify-content:center;margin:14px 0 0;cursor:pointer;font-size:13px;opacity:0.92"><input type="checkbox" id="giftToggle" style="width:17px;height:17px;accent-color:#e6c449">🎁 MU アカウントに贈る <span style="opacity:.6">(住所を知らせず送れます)</span></label><div id="giftWrap" style="display:none;margin-top:8px"><input id="giftHandle" placeholder="相手の @ハンドル または メールアドレス" autocapitalize="off" autocomplete="off" spellcheck="false" style="width:100%;box-sizing:border-box;background:#0a0a0a;border:1px solid #1f1f1f;color:#fff;padding:11px;font-size:14px;border-radius:3px"><div id="giftStatus" style="font-size:12px;margin-top:6px;text-align:center;min-height:16px"></div></div>"#.to_string(),
                 format!(
-                    r#"<script>(function(){{var t=document.getElementById('giftToggle'),inp=document.getElementById('giftHandle'),b=document.getElementById('buybtn'),st=document.getElementById('giftStatus'),wrap=document.getElementById('giftWrap');if(!t||!b)return;var ok=false,handle='',timer=null;t.addEventListener('change',function(){{wrap.style.display=t.checked?'block':'none';if(!t.checked){{ok=false;st.textContent='';}}else{{inp.focus();}}}});inp.addEventListener('input',function(){{ok=false;st.textContent='';handle=inp.value.trim().replace(/^@/,'');if(timer)clearTimeout(timer);if(!handle)return;timer=setTimeout(async function(){{try{{var r=await fetch('/api/gift/check?handle='+encodeURIComponent(handle));var j=await r.json();if(j&&j.exists){{ok=true;handle=j.handle;st.innerHTML='<span style=\"color:#9bd97a\">✓ @'+j.handle+' に贈れます</span>';}}else{{ok=false;st.innerHTML='<span style=\"color:#e07b7b\">そのハンドルのアカウントが見つかりません</span>';}}}}catch(e){{ok=false;}}}},350);}});b.addEventListener('click',function(ev){{if(t.checked){{ev.preventDefault();if(!ok){{st.innerHTML='<span style=\"color:#e07b7b\">受け取る人の @ハンドルを入力してください</span>';return;}}var h=b.getAttribute('href');window.location.href=h+(h.indexOf('?')>=0?'&':'?')+'gift_to='+encodeURIComponent(handle);}}}});}})();</script>"#,
+                    r#"<script>(function(){{var t=document.getElementById('giftToggle'),inp=document.getElementById('giftHandle'),b=document.getElementById('buybtn'),st=document.getElementById('giftStatus'),wrap=document.getElementById('giftWrap');if(!t||!b)return;var ok=false,dest='',timer=null;function isEmail(v){{return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v);}}t.addEventListener('change',function(){{wrap.style.display=t.checked?'block':'none';if(!t.checked){{ok=false;st.textContent='';}}else{{inp.focus();}}}});inp.addEventListener('input',function(){{ok=false;st.textContent='';var v=inp.value.trim().replace(/^@/,'');dest=v;if(timer)clearTimeout(timer);if(!v)return;if(isEmail(v)){{ok=true;st.innerHTML='<span style=\"color:#9bd97a\">✓ 未登録ならメールで招待します（住所はあなたに伝わりません）</span>';return;}}timer=setTimeout(async function(){{try{{var r=await fetch('/api/gift/check?handle='+encodeURIComponent(v));var j=await r.json();if(j&&j.exists){{ok=true;dest=j.handle;st.innerHTML='<span style=\"color:#9bd97a\">✓ @'+j.handle+' に贈れます</span>';}}else{{ok=false;st.innerHTML='<span style=\"color:#e07b7b\">そのハンドルは見つかりません（未登録の方はメールアドレスで）</span>';}}}}catch(e){{ok=false;}}}},350);}});b.addEventListener('click',function(ev){{if(t.checked){{ev.preventDefault();if(!ok){{st.innerHTML='<span style=\"color:#e07b7b\">受け取る人の @ハンドル または メールアドレスを入力してください</span>';return;}}var h=b.getAttribute('href');window.location.href=h+(h.indexOf('?')>=0?'&':'?')+'gift_to='+encodeURIComponent(dest);}}}});}})();</script>"#,
                 ),
             )
         } else {
@@ -8623,6 +8623,21 @@ fn sanitize_ref(code: &str) -> Option<String> {
     if c.len() >= 4 { Some(c) } else { None }
 }
 
+/// Loose e-mail shape check: one '@' with a dotted host after it and no spaces.
+/// Good enough to route a gift input to the "invite by email" path vs a handle.
+fn looks_like_email(s: &str) -> bool {
+    let s = s.trim();
+    if s.len() < 6 || s.len() > 200 || s.contains(char::is_whitespace) {
+        return false;
+    }
+    match s.split_once('@') {
+        Some((local, host)) => {
+            !local.is_empty() && host.contains('.') && !host.starts_with('.') && !host.ends_with('.')
+        }
+        None => false,
+    }
+}
+
 pub async fn shop_checkout(
     State(db): State<Db>,
     headers: axum::http::HeaderMap,
@@ -8828,12 +8843,21 @@ pub async fn shop_checkout(
     // they have none yet. Only honored for shippable goods (a digital ticket
     // has nothing to ship). An unknown handle aborts BEFORE a paid session is
     // opened, so we never take money for a gift that can never be delivered.
-    let gift_slug: Option<String> = match q.gift_to.as_deref() {
-        Some(h) if !is_ticket => {
-            let handle = h.trim().trim_start_matches('@').to_lowercase();
-            if handle.is_empty() {
-                None
+    // The gift destination is EITHER an existing @handle OR an email address.
+    //   • email  → the recipient may be unregistered; we mint an account +
+    //     person-like handle at fulfillment and email them an invite. No abort.
+    //   • handle → must resolve to a real account now, else abort BEFORE a paid
+    //     session opens (never take money for a gift that can't be delivered).
+    // Both skip Stripe shipping collection — the sender must not see the address.
+    let mut gift_slug: Option<String> = None;
+    let mut gift_email: Option<String> = None;
+    if let Some(raw) = q.gift_to.as_deref() {
+        let v = raw.trim().trim_start_matches('@').trim().to_string();
+        if !v.is_empty() && !is_ticket {
+            if looks_like_email(&v) {
+                gift_email = Some(v.to_lowercase());
             } else {
+                let handle = v.to_lowercase();
                 let found: Option<String> = {
                     let conn = db.lock().unwrap();
                     conn.query_row(
@@ -8844,7 +8868,7 @@ pub async fn shop_checkout(
                     .ok()
                 };
                 match found {
-                    Some(s) => Some(s),
+                    Some(s) => gift_slug = Some(s),
                     None => {
                         return (
                             StatusCode::OK,
@@ -8857,7 +8881,7 @@ pub async fn shop_checkout(
                                  <div style=\"font-size:13px;letter-spacing:.3em;color:#e6c449\">🎁 GIFT</div>\
                                  <h1 style=\"font-weight:500;font-size:20px;margin:14px 0 10px\">その MU アカウントが見つかりません</h1>\
                                  <p style=\"opacity:.6;font-size:13px;line-height:1.8\">ハンドル <b>@{h}</b> のアカウントは見つかりませんでした。<br>\
-                                 つづりをご確認ください。<br><br>\
+                                 未登録の方へはメールアドレスで贈れます。<br><br>\
                                  <a href=\"/shop/{sku}\" style=\"color:#e6c449\">← 商品に戻る</a></p></div></body>",
                                 h = html_text(&handle), sku = html_text(&sku),
                             )),
@@ -8867,8 +8891,8 @@ pub async fn shop_checkout(
                 }
             }
         }
-        _ => None,
-    };
+    }
+    let is_gift = gift_slug.is_some() || gift_email.is_some();
 
     let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
     // Pass the real order value + Stripe session id so the /success page
@@ -9020,11 +9044,14 @@ pub async fn shop_checkout(
     if let Some(ref gs) = gift_slug {
         form.push(("metadata[gift_to]", gs.clone()));
     }
+    if let Some(ref ge) = gift_email {
+        form.push(("metadata[gift_email]", ge.clone()));
+    }
     // Physical goods collect a shipping address; a digital ticket does not
     // (nothing ships — we email a QR), and neither does a gift (the address
-    // comes from the recipient's account). Stripe still captures the buyer's
-    // email in payment mode either way.
-    if !is_ticket && gift_slug.is_none() {
+    // comes from the recipient's account / claim flow). Stripe still captures
+    // the buyer's email in payment mode either way.
+    if !is_ticket && !is_gift {
         for (i, cc) in ["JP", "US", "GB", "CA", "AU", "DE", "FR"].iter().enumerate() {
             form.push((
                 match i {
@@ -9466,20 +9493,16 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
     // (manual / digital / contrado returned above), so the sender's address is
     // never read anywhere in this path — the privacy guarantee holds.
     let gift_to = session["metadata"]["gift_to"].as_str().unwrap_or("").to_string();
-    if !gift_to.is_empty() && route.starts_with("printful_") {
+    let gift_email = session["metadata"]["gift_email"].as_str().unwrap_or("").to_lowercase();
+    if (!gift_to.is_empty() || !gift_email.is_empty()) && route.starts_with("printful_") {
         let sender_email = session["customer_details"]["email"].as_str().unwrap_or("").to_string();
-        let recipient: Option<(String, Option<String>)> = {
-            let conn = db.lock().unwrap();
-            conn.query_row(
-                "SELECT COALESCE(email,''), shipping_address_json FROM you_users WHERE LOWER(slug)=? LIMIT 1",
-                rusqlite::params![gift_to.to_lowercase()],
-                |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
-            )
-            .ok()
-        };
-        let Some((recipient_email, saved_addr)) = recipient else {
-            // Recipient account vanished between checkout and webhook.
-            tracing::warn!("[catalog/gift] recipient slug {} not found, session={}", gift_to, session_id);
+        // Resolve the recipient account — creating one with a person-like
+        // handle if this is a gift-by-email to someone not registered yet.
+        // → (slug, recipient_email, saved_address_json, newly_minted_handle).
+        let resolved = resolve_or_create_gift_recipient(&db, &gift_to, &gift_email);
+        let Some((rslug, recipient_email, saved_addr, minted_handle)) = resolved else {
+            // Handle-gift to an account that vanished between checkout & webhook.
+            tracing::warn!("[catalog/gift] recipient not found (slug='{}' email='{}'), session={}", gift_to, gift_email, session_id);
             {
                 let conn = db.lock().unwrap();
                 let _ = conn.execute(
@@ -9509,7 +9532,7 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
             Some(addr) => {
                 // Ship now to the recipient's saved address — sender sees nothing.
                 let gift_json = serde_json::json!({
-                    "recipient_slug": gift_to, "claimed": true, "sender_email": sender_email,
+                    "recipient_slug": rslug, "claimed": true, "sender_email": sender_email,
                 }).to_string();
                 ship_gift(db.clone(), &session_id, &sku, amount_total, &currency,
                           &addr, &sender_email, &recipient_email, &gift_json).await;
@@ -9517,9 +9540,11 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
             }
             None => {
                 // No address yet → hold the paid order + email a private claim link.
+                // For a freshly-minted account, the email also announces the
+                // assigned @handle (changeable once).
                 let claim_token = uuid::Uuid::new_v4().simple().to_string();
                 let gift_json = serde_json::json!({
-                    "recipient_slug": gift_to, "claim_token": claim_token,
+                    "recipient_slug": rslug, "claim_token": claim_token,
                     "claimed": false, "sender_email": sender_email,
                 }).to_string();
                 {
@@ -9530,10 +9555,11 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
                         rusqlite::params![amount_total, sender_email, gift_json, session_id],
                     );
                 }
-                send_gift_claim_email(&recipient_email, &claim_token, &sender_email).await;
+                send_gift_claim_email(&recipient_email, &claim_token, &sender_email, minted_handle.as_deref()).await;
                 let _ = crate::send_telegram_message(&format!(
-                    "🎁 *gift awaiting address* → {} (slug {}) session=`{}…` ¥{}. Claim link emailed.",
-                    recipient_email, gift_to, session_id.chars().take(24).collect::<String>(), amount_total
+                    "🎁 *gift awaiting address* → {} (@{}{}) session=`{}…` ¥{}. Claim link emailed.",
+                    recipient_email, rslug, if minted_handle.is_some() { " NEW" } else { "" },
+                    session_id.chars().take(24).collect::<String>(), amount_total
                 )).await;
                 return;
             }
@@ -10590,9 +10616,64 @@ async fn ship_gift(
     }
 }
 
+/// Resolve the gift recipient's account, creating one for an unregistered
+/// gift-by-email target. Returns (slug, recipient_email, saved_address_json,
+/// newly_minted_handle). `newly_minted_handle` is Some ONLY when we just
+/// created the account — the caller uses it to announce the assigned @handle
+/// in the invite email. Slug-gift to a missing account returns None (the
+/// caller treats that as "recipient vanished"). Synchronous (DB only).
+fn resolve_or_create_gift_recipient(
+    db: &Db,
+    gift_to: &str,
+    gift_email: &str,
+) -> Option<(String, String, Option<String>, Option<String>)> {
+    let conn = db.lock().unwrap();
+    let by = |conn: &rusqlite::Connection, col: &str, val: &str| {
+        conn.query_row(
+            &format!("SELECT slug, COALESCE(email,''), shipping_address_json FROM you_users WHERE LOWER({col})=? LIMIT 1"),
+            rusqlite::params![val],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?)),
+        )
+        .ok()
+    };
+    // Handle gift → must be an existing account.
+    if !gift_to.is_empty() {
+        return by(&conn, "slug", &gift_to.to_lowercase()).map(|(s, e, a)| (s, e, a, None));
+    }
+    // Email gift → existing account by email, else mint one.
+    if !gift_email.is_empty() {
+        if let Some((s, e, a)) = by(&conn, "email", gift_email) {
+            return Some((s, if e.is_empty() { gift_email.to_string() } else { e }, a, None));
+        }
+        let now = chrono_now_iso();
+        let tk = uuid::Uuid::new_v4().simple().to_string();
+        let mut slug = crate::random_person_slug();
+        for _ in 0..6 {
+            let taken = conn.query_row("SELECT 1 FROM you_users WHERE slug=?", rusqlite::params![slug], |_| Ok(())).is_ok();
+            if !taken { break; }
+            slug = crate::random_person_slug();
+        }
+        let inserted = conn.execute(
+            "INSERT INTO you_users (email, token, slug, taste_json, size, created_at, updated_at)
+             VALUES (?,?,?,'{}','S',?,?)",
+            rusqlite::params![gift_email, tk, slug, now, now],
+        ).unwrap_or(0);
+        if inserted > 0 {
+            return Some((slug.clone(), gift_email.to_string(), None, Some(slug)));
+        }
+        // Race: another caller inserted this email first — re-read it.
+        return by(&conn, "email", gift_email)
+            .map(|(s, e, a)| (s, if e.is_empty() { gift_email.to_string() } else { e }, a, None));
+    }
+    None
+}
+
 /// Email the giftee a private claim link to enter their shipping address.
-/// The sender's identity/address is never included. Best-effort.
-async fn send_gift_claim_email(recipient_email: &str, claim_token: &str, _sender_email: &str) {
+/// The sender's identity/address is never included. When `assigned_handle` is
+/// Some (a freshly-minted account for an unregistered email gift), the email
+/// also tells them their new MU handle and that it can be changed once.
+/// Best-effort.
+async fn send_gift_claim_email(recipient_email: &str, claim_token: &str, _sender_email: &str, assigned_handle: Option<&str>) {
     if recipient_email.is_empty() {
         tracing::warn!("[catalog/gift] recipient has no email — claim link cannot be sent (token {})", claim_token);
         return;
@@ -10604,6 +10685,19 @@ async fn send_gift_claim_email(recipient_email: &str, claim_token: &str, _sender
         tracing::warn!("[catalog/gift] RESEND_API_KEY unset — claim link for {} not emailed: {}", recipient_email, link);
         return;
     }
+    // For a newly-created account, introduce the assigned handle + the
+    // one-time-change rule (the user asked unregistered recipients be told this).
+    let handle_block = match assigned_handle {
+        Some(h) => format!(
+            r#"<div style="margin:18px 0;padding:14px 16px;background:#111;border:1px solid #222;border-radius:6px">
+<div style="font-size:12px;opacity:.6;letter-spacing:.08em">あなたの MU ハンドル</div>
+<div style="font-size:20px;color:#e6c449;font-weight:600;margin-top:4px">@{h}</div>
+<div style="font-size:12px;opacity:.7;line-height:1.7;margin-top:8px">あなた用に自動で割り当てました。<br><b style="color:#cfcfcf">ハンドルの変更は1回だけ</b>、マイページ (/mypage) から行えます。</div>
+</div>"#,
+            h = html_text(h),
+        ),
+        None => String::new(),
+    };
     let html = format!(
         r#"<div style="background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,sans-serif;padding:32px 0">
 <div style="max-width:520px;margin:0 auto;padding:0 28px">
@@ -10611,10 +10705,12 @@ async fn send_gift_claim_email(recipient_email: &str, claim_token: &str, _sender
 <h2 style="font-weight:500;font-size:21px;margin:14px 0 10px">あなたに MU のギフトが届いています</h2>
 <p style="opacity:0.82;font-size:14px;line-height:1.9">MU の仲間から、あなたへの贈り物です。<br>
 お届け先のご住所を入力いただくと発送します。<b style="color:#e6c449">ご住所は贈った方には一切伝わりません。</b></p>
+{handle_block}
 <p style="margin:26px 0"><a href="{link}" style="display:inline-block;background:#e6c449;color:#000;text-decoration:none;padding:14px 28px;font-weight:600;letter-spacing:0.06em;border-radius:3px">住所を入力して受け取る →</a></p>
 <p style="opacity:0.5;font-size:12px;line-height:1.7">このリンクはあなた専用です。心当たりがない場合は破棄してください。<br>URL: <span style="color:#888">{link}</span></p>
 <p style="opacity:0.5;font-size:12px">— MU / 株式会社イネブラ</p>
 </div></div>"#,
+        handle_block = handle_block,
         link = html_text(&link),
     );
     let _ = reqwest::Client::new()
