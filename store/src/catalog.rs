@@ -933,6 +933,22 @@ pub(crate) fn placements_for_product(printful_product_id: i64) -> &'static [&'st
     }
 }
 
+/// kind → fulfillment_route。admin_nl_add と public_make(/make) の両方が使う
+/// 唯一の真実。/make が独自の dtg/aop 二択をハードコードしていたため towel
+/// (刺繍)/mug/poster 等が printful_dtg で作られ誤発送になっていた回帰を防ぐ。
+pub(crate) fn route_for_kind(kind: &str) -> &'static str {
+    match kind {
+        "rashguard_ls" | "rashguard_black" => "printful_aop",
+        // 刺繍系(stitched, not printed)。placement(embroidery_*)がファイルを駆動。
+        "cap" | "beanie" | "blanket" | "towel" => "printful_embroidery",
+        // 人手発送(NFC音コイン / ハード / 受注設計の家)。
+        "nfc_coin" | "device" | "house" => "manual",
+        // デジタル(購入→メール配信。チケット→QR / song・zine・video→限定リンク)。
+        "event_ticket" | "song" | "zine" | "video" | "karaoke_ticket" => "digital",
+        _ => "printful_dtg",
+    }
+}
+
 struct ProductSpec {
     kind: &'static str,
     printful_product_id: i64,
@@ -1447,27 +1463,7 @@ pub fn agent_insert_product(
     let sku = format!("{}-AGENT-{}-{}",
         brand_for_sku, kind.to_uppercase().replace('_', "-"), seed);
 
-    let route = match kind {
-        "rashguard_ls" | "rashguard_black" => "printful_aop",
-        // Embroidered cap (Printful 99): stitched, not printed. No special
-        // dispatch arm in fulfill_catalog_order — like every non-manual/
-        // non-digital route it falls through to the Printful POST, where the
-        // stored placement ("embroidery_front") drives the embroidery file.
-        // Embroidered goods — stitched, not printed (same fall-through to the
-        // Printful POST as cap; the stored embroidery placement drives the file).
-        "cap" | "beanie" | "blanket" | "towel" => "printful_embroidery",
-        // Self-fulfilled, non-Printful (NFC音コイン): take payment, then a
-        // human encodes the tag + mails it (handled by the manual arm in
-        // fulfill_catalog_order).
-        // Self-fulfilled, non-Printful: NFC音コイン / hardware / 受注設計の家。
-        // Take payment, then a human fulfils (encode+mail / ship / 設計相談).
-        "nfc_coin" | "device" | "house" => "manual",
-        // Digital goods: take payment, then deliver by email (handled by the
-        // digital arm in fulfill_catalog_order). No shipping. Ticket → QR;
-        // song/zine/video → private link; karaoke_ticket → redemption code.
-        "event_ticket" | "song" | "zine" | "video" | "karaoke_ticket" => "digital",
-        _ => "printful_dtg",
-    };
+    let route = route_for_kind(kind);
 
     conn.execute(
         "INSERT INTO catalog_products (
@@ -3668,7 +3664,7 @@ pub async fn admin_nl_add(
                 &url, &url, &url,
                 1, 50,
                 "live",
-                if matches!(kind, "rashguard_ls"|"rashguard_black") { "printful_aop" } else { "printful_dtg" },
+                route_for_kind(kind),
                 &legacy,
             ],
         );
@@ -4650,10 +4646,16 @@ pub async fn make_page(State(db): State<Db>, Query(q): Query<MakePageQuery>) -> 
     } else {
         "できた一着は <b>Tシャツ ¥4,900〜・ラッシュガード ¥9,800〜・スウェット ¥7,800〜・パーカー ¥8,800〜・ステッカー ¥800〜</b>。1枚から受注生産・買わなくてもOK。権利リスクがあるものだけ人が確認、あとは自動で公開。"
     };
+    // 非アパレルkindを深リンクで選んで来た場合(?k=towel 等)、見出し/プレース
+    // ホルダの「Tシャツ」固定をそのkindに差し替えるためラベルをJSへ渡す。
+    let sel_label = MAKE_KINDS_ALL.iter()
+        .find(|(v, _)| *v == sel).map(|(_, l)| *l).unwrap_or("");
     Html(MAKE_HTML
         .replace("__KIND_OPTIONS__", &kind_options)
         .replace("__PRICE_HINT__", price_hint)
         .replace("__SERVER_VARIANT__", server_variant)
+        .replace("__SEL_KIND__", sel)
+        .replace("__SEL_LABEL__", sel_label)
         .replace("__WINNER_LOCKED__", lock_js))
 }
 
@@ -4837,7 +4839,7 @@ function muEvent(ev,extra){try{
 // 着用イメージ(on-body mockup)はバックグラウンド生成 → /api/make/peek を
 // ポーリングして完成したらカード画像を差し替え（着た姿=心理的所有感）。
 // 6秒×20回のあと15秒×10回（計約4.5分）。タブ非表示中はfetchしない。
-function pollFit(sku,design){
+function pollFit(sku,design,kind){
   var n=0;
   function schedule(){setTimeout(tick,n<20?6000:15000);}
   function tick(){
@@ -4848,7 +4850,7 @@ function pollFit(sku,design){
       if(j&&j.mockup&&j.mockup!==design){
         var im=$('#mkImg'),f=$('#mkFit');
         if(im){im.style.opacity=0;setTimeout(function(){im.src=j.mockup;im.style.opacity=1;},450);}
-        if(f)f.textContent='👕 着ると、こうなる。鏡の前の自分を、想像してみて。';
+        if(f)f.textContent=mkVerb(kind);
         return;
       }
       schedule();
@@ -4878,6 +4880,22 @@ var MKV_DEFS={
 };
 // サーバが variant を焼いていればそれ、無ければ visitor のハッシュで決定的3分割。
 var SV='__SERVER_VARIANT__', LOCKED=__WINNER_LOCKED__;
+// 深リンク ?k=<kind> で選ばれた種類（空ならアパレル既定）。Tシャツ前提の固定
+// コピーを kind に合わせて差し替えるために使う。
+var SEL_KIND='__SEL_KIND__', SEL_LABEL='__SEL_LABEL__';
+// kind別の「動詞」コピー。タオル/マグに「着ると」と出ていた回帰を修正。
+var MK_USE=['mug','mug_black','bottle','wine_glass','towel','journal','mouse_pad','laptop_sleeve','phone_case','coaster','placemat','sticker'];
+var MK_SHOW=['poster','canvas','metal_print','pillow','blanket'];
+function mkVerb(k){
+  if(k==='tote') return '👜 持つと、こうなる。';
+  if(MK_SHOW.indexOf(k)>=0) return '🖼 飾ると、こうなる。お部屋を、想像してみて。';
+  if(MK_USE.indexOf(k)>=0) return '✨ 使うと、こうなる。';
+  return '👕 着ると、こうなる。鏡の前の自分を、想像してみて。';
+}
+function mkPrep(k){
+  if(k==='tote'||MK_SHOW.indexOf(k)>=0||MK_USE.indexOf(k)>=0) return '仕上がりイメージを準備中… 数十秒でここに届きます';
+  return '👕 着用イメージを準備中… 数十秒でここに届きます';
+}
 function hash3(s){var h=0;for(var i=0;i<s.length;i++){h=(h*31+s.charCodeAt(i))>>>0;}return ['a','b','c'][h%3];}
 var MKV=(SV==='a'||SV==='b'||SV==='c')?SV:hash3(VIS||'a');
 (function applyVariant(){
@@ -4887,6 +4905,12 @@ var MKV=(SV==='a'||SV==='b'||SV==='c')?SV:hash3(VIS||'a');
   var p=$('#p'); if(p)p.placeholder=d.ph;
   var q=$('#mkQuick'); if(q)q.hidden=!d.quick;
   var ex=$('#mkEx'); if(ex&&d.quick)ex.hidden=true;
+  // ?k=<非アパレル> で来たら「Tシャツ」固定の見出しをそのkindに差し替える。
+  if(SEL_KIND && SEL_LABEL){
+    var lbl=SEL_LABEL.replace(/（.*?）/,'');
+    if(h)h.textContent='言うだけで、'+lbl+'ができる。';
+    if(p)p.placeholder='例：'+lbl+'に、ミニマルな一本線の富士山';
+  }
   document.body.setAttribute('data-variant',MKV);
 })();
 document.querySelectorAll('.ex b').forEach(b=>b.onclick=()=>{$('#p').value=b.dataset.x;});
@@ -4954,13 +4978,13 @@ function renderResult(j,p,ok){
     +'<div class=pr>¥'+yen(j.retail_jpy)+'</div>'
     +'<div style="font-size:13px;color:rgba(245,245,240,.7)">'+(j.hook||'')+'</div>'
     + one
-    +'<div class=fitnote id=mkFit>'+(j.auto_approved?'👕 着用イメージを準備中… 数十秒でここに届きます':'')+'</div>'
+    +'<div class=fitnote id=mkFit>'+(j.auto_approved?mkPrep(j.kind):'')+'</div>'
     + buy + share + spread + nt
     +'</div></div>'
     +(ok?'':claimCardHtml());
   $('#out').scrollIntoView({behavior:'smooth',block:'nearest'});
   if(!ok) wireClaim(j,p);
-  if(j.auto_approved && j.sku) pollFit(j.sku, j.design_url);
+  if(j.auto_approved && j.sku) pollFit(j.sku, j.design_url, j.kind);
 }
 // 名義化カード: デザインは見せた上で「あなたの名義にする」だけをメール認証ゲートに。
 function claimCardHtml(){
@@ -5258,7 +5282,10 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
                 0, 0,
                 &url, &url, &url,
                 is_active_i, 50, status_s,
-                if is_contrado { "contrado_uk" } else if is_aop { "printful_aop" } else { "printful_dtg" },
+                // contrado は専用ルート。それ以外は kind→route の唯一の真実に委譲
+                // (rashguard→aop / towel・cap 等→embroidery / 既定→dtg)。
+                // 以前は dtg/aop 二択固定で towel が printful_dtg になり誤発送だった。
+                if is_contrado { "contrado_uk" } else { route_for_kind(kind) },
                 "public_make", meta_json,
             ],
         );
