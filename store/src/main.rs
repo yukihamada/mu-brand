@@ -37,7 +37,7 @@ fn autopilot_on() -> bool {
 
 /// Returns true if autopilot is off — caller should log and skip.
 /// Used at the top of every autonomous cron task.
-fn autopilot_skip(task: &str) -> bool {
+pub(crate) fn autopilot_skip(task: &str) -> bool {
     if !autopilot_on() {
         tracing::warn!("[autopilot:off] skipping {} (set MU_AUTOPILOT=1 to re-enable)", task);
         true
@@ -24039,7 +24039,7 @@ fn jp_prefecture_to_iso(s: &str) -> Option<&'static str> {
 }
 
 /// Unix-epoch-seconds 30 days from now, as a string (matches you_users.trial_end_at format).
-fn trial_end_seconds_from_now() -> String {
+pub(crate) fn trial_end_seconds_from_now() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
     format!("{}", secs + 30 * 86400)
@@ -69345,6 +69345,17 @@ async fn main() {
     let watcher_db = db.clone();
     let agent_db = db.clone();
     let weather_db = db.clone();
+    let gift_remind_db = db.clone();
+    // Gift reminder sweep — every 6h, nudge unclaimed gift recipients (once at
+    // 3d) + escalate to the operator (once at 14d). See remind_pending_gifts.
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(90)).await;
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(6 * 3600));
+        loop {
+            interval.tick().await;
+            catalog::remind_pending_gifts(gift_remind_db.clone()).await;
+        }
+    });
 
     // CORS — allow any origin to read public APIs + embed.js.
     // Restricted to GET/OPTIONS so write endpoints (POST /api/checkout etc.)
