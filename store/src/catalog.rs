@@ -2350,6 +2350,15 @@ pub async fn generate_onbody_mockup(
         .build()
         .map_err(|e| format!("client: {}", e))?;
 
+    // Read the design's real pixel aspect ratio. The position boxes below were
+    // written assuming square (1024²) artwork, but maker / agent designs can
+    // come back non-square (e.g. /make returned a 1408×768 landscape for
+    // MAKE-MAKE-TEE-mkdcffdbb5). Forcing a non-square design into a square
+    // width×height makes Printful STRETCH it — a round logo became a tall
+    // ellipse. With the true dims we center-fit instead, so it is never
+    // stretched. None → fall back to the old square boxes.
+    let design_dims = design_dims(&client, &design_url).await;
+
     // 1. Create task. The `position` field is mandatory per Printful
     //    error MG-4 "Position field is missing"; values mirror
     //    printful_mockup_config_for() in main.rs for chest_tee.
@@ -2393,11 +2402,17 @@ pub async fn generate_onbody_mockup(
         // 前面チェストDTGアパレル + AOPラッシュガード4パネル → tee 1800×2400 box。
         // tee(71)/hoodie(146)/crewneck(145)/tank(539)/long_sleeve(356) +
         // rashguard AOP(301/302/368/369/836)。
-        71 | 146 | 145 | 539 | 356 | 301 | 302 | 368 | 369 | 836 => serde_json::json!({
-            "area_width": 1800, "area_height": 2400,
-            "width": 1260,      "height": 1260,
-            "top": 380,         "left": 270
-        }),
+        71 | 146 | 145 | 539 | 356 | 301 | 302 | 368 | 369 | 836 => match design_dims {
+            // Center-fit the design inside the 1260×1260 chest box (top-left
+            // 270,380 in the 1800×2400 print area), preserving aspect so a
+            // non-square design isn't stretched.
+            Some((dw, dh)) => aspect_fit_position(1800, 2400, 270, 380, 1260, dw, dh),
+            None => serde_json::json!({
+                "area_width": 1800, "area_height": 2400,
+                "width": 1260,      "height": 1260,
+                "top": 380,         "left": 270
+            }),
+        },
         // それ以外(tote/cap/canvas/mug/pillow/coaster/bottle/leggings/joggers/
         // apron/shorts/... 等)は印刷面の寸法を Printful から取得し「中央fit」配置。
         // 印刷面ごとに形が違うため tee box だとクリップ/歪み/文字はみ出しになる。
@@ -2406,7 +2421,7 @@ pub async fn generate_onbody_mockup(
         _ => {
             let placement = placements_for_product(printful_product)
                 .first().copied().unwrap_or("front");
-            printful_fill_position(&client, &key, printful_product, placement)
+            printful_fill_position(&client, &key, printful_product, placement, design_dims)
                 .await
                 .unwrap_or_else(|| serde_json::json!({
                     "area_width": 1800, "area_height": 2400,
@@ -2537,6 +2552,7 @@ async fn printful_fill_position(
     key: &str,
     product: i64,
     placement: &str,
+    design_dims: Option<(u32, u32)>,
 ) -> Option<serde_json::Value> {
     let url = format!("https://api.printful.com/mockup-generator/printfiles/{}", product);
     let r = client.get(&url).bearer_auth(key).send().await.ok()?;
@@ -2556,17 +2572,64 @@ async fn printful_fill_position(
         .find(|f| f["printfile_id"].as_i64() == Some(pf_id))?;
     let w = pf["width"].as_i64()?;
     let h = pf["height"].as_i64()?;
-    // Center-fit: a square box at 92% of the print area's SHORTER side, centered.
-    // Designs are square (1024²); fitting the shorter side preserves aspect with
-    // a safe margin → no stretch, no overflow regardless of print-area shape.
+    // A square box at 92% of the print area's SHORTER side, centered, gives a
+    // safe margin regardless of print-area shape. Inside that box, center-fit
+    // the design by its true aspect ratio so non-square artwork isn't stretched
+    // (designs were historically assumed square 1024², but maker/agent designs
+    // can be landscape/portrait). dims unknown → keep the square box.
     let side = ((w.min(h) as f64) * 0.92) as i64;
-    let left = (w - side) / 2;
-    let top = (h - side) / 2;
-    Some(serde_json::json!({
-        "area_width": w, "area_height": h,
-        "width": side,   "height": side,
-        "top": top,      "left": left
-    }))
+    let box_left = (w - side) / 2;
+    let box_top = (h - side) / 2;
+    match design_dims {
+        Some((dw, dh)) => Some(aspect_fit_position(w, h, box_left, box_top, side, dw, dh)),
+        None => Some(serde_json::json!({
+            "area_width": w, "area_height": h,
+            "width": side,   "height": side,
+            "top": box_top,  "left": box_left
+        })),
+    }
+}
+
+/// Fetch just the pixel dimensions of a design image (decodes it once).
+/// Used so the Printful mockup position can preserve the design's aspect
+/// ratio instead of stretching a non-square design into a square box.
+async fn design_dims(client: &reqwest::Client, url: &str) -> Option<(u32, u32)> {
+    use image::GenericImageView;
+    let bytes = client.get(url).send().await.ok()?.bytes().await.ok()?;
+    let im = image::load_from_memory(&bytes).ok()?;
+    let (w, h) = im.dimensions();
+    if w == 0 || h == 0 { None } else { Some((w, h)) }
+}
+
+/// Center-fit a design of pixel size `(dw, dh)` inside a `box_side`×`box_side`
+/// square whose top-left sits at `(box_left, box_top)` within an
+/// `area_w`×`area_h` Printful print area, preserving the design's aspect ratio.
+/// Landscape designs get full box width and reduced height; portrait the
+/// reverse. The result is clamped to stay inside the print area.
+fn aspect_fit_position(
+    area_w: i64,
+    area_h: i64,
+    box_left: i64,
+    box_top: i64,
+    box_side: i64,
+    dw: u32,
+    dh: u32,
+) -> serde_json::Value {
+    let a = (dw.max(1) as f64) / (dh.max(1) as f64);
+    let (w, h) = if a >= 1.0 {
+        (box_side, ((box_side as f64) / a).round() as i64)
+    } else {
+        (((box_side as f64) * a).round() as i64, box_side)
+    };
+    let w = w.clamp(1, box_side);
+    let h = h.clamp(1, box_side);
+    let left = (box_left + (box_side - w) / 2).clamp(0, (area_w - w).max(0));
+    let top = (box_top + (box_side - h) / 2).clamp(0, (area_h - h).max(0));
+    serde_json::json!({
+        "area_width": area_w, "area_height": area_h,
+        "width": w, "height": h,
+        "top": top, "left": left
+    })
 }
 
 /// `(printful_product_id, printful_variant_id)` for a kind, or None for
