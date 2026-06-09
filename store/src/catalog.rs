@@ -171,6 +171,16 @@ pub fn ensure_schema(conn: &rusqlite::Connection) {
     // the payout source of truth). NULL/0 for unattributed orders.
     let _ = conn.execute("ALTER TABLE catalog_orders ADD COLUMN referrer_code TEXT", []);
     let _ = conn.execute("ALTER TABLE catalog_orders ADD COLUMN commission_jpy INTEGER NOT NULL DEFAULT 0", []);
+    // Gift-to-an-MU-account: when a buyer gifts a product to another MU
+    // account by handle, the sender never sees the recipient's address —
+    // it is pulled from the recipient's account at fulfillment. ONE general
+    // JSON column per the catalog contract (no column-per-attribute):
+    //   {"recipient_slug": "<you_users.slug>",
+    //    "claim_token": "<unguessable>",   // only set when no saved address yet
+    //    "claimed": true|false,            // address resolved (saved or claimed)
+    //    "sender_email": "<buyer email>"}  // so the buyer can be reached
+    // NULL for every ordinary (non-gift) order → full backward compat.
+    let _ = conn.execute("ALTER TABLE catalog_orders ADD COLUMN gift_json TEXT", []);
 }
 
 /// How many founder cards are still available (0..100).
@@ -7731,16 +7741,35 @@ pub async fn shop_pdp(
                 base = base,
             )
         } else { String::new() };
+        // Gift to an MU account (privacy gift by @handle) — distinct from the
+        // ?gift=1 button above (where the buyer types the recipient's address).
+        // Only for shippable physical goods. The handle is validated live and
+        // carried into checkout; the recipient's address is pulled from their
+        // account at fulfillment, so the sender never sees it.
+        let acctgift_eligible = !is_digital && !is_song && !is_house && !is_device
+            && kind_guess != "zine" && kind_guess != "video" && kind_guess != "karaoke_ticket";
+        let (acctgift_html, acctgift_script) = if acctgift_eligible {
+            (
+                r#"<label style="display:flex;align-items:center;gap:9px;justify-content:center;margin:14px 0 0;cursor:pointer;font-size:13px;opacity:0.92"><input type="checkbox" id="giftToggle" style="width:17px;height:17px;accent-color:#e6c449">🎁 MU アカウントに贈る <span style="opacity:.6">(住所を知らせず送れます)</span></label><div id="giftWrap" style="display:none;margin-top:8px"><input id="giftHandle" placeholder="贈る相手の @ハンドル" autocapitalize="off" autocomplete="off" spellcheck="false" style="width:100%;box-sizing:border-box;background:#0a0a0a;border:1px solid #1f1f1f;color:#fff;padding:11px;font-size:14px;border-radius:3px"><div id="giftStatus" style="font-size:12px;margin-top:6px;text-align:center;min-height:16px"></div></div>"#.to_string(),
+                format!(
+                    r#"<script>(function(){{var t=document.getElementById('giftToggle'),inp=document.getElementById('giftHandle'),b=document.getElementById('buybtn'),st=document.getElementById('giftStatus'),wrap=document.getElementById('giftWrap');if(!t||!b)return;var ok=false,handle='',timer=null;t.addEventListener('change',function(){{wrap.style.display=t.checked?'block':'none';if(!t.checked){{ok=false;st.textContent='';}}else{{inp.focus();}}}});inp.addEventListener('input',function(){{ok=false;st.textContent='';handle=inp.value.trim().replace(/^@/,'');if(timer)clearTimeout(timer);if(!handle)return;timer=setTimeout(async function(){{try{{var r=await fetch('/api/gift/check?handle='+encodeURIComponent(handle));var j=await r.json();if(j&&j.exists){{ok=true;handle=j.handle;st.innerHTML='<span style=\"color:#9bd97a\">✓ @'+j.handle+' に贈れます</span>';}}else{{ok=false;st.innerHTML='<span style=\"color:#e07b7b\">そのハンドルのアカウントが見つかりません</span>';}}}}catch(e){{ok=false;}}}},350);}});b.addEventListener('click',function(ev){{if(t.checked){{ev.preventDefault();if(!ok){{st.innerHTML='<span style=\"color:#e07b7b\">受け取る人の @ハンドルを入力してください</span>';return;}}var h=b.getAttribute('href');window.location.href=h+(h.indexOf('?')>=0?'&':'?')+'gift_to='+encodeURIComponent(handle);}}}});}})();</script>"#,
+                ),
+            )
+        } else {
+            (String::new(), String::new())
+        };
         format!(
-            r#"{cross_html}{phone_html}<a class="buy" id="buybtn" href="{base}" data-funnel="cta_click" data-funnel-cta="pdp_buy">買う <span class="amt">¥{price}</span> · 即購入 ({fulfil_note})</a>{gift_html}{cross_script}{phone_script}"#,
+            r#"{cross_html}{phone_html}<a class="buy" id="buybtn" href="{base}" data-funnel="cta_click" data-funnel-cta="pdp_buy">買う <span class="amt">¥{price}</span> · 即購入 ({fulfil_note})</a>{gift_html}{acctgift_html}{cross_script}{phone_script}{acctgift_script}"#,
             cross_html = cross_html,
             phone_html = phone_html,
             gift_html = gift_html,
+            acctgift_html = acctgift_html,
             base = base,
             price = format_jpy(price_jpy),
             fulfil_note = fulfil_note,
             cross_script = cross_script,
             phone_script = phone_script,
+            acctgift_script = acctgift_script,
         )
     } else {
         r#"<div class="buy disabled">準備中</div>"#.to_string()
@@ -8568,6 +8597,15 @@ pub struct CheckoutQuery {
     /// so `?gift=1` would 400. Accept "1"/"true"/"yes".
     #[serde(default, rename = "gift")]
     pub as_gift: Option<String>,
+    /// Gift to an MU account by handle (you_users.slug). Distinct from
+    /// `as_gift` (?gift=1, where the buyer types the recipient's address):
+    /// here the handle resolves to a real account, checkout SKIPS Stripe
+    /// shipping collection (the sender must not see the recipient's address)
+    /// and tags metadata[gift_to]. Fulfillment ships to the recipient's saved
+    /// address, or emails them a private claim link if they have none yet.
+    /// Ignored for digital SKUs (nothing ships).
+    #[serde(default)]
+    pub gift_to: Option<String>,
 }
 
 /// Pull a referral code from the `mu_ref` cookie (set by `/r/:code`).
@@ -8784,6 +8822,54 @@ pub async fn shop_checkout(
         Some(format!("https://merch.wearmu.com{}", mockup_path))
     };
 
+    // Gift to an MU account: resolve the recipient handle to a real account.
+    // The sender never provides (or sees) the address — fulfillment pulls it
+    // from the recipient's account, or emails them a private claim link if
+    // they have none yet. Only honored for shippable goods (a digital ticket
+    // has nothing to ship). An unknown handle aborts BEFORE a paid session is
+    // opened, so we never take money for a gift that can never be delivered.
+    let gift_slug: Option<String> = match q.gift_to.as_deref() {
+        Some(h) if !is_ticket => {
+            let handle = h.trim().trim_start_matches('@').to_lowercase();
+            if handle.is_empty() {
+                None
+            } else {
+                let found: Option<String> = {
+                    let conn = db.lock().unwrap();
+                    conn.query_row(
+                        "SELECT slug FROM you_users WHERE LOWER(slug)=? LIMIT 1",
+                        rusqlite::params![&handle],
+                        |r| r.get::<_, String>(0),
+                    )
+                    .ok()
+                };
+                match found {
+                    Some(s) => Some(s),
+                    None => {
+                        return (
+                            StatusCode::OK,
+                            Html(format!(
+                                "<!doctype html><meta charset=utf-8><meta name=robots content=noindex>\
+                                 <title>宛先が見つかりません — MU</title>\
+                                 <body style=\"background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,sans-serif;\
+                                 display:flex;min-height:90vh;align-items:center;justify-content:center;text-align:center\">\
+                                 <div style=\"max-width:380px;padding:0 22px\">\
+                                 <div style=\"font-size:13px;letter-spacing:.3em;color:#e6c449\">🎁 GIFT</div>\
+                                 <h1 style=\"font-weight:500;font-size:20px;margin:14px 0 10px\">その MU アカウントが見つかりません</h1>\
+                                 <p style=\"opacity:.6;font-size:13px;line-height:1.8\">ハンドル <b>@{h}</b> のアカウントは見つかりませんでした。<br>\
+                                 つづりをご確認ください。<br><br>\
+                                 <a href=\"/shop/{sku}\" style=\"color:#e6c449\">← 商品に戻る</a></p></div></body>",
+                                h = html_text(&handle), sku = html_text(&sku),
+                            )),
+                        )
+                            .into_response();
+                    }
+                }
+            }
+        }
+        _ => None,
+    };
+
     let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
     // Pass the real order value + Stripe session id so the /success page
     // fires the Google Ads purchase conversion with the ACTUAL amount (not
@@ -8927,10 +9013,18 @@ pub async fn shop_checkout(
     {
         form.push(("metadata[referrer_code]", rc));
     }
+    // Gift to an MU account: tag the session so fulfill_catalog_order ships
+    // to the recipient's account address (never the sender's). The country
+    // block below is skipped for gifts — the sender must not enter, or even
+    // see, the recipient's address.
+    if let Some(ref gs) = gift_slug {
+        form.push(("metadata[gift_to]", gs.clone()));
+    }
     // Physical goods collect a shipping address; a digital ticket does not
-    // (nothing ships — we email a QR). Stripe still captures the buyer's
-    // email in payment mode either way, which is all the ticket needs.
-    if !is_ticket {
+    // (nothing ships — we email a QR), and neither does a gift (the address
+    // comes from the recipient's account). Stripe still captures the buyer's
+    // email in payment mode either way.
+    if !is_ticket && gift_slug.is_none() {
         for (i, cc) in ["JP", "US", "GB", "CA", "AU", "DE", "FR"].iter().enumerate() {
             form.push((
                 match i {
@@ -9362,6 +9456,88 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
     if route == "contrado_uk" {
         fulfill_via_contrado(db, &session_id, &sku, amount_total, &currency).await;
         return;
+    }
+
+    // ── Gift to an MU account ─────────────────────────────────────────────
+    // The buyer gifted this to another MU account by handle. The sender never
+    // entered (or sees) an address — we ship to the recipient's saved account
+    // address, or, if they have none yet, HOLD the order and email them a
+    // private claim link to enter it. Only physical Printful routes reach here
+    // (manual / digital / contrado returned above), so the sender's address is
+    // never read anywhere in this path — the privacy guarantee holds.
+    let gift_to = session["metadata"]["gift_to"].as_str().unwrap_or("").to_string();
+    if !gift_to.is_empty() && route.starts_with("printful_") {
+        let sender_email = session["customer_details"]["email"].as_str().unwrap_or("").to_string();
+        let recipient: Option<(String, Option<String>)> = {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT COALESCE(email,''), shipping_address_json FROM you_users WHERE LOWER(slug)=? LIMIT 1",
+                rusqlite::params![gift_to.to_lowercase()],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
+            )
+            .ok()
+        };
+        let Some((recipient_email, saved_addr)) = recipient else {
+            // Recipient account vanished between checkout and webhook.
+            tracing::warn!("[catalog/gift] recipient slug {} not found, session={}", gift_to, session_id);
+            {
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "UPDATE catalog_orders SET status='gift_recipient_missing', customer_email=?, gift_json=? \
+                     WHERE stripe_session_id=?",
+                    rusqlite::params![
+                        sender_email,
+                        serde_json::json!({"recipient_slug": gift_to, "claimed": false, "sender_email": sender_email}).to_string(),
+                        session_id
+                    ],
+                );
+            }
+            let _ = crate::send_telegram_message(&format!(
+                "🚨 *gift recipient missing* slug=`{}` session=`{}…` ¥{} — refund the sender.",
+                gift_to, session_id.chars().take(24).collect::<String>(), amount_total
+            )).await;
+            return;
+        };
+
+        // A usable saved address has a non-empty line1.
+        let addr_val: Option<serde_json::Value> = saved_addr
+            .as_deref()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+            .filter(|v| !v["line1"].as_str().unwrap_or("").is_empty());
+
+        match addr_val {
+            Some(addr) => {
+                // Ship now to the recipient's saved address — sender sees nothing.
+                let gift_json = serde_json::json!({
+                    "recipient_slug": gift_to, "claimed": true, "sender_email": sender_email,
+                }).to_string();
+                ship_gift(db.clone(), &session_id, &sku, amount_total, &currency,
+                          &addr, &sender_email, &recipient_email, &gift_json).await;
+                return;
+            }
+            None => {
+                // No address yet → hold the paid order + email a private claim link.
+                let claim_token = uuid::Uuid::new_v4().simple().to_string();
+                let gift_json = serde_json::json!({
+                    "recipient_slug": gift_to, "claim_token": claim_token,
+                    "claimed": false, "sender_email": sender_email,
+                }).to_string();
+                {
+                    let conn = db.lock().unwrap();
+                    let _ = conn.execute(
+                        "UPDATE catalog_orders SET status='gift_pending_address', amount_jpy=?, \
+                         customer_email=?, gift_json=? WHERE stripe_session_id=?",
+                        rusqlite::params![amount_total, sender_email, gift_json, session_id],
+                    );
+                }
+                send_gift_claim_email(&recipient_email, &claim_token, &sender_email).await;
+                let _ = crate::send_telegram_message(&format!(
+                    "🎁 *gift awaiting address* → {} (slug {}) session=`{}…` ¥{}. Claim link emailed.",
+                    recipient_email, gift_to, session_id.chars().take(24).collect::<String>(), amount_total
+                )).await;
+                return;
+            }
+        }
     }
 
     // Pull selected size from Stripe custom_fields (if any). When the
@@ -10267,19 +10443,19 @@ fn record_order_full(
     // Preserve affiliate attribution across the REPLACE: apply_affiliate()
     // and stamp_ticket_code run on the reserved row BEFORE this final write,
     // and INSERT OR REPLACE would otherwise reset those columns to default.
-    let (existing_ref, existing_comm, existing_ticket): (Option<String>, i64, Option<String>) = conn
+    let (existing_ref, existing_comm, existing_ticket, existing_gift): (Option<String>, i64, Option<String>, Option<String>) = conn
         .query_row(
-            "SELECT referrer_code, commission_jpy, ticket_code FROM catalog_orders WHERE stripe_session_id=?",
+            "SELECT referrer_code, commission_jpy, ticket_code, gift_json FROM catalog_orders WHERE stripe_session_id=?",
             rusqlite::params![session_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
-        .unwrap_or((None, 0, None));
+        .unwrap_or((None, 0, None, None));
     let _ = conn.execute(
         "INSERT OR REPLACE INTO catalog_orders
          (stripe_session_id, sku, amount_jpy, customer_email, customer_name,
           shipping_address_json, printful_order_id, printful_response_json, status,
-          addon_sku, referrer_code, commission_jpy, ticket_code)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+          addon_sku, referrer_code, commission_jpy, ticket_code, gift_json)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         rusqlite::params![
             session_id,
             sku,
@@ -10294,11 +10470,372 @@ fn record_order_full(
             existing_ref,
             existing_comm,
             existing_ticket,
+            existing_gift,
         ],
     );
     // 糸 (ITO): 購入採掘 +2糸 (景表法20%キャップ併算・session冪等) と
     // 服シリアル発行 (digital 以外)。ito.rs 参照。
     crate::ito::grant_for_order(&conn, session_id, sku, amount, email, status);
+}
+
+// ─── Gift to an MU account ──────────────────────────────────────────────
+
+/// Ship a gift order to the recipient's account address. Single SKU (gifts
+/// carry no cross-sell add-on). `buyer_email` (the sender) is recorded as the
+/// order's customer for attribution + reachability; the Printful recipient is
+/// the giftee. The sender's own address is never read on this path, so the
+/// "address never disclosed to sender" guarantee holds end-to-end.
+async fn ship_gift(
+    db: Db,
+    session_id: &str,
+    sku: &str,
+    amount_total: i64,
+    currency: &str,
+    addr: &serde_json::Value,
+    buyer_email: &str,
+    recipient_email: &str,
+    gift_json: &str,
+) {
+    let retail_price = if currency == "jpy" {
+        format!("{:.2}", amount_total.max(0) as f64)
+    } else {
+        format!("{:.2}", (amount_total as f64) / 100.0)
+    };
+    let ext_id = if session_id.len() > 32 {
+        session_id[session_id.len() - 32..].to_string()
+    } else {
+        session_id.to_string()
+    };
+    let main_item = {
+        let conn = db.lock().unwrap();
+        build_printful_item(&conn, sku, &retail_price, None, false, 1)
+    };
+    // Stamp gift_json + buyer up-front on the reserved row so the
+    // INSERT OR REPLACE in record_order_full preserves them whatever happens.
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE catalog_orders SET gift_json=?, customer_email=? WHERE stripe_session_id=?",
+            rusqlite::params![gift_json, buyer_email, session_id],
+        );
+    }
+    // Stored shipping = recipient address (internal, never shown to sender);
+    // customer = the buyer who paid.
+    let name = addr["name"].as_str().unwrap_or("");
+    let shipping = serde_json::json!({ "name": name, "address": addr });
+    let cust = serde_json::json!({ "email": buyer_email });
+
+    let Some(main_item) = main_item else {
+        record_order(&db, session_id, sku, amount_total, &cust, &shipping, None, "failed_no_item");
+        let _ = crate::send_telegram_message(&format!(
+            "🚨 *gift can't auto-fulfill* (failed_no_item) sku=`{}` session=`{}…`",
+            sku, session_id.chars().take(24).collect::<String>()
+        )).await;
+        return;
+    };
+
+    let country = addr["country"].as_str().unwrap_or("JP").to_uppercase();
+    let state_code = normalize_state_code(&country, addr["state"].as_str().unwrap_or(""));
+    let body = serde_json::json!({
+        "recipient": {
+            "name":         name,
+            "address1":     addr["line1"].as_str().unwrap_or(""),
+            "address2":     addr["line2"].as_str().unwrap_or(""),
+            "city":         addr["city"].as_str().unwrap_or(""),
+            "state_code":   state_code,
+            "country_code": country,
+            "zip":          addr["postal_code"].as_str().unwrap_or(""),
+            "email":        recipient_email,
+            "phone":        addr["phone"].as_str().unwrap_or(""),
+        },
+        "items": [main_item],
+        "external_id": ext_id,
+    });
+
+    let pf_key = env::var("PRINTFUL_API_KEY").unwrap_or_default();
+    if pf_key.is_empty() {
+        record_order(&db, session_id, sku, amount_total, &cust, &shipping, None, "failed_no_key");
+        return;
+    }
+    match reqwest::Client::new()
+        .post("https://api.printful.com/orders?confirm=true")
+        .bearer_auth(&pf_key)
+        .json(&body)
+        .send()
+        .await
+    {
+        Ok(r) => {
+            let status = r.status();
+            let text = r.text().await.unwrap_or_default();
+            let pf_json: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+            let pf_id = pf_json["result"]["id"].as_i64().map(|i| i.to_string())
+                .or_else(|| pf_json["result"]["id"].as_str().map(String::from));
+            let ok = status.is_success();
+            record_order_full(&db, session_id, sku, amount_total, &cust, &shipping,
+                pf_id.as_deref(), if ok { "submitted" } else { "failed" }, Some(&text), None);
+            let _ = crate::send_telegram_message(&if ok {
+                format!("🎁✅ *gift shipped* sku=`{}` session=`{}…` ¥{}",
+                    sku, session_id.chars().take(24).collect::<String>(), amount_total)
+            } else {
+                format!("🚨 *gift fulfillment FAILED* sku=`{}` session=`{}…` status={}\n{}",
+                    sku, session_id.chars().take(24).collect::<String>(), status,
+                    text.chars().take(400).collect::<String>())
+            }).await;
+        }
+        Err(e) => {
+            tracing::error!("[catalog/gift] printful net err sku={} session={}: {}", sku, session_id, e);
+            record_order_full(&db, session_id, sku, amount_total, &cust, &shipping,
+                None, "failed", Some(&format!("net err: {}", e)), None);
+        }
+    }
+}
+
+/// Email the giftee a private claim link to enter their shipping address.
+/// The sender's identity/address is never included. Best-effort.
+async fn send_gift_claim_email(recipient_email: &str, claim_token: &str, _sender_email: &str) {
+    if recipient_email.is_empty() {
+        tracing::warn!("[catalog/gift] recipient has no email — claim link cannot be sent (token {})", claim_token);
+        return;
+    }
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    let link = format!("{}/gift/claim/{}", base_url, claim_token);
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    if resend_key.is_empty() {
+        tracing::warn!("[catalog/gift] RESEND_API_KEY unset — claim link for {} not emailed: {}", recipient_email, link);
+        return;
+    }
+    let html = format!(
+        r#"<div style="background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,sans-serif;padding:32px 0">
+<div style="max-width:520px;margin:0 auto;padding:0 28px">
+<div style="font-size:13px;letter-spacing:0.3em;color:#e6c449">🎁 GIFT</div>
+<h2 style="font-weight:500;font-size:21px;margin:14px 0 10px">あなたに MU のギフトが届いています</h2>
+<p style="opacity:0.82;font-size:14px;line-height:1.9">MU の仲間から、あなたへの贈り物です。<br>
+お届け先のご住所を入力いただくと発送します。<b style="color:#e6c449">ご住所は贈った方には一切伝わりません。</b></p>
+<p style="margin:26px 0"><a href="{link}" style="display:inline-block;background:#e6c449;color:#000;text-decoration:none;padding:14px 28px;font-weight:600;letter-spacing:0.06em;border-radius:3px">住所を入力して受け取る →</a></p>
+<p style="opacity:0.5;font-size:12px;line-height:1.7">このリンクはあなた専用です。心当たりがない場合は破棄してください。<br>URL: <span style="color:#888">{link}</span></p>
+<p style="opacity:0.5;font-size:12px">— MU / 株式会社イネブラ</p>
+</div></div>"#,
+        link = html_text(&link),
+    );
+    let _ = reqwest::Client::new()
+        .post("https://api.resend.com/emails")
+        .bearer_auth(&resend_key)
+        .json(&serde_json::json!({
+            "from": "━◯━ MU <noreply@wearmu.com>",
+            "to": [recipient_email],
+            "subject": "🎁 MU のギフトが届いています — お届け先のご入力を",
+            "html": html,
+            "reply_to": "info@wearmu.com",
+        }))
+        .send().await;
+}
+
+#[derive(Deserialize)]
+pub struct GiftCheckQuery {
+    #[serde(default)]
+    pub handle: String,
+}
+
+/// GET /api/gift/check?handle=foo — does this MU account exist? Returns only
+/// existence + canonical handle (never the recipient's address or whether one
+/// is on file), so the gift UI can confirm the destination before checkout.
+pub async fn gift_check_recipient(State(db): State<Db>, Query(q): Query<GiftCheckQuery>) -> Response {
+    let handle = q.handle.trim().trim_start_matches('@').to_lowercase();
+    if handle.is_empty() || handle.len() > 64 {
+        return axum::Json(serde_json::json!({"ok": false, "exists": false})).into_response();
+    }
+    let found: Option<String> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT slug FROM you_users WHERE LOWER(slug)=? LIMIT 1",
+            rusqlite::params![&handle],
+            |r| r.get::<_, String>(0),
+        )
+        .ok()
+    };
+    match found {
+        Some(s) => axum::Json(serde_json::json!({"ok": true, "exists": true, "handle": s})).into_response(),
+        None => axum::Json(serde_json::json!({"ok": true, "exists": false})).into_response(),
+    }
+}
+
+fn gift_simple_page(title: &str, body: &str) -> String {
+    format!(
+        "<!doctype html><html lang=\"ja\"><head><meta charset=\"utf-8\">\
+         <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
+         <meta name=\"robots\" content=\"noindex,nofollow\"><title>{t} — MU</title></head>\
+         <body style=\"background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,sans-serif;\
+         display:flex;min-height:90vh;align-items:center;justify-content:center;text-align:center\">\
+         <div style=\"max-width:380px;padding:0 22px\"><div style=\"font-size:13px;letter-spacing:.3em;color:#e6c449\">🎁 GIFT</div>\
+         <h1 style=\"font-weight:500;font-size:21px;margin:14px 0 10px\">{t}</h1>\
+         <p style=\"opacity:.65;font-size:13.5px;line-height:1.8\">{b}</p></div></body></html>",
+        t = html_text(title), b = html_text(body),
+    )
+}
+
+/// GET /gift/claim/:token — the giftee opens this from the email and enters
+/// their shipping address. The token is the only credential (like a magic
+/// link); no login required.
+pub async fn gift_claim_page(State(db): State<Db>, Path(token): Path<String>) -> Response {
+    let token = token.trim().to_string();
+    if token.is_empty() || token.len() > 128 {
+        return (StatusCode::NOT_FOUND, Html(gift_simple_page("リンクが無効です", "この受け取りリンクは無効です。"))).into_response();
+    }
+    let row: Option<(String, String)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT sku, status FROM catalog_orders \
+             WHERE json_extract(gift_json,'$.claim_token')=? LIMIT 1",
+            rusqlite::params![&token],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )
+        .ok()
+    };
+    let Some((sku, status)) = row else {
+        return (StatusCode::NOT_FOUND, Html(gift_simple_page("リンクが無効です", "この受け取りリンクは無効です。期限切れか、すでに使用済みの可能性があります。"))).into_response();
+    };
+    if status != "gift_pending_address" {
+        return (StatusCode::OK, Html(gift_simple_page("受け取り済みです", "このギフトはすでにお届け先が登録され、発送手配が済んでいます。"))).into_response();
+    }
+    let label = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT description_ja FROM catalog_products WHERE sku=?",
+            rusqlite::params![&sku],
+            |r| r.get::<_, String>(0),
+        )
+        .unwrap_or_else(|_| "MU のギフト".into())
+    };
+    let item = label.split(" · ").next().unwrap_or(&label).to_string();
+    let page = format!(
+        r#"<!doctype html><html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>ギフトを受け取る — MU</title>
+<style>
+ :root{{--bg:#000;--fg:#f5f5f0;--mute:#888;--gold:#e6c449}}
+ html,body{{background:var(--bg);color:var(--fg);margin:0;font-family:-apple-system,sans-serif}}
+ .wrap{{max-width:460px;margin:0 auto;padding:48px 22px 80px}}
+ .kicker{{font-size:11px;letter-spacing:.3em;color:var(--gold);text-transform:uppercase}}
+ h1{{font-size:24px;font-weight:300;line-height:1.35;margin:12px 0 6px}}
+ .item{{color:var(--gold);font-size:15px;margin:0 0 8px}}
+ p.meta{{color:var(--mute);font-size:13px;line-height:1.8;margin:0 0 24px}}
+ form{{display:flex;flex-direction:column;gap:11px}}
+ label{{font-size:11px;letter-spacing:.08em;color:#999}}
+ input,select{{background:#0a0a0a;border:1px solid #1f1f1f;color:#fff;padding:12px;font-size:15px;border-radius:3px;font-family:inherit}}
+ input:focus,select:focus{{outline:none;border-color:var(--gold)}}
+ .row{{display:flex;gap:10px}}.row>div{{flex:1;display:flex;flex-direction:column;gap:5px}}
+ button{{background:var(--gold);color:#000;border:0;padding:15px;font-size:14px;font-weight:600;letter-spacing:.06em;border-radius:3px;cursor:pointer;margin-top:6px}}
+ button:disabled{{opacity:.6}}
+ .note{{color:#9bd97a;font-size:12px;margin-top:10px;text-align:center;line-height:1.7}}
+ .err{{color:#e07b7b;font-size:12.5px;margin-top:8px;text-align:center}}
+</style></head><body><div class="wrap">
+ <div class="kicker">🎁 GIFT</div>
+ <h1>ギフトを受け取る</h1>
+ <div class="item">{item}</div>
+ <p class="meta">MU の仲間からの贈り物です。お届け先をご入力ください。<br><b style="color:#cfcfcf">ご住所が贈った方に伝わることはありません。</b></p>
+ <form id="f" onsubmit="return false">
+  <div style="display:flex;flex-direction:column;gap:5px"><label>お名前</label><input id="name" autocomplete="name" required></div>
+  <div class="row"><div><label>郵便番号</label><input id="postal_code" autocomplete="postal-code" required></div>
+   <div><label>国</label><select id="country"><option value="JP" selected>日本</option><option value="US">United States</option><option value="GB">United Kingdom</option><option value="CA">Canada</option><option value="AU">Australia</option><option value="DE">Germany</option><option value="FR">France</option></select></div></div>
+  <div class="row"><div><label>都道府県 / State</label><input id="state" autocomplete="address-level1"></div>
+   <div><label>市区町村 / City</label><input id="city" autocomplete="address-level2" required></div></div>
+  <div style="display:flex;flex-direction:column;gap:5px"><label>住所1 (番地)</label><input id="line1" autocomplete="address-line1" required></div>
+  <div style="display:flex;flex-direction:column;gap:5px"><label>住所2 (建物・部屋, 任意)</label><input id="line2" autocomplete="address-line2"></div>
+  <div style="display:flex;flex-direction:column;gap:5px"><label>電話番号 (任意)</label><input id="phone" autocomplete="tel"></div>
+  <button id="b" type="submit">この住所で受け取る</button>
+ </form>
+ <div id="msg"></div>
+</div>
+<script>
+const f=document.getElementById('f'),b=document.getElementById('b'),msg=document.getElementById('msg');
+f.addEventListener('submit',async()=>{{
+ const g=id=>document.getElementById(id).value.trim();
+ const body={{name:g('name'),postal_code:g('postal_code'),country:g('country'),state:g('state'),city:g('city'),line1:g('line1'),line2:g('line2'),phone:g('phone')}};
+ if(!body.name||!body.line1||!body.city||!body.postal_code){{msg.innerHTML='<div class="err">お名前・郵便番号・市区町村・住所1 は必須です</div>';return;}}
+ b.disabled=true;msg.innerHTML='';
+ const r=await fetch(location.pathname.replace('/gift/claim/','/api/gift/claim/'),{{method:'POST',headers:{{'content-type':'application/json'}},body:JSON.stringify(body)}});
+ const j=await r.json().catch(()=>({{}}));
+ if(j.ok){{msg.innerHTML='<div class="note">受け取りました！発送手配に入ります。<br>お届けまで通常 7〜14 日です 🎁</div>';f.style.display='none';}}
+ else{{msg.innerHTML='<div class="err">'+(j.error||'エラーが発生しました')+'</div>';b.disabled=false;}}
+}});
+</script>
+</body></html>"#,
+        item = html_text(&item),
+    );
+    Html(page).into_response()
+}
+
+/// POST /api/gift/claim/:token — the giftee submits their address. We save it,
+/// (also onto their account for next time), then ship via Printful. The sender
+/// is never shown the address.
+pub async fn gift_claim_submit(
+    State(db): State<Db>,
+    Path(token): Path<String>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> Response {
+    let token = token.trim().to_string();
+    let g = |k: &str| body.get(k).and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    let name = g("name");
+    let line1 = g("line1");
+    let city = g("city");
+    let postal_code = g("postal_code");
+    if name.is_empty() || line1.is_empty() || city.is_empty() || postal_code.is_empty() {
+        return axum::Json(serde_json::json!({"ok": false, "error": "必須項目が未入力です"})).into_response();
+    }
+    let mut country = g("country").to_uppercase();
+    if country.is_empty() { country = "JP".into(); }
+
+    // Resolve the held order from the claim token (must still be pending).
+    let order: Option<(String, String, i64, String)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT stripe_session_id, sku, COALESCE(amount_jpy,0), COALESCE(gift_json,'{}') \
+             FROM catalog_orders \
+             WHERE json_extract(gift_json,'$.claim_token')=? AND status='gift_pending_address' LIMIT 1",
+            rusqlite::params![&token],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?)),
+        )
+        .ok()
+    };
+    let Some((session_id, sku, amount, gift_json_old)) = order else {
+        return axum::Json(serde_json::json!({"ok": false, "error": "この受け取りリンクは無効か、すでに使用済みです"})).into_response();
+    };
+    let gv: serde_json::Value = serde_json::from_str(&gift_json_old).unwrap_or(serde_json::json!({}));
+    let recipient_slug = gv["recipient_slug"].as_str().unwrap_or("").to_string();
+    let sender_email = gv["sender_email"].as_str().unwrap_or("").to_string();
+
+    let addr = serde_json::json!({
+        "name": name, "line1": line1, "line2": g("line2"), "city": city,
+        "state": g("state"), "postal_code": postal_code, "country": country, "phone": g("phone"),
+    });
+
+    // Save the address onto the recipient's account too, so future gifts skip
+    // the claim step entirely, and fetch their email for Printful notices.
+    let recipient_email: String = {
+        let conn = db.lock().unwrap();
+        if !recipient_slug.is_empty() {
+            let _ = conn.execute(
+                "UPDATE you_users SET shipping_address_json=?, updated_at=? WHERE LOWER(slug)=?",
+                rusqlite::params![addr.to_string(), chrono_now_iso(), recipient_slug.to_lowercase()],
+            );
+        }
+        conn.query_row(
+            "SELECT COALESCE(email,'') FROM you_users WHERE LOWER(slug)=? LIMIT 1",
+            rusqlite::params![recipient_slug.to_lowercase()],
+            |r| r.get::<_, String>(0),
+        )
+        .unwrap_or_default()
+    };
+
+    let gift_json_new = serde_json::json!({
+        "recipient_slug": recipient_slug, "claimed": true, "sender_email": sender_email,
+    }).to_string();
+
+    // Ship now. ship_gift records the order + fires the operator alert.
+    ship_gift(db.clone(), &session_id, &sku, amount, "jpy",
+              &addr, &sender_email, &recipient_email, &gift_json_new).await;
+
+    axum::Json(serde_json::json!({"ok": true})).into_response()
 }
 
 // ─── Digital event tickets ────────────────────────────────────────────

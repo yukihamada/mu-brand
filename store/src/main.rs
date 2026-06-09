@@ -5877,6 +5877,64 @@ async fn mypage_dashboard(db: Db, email: String, buyer_token: String) -> Respons
     let first_day = orders.iter().map(|o| o.created_at).min().unwrap_or(now_s);
     let day_n = ((now_s - first_day) / 86_400).max(0);
 
+    // ── Gift address section ──────────────────────────────────────────────
+    // Your saved shipping address + giftable handle. Others can send you a
+    // product by @handle and it ships here — they never see this address.
+    let (acct_slug, acct_addr): (String, Option<String>) = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(slug,''), shipping_address_json FROM you_users WHERE email=? LIMIT 1",
+            params![email],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
+        ).unwrap_or((String::new(), None))
+    };
+    let av: serde_json::Value = acct_addr.as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let has_addr = !av["line1"].as_str().unwrap_or("").is_empty();
+    let pv = |k: &str| html_attr_escape(av.get(k).and_then(|x| x.as_str()).unwrap_or(""));
+    let handle_line = if acct_slug.is_empty() {
+        "<span style=\"color:#888\">住所を保存するとギフト用ハンドルが発行されます。</span>".to_string()
+    } else {
+        format!("あなたのハンドル: <b style=\"color:#e6c449\">@{slug}</b> 宛にギフトを受け取れます", slug = html_escape(&acct_slug))
+    };
+    let addr_status = if has_addr {
+        "<span style=\"color:#9bd97a;font-size:12px\">✓ 登録済み — ギフトはすぐ発送されます</span>"
+    } else {
+        "<span style=\"color:#888;font-size:12px\">未登録 — ギフトを受け取ると住所入力のメールが届きます</span>"
+    };
+    let country_opts = |sel: &str| {
+        [("JP","日本"),("US","United States"),("GB","United Kingdom"),("CA","Canada"),("AU","Australia"),("DE","Germany"),("FR","France")]
+            .iter()
+            .map(|(c, n)| format!("<option value=\"{c}\"{s}>{n}</option>", c=c, n=n, s=if *c==sel {" selected"} else {""}))
+            .collect::<String>()
+    };
+    let sel_country = { let c = av["country"].as_str().unwrap_or("JP"); if c.is_empty() {"JP"} else {c} };
+    let address_html = format!(r#"<h2>お届け先 / ギフトを受け取る</h2>
+  <div style="color:#999;font-size:12.5px;line-height:1.7;margin:0 0 12px">{handle_line}<br>{addr_status}</div>
+  <form id="addrf" onsubmit="return false" style="display:flex;flex-direction:column;gap:9px">
+    <input id="a_name" placeholder="お名前" value="{name}" style="background:#0a0a0a;border:1px solid #1f1f1f;color:#fff;padding:11px;font-size:14px;border-radius:3px"/>
+    <div style="display:flex;gap:9px">
+      <input id="a_postal" placeholder="郵便番号" value="{postal}" style="flex:1;background:#0a0a0a;border:1px solid #1f1f1f;color:#fff;padding:11px;font-size:14px;border-radius:3px"/>
+      <select id="a_country" style="flex:1;background:#0a0a0a;border:1px solid #1f1f1f;color:#fff;padding:11px;font-size:14px;border-radius:3px">{country_opts}</select>
+    </div>
+    <div style="display:flex;gap:9px">
+      <input id="a_state" placeholder="都道府県 / State" value="{state}" style="flex:1;background:#0a0a0a;border:1px solid #1f1f1f;color:#fff;padding:11px;font-size:14px;border-radius:3px"/>
+      <input id="a_city" placeholder="市区町村 / City" value="{city}" style="flex:1;background:#0a0a0a;border:1px solid #1f1f1f;color:#fff;padding:11px;font-size:14px;border-radius:3px"/>
+    </div>
+    <input id="a_line1" placeholder="住所1 (番地)" value="{line1}" style="background:#0a0a0a;border:1px solid #1f1f1f;color:#fff;padding:11px;font-size:14px;border-radius:3px"/>
+    <input id="a_line2" placeholder="住所2 (建物・部屋, 任意)" value="{line2}" style="background:#0a0a0a;border:1px solid #1f1f1f;color:#fff;padding:11px;font-size:14px;border-radius:3px"/>
+    <input id="a_phone" placeholder="電話番号 (任意)" value="{phone}" style="background:#0a0a0a;border:1px solid #1f1f1f;color:#fff;padding:11px;font-size:14px;border-radius:3px"/>
+    <button id="a_btn" type="submit" style="background:#e6c449;color:#000;border:0;padding:13px;font-size:13px;font-weight:600;letter-spacing:0.05em;border-radius:3px;cursor:pointer">住所を保存する</button>
+  </form>
+  <div id="a_msg" style="font-size:12.5px;margin-top:8px"></div>
+"#,
+        handle_line = handle_line, addr_status = addr_status,
+        name = pv("name"), postal = pv("postal_code"), state = pv("state"),
+        city = pv("city"), line1 = pv("line1"), line2 = pv("line2"), phone = pv("phone"),
+        country_opts = country_opts(sel_country),
+    );
+
     let page = format!(r#"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <meta name="robots" content="noindex,nofollow"/>
@@ -5906,6 +5964,7 @@ async fn mypage_dashboard(db: Db, email: String, buyer_token: String) -> Respons
     <div><div class="v">{dayn}</div><div class="l">Day N</div></div>
     <div><div class="v">¥{spent}</div><div class="l">累計</div></div>
   </div>
+  {address_html}
   <h2>注文 / 受け取り状況</h2>
   <div>{orders_html}</div>
   <div style="margin-top:48px;color:#555;font-size:11px;line-height:1.7;text-align:center">
@@ -5926,14 +5985,106 @@ document.querySelectorAll('form.claim-form').forEach(f=>{{
     if(j.ok){{location.reload();}}else{{alert(j.error||'エラー');f.querySelector('button').disabled=false;}}
   }});
 }});
+(function(){{
+  const f=document.getElementById('addrf');if(!f)return;
+  const btn=document.getElementById('a_btn'),msg=document.getElementById('a_msg');
+  f.addEventListener('submit',async()=>{{
+    const g=id=>document.getElementById(id).value.trim();
+    const body={{name:g('a_name'),postal_code:g('a_postal'),country:g('a_country'),state:g('a_state'),city:g('a_city'),line1:g('a_line1'),line2:g('a_line2'),phone:g('a_phone')}};
+    if(!body.name||!body.line1||!body.city||!body.postal_code){{msg.innerHTML='<span style=\"color:#e07b7b\">お名前・郵便番号・市区町村・住所1 は必須です</span>';return;}}
+    btn.disabled=true;msg.innerHTML='';
+    const r=await fetch('/api/mypage/address',{{method:'POST',headers:{{'content-type':'application/json'}},body:JSON.stringify(body)}});
+    const j=await r.json().catch(()=>({{}}));
+    if(j.ok){{msg.innerHTML='<span style=\"color:#9bd97a\">✓ 保存しました。@'+(j.handle||'')+' 宛にギフトを受け取れます。</span>';setTimeout(()=>location.reload(),900);}}
+    else{{msg.innerHTML='<span style=\"color:#e07b7b\">'+(j.error||'エラー')+'</span>';btn.disabled=false;}}
+  }});
+}})();
 </script>
 </body></html>"#,
         masked = html_escape(&masked),
         owned = orders.len(),
         dayn = day_n,
         spent = fmt_jpy(total_spent),
+        address_html = address_html,
         orders_html = orders_html);
     axum::response::Html(page).into_response()
+}
+
+/// POST /api/mypage/address — save the logged-in account's shipping address
+/// so others can gift to them by handle WITHOUT ever seeing it. Upserts a
+/// you_users row (minting a giftable handle if the buyer has none yet), keyed
+/// by the session email. Returns the account handle on success.
+async fn mypage_save_address(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let email = {
+        let sid = match mypage_session_from_cookie(&headers) {
+            Some(s) => s,
+            None => return (StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"ok":false,"error":"ログインが必要です"}))).into_response(),
+        };
+        let conn = db.lock().unwrap();
+        match mypage_lookup_session(&conn, &sid) {
+            Some((email, _)) => email,
+            None => return (StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"ok":false,"error":"ログインの有効期限が切れています"}))).into_response(),
+        }
+    };
+    let g = |k: &str| body.get(k).and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    let (name, line1, city, postal_code) = (g("name"), g("line1"), g("city"), g("postal_code"));
+    if name.is_empty() || line1.is_empty() || city.is_empty() || postal_code.is_empty() {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok":false,"error":"お名前・郵便番号・市区町村・住所1 は必須です"}))).into_response();
+    }
+    let mut country = g("country").to_uppercase();
+    if country.is_empty() { country = "JP".into(); }
+    let addr = serde_json::json!({
+        "name": name, "line1": line1, "line2": g("line2"), "city": city,
+        "state": g("state"), "postal_code": postal_code, "country": country, "phone": g("phone"),
+    });
+    let now = chrono_now();
+    let mint_slug = |conn: &Connection| -> String {
+        let mut s = random_slug();
+        for _ in 0..5 {
+            let taken: bool = conn.query_row("SELECT 1 FROM you_users WHERE slug=?", params![s], |_| Ok(true)).unwrap_or(false);
+            if !taken { break; }
+            s = random_slug();
+        }
+        s
+    };
+    let handle = {
+        let conn = db.lock().unwrap();
+        let existing: Option<(i64, Option<String>)> = conn.query_row(
+            "SELECT id, slug FROM you_users WHERE email=? LIMIT 1",
+            params![email], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).ok();
+        match existing {
+            Some((id, slug)) => {
+                let slug = match slug {
+                    Some(s) if !s.is_empty() => s,
+                    _ => { let s = mint_slug(&conn); let _ = conn.execute("UPDATE you_users SET slug=? WHERE id=?", params![s, id]); s }
+                };
+                let _ = conn.execute(
+                    "UPDATE you_users SET shipping_address_json=?, updated_at=? WHERE id=?",
+                    params![addr.to_string(), now, id],
+                );
+                slug
+            }
+            None => {
+                let tk = uuid::Uuid::new_v4().to_string().replace('-', "");
+                let s = mint_slug(&conn);
+                let _ = conn.execute(
+                    "INSERT INTO you_users (email, token, slug, taste_json, size, created_at, updated_at, shipping_address_json)
+                     VALUES (?,?,?,'{}','S',?,?,?)",
+                    params![email, tk, s, now, now, addr.to_string()],
+                );
+                s
+            }
+        }
+    };
+    Json(serde_json::json!({"ok": true, "handle": handle})).into_response()
 }
 
 async fn mypage_claim_nft(
@@ -67730,6 +67881,13 @@ async fn main() {
     let _ = conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_you_users_slug_unique \
          ON you_users(slug) WHERE slug IS NOT NULL", []);
+    // Gift-to-an-MU-account: the recipient's saved shipping address, linked
+    // to their account so a sender can gift by handle WITHOUT ever seeing the
+    // address. Single JSON column (name / line1 / line2 / city / state /
+    // postal_code / country / phone). NULL = no address saved yet → a gift
+    // falls back to the private claim-link flow. Set via /api/mypage/address.
+    let _ = conn.execute(
+        "ALTER TABLE you_users ADD COLUMN shipping_address_json TEXT", []);
 
     // Backfill: every existing you_user gets a random slug if missing
     {
@@ -68722,6 +68880,9 @@ async fn main() {
         .route("/mypage/auth/:token", get(mypage_auth_consume))
         .route("/mypage/logout", post(mypage_logout))
         .route("/api/mypage/claim-nft", post(mypage_claim_nft))
+        // Save the account shipping address (so others can gift to you by
+        // handle without ever seeing it). Logged-in (session cookie) only.
+        .route("/api/mypage/address", post(mypage_save_address))
         .route("/vault", get(vault_index))
         .route("/vault/:slug", get(vault_article))
         // ── Holder gates — third-party MU-holder-only content gateways ──
@@ -68947,6 +69108,12 @@ async fn main() {
         .route("/collabs", get(brands_index))
         .route("/shop/:sku", get(catalog::shop_pdp))
         .route("/api/shop/checkout", get(catalog::shop_checkout))
+        // Gift to an MU account: handle existence check (PDP), the giftee's
+        // private address-claim page + submit (no login — the token is the
+        // credential). The sender never sees the recipient's address.
+        .route("/api/gift/check", get(catalog::gift_check_recipient))
+        .route("/gift/claim/:token", get(catalog::gift_claim_page))
+        .route("/api/gift/claim/:token", post(catalog::gift_claim_submit))
         // UNIVERSAL collection sales page + per-edition public serial registry.
         .route("/universal", get(catalog::universal_collection))
         .route("/edition/:sku", get(catalog::edition_page))

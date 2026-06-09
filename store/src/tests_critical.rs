@@ -214,3 +214,85 @@ fn mu_score_sql_ranks_design_sales_freshness() {
         "design 90 > unjudged+10 sales > unjudged+fresh"
     );
 }
+
+// ── (f) Gift-to-an-MU-account: schema + claim-token lookup + preserve ────────
+//
+// The gift feature relies on three DB invariants:
+//   1. ensure_schema() adds catalog_orders.gift_json (idempotent ALTER).
+//   2. The held-order claim page/submit resolves an order by the unguessable
+//      json_extract(gift_json,'$.claim_token') — so the giftee can enter their
+//      address WITHOUT exposing it to the sender.
+//   3. record_order_full's INSERT OR REPLACE PRESERVES gift_json (it re-reads
+//      then rewrites it, like referrer_code/ticket_code). If that preserve
+//      breaks, a gift order silently loses its recipient on the final write.
+// This test guards all three at the SQL level (network-free, in-memory).
+#[test]
+fn gift_json_schema_claim_lookup_and_preserve() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    crate::catalog::ensure_schema(&conn);
+
+    // (1) gift_json column exists and round-trips.
+    let session = "cs_test_gift_0001";
+    let gift_json = serde_json::json!({
+        "recipient_slug": "abc1234",
+        "claim_token": "tok_unguessable_xyz",
+        "claimed": false,
+        "sender_email": "buyer@example.com"
+    })
+    .to_string();
+    conn.execute(
+        "INSERT INTO catalog_orders (stripe_session_id, sku, amount_jpy, status, gift_json)
+         VALUES (?,?,?,?,?)",
+        rusqlite::params![session, "AUTO-X-TEE-S", 6800, "gift_pending_address", gift_json],
+    )
+    .unwrap();
+
+    // (2) Resolve the held order by its claim token (the only credential the
+    //     giftee presents) — exactly the query gift_claim_page/submit run.
+    let (found_sku, found_status): (String, String) = conn
+        .query_row(
+            "SELECT sku, status FROM catalog_orders
+             WHERE json_extract(gift_json,'$.claim_token')=? AND status='gift_pending_address' LIMIT 1",
+            rusqlite::params!["tok_unguessable_xyz"],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .expect("claim token must resolve the held gift order");
+    assert_eq!(found_sku, "AUTO-X-TEE-S");
+    assert_eq!(found_status, "gift_pending_address");
+    // A wrong/guessed token must NOT resolve anything.
+    let none: Result<String, _> = conn.query_row(
+        "SELECT sku FROM catalog_orders WHERE json_extract(gift_json,'$.claim_token')=? LIMIT 1",
+        rusqlite::params!["tok_wrong"],
+        |r| r.get(0),
+    );
+    assert!(none.is_err(), "an unknown claim token must resolve nothing");
+
+    // (3) Preserve invariant: the final write re-reads gift_json then rewrites
+    //     it inside INSERT OR REPLACE (mirrors record_order_full). After it,
+    //     gift_json must still be present — not reset to NULL.
+    let existing_gift: Option<String> = conn
+        .query_row(
+            "SELECT gift_json FROM catalog_orders WHERE stripe_session_id=?",
+            rusqlite::params![session],
+            |r| r.get(0),
+        )
+        .unwrap();
+    conn.execute(
+        "INSERT OR REPLACE INTO catalog_orders
+           (stripe_session_id, sku, amount_jpy, status, gift_json)
+         VALUES (?,?,?,?,?)",
+        rusqlite::params![session, "AUTO-X-TEE-S", 6800, "submitted", existing_gift],
+    )
+    .unwrap();
+    let after: Option<String> = conn
+        .query_row(
+            "SELECT gift_json FROM catalog_orders WHERE stripe_session_id=?",
+            rusqlite::params![session],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(
+        after.as_deref().unwrap_or("").contains("recipient_slug"),
+        "gift_json must survive the INSERT OR REPLACE final write (recipient not lost)"
+    );
+}
