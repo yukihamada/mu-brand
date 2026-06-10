@@ -2466,12 +2466,101 @@ pub async fn admin_fix_lifestyle(
     })).into_response()
 }
 
+/// MU-side fallback mockup: compose the design onto a clean cream product
+/// card (square, design centred ~72%). Used when Printful's mockup-generator
+/// can't render a product (no `position` geometry for that kind, AOP, or a
+/// digital/manual kind with no Printful product at all). Pure-local, no
+/// external API, so EVERY product gets a presentable card.
+fn compose_card_mockup(design_png: &[u8]) -> Result<Vec<u8>, String> {
+    use image::imageops;
+    let design = image::load_from_memory(design_png)
+        .map_err(|e| format!("load design: {}", e))?
+        .to_rgba8();
+    let (dw, dh) = design.dimensions();
+    if dw == 0 || dh == 0 {
+        return Err("empty design".into());
+    }
+    let (cw, ch) = (1200u32, 1200u32);
+    let mut base = image::RgbaImage::from_pixel(cw, ch, image::Rgba([244, 241, 234, 255]));
+    let maxd = (cw as f32 * 0.72) as u32;
+    let ratio = maxd as f32 / dw.max(dh) as f32;
+    let nw = ((dw as f32) * ratio).round().max(1.0) as u32;
+    let nh = ((dh as f32) * ratio).round().max(1.0) as u32;
+    let layer = imageops::resize(&design, nw, nh, imageops::FilterType::Lanczos3);
+    let px = ((cw.saturating_sub(nw)) / 2) as i64;
+    let py = ((ch.saturating_sub(nh)) / 2) as i64;
+    imageops::overlay(&mut base, &layer, px, py);
+    let mut buf = std::io::Cursor::new(Vec::<u8>::new());
+    image::DynamicImage::ImageRgba8(base)
+        .into_rgb8()
+        .write_to(&mut buf, image::ImageFormat::Png)
+        .map_err(|e| format!("encode: {}", e))?;
+    Ok(buf.into_inner())
+}
+
+/// Download the design, compose a local card mockup, mirror to R2 and swap
+/// `mockup_url_external`. The MU-side fallback path for `generate_onbody_mockup`.
+async fn local_card_to_r2(db: Db, sku: String, design_url: String) -> Result<(), String> {
+    if !design_url.starts_with("http") {
+        return Err("no design url for local card".into());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let bytes = client.get(&design_url).send().await
+        .map_err(|e| format!("download design: {}", e))?
+        .bytes().await
+        .map_err(|e| format!("read design: {}", e))?
+        .to_vec();
+    let card = compose_card_mockup(&bytes)?;
+    let r2_key = format!("catalog/mockups/{}.png", sku);
+    let r2_url = crate::store_r2_bytes(&r2_key, &card, "image/png")
+        .await
+        .ok_or_else(|| "R2 upload failed".to_string())?;
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE catalog_products SET mockup_url_external=? WHERE sku=?",
+            rusqlite::params![&r2_url, &sku],
+        );
+    }
+    tracing::info!("[catalog/mockup] local card sku={} → {}", sku, r2_url);
+    Ok(())
+}
+
+/// On-body mockup entry point. Tries Printful's mockup-generator first (real
+/// garment render); if Printful can't do this product — no `position` geometry
+/// for the kind, AOP, timeout, or a digital/manual kind with `printful_product
+/// <= 0` — falls back to a MU-side local card so the shop never shows a bare
+/// design. Call sites are unchanged.
+pub async fn generate_onbody_mockup(
+    db: Db,
+    sku: String,
+    printful_product: i64,
+    printful_variant: i64,
+    design_url: String,
+) -> Result<(), String> {
+    if printful_product > 0 {
+        match printful_onbody_mockup(
+            db.clone(), sku.clone(), printful_product, printful_variant, design_url.clone(),
+        ).await {
+            Ok(()) => return Ok(()),
+            Err(e) => tracing::warn!(
+                "[catalog/mockup] printful failed sku={} ({}) → MU local card fallback", sku, e
+            ),
+        }
+    }
+    local_card_to_r2(db, sku, design_url).await
+}
+
 /// Async background task: call Printful's mockup-generator with the
 /// design URL, poll until done (~30-60s), upload the resulting on-body
 /// mockup to R2, swap catalog_products.mockup_url_external. Printful's
 /// mockup-generator is free for the basic single-front variant we use,
-/// so no budget guard needed.
-pub async fn generate_onbody_mockup(
+/// so no budget guard needed. Wrapped by `generate_onbody_mockup`, which
+/// adds the MU-side local-card fallback.
+async fn printful_onbody_mockup(
     db: Db,
     sku: String,
     printful_product: i64,
