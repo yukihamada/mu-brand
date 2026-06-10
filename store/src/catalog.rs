@@ -7054,6 +7054,43 @@ fn shop_filter_sql(brand: Option<&str>, kind_sql: &str, q_pat: Option<&str>) -> 
     (parts.join(" AND "), binds)
 }
 
+/// 「読みもの」内部リンクブロック — /shop と PDP のフッター直前に挿す。
+/// SEO 記事 (auto_blog_posts の slug LIKE 'seo-%') は内部導線が無いと
+/// クロール/回遊されない (実測: 記事3本の7日流入ゼロ・/blog 自体も 2PV)
+/// ので、トラフィックのある回遊面からリンクを張る。記事本文は日本語のみ
+/// なので EN モードでも記事タイトルは日本語のまま、見出しと「すべての
+/// 記事」リンクだけ言語を切り替える。
+fn readmore_journal_html(conn: &rusqlite::Connection, lang: &str) -> String {
+    let posts: Vec<(String, String)> = conn
+        .prepare(
+            "SELECT slug, title FROM auto_blog_posts \
+             WHERE published=1 AND slug LIKE 'seo-%' \
+             ORDER BY created_at DESC LIMIT 3",
+        )
+        .ok()
+        .and_then(|mut s| {
+            s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+                .ok()
+                .map(|it| it.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default();
+    let heading = if lang == "en" { "Journal" } else { "読みもの" };
+    let all = if lang == "en" { "All notes →" } else { "すべての記事 →" };
+    let mut links = String::new();
+    for (slug, title) in &posts {
+        links.push_str(&format!(
+            "<a href=\"/blog/auto/{}\">{}</a>",
+            html_attr(slug),
+            html_text(title),
+        ));
+    }
+    format!(
+        "<nav class=\"readmore\" aria-label=\"{heading}\">\
+         <span class=\"readmore-h\">{heading}</span>{links}\
+         <a href=\"/blog/\">{all}</a></nav>"
+    )
+}
+
 pub async fn shop_index(
     State(db): State<Db>,
     Query(q): Query<ShopQuery>,
@@ -7113,6 +7150,11 @@ pub async fn shop_index(
 
         let items = list_products_paged(&conn, brand_opt, SHOP_PAGE_SIZE, offset, sort, kind_sql, q_pat.as_deref());
         (brands, items, total)
+    };
+    // 読みもの (SEO 記事) への内部導線 — フッター直前に挿す。
+    let readmore_html = {
+        let conn = db.lock().unwrap();
+        readmore_journal_html(&conn, lang)
     };
 
     // 全チップ/フォームが共有する URL ビルダ。選択中の brand/sort/kind/q を
@@ -7513,6 +7555,10 @@ button.chip{{cursor:pointer;font-family:inherit;line-height:inherit}}
 .pg-link:hover{{background:rgba(255,215,0,0.08)}}
 .pg-link.off{{color:#444;border-color:rgba(255,255,255,0.06);cursor:not-allowed}}
 .pg-count{{color:rgba(245,245,240,0.5);font-size:11px;font-family:monospace}}
+.readmore{{max-width:920px;margin:0 auto;padding:26px 24px 6px;border-top:1px solid rgba(255,255,255,0.06);display:flex;flex-wrap:wrap;gap:6px 18px;justify-content:center;align-items:center;font-size:11px;letter-spacing:0.08em;line-height:1.8}}
+.readmore-h{{color:rgba(245,245,240,0.45);letter-spacing:0.3em;text-transform:uppercase;font-size:10px}}
+.readmore a{{color:rgba(245,245,240,0.72);text-decoration:none;border-bottom:1px dotted rgba(245,245,240,0.3)}}
+.readmore a:hover{{color:#e6c449;border-bottom-color:#e6c449}}
 footer{{padding:30px 24px 50px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;color:rgba(245,245,240,0.5);font-size:10px;letter-spacing:0.15em}}
 footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
 .cardplay{{position:absolute;top:8px;right:8px;z-index:2;width:38px;height:38px;border-radius:50%;border:1px solid rgba(255,215,0,.8);background:rgba(0,0,0,.66);color:#fff;font-size:13px;cursor:pointer;backdrop-filter:blur(4px)}}
@@ -7555,6 +7601,7 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
 {body_or_empty}
 {pagination}
 {make_fab}
+{readmore}
 <footer>
   <span>© 2026 MU / Enabler Inc.</span>
   <a href="/shipping">配送</a>
@@ -7624,6 +7671,7 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
         },
         pagination = pagination_html,
         make_fab = make_fab,
+        readmore = readmore_html,
     );
     Html(body)
 }
@@ -8825,6 +8873,12 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
         }
     };
 
+    // 読みもの (SEO 記事) への内部導線 — PDP フッター直前。
+    let readmore_html = {
+        let conn = db.lock().unwrap();
+        readmore_journal_html(&conn, lang)
+    };
+
     // ── SEO Round 1: lang attr / hreflang / structured-data hardening ──
     let html_lang_attr = lang; // "ja" | "en"
     // <title> suffix is already English and reads correctly in both locales.
@@ -8961,6 +9015,10 @@ table.sz th, table.sz td{{padding:5px 8px;border-bottom:1px solid rgba(255,255,2
 table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-spacing:0.1em;text-transform:uppercase}}
 .sz-cap{{font-size:10.5px;color:rgba(245,245,240,0.45);margin-top:8px;font-style:italic}}
 .pdp-footer{{max-width:920px;margin:0 auto;padding:30px 22px 50px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;color:rgba(245,245,240,0.5);font-size:10px;letter-spacing:0.1em}}
+.readmore{{max-width:920px;margin:0 auto;padding:26px 22px 6px;border-top:1px solid rgba(255,255,255,0.06);display:flex;flex-wrap:wrap;gap:6px 18px;justify-content:center;align-items:center;font-size:11px;letter-spacing:0.08em;line-height:1.8}}
+.readmore-h{{color:rgba(245,245,240,0.45);letter-spacing:0.3em;text-transform:uppercase;font-size:10px}}
+.readmore a{{color:rgba(245,245,240,0.72);text-decoration:none;border-bottom:1px dotted rgba(245,245,240,0.3)}}
+.readmore a:hover{{color:#e6c449;border-bottom-color:#e6c449}}
 .legal-links{{display:flex;flex-wrap:wrap;justify-content:center;gap:18px;margin-bottom:12px;font-size:11px;letter-spacing:0.15em}}
 .legal-links a{{color:rgba(245,245,240,0.7);text-decoration:none;text-transform:uppercase}}
 .legal-links a:hover{{color:#ffd700}}
@@ -9012,6 +9070,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
 </div>
 <div style="max-width:920px;margin:0 auto;padding:0 22px 10px">{make_cta}</div>
 {related}
+{readmore}
 <footer class="pdp-footer">
   <div class="legal-links">
     <a href="/shop">SHOP</a>
@@ -9066,6 +9125,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
         assessment = assessment_html,
         edition_doc = edition_doc_html,
         related = related_html,
+        readmore = readmore_html,
         title = html_text(&display_name),
         headline = html_text(&headline),
         tagline_html = tagline_html,
