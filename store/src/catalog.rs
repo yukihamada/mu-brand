@@ -907,7 +907,8 @@ pub(crate) fn placements_for_product(printful_product_id: i64) -> &'static [&'st
     match printful_product_id {
         // 301 = Men's AOP Rash Guard, 302/368/369/836 = sister AOP products
         // (per fulfill_catalog_order's stitch_color guard at line 2736).
-        301 | 302 | 368 | 369 | 836 => &["front", "back", "sleeve_left", "sleeve_right"],
+        // 384 = AOP kids crew tee (front/back/両袖) も同じ4パネル cover-fill。
+        301 | 302 | 368 | 369 | 836 | 384 => &["front", "back", "sleeve_left", "sleeve_right"],
         // 1 = matte poster, 19 = 11oz mug, 358 = kiss-cut sticker,
         // 601 = Tough iPhone Case — Printful's mockup-generator rejects
         // "front" for these ("File type front is not allowed", MG-4); their
@@ -915,7 +916,12 @@ pub(crate) fn placements_for_product(printful_product_id: i64) -> &'static [&'st
         // 300 mug(黒) / 518 mouse pad / 3 canvas / 588 metal print /
         // 394 laptop sleeve / 611 coaster / 189 leggings(AOP) / 691 wine glass /
         // 848 bottle も同じく "default" のみ (mockup-generator/printfiles で検証 2026-06-09)。
-        1 | 19 | 358 | 601 | 300 | 518 | 3 | 588 | 394 | 611 | 189 | 691 | 848 => &["default"],
+        // 186 socks / 262 drawstring bag / 259 beach towel も単一printfile "default"
+        // (mockup-generator/printfiles で検証 2026-06-10)。
+        1 | 19 | 358 | 601 | 300 | 518 | 3 | 588 | 394 | 611 | 189 | 691 | 848
+        | 186 | 262 | 259 => &["default"],
+        // 654 = AOP reversible bucket hat。"front"/"default" は無効で外面のみ有効。
+        654 => &["outside_front"],
         // 99 = embroidered cap — its only valid placement is the embroidery
         // front zone, not "front". build_printful_item (fulfillment) and
         // generate_onbody_mockup both read this, so the cap stitches + mocks
@@ -938,7 +944,10 @@ pub(crate) fn placements_for_product(printful_product_id: i64) -> &'static [&'st
 /// (刺繍)/mug/poster 等が printful_dtg で作られ誤発送になっていた回帰を防ぐ。
 pub(crate) fn route_for_kind(kind: &str) -> &'static str {
     match kind {
-        "rashguard_ls" | "rashguard_black" => "printful_aop",
+        // 全面プリント(sublimation/AOP)。placements_for_product がパネル/単面を駆動。
+        "rashguard_ls" | "rashguard_black"
+        | "socks" | "drawstring_bag" | "beach_towel" | "fanny_pack"
+        | "bucket_hat" | "kids_tee" | "backpack" | "flag" => "printful_aop",
         // 刺繍系(stitched, not printed)。placement(embroidery_*)がファイルを駆動。
         "cap" | "beanie" | "blanket" | "towel" => "printful_embroidery",
         // 人手発送(NFC音コイン / ハード / 受注設計の家)。
@@ -1416,6 +1425,80 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
         retail_jpy: 800,
         spec_html: "Printful カタログ品 (汎用) · product / variant は作成時に指定 · \
                     素材・仕様は各 Printful 商品ページに準拠 · Printful EU/US 製造",
+    },
+    // ─── 全面プリント(AOP)新ライン。variant は Printful API で実在確認済(2026-06-10)。
+    //     route=printful_aop / placements_for_product が単面・パネル・外面を駆動。
+    ProductSpec {
+        kind: "socks",
+        printful_product_id: 186, // Black Foot Sublimated Socks
+        printful_variant_id: 7290, // M
+        placement: "default",
+        retail_jpy: 3200,
+        spec_html: "全面プリント ソックス · 昇華プリント(色褪せ・剥がれなし) · \
+                    足裏まで一面デザイン · ポリ混 · 1点ずつ製造・Printful 製造",
+    },
+    ProductSpec {
+        kind: "drawstring_bag",
+        printful_product_id: 262, // All-Over Print Drawstring Bag
+        printful_variant_id: 8894, // 15″×17″ One size
+        placement: "default",
+        retail_jpy: 4900,
+        spec_html: "全面プリント ナップサック(巾着) · 約38×43cm · 昇華プリント · \
+                    軽量・ジム/稽古の着替え入れに · 1点ずつ製造・Printful 製造",
+    },
+    ProductSpec {
+        kind: "beach_towel",
+        printful_product_id: 259, // Beach Towel (sublimated)
+        printful_variant_id: 8874, // 30″×60″
+        placement: "default",
+        retail_jpy: 7800,
+        spec_html: "ビーチタオル · 約76×152cm · 全面昇華プリント · \
+                    吸水ポリ表面 · 海/プール/アウトドアに · Printful 製造",
+    },
+    ProductSpec {
+        kind: "fanny_pack",
+        printful_product_id: 350, // All-Over Print Fanny Pack
+        printful_variant_id: 9987, // M/L
+        placement: "front",
+        retail_jpy: 7800,
+        spec_html: "全面プリント ウエストバッグ · 昇華プリント · 調整可能ストラップ · \
+                    斜め掛け対応 · 街/フェス/旅に · Printful 製造",
+    },
+    ProductSpec {
+        kind: "bucket_hat",
+        printful_product_id: 654, // AOP Reversible Bucket Hat
+        printful_variant_id: 16360, // S/M
+        placement: "outside_front",
+        retail_jpy: 6800,
+        spec_html: "全面プリント リバーシブル バケットハット · 昇華プリント · \
+                    両面で2柄 · UV対策・夏のギアに · Printful 製造",
+    },
+    ProductSpec {
+        kind: "kids_tee",
+        printful_product_id: 384, // AOP Kids Crew Neck T-Shirt
+        printful_variant_id: 10821, // size 6
+        placement: "front",
+        retail_jpy: 4900,
+        spec_html: "キッズ 全面プリントTシャツ (サイズ6) · 昇華プリント · \
+                    前後+両袖まで一面デザイン · 親子おそろいに · Printful 製造",
+    },
+    ProductSpec {
+        kind: "backpack",
+        printful_product_id: 279, // All-Over Print Backpack
+        printful_variant_id: 9063, // One size
+        placement: "front",
+        retail_jpy: 9800,
+        spec_html: "全面プリント バックパック · 昇華プリント · ノートPCポケット付 · \
+                    通学/通勤/旅に · Printful 製造",
+    },
+    ProductSpec {
+        kind: "flag",
+        printful_product_id: 490, // All-Over Print Flag
+        printful_variant_id: 12584, // One size
+        placement: "front",
+        retail_jpy: 4900,
+        spec_html: "全面プリント フラッグ(タペストリー) · 昇華プリント · \
+                    壁掛け・道場/部屋の装飾に · Printful 製造",
     },
 ];
 
@@ -4875,8 +4958,14 @@ pub const MAKE_KINDS_ALL: &[(&str, &str)] = &[
     ("joggers", "スウェットパンツ"),
     ("apron", "エプロン"),
     ("beanie", "ビーニー（刺繍）"),
+    ("kids_tee", "キッズTシャツ（全面）"),
+    ("socks", "ソックス（全面）"),
+    ("bucket_hat", "バケットハット（全面）"),
     // 持つ
     ("tote", "トートバッグ"),
+    ("drawstring_bag", "ナップサック（全面）"),
+    ("fanny_pack", "ウエストバッグ（全面）"),
+    ("backpack", "バックパック（全面）"),
     ("sticker", "ステッカー"),
     ("mug", "マグカップ（白）"),
     ("mug_black", "マグカップ（黒）"),
@@ -4895,6 +4984,8 @@ pub const MAKE_KINDS_ALL: &[(&str, &str)] = &[
     ("placemat", "プレースマット"),
     ("blanket", "ブランケット（刺繍）"),
     ("towel", "今治タオル（刺繍）"),
+    ("beach_towel", "ビーチタオル（全面）"),
+    ("flag", "フラッグ（全面）"),
 ];
 
 pub async fn make_page(State(db): State<Db>, Query(q): Query<MakePageQuery>) -> Html<String> {
@@ -5418,12 +5509,14 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
         // 着る
         "tee", "tee_white", "hoodie", "crewneck", "long_sleeve_tee", "tank",
         "rashguard_ls", "rashguard_black", "rashguard_contrado", "leggings", "apron",
-        "shorts", "joggers",
+        "shorts", "joggers", "kids_tee", "socks", "bucket_hat",
         // 持つ
         "tote", "sticker", "mug", "mug_black", "phone_case", "laptop_sleeve",
         "mouse_pad", "bottle", "wine_glass", "journal",
+        "drawstring_bag", "fanny_pack", "backpack",
         // 家・暮らし
         "poster", "canvas", "metal_print", "pillow", "coaster", "placemat",
+        "beach_towel", "flag",
         // 刺繍
         "beanie", "blanket", "towel",
     ];
@@ -5463,14 +5556,18 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     // at ~line 2783). The Contrado premium tier is also full-coverage, so it
     // takes the same full-canvas artwork. DTG apparel keeps the centered
     // chest-graphic-on-white.
-    let is_aop = matches!(kind, "rashguard_ls" | "rashguard_black" | "rashguard_contrado");
+    // kids_tee は rashguard と同じ前後+両袖の4パネル cover-crop なので AOP 扱い。
+    let is_aop = matches!(kind,
+        "rashguard_ls" | "rashguard_black" | "rashguard_contrado" | "kids_tee");
     // 全面1ファイル印刷の商品 → フチまで埋める full-bleed アート
     // (chest graphic だと小さく中央に乗ってしまう)。透過キーもしない。
     // mug(白)は中央ロゴが定番なので chest 側に残す。mug_black は全面。
     let is_full_bleed = matches!(kind,
         "poster" | "phone_case" | "mug_black" | "mouse_pad" | "canvas" | "metal_print"
         | "laptop_sleeve" | "coaster" | "leggings" | "pillow" | "wine_glass" | "bottle"
-        | "shorts" | "placemat");
+        | "shorts" | "placemat"
+        | "socks" | "drawstring_bag" | "beach_towel" | "fanny_pack" | "bucket_hat"
+        | "backpack" | "flag");
     // 刺繍商品(ビーニー/ブランケット/タオル)はシンプルで太い1〜2色のロゴが映える。
     // 写真調/グラデは刺繍に向かないので、専用プロンプトでベクター調の紋章を作る。
     let is_embroidery = matches!(kind, "beanie" | "blanket" | "towel");
