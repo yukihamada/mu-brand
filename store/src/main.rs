@@ -69186,6 +69186,7 @@ async fn main() {
         .route("/api/agent/register/verify", post(agent_api::agent_register_verify))
         .route("/api/agent/me", get(agent_api::agent_me))
         .route("/api/agent/stores", post(agent_api::agent_create_store))
+        .route("/api/agent/stores/:slug/collaborators", post(agent_api::agent_store_collaborators))
         .route("/api/agent/products",
             get(agent_api::agent_list_products).post(agent_api::agent_create_product))
         .route("/api/agent/products/:sku/update", post(agent_api::agent_update_product))
