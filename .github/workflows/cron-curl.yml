@@ -403,9 +403,9 @@ jobs:
     timeout-minutes: 12
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -512,7 +512,7 @@ jobs:
           head -c 16 "products_${ts}.db" | hexdump -C | head -1
           echo "DB_FILE=products_${ts}.db" >> $GITHUB_ENV
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ env.DB_FILE }}
           path: ${{ env.DB_FILE }}

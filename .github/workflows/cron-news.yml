@@ -34,7 +34,7 @@ jobs:
       CLOUDFLARE_R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}
       NO_DELAY: "1"   # cron fires at JST 09:00 sharp; skip random_delay
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Stop after festival (2026-10-29)
         id: gate
         run: |
@@ -45,7 +45,7 @@ jobs:
           else
             echo "run=true" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         if: steps.gate.outputs.run == 'true'
         with:
           python-version: '3.11'
