@@ -253,6 +253,45 @@ footer{
 </head>
 <body>
 
+<!-- ── /buy A/B (2026-06-11): CVR改善テスト ──────────────────────────
+     実測根拠: /buy=939PV/714UU(全PVの51%)なのに購入CTAクリック17回(UU比2.4%)。
+     scroll25%到達23%・滞在中央値9秒 → 大半がCTAに到達する前に離脱している。
+     b = ①商品カードをファーストビューへ前倒し ②sticky 購入バー(常時可視CTA)
+         ③YouTube経由者への文脈ブリッジ(流入主役=YouTube 7日333)
+     a = 現行レイアウト(コントロール)。
+     割当は visitor_id の決定的2分割。mu-funnel.js が body[data-ab] を全イベントに
+     刻むので path=/buy × extra.ab で pageview/cta_click/checkout_attempt を
+     変分別に集計できる(index.html のトップA/B/Cと同じ仕組み)。
+     初訪問は mu_funnel_v1 未作成のため、ここで identity を先に作って
+     mu-funnel.js に引き継がせる(初訪問が全員同バケツに落ちる偏りの回避)。
+     検証用強制: ?ab=a / ?ab=b -->
+<script>
+(function(){
+  try{
+    var KEY='mu_funnel_v1';
+    function uuid(){
+      try{
+        return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g,function(c){
+          return (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c/4).toString(16);
+        });
+      }catch(_){ return 'v'+Date.now().toString(36)+Math.random().toString(36).slice(2,10); }
+    }
+    var id=null;
+    try{ id=JSON.parse(localStorage.getItem(KEY)||'null'); }catch(_){}
+    if(!id||!id.visitor_id){
+      id={visitor_id:uuid(),session_id:uuid(),last:Date.now()};
+      try{ localStorage.setItem(KEY,JSON.stringify(id)); }catch(_){}
+    }
+    var s=id.visitor_id,h=0;
+    for(var i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))>>>0;
+    var q=new URLSearchParams(location.search).get('ab');
+    var v=(q==='a'||q==='b')?q:['a','b'][h%2];
+    document.body.setAttribute('data-ab',v);
+    window.MU_BUY_AB=v;
+  }catch(_){ window.MU_BUY_AB='a'; }
+})();
+</script>
+
 <nav>
   <a href="/" class="logo">MU</a>
   <span class="right">
@@ -541,6 +580,91 @@ footer{
 <div style="text-align:center;margin-top:8px;font-size:13.5px;font-weight:700"><a href="/start?ref=buy" data-funnel="cta_click" data-funnel-cta="start_buy_page" style="color:#ffd700;text-decoration:none">クリエイター登録すると、売れるたび10%があなたに → /start</a></div></div>
 </main>
 
+<!-- Sticky 購入バー (variant b のみ表示) — ファーストビューから常時可視の CTA。
+     商品名/価格/サムネは loadProduct() が同期。クリックは本体ボタンと同じ
+     startCheckout() に入る (checkout_attempt source='buy.html#sticky')。 -->
+<div id="sticky-cta" style="display:none;position:fixed;left:0;right:0;bottom:0;z-index:60;background:rgba(10,10,10,0.95);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-top:1px solid rgba(230,196,73,0.35);padding:10px 16px;padding-bottom:calc(10px + env(safe-area-inset-bottom))">
+  <div style="max-width:880px;margin:0 auto;display:flex;align-items:center;gap:12px">
+    <img id="sticky-img" src="https://mockups.wearmu.com/hero.png" alt="MUGEN" style="width:44px;height:44px;object-fit:cover;border-radius:4px;background:#000;flex-shrink:0">
+    <div style="flex:1;min-width:0;line-height:1.35">
+      <div id="sticky-name" style="font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:#e6c449;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">MUGEN</div>
+      <div id="sticky-price" style="font-size:15px;font-weight:600;color:#fff;font-variant-numeric:tabular-nums">¥4,900〜¥9,800</div>
+    </div>
+    <button type="button" id="btn-buy-sticky" data-funnel="cta_click" data-funnel-cta="buy_sticky_purchase" style="background:#e6c449;color:#0A0A0A;border:0;padding:12px 22px;font-family:inherit;font-size:12px;letter-spacing:0.22em;text-transform:uppercase;font-weight:700;border-radius:3px;cursor:pointer;white-space:nowrap">今すぐ買う</button>
+  </div>
+</div>
+
+<script>
+// Variant b activation — DOM 前倒し + sticky CTA + YouTube ブリッジ。
+// 全て try/catch で囲い、失敗しても variant a 相当の表示に劣化するだけにする。
+(function(){
+  if(window.MU_BUY_AB!=='b')return;
+  var isJa=/^ja/.test(navigator.language||'');
+  // ① 商品カード(画像+価格+購入ボタン)を h1 直後 = ファーストビューへ前倒し。
+  //    哲学(lede)より商品写真が先 (/buy/today の 2026-05-09 診断と同方針)。
+  //    lede・価格レンジ/MSA等の説明ブロックはカードの下に下がる。
+  //    注意: ラッパーの <a id="product-link"> は中に <a id="suzuri-link"> が
+  //    入っているため HTML パーサが 3 つの fragment に分割し、div#product-card
+  //    自体が main 直下になる (本番 DOM 実測)。なので動かすのはカード本体。
+  try{
+    var card=document.getElementById('product-card');
+    var lede=document.getElementById('buy-lede');
+    if(card&&lede&&lede.parentNode)lede.parentNode.insertBefore(card,lede);
+  }catch(_){}
+  // ② sticky 購入バー表示 + 表示計測 (CTR = cta_click/cta_view の cta を揃える)
+  try{
+    var bar=document.getElementById('sticky-cta');
+    var btn=document.getElementById('btn-buy-sticky');
+    if(btn&&!isJa)btn.textContent='BUY NOW';
+    if(bar){
+      bar.style.display='block';
+      document.body.style.paddingBottom='76px';
+      var sent=false;
+      var view=function(){
+        if(sent)return;sent=true;
+        try{if(window.MuFunnel&&window.MuFunnel.track)window.MuFunnel.track('cta_view',{cta:'buy_sticky_purchase'});}catch(_){}
+      };
+      // mu-funnel.js は defer 読込なので DOMContentLoaded 後に送る
+      if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',view);
+      else view();
+      // 本体の購入ボタンが画面内にある間は隠す (二重UI回避)
+      if('IntersectionObserver' in window){
+        var real=document.getElementById('btn-buy');
+        if(real)new IntersectionObserver(function(es){
+          bar.style.display=es[0].isIntersecting?'none':'block';
+        },{threshold:0.5}).observe(real);
+      }
+    }
+  }catch(_){}
+  // ③ YouTube 文脈ブリッジ — 動画から来た人に「ここで買える」を最上部で一行明示。
+  //    判定 = referrer が youtube.com/youtu.be、または ?utm_source|ref が youtube/yt。
+  try{
+    var sp=new URLSearchParams(location.search);
+    var src=((sp.get('utm_source')||'')+' '+(sp.get('ref')||'')).toLowerCase();
+    var fromYt=/youtube|\byt\b/.test(src)||/(^|\.)youtube\.com|(^|\.)youtu\.be/.test((document.referrer||'').replace(/^https?:\/\//,''));
+    if(fromYt){
+      var mainEl=document.querySelector('main');
+      var d=document.createElement('a');
+      d.href='#product-card';
+      d.setAttribute('data-funnel','cta_click');
+      d.setAttribute('data-funnel-cta','buy_yt_bridge');
+      d.style.cssText='display:flex;align-items:center;gap:10px;background:rgba(255,138,138,0.06);border:1px solid rgba(255,138,138,0.35);border-radius:8px;padding:12px 16px;margin:0 0 20px;text-decoration:none;color:#F5F5F0;font-size:13px;line-height:1.6';
+      d.innerHTML=isJa
+        ?'<span style="font-size:18px">📺</span><span><strong style="color:#ff8a8a">動画から来た方へ</strong> — ここが MU の購入ページです。 いま買える最新の 1 着はこちら ↓</span>'
+        :'<span style="font-size:18px">📺</span><span><strong style="color:#ff8a8a">Came from the video?</strong> This is MU\'s buy page — the latest one-of-one drop is right below ↓</span>';
+      if(mainEl)mainEl.insertBefore(d,mainEl.firstChild);
+      var sentB=false;
+      var viewB=function(){
+        if(sentB)return;sentB=true;
+        try{if(window.MuFunnel&&window.MuFunnel.track)window.MuFunnel.track('cta_view',{cta:'buy_yt_bridge'});}catch(_){}
+      };
+      if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',viewB);
+      else viewB();
+    }
+  }catch(_){}
+})();
+</script>
+
 <footer>
   MU · wearmu.com · <a href="mailto:mail@yukihamada.jp" style="color:inherit">mail@yukihamada.jp</a>
 </footer>
@@ -654,6 +778,9 @@ function updateVariantPrice() {
     noteEl.textContent = (combo && combo.note ? combo.note + ' · ' : '') +
       '配送 ' + (pod.ship_to_jp_days || '?') + '日';
   }
+  // Sticky bar price mirrors the card price (variant b).
+  const stickyPrice = document.getElementById('sticky-price');
+  if (stickyPrice && priceEl) stickyPrice.textContent = priceEl.textContent;
 }
 
 async function loadProduct() {
@@ -720,6 +847,13 @@ async function loadProduct() {
       stockEl.textContent = 'のこり ' + rem + ' 着 · ' + pick.sold + ' 着 発送済';
     }
     document.getElementById('product-link').href = '/products/' + (pick.brand || 'mugen') + '/' + pick.id + '?from=buy_page';
+    // Sticky bar (variant b): mirror thumb / name / price from the card.
+    const stickyImg = document.getElementById('sticky-img');
+    if (stickyImg) stickyImg.src = document.getElementById('product-img').src;
+    const stickyName = document.getElementById('sticky-name');
+    if (stickyName) stickyName.textContent = brandLabel + ' · #' + pick.drop_num;
+    const stickyPriceEl = document.getElementById('sticky-price');
+    if (stickyPriceEl) stickyPriceEl.textContent = document.getElementById('product-price').textContent;
     const anchorLink = document.getElementById('product-anchor-link');
     if (anchorLink) anchorLink.href = '/anchor/' + pick.id;
     // SUZURI は国内 (日本) 顧客向け fulfillment のみ。 navigator.language が
@@ -783,17 +917,20 @@ initVariants();
   } catch (e) {}
 })();
 
-document.getElementById('btn-buy').addEventListener('click', async (e) => {
-  e.preventDefault();
+// Shared checkout flow — main buy button + sticky bar button both land here.
+// `source` keeps the two CTA positions distinguishable in checkout_attempt
+// ('buy.html' = 従来位置 / 'buy.html#sticky' = sticky バー)。data-ab は
+// mu-funnel.js が自動で全イベントに刻むので variant 別比較もそのまま出る。
+async function startCheckout(btn, source) {
   if (!CURRENT_PRODUCT) return;
-  const btn = e.currentTarget;
+  const prevHtml = btn.innerHTML;
   btn.disabled = true; btn.textContent = '...';
   try {
     if (window.MuFunnel?.track) {
       window.MuFunnel.track('checkout_attempt', {
         product_id: CURRENT_PRODUCT.id,
         size: SELECTED_SIZE,
-        source: 'buy.html',
+        source: source,
       });
     }
     const r = await fetch('/api/checkout', {
@@ -816,8 +953,22 @@ document.getElementById('btn-buy').addEventListener('click', async (e) => {
     }
   } catch (err) {
     btn.disabled = false;
-    btn.innerHTML = 'もう一度試す<span class="sub">エラー · 別経路 → <a href="/mugen" style="color:#0A0A0A;text-decoration:underline">MUGEN 一覧</a></span>';
+    if (btn.id === 'btn-buy') {
+      btn.innerHTML = 'もう一度試す<span class="sub">エラー · 別経路 → <a href="/mugen" style="color:#0A0A0A;text-decoration:underline">MUGEN 一覧</a></span>';
+    } else {
+      btn.innerHTML = prevHtml;
+    }
   }
+}
+
+document.getElementById('btn-buy').addEventListener('click', (e) => {
+  e.preventDefault();
+  startCheckout(e.currentTarget, 'buy.html');
+});
+const stickyBuyBtn = document.getElementById('btn-buy-sticky');
+if (stickyBuyBtn) stickyBuyBtn.addEventListener('click', (e) => {
+  e.preventDefault();
+  startCheckout(e.currentTarget, 'buy.html#sticky');
 });
 
 // 100枚 challenge live counter (Sho FB #7 #11) — fetch /api/100/progress.
