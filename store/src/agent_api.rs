@@ -630,6 +630,11 @@ pub struct CreateProductBody {
     /// optional universality scorecard (e.g. {"total":97,"axes":{...},"verdict":"…"})
     /// surfaced verbatim on the /universal collection page.
     pub score: Option<serde_json::Value>,
+    /// printful_custom only: the Printful catalog product + variant id to make.
+    /// Required when kind == "printful_custom"; resolved live against the
+    /// Printful API for placement / route / price floor at create time.
+    pub printful_product_id: Option<i64>,
+    pub printful_variant_id: Option<i64>,
 }
 
 /// Hosts we control / trust for externally-referenced design images.
@@ -847,6 +852,26 @@ pub async fn agent_create_product(
         return json_err(StatusCode::BAD_REQUEST, "provide either design_url or ai_prompt");
     };
 
+    // Generic Printful catalog path (kind == "printful_custom"): resolve the
+    // product's placement / route / price-floor live from the Printful API
+    // BEFORE taking the DB lock — the API call is async and the std Mutex guard
+    // below is not Send across an await point.
+    let custom_resolved: Option<(i64, i64, String, &'static str, i64)> =
+        if body.kind.trim() == "printful_custom" {
+            let (pp, pv) = match (body.printful_product_id, body.printful_variant_id) {
+                (Some(pp), Some(pv)) if pp > 0 && pv > 0 => (pp, pv),
+                _ => return json_err(StatusCode::BAD_REQUEST,
+                    "printful_custom requires positive printful_product_id + printful_variant_id"),
+            };
+            match crate::catalog::resolve_printful_custom(pp, pv).await {
+                Ok((placement, route, floor, _spec)) => Some((pp, pv, placement, route, floor)),
+                Err(e) => return json_err(StatusCode::BAD_REQUEST,
+                    &format!("printful_custom resolve failed: {}", e)),
+            }
+        } else {
+            None
+        };
+
     let conn = db.lock().unwrap();
 
     // Owner check: load the store's owner_email from config_json.
@@ -866,11 +891,24 @@ pub async fn agent_create_product(
     }
 
     // Catalog-native insert (validates kind + applies price floor).
-    let sku = match crate::catalog::agent_insert_product(
-        &conn, &store, label, description, body.kind.trim(), &design_file, body.price_jpy,
-    ) {
-        Ok(s) => s,
-        Err(e) => return json_err(StatusCode::BAD_REQUEST, &e),
+    // printful_custom rows carry their resolved ids/placement/route/floor;
+    // everything else reads its PRODUCT_SPECS row.
+    let sku = if let Some((pp, pv, placement, route, floor)) = custom_resolved.as_ref() {
+        let retail = body.price_jpy.map(|p| p.max(*floor)).unwrap_or(*floor);
+        match crate::catalog::agent_insert_custom_product(
+            &conn, &store, label, description, &design_file,
+            *pp, *pv, placement, route, retail,
+        ) {
+            Ok(s) => s,
+            Err(e) => return json_err(StatusCode::BAD_REQUEST, &e),
+        }
+    } else {
+        match crate::catalog::agent_insert_product(
+            &conn, &store, label, description, body.kind.trim(), &design_file, body.price_jpy,
+        ) {
+            Ok(s) => s,
+            Err(e) => return json_err(StatusCode::BAD_REQUEST, &e),
+        }
     };
 
     // Digital-kind extras → meta_json (one general column per the catalog
@@ -916,7 +954,11 @@ pub async fn agent_create_product(
     // 数十秒）。PRINTFUL_API_KEY 未設定や失敗時は warn ログのみで素デザインに
     // フォールバック（mockup_url_external 未更新）。
     if design_file.starts_with("http") {
-        if let Some((pp, pv)) = crate::catalog::printful_ids_for_kind(body.kind.trim()) {
+        // printful_custom carries its ids on the resolved tuple (the placeholder
+        // spec has id 0, so printful_ids_for_kind would return None).
+        let mockup_ids = custom_resolved.as_ref().map(|(pp, pv, _, _, _)| (*pp, *pv))
+            .or_else(|| crate::catalog::printful_ids_for_kind(body.kind.trim()));
+        if let Some((pp, pv)) = mockup_ids {
             let dbc = db.clone();
             let skuc = sku.clone();
             let durl = design_file.clone();

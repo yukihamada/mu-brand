@@ -1400,6 +1400,23 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
                     正式な設計図書・工事監理は提携建築士事務所名義 / 工事は \
                     建設業許可業者とお客様の直接契約 (MU は売買・仲介をしません)",
     },
+    ProductSpec {
+        // 汎用 Printful カタログ品。printful_product_id=0 のプレースホルダ。
+        // 実際の product / variant / placement / route / floor は作成時に
+        // resolve_printful_custom() が Printful API から解決し、
+        // agent_insert_custom_product() が行ごとに焼き込む。これで Printful の
+        // ~500 カタログ品を PRODUCT_SPECS を1行ずつ増やさず作成可能にする。
+        // ここに1エントリだけ置くのは (a) kind_from_sku が "printful_custom" を
+        // 解決できるように (b) limits に「作れる kind」として出すため。
+        // ids=0 なので printful_ids_for_kind は None を返す(mockup は行の保存値)。
+        kind: "printful_custom",
+        printful_product_id: 0,
+        printful_variant_id: 0,
+        placement: "default",
+        retail_jpy: 800,
+        spec_html: "Printful カタログ品 (汎用) · product / variant は作成時に指定 · \
+                    素材・仕様は各 Printful 商品ページに準拠 · Printful EU/US 製造",
+    },
 ];
 
 /// Public, agent-facing view of a `ProductSpec` so callers outside this
@@ -1482,6 +1499,130 @@ pub fn agent_insert_product(
             "review",
             route,
             "agent_api",
+        ],
+    ).map_err(|e| format!("insert failed: {}", e))?;
+    Ok(sku)
+}
+
+/// Resolve a Printful catalog product+variant into the fields MU needs to make
+/// a generic product WITHOUT a hardcoded PRODUCT_SPECS row:
+/// `(placement, fulfillment_route, retail_floor_jpy, spec_html)`.
+///
+/// Called at create time for `kind == "printful_custom"` so ANY of Printful's
+/// ~500 catalog products can be made. The Printful store currency is JPY, so
+/// `variants[].price` is the Printful cost in yen → floor = cost × 2.2 rounded
+/// up to ¥100 (min ¥800). Placement is the product's primary printfile
+/// (an `embroidery_*` file for stitched goods, else `"default"`, else the first
+/// non-`preview` file); route is inferred from that placement + the title.
+///
+/// ⚠ Single-placement only: for all-over-print products (socks, AOP hoodie…)
+/// this prints ONE panel and leaves the rest blank — same caveat as the
+/// rashguard AOP path. True edge-to-edge fan-out per panel is a follow-up.
+pub async fn resolve_printful_custom(
+    product_id: i64,
+    variant_id: i64,
+) -> Result<(String, &'static str, i64, String), String> {
+    let key = std::env::var("PRINTFUL_API_KEY").unwrap_or_default();
+    if key.is_empty() {
+        return Err("PRINTFUL_API_KEY unset".into());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let url = format!("https://api.printful.com/products/{}", product_id);
+    let resp = client.get(&url).bearer_auth(&key).send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("printful product {} → HTTP {}", product_id, resp.status()));
+    }
+    let j: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let result = &j["result"];
+    let title = result["product"]["title"].as_str().unwrap_or("Printful product").to_string();
+    let placements: Vec<String> = result["product"]["files"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|f| f["id"].as_str().map(|s| s.to_string()))
+                .filter(|id| id != "preview")
+                .collect()
+        })
+        .unwrap_or_default();
+    if placements.is_empty() {
+        return Err(format!("printful product {} has no print placements", product_id));
+    }
+    let placement = placements
+        .iter()
+        .find(|p| p.starts_with("embroidery"))
+        .or_else(|| placements.iter().find(|p| p.as_str() == "default"))
+        .cloned()
+        .unwrap_or_else(|| placements[0].clone());
+    let title_l = title.to_lowercase();
+    let route: &'static str = if placement.starts_with("embroidery") {
+        "printful_embroidery"
+    } else if title_l.contains("all-over") || title_l.contains("sublimat") {
+        "printful_aop"
+    } else {
+        "printful_dtg"
+    };
+    let cost = result["variants"]
+        .as_array()
+        .and_then(|a| a.iter().find(|v| v["id"].as_i64() == Some(variant_id)))
+        .and_then(|v| v["price"].as_str().and_then(|s| s.parse::<f64>().ok()))
+        .ok_or_else(|| format!("variant {} not found for product {}", variant_id, product_id))?;
+    let floor = ((cost * 2.2 / 100.0).ceil() * 100.0) as i64;
+    let floor = floor.max(800);
+    let spec_html = format!("{} · Printful 製造 · 素材・仕様は Printful 商品ページに準拠", title);
+    Ok((placement, route, floor, spec_html))
+}
+
+/// Insert a generic Printful catalog product (`kind == "printful_custom"`).
+/// Unlike [`agent_insert_product`], the printful ids / placement / route / floor
+/// are supplied by the caller (resolved live via [`resolve_printful_custom`])
+/// rather than read from a PRODUCT_SPECS row. The kind is baked into the SKU as
+/// `PRINTFUL-CUSTOM` so `kind_from_sku` resolves it against the placeholder spec,
+/// and the stored `printful_placement` is what `build_printful_item` fulfils.
+#[allow(clippy::too_many_arguments)]
+pub fn agent_insert_custom_product(
+    conn: &rusqlite::Connection,
+    brand: &str,
+    label: &str,
+    description_ja: &str,
+    design_url: &str,
+    printful_product_id: i64,
+    printful_variant_id: i64,
+    placement: &str,
+    route: &str,
+    retail_jpy: i64,
+) -> Result<String, String> {
+    if printful_product_id <= 0 || printful_variant_id <= 0 {
+        return Err("printful_custom requires positive printful_product_id + printful_variant_id".into());
+    }
+    let brand_for_sku: String = brand
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_uppercase();
+    let brand_for_sku = if brand_for_sku.is_empty() { "AGENT".to_string() } else { brand_for_sku };
+    let seed = format!("{:08x}", rand::random::<u32>());
+    let sku = format!("{}-AGENT-PRINTFUL-CUSTOM-{}", brand_for_sku, seed);
+
+    conn.execute(
+        "INSERT INTO catalog_products (
+            sku, brand, label, description_ja, retail_price_jpy,
+            printful_product_id, printful_variant_id, printful_placement,
+            printful_print_w, printful_print_h,
+            design_file, mockup_main_file, mockup_url_external,
+            is_active, sort_order, status, fulfillment_route, legacy_source
+         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        rusqlite::params![
+            &sku, brand, label, description_ja, retail_jpy,
+            printful_product_id, printful_variant_id, placement,
+            0, 0,
+            design_url, design_url, design_url,
+            0, 100,
+            "review",
+            route,
+            "agent_api_custom",
         ],
     ).map_err(|e| format!("insert failed: {}", e))?;
     Ok(sku)
