@@ -2471,7 +2471,32 @@ pub async fn admin_fix_lifestyle(
 /// can't render a product (no `position` geometry for that kind, AOP, or a
 /// digital/manual kind with no Printful product at all). Pure-local, no
 /// external API, so EVERY product gets a presentable card.
-fn compose_card_mockup(design_png: &[u8]) -> Result<Vec<u8>, String> {
+/// Per-kind card palette → (background tint, accent bar). Color-codes the
+/// MU-side card so a glance distinguishes the type — especially digital goods
+/// (song / video / zine / ticket / karaoke) which otherwise all look identical.
+fn card_palette(kind: &str) -> ([u8; 4], [u8; 4]) {
+    match kind {
+        // digital
+        "song"           => ([237, 233, 254, 255], [124,  58, 237, 255]), // purple
+        "video"          => ([219, 234, 254, 255], [ 37,  99, 235, 255]), // blue
+        "zine"           => ([255, 237, 213, 255], [234,  88,  12, 255]), // orange
+        "event_ticket"   => ([220, 252, 231, 255], [ 22, 163,  74, 255]), // green
+        "karaoke_ticket" => ([252, 231, 243, 255], [219,  39, 119, 255]), // pink
+        // service / made-to-order / hardware
+        "house"          => ([254, 243, 199, 255], [180,  83,   9, 255]), // amber/earth
+        "device"         => ([226, 232, 240, 255], [ 51,  65,  85, 255]), // slate
+        "nfc_coin"       => ([204, 251, 241, 255], [ 13, 148, 136, 255]), // teal
+        // generic Printful catalog item
+        "printful_custom"=> ([224, 242, 254, 255], [  2, 132, 199, 255]), // sky
+        // physical print fallback
+        _                => ([244, 241, 234, 255], [120, 120, 120, 255]), // cream
+    }
+}
+
+/// Compose the design onto a color-coded product card. `kind` selects the
+/// palette (see `card_palette`) so digital / made-to-order goods read as
+/// visually distinct even as a storefront thumbnail.
+fn compose_card_mockup(design_png: &[u8], kind: &str) -> Result<Vec<u8>, String> {
     use image::imageops;
     let design = image::load_from_memory(design_png)
         .map_err(|e| format!("load design: {}", e))?
@@ -2481,8 +2506,19 @@ fn compose_card_mockup(design_png: &[u8]) -> Result<Vec<u8>, String> {
         return Err("empty design".into());
     }
     let (cw, ch) = (1200u32, 1200u32);
-    let mut base = image::RgbaImage::from_pixel(cw, ch, image::Rgba([244, 241, 234, 255]));
-    let maxd = (cw as f32 * 0.72) as u32;
+    let (bg, accent) = card_palette(kind);
+    let mut base = image::RgbaImage::from_pixel(cw, ch, image::Rgba(bg));
+    // Top + bottom accent bars (the type-color) so the category reads even at
+    // thumbnail size in the storefront grid.
+    let bar = 70u32;
+    for y in 0..ch {
+        if y < bar || y >= ch.saturating_sub(bar) {
+            for x in 0..cw {
+                base.put_pixel(x, y, image::Rgba(accent));
+            }
+        }
+    }
+    let maxd = (cw as f32 * 0.66) as u32;
     let ratio = maxd as f32 / dw.max(dh) as f32;
     let nw = ((dw as f32) * ratio).round().max(1.0) as u32;
     let nh = ((dh as f32) * ratio).round().max(1.0) as u32;
@@ -2513,7 +2549,7 @@ async fn local_card_to_r2(db: Db, sku: String, design_url: String) -> Result<(),
         .bytes().await
         .map_err(|e| format!("read design: {}", e))?
         .to_vec();
-    let card = compose_card_mockup(&bytes)?;
+    let card = compose_card_mockup(&bytes, kind_from_sku(&sku))?;
     let r2_key = format!("catalog/mockups/{}.png", sku);
     let r2_url = crate::store_r2_bytes(&r2_key, &card, "image/png")
         .await
@@ -3092,6 +3128,9 @@ pub struct MockupBackfillQuery {
     pub token: String,
     pub brand: Option<String>,
     pub limit: Option<u32>,
+    /// force=1 regenerates mockups even for SKUs that already have one
+    /// (e.g. to re-color MU-side cards after a palette change).
+    pub force: Option<bool>,
 }
 
 /// GET /admin/catalog/mockup_backfill?token=&brand=&limit= — generate on-body
@@ -3108,12 +3147,20 @@ pub async fn admin_mockup_backfill(
         return (StatusCode::UNAUTHORIZED, "bad token").into_response();
     }
     let limit = q.limit.unwrap_or(20).clamp(1, 50) as i64;
+    let force = q.force.unwrap_or(false);
     let rows: Vec<(String, i64, i64, String)> = {
         let conn = db.lock().unwrap();
-        let select = "SELECT sku, printful_product_id, printful_variant_id, COALESCE(design_file, '') \
-                      FROM catalog_products \
-                      WHERE is_active=1 AND printful_product_id IS NOT NULL \
-                        AND (mockup_url_external = design_file OR mockup_url_external IS NULL)";
+        let mockup_filter = if force {
+            ""
+        } else {
+            " AND (mockup_url_external = design_file OR mockup_url_external IS NULL)"
+        };
+        let select = format!(
+            "SELECT sku, printful_product_id, printful_variant_id, COALESCE(design_file, '') \
+             FROM catalog_products \
+             WHERE is_active=1 AND printful_product_id IS NOT NULL{}",
+            mockup_filter
+        );
         let map_row = |r: &rusqlite::Row| {
             Ok((
                 r.get::<_, String>(0)?,
