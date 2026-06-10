@@ -382,7 +382,14 @@ footer{
   <!-- 2026-05-16: ローンチ/紹介クーポン (FIRST30 / REF500) は廃止。 価格は
        原価ベースで透明設計 (/transparency)。 -->
 
-  <a id="product-link" href="#" data-funnel="cta_click" data-funnel-cta="buy_page_card" style="text-decoration:none;color:inherit">
+  <!-- 2026-06-11 fix: 旧マークアップは <a id="product-link"> の中に
+       <a id="suzuri-link"> がネストしていて invalid HTML だった。パーサが
+       3 fragment に分割し #product-card が main 直下に落ちるため、JS の
+       product-link.href 更新は空の <a> にしか効かず、カード全体クリックが
+       死んでいた (本番 DOM 実測)。div[role=link] + 委譲クリック
+       (goToProduct, 下の <script>) に置き換え。data-funnel はそのまま
+       なので cta_click(buy_page_card) 計測は従来どおり mu-funnel.js が拾う。 -->
+  <div id="product-link" role="link" tabindex="0" aria-label="商品ページを見る" data-funnel="cta_click" data-funnel-cta="buy_page_card" style="cursor:pointer">
     <div class="product-card" id="product-card">
       <img id="product-img" src="https://mockups.wearmu.com/hero.png" alt="latest MUGEN" loading="eager" fetchpriority="high">
       <div class="product-info">
@@ -424,7 +431,7 @@ footer{
         </a>
       </div>
     </div>
-  </a>
+  </div>
 
   <!-- 「あなたが受け取る 4 つ」: 1 着で何が手に入るか可視化。
        MU Pass (NFT 会員証) を期待値に含めることで「単なるTシャツ」ではなく
@@ -603,11 +610,11 @@ footer{
   // ① 商品カード(画像+価格+購入ボタン)を h1 直後 = ファーストビューへ前倒し。
   //    哲学(lede)より商品写真が先 (/buy/today の 2026-05-09 診断と同方針)。
   //    lede・価格レンジ/MSA等の説明ブロックはカードの下に下がる。
-  //    注意: ラッパーの <a id="product-link"> は中に <a id="suzuri-link"> が
-  //    入っているため HTML パーサが 3 つの fragment に分割し、div#product-card
-  //    自体が main 直下になる (本番 DOM 実測)。なので動かすのはカード本体。
+  //    2026-06-11: ネスト<a>解消で #product-card はラッパー div#product-link の
+  //    中に戻ったので、動かすのはラッパーごと (カードだけ抜くとカード全体
+  //    クリックが variant b でだけ死ぬ)。旧DOM互換で #product-card にフォールバック。
   try{
-    var card=document.getElementById('product-card');
+    var card=document.getElementById('product-link')||document.getElementById('product-card');
     var lede=document.getElementById('buy-lede');
     if(card&&lede&&lede.parentNode)lede.parentNode.insertBefore(card,lede);
   }catch(_){}
@@ -687,6 +694,39 @@ document.getElementById('size-row').querySelectorAll('.size-btn').forEach(btn =>
     SELECTED_SIZE = btn.dataset.size;
   });
 });
+
+// Card-wide click → product page (nested-<a> fix, 2026-06-11). The wrapper
+// div#product-link navigates to data-href (set by loadProduct) unless the
+// click landed on an interactive descendant (size/variant buttons, btn-buy,
+// suzuri-link, anchor link) — those keep their own behavior. cta_click is
+// NOT sent here: mu-funnel.js's capture-phase [data-funnel] listener already
+// fires for the wrapper (innermost data-funnel wins, so buttons still report
+// their own cta). Works identically in both A/B variants — variant b moves
+// the wrapper node, listeners travel with it.
+(function () {
+  const wrap = document.getElementById('product-link');
+  if (!wrap) return;
+  function goToProduct(e) {
+    if (e.target.closest && e.target.closest('a,button')) return;
+    const href = wrap.dataset.href;
+    if (href) location.href = href;
+  }
+  wrap.addEventListener('click', goToProduct);
+  wrap.addEventListener('keydown', (e) => { if (e.key === 'Enter') goToProduct(e); });
+  // 表示計測: cta_view を cta_click と同じ cta で送る → CTR = click/view が
+  // そのまま出る (sticky バーと同じ様式)。mu-funnel.js は defer なので
+  // DOMContentLoaded 後に observe 開始。
+  function observeView() {
+    if (!('IntersectionObserver' in window)) return;
+    new IntersectionObserver(function (es, obs) {
+      if (!es[0].isIntersecting) return;
+      obs.disconnect();
+      try { if (window.MuFunnel && window.MuFunnel.track) window.MuFunnel.track('cta_view', { cta: 'buy_page_card' }); } catch (_) {}
+    }, { threshold: 0.25 }).observe(wrap);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', observeView);
+  else observeView();
+})();
 
 async function initVariants() {
   try {
@@ -846,7 +886,14 @@ async function loadProduct() {
       // Show positive social proof. "発送済" is neutral.
       stockEl.textContent = 'のこり ' + rem + ' 着 · ' + pick.sold + ' 着 発送済';
     }
-    document.getElementById('product-link').href = '/products/' + (pick.brand || 'mugen') + '/' + pick.id + '?from=buy_page';
+    // Card-wide link target. The wrapper is a div[role=link] (nested-<a> fix,
+    // 2026-06-11) — navigation happens in the delegated click handler below.
+    // data-funnel-href feeds mu-funnel.js so cta_click(buy_page_card) keeps
+    // reporting the destination in extra.href like a real <a> would.
+    const cardWrap = document.getElementById('product-link');
+    const cardHref = '/products/' + (pick.brand || 'mugen') + '/' + pick.id + '?from=buy_page';
+    cardWrap.dataset.href = cardHref;
+    cardWrap.setAttribute('data-funnel-href', cardHref);
     // Sticky bar (variant b): mirror thumb / name / price from the card.
     const stickyImg = document.getElementById('sticky-img');
     if (stickyImg) stickyImg.src = document.getElementById('product-img').src;
