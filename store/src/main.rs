@@ -24551,6 +24551,27 @@ async fn index(State(db): State<Db>, is_en: bool) -> Html<String> {
                 r#"aria-label="運営公開ノート">運営ノート</a>"#,
                 r#"aria-label="Operator's public notes">Notes</a>"#,
             )
+            // ── footer 読みもの (journal) internal links ──
+            .replace(
+                r#"<span class="footer-readmore-h">読みもの</span>"#,
+                r#"<span class="footer-readmore-h">Journal</span>"#,
+            )
+            .replace(
+                r#"seo-original-tshirt-1mai">オリジナルTシャツを1枚から作る方法</a>"#,
+                r#"seo-original-tshirt-1mai">Make a custom tee from just one (JA)</a>"#,
+            )
+            .replace(
+                r#"seo-bjj-rashguard-order">柔術ラッシュガード・BJJ Tシャツのオーダーメイド</a>"#,
+                r#"seo-bjj-rashguard-order">Custom BJJ rashguards &amp; tees (JA)</a>"#,
+            )
+            .replace(
+                r#"seo-pod-honest-cost">受注生産アパレルの原価、全部見せます</a>"#,
+                r#"seo-pod-honest-cost">The honest economics of print-on-demand (JA)</a>"#,
+            )
+            .replace(
+                r#"<a href="/blog/">すべての記事 →</a>"#,
+                r#"<a href="/blog/">All notes →</a>"#,
+            )
             // ── promo strip (today's tee card) ──
             .replace(
                 r#"今日 の Tシャツ · MUGEN {HERO_DROP_LABEL} · ベーシック生地"#,
@@ -50367,7 +50388,7 @@ async fn show_auto_blog(
 <meta name="twitter:description" content="MU の AI 自動執筆 Field log — 毎朝 JST 9:00 に Gemini が書きます。">
 <meta name="twitter:image" content="https://mockups.wearmu.com/hero.png">
 <link rel="canonical" href="https://wearmu.com/blog/auto/{slug_attr}">
-<script type="application/ld+json">{{"@context":"https://schema.org","@type":"Article","headline":"{title_json}","datePublished":"{date_iso}","dateModified":"{date_iso}","author":{{"@type":"Organization","name":"MU"}},"publisher":{{"@type":"Organization","name":"MU","logo":{{"@type":"ImageObject","url":"https://wearmu.com/icon-512.png"}}}},"image":"https://mockups.wearmu.com/hero.png","mainEntityOfPage":"https://wearmu.com/blog/auto/{slug_attr}"}}</script>
+<script type="application/ld+json">{{"@context":"https://schema.org","@type":"BlogPosting","headline":"{title_json}","datePublished":"{date_iso}","dateModified":"{date_iso}","author":{{"@type":"Organization","name":"MU"}},"publisher":{{"@type":"Organization","name":"MU","logo":{{"@type":"ImageObject","url":"https://wearmu.com/icon-512.png"}}}},"image":"https://mockups.wearmu.com/hero.png","mainEntityOfPage":"https://wearmu.com/blog/auto/{slug_attr}"}}</script>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
 :root{{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.6);--y:#e6c449;--card:#111}}
@@ -50399,7 +50420,7 @@ footer{{padding:48px 32px;border-top:1px solid rgba(255,255,255,0.06);text-align
   {body_html}
   <p style="margin-top:48px;font-size:11px;opacity:0.5">— このノートは MU が毎朝 JST 9:00 に <a href="/api/transparency">/api/transparency</a> の生データを Gemini に渡して自動生成しています。事実は数字、文体は AI。</p>
 </article>
-<footer>MU — wearmu.com / <a href="/blog/" style="color:inherit">all notes →</a></footer>
+<footer>MU — wearmu.com / <a href="/blog/" style="color:inherit">all notes →</a> / <a href="/shop" style="color:inherit">shop →</a> / <a href="/make" style="color:inherit">作ってみる / make yours →</a></footer>
 </body></html>
 "#,
         title = html_escape(&title),
@@ -53219,9 +53240,32 @@ async fn dynamic_sitemap(State(db): State<Db>) -> Response {
             slug = slug, now = now,
         ));
     }
-    for (slug, lastmod) in posts {
+    // /blog index + the statically-routed posts (include_str! pages in the
+    // router). These have no DB row, so list them explicitly.
+    entries.push_str(&format!(
+        "  <url>\n    <loc>https://wearmu.com/blog</loc>\n    \
+         <lastmod>{now}</lastmod>\n    \
+         <changefreq>daily</changefreq>\n    <priority>0.8</priority>\n  </url>\n",
+        now = now,
+    ));
+    const STATIC_BLOG_SLUGS: &[&str] = &[
+        "from-automation-to-autonomy", "fabric-shift", "week-one-7-buyers",
+        "quality-upgrade-muon-ma", "suzuri-vs-printful-spec",
+        "spec-and-prompt", "100-in-20-days-strategy", "all-in-on-mu",
+    ];
+    for slug in STATIC_BLOG_SLUGS {
         entries.push_str(&format!(
             "  <url>\n    <loc>https://wearmu.com/blog/{slug}</loc>\n    \
+             <changefreq>monthly</changefreq>\n    <priority>0.6</priority>\n  </url>\n",
+            slug = slug));
+    }
+    // DB-driven auto posts are served at /blog/auto/<slug> (router:
+    // `.route("/blog/auto/:slug", get(show_auto_blog))`). The previous
+    // `/blog/<slug>` form 404'd for every one of these — the sitemap was
+    // feeding Google ~365 dead URLs, including the 3 SEO articles.
+    for (slug, lastmod) in posts {
+        entries.push_str(&format!(
+            "  <url>\n    <loc>https://wearmu.com/blog/auto/{slug}</loc>\n    \
              <lastmod>{lastmod}</lastmod>\n    \
              <changefreq>never</changefreq>\n    <priority>0.6</priority>\n  </url>\n",
             slug = slug, lastmod = lastmod));
