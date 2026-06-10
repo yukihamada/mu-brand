@@ -38439,6 +38439,81 @@ async fn success_page(
         )
     };
 
+    // 🔁 Post-purchase conversion maximizer. The buyer is the warmest audience
+    // MU ever has, so offer the three highest-intent next moves right here:
+    //   (1) もう一枚 自分に — re-order the exact same piece
+    //   (2) 誰かに贈る   — account-gift composer (/gift), address never shared
+    //   (3) AIに別の種類で — generate a different kind from the same vibe (/make)
+    // Each is a SEPARATE new order, so no fulfillment change is needed.
+    let about_q = q.get("about").cloned().unwrap_or_default();
+    let make_href = if about_q.is_empty() {
+        "/make".to_string()
+    } else {
+        format!("/make?about={}", urlencoding::encode(&about_q))
+    };
+    let self_again = if sku_q.is_empty() {
+        String::new()
+    } else {
+        format!(
+            r#"<a href="/shop/{sku}" data-funnel="cta_click" data-funnel-cta="success_self_again" style="display:flex;flex-direction:column;justify-content:center;text-decoration:none;color:inherit;background:#141414;border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:16px 14px;min-height:84px"><span style="font-size:14px;font-weight:700">もう一枚、自分に</span><small style="font-size:11px;opacity:.6;margin-top:4px;line-height:1.5">気に入ったら、同じ一枚をもう一度</small></a>"#,
+            sku = html_attr_escape(&sku_q),
+        )
+    };
+    let upsell_block = format!(
+        r#"<div style="max-width:520px;width:100%;margin-top:30px">
+  <div style="font-size:10px;letter-spacing:.3em;text-transform:uppercase;opacity:.5;margin-bottom:12px;text-align:center">この一着の、つぎ</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px">
+    {self_again}
+    <a href="/gift" data-funnel="cta_click" data-funnel-cta="success_gift" style="display:flex;flex-direction:column;justify-content:center;text-decoration:none;color:inherit;background:rgba(230,196,73,.1);border:1px solid rgba(230,196,73,.45);border-radius:12px;padding:16px 14px;min-height:84px"><span style="font-size:14px;font-weight:700;color:#e6c449">🎁 大切な人に贈る</span><small style="font-size:11px;opacity:.7;margin-top:4px;line-height:1.5">@で贈ると住所いらず・そのまま届く</small></a>
+    <a href="{make_href}" data-funnel="cta_click" data-funnel-cta="success_ai_make" style="grid-column:1 / -1;display:flex;flex-direction:column;justify-content:center;text-decoration:none;color:inherit;background:#141414;border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:16px 14px"><span style="font-size:14px;font-weight:700">✨ AIに、別の種類でつくらせる</span><small style="font-size:11px;opacity:.6;margin-top:4px;line-height:1.5">ちがうアイテムで、新しい一点ものを一枚</small></a>
+  </div>
+</div>"#,
+        self_again = self_again,
+        make_href = html_attr_escape(&make_href),
+    );
+
+    // 🎁 Gift outcome (sender side). Polls /api/gift/status?sid=… and, only if
+    // this purchase was a gift, shows either the shareable claim link (recipient
+    // must enter an address — "これを送れば入力できる") or a "shipping now, no link
+    // needed" note (recipient was an MU account with a saved address). The status
+    // API never returns the recipient's address, so it can't surface here.
+    // Hidden until the poll confirms a gift, so ordinary orders show nothing.
+    let gift_status_block = r##"<div id="giftOutcome" style="display:none;background:#121212;border:1px solid #2a2a2a;border-radius:10px;padding:20px;margin-top:8px;max-width:520px;width:100%;text-align:center"></div>
+<script>(function(){
+  var p=new URLSearchParams(location.search);
+  var sid=p.get('sid')||p.get('session_id')||p.get('cs')||'';
+  if(!sid)return;
+  var box=document.getElementById('giftOutcome');if(!box)return;
+  var tries=0,MAX=10;
+  function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  var H='<div style="font-size:10px;letter-spacing:.3em;text-transform:uppercase;color:#e6c449;margin-bottom:10px">🎁 贈りものを送りました</div>';
+  var PRIV='<div style="opacity:.55;font-size:11.5px;margin-top:6px">入力されたお届け先は、あなたには表示されません。</div>';
+  function render(j){
+    if(!j||!j.state)return;
+    if(j.state==='claim_link'){
+      var u=j.claim_url;
+      box.innerHTML=H+
+        '<div style="font-size:13px;opacity:.92;line-height:1.85;margin-bottom:14px">受け取りリンクを<b>相手にメールでも送りました</b>。<br>このリンクを相手に渡すと、お届け先を入力して受け取れます。</div>'+
+        '<div style="display:flex;gap:8px;max-width:460px;margin:0 auto"><input readonly value="'+esc(u)+'" onclick="this.select()" style="flex:1;min-width:0;background:#0a0a0a;border:1px solid #2a2a2a;color:#ddd;padding:10px;font-size:12px;border-radius:6px"/>'+
+        '<button id="gcopy" style="background:#e6c449;color:#000;border:0;padding:10px 16px;font-size:12px;font-weight:600;border-radius:6px;cursor:pointer;white-space:nowrap">コピー</button></div>'+PRIV;
+      box.style.display='block';
+      var b=document.getElementById('gcopy');
+      if(b)b.addEventListener('click',function(){if(navigator.clipboard)navigator.clipboard.writeText(u).then(function(){b.textContent='コピーしました';});});
+    }else if(j.state==='account_auto'){
+      box.innerHTML=H+
+        '<div style="font-size:13px;opacity:.92;line-height:1.85">'+(j.handle?'<b>@'+esc(j.handle)+'</b> ':'お相手')+'のアカウントにお届けします。<br><b>そのまま発送されます</b>（受け取りリンクは不要です）。</div>'+PRIV;
+      box.style.display='block';
+    }else if(j.state==='recipient_missing'){
+      box.innerHTML=H+'<div style="font-size:13px;opacity:.9;line-height:1.8">贈り先の確認に少し時間がかかっています。問題があれば <a href="mailto:info@enablerdao.com" style="color:#e6c449">info@enablerdao.com</a> までご連絡ください。</div>';
+      box.style.display='block';
+    }else{ if(tries++<MAX) setTimeout(poll,1800); }
+  }
+  function poll(){
+    fetch('/api/gift/status?sid='+encodeURIComponent(sid)).then(function(r){return r.json();}).then(render).catch(function(){ if(tries++<MAX) setTimeout(poll,2200); });
+  }
+  poll();
+})();</script>"##.to_string();
+
     Html(format!(r#"<!DOCTYPE html><html><head><meta charset=UTF-8><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title><meta name="robots" content="noindex,nofollow"><style>
     body{{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue','Hiragino Sans',sans-serif;
     display:flex;align-items:center;justify-content:center;min-height:100vh;flex-direction:column;gap:20px;padding:40px 20px;line-height:1.7}}
@@ -38457,9 +38532,11 @@ async fn success_page(
     <script defer src="/mu-funnel.js"></script>
     </head><body>
     {header_html}
+    {gift_status_block}
     {gift_block}
     {invite_block}
     {next_block}
+    {upsell_block}
     {share_block}
     {recs_block}
     <div style="max-width:560px;width:100%;margin-top:26px">{make_cta}</div>
@@ -38481,6 +38558,8 @@ async fn success_page(
     </body></html>"#,
         title = if is_founder { "MUGEN #∞ Founder Edition — 予約 確認" } else { "ありがとうございます — MU" },
         header_html = header_html,
+        gift_status_block = gift_status_block,
+        upsell_block = upsell_block,
         gift_block = gift_block,
         invite_block = invite_block,
         next_block = next_block,
@@ -69227,6 +69306,7 @@ async fn main() {
         // private address-claim page + submit (no login — the token is the
         // credential). The sender never sees the recipient's address.
         .route("/api/gift/check", get(catalog::gift_check_recipient))
+        .route("/api/gift/status", get(catalog::gift_status))
         .route("/gift/claim/:token", get(catalog::gift_claim_page))
         .route("/api/gift/claim/:token", post(catalog::gift_claim_submit))
         // UNIVERSAL collection sales page + per-edition public serial registry.
