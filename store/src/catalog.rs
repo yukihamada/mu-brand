@@ -6023,6 +6023,10 @@ button.go:disabled{opacity:.5;cursor:default}
   <h1><span class="e">🎁</span> 人のために、作る。</h1>
   <p class="sub">贈る相手はどんな人? 一言で教えてください。<br>AIがその人だけの一点ものをデザインして、そのまま贈れます。</p>
 
+  <label class="fl">だれに贈る?（@ハンドル または メール — 任意）</label>
+  <input id="dest" placeholder="例: @taro または taro@example.com" autocapitalize="off" autocomplete="off" spellcheck="false">
+  <div id="dstatus" style="font-size:12.5px;margin:7px 2px 0;min-height:17px;line-height:1.6"></div>
+
   <label class="fl">贈る相手はどんな人?（必須）</label>
   <textarea id="about" placeholder="例: 柔術と珈琲が好きな弟。物静かだけど芯が強い。北海道で一緒に育った。"></textarea>
 
@@ -6052,12 +6056,29 @@ button.go:disabled{opacity:.5;cursor:default}
   <div class="steps">
     <div class="step"><b>1 言う</b>相手のことを一言。</div>
     <div class="step"><b>2 AIが作る</b>その人だけの一点ものに。</div>
-    <div class="step"><b>3 贈る</b>相手に直送・金額は出しません。</div>
+    <div class="step"><b>3 贈る</b>@アカウントなら住所いらずで自動で届く。未登録でもメールで。金額は出しません。</div>
   </div>
 </div>
 <script>
 var KIND='tee';
 document.querySelectorAll('#kinds button').forEach(function(b){b.onclick=function(){document.querySelectorAll('#kinds button').forEach(function(x){x.classList.remove('on')});b.classList.add('on');KIND=b.dataset.k;};});
+// 宛先(@ハンドル / メール)のライブ確認。アカウントがあれば住所いらずで自動で届く。
+var DEST='',DEST_OK=false,DEST_KIND='',dtimer=null;
+var dEl=document.getElementById('dest'),dStat=document.getElementById('dstatus');
+function isEmail(v){return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v);}
+if(dEl)dEl.addEventListener('input',function(){
+  DEST_OK=false;DEST_KIND='';dStat.textContent='';
+  var v=dEl.value.trim().replace(/^@/,'');DEST=v;
+  if(dtimer)clearTimeout(dtimer);
+  if(!v)return;
+  if(isEmail(v)){DEST_OK=true;DEST_KIND='email';dStat.innerHTML='<span style="color:#9bd97a">✓ 未登録ならメールで受け取りリンクを送ります（住所はあなたに伝わりません）</span>';return;}
+  dtimer=setTimeout(function(){
+    fetch('/api/gift/check?handle='+encodeURIComponent(v)).then(function(r){return r.json();}).then(function(j){
+      if(j&&j.exists){DEST=j.handle;DEST_OK=true;DEST_KIND='handle';dStat.innerHTML='<span style="color:#9bd97a">✓ @'+j.handle+' に、住所いらずでそのまま届きます</span>';}
+      else{DEST_OK=false;dStat.innerHTML='<span style="color:#e6b07a">そのハンドルは未登録です。メールアドレスを入れればメールで贈れます</span>';}
+    }).catch(function(){});
+  },350);
+});
 document.getElementById('ex1').onclick=function(){document.getElementById('about').value='柔術と珈琲が好きな弟。物静かだけど芯が強い。';};
 document.getElementById('ex2').onclick=function(){document.getElementById('about').value='星空と詩が好きな母。やさしくて、いつも見守ってくれる。';};
 var MSGS=['その人のことを、想っています…','心に合うかたちを探しています…','線を一本ずつ…','仕上げています…'];
@@ -6073,7 +6094,11 @@ document.getElementById('go').onclick=function(){
   fetch(u).then(function(r){return r.json();}).then(function(d){
     clearInterval(iv);go.disabled=false;go.textContent='もう一度つくる';
     if(!d.ok){out.innerHTML='<p class="err">'+(d.error||'うまく作れませんでした。言い換えてお試しください。')+'</p>';return;}
-    var gift=d.gift_checkout_url?('<a class="gift" href="'+d.gift_checkout_url+'">🎁 この人に贈る — ¥'+(d.retail_jpy||'').toLocaleString()+'<small>相手に直送・声＋メッセージ同梱・金額は出しません</small></a>'):('<p class="note">'+(d.note||'')+'</p>');
+    var gurl=d.gift_checkout_url;
+    var gsmall='相手に直送・声＋メッセージ同梱・金額は出しません';
+    if(gurl&&DEST_OK&&DEST){gurl+=(gurl.indexOf('?')>=0?'&':'?')+'gift_to='+encodeURIComponent(DEST);
+      gsmall=(DEST_KIND==='email')?('住所いらず・'+DEST+' にメールで受け取りリンク'):('@'+DEST+' に住所いらずでそのまま届く');}
+    var gift=gurl?('<a class="gift" href="'+gurl+'">🎁 '+(DEST_OK?('@'+DEST+' に贈る'):'この人に贈る')+' — ¥'+(d.retail_jpy||'').toLocaleString()+'<small>'+gsmall+'</small></a>'):('<p class="note">'+(d.note||'')+'</p>');
     var voice=d.voice_url?('<div style="margin:0 0 14px;text-align:center"><div style="font-size:12px;color:rgba(230,196,73,.85);margin-bottom:6px">🔊 Koe の声で届きます</div><audio controls src="'+d.voice_url+'" style="width:100%;max-width:300px"></audio></div>'):'';
     out.innerHTML='<div class="card"><img src="'+d.design_url+'" alt="贈りものデザイン"><div class="nm">'+(d.display||'贈りもの')+'</div><div class="hk">'+(d.hook||'')+'</div>'+voice+gift+'<a class="view" href="'+d.pdp_url+'">商品ページを見る</a></div>';
     out.scrollIntoView({behavior:'smooth',block:'center'});
@@ -11472,6 +11497,81 @@ pub async fn gift_check_recipient(State(db): State<Db>, Query(q): Query<GiftChec
         Some(s) => axum::Json(serde_json::json!({"ok": true, "exists": true, "handle": s})).into_response(),
         None => axum::Json(serde_json::json!({"ok": true, "exists": false})).into_response(),
     }
+}
+
+/// GET /api/gift/status?sid=<stripe_session_id> — the SENDER's success page
+/// asks "what happened to my gift?" WITHOUT ever learning the recipient's
+/// address. We only read `catalog_orders.gift_json`, which by construction
+/// holds no address (recipient_slug + claim_token + flags only — see the gift
+/// webhook branch). Returns one of:
+///   {"state":"none"}                        not a gift / bad sid
+///   {"state":"pending"}                     webhook hasn't resolved yet (poll)
+///   {"state":"account_auto","handle":"x"}   recipient had a saved address → shipping, no link
+///   {"state":"claim_link","claim_url":"…"}  recipient must enter an address → share this link
+///   {"state":"recipient_missing"}           needs a manual refund (rare)
+/// Privacy guarantee: the shipping address lives only on the recipient's own
+/// claim submission and is never returned here, so the sender can show/share
+/// the claim link yet never sees where it ships.
+pub async fn gift_status(
+    State(db): State<Db>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let sid = q
+        .get("sid")
+        .or_else(|| q.get("session_id"))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    if sid.is_empty() || sid.len() > 200 {
+        return axum::Json(serde_json::json!({"state": "none"})).into_response();
+    }
+    let row: Option<(String, String)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(status,''), COALESCE(gift_json,'') FROM catalog_orders \
+             WHERE stripe_session_id=? LIMIT 1",
+            rusqlite::params![&sid],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )
+        .ok()
+    };
+    // No row yet, or row present but gift_json not written → still resolving (or
+    // simply not a gift). The caller polls a bounded number of times then quietly
+    // gives up, so non-gift orders render nothing.
+    let (status, gift_json) = match row {
+        Some(v) => v,
+        None => return axum::Json(serde_json::json!({"state": "pending"})).into_response(),
+    };
+    if gift_json.is_empty() {
+        return axum::Json(serde_json::json!({"state": "pending"})).into_response();
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(&gift_json).unwrap_or_else(|_| serde_json::json!({}));
+    let handle = v["recipient_slug"].as_str().unwrap_or("").to_string();
+    let out = match status.as_str() {
+        "gift_pending_address" => {
+            let token = v["claim_token"].as_str().unwrap_or("");
+            if token.is_empty() {
+                serde_json::json!({"state": "pending"})
+            } else {
+                let base_url =
+                    env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+                serde_json::json!({
+                    "state": "claim_link",
+                    "claim_url": format!("{}/gift/claim/{}", base_url, token),
+                })
+            }
+        }
+        "gift_recipient_missing" => serde_json::json!({"state": "recipient_missing"}),
+        _ => {
+            // The ship_gift path (recipient had a saved address) sets claimed=true.
+            if v["claimed"].as_bool().unwrap_or(false) {
+                serde_json::json!({"state": "account_auto", "handle": handle})
+            } else {
+                serde_json::json!({"state": "pending"})
+            }
+        }
+    };
+    axum::Json(out).into_response()
 }
 
 fn gift_simple_page(title: &str, body: &str) -> String {
