@@ -5197,6 +5197,7 @@ __KIND_OPTIONS__
   <div class="ex" id="mkEx">例: <b data-x="柴犬のシンプルな線画 生成りトート">柴犬の線画</b> ・ <b data-x="禅の円相 ひと筆 黒Tシャツ">円相T</b> ・ <b data-x="夜の富士山と月 ミニマル パーカー">富士と月</b></div>
   <div class="ex" style="opacity:.55;font-size:12px">🧰 <a href="/make/all" style="color:#ffd700;text-decoration:none" data-funnel="cta_click" data-funnel-cta="make_all_link">MUで作れるもの一覧</a>（作れそうなものも）</div>
   <div class="ex" style="opacity:.6">🏠 服じゃなく<b>家</b>をつくりたい人は → <a href="https://bim.house/make" style="color:#ffd700;text-decoration:none" data-funnel="cta_click" data-funnel-cta="make_bimhouse">bim.house/make</a>（言葉から、家が建つ）</div>
+  <div class="ex" style="opacity:.6">🔒 <b>完全無料・通信なし</b>で作りたい人は → <a id="goLocal" href="https://yukihamada.github.io/kamishibai-pitch/paint/" target="_blank" rel="noopener" onclick="try{var v=document.getElementById('p').value.trim();if(v)this.href='https://yukihamada.github.io/kamishibai-pitch/paint/?prompt='+encodeURIComponent(v);}catch(e){}" style="color:#ffd700;text-decoration:none" data-funnel="cta_click" data-funnel-cta="make_local_beta">ローカルで生成（β）</a>（端末のGPUだけ・API課金ゼロ）</div>
   <div id="out"></div>
   <div class="recent" id="recent" hidden>
     <h2>みんなが、さっき作った一着</h2>
