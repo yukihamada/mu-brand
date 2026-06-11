@@ -68390,6 +68390,7 @@ async fn main() {
         catalog::migrate_auto_labels(&conn);
         catalog::migrate_rashguard_product_id(&conn);
         catalog::migrate_hoodie_crewneck_variants(&conn);
+        catalog::migrate_rash_sync_variants(&conn);
         catalog::retire_dead_static_collection_mockups(&conn);
         catalog::retire_superseded_belt_rashguards(&conn);
         catalog::retire_imageless_products(&conn);
