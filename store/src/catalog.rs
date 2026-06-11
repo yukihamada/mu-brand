@@ -4166,6 +4166,9 @@ pub struct MakePageQuery {
     /// ?k=<kind> — 深リンクで作る種類を preselect（/make/all のカード等）。
     #[serde(default)]
     pub k: Option<String>,
+    /// ?lang=en|ja — 表示言語。省略時は Accept-Language で判定（ja以外→en）。
+    #[serde(default)]
+    pub lang: Option<String>,
 }
 
 /// /make A/B/C: 勝者UU到達のしきい値（ユニーク訪問者の作成数）。
@@ -4708,14 +4711,19 @@ pub async fn make_verify_check(State(db): State<Db>, axum::Json(q): axum::Json<M
     if expires < now_s {
         return (StatusCode::UNAUTHORIZED, axum::Json(serde_json::json!({"ok":false,"error":"コードの有効期限が切れました。もう一度お試しください"}))).into_response();
     }
+    // 初回の名義化なら、PDP+編集リンクをメールで手元に残す(編集トークンは
+    // 作成端末の localStorage にしか無い → 端末を変えると編集不能になる対策)。
+    let mut claim_mail: Option<(String, i64, String)> = None;
     {
         let conn = db.lock().unwrap();
         // コードを使い切る（再利用防止）
         let _ = conn.execute("UPDATE collab_users SET code=NULL, code_expires_at=NULL WHERE email=?", rusqlite::params![email]);
         // 作者メールを作品に刻む（先勝ち・冪等）。売れた時の連絡先にもなる。
-        if let Ok(meta_json) = conn.query_row(
-            "SELECT COALESCE(meta_json,'') FROM catalog_products WHERE sku=? AND legacy_source='public_make'",
-            rusqlite::params![&q.sku], |r| r.get::<_, String>(0),
+        if let Ok((meta_json, label, price)) = conn.query_row(
+            "SELECT COALESCE(meta_json,''), COALESCE(label,''), COALESCE(retail_price_jpy,0)
+             FROM catalog_products WHERE sku=? AND legacy_source='public_make'",
+            rusqlite::params![&q.sku],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)),
         ) {
             let mut meta: serde_json::Value = serde_json::from_str(&meta_json).unwrap_or_else(|_| serde_json::json!({}));
             if !meta.is_object() { meta = serde_json::json!({}); }
@@ -4723,8 +4731,13 @@ pub async fn make_verify_check(State(db): State<Db>, axum::Json(q): axum::Json<M
             if !has {
                 meta.as_object_mut().unwrap().insert("maker_email".into(), serde_json::Value::from(email.clone()));
                 let _ = conn.execute("UPDATE catalog_products SET meta_json=? WHERE sku=?", rusqlite::params![meta.to_string(), &q.sku]);
+                let edit_token = meta.get("edit_token").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                claim_mail = Some((label, price, edit_token));
             }
         }
+    }
+    if let Some((label, price, edit_token)) = claim_mail {
+        tokio::spawn(send_make_claimed_email(email.clone(), q.sku.clone(), label, price, edit_token));
     }
     crate::funnel_track_server(&db, "make_verified", "/make", None, serde_json::json!({"sku": q.sku})).await;
     let mut resp = axum::Json(serde_json::json!({"ok":true})).into_response();
@@ -4742,6 +4755,61 @@ pub async fn make_verify_check(State(db): State<Db>, axum::Json(q): axum::Json<M
         resp.headers_mut().append(axum::http::header::SET_COOKIE, v);
     }
     resp
+}
+
+/// 名義化完了メール: PDP リンクと「あとから編集」リンクを手元に残す。
+/// 編集トークンは作成端末の localStorage にしか無いので、ここで送らないと
+/// 端末・ブラウザを変えた瞬間に編集手段が消える。初回名義化時のみ1通。
+pub async fn send_make_claimed_email(to: String, sku: String, label: String, price_jpy: i64, edit_token: String) {
+    let resend_key = std::env::var("RESEND_API_KEY").unwrap_or_default();
+    if resend_key.is_empty() {
+        tracing::warn!("[make/claimed] RESEND_API_KEY unset — claim mail to {} not sent (sku {})", to, sku);
+        return;
+    }
+    let pdp = format!("https://wearmu.com/shop/{}", sku);
+    let edit_row = if edit_token.is_empty() {
+        String::new()
+    } else {
+        format!(
+            r#"<p style="font-size:13px;line-height:1.9;opacity:0.78;margin:0 0 6px">プリント位置・タイトル・価格は、あとからいつでも直せます:</p>
+<p style="margin:0 0 22px"><a href="https://wearmu.com/make/edit/{sku}?t={t}" style="color:#ffd700;font-size:13px">✏️ この一着を編集する</a><br>
+<span style="font-size:11px;opacity:0.5">このリンクは編集の合言葉つきです。他の人に渡すと編集できてしまうので、共有には上の商品リンクを使ってください。</span></p>"#,
+            sku = urlencoding::encode(&sku),
+            t = urlencoding::encode(&edit_token),
+        )
+    };
+    let html = format!(
+        r#"<div style="background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;padding:32px 0;margin:0">
+<div style="max-width:560px;margin:0 auto;padding:0 32px">
+<div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:24px">━◯━ MU</div>
+<div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#ffd700;opacity:0.85;margin-bottom:8px">DESIGNED BY YOU</div>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:0 0 14px">{label}</h2>
+<p style="font-size:13px;line-height:1.9;opacity:0.78;margin:0 0 22px">あなたの名義になりました。売れるたび販売価格の10%があなたのMUクレジットに入ります。</p>
+<div style="text-align:center;margin:24px 0">
+<a href="{pdp}" style="display:inline-block;background:#ffd700;color:#0a0a0a;text-decoration:none;font-weight:700;font-size:15px;padding:14px 28px;border-radius:99px">この一着を見る ¥{price} →</a></div>
+{edit_row}
+<p style="font-size:11px;line-height:1.85;opacity:0.55;margin:24px 0 0;border-top:1px solid #222;padding-top:18px">
+同じデザインは二度と生成されません。1枚から受注生産。<br>
+お問い合わせ: <a href="mailto:info@enablerdao.com" style="color:#ffd700">info@enablerdao.com</a>
+</p>
+</div></div>"#,
+        label = html_text(&label),
+        pdp = pdp,
+        price = price_jpy,
+        edit_row = edit_row,
+    );
+    let payload = serde_json::json!({
+        "from": "MU MAKE <noreply@wearmu.com>",
+        "to": [to],
+        "subject": format!("🌱 あなたの名義になりました — {}", label),
+        "html": html,
+    });
+    let _ = reqwest::Client::new()
+        .post("https://api.resend.com/emails")
+        .bearer_auth(&resend_key)
+        .json(&payload)
+        .send()
+        .await;
 }
 
 /// GET /make/all — 「MU で作れるもの・作れそうなもの」一覧。価格フロアは
@@ -5066,7 +5134,22 @@ pub const MAKE_KINDS_ALL: &[(&str, &str)] = &[
     ("flag", "フラッグ（全面）"),
 ];
 
-pub async fn make_page(State(db): State<Db>, Query(q): Query<MakePageQuery>) -> Html<String> {
+pub async fn make_page(State(db): State<Db>, headers: axum::http::HeaderMap, Query(q): Query<MakePageQuery>) -> Response {
+    // 表示言語: ?lang= 明示 > Accept-Language の第一候補が ja 以外なら EN。
+    // EN は JA レンダリング後に make_html_en() の対訳テーブルで差し替える
+    // (訳が無い文字列は JA のまま残る=安全側)。
+    let en = match q.lang.as_deref().map(str::trim) {
+        Some("en") => true,
+        Some(_) => false,
+        None => headers
+            .get(axum::http::header::ACCEPT_LANGUAGE)
+            .and_then(|v| v.to_str().ok())
+            .map(|al| {
+                let first = al.split(',').next().unwrap_or("").trim().to_lowercase();
+                !first.is_empty() && !first.starts_with("ja")
+            })
+            .unwrap_or(false),
+    };
     // 勝者が決まっていれば全員に勝者を固定表示（?v は無視）。
     let winner = { let conn = db.lock().unwrap(); cv_get(&conn, "make_winner") };
     let locked = make_variant_norm(winner.as_deref());
@@ -5108,14 +5191,221 @@ pub async fn make_page(State(db): State<Db>, Query(q): Query<MakePageQuery>) -> 
     // ホルダの「Tシャツ」固定をそのkindに差し替えるためラベルをJSへ渡す。
     let sel_label = MAKE_KINDS_ALL.iter()
         .find(|(v, _)| *v == sel).map(|(_, l)| *l).unwrap_or("");
-    Html(MAKE_HTML
+    let html = MAKE_HTML
         .replace("__LOCAL_GEN__", if local_gen_enabled() { "1" } else { "0" })
         .replace("__KIND_OPTIONS__", &kind_options)
         .replace("__PRICE_HINT__", price_hint)
         .replace("__SERVER_VARIANT__", server_variant)
         .replace("__SEL_KIND__", sel)
         .replace("__SEL_LABEL__", sel_label)
-        .replace("__WINNER_LOCKED__", lock_js))
+        .replace("__WINNER_LOCKED__", lock_js);
+    let html = if en { make_html_en(html) } else { html };
+    let mut resp = Html(html).into_response();
+    resp.headers_mut().insert(
+        axum::http::header::VARY,
+        axum::http::HeaderValue::from_static("Accept-Language"),
+    );
+    resp
+}
+
+/// /make の英語化: JA でレンダリングした最終 HTML に対訳テーブルを適用する。
+/// テンプレートを二重管理しない(JA が唯一の原本)・訳が無い文字列は JA のまま
+/// 残る(=壊れない)・サーバ注入分(kind options / price hint)も同じ表で訳せる。
+/// 長い複合文字列(JSON-LD 等)を先に、単独の短い文字列を後に置く —
+/// 先に短い方を替えると長い方がマッチしなくなるため順序が意味を持つ。
+fn make_html_en(mut h: String) -> String {
+    const T: &[(&str, &str)] = &[
+        // ── head / SEO ──
+        (r#"<!doctype html><html lang="ja">"#, r#"<!doctype html><html lang="en">"#),
+        ("<title>AIでオリジナルTシャツ作成 — 言うだけ10秒・1枚から・在庫ゼロ | MU MAKE · wearmu.com</title>",
+         "<title>Make a Custom AI T-Shirt — Say One Line · From 1 Piece · Zero Stock | MU MAKE · wearmu.com</title>"),
+        (r#"content="ひとこと言うだけでAIがオリジナルTシャツ・パーカーをデザイン。30秒ほどで完成、その場で1枚から購入OK（¥4,900〜）。ログイン不要・在庫ゼロ。作った一着は店に並び、売れたら売上の10%が作り手に(Tシャツなら¥490〜/枚)。""#,
+         r#"content="Say one line and AI designs your original tee or hoodie. Done in ~30 seconds, buy from a single piece (¥4,900+). No login, zero stock. Your piece joins the shop — every sale pays the maker 10% (¥490+/tee).""#),
+        (r#"<link rel="canonical" href="https://wearmu.com/make">"#,
+         r#"<link rel="canonical" href="https://wearmu.com/make?lang=en">"#),
+        (r#"<meta property="og:url" content="https://wearmu.com/make">"#,
+         r#"<meta property="og:url" content="https://wearmu.com/make?lang=en">"#),
+        (r#"content="MU つくる""#, r#"content="MU MAKE""#),
+        ("言うだけで、Tシャツができる。— MU MAKE", "Say it, and your tee exists. — MU MAKE"),
+        (r#"content="AIが10秒でデザイン→1枚から買える（¥4,900〜）。あなたの一着が店に並び、売れたら売上の10%が作り手に。ログイン不要。""#,
+         r#"content="AI designs it in seconds → buy from one piece (¥4,900+). Your piece joins the shop; every sale pays you 10%. No login.""#),
+        // ── JSON-LD (長い複合文字列 — 短い対の前に置く) ──
+        (r#""name":"AIでオリジナルTシャツを作る方法（MU MAKE）""#,
+         r#""name":"How to make a custom AI T-shirt (MU MAKE)""#),
+        (r#""name":"言う","text":"作りたいものを一言で入力（例：富士山をミニマルな一本線で描いた黒Tシャツ）。""#,
+         r#""name":"Say it","text":"Type one line about what you want (e.g. a black tee with Mt. Fuji drawn in a single minimal line).""#),
+        (r#""name":"AIが描く","text":"30秒ほどでAIがデザインを生成し、商品ページができる。""#,
+         r#""name":"AI draws","text":"In about 30 seconds the AI generates the design and a product page.""#),
+        (r#""name":"買える・並ぶ","text":"その場で1枚から購入できる（Tシャツ¥4,900〜）。作った一着はみんなの棚に並び、売れるたび売上の10%が作り手の報酬。""#,
+         r#""name":"Buy it · it joins the shop","text":"Buy from a single piece on the spot (tees from ¥4,900). Your piece joins the shared shelf and every sale pays the maker 10%.""#),
+        (r#""name":"本当にログイン不要ですか？","acceptedAnswer":{"@type":"Answer","text":"はい。アカウント登録なしで、その場で作成・購入できます。"}"#,
+         r#""name":"Is it really login-free?","acceptedAnswer":{"@type":"Answer","text":"Yes. Create and buy on the spot with no account."}"#),
+        (r#""name":"価格はいくらですか？","acceptedAnswer":{"@type":"Answer","text":"Tシャツ¥4,900〜、ラッシュガード¥9,800〜、スウェット¥7,800〜、パーカー¥8,800〜。1枚から受注生産です。"}"#,
+         r#""name":"How much does it cost?","acceptedAnswer":{"@type":"Answer","text":"Tees from ¥4,900, rashguards from ¥9,800, sweatshirts from ¥7,800, hoodies from ¥8,800. Made to order from a single piece."}"#),
+        (r#""name":"作ったデザインはすぐ公開されますか？","acceptedAnswer":{"@type":"Answer","text":"ほとんどは即公開・即購入できます。商標・実在人物など権利リスクがあるものだけ人が確認してから公開します。"}"#,
+         r#""name":"Is my design published right away?","acceptedAnswer":{"@type":"Answer","text":"Most designs go live and purchasable instantly. Only ones with rights risks (trademarks, real people) get a human check first."}"#),
+        (r#""name":"売れたらどうなりますか？","acceptedAnswer":{"@type":"Answer","text":"あなたの一着が売れるたび、売上の10%(Tシャツなら¥490〜/枚)をMUクレジットとして受け取れます。詳細は wearmu.com/credit。"}"#,
+         r#""name":"What happens when it sells?","acceptedAnswer":{"@type":"Answer","text":"Every time your piece sells you receive 10% of the sale (¥490+/tee) as MU credit. Details at wearmu.com/credit."}"#),
+        // ── nav ──
+        (r#"<a href="/make?lang=en" style="opacity:.6">EN</a>"#, r#"<a href="/make" style="opacity:.6">日本語</a>"#),
+        (">作って売る</a>", ">Make &amp; sell</a>"),
+        // ── A/B/C バリアント (JS内・長い方から) ──
+        ("ひとこと言えば AI がデザイン → <b>その場で 1 枚から買える</b>。ログインも在庫もゼロ。あなたの一着はみんなの棚にも並び、<b style=\"color:#ffd700\">売れたら売上の10%が作り手に</b>（<a href=\"/credit\" style=\"color:#ffd700\">仕組み</a>）。",
+         "Say one line and AI designs it → <b>buy from a single piece on the spot</b>. No login, zero stock. Your piece joins everyone's shelf and <b style=\"color:#ffd700\">every sale pays you 10%</b> (<a href=\"/credit\" style=\"color:#ffd700\">how it works</a>)."),
+        ("ひとこと言えば AI がデザイン → <b>その場で 1 枚から買える</b>。ログインも在庫もゼロ。あなたの一着はみんなの棚にも並び、<b style=\"color:#ffd700\">売れたら売上の10%が作り手に</b>。",
+         "Say one line and AI designs it → <b>buy from a single piece on the spot</b>. No login, zero stock. Your piece joins everyone's shelf and <b style=\"color:#ffd700\">every sale pays you 10%</b>."),
+        ("考えるより早い。<b>下から選ぶだけ</b>で AI が一着にします。自由入力もOK。<b style=\"color:#ffd700\">売れたら売上の10%</b>。",
+         "Faster than thinking. <b>Just tap one below</b> and AI turns it into a piece. Free input works too. <b style=\"color:#ffd700\">Every sale pays you 10%</b>."),
+        ("ひとことどうぞ。話すように書けば、AI があなたの一着にします。<b style=\"color:#ffd700\">売れたら売上の10%が作り手に</b>。",
+         "Say a word. Write like you talk and AI turns it into your piece. <b style=\"color:#ffd700\">Every sale pays the maker 10%</b>."),
+        ("言うだけで、Tシャツができる。", "Say it, and your tee exists."),
+        ("タップして、Tシャツ。", "Tap it, get a tee."),
+        ("何を着たい？", "What do you want to wear?"),
+        ("例：富士山をミニマルな一本線で描いた黒Tシャツ", "e.g. a black tee with Mt. Fuji drawn in one minimal line"),
+        ("自分の言葉でもOK（例：猫のシルエット）", "Your own words work too (e.g. a cat silhouette)"),
+        ("「〇〇な感じのTシャツがほしい」みたいに話して", "Talk like “I want a tee that feels like …”"),
+        // ── steps / quick ──
+        ("<div class=\"n\">STEP 1</div><div class=\"t\">言う</div><div class=\"d\">作りたいものを一言。日本語でOK。</div>",
+         "<div class=\"n\">STEP 1</div><div class=\"t\">Say it</div><div class=\"d\">One line about what you want. Any language.</div>"),
+        ("<div class=\"n\">STEP 2</div><div class=\"t\">AIが描く</div><div class=\"d\">30秒ほどでデザインと商品ページが完成。</div>",
+         "<div class=\"n\">STEP 2</div><div class=\"t\">AI draws</div><div class=\"d\">Design + product page ready in ~30s.</div>"),
+        ("<div class=\"n\">STEP 3</div><div class=\"t\">買える・並ぶ</div><div class=\"d\">1枚から購入OK。店にも並んで、売れたら報酬。</div>",
+         "<div class=\"n\">STEP 3</div><div class=\"t\">Buy · it joins the shop</div><div class=\"d\">Buy from one piece. It joins the shelf — sales pay you.</div>"),
+        ("<div class=\"qlead\">タップするだけ。すぐ作れます。</div>", "<div class=\"qlead\">Just tap one. Instant.</div>"),
+        ("data-x=\"柴犬のシンプルな一本線の線画\">柴犬の線画</button>", "data-x=\"minimal one-line drawing of a shiba inu\">Shiba line art</button>"),
+        ("data-x=\"禅の円相 ひと筆書き\">禅の円相</button>", "data-x=\"zen enso circle, single brush stroke\">Zen enso</button>"),
+        ("data-x=\"夜の富士山と満月 ミニマル\">富士と月</button>", "data-x=\"Mt. Fuji at night with a full moon, minimal\">Fuji &amp; moon</button>"),
+        ("data-x=\"猫のシルエット ミニマル\">猫</button>", "data-x=\"minimal cat silhouette\">Cat</button>"),
+        ("data-x=\"波 浮世絵風のミニマルライン\">波</button>", "data-x=\"wave, ukiyo-e style minimal lines\">Wave</button>"),
+        ("data-x=\"満月と山並み ミニマル\">満月</button>", "data-x=\"full moon over mountain ridges, minimal\">Full moon</button>"),
+        // ── 添付 / エンジン ──
+        ("📎 画像・曲をのせる", "📎 Add an image or a song"),
+        ("この曲をどう届ける?", "How should this song ship?"),
+        ("🎵 曲として販売（購入者に視聴/DLリンク）", "🎵 Sell as a song (buyers get listen/DL link)"),
+        ("👕 グッズにのせる（商品ページで試聴）", "👕 Put it on goods (preview on the page)"),
+        (">つくる（無料でデザイン）</button>", ">Create (free design)</button>"),
+        ("生成エンジン:", "Engine:"),
+        ("⚡ 高品質（Gemini）", "⚡ High quality (Gemini)"),
+        ("🆓 無料（ローカルAI・β）", "🆓 Free (local AI · beta)"),
+        (">混雑時は数分かかります</span>", ">may take a few minutes when busy</span>"),
+        // ── price hint (サーバ注入・2種) ──
+        ("作れる物理グッズ：<b>Tシャツ ¥4,900〜・パーカー ¥8,800〜・スウェット ¥7,800〜・ラッシュガード ¥9,800〜・ステッカー ¥800〜・マグ ¥2,200〜・スマホケース ¥4,900〜・ポスター ¥4,900〜</b>。1点から受注生産・買わなくてもOK。権利リスクがあるものだけ人が確認、あとは自動で公開。",
+         "Physical goods you can make: <b>tees ¥4,900+ · hoodies ¥8,800+ · sweatshirts ¥7,800+ · rashguards ¥9,800+ · stickers ¥800+ · mugs ¥2,200+ · phone cases ¥4,900+ · posters ¥4,900+</b>. Made to order from one piece — buying is optional. Only rights-risky designs get a human check; the rest publish automatically."),
+        ("作れるもの：<b>Tシャツ ¥4,900〜・パーカー ¥8,800〜・スウェット ¥7,800〜・ロングT ¥5,800〜・タンク ¥4,200〜・ラッシュガード ¥9,800〜・トート ¥3,800〜・ステッカー ¥800〜・マグ ¥2,200〜・スマホケース ¥4,900〜・ポスター ¥4,900〜</b>。さらに <a href=\"/make/all\" style=\"color:#ffd700;text-decoration:none\">他の種類</a> も。1点から受注生産・買わなくてもOK。権利リスクがあるものだけ人が確認、あとは自動で公開。",
+         "You can make: <b>tees ¥4,900+ · hoodies ¥8,800+ · sweatshirts ¥7,800+ · long sleeves ¥5,800+ · tanks ¥4,200+ · rashguards ¥9,800+ · totes ¥3,800+ · stickers ¥800+ · mugs ¥2,200+ · phone cases ¥4,900+ · posters ¥4,900+</b>. Plus <a href=\"/make/all\" style=\"color:#ffd700;text-decoration:none\">more kinds</a>. Made to order from one piece — buying is optional. Only rights-risky designs get a human check; the rest publish automatically."),
+        // ── 例・リンク行 ──
+        ("例: <b data-x=\"柴犬のシンプルな線画 生成りトート\">柴犬の線画</b> ・ <b data-x=\"禅の円相 ひと筆 黒Tシャツ\">円相T</b> ・ <b data-x=\"夜の富士山と月 ミニマル パーカー\">富士と月</b>",
+         "e.g. <b data-x=\"minimal shiba inu line drawing on a natural tote\">Shiba line art</b> · <b data-x=\"zen enso single stroke on a black tee\">Enso tee</b> · <b data-x=\"Mt. Fuji and the moon at night, minimal, hoodie\">Fuji &amp; moon</b>"),
+        (">MUで作れるもの一覧</a>（作れそうなものも）", ">Everything MU can make</a> (and soon-to-be)"),
+        ("🏠 服じゃなく<b>家</b>をつくりたい人は → ", "🏠 Want a <b>house</b> instead of clothes? → "),
+        ("（言葉から、家が建つ）", " (words become a building)"),
+        // ── kind options (サーバ注入) ──
+        (">おまかせ</option>", ">Let AI pick</option>"),
+        (">Tシャツ（黒）</option>", ">Tee (black)</option>"),
+        (">Tシャツ（白）</option>", ">Tee (white)</option>"),
+        (">パーカー</option>", ">Hoodie</option>"),
+        (">スウェット</option>", ">Sweatshirt</option>"),
+        (">ロングスリーブT</option>", ">Long sleeve tee</option>"),
+        (">タンクトップ</option>", ">Tank top</option>"),
+        (">ラッシュガード</option>", ">Rashguard</option>"),
+        (">ラッシュガード（黒）</option>", ">Rashguard (black)</option>"),
+        (">ラッシュガード（完全プリント・プレミアム）</option>", ">Rashguard (full print · premium)</option>"),
+        (">レギンス（スパッツ）</option>", ">Leggings</option>"),
+        (">メッシュショーツ</option>", ">Mesh shorts</option>"),
+        (">スウェットパンツ</option>", ">Joggers</option>"),
+        (">エプロン</option>", ">Apron</option>"),
+        (">ビーニー（刺繍）</option>", ">Beanie (embroidered)</option>"),
+        (">キッズTシャツ（全面）</option>", ">Kids tee (all-over)</option>"),
+        (">ソックス（全面）</option>", ">Socks (all-over)</option>"),
+        (">バケットハット（全面）</option>", ">Bucket hat (all-over)</option>"),
+        (">トートバッグ</option>", ">Tote bag</option>"),
+        (">ナップサック（全面）</option>", ">Drawstring bag (all-over)</option>"),
+        (">ウエストバッグ（全面）</option>", ">Fanny pack (all-over)</option>"),
+        (">バックパック（全面）</option>", ">Backpack (all-over)</option>"),
+        (">ステッカー</option>", ">Sticker</option>"),
+        (">マグカップ（白）</option>", ">Mug (white)</option>"),
+        (">マグカップ（黒）</option>", ">Mug (black)</option>"),
+        (">スマホケース（iPhone）</option>", ">iPhone case</option>"),
+        (">ラップトップスリーブ</option>", ">Laptop sleeve</option>"),
+        (">マウスパッド</option>", ">Mouse pad</option>"),
+        (">ボトル</option>", ">Bottle</option>"),
+        (">ワイングラス</option>", ">Wine glass</option>"),
+        (">ジャーナル</option>", ">Journal</option>"),
+        (">ポスター</option>", ">Poster</option>"),
+        (">キャンバスアート</option>", ">Canvas art</option>"),
+        (">メタルプリント</option>", ">Metal print</option>"),
+        (">クッション</option>", ">Pillow</option>"),
+        (">コースター</option>", ">Coaster</option>"),
+        (">プレースマット</option>", ">Placemat</option>"),
+        (">ブランケット（刺繍）</option>", ">Blanket (embroidered)</option>"),
+        (">今治タオル（刺繍）</option>", ">Imabari towel (embroidered)</option>"),
+        (">ビーチタオル（全面）</option>", ">Beach towel (all-over)</option>"),
+        (">フラッグ（全面）</option>", ">Flag (all-over)</option>"),
+        // ── JS: 共有/シアター/結果カード ──
+        ("リンクをコピーしました ✓", "Link copied ✓"),
+        ("このリンクを広めてください", "Spread this link"),
+        ("['お題を、読み解いています…','筆を、とりました','線を一本、引いています…','色を、えらんでいます…','余白と、相談しています…','布にのせて、確かめています…','タグに名前を入れています…','棚をあけて、待っています…']",
+         "['Reading your idea…','Picking up the brush','Drawing the first line…','Choosing colors…','Negotiating with the whitespace…','Testing it on fabric…','Writing your name on the tag…','Clearing a spot on the shelf…']"),
+        ("<div class=gq>「<b></b>」を、一枚の絵に。</div>", "<div class=gq>Turning “<b></b>” into one picture.</div>"),
+        ("世界のどこにもない一枚を生成中 — だいたい 30 秒。同じ絵は二度と生まれません。", "Generating a one-of-one — about 30 seconds. The same picture will never be born twice."),
+        ("無料ローカルAI(β)で生成中 — 混雑時は数分かかります。そのまま待っていてください。", "Generating on the free local AI (beta) — may take a few minutes when busy. Hang tight."),
+        ("あなたの画像を、そのまま製品にのせています — だいたい10秒。", "Putting your image straight onto the product — about 10 seconds."),
+        ("つくっています…", "Creating…"),
+        ("textContent='つくる';", "textContent='Create';"),
+        ("うまく作れませんでした。もう一度お試しください。", "Could not create it. Please try again."),
+        ("通信エラー。もう一度お試しください。", "Network error. Please try again."),
+        ("通信エラー。もう一度どうぞ。", "Network error. Try again."),
+        ("alert((isAudio?'音声は25MB':'画像は8MB')+'までです')", "alert((isAudio?'Audio: 25MB max':'Images: 8MB max'))"),
+        ("アップロードできませんでした", "Upload failed"),
+        ("アップロード中…", "Uploading…"),
+        ("例：この曲のタイトルと、ひとこと（雰囲気・誰の曲か）", "e.g. the song title plus one line (mood, who made it)"),
+        ("例：この画像のタイトルや、のせたい気持ちをひとこと", "e.g. a title for this image, or one line about the feeling"),
+        ("<b>あなたの言葉</b>から、世界に1枚が生まれました。", "From <b>your words</b>, a one-of-one was born."),
+        ("この一着を、自分のものにする ¥", "Make this piece yours ¥"),
+        ("<small>サイズ・お届け先はお会計画面で · 1枚から受注生産</small>", "<small>size &amp; address at checkout · made to order from 1 piece</small>"),
+        ("商品ページでくわしく見る →", "See the full product page →"),
+        ("ことば1行から30秒で作った: ", "Made from one line of words in 30s: "),
+        ("📣 シェアして広める", "📣 Share it"),
+        ("✏️ あとから編集（位置・説明・価格）", "✏️ Edit later (position · text · price)"),
+        ("🎲 もう1案つくる（同じお題で）", "🎲 Another take (same idea)"),
+        ("さっきの案（どれも棚に残っています）", "Earlier takes (all still on the shelf)"),
+        ("棚にも並びました。広めるほどこの子が売れる → 売上の10%が作り手のあなたに。", "It's on the shelf now. The more you spread it, the more it sells → 10% of every sale goes to you, the maker. "),
+        ("クリエイター登録(無料)で売上と報酬を管理 →", "Manage sales &amp; payouts with a free creator account →"),
+        ("🌱 <b>世界に1枚。</b>同じ絵は二度と生成されません。ファーストオーナーは、まだいません。", "🌱 <b>One of one.</b> The same picture will never be generated again. It has no first owner yet."),
+        ("つくりました。確認後に公開・購入できます。", "Created. It goes live and purchasable after a quick check."),
+        ("👜 持つと、こうなる。", "👜 This is how it carries."),
+        ("🖼 飾ると、こうなる。お部屋を、想像してみて。", "🖼 This is how it hangs. Picture your room."),
+        ("✨ 使うと、こうなる。", "✨ This is how it looks in use."),
+        ("👕 着ると、こうなる。鏡の前の自分を、想像してみて。", "👕 This is how it wears. Picture yourself in the mirror."),
+        ("仕上がりイメージを準備中… 数十秒でここに届きます", "Preparing the finished view… arriving here in ~30s"),
+        ("👕 着用イメージを準備中… 数十秒でここに届きます", "👕 Preparing the on-body view… arriving here in ~30s"),
+        ("h.textContent='言うだけで、'+lbl+'ができる。';", "h.textContent='Say it, and your '+lbl+' exists.';"),
+        ("p.placeholder='例：'+lbl+'に、ミニマルな一本線の富士山';", "p.placeholder='e.g. a minimal one-line Mt. Fuji on your '+lbl;"),
+        // ── 名義化ゲート ──
+        ("この一着を、<b>あなたの名義</b>に。", "Put this piece <b>in your name</b>."),
+        ("メール認証(6桁コード・10秒)で公開と名義化が完了。売れるたび<b>販売価格の10%</b>があなたのMUクレジットに入ります（<a href=\"/credit\" target=\"_blank\" style=\"color:#ffd700\">仕組み</a>・メールの扱いは<a href=\"/privacy\" target=\"_blank\" style=\"color:#ffd700\">プライバシー</a>）。",
+         "A 10-second email check (6-digit code) publishes it under your name. Every sale puts <b>10% of the price</b> into your MU credit (<a href=\"/credit\" target=\"_blank\" style=\"color:#ffd700\">how it works</a> · <a href=\"/privacy\" target=\"_blank\" style=\"color:#ffd700\">privacy</a>)."),
+        (">コードを送る</button>", ">Send code</button>"),
+        ("placeholder=\"6桁コード\"", "placeholder=\"6-digit code\""),
+        (">名義化する</button>", ">Claim it</button>"),
+        (">メールアドレスを入れ直す</button>", ">Re-enter email address</button>"),
+        ("送信中…", "Sending…"),
+        ("にコードを送りました（15分有効）。", " — code sent (valid 15 min)."),
+        ("送れませんでした", "Could not send"),
+        ("確認中…", "Checking…"),
+        ("6桁の数字を入力してください", "Enter the 6-digit number"),
+        ("確認できませんでした", "Could not verify"),
+        // ── recent / PWA ──
+        ("みんなが、さっき作った一着", "Just made by everyone"),
+        ("📲 アプリにする<span style=\"opacity:.55;font-weight:400;font-size:12px\">ホーム画面に追加</span>", "📲 Get the app<span style=\"opacity:.55;font-weight:400;font-size:12px\">Add to Home Screen</span>"),
+        ("<div style=\"font-weight:700;font-size:16px;margin-bottom:8px\">ホーム画面に追加</div>", "<div style=\"font-weight:700;font-size:16px;margin-bottom:8px\">Add to Home Screen</div>"),
+        ("下の <b>共有</b> ボタン <span style=\"font-size:17px\">􀈂</span> を押して、<br><b>「ホーム画面に追加」</b> を選ぶと、アプリとして開けます。", "Tap the <b>Share</b> button <span style=\"font-size:17px\">􀈂</span> below, then choose <b>“Add to Home Screen”</b> to open this as an app."),
+        (">わかった</button>", ">Got it</button>"),
+    ];
+    for (ja, en) in T {
+        h = h.replace(ja, en);
+    }
+    h
 }
 
 const MAKE_HTML: &str = r##"<!doctype html><html lang="ja"><head>
@@ -5124,6 +5414,7 @@ const MAKE_HTML: &str = r##"<!doctype html><html lang="ja"><head>
 <meta name="description" content="ひとこと言うだけでAIがオリジナルTシャツ・パーカーをデザイン。30秒ほどで完成、その場で1枚から購入OK（¥4,900〜）。ログイン不要・在庫ゼロ。作った一着は店に並び、売れたら売上の10%が作り手に(Tシャツなら¥490〜/枚)。">
 <link rel="canonical" href="https://wearmu.com/make">
 <link rel="alternate" hreflang="ja" href="https://wearmu.com/make">
+<link rel="alternate" hreflang="en" href="https://wearmu.com/make?lang=en">
 <link rel="alternate" hreflang="x-default" href="https://wearmu.com/make">
 <link rel="manifest" href="/make.webmanifest">
 <meta name="theme-color" content="#0a0a0a">
@@ -5237,6 +5528,10 @@ button:disabled{opacity:.5;cursor:default}
 .step .d{font-size:12px;color:rgba(245,245,240,.55);margin-top:3px;line-height:1.55}
 .price-hint{font-size:12.5px;color:rgba(245,245,240,.6);margin-top:10px}
 .price-hint b{color:#f5f5f0}
+.hist{margin-top:14px}
+.hist .histlead{font-size:11.5px;color:rgba(245,245,240,.45);margin-bottom:7px}
+.hist .histrow{display:flex;gap:8px;flex-wrap:wrap}
+.hist img{width:62px;height:62px;object-fit:contain;background:#fff;border-radius:8px;border:1px solid rgba(255,255,255,.12)}
 .recent{margin-top:44px}
 .recent h2{font-size:13px;letter-spacing:.25em;text-transform:uppercase;color:rgba(245,245,240,.55);font-weight:600;margin-bottom:14px}
 .rgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px}
@@ -5245,7 +5540,7 @@ button:disabled{opacity:.5;cursor:default}
 .rgrid .rl{font-size:10.5px;padding:7px 9px 2px;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:rgba(245,245,240,.85)}
 .rgrid .rp{font-size:11px;color:#ffd700;font-weight:700;padding:0 9px 8px}
 </style></head><body>
-<nav><a class="brand" href="/make">MU MAKE</a><div><a href="/start" data-funnel="cta_click" data-funnel-cta="make_nav_start" style="color:#ffd700">作って売る</a> <a href="/shop">SHOP</a></div></nav>
+<nav><a class="brand" href="/make">MU MAKE</a><div><a href="/make?lang=en" style="opacity:.6">EN</a> <a href="/start" data-funnel="cta_click" data-funnel-cta="make_nav_start" style="color:#ffd700">作って売る</a> <a href="/shop">SHOP</a></div></nav>
 <div class="wrap">
   <h1 id="mkH1">言うだけで、Tシャツができる。</h1>
   <div class="sub" id="mkSub">ひとこと言えば AI がデザイン → <b>その場で 1 枚から買える</b>。ログインも在庫もゼロ。あなたの一着はみんなの棚にも並び、<b style="color:#ffd700">売れたら売上の10%が作り手に</b>（<a href="/credit" style="color:#ffd700">仕組み</a>）。</div>
@@ -5291,7 +5586,6 @@ __KIND_OPTIONS__
   <div class="ex" id="mkEx">例: <b data-x="柴犬のシンプルな線画 生成りトート">柴犬の線画</b> ・ <b data-x="禅の円相 ひと筆 黒Tシャツ">円相T</b> ・ <b data-x="夜の富士山と月 ミニマル パーカー">富士と月</b></div>
   <div class="ex" style="opacity:.55;font-size:12px">🧰 <a href="/make/all" style="color:#ffd700;text-decoration:none" data-funnel="cta_click" data-funnel-cta="make_all_link">MUで作れるもの一覧</a>（作れそうなものも）</div>
   <div class="ex" style="opacity:.6">🏠 服じゃなく<b>家</b>をつくりたい人は → <a href="https://bim.house/make" style="color:#ffd700;text-decoration:none" data-funnel="cta_click" data-funnel-cta="make_bimhouse">bim.house/make</a>（言葉から、家が建つ）</div>
-  <div class="ex" style="opacity:.6">🎨 <b>完全無料</b>で画像を作りたい人は → <a id="goLocal" href="https://yukihamada.github.io/kamishibai-pitch/paint/" target="_blank" rel="noopener" onclick="try{var v=document.getElementById('p').value.trim();if(v)this.href='https://yukihamada.github.io/kamishibai-pitch/paint/?prompt='+encodeURIComponent(v);}catch(e){}" style="color:#ffd700;text-decoration:none" data-funnel="cta_click" data-funnel-cta="make_local_beta">無料で生成（β）</a>（自前GPUで生成・API課金ゼロ・スマホ可）</div>
   <div id="out"></div>
   <div class="recent" id="recent" hidden>
     <h2>みんなが、さっき作った一着</h2>
@@ -5395,7 +5689,7 @@ var MKV=(SV==='a'||SV==='b'||SV==='c')?SV:hash3(VIS||'a');
   var ex=$('#mkEx'); if(ex&&d.quick)ex.hidden=true;
   // ?k=<非アパレル> で来たら「Tシャツ」固定の見出しをそのkindに差し替える。
   if(SEL_KIND && SEL_LABEL){
-    var lbl=SEL_LABEL.replace(/（.*?）/,'');
+    var lbl=SEL_LABEL.replace(/\s*[（(].*?[）)]/,'');
     if(h)h.textContent='言うだけで、'+lbl+'ができる。';
     if(p)p.placeholder='例：'+lbl+'に、ミニマルな一本線の富士山';
   }
@@ -5446,6 +5740,7 @@ function genTheater(p){
   var pr=2; var t2=setInterval(function(){pr=Math.min(93,pr+(pr<55?5:1.4));gf.style.width=pr+'%';},600);
   return function(){clearInterval(t1);clearInterval(t2);if(gf)gf.style.width='100%';};
 }
+var MK_HIST=[]; // このセッションで作った案(sku/サムネ/PDP)。「もう1案」で前の案に戻れる。
 var RUNSEQ=0; // 連打/連続生成の古いレスポンスが新しい結果を上書きしないためのガード
 async function runMake(){
   const p=$('#p').value.trim(); if(!p){$('#p').focus();return;}
@@ -5492,13 +5787,23 @@ function renderResult(j,p,ok){
   var url = j.buy_url || j.pdp_url || '';
   var pEcho = p.length>60 ? p.slice(0,60)+'…' : p;
   var own = '<div class=own><b>あなたの言葉</b>から、世界に1枚が生まれました。<span class=pq>「'+escHtml(pEcho)+'」</span></div>';
-  var buy = j.buy_url ? '<a class=buy href="'+j.buy_url+'" onclick="muEvent(\'cta_click\',{cta:\'make_buy\',sku:\''+j.sku+'\'})">この一着を、自分のものにする ¥'+yen(j.retail_jpy)+' →<small>サイズを選ぶだけ · 1枚から受注生産</small></a>' : '';
+  // 生成直後=購入意欲のピーク。PDPを挟まず Stripe Checkout に直行(1ホップ)。
+  // サイズ/住所は Stripe 側で選ぶ。PDP は小リンクで残す。
+  var buyHref = j.checkout_url || j.buy_url;
+  var buy = buyHref ? '<a class=buy href="'+buyHref+'" onclick="muEvent(\'cta_click\',{cta:\'make_buy_direct\',sku:\''+j.sku+'\'})">この一着を、自分のものにする ¥'+yen(j.retail_jpy)+' →<small>サイズ・お届け先はお会計画面で · 1枚から受注生産</small></a>'
+    +(j.pdp_url?'<div style="text-align:center;margin-top:7px"><a href="'+j.pdp_url+'" style="color:rgba(245,245,240,.55);font-size:12px" onclick="muEvent(\'cta_click\',{cta:\'make_pdp\',sku:\''+j.sku+'\'})">商品ページでくわしく見る →</a></div>':'') : '';
   var shareTxt = encodeURIComponent('ことば1行から30秒で作った: '+(j.display||'MU')+' #MU #wearmu');
   var share = url ? '<button class=share onclick="muEvent(\'share\',{sku:\''+j.sku+'\'});muShare(this)" data-u="'+url+'" data-t="'+((j.display||'MU')+' / wearmu')+'">📣 シェアして広める</button>'
     +' <a class=share data-funnel="share" data-funnel-cta="make_share_x" href="https://x.com/intent/tweet?text='+shareTxt+'&url='+encodeURIComponent(url+'?ref=make_share_x')+'" target="_blank" rel="noopener" onclick="muEvent(\'share\',{sku:\''+j.sku+'\',ch:\'x\'})" style="text-decoration:none">𝕏 ポスト</a>'
     +' <a class=share data-funnel="share" data-funnel-cta="make_share_line" href="https://social-plugins.line.me/lineit/share?url='+encodeURIComponent(url+'?ref=make_share_line')+'" target="_blank" rel="noopener" onclick="muEvent(\'share\',{sku:\''+j.sku+'\',ch:\'line\'})" style="text-decoration:none">LINE</a>' : '';
   var edit = (j.edit_token&&j.sku) ? ' <a class=share style="text-decoration:none" href="/make/edit/'+j.sku+'?t='+j.edit_token+'" onclick="muEvent(\'cta_click\',{cta:\'make_edit\',sku:\''+j.sku+'\'})">✏️ あとから編集（位置・説明・価格）</a>' : '';
   share += edit;
+  // 「もう1案」: 実測で1人平均2回生成している=撮り直し欲求。失敗扱いにせず機能にする。
+  var retry = '<button class=share id=mkRetry type=button>🎲 もう1案つくる（同じお題で）</button>';
+  share += retry;
+  // さっきの案: 作り直しても前の案は棚に残る。サムネで戻れるようにする。
+  if(!MK_HIST.length||MK_HIST[MK_HIST.length-1].sku!==j.sku)MK_HIST.push({sku:j.sku,img:j.design_url,pdp:j.pdp_url||''});
+  var hist = MK_HIST.length>1 ? '<div class=hist><div class=histlead>さっきの案（どれも棚に残っています）</div><div class=histrow>'+MK_HIST.slice(0,-1).map(function(h){return h.pdp?'<a href="'+h.pdp+'" target="_blank" rel="noopener"><img loading=lazy src="'+h.img+'" alt=""></a>':'';}).reverse().join('')+'</div></div>' : '';
   var spread = (ok && url) ? '<div class=spread>棚にも並びました。広めるほどこの子が売れる → 売上の10%が作り手のあなたに。<a href="/start?ref=make_result" style="color:#ffd700">クリエイター登録(無料)で売上と報酬を管理 →</a></div>' : '';
   var one = j.auto_approved ? '<div class=one>🌱 <b>世界に1枚。</b>同じ絵は二度と生成されません。ファーストオーナーは、まだいません。</div>' : '';
   var nt = j.auto_approved ? '' : '<div class=note>'+(j.note||'つくりました。確認後に公開・購入できます。')+'</div>';
@@ -5511,7 +5816,9 @@ function renderResult(j,p,ok){
     +'<div class=fitnote id=mkFit>'+(j.auto_approved&&j.kind!=='song'?mkPrep(j.kind):'')+'</div>'
     + buy + share + spread + nt
     +'</div></div>'
+    +hist
     +(ok?'':claimCardHtml());
+  var rb=$('#mkRetry'); if(rb)rb.onclick=function(){muEvent('cta_click',{cta:'make_retry',sku:j.sku});var pp=$('#p');if(pp&&!pp.value.trim())pp.value=p;runMake();};
   $('#out').scrollIntoView({behavior:'smooth',block:'nearest'});
   if(!ok) wireClaim(j,p);
   if(j.auto_approved && j.sku && j.kind!=='song') pollFit(j.sku, j.design_url, j.kind);
@@ -5670,6 +5977,65 @@ fn sniff_make_upload(bytes: &[u8]) -> Option<(&'static str, &'static str, &'stat
 
 const MAKE_UPLOAD_IMAGE_MAX: usize = 8 * 1024 * 1024;
 const MAKE_UPLOAD_AUDIO_MAX: usize = 25 * 1024 * 1024;
+
+/// song 試聴プレビューの上限バイト数 (128kbps mp3 で約35秒)。
+const SONG_PREVIEW_MAX_BYTES: usize = 560 * 1024;
+
+/// GET /api/song/preview/:sku — 試聴用に音源の冒頭だけをプロキシ配信する。
+/// meta_json.audio_url は購入後配信と同一の公開 URL のため、PDP にそのまま
+/// 渡すと買わずに全曲聴けてしまう。song の試聴はここを経由してフル URL を
+/// ページに出さない。mp3/wav/ogg は途中で切っても冒頭が再生できるが、
+/// m4a は moov アトムが末尾にあると再生不能になるため対象外(404 を返し、
+/// PDP 側はフル URL にフォールバックする)。
+pub async fn song_preview(State(db): State<Db>, Path(sku): Path<String>) -> Response {
+    let audio_url: Option<String> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(meta_json,'') FROM catalog_products WHERE sku=?",
+            rusqlite::params![&sku],
+            |r| r.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|m| serde_json::from_str::<serde_json::Value>(&m).ok())
+        .and_then(|v| v.get("audio_url").and_then(|a| a.as_str()).map(|s| s.to_string()))
+    };
+    let Some(url) = audio_url.filter(|u| u.starts_with("https://")) else {
+        return (StatusCode::NOT_FOUND, "no audio").into_response();
+    };
+    let ct = if url.ends_with(".mp3") { "audio/mpeg" }
+        else if url.ends_with(".wav") { "audio/wav" }
+        else if url.ends_with(".ogg") { "audio/ogg" }
+        else { return (StatusCode::NOT_FOUND, "preview unavailable").into_response(); };
+    // Range で冒頭だけ取得(R2 は Range 対応)。200(全量)で返ってきても下で切る。
+    let mut upstream = match reqwest::Client::new()
+        .get(&url)
+        .header(reqwest::header::RANGE, format!("bytes=0-{}", SONG_PREVIEW_MAX_BYTES - 1))
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => r,
+        _ => return (StatusCode::BAD_GATEWAY, "audio fetch failed").into_response(),
+    };
+    let mut buf: Vec<u8> = Vec::with_capacity(SONG_PREVIEW_MAX_BYTES);
+    while let Ok(Some(chunk)) = upstream.chunk().await {
+        buf.extend_from_slice(&chunk);
+        if buf.len() >= SONG_PREVIEW_MAX_BYTES {
+            buf.truncate(SONG_PREVIEW_MAX_BYTES);
+            break;
+        }
+    }
+    if buf.is_empty() {
+        return (StatusCode::BAD_GATEWAY, "empty audio").into_response();
+    }
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, ct),
+            (axum::http::header::CACHE_CONTROL, "public, max-age=3600"),
+        ],
+        buf,
+    )
+        .into_response()
+}
 
 /// POST /api/make/upload — /make の添付（画像 or 曲）を R2 に永続化して
 /// 自ホスト URL を返す。返った URL を /api/make の design_url / audio_url に渡す。
@@ -6514,6 +6880,9 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
         note.push_str(" ※この作品はまだ誰の名義でもありません。メール認証(画面の指示 または https://wearmu.com/start で登録後に作成)すると、売れるたび売上の10%があなたに入ります。");
     }
     let buy_url = if flagged { serde_json::Value::Null } else { serde_json::json!(format!("https://wearmu.com/shop/{}", sku)) };
+    // 生成直後が購入意欲のピーク。PDP を経由せず Stripe Checkout に直行できる
+    // リンクも返す(サイズ/住所は Stripe 側の custom_fields で完結する)。
+    let checkout_url = if flagged { serde_json::Value::Null } else { serde_json::json!(format!("https://wearmu.com/api/shop/checkout?sku={}", sku)) };
     axum::Json(serde_json::json!({
         "ok": true,
         "sku": sku,
@@ -6526,6 +6895,7 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
         "status": status_s,
         "auto_approved": !flagged,
         "buy_url": buy_url,
+        "checkout_url": checkout_url,
         "note": note,
         "edit_token": edit_token,
         "edit_url": format!("https://wearmu.com/make/edit/{}?t={}", sku, edit_token),
@@ -9426,7 +9796,19 @@ pub async fn shop_pdp(
         let direct_audio = meta_audio.starts_with("https://")
             && [".mp3", ".wav", ".m4a", ".ogg"].iter().any(|&e| meta_audio.ends_with(e));
         if (is_song && meta_audio.starts_with("https://")) || direct_audio {
-            let note = if is_song { "買う前に、全部聴けます" } else { "QRで流れる曲。ここでも聴けます" };
+            // song の audio_url は購入後配信と同じ公開 URL → PDP に直書きすると
+            // 買わずに全曲聴ける。試聴は /api/song/preview/:sku (冒頭のみ) を使い、
+            // フル URL をページに出さない。m4a は途中切り再生不能なので従来どおり。
+            let preview_ok = is_song
+                && [".mp3", ".wav", ".ogg"].iter().any(|&e| meta_audio.ends_with(e));
+            let (src, note) = if preview_ok {
+                (format!("/api/song/preview/{}", urlencoding::encode(&sku)),
+                 "冒頭だけ試聴できます。フル版は購入後にお届け")
+            } else if is_song {
+                (meta_audio.clone(), "買う前に、全部聴けます")
+            } else {
+                (meta_audio.clone(), "QRで流れる曲。ここでも聴けます")
+            };
             format!(r##"<div class="listen">
   <button id="songBtn" class="listen-btn" aria-label="試聴">▶ この曲を試聴</button>
   <span class="listen-note">{note}</span>
@@ -9439,7 +9821,7 @@ pub async fn shop_pdp(
     }});
     a.addEventListener('ended',function(){{b.textContent="▶ この曲を試聴";playing=false;}});
   }})();</script>
-</div>"##, u = html_attr(&meta_audio), note = note)
+</div>"##, u = html_attr(&src), note = note)
         } else { listen_block }
     } else { listen_block };
 
