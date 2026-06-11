@@ -4833,6 +4833,7 @@ footer{{opacity:.45;font-size:11px;text-align:center;padding:30px 18px}}
   <p class="note">🏠 服やグッズでなく<b>家</b>をつくりたい人は <a href="https://bim.house/make" style="color:var(--y)">bim.house/make</a> へ。</p>
 </div>
 <footer>© 2026 MU / Enabler Inc. · <a href="/shop">SHOP</a> · <a href="/about/honest">正直なところ</a></footer>
+<script defer src="/tracking.js"></script>
 <script defer src="/mu-funnel.js"></script>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </body></html>"##,
@@ -5446,6 +5447,7 @@ $('#p').addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter
   window.addEventListener('appinstalled', function(){ track('pwa_appinstalled'); btn.style.display='none'; });
 })();
 </script>
+<script defer src="/tracking.js"></script>
 <script defer src="/mu-funnel.js"></script>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </body></html>"##;
@@ -7637,6 +7639,7 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
     window.muAudio.onended=function(){{btn.textContent='▶';}};
   }};
 </script>
+<script defer src="/tracking.js"></script>
 <script defer src="/mu-funnel.js"></script>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </body></html>"##,
@@ -9083,6 +9086,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
   </div>
   <div class="legal-fine">© 2026 MU / Enabler Inc. · 東京千代田区九段南 1-5-6 · 受注生産・国際発送 7-14 日</div>
 </footer>
+<script defer src="/tracking.js"></script>
 <script defer src="/mu-funnel.js"></script>
 <div id="lb"><span class="lb-x">×</span><img id="lb-img" alt=""><div class="lb-hint">クリック / Esc で閉じる</div></div>
 <script>

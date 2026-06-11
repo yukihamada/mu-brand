@@ -106,6 +106,7 @@ pre{{white-space:pre-wrap;font-family:inherit;margin:0}}
 .brand .muted{{color:#aaa}}
 @media(max-width:480px){{.steps img{{width:88px;height:64px}}}}
 </style></head><body>{body}
+<script defer src="/tracking.js"></script>
 <script defer src="/mu-funnel.js"></script>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </body></html>"#,
