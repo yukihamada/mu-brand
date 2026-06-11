@@ -850,8 +850,9 @@ async fn fulfill_crypto_order(db: Db, reference: String) {
     let printful_key = env::var("PRINTFUL_API_KEY").unwrap_or_default();
     let mut printful_order_id: Option<String> = None;
     if !printful_key.is_empty() && !design_url.is_empty() {
+        // Order files use "type", not "placement" — see build_printful_item.
         let files: Vec<serde_json::Value> = pf.placements.iter().map(|p| {
-            serde_json::json!({"url": design_url, "placement": p})
+            serde_json::json!({"url": design_url, "type": p})
         }).collect();
         let order = serde_json::json!({
             "recipient": {
