@@ -12964,67 +12964,21 @@ fn normalize_state_code(country: &str, raw: &str) -> String {
                     return format!("JP-{:02}", n);
                 }
             }
-            if let Some(code) = jp_prefecture_to_iso(s) {
-                return format!("JP-{}", code);
+            // Crate-wide canonical table (main.rs): full names ("東京都"),
+            // suffix-less ("東京"), romaji any case ("Tokyo"/"tokyo").
+            // 2026-06-08: order #41 (phone case, state="東京") fell through
+            // the old local table here, sent state_code="" and Printful
+            // 400'd with "Please fill in your prefecture" → auto-refund.
+            if let Some(code) = crate::jp_prefecture_to_iso(s) {
+                return code.to_string();
             }
-            String::new()
+            // No match: pass the raw value through — Printful's error names
+            // the bad value, which beats silently sending an empty field.
+            s.to_string()
         }
         "US" => s.to_uppercase().chars().take(2).collect(),
         _ => s.to_string(),
     }
-}
-
-fn jp_prefecture_to_iso(s: &str) -> Option<&'static str> {
-    Some(match s {
-        "北海道" | "Hokkaido" => "01",
-        "青森県" | "Aomori" => "02",
-        "岩手県" | "Iwate" => "03",
-        "宮城県" | "Miyagi" => "04",
-        "秋田県" | "Akita" => "05",
-        "山形県" | "Yamagata" => "06",
-        "福島県" | "Fukushima" => "07",
-        "茨城県" | "Ibaraki" => "08",
-        "栃木県" | "Tochigi" => "09",
-        "群馬県" | "Gunma" => "10",
-        "埼玉県" | "Saitama" => "11",
-        "千葉県" | "Chiba" => "12",
-        "東京都" | "Tokyo" => "13",
-        "神奈川県" | "Kanagawa" => "14",
-        "新潟県" | "Niigata" => "15",
-        "富山県" | "Toyama" => "16",
-        "石川県" | "Ishikawa" => "17",
-        "福井県" | "Fukui" => "18",
-        "山梨県" | "Yamanashi" => "19",
-        "長野県" | "Nagano" => "20",
-        "岐阜県" | "Gifu" => "21",
-        "静岡県" | "Shizuoka" => "22",
-        "愛知県" | "Aichi" => "23",
-        "三重県" | "Mie" => "24",
-        "滋賀県" | "Shiga" => "25",
-        "京都府" | "Kyoto" => "26",
-        "大阪府" | "Osaka" => "27",
-        "兵庫県" | "Hyogo" => "28",
-        "奈良県" | "Nara" => "29",
-        "和歌山県" | "Wakayama" => "30",
-        "鳥取県" | "Tottori" => "31",
-        "島根県" | "Shimane" => "32",
-        "岡山県" | "Okayama" => "33",
-        "広島県" | "Hiroshima" => "34",
-        "山口県" | "Yamaguchi" => "35",
-        "徳島県" | "Tokushima" => "36",
-        "香川県" | "Kagawa" => "37",
-        "愛媛県" | "Ehime" => "38",
-        "高知県" | "Kochi" => "39",
-        "福岡県" | "Fukuoka" => "40",
-        "佐賀県" | "Saga" => "41",
-        "長崎県" | "Nagasaki" => "42",
-        "熊本県" | "Kumamoto" => "43",
-        "大分県" | "Oita" => "44",
-        "宮崎県" | "Miyazaki" => "45",
-        "鹿児島県" | "Kagoshima" => "46",
-        "沖縄県" | "Okinawa" => "47",
-        _ => return None,
-    })
 }
 
 // ─── 30-min autonomous optimizer cron ─────────────────────────────────
@@ -13679,6 +13633,52 @@ mod lifestyle_composite_tests {
         assert!(out.len() > 10_000, "output png suspiciously small: {}", out.len());
         std::fs::write("/tmp/rust_comp.png", &out).expect("write out");
         eprintln!("wrote /tmp/rust_comp.png ({} bytes)", out.len());
+    }
+}
+
+#[cfg(test)]
+mod state_code_tests {
+    use super::normalize_state_code;
+    use crate::jp_prefecture_to_iso;
+
+    #[test]
+    fn jp_prefecture_variants_map_to_iso() {
+        for raw in ["東京都", "東京", "Tokyo", "tokyo", "TOKYO", " 東京都 "] {
+            assert_eq!(jp_prefecture_to_iso(raw), Some("JP-13"), "raw={raw}");
+        }
+        assert_eq!(jp_prefecture_to_iso("大阪"), Some("JP-27"));
+        assert_eq!(jp_prefecture_to_iso("京都府"), Some("JP-26"));
+        assert_eq!(jp_prefecture_to_iso("北海道"), Some("JP-01"));
+        assert_eq!(jp_prefecture_to_iso("Hokkaidō"), Some("JP-01"));
+        assert_eq!(jp_prefecture_to_iso("California"), None);
+        assert_eq!(jp_prefecture_to_iso(""), None);
+    }
+
+    // Regression for catalog order #41 (2026-06-08, phone case): the buyer's
+    // state="東京" (no 都) fell through the old catalog-local table, was sent
+    // to Printful as state_code="" and the order 400'd with
+    // "Recipient: Please fill in your prefecture" → charge auto-refunded.
+    #[test]
+    fn normalize_state_code_handles_suffixless_tokyo() {
+        assert_eq!(normalize_state_code("JP", "東京"), "JP-13");
+        assert_eq!(normalize_state_code("JP", "東京都"), "JP-13");
+        assert_eq!(normalize_state_code("JP", "Tokyo"), "JP-13");
+        assert_eq!(normalize_state_code("JP", "tokyo"), "JP-13");
+        assert_eq!(normalize_state_code("JP", "JP-13"), "JP-13");
+        assert_eq!(normalize_state_code("JP", "13"), "JP-13");
+        assert_eq!(normalize_state_code("JP", "9"), "JP-09");
+        // Unknown values pass through raw — Printful's 400 then names the
+        // bad value instead of a blank "fill in your prefecture".
+        assert_eq!(normalize_state_code("JP", "謎の国"), "謎の国");
+        assert_eq!(normalize_state_code("US", "ca"), "CA");
+    }
+
+    #[test]
+    fn jp_state_code_still_accepts_full_and_iso() {
+        assert_eq!(crate::jp_state_code("東京都"), "JP-13");
+        assert_eq!(crate::jp_state_code("東京"), "JP-13");
+        assert_eq!(crate::jp_state_code("JP-13"), "JP-13");
+        assert_eq!(crate::jp_state_code("そんな県はない"), "");
     }
 }
 
