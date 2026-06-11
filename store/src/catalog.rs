@@ -550,6 +550,47 @@ pub fn migrate_hoodie_crewneck_variants(conn: &rusqlite::Connection) {
     }
 }
 
+/// One-shot migration: stamp the missing `printful_sync_variant_id` on the
+/// two legacy seed AOP rashguards `MU-ZEN-03-RASH` / `MU-MU-01-RASH`.
+///
+/// Both rows were seeded with a `printful_sync_product_id` but NULL
+/// `printful_sync_variant_id` AND NULL `design_file`, so
+/// `build_printful_item()` fell through to shape (c) — variant_id only,
+/// no files — and Printful rejected every purchase with
+/// `Item 0: Item can't be submitted without any print files` → auto
+/// refund (catalog_orders #16 on 2026-06-04 and #24 on 2026-06-05, both
+/// status='refunded').
+///
+/// The pre-synced Printful store products are intact (verified live via
+/// `GET /store/products/{id}` on 2026-06-11) and each holds exactly one
+/// sync variant with a `status: ok` print file:
+///   - 434211687 MU × ZEN #03 · RASH → sync variant 5317891114 (White/M, 9328)
+///   - 434212898 MU #01 · RASH      → sync variant 5317914251 (White/M, 9328)
+/// Stamping these flips fulfillment to shape (a) (sync_variant_id), which
+/// uses Printful's stored print file. Size note: non-nouns checkouts never
+/// set a Stripe size custom-field, so these SKUs only ever sold the single
+/// M variant — the sync variant matches the historic behaviour exactly.
+/// Idempotent: only touches rows still missing the sync variant.
+pub fn migrate_rash_sync_variants(conn: &rusqlite::Connection) {
+    let mut fixed = 0;
+    for (sku, sync_product_id, sync_variant_id) in [
+        ("MU-ZEN-03-RASH", 434211687_i64, 5317891114_i64),
+        ("MU-MU-01-RASH", 434212898_i64, 5317914251_i64),
+    ] {
+        fixed += conn.execute(
+            "UPDATE catalog_products
+             SET printful_sync_variant_id = ?1
+             WHERE sku = ?2
+               AND printful_sync_product_id = ?3
+               AND (printful_sync_variant_id IS NULL OR printful_sync_variant_id = 0)",
+            rusqlite::params![sync_variant_id, sku, sync_product_id],
+        ).unwrap_or(0);
+    }
+    if fixed > 0 {
+        tracing::info!("[catalog] migrate_rash_sync_variants: fixed {} rows", fixed);
+    }
+}
+
 /// One-shot migration: retire 7 belt-rashguard SKUs that were superseded
 /// by the Phase B full-canvas regeneration. Five V1 chest-graphic SKUs and
 /// two V2 SKUs where Gemini drifted off the target color (brown→near-black,
