@@ -12998,9 +12998,27 @@ pub async fn ticket_view(State(db): State<Db>, Path(code): Path<String>) -> Resp
         )
     } else {
         let qr_img = ticket_qr_data_uri(&ticket_url).unwrap_or_default();
+        // 焚き火券: コミュニティにこの券コードで入れる入口ボタン。既存QRは
+        // このページを開くので、古い券面QRからでもこの導線に乗る。
+        // 入口URLは env で差し替え可能(takibi.wtf ドメイン切替が kenny ゲート
+        // 待ちのため、今確実に届く atsme-community.fly.dev を既定にする)。
+        let takibi_btn = if sku.to_uppercase().contains("TAKIBI") {
+            let redeem_page = env::var("TAKIBI_REDEEM_PAGE_URL")
+                .unwrap_or_else(|_| "https://atsme-community.fly.dev/redeem".into());
+            format!(
+                "<div style=\"margin:4px 0 14px\"><a href=\"{u}?code={c}\" \
+                 style=\"display:inline-block;background:#e6c449;color:#0a0a0a;text-decoration:none;\
+                 font-weight:700;font-size:15px;padding:13px 28px;border-radius:99px\">🔥 この券で焚き火に入る</a>\
+                 <div style=\"font-size:11px;opacity:.5;margin-top:6px\">入口ページにコード <span style=\"font-family:monospace;color:#e6c449\">{c}</span> を入力しても入れます</div></div>",
+                u = html_text(redeem_page.trim_end_matches('/')),
+                c = html_text(&code),
+            )
+        } else {
+            String::new()
+        };
         (
             "<div style=\"display:inline-block;font-size:11px;letter-spacing:0.3em;color:#0a0a0a;background:#3ddc84;padding:4px 12px;border-radius:99px;font-weight:700\">✓ VALID</div>".to_string(),
-            format!("<div style=\"background:#fff;border-radius:12px;padding:16px;display:inline-block;margin:16px 0\"><img src=\"{}\" alt=\"QR\" width=\"240\" height=\"240\" style=\"display:block\"></div>", qr_img),
+            format!("<div style=\"background:#fff;border-radius:12px;padding:16px;display:inline-block;margin:16px 0\"><img src=\"{}\" alt=\"QR\" width=\"240\" height=\"240\" style=\"display:block\"></div>{}", qr_img, takibi_btn),
             "受付でこの画面（QR）をご提示ください。 デジタル参加券・物理発送はありません。",
         )
     };
