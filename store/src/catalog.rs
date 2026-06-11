@@ -10137,6 +10137,23 @@ pub async fn shop_checkout(
         return (StatusCode::SERVICE_UNAVAILABLE, "checkout disabled").into_response();
     }
     let sku = q.sku;
+    // GET /api/shop/checkout は <a href> 直リンク。クローラ/リンクプレビュー/プリフェッチが
+    // 辿るだけで実 Stripe セッションが量産される (実測: 7日で478作成/人手buyクリックは17 →
+    // 転換率の分母汚染 + 無駄なセッション生成)。bot UA は購入せずセッションも作らせず PDP へ送る。
+    // 誤検知しても商品ページに着くだけで実害なし(そこで再度 buy できる)。
+    {
+        let ua = headers.get(axum::http::header::USER_AGENT)
+            .and_then(|v| v.to_str().ok()).unwrap_or("").to_lowercase();
+        let is_bot = ua.is_empty() || [
+            "bot", "crawl", "spider", "slurp", "bingpreview", "facebookexternalhit",
+            "embedly", "quora link preview", "outbrain", "pinterest", "developers.google.com",
+            "headless", "phantom", "python-requests", "curl/", "wget", "go-http-client",
+            "node-fetch", "axios", "scrapy", "preview", "monitor", "uptime", "pingdom",
+        ].iter().any(|b| ua.contains(b));
+        if is_bot {
+            return Redirect::to(&format!("/shop/{}", urlencoding::encode(&sku))).into_response();
+        }
+    }
     // A valid gift key unlocks an otherwise-hidden (is_active=0) SKU —
     // the private 'halo' tees. Public checkouts never pass a key, so they
     // always hit the is_active=1 path (zero behaviour change).
