@@ -54,6 +54,11 @@ fn ensure_tables(conn: &rusqlite::Connection) {
     );
     // 既存の work_workers に about 列を追加（無ければ）。冪等・既にあればエラーは無視。
     let _ = conn.execute("ALTER TABLE work_workers ADD COLUMN about TEXT", []);
+    // 価格A/B: 応募時に見た提示単価(¥200/¥300)。Tシャツ等の汎用ジョブ単価に使う(音コインは fee_jpy() 固定)。
+    let _ = conn.execute("ALTER TABLE work_workers ADD COLUMN rate_jpy INTEGER", []);
+    // 完成写真URL(LPの「写真で承認」の実装)と月次振込の二重払い防止マーカー。
+    let _ = conn.execute("ALTER TABLE work_assignments ADD COLUMN photo_url TEXT", []);
+    let _ = conn.execute("ALTER TABLE work_assignments ADD COLUMN paid_at TEXT", []);
 }
 
 /// description_ja の "oto.html?s=KEY" 規約から NFC 書込URLを得る
@@ -408,12 +413,19 @@ pub async fn work_apply(State(db): State<Db>, Form(f): Form<ApplyForm>) -> Respo
     if f.agree.as_deref().unwrap_or("").is_empty() {
         return page("同意が必要です", "<h1>配送情報の取扱いへの同意が必要です</h1><p>お客様の住所をお預かりするため、取扱いへの同意にチェックをお願いします。</p><p><a href=\"/work#apply\">戻る</a></p>");
     }
+    let via = f.v.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()).unwrap_or("-");
+    // 価格A/Bテスト: 提示単価はパターンの偶奇 (work_recruit と同一規則)。
+    // ワーカーに保存し、汎用ジョブ(Tシャツ等)の単価として使う。見せた単価は約束。
+    let rate_jpy: i64 = match via.parse::<usize>() {
+        Ok(n) if n % 2 == 0 => 300,
+        _ => 200,
+    };
     let worker_id: i64 = {
         let conn = db.lock().unwrap();
         ensure_tables(&conn);
         let _ = conn.execute(
-            "INSERT OR IGNORE INTO work_workers (email, name, region, about) VALUES (?,?,?,?)",
-            rusqlite::params![email, name, region, about],
+            "INSERT OR IGNORE INTO work_workers (email, name, region, about, rate_jpy) VALUES (?,?,?,?,?)",
+            rusqlite::params![email, name, region, about, rate_jpy],
         );
         conn.query_row(
             "SELECT id FROM work_workers WHERE email=?",
@@ -423,13 +435,7 @@ pub async fn work_apply(State(db): State<Db>, Form(f): Form<ApplyForm>) -> Respo
         .unwrap_or(0)
     };
     let admin = env::var("ADMIN_TOKEN").unwrap_or_default();
-    let via = f.v.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()).unwrap_or("-");
-    // 価格A/Bテスト: 提示単価はパターンの偶奇 (work_recruit と同一規則)。承認者が見える形で通知。
-    let shown_price = match via.parse::<usize>() {
-        Ok(n) if n % 2 == 0 => "提示単価¥300",
-        Ok(_) => "提示単価¥200",
-        Err(_) => "提示単価不明",
-    };
+    let shown_price = format!("提示単価¥{}", rate_jpy);
     let about_line = if about.is_empty() { String::new() } else { format!("\n「{}」", about) };
     let _ = crate::send_telegram_message(&format!(
         "🧵 *work応募* (パターンv{}・{})\n{} <{}> {}{}\n承認→ https://wearmu.com/admin/work/approve?id={}&token={}",
@@ -512,9 +518,10 @@ pub async fn admin_approve(State(db): State<Db>, Query(q): Query<ApproveQuery>) 
         "【MU おしごと】承認されました — 仕事キューのご案内",
         format!(
             r#"<div style="font-family:sans-serif;line-height:1.8"><p>{}さん</p>
-<p>音コインのお仕事、承認されました。下のリンクがあなた専用の仕事キューです(ブックマーク推奨・他の人に共有しないでください)。</p>
+<p>MUのお仕事(Tシャツの仕上げ・音コインなど)、承認されました。下のリンクがあなた専用の仕事キューです(ブックマーク推奨・他の人に共有しないでください)。</p>
 <p><a href="{}" style="background:#111;color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:700">仕事キューを開く</a></p>
-<p>最初のキット(ブランクコイン・封筒・宛名シール)は別途お送りします。<br>— MU</p></div>"#,
+<p><b>このメールに返信で、キット(資材一式)の郵送先住所を教えてください。</b>梱包資材・封緘シール・カード等をお送りします(住所はキット送付のみに使います)。</p>
+<p>報酬は月末締め・翌月振込です。振込先口座は初回の報酬が確定したタイミングで伺います。<br>— MU</p></div>"#,
             esc(&name),
             queue_url
         ),
@@ -523,7 +530,7 @@ pub async fn admin_approve(State(db): State<Db>, Query(q): Query<ApproveQuery>) 
     page(
         "承認しました",
         &format!(
-            "<h1>承認しました。</h1><p>{} &lt;{}&gt; に仕事キューのリンクを{}。</p><p class=\"muted\">キット(ブランクコイン・封筒)の発送を忘れずに。</p>",
+            "<h1>承認しました。</h1><p>{} &lt;{}&gt; に仕事キューのリンクを{}。</p><p class=\"muted\">ワーカーから住所の返信が来たらキット(資材一式)の発送を忘れずに。手順: docs/WORK_OPERATIONS.md</p>",
             esc(&name),
             esc(&email),
             if emailed { "メール送信しました" } else { "送信できませんでした(RESEND未設定?)。手動で共有してください" }
@@ -665,6 +672,7 @@ pub async fn work_queue(State(db): State<Db>, Query(q): Query<QueueQuery>) -> Re
 <form method="POST" action="/api/work/ship" style="margin-top:10px">
 <input type="hidden" name="token" value="{}"><input type="hidden" name="order_id" value="{}">
 <label>追跡番号(クリックポスト等)<input name="tracking" required maxlength="40" placeholder="1234-5678-9012"></label>
+<label>完成写真のURL(任意・Googleフォト等の共有リンク。メール添付でもOK)<input name="photo_url" type="url" maxlength="300" placeholder="https://photos.app.goo.gl/..."></label>
 <button class="btn" type="submit">発送完了にする</button></form></div>"#,
                 esc(&j.label),
                 enc,
@@ -754,6 +762,8 @@ pub struct ShipForm {
     pub token: String,
     pub order_id: i64,
     pub tracking: String,
+    #[serde(default)]
+    pub photo_url: String,
 }
 
 pub async fn work_ship(State(db): State<Db>, Form(f): Form<ShipForm>) -> Response {
@@ -761,6 +771,8 @@ pub async fn work_ship(State(db): State<Db>, Form(f): Form<ShipForm>) -> Respons
     if tracking.is_empty() {
         return (StatusCode::BAD_REQUEST, "tracking required").into_response();
     }
+    let photo_url = f.photo_url.trim().to_string();
+    let photo_url = if photo_url.starts_with("http") { Some(photo_url) } else { None };
     let done: Option<(String, String, String)> = {
         let conn = db.lock().unwrap();
         ensure_tables(&conn);
@@ -770,9 +782,9 @@ pub async fn work_ship(State(db): State<Db>, Form(f): Form<ShipForm>) -> Respons
         // 自分の担当 & 未発送のときだけ完了にできる
         let n = conn
             .execute(
-                "UPDATE work_assignments SET shipped_at=datetime('now'), tracking=?
+                "UPDATE work_assignments SET shipped_at=datetime('now'), tracking=?, photo_url=?
                  WHERE order_id=? AND worker_id=? AND shipped_at IS NULL",
-                rusqlite::params![tracking, f.order_id, wid],
+                rusqlite::params![tracking, photo_url, f.order_id, wid],
             )
             .unwrap_or(0);
         if n != 1 {
@@ -806,10 +818,109 @@ pub async fn work_ship(State(db): State<Db>, Form(f): Form<ShipForm>) -> Respons
             .await;
         }
         let _ = crate::send_telegram_message(&format!(
-            "📮 work: order#{} 発送完了 by {} (追跡 {})",
-            f.order_id, wname, tracking
+            "📮 work: order#{} 発送完了 by {} (追跡 {}){}",
+            f.order_id,
+            wname,
+            tracking,
+            photo_url.as_deref().map(|u| format!("\n📷 {}", u)).unwrap_or_default()
         ))
         .await;
     }
     Redirect::to(&format!("/work/queue?token={}", f.token)).into_response()
+}
+
+// ── 月次振込オペ ────────────────────────────────────────────────────────
+// GET  /admin/work/payouts?token=&month=YYYY-MM   … 月次集計(JSON・未払いのみ)
+// GET  /admin/work/mark_paid?token=&worker_id=&month=YYYY-MM … 振込済みマーク(冪等)
+// 「月末締め・翌月振込」の実体。振込そのものは人間(銀行)。手順: docs/WORK_OPERATIONS.md
+#[derive(Deserialize)]
+pub struct PayoutQuery {
+    pub token: String,
+    pub month: Option<String>,
+    pub worker_id: Option<i64>,
+}
+
+fn month_range(month: &str) -> Option<(String, String)> {
+    // "YYYY-MM" → (月初, 翌月初)。datetime('now')形式(UTC)と直接比較できる文字列。
+    let (y, m) = month.split_once('-')?;
+    let y: i32 = y.parse().ok()?;
+    let m: u32 = m.parse().ok()?;
+    if !(1..=12).contains(&m) {
+        return None;
+    }
+    let (ny, nm) = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
+    Some((format!("{:04}-{:02}-01", y, m), format!("{:04}-{:02}-01", ny, nm)))
+}
+
+pub async fn admin_payouts(State(db): State<Db>, Query(q): Query<PayoutQuery>) -> Response {
+    let expected = env::var("ADMIN_TOKEN").unwrap_or_default();
+    if expected.is_empty() || q.token != expected {
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    }
+    let month = q.month.clone().unwrap_or_default();
+    let Some((from, to)) = month_range(&month) else {
+        return (StatusCode::BAD_REQUEST, "month=YYYY-MM required").into_response();
+    };
+    let conn = db.lock().unwrap();
+    ensure_tables(&conn);
+    let rows: Vec<serde_json::Value> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT w.id, w.name, w.email, COALESCE(w.rate_jpy,200),
+                        COUNT(*), COALESCE(SUM(a.fee_jpy),0)
+                 FROM work_assignments a JOIN work_workers w ON w.id = a.worker_id
+                 WHERE a.shipped_at >= ? AND a.shipped_at < ? AND a.paid_at IS NULL
+                 GROUP BY w.id ORDER BY SUM(a.fee_jpy) DESC",
+            )
+            .unwrap();
+        stmt.query_map(rusqlite::params![from, to], |r| {
+            Ok(serde_json::json!({
+                "worker_id": r.get::<_, i64>(0)?, "name": r.get::<_, String>(1)?,
+                "email": r.get::<_, String>(2)?, "rate_jpy": r.get::<_, i64>(3)?,
+                "jobs": r.get::<_, i64>(4)?, "total_jpy": r.get::<_, i64>(5)?
+            }))
+        })
+        .unwrap()
+        .filter_map(|x| x.ok())
+        .collect()
+    };
+    let total: i64 = rows.iter().map(|r| r["total_jpy"].as_i64().unwrap_or(0)).sum();
+    let body = serde_json::json!({
+        "month": month, "unpaid_workers": rows.len(), "unpaid_total_jpy": total,
+        "rows": rows,
+        "next": "振込したら /admin/work/mark_paid?worker_id=<id>&month=<YYYY-MM>&token=… で確定"
+    })
+    .to_string();
+    ([(axum::http::header::CONTENT_TYPE, "application/json")], body).into_response()
+}
+
+pub async fn admin_mark_paid(State(db): State<Db>, Query(q): Query<PayoutQuery>) -> Response {
+    let expected = env::var("ADMIN_TOKEN").unwrap_or_default();
+    if expected.is_empty() || q.token != expected {
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    }
+    let (Some(wid), Some(month)) = (q.worker_id, q.month.clone()) else {
+        return (StatusCode::BAD_REQUEST, "worker_id & month=YYYY-MM required").into_response();
+    };
+    let Some((from, to)) = month_range(&month) else {
+        return (StatusCode::BAD_REQUEST, "month=YYYY-MM required").into_response();
+    };
+    let n = {
+        let conn = db.lock().unwrap();
+        ensure_tables(&conn);
+        // 冪等: 未払い分のみ paid_at を打つ(二重払い防止の台帳側マーカー)
+        conn.execute(
+            "UPDATE work_assignments SET paid_at=datetime('now')
+             WHERE worker_id=? AND shipped_at >= ? AND shipped_at < ? AND paid_at IS NULL",
+            rusqlite::params![wid, from, to],
+        )
+        .unwrap_or(0)
+    };
+    let _ = crate::send_telegram_message(&format!(
+        "💴 work: worker#{} の {} 分 {}件を振込済みにマーク",
+        wid, month, n
+    ))
+    .await;
+    let body = serde_json::json!({"worker_id": wid, "month": month, "marked": n}).to_string();
+    ([(axum::http::header::CONTENT_TYPE, "application/json")], body).into_response()
 }

@@ -69323,6 +69323,8 @@ async fn main() {
         .route("/api/work/ship", post(work::work_ship))
         .route("/admin/work/approve", get(work::admin_approve))
         .route("/admin/work/pending", get(work::admin_pending))
+        .route("/admin/work/payouts", get(work::admin_payouts))
+        .route("/admin/work/mark_paid", get(work::admin_mark_paid))
         .route("/api/collab/session", get(collab_session_info))
         .route("/api/collab/sub/checkout", post(collab_sub_checkout))
         .route("/api/product/collab/:slug", get(api_product_collab))
