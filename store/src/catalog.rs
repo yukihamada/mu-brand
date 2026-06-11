@@ -4267,6 +4267,7 @@ pub async fn store_unmanned_page(State(db): State<Db>) -> Html<String> {
 <meta property="og:title" content="MU MAKE 無人店 — 店員ゼロ、AIだけのTシャツ店">
 <meta property="og:description" content="店員はいない。AIが描いて、刷って、送る。なんでも言ってみ、Tシャツになるから。">
 <meta name="theme-color" content="#0a0a0a">
+<script defer src="/tracking.js"></script>
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
 :root{{--gold:#ffd700;--ink:#f5f5f0;--mut:#8c8c84}}
