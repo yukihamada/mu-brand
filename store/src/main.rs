@@ -69408,6 +69408,11 @@ async fn main() {
         .route("/mujin", get(catalog::store_unmanned_page))
         .route("/unmanned", get(catalog::store_unmanned_page))
         .route("/api/make", post(catalog::public_make).get(catalog::public_make))
+        // 添付アップロード（画像8MB/音声25MB）。axum 既定の 2MB body 上限を
+        // このルートだけ広げる(+multipart封筒ぶん少し余裕を持たせる)。
+        .route("/api/make/upload",
+            post(catalog::make_upload)
+                .layer(axum::extract::DefaultBodyLimit::max(26 * 1024 * 1024)))
         .route("/api/make/recent", get(catalog::make_recent))
         .route("/api/make/peek", get(catalog::make_peek))
         .route("/api/make/notify", post(catalog::make_notify))
