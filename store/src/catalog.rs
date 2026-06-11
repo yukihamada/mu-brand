@@ -5592,19 +5592,6 @@ fn local_gen_client() -> Result<(reqwest::Client, String, String), String> {
     Ok((client, url.trim_end_matches('/').to_string(), key))
 }
 
-/// m5 のローカル LLM にテキスト生成を投げる（Gemini の call_gemini_text と同じ役割）。
-async fn local_gen_text(prompt: &str) -> Result<String, String> {
-    let (client, url, key) = local_gen_client()?;
-    let r = client.post(format!("{}/llm", url)).header("X-MU-Key", key)
-        .json(&serde_json::json!({"prompt": prompt, "max_tokens": 600}))
-        .send().await.map_err(|_| "無料生成サーバーに届きませんでした。Gemini でお試しください。".to_string())?;
-    let j: serde_json::Value = r.json().await.map_err(|e| e.to_string())?;
-    if !j["ok"].as_bool().unwrap_or(false) {
-        return Err("無料生成が混み合っています。少し待つか Gemini でお試しください。".to_string());
-    }
-    Ok(j["text"].as_str().unwrap_or("").to_string())
-}
-
 /// m5 のローカル画像生成（Gemini の call_gemini と同じ役割。design_prompt はそのまま渡す）。
 async fn local_gen_image(design_prompt: &str) -> Result<crate::gemini::GeneratedImage, String> {
     let (client, url, key) = local_gen_client()?;
@@ -5699,6 +5686,25 @@ pub async fn make_upload(mut multipart: axum::extract::Multipart) -> Response {
     }
 }
 
+/// 無料ローカル生成用の超軽量 kind 判定。重い 30B LLM を parse に使うと実測 120s 超で
+/// timeout するため、ローカル経路は LLM を呼ばずキーワードで kind を決める(2026-06-11)。
+fn local_kind_from_prompt(p: &str) -> &'static str {
+    let q = p.to_lowercase();
+    let has = |ks: &[&str]| ks.iter().any(|k| q.contains(k));
+    if has(&["ラッシュガード", "ラッシュ", "rashguard", "no-gi", "no gi", "グラップリング"]) { "rashguard_ls" }
+    else if has(&["ステッカー", "シール", "sticker", "decal"]) { "sticker" }
+    else if has(&["パーカー", "hoodie", "フーディ"]) { "hoodie" }
+    else if has(&["スウェット", "クルーネック", "crewneck", "trainer"]) { "crewneck" }
+    else if has(&["トート", "tote", "エコバッグ"]) { "tote" }
+    else if has(&["黒マグ", "black mug"]) { "mug_black" }
+    else if has(&["マグ", "mug", "カップ"]) { "mug" }
+    else if has(&["スマホ", "iphone", "ケース", "phone case", "phone_case"]) { "phone_case" }
+    else if has(&["タンク", "tank"]) { "tank" }
+    else if has(&["ロンt", "長袖", "long sleeve", "long_sleeve"]) { "long_sleeve_tee" }
+    else if has(&["ポスター", "poster"]) { "poster" }
+    else { "tee" }
+}
+
 pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Query(q): Query<MakeQuery>) -> Response {
     let prompt_in = q.prompt.trim().to_string();
     if prompt_in.is_empty() || prompt_in.chars().count() > 300 {
@@ -5753,14 +5759,28 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     if use_local && !local_gen_enabled() {
         return (StatusCode::SERVICE_UNAVAILABLE, axum::Json(serde_json::json!({"ok":false,"error":"無料生成は準備中です。Gemini でお試しください。"}))).into_response();
     }
-    let parsed_json = match if use_local { local_gen_text(&parse_prompt).await } else { crate::gemini::call_gemini_text(&parse_prompt).await } {
-        Ok(s) => s,
-        Err(e) => return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":format!("生成に失敗しました: {}", e)}))).into_response(),
-    };
-    let json_str: String = parsed_json.find('{').and_then(|i| parsed_json[i..].rfind('}').map(|j| parsed_json[i..i+j+1].to_string())).unwrap_or(parsed_json.clone());
-    let parsed: serde_json::Value = match serde_json::from_str(&json_str) {
-        Ok(v) => v,
-        Err(_) => return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":"うまく解釈できませんでした。言い換えてお試しください。"}))).into_response(),
+    // 無料ローカルは重い 30B LLM を parse に使わない(timeout源)。キーワードで kind を決め、
+    // theme_brief はユーザー文そのまま、auto-approve。Gemini 経路は従来どおり LLM parse。
+    let parsed: serde_json::Value = if use_local {
+        serde_json::json!({
+            "kind": local_kind_from_prompt(&prompt_in),
+            "theme_brief": prompt_in,
+            "display": "MU",
+            "hook": "自然言語から自動生成",
+            "retail_jpy": 0,
+            "flagged": false,
+            "flag_reason": ""
+        })
+    } else {
+        let parsed_json = match crate::gemini::call_gemini_text(&parse_prompt).await {
+            Ok(s) => s,
+            Err(e) => return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":format!("生成に失敗しました: {}", e)}))).into_response(),
+        };
+        let json_str: String = parsed_json.find('{').and_then(|i| parsed_json[i..].rfind('}').map(|j| parsed_json[i..i+j+1].to_string())).unwrap_or(parsed_json.clone());
+        match serde_json::from_str(&json_str) {
+            Ok(v) => v,
+            Err(_) => return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":"うまく解釈できませんでした。言い換えてお試しください。"}))).into_response(),
+        }
     };
     let kind_parsed = parsed["kind"].as_str().unwrap_or("tee");
     // DTG apparel + the AOP rashguard (Printful) + the premium full-coverage
