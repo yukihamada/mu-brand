@@ -859,7 +859,9 @@ async fn fulfill_crypto_order(db: Db, reference: String) {
                 "address1": ship_line1,
                 "address2": ship_line2,
                 "city": ship_city,
-                "state_code": ship_state,
+                // Printful rejects raw JP prefecture names ("東京都"/"東京")
+                // — normalize to ISO 3166-2 ("JP-13"); others pass through.
+                "state_code": crate::jp_prefecture_to_iso(&ship_state).unwrap_or(&ship_state),
                 "country_code": ship_country.to_uppercase(),
                 "zip": ship_zip,
                 "phone": ship_phone,

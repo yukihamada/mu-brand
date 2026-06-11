@@ -9626,6 +9626,9 @@ async fn bounty_printful_fulfill(
     city: &str, state: &str, zip: &str, country: &str, phone: &str,
 ) {
     let variant_id = bounty_variant_id_for_size(size);
+    // Printful rejects raw JP prefecture names ("東京都"/"東京") — normalize
+    // to ISO 3166-2 ("JP-13"); non-JP values pass through unchanged.
+    let state = jp_prefecture_to_iso(state).unwrap_or(state);
     let order = serde_json::json!({
         "recipient": {
             "name": name, "address1": line1, "address2": line2,
@@ -9757,6 +9760,8 @@ async fn mupay_place_printful_order(
     email: &str, name: &str, line1: &str, line2: &str,
     city: &str, state: &str, zip: &str, country: &str, phone: &str,
 ) -> Result<String, String> {
+    // Printful rejects raw JP prefecture names — normalize to ISO 3166-2.
+    let state = jp_prefecture_to_iso(state).unwrap_or(state);
     let order = serde_json::json!({
         "recipient": {
             "name": name, "address1": line1, "address2": line2,
@@ -19431,7 +19436,11 @@ async fn handle_you_purchase_webhook(db: Db, design_id: i64, session: serde_json
     let address1 = addr["line1"].as_str().unwrap_or("").to_string();
     let address2 = addr["line2"].as_str().unwrap_or("").to_string();
     let city     = addr["city"].as_str().unwrap_or("").to_string();
-    let state    = addr["state"].as_str().unwrap_or("").to_string();
+    // Printful rejects raw JP prefecture names — normalize to ISO 3166-2.
+    let state    = {
+        let raw = addr["state"].as_str().unwrap_or("");
+        jp_prefecture_to_iso(raw).unwrap_or(raw).to_string()
+    };
     let country  = addr["country"].as_str().unwrap_or("JP").to_string();
     let zip      = addr["postal_code"].as_str().unwrap_or("").to_string();
 
@@ -21858,7 +21867,8 @@ async fn admin_mu_purchase_manual_ship(
             "address1":     body.address1,
             "address2":     body.address2,
             "city":         body.city,
-            "state_code":   body.state,
+            // Printful rejects raw JP prefecture names — normalize to ISO 3166-2.
+            "state_code":   jp_prefecture_to_iso(&body.state).unwrap_or(&body.state),
             "country_code": body.country,
             "zip":          body.postal_code,
         },
@@ -23985,9 +23995,34 @@ fn donations_by_destination(conn: &Connection) -> Vec<(String, i64, i64)> {
 /// code (e.g. "JP-13"). Printful requires this for JP recipients; Stripe returns
 /// the prefecture as a name string. Returns None if no match — caller should
 /// pass through the raw value.
-fn jp_prefecture_to_iso(s: &str) -> Option<&'static str> {
-    match s.trim() {
-        "Hokkaido"  | "Hokkaidō"  | "北海道"   => Some("JP-01"),
+///
+/// This is the ONE canonical prefecture table for the crate — every Printful
+/// recipient builder must route its state through here (directly or via
+/// `catalog::normalize_state_code` / `jp_state_code`). 2026-06-08 incident:
+/// catalog order #41 (phone case, state="東京" without 都) hit a weaker local
+/// table in catalog.rs that only knew full names, sent state_code="" and got
+/// Printful 400 "Recipient: Please fill in your prefecture" → auto-refund.
+pub(crate) fn jp_prefecture_to_iso(s: &str) -> Option<&'static str> {
+    let t = s.trim();
+    if let Some(code) = jp_prefecture_lookup(t) {
+        return Some(code);
+    }
+    // Romaji matches case-insensitively ("TOKYO" / "tokyo" → "Tokyo").
+    if t.is_ascii() && !t.is_empty() {
+        let lower = t.to_ascii_lowercase();
+        let mut chars = lower.chars();
+        let titled: String = chars.next().into_iter()
+            .map(|c| c.to_ascii_uppercase())
+            .chain(chars)
+            .collect();
+        return jp_prefecture_lookup(&titled);
+    }
+    None
+}
+
+fn jp_prefecture_lookup(s: &str) -> Option<&'static str> {
+    match s {
+        "Hokkaido"  | "Hokkaidō"  | "北海道" | "北海" => Some("JP-01"),
         "Aomori"    | "青森県" | "青森"        => Some("JP-02"),
         "Iwate"     | "岩手県" | "岩手"        => Some("JP-03"),
         "Miyagi"    | "宮城県" | "宮城"        => Some("JP-04"),
@@ -44151,6 +44186,8 @@ async fn fire_ma_gift_printful_order(db: Db, token: String) {
         "XS" => 9527, "S" => 4016, "M" => 4017, "L" => 4018,
         "XL" => 4019, "2XL" => 4020, _ => 4017,
     };
+    // Printful rejects raw JP prefecture names — normalize to ISO 3166-2.
+    let state = jp_prefecture_to_iso(&state).unwrap_or(&state).to_string();
     let order = serde_json::json!({
         "recipient": {
             "name": ship_name, "address1": addr1, "address2": addr2,
@@ -51708,57 +51745,10 @@ fn ma_ship_size_to_variant(size: &str) -> u64 {
 fn jp_state_code(input: &str) -> String {
     let s = input.trim();
     if s.starts_with("JP-") { return s.to_string(); }
-    let normalized = s.trim_end_matches('都').trim_end_matches('府').trim_end_matches('県');
-    match normalized {
-        "北海道" | "北海" => "JP-01",
-        "青森" => "JP-02",
-        "岩手" => "JP-03",
-        "宮城" => "JP-04",
-        "秋田" => "JP-05",
-        "山形" => "JP-06",
-        "福島" => "JP-07",
-        "茨城" => "JP-08",
-        "栃木" => "JP-09",
-        "群馬" => "JP-10",
-        "埼玉" => "JP-11",
-        "千葉" => "JP-12",
-        "東京" => "JP-13",
-        "神奈川" => "JP-14",
-        "新潟" => "JP-15",
-        "富山" => "JP-16",
-        "石川" => "JP-17",
-        "福井" => "JP-18",
-        "山梨" => "JP-19",
-        "長野" => "JP-20",
-        "岐阜" => "JP-21",
-        "静岡" => "JP-22",
-        "愛知" => "JP-23",
-        "三重" => "JP-24",
-        "滋賀" => "JP-25",
-        "京都" => "JP-26",
-        "大阪" => "JP-27",
-        "兵庫" => "JP-28",
-        "奈良" => "JP-29",
-        "和歌山" => "JP-30",
-        "鳥取" => "JP-31",
-        "島根" => "JP-32",
-        "岡山" => "JP-33",
-        "広島" => "JP-34",
-        "山口" => "JP-35",
-        "徳島" => "JP-36",
-        "香川" => "JP-37",
-        "愛媛" => "JP-38",
-        "高知" => "JP-39",
-        "福岡" => "JP-40",
-        "佐賀" => "JP-41",
-        "長崎" => "JP-42",
-        "熊本" => "JP-43",
-        "大分" => "JP-44",
-        "宮崎" => "JP-45",
-        "鹿児島" => "JP-46",
-        "沖縄" => "JP-47",
-        _ => "",
-    }.to_string()
+    // Delegates to the crate-wide canonical table (full names, suffix-less
+    // "東京"/"大阪", romaji any case). Empty string on no match keeps the
+    // historical contract of this helper (form validation rejects empties).
+    jp_prefecture_to_iso(s).unwrap_or("").to_string()
 }
 
 /// GET /ma/ship/:token — form page (or submitted view).
