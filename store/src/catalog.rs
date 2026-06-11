@@ -8245,6 +8245,71 @@ fn readmore_journal_html(conn: &rusqlite::Connection, lang: &str) -> String {
     )
 }
 
+// 本家ドロップ線 (products テーブル — MUON=1日1ドロップ / MUGEN=ボンディングカーブ /
+// MA=間オークション) の現役 1 点ずつを /shop グリッドと同じ .card 見た目で返す。
+// CATALOG_CONTRACT §1 により products は catalog_* と別スキーマ族 — ここでは
+// SELECT のみ (書き込み・移行はしない)。在庫が掃けた行 (inventory<=sold) は出さない。
+fn shop_drop_cards(conn: &rusqlite::Connection, only: Option<&str>, lang: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for slug in ["muon", "mugen", "ma"] {
+        if let Some(b) = only {
+            if b != slug {
+                continue;
+            }
+        }
+        let row: Option<(i64, String, Option<String>, i64, i64, i64, i64)> = conn
+            .query_row(
+                "SELECT id, name, mockup_url, price_jpy, inventory, sold, current_bid
+                 FROM products WHERE brand=?1 AND active=1 AND inventory > sold
+                 ORDER BY id DESC LIMIT 1",
+                rusqlite::params![slug],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
+            )
+            .ok();
+        let Some((id, name, mockup, price, inventory, sold, current_bid)) = row else {
+            continue;
+        };
+        // MA は入札体験ごと /ma へ。muon/mugen は canonical の /p/:id。
+        let (brand_label, badge, href) = match (slug, lang) {
+            ("muon", "en") => ("MUON", "Today's drop".to_string(), format!("/p/{id}")),
+            ("muon", _) => ("MUON 無音", "今日の一枚 · 1日1ドロップ".to_string(), format!("/p/{id}")),
+            ("mugen", "en") => ("MUGEN", "MUGEN drop".to_string(), format!("/p/{id}")),
+            ("mugen", _) => ("MUGEN 無限", "MUGEN ドロップ".to_string(), format!("/p/{id}")),
+            (_, "en") => ("MA — 間", "Live auction".to_string(), "/ma".to_string()),
+            _ => ("間 MA", "オークション開催中".to_string(), "/ma".to_string()),
+        };
+        let price_txt = if slug == "ma" {
+            let cur = current_bid.max(price);
+            if lang == "en" { format!("Current ¥{}", format_jpy(cur)) } else { format!("現在 ¥{}", format_jpy(cur)) }
+        } else {
+            let left = (inventory - sold).max(0);
+            let left_txt = if lang == "en" { format!(" · {left} left") } else { format!(" · 残り{left}") };
+            format!("¥{}{left_txt}", format_jpy(price))
+        };
+        let img = mockup.unwrap_or_default();
+        let img_html = if img.is_empty() {
+            String::new()
+        } else {
+            format!(
+                r##"<img src="{img}" alt="{alt}" loading="lazy" onerror="this.onerror=null;this.src='/static/designs/marker_zero.png';this.style.objectFit='contain';this.style.background='#0a0a0a';this.style.padding='28px'">"##,
+                img = html_attr(&img),
+                alt = html_attr(&format!("{} — {}", name, brand_label)),
+            )
+        };
+        out.push(format!(
+            r##"<a class="card" href="{href}" data-funnel="cta_click" data-funnel-cta="shop_drop_{slug}"><span class="img" style="position:relative;display:block"><span style="position:absolute;top:8px;left:8px;background:rgba(0,0,0,0.72);color:#e6c449;font-size:10px;letter-spacing:.04em;padding:3px 7px;border-radius:999px;backdrop-filter:blur(4px);z-index:2">{badge}</span>{img_html}</span><span class="body"><span class="brand">{brand_label}</span><span class="name">{name}</span><span class="price">{price_txt}</span></span></a>"##,
+            href = html_attr(&href),
+            slug = slug,
+            badge = html_text(&badge),
+            img_html = img_html,
+            brand_label = html_text(brand_label),
+            name = html_text(&name),
+            price_txt = html_text(&price_txt),
+        ));
+    }
+    out
+}
+
 pub async fn shop_index(
     State(db): State<Db>,
     Query(q): Query<ShopQuery>,
@@ -8340,6 +8405,19 @@ pub async fn shop_index(
             html_attr(&shop_url("", sort, kind, &q_trim)),
             if lang == "en" { "All" } else { "すべて" },
         ));
+        // 本家ドロップ線への固定チップ。catalog_brands 外 (products テーブル系) なので
+        // 件数 JOIN に乗らない — リンク先は ?brand= でなく各専用ページ (入札/カーブ体験込み)。
+        for (slug, ja, en) in [
+            ("muon", "🌑 MUON", "🌑 MUON"),
+            ("mugen", "♾️ MUGEN", "♾️ MUGEN"),
+            ("ma", "間 MA", "MA Auction"),
+        ] {
+            s.push_str(&format!(
+                r#"<a class="chip" href="/{slug}" data-funnel="cta_click" data-funnel-cta="shop_brand_{slug}">{label}</a>"#,
+                slug = slug,
+                label = if lang == "en" { en } else { ja },
+            ));
+        }
         let mut hidden = String::new();
         let mut hidden_n = 0usize;
         for (i, (slug, name, emoji, n, config_json)) in brands.iter().enumerate() {
@@ -8433,11 +8511,37 @@ pub async fn shop_index(
             .collect::<String>()
     };
 
-    let grid = items
-        .iter()
-        .enumerate()
-        .map(|(i, p)| render_card(p, i))
-        .collect::<String>();
+    // 本家ドロップ (MUON/MUGEN/MA) をカタログ一覧に混ぜる。1ページ目・検索なし・
+    // kind が全部/Tシャツのときだけ (2ページ目以降や検索結果に出すと文脈が壊れる)。
+    let drop_cards: Vec<String> = if page == 1
+        && q_trim.is_empty()
+        && matches!(kind, "" | "tee")
+        && (brand_filter.is_empty() || matches!(brand_filter.as_str(), "muon" | "mugen" | "ma"))
+    {
+        let conn = db.lock().unwrap();
+        shop_drop_cards(
+            &conn,
+            if brand_filter.is_empty() { None } else { Some(brand_filter.as_str()) },
+            lang,
+        )
+    } else {
+        Vec::new()
+    };
+
+    let grid = {
+        let mut cards: Vec<String> = items
+            .iter()
+            .enumerate()
+            .map(|(i, p)| render_card(p, i))
+            .collect();
+        // 先頭固め (広告棚っぽさ) を避けて 0 / 5 / 11 番目に散らして「混ぜる」。
+        // 一覧が短ければ末尾に足す。
+        for (j, dc) in drop_cards.into_iter().enumerate() {
+            let pos = [0usize, 5, 11][j.min(2)];
+            if pos <= cards.len() { cards.insert(pos, dc) } else { cards.push(dc) }
+        }
+        cards.concat()
+    };
 
     let page_count = items.len();
     let total_pages = ((total_active as f64) / (SHOP_PAGE_SIZE as f64)).ceil() as u32;
