@@ -2745,6 +2745,19 @@ async fn printful_onbody_mockup(
     // stretched. None → fall back to the old square boxes.
     let design_dims = design_dims(&client, &design_url).await;
 
+    // /make/edit の位置指定: 保存時に aspect-fit 解決済みのボックスが
+    // meta_json.print_position_box にあれば、モックアップもそれを使う
+    // (実発注 build_printful_item と同じボックス = WYSIWYG)。
+    let custom_pos: Option<serde_json::Value> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT json_extract(COALESCE(meta_json,'{}'),'$.print_position_box')
+             FROM catalog_products WHERE sku=?",
+            rusqlite::params![&sku],
+            |r| r.get::<_, Option<String>>(0),
+        ).ok().flatten().and_then(|s| serde_json::from_str(&s).ok())
+    };
+
     // 1. Create task. The `position` field is mandatory per Printful
     //    error MG-4 "Position field is missing"; values mirror
     //    printful_mockup_config_for() in main.rs for chest_tee.
@@ -2785,6 +2798,10 @@ async fn printful_onbody_mockup(
             "width": 1392,      "height": 2220,
             "top": 0,           "left": 0
         }),
+        // /make/edit で位置指定された DTG アパレル: 保存時に解決済みのボックス
+        // (meta_json.print_position_box・aspect-fit 済み)をそのまま使う。
+        // AOP(301系)は4パネル cover-fill が正なので対象外。
+        71 | 146 | 145 | 539 | 356 if custom_pos.is_some() => custom_pos.clone().unwrap(),
         // 前面チェストDTGアパレル + AOPラッシュガード4パネル → tee 1800×2400 box。
         // tee(71)/hoodie(146)/crewneck(145)/tank(539)/long_sleeve(356) +
         // rashguard AOP(301/302/368/369/836)。
@@ -5463,6 +5480,8 @@ async function runMake(){
 // 生成済みの結果カードを描画。ok=メール認証済み端末か(未認証でもデザインは見せる)。
 function renderResult(j,p,ok){
   if(ok===undefined)ok=true;
+  // あとから編集の合言葉をこの端末に保存(編集リンクは作成者だけが持つ)。
+  if(j.edit_token&&j.sku){try{localStorage.setItem('mu_edit_'+j.sku,j.edit_token);}catch(e){}}
   // 行動科学の根拠: IKEA効果(自作品は+63%高く評価/Norton+2012)→「あなたが作った」と
   // プロンプトのエコーで作者性を返す。心理的所有感(Peck&Shu 2009)→着用イメージ差替+所有語CTA。
   var url = j.buy_url || j.pdp_url || '';
@@ -5473,6 +5492,8 @@ function renderResult(j,p,ok){
   var share = url ? '<button class=share onclick="muEvent(\'share\',{sku:\''+j.sku+'\'});muShare(this)" data-u="'+url+'" data-t="'+((j.display||'MU')+' / wearmu')+'">📣 シェアして広める</button>'
     +' <a class=share data-funnel="share" data-funnel-cta="make_share_x" href="https://x.com/intent/tweet?text='+shareTxt+'&url='+encodeURIComponent(url+'?ref=make_share_x')+'" target="_blank" rel="noopener" onclick="muEvent(\'share\',{sku:\''+j.sku+'\',ch:\'x\'})" style="text-decoration:none">𝕏 ポスト</a>'
     +' <a class=share data-funnel="share" data-funnel-cta="make_share_line" href="https://social-plugins.line.me/lineit/share?url='+encodeURIComponent(url+'?ref=make_share_line')+'" target="_blank" rel="noopener" onclick="muEvent(\'share\',{sku:\''+j.sku+'\',ch:\'line\'})" style="text-decoration:none">LINE</a>' : '';
+  var edit = (j.edit_token&&j.sku) ? ' <a class=share style="text-decoration:none" href="/make/edit/'+j.sku+'?t='+j.edit_token+'" onclick="muEvent(\'cta_click\',{cta:\'make_edit\',sku:\''+j.sku+'\'})">✏️ あとから編集（位置・説明・価格）</a>' : '';
+  share += edit;
   var spread = (ok && url) ? '<div class=spread>棚にも並びました。広めるほどこの子が売れる → 売上の10%が作り手のあなたに。<a href="/start?ref=make_result" style="color:#ffd700">クリエイター登録(無料)で売上と報酬を管理 →</a></div>' : '';
   var one = j.auto_approved ? '<div class=one>🌱 <b>世界に1枚。</b>同じ絵は二度と生成されません。ファーストオーナーは、まだいません。</div>' : '';
   var nt = j.auto_approved ? '' : '<div class=note>'+(j.note||'つくりました。確認後に公開・購入できます。')+'</div>';
@@ -5704,6 +5725,424 @@ fn local_kind_from_prompt(p: &str) -> &'static str {
     else if has(&["ポスター", "poster"]) { "poster" }
     else { "tee" }
 }
+
+// ════════════════════════════════════════════════════════════════════
+// /make/edit — 作った後の編集(プリント位置・タイトル/説明・価格・曲・取り下げ)
+//
+// 認証は作成時に発行する meta_json.edit_token(レスポンス+作成者端末の
+// localStorage にだけ渡る合言葉)。位置は保存時に aspect-fit 済みの実寸
+// ボックス print_position_box へ解決し、モックアップ生成と実発注の両方が
+// 同じボックスを使う = 見た目どおりに刷られる。
+// ════════════════════════════════════════════════════════════════════
+
+/// /make/edit で位置を動かせる DTG 前面プリント製品(printful product id)。
+/// tee(71)/hoodie(146)/crewneck(145)/tank(539)/long_sleeve(356)。
+/// AOP(301系)は4パネル cover-fill、mug/poster/sticker/phone case 等は
+/// 専用 printfile なので対象外。
+const MAKE_POS_EDITABLE: [i64; 5] = [71, 146, 145, 539, 356];
+
+#[derive(serde::Deserialize)]
+pub struct MakeEditTokenQuery {
+    #[serde(default)]
+    pub t: Option<String>,
+}
+
+struct MakeEditRow {
+    label: String,
+    price_jpy: i64,
+    status: String,
+    design: String,
+    mockup: String,
+    route: String,
+    pp: i64,
+    pv: i64,
+    meta: serde_json::Map<String, serde_json::Value>,
+}
+
+fn make_edit_load(
+    conn: &rusqlite::Connection,
+    sku: &str,
+    token: &str,
+) -> Result<MakeEditRow, (StatusCode, &'static str)> {
+    if token.is_empty() || token.len() > 64 {
+        return Err((StatusCode::UNAUTHORIZED, "編集リンクが無効です"));
+    }
+    let row = conn
+        .query_row(
+            "SELECT COALESCE(label,''), retail_price_jpy, COALESCE(status,''),
+                    COALESCE(design_file,''), COALESCE(mockup_main_file,''),
+                    COALESCE(fulfillment_route,'printful_dtg'),
+                    printful_product_id, printful_variant_id, COALESCE(meta_json,'{}')
+             FROM catalog_products WHERE sku=? AND legacy_source='public_make'",
+            rusqlite::params![sku],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, String>(5)?,
+                    r.get::<_, i64>(6)?, r.get::<_, i64>(7)?, r.get::<_, String>(8)?,
+                ))
+            },
+        )
+        .map_err(|_| (StatusCode::NOT_FOUND, "作品が見つかりません"))?;
+    let meta: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str::<serde_json::Value>(&row.8)
+            .ok()
+            .and_then(|v| v.as_object().cloned())
+            .unwrap_or_default();
+    if meta.get("edit_token").and_then(|v| v.as_str()) != Some(token) {
+        return Err((StatusCode::UNAUTHORIZED, "編集リンクが無効です"));
+    }
+    Ok(MakeEditRow {
+        label: row.0, price_jpy: row.1, status: row.2, design: row.3,
+        mockup: row.4, route: row.5, pp: row.6, pv: row.7, meta,
+    })
+}
+
+/// GET /api/make/item/:sku?t= — 編集ページの初期表示用に現在値を返す。
+pub async fn make_item(
+    State(db): State<Db>,
+    axum::extract::Path(sku): axum::extract::Path<String>,
+    Query(q): Query<MakeEditTokenQuery>,
+) -> Response {
+    let token = q.t.unwrap_or_default();
+    let row = {
+        let conn = db.lock().unwrap();
+        match make_edit_load(&conn, &sku, token.trim()) {
+            Ok(r) => r,
+            Err((c, m)) => return (c, axum::Json(serde_json::json!({"ok":false,"error":m}))).into_response(),
+        }
+    };
+    let kind = kind_from_sku(&sku);
+    let (title, hook) = row.label.split_once(" — ")
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+        .unwrap_or((row.label.clone(), String::new()));
+    let floor = PRODUCT_SPECS.iter().find(|s| s.kind == kind).map(|s| s.retail_jpy).unwrap_or(500);
+    axum::Json(serde_json::json!({
+        "ok": true, "sku": sku, "title": title, "hook": hook,
+        "price_jpy": row.price_jpy, "price_floor_jpy": floor,
+        "kind": kind, "status": row.status,
+        "design_url": row.design, "mockup_url": row.mockup,
+        "audio_url": row.meta.get("audio_url").cloned().unwrap_or(serde_json::Value::Null),
+        "position": row.meta.get("print_position").cloned().unwrap_or(serde_json::Value::Null),
+        "can_position": row.route == "printful_dtg" && MAKE_POS_EDITABLE.contains(&row.pp),
+        "pdp_url": format!("https://wearmu.com/shop/{}", sku),
+    })).into_response()
+}
+
+#[derive(serde::Deserialize)]
+pub struct MakeEditPos {
+    pub w_pct: f64,
+    pub x_pct: f64,
+    pub y_pct: f64,
+}
+
+#[derive(serde::Deserialize)]
+pub struct MakeEditBody {
+    #[serde(default)] pub title: Option<String>,
+    #[serde(default)] pub hook: Option<String>,
+    #[serde(default)] pub price_jpy: Option<i64>,
+    #[serde(default)] pub position: Option<MakeEditPos>,
+    /// 曲URLの差し替え(/api/make/upload の返値)。空文字=曲を外す(songは不可)。
+    #[serde(default)] pub audio_url: Option<String>,
+    #[serde(default)] pub retire: Option<bool>,
+}
+
+/// POST /api/make/edit/:sku?t= — 編集を適用。位置変更時は着用イメージを再生成。
+pub async fn make_edit_apply(
+    State(db): State<Db>,
+    axum::extract::Path(sku): axum::extract::Path<String>,
+    Query(q): Query<MakeEditTokenQuery>,
+    axum::Json(body): axum::Json<MakeEditBody>,
+) -> Response {
+    let token = q.t.unwrap_or_default();
+    let row = {
+        let conn = db.lock().unwrap();
+        match make_edit_load(&conn, &sku, token.trim()) {
+            Ok(r) => r,
+            Err((c, m)) => return (c, axum::Json(serde_json::json!({"ok":false,"error":m}))).into_response(),
+        }
+    };
+    // 取り下げ(棚から下げる)。元に戻すのは人間オペレーション。
+    if body.retire == Some(true) {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE catalog_products SET status='retired', is_active=0, updated_at=datetime('now') WHERE sku=?",
+            rusqlite::params![&sku],
+        );
+        return axum::Json(serde_json::json!({"ok":true,"retired":true})).into_response();
+    }
+    let kind = kind_from_sku(&sku);
+    let mut updated: Vec<&str> = Vec::new();
+    let mut meta = row.meta.clone();
+    // タイトル/ひとこと → label & description_ja("タイトル — ひとこと"形式を維持)
+    let mut new_label: Option<String> = None;
+    if body.title.is_some() || body.hook.is_some() {
+        let (cur_t, cur_h) = row.label.split_once(" — ")
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .unwrap_or((row.label.clone(), String::new()));
+        let t = body.title.as_deref().map(str::trim)
+            .filter(|s| !s.is_empty() && s.chars().count() <= 40)
+            .map(String::from).unwrap_or(cur_t);
+        let h = body.hook.as_deref().map(str::trim)
+            .filter(|s| s.chars().count() <= 120)
+            .map(String::from).unwrap_or(cur_h);
+        let l = if h.is_empty() { t } else { format!("{} — {}", t, h) };
+        if l != row.label { new_label = Some(l); updated.push("text"); }
+    }
+    // 価格(種別の原価floorから下げられない・上限¥99,000)
+    let mut new_price: Option<i64> = None;
+    if let Some(p) = body.price_jpy {
+        let floor = PRODUCT_SPECS.iter().find(|s| s.kind == kind).map(|s| s.retail_jpy).unwrap_or(500);
+        let p2 = p.clamp(floor, 99_000);
+        if p2 != row.price_jpy { new_price = Some(p2); updated.push("price"); }
+    }
+    // 曲の差し替え/取り外し
+    if let Some(au) = &body.audio_url {
+        let au = au.trim();
+        if au.is_empty() {
+            if kind == "song" {
+                return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"曲の商品から音源は外せません(「棚から下げる」は可能です)"}))).into_response();
+            }
+            if meta.remove("audio_url").is_some() { updated.push("audio"); }
+        } else if au.len() <= 2000 && au.starts_with("https://")
+            && crate::agent_api::is_trusted_design_host(au) {
+            meta.insert("audio_url".into(), serde_json::Value::from(au));
+            updated.push("audio");
+        } else {
+            return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"音源は画面のアップロードボタンから差し替えてください"}))).into_response();
+        }
+    }
+    // プリント位置 — % 指定を 1800×2400 の実寸ボックスに解決して保存。
+    // デザインの実寸 aspect で fit するため await が要る(lock の外)。
+    let mut regen = false;
+    if let Some(pos) = &body.position {
+        if !(row.route == "printful_dtg" && MAKE_POS_EDITABLE.contains(&row.pp)) {
+            return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"この商品は位置調整に対応していません"}))).into_response();
+        }
+        let w = pos.w_pct.clamp(20.0, 100.0);
+        let x = pos.x_pct.clamp(0.0, 100.0);
+        let y = pos.y_pct.clamp(0.0, 100.0);
+        let side = ((1800.0 * w / 100.0).round() as i64).clamp(360, 1800);
+        let box_left = (((1800 - side) as f64) * x / 100.0).round() as i64;
+        let box_top = (((2400 - side) as f64) * y / 100.0).round() as i64;
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build().unwrap_or_else(|_| reqwest::Client::new());
+        let mut bx = match design_dims(&client, &row.design).await {
+            Some((dw, dh)) => aspect_fit_position(1800, 2400, box_left, box_top, side, dw, dh),
+            None => serde_json::json!({
+                "area_width": 1800, "area_height": 2400,
+                "width": side, "height": side, "top": box_top, "left": box_left
+            }),
+        };
+        bx["limit_to_print_area"] = serde_json::Value::from(true);
+        meta.insert("print_position".into(), serde_json::json!({"w_pct": w, "x_pct": x, "y_pct": y}));
+        meta.insert("print_position_box".into(), bx);
+        updated.push("position");
+        regen = true;
+    }
+    if updated.is_empty() {
+        return axum::Json(serde_json::json!({"ok":true,"updated":[],"note":"変更はありません"})).into_response();
+    }
+    {
+        let conn = db.lock().unwrap();
+        if let Some(l) = &new_label {
+            let _ = conn.execute(
+                "UPDATE catalog_products SET label=?, description_ja=?, updated_at=datetime('now') WHERE sku=?",
+                rusqlite::params![l, l, &sku],
+            );
+        }
+        if let Some(p) = new_price {
+            let _ = conn.execute(
+                "UPDATE catalog_products SET retail_price_jpy=?, updated_at=datetime('now') WHERE sku=?",
+                rusqlite::params![p, &sku],
+            );
+        }
+        let _ = conn.execute(
+            "UPDATE catalog_products SET meta_json=?, updated_at=datetime('now') WHERE sku=?",
+            rusqlite::params![serde_json::Value::Object(meta).to_string(), &sku],
+        );
+    }
+    if regen {
+        let (db_c, sku_c, pp, pv, design) = (db.clone(), sku.clone(), row.pp, row.pv, row.design.clone());
+        tokio::spawn(async move { let _ = generate_onbody_mockup(db_c, sku_c, pp, pv, design).await; });
+    }
+    axum::Json(serde_json::json!({
+        "ok": true, "updated": updated, "mockup_regen": regen,
+        "pdp_url": format!("https://wearmu.com/shop/{}", sku),
+        "note": if regen { "保存しました。着用イメージを作り直しています(数十秒)。" } else { "保存しました。" },
+    })).into_response()
+}
+
+/// GET /make/edit/:sku — 編集ページ(認証は JS が ?t= / localStorage の token で API に行う)。
+pub async fn make_edit_page(axum::extract::Path(sku): axum::extract::Path<String>) -> Html<String> {
+    let safe: String = sku.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').take(80).collect();
+    Html(MAKE_EDIT_HTML.replace("__SKU__", &safe))
+}
+
+const MAKE_EDIT_HTML: &str = r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>編集 — MU MAKE</title><meta name="robots" content="noindex">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0a0a;color:#f5f5f0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.7}
+nav{padding:16px 24px;border-bottom:1px solid rgba(255,255,255,.08)}
+nav a{color:#f5f5f0;text-decoration:none;font-size:11px;letter-spacing:.3em;text-transform:uppercase;font-weight:900}
+.wrap{max-width:560px;margin:0 auto;padding:32px 22px 100px}
+h1{font-size:24px;font-weight:800;margin-bottom:6px}
+.sub{color:rgba(245,245,240,.55);font-size:13px;margin-bottom:22px}
+.sec{background:#141414;border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:16px;margin-bottom:14px}
+.sec h2{font-size:12px;letter-spacing:.2em;color:rgba(255,215,0,.85);font-weight:700;margin-bottom:10px;text-transform:uppercase}
+label.f{display:block;font-size:12px;color:rgba(245,245,240,.6);margin:10px 0 4px}
+input[type=text],input[type=number],textarea{width:100%;background:#0f0f0f;border:1px solid rgba(255,255,255,.14);color:#f5f5f0;border-radius:8px;padding:10px 12px;font-size:15px;font-family:inherit}
+textarea{min-height:64px;resize:vertical}
+input:focus,textarea:focus{outline:none;border-color:#ffd700}
+input[type=range]{width:100%;accent-color:#ffd700}
+.pv{position:relative;width:100%;aspect-ratio:3/4;background:#1b1b1b;border:1px dashed rgba(255,255,255,.18);border-radius:10px;overflow:hidden}
+.pv img{position:absolute;object-fit:contain}
+.pvnote{font-size:11px;color:rgba(245,245,240,.45);margin-top:6px}
+.row{display:flex;gap:10px;align-items:center}
+button{background:#ffd700;color:#0a0a0a;border:0;border-radius:10px;padding:13px 18px;font-size:15px;font-weight:800;cursor:pointer;width:100%;font-family:inherit}
+button:disabled{opacity:.5}
+button.ghost{background:transparent;border:1px solid rgba(255,215,0,.45);color:#ffd700;font-weight:600;font-size:13px;padding:9px 12px;width:auto}
+button.danger{background:transparent;border:1px solid rgba(255,120,100,.5);color:#ff8a7a;font-weight:600;font-size:13px;width:auto;padding:9px 12px}
+.msg{font-size:13px;margin-top:10px;min-height:18px}
+.msg.ok{color:#9fdf9f}.msg.err{color:#ff8a7a}
+audio{width:100%;margin:6px 0}
+.err-page{padding:60px 22px;text-align:center;color:rgba(245,245,240,.7)}
+</style></head><body>
+<nav><a href="/make">MU MAKE</a></nav>
+<div class="wrap" id="app" hidden>
+  <h1>あとから、ととのえる。</h1>
+  <div class="sub" id="skuLine"></div>
+  <div class="sec" id="posSec" hidden>
+    <h2>プリント位置</h2>
+    <div class="pv" id="pv"><img id="pvImg" alt=""></div>
+    <div class="pvnote">枠=プリント可能エリア。保存すると着用イメージも作り直されます(数十秒)。</div>
+    <label class="f">大きさ <span id="wv"></span>%</label>
+    <input type="range" id="w" min="20" max="100" step="1">
+    <label class="f">左右</label>
+    <input type="range" id="x" min="0" max="100" step="1">
+    <label class="f">上下</label>
+    <input type="range" id="y" min="0" max="100" step="1">
+    <div style="margin-top:8px"><button class="ghost" id="posReset">標準の胸位置に戻す</button></div>
+  </div>
+  <div class="sec">
+    <h2>タイトルと説明</h2>
+    <label class="f">タイトル(40字まで)</label>
+    <input type="text" id="ti" maxlength="40">
+    <label class="f">ひとこと(120字まで)</label>
+    <textarea id="hk" maxlength="120"></textarea>
+    <label class="f">価格(円・<span id="floorv"></span>円から)</label>
+    <input type="number" id="pr" min="0" step="100">
+  </div>
+  <div class="sec" id="auSec" hidden>
+    <h2>曲</h2>
+    <audio id="auPlay" controls preload="none"></audio>
+    <div class="row">
+      <label class="ghost" style="border:1px solid rgba(255,215,0,.45);border-radius:10px;padding:9px 12px;color:#ffd700;font-size:13px;cursor:pointer">🎵 曲を差し替える<input id="auF" type="file" accept="audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/ogg,.mp3,.m4a,.wav,.ogg" hidden></label>
+      <button class="danger" id="auRemove" hidden>曲を外す</button>
+    </div>
+    <div class="msg" id="auMsg"></div>
+  </div>
+  <button id="save">保存する</button>
+  <div class="msg" id="msg"></div>
+  <div style="margin-top:18px;display:flex;justify-content:space-between;align-items:center">
+    <a id="pdp" href="#" style="color:#ffd700;font-size:13px">商品ページを見る →</a>
+    <button class="danger" id="retire">棚から下げる</button>
+  </div>
+</div>
+<div class="err-page" id="errPage" hidden>この編集リンクは無効です。<br>作成した端末・作成直後のリンクからもう一度開いてください。</div>
+<script>
+var SKU='__SKU__';
+var $=function(s){return document.querySelector(s);};
+var T=new URLSearchParams(location.search).get('t')||'';
+try{if(!T)T=localStorage.getItem('mu_edit_'+SKU)||'';else localStorage.setItem('mu_edit_'+SKU,T);}catch(e){}
+var IT=null, AU=null; // AU=差し替え後audio url(未保存)
+function pvUpdate(){
+  var w=+$('#w').value,x=+$('#x').value,y=+$('#y').value;
+  $('#wv').textContent=w;
+  var img=$('#pvImg');
+  var sideW=w, sideH=w*1800/2400; // 高さ%換算(エリア3:4)
+  img.style.width=sideW+'%'; img.style.height=sideH+'%';
+  img.style.left=((100-sideW)*x/100)+'%';
+  img.style.top=((100-sideH)*y/100)+'%';
+}
+['w','x','y'].forEach(function(id){document.addEventListener('input',function(e){if(e.target.id===id)pvUpdate();});});
+function load(){
+  fetch('/api/make/item/'+encodeURIComponent(SKU)+'?t='+encodeURIComponent(T)).then(function(r){return r.json();}).then(function(j){
+    if(!j.ok){$('#errPage').hidden=false;return;}
+    IT=j;
+    $('#app').hidden=false;
+    $('#skuLine').textContent=j.sku+'（'+(j.status==='live'?'公開中':j.status)+'）';
+    $('#ti').value=j.title||''; $('#hk').value=j.hook||'';
+    $('#pr').value=j.price_jpy; $('#pr').min=j.price_floor_jpy; $('#floorv').textContent=(j.price_floor_jpy||0).toLocaleString('ja-JP');
+    $('#pdp').href=j.pdp_url;
+    if(j.can_position){
+      $('#posSec').hidden=false;
+      $('#pvImg').src=j.design_url;
+      var p=j.position||{w_pct:70,x_pct:50,y_pct:33};
+      $('#w').value=Math.round(p.w_pct);$('#x').value=Math.round(p.x_pct);$('#y').value=Math.round(p.y_pct);
+      pvUpdate();
+    }
+    if(j.audio_url){
+      $('#auSec').hidden=false;
+      $('#auPlay').src=j.audio_url;
+      if(j.kind!=='song')$('#auRemove').hidden=false;
+    }
+  }).catch(function(){$('#errPage').hidden=false;});
+}
+$('#posReset').onclick=function(){$('#w').value=70;$('#x').value=50;$('#y').value=33;pvUpdate();};
+$('#auF').onchange=function(){
+  var f=this.files&&this.files[0]; if(!f)return;
+  if(f.size>25*1024*1024){$('#auMsg').textContent='音声は25MBまでです';$('#auMsg').className='msg err';return;}
+  $('#auMsg').textContent='アップロード中…';$('#auMsg').className='msg';
+  var fd=new FormData();fd.append('file',f);
+  fetch('/api/make/upload',{method:'POST',body:fd}).then(function(r){return r.json();}).then(function(j){
+    if(!j.ok||j.media!=='audio'){$('#auMsg').textContent=j.error||'音声ファイルを選んでください';$('#auMsg').className='msg err';return;}
+    AU=j.url;$('#auPlay').src=j.url;
+    $('#auMsg').textContent='差し替え準備OK — 「保存する」で確定します';$('#auMsg').className='msg ok';
+  }).catch(function(){$('#auMsg').textContent='通信エラー';$('#auMsg').className='msg err';});
+};
+$('#auRemove').onclick=function(){
+  AU='';$('#auPlay').removeAttribute('src');
+  $('#auMsg').textContent='曲を外します — 「保存する」で確定します';$('#auMsg').className='msg ok';
+};
+$('#save').onclick=function(){
+  if(!IT)return;
+  var b={};
+  var t=$('#ti').value.trim(),h=$('#hk').value.trim();
+  if(t&&t!==IT.title)b.title=t;
+  if(h!==IT.hook)b.hook=h;
+  var pr=parseInt($('#pr').value,10);
+  if(pr&&pr!==IT.price_jpy)b.price_jpy=pr;
+  if(IT.can_position){
+    var p=IT.position||{w_pct:70,x_pct:50,y_pct:33};
+    var w=+$('#w').value,x=+$('#x').value,y=+$('#y').value;
+    if(Math.round(p.w_pct)!==w||Math.round(p.x_pct)!==x||Math.round(p.y_pct)!==y)b.position={w_pct:w,x_pct:x,y_pct:y};
+  }
+  if(AU!==null)b.audio_url=AU;
+  if(!Object.keys(b).length){$('#msg').textContent='変更はありません';$('#msg').className='msg';return;}
+  var btn=$('#save');btn.disabled=true;$('#msg').textContent='保存中…';$('#msg').className='msg';
+  fetch('/api/make/edit/'+encodeURIComponent(SKU)+'?t='+encodeURIComponent(T),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)})
+    .then(function(r){return r.json();}).then(function(j){
+      btn.disabled=false;
+      if(!j.ok){$('#msg').textContent=j.error||'保存できませんでした';$('#msg').className='msg err';return;}
+      $('#msg').textContent=j.note||'保存しました。';$('#msg').className='msg ok';
+      AU=null;load();
+    }).catch(function(){btn.disabled=false;$('#msg').textContent='通信エラー。もう一度どうぞ。';$('#msg').className='msg err';});
+};
+$('#retire').onclick=function(){
+  if(!confirm('この作品を棚から下げます（販売停止）。よろしいですか？'))return;
+  fetch('/api/make/edit/'+encodeURIComponent(SKU)+'?t='+encodeURIComponent(T),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({retire:true})})
+    .then(function(r){return r.json();}).then(function(j){
+      if(j.ok){$('#msg').textContent='棚から下げました。';$('#msg').className='msg ok';$('#save').disabled=true;$('#retire').disabled=true;}
+      else{$('#msg').textContent=j.error||'できませんでした';$('#msg').className='msg err';}
+    });
+};
+load();
+</script>
+</body></html>"##;
 
 pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Query(q): Query<MakeQuery>) -> Response {
     let prompt_in = q.prompt.trim().to_string();
@@ -5961,6 +6400,9 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
                 .map(|s| s.trim().to_lowercase())
                 .filter(|s| s.contains('@') && s.len() <= 254)
         });
+    // あとから編集(/make/edit)用の合言葉。作成者の端末(localStorage)と
+    // レスポンスにだけ渡す — メール認証より軽い「作った本人」の証明。
+    let edit_token = format!("{:016x}", rand::random::<u64>());
     let meta_json = {
         let mut m = serde_json::Map::new();
         if let Some(v) = ab_variant { m.insert("make_variant".into(), serde_json::Value::from(v)); }
@@ -5972,6 +6414,7 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
         if let Some(au) = &user_audio_url { m.insert("audio_url".into(), serde_json::Value::from(au.clone())); }
         // 持ち込みデザイン印: 監査・ペルソナ批評・後追い調査用のマーカー。
         if user_design_url.is_some() { m.insert("user_design".into(), serde_json::Value::from(true)); }
+        m.insert("edit_token".into(), serde_json::Value::from(edit_token.clone()));
         if m.is_empty() { None } else { Some(serde_json::Value::Object(m).to_string()) }
     };
     {
@@ -6079,6 +6522,8 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
         "auto_approved": !flagged,
         "buy_url": buy_url,
         "note": note,
+        "edit_token": edit_token,
+        "edit_url": format!("https://wearmu.com/make/edit/{}?t={}", sku, edit_token),
     })).into_response()
 }
 
@@ -10346,18 +10791,20 @@ fn build_printful_item(
     quantity: i64,
 ) -> Option<serde_json::Value> {
     let quantity = quantity.clamp(1, 50);
-    let (pp_id, mut pf_variant_id, sync_variant_id, design_file, placement, route): (
+    let (pp_id, mut pf_variant_id, sync_variant_id, design_file, placement, route, pos_box_s): (
         i64,
         i64,
         Option<i64>,
         Option<String>,
         String,
         String,
+        Option<String>,
     ) = conn
         .query_row(
             "SELECT printful_product_id, printful_variant_id,
                     printful_sync_variant_id, design_file, printful_placement,
-                    COALESCE(fulfillment_route, 'printful_dtg')
+                    COALESCE(fulfillment_route, 'printful_dtg'),
+                    json_extract(COALESCE(meta_json,'{}'),'$.print_position_box')
              FROM catalog_products WHERE sku=?",
             rusqlite::params![sku],
             |r| {
@@ -10368,6 +10815,7 @@ fn build_printful_item(
                     r.get::<_, Option<String>>(3)?,
                     r.get::<_, String>(4)?,
                     r.get::<_, String>(5)?,
+                    r.get::<_, Option<String>>(6)?,
                 ))
             },
         )
@@ -10443,8 +10891,17 @@ fn build_printful_item(
             // placements_for_product() are all valid Orders-API file types
             // (verified live via GET /products/{71,301,99,19,654,895,536}
             // + /orders/estimate-costs on 2026-06-11).
+            // /make/edit の位置指定: 保存時に aspect-fit 解決済みのボックスを
+            // そのまま position に載せる(モックアップ生成と同一ボックス=見た目
+            // 通りに刷られる)。DTG 単パネルのみ — AOP 多パネルは cover-fill が正。
+            let pos_box: Option<serde_json::Value> = pos_box_s.as_deref()
+                .and_then(|s| serde_json::from_str(s).ok())
+                .filter(|v: &serde_json::Value| v.is_object()
+                    && route == "printful_dtg" && resolved_placements.len() == 1);
             let files: Vec<serde_json::Value> = resolved_placements.iter().map(|p| {
-                serde_json::json!({"url": file_url, "type": p})
+                let mut f = serde_json::json!({"url": file_url, "type": p});
+                if let Some(b) = &pos_box { f["position"] = b.clone(); }
+                f
             }).collect();
             serde_json::json!({
                 "variant_id": pf_variant_id,
