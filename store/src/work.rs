@@ -188,6 +188,11 @@ pub async fn work_recruit(Query(q): Query<RecruitQuery>) -> Response {
         .unwrap_or_else(|| (rand::random::<u32>() as usize) % RECRUIT_VARIANTS.len());
     let (eyebrow, h1, lead, cta) = RECRUIT_VARIANTS[n];
     let v = n + 1;
+    // 価格A/Bテスト (本人指示 2026-06-11): 提示単価をパターンの偶奇で出し分け。
+    // v奇数=¥200(現行) / v偶数=¥300。v は応募フォームの hidden で送られるため、
+    // スキーマ変更なしで「どの単価を見て応募したか」が追える (telegram通知に単価併記)。
+    // ⚠提示した単価は約束 — v偶数経由の応募者へのジョブ単価は¥300前後にすること。
+    let price = if v % 2 == 0 { 300 } else { 200 };
     let fee = fee_jpy();
     let img = "https://raw.githubusercontent.com/yukihamada/mu-mockups/main/work";
     let body = format!(
@@ -195,9 +200,9 @@ pub async fn work_recruit(Query(q): Query<RecruitQuery>) -> Response {
 <h1>{h1}</h1>
 <img class="hero-img" src="{img}/step3_pack.png" alt="MUの梱包・仕上げの仕事" loading="lazy">
 <p>{lead}</p>
-<p style="font-size:15px;font-weight:700;margin:8px 0">👕 Tシャツを包んで送る ＝ <b>目安¥200前後/件・1件数分</b>。やった分だけ・ノルマなし・初期費用0。</p>
+<p style="font-size:15px;font-weight:700;margin:8px 0">👕 Tシャツを包んで送る ＝ <b>目安¥{price}前後/件・1件数分</b>。やった分だけ・ノルマなし・初期費用0。</p>
 <div style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 10px;font-size:12px">
-<span class="tag">👕 仕事＝Tシャツを包んで送る</span><span class="tag">💴 目安¥200前後/件</span><span class="tag">📱 スマホだけ・初期費用0</span></div>
+<span class="tag">👕 仕事＝Tシャツを包んで送る</span><span class="tag">💴 目安¥{price}前後/件</span><span class="tag">📱 スマホだけ・初期費用0</span></div>
 <p><a class="btn green" href="#apply" data-funnel="cta_click" data-funnel-cta="work_cta_v{v}">{cta}</a></p>
 
 <p class="muted" style="margin:14px 0 4px;font-weight:700">▶ まずは30秒の紙芝居でどんな仕事か見てみてください（タップで再生・本人の声つき）</p>
@@ -254,7 +259,7 @@ pub async fn work_recruit(Query(q): Query<RecruitQuery>) -> Response {
 
 <h2>報酬とお金のこと 💴</h2>
 <table style="margin-top:6px">
-<tr><td>単価</td><td><b>出来高制・着手する前に「1件いくら」を必ず表示</b>します。Tシャツの仕上げは目安 <b>¥200前後/件</b>（1件数分）、音コインは ¥{fee}/件。1件あたりが数分で終わる軽作業の単価です。</td></tr>
+<tr><td>単価</td><td><b>出来高制・着手する前に「1件いくら」を必ず表示</b>します。Tシャツの仕上げは目安 <b>¥{price}前後/件</b>（1件数分）、音コインは ¥{fee}/件。1件あたりが数分で終わる軽作業の単価です。</td></tr>
 <tr><td>支払い</td><td>月末締め・<b>翌月に銀行振込</b>。<b>振込手数料は当社負担</b>。報酬は写真の承認で確定（先にプールするエスクロー方式）。</td></tr>
 <tr><td>どのくらい稼げる?</td><td><b>正直に言うと、いまは立ち上げ期で件数はまだ少ないです。</b>「本業」ではなく<b>スキマ時間のおこづかい</b>くらいに考えてください。注文が増えれば回ってくる件数も増えます。収入は引き受けた件数しだいで、<b>金額は保証しません</b>。ノルマなし・やった分だけ。</td></tr>
 <tr><td>初期費用</td><td><b>ゼロ</b>。梱包資材（薄紙・封緘シール・カード）も<b>当社が支給</b>・送料も当社負担。<b>立替なし</b>。</td></tr>
@@ -308,7 +313,7 @@ pub async fn work_recruit(Query(q): Query<RecruitQuery>) -> Response {
 </form>
 <p class="muted">運営: <b><a href="https://enablerdao.com">株式会社イネブラ</a></b>(Enabler Inc.)／〒102-0074 東京都千代田区九段南1-5-6 りそな九段ビル5階KSフロア／代表取締役 濱田優貴／業務委託／お問い合わせ info@enablerdao.com</p>
 <div class="sticky-cta"><a class="btn green" href="#apply" data-funnel="cta_click" data-funnel-cta="work_cta_sticky_v{v}">30秒で応募する</a></div>
-<script>try{{(window.MU_FUNNEL&&window.MU_FUNNEL.send||function(){{}})('work_view',{{variant:'{v}'}})}}catch(e){{}}</script>"##,
+<script>try{{(window.MU_FUNNEL&&window.MU_FUNNEL.send||function(){{}})('work_view',{{variant:'{v}',price:'{price}'}})}}catch(e){{}}</script>"##,
     );
     page_with_head("MUで、作って届ける仕事", GTAG_HEAD, &body)
 }
@@ -419,10 +424,16 @@ pub async fn work_apply(State(db): State<Db>, Form(f): Form<ApplyForm>) -> Respo
     };
     let admin = env::var("ADMIN_TOKEN").unwrap_or_default();
     let via = f.v.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()).unwrap_or("-");
+    // 価格A/Bテスト: 提示単価はパターンの偶奇 (work_recruit と同一規則)。承認者が見える形で通知。
+    let shown_price = match via.parse::<usize>() {
+        Ok(n) if n % 2 == 0 => "提示単価¥300",
+        Ok(_) => "提示単価¥200",
+        Err(_) => "提示単価不明",
+    };
     let about_line = if about.is_empty() { String::new() } else { format!("\n「{}」", about) };
     let _ = crate::send_telegram_message(&format!(
-        "🧵 *work応募* (パターンv{})\n{} <{}> {}{}\n承認→ https://wearmu.com/admin/work/approve?id={}&token={}",
-        via, name, email, region, about_line, worker_id, admin
+        "🧵 *work応募* (パターンv{}・{})\n{} <{}> {}{}\n承認→ https://wearmu.com/admin/work/approve?id={}&token={}",
+        via, shown_price, name, email, region, about_line, worker_id, admin
     ))
     .await;
     // 応募成功 = Google Ads コンバージョン発火 (MU_WORK_Recruit が応募で最適化できる
