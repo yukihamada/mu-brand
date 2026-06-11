@@ -69413,6 +69413,10 @@ async fn main() {
         .route("/api/make/upload",
             post(catalog::make_upload)
                 .layer(axum::extract::DefaultBodyLimit::max(26 * 1024 * 1024)))
+        // あとから編集(作成時の edit_token 持ちのみ)。
+        .route("/make/edit/:sku", get(catalog::make_edit_page))
+        .route("/api/make/item/:sku", get(catalog::make_item))
+        .route("/api/make/edit/:sku", post(catalog::make_edit_apply))
         .route("/api/make/recent", get(catalog::make_recent))
         .route("/api/make/peek", get(catalog::make_peek))
         .route("/api/make/notify", post(catalog::make_notify))
