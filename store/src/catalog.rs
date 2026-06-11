@@ -10142,9 +10142,21 @@ pub async fn shop_checkout(
     // 転換率の分母汚染 + 無駄なセッション生成)。bot UA は購入せずセッションも作らせず PDP へ送る。
     // 誤検知しても商品ページに着くだけで実害なし(そこで再度 buy できる)。
     {
+        // ブラウザのプリフェッチ/プリレンダは専用ヘッダで「ユーザー操作ではない」と明示する。
+        // bot UAリストを掻い潜る通常UAのプリフェッチ(残存セッション量産の主因)をここで弾く。
+        let hv = |k: &str| headers.get(k).and_then(|v| v.to_str().ok()).unwrap_or("").to_lowercase();
+        let is_prefetch = {
+            let secp = hv("sec-purpose");        // Chrome: "prefetch" / "prefetch;prerender"
+            let purpose = hv("purpose");          // 一般: "prefetch"
+            let xpurpose = hv("x-purpose");       // Safari: "preview"
+            let xmoz = hv("x-moz");               // Firefox: "prefetch"
+            secp.contains("prefetch") || secp.contains("prerender")
+                || purpose.contains("prefetch") || xpurpose.contains("preview")
+                || xmoz.contains("prefetch")
+        };
         let ua = headers.get(axum::http::header::USER_AGENT)
             .and_then(|v| v.to_str().ok()).unwrap_or("").to_lowercase();
-        let is_bot = ua.is_empty() || [
+        let is_bot = is_prefetch || ua.is_empty() || [
             "bot", "crawl", "spider", "slurp", "bingpreview", "facebookexternalhit",
             "embedly", "quora link preview", "outbrain", "pinterest", "developers.google.com",
             "headless", "phantom", "python-requests", "curl/", "wget", "go-http-client",
