@@ -26,13 +26,19 @@
   {
     "email": "mail@yukihamada.jp",
     "start": 346,
-    "end": 388,
+    "end": 349,
+    "date": "2026-06-01"
+  },
+  {
+    "email": "mail@yukihamada.jp",
+    "start": 350,
+    "end": 392,
     "date": "2026-05-18"
   },
   {
     "email": "mail@yukihamada.jp",
-    "start": 389,
-    "end": 391,
+    "start": 393,
+    "end": 395,
     "date": "2026-05-12"
   }
 ]
