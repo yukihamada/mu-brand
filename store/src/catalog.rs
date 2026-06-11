@@ -4121,6 +4121,10 @@ pub struct MakeQuery {
     /// ユニーク訪問者ID（mu-funnel.js の visitor_id）。UU勝者判定の母数。
     #[serde(default)]
     pub visitor: Option<String>,
+    /// 生成エンジン。"local" = m5 のローカルモデル（無料・MU_GEN_URL/KEY 設定時のみ）。
+    /// 省略時は従来どおり Gemini。
+    #[serde(default)]
+    pub engine: Option<String>,
 }
 
 /// GET /make のクエリ。?v= でバリアント固定（勝者確定後はサーバが上書き）。
@@ -5074,6 +5078,7 @@ pub async fn make_page(State(db): State<Db>, Query(q): Query<MakePageQuery>) -> 
     let sel_label = MAKE_KINDS_ALL.iter()
         .find(|(v, _)| *v == sel).map(|(_, l)| *l).unwrap_or("");
     Html(MAKE_HTML
+        .replace("__LOCAL_GEN__", if local_gen_enabled() { "1" } else { "0" })
         .replace("__KIND_OPTIONS__", &kind_options)
         .replace("__PRICE_HINT__", price_hint)
         .replace("__SERVER_VARIANT__", server_variant)
@@ -5237,6 +5242,12 @@ __KIND_OPTIONS__
     <button id="go" data-funnel="cta_click" data-funnel-cta="make_generate">つくる（無料でデザイン）</button>
   </div>
   <div class="price-hint">__PRICE_HINT__</div>
+  <div id="engRow" style="display:none;margin:6px 0 0;font-size:12.5px;color:rgba(245,245,240,.75)">
+    生成エンジン:
+    <label style="margin-left:6px;cursor:pointer"><input type="radio" name="eng" value="gemini" checked> ⚡ 高品質（Gemini）</label>
+    <label style="margin-left:10px;cursor:pointer"><input type="radio" name="eng" value="local"> 🆓 無料（ローカルAI・β）</label>
+    <span id="engNote" style="display:none;margin-left:8px;opacity:.65">混雑時は数分かかります</span>
+  </div>
   <div class="ex" id="mkEx">例: <b data-x="柴犬のシンプルな線画 生成りトート">柴犬の線画</b> ・ <b data-x="禅の円相 ひと筆 黒Tシャツ">円相T</b> ・ <b data-x="夜の富士山と月 ミニマル パーカー">富士と月</b></div>
   <div class="ex" style="opacity:.55;font-size:12px">🧰 <a href="/make/all" style="color:#ffd700;text-decoration:none" data-funnel="cta_click" data-funnel-cta="make_all_link">MUで作れるもの一覧</a>（作れそうなものも）</div>
   <div class="ex" style="opacity:.6">🏠 服じゃなく<b>家</b>をつくりたい人は → <a href="https://bim.house/make" style="color:#ffd700;text-decoration:none" data-funnel="cta_click" data-funnel-cta="make_bimhouse">bim.house/make</a>（言葉から、家が建つ）</div>
@@ -5304,6 +5315,19 @@ var MKV_DEFS={
 };
 // サーバが variant を焼いていればそれ、無ければ visitor のハッシュで決定的3分割。
 var SV='__SERVER_VARIANT__', LOCKED=__WINNER_LOCKED__;
+// 無料ローカル生成（m5）: サーバが構成済みのときだけトグルを出す。選択は端末に記憶。
+var LOCALGEN='__LOCAL_GEN__'==='1';
+if(LOCALGEN){
+  var er=document.getElementById('engRow'); if(er)er.style.display='';
+  try{var sv=localStorage.getItem('mu_make_engine');if(sv){var rb=document.querySelector('input[name=eng][value="'+sv+'"]');if(rb)rb.checked=true;}}catch(e){}
+  document.querySelectorAll('input[name=eng]').forEach(function(r){r.onchange=function(){
+    try{localStorage.setItem('mu_make_engine',r.value);}catch(e){}
+    var n=document.getElementById('engNote');if(n)n.style.display=(r.value==='local')?'':'none';
+  };});
+  var cur=document.querySelector('input[name=eng]:checked');
+  var n0=document.getElementById('engNote');if(n0&&cur&&cur.value==='local')n0.style.display='';
+}
+function muEngine(){var c=document.querySelector('input[name=eng]:checked');return (LOCALGEN&&c)?c.value:'gemini';}
 // 深リンク ?k=<kind> で選ばれた種類（空ならアパレル既定）。Tシャツ前提の固定
 // コピーを kind に合わせて差し替えるために使う。
 var SEL_KIND='__SEL_KIND__', SEL_LABEL='__SEL_LABEL__';
@@ -5362,13 +5386,16 @@ async function runMake(){
   const p=$('#p').value.trim(); if(!p){$('#p').focus();return;}
   const k=$('#k').value;
   const myRun=++RUNSEQ;
-  muEvent('cta_click',{cta:'make_create',variant:MKV});
+  muEvent('cta_click',{cta:'make_create',variant:MKV,engine:muEngine()});
   $('#go').disabled=true; $('#go').innerHTML='<span class=spin></span>つくっています…';
   const genDone=genTheater(p);
   try{
     // v(バリアント)と visitor(UU)を必ず添えて投稿 → サーバが勝者判定の母数に刻む。
+    const eng=muEngine();
+    if(eng==='local'){var gn=document.querySelector('.gnote');if(gn)gn.textContent='無料ローカルAI(β)で生成中 — 混雑時は数分かかります。そのまま待っていてください。';}
     const r=await fetch('/api/make?prompt='+encodeURIComponent(p)+(k?'&kind='+k:'')
-      +'&v='+encodeURIComponent(MKV)+(VIS?'&visitor='+encodeURIComponent(VIS):''),{method:'POST'});
+      +'&v='+encodeURIComponent(MKV)+(VIS?'&visitor='+encodeURIComponent(VIS):'')
+      +(eng==='local'?'&engine=local':''),{method:'POST'});
     const j=await r.json();
     if(myRun!==RUNSEQ) return; // より新しい生成が走っている → この結果は捨てる
     genDone();
@@ -5497,6 +5524,54 @@ $('#p').addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter
 /// POST /api/make?prompt=…&kind=… — public NL → product. status='review',
 /// brand='minna', cost-guarded (hourly cap + global budget gate). Mirrors
 /// admin_nl_add but unauthenticated, review-only, and single-image (cost-min).
+/// 無料ローカル生成 (m5) が構成済みか。make_page のトグル表示と /api/make の受付に使う。
+pub fn local_gen_enabled() -> bool {
+    std::env::var("MU_GEN_URL").is_ok() && std::env::var("MU_GEN_KEY").is_ok()
+}
+
+fn local_gen_client() -> Result<(reqwest::Client, String, String), String> {
+    let url = std::env::var("MU_GEN_URL").map_err(|_| "無料生成は準備中です。Gemini でお試しください。".to_string())?;
+    let key = std::env::var("MU_GEN_KEY").map_err(|_| "無料生成は準備中です。Gemini でお試しください。".to_string())?;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .map_err(|e| e.to_string())?;
+    Ok((client, url.trim_end_matches('/').to_string(), key))
+}
+
+/// m5 のローカル LLM にテキスト生成を投げる（Gemini の call_gemini_text と同じ役割）。
+async fn local_gen_text(prompt: &str) -> Result<String, String> {
+    let (client, url, key) = local_gen_client()?;
+    let r = client.post(format!("{}/llm", url)).header("X-MU-Key", key)
+        .json(&serde_json::json!({"prompt": prompt, "max_tokens": 600}))
+        .send().await.map_err(|_| "無料生成サーバーに届きませんでした。Gemini でお試しください。".to_string())?;
+    let j: serde_json::Value = r.json().await.map_err(|e| e.to_string())?;
+    if !j["ok"].as_bool().unwrap_or(false) {
+        return Err("無料生成が混み合っています。少し待つか Gemini でお試しください。".to_string());
+    }
+    Ok(j["text"].as_str().unwrap_or("").to_string())
+}
+
+/// m5 のローカル画像生成（Gemini の call_gemini と同じ役割。design_prompt はそのまま渡す）。
+async fn local_gen_image(design_prompt: &str) -> Result<crate::gemini::GeneratedImage, String> {
+    let (client, url, key) = local_gen_client()?;
+    let r = client.post(format!("{}/image", url)).header("X-MU-Key", key)
+        .json(&serde_json::json!({"prompt": design_prompt}))
+        .send().await.map_err(|_| "無料生成サーバーに届きませんでした。Gemini でお試しください。".to_string())?;
+    if r.status().as_u16() == 503 {
+        return Err("無料生成が混み合っています。少し待つか Gemini でお試しください。".to_string());
+    }
+    let j: serde_json::Value = r.json().await.map_err(|e| e.to_string())?;
+    if !j["ok"].as_bool().unwrap_or(false) {
+        return Err(format!("無料生成に失敗: {}", j["error"].as_str().unwrap_or("unknown")));
+    }
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(j["image_b64"].as_str().unwrap_or(""))
+        .map_err(|e| e.to_string())?;
+    Ok(crate::gemini::GeneratedImage { bytes, mime: j["mime"].as_str().unwrap_or("image/png").to_string() })
+}
+
 pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Query(q): Query<MakeQuery>) -> Response {
     let prompt_in = q.prompt.trim().to_string();
     if prompt_in.is_empty() || prompt_in.chars().count() > 300 {
@@ -5534,7 +5609,12 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
          hoodie/'パーカー' → hoodie; sweat/'スウェット' → crewneck; '白T'/white tee → tee_white.\n\
          If kind is missing, default to 'tee'. retail default 4900 tee / 8800 hoodie / 7800 crewneck / 9800 rashguard / 800 sticker / 2200 mug / 4900 poster; その他は各商品の最低価格に自動調整.\n\
          Input: {}", prompt_in);
-    let parsed_json = match crate::gemini::call_gemini_text(&parse_prompt).await {
+    // 無料エンジン: parse も画像も m5 ローカル（Gemini API 課金ゼロ）。未構成なら受け付けない。
+    let use_local = q.engine.as_deref() == Some("local");
+    if use_local && !local_gen_enabled() {
+        return (StatusCode::SERVICE_UNAVAILABLE, axum::Json(serde_json::json!({"ok":false,"error":"無料生成は準備中です。Gemini でお試しください。"}))).into_response();
+    }
+    let parsed_json = match if use_local { local_gen_text(&parse_prompt).await } else { crate::gemini::call_gemini_text(&parse_prompt).await } {
         Ok(s) => s,
         Err(e) => return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":format!("生成に失敗しました: {}", e)}))).into_response(),
     };
@@ -5592,7 +5672,9 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     let seed = format!("mk{:08x}", rand::random::<u32>());
     let slug = { let s: String = display.chars().filter(|c| c.is_ascii_alphanumeric()).take(12).collect::<String>().to_uppercase(); if s.is_empty() { "MAKE".to_string() } else { s } };
     let sku = format!("MAKE-{}-{}-{}", slug, kind.to_uppercase().replace('_', "-"), seed);
-    let charged = { let conn = db.lock().unwrap(); spend_or_refuse(&conn, "ai_image", GEMINI_IMAGE_COST_JPY, &format!("public_make sku={}", sku), Some(&sku)) };
+    // ローカル生成は API 課金ゼロ → 予算台帳は ¥0 で記録だけ残す(観測のため)。
+    let gen_cost = if use_local { 0 } else { GEMINI_IMAGE_COST_JPY };
+    let charged = { let conn = db.lock().unwrap(); spend_or_refuse(&conn, "ai_image", gen_cost, &format!("public_make sku={} engine={}", sku, if use_local { "local" } else { "gemini" }), Some(&sku)) };
     if !charged {
         return (StatusCode::FAILED_DEPENDENCY, axum::Json(serde_json::json!({"ok":false,"error":"本日の生成枠が上限に達しました。また明日お試しください。"}))).into_response();
     }
@@ -5650,7 +5732,7 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
              Style brief: {}. NO model, NO mockup, just the artwork, centered. Variation key: {}.",
             theme_brief, seed)
     };
-    let img = match crate::gemini::call_gemini(&design_prompt).await {
+    let img = match if use_local { local_gen_image(&design_prompt).await } else { crate::gemini::call_gemini(&design_prompt).await } {
         Ok(i) => i,
         Err(e) => return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":format!("デザイン生成に失敗: {}", e)}))).into_response(),
     };
@@ -5687,6 +5769,7 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     let meta_json = {
         let mut m = serde_json::Map::new();
         if let Some(v) = ab_variant { m.insert("make_variant".into(), serde_json::Value::from(v)); }
+        if use_local { m.insert("gen_engine".into(), serde_json::Value::from("local")); }
         if let Some(vis) = ab_visitor { m.insert("make_visitor".into(), serde_json::Value::from(vis)); }
         if let Some(me) = &maker_email { m.insert("maker_email".into(), serde_json::Value::from(me.clone())); }
         if m.is_empty() { None } else { Some(serde_json::Value::Object(m).to_string()) }
