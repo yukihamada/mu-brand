@@ -10224,8 +10224,14 @@ fn build_printful_item(
                 } else {
                     resolved_placements.iter().copied().collect()
                 };
+            // Printful's ORDER api keys files by "type" (the mockup-generator
+            // api is the one that uses "placement"). An unknown "placement" key
+            // was silently ignored, every file fell into the default slot, and
+            // multi-panel AOP orders died with "There can only be one file for
+            // each placement" (catalog_orders #47). Verified 2026-06-11 against
+            // a draft order: "type" → 200 with all four panels assigned.
             let files: Vec<serde_json::Value> = resolved_placements.iter().map(|p| {
-                serde_json::json!({"url": file_url, "placement": p})
+                serde_json::json!({"url": file_url, "type": p})
             }).collect();
             serde_json::json!({
                 "variant_id": pf_variant_id,
