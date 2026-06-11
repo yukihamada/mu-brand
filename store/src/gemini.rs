@@ -427,6 +427,90 @@ pub async fn call_gemini_judge(
     parse_judge_json(&out)
 }
 
+/// Vision moderation for USER-UPLOADED design images (/make 添付).
+/// AI生成と違い持ち込み画像は生成側の安全フィルタを通っていない上、/make は
+/// 匿名なので、公開(live)前にここで権利・不適切チェックを1回だけ同期で行う。
+/// Returns (flagged, reason_ja). Caller treats Err as flagged (fail-safe).
+pub async fn call_gemini_image_check(image_url: &str) -> Result<(bool, String), String> {
+    const CHECK_MODEL: &str = "gemini-2.5-flash";
+    let key = std::env::var("GEMINI_API_KEY")
+        .or_else(|_| std::env::var("GOOGLE_API_KEY"))
+        .map_err(|_| "GEMINI_API_KEY not set".to_string())?;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| format!("client: {}", e))?;
+    let resp = client
+        .get(image_url)
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| format!("fetch upload {}: {}", image_url, e))?;
+    if !resp.status().is_success() {
+        return Err(format!("fetch upload {}: status {}", image_url, resp.status()));
+    }
+    let mime = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(';').next().unwrap_or("image/png").trim().to_string())
+        .unwrap_or_else(|| "image/png".to_string());
+    let bytes = resp.bytes().await.map_err(|e| format!("read upload: {}", e))?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    let prompt = "あなたはECサイトの公開前審査員。添付はユーザーが持ち込んだ、Tシャツ等にプリントして即販売される画像。\
+         次のどれかに当てはまる場合のみ flagged=true: 実在ブランドのロゴ/商標、実在人物の顔や名前、\
+         著作権のあるキャラクター/アートワークの複製、性的/暴力的/差別的/違法な内容。\
+         個人の写真・自作イラスト・風景・ペット・抽象アートなどは flagged=false。迷ったら false に寄せる。\
+         出力はJSONのみ: {\"flagged\":true|false,\"reason\":\"日本語で30字以内(falseなら空)\"}";
+    let parts = vec![
+        json!({"text": prompt}),
+        json!({"inline_data": {"mime_type": mime, "data": b64}}),
+    ];
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+        CHECK_MODEL, key
+    );
+    let body = json!({
+        "contents": [{"parts": parts}],
+        "generationConfig": {
+            "responseModalities": ["TEXT"],
+            "responseMimeType": "application/json",
+            "maxOutputTokens": 200,
+            "temperature": 0.0,
+            "thinkingConfig": {"thinkingBudget": 0}
+        }
+    });
+    let resp = client.post(&url).json(&body).send().await
+        .map_err(|e| format!("send: {}", e))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let txt = resp.text().await.unwrap_or_default();
+        let head: String = txt.chars().take(400).collect();
+        return Err(format!("gemini {}: {}", status, head));
+    }
+    let json: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {}", e))?;
+    let parts = json["candidates"][0]["content"]["parts"]
+        .as_array()
+        .ok_or_else(|| format!("no parts (feedback={})", json["promptFeedback"]))?
+        .clone();
+    let mut out = String::new();
+    for part in parts {
+        if let Some(t) = part.get("text").and_then(|v| v.as_str()) {
+            out.push_str(t);
+        }
+    }
+    let t = out.trim();
+    let v: serde_json::Value = serde_json::from_str(t)
+        .or_else(|e| match (t.find('{'), t.rfind('}')) {
+            (Some(a), Some(b)) if b > a => serde_json::from_str(&t[a..=b]),
+            _ => Err(e),
+        })
+        .map_err(|e| format!("image_check json: {}", e))?;
+    let flagged = v["flagged"].as_bool().unwrap_or(true);
+    let reason: String = v["reason"].as_str().unwrap_or("").chars().take(60).collect();
+    Ok((flagged, reason))
+}
+
 /// Pure parser for the judge's JSON reply — factored out of
 /// `call_gemini_judge` so it's unit-testable without a network call.
 /// Tolerates ```json fences and leading/trailing chatter; clamps each axis

@@ -745,7 +745,7 @@ pub struct CreateProductBody {
 
 /// Hosts we control / trust for externally-referenced design images.
 /// An https design_url on any other host counts as a risk (unknown copyright).
-fn is_trusted_design_host(url: &str) -> bool {
+pub(crate) fn is_trusted_design_host(url: &str) -> bool {
     let u = url.to_lowercase();
     const HOSTS: &[&str] = &[
         "mockups.wearmu.com", "merch.wearmu.com", "wearmu.com",

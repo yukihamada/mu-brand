@@ -4125,6 +4125,15 @@ pub struct MakeQuery {
     /// 省略時は従来どおり Gemini。
     #[serde(default)]
     pub engine: Option<String>,
+    /// 持ち込みデザイン画像（/api/make/upload が返した自ホストURL）。
+    /// あれば AI 画像生成をスキップしてこの画像をそのままプリントに使う。
+    #[serde(default)]
+    pub design_url: Option<String>,
+    /// 持ち込み音源（/api/make/upload が返した自ホストURL）。
+    /// kind=song ならデジタル販売（購入者に視聴/DLリンク）、
+    /// アパレル等なら meta_json.audio_url として PDP の試聴プレイヤーで鳴る。
+    #[serde(default)]
+    pub audio_url: Option<String>,
 }
 
 /// GET /make のクエリ。?v= でバリアント固定（勝者確定後はサーバが上書き）。
@@ -5235,6 +5244,15 @@ button:disabled{opacity:.5;cursor:default}
     </div>
   </div>
   <textarea id="p" maxlength="300" placeholder="例：富士山をミニマルな一本線で描いた黒Tシャツ"></textarea>
+  <div class="row" style="margin-top:8px">
+    <label style="flex:0 0 auto;min-width:0;background:transparent;border:1px dashed rgba(255,215,0,.45);color:rgba(255,215,0,.9);font-weight:600;padding:10px 14px;border-radius:10px;font-size:13px;cursor:pointer">📎 画像・曲をのせる<input id="attF" type="file" accept="image/png,image/jpeg,image/webp,audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/ogg,.mp3,.m4a,.wav,.ogg" hidden></label>
+    <span id="attChip" style="display:none;flex:1;min-width:0;align-items:center;gap:8px;font-size:12.5px;color:rgba(245,245,240,.8)"></span>
+  </div>
+  <div id="audioMode" style="display:none;margin-top:8px;font-size:12.5px;color:rgba(245,245,240,.75)">
+    この曲をどう届ける?
+    <label style="margin-left:6px;cursor:pointer"><input type="radio" name="amode" value="song" checked> 🎵 曲として販売（購入者に視聴/DLリンク）</label>
+    <label style="margin-left:10px;cursor:pointer"><input type="radio" name="amode" value="goods"> 👕 グッズにのせる（商品ページで試聴）</label>
+  </div>
   <div class="row">
     <select id="k">
 __KIND_OPTIONS__
@@ -5362,6 +5380,31 @@ var MKV=(SV==='a'||SV==='b'||SV==='c')?SV:hash3(VIS||'a');
   document.body.setAttribute('data-variant',MKV);
 })();
 document.querySelectorAll('.ex b').forEach(b=>b.onclick=()=>{$('#p').value=b.dataset.x;});
+// ── 添付 ───────────────────────────────────────────────────
+// 画像→そのままプリント(AI生成スキップ) / 曲→デジタル販売 or グッズで試聴。
+var ATT=null; // {url, media:'image'|'audio'}
+var attF=document.getElementById('attF'),attChip=document.getElementById('attChip'),audioMode=document.getElementById('audioMode');
+function attRender(name){
+  if(!ATT){attChip.style.display='none';attChip.innerHTML='';audioMode.style.display='none';return;}
+  attChip.style.display='flex';
+  attChip.innerHTML=(ATT.media==='audio'?'🎵':'🖼')+' <b style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px">'+escHtml(name||'')+'</b> <button type=button id=attX style="flex:none;min-width:0;background:none;border:0;color:rgba(245,245,240,.55);font-size:14px;cursor:pointer;padding:2px 6px">✕</button>';
+  document.getElementById('attX').onclick=function(){ATT=null;attF.value='';attRender();};
+  audioMode.style.display=(ATT.media==='audio')?'':'none';
+}
+if(attF)attF.onchange=function(){
+  var f=attF.files&&attF.files[0]; if(!f)return;
+  var isAudio=/^audio\//.test(f.type)||/\.(mp3|m4a|wav|ogg)$/i.test(f.name);
+  var max=isAudio?25*1024*1024:8*1024*1024;
+  if(f.size>max){alert((isAudio?'音声は25MB':'画像は8MB')+'までです');attF.value='';return;}
+  attChip.style.display='flex';attChip.textContent='アップロード中…';
+  var fd=new FormData();fd.append('file',f);
+  fetch('/api/make/upload',{method:'POST',body:fd}).then(function(r){return r.json();}).then(function(j){
+    if(!j.ok){ATT=null;attRender();alert(j.error||'アップロードできませんでした');attF.value='';return;}
+    ATT={url:j.url,media:j.media};attRender(f.name);
+    muEvent('cta_click',{cta:'make_attach',media:j.media});
+    var p=$('#p'); if(p&&!p.value.trim())p.placeholder=(j.media==='audio')?'例：この曲のタイトルと、ひとこと（雰囲気・誰の曲か）':'例：この画像のタイトルや、のせたい気持ちをひとこと';
+  }).catch(function(){ATT=null;attRender();alert('通信エラー。もう一度どうぞ。');attF.value='';});
+};
 // 例文クイックボタン（B案）: タップで充填して即生成。
 document.querySelectorAll('#mkQuick .q').forEach(b=>b.onclick=()=>{$('#p').value=b.dataset.x;runMake();});
 // 直近の作例 — 品質の証明・出来上がりイメージ・「動いてる店」の気配
@@ -5384,23 +5427,33 @@ function genTheater(p){
 var RUNSEQ=0; // 連打/連続生成の古いレスポンスが新しい結果を上書きしないためのガード
 async function runMake(){
   const p=$('#p').value.trim(); if(!p){$('#p').focus();return;}
-  const k=$('#k').value;
+  // 添付があるとき: 画像→design_url / 曲→audio_url。曲を「曲として販売」なら kind=song。
+  var k=$('#k').value, att='';
+  if(ATT&&ATT.media==='image')att='&design_url='+encodeURIComponent(ATT.url);
+  if(ATT&&ATT.media==='audio'){
+    att='&audio_url='+encodeURIComponent(ATT.url);
+    var am=document.querySelector('input[name=amode]:checked');
+    if(am&&am.value==='song')k='song';
+  }
   const myRun=++RUNSEQ;
-  muEvent('cta_click',{cta:'make_create',variant:MKV,engine:muEngine()});
+  muEvent('cta_click',{cta:'make_create',variant:MKV,engine:muEngine(),att:ATT?ATT.media:''});
   $('#go').disabled=true; $('#go').innerHTML='<span class=spin></span>つくっています…';
   const genDone=genTheater(p);
   try{
     // v(バリアント)と visitor(UU)を必ず添えて投稿 → サーバが勝者判定の母数に刻む。
     const eng=muEngine();
     if(eng==='local'){var gn=document.querySelector('.gnote');if(gn)gn.textContent='無料ローカルAI(β)で生成中 — 混雑時は数分かかります。そのまま待っていてください。';}
-    const r=await fetch('/api/make?prompt='+encodeURIComponent(p)+(k?'&kind='+k:'')
+    if(ATT&&ATT.media==='image'){var gn2=document.querySelector('.gnote');if(gn2)gn2.textContent='あなたの画像を、そのまま製品にのせています — だいたい10秒。';}
+    const r=await fetch('/api/make?prompt='+encodeURIComponent(p)+(k?'&kind='+encodeURIComponent(k):'')
       +'&v='+encodeURIComponent(MKV)+(VIS?'&visitor='+encodeURIComponent(VIS):'')
-      +(eng==='local'?'&engine=local':''),{method:'POST'});
+      +(eng==='local'?'&engine=local':'')+att,{method:'POST'});
     const j=await r.json();
     if(myRun!==RUNSEQ) return; // より新しい生成が走っている → この結果は捨てる
     genDone();
     if(!j.ok){ $('#out').innerHTML='<div class=err>'+(j.error||'うまく作れませんでした。もう一度お試しください。')+'</div>'; }
     else{
+      // 添付は1作品で消費(次の作成に紛れ込まない)。
+      ATT=null;attF.value='';attRender();
       // デザインは認証なしで必ず見せる(見るのは無料)。名義化+10%だけメール認証ゲート。
       renderResult(j,p,/(?:^|;\s*)mu_make_ok=1/.test(document.cookie));
     }
@@ -5429,13 +5482,13 @@ function renderResult(j,p,ok){
     +'<div class=pr>¥'+yen(j.retail_jpy)+'</div>'
     +'<div style="font-size:13px;color:rgba(245,245,240,.7)">'+(j.hook||'')+'</div>'
     + one
-    +'<div class=fitnote id=mkFit>'+(j.auto_approved?mkPrep(j.kind):'')+'</div>'
+    +'<div class=fitnote id=mkFit>'+(j.auto_approved&&j.kind!=='song'?mkPrep(j.kind):'')+'</div>'
     + buy + share + spread + nt
     +'</div></div>'
     +(ok?'':claimCardHtml());
   $('#out').scrollIntoView({behavior:'smooth',block:'nearest'});
   if(!ok) wireClaim(j,p);
-  if(j.auto_approved && j.sku) pollFit(j.sku, j.design_url, j.kind);
+  if(j.auto_approved && j.sku && j.kind!=='song') pollFit(j.sku, j.design_url, j.kind);
 }
 // 名義化カード: デザインは見せた上で「あなたの名義にする」だけをメール認証ゲートに。
 function claimCardHtml(){
@@ -5572,11 +5625,97 @@ async fn local_gen_image(design_prompt: &str) -> Result<crate::gemini::Generated
     Ok(crate::gemini::GeneratedImage { bytes, mime: j["mime"].as_str().unwrap_or("image/png").to_string() })
 }
 
+/// マジックバイトで添付ファイルの実体を判定する（content-type は自己申告なので
+/// 信用しない）。Some((ext, content_type, media)) / None=未対応形式。
+fn sniff_make_upload(bytes: &[u8]) -> Option<(&'static str, &'static str, &'static str)> {
+    if bytes.len() < 12 { return None; }
+    // 画像
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) {
+        return Some(("png", "image/png", "image"));
+    }
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Some(("jpg", "image/jpeg", "image"));
+    }
+    if bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
+        return Some(("webp", "image/webp", "image"));
+    }
+    // 音声
+    if bytes.starts_with(b"ID3") || (bytes[0] == 0xFF && (bytes[1] & 0xE0) == 0xE0) {
+        return Some(("mp3", "audio/mpeg", "audio"));
+    }
+    if &bytes[4..8] == b"ftyp" {
+        return Some(("m4a", "audio/mp4", "audio"));
+    }
+    if bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WAVE" {
+        return Some(("wav", "audio/wav", "audio"));
+    }
+    if bytes.starts_with(b"OggS") {
+        return Some(("ogg", "audio/ogg", "audio"));
+    }
+    None
+}
+
+const MAKE_UPLOAD_IMAGE_MAX: usize = 8 * 1024 * 1024;
+const MAKE_UPLOAD_AUDIO_MAX: usize = 25 * 1024 * 1024;
+
+/// POST /api/make/upload — /make の添付（画像 or 曲）を R2 に永続化して
+/// 自ホスト URL を返す。返った URL を /api/make の design_url / audio_url に渡す。
+/// sha8 命名で同一ファイルの再アップロードは同じ URL に dedupe される。
+pub async fn make_upload(mut multipart: axum::extract::Multipart) -> Response {
+    let mut file_bytes: Option<axum::body::Bytes> = None;
+    while let Some(field) = match multipart.next_field().await {
+        Ok(f) => f,
+        Err(e) => return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":format!("multipart: {}", e)}))).into_response(),
+    } {
+        if field.name().unwrap_or("") == "file" {
+            file_bytes = field.bytes().await.ok();
+        }
+    }
+    let bytes = match file_bytes {
+        Some(b) if !b.is_empty() => b,
+        _ => return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"ファイルが届きませんでした"}))).into_response(),
+    };
+    let Some((ext, ct, media)) = sniff_make_upload(&bytes) else {
+        return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"対応形式: 画像 PNG/JPEG/WebP・音声 MP3/M4A/WAV/OGG"}))).into_response();
+    };
+    let max = if media == "image" { MAKE_UPLOAD_IMAGE_MAX } else { MAKE_UPLOAD_AUDIO_MAX };
+    if bytes.len() > max {
+        return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":format!("ファイルが大きすぎます（{}は{}MBまで）", if media=="image" {"画像"} else {"音声"}, max / 1024 / 1024)}))).into_response();
+    }
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(&bytes);
+    let sha = hex::encode(&h.finalize()[..8]);
+    let key = if media == "image" {
+        format!("make/upload/{}.{}", sha, ext)
+    } else {
+        format!("make/audio/{}.{}", sha, ext)
+    };
+    match crate::store_r2_bytes(&key, &bytes, ct).await {
+        Some(url) => axum::Json(serde_json::json!({
+            "ok": true, "url": url, "media": media, "bytes": bytes.len(),
+        })).into_response(),
+        None => (StatusCode::SERVICE_UNAVAILABLE, axum::Json(serde_json::json!({"ok":false,"error":"アップロード先の準備ができていません。少し待ってお試しください。"}))).into_response(),
+    }
+}
+
 pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Query(q): Query<MakeQuery>) -> Response {
     let prompt_in = q.prompt.trim().to_string();
     if prompt_in.is_empty() || prompt_in.chars().count() > 300 {
         return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"作りたいものを入力してください（300文字以内）"}))).into_response();
     }
+    // 添付（/api/make/upload が返した自ホスト URL のみ受ける）。外部 URL の
+    // 持ち込みは権利リスク評価不能なので弾く（MCP の agent 経路と同じ思想）。
+    let valid_attach = |u: &Option<String>| -> Result<Option<String>, Response> {
+        match u.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            None => Ok(None),
+            Some(s) if s.len() <= 2000 && s.starts_with("https://")
+                && crate::agent_api::is_trusted_design_host(s) => Ok(Some(s.to_string())),
+            Some(_) => Err((StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"添付は画面のアップロードボタンから行ってください"}))).into_response()),
+        }
+    };
+    let user_design_url = match valid_attach(&q.design_url) { Ok(v) => v, Err(r) => return r };
+    let user_audio_url = match valid_attach(&q.audio_url) { Ok(v) => v, Err(r) => return r };
     {
         let conn = db.lock().unwrap();
         let n: i64 = conn.query_row(
@@ -5645,8 +5784,12 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
         // 刺繍
         "beanie", "blanket", "towel",
     ];
+    // 音源添付があるときだけ kind=song（デジタル販売・issue_digital 配信）を解放。
+    // 音源なしの song 指定は配信物が無いので物販既定（tee）に落とす。
     let kind: &str = match q.kind.as_deref() {
+        Some("song") if user_audio_url.is_some() => "song",
         Some(k) if allowed.contains(&k) => k,
+        _ if user_audio_url.is_some() && q.kind.is_none() => "song",
         _ if allowed.contains(&kind_parsed) => kind_parsed,
         _ => "tee",
     };
@@ -5660,9 +5803,9 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     // catalog_orders for `contrado_*` rows. See docs/CONTRADO_SALES_OUTREACH.md.
     let is_contrado = kind == "rashguard_contrado";
     // 基本は AI 自動承認 → 即 live(買える)。商標/実在人物/著名キャラ/不適切のみ human review。
-    let flagged = parsed["flagged"].as_bool().unwrap_or(false);
-    let flag_reason = parsed["flag_reason"].as_str().unwrap_or("").to_string();
-    let (is_active_i, status_s): (i64, &str) = if flagged { (0, "review") } else { (1, "live") };
+    // 持ち込み画像があるときは下の vision チェック結果も加味してから status を確定する。
+    let mut flagged = parsed["flagged"].as_bool().unwrap_or(false);
+    let mut flag_reason = parsed["flag_reason"].as_str().unwrap_or("").to_string();
     let Some(spec) = PRODUCT_SPECS.iter().find(|s| s.kind == kind) else {
         return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"未対応の種類です"}))).into_response();
     };
@@ -5672,9 +5815,9 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     let seed = format!("mk{:08x}", rand::random::<u32>());
     let slug = { let s: String = display.chars().filter(|c| c.is_ascii_alphanumeric()).take(12).collect::<String>().to_uppercase(); if s.is_empty() { "MAKE".to_string() } else { s } };
     let sku = format!("MAKE-{}-{}-{}", slug, kind.to_uppercase().replace('_', "-"), seed);
-    // ローカル生成は API 課金ゼロ → 予算台帳は ¥0 で記録だけ残す(観測のため)。
-    let gen_cost = if use_local { 0 } else { GEMINI_IMAGE_COST_JPY };
-    let charged = { let conn = db.lock().unwrap(); spend_or_refuse(&conn, "ai_image", gen_cost, &format!("public_make sku={} engine={}", sku, if use_local { "local" } else { "gemini" }), Some(&sku)) };
+    // ローカル生成・持ち込み画像は API 課金ゼロ → 予算台帳は ¥0 で記録だけ残す(観測のため)。
+    let gen_cost = if user_design_url.is_some() || use_local { 0 } else { GEMINI_IMAGE_COST_JPY };
+    let charged = { let conn = db.lock().unwrap(); spend_or_refuse(&conn, "ai_image", gen_cost, &format!("public_make sku={} engine={}", sku, if user_design_url.is_some() { "upload" } else if use_local { "local" } else { "gemini" }), Some(&sku)) };
     if !charged {
         return (StatusCode::FAILED_DEPENDENCY, axum::Json(serde_json::json!({"ok":false,"error":"本日の生成枠が上限に達しました。また明日お試しください。"}))).into_response();
     }
@@ -5698,58 +5841,90 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     // 刺繍商品(ビーニー/ブランケット/タオル)はシンプルで太い1〜2色のロゴが映える。
     // 写真調/グラデは刺繍に向かないので、専用プロンプトでベクター調の紋章を作る。
     let is_embroidery = matches!(kind, "beanie" | "blanket" | "towel");
-    let design_prompt = if is_aop {
-        format!(
-            "Print-ready FULL-CANVAS sublimation artwork at 300 DPI for an \
-             all-over-print rashguard. CRITICAL: fill the ENTIRE canvas \
-             edge-to-edge with the dominant color — NO white margins, NO \
-             padding, NO background gaps. Style brief: {}. The artwork will \
-             be cover-cropped onto every panel (front, back, both sleeves), \
-             so corners and edges matter as much as the center. NO model, \
-             NO garment mockup, just the printable artwork. Variation key: {}.",
-            theme_brief, seed)
-    } else if is_full_bleed {
-        format!(
-            "Print-ready FULL-BLEED artwork at 300 DPI that fills the ENTIRE \
-             canvas edge-to-edge — NO white margins, NO padding. Style brief: \
-             {}. The art will be cover-cropped onto the whole surface (poster \
-             sheet / phone case back), so edges and corners matter as much as \
-             the center. NO model, NO product mockup, just the printable \
-             artwork. Variation key: {}.",
-            theme_brief, seed)
-    } else if is_embroidery {
-        format!(
-            "Embroidery-ready emblem at 300 DPI on a pure white background. \
-             CRITICAL: a SIMPLE, BOLD design using only 1–3 flat solid colors, \
-             clean vector-style shapes and thick lines — NO gradients, NO photo \
-             realism, NO fine detail or thin strokes (they cannot be stitched). \
-             Think a crest / monogram / minimal icon. Style brief: {}. \
-             NO model, NO mockup, just the emblem, centered. Variation key: {}.",
-            theme_brief, seed)
+    let url: String = if let Some(du) = &user_design_url {
+        // 持ち込み画像はそのままプリント/ジャケットに使う。AI生成と違い写真の
+        // 白い部分を透過キーすると穴が空くので make_design_transparent はかけない。
+        du.clone()
     } else {
-        format!(
-            "Print-ready chest graphic at 300 DPI on a pure white background. \
-             Style brief: {}. NO model, NO mockup, just the artwork, centered. Variation key: {}.",
-            theme_brief, seed)
+        let design_prompt = if kind == "song" {
+            // 楽曲: ジャケット(正方形フルブリード)。プリントではなく PDP/棚の顔。
+            format!(
+                "Square album cover artwork. Fill the ENTIRE canvas edge-to-edge \
+                 — NO white margins, NO padding. Mood/style brief: {}. \
+                 NO model, NO product mockup, just the cover art. Variation key: {}.",
+                theme_brief, seed)
+        } else if is_aop {
+            format!(
+                "Print-ready FULL-CANVAS sublimation artwork at 300 DPI for an \
+                 all-over-print rashguard. CRITICAL: fill the ENTIRE canvas \
+                 edge-to-edge with the dominant color — NO white margins, NO \
+                 padding, NO background gaps. Style brief: {}. The artwork will \
+                 be cover-cropped onto every panel (front, back, both sleeves), \
+                 so corners and edges matter as much as the center. NO model, \
+                 NO garment mockup, just the printable artwork. Variation key: {}.",
+                theme_brief, seed)
+        } else if is_full_bleed {
+            format!(
+                "Print-ready FULL-BLEED artwork at 300 DPI that fills the ENTIRE \
+                 canvas edge-to-edge — NO white margins, NO padding. Style brief: \
+                 {}. The art will be cover-cropped onto the whole surface (poster \
+                 sheet / phone case back), so edges and corners matter as much as \
+                 the center. NO model, NO product mockup, just the printable \
+                 artwork. Variation key: {}.",
+                theme_brief, seed)
+        } else if is_embroidery {
+            format!(
+                "Embroidery-ready emblem at 300 DPI on a pure white background. \
+                 CRITICAL: a SIMPLE, BOLD design using only 1–3 flat solid colors, \
+                 clean vector-style shapes and thick lines — NO gradients, NO photo \
+                 realism, NO fine detail or thin strokes (they cannot be stitched). \
+                 Think a crest / monogram / minimal icon. Style brief: {}. \
+                 NO model, NO mockup, just the emblem, centered. Variation key: {}.",
+                theme_brief, seed)
+        } else {
+            format!(
+                "Print-ready chest graphic at 300 DPI on a pure white background. \
+                 Style brief: {}. NO model, NO mockup, just the artwork, centered. Variation key: {}.",
+                theme_brief, seed)
+        };
+        let img = match if use_local { local_gen_image(&design_prompt).await } else { crate::gemini::call_gemini(&design_prompt).await } {
+            Ok(i) => i,
+            Err(e) => return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":format!("デザイン生成に失敗: {}", e)}))).into_response(),
+        };
+        // DTG: 白(or黒)背景 → 後処理で背景透過にしてから保存（色生地でも四角が出ない）。
+        // AOP/full-bleed/ジャケット: 全面なので透過キーは禁止（フチまで色を残す）→ そのまま使う。
+        let (design_bytes, design_mime) = if is_aop || is_full_bleed || kind == "song" {
+            (img.bytes.clone(), img.mime.clone())
+        } else {
+            match make_design_transparent(&img.bytes) {
+                Some(b) => (b, "image/png".to_string()),
+                None => (img.bytes.clone(), img.mime.clone()),
+            }
+        };
+        let key = format!("catalog/{}.png", sku);
+        let Some(u) = crate::store_r2_bytes(&key, &design_bytes, &design_mime).await else {
+            return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":"画像アップロードに失敗しました"}))).into_response();
+        };
+        u
     };
-    let img = match if use_local { local_gen_image(&design_prompt).await } else { crate::gemini::call_gemini(&design_prompt).await } {
-        Ok(i) => i,
-        Err(e) => return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":format!("デザイン生成に失敗: {}", e)}))).into_response(),
-    };
-    // DTG: 白(or黒)背景 → 後処理で背景透過にしてから保存（色生地でも四角が出ない）。
-    // AOP/full-bleed: 全面プリントなので透過キーは禁止（フチまで色を残す）→ そのまま使う。
-    let (design_bytes, design_mime) = if is_aop || is_full_bleed {
-        (img.bytes.clone(), img.mime.clone())
-    } else {
-        match make_design_transparent(&img.bytes) {
-            Some(b) => (b, "image/png".to_string()),
-            None => (img.bytes.clone(), img.mime.clone()),
+    // 持ち込み画像: 公開(live)前に1回だけ vision で権利/不適切チェック。
+    // /make は匿名なので、AI生成側の安全フィルタを通らない持ち込みだけ追加で見る。
+    // チェック自体が失敗したときも review に倒す(フェイルセーフ)。
+    if user_design_url.is_some() && !flagged {
+        match crate::gemini::call_gemini_image_check(&url).await {
+            Ok((false, _)) => {}
+            Ok((true, reason)) => {
+                flagged = true;
+                flag_reason = if reason.is_empty() { "画像の権利確認".to_string() } else { reason };
+            }
+            Err(e) => {
+                tracing::warn!("[make/upload-check] {} failed: {}", sku, e);
+                flagged = true;
+                flag_reason = "画像の自動確認が混み合っています".to_string();
+            }
         }
-    };
-    let key = format!("catalog/{}.png", sku);
-    let Some(url) = crate::store_r2_bytes(&key, &design_bytes, &design_mime).await else {
-        return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":"画像アップロードに失敗しました"}))).into_response();
-    };
+    }
+    let (is_active_i, status_s): (i64, &str) = if flagged { (0, "review") } else { (1, "live") };
     // A/B/C: 投稿に variant と visitor を刻む（勝者UU判定の母数）。
     let ab_variant = make_variant_norm(q.v.as_deref());
     let ab_visitor = q.visitor.as_deref().map(str::trim).filter(|s| !s.is_empty() && s.len() <= 80);
@@ -5772,6 +5947,11 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
         if use_local { m.insert("gen_engine".into(), serde_json::Value::from("local")); }
         if let Some(vis) = ab_visitor { m.insert("make_visitor".into(), serde_json::Value::from(vis)); }
         if let Some(me) = &maker_email { m.insert("maker_email".into(), serde_json::Value::from(me.clone())); }
+        // 音源: kind=song なら購入時の配信物(issue_digital)、アパレル等なら
+        // PDP の試聴プレイヤー(「Tシャツに音源」)として鳴る。
+        if let Some(au) = &user_audio_url { m.insert("audio_url".into(), serde_json::Value::from(au.clone())); }
+        // 持ち込みデザイン印: 監査・ペルソナ批評・後追い調査用のマーカー。
+        if user_design_url.is_some() { m.insert("user_design".into(), serde_json::Value::from(true)); }
         if m.is_empty() { None } else { Some(serde_json::Value::Object(m).to_string()) }
     };
     {
@@ -5827,8 +6007,11 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
         }
     }
     // Cost-minimal: only the Printful on-body mockup (no extra Gemini images).
-    let (pp, pv, url_c, sku_c, db_c) = (spec.printful_product_id, spec.printful_variant_id, url.clone(), sku.clone(), db.clone());
-    tokio::spawn(async move { let _ = generate_onbody_mockup(db_c, sku_c, pp, pv, url_c).await; });
+    // song などデジタル種別(printful_product_id=0)は物理モックアップが無いのでスキップ。
+    if spec.printful_product_id > 0 {
+        let (pp, pv, url_c, sku_c, db_c) = (spec.printful_product_id, spec.printful_variant_id, url.clone(), sku.clone(), db.clone());
+        tokio::spawn(async move { let _ = generate_onbody_mockup(db_c, sku_c, pp, pv, url_c).await; });
+    }
     // MUスコア: 公開即採点 (デザイン画像で判定 — mockupはまだ無い)。
     // 失敗してもPDP/ソートはCOALESCE 40で動くのでログだけ残して続行。
     if !flagged {
@@ -5850,6 +6033,10 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
         format!("つくりました。少し確認したい点（{}）があるので人の目を通します。OKならすぐ公開・購入できます。", r)
     } else if is_contrado {
         "できました！もう棚に並びました。今すぐ買えます。プレミアム（Contrado UK / 裾・袖口・襟まで完全プリント）は英国で1枚ずつ縫製するため、お届けまで少しお時間をいただきます。".to_string()
+    } else if kind == "song" {
+        "できました！もう棚に並びました。購入した人には視聴/ダウンロードリンクがメールで届きます。".to_string()
+    } else if user_audio_url.is_some() {
+        "できました！もう棚に並びました。商品ページでこの曲が試聴できます。着用イメージは数十秒で反映されます。".to_string()
     } else {
         "できました！もう棚に並びました。今すぐ買えます。着用イメージは数十秒で反映されます。".to_string()
     };
