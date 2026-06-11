@@ -42361,7 +42361,7 @@ async fn public_constitution_page() -> Html<String> {
 /// MU is an unmanned AI brand currently run by one human (Yuki). This page is
 /// the public design doc for making it survive that one human: judgement
 /// criteria, key/permission policy, voice, revenue split, succession. Living
-/// document — meant to be amended by atsm.wtf feedback. Self-contained inline
+/// document — meant to be amended by takibi.wtf feedback. Self-contained inline
 /// HTML in 墨黒×明朝 to match heritage/story tone. NOT noindex (the whole
 /// point is to be inheritable). JP body, EN gloss inline.
 async fn public_governance_page() -> Html<String> {
@@ -42421,9 +42421,9 @@ async fn public_governance_page() -> Html<String> {
   <ul>
     <li>この憲法を公開で残す（誰でも引き継げる）。</li>
     <li>鍵は council へ。基準はログで育てる。</li>
-    <li>これは v0.1。焚き火 (<a href="https://atsm.wtf">atsm.wtf</a>) のみんなの FB で改訂していく。</li>
+    <li>これは v0.1。焚き火 (<a href="https://takibi.wtf">takibi.wtf</a>) のみんなの FB で改訂していく。</li>
   </ul>
-  <p class="gloss-en">Kept public so anyone can inherit it. Keys go to the council; criteria grow in the log. This is v0.1 — to be revised by the campfire at atsm.wtf.</p>
+  <p class="gloss-en">Kept public so anyone can inherit it. Keys go to the council; criteria grow in the log. This is v0.1 — to be revised by the campfire at takibi.wtf.</p>
 </section>
 
 <blockquote class="sign">
@@ -42431,7 +42431,7 @@ async fn public_governance_page() -> Html<String> {
   <span class="sign-by">— MU council（暫定: 濱田優貴 + Claude）</span>
 </blockquote>
 
-<p class="campfire"><a href="https://atsm.wtf">→ 焚き火で一緒に育てる · atsm.wtf</a></p>
+<p class="campfire"><a href="https://takibi.wtf">→ 焚き火で一緒に育てる · takibi.wtf</a></p>
 "##;
 
     let html = format!(r##"<!doctype html><html lang="ja"><head>
@@ -42484,7 +42484,7 @@ footer a:hover{{color:var(--y)}}
 {body}
 </div>
 <footer>
-  <div>MU council (暫定): 濱田優貴 + Claude · 生きた文書 v0.1 — <a href="https://atsm.wtf">atsm.wtf</a> で改訂</div>
+  <div>MU council (暫定): 濱田優貴 + Claude · 生きた文書 v0.1 — <a href="https://takibi.wtf">takibi.wtf</a> で改訂</div>
   <div style="margin-top:6px">株式会社イネブラ (Enabler Inc.) · <a href="/constitution">/constitution</a> · <a href="/transparency">/transparency</a> · <a href="https://github.com/yukihamada/mu-brand">GitHub</a></div>
 </footer>
 </body></html>"##, body = body);
