@@ -69428,6 +69428,8 @@ async fn main() {
         .route("/api/make/verify/send", post(catalog::make_verify_send))
         .route("/api/make/verify/check", post(catalog::make_verify_check))
         .route("/api/make/ab", get(catalog::make_ab_status))
+        // song 試聴プレビュー(冒頭のみ・フルURL非公開)。
+        .route("/api/song/preview/:sku", get(catalog::song_preview))
         .route("/admin/catalog/lifestyle_gen", get(catalog::admin_lifestyle_gen))
         .route("/admin/catalog/fix_lifestyle", get(catalog::admin_fix_lifestyle))
         .route("/admin/catalog/legacy_rename", get(catalog::admin_legacy_rename))
