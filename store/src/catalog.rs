@@ -10224,8 +10224,20 @@ fn build_printful_item(
                 } else {
                     resolved_placements.iter().copied().collect()
                 };
+            // ⚠ Orders API v1 keys the print position by `type`, NOT
+            // `placement` (`placement` is the Mockup-Generator API's key).
+            // An unknown `placement` key is silently ignored and every file
+            // falls back to type "default", so a multi-panel fan-out posted
+            // 4 files on the SAME placement and Printful 400'd with OR-12
+            // "There can only be one file for each placement" → auto refund
+            // (catalog_orders #47, MAKE-MAKE-RASHGUARD-LS, 2026-06-11).
+            // Single-file products never noticed because one "default" file
+            // lands on the primary placement anyway. The names returned by
+            // placements_for_product() are all valid Orders-API file types
+            // (verified live via GET /products/{71,301,99,19,654,895,536}
+            // + /orders/estimate-costs on 2026-06-11).
             let files: Vec<serde_json::Value> = resolved_placements.iter().map(|p| {
-                serde_json::json!({"url": file_url, "placement": p})
+                serde_json::json!({"url": file_url, "type": p})
             }).collect();
             serde_json::json!({
                 "variant_id": pf_variant_id,
@@ -13679,6 +13691,108 @@ mod state_code_tests {
         assert_eq!(crate::jp_state_code("東京"), "JP-13");
         assert_eq!(crate::jp_state_code("JP-13"), "JP-13");
         assert_eq!(crate::jp_state_code("そんな県はない"), "");
+    }
+}
+
+#[cfg(test)]
+mod printful_item_files_tests {
+    use super::*;
+
+    fn test_conn() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().expect("in-memory db");
+        ensure_schema(&conn);
+        conn
+    }
+
+    fn insert_product(
+        conn: &rusqlite::Connection,
+        sku: &str,
+        pp_id: i64,
+        variant_id: i64,
+        placement: &str,
+        route: &str,
+        design_file: Option<&str>,
+    ) {
+        conn.execute(
+            "INSERT INTO catalog_products
+               (sku, brand, label, description_ja, retail_price_jpy,
+                printful_product_id, printful_variant_id, printful_placement,
+                design_file, fulfillment_route, status)
+             VALUES (?,?,?,?,?,?,?,?,?,?, 'live')",
+            rusqlite::params![
+                sku, "test", "Test", "テスト", 9800_i64,
+                pp_id, variant_id, placement, design_file, route,
+            ],
+        )
+        .expect("insert product");
+    }
+
+    /// Regression for catalog order #47 (2026-06-11, MAKE-MAKE-RASHGUARD-LS):
+    /// the AOP 4-panel fan-out keyed each file by `placement`, but the
+    /// Printful Orders API v1 keys print positions by `type` and silently
+    /// ignores unknown keys — so all four files collapsed onto the "default"
+    /// placement and Printful 400'd with OR-12 "There can only be one file
+    /// for each placement" → the paid order auto-refunded.
+    #[test]
+    fn aop_rashguard_fans_out_four_distinct_file_types() {
+        let conn = test_conn();
+        insert_product(
+            &conn, "TEST-RASH", 301, 9328, "front", "printful_aop",
+            Some("https://mockups.wearmu.com/catalog/TEST-RASH.png"),
+        );
+        let item = build_printful_item(&conn, "TEST-RASH", "9800.00", None, false, 1)
+            .expect("item built");
+        let files = item["files"].as_array().expect("files array");
+        assert_eq!(files.len(), 4, "AOP rashguard fans out to 4 panels");
+        let mut types: Vec<&str> = files
+            .iter()
+            .map(|f| f["type"].as_str().expect("each file keyed by `type`"))
+            .collect();
+        types.sort_unstable();
+        types.dedup();
+        assert_eq!(
+            types,
+            vec!["back", "front", "sleeve_left", "sleeve_right"],
+            "four DISTINCT placements — duplicates trigger Printful OR-12"
+        );
+        // `placement` is the Mockup-Generator API's key; on the Orders API
+        // it is ignored and the file falls back to type "default".
+        assert!(
+            files.iter().all(|f| f.get("placement").is_none()),
+            "order files must not use the mockup-generator `placement` key"
+        );
+    }
+
+    /// Single-panel DTG products keep exactly one file, keyed by `type`.
+    #[test]
+    fn dtg_tee_sends_single_front_file() {
+        let conn = test_conn();
+        insert_product(
+            &conn, "TEST-TEE", 71, 4017, "front", "printful_dtg",
+            Some("https://mockups.wearmu.com/catalog/TEST-TEE.png"),
+        );
+        let item = build_printful_item(&conn, "TEST-TEE", "4900.00", None, false, 1)
+            .expect("item built");
+        let files = item["files"].as_array().expect("files array");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0]["type"].as_str(), Some("front"));
+        assert!(files[0].get("placement").is_none());
+    }
+
+    /// Stored non-front placements (embroidery cap) are honored verbatim
+    /// as the Orders-API file `type`.
+    #[test]
+    fn embroidery_cap_honors_stored_placement_as_type() {
+        let conn = test_conn();
+        insert_product(
+            &conn, "TEST-CAP", 99, 4792, "embroidery_front", "printful_embroidery",
+            Some("https://mockups.wearmu.com/catalog/TEST-CAP.png"),
+        );
+        let item = build_printful_item(&conn, "TEST-CAP", "4900.00", None, false, 1)
+            .expect("item built");
+        let files = item["files"].as_array().expect("files array");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0]["type"].as_str(), Some("embroidery_front"));
     }
 }
 
