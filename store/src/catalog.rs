@@ -166,6 +166,11 @@ pub fn ensure_schema(conn: &rusqlite::Connection) {
     let _ = conn.execute("ALTER TABLE catalog_orders ADD COLUMN ticket_code TEXT", []);
     let _ = conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_catorders_ticket ON catalog_orders(ticket_code)", []);
+    // Redemption: when an event-ticket seat is claimed from an external surface
+    // (e.g. takibi.wtf /redeem) we stamp who claimed it + when, so a seat can't
+    // be double-claimed. NULL = not yet redeemed (the QR/VALID page is unaffected).
+    let _ = conn.execute("ALTER TABLE catalog_orders ADD COLUMN redeemed_at TEXT", []);
+    let _ = conn.execute("ALTER TABLE catalog_orders ADD COLUMN redeemed_by TEXT", []);
     // Affiliate attribution: which referral code drove this sale + the
     // commission credited to the referrer (also written to mu_credit_ledger,
     // the payout source of truth). NULL/0 for unattributed orders.
@@ -12993,9 +12998,27 @@ pub async fn ticket_view(State(db): State<Db>, Path(code): Path<String>) -> Resp
         )
     } else {
         let qr_img = ticket_qr_data_uri(&ticket_url).unwrap_or_default();
+        // 焚き火券: コミュニティにこの券コードで入れる入口ボタン。既存QRは
+        // このページを開くので、古い券面QRからでもこの導線に乗る。
+        // 入口URLは env で差し替え可能(takibi.wtf ドメイン切替が kenny ゲート
+        // 待ちのため、今確実に届く atsme-community.fly.dev を既定にする)。
+        let takibi_btn = if sku.to_uppercase().contains("TAKIBI") {
+            let redeem_page = env::var("TAKIBI_REDEEM_PAGE_URL")
+                .unwrap_or_else(|_| "https://atsme-community.fly.dev/redeem".into());
+            format!(
+                "<div style=\"margin:4px 0 14px\"><a href=\"{u}?code={c}\" \
+                 style=\"display:inline-block;background:#e6c449;color:#0a0a0a;text-decoration:none;\
+                 font-weight:700;font-size:15px;padding:13px 28px;border-radius:99px\">🔥 この券で焚き火に入る</a>\
+                 <div style=\"font-size:11px;opacity:.5;margin-top:6px\">入口ページにコード <span style=\"font-family:monospace;color:#e6c449\">{c}</span> を入力しても入れます</div></div>",
+                u = html_text(redeem_page.trim_end_matches('/')),
+                c = html_text(&code),
+            )
+        } else {
+            String::new()
+        };
         (
             "<div style=\"display:inline-block;font-size:11px;letter-spacing:0.3em;color:#0a0a0a;background:#3ddc84;padding:4px 12px;border-radius:99px;font-weight:700\">✓ VALID</div>".to_string(),
-            format!("<div style=\"background:#fff;border-radius:12px;padding:16px;display:inline-block;margin:16px 0\"><img src=\"{}\" alt=\"QR\" width=\"240\" height=\"240\" style=\"display:block\"></div>", qr_img),
+            format!("<div style=\"background:#fff;border-radius:12px;padding:16px;display:inline-block;margin:16px 0\"><img src=\"{}\" alt=\"QR\" width=\"240\" height=\"240\" style=\"display:block\"></div>{}", qr_img, takibi_btn),
             "受付でこの画面（QR）をご提示ください。 デジタル参加券・物理発送はありません。",
         )
     };
@@ -13068,6 +13091,140 @@ pub async fn admin_ticket_issue(State(db): State<Db>, Query(q): Query<TicketIssu
         .into_response(),
         Err(e) => axum::Json(serde_json::json!({ "ok": false, "error": e })).into_response(),
     }
+}
+
+// ─── Takibi event-pass redemption ─────────────────────────────────────
+//
+// Lets an external surface (takibi.wtf) claim/check an MU event-ticket seat.
+// MU stays the source of truth for ticket validity + single-use. Secret-gated
+// (TAKIBI_REDEEM_SECRET) service-to-service; never browser-facing. This is the
+// MU/issuer half of the takibi entitlement-voucher flow — takibi exposes the
+// public POST /redeem and calls these behind it.
+
+#[derive(Deserialize)]
+pub struct RedeemQuery {
+    /// Shared secret = env TAKIBI_REDEEM_SECRET (service-to-service auth).
+    #[serde(default)]
+    pub token: String,
+    /// Who is claiming the seat (e.g. a takibi.wtf member id). Optional but
+    /// recommended: the first claimer binds the seat; a different claimer is
+    /// rejected as already-redeemed.
+    #[serde(default)]
+    pub member: Option<String>,
+}
+
+fn redeem_authed(q: &RedeemQuery) -> bool {
+    let expected = env::var("TAKIBI_REDEEM_SECRET").unwrap_or_default();
+    !expected.is_empty() && q.token == expected
+}
+
+fn norm_code(code: &str) -> String {
+    code.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_lowercase()
+}
+
+/// POST /t/:code/redeem?token=&member= — claim an event-ticket seat from an
+/// external surface (takibi.wtf). First claim stamps redeemed_at/redeemed_by;
+/// re-claim by the same member (or a caller that sent no member) is idempotent;
+/// a different member gets 409. event_ticket SKUs only. Does not affect the QR
+/// VALID page (that still resolves by ticket_code).
+pub async fn ticket_redeem(
+    State(db): State<Db>,
+    Path(code): Path<String>,
+    Query(q): Query<RedeemQuery>,
+) -> Response {
+    if !redeem_authed(&q) {
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    }
+    let code = norm_code(&code);
+    let member = q
+        .member
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && s.len() <= 128)
+        .map(|s| s.to_string());
+
+    let row: Option<(String, Option<String>, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT sku, redeemed_at, redeemed_by FROM catalog_orders WHERE ticket_code=?",
+            rusqlite::params![&code],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, Option<String>>(2)?)),
+        )
+        .ok()
+    };
+    let Some((sku, redeemed_at, redeemed_by)) = row else {
+        return (StatusCode::NOT_FOUND, axum::Json(serde_json::json!({"valid": false, "reason": "not_found"}))).into_response();
+    };
+    if kind_from_sku(&sku) != "event_ticket" {
+        return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"valid": false, "reason": "not_event_ticket", "sku": sku}))).into_response();
+    }
+    // Already claimed?
+    if let Some(at) = redeemed_at.filter(|s| !s.is_empty()) {
+        let by = redeemed_by.unwrap_or_default();
+        let same = member.as_deref().map(|m| m == by).unwrap_or(true);
+        if same {
+            return axum::Json(serde_json::json!({"valid": true, "sku": sku, "redeemed_at": at, "redeemed_by": by, "first": false})).into_response();
+        }
+        return (StatusCode::CONFLICT, axum::Json(serde_json::json!({"valid": false, "reason": "already_redeemed", "redeemed_at": at}))).into_response();
+    }
+    // First claim — guard the UPDATE so a concurrent claimer can't double-book.
+    let now = crate::chrono_now();
+    let by = member.clone().unwrap_or_default();
+    let changed = {
+        let conn = db.lock().unwrap();
+        conn.execute(
+            "UPDATE catalog_orders SET redeemed_at=?1, redeemed_by=?2 \
+             WHERE ticket_code=?3 AND (redeemed_at IS NULL OR redeemed_at='')",
+            rusqlite::params![&now, &by, &code],
+        )
+        .unwrap_or(0)
+    };
+    if changed == 0 {
+        // Lost the race: someone claimed between our SELECT and UPDATE.
+        let (at, who): (String, String) = {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT COALESCE(redeemed_at,''), COALESCE(redeemed_by,'') FROM catalog_orders WHERE ticket_code=?",
+                rusqlite::params![&code],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap_or_default()
+        };
+        let same = member.as_deref().map(|m| m == who).unwrap_or(true);
+        if same {
+            return axum::Json(serde_json::json!({"valid": true, "sku": sku, "redeemed_at": at, "redeemed_by": who, "first": false})).into_response();
+        }
+        return (StatusCode::CONFLICT, axum::Json(serde_json::json!({"valid": false, "reason": "already_redeemed", "redeemed_at": at}))).into_response();
+    }
+    axum::Json(serde_json::json!({"valid": true, "sku": sku, "redeemed_at": now, "redeemed_by": by, "first": true})).into_response()
+}
+
+/// GET /t/:code/verify?token= — read-only validity check for an external
+/// surface (takibi.wtf UI) before claiming. Secret-gated; does not mutate.
+pub async fn ticket_verify(
+    State(db): State<Db>,
+    Path(code): Path<String>,
+    Query(q): Query<RedeemQuery>,
+) -> Response {
+    if !redeem_authed(&q) {
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    }
+    let code = norm_code(&code);
+    let row: Option<(String, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT sku, redeemed_at FROM catalog_orders WHERE ticket_code=?",
+            rusqlite::params![&code],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
+        )
+        .ok()
+    };
+    let Some((sku, redeemed_at)) = row else {
+        return (StatusCode::NOT_FOUND, axum::Json(serde_json::json!({"valid": false, "reason": "not_found"}))).into_response();
+    };
+    let kind = kind_from_sku(&sku);
+    let redeemed = redeemed_at.map(|s| !s.is_empty()).unwrap_or(false);
+    axum::Json(serde_json::json!({"valid": kind == "event_ticket", "sku": sku, "kind": kind, "redeemed": redeemed})).into_response()
 }
 
 // ─── Affiliate commission ─────────────────────────────────────────────

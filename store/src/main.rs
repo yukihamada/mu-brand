@@ -69366,6 +69366,11 @@ async fn main() {
         .route("/api/admin/ito/issue", post(ito::api_admin_issue))
         .route("/api/admin/ito/redemptions", get(ito::api_admin_redemptions))
         .route("/api/admin/ito/redeem-done", post(ito::api_admin_redeem_done))
+        // Takibi event-pass redemption (secret-gated, service-to-service):
+        // takibi.wtf claims/checks an MU event-ticket seat. MU stays the
+        // source of truth for ticket validity + single-use.
+        .route("/t/:code/redeem", post(catalog::ticket_redeem))
+        .route("/t/:code/verify", get(catalog::ticket_verify))
         // Self-serve affiliate: signup/link page + per-code dashboard.
         .route("/affiliate", get(affiliate_page))
         .route("/affiliate/:code", get(affiliate_dashboard))
