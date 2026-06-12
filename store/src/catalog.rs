@@ -1650,10 +1650,102 @@ const DESIGN_VARIANT_KINDS: &[(&str, &str, &str)] = &[
     ("crewneck", "スウェット", "Crewneck"),
     ("long_sleeve_tee", "ロンT", "Long sleeve"),
     ("mug", "マグ", "Mug"),
+    ("mug_black", "マグ(黒)", "Black mug"),
     ("sticker", "ステッカー", "Sticker"),
     ("tote", "トート", "Tote"),
     ("poster", "ポスター", "Poster"),
 ];
+
+/// kind → 印刷面の地色が暗いか。実Printful variantの色で確認済(2026-06-12):
+/// tee=BC3001 Black / hoodie=Gildan18500 Black / crewneck=Gildan18000 Black /
+/// long_sleeve_tee=BC3501 Black(10095実API確認) / mug_black=Printful300 黒。
+/// 白系: mug=白磁 / sticker=白ビニール / tote=ナチュラルコットン / poster=白紙。
+pub(crate) fn variant_canvas_is_dark(kind: &str) -> bool {
+    matches!(kind, "tee" | "hoodie" | "crewneck" | "long_sleeve_tee" | "mug_black")
+}
+
+/// デザインの明暗 × 地色の相性ゲート — 「白マグに白文字でほぼ不可視」事故の根治。
+/// tone=(ほぼ白%, ほぼ黒%)。白>=40%→暗い地色のみ・黒>=40%→明るい地色のみ
+/// (40%が白文字なら白生地では実質読めない。実事故デザインは51%で境界に近かった)。
+/// 平均輝度でなく割合を使う — 疎なテキストデザインでは透明縁のブレンドが
+/// 平均を狂わせる(実例: 白文字88%のデザインが平均輝度99と出て素通りした)。
+pub(crate) fn kind_ok_for_tone(kind: &str, tone: Option<(i64, i64)>) -> bool {
+    match tone {
+        Some((light, _)) if light >= 40 => variant_canvas_is_dark(kind),
+        Some((_, dark)) if dark >= 40 => !variant_canvas_is_dark(kind),
+        _ => true,
+    }
+}
+
+/// PDP の横展開ボタン列に kind を出すか。mug_black は「白マグが出せない
+/// デザインのときだけ」出す(中間トーンで白黒マグ2連を並べない)。
+pub(crate) fn show_variant_kind(kind: &str, tone: Option<(i64, i64)>) -> bool {
+    match kind {
+        "mug_black" => !kind_ok_for_tone("mug", tone),
+        k => kind_ok_for_tone(k, tone),
+    }
+}
+
+/// 透過PNGのトーン統計: (ほぼ白% [luma>=200], ほぼ黒% [luma<=55], 不透過率%)。
+/// alpha>=200 のみ数える — リサイズで生まれる半透明の縁(暗側に振れる)を除外。
+/// 縮小してから舐めるので大きい画像でも数ms。
+fn design_tone_stats(bytes: &[u8]) -> Option<(i64, i64, i64)> {
+    let img = image::load_from_memory(bytes).ok()?;
+    let img = img.thumbnail(128, 128).to_rgba8();
+    let (mut light, mut dark, mut n, mut total) = (0u64, 0u64, 0u64, 0u64);
+    for p in img.pixels() {
+        total += 1;
+        if p[3] >= 200 {
+            n += 1;
+            // ITU-R BT.601 luma
+            let l = (299 * p[0] as u64 + 587 * p[1] as u64 + 114 * p[2] as u64) / 1000;
+            if l >= 200 { light += 1; }
+            if l <= 55 { dark += 1; }
+        }
+    }
+    if total == 0 || n == 0 {
+        return None;
+    }
+    Some((
+        (light * 100 / n) as i64,
+        (dark * 100 / n) as i64,
+        (n * 100 / total) as i64,
+    ))
+}
+
+/// design tone を meta_json にキャッシュしつつ返す。未計算なら R2 から
+/// 取得して計算→保存(初回のみ ~100-300ms、以降はDB読みだけ)。
+async fn cached_design_tone(db: &Db, sku: &str, design_url: &str) -> Option<(i64, i64)> {
+    {
+        let conn = db.lock().unwrap();
+        if let Ok((Some(l), Some(d))) = conn.query_row(
+            "SELECT json_extract(COALESCE(meta_json,'{}'),'$.design_tone_light'),
+                    json_extract(COALESCE(meta_json,'{}'),'$.design_tone_dark')
+             FROM catalog_products WHERE sku=?",
+            rusqlite::params![sku],
+            |r| Ok((r.get::<_, Option<i64>>(0)?, r.get::<_, Option<i64>>(1)?)),
+        ) {
+            return Some((l, d));
+        }
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(4))
+        .build()
+        .ok()?;
+    let bytes = client.get(design_url).send().await.ok()?.bytes().await.ok()?;
+    let (light, dark, _) = design_tone_stats(&bytes)?;
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE catalog_products
+             SET meta_json = json_set(json_set(COALESCE(meta_json,'{}'),
+                 '$.design_tone_light', ?), '$.design_tone_dark', ?)
+             WHERE sku=?",
+            rusqlite::params![light, dark, sku],
+        );
+    }
+    Some((light, dark))
+}
 
 /// この商品が横展開セクションの土台になれるか。live + DTG + 実デザインURL。
 fn design_variant_base_row(
@@ -1741,47 +1833,92 @@ pub async fn design_variant_create(
     if !DESIGN_VARIANT_KINDS.iter().any(|(k, _, _)| *k == kind) {
         return (StatusCode::BAD_REQUEST, "unsupported kind").into_response();
     }
-    let (new_sku, spec_pid, spec_vid, design_url) = {
+    // 土台の確認はロック内で済ませ、画像の輝度計算(非同期)はロックの外で。
+    let (brand, label, desc, design, base_meta) = {
         let conn = db.lock().unwrap();
-        let Some((brand, label, desc, design, base_meta)) =
-            design_variant_base_row(&conn, &base_sku)
-        else {
-            return (StatusCode::BAD_REQUEST, "base product not eligible").into_response();
+        match design_variant_base_row(&conn, &base_sku) {
+            Some(v) => v,
+            None => return (StatusCode::BAD_REQUEST, "base product not eligible").into_response(),
+        }
+    };
+    if kind_from_sku(&base_sku) == kind.as_str() {
+        return Redirect::to(&format!("/shop/{}", urlencoding::encode(&base_sku)))
+            .into_response();
+    }
+    // 明暗ゲート: 白マグ×白文字のような不可視の組合せは作らせない。
+    // ペアのある kind は自動スワップ(mug↔mug_black)、無ければ断る。
+    let tone = cached_design_tone(&db, &base_sku, &design).await;
+    let kind: String = if kind_ok_for_tone(&kind, tone) {
+        kind
+    } else {
+        let swapped = match kind.as_str() {
+            "mug" => "mug_black",
+            "mug_black" => "mug",
+            _ => "",
         };
-        if kind_from_sku(&base_sku) == kind.as_str() {
-            return Redirect::to(&format!("/shop/{}", urlencoding::encode(&base_sku)))
-                .into_response();
+        if !swapped.is_empty() && kind_ok_for_tone(swapped, tone) {
+            swapped.to_string()
+        } else {
+            return (StatusCode::BAD_REQUEST,
+                "このデザインの色味では、その生地だとほぼ見えなくなるため作れません").into_response();
         }
+    };
+    let (new_sku, spec_pid, spec_vid, design_url, pending) = {
+        let conn = db.lock().unwrap();
         let group = design_group_of(&base_meta, &base_sku);
-        if let Some((existing, _, _)) =
-            design_variant_siblings(&conn, &design, &group).get(kind.as_str())
-                .map(|t| t.clone())
-        {
-            return Redirect::to(&format!("/shop/{}", urlencoding::encode(&existing)))
-                .into_response();
+        // 冪等(check+insert を同一ロックで原子化)。review 中の兄弟も「存在」と
+        // みなす — 承認待ちの間に連打で複製が生まれるのを防ぐ。
+        if let Some(existing) = design_variant_sibling_any_status(&conn, &design, &group, &kind) {
+            // 既存が review(承認待ち)なら PDP が出ないので土台へ pending を見せる。
+            let live: bool = conn.query_row(
+                "SELECT status='live' AND is_active=1 FROM catalog_products WHERE sku=?",
+                rusqlite::params![&existing], |r| r.get(0)).unwrap_or(false);
+            return if live {
+                Redirect::to(&format!("/shop/{}?made=1", urlencoding::encode(&existing)))
+                    .into_response()
+            } else {
+                Redirect::to(&format!("/shop/{}?made=pending", urlencoding::encode(&base_sku)))
+                    .into_response()
+            };
         }
+        // パートナーブランド(approval_required)の棚は素通りさせない —
+        // 本人が育てた棚に匿名の横展開が無断で並ぶのを防ぐ(review 行き)。
+        let approval_required: bool = conn
+            .query_row(
+                "SELECT COALESCE(json_extract(config_json,'$.approval_required'),0) FROM catalog_brands WHERE slug=?",
+                rusqlite::params![&brand],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|v| v != 0)
+            .unwrap_or(false);
         let sku = match agent_insert_product(&conn, &brand, &label, &desc, &kind, &design, None) {
             Ok(s) => s,
             Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
         };
-        // 元デザインは審査済みの live 品 — 横展開はアートも文言も同一なので即 live。
-        // meta に系譜(design_group / variant_of)と作者継承を書く。
+        // 元デザインは審査済みの live 品 — 横展開はアートも文言も同一なので、
+        // 承認制ブランド以外は即 live。meta に系譜と作者継承を書く。
         let mut meta = serde_json::Map::new();
         meta.insert("design_group".into(), serde_json::Value::from(group.clone()));
         meta.insert("variant_of".into(), serde_json::Value::from(base_sku.clone()));
+        if let Some((l, d)) = tone {
+            meta.insert("design_tone_light".into(), serde_json::Value::from(l));
+            meta.insert("design_tone_dark".into(), serde_json::Value::from(d));
+        }
         if let Some(me) = base_meta.get("maker_email").and_then(|v| v.as_str()) {
             meta.insert("maker_email".into(), serde_json::Value::from(me));
         }
+        let (status_s, active_i) = if approval_required { ("review", 0) } else { ("live", 1) };
         let _ = conn.execute(
             "UPDATE catalog_products
-             SET status='live', is_active=1, meta_json=?, legacy_source='design_variant',
+             SET status=?, is_active=?, meta_json=?, legacy_source='design_variant',
                  updated_at=datetime('now')
              WHERE sku=?",
-            rusqlite::params![serde_json::Value::Object(meta).to_string(), &sku],
+            rusqlite::params![status_s, active_i,
+                serde_json::Value::Object(meta).to_string(), &sku],
         );
         // 土台側に design_group が無ければ書いて、以後の兄弟検索を URL 非依存に。
         if base_meta.get("design_group").is_none() {
-            let mut bm = base_meta;
+            let mut bm = base_meta.clone();
             bm.insert("design_group".into(), serde_json::Value::from(group));
             let _ = conn.execute(
                 "UPDATE catalog_products SET meta_json=?, updated_at=datetime('now') WHERE sku=?",
@@ -1789,18 +1926,79 @@ pub async fn design_variant_create(
             );
         }
         let spec = PRODUCT_SPECS.iter().find(|s| s.kind == kind).unwrap();
-        (sku, spec.printful_product_id, spec.printful_variant_id, design)
+        (sku, spec.printful_product_id, spec.printful_variant_id, design, approval_required)
     };
     tokio::spawn(generate_onbody_mockup(
         db.clone(), new_sku.clone(), spec_pid, spec_vid, design_url,
     ));
-    Redirect::to(&format!("/shop/{}", urlencoding::encode(&new_sku))).into_response()
+    if pending {
+        // review 中は PDP が出ないので土台へ戻して「確認後に並ぶ」を見せる。
+        Redirect::to(&format!("/shop/{}?made=pending", urlencoding::encode(&base_sku)))
+            .into_response()
+    } else {
+        Redirect::to(&format!("/shop/{}?made=1", urlencoding::encode(&new_sku))).into_response()
+    }
+}
+
+/// 冪等チェック用: live/review を問わず、同 design group × kind の既存 SKU。
+fn design_variant_sibling_any_status(
+    conn: &rusqlite::Connection,
+    design_file: &str,
+    group: &str,
+    kind: &str,
+) -> Option<String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT sku FROM catalog_products
+             WHERE status IN ('live','review')
+               AND (design_file=?1 OR json_extract(COALESCE(meta_json,'{}'),'$.design_group')=?2)
+             ORDER BY created_at ASC",
+        )
+        .ok()?;
+    let rows: Vec<String> = stmt
+        .query_map(rusqlite::params![design_file, group], |r| r.get::<_, String>(0))
+        .ok()?
+        .flatten()
+        .collect();
+    rows.into_iter().find(|s| kind_from_sku(s) == kind)
 }
 
 #[derive(Deserialize)]
 pub struct DesignRemixForm {
     pub sku: String,
     pub words: String,
+}
+
+/// リミックスの IP 別レート制限(5回/時)。/make と共有の MAKE_HOURLY_CAP(40/時)
+/// は全体キャップなので、1つの bot がそれを食い潰すと正規ユーザーが締め出される
+/// — 個別の蛇口を別に持つ。プロセス内メモリ(再起動でリセット)で十分。
+fn remix_ip_allow(headers: &axum::http::HeaderMap) -> bool {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static HITS: OnceLock<Mutex<HashMap<String, Vec<u64>>>> = OnceLock::new();
+    let ip = headers
+        .get("fly-client-ip")
+        .or_else(|| headers.get("x-forwarded-for"))
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(',').next().unwrap_or("").trim().to_string())
+        .unwrap_or_default();
+    if ip.is_empty() {
+        return true; // ローカル/不明は全体キャップと予算台帳が守る
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let m = HITS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut g = m.lock().unwrap();
+    g.retain(|_, v| v.iter().any(|t| now.saturating_sub(*t) < 3600));
+    let v = g.entry(ip).or_default();
+    v.retain(|t| now.saturating_sub(*t) < 3600);
+    if v.len() >= 5 {
+        return false;
+    }
+    v.push(now);
+    true
 }
 
 /// POST /api/design-remix — 「一言足して、変える」。既存ライブ商品のデザインを
@@ -1819,6 +2017,11 @@ pub async fn design_remix_create(
     if words.is_empty() || words.chars().count() > 120 {
         return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({
             "ok": false, "error": "足したい一言を入力してください（120文字以内）"
+        }))).into_response();
+    }
+    if !remix_ip_allow(&headers) {
+        return (StatusCode::TOO_MANY_REQUESTS, axum::Json(serde_json::json!({
+            "ok": false, "error": "リミックスは1時間に5回まで。少し時間をおいて試してください。"
         }))).into_response();
     }
     let (base_label, design, base_meta, base_price) = {
@@ -1914,10 +2117,37 @@ pub async fn design_remix_create(
             }))).into_response();
         }
     };
-    let (design_bytes, design_mime) = match make_design_transparent(&img.bytes) {
+    let (mut design_bytes, mut design_mime) = match make_design_transparent(&img.bytes) {
         Some(b) => (b, "image/png".to_string()),
         None => (img.bytes.clone(), img.mime.clone()),
     };
+    // Gemini が紙テクスチャ等の「白でない背景」で返すと透過キーが効かず、
+    // 生地に四角いパッチとして刷られる。非透過率が高すぎたら一度だけ
+    // 純白背景を強要して織り直す(+生成1回分の台帳記録)。
+    if design_tone_stats(&design_bytes).map(|(_, _, cov)| cov > 85).unwrap_or(false) {
+        let retried = {
+            let conn = db.lock().unwrap();
+            spend_or_refuse(&conn, "ai_image", GEMINI_IMAGE_COST_JPY,
+                &format!("design_remix retry(bg) base={} sku={}", base_sku, sku), Some(&sku))
+        };
+        if retried {
+            let retry_prompt = format!(
+                "{} CRITICAL: the background MUST be pure #FFFFFF white — \
+                 NO paper texture, NO canvas, NO off-white tint. Only the artwork \
+                 itself on plain white.", design_prompt);
+            if let Ok(img2) = crate::gemini::call_gemini_with_image(&retry_prompt, &[design.as_str()]).await {
+                let (b2, m2) = match make_design_transparent(&img2.bytes) {
+                    Some(b) => (b, "image/png".to_string()),
+                    None => (img2.bytes.clone(), img2.mime.clone()),
+                };
+                if design_tone_stats(&b2).map(|(_, _, cov)| cov <= 85).unwrap_or(false) {
+                    design_bytes = b2;
+                    design_mime = m2;
+                }
+            }
+        }
+    }
+    let new_tone = design_tone_stats(&design_bytes);
     let key = format!("catalog/{}.png", sku);
     let Some(url) = crate::store_r2_bytes(&key, &design_bytes, &design_mime).await else {
         return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({
@@ -1947,6 +2177,10 @@ pub async fn design_remix_create(
         m.insert("remix_of".into(), serde_json::Value::from(base_sku.clone()));
         m.insert("remix_words".into(), serde_json::Value::from(words.clone()));
         m.insert("edit_token".into(), serde_json::Value::from(edit_token.clone()));
+        if let Some((l, d, _)) = new_tone {
+            m.insert("design_tone_light".into(), serde_json::Value::from(l));
+            m.insert("design_tone_dark".into(), serde_json::Value::from(d));
+        }
         if let Some(ome) = base_meta.get("maker_email").and_then(|v| v.as_str()) {
             m.insert("original_maker_email".into(), serde_json::Value::from(ome));
         }
@@ -1997,7 +2231,7 @@ pub async fn design_remix_create(
     };
     axum::Json(serde_json::json!({
         "ok": true, "sku": sku, "status": status_s,
-        "pdp_url": format!("/shop/{}", urlencoding::encode(&sku)),
+        "pdp_url": format!("/shop/{}?made=1", urlencoding::encode(&sku)),
         "note": note,
     })).into_response()
 }
@@ -9659,6 +9893,8 @@ pub async fn universal_collection(State(db): State<Db>) -> Response {
 #[derive(Deserialize)]
 pub struct PdpQuery {
     pub lang: Option<String>,
+    /// 横展開/リミックス直後の着地: "1"=今あなたが作った一枚 / "pending"=承認待ち。
+    pub made: Option<String>,
 }
 
 pub async fn shop_pdp(
@@ -9831,6 +10067,21 @@ pub async fn shop_pdp(
     // ログイン不要の常時表示バナーで「集めたくなる」ループを作る。
     // brand=nouns では出さない — Nounsオーナー向けPDPにMU店内ロイヤルティを
     // 混ぜると「Nounsは大量ブランドの1つ」シグナルになる (persona FB 2026-06-07)。
+    // 作った直後の着地バナー — 「作る」の熱(IKEA効果)を購入へつなぐ。
+    // ?made=1 は横展開/リミックスの 303 先、?made=pending は承認制ブランド。
+    let made_banner = match pq.made.as_deref() {
+        Some("1") => if lang == "en" {
+            "<div style=\"background:rgba(230,196,73,.12);border:1px solid rgba(230,196,73,.5);border-radius:10px;padding:10px 14px;margin:0 0 14px;font-size:13px\">✦ <b>You just made this.</b> It's on the shelf now — one of a kind, buyable right here.</div>".to_string()
+        } else {
+            "<div style=\"background:rgba(230,196,73,.12);border:1px solid rgba(230,196,73,.5);border-radius:10px;padding:10px 14px;margin:0 0 14px;font-size:13px\">✦ <b>あなたが今つくった一枚</b>が、棚に並びました — 世界に1つ、このまま買えます。</div>".to_string()
+        },
+        Some("pending") => if lang == "en" {
+            "<div style=\"background:rgba(128,128,128,.12);border:1px solid rgba(128,128,128,.4);border-radius:10px;padding:10px 14px;margin:0 0 14px;font-size:13px\">⏳ Made — it will appear on the shelf after the brand owner approves it.</div>".to_string()
+        } else {
+            "<div style=\"background:rgba(128,128,128,.12);border:1px solid rgba(128,128,128,.4);border-radius:10px;padding:10px 14px;margin:0 0 14px;font-size:13px\">⏳ つくりました — ブランドオーナーの確認後に棚に並びます。</div>".to_string()
+        },
+        _ => String::new(),
+    };
     let muon_banner = if kind_guess == "tee" && brand != "nouns" {
         r#"<div class="muon-b">🎟 <b>MUON コレクター</b> — Tシャツを3枚集めると <b style="color:#ffd700">¥2,000 のMUクレジット</b>。次のお買い物の決済で自動で使えます（期限なし・6枚で2回目）。</div>"#
     } else { "" };
@@ -10465,24 +10716,34 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
     let design_variants_html = if is_sealed {
         String::new()
     } else {
-        let conn = db.lock().unwrap();
-        match design_variant_base_row(&conn, &sku) {
+        // 土台確認・兄弟検索は短いロックで、輝度(R2画像)はロック外の async で。
+        let base = {
+            let conn = db.lock().unwrap();
+            design_variant_base_row(&conn, &sku)
+        };
+        match base {
             None => String::new(),
             Some((_b, _l, _d, design, meta)) => {
+                let tone = cached_design_tone(&db, &sku, &design).await;
                 let my_kind = kind_from_sku(&sku);
                 let group = design_group_of(&meta, &sku);
-                let sibs = design_variant_siblings(&conn, &design, &group);
+                let sibs = {
+                    let conn = db.lock().unwrap();
+                    design_variant_siblings(&conn, &design, &group)
+                };
                 let mut cards = String::new();
                 for (k, ja, en) in DESIGN_VARIANT_KINDS {
                     if *k == my_kind {
                         continue;
                     }
+                    // 明暗ゲート: 白マグ×白文字のような不可視の組合せは出さない。
+                    // 既存兄弟は実在する商品なのでゲートに関係なく案内する。
                     let kind_name = if lang == "en" { en } else { ja };
                     if let Some((vsku, vmock, vprice)) = sibs.get(k) {
                         let img = if vmock.starts_with("http") { vmock.as_str() } else { design.as_str() };
                         let cta = if lang == "en" { "View" } else { "見る" };
                         cards.push_str(&format!(
-                            "<a href=\"/shop/{s}\" style=\"text-decoration:none;color:inherit;flex:0 0 132px\">\
+                            "<a href=\"/shop/{s}\" data-funnel=\"cta_click\" data-funnel-cta=\"pdp_variant_view\" style=\"text-decoration:none;color:inherit;flex:0 0 132px\">\
                              <div style=\"background:#f0efea;border-radius:10px;overflow:hidden\">\
                              <img src=\"{img}\" alt=\"{n}\" loading=lazy style=\"width:100%;aspect-ratio:1;object-fit:contain;display:block\"></div>\
                              <div style=\"font-size:12px;margin:7px 2px 0;font-weight:700\">{n}</div>\
@@ -10491,6 +10752,9 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
                             p = vprice, cta = cta,
                         ));
                     } else {
+                        if !show_variant_kind(k, tone) {
+                            continue;
+                        }
                         let floor = PRODUCT_SPECS.iter().find(|s| s.kind == *k)
                             .map(|s| s.retail_jpy).unwrap_or(0);
                         let cta = if lang == "en" {
@@ -10502,7 +10766,7 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
                             "<form method=\"post\" action=\"/api/design-variant\" style=\"flex:0 0 132px;margin:0\">\
                              <input type=\"hidden\" name=\"sku\" value=\"{base}\">\
                              <input type=\"hidden\" name=\"kind\" value=\"{k}\">\
-                             <button type=\"submit\" style=\"all:unset;cursor:pointer;display:block;width:100%\">\
+                             <button type=\"submit\" data-funnel=\"cta_click\" data-funnel-cta=\"pdp_variant_create_{k}\" style=\"all:unset;cursor:pointer;display:block;width:100%\">\
                              <div style=\"background:#f0efea;border-radius:10px;overflow:hidden;position:relative\">\
                              <img src=\"{img}\" alt=\"{n}\" loading=lazy style=\"width:100%;aspect-ratio:1;object-fit:contain;display:block;opacity:.38\">\
                              <span style=\"position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:22px;opacity:.5\">＋</span></div>\
@@ -10525,6 +10789,13 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
                     };
                     // 「一言足して、変える」— このデザインを参照に新作を織る
                     // (POST /api/design-remix・fetch で 10〜30秒の生成を待つ)。
+                    // ⚠ maker_email 付き(クリエイター帰属)の作品は、/terms の
+                    // リミックス条項を既存クリエイターに告知し終えるまで非表示 —
+                    // 本人の同意なく改変販売の入口を開けない(法務ゲート)。
+                    let attributed = meta.get("maker_email")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.contains('@'))
+                        .unwrap_or(false);
                     let (rx_title, rx_ph, rx_btn, rx_busy, rx_need, rx_fail) = if lang == "en" {
                         ("Add a few words, make it yours",
                          "e.g. \"in gold\", \"add a cat\", \"more minimal\"",
@@ -10534,17 +10805,21 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
                          "例:「金色で」「猫を足して」「もっとミニマルに」",
                          "✦ リミックスする(無料)", "織り上げ中… 10〜30秒", "足したい一言を入れてください", "失敗しました")
                     };
-                    let remix_block = format!(
+                    let remix_block = if attributed {
+                        String::new()
+                    } else {
+                        format!(
                         "<div style=\"margin-top:16px;border-top:1px solid rgba(128,128,128,.18);padding-top:14px\">\
                          <div style=\"font-size:12px;font-weight:700;margin:0 0 8px\">{t}</div>\
                          <form id=\"mu-remix-form\" data-sku=\"{base}\" data-busy=\"{busy}\" data-need=\"{need}\" data-fail=\"{fail}\" style=\"display:flex;gap:8px;margin:0;max-width:560px\">\
                          <input id=\"mu-remix-words\" maxlength=\"120\" placeholder=\"{ph}\" style=\"flex:1;min-width:0;padding:9px 12px;border:1px solid rgba(128,128,128,.35);border-radius:9px;background:transparent;color:inherit;font-size:13px\">\
-                         <button id=\"mu-remix-btn\" type=\"submit\" style=\"padding:9px 14px;border:0;border-radius:9px;background:#e6c449;color:#0a0a0a;font-weight:800;font-size:12.5px;cursor:pointer;white-space:nowrap\">{btn}</button></form>\
+                         <button id=\"mu-remix-btn\" type=\"submit\" data-funnel=\"cta_click\" data-funnel-cta=\"pdp_remix_submit\" style=\"padding:9px 14px;border:0;border-radius:9px;background:#e6c449;color:#0a0a0a;font-weight:800;font-size:12.5px;cursor:pointer;white-space:nowrap\">{btn}</button></form>\
                          <div id=\"mu-remix-status\" style=\"font-size:11.5px;opacity:.6;margin:7px 2px 0;min-height:15px\"></div></div>",
                         t = html_text(rx_title), base = html_attr(&sku), ph = html_attr(rx_ph),
                         btn = html_text(rx_btn), busy = html_attr(rx_busy),
                         need = html_attr(rx_need), fail = html_attr(rx_fail),
-                    );
+                        )
+                    };
                     const REMIX_JS: &str = r##"<script>
 (function(){
   var f=document.getElementById('mu-remix-form');if(!f)return;
@@ -10558,7 +10833,8 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
       body:new URLSearchParams({sku:f.dataset.sku,words:words})})
       .then(function(r){return r.json()})
       .then(function(j){
-        if(j.ok){st.textContent=j.note||'';location.href=j.pdp_url;}
+        if(j.ok&&j.status==='live'){st.textContent=j.note||'';location.href=j.pdp_url;}
+        else if(j.ok){st.textContent=j.note||'';btn.disabled=false;btn.style.opacity='1';}
         else{st.textContent=j.error||f.dataset.fail;btn.disabled=false;btn.style.opacity='1';}
       })
       .catch(function(){st.textContent=f.dataset.fail;btn.disabled=false;btn.style.opacity='1';});
@@ -10832,6 +11108,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
     {extras}
   </div>
   <div class="body">
+    {made_banner}
     <div class="brand">{brand}</div>
     <h1>{headline}</h1>
     {tagline_html}
@@ -10919,6 +11196,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
         headline = html_text(&headline),
         tagline_html = tagline_html,
         muon_banner = muon_banner,
+        made_banner = made_banner,
         short_title = html_text(&short_title),
         desc_short = html_attr(&meta_desc_short),
         sealed = sealed_block,

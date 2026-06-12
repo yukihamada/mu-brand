@@ -405,3 +405,35 @@ async fn remix_royalty_pays_original_maker_once_and_skips_self_remix() {
     crate::catalog::apply_remix_royalty(&db, "cs_5", &self_buy, "MAKE-RX-TEE-rx1", 4900).await;
     assert_eq!(balance(&db, "orig@example.com"), 490, "original maker buying their own remix pays no royalty");
 }
+
+// ── 明暗ゲート (kind_ok_for_tone / show_variant_kind) — 白マグ×白文字の根治 ──
+//
+// 2026-06-12 に実際に起きた事故: 黒生地用デザイン(白文字88%)を白マグに
+// 横展開して、ほぼ無地のマグが本番の棚に並んだ。tone=(ほぼ白%,ほぼ黒%)で
+// 白過半→暗い地色のみ・黒過半→明るい地色のみ、を純関数でガードする。
+#[test]
+fn tone_gate_blocks_invisible_canvas_combos() {
+    use crate::catalog::{kind_ok_for_tone, show_variant_kind};
+    let light = Some((88i64, 0i64)); // 白文字系(黒生地用) — 実事故のデザイン実測値
+    let dark = Some((2i64, 90i64));  // 墨絵系(白生地用)
+    let mid = Some((30i64, 30i64));
+    // 明るいデザイン → 白マグ/ステッカー/トート/ポスターは不可、黒生地系は可
+    for k in ["mug", "sticker", "tote", "poster"] {
+        assert!(!kind_ok_for_tone(k, light), "{} must be blocked for light design", k);
+    }
+    for k in ["tee", "hoodie", "crewneck", "long_sleeve_tee", "mug_black"] {
+        assert!(kind_ok_for_tone(k, light), "{} must be allowed for light design", k);
+    }
+    // 暗いデザイン → 黒生地系は不可、白系は可
+    assert!(!kind_ok_for_tone("tee", dark));
+    assert!(kind_ok_for_tone("mug", dark));
+    assert!(kind_ok_for_tone("poster", dark));
+    // 中間/不明 → 制限なし
+    assert!(kind_ok_for_tone("mug", mid));
+    assert!(kind_ok_for_tone("tee", None));
+    // 表示ルール: mug_black は白マグが出せないときだけ
+    assert!(show_variant_kind("mug_black", light), "light → black mug shown");
+    assert!(!show_variant_kind("mug_black", dark), "dark → white mug suffices");
+    assert!(!show_variant_kind("mug_black", mid), "mid → no double mugs");
+    assert!(show_variant_kind("mug", mid));
+}
