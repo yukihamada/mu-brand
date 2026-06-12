@@ -11271,6 +11271,20 @@ pub async fn shop_pdp(
         .unwrap_or_default();
     let listen_block = format!("{}{}", listen_block, perm_block);
 
+    // AI合宿『行く。』T (store=ai-camp-iku のアパレル) の PDP には、合宿の
+    // あとに着られる「後日 T(予約受付)」の案内セクションを出す。新たな商品
+    // は本生産せず、ここは「行った人に後日ご案内」という導線だけ — 予約は
+    // 合宿後の招待メール(maybe_send_ai_camp_invite)で受ける。
+    let ai_camp_followup_block: String = if brand == AI_CAMP_BRAND_SLUG && is_apparel_sized {
+        r#"<div style="margin:14px 0;padding:14px 16px;border:1px solid rgba(230,196,73,.45);border-radius:12px;background:rgba(230,196,73,.07)">
+<div style="font-weight:700;font-size:14px;margin-bottom:4px">📸 合宿フォト 後日T(予約受付)</div>
+<p style="font-size:13px;line-height:1.85;opacity:.82;margin:0">合宿に<b>行った人だけ</b>の記念の一枚。当日の写真からつくる「後日T」を、合宿のあとにご案内します。いま新しく注文する必要はありません — 『行く。』を買ってくださった方へ、後日メールで予約のご案内をお送りします(任意)。</p>
+</div>"#.to_string()
+    } else {
+        String::new()
+    };
+    let listen_block = format!("{}{}", listen_block, ai_camp_followup_block);
+
     // ── 見解(普遍性アセスメント) + 書類(限定/シリアル証明) + 類似商品 ──
     // PDP を「URLを開けば一目で分かる」に。meta_json と DB から組む(スキーマ非変更)。
     let score_v: serde_json::Value = meta_json
@@ -13075,6 +13089,12 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
 
     // リミックス印税 — design_remix 生まれの商品は元デザインの作者にも 5%。
     apply_remix_royalty(&db, &session_id, &session, &sku, amount_total).await;
+
+    // AI合宿『行く。』T を買った人にカレンダー招待 — route 非依存・冪等
+    // (このフローは session ごとに INSERT OR IGNORE で 1 回だけ到達する)。
+    // 該当 SKU のときだけ .ics を添付した追加メールを購入者へ送る。物理発送
+    // (printful_*) は下流でそのまま走る。
+    maybe_send_ai_camp_invite(&db, &session, &sku).await;
 
     // Route dispatch. printful_* / gelato_jp / suzuri_jp / manual / digital
     // continue through the existing Printful logic below as a fallback. A new
@@ -14916,6 +14936,141 @@ struct TicketIssued {
     code: String,
     ticket_url: String,
     qr_url: Option<String>,
+}
+
+/// AI合宿『行く。』T を買った人に、合宿(2026-07-13〜15・弟子屈)の
+/// カレンダー招待(.ics)を追加メールで送る。
+///
+/// 反応条件は **store=`ai-camp-iku` かつ『行く。』T(SKU = AI_CAMP_GO_TEE_SKU)**
+/// に限定 — 同店の『まだ、決めない。』T や他商品には反応しない。物理発送
+/// (printful_*) は下流でそのまま走る・これはあくまで「追加の招待メール」。
+///
+/// 日程の詳細(集合時刻・場所の番地・移動)は未確定なので .ics 本文/説明には
+/// 断定で書かず「詳細は別途ご連絡します」とする。開始は 2026-07-13 09:00 JST、
+/// 終了は 2026-07-15 17:00 JST(目安)。タイムゾーンは Asia/Tokyo を明示。
+const AI_CAMP_GO_TEE_SKU: &str = "AICAMPIKU-AGENT-TEE-424fd682";
+const AI_CAMP_BRAND_SLUG: &str = "ai-camp-iku";
+
+async fn maybe_send_ai_camp_invite(db: &Db, session: &serde_json::Value, sku: &str) {
+    // SKU で 1 次フィルタ(安い文字列比較)。
+    if sku != AI_CAMP_GO_TEE_SKU {
+        return;
+    }
+    // brand を DB で確認 — SKU が将来別店に流用されても誤爆しないよう二重ガード。
+    let brand = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT brand FROM catalog_products WHERE sku=?",
+            rusqlite::params![sku],
+            |r| r.get::<_, String>(0),
+        )
+        .unwrap_or_default()
+    };
+    if brand != AI_CAMP_BRAND_SLUG {
+        return;
+    }
+
+    let email = session["customer_details"]["email"]
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if email.is_empty() {
+        tracing::warn!("[ai-camp] 'go' tee bought but no buyer email — invite skipped");
+        return;
+    }
+    let name = session["customer_details"]["name"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+
+    let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
+    if resend_key.is_empty() {
+        tracing::warn!("[ai-camp] RESEND_API_KEY unset — calendar invite not sent");
+        return;
+    }
+
+    // .ics(iCalendar)。UID は session id で安定(再送しても同一予定として上書き)。
+    // 時刻は UTC。2026-07-13 09:00 JST = 2026-07-13T00:00:00Z、
+    //        2026-07-15 17:00 JST = 2026-07-15T08:00:00Z。
+    let session_id = session["id"].as_str().unwrap_or("ai-camp");
+    let uid = format!("ai-camp-2026-{}@wearmu.com", session_id);
+    let dtstamp = "20260613T000000Z"; // 生成時刻(固定でも招待として有効)
+    let ics = format!(
+        "BEGIN:VCALENDAR\r\n\
+         VERSION:2.0\r\n\
+         PRODID:-//MU//ai-camp-iku//JP\r\n\
+         CALSCALE:GREGORIAN\r\n\
+         METHOD:PUBLISH\r\n\
+         BEGIN:VEVENT\r\n\
+         UID:{uid}\r\n\
+         DTSTAMP:{dtstamp}\r\n\
+         DTSTART:20260713T000000Z\r\n\
+         DTEND:20260715T080000Z\r\n\
+         SUMMARY:AI合宿 2026 (弟子屈)\r\n\
+         LOCATION:北海道 弟子屈\r\n\
+         DESCRIPTION:MU『行く。』— AI合宿 2026。2026年7月13日(月)〜15日(水)、北海道・弟子屈。集合時刻・場所の詳細は別途ご連絡します。\r\n\
+         END:VEVENT\r\n\
+         END:VCALENDAR\r\n",
+        uid = uid,
+        dtstamp = dtstamp,
+    );
+    use base64::Engine;
+    let ics_b64 = base64::engine::general_purpose::STANDARD.encode(ics.as_bytes());
+
+    let html = format!(
+        r#"<div style="background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;padding:32px 0;margin:0">
+<div style="max-width:560px;margin:0 auto;padding:0 32px">
+<div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:24px">━◯━ MU</div>
+<div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;margin-bottom:8px">AI CAMP 2026</div>
+<h2 style="font-size:20px;font-weight:500;line-height:1.4;margin:0 0 8px">『行く。』ありがとうございます。</h2>
+<p style="font-size:13px;line-height:1.9;opacity:0.85;margin:0 0 14px">AI合宿 2026 のカレンダー招待を添付しました(<code>.ics</code>)。お使いのカレンダーに取り込めます。</p>
+<table style="width:100%;font-size:13px;line-height:1.9;border-collapse:collapse;margin:6px 0 18px">
+<tr><td style="opacity:0.55;width:30%;padding:4px 0">日程</td><td style="padding:4px 0">2026年7月13日(月)〜15日(水)</td></tr>
+<tr><td style="opacity:0.55;padding:4px 0">場所</td><td style="padding:4px 0">北海道・弟子屈</td></tr>
+<tr><td style="opacity:0.55;padding:4px 0">お名前</td><td style="padding:4px 0">{name}</td></tr>
+</table>
+<p style="font-size:12px;line-height:1.85;opacity:0.7;margin:0 0 4px">集合時刻・場所の番地・移動の詳細は<b>別途ご連絡します</b>。</p>
+<p style="font-size:12px;line-height:1.85;opacity:0.7;margin:8px 0 4px">📸 合宿のあとに、行った人だけの<b>「合宿フォト 後日T」</b>のご案内も別途お送りします。当日の写真からつくる記念の一枚です(任意・予約制)。</p>
+<p style="font-size:11px;line-height:1.85;opacity:0.55;margin:24px 0 0;border-top:1px solid #222;padding-top:18px">
+お問い合わせ: <a href="mailto:info@enablerdao.com" style="color:#e6c449">info@enablerdao.com</a>
+</p>
+</div></div>"#,
+        name = html_text(&name),
+    );
+
+    let payload = serde_json::json!({
+        "from": "MU AI Camp <noreply@wearmu.com>",
+        "to": [email],
+        "subject": "🏕 AI合宿 2026 (7/13〜15・弟子屈) — カレンダー招待",
+        "html": html,
+        "attachments": [{
+            "filename": "ai-camp-2026.ics",
+            "content": ics_b64,
+            "content_type": "text/calendar; method=PUBLISH"
+        }],
+    });
+
+    let resp = reqwest::Client::new()
+        .post("https://api.resend.com/emails")
+        .bearer_auth(&resend_key)
+        .json(&payload)
+        .send()
+        .await;
+    match resp {
+        Ok(r) if r.status().is_success() => {
+            let _ = crate::send_telegram_message(&format!(
+                "🏕 *AI camp invite sent*\n『行く。』T 購入 → カレンダー招待 .ics 送付\n👤 {} <{}>",
+                name, email
+            )).await;
+        }
+        Ok(r) => {
+            let s = r.status();
+            let t = r.text().await.unwrap_or_default();
+            tracing::error!("[ai-camp] resend {}: {}", s, t.chars().take(200).collect::<String>());
+        }
+        Err(e) => tracing::error!("[ai-camp] resend network: {}", e),
+    }
 }
 
 /// Core digital-goods issuance (event ticket or song), shared by the
