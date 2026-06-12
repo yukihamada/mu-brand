@@ -28382,6 +28382,8 @@ async fn privacy_page() -> Html<&'static str> {
     Html(include_str!("../static/privacy.html"))
 }
 
+// 第4条の2(投稿デザインとリミックス)を含む。tos.html 変更時はこのファイルにも
+// 触れること — include_str! はアセット変更だけだと再コンパイルされない罠がある。
 async fn tos_page() -> Html<&'static str> {
     Html(include_str!("../static/tos.html"))
 }
