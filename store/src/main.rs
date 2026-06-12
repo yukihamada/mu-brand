@@ -38600,8 +38600,11 @@ async fn success_page(
     if(!j||!j.state)return;
     if(j.state==='claim_link'){
       var u=j.claim_url;
+      var lead=j.unregistered
+        ?'<b>@'+esc(j.handle||'')+'</b> さんはまだ MU 未登録です。<br><b>この受け取りリンクをあなたから相手に送ってください</b>。<br>開くとお届け先の入力と、@'+esc(j.handle||'')+' 名義の無料アカウント作成をご案内します。'
+        :'受け取りリンクを<b>相手にメールでも送りました</b>。<br>このリンクを相手に渡すと、お届け先を入力して受け取れます。';
       box.innerHTML=H+
-        '<div style="font-size:13px;opacity:.92;line-height:1.85;margin-bottom:14px">受け取りリンクを<b>相手にメールでも送りました</b>。<br>このリンクを相手に渡すと、お届け先を入力して受け取れます。</div>'+
+        '<div style="font-size:13px;opacity:.92;line-height:1.85;margin-bottom:14px">'+lead+'</div>'+
         '<div style="display:flex;gap:8px;max-width:460px;margin:0 auto"><input readonly value="'+esc(u)+'" onclick="this.select()" style="flex:1;min-width:0;background:#0a0a0a;border:1px solid #2a2a2a;color:#ddd;padding:10px;font-size:12px;border-radius:6px"/>'+
         '<button id="gcopy" style="background:#e6c449;color:#000;border:0;padding:10px 16px;font-size:12px;font-weight:600;border-radius:6px;cursor:pointer;white-space:nowrap">コピー</button></div>'+PRIV;
       box.style.display='block';
