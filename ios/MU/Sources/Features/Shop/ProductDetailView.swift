@@ -39,7 +39,9 @@ struct ProductDetailView: View {
                 Button {
                     showCheckout = true
                 } label: {
-                    Label(String(localized: "pdp.buy"), systemImage: "applelogo")
+                    // Apple Pay マーク/文言はカスタムボタンに使えない (PKPaymentButton 限定・
+                    // Marketing Guidelines)。実態は Stripe Checkout なので「購入する」が正直。
+                    Text(String(localized: "pdp.buy"))
                         .font(.headline)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 6)

@@ -38186,8 +38186,23 @@ async fn collab_account_delete(
     State(db): State<Db>,
     headers: HeaderMap,
 ) -> Response {
-    let (email, _, _, _) = match collab_session_email(&db, &headers) {
-        Some(s) => s,
+    // Cookie に加えて Bearer api_key も受ける (iOS アプリのアカウント削除 =
+    // App Store Guideline 5.1.1(v) 必須要件。api_key = session_token 同一credential)。
+    // DELETE は email の大小文字一致が必要なので DB 原文 case を保持する
+    // (bearer_or_session_email は lowercase して返すためここでは使わない)。
+    let bearer_email = headers.get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer ").or_else(|| s.strip_prefix("bearer ")))
+        .filter(|t| !t.is_empty())
+        .and_then(|t| {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT email FROM collab_users WHERE session_token=? AND verified=1",
+                params![t], |r| r.get::<_, String>(0),
+            ).ok()
+        });
+    let email = match bearer_email.or_else(|| collab_session_email(&db, &headers).map(|s| s.0)) {
+        Some(e) => e,
         None => return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({
             "error": "verify email first", "verify": "/api/collab/auth/start"
         }))).into_response(),

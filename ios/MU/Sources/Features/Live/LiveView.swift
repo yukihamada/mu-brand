@@ -13,7 +13,7 @@ struct LiveView: View {
         NavigationStack {
             ScrollView {
                 LazyVStack(spacing: 16) {
-                    NextDropCountdown()
+                    LatestDropBar(products: products)
                     KindChips(selected: $kind)
                     ForEach(products) { p in
                         NavigationLink(value: p) { DropCard(product: p) }
@@ -59,27 +59,31 @@ struct LiveView: View {
     }
 }
 
-// 「次の一着まで ◯◯:◯◯」— MU の生成周期 (毎時) と同期した呼吸。
-struct NextDropCountdown: View {
-    @State private var now = Date()
-    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+// 実データの鼓動: 「最新ドロップ n分前 ・ 24時間で n着」。
+// 生成はバッチで毎時00分に揃わないため、予告カウントダウンは出さない (正直さ優先)。
+struct LatestDropBar: View {
+    let products: [FeedProduct]
 
     var body: some View {
-        let cal = Calendar.current
-        let nextHour = cal.nextDate(after: now, matching: DateComponents(minute: 0, second: 0), matchingPolicy: .nextTime) ?? now
-        let remain = max(0, Int(nextHour.timeIntervalSince(now)))
+        let latest = products.compactMap(\.createdDate).max()
+        let dayAgo = Date().addingTimeInterval(-24 * 3600)
+        let count24h = products.compactMap(\.createdDate).filter { $0 > dayAgo }.count
         HStack(spacing: 8) {
             Image(systemName: "flame.fill")
-            Text(String(localized: "live.nextDrop"))
-            Text(String(format: "%02d:%02d", remain / 60, remain % 60))
-                .monospacedDigit()
-                .fontWeight(.bold)
+            if let latest {
+                Text(String(localized: "live.latestDrop")) + Text(" ") + Text(latest, style: .relative)
+                if count24h > 0 {
+                    Text("·").foregroundStyle(.tertiary)
+                    Text(String(format: String(localized: "live.born24h %lld"), count24h))
+                }
+            } else {
+                Text(String(localized: "live.latestDrop"))
+            }
         }
         .font(.subheadline)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity)
         .background(.quaternary, in: Capsule())
-        .onReceive(timer) { now = $0 }
     }
 }
 

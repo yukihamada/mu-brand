@@ -1,8 +1,9 @@
 "tab.live" = "ライブ";
 "tab.shop" = "ショップ";
-"tab.closet" = "クローゼット";
+"tab.closet" = "アカウント";
 
-"live.nextDrop" = "次の一着まで";
+"live.latestDrop" = "最新ドロップ:";
+"live.born24h %lld" = "24時間で%lld着";
 "feed.sold %lld" = "%lld着が旅立った";
 
 "kind.all" = "すべて";
@@ -14,7 +15,7 @@
 
 "shop.search" = "言葉で探す";
 
-"pdp.buy" = "Apple Pay で買う";
+"pdp.buy" = "購入する";
 "pdp.openWeb" = "Webで開く（ギフト・詳細）";
 
 "auth.lead" = "メールアドレスに6桁のコードを送ります。コードを入れるだけでログイン完了。パスワードはありません。";
@@ -30,3 +31,8 @@
 "account.revenue" = "売上";
 "account.mypage" = "マイページをWebで開く";
 "account.logout" = "ログアウト";
+"account.delete" = "アカウントを削除";
+"account.deleteConfirmTitle" = "アカウントを削除しますか？";
+"account.deleteConfirmBody" = "ストア・クレジット情報が削除されます。この操作は取り消せません（法令上の記録はメールのハッシュのみ保持されます）。";
+"account.deleteConfirmAction" = "完全に削除する";
+"account.privacy" = "プライバシーポリシー";

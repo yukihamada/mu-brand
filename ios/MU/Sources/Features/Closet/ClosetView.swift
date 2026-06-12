@@ -95,6 +95,9 @@ struct AccountView: View {
     @EnvironmentObject private var session: Session
     @State private var sales: SalesResponse?
     @State private var showMypage = false
+    @State private var showPrivacy = false
+    @State private var confirmDelete = false
+    @State private var deleteError: String?
 
     var body: some View {
         List {
@@ -118,7 +121,41 @@ struct AccountView: View {
                 Button(String(localized: "account.logout"), role: .destructive) {
                     session.logOut()
                 }
+                Button(String(localized: "account.delete"), role: .destructive) {
+                    confirmDelete = true
+                }
+            } footer: {
+                VStack(alignment: .leading, spacing: 4) {
+                    if let deleteError {
+                        Text(deleteError).foregroundStyle(.red)
+                    }
+                    Button(String(localized: "account.privacy")) { showPrivacy = true }
+                        .font(.footnote)
+                }
             }
+        }
+        .confirmationDialog(
+            String(localized: "account.deleteConfirmTitle"),
+            isPresented: $confirmDelete,
+            titleVisibility: .visible
+        ) {
+            Button(String(localized: "account.deleteConfirmAction"), role: .destructive) {
+                Task {
+                    do {
+                        if let key = session.apiKey {
+                            try await MUAPI.deleteAccount(apiKey: key)
+                        }
+                        session.logOut()
+                    } catch {
+                        deleteError = error.localizedDescription
+                    }
+                }
+            }
+        } message: {
+            Text(String(localized: "account.deleteConfirmBody"))
+        }
+        .sheet(isPresented: $showPrivacy) {
+            SafariView(url: URL(string: "https://wearmu.com/privacy")!).ignoresSafeArea()
         }
         .task {
             if let key = session.apiKey {
