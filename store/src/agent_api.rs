@@ -1374,6 +1374,14 @@ pub async fn agent_upload_design(
     Json(body): Json<UploadBody>,
 ) -> Response {
     let email = match require_email(&db, &headers, Some(&q)) { Ok(e) => e, Err(r) => return r };
+    // Cap uploads per email/hour to bound R2 storage + egress cost now that
+    // any agent can self-register anonymously (public MCP registry listing).
+    {
+        let conn = db.lock().unwrap();
+        if !crate::rate_limit_hit_ok(&conn, &format!("upload:{}", email), 60) {
+            return json_err(StatusCode::TOO_MANY_REQUESTS, "upload rate limit reached; try again in an hour");
+        }
+    }
     use base64::Engine;
     let raw = body.data_base64.trim();
     let raw = raw.strip_prefix("data:image/png;base64,").unwrap_or(raw);

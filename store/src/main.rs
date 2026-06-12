@@ -25641,6 +25641,30 @@ async fn collab_auth_start(
     collab_auth_start_core(&db, &body.email, body.next.as_deref()).await
 }
 
+/// Per-key hourly rate limit on the shared `blog_rate_limit` table, namespaced
+/// via `key` (e.g. "authstart:<email>"). Records the hit and returns true if
+/// the count for the current hour is <= `cap`, false if over. Opportunistically
+/// prunes buckets older than 24h. Reused for auth-code sends, verify attempts,
+/// and agent uploads — all reachable anonymously since the public MCP listing.
+pub(crate) fn rate_limit_hit_ok(conn: &rusqlite::Connection, key: &str, cap: i64) -> bool {
+    let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    let hour_bucket = now_s / 3600;
+    let _ = conn.execute(
+        "INSERT INTO blog_rate_limit (ip, hour_bucket, hits) VALUES (?,?,1)
+         ON CONFLICT(ip, hour_bucket) DO UPDATE SET hits = hits + 1",
+        params![key, hour_bucket],
+    );
+    let _ = conn.execute(
+        "DELETE FROM blog_rate_limit WHERE hour_bucket < ?",
+        params![hour_bucket - 24],
+    );
+    let hits: i64 = conn.query_row(
+        "SELECT hits FROM blog_rate_limit WHERE ip=? AND hour_bucket=?",
+        params![key, hour_bucket], |r| r.get(0),
+    ).unwrap_or(0);
+    hits <= cap
+}
+
 /// Core of the magic-link onboarding: persist a fresh 6-digit code for
 /// `email_in` and email it (verification code + magic link) via Resend.
 /// Returns the JSON Response. Shared by the human `/api/collab/auth/start`
@@ -25650,6 +25674,23 @@ pub(crate) async fn collab_auth_start_core(db: &Db, email_in: &str, next: Option
     let email = email_in.trim().to_lowercase();
     if !email.contains('@') || email.len() > 254 {
         return (StatusCode::BAD_REQUEST, "invalid email").into_response();
+    }
+    // Rate-limit auth-code emails: stop inbox-bombing a victim address and cap
+    // the Resend cost/reputation blast radius (info@enablerdao.com is shared
+    // across services). Per-email 5/hr + a global backstop. This path is now
+    // reachable anonymously via the public MCP registry listing.
+    {
+        let conn = db.lock().unwrap();
+        if !rate_limit_hit_ok(&conn, &format!("authstart:{}", email), 5) {
+            return (StatusCode::TOO_MANY_REQUESTS, Json(serde_json::json!({
+                "error": "too many code requests for this email; try again in an hour",
+            }))).into_response();
+        }
+        if !rate_limit_hit_ok(&conn, "authstart:_global", 300) {
+            return (StatusCode::TOO_MANY_REQUESTS, Json(serde_json::json!({
+                "error": "service is busy; try again shortly",
+            }))).into_response();
+        }
     }
     // 6-digit code
     use rand::Rng;
@@ -25773,6 +25814,15 @@ pub(crate) fn collab_auth_verify_core(
     let email = email_in.trim().to_lowercase();
     let code = code_in.trim().to_string();
     let now_s: i64 = chrono_now().parse().unwrap_or(0);
+    // Brute-force guard: the 6-digit code stays valid 15 min and is not
+    // invalidated on a wrong guess, so cap verify attempts per email per hour.
+    // 10/hr ≈ 2-3 tries inside the 15-min window — well below the 1M space.
+    {
+        let conn = db.lock().unwrap();
+        if !rate_limit_hit_ok(&conn, &format!("authverify:{}", email), 10) {
+            return Err((StatusCode::TOO_MANY_REQUESTS, "too many attempts; try again later"));
+        }
+    }
     let row: Option<(String, i64)> = {
         let conn = db.lock().unwrap();
         conn.query_row(
