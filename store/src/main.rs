@@ -63596,7 +63596,7 @@ async fn slug_or_static(
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         ).ok()
     };
-    let (uid, _email, display_name) = match row {
+    let (uid, user_email, display_name) = match row {
         Some(v) => v,
         None => {
             // Try as an approved proposal slug (atsume, future DB-driven brands).
@@ -63655,11 +63655,32 @@ async fn slug_or_static(
         (v, bio)
     };
 
-    let html = render_share_page(&slug_lo, display_name.as_deref(), &user_bio, &designs);
+    // 本人判定: ?token=<you_users.token> がこの slug の行と一致するか、
+    // ログイン中(mu_collab_session)の email がこのアカウントの email と一致するか。
+    // 一致したときだけ「買ったもの・持ってるもの」(PII)を見せる。
+    let owner = {
+        let token_match = q.get("token").map(|t| {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT 1 FROM you_users WHERE id=? AND token=? AND unsubscribed_at IS NULL",
+                params![uid, t.trim()], |_| Ok(true)).unwrap_or(false)
+        }).unwrap_or(false);
+        let session_match = collab_session_email(&db, &headers)
+            .map(|(e, ..)| e.eq_ignore_ascii_case(&user_email))
+            .unwrap_or(false);
+        token_match || session_match
+    };
+
+    let commerce = account_commerce_html(&db, &slug_lo, &user_email, owner);
+
+    let html = render_share_page(&slug_lo, display_name.as_deref(), &user_bio, &designs)
+        .replacen("</body>", &format!("{}</body>", commerce), 1);
     let mut resp = Html(html).into_response();
+    // owner ビューは PII を含むので公開キャッシュに載せない。
+    let cache = if owner { "private, no-store" } else { "public, max-age=300, s-maxage=300" };
     resp.headers_mut().insert(
         header::CACHE_CONTROL,
-        HeaderValue::from_static("public, max-age=300, s-maxage=300"),
+        HeaderValue::from_str(cache).unwrap_or(HeaderValue::from_static("private, no-store")),
     );
     resp
 }
@@ -64049,6 +64070,133 @@ document.addEventListener('click', async (e) => {{
             format!(r#"<div class="grid">{}</div>"#, cards)
         },
     )
+}
+
+/// アカウントのコマース・プロフィール断片 (`<section>`)。`slug_or_static` が
+/// `you_users.slug` でユーザーを解決したあと、`render_share_page` の出力(MU×YOU
+/// の毎日デザイン)に追記する。新ルートは増やさない(`/<slug>` の衝突回避のため)。
+///
+///   公開: そのアカウントが作った LIVE 商品 (catalog_products を maker_email=email
+///         で紐付け — /studio・/u/:code と同じ MAKER_SQL)。
+///   本人のみ (owner=true): 買ったもの(customer_email=email)+ 受け取ったギフト
+///         (gift_json.$.recipient_slug=slug)= 「持ってるもの」。各アイテムに修理導線。
+///
+/// `owner` の判定は呼び出し側 (slug_or_static) が `?token=<you_users.token>` か
+/// `mu_collab_session` の email 一致で行う。PII(購入履歴・メール)は owner=false
+/// では一切出さない。
+fn account_commerce_html(db: &Db, slug: &str, email: &str, owner: bool) -> String {
+    let email_lc = email.to_lowercase();
+    let slug_lc = slug.to_lowercase();
+
+    struct Item { sku: String, label: String, price: i64, img: String, gift_from: String }
+
+    let (selling, owned): (Vec<Item>, Vec<Item>) = {
+        let conn = db.lock().unwrap();
+        // ── 公開: このアカウントが作った LIVE 商品 (creators::MAKER_SQL と同一の帰属)。
+        let selling: Vec<Item> = conn.prepare(&format!(
+            "SELECT p.sku, p.label, p.retail_price_jpy,
+                    COALESCE(p.mockup_url_external, p.mockup_main_file, p.design_file, '')
+             FROM catalog_products p
+             WHERE {maker} = ?1 AND p.is_active=1 AND p.status='live'
+             ORDER BY p.created_at DESC LIMIT 60", maker = creators::MAKER_SQL))
+            .ok()
+            .and_then(|mut s| s.query_map(rusqlite::params![email_lc], |r| Ok(Item {
+                sku: r.get(0)?, label: r.get(1)?, price: r.get(2)?, img: r.get(3)?, gift_from: String::new(),
+            })).map(|it| it.filter_map(|x| x.ok()).collect()).ok())
+            .unwrap_or_default();
+
+        // ── 本人のみ: 持ってるもの = 自分で買った注文 ∪ 受け取ったギフト。
+        // 購入履歴は PII。owner=false のときはクエリ自体を回さない。
+        let owned: Vec<Item> = if owner {
+            conn.prepare(
+                "SELECT p.sku, p.label, p.retail_price_jpy,
+                        COALESCE(p.mockup_url_external, p.mockup_main_file, p.design_file, ''),
+                        COALESCE(json_extract(co.gift_json,'$.gift_from'),'') AS gift_from
+                 FROM catalog_orders co JOIN catalog_products p ON p.sku = co.sku
+                 WHERE co.amount_jpy > 0
+                   AND co.status NOT IN ('submitting','gift_pending_address','gift_recipient_missing')
+                   AND ( LOWER(COALESCE(co.customer_email,'')) = ?1
+                         OR LOWER(COALESCE(json_extract(co.gift_json,'$.recipient_slug'),'')) = ?2 )
+                 ORDER BY co.created_at DESC LIMIT 80")
+                .ok()
+                .and_then(|mut s| s.query_map(rusqlite::params![email_lc, slug_lc], |r| Ok(Item {
+                    sku: r.get(0)?, label: r.get(1)?, price: r.get(2)?, img: r.get(3)?, gift_from: r.get(4)?,
+                })).map(|it| it.filter_map(|x| x.ok()).collect()).ok())
+                .unwrap_or_default()
+        } else { Vec::new() };
+        (selling, owned)
+    };
+
+    // ── 公開セクション: 売ってるもの。常に出す(空でも導線を出す)。
+    let sell_cards: String = selling.iter().map(|it| format!(
+        r##"<a class="ac-card" href="/shop/{sku}"><div class="ac-img" style="background-image:url('{img}')"></div><div class="ac-b"><div class="ac-t">{label}</div><div class="ac-p">¥{price}</div></div></a>"##,
+        sku = html_escape(&it.sku), img = html_escape(&it.img),
+        label = html_escape(it.label.chars().take(40).collect::<String>().as_str()),
+        price = fmt_jpy(it.price))).collect();
+    let sell_block = if selling.is_empty() {
+        format!(r##"<p class="ac-empty">@{slug} さんが売っている作品はまだありません。<a href="/start?ref=profile">あなたも30秒で作って売る →</a></p>"##,
+            slug = html_escape(slug))
+    } else {
+        format!(r#"<div class="ac-grid">{}</div>"#, sell_cards)
+    };
+
+    // ── 本人セクション: 持ってるもの + 修理導線。owner=false では描かない。
+    let owned_block = if !owner {
+        String::new()
+    } else if owned.is_empty() {
+        r##"<section class="ac-sec ac-private"><div class="ac-h"><span class="ac-lock">🔒 あなただけに表示</span><h2>持っているもの</h2></div><p class="ac-empty">まだ MU の品はありません。<a href="/shop">SHOP を見る →</a></p></section>"##.to_string()
+    } else {
+        let owned_cards: String = owned.iter().map(|it| {
+            let gift_chip = if it.gift_from.trim().is_empty() {
+                String::new()
+            } else {
+                format!(r#"<div class="ac-gift">🎁 {} さんから</div>"#, html_escape(it.gift_from.trim().chars().take(24).collect::<String>().as_str()))
+            };
+            // 修理・再注文の相談 = 既存の問い合わせ先 (info@wearmu.com) へ SKU 付き mailto。
+            let subject_raw = format!("修理・アフターケアの相談 [{}]", it.sku);
+            let body_raw = format!(
+                "MU をご利用ありがとうございます。下記の品について修理・再注文を相談したいです。\n\n商品: {} ({})\n\n状態(できるだけ詳しく):\n",
+                it.label, it.sku);
+            let subject = urlencoding::encode(&subject_raw);
+            let body = urlencoding::encode(&body_raw);
+            format!(
+                r##"<div class="ac-card owned"><div class="ac-img" style="background-image:url('{img}')"></div><div class="ac-b"><div class="ac-t">{label}</div>{gift}<div class="ac-actions"><a class="ac-fix" href="mailto:info@wearmu.com?subject={subject}&body={body}">修理・再注文を相談</a><a class="ac-rebuy" href="/shop/{sku}">同じものをもう一度</a></div></div></div>"##,
+                img = html_escape(&it.img),
+                label = html_escape(it.label.chars().take(40).collect::<String>().as_str()),
+                gift = gift_chip, subject = subject, body = body,
+                sku = html_escape(&it.sku))
+        }).collect();
+        format!(
+            r##"<section class="ac-sec ac-private"><div class="ac-h"><span class="ac-lock">🔒 あなただけに表示</span><h2>持っているもの ({n})</h2></div><p class="ac-note">買ったもの・受け取ったギフトの一覧です。各品から修理・アフターケアの相談ができます(<a href="mailto:info@wearmu.com">info@wearmu.com</a>)。この欄はあなた以外には表示されません。</p><div class="ac-grid owned">{cards}</div></section>"##,
+            n = owned.len(), cards = owned_cards)
+    };
+
+    format!(
+        r##"<style>
+.ac-wrap{{max-width:920px;margin:0 auto;padding:8px 22px 70px;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;color:#f5f5f0}}
+.ac-sec{{margin-top:38px}}
+.ac-h{{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:14px}}
+.ac-h h2{{font-size:16px;font-weight:700;letter-spacing:.06em;color:#e6c449;margin:0}}
+.ac-lock{{font-size:11px;letter-spacing:.06em;color:#7ad58a;background:rgba(122,213,138,.12);border-radius:99px;padding:3px 10px}}
+.ac-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}}
+.ac-card{{background:#111;border:1px solid #222;border-radius:12px;overflow:hidden;text-decoration:none;color:#f5f5f0;display:block}}
+.ac-img{{width:100%;aspect-ratio:1;background:#0d0d0d center/cover no-repeat;display:block}}
+.ac-b{{padding:10px 12px}}
+.ac-t{{font-size:12.5px;line-height:1.5;max-height:3em;overflow:hidden}}
+.ac-p{{font-size:13px;color:#e6c449;font-weight:700;margin-top:4px}}
+.ac-gift{{font-size:11px;color:#e6c449;margin-top:6px}}
+.ac-actions{{display:flex;flex-direction:column;gap:6px;margin-top:10px}}
+.ac-fix{{font-size:12px;text-align:center;background:#e6c449;color:#0a0a0a;font-weight:700;border-radius:7px;padding:8px;text-decoration:none}}
+.ac-rebuy{{font-size:12px;text-align:center;border:1px solid #3a3a3a;color:#f5f5f0;border-radius:7px;padding:7px;text-decoration:none}}
+.ac-empty,.ac-note{{font-size:12.5px;opacity:.6;line-height:1.9}}
+.ac-private{{background:#0d0d0d;border:1px solid #1d1d1d;border-radius:16px;padding:18px 18px 22px;margin-top:42px}}
+.ac-wrap a{{color:#e6c449}}
+</style>
+<div class="ac-wrap">
+<section class="ac-sec"><div class="ac-h"><h2>@{slug} が売っているもの</h2></div>{sell_block}</section>
+{owned_block}
+</div>"##,
+        slug = html_escape(slug), sell_block = sell_block, owned_block = owned_block)
 }
 
 fn json_escape(s: &str) -> String {
