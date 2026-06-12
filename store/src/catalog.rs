@@ -10335,6 +10335,33 @@ pub async fn shop_pdp(
             who = who, code = code, amt = format_jpy(price_jpy / 10)),
         None => String::new(),
     };
+    // リミックス系譜: design_remix 生まれは元デザインへのリンクと、元作者にも
+    // 5%が流れる事実を明示(印税の見える化 — コピーが資産になる側の透明性)。
+    let remix_line = {
+        let meta_v = meta_json
+            .as_deref()
+            .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok());
+        let remix_of = meta_v.as_ref()
+            .and_then(|v| v.get("remix_of").and_then(|x| x.as_str()).map(String::from))
+            .filter(|s| !s.is_empty());
+        match remix_of {
+            Some(base) => {
+                let has_original = meta_v.as_ref()
+                    .and_then(|v| v.get("original_maker_email").and_then(|x| x.as_str()))
+                    .map(|s| s.contains('@')).unwrap_or(false);
+                let royalty_note = if has_original {
+                    format!(" · 売れるたび元デザインの作者にも{}%が流れます", REMIX_ROYALTY_PCT)
+                } else {
+                    String::new()
+                };
+                format!(
+                    r#"<div style="font-size:12px;opacity:.7;margin:0 0 10px">⟳ リミックス — <a href="/shop/{base}" style="color:#ffd700;text-decoration:none">元デザインを見る</a>{note}</div>"#,
+                    base = html_attr(&base), note = royalty_note)
+            }
+            None => String::new(),
+        }
+    };
+    let maker_line = format!("{}{}", maker_line, remix_line);
     // シェアは「ブランド広告」でなく「作者の自己表現」: 一人称+作者名+ref計測。
     let share_url = format!("https://wearmu.com/shop/{}?ref=share_x", sku);
     let share_who = maker_info.as_ref().map(|(w, _)| w.as_str()).unwrap_or("MU");
@@ -12009,6 +12036,9 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
     // 作者コミッション — アフィリと独立・route 非依存・冪等。「売れたら作者に
     // 10%」がクリエイターループの心臓部 (creators.rs / /studio で可視化)。
     apply_maker_commission(&db, &session_id, &session, &sku, amount_total).await;
+
+    // リミックス印税 — design_remix 生まれの商品は元デザインの作者にも 5%。
+    apply_remix_royalty(&db, &session_id, &session, &sku, amount_total).await;
 
     // Route dispatch. printful_* / gelato_jp / suzuri_jp / manual / digital
     // continue through the existing Printful logic below as a fallback. A new
@@ -14356,6 +14386,59 @@ async fn apply_maker_commission(db: &Db, session_id: &str, session: &serde_json:
     let reason = format!("creator:{}", sku);
     crate::mu_credit_apply(&conn, &maker, commission, &reason, Some(session_id));
     tracing::info!("[catalog/maker] {} earned ¥{} ({}%) as maker of {} (order {})", maker, commission, pct, sku, session_id);
+}
+
+/// リミックス印税 — 「一言足して、変える」(design_remix) 生まれの商品が売れたら、
+/// 元デザインの作者(meta_json.original_maker_email)へ小売の5%を MU クレジットで。
+/// リミックスした人への10%(apply_maker_commission)とは独立・冪等。
+/// コピーが脅威でなく資産になる側 — リミックスされるほど元作者が潤う。
+const REMIX_ROYALTY_PCT: i64 = 5;
+
+pub(crate) async fn apply_remix_royalty(db: &Db, session_id: &str, session: &serde_json::Value, sku: &str, amount: i64) {
+    if amount <= 0 || session["currency"].as_str().unwrap_or("jpy").to_lowercase() != "jpy" {
+        return;
+    }
+    let buyer_email = session["customer_details"]["email"].as_str().unwrap_or("").to_lowercase();
+    let conn = db.lock().unwrap();
+    let (original, maker): (String, String) = conn
+        .query_row(
+            "SELECT LOWER(COALESCE(json_extract(meta_json,'$.original_maker_email'),'')),
+                    LOWER(COALESCE(json_extract(meta_json,'$.maker_email'),''))
+             FROM catalog_products WHERE sku=?",
+            rusqlite::params![sku],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap_or_default();
+    if !original.contains('@') {
+        return; // リミックス品でない or 元デザインが無帰属
+    }
+    if original == maker {
+        return; // 自分のデザインを自分でリミックス → 10%側で受け取り済み
+    }
+    if !buyer_email.is_empty() && buyer_email == original {
+        return; // 元作者本人の購入
+    }
+    // Idempotency: one royalty per checkout session.
+    let already: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM mu_credit_ledger WHERE ref_id=? AND reason LIKE 'remix_royalty:%'",
+            rusqlite::params![session_id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    if already > 0 {
+        return;
+    }
+    let royalty = (amount * REMIX_ROYALTY_PCT / 100).max(0);
+    if royalty <= 0 {
+        return;
+    }
+    let reason = format!("remix_royalty:{}", sku);
+    crate::mu_credit_apply(&conn, &original, royalty, &reason, Some(session_id));
+    tracing::info!(
+        "[catalog/remix] {} earned ¥{} ({}%) as original maker of {} (order {})",
+        original, royalty, REMIX_ROYALTY_PCT, sku, session_id
+    );
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────

@@ -349,12 +349,13 @@ pub async fn studio_page(State(db): State<Db>, headers: HeaderMap) -> Response {
                  WHERE co.amount_jpy > 0 AND co.status <> 'submitting' AND {maker} = ?1", maker = MAKER_SQL),
             rusqlite::params![email_lc], |r| r.get(0)).unwrap_or(0);
         let earned: i64 = conn.query_row(
-            "SELECT COALESCE(SUM(delta_jpy),0) FROM mu_credit_ledger WHERE email=? AND reason LIKE 'creator:%'",
+            "SELECT COALESCE(SUM(delta_jpy),0) FROM mu_credit_ledger WHERE email=? \
+             AND (reason LIKE 'creator:%' OR reason LIKE 'remix_royalty:%')",
             rusqlite::params![email_lc], |r| r.get(0)).unwrap_or(0);
-        // 今年の受取累計(作者+紹介の正の付与) — 確定申告の自己評価用。
+        // 今年の受取累計(作者+リミックス印税+紹介の正の付与) — 確定申告の自己評価用。
         let ytd: i64 = conn.query_row(
             "SELECT COALESCE(SUM(delta_jpy),0) FROM mu_credit_ledger
-             WHERE email=? AND delta_jpy>0 AND (reason LIKE 'creator:%' OR reason LIKE 'affiliate:%')
+             WHERE email=? AND delta_jpy>0 AND (reason LIKE 'creator:%' OR reason LIKE 'remix_royalty:%' OR reason LIKE 'affiliate:%')
              AND created_at >= CAST(strftime('%s', date('now','start of year')) AS INTEGER)",
             rusqlite::params![email_lc], |r| r.get(0)).unwrap_or(0);
         (balance, display_name, products, ledger, n_sales, earned, ytd)

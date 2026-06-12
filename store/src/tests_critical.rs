@@ -327,3 +327,81 @@ fn person_slug_is_slug_safe_and_varied() {
     // isn't generating a constant (which would collide every gift-by-email).
     assert!(seen.len() > 150, "person slugs not varied enough: {} unique/200", seen.len());
 }
+
+// ── リミックス印税 (apply_remix_royalty) — 支払い・冪等・自己リミックス除外 ──
+//
+// design_remix 生まれの商品が売れたら meta_json.original_maker_email に
+// 小売の5%。同一 checkout session では一度だけ(冪等)、元作者==リミックス
+// 本人なら10%側(apply_maker_commission)で受け取り済みなので支払わない。
+#[tokio::test]
+async fn remix_royalty_pays_original_maker_once_and_skips_self_remix() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE catalog_products (sku TEXT PRIMARY KEY, meta_json TEXT);
+         CREATE TABLE mu_credits (
+            email TEXT PRIMARY KEY, balance_jpy INTEGER, total_earned_jpy INTEGER,
+            total_spent_jpy INTEGER, updated_at INTEGER);
+         CREATE TABLE mu_credit_ledger (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT, delta_jpy INTEGER,
+            reason TEXT, ref_id TEXT, created_at INTEGER);",
+    )
+    .unwrap();
+    // 他人のデザインのリミックス品
+    conn.execute(
+        r#"INSERT INTO catalog_products VALUES ('MAKE-RX-TEE-rx1',
+           '{"remix_of":"BASE-TEE-1","original_maker_email":"orig@example.com","maker_email":"remixer@example.com"}')"#,
+        [],
+    ).unwrap();
+    // 自作デザインを自分でリミックスした品
+    conn.execute(
+        r#"INSERT INTO catalog_products VALUES ('MAKE-RX-TEE-rx2',
+           '{"remix_of":"BASE-TEE-2","original_maker_email":"same@example.com","maker_email":"same@example.com"}')"#,
+        [],
+    ).unwrap();
+    // リミックスでない通常商品
+    conn.execute(
+        r#"INSERT INTO catalog_products VALUES ('PLAIN-TEE-1', '{"maker_email":"someone@example.com"}')"#,
+        [],
+    ).unwrap();
+    let db: crate::Db = std::sync::Arc::new(std::sync::Mutex::new(conn));
+    let session = serde_json::json!({
+        "currency": "jpy",
+        "customer_details": {"email": "buyer@example.com"}
+    });
+
+    let balance = |db: &crate::Db, email: &str| -> i64 {
+        db.lock().unwrap().query_row(
+            "SELECT COALESCE(balance_jpy,0) FROM mu_credits WHERE email=?",
+            rusqlite::params![email], |r| r.get(0)).unwrap_or(0)
+    };
+
+    // 1) 他人リミックスが¥4,900で売れた → 元作者に5% = ¥245。
+    crate::catalog::apply_remix_royalty(&db, "cs_1", &session, "MAKE-RX-TEE-rx1", 4900).await;
+    assert_eq!(balance(&db, "orig@example.com"), 245, "original maker gets 5%");
+
+    // 2) 同じ session の再実行(webhook リトライ) → 二重払いしない。
+    crate::catalog::apply_remix_royalty(&db, "cs_1", &session, "MAKE-RX-TEE-rx1", 4900).await;
+    assert_eq!(balance(&db, "orig@example.com"), 245, "idempotent per session");
+
+    // 3) 別 session の2枚目 → もう ¥245。
+    crate::catalog::apply_remix_royalty(&db, "cs_2", &session, "MAKE-RX-TEE-rx1", 4900).await;
+    assert_eq!(balance(&db, "orig@example.com"), 490, "second sale pays again");
+
+    // 4) 自作リミックス → 印税側は支払わない(10%側で受領済み)。
+    crate::catalog::apply_remix_royalty(&db, "cs_3", &session, "MAKE-RX-TEE-rx2", 4900).await;
+    assert_eq!(balance(&db, "same@example.com"), 0, "self-remix gets no extra royalty");
+
+    // 5) リミックスでない商品 → no-op。
+    crate::catalog::apply_remix_royalty(&db, "cs_4", &session, "PLAIN-TEE-1", 4900).await;
+    let ledger_n: i64 = db.lock().unwrap().query_row(
+        "SELECT COUNT(*) FROM mu_credit_ledger", [], |r| r.get(0)).unwrap();
+    assert_eq!(ledger_n, 2, "exactly two royalty ledger rows (cs_1 + cs_2)");
+
+    // 6) 元作者本人が購入 → 支払わない。
+    let self_buy = serde_json::json!({
+        "currency": "jpy",
+        "customer_details": {"email": "orig@example.com"}
+    });
+    crate::catalog::apply_remix_royalty(&db, "cs_5", &self_buy, "MAKE-RX-TEE-rx1", 4900).await;
+    assert_eq!(balance(&db, "orig@example.com"), 490, "original maker buying their own remix pays no royalty");
+}
