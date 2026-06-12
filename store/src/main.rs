@@ -69415,6 +69415,8 @@ async fn main() {
         .route("/api/make", post(catalog::public_make).get(catalog::public_make))
         // PDP「このデザインで、他のかたち」— 同デザイン別kindをその場で作る(冪等)。
         .route("/api/design-variant", post(catalog::design_variant_create))
+        // PDP「一言足して、変える」— 参照画像リミックスで新デザインを織る。
+        .route("/api/design-remix", post(catalog::design_remix_create))
         // 添付アップロード（画像8MB/音声25MB）。axum 既定の 2MB body 上限を
         // このルートだけ広げる(+multipart封筒ぶん少し余裕を持たせる)。
         .route("/api/make/upload",
