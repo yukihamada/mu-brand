@@ -1797,6 +1797,211 @@ pub async fn design_variant_create(
     Redirect::to(&format!("/shop/{}", urlencoding::encode(&new_sku))).into_response()
 }
 
+#[derive(Deserialize)]
+pub struct DesignRemixForm {
+    pub sku: String,
+    pub words: String,
+}
+
+/// POST /api/design-remix — 「一言足して、変える」。既存ライブ商品のデザインを
+/// 参照画像として Gemini に渡し、スタイルを保ったまま追加ワードを適用した
+/// **新しいデザイン**の商品を作る(/make と同じ minna 棚・同じ予算/審査ゲート)。
+/// 系譜は meta_json.remix_of に記録し、元の作者は original_maker_email として
+/// 残す(リミックス印税の土台)。design_group は新規(=新デザインなので A の
+/// 横展開とは独立に育つ)。
+pub async fn design_remix_create(
+    State(db): State<Db>,
+    headers: axum::http::HeaderMap,
+    axum::Form(f): axum::Form<DesignRemixForm>,
+) -> Response {
+    let base_sku = f.sku.trim().to_string();
+    let words = f.words.trim().to_string();
+    if words.is_empty() || words.chars().count() > 120 {
+        return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({
+            "ok": false, "error": "足したい一言を入力してください（120文字以内）"
+        }))).into_response();
+    }
+    let (base_label, design, base_meta, base_price) = {
+        let conn = db.lock().unwrap();
+        let Some((_b, label, _d, design, meta)) = design_variant_base_row(&conn, &base_sku) else {
+            return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({
+                "ok": false, "error": "この商品はリミックスに対応していません"
+            }))).into_response();
+        };
+        // /make と同じ時間あたり生成キャップ(棚も同じ minna なので分母を共有)。
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM catalog_products WHERE brand='minna' AND created_at > datetime('now','-1 hour')",
+            [], |r| r.get(0)).unwrap_or(0);
+        if n >= MAKE_HOURLY_CAP {
+            return (StatusCode::TOO_MANY_REQUESTS, axum::Json(serde_json::json!({
+                "ok": false, "error": "いまアクセスが集中しています。少し時間をおいて試してください。"
+            }))).into_response();
+        }
+        let price: i64 = conn.query_row(
+            "SELECT retail_price_jpy FROM catalog_products WHERE sku=?",
+            rusqlite::params![&base_sku], |r| r.get(0)).unwrap_or(0);
+        (label, design, meta, price)
+    };
+    let kind = kind_from_sku(&base_sku);
+    let Some(spec) = PRODUCT_SPECS.iter().find(|s| s.kind == kind) else {
+        return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({
+            "ok": false, "error": "未対応の種類です"
+        }))).into_response();
+    };
+    // 文言の権利/不適切チェック + 新商品の名前とひとことを同時に作る(/make と同じ基準)。
+    let parse_prompt = format!(
+        "Parse this design-remix request into compact JSON. ONLY emit JSON, no prose, no fences.\n\
+         Base product: \"{}\". The user wants a new variation of its design with this change: \"{}\".\n\
+         Schema: {{\"display\":\"<short JP name for the remixed design, <=10 chars>\", \
+                   \"hook\":\"<one JP marketing sentence for the PDP>\", \
+                   \"flagged\":<true ONLY if the change introduces a real brand/trademark/logo, a real living person's name or likeness, a copyrighted character/IP, or hateful/sexual/violent/illegal content; otherwise false>, \
+                   \"flag_reason\":\"<short JP reason if flagged, else empty>\"}}\n\
+         Bias toward flagged=false (auto-approve). Only set true when clearly risky.",
+        base_label.chars().take(80).collect::<String>(), words);
+    let parsed: serde_json::Value = match crate::gemini::call_gemini_text(&parse_prompt).await {
+        Ok(s) => {
+            let json_str = s.find('{')
+                .and_then(|i| s[i..].rfind('}').map(|j| s[i..i + j + 1].to_string()))
+                .unwrap_or(s);
+            serde_json::from_str(&json_str).unwrap_or(serde_json::json!({}))
+        }
+        Err(e) => {
+            return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({
+                "ok": false, "error": format!("生成に失敗しました: {}", e)
+            }))).into_response();
+        }
+    };
+    let display = parsed["display"].as_str().unwrap_or("MU").to_string();
+    let hook = parsed["hook"].as_str()
+        .filter(|s| !s.trim().is_empty())
+        .map(String::from)
+        .unwrap_or_else(|| format!("「{}」を足してリミックス", words));
+    let flagged = parsed["flagged"].as_bool().unwrap_or(false);
+    let flag_reason = parsed["flag_reason"].as_str().unwrap_or("").to_string();
+    let seed = format!("rx{:08x}", rand::random::<u32>());
+    let slug = {
+        let s: String = display.chars().filter(|c| c.is_ascii_alphanumeric())
+            .take(12).collect::<String>().to_uppercase();
+        if s.is_empty() { "REMIX".to_string() } else { s }
+    };
+    let sku = format!("MAKE-{}-{}-{}", slug, kind.to_uppercase().replace('_', "-"), seed);
+    // 予算台帳(/make と同じ ¥/枚・日次上限に乗る)。
+    let charged = {
+        let conn = db.lock().unwrap();
+        spend_or_refuse(&conn, "ai_image", GEMINI_IMAGE_COST_JPY,
+            &format!("design_remix base={} sku={}", base_sku, sku), Some(&sku))
+    };
+    if !charged {
+        return (StatusCode::FAILED_DEPENDENCY, axum::Json(serde_json::json!({
+            "ok": false, "error": "本日の生成枠が上限に達しました。また明日お試しください。"
+        }))).into_response();
+    }
+    // 元デザインを参照画像で渡し、スタイル維持+追加ワード適用の新作を織る。
+    // 対象は printful_dtg のみ(design_variant_base_row が保証)なので
+    // chest-graphic-on-white 一本でよい。
+    let design_prompt = format!(
+        "Here is an existing print-ready chest graphic as a reference image. \
+         Create a NEW variation of it: keep the reference's overall style, \
+         composition, typography feel and spirit, and apply this change: {}. \
+         Print-ready chest graphic at 300 DPI on a pure white background. \
+         NO model, NO mockup, just the artwork, centered. Variation key: {}.",
+        words, seed);
+    let img = match crate::gemini::call_gemini_with_image(&design_prompt, &[design.as_str()]).await {
+        Ok(i) => i,
+        Err(e) => {
+            return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({
+                "ok": false, "error": format!("デザイン生成に失敗: {}", e)
+            }))).into_response();
+        }
+    };
+    let (design_bytes, design_mime) = match make_design_transparent(&img.bytes) {
+        Some(b) => (b, "image/png".to_string()),
+        None => (img.bytes.clone(), img.mime.clone()),
+    };
+    let key = format!("catalog/{}.png", sku);
+    let Some(url) = crate::store_r2_bytes(&key, &design_bytes, &design_mime).await else {
+        return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({
+            "ok": false, "error": "画像アップロードに失敗しました"
+        }))).into_response();
+    };
+    let retail_jpy = base_price.max(spec.retail_jpy);
+    let (is_active_i, status_s): (i64, &str) = if flagged { (0, "review") } else { (1, "live") };
+    let maker_email = crate::bearer_or_session_email(&db, &headers, None)
+        .or_else(|| {
+            headers.get(axum::http::header::COOKIE)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|c| c.split(';').find_map(|p| p.trim().strip_prefix("mu_make_email=")))
+                .and_then(|v| urlencoding::decode(v).ok())
+                .map(|s| s.trim().to_lowercase())
+                .filter(|s| s.contains('@') && s.len() <= 254)
+        });
+    let edit_token = format!("{:016x}", rand::random::<u64>());
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO catalog_brands (slug, name, emoji, color_primary, tagline, is_active, revenue_share_pct)
+             VALUES ('minna', 'みんなでつくる MU', '🌱', '#88c97a', '言うだけで作れる — あなたのアイデアを MU が形に', 1, 0)",
+            [],
+        );
+        let mut m = serde_json::Map::new();
+        m.insert("remix_of".into(), serde_json::Value::from(base_sku.clone()));
+        m.insert("remix_words".into(), serde_json::Value::from(words.clone()));
+        m.insert("edit_token".into(), serde_json::Value::from(edit_token.clone()));
+        if let Some(ome) = base_meta.get("maker_email").and_then(|v| v.as_str()) {
+            m.insert("original_maker_email".into(), serde_json::Value::from(ome));
+        }
+        if let Some(me) = &maker_email {
+            m.insert("maker_email".into(), serde_json::Value::from(me.clone()));
+        }
+        let desc = format!("{} — {}", display, hook);
+        let _ = conn.execute(
+            "INSERT INTO catalog_products (
+                sku, brand, label, description_ja, retail_price_jpy,
+                printful_product_id, printful_variant_id, printful_placement,
+                printful_print_w, printful_print_h,
+                design_file, mockup_main_file, mockup_url_external,
+                is_active, sort_order, status, fulfillment_route, legacy_source, meta_json
+             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            rusqlite::params![
+                &sku, "minna", desc, desc, retail_jpy,
+                spec.printful_product_id, spec.printful_variant_id, spec.placement,
+                0, 0,
+                &url, &url, &url,
+                is_active_i, 50, status_s,
+                route_for_kind(kind),
+                "design_remix",
+                serde_json::Value::Object(m).to_string(),
+            ],
+        );
+    }
+    if spec.printful_product_id > 0 {
+        let (pp, pv, url_c, sku_c, db_c) =
+            (spec.printful_product_id, spec.printful_variant_id, url.clone(), sku.clone(), db.clone());
+        tokio::spawn(async move { let _ = generate_onbody_mockup(db_c, sku_c, pp, pv, url_c).await; });
+    }
+    if !flagged {
+        let (db_s, sku_s, url_s, title_s, hook_s) =
+            (db.clone(), sku.clone(), url.clone(), display.clone(), hook.clone());
+        tokio::spawn(async move {
+            match crate::gemini::call_gemini_judge(&url_s, &title_s, &hook_s).await {
+                Ok(score) => store_score(&db_s, &sku_s, &score),
+                Err(e) => tracing::warn!("[catalog/score] remix {} judge failed: {}", sku_s, e),
+            }
+        });
+    }
+    let note = if flagged {
+        let r = if flag_reason.is_empty() { "内容".to_string() } else { flag_reason };
+        format!("織れました。少し確認したい点（{}）があるので人の目を通します。OKならすぐ公開されます。", r)
+    } else {
+        "織れました！もう棚に並んでいます。".to_string()
+    };
+    axum::Json(serde_json::json!({
+        "ok": true, "sku": sku, "status": status_s,
+        "pdp_url": format!("/shop/{}", urlencoding::encode(&sku)),
+        "note": note,
+    })).into_response()
+}
+
 /// Resolve a Printful catalog product+variant into the fields MU needs to make
 /// a generic product WITHOUT a hardcoded PRODUCT_SPECS row:
 /// `(placement, fulfillment_route, retail_floor_jpy, spec_html)`.
@@ -10291,12 +10496,55 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
                         ("このデザインで、他のかたち",
                          "押すとその場で棚に並びます — 同じデザイン・受注生産。")
                     };
+                    // 「一言足して、変える」— このデザインを参照に新作を織る
+                    // (POST /api/design-remix・fetch で 10〜30秒の生成を待つ)。
+                    let (rx_title, rx_ph, rx_btn, rx_busy, rx_need, rx_fail) = if lang == "en" {
+                        ("Add a few words, make it yours",
+                         "e.g. \"in gold\", \"add a cat\", \"more minimal\"",
+                         "✦ Remix (free)", "Weaving… 10–30s", "Type a few words first", "Something went wrong")
+                    } else {
+                        ("一言足して、変える",
+                         "例:「金色で」「猫を足して」「もっとミニマルに」",
+                         "✦ リミックスする(無料)", "織り上げ中… 10〜30秒", "足したい一言を入れてください", "失敗しました")
+                    };
+                    let remix_block = format!(
+                        "<div style=\"margin-top:16px;border-top:1px solid rgba(128,128,128,.18);padding-top:14px\">\
+                         <div style=\"font-size:12px;font-weight:700;margin:0 0 8px\">{t}</div>\
+                         <form id=\"mu-remix-form\" data-sku=\"{base}\" data-busy=\"{busy}\" data-need=\"{need}\" data-fail=\"{fail}\" style=\"display:flex;gap:8px;margin:0;max-width:560px\">\
+                         <input id=\"mu-remix-words\" maxlength=\"120\" placeholder=\"{ph}\" style=\"flex:1;min-width:0;padding:9px 12px;border:1px solid rgba(128,128,128,.35);border-radius:9px;background:transparent;color:inherit;font-size:13px\">\
+                         <button id=\"mu-remix-btn\" type=\"submit\" style=\"padding:9px 14px;border:0;border-radius:9px;background:#e6c449;color:#0a0a0a;font-weight:800;font-size:12.5px;cursor:pointer;white-space:nowrap\">{btn}</button></form>\
+                         <div id=\"mu-remix-status\" style=\"font-size:11.5px;opacity:.6;margin:7px 2px 0;min-height:15px\"></div></div>",
+                        t = html_text(rx_title), base = html_attr(&sku), ph = html_attr(rx_ph),
+                        btn = html_text(rx_btn), busy = html_attr(rx_busy),
+                        need = html_attr(rx_need), fail = html_attr(rx_fail),
+                    );
+                    const REMIX_JS: &str = r##"<script>
+(function(){
+  var f=document.getElementById('mu-remix-form');if(!f)return;
+  var st=document.getElementById('mu-remix-status'),btn=document.getElementById('mu-remix-btn');
+  f.addEventListener('submit',function(ev){
+    ev.preventDefault();
+    var words=(document.getElementById('mu-remix-words').value||'').trim();
+    if(!words){st.textContent=f.dataset.need;return;}
+    btn.disabled=true;btn.style.opacity='.5';st.textContent=f.dataset.busy;
+    fetch('/api/design-remix',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body:new URLSearchParams({sku:f.dataset.sku,words:words})})
+      .then(function(r){return r.json()})
+      .then(function(j){
+        if(j.ok){st.textContent=j.note||'';location.href=j.pdp_url;}
+        else{st.textContent=j.error||f.dataset.fail;btn.disabled=false;btn.style.opacity='1';}
+      })
+      .catch(function(){st.textContent=f.dataset.fail;btn.disabled=false;btn.style.opacity='1';});
+  });
+})();
+</script>"##;
                     format!(
                         "<section style=\"max-width:920px;margin:34px auto 0;padding:0 22px\">\
                          <h3 style=\"font-size:13px;letter-spacing:.15em;opacity:.85;margin:0 0 4px\">{h}</h3>\
                          <p style=\"font-size:11.5px;opacity:.55;margin:0 0 14px\">{sub}</p>\
-                         <div style=\"display:flex;gap:14px;overflow-x:auto;padding-bottom:10px;scroll-snap-type:x proximity\">{cards}</div></section>",
-                        h = h, sub = sub, cards = cards
+                         <div style=\"display:flex;gap:14px;overflow-x:auto;padding-bottom:10px;scroll-snap-type:x proximity\">{cards}</div>\
+                         {remix}{js}</section>",
+                        h = h, sub = sub, cards = cards, remix = remix_block, js = REMIX_JS
                     )
                 }
             }
