@@ -1,8 +1,9 @@
 "tab.live" = "Live";
 "tab.shop" = "Shop";
-"tab.closet" = "Closet";
+"tab.closet" = "Account";
 
-"live.nextDrop" = "Next drop in";
+"live.latestDrop" = "Latest drop:";
+"live.born24h %lld" = "%lld born in 24h";
 "feed.sold %lld" = "%lld shipped";
 
 "kind.all" = "All";
@@ -14,7 +15,7 @@
 
 "shop.search" = "Search with words";
 
-"pdp.buy" = "Buy with Apple Pay";
+"pdp.buy" = "Buy now";
 "pdp.openWeb" = "Open on web (gift & details)";
 
 "auth.lead" = "We'll email you a 6-digit code. Enter it and you're in — no password.";
@@ -30,3 +31,8 @@
 "account.revenue" = "Revenue";
 "account.mypage" = "Open my page on web";
 "account.logout" = "Log out";
+"account.delete" = "Delete account";
+"account.deleteConfirmTitle" = "Delete your account?";
+"account.deleteConfirmBody" = "Your store and credit data will be erased. This cannot be undone (only a legal-compliance hash of your email is retained).";
+"account.deleteConfirmAction" = "Delete permanently";
+"account.privacy" = "Privacy Policy";

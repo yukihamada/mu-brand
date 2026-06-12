@@ -45,6 +45,18 @@ struct MUAPI {
         return key
     }
 
+    // App Store Guideline 5.1.1(v): アカウント削除 (サーバ側は冪等・compliance log のみ保持)
+    static func deleteAccount(apiKey: String) async throws {
+        var req = URLRequest(url: base.appendingPathComponent("api/collab/account/delete"))
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            throw APIError.message((json?["error"] as? String) ?? "HTTP \((resp as? HTTPURLResponse)?.statusCode ?? -1)")
+        }
+    }
+
     static func sales(apiKey: String) async throws -> SalesResponse {
         var req = URLRequest(url: base.appendingPathComponent("api/agent/sales"))
         req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
