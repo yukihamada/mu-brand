@@ -4875,6 +4875,13 @@ pub struct MakeQuery {
     /// アパレル等なら meta_json.audio_url として PDP の試聴プレイヤーで鳴る。
     #[serde(default)]
     pub audio_url: Option<String>,
+    /// 運営専用: ADMIN_TOKEN(必須対) + brand 指定で、公開フィード(brand='minna')
+    /// を汚さず隠しブランド(is_active=0・/shop 非掲載・PDP直リンクのみ)に作る。
+    /// E2E デモ・レビュー用。一般ユーザーは使えない(token 不一致は 401)。
+    #[serde(default)]
+    pub brand: Option<String>,
+    #[serde(default)]
+    pub token: Option<String>,
 }
 
 /// GET /make のクエリ。?v= でバリアント固定（勝者確定後はサーバが上書き）。
@@ -6797,6 +6804,168 @@ pub async fn make_upload(mut multipart: axum::extract::Multipart) -> Response {
     }
 }
 
+/// GET /api/oto/:key — 音源付きT の KEY → {音源URL, sha256指紋, タイトル} 解決。
+/// プレイヤー(mu.koe.live/oto.html)が SONGS ハードコードに無い KEY をここに
+/// フォールバックする = 新しい音源付きTごとに mugon-fm を再デプロイしない。
+/// CORS *。sha256 指紋を持つ商品(=音源付きT)だけ返す — kind=song の配信原本は
+/// 返さない(買わずに全曲聴ける穴を作らない)。
+pub async fn api_oto(State(db): State<Db>, Path(key): Path<String>) -> Response {
+    let k = key.trim().to_lowercase();
+    if k.is_empty() || k.len() > 80
+        || !k.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return (StatusCode::BAD_REQUEST, "bad key").into_response();
+    }
+    let row: Option<(String, String, String, String)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT sku, COALESCE(description_ja,''), COALESCE(meta_json,''), COALESCE(design_file,'')
+             FROM catalog_products
+             WHERE LOWER(sku)=?1 OR json_extract(meta_json,'$.oto_key')=?1",
+            rusqlite::params![k],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        ).ok()
+    };
+    let Some((sku, desc, meta, design_file)) = row else {
+        return (StatusCode::NOT_FOUND, "unknown key").into_response();
+    };
+    let m: serde_json::Value = serde_json::from_str(&meta).unwrap_or(serde_json::Value::Null);
+    let (Some(url), Some(sha)) = (
+        m.get("audio_url").and_then(|x| x.as_str()),
+        m.get("audio_sha256").and_then(|x| x.as_str()),
+    ) else {
+        return (StatusCode::NOT_FOUND, "no fingerprinted audio").into_response();
+    };
+    let title: String = desc.lines().next().unwrap_or("")
+        .split(" — ").next().unwrap_or("MU")
+        .chars().take(40).collect();
+    (
+        [
+            ("access-control-allow-origin", "*"),
+            ("cache-control", "public, max-age=300"),
+        ],
+        axum::Json(serde_json::json!({
+            "ok": true,
+            "key": k,
+            "sku": sku,
+            "title": if title.is_empty() { "MU".to_string() } else { title },
+            "url": url,
+            "sha256": sha,
+            "design_url": if design_file.starts_with("https://") { serde_json::Value::from(design_file) } else { serde_json::Value::Null },
+            "design_sha256": m.get("design_sha256").cloned().unwrap_or(serde_json::Value::Null),
+            "pdp": format!("https://wearmu.com/shop/{}", sku),
+            "permanence": m.get("permanence").cloned().unwrap_or(serde_json::Value::Null),
+        })),
+    ).into_response()
+}
+
+#[derive(Deserialize)]
+pub struct PermAdminQuery {
+    pub token: String,
+    pub sku: String,
+}
+
+#[derive(Deserialize)]
+pub struct PermAdminBody {
+    #[serde(default)] pub design_ar: Option<String>,
+    #[serde(default)] pub audio_ar: Option<String>,
+    #[serde(default)] pub memo_tx: Option<String>,
+}
+
+/// POST /admin/catalog/permanence?token=…&sku=… — ⛓ 永続証明の刻印。
+/// scripts/permanence_inscribe.sh が Irys で Arweave に永久アップした恒久URLを
+/// 受け取り、**サーバ側でも実バイトを取得して sha256 を商品の指紋と再検証**
+/// してから meta_json.permanence に書く(不一致は 409 で拒否 = 信頼しない)。
+pub async fn admin_permanence(
+    State(db): State<Db>,
+    Query(q): Query<PermAdminQuery>,
+    axum::Json(body): axum::Json<PermAdminBody>,
+) -> Response {
+    let expected = env::var("ADMIN_TOKEN").unwrap_or_default();
+    if expected.is_empty() || q.token != expected {
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    }
+    let ar_ok = |u: &str| u.starts_with("https://gateway.irys.xyz/") || u.starts_with("https://arweave.net/");
+    let row: Option<(String, String)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(design_file,''), COALESCE(meta_json,'') FROM catalog_products WHERE sku=?1",
+            rusqlite::params![q.sku], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).ok()
+    };
+    let Some((design_file, meta)) = row else {
+        return (StatusCode::NOT_FOUND, "unknown sku").into_response();
+    };
+    let mut m: serde_json::Map<String, serde_json::Value> = serde_json::from_str::<serde_json::Value>(&meta)
+        .ok().and_then(|v| v.as_object().cloned()).unwrap_or_default();
+    let mut perm = serde_json::Map::new();
+    if let Some(da) = body.design_ar.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if !ar_ok(da) {
+            return (StatusCode::BAD_REQUEST, "design_ar must be a gateway.irys.xyz / arweave.net URL").into_response();
+        }
+        let Some(bytes) = fetch_public_bytes(da).await else {
+            return (StatusCode::BAD_GATEWAY, "fetch design_ar failed").into_response();
+        };
+        let got = sha256_hex_full(&bytes);
+        // 指紋未刻印の旧商品は、いまの design_file の実バイトから期待値を作る。
+        let expect = match m.get("design_sha256").and_then(|x| x.as_str()) {
+            Some(e) => e.to_string(),
+            None => {
+                let Some(cur) = fetch_public_bytes(&design_file).await else {
+                    return (StatusCode::BAD_GATEWAY, "fetch design_file failed").into_response();
+                };
+                sha256_hex_full(&cur)
+            }
+        };
+        if got != expect {
+            return (StatusCode::CONFLICT, axum::Json(serde_json::json!({
+                "ok": false, "error": "design sha256 mismatch", "arweave": got, "expected": expect,
+            }))).into_response();
+        }
+        perm.insert("design_ar".into(), serde_json::Value::from(da));
+        perm.insert("design_sha256".into(), serde_json::Value::from(expect));
+    }
+    if let Some(aa) = body.audio_ar.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if !ar_ok(aa) {
+            return (StatusCode::BAD_REQUEST, "audio_ar must be a gateway.irys.xyz / arweave.net URL").into_response();
+        }
+        let Some(expect) = m.get("audio_sha256").and_then(|x| x.as_str()).map(str::to_string) else {
+            return (StatusCode::BAD_REQUEST, "product has no audio_sha256 fingerprint").into_response();
+        };
+        let Some(bytes) = fetch_public_bytes(aa).await else {
+            return (StatusCode::BAD_GATEWAY, "fetch audio_ar failed").into_response();
+        };
+        let got = sha256_hex_full(&bytes);
+        if got != expect {
+            return (StatusCode::CONFLICT, axum::Json(serde_json::json!({
+                "ok": false, "error": "audio sha256 mismatch", "arweave": got, "expected": expect,
+            }))).into_response();
+        }
+        perm.insert("audio_ar".into(), serde_json::Value::from(aa));
+        perm.insert("audio_sha256".into(), serde_json::Value::from(expect));
+    }
+    if let Some(tx) = body.memo_tx.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if tx.len() > 96 || !tx.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return (StatusCode::BAD_REQUEST, "bad memo_tx").into_response();
+        }
+        perm.insert("memo_tx".into(), serde_json::Value::from(tx));
+        perm.insert("memo_cluster".into(), serde_json::Value::from("mainnet-beta"));
+    }
+    if perm.is_empty() {
+        return (StatusCode::BAD_REQUEST, "nothing to inscribe").into_response();
+    }
+    perm.insert("inscribed_at".into(), serde_json::Value::from(crate::chrono_now()));
+    m.insert("permanence".into(), serde_json::Value::Object(perm.clone()));
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE catalog_products SET meta_json=?1, updated_at=datetime('now') WHERE sku=?2",
+            rusqlite::params![serde_json::Value::Object(m).to_string(), q.sku],
+        );
+    }
+    tracing::info!("[catalog/permanence] {} inscribed: {:?}", q.sku, perm.keys().collect::<Vec<_>>());
+    axum::Json(serde_json::json!({ "ok": true, "sku": q.sku, "permanence": perm })).into_response()
+}
+
 /// 無料ローカル生成用の超軽量 kind 判定。重い 30B LLM を parse に使うと実測 120s 超で
 /// timeout するため、ローカル経路は LLM を呼ばずキーワードで kind を決める(2026-06-11)。
 fn local_kind_from_prompt(p: &str) -> &'static str {
@@ -7227,6 +7396,228 @@ load();
 </script>
 </body></html>"##;
 
+// ════════════════════════════════════════════════════════════════════
+// 音源付きT (sound tee) — 「お願いすると音源付きTが作れる」部品。
+// 規約は既存の Shiopixel 8枚と同じ: description に
+// `https://mu.koe.live/oto.html?s=<KEY>` を埋めると PDP に試聴▶が出る。
+// KEY→音源の解決はハードコード(mugon-fm SONGS)でなく /api/oto/<KEY> が担う
+// (プレイヤー側は未知KEYをこの API にフォールバックする)。
+// ════════════════════════════════════════════════════════════════════
+
+/// 依頼文が「音源付き」を求めているか。添付音源が無くても合成アンビエンスで応える。
+fn make_wants_sound(p: &str) -> bool {
+    let q = p.to_lowercase();
+    [
+        "音源付", "音源つき", "音付", "音つき", "曲付", "曲つき",
+        "音源入り", "曲入り", "音入り", "鳴るt", "鳴るシャツ", "音の鳴る",
+        "sound", "with music", "サウンドティー",
+    ]
+    .iter()
+    .any(|k| q.contains(k))
+}
+
+/// フル(64桁) sha256 hex。QR の `&h=` と meta_json の指紋に使う。
+fn sha256_hex_full(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(bytes);
+    hex::encode(h.finalize())
+}
+
+/// 自ホスト(R2 等)に置いた添付・デザインを取り直す小ヘルパ。
+pub(crate) async fn fetch_public_bytes(url: &str) -> Option<Vec<u8>> {
+    let r = reqwest::Client::new()
+        .get(url)
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+        .ok()?;
+    if !r.status().is_success() {
+        return None;
+    }
+    let b = r.bytes().await.ok()?;
+    if b.is_empty() { None } else { Some(b.to_vec()) }
+}
+
+/// 添付音源なしの「音源付き」依頼に応える合成アンビエンス(純Rust・ffmpeg不要)。
+/// 22.05kHz / 16bit / モノラル / 40秒。seed からペンタトニック3声のパッド
+/// (ゆっくり揺れる)+波のようなローパスノイズを重ね、fade in/out を掛ける。
+/// 楽曲生成に ElevenLabs は使わない(TTS専用)・外部APIゼロ。
+fn synth_ambience_wav(seed: u32) -> Vec<u8> {
+    const SR: u32 = 22_050;
+    const SECS: u32 = 40;
+    let n = (SR * SECS) as usize;
+    // 決定的 LCG (同じ seed → 同じ音 = sha256 指紋が安定)
+    let mut s = (seed as u64) | 1;
+    let mut rnd = move || {
+        s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        ((s >> 33) as u32) as f64 / u32::MAX as f64
+    };
+    let tau = std::f64::consts::TAU;
+    let root = 110.0 * (1.0 + rnd()); // 110–220Hz
+    let ratios = [1.0, 6.0 / 5.0, 3.0 / 2.0, 9.0 / 5.0, 2.0]; // minor pentatonic
+    let mut voices: Vec<(f64, f64, f64)> = Vec::new(); // (freq, lfo_hz, phase)
+    for i in 0..3 {
+        let idx = ((rnd() * ratios.len() as f64) as usize).min(ratios.len() - 1);
+        let f = root * ratios[idx] * if i == 2 { 2.0 } else { 1.0 };
+        voices.push((f, 0.05 + rnd() * 0.08, rnd() * tau));
+    }
+    let mut noise_lp = 0.0f64;
+    let mut data: Vec<u8> = Vec::with_capacity(n * 2);
+    for i in 0..n {
+        let t = i as f64 / SR as f64;
+        let mut x = 0.0f64;
+        for (f, lfo, ph) in &voices {
+            let a = 0.5 + 0.5 * (tau * lfo * t + ph).sin();
+            x += (tau * f * t).sin() * a * 0.22 + (tau * f * 2.001 * t).sin() * a * 0.05;
+        }
+        let w = rnd() * 2.0 - 1.0;
+        noise_lp += 0.02 * (w - noise_lp);
+        x += noise_lp * 0.18 * (0.5 + 0.5 * (tau * 0.03 * t).sin());
+        let env = (t / 3.0).min((SECS as f64 - t) / 5.0).clamp(0.0, 1.0);
+        let v = (x * env * 0.8).clamp(-1.0, 1.0);
+        data.extend_from_slice(&((v * i16::MAX as f64) as i16).to_le_bytes());
+    }
+    // WAV (PCM) ヘッダ手組み — hound 等の新規依存を足さない
+    let mut out = Vec::with_capacity(44 + data.len());
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&((36 + data.len()) as u32).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    out.extend_from_slice(&1u16.to_le_bytes()); // mono
+    out.extend_from_slice(&SR.to_le_bytes());
+    out.extend_from_slice(&(SR * 2).to_le_bytes()); // byte rate
+    out.extend_from_slice(&2u16.to_le_bytes()); // block align
+    out.extend_from_slice(&16u16.to_le_bytes()); // bits/sample
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    out.extend_from_slice(&data);
+    out
+}
+
+/// 音源付きT: デザイン画像の下部中央に「白い角丸パネル + 黒QR」を合成する。
+/// 飛び先は `mu.koe.live/oto.html?s=<KEY>&h=<sha256>`(指紋型QR — プレイヤーが
+/// Web Crypto で原本照合して「✓原本と一致」を出す)。
+/// 🪤 白on黒の反転QRは iOS が読めない → 必ず白パネル+黒モジュール。
+fn composite_sound_qr(design: &[u8], qr_text: &str) -> Option<Vec<u8>> {
+    use qrcodegen::{QrCode, QrCodeEcc};
+    let mut img = image::load_from_memory(design).ok()?.to_rgba8();
+    let (w, h) = img.dimensions();
+    if w < 320 || h < 320 {
+        return None;
+    }
+    let qr = QrCode::encode_text(qr_text, QrCodeEcc::Medium).ok()?;
+    let n = qr.size() as u32;
+    let quiet = 3u32; // 白パネル自体が余白になるので 3 モジュールで足りる
+    // パネル ≈ 短辺の24%(胸プリント実寸 ~5cm)。最低160px・最大は短辺の1/3。
+    let panel = ((w.min(h) as f64 * 0.24) as u32).max(160).min(w.min(h) / 3);
+    let scale = (panel / (n + quiet * 2)).max(2);
+    let inner = (n + quiet * 2) * scale;
+    let px0 = (w - inner) / 2;
+    let py0 = h.saturating_sub(inner + h / 50); // 下端から2%上
+    let r = (inner as f64 * 0.10) as i64; // 角丸半径
+    for y in 0..inner {
+        for x in 0..inner {
+            // 角丸: 四隅の r 範囲は円の外をスキップ(デザインを残す)
+            let dx = if (x as i64) < r {
+                Some(r - x as i64)
+            } else if x as i64 >= inner as i64 - r {
+                Some(x as i64 - (inner as i64 - r - 1))
+            } else {
+                None
+            };
+            let dy = if (y as i64) < r {
+                Some(r - y as i64)
+            } else if y as i64 >= inner as i64 - r {
+                Some(y as i64 - (inner as i64 - r - 1))
+            } else {
+                None
+            };
+            if let (Some(dx), Some(dy)) = (dx, dy) {
+                if dx * dx + dy * dy > r * r {
+                    continue;
+                }
+            }
+            let (mx, my) = (
+                (x / scale) as i32 - quiet as i32,
+                (y / scale) as i32 - quiet as i32,
+            );
+            let dark = mx >= 0 && my >= 0 && qr.get_module(mx, my);
+            let (px, py) = (px0 + x, py0 + y);
+            if px < w && py < h {
+                img.put_pixel(px, py, image::Rgba(if dark {
+                    [0x10, 0x10, 0x10, 0xff]
+                } else {
+                    [0xff, 0xff, 0xff, 0xff]
+                }));
+            }
+        }
+    }
+    let mut buf = Vec::new();
+    img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png).ok()?;
+    Some(buf)
+}
+
+#[cfg(test)]
+mod sound_tee_tests {
+    use super::*;
+
+    #[test]
+    fn ambience_wav_is_deterministic_and_valid() {
+        let a = synth_ambience_wav(42);
+        let b = synth_ambience_wav(42);
+        assert_eq!(a, b, "同じ seed → 同じバイト列(sha256指紋が安定)");
+        assert_eq!(&a[..4], b"RIFF");
+        assert_eq!(&a[8..16], b"WAVEfmt ");
+        assert_eq!(a.len(), 44 + 22_050 * 40 * 2);
+    }
+
+    #[test]
+    fn sound_qr_composites_white_panel_with_black_modules() {
+        let img = image::RgbaImage::from_pixel(1024, 1024, image::Rgba([20, 20, 60, 255]));
+        let mut buf = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png).unwrap();
+        let url = "https://mu.koe.live/oto.html?s=make-test-tee-mk00000001&h=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let out = composite_sound_qr(&buf, url).expect("composite should succeed");
+        let out_img = image::load_from_memory(&out).unwrap().to_rgba8();
+        assert_eq!(out_img.dimensions(), (1024, 1024), "サイズは変えない");
+        // 下部中央に白パネル+黒モジュールの両方があること(白on黒の反転QR禁止)
+        let (mut white, mut black) = (0u32, 0u32);
+        for y in 700..1024 {
+            for x in 320..704 {
+                let p = out_img.get_pixel(x, y);
+                if p[0] > 0xf0 && p[1] > 0xf0 && p[2] > 0xf0 { white += 1; }
+                if p[0] < 0x20 && p[1] < 0x20 && p[3] == 0xff { black += 1; }
+            }
+        }
+        assert!(white > 1000, "白パネルが見つからない ({} px)", white);
+        assert!(black > 500, "黒モジュールが見つからない ({} px)", black);
+    }
+
+    /// 手元検証用: /tmp に合成サンプルを書き出して OpenCV 等で実デコードする。
+    /// `cargo test dump_qr_sample -- --ignored`
+    #[test]
+    #[ignore]
+    fn dump_qr_sample() {
+        let img = image::RgbaImage::from_pixel(1024, 1024, image::Rgba([20, 20, 60, 255]));
+        let mut buf = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png).unwrap();
+        let url = "https://mu.koe.live/oto.html?s=make-test-tee-mk00000001&h=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let out = composite_sound_qr(&buf, url).unwrap();
+        std::fs::write("/tmp/mu-sound-qr-sample.png", out).unwrap();
+    }
+
+    #[test]
+    fn wants_sound_detects_keywords() {
+        assert!(make_wants_sound("音源付きTシャツが欲しい"));
+        assert!(make_wants_sound("a tee with sound"));
+        assert!(make_wants_sound("曲付きのT"));
+        assert!(make_wants_sound("着ると音の鳴るパーカー"));
+        assert!(!make_wants_sound("ただの猫Tシャツ"));
+    }
+}
+
 pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Query(q): Query<MakeQuery>) -> Response {
     let prompt_in = q.prompt.trim().to_string();
     if prompt_in.is_empty() || prompt_in.chars().count() > 300 {
@@ -7244,6 +7635,22 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     };
     let user_design_url = match valid_attach(&q.design_url) { Ok(v) => v, Err(r) => return r };
     let user_audio_url = match valid_attach(&q.audio_url) { Ok(v) => v, Err(r) => return r };
+    // 依頼文が「音源付き/曲付き/sound」等を求めているか(添付なしでも合成で応える)。
+    let wants_sound = make_wants_sound(&prompt_in);
+    // 運営専用の隠しブランド作成(E2Eデモ/レビュー用)。token 必須・不一致は 401。
+    let admin_brand: Option<String> = match (q.brand.as_deref().map(str::trim).filter(|s| !s.is_empty()), q.token.as_deref()) {
+        (None, _) => None,
+        (Some(b), t) => {
+            let expected = std::env::var("ADMIN_TOKEN").unwrap_or_default();
+            let slug: String = b.chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+                .take(32).collect::<String>().to_lowercase();
+            if expected.is_empty() || t != Some(expected.as_str()) || slug.is_empty() {
+                return (StatusCode::UNAUTHORIZED, axum::Json(serde_json::json!({"ok":false,"error":"brand 指定は運営専用です"}))).into_response();
+            }
+            Some(slug)
+        }
+    };
     {
         let conn = db.lock().unwrap();
         let n: i64 = conn.query_row(
@@ -7331,6 +7738,9 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     let kind: &str = match q.kind.as_deref() {
         Some("song") if user_audio_url.is_some() => "song",
         Some(k) if allowed.contains(&k) => k,
+        // 「音源付きT」依頼 + 音声添付: song(デジタル)でなく物理(音源付きT)に倒す。
+        _ if user_audio_url.is_some() && q.kind.is_none() && wants_sound
+            && allowed.contains(&kind_parsed) => kind_parsed,
         _ if user_audio_url.is_some() && q.kind.is_none() => "song",
         _ if allowed.contains(&kind_parsed) => kind_parsed,
         _ => "tee",
@@ -7383,7 +7793,7 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     // 刺繍商品(ビーニー/ブランケット/タオル)はシンプルで太い1〜2色のロゴが映える。
     // 写真調/グラデは刺繍に向かないので、専用プロンプトでベクター調の紋章を作る。
     let is_embroidery = matches!(kind, "beanie" | "blanket" | "towel");
-    let url: String = if let Some(du) = &user_design_url {
+    let mut url: String = if let Some(du) = &user_design_url {
         // 持ち込み画像はそのままプリント/ジャケットに使う。AI生成と違い写真の
         // 白い部分を透過キーすると穴が空くので make_design_transparent はかけない。
         du.clone()
@@ -7466,6 +7876,59 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
             }
         }
     }
+    // ── 音源付きT パイプライン ────────────────────────────────
+    // ①音源確定(添付優先・なければ合成アンビエンス) ②sha256指紋
+    // ③白パネル+黒QR をプリントに合成(DTG系のみ — AOP/全面/刺繍は
+    //   cover-crop でQRが切れるため音源リンクだけ付ける)
+    // ④description に oto リンク → 既存PDP試聴が自動で効く
+    let is_sound_tee = kind != "song" && (user_audio_url.is_some() || wants_sound);
+    let mut sound_oto_key: Option<String> = None;
+    let mut sound_audio_url: Option<String> = None;
+    let mut audio_sha256: Option<String> = None;
+    let mut design_sha256: Option<String> = None;
+    if is_sound_tee {
+        let (audio_bytes, au_url): (Vec<u8>, String) = if let Some(au) = &user_audio_url {
+            match fetch_public_bytes(au).await {
+                Some(b) => (b, au.clone()),
+                None => return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":"添付音源の取得に失敗しました。もう一度お試しください。"}))).into_response(),
+            }
+        } else {
+            let b = synth_ambience_wav(rand::random::<u32>());
+            let sha8 = {
+                use sha2::{Digest, Sha256};
+                let mut h = Sha256::new();
+                h.update(&b);
+                hex::encode(&h.finalize()[..8])
+            };
+            match crate::store_r2_bytes(&format!("make/audio/{}.wav", sha8), &b, "audio/wav").await {
+                Some(u) => (b, u),
+                None => return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":"音源の保存に失敗しました"}))).into_response(),
+            }
+        };
+        let asha = sha256_hex_full(&audio_bytes);
+        let okey = sku.to_lowercase();
+        let qr_url = format!("https://mu.koe.live/oto.html?s={}&h={}", okey, asha);
+        if !(is_aop || is_full_bleed || is_embroidery) {
+            if let Some(orig) = fetch_public_bytes(&url).await {
+                if let Some(composited) = composite_sound_qr(&orig, &qr_url) {
+                    // 元デザイン(catalog/{sku}.png)はそのまま残し、CDNキャッシュと
+                    // 衝突しない別キーに置く。
+                    if let Some(u2) = crate::store_r2_bytes(&format!("catalog/{}-sound.png", sku), &composited, "image/png").await {
+                        design_sha256 = Some(sha256_hex_full(&composited));
+                        url = u2;
+                    }
+                }
+            }
+        }
+        if design_sha256.is_none() {
+            if let Some(b) = fetch_public_bytes(&url).await {
+                design_sha256 = Some(sha256_hex_full(&b));
+            }
+        }
+        sound_oto_key = Some(okey);
+        sound_audio_url = Some(au_url);
+        audio_sha256 = Some(asha);
+    }
     let (is_active_i, status_s): (i64, &str) = if flagged { (0, "review") } else { (1, "live") };
     // A/B/C: 投稿に variant と visitor を刻む（勝者UU判定の母数）。
     let ab_variant = make_variant_norm(q.v.as_deref());
@@ -7494,20 +7957,39 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
         if let Some(me) = &maker_email { m.insert("maker_email".into(), serde_json::Value::from(me.clone())); }
         // 音源: kind=song なら購入時の配信物(issue_digital)、アパレル等なら
         // PDP の試聴プレイヤー(「Tシャツに音源」)として鳴る。
-        if let Some(au) = &user_audio_url { m.insert("audio_url".into(), serde_json::Value::from(au.clone())); }
+        // 音源付きT は合成音源の URL + sha256 指紋 + oto KEY も刻む
+        // (/api/oto/<key> がこの指紋でプレイヤーの原本照合に答える)。
+        if let Some(au) = sound_audio_url.as_ref().or(user_audio_url.as_ref()) { m.insert("audio_url".into(), serde_json::Value::from(au.clone())); }
+        if let Some(k) = &sound_oto_key { m.insert("oto_key".into(), serde_json::Value::from(k.clone())); }
+        if let Some(s) = &audio_sha256 { m.insert("audio_sha256".into(), serde_json::Value::from(s.clone())); }
+        if let Some(s) = &design_sha256 { m.insert("design_sha256".into(), serde_json::Value::from(s.clone())); }
         // 持ち込みデザイン印: 監査・ペルソナ批評・後追い調査用のマーカー。
         if user_design_url.is_some() { m.insert("user_design".into(), serde_json::Value::from(true)); }
         m.insert("edit_token".into(), serde_json::Value::from(edit_token.clone()));
         if m.is_empty() { None } else { Some(serde_json::Value::Object(m).to_string()) }
     };
+    let brand_slug: String = admin_brand.clone().unwrap_or_else(|| "minna".to_string());
     {
         let conn = db.lock().unwrap();
-        let _ = conn.execute(
-            "INSERT OR IGNORE INTO catalog_brands (slug, name, emoji, color_primary, tagline, is_active, revenue_share_pct)
-             VALUES ('minna', 'みんなでつくる MU', '🌱', '#88c97a', '言うだけで作れる — あなたのアイデアを MU が形に', 1, 0)",
-            [],
-        );
+        if let Some(b) = &admin_brand {
+            // 隠しブランド: is_active=0 で自動作成 → /shop に出ない(PDP直リンクのみ)。
+            let _ = conn.execute(
+                "INSERT OR IGNORE INTO catalog_brands (slug, name, emoji, color_primary, tagline, is_active, revenue_share_pct)
+                 VALUES (?1, ?2, '🔇', '#444444', 'MU lab (非公開)', 0, 0)",
+                rusqlite::params![b, format!("MU Lab {}", b)],
+            );
+        } else {
+            let _ = conn.execute(
+                "INSERT OR IGNORE INTO catalog_brands (slug, name, emoji, color_primary, tagline, is_active, revenue_share_pct)
+                 VALUES ('minna', 'みんなでつくる MU', '🌱', '#88c97a', '言うだけで作れる — あなたのアイデアを MU が形に', 1, 0)",
+                [],
+            );
+        }
         let desc = format!("{} — {}", display, hook);
+        // 音源付きT: 既存PDP規約(description 内の oto.html?s=KEY → 試聴▶)に乗せる。
+        let desc = if let Some(k) = &sound_oto_key {
+            format!("{}\n♪ 着ると、この曲が鳴る → https://mu.koe.live/oto.html?s={}", desc, k)
+        } else { desc };
         let _ = conn.execute(
             "INSERT INTO catalog_products (
                 sku, brand, label, description_ja, retail_price_jpy,
@@ -7517,7 +7999,7 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
                 is_active, sort_order, status, fulfillment_route, legacy_source, meta_json
              ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             rusqlite::params![
-                &sku, "minna", desc, desc, retail_jpy,
+                &sku, &brand_slug, desc, desc, retail_jpy,
                 spec.printful_product_id, spec.printful_variant_id, spec.placement,
                 0, 0,
                 &url, &url, &url,
@@ -7581,6 +8063,8 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
         "できました！もう棚に並びました。今すぐ買えます。プレミアム（Contrado UK / 裾・袖口・襟まで完全プリント）は英国で1枚ずつ縫製するため、お届けまで少しお時間をいただきます。".to_string()
     } else if kind == "song" {
         "できました！もう棚に並びました。購入した人には視聴/ダウンロードリンクがメールで届きます。".to_string()
+    } else if sound_oto_key.is_some() {
+        "できました！もう棚に並びました。プリントのQRをスマホで読むとこの一曲が鳴り、商品ページでも試聴できます。着用イメージは数十秒で反映されます。".to_string()
     } else if user_audio_url.is_some() {
         "できました！もう棚に並びました。商品ページでこの曲が試聴できます。着用イメージは数十秒で反映されます。".to_string()
     } else {
@@ -7611,6 +8095,10 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
         "note": note,
         "edit_token": edit_token,
         "edit_url": format!("https://wearmu.com/make/edit/{}?t={}", sku, edit_token),
+        "oto_url": sound_oto_key.as_ref().map(|k| format!("https://mu.koe.live/oto.html?s={}", k)),
+        "audio_url": sound_audio_url,
+        "audio_sha256": audio_sha256,
+        "design_sha256": design_sha256,
     })).into_response()
 }
 
@@ -10596,6 +11084,12 @@ pub async fn shop_pdp(
                 .collect();
             if !key.is_empty() {
                 let pkey = html_attr(&key);
+                // /make 製の音源付きT は SRC テーブルに無い → meta_json.audio_url の
+                // 直接ファイルをフォールバック再生(無ければ従来どおり oto.html を開く)。
+                let direct_js = if meta_audio.starts_with("https://")
+                    && [".mp3", ".wav", ".m4a", ".ogg"].iter().any(|e| meta_audio.ends_with(e)) {
+                    serde_json::Value::from(meta_audio.clone()).to_string()
+                } else { "\"\"".to_string() };
                 format!(r##"<div class="listen">
   <button id="listenBtn" class="listen-btn" aria-label="試聴">▶ この曲を試聴</button>
   <span class="listen-note">着ると、この曲が鳴る</span>
@@ -10614,7 +11108,7 @@ pub async fn shop_pdp(
       "free-to-change":"https://gateway.irys.xyz/5jsmQoNNekanEGMBUEhSLoZyxGXSDZL5taMZfwwrEC1c/free-to-change.mp3",
       "attention-kudasai":"https://gateway.irys.xyz/5jsmQoNNekanEGMBUEhSLoZyxGXSDZL5taMZfwwrEC1c/attention-kudasai.mp3"
     }};
-    var a=new Audio(); a.src=SRC["{pkey}"]||""; var playing=false;
+    var a=new Audio(); a.src=SRC["{pkey}"]||{direct_js}; var playing=false;
     b.addEventListener('click',function(){{
       if(!a.src){{window.open("https://mu.koe.live/oto.html?s={pkey}","_blank");return;}}
       if(playing){{a.pause();b.textContent="▶ この曲を試聴";playing=false;}}
@@ -10622,7 +11116,7 @@ pub async fn shop_pdp(
     }});
     a.addEventListener('ended',function(){{b.textContent="▶ この曲を試聴";playing=false;}});
   }})();</script>
-</div>"##, pkey = pkey)
+</div>"##, pkey = pkey, direct_js = direct_js)
             } else { String::new() }
         } else { String::new() }
     };
@@ -10661,6 +11155,45 @@ pub async fn shop_pdp(
 </div>"##, u = html_attr(&src), note = note)
         } else { listen_block }
     } else { listen_block };
+
+    // ── ⛓ 永続証明 — meta_json.permanence ──────────────────────
+    // scripts/permanence_inscribe.sh が design+音源を Arweave(Irys) に永久
+    // アップし、sha256 を実バイトと突き合わせ済み(/admin/catalog/permanence が
+    // サーバ側でも再検証)の場合だけこのセクションが出る。
+    let perm_block: String = meta_json
+        .as_deref()
+        .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+        .and_then(|v| v.get("permanence").cloned())
+        .map(|p| {
+            let row = |label: &str, url: Option<&str>, sha: Option<&str>| -> String {
+                match url {
+                    Some(u) if u.starts_with("https://") => format!(
+                        r#"<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;font-size:13px;margin:4px 0"><span style="opacity:.65">{label}</span><a href="{u}" target="_blank" rel="noopener">Arweave 原本 ↗</a>{sha}</div>"#,
+                        label = label, u = html_attr(u),
+                        sha = sha.filter(|s| !s.is_empty()).map(|s| format!(
+                            r#"<code title="sha256 {0}" style="font-size:11px;opacity:.6">sha256 {1}…</code>"#,
+                            html_attr(s), html_text(&s.chars().take(12).collect::<String>())
+                        )).unwrap_or_default()
+                    ),
+                    _ => String::new(),
+                }
+            };
+            let memo = p.get("memo_tx").and_then(|x| x.as_str()).filter(|s| !s.is_empty()).map(|tx| format!(
+                r#"<div style="display:flex;gap:8px;align-items:baseline;font-size:13px;margin:4px 0"><span style="opacity:.65">Solana 刻印</span><a href="https://solscan.io/tx/{0}" target="_blank" rel="noopener">memo tx ↗</a></div>"#,
+                html_attr(tx))).unwrap_or_default();
+            let body = format!("{}{}{}",
+                row("デザイン", p.get("design_ar").and_then(|x| x.as_str()), p.get("design_sha256").and_then(|x| x.as_str())),
+                row("音源", p.get("audio_ar").and_then(|x| x.as_str()), p.get("audio_sha256").and_then(|x| x.as_str())),
+                memo);
+            if body.is_empty() { String::new() } else {
+                format!(r#"<div style="margin:14px 0;padding:12px 14px;border:1px solid rgba(127,127,127,.25);border-radius:12px">
+<div style="font-weight:700;font-size:14px;margin-bottom:4px">⛓ 永続証明</div>
+<p style="font-size:12px;opacity:.7;margin:0 0 6px">このデザインと音源は Arweave に永久保存済み。指紋(sha256)が原本と一致することを誰でも検証できます。</p>
+{body}</div>"#)
+            }
+        })
+        .unwrap_or_default();
+    let listen_block = format!("{}{}", listen_block, perm_block);
 
     // ── 見解(普遍性アセスメント) + 書類(限定/シリアル証明) + 類似商品 ──
     // PDP を「URLを開けば一目で分かる」に。meta_json と DB から組む(スキーマ非変更)。

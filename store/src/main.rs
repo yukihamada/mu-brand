@@ -69470,6 +69470,10 @@ async fn main() {
         .route("/mujin", get(catalog::store_unmanned_page))
         .route("/unmanned", get(catalog::store_unmanned_page))
         .route("/api/make", post(catalog::public_make).get(catalog::public_make))
+        // 音源付きT: プレイヤー(mu.koe.live/oto.html)の KEY→音源/指紋 解決(CORS *)。
+        .route("/api/oto/:key", get(catalog::api_oto))
+        // ⛓ 永続証明: Arweave恒久URL+memo tx を sha256 再検証つきで meta_json.permanence へ。
+        .route("/admin/catalog/permanence", post(catalog::admin_permanence))
         // PDP「このデザインで、他のかたち」— 同デザイン別kindをその場で作る(冪等)。
         .route("/api/design-variant", post(catalog::design_variant_create))
         // PDP「一言足して、変える」— 参照画像リミックスで新デザインを織る。
