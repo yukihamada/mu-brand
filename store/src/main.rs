@@ -69357,6 +69357,8 @@ async fn main() {
             get(agent_api::agent_list_products).post(agent_api::agent_create_product))
         .route("/api/agent/products/:sku/update", post(agent_api::agent_update_product))
         .route("/api/agent/products/:sku/retire", post(agent_api::agent_retire_product))
+        .route("/api/agent/preview", post(agent_api::agent_preview_mockup))
+        .route("/api/agent/preview/:id", get(agent_api::agent_preview_status))
         .route("/api/agent/sales", get(agent_api::agent_sales))
         .route("/api/agent/upload", post(agent_api::agent_upload_design))
         .route("/api/agent/feedback", post(agent_api::agent_submit_feedback))

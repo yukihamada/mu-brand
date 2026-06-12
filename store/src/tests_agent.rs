@@ -134,3 +134,39 @@ fn kind_from_sku_rejects_unknown_or_malformed() {
     // Empty.
     assert_eq!(kind_from_sku(""), None);
 }
+
+// ── (c) print position: %→box math + per-product gating ──────────────────────
+
+#[test]
+fn pct_print_box_resolves_center_and_edges() {
+    // Full width, any x → side 1800, left 0; y=50 centers vertically.
+    assert_eq!(crate::catalog::pct_print_box(100.0, 50.0, 50.0), (1800, 0, 300));
+    // Half width centered: side 900, left (1800-900)/2, top (2400-900)/2.
+    assert_eq!(crate::catalog::pct_print_box(50.0, 50.0, 50.0), (900, 450, 750));
+    // Corners pin to the print-area bounds.
+    assert_eq!(crate::catalog::pct_print_box(50.0, 0.0, 0.0), (900, 0, 0));
+    assert_eq!(crate::catalog::pct_print_box(50.0, 100.0, 100.0), (900, 900, 1500));
+}
+
+#[test]
+fn pct_print_box_clamps_out_of_range_inputs() {
+    // w below 20% clamps to the 360px floor; x/y clamp into 0-100.
+    let (side, left, top) = crate::catalog::pct_print_box(5.0, -50.0, 999.0);
+    assert_eq!(side, 360);
+    assert_eq!(left, 0);
+    assert_eq!(top, 2400 - 360);
+    // w above 100 clamps to full area (left/top forced to 0 by no remaining space).
+    assert_eq!(crate::catalog::pct_print_box(150.0, 100.0, 100.0), (1800, 0, 600));
+}
+
+#[test]
+fn position_gating_is_dtg_front_print_only() {
+    // tee(71)/hoodie(146)/crewneck(145)/tank(539)/long_sleeve(356) are editable…
+    for pp in [71, 146, 145, 539, 356] {
+        assert!(crate::catalog::position_editable_product(pp), "pp={} must be editable", pp);
+    }
+    // …AOP rashguards, mug, sticker, poster, cap and digital (0) are NOT.
+    for pp in [301, 302, 19, 358, 1, 99, 601, 0, -1] {
+        assert!(!crate::catalog::position_editable_product(pp), "pp={} must NOT be editable", pp);
+    }
+}

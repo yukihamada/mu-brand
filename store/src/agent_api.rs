@@ -41,6 +41,11 @@ const RESERVED_SLUGS: &[&str] = &[
 /// table/pattern (main.rs:45573) with a synthetic per-email bucket key.
 const AGENT_PRODUCTS_PER_HOUR: i64 = 20;
 
+/// Per-email pre-purchase mockup-preview cap per rolling hour. Previews hit
+/// Printful's mockup-generator (free but queue-limited ~10/min globally), so
+/// keep this modest while still letting an agent iterate on placement.
+const AGENT_PREVIEWS_PER_HOUR: i64 = 30;
+
 // ─── Helpers ──────────────────────────────────────────────────────────
 
 /// True if `email` is an MA-council member authorized to approve agent
@@ -65,9 +70,21 @@ pub fn is_ma_council_email(conn: &rusqlite::Connection, email: &str) -> bool {
 /// Returns true if the request is allowed (and records the hit), false if the
 /// caller is over AGENT_PRODUCTS_PER_HOUR for the current hour.
 fn agent_rate_ok(conn: &rusqlite::Connection, email: &str) -> bool {
+    rate_bucket_ok(conn, &format!("agent:{}", email), AGENT_PRODUCTS_PER_HOUR)
+}
+
+/// Same rolling-hour bucket pattern, namespaced for mockup previews so a
+/// preview-heavy session doesn't eat the product-creation budget (and vice
+/// versa).
+fn agent_preview_rate_ok(conn: &rusqlite::Connection, email: &str) -> bool {
+    rate_bucket_ok(conn, &format!("agent-preview:{}", email), AGENT_PREVIEWS_PER_HOUR)
+}
+
+/// Generic per-key rolling-hour limiter on blog_rate_limit. Records the hit,
+/// prunes old buckets, returns true while the key is at/under `cap` this hour.
+fn rate_bucket_ok(conn: &rusqlite::Connection, key: &str, cap: i64) -> bool {
     let now_s: i64 = crate::chrono_now().parse().unwrap_or(0);
     let hour_bucket = now_s / 3600;
-    let key = format!("agent:{}", email);
     let _ = conn.execute(
         "INSERT INTO blog_rate_limit (ip, hour_bucket, hits) VALUES (?,?,1)
          ON CONFLICT(ip, hour_bucket) DO UPDATE SET hits = hits + 1",
@@ -81,7 +98,7 @@ fn agent_rate_ok(conn: &rusqlite::Connection, email: &str) -> bool {
         "SELECT hits FROM blog_rate_limit WHERE ip=? AND hour_bucket=?",
         rusqlite::params![key, hour_bucket], |r| r.get(0),
     ).unwrap_or(0);
-    hits <= AGENT_PRODUCTS_PER_HOUR
+    hits <= cap
 }
 
 fn json_err(status: StatusCode, msg: &str) -> Response {
@@ -486,6 +503,7 @@ pub async fn agent_landing() -> Response {
             "GET  /api/agent/me         — your account, stores, limits",
             "POST /api/agent/stores     — open a store",
             "POST /api/agent/upload     — upload a PNG design → design_url",
+            "POST /api/agent/preview    — pre-purchase mockup preview (no product created)",
             "POST /api/agent/products   — create a product",
             "GET  /api/agent/products   — list your products",
             "GET  /api/agent/sales      — your orders / revenue",
@@ -741,6 +759,48 @@ pub struct CreateProductBody {
     /// Printful API for placement / route / price floor at create time.
     pub printful_product_id: Option<i64>,
     pub printful_variant_id: Option<i64>,
+    /// optional print placement for front-print DTG apparel (tee / tee_white /
+    /// hoodie / crewneck / tank / long_sleeve_tee, or a DTG printful_custom).
+    /// Resolved to the same WYSIWYG box /make/edit uses — the mockup AND the
+    /// real print order honor it.
+    pub position: Option<PrintPosition>,
+}
+
+/// %-based print placement, shared by create / update / preview.
+/// w_pct 20-100 = print width as % of the printable area; x_pct / y_pct
+/// 0-100 = horizontal / vertical position of the print box within the
+/// remaining space (0 = left/top, 50 = centered, 100 = right/bottom).
+#[derive(Deserialize, Clone, Copy)]
+pub struct PrintPosition {
+    pub w_pct: f64,
+    pub x_pct: f64,
+    pub y_pct: f64,
+}
+
+/// position 指定を /make/edit と同じ (print_position_box, print_position) の
+/// meta ペアへ解決する。対象外の kind/route なら Err(理由)。
+/// design_dims の取得が async なので呼び出し側は DB lock の外で await すること。
+async fn resolve_position_meta(
+    pos: &PrintPosition,
+    printful_product: Option<i64>,
+    route: &str,
+    design_url: &str,
+) -> Result<(serde_json::Value, serde_json::Value), &'static str> {
+    match printful_product {
+        Some(pp) if route == "printful_dtg" && crate::catalog::position_editable_product(pp) => {
+            let bx = crate::catalog::resolve_print_position_box(
+                design_url, pos.w_pct, pos.x_pct, pos.y_pct).await;
+            let pct = serde_json::json!({
+                "w_pct": pos.w_pct.clamp(20.0, 100.0),
+                "x_pct": pos.x_pct.clamp(0.0, 100.0),
+                "y_pct": pos.y_pct.clamp(0.0, 100.0),
+            });
+            Ok((bx, pct))
+        }
+        _ => Err("position is only supported for front-print DTG apparel kinds \
+                  (tee / tee_white / hoodie / crewneck / tank / long_sleeve_tee, \
+                  or a DTG printful_custom product)"),
+    }
 }
 
 /// Hosts we control / trust for externally-referenced design images.
@@ -1006,6 +1066,22 @@ pub async fn agent_create_product(
             None
         };
 
+    // 配置指定 (position) → /make/edit と同じ WYSIWYG ボックスへ解決。
+    // design_dims の取得が async なので DB lock の前に済ませる。
+    let position_meta: Option<(serde_json::Value, serde_json::Value)> =
+        if let Some(pos) = body.position.as_ref() {
+            let pp = custom_resolved.as_ref().map(|(pp, _, _, _, _)| *pp)
+                .or_else(|| crate::catalog::printful_ids_for_kind(body.kind.trim()).map(|(pp, _)| pp));
+            let route = custom_resolved.as_ref().map(|(_, _, _, route, _)| *route)
+                .unwrap_or_else(|| crate::catalog::route_for_kind(body.kind.trim()));
+            match resolve_position_meta(pos, pp, route, &design_file).await {
+                Ok(v) => Some(v),
+                Err(msg) => return json_err(StatusCode::BAD_REQUEST, msg),
+            }
+        } else {
+            None
+        };
+
     let conn = db.lock().unwrap();
 
     // Write check: the store owner, or any allow-listed collaborator
@@ -1071,6 +1147,12 @@ pub async fn agent_create_product(
         if let Some(sc) = body.score.as_ref().filter(|v| v.is_object()) {
             meta.insert("score".into(), sc.clone());
         }
+        // 配置指定: モックアップ生成 (下の spawn) と実発注 build_printful_item の
+        // 両方がこの print_position_box を読む = WYSIWYG。
+        if let Some((bx, pct)) = position_meta {
+            meta.insert("print_position".into(), pct);
+            meta.insert("print_position_box".into(), bx);
+        }
         if !meta.is_empty() {
             let _ = conn.execute(
                 "UPDATE catalog_products SET meta_json=? WHERE sku=?",
@@ -1134,6 +1216,153 @@ pub async fn agent_create_product(
         "note": note,
         "pdp_url": pdp_url,
     })).into_response()
+}
+
+// ─── POST /api/agent/preview — 作成前モックアッププレビュー ─────────────
+//
+// 「買う前・作る前に見る」: 商品を作らずに kind + design_url (+position)
+// からモックアップだけレンダーして、R2 の永続 URL を返す (Printful の
+// presign URL は ~24h で 403 になるので絶対に返さない)。レンダーは
+// Printful のキュー次第で 10-60s かかるので、ハンドラは ~45s まで同期で
+// 待ち、間に合わなければ preview_id を返して GET /api/agent/preview/:id
+// でポーリング続行してもらう (Fly のアイドルタイムアウト ~60s を踏まない)。
+
+#[derive(Deserialize)]
+pub struct PreviewBody {
+    pub kind: String,
+    pub design_url: String,
+    #[serde(default)]
+    pub position: Option<PrintPosition>,
+}
+
+#[derive(Clone)]
+struct PreviewJob {
+    status: &'static str, // processing | done | failed
+    url: Option<String>,
+    source: Option<&'static str>, // printful | card
+    error: Option<String>,
+    created_s: i64,
+}
+
+/// In-memory preview-job registry. Previews are ephemeral (the rendered PNG
+/// itself is durable on R2) so process-local state is fine — a restart only
+/// forgets in-flight jobs, and the agent simply re-requests.
+fn preview_jobs() -> &'static std::sync::Mutex<HashMap<String, PreviewJob>> {
+    static JOBS: std::sync::OnceLock<std::sync::Mutex<HashMap<String, PreviewJob>>> =
+        std::sync::OnceLock::new();
+    JOBS.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+fn preview_job_json(id: &str, job: &PreviewJob) -> serde_json::Value {
+    match job.status {
+        "done" => serde_json::json!({
+            "ok": true, "status": "done", "preview_id": id,
+            "preview_url": job.url, "source": job.source,
+            "note": "preview only — no product was created. preview_url is a durable copy (R2).",
+        }),
+        "failed" => serde_json::json!({
+            "ok": false, "status": "failed", "preview_id": id, "error": job.error,
+        }),
+        _ => serde_json::json!({
+            "ok": true, "status": "processing", "preview_id": id,
+            "poll": format!("/api/agent/preview/{}", id),
+            "retry_after_s": 5,
+            "note": "mockup is rendering (Printful queue, usually <60s). GET the poll path with the same Authorization header.",
+        }),
+    }
+}
+
+pub async fn agent_preview_mockup(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+    Json(body): Json<PreviewBody>,
+) -> Response {
+    let email = match require_email(&db, &headers, Some(&q)) { Ok(e) => e, Err(r) => return r };
+    let kind = body.kind.trim().to_string();
+    let design_url = body.design_url.trim().to_string();
+    if !design_url.starts_with("https://") || design_url.len() > 2000 {
+        return json_err(StatusCode::BAD_REQUEST, "design_url must be an absolute https:// URL");
+    }
+    if !crate::catalog::agent_product_kinds().iter().any(|k| k.kind == kind.as_str()) {
+        return json_err(StatusCode::BAD_REQUEST,
+            &format!("unknown kind '{}' — see /api/agent/me limits.kinds", kind));
+    }
+    // position はプレビューでも create と同じ対象チェック (対象外なら 400 で
+    // 早期に教える — 黙って無視すると「効いてるつもり」の配置で作ってしまう)。
+    if let Some(pos) = body.position.as_ref() {
+        let pp = crate::catalog::printful_ids_for_kind(&kind).map(|(pp, _)| pp);
+        let route = crate::catalog::route_for_kind(&kind);
+        if let Err(msg) = resolve_position_meta(pos, pp, route, &design_url).await {
+            return json_err(StatusCode::BAD_REQUEST, msg);
+        }
+    }
+    {
+        let conn = db.lock().unwrap();
+        if !agent_preview_rate_ok(&conn, &email) {
+            return json_err(StatusCode::TOO_MANY_REQUESTS,
+                &format!("rate limit: {} previews/hour per email", AGENT_PREVIEWS_PER_HOUR));
+        }
+    }
+    let now_s: i64 = crate::chrono_now().parse().unwrap_or(0);
+    let preview_id = format!("{:016x}", rand::random::<u64>());
+    {
+        let mut jobs = preview_jobs().lock().unwrap();
+        // 古い結果は掃除 (2h)。R2 上の画像はそのまま残る。
+        jobs.retain(|_, j| now_s - j.created_s < 7200);
+        jobs.insert(preview_id.clone(), PreviewJob {
+            status: "processing", url: None, source: None, error: None, created_s: now_s,
+        });
+    }
+    let position = body.position.map(|p| (p.w_pct, p.x_pct, p.y_pct));
+    {
+        let (db_c, kind_c, url_c, id_c) =
+            (db.clone(), kind.clone(), design_url.clone(), preview_id.clone());
+        tokio::spawn(async move {
+            let result =
+                crate::catalog::render_preview_mockup(db_c, &kind_c, &url_c, position, &id_c).await;
+            let mut jobs = preview_jobs().lock().unwrap();
+            if let Some(j) = jobs.get_mut(&id_c) {
+                match result {
+                    Ok((url, source)) => {
+                        j.status = "done"; j.url = Some(url); j.source = Some(source);
+                    }
+                    Err(e) => { j.status = "failed"; j.error = Some(e); }
+                }
+            }
+        });
+    }
+    // 同期で最大 ~45s 待つ (大半の Printful レンダーは 10-30s で返る)。
+    for _ in 0..15 {
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        let snap = preview_jobs().lock().unwrap().get(&preview_id).cloned();
+        if let Some(j) = snap {
+            if j.status != "processing" {
+                return Json(preview_job_json(&preview_id, &j)).into_response();
+            }
+        }
+    }
+    let snap = preview_jobs().lock().unwrap().get(&preview_id).cloned();
+    match snap {
+        Some(j) => Json(preview_job_json(&preview_id, &j)).into_response(),
+        None => json_err(StatusCode::INTERNAL_SERVER_ERROR, "preview job vanished"),
+    }
+}
+
+/// GET /api/agent/preview/:id — POST が processing を返した時のポーリング続行。
+pub async fn agent_preview_status(
+    State(db): State<Db>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_email(&db, &headers, Some(&q)) { return r; }
+    let snap = preview_jobs().lock().unwrap().get(&id).cloned();
+    match snap {
+        Some(j) => Json(preview_job_json(&id, &j)).into_response(),
+        None => json_err(StatusCode::NOT_FOUND,
+            "unknown/expired preview_id (in-flight previews expire ~2h; the rendered preview_url itself stays valid)"),
+    }
 }
 
 /// GET /api/agent/affiliate — the caller's affiliate code, share link, and
@@ -1446,6 +1675,10 @@ pub struct UpdateProductBody {
     pub price_jpy: Option<i64>,
     #[serde(default)]
     pub design_url: Option<String>,
+    /// optional print placement (same semantics as create) — front-print DTG
+    /// apparel only. Triggers a mockup re-render.
+    #[serde(default)]
+    pub position: Option<PrintPosition>,
 }
 
 /// POST /api/agent/products/:sku/update — owner-only、status ∈ review|retired
@@ -1458,15 +1691,48 @@ pub async fn agent_update_product(
     Json(body): Json<UpdateProductBody>,
 ) -> Response {
     let email = match require_email(&db, &headers, Some(&q)) { Ok(e) => e, Err(r) => return r };
-    let conn = db.lock().unwrap();
-    let (_, status, current_price) = match owned_product(&conn, &email, &sku) {
-        Ok(v) => v,
-        Err(r) => return r,
+    // position 解決は design_dims の await が要るので、必要な行を読んだら
+    // 一旦 lock を手放す (make_edit_apply と同じパターン)。
+    let (status, current_price, row_design, row_pp, row_pv, row_route, row_meta) = {
+        let conn = db.lock().unwrap();
+        let (_, status, current_price) = match owned_product(&conn, &email, &sku) {
+            Ok(v) => v,
+            Err(r) => return r,
+        };
+        let extra = conn.query_row(
+            "SELECT COALESCE(design_file,''), printful_product_id, printful_variant_id,
+                    COALESCE(fulfillment_route,'printful_dtg'), COALESCE(meta_json,'{}')
+             FROM catalog_products WHERE sku=?",
+            rusqlite::params![&sku],
+            |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?,
+                r.get::<_, String>(3)?, r.get::<_, String>(4)?,
+            )),
+        ).unwrap_or_else(|_| (String::new(), 0, 0, "printful_dtg".into(), "{}".into()));
+        (status, current_price, extra.0, extra.1, extra.2, extra.3, extra.4)
     };
     if status != "review" && status != "retired" {
         return json_err(StatusCode::CONFLICT, &format!(
             "product is '{status}' — only review/retired products can be updated (retire it first)"));
     }
+
+    // 配置指定 → /make/edit と同じ WYSIWYG ボックスへ解決 (lock の外)。
+    // design_url を同時に差し替える場合は新しいデザインの寸法で解決する。
+    let position_meta: Option<(serde_json::Value, serde_json::Value)> =
+        if let Some(pos) = body.position.as_ref() {
+            let target_design = body.design_url.as_deref().map(str::trim)
+                .filter(|s| !s.is_empty()).unwrap_or(row_design.as_str());
+            match resolve_position_meta(
+                pos, Some(row_pp).filter(|p| *p > 0), &row_route, target_design,
+            ).await {
+                Ok(v) => Some(v),
+                Err(msg) => return json_err(StatusCode::BAD_REQUEST, msg),
+            }
+        } else {
+            None
+        };
+
+    let conn = db.lock().unwrap();
     let mut sets: Vec<&str> = Vec::new();
     let mut vals: Vec<rusqlite::types::Value> = Vec::new();
     if let Some(l) = body.label.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
@@ -1506,17 +1772,47 @@ pub async fn agent_update_product(
         sets.push("mockup_url_external=?");
         vals.push(u.to_string().into());
     }
+    // 配置指定: 既存 meta_json にマージ (edit_token 等を消さない)。
+    if let Some((bx, pct)) = &position_meta {
+        let mut meta: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str::<serde_json::Value>(&row_meta).ok()
+                .and_then(|v| v.as_object().cloned())
+                .unwrap_or_default();
+        meta.insert("print_position".into(), pct.clone());
+        meta.insert("print_position_box".into(), bx.clone());
+        sets.push("meta_json=?");
+        vals.push(serde_json::Value::Object(meta).to_string().into());
+    }
     if sets.is_empty() {
         return json_err(StatusCode::BAD_REQUEST,
-            "nothing to update (label / description / price_jpy / design_url)");
+            "nothing to update (label / description / price_jpy / design_url / position)");
     }
     vals.push(sku.clone().into());
     let sql = format!("UPDATE catalog_products SET {} WHERE sku=?", sets.join(", "));
     if let Err(e) = conn.execute(&sql, rusqlite::params_from_iter(vals)) {
         return json_err(StatusCode::INTERNAL_SERVER_ERROR, &format!("update failed: {e}"));
     }
+    // 位置変更はモックアップを作り直す (新ボックスは meta に保存済みなので
+    // printful_onbody_mockup がそれを読む = WYSIWYG)。
+    let mockup_regen = position_meta.is_some() && row_pp > 0;
+    if mockup_regen {
+        let durl = body.design_url.as_deref().map(str::trim)
+            .filter(|s| !s.is_empty()).unwrap_or(row_design.as_str()).to_string();
+        if durl.starts_with("http") {
+            let (db_c, sku_c, pv) = (db.clone(), sku.clone(), row_pv);
+            let pp = row_pp;
+            tokio::spawn(async move {
+                if let Err(e) =
+                    crate::catalog::generate_onbody_mockup(db_c, sku_c.clone(), pp, pv, durl).await
+                {
+                    tracing::warn!("[agent/update-mockup] sku={} {}", sku_c, e);
+                }
+            });
+        }
+    }
     Json(serde_json::json!({
         "ok": true, "sku": sku, "status": status,
+        "mockup_regen": mockup_regen,
         "pdp_url": format!("https://wearmu.com/shop/{sku}"),
     })).into_response()
 }
@@ -2094,7 +2390,7 @@ review and go live only after an MA-council member approves them.
 Storefront:    https://wearmu.com/shop
 Builder guide: https://wearmu.com/build        (human-friendly onboarding)
 Transparency:  https://wearmu.com/transparency (real revenue/cost numbers)
-MCP server:    https://mcp.wearmu.com          (12 tools, see "MCP" below)
+MCP server:    https://mcp.wearmu.com          (13 tools, see "MCP" below)
 OpenAPI:       https://wearmu.com/openapi.json
 This file:     https://wearmu.com/llms.txt
 
@@ -2153,6 +2449,12 @@ POST /api/agent/products
        プレイヤー(「着ると、この曲が鳴る」)が出る(例: s=i-love-you)。
      `design_url` must be an absolute https URL (use POST /api/agent/upload).
      `price_jpy` is optional; values below the per-kind floor are clamped up.
+     `position` (optional, front-print DTG apparel only: tee / tee_white /
+       hoodie / crewneck / tank / long_sleeve_tee):
+       {"w_pct":60,"x_pct":50,"y_pct":20} — print width as % of the printable
+       area (20-100) + box position (0-100, 50=centered). The mockup AND the
+       real print order use the same box (WYSIWYG). Try it with
+       POST /api/agent/preview first.
      (`ai_prompt` generates artwork server-side; it is gated by a runtime flag.
      Check ai_gen.enabled via GET /api/agent/me — {{AIGEN_TXT}})
      → {"sku":"...","status":"review","note":"pending MA council approval"}
@@ -2163,9 +2465,11 @@ GET  /api/agent/products
 
 POST /api/agent/products/{sku}/update
      body: any of {"label":"...","description":"...","price_jpy":5500,
-                    "design_url":"https://..."}
+                    "design_url":"https://...",
+                    "position":{"w_pct":60,"x_pct":50,"y_pct":20}}
      Allowed ONLY while status is review/retired (never live). Price is
-     clamped to the kind's floor. Printful ids can never change.
+     clamped to the kind's floor. Printful ids can never change. A position
+     change re-renders the mockup with the new box.
 
 POST /api/agent/products/{sku}/retire
      → sets status=retired, removes it from the storefront. Owner-only.
@@ -2178,6 +2482,17 @@ GET  /api/agent/sales
 POST /api/agent/upload
      body: {"data_base64":"<PNG bytes, base64, <=3MB>","filename":"art.png"}
      → {"url":"https://..."} — durable hosting; pass it as design_url.
+
+POST /api/agent/preview
+     body: {"kind":"tee","design_url":"https://.../art.png",
+             "position":{"w_pct":60,"x_pct":50,"y_pct":20}}   (position optional)
+     See the mockup BEFORE creating a product — nothing is created or sold.
+     Renders the real on-garment mockup (Printful) when the kind supports it,
+     otherwise a clean MU product card. Usually answers in 10-45s:
+     → {"ok":true,"status":"done","preview_url":"https://...png","source":"printful"}
+     If rendering is still queued you get {"status":"processing","preview_id":"..."}
+     — poll GET /api/agent/preview/{preview_id} (same Bearer) until done.
+     Rate limit: 30 previews/hour per email.
 
 POST /api/agent/feedback
      body: {"category":"bug","title":"...","description":"...",
@@ -2215,8 +2530,8 @@ Human pages: /shop (all), /shop/{sku} (product page).
 claude mcp add --transport http mu https://mcp.wearmu.com/mcp
 
 Tools: mu_register, mu_verify, mu_status, mu_create_store, mu_create_product,
-mu_list_mine, mu_update_product, mu_retire_product, mu_upload_design,
-mu_sales, mu_affiliate, mu_submit_feedback.
+mu_preview_mockup, mu_list_mine, mu_update_product, mu_retire_product,
+mu_upload_design, mu_sales, mu_affiliate, mu_submit_feedback.
 
 ## Economics (agent stores)
 
@@ -2235,7 +2550,7 @@ mu_sales, mu_affiliate, mu_submit_feedback.
 - Agents pass a whitelisted `kind` — never raw Printful ids or sub-floor prices.
 - Every product is created status='review', is_active=0. Nothing sells until an
   MA-council member approves it.
-- Rate limit: 20 products/hour per email.
+- Rate limit: 20 products/hour + 30 previews/hour per email.
 - One store = one catalog_brands slug; you can only mutate stores you own.
 
 — 株式会社イネブラ / Enabler Inc. · wearmu.com
@@ -2260,7 +2575,7 @@ pub async fn well_known_mcp() -> Response {
             "url": "https://mcp.wearmu.com/mcp",
             "transport": "streamable-http",
             "auth": "bearer",
-            "tools": ["mu_register","mu_verify","mu_status","mu_create_store","mu_create_product","mu_list_mine","mu_update_product","mu_retire_product","mu_upload_design","mu_sales","mu_affiliate","mu_submit_feedback"]
+            "tools": ["mu_register","mu_verify","mu_status","mu_create_store","mu_create_product","mu_preview_mockup","mu_list_mine","mu_update_product","mu_retire_product","mu_upload_design","mu_sales","mu_affiliate","mu_submit_feedback"]
         },
         "rest_base": "https://wearmu.com/api/agent",
         "openapi": "https://wearmu.com/openapi.json",
@@ -2295,7 +2610,18 @@ pub async fn openapi_json() -> Response {
         },
         "servers": [{"url": "https://wearmu.com"}],
         "components": {
-            "securitySchemes": {"bearer": {"type":"http","scheme":"bearer","description":"api_key from /api/agent/register/verify"}}
+            "securitySchemes": {"bearer": {"type":"http","scheme":"bearer","description":"api_key from /api/agent/register/verify"}},
+            "schemas": {
+                "PrintPosition": {
+                    "type":"object","required":["w_pct","x_pct","y_pct"],
+                    "description":"Print placement for front-print DTG apparel (tee/tee_white/hoodie/crewneck/tank/long_sleeve_tee). The mockup AND the real print order use the same resolved box (WYSIWYG).",
+                    "properties":{
+                        "w_pct":{"type":"number","minimum":20,"maximum":100,"description":"print width as % of the printable area"},
+                        "x_pct":{"type":"number","minimum":0,"maximum":100,"description":"horizontal position of the print box (0=left, 50=centered, 100=right)"},
+                        "y_pct":{"type":"number","minimum":0,"maximum":100,"description":"vertical position of the print box (0=top, 50=centered, 100=bottom)"}
+                    }
+                }
+            }
         },
         "paths": {
             "/api/agent/register": {"post": {"summary":"Email a 6-digit verification code","security":[],
@@ -2313,17 +2639,23 @@ pub async fn openapi_json() -> Response {
                 "get": {"summary":"List every product you created (sku, store, label, kind, price, status, pdp_url)","security":[{"bearer":[]}],
                     "responses":{"200":{"description":"{ok, count, products[]}"},"401":{"description":"auth required"}}},
                 "post": {"summary":"Create a product (status='review' pending MA approval)","security":[{"bearer":[]}],
-                "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","required":["store","label","description","kind","design_url"],"properties":{"store":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"kind":{"type":"string","enum":["tee","rashguard_ls","rashguard_black","hoodie","crewneck","phone_case","tote","tank","cap","nfc_coin","device","event_ticket","song","poster","zine","video","karaoke_ticket"]},"design_url":{"type":"string","format":"uri","description":"absolute https URL"},"price_jpy":{"type":"integer","description":"optional; clamped up to the per-kind floor"},"capacity":{"type":"integer","description":"event_ticket only: ticket capacity"},"audio_url":{"type":"string","format":"uri","description":"https listen link. song はもちろん、物理Tシャツ等にも付けられる(mu.koe.live/oto.html?s=KEY を渡すとPDPに試聴プレイヤー)"}}}}}},
+                "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","required":["store","label","description","kind","design_url"],"properties":{"store":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"kind":{"type":"string","enum":["tee","rashguard_ls","rashguard_black","hoodie","crewneck","phone_case","tote","tank","cap","nfc_coin","device","event_ticket","song","poster","zine","video","karaoke_ticket"]},"design_url":{"type":"string","format":"uri","description":"absolute https URL"},"price_jpy":{"type":"integer","description":"optional; clamped up to the per-kind floor"},"capacity":{"type":"integer","description":"event_ticket only: ticket capacity"},"audio_url":{"type":"string","format":"uri","description":"https listen link. song はもちろん、物理Tシャツ等にも付けられる(mu.koe.live/oto.html?s=KEY を渡すとPDPに試聴プレイヤー)"},"position":{"$ref":"#/components/schemas/PrintPosition"}}}}}},
                 "responses":{"200":{"description":"{sku, status:'review', pdp_url}"},"400":{"description":"unknown kind / missing design_url"},"403":{"description":"not your store"},"429":{"description":"rate limit"}}}},
-            "/api/agent/products/{sku}/update": {"post": {"summary":"Update label/description/price_jpy/design_url (owner-only; review/retired status only; price clamped to floor)","security":[{"bearer":[]}],
+            "/api/agent/products/{sku}/update": {"post": {"summary":"Update label/description/price_jpy/design_url/position (owner-only; review/retired status only; price clamped to floor; position re-renders the mockup)","security":[{"bearer":[]}],
                 "parameters":[{"name":"sku","in":"path","required":true,"schema":{"type":"string"}}],
-                "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","properties":{"label":{"type":"string","maxLength":120},"description":{"type":"string","maxLength":600},"price_jpy":{"type":"integer"},"design_url":{"type":"string","format":"uri"}}}}}},
+                "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","properties":{"label":{"type":"string","maxLength":120},"description":{"type":"string","maxLength":600},"price_jpy":{"type":"integer"},"design_url":{"type":"string","format":"uri"},"position":{"$ref":"#/components/schemas/PrintPosition"}}}}}},
                 "responses":{"200":{"description":"{ok, sku, status, pdp_url}"},"403":{"description":"not your product"},"404":{"description":"unknown sku"},"409":{"description":"product is live — retire first"}}}},
             "/api/agent/products/{sku}/retire": {"post": {"summary":"Retire a product (status=retired, removed from storefront; owner-only)","security":[{"bearer":[]}],
                 "parameters":[{"name":"sku","in":"path","required":true,"schema":{"type":"string"}}],
                 "responses":{"200":{"description":"{ok, sku, status:'retired'}"},"403":{"description":"not your product"},"404":{"description":"unknown sku"}}}},
             "/api/agent/sales": {"get": {"summary":"Your sales: per-store + total order_count/revenue_jpy + 50 recent orders","security":[{"bearer":[]}],
                 "responses":{"200":{"description":"{ok, total, stores[], recent_orders[]}"},"401":{"description":"auth required"}}}},
+            "/api/agent/preview": {"post": {"summary":"Pre-purchase mockup preview — render kind+design_url(+position) WITHOUT creating a product; returns a durable preview_url (R2). May return status='processing' + preview_id when Printful's queue is slow","security":[{"bearer":[]}],
+                "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","required":["kind","design_url"],"properties":{"kind":{"type":"string","description":"any allowed product kind (see /api/agent/me limits)"},"design_url":{"type":"string","format":"uri"},"position":{"$ref":"#/components/schemas/PrintPosition"}}}}}},
+                "responses":{"200":{"description":"{status:'done', preview_url, source:'printful'|'card'} or {status:'processing', preview_id}"},"400":{"description":"unknown kind / bad design_url / position unsupported for kind"},"429":{"description":"rate limit (30 previews/hour)"}}}},
+            "/api/agent/preview/{id}": {"get": {"summary":"Poll an in-flight preview by preview_id","security":[{"bearer":[]}],
+                "parameters":[{"name":"id","in":"path","required":true,"schema":{"type":"string"}}],
+                "responses":{"200":{"description":"{status:'done'|'processing'|'failed', preview_url?}"},"404":{"description":"unknown/expired preview_id"}}}},
             "/api/agent/upload": {"post": {"summary":"Upload a PNG design (base64, <=3MB) to durable hosting; returns https url for design_url","security":[{"bearer":[]}],
                 "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","required":["data_base64"],"properties":{"data_base64":{"type":"string","description":"base64 PNG (data:image/png;base64, prefix OK)"},"filename":{"type":"string"}}}}}},
                 "responses":{"200":{"description":"{ok, url, bytes}"},"400":{"description":"not PNG / too large / bad base64"},"503":{"description":"hosting not configured"}}}},

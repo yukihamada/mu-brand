@@ -3322,12 +3322,11 @@ pub async fn generate_onbody_mockup(
     local_card_to_r2(db, sku, design_url).await
 }
 
-/// Async background task: call Printful's mockup-generator with the
-/// design URL, poll until done (~30-60s), upload the resulting on-body
-/// mockup to R2, swap catalog_products.mockup_url_external. Printful's
-/// mockup-generator is free for the basic single-front variant we use,
-/// so no budget guard needed. Wrapped by `generate_onbody_mockup`, which
-/// adds the MU-side local-card fallback.
+/// Async background task: render via `printful_render_mockup_bytes`, upload
+/// the resulting on-body mockup to R2, swap
+/// catalog_products.mockup_url_external. Printful's mockup-generator is free
+/// for the variants we use, so no budget guard needed. Wrapped by
+/// `generate_onbody_mockup`, which adds the MU-side local-card fallback.
 async fn printful_onbody_mockup(
     db: Db,
     sku: String,
@@ -3335,6 +3334,68 @@ async fn printful_onbody_mockup(
     printful_variant: i64,
     design_url: String,
 ) -> Result<(), String> {
+    // /make/edit・/api/agent の位置指定: 保存時に aspect-fit 解決済みのボックスが
+    // meta_json.print_position_box にあれば、モックアップもそれを使う
+    // (実発注 build_printful_item と同じボックス = WYSIWYG)。
+    let custom_pos: Option<serde_json::Value> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT json_extract(COALESCE(meta_json,'{}'),'$.print_position_box')
+             FROM catalog_products WHERE sku=?",
+            rusqlite::params![&sku],
+            |r| r.get::<_, Option<String>>(0),
+        ).ok().flatten().and_then(|s| serde_json::from_str(&s).ok())
+    };
+
+    let (mockup_bytes, printful_tmp_url) = printful_render_mockup_bytes(
+        printful_product, printful_variant, &design_url, custom_pos,
+        Some((db.clone(), sku.clone())),
+    ).await?;
+
+    // Mirror to R2 so the URL survives Printful's ~24h presign and
+    // becomes part of the catalog forever.
+    let r2_key = format!("catalog/mockups/{}.png", sku);
+    let r2_url = crate::store_r2_bytes(&r2_key, &mockup_bytes, "image/png")
+        .await
+        .unwrap_or(printful_tmp_url);
+
+    // Swap mockup_url_external. mockup_main_file (the design URL) stays
+    // as the fallback for Printful fulfillment files.
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE catalog_products SET mockup_url_external=? WHERE sku=?",
+            rusqlite::params![&r2_url, &sku],
+        );
+    }
+    tracing::info!("[catalog/mockup] OK sku={} → {}", sku, r2_url);
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO catalog_spend (category, amount_jpy, reason, ref_id)
+             VALUES ('mockup_ok', 0, ?, ?)",
+            rusqlite::params![&r2_url, &sku],
+        );
+    }
+    Ok(())
+}
+
+/// Printful mockup-generator render core: create-task → poll (~30-60s, up to
+/// 4 min) → download the mockup PNG. DB-free pure render, shared by the
+/// product path (`printful_onbody_mockup`) and the no-product-created
+/// preview path (`render_preview_mockup`).
+/// `custom_pos` = aspect-fit 済み position box (DTGアパレル 71/146/145/539/356
+/// のみ適用・/make/edit と /api/agent の position 指定)。
+/// `spend_ref` = Some((db, ref_id)) なら task_key を catalog_spend
+/// ('mockup_attempt' ¥0) に記録し /admin/catalog/status から活動が見える。
+/// Returns (mockup PNG bytes, Printful's ~24h presigned URL).
+async fn printful_render_mockup_bytes(
+    printful_product: i64,
+    printful_variant: i64,
+    design_url: &str,
+    custom_pos: Option<serde_json::Value>,
+    spend_ref: Option<(Db, String)>,
+) -> Result<(Vec<u8>, String), String> {
     let key = std::env::var("PRINTFUL_API_KEY").unwrap_or_default();
     if key.is_empty() {
         return Err("PRINTFUL_API_KEY not set".into());
@@ -3351,20 +3412,7 @@ async fn printful_onbody_mockup(
     // width×height makes Printful STRETCH it — a round logo became a tall
     // ellipse. With the true dims we center-fit instead, so it is never
     // stretched. None → fall back to the old square boxes.
-    let design_dims = design_dims(&client, &design_url).await;
-
-    // /make/edit の位置指定: 保存時に aspect-fit 解決済みのボックスが
-    // meta_json.print_position_box にあれば、モックアップもそれを使う
-    // (実発注 build_printful_item と同じボックス = WYSIWYG)。
-    let custom_pos: Option<serde_json::Value> = {
-        let conn = db.lock().unwrap();
-        conn.query_row(
-            "SELECT json_extract(COALESCE(meta_json,'{}'),'$.print_position_box')
-             FROM catalog_products WHERE sku=?",
-            rusqlite::params![&sku],
-            |r| r.get::<_, Option<String>>(0),
-        ).ok().flatten().and_then(|s| serde_json::from_str(&s).ok())
-    };
+    let design_dims = design_dims(&client, design_url).await;
 
     // 1. Create task. The `position` field is mandatory per Printful
     //    error MG-4 "Position field is missing"; values mirror
@@ -3479,12 +3527,12 @@ async fn printful_onbody_mockup(
     // Log attempt start in spend ledger (¥0) so we can see backfill activity
     // in /admin/catalog/status — tracing!/warn! logs go to Fly stdout which
     // isn't easily readable from outside.
-    {
+    if let Some((db, ref_id)) = &spend_ref {
         let conn = db.lock().unwrap();
         let _ = conn.execute(
             "INSERT INTO catalog_spend (category, amount_jpy, reason, ref_id)
              VALUES ('mockup_attempt', 0, ?, ?)",
-            rusqlite::params![format!("printful task_key={}", task_key), &sku],
+            rusqlite::params![format!("printful task_key={}", task_key), ref_id],
         );
     }
 
@@ -3516,39 +3564,16 @@ async fn printful_onbody_mockup(
             _ => continue,
         }
     }
-    let mockup_url = mockup_url.ok_or_else(|| "poll timeout (2min)".to_string())?;
+    let mockup_url = mockup_url.ok_or_else(|| "poll timeout (4min)".to_string())?;
 
-    // 3. Mirror to R2 so the URL survives Printful's ~24h presign and
-    //    becomes part of the catalog forever.
+    // 3. Download the rendered mockup. Printful's URL is a ~24h presign —
+    //    callers MUST persist the bytes (R2) and never store this URL.
     let mockup_bytes = client.get(&mockup_url).send().await
         .map_err(|e| format!("download mockup: {}", e))?
         .bytes().await
         .map_err(|e| format!("read mockup bytes: {}", e))?
         .to_vec();
-    let r2_key = format!("catalog/mockups/{}.png", sku);
-    let r2_url = crate::store_r2_bytes(&r2_key, &mockup_bytes, "image/png")
-        .await
-        .unwrap_or(mockup_url.clone());
-
-    // 4. Swap mockup_url_external. mockup_main_file (the design URL) stays
-    //    as the fallback for Printful fulfillment files.
-    {
-        let conn = db.lock().unwrap();
-        let _ = conn.execute(
-            "UPDATE catalog_products SET mockup_url_external=? WHERE sku=?",
-            rusqlite::params![&r2_url, &sku],
-        );
-    }
-    tracing::info!("[catalog/mockup] OK sku={} → {}", sku, r2_url);
-    {
-        let conn = db.lock().unwrap();
-        let _ = conn.execute(
-            "INSERT INTO catalog_spend (category, amount_jpy, reason, ref_id)
-             VALUES ('mockup_ok', 0, ?, ?)",
-            rusqlite::params![&r2_url, &sku],
-        );
-    }
-    Ok(())
+    Ok((mockup_bytes, mockup_url))
 }
 
 /// Fetch a Printful product's printfile dimensions for a placement and return
@@ -3641,6 +3666,97 @@ fn aspect_fit_position(
         "width": w, "height": h,
         "top": top, "left": left
     })
+}
+
+/// %指定 (幅 w_pct / 横 x_pct / 縦 y_pct) を tee 1800×2400 プリントエリアの
+/// 正方形ボックス (side, left, top) へ解決する純関数。/make/edit と
+/// /api/agent (create/update/preview) の position 指定が同じ数式を共有する。
+/// w_pct: プリント幅 = エリア幅の% (20-100)。x/y_pct: 残余スペース内の位置
+/// (0=左/上端, 50=中央, 100=右/下端)。
+pub(crate) fn pct_print_box(w_pct: f64, x_pct: f64, y_pct: f64) -> (i64, i64, i64) {
+    let w = w_pct.clamp(20.0, 100.0);
+    let x = x_pct.clamp(0.0, 100.0);
+    let y = y_pct.clamp(0.0, 100.0);
+    let side = ((1800.0 * w / 100.0).round() as i64).clamp(360, 1800);
+    let left = (((1800 - side) as f64) * x / 100.0).round() as i64;
+    let top = (((2400 - side) as f64) * y / 100.0).round() as i64;
+    (side, left, top)
+}
+
+/// %指定をデザイン実寸の aspect で fit した print_position_box
+/// (limit_to_print_area 付き) へ解決する。/make/edit 保存と /api/agent の
+/// 作成/更新/プレビューが同じボックスを使う = モックも実発注も見た目どおり
+/// (WYSIWYG)。デザインの寸法が読めない時は正方形ボックスのまま。
+pub(crate) async fn resolve_print_position_box(
+    design_url: &str, w_pct: f64, x_pct: f64, y_pct: f64,
+) -> serde_json::Value {
+    let (side, left, top) = pct_print_box(w_pct, x_pct, y_pct);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build().unwrap_or_else(|_| reqwest::Client::new());
+    let mut bx = match design_dims(&client, design_url).await {
+        Some((dw, dh)) => aspect_fit_position(1800, 2400, left, top, side, dw, dh),
+        None => serde_json::json!({
+            "area_width": 1800, "area_height": 2400,
+            "width": side, "height": side, "top": top, "left": left
+        }),
+    };
+    bx["limit_to_print_area"] = serde_json::Value::from(true);
+    bx
+}
+
+/// 作成前プレビュー: 商品を作らずに kind + design_url (+position) から
+/// モックアップを 1 枚レンダーし、R2 `catalog/previews/` へ永続化して URL を
+/// 返す (Printful の presign URL は ~24h で 403 になるので絶対に返さない)。
+/// Printful が扱えない kind (digital / manual / 未知) や Printful 失敗時は
+/// ローカルカード合成にフォールバック。返り値 = (url, source)
+/// source ∈ "printful" (実商品レンダー) | "card" (MU ローカルカード)。
+pub(crate) async fn render_preview_mockup(
+    db: Db,
+    kind: &str,
+    design_url: &str,
+    position: Option<(f64, f64, f64)>,
+    preview_id: &str,
+) -> Result<(String, &'static str), String> {
+    let r2_key = format!("catalog/previews/{}.png", preview_id);
+    if let Some((pp, pv)) = printful_ids_for_kind(kind) {
+        // 位置指定は /make/edit と同じ制約: DTG 前面プリントのアパレルのみ。
+        let custom_pos = match position {
+            Some((w, x, y)) if position_editable_product(pp) => {
+                Some(resolve_print_position_box(design_url, w, x, y).await)
+            }
+            _ => None,
+        };
+        match printful_render_mockup_bytes(
+            pp, pv, design_url, custom_pos,
+            Some((db.clone(), format!("preview:{}", preview_id))),
+        ).await {
+            Ok((bytes, _tmp_url)) => {
+                let url = crate::store_r2_bytes(&r2_key, &bytes, "image/png")
+                    .await
+                    .ok_or_else(|| "R2 upload failed".to_string())?;
+                return Ok((url, "printful"));
+            }
+            Err(e) => tracing::warn!(
+                "[agent/preview] printful failed kind={} ({}) → card fallback", kind, e
+            ),
+        }
+    }
+    // Printful 商品なし or レンダー失敗 → ローカルカード合成 (必ず何か返す)。
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let bytes = client.get(design_url).send().await
+        .map_err(|e| format!("download design: {}", e))?
+        .bytes().await
+        .map_err(|e| format!("read design: {}", e))?
+        .to_vec();
+    let card = compose_card_mockup(&bytes, kind)?;
+    let url = crate::store_r2_bytes(&r2_key, &card, "image/png")
+        .await
+        .ok_or_else(|| "R2 upload failed".to_string())?;
+    Ok((url, "card"))
 }
 
 /// `(printful_product_id, printful_variant_id)` for a kind, or None for
@@ -6715,6 +6831,12 @@ fn local_kind_from_prompt(p: &str) -> &'static str {
 /// 専用 printfile なので対象外。
 const MAKE_POS_EDITABLE: [i64; 5] = [71, 146, 145, 539, 356];
 
+/// この Printful product がプリント位置指定 (print_position_box) に対応するか。
+/// /make/edit と /api/agent (create/update/preview) が同じ判定を共有する。
+pub(crate) fn position_editable_product(printful_product_id: i64) -> bool {
+    MAKE_POS_EDITABLE.contains(&printful_product_id)
+}
+
 #[derive(serde::Deserialize)]
 pub struct MakeEditTokenQuery {
     #[serde(default)]
@@ -6896,20 +7018,7 @@ pub async fn make_edit_apply(
         let w = pos.w_pct.clamp(20.0, 100.0);
         let x = pos.x_pct.clamp(0.0, 100.0);
         let y = pos.y_pct.clamp(0.0, 100.0);
-        let side = ((1800.0 * w / 100.0).round() as i64).clamp(360, 1800);
-        let box_left = (((1800 - side) as f64) * x / 100.0).round() as i64;
-        let box_top = (((2400 - side) as f64) * y / 100.0).round() as i64;
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(15))
-            .build().unwrap_or_else(|_| reqwest::Client::new());
-        let mut bx = match design_dims(&client, &row.design).await {
-            Some((dw, dh)) => aspect_fit_position(1800, 2400, box_left, box_top, side, dw, dh),
-            None => serde_json::json!({
-                "area_width": 1800, "area_height": 2400,
-                "width": side, "height": side, "top": box_top, "left": box_left
-            }),
-        };
-        bx["limit_to_print_area"] = serde_json::Value::from(true);
+        let bx = resolve_print_position_box(&row.design, w, x, y).await;
         meta.insert("print_position".into(), serde_json::json!({"w_pct": w, "x_pct": x, "y_pct": y}));
         meta.insert("print_position_box".into(), bx);
         updated.push("position");
