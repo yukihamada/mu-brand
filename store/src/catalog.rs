@@ -1633,6 +1633,170 @@ pub fn agent_insert_product(
     Ok(sku)
 }
 
+// ─── Design variants — 「このデザインで、他のかたち」 ────────────────────
+//
+// PDP から同じデザインを別 kind の商品にする。design group × kind ごとに
+// 冪等(2回目以降は既存 SKU へ転送)なので、1 デザインから生まれる SKU は
+// DESIGN_VARIANT_KINDS の数で頭打ち — 乱造は構造的に起きない。
+// 元デザインは既に live(=審査/risk判定通過済み)で、アートも文言も流用する
+// だけなので新規 risk は増えない → 即 live。
+
+/// 横展開を提案する kind の厳選リスト (kind, 日本語名, 英語名)。
+/// printful_dtg の透過・中央配置アートがそのまま映える形だけ。
+/// AOP rashguard はキャンバス全面前提、phone_case は機種解決が絡むので対象外。
+const DESIGN_VARIANT_KINDS: &[(&str, &str, &str)] = &[
+    ("tee", "Tシャツ", "Tee"),
+    ("hoodie", "フーディー", "Hoodie"),
+    ("crewneck", "スウェット", "Crewneck"),
+    ("long_sleeve_tee", "ロンT", "Long sleeve"),
+    ("mug", "マグ", "Mug"),
+    ("sticker", "ステッカー", "Sticker"),
+    ("tote", "トート", "Tote"),
+    ("poster", "ポスター", "Poster"),
+];
+
+/// この商品が横展開セクションの土台になれるか。live + DTG + 実デザインURL。
+fn design_variant_base_row(
+    conn: &rusqlite::Connection,
+    sku: &str,
+) -> Option<(String, String, String, String, serde_json::Map<String, serde_json::Value>)> {
+    let (brand, label, desc, design, route, meta_raw) = conn
+        .query_row(
+            "SELECT brand, label, description_ja, COALESCE(design_file,''),
+                    COALESCE(fulfillment_route,''), COALESCE(meta_json,'{}')
+             FROM catalog_products WHERE sku=? AND status='live' AND is_active=1",
+            rusqlite::params![sku],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, String>(5)?,
+                ))
+            },
+        )
+        .ok()?;
+    if !design.starts_with("http") || route != "printful_dtg" {
+        return None;
+    }
+    let meta = serde_json::from_str::<serde_json::Value>(&meta_raw)
+        .ok()
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default();
+    Some((brand, label, desc, design, meta))
+}
+
+/// design group id — meta_json.design_group があればそれ、なければ自分の SKU。
+fn design_group_of(meta: &serde_json::Map<String, serde_json::Value>, sku: &str) -> String {
+    meta.get("design_group")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .unwrap_or_else(|| sku.to_string())
+}
+
+/// 同じデザイン(design_file 一致 or design_group 一致)の live 兄弟を
+/// kind → (sku, mockup, price) で返す。kind はカラムでなく SKU 由来なので
+/// Rust 側で kind_from_sku を畳む。同 kind 複数なら先勝ち。
+fn design_variant_siblings(
+    conn: &rusqlite::Connection,
+    design_file: &str,
+    group: &str,
+) -> std::collections::HashMap<&'static str, (String, String, i64)> {
+    let mut by_kind = std::collections::HashMap::new();
+    let prepared = conn.prepare(
+        "SELECT sku, COALESCE(mockup_url_external, mockup_main_file, ''), retail_price_jpy
+         FROM catalog_products
+         WHERE status='live' AND is_active=1
+           AND (design_file=?1 OR json_extract(COALESCE(meta_json,'{}'),'$.design_group')=?2)
+         ORDER BY created_at ASC",
+    );
+    if let Ok(mut stmt) = prepared {
+        if let Ok(rows) = stmt.query_map(rusqlite::params![design_file, group], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?))
+        }) {
+            for (s, m, p) in rows.flatten() {
+                let k = kind_from_sku(&s);
+                by_kind.entry(k).or_insert((s, m, p));
+            }
+        }
+    }
+    by_kind
+}
+
+#[derive(Deserialize)]
+pub struct DesignVariantForm {
+    pub sku: String,
+    pub kind: String,
+}
+
+/// POST /api/design-variant — 既存ライブ商品のデザインで別 kind の商品を作る。
+/// 既にその kind の兄弟が居ればそこへ 303(冪等)。新規作成は spec floor 価格で
+/// 即 live、Printful on-body mockup を裏で生成し、できるまでは平デザインを表示。
+/// maker_email は元デザインから継承 — 横展開が売れても作者の10%が生きる。
+pub async fn design_variant_create(
+    State(db): State<Db>,
+    axum::Form(f): axum::Form<DesignVariantForm>,
+) -> Response {
+    let base_sku = f.sku.trim().to_string();
+    let kind = f.kind.trim().to_lowercase();
+    if !DESIGN_VARIANT_KINDS.iter().any(|(k, _, _)| *k == kind) {
+        return (StatusCode::BAD_REQUEST, "unsupported kind").into_response();
+    }
+    let (new_sku, spec_pid, spec_vid, design_url) = {
+        let conn = db.lock().unwrap();
+        let Some((brand, label, desc, design, base_meta)) =
+            design_variant_base_row(&conn, &base_sku)
+        else {
+            return (StatusCode::BAD_REQUEST, "base product not eligible").into_response();
+        };
+        if kind_from_sku(&base_sku) == kind.as_str() {
+            return Redirect::to(&format!("/shop/{}", urlencoding::encode(&base_sku)))
+                .into_response();
+        }
+        let group = design_group_of(&base_meta, &base_sku);
+        if let Some((existing, _, _)) =
+            design_variant_siblings(&conn, &design, &group).get(kind.as_str())
+                .map(|t| t.clone())
+        {
+            return Redirect::to(&format!("/shop/{}", urlencoding::encode(&existing)))
+                .into_response();
+        }
+        let sku = match agent_insert_product(&conn, &brand, &label, &desc, &kind, &design, None) {
+            Ok(s) => s,
+            Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
+        };
+        // 元デザインは審査済みの live 品 — 横展開はアートも文言も同一なので即 live。
+        // meta に系譜(design_group / variant_of)と作者継承を書く。
+        let mut meta = serde_json::Map::new();
+        meta.insert("design_group".into(), serde_json::Value::from(group.clone()));
+        meta.insert("variant_of".into(), serde_json::Value::from(base_sku.clone()));
+        if let Some(me) = base_meta.get("maker_email").and_then(|v| v.as_str()) {
+            meta.insert("maker_email".into(), serde_json::Value::from(me));
+        }
+        let _ = conn.execute(
+            "UPDATE catalog_products
+             SET status='live', is_active=1, meta_json=?, legacy_source='design_variant',
+                 updated_at=datetime('now')
+             WHERE sku=?",
+            rusqlite::params![serde_json::Value::Object(meta).to_string(), &sku],
+        );
+        // 土台側に design_group が無ければ書いて、以後の兄弟検索を URL 非依存に。
+        if base_meta.get("design_group").is_none() {
+            let mut bm = base_meta;
+            bm.insert("design_group".into(), serde_json::Value::from(group));
+            let _ = conn.execute(
+                "UPDATE catalog_products SET meta_json=?, updated_at=datetime('now') WHERE sku=?",
+                rusqlite::params![serde_json::Value::Object(bm).to_string(), &base_sku],
+            );
+        }
+        let spec = PRODUCT_SPECS.iter().find(|s| s.kind == kind).unwrap();
+        (sku, spec.printful_product_id, spec.printful_variant_id, design)
+    };
+    tokio::spawn(generate_onbody_mockup(
+        db.clone(), new_sku.clone(), spec_pid, spec_vid, design_url,
+    ));
+    Redirect::to(&format!("/shop/{}", urlencoding::encode(&new_sku))).into_response()
+}
+
 /// Resolve a Printful catalog product+variant into the fields MU needs to make
 /// a generic product WITHOUT a hardcoded PRODUCT_SPECS row:
 /// `(placement, fulfillment_route, retail_floor_jpy, spec_html)`.
@@ -10062,6 +10226,82 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
             String::new()
         }
     };
+    // 「このデザインで、他のかたち」— 同じアートを別 kind で。既存兄弟は
+    // そのまま案内し、まだ無い kind は押した場でつくる(POST /api/design-variant・
+    // 冪等なので連打/再訪で SKU は増えない)。DTG 以外(AOP/digital/manual)と
+    // 封印ドロップは対象外。
+    let design_variants_html = if is_sealed {
+        String::new()
+    } else {
+        let conn = db.lock().unwrap();
+        match design_variant_base_row(&conn, &sku) {
+            None => String::new(),
+            Some((_b, _l, _d, design, meta)) => {
+                let my_kind = kind_from_sku(&sku);
+                let group = design_group_of(&meta, &sku);
+                let sibs = design_variant_siblings(&conn, &design, &group);
+                let mut cards = String::new();
+                for (k, ja, en) in DESIGN_VARIANT_KINDS {
+                    if *k == my_kind {
+                        continue;
+                    }
+                    let kind_name = if lang == "en" { en } else { ja };
+                    if let Some((vsku, vmock, vprice)) = sibs.get(k) {
+                        let img = if vmock.starts_with("http") { vmock.as_str() } else { design.as_str() };
+                        let cta = if lang == "en" { "View" } else { "見る" };
+                        cards.push_str(&format!(
+                            "<a href=\"/shop/{s}\" style=\"text-decoration:none;color:inherit;flex:0 0 132px\">\
+                             <div style=\"background:#f0efea;border-radius:10px;overflow:hidden\">\
+                             <img src=\"{img}\" alt=\"{n}\" loading=lazy style=\"width:100%;aspect-ratio:1;object-fit:contain;display:block\"></div>\
+                             <div style=\"font-size:12px;margin:7px 2px 0;font-weight:700\">{n}</div>\
+                             <div style=\"font-size:11px;opacity:.55;margin:2px 2px 0\">¥{p} · {cta}</div></a>",
+                            s = html_attr(vsku), img = html_attr(img), n = html_text(kind_name),
+                            p = vprice, cta = cta,
+                        ));
+                    } else {
+                        let floor = PRODUCT_SPECS.iter().find(|s| s.kind == *k)
+                            .map(|s| s.retail_jpy).unwrap_or(0);
+                        let cta = if lang == "en" {
+                            format!("✦ Make it · ¥{}", floor)
+                        } else {
+                            format!("✦ つくる · ¥{}", floor)
+                        };
+                        cards.push_str(&format!(
+                            "<form method=\"post\" action=\"/api/design-variant\" style=\"flex:0 0 132px;margin:0\">\
+                             <input type=\"hidden\" name=\"sku\" value=\"{base}\">\
+                             <input type=\"hidden\" name=\"kind\" value=\"{k}\">\
+                             <button type=\"submit\" style=\"all:unset;cursor:pointer;display:block;width:100%\">\
+                             <div style=\"background:#f0efea;border-radius:10px;overflow:hidden;position:relative\">\
+                             <img src=\"{img}\" alt=\"{n}\" loading=lazy style=\"width:100%;aspect-ratio:1;object-fit:contain;display:block;opacity:.38\">\
+                             <span style=\"position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:22px;opacity:.5\">＋</span></div>\
+                             <div style=\"font-size:12px;margin:7px 2px 0;font-weight:700\">{n}</div>\
+                             <div style=\"font-size:11px;color:#b08d2f;margin:2px 2px 0\">{cta}</div></button></form>",
+                            base = html_attr(&sku), k = k, img = html_attr(&design),
+                            n = html_text(kind_name), cta = html_text(&cta),
+                        ));
+                    }
+                }
+                if cards.is_empty() {
+                    String::new()
+                } else {
+                    let (h, sub) = if lang == "en" {
+                        ("Same design, other forms",
+                         "Tap to put it on the shelf right now — same artwork, made to order.")
+                    } else {
+                        ("このデザインで、他のかたち",
+                         "押すとその場で棚に並びます — 同じデザイン・受注生産。")
+                    };
+                    format!(
+                        "<section style=\"max-width:920px;margin:34px auto 0;padding:0 22px\">\
+                         <h3 style=\"font-size:13px;letter-spacing:.15em;opacity:.85;margin:0 0 4px\">{h}</h3>\
+                         <p style=\"font-size:11.5px;opacity:.55;margin:0 0 14px\">{sub}</p>\
+                         <div style=\"display:flex;gap:14px;overflow-x:auto;padding-bottom:10px;scroll-snap-type:x proximity\">{cards}</div></section>",
+                        h = h, sub = sub, cards = cards
+                    )
+                }
+            }
+        }
+    };
     let related_html = {
         let mut sibs: Vec<(String, String, String, i64, i64)> = Vec::new();
         {
@@ -10340,6 +10580,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
   </div>
 </div>
 <div style="max-width:920px;margin:0 auto;padding:0 22px 10px">{make_cta}</div>
+{design_variants}
 {related}
 {readmore}
 <footer class="pdp-footer">
@@ -10396,6 +10637,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
             trim_chars(&meta_desc_short, 80))),
         assessment = assessment_html,
         edition_doc = edition_doc_html,
+        design_variants = design_variants_html,
         related = related_html,
         readmore = readmore_html,
         title = html_text(&display_name),
