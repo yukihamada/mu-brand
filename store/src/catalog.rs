@@ -8741,6 +8741,9 @@ fn shop_kind_sql(kind: &str) -> &'static str {
         "hoodie" => "(UPPER(sku) LIKE '%HOODIE%' OR UPPER(sku) LIKE '%CREWNECK%' OR UPPER(sku) LIKE '%-HOOD%' OR UPPER(sku) LIKE '%-CREW%')",
         "sticker" => "(UPPER(sku) LIKE '%STICKER%')",
         "song" => "(COALESCE(meta_json,'') LIKE '%audio_url%' OR UPPER(sku) LIKE '%-SONG%')",
+        // 受注設計の家 (bim.house)。kind_from_sku と同じ "-HOUSE-" トークンで
+        // 判定する (LIGHTHOUSE 等の部分一致を拾わないようダッシュ込み)。
+        "house" => "(UPPER(sku) LIKE '%-HOUSE-%' OR UPPER(sku) LIKE '%-HOUSE')",
         _ => "",
     }
 }
@@ -8929,7 +8932,7 @@ pub async fn shop_index(
     };
     // kind / q 絞り込み: kind はホワイトリスト、q は bind + LIKE エスケープ。
     let kind = match q.kind.as_deref() {
-        Some(k @ ("tee" | "rashguard" | "hoodie" | "sticker" | "song")) => k,
+        Some(k @ ("tee" | "rashguard" | "hoodie" | "sticker" | "song" | "house")) => k,
         _ => "",
     };
     let kind_sql = shop_kind_sql(kind);
@@ -9054,10 +9057,10 @@ pub async fn shop_index(
     // 種類チップ: Tシャツ / ラッシュガード / パーカー・クルー / ステッカー / 曲。
     // brand+sort+q を維持しトグル動作 (選択中をもう一度押すと解除)。
     // 「Tシャツ」はサイトの主力商品 — フィルタ無しは致命的なので tee を提供する。
-    let kind_defs: [(&str, &str); 5] = if lang == "en" {
-        [("tee", "👕 Tees"), ("rashguard", "🥋 Rashguards"), ("hoodie", "🧥 Hoodies / Crews"), ("sticker", "✦ Stickers"), ("song", "🎵 Songs")]
+    let kind_defs: [(&str, &str); 6] = if lang == "en" {
+        [("tee", "👕 Tees"), ("rashguard", "🥋 Rashguards"), ("hoodie", "🧥 Hoodies / Crews"), ("sticker", "✦ Stickers"), ("song", "🎵 Songs"), ("house", "🏠 Houses")]
     } else {
-        [("tee", "👕 Tシャツ"), ("rashguard", "🥋 ラッシュガード"), ("hoodie", "🧥 パーカー・クルー"), ("sticker", "✦ ステッカー"), ("song", "🎵 曲")]
+        [("tee", "👕 Tシャツ"), ("rashguard", "🥋 ラッシュガード"), ("hoodie", "🧥 パーカー・クルー"), ("sticker", "✦ ステッカー"), ("song", "🎵 曲"), ("house", "🏠 家")]
     };
     let kind_chips = {
         let mut s = format!(
