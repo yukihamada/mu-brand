@@ -69545,6 +69545,7 @@ async fn main() {
         .route("/collabs", get(brands_index))
         .route("/shop/:sku", get(catalog::shop_pdp))
         .route("/api/shop/checkout", get(catalog::shop_checkout))
+        .route("/api/shop/feed.json", get(catalog::shop_feed_json))
         // Gift to an MU account: handle existence check (PDP), the giftee's
         // private address-claim page + submit (no login — the token is the
         // credential). The sender never sees the recipient's address.

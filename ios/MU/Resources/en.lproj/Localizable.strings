@@ -1,0 +1,32 @@
+"tab.live" = "Live";
+"tab.shop" = "Shop";
+"tab.closet" = "Closet";
+
+"live.nextDrop" = "Next drop in";
+"feed.sold %lld" = "%lld shipped";
+
+"kind.all" = "All";
+"kind.rashguard" = "Rashguard";
+"kind.hoodie" = "Hoodie";
+"kind.sticker" = "Sticker";
+"kind.song" = "Song";
+"kind.house" = "House";
+
+"shop.search" = "Search with words";
+
+"pdp.buy" = "Buy with Apple Pay";
+"pdp.openWeb" = "Open on web (gift & details)";
+
+"auth.lead" = "We'll email you a 6-digit code. Enter it and you're in — no password.";
+"auth.email" = "Email";
+"auth.code" = "6-digit code";
+"auth.sendCode" = "Send code";
+"auth.verify" = "Log in";
+"auth.restart" = "Use a different email";
+
+"account.email" = "Email";
+"account.sales" = "Your store";
+"account.orders" = "Orders";
+"account.revenue" = "Revenue";
+"account.mypage" = "Open my page on web";
+"account.logout" = "Log out";

@@ -1,0 +1,32 @@
+"tab.live" = "ライブ";
+"tab.shop" = "ショップ";
+"tab.closet" = "クローゼット";
+
+"live.nextDrop" = "次の一着まで";
+"feed.sold %lld" = "%lld着が旅立った";
+
+"kind.all" = "すべて";
+"kind.rashguard" = "ラッシュガード";
+"kind.hoodie" = "フーディ";
+"kind.sticker" = "ステッカー";
+"kind.song" = "うた";
+"kind.house" = "いえ";
+
+"shop.search" = "言葉で探す";
+
+"pdp.buy" = "Apple Pay で買う";
+"pdp.openWeb" = "Webで開く（ギフト・詳細）";
+
+"auth.lead" = "メールアドレスに6桁のコードを送ります。コードを入れるだけでログイン完了。パスワードはありません。";
+"auth.email" = "メールアドレス";
+"auth.code" = "6桁コード";
+"auth.sendCode" = "コードを送る";
+"auth.verify" = "ログイン";
+"auth.restart" = "メールアドレスを入れ直す";
+
+"account.email" = "メール";
+"account.sales" = "あなたのストア";
+"account.orders" = "注文数";
+"account.revenue" = "売上";
+"account.mypage" = "マイページをWebで開く";
+"account.logout" = "ログアウト";
