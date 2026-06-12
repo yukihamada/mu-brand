@@ -11371,6 +11371,12 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
             None => String::new(),
             Some((_b, _l, _d, design, meta)) => {
                 let tone = cached_design_tone(&db, &sku, &design).await;
+                // 白インク系(透過PNG+白主体)のデザインは明るい台座に直置きすると
+                // ほぼ見えない。トーンが白優位なら台座を暗くする(モック写真は常に明)。
+                let design_tile_bg = match tone {
+                    Some((light, _)) if light >= 45 => "#1d1d22",
+                    _ => "#f0efea",
+                };
                 let my_kind = kind_from_sku(&sku);
                 let group = design_group_of(&meta, &sku);
                 let sibs = {
@@ -11386,15 +11392,19 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
                     // 既存兄弟は実在する商品なのでゲートに関係なく案内する。
                     let kind_name = if lang == "en" { en } else { ja };
                     if let Some((vsku, vmock, vprice)) = sibs.get(k) {
-                        let img = if vmock.starts_with("http") { vmock.as_str() } else { design.as_str() };
+                        let (img, tile_bg) = if vmock.starts_with("http") {
+                            (vmock.as_str(), "#f0efea")
+                        } else {
+                            (design.as_str(), design_tile_bg)
+                        };
                         let cta = if lang == "en" { "View" } else { "見る" };
                         cards.push_str(&format!(
                             "<a href=\"/shop/{s}\" data-funnel=\"cta_click\" data-funnel-cta=\"pdp_variant_view\" style=\"text-decoration:none;color:inherit;flex:0 0 132px\">\
-                             <div style=\"background:#f0efea;border-radius:10px;overflow:hidden\">\
+                             <div style=\"background:{bg};border-radius:10px;overflow:hidden\">\
                              <img src=\"{img}\" alt=\"{n}\" loading=lazy style=\"width:100%;aspect-ratio:1;object-fit:contain;display:block\"></div>\
                              <div style=\"font-size:12px;margin:7px 2px 0;font-weight:700\">{n}</div>\
                              <div style=\"font-size:11px;opacity:.55;margin:2px 2px 0\">¥{p} · {cta}</div></a>",
-                            s = html_attr(vsku), img = html_attr(img), n = html_text(kind_name),
+                            s = html_attr(vsku), bg = tile_bg, img = html_attr(img), n = html_text(kind_name),
                             p = vprice, cta = cta,
                         ));
                     } else {
@@ -11413,12 +11423,12 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
                              <input type=\"hidden\" name=\"sku\" value=\"{base}\">\
                              <input type=\"hidden\" name=\"kind\" value=\"{k}\">\
                              <button type=\"submit\" data-funnel=\"cta_click\" data-funnel-cta=\"pdp_variant_create_{k}\" style=\"all:unset;cursor:pointer;display:block;width:100%\">\
-                             <div style=\"background:#f0efea;border-radius:10px;overflow:hidden;position:relative\">\
+                             <div style=\"background:{bg};border-radius:10px;overflow:hidden;position:relative\">\
                              <img src=\"{img}\" alt=\"{n}\" loading=lazy style=\"width:100%;aspect-ratio:1;object-fit:contain;display:block;opacity:.38\">\
                              <span style=\"position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:22px;opacity:.5\">＋</span></div>\
                              <div style=\"font-size:12px;margin:7px 2px 0;font-weight:700\">{n}</div>\
                              <div style=\"font-size:11px;color:#b08d2f;margin:2px 2px 0\">{cta}</div></button></form>",
-                            base = html_attr(&sku), k = k, img = html_attr(&design),
+                            base = html_attr(&sku), k = k, bg = design_tile_bg, img = html_attr(&design),
                             n = html_text(kind_name), cta = html_text(&cta),
                         ));
                     }
