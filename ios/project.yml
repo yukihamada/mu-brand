@@ -1,0 +1,29 @@
+name: MU
+options:
+  bundleIdPrefix: com.wearmu
+  deploymentTarget:
+    iOS: "17.0"
+  developmentLanguage: ja
+settings:
+  base:
+    DEVELOPMENT_TEAM: 5BV85JW8US
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "5.9"
+    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: "0.1.0"
+targets:
+  MU:
+    type: application
+    platform: iOS
+    sources:
+      - MU/Sources
+      - MU/Resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.wearmu.mu
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_CFBundleDisplayName: MU
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
+        INFOPLIST_KEY_UIRequiresFullScreen: YES

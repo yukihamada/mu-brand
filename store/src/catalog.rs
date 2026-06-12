@@ -9412,6 +9412,82 @@ fn shop_filter_sql(brand: Option<&str>, kind_sql: &str, q_pat: Option<&str>) -> 
     (parts.join(" AND "), binds)
 }
 
+/// GET /api/shop/feed.json?page=&kind=&brand=&q= — MU iOS アプリの Live フィード。
+/// 新着順 (created_at DESC) の横断カタログ JSON。フィルタは shop_index と同じ
+/// ホワイトリスト (kind) / bind (brand, q) を共有し、ユーザー入力は SQL に混ぜない。
+pub async fn shop_feed_json(State(db): State<Db>, Query(q): Query<ShopQuery>) -> Response {
+    let page = q.page.unwrap_or(1).max(1);
+    let kind = match q.kind.as_deref() {
+        Some(k @ ("tee" | "rashguard" | "hoodie" | "sticker" | "song" | "house")) => k,
+        _ => "",
+    };
+    let kind_sql = shop_kind_sql(kind);
+    let brand_filter = q.brand.unwrap_or_default();
+    let brand_opt = if brand_filter.is_empty() { None } else { Some(brand_filter.as_str()) };
+    let q_pat = shop_q_pattern(q.q.as_deref().unwrap_or(""));
+    let offset = (page as i64 - 1) * SHOP_PAGE_SIZE;
+    let (where_sql, binds) = shop_filter_sql(brand_opt, kind_sql, q_pat.as_deref());
+    let rows: Vec<(String, String, String, i64, Option<String>, i64, String)> = {
+        let conn = db.lock().unwrap();
+        let sql = format!(
+            "SELECT sku, brand, description_ja, retail_price_jpy,
+                    COALESCE({ext}, mockup_main_file),
+                    (SELECT COUNT(*) FROM catalog_orders o WHERE o.sku=catalog_products.sku AND o.status='submitted'),
+                    COALESCE(created_at,'')
+             FROM catalog_products
+             WHERE {where_sql}
+             ORDER BY (COALESCE({ext}, '') != '') DESC, created_at DESC, sku
+             LIMIT ? OFFSET ?",
+            ext = MOCKUP_EXT_LIVE,
+            where_sql = where_sql,
+        );
+        conn.prepare(&sql)
+            .ok()
+            .and_then(|mut s| {
+                let mut params: Vec<&dyn rusqlite::ToSql> =
+                    binds.iter().map(|b| b as &dyn rusqlite::ToSql).collect();
+                params.push(&SHOP_PAGE_SIZE);
+                params.push(&offset);
+                s.query_map(rusqlite::params_from_iter(params), |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, i64>(3)?,
+                        r.get::<_, Option<String>>(4)?,
+                        r.get::<_, i64>(5)?,
+                        r.get::<_, String>(6)?,
+                    ))
+                })
+                .ok()
+                .map(|it| it.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default()
+    };
+    let products: Vec<serde_json::Value> = rows
+        .into_iter()
+        .map(|(sku, brand, desc, price, img, sold, created_at)| {
+            serde_json::json!({
+                "sku": sku,
+                "brand": brand,
+                "description": desc,
+                "price_jpy": price,
+                "mockup_url": img,
+                "sold": sold,
+                "created_at": created_at,
+                "pdp_url": format!("https://wearmu.com/shop/{}", urlencoding::encode(&sku)),
+                "checkout_url": format!("https://wearmu.com/api/shop/checkout?sku={}", urlencoding::encode(&sku)),
+            })
+        })
+        .collect();
+    axum::Json(serde_json::json!({
+        "page": page,
+        "page_size": SHOP_PAGE_SIZE,
+        "products": products,
+    }))
+    .into_response()
+}
+
 /// 「読みもの」内部リンクブロック — /shop と PDP のフッター直前に挿す。
 /// SEO 記事 (auto_blog_posts の slug LIKE 'seo-%') は内部導線が無いと
 /// クロール/回遊されない (実測: 記事3本の7日流入ゼロ・/blog 自体も 2PV)
