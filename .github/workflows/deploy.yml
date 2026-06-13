@@ -27,7 +27,7 @@ jobs:
     # per deploy. Dockerfile build during fly deploy is the real validation.
     if: false
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       # When re-enabled, restore cargo registry + target/ between runs.
       # Cuts cold builds from 8+ min to ~2 min on cache hit.
@@ -101,7 +101,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -118,7 +118,7 @@ jobs:
     concurrency: deploy-mu-store
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: superfly/flyctl-actions/setup-flyctl@master
       - name: Capture previous version (for rollback)
         id: prev
