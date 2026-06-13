@@ -11,6 +11,7 @@
 		24083EB4097C91201E826035 /* SafariView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C2819769FCF2C0AA6B54978 /* SafariView.swift */; };
 		33B36932D912704B43630E47 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = B82CA420028E679CC07FEA55 /* Localizable.strings */; };
 		43EFEAE198F4E7164A36B330 /* MUWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 3D1E794BB01764020997A41E /* MUWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		5906456D1AA4BC8B1359CF98 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43E501A44D68FF958C26B9C4 /* OnboardingView.swift */; };
 		5D13E83F1F3BF4028293DB3C /* Push.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D2F7D33C233A7979CE2339B /* Push.swift */; };
 		5FE1BC0DBEE47A5F73AC6A3A /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95E7652A5B51B2C1CD3E6D39 /* Models.swift */; };
 		616BA7710E55ED6937B9A3BE /* LiveView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3310C08546283F364B25E1C0 /* LiveView.swift */; };
@@ -18,6 +19,7 @@
 		714DE96383F152E399DC9BB3 /* ScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37FB043CBEA23D3AEC2ED545 /* ScanView.swift */; };
 		72C1F86E0777B2ED87AB917E /* ShopView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDD3AA78E083DAD93A222113 /* ShopView.swift */; };
 		AEB216DA4B7A3841DB82154A /* MUApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFC239613BD23A83EA3EEE15 /* MUApp.swift */; };
+		C3A13A39199892744181EE91 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 397EDA480FA0F17B7918F918 /* AppState.swift */; };
 		C9BEA58145EFC10A50732C0B /* ClosetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25D52C74AD48EE37849F85FC /* ClosetView.swift */; };
 		D0785758C1A192FFDB0D358B /* MakeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98732D3C633998735A148781 /* MakeView.swift */; };
 		DCE063DAE166EBF372843B7F /* API.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C5E91CDFCCD90545D126CC5 /* API.swift */; };
@@ -55,8 +57,10 @@
 		2C5E91CDFCCD90545D126CC5 /* API.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = API.swift; sourceTree = "<group>"; };
 		3310C08546283F364B25E1C0 /* LiveView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveView.swift; sourceTree = "<group>"; };
 		37FB043CBEA23D3AEC2ED545 /* ScanView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanView.swift; sourceTree = "<group>"; };
+		397EDA480FA0F17B7918F918 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		3D1E794BB01764020997A41E /* MUWidget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = MUWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		42F1F6F276BCB5A2CA6FE3E7 /* MUWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MUWidget.swift; sourceTree = "<group>"; };
+		43E501A44D68FF958C26B9C4 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		5C2819769FCF2C0AA6B54978 /* SafariView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariView.swift; sourceTree = "<group>"; };
 		6C4140B36BFB33F4D3CBCCE1 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		95E7652A5B51B2C1CD3E6D39 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
@@ -70,6 +74,14 @@
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
+		0440D0EB3C172BBF55B4D2B5 /* Onboarding */ = {
+			isa = PBXGroup;
+			children = (
+				43E501A44D68FF958C26B9C4 /* OnboardingView.swift */,
+			);
+			path = Onboarding;
+			sourceTree = "<group>";
+		};
 		0676764BD8C1BB1D7FEB6986 /* Make */ = {
 			isa = PBXGroup;
 			children = (
@@ -91,6 +103,7 @@
 			isa = PBXGroup;
 			children = (
 				2C5E91CDFCCD90545D126CC5 /* API.swift */,
+				397EDA480FA0F17B7918F918 /* AppState.swift */,
 				95E7652A5B51B2C1CD3E6D39 /* Models.swift */,
 				1D2F7D33C233A7979CE2339B /* Push.swift */,
 				A63CABCD1C5C82345D918B01 /* Session.swift */,
@@ -104,6 +117,7 @@
 				A2A2042B177BF5ACED1A7EC6 /* Closet */,
 				CD6262FA66CF313C9790006D /* Live */,
 				0676764BD8C1BB1D7FEB6986 /* Make */,
+				0440D0EB3C172BBF55B4D2B5 /* Onboarding */,
 				C31710599BFEC2A9EE80C56A /* Scan */,
 				EE7299AEAD5D88790912A6A9 /* Shop */,
 			);
@@ -288,11 +302,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				DCE063DAE166EBF372843B7F /* API.swift in Sources */,
+				C3A13A39199892744181EE91 /* AppState.swift in Sources */,
 				C9BEA58145EFC10A50732C0B /* ClosetView.swift in Sources */,
 				616BA7710E55ED6937B9A3BE /* LiveView.swift in Sources */,
 				AEB216DA4B7A3841DB82154A /* MUApp.swift in Sources */,
 				D0785758C1A192FFDB0D358B /* MakeView.swift in Sources */,
 				5FE1BC0DBEE47A5F73AC6A3A /* Models.swift in Sources */,
+				5906456D1AA4BC8B1359CF98 /* OnboardingView.swift in Sources */,
 				F4090F6F98C0354F04F9A358 /* ProductDetailView.swift in Sources */,
 				5D13E83F1F3BF4028293DB3C /* Push.swift in Sources */,
 				24083EB4097C91201E826035 /* SafariView.swift in Sources */,

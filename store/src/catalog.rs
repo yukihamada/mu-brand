@@ -4902,6 +4902,22 @@ pub struct MakeQuery {
     pub brand: Option<String>,
     #[serde(default)]
     pub token: Option<String>,
+    /// 作り手の印税率 (10〜50%)。省略時は10%。価格はこの率に応じて自動調整
+    /// (royalty_adjusted_price)。商品単位で meta_json.maker_pct に刻み、
+    /// 売れたら apply_maker_commission がこの率で作者に支払う。
+    #[serde(default)]
+    pub royalty: Option<i64>,
+}
+
+/// 印税率 (10〜50%) に応じた価格自動調整。プラットフォーム粗利を10%時と
+/// 同額に保つ: price = base * 0.9 / (1 - pct/100)。100円単位に丸め、
+/// base..99,000 にクランプ。pct=10→base, 30→×1.29, 50→×1.8。
+pub fn royalty_adjusted_price(base: i64, pct: i64) -> i64 {
+    let pct = pct.clamp(10, 50);
+    let factor = 0.90 / (1.0 - pct as f64 / 100.0);
+    let raw = (base as f64 * factor).round() as i64;
+    let rounded = ((raw + 50) / 100) * 100; // 100円単位
+    rounded.clamp(base, 99_000)
 }
 
 /// GET /make のクエリ。?v= でバリアント固定（勝者確定後はサーバが上書き）。
@@ -8031,7 +8047,10 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     };
     // Clamp UP to the per-kind price floor — Gemini sometimes echoes a low
     // retail (e.g. 9800) for a premium pick, which would sell below genka.
-    let retail_jpy = parsed["retail_jpy"].as_i64().unwrap_or(spec.retail_jpy).max(spec.retail_jpy);
+    let base_retail = parsed["retail_jpy"].as_i64().unwrap_or(spec.retail_jpy).max(spec.retail_jpy);
+    // 印税率(10〜50%)。価格はこの率に応じて自動で上がる(高印税ほど高価格)。
+    let maker_pct = q.royalty.unwrap_or(10).clamp(10, 50);
+    let retail_jpy = royalty_adjusted_price(base_retail, maker_pct);
     let seed = format!("mk{:08x}", rand::random::<u32>());
     let slug = { let s: String = display.chars().filter(|c| c.is_ascii_alphanumeric()).take(12).collect::<String>().to_uppercase(); if s.is_empty() { "MAKE".to_string() } else { s } };
     let sku = format!("MAKE-{}-{}-{}", slug, kind.to_uppercase().replace('_', "-"), seed);
@@ -8223,6 +8242,8 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
         if use_local { m.insert("gen_engine".into(), serde_json::Value::from("local")); }
         if let Some(vis) = ab_visitor { m.insert("make_visitor".into(), serde_json::Value::from(vis)); }
         if let Some(me) = &maker_email { m.insert("maker_email".into(), serde_json::Value::from(me.clone())); }
+        // 作り手の印税率(商品単位)。apply_maker_commission がブランド既定より優先して使う。
+        m.insert("maker_pct".into(), serde_json::Value::from(maker_pct));
         // 音源: kind=song なら購入時の配信物(issue_digital)、アパレル等なら
         // PDP の試聴プレイヤー(「Tシャツに音源」)として鳴る。
         // 音源付きT は合成音源の URL + sha256 指紋 + oto KEY も刻む
@@ -8354,6 +8375,8 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
         "display": display,
         "hook": hook,
         "retail_jpy": retail_jpy,
+        "maker_pct": maker_pct,
+        "maker_earn_jpy": (retail_jpy * maker_pct / 100),
         "design_url": url,
         "pdp_url": format!("https://wearmu.com/shop/{}", sku),
         "status": status_s,
@@ -15936,17 +15959,28 @@ async fn apply_maker_commission(db: &Db, session_id: &str, session: &serde_json:
         return;
     }
 
-    let brand: String = conn
-        .query_row("SELECT brand FROM catalog_products WHERE sku=?", rusqlite::params![sku], |r| r.get(0))
-        .unwrap_or_default();
-    let pct = conn
+    // 印税率: 商品単位の meta_json.maker_pct を最優先 (作り手が /make で 10〜50% を選択)。
+    // 無ければブランド既定 config_json.maker_pct、それも無ければ 10%。
+    let product_pct: Option<i64> = conn
         .query_row(
-            "SELECT json_extract(config_json,'$.maker_pct') FROM catalog_brands WHERE slug=?",
-            rusqlite::params![&brand],
+            "SELECT json_extract(meta_json,'$.maker_pct') FROM catalog_products WHERE sku=?",
+            rusqlite::params![sku],
             |r| r.get::<_, Option<i64>>(0),
         )
         .ok()
-        .flatten()
+        .flatten();
+    let brand: String = conn
+        .query_row("SELECT brand FROM catalog_products WHERE sku=?", rusqlite::params![sku], |r| r.get(0))
+        .unwrap_or_default();
+    let pct = product_pct
+        .or_else(|| conn
+            .query_row(
+                "SELECT json_extract(config_json,'$.maker_pct') FROM catalog_brands WHERE slug=?",
+                rusqlite::params![&brand],
+                |r| r.get::<_, Option<i64>>(0),
+            )
+            .ok()
+            .flatten())
         .unwrap_or(10)
         .clamp(0, 50);
     let commission = (amount * pct / 100).max(0);

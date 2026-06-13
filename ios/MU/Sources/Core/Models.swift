@@ -97,6 +97,8 @@ struct MakeResult: Codable {
     let checkoutUrl: String?
     let note: String
     let editToken: String?
+    let makerPct: Int?
+    let makerEarnJpy: Int?
 
     enum CodingKeys: String, CodingKey {
         case ok, sku, kind, display, hook, status, note
@@ -107,11 +109,20 @@ struct MakeResult: Codable {
         case buyUrl = "buy_url"
         case checkoutUrl = "checkout_url"
         case editToken = "edit_token"
+        case makerPct = "maker_pct"
+        case makerEarnJpy = "maker_earn_jpy"
     }
 
-    // 磨いた後に design 画像だけ差し替えるため var なコピーを返す。
     var designURL: URL? { URL(string: designUrl) }
     var priceLabel: String { "¥\(retailJpy.formatted())" }
+}
+
+// /api/make/peek?sku= — 着画(オンボディmockup)が出来たかをポーリング。
+struct PeekResult: Codable {
+    let ok: Bool
+    let status: String?
+    let mockup: String?
+    var mockupURL: URL? { mockup.flatMap(URL.init(string:)) }
 }
 
 // 5軸スコア (MUスコア)。/api/make/polish の before/after。

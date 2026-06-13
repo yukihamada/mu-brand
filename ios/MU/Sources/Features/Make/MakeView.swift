@@ -1,17 +1,27 @@
 import SwiftUI
+import UIKit
 
 // 「言えば、作れる」— MU の背骨。ひとこと打つと AI がデザインを起こし、即棚に並ぶ。
 // 生成は POST /api/make。結果は design 画像 + 名前 + ひとこと + 購入導線。
 struct MakeView: View {
     @EnvironmentObject private var session: Session
+    @EnvironmentObject private var app: AppState
 
     @State private var prompt = ""
     @State private var kind: MakeKind = .auto
+    @State private var royalty = 10          // 印税 10〜50%(価格は自動調整)
     @State private var isMaking = false
     @State private var result: MakeResult?
     @State private var errorMessage: String?
     @State private var showCheckout = false
     @FocusState private var promptFocused: Bool
+
+    // 作っている間の演出
+    @State private var makingStep = 0
+    @State private var revealed = false      // 完成リビールのアニメ
+
+    // 着画(オンボディ mockup)。ポーリングで出来たら差し替え。
+    @State private var mockupURL: URL?
 
     // 「磨く」(5軸自己改善) の状態
     @State private var isPolishing = false
@@ -21,6 +31,9 @@ struct MakeView: View {
 
     // 作った直後 = 高意欲の瞬間に1回だけ通知許可を促す
     @AppStorage("didPromptPushAfterMake") private var didPromptPush = false
+
+    // 作っている間に流す“作ってる感”メッセージ
+    private let makingSteps = ["make.step1", "make.step2", "make.step3", "make.step4", "make.step5"]
 
     var body: some View {
         NavigationStack {
@@ -47,15 +60,12 @@ struct MakeView: View {
                             }
                         }
 
-                        Button(action: make) {
+                        royaltyPicker
+
+                        Button(action: { make() }) {
                             HStack {
-                                if isMaking {
-                                    ProgressView().tint(.black)
-                                    Text(String(localized: "make.making"))
-                                } else {
-                                    Image(systemName: "sparkles")
-                                    Text(String(localized: "make.go"))
-                                }
+                                Image(systemName: "sparkles")
+                                Text(String(localized: "make.go"))
                             }
                             .font(.headline)
                             .frame(maxWidth: .infinity)
@@ -65,6 +75,8 @@ struct MakeView: View {
                         .foregroundStyle(.black)
                         .disabled(isMaking || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
+                    .disabled(isMaking)
+                    .opacity(isMaking ? 0.5 : 1)
 
                     if let errorMessage {
                         Label(errorMessage, systemImage: "exclamationmark.triangle")
@@ -72,9 +84,11 @@ struct MakeView: View {
                             .foregroundStyle(.red)
                     }
 
-                    if let result {
+                    if isMaking {
+                        makingView
+                    } else if let result {
                         resultCard(result)
-                    } else if !isMaking {
+                    } else {
                         hints
                     }
                 }
@@ -82,6 +96,20 @@ struct MakeView: View {
             }
             .navigationTitle(String(localized: "tab.make"))
             .task { Analytics.track("view_make") }
+            // オンボーディングからの「最初の一着」を受け取り、その場で自動生成。
+            .onChange(of: app.pendingPrompt) { _, new in
+                guard let p = new else { return }
+                app.pendingPrompt = nil
+                prompt = p
+                make()
+            }
+            .onAppear {
+                if let p = app.pendingPrompt {
+                    app.pendingPrompt = nil
+                    prompt = p
+                    make()
+                }
+            }
             .sheet(isPresented: $showCheckout) {
                 if let s = result?.checkoutUrl, let url = URL(string: s) {
                     SafariView(url: url).ignoresSafeArea()
@@ -97,6 +125,95 @@ struct MakeView: View {
             Text(String(localized: "make.subtitle"))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    // 印税 10〜50%。上げるほど価格が自動で上がり、あなたの取り分が増える。
+    private var royaltyPicker: some View {
+        let base = basePrice(kind)
+        let price = adjustedPrice(base, royalty)
+        let earn = price * royalty / 100
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Label(String(localized: "make.royalty"), systemImage: "yensign.circle")
+                    .font(.subheadline.weight(.medium))
+                Spacer()
+                Text("\(royalty)%").font(.subheadline.bold()).foregroundStyle(.tint)
+            }
+            Slider(value: Binding(
+                get: { Double(royalty) },
+                set: { royalty = min(50, max(10, Int(($0 / 10).rounded()) * 10)) }
+            ), in: 10...50, step: 10)
+            // 価格と取り分は自動連動(おまかせ時は目安)
+            HStack(spacing: 4) {
+                Text(String(format: String(localized: "make.priceLine"), "¥\(price.formatted())"))
+                Text("·").foregroundStyle(.tertiary)
+                Text(String(format: String(localized: "make.earnLine"), "¥\(earn.formatted())"))
+                    .foregroundStyle(.tint)
+                if kind == .auto {
+                    Text(String(localized: "make.estimate")).foregroundStyle(.tertiary)
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .padding(10)
+        .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    // 種類別の基準価格(印税プレビュー用。サーバの spec.retail_jpy と一致)。
+    private func basePrice(_ k: MakeKind) -> Int {
+        switch k {
+        case .auto, .tee: return 4900
+        case .hoodie: return 8800
+        case .sticker: return 800
+        case .rashguard: return 9800
+        case .tote: return 2900
+        case .mug: return 2200
+        }
+    }
+    // サーバ royalty_adjusted_price と同式: base * 0.9 / (1 - pct/100)、100円丸め。
+    private func adjustedPrice(_ base: Int, _ pct: Int) -> Int {
+        let factor = 0.9 / (1.0 - Double(pct) / 100.0)
+        let raw = Int((Double(base) * factor).rounded())
+        return min(max(((raw + 50) / 100) * 100, base), 99_000)
+    }
+
+    // 作っている間の“作ってる感”。本当に何かが起きている手応えを出す。
+    private var makingView: some View {
+        VStack(spacing: 18) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(.quaternary.opacity(0.3))
+                    .frame(height: 300)
+                    .shimmering()
+                VStack(spacing: 14) {
+                    Image(systemName: "wand.and.stars")
+                        .font(.system(size: 40))
+                        .foregroundStyle(.tint)
+                        .symbolEffect(.variableColor.iterative, options: .repeating)
+                    Text(String(localized: String.LocalizationValue(makingSteps[makingStep % makingSteps.count])))
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .transition(.opacity)
+                        .id(makingStep)
+                }
+            }
+            // 進捗ドット
+            HStack(spacing: 6) {
+                ForEach(0..<makingSteps.count, id: \.self) { i in
+                    Circle()
+                        .fill(i <= makingStep % makingSteps.count ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary))
+                        .frame(width: 6, height: 6)
+                }
+            }
+        }
+        .task {
+            // 1.4秒ごとにメッセージを進める(完成まで巡回)
+            while isMaking {
+                try? await Task.sleep(nanoseconds: 1_400_000_000)
+                withAnimation { makingStep += 1 }
+            }
         }
     }
 
@@ -117,9 +234,18 @@ struct MakeView: View {
 
     @ViewBuilder
     private func resultCard(_ r: MakeResult) -> some View {
+        // 表示画像: 磨いた絵 > 着画(オンボディ) > 元デザイン
+        let shownURL = polishedURL ?? mockupURL ?? r.designURL
         VStack(alignment: .leading, spacing: 14) {
+            // 完成バナー(テンション上げ)
+            Label(String(localized: "make.done"), systemImage: "checkmark.seal.fill")
+                .font(.headline)
+                .foregroundStyle(.tint)
+                .scaleEffect(revealed ? 1 : 0.6)
+                .opacity(revealed ? 1 : 0)
+
             ZStack {
-                AsyncImage(url: polishedURL ?? r.designURL) { phase in
+                AsyncImage(url: shownURL) { phase in
                     switch phase {
                     case .success(let img): img.resizable().scaledToFit()
                     default: Rectangle().fill(.quaternary).frame(height: 320)
@@ -128,6 +254,7 @@ struct MakeView: View {
                 .frame(maxWidth: .infinity)
                 .clipShape(RoundedRectangle(cornerRadius: 16))
                 .opacity(isPolishing ? 0.4 : 1)
+                .scaleEffect(revealed ? 1 : 0.92)
 
                 if isPolishing {
                     VStack(spacing: 8) {
@@ -136,8 +263,20 @@ struct MakeView: View {
                             .font(.footnote).foregroundStyle(.white)
                     }
                 }
+                // 着画ができたら右上にバッジ
+                if mockupURL != nil && polishedURL == nil {
+                    VStack { HStack {
+                        Spacer()
+                        Text(String(localized: "make.onbody"))
+                            .font(.caption2.weight(.bold))
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .background(.black.opacity(0.6), in: Capsule())
+                            .foregroundStyle(.white)
+                            .padding(8)
+                    }; Spacer() }
+                }
             }
-            .id(polishedURL?.absoluteString ?? r.designUrl) // 差し替え時に再描画
+            .id(shownURL?.absoluteString ?? r.designUrl) // 差し替え時に再描画
 
             Text(r.display.uppercased())
                 .font(.caption.weight(.semibold))
@@ -150,14 +289,26 @@ struct MakeView: View {
                 scoreView(s)
             }
 
-            Text(polishNote ?? r.note)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-
             HStack {
                 Text(r.priceLabel).font(.title2.bold())
                 Spacer()
             }
+
+            // 出品済み + 印税: 「もう棚に並んだ。売れたら R% (約¥Y) があなたに」
+            if r.autoApproved, let pct = r.makerPct, let earn = r.makerEarnJpy {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "bag.badge.plus").foregroundStyle(.tint)
+                    Text(String(format: String(localized: "make.listedEarn"), pct, "¥\(earn.formatted())"))
+                        .font(.footnote)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+            }
+
+            Text(polishNote ?? r.note)
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             // 磨く — 5軸で自己改善 (AI生成・自動承認の live 商品のみ)。
             if r.editToken != nil && r.autoApproved {
@@ -207,8 +358,10 @@ struct MakeView: View {
                 withAnimation {
                     result = nil
                     polishedURL = nil
+                    mockupURL = nil
                     score = nil
                     polishNote = nil
+                    revealed = false
                 }
                 prompt = ""
                 promptFocused = true
@@ -333,22 +486,33 @@ struct MakeView: View {
         guard !text.isEmpty else { return }
         promptFocused = false
         errorMessage = nil
+        // 新しい作品 → 全状態リセット
+        result = nil
+        polishedURL = nil
+        mockupURL = nil
+        score = nil
+        polishNote = nil
+        revealed = false
+        makingStep = 0
         isMaking = true
         Task {
             do {
-                let r = try await MUAPI.make(prompt: text, kind: kind, apiKey: session.apiKey)
-                Analytics.track("make_create", ["kind": r.kind, "sku": r.sku])
+                let r = try await MUAPI.make(prompt: text, kind: kind, royalty: royalty, apiKey: session.apiKey)
+                Analytics.track("make_create", ["kind": r.kind, "sku": r.sku, "royalty": royalty])
                 await MainActor.run {
-                    withAnimation {
-                        // 新しい作品 → 磨き状態をリセット
-                        polishedURL = nil
-                        score = nil
-                        polishNote = nil
+                    isMaking = false
+                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
                         result = r
                     }
-                    isMaking = false
+                    // 完成の高揚: 成功ハプティクス + リビールアニメ
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    withAnimation(.spring(response: 0.6, dampingFraction: 0.6).delay(0.05)) {
+                        revealed = true
+                    }
                     maybePromptPush()
                 }
+                // 着画(オンボディ mockup)が出来たらポーリングで差し替え(最大~70秒)。
+                await pollOnbody(sku: r.sku)
             } catch {
                 await MainActor.run {
                     errorMessage = error.localizedDescription
@@ -357,4 +521,52 @@ struct MakeView: View {
             }
         }
     }
+
+    // 着画ポーリング: 数秒ごとに peek し、mockup が出たら反映してハプティクス。
+    private func pollOnbody(sku: String) async {
+        for _ in 0..<14 {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            // 別の作品に切り替わっていたら中断
+            if result?.sku != sku { return }
+            if let peek = try? await MUAPI.peek(sku: sku), let url = peek.mockupURL {
+                await MainActor.run {
+                    guard result?.sku == sku else { return }
+                    withAnimation(.spring(response: 0.5, dampingFraction: 0.75)) {
+                        mockupURL = url
+                    }
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                }
+                return
+            }
+        }
+    }
+}
+
+// シマー(作ってる感のスケルトン)
+private struct Shimmer: ViewModifier {
+    @State private var phase: CGFloat = -1
+    func body(content: Content) -> some View {
+        content.overlay(
+            GeometryReader { geo in
+                LinearGradient(
+                    colors: [.clear, .white.opacity(0.18), .clear],
+                    startPoint: .leading, endPoint: .trailing
+                )
+                .frame(width: geo.size.width * 1.5)
+                .offset(x: phase * geo.size.width * 1.5)
+            }
+            .clipped()
+            .allowsHitTesting(false)
+        )
+        .task {
+            while !Task.isCancelled {
+                withAnimation(.linear(duration: 1.3)) { phase = 1.2 }
+                try? await Task.sleep(nanoseconds: 1_300_000_000)
+                phase = -1
+            }
+        }
+    }
+}
+private extension View {
+    func shimmering() -> some View { modifier(Shimmer()) }
 }

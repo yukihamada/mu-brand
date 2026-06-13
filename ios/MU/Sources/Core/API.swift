@@ -50,9 +50,10 @@ struct MUAPI {
     // 「言えば、作れる」— POST /api/make?prompt=&kind=。AI がデザイン生成 → 即棚に並ぶ。
     // apiKey があればログインユーザーに帰属 (売れるたび売上10%が作者へ・apply_maker_commission)。
     // 画像生成に時間がかかるため timeout を延ばす。
-    static func make(prompt: String, kind: MakeKind, apiKey: String?) async throws -> MakeResult {
+    static func make(prompt: String, kind: MakeKind, royalty: Int, apiKey: String?) async throws -> MakeResult {
         var comps = URLComponents(url: base.appendingPathComponent("api/make"), resolvingAgainstBaseURL: false)!
-        var items = [URLQueryItem(name: "prompt", value: prompt)]
+        var items = [URLQueryItem(name: "prompt", value: prompt),
+                     URLQueryItem(name: "royalty", value: String(royalty))]
         if !kind.rawValue.isEmpty { items.append(URLQueryItem(name: "kind", value: kind.rawValue)) }
         comps.queryItems = items
 
@@ -88,6 +89,17 @@ struct MUAPI {
             throw APIError.message((json?["error"] as? String) ?? "HTTP \(http.statusCode)")
         }
         return try JSONDecoder().decode(PolishResult.self, from: data)
+    }
+
+    // 着画(オンボディmockup)が出来たか確認。GET /api/make/peek?sku=
+    static func peek(sku: String) async throws -> PeekResult {
+        var comps = URLComponents(url: base.appendingPathComponent("api/make/peek"), resolvingAgainstBaseURL: false)!
+        comps.queryItems = [URLQueryItem(name: "sku", value: sku)]
+        let (data, resp) = try await URLSession.shared.data(from: comps.url!)
+        guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
+            throw APIError.badStatus((resp as? HTTPURLResponse)?.statusCode ?? -1)
+        }
+        return try JSONDecoder().decode(PeekResult.self, from: data)
     }
 
     // APNs デバイストークンを登録 (ドロップ/売れた通知の宛先)。ログイン時は Bearer も付ける。
