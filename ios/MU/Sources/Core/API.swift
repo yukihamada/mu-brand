@@ -125,6 +125,24 @@ struct MUAPI {
         return try JSONDecoder().decode(MakeResult.self, from: data)
     }
 
+    // 作った後に価格を変更。POST /api/make/edit/:sku?t= {price_jpy}。送った価格を返す
+    // (サーバは原価フロア〜¥99,000にクランプ)。
+    @discardableResult
+    static func editPrice(sku: String, editToken: String, priceJpy: Int) async throws -> Int {
+        var comps = URLComponents(url: base.appendingPathComponent("api/make/edit/\(sku)"), resolvingAgainstBaseURL: false)!
+        comps.queryItems = [URLQueryItem(name: "t", value: editToken)]
+        var req = URLRequest(url: comps.url!)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["price_jpy": priceJpy])
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            throw APIError.message((json?["error"] as? String) ?? "HTTP \((resp as? HTTPURLResponse)?.statusCode ?? -1)")
+        }
+        return priceJpy
+    }
+
     // 着画(オンボディmockup)が出来たか確認。GET /api/make/peek?sku=
     static func peek(sku: String) async throws -> PeekResult {
         var comps = URLComponents(url: base.appendingPathComponent("api/make/peek"), resolvingAgainstBaseURL: false)!

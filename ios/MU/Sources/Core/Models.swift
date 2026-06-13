@@ -93,7 +93,7 @@ struct MakeResult: Codable {
     let kind: String
     let display: String
     let hook: String
-    let retailJpy: Int
+    var retailJpy: Int        // 作った後に価格変更できるよう var
     let designUrl: String
     let pdpUrl: String
     let status: String

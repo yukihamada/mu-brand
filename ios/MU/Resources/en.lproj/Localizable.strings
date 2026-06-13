@@ -113,3 +113,9 @@
 "share.message" = "I made this on MU. Now make it yours →";
 "pdp.related" = "You might also like";
 "make.popularTitle" = "Start from a best-seller";
+"make.variantCount" = "Design %d / %d · swipe to compare";
+"make.another" = "Make another idea";
+"make.editPrice" = "Change price";
+"make.priceSave" = "Save";
+"make.cancel" = "Cancel";
+"make.priceHint" = "Enter a price (JPY). Below-cost amounts are auto-adjusted.";

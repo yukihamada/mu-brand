@@ -1,8 +1,21 @@
 import SwiftUI
 import UIKit
 
+// 1案ぶんの状態。複数案をスワイプで見比べられるよう、着画/磨き/スコアは案ごとに持つ。
+struct DesignVariant: Identifiable {
+    var result: MakeResult
+    var mockupURL: URL? = nil
+    var mockupIsModel = false
+    var polishedURL: URL? = nil
+    var score: DesignScore? = nil
+    var polishNote: String? = nil
+    var id: String { result.sku }
+    // 着画(モデル) > 磨いた絵 > 元デザイン
+    var shownURL: URL? { mockupURL ?? polishedURL ?? result.designURL }
+}
+
 // 「言えば、作れる」— MU の背骨。ひとこと打つと AI がデザインを起こし、即棚に並ぶ。
-// 生成は POST /api/make。結果は design 画像 + 名前 + ひとこと + 購入導線。
+// 作ると複数案を生成し、スワイプで見比べて選べる。生成は POST /api/make。
 struct MakeView: View {
     @EnvironmentObject private var session: Session
     @EnvironmentObject private var app: AppState
@@ -13,20 +26,20 @@ struct MakeView: View {
     @State private var kind: MakeKind = .auto
     @State private var royalty = 10          // 印税 10〜50%(価格は自動調整)
     @State private var isMaking = false
-    @State private var result: MakeResult?
     @State private var errorMessage: String?
     @State private var showCheckout = false
     @State private var showGift = false
     @FocusState private var promptFocused: Bool
 
+    // 複数案 + スワイプ
+    @State private var variants: [DesignVariant] = []
+    @State private var current = 0           // スワイプ中の案
+    @State private var addingVariant = false  // 「もう1案」生成中
+    @State private var pollTasks: [Task<Void, Never>] = []
+
     // 作っている間の演出
     @State private var makingStep = 0
     @State private var revealed = false      // 完成リビールのアニメ
-
-    // 着画(モデル着用 or 平置き mockup)。ポーリングで出来たら差し替え。
-    @State private var mockupURL: URL?
-    @State private var mockupIsModel = false
-    @State private var pollTask: Task<Void, Never>?   // 着画ポーリング(make毎にキャンセル)
 
     // リミックス(続きを作る)の状態
     @State private var showRemix = false
@@ -35,9 +48,16 @@ struct MakeView: View {
 
     // 「磨く」(5軸自己改善) の状態
     @State private var isPolishing = false
-    @State private var polishedURL: URL?     // 磨いた後の差し替え画像
-    @State private var score: DesignScore?   // 最新スコア (after)
-    @State private var polishNote: String?
+
+    // 価格編集(作った後に値段を変える)
+    @State private var showPriceEdit = false
+    @State private var priceInput = ""
+    @State private var savingPrice = false
+
+    // 現在表示中の案(安全に取り出す)
+    private var currentVariant: DesignVariant? {
+        variants.indices.contains(current) ? variants[current] : nil
+    }
 
     // 作った直後 = 高意欲の瞬間に1回だけ通知許可を促す
     @AppStorage("didPromptPushAfterMake") private var didPromptPush = false
@@ -120,8 +140,8 @@ struct MakeView: View {
 
                     if isMaking {
                         makingView
-                    } else if let result {
-                        resultCard(result)
+                    } else if !variants.isEmpty {
+                        variantPager
                     } else {
                         hints
                     }
@@ -151,14 +171,21 @@ struct MakeView: View {
                 make()
             }
             .sheet(isPresented: $showCheckout) {
-                if let s = result?.checkoutUrl, let url = URL(string: s) {
+                if let s = currentVariant?.result.checkoutUrl, let url = URL(string: s) {
                     SafariView(url: url).ignoresSafeArea()
                 }
             }
             .sheet(isPresented: $showGift) {
-                if let s = result?.checkoutUrl, let url = giftURL(s) {
+                if let s = currentVariant?.result.checkoutUrl, let url = giftURL(s) {
                     SafariView(url: url).ignoresSafeArea()
                 }
+            }
+            .alert(String(localized: "make.editPrice"), isPresented: $showPriceEdit) {
+                TextField("¥", text: $priceInput).keyboardType(.numberPad)
+                Button(String(localized: "make.priceSave")) { savePrice() }
+                Button(String(localized: "make.cancel"), role: .cancel) {}
+            } message: {
+                Text(String(localized: "make.priceHint"))
             }
         }
     }
@@ -283,179 +310,156 @@ struct MakeView: View {
         .disabled(isMaking)
     }
 
-    @ViewBuilder
-    private func resultCard(_ r: MakeResult) -> some View {
-        // 表示画像: 磨いた絵 > 着画(オンボディ) > 元デザイン
-        // 着画(モデル) > 磨いた絵 > 元デザイン。着画が出たらそれを主役にする
-        // (磨いた後も新しい着画が来たらそれを優先)。
-        let shownURL = mockupURL ?? polishedURL ?? r.designURL
+    // 複数案をスワイプで見比べ。画像をページング、下の操作は現在の案に連動。
+    private var variantPager: some View {
         VStack(alignment: .leading, spacing: 14) {
-            // 完成バナー(テンション上げ)
             Label(String(localized: "make.done"), systemImage: "checkmark.seal.fill")
-                .font(.headline)
-                .foregroundStyle(.tint)
-                .scaleEffect(revealed ? 1 : 0.6)
-                .opacity(revealed ? 1 : 0)
+                .font(.headline).foregroundStyle(.tint)
+                .scaleEffect(revealed ? 1 : 0.6).opacity(revealed ? 1 : 0)
 
-            ZStack {
-                AsyncImage(url: shownURL) { phase in
-                    switch phase {
-                    case .success(let img): img.resizable().scaledToFit()
-                    default: Rectangle().fill(.quaternary).frame(height: 320)
-                    }
+            // 案カウンタ + スワイプ案内
+            if variants.count > 1 {
+                Text(String(format: String(localized: "make.variantCount"), current + 1, variants.count))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            // 画像ページャ(スワイプで案を切替)
+            TabView(selection: $current) {
+                ForEach(Array(variants.enumerated()), id: \.element.id) { idx, v in
+                    variantImage(v).tag(idx)
                 }
-                .frame(maxWidth: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-                .opacity(isPolishing ? 0.4 : 1)
-                .scaleEffect(revealed ? 1 : 0.92)
-
-                if isPolishing {
-                    VStack(spacing: 8) {
+                if addingVariant {  // 生成中の案をプレースホルダで見せる
+                    ZStack { RoundedRectangle(cornerRadius: 16).fill(.quaternary.opacity(0.3)).shimmering()
                         ProgressView().tint(.white)
-                        Text(String(localized: "make.polishing"))
-                            .font(.footnote).foregroundStyle(.white)
-                    }
-                }
-                // 着画ができたら右上にバッジ
-                if mockupURL != nil && polishedURL == nil {
-                    VStack { HStack {
-                        Spacer()
-                        Text(String(localized: mockupIsModel ? "make.onbody.model" : "make.onbody"))
-                            .font(.caption2.weight(.bold))
-                            .padding(.horizontal, 8).padding(.vertical, 4)
-                            .background(.black.opacity(0.6), in: Capsule())
-                            .foregroundStyle(.white)
-                            .padding(8)
-                    }; Spacer() }
+                    }.tag(variants.count)
                 }
             }
-            .id(shownURL?.absoluteString ?? r.designUrl) // 差し替え時に再描画
+            .tabViewStyle(.page(indexDisplayMode: variants.count > 1 ? .always : .never))
+            .frame(height: 360)
 
-            Text(r.display.uppercased())
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            Text(r.hook)
-                .font(.title3.weight(.medium))
+            if let v = currentVariant { detailsFor(v) }
 
-            // MUスコア (5軸)。磨くと更新される。
-            if let s = score {
-                scoreView(s)
-            }
-
-            HStack {
-                Text(r.priceLabel).font(.title2.bold())
-                Spacer()
-            }
-
-            // 出品済み + 印税: 「もう棚に並んだ。売れたら R% (約¥Y) があなたに」
-            if r.autoApproved, let pct = r.makerPct, let earn = r.makerEarnJpy {
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: "bag.badge.plus").foregroundStyle(.tint)
-                    Text(String(format: String(localized: "make.listedEarn"), pct, "¥\(earn.formatted())"))
-                        .font(.footnote)
+            // もう1案つくる(バリエーションを増やしてスワイプで見比べ)
+            Button {
+                addVariation()
+            } label: {
+                HStack {
+                    if addingVariant { ProgressView() } else { Image(systemName: "plus.circle") }
+                    Text(String(localized: "make.another"))
                 }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity).padding(.vertical, 4)
             }
-
-            Text(polishNote ?? r.note)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            // 磨く — 5軸で自己改善 (AI生成・自動承認の live 商品のみ)。
-            if r.editToken != nil && r.autoApproved {
-                Button {
-                    polish(r)
-                } label: {
-                    HStack {
-                        Image(systemName: "wand.and.stars")
-                        Text(isPolishing ? String(localized: "make.polishing") : String(localized: "make.polish"))
-                    }
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
-                }
-                .buttonStyle(.bordered)
-                .tint(.yellow)
-                .disabled(isPolishing)
-            }
-
-            // 自動承認なら即購入 + プレゼント。要審査(flagged)は checkout_url が null。
-            if r.checkoutUrl != nil {
-                Button {
-                    Analytics.track("make_buy", ["sku": r.sku])
-                    showCheckout = true
-                } label: {
-                    Label(String(localized: "pdp.buy"), systemImage: "bolt.fill")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
-                }
-                .buttonStyle(.borderedProminent)
-                .foregroundStyle(.black)
-                .disabled(isPolishing)
-
-                // 🎁 プレゼントする(相手の住所+メッセージはStripe側・金額なし納品書)
-                Button {
-                    Analytics.track("make_gift", ["sku": r.sku])
-                    showGift = true
-                } label: {
-                    Label(String(localized: "buy.gift"), systemImage: "gift.fill")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 4)
-                }
-                .buttonStyle(.bordered)
-                .disabled(isPolishing)
-            } else {
-                Label(String(localized: "make.reviewPending"), systemImage: "clock")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-
-            // 続きを、誰かと作る(リミックス)。元の作者には印税5%が流れる。
-            if r.editToken != nil && r.autoApproved {
-                remixSection(r)
-            }
-
-            if let pdp = URL(string: r.pdpUrl) {
-                // 作った瞬間にシェア = 全創作が宣伝に。リンク先で着画・購入・続きを作れる。
-                ShareLink(item: pdp,
-                          subject: Text(r.display),
-                          message: Text(String(localized: "share.message"))) {
-                    Label(String(localized: "share.cta"), systemImage: "square.and.arrow.up")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 4)
-                }
-                .buttonStyle(.bordered)
-
-                Link(destination: pdp) {
-                    Label(String(localized: "pdp.openWeb"), systemImage: "safari")
-                        .font(.subheadline)
-                        .frame(maxWidth: .infinity)
-                }
-            }
+            .buttonStyle(.bordered)
+            .disabled(addingVariant || isPolishing)
 
             Button(String(localized: "make.again")) {
-                withAnimation {
-                    result = nil
-                    polishedURL = nil
-                    mockupURL = nil; mockupIsModel = false
-                    score = nil
-                    polishNote = nil
-                    revealed = false
-                }
+                resetAll()
                 prompt = ""
                 promptFocused = true
             }
-            .font(.subheadline)
-            .frame(maxWidth: .infinity)
-            .padding(.top, 4)
+            .font(.subheadline).frame(maxWidth: .infinity).padding(.top, 2)
         }
         .padding(16)
         .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    private func variantImage(_ v: DesignVariant) -> some View {
+        ZStack {
+            AsyncImage(url: v.shownURL) { phase in
+                switch phase {
+                case .success(let img): img.resizable().scaledToFit()
+                default: Rectangle().fill(.quaternary)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .opacity(isPolishing && v.id == currentVariant?.id ? 0.4 : 1)
+            if isPolishing && v.id == currentVariant?.id {
+                VStack(spacing: 8) { ProgressView().tint(.white)
+                    Text(String(localized: "make.polishing")).font(.footnote).foregroundStyle(.white) }
+            }
+            if v.mockupURL != nil && v.polishedURL == nil {
+                VStack { HStack { Spacer()
+                    Text(String(localized: v.mockupIsModel ? "make.onbody.model" : "make.onbody"))
+                        .font(.caption2.weight(.bold)).padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(.black.opacity(0.6), in: Capsule()).foregroundStyle(.white).padding(8)
+                }; Spacer() }
+            }
+        }
+    }
+
+    // 現在の案の詳細 + 操作(価格編集・磨く・買う・プレゼント・リミックス・シェア)。
+    @ViewBuilder
+    private func detailsFor(_ v: DesignVariant) -> some View {
+        let r = v.result
+        Text(r.display.uppercased()).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+        Text(r.hook).font(.title3.weight(.medium))
+
+        if let s = v.score { scoreView(s) }
+
+        // 価格 + 「変更」(作った後に値段を変えられる)
+        HStack {
+            Text(r.priceLabel).font(.title2.bold())
+            if r.editToken != nil && r.autoApproved {
+                Button(String(localized: "make.editPrice")) {
+                    priceInput = String(r.retailJpy)
+                    showPriceEdit = true
+                }
+                .font(.caption).buttonStyle(.bordered).controlSize(.mini)
+            }
+            Spacer()
+        }
+
+        if r.autoApproved, let pct = r.makerPct, let earn = r.makerEarnJpy {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "bag.badge.plus").foregroundStyle(.tint)
+                Text(String(format: String(localized: "make.listedEarn"), pct, "¥\(earn.formatted())")).font(.footnote)
+            }
+            .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+            .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+        }
+
+        Text(v.polishNote ?? r.note).font(.caption).foregroundStyle(.secondary)
+
+        if r.editToken != nil && r.autoApproved {
+            Button { polish(v) } label: {
+                HStack { Image(systemName: "wand.and.stars")
+                    Text(isPolishing ? String(localized: "make.polishing") : String(localized: "make.polish")) }
+                .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 6)
+            }
+            .buttonStyle(.bordered).tint(.yellow).disabled(isPolishing)
+        }
+
+        if r.checkoutUrl != nil {
+            Button { Analytics.track("make_buy", ["sku": r.sku]); showCheckout = true } label: {
+                Label(String(localized: "pdp.buy"), systemImage: "bolt.fill")
+                    .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 6)
+            }
+            .buttonStyle(.borderedProminent).foregroundStyle(.black).disabled(isPolishing)
+            Button { Analytics.track("make_gift", ["sku": r.sku]); showGift = true } label: {
+                Label(String(localized: "buy.gift"), systemImage: "gift.fill")
+                    .font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity).padding(.vertical, 4)
+            }
+            .buttonStyle(.bordered).disabled(isPolishing)
+        } else {
+            Label(String(localized: "make.reviewPending"), systemImage: "clock")
+                .font(.subheadline).foregroundStyle(.secondary)
+        }
+
+        if r.editToken != nil && r.autoApproved { remixSection(r) }
+
+        if let pdp = URL(string: r.pdpUrl) {
+            ShareLink(item: pdp, subject: Text(r.display), message: Text(String(localized: "share.message"))) {
+                Label(String(localized: "share.cta"), systemImage: "square.and.arrow.up")
+                    .font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity).padding(.vertical, 4)
+            }
+            .buttonStyle(.bordered)
+            Link(destination: pdp) {
+                Label(String(localized: "pdp.openWeb"), systemImage: "safari")
+                    .font(.subheadline).frame(maxWidth: .infinity)
+            }
+        }
     }
 
     private var hints: some View {
@@ -616,39 +620,35 @@ struct MakeView: View {
         }
     }
 
+    // sku で案のインデックスを引く(スワイプで current が動いても安全に更新するため)。
+    private func variantIndex(_ sku: String) -> Int? { variants.firstIndex { $0.id == sku } }
+
     private func remix(_ r: MakeResult) {
         let words = remixWords.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !words.isEmpty, !isRemixing else { return }
         isRemixing = true
-        pollTask?.cancel()
         Task {
             do {
                 let nr = try await MUAPI.remix(sku: r.sku, words: words, apiKey: session.apiKey)
                 Analytics.track("make_remix", ["from": r.sku, "to": nr.sku])
                 await MainActor.run {
-                    isRemixing = false
-                    showRemix = false
-                    remixWords = ""
-                    polishedURL = nil
-                    mockupURL = nil; mockupIsModel = false
-                    score = nil
-                    polishNote = nil
-                    revealed = false
-                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { result = nr }
+                    isRemixing = false; showRemix = false; remixWords = ""
+                    // リミックスは新しい案として追加し、そこへスワイプ。
+                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+                        variants.append(DesignVariant(result: nr))
+                        current = variants.count - 1
+                    }
                     successHaptic()
-                    withAnimation(.spring(response: 0.6, dampingFraction: 0.6).delay(0.05)) { revealed = true }
                     startPolling(sku: nr.sku)
                 }
             } catch {
-                await MainActor.run {
-                    errorMessage = error.localizedDescription
-                    isRemixing = false
-                }
+                await MainActor.run { errorMessage = error.localizedDescription; isRemixing = false }
             }
         }
     }
 
-    private func polish(_ r: MakeResult) {
+    private func polish(_ v: DesignVariant) {
+        let r = v.result
         guard let token = r.editToken, !isPolishing else { return }
         errorMessage = nil
         isPolishing = true
@@ -657,27 +657,75 @@ struct MakeView: View {
                 let res = try await MUAPI.polish(sku: r.sku, editToken: token)
                 Analytics.track("make_polish", ["sku": r.sku, "improved": res.improved])
                 await MainActor.run {
-                    withAnimation {
-                        if res.improved, let url = res.designURL {
-                            polishedURL = url
-                            score = res.after
-                            // 磨いた絵で着画も作り直されるので、旧着画を捨てて取り直す。
-                            mockupURL = nil; mockupIsModel = false
-                            startPolling(sku: r.sku)
-                        } else {
-                            // 据え置き: 現状スコアは before(=after の最高試行) を見せる
-                            score = res.after ?? res.before
+                    if let i = variantIndex(r.sku) {
+                        withAnimation {
+                            if res.improved, let url = res.designURL {
+                                variants[i].polishedURL = url
+                                variants[i].score = res.after
+                                variants[i].mockupURL = nil; variants[i].mockupIsModel = false
+                                startPolling(sku: r.sku) // 磨いた絵の着画を取り直す
+                            } else {
+                                variants[i].score = res.after ?? res.before
+                            }
+                            variants[i].polishNote = res.note
                         }
-                        polishNote = res.note
                     }
                     isPolishing = false
                 }
             } catch {
-                await MainActor.run {
-                    errorMessage = error.localizedDescription
-                    isPolishing = false
-                }
+                await MainActor.run { errorMessage = error.localizedDescription; isPolishing = false }
             }
+        }
+    }
+
+    // 値段を作った後に変更(/api/make/edit)。
+    private func savePrice() {
+        guard let r = currentVariant?.result, let token = r.editToken,
+              let yen = Int(priceInput.filter(\.isNumber)), yen > 0, !savingPrice else { return }
+        savingPrice = true
+        Task {
+            do {
+                let newPrice = try await MUAPI.editPrice(sku: r.sku, editToken: token, priceJpy: yen)
+                Analytics.track("make_price_edit", ["sku": r.sku, "price": newPrice])
+                await MainActor.run {
+                    if let i = variantIndex(r.sku) { variants[i].result.retailJpy = newPrice }
+                    savingPrice = false; showPriceEdit = false
+                }
+            } catch {
+                await MainActor.run { errorMessage = error.localizedDescription; savingPrice = false }
+            }
+        }
+    }
+
+    // もう1案つくる(同じ依頼でバリエーションを追加 → スワイプで見比べ)。
+    private func addVariation() {
+        guard !addingVariant, let base = variants.first?.result else { return }
+        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        addingVariant = true
+        Task {
+            do {
+                let r = try await MUAPI.make(prompt: text.isEmpty ? base.hook : text,
+                                             kind: kind, royalty: royalty, apiKey: session.apiKey)
+                Analytics.track("make_variation", ["sku": r.sku])
+                await MainActor.run {
+                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+                        variants.append(DesignVariant(result: r))
+                        current = variants.count - 1
+                    }
+                    addingVariant = false
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    startPolling(sku: r.sku)
+                }
+            } catch {
+                await MainActor.run { errorMessage = error.localizedDescription; addingVariant = false }
+            }
+        }
+    }
+
+    private func resetAll() {
+        pollTasks.forEach { $0.cancel() }; pollTasks.removeAll()
+        withAnimation {
+            variants.removeAll(); current = 0; revealed = false
         }
     }
 
@@ -700,14 +748,7 @@ struct MakeView: View {
         guard !text.isEmpty else { return }
         promptFocused = false
         errorMessage = nil
-        // 新しい作品 → 全状態リセット + 進行中ポーリングをキャンセル
-        pollTask?.cancel()
-        result = nil
-        polishedURL = nil
-        mockupURL = nil; mockupIsModel = false
-        score = nil
-        polishNote = nil
-        revealed = false
+        resetAll()
         makingStep = 0
         isMaking = true
         Task {
@@ -717,49 +758,57 @@ struct MakeView: View {
                 await MainActor.run {
                     isMaking = false
                     withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
-                        result = r
+                        variants = [DesignVariant(result: r)]
+                        current = 0
                     }
-                    // 完成の高揚: 成功ハプティクス + リビールアニメ
                     successHaptic()
-                    withAnimation(.spring(response: 0.6, dampingFraction: 0.6).delay(0.05)) {
-                        revealed = true
-                    }
+                    withAnimation(.spring(response: 0.6, dampingFraction: 0.6).delay(0.05)) { revealed = true }
                     maybePromptPush()
-                    startPolling(sku: r.sku) // 着画ポーリング開始
+                    startPolling(sku: r.sku)
                 }
+                // いろいろスワイプで見比べられるよう、もう2案を裏で生成して追加。
+                await autoVariations(prompt: text, count: 2)
             } catch {
-                await MainActor.run {
-                    errorMessage = error.localizedDescription
-                    isMaking = false
-                }
+                await MainActor.run { errorMessage = error.localizedDescription; isMaking = false }
             }
         }
     }
 
-    // 着画ポーリングを(再)起動。前のポーリングは必ずキャンセルしてから。
-    private func startPolling(sku: String) {
-        pollTask?.cancel()
-        pollTask = Task { await pollOnbody(sku: sku) }
+    // 追加バリエーションを順に生成して追加(スワイプ用)。
+    private func autoVariations(prompt text: String, count: Int) async {
+        for _ in 0..<count {
+            guard let r = try? await MUAPI.make(prompt: text, kind: kind, royalty: royalty, apiKey: session.apiKey)
+            else { continue }
+            await MainActor.run {
+                guard !variants.isEmpty else { return } // 作り直し済みなら捨てる
+                variants.append(DesignVariant(result: r))
+                startPolling(sku: r.sku)
+            }
+        }
     }
 
-    // 着画ポーリング: 数秒ごとに peek し、mockup が出たら反映してハプティクス。
-    // キャンセル(新make/remix)・作品切替で安全に中断する。
+    // 着画ポーリングを起動(案ごとに1本・配列で保持し、作り直しで全キャンセル)。
+    private func startPolling(sku: String) {
+        let t = Task { await pollOnbody(sku: sku) }
+        pollTasks.append(t)
+    }
+
+    // 着画ポーリング: 数秒ごとに peek し、mockup が出たら該当案に反映。
     private func pollOnbody(sku: String) async {
         for _ in 0..<14 {
             try? await Task.sleep(nanoseconds: 5_000_000_000)
             if Task.isCancelled { return }
-            if result?.sku != sku { return }
+            if variantIndex(sku) == nil { return }
             if let peek = try? await MUAPI.peek(sku: sku), let url = peek.mockupURL {
                 if Task.isCancelled { return }
                 await MainActor.run {
-                    guard !Task.isCancelled, result?.sku == sku else { return }
+                    guard let i = variantIndex(sku) else { return }
                     withAnimation(.spring(response: 0.5, dampingFraction: 0.75)) {
-                        mockupURL = url
-                        mockupIsModel = peek.isModel ?? false
+                        variants[i].mockupURL = url
+                        variants[i].mockupIsModel = peek.isModel ?? false
                     }
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    if i == current { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
                 }
-                // モデル着用写真が出たら確定。まだ平置きなら、モデル写真を待って続行。
                 if peek.isModel == true { return }
             }
         }
