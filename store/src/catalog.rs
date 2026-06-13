@@ -2133,8 +2133,13 @@ pub async fn design_remix_create(
         "Here is an existing print-ready chest graphic as a reference image. \
          Create a NEW variation of it: keep the reference's overall style, \
          composition, typography feel and spirit, and apply this change: {}. \
-         Print-ready chest graphic at 300 DPI on a pure white background. \
-         NO model, NO mockup, just the artwork, centered. Variation key: {}.",
+         Print-ready chest graphic at 300 DPI for apparel. \
+         CONSISTENCY & SIZE RULES (must follow exactly): \
+         (1) The artwork must be LARGE and fill MOST of the square canvas — bold and clearly visible, NOT tiny. \
+         (2) Background MUST be 100% pure flat #FFFFFF white, edge to edge. \
+         (3) ABSOLUTELY NO rectangular panel, frame, border, card or grey/colored box behind the art — \
+         the artwork sits DIRECTLY on pure white so it keys out cleanly to transparent. \
+         (4) NO drop shadow, NO mockup, NO model — just the flat artwork, centered. Variation key: {}.",
         words, seed);
     let img = match crate::gemini::call_gemini_with_image(&design_prompt, &[design.as_str()]).await {
         Ok(i) => i,
@@ -7540,6 +7545,100 @@ pub async fn app_event(
     axum::Json(serde_json::json!({"ok": true})).into_response()
 }
 
+/// GET /app — iOS アプリの紹介ページ(インストール導線・KPI最適化)。
+/// 価値(言えば作れる)→ 生きている証明(実数)→ 強いCTA。黒地に金・モバイル先頭。
+pub async fn app_landing(State(db): State<Db>) -> Html<String> {
+    // 生きている証明: 実数のみ(未確認の数字は出さない)。
+    let (total_live, last_24h): (i64, i64) = {
+        let conn = db.lock().unwrap();
+        let t = conn.query_row(
+            "SELECT COUNT(*) FROM catalog_products WHERE status='live' AND is_active=1 AND COALESCE(fulfillment_route,'')!='digital'",
+            [], |r| r.get(0)).unwrap_or(0);
+        let d = conn.query_row(
+            "SELECT COUNT(*) FROM catalog_products WHERE status='live' AND brand='minna' AND created_at > datetime('now','-1 day')",
+            [], |r| r.get(0)).unwrap_or(0);
+        (t, d)
+    };
+    let html = APP_LANDING_HTML
+        .replace("__TOTAL__", &total_live.to_string())
+        .replace("__LAST24__", &last_24h.to_string());
+    Html(html)
+}
+
+const APP_LANDING_HTML: &str = r##"<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU — 言えば、作れる。｜AIアパレル工房アプリ</title>
+<meta name="description" content="ひとこと言うだけで、世界に一つの服やグッズをAIが作って即販売。あなたのデザインが売れたら印税も。MUのiPhoneアプリ。">
+<meta property="og:title" content="MU — 言えば、作れる。"><meta property="og:description" content="ひとことで、世界に一つのプロダクトが生まれる。AIアパレル工房 MU のアプリ。">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--gold:#e6c449;--bg:#0a0a0a}
+body{background:var(--bg);color:#f5f5f0;font-family:-apple-system,'Hiragino Sans',sans-serif;line-height:1.7;-webkit-font-smoothing:antialiased}
+.wrap{max-width:760px;margin:0 auto;padding:0 22px}
+.hero{text-align:center;padding:64px 0 40px}
+.mark{font-size:13px;letter-spacing:.4em;color:var(--gold);font-weight:900}
+h1{font-size:clamp(34px,9vw,56px);font-weight:900;line-height:1.1;margin:14px 0 12px}
+.sub{font-size:clamp(15px,4vw,19px);color:rgba(245,245,240,.7);max-width:30em;margin:0 auto 26px}
+.cta{display:inline-block;background:var(--gold);color:#0a0a0a;font-weight:800;font-size:17px;padding:15px 34px;border-radius:14px;text-decoration:none;box-shadow:0 8px 30px rgba(230,196,73,.25)}
+.cta.s{background:transparent;color:var(--gold);border:1px solid rgba(230,196,73,.5);box-shadow:none;margin-left:8px}
+.note{font-size:12px;color:rgba(245,245,240,.4);margin-top:12px}
+.proof{display:flex;gap:14px;justify-content:center;margin:34px 0 0;flex-wrap:wrap}
+.stat{background:#141414;border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:16px 22px;min-width:130px}
+.stat b{display:block;font-size:30px;font-weight:900;color:var(--gold)}
+.stat span{font-size:12px;color:rgba(245,245,240,.55)}
+.feat{padding:44px 0;border-top:1px solid rgba(255,255,255,.07)}
+.feat h2{font-size:13px;letter-spacing:.2em;color:var(--gold);text-transform:uppercase;margin-bottom:20px}
+.row{display:flex;gap:14px;align-items:flex-start;margin-bottom:20px}
+.row .ic{font-size:26px;line-height:1}
+.row h3{font-size:18px;font-weight:800;margin-bottom:3px}
+.row p{font-size:14px;color:rgba(245,245,240,.65)}
+.steps{counter-reset:s;padding:0}
+.steps li{list-style:none;counter-increment:s;display:flex;gap:14px;align-items:center;margin-bottom:14px;font-size:16px}
+.steps li::before{content:counter(s);flex:none;width:34px;height:34px;border-radius:50%;background:var(--gold);color:#0a0a0a;font-weight:900;display:grid;place-items:center}
+.final{text-align:center;padding:54px 0 70px}
+.final h2{font-size:clamp(26px,7vw,38px);font-weight:900;margin-bottom:22px}
+footer{text-align:center;padding:26px;font-size:12px;color:rgba(245,245,240,.4);border-top:1px solid rgba(255,255,255,.07)}
+footer a{color:rgba(245,245,240,.55)}
+</style></head><body>
+<section class="hero"><div class="wrap">
+  <div class="mark">━◯━ MU</div>
+  <h1>言えば、作れる。</h1>
+  <p class="sub">ひとこと言うだけで、世界に一つの服やグッズをAIが作って、その場で買える。あなたのデザインが売れたら、印税もあなたに。</p>
+  <a class="cta" href="/make?ref=app" data-funnel="cta_click" data-funnel-cta="app_try_make">今すぐ作ってみる →</a>
+  <a class="cta s" href="#how" data-funnel="cta_click" data-funnel-cta="app_how">使い方</a>
+  <div class="note">iPhoneアプリは近日公開。今すぐブラウザで作れます。</div>
+  <div class="proof">
+    <div class="stat"><b>__TOTAL__</b><span>並んでいる作品</span></div>
+    <div class="stat"><b>__LAST24__</b><span>24時間で生まれた数</span></div>
+    <div class="stat"><b>30秒</b><span>言葉から完成まで</span></div>
+  </div>
+</div></section>
+
+<section class="feat"><div class="wrap">
+  <h2>MUにしかないこと</h2>
+  <div class="row"><div class="ic">🗣️</div><div><h3>言えば作れる</h3><p>「柔術の帯モチーフの黒T」——ひとことで、AIがデザインを起こす。絵心も道具もいらない。</p></div></div>
+  <div class="row"><div class="ic">👕</div><div><h3>着ている姿で、すぐ確認</h3><p>作った瞬間に、モデルが着ている写真(着画)が立ち上がる。スワイプで複数案を見比べ。</p></div></div>
+  <div class="row"><div class="ic">💰</div><div><h3>売れたら、あなたに印税</h3><p>あなたの作品が売れるたび、売上の10〜50%があなたに。価格も自分で決められる。</p></div></div>
+  <div class="row"><div class="ic">🤖</div><div><h3>AIに話しかけて操作</h3><p>「今月いくら売れた?」「ステッカー作って」——会話でぜんぶできる。</p></div></div>
+</div></section>
+
+<section class="feat" id="how"><div class="wrap">
+  <h2>3ステップ</h2>
+  <ol class="steps">
+    <li>作りたいものを、ひとこと言う(声でもOK)</li>
+    <li>数十秒で、デザインと着画が完成</li>
+    <li>その場で買う・贈る・シェアする。売れたら印税</li>
+  </ol>
+</div></section>
+
+<section class="final"><div class="wrap">
+  <h2>あなたの最初の一着を、いま。</h2>
+  <a class="cta" href="/make?ref=app_final" data-funnel="cta_click" data-funnel-cta="app_try_make_final">作ってみる →</a>
+</div></section>
+<footer><div class="wrap">━◯━ MU · <a href="/shop">SHOP</a> · <a href="/make">作る</a> · <a href="/transparency">透明性</a> · <a href="/tokushoho">特商法</a> · <a href="/privacy">プライバシー</a> · 株式会社イネブラ</div></footer>
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+</body></html>"##;
+
 // ───────────────────────── アプリ内 AI エージェント(MCP/アクションを会話で) ─────────────────────────
 
 #[derive(serde::Deserialize)]
@@ -8233,13 +8332,21 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
                 theme_brief, seed)
         } else {
             format!(
-                "Print-ready chest graphic at 300 DPI on a pure white background. \
+                "Print-ready chest graphic at 300 DPI for apparel. \
                  Style brief: {}. \
                  Make it genuinely DESIRABLE — a design real people would want to wear and buy: \
                  a strong focal idea, confident composition, tasteful modern type, balanced negative space, \
                  a refined limited palette that prints cleanly. Avoid generic clip-art, clutter, or AI-looking gradients. \
                  Aim for a piece that looks like it belongs in a great streetwear/boutique shop. \
-                 NO model, NO mockup, just the artwork, centered. Variation key: {}.",
+                 CONSISTENCY & SIZE RULES (must follow exactly): \
+                 (1) The artwork must be LARGE and fill MOST of the square canvas — bold and clearly visible, \
+                 NOT tiny or lost in empty space. \
+                 (2) The background MUST be 100% pure flat #FFFFFF white, edge to edge. \
+                 (3) ABSOLUTELY NO rectangular panel, NO frame, NO border, NO card, NO sticker outline, \
+                 NO colored or grey box or backdrop behind the art — the artwork sits DIRECTLY on pure white \
+                 so it keys out cleanly to transparent (any non-white panel leaves an ugly box on the garment). \
+                 (4) NO drop shadows, NO mockup, NO model, NO photo of a shirt — just the flat artwork itself, centered. \
+                 Variation key: {}.",
                 theme_brief, seed)
         };
         let img = match if use_local { local_gen_image(&design_prompt).await } else { crate::gemini::call_gemini(&design_prompt).await } {
@@ -9752,7 +9859,7 @@ pub async fn shop_related(State(db): State<Db>, Query(q): Query<RelatedQuery>) -
             .unwrap_or((0, String::new()));
         let sql = format!(
             "SELECT sku, brand, description_ja, retail_price_jpy,
-                    COALESCE({ext}, mockup_main_file),
+                    COALESCE({life}, {ext}, mockup_main_file),
                     (SELECT COUNT(*) FROM catalog_orders o WHERE o.sku=catalog_products.sku AND o.status='submitted') AS sold,
                     COALESCE(created_at,'')
              FROM catalog_products
@@ -9762,7 +9869,7 @@ pub async fn shop_related(State(db): State<Db>, Query(q): Query<RelatedQuery>) -
                AND ( (?2 > 0 AND printful_product_id = ?2) OR (?2 = 0 AND brand = ?3) )
              ORDER BY sold DESC, ({score}) DESC, created_at DESC
              LIMIT ?4",
-            ext = MOCKUP_EXT_LIVE, score = MU_SCORE_SQL,
+            life = LIFESTYLE_EXT, ext = MOCKUP_EXT_LIVE, score = MU_SCORE_SQL,
         );
         conn.prepare(&sql).ok().and_then(|mut s| {
             s.query_map(rusqlite::params![&q.sku, pp, brand, limit], |r| {
@@ -9913,13 +10020,14 @@ pub async fn shop_feed_json(State(db): State<Db>, Query(q): Query<ShopQuery>) ->
         let conn = db.lock().unwrap();
         let sql = format!(
             "SELECT sku, brand, description_ja, retail_price_jpy,
-                    COALESCE({ext}, mockup_main_file),
+                    COALESCE({life}, {ext}, mockup_main_file),
                     (SELECT COUNT(*) FROM catalog_orders o WHERE o.sku=catalog_products.sku AND o.status='submitted'),
                     COALESCE(created_at,'')
              FROM catalog_products
              WHERE {where_sql}
              ORDER BY (COALESCE({ext}, '') != '') DESC, created_at DESC, sku
              LIMIT ? OFFSET ?",
+            life = LIFESTYLE_EXT,
             ext = MOCKUP_EXT_LIVE,
             where_sql = where_sql,
         );
@@ -16253,6 +16361,14 @@ struct ProductRow {
 const MOCKUP_EXT_LIVE: &str = "CASE WHEN mockup_url_external LIKE 'https://printful-upload.s3%' \
        OR mockup_url_external LIKE '%/tmp/%' \
      THEN NULL ELSE mockup_url_external END";
+
+/// SQL fragment: Gemini 直接生成の「着画(モデル着用)」= lifestyle 画像を最優先で拾う。
+/// Printful の平置きモック(白箱・サイズ不揃いが出る)より、これがあればこちらを表示。
+/// 相関サブクエリなので FROM 側に catalog_products がある SELECT でのみ使う。
+const LIFESTYLE_EXT: &str = "(SELECT image_url FROM catalog_product_extras le \
+     WHERE le.sku = catalog_products.sku AND lower(le.label) LIKE 'lifestyle%' \
+       AND le.image_url IS NOT NULL AND le.image_url != '' \
+     ORDER BY le.id DESC LIMIT 1)";
 
 /// SQL fragment: MUスコア ranking expression for the /shop default sort.
 ///   AIデザイン基礎点 (meta_json.score.total / 未採点は40) × 0.7

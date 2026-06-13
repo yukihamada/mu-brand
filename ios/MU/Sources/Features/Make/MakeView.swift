@@ -65,7 +65,7 @@ struct MakeView: View {
     @State private var popular: [FeedProduct] = []   // 売れ筋(人気から作る)
 
     // 作っている間に流す“作ってる感”メッセージ
-    private let makingSteps = ["make.step1", "make.step2", "make.step3", "make.step4", "make.step5"]
+    private let makingSteps = ["make.step1", "make.step2", "make.step3", "make.step4", "make.step5", "make.step6"]
 
     var body: some View {
         NavigationStack {
@@ -271,7 +271,15 @@ struct MakeView: View {
 
     // 作っている間の“作ってる感”。本当に何かが起きている手応えを出す。
     private var makingView: some View {
-        VStack(spacing: 18) {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        return VStack(spacing: 18) {
+            // 自分ゴト化: 入力した言葉を「かたちにしています」と返す
+            if !trimmed.isEmpty {
+                Text(String(format: String(localized: "make.shaping"), trimmed))
+                    .font(.headline)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+            }
             ZStack {
                 RoundedRectangle(cornerRadius: 20)
                     .fill(.quaternary.opacity(0.3))
@@ -282,9 +290,12 @@ struct MakeView: View {
                         .font(.system(size: 40))
                         .foregroundStyle(.tint)
                         .symbolEffect(.variableColor.iterative, options: .repeating)
-                    Text(String(localized: String.LocalizationValue(makingSteps[makingStep % makingSteps.count])))
+                    // 魅力的なコピーを巡回(工程 + 価値 + ブランドの物語)
+                    Text(String(format: String(localized: String.LocalizationValue(makingSteps[makingStep % makingSteps.count])), royalty))
                         .font(.callout.weight(.medium))
                         .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
                         .transition(.opacity)
                         .id(makingStep)
                 }
