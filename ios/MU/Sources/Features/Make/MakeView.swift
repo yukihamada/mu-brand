@@ -8,6 +8,7 @@ struct MakeView: View {
     @EnvironmentObject private var app: AppState
 
     @StateObject private var voice = VoiceInput()
+    @State private var voiceBasePrompt = ""   // 録音開始時の入力(認識結果を追記する土台)
     @State private var prompt = ""
     @State private var kind: MakeKind = .auto
     @State private var royalty = 10          // 印税 10〜50%(価格は自動調整)
@@ -25,6 +26,7 @@ struct MakeView: View {
     // 着画(モデル着用 or 平置き mockup)。ポーリングで出来たら差し替え。
     @State private var mockupURL: URL?
     @State private var mockupIsModel = false
+    @State private var pollTask: Task<Void, Never>?   // 着画ポーリング(make毎にキャンセル)
 
     // リミックス(続きを作る)の状態
     @State private var showRemix = false
@@ -126,23 +128,22 @@ struct MakeView: View {
             }
             .navigationTitle(String(localized: "tab.make"))
             .task { Analytics.track("view_make") }
-            // 声で作る: 認識テキストをそのまま入力に流す
+            // 声で作る: 認識テキストを「録音開始時の入力 + 認識結果」で追記する
+            // (一方的な全消し上書きでユーザーが手で打った文章を失わないように)。
             .onChange(of: voice.transcript) { _, t in
-                if !t.isEmpty { prompt = t }
+                if !t.isEmpty { prompt = (voiceBasePrompt + t) }
+            }
+            .onChange(of: voice.isRecording) { _, rec in
+                if rec { voiceBasePrompt = prompt.isEmpty ? "" : prompt + " " }
             }
             // オンボーディングからの「最初の一着」を受け取り、その場で自動生成。
+            // 受け取りは onChange の1箇所のみ(onAppear と二重に拾うと make が2回
+            // 走り課金が二重になる)。make() 冒頭にも二重発火ガードを置く。
             .onChange(of: app.pendingPrompt) { _, new in
                 guard let p = new else { return }
                 app.pendingPrompt = nil
                 prompt = p
                 make()
-            }
-            .onAppear {
-                if let p = app.pendingPrompt {
-                    app.pendingPrompt = nil
-                    prompt = p
-                    make()
-                }
             }
             .sheet(isPresented: $showCheckout) {
                 if let s = result?.checkoutUrl, let url = URL(string: s) {
@@ -150,11 +151,17 @@ struct MakeView: View {
                 }
             }
             .sheet(isPresented: $showGift) {
-                if let s = result?.checkoutUrl, let url = URL(string: s + "&gift=1") {
+                if let s = result?.checkoutUrl, let url = giftURL(s) {
                     SafariView(url: url).ignoresSafeArea()
                 }
             }
         }
+    }
+
+    // checkout_url にギフトフラグを安全に足す(`?` の有無で区切りを選ぶ)。
+    private func giftURL(_ checkout: String) -> URL? {
+        let sep = checkout.contains("?") ? "&" : "?"
+        return URL(string: checkout + sep + "gift=1")
     }
 
     private var header: some View {
@@ -274,7 +281,9 @@ struct MakeView: View {
     @ViewBuilder
     private func resultCard(_ r: MakeResult) -> some View {
         // 表示画像: 磨いた絵 > 着画(オンボディ) > 元デザイン
-        let shownURL = polishedURL ?? mockupURL ?? r.designURL
+        // 着画(モデル) > 磨いた絵 > 元デザイン。着画が出たらそれを主役にする
+        // (磨いた後も新しい着画が来たらそれを優先)。
+        let shownURL = mockupURL ?? polishedURL ?? r.designURL
         VStack(alignment: .leading, spacing: 14) {
             // 完成バナー(テンション上げ)
             Label(String(localized: "make.done"), systemImage: "checkmark.seal.fill")
@@ -405,10 +414,12 @@ struct MakeView: View {
                 remixSection(r)
             }
 
-            Link(destination: URL(string: r.pdpUrl)!) {
-                Label(String(localized: "pdp.openWeb"), systemImage: "safari")
-                    .font(.subheadline)
-                    .frame(maxWidth: .infinity)
+            if let pdp = URL(string: r.pdpUrl) {
+                Link(destination: pdp) {
+                    Label(String(localized: "pdp.openWeb"), systemImage: "safari")
+                        .font(.subheadline)
+                        .frame(maxWidth: .infinity)
+                }
             }
 
             Button(String(localized: "make.again")) {
@@ -559,6 +570,7 @@ struct MakeView: View {
         let words = remixWords.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !words.isEmpty, !isRemixing else { return }
         isRemixing = true
+        pollTask?.cancel()
         Task {
             do {
                 let nr = try await MUAPI.remix(sku: r.sku, words: words, apiKey: session.apiKey)
@@ -573,10 +585,10 @@ struct MakeView: View {
                     polishNote = nil
                     revealed = false
                     withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { result = nr }
-                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    successHaptic()
                     withAnimation(.spring(response: 0.6, dampingFraction: 0.6).delay(0.05)) { revealed = true }
+                    startPolling(sku: nr.sku)
                 }
-                await pollOnbody(sku: nr.sku)
             } catch {
                 await MainActor.run {
                     errorMessage = error.localizedDescription
@@ -599,6 +611,9 @@ struct MakeView: View {
                         if res.improved, let url = res.designURL {
                             polishedURL = url
                             score = res.after
+                            // 磨いた絵で着画も作り直されるので、旧着画を捨てて取り直す。
+                            mockupURL = nil; mockupIsModel = false
+                            startPolling(sku: r.sku)
                         } else {
                             // 据え置き: 現状スコアは before(=after の最高試行) を見せる
                             score = res.after ?? res.before
@@ -629,11 +644,14 @@ struct MakeView: View {
     }
 
     private func make() {
+        // 二重発火ガード(オンボーディング受け渡し+連打)。課金が二重に走るのを防ぐ。
+        guard !isMaking else { return }
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         promptFocused = false
         errorMessage = nil
-        // 新しい作品 → 全状態リセット
+        // 新しい作品 → 全状態リセット + 進行中ポーリングをキャンセル
+        pollTask?.cancel()
         result = nil
         polishedURL = nil
         mockupURL = nil; mockupIsModel = false
@@ -652,14 +670,13 @@ struct MakeView: View {
                         result = r
                     }
                     // 完成の高揚: 成功ハプティクス + リビールアニメ
-                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    successHaptic()
                     withAnimation(.spring(response: 0.6, dampingFraction: 0.6).delay(0.05)) {
                         revealed = true
                     }
                     maybePromptPush()
+                    startPolling(sku: r.sku) // 着画ポーリング開始
                 }
-                // 着画(オンボディ mockup)が出来たらポーリングで差し替え(最大~70秒)。
-                await pollOnbody(sku: r.sku)
             } catch {
                 await MainActor.run {
                     errorMessage = error.localizedDescription
@@ -669,15 +686,23 @@ struct MakeView: View {
         }
     }
 
+    // 着画ポーリングを(再)起動。前のポーリングは必ずキャンセルしてから。
+    private func startPolling(sku: String) {
+        pollTask?.cancel()
+        pollTask = Task { await pollOnbody(sku: sku) }
+    }
+
     // 着画ポーリング: 数秒ごとに peek し、mockup が出たら反映してハプティクス。
+    // キャンセル(新make/remix)・作品切替で安全に中断する。
     private func pollOnbody(sku: String) async {
         for _ in 0..<14 {
             try? await Task.sleep(nanoseconds: 5_000_000_000)
-            // 別の作品に切り替わっていたら中断
+            if Task.isCancelled { return }
             if result?.sku != sku { return }
             if let peek = try? await MUAPI.peek(sku: sku), let url = peek.mockupURL {
+                if Task.isCancelled { return }
                 await MainActor.run {
-                    guard result?.sku == sku else { return }
+                    guard !Task.isCancelled, result?.sku == sku else { return }
                     withAnimation(.spring(response: 0.5, dampingFraction: 0.75)) {
                         mockupURL = url
                         mockupIsModel = peek.isModel ?? false
@@ -688,6 +713,13 @@ struct MakeView: View {
                 if peek.isModel == true { return }
             }
         }
+    }
+
+    // 成功ハプティクスは prepare してから発火(不発を避ける)。
+    private func successHaptic() {
+        let gen = UINotificationFeedbackGenerator()
+        gen.prepare()
+        gen.notificationOccurred(.success)
     }
 }
 

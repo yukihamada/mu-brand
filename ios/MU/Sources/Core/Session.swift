@@ -11,21 +11,33 @@ final class Session: ObservableObject {
     private static let keyAccount = "api_key"
     private static let emailAccount = "email"
 
+    // API キーのメモリキャッシュ。Analytics/Push が高頻度で読むため、
+    // 毎回 Keychain を叩かない(login/logout で更新)。
+    private static var cachedKey: String?? = nil  // nil=未読込, .some(nil)=未ログイン
+
     init() {
-        if let key = Self.keychainRead(Self.keyAccount), !key.isEmpty {
+        let key = Self.keychainRead(Self.keyAccount)
+        Self.cachedKey = .some(key)
+        if let key, !key.isEmpty {
             isLoggedIn = true
             email = Self.keychainRead(Self.emailAccount)
         }
     }
 
-    var apiKey: String? { Self.keychainRead(Self.keyAccount) }
+    var apiKey: String? { Self.currentAPIKey() }
 
-    // AppDelegate / Analytics などインスタンス外から鍵を読むための静的アクセサ。
-    static func currentAPIKey() -> String? { keychainRead(keyAccount) }
+    // AppDelegate / Analytics などインスタンス外から鍵を読むための静的アクセサ(キャッシュ優先)。
+    static func currentAPIKey() -> String? {
+        if let cached = cachedKey { return cached }
+        let key = keychainRead(keyAccount)
+        cachedKey = .some(key)
+        return key
+    }
 
     func logIn(email: String, apiKey: String) {
         Self.keychainWrite(Self.keyAccount, value: apiKey)
         Self.keychainWrite(Self.emailAccount, value: email)
+        Self.cachedKey = .some(apiKey)
         self.email = email
         self.isLoggedIn = true
     }
@@ -33,6 +45,7 @@ final class Session: ObservableObject {
     func logOut() {
         Self.keychainDelete(Self.keyAccount)
         Self.keychainDelete(Self.emailAccount)
+        Self.cachedKey = .some(nil)
         email = nil
         isLoggedIn = false
     }

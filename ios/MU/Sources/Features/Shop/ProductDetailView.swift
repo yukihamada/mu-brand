@@ -63,12 +63,14 @@ struct ProductDetailView: View {
                 }
                 .buttonStyle(.bordered)
 
-                Link(destination: URL(string: product.pdpUrl)!) {
-                    Label(String(localized: "pdp.openWeb"), systemImage: "safari")
-                        .font(.subheadline)
-                        .frame(maxWidth: .infinity)
+                if let pdp = URL(string: product.pdpUrl) {
+                    Link(destination: pdp) {
+                        Label(String(localized: "pdp.openWeb"), systemImage: "safari")
+                            .font(.subheadline)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .padding(.bottom, 24)
                 }
-                .padding(.bottom, 24)
             }
             .padding(.horizontal)
         }
@@ -81,7 +83,9 @@ struct ProductDetailView: View {
             }
         }
         .sheet(isPresented: $showGift) {
-            if let url = URL(string: product.checkoutUrl + "&gift=1") {
+            // checkout_url に `?` の有無を見てギフトフラグを安全に付与。
+            let sep = product.checkoutUrl.contains("?") ? "&" : "?"
+            if let url = URL(string: product.checkoutUrl + sep + "gift=1") {
                 SafariView(url: url).ignoresSafeArea()
             }
         }

@@ -110,6 +110,7 @@ struct ScanView: View {
         }
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         Analytics.track("scan_hit", ["host": host])
+        lastIgnored = nil   // MUコードを読めたら「非MU」警告を消す
         scannedURL = u
         showResult = true
     }
@@ -158,24 +159,30 @@ final class ScannerVC: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
-        configure()
+        // プレビュー層はメインで先に乗せ、重いセッション構成は専用キューへ逃がす
+        // (addInput/addOutput はメインで同期実行すると初回表示がカクつく)。
+        let pv = AVCaptureVideoPreviewLayer(session: session)
+        pv.videoGravity = .resizeAspectFill
+        pv.frame = view.bounds
+        view.layer.addSublayer(pv)
+        preview = pv
+        queue.async { [weak self] in self?.configure() }
     }
 
     private func configure() {
         guard let device = AVCaptureDevice.default(for: .video),
               let input = try? AVCaptureDeviceInput(device: device),
               session.canAddInput(input) else { return }
+        session.beginConfiguration()
         session.addInput(input)
         let output = AVCaptureMetadataOutput()
-        guard session.canAddOutput(output) else { return }
-        session.addOutput(output)
-        output.setMetadataObjectsDelegate(coordinator, queue: DispatchQueue.main)
-        output.metadataObjectTypes = [.qr]
-        let pv = AVCaptureVideoPreviewLayer(session: session)
-        pv.videoGravity = .resizeAspectFill
-        pv.frame = view.bounds
-        view.layer.addSublayer(pv)
-        preview = pv
+        if session.canAddOutput(output) {
+            session.addOutput(output)
+            output.setMetadataObjectsDelegate(coordinator, queue: DispatchQueue.main)
+            output.metadataObjectTypes = [.qr]
+        }
+        session.commitConfiguration()
+        if !session.isRunning { session.startRunning() }
     }
 
     override func viewWillLayoutSubviews() {
