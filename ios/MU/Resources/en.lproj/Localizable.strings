@@ -136,3 +136,6 @@
 "agent.thinking" = "Thinking…";
 "agent.makeFail" = "Couldn't make it. Try rephrasing.";
 "agent.loginNeeded" = "Log in on the Account tab to see your sales.";
+"onb.seed.a" = "You're great just for living today";
+"onb.seed.b" = "A \"thank you\" piece for someone you love";
+"onb.seed.c" = "A gentle few words that lighten the heart";

@@ -12,10 +12,12 @@ struct OnboardingView: View {
     @State private var prompt = ""
     @State private var typed = ""   // タイプライター演出用
 
-    // 1ページ目で出す“言ってみて”の例(タップで3ページ目に流し込む)
-    private let seeds = [
-        "make.example1", "make.example2", "make.example3",
-    ]
+    // 最初の一着の“幸せプロンプト”候補(A/B/C)。決め打ちでなくランダム割当で
+    // どれが活性化に効くかを計測(科学的にデータで勝者を決める)。
+    private let seeds = ["onb.seed.a", "onb.seed.b", "onb.seed.c"]
+    // 割当バリアントは端末で固定(同じユーザーは毎回同じ初期値=計測がブレない)。
+    @AppStorage("onbSeedVariant") private var seedVariant = -1
+    @State private var seededDefault = false
 
     var body: some View {
         ZStack {
@@ -42,13 +44,23 @@ struct OnboardingView: View {
             }
         }
         .task {
+            // A/B: 初回だけランダムにバリアント割当(端末固定)。どの“幸せプロンプト”が
+            // 活性化に効くかをデータで決める(決め打ちでなく科学的に)。
+            if seedVariant < 0 { seedVariant = Int.random(in: 0..<seeds.count) }
+            if !seededDefault {
+                seededDefault = true
+                if prompt.isEmpty { prompt = String(localized: String.LocalizationValue(defaultSeedKey)) }
+            }
             hero = (try? await MUAPI.feed(page: 1, kind: .all)) ?? []
-            Analytics.track("onboarding_open")
+            Analytics.track("onboarding_open", ["variant": seedVariant])
             runTypewriter()
         }
         .preferredColorScheme(.dark)
         .tint(gold)
     }
+
+    // 割当バリアントの既定プロンプト(0..<seeds.count に丸める)。
+    private var defaultSeedKey: String { seeds[max(0, min(seedVariant, seeds.count - 1))] }
 
     private let gold = Color(red: 0.90, green: 0.77, blue: 0.29)
 
@@ -145,6 +157,7 @@ struct OnboardingView: View {
                     ForEach(seeds, id: \.self) { key in
                         Button {
                             prompt = String(localized: String.LocalizationValue(key))
+                            Analytics.track("onboarding_seed_pick", ["seed": key])
                         } label: {
                             Text(String(localized: String.LocalizationValue(key)))
                                 .font(.caption)
@@ -160,8 +173,9 @@ struct OnboardingView: View {
 
             Button {
                 let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-                let final = text.isEmpty ? String(localized: "make.example1") : text
-                Analytics.track("onboarding_make", ["seeded": text.isEmpty])
+                let final = text.isEmpty ? String(localized: String.LocalizationValue(defaultSeedKey)) : text
+                // 計測: どのバリアント/プロンプトで作ったか(後で購入率まで追える)
+                Analytics.track("onboarding_make", ["variant": seedVariant, "prompt": final])
                 finish(final)
             } label: {
                 HStack {
@@ -224,7 +238,7 @@ struct OnboardingView: View {
 
     // 入力欄プレースホルダのタイプライター演出(お手本が“勝手に書かれていく”)
     private func runTypewriter() {
-        let target = String(localized: "make.example1")
+        let target = String(localized: String.LocalizationValue(defaultSeedKey))
         typed = ""
         Task {
             for ch in target {
