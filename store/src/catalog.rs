@@ -7540,6 +7540,87 @@ pub async fn app_event(
     axum::Json(serde_json::json!({"ok": true})).into_response()
 }
 
+// ───────────────────────── アプリ内 AI エージェント(MCP/アクションを会話で) ─────────────────────────
+
+#[derive(serde::Deserialize)]
+pub struct AgentChatMsg { pub role: String, pub content: String }
+
+#[derive(serde::Deserialize)]
+pub struct AgentChatBody {
+    pub message: String,
+    #[serde(default)]
+    pub history: Option<Vec<AgentChatMsg>>,
+}
+
+/// POST /api/app/agent/chat — アプリ内 AI エージェント。LLM(Gemini)がユーザーの言葉から
+/// 意図を判定して JSON を返す。実アクション(作る/売上/自分の作品)はクライアントが
+/// 既存の MU API で実行する(= MCP と同じ操作群を会話で叩く)。鍵はサーバ側に隠す。
+pub async fn agent_chat(
+    State(_db): State<Db>,
+    axum::Json(body): axum::Json<AgentChatBody>,
+) -> Response {
+    let msg = body.message.trim();
+    if msg.is_empty() || msg.chars().count() > 1000 {
+        return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"メッセージを入力してください"}))).into_response();
+    }
+    let hist: String = body.history.unwrap_or_default().iter()
+        .rev().take(8).rev()
+        .map(|m| {
+            let role = if m.role == "user" { "User" } else { "Assistant" };
+            let c: String = m.content.chars().take(400).collect();
+            format!("{}: {}", role, c)
+        })
+        .collect::<Vec<_>>().join("\n");
+    let prompt = format!(
+        "あなたはアパレル工房『MU』のアプリ内アシスタント。MUは「言えば作れる」— ひとことで\
+         世界に一つの服やグッズをAIが作って即販売できる。あなたはユーザーの言葉から意図を判定し、\
+         アプリのアクションを起こすために **JSONのみ** を返す(前後に文章・コードフェンス禁止)。\n\
+         スキーマ: {{\"reply\":\"<画面に出す短い日本語の一言>\",\
+         \"action\":\"make|sales|list_mine|none\",\
+         \"args\":{{\"prompt\":\"<makeのときだけ: 具体的なデザインの依頼文(日英可)>\",\
+         \"kind\":\"tee|hoodie|sticker|rashguard|tote|mug|\",\"royalty\":<10〜50 または null>}}}}\n\
+         判定ルール:\n\
+         - 作りたい/つくって/デザインして 等 → action=\"make\"。args.prompt に魅力的で具体的な\
+           デザインブリーフを入れる(種類が明示されていれば kind も)。\n\
+         - 売上/いくら売れた/収益 → action=\"sales\"。\n\
+         - 自分の作品/何を作った/一覧 → action=\"list_mine\"。\n\
+         - それ以外(雑談・質問) → action=\"none\" で reply に親切に答える。\n\
+         - reply は常に短い日本語の一文(アクション時も「柔術の黒Tをつくるね！」のように)。\n\
+         {hist_block}\
+         User: {msg}",
+        hist_block = if hist.is_empty() { String::new() } else { format!("これまでの会話:\n{}\n", hist) },
+        msg = msg,
+    );
+    let raw = match crate::gemini::call_gemini_text(&prompt).await {
+        Ok(s) => s,
+        Err(e) => return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":format!("応答に失敗: {}", e)}))).into_response(),
+    };
+    let json_str: String = raw.find('{')
+        .and_then(|i| raw[i..].rfind('}').map(|j| raw[i..i+j+1].to_string()))
+        .unwrap_or(raw.clone());
+    let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap_or_else(|_| {
+        serde_json::json!({"reply": raw.chars().take(200).collect::<String>(), "action": "none"})
+    });
+    let action = match parsed["action"].as_str() {
+        Some(a @ ("make" | "sales" | "list_mine")) => a,
+        _ => "none",
+    };
+    let reply = parsed["reply"].as_str().filter(|s| !s.is_empty()).unwrap_or("はい！").to_string();
+    let kind_in = parsed["args"]["kind"].as_str().unwrap_or("");
+    let kind = if ["tee","hoodie","sticker","rashguard","tote","mug"].contains(&kind_in) { kind_in } else { "" };
+    let royalty = parsed["args"]["royalty"].as_i64().map(|r| r.clamp(10, 50));
+    axum::Json(serde_json::json!({
+        "ok": true,
+        "reply": reply,
+        "action": action,
+        "args": {
+            "prompt": parsed["args"]["prompt"].as_str().unwrap_or("").chars().take(300).collect::<String>(),
+            "kind": kind,
+            "royalty": royalty,
+        }
+    })).into_response()
+}
+
 /// GET /make/edit/:sku — 編集ページ(認証は JS が ?t= / localStorage の token で API に行う)。
 pub async fn make_edit_page(axum::extract::Path(sku): axum::extract::Path<String>) -> Html<String> {
     let safe: String = sku.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').take(80).collect();

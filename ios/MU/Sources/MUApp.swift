@@ -39,9 +39,9 @@ struct RootView: View {
             MakeView()
                 .tabItem { Label(String(localized: "tab.make"), systemImage: "wand.and.stars") }
                 .tag(AppState.Tab.make)
-            ScanView()
-                .tabItem { Label(String(localized: "tab.scan"), systemImage: "qrcode.viewfinder") }
-                .tag(AppState.Tab.scan)
+            AgentView()
+                .tabItem { Label(String(localized: "tab.agent"), systemImage: "bubbles.and.sparkles.fill") }
+                .tag(AppState.Tab.agent)
             ClosetView()
                 .tabItem { Label(String(localized: "tab.closet"), systemImage: "person.crop.square") }
                 .tag(AppState.Tab.account)

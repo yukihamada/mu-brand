@@ -125,6 +125,22 @@ struct MUAPI {
         return try JSONDecoder().decode(MakeResult.self, from: data)
     }
 
+    // アプリ内 AI エージェント。意図判定(make/sales/list_mine/none)を返す。POST /api/app/agent/chat
+    static func agentChat(message: String, history: [[String: String]], apiKey: String?) async throws -> AgentChatResponse {
+        var req = URLRequest(url: base.appendingPathComponent("api/app/agent/chat"))
+        req.httpMethod = "POST"
+        req.timeoutInterval = 60
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let key = apiKey, !key.isEmpty { req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["message": message, "history": history])
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            throw APIError.message((json?["error"] as? String) ?? "HTTP \((resp as? HTTPURLResponse)?.statusCode ?? -1)")
+        }
+        return try JSONDecoder().decode(AgentChatResponse.self, from: data)
+    }
+
     // 作った後に価格を変更。POST /api/make/edit/:sku?t= {price_jpy}。送った価格を返す
     // (サーバは原価フロア〜¥99,000にクランプ)。
     @discardableResult

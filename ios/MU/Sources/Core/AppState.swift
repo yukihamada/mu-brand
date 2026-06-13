@@ -8,8 +8,9 @@ final class AppState: ObservableObject {
     @Published var selectedTab = 2          // 起動時は中央の「作る」を見せる
     @Published var pendingPrompt: String?   // オンボーディング → Make への受け渡し
 
-    // タブのタグ(順序: ライブ0 / ショップ1 / 作る2[中央] / スキャン3 / アカウント4)
-    enum Tab { static let live = 0, shop = 1, make = 2, scan = 3, account = 4 }
+    // タブのタグ(順序: ライブ0 / ショップ1 / 作る2[中央] / AI3 / アカウント4)。
+    // スキャンはタブ上限(5)を保つためツールバーボタンへ移設。
+    enum Tab { static let live = 0, shop = 1, make = 2, agent = 3, account = 4 }
 
     func startMake(_ prompt: String) {
         pendingPrompt = prompt

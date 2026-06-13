@@ -51,6 +51,19 @@ struct ProductList: Codable {
     let products: [FeedProduct]
 }
 
+// /api/app/agent/chat — アプリ内AIエージェントの意図判定結果。
+struct AgentChatResponse: Codable {
+    let ok: Bool
+    let reply: String
+    let action: String          // make | sales | list_mine | none
+    let args: AgentArgs?
+    struct AgentArgs: Codable {
+        let prompt: String?
+        let kind: String?
+        let royalty: Int?
+    }
+}
+
 // /api/brands の1ブランド (チップ表示に使う最小限)
 struct BrandSummary: Codable, Identifiable, Hashable {
     let slug: String

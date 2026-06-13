@@ -9,6 +9,7 @@ struct LiveView: View {
     @State private var reachedEnd = false
     @State private var error: String?
     @State private var loadedOnce = false
+    @State private var showScan = false
 
     var body: some View {
         NavigationStack {
@@ -34,6 +35,14 @@ struct LiveView: View {
             }
             .navigationTitle(String(localized: "tab.live"))
             .navigationDestination(for: FeedProduct.self) { ProductDetailView(product: $0) }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showScan = true } label: { Image(systemName: "qrcode.viewfinder") }
+                }
+            }
+            .fullScreenCover(isPresented: $showScan) {
+                ScanView(onClose: { showScan = false })
+            }
             .refreshable { await reload() }
             .task {
                 if products.isEmpty { await reload() }

@@ -5,6 +5,7 @@ import UIKit
 // 📷 Scan — 商品タグ/ムーンマーカーのQRをかざす。MUドメインのURLだけアプリ内で開く。
 // 完全ネイティブ(カメラ)= Webにできない背骨の一つ。実物 → 真贋/音/つくる へ橋渡し。
 struct ScanView: View {
+    var onClose: (() -> Void)? = nil
     @State private var status: CameraStatus = .checking
     @State private var scannedURL: URL?
     @State private var showResult = false
@@ -33,6 +34,13 @@ struct ScanView: View {
             }
             .navigationTitle(String(localized: "tab.scan"))
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if let onClose {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button(String(localized: "make.cancel")) { onClose() }
+                    }
+                }
+            }
             .sheet(isPresented: $showResult, onDismiss: { scannedURL = nil }) {
                 if let u = scannedURL { SafariView(url: u).ignoresSafeArea() }
             }

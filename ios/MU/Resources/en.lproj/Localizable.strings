@@ -119,3 +119,13 @@
 "make.priceSave" = "Save";
 "make.cancel" = "Cancel";
 "make.priceHint" = "Enter a price (JPY). Below-cost amounts are auto-adjusted.";
+"tab.agent" = "AI";
+"agent.intro.title" = "Talk to MU's AI.";
+"agent.intro.sub" = "Make things, check sales, ask anything — all by chatting.";
+"agent.ex1" = "Make a black tee inspired by a jiu-jitsu belt";
+"agent.ex2" = "How much did I sell this month?";
+"agent.ex3" = "Any sticker ideas that would sell?";
+"agent.placeholder" = "Type a message";
+"agent.thinking" = "Thinking…";
+"agent.makeFail" = "Couldn't make it. Try rephrasing.";
+"agent.loginNeeded" = "Log in on the Account tab to see your sales.";

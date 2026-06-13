@@ -119,3 +119,13 @@
 "make.priceSave" = "保存";
 "make.cancel" = "キャンセル";
 "make.priceHint" = "売値(円)を入力。原価を下回る額は自動で調整されます。";
+"tab.agent" = "AI";
+"agent.intro.title" = "MUのAIに、話しかけて。";
+"agent.intro.sub" = "作る・売上を見る・相談する。ぜんぶ会話で。";
+"agent.ex1" = "柔術の帯モチーフの黒Tをつくって";
+"agent.ex2" = "今月いくら売れた？";
+"agent.ex3" = "売れそうなステッカーのアイデアある？";
+"agent.placeholder" = "メッセージを入力";
+"agent.thinking" = "考えています…";
+"agent.makeFail" = "うまく作れませんでした。言い換えてみてください。";
+"agent.loginNeeded" = "売上を見るにはアカウントタブでログインしてください。";
