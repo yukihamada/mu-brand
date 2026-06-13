@@ -8146,7 +8146,12 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
         } else {
             format!(
                 "Print-ready chest graphic at 300 DPI on a pure white background. \
-                 Style brief: {}. NO model, NO mockup, just the artwork, centered. Variation key: {}.",
+                 Style brief: {}. \
+                 Make it genuinely DESIRABLE — a design real people would want to wear and buy: \
+                 a strong focal idea, confident composition, tasteful modern type, balanced negative space, \
+                 a refined limited palette that prints cleanly. Avoid generic clip-art, clutter, or AI-looking gradients. \
+                 Aim for a piece that looks like it belongs in a great streetwear/boutique shop. \
+                 NO model, NO mockup, just the artwork, centered. Variation key: {}.",
                 theme_brief, seed)
         };
         let img = match if use_local { local_gen_image(&design_prompt).await } else { crate::gemini::call_gemini(&design_prompt).await } {
@@ -9633,6 +9638,62 @@ pub async fn admin_status(
         "recent_spend": recent_spend,
     }))
     .into_response()
+}
+
+#[derive(serde::Deserialize)]
+pub struct RelatedQuery {
+    pub sku: String,
+    #[serde(default)]
+    pub limit: Option<i64>,
+}
+
+/// GET /api/shop/related?sku=&limit= — 商品ページの「関連商品」。
+/// 同じ商品タイプ(printful_product_id)の live・物理SKUを、売れてる順→MUスコア順で。
+/// 同タイプが少なければ同ブランドで補完。自分自身は除外。feed と同じJSON形。
+pub async fn shop_related(State(db): State<Db>, Query(q): Query<RelatedQuery>) -> Response {
+    let limit = q.limit.unwrap_or(8).clamp(1, 20);
+    let rows: Vec<(String, String, String, i64, Option<String>, i64, String)> = {
+        let conn = db.lock().unwrap();
+        // 対象商品の商品タイプとブランドを引く。
+        let (pp, brand): (i64, String) = conn
+            .query_row(
+                "SELECT COALESCE(printful_product_id,0), COALESCE(brand,'') FROM catalog_products WHERE sku=?",
+                rusqlite::params![&q.sku],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap_or((0, String::new()));
+        let sql = format!(
+            "SELECT sku, brand, description_ja, retail_price_jpy,
+                    COALESCE({ext}, mockup_main_file),
+                    (SELECT COUNT(*) FROM catalog_orders o WHERE o.sku=catalog_products.sku AND o.status='submitted') AS sold,
+                    COALESCE(created_at,'')
+             FROM catalog_products
+             WHERE status='live' AND is_active=1
+               AND COALESCE(fulfillment_route,'') != 'digital'
+               AND sku != ?1
+               AND ( (?2 > 0 AND printful_product_id = ?2) OR (?2 = 0 AND brand = ?3) )
+             ORDER BY sold DESC, ({score}) DESC, created_at DESC
+             LIMIT ?4",
+            ext = MOCKUP_EXT_LIVE, score = MU_SCORE_SQL,
+        );
+        conn.prepare(&sql).ok().and_then(|mut s| {
+            s.query_map(rusqlite::params![&q.sku, pp, brand, limit], |r| {
+                Ok((r.get::<_,String>(0)?, r.get::<_,String>(1)?, r.get::<_,String>(2)?,
+                    r.get::<_,i64>(3)?, r.get::<_,Option<String>>(4)?, r.get::<_,i64>(5)?, r.get::<_,String>(6)?))
+            }).ok().map(|it| it.filter_map(|r| r.ok()).collect())
+        }).unwrap_or_default()
+    };
+    let products: Vec<serde_json::Value> = rows.into_iter()
+        .map(|(sku, brand, desc, price, img, sold, created_at)| serde_json::json!({
+            "sku": sku, "brand": brand, "description": desc, "price_jpy": price,
+            "mockup_url": img, "sold": sold, "created_at": created_at,
+            "pdp_url": format!("https://wearmu.com/shop/{}", urlencoding::encode(&sku)),
+            "checkout_url": format!("https://wearmu.com/api/shop/checkout?sku={}", urlencoding::encode(&sku)),
+        }))
+        .collect();
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert("Cache-Control", axum::http::HeaderValue::from_static("public, max-age=30"));
+    (headers, axum::Json(serde_json::json!({"products": products}))).into_response()
 }
 
 // ─── Public storefront pages ──────────────────────────────────────────

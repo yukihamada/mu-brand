@@ -46,6 +46,11 @@ struct FeedPage: Codable {
     }
 }
 
+// /api/shop/related の {products:[...]} 用。
+struct ProductList: Codable {
+    let products: [FeedProduct]
+}
+
 // /api/brands の1ブランド (チップ表示に使う最小限)
 struct BrandSummary: Codable, Identifiable, Hashable {
     let slug: String

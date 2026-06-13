@@ -7,6 +7,7 @@ struct ProductDetailView: View {
     let product: FeedProduct
     @State private var showCheckout = false
     @State private var showGift = false
+    @State private var related: [FeedProduct] = []
 
     var body: some View {
         ScrollView {
@@ -69,6 +70,34 @@ struct ProductDetailView: View {
                             .font(.subheadline)
                             .frame(maxWidth: .infinity)
                     }
+                }
+
+                // 関連商品(同じ商品タイプ・売れ筋順)
+                if !related.isEmpty {
+                    Divider().padding(.vertical, 4)
+                    Text(String(localized: "pdp.related"))
+                        .font(.headline)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(alignment: .top, spacing: 12) {
+                            ForEach(related) { p in
+                                NavigationLink(value: p) {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        AsyncImage(url: p.mockupURL) { phase in
+                                            switch phase {
+                                            case .success(let img): img.resizable().scaledToFill()
+                                            default: Rectangle().fill(.quaternary)
+                                            }
+                                        }
+                                        .frame(width: 130, height: 130)
+                                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                                        Text(p.description).font(.caption2).lineLimit(1).frame(width: 130, alignment: .leading)
+                                        Text(p.priceLabel).font(.caption.weight(.semibold))
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
                     .padding(.bottom, 24)
                 }
             }
@@ -76,7 +105,10 @@ struct ProductDetailView: View {
         }
         .navigationTitle(product.sku)
         .navigationBarTitleDisplayMode(.inline)
-        .task { Analytics.track("pdp_view", ["sku": product.sku]) }
+        .task {
+            Analytics.track("pdp_view", ["sku": product.sku])
+            related = (try? await MUAPI.related(sku: product.sku)) ?? []
+        }
         .sheet(isPresented: $showCheckout) {
             if let url = URL(string: product.checkoutUrl) {
                 SafariView(url: url).ignoresSafeArea()

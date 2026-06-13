@@ -27,6 +27,18 @@ struct MUAPI {
         return try await get(comps.url!, as: FeedPage.self).products
     }
 
+    // 商品ページの「関連商品」(同タイプ・売れ筋順)。GET /api/shop/related?sku=
+    static func related(sku: String, limit: Int = 8) async throws -> [FeedProduct] {
+        var comps = URLComponents(url: base.appendingPathComponent("api/shop/related"), resolvingAgainstBaseURL: false)!
+        comps.queryItems = [URLQueryItem(name: "sku", value: sku), URLQueryItem(name: "limit", value: String(limit))]
+        return try await get(comps.url!, as: ProductList.self).products
+    }
+
+    // 売れ筋・人気(feed の既定ソート=MUスコア順の先頭)。Make の「人気から作る」用。
+    static func popular() async throws -> [FeedProduct] {
+        try await feed(page: 1)
+    }
+
     static func brands() async throws -> [BrandSummary] {
         try await get(base.appendingPathComponent("api/brands"), as: BrandsResponse.self).brands
     }

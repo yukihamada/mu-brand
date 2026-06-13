@@ -42,6 +42,8 @@ struct MakeView: View {
     // 作った直後 = 高意欲の瞬間に1回だけ通知許可を促す
     @AppStorage("didPromptPushAfterMake") private var didPromptPush = false
 
+    @State private var popular: [FeedProduct] = []   // 売れ筋(人気から作る)
+
     // 作っている間に流す“作ってる感”メッセージ
     private let makingSteps = ["make.step1", "make.step2", "make.step3", "make.step4", "make.step5"]
 
@@ -127,7 +129,10 @@ struct MakeView: View {
                 .padding()
             }
             .navigationTitle(String(localized: "tab.make"))
-            .task { Analytics.track("view_make") }
+            .task {
+                Analytics.track("view_make")
+                if popular.isEmpty { popular = (try? await MUAPI.popular()) ?? [] }
+            }
             // 声で作る: 認識テキストを「録音開始時の入力 + 認識結果」で追記する
             // (一方的な全消し上書きでユーザーが手で打った文章を失わないように)。
             .onChange(of: voice.transcript) { _, t in
@@ -455,6 +460,40 @@ struct MakeView: View {
 
     private var hints: some View {
         VStack(alignment: .leading, spacing: 8) {
+            // 売れ筋から作る: 人気デザインを起点にすると「買いたくなる商品」が作りやすい。
+            if !popular.isEmpty {
+                Text(String(localized: "make.popularTitle"))
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(alignment: .top, spacing: 10) {
+                        ForEach(popular.prefix(10)) { p in
+                            Button {
+                                // その商品のコンセプトを起点に(売れ筋ベース=desirable)。
+                                let brief = p.description.components(separatedBy: " — ").last ?? p.description
+                                prompt = brief
+                                promptFocused = true
+                                Analytics.track("make_from_popular", ["sku": p.sku])
+                            } label: {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    AsyncImage(url: p.mockupURL) { phase in
+                                        switch phase {
+                                        case .success(let img): img.resizable().scaledToFill()
+                                        default: Rectangle().fill(.quaternary)
+                                        }
+                                    }
+                                    .frame(width: 110, height: 110)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                                    Text(p.description).font(.caption2).lineLimit(1).frame(width: 110, alignment: .leading)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .padding(.bottom, 4)
+            }
+
             // 🥋 道場グッズ プリセット(戦略: BJJ垂直の実需。言うだけでチーム公式グッズ)
             Button {
                 prompt = String(localized: "make.bjj.template")

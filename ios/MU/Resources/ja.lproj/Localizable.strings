@@ -111,3 +111,5 @@
 "make.onbody.model" = "モデル着用";
 "share.cta" = "シェアする";
 "share.message" = "MUで作った一着。続きはあなたが →";
+"pdp.related" = "関連する商品";
+"make.popularTitle" = "売れ筋から作る（人気を起点にアレンジ）";
