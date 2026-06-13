@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // 👤 Closet — ログイン (メール → 6桁コード → api_key) と自分の売上/ストア。
 struct ClosetView: View {
@@ -98,11 +99,41 @@ struct AccountView: View {
     @State private var showPrivacy = false
     @State private var confirmDelete = false
     @State private var deleteError: String?
+    @State private var pushOn = false
+    @State private var pushDenied = false
 
     var body: some View {
         List {
             Section {
                 LabeledContent(String(localized: "account.email"), value: session.email ?? "—")
+            }
+            // 通知: ドロップ/売れた時に届く。許可導線をアカウントに置く。
+            Section {
+                if pushOn {
+                    Label(String(localized: "push.on"), systemImage: "bell.fill")
+                        .foregroundStyle(.secondary)
+                } else if pushDenied {
+                    Button {
+                        if let url = URL(string: UIApplication.openSettingsURLString) {
+                            UIApplication.shared.open(url)
+                        }
+                    } label: {
+                        Label(String(localized: "push.openSettings"), systemImage: "bell.slash")
+                    }
+                } else {
+                    Button {
+                        Task {
+                            let ok = await PushManager.enable()
+                            pushOn = ok
+                            pushDenied = !ok
+                            Analytics.track("push_enable", ["ok": ok])
+                        }
+                    } label: {
+                        Label(String(localized: "push.enable"), systemImage: "bell.badge")
+                    }
+                }
+            } footer: {
+                Text(String(localized: "push.why"))
             }
             if let t = sales?.total {
                 Section(String(localized: "account.sales")) {
@@ -161,6 +192,9 @@ struct AccountView: View {
             if let key = session.apiKey {
                 sales = try? await MUAPI.sales(apiKey: key)
             }
+            let st = await PushManager.status()
+            pushOn = st == .authorized
+            pushDenied = st == .denied
         }
         .sheet(isPresented: $showMypage) {
             SafariView(url: URL(string: "https://wearmu.com/mypage")!).ignoresSafeArea()

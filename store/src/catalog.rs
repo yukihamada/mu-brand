@@ -186,6 +186,26 @@ pub fn ensure_schema(conn: &rusqlite::Connection) {
     //    "sender_email": "<buyer email>"}  // so the buyer can be reached
     // NULL for every ordinary (non-gift) order → full backward compat.
     let _ = conn.execute("ALTER TABLE catalog_orders ADD COLUMN gift_json TEXT", []);
+
+    // iOS アプリの APNs デバイストークン (ドロップ/売れた通知の宛先)。1端末1行。
+    // email は任意(ログイン端末のみ刻む)。実送信の APNs 認証キーは別途(人間ゲート)。
+    let _ = conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS app_push_tokens (
+            token       TEXT PRIMARY KEY,
+            platform    TEXT NOT NULL DEFAULT 'ios',
+            email       TEXT,
+            created_at  TEXT DEFAULT (datetime('now')),
+            updated_at  TEXT DEFAULT (datetime('now'))
+         );
+         CREATE TABLE IF NOT EXISTS app_events (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            event       TEXT NOT NULL,
+            props       TEXT,
+            email       TEXT,
+            created_at  TEXT DEFAULT (datetime('now'))
+         );
+         CREATE INDEX IF NOT EXISTS idx_app_events_event ON app_events(event);",
+    );
 }
 
 /// How many founder cards are still available (0..100).
@@ -7226,6 +7246,254 @@ pub async fn make_edit_apply(
     })).into_response()
 }
 
+/// 5軸の弱点 → 日本語の改善指示。lowest 軸ほど強く直す。
+fn make_axis_guidance(axis: &str) -> &'static str {
+    match axis {
+        "visual" => "視覚的完成度を上げる: サムネイルでも目を引くよう、配色のコントラスト・構図のバランス・余白を磨く",
+        "universality" => "普遍性を上げる: 文化や言語に依存する要素を削り、10年後も古びない普遍的なモチーフに寄せる",
+        "craft" => "プリント適性を上げる: 線を太く・色数を絞り、DTG印刷で破綻しない明快なシェイプにする(黒地に沈む濃色を避ける)",
+        "concept" => "コンセプトの一貫性を上げる: タイトルと説明文が語る物語を、画像が一目で体現するよう要素を整理する",
+        "desire" => "所有欲を上げる: 素直に「着たい・欲しい」と思える主役の強さ・かっこよさを足す",
+        _ => "全体の完成度を上げる",
+    }
+}
+
+/// 改善プロンプトを組む。kind に応じた印刷制約 + 「この絵を磨け」指示 + 弱点フィードバック。
+fn build_polish_prompt(kind: &str, label: &str, weak: &[(String, i64)], verdict: &str, seed: &str) -> String {
+    let is_aop = matches!(kind, "rashguard_ls" | "rashguard_black" | "rashguard_contrado" | "kids_tee");
+    let is_full_bleed = matches!(kind,
+        "poster" | "phone_case" | "mug_black" | "mouse_pad" | "canvas" | "metal_print"
+        | "laptop_sleeve" | "coaster" | "leggings" | "pillow" | "wine_glass" | "bottle"
+        | "shorts" | "placemat" | "socks" | "drawstring_bag" | "beach_towel"
+        | "fanny_pack" | "bucket_hat" | "backpack" | "flag");
+    let is_embroidery = matches!(kind, "beanie" | "blanket" | "towel");
+    let is_song = kind == "song";
+    let focus: String = weak.iter()
+        .map(|(a, s)| format!("・{}(現在 {}/20点) — {}", a, s, make_axis_guidance(a)))
+        .collect::<Vec<_>>().join("\n");
+    let common = format!(
+        "添付した1枚の画像は、MUブランドの販売中デザイン「{label}」。\
+         このデザインの核となるコンセプトと構図は保ちつつ、より良い1枚へと磨き直してほしい。\
+         辛口審査員の講評: 「{verdict}」。特に次の弱点を重点的に改善せよ:\n{focus}\n\
+         まったく別の絵にはせず、同じ作品の上位互換を作ること。Variation key: {seed}.",
+        label = label, verdict = verdict, focus = focus, seed = seed,
+    );
+    if is_song {
+        format!("Square album cover artwork, fill the ENTIRE canvas edge-to-edge (no white margins). NO model, NO product mockup. {}", common)
+    } else if is_aop {
+        format!("Print-ready FULL-CANVAS sublimation artwork at 300 DPI for an all-over-print garment. Fill the ENTIRE canvas edge-to-edge with the dominant color — NO white margins, NO padding. NO model, NO garment mockup, just the printable artwork. {}", common)
+    } else if is_full_bleed {
+        format!("Print-ready FULL-BLEED artwork at 300 DPI filling the ENTIRE canvas edge-to-edge — NO white margins, NO padding. NO model, NO product mockup, just the printable artwork. {}", common)
+    } else if is_embroidery {
+        format!("Embroidery-ready emblem at 300 DPI on a pure white background. SIMPLE, BOLD, 1–3 flat solid colors, clean vector-style shapes and thick lines — NO gradients, NO photo realism, NO thin strokes. NO model, NO mockup, just the emblem, centered. {}", common)
+    } else {
+        format!("Print-ready chest graphic at 300 DPI on a pure white background. NO model, NO mockup, just the artwork, centered. {}", common)
+    }
+}
+
+/// POST /api/make/polish/:sku?t= — 「磨く」。現デザインを5軸採点し、弱点を重点改善した
+/// 候補を best-of-N で再生成。元より高得点なら差し替え(if-better)、そうでなければ据え置き。
+/// 認証は make_edit と同じ edit_token。song / 持ち込み画像は対象外(別経路)。
+pub async fn make_polish(
+    State(db): State<Db>,
+    axum::extract::Path(sku): axum::extract::Path<String>,
+    Query(q): Query<MakeEditTokenQuery>,
+) -> Response {
+    const POLISH_CANDIDATES: usize = 2;
+    let token = q.t.unwrap_or_default();
+    let row = {
+        let conn = db.lock().unwrap();
+        match make_edit_load(&conn, &sku, token.trim()) {
+            Ok(r) => r,
+            Err((c, m)) => return (c, axum::Json(serde_json::json!({"ok":false,"error":m}))).into_response(),
+        }
+    };
+    let kind = kind_from_sku(&sku);
+    if kind == "song" {
+        return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"曲は「磨く」に対応していません"}))).into_response();
+    }
+    if row.meta.get("user_design").and_then(|v| v.as_bool()) == Some(true) {
+        return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"持ち込み画像のデザインは磨けません(AIが生成した作品のみ対象です)"}))).into_response();
+    }
+    if row.design.is_empty() {
+        return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"デザイン画像が見つかりません"}))).into_response();
+    }
+    let (title, hook) = row.label.split_once(" — ")
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+        .unwrap_or((row.label.clone(), String::new()));
+
+    // 1) 現デザインを採点(before)。
+    let before = match crate::gemini::call_gemini_judge(&row.design, &title, &hook).await {
+        Ok(s) => s,
+        Err(e) => return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":format!("採点に失敗しました: {}", e)}))).into_response(),
+    };
+    // 弱い軸(昇順)上位2つを重点改善ターゲットにする。
+    let mut weak = before.axes.clone();
+    weak.sort_by_key(|(_, s)| *s);
+    weak.truncate(2);
+
+    let is_aop = matches!(kind, "rashguard_ls" | "rashguard_black" | "rashguard_contrado" | "kids_tee");
+    let is_full_bleed = matches!(kind,
+        "poster" | "phone_case" | "mug_black" | "mouse_pad" | "canvas" | "metal_print"
+        | "laptop_sleeve" | "coaster" | "leggings" | "pillow" | "wine_glass" | "bottle"
+        | "shorts" | "placemat" | "socks" | "drawstring_bag" | "beach_towel"
+        | "fanny_pack" | "bucket_hat" | "backpack" | "flag");
+    let is_embroidery = matches!(kind, "beanie" | "blanket" | "towel");
+    let keep_opaque = is_aop || is_full_bleed || is_embroidery;
+
+    // 2) 候補を best-of-N 生成 → 各採点。並列で回してレイテンシを抑える。
+    let design_ref = row.design.clone();
+    let mut tasks = Vec::new();
+    for i in 0..POLISH_CANDIDATES {
+        // 予算: 1枚 ¥6。上限到達なら以降の候補は諦める(0枚なら据え置き応答)。
+        let charged = {
+            let conn = db.lock().unwrap();
+            spend_or_refuse(&conn, "ai_image", GEMINI_IMAGE_COST_JPY,
+                &format!("make_polish sku={} cand={}", sku, i), Some(&sku))
+        };
+        if !charged { break; }
+        let seed = format!("pl{:08x}", rand::random::<u32>());
+        let prompt = build_polish_prompt(kind, &row.label, &weak, &before.verdict, &seed);
+        let (sku_c, title_c, hook_c, ref_c) = (sku.clone(), title.clone(), hook.clone(), design_ref.clone());
+        tasks.push(tokio::spawn(async move {
+            let img = crate::gemini::call_gemini_with_image(&prompt, &[ref_c.as_str()]).await.ok()?;
+            let (bytes, mime) = if keep_opaque {
+                (img.bytes.clone(), img.mime.clone())
+            } else {
+                match make_design_transparent(&img.bytes) {
+                    Some(b) => (b, "image/png".to_string()),
+                    None => (img.bytes.clone(), img.mime.clone()),
+                }
+            };
+            // CDN キャッシュ衝突を避けるため必ず新キー(seed 付き)に置く。
+            let key = format!("catalog/{}-{}.png", sku_c, seed);
+            let url = crate::store_r2_bytes(&key, &bytes, &mime).await?;
+            let score = crate::gemini::call_gemini_judge(&url, &title_c, &hook_c).await.ok()?;
+            Some((url, score))
+        }));
+    }
+    let mut candidates: Vec<(String, crate::gemini::DesignScore)> = Vec::new();
+    for t in tasks {
+        if let Ok(Some(c)) = t.await { candidates.push(c); }
+    }
+    if candidates.is_empty() {
+        return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({
+            "ok": true, "improved": false,
+            "before": score_json(&before),
+            "note": "今回はうまく磨けませんでした。もう一度お試しください。",
+        }))).into_response();
+    }
+    // 3) 最高得点の候補を選ぶ。
+    candidates.sort_by_key(|(_, s)| -s.total);
+    let (best_url, best_score) = candidates.into_iter().next().unwrap();
+
+    // 4) if-better: 元の total を上回ったときだけ差し替える。
+    if best_score.total > before.total {
+        {
+            let conn = db.lock().unwrap();
+            let _ = conn.execute(
+                "UPDATE catalog_products SET design_file=?, mockup_main_file=?, mockup_url_external=?, updated_at=datetime('now') WHERE sku=?",
+                rusqlite::params![&best_url, &best_url, &best_url, &sku],
+            );
+        }
+        store_score(&db, &sku, &best_score);
+        // 着用イメージを新デザインで作り直す(数十秒・非同期)。
+        let (db_c, sku_c, pp, pv, url_c) = (db.clone(), sku.clone(), row.pp, row.pv, best_url.clone());
+        if pp > 0 {
+            tokio::spawn(async move { let _ = generate_onbody_mockup(db_c, sku_c, pp, pv, url_c).await; });
+        }
+        axum::Json(serde_json::json!({
+            "ok": true, "improved": true,
+            "before": score_json(&before),
+            "after": score_json(&best_score),
+            "design_url": best_url,
+            "pdp_url": format!("https://wearmu.com/shop/{}", sku),
+            "note": format!("磨きました。MUスコアが {} → {} に上がりました。着用イメージは数十秒で反映されます。", before.total, best_score.total),
+        })).into_response()
+    } else {
+        axum::Json(serde_json::json!({
+            "ok": true, "improved": false,
+            "before": score_json(&before),
+            "after": score_json(&best_score),
+            "note": format!("今回は元のデザイン(MUスコア {})を超えられませんでした。元のまま据え置きます。", before.total),
+        })).into_response()
+    }
+}
+
+/// DesignScore → JSON(iOS/Web 共通の before/after 表示用)。
+fn score_json(s: &crate::gemini::DesignScore) -> serde_json::Value {
+    let axes: serde_json::Map<String, serde_json::Value> =
+        s.axes.iter().map(|(k, v)| (k.clone(), serde_json::json!(v))).collect();
+    serde_json::json!({"total": s.total, "axes": axes, "verdict": s.verdict})
+}
+
+// ───────────────────────── iOS アプリ: Push 登録 + 計測 ─────────────────────────
+
+#[derive(serde::Deserialize)]
+pub struct PushRegisterBody {
+    pub token: String,
+    #[serde(default)]
+    pub platform: Option<String>,
+}
+
+/// POST /api/app/push/register — iOS の APNs デバイストークンを登録(upsert)。
+/// ログイン端末(Bearer)なら email も刻む。実送信の認証キーは別途(人間ゲート)。
+pub async fn app_push_register(
+    State(db): State<Db>,
+    headers: axum::http::HeaderMap,
+    axum::Json(body): axum::Json<PushRegisterBody>,
+) -> Response {
+    let token = body.token.trim();
+    // APNs トークンは16進64文字。緩めに検証(長さと文字種)。
+    if token.len() < 32 || token.len() > 200 || !token.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"invalid token"}))).into_response();
+    }
+    let platform = match body.platform.as_deref() { Some("ios") | None => "ios", Some(_) => "ios" };
+    let email = crate::bearer_or_session_email(&db, &headers, None);
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO app_push_tokens (token, platform, email, updated_at)
+             VALUES (?1, ?2, ?3, datetime('now'))
+             ON CONFLICT(token) DO UPDATE SET email=COALESCE(excluded.email, email), updated_at=datetime('now')",
+            rusqlite::params![token, platform, email],
+        );
+    }
+    axum::Json(serde_json::json!({"ok": true})).into_response()
+}
+
+#[derive(serde::Deserialize)]
+pub struct AppEventBody {
+    pub event: String,
+    #[serde(default)]
+    pub props: Option<serde_json::Value>,
+}
+
+/// POST /api/app/event — アプリの funnel 計測(make/buy/scan/polish 等)。軽量。
+pub async fn app_event(
+    State(db): State<Db>,
+    headers: axum::http::HeaderMap,
+    axum::Json(body): axum::Json<AppEventBody>,
+) -> Response {
+    let event: String = body.event.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '.' || *c == ':').take(64).collect();
+    if event.is_empty() {
+        return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false}))).into_response();
+    }
+    let props = body.props.map(|v| {
+        let s = v.to_string();
+        if s.len() > 1000 { s.chars().take(1000).collect::<String>() } else { s }
+    });
+    let email = crate::bearer_or_session_email(&db, &headers, None);
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO app_events (event, props, email) VALUES (?1, ?2, ?3)",
+            rusqlite::params![event, props, email],
+        );
+    }
+    axum::Json(serde_json::json!({"ok": true})).into_response()
+}
+
 /// GET /make/edit/:sku — 編集ページ(認証は JS が ?t= / localStorage の token で API に行う)。
 pub async fn make_edit_page(axum::extract::Path(sku): axum::extract::Path<String>) -> Html<String> {
     let safe: String = sku.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').take(80).collect();
@@ -9321,6 +9589,10 @@ pub struct ShopQuery {
     pub kind: Option<String>,
     pub q: Option<String>,
     pub lang: Option<String>,
+    /// physical=1 でデジタル(song/チケット等 fulfillment_route='digital')を除外。
+    /// iOS アプリは常にこれを付ける(App Store 3.1.1: デジタルは IAP 必須なので売らない)。
+    #[serde(default)]
+    pub physical: Option<u8>,
 }
 
 const SHOP_PAGE_SIZE: i64 = 60;
@@ -9426,7 +9698,12 @@ pub async fn shop_feed_json(State(db): State<Db>, Query(q): Query<ShopQuery>) ->
     let brand_opt = if brand_filter.is_empty() { None } else { Some(brand_filter.as_str()) };
     let q_pat = shop_q_pattern(q.q.as_deref().unwrap_or(""));
     let offset = (page as i64 - 1) * SHOP_PAGE_SIZE;
-    let (where_sql, binds) = shop_filter_sql(brand_opt, kind_sql, q_pat.as_deref());
+    let (mut where_sql, binds) = shop_filter_sql(brand_opt, kind_sql, q_pat.as_deref());
+    // App Store 3.1.1: デジタル(route='digital' = song/各チケット)は IAP 必須なので
+    // アプリには出さない。physical=1 のときだけ除外句を足す(リテラルのみ・bind 不要)。
+    if q.physical == Some(1) {
+        where_sql.push_str(" AND COALESCE(fulfillment_route,'') != 'digital'");
+    }
     let rows: Vec<(String, String, String, i64, Option<String>, i64, String)> = {
         let conn = db.lock().unwrap();
         let sql = format!(

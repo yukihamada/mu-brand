@@ -81,10 +81,107 @@ struct SalesResponse: Codable {
     }
 }
 
-// kind チップ (サーバ側ホワイトリストと一致させる)
+// POST /api/make の成功レスポンス (catalog.rs public_make)
+struct MakeResult: Codable {
+    let ok: Bool
+    let sku: String
+    let kind: String
+    let display: String
+    let hook: String
+    let retailJpy: Int
+    let designUrl: String
+    let pdpUrl: String
+    let status: String
+    let autoApproved: Bool
+    let buyUrl: String?
+    let checkoutUrl: String?
+    let note: String
+    let editToken: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, sku, kind, display, hook, status, note
+        case retailJpy = "retail_jpy"
+        case designUrl = "design_url"
+        case pdpUrl = "pdp_url"
+        case autoApproved = "auto_approved"
+        case buyUrl = "buy_url"
+        case checkoutUrl = "checkout_url"
+        case editToken = "edit_token"
+    }
+
+    // 磨いた後に design 画像だけ差し替えるため var なコピーを返す。
+    var designURL: URL? { URL(string: designUrl) }
+    var priceLabel: String { "¥\(retailJpy.formatted())" }
+}
+
+// 5軸スコア (MUスコア)。/api/make/polish の before/after。
+struct DesignScore: Codable {
+    let total: Int
+    let axes: [String: Int]
+    let verdict: String
+
+    // 表示順を固定 (visual→universality→craft→concept→desire)
+    static let axisOrder = ["visual", "universality", "craft", "concept", "desire"]
+    static func axisLabel(_ k: String) -> String {
+        switch k {
+        case "visual": return String(localized: "score.visual")
+        case "universality": return String(localized: "score.universality")
+        case "craft": return String(localized: "score.craft")
+        case "concept": return String(localized: "score.concept")
+        case "desire": return String(localized: "score.desire")
+        default: return k
+        }
+    }
+    var orderedAxes: [(String, Int)] {
+        Self.axisOrder.compactMap { k in axes[k].map { (k, $0) } }
+    }
+}
+
+// POST /api/make/polish/:sku の結果
+struct PolishResult: Codable {
+    let ok: Bool
+    let improved: Bool
+    let before: DesignScore?
+    let after: DesignScore?
+    let designUrl: String?
+    let note: String
+
+    enum CodingKeys: String, CodingKey {
+        case ok, improved, before, after, note
+        case designUrl = "design_url"
+    }
+    var designURL: URL? { designUrl.flatMap(URL.init(string:)) }
+}
+
+// /make で作れる種類。"" = AI におまかせ (kind 省略 → サーバが文面から判定)。
+// raw value はサーバ側 allowed リスト (catalog.rs) と一致させる。
+enum MakeKind: String, CaseIterable, Identifiable {
+    case auto = ""
+    case tee, hoodie, sticker
+    case rashguard = "rashguard_ls"
+    case tote, mug
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .auto: return String(localized: "make.kind.auto")
+        case .tee: return "TEE"
+        case .hoodie: return String(localized: "kind.hoodie")
+        case .sticker: return String(localized: "kind.sticker")
+        case .rashguard: return String(localized: "kind.rashguard")
+        case .tote: return String(localized: "make.kind.tote")
+        case .mug: return String(localized: "make.kind.mug")
+        }
+    }
+}
+
+// kind チップ (サーバ側ホワイトリストと一致させる)。
+// App Store 3.1.1: デジタル(song/house)はアプリで売らない → チップから除外し、
+// feed は常に physical=1 で叩く (デジタルSKUをフィードからも除外)。
 enum ProductKind: String, CaseIterable, Identifiable {
     case all = ""
-    case tee, rashguard, hoodie, sticker, song, house
+    case tee, rashguard, hoodie, sticker
 
     var id: String { rawValue }
 
@@ -95,8 +192,6 @@ enum ProductKind: String, CaseIterable, Identifiable {
         case .rashguard: return String(localized: "kind.rashguard")
         case .hoodie: return String(localized: "kind.hoodie")
         case .sticker: return String(localized: "kind.sticker")
-        case .song: return String(localized: "kind.song")
-        case .house: return String(localized: "kind.house")
         }
     }
 }

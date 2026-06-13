@@ -8,6 +8,7 @@ struct LiveView: View {
     @State private var loading = false
     @State private var reachedEnd = false
     @State private var error: String?
+    @State private var loadedOnce = false
 
     var body: some View {
         NavigationStack {
@@ -21,14 +22,23 @@ struct LiveView: View {
                             .onAppear { if p == products.last { Task { await loadMore() } } }
                     }
                     if loading { ProgressView().padding() }
-                    if let error { Text(error).font(.footnote).foregroundStyle(.secondary) }
+                    if !loading && loadedOnce && products.isEmpty {
+                        ContentUnavailableView(
+                            error == nil ? String(localized: "live.empty") : String(localized: "shop.error"),
+                            systemImage: error == nil ? "flame" : "wifi.exclamationmark"
+                        )
+                        .padding(.top, 60)
+                    }
                 }
                 .padding(.horizontal)
             }
             .navigationTitle(String(localized: "tab.live"))
             .navigationDestination(for: FeedProduct.self) { ProductDetailView(product: $0) }
             .refreshable { await reload() }
-            .task { if products.isEmpty { await reload() } }
+            .task {
+                if products.isEmpty { await reload() }
+                Analytics.track("view_live")
+            }
             .onChange(of: kind) { Task { await reload() } }
         }
     }
@@ -47,7 +57,7 @@ struct LiveView: View {
 
     private func fetch(replace: Bool) async {
         loading = true
-        defer { loading = false }
+        defer { loading = false; loadedOnce = true }
         do {
             let new = try await MUAPI.feed(page: page, kind: kind)
             if new.isEmpty { reachedEnd = true }
@@ -55,6 +65,7 @@ struct LiveView: View {
             error = nil
         } catch {
             self.error = error.localizedDescription
+            if replace { products = [] }
         }
     }
 }

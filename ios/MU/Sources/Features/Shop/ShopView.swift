@@ -8,6 +8,8 @@ struct ShopView: View {
     @State private var query = ""
     @State private var loading = false
     @State private var reachedEnd = false
+    @State private var error: String?
+    @State private var loadedOnce = false
 
     private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
 
@@ -24,6 +26,14 @@ struct ShopView: View {
                         }
                     }
                     if loading { ProgressView().padding() }
+                    // 空状態 / エラー (初回ロード後・0件のときだけ出す)
+                    if !loading && loadedOnce && products.isEmpty {
+                        ContentUnavailableView(
+                            error == nil ? String(localized: "shop.empty") : String(localized: "shop.error"),
+                            systemImage: error == nil ? "magnifyingglass" : "wifi.exclamationmark"
+                        )
+                        .padding(.top, 60)
+                    }
                 }
                 .padding(.horizontal)
             }
@@ -32,7 +42,10 @@ struct ShopView: View {
             .searchable(text: $query, prompt: String(localized: "shop.search"))
             .onSubmit(of: .search) { Task { await reload() } }
             .refreshable { await reload() }
-            .task { if products.isEmpty { await reload() } }
+            .task {
+                if products.isEmpty { await reload() }
+                Analytics.track("view_shop")
+            }
             .onChange(of: kind) { Task { await reload() } }
         }
     }
@@ -51,10 +64,15 @@ struct ShopView: View {
 
     private func fetch(replace: Bool) async {
         loading = true
-        defer { loading = false }
-        if let new = try? await MUAPI.feed(page: page, kind: kind, query: query) {
+        defer { loading = false; loadedOnce = true }
+        do {
+            let new = try await MUAPI.feed(page: page, kind: kind, query: query)
             if new.isEmpty { reachedEnd = true }
             products = replace ? new : products + new
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+            if replace { products = [] }
         }
     }
 }

@@ -37,6 +37,7 @@ struct ProductDetailView: View {
                 }
 
                 Button {
+                    Analytics.track("pdp_buy", ["sku": product.sku])
                     showCheckout = true
                 } label: {
                     // Apple Pay マーク/文言はカスタムボタンに使えない (PKPaymentButton 限定・
@@ -60,6 +61,7 @@ struct ProductDetailView: View {
         }
         .navigationTitle(product.sku)
         .navigationBarTitleDisplayMode(.inline)
+        .task { Analytics.track("pdp_view", ["sku": product.sku]) }
         .sheet(isPresented: $showCheckout) {
             if let url = URL(string: product.checkoutUrl) {
                 SafariView(url: url).ignoresSafeArea()

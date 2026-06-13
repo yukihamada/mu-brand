@@ -18,7 +18,9 @@ struct MUAPI {
 
     static func feed(page: Int = 1, kind: ProductKind = .all, query: String = "") async throws -> [FeedProduct] {
         var comps = URLComponents(url: base.appendingPathComponent("api/shop/feed.json"), resolvingAgainstBaseURL: false)!
-        var items = [URLQueryItem(name: "page", value: String(page))]
+        // physical=1: デジタル(song等)を除外 (App Store 3.1.1)。アプリは物理グッズのみ扱う。
+        var items = [URLQueryItem(name: "page", value: String(page)),
+                     URLQueryItem(name: "physical", value: "1")]
         if !kind.rawValue.isEmpty { items.append(URLQueryItem(name: "kind", value: kind.rawValue)) }
         if !query.isEmpty { items.append(URLQueryItem(name: "q", value: query)) }
         comps.queryItems = items
@@ -43,6 +45,75 @@ struct MUAPI {
             throw APIError.message((json["error"] as? String) ?? "no api_key in response")
         }
         return key
+    }
+
+    // 「言えば、作れる」— POST /api/make?prompt=&kind=。AI がデザイン生成 → 即棚に並ぶ。
+    // apiKey があればログインユーザーに帰属 (売れるたび売上10%が作者へ・apply_maker_commission)。
+    // 画像生成に時間がかかるため timeout を延ばす。
+    static func make(prompt: String, kind: MakeKind, apiKey: String?) async throws -> MakeResult {
+        var comps = URLComponents(url: base.appendingPathComponent("api/make"), resolvingAgainstBaseURL: false)!
+        var items = [URLQueryItem(name: "prompt", value: prompt)]
+        if !kind.rawValue.isEmpty { items.append(URLQueryItem(name: "kind", value: kind.rawValue)) }
+        comps.queryItems = items
+
+        var req = URLRequest(url: comps.url!)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 90
+        if let key = apiKey, !key.isEmpty {
+            req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse else { throw APIError.badStatus(-1) }
+        guard (200...299).contains(http.statusCode) else {
+            let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            throw APIError.message((json?["error"] as? String) ?? "HTTP \(http.statusCode)")
+        }
+        return try JSONDecoder().decode(MakeResult.self, from: data)
+    }
+
+    // 「磨く」— POST /api/make/polish/:sku?t=。現デザインを5軸採点し、弱点を改善した候補を
+    // best-of-N 再生成。元より高得点なら差し替え (improved=true)。採点+生成で時間がかかる。
+    static func polish(sku: String, editToken: String) async throws -> PolishResult {
+        var comps = URLComponents(
+            url: base.appendingPathComponent("api/make/polish/\(sku)"),
+            resolvingAgainstBaseURL: false)!
+        comps.queryItems = [URLQueryItem(name: "t", value: editToken)]
+        var req = URLRequest(url: comps.url!)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 150
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse else { throw APIError.badStatus(-1) }
+        guard (200...299).contains(http.statusCode) else {
+            let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            throw APIError.message((json?["error"] as? String) ?? "HTTP \(http.statusCode)")
+        }
+        return try JSONDecoder().decode(PolishResult.self, from: data)
+    }
+
+    // APNs デバイストークンを登録 (ドロップ/売れた通知の宛先)。ログイン時は Bearer も付ける。
+    static func registerPush(token: String, apiKey: String?) async {
+        var req = URLRequest(url: base.appendingPathComponent("api/app/push/register"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let key = apiKey, !key.isEmpty {
+            req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["token": token, "platform": "ios"])
+        _ = try? await URLSession.shared.data(for: req)
+    }
+
+    // 軽量 funnel 計測。失敗は握り潰す (計測でユーザー体験を止めない)。
+    static func track(_ event: String, props: [String: Any] = [:], apiKey: String?) async {
+        var req = URLRequest(url: base.appendingPathComponent("api/app/event"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let key = apiKey, !key.isEmpty {
+            req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
+        var body: [String: Any] = ["event": event]
+        if !props.isEmpty { body["props"] = props }
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        _ = try? await URLSession.shared.data(for: req)
     }
 
     // App Store Guideline 5.1.1(v): アカウント削除 (サーバ側は冪等・compliance log のみ保持)

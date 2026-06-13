@@ -20,6 +20,9 @@ final class Session: ObservableObject {
 
     var apiKey: String? { Self.keychainRead(Self.keyAccount) }
 
+    // AppDelegate / Analytics などインスタンス外から鍵を読むための静的アクセサ。
+    static func currentAPIKey() -> String? { keychainRead(keyAccount) }
+
     func logIn(email: String, apiKey: String) {
         Self.keychainWrite(Self.keyAccount, value: apiKey)
         Self.keychainWrite(Self.emailAccount, value: email)

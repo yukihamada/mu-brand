@@ -1,6 +1,39 @@
 "tab.live" = "Live";
+"tab.make" = "Make";
 "tab.shop" = "Shop";
+"tab.scan" = "Scan";
 "tab.closet" = "Account";
+
+"scan.hint" = "Point at the QR on a product tag or moon marker";
+"scan.notMU" = "Not an MU code — not opened";
+"scan.denied" = "Camera access is needed to scan QR codes. Enable it in Settings.";
+"scan.openSettings" = "Open Settings";
+
+"live.empty" = "No drops yet. Wait a moment or pull to refresh.";
+"shop.empty" = "Nothing found. Try different words.";
+"shop.error" = "Couldn't load. Pull to refresh.";
+
+"make.title" = "Say it. It's made.";
+"make.subtitle" = "Type one line. AI designs it and it lands on the shelf instantly.";
+"make.placeholder" = "e.g. A minimal black tee inspired by a jiu-jitsu belt";
+"make.kind.auto" = "Auto";
+"make.kind.tote" = "Tote";
+"make.kind.mug" = "Mug";
+"make.go" = "Make it";
+"make.making" = "Making…";
+"make.again" = "Make another";
+"make.reviewPending" = "We're reviewing it. Once approved it's live and buyable.";
+"make.polish" = "Polish (5-axis self-improve)";
+"make.polishing" = "Polishing…";
+"score.visual" = "Visual";
+"score.universality" = "Universal";
+"score.craft" = "Print";
+"score.concept" = "Concept";
+"score.desire" = "Desire";
+"make.examplesTitle" = "Try saying something like";
+"make.example1" = "A minimal black tee inspired by a jiu-jitsu belt";
+"make.example2" = "A crescent moon and a howling wolf, indigo hoodie";
+"make.example3" = "A simple sticker that says \"Build from white.\"";
 
 "live.latestDrop" = "Latest drop:";
 "live.born24h %lld" = "%lld born in 24h";
@@ -36,3 +69,8 @@
 "account.deleteConfirmBody" = "Your store and credit data will be erased. This cannot be undone (only a legal-compliance hash of your email is retained).";
 "account.deleteConfirmAction" = "Delete permanently";
 "account.privacy" = "Privacy Policy";
+
+"push.enable" = "Turn on notifications";
+"push.on" = "Notifications are on";
+"push.openSettings" = "Allow notifications in Settings";
+"push.why" = "We'll let you know about new drops and when your design sells.";

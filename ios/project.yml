@@ -18,6 +18,8 @@ targets:
     sources:
       - MU/Sources
       - MU/Resources
+    dependencies:
+      - target: MUWidget
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.wearmu.mu
@@ -27,3 +29,15 @@ targets:
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
         INFOPLIST_KEY_UIRequiresFullScreen: YES
+        INFOPLIST_KEY_NSCameraUsageDescription: "商品タグやムーンマーカーのQRコードを読み取り、真贋・音・つくる画面を開くために使います。"
+  MUWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - MUWidget
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.wearmu.mu.widget
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: MUWidget/Info.plist
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO

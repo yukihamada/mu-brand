@@ -63,3 +63,7 @@ store/static/proposals/*_old.jpg
 # wearmu data — DB backups are local-only (too big, churning)
 data/backups/
 .secrets.local
+
+# iOS build artifacts
+ios/build_device/
+ios/build/

@@ -1,6 +1,39 @@
 "tab.live" = "ライブ";
+"tab.make" = "作る";
 "tab.shop" = "ショップ";
+"tab.scan" = "スキャン";
 "tab.closet" = "アカウント";
+
+"scan.hint" = "商品タグ・ムーンマーカーのQRをかざしてください";
+"scan.notMU" = "MUのコードではないため開きませんでした";
+"scan.denied" = "QRを読み取るにはカメラの許可が必要です。設定から有効にしてください。";
+"scan.openSettings" = "設定を開く";
+
+"live.empty" = "まだドロップがありません。少し待つか、引っぱって更新してください。";
+"shop.empty" = "見つかりませんでした。別の言葉で探してみてください。";
+"shop.error" = "読み込めませんでした。引っぱって更新してください。";
+
+"make.title" = "言えば、作れる。";
+"make.subtitle" = "ひとこと打つだけ。AIがデザインを起こして、すぐ棚に並びます。";
+"make.placeholder" = "例: 柔術の帯をモチーフにしたミニマルな黒T";
+"make.kind.auto" = "おまかせ";
+"make.kind.tote" = "トート";
+"make.kind.mug" = "マグ";
+"make.go" = "作る";
+"make.making" = "作っています…";
+"make.again" = "もう一つ作る";
+"make.reviewPending" = "内容を確認中です。OKならすぐ公開・購入できます。";
+"make.polish" = "磨く（5軸で自己改善）";
+"make.polishing" = "磨いています…";
+"score.visual" = "視覚";
+"score.universality" = "普遍性";
+"score.craft" = "印刷適性";
+"score.concept" = "コンセプト";
+"score.desire" = "所有欲";
+"make.examplesTitle" = "こんな風に言ってみて";
+"make.example1" = "柔術の帯をモチーフにしたミニマルな黒T";
+"make.example2" = "三日月とオオカミの遠吠え、藍色のフーディ";
+"make.example3" = "「白から、組む。」と入れたシンプルなステッカー";
 
 "live.latestDrop" = "最新ドロップ:";
 "live.born24h %lld" = "24時間で%lld着";
@@ -36,3 +69,8 @@
 "account.deleteConfirmBody" = "ストア・クレジット情報が削除されます。この操作は取り消せません（法令上の記録はメールのハッシュのみ保持されます）。";
 "account.deleteConfirmAction" = "完全に削除する";
 "account.privacy" = "プライバシーポリシー";
+
+"push.enable" = "通知をオンにする";
+"push.on" = "通知はオンです";
+"push.openSettings" = "設定で通知を許可する";
+"push.why" = "新作ドロップや、あなたの作品が売れたときにお知らせします。";
