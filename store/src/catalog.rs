@@ -171,6 +171,13 @@ pub fn ensure_schema(conn: &rusqlite::Connection) {
     // be double-claimed. NULL = not yet redeemed (the QR/VALID page is unaffected).
     let _ = conn.execute("ALTER TABLE catalog_orders ADD COLUMN redeemed_at TEXT", []);
     let _ = conn.execute("ALTER TABLE catalog_orders ADD COLUMN redeemed_by TEXT", []);
+    // 工場向け出荷管理 (/admin/ship): 物理出荷の進行ステータス + 配送業者 +
+    // 追跡番号 + 発送日時。配送APIは使わず送り状CSV(B2クラウド/e飛伝)取込方式。
+    // ship_status: NULL/pending → in_production → shipped → delivered。
+    let _ = conn.execute("ALTER TABLE catalog_orders ADD COLUMN ship_status TEXT", []);
+    let _ = conn.execute("ALTER TABLE catalog_orders ADD COLUMN courier TEXT", []);
+    let _ = conn.execute("ALTER TABLE catalog_orders ADD COLUMN tracking_number TEXT", []);
+    let _ = conn.execute("ALTER TABLE catalog_orders ADD COLUMN shipped_at TEXT", []);
     // Affiliate attribution: which referral code drove this sale + the
     // commission credited to the referrer (also written to mu_credit_ledger,
     // the payout source of truth). NULL/0 for unattributed orders.
