@@ -109,3 +109,5 @@
 "account.worn" = "Your designs have been worn %d times worldwide 🌍";
 "buy.gift" = "Send as a gift 🎁";
 "make.onbody.model" = "On a model";
+"share.cta" = "Share";
+"share.message" = "I made this on MU. Now make it yours →";

@@ -109,3 +109,5 @@
 "account.worn" = "あなたの作品が、世界で %d回 着られています 🌍";
 "buy.gift" = "プレゼントする 🎁";
 "make.onbody.model" = "モデル着用";
+"share.cta" = "シェアする";
+"share.message" = "MUで作った一着。続きはあなたが →";

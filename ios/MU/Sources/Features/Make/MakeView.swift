@@ -415,6 +415,17 @@ struct MakeView: View {
             }
 
             if let pdp = URL(string: r.pdpUrl) {
+                // 作った瞬間にシェア = 全創作が宣伝に。リンク先で着画・購入・続きを作れる。
+                ShareLink(item: pdp,
+                          subject: Text(r.display),
+                          message: Text(String(localized: "share.message"))) {
+                    Label(String(localized: "share.cta"), systemImage: "square.and.arrow.up")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 4)
+                }
+                .buttonStyle(.bordered)
+
                 Link(destination: pdp) {
                     Label(String(localized: "pdp.openWeb"), systemImage: "safari")
                         .font(.subheadline)

@@ -67,3 +67,11 @@ data/backups/
 # iOS build artifacts
 ios/build_device/
 ios/build/
+
+# fastlane build output
+ios/build/
+ios/build_archive/
+ios/build_release/
+ios/Gemfile.lock
+ios/fastlane/report.xml
+ios/fastlane/Preview.html
